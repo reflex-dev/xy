@@ -163,7 +163,7 @@ class Chart(Component):
         children: tuple[Component, ...],
         *,
         title: Optional[str] = None,
-        width: int = 900,
+        width: "int | str" = 900,  # pixels, or "100%" to fill the parent
         height: int = 420,
         data: Any = None,
         on_hover: Optional[Callable[[dict], None]] = None,
