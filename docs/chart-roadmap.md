@@ -106,6 +106,41 @@ Breadth should arrive after the core primitives are solid:
 5. small-multiple and dashboard composition,
 6. accessibility, export, theming, and Plotly-compatibility coverage.
 
+## Cross-Cutting: Adaptive Scatter LOD
+
+How fastcharts answers "density is too blunt — zooming in should reveal real
+points." The dossier already prescribes this (§5: `tier = f(visible_count, …)`,
+not total count; transitions hysteresis-guarded), and the literature agrees on
+the shape: imMens/Nanocubes bound work by *screen* resolution via tiles and
+hierarchical aggregates; datashader rasterizes; plotly-resampler re-aggregates
+per view; deck.gl documents why 10M visible markers die on fill-rate/overdraw.
+
+**Implemented — drill-in/drill-out (the §5 visible-count rule):**
+
+- Zoomed out, a Tier-2 scatter renders as the density texture (screen-bounded).
+- Every pan/zoom already round-trips `density_view`; the kernel now counts the
+  points in the window and, when they fit the direct budget (200k), ships the
+  *actual visible points* — color/size channels restored, normalized over their
+  global domain so styling is stable across views — instead of a grid. Hover
+  picking and box-select work on the drilled points (shipped→canonical index
+  translation). Zooming back out returns to density. Enter/exit is
+  hysteresis-guarded (1.15×) so the boundary doesn't thrash. Every decision
+  rides the update as `mode` + `visible` (§28, never silent).
+
+**Not yet built (the rest of the §5 ladder, in rough order of value):**
+
+- *Data-space tile pyramid* — today zoom-out re-bins the visible window
+  (O(visible points)); the pyramid makes pan pure tile reuse and zoom a level
+  step, O(visible tiles) per frame after a one-pass build (~1.33× cost).
+- *Progressive refinement* (§17) — bin a 1-in-k sample first so a coarse
+  density appears <100 ms, refine over subsequent frames.
+- *Hybrid overlay* — density background + a stratified sample of real points
+  (rare categories/outliers kept) so zoomed-out views still show markers.
+  Requires a sampling pass with an explicit "sampled" badge (§28).
+- *Per-bin channel aggregation* (§5-F5) — mean/max color per density cell, so
+  a zoomed-out colored scatter keeps *some* channel signal instead of
+  `channels_dropped`.
+
 ## Cross-Cutting: Styling & Theming
 
 These are not chart types but engine-wide styling capabilities. They are tracked

@@ -191,7 +191,29 @@ try{{
     v._setDragMode("zoom");
     const zmode = (v.dragMode==="zoom" && v.canvas.style.cursor==="crosshair") ? 1 : 0;
     v._setDragMode("pan");
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} box=${{boxOk}} zmode=${{zmode}}`;
+    // Adaptive LOD drill-in (§5): a synthetic kernel "points" update swaps the
+    // density texture for real colored markers (pickable); a density update
+    // swaps back. View is parked far from other traces so picks can't collide.
+    const gd=v.gpuTraces.find(g=>g.tier==="density");
+    const oldView={{...v.view}};
+    v.view={{x0:5000,x1:5010,y0:5000,y1:5010}};
+    const n3=25, xs3=new Float32Array(n3), ys3=new Float32Array(n3), cs3=new Float32Array(n3);
+    for(let i=0;i<n3;i++){{xs3[i]=(i%5-2)*1.5; ys3[i]=(Math.floor(i/5)-2)*1.5; cs3[i]=i/n3;}}
+    v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"points",visible:n3,
+      x:{{buf:0,len:n3,offset:5005,scale:1}},y:{{buf:1,len:n3,offset:5005,scale:1}},
+      color:{{mode:"continuous",colormap:"viridis",buf:2}},size:{{mode:"constant",size:8}}}}]}},
+      [xs3.buffer,ys3.buffer,cs3.buffer]);
+    const drilled=(gd.drill && gd.drill.n===n3 && gd.drill.colorMode===1)?1:0;
+    v._drawNow();
+    const hit3=v._pickAt(v.plot.w/2, v.plot.h/2);
+    const dpick=(hit3 && hit3.trace===gd.trace.id)?1:0;
+    const grid3=new Float32Array(16).fill(1);
+    v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"density",visible:999999,
+      density:{{buf:0,w:4,h:4,max:1,x_range:[5000,5010],y_range:[5000,5010]}}}}]}},[grid3.buffer]);
+    const dback=(!gd.drill)?1:0;
+    v.view=oldView;
+    v._drawNow();
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} box=${{boxOk}} zmode=${{zmode}} drill=${{drilled}} dpick=${{dpick}} dback=${{dback}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -258,6 +280,9 @@ try{{
     fluid = int(re.search(r"fluid=(\d+)", title).group(1))
     grew = int(re.search(r"grew=(\d+)", title).group(1))
     pick2 = int(re.search(r"pick2=(\d+)", title).group(1))
+    drill = int(re.search(r"drill=(\d+)", title).group(1))
+    dpick = int(re.search(r"dpick=(\d+)", title).group(1))
+    dback = int(re.search(r"dback=(\d+)", title).group(1))
     frac = lit / max(total, 1)
     print(
         f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}, pick hits: {pick}, "
@@ -293,9 +318,15 @@ try{{
         raise SystemExit("ResizeObserver resize did not re-render at the new width")
     if pick2 != 1:
         raise SystemExit("pick FBO was not reallocated to the resized canvas")
+    if drill != 1:
+        raise SystemExit("density trace did not drill in to points on a points update")
+    if dpick != 1:
+        raise SystemExit("drilled points were not pickable (GPU pick missed)")
+    if dback != 1:
+        raise SystemExit("density update did not drop the drill state")
     print(
         "render smoke OK (no numpy): line + colored/sized scatter + density + "
-        "picking + box-select + modebar/box-zoom + responsive resize"
+        "picking + box-select + modebar/box-zoom + responsive resize + LOD drill-in"
     )
 
 
