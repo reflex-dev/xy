@@ -80,12 +80,20 @@ def first_paint_ms(
         try:
             out = subprocess.run(
                 [
-                    exe, "--headless=new", "--no-sandbox", "--disable-dev-shm-usage",
-                    "--use-angle=swiftshader", "--enable-unsafe-swiftshader",
-                    "--hide-scrollbars", f"--virtual-time-budget={virtual_time_ms}",
-                    "--dump-dom", p.as_uri(),
+                    exe,
+                    "--headless=new",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--use-angle=swiftshader",
+                    "--enable-unsafe-swiftshader",
+                    "--hide-scrollbars",
+                    f"--virtual-time-budget={virtual_time_ms}",
+                    "--dump-dom",
+                    p.as_uri(),
                 ],
-                capture_output=True, text=True, timeout=timeout_s,
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
             )
         except subprocess.TimeoutExpired:
             return None

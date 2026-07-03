@@ -112,9 +112,12 @@ class FigureWidget(anywidget.AnyWidget):
             try:
                 update, buffers = self._figure.density_view(
                     int(content["trace"]),
-                    float(content["x0"]), float(content["x1"]),
-                    float(content["y0"]), float(content["y1"]),
-                    int(content.get("w", 512)), int(content.get("h", 384)),
+                    float(content["x0"]),
+                    float(content["x1"]),
+                    float(content["y0"]),
+                    float(content["y1"]),
+                    int(content.get("w", 512)),
+                    int(content.get("h", 384)),
                 )
             except (KeyError, ValueError, IndexError):
                 return
@@ -132,8 +135,10 @@ class FigureWidget(anywidget.AnyWidget):
             # the resolved indices (Arrow-slice-shaped, not JSON — §34 API note).
             try:
                 sel = self._figure.select_range(
-                    float(content["x0"]), float(content["x1"]),
-                    float(content["y0"]), float(content["y1"]),
+                    float(content["x0"]),
+                    float(content["x1"]),
+                    float(content["y0"]),
+                    float(content["y1"]),
                 )
             except (KeyError, ValueError):
                 return

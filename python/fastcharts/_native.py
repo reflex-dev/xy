@@ -74,25 +74,48 @@ def _load() -> ctypes.CDLL:
 
     lib.fc_zone_maps.restype = ctypes.c_size_t
     lib.fc_zone_maps.argtypes = [
-        _F64_P, ctypes.c_size_t, ctypes.c_size_t,
-        _F64_P, _F64_P, _U64_P, _U64_P, _F64_P, _F64_P,
+        _F64_P,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        _F64_P,
+        _F64_P,
+        _U64_P,
+        _U64_P,
+        _F64_P,
+        _F64_P,
     ]
     lib.fc_encode_f32.restype = None
     lib.fc_encode_f32.argtypes = [
-        _F64_P, ctypes.c_size_t, ctypes.c_double, ctypes.c_double, _F32_P,
+        _F64_P,
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_double,
+        _F32_P,
     ]
     lib.fc_m4_indices.restype = ctypes.c_size_t
     lib.fc_m4_indices.argtypes = [
-        _F64_P, _F64_P, ctypes.c_size_t,
-        ctypes.c_double, ctypes.c_double, ctypes.c_size_t, _U32_P,
+        _F64_P,
+        _F64_P,
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_size_t,
+        _U32_P,
     ]
     lib.fc_min_max.restype = ctypes.c_int32
     lib.fc_min_max.argtypes = [_F64_P, ctypes.c_size_t, _F64_P, _F64_P]
     lib.fc_bin_2d.restype = ctypes.c_int32
     lib.fc_bin_2d.argtypes = [
-        _F64_P, _F64_P, ctypes.c_size_t,
-        ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,
-        ctypes.c_size_t, ctypes.c_size_t, _F32_P,
+        _F64_P,
+        _F64_P,
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        _F32_P,
     ]
     return lib
 
@@ -136,10 +159,15 @@ def zone_maps(
     sums = np.empty(n_chunks, dtype=np.float64)
     sum_sqs = np.empty(n_chunks, dtype=np.float64)
     written = _lib.fc_zone_maps(
-        _ptr_f64(data), n, chunk_size,
-        _ptr_f64(mins), _ptr_f64(maxs),
-        counts.ctypes.data_as(_U64_P), nulls.ctypes.data_as(_U64_P),
-        _ptr_f64(sums), _ptr_f64(sum_sqs),
+        _ptr_f64(data),
+        n,
+        chunk_size,
+        _ptr_f64(mins),
+        _ptr_f64(maxs),
+        counts.ctypes.data_as(_U64_P),
+        nulls.ctypes.data_as(_U64_P),
+        _ptr_f64(sums),
+        _ptr_f64(sum_sqs),
     )
     assert written == n_chunks
     return mins, maxs, counts, nulls, sums, sum_sqs
@@ -177,7 +205,12 @@ def m4_indices(
         return np.empty(0, dtype=np.uint32)
     out = np.empty(n_buckets * 4, dtype=np.uint32)
     written = _lib.fc_m4_indices(
-        _ptr_f64(x), _ptr_f64(y), len(x), x0, x1, n_buckets,
+        _ptr_f64(x),
+        _ptr_f64(y),
+        len(x),
+        x0,
+        x1,
+        n_buckets,
         out.ctypes.data_as(_U32_P),
     )
     if written == np.iinfo(np.uint64).max:  # usize::MAX sentinel
@@ -205,7 +238,15 @@ def bin_2d(
     out = np.zeros((h, w), dtype=np.float32)
     if len(x):
         ok = _lib.fc_bin_2d(
-            _ptr_f64(x), _ptr_f64(y), len(x), x0, x1, y0, y1, w, h,
+            _ptr_f64(x),
+            _ptr_f64(y),
+            len(x),
+            x0,
+            x1,
+            y0,
+            y1,
+            w,
+            h,
             out.ctypes.data_as(_F32_P),
         )
         if not ok:
@@ -220,7 +261,5 @@ def min_max(data: npt.NDArray[np.float64]) -> Optional[tuple[float, float]]:
         return None
     lo = ctypes.c_double()
     hi = ctypes.c_double()
-    ok = _lib.fc_min_max(
-        _ptr_f64(data), len(data), ctypes.byref(lo), ctypes.byref(hi)
-    )
+    ok = _lib.fc_min_max(_ptr_f64(data), len(data), ctypes.byref(lo), ctypes.byref(hi))
     return (lo.value, hi.value) if ok else None

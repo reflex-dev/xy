@@ -226,7 +226,9 @@ class Chart(Component):
                     yv,
                     name=m.name,
                     color=_resolve_color(data, m.props["color"]),
-                    size=_resolve(data, m.props["size"]) if isinstance(m.props["size"], str) else m.props["size"],
+                    size=_resolve(data, m.props["size"])
+                    if isinstance(m.props["size"], str)
+                    else m.props["size"],
                     colormap=m.props["colormap"],
                     size_range=m.props["size_range"],
                     opacity=m.props["opacity"],
@@ -253,7 +255,9 @@ class Chart(Component):
         if self._widget is None:
             from .widget import FigureWidget
 
-            self._widget = FigureWidget(self.figure(), on_hover=self.on_hover, on_select=self.on_select)
+            self._widget = FigureWidget(
+                self.figure(), on_hover=self.on_hover, on_select=self.on_select
+            )
         return self._widget
 
     def show(self) -> Any:
@@ -290,9 +294,30 @@ def _looks_like_css(s: str) -> bool:
 
 
 _CSS_NAMES = {
-    "black", "white", "red", "green", "blue", "yellow", "orange", "purple",
-    "gray", "grey", "cyan", "magenta", "pink", "brown", "teal", "navy",
-    "gold", "silver", "maroon", "olive", "lime", "aqua", "fuchsia", "transparent",
+    "black",
+    "white",
+    "red",
+    "green",
+    "blue",
+    "yellow",
+    "orange",
+    "purple",
+    "gray",
+    "grey",
+    "cyan",
+    "magenta",
+    "pink",
+    "brown",
+    "teal",
+    "navy",
+    "gold",
+    "silver",
+    "maroon",
+    "olive",
+    "lime",
+    "aqua",
+    "fuchsia",
+    "transparent",
 }
 
 

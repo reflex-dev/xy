@@ -42,8 +42,16 @@ DENSITY_GRID = (512, 384)
 
 # CVD-safe default categorical palette (§20/§36 default theme).
 DEFAULT_PALETTE = [
-    "#4c78a8", "#f58518", "#54a24b", "#e45756", "#72b7b2",
-    "#eeca3b", "#b279a2", "#ff9da6", "#9d755d", "#bab0ac",
+    "#4c78a8",
+    "#f58518",
+    "#54a24b",
+    "#e45756",
+    "#72b7b2",
+    "#eeca3b",
+    "#b279a2",
+    "#ff9da6",
+    "#9d755d",
+    "#bab0ac",
 ]
 
 
@@ -123,9 +131,7 @@ class Figure:
         xc = self.store.ingest(x)
         yc = self.store.ingest(y)
         if len(xc) != len(yc):
-            raise ValueError(
-                f"line x and y must have equal length, got {len(xc)} and {len(yc)}"
-            )
+            raise ValueError(f"line x and y must have equal length, got {len(xc)} and {len(yc)}")
         if not np.all(np.diff(xc.values) >= 0):
             # LOD contract (§28): line x must be sorted; the engine sorts once
             # at ingest, and says so. The predicate is NaN-safe on purpose:
@@ -172,9 +178,7 @@ class Figure:
         yc = self.store.ingest(y)
         n = len(xc)
         if len(yc) != n:
-            raise ValueError(
-                f"scatter x and y must have equal length, got {n} and {len(yc)}"
-            )
+            raise ValueError(f"scatter x and y must have equal length, got {n} and {len(yc)}")
         default_color = DEFAULT_PALETTE[len(self.traces) % len(DEFAULT_PALETTE)]
         color_ch = channels.resolve_color(
             color, n, colormap=colormap, default_constant=default_color
@@ -409,7 +413,11 @@ class Figure:
         gmax = float(grid.max()) if grid.size else 0.0
         # Honor the user's colormap for the density ramp even though the per-point
         # color *data* can't survive count-aggregation (needs the §5-F5 algebra).
-        cmap = t.color_ch.colormap if (t.color_ch and t.color_ch.mode == "continuous") else channels.DEFAULT_COLORMAP
+        cmap = (
+            t.color_ch.colormap
+            if (t.color_ch and t.color_ch.mode == "continuous")
+            else channels.DEFAULT_COLORMAP
+        )
         color_dropped = bool(t.color_ch and t.color_ch.mode != "constant")
         size_dropped = bool(t.size_ch and t.size_ch.mode != "constant")
         dropped = color_dropped or size_dropped
@@ -548,7 +556,12 @@ class Figure:
                 {
                     "id": t.id,
                     "x": {"buf": len(buffers), "len": len(x_enc), "offset": x_off, "scale": 1.0},
-                    "y": {"buf": len(buffers) + 1, "len": len(y_enc), "offset": y_off, "scale": 1.0},
+                    "y": {
+                        "buf": len(buffers) + 1,
+                        "len": len(y_enc),
+                        "offset": y_off,
+                        "scale": 1.0,
+                    },
                 }
             )
             buffers.append(x_enc.tobytes())

@@ -234,7 +234,9 @@ def test_pick_time_axis_exact():
     fig = Figure().scatter(t, np.array([1.0, 2.0]))
     row = fig.pick(0, 1)
     assert row["x_kind"] == "time_ms"
-    assert row["x"] == float(np.datetime64("2024-06-01T00:00:01").astype("datetime64[ms]").astype(np.int64))
+    assert row["x"] == float(
+        np.datetime64("2024-06-01T00:00:01").astype("datetime64[ms]").astype(np.int64)
+    )
 
 
 def test_pick_out_of_range():
@@ -321,7 +323,10 @@ def test_line_with_nan_x_sorts_and_excludes():
     fig = Figure().line(x, y)
     spec, blob = fig.build_payload()
     tr = spec["traces"][0]
-    xbuf = np.frombuffer(blob, dtype=np.float32,
-                         count=spec["columns"][tr["x"]]["len"],
-                         offset=spec["columns"][tr["x"]]["byte_offset"])
+    xbuf = np.frombuffer(
+        blob,
+        dtype=np.float32,
+        count=spec["columns"][tr["x"]]["len"],
+        offset=spec["columns"][tr["x"]]["byte_offset"],
+    )
     assert not np.isnan(xbuf).any()  # §19: NaN never reaches a vertex buffer

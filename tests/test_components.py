@@ -53,12 +53,14 @@ def test_composition_builds_figure():
 
 
 def test_data_key_resolution():
-    df = FakeFrame({
-        "gdp": np.array([1.0, 2.0, 3.0]),
-        "life": np.array([70.0, 75.0, 80.0]),
-        "pop": np.array([10.0, 20.0, 30.0]),
-        "cont": np.array(["a", "b", "a"]),
-    })
+    df = FakeFrame(
+        {
+            "gdp": np.array([1.0, 2.0, 3.0]),
+            "life": np.array([70.0, 75.0, 80.0]),
+            "pop": np.array([10.0, 20.0, 30.0]),
+            "cont": np.array(["a", "b", "a"]),
+        }
+    )
     chart = fc.scatter_chart(
         fc.scatter(x="gdp", y="life", color="cont", size="pop", data=df),
     )
