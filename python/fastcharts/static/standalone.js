@@ -988,7 +988,13 @@ class ChartView {
     if (row.color_category !== undefined) lines.push(`${row.color_category}`);
     if (row.size_value !== undefined) lines.push(`size: ${fmtValue(row.size_value)}`);
     if (!lines.length) lines.push(`#${row.index}`);
-    this.tooltip.innerHTML = lines.join("<br>");
+    // Text nodes, not innerHTML: category labels are user data and must never
+    // be parsed as markup (a category named "<img onerror=…>" is just a label).
+    this.tooltip.textContent = "";
+    lines.forEach((ln, i) => {
+      if (i) this.tooltip.appendChild(document.createElement("br"));
+      this.tooltip.appendChild(document.createTextNode(ln));
+    });
     this.tooltip.style.display = "block";
     const tw = this.tooltip.offsetWidth;
     this.tooltip.style.left = Math.min(lx + 12, this.spec.width - tw - 4) + "px";

@@ -573,16 +573,24 @@ class Figure:
                 RuntimeWarning,
                 stacklevel=2,
             )
+        # User strings (title, names, labels) ride inside <script>/<title>
+        # blocks: escape "</" so "</script>"-shaped content can't break out of
+        # the script context (markup injection in exported files), and
+        # HTML-escape the <title> text itself.
+        import html as _html
+
+        spec_js = json.dumps(spec).replace("</", "<\\/")
+        title_html = _html.escape(self.title or "fastcharts")
         html = f"""<!doctype html>
 <html>
-<head><meta charset="utf-8"><title>{self.title or "fastcharts"}</title>
+<head><meta charset="utf-8"><title>{title_html}</title>
 <style>body{{margin:24px;font-family:system-ui,sans-serif;background:#fff}}</style>
 </head>
 <body>
 <div id="chart"></div>
 <script>{bundled_js("standalone")}</script>
 <script>
-  const spec = {json.dumps(spec)};
+  const spec = {spec_js};
   const b64 = "{base64.b64encode(blob).decode("ascii")}";
   const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
   fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);
