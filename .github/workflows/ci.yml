@@ -193,8 +193,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      # deliberately NO rust-toolchain and NO node: cargo absent, static JS is
-      # committed — this is the "user without a toolchain" path.
+      # GitHub runners ship Rust preinstalled (the first run of this job proved
+      # it by happily compiling the core!) — strip every cargo from PATH so the
+      # build genuinely exercises the no-toolchain path.
+      - name: Remove preinstalled Rust
+        run: |
+          while p=$(command -v cargo 2>/dev/null); do
+            echo "removing $p"; sudo rm -f "$p"
+          done
+          if command -v cargo; then echo "cargo still present"; exit 1; fi
+          echo "cargo is gone"
       - name: Build wheel with no toolchain
         run: uv build --wheel
       - name: Wheel is pure-Python (py3-none-any)

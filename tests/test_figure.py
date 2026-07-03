@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from fastcharts import Figure
-from fastcharts.figure import DECIMATION_THRESHOLD, PROTOCOL_VERSION
+from fastcharts.figure import PROTOCOL_VERSION
 
 
 def _payload_col(spec, blob, ref):

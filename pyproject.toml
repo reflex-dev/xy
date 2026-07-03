@@ -45,7 +45,19 @@ select = [
     "RUF",
 ]
 ignore = [
-    "E501", # line length is the formatter's job
+    "E501",   # line length is the formatter's job
+    # Stylistic churn we opt out of (newer-ruff additions; the codebase
+    # deliberately uses typing.Optional/Union for its py3.9 floor, and unicode
+    # ×/– in prose comments is intended):
+    "UP007",  # Union[X, Y] -> X | Y
+    "UP037",  # quoted annotations
+    "UP045",  # Optional[X] -> X | None
+    "RUF002", # ambiguous unicode in docstrings
+    "RUF003", # ambiguous unicode in comments
+    "RUF005", # list concatenation vs unpacking
+    "RUF046", # int() on already-int
+    "RUF059", # unused unpacked variable (tests unpack payloads for clarity)
+    "RUF100", # unused noqa (kept for editors running broader rule sets)
 ]
 
 [tool.ty.environment]
