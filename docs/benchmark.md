@@ -25,6 +25,27 @@ python benchmarks/bench_vs.py
 The fastcharts-only arm also runs with no dependencies via
 `benchmarks/bench_scatter_native.py`.
 
+## Time to first render (data → pixels)
+
+Byte counts and serialize time are **not** pixels. For the browser-rendered
+libraries (fastcharts, Plotly-HTML, Bokeh, Altair, hvPlot) the static-export size
+says nothing about how long the browser takes to parse the embedded JS, build the
+scene, and paint — often the dominant cost (Bokeh/Altair ship megabytes of JS +
+data the browser must execute). So the harness measures **time-to-first-render**
+directly: `benchmarks/bench_vs.py --ttfr` loads each library's output in headless
+Chromium and reads First Contentful Paint (`navigationStart → first paint`, JS
+inlined, no CDN, via `benchmarks/_browser.py`). Raster libraries
+(matplotlib/seaborn/datashader/Plotly-kaleido) already produced pixels at render,
+so their TTFR = build + render.
+
+This closes the biggest fairness gap: previously fastcharts' number excluded the
+WebGL draw while the HTML libraries' numbers excluded the browser entirely — both
+stopped before pixels existed. The CI `benchmark` job now runs the TTFR pass
+(capped at 100k points, since each row launches a browser) and the numbers land
+in `docs/benchmark_ci.md` / the `benchmark-report` artifact. Locally, fastcharts'
+standalone-export TTFR under software GL (SwiftShader) is ~180 ms for a density
+page; on real GPU hardware it is lower.
+
 ## Expanded adapter benchmark — 100k points
 
 Measured locally with:

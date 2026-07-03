@@ -79,11 +79,11 @@ jobs:
       - name: Benchmark smoke (1e5/1e6 — §12 harness runs every phase)
         run: .venv/bin/python scripts/bench.py --sizes 1e5,1e6
 
-  # Three-way scatter benchmark vs Plotly and matplotlib (docs/benchmark.md).
+  # Cross-library scatter benchmark incl. time-to-first-render (docs/benchmark.md).
   # Non-blocking: it's a measurement, not a gate. Uploads the report as an
   # artifact and prints it to the log.
   benchmark:
-    name: Benchmark vs Plotly / matplotlib
+    name: Benchmark vs Python charting libraries
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -100,11 +100,18 @@ jobs:
         run: |
           uv venv .venv
           uv pip install -p .venv/bin/python -e .
-          uv pip install -p .venv/bin/python matplotlib plotly kaleido psutil
-      - name: Run three-way benchmark
+          uv pip install -p .venv/bin/python matplotlib seaborn plotly kaleido bokeh altair datashader hvplot psutil
+      # Playwright Chromium for the time-to-first-render (browser paint) pass.
+      - name: Install Chromium (Playwright)
         run: |
+          npm i --no-save playwright@1.48
+          npx playwright install --with-deps chromium
+      - name: Run cross-library benchmark (with TTFR)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
           .venv/bin/python scripts/bench_vs.py \
             --sizes 1e3,1e4,1e5,1e6,3e6,1e7 --budget 45 \
+            --ttfr --ttfr-max-n 1e5 --chromium "$CHROME" \
             --out docs/benchmark_ci.md --json benchmark.json
       - name: Show report
         run: cat docs/benchmark_ci.md
