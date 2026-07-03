@@ -221,6 +221,12 @@ def _drill_points(
                     "id": t.id,
                     "mode": "points",
                     "visible": visible,
+                    # The window these points cover: the client draws points
+                    # while the view stays inside it, and falls back to the
+                    # density overview the instant a zoom-out leaves it — so
+                    # zooming out is never blank (§5 smooth transitions).
+                    "x_range": [lo_x, hi_x],
+                    "y_range": [lo_y, hi_y],
                     "x": {"buf": 0, "len": n, "offset": x_off, "scale": 1.0},
                     "y": {"buf": 1, "len": n, "offset": y_off, "scale": 1.0},
                     "color": color_spec,

@@ -200,20 +200,30 @@ try{{
     const n3=25, xs3=new Float32Array(n3), ys3=new Float32Array(n3), cs3=new Float32Array(n3);
     for(let i=0;i<n3;i++){{xs3[i]=(i%5-2)*1.5; ys3[i]=(Math.floor(i/5)-2)*1.5; cs3[i]=i/n3;}}
     v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"points",visible:n3,
+      x_range:[5000,5010],y_range:[5000,5010],
       x:{{buf:0,len:n3,offset:5005,scale:1}},y:{{buf:1,len:n3,offset:5005,scale:1}},
       color:{{mode:"continuous",colormap:"viridis",buf:2}},size:{{mode:"constant",size:8}}}}]}},
       [xs3.buffer,ys3.buffer,cs3.buffer]);
-    const drilled=(gd.drill && gd.drill.n===n3 && gd.drill.colorMode===1)?1:0;
+    const drilled=(gd.drill && gd.drill.n===n3 && gd.drill.colorMode===1
+      && v._viewInside(gd.drill.win)===true)?1:0;
     v._drawNow();
     const hit3=v._pickAt(v.plot.w/2, v.plot.h/2);
     const dpick=(hit3 && hit3.trace===gd.trace.id)?1:0;
+    // Zoom out past the drilled window: still drilled, but now the overview
+    // must be what covers the view (no blank). Assert _viewInside flips and a
+    // draw with the retained density texture present doesn't throw.
+    v.view={{x0:0,x1:10000,y0:0,y1:10000}};
+    v._drawNow();
+    const zoomout=(gd.drill && v._viewInside(gd.drill.win)===false
+      && gd.density && gd.density.tex)?1:0;
+    v.view={{x0:5000,x1:5010,y0:5000,y1:5010}};
     const grid3=new Float32Array(16).fill(1);
     v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"density",visible:999999,
       density:{{buf:0,w:4,h:4,max:1,x_range:[5000,5010],y_range:[5000,5010]}}}}]}},[grid3.buffer]);
     const dback=(!gd.drill)?1:0;
     v.view=oldView;
     v._drawNow();
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} box=${{boxOk}} zmode=${{zmode}} drill=${{drilled}} dpick=${{dpick}} dback=${{dback}}`;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} box=${{boxOk}} zmode=${{zmode}} drill=${{drilled}} dpick=${{dpick}} zoomout=${{zoomout}} dback=${{dback}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -282,6 +292,7 @@ try{{
     pick2 = int(re.search(r"pick2=(\d+)", title).group(1))
     drill = int(re.search(r"drill=(\d+)", title).group(1))
     dpick = int(re.search(r"dpick=(\d+)", title).group(1))
+    zoomout = int(re.search(r"zoomout=(\d+)", title).group(1))
     dback = int(re.search(r"dback=(\d+)", title).group(1))
     frac = lit / max(total, 1)
     print(
@@ -322,6 +333,8 @@ try{{
         raise SystemExit("density trace did not drill in to points on a points update")
     if dpick != 1:
         raise SystemExit("drilled points were not pickable (GPU pick missed)")
+    if zoomout != 1:
+        raise SystemExit("zoom-out past the drilled window did not fall back to the overview")
     if dback != 1:
         raise SystemExit("density update did not drop the drill state")
     print(
