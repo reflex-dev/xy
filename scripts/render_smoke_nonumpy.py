@@ -192,19 +192,24 @@ try{{
     const zmode = (v.dragMode==="zoom" && v.canvas.style.cursor==="crosshair") ? 1 : 0;
     v._setDragMode("pan");
     const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} box=${{boxOk}} zmode=${{zmode}}`;
-    // Responsive: width:"100%" chart in a 400px container tracks its parent;
-    // growing the container must fire the ResizeObserver and re-render wider.
+    // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
+    // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
     spec2.width="100%";
+    spec2.height="100%";
     const holder=document.createElement("div");
     holder.style.width="400px";
+    holder.style.height="300px";
     document.body.appendChild(holder);
     const v2=fastcharts.renderStandalone(holder,spec2,bytes.buffer);
-    const fluid0=(v2.fluid===true && v2.size.w===400 && v2.root.style.width==="100%")?1:0;
+    const fluid0=(v2.fluid===true && v2.fluidH===true && v2.size.w===400 && v2.size.h===300
+      && v2.root.style.width==="100%" && v2.root.style.height==="100%")?1:0;
     holder.style.width="640px";
+    holder.style.height="360px";
     setTimeout(()=>{{try{{
-      const grew=(v2.size.w===640 && v2.canvas.width===v2.plot.w*v2.dpr
-        && v2.chrome.width===640*v2.dpr)?1:0;
+      const grew=(v2.size.w===640 && v2.size.h===360 && v2.canvas.width===v2.plot.w*v2.dpr
+        && v2.canvas.height===v2.plot.h*v2.dpr && v2.chrome.width===640*v2.dpr
+        && v2.chrome.height===360*v2.dpr)?1:0;
       v2._pickAt(4,4); // exercises _renderPick -> deferred pick-FBO realloc
       const pick2=(v2._pickW===v2.canvas.width && v2._pickH===v2.canvas.height)?1:0;
       document.title=`${{base}} fluid=${{fluid0}} grew=${{grew}} pick2=${{pick2}}`;

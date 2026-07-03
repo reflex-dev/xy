@@ -405,13 +405,15 @@ class ChartView {
     this._hoverId = -1;
     this.dragMode = "pan"; // "pan" | "zoom" (box zoom); toggled via the modebar
 
-    // Responsive width: "100%" means the *container* owns the width — measure
-    // it now, track it with a ResizeObserver below. Numeric width is fixed.
+    // Responsive size: "100%" means the *container* owns that axis — measure
+    // it now, track it with a ResizeObserver below. Numeric sizes are fixed.
+    // (height:"100%" needs a parent with a defined height, per usual CSS.)
     this.fluid = spec.width === "100%";
-    const cw = this.fluid
-      ? Math.round(el.getBoundingClientRect().width) || 640 // 0 = hidden; RO corrects later
-      : spec.width;
-    this.size = { w: Math.max(120, cw), h: spec.height };
+    this.fluidH = spec.height === "100%";
+    const rect = this.fluid || this.fluidH ? el.getBoundingClientRect() : null;
+    const cw = this.fluid ? Math.round(rect.width) || 640 : spec.width; // 0 = hidden; RO corrects
+    const ch = this.fluidH ? Math.round(rect.height) || 420 : spec.height;
+    this.size = { w: Math.max(120, cw), h: Math.max(120, ch) };
     this._layout();
 
     this._buildDom(el);
@@ -420,10 +422,10 @@ class ChartView {
     this._initInteraction();
     this._buildModebar(this.root); // after theme (icon color) + canvas (cursor)
 
-    if (this.fluid && typeof ResizeObserver !== "undefined") {
+    if ((this.fluid || this.fluidH) && typeof ResizeObserver !== "undefined") {
       this._ro = new ResizeObserver((entries) => {
-        const w = entries[entries.length - 1].contentRect.width;
-        if (w) this._resize(w);
+        const r = entries[entries.length - 1].contentRect;
+        if (r.width || r.height) this._resize(r.width, r.height);
       });
       this._ro.observe(this.root);
     }
@@ -453,15 +455,17 @@ class ChartView {
     };
   }
 
-  // Container width changed (fluid mode). Cheap on purpose: data GPU buffers
+  // Container size changed (fluid mode). Cheap on purpose: data GPU buffers
   // are untouched — the _map() uniforms absorb the new aspect — and the pick
   // FBO realloc is deferred to the next actual pick (_renderPick checks dims).
-  // The view request re-decimates/re-bins at the new pixel width (§28), so a
-  // wider chart gains real detail, not just stretched pixels.
-  _resize(cssW) {
-    const w = Math.max(120, Math.round(cssW));
-    if (w === this.size.w) return;
+  // The view request re-decimates/re-bins at the new pixel size (§28), so a
+  // bigger chart gains real detail, not just stretched pixels.
+  _resize(cssW, cssH) {
+    const w = this.fluid && cssW ? Math.max(120, Math.round(cssW)) : this.size.w;
+    const h = this.fluidH && cssH ? Math.max(120, Math.round(cssH)) : this.size.h;
+    if (w === this.size.w && h === this.size.h) return;
     this.size.w = w;
+    this.size.h = h;
     this._layout();
     const p = this.plot;
     this.canvas.style.width = p.w + "px";
@@ -469,7 +473,10 @@ class ChartView {
     this.canvas.width = p.w * this.dpr;
     this.canvas.height = p.h * this.dpr;
     this.chrome.style.width = this.size.w + "px";
+    this.chrome.style.height = this.size.h + "px";
     this.chrome.width = this.size.w * this.dpr;
+    this.chrome.height = this.size.h * this.dpr;
+    if (this._legend) this._legend.style.maxHeight = p.h - 12 + "px";
     this._pickDirty = true;
     this.draw();
     this._scheduleViewRequest();
@@ -481,7 +488,9 @@ class ChartView {
     root.className = "fastcharts";
     root.style.cssText =
       `position:relative;width:${this.fluid ? "100%" : this.size.w + "px"};` +
-      `height:${this.size.h}px;font:12px system-ui,sans-serif;user-select:none;`;
+      `height:${this.fluidH ? "100%" : this.size.h + "px"};` +
+      (this.fluidH ? "min-height:120px;" : "") + // parent without a height -> visible floor
+      "font:12px system-ui,sans-serif;user-select:none;";
     el.appendChild(root);
     this.root = root;
 
@@ -560,6 +569,7 @@ class ChartView {
       lg.appendChild(row);
     }
     root.appendChild(lg);
+    this._legend = lg; // _resize refreshes its max-height
   }
 
   _initGl(buffer) {
