@@ -40,10 +40,19 @@ jobs:
       - name: Native ABI smoke (stdlib only)
         run: python3 scripts/abi_smoke.py
 
+      # Playwright's Chromium, not the apt/snap one: Ubuntu's chromium-browser is
+      # a confined snap that can't read the temp HTML under /tmp and whose GPU
+      # process crashes headless — it fails the render probe for environment
+      # reasons, not code. Playwright ships an unconfined build.
+      - name: Install Chromium (Playwright)
+        run: |
+          npm i --no-save playwright@1.48
+          npx playwright install --with-deps chromium
       - name: Headless render smoke (stdlib + Chromium)
         run: |
-          sudo apt-get update && sudo apt-get install -y chromium-browser || sudo apt-get install -y chromium
-          python3 scripts/render_smoke_nonumpy.py "$(command -v chromium-browser || command -v chromium)"
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          echo "using $CHROME"
+          python3 scripts/render_smoke_nonumpy.py "$CHROME"
 
       - name: Native benchmark (stdlib only — executed numbers, no PyPI needed)
         run: python3 scripts/bench_native.py --sizes 1e5,1e6
