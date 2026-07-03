@@ -256,6 +256,12 @@ for anywidget and wraps a standalone IIFE for `Figure.to_html`.
 
 ## Roadmap
 
+For chart-type ordering, see the detailed
+[`docs/chart-roadmap.md`](docs/chart-roadmap.md). Short version: add histogram
+next, then bar/column, area, heatmap, box/violin, and finance traces. Long term,
+the goal is Plotly-class chart breadth across BI, data science, finance,
+science/engineering, product analytics, and dashboards.
+
 - **Phase 1:** worker-side compute, SharedArrayBuffer where available, gap
   semantics, accessibility layer, filter Tier A.
 - **Phase 2:** density pyramid, progressive refinement, fill-rate-aware tier
