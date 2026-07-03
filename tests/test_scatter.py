@@ -241,3 +241,74 @@ def test_pick_out_of_range():
     fig = Figure().scatter(np.arange(3.0), np.arange(3.0))
     assert fig.pick(0, 99) is None
     assert fig.pick(0, -1) is None
+
+
+# -- shipped↔canonical translation (staff-review regressions) ----------------
+
+
+def test_pick_translates_shipped_index_after_nan_drop():
+    # Rows 1 and 3 are dropped at ship time; the client's shipped index 1 is
+    # canonical row 2. Without translation, pick reported the wrong row.
+    x = np.array([0.0, np.nan, 2.0, 3.0, 4.0])
+    y = np.array([10.0, 11.0, 12.0, np.nan, 14.0])
+    fig = Figure().scatter(x, y)
+    spec, _ = fig.build_payload()
+    assert spec["traces"][0]["tier"] == "direct"
+    row = fig.pick(0, 1)  # shipped index 1 == canonical row 2
+    assert row["x"] == 2.0 and row["y"] == 12.0
+    row_last = fig.pick(0, 2)  # shipped index 2 == canonical row 4
+    assert row_last["x"] == 4.0 and row_last["y"] == 14.0
+    assert fig.pick(0, 3) is None  # only 3 shipped vertices
+
+
+def test_selection_translates_to_shipped_positions():
+    x = np.array([0.0, np.nan, 2.0, 3.0, 4.0])
+    y = np.array([10.0, 11.0, 12.0, 13.0, 14.0])
+    fig = Figure().scatter(x, y)
+    fig.build_payload()  # establishes shipped_sel = [0, 2, 3, 4]
+    canonical = fig.select_range(1.5, 3.5, 0.0, 100.0)[0]  # rows 2, 3
+    np.testing.assert_array_equal(canonical, [2, 3])
+    shipped = fig.to_shipped_indices(0, canonical)
+    np.testing.assert_array_equal(shipped, [1, 2])  # positions in shipped buffer
+
+
+def test_to_shipped_indices_identity_without_drop():
+    fig = Figure().scatter(np.arange(10.0), np.arange(10.0))
+    fig.build_payload()
+    idx = np.array([3, 7], dtype=np.uint32)
+    np.testing.assert_array_equal(fig.to_shipped_indices(0, idx), idx)
+
+
+def test_density_false_is_honored():
+    # density=False must force direct draw (it was silently ignored before).
+    n = SCATTER_DENSITY_THRESHOLD + 1
+    x = np.zeros(n)
+    fig = Figure().scatter(x, x, density=False)
+    assert not fig.traces[0].use_density()
+    spec, _ = fig.build_payload()
+    assert spec["traces"][0]["tier"] == "direct"
+
+
+def test_density_false_above_ceiling_warns():
+    from fastcharts.figure import DIRECT_SOFT_CEILING
+
+    n = DIRECT_SOFT_CEILING + 1
+    x = np.zeros(n)
+    with pytest.warns(RuntimeWarning, match="direct draw above the ceiling"):
+        Figure().scatter(x, x, density=False)
+
+
+def test_line_with_nan_x_sorts_and_excludes():
+    # NaN in x must not defeat the sorted-x check (any(diff<0) is NaN-blind);
+    # after the fix the trace sorts, NaNs land last, and m4 excludes them.
+    n = 20_000
+    x = np.arange(n, dtype=np.float64)
+    x[[100, 5000]] = np.nan
+    y = np.sin(np.arange(n) * 0.01)
+    fig = Figure().line(x, y)
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    xbuf = np.frombuffer(blob, dtype=np.float32,
+                         count=spec["columns"][tr["x"]]["len"],
+                         offset=spec["columns"][tr["x"]]["byte_offset"])
+    assert not np.isnan(xbuf).any()  # §19: NaN never reaches a vertex buffer

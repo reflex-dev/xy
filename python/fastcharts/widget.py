@@ -141,8 +141,12 @@ class FigureWidget(anywidget.AnyWidget):
             buffers = []
             total = 0
             for tid, idx in sel.items():
-                traces.append({"id": tid, "count": int(len(idx)), "buf": len(buffers)})
-                buffers.append(idx.tobytes())
+                # The wire mask speaks shipped-vertex positions; the Selection
+                # callback below keeps canonical rows (§34 — callbacks get real
+                # data, the GPU gets its own coordinate space).
+                wire_idx = self._figure.to_shipped_indices(tid, idx)
+                traces.append({"id": tid, "count": int(len(wire_idx)), "buf": len(buffers)})
+                buffers.append(wire_idx.tobytes())
                 total += len(idx)
             self.send({"type": "selection", "traces": traces, "total": total}, buffers=buffers)
             if self._on_select is not None:

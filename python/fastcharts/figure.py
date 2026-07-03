@@ -57,7 +57,14 @@ class Trace:
     style: dict[str, Any] = field(default_factory=dict)
     color_ch: Optional[ColorChannel] = None  # scatter color encoding
     size_ch: Optional[SizeChannel] = None  # scatter size encoding
-    force_density: bool = False  # user opted into Tier-2 explicitly
+    # Tri-state density override: None = auto (threshold), True/False = forced.
+    # (A bool here silently ignored density=False — staff-review finding.)
+    force_density: Optional[bool] = None
+    # Shipped-row → canonical-row mapping, set by build_payload when the shipped
+    # copy drops NaN rows (§19). The client's GPU pick and selection masks speak
+    # in *shipped* indices; canonical readouts must translate through this or
+    # hover/selection silently report the wrong rows.
+    shipped_sel: Optional[Any] = None
 
     @property
     def n_points(self) -> int:
@@ -67,8 +74,8 @@ class Trace:
         """Whether this scatter renders as a Tier-2 density grid (§5)."""
         if self.kind != "scatter":
             return False
-        if self.force_density:
-            return True
+        if self.force_density is not None:
+            return self.force_density
         per_point = (self.color_ch and self.color_ch.mode != "constant") or (
             self.size_ch and self.size_ch.mode != "constant"
         )
@@ -115,9 +122,12 @@ class Figure:
     ) -> "Figure":
         xc = self.store.ingest(x)
         yc = self.store.ingest(y)
-        if np.any(np.diff(xc.values) < 0):
+        if not np.all(np.diff(xc.values) >= 0):
             # LOD contract (§28): line x must be sorted; the engine sorts once
-            # at ingest, and says so.
+            # at ingest, and says so. The predicate is NaN-safe on purpose:
+            # `any(diff < 0)` is False for NaN diffs, which would let a
+            # NaN-carrying x skip the sort and violate M4's sorted precondition.
+            # argsort places NaNs last, where the m4 window excludes them.
             order = np.argsort(xc.values, kind="stable")
             xc = self.store.ingest(xc.values[order])
             yc = self.store.ingest(yc.values[order])
@@ -172,7 +182,7 @@ class Figure:
             style={"opacity": opacity},
             color_ch=color_ch,
             size_ch=size_ch,
-            force_density=bool(density) if density is not None else False,
+            force_density=density,
         )
 
         per_point = color_ch.mode != "constant" or size_ch.mode != "constant"
@@ -189,6 +199,18 @@ class Figure:
                 stacklevel=2,
             )
             trace.force_density = True
+        elif density is False and n > DIRECT_SOFT_CEILING:
+            import warnings
+
+            # §28: opting out of aggregation above the ceiling is allowed but
+            # never silent — fill-rate and the ~1 GB allocation cliff are real (§5 F3).
+            warnings.warn(
+                f"density=False with {n:,} points forces direct draw above the "
+                f"ceiling ({DIRECT_SOFT_CEILING:,}); expect fill-rate-bound frames "
+                "and possible buffer-allocation failure.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
         self.traces.append(trace)
         return self
@@ -274,6 +296,7 @@ class Figure:
             if t.use_density():
                 # Tier 2: ship a density grid, not points (§5).
                 w, h = DENSITY_GRID
+                t.shipped_sel = None  # no per-point marks, no pick mapping
                 spec_traces.append(self._density_trace_spec(t, xr, yr, w, h, ship_scalar))
                 continue
 
@@ -306,6 +329,7 @@ class Figure:
             }
             if t.kind == "scatter":
                 entry["color"], entry["size"] = self._ship_channels(t, sel, ship_scalar)
+                t.shipped_sel = sel  # pick/selection translation (§17)
             else:  # line/area: constant color from the trace style
                 if style.get("color") is None:
                     style["color"] = DEFAULT_PALETTE[t.id % len(DEFAULT_PALETTE)]
@@ -421,8 +445,15 @@ class Figure:
     def pick(self, trace_id: int, index: int) -> Optional[dict[str, Any]]:
         """Exact source-row readout for a hover/pick (§17 Tier-0 hover; §16 —
         values come from the f64 canonical store, never through the f32 GPU path).
-        Returns None if out of range."""
+
+        `index` is a *shipped* vertex index (what the client's GPU pick sees);
+        it is translated to a canonical row when the shipped copy dropped NaN
+        rows (§19). Returns None if out of range."""
         t = self.traces[trace_id]
+        if t.shipped_sel is not None:
+            if index < 0 or index >= len(t.shipped_sel):
+                return None
+            index = int(t.shipped_sel[index])
         if index < 0 or index >= t.n_points:
             return None
         out: dict[str, Any] = {
@@ -461,6 +492,16 @@ class Figure:
             mask = (xv >= lo_x) & (xv <= hi_x) & (yv >= lo_y) & (yv <= hi_y)
             out[t.id] = np.flatnonzero(mask).astype(np.uint32)
         return out
+
+    def to_shipped_indices(self, trace_id: int, canonical: np.ndarray) -> np.ndarray:
+        """Translate canonical row indices to *shipped* vertex positions for a
+        trace — the coordinate space the client's per-vertex selection mask uses.
+        Identity when nothing was dropped at ship time."""
+        sel = self.traces[trace_id].shipped_sel
+        if sel is None:
+            return np.asarray(canonical, dtype=np.uint32)
+        # sel is sorted ascending (flatnonzero/m4 output); membership → position.
+        return np.flatnonzero(np.isin(sel, canonical)).astype(np.uint32)
 
     def decimate_view(
         self, x0: float, x1: float, px_width: int

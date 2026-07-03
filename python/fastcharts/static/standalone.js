@@ -951,9 +951,11 @@ class ChartView {
     if (this.comm) {
       // Exact f64 values from the kernel canonical store (§16). The local row
       // (decoded from f32) shows instantly; the exact one replaces it.
-      this.seq += 1;
-      this._pendingPick = { seq: this.seq, clientX, clientY };
-      this.comm.send({ type: "pick", seq: this.seq, trace: hit.trace, index: hit.index });
+      // NOTE: picks use their own sequence — sharing this.seq with view
+      // requests made a hover invalidate an in-flight tier_update, freezing
+      // the stale tier (found in staff review).
+      this._pickSeq = (this._pickSeq || 0) + 1;
+      this.comm.send({ type: "pick", seq: this._pickSeq, trace: hit.trace, index: hit.index });
     }
   }
 
@@ -1267,7 +1269,13 @@ class ChartView {
   refreshTheme() {
     this.theme = readTheme(this.root);
     for (const g of this.gpuTraces) {
-      if (g.trace.kind === "line") g.color = parseColor(this.root, g.trace.style.color, g.color);
+      // Re-resolve any CSS-expressed constant colors (§36 live re-resolution):
+      // lines keep theirs in style.color, scatters in color.color.
+      if (g.trace.kind === "line") {
+        g.color = parseColor(this.root, g.trace.style.color, g.color);
+      } else if (g.colorMode === 0 && g.trace.color) {
+        g.color = parseColor(this.root, g.trace.color.color, g.color);
+      }
     }
     this.draw();
   }
