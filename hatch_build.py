@@ -70,4 +70,6 @@ class CustomBuildHook(BuildHookInterface):
 
         build_data["pure_python"] = False
         build_data["tag"] = f"py3-none-{_platform_tag()}"
-        build_data["force_include"][str(dest)] = f"fastcharts/_native_lib/{lib_name}"
+        build_data.setdefault("force_include", {})[str(dest)] = (
+            f"fastcharts/_native_lib/{lib_name}"
+        )

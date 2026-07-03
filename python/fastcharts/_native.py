@@ -144,6 +144,8 @@ def encode_f32(
 ) -> npt.NDArray[np.float32]:
     """Relative-f32 encode `(v - offset) * scale` — §4/§16."""
     data = _as_f64(data)
+    if len(data) == 0:  # empty NumPy arrays may carry a null pointer
+        return np.empty(0, dtype=np.float32)
     out = np.empty(len(data), dtype=np.float32)
     _lib.fc_encode_f32(_ptr_f64(data), len(data), offset, scale, out.ctypes.data_as(_F32_P))
     return out
@@ -165,6 +167,8 @@ def m4_indices(
     y = _as_f64(y)
     if len(x) != len(y):
         raise ValueError("x and y must have equal length")
+    if len(x) == 0:
+        return np.empty(0, dtype=np.uint32)
     out = np.empty(n_buckets * 4, dtype=np.uint32)
     written = _lib.fc_m4_indices(
         _ptr_f64(x), _ptr_f64(y), len(x), x0, x1, n_buckets,
@@ -178,6 +182,8 @@ def m4_indices(
 def min_max(data: npt.NDArray[np.float64]) -> Optional[tuple[float, float]]:
     """NaN-skipping min/max; None for empty/all-NaN input."""
     data = _as_f64(data)
+    if len(data) == 0:
+        return None
     lo = ctypes.c_double()
     hi = ctypes.c_double()
     ok = _lib.fc_min_max(
