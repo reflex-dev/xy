@@ -23,10 +23,16 @@ code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
 ```bash
 cargo test && cargo build --release   # core
 node js/build.mjs                     # regenerate static/ after JS edits
+python3 scripts/abi_smoke.py          # C-ABI seam, stdlib only (no PyPI needed)
+python3 scripts/render_smoke_nonumpy.py  # WebGL2 render path in headless Chromium
 uv venv && uv pip install -e ".[dev]"
 uv run pytest                         # + FASTCHARTS_FORCE_FALLBACK=1 pytest
 uv run ruff check . && uv run ruff format . && uv run ty check
+uv run python scripts/bench.py        # §12 benchmark harness
 ```
+
+The two `*_smoke*` scripts need neither numpy nor PyPI — they verify the
+Python↔Rust ABI and the render client directly, and run first in CI.
 
 ## Invariants (from the dossier — don't regress silently)
 

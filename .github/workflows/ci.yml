@@ -34,6 +34,16 @@ jobs:
           node -e "import('./python/fastcharts/static/index.js').then(m => { if (!m.default.render) throw new Error('no render export'); })"
           node --check python/fastcharts/static/standalone.js
 
+      # Dependency-free gates — verify the two seams cargo can't (the C ABI and
+      # the WebGL2 render path) and run even if PyPI is unreachable.
+      - name: Native ABI smoke (stdlib only)
+        run: python3 scripts/abi_smoke.py
+
+      - name: Headless render smoke (stdlib + Chromium)
+        run: |
+          sudo apt-get update && sudo apt-get install -y chromium-browser || sudo apt-get install -y chromium
+          python3 scripts/render_smoke_nonumpy.py "$(command -v chromium-browser || command -v chromium)"
+
       - name: Install package + dev deps
         run: |
           uv venv .venv
