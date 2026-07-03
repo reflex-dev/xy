@@ -95,8 +95,22 @@ no supply chain (§33: assets ship inside the wheel).
 - Decimated lines: wire cost is **screen-bounded** (≤ 4 points per pixel
   column), independent of dataset size; zoom round-trips recompute only the
   visible window.
-- Run `scripts/bench.py` for throughput on your machine; CI publishes the
-  numbers per commit. No universal claims — see dossier §2/§31.
+
+Native-kernel throughput, measured (`scripts/bench_native.py`, single-threaded
+scalar Rust — SIMD and worker threads are Phase 1; one dev machine, so treat as
+order-of-magnitude, not a spec):
+
+| points | encode f32 | zone maps | M4 (full range) | zoom re-decimate (1% window) |
+|---|---|---|---|---|
+| 100 k | 1580 Mpt/s | 386 Mpt/s | 251 Mpt/s | 0.01 ms |
+| 1 M | 1090 Mpt/s | 376 Mpt/s | 260 Mpt/s | 0.06 ms |
+| 10 M | 930 Mpt/s | 369 Mpt/s | 258 Mpt/s | 0.39 ms |
+
+The last column is the interaction that matters: re-decimating the visible
+window on zoom (§28) costs **0.39 ms for 10M points** — ~250× under the §17
+100–300 ms budget, before any SIMD. `scripts/bench.py` adds the full
+figure→payload path once numpy installs; CI publishes both per commit. No
+universal claims — see dossier §2/§31.
 
 ## Roadmap (dossier §11, amended §25/§35)
 
