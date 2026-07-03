@@ -106,6 +106,43 @@ Breadth should arrive after the core primitives are solid:
 5. small-multiple and dashboard composition,
 6. accessibility, export, theming, and Plotly-compatibility coverage.
 
+## Cross-Cutting: Styling & Theming
+
+These are not chart types but engine-wide styling capabilities. They are tracked
+here so breadth work (item 6 above) has a concrete backlog.
+
+### Tailwind / utility-class styling (candidate — gated on performance)
+
+Today the client already resolves colors *through the DOM* (§36): `currentColor`
+and the `--chart-*` custom properties (`--chart-bg`, `--chart-grid`,
+`--chart-axis`, `--chart-text`) feed axis/grid/label/mark colors, and mark
+colors accept any CSS expression (`var(--brand-500)`, named colors, etc.). So
+Tailwind can already drive the chart's **theme** by setting a text color or those
+variables on the container, and can style the wrapper freely.
+
+What it does **not** cover, and what fuller Tailwind support would add:
+
+- A `class_name` (and per-element class) passthrough so utility classes reach the
+  DOM chrome — the tooltip, legend, and modebar currently use inline `cssText`,
+  which beats utility classes on specificity and offers no class hook.
+- Documented `--chart-*` theming recipes for Tailwind's arbitrary-property syntax.
+
+Explicitly **out of scope** (browser limit, not a backlog item): the plotted
+marks are WebGL2 canvas pixels — no CSS, Tailwind or otherwise, can style them.
+Mark appearance stays driven by the spec and resolved CSS colors.
+
+**Performance caveat (why this is a candidate, not a commitment):** CSS-color
+resolution goes through `resolveCssColor`, which appends a probe element and calls
+`getComputedStyle` — a style/layout flush. That is acceptable today because it
+runs only at theme-read time and is effectively cached, never in the draw loop.
+Before broadening class-driven styling we must confirm resolution stays out of the
+hot path (cache resolved colors; re-resolve only on explicit theme change, not per
+frame or per hover), and that classable chrome doesn't reintroduce layout thrash
+on the tooltip's per-hover repositioning. If it can't be kept off the render path
+without measurable cost, we keep the current `--chart-*` token surface and decline
+the broader passthrough. Decision should be backed by a `scripts/bench.py` TTFR /
+interaction-latency comparison, not assumed.
+
 ## Recommended Sequence
 
 1. **Histogram**
