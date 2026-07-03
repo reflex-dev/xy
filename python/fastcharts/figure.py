@@ -207,6 +207,16 @@ class Figure:
                 stacklevel=2,
             )
             trace.force_density = True
+        elif density is None and n > DIRECT_SOFT_CEILING:
+            import warnings
+
+            warnings.warn(
+                f"scatter has {n:,} points above the soft ceiling "
+                f"({DIRECT_SOFT_CEILING:,}); using a density surface for the "
+                "initial render.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         elif density is False and n > DIRECT_SOFT_CEILING:
             import warnings
 
