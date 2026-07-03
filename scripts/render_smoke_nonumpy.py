@@ -24,7 +24,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "python" / "fastcharts" / "static"
-CHROMIUM_CANDIDATES = ["/opt/pw-browsers/chromium", "chromium", "chromium-browser", "google-chrome"]
+CHROMIUM_CANDIDATES = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/opt/pw-browsers/chromium",
+    "chromium",
+    "chromium-browser",
+    "google-chrome",
+]
 
 
 def find_chromium() -> str:
@@ -185,6 +193,13 @@ try{{
     v._zoomBy(0.5);                 // zoom in -> span shrinks
     const zin = spanX() < s0 ? 1 : 0;
     v._zoomBy(2);                   // back out
+    v._zoomBy(0.8,true);            // modebar path animates
+    const smooth=(v._viewAnim && v._animRaf)?1:0;
+    v._cancelViewAnimation();
+    v._zoomAt(0.8,0.25,0.75,true,95); // wheel path animates around cursor
+    const zanch=(v._viewAnim && v._animRaf
+      && (v._viewAnim.target.x1-v._viewAnim.target.x0)<spanX())?1:0;
+    v._cancelViewAnimation();
     v._zoomToBox([10,0],[20,5]);    // box-zoom fits the rectangle
     const boxOk = (Math.abs(v.view.x0-10)<1e-6 && Math.abs(v.view.x1-20)<1e-6) ? 1 : 0;
     v.view = {{...v.view0}};
@@ -195,6 +210,18 @@ try{{
     // density texture for real colored markers (pickable); a density update
     // swaps back. View is parked far from other traces so picks can't collide.
     const gd=v.gpuTraces.find(g=>g.tier==="density");
+    const traces0=v.gpuTraces;
+    const preDensityView={{...v.view}};
+    v.gpuTraces=[gd];
+    v.view={{x0:0,x1:spec.x_axis.range[1],y0:-3,y1:8}};
+    v._drawNow();
+    const dg=v.gl,dw=dg.drawingBufferWidth,dh=dg.drawingBufferHeight,dpx=new Uint8Array(dw*dh*4);
+    dg.readPixels(0,0,dw,dh,dg.RGBA,dg.UNSIGNED_BYTE,dpx);
+    let dlit=0;for(let i=3;i<dpx.length;i+=4)if(dpx[i]>8)dlit++;
+    const densityLit=(dlit>100)?1:0;
+    v.gpuTraces=traces0;
+    v.view=preDensityView;
+    v._drawNow();
     const oldView={{...v.view}};
     v.view={{x0:5000,x1:5010,y0:5000,y1:5010}};
     const n3=25, xs3=new Float32Array(n3), ys3=new Float32Array(n3), cs3=new Float32Array(n3);
@@ -209,21 +236,49 @@ try{{
     v._drawNow();
     const hit3=v._pickAt(v.plot.w/2, v.plot.h/2);
     const dpick=(hit3 && hit3.trace===gd.trace.id)?1:0;
-    // Zoom out past the drilled window: still drilled, but now the overview
-    // must be what covers the view (no blank). Assert _viewInside flips and a
-    // draw with the retained density texture present doesn't throw.
-    v.view={{x0:0,x1:10000,y0:0,y1:10000}};
+    // Zoom out past the drilled window: still drilled, but now a cached
+    // overview must cover the view (no blank), even if the current density
+    // texture is a narrower intermediate one.
+    const savedOverview={{...gd.density}};
+    gd.density={{...gd.density,xRange:[5000,5010],yRange:[5000,5010]}};
+    gd.densityCache=[savedOverview,gd.density];
+    const drawDensity0=v._drawDensity;
+    const drawPoints0=v._drawPoints;
+    let zdensity=0, zpoints=0, zcovered=0;
+    v._drawDensity=function(gg,dd){{
+      if(gg===gd){{
+        zdensity++;
+        if(dd && dd.xRange[0]<=v.view.x0 && dd.xRange[1]>=v.view.x1
+          && dd.yRange[0]<=v.view.y0 && dd.yRange[1]>=v.view.y1)zcovered=1;
+      }}
+      return drawDensity0.call(this,gg,dd);
+    }};
+    v._drawPoints=function(gg,xm,ym){{if(gg===gd.drill)zpoints++;return drawPoints0.call(this,gg,xm,ym);}};
+    v.view={{x0:0,x1:2000,y0:-3,y1:8}};
     v._drawNow();
+    v._drawDensity=drawDensity0;
+    v._drawPoints=drawPoints0;
     const zoomout=(gd.drill && v._viewInside(gd.drill.win)===false
-      && gd.density && gd.density.tex)?1:0;
+      && gd.density && gd.density.tex && zdensity>0 && zpoints===0 && zcovered===1)?1:0;
     v.view={{x0:5000,x1:5010,y0:5000,y1:5010}};
     const grid3=new Float32Array(16).fill(1);
     v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"density",visible:999999,
       density:{{buf:0,w:4,h:4,max:1,x_range:[5000,5010],y_range:[5000,5010]}}}}]}},[grid3.buffer]);
     const dback=(!gd.drill)?1:0;
+    const dnorm=(gd.density && gd.density.max===1 && gd.density.normMax>gd.density.max)?1:0;
+    if(gd._densityNormAnim) gd._densityNormAnim.startedAt-=gd._densityNormAnim.duration+1;
+    v._drawNow();
+    const dnormDone=(gd.density && Math.abs(gd.density.normMax-gd.density.max)<1e-6
+      && !gd._densityNormAnim)?1:0;
+    v.seq=12;
+    v._onKernelMsg({{type:"density_update",seq:11,traces:[{{id:gd.trace.id,mode:"points",visible:n3,
+      x:{{buf:0,len:n3,offset:5005,scale:1}},y:{{buf:1,len:n3,offset:5005,scale:1}},
+      color:{{mode:"continuous",colormap:"viridis",buf:2}},size:{{mode:"constant",size:8}}}}]}},
+      [xs3.buffer,ys3.buffer,cs3.buffer]);
+    const stale=(!gd.drill)?1:0;
     v.view=oldView;
     v._drawNow();
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} box=${{boxOk}} zmode=${{zmode}} drill=${{drilled}} dpick=${{dpick}} zoomout=${{zoomout}} dback=${{dback}}`;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} zanch=${{zanch}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} dpick=${{dpick}} zoomout=${{zoomout}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -285,15 +340,21 @@ try{{
     active = int(re.search(r"active=(\d+)", title).group(1))
     btns = int(re.search(r"btns=(\d+)", title).group(1))
     zin = int(re.search(r"zin=(\d+)", title).group(1))
+    smooth = int(re.search(r"smooth=(\d+)", title).group(1))
+    zanch = int(re.search(r"zanch=(\d+)", title).group(1))
     box = int(re.search(r"box=(\d+)", title).group(1))
     zmode = int(re.search(r"zmode=(\d+)", title).group(1))
     fluid = int(re.search(r"fluid=(\d+)", title).group(1))
     grew = int(re.search(r"grew=(\d+)", title).group(1))
     pick2 = int(re.search(r"pick2=(\d+)", title).group(1))
     drill = int(re.search(r"drill=(\d+)", title).group(1))
+    density_lit = int(re.search(r"densityLit=(\d+)", title).group(1))
     dpick = int(re.search(r"dpick=(\d+)", title).group(1))
     zoomout = int(re.search(r"zoomout=(\d+)", title).group(1))
     dback = int(re.search(r"dback=(\d+)", title).group(1))
+    dnorm = int(re.search(r"dnorm=(\d+)", title).group(1))
+    dnorm_done = int(re.search(r"dnormDone=(\d+)", title).group(1))
+    stale = int(re.search(r"stale=(\d+)", title).group(1))
     frac = lit / max(total, 1)
     print(
         f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}, pick hits: {pick}, "
@@ -319,6 +380,10 @@ try{{
         raise SystemExit(f"modebar missing buttons: {btns}")
     if zin != 1:
         raise SystemExit("modebar zoom-in did not shrink the view span")
+    if smooth != 1:
+        raise SystemExit("animated zoom did not schedule a smooth view transition")
+    if zanch != 1:
+        raise SystemExit("cursor-anchored wheel zoom did not schedule a smooth transition")
     if box != 1:
         raise SystemExit("box-zoom did not fit the dragged rectangle")
     if zmode != 1:
@@ -331,12 +396,20 @@ try{{
         raise SystemExit("pick FBO was not reallocated to the resized canvas")
     if drill != 1:
         raise SystemExit("density trace did not drill in to points on a points update")
+    if density_lit != 1:
+        raise SystemExit("density trace did not render visible pixels by itself")
     if dpick != 1:
         raise SystemExit("drilled points were not pickable (GPU pick missed)")
     if zoomout != 1:
         raise SystemExit("zoom-out past the drilled window did not fall back to the overview")
     if dback != 1:
         raise SystemExit("density update did not drop the drill state")
+    if dnorm != 1:
+        raise SystemExit("density color normalization snapped to the new max instead of easing")
+    if dnorm_done != 1:
+        raise SystemExit("density color normalization did not settle to the true max")
+    if stale != 1:
+        raise SystemExit("stale density update resurrected a drilled point subset")
     print(
         "render smoke OK (no numpy): line + colored/sized scatter + density + "
         "picking + box-select + modebar/box-zoom + responsive resize + LOD drill-in"

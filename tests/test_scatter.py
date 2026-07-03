@@ -196,6 +196,25 @@ def test_density_view_rebins():
     assert grid.sum() == pytest.approx(inwin)
 
 
+def test_density_view_coarsens_sparse_screen_grid():
+    # A viewport just over the direct-point budget should not request a
+    # near-empty one-cell-per-pixel density texture; coarser bins make drill-out
+    # look continuous and reduce update size.
+    n = SCATTER_DENSITY_THRESHOLD + 90_000
+    rng = np.random.default_rng(12)
+    x = rng.uniform(0, 100, n)
+    y = rng.uniform(0, 100, n)
+    fig = Figure().scatter(x, y, density=True)
+    update, buffers = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, 1200, 800)
+    tr = update["traces"][0]
+    assert tr["mode"] == "density"
+    d = tr["density"]
+    assert d["w"] < 1200 and d["h"] < 800
+    assert d["w"] * d["h"] < 1200 * 800
+    grid = np.frombuffer(buffers[0], dtype=np.float32)
+    assert grid.sum() == pytest.approx(n)
+
+
 def test_density_view_drills_to_points_when_window_fits():
     # §5: the tier is a function of the *visible* count. Zooming a Tier-2
     # scatter into a window under the budget ships real points with the

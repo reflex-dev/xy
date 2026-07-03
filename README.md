@@ -148,6 +148,14 @@ Benchmarks live in [`benchmarks/`](benchmarks/). The cross-library harness now
 compares fastcharts with matplotlib, seaborn, Plotly, Bokeh, Altair,
 Datashader, and hvPlot/HoloViews.
 
+The benchmark program tracks separate performance categories rather than one
+blurry "fastest" number: small-data startup, medium exact scatter, huge scatter
+overview, adaptive scatter drilldown, huge line/time-series, many-chart
+dashboards, interaction smoothness, and payload/export size. See
+[`docs/benchmark.md`](docs/benchmark.md) for the category goals and fairness
+notes. The stable category IDs are emitted in `benchmark.json` and attached to
+the fastcharts-only benchmark rows as `benchmark_categories`.
+
 Run the expanded comparison:
 
 ```bash

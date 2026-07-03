@@ -2,26 +2,43 @@ from __future__ import annotations
 
 import reflex as rx
 
-CHARTS = [
+from .live_drilldown import LIVE_DRILLDOWN_ROUTE, drilldown_endpoint
+
+LIVE_DRILLDOWN_CHART = {
+    "title": "Live 10M Drilldown Scatter",
+    "subtitle": "10M source points with Reflex-backed adaptive LOD.",
+    "src": "/charts/live_drilldown_10m.html",
+    "stat": "10M live",
+}
+
+COMPARISON_CHARTS = [
     {
-        "title": "Decimated Line",
-        "subtitle": "120k sorted samples, shipped as a screen-bounded line payload.",
-        "src": "/charts/line_walk.html",
-        "stat": "120k points",
-    },
-    {
-        "title": "Colored Scatter",
-        "subtitle": "60k points with continuous color and variable marker size.",
+        "title": "fastcharts Colored Scatter",
+        "subtitle": "10M source points with color and size, exported through the density tier.",
         "src": "/charts/colored_scatter.html",
-        "stat": "60k points",
+        "stat": "10M source",
     },
     {
-        "title": "Density Scatter",
-        "subtitle": "250k raw points aggregated into a fixed-size density texture.",
-        "src": "/charts/density_scatter.html",
-        "stat": "250k points",
+        "title": "Plotly Scattergl",
+        "subtitle": "100k sampled points from the same distribution, rendered as WebGL markers.",
+        "src": "/charts/plotly_colored_scatter.html",
+        "stat": "100k sample",
     },
 ]
+
+LINE_CHART = {
+    "title": "Decimated Line",
+    "subtitle": "120k sorted samples, shipped as a screen-bounded line payload.",
+    "src": "/charts/line_walk.html",
+    "stat": "120k points",
+}
+
+DENSITY_CHART = {
+    "title": "Density Scatter",
+    "subtitle": "10M raw points aggregated into a responsive density texture.",
+    "src": "/charts/density_scatter.html",
+    "stat": "10M points",
+}
 
 
 def metric(label: str, value: str) -> rx.Component:
@@ -36,7 +53,7 @@ def metric(label: str, value: str) -> rx.Component:
     )
 
 
-def chart_panel(chart: dict[str, str]) -> rx.Component:
+def chart_panel(chart: dict[str, str], *, fluid: bool = False) -> rx.Component:
     return rx.box(
         rx.hstack(
             rx.box(
@@ -53,10 +70,10 @@ def chart_panel(chart: dict[str, str]) -> rx.Component:
             rx.el.iframe(
                 src=chart["src"],
                 title=chart["title"],
-                loading="lazy",
+                loading="eager" if fluid else "lazy",
                 style={
                     "border": "0",
-                    "width": "1040px",
+                    "width": "100%" if fluid else "1040px",
                     "height": "430px",
                     "display": "block",
                     "background": "#ffffff",
@@ -68,11 +85,13 @@ def chart_panel(chart: dict[str, str]) -> rx.Component:
             overflow_x="auto",
             overflow_y="hidden",
             background="#ffffff",
+            width="100%",
         ),
         padding="1rem",
         border="1px solid #dde3ea",
         border_radius="8px",
         background="#fbfcfe",
+        width="100%",
     )
 
 
@@ -98,17 +117,20 @@ def index() -> rx.Component:
             rx.grid(
                 metric("Renderer", "WebGL2"),
                 metric("Transport", "binary f32"),
-                metric("Largest demo", "250k points"),
+                metric("Largest demo", "10M points"),
                 columns={"initial": "1", "sm": "3"},
                 gap="1rem",
                 width="100%",
             ),
+            chart_panel(LIVE_DRILLDOWN_CHART, fluid=True),
             rx.grid(
-                *[chart_panel(chart) for chart in CHARTS],
-                columns={"initial": "1", "xl": "2"},
+                *[chart_panel(chart, fluid=True) for chart in COMPARISON_CHARTS],
+                columns={"initial": "1", "lg": "2"},
                 gap="1rem",
                 width="100%",
             ),
+            chart_panel(LINE_CHART),
+            chart_panel(DENSITY_CHART, fluid=True),
             spacing="5",
             width="100%",
             max_width="1280px",
@@ -123,3 +145,5 @@ def index() -> rx.Component:
 
 app = rx.App()
 app.add_page(index, route="/", title="fastcharts Reflex dashboard")
+if app._api is not None:
+    app._api.add_route(LIVE_DRILLDOWN_ROUTE, drilldown_endpoint, methods=["POST"])

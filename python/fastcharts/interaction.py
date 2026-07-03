@@ -23,6 +23,7 @@ from .config import DECIMATION_THRESHOLD, SCATTER_DENSITY_THRESHOLD
 # once drilled to points, stay until the visible count clearly exceeds the
 # budget again, so a view hovering at the threshold doesn't thrash modes.
 DRILL_EXIT_FACTOR = 1.15
+DENSITY_TARGET_POINTS_PER_CELL = 16.0
 
 if TYPE_CHECKING:
     from .figure import Figure
@@ -156,9 +157,8 @@ def density_view(
 
     t.drill_mode = False
     t.shipped_sel = None  # aggregate view: no per-point marks, no pick mapping
-    w = max(16, min(w, 4096))
-    h = max(16, min(h, 4096))
-    grid = kernels.bin_2d(xv, yv, x0, x1, y0, y1, w, h)
+    w, h = _density_grid_shape(w, h, visible)
+    grid = kernels.bin_2d(xv, yv, lo_x, hi_x, lo_y, hi_y, w, h)
     return (
         {
             "traces": [
@@ -171,14 +171,30 @@ def density_view(
                         "w": w,
                         "h": h,
                         "max": float(grid.max()) if grid.size else 0.0,
-                        "x_range": [x0, x1],
-                        "y_range": [y0, y1],
+                        "x_range": [lo_x, hi_x],
+                        "y_range": [lo_y, hi_y],
                     },
                 }
             ]
         },
         [grid.reshape(-1).astype(np.float32).tobytes()],
     )
+
+
+def _density_grid_shape(w: int, h: int, visible: int) -> tuple[int, int]:
+    """Keep density grids screen-bounded, but avoid one-pixel bins when the
+    visible count is only barely over the direct draw budget. A few points per
+    cell gives smoother drill-out density and smaller updates."""
+    w = max(16, min(int(w), 4096))
+    h = max(16, min(int(h), 4096))
+    requested = w * h
+    if visible <= 0:
+        return w, h
+    target = min(requested, max(16 * 16, int(np.ceil(visible / DENSITY_TARGET_POINTS_PER_CELL))))
+    if target >= requested:
+        return w, h
+    scale = float(np.sqrt(target / requested))
+    return max(16, int(round(w * scale))), max(16, int(round(h * scale)))
 
 
 def _drill_points(
