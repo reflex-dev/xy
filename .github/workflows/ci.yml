@@ -151,6 +151,20 @@ jobs:
           FASTCHARTS_REQUIRE_CARGO: "1"
         run: uv build --wheel
 
+      # A raw linux_x86_64 tag is not installable off this machine and PyPI
+      # rejects it; auditwheel relabels to manylinux (our cdylib needs only
+      # libc/libm, so there's nothing external to bundle). The glibc floor is
+      # the runner's; a manylinux-container build (cibuildwheel) would lower it.
+      - name: Repair Linux wheel to manylinux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update && sudo apt-get install -y patchelf
+          uv tool install auditwheel
+          uv tool run auditwheel repair dist/*.whl -w wheelhouse
+          rm dist/*.whl && mv wheelhouse/*.whl dist/
+          ls -la dist/
+
       - name: Install-size budget (≤ 15 MB, §33)
         shell: bash
         run: |
