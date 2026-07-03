@@ -406,19 +406,28 @@ class ChartView {
     this._hoverId = -1;
     this.dragMode = "pan"; // "pan" | "zoom" (box zoom); toggled via the modebar
 
-    const top = MARGIN.t + (spec.title ? 30 : 0);
-    this.plot = {
-      x: MARGIN.l,
-      y: top,
-      w: Math.max(40, spec.width - MARGIN.l - MARGIN.r),
-      h: Math.max(40, spec.height - top - MARGIN.b),
-    };
+    // Responsive width: "100%" means the *container* owns the width — measure
+    // it now, track it with a ResizeObserver below. Numeric width is fixed.
+    this.fluid = spec.width === "100%";
+    const cw = this.fluid
+      ? Math.round(el.getBoundingClientRect().width) || 640 // 0 = hidden; RO corrects later
+      : spec.width;
+    this.size = { w: Math.max(120, cw), h: spec.height };
+    this._layout();
 
     this._buildDom(el);
     this.theme = readTheme(this.root);
     this._initGl(buffer);
     this._initInteraction();
     this._buildModebar(this.root); // after theme (icon color) + canvas (cursor)
+
+    if (this.fluid && typeof ResizeObserver !== "undefined") {
+      this._ro = new ResizeObserver((entries) => {
+        const w = entries[entries.length - 1].contentRect.width;
+        if (w) this._resize(w);
+      });
+      this._ro.observe(this.root);
+    }
 
     this.view0 = {
       x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
@@ -434,13 +443,46 @@ class ChartView {
     this.draw();
   }
 
+  _layout() {
+    // Plot rect from the current size — margins fixed, data area flexes.
+    const top = MARGIN.t + (this.spec.title ? 30 : 0);
+    this.plot = {
+      x: MARGIN.l,
+      y: top,
+      w: Math.max(40, this.size.w - MARGIN.l - MARGIN.r),
+      h: Math.max(40, this.size.h - top - MARGIN.b),
+    };
+  }
+
+  // Container width changed (fluid mode). Cheap on purpose: data GPU buffers
+  // are untouched — the _map() uniforms absorb the new aspect — and the pick
+  // FBO realloc is deferred to the next actual pick (_renderPick checks dims).
+  // The view request re-decimates/re-bins at the new pixel width (§28), so a
+  // wider chart gains real detail, not just stretched pixels.
+  _resize(cssW) {
+    const w = Math.max(120, Math.round(cssW));
+    if (w === this.size.w) return;
+    this.size.w = w;
+    this._layout();
+    const p = this.plot;
+    this.canvas.style.width = p.w + "px";
+    this.canvas.style.height = p.h + "px";
+    this.canvas.width = p.w * this.dpr;
+    this.canvas.height = p.h * this.dpr;
+    this.chrome.style.width = this.size.w + "px";
+    this.chrome.width = this.size.w * this.dpr;
+    this._pickDirty = true;
+    this.draw();
+    this._scheduleViewRequest();
+  }
+
   _buildDom(el) {
     const s = this.spec;
     const root = document.createElement("div");
     root.className = "fastcharts";
     root.style.cssText =
-      `position:relative;width:${s.width}px;height:${s.height}px;` +
-      "font:12px system-ui,sans-serif;user-select:none;";
+      `position:relative;width:${this.fluid ? "100%" : this.size.w + "px"};` +
+      `height:${this.size.h}px;font:12px system-ui,sans-serif;user-select:none;`;
     el.appendChild(root);
     this.root = root;
 
@@ -526,10 +568,10 @@ class ChartView {
     this.dpr = dpr;
     this.canvas.width = this.plot.w * dpr;
     this.canvas.height = this.plot.h * dpr;
-    this.chrome.width = this.spec.width * dpr;
-    this.chrome.height = this.spec.height * dpr;
-    this.chrome.style.width = this.spec.width + "px";
-    this.chrome.style.height = this.spec.height + "px";
+    this.chrome.width = this.size.w * dpr;
+    this.chrome.height = this.size.h * dpr;
+    this.chrome.style.width = this.size.w + "px";
+    this.chrome.style.height = this.size.h + "px";
 
     const gl = this.canvas.getContext("webgl2", {
       antialias: false, premultipliedAlpha: true, alpha: true,
@@ -668,16 +710,25 @@ class ChartView {
   _initPickTarget() {
     const gl = this.gl;
     this.pickTex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, this.pickTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, this.canvas.width, this.canvas.height, 0,
-      gl.RGBA, gl.UNSIGNED_BYTE, null);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    this._allocPickTex();
     this.pickFbo = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.pickTex, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     this._pickDirty = true;
+  }
+
+  _allocPickTex() {
+    // Sized to the canvas backing store; called again lazily after a resize
+    // (from _renderPick, not _resize — no FBO churn during a drag-resize).
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.pickTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, this.canvas.width, this.canvas.height, 0,
+      gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    this._pickW = this.canvas.width;
+    this._pickH = this.canvas.height;
   }
 
   // -- drawing --------------------------------------------------------------
@@ -829,7 +880,7 @@ class ChartView {
     const dpr = this.dpr;
     const ctx = this.chrome.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, s.width, s.height);
+    ctx.clearRect(0, 0, this.size.w, this.size.h);
     this.labels.textContent = "";
 
     const { x0, x1, y0, y1 } = this.view;
@@ -875,7 +926,7 @@ class ChartView {
     for (const v of yt.ticks) {
       const py = p.y + (1 - (v - y0) / (y1 - y0)) * p.h;
       if (py < p.y - 1 || py > p.y + p.h + 1) continue;
-      label(fmtLinear(v, yt.step), `right:${s.width - p.x + 8}px;top:${py}px;transform:translateY(-50%);`);
+      label(fmtLinear(v, yt.step), `right:${this.size.w - p.x + 8}px;top:${py}px;transform:translateY(-50%);`);
     }
     if (s.x_axis.label) {
       label(s.x_axis.label, `left:${p.x + p.w / 2}px;top:${p.y + p.h + 24}px;transform:translateX(-50%);font-weight:500;`);
@@ -890,6 +941,9 @@ class ChartView {
 
   _renderPick() {
     const gl = this.gl;
+    if (this._pickW !== this.canvas.width || this._pickH !== this.canvas.height) {
+      this._allocPickTex(); // deferred resize catch-up
+    }
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.disable(gl.BLEND);
@@ -999,7 +1053,7 @@ class ChartView {
     });
     this.tooltip.style.display = "block";
     const tw = this.tooltip.offsetWidth;
-    this.tooltip.style.left = Math.min(lx + 12, this.spec.width - tw - 4) + "px";
+    this.tooltip.style.left = Math.min(lx + 12, this.size.w - tw - 4) + "px";
     this.tooltip.style.top = ly + 12 + "px";
   }
 
@@ -1415,6 +1469,7 @@ class ChartView {
   }
 
   destroy() {
+    this._ro?.disconnect();
     this._themeWatch?.removeEventListener?.("change", this._onScheme);
     clearTimeout(this._viewTimer);
     if (this._raf) cancelAnimationFrame(this._raf);

@@ -191,7 +191,24 @@ try{{
     v._setDragMode("zoom");
     const zmode = (v.dragMode==="zoom" && v.canvas.style.cursor==="crosshair") ? 1 : 0;
     v._setDragMode("pan");
-    document.title=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} box=${{boxOk}} zmode=${{zmode}}`;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} box=${{boxOk}} zmode=${{zmode}}`;
+    // Responsive: width:"100%" chart in a 400px container tracks its parent;
+    // growing the container must fire the ResizeObserver and re-render wider.
+    const spec2=JSON.parse(JSON.stringify(spec));
+    spec2.width="100%";
+    const holder=document.createElement("div");
+    holder.style.width="400px";
+    document.body.appendChild(holder);
+    const v2=fastcharts.renderStandalone(holder,spec2,bytes.buffer);
+    const fluid0=(v2.fluid===true && v2.size.w===400 && v2.root.style.width==="100%")?1:0;
+    holder.style.width="640px";
+    setTimeout(()=>{{try{{
+      const grew=(v2.size.w===640 && v2.canvas.width===v2.plot.w*v2.dpr
+        && v2.chrome.width===640*v2.dpr)?1:0;
+      v2._pickAt(4,4); // exercises _renderPick -> deferred pick-FBO realloc
+      const pick2=(v2._pickW===v2.canvas.width && v2._pickH===v2.canvas.height)?1:0;
+      document.title=`${{base}} fluid=${{fluid0}} grew=${{grew}} pick2=${{pick2}}`;
+    }}catch(e){{document.title="FC_ERROR "+e.message}}}},250);
   }}catch(e){{document.title="FC_ERROR "+e.message}}}},200);
 }}catch(e){{document.title="FC_ERROR "+e.message}}
 </script></body></html>"""
@@ -233,11 +250,15 @@ try{{
     zin = int(re.search(r"zin=(\d+)", title).group(1))
     box = int(re.search(r"box=(\d+)", title).group(1))
     zmode = int(re.search(r"zmode=(\d+)", title).group(1))
+    fluid = int(re.search(r"fluid=(\d+)", title).group(1))
+    grew = int(re.search(r"grew=(\d+)", title).group(1))
+    pick2 = int(re.search(r"pick2=(\d+)", title).group(1))
     frac = lit / max(total, 1)
     print(
         f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}, pick hits: {pick}, "
         f"row-decoded: {rowok}, select all/sub: {sel_all}/{sel_some}, mask active: {active}, "
-        f"modebar btns: {btns}, zoom-in: {zin}, box-zoom: {box}, zoom-mode: {zmode}"
+        f"modebar btns: {btns}, zoom-in: {zin}, box-zoom: {box}, zoom-mode: {zmode}, "
+        f"fluid: {fluid}, resize grew: {grew}, pick realloc: {pick2}"
     )
     if not (0.001 < frac < 0.95):
         raise SystemExit(f"suspicious lit fraction {frac}")
@@ -261,9 +282,15 @@ try{{
         raise SystemExit("box-zoom did not fit the dragged rectangle")
     if zmode != 1:
         raise SystemExit("drag-mode toggle did not switch to box-zoom")
+    if fluid != 1:
+        raise SystemExit('width:"100%" chart did not track its 400px container')
+    if grew != 1:
+        raise SystemExit("ResizeObserver resize did not re-render at the new width")
+    if pick2 != 1:
+        raise SystemExit("pick FBO was not reallocated to the resized canvas")
     print(
         "render smoke OK (no numpy): line + colored/sized scatter + density + "
-        "picking + box-select + modebar/box-zoom"
+        "picking + box-select + modebar/box-zoom + responsive resize"
     )
 
 

@@ -139,12 +139,17 @@ class Figure:
     def __init__(
         self,
         *,
-        width: int = 900,
+        width: "int | str" = 900,
         height: int = 420,
         title: Optional[str] = None,
         x_label: Optional[str] = None,
         y_label: Optional[str] = None,
     ) -> None:
+        # width: pixels, or "100%" to fill the parent container — the client
+        # measures the container and re-renders on resize (ResizeObserver),
+        # re-requesting decimation/density at the new pixel width (§28).
+        if isinstance(width, str) and width != "100%":
+            raise ValueError(f'width must be an int (pixels) or "100%", got {width!r}')
         self.width = width
         self.height = height
         self.title = title
