@@ -1,0 +1,293 @@
+//! Pure compute kernels for the charting engine.
+//!
+//! Design dossier references:
+//! - Zone maps (§22): one-pass per-chunk statistics, computed at ingest.
+//! - Offset+scale f32 encoding (§4, §16): full-precision f64/i64 canonical data is
+//!   uploaded to the GPU as *relative* f32 — `(v - offset) * scale` — so
+//!   large-magnitude/small-delta domains (ms timestamps, finance, geo) keep the
+//!   digits that matter. Deep zoom re-centers the offset (§16); the kernel takes the
+//!   offset explicitly so the caller owns that policy.
+//! - M4 decimation (§5 Tier 1, research Part 2 §2): per pixel column keep
+//!   first/min/max/last — provably pixel-accurate for a rasterized line (Jugel et
+//!   al., VLDB 2014). NaN-aware: buckets never span invalid values silently (§19).
+
+/// One-pass statistics for a chunk of a column (§22).
+///
+/// NaN values count as nulls (Arrow validity semantics arrive with real Arrow
+/// ingest; NaN-as-null is the Phase 0 contract and is asserted in tests).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ZoneMap {
+    pub min: f64,
+    pub max: f64,
+    pub count: u64,
+    pub null_count: u64,
+    pub sum: f64,
+    pub sum_sq: f64,
+}
+
+impl ZoneMap {
+    pub fn empty() -> Self {
+        ZoneMap {
+            min: f64::INFINITY,
+            max: f64::NEG_INFINITY,
+            count: 0,
+            null_count: 0,
+            sum: 0.0,
+            sum_sq: 0.0,
+        }
+    }
+}
+
+/// Default chunk size: ~64k values (§22).
+pub const DEFAULT_CHUNK: usize = 65_536;
+
+/// Compute zone maps over `data` in chunks of `chunk_size`.
+pub fn zone_maps(data: &[f64], chunk_size: usize) -> Vec<ZoneMap> {
+    assert!(chunk_size > 0, "chunk_size must be positive");
+    data.chunks(chunk_size)
+        .map(|chunk| {
+            let mut zm = ZoneMap::empty();
+            for &v in chunk {
+                if v.is_nan() {
+                    zm.null_count += 1;
+                } else {
+                    zm.count += 1;
+                    zm.min = zm.min.min(v);
+                    zm.max = zm.max.max(v);
+                    zm.sum += v;
+                    zm.sum_sq += v * v;
+                }
+            }
+            zm
+        })
+        .collect()
+}
+
+/// Encode canonical f64 values as relative f32: `(v - offset) * scale` (§4).
+///
+/// NaN passes through as f32 NaN — the caller is responsible for keeping NaN out
+/// of vertex buffers via the gap/segment machinery (§19); passing it through here
+/// keeps the kernel total rather than silently inventing values.
+pub fn encode_f32(data: &[f64], offset: f64, scale: f64, out: &mut Vec<f32>) {
+    out.clear();
+    out.reserve(data.len());
+    // Simple loop autovectorizes; keep it branch-free on the hot path.
+    out.extend(data.iter().map(|&v| ((v - offset) * scale) as f32));
+}
+
+/// As [`encode_f32`] but into a caller-owned slice (the C ABI path — the output
+/// buffer is a NumPy array allocated Python-side, so no copy on return).
+pub fn encode_f32_into(data: &[f64], offset: f64, scale: f64, out: &mut [f32]) {
+    assert_eq!(data.len(), out.len());
+    for (o, &v) in out.iter_mut().zip(data) {
+        *o = ((v - offset) * scale) as f32;
+    }
+}
+
+/// M4 decimation (§5 Tier 1): for `n_buckets` uniform buckets over `[x0, x1)`,
+/// return the source indices of {first, min-y, max-y, last} per bucket, sorted
+/// ascending and deduplicated.
+///
+/// Requirements (per the LOD contract, §28): `x` ascending (engine sorts once at
+/// ingest for line traces), `x.len() == y.len()`. Points with NaN y are skipped —
+/// min/max buckets never span a gap (§19); gap segmentation itself is a later
+/// milestone.
+pub fn m4_indices(x: &[f64], y: &[f64], x0: f64, x1: f64, n_buckets: usize) -> Vec<u32> {
+    assert_eq!(x.len(), y.len());
+    assert!(n_buckets > 0);
+    assert!(x1 > x0, "x1 must be > x0");
+    if x.is_empty() {
+        return Vec::new();
+    }
+
+    // Visible window via binary search (x sorted ascending).
+    let start = x.partition_point(|&v| v < x0);
+    let end = x.partition_point(|&v| v < x1);
+    if start >= end {
+        return Vec::new();
+    }
+
+    let inv_bucket_w = n_buckets as f64 / (x1 - x0);
+    let mut out: Vec<u32> = Vec::with_capacity(n_buckets * 4);
+
+    // Per-bucket running state.
+    let mut cur_bucket = usize::MAX;
+    let mut first = 0u32;
+    let mut last = 0u32;
+    let mut min_i = 0u32;
+    let mut max_i = 0u32;
+    let mut min_v = f64::INFINITY;
+    let mut max_v = f64::NEG_INFINITY;
+    let mut has_any = false;
+
+    let flush = |first: u32, min_i: u32, max_i: u32, last: u32, out: &mut Vec<u32>| {
+        let mut ids = [first, min_i, max_i, last];
+        ids.sort_unstable();
+        let mut prev = u32::MAX;
+        for id in ids {
+            if id != prev {
+                out.push(id);
+                prev = id;
+            }
+        }
+    };
+
+    for i in start..end {
+        let yv = y[i];
+        if yv.is_nan() {
+            continue;
+        }
+        let b = (((x[i] - x0) * inv_bucket_w) as usize).min(n_buckets - 1);
+        if b != cur_bucket {
+            if has_any {
+                flush(first, min_i, max_i, last, &mut out);
+            }
+            cur_bucket = b;
+            first = i as u32;
+            min_i = i as u32;
+            max_i = i as u32;
+            min_v = yv;
+            max_v = yv;
+            has_any = true;
+        } else {
+            if yv < min_v {
+                min_v = yv;
+                min_i = i as u32;
+            }
+            if yv > max_v {
+                max_v = yv;
+                max_i = i as u32;
+            }
+        }
+        last = i as u32;
+    }
+    if has_any {
+        flush(first, min_i, max_i, last, &mut out);
+    }
+    out
+}
+
+/// Min/max over a slice, NaN-skipping — the autorange primitive when zone maps
+/// aren't available (they make this O(chunks), §22).
+pub fn min_max(data: &[f64]) -> Option<(f64, f64)> {
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    for &v in data {
+        if !v.is_nan() {
+            min = min.min(v);
+            max = max.max(v);
+        }
+    }
+    if min <= max {
+        Some((min, max))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zone_maps_basic() {
+        let data: Vec<f64> = (0..10).map(|i| i as f64).collect();
+        let zms = zone_maps(&data, 4);
+        assert_eq!(zms.len(), 3);
+        assert_eq!(zms[0].min, 0.0);
+        assert_eq!(zms[0].max, 3.0);
+        assert_eq!(zms[0].count, 4);
+        assert_eq!(zms[0].sum, 6.0);
+        assert_eq!(zms[2].min, 8.0);
+        assert_eq!(zms[2].max, 9.0);
+        assert_eq!(zms[2].count, 2);
+    }
+
+    #[test]
+    fn zone_maps_nan_is_null() {
+        let data = [1.0, f64::NAN, 3.0];
+        let zms = zone_maps(&data, 65_536);
+        assert_eq!(zms[0].count, 2);
+        assert_eq!(zms[0].null_count, 1);
+        assert_eq!(zms[0].min, 1.0);
+        assert_eq!(zms[0].max, 3.0);
+    }
+
+    #[test]
+    fn encode_precision_ms_timestamps() {
+        // The §25 thesis test: a 1-second span inside a 10-year ms-timestamp
+        // series must survive the f32 path when re-centered on the window.
+        let t0: f64 = 1.7e12; // ~2023 in ms epoch
+        let window: Vec<f64> = (0..1000).map(|i| t0 + i as f64).collect(); // 1ms steps
+        let offset = t0 + 500.0; // viewport-center offset (§16 re-centering)
+        let mut enc = Vec::new();
+        encode_f32(&window, offset, 1.0, &mut enc);
+        for (i, &e) in enc.iter().enumerate() {
+            let decoded = e as f64 + offset;
+            let err = (decoded - window[i]).abs();
+            // Relative span is 1000ms; f32 resolves ~6e-5 ms at that magnitude.
+            assert!(err < 1e-3, "err {err} at {i}");
+        }
+    }
+
+    #[test]
+    fn encode_naive_f32_would_corrupt() {
+        // Control: the same data as raw f32 (offset 0) loses ms resolution
+        // entirely — this is the §15 finding #2 the offset path exists to fix.
+        let t0: f64 = 1.7e12;
+        let window: Vec<f64> = (0..1000).map(|i| t0 + i as f64).collect();
+        let mut enc = Vec::new();
+        encode_f32(&window, 0.0, 1.0, &mut enc);
+        let worst = enc
+            .iter()
+            .zip(&window)
+            .map(|(&e, &v)| (e as f64 - v).abs())
+            .fold(0.0f64, f64::max);
+        assert!(worst > 1.0, "naive f32 should be visibly wrong, got {worst}");
+    }
+
+    #[test]
+    fn m4_keeps_extremes() {
+        // A spike in the middle of a bucket must survive decimation.
+        let n = 10_000;
+        let x: Vec<f64> = (0..n).map(|i| i as f64).collect();
+        let mut y: Vec<f64> = x.iter().map(|v| (v * 0.01).sin()).collect();
+        y[5_432] = 100.0; // spike
+        y[7_891] = -100.0; // negative spike
+        let idx = m4_indices(&x, &y, 0.0, n as f64, 100);
+        assert!(idx.len() <= 400);
+        assert!(idx.contains(&5_432));
+        assert!(idx.contains(&7_891));
+        // First and last points of the window are preserved (M4, not min/max-only).
+        assert_eq!(idx[0], 0);
+        assert_eq!(*idx.last().unwrap(), (n - 1) as u32);
+        // Sorted and unique.
+        assert!(idx.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn m4_visible_window_only() {
+        let n = 1_000;
+        let x: Vec<f64> = (0..n).map(|i| i as f64).collect();
+        let y = x.clone();
+        let idx = m4_indices(&x, &y, 250.0, 500.0, 10);
+        assert!(!idx.is_empty());
+        assert!(idx.iter().all(|&i| (250..500).contains(&(i as usize))));
+    }
+
+    #[test]
+    fn m4_skips_nan() {
+        let x = [0.0, 1.0, 2.0, 3.0];
+        let y = [1.0, f64::NAN, 5.0, 2.0];
+        let idx = m4_indices(&x, &y, 0.0, 4.0, 1);
+        assert!(!idx.contains(&1));
+        assert!(idx.contains(&2));
+    }
+
+    #[test]
+    fn min_max_skips_nan() {
+        assert_eq!(min_max(&[f64::NAN, 2.0, -1.0]), Some((-1.0, 2.0)));
+        assert_eq!(min_max(&[f64::NAN]), None);
+        assert_eq!(min_max(&[]), None);
+    }
+}

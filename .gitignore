@@ -1,0 +1,10 @@
+target/
+.venv/
+smoke/
+dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+node_modules/
+*.egg-info/
