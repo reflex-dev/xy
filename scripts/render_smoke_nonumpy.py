@@ -177,7 +177,21 @@ try{{
     v._selectLocal(0, 1000, -3, 8);        // a sub-range
     const selSome = v._selectionCount;
     const active = v.gpuTraces.some(g=>g.selActive) ? 1 : 0;
-    document.title=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}}`;
+    // Modebar: button row present, and its zoom controls actually move the view.
+    const bar = v._modebar;
+    const btns = bar ? bar.querySelectorAll("button").length : 0;
+    const spanX = () => v.view.x1 - v.view.x0;
+    const s0 = spanX();
+    v._zoomBy(0.5);                 // zoom in -> span shrinks
+    const zin = spanX() < s0 ? 1 : 0;
+    v._zoomBy(2);                   // back out
+    v._zoomToBox([10,0],[20,5]);    // box-zoom fits the rectangle
+    const boxOk = (Math.abs(v.view.x0-10)<1e-6 && Math.abs(v.view.x1-20)<1e-6) ? 1 : 0;
+    v.view = {{...v.view0}};
+    v._setDragMode("zoom");
+    const zmode = (v.dragMode==="zoom" && v.canvas.style.cursor==="crosshair") ? 1 : 0;
+    v._setDragMode("pan");
+    document.title=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} box=${{boxOk}} zmode=${{zmode}}`;
   }}catch(e){{document.title="FC_ERROR "+e.message}}}},200);
 }}catch(e){{document.title="FC_ERROR "+e.message}}
 </script></body></html>"""
@@ -215,10 +229,15 @@ try{{
     sel_all = int(re.search(r"selAll=(\d+)", title).group(1))
     sel_some = int(re.search(r"selSome=(\d+)", title).group(1))
     active = int(re.search(r"active=(\d+)", title).group(1))
+    btns = int(re.search(r"btns=(\d+)", title).group(1))
+    zin = int(re.search(r"zin=(\d+)", title).group(1))
+    box = int(re.search(r"box=(\d+)", title).group(1))
+    zmode = int(re.search(r"zmode=(\d+)", title).group(1))
     frac = lit / max(total, 1)
     print(
         f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}, pick hits: {pick}, "
-        f"row-decoded: {rowok}, select all/sub: {sel_all}/{sel_some}, mask active: {active}"
+        f"row-decoded: {rowok}, select all/sub: {sel_all}/{sel_some}, mask active: {active}, "
+        f"modebar btns: {btns}, zoom-in: {zin}, box-zoom: {box}, zoom-mode: {zmode}"
     )
     if not (0.001 < frac < 0.95):
         raise SystemExit(f"suspicious lit fraction {frac}")
@@ -234,8 +253,17 @@ try{{
         raise SystemExit(f"sub-range selection implausible: {sel_some} of {sel_all}")
     if active != 1:
         raise SystemExit("selection mask did not activate")
+    if btns < 5:
+        raise SystemExit(f"modebar missing buttons: {btns}")
+    if zin != 1:
+        raise SystemExit("modebar zoom-in did not shrink the view span")
+    if box != 1:
+        raise SystemExit("box-zoom did not fit the dragged rectangle")
+    if zmode != 1:
+        raise SystemExit("drag-mode toggle did not switch to box-zoom")
     print(
-        "render smoke OK (no numpy): line + colored/sized scatter + density + picking + box-select"
+        "render smoke OK (no numpy): line + colored/sized scatter + density + "
+        "picking + box-select + modebar/box-zoom"
     )
 
 

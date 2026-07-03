@@ -17,6 +17,7 @@ class ChartView {
     this.seq = 0;
     this._lutCache = new Map();
     this._hoverId = -1;
+    this.dragMode = "pan"; // "pan" | "zoom" (box zoom); toggled via the modebar
 
     const top = MARGIN.t + (spec.title ? 30 : 0);
     this.plot = {
@@ -30,6 +31,7 @@ class ChartView {
     this.theme = readTheme(this.root);
     this._initGl(buffer);
     this._initInteraction();
+    this._buildModebar(this.root); // after theme (icon color) + canvas (cursor)
 
     this.view0 = {
       x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
@@ -637,8 +639,12 @@ class ChartView {
     };
 
     c.addEventListener("pointerdown", (e) => {
-      if (e.shiftKey && this._pickable) {
-        band = { sx: e.clientX, sy: e.clientY, d0: dataAt(e.clientX, e.clientY) };
+      // Shift-drag box-selects (§34); a "zoom" modebar toggle turns a plain drag
+      // into a box-zoom; otherwise a plain drag pans.
+      const mode = e.shiftKey && this._pickable ? "select"
+        : this.dragMode === "zoom" ? "zoom" : null;
+      if (mode) {
+        band = { mode, sx: e.clientX, sy: e.clientY, d0: dataAt(e.clientX, e.clientY) };
         c.setPointerCapture(e.pointerId);
         this.tooltip.style.display = "none";
         return;
@@ -666,7 +672,10 @@ class ChartView {
         this.selRect.style.display = "none";
         const d1 = dataAt(e.clientX, e.clientY);
         const moved = Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
-        if (moved) this._sendSelect(band.d0, d1);
+        if (moved) {
+          if (band.mode === "zoom") this._zoomToBox(band.d0, d1);
+          else this._sendSelect(band.d0, d1);
+        }
         band = null;
         return;
       }
@@ -718,6 +727,13 @@ class ChartView {
     const px = this.plot.x, py = this.plot.y;
     const x2 = Math.min(x + w, px + this.plot.w), y2 = Math.min(y + h, py + this.plot.h);
     const cx = Math.max(x, px), cy = Math.max(y, py);
+    if (band.mode === "zoom") {
+      this.selRect.style.border = "1px solid rgba(120,120,120,.9)";
+      this.selRect.style.background = "rgba(120,120,120,.12)";
+    } else {
+      this.selRect.style.border = "1px solid rgba(90,140,240,.9)";
+      this.selRect.style.background = "rgba(90,140,240,.15)";
+    }
     this.selRect.style.display = "block";
     this.selRect.style.left = cx + "px";
     this.selRect.style.top = cy + "px";
@@ -769,6 +785,118 @@ class ChartView {
     for (const g of this.gpuTraces) g.selActive = false;
     this._selectionCount = 0;
     if (this.comm) this.comm.send({ type: "select_clear" });
+  }
+
+  // -- modebar & zoom (Plotly-parity controls) ------------------------------
+
+  _buildModebar(root) {
+    if (this.spec.show_modebar === false) return;
+    const bar = document.createElement("div");
+    // Faint until hover, like Plotly's — chrome shouldn't compete with data (§7).
+    bar.style.cssText =
+      `position:absolute;top:${this.plot.y + 4}px;right:${MARGIN.r + 4}px;z-index:6;` +
+      "display:flex;gap:1px;opacity:.25;transition:opacity .15s;";
+    root.addEventListener("pointerenter", () => { bar.style.opacity = "1"; });
+    root.addEventListener("pointerleave", () => { bar.style.opacity = ".25"; });
+    this._modebar = bar;
+    this._modeBtns = {};
+
+    const col = cssColor(this.theme.axis);
+    const mk = (name, title, onClick, toggles) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.title = title;
+      b.innerHTML = this._icon(name);
+      b.style.cssText =
+        "display:flex;align-items:center;justify-content:center;width:26px;height:24px;" +
+        "padding:0;border:none;background:transparent;cursor:pointer;border-radius:3px;" +
+        `color:${col};pointer-events:auto;`;
+      b.addEventListener("pointerdown", (e) => e.stopPropagation());
+      b.addEventListener("click", (e) => { e.stopPropagation(); onClick(); });
+      bar.appendChild(b);
+      if (toggles) this._modeBtns[toggles] = b;
+      return b;
+    };
+
+    mk("zoomin", "Zoom in", () => this._zoomBy(0.5));
+    mk("zoomout", "Zoom out", () => this._zoomBy(2));
+    mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
+    mk("zoom", "Box zoom", () => this._setDragMode("zoom"), "zoom");
+    mk("reset", "Reset view", () => {
+      this.view = { ...this.view0 };
+      this._clearSelection();
+      this.draw();
+      this._scheduleViewRequest();
+    });
+    root.appendChild(bar);
+    this._setDragMode(this.dragMode);
+  }
+
+  _setDragMode(mode) {
+    this.dragMode = mode;
+    // Cursor telegraphs the gesture: grab for pan, crosshair for box-zoom.
+    if (this.canvas) this.canvas.style.cursor = mode === "zoom" ? "crosshair" : "grab";
+    for (const [name, btn] of Object.entries(this._modeBtns || {})) {
+      btn.style.background = name === mode ? "rgba(128,128,128,.22)" : "transparent";
+    }
+  }
+
+  // Center-anchored zoom (f<1 in, f>1 out) — the modebar buttons; wheel is
+  // cursor-anchored. Shares the §16 precision floor so we never zoom past f32.
+  _zoomBy(f) {
+    const { x0, x1, y0, y1 } = this.view;
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    if (f < 1) {
+      const minSpanX = Math.max(Math.abs(cx), 1e-30) * 1e-12;
+      const minSpanY = Math.max(Math.abs(cy), 1e-30) * 1e-12;
+      if ((x1 - x0) * f < minSpanX || (y1 - y0) * f < minSpanY) return;
+    }
+    this.view = {
+      x0: cx - (cx - x0) * f, x1: cx + (x1 - cx) * f,
+      y0: cy - (cy - y0) * f, y1: cy + (y1 - cy) * f,
+    };
+    this.draw();
+    this._scheduleViewRequest();
+  }
+
+  // Box-zoom: fit the view to the dragged data rectangle (§16 precision floor;
+  // ignore degenerate drags that would collapse a span below f32 resolution).
+  _zoomToBox(d0, d1) {
+    const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
+    const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
+    const minSpanX = Math.max(Math.abs(x0), Math.abs(x1), 1e-30) * 1e-12;
+    const minSpanY = Math.max(Math.abs(y0), Math.abs(y1), 1e-30) * 1e-12;
+    if (x1 - x0 < minSpanX || y1 - y0 < minSpanY) return;
+    this.view = { x0, x1, y0, y1 };
+    this.draw();
+    this._scheduleViewRequest();
+  }
+
+  _icon(name) {
+    // Inline stroke SVGs (currentColor) — no external assets (§33 no supply chain).
+    const svg = (body) =>
+      `<svg width="15" height="15" viewBox="0 0 20 20" fill="none" ` +
+      `stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ` +
+      `stroke-linejoin="round">${body}</svg>`;
+    switch (name) {
+      case "zoomin":
+        return svg('<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5 L17 17"/>' +
+          '<path d="M8.5 6 V11 M6 8.5 H11"/>');
+      case "zoomout":
+        return svg('<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5 L17 17"/>' +
+          '<path d="M6 8.5 H11"/>');
+      case "pan":
+        return svg('<path d="M10 3 V17 M3 10 H17"/><path d="M10 3 L8 5 M10 3 L12 5"/>' +
+          '<path d="M10 17 L8 15 M10 17 L12 15"/><path d="M3 10 L5 8 M3 10 L5 12"/>' +
+          '<path d="M17 10 L15 8 M17 10 L15 12"/>');
+      case "zoom":
+        return svg('<rect x="3.5" y="3.5" width="13" height="13" rx="1" ' +
+          'stroke-dasharray="3 2"/>');
+      case "reset":
+        return svg('<path d="M4 10 a6 6 0 1 1 1.8 4.3"/><path d="M4 6 V10 H8"/>');
+      default:
+        return svg("");
+    }
   }
 
   _hover(e) {
