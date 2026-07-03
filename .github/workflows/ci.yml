@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+  pull_request:
+
+jobs:
+  test:
+    name: Test (Rust + Python + JS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Rust unit tests
+        run: cargo test
+
+      - name: Rust lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build native core
+        run: cargo build --release
+
+      - name: Build JS client
+        run: node js/build.mjs
+
+      - name: JS parses (ESM + IIFE)
+        run: |
+          node -e "import('./python/fastcharts/static/index.js').then(m => { if (!m.default.render) throw new Error('no render export'); })"
+          node --check python/fastcharts/static/standalone.js
+
+      - name: Install package + dev deps
+        run: |
+          uv venv .venv
+          uv pip install -p .venv/bin/python -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: |
+          .venv/bin/ruff check .
+          .venv/bin/ruff format --check .
+
+      - name: Typecheck (ty)
+        run: .venv/bin/ty check
+
+      - name: Python tests (native core)
+        run: .venv/bin/pytest -q
+
+      - name: Python tests (NumPy fallback — §33 no-wheel contract)
+        run: FASTCHARTS_FORCE_FALLBACK=1 .venv/bin/pytest -q
+
+      - name: Benchmark smoke (1e5/1e6 — §12 harness runs every phase)
+        run: .venv/bin/python scripts/bench.py --sizes 1e5,1e6
+
+  # Wheel matrix (§33): a missing wheel is a build failure, not a runtime
+  # surprise. The core is a C-ABI cdylib → one `py3-none-<platform>` wheel per
+  # platform covers every CPython version.
+  wheels:
+    name: Wheel ${{ matrix.os }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-13, macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build JS client
+        run: node js/build.mjs
+
+      - name: Build wheel
+        run: uv build --wheel
+
+      - name: Install-size budget (≤ 15 MB, §33)
+        shell: bash
+        run: |
+          size=$(du -sb dist/*.whl | cut -f1)
+          echo "wheel size: $size bytes"
+          test "$size" -le 15728640
+
+      - name: Smoke-install and import
+        shell: bash
+        run: |
+          uv venv smoke
+          uv pip install -p smoke dist/*.whl numpy anywidget
+          ./smoke/bin/python -c "import fastcharts, fastcharts.kernels as k; assert k.BACKEND == 'native', k.BACKEND; print('native core loaded')" \
+            || ./smoke/Scripts/python.exe -c "import fastcharts, fastcharts.kernels as k; assert k.BACKEND == 'native', k.BACKEND; print('native core loaded')"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.os }}
+          path: dist/*.whl

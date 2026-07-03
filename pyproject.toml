@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fastcharts"
+version = "0.1.0"
+description = "A faster charting engine: native Rust core, binary columnar transport, GPU render client"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "numpy>=1.24",
+    "anywidget>=0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.8",
+    "ty",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["python/fastcharts"]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
+
+[tool.hatch.build.targets.sdist]
+include = ["python", "src", "js/src", "Cargo.toml", "Cargo.lock", "hatch_build.py", "README.md"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+src = ["python", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",   # pycodestyle / pyflakes
+    "I",             # isort
+    "UP",            # pyupgrade
+    "B",             # bugbear
+    "SIM",           # simplify
+    "RUF",
+]
+ignore = [
+    "E501", # line length is the formatter's job
+]
+
+[tool.ty.environment]
+python = ".venv"
+
+[tool.ty.src]
+include = ["python", "tests", "scripts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
