@@ -130,7 +130,14 @@ try{{
       }}
     }}
     const hasXY = sampleRow && sampleRow.x!==undefined ? 1 : 0;
-    document.title=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}}`;
+    // Selection: box-select the left half in data space (standalone -> local mask).
+    v._selectLocal(-1e9, 1e9, -1e9, 1e9);  // select everything first
+    const selAll = v._selectionCount;
+    v._clearSelection();
+    v._selectLocal(0, 1000, -3, 8);        // a sub-range
+    const selSome = v._selectionCount;
+    const active = v.gpuTraces.some(g=>g.selActive) ? 1 : 0;
+    document.title=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}}`;
   }}catch(e){{document.title="FC_ERROR "+e.message}}}},200);
 }}catch(e){{document.title="FC_ERROR "+e.message}}
 </script></body></html>"""
@@ -155,8 +162,12 @@ try{{
     labels = int(re.search(r"labels=(\d+)", title).group(1))
     pick = int(re.search(r"pick=(\d+)", title).group(1))
     rowok = int(re.search(r"row=(\d+)", title).group(1))
+    sel_all = int(re.search(r"selAll=(\d+)", title).group(1))
+    sel_some = int(re.search(r"selSome=(\d+)", title).group(1))
+    active = int(re.search(r"active=(\d+)", title).group(1))
     frac = lit / max(total, 1)
-    print(f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}, pick hits: {pick}, row-decoded: {rowok}")
+    print(f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}, pick hits: {pick}, "
+          f"row-decoded: {rowok}, select all/sub: {sel_all}/{sel_some}, mask active: {active}")
     if not (0.001 < frac < 0.95):
         raise SystemExit(f"suspicious lit fraction {frac}")
     if labels < 6:
@@ -165,7 +176,13 @@ try{{
         raise SystemExit("GPU picking found no scatter point")
     if rowok < 1:
         raise SystemExit("picked point did not decode to x/y (standalone hover)")
-    print("render smoke OK (no numpy): line + colored/sized scatter + density + picking")
+    if sel_all < 1:
+        raise SystemExit("box-select over everything selected nothing")
+    if not (0 < sel_some <= sel_all):
+        raise SystemExit(f"sub-range selection implausible: {sel_some} of {sel_all}")
+    if active != 1:
+        raise SystemExit("selection mask did not activate")
+    print("render smoke OK (no numpy): line + colored/sized scatter + density + picking + box-select")
 
 
 if __name__ == "__main__":

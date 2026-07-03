@@ -20,6 +20,38 @@ if TYPE_CHECKING:
 _STATIC = pathlib.Path(__file__).parent / "static"
 
 
+class Selection:
+    """The payload handed to an `on_select` callback (§34). Holds the selected
+    row indices per trace and lends convenient access to the underlying data —
+    callbacks receive real arrays, never JSON."""
+
+    def __init__(self, figure: "Figure", per_trace: dict) -> None:
+        self._figure = figure
+        self.per_trace = per_trace  # {trace_id: np.ndarray[uint32]}
+
+    @property
+    def index(self):  # noqa: ANN201
+        """Concatenated selected indices across all traces (single-trace charts
+        are the common case, where this is just that trace's indices)."""
+        import numpy as np
+
+        arrs = list(self.per_trace.values())
+        return np.concatenate(arrs) if arrs else np.empty(0, dtype="uint32")
+
+    def __len__(self) -> int:
+        return int(sum(len(v) for v in self.per_trace.values()))
+
+    def xy(self, trace_id: int = 0):  # noqa: ANN201
+        """(x, y) f64 arrays for the selected points of a trace (from canonical)."""
+        idx = self.per_trace.get(trace_id)
+        t = self._figure.traces[trace_id]
+        if idx is None:
+            import numpy as np
+
+            return np.empty(0), np.empty(0)
+        return t.x.values[idx], t.y.values[idx]
+
+
 def bundled_js(which: str = "widget") -> str:
     """Read a bundled client build ("widget" ESM or "standalone" IIFE)."""
     name = "index.js" if which == "widget" else "standalone.js"
@@ -42,8 +74,17 @@ class FigureWidget(anywidget.AnyWidget):
     # never JSON).
     buffers = traitlets.Bytes().tag(sync=True)
 
-    def __init__(self, figure: "Figure", **kwargs: Any) -> None:
+    def __init__(
+        self,
+        figure: "Figure",
+        *,
+        on_hover: Any = None,
+        on_select: Any = None,
+        **kwargs: Any,
+    ) -> None:
         self._figure = figure
+        self._on_hover = on_hover
+        self._on_select = on_select
         spec, blob = figure.build_payload()
         super().__init__(spec=spec, buffers=blob, **kwargs)
         self.on_msg(self._on_custom_msg)
@@ -83,3 +124,30 @@ class FigureWidget(anywidget.AnyWidget):
             # Hover/click drill: exact f64 row from canonical (§16/§17).
             row = self._figure.pick(int(content.get("trace", -1)), int(content.get("index", -1)))
             self.send({"type": "pick_result", "seq": content.get("seq"), "row": row})
+            if row is not None and self._on_hover is not None:
+                self._on_hover(row)
+        elif kind == "select":
+            # Box-select → range predicate (§34 Tier A). Ship a selection mask
+            # per trace so the client dims unselected marks; call on_select with
+            # the resolved indices (Arrow-slice-shaped, not JSON — §34 API note).
+            try:
+                sel = self._figure.select_range(
+                    float(content["x0"]), float(content["x1"]),
+                    float(content["y0"]), float(content["y1"]),
+                )
+            except (KeyError, ValueError):
+                return
+            traces = []
+            buffers = []
+            total = 0
+            for tid, idx in sel.items():
+                traces.append({"id": tid, "count": int(len(idx)), "buf": len(buffers)})
+                buffers.append(idx.tobytes())
+                total += len(idx)
+            self.send({"type": "selection", "traces": traces, "total": total}, buffers=buffers)
+            if self._on_select is not None:
+                self._on_select(Selection(self._figure, sel))
+        elif kind == "select_clear":
+            self.send({"type": "selection", "traces": [], "total": 0})
+            if self._on_select is not None:
+                self._on_select(Selection(self._figure, {}))

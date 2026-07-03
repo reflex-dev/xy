@@ -11,7 +11,10 @@ code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
   `ABI_VERSION` in `src/lib.rs` *and* `python/fastcharts/_native.py` together
   on any signature change.
 - `python/fastcharts/` — package. `_native.py` (ctypes) and `_fallback.py`
-  (NumPy) must stay semantically identical; parity is tested.
+  (NumPy) must stay semantically identical; parity is tested. `components.py`
+  is the Reflex-flavored composition API (`scatter_chart`/`line_chart` + marks/
+  axes) — it builds a `Figure`; keep it dependency-free (no `reflex` import).
+  `channels.py` resolves scatter color/size encodings.
 - `js/src/fastcharts.js` — the entire render client, one dependency-free ES
   module. **No npm packages.** `node js/build.mjs` copies it to
   `python/fastcharts/static/` (committed artifacts).

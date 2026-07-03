@@ -11,6 +11,29 @@ primitives than the screen can show.
 **Status: Phase 0 complete + full scatter chart** (Tier-0 direct through Tier-2
 density, per the dossier's §5/§11 scatter contract).
 
+Two APIs over one engine — pick per taste; both render in Jupyter / VS Code /
+Colab / Marimo via anywidget and export to standalone HTML.
+
+**Composition API** (declarative, Reflex-flavored — but with no Reflex
+dependency): a chart container with mark + axis children, snake_case props,
+`data=` + column names, and `on_*` event props.
+
+```python
+import fastcharts as fc
+
+fc.scatter_chart(
+    fc.scatter(x="gdp", y="life", color="continent", size="pop", data=df),
+    fc.x_axis(label="GDP per capita"),
+    fc.y_axis(label="life expectancy"),
+    fc.legend(),
+    title="Gapminder",
+    on_hover=lambda row: print(row),               # exact f64 row, kernel-side
+    on_select=lambda sel: print(len(sel), "points"),  # shift-drag box-select
+)
+```
+
+**Fluent API** (imperative):
+
 ```python
 import numpy as np
 from fastcharts import Figure
@@ -19,10 +42,7 @@ n = 10_000_000
 x = np.arange("2015-01-01", "2025-01-01", dtype="datetime64[s]")[:n]
 y = np.cumsum(np.random.default_rng(0).normal(size=n))
 
-fig = Figure(title="10M points, interactive")
-fig.line(x, y, name="random walk")
-fig            # renders in Jupyter / VS Code / Colab / Marimo via anywidget
-fig.to_html("chart.html")   # or standalone interactive HTML
+Figure(title="10M points, interactive").line(x, y, name="random walk")
 ```
 
 ## What exists (Phase 0)
@@ -34,6 +54,9 @@ fig.to_html("chart.html")   # or standalone interactive HTML
 | Pure-NumPy fallback — the *defined*, loud no-wheel behavior | §33 | `python/fastcharts/_fallback.py` |
 | Data-less `{traces, layout}` spec + column handles | §9 | `python/fastcharts/figure.py` |
 | Single-copy column store, zone-map autorange, ingest copy accounting | §4, §22, §29 | `python/fastcharts/column.py` |
+| Reflex-style composition API (`scatter_chart`/`line_chart` + marks/axes) | — | `python/fastcharts/components.py` |
+| Full scatter: color (constant/colormap/palette), size, GPU-pick hover, Tier-2 density | §5, §28, §36c | `figure.py`, `channels.py`, `js/` |
+| Box-select (shift-drag) → range filter, dim-unselected, `on_hover`/`on_select` | §34 | `figure.select_range`, `widget.py`, `js/` |
 | anywidget client: WebGL2 instanced marks, SDF AA, binary buffers | §7, §33 | `js/src/fastcharts.js` |
 | Pan/zoom = uniform update; kernel re-decimation round-trip on zoom, stale-while-revalidate | §17, §28 | widget + client |
 | Viewport-recentered offsets → sub-ms precision inside 10-year series | §16 | tested in `tests/` |
@@ -98,6 +121,11 @@ fig.scatter(bigx, bigy, density=True)   # or force it
   triggers a kernel re-bin of the visible window; the stale grid stays drawn
   until it arrives (§17). Dropping per-point color under aggregation is
   reported (`channels_dropped`), never silent (§28).
+- **Select** (§34): shift-drag a box; the kernel resolves the range predicate to
+  row indices, unselected marks dim on the GPU, and `on_select` fires with a
+  `Selection` (indices + `.xy()` arrays, never JSON). `on_hover` fires with the
+  exact f64 row. Double-click clears. Standalone HTML computes selection from the
+  resident f32 with no kernel.
 
 ## Development
 
