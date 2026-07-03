@@ -44,6 +44,9 @@ jobs:
           sudo apt-get update && sudo apt-get install -y chromium-browser || sudo apt-get install -y chromium
           python3 scripts/render_smoke_nonumpy.py "$(command -v chromium-browser || command -v chromium)"
 
+      - name: Native benchmark (stdlib only — executed numbers, no PyPI needed)
+        run: python3 scripts/bench_native.py --sizes 1e5,1e6
+
       - name: Install package + dev deps
         run: |
           uv venv .venv
