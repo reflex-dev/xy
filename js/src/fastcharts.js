@@ -206,7 +206,9 @@ void main() {
 }`;
 
 const POINT_FS = `#version 300 es
-precision mediump float;
+// highp (not mediump): vertex-stage floats default to highp, and WebGL2 rejects
+// a program whose shared uniforms differ in precision between stages.
+precision highp float;
 uniform vec4 u_color;
 out vec4 outColor;
 void main() {
@@ -243,7 +245,8 @@ void main() {
 }`;
 
 const LINE_FS = `#version 300 es
-precision mediump float;
+// highp: u_width is shared with the vertex stage (highp there); precisions must match.
+precision highp float;
 uniform vec4 u_color; uniform float u_width;
 in float v_off;
 out vec4 outColor;
