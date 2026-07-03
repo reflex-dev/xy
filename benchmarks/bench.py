@@ -8,12 +8,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
+from pathlib import Path
 
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from categories import categories_for  # noqa: E402
 from fastcharts import Figure
 from fastcharts import kernels as k
+
+BENCH_CATEGORY_IDS = ("huge_line_time_series", "payload_export_size")
 
 
 def timeit(fn, *args, repeat: int = 3):
@@ -31,7 +37,11 @@ def bench_size(n: int) -> dict:
     x = np.arange(n, dtype=np.float64)
     y = rng.normal(0.0, 1.0, n)
 
-    row: dict = {"n": n, "backend": k.BACKEND}
+    row: dict = {
+        "n": n,
+        "backend": k.BACKEND,
+        "benchmark_categories": [category["id"] for category in categories_for(BENCH_CATEGORY_IDS)],
+    }
 
     t, _ = timeit(k.zone_maps, x)
     row["zone_maps_mpts_s"] = n / t / 1e6

@@ -25,6 +25,34 @@ python benchmarks/bench_vs.py
 The fastcharts-only arm also runs with no dependencies via
 `benchmarks/bench_scatter_native.py`.
 
+## Benchmark categories and goals
+
+The performance story should be measured by mode, not with one blanket
+"fastest charting library" number. A small exact scatter, a 10M density view, a
+large line, and a 30-chart dashboard stress different parts of the system. These
+are the categories we track or plan to add to CI.
+
+The stable category IDs live in `benchmarks/categories.py`. CI's
+`benchmark.json` includes the full registry plus `tracked_categories`, and the
+fastcharts-only benchmark rows include `benchmark_categories` so future
+dashboards can group results by these goals.
+
+| ID | Category | Status | Why it matters | Primary metrics | Current / planned harness | Goal |
+|---|---|---|---|---|---|---|
+| `small_data_startup` | Small-data startup | tracked | Everyday charts should feel instant; a performance library cannot only win at 10M rows. | time-to-first-render, JS payload, Python overhead | `benchmarks/bench_vs.py --ttfr` at 1k-100k | Beat Plotly/Bokeh/Altair on first interactive paint for common charts. |
+| `medium_direct_scatter` | Medium direct scatter | partial | Proves exact marker rendering, hover, color, and size channels before aggregation kicks in. | FPS, TTFR, memory, payload bytes/point, hover latency | `benchmarks/bench_vs.py` at 100k-200k; browser interaction probes planned | Smooth exact WebGL scatter with bounded bytes/point and no JSON-number payload cliff. |
+| `huge_scatter_overview` | Huge scatter overview | tracked | Proves screen-bounded rendering for datasets larger than the browser should draw point-for-point. | ingest/bin time, density payload size, peak memory, TTFR | `bench_scatter_native.py`, `bench_vs.py`, example app assets | Keep resident/render payload flat in N while showing truthful density summaries. |
+| `adaptive_scatter_drilldown` | Adaptive scatter drilldown | planned | The large-data claim needs a credible path from overview to exact visible points. | visible-query latency, tier-switch latency, exact-point recovery, badge accuracy | planned spatial-index/tile benchmark | Exact points when visible count is under budget; sampled/density with explicit counts otherwise. |
+| `huge_line_time_series` | Huge line / time series | tracked | Common observability and finance workload; Plotly-resampler sets the bar here. | decimation time, zoom re-decimation latency, TTFR, extrema preservation | `benchmarks/bench.py`, `bench_native.py` | Screen-bounded line payloads with extrema-preserving decimation and fast zoom refresh. |
+| `many_chart_dashboards` | Many-chart dashboards | planned | Plotly-class apps often fail from total page weight and many live canvases, not one chart. | total TTFR, memory, CPU after idle, number of charts before degradation | planned dashboard benchmark | Load 10-50 interactive charts with lower total memory and faster first usable dashboard than Plotly/Bokeh. |
+| `interaction_smoothness` | Interaction smoothness | planned | Users judge performance by pan/zoom/hover, not just export time. | pan/zoom FPS, wheel latency, hover latency, selection latency | planned browser automation benchmark | Stay responsive during interaction, then refine view after interaction settles. |
+| `payload_export_size` | Payload/export size | tracked | Notebooks, static HTML, docs, and dashboards pay for every byte shipped. | standalone HTML bytes, binary payload bytes, bundle bytes | `bench_vs.py`, `bench_scatter_native.py`, example app asset sizes | Keep data payloads binary and screen-bounded where possible; warn when exact export would be huge. |
+
+Mode labels in benchmark output should stay explicit: `direct`, `decimated`,
+`density`, `sampled`, or `adaptive`. A 10M density result is a real large-data
+visualization result, but it is not the same claim as 10M individually styled
+markers. The benchmark reports should make that distinction impossible to miss.
+
 ## Time to first render (data → pixels)
 
 Byte counts and serialize time are **not** pixels. For the browser-rendered

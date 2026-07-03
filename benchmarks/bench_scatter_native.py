@@ -39,9 +39,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "python" / "fastcharts" / "static"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from abi_smoke import load  # noqa: E402
+from categories import categories_for  # noqa: E402
 
 # Mirror the Python defaults (fastcharts.figure).
 DENSITY_THRESHOLD = 200_000
@@ -73,6 +75,11 @@ def gen(n: int) -> tuple[array, array]:
 def bench_prep(lib, n: int, x: array, y: array) -> dict:
     D, F = ctypes.c_double, ctypes.c_float
     density = n > DENSITY_THRESHOLD
+    category_ids = (
+        ("huge_scatter_overview", "payload_export_size")
+        if density
+        else ("medium_direct_scatter", "payload_export_size")
+    )
     reps = 3 if n <= 2_000_000 else 1
     best = float("inf")
     if density:
@@ -98,6 +105,7 @@ def bench_prep(lib, n: int, x: array, y: array) -> dict:
     return {
         "n": n,
         "tier": tier,
+        "benchmark_categories": [category["id"] for category in categories_for(category_ids)],
         "data_prep_ms": best * 1e3,
         "wire_bytes": wire,
         "wire_bytes_per_point": wire / n,
@@ -106,7 +114,15 @@ def bench_prep(lib, n: int, x: array, y: array) -> dict:
 
 
 def find_chromium() -> str:
-    for c in ("/opt/pw-browsers/chromium", "chromium", "chromium-browser", "google-chrome"):
+    for c in (
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        "/opt/pw-browsers/chromium",
+        "chromium",
+        "chromium-browser",
+        "google-chrome",
+    ):
         if Path(c).is_file() or shutil.which(c):
             return c
     return ""

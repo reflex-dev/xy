@@ -349,14 +349,18 @@ def test_select_and_translate_roundtrip():
 
 
 def test_density_view_rebin_matches_range():
-    n = SCATTER_DENSITY_THRESHOLD + 1
+    # Keep this viewport over the adaptive drill budget; smaller windows now
+    # return exact points instead of a density grid.
+    n = 550_000
     rng = np.random.default_rng(3)
     x = rng.uniform(0, 100, n)
     y = rng.uniform(0, 100, n)
     fig = Figure().scatter(x, y)
-    update, buffers = fig.density_view(0, 40.0, 60.0, 40.0, 60.0, 32, 32)
+    update, buffers = fig.density_view(0, 10.0, 90.0, 20.0, 80.0, 32, 32)
+    assert update["traces"][0]["mode"] == "density"
     grid = np.frombuffer(buffers[0], dtype=np.float32)
-    expect = np.sum((x >= 40) & (x < 60) & (y >= 40) & (y < 60))
+    expect = np.sum((x >= 10) & (x < 90) & (y >= 20) & (y < 80))
+    assert expect > SCATTER_DENSITY_THRESHOLD
     assert grid.sum() == pytest.approx(expect)
 
 

@@ -12,8 +12,9 @@
  *  - GPU picking → exact-row hover tooltip (§7/§17 Tier-0 hover; exact values
  *    come from the kernel's f64 canonical store, §16)
  *  - Tier-2 density surface for massive scatter (§5): a kernel-binned count grid
- *    uploaded as an R32F texture and colormapped at composite time, re-binned on
- *    zoom via a kernel round-trip (stale grid stays drawn until then, §17)
+ *    uploaded as a log-normalized R8 texture and colormapped at composite time,
+ *    re-binned on zoom via a kernel round-trip (stale grid stays drawn until
+ *    then, §17)
  *
  * Dependency-free: this file is the whole client. DOM is used only for chrome —
  * title, axis tick labels, legend, tooltip (§7).
@@ -22,4 +23,3 @@
 "use strict";
 
 const PROTOCOL = 2;
-

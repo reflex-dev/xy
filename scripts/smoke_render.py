@@ -25,6 +25,9 @@ from fastcharts import Figure
 from fastcharts.widget import bundled_js
 
 CHROMIUM_CANDIDATES = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
     "/opt/pw-browsers/chromium",
     "chromium",
     "chromium-browser",

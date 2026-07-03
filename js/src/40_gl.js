@@ -93,9 +93,9 @@ void main() {
 
 // Density (Tier 2): a fullscreen quad; each fragment reconstructs its data-space
 // coordinate from the view range, maps into the grid's data range, samples the
-// count, log-normalizes by the per-view max, and colormaps (§5, §F6). Data
-// outside the grid range is transparent — so a stale grid stays correctly
-// positioned during pan until the re-bin arrives (§17).
+// pre-normalized log-density value, and colormaps (§5, §F6). Data outside the
+// grid range is transparent — so a stale grid stays correctly positioned during
+// pan until the re-bin arrives (§17).
 const DENSITY_VS = `#version 300 es
 in vec2 a_corner;
 uniform vec4 u_view; // x0,x1,y0,y1
@@ -109,18 +109,19 @@ const DENSITY_FS = `#version 300 es
 precision highp float;
 uniform sampler2D u_grid; uniform sampler2D u_lut;
 uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1
-uniform float u_max; uniform float u_opacity;
+uniform float u_opacity;
 in vec2 v_data;
 out vec4 outColor;
 void main() {
   vec2 uv = vec2((v_data.x - u_gridRange.x) / (u_gridRange.y - u_gridRange.x),
                  (v_data.y - u_gridRange.z) / (u_gridRange.w - u_gridRange.z));
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
-  float c = texture(u_grid, uv).r;
-  if (c <= 0.0 || u_max <= 0.0) discard;
-  float t = log(1.0 + c) / log(1.0 + u_max); // eq-hist-ish log scaling (§5)
+  float t = texture(u_grid, uv).r;
+  if (t <= 0.0) discard;
   vec3 rgb = texture(u_lut, vec2(clamp(t, 0.0, 1.0), 0.5)).rgb;
-  outColor = vec4(rgb * u_opacity, u_opacity);
+  float alpha = u_opacity * clamp(t * 1.35, 0.0, 1.0);
+  if (alpha <= 0.01) discard;
+  outColor = vec4(rgb * alpha, alpha);
 }`;
 
 const LINE_VS = `#version 300 es
@@ -155,4 +156,3 @@ void main() {
   if (alpha <= 0.001) discard;
   outColor = vec4(u_color.rgb * alpha, alpha);
 }`;
-

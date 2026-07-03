@@ -8,9 +8,18 @@ import numpy as np
 APP_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = APP_ROOT.parent
 ASSET_DIR = APP_ROOT / "assets" / "charts"
+PLOTLY_SAMPLE_POINTS = 100_000
 
 # Prefer the checkout source when running the example from this repository.
+sys.path.insert(0, str(APP_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "python"))
+
+from reflex_fastcharts_app.live_drilldown import (  # noqa: E402
+    LIVE_SCATTER_POINTS,
+    colored_scatter_data,
+    colored_scatter_figure,
+    live_drilldown_html,
+)
 
 from fastcharts import Figure  # noqa: E402
 
@@ -21,6 +30,50 @@ def write_chart(fig: Figure, name: str) -> None:
     fig.to_html(str(path))
     print(f"wrote {path.relative_to(APP_ROOT)}")
 
+
+def write_live_drilldown_chart(name: str) -> None:
+    ASSET_DIR.mkdir(parents=True, exist_ok=True)
+    path = ASSET_DIR / name
+    path.write_text(live_drilldown_html(), encoding="utf-8")
+    print(f"wrote {path.relative_to(APP_ROOT)}")
+
+
+def write_plotly_chart(name: str) -> None:
+    import plotly.graph_objects as go
+
+    ASSET_DIR.mkdir(parents=True, exist_ok=True)
+    x, y, color, size = colored_scatter_data(PLOTLY_SAMPLE_POINTS)
+    path = ASSET_DIR / name
+    fig = go.Figure(
+        go.Scattergl(
+            x=x.astype(np.float32),
+            y=y.astype(np.float32),
+            mode="markers",
+            marker={
+                "color": color.astype(np.float32),
+                "colorscale": "Viridis",
+                "showscale": True,
+                "size": size.astype(np.float32),
+                "opacity": 0.72,
+            },
+        )
+    )
+    fig.update_layout(
+        title=f"Plotly Scattergl ({PLOTLY_SAMPLE_POINTS // 1_000}k sample)",
+        xaxis_title="feature A",
+        yaxis_title="feature B",
+        template="plotly_white",
+        autosize=True,
+        height=430,
+        margin={"l": 58, "r": 22, "t": 62, "b": 54},
+    )
+    fig.write_html(
+        str(path),
+        config={"displaylogo": False, "responsive": True, "scrollZoom": True},
+        full_html=True,
+        include_plotlyjs=True,
+    )
+    print(f"wrote {path.relative_to(APP_ROOT)}")
 
 def line_walk() -> Figure:
     rng = np.random.default_rng(7)
@@ -38,40 +91,37 @@ def line_walk() -> Figure:
 
 
 def colored_scatter() -> Figure:
-    rng = np.random.default_rng(11)
-    n = 60_000
-    x = rng.normal(0, 1.0, n)
-    y = 0.55 * x + rng.normal(0, 0.55, n)
-    color = np.hypot(x, y)
-    size = np.clip(np.abs(rng.normal(6, 2.5, n)), 2, 16)
-    return Figure(
-        title="60k colored scatter",
-        x_label="feature A",
-        y_label="feature B",
-        width=980,
+    return colored_scatter_figure(
+        LIVE_SCATTER_POINTS,
+        title="10M colored scatter",
+        width="100%",
         height=430,
-    ).scatter(x, y, color=color, size=size, colormap="viridis", opacity=0.72)
+    )
 
 
 def density_scatter() -> Figure:
     rng = np.random.default_rng(23)
-    n = 250_000
-    groups = rng.integers(0, 4, n)
+    n = 10_000_000
     centers = np.array([[-1.4, -0.9], [-0.2, 0.8], [1.0, -0.2], [1.8, 1.1]])
-    noise = rng.normal(0, 0.33, (n, 2))
-    pts = centers[groups] + noise
+    groups = rng.integers(0, len(centers), n, dtype=np.int8)
+    x = centers[groups, 0].astype(np.float64, copy=True)
+    y = centers[groups, 1].astype(np.float64, copy=True)
+    x += rng.normal(0, 0.33, n)
+    y += rng.normal(0, 0.33, n)
     return Figure(
-        title="250k density scatter",
+        title="10M density scatter",
         x_label="x",
         y_label="y",
-        width=980,
+        width="100%",
         height=430,
-    ).scatter(pts[:, 0], pts[:, 1], opacity=0.9)
+    ).scatter(x, y, opacity=0.9)
 
 
 def main() -> None:
+    write_live_drilldown_chart("live_drilldown_10m.html")
     write_chart(line_walk(), "line_walk.html")
     write_chart(colored_scatter(), "colored_scatter.html")
+    write_plotly_chart("plotly_colored_scatter.html")
     write_chart(density_scatter(), "density_scatter.html")
 
 

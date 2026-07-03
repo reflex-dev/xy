@@ -13,8 +13,9 @@
  *  - GPU picking → exact-row hover tooltip (§7/§17 Tier-0 hover; exact values
  *    come from the kernel's f64 canonical store, §16)
  *  - Tier-2 density surface for massive scatter (§5): a kernel-binned count grid
- *    uploaded as an R32F texture and colormapped at composite time, re-binned on
- *    zoom via a kernel round-trip (stale grid stays drawn until then, §17)
+ *    uploaded as a log-normalized R8 texture and colormapped at composite time,
+ *    re-binned on zoom via a kernel round-trip (stale grid stays drawn until
+ *    then, §17)
  *
  * Dependency-free: this file is the whole client. DOM is used only for chrome —
  * title, axis tick labels, legend, tooltip (§7).
@@ -23,7 +24,6 @@
 "use strict";
 
 const PROTOCOL = 2;
-
 // ---------------------------------------------------------------------------
 // Colormaps (§36 — CVD-safe defaults). Compact stop lists; the client
 // interpolates a 256-texel LUT texture once per colormap.
@@ -322,9 +322,9 @@ void main() {
 
 // Density (Tier 2): a fullscreen quad; each fragment reconstructs its data-space
 // coordinate from the view range, maps into the grid's data range, samples the
-// count, log-normalizes by the per-view max, and colormaps (§5, §F6). Data
-// outside the grid range is transparent — so a stale grid stays correctly
-// positioned during pan until the re-bin arrives (§17).
+// pre-normalized log-density value, and colormaps (§5, §F6). Data outside the
+// grid range is transparent — so a stale grid stays correctly positioned during
+// pan until the re-bin arrives (§17).
 const DENSITY_VS = `#version 300 es
 in vec2 a_corner;
 uniform vec4 u_view; // x0,x1,y0,y1
@@ -338,18 +338,19 @@ const DENSITY_FS = `#version 300 es
 precision highp float;
 uniform sampler2D u_grid; uniform sampler2D u_lut;
 uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1
-uniform float u_max; uniform float u_opacity;
+uniform float u_opacity;
 in vec2 v_data;
 out vec4 outColor;
 void main() {
   vec2 uv = vec2((v_data.x - u_gridRange.x) / (u_gridRange.y - u_gridRange.x),
                  (v_data.y - u_gridRange.z) / (u_gridRange.w - u_gridRange.z));
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
-  float c = texture(u_grid, uv).r;
-  if (c <= 0.0 || u_max <= 0.0) discard;
-  float t = log(1.0 + c) / log(1.0 + u_max); // eq-hist-ish log scaling (§5)
+  float t = texture(u_grid, uv).r;
+  if (t <= 0.0) discard;
   vec3 rgb = texture(u_lut, vec2(clamp(t, 0.0, 1.0), 0.5)).rgb;
-  outColor = vec4(rgb * u_opacity, u_opacity);
+  float alpha = u_opacity * clamp(t * 1.35, 0.0, 1.0);
+  if (alpha <= 0.01) discard;
+  outColor = vec4(rgb * alpha, alpha);
 }`;
 
 const LINE_VS = `#version 300 es
@@ -384,7 +385,6 @@ void main() {
   if (alpha <= 0.001) discard;
   outColor = vec4(u_color.rgb * alpha, alpha);
 }`;
-
 // ---------------------------------------------------------------------------
 // ChartView
 // ---------------------------------------------------------------------------
@@ -402,6 +402,9 @@ class ChartView {
     this.spec = spec;
     this.comm = comm;
     this.seq = 0;
+    this._densityStamp = 0;
+    this._viewAnim = null;
+    this._animRaf = null;
     this._lutCache = new Map();
     this._hoverId = -1;
     this.dragMode = "pan"; // "pan" | "zoom" (box zoom); toggled via the modebar
@@ -615,8 +618,8 @@ class ChartView {
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, buildLutData(name));
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     this._lutCache.set(name, tex);
@@ -650,12 +653,15 @@ class ChartView {
     if (t.tier === "density") {
       const d = t.density;
       const grid = new Float32Array(buffer, this.spec.columns[d.buf].byte_offset, d.w * d.h);
+      g.densityNormMax = d.max;
       g.density = {
-        w: d.w, h: d.h, max: d.max, colormap: d.colormap,
+        w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
         xRange: d.x_range, yRange: d.y_range,
-        tex: this._uploadGrid(grid, d.w, d.h),
+        grid: this._copyGrid(grid),
+        tex: this._uploadGrid(grid, d.w, d.h, d.max),
         lut: this._lut(d.colormap),
       };
+      this._rememberDensity(g, g.density);
       return g;
     }
 
@@ -693,16 +699,100 @@ class ChartView {
     return g;
   }
 
-  _uploadGrid(f32, w, h) {
+  _uploadGrid(f32, w, h, maxVal) {
     const gl = this.gl;
     const tex = gl.createTexture();
+    this._writeGridTexture(tex, f32, w, h, maxVal);
+    return tex;
+  }
+
+  _writeGridTexture(tex, f32, w, h, maxVal) {
+    const gl = this.gl;
+    const data = new Uint8Array(f32.length);
+    const denom = Math.log1p(Math.max(0, maxVal || 0));
+    if (denom > 0) {
+      for (let i = 0; i < f32.length; i++) {
+        const c = f32[i];
+        if (c > 0 && Number.isFinite(c)) {
+          data[i] = Math.max(1, Math.min(255, Math.round(255 * Math.log1p(c) / denom)));
+        }
+      }
+    }
     gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, w, h, 0, gl.RED, gl.FLOAT, f32);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    const align = gl.getParameter(gl.UNPACK_ALIGNMENT);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, data);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, align);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    return tex;
+  }
+
+  _copyGrid(f32) {
+    return f32.slice ? f32.slice() : new Float32Array(f32);
+  }
+
+  _densityNormMax(g, nextMax) {
+    if (!Number.isFinite(nextMax) || nextMax <= 0) {
+      g.densityNormMax = 0;
+      return 0;
+    }
+    const prev = Number.isFinite(g.densityNormMax) && g.densityNormMax > 0
+      ? g.densityNormMax
+      : nextMax;
+    // Treat the color scale like exposure: brighten slowly on drill-in so a
+    // smaller density tile does not suddenly go hot, but recover faster when
+    // the incoming tile needs more headroom to avoid clipping.
+    const norm = nextMax > prev
+      ? prev * 0.3 + nextMax * 0.7
+      : Math.max(nextMax, prev * 0.86);
+    g.densityNormMax = norm;
+    return norm;
+  }
+
+  _startDensityNormAnimation(g, start, target) {
+    if (!g.density || !g.density.grid || !Number.isFinite(target) || target <= 0) {
+      g._densityNormAnim = null;
+      return;
+    }
+    const ratio = Math.abs(Math.log(Math.max(start, 1e-12) / Math.max(target, 1e-12)));
+    if (this._prefersReducedMotion() || ratio < 0.02) {
+      g._densityNormAnim = null;
+      g.density.normMax = target;
+      g.densityNormMax = target;
+      this._writeGridTexture(g.density.tex, g.density.grid, g.density.w, g.density.h, target);
+      return;
+    }
+    g._densityNormAnim = {
+      start,
+      target,
+      startedAt: performance.now(),
+      duration: target < start ? 420 : 260,
+    };
+  }
+
+  _stepDensityNorm(g) {
+    const anim = g._densityNormAnim;
+    const d = g.density;
+    if (!anim || !d || !d.grid || !d.tex) return;
+    const t = Math.min(1, Math.max(0, (performance.now() - anim.startedAt) / anim.duration));
+    const k = t * t * (3 - 2 * t);
+    const norm = anim.start + (anim.target - anim.start) * k;
+    const prev = d.normMax || 0;
+    const rel = Math.abs(norm - prev) / Math.max(Math.abs(norm), Math.abs(prev), 1);
+    if (rel > 0.004 || t >= 1) {
+      d.normMax = norm;
+      g.densityNormMax = norm;
+      this._writeGridTexture(d.tex, d.grid, d.w, d.h, norm);
+    }
+    if (t < 1) {
+      this.draw();
+      return;
+    }
+    d.normMax = anim.target;
+    g.densityNormMax = anim.target;
+    g._densityNormAnim = null;
   }
 
   _columnView(buffer, meta) {
@@ -757,6 +847,12 @@ class ChartView {
     });
   }
 
+  _lodFade(start, duration = 140) {
+    if (!start || duration <= 0 || this._prefersReducedMotion()) return 1;
+    const t = Math.min(1, Math.max(0, (performance.now() - start) / duration));
+    return t * t * (3 - 2 * t);
+  }
+
   _drawNow() {
     const gl = this.gl;
     const { x0, x1, y0, y1 } = this.view;
@@ -769,18 +865,31 @@ class ChartView {
 
     for (const g of this.gpuTraces) {
       if (g.tier === "density") {
+        this._stepDensityNorm(g);
         // Drilled-in view (§5): the kernel shipped the window's real points.
         // While the view stays *inside* that window, draw points alone. The
-        // moment a zoom-out/pan leaves it, draw the density overview first (it
-        // discards empty cells and everything outside its range) so the chart
-        // never goes blank waiting for the debounced kernel reply — then the
-        // shrinking point cluster on top. We skip the overview when fully
-        // inside because at deep zoom its coarse cells would paint over the
-        // crisp points.
+        // moment a zoom-out/pan leaves it, the drilled subset is no longer a
+        // valid representation of the viewport. Draw the retained density
+        // overview instead until the kernel sends a fresh subset/grid for the
+        // wider view.
         const d = g.drill;
         const inside = d && this._viewInside(d.win);
-        if (!inside && g.density && g.density.tex) this._drawDensity(g);
-        if (d) this._drawPoints(d, this._map(d.xMeta, x0, x1), this._map(d.yMeta, y0, y1));
+        const density = this._densityForView(g);
+        if (inside) {
+          const fade = this._lodFade(g._drillFadeStart);
+          if (fade < 1 && density && density.tex) {
+            this._drawDensity(g, density, 1 - fade);
+            this._drawPoints(d, this._map(d.xMeta, x0, x1), this._map(d.yMeta, y0, y1), fade);
+            this.draw();
+          } else {
+            g._drillFadeStart = 0;
+            this._drawPoints(d, this._map(d.xMeta, x0, x1), this._map(d.yMeta, y0, y1));
+          }
+        } else if (density && density.tex) {
+          this._drawDensityWithFade(g, density);
+        } else if (d) {
+          this._drawPoints(d, this._map(d.xMeta, x0, x1), this._map(d.yMeta, y0, y1));
+        }
         continue;
       }
       const xm = this._map(g.xMeta, x0, x1);
@@ -808,7 +917,7 @@ class ChartView {
     if (loc >= 0) gl.disableVertexAttribArray(loc);
   }
 
-  _drawPoints(g, xm, ym) {
+  _drawPoints(g, xm, ym, opacityScale = 1) {
     const gl = this.gl;
     const prog = this.pointProg;
     gl.useProgram(prog);
@@ -820,7 +929,7 @@ class ChartView {
     gl.uniform1i(u("u_sizeMode"), g.sizeMode);
     gl.uniform2f(u("u_sizeRange"), g.sizeRange[0], g.sizeRange[1]);
     gl.uniform1i(u("u_colorMode"), g.colorMode);
-    gl.uniform1f(u("u_opacity"), g.trace.style.opacity ?? 0.8);
+    gl.uniform1f(u("u_opacity"), (g.trace.style.opacity ?? 0.8) * opacityScale);
     const [r, gg, b] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, 1);
 
@@ -856,17 +965,16 @@ class ChartView {
     gl.drawArrays(gl.POINTS, 0, g.n);
   }
 
-  _drawDensity(g) {
+  _drawDensity(g, density, opacityScale = 1) {
     const gl = this.gl;
     const prog = this.densityProg;
     gl.useProgram(prog);
     const u = (n) => gl.getUniformLocation(prog, n);
     const { x0, x1, y0, y1 } = this.view;
     gl.uniform4f(u("u_view"), x0, x1, y0, y1);
-    const d = g.density;
+    const d = density || g.density;
     gl.uniform4f(u("u_gridRange"), d.xRange[0], d.xRange[1], d.yRange[0], d.yRange[1]);
-    gl.uniform1f(u("u_max"), d.max);
-    gl.uniform1f(u("u_opacity"), g.trace.style.opacity ?? 1.0);
+    gl.uniform1f(u("u_opacity"), (g.trace.style.opacity ?? 1.0) * opacityScale);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, d.tex);
     gl.uniform1i(u("u_grid"), 0);
@@ -874,11 +982,29 @@ class ChartView {
     gl.bindTexture(gl.TEXTURE_2D, d.lut);
     gl.uniform1i(u("u_lut"), 1);
     const loc = gl.getAttribLocation(prog, "a_corner");
+    const maxAttrs = gl.getParameter(gl.MAX_VERTEX_ATTRIBS);
+    for (let i = 0; i < maxAttrs; i++) gl.disableVertexAttribArray(i);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
     gl.vertexAttribDivisor(loc, 0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+
+  _drawDensityWithFade(g, density) {
+    const fade = density === g.density ? this._lodFade(g._densityFadeStart) : 1;
+    const prev = g.prevDensity;
+    if (fade < 1 && prev && prev.tex && this._viewInsideRange(prev.xRange, prev.yRange)) {
+      this._drawDensity(g, prev, 1 - fade);
+      this._drawDensity(g, density, fade);
+      this.draw();
+      return;
+    }
+    if (fade >= 1) {
+      g.prevDensity = null;
+      g._densityFadeStart = 0;
+    }
+    this._drawDensity(g, density);
   }
 
   _drawLine(g, xm, ym) {
@@ -982,7 +1108,9 @@ class ChartView {
     for (const g of this.gpuTraces) {
       // Density traces pick only while drilled to points (§5); the drill
       // sibling carries the buffers, the host g keeps the slot → trace id.
-      const pg = g.tier === "density" ? g.drill : g.trace.kind === "scatter" ? g : null;
+      const pg = g.tier === "density"
+        ? (g.drill && this._viewInside(g.drill.win) ? g.drill : null)
+        : (g.trace.kind === "scatter" ? g : null);
       if (!pg || !pg.n) { g.pickSlot = -1; continue; } // stale slots must not alias
       const xm = this._map(pg.xMeta, x0, x1);
       const ym = this._map(pg.yMeta, y0, y1);
@@ -1107,6 +1235,7 @@ class ChartView {
     };
 
     c.addEventListener("pointerdown", (e) => {
+      this._cancelViewAnimation();
       // Shift-drag box-selects (§34); a "zoom" modebar toggle turns a plain drag
       // into a box-zoom; otherwise a plain drag pans.
       const mode = e.shiftKey && this._pickable ? "select"
@@ -1141,7 +1270,7 @@ class ChartView {
         const d1 = dataAt(e.clientX, e.clientY);
         const moved = Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
         if (moved) {
-          if (band.mode === "zoom") this._zoomToBox(band.d0, d1);
+          if (band.mode === "zoom") this._zoomToBox(band.d0, d1, true);
           else this._sendSelect(band.d0, d1);
         }
         band = null;
@@ -1160,27 +1289,12 @@ class ChartView {
       const r = c.getBoundingClientRect();
       const fx = (e.clientX - r.left) / r.width;
       const fy = 1 - (e.clientY - r.top) / r.height;
-      const { x0, x1, y0, y1 } = this.view;
-      const ax = x0 + fx * (x1 - x0);
-      const ay = y0 + fy * (y1 - y0);
-      if (f < 1) {
-        const minSpanX = Math.max(Math.abs(ax), 1e-30) * 1e-12;
-        const minSpanY = Math.max(Math.abs(ay), 1e-30) * 1e-12;
-        if ((x1 - x0) * f < minSpanX || (y1 - y0) * f < minSpanY) return;
-      }
-      this.view = {
-        x0: ax - (ax - x0) * f, x1: ax + (x1 - ax) * f,
-        y0: ay - (ay - y0) * f, y1: ay + (y1 - ay) * f,
-      };
-      this.draw();
-      this._scheduleViewRequest();
+      this._zoomAt(f, fx, fy, true, 95);
     }, { passive: false });
 
     c.addEventListener("dblclick", () => {
-      this.view = { ...this.view0 };
       this._clearSelection();
-      this.draw();
-      this._scheduleViewRequest();
+      this._setView(this.view0, { animate: true });
     });
   }
 
@@ -1263,12 +1377,15 @@ class ChartView {
   _buildModebar(root) {
     if (this.spec.show_modebar === false) return;
     const bar = document.createElement("div");
-    // Faint until hover, like Plotly's — chrome shouldn't compete with data (§7).
+    // Visible by default, then stronger on hover. At .25 opacity the controls
+    // were technically present but easy to miss in embedded dashboards.
     bar.style.cssText =
-      `position:absolute;top:${this.plot.y + 4}px;right:${MARGIN.r + 4}px;z-index:6;` +
-      "display:flex;gap:1px;opacity:.25;transition:opacity .15s;";
+      `position:absolute;top:${this.plot.y + 4}px;left:${this.plot.x + 4}px;z-index:6;` +
+      "display:flex;gap:1px;opacity:.72;transition:opacity .15s;" +
+      "background:rgba(255,255,255,.78);border:1px solid rgba(128,128,128,.18);" +
+      "border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08);";
     root.addEventListener("pointerenter", () => { bar.style.opacity = "1"; });
-    root.addEventListener("pointerleave", () => { bar.style.opacity = ".25"; });
+    root.addEventListener("pointerleave", () => { bar.style.opacity = ".72"; });
     this._modebar = bar;
     this._modeBtns = {};
 
@@ -1289,15 +1406,13 @@ class ChartView {
       return b;
     };
 
-    mk("zoomin", "Zoom in", () => this._zoomBy(0.5));
-    mk("zoomout", "Zoom out", () => this._zoomBy(2));
+    mk("zoomin", "Zoom in", () => this._zoomBy(0.5, true));
+    mk("zoomout", "Zoom out", () => this._zoomBy(2, true));
     mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
     mk("zoom", "Box zoom", () => this._setDragMode("zoom"), "zoom");
     mk("reset", "Reset view", () => {
-      this.view = { ...this.view0 };
       this._clearSelection();
-      this.draw();
-      this._scheduleViewRequest();
+      this._setView(this.view0, { animate: true });
     });
     root.appendChild(bar);
     this._setDragMode(this.dragMode);
@@ -1312,35 +1427,99 @@ class ChartView {
     }
   }
 
+  _prefersReducedMotion() {
+    return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+  }
+
+  _cancelViewAnimation() {
+    if (this._animRaf) cancelAnimationFrame(this._animRaf);
+    this._animRaf = null;
+    this._viewAnim = null;
+  }
+
+  _setView(next, opts = {}) {
+    const target = { x0: next.x0, x1: next.x1, y0: next.y0, y1: next.y1 };
+    const animate = opts.animate === true && !this._prefersReducedMotion();
+    const duration = opts.duration || 180;
+    if (!animate || duration <= 0) {
+      this._cancelViewAnimation();
+      this.view = target;
+      this.draw();
+      if (opts.request !== false) this._scheduleViewRequest();
+      return;
+    }
+
+    this._cancelViewAnimation();
+    clearTimeout(this._viewTimer);
+    const start = { ...this.view };
+    const startTime = performance.now();
+    this._viewAnim = { start, target };
+    const ease = (t) => 1 - Math.pow(1 - t, 3);
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const step = (now) => {
+      const t = Math.min(1, (now - startTime) / duration);
+      const k = ease(t);
+      this.view = {
+        x0: lerp(start.x0, target.x0, k),
+        x1: lerp(start.x1, target.x1, k),
+        y0: lerp(start.y0, target.y0, k),
+        y1: lerp(start.y1, target.y1, k),
+      };
+      this.draw();
+      if (t < 1) {
+        this._animRaf = requestAnimationFrame(step);
+      } else {
+        this._animRaf = null;
+        this._viewAnim = null;
+        this.view = target;
+        if (opts.request !== false) this._scheduleViewRequest();
+      }
+    };
+    this._animRaf = requestAnimationFrame(step);
+  }
+
   // Center-anchored zoom (f<1 in, f>1 out) — the modebar buttons; wheel is
   // cursor-anchored. Shares the §16 precision floor so we never zoom past f32.
-  _zoomBy(f) {
-    const { x0, x1, y0, y1 } = this.view;
+  _zoomBy(f, animate = false) {
+    const base = this._viewAnim ? this._viewAnim.target : this.view;
+    const { x0, x1, y0, y1 } = base;
     const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
     if (f < 1) {
       const minSpanX = Math.max(Math.abs(cx), 1e-30) * 1e-12;
       const minSpanY = Math.max(Math.abs(cy), 1e-30) * 1e-12;
       if ((x1 - x0) * f < minSpanX || (y1 - y0) * f < minSpanY) return;
     }
-    this.view = {
+    this._setView({
       x0: cx - (cx - x0) * f, x1: cx + (x1 - cx) * f,
       y0: cy - (cy - y0) * f, y1: cy + (y1 - cy) * f,
-    };
-    this.draw();
-    this._scheduleViewRequest();
+    }, { animate });
+  }
+
+  _zoomAt(f, fx, fy, animate = false, duration = 120) {
+    const base = this._viewAnim ? this._viewAnim.target : this.view;
+    const { x0, x1, y0, y1 } = base;
+    const ax = x0 + fx * (x1 - x0);
+    const ay = y0 + fy * (y1 - y0);
+    if (f < 1) {
+      const minSpanX = Math.max(Math.abs(ax), 1e-30) * 1e-12;
+      const minSpanY = Math.max(Math.abs(ay), 1e-30) * 1e-12;
+      if ((x1 - x0) * f < minSpanX || (y1 - y0) * f < minSpanY) return;
+    }
+    this._setView({
+      x0: ax - (ax - x0) * f, x1: ax + (x1 - ax) * f,
+      y0: ay - (ay - y0) * f, y1: ay + (y1 - ay) * f,
+    }, { animate, duration });
   }
 
   // Box-zoom: fit the view to the dragged data rectangle (§16 precision floor;
   // ignore degenerate drags that would collapse a span below f32 resolution).
-  _zoomToBox(d0, d1) {
+  _zoomToBox(d0, d1, animate = false) {
     const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
     const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
     const minSpanX = Math.max(Math.abs(x0), Math.abs(x1), 1e-30) * 1e-12;
     const minSpanY = Math.max(Math.abs(y0), Math.abs(y1), 1e-30) * 1e-12;
     if (x1 - x0 < minSpanX || y1 - y0 < minSpanY) return;
-    this.view = { x0, x1, y0, y1 };
-    this.draw();
-    this._scheduleViewRequest();
+    this._setView({ x0, x1, y0, y1 }, { animate });
   }
 
   _icon(name) {
@@ -1434,17 +1613,28 @@ class ChartView {
       }
       this.draw();
     } else if (msg.type === "density_update") {
+      if (msg.seq !== undefined && msg.seq !== this.seq) return;
       for (const upd of msg.traces) {
         const g = this.gpuTraces.find((t) => t.trace.id === upd.id && t.tier === "density");
         if (!g) continue;
         if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }
         this._dropDrill(g); // window over budget again → back to the aggregate
         const d = upd.density;
-        const grid = this._asF32(buffers[d.buf]);
-        this.gl.deleteTexture(g.density.tex);
-        g.density.tex = this._uploadGrid(grid, d.w, d.h);
-        g.density.w = d.w; g.density.h = d.h; g.density.max = d.max;
-        g.density.xRange = d.x_range; g.density.yRange = d.y_range;
+        const grid = this._copyGrid(this._asF32(buffers[d.buf]));
+        const normStart = this._densityNormMax(g, d.max);
+        const normMax = this._prefersReducedMotion() ? d.max : normStart;
+        g.densityNormMax = normMax;
+        g.prevDensity = g.density;
+        g._densityFadeStart = performance.now();
+        g.density = {
+          w: d.w, h: d.h, max: d.max, normMax, colormap: d.colormap || g.density.colormap,
+          xRange: d.x_range, yRange: d.y_range,
+          grid,
+          tex: this._uploadGrid(grid, d.w, d.h, normMax),
+          lut: g.density.lut,
+        };
+        this._startDensityNormAnimation(g, normMax, d.max);
+        this._rememberDensity(g, g.density);
       }
       // Drill state changes what's pickable; hover needs the FBO ready.
       this._pickable = this.gpuTraces.some(
@@ -1523,6 +1713,7 @@ class ChartView {
       gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.size.buf]), gl.STATIC_DRAW);
       d.sizeRange = upd.size.range_px;
     }
+    g._drillFadeStart = performance.now();
   }
 
   // Is the current view fully covered by a drilled window? A tiny epsilon
@@ -1535,12 +1726,57 @@ class ChartView {
     return x0 >= win.x0 - ex && x1 <= win.x1 + ex && y0 >= win.y0 - ey && y1 <= win.y1 + ey;
   }
 
+  _viewInsideRange(xRange, yRange) {
+    if (!xRange || !yRange) return false;
+    return this._viewInside({ x0: xRange[0], x1: xRange[1], y0: yRange[0], y1: yRange[1] });
+  }
+
+  _densityArea(d) {
+    return Math.abs((d.xRange[1] - d.xRange[0]) * (d.yRange[1] - d.yRange[0]));
+  }
+
+  _densityForView(g) {
+    const cache = g.densityCache || (g.density ? [g.density] : []);
+    let best = null;
+    for (const d of cache) {
+      if (!d || !d.tex || !this._viewInsideRange(d.xRange, d.yRange)) continue;
+      if (!best || this._densityArea(d) < this._densityArea(best)) best = d;
+    }
+    return best || g.density;
+  }
+
+  _rememberDensity(g, d) {
+    if (!d || !d.tex) return;
+    d._stamp = ++this._densityStamp;
+    if (!g.densityCache) g.densityCache = [];
+    if (!g.densityCache.includes(d)) g.densityCache.push(d);
+    const maxCached = 8;
+    while (g.densityCache.length > maxCached) {
+      let drop = -1;
+      for (let i = 0; i < g.densityCache.length; i++) {
+        const cand = g.densityCache[i];
+        if (cand === g.density) continue;
+        if (cand === g.prevDensity) continue;
+        if (drop < 0) { drop = i; continue; }
+        const dropArea = this._densityArea(g.densityCache[drop]);
+        const candArea = this._densityArea(cand);
+        if (candArea < dropArea || (candArea === dropArea && cand._stamp < g.densityCache[drop]._stamp)) {
+          drop = i;
+        }
+      }
+      if (drop < 0) break;
+      const old = g.densityCache.splice(drop, 1)[0];
+      if (old !== g.density && old !== g.prevDensity) this.gl.deleteTexture(old.tex);
+    }
+  }
+
   _dropDrill(g) {
     const d = g.drill;
     if (!d) return;
     const gl = this.gl;
     for (const b of [d.xBuf, d.yBuf, d.cBuf, d.sBuf, d.selBuf]) if (b) gl.deleteBuffer(b);
     g.drill = null;
+    g._drillFadeStart = 0;
   }
 
   _asF32(b) {
@@ -1578,10 +1814,19 @@ class ChartView {
     this._themeWatch?.removeEventListener?.("change", this._onScheme);
     clearTimeout(this._viewTimer);
     if (this._raf) cancelAnimationFrame(this._raf);
+    this._cancelViewAnimation();
+    for (const g of this.gpuTraces || []) {
+      const seen = new Set();
+      for (const d of g.densityCache || []) {
+        if (d && d.tex && !seen.has(d.tex)) {
+          seen.add(d.tex);
+          this.gl.deleteTexture(d.tex);
+        }
+      }
+    }
     this.root.remove();
   }
 }
-
 // ---------------------------------------------------------------------------
 // Entry points
 // ---------------------------------------------------------------------------

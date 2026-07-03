@@ -55,6 +55,11 @@ from typing import Any, Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _browser import first_paint_ms  # noqa: E402
+from categories import (  # noqa: E402
+    BENCHMARK_CATEGORIES,
+    categories_for,
+    markdown_category_table,
+)
 
 try:
     import numpy as np
@@ -70,6 +75,12 @@ except Exception:
 
 RENDER_W, RENDER_H = 900, 420
 DPI = 100
+BENCH_VS_CATEGORY_IDS = (
+    "small_data_startup",
+    "medium_direct_scatter",
+    "huge_scatter_overview",
+    "payload_export_size",
+)
 
 
 def _rss_mb() -> float | None:
@@ -447,6 +458,8 @@ def run(
     return {
         "sizes": sizes,
         "budget_s": budget_s,
+        "benchmark_categories": list(BENCHMARK_CATEGORIES),
+        "tracked_categories": categories_for(BENCH_VS_CATEGORY_IDS),
         "results": results,
         "ceilings": ceilings,
         "ttfr": ttfr,
@@ -500,6 +513,23 @@ def to_markdown(report: dict) -> str:
         env.append("RSS via psutil")
     if env:
         lines += [", ".join(env), ""]
+
+    lines += [
+        "## Tracked benchmark categories",
+        "",
+    ]
+    lines += markdown_category_table(report.get("benchmark_categories", BENCHMARK_CATEGORIES))
+    lines += [
+        "",
+        "This run currently exercises: "
+        + ", ".join(f"`{category['id']}`" for category in report["tracked_categories"])
+        + ".",
+        "",
+        "Mode labels should stay explicit in benchmark interpretation: `direct`, "
+        "`decimated`, `density`, `sampled`, or `adaptive`. A 10M density result "
+        "is not the same claim as 10M individually styled markers.",
+        "",
+    ]
 
     lines += [f"## Ceiling — largest N rendered under {report['budget_s']:.0f}s budget", ""]
     lines += ["| library | max points |", "|---|---|"]
