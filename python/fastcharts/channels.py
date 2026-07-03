@@ -131,9 +131,9 @@ def resolve_size(size: Any, n: int, *, range_px: tuple[float, float] = (2.0, 18.
 
 def normalize_to_unit(values: npt.NDArray[np.float64], domain: tuple[float, float]) -> np.ndarray:
     """Map values to [0,1] over `domain` (for continuous color/size upload).
-    NaN → 0 so it never poisons a vertex (§19); the validity story tightens with
-    real bitmaps later."""
+    Non-finite (NaN, ±inf) → domain floor so it never poisons a vertex (§19);
+    the validity story tightens with real bitmaps later."""
     lo, hi = domain
     span = hi - lo if hi > lo else 1.0
-    out = (np.nan_to_num(values, nan=lo) - lo) / span
-    return np.clip(out, 0.0, 1.0)
+    safe = np.where(np.isfinite(values), values, lo)
+    return np.clip((safe - lo) / span, 0.0, 1.0)
