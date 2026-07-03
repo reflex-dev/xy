@@ -155,6 +155,42 @@ def test_min_max(impl):
     assert impl.min_max(np.array([], dtype=np.float64)) is None
 
 
+# -- 2D density binning (§5 Tier 2) ------------------------------------------
+
+
+def test_bin_2d_conserves_and_places(impl):
+    x = np.array([0.25, 0.75, 0.25, 0.75])
+    y = np.array([0.25, 0.25, 0.75, 0.75])
+    grid = impl.bin_2d(x, y, 0.0, 1.0, 0.0, 1.0, 2, 2)
+    assert grid.shape == (2, 2)
+    assert grid.sum() == 4.0
+    # row 0 = bottom (GL convention)
+    assert grid[0, 0] == 1.0 and grid[1, 1] == 1.0
+
+
+def test_bin_2d_skips_nan_and_outside(impl):
+    x = np.array([0.5, np.nan, 5.0, -1.0])
+    y = np.array([0.5, 0.5, 0.5, 0.5])
+    grid = impl.bin_2d(x, y, 0.0, 1.0, 0.0, 1.0, 1, 1)
+    assert grid[0, 0] == 1.0
+
+
+def test_bin_2d_hotspot(impl):
+    x = np.concatenate([np.full(1000, 0.1), np.array([0.9])])
+    y = np.concatenate([np.full(1000, 0.1), np.array([0.9])])
+    grid = impl.bin_2d(x, y, 0.0, 1.0, 0.0, 1.0, 2, 2)
+    assert grid.max() == 1000.0
+    assert grid.sum() == 1001.0
+
+
+def test_bin_2d_invalid_args(impl):
+    x = np.arange(10.0)
+    with pytest.raises(ValueError):
+        impl.bin_2d(x, x, 0.0, 0.0, 0.0, 1.0, 4, 4)
+    with pytest.raises(ValueError):
+        impl.bin_2d(x, x, 0.0, 1.0, 0.0, 1.0, 0, 4)
+
+
 # -- native/fallback parity (§33: the fallback is semantically identical) ------
 
 
@@ -177,3 +213,10 @@ def test_backends_agree():
     for a, b in zip(_native.zone_maps(x, 4096), _fallback.zone_maps(x, 4096)):
         np.testing.assert_allclose(a, b)
     assert _native.min_max(y) == _fallback.min_max(y)
+
+    xr = rng.uniform(0, 100, 30_000)
+    yr = rng.uniform(0, 100, 30_000)
+    np.testing.assert_array_equal(
+        _native.bin_2d(xr, yr, 5.0, 95.0, 5.0, 95.0, 128, 96),
+        _fallback.bin_2d(xr, yr, 5.0, 95.0, 5.0, 95.0, 128, 96),
+    )

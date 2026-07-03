@@ -167,6 +167,59 @@ pub fn m4_indices(x: &[f64], y: &[f64], x0: f64, x1: f64, n_buckets: usize) -> V
     out
 }
 
+/// 2D density aggregation (§5 Tier 2): additively bin points into a `w × h`
+/// grid over `[x0, x1) × [y0, y1)`, one count per cell. Points with NaN in
+/// either coordinate, or outside the viewport, are skipped. Output is f32
+/// (ready for direct texture upload; colormapping happens at composite time on
+/// the client, so restyle never re-bins — §5).
+///
+/// `out` must be `w * h` long; it is fully overwritten (zeroed then filled).
+/// Row-major, row 0 = bottom (`y0`), matching GL texture coordinates.
+///
+/// This is the "bin the visible window" path (datashader's interactive model,
+/// §5 research): O(visible points) per viewport change, screen-bounded output.
+/// The live tile pyramid that makes pan/zoom O(visible tiles) is a later
+/// milestone; this is the correct, honest Tier-2 MVP.
+pub fn bin_2d(
+    x: &[f64],
+    y: &[f64],
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    out: &mut [f32],
+) {
+    assert_eq!(x.len(), y.len());
+    assert_eq!(out.len(), w * h);
+    assert!(w > 0 && h > 0 && x1 > x0 && y1 > y0);
+    for c in out.iter_mut() {
+        *c = 0.0;
+    }
+    let sx = w as f64 / (x1 - x0);
+    let sy = h as f64 / (y1 - y0);
+    for i in 0..x.len() {
+        let xv = x[i];
+        let yv = y[i];
+        if xv.is_nan() || yv.is_nan() || xv < x0 || xv >= x1 || yv < y0 || yv >= y1 {
+            continue;
+        }
+        let cx = ((xv - x0) * sx) as usize;
+        let cy = ((yv - y0) * sy) as usize;
+        // Guard the top/right edge against f64 rounding landing exactly on w/h.
+        let cx = cx.min(w - 1);
+        let cy = cy.min(h - 1);
+        out[cy * w + cx] += 1.0;
+    }
+}
+
+/// Max value over an f32 grid — the per-view normalization domain for
+/// colormapping (§5 F6: recomputed per view so zoom doesn't flicker brightness).
+pub fn grid_max(grid: &[f32]) -> f32 {
+    grid.iter().copied().fold(0.0f32, f32::max)
+}
+
 /// Min/max over a slice, NaN-skipping — the autorange primitive when zone maps
 /// aren't available (they make this O(chunks), §22).
 pub fn min_max(data: &[f64]) -> Option<(f64, f64)> {
@@ -289,5 +342,60 @@ mod tests {
         assert_eq!(min_max(&[f64::NAN, 2.0, -1.0]), Some((-1.0, 2.0)));
         assert_eq!(min_max(&[f64::NAN]), None);
         assert_eq!(min_max(&[]), None);
+    }
+
+    #[test]
+    fn bin_2d_counts_and_conserves() {
+        // 4 points, one per quadrant of a 2×2 grid over the unit square.
+        let x = [0.25, 0.75, 0.25, 0.75];
+        let y = [0.25, 0.25, 0.75, 0.75];
+        let mut out = vec![0.0f32; 4];
+        bin_2d(&x, &y, 0.0, 1.0, 0.0, 1.0, 2, 2, &mut out);
+        assert_eq!(out, vec![1.0, 1.0, 1.0, 1.0]);
+        // Total count conserved.
+        assert_eq!(out.iter().sum::<f32>(), 4.0);
+    }
+
+    #[test]
+    fn bin_2d_row0_is_bottom() {
+        // A point low in y must land in row 0 (GL texture convention).
+        let x = [0.5];
+        let y = [0.1];
+        let mut out = vec![0.0f32; 4]; // 2 wide, 2 tall
+        bin_2d(&x, &y, 0.0, 1.0, 0.0, 1.0, 2, 2, &mut out);
+        assert_eq!(out[0] + out[1], 1.0); // bottom row
+        assert_eq!(out[2] + out[3], 0.0); // top row empty
+    }
+
+    #[test]
+    fn bin_2d_skips_nan_and_outside() {
+        let x = [0.5, f64::NAN, 5.0, -1.0];
+        let y = [0.5, 0.5, 0.5, 0.5];
+        let mut out = vec![0.0f32; 1];
+        bin_2d(&x, &y, 0.0, 1.0, 0.0, 1.0, 1, 1, &mut out);
+        assert_eq!(out[0], 1.0); // only the in-range, non-NaN point
+    }
+
+    #[test]
+    fn bin_2d_edge_rounding() {
+        // A point exactly on the top/right edge must not write out of bounds.
+        let x = [1.0 - f64::EPSILON, 0.999999];
+        let y = [0.999999, 1.0 - f64::EPSILON];
+        let mut out = vec![0.0f32; 16]; // 4×4
+        bin_2d(&x, &y, 0.0, 1.0, 0.0, 1.0, 4, 4, &mut out);
+        assert_eq!(out.iter().sum::<f32>(), 2.0);
+    }
+
+    #[test]
+    fn bin_2d_density_hotspot() {
+        // A cluster in one cell should dominate grid_max.
+        let mut x = vec![0.1; 1000];
+        let mut y = vec![0.1; 1000];
+        x.extend((0..10).map(|i| 0.5 + i as f64 * 0.001));
+        y.extend((0..10).map(|_| 0.9));
+        let mut out = vec![0.0f32; 100]; // 10×10
+        bin_2d(&x, &y, 0.0, 1.0, 0.0, 1.0, 10, 10, &mut out);
+        assert_eq!(grid_max(&out), 1000.0);
+        assert_eq!(out.iter().sum::<f32>(), 1010.0);
     }
 }

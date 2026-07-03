@@ -17,7 +17,7 @@ import sys
 from array import array
 from pathlib import Path
 
-ABI_VERSION = 1
+ABI_VERSION = 2
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -55,6 +55,10 @@ def load() -> ctypes.CDLL:
     lib.fc_zone_maps.argtypes = [F64P, ctypes.c_size_t, ctypes.c_size_t] + [F64P, F64P, U64P, U64P, F64P, F64P]
     lib.fc_min_max.restype = ctypes.c_int32
     lib.fc_min_max.argtypes = [F64P, ctypes.c_size_t, F64P, F64P]
+    D = ctypes.c_double
+    Z = ctypes.c_size_t
+    lib.fc_bin_2d.restype = ctypes.c_int32
+    lib.fc_bin_2d.argtypes = [F64P, F64P, Z, D, D, D, D, Z, Z, F32P]
     return lib
 
 
@@ -142,6 +146,27 @@ def main() -> None:
     allnan = array("d", [float("nan")])
     ok(lib.fc_min_max(_ptr(allnan, ctypes.c_double), 1, ctypes.byref(lo), ctypes.byref(hi)) == 0,
        "min_max all-NaN returns 0")
+
+    # bin_2d: 4 points, one per quadrant of a 2×2 grid; count conserved, row0 bottom.
+    bx = array("d", [0.25, 0.75, 0.25, 0.75])
+    by = array("d", [0.25, 0.25, 0.75, 0.75])
+    grid = array("f", [0.0]) * 4
+    got = lib.fc_bin_2d(
+        _ptr(bx, ctypes.c_double), _ptr(by, ctypes.c_double), 4,
+        0.0, 1.0, 0.0, 1.0, 2, 2, _ptr(grid, ctypes.c_float),
+    )
+    ok(got == 1, "bin_2d ok flag")
+    ok(list(grid) == [1.0, 1.0, 1.0, 1.0], "bin_2d one per quadrant")
+    ok(sum(grid) == 4.0, "bin_2d conserves count")
+    # A dense cluster in one cell dominates.
+    cx = array("d", [0.1] * 500 + [0.9])
+    cy = array("d", [0.1] * 500 + [0.9])
+    g2 = array("f", [0.0]) * 4
+    lib.fc_bin_2d(
+        _ptr(cx, ctypes.c_double), _ptr(cy, ctypes.c_double), 501,
+        0.0, 1.0, 0.0, 1.0, 2, 2, _ptr(g2, ctypes.c_float),
+    )
+    ok(g2[0] == 500.0 and g2[3] == 1.0, "bin_2d density hotspot")
 
     print(f"ABI smoke: {checks} checks passed against {_lib_name()}")
 

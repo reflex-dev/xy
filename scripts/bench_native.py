@@ -77,12 +77,23 @@ def bench(lib, n: int) -> dict:  # noqa: ANN001
     ))
     zoom_ms = t * 1e3
 
+    # bin_2d: the Tier-2 scatter aggregation cost (§5). 512×384 grid.
+    gw, gh = 512, 384
+    grid = array("f", bytes(4 * gw * gh))
+    t = timeit(lambda: lib.fc_bin_2d(
+        _ptr(x, D), _ptr(y, D), n, 0.0, float(n), -3.0, 3.0, gw, gh, _ptr(grid, F)
+    ))
+    bin_mpts = n / t / 1e6
+    bin_ms = t * 1e3
+
     return {
         "n": n,
         "encode_mpts_s": encode_mpts,
         "zone_maps_mpts_s": zone_mpts,
         "m4_full_mpts_s": m4_mpts,
         "zoom_redecimate_ms": zoom_ms,
+        "bin_2d_mpts_s": bin_mpts,
+        "bin_2d_ms": bin_ms,
     }
 
 
@@ -93,13 +104,14 @@ def main() -> None:
     sizes = [int(float(s)) for s in args.sizes.split(",")]
     lib = load()
 
-    print("| points | encode f32 | zone maps | M4 (full) | zoom re-decimate (1% window) |")
-    print("|---|---|---|---|---|")
+    print("| points | encode f32 | zone maps | M4 (full) | zoom re-decimate | bin_2d (Tier2) |")
+    print("|---|---|---|---|---|---|")
     for n in sizes:
         r = bench(lib, n)
         print(
             f"| {r['n']:,} | {r['encode_mpts_s']:.0f} Mpt/s | {r['zone_maps_mpts_s']:.0f} Mpt/s "
-            f"| {r['m4_full_mpts_s']:.0f} Mpt/s | {r['zoom_redecimate_ms']:.2f} ms |"
+            f"| {r['m4_full_mpts_s']:.0f} Mpt/s | {r['zoom_redecimate_ms']:.2f} ms "
+            f"| {r['bin_2d_mpts_s']:.0f} Mpt/s ({r['bin_2d_ms']:.0f} ms) |"
         )
 
 

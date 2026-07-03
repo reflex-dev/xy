@@ -8,8 +8,8 @@ changes — GPU rendering (not one SVG node per point), binary columnar transpor
 and a multi-tier level-of-detail system that never ships or draws more
 primitives than the screen can show.
 
-**Status: Phase 0** (of the dossier's §11/§25/§35 milestones) — prove the
-memory/scale thesis end to end.
+**Status: Phase 0 complete + full scatter chart** (Tier-0 direct through Tier-2
+density, per the dossier's §5/§11 scatter contract).
 
 ```python
 import numpy as np
@@ -69,6 +69,36 @@ Python process                          Browser
   re-decimation of only the visible window on zoom. Tiers 2/3 (density pyramid,
   out-of-core) are Phases 2/4.
 
+## Scatter — a full chart type (§5, §28, §36c)
+
+```python
+# constant, continuous colormap, or categorical palette — auto-detected
+fig.scatter(x, y, color=values, colormap="viridis")   # continuous → LUT
+fig.scatter(x, y, color=labels)                        # strings → palette
+fig.scatter(x, y, size=weights, size_range=(3, 20))    # per-point size
+
+# 30M points: auto-switches to a Tier-2 density surface (kernel-binned count
+# grid, colormapped on the GPU, re-binned on zoom). Screen-bounded VRAM.
+fig.scatter(bigx, bigy)          # density kicks in above ~200k points
+fig.scatter(bigx, bigy, density=True)   # or force it
+```
+
+- **Color**: a CSS string (constant), a numeric array (continuous → colormap
+  LUT), or a categorical array (factorized → CVD-safe palette). Ships as **one
+  f32 per point + a LUT** — never per-point RGBA — so a colored, sized scatter
+  is ~16 B/pt on the wire (§2 "typical ≤ 24 B/pt").
+- **Hover**: GPU picking (an ID texture + 1-pixel readback, O(1) regardless of
+  point count) resolves which point; the exact row is read from the **f64
+  canonical store** kernel-side (§16) and shown in a DOM tooltip. Standalone
+  HTML decodes the resident f32 for an approximate readout with no kernel.
+- **Tier-2 density** (§5): above the density threshold the kernel bins the
+  viewport into a count grid (`bin_2d`), ships it as one f32 buffer, and the
+  client uploads it as an R32F texture and log-colormaps it — normalization
+  domain recomputed per view so brightness is stable on zoom (§F6). Pan/zoom
+  triggers a kernel re-bin of the visible window; the stale grid stays drawn
+  until it arrives (§17). Dropping per-point color under aggregation is
+  reported (`channels_dropped`), never silent (§28).
+
 ## Development
 
 Requires Rust (stable), Python ≥ 3.9 with [uv](https://docs.astral.sh/uv/), Node ≥ 18 (build script only — no npm packages).
@@ -100,17 +130,17 @@ Native-kernel throughput, measured (`scripts/bench_native.py`, single-threaded
 scalar Rust — SIMD and worker threads are Phase 1; one dev machine, so treat as
 order-of-magnitude, not a spec):
 
-| points | encode f32 | zone maps | M4 (full range) | zoom re-decimate (1% window) |
-|---|---|---|---|---|
-| 100 k | 1580 Mpt/s | 386 Mpt/s | 251 Mpt/s | 0.01 ms |
-| 1 M | 1090 Mpt/s | 376 Mpt/s | 260 Mpt/s | 0.06 ms |
-| 10 M | 930 Mpt/s | 369 Mpt/s | 258 Mpt/s | 0.39 ms |
+| points | encode f32 | zone maps | M4 (full) | zoom re-decimate | Tier-2 bin (512×384) |
+|---|---|---|---|---|---|
+| 1 M | 1410 Mpt/s | 400 Mpt/s | 253 Mpt/s | 0.05 ms | 166 Mpt/s (6 ms) |
+| 10 M | 890 Mpt/s | 372 Mpt/s | 249 Mpt/s | 0.40 ms | 163 Mpt/s (61 ms) |
 
-The last column is the interaction that matters: re-decimating the visible
-window on zoom (§28) costs **0.39 ms for 10M points** — ~250× under the §17
-100–300 ms budget, before any SIMD. `scripts/bench.py` adds the full
-figure→payload path once numpy installs; CI publishes both per commit. No
-universal claims — see dossier §2/§31.
+Two interactions that matter: re-decimating a line's visible window on zoom
+(§28) is **0.40 ms for 10M points** (~250× under the §17 100–300 ms budget), and
+binning 10M scatter points into a Tier-2 density grid is **61 ms** — a full
+first paint, before any SIMD or the progressive-refinement coarse pass (§17).
+`scripts/bench.py` adds the full figure→payload path once numpy installs; CI
+publishes both per commit. No universal claims — see dossier §2/§31.
 
 ## Roadmap (dossier §11, amended §25/§35)
 
