@@ -145,6 +145,10 @@ jobs:
         run: node js/build.mjs
 
       - name: Build wheel
+        # REQUIRE_CARGO: a published wheel must carry the native core — never
+        # silently fall back to pure-Python at wheel-build time.
+        env:
+          FASTCHARTS_REQUIRE_CARGO: "1"
         run: uv build --wheel
 
       - name: Install-size budget (≤ 15 MB, §33)
@@ -166,3 +170,36 @@ jobs:
         with:
           name: wheel-${{ matrix.os }}
           path: dist/*.whl
+
+  # Proves the ergonomics promise: a source build with NO Rust toolchain still
+  # installs and works (pure-Python wheel + NumPy fallback), never erroring.
+  install_without_rust:
+    name: Install without Rust (NumPy fallback)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      # deliberately NO rust-toolchain and NO node: cargo absent, static JS is
+      # committed — this is the "user without a toolchain" path.
+      - name: Build wheel with no toolchain
+        run: uv build --wheel
+      - name: Wheel is pure-Python (py3-none-any)
+        shell: bash
+        run: ls dist/ && ls dist/*-py3-none-any.whl
+      - name: Install and verify it works via the fallback
+        shell: bash
+        run: |
+          uv venv smoke
+          uv pip install -p smoke dist/*.whl numpy anywidget
+          ./smoke/bin/python - <<'PY'
+          import warnings, numpy as np
+          with warnings.catch_warnings(record=True) as w:
+              warnings.simplefilter("always")
+              import fastcharts.kernels as k
+              from fastcharts import Figure
+          assert k.BACKEND == "numpy", k.BACKEND
+          spec, blob = Figure().scatter(np.arange(5.0), np.arange(5.0)).build_payload()
+          assert len(blob) > 0
+          assert any("NumPy fallback" in str(x.message) for x in w), "expected loud fallback warning"
+          print("pure-Python install OK; backend:", k.BACKEND)
+          PY

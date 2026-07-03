@@ -26,32 +26,38 @@ export all exist. See the full design dossier in
 
 ## Installation
 
-### From a published wheel
+### From a published wheel (recommended — no toolchain)
 
 ```bash
 pip install fastcharts
 ```
 
-Prebuilt wheels include the native C-ABI Rust core, the Python package, and the
-bundled JavaScript client. No npm install or runtime CDN is required.
+That's it. Prebuilt platform wheels bundle the native C-ABI Rust core, the
+Python package, **and** the JavaScript client. **No Rust, no Node, no npm, no
+CDN** — just `pip install` and `import fastcharts`.
 
-### From this repository
+### From source
 
-Requires Rust stable, Python 3.9+, `uv`, and Node 18+.
+Python 3.9+ and `uv` (or plain `pip`) are the only hard requirements:
 
 ```bash
 git clone https://github.com/Alek99/charts-exp.git
 cd charts-exp
-
-cargo build --release
-node js/build.mjs
 uv venv
 uv pip install -e ".[dev]"
 ```
 
-The source build compiles the Rust core during installation. If the native
-library is unavailable at runtime, fastcharts falls back to NumPy with a loud
-warning so behavior remains correct while ingest and decimation are slower.
+- **Rust is optional.** If a Rust toolchain is present, the install compiles the
+  fast native core. **If it isn't, the install still succeeds** as a pure-Python
+  package that uses the NumPy fallback (identical results, slower ingest/
+  decimation, one loud warning at import). Install is never blocked on a
+  toolchain. Install Rust via [rustup](https://rustup.rs) for the fast path.
+- **Node is optional too** — the JS client ships as a committed artifact, so you
+  only need Node (18+) if you're *editing* `js/src/fastcharts.js` and want to
+  regenerate the bundle with `node js/build.mjs`.
+
+CI (`install_without_rust` job) builds and imports a wheel on a runner with no
+Rust and no Node to keep this promise honest.
 
 ## Getting Started
 

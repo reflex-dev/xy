@@ -1,16 +1,24 @@
 """Hatchling build hook: compile the Rust core and bundle it into the wheel.
 
-Design dossier §33: `pip install` must deliver the native core prebuilt — a user
-must never be dropped into a source build by surprise. This hook is what runs on
-the CI wheel matrix; end users receive the .so/.dylib/.dll inside the wheel.
+Install ergonomics, by audience (design dossier §33):
 
-The wheel is tagged `py3-none-<platform>`: the core is a plain C-ABI cdylib
-(no CPython ABI at all), so one wheel per platform covers every Python version.
+- **End users** run `pip install fastcharts` and get a prebuilt platform wheel
+  from the CI matrix — the compiled core *and* the JS client are already inside
+  it. **No Rust, no Node, no toolchain.** This is the front door.
+- **Source builds** (`pip install .` / `-e .` from a clone) compile the core if
+  a Rust toolchain is present. **If Rust is absent, the build does NOT fail** —
+  it produces a pure-Python install that uses the NumPy fallback (correct
+  output, slower ingest/decimation, one loud warning at import). Install is
+  never blocked on a toolchain.
+- The JS client (`python/fastcharts/static/*`) is a **committed artifact**, so
+  Node is only needed to *edit* the client, never to install.
 
-Set FASTCHARTS_SKIP_CARGO=1 to skip the cargo build (e.g. when the artifact was
-prebuilt by an earlier CI step); the hook then requires the library to already
-be present and fails loudly otherwise — a missing wheel artifact is a build
-failure, not a runtime surprise (§33).
+Env switches:
+- `FASTCHARTS_SKIP_CARGO=1` — don't invoke cargo; use an already-built lib if
+  present, else build pure-Python. (Used when an earlier CI step prebuilt it.)
+- `FASTCHARTS_REQUIRE_CARGO=1` — the native core MUST end up in the wheel; a
+  missing toolchain or failed build is an error. CI wheel builds set this so a
+  published wheel never silently ships without the core.
 """
 
 from __future__ import annotations
@@ -49,27 +57,64 @@ class CustomBuildHook(BuildHookInterface):
         lib_name = _lib_filename()
         dest_dir = root / "python" / "fastcharts" / "_native_lib"
         dest = dest_dir / lib_name
+        require = os.environ.get("FASTCHARTS_REQUIRE_CARGO") == "1"
 
-        if os.environ.get("FASTCHARTS_SKIP_CARGO") == "1":
-            if not dest.exists():
-                raise RuntimeError(
-                    f"FASTCHARTS_SKIP_CARGO=1 but {dest} does not exist — "
-                    "the native core must be prebuilt for this platform."
-                )
-        else:
-            subprocess.run(
-                ["cargo", "build", "--release"],
-                cwd=root,
-                check=True,
+        native_ok = self._provision_native(root, lib_name, dest, dest_dir, require)
+
+        if native_ok:
+            # Platform wheel carrying the compiled C-ABI core (one per platform,
+            # every CPython version).
+            build_data["pure_python"] = False
+            build_data["tag"] = f"py3-none-{_platform_tag()}"
+            build_data.setdefault("force_include", {})[str(dest)] = (
+                f"fastcharts/_native_lib/{lib_name}"
             )
-            built = root / "target" / "release" / lib_name
-            if not built.exists():
-                raise RuntimeError(f"cargo build succeeded but {built} is missing")
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(built, dest)
+        else:
+            # No toolchain / build skipped: ship a pure-Python wheel. The JS
+            # client is included via package data (committed); the runtime uses
+            # the NumPy fallback with a loud warning (fastcharts.kernels).
+            print(
+                "fastcharts: building WITHOUT the native Rust core (cargo not "
+                "found or build skipped). The install works via the NumPy "
+                "fallback — correct, but slower. Install a prebuilt wheel or a "
+                "Rust toolchain (https://rustup.rs) for the fast path.",
+                file=sys.stderr,
+            )
+            build_data["pure_python"] = True
+            build_data["tag"] = "py3-none-any"
 
-        build_data["pure_python"] = False
-        build_data["tag"] = f"py3-none-{_platform_tag()}"
-        build_data.setdefault("force_include", {})[str(dest)] = (
-            f"fastcharts/_native_lib/{lib_name}"
-        )
+    def _provision_native(self, root, lib_name, dest, dest_dir, require) -> bool:  # noqa: ANN001
+        """Ensure the native lib is at `dest`. Returns True if present."""
+        if os.environ.get("FASTCHARTS_SKIP_CARGO") == "1":
+            if dest.exists():
+                return True
+            if require:
+                raise RuntimeError(
+                    f"FASTCHARTS_REQUIRE_CARGO=1 and FASTCHARTS_SKIP_CARGO=1 but "
+                    f"{dest} is missing — prebuild the core before this step."
+                )
+            return False
+
+        if shutil.which("cargo") is None:
+            if require:
+                raise RuntimeError(
+                    "FASTCHARTS_REQUIRE_CARGO=1 but cargo is not on PATH — a "
+                    "published wheel must contain the native core."
+                )
+            return False  # graceful: pure-Python wheel
+
+        try:
+            subprocess.run(["cargo", "build", "--release"], cwd=root, check=True)
+        except (subprocess.CalledProcessError, OSError) as e:
+            if require:
+                raise RuntimeError(f"cargo build failed: {e}") from e
+            return False
+
+        built = root / "target" / "release" / lib_name
+        if not built.exists():
+            if require:
+                raise RuntimeError(f"cargo build succeeded but {built} is missing")
+            return False
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(built, dest)
+        return True
