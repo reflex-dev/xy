@@ -34,7 +34,7 @@ from .components import (
     x_axis,
     y_axis,
 )
-from .figure import Figure
+from .figure import Figure, Selection
 
 __version__ = "0.1.0"
 
@@ -43,6 +43,7 @@ __all__ = [
     "Column",
     "ColumnStore",
     "Figure",
+    "Selection",
     "ZoneMaps",
     "__version__",
     "legend",

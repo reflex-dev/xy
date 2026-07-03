@@ -14,42 +14,16 @@ from typing import TYPE_CHECKING, Any
 import anywidget
 import traitlets
 
+# Selection lives in figure.py (it's the on_select payload and has no widget
+# dependency); re-exported here for backward compatibility.
+from .figure import Selection
+
 if TYPE_CHECKING:
     from .figure import Figure
 
 _STATIC = pathlib.Path(__file__).parent / "static"
 
-
-class Selection:
-    """The payload handed to an `on_select` callback (§34). Holds the selected
-    row indices per trace and lends convenient access to the underlying data —
-    callbacks receive real arrays, never JSON."""
-
-    def __init__(self, figure: "Figure", per_trace: dict) -> None:
-        self._figure = figure
-        self.per_trace = per_trace  # {trace_id: np.ndarray[uint32]}
-
-    @property
-    def index(self):  # noqa: ANN201
-        """Concatenated selected indices across all traces (single-trace charts
-        are the common case, where this is just that trace's indices)."""
-        import numpy as np
-
-        arrs = list(self.per_trace.values())
-        return np.concatenate(arrs) if arrs else np.empty(0, dtype="uint32")
-
-    def __len__(self) -> int:
-        return int(sum(len(v) for v in self.per_trace.values()))
-
-    def xy(self, trace_id: int = 0):  # noqa: ANN201
-        """(x, y) f64 arrays for the selected points of a trace (from canonical)."""
-        idx = self.per_trace.get(trace_id)
-        t = self._figure.traces[trace_id]
-        if idx is None:
-            import numpy as np
-
-            return np.empty(0), np.empty(0)
-        return t.x.values[idx], t.y.values[idx]
+__all__ = ["FigureWidget", "Selection", "bundled_js"]
 
 
 def bundled_js(which: str = "widget") -> str:

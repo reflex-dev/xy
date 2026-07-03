@@ -130,6 +130,34 @@ class _PayloadWriter:
         return b"".join(self._chunks)
 
 
+class Selection:
+    """The payload handed to an `on_select` callback (§34). Holds the selected
+    row indices per trace and lends convenient access to the underlying data —
+    callbacks receive real arrays, never JSON."""
+
+    def __init__(self, figure: "Figure", per_trace: dict) -> None:
+        self._figure = figure
+        self.per_trace = per_trace  # {trace_id: np.ndarray[uint32]}
+
+    @property
+    def index(self) -> np.ndarray:
+        """Concatenated selected indices across all traces (single-trace charts
+        are the common case, where this is just that trace's indices)."""
+        arrs = list(self.per_trace.values())
+        return np.concatenate(arrs) if arrs else np.empty(0, dtype="uint32")
+
+    def __len__(self) -> int:
+        return int(sum(len(v) for v in self.per_trace.values()))
+
+    def xy(self, trace_id: int = 0) -> tuple[np.ndarray, np.ndarray]:
+        """(x, y) f64 arrays for the selected points of a trace (from canonical)."""
+        idx = self.per_trace.get(trace_id)
+        t = self._figure.traces[trace_id]
+        if idx is None:
+            return np.empty(0), np.empty(0)
+        return t.x.values[idx], t.y.values[idx]
+
+
 class Figure:
     """Build with `line()` / `scatter()`, display with `show()` (notebook) or
     `to_html()` (standalone file, no kernel round-trips)."""
