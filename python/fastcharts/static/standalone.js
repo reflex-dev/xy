@@ -92,7 +92,9 @@ function linearTicks(lo, hi, target = 6) {
   const step = niceStep((hi - lo) / target);
   const first = Math.ceil(lo / step) * step;
   const out = [];
-  for (let v = first; v <= hi + step * 1e-9; v += step) {
+  // The length guard also breaks the v += step fixed point that f64 rounding
+  // can produce at extreme zoom (step << ulp(v)).
+  for (let v = first; v <= hi + step * 1e-9 && out.length < 200; v += step) {
     out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
   }
   return { ticks: out, step };
@@ -120,7 +122,7 @@ function timeTicks(lo, hi, target = 6) {
   }
   const first = Math.ceil(lo / step) * step;
   const out = [];
-  for (let v = first; v <= hi; v += step) out.push(v);
+  for (let v = first; v <= hi && out.length < 200; v += step) out.push(v);
   return { ticks: out, step };
 }
 
@@ -165,7 +167,9 @@ function fmtLinear(v, step) {
   const av = Math.abs(v);
   if (av >= 1e6 || av < 1e-4) return v.toExponential(1).replace("e+", "e");
   const dec = Math.max(0, -Math.floor(Math.log10(step)) + (step < 1 ? 1 : 0));
-  return v.toFixed(Math.min(dec, 8)).replace(/\.?0+$/, "") || "0";
+  let s = v.toFixed(Math.min(dec, 8));
+  if (s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
+  return s;
 }
 
 // ---------------------------------------------------------------------------
@@ -592,6 +596,14 @@ class ChartView {
       const { x0, x1, y0, y1 } = this.view;
       const ax = x0 + fx * (x1 - x0);
       const ay = y0 + fy * (y1 - y0);
+      // Clamp zoom-in near the f64 ulp of the anchor — below that, tick math
+      // and the view itself degenerate (deep-zoom re-centering of the *data*
+      // is handled kernel-side, §16; this guards the view rectangle only).
+      if (f < 1) {
+        const minSpanX = Math.max(Math.abs(ax), 1e-30) * 1e-12;
+        const minSpanY = Math.max(Math.abs(ay), 1e-30) * 1e-12;
+        if ((x1 - x0) * f < minSpanX || (y1 - y0) * f < minSpanY) return;
+      }
       this.view = {
         x0: ax - (ax - x0) * f, x1: ax + (x1 - ax) * f,
         y0: ay - (ay - y0) * f, y1: ay + (y1 - ay) * f,
@@ -632,10 +644,15 @@ class ChartView {
       if (!g) continue;
       const xBytes = buffers[upd.x.buf];
       const yBytes = buffers[upd.y.buf];
-      const asF32 = (b) =>
-        b instanceof DataView
-          ? new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4)
-          : new Float32Array(b.buffer || b);
+      const asF32 = (b) => {
+        if (b instanceof ArrayBuffer) return new Float32Array(b);
+        // Comm buffers may share one ArrayBuffer at arbitrary (unaligned)
+        // offsets — a Float32Array view requires 4-byte alignment.
+        if (b.byteOffset % 4 === 0) {
+          return new Float32Array(b.buffer, b.byteOffset, Math.floor(b.byteLength / 4));
+        }
+        return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+      };
       const gl = this.gl;
       gl.bindBuffer(gl.ARRAY_BUFFER, g.xBuf);
       gl.bufferData(gl.ARRAY_BUFFER, asF32(xBytes), gl.STATIC_DRAW);
