@@ -6,7 +6,8 @@ question — the widget (or any other frontend) is a thin transport over these.
 - select_range: box-select → range predicate (§34 Filter Tier A)
 - to_shipped_indices: canonical rows → shipped vertex positions (mask space)
 - decimate_view: re-decimate visible line windows on zoom (§28)
-- density_view: re-bin a Tier-2 scatter for a new viewport (§5)
+- density_view: re-aggregate a Tier-2 scatter per viewport — density grid when
+  the window is over budget, real points (drill-in) when it fits (§5)
 """
 
 from __future__ import annotations
@@ -16,7 +17,12 @@ from typing import TYPE_CHECKING, Any, Optional
 import numpy as np
 
 from . import kernels
-from .config import DECIMATION_THRESHOLD
+from .config import DECIMATION_THRESHOLD, SCATTER_DENSITY_THRESHOLD
+
+# Hysteresis on the drill boundary (§5 "tier transitions hysteresis-guarded"):
+# once drilled to points, stay until the visible count clearly exceeds the
+# budget again, so a view hovering at the threshold doesn't thrash modes.
+DRILL_EXIT_FACTOR = 1.15
 
 if TYPE_CHECKING:
     from .figure import Figure
@@ -127,19 +133,39 @@ def decimate_view(
 def density_view(
     fig: "Figure", trace_id: int, x0: float, x1: float, y0: float, y1: float, w: int, h: int
 ) -> tuple[dict[str, Any], list[bytes]]:
-    """Re-bin a Tier-2 scatter for a new viewport (§5: O(visible points);
-    the client requests this when pan/zoom leaves the shipped grid)."""
+    """Re-aggregate a Tier-2 scatter for a new viewport (§5: O(visible points);
+    the client requests this when pan/zoom leaves the shipped grid).
+
+    The tier is a function of the *visible* count, not the total (§5) — deep
+    zoom drills back to real points, color/size channels restored, once the
+    window fits the direct budget; zooming out returns to density. The per-view
+    decision rides each update as `mode` — never silent (§28)."""
     t = fig.traces[trace_id]
     if not t.use_density():
         return {"traces": []}, []
+    lo_x, hi_x = min(x0, x1), max(x0, x1)
+    lo_y, hi_y = min(y0, y1), max(y0, y1)
+    xv, yv = t.x.values, t.y.values
+    # NaN/±inf compare False on either side, so non-finite rows never enter the
+    # drilled subset (§19: nothing non-finite reaches vertex buffers).
+    vis = (xv >= lo_x) & (xv <= hi_x) & (yv >= lo_y) & (yv <= hi_y)
+    visible = int(np.count_nonzero(vis))
+    budget = SCATTER_DENSITY_THRESHOLD * (DRILL_EXIT_FACTOR if t.drill_mode else 1.0)
+    if visible <= budget:
+        return _drill_points(fig, t, vis, visible, lo_x, hi_x, lo_y, hi_y)
+
+    t.drill_mode = False
+    t.shipped_sel = None  # aggregate view: no per-point marks, no pick mapping
     w = max(16, min(w, 4096))
     h = max(16, min(h, 4096))
-    grid = kernels.bin_2d(t.x.values, t.y.values, x0, x1, y0, y1, w, h)
+    grid = kernels.bin_2d(xv, yv, x0, x1, y0, y1, w, h)
     return (
         {
             "traces": [
                 {
                     "id": trace_id,
+                    "mode": "density",
+                    "visible": visible,
                     "density": {
                         "buf": 0,
                         "w": w,
@@ -152,4 +178,56 @@ def density_view(
             ]
         },
         [grid.reshape(-1).astype(np.float32).tobytes()],
+    )
+
+
+def _drill_points(
+    fig: "Figure",
+    t: Any,
+    vis: np.ndarray,
+    visible: int,
+    lo_x: float,
+    hi_x: float,
+    lo_y: float,
+    hi_y: float,
+) -> tuple[dict[str, Any], list[bytes]]:
+    """Ship the visible subset of a Tier-2 scatter as real points (§5 drill-in).
+
+    Channels ship in the same wire shape as a direct scatter, normalized over
+    their *global* domain so colors/sizes stay stable across views. Offsets
+    re-center on the window midpoint (§16 deep-zoom rule)."""
+    sel = np.flatnonzero(vis)
+    t.drill_mode = True
+    t.shipped_sel = sel  # pick/selection translate through the drilled subset (§17)
+    x_off = (lo_x + hi_x) / 2.0
+    y_off = (lo_y + hi_y) / 2.0
+    if len(sel):
+        x_enc = kernels.encode_f32(t.x.values[sel], x_off, 1.0)
+        y_enc = kernels.encode_f32(t.y.values[sel], y_off, 1.0)
+    else:
+        x_enc = y_enc = np.empty(0, dtype=np.float32)
+    buffers: list[bytes] = [x_enc.tobytes(), y_enc.tobytes()]
+
+    def ship_scalar(arr: np.ndarray) -> int:
+        buffers.append(np.ascontiguousarray(arr, dtype=np.float32).tobytes())
+        return len(buffers) - 1
+
+    color_spec, size_spec = fig._ship_channels(t, sel, ship_scalar)
+    n = len(sel)
+    return (
+        {
+            "traces": [
+                {
+                    "id": t.id,
+                    "mode": "points",
+                    "visible": visible,
+                    "x": {"buf": 0, "len": n, "offset": x_off, "scale": 1.0},
+                    "y": {"buf": 1, "len": n, "offset": y_off, "scale": 1.0},
+                    "color": color_spec,
+                    "size": size_spec,
+                    "style": dict(t.style),
+                }
+            ]
+        },
+        buffers,
     )

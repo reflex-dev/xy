@@ -176,20 +176,89 @@ def test_force_density():
 
 
 def test_density_view_rebins():
-    n = SCATTER_DENSITY_THRESHOLD + 1
+    # Window must hold more than the drill budget or the adaptive tier ships
+    # points instead (§5: tier follows the visible count) — see drill tests.
+    n = 450_000
     rng = np.random.default_rng(1)
     x = rng.uniform(0, 100, n)
     y = rng.uniform(0, 100, n)
     fig = Figure().scatter(x, y)
     update, buffers = fig.density_view(0, 10.0, 90.0, 20.0, 80.0, 64, 48)
     assert len(update["traces"]) == 1
+    assert update["traces"][0]["mode"] == "density"
     d = update["traces"][0]["density"]
     assert d["w"] == 64 and d["h"] == 48
     grid = np.frombuffer(buffers[0], dtype=np.float32)
     assert len(grid) == 64 * 48
     # only points inside the requested window are counted
     inwin = np.sum((x >= 10) & (x < 90) & (y >= 20) & (y < 80))
+    assert inwin > SCATTER_DENSITY_THRESHOLD  # really over budget
     assert grid.sum() == pytest.approx(inwin)
+
+
+def test_density_view_drills_to_points_when_window_fits():
+    # §5: the tier is a function of the *visible* count. Zooming a Tier-2
+    # scatter into a window under the budget ships real points with the
+    # color channel restored, in the direct-scatter wire shape.
+    n = SCATTER_DENSITY_THRESHOLD + 50_000
+    rng = np.random.default_rng(2)
+    x = rng.uniform(0, 100, n)
+    y = rng.uniform(0, 100, n)
+    c = rng.uniform(0, 1, n)
+    fig = Figure().scatter(x, y, color=c, density=True)
+    upd, bufs = fig.density_view(0, 0.0, 10.0, 0.0, 10.0, 512, 384)
+    tr = upd["traces"][0]
+    assert tr["mode"] == "points"
+    inwin = int(np.sum((x >= 0) & (x <= 10) & (y >= 0) & (y <= 10)))
+    assert 0 < inwin <= SCATTER_DENSITY_THRESHOLD
+    assert tr["visible"] == inwin and tr["x"]["len"] == inwin
+    xs = np.frombuffer(bufs[tr["x"]["buf"]], dtype=np.float32)
+    assert len(xs) == inwin
+    assert tr["x"]["offset"] == pytest.approx(5.0)  # §16 window-centered
+    assert tr["color"]["mode"] == "continuous"
+    cbuf = np.frombuffer(bufs[tr["color"]["buf"]], dtype=np.float32)
+    assert len(cbuf) == inwin and cbuf.min() >= 0.0 and cbuf.max() <= 1.0
+    assert fig.traces[0].drill_mode is True
+    # pick speaks drilled indices: shipped 0 -> a canonical row in the window
+    row = fig.pick(0, 0)
+    assert row is not None and 0.0 <= row["x"] <= 10.0
+    assert "color_value" in row
+
+
+def test_density_view_returns_to_density_on_zoom_out():
+    n = 450_000
+    rng = np.random.default_rng(3)
+    x = rng.uniform(0, 100, n)
+    y = rng.uniform(0, 100, n)
+    fig = Figure().scatter(x, y)
+    fig.density_view(0, 0.0, 1.0, 0.0, 1.0, 64, 48)  # drill in
+    assert fig.traces[0].drill_mode is True
+    upd, _ = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, 64, 48)  # zoom out
+    assert upd["traces"][0]["mode"] == "density"
+    assert fig.traces[0].drill_mode is False
+    assert fig.traces[0].shipped_sel is None
+
+
+def test_drill_hysteresis_holds_points_mode_near_boundary():
+    # §5 "tier transitions hysteresis-guarded": once drilled, a window just
+    # over the threshold stays in points mode; entered cold, it aggregates.
+    n = 450_000
+    rng = np.random.default_rng(4)
+    x = rng.uniform(0, 100, n)
+    y = rng.uniform(0, 100, n)
+    side = 69.9  # ~0.489 of the area -> ~220k points: inside the 1.15x guard
+    inwin = int(np.sum((x >= 0) & (x <= side) & (y >= 0) & (y <= side)))
+    assert SCATTER_DENSITY_THRESHOLD < inwin < 1.15 * SCATTER_DENSITY_THRESHOLD
+
+    fig = Figure().scatter(x, y)
+    fig.density_view(0, 0.0, 10.0, 0.0, 10.0, 64, 48)  # enter points mode
+    assert fig.traces[0].drill_mode is True
+    upd, _ = fig.density_view(0, 0.0, side, 0.0, side, 64, 48)
+    assert upd["traces"][0]["mode"] == "points"  # held by hysteresis
+
+    fig2 = Figure().scatter(x, y)
+    upd2, _ = fig2.density_view(0, 0.0, side, 0.0, side, 64, 48)
+    assert upd2["traces"][0]["mode"] == "density"  # cold entry aggregates
 
 
 def test_huge_scatter_with_channels_warns_and_drops():

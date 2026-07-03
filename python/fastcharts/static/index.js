@@ -767,7 +767,17 @@ class ChartView {
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     for (const g of this.gpuTraces) {
-      if (g.tier === "density") { this._drawDensity(g); continue; }
+      if (g.tier === "density") {
+        // Drilled-in view (§5): the visible window fit the direct budget, so
+        // the kernel shipped real points — draw those instead of the texture.
+        if (g.drill) {
+          const d = g.drill;
+          this._drawPoints(d, this._map(d.xMeta, x0, x1), this._map(d.yMeta, y0, y1));
+        } else {
+          this._drawDensity(g);
+        }
+        continue;
+      }
       const xm = this._map(g.xMeta, x0, x1);
       const ym = this._map(g.yMeta, y0, y1);
       if (g.trace.kind === "scatter") this._drawPoints(g, xm, ym);
@@ -965,25 +975,28 @@ class ChartView {
     gl.uniform1f(u("u_dpr"), this.dpr);
     let slot = 0;
     for (const g of this.gpuTraces) {
-      if (g.trace.kind !== "scatter" || g.tier === "density") continue;
-      const xm = this._map(g.xMeta, x0, x1);
-      const ym = this._map(g.yMeta, y0, y1);
+      // Density traces pick only while drilled to points (§5); the drill
+      // sibling carries the buffers, the host g keeps the slot → trace id.
+      const pg = g.tier === "density" ? g.drill : g.trace.kind === "scatter" ? g : null;
+      if (!pg || !pg.n) { g.pickSlot = -1; continue; } // stale slots must not alias
+      const xm = this._map(pg.xMeta, x0, x1);
+      const ym = this._map(pg.yMeta, y0, y1);
       gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
       gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
-      gl.uniform1f(u("u_size"), g.size);
-      gl.uniform1i(u("u_sizeMode"), g.sizeMode);
-      gl.uniform2f(u("u_sizeRange"), g.sizeRange[0], g.sizeRange[1]);
+      gl.uniform1f(u("u_size"), pg.size);
+      gl.uniform1i(u("u_sizeMode"), pg.sizeMode);
+      gl.uniform2f(u("u_sizeRange"), pg.sizeRange[0], pg.sizeRange[1]);
       gl.uniform1i(u("u_slot"), slot);
       g.pickSlot = slot;
-      this._bindScalarAttr(prog, "ax", g.xBuf, 0, 0);
-      this._bindScalarAttr(prog, "ay", g.yBuf, 0, 0);
-      if (g.sizeMode === 1 && g.sBuf) this._bindScalarAttr(prog, "a_sval", g.sBuf, 0, 0);
+      this._bindScalarAttr(prog, "ax", pg.xBuf, 0, 0);
+      this._bindScalarAttr(prog, "ay", pg.yBuf, 0, 0);
+      if (pg.sizeMode === 1 && pg.sBuf) this._bindScalarAttr(prog, "a_sval", pg.sBuf, 0, 0);
       else {
         this._disableAttr(prog, "a_sval");
         const loc = gl.getAttribLocation(prog, "a_sval");
         if (loc >= 0) gl.vertexAttrib1f(loc, 0.5);
       }
-      gl.drawArrays(gl.POINTS, 0, g.n);
+      gl.drawArrays(gl.POINTS, 0, pg.n);
       slot++;
     }
     gl.enable(gl.BLEND);
@@ -1232,7 +1245,10 @@ class ChartView {
   }
 
   _clearSelection() {
-    for (const g of this.gpuTraces) g.selActive = false;
+    for (const g of this.gpuTraces) {
+      g.selActive = false;
+      if (g.drill) g.drill.selActive = false;
+    }
     this._selectionCount = 0;
     if (this.comm) this.comm.send({ type: "select_clear" });
   }
@@ -1416,6 +1432,8 @@ class ChartView {
       for (const upd of msg.traces) {
         const g = this.gpuTraces.find((t) => t.trace.id === upd.id && t.tier === "density");
         if (!g) continue;
+        if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }
+        this._dropDrill(g); // window over budget again → back to the aggregate
         const d = upd.density;
         const grid = this._asF32(buffers[d.buf]);
         this.gl.deleteTexture(g.density.tex);
@@ -1423,6 +1441,10 @@ class ChartView {
         g.density.w = d.w; g.density.h = d.h; g.density.max = d.max;
         g.density.xRange = d.x_range; g.density.yRange = d.y_range;
       }
+      // Drill state changes what's pickable; hover needs the FBO ready.
+      this._pickable = this.gpuTraces.some(
+        (t) => t.trace.kind === "scatter" && (t.tier !== "density" || t.drill));
+      if (this._pickable && !this.pickFbo) this._initPickTarget();
       this.draw();
     } else if (msg.type === "pick_result") {
       if (!msg.row) { this.tooltip.style.display = "none"; return; }
@@ -1431,20 +1453,78 @@ class ChartView {
       if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY);
     } else if (msg.type === "selection") {
       if (!msg.traces || !msg.traces.length) {
-        for (const g of this.gpuTraces) g.selActive = false;
+        for (const g of this.gpuTraces) {
+          g.selActive = false;
+          if (g.drill) g.drill.selActive = false;
+        }
       } else {
         for (const upd of msg.traces) {
           const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
-          if (!g || g.tier === "density" || !g.n) continue; // density has no per-point marks
+          if (!g) continue;
+          // Aggregate density has no per-point marks, but a drilled view does —
+          // the kernel's indices are in the drilled subset's space (§17).
+          const pg = g.tier === "density" ? g.drill : g;
+          if (!pg || !pg.n) continue;
           const idx = this._asU32(buffers[upd.buf]);
-          const mask = new Float32Array(g.n);
-          for (let i = 0; i < idx.length; i++) if (idx[i] < g.n) mask[idx[i]] = 1;
-          this._applySelMask(g, mask);
+          const mask = new Float32Array(pg.n);
+          for (let i = 0; i < idx.length; i++) if (idx[i] < pg.n) mask[idx[i]] = 1;
+          this._applySelMask(pg, mask);
         }
       }
       this._selectionCount = msg.total || 0;
       this.draw();
     }
+  }
+
+  // -- Tier-2 drill-in (§5: tier follows the *visible* count) ---------------
+
+  // The kernel decided this view fits the direct budget and shipped real
+  // points (channels restored). Build/refresh a direct-scatter-shaped sibling
+  // on the density trace; _drawNow/_renderPick draw it until the kernel
+  // switches back.
+  _applyDrill(g, upd, buffers) {
+    const gl = this.gl;
+    let d = g.drill;
+    if (!d) {
+      d = g.drill = { trace: g.trace, xBuf: gl.createBuffer(), yBuf: gl.createBuffer() };
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, d.xBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.x.buf]), gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, d.yBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.y.buf]), gl.STATIC_DRAW);
+    d.xMeta = { offset: upd.x.offset, scale: upd.x.scale };
+    d.yMeta = { offset: upd.y.offset, scale: upd.y.scale };
+    d.n = Math.min(upd.x.len, upd.y.len);
+    d.selActive = false; // drilled subset changed; old mask indices are stale
+    d.colorMode = 0;
+    d.color = parseColor(this.root, upd.color && upd.color.color, [0.3, 0.47, 0.66, 1]);
+    if (upd.color && upd.color.buf !== undefined) {
+      d.colorMode = upd.color.mode === "continuous" ? 1 : 2;
+      if (!d.cBuf) d.cBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, d.cBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.color.buf]), gl.STATIC_DRAW);
+      d.lut = upd.color.mode === "continuous"
+        ? this._lut(upd.color.colormap)
+        : this._paletteLut(upd.color.palette);
+    }
+    d.sizeMode = 0;
+    d.size = (upd.size && upd.size.size) || 4.0;
+    d.sizeRange = [2, 18];
+    if (upd.size && upd.size.mode === "continuous") {
+      d.sizeMode = 1;
+      if (!d.sBuf) d.sBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, d.sBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.size.buf]), gl.STATIC_DRAW);
+      d.sizeRange = upd.size.range_px;
+    }
+  }
+
+  _dropDrill(g) {
+    const d = g.drill;
+    if (!d) return;
+    const gl = this.gl;
+    for (const b of [d.xBuf, d.yBuf, d.cBuf, d.sBuf, d.selBuf]) if (b) gl.deleteBuffer(b);
+    g.drill = null;
   }
 
   _asF32(b) {

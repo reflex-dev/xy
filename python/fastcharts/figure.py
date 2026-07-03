@@ -43,10 +43,15 @@ class Trace:
     # (A bool here silently ignored density=False — staff-review finding.)
     force_density: Optional[bool] = None
     # Shipped-row → canonical-row mapping, set by build_payload when the shipped
-    # copy drops NaN rows (§19). The client's GPU pick and selection masks speak
-    # in *shipped* indices; canonical readouts must translate through this or
-    # hover/selection silently report the wrong rows.
+    # copy drops NaN rows (§19), and by the drill-in view path when a Tier-2
+    # trace ships its visible subset. The client's GPU pick and selection masks
+    # speak in *shipped* indices; canonical readouts must translate through this
+    # or hover/selection silently report the wrong rows.
     shipped_sel: Optional[Any] = None
+    # Tier-2 drill state (§5: tier follows the *visible* count): True while the
+    # current view ships real points instead of the density grid. Kernel-side
+    # only — the per-view decision itself rides each update (§28).
+    drill_mode: bool = False
 
     @property
     def n_points(self) -> int:
@@ -411,6 +416,7 @@ class Figure:
     ) -> dict[str, Any]:
         if t.use_density():
             t.shipped_sel = None  # no per-point marks, no pick mapping
+            t.drill_mode = False  # full view: density until a zoom drills in
             return self._density_trace_spec(t, xr, yr, *DENSITY_GRID, pw.ship_scalar)
         xv, yv = t.x.values, t.y.values
         sel = self._finite_sel(t, xv, yv)
