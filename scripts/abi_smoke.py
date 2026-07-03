@@ -136,6 +136,19 @@ def main() -> None:
     ok(cnt[0] == 9 and nul[0] == 1, "zone_maps counts NaN as null")
     ok(zm[0][0] == 0.0 and zm[1][0] == 9.0, "zone_maps min/max skip NaN")
 
+    # inf must be treated as null too (§19 hardening): min/max stay finite.
+    idata = array("d", [1.0, float("inf"), float("-inf"), 3.0])
+    izm = [array("d", [0.0]) for _ in range(4)]
+    icnt = array("Q", [0]); inul = array("Q", [0])
+    lib.fc_zone_maps(
+        _ptr(idata, ctypes.c_double), 4, 65536,
+        _ptr(izm[0], ctypes.c_double), _ptr(izm[1], ctypes.c_double),
+        _ptr(icnt, ctypes.c_uint64), _ptr(inul, ctypes.c_uint64),
+        _ptr(izm[2], ctypes.c_double), _ptr(izm[3], ctypes.c_double),
+    )
+    ok(icnt[0] == 2 and inul[0] == 2, "zone_maps counts inf as null")
+    ok(izm[0][0] == 1.0 and izm[1][0] == 3.0, "zone_maps min/max skip inf")
+
     # min_max sentinel path.
     lo = ctypes.c_double()
     hi = ctypes.c_double()

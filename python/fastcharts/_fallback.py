@@ -39,7 +39,7 @@ def zone_maps(
     sum_sqs = np.empty(n_chunks, dtype=np.float64)
     for i in range(n_chunks):
         chunk = data[i * chunk_size : (i + 1) * chunk_size]
-        valid = chunk[~np.isnan(chunk)]
+        valid = chunk[np.isfinite(chunk)]  # NaN and ±inf are null (§19)
         counts[i] = len(valid)
         nulls[i] = len(chunk) - len(valid)
         if len(valid):
@@ -88,7 +88,7 @@ def m4_indices(
     idx = np.arange(start, end, dtype=np.uint32)
     xv = x[start:end]
     yv = y[start:end]
-    valid = ~np.isnan(yv)
+    valid = np.isfinite(yv)  # NaN and ±inf are non-plottable (§19)
     idx, xv, yv = idx[valid], xv[valid], yv[valid]
     if len(idx) == 0:
         return np.empty(0, dtype=np.uint32)
@@ -128,7 +128,7 @@ def bin_2d(
     y = np.ascontiguousarray(y, dtype=np.float64)
     if len(x) != len(y):
         raise ValueError("x and y must have equal length")
-    valid = ~(np.isnan(x) | np.isnan(y))
+    valid = np.isfinite(x) & np.isfinite(y)  # NaN and ±inf excluded (§19)
     valid &= (x >= x0) & (x < x1) & (y >= y0) & (y < y1)
     xv, yv = x[valid], y[valid]
     cx = np.minimum(((xv - x0) * (w / (x1 - x0))).astype(np.int64), w - 1)
@@ -140,7 +140,7 @@ def bin_2d(
 
 def min_max(data: npt.NDArray[np.float64]) -> Optional[tuple[float, float]]:
     data = np.ascontiguousarray(data, dtype=np.float64)
-    valid = data[~np.isnan(data)]
+    valid = data[np.isfinite(data)]  # NaN and ±inf excluded (§19)
     if len(valid) == 0:
         return None
     return float(valid.min()), float(valid.max())

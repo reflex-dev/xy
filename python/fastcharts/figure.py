@@ -122,6 +122,10 @@ class Figure:
     ) -> "Figure":
         xc = self.store.ingest(x)
         yc = self.store.ingest(y)
+        if len(xc) != len(yc):
+            raise ValueError(
+                f"line x and y must have equal length, got {len(xc)} and {len(yc)}"
+            )
         if not np.all(np.diff(xc.values) >= 0):
             # LOD contract (§28): line x must be sorted; the engine sorts once
             # at ingest, and says so. The predicate is NaN-safe on purpose:
@@ -167,6 +171,10 @@ class Figure:
         xc = self.store.ingest(x)
         yc = self.store.ingest(y)
         n = len(xc)
+        if len(yc) != n:
+            raise ValueError(
+                f"scatter x and y must have equal length, got {n} and {len(yc)}"
+            )
         default_color = DEFAULT_PALETTE[len(self.traces) % len(DEFAULT_PALETTE)]
         color_ch = channels.resolve_color(
             color, n, colormap=colormap, default_constant=default_color
@@ -310,11 +318,13 @@ class Figure:
                     xv, yv = xv[idx], yv[idx]
                     tier = "decimated"
             elif t.x.zone.null_count or t.y.zone.null_count:
-                # NaN never reaches a vertex buffer — it silently corrupts
-                # primitives, driver-dependently (§19). Phase 0 drops invalid
-                # rows on the shipped copy (canonical keeps them); real gap
-                # semantics (segment index list) arrive with validity bitmaps.
-                sel = np.flatnonzero(~(np.isnan(xv) | np.isnan(yv)))
+                # Non-finite (NaN or ±inf) never reaches a vertex buffer — it
+                # silently corrupts primitives, driver-dependently (§19). Zone
+                # maps count both as null, so this branch fires for either.
+                # Phase 0 drops invalid rows on the shipped copy (canonical
+                # keeps them); real gap semantics (segment index list) arrive
+                # with validity bitmaps.
+                sel = np.flatnonzero(np.isfinite(xv) & np.isfinite(yv))
                 xv, yv = xv[sel], yv[sel]
 
             entry: dict[str, Any] = {

@@ -13,8 +13,11 @@
 
 /// One-pass statistics for a chunk of a column (§22).
 ///
-/// NaN values count as nulls (Arrow validity semantics arrive with real Arrow
-/// ingest; NaN-as-null is the Phase 0 contract and is asserted in tests).
+/// Non-finite values (NaN and ±∞) count as nulls: neither is plottable, both
+/// corrupt GPU primitives if they reach a vertex buffer (§19), and ∞ would
+/// poison min/max/sum for autorange. Treating them uniformly as invalid is what
+/// lets autorange, `null_count`, and the ship-time drop all agree. (Arrow
+/// validity bitmaps arrive later; non-finite-as-null is the Phase-0 contract.)
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ZoneMap {
     pub min: f64,
@@ -48,7 +51,7 @@ pub fn zone_maps(data: &[f64], chunk_size: usize) -> Vec<ZoneMap> {
         .map(|chunk| {
             let mut zm = ZoneMap::empty();
             for &v in chunk {
-                if v.is_nan() {
+                if !v.is_finite() {
                     zm.null_count += 1;
                 } else {
                     zm.count += 1;
@@ -134,8 +137,8 @@ pub fn m4_indices(x: &[f64], y: &[f64], x0: f64, x1: f64, n_buckets: usize) -> V
 
     for i in start..end {
         let yv = y[i];
-        if yv.is_nan() {
-            continue;
+        if !yv.is_finite() {
+            continue; // NaN and ±∞ are non-plottable (§19)
         }
         let b = (((x[i] - x0) * inv_bucket_w) as usize).min(n_buckets - 1);
         if b != cur_bucket {
@@ -203,7 +206,11 @@ pub fn bin_2d(
     for i in 0..x.len() {
         let xv = x[i];
         let yv = y[i];
-        if xv.is_nan() || yv.is_nan() || xv < x0 || xv >= x1 || yv < y0 || yv >= y1 {
+        // Non-finite fails the range comparisons already, but check explicitly
+        // so intent is clear and -∞/∞ can never index a cell.
+        if !xv.is_finite() || !yv.is_finite()
+            || xv < x0 || xv >= x1 || yv < y0 || yv >= y1
+        {
             continue;
         }
         let cx = ((xv - x0) * sx) as usize;
@@ -227,7 +234,7 @@ pub fn min_max(data: &[f64]) -> Option<(f64, f64)> {
     let mut min = f64::INFINITY;
     let mut max = f64::NEG_INFINITY;
     for &v in data {
-        if !v.is_nan() {
+        if v.is_finite() {
             min = min.min(v);
             max = max.max(v);
         }
@@ -265,6 +272,20 @@ mod tests {
         assert_eq!(zms[0].null_count, 1);
         assert_eq!(zms[0].min, 1.0);
         assert_eq!(zms[0].max, 3.0);
+    }
+
+    #[test]
+    fn zone_maps_inf_is_null() {
+        // ±∞ must count as null and never contaminate min/max/sum — else
+        // autorange collapses (§19 hardening).
+        let data = [1.0, f64::INFINITY, f64::NEG_INFINITY, 3.0];
+        let zms = zone_maps(&data, 65_536);
+        assert_eq!(zms[0].count, 2);
+        assert_eq!(zms[0].null_count, 2);
+        assert_eq!(zms[0].min, 1.0);
+        assert_eq!(zms[0].max, 3.0);
+        assert_eq!(zms[0].sum, 4.0);
+        assert!(zms[0].sum_sq.is_finite());
     }
 
     #[test]
@@ -330,18 +351,20 @@ mod tests {
     }
 
     #[test]
-    fn m4_skips_nan() {
-        let x = [0.0, 1.0, 2.0, 3.0];
-        let y = [1.0, f64::NAN, 5.0, 2.0];
-        let idx = m4_indices(&x, &y, 0.0, 4.0, 1);
-        assert!(!idx.contains(&1));
+    fn m4_skips_non_finite() {
+        let x = [0.0, 1.0, 2.0, 3.0, 4.0];
+        let y = [1.0, f64::NAN, 5.0, f64::INFINITY, 2.0];
+        let idx = m4_indices(&x, &y, 0.0, 5.0, 1);
+        assert!(!idx.contains(&1)); // NaN y
+        assert!(!idx.contains(&3)); // inf y
         assert!(idx.contains(&2));
     }
 
     #[test]
-    fn min_max_skips_nan() {
+    fn min_max_skips_non_finite() {
         assert_eq!(min_max(&[f64::NAN, 2.0, -1.0]), Some((-1.0, 2.0)));
-        assert_eq!(min_max(&[f64::NAN]), None);
+        assert_eq!(min_max(&[f64::INFINITY, 2.0, f64::NEG_INFINITY, -1.0]), Some((-1.0, 2.0)));
+        assert_eq!(min_max(&[f64::NAN, f64::INFINITY]), None);
         assert_eq!(min_max(&[]), None);
     }
 
@@ -370,11 +393,11 @@ mod tests {
 
     #[test]
     fn bin_2d_skips_nan_and_outside() {
-        let x = [0.5, f64::NAN, 5.0, -1.0];
-        let y = [0.5, 0.5, 0.5, 0.5];
+        let x = [0.5, f64::NAN, 5.0, -1.0, f64::INFINITY];
+        let y = [0.5, 0.5, 0.5, 0.5, 0.5];
         let mut out = vec![0.0f32; 1];
         bin_2d(&x, &y, 0.0, 1.0, 0.0, 1.0, 1, 1, &mut out);
-        assert_eq!(out[0], 1.0); // only the in-range, non-NaN point
+        assert_eq!(out[0], 1.0); // only the in-range, finite point
     }
 
     #[test]
