@@ -139,7 +139,8 @@ def main() -> None:
     # inf must be treated as null too (§19 hardening): min/max stay finite.
     idata = array("d", [1.0, float("inf"), float("-inf"), 3.0])
     izm = [array("d", [0.0]) for _ in range(4)]
-    icnt = array("Q", [0]); inul = array("Q", [0])
+    icnt = array("Q", [0])
+    inul = array("Q", [0])
     lib.fc_zone_maps(
         _ptr(idata, ctypes.c_double), 4, 65536,
         _ptr(izm[0], ctypes.c_double), _ptr(izm[1], ctypes.c_double),
