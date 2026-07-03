@@ -22,6 +22,10 @@ import numpy.typing as npt
 COLORMAPS = ("viridis", "magma", "plasma", "cividis", "turbo")
 DEFAULT_COLORMAP = "viridis"
 
+# The client palette LUT is 256 texels; categories beyond this collide in the
+# shader, so we warn (channels.resolve_color).
+MAX_CATEGORIES = 256
+
 
 @dataclass
 class ColorChannel:
@@ -98,6 +102,19 @@ def resolve_color(
 
     if _is_categorical(arr):
         cats, codes = np.unique(arr.astype(object), return_inverse=True)
+        if len(cats) > MAX_CATEGORIES:
+            import warnings
+
+            # The client's palette LUT is 256-wide; beyond that, codes collide
+            # in the shader. A categorical scatter with >256 distinct values is
+            # rarely legible anyway — warn loudly rather than mis-color silently.
+            warnings.warn(
+                f"categorical color has {len(cats)} categories; only the first "
+                f"{MAX_CATEGORIES} get distinct palette slots (the rest collide). "
+                "Consider grouping rare categories or a continuous encoding.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
         return ColorChannel(
             mode="categorical",
             codes=codes.astype(np.float64),

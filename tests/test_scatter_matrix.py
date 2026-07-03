@@ -106,6 +106,12 @@ def test_categorical_single_category():
     assert set(codes.astype(int)) == {0}
 
 
+def test_too_many_categories_warns():
+    cats = np.array([f"c{i}" for i in range(300)])
+    with pytest.warns(RuntimeWarning, match="categories"):
+        Figure().scatter(np.arange(300.0), np.arange(300.0), color=cats)
+
+
 def test_categorical_bool_array():
     flags = np.array([True, False, True, True, False])
     fig = Figure().scatter(np.arange(5.0), np.arange(5.0), color=flags)
