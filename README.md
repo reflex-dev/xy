@@ -107,6 +107,11 @@ fig = Figure(title="Standalone").scatter(x, y)
 fig.to_html("chart.html")
 ```
 
+## Example Apps
+
+- [`reflex_fastcharts_app/`](reflex_fastcharts_app/) is a standalone Reflex
+  dashboard that embeds generated fastcharts line, scatter, and density charts.
+
 ## API Styles
 
 Use the fluent API when you want quick imperative chart construction:
