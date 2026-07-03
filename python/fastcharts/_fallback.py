@@ -112,6 +112,32 @@ def m4_indices(
     return np.array(out, dtype=np.uint32)
 
 
+def bin_2d(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+    w: int,
+    h: int,
+) -> npt.NDArray[np.float32]:
+    if not (w > 0 and h > 0 and x1 > x0 and y1 > y0):
+        raise ValueError("require w>0, h>0, x1>x0, y1>y0")
+    x = np.ascontiguousarray(x, dtype=np.float64)
+    y = np.ascontiguousarray(y, dtype=np.float64)
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    valid = ~(np.isnan(x) | np.isnan(y))
+    valid &= (x >= x0) & (x < x1) & (y >= y0) & (y < y1)
+    xv, yv = x[valid], y[valid]
+    cx = np.minimum(((xv - x0) * (w / (x1 - x0))).astype(np.int64), w - 1)
+    cy = np.minimum(((yv - y0) * (h / (y1 - y0))).astype(np.int64), h - 1)
+    # bincount is the fast, exact equivalent of the Rust additive loop.
+    flat = np.bincount(cy * w + cx, minlength=w * h).astype(np.float32)
+    return flat.reshape(h, w)
+
+
 def min_max(data: npt.NDArray[np.float64]) -> Optional[tuple[float, float]]:
     data = np.ascontiguousarray(data, dtype=np.float64)
     valid = data[~np.isnan(data)]

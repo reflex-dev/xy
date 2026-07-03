@@ -37,5 +37,6 @@ zone_maps = _impl.zone_maps
 encode_f32 = _impl.encode_f32
 m4_indices = _impl.m4_indices
 min_max = _impl.min_max
+bin_2d = _impl.bin_2d
 
-__all__ = ["BACKEND", "encode_f32", "m4_indices", "min_max", "zone_maps"]
+__all__ = ["BACKEND", "bin_2d", "encode_f32", "m4_indices", "min_max", "zone_maps"]

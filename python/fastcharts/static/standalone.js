@@ -1,27 +1,78 @@
 (() => {
 /**
- * fastcharts render client — Phase 0.
+ * fastcharts render client.
  *
  * A thin GPU render client (design dossier §32): receives a data-less spec +
  * offset-encoded f32 columns as raw binary (§29 — no JSON numbers, no parse),
- * uploads them once to WebGL2 buffers, and draws with instanced primitives.
- * Pan/zoom is a uniform update — it never touches data buffers (§7). When a
- * zoom outruns the shipped decimation, it asks the kernel to re-decimate the
- * visible window and swaps buffers when the answer arrives, drawing the stale
- * tier until then (§17 stale-while-revalidate).
+ * uploads them once to WebGL2 buffers, and draws with instanced/point
+ * primitives. Pan/zoom is a uniform update — it never touches data buffers (§7).
  *
- * Deliberately dependency-free: this file is the entire client. DOM is used
- * only for chrome — title, axis tick labels, legend (§7).
+ * Full scatter support:
+ *  - per-point color: constant, continuous (colormap LUT), categorical (palette)
+ *  - per-point size: constant or continuous (mapped to a px range)
+ *  - GPU picking → exact-row hover tooltip (§7/§17 Tier-0 hover; exact values
+ *    come from the kernel's f64 canonical store, §16)
+ *  - Tier-2 density surface for massive scatter (§5): a kernel-binned count grid
+ *    uploaded as an R32F texture and colormapped at composite time, re-binned on
+ *    zoom via a kernel round-trip (stale grid stays drawn until then, §17)
+ *
+ * Dependency-free: this file is the whole client. DOM is used only for chrome —
+ * title, axis tick labels, legend, tooltip (§7).
  */
 
 "use strict";
+
+const PROTOCOL = 2;
+
+// ---------------------------------------------------------------------------
+// Colormaps (§36 — CVD-safe defaults). Compact stop lists; the client
+// interpolates a 256-texel LUT texture once per colormap.
+// ---------------------------------------------------------------------------
+
+const COLORMAP_STOPS = {
+  viridis: [
+    [68, 1, 84], [72, 40, 120], [62, 74, 137], [49, 104, 142], [38, 130, 142],
+    [31, 158, 137], [53, 183, 121], [110, 206, 88], [181, 222, 43], [253, 231, 37],
+  ],
+  magma: [
+    [0, 0, 4], [28, 16, 68], [79, 18, 123], [129, 37, 129], [181, 54, 122],
+    [229, 80, 100], [251, 135, 97], [254, 194, 135], [252, 253, 191], [252, 253, 191],
+  ],
+  plasma: [
+    [13, 8, 135], [84, 2, 163], [139, 10, 165], [185, 50, 137], [219, 92, 104],
+    [244, 136, 73], [254, 188, 43], [240, 249, 33], [240, 249, 33], [240, 249, 33],
+  ],
+  cividis: [
+    [0, 32, 76], [0, 42, 102], [39, 63, 108], [72, 85, 115], [106, 109, 120],
+    [143, 133, 118], [181, 159, 105], [223, 187, 82], [253, 217, 63], [255, 233, 69],
+  ],
+  turbo: [
+    [48, 18, 59], [70, 107, 227], [40, 187, 226], [61, 242, 148], [161, 253, 60],
+    [232, 216, 33], [253, 149, 35], [225, 66, 13], [153, 15, 4], [122, 4, 3],
+  ],
+};
+
+function buildLutData(name) {
+  const stops = COLORMAP_STOPS[name] || COLORMAP_STOPS.viridis;
+  const N = 256;
+  const data = new Uint8Array(N * 4);
+  for (let i = 0; i < N; i++) {
+    const t = (i / (N - 1)) * (stops.length - 1);
+    const lo = Math.floor(t);
+    const hi = Math.min(lo + 1, stops.length - 1);
+    const f = t - lo;
+    for (let c = 0; c < 3; c++) {
+      data[i * 4 + c] = Math.round(stops[lo][c] * (1 - f) + stops[hi][c] * f);
+    }
+    data[i * 4 + 3] = 255;
+  }
+  return data;
+}
 
 // ---------------------------------------------------------------------------
 // Colors & theming (§36: chrome inherits CSS; marks read --chart-* tokens)
 // ---------------------------------------------------------------------------
 
-/** Resolve any CSS color expression to [r,g,b,a] via a probe element —
- * handles oklch(), color-mix(), named colors without a CSS parser (§36b). */
 function resolveCssColor(host, expr) {
   const probe = document.createElement("span");
   probe.style.display = "none";
@@ -55,8 +106,6 @@ function parseColor(host, c, fallback) {
   return resolveCssColor(host, c) || fallback;
 }
 
-/** Theme derived from the container: tokens if set, otherwise the inherited
- * text color at reduced alpha — auto-adapts to light/dark notebooks. */
 function readTheme(root) {
   const text = resolveCssColor(root, "currentColor") || [0.2, 0.2, 0.2, 1];
   const withA = (c, a) => [c[0], c[1], c[2], a];
@@ -65,7 +114,7 @@ function readTheme(root) {
     return v ? resolveCssColor(root, v) || null : null;
   };
   return {
-    bg: tok("--chart-bg"), // null = transparent, page shows through
+    bg: tok("--chart-bg"),
     grid: tok("--chart-grid") || withA(text, 0.14),
     axis: tok("--chart-axis") || withA(text, 0.55),
     label: tok("--chart-text") || withA(text, 0.85),
@@ -92,8 +141,6 @@ function linearTicks(lo, hi, target = 6) {
   const step = niceStep((hi - lo) / target);
   const first = Math.ceil(lo / step) * step;
   const out = [];
-  // The length guard also breaks the v += step fixed point that f64 rounding
-  // can produce at extreme zoom (step << ulp(v)).
   for (let v = first; v <= hi + step * 1e-9 && out.length < 200; v += step) {
     out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
   }
@@ -112,10 +159,7 @@ const TIME_STEPS = [
 function timeTicks(lo, hi, target = 6) {
   const span = hi - lo;
   const rough = span / target;
-  // Month/year steps need calendar arithmetic (§16: months are not 30×86400s).
-  if (rough > 14 * MS.d) {
-    return calendarTicks(lo, hi, rough);
-  }
+  if (rough > 14 * MS.d) return calendarTicks(lo, hi, rough);
   let step = TIME_STEPS[TIME_STEPS.length - 1];
   for (const s of TIME_STEPS) {
     if (s >= rough) { step = s; break; }
@@ -172,6 +216,17 @@ function fmtLinear(v, step) {
   return s;
 }
 
+function fmtValue(v, kind) {
+  if (kind === "time_ms") {
+    const d = new Date(v);
+    return d.toISOString().replace("T", " ").replace(".000Z", "Z");
+  }
+  if (v === 0) return "0";
+  const av = Math.abs(v);
+  if (av >= 1e6 || av < 1e-4) return v.toExponential(3);
+  return (Math.round(v * 1e4) / 1e4).toString();
+}
+
 // ---------------------------------------------------------------------------
 // WebGL2 helpers
 // ---------------------------------------------------------------------------
@@ -181,7 +236,7 @@ function compile(gl, type, src) {
   gl.shaderSource(sh, src);
   gl.compileShader(sh);
   if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
-    throw new Error("shader compile: " + gl.getShaderInfoLog(sh));
+    throw new Error("shader compile: " + gl.getShaderInfoLog(sh) + "\n" + src);
   }
   return sh;
 }
@@ -197,33 +252,104 @@ function makeProgram(gl, vs, fs) {
   return p;
 }
 
-// Marks are SDF-shaded quads/sprites — resolution-independent AA (research §4.5).
+// Points: per-vertex position, plus optional per-vertex color scalar (a_cval)
+// and size scalar (a_sval). Color mode selects how the LUT is sampled; the LUT
+// is a 256×1 texture (colormap or cycled palette). Size mode maps a_sval into a
+// px range. SDF-antialiased in the fragment stage.
 const POINT_VS = `#version 300 es
-in float ax; in float ay;
-uniform vec2 u_xmap; uniform vec2 u_ymap; uniform float u_size;
+in float ax; in float ay; in float a_cval; in float a_sval;
+uniform vec2 u_xmap; uniform vec2 u_ymap;
+uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange;
+uniform int u_colorMode; uniform float u_dpr;
+out float v_lutCoord;
 void main() {
   gl_Position = vec4(ax * u_xmap.x + u_xmap.y, ay * u_ymap.x + u_ymap.y, 0.0, 1.0);
-  gl_PointSize = u_size;
+  float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
+  gl_PointSize = sz * u_dpr;
+  // continuous: coord = value in [0,1]; categorical: center of texel a_cval.
+  v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
 }`;
 
 const POINT_FS = `#version 300 es
-// highp (not mediump): vertex-stage floats default to highp, and WebGL2 rejects
-// a program whose shared uniforms differ in precision between stages.
-precision highp float;
-uniform vec4 u_color;
+precision highp float; precision highp int;
+uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
+in float v_lutCoord;
 out vec4 outColor;
 void main() {
   vec2 d = gl_PointCoord - 0.5;
   float r = length(d) * 2.0;
   float aa = fwidth(r) + 1e-4;
-  float alpha = (1.0 - smoothstep(1.0 - aa, 1.0, r)) * u_color.a;
-  if (alpha <= 0.001) discard;
-  outColor = vec4(u_color.rgb * alpha, alpha);
+  float cov = 1.0 - smoothstep(1.0 - aa, 1.0, r);
+  if (cov <= 0.001) discard;
+  vec3 rgb = u_colorMode == 0 ? u_color.rgb : texture(u_lut, vec2(clamp(v_lutCoord, 0.0, 1.0), 0.5)).rgb;
+  float alpha = cov * u_opacity;
+  outColor = vec4(rgb * alpha, alpha);
 }`;
 
-// Lines: one instanced quad per segment, extruded in pixel space with an
-// SDF-antialiased edge. SoA buffers: x0/x1 are the same buffer at a 4-byte
-// offset. (Research §4.4 — nobody serious uses GL.LINES.)
+// Picking: same geometry + size, outputs an encoded ID (24-bit vertex index +
+// 8-bit trace slot) so a single readPixels resolves which point is under the
+// cursor (§17). Rerun's R-channel-ID-texture idea, RGBA8 variant.
+const PICK_VS = `#version 300 es
+in float ax; in float ay; in float a_sval;
+uniform vec2 u_xmap; uniform vec2 u_ymap;
+uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange; uniform float u_dpr;
+flat out int v_id;
+void main() {
+  gl_Position = vec4(ax * u_xmap.x + u_xmap.y, ay * u_ymap.x + u_ymap.y, 0.0, 1.0);
+  float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
+  gl_PointSize = max(sz, 6.0) * u_dpr; // enlarge hit target
+  v_id = gl_VertexID;
+}`;
+
+const PICK_FS = `#version 300 es
+precision highp float; precision highp int;
+uniform int u_slot;
+flat in int v_id;
+out vec4 outColor;
+void main() {
+  vec2 d = gl_PointCoord - 0.5;
+  if (length(d) > 0.5) discard;
+  int id = v_id;
+  outColor = vec4(
+    float(id & 255) / 255.0,
+    float((id >> 8) & 255) / 255.0,
+    float((id >> 16) & 255) / 255.0,
+    float(u_slot + 1) / 255.0
+  );
+}`;
+
+// Density (Tier 2): a fullscreen quad; each fragment reconstructs its data-space
+// coordinate from the view range, maps into the grid's data range, samples the
+// count, log-normalizes by the per-view max, and colormaps (§5, §F6). Data
+// outside the grid range is transparent — so a stale grid stays correctly
+// positioned during pan until the re-bin arrives (§17).
+const DENSITY_VS = `#version 300 es
+in vec2 a_corner;
+uniform vec4 u_view; // x0,x1,y0,y1
+out vec2 v_data;
+void main() {
+  gl_Position = vec4(a_corner * 2.0 - 1.0, 0.0, 1.0);
+  v_data = vec2(mix(u_view.x, u_view.y, a_corner.x), mix(u_view.z, u_view.w, a_corner.y));
+}`;
+
+const DENSITY_FS = `#version 300 es
+precision highp float;
+uniform sampler2D u_grid; uniform sampler2D u_lut;
+uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1
+uniform float u_max; uniform float u_opacity;
+in vec2 v_data;
+out vec4 outColor;
+void main() {
+  vec2 uv = vec2((v_data.x - u_gridRange.x) / (u_gridRange.y - u_gridRange.x),
+                 (v_data.y - u_gridRange.z) / (u_gridRange.w - u_gridRange.z));
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
+  float c = texture(u_grid, uv).r;
+  if (c <= 0.0 || u_max <= 0.0) discard;
+  float t = log(1.0 + c) / log(1.0 + u_max); // eq-hist-ish log scaling (§5)
+  vec3 rgb = texture(u_lut, vec2(clamp(t, 0.0, 1.0), 0.5)).rgb;
+  outColor = vec4(rgb * u_opacity, u_opacity);
+}`;
+
 const LINE_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
@@ -246,7 +372,6 @@ void main() {
 }`;
 
 const LINE_FS = `#version 300 es
-// highp: u_width is shared with the vertex stage (highp there); precisions must match.
 precision highp float;
 uniform vec4 u_color; uniform float u_width;
 in float v_off;
@@ -265,23 +390,18 @@ void main() {
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
 
 class ChartView {
-  /**
-   * @param el host element
-   * @param spec data-less spec (§9)
-   * @param buffer ArrayBuffer of concatenated relative-f32 columns
-   * @param comm {send(msg), onMessage(cb)} | null (null = static HTML export)
-   */
   constructor(el, spec, buffer, comm) {
-    if (spec.protocol !== 1) {
-      // §33: version mismatch fails loudly with an upgrade hint, never renders wrong.
+    if (spec.protocol !== PROTOCOL) {
       el.textContent =
-        `fastcharts: protocol mismatch (client speaks 1, kernel sent ${spec.protocol}). ` +
+        `fastcharts: protocol mismatch (client speaks ${PROTOCOL}, kernel sent ${spec.protocol}). ` +
         "Update the fastcharts package and restart the kernel.";
       throw new Error("protocol mismatch");
     }
     this.spec = spec;
     this.comm = comm;
     this.seq = 0;
+    this._lutCache = new Map();
+    this._hoverId = -1;
 
     const top = MARGIN.t + (spec.title ? 30 : 0);
     this.plot = {
@@ -296,7 +416,6 @@ class ChartView {
     this._initGl(buffer);
     this._initInteraction();
 
-    // Initial view = spec autorange (computed kernel-side from zone maps, §22).
     this.view0 = {
       x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
       y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
@@ -307,9 +426,7 @@ class ChartView {
     this._onScheme = () => this.refreshTheme();
     this._themeWatch.addEventListener?.("change", this._onScheme);
 
-    if (comm) {
-      comm.onMessage((msg, buffers) => this._onKernelMsg(msg, buffers));
-    }
+    if (comm) comm.onMessage((msg, buffers) => this._onKernelMsg(msg, buffers));
     this.draw();
   }
 
@@ -327,12 +444,10 @@ class ChartView {
       const t = document.createElement("div");
       t.textContent = s.title;
       t.style.cssText =
-        "position:absolute;top:6px;left:0;right:0;text-align:center;" +
-        "font-size:14px;font-weight:600;";
+        "position:absolute;top:6px;left:0;right:0;text-align:center;font-size:14px;font-weight:600;";
       root.appendChild(t);
     }
 
-    // Chrome canvas (grid, axes) under the GL canvas; DOM text on top (§7).
     this.chrome = document.createElement("canvas");
     this.chrome.style.cssText = "position:absolute;inset:0;pointer-events:none;";
     root.appendChild(this.chrome);
@@ -347,25 +462,58 @@ class ChartView {
     this.labels.style.cssText = "position:absolute;inset:0;pointer-events:none;";
     root.appendChild(this.labels);
 
-    const named = s.traces.filter((t) => t.name);
-    if (named.length) {
-      const lg = document.createElement("div");
-      lg.style.cssText =
-        `position:absolute;top:${this.plot.y + 6}px;right:${MARGIN.r + 6}px;` +
-        "display:flex;flex-direction:column;gap:2px;font-size:11px;" +
-        "background:rgba(128,128,128,.08);border-radius:4px;padding:4px 8px;";
-      for (const t of named) {
-        const row = document.createElement("div");
-        const sw = document.createElement("span");
-        sw.style.cssText =
-          `display:inline-block;width:10px;height:10px;border-radius:5px;` +
-          `background:${t.style.color};margin-right:5px;vertical-align:-1px;`;
-        row.appendChild(sw);
-        row.appendChild(document.createTextNode(t.name));
-        lg.appendChild(row);
+    // Hover tooltip (§17) — DOM, so it's crisp and selectable (§7).
+    this.tooltip = document.createElement("div");
+    this.tooltip.style.cssText =
+      "position:absolute;display:none;pointer-events:none;z-index:5;" +
+      "background:rgba(20,24,33,.92);color:#fff;padding:5px 8px;border-radius:4px;" +
+      "font-size:11px;line-height:1.35;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.3);";
+    root.appendChild(this.tooltip);
+
+    this._buildLegend(root);
+  }
+
+  _buildLegend(root) {
+    const s = this.spec;
+    const items = [];
+    for (const t of s.traces) {
+      if (t.tier === "density") {
+        items.push({ swatch: "gradient", cmap: t.density.colormap, name: t.name || "density" });
+      } else if (t.color && t.color.mode === "categorical") {
+        t.color.categories.forEach((cat, i) =>
+          items.push({ swatch: t.color.palette[i], name: cat }));
+      } else if (t.color && t.color.mode === "continuous") {
+        items.push({ swatch: "gradient", cmap: t.color.colormap, name: t.name || "value" });
+      } else if (t.name) {
+        const c = (t.color && t.color.color) || (t.style && t.style.color);
+        items.push({ swatch: c, name: t.name });
       }
-      root.appendChild(lg);
     }
+    if (!items.length) return;
+    const lg = document.createElement("div");
+    lg.style.cssText =
+      `position:absolute;top:${this.plot.y + 6}px;right:${MARGIN.r + 6}px;` +
+      "display:flex;flex-direction:column;gap:2px;font-size:11px;" +
+      "background:rgba(128,128,128,.08);border-radius:4px;padding:4px 8px;max-height:" +
+      `${this.plot.h - 12}px;overflow:auto;`;
+    for (const it of items) {
+      const row = document.createElement("div");
+      const sw = document.createElement("span");
+      let bg = it.swatch;
+      if (it.swatch === "gradient") {
+        const stops = COLORMAP_STOPS[it.cmap] || COLORMAP_STOPS.viridis;
+        bg = `linear-gradient(90deg,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
+        sw.style.background = bg;
+      } else {
+        sw.style.background = bg;
+      }
+      sw.style.cssText +=
+        "display:inline-block;width:12px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px;";
+      row.appendChild(sw);
+      row.appendChild(document.createTextNode(it.name));
+      lg.appendChild(row);
+    }
+    root.appendChild(lg);
   }
 
   _initGl(buffer) {
@@ -379,9 +527,7 @@ class ChartView {
     this.chrome.style.height = this.spec.height + "px";
 
     const gl = this.canvas.getContext("webgl2", {
-      antialias: false, // marks self-antialias via SDF
-      premultipliedAlpha: true,
-      alpha: true,
+      antialias: false, premultipliedAlpha: true, alpha: true,
     });
     if (!gl) {
       this.root.textContent = "fastcharts: WebGL2 unavailable in this browser.";
@@ -393,21 +539,113 @@ class ChartView {
 
     this.pointProg = makeProgram(gl, POINT_VS, POINT_FS);
     this.lineProg = makeProgram(gl, LINE_VS, LINE_FS);
+    this.pickProg = makeProgram(gl, PICK_VS, PICK_FS);
+    this.densityProg = makeProgram(gl, DENSITY_VS, DENSITY_FS);
 
-    // Upload once; pan/zoom never re-uploads (§7 retained buffers).
-    this.gpuTraces = this.spec.traces.map((t) => {
-      const x = this._columnView(buffer, this.spec.columns[t.x]);
-      const y = this._columnView(buffer, this.spec.columns[t.y]);
-      return {
-        trace: t,
-        xMeta: { ...this.spec.columns[t.x] },
-        yMeta: { ...this.spec.columns[t.y] },
-        n: Math.min(x.length, y.length),
-        xBuf: this._upload(x),
-        yBuf: this._upload(y),
-        color: parseColor(this.root, t.style.color, [0.3, 0.47, 0.66, 1]),
+    // Fullscreen quad for density.
+    this.quad = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
+
+    this.gpuTraces = this.spec.traces.map((t) => this._buildTrace(buffer, t));
+    this._pickable = this.gpuTraces.some((g) => g.trace.kind === "scatter" && g.tier !== "density");
+    if (this._pickable) this._initPickTarget();
+  }
+
+  _lut(name) {
+    if (this._lutCache.has(name)) return this._lutCache.get(name);
+    const gl = this.gl;
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, buildLutData(name));
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this._lutCache.set(name, tex);
+    return tex;
+  }
+
+  _paletteLut(palette) {
+    const gl = this.gl;
+    const data = new Uint8Array(256 * 4);
+    for (let i = 0; i < 256; i++) {
+      const c = hexColor(palette[i % palette.length]);
+      data[i * 4] = c[0] * 255;
+      data[i * 4 + 1] = c[1] * 255;
+      data[i * 4 + 2] = c[2] * 255;
+      data[i * 4 + 3] = 255;
+    }
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return tex;
+  }
+
+  _buildTrace(buffer, t) {
+    const gl = this.gl;
+    const g = { trace: t, tier: t.tier, color: [0.3, 0.47, 0.66, 1] };
+
+    if (t.tier === "density") {
+      const d = t.density;
+      const grid = new Float32Array(buffer, this.spec.columns[d.buf].byte_offset, d.w * d.h);
+      g.density = {
+        w: d.w, h: d.h, max: d.max, colormap: d.colormap,
+        xRange: d.x_range, yRange: d.y_range,
+        tex: this._uploadGrid(grid, d.w, d.h),
+        lut: this._lut(d.colormap),
       };
-    });
+      return g;
+    }
+
+    const x = this._columnView(buffer, this.spec.columns[t.x]);
+    const y = this._columnView(buffer, this.spec.columns[t.y]);
+    g.xMeta = { ...this.spec.columns[t.x] };
+    g.yMeta = { ...this.spec.columns[t.y] };
+    g.n = Math.min(x.length, y.length);
+    g.xBuf = this._upload(x);
+    g.yBuf = this._upload(y);
+
+    if (t.kind === "scatter") {
+      g.colorMode = 0;
+      g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
+      if (t.color && t.color.mode === "continuous") {
+        g.colorMode = 1;
+        g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+        g.lut = this._lut(t.color.colormap);
+      } else if (t.color && t.color.mode === "categorical") {
+        g.colorMode = 2;
+        g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+        g.lut = this._paletteLut(t.color.palette);
+      }
+      g.sizeMode = 0;
+      g.size = (t.size && t.size.size) || 4.0;
+      g.sizeRange = [2, 18];
+      if (t.size && t.size.mode === "continuous") {
+        g.sizeMode = 1;
+        g.sBuf = this._upload(this._columnView(buffer, this.spec.columns[t.size.buf]));
+        g.sizeRange = t.size.range_px;
+      }
+    } else {
+      g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+    }
+    return g;
+  }
+
+  _uploadGrid(f32, w, h) {
+    const gl = this.gl;
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, w, h, 0, gl.RED, gl.FLOAT, f32);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return tex;
   }
 
   _columnView(buffer, meta) {
@@ -422,10 +660,23 @@ class ChartView {
     return buf;
   }
 
+  _initPickTarget() {
+    const gl = this.gl;
+    this.pickTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.pickTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, this.canvas.width, this.canvas.height, 0,
+      gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    this.pickFbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.pickTex, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    this._pickDirty = true;
+  }
+
   // -- drawing --------------------------------------------------------------
 
-  /** Column-space → clip-space map. Computed in f64 here; only the small
-   * relative values go through f32 (§4 offset encoding). */
   _map(meta, lo, hi) {
     const mul = 2 / ((hi - lo) * meta.scale);
     const add = ((meta.offset - lo) / (hi - lo)) * 2 - 1;
@@ -443,6 +694,7 @@ class ChartView {
   _drawNow() {
     const gl = this.gl;
     const { x0, x1, y0, y1 } = this.view;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     const bg = this.theme.bg;
     if (bg) gl.clearColor(bg[0] * bg[3], bg[1] * bg[3], bg[2] * bg[3], bg[3]);
@@ -450,29 +702,95 @@ class ChartView {
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     for (const g of this.gpuTraces) {
+      if (g.tier === "density") { this._drawDensity(g); continue; }
       const xm = this._map(g.xMeta, x0, x1);
       const ym = this._map(g.yMeta, y0, y1);
-      if (g.trace.kind === "scatter") {
-        this._drawPoints(g, xm, ym);
-      } else {
-        this._drawLine(g, xm, ym);
-      }
+      if (g.trace.kind === "scatter") this._drawPoints(g, xm, ym);
+      else this._drawLine(g, xm, ym);
     }
+    this._pickDirty = true;
     this._drawChrome();
+  }
+
+  _bindScalarAttr(prog, name, buf, byteOffset, divisor) {
+    const gl = this.gl;
+    const loc = gl.getAttribLocation(prog, name);
+    if (loc < 0) return;
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 1, gl.FLOAT, false, 0, byteOffset);
+    gl.vertexAttribDivisor(loc, divisor);
+  }
+
+  _disableAttr(prog, name) {
+    const gl = this.gl;
+    const loc = gl.getAttribLocation(prog, name);
+    if (loc >= 0) gl.disableVertexAttribArray(loc);
   }
 
   _drawPoints(g, xm, ym) {
     const gl = this.gl;
-    gl.useProgram(this.pointProg);
-    const u = (n) => gl.getUniformLocation(this.pointProg, n);
+    const prog = this.pointProg;
+    gl.useProgram(prog);
+    const u = (n) => gl.getUniformLocation(prog, n);
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
-    gl.uniform1f(u("u_size"), (g.trace.style.size || 4) * this.dpr);
-    const [r, gr, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gr, b, a * (g.trace.style.opacity ?? 1));
-    this._bindScalarAttr(this.pointProg, "ax", g.xBuf, 0, 0);
-    this._bindScalarAttr(this.pointProg, "ay", g.yBuf, 0, 0);
+    gl.uniform1f(u("u_dpr"), this.dpr);
+    gl.uniform1f(u("u_size"), g.size);
+    gl.uniform1i(u("u_sizeMode"), g.sizeMode);
+    gl.uniform2f(u("u_sizeRange"), g.sizeRange[0], g.sizeRange[1]);
+    gl.uniform1i(u("u_colorMode"), g.colorMode);
+    gl.uniform1f(u("u_opacity"), g.trace.style.opacity ?? 0.8);
+    const [r, gg, b] = g.color;
+    gl.uniform4f(u("u_color"), r, gg, b, 1);
+
+    this._bindScalarAttr(prog, "ax", g.xBuf, 0, 0);
+    this._bindScalarAttr(prog, "ay", g.yBuf, 0, 0);
+    if (g.colorMode !== 0 && g.cBuf) {
+      this._bindScalarAttr(prog, "a_cval", g.cBuf, 0, 0);
+    } else {
+      this._disableAttr(prog, "a_cval");
+      const loc = gl.getAttribLocation(prog, "a_cval");
+      if (loc >= 0) gl.vertexAttrib1f(loc, 0);
+    }
+    if (g.sizeMode === 1 && g.sBuf) {
+      this._bindScalarAttr(prog, "a_sval", g.sBuf, 0, 0);
+    } else {
+      this._disableAttr(prog, "a_sval");
+      const loc = gl.getAttribLocation(prog, "a_sval");
+      if (loc >= 0) gl.vertexAttrib1f(loc, 0.5);
+    }
+    if (g.lut) {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, g.lut);
+      gl.uniform1i(u("u_lut"), 0);
+    }
     gl.drawArrays(gl.POINTS, 0, g.n);
+  }
+
+  _drawDensity(g) {
+    const gl = this.gl;
+    const prog = this.densityProg;
+    gl.useProgram(prog);
+    const u = (n) => gl.getUniformLocation(prog, n);
+    const { x0, x1, y0, y1 } = this.view;
+    gl.uniform4f(u("u_view"), x0, x1, y0, y1);
+    const d = g.density;
+    gl.uniform4f(u("u_gridRange"), d.xRange[0], d.xRange[1], d.yRange[0], d.yRange[1]);
+    gl.uniform1f(u("u_max"), d.max);
+    gl.uniform1f(u("u_opacity"), g.trace.style.opacity ?? 1.0);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, d.tex);
+    gl.uniform1i(u("u_grid"), 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, d.lut);
+    gl.uniform1i(u("u_lut"), 1);
+    const loc = gl.getAttribLocation(prog, "a_corner");
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribDivisor(loc, 0);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
   _drawLine(g, xm, ym) {
@@ -484,24 +802,13 @@ class ChartView {
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     gl.uniform1f(u("u_width"), (g.trace.style.width || 1.5) * this.dpr);
-    const [r, gr, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gr, b, a * (g.trace.style.opacity ?? 1));
-    // Same SoA buffer bound twice at a 4-byte offset = segment endpoints.
+    const [r, gg, b, a] = g.color;
+    gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
     this._bindScalarAttr(this.lineProg, "ax0", g.xBuf, 0, 1);
     this._bindScalarAttr(this.lineProg, "ax1", g.xBuf, 4, 1);
     this._bindScalarAttr(this.lineProg, "ay0", g.yBuf, 0, 1);
     this._bindScalarAttr(this.lineProg, "ay1", g.yBuf, 4, 1);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n - 1);
-  }
-
-  _bindScalarAttr(prog, name, buf, byteOffset, divisor) {
-    const gl = this.gl;
-    const loc = gl.getAttribLocation(prog, name);
-    if (loc < 0) return;
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 1, gl.FLOAT, false, 0, byteOffset);
-    gl.vertexAttribDivisor(loc, divisor);
   }
 
   _drawChrome() {
@@ -540,7 +847,6 @@ class ChartView {
     ctx.lineTo(p.x + p.w, p.y + p.h + 0.5);
     ctx.stroke();
 
-    // Tick labels are DOM text — crisp, selectable, a11y-visible (§7/§20).
     const label = (text, css) => {
       const d = document.createElement("div");
       d.textContent = text;
@@ -567,28 +873,146 @@ class ChartView {
     }
   }
 
-  // -- interaction (§17: view changes are same-frame uniform updates) --------
+  // -- picking (§17) --------------------------------------------------------
+
+  _renderPick() {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    gl.disable(gl.BLEND);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    const { x0, x1, y0, y1 } = this.view;
+    const prog = this.pickProg;
+    gl.useProgram(prog);
+    const u = (n) => gl.getUniformLocation(prog, n);
+    gl.uniform1f(u("u_dpr"), this.dpr);
+    let slot = 0;
+    for (const g of this.gpuTraces) {
+      if (g.trace.kind !== "scatter" || g.tier === "density") continue;
+      const xm = this._map(g.xMeta, x0, x1);
+      const ym = this._map(g.yMeta, y0, y1);
+      gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+      gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+      gl.uniform1f(u("u_size"), g.size);
+      gl.uniform1i(u("u_sizeMode"), g.sizeMode);
+      gl.uniform2f(u("u_sizeRange"), g.sizeRange[0], g.sizeRange[1]);
+      gl.uniform1i(u("u_slot"), slot);
+      g.pickSlot = slot;
+      this._bindScalarAttr(prog, "ax", g.xBuf, 0, 0);
+      this._bindScalarAttr(prog, "ay", g.yBuf, 0, 0);
+      if (g.sizeMode === 1 && g.sBuf) this._bindScalarAttr(prog, "a_sval", g.sBuf, 0, 0);
+      else {
+        this._disableAttr(prog, "a_sval");
+        const loc = gl.getAttribLocation(prog, "a_sval");
+        if (loc >= 0) gl.vertexAttrib1f(loc, 0.5);
+      }
+      gl.drawArrays(gl.POINTS, 0, g.n);
+      slot++;
+    }
+    gl.enable(gl.BLEND);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    this._pickDirty = false;
+  }
+
+  _pickAt(cssX, cssY) {
+    if (!this._pickable) return null;
+    if (this._pickDirty) this._renderPick();
+    const gl = this.gl;
+    const px = Math.round(cssX * this.dpr);
+    const py = Math.round((this.plot.h - cssY) * this.dpr); // GL origin bottom-left
+    if (px < 0 || py < 0 || px >= this.canvas.width || py >= this.canvas.height) return null;
+    const buf = new Uint8Array(4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
+    gl.readPixels(px, py, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    if (buf[3] === 0) return null;
+    const slot = buf[3] - 1;
+    const index = buf[0] | (buf[1] << 8) | (buf[2] << 16);
+    const g = this.gpuTraces.find((t) => t.pickSlot === slot && t.trace.kind === "scatter");
+    if (!g) return null;
+    return { trace: g.trace.id, index, g };
+  }
+
+  _showTooltip(hit, clientX, clientY) {
+    const row = this._localRow(hit);
+    this._renderTooltip(row, clientX, clientY);
+    if (this.comm) {
+      // Exact f64 values from the kernel canonical store (§16). The local row
+      // (decoded from f32) shows instantly; the exact one replaces it.
+      this.seq += 1;
+      this._pendingPick = { seq: this.seq, clientX, clientY };
+      this.comm.send({ type: "pick", seq: this.seq, trace: hit.trace, index: hit.index });
+    }
+  }
+
+  _localRow(hit) {
+    // Approximate readout from the resident f32 (used in standalone export and
+    // as the instant value before the kernel's exact reply, §37). Only present
+    // when CPU copies were retained (renderStandalone); the widget path replaces
+    // this with the kernel's exact f64 row (§16).
+    const g = hit.g;
+    const cpu = g._cpu;
+    const row = { trace: g.trace.id, index: hit.index };
+    if (cpu) {
+      row.x = cpu.x[hit.index] / (g.xMeta.scale || 1) + g.xMeta.offset;
+      row.y = cpu.y[hit.index] / (g.yMeta.scale || 1) + g.yMeta.offset;
+      row.x_kind = g.xMeta.kind;
+      row.y_kind = g.yMeta.kind;
+    }
+    return row;
+  }
+
+  _renderTooltip(row, clientX, clientY) {
+    if (!row) { this.tooltip.style.display = "none"; return; }
+    const rect = this.root.getBoundingClientRect();
+    const lx = clientX - rect.left;
+    const ly = clientY - rect.top;
+    const lines = [];
+    if (row.x !== undefined) lines.push(`x: ${fmtValue(row.x, row.x_kind)}`);
+    if (row.y !== undefined) lines.push(`y: ${fmtValue(row.y, row.y_kind)}`);
+    if (row.color_value !== undefined) lines.push(`color: ${fmtValue(row.color_value)}`);
+    if (row.color_category !== undefined) lines.push(`${row.color_category}`);
+    if (row.size_value !== undefined) lines.push(`size: ${fmtValue(row.size_value)}`);
+    if (!lines.length) lines.push(`#${row.index}`);
+    this.tooltip.innerHTML = lines.join("<br>");
+    this.tooltip.style.display = "block";
+    const tw = this.tooltip.offsetWidth;
+    this.tooltip.style.left = Math.min(lx + 12, this.spec.width - tw - 4) + "px";
+    this.tooltip.style.top = ly + 12 + "px";
+  }
+
+  // -- interaction ----------------------------------------------------------
 
   _initInteraction() {
     const c = this.canvas;
     let drag = null;
 
     c.addEventListener("pointerdown", (e) => {
-      drag = { px: e.clientX, py: e.clientY, view: { ...this.view } };
+      drag = { px: e.clientX, py: e.clientY, view: { ...this.view }, moved: false };
       c.setPointerCapture(e.pointerId);
+      this.tooltip.style.display = "none";
     });
     c.addEventListener("pointermove", (e) => {
-      if (!drag) return;
-      const { x0, x1, y0, y1 } = drag.view;
-      const dx = ((e.clientX - drag.px) / this.plot.w) * (x1 - x0);
-      const dy = ((e.clientY - drag.py) / this.plot.h) * (y1 - y0);
-      this.view = { x0: x0 - dx, x1: x1 - dx, y0: y0 + dy, y1: y1 + dy };
-      this.draw();
-      this._scheduleViewRequest();
+      if (drag) {
+        drag.moved = true;
+        const { x0, x1, y0, y1 } = drag.view;
+        const dx = ((e.clientX - drag.px) / this.plot.w) * (x1 - x0);
+        const dy = ((e.clientY - drag.py) / this.plot.h) * (y1 - y0);
+        this.view = { x0: x0 - dx, x1: x1 - dx, y0: y0 + dy, y1: y1 + dy };
+        this.draw();
+        this._scheduleViewRequest();
+        return;
+      }
+      this._hover(e);
     });
-    const end = () => { drag = null; };
+    const end = () => {
+      if (drag && !drag.moved) this.tooltip.style.display = "none";
+      drag = null;
+    };
     c.addEventListener("pointerup", end);
     c.addEventListener("pointercancel", end);
+    c.addEventListener("pointerleave", () => { this.tooltip.style.display = "none"; });
 
     c.addEventListener("wheel", (e) => {
       e.preventDefault();
@@ -599,9 +1023,6 @@ class ChartView {
       const { x0, x1, y0, y1 } = this.view;
       const ax = x0 + fx * (x1 - x0);
       const ay = y0 + fy * (y1 - y0);
-      // Clamp zoom-in near the f64 ulp of the anchor — below that, tick math
-      // and the view itself degenerate (deep-zoom re-centering of the *data*
-      // is handled kernel-side, §16; this guards the view rectangle only).
       if (f < 1) {
         const minSpanX = Math.max(Math.abs(ax), 1e-30) * 1e-12;
         const minSpanY = Math.max(Math.abs(ay), 1e-30) * 1e-12;
@@ -622,57 +1043,101 @@ class ChartView {
     });
   }
 
-  /** Debounced kernel round-trip: re-decimate the visible window (§28).
-   * The stale tier keeps drawing under the new view matrix until the swap (§17). */
+  _hover(e) {
+    if (!this._pickable) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const hit = this._pickAt(e.clientX - rect.left, e.clientY - rect.top);
+    if (!hit) {
+      this._hoverId = -1;
+      this.tooltip.style.display = "none";
+      return;
+    }
+    const id = hit.trace * 1e9 + hit.index;
+    this._lastHoverXY = { clientX: e.clientX, clientY: e.clientY };
+    if (id === this._hoverId) {
+      this._renderTooltip(this._lastRow, e.clientX, e.clientY);
+      return;
+    }
+    this._hoverId = id;
+    this._showTooltip(hit, e.clientX, e.clientY);
+  }
+
   _scheduleViewRequest() {
-    if (!this.comm || !this.spec.traces.some((t) => t.tier === "decimated")) return;
+    if (!this.comm) return;
+    const needsLine = this.spec.traces.some((t) => t.tier === "decimated");
+    const needsDensity = this.gpuTraces.some((g) => g.tier === "density");
+    if (!needsLine && !needsDensity) return;
     clearTimeout(this._viewTimer);
     this._viewTimer = setTimeout(() => {
       this.seq += 1;
-      this.comm.send({
-        type: "view",
-        seq: this.seq,
-        x0: this.view.x0,
-        x1: this.view.x1,
-        px: Math.round(this.plot.w),
-      });
+      if (needsLine) {
+        this.comm.send({
+          type: "view", seq: this.seq,
+          x0: this.view.x0, x1: this.view.x1, px: Math.round(this.plot.w),
+        });
+      }
+      if (needsDensity) {
+        for (const g of this.gpuTraces) {
+          if (g.tier !== "density") continue;
+          this.comm.send({
+            type: "density_view", seq: this.seq, trace: g.trace.id,
+            x0: this.view.x0, x1: this.view.x1, y0: this.view.y0, y1: this.view.y1,
+            w: Math.round(this.plot.w), h: Math.round(this.plot.h),
+          });
+        }
+      }
     }, 120);
   }
 
   _onKernelMsg(msg, buffers) {
-    if (!msg || msg.type !== "tier_update") return;
-    if (msg.seq !== this.seq) return; // superseded request — drop stale answer
-    for (const upd of msg.traces) {
-      const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
-      if (!g) continue;
-      const xBytes = buffers[upd.x.buf];
-      const yBytes = buffers[upd.y.buf];
-      const asF32 = (b) => {
-        if (b instanceof ArrayBuffer) return new Float32Array(b);
-        // Comm buffers may share one ArrayBuffer at arbitrary (unaligned)
-        // offsets — a Float32Array view requires 4-byte alignment.
-        if (b.byteOffset % 4 === 0) {
-          return new Float32Array(b.buffer, b.byteOffset, Math.floor(b.byteLength / 4));
-        }
-        return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
-      };
-      const gl = this.gl;
-      gl.bindBuffer(gl.ARRAY_BUFFER, g.xBuf);
-      gl.bufferData(gl.ARRAY_BUFFER, asF32(xBytes), gl.STATIC_DRAW);
-      gl.bindBuffer(gl.ARRAY_BUFFER, g.yBuf);
-      gl.bufferData(gl.ARRAY_BUFFER, asF32(yBytes), gl.STATIC_DRAW);
-      g.xMeta = { ...g.xMeta, offset: upd.x.offset, scale: upd.x.scale };
-      g.yMeta = { ...g.yMeta, offset: upd.y.offset, scale: upd.y.scale };
-      g.n = Math.min(upd.x.len, upd.y.len);
+    if (!msg) return;
+    if (msg.type === "tier_update") {
+      if (msg.seq !== this.seq) return;
+      for (const upd of msg.traces) {
+        const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
+        if (!g) continue;
+        const gl = this.gl;
+        gl.bindBuffer(gl.ARRAY_BUFFER, g.xBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.x.buf]), gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, g.yBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.y.buf]), gl.STATIC_DRAW);
+        g.xMeta = { ...g.xMeta, offset: upd.x.offset, scale: upd.x.scale };
+        g.yMeta = { ...g.yMeta, offset: upd.y.offset, scale: upd.y.scale };
+        g.n = Math.min(upd.x.len, upd.y.len);
+      }
+      this.draw();
+    } else if (msg.type === "density_update") {
+      for (const upd of msg.traces) {
+        const g = this.gpuTraces.find((t) => t.trace.id === upd.id && t.tier === "density");
+        if (!g) continue;
+        const d = upd.density;
+        const grid = this._asF32(buffers[d.buf]);
+        this.gl.deleteTexture(g.density.tex);
+        g.density.tex = this._uploadGrid(grid, d.w, d.h);
+        g.density.w = d.w; g.density.h = d.h; g.density.max = d.max;
+        g.density.xRange = d.x_range; g.density.yRange = d.y_range;
+      }
+      this.draw();
+    } else if (msg.type === "pick_result") {
+      if (!msg.row) { this.tooltip.style.display = "none"; return; }
+      this._lastRow = msg.row;
+      const xy = this._lastHoverXY;
+      if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY);
     }
-    this.draw();
   }
 
-  /** §36 escape hatch: re-resolve theme tokens (called on scheme change too). */
+  _asF32(b) {
+    if (b instanceof ArrayBuffer) return new Float32Array(b);
+    if (b.byteOffset % 4 === 0) {
+      return new Float32Array(b.buffer, b.byteOffset, Math.floor(b.byteLength / 4));
+    }
+    return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+  }
+
   refreshTheme() {
     this.theme = readTheme(this.root);
     for (const g of this.gpuTraces) {
-      g.color = parseColor(this.root, g.trace.style.color, g.color);
+      if (g.trace.kind === "line") g.color = parseColor(this.root, g.trace.style.color, g.color);
     }
     this.draw();
   }
@@ -697,7 +1162,6 @@ function bytesToArrayBuffer(b) {
   throw new Error("unsupported buffer type");
 }
 
-/** anywidget entry point (§33.3). */
 function render({ model, el }) {
   const spec = model.get("spec");
   const buffer = bytesToArrayBuffer(model.get("buffers"));
@@ -709,9 +1173,20 @@ function render({ model, el }) {
   return () => view.destroy();
 }
 
-/** Standalone entry point (static HTML export — no kernel, no tier updates). */
+/** Standalone (static HTML export — no kernel). Retains CPU f32 copies of
+ * scatter x/y so hover can read approximate values without a kernel (§37). */
 function renderStandalone(el, spec, arrayBuffer) {
-  return new ChartView(el, spec, bytesToArrayBuffer(arrayBuffer), null);
+  const buffer = bytesToArrayBuffer(arrayBuffer);
+  const view = new ChartView(el, spec, buffer, null);
+  for (const g of view.gpuTraces) {
+    if (g.trace.kind === "scatter" && g.tier !== "density") {
+      g._cpu = {
+        x: new Float32Array(buffer, spec.columns[g.trace.x].byte_offset, spec.columns[g.trace.x].len),
+        y: new Float32Array(buffer, spec.columns[g.trace.y].byte_offset, spec.columns[g.trace.y].len),
+      };
+    }
+  }
+  return view;
 }
 
 

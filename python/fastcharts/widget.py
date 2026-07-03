@@ -51,7 +51,8 @@ class FigureWidget(anywidget.AnyWidget):
     def _on_custom_msg(self, widget: Any, content: Any, msg_buffers: Any) -> None:
         if not isinstance(content, dict):
             return
-        if content.get("type") == "view":
+        kind = content.get("type")
+        if kind == "view":
             # Zoom/pan crossed what the shipped decimation can serve: recompute
             # for the visible window only (§28), stale-while-revalidate on the
             # client (§17 — it keeps drawing the old tier until this arrives).
@@ -63,7 +64,22 @@ class FigureWidget(anywidget.AnyWidget):
                 return
             update, buffers = self._figure.decimate_view(x0, x1, px)
             if update["traces"]:
-                self.send(
-                    {"type": "tier_update", "seq": seq, **update},
-                    buffers=buffers,
+                self.send({"type": "tier_update", "seq": seq, **update}, buffers=buffers)
+        elif kind == "density_view":
+            # Tier-2 scatter panned/zoomed: re-bin the visible window (§5).
+            seq = content.get("seq")
+            try:
+                update, buffers = self._figure.density_view(
+                    int(content["trace"]),
+                    float(content["x0"]), float(content["x1"]),
+                    float(content["y0"]), float(content["y1"]),
+                    int(content.get("w", 512)), int(content.get("h", 384)),
                 )
+            except (KeyError, ValueError, IndexError):
+                return
+            if update["traces"]:
+                self.send({"type": "density_update", "seq": seq, **update}, buffers=buffers)
+        elif kind == "pick":
+            # Hover/click drill: exact f64 row from canonical (§16/§17).
+            row = self._figure.pick(int(content.get("trace", -1)), int(content.get("index", -1)))
+            self.send({"type": "pick_result", "seq": content.get("seq"), "row": row})

@@ -14,19 +14,31 @@ from typing import Any, Optional
 
 import numpy as np
 
-from . import kernels
+from . import channels, kernels
+from .channels import ColorChannel, SizeChannel
 from .column import Column, ColumnStore
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the
 # visible x-range only).
 DECIMATION_THRESHOLD = 10_000
 
-# Direct-tier soft ceiling (§5 F3: fill-rate + allocation cliffs are real even
-# when vertex count "fits"). Phase 0 warns; Tier 2 aggregation is the real fix.
+# Scatter above this many points switches to Tier-2 density aggregation (§5):
+# instead of shipping/drawing every point (fill-rate + the ~1 GB single-alloc
+# cliff, §5 F3), the kernel bins the viewport into a density grid and the client
+# colormaps it. Screen-bounded transport and VRAM regardless of point count.
+SCATTER_DENSITY_THRESHOLD = 200_000
+
+# Absolute direct-draw ceiling; above this, density is forced even if the user
+# asked for per-point channels (they can't survive count-aggregation without the
+# §5-F5 aggregation algebra — we warn and drop them, never silently mislead).
 DIRECT_SOFT_CEILING = 2_000_000
+
+# Default density grid resolution (cells). Screen-bounded (§5); the client
+# requests a viewport-matched size on zoom via density_view.
+DENSITY_GRID = (512, 384)
 
 # CVD-safe default categorical palette (§20/§36 default theme).
 DEFAULT_PALETTE = [
@@ -43,10 +55,27 @@ class Trace:
     y: Column
     name: Optional[str] = None
     style: dict[str, Any] = field(default_factory=dict)
+    color_ch: Optional[ColorChannel] = None  # scatter color encoding
+    size_ch: Optional[SizeChannel] = None  # scatter size encoding
+    force_density: bool = False  # user opted into Tier-2 explicitly
 
     @property
     def n_points(self) -> int:
         return len(self.x)
+
+    def use_density(self) -> bool:
+        """Whether this scatter renders as a Tier-2 density grid (§5)."""
+        if self.kind != "scatter":
+            return False
+        if self.force_density:
+            return True
+        per_point = (self.color_ch and self.color_ch.mode != "constant") or (
+            self.size_ch and self.size_ch.mode != "constant"
+        )
+        # Per-point channels keep direct draw until the hard ceiling; plain
+        # scatter aggregates earlier (its whole win is not drawing 10M dots).
+        threshold = DIRECT_SOFT_CEILING if per_point else SCATTER_DENSITY_THRESHOLD
+        return self.n_points > threshold
 
 
 class Figure:
@@ -109,33 +138,58 @@ class Figure:
         y: Any,
         *,
         name: Optional[str] = None,
-        color: Optional[str] = None,
-        size: float = 4.0,
+        color: Any = None,
+        size: Any = 4.0,
         opacity: float = 0.8,
+        colormap: str = channels.DEFAULT_COLORMAP,
+        size_range: tuple[float, float] = (2.0, 18.0),
+        density: Optional[bool] = None,
     ) -> "Figure":
+        """Add a scatter trace.
+
+        `color` may be a CSS color (constant), a numeric array (continuous →
+        colormap), or a categorical array (factorized → palette). `size` may be
+        a scalar or a numeric array (mapped to `size_range` px). Large scatters
+        auto-switch to a Tier-2 density surface (§5); pass `density=True/False`
+        to force it.
+        """
         xc = self.store.ingest(x)
         yc = self.store.ingest(y)
-        if len(xc) > DIRECT_SOFT_CEILING:
+        n = len(xc)
+        default_color = DEFAULT_PALETTE[len(self.traces) % len(DEFAULT_PALETTE)]
+        color_ch = channels.resolve_color(
+            color, n, colormap=colormap, default_constant=default_color
+        )
+        size_ch = channels.resolve_size(size, n, range_px=size_range)
+
+        trace = Trace(
+            id=len(self.traces),
+            kind="scatter",
+            x=xc,
+            y=yc,
+            name=name,
+            style={"opacity": opacity},
+            color_ch=color_ch,
+            size_ch=size_ch,
+            force_density=bool(density) if density is not None else False,
+        )
+
+        per_point = color_ch.mode != "constant" or size_ch.mode != "constant"
+        if density is None and per_point and n > DIRECT_SOFT_CEILING:
             import warnings
 
             warnings.warn(
-                f"scatter trace has {len(xc):,} points — above the direct-tier "
-                f"soft ceiling ({DIRECT_SOFT_CEILING:,}). Rendering proceeds but "
-                "may be fill-rate bound; Tier-2 density aggregation (Phase 2) is "
-                "the designed path for this volume.",
+                f"scatter has {n:,} points with per-point color/size — above the "
+                f"direct ceiling ({DIRECT_SOFT_CEILING:,}). Falling back to a "
+                "density surface; per-point channels are dropped (aggregating "
+                "arbitrary color/size needs the §5-F5 aggregation algebra, not yet "
+                "implemented). Pass density=False to keep direct draw at your risk.",
                 RuntimeWarning,
                 stacklevel=2,
             )
-        self.traces.append(
-            Trace(
-                id=len(self.traces),
-                kind="scatter",
-                x=xc,
-                y=yc,
-                name=name,
-                style={"color": color, "size": size, "opacity": opacity},
-            )
-        )
+            trace.force_density = True
+
+        self.traces.append(trace)
         return self
 
     # -- ranges ---------------------------------------------------------------
@@ -199,17 +253,36 @@ class Figure:
             byte_pos += len(raw)
             return len(shipped) - 1
 
+        def ship_scalar(values: np.ndarray) -> int:
+            """Ship a raw f32 channel (already normalized/coded, no offset)."""
+            nonlocal byte_pos
+            enc = np.ascontiguousarray(values, dtype=np.float32)
+            raw = enc.tobytes()
+            shipped.append({"byte_offset": byte_pos, "len": int(len(enc))})
+            chunks.append(raw)
+            byte_pos += len(raw)
+            return len(shipped) - 1
+
+        xr = self.x_range()
+        yr = self.y_range()
+
         spec_traces: list[dict[str, Any]] = []
         for t in self.traces:
             style = dict(t.style)
-            if style.get("color") is None:
-                style["color"] = DEFAULT_PALETTE[t.id % len(DEFAULT_PALETTE)]
+
+            if t.use_density():
+                # Tier 2: ship a density grid, not points (§5).
+                w, h = DENSITY_GRID
+                spec_traces.append(self._density_trace_spec(t, xr, yr, w, h, ship_scalar))
+                continue
+
             tier = "direct"
             xv, yv = t.x.values, t.y.values
+            sel = None  # index selection applied to x/y — channels must match
             if t.kind == "line" and t.n_points > DECIMATION_THRESHOLD:
-                x0, x1 = self.x_range()
-                idx = kernels.m4_indices(xv, yv, x0, x1 + np.finfo(np.float64).eps, px_width)
+                idx = kernels.m4_indices(xv, yv, xr[0], xr[1] + np.finfo(np.float64).eps, px_width)
                 if len(idx):
+                    sel = idx
                     xv, yv = xv[idx], yv[idx]
                     tier = "decimated"
             elif t.x.zone.null_count or t.y.zone.null_count:
@@ -217,20 +290,25 @@ class Figure:
                 # primitives, driver-dependently (§19). Phase 0 drops invalid
                 # rows on the shipped copy (canonical keeps them); real gap
                 # semantics (segment index list) arrive with validity bitmaps.
-                valid = ~(np.isnan(xv) | np.isnan(yv))
-                xv, yv = xv[valid], yv[valid]
-            spec_traces.append(
-                {
-                    "id": t.id,
-                    "kind": t.kind,
-                    "name": t.name,
-                    "style": style,
-                    "tier": tier,
-                    "n_points": t.n_points,
-                    "x": ship(xv, t.x),
-                    "y": ship(yv, t.y),
-                }
-            )
+                sel = np.flatnonzero(~(np.isnan(xv) | np.isnan(yv)))
+                xv, yv = xv[sel], yv[sel]
+
+            entry: dict[str, Any] = {
+                "id": t.id,
+                "kind": t.kind,
+                "name": t.name,
+                "style": style,
+                "tier": tier,
+                "n_points": t.n_points,
+                "x": ship(xv, t.x),
+                "y": ship(yv, t.y),
+            }
+            if t.kind == "scatter":
+                entry["color"], entry["size"] = self._ship_channels(t, sel, ship_scalar)
+            else:  # line/area: constant color from the trace style
+                if style.get("color") is None:
+                    style["color"] = DEFAULT_PALETTE[t.id % len(DEFAULT_PALETTE)]
+            spec_traces.append(entry)
 
         spec = {
             "protocol": PROTOCOL_VERSION,
@@ -252,6 +330,116 @@ class Figure:
             "backend": kernels.BACKEND,
         }
         return spec, b"".join(chunks)
+
+    # -- channel & density helpers -------------------------------------------
+
+    def _ship_channels(self, t: Trace, sel, ship_scalar) -> tuple[Any, Any]:  # noqa: ANN001
+        """Ship a scatter's color and size channels. Returns (color_spec,
+        size_spec); per-point channels carry a `buf` index into the blob."""
+        cc = t.color_ch
+        color_spec = cc.spec()
+        if cc.mode == "continuous":
+            unit = channels.normalize_to_unit(cc.values, cc.domain)
+            color_spec["buf"] = ship_scalar(unit if sel is None else unit[sel])
+        elif cc.mode == "categorical":
+            codes = cc.codes if sel is None else cc.codes[sel]
+            color_spec["buf"] = ship_scalar(codes)
+            color_spec["palette"] = [
+                DEFAULT_PALETTE[i % len(DEFAULT_PALETTE)] for i in range(len(cc.categories))
+            ]
+
+        sc = t.size_ch
+        size_spec = sc.spec()
+        if sc.mode == "continuous":
+            unit = channels.normalize_to_unit(sc.values, sc.domain)
+            size_spec["buf"] = ship_scalar(unit if sel is None else unit[sel])
+        return color_spec, size_spec
+
+    def _density_trace_spec(self, t: Trace, xr, yr, w, h, ship_scalar) -> dict[str, Any]:  # noqa: ANN001
+        """Bin a scatter into a density grid and build its spec entry (§5 Tier 2).
+        The grid ships as one f32 buffer (h×w counts); the client colormaps it,
+        recomputing the normalization domain per view so brightness is stable (§F6)."""
+        grid = kernels.bin_2d(t.x.values, t.y.values, xr[0], xr[1], yr[0], yr[1], w, h)
+        gmax = float(grid.max()) if grid.size else 0.0
+        # Honor the user's colormap for the density ramp even though the per-point
+        # color *data* can't survive count-aggregation (needs the §5-F5 algebra).
+        cmap = t.color_ch.colormap if (t.color_ch and t.color_ch.mode == "continuous") else channels.DEFAULT_COLORMAP
+        color_dropped = bool(t.color_ch and t.color_ch.mode != "constant")
+        size_dropped = bool(t.size_ch and t.size_ch.mode != "constant")
+        dropped = color_dropped or size_dropped
+        return {
+            "id": t.id,
+            "kind": "scatter",
+            "name": t.name,
+            "style": dict(t.style),
+            "tier": "density",
+            "n_points": t.n_points,
+            "density": {
+                "buf": ship_scalar(grid.reshape(-1)),
+                "w": w,
+                "h": h,
+                "max": gmax,
+                "colormap": cmap,
+                "x_range": list(xr),
+                "y_range": list(yr),
+                "channels_dropped": dropped,  # never silent (§28)
+            },
+        }
+
+    def density_view(
+        self, trace_id: int, x0: float, x1: float, y0: float, y1: float, w: int, h: int
+    ) -> tuple[dict[str, Any], list[bytes]]:
+        """Re-bin a Tier-2 scatter for a new viewport (§5: O(visible points);
+        the client requests this when pan/zoom leaves the shipped grid)."""
+        t = self.traces[trace_id]
+        if not t.use_density():
+            return {"traces": []}, []
+        w = max(16, min(w, 4096))
+        h = max(16, min(h, 4096))
+        grid = kernels.bin_2d(t.x.values, t.y.values, x0, x1, y0, y1, w, h)
+        return (
+            {
+                "traces": [
+                    {
+                        "id": trace_id,
+                        "density": {
+                            "buf": 0,
+                            "w": w,
+                            "h": h,
+                            "max": float(grid.max()) if grid.size else 0.0,
+                            "x_range": [x0, x1],
+                            "y_range": [y0, y1],
+                        },
+                    }
+                ]
+            },
+            [grid.reshape(-1).astype(np.float32).tobytes()],
+        )
+
+    def pick(self, trace_id: int, index: int) -> Optional[dict[str, Any]]:
+        """Exact source-row readout for a hover/pick (§17 Tier-0 hover; §16 —
+        values come from the f64 canonical store, never through the f32 GPU path).
+        Returns None if out of range."""
+        t = self.traces[trace_id]
+        if index < 0 or index >= t.n_points:
+            return None
+        out: dict[str, Any] = {
+            "trace": trace_id,
+            "index": index,
+            "x": float(t.x.values[index]),
+            "y": float(t.y.values[index]),
+            "x_kind": t.x.kind,
+            "y_kind": t.y.kind,
+        }
+        cc = t.color_ch
+        if cc and cc.mode == "continuous" and cc.values is not None:
+            out["color_value"] = float(cc.values[index])
+        elif cc and cc.mode == "categorical" and cc.codes is not None:
+            out["color_category"] = cc.categories[int(cc.codes[index])]
+        sc = t.size_ch
+        if sc and sc.mode == "continuous" and sc.values is not None:
+            out["size_value"] = float(sc.values[index])
+        return out
 
     def decimate_view(
         self, x0: float, x1: float, px_width: int

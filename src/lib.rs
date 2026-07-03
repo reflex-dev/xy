@@ -21,7 +21,7 @@ use kernels::ZoneMap;
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 
 #[no_mangle]
 pub extern "C" fn fc_abi_version() -> u32 {
@@ -107,6 +107,36 @@ pub unsafe extern "C" fn fc_m4_indices(
     let out = std::slice::from_raw_parts_mut(out, n_buckets * 4);
     out[..idx.len()].copy_from_slice(&idx);
     idx.len()
+}
+
+/// 2D density aggregation (§5 Tier 2): additively bin points into a `w × h`
+/// grid over the viewport. `out` must be `w * h` f32s (fully overwritten).
+///
+/// # Safety
+/// `x`/`y` must point to `len` readable f64s; `out` to `w * h` writable f32s;
+/// `w > 0 && h > 0 && x1 > x0 && y1 > y0`.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fc_bin_2d(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    out: *mut f32,
+) -> i32 {
+    if w == 0 || h == 0 || !(x1 > x0) || !(y1 > y0) {
+        return 0;
+    }
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    let out = std::slice::from_raw_parts_mut(out, w * h);
+    kernels::bin_2d(x, y, x0, x1, y0, y1, w, h, out);
+    1
 }
 
 /// NaN-skipping min/max (autorange primitive). Returns 1 and writes the result,

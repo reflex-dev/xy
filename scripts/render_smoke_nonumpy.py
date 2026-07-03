@@ -41,7 +41,8 @@ def encode_f32(vals, offset):  # noqa: ANN001
 
 
 def build_payload():
-    # A line (sine + spike) and a scatter, mirroring Figure's spec shape.
+    # Exercises the full scatter path: a line, a scatter with continuous color
+    # + variable size, and a Tier-2 density surface — all in Figure's wire shape.
     n = 2000
     xs = [float(i) for i in range(n)]
     ys = [math.sin(i * 0.02) for i in range(n)]
@@ -50,24 +51,48 @@ def build_payload():
     cols = []
     blob = bytearray()
 
-    def ship(vals):
-        offset = (min(vals) + max(vals)) / 2.0
-        raw = encode_f32(vals, offset)
-        meta = {"byte_offset": len(blob), "len": len(vals), "offset": offset, "scale": 1.0, "kind": "float"}
-        cols.append(meta)
+    def ship(vals, offset=None, kind="float"):
+        off = ((min(vals) + max(vals)) / 2.0) if offset is None else offset
+        raw = encode_f32(vals, off)
+        cols.append({"byte_offset": len(blob), "len": len(vals), "offset": off, "scale": 1.0, "kind": kind})
         blob.extend(raw)
         return len(cols) - 1
+
+    def ship_scalar(vals):
+        raw = array("f", [float(v) for v in vals]).tobytes()
+        cols.append({"byte_offset": len(blob), "len": len(vals)})
+        blob.extend(raw)
+        return len(cols) - 1
+
+    # continuous color = normalized index; variable size = |sin|.
+    m = n // 20
+    cvals = [i / (m - 1) for i in range(m)]
+    svals = [abs(math.sin(i * 0.4)) for i in range(m)]
+
+    # A density grid (8×6) with a hotspot, hand-built.
+    gw, gh = 8, 6
+    grid = [0.0] * (gw * gh)
+    grid[gh // 2 * gw + gw // 2] = 500.0
+    for i in range(gw * gh):
+        grid[i] += (i % 3)
+    density_buf = ship_scalar(grid)
 
     traces = [
         {"id": 0, "kind": "line", "name": "sine", "tier": "direct", "n_points": n,
          "style": {"color": "#4c78a8", "width": 1.5, "opacity": 1.0},
          "x": ship(xs), "y": ship(ys)},
-        {"id": 1, "kind": "scatter", "name": "pts", "tier": "direct", "n_points": n // 20,
-         "style": {"color": "#f58518", "size": 4.0, "opacity": 0.8},
-         "x": ship(xs[::20]), "y": ship([v + 2.0 for v in ys[::20]])},
+        {"id": 1, "kind": "scatter", "name": "pts", "tier": "direct", "n_points": m,
+         "style": {"opacity": 0.85},
+         "x": ship(xs[::20]), "y": ship([v + 2.0 for v in ys[::20]]),
+         "color": {"mode": "continuous", "colormap": "viridis", "domain": [0.0, 1.0], "buf": ship_scalar(cvals)},
+         "size": {"mode": "continuous", "range_px": [3.0, 16.0], "buf": ship_scalar(svals)}},
+        {"id": 2, "kind": "scatter", "name": "density", "tier": "density", "n_points": 1_000_000,
+         "style": {"opacity": 1.0},
+         "density": {"buf": density_buf, "w": gw, "h": gh, "max": 502.0, "colormap": "magma",
+                     "x_range": [0.0, float(n)], "y_range": [-3.0, 8.0], "channels_dropped": False}},
     ]
     spec = {
-        "protocol": 1, "width": 800, "height": 400, "title": "nonumpy smoke",
+        "protocol": 2, "width": 800, "height": 400, "title": "nonumpy smoke",
         "x_axis": {"kind": "linear", "label": "i", "range": [0.0, float(n)]},
         "y_axis": {"kind": "linear", "label": "y", "range": [-3.0, 8.0]},
         "traces": traces, "columns": cols, "backend": "none",
@@ -96,7 +121,16 @@ try{{
     gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,px);
     let lit=0;for(let i=3;i<px.length;i+=4)if(px[i]>8)lit++;
     const labels=document.querySelectorAll(".fastcharts div").length;
-    document.title=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}}`;
+    // Picking: scan the plot for any pickable scatter point (GPU ID readback).
+    let hits=0, sampleRow=null;
+    for(let sx=4; sx<v.plot.w && hits<1; sx+=3){{
+      for(let sy=4; sy<v.plot.h; sy+=3){{
+        const hit=v._pickAt(sx,sy);
+        if(hit){{hits++; sampleRow=v._localRow(hit); break;}}
+      }}
+    }}
+    const hasXY = sampleRow && sampleRow.x!==undefined ? 1 : 0;
+    document.title=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}}`;
   }}catch(e){{document.title="FC_ERROR "+e.message}}}},200);
 }}catch(e){{document.title="FC_ERROR "+e.message}}
 </script></body></html>"""
@@ -119,13 +153,19 @@ try{{
     lit = int(re.search(r"lit=(\d+)", title).group(1))
     total = int(re.search(r"total=(\d+)", title).group(1))
     labels = int(re.search(r"labels=(\d+)", title).group(1))
+    pick = int(re.search(r"pick=(\d+)", title).group(1))
+    rowok = int(re.search(r"row=(\d+)", title).group(1))
     frac = lit / max(total, 1)
-    print(f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}")
-    if not (0.001 < frac < 0.9):
+    print(f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}, pick hits: {pick}, row-decoded: {rowok}")
+    if not (0.001 < frac < 0.95):
         raise SystemExit(f"suspicious lit fraction {frac}")
     if labels < 6:
         raise SystemExit(f"too few DOM tick labels: {labels}")
-    print("render smoke OK (no numpy)")
+    if pick < 1:
+        raise SystemExit("GPU picking found no scatter point")
+    if rowok < 1:
+        raise SystemExit("picked point did not decode to x/y (standalone hover)")
+    print("render smoke OK (no numpy): line + colored/sized scatter + density + picking")
 
 
 if __name__ == "__main__":

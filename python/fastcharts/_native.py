@@ -20,7 +20,7 @@ from typing import Optional
 import numpy as np
 import numpy.typing as npt
 
-ABI_VERSION = 1
+ABI_VERSION = 2
 
 _F64_P = ctypes.POINTER(ctypes.c_double)
 _F32_P = ctypes.POINTER(ctypes.c_float)
@@ -88,6 +88,12 @@ def _load() -> ctypes.CDLL:
     ]
     lib.fc_min_max.restype = ctypes.c_int32
     lib.fc_min_max.argtypes = [_F64_P, ctypes.c_size_t, _F64_P, _F64_P]
+    lib.fc_bin_2d.restype = ctypes.c_int32
+    lib.fc_bin_2d.argtypes = [
+        _F64_P, _F64_P, ctypes.c_size_t,
+        ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double,
+        ctypes.c_size_t, ctypes.c_size_t, _F32_P,
+    ]
     return lib
 
 
@@ -177,6 +183,34 @@ def m4_indices(
     if written == np.iinfo(np.uint64).max:  # usize::MAX sentinel
         raise ValueError("invalid m4 arguments")
     return out[:written].copy()
+
+
+def bin_2d(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+    w: int,
+    h: int,
+) -> npt.NDArray[np.float32]:
+    """2D density grid (h, w) f32, row 0 = bottom — §5 Tier 2."""
+    if not (w > 0 and h > 0 and x1 > x0 and y1 > y0):
+        raise ValueError("require w>0, h>0, x1>x0, y1>y0")
+    x = _as_f64(x)
+    y = _as_f64(y)
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    out = np.zeros((h, w), dtype=np.float32)
+    if len(x):
+        ok = _lib.fc_bin_2d(
+            _ptr_f64(x), _ptr_f64(y), len(x), x0, x1, y0, y1, w, h,
+            out.ctypes.data_as(_F32_P),
+        )
+        if not ok:
+            raise ValueError("invalid bin_2d arguments")
+    return out
 
 
 def min_max(data: npt.NDArray[np.float64]) -> Optional[tuple[float, float]]:
