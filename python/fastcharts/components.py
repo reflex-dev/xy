@@ -164,7 +164,7 @@ class Chart(Component):
         *,
         title: Optional[str] = None,
         width: "int | str" = 900,  # pixels, or "100%" to fill the parent
-        height: int = 420,
+        height: "int | str" = 420,  # pixels, or "100%" (parent needs a height)
         data: Any = None,
         on_hover: Optional[Callable[[dict], None]] = None,
         on_select: Optional[Callable[[Any], None]] = None,

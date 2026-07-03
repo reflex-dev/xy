@@ -153,17 +153,19 @@ def test_to_html_standalone():
     assert "webgl2" in html or "fastcharts" in html
 
 
-def test_responsive_width_in_spec():
-    # width="100%" rides the spec verbatim; the client measures the container
-    # and re-requests decimation/density at the new pixel width on resize.
+def test_responsive_size_in_spec():
+    # width/height="100%" ride the spec verbatim; the client measures the
+    # container and re-requests decimation/density at the new pixel size.
     x = np.arange(10.0)
-    fig = Figure(width="100%").scatter(x, x)
+    fig = Figure(width="100%", height="100%").scatter(x, x)
     spec, _ = fig.build_payload()
     assert spec["width"] == "100%"
-    assert spec["height"] == 420
+    assert spec["height"] == "100%"
     json.dumps(spec)  # still plain JSON
 
 
-def test_responsive_width_rejects_other_strings():
-    with pytest.raises(ValueError, match="100%"):
+def test_responsive_size_rejects_other_strings():
+    with pytest.raises(ValueError, match="width"):
         Figure(width="50vw")
+    with pytest.raises(ValueError, match="height"):
+        Figure(height="50vh")
