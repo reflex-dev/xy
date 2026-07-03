@@ -298,6 +298,19 @@ def test_density_false_above_ceiling_warns():
         Figure().scatter(x, x, density=False)
 
 
+def test_to_html_escapes_user_strings():
+    # A title shaped like "</script>…" must not break out of the script block
+    # (markup injection in exported HTML) and must be entity-escaped in <title>.
+    evil = "</script><img src=x onerror=alert(1)>"
+    fig = Figure(title=evil).scatter(np.arange(3.0), np.arange(3.0), name=evil)
+    html = fig.to_html()
+    body = html.split("<body>", 1)[1]
+    assert "</script><img" not in body  # broken-out tag never appears verbatim
+    assert "<\\/script>" in body  # escaped inside the JSON spec instead
+    head = html.split("<body>", 1)[0]
+    assert "&lt;/script&gt;" in head  # <title> is entity-escaped
+
+
 def test_line_with_nan_x_sorts_and_excludes():
     # NaN in x must not defeat the sorted-x check (any(diff<0) is NaN-blind);
     # after the fix the trace sorts, NaNs land last, and m4 excludes them.
