@@ -154,12 +154,21 @@ no supply chain (§33: assets ship inside the wheel).
   column), independent of dataset size; zoom round-trips recompute only the
   visible window.
 
-**vs Plotly & matplotlib:** see [`docs/benchmark.md`](docs/benchmark.md) for the
-three-way scatter comparison (point-count ceiling, speed, memory, payload size).
-Headline, measured: fastcharts' wire payload goes **flat at 768 KB** once density
-aggregation kicks in (0.08 B/pt at 10M, vs Plotly/matplotlib growing ∝ N), and
-render cost is screen-bounded, not data-bounded. Run `scripts/bench_vs.py` (all
-three) or `scripts/bench_scatter_native.py` (fastcharts arm, no deps).
+**vs Plotly & matplotlib** — measured, three-way ([`docs/benchmark.md`](docs/benchmark.md)).
+At **10M points** (CI, Ubuntu):
+
+| | fastcharts | matplotlib | Plotly WebGL | Plotly SVG |
+|---|---|---|---|---|
+| total time | **86 ms** | 3,230 ms | 33,907 ms | didn't finish |
+| peak memory | **2 MB** | 553 MB | 1,584 MB | (113 s @ 3M) |
+| payload | **768 KB** | 41 KB PNG | 49 KB PNG | 78 MB |
+
+fastcharts is the only one **flat in N**: payload and memory stop growing once
+density aggregation engages (§5). ~37× faster than matplotlib, ~394× than
+Plotly-GL, 250–790× less memory. (fastcharts "total" is payload build; +~150 ms
+for the actual browser render still leaves it ~14×/~140× ahead — see the report's
+fairness note.) Run `scripts/bench_vs.py` (all three) or
+`scripts/bench_scatter_native.py` (fastcharts arm, no deps).
 
 Native-kernel throughput, measured (`scripts/bench_native.py`, single-threaded
 scalar Rust — SIMD and worker threads are Phase 1; one dev machine, so treat as

@@ -180,6 +180,7 @@ pub fn m4_indices(x: &[f64], y: &[f64], x0: f64, x1: f64, n_buckets: usize) -> V
 /// §5 research): O(visible points) per viewport change, screen-bounded output.
 /// The live tile pyramid that makes pan/zoom O(visible tiles) is a later
 /// milestone; this is the correct, honest Tier-2 MVP.
+#[allow(clippy::too_many_arguments)] // viewport (x0,x1,y0,y1) + grid (w,h) + io is irreducible
 pub fn bin_2d(
     x: &[f64],
     y: &[f64],
