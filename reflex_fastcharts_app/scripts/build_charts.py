@@ -5,7 +5,6 @@ from pathlib import Path
 
 import numpy as np
 
-
 APP_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = APP_ROOT.parent
 ASSET_DIR = APP_ROOT / "assets" / "charts"
