@@ -54,7 +54,9 @@ def build_payload():
     def ship(vals, offset=None, kind="float"):
         off = ((min(vals) + max(vals)) / 2.0) if offset is None else offset
         raw = encode_f32(vals, off)
-        cols.append({"byte_offset": len(blob), "len": len(vals), "offset": off, "scale": 1.0, "kind": kind})
+        cols.append(
+            {"byte_offset": len(blob), "len": len(vals), "offset": off, "scale": 1.0, "kind": kind}
+        )
         blob.extend(raw)
         return len(cols) - 1
 
@@ -74,28 +76,66 @@ def build_payload():
     grid = [0.0] * (gw * gh)
     grid[gh // 2 * gw + gw // 2] = 500.0
     for i in range(gw * gh):
-        grid[i] += (i % 3)
+        grid[i] += i % 3
     density_buf = ship_scalar(grid)
 
     traces = [
-        {"id": 0, "kind": "line", "name": "sine", "tier": "direct", "n_points": n,
-         "style": {"color": "#4c78a8", "width": 1.5, "opacity": 1.0},
-         "x": ship(xs), "y": ship(ys)},
-        {"id": 1, "kind": "scatter", "name": "pts", "tier": "direct", "n_points": m,
-         "style": {"opacity": 0.85},
-         "x": ship(xs[::20]), "y": ship([v + 2.0 for v in ys[::20]]),
-         "color": {"mode": "continuous", "colormap": "viridis", "domain": [0.0, 1.0], "buf": ship_scalar(cvals)},
-         "size": {"mode": "continuous", "range_px": [3.0, 16.0], "buf": ship_scalar(svals)}},
-        {"id": 2, "kind": "scatter", "name": "density", "tier": "density", "n_points": 1_000_000,
-         "style": {"opacity": 1.0},
-         "density": {"buf": density_buf, "w": gw, "h": gh, "max": 502.0, "colormap": "magma",
-                     "x_range": [0.0, float(n)], "y_range": [-3.0, 8.0], "channels_dropped": False}},
+        {
+            "id": 0,
+            "kind": "line",
+            "name": "sine",
+            "tier": "direct",
+            "n_points": n,
+            "style": {"color": "#4c78a8", "width": 1.5, "opacity": 1.0},
+            "x": ship(xs),
+            "y": ship(ys),
+        },
+        {
+            "id": 1,
+            "kind": "scatter",
+            "name": "pts",
+            "tier": "direct",
+            "n_points": m,
+            "style": {"opacity": 0.85},
+            "x": ship(xs[::20]),
+            "y": ship([v + 2.0 for v in ys[::20]]),
+            "color": {
+                "mode": "continuous",
+                "colormap": "viridis",
+                "domain": [0.0, 1.0],
+                "buf": ship_scalar(cvals),
+            },
+            "size": {"mode": "continuous", "range_px": [3.0, 16.0], "buf": ship_scalar(svals)},
+        },
+        {
+            "id": 2,
+            "kind": "scatter",
+            "name": "density",
+            "tier": "density",
+            "n_points": 1_000_000,
+            "style": {"opacity": 1.0},
+            "density": {
+                "buf": density_buf,
+                "w": gw,
+                "h": gh,
+                "max": 502.0,
+                "colormap": "magma",
+                "x_range": [0.0, float(n)],
+                "y_range": [-3.0, 8.0],
+                "channels_dropped": False,
+            },
+        },
     ]
     spec = {
-        "protocol": 2, "width": 800, "height": 400, "title": "nonumpy smoke",
+        "protocol": 2,
+        "width": 800,
+        "height": 400,
+        "title": "nonumpy smoke",
         "x_axis": {"kind": "linear", "label": "i", "range": [0.0, float(n)]},
         "y_axis": {"kind": "linear", "label": "y", "range": [-3.0, 8.0]},
-        "traces": traces, "columns": cols, "backend": "none",
+        "traces": traces,
+        "columns": cols,
+        "backend": "none",
     }
     return spec, bytes(blob)
 
@@ -146,10 +186,20 @@ try{{
         p = Path(td) / "s.html"
         p.write_text(page, encoding="utf-8")
         out = subprocess.run(
-            [find_chromium(), "--headless=new", "--no-sandbox", "--disable-dev-shm-usage",
-             "--use-angle=swiftshader", "--enable-unsafe-swiftshader",
-             "--virtual-time-budget=4000", "--dump-dom", p.as_uri()],
-            capture_output=True, text=True, timeout=120,
+            [
+                find_chromium(),
+                "--headless=new",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--use-angle=swiftshader",
+                "--enable-unsafe-swiftshader",
+                "--virtual-time-budget=4000",
+                "--dump-dom",
+                p.as_uri(),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
     m = re.search(r"<title>([^<]*)</title>", out.stdout)
     title = m.group(1) if m else "(none)"
@@ -166,8 +216,10 @@ try{{
     sel_some = int(re.search(r"selSome=(\d+)", title).group(1))
     active = int(re.search(r"active=(\d+)", title).group(1))
     frac = lit / max(total, 1)
-    print(f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}, pick hits: {pick}, "
-          f"row-decoded: {rowok}, select all/sub: {sel_all}/{sel_some}, mask active: {active}")
+    print(
+        f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}, pick hits: {pick}, "
+        f"row-decoded: {rowok}, select all/sub: {sel_all}/{sel_some}, mask active: {active}"
+    )
     if not (0.001 < frac < 0.95):
         raise SystemExit(f"suspicious lit fraction {frac}")
     if labels < 6:
@@ -182,7 +234,9 @@ try{{
         raise SystemExit(f"sub-range selection implausible: {sel_some} of {sel_all}")
     if active != 1:
         raise SystemExit("selection mask did not activate")
-    print("render smoke OK (no numpy): line + colored/sized scatter + density + picking + box-select")
+    print(
+        "render smoke OK (no numpy): line + colored/sized scatter + density + picking + box-select"
+    )
 
 
 if __name__ == "__main__":

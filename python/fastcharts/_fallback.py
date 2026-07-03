@@ -93,9 +93,7 @@ def m4_indices(
     if len(idx) == 0:
         return np.empty(0, dtype=np.uint32)
 
-    buckets = np.minimum(
-        ((xv - x0) * (n_buckets / (x1 - x0))).astype(np.int64), n_buckets - 1
-    )
+    buckets = np.minimum(((xv - x0) * (n_buckets / (x1 - x0))).astype(np.int64), n_buckets - 1)
     # x is sorted, so bucket ids are non-decreasing: group boundaries suffice.
     starts = np.unique(buckets, return_index=True)[1]
     ends = np.append(starts[1:], len(buckets))

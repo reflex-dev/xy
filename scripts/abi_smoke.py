@@ -49,10 +49,23 @@ def load() -> ctypes.CDLL:
     lib.fc_encode_f32.argtypes = [F64P, ctypes.c_size_t, ctypes.c_double, ctypes.c_double, F32P]
     lib.fc_m4_indices.restype = ctypes.c_size_t
     lib.fc_m4_indices.argtypes = [
-        F64P, F64P, ctypes.c_size_t, ctypes.c_double, ctypes.c_double, ctypes.c_size_t, U32P
+        F64P,
+        F64P,
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_size_t,
+        U32P,
     ]
     lib.fc_zone_maps.restype = ctypes.c_size_t
-    lib.fc_zone_maps.argtypes = [F64P, ctypes.c_size_t, ctypes.c_size_t] + [F64P, F64P, U64P, U64P, F64P, F64P]
+    lib.fc_zone_maps.argtypes = [F64P, ctypes.c_size_t, ctypes.c_size_t] + [
+        F64P,
+        F64P,
+        U64P,
+        U64P,
+        F64P,
+        F64P,
+    ]
     lib.fc_min_max.restype = ctypes.c_int32
     lib.fc_min_max.argtypes = [F64P, ctypes.c_size_t, F64P, F64P]
     D = ctypes.c_double
@@ -84,9 +97,7 @@ def main() -> None:
     x = array("d", [t0 + i for i in range(1000)])
     offset = t0 + 500.0
     out = array("f", [0.0]) * len(x)
-    lib.fc_encode_f32(
-        _ptr(x, ctypes.c_double), len(x), offset, 1.0, _ptr(out, ctypes.c_float)
-    )
+    lib.fc_encode_f32(_ptr(x, ctypes.c_double), len(x), offset, 1.0, _ptr(out, ctypes.c_float))
     worst = max(abs((out[i] + offset) - x[i]) for i in range(len(x)))
     ok(worst < 1e-3, f"offset-encoded precision worst={worst}")
 
@@ -104,8 +115,13 @@ def main() -> None:
     buckets = 100
     idx_buf = array("I", [0]) * (buckets * 4)
     written = lib.fc_m4_indices(
-        _ptr(xs, ctypes.c_double), _ptr(ys, ctypes.c_double), n,
-        0.0, float(n), buckets, _ptr(idx_buf, ctypes.c_uint32),
+        _ptr(xs, ctypes.c_double),
+        _ptr(ys, ctypes.c_double),
+        n,
+        0.0,
+        float(n),
+        buckets,
+        _ptr(idx_buf, ctypes.c_uint32),
     )
     idx = set(idx_buf[:written])
     ok(5432 in idx and 7891 in idx, "m4 preserves spikes")
@@ -114,8 +130,13 @@ def main() -> None:
 
     # m4 invalid-arg sentinel (usize::MAX).
     bad = lib.fc_m4_indices(
-        _ptr(xs, ctypes.c_double), _ptr(ys, ctypes.c_double), n,
-        5.0, 5.0, buckets, _ptr(idx_buf, ctypes.c_uint32),
+        _ptr(xs, ctypes.c_double),
+        _ptr(ys, ctypes.c_double),
+        n,
+        5.0,
+        5.0,
+        buckets,
+        _ptr(idx_buf, ctypes.c_uint32),
     )
     ok(bad == (2**64 - 1), "m4 invalid-arg sentinel")
 
@@ -127,10 +148,15 @@ def main() -> None:
     cnt = array("Q", [0]) * nchunks
     nul = array("Q", [0]) * nchunks
     wrote = lib.fc_zone_maps(
-        _ptr(data, ctypes.c_double), len(data), 65536,
-        _ptr(zm[0], ctypes.c_double), _ptr(zm[1], ctypes.c_double),
-        _ptr(cnt, ctypes.c_uint64), _ptr(nul, ctypes.c_uint64),
-        _ptr(zm[2], ctypes.c_double), _ptr(zm[3], ctypes.c_double),
+        _ptr(data, ctypes.c_double),
+        len(data),
+        65536,
+        _ptr(zm[0], ctypes.c_double),
+        _ptr(zm[1], ctypes.c_double),
+        _ptr(cnt, ctypes.c_uint64),
+        _ptr(nul, ctypes.c_uint64),
+        _ptr(zm[2], ctypes.c_double),
+        _ptr(zm[3], ctypes.c_double),
     )
     ok(wrote == 1, "zone_maps chunk count")
     ok(cnt[0] == 9 and nul[0] == 1, "zone_maps counts NaN as null")
@@ -142,10 +168,15 @@ def main() -> None:
     icnt = array("Q", [0])
     inul = array("Q", [0])
     lib.fc_zone_maps(
-        _ptr(idata, ctypes.c_double), 4, 65536,
-        _ptr(izm[0], ctypes.c_double), _ptr(izm[1], ctypes.c_double),
-        _ptr(icnt, ctypes.c_uint64), _ptr(inul, ctypes.c_uint64),
-        _ptr(izm[2], ctypes.c_double), _ptr(izm[3], ctypes.c_double),
+        _ptr(idata, ctypes.c_double),
+        4,
+        65536,
+        _ptr(izm[0], ctypes.c_double),
+        _ptr(izm[1], ctypes.c_double),
+        _ptr(icnt, ctypes.c_uint64),
+        _ptr(inul, ctypes.c_uint64),
+        _ptr(izm[2], ctypes.c_double),
+        _ptr(izm[3], ctypes.c_double),
     )
     ok(icnt[0] == 2 and inul[0] == 2, "zone_maps counts inf as null")
     ok(izm[0][0] == 1.0 and izm[1][0] == 3.0, "zone_maps min/max skip inf")
@@ -153,21 +184,29 @@ def main() -> None:
     # min_max sentinel path.
     lo = ctypes.c_double()
     hi = ctypes.c_double()
-    got = lib.fc_min_max(
-        _ptr(data, ctypes.c_double), len(data), ctypes.byref(lo), ctypes.byref(hi)
-    )
+    got = lib.fc_min_max(_ptr(data, ctypes.c_double), len(data), ctypes.byref(lo), ctypes.byref(hi))
     ok(got == 1 and lo.value == 0.0 and hi.value == 9.0, "min_max ok")
     allnan = array("d", [float("nan")])
-    ok(lib.fc_min_max(_ptr(allnan, ctypes.c_double), 1, ctypes.byref(lo), ctypes.byref(hi)) == 0,
-       "min_max all-NaN returns 0")
+    ok(
+        lib.fc_min_max(_ptr(allnan, ctypes.c_double), 1, ctypes.byref(lo), ctypes.byref(hi)) == 0,
+        "min_max all-NaN returns 0",
+    )
 
     # bin_2d: 4 points, one per quadrant of a 2×2 grid; count conserved, row0 bottom.
     bx = array("d", [0.25, 0.75, 0.25, 0.75])
     by = array("d", [0.25, 0.25, 0.75, 0.75])
     grid = array("f", [0.0]) * 4
     got = lib.fc_bin_2d(
-        _ptr(bx, ctypes.c_double), _ptr(by, ctypes.c_double), 4,
-        0.0, 1.0, 0.0, 1.0, 2, 2, _ptr(grid, ctypes.c_float),
+        _ptr(bx, ctypes.c_double),
+        _ptr(by, ctypes.c_double),
+        4,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        2,
+        2,
+        _ptr(grid, ctypes.c_float),
     )
     ok(got == 1, "bin_2d ok flag")
     ok(list(grid) == [1.0, 1.0, 1.0, 1.0], "bin_2d one per quadrant")
@@ -177,8 +216,16 @@ def main() -> None:
     cy = array("d", [0.1] * 500 + [0.9])
     g2 = array("f", [0.0]) * 4
     lib.fc_bin_2d(
-        _ptr(cx, ctypes.c_double), _ptr(cy, ctypes.c_double), 501,
-        0.0, 1.0, 0.0, 1.0, 2, 2, _ptr(g2, ctypes.c_float),
+        _ptr(cx, ctypes.c_double),
+        _ptr(cy, ctypes.c_double),
+        501,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        2,
+        2,
+        _ptr(g2, ctypes.c_float),
     )
     ok(g2[0] == 500.0 and g2[3] == 1.0, "bin_2d density hotspot")
 

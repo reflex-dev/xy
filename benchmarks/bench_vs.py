@@ -445,8 +445,11 @@ def run(
         ceilings[name] = max(ok) if ok else None
 
     return {
-        "sizes": sizes, "budget_s": budget_s, "results": results,
-        "ceilings": ceilings, "ttfr": ttfr,
+        "sizes": sizes,
+        "budget_s": budget_s,
+        "results": results,
+        "ceilings": ceilings,
+        "ttfr": ttfr,
     }
 
 
@@ -540,9 +543,7 @@ def to_markdown(report: dict) -> str:
         ]
         for r in rows:
             if r.get("status") != "ok":
-                lines.append(
-                    f"| {r['n']:,} | | | | | | | | {_fmt_status(r.get('status', '?'))} |"
-                )
+                lines.append(f"| {r['n']:,} | | | | | | | | {_fmt_status(r.get('status', '?'))} |")
                 continue
             ttfr_ms = r.get("ttfr_ms")
             ttfr_s = f"{ttfr_ms:.0f} ms" if ttfr_ms is not None else "—"
@@ -561,17 +562,22 @@ def main() -> None:
     ap.add_argument("--budget", type=float, default=45.0)
     ap.add_argument("--out", default=None, help="write Markdown report here")
     ap.add_argument("--json", default=None, help="write JSON results here")
-    ap.add_argument("--ttfr", action="store_true",
-                    help="measure time-to-first-render in headless Chromium")
-    ap.add_argument("--ttfr-max-n", type=float, default=1e5,
-                    help="cap N for the (slow) browser-paint pass")
+    ap.add_argument(
+        "--ttfr", action="store_true", help="measure time-to-first-render in headless Chromium"
+    )
+    ap.add_argument(
+        "--ttfr-max-n", type=float, default=1e5, help="cap N for the (slow) browser-paint pass"
+    )
     ap.add_argument("--chromium", default=None, help="path to a Chromium/Chrome binary")
     args = ap.parse_args()
     sizes = [int(float(s)) for s in args.sizes.split(",")]
 
     report = run(
-        sizes, args.budget,
-        ttfr=args.ttfr, ttfr_max_n=int(args.ttfr_max_n), chromium=args.chromium,
+        sizes,
+        args.budget,
+        ttfr=args.ttfr,
+        ttfr_max_n=int(args.ttfr_max_n),
+        chromium=args.chromium,
     )
     md = to_markdown(report)
     print(md)
