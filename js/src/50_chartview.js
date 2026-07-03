@@ -382,14 +382,18 @@ class ChartView {
 
     for (const g of this.gpuTraces) {
       if (g.tier === "density") {
-        // Drilled-in view (§5): the visible window fit the direct budget, so
-        // the kernel shipped real points — draw those instead of the texture.
-        if (g.drill) {
-          const d = g.drill;
-          this._drawPoints(d, this._map(d.xMeta, x0, x1), this._map(d.yMeta, y0, y1));
-        } else {
-          this._drawDensity(g);
-        }
+        // Drilled-in view (§5): the kernel shipped the window's real points.
+        // While the view stays *inside* that window, draw points alone. The
+        // moment a zoom-out/pan leaves it, draw the density overview first (it
+        // discards empty cells and everything outside its range) so the chart
+        // never goes blank waiting for the debounced kernel reply — then the
+        // shrinking point cluster on top. We skip the overview when fully
+        // inside because at deep zoom its coarse cells would paint over the
+        // crisp points.
+        const d = g.drill;
+        const inside = d && this._viewInside(d.win);
+        if (!inside && g.density && g.density.tex) this._drawDensity(g);
+        if (d) this._drawPoints(d, this._map(d.xMeta, x0, x1), this._map(d.yMeta, y0, y1));
         continue;
       }
       const xm = this._map(g.xMeta, x0, x1);
@@ -1108,6 +1112,7 @@ class ChartView {
     gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.y.buf]), gl.STATIC_DRAW);
     d.xMeta = { offset: upd.x.offset, scale: upd.x.scale };
     d.yMeta = { offset: upd.y.offset, scale: upd.y.scale };
+    d.win = { x0: upd.x_range[0], x1: upd.x_range[1], y0: upd.y_range[0], y1: upd.y_range[1] };
     d.n = Math.min(upd.x.len, upd.y.len);
     d.selActive = false; // drilled subset changed; old mask indices are stale
     d.colorMode = 0;
@@ -1131,6 +1136,16 @@ class ChartView {
       gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.size.buf]), gl.STATIC_DRAW);
       d.sizeRange = upd.size.range_px;
     }
+  }
+
+  // Is the current view fully covered by a drilled window? A tiny epsilon
+  // absorbs f32 round-trip slop so we don't flip to the overview at the exact
+  // window edge right after drilling in.
+  _viewInside(win) {
+    if (!win) return false;
+    const { x0, x1, y0, y1 } = this.view;
+    const ex = (x1 - x0) * 1e-4, ey = (y1 - y0) * 1e-4;
+    return x0 >= win.x0 - ex && x1 <= win.x1 + ex && y0 >= win.y0 - ey && y1 <= win.y1 + ey;
   }
 
   _dropDrill(g) {
