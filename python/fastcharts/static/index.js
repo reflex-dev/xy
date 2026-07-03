@@ -256,23 +256,25 @@ function makeProgram(gl, vs, fs) {
 // is a 256×1 texture (colormap or cycled palette). Size mode maps a_sval into a
 // px range. SDF-antialiased in the fragment stage.
 const POINT_VS = `#version 300 es
-in float ax; in float ay; in float a_cval; in float a_sval;
+in float ax; in float ay; in float a_cval; in float a_sval; in float a_sel;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange;
-uniform int u_colorMode; uniform float u_dpr;
-out float v_lutCoord;
+uniform int u_colorMode; uniform float u_dpr; uniform int u_selActive;
+out float v_lutCoord; out float v_dim;
 void main() {
   gl_Position = vec4(ax * u_xmap.x + u_xmap.y, ay * u_ymap.x + u_ymap.y, 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = sz * u_dpr;
   // continuous: coord = value in [0,1]; categorical: center of texel a_cval.
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  // Unselected marks dim when a selection is active (§34 selected/unselected styling).
+  v_dim = (u_selActive == 1 && a_sel < 0.5) ? 0.12 : 1.0;
 }`;
 
 const POINT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
-in float v_lutCoord;
+in float v_lutCoord; in float v_dim;
 out vec4 outColor;
 void main() {
   vec2 d = gl_PointCoord - 0.5;
@@ -281,7 +283,7 @@ void main() {
   float cov = 1.0 - smoothstep(1.0 - aa, 1.0, r);
   if (cov <= 0.001) discard;
   vec3 rgb = u_colorMode == 0 ? u_color.rgb : texture(u_lut, vec2(clamp(v_lutCoord, 0.0, 1.0), 0.5)).rgb;
-  float alpha = cov * u_opacity;
+  float alpha = cov * u_opacity * v_dim;
   outColor = vec4(rgb * alpha, alpha);
 }`;
 
@@ -474,6 +476,7 @@ class ChartView {
 
   _buildLegend(root) {
     const s = this.spec;
+    if (s.show_legend === false) return;
     const items = [];
     for (const t of s.traces) {
       if (t.tier === "density") {
@@ -759,6 +762,14 @@ class ChartView {
       const loc = gl.getAttribLocation(prog, "a_sval");
       if (loc >= 0) gl.vertexAttrib1f(loc, 0.5);
     }
+    gl.uniform1i(u("u_selActive"), g.selActive ? 1 : 0);
+    if (g.selActive && g.selBuf) {
+      this._bindScalarAttr(prog, "a_sel", g.selBuf, 0, 0);
+    } else {
+      this._disableAttr(prog, "a_sel");
+      const loc = gl.getAttribLocation(prog, "a_sel");
+      if (loc >= 0) gl.vertexAttrib1f(loc, 1.0);
+    }
     if (g.lut) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -986,13 +997,36 @@ class ChartView {
   _initInteraction() {
     const c = this.canvas;
     let drag = null;
+    let band = null;
+
+    // Rubber-band overlay for box-select (§34) — DOM, above the canvas.
+    this.selRect = document.createElement("div");
+    this.selRect.style.cssText =
+      "position:absolute;display:none;pointer-events:none;z-index:4;" +
+      "border:1px solid rgba(90,140,240,.9);background:rgba(90,140,240,.15);";
+    this.root.appendChild(this.selRect);
+
+    const dataAt = (clientX, clientY) => {
+      const r = c.getBoundingClientRect();
+      const fx = (clientX - r.left) / r.width;
+      const fy = 1 - (clientY - r.top) / r.height;
+      const { x0, x1, y0, y1 } = this.view;
+      return [x0 + fx * (x1 - x0), y0 + fy * (y1 - y0)];
+    };
 
     c.addEventListener("pointerdown", (e) => {
+      if (e.shiftKey && this._pickable) {
+        band = { sx: e.clientX, sy: e.clientY, d0: dataAt(e.clientX, e.clientY) };
+        c.setPointerCapture(e.pointerId);
+        this.tooltip.style.display = "none";
+        return;
+      }
       drag = { px: e.clientX, py: e.clientY, view: { ...this.view }, moved: false };
       c.setPointerCapture(e.pointerId);
       this.tooltip.style.display = "none";
     });
     c.addEventListener("pointermove", (e) => {
+      if (band) { this._updateBand(band, e); return; }
       if (drag) {
         drag.moved = true;
         const { x0, x1, y0, y1 } = drag.view;
@@ -1005,12 +1039,20 @@ class ChartView {
       }
       this._hover(e);
     });
-    const end = () => {
+    const end = (e) => {
+      if (band) {
+        this.selRect.style.display = "none";
+        const d1 = dataAt(e.clientX, e.clientY);
+        const moved = Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
+        if (moved) this._sendSelect(band.d0, d1);
+        band = null;
+        return;
+      }
       if (drag && !drag.moved) this.tooltip.style.display = "none";
       drag = null;
     };
     c.addEventListener("pointerup", end);
-    c.addEventListener("pointercancel", end);
+    c.addEventListener("pointercancel", () => { this.selRect.style.display = "none"; band = null; drag = null; });
     c.addEventListener("pointerleave", () => { this.tooltip.style.display = "none"; });
 
     c.addEventListener("wheel", (e) => {
@@ -1037,9 +1079,74 @@ class ChartView {
 
     c.addEventListener("dblclick", () => {
       this.view = { ...this.view0 };
+      this._clearSelection();
       this.draw();
       this._scheduleViewRequest();
     });
+  }
+
+  _updateBand(band, e) {
+    const rect = this.canvas.getBoundingClientRect();
+    const rootRect = this.root.getBoundingClientRect();
+    const x = Math.min(band.sx, e.clientX) - rootRect.left;
+    const y = Math.min(band.sy, e.clientY) - rootRect.top;
+    const w = Math.abs(e.clientX - band.sx);
+    const h = Math.abs(e.clientY - band.sy);
+    // clamp to plot area
+    const px = this.plot.x, py = this.plot.y;
+    const x2 = Math.min(x + w, px + this.plot.w), y2 = Math.min(y + h, py + this.plot.h);
+    const cx = Math.max(x, px), cy = Math.max(y, py);
+    this.selRect.style.display = "block";
+    this.selRect.style.left = cx + "px";
+    this.selRect.style.top = cy + "px";
+    this.selRect.style.width = Math.max(0, x2 - cx) + "px";
+    this.selRect.style.height = Math.max(0, y2 - cy) + "px";
+    void rect;
+  }
+
+  _sendSelect(d0, d1) {
+    const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
+    const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
+    if (this.comm) {
+      this.comm.send({ type: "select", x0, x1, y0, y1 });
+    } else {
+      this._selectLocal(x0, x1, y0, y1); // standalone: compute from resident f32
+    }
+  }
+
+  // Standalone selection (no kernel): mask the retained CPU f32 columns (§37).
+  _selectLocal(x0, x1, y0, y1) {
+    let total = 0;
+    for (const g of this.gpuTraces) {
+      if (g.trace.kind !== "scatter" || g.tier === "density" || !g._cpu) continue;
+      const cx = g._cpu.x, cy = g._cpu.y;
+      const ox = g.xMeta.offset, sx = g.xMeta.scale || 1;
+      const oy = g.yMeta.offset, sy = g.yMeta.scale || 1;
+      const mask = new Float32Array(g.n);
+      let cnt = 0;
+      for (let i = 0; i < g.n; i++) {
+        const dx = cx[i] / sx + ox, dy = cy[i] / sy + oy;
+        if (dx >= x0 && dx <= x1 && dy >= y0 && dy <= y1) { mask[i] = 1; cnt++; }
+      }
+      this._applySelMask(g, mask);
+      total += cnt;
+    }
+    this._selectionCount = total;
+    this.draw();
+  }
+
+  _applySelMask(g, maskF32) {
+    const gl = this.gl;
+    if (!g.selBuf) g.selBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, g.selBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, maskF32, gl.STATIC_DRAW);
+    g.selActive = true;
+  }
+
+  _clearSelection() {
+    for (const g of this.gpuTraces) g.selActive = false;
+    this._selectionCount = 0;
+    if (this.comm) this.comm.send({ type: "select_clear" });
   }
 
   _hover(e) {
@@ -1122,6 +1229,21 @@ class ChartView {
       this._lastRow = msg.row;
       const xy = this._lastHoverXY;
       if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY);
+    } else if (msg.type === "selection") {
+      if (!msg.traces || !msg.traces.length) {
+        for (const g of this.gpuTraces) g.selActive = false;
+      } else {
+        for (const upd of msg.traces) {
+          const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
+          if (!g || g.tier === "density" || !g.n) continue; // density has no per-point marks
+          const idx = this._asU32(buffers[upd.buf]);
+          const mask = new Float32Array(g.n);
+          for (let i = 0; i < idx.length; i++) if (idx[i] < g.n) mask[idx[i]] = 1;
+          this._applySelMask(g, mask);
+        }
+      }
+      this._selectionCount = msg.total || 0;
+      this.draw();
     }
   }
 
@@ -1131,6 +1253,14 @@ class ChartView {
       return new Float32Array(b.buffer, b.byteOffset, Math.floor(b.byteLength / 4));
     }
     return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+  }
+
+  _asU32(b) {
+    if (b instanceof ArrayBuffer) return new Uint32Array(b);
+    if (b.byteOffset % 4 === 0) {
+      return new Uint32Array(b.buffer, b.byteOffset, Math.floor(b.byteLength / 4));
+    }
+    return new Uint32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
   }
 
   refreshTheme() {

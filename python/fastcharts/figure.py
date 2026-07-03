@@ -98,6 +98,7 @@ class Figure:
         self.y_label = y_label
         self.store = ColumnStore()
         self.traces: list[Trace] = []
+        self.show_legend = True
         self._widget: Any = None
 
     # -- trace builders -----------------------------------------------------
@@ -328,6 +329,7 @@ class Figure:
             "traces": spec_traces,
             "columns": shipped,
             "backend": kernels.BACKEND,
+            "show_legend": self.show_legend,
         }
         return spec, b"".join(chunks)
 
@@ -439,6 +441,25 @@ class Figure:
         sc = t.size_ch
         if sc and sc.mode == "continuous" and sc.values is not None:
             out["size_value"] = float(sc.values[index])
+        return out
+
+    def select_range(
+        self, x0: float, x1: float, y0: float, y1: float, trace_id: Optional[int] = None
+    ) -> dict[int, np.ndarray]:
+        """Indices of points inside the box, per scatter trace (§34 Filter Tier A:
+        an indexed range predicate). A plain NumPy mask over canonical here; the
+        zone-map-pruned version is the scale path. Returns {trace_id: indices}."""
+        lo_x, hi_x = min(x0, x1), max(x0, x1)
+        lo_y, hi_y = min(y0, y1), max(y0, y1)
+        out: dict[int, np.ndarray] = {}
+        for t in self.traces:
+            if t.kind != "scatter":
+                continue
+            if trace_id is not None and t.id != trace_id:
+                continue
+            xv, yv = t.x.values, t.y.values
+            mask = (xv >= lo_x) & (xv <= hi_x) & (yv >= lo_y) & (yv <= hi_y)
+            out[t.id] = np.flatnonzero(mask).astype(np.uint32)
         return out
 
     def decimate_view(
