@@ -32,9 +32,13 @@ export all exist. See the full design dossier in
 pip install fastcharts
 ```
 
-That's it. Prebuilt platform wheels bundle the native C-ABI Rust core, the
-Python package, **and** the JavaScript client. **No Rust, no Node, no npm, no
-CDN** — just `pip install` and `import fastcharts`.
+That's it. The Rust core ships **as a prebuilt binary inside the wheel** — you
+never compile it. Each platform wheel bundles the compiled C-ABI core, the
+Python package, **and** the JavaScript client, so there's **no Rust, no Node, no
+npm, no CDN** at install time. Wheels are published per platform (manylinux
+Linux x86-64/arm64, macOS arm64/x86-64, Windows x86-64) by the release workflow;
+because the core is a plain C ABI with no CPython ABI, one wheel per platform
+serves every supported Python version.
 
 ### From source
 
