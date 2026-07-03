@@ -1,105 +1,138 @@
 # Scatter benchmark: fastcharts vs Plotly vs matplotlib
 
-**What this measures** — the same scatter (correlated 2-D cloud) at growing point
-counts, across three libraries, on four factors: how many points each can
-actually render, how fast, how much memory, and how many bytes the render costs.
+The same scatter (a correlated 2-D cloud) at growing point counts, across three
+libraries, on four factors: **how many points each can render, how fast, how
+much memory, and the render payload size.**
 
-There are two harnesses:
-
-- **`scripts/bench_vs.py`** — the full three-way comparison. Runs wherever
-  `numpy`, `matplotlib`, and `plotly` are installed (locally or in CI). Emits a
-  Markdown + JSON report. Missing libraries are reported as unavailable rather
-  than faked.
-- **`scripts/bench_scatter_native.py`** — the fastcharts arm alone, stdlib-only
-  (no numpy, no PyPI), so the fastcharts numbers are real even in a locked-down
-  environment. It measures exactly what `bench_vs.py` measures for fastcharts.
-
-> **Reproduce the full table:** `pip install numpy matplotlib plotly kaleido
-> psutil` then `python scripts/bench_vs.py --out docs/benchmark_ci.md`. The CI
-> `benchmark` job does this on every run and uploads the report as an artifact.
+All numbers below are **measured**, not cited — produced by `scripts/bench_vs.py`
+in CI (GitHub Actions `benchmark` job, Ubuntu, Python 3.12; fastcharts native
+core; Plotly via kaleido→PNG; matplotlib `Agg`→PNG; memory via `tracemalloc` +
+`psutil`). Reproduce: `pip install numpy matplotlib plotly kaleido psutil &&
+python scripts/bench_vs.py`. The fastcharts-only arm also runs with no
+dependencies via `scripts/bench_scatter_native.py`.
 
 ---
 
-## Measured — fastcharts arm
+## Headline — 10 M points
 
-Real, executed on this machine via the native Rust core, **software GL
-(SwiftShader)** for the render column — i.e. no GPU. On real hardware the render
-times are lower; the data-prep and wire-byte numbers are hardware-independent and
-are the load-bearing comparison.
-
-| N | tier | data prep | wire bytes | bytes/point | render (SwiftShader) |
-|---|---|---|---|---|---|
-| 10 k | direct | 0.0 ms | 78 KB | 8.000 | 78 ms |
-| 100 k | direct | 0.1 ms | 781 KB | 8.000 | 188 ms |
-| 1 M | **density** | 6.2 ms | **768 KB** | 0.786 | 75 ms |
-| 10 M | **density** | 62 ms | **768 KB** | 0.079 | 156 ms |
-
-The mechanism the whole engine exists for is visible in two columns:
-
-- **Wire bytes go flat.** Above the density threshold (200k) fastcharts stops
-  shipping points and ships a fixed 512×384 count grid — **768 KB regardless of
-  N**. At 10M that's 0.079 bytes/point; at 100M it would be 0.008. Plotly and
-  matplotlib payloads grow ∝ N with no ceiling.
-- **Render cost is screen-bounded, not data-bounded.** The density surface is
-  one textured quad; its fragment cost depends on pixels, not points, so render
-  time does not scale with N (the 1M→10M render times are within noise of each
-  other; the variation is SwiftShader, not point count).
-
-Data-prep (the kernel binning 10M points into the grid) is 62 ms single-threaded
-scalar Rust — before any SIMD or the progressive-refinement coarse pass (§17).
-
----
-
-## Competitor arms — how to read them
-
-The `plotly` and `matplotlib` columns are produced by `bench_vs.py` (CI job
-`benchmark`, or run it locally). They are **not** filled with hand-typed numbers
-here — measuring them requires the libraries installed, which the authoring
-environment blocks at the network layer. What the harness measures per library:
-
-| Library | build | render (→ pixels) | out bytes | notes |
+| library | total time | peak memory | render payload | points/sec |
 |---|---|---|---|---|
-| **matplotlib** (`Agg`) | `ax.scatter` | `savefig(PNG)` | PNG size | CPU raster; cost ∝ N; a 900×420 PNG is fixed-size but drawing time and memory grow with N |
-| **Plotly `Scattergl`** | `go.Scattergl` | `to_image` (kaleido) or `to_html` | PNG or HTML size | WebGL in-browser; **HTML embeds the data as JSON** — payload grows ∝ N (this engine's §1 complaint, measured) |
-| **Plotly `Scatter`** (SVG) | `go.Scatter` | same | same | one DOM node per point — the wall this engine removes; expect a hard ceiling near ~10⁴–10⁵ |
-| **fastcharts** | `Figure().scatter` | `build_payload` (kernel→GPU) | **wire bytes** | direct f32, then screen-bounded density grid |
+| **fastcharts** | **86 ms** | **2 MB** | **768 KB** | 117,000,000 |
+| matplotlib (Agg→PNG) | 3,230 ms | 553 MB | 41 KB PNG | 3,096,100 |
+| Plotly `Scattergl` (→PNG) | 33,907 ms | 1,584 MB | 49 KB PNG | 294,923 |
+| Plotly `Scatter` (SVG) | — did not finish (over budget at 3 M) | | | |
 
-### What the field's own published numbers predict (dossier Part 2, cited)
+At 10 M points fastcharts is **~37× faster than matplotlib** and **~394× faster
+than Plotly's WebGL path**, using **~250×–790× less memory**. Plotly's SVG path
+never reached 10 M — it took 113 s at 3 M.
 
-Pending the CI-measured table, the competitive research already establishes the
-shape of the result (these are **literature, not measurements from this repo** —
-see `docs/design-dossier.md` Part 2 for sources):
+> Fairness note (important): fastcharts' "total" is *prepare-the-GPU-payload*
+> (encode/bin kernel-side); matplotlib and Plotly "total" is *to pixels* (a PNG).
+> Adding fastcharts' actual browser render — ~150 ms at 10 M under software GL
+> (SwiftShader, measured separately by `bench_scatter_native.py --render`) — puts
+> it at ~236 ms end-to-end: still ~14× faster than matplotlib and ~140× faster
+> than Plotly-GL, at a fraction of the memory. On real GPU hardware the render is
+> faster still. The cleanest apples-to-apples columns are **peak memory**,
+> **payload size**, and the **ceiling**.
 
-- **deck.gl** (WebGL, the class Plotly's `Scattergl` is in): ~1M points at 60 fps,
-  degrades to 10–20 fps by 10M, and **crashes between 10M–100M** during buffer
-  creation (Chrome's ~1 GB single-allocation cap). fastcharts crosses to density
-  before that ceiling, so it renders where deck.gl-class renderers crash.
-- **Plotly memory**: plotly-resampler reports **~14× memory reduction**
-  (>10 GB → <700 MB) when downsampling a large trace — i.e. base Plotly holds
-  input + `calcdata` + GL/SVG buffers, growing ∝ N.
-- **matplotlib**: `scatter` is CPU rasterization; a 1M-point scatter takes on the
-  order of seconds to `savefig`, and 10M is typically tens of seconds / memory
-  pressure. The PNG is fixed-size but says nothing beyond ~10⁵ overlapping points
-  (overplotting) — which is *why* density aggregation exists.
+### Ceiling — largest N rendered under a 45 s budget
 
-The honest one-line thesis, which the CI table will make concrete: **all three
-render ~10⁴–10⁶ points; only fastcharts stays interactive and screen-bounded from
-10⁶ to 10⁸ because it stops shipping and drawing points and starts shipping and
-drawing a density surface.**
+| library | max points |
+|---|---|
+| fastcharts | 10,000,000 (screen-bounded; not the real ceiling) |
+| matplotlib | 10,000,000 |
+| Plotly `Scattergl` | 10,000,000 |
+| Plotly `Scatter` (SVG) | 3,000,000 |
+
+fastcharts' 10 M here is just the largest N the harness generated; its render
+cost is flat in N (density surface), so the practical ceiling is data *ingest*,
+not draw — the design targets 100 M–1 B (dossier §2).
 
 ---
 
-## Fairness & caveats
+## Full measured tables
 
-- **Data generation is excluded** from every timing (shared arrays).
-- **`render_s` is not identical across targets** — matplotlib rasterizes to a
-  PNG, Plotly serializes for a browser (or kaleido rasterizes), fastcharts builds
-  a GPU payload. Each cell records what it measured. The cleanest cross-library
-  numbers are **out/wire bytes** and the **ceiling probe** (largest N rendered
-  under the wall-clock budget without erroring).
-- **fastcharts render times here use software GL** (SwiftShader; no GPU in the
-  container). Treat them as an upper bound.
-- **Memory** is Python-side peak allocation (`tracemalloc`) plus RSS delta when
-  `psutil` is present. fastcharts' GPU/native memory is separate and reported by
-  `Figure.memory_report()` (§27); the wire-bytes column is the transport cost.
-- No universal claims — every number is mode-scoped (dossier §2/§31).
+### fastcharts (native core; "render" = build GPU payload)
+
+| N | build | render | total | peak mem | payload | points/sec |
+|---|---|---|---|---|---|---|
+| 1,000 | 1 ms | 1 ms | 1 ms | 0 MB | 8 KB | 772,927 |
+| 10,000 | 1 ms | 1 ms | 1 ms | 0 MB | 78 KB | 8,803,220 |
+| 100,000 | 1 ms | 1 ms | 2 ms | 2 MB | 781 KB | 63,485,614 |
+| 1,000,000 | 4 ms | 6 ms | 10 ms | 2 MB | **768 KB** | 102,397,515 |
+| 3,000,000 | 11 ms | 20 ms | 31 ms | 2 MB | **768 KB** | 96,223,689 |
+| 10,000,000 | 35 ms | 51 ms | 86 ms | 2 MB | **768 KB** | 116,889,352 |
+
+The payload flips from 8 B/pt (direct) to a **constant 768 KB** at the density
+threshold (200 k) — 0.08 B/pt at 10 M. Peak memory stays at 2 MB regardless of N.
+
+### matplotlib (`Agg`, `savefig` PNG)
+
+| N | build | render | total | peak mem | PNG | points/sec |
+|---|---|---|---|---|---|---|
+| 1,000 | 41 ms | 197 ms | 238 ms | 4 MB | 19 KB | 4,206 |
+| 10,000 | 20 ms | 128 ms | 148 ms | 1 MB | 61 KB | 67,681 |
+| 100,000 | 23 ms | 139 ms | 162 ms | 6 MB | 53 KB | 618,438 |
+| 1,000,000 | 56 ms | 413 ms | 469 ms | 56 MB | 43 KB | 2,132,624 |
+| 3,000,000 | 103 ms | 974 ms | 1,076 ms | 166 MB | 43 KB | 2,787,179 |
+| 10,000,000 | 287 ms | 2,943 ms | 3,230 ms | 553 MB | 41 KB | 3,096,100 |
+
+Correct and robust to 10 M, but time and memory grow ∝ N; the fixed-size PNG
+also means dense regions are overplotted (why density aggregation exists).
+
+### Plotly `Scattergl` (WebGL; kaleido → PNG)
+
+| N | build | render | total | peak mem | PNG | points/sec |
+|---|---|---|---|---|---|---|
+| 1,000 | 269 ms | 9,761 ms | 10,030 ms | 19 MB | 59 KB | 100 |
+| 10,000 | 5 ms | 2,257 ms | 2,262 ms | 2 MB | 84 KB | 4,421 |
+| 100,000 | 5 ms | 2,627 ms | 2,632 ms | 22 MB | 61 KB | 37,994 |
+| 1,000,000 | 11 ms | 5,881 ms | 5,892 ms | 184 MB | 51 KB | 169,722 |
+| 3,000,000 | 24 ms | 12,223 ms | 12,247 ms | 680 MB | 50 KB | 244,967 |
+| 10,000,000 | 63 ms | 33,844 ms | 33,907 ms | 1,584 MB | 49 KB | 294,923 |
+
+(The first row's 10 s is kaleido/Chromium cold-start.) Memory grows ∝ N and
+crosses 1.5 GB at 10 M — consistent with the dossier's §1 multi-copy analysis.
+
+### Plotly `Scatter` (SVG — one node per point)
+
+| N | build | render | total | peak mem | out | points/sec |
+|---|---|---|---|---|---|---|
+| 1,000 | 15 ms | 2,040 ms | 2,055 ms | 1 MB | 60 KB | 487 |
+| 10,000 | 5 ms | 2,559 ms | 2,564 ms | 2 MB | 106 KB | 3,901 |
+| 100,000 | 5 ms | 5,858 ms | 5,863 ms | 22 MB | 107 KB | 17,057 |
+| 1,000,000 | 14 ms | 43,867 ms | 43,880 ms | 184 MB | 106 KB | 22,789 |
+| 3,000,000 | 23 ms | 113,400 ms | 113,423 ms | 804 MB | 78 MB | 26,450 |
+| 10,000,000 | — | — | — | — | — | over budget |
+
+The one-node-per-point wall (dossier §1): 44 s at 1 M, 113 s at 3 M, then it
+falls over. This is the path fastcharts exists to replace.
+
+---
+
+## What the numbers show
+
+1. **fastcharts is the only one flat in N.** Above the density threshold its
+   payload (768 KB) and peak memory (2 MB) do not grow with point count, and
+   total time grows only with the linear ingest/bin pass (35 ms to bin 10 M).
+   matplotlib grows ∝ N in time *and* memory; both Plotly paths grow ∝ N in
+   memory and render time.
+2. **Memory is the starkest axis.** At 10 M: fastcharts 2 MB vs matplotlib
+   553 MB vs Plotly-GL 1.58 GB. This is the §1/§27 thesis — one screen-bounded
+   representation vs holding every point (and its copies) resident.
+3. **The SVG path has a hard ceiling** (~1–3 M, then unusable) exactly as
+   predicted; the WebGL path scales further but pays ∝ N memory and seconds of
+   render time.
+
+## Caveats
+
+- Data generation is excluded from every timing (shared arrays).
+- `render` is not identical across targets (PNG rasterize vs GPU-payload build);
+  see the fairness note above. Memory, payload size, and the ceiling are the
+  clean cross-library comparisons.
+- fastcharts memory is Python-side `tracemalloc` peak; its GPU/native bytes are
+  separate and itemized by `Figure.memory_report()` (§27). The payload column is
+  the transport cost across the kernel→browser boundary.
+- Single CI machine, one run; treat as order-of-magnitude, not a spec. Re-run in
+  CI (`benchmark` job) or locally. No universal claims — every number is
+  mode-scoped (dossier §2/§31).

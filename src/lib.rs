@@ -98,6 +98,8 @@ pub unsafe extern "C" fn fc_m4_indices(
     n_buckets: usize,
     out: *mut u32,
 ) -> usize {
+    // `!(x1 > x0)` (not `x1 <= x0`) deliberately rejects NaN bounds too.
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
     if n_buckets == 0 || !(x1 > x0) {
         return usize::MAX;
     }
@@ -129,7 +131,10 @@ pub unsafe extern "C" fn fc_bin_2d(
     h: usize,
     out: *mut f32,
 ) -> i32 {
-    if w == 0 || h == 0 || !(x1 > x0) || !(y1 > y0) {
+    // `!(a > b)` (not `a <= b`) deliberately rejects NaN bounds too.
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
+    let bad = w == 0 || h == 0 || !(x1 > x0) || !(y1 > y0);
+    if bad {
         return 0;
     }
     let x = std::slice::from_raw_parts(x, len);
