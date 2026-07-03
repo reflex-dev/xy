@@ -80,6 +80,15 @@ jobs:
       - name: Python tests (NumPy fallback — §33 no-wheel contract)
         run: FASTCHARTS_FORCE_FALLBACK=1 .venv/bin/pytest -q
 
+      # End-to-end: a real Figure (line decimation + scatter) through to_html's
+      # exact payload path, rendered in Chromium, pixels read back. Complements
+      # the stdlib smoke, which hand-builds payloads. (Was dead code — audit
+      # finding: the only real-Figure→browser gate, never executed.)
+      - name: Real-Figure render smoke (numpy + Chromium)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python scripts/smoke_render.py "$CHROME"
+
       - name: Benchmark smoke (1e5/1e6 — §12 harness runs every phase)
         run: .venv/bin/python scripts/bench.py --sizes 1e5,1e6
 
