@@ -57,7 +57,7 @@ uv pip install -e ".[dev]"
   decimation, one loud warning at import). Install is never blocked on a
   toolchain. Install Rust via [rustup](https://rustup.rs) for the fast path.
 - **Node is optional too** — the JS client ships as a committed artifact, so you
-  only need Node (18+) if you're *editing* `js/src/fastcharts.js` and want to
+  only need Node (18+) if you're *editing* the client source under `js/src/` and want to
   regenerate the bundle with `node js/build.mjs`.
 
 CI (`install_without_rust` job) builds and imports a wheel on a runner with no
@@ -212,7 +212,7 @@ that all expanded adapters run and for comparing payload styles at 100k points.
 | Column store, autorange, memory accounting | [`python/fastcharts/column.py`](python/fastcharts/column.py) |
 | Figure API, payload builder, line/scatter traces | [`python/fastcharts/figure.py`](python/fastcharts/figure.py) |
 | Composition API | [`python/fastcharts/components.py`](python/fastcharts/components.py) |
-| anywidget and standalone WebGL2 client | [`js/src/fastcharts.js`](js/src/fastcharts.js) |
+| anywidget and standalone WebGL2 client | [`js/src/`](js/src/) (parts concatenated by `js/build.mjs`) |
 | Benchmarks | [`benchmarks/`](benchmarks/) |
 | Tests | [`tests/`](tests/) |
 
