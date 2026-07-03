@@ -4,6 +4,7 @@ on:
   push:
     branches: ["main", "claude/**"]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
@@ -74,7 +75,6 @@ jobs:
   # artifact and prints it to the log.
   benchmark:
     name: Benchmark vs Plotly / matplotlib
-    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
