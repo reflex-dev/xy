@@ -15,7 +15,8 @@ code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
   is the Reflex-flavored composition API (`scatter_chart`/`line_chart` + marks/
   axes) — it builds a `Figure`; keep it dependency-free (no `reflex` import).
   `channels.py` resolves scatter color/size encodings.
-- `js/src/fastcharts.js` — the entire render client, one dependency-free ES
+- `js/src/*.js` — the render client as ordered parts (concat order in
+  `js/build.mjs`; exports live only in `60_entries.js`), one dependency-free ES
   module. **No npm packages.** `node js/build.mjs` copies it to
   `python/fastcharts/static/` (committed artifacts).
 - `tests/`, `scripts/bench.py` (§12 harness), `scripts/smoke_render.py`

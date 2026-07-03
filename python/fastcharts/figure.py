@@ -8,51 +8,25 @@ work is forbidden on the client).
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import numpy as np
 
-from . import channels, kernels
+from . import channels, export, interaction, kernels
 from .channels import ColorChannel, SizeChannel
 from .column import Column, ColumnStore
 
-PROTOCOL_VERSION = 2
-
-# Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
-# column stays kernel-side for re-decimation on zoom (§28: recompute for the
-# visible x-range only).
-DECIMATION_THRESHOLD = 10_000
-
-# Scatter above this many points switches to Tier-2 density aggregation (§5):
-# instead of shipping/drawing every point (fill-rate + the ~1 GB single-alloc
-# cliff, §5 F3), the kernel bins the viewport into a density grid and the client
-# colormaps it. Screen-bounded transport and VRAM regardless of point count.
-SCATTER_DENSITY_THRESHOLD = 200_000
-
-# Absolute direct-draw ceiling; above this, density is forced even if the user
-# asked for per-point channels (they can't survive count-aggregation without the
-# §5-F5 aggregation algebra — we warn and drop them, never silently mislead).
-DIRECT_SOFT_CEILING = 2_000_000
-
-# Default density grid resolution (cells). Screen-bounded (§5); the client
-# requests a viewport-matched size on zoom via density_view.
-DENSITY_GRID = (512, 384)
-
-# CVD-safe default categorical palette (§20/§36 default theme).
-DEFAULT_PALETTE = [
-    "#4c78a8",
-    "#f58518",
-    "#54a24b",
-    "#e45756",
-    "#72b7b2",
-    "#eeca3b",
-    "#b279a2",
-    "#ff9da6",
-    "#9d755d",
-    "#bab0ac",
-]
+# Tier/tuning constants live in config.py (shared with interaction/export);
+# re-exported here because this module is their historic import path.
+from .config import (  # noqa: E402
+    DECIMATION_THRESHOLD,
+    DEFAULT_PALETTE,
+    DENSITY_GRID,
+    DIRECT_SOFT_CEILING,
+    PROTOCOL_VERSION,
+    SCATTER_DENSITY_THRESHOLD,
+)
 
 
 @dataclass
@@ -497,133 +471,36 @@ class Figure:
             },
         }
 
+    # Interaction handlers live in interaction.py (§17/§34); these delegates are
+    # the public API the widget and users call.
+
     def density_view(
         self, trace_id: int, x0: float, x1: float, y0: float, y1: float, w: int, h: int
     ) -> tuple[dict[str, Any], list[bytes]]:
-        """Re-bin a Tier-2 scatter for a new viewport (§5: O(visible points);
-        the client requests this when pan/zoom leaves the shipped grid)."""
-        t = self.traces[trace_id]
-        if not t.use_density():
-            return {"traces": []}, []
-        w = max(16, min(w, 4096))
-        h = max(16, min(h, 4096))
-        grid = kernels.bin_2d(t.x.values, t.y.values, x0, x1, y0, y1, w, h)
-        return (
-            {
-                "traces": [
-                    {
-                        "id": trace_id,
-                        "density": {
-                            "buf": 0,
-                            "w": w,
-                            "h": h,
-                            "max": float(grid.max()) if grid.size else 0.0,
-                            "x_range": [x0, x1],
-                            "y_range": [y0, y1],
-                        },
-                    }
-                ]
-            },
-            [grid.reshape(-1).astype(np.float32).tobytes()],
-        )
+        """Re-bin a Tier-2 scatter for a new viewport (§5)."""
+        return interaction.density_view(self, trace_id, x0, x1, y0, y1, w, h)
 
     def pick(self, trace_id: int, index: int) -> Optional[dict[str, Any]]:
-        """Exact source-row readout for a hover/pick (§17 Tier-0 hover; §16 —
-        values come from the f64 canonical store, never through the f32 GPU path).
-
-        `index` is a *shipped* vertex index (what the client's GPU pick sees);
-        it is translated to a canonical row when the shipped copy dropped NaN
-        rows (§19). Returns None if out of range."""
-        t = self.traces[trace_id]
-        if t.shipped_sel is not None:
-            if index < 0 or index >= len(t.shipped_sel):
-                return None
-            index = int(t.shipped_sel[index])
-        if index < 0 or index >= t.n_points:
-            return None
-        out: dict[str, Any] = {
-            "trace": trace_id,
-            "index": index,
-            "x": float(t.x.values[index]),
-            "y": float(t.y.values[index]),
-            "x_kind": t.x.kind,
-            "y_kind": t.y.kind,
-        }
-        cc = t.color_ch
-        if cc and cc.mode == "continuous" and cc.values is not None:
-            out["color_value"] = float(cc.values[index])
-        elif cc and cc.mode == "categorical" and cc.codes is not None:
-            out["color_category"] = cc.categories[int(cc.codes[index])]
-        sc = t.size_ch
-        if sc and sc.mode == "continuous" and sc.values is not None:
-            out["size_value"] = float(sc.values[index])
-        return out
+        """Exact source-row readout for a hover/pick (§16/§17); `index` is a
+        shipped vertex index, translated to a canonical row when NaN rows were
+        dropped at ship time (§19)."""
+        return interaction.pick(self, trace_id, index)
 
     def select_range(
         self, x0: float, x1: float, y0: float, y1: float, trace_id: Optional[int] = None
     ) -> dict[int, np.ndarray]:
-        """Indices of points inside the box, per scatter trace (§34 Filter Tier A:
-        an indexed range predicate). A plain NumPy mask over canonical here; the
-        zone-map-pruned version is the scale path. Returns {trace_id: indices}."""
-        lo_x, hi_x = min(x0, x1), max(x0, x1)
-        lo_y, hi_y = min(y0, y1), max(y0, y1)
-        out: dict[int, np.ndarray] = {}
-        for t in self.traces:
-            if t.kind != "scatter":
-                continue
-            if trace_id is not None and t.id != trace_id:
-                continue
-            xv, yv = t.x.values, t.y.values
-            mask = (xv >= lo_x) & (xv <= hi_x) & (yv >= lo_y) & (yv <= hi_y)
-            out[t.id] = np.flatnonzero(mask).astype(np.uint32)
-        return out
+        """Box-select → canonical indices per scatter trace (§34 Filter Tier A)."""
+        return interaction.select_range(self, x0, x1, y0, y1, trace_id)
 
     def to_shipped_indices(self, trace_id: int, canonical: np.ndarray) -> np.ndarray:
-        """Translate canonical row indices to *shipped* vertex positions for a
-        trace — the coordinate space the client's per-vertex selection mask uses.
-        Identity when nothing was dropped at ship time."""
-        sel = self.traces[trace_id].shipped_sel
-        if sel is None:
-            return np.asarray(canonical, dtype=np.uint32)
-        # sel is sorted ascending (flatnonzero/m4 output); membership → position.
-        return np.flatnonzero(np.isin(sel, canonical)).astype(np.uint32)
+        """Canonical rows → shipped vertex positions (the client's mask space)."""
+        return interaction.to_shipped_indices(self, trace_id, canonical)
 
     def decimate_view(
         self, x0: float, x1: float, px_width: int
     ) -> tuple[dict[str, Any], list[bytes]]:
-        """Re-decimate visible windows for a zoomed view (§28 line rule:
-        recompute for the visible x-range only). The offset re-centers on the
-        window midpoint — the §16 deep-zoom rule — so f32 precision follows the
-        viewport instead of the whole series.
-        """
-        updates: list[dict[str, Any]] = []
-        buffers: list[bytes] = []
-        for t in self.traces:
-            if t.kind != "line" or t.n_points <= DECIMATION_THRESHOLD:
-                continue
-            idx = kernels.m4_indices(t.x.values, t.y.values, x0, x1, max(16, px_width))
-            if len(idx) == 0:
-                continue
-            xv, yv = t.x.values[idx], t.y.values[idx]
-            x_off = (x0 + x1) / 2.0
-            y_off = t.y.suggest_offset()
-            x_enc = kernels.encode_f32(xv, x_off, 1.0)
-            y_enc = kernels.encode_f32(yv, y_off, 1.0)
-            updates.append(
-                {
-                    "id": t.id,
-                    "x": {"buf": len(buffers), "len": len(x_enc), "offset": x_off, "scale": 1.0},
-                    "y": {
-                        "buf": len(buffers) + 1,
-                        "len": len(y_enc),
-                        "offset": y_off,
-                        "scale": 1.0,
-                    },
-                }
-            )
-            buffers.append(x_enc.tobytes())
-            buffers.append(y_enc.tobytes())
-        return {"traces": updates}, buffers
+        """Re-decimate visible line windows on zoom (§28), offsets re-centered (§16)."""
+        return interaction.decimate_view(self, x0, x1, px_width)
 
     # -- output -----------------------------------------------------------
 
@@ -643,54 +520,10 @@ class Figure:
         display(self.widget())
 
     def to_html(self, path: Optional[str] = None) -> str:
-        """Standalone interactive HTML: JS client + spec + base64 buffers.
-
-        Base64 carries a stated ~33% size tax (§29 static-export row); above
-        ~64 MB of payload we warn and suggest the aggregate-only embed that
-        arrives with Tier 2.
-        """
-        import base64
-
-        from .widget import bundled_js
-
-        spec, blob = self.build_payload()
-        if len(blob) > 64 * 2**20:
-            import warnings
-
-            warnings.warn(
-                f"embedding {len(blob) / 2**20:.0f} MB of data (+33% as base64) "
-                "into HTML; consider the aggregated embed once Tier 2 lands.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-        # User strings (title, names, labels) ride inside <script>/<title>
-        # blocks: escape "</" so "</script>"-shaped content can't break out of
-        # the script context (markup injection in exported files), and
-        # HTML-escape the <title> text itself.
-        import html as _html
-
-        spec_js = json.dumps(spec).replace("</", "<\\/")
-        title_html = _html.escape(self.title or "fastcharts")
-        html = f"""<!doctype html>
-<html>
-<head><meta charset="utf-8"><title>{title_html}</title>
-<style>body{{margin:24px;font-family:system-ui,sans-serif;background:#fff}}</style>
-</head>
-<body>
-<div id="chart"></div>
-<script>{bundled_js("standalone")}</script>
-<script>
-  const spec = {spec_js};
-  const b64 = "{base64.b64encode(blob).decode("ascii")}";
-  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-  fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);
-</script>
-</body>
-</html>"""
-        if path is not None:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(html)
-        return html
+        """Standalone interactive HTML (export.py): JS client + spec + base64
+        buffers in one self-contained file. Base64 carries a stated ~33% size
+        tax (§29 static-export row)."""
+        return export.to_html(self, path)
 
     def memory_report(self) -> dict[str, Any]:
         """§27: every byte class itemized; if it isn't in the report it isn't real."""
