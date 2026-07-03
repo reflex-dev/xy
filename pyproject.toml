@@ -33,7 +33,7 @@ include = ["python", "src", "js/src", "Cargo.toml", "Cargo.lock", "hatch_build.p
 [tool.ruff]
 line-length = 100
 target-version = "py39"
-src = ["python", "tests", "scripts"]
+src = ["python", "tests", "scripts", "benchmarks"]
 
 [tool.ruff.lint]
 select = [

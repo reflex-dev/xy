@@ -1,15 +1,55 @@
-# Scatter benchmark: fastcharts vs Plotly vs matplotlib
+# Scatter benchmark: fastcharts vs Python charting libraries
 
-The same scatter (a correlated 2-D cloud) at growing point counts, across three
-libraries, on four factors: **how many points each can render, how fast, how
-much memory, and the render payload size.**
+The same scatter (a correlated 2-D cloud) at growing point counts, across
+popular Python charting libraries, on four factors: **how many points each can
+render, how fast, how much memory, and the render payload size.**
 
-All numbers below are **measured**, not cited — produced by `scripts/bench_vs.py`
-in CI (GitHub Actions `benchmark` job, Ubuntu, Python 3.12; fastcharts native
-core; Plotly via kaleido→PNG; matplotlib `Agg`→PNG; memory via `tracemalloc` +
-`psutil`). Reproduce: `pip install numpy matplotlib plotly kaleido psutil &&
-python scripts/bench_vs.py`. The fastcharts-only arm also runs with no
-dependencies via `scripts/bench_scatter_native.py`.
+The cross-library harness lives in `benchmarks/bench_vs.py` and includes
+optional adapters for fastcharts, matplotlib, seaborn, Plotly, Bokeh, Altair,
+Datashader, and hvPlot/HoloViews. Missing libraries are reported as
+`unavailable` rather than failing the run.
+
+The 10M headline and full original tables below are **measured**, not cited —
+produced by the CI `benchmark` job before the expanded adapter set landed
+(Ubuntu, Python 3.12; fastcharts native core; Plotly via kaleido→PNG;
+matplotlib `Agg`→PNG; memory via `tracemalloc` + `psutil`). The expanded adapter
+table is a local benchmark run that validates the new adapters at 100k points.
+
+Reproduce the current harness with:
+
+```bash
+pip install numpy matplotlib seaborn plotly kaleido bokeh altair datashader hvplot psutil
+python benchmarks/bench_vs.py
+```
+
+The fastcharts-only arm also runs with no dependencies via
+`benchmarks/bench_scatter_native.py`.
+
+## Expanded adapter benchmark — 100k points
+
+Measured locally with:
+
+```bash
+PYTHONPATH=python .venv/bin/python benchmarks/bench_vs.py \
+  --sizes 1e3,1e4,1e5 --budget 20
+```
+
+Environment note: Cargo was not available in this shell, so the fastcharts row
+uses the NumPy fallback backend. CI should regenerate these rows with the native
+backend in the non-blocking benchmark job.
+
+| Library | Render target | 100k total | Peak memory | Output bytes | Points/sec |
+|---|---|---:|---:|---:|---:|
+| fastcharts | binary payload, NumPy fallback | **1 ms** | **2 MB** | 781 KB | 156,985,881 |
+| matplotlib | Agg PNG | 49 ms | 6 MB | 46 KB | 2,055,087 |
+| seaborn | matplotlib PNG | 71 ms | 11 MB | 37 KB | 1,399,835 |
+| Plotly `Scattergl` | Kaleido PNG | 2,018 ms | 22 MB | 61 KB | 49,558 |
+| Plotly `Scatter` | Kaleido PNG | 2,835 ms | 22 MB | 107 KB | 35,269 |
+| Bokeh canvas | standalone HTML | 75 ms | 14 MB | 2 MB | 1,327,770 |
+| Bokeh WebGL | standalone HTML | 73 ms | 14 MB | 2 MB | 1,360,995 |
+| Altair / Vega-Lite | standalone HTML | 1,846 ms | 35 MB | 5 MB | 54,171 |
+| Datashader | PNG raster | 13 ms | 15 MB | 58 KB | 7,502,931 |
+| hvPlot / HoloViews | Bokeh HTML | 95 ms | 17 MB | 2 MB | 1,052,353 |
 
 ---
 
@@ -29,7 +69,7 @@ never reached 10 M — it took 113 s at 3 M.
 > Fairness note (important): fastcharts' "total" is *prepare-the-GPU-payload*
 > (encode/bin kernel-side); matplotlib and Plotly "total" is *to pixels* (a PNG).
 > Adding fastcharts' actual browser render — ~150 ms at 10 M under software GL
-> (SwiftShader, measured separately by `bench_scatter_native.py --render`) — puts
+> (SwiftShader, measured separately by `benchmarks/bench_scatter_native.py --render`) — puts
 > it at ~236 ms end-to-end: still ~14× faster than matplotlib and ~140× faster
 > than Plotly-GL, at a fraction of the memory. On real GPU hardware the render is
 > faster still. The cleanest apples-to-apples columns are **peak memory**,

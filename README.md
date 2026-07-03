@@ -1,22 +1,114 @@
 # fastcharts
 
-A faster charting engine, per the design dossier in
-[`docs/design-dossier.md`](docs/design-dossier.md): **cost scales with pixels on
-screen, not points in the dataset.** Plotly's ceilings are removed by four
-changes — GPU rendering (not one SVG node per point), binary columnar transport
-(not JSON), a native Rust core in the Python process (not main-thread compute),
-and a multi-tier level-of-detail system that never ships or draws more
-primitives than the screen can show.
+**fastcharts** is an experimental Python charting engine for very large,
+interactive line and scatter plots. Its core idea is simple: chart cost should
+scale with the pixels on screen, not with every point in the dataset.
 
-**Status: Phase 0 complete + full scatter chart** (Tier-0 direct through Tier-2
-density, per the dossier's §5/§11 scatter contract).
+It combines a native Rust compute core, binary columnar transport, WebGL2
+rendering, and level-of-detail tiers so notebooks and standalone HTML exports
+can stay interactive well past the point where JSON/SVG-heavy chart stacks run
+out of room.
 
-Two APIs over one engine — pick per taste; both render in Jupyter / VS Code /
-Colab / Marimo via anywidget and export to standalone HTML.
+**Status:** Phase 0 is complete: lines, scatter, direct rendering, M4 line
+decimation, Tier-2 scatter density, hover, box select, and standalone HTML
+export all exist. See the full design dossier in
+[`docs/design-dossier.md`](docs/design-dossier.md).
 
-**Composition API** (declarative, Reflex-flavored — but with no Reflex
-dependency): a chart container with mark + axis children, snake_case props,
-`data=` + column names, and `on_*` event props.
+## Why fastcharts
+
+| Problem in large charts | fastcharts approach |
+|---|---|
+| JSON payloads grow with every point | Binary f32 buffers ship as widget buffers |
+| SVG creates one DOM node per mark | WebGL2 draws instanced marks and line segments |
+| Precision gets shaky with timestamps | f64 canonical data stays kernel-side; GPU gets recentered f32 offsets |
+| Rendering 10M points is visually wasteful | Large scatters aggregate into a fixed-size density grid |
+| Benchmark claims get fuzzy | Each mode reports timing, memory, payload, and backend |
+
+## Installation
+
+### From a published wheel
+
+```bash
+pip install fastcharts
+```
+
+Prebuilt wheels include the native C-ABI Rust core, the Python package, and the
+bundled JavaScript client. No npm install or runtime CDN is required.
+
+### From this repository
+
+Requires Rust stable, Python 3.9+, `uv`, and Node 18+.
+
+```bash
+git clone https://github.com/Alek99/charts-exp.git
+cd charts-exp
+
+cargo build --release
+node js/build.mjs
+uv venv
+uv pip install -e ".[dev]"
+```
+
+The source build compiles the Rust core during installation. If the native
+library is unavailable at runtime, fastcharts falls back to NumPy with a loud
+warning so behavior remains correct while ingest and decimation are slower.
+
+## Getting Started
+
+Create a line chart:
+
+```python
+import numpy as np
+from fastcharts import Figure
+
+n = 1_000_000
+x = np.arange(n, dtype=np.float64)
+y = np.cumsum(np.random.default_rng(0).normal(size=n))
+
+fig = Figure(title="Random walk", x_label="sample", y_label="value")
+fig.line(x, y, name="walk")
+fig
+```
+
+Create a colored, sized scatter plot:
+
+```python
+import numpy as np
+from fastcharts import Figure
+
+rng = np.random.default_rng(1)
+x = rng.normal(size=500_000)
+y = x * 0.5 + rng.normal(scale=0.6, size=len(x))
+
+Figure(title="Correlated cloud").scatter(
+    x,
+    y,
+    color=y,
+    size=np.abs(y),
+    colormap="viridis",
+    size_range=(2, 14),
+)
+```
+
+Export a standalone HTML file:
+
+```python
+fig = Figure(title="Standalone").scatter(x, y)
+fig.to_html("chart.html")
+```
+
+## API Styles
+
+Use the fluent API when you want quick imperative chart construction:
+
+```python
+from fastcharts import Figure
+
+Figure(title="Telemetry").line(timestamps, values, name="sensor A")
+```
+
+Use the composition API when you prefer declarative chart children and event
+props:
 
 ```python
 import fastcharts as fc
@@ -27,172 +119,137 @@ fc.scatter_chart(
     fc.y_axis(label="life expectancy"),
     fc.legend(),
     title="Gapminder",
-    on_hover=lambda row: print(row),               # exact f64 row, kernel-side
-    on_select=lambda sel: print(len(sel), "points"),  # shift-drag box-select
+    on_hover=lambda row: print(row),
+    on_select=lambda sel: print(len(sel), "points"),
 )
 ```
 
-**Fluent API** (imperative):
+Both APIs render in Jupyter, VS Code, Colab, Marimo, and standalone HTML through
+the same engine.
 
-```python
-import numpy as np
-from fastcharts import Figure
+## Benchmark Snapshot
 
-n = 10_000_000
-x = np.arange("2015-01-01", "2025-01-01", dtype="datetime64[s]")[:n]
-y = np.cumsum(np.random.default_rng(0).normal(size=n))
+Benchmarks live in [`benchmarks/`](benchmarks/). The cross-library harness now
+compares fastcharts with matplotlib, seaborn, Plotly, Bokeh, Altair,
+Datashader, and hvPlot/HoloViews.
 
-Figure(title="10M points, interactive").line(x, y, name="random walk")
+Run the expanded comparison:
+
+```bash
+uv pip install matplotlib seaborn plotly kaleido bokeh altair datashader hvplot psutil
+uv run python benchmarks/bench_vs.py --sizes 1e3,1e4,1e5,1e6 --budget 45
 ```
 
-## What exists (Phase 0)
+Run the fastcharts kernel/payload benchmarks:
 
-| Piece | Dossier § | Where |
-|---|---|---|
-| Native Rust core: zone maps, offset-f32 encode, M4 decimation | §22, §4/§16, §5 | `src/` |
-| Zero-copy NumPy↔Rust via C ABI + ctypes (no registry deps at all) | §32, §33 | `python/fastcharts/_native.py` |
-| Pure-NumPy fallback — the *defined*, loud no-wheel behavior | §33 | `python/fastcharts/_fallback.py` |
-| Data-less `{traces, layout}` spec + column handles | §9 | `python/fastcharts/figure.py` |
-| Single-copy column store, zone-map autorange, ingest copy accounting | §4, §22, §29 | `python/fastcharts/column.py` |
-| Reflex-style composition API (`scatter_chart`/`line_chart` + marks/axes) | — | `python/fastcharts/components.py` |
-| Full scatter: color (constant/colormap/palette), size, GPU-pick hover, Tier-2 density | §5, §28, §36c | `figure.py`, `channels.py`, `js/` |
-| Box-select (shift-drag) → range filter, dim-unselected, `on_hover`/`on_select` | §34 | `figure.select_range`, `widget.py`, `js/` |
-| anywidget client: WebGL2 instanced marks, SDF AA, binary buffers | §7, §33 | `js/src/fastcharts.js` |
-| Pan/zoom = uniform update; kernel re-decimation round-trip on zoom, stale-while-revalidate | §17, §28 | widget + client |
-| Viewport-recentered offsets → sub-ms precision inside 10-year series | §16 | tested in `tests/` |
-| NaN never reaches vertex buffers | §19 | `figure.build_payload` |
-| Memory report: every byte class itemized | §27 | `Figure.memory_report()` |
-| Benchmark harness, run in CI every phase | §12 | `scripts/bench.py` |
-| CI wheel matrix + install-size budget | §33 | `.github/workflows/ci.yml` |
-
-### Architecture (Python-only, §32)
-
+```bash
+uv run python benchmarks/bench.py --sizes 1e5,1e6,1e7
+python benchmarks/bench_scatter_native.py --sizes 1e5,1e6,1e7 --render
 ```
+
+### 10M-point native benchmark
+
+These CI numbers use the native Rust backend on Ubuntu. See
+[`docs/benchmark.md`](docs/benchmark.md) for the full tables and fairness notes.
+
+| Library | Target | Total | Peak memory | Payload / output |
+|---|---|---:|---:|---:|
+| fastcharts | GPU binary payload | **86 ms** | **2 MB** | **768 KB** |
+| matplotlib | Agg PNG | 3,230 ms | 553 MB | 41 KB |
+| Plotly `Scattergl` | Kaleido PNG | 33,907 ms | 1,584 MB | 49 KB |
+| Plotly `Scatter` | SVG/Kaleido | over budget at 3M | 804 MB at 3M | 78 MB at 3M |
+
+At 10M points, fastcharts stays screen-bounded after density aggregation: the
+payload is fixed-size, and peak Python allocation stays near 2 MB.
+
+### Expanded adapter benchmark
+
+Measured locally with:
+
+```bash
+PYTHONPATH=python .venv/bin/python benchmarks/bench_vs.py \
+  --sizes 1e3,1e4,1e5 --budget 20
+```
+
+Environment note: this machine did not have Cargo available, so the fastcharts
+row below uses the NumPy fallback backend. The table is still useful for showing
+that all expanded adapters run and for comparing payload styles at 100k points.
+
+| Library | Render target | 100k total | Peak memory | Output bytes | Points/sec |
+|---|---|---:|---:|---:|---:|
+| fastcharts | binary payload, NumPy fallback | **1 ms** | **2 MB** | 781 KB | 156,985,881 |
+| matplotlib | Agg PNG | 49 ms | 6 MB | 46 KB | 2,055,087 |
+| seaborn | matplotlib PNG | 71 ms | 11 MB | 37 KB | 1,399,835 |
+| Plotly `Scattergl` | Kaleido PNG | 2,018 ms | 22 MB | 61 KB | 49,558 |
+| Plotly `Scatter` | Kaleido PNG | 2,835 ms | 22 MB | 107 KB | 35,269 |
+| Bokeh canvas | standalone HTML | 75 ms | 14 MB | 2 MB | 1,327,770 |
+| Bokeh WebGL | standalone HTML | 73 ms | 14 MB | 2 MB | 1,360,995 |
+| Altair / Vega-Lite | standalone HTML | 1,846 ms | 35 MB | 5 MB | 54,171 |
+| Datashader | PNG raster | 13 ms | 15 MB | 58 KB | 7,502,931 |
+| hvPlot / HoloViews | Bokeh HTML | 95 ms | 17 MB | 2 MB | 1,052,353 |
+
+## What Exists
+
+| Piece | Where |
+|---|---|
+| Rust core: zone maps, offset-f32 encode, M4 decimation, 2-D binning | [`src/`](src/) |
+| ctypes native binding and NumPy fallback | [`python/fastcharts/_native.py`](python/fastcharts/_native.py), [`python/fastcharts/_fallback.py`](python/fastcharts/_fallback.py) |
+| Column store, autorange, memory accounting | [`python/fastcharts/column.py`](python/fastcharts/column.py) |
+| Figure API, payload builder, line/scatter traces | [`python/fastcharts/figure.py`](python/fastcharts/figure.py) |
+| Composition API | [`python/fastcharts/components.py`](python/fastcharts/components.py) |
+| anywidget and standalone WebGL2 client | [`js/src/fastcharts.js`](js/src/fastcharts.js) |
+| Benchmarks | [`benchmarks/`](benchmarks/) |
+| Tests | [`tests/`](tests/) |
+
+## Architecture
+
+```text
 Python process                          Browser
 ┌──────────────────────────────┐        ┌──────────────────────────────┐
-│ Figure / ColumnStore (NumPy   │  spec  │ anywidget ESM client          │
-│ f64 canonical — the truth)    │ (JSON) │  WebGL2: instanced points,    │
-│         │                     │ ─────► │  instanced line segments,     │
-│ Rust core (C-ABI cdylib)      │ columns│  SDF antialiasing             │
-│  zone maps · offset-f32 ·     │ (raw   │  pan/zoom = uniform update    │
-│  M4 decimation                │  f32)  │  DOM chrome: axes/legend/title│
-│         ▲                     │ ─────► │        │                      │
-│         └── re-decimate view ◄─────────┘  debounced view change        │
-└──────────────────────────────┘  msg + binary buffers (never base64)   │
+│ Figure / ColumnStore          │ spec   │ anywidget ESM client          │
+│ f64 canonical data            │ ─────► │ WebGL2 marks + DOM chrome     │
+│        │                      │ raw    │ pan/zoom = uniform update     │
+│ Rust core via C ABI           │ f32    │ GPU picking + selection mask  │
+│ zone maps, M4, bin_2d         │ ─────► │ density texture for big data  │
+│        ▲                      │        │        │                      │
+│        └── re-decimate view ◄─────────┘ debounced view changes         │
+└──────────────────────────────┘        └──────────────────────────────┘
 ```
 
-- **Wire format = memory format**: relative-f32 columns move as raw widget
-  buffers; the client wraps them in `Float32Array` views and uploads once. No
-  JSON numbers anywhere (§29).
-- **Offset encoding** (§4): canonical f64 stays kernel-side; the GPU sees
-  `(v − offset) × scale` f32. Zoom re-decimation re-centers the offset on the
-  viewport (§16), so ms-timestamps keep sub-ms precision at any zoom.
-- **Tier 0/1** ship in Phase 0: direct instanced draw, and M4 (first/min/max/
-  last per pixel column — pixel-accurate for lines) with kernel-side
-  re-decimation of only the visible window on zoom. Tiers 2/3 (density pyramid,
-  out-of-core) are Phases 2/4.
+Important properties:
 
-## Scatter — a full chart type (§5, §28, §36c)
-
-```python
-# constant, continuous colormap, or categorical palette — auto-detected
-fig.scatter(x, y, color=values, colormap="viridis")   # continuous → LUT
-fig.scatter(x, y, color=labels)                        # strings → palette
-fig.scatter(x, y, size=weights, size_range=(3, 20))    # per-point size
-
-# 30M points: auto-switches to a Tier-2 density surface (kernel-binned count
-# grid, colormapped on the GPU, re-binned on zoom). Screen-bounded VRAM.
-fig.scatter(bigx, bigy)          # density kicks in above ~200k points
-fig.scatter(bigx, bigy, density=True)   # or force it
-```
-
-- **Color**: a CSS string (constant), a numeric array (continuous → colormap
-  LUT), or a categorical array (factorized → CVD-safe palette). Ships as **one
-  f32 per point + a LUT** — never per-point RGBA — so a colored, sized scatter
-  is ~16 B/pt on the wire (§2 "typical ≤ 24 B/pt").
-- **Hover**: GPU picking (an ID texture + 1-pixel readback, O(1) regardless of
-  point count) resolves which point; the exact row is read from the **f64
-  canonical store** kernel-side (§16) and shown in a DOM tooltip. Standalone
-  HTML decodes the resident f32 for an approximate readout with no kernel.
-- **Tier-2 density** (§5): above the density threshold the kernel bins the
-  viewport into a count grid (`bin_2d`), ships it as one f32 buffer, and the
-  client uploads it as an R32F texture and log-colormaps it — normalization
-  domain recomputed per view so brightness is stable on zoom (§F6). Pan/zoom
-  triggers a kernel re-bin of the visible window; the stale grid stays drawn
-  until it arrives (§17). Dropping per-point color under aggregation is
-  reported (`channels_dropped`), never silent (§28).
-- **Select** (§34): shift-drag a box; the kernel resolves the range predicate to
-  row indices, unselected marks dim on the GPU, and `on_select` fires with a
-  `Selection` (indices + `.xy()` arrays, never JSON). `on_hover` fires with the
-  exact f64 row. Double-click clears. Standalone HTML computes selection from the
-  resident f32 with no kernel.
+- Wire format is memory format: raw f32 buffers, not JSON arrays.
+- Canonical data stays f64 in Python so hover/select can return exact rows.
+- Long lines ship M4-decimated points for first paint and re-decimate on zoom.
+- Large scatters switch to a fixed-size density surface above the threshold.
+- Standalone HTML embeds the same spec and buffers with no Python kernel needed.
 
 ## Development
 
-Requires Rust (stable), Python ≥ 3.9 with [uv](https://docs.astral.sh/uv/), Node ≥ 18 (build script only — no npm packages).
-
 ```bash
-cargo test                       # Rust kernel tests
-cargo build --release            # native core cdylib
-node js/build.mjs                # bundle JS client into python/fastcharts/static/
-uv venv && uv pip install -e ".[dev]"
-uv run pytest                    # Python tests (native + fallback parity)
-uv run ruff check . && uv run ruff format --check .
-uv run ty check                  # typecheck
-uv run python scripts/bench.py  # §12 harness
+cargo test
+cargo clippy --all-targets -- -D warnings
+cargo build --release
+
+node js/build.mjs
+
+uv venv
+uv pip install -e ".[dev]"
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run ty check
 ```
 
-The JS client is a single dependency-free ES module — `js/build.mjs` just copies
-it (anywidget) and wraps it (standalone IIFE for `to_html`). No bundler, no CDN,
-no supply chain (§33: assets ship inside the wheel).
+The JavaScript client is dependency-free. `js/build.mjs` copies the ESM client
+for anywidget and wraps a standalone IIFE for `Figure.to_html`.
 
-## Honest numbers (§2: every claim is mode-scoped)
+## Roadmap
 
-- Direct scatter transport: **8 B/pt** on the wire (x,y as relative f32);
-  canonical f64 kernel-side is 16 B/pt.
-- Decimated lines: wire cost is **screen-bounded** (≤ 4 points per pixel
-  column), independent of dataset size; zoom round-trips recompute only the
-  visible window.
-
-**vs Plotly & matplotlib** — measured, three-way ([`docs/benchmark.md`](docs/benchmark.md)).
-At **10M points** (CI, Ubuntu):
-
-| | fastcharts | matplotlib | Plotly WebGL | Plotly SVG |
-|---|---|---|---|---|
-| total time | **86 ms** | 3,230 ms | 33,907 ms | didn't finish |
-| peak memory | **2 MB** | 553 MB | 1,584 MB | (113 s @ 3M) |
-| payload | **768 KB** | 41 KB PNG | 49 KB PNG | 78 MB |
-
-fastcharts is the only one **flat in N**: payload and memory stop growing once
-density aggregation engages (§5). ~37× faster than matplotlib, ~394× than
-Plotly-GL, 250–790× less memory. (fastcharts "total" is payload build; +~150 ms
-for the actual browser render still leaves it ~14×/~140× ahead — see the report's
-fairness note.) Run `scripts/bench_vs.py` (all three) or
-`scripts/bench_scatter_native.py` (fastcharts arm, no deps).
-
-Native-kernel throughput, measured (`scripts/bench_native.py`, single-threaded
-scalar Rust — SIMD and worker threads are Phase 1; one dev machine, so treat as
-order-of-magnitude, not a spec):
-
-| points | encode f32 | zone maps | M4 (full) | zoom re-decimate | Tier-2 bin (512×384) |
-|---|---|---|---|---|---|
-| 1 M | 1410 Mpt/s | 400 Mpt/s | 253 Mpt/s | 0.05 ms | 166 Mpt/s (6 ms) |
-| 10 M | 890 Mpt/s | 372 Mpt/s | 249 Mpt/s | 0.40 ms | 163 Mpt/s (61 ms) |
-
-Two interactions that matter: re-decimating a line's visible window on zoom
-(§28) is **0.40 ms for 10M points** (~250× under the §17 100–300 ms budget), and
-binning 10M scatter points into a Tier-2 density grid is **61 ms** — a full
-first paint, before any SIMD or the progressive-refinement coarse pass (§17).
-`scripts/bench.py` adds the full figure→payload path once numpy installs; CI
-publishes both per commit. No universal claims — see dossier §2/§31.
-
-## Roadmap (dossier §11, amended §25/§35)
-
-- **Phase 1**: worker-side compute, SharedArrayBuffer-where-available, gap
-  semantics via segment lists, a11y semantic layer, Filter Tier A.
-- **Phase 2**: Tier-2 density pyramid (WebGPU/WebGL2/CPU ladder), progressive
-  refinement, fill-rate-aware tier heuristic, Filter Tier B.
-- **Phase 3**: CPU reference rasterizer + perceptual-diff CI, native export.
-- **Phase 4**: out-of-core tiling, shared-context dashboards, Filter Tier C
-  (Falcon-style cross-filter index).
-- **Phase 5**: Plotly-compat shim + generated conformance suite (§24/§30).
+- **Phase 1:** worker-side compute, SharedArrayBuffer where available, gap
+  semantics, accessibility layer, filter Tier A.
+- **Phase 2:** density pyramid, progressive refinement, fill-rate-aware tier
+  heuristic, filter Tier B.
+- **Phase 3:** CPU reference rasterizer, perceptual-diff CI, native export.
+- **Phase 4:** out-of-core tiling, shared-context dashboards, filter Tier C.
+- **Phase 5:** Plotly compatibility shim and generated conformance suite.
