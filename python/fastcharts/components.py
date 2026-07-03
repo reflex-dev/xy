@@ -218,31 +218,10 @@ class Chart(Component):
 
         for m in marks:
             data = m.data if m.data is not None else self.data
-            xv = _resolve(data, m.x)
-            yv = _resolve(data, m.y)
-            if m.kind == "scatter":
-                fig.scatter(
-                    xv,
-                    yv,
-                    name=m.name,
-                    color=_resolve_color(data, m.props["color"]),
-                    size=_resolve(data, m.props["size"])
-                    if isinstance(m.props["size"], str)
-                    else m.props["size"],
-                    colormap=m.props["colormap"],
-                    size_range=m.props["size_range"],
-                    opacity=m.props["opacity"],
-                    density=m.props["density"],
-                )
-            else:
-                fig.line(
-                    xv,
-                    yv,
-                    name=m.name,
-                    color=m.props["color"],
-                    width=m.props["width"],
-                    opacity=m.props["opacity"],
-                )
+            applier = _MARK_APPLIERS.get(m.kind)
+            if applier is None:
+                raise TypeError(f"no applier registered for mark kind {m.kind!r}")
+            applier(fig, m, data)
 
         if legends and not legends[-1].show:
             fig.show_legend = False
@@ -318,6 +297,46 @@ _CSS_NAMES = {
     "aqua",
     "fuchsia",
     "transparent",
+}
+
+
+# ---------------------------------------------------------------------------
+# Mark appliers — one per mark kind, mapping a declarative Mark onto a Figure
+# call with its (data-resolved) props. Register a new chart type here; the
+# Chart container dispatches through this table, so figure() never grows a
+# per-kind branch.
+# ---------------------------------------------------------------------------
+
+
+def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
+    size = m.props["size"]
+    fig.scatter(
+        _resolve(data, m.x),
+        _resolve(data, m.y),
+        name=m.name,
+        color=_resolve_color(data, m.props["color"]),
+        size=_resolve(data, size) if isinstance(size, str) else size,
+        colormap=m.props["colormap"],
+        size_range=m.props["size_range"],
+        opacity=m.props["opacity"],
+        density=m.props["density"],
+    )
+
+
+def _apply_line(fig: Figure, m: Mark, data: Any) -> None:
+    fig.line(
+        _resolve(data, m.x),
+        _resolve(data, m.y),
+        name=m.name,
+        color=m.props["color"],
+        width=m.props["width"],
+        opacity=m.props["opacity"],
+    )
+
+
+_MARK_APPLIERS: dict[str, Callable[[Figure, Mark, Any], None]] = {
+    "scatter": _apply_scatter,
+    "line": _apply_line,
 }
 
 

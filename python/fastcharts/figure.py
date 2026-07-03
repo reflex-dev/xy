@@ -93,6 +93,43 @@ class Trace:
         return self.n_points > threshold
 
 
+class _PayloadWriter:
+    """Accumulates the binary blob + column table for `build_payload`.
+
+    The single place that knows the wire encoding, so every chart type ships
+    columns the same way (§29): `ship` for offset-encoded geometry (§4), and
+    `ship_scalar` for raw f32 channels/grids already in final units (color
+    codes, density counts, bin heights). Adding a chart means calling these, not
+    re-implementing the encoding.
+    """
+
+    def __init__(self) -> None:
+        self.columns: list[dict[str, Any]] = []
+        self._chunks: list[bytes] = []
+        self._pos = 0
+
+    def ship(self, values: np.ndarray, col: "Column") -> int:
+        """Offset-encoded geometry column: `(v - offset)` as f32 (§4/§16)."""
+        offset = col.suggest_offset()
+        enc = kernels.encode_f32(values, offset, 1.0)
+        return self._append(enc, {"offset": offset, "scale": 1.0, "kind": col.kind})
+
+    def ship_scalar(self, values: np.ndarray) -> int:
+        """Raw f32 column already in final units (no offset): channel/grid/heights."""
+        enc = np.ascontiguousarray(values, dtype=np.float32)
+        return self._append(enc, {})
+
+    def _append(self, enc: np.ndarray, meta: dict[str, Any]) -> int:
+        raw = enc.tobytes()
+        self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), **meta})
+        self._chunks.append(raw)
+        self._pos += len(raw)
+        return len(self.columns) - 1
+
+    def blob(self) -> bytes:
+        return b"".join(self._chunks)
+
+
 class Figure:
     """Build with `line()` / `scatter()`, display with `show()` (notebook) or
     `to_html()` (standalone file, no kernel round-trips)."""
@@ -118,6 +155,15 @@ class Figure:
 
     # -- trace builders -----------------------------------------------------
 
+    def _ingest_xy(self, x: Any, y: Any, kind: str) -> tuple[Column, Column]:
+        """Ingest an (x, y) pair into the column store with the equal-length
+        contract every xy chart shares (line/scatter/area/bar/…)."""
+        xc = self.store.ingest(x)
+        yc = self.store.ingest(y)
+        if len(xc) != len(yc):
+            raise ValueError(f"{kind} x and y must have equal length, got {len(xc)} and {len(yc)}")
+        return xc, yc
+
     def line(
         self,
         x: Any,
@@ -128,10 +174,7 @@ class Figure:
         width: float = 1.5,
         opacity: float = 1.0,
     ) -> "Figure":
-        xc = self.store.ingest(x)
-        yc = self.store.ingest(y)
-        if len(xc) != len(yc):
-            raise ValueError(f"line x and y must have equal length, got {len(xc)} and {len(yc)}")
+        xc, yc = self._ingest_xy(x, y, "line")
         if not np.all(np.diff(xc.values) >= 0):
             # LOD contract (§28): line x must be sorted; the engine sorts once
             # at ingest, and says so. The predicate is NaN-safe on purpose:
@@ -174,11 +217,8 @@ class Figure:
         auto-switch to a Tier-2 density surface (§5); pass `density=True/False`
         to force it.
         """
-        xc = self.store.ingest(x)
-        yc = self.store.ingest(y)
+        xc, yc = self._ingest_xy(x, y, "scatter")
         n = len(xc)
-        if len(yc) != n:
-            raise ValueError(f"scatter x and y must have equal length, got {n} and {len(yc)}")
         default_color = DEFAULT_PALETTE[len(self.traces) % len(DEFAULT_PALETTE)]
         color_ch = channels.resolve_color(
             color, n, colormap=colormap, default_constant=default_color
@@ -273,113 +313,102 @@ class Figure:
     def build_payload(self, px_width: int = 2048) -> tuple[dict[str, Any], bytes]:
         """Encode every trace for first paint: (spec, binary buffer blob).
 
-        Direct traces ship whole columns offset-encoded (§4); long lines ship
-        M4-decimated to ~4 points per pixel column (§5 Tier 1). Every reduction
-        is recorded in the spec — no silent quality changes (§28).
+        Per-kind logic lives in `_emit_<kind>` methods dispatched here — adding a
+        chart type means adding one emitter, not editing this loop. Direct traces
+        ship whole columns offset-encoded (§4); long lines ship M4-decimated
+        (§5 Tier 1); dense scatter ships a density grid (§5 Tier 2). Every
+        reduction is recorded in the spec — no silent quality changes (§28).
         """
-        shipped: list[dict[str, Any]] = []
-        chunks: list[bytes] = []
-        byte_pos = 0
-
-        def ship(values: np.ndarray, col: Column) -> int:
-            nonlocal byte_pos
-            offset = col.suggest_offset()
-            enc = kernels.encode_f32(values, offset, 1.0)
-            raw = enc.tobytes()
-            meta = {
-                "byte_offset": byte_pos,
-                "len": int(len(enc)),
-                "offset": offset,
-                "scale": 1.0,
-                "kind": col.kind,
-            }
-            shipped.append(meta)
-            chunks.append(raw)
-            byte_pos += len(raw)
-            return len(shipped) - 1
-
-        def ship_scalar(values: np.ndarray) -> int:
-            """Ship a raw f32 channel (already normalized/coded, no offset)."""
-            nonlocal byte_pos
-            enc = np.ascontiguousarray(values, dtype=np.float32)
-            raw = enc.tobytes()
-            shipped.append({"byte_offset": byte_pos, "len": int(len(enc))})
-            chunks.append(raw)
-            byte_pos += len(raw)
-            return len(shipped) - 1
-
+        pw = _PayloadWriter()
         xr = self.x_range()
         yr = self.y_range()
-
-        spec_traces: list[dict[str, Any]] = []
-        for t in self.traces:
-            style = dict(t.style)
-
-            if t.use_density():
-                # Tier 2: ship a density grid, not points (§5).
-                w, h = DENSITY_GRID
-                t.shipped_sel = None  # no per-point marks, no pick mapping
-                spec_traces.append(self._density_trace_spec(t, xr, yr, w, h, ship_scalar))
-                continue
-
-            tier = "direct"
-            xv, yv = t.x.values, t.y.values
-            sel = None  # index selection applied to x/y — channels must match
-            if t.kind == "line" and t.n_points > DECIMATION_THRESHOLD:
-                idx = kernels.m4_indices(xv, yv, xr[0], xr[1] + np.finfo(np.float64).eps, px_width)
-                if len(idx):
-                    sel = idx
-                    xv, yv = xv[idx], yv[idx]
-                    tier = "decimated"
-            elif t.x.zone.null_count or t.y.zone.null_count:
-                # Non-finite (NaN or ±inf) never reaches a vertex buffer — it
-                # silently corrupts primitives, driver-dependently (§19). Zone
-                # maps count both as null, so this branch fires for either.
-                # Phase 0 drops invalid rows on the shipped copy (canonical
-                # keeps them); real gap semantics (segment index list) arrive
-                # with validity bitmaps.
-                sel = np.flatnonzero(np.isfinite(xv) & np.isfinite(yv))
-                xv, yv = xv[sel], yv[sel]
-
-            entry: dict[str, Any] = {
-                "id": t.id,
-                "kind": t.kind,
-                "name": t.name,
-                "style": style,
-                "tier": tier,
-                "n_points": t.n_points,
-                "x": ship(xv, t.x),
-                "y": ship(yv, t.y),
-            }
-            if t.kind == "scatter":
-                entry["color"], entry["size"] = self._ship_channels(t, sel, ship_scalar)
-                t.shipped_sel = sel  # pick/selection translation (§17)
-            else:  # line/area: constant color from the trace style
-                if style.get("color") is None:
-                    style["color"] = DEFAULT_PALETTE[t.id % len(DEFAULT_PALETTE)]
-            spec_traces.append(entry)
+        spec_traces = [self._emit_trace(t, pw, xr, yr, px_width) for t in self.traces]
 
         spec = {
             "protocol": PROTOCOL_VERSION,
             "width": self.width,
             "height": self.height,
             "title": self.title,
-            "x_axis": {
-                "kind": self._axis_kind("x"),
-                "label": self.x_label,
-                "range": list(self.x_range()),
-            },
-            "y_axis": {
-                "kind": self._axis_kind("y"),
-                "label": self.y_label,
-                "range": list(self.y_range()),
-            },
+            "x_axis": {"kind": self._axis_kind("x"), "label": self.x_label, "range": list(xr)},
+            "y_axis": {"kind": self._axis_kind("y"), "label": self.y_label, "range": list(yr)},
             "traces": spec_traces,
-            "columns": shipped,
+            "columns": pw.columns,
             "backend": kernels.BACKEND,
             "show_legend": self.show_legend,
         }
-        return spec, b"".join(chunks)
+        return spec, pw.blob()
+
+    # -- per-kind payload emitters (extend here for new chart types) ---------
+
+    def _emit_trace(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        emitter = getattr(self, f"_emit_{t.kind}", None)
+        if emitter is None:
+            raise ValueError(f"no payload emitter for trace kind {t.kind!r}")
+        return emitter(t, pw, xr, yr, px_width)
+
+    def _base_entry(
+        self, t: Trace, pw: "_PayloadWriter", xv: np.ndarray, yv: np.ndarray, tier: str, style: dict
+    ) -> dict[str, Any]:
+        """The shared spec skeleton for any xy trace that ships x/y geometry."""
+        return {
+            "id": t.id,
+            "kind": t.kind,
+            "name": t.name,
+            "style": style,
+            "tier": tier,
+            "n_points": t.n_points,
+            "x": pw.ship(xv, t.x),
+            "y": pw.ship(yv, t.y),
+        }
+
+    @staticmethod
+    def _finite_sel(t: Trace, xv: np.ndarray, yv: np.ndarray):
+        """Indices where both x and y are finite, or None if nothing to drop.
+
+        Non-finite (NaN or ±inf) never reaches a vertex buffer — it silently
+        corrupts primitives, driver-dependently (§19). Zone maps count both as
+        null, so we only scan when a null is present. Canonical keeps every row;
+        real gap semantics (segment index list) arrive with validity bitmaps.
+        """
+        if not (t.x.zone.null_count or t.y.zone.null_count):
+            return None
+        return np.flatnonzero(np.isfinite(xv) & np.isfinite(yv))
+
+    def _emit_line(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        xv, yv = t.x.values, t.y.values
+        tier = "direct"
+        if t.n_points > DECIMATION_THRESHOLD:
+            # M4 already excludes non-finite within the visible window (§19).
+            idx = kernels.m4_indices(xv, yv, xr[0], xr[1] + np.finfo(np.float64).eps, px_width)
+            if len(idx):
+                xv, yv, tier = xv[idx], yv[idx], "decimated"
+        else:
+            sel = self._finite_sel(t, xv, yv)
+            if sel is not None:
+                xv, yv = xv[sel], yv[sel]
+        style = dict(t.style)
+        if style.get("color") is None:
+            style["color"] = DEFAULT_PALETTE[t.id % len(DEFAULT_PALETTE)]
+        return self._base_entry(t, pw, xv, yv, tier, style)
+
+    def _emit_scatter(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        if t.use_density():
+            t.shipped_sel = None  # no per-point marks, no pick mapping
+            return self._density_trace_spec(t, xr, yr, *DENSITY_GRID, pw.ship_scalar)
+        xv, yv = t.x.values, t.y.values
+        sel = self._finite_sel(t, xv, yv)
+        if sel is not None:
+            xv, yv = xv[sel], yv[sel]
+        entry = self._base_entry(t, pw, xv, yv, "direct", dict(t.style))
+        entry["color"], entry["size"] = self._ship_channels(t, sel, pw.ship_scalar)
+        t.shipped_sel = sel  # pick/selection translation (§17)
+        return entry
 
     # -- channel & density helpers -------------------------------------------
 
