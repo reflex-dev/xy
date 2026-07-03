@@ -154,6 +154,13 @@ no supply chain (§33: assets ship inside the wheel).
   column), independent of dataset size; zoom round-trips recompute only the
   visible window.
 
+**vs Plotly & matplotlib:** see [`docs/benchmark.md`](docs/benchmark.md) for the
+three-way scatter comparison (point-count ceiling, speed, memory, payload size).
+Headline, measured: fastcharts' wire payload goes **flat at 768 KB** once density
+aggregation kicks in (0.08 B/pt at 10M, vs Plotly/matplotlib growing ∝ N), and
+render cost is screen-bounded, not data-bounded. Run `scripts/bench_vs.py` (all
+three) or `scripts/bench_scatter_native.py` (fastcharts arm, no deps).
+
 Native-kernel throughput, measured (`scripts/bench_native.py`, single-threaded
 scalar Rust — SIMD and worker threads are Phase 1; one dev machine, so treat as
 order-of-magnitude, not a spec):

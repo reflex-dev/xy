@@ -32,6 +32,8 @@ uv venv && uv pip install -e ".[dev]"
 uv run pytest                         # + FASTCHARTS_FORCE_FALLBACK=1 pytest
 uv run ruff check . && uv run ruff format . && uv run ty check
 uv run python scripts/bench.py        # §12 benchmark harness
+python3 scripts/bench_scatter_native.py --render   # fastcharts scatter, no deps
+uv run python scripts/bench_vs.py     # three-way vs plotly/matplotlib (needs both)
 ```
 
 The two `*_smoke*` scripts need neither numpy nor PyPI — they verify the

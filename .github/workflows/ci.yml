@@ -69,6 +69,43 @@ jobs:
       - name: Benchmark smoke (1e5/1e6 — §12 harness runs every phase)
         run: .venv/bin/python scripts/bench.py --sizes 1e5,1e6
 
+  # Three-way scatter benchmark vs Plotly and matplotlib (docs/benchmark.md).
+  # Non-blocking: it's a measurement, not a gate. Uploads the report as an
+  # artifact and prints it to the log.
+  benchmark:
+    name: Benchmark vs Plotly / matplotlib
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build core + JS client
+        run: |
+          node js/build.mjs
+          cargo build --release
+      - name: Install fastcharts + competitors
+        run: |
+          uv venv .venv
+          uv pip install -p .venv/bin/python -e .
+          uv pip install -p .venv/bin/python matplotlib plotly kaleido psutil
+      - name: Run three-way benchmark
+        run: |
+          .venv/bin/python scripts/bench_vs.py \
+            --sizes 1e3,1e4,1e5,1e6,3e6,1e7 --budget 45 \
+            --out docs/benchmark_ci.md --json benchmark.json
+      - name: Show report
+        run: cat docs/benchmark_ci.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-report
+          path: |
+            docs/benchmark_ci.md
+            benchmark.json
+
   # Wheel matrix (§33): a missing wheel is a build failure, not a runtime
   # surprise. The core is a C-ABI cdylib → one `py3-none-<platform>` wheel per
   # platform covers every CPython version.
