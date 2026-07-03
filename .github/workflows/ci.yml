@@ -172,8 +172,10 @@ jobs:
       - name: Install-size budget (≤ 15 MB, §33)
         shell: bash
         run: |
-          size=$(du -sb dist/*.whl | cut -f1)
-          echo "wheel size: $size bytes"
+          # wc -c is portable (macOS/BSD du has no -b); trim BSD's leading spaces.
+          whl=$(ls dist/*.whl)
+          size=$(wc -c < "$whl" | tr -d ' ')
+          echo "wheel size: $size bytes ($whl)"
           test "$size" -le 15728640
 
       - name: Smoke-install and import
