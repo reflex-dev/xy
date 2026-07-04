@@ -70,22 +70,54 @@ by the string `K` on the wire (`trace.kind`).
 - **Transport**: data-less JSON spec + one binary blob; no JSON numbers (§29).
 - **Ticks / axes / time axis / autorange**: keyed on axis kind, not mark kind.
 
+## Registry capabilities
+
+Beyond `build`/`draw`, `MARK_KINDS` entries carry capability flags/hooks so no
+per-kind knowledge lives in ChartView branches (the smoke's `reg` probe pins
+this contract): `pointPick` (participates in the point-geometry GPU pick pass),
+`retainCpu` (standalone export keeps CPU x/y copies for kernel-less hover,
+§37), `refreshColor(view, g)` (theme-change re-resolution of CSS constant
+colors, §36). The registry and `markOf()` are exported (`fastcharts.MARK_KINDS`)
+— it is the public extension surface.
+
 ## Extension points not yet generalized (do it when the case lands)
 
 These are still shaped for the marks that exist. Generalize them when a real new
 mark needs them — not preemptively (an interface guessed from one example is
-usually wrong):
+usually wrong). Each has an explicit trigger:
 
-- **Picking** (`_renderPick`, `_pickAt`): point-geometry only today. A pickable
-  bar/candle needs its own pick geometry; add a `pick` step to `MARK_KINDS` then.
-- **Legend** (`_buildLegend`): handles density / categorical / continuous /
-  named-series swatches. A mark needing a different swatch adds a case.
+- **Picking** (`_renderPick`, `_pickAt`): point-geometry only today
+  (`pointPick`). *Trigger: first pickable non-point mark (bar/candle)* — add a
+  `pick` step to `MARK_KINDS` and give the mark its own ID-pass geometry.
+- **Legend** (`_buildLegend`): keyed on *channel modes* (density / categorical /
+  continuous / named-series), not mark kinds — a colored bar inherits swatches
+  for free. *Trigger: a mark needing a swatch that isn't channel-shaped.*
 - **Decimation** (`interaction.decimate_view`): line-only (`t.kind == "line"`).
-  Any 1D-orderable mark (area, candlestick/OHLC) that decimates opens this gate
-  into a per-kind decimator hook.
-- **The drill "real marks"** render as points (`lod` calls `_drawPoints`). A
-  drilling kind whose drilled marks aren't points routes through its own
-  renderer — introduce a kind-dispatched drill-mark draw at that point.
+  *Trigger: the first other 1D-orderable mark (area, candlestick/OHLC)* — open
+  the gate into a per-kind decimator hook.
+- **The drill "real marks"** render as points (`lod` calls `_drawPoints`).
+  *Trigger: a drilling kind whose drilled marks aren't points* — route through
+  `MARK_KINDS` at that call site.
+- **Trace shape & autorange**: `Trace(x, y)` is an xy pair and
+  `Figure._range()` reads exactly those columns. A multi-column mark (OHLC:
+  open/high/low/close; box: distribution stats) adds its extra columns to the
+  trace and — critically — must contribute its true extent to autorange
+  (candlestick y-range = min(low)..max(high), not close). *Trigger: first
+  multi-column mark* — add an optional per-kind range hook next to
+  `_emit_<kind>` and an `extra columns` convention on Trace; both additive.
+- **Categorical axis**: `x_axis.kind` is `linear | time` only. Bar/box/violin
+  need category axes: positions ship as f64 codes (the wire already handles
+  that), the spec's axis entry gains `kind: "category"` + a `categories` label
+  table, and the client ticks/labels from the table instead of numeric
+  formatting. Design this *with bar* (the protocol is versioned; the change is
+  additive) — but do not ship bar without it.
+- **View-request protocol**: the client enumerates tier needs per message type
+  (`view` for decimated lines, `density_view` per density trace) and the
+  widget's handler chain mirrors that. The kernel already knows every trace's
+  tier — the client doesn't need to enumerate. *Trigger: the first new
+  aggregating kind (histogram)* — unify into one viewport message the kernel
+  answers per trace, and bump PROTOCOL once, instead of accreting a message
+  type per tier.
 
 ## Checklist for a new kind
 

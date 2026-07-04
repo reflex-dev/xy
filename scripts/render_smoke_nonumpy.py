@@ -332,6 +332,15 @@ try{{
     const sfresh=(gd.drill.selActive===true)?1:0;
     v._clearSelection();
     const plut=(v._paletteLut(["#112233","#445566"])===v._paletteLut(["#112233","#445566"]))?1:0;
+    // Mark registry contract: all per-kind client knowledge lives in
+    // MARK_KINDS (build/draw + capabilities); unknown kinds fall back to
+    // scatter; lines are not point-pickable; theme refresh dispatches.
+    const reg=(typeof fastcharts.MARK_KINDS==="object"
+      && fastcharts.MARK_KINDS.scatter.pointPick===true && fastcharts.MARK_KINDS.scatter.retainCpu===true
+      && !fastcharts.MARK_KINDS.line.pointPick
+      && typeof fastcharts.MARK_KINDS.scatter.refreshColor==="function"
+      && typeof fastcharts.MARK_KINDS.line.refreshColor==="function"
+      && fastcharts.markOf("nonexistent")===fastcharts.MARK_KINDS.scatter)?1:0;
     // Flashing fix: a points REFRESH (already drilled) must not restart the
     // entry fade — restarting blanked the points to ~0 alpha on every kernel
     // reply while zooming inside a drilled view.
@@ -461,7 +470,7 @@ try{{
     const stale=(staleReply && staleQueued && staleAnim)?1:0;
     v.view=oldView;
     v._drawNow();
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}}`;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -544,6 +553,7 @@ try{{
     sstale = int(re.search(r"sstale=(\d+)", title).group(1))
     sfresh = int(re.search(r"sfresh=(\d+)", title).group(1))
     plut = int(re.search(r"plut=(\d+)", title).group(1))
+    reg = int(re.search(r"reg=(\d+)", title).group(1))
     refresh = int(re.search(r"refresh=(\d+)", title).group(1))
     dying = int(re.search(r"dying=(\d+)", title).group(1))
     density_lit = int(re.search(r"densityLit=(\d+)", title).group(1))
@@ -624,6 +634,8 @@ try{{
         raise SystemExit("matching-drill_seq selection mask was not applied")
     if plut != 1:
         raise SystemExit("palette LUT not cached (GL texture leak per categorical drill)")
+    if reg != 1:
+        raise SystemExit("MARK_KINDS registry contract broken (capabilities/fallback)")
     if refresh != 1:
         raise SystemExit("points refresh restarted the entry fade (per-reply flash)")
     if dying != 1:

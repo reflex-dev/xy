@@ -27,7 +27,7 @@ function renderStandalone(el, spec, arrayBuffer) {
   const buffer = bytesToArrayBuffer(arrayBuffer);
   const view = new ChartView(el, spec, buffer, null);
   for (const g of view.gpuTraces) {
-    if (g.trace.kind === "scatter" && g.tier !== "density") {
+    if (markOf(g.trace.kind).retainCpu && g.tier !== "density") {
       g._cpu = {
         x: new Float32Array(buffer, spec.columns[g.trace.x].byte_offset, spec.columns[g.trace.x].len),
         y: new Float32Array(buffer, spec.columns[g.trace.y].byte_offset, spec.columns[g.trace.y].len),
@@ -38,5 +38,5 @@ function renderStandalone(el, spec, arrayBuffer) {
 }
 
 // ---- exports ---- (everything below this marker is stripped for the IIFE build)
-export { render, renderStandalone, ChartView };
+export { render, renderStandalone, ChartView, MARK_KINDS, markOf };
 export default { render };

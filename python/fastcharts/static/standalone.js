@@ -1009,7 +1009,7 @@ class ChartView {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
 
     this.gpuTraces = this.spec.traces.map((t) => this._buildTrace(buffer, t));
-    this._pickable = this.gpuTraces.some((g) => g.trace.kind === "scatter" && g.tier !== "density");
+    this._pickable = this.gpuTraces.some((g) => markOf(g.trace.kind).pointPick && g.tier !== "density");
     if (this._pickable) this._initPickTarget();
   }
 
@@ -1074,8 +1074,7 @@ class ChartView {
 
     // Per-mark GPU setup is dispatched through MARK_KINDS (55_marks.js) so a
     // new chart kind is an entry in that registry, not another branch here.
-    const mark = MARK_KINDS[t.kind] || MARK_KINDS.scatter;
-    mark.build(this, g, t, buffer);
+    markOf(t.kind).build(this, g, t, buffer);
     return g;
   }
 
@@ -1200,8 +1199,7 @@ class ChartView {
         lodDrawDensityTier(this, g, x0, x1, y0, y1);
         continue;
       }
-      const mark = MARK_KINDS[g.trace.kind] || MARK_KINDS.scatter;
-      mark.draw(this, g, x0, x1, y0, y1);
+      markOf(g.trace.kind).draw(this, g, x0, x1, y0, y1);
     }
     this._pickDirty = true;
     this._drawChrome();
@@ -1448,7 +1446,7 @@ class ChartView {
       // sibling carries the buffers, the host g keeps the slot → trace id.
       const pg = g.tier === "density"
         ? (g.drill && !g._drillDying && this._viewInside(g.drill.win) ? g.drill : null)
-        : (g.trace.kind === "scatter" ? g : null);
+        : (markOf(g.trace.kind).pointPick ? g : null);
       if (!pg || !pg.n) { g.pickSlot = -1; continue; } // stale slots must not alias
       const xm = this._map(pg.xMeta, x0, x1);
       const ym = this._map(pg.yMeta, y0, y1);
@@ -1489,7 +1487,7 @@ class ChartView {
     if (buf[3] === 0) return null;
     const slot = buf[3] - 1;
     const index = buf[0] | (buf[1] << 8) | (buf[2] << 16);
-    const g = this.gpuTraces.find((t) => t.pickSlot === slot && t.trace.kind === "scatter");
+    const g = this.gpuTraces.find((t) => t.pickSlot === slot && markOf(t.trace.kind).pointPick);
     if (!g) return null;
     return { trace: g.trace.id, index, g };
   }
@@ -1683,7 +1681,8 @@ class ChartView {
   _selectLocal(x0, x1, y0, y1) {
     let total = 0;
     for (const g of this.gpuTraces) {
-      if (g.trace.kind !== "scatter" || g.tier === "density" || !g._cpu) continue;
+      // _cpu only exists where the standalone entry retained copies (retainCpu).
+      if (!g._cpu || g.tier === "density") continue;
       const cx = g._cpu.x, cy = g._cpu.y;
       const ox = g.xMeta.offset, sx = g.xMeta.scale || 1;
       const oy = g.yMeta.offset, sy = g.yMeta.scale || 1;
@@ -2035,7 +2034,7 @@ class ChartView {
       }
       // Drill state changes what's pickable; hover needs the FBO ready.
       this._pickable = this.gpuTraces.some(
-        (t) => t.trace.kind === "scatter" && (t.tier !== "density" || t.drill));
+        (t) => markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill));
       if (this._pickable && !this.pickFbo) this._initPickTarget();
       this.draw();
     } else if (msg.type === "pick_result") {
@@ -2122,13 +2121,9 @@ class ChartView {
   refreshTheme() {
     this.theme = readTheme(this.root);
     for (const g of this.gpuTraces) {
-      // Re-resolve any CSS-expressed constant colors (§36 live re-resolution):
-      // lines keep theirs in style.color, scatters in color.color.
-      if (g.trace.kind === "line") {
-        g.color = parseColor(this.root, g.trace.style.color, g.color);
-      } else if (g.colorMode === 0 && g.trace.color) {
-        g.color = parseColor(this.root, g.trace.color.color, g.color);
-      }
+      // Re-resolve CSS-expressed constant colors (§36 live re-resolution);
+      // each mark kind knows where its constant color lives in the spec.
+      markOf(g.trace.kind).refreshColor?.(this, g);
     }
     this.draw();
   }
@@ -2174,18 +2169,43 @@ class ChartView {
 // mark actually lands, not preemptively.
 // ---------------------------------------------------------------------------
 
+// Capabilities (beyond build/draw) so no per-kind knowledge leaks back into
+// ChartView branches:
+//   pointPick    — marks are point-shaped and participate in the GPU ID pick
+//                  pass (§17). A future rect/candle mark supplies its own pick
+//                  step instead (see docs/chart-kind-contract.md).
+//   retainCpu    — standalone export keeps CPU f32 copies of x/y so hover can
+//                  read approximate values with no kernel attached (§37).
+//   refreshColor — re-resolve CSS-expressed constant colors on theme change
+//                  (§36 live re-resolution); each kind knows where its
+//                  constant color lives in the spec.
 const MARK_KINDS = {
   scatter: {
     build: (view, g, t, buffer) => view._buildScatterMark(g, t, buffer),
     draw: (view, g, x0, x1, y0, y1) =>
       view._drawPoints(g, view._map(g.xMeta, x0, x1), view._map(g.yMeta, y0, y1)),
+    pointPick: true,
+    retainCpu: true,
+    refreshColor: (view, g) => {
+      if (g.colorMode === 0 && g.trace.color) {
+        g.color = parseColor(view.root, g.trace.color.color, g.color);
+      }
+    },
   },
   line: {
     build: (view, g, t, buffer) => view._buildLineMark(g, t, buffer),
     draw: (view, g, x0, x1, y0, y1) =>
       view._drawLine(g, view._map(g.xMeta, x0, x1), view._map(g.yMeta, y0, y1)),
+    refreshColor: (view, g) => {
+      g.color = parseColor(view.root, g.trace.style.color, g.color);
+    },
   },
 };
+
+// Registry lookup with the scatter fallback every dispatch site shares.
+function markOf(kind) {
+  return MARK_KINDS[kind] || MARK_KINDS.scatter;
+}
 // ---------------------------------------------------------------------------
 // Entry points
 // ---------------------------------------------------------------------------
@@ -2215,7 +2235,7 @@ function renderStandalone(el, spec, arrayBuffer) {
   const buffer = bytesToArrayBuffer(arrayBuffer);
   const view = new ChartView(el, spec, buffer, null);
   for (const g of view.gpuTraces) {
-    if (g.trace.kind === "scatter" && g.tier !== "density") {
+    if (markOf(g.trace.kind).retainCpu && g.tier !== "density") {
       g._cpu = {
         x: new Float32Array(buffer, spec.columns[g.trace.x].byte_offset, spec.columns[g.trace.x].len),
         y: new Float32Array(buffer, spec.columns[g.trace.y].byte_offset, spec.columns[g.trace.y].len),
@@ -2226,5 +2246,5 @@ function renderStandalone(el, spec, arrayBuffer) {
 }
 
 
-window.fastcharts = { render, renderStandalone, ChartView };
+window.fastcharts = { render, renderStandalone, ChartView, MARK_KINDS, markOf };
 })();
