@@ -29,14 +29,26 @@ if TYPE_CHECKING:
     from .figure import Figure
 
 
-def pick(fig: "Figure", trace_id: int, index: int) -> Optional[dict[str, Any]]:
+def pick(
+    fig: "Figure", trace_id: int, index: int, drill_seq: Optional[int] = None
+) -> Optional[dict[str, Any]]:
     """Exact source-row readout for a hover/pick (§17 Tier-0 hover; §16 —
     values come from the f64 canonical store, never through the f32 GPU path).
 
     `index` is a *shipped* vertex index (what the client's GPU pick sees);
     it is translated to a canonical row when the shipped copy dropped NaN
-    rows (§19). Returns None if out of range."""
+    rows (§19). Returns None if out of range.
+
+    `drill_seq` is the subset version the client picked against. If the drill
+    advanced (or exited) since, the index is in a dead coordinate space —
+    return None rather than translate it into the wrong row (§16: exact or
+    nothing; a stale pick after drill-out would otherwise read `index` as a
+    *canonical* row, i.e. an arbitrary point)."""
+    if trace_id < 0 or trace_id >= len(fig.traces):
+        return None
     t = fig.traces[trace_id]
+    if drill_seq is not None and drill_seq != t.drill_seq:
+        return None
     if t.shipped_sel is not None:
         if index < 0 or index >= len(t.shipped_sel):
             return None
@@ -155,6 +167,8 @@ def density_view(
     if visible <= budget:
         return _drill_points(fig, t, vis, visible, lo_x, hi_x, lo_y, hi_y, w, h)
 
+    if t.drill_mode:
+        t.drill_seq += 1  # leaving drill: in-flight picks against it are dead
     t.drill_mode = False
     t.shipped_sel = None  # aggregate view: no per-point marks, no pick mapping
     w, h = _density_grid_shape(w, h, visible)
@@ -224,6 +238,7 @@ def _drill_points(
     sel = np.flatnonzero(vis)
     t.drill_mode = True
     t.shipped_sel = sel  # pick/selection translate through the drilled subset (§17)
+    t.drill_seq += 1  # new index space; stale picks/selections must miss
     x_off = (lo_x + hi_x) / 2.0
     y_off = (lo_y + hi_y) / 2.0
     xs, ys = t.x.values[sel], t.y.values[sel]
@@ -281,6 +296,7 @@ def _drill_points(
                     "density_val": {"buf": dval_buf},
                     "lod_blend": lod_blend,
                     "density_colormap": cmap,
+                    "drill_seq": t.drill_seq,
                     "style": dict(t.style),
                 }
             ]

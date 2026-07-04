@@ -637,6 +637,10 @@ class ChartView {
   }
 
   _paletteLut(palette) {
+    // Cached by palette identity: categorical drill updates request this per
+    // zoom step, and an uncached texture per call is a steady GL leak.
+    const key = "pal:" + palette.join(",");
+    if (this._lutCache.has(key)) return this._lutCache.get(key);
     const gl = this.gl;
     const data = new Uint8Array(256 * 4);
     for (let i = 0; i < 256; i++) {
@@ -653,6 +657,7 @@ class ChartView {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    this._lutCache.set(key, tex);
     return tex;
   }
 
@@ -983,15 +988,20 @@ class ChartView {
     }
     // Drill handoff (§5): blend from the density ramp toward native colors.
     // The shown weight eases toward the kernel's target so successive drill
-    // updates recolor smoothly instead of stepping.
+    // updates recolor smoothly instead of stepping. Time-based decay (τ=90ms)
+    // — a per-frame factor would converge 2.4× faster on a 144Hz display.
     const blendTarget = g.lodBlend ?? 0;
     let blend = g.lodBlendShown ?? blendTarget;
-    if (Math.abs(blend - blendTarget) > 0.005) {
-      blend += (blendTarget - blend) * 0.18;
+    if (Math.abs(blend - blendTarget) > 0.005 && !this._prefersReducedMotion()) {
+      const now = performance.now();
+      const dt = g._blendTick ? Math.min(100, now - g._blendTick) : 16;
+      g._blendTick = now;
+      blend += (blendTarget - blend) * (1 - Math.exp(-dt / 90));
       g.lodBlendShown = blend;
       this.draw();
     } else {
       g.lodBlendShown = blend = blendTarget;
+      g._blendTick = 0;
     }
     gl.uniform1f(u("u_dblend"), blend);
     if (blend > 0.001 && g.dBuf && g.dlut) {
@@ -1235,7 +1245,14 @@ class ChartView {
       // requests made a hover invalidate an in-flight tier_update, freezing
       // the stale tier (found in staff review).
       this._pickSeq = (this._pickSeq || 0) + 1;
-      this.comm.send({ type: "pick", seq: this._pickSeq, trace: hit.trace, index: hit.index });
+      const req = { type: "pick", seq: this._pickSeq, trace: hit.trace, index: hit.index };
+      // Drilled picks name the subset version they hit against; the kernel
+      // returns None instead of translating through the wrong subset (§16/§17).
+      const hg = hit.g;
+      if (hg && hg.tier === "density" && hg.drill && hg.drill.seq !== undefined) {
+        req.drill_seq = hg.drill.seq;
+      }
+      this.comm.send(req);
     }
   }
 
@@ -1765,6 +1782,13 @@ class ChartView {
           // the kernel's indices are in the drilled subset's space (§17).
           const pg = g.tier === "density" ? g.drill : g;
           if (!pg || !pg.n) continue;
+          // A mask built against another subset version would highlight
+          // arbitrary points — drop it; the kernel's canonical Selection is
+          // still correct and a fresh drag re-syncs the visual.
+          if (
+            g.tier === "density" && upd.drill_seq !== undefined &&
+            pg.seq !== undefined && upd.drill_seq !== pg.seq
+          ) continue;
           const idx = this._asU32(buffers[upd.buf]);
           const mask = new Float32Array(pg.n);
           for (let i = 0; i < idx.length; i++) if (idx[i] < pg.n) mask[idx[i]] = 1;
@@ -1796,7 +1820,12 @@ class ChartView {
     d.yMeta = { offset: upd.y.offset, scale: upd.y.scale };
     d.win = { x0: upd.x_range[0], x1: upd.x_range[1], y0: upd.y_range[0], y1: upd.y_range[1] };
     d.n = Math.min(upd.x.len, upd.y.len);
+    d.seq = upd.drill_seq; // subset version — echoed with picks, gates selections
     d.selActive = false; // drilled subset changed; old mask indices are stale
+    // The point under the cursor is a different row now; a cached tooltip for
+    // the same index would silently show the old point's values (§16).
+    this._hoverId = -1;
+    this._lastRow = null;
     d.colorMode = 0;
     d.color = parseColor(this.root, upd.color && upd.color.color, [0.3, 0.47, 0.66, 1]);
     if (upd.color && upd.color.buf !== undefined) {
@@ -1911,6 +1940,8 @@ class ChartView {
     g.drill = null;
     g._drillFadeStart = null;
     g._drillExitFadeStart = null;
+    this._hoverId = -1; // drilled indices are dead; don't reuse a cached row
+    this._lastRow = null;
   }
 
   _asF32(b) {

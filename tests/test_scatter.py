@@ -251,6 +251,43 @@ def test_density_view_drills_to_points_when_window_fits():
     assert dbuf.max() == pytest.approx(1.0)  # the hottest cell hits the ramp top
     assert tr["lod_blend"] == pytest.approx(inwin / SCATTER_DENSITY_THRESHOLD)
     assert tr["density_colormap"] == "viridis"  # continuous channel's colormap
+    # Channels are normalized over the *global* domain after slicing (staff
+    # review: slice-first must not change values — colors stay view-stable).
+    cbuf2 = np.frombuffer(bufs[tr["color"]["buf"]], dtype=np.float32)
+    vis = (x >= 0) & (x <= 10) & (y >= 0) & (y <= 10)
+    expected = (c[vis] - c.min()) / (c.max() - c.min())
+    np.testing.assert_allclose(cbuf2, expected.astype(np.float32), rtol=1e-5, atol=1e-6)
+
+
+def test_drill_seq_guards_stale_picks():
+    # A pick that raced a drill update must return None — never a row read
+    # through the wrong index space (§16: exact or nothing).
+    # n chosen so the full window (n visible) clears the 1.15x hysteresis exit.
+    n = SCATTER_DENSITY_THRESHOLD + 50_000
+    rng = np.random.default_rng(11)
+    x = rng.uniform(0, 100, n)
+    y = rng.uniform(0, 100, n)
+    fig = Figure().scatter(x, y, density=True)
+    upd1, _ = fig.density_view(0, 0.0, 10.0, 0.0, 10.0, 512, 384)
+    seq1 = upd1["traces"][0]["drill_seq"]
+    assert seq1 == 1
+    assert fig.pick(0, 0, drill_seq=seq1) is not None  # matching subset: exact row
+    assert fig.pick(0, 0) is not None  # legacy caller without seq still works
+
+    upd2, _ = fig.density_view(0, 20.0, 30.0, 20.0, 30.0, 512, 384)
+    seq2 = upd2["traces"][0]["drill_seq"]
+    assert seq2 == seq1 + 1
+    assert fig.pick(0, 0, drill_seq=seq1) is None  # stale subset: dropped
+    assert fig.pick(0, 0, drill_seq=seq2) is not None
+
+    # Drill-out bumps the version too: a drilled-index pick arriving after the
+    # subset died must not be read as a *canonical* index.
+    upd3, _ = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, 512, 384)
+    assert upd3["traces"][0]["mode"] == "density"
+    assert fig.pick(0, 0, drill_seq=seq2) is None
+    # out-of-range trace ids are rejected, not wrapped pythonically
+    assert fig.pick(-1, 0) is None
+    assert fig.pick(99, 0) is None
 
 
 def test_drill_lod_blend_shrinks_as_zoom_deepens():

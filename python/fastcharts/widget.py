@@ -98,8 +98,14 @@ class FigureWidget(anywidget.AnyWidget):
             if update["traces"]:
                 self.send({"type": "density_update", "seq": seq, **update}, buffers=buffers)
         elif kind == "pick":
-            # Hover/click drill: exact f64 row from canonical (§16/§17).
-            row = self._figure.pick(int(content.get("trace", -1)), int(content.get("index", -1)))
+            # Hover/click drill: exact f64 row from canonical (§16/§17). The
+            # client's drill_seq rejects picks that raced a subset swap.
+            dseq = content.get("drill_seq")
+            row = self._figure.pick(
+                int(content.get("trace", -1)),
+                int(content.get("index", -1)),
+                None if dseq is None else int(dseq),
+            )
             self.send({"type": "pick_result", "seq": content.get("seq"), "row": row})
             if row is not None and self._on_hover is not None:
                 self._on_hover(row)
@@ -124,7 +130,16 @@ class FigureWidget(anywidget.AnyWidget):
                 # callback below keeps canonical rows (§34 — callbacks get real
                 # data, the GPU gets its own coordinate space).
                 wire_idx = self._figure.to_shipped_indices(tid, idx)
-                traces.append({"id": tid, "count": int(len(wire_idx)), "buf": len(buffers)})
+                traces.append(
+                    {
+                        "id": tid,
+                        "count": int(len(wire_idx)),
+                        "buf": len(buffers),
+                        # Which drilled subset this mask speaks for; the client
+                        # drops it if its buffers have moved on (§17).
+                        "drill_seq": self._figure.traces[tid].drill_seq,
+                    }
+                )
                 buffers.append(wire_idx.tobytes())
                 total += len(idx)
             self.send({"type": "selection", "traces": traces, "total": total}, buffers=buffers)
