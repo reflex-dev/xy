@@ -195,10 +195,26 @@ try{{
     v._zoomBy(2);                   // back out
     v._zoomBy(0.8,true);            // modebar path animates
     const smooth=(v._viewAnim && v._animRaf)?1:0;
+    const labelStamp=performance.now();
+    const labelCount=v.labels.children.length;
+    v._lastLabelDraw=labelStamp;
+    v._drawChrome();
+    const labelThrottle=(v._lastLabelDraw===labelStamp && v.labels.children.length===labelCount)?1:0;
+    const pickAt0=v._pickAt;
+    let hoverPickCalls=0;
+    v._pickAt=function(){{hoverPickCalls++; return pickAt0.apply(this,arguments);}};
+    const rc=v.canvas.getBoundingClientRect();
+    v._hover({{clientX:rc.left+v.plot.w/2,clientY:rc.top+v.plot.h/2}});
+    v._pickAt=pickAt0;
+    const hoverSkip=(hoverPickCalls===0 && v.tooltip.style.display==="none")?1:0;
     v._cancelViewAnimation();
     v._zoomAt(0.8,0.25,0.75,true,95); // wheel path animates around cursor
     const zanch=(v._viewAnim && v._animRaf
       && (v._viewAnim.target.x1-v._viewAnim.target.x0)<spanX())?1:0;
+    const retarget0=v._viewAnim ? (v._viewAnim.target.x1-v._viewAnim.target.x0) : Infinity;
+    v._zoomAt(0.8,0.25,0.75,true,95);
+    const retarget=(v._viewAnim && v._animRaf
+      && (v._viewAnim.target.x1-v._viewAnim.target.x0)<retarget0)?1:0;
     v._cancelViewAnimation();
     v._zoomToBox([10,0],[20,5]);    // box-zoom fits the rectangle
     const boxOk = (Math.abs(v.view.x0-10)<1e-6 && Math.abs(v.view.x1-20)<1e-6) ? 1 : 0;
@@ -249,25 +265,44 @@ try{{
     // texture is a narrower intermediate one.
     const savedOverview={{...gd.density}};
     gd.density={{...gd.density,xRange:[5000,5010],yRange:[5000,5010]}};
+    gd._shownDensity=gd.density;
+    gd._densitySwitchPrev=null;
+    gd._densitySwitchFadeStart=null;
     gd.densityCache=[savedOverview,gd.density];
     const drawDensity0=v._drawDensity;
     const drawPoints0=v._drawPoints;
-    let zdensity=0, zpoints=0, zcovered=0;
-    v._drawDensity=function(gg,dd){{
+    let zdensity=0, zpoints=0, zcovered=0, zpointsDone=0, zphase="fade";
+    v._drawDensity=function(gg,dd,op){{
       if(gg===gd){{
         zdensity++;
         if(dd && dd.xRange[0]<=v.view.x0 && dd.xRange[1]>=v.view.x1
           && dd.yRange[0]<=v.view.y0 && dd.yRange[1]>=v.view.y1)zcovered=1;
       }}
-      return drawDensity0.call(this,gg,dd);
+      return drawDensity0.call(this,gg,dd,op);
     }};
-    v._drawPoints=function(gg,xm,ym){{if(gg===gd.drill)zpoints++;return drawPoints0.call(this,gg,xm,ym);}};
+    v._drawPoints=function(gg,xm,ym,op){{
+      if(gg===gd.drill){{
+        if(zphase==="fade") zpoints++;
+        else zpointsDone++;
+      }}
+      return drawPoints0.call(this,gg,xm,ym,op);
+    }};
     v.view={{x0:0,x1:2000,y0:-3,y1:8}};
     v._drawNow();
+    const zfade=(zpoints>0 && gd._drillExitFadeStart!==undefined && gd._drillExitFadeStart!==null)?1:0;
+    const zswitch=(gd._densitySwitchPrev===gd.density && gd._shownDensity===savedOverview
+      && gd._densitySwitchFadeStart!==undefined && gd._densitySwitchFadeStart!==null)?1:0;
+    gd._drillExitFadeStart-=121;
+    gd._densitySwitchFadeStart-=141;
+    zphase="done";
+    zpoints=0;
+    v._drawNow();
+    const zswitchDone=(!gd._densitySwitchPrev && !gd._densitySwitchFadeStart)?1:0;
     v._drawDensity=drawDensity0;
     v._drawPoints=drawPoints0;
     const zoomout=(gd.drill && v._viewInside(gd.drill.win)===false
-      && gd.density && gd.density.tex && zdensity>0 && zpoints===0 && zcovered===1)?1:0;
+      && gd.density && gd.density.tex && zdensity>0 && zfade===1 && zpoints===0
+      && zpointsDone===0 && zcovered===1 && zswitch===1 && zswitchDone===1)?1:0;
     v.view={{x0:5000,x1:5010,y0:5000,y1:5010}};
     const grid3=new Float32Array(16).fill(1);
     v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"density",visible:999999,
@@ -283,10 +318,31 @@ try{{
       x:{{buf:0,len:n3,offset:5005,scale:1}},y:{{buf:1,len:n3,offset:5005,scale:1}},
       color:{{mode:"continuous",colormap:"viridis",buf:2}},size:{{mode:"constant",size:8}}}}]}},
       [xs3.buffer,ys3.buffer,cs3.buffer]);
-    const stale=(!gd.drill)?1:0;
+    const staleReply=(!gd.drill)?1:0;
+    v.comm={{sent:[],send(m){{this.sent.push(m);}}}};
+    const oldSeq=v.seq;
+    v._scheduleViewRequest();
+    const queuedSeq=v.seq;
+    v._onKernelMsg({{type:"density_update",seq:oldSeq,traces:[{{id:gd.trace.id,mode:"points",visible:n3,
+      x:{{buf:0,len:n3,offset:5005,scale:1}},y:{{buf:1,len:n3,offset:5005,scale:1}},
+      color:{{mode:"continuous",colormap:"viridis",buf:2}},size:{{mode:"constant",size:8}}}}]}},
+      [xs3.buffer,ys3.buffer,cs3.buffer]);
+    clearTimeout(v._viewTimer);
+    v.comm=null;
+    const staleQueued=(queuedSeq===oldSeq+1 && !gd.drill)?1:0;
+    const oldAnimSeq=v.seq;
+    v._setView({{x0:10,x1:20,y0:10,y1:20}},{{animate:true}});
+    const animSeq=v.seq;
+    v._onKernelMsg({{type:"density_update",seq:oldAnimSeq,traces:[{{id:gd.trace.id,mode:"points",visible:n3,
+      x:{{buf:0,len:n3,offset:5005,scale:1}},y:{{buf:1,len:n3,offset:5005,scale:1}},
+      color:{{mode:"continuous",colormap:"viridis",buf:2}},size:{{mode:"constant",size:8}}}}]}},
+      [xs3.buffer,ys3.buffer,cs3.buffer]);
+    v._cancelViewAnimation();
+    const staleAnim=(animSeq===oldAnimSeq+1 && !gd.drill)?1:0;
+    const stale=(staleReply && staleQueued && staleAnim)?1:0;
     v.view=oldView;
     v._drawNow();
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} zanch=${{zanch}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} dblend=${{dblend}} dpick=${{dpick}} zoomout=${{zoomout}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}}`;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} dblend=${{dblend}} dpick=${{dpick}} zoomout=${{zoomout}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -349,7 +405,10 @@ try{{
     btns = int(re.search(r"btns=(\d+)", title).group(1))
     zin = int(re.search(r"zin=(\d+)", title).group(1))
     smooth = int(re.search(r"smooth=(\d+)", title).group(1))
+    label_throttle = int(re.search(r"labelThrottle=(\d+)", title).group(1))
+    hover_skip = int(re.search(r"hoverSkip=(\d+)", title).group(1))
     zanch = int(re.search(r"zanch=(\d+)", title).group(1))
+    retarget = int(re.search(r"retarget=(\d+)", title).group(1))
     box = int(re.search(r"box=(\d+)", title).group(1))
     zmode = int(re.search(r"zmode=(\d+)", title).group(1))
     fluid = int(re.search(r"fluid=(\d+)", title).group(1))
@@ -391,8 +450,14 @@ try{{
         raise SystemExit("modebar zoom-in did not shrink the view span")
     if smooth != 1:
         raise SystemExit("animated zoom did not schedule a smooth view transition")
+    if label_throttle != 1:
+        raise SystemExit("animated zoom rebuilt DOM tick labels instead of throttling them")
+    if hover_skip != 1:
+        raise SystemExit("hover picking was not suspended during zoom animation")
     if zanch != 1:
         raise SystemExit("cursor-anchored wheel zoom did not schedule a smooth transition")
+    if retarget != 1:
+        raise SystemExit("repeated wheel zoom did not retarget the active smooth transition")
     if box != 1:
         raise SystemExit("box-zoom did not fit the dragged rectangle")
     if zmode != 1:
