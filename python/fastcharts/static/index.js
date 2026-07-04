@@ -273,7 +273,19 @@ function makeProgram(gl, vs, fs) {
     gl.deleteProgram(p);
     throw new Error("program link: " + info);
   }
+  // Uniform-location cache (renderer audit R1): draw paths look locations up
+  // by name every frame; memoize per program so each name hits the driver once.
+  p._u = Object.create(null);
   return p;
+}
+
+function uniformOf(gl, prog, name) {
+  let loc = prog._u[name];
+  if (loc === undefined) {
+    loc = gl.getUniformLocation(prog, name);
+    prog._u[name] = loc;
+  }
+  return loc;
 }
 
 // Points: per-vertex position, plus optional per-vertex color scalar (a_cval)
@@ -1503,7 +1515,7 @@ class ChartView {
     const gl = this.gl;
     const prog = this.pointProg;
     gl.useProgram(prog);
-    const u = (n) => gl.getUniformLocation(prog, n);
+    const u = (n) => uniformOf(gl, prog, n);
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     gl.uniform1f(u("u_dpr"), this.dpr);
@@ -1580,7 +1592,7 @@ class ChartView {
     const gl = this.gl;
     const prog = this.densityProg;
     gl.useProgram(prog);
-    const u = (n) => gl.getUniformLocation(prog, n);
+    const u = (n) => uniformOf(gl, prog, n);
     const { x0, x1, y0, y1 } = this.view;
     gl.uniform4f(u("u_view"), x0, x1, y0, y1);
     const d = density || g.density;
@@ -1608,7 +1620,7 @@ class ChartView {
     const gl = this.gl;
     const prog = this.heatmapProg;
     gl.useProgram(prog);
-    const u = (n) => gl.getUniformLocation(prog, n);
+    const u = (n) => uniformOf(gl, prog, n);
     const { x0, x1, y0, y1 } = this.view;
     gl.uniform4f(u("u_view"), x0, x1, y0, y1);
     gl.uniform4f(u("u_gridRange"), h.xRange[0], h.xRange[1], h.yRange[0], h.yRange[1]);
@@ -1633,7 +1645,7 @@ class ChartView {
     if (g.n < 2) return;
     const gl = this.gl;
     gl.useProgram(this.lineProg);
-    const u = (n) => gl.getUniformLocation(this.lineProg, n);
+    const u = (n) => uniformOf(gl, this.lineProg, n);
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
@@ -1652,7 +1664,7 @@ class ChartView {
     const gl = this.gl;
     const prog = this.areaProg;
     gl.useProgram(prog);
-    const u = (n) => gl.getUniformLocation(prog, n);
+    const u = (n) => uniformOf(gl, prog, n);
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     gl.uniform2f(u("u_bmap"), bm[0], bm[1]);
@@ -1672,7 +1684,7 @@ class ChartView {
     const gl = this.gl;
     const prog = this.rectProg;
     gl.useProgram(prog);
-    const u = (n) => gl.getUniformLocation(prog, n);
+    const u = (n) => uniformOf(gl, prog, n);
     gl.uniform2f(u("u_x0map"), x0[0], x0[1]);
     gl.uniform2f(u("u_x1map"), x1[0], x1[1]);
     gl.uniform2f(u("u_y0map"), y0[0], y0[1]);
@@ -1703,7 +1715,7 @@ class ChartView {
     const gl = this.gl;
     const prog = this.barProg;
     gl.useProgram(prog);
-    const u = (n) => gl.getUniformLocation(prog, n);
+    const u = (n) => uniformOf(gl, prog, n);
     gl.uniform2f(u("u_pmap"), pmap[0], pmap[1]);
     gl.uniform2f(u("u_v1map"), v1map[0], v1map[1]);
     gl.uniform2f(u("u_v0map"), v0map ? v0map[0] : 1, v0map ? v0map[1] : 0);
@@ -1843,7 +1855,7 @@ class ChartView {
     const { x0, x1, y0, y1 } = this.view;
     const prog = this.pickProg;
     gl.useProgram(prog);
-    const u = (n) => gl.getUniformLocation(prog, n);
+    const u = (n) => uniformOf(gl, prog, n);
     gl.uniform1f(u("u_dpr"), this.dpr);
     let slot = 0;
     for (const g of this.gpuTraces) {
