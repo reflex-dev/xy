@@ -47,23 +47,48 @@ pub const DEFAULT_CHUNK: usize = 65_536;
 /// Compute zone maps over `data` in chunks of `chunk_size`.
 pub fn zone_maps(data: &[f64], chunk_size: usize) -> Vec<ZoneMap> {
     assert!(chunk_size > 0, "chunk_size must be positive");
-    data.chunks(chunk_size)
-        .map(|chunk| {
-            let mut zm = ZoneMap::empty();
-            for &v in chunk {
-                if !v.is_finite() {
-                    zm.null_count += 1;
-                } else {
-                    zm.count += 1;
-                    zm.min = zm.min.min(v);
-                    zm.max = zm.max.max(v);
-                    zm.sum += v;
-                    zm.sum_sq += v * v;
-                }
-            }
-            zm
-        })
-        .collect()
+    zone_maps_impl(data, chunk_size, par_threads(data.len()))
+}
+
+fn zone_map_one(chunk: &[f64]) -> ZoneMap {
+    let mut zm = ZoneMap::empty();
+    for &v in chunk {
+        if !v.is_finite() {
+            zm.null_count += 1;
+        } else {
+            zm.count += 1;
+            zm.min = zm.min.min(v);
+            zm.max = zm.max.max(v);
+            zm.sum += v;
+            zm.sum_sq += v * v;
+        }
+    }
+    zm
+}
+
+/// Chunks are independent, so ingest fans out across cores by splitting at
+/// chunk boundaries — every chunk is still folded sequentially by one thread,
+/// so results are bitwise identical to the serial pass for any thread count.
+fn zone_maps_impl(data: &[f64], chunk_size: usize, threads: usize) -> Vec<ZoneMap> {
+    let n_chunks = data.len().div_ceil(chunk_size);
+    if threads <= 1 || n_chunks < 2 {
+        return data.chunks(chunk_size).map(zone_map_one).collect();
+    }
+    let per = n_chunks.div_ceil(threads);
+    std::thread::scope(|s| {
+        let handles: Vec<_> = (0..threads)
+            .map(|t| {
+                let lo = (t * per * chunk_size).min(data.len());
+                let hi = ((t + 1) * per * chunk_size).min(data.len());
+                let seg = &data[lo..hi];
+                s.spawn(move || seg.chunks(chunk_size).map(zone_map_one).collect::<Vec<_>>())
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|hd| hd.join().expect("zone_maps worker panicked"))
+            .collect()
+    })
 }
 
 /// Encode canonical f64 values as relative f32: `(v - offset) * scale` (§4).
@@ -80,11 +105,27 @@ pub fn encode_f32(data: &[f64], offset: f64, scale: f64, out: &mut Vec<f32>) {
 
 /// As [`encode_f32`] but into a caller-owned slice (the C ABI path — the output
 /// buffer is a NumPy array allocated Python-side, so no copy on return).
+/// Element-wise, so the parallel fan-out writes disjoint segments and is
+/// bitwise identical to the serial loop.
 pub fn encode_f32_into(data: &[f64], offset: f64, scale: f64, out: &mut [f32]) {
     assert_eq!(data.len(), out.len());
-    for (o, &v) in out.iter_mut().zip(data) {
-        *o = ((v - offset) * scale) as f32;
+    let threads = par_threads(data.len());
+    if threads <= 1 {
+        for (o, &v) in out.iter_mut().zip(data) {
+            *o = ((v - offset) * scale) as f32;
+        }
+        return;
     }
+    let chunk = data.len().div_ceil(threads);
+    std::thread::scope(|s| {
+        for (dseg, oseg) in data.chunks(chunk).zip(out.chunks_mut(chunk)) {
+            s.spawn(move || {
+                for (o, &v) in oseg.iter_mut().zip(dseg) {
+                    *o = ((v - offset) * scale) as f32;
+                }
+            });
+        }
+    });
 }
 
 /// M4 decimation (§5 Tier 1): for `n_buckets` uniform buckets over `[x0, x1)`,
@@ -110,8 +151,14 @@ pub fn m4_indices(x: &[f64], y: &[f64], x0: f64, x1: f64, n_buckets: usize) -> V
         return Vec::new();
     }
 
-    let inv_bucket_w = n_buckets as f64 / (x1 - x0);
-    let mut out: Vec<u32> = Vec::with_capacity(n_buckets * 4);
+    m4_indices_impl(x, y, x0, x1, n_buckets, start, end, par_threads(end - start))
+}
+
+/// Serial M4 over rows `[lo, hi)` — the shared building block: the serial path
+/// runs it once over the whole window; the parallel path runs it per bucket-
+/// aligned segment and concatenates.
+fn m4_range(x: &[f64], y: &[f64], x0: f64, inv_bucket_w: f64, n_buckets: usize, lo: usize, hi: usize) -> Vec<u32> {
+    let mut out: Vec<u32> = Vec::with_capacity((n_buckets * 4).min((hi - lo) * 4));
 
     // Per-bucket running state.
     let mut cur_bucket = usize::MAX;
@@ -135,7 +182,7 @@ pub fn m4_indices(x: &[f64], y: &[f64], x0: f64, x1: f64, n_buckets: usize) -> V
         }
     };
 
-    for i in start..end {
+    for i in lo..hi {
         let yv = y[i];
         if !yv.is_finite() {
             continue; // NaN and ±∞ are non-plottable (§19)
@@ -166,6 +213,62 @@ pub fn m4_indices(x: &[f64], y: &[f64], x0: f64, x1: f64, n_buckets: usize) -> V
     }
     if has_any {
         flush(first, min_i, max_i, last, &mut out);
+    }
+    out
+}
+
+/// Buckets are monotone non-decreasing in sorted x, so every bucket's rows are
+/// contiguous. Split the window at bucket boundaries (nudging each split
+/// forward until it starts a new bucket), scan each segment with the same
+/// serial routine, and concatenate in order — bitwise identical to the serial
+/// pass for any thread count. Degenerate case: one giant bucket collapses to
+/// a single segment (serial speed, still correct).
+#[allow(clippy::too_many_arguments)]
+fn m4_indices_impl(
+    x: &[f64],
+    y: &[f64],
+    x0: f64,
+    x1: f64,
+    n_buckets: usize,
+    start: usize,
+    end: usize,
+    threads: usize,
+) -> Vec<u32> {
+    let inv_bucket_w = n_buckets as f64 / (x1 - x0);
+    if threads <= 1 {
+        return m4_range(x, y, x0, inv_bucket_w, n_buckets, start, end);
+    }
+    let bucket_of = |i: usize| (((x[i] - x0) * inv_bucket_w) as usize).min(n_buckets - 1);
+    let span = end - start;
+    let chunk = span.div_ceil(threads);
+    let mut bounds: Vec<usize> = vec![start];
+    for t in 1..threads {
+        let mut j = (start + t * chunk).min(end);
+        while j < end && j > 0 && bucket_of(j) == bucket_of(j - 1) {
+            j += 1;
+        }
+        let prev = *bounds.last().expect("bounds never empty");
+        if j > prev && j < end {
+            bounds.push(j);
+        }
+    }
+    bounds.push(end);
+    let parts: Vec<Vec<u32>> = std::thread::scope(|s| {
+        let handles: Vec<_> = bounds
+            .windows(2)
+            .map(|wnd| {
+                let (lo, hi) = (wnd[0], wnd[1]);
+                s.spawn(move || m4_range(x, y, x0, inv_bucket_w, n_buckets, lo, hi))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|hd| hd.join().expect("m4 worker panicked"))
+            .collect()
+    });
+    let mut out = Vec::with_capacity(parts.iter().map(Vec::len).sum());
+    for p in parts {
+        out.extend(p);
     }
     out
 }
@@ -382,13 +485,31 @@ pub fn normalize_f32_into(data: &[f64], lo: f64, hi: f64, nan_value: f32, out: &
     assert_eq!(data.len(), out.len());
     assert!(x1_gt_x0(lo, hi));
     let span = hi - lo;
-    for (dst, &v) in out.iter_mut().zip(data) {
+    let norm_one = move |dst: &mut f32, v: f64| {
         if v.is_finite() {
             *dst = (((v - lo) / span).clamp(0.0, 1.0)) as f32;
         } else {
             *dst = nan_value;
         }
+    };
+    let threads = par_threads(data.len());
+    if threads <= 1 {
+        for (dst, &v) in out.iter_mut().zip(data) {
+            norm_one(dst, v);
+        }
+        return;
     }
+    // Element-wise: disjoint output segments, bitwise identical to serial.
+    let chunk = data.len().div_ceil(threads);
+    std::thread::scope(|s| {
+        for (dseg, oseg) in data.chunks(chunk).zip(out.chunks_mut(chunk)) {
+            s.spawn(move || {
+                for (dst, &v) in oseg.iter_mut().zip(dseg) {
+                    norm_one(dst, v);
+                }
+            });
+        }
+    });
 }
 
 /// Canonical row indices inside a rectangular window. Bounds are inclusive to
@@ -404,16 +525,78 @@ pub fn range_indices(
 ) -> usize {
     assert_eq!(x.len(), y.len());
     assert!(out.len() >= x.len());
+    range_indices_impl(x, y, lo_x, hi_x, lo_y, hi_y, par_threads(x.len()), out)
+}
+
+/// Append the global indices (`base + i`) of in-window rows to `out`,
+/// returning the match count. NaN fails every comparison → skipped, matching
+/// the historical behavior.
+#[allow(clippy::too_many_arguments)]
+fn range_scan(
+    x: &[f64],
+    y: &[f64],
+    base: u32,
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    out: &mut [u32],
+) -> usize {
     let mut n = 0usize;
     for i in 0..x.len() {
         let xv = x[i];
         let yv = y[i];
         if xv >= lo_x && xv <= hi_x && yv >= lo_y && yv <= hi_y {
-            out[n] = i as u32;
+            out[n] = base + i as u32;
             n += 1;
         }
     }
     n
+}
+
+/// Parallel window scan: workers fill disjoint `out` segments aligned with
+/// their data chunk (a chunk can never yield more matches than its length),
+/// then segments compact left in chunk order — the result is the same
+/// ascending index list the serial scan produces, bitwise.
+#[allow(clippy::too_many_arguments)]
+fn range_indices_impl(
+    x: &[f64],
+    y: &[f64],
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    threads: usize,
+    out: &mut [u32],
+) -> usize {
+    let n = x.len();
+    if threads <= 1 || n < threads {
+        return range_scan(x, y, 0, lo_x, hi_x, lo_y, hi_y, out);
+    }
+    let chunk = n.div_ceil(threads);
+    let counts: Vec<usize> = std::thread::scope(|s| {
+        let handles: Vec<_> = x
+            .chunks(chunk)
+            .zip(y.chunks(chunk))
+            .zip(out[..n].chunks_mut(chunk))
+            .enumerate()
+            .map(|(t, ((xs, ys), oseg))| {
+                let base = (t * chunk) as u32;
+                s.spawn(move || range_scan(xs, ys, base, lo_x, hi_x, lo_y, hi_y, oseg))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|hd| hd.join().expect("range_indices worker panicked"))
+            .collect()
+    });
+    let mut write = counts[0];
+    for (t, &c) in counts.iter().enumerate().skip(1) {
+        let start = t * chunk;
+        out.copy_within(start..start + c, write);
+        write += c;
+    }
+    write
 }
 
 /// Per-point log-normalized local density for a subset. This fuses the
@@ -879,6 +1062,16 @@ mod fuzz {
             let bins = 1 + (rng.next() % 64) as usize;
             let mut hs = vec![0f64; bins];
             let ts = histogram_uniform_impl(&x, -8.0, 8.0, 1, &mut hs);
+            // m4 needs ascending x (ingest contract); duplicate-heavy so
+            // bucket runs regularly straddle naive split points.
+            let mx: Vec<f64> = (0..n).map(|i| (i / 3) as f64).collect();
+            let buckets_m4 = 1 + (rng.next() % 48) as usize;
+            let (s0, s1) = (0usize, n);
+            let m4_serial = m4_indices_impl(&mx, &y, -1.0, n as f64 + 1.0, buckets_m4, s0, s1, 1);
+            let zm_serial = zone_maps_impl(&x, 64, 1);
+            let mut ri_serial = vec![0u32; n.max(1)];
+            let rn_serial =
+                range_indices_impl(&x, &y, -5.0, 7.0, -6.0, 4.0, 1, &mut ri_serial[..n]);
             for threads in [2usize, 3, 5] {
                 let mut par = vec![0f32; w * h];
                 bin_2d_impl(&x, &y, x0, x1, y0, y1, w, h, threads, &mut par);
@@ -889,7 +1082,45 @@ mod fuzz {
                 let tp = histogram_uniform_impl(&x, -8.0, 8.0, threads, &mut hp);
                 assert_eq!(ts, tp, "histogram total parity it={it} threads={threads}");
                 assert_eq!(hs, hp, "histogram bins parity it={it} threads={threads}");
+                let zm_par = zone_maps_impl(&x, 64, threads);
+                assert_eq!(zm_serial, zm_par, "zone_maps parity it={it} threads={threads}");
+                let m4_par =
+                    m4_indices_impl(&mx, &y, -1.0, n as f64 + 1.0, buckets_m4, s0, s1, threads);
+                assert_eq!(m4_serial, m4_par, "m4 parity it={it} threads={threads}");
+                let mut ri_par = vec![0u32; n.max(1)];
+                let rn_par =
+                    range_indices_impl(&x, &y, -5.0, 7.0, -6.0, 4.0, threads, &mut ri_par[..n]);
+                assert_eq!(rn_serial, rn_par, "range count parity it={it} threads={threads}");
+                assert_eq!(
+                    ri_serial[..rn_serial],
+                    ri_par[..rn_par],
+                    "range indices parity it={it} threads={threads}"
+                );
             }
+        }
+    }
+
+    #[test]
+    fn fuzz_elementwise_parallel_parity() {
+        // encode/normalize fan out only past PAR_THRESHOLD, so exercise the
+        // public fns at threshold size once (real threads, hostile data) and
+        // compare against a hand-rolled serial reference.
+        let mut rng = Rng(0x5EED_000B);
+        let n = super::PAR_THRESHOLD;
+        let data = rng.hostile_vec(n, -1e6, 1e6);
+        let mut enc = vec![0f32; n];
+        encode_f32_into(&data, 12.5, 3.0, &mut enc);
+        let mut norm = vec![0f32; n];
+        normalize_f32_into(&data, -1e6, 1e6, 0.0, &mut norm);
+        for (i, &v) in data.iter().enumerate() {
+            let e = ((v - 12.5) * 3.0) as f32;
+            assert_eq!(enc[i].to_bits(), e.to_bits(), "encode i={i}");
+            let r = if v.is_finite() {
+                (((v - -1e6) / 2e6).clamp(0.0, 1.0)) as f32
+            } else {
+                0.0
+            };
+            assert_eq!(norm[i].to_bits(), r.to_bits(), "normalize i={i}");
         }
     }
 
