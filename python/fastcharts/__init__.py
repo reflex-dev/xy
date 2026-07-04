@@ -26,6 +26,8 @@ from __future__ import annotations
 from .column import Column, ColumnStore, ZoneMaps
 from .components import (
     Chart,
+    candlestick,
+    candlestick_chart,
     legend,
     line,
     line_chart,
@@ -46,6 +48,8 @@ __all__ = [
     "Selection",
     "ZoneMaps",
     "__version__",
+    "candlestick",
+    "candlestick_chart",
     "legend",
     "line",
     "line_chart",

@@ -15,7 +15,7 @@ reduces to a few GPU primitives on top of the shared infrastructure.
 |---|---|---|
 | Points | built (`scatter`) | scatter, bubble |
 | Lines | built (`line`) | line, area (fill), spline, ECDF, error bands |
-| Rectangles | **next** | bar, histogram, candlestick/OHLC, waterfall, error bars, heatmap cells |
+| Rectangles | landed (`candlestick`) | bar, histogram, waterfall, error bars, heatmap cells (reuse the instanced-quad CANDLE program / `_drawCandles` pattern) |
 | Filled polygons | planned | area fill, violin, confidence bands |
 | Grid texture | built (`density` tier) | heatmap, 2D histogram, hexbin |
 

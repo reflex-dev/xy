@@ -395,6 +395,42 @@ void main() {
   if (alpha <= 0.001) discard;
   outColor = vec4(u_color.rgb * alpha, alpha);
 }`;
+
+// Candlestick: one instanced quad per candle, drawn twice per frame — the wick
+// (low→high, thin) and the body (open↔close, wide). u_part selects which. A
+// minimum 1px extent keeps doji (open==close) and flat wicks visible. Up/down
+// color chosen per candle from a_dir. The rectangle primitive the bar /
+// histogram / waterfall / error-bar family will share.
+const CANDLE_VS = `#version 300 es
+in float a_x; in float a_open; in float a_high; in float a_low; in float a_close; in float a_dir;
+uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res;
+uniform float u_halfPx; uniform int u_part; // 0 = wick, 1 = body
+out float v_dir;
+const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
+void main() {
+  float yLo = u_part == 1 ? min(a_open, a_close) : a_low;
+  float yHi = u_part == 1 ? max(a_open, a_close) : a_high;
+  float xc = a_x * u_xmap.x + u_xmap.y;
+  float ylPx = ((yLo * u_ymap.x + u_ymap.y) * 0.5 + 0.5) * u_res.y;
+  float yhPx = ((yHi * u_ymap.x + u_ymap.y) * 0.5 + 0.5) * u_res.y;
+  if (abs(yhPx - ylPx) < 1.0) { float mid = (ylPx + yhPx) * 0.5; ylPx = mid - 0.5; yhPx = mid + 0.5; }
+  vec2 c = corners[gl_VertexID];
+  float xPx = ((xc * 0.5 + 0.5) * u_res.x) + (c.x * 2.0 - 1.0) * u_halfPx;
+  float yPx = mix(ylPx, yhPx, c.y);
+  gl_Position = vec4(vec2(xPx / u_res.x, yPx / u_res.y) * 2.0 - 1.0, 0.0, 1.0);
+  v_dir = a_dir;
+}`;
+
+const CANDLE_FS = `#version 300 es
+precision highp float; precision highp int;
+uniform vec4 u_up; uniform vec4 u_down; uniform float u_opacity;
+in float v_dir;
+out vec4 outColor;
+void main() {
+  vec3 rgb = v_dir > 0.5 ? u_up.rgb : u_down.rgb;
+  float a = u_opacity;
+  outColor = vec4(rgb * a, a);
+}`;
 // ---------------------------------------------------------------------------
 
 const LOD_DIRECT_POINT_BUDGET = 200000;
@@ -939,6 +975,8 @@ class ChartView {
     for (const t of s.traces) {
       if (t.tier === "density") {
         items.push({ swatch: "gradient", cmap: t.density.colormap, name: t.name || "density" });
+      } else if (t.kind === "candlestick") {
+        if (t.name) items.push({ swatch: t.style.up_color, name: t.name });
       } else if (t.color && t.color.mode === "categorical") {
         t.color.categories.forEach((cat, i) =>
           items.push({ swatch: t.color.palette[i], name: cat }));
@@ -1002,6 +1040,7 @@ class ChartView {
     this.lineProg = makeProgram(gl, LINE_VS, LINE_FS);
     this.pickProg = makeProgram(gl, PICK_VS, PICK_FS);
     this.densityProg = makeProgram(gl, DENSITY_VS, DENSITY_FS);
+    this.candleProg = makeProgram(gl, CANDLE_VS, CANDLE_FS);
 
     // Fullscreen quad for density.
     this.quad = gl.createBuffer();
@@ -1117,6 +1156,81 @@ class ChartView {
   _buildLineMark(g, t, buffer) {
     this._buildXY(g, t, buffer);
     g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+  }
+
+  _buildCandleMark(g, t, buffer) {
+    const gl = this.gl;
+    const col = (ref) => this._columnView(buffer, this.spec.columns[ref]);
+    const xEnc = col(t.x), oEnc = col(t.open), hEnc = col(t.high);
+    const lEnc = col(t.low), cEnc = col(t.close);
+    g.xMeta = { ...this.spec.columns[t.x] };
+    // open/high/low/close all ride the y offset (shipped via ship_at) — read it
+    // off `close` for the single y map.
+    g.yMeta = { ...this.spec.columns[t.close] };
+    g.n = Math.min(xEnc.length, cEnc.length);
+    // dir = up(1)/down(0) from encoded close vs open (offset cancels in compare).
+    const dir = new Float32Array(g.n);
+    for (let i = 0; i < g.n; i++) dir[i] = cEnc[i] >= oEnc[i] ? 1 : 0;
+    g.candle = {
+      xBuf: this._upload(xEnc), oBuf: this._upload(oEnc), hBuf: this._upload(hEnc),
+      lBuf: this._upload(lEnc), cBuf: this._upload(cEnc), dBuf: this._upload(dir),
+      up: parseColor(this.root, t.style.up_color, [0.15, 0.65, 0.6, 1]),
+      down: parseColor(this.root, t.style.down_color, [0.94, 0.33, 0.31, 1]),
+      widthFrac: t.style.width_frac ?? 0.7,
+      opacity: t.style.opacity ?? 1.0,
+    };
+    // Resident data-space copies for CPU nearest-candle hover (§17) and slot
+    // sizing — decode the offset-encoded f32 once.
+    const xo = g.xMeta.offset, yo = g.yMeta.offset;
+    const xd = new Float64Array(g.n), od = new Float64Array(g.n), hd = new Float64Array(g.n);
+    const ld = new Float64Array(g.n), cd = new Float64Array(g.n);
+    for (let i = 0; i < g.n; i++) {
+      xd[i] = xEnc[i] + xo; od[i] = oEnc[i] + yo; hd[i] = hEnc[i] + yo;
+      ld[i] = lEnc[i] + yo; cd[i] = cEnc[i] + yo;
+    }
+    let dxMed = 1;
+    if (g.n > 1) {
+      const diffs = [];
+      for (let i = 1; i < g.n; i++) diffs.push(xd[i] - xd[i - 1]);
+      diffs.sort((a, b) => a - b);
+      dxMed = diffs[diffs.length >> 1] || 1;
+    }
+    g.candle.cpu = { x: xd, o: od, h: hd, l: ld, c: cd, dxMed };
+  }
+
+  _drawCandles(g, x0, x1, y0, y1) {
+    const gl = this.gl;
+    const prog = this.candleProg;
+    gl.useProgram(prog);
+    const u = (n) => gl.getUniformLocation(prog, n);
+    const xm = this._map(g.xMeta, x0, x1);
+    const ym = this._map(g.yMeta, y0, y1);
+    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+    gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
+    const cd = g.candle;
+    gl.uniform4f(u("u_up"), cd.up[0], cd.up[1], cd.up[2], 1);
+    gl.uniform4f(u("u_down"), cd.down[0], cd.down[1], cd.down[2], 1);
+    gl.uniform1f(u("u_opacity"), cd.opacity);
+    // Candle slot in device px → body half-width; wick stays thin.
+    const slotPx = (cd.cpu.dxMed / Math.max(x1 - x0, 1e-30)) * this.canvas.width;
+    const bodyHalf = Math.max(0.5, slotPx * cd.widthFrac * 0.5);
+    const wickHalf = Math.min(bodyHalf, Math.max(0.5 * this.dpr, 0.6 * this.dpr));
+    const bind = (name, buf) => {
+      const loc = gl.getAttribLocation(prog, name);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 1, gl.FLOAT, false, 0, 0);
+      gl.vertexAttribDivisor(loc, 1);
+    };
+    bind("a_x", cd.xBuf); bind("a_open", cd.oBuf); bind("a_high", cd.hBuf);
+    bind("a_low", cd.lBuf); bind("a_close", cd.cBuf); bind("a_dir", cd.dBuf);
+    gl.uniform1i(u("u_part"), 0); // wick
+    gl.uniform1f(u("u_halfPx"), wickHalf);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+    gl.uniform1i(u("u_part"), 1); // body
+    gl.uniform1f(u("u_halfPx"), bodyHalf);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
   }
 
   _uploadGrid(f32, w, h, maxVal) {
@@ -1537,6 +1651,11 @@ class ChartView {
     const ly = clientY - rect.top;
     const lines = [];
     if (row.x !== undefined) lines.push(`x: ${fmtValue(row.x, row.x_kind)}`);
+    if (row.ohlc) {
+      const o = row.ohlc;
+      lines.push(`O ${fmtValue(o.o)}  H ${fmtValue(o.h)}`);
+      lines.push(`L ${fmtValue(o.l)}  C ${fmtValue(o.c)}`);
+    }
     if (row.y !== undefined) lines.push(`y: ${fmtValue(row.y, row.y_kind)}`);
     if (row.color_value !== undefined) lines.push(`color: ${fmtValue(row.color_value)}`);
     if (row.color_category !== undefined) lines.push(`${row.color_category}`);
@@ -1921,6 +2040,9 @@ class ChartView {
   }
 
   _hover(e) {
+    // Marks with their own hover (candlestick: CPU nearest-x readout) resolve
+    // before the GPU point pick — no ID pass, works with no kernel attached.
+    if (this._hoverNonPoint(e)) return;
     if (!this._pickable) return;
     if (this._transitionActive()) {
       this._hoverId = -1;
@@ -1942,6 +2064,47 @@ class ChartView {
     }
     this._hoverId = id;
     this._showTooltip(hit, e.clientX, e.clientY);
+  }
+
+  // CPU nearest-mark hover for kinds with a `hover` hook (candlestick). Returns
+  // true if it handled the event (a hookable trace exists), so _hover skips the
+  // GPU point pick. Reads exact resident values — no kernel round-trip (§17).
+  _hoverNonPoint(e) {
+    const traces = this.gpuTraces.filter((g) => markOf(g.trace.kind).hover);
+    if (!traces.length) return false;
+    const rect = this.canvas.getBoundingClientRect();
+    const fx = (e.clientX - rect.left) / rect.width;
+    const dataX = this.view.x0 + fx * (this.view.x1 - this.view.x0);
+    let best = null;
+    for (const g of traces) {
+      const row = markOf(g.trace.kind).hover(this, g, dataX);
+      if (row && (!best || row._dist < best._dist)) best = row;
+    }
+    if (!best) {
+      this.tooltip.style.display = "none";
+      return true;
+    }
+    this._renderTooltip(best, e.clientX, e.clientY);
+    return true;
+  }
+
+  // Nearest candle to a data-space x → tooltip row of exact O/H/L/C.
+  _candleHoverRow(g, dataX) {
+    const cpu = g.candle && g.candle.cpu;
+    if (!cpu || !g.n) return null;
+    const xs = cpu.x;
+    let lo = 0, hi = g.n - 1;
+    while (lo < hi) { // binary search on sorted candle x
+      const mid = (lo + hi) >> 1;
+      if (xs[mid] < dataX) lo = mid + 1; else hi = mid;
+    }
+    if (lo > 0 && Math.abs(xs[lo - 1] - dataX) <= Math.abs(xs[lo] - dataX)) lo -= 1;
+    // Ignore hovers more than half a slot from any candle.
+    if (Math.abs(xs[lo] - dataX) > cpu.dxMed * 0.6) return null;
+    return {
+      x: xs[lo], x_kind: g.xMeta.kind, index: lo, _dist: Math.abs(xs[lo] - dataX),
+      ohlc: { o: cpu.o[lo], h: cpu.h[lo], l: cpu.l[lo], c: cpu.c[lo] },
+    };
   }
 
   _scheduleViewRequest(viewOverride = this.view, opts = {}) {
@@ -2198,6 +2361,17 @@ const MARK_KINDS = {
       view._drawLine(g, view._map(g.xMeta, x0, x1), view._map(g.yMeta, y0, y1)),
     refreshColor: (view, g) => {
       g.color = parseColor(view.root, g.trace.style.color, g.color);
+    },
+  },
+  candlestick: {
+    build: (view, g, t, buffer) => view._buildCandleMark(g, t, buffer),
+    draw: (view, g, x0, x1, y0, y1) => view._drawCandles(g, x0, x1, y0, y1),
+    // Rect geometry, not a point — hover is a CPU nearest-x readout (§17),
+    // handled by ChartView._hover via the `hover` hook rather than GPU pick.
+    hover: (view, g, dataX) => view._candleHoverRow(g, dataX),
+    refreshColor: (view, g) => {
+      g.candle.up = parseColor(view.root, g.trace.style.up_color, g.candle.up);
+      g.candle.down = parseColor(view.root, g.trace.style.down_color, g.candle.down);
     },
   },
 };
