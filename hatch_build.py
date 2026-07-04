@@ -29,7 +29,7 @@ import subprocess
 import sys
 import sysconfig
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
@@ -59,14 +59,14 @@ class CustomBuildHook(BuildHookInterface):
         dest = dest_dir / lib_name
         require = os.environ.get("FASTCHARTS_REQUIRE_CARGO") == "1"
 
-        native_ok = self._provision_native(root, lib_name, dest, dest_dir, require)
+        native_src = self._provision_native(root, lib_name, dest, require)
 
-        if native_ok:
+        if native_src is not None:
             # Platform wheel carrying the compiled C-ABI core (one per platform,
             # every CPython version).
             build_data["pure_python"] = False
             build_data["tag"] = f"py3-none-{_platform_tag()}"
-            build_data.setdefault("force_include", {})[str(dest)] = (
+            build_data.setdefault("force_include", {})[str(native_src)] = (
                 f"fastcharts/_native_lib/{lib_name}"
             )
         else:
@@ -83,17 +83,27 @@ class CustomBuildHook(BuildHookInterface):
             build_data["pure_python"] = True
             build_data["tag"] = "py3-none-any"
 
-    def _provision_native(self, root, lib_name, dest, dest_dir, require) -> bool:  # noqa: ANN001
-        """Ensure the native lib is at `dest`. Returns True if present."""
+    def _provision_native(
+        self, root: Path, lib_name: str, dest: Path, require: bool
+    ) -> Optional[Path]:
+        """Return a native library path to include in the wheel, if available.
+
+        Do not copy into `python/fastcharts/_native_lib` during a normal build:
+        force-include can place the built artifact at that wheel path directly,
+        and generated platform binaries should not dirty the source tree.
+        """
+        built = root / "target" / "release" / lib_name
         if os.environ.get("FASTCHARTS_SKIP_CARGO") == "1":
             if dest.exists():
-                return True
+                return dest
+            if built.exists():
+                return built
             if require:
                 raise RuntimeError(
                     f"FASTCHARTS_REQUIRE_CARGO=1 and FASTCHARTS_SKIP_CARGO=1 but "
-                    f"{dest} is missing — prebuild the core before this step."
+                    f"neither {dest} nor {built} exists — prebuild the core before this step."
                 )
-            return False
+            return None
 
         if shutil.which("cargo") is None:
             if require:
@@ -101,20 +111,17 @@ class CustomBuildHook(BuildHookInterface):
                     "FASTCHARTS_REQUIRE_CARGO=1 but cargo is not on PATH — a "
                     "published wheel must contain the native core."
                 )
-            return False  # graceful: pure-Python wheel
+            return None  # graceful: pure-Python wheel
 
         try:
             subprocess.run(["cargo", "build", "--release"], cwd=root, check=True)
         except (subprocess.CalledProcessError, OSError) as e:
             if require:
                 raise RuntimeError(f"cargo build failed: {e}") from e
-            return False
+            return None
 
-        built = root / "target" / "release" / lib_name
         if not built.exists():
             if require:
                 raise RuntimeError(f"cargo build succeeded but {built} is missing")
-            return False
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(built, dest)
-        return True
+            return None
+        return built

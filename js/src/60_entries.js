@@ -15,7 +15,11 @@ function render({ model, el }) {
   const buffer = bytesToArrayBuffer(model.get("buffers"));
   const comm = {
     send: (msg) => model.send(msg),
-    onMessage: (cb) => model.on("msg:custom", (content, buffers) => cb(content, buffers)),
+    onMessage: (cb) => {
+      const handler = (content, buffers) => cb(content, buffers);
+      model.on("msg:custom", handler);
+      return () => model.off?.("msg:custom", handler);
+    },
   };
   const view = new ChartView(el, spec, buffer, comm);
   return () => view.destroy();

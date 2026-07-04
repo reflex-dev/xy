@@ -3,11 +3,14 @@ hover pick with exact f64 readout (§16/§17)."""
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 
 from fastcharts import Figure
 from fastcharts import channels as ch
+from fastcharts.config import MAX_SCREEN_DIM
 from fastcharts.figure import DENSITY_GRID, SCATTER_DENSITY_THRESHOLD
 
 
@@ -43,6 +46,29 @@ def test_color_categorical():
     np.testing.assert_array_equal(c.codes, [1, 0, 1, 2, 0])
 
 
+def test_color_categorical_handles_missing_and_mixed_objects():
+    cats = np.array(["b", None, "a", np.nan, 1], dtype=object)
+    c = ch.resolve_color(cats, 5, default_constant="#000")
+    assert c.mode == "categorical"
+    assert c.categories == ["(missing)", "1", "a", "b"]
+    np.testing.assert_array_equal(c.codes, [3, 0, 2, 0, 1])
+
+
+def test_numeric_object_color_with_missing_is_continuous():
+    vals = np.array([1, None, 2.5, np.nan], dtype=object)
+    c = ch.resolve_color(vals, 4, default_constant="#000")
+    assert c.mode == "continuous"
+    assert c.domain == (1.0, 2.5)
+    np.testing.assert_allclose(c.values, [1.0, np.nan, 2.5, np.nan])
+
+
+def test_numeric_string_object_color_stays_categorical():
+    vals = np.array(["1", "2", None], dtype=object)
+    c = ch.resolve_color(vals, 3, default_constant="#000")
+    assert c.mode == "categorical"
+    assert c.categories == ["(missing)", "1", "2"]
+
+
 def test_color_bad_length():
     with pytest.raises(ValueError, match="length 10"):
         ch.resolve_color(np.arange(5.0), 10, default_constant="#000")
@@ -60,6 +86,41 @@ def test_size_modes():
     assert s.mode == "continuous"
     assert s.range_px == (1.0, 9.0)
     assert s.domain == (0.0, 9.0)
+
+
+def test_object_numeric_size_with_missing_is_continuous():
+    vals = np.array([1, None, 3.0], dtype=object)
+    s = ch.resolve_size(vals, 3, range_px=(2.0, 12.0))
+    assert s.mode == "continuous"
+    assert s.domain == (1.0, 3.0)
+    np.testing.assert_allclose(s.values, [1.0, np.nan, 3.0])
+
+
+def test_complex_or_non_numeric_channels_rejected():
+    with pytest.raises(ValueError, match="real numeric"):
+        ch.resolve_color(np.array([1 + 2j, 3 + 4j]), 2, default_constant="#000")
+    with pytest.raises(ValueError, match="real numeric"):
+        ch.resolve_size(np.array([1 + 2j, 3 + 4j]), 2)
+    with pytest.raises(ValueError, match="real numeric"):
+        ch.resolve_size(np.array(["1", "2"], dtype=object), 2)
+    with pytest.raises(ValueError, match="size"):
+        ch.resolve_size(True, 1)
+
+
+@pytest.mark.parametrize(
+    "range_px",
+    [
+        (1.0,),
+        (1.0, 2.0, 3.0),
+        (-1.0, 2.0),
+        (4.0, 2.0),
+        (np.nan, 2.0),
+        (1.0, np.inf),
+    ],
+)
+def test_size_range_validation(range_px):
+    with pytest.raises(ValueError, match="size_range"):
+        ch.resolve_size(np.arange(3.0), 3, range_px=range_px)
 
 
 def test_normalize_to_unit():
@@ -100,6 +161,38 @@ def test_categorical_color_palette():
     assert set(np.round(codes).astype(int)) == {0, 1, 2}
 
 
+def test_categorical_color_payload_handles_missing_and_mixed_objects():
+    color = np.array(["a", None, "b", np.nan, 1], dtype=object)
+    fig = Figure().scatter(np.arange(5.0), np.arange(5.0), color=color)
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["color"]["categories"] == ["(missing)", "1", "a", "b"]
+    codes = _col(spec, blob, tr["color"]["buf"])
+    np.testing.assert_array_equal(codes.astype(int), [2, 0, 3, 0, 1])
+
+
+def test_numeric_object_color_payload_is_continuous():
+    color = np.array([1.0, None, 3.0, np.nan], dtype=object)
+    fig = Figure().scatter(np.arange(4.0), np.arange(4.0), color=color)
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["color"]["mode"] == "continuous"
+    assert tr["color"]["domain"] == [1.0, 3.0]
+    cbuf = _col(spec, blob, tr["color"]["buf"])
+    np.testing.assert_allclose(cbuf, [0.0, 0.0, 1.0, 0.0])
+
+
+def test_numeric_object_size_payload_is_continuous():
+    size = np.array([1.0, None, 3.0, np.nan], dtype=object)
+    fig = Figure().scatter(np.arange(4.0), np.arange(4.0), size=size, size_range=(2.0, 20.0))
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["size"]["mode"] == "continuous"
+    assert tr["size"]["range_px"] == [2.0, 20.0]
+    sbuf = _col(spec, blob, tr["size"]["buf"])
+    np.testing.assert_allclose(sbuf, [0.0, 0.0, 1.0, 0.0])
+
+
 def test_variable_size_shipped():
     n = 500
     x = np.arange(n, dtype=np.float64)
@@ -111,6 +204,35 @@ def test_variable_size_shipped():
     assert tr["size"]["range_px"] == [2.0, 20.0]
     sbuf = _col(spec, blob, tr["size"]["buf"])
     assert sbuf.min() >= 0.0 and sbuf.max() <= 1.0
+
+
+def test_constant_numeric_color_and_size_channels_ship_midpoint_values():
+    fig = Figure().scatter(
+        np.arange(4.0),
+        np.arange(4.0),
+        color=np.full(4, 7.0),
+        size=np.full(4, 5.0),
+    )
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    cbuf = _col(spec, blob, tr["color"]["buf"])
+    sbuf = _col(spec, blob, tr["size"]["buf"])
+    np.testing.assert_allclose(cbuf, np.full(4, 0.5, dtype=np.float32))
+    np.testing.assert_allclose(sbuf, np.full(4, 0.5, dtype=np.float32))
+    lo, hi = tr["color"]["domain"]
+    assert lo < 7.0 < hi
+
+
+def test_numpy_scalar_size_range_is_json_serializable():
+    fig = Figure().scatter(
+        np.arange(4.0),
+        np.arange(4.0),
+        size=np.arange(4.0),
+        size_range=(np.float32(1.5), np.float64(12.0)),
+    )
+    spec, _blob = fig.build_payload()
+    assert spec["traces"][0]["size"]["range_px"] == [1.5, 12.0]
+    json.dumps(spec)
 
 
 def test_constant_color_and_size_no_channel_buffers():
@@ -259,6 +381,69 @@ def test_density_view_drills_to_points_when_window_fits():
     np.testing.assert_allclose(cbuf2, expected.astype(np.float32), rtol=1e-5, atol=1e-6)
 
 
+def test_interaction_windows_reject_nonfinite_bounds():
+    fig = Figure().scatter(np.arange(10.0), np.arange(10.0))
+    with pytest.raises(ValueError, match="view window"):
+        fig.select_range(np.nan, 1.0, 0.0, 1.0)
+    with pytest.raises(ValueError, match="view window"):
+        fig.select_range(True, 1.0, 0.0, 1.0)
+
+
+def test_density_view_rejects_bad_inputs_without_mutating_drill_state():
+    n = SCATTER_DENSITY_THRESHOLD + 50_000
+    rng = np.random.default_rng(22)
+    x = rng.uniform(0, 100, n)
+    y = rng.uniform(0, 100, n)
+    fig = Figure().scatter(x, y, density=True)
+    fig.density_view(0, 0.0, 1.0, 0.0, 1.0, 64, 48)
+    t = fig.traces[0]
+    assert t.drill_mode is True
+    seq = t.drill_seq
+    shipped = t.shipped_sel.copy()
+
+    with pytest.raises(ValueError, match="trace_id"):
+        fig.density_view(-1, 0.0, 1.0, 0.0, 1.0, 64, 48)
+    with pytest.raises(ValueError, match="view window"):
+        fig.density_view(0, 0.0, np.inf, 0.0, 1.0, 64, 48)
+    with pytest.raises(ValueError, match="view window"):
+        fig.density_view(0, "left", 1.0, 0.0, 1.0, 64, 48)
+    with pytest.raises(ValueError, match="view window"):
+        fig.density_view(0, True, 1.0, 0.0, 1.0, 64, 48)
+    with pytest.raises(ValueError, match="screen dimensions"):
+        fig.density_view(0, 0.0, 1.0, 0.0, 1.0, np.nan, 48)
+    with pytest.raises(ValueError, match="screen dimensions"):
+        fig.density_view(0, 0.0, 1.0, 0.0, 1.0, "wide", 48)
+    with pytest.raises(ValueError, match="screen dimensions"):
+        fig.density_view(0, 0.0, 1.0, 0.0, 1.0, True, 48)
+
+    assert t.drill_mode is True
+    assert t.drill_seq == seq
+    np.testing.assert_array_equal(t.shipped_sel, shipped)
+
+
+def test_density_view_clamps_huge_frontend_screen_shape(monkeypatch):
+    from fastcharts import interaction
+
+    n = SCATTER_DENSITY_THRESHOLD + 1
+    x = np.linspace(0.0, 100.0, n)
+    fig = Figure().scatter(x, x, density=True)
+    seen_shapes = []
+
+    def fake_bin_2d(_x, _y, _lo_x, _hi_x, _lo_y, _hi_y, w, h):
+        seen_shapes.append((w, h))
+        return np.zeros(1, dtype=np.float64)
+
+    monkeypatch.setattr(interaction.kernels, "bin_2d", fake_bin_2d)
+    update, buffers = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, 10**12, 10**12)
+    shape = seen_shapes[0]
+    density = update["traces"][0]["density"]
+    assert 16 <= shape[0] <= MAX_SCREEN_DIM
+    assert 16 <= shape[1] <= MAX_SCREEN_DIM
+    assert density["w"] == shape[0]
+    assert density["h"] == shape[1]
+    assert len(buffers[0]) == 4
+
+
 def test_drill_seq_guards_stale_picks():
     # A pick that raced a drill update must return None — never a row read
     # through the wrong index space (§16: exact or nothing).
@@ -273,6 +458,7 @@ def test_drill_seq_guards_stale_picks():
     assert seq1 == 1
     assert fig.pick(0, 0, drill_seq=seq1) is not None  # matching subset: exact row
     assert fig.pick(0, 0) is not None  # legacy caller without seq still works
+    assert fig.pick(0, 0, drill_seq=True) is None  # bool must not alias seq 1
 
     upd2, _ = fig.density_view(0, 20.0, 30.0, 20.0, 30.0, 512, 384)
     seq2 = upd2["traces"][0]["drill_seq"]
@@ -394,6 +580,11 @@ def test_pick_out_of_range():
     fig = Figure().scatter(np.arange(3.0), np.arange(3.0))
     assert fig.pick(0, 99) is None
     assert fig.pick(0, -1) is None
+    assert fig.pick(-1, 0) is None
+    assert fig.pick(0.0, 0) is None
+    assert fig.pick(True, 0) is None
+    assert fig.pick(0, 1.0) is None
+    assert fig.pick(0, True) is None
 
 
 # -- shipped↔canonical translation (staff-review regressions) ----------------
@@ -414,6 +605,17 @@ def test_pick_translates_shipped_index_after_nan_drop():
     assert fig.pick(0, 3) is None  # only 3 shipped vertices
 
 
+def test_pick_translates_nan_drop_before_payload_build():
+    x = np.array([0.0, np.nan, 2.0, 3.0, 4.0])
+    y = np.array([10.0, 11.0, 12.0, np.nan, 14.0])
+    fig = Figure().scatter(x, y)
+    row = fig.pick(0, 1)  # shipped index 1 == canonical row 2
+    assert row is not None
+    assert row["index"] == 2
+    assert row["x"] == 2.0 and row["y"] == 12.0
+    assert fig.pick(0, 3) is None
+
+
 def test_selection_translates_to_shipped_positions():
     x = np.array([0.0, np.nan, 2.0, 3.0, 4.0])
     y = np.array([10.0, 11.0, 12.0, 13.0, 14.0])
@@ -423,6 +625,38 @@ def test_selection_translates_to_shipped_positions():
     np.testing.assert_array_equal(canonical, [2, 3])
     shipped = fig.to_shipped_indices(0, canonical)
     np.testing.assert_array_equal(shipped, [1, 2])  # positions in shipped buffer
+
+
+def test_to_shipped_indices_translates_nan_drop_before_payload_build():
+    x = np.array([0.0, np.nan, 2.0, 3.0, 4.0])
+    y = np.array([10.0, 11.0, 12.0, 13.0, 14.0])
+    fig = Figure().scatter(x, y)
+    canonical = fig.select_range(1.5, 3.5, 0.0, 100.0)[0]
+    np.testing.assert_array_equal(canonical, [2, 3])
+    np.testing.assert_array_equal(fig.to_shipped_indices(0, canonical), [1, 2])
+
+
+def test_density_pick_before_payload_build_has_no_point_space():
+    n = SCATTER_DENSITY_THRESHOLD + 1
+    x = np.arange(n, dtype=np.float64)
+    fig = Figure().scatter(x, x, density=True)
+    assert fig.pick(0, 0) is None
+    np.testing.assert_array_equal(fig.to_shipped_indices(0, np.array([0], dtype=np.uint32)), [])
+
+
+def test_selection_helpers_reject_invalid_trace_ids():
+    fig = Figure().scatter(np.arange(5.0), np.arange(5.0))
+    fig.build_payload()
+    idx = np.array([1, 2], dtype=np.uint32)
+
+    with pytest.raises(ValueError, match="trace_id"):
+        fig.to_shipped_indices(-1, idx)
+    with pytest.raises(ValueError, match="trace_id"):
+        fig.to_shipped_indices(1.0, idx)
+    with pytest.raises(ValueError, match="trace_id"):
+        fig.select_range(0.0, 4.0, 0.0, 4.0, trace_id=-1)
+    with pytest.raises(ValueError, match="trace_id"):
+        fig.select_range(0.0, 4.0, 0.0, 4.0, trace_id=True)
 
 
 def test_to_shipped_indices_identity_without_drop():
@@ -452,16 +686,21 @@ def test_density_false_above_ceiling_warns():
 
 
 def test_to_html_escapes_user_strings():
-    # A title shaped like "</script>…" must not break out of the script block
-    # (markup injection in exported HTML) and must be entity-escaped in <title>.
-    evil = "</script><img src=x onerror=alert(1)>"
-    fig = Figure(title=evil).scatter(np.arange(3.0), np.arange(3.0), name=evil)
+    # User text crosses into both <title> and an inline JSON literal. Escape the
+    # full HTML-sensitive set, not only the obvious lowercase </script> case.
+    evil = "</ScRiPt><!--<img src=x onerror=alert(1)>&"
+    fig = Figure(title=evil, x_label=evil, y_label=evil).bar([evil, "safe"], [1.0, 2.0], name=evil)
     html = fig.to_html()
     body = html.split("<body>", 1)[1]
     assert "</script><img" not in body  # broken-out tag never appears verbatim
-    assert "<\\/script>" in body  # escaped inside the JSON spec instead
+    spec_literal = body.rsplit("const spec = ", 1)[1].split(";\n  const b64", 1)[0]
+    assert "<" not in spec_literal
+    assert ">" not in spec_literal
+    assert "&" not in spec_literal
+    assert "\\u003c/ScRiPt\\u003e" in spec_literal
+    assert "\\u0026" in spec_literal
     head = html.split("<body>", 1)[0]
-    assert "&lt;/script&gt;" in head  # <title> is entity-escaped
+    assert "&lt;/ScRiPt&gt;" in head  # <title> is entity-escaped
 
 
 def test_line_with_nan_x_sorts_and_excludes():

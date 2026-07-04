@@ -6,10 +6,62 @@ slower, and it says so once at import time via `fastcharts.kernels`.
 
 from __future__ import annotations
 
+import operator
 from typing import Optional
 
 import numpy as np
 import numpy.typing as npt
+
+from .config import MAX_SCREEN_DIM
+
+
+def _as_f64(arr: npt.NDArray[np.float64], label: str = "data") -> npt.NDArray[np.float64]:
+    out = np.ascontiguousarray(arr, dtype=np.float64)
+    if out.ndim != 1:
+        raise ValueError(f"{label} must be 1-D, got shape {out.shape}")
+    return out
+
+
+def _positive_int(value: int, label: str) -> int:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{label} must be a positive integer")
+    try:
+        out = operator.index(value)
+    except TypeError as e:
+        raise ValueError(f"{label} must be a positive integer") from e
+    if out <= 0:
+        raise ValueError(f"{label} must be > 0")
+    return int(out)
+
+
+def _bounded_positive_int(value: int, label: str, max_value: int = MAX_SCREEN_DIM) -> int:
+    out = _positive_int(value, label)
+    if out > max_value:
+        raise ValueError(f"{label} must be <= {max_value}")
+    return out
+
+
+def _finite_float(value: float, label: str) -> float:
+    out = float(value)
+    if not np.isfinite(out):
+        raise ValueError(f"{label} must be finite")
+    return out
+
+
+def _finite_increasing(lo: float, hi: float, label: str) -> tuple[float, float]:
+    lo_f = float(lo)
+    hi_f = float(hi)
+    if not np.isfinite(lo_f) or not np.isfinite(hi_f) or not hi_f > lo_f:
+        raise ValueError(f"{label} must be finite and increasing")
+    return lo_f, hi_f
+
+
+def _finite_ordered(lo: float, hi: float, label: str) -> tuple[float, float]:
+    lo_f = float(lo)
+    hi_f = float(hi)
+    if not np.isfinite(lo_f) or not np.isfinite(hi_f) or hi_f < lo_f:
+        raise ValueError(f"{label} must be finite and ordered low-to-high")
+    return lo_f, hi_f
 
 
 def zone_maps(
@@ -22,9 +74,8 @@ def zone_maps(
     npt.NDArray[np.float64],
     npt.NDArray[np.float64],
 ]:
-    if chunk_size <= 0:
-        raise ValueError("chunk_size must be > 0")
-    data = np.ascontiguousarray(data, dtype=np.float64)
+    chunk_size = _positive_int(chunk_size, "chunk_size")
+    data = _as_f64(data, "data")
     n = len(data)
     if n == 0:
         empty_f = np.empty(0, dtype=np.float64)
@@ -45,8 +96,9 @@ def zone_maps(
         if len(valid):
             mins[i] = valid.min()
             maxs[i] = valid.max()
-            sums[i] = valid.sum()
-            sum_sqs[i] = (valid * valid).sum()
+            with np.errstate(over="ignore"):
+                sums[i] = valid.sum()
+                sum_sqs[i] = np.square(valid).sum()
         else:
             mins[i] = np.inf
             maxs[i] = -np.inf
@@ -58,7 +110,9 @@ def zone_maps(
 def encode_f32(
     data: npt.NDArray[np.float64], offset: float, scale: float = 1.0
 ) -> npt.NDArray[np.float32]:
-    data = np.ascontiguousarray(data, dtype=np.float64)
+    data = _as_f64(data, "data")
+    offset = _finite_float(offset, "offset")
+    scale = _finite_float(scale, "scale")
     return ((data - offset) * scale).astype(np.float32)
 
 
@@ -69,12 +123,10 @@ def m4_indices(
     x1: float,
     n_buckets: int,
 ) -> npt.NDArray[np.uint32]:
-    if n_buckets <= 0:
-        raise ValueError("n_buckets must be > 0")
-    if not x1 > x0:
-        raise ValueError("x1 must be > x0")
-    x = np.ascontiguousarray(x, dtype=np.float64)
-    y = np.ascontiguousarray(y, dtype=np.float64)
+    n_buckets = _bounded_positive_int(n_buckets, "n_buckets")
+    x0, x1 = _finite_increasing(x0, x1, "x range")
+    x = _as_f64(x, "x")
+    y = _as_f64(y, "y")
     if len(x) != len(y):
         raise ValueError("x and y must have equal length")
     if len(x) == 0:
@@ -97,16 +149,20 @@ def m4_indices(
     # x is sorted, so bucket ids are non-decreasing: group boundaries suffice.
     starts = np.unique(buckets, return_index=True)[1]
     ends = np.append(starts[1:], len(buckets))
-    out: list[np.uint32] = []
-    for s, e in zip(starts, ends):
+    out: list[int] = []
+    for s, e in zip(starts, ends, strict=True):
         seg = yv[s:e]
-        picks = np.unique(
-            np.array(
-                [idx[s], idx[s + int(np.argmin(seg))], idx[s + int(np.argmax(seg))], idx[e - 1]],
-                dtype=np.uint32,
-            )
+        picks = (
+            int(idx[s]),
+            int(idx[s + int(np.argmin(seg))]),
+            int(idx[s + int(np.argmax(seg))]),
+            int(idx[e - 1]),
         )
-        out.extend(picks)
+        prev = -1
+        for pick in sorted(picks):
+            if pick != prev:
+                out.append(pick)
+                prev = pick
     return np.array(out, dtype=np.uint32)
 
 
@@ -120,10 +176,12 @@ def bin_2d(
     w: int,
     h: int,
 ) -> npt.NDArray[np.float32]:
-    if not (w > 0 and h > 0 and x1 > x0 and y1 > y0):
-        raise ValueError("require w>0, h>0, x1>x0, y1>y0")
-    x = np.ascontiguousarray(x, dtype=np.float64)
-    y = np.ascontiguousarray(y, dtype=np.float64)
+    w = _bounded_positive_int(w, "w")
+    h = _bounded_positive_int(h, "h")
+    x0, x1 = _finite_increasing(x0, x1, "x range")
+    y0, y1 = _finite_increasing(y0, y1, "y range")
+    x = _as_f64(x, "x")
+    y = _as_f64(y, "y")
     if len(x) != len(y):
         raise ValueError("x and y must have equal length")
     valid = np.isfinite(x) & np.isfinite(y)  # NaN and ±inf excluded (§19)
@@ -137,8 +195,111 @@ def bin_2d(
 
 
 def min_max(data: npt.NDArray[np.float64]) -> Optional[tuple[float, float]]:
-    data = np.ascontiguousarray(data, dtype=np.float64)
+    data = _as_f64(data, "data")
     valid = data[np.isfinite(data)]  # NaN and ±inf excluded (§19)
     if len(valid) == 0:
         return None
     return float(valid.min()), float(valid.max())
+
+
+def histogram_uniform(
+    data: npt.NDArray[np.float64],
+    lo: float,
+    hi: float,
+    n_bins: int,
+    *,
+    density: bool = False,
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    n_bins = _bounded_positive_int(n_bins, "n_bins")
+    lo, hi = _finite_increasing(lo, hi, "histogram range")
+    data = _as_f64(data, "data")
+    counts = np.zeros(n_bins, dtype=np.float64)
+    valid = np.isfinite(data) & (data >= lo) & (data <= hi)
+    if np.any(valid):
+        scaled = ((data[valid] - lo) * (n_bins / (hi - lo))).astype(np.int64)
+        scaled = np.minimum(scaled, n_bins - 1)
+        counts += np.bincount(scaled, minlength=n_bins)
+        if density:
+            total = counts.sum()
+            if total > 0:
+                counts /= total * ((hi - lo) / n_bins)
+    edges = np.linspace(lo, hi, n_bins + 1, dtype=np.float64)
+    return counts, edges
+
+
+def normalize_f32(
+    data: npt.NDArray[np.float64],
+    domain: tuple[float, float],
+    *,
+    nonfinite: str = "zero",
+) -> npt.NDArray[np.float32]:
+    if nonfinite not in {"zero", "nan"}:
+        raise ValueError("nonfinite must be 'zero' or 'nan'")
+    data = _as_f64(data, "data")
+    try:
+        lo_raw, hi_raw = domain
+    except (TypeError, ValueError) as e:
+        raise ValueError("domain must contain exactly two finite increasing values") from e
+    lo, hi = _finite_increasing(lo_raw, hi_raw, "domain")
+    span = hi - lo if hi > lo else 1.0
+    out = ((data - lo) / span).clip(0.0, 1.0).astype(np.float32)
+    bad = ~np.isfinite(data)
+    if np.any(bad):
+        out[bad] = np.nan if nonfinite == "nan" else 0.0
+    return out
+
+
+def range_indices(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    lo_x: float,
+    hi_x: float,
+    lo_y: float,
+    hi_y: float,
+) -> npt.NDArray[np.uint32]:
+    lo_x, hi_x = _finite_ordered(lo_x, hi_x, "x range")
+    lo_y, hi_y = _finite_ordered(lo_y, hi_y, "y range")
+    x = _as_f64(x, "x")
+    y = _as_f64(y, "y")
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    mask = (x >= lo_x) & (x <= hi_x) & (y >= lo_y) & (y <= hi_y)
+    return np.flatnonzero(mask).astype(np.uint32)
+
+
+def local_log_density(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    lo_x: float,
+    hi_x: float,
+    lo_y: float,
+    hi_y: float,
+    w: int,
+    h: int,
+) -> npt.NDArray[np.float32]:
+    w = _bounded_positive_int(w, "w")
+    h = _bounded_positive_int(h, "h")
+    lo_x, hi_x = _finite_increasing(lo_x, hi_x, "x range")
+    lo_y, hi_y = _finite_increasing(lo_y, hi_y, "y range")
+    x = _as_f64(x, "x")
+    y = _as_f64(y, "y")
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    out = np.zeros(len(x), dtype=np.float32)
+    if len(x):
+        grid = bin_2d(x, y, lo_x, hi_x, lo_y, hi_y, w, h)
+        gmax = float(grid.max()) if grid.size else 0.0
+        if gmax > 0:
+            inside = (
+                np.isfinite(x)
+                & np.isfinite(y)
+                & (x >= lo_x)
+                & (x < hi_x)
+                & (y >= lo_y)
+                & (y < hi_y)
+            )
+            if np.any(inside):
+                ix = np.clip(((x[inside] - lo_x) * (w / (hi_x - lo_x))).astype(np.int64), 0, w - 1)
+                iy = np.clip(((y[inside] - lo_y) * (h / (hi_y - lo_y))).astype(np.int64), 0, h - 1)
+                out[inside] = (np.log1p(grid[iy, ix]) / np.log1p(gmax)).astype(np.float32)
+    return out

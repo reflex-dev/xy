@@ -21,6 +21,9 @@ class ChartView {
     this._animRaf = null;
     this._lastLabelDraw = null;
     this._lutCache = new Map();
+    this._listeners = [];
+    this._glPrograms = [];
+    this._destroyed = false;
     this._hoverId = -1;
     this.dragMode = "pan"; // "pan" | "zoom" (box zoom); toggled via the modebar
 
@@ -59,7 +62,7 @@ class ChartView {
     this._onScheme = () => this.refreshTheme();
     this._themeWatch.addEventListener?.("change", this._onScheme);
 
-    if (comm) comm.onMessage((msg, buffers) => this._onKernelMsg(msg, buffers));
+    this._unsubscribeComm = comm ? comm.onMessage((msg, buffers) => this._onKernelMsg(msg, buffers)) : null;
     this.draw();
   }
 
@@ -72,6 +75,12 @@ class ChartView {
       w: Math.max(40, this.size.w - MARGIN.l - MARGIN.r),
       h: Math.max(40, this.size.h - top - MARGIN.b),
     };
+  }
+
+  _listen(target, type, handler, options) {
+    target.addEventListener(type, handler, options);
+    this._listeners.push({ target, type, handler, options });
+    return handler;
   }
 
   // Container size changed (fluid mode). Cheap on purpose: data GPU buffers
@@ -214,8 +223,16 @@ class ChartView {
 
     this.pointProg = makeProgram(gl, POINT_VS, POINT_FS);
     this.lineProg = makeProgram(gl, LINE_VS, LINE_FS);
+    this.areaProg = makeProgram(gl, AREA_VS, AREA_FS);
+    this.rectProg = makeProgram(gl, RECT_VS, RECT_FS);
+    this.barProg = makeProgram(gl, BAR_VS, RECT_FS);
     this.pickProg = makeProgram(gl, PICK_VS, PICK_FS);
     this.densityProg = makeProgram(gl, DENSITY_VS, DENSITY_FS);
+    this.heatmapProg = makeProgram(gl, HEATMAP_VS, HEATMAP_FS);
+    this._glPrograms = [
+      this.pointProg, this.lineProg, this.areaProg, this.rectProg,
+      this.barProg, this.pickProg, this.densityProg, this.heatmapProg,
+    ];
 
     // Fullscreen quad for density.
     this.quad = gl.createBuffer();
@@ -333,10 +350,116 @@ class ChartView {
     g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
   }
 
+  _buildAreaMark(g, t, buffer) {
+    this._buildXY(g, t, buffer);
+    const base = this._columnView(buffer, this.spec.columns[t.base]);
+    g.baseMeta = { ...this.spec.columns[t.base] };
+    g.n = Math.min(g.n, base.length);
+    g.baseBuf = this._upload(base);
+    g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+    g.lineColor = parseColor(this.root, t.style && t.style.color, g.color);
+  }
+
+  _buildRectMark(g, t, buffer) {
+    const x0 = this._columnView(buffer, this.spec.columns[t.x0]);
+    const x1 = this._columnView(buffer, this.spec.columns[t.x1]);
+    const y0 = this._columnView(buffer, this.spec.columns[t.y0]);
+    const y1 = this._columnView(buffer, this.spec.columns[t.y1]);
+    g.x0Meta = { ...this.spec.columns[t.x0] };
+    g.x1Meta = { ...this.spec.columns[t.x1] };
+    g.y0Meta = { ...this.spec.columns[t.y0] };
+    g.y1Meta = { ...this.spec.columns[t.y1] };
+    g.n = Math.min(x0.length, x1.length, y0.length, y1.length);
+    g.x0Buf = this._upload(x0);
+    g.x1Buf = this._upload(x1);
+    g.y0Buf = this._upload(y0);
+    g.y1Buf = this._upload(y1);
+    g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+    g.colorMode = 0;
+    if (t.color && t.color.mode === "continuous") {
+      g.colorMode = 1;
+      g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+      g.lut = this._lut(t.color.colormap);
+    } else if (t.color && t.color.mode === "categorical") {
+      g.colorMode = 2;
+      g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+      g.lut = this._paletteLut(t.color.palette);
+    }
+  }
+
+  _buildBarMark(g, t, buffer) {
+    const b = t.bar;
+    if (!b) return this._buildRectMark(g, t, buffer);
+    const pos = this._columnView(buffer, this.spec.columns[b.pos]);
+    const v1 = this._columnView(buffer, this.spec.columns[b.value1]);
+    g.posMeta = { ...this.spec.columns[b.pos] };
+    g.value1Meta = { ...this.spec.columns[b.value1] };
+    g.n = Math.min(pos.length, v1.length);
+    g.posBuf = this._upload(pos);
+    g.value1Buf = this._upload(v1);
+    g.orientation = b.orientation === "horizontal" ? 1 : 0;
+    g.value0Const = b.value0_const ?? 0;
+    g.value0Mode = b.value0 === undefined ? 0 : 1;
+    g.width = b.width;
+    if (g.value0Mode === 1) {
+      const v0 = this._columnView(buffer, this.spec.columns[b.value0]);
+      g.value0Meta = { ...this.spec.columns[b.value0] };
+      g.n = Math.min(g.n, v0.length);
+      g.value0Buf = this._upload(v0);
+    }
+    g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+    g.colorMode = 0;
+    if (t.color && t.color.mode === "continuous") {
+      g.colorMode = 1;
+      g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+      g.lut = this._lut(t.color.colormap);
+    } else if (t.color && t.color.mode === "categorical") {
+      g.colorMode = 2;
+      g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+      g.lut = this._paletteLut(t.color.palette);
+    }
+  }
+
+  _buildHeatmapMark(g, t, buffer) {
+    const h = t.heatmap;
+    const grid = this._columnView(buffer, this.spec.columns[h.buf]);
+    g.heatmap = {
+      w: h.w,
+      h: h.h,
+      xRange: h.x_range,
+      yRange: h.y_range,
+      colormap: h.colormap,
+      tex: this._uploadHeatmapGrid(grid, h.w, h.h),
+      lut: this._lut(h.colormap),
+    };
+  }
+
   _uploadGrid(f32, w, h, maxVal) {
     const gl = this.gl;
     const tex = gl.createTexture();
     lodWriteGridTexture(gl, tex, f32, w, h, maxVal);
+    return tex;
+  }
+
+  _uploadHeatmapGrid(f32, w, h) {
+    const gl = this.gl;
+    const tex = gl.createTexture();
+    const data = new Uint8Array(f32.length);
+    for (let i = 0; i < f32.length; i++) {
+      const v = f32[i];
+      if (Number.isFinite(v)) {
+        data[i] = Math.max(1, Math.min(255, Math.round(1 + 254 * Math.max(0, Math.min(1, v)))));
+      }
+    }
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    const align = gl.getParameter(gl.UNPACK_ALIGNMENT);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, data);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, align);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     return tex;
   }
 
@@ -388,16 +511,33 @@ class ChartView {
     return [mul, add];
   }
 
+  _mapConst(value, lo, hi) {
+    return ((value - lo) / (hi - lo)) * 2 - 1;
+  }
+
+  _edgePadForValue(value, lo, hi, pixels) {
+    if (!Number.isFinite(value) || !Number.isFinite(lo) || !Number.isFinite(hi) || hi === lo) return 0;
+    const eps = Math.abs(hi - lo) * 1e-10 + 1e-12;
+    const px = Math.max(1, pixels || 1);
+    const padPx = Math.max(2, Math.ceil(this.dpr || 1));
+    if (Math.abs(value - lo) <= eps) return -(2 * padPx) / px;
+    if (Math.abs(value - hi) <= eps) return (2 * padPx) / px;
+    return 0;
+  }
+
   draw() {
+    if (this._destroyed) return;
     if (this._raf) return;
     this._raf = requestAnimationFrame(() => {
       this._raf = null;
+      if (this._destroyed) return;
       this._drawNow();
     });
   }
 
 
   _drawNow() {
+    if (this._destroyed || !this.gl) return;
     const gl = this.gl;
     const { x0, x1, y0, y1 } = this.view;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -538,7 +678,34 @@ class ChartView {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
-  _drawLine(g, xm, ym) {
+  _drawHeatmap(g) {
+    const h = g.heatmap;
+    if (!h) return;
+    const gl = this.gl;
+    const prog = this.heatmapProg;
+    gl.useProgram(prog);
+    const u = (n) => gl.getUniformLocation(prog, n);
+    const { x0, x1, y0, y1 } = this.view;
+    gl.uniform4f(u("u_view"), x0, x1, y0, y1);
+    gl.uniform4f(u("u_gridRange"), h.xRange[0], h.xRange[1], h.yRange[0], h.yRange[1]);
+    gl.uniform1f(u("u_opacity"), g.trace.style.opacity ?? 1.0);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, h.tex);
+    gl.uniform1i(u("u_grid"), 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, h.lut);
+    gl.uniform1i(u("u_lut"), 1);
+    const loc = gl.getAttribLocation(prog, "a_corner");
+    const maxAttrs = gl.getParameter(gl.MAX_VERTEX_ATTRIBS);
+    for (let i = 0; i < maxAttrs; i++) gl.disableVertexAttribArray(i);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribDivisor(loc, 0);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+
+  _drawLine(g, xm, ym, color = null, width = null, opacity = null) {
     if (g.n < 2) return;
     const gl = this.gl;
     gl.useProgram(this.lineProg);
@@ -546,14 +713,104 @@ class ChartView {
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
-    gl.uniform1f(u("u_width"), (g.trace.style.width || 1.5) * this.dpr);
-    const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
+    gl.uniform1f(u("u_width"), (width ?? g.trace.style.width ?? 1.5) * this.dpr);
+    const [r, gg, b, a] = color || g.color;
+    gl.uniform4f(u("u_color"), r, gg, b, a * (opacity ?? g.trace.style.opacity ?? 1));
     this._bindScalarAttr(this.lineProg, "ax0", g.xBuf, 0, 1);
     this._bindScalarAttr(this.lineProg, "ax1", g.xBuf, 4, 1);
     this._bindScalarAttr(this.lineProg, "ay0", g.yBuf, 0, 1);
     this._bindScalarAttr(this.lineProg, "ay1", g.yBuf, 4, 1);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n - 1);
+  }
+
+  _drawArea(g, xm, ym, bm) {
+    if (g.n < 2) return;
+    const gl = this.gl;
+    const prog = this.areaProg;
+    gl.useProgram(prog);
+    const u = (n) => gl.getUniformLocation(prog, n);
+    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+    gl.uniform2f(u("u_bmap"), bm[0], bm[1]);
+    const [r, gg, b, a] = g.color;
+    gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 0.35));
+    this._bindScalarAttr(prog, "ax0", g.xBuf, 0, 1);
+    this._bindScalarAttr(prog, "ax1", g.xBuf, 4, 1);
+    this._bindScalarAttr(prog, "ay0", g.yBuf, 0, 1);
+    this._bindScalarAttr(prog, "ay1", g.yBuf, 4, 1);
+    this._bindScalarAttr(prog, "ab0", g.baseBuf, 0, 1);
+    this._bindScalarAttr(prog, "ab1", g.baseBuf, 4, 1);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n - 1);
+  }
+
+  _drawRects(g, x0, x1, y0, y1, edgePad = [0, 0, 0, 0]) {
+    if (!g.n) return;
+    const gl = this.gl;
+    const prog = this.rectProg;
+    gl.useProgram(prog);
+    const u = (n) => gl.getUniformLocation(prog, n);
+    gl.uniform2f(u("u_x0map"), x0[0], x0[1]);
+    gl.uniform2f(u("u_x1map"), x1[0], x1[1]);
+    gl.uniform2f(u("u_y0map"), y0[0], y0[1]);
+    gl.uniform2f(u("u_y1map"), y1[0], y1[1]);
+    gl.uniform4f(u("u_edgePad"), edgePad[0], edgePad[1], edgePad[2], edgePad[3]);
+    const [r, gg, b, a] = g.color;
+    gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
+    gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+    this._bindScalarAttr(prog, "ax0", g.x0Buf, 0, 1);
+    this._bindScalarAttr(prog, "ax1", g.x1Buf, 0, 1);
+    this._bindScalarAttr(prog, "ay0", g.y0Buf, 0, 1);
+    this._bindScalarAttr(prog, "ay1", g.y1Buf, 0, 1);
+    if (g.colorMode && g.cBuf) {
+      this._bindScalarAttr(prog, "a_cval", g.cBuf, 0, 1);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, g.lut);
+      gl.uniform1i(u("u_lut"), 0);
+    } else {
+      this._disableAttr(prog, "a_cval");
+      const loc = gl.getAttribLocation(prog, "a_cval");
+      if (loc >= 0) gl.vertexAttrib1f(loc, 0);
+    }
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+  }
+
+  _drawBars(g, pmap, v1map, v0map, v0Const, v0EdgePad = 0) {
+    if (!g.n) return;
+    const gl = this.gl;
+    const prog = this.barProg;
+    gl.useProgram(prog);
+    const u = (n) => gl.getUniformLocation(prog, n);
+    gl.uniform2f(u("u_pmap"), pmap[0], pmap[1]);
+    gl.uniform2f(u("u_v1map"), v1map[0], v1map[1]);
+    gl.uniform2f(u("u_v0map"), v0map ? v0map[0] : 1, v0map ? v0map[1] : 0);
+    gl.uniform1f(u("u_width"), g.width);
+    gl.uniform1i(u("u_orientation"), g.orientation);
+    gl.uniform1i(u("u_v0Mode"), g.value0Mode);
+    gl.uniform1f(u("u_v0Const"), v0Const ?? 0);
+    gl.uniform1f(u("u_v0EdgePad"), v0EdgePad);
+    const [r, gg, b, a] = g.color;
+    gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
+    gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+    this._bindScalarAttr(prog, "a_pos", g.posBuf, 0, 1);
+    this._bindScalarAttr(prog, "a_v1", g.value1Buf, 0, 1);
+    if (g.value0Mode === 1 && g.value0Buf) {
+      this._bindScalarAttr(prog, "a_v0", g.value0Buf, 0, 1);
+    } else {
+      this._disableAttr(prog, "a_v0");
+      const loc = gl.getAttribLocation(prog, "a_v0");
+      if (loc >= 0) gl.vertexAttrib1f(loc, 0);
+    }
+    if (g.colorMode && g.cBuf) {
+      this._bindScalarAttr(prog, "a_cval", g.cBuf, 0, 1);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, g.lut);
+      gl.uniform1i(u("u_lut"), 0);
+    } else {
+      this._disableAttr(prog, "a_cval");
+      const loc = gl.getAttribLocation(prog, "a_cval");
+      if (loc >= 0) gl.vertexAttrib1f(loc, 0);
+    }
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
   }
 
   _drawChrome() {
@@ -575,29 +832,35 @@ class ChartView {
     const { x0, x1, y0, y1 } = this.view;
     const p = this.plot;
     const xt = s.x_axis.kind === "time" ? timeTicks(x0, x1, Math.max(3, p.w / 90))
+      : s.x_axis.kind === "category" ? categoryTicks(x0, x1, s.x_axis.categories || [], Math.max(3, p.w / 80))
       : linearTicks(x0, x1, Math.max(3, p.w / 80));
-    const yt = linearTicks(y0, y1, Math.max(3, p.h / 45));
+    const yt = s.y_axis.kind === "category" ? categoryTicks(y0, y1, s.y_axis.categories || [], Math.max(3, p.h / 45))
+      : linearTicks(y0, y1, Math.max(3, p.h / 45));
+    const xEdge = (px) => Math.min(p.x + p.w - 0.5, Math.max(p.x + 0.5, Math.round(px) + 0.5));
+    const yEdge = (py) => Math.min(p.y + p.h - 0.5, Math.max(p.y + 0.5, Math.round(py) + 0.5));
 
     ctx.strokeStyle = cssColor(this.theme.grid);
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (const v of xt.ticks) {
       const px = p.x + ((v - x0) / (x1 - x0)) * p.w;
-      ctx.moveTo(Math.round(px) + 0.5, p.y);
-      ctx.lineTo(Math.round(px) + 0.5, p.y + p.h);
+      const x = xEdge(px);
+      ctx.moveTo(x, p.y);
+      ctx.lineTo(x, p.y + p.h);
     }
     for (const v of yt.ticks) {
       const py = p.y + (1 - (v - y0) / (y1 - y0)) * p.h;
-      ctx.moveTo(p.x, Math.round(py) + 0.5);
-      ctx.lineTo(p.x + p.w, Math.round(py) + 0.5);
+      const y = yEdge(py);
+      ctx.moveTo(p.x, y);
+      ctx.lineTo(p.x + p.w, y);
     }
     ctx.stroke();
 
     ctx.strokeStyle = cssColor(this.theme.axis);
     ctx.beginPath();
     ctx.moveTo(p.x + 0.5, p.y);
-    ctx.lineTo(p.x + 0.5, p.y + p.h + 0.5);
-    ctx.lineTo(p.x + p.w, p.y + p.h + 0.5);
+    ctx.lineTo(p.x + 0.5, p.y + p.h - 0.5);
+    ctx.lineTo(p.x + p.w, p.y + p.h - 0.5);
     ctx.stroke();
 
     const label = (text, css) => {
@@ -610,13 +873,17 @@ class ChartView {
     for (const v of xt.ticks) {
       const px = p.x + ((v - x0) / (x1 - x0)) * p.w;
       if (px < p.x - 1 || px > p.x + p.w + 1) continue;
-      const text = s.x_axis.kind === "time" ? fmtTime(v, xt.step) : fmtLinear(v, xt.step);
+      const text = s.x_axis.kind === "time" ? fmtTime(v, xt.step)
+        : s.x_axis.kind === "category" ? fmtCategory(v, s.x_axis.categories || [])
+        : fmtLinear(v, xt.step);
       label(text, `left:${px}px;top:${p.y + p.h + 6}px;transform:translateX(-50%);`);
     }
     for (const v of yt.ticks) {
       const py = p.y + (1 - (v - y0) / (y1 - y0)) * p.h;
       if (py < p.y - 1 || py > p.y + p.h + 1) continue;
-      label(fmtLinear(v, yt.step), `right:${this.size.w - p.x + 8}px;top:${py}px;transform:translateY(-50%);`);
+      const text = s.y_axis.kind === "category" ? fmtCategory(v, s.y_axis.categories || [])
+        : fmtLinear(v, yt.step);
+      label(text, `right:${this.size.w - p.x + 8}px;top:${py}px;transform:translateY(-50%);`);
     }
     if (s.x_axis.label) {
       label(s.x_axis.label, `left:${p.x + p.w / 2}px;top:${p.y + p.h + 24}px;transform:translateX(-50%);font-weight:500;`);
@@ -791,7 +1058,7 @@ class ChartView {
       return [x0 + fx * (x1 - x0), y0 + fy * (y1 - y0)];
     };
 
-    c.addEventListener("pointerdown", (e) => {
+    this._listen(c, "pointerdown", (e) => {
       this._cancelViewAnimation();
       // Shift-drag box-selects (§34); a "zoom" modebar toggle turns a plain drag
       // into a box-zoom; otherwise a plain drag pans.
@@ -807,7 +1074,7 @@ class ChartView {
       c.setPointerCapture(e.pointerId);
       this.tooltip.style.display = "none";
     });
-    c.addEventListener("pointermove", (e) => {
+    this._listen(c, "pointermove", (e) => {
       if (band) { this._updateBand(band, e); return; }
       if (drag) {
         drag.moved = true;
@@ -836,11 +1103,11 @@ class ChartView {
       if (drag && !drag.moved) this.tooltip.style.display = "none";
       drag = null;
     };
-    c.addEventListener("pointerup", end);
-    c.addEventListener("pointercancel", () => { this.selRect.style.display = "none"; band = null; drag = null; });
-    c.addEventListener("pointerleave", () => { this.tooltip.style.display = "none"; });
+    this._listen(c, "pointerup", end);
+    this._listen(c, "pointercancel", () => { this.selRect.style.display = "none"; band = null; drag = null; });
+    this._listen(c, "pointerleave", () => { this.tooltip.style.display = "none"; });
 
-    c.addEventListener("wheel", (e) => {
+    this._listen(c, "wheel", (e) => {
       e.preventDefault();
       const f = Math.pow(1.0015, e.deltaY);
       const r = c.getBoundingClientRect();
@@ -849,7 +1116,7 @@ class ChartView {
       this._zoomAt(f, fx, fy, true, 95);
     }, { passive: false });
 
-    c.addEventListener("dblclick", () => {
+    this._listen(c, "dblclick", () => {
       this._clearSelection();
       this._setView(this.view0, { animate: true });
     });
@@ -942,8 +1209,8 @@ class ChartView {
       "display:flex;gap:1px;opacity:.72;transition:opacity .15s;" +
       "background:rgba(255,255,255,.78);border:1px solid rgba(128,128,128,.18);" +
       "border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08);";
-    root.addEventListener("pointerenter", () => { bar.style.opacity = "1"; });
-    root.addEventListener("pointerleave", () => { bar.style.opacity = ".72"; });
+    this._listen(root, "pointerenter", () => { bar.style.opacity = "1"; });
+    this._listen(root, "pointerleave", () => { bar.style.opacity = ".72"; });
     this._modebar = bar;
     this._modeBtns = {};
 
@@ -957,8 +1224,8 @@ class ChartView {
         "display:flex;align-items:center;justify-content:center;width:26px;height:24px;" +
         "padding:0;border:none;background:transparent;cursor:pointer;border-radius:3px;" +
         `color:${col};pointer-events:auto;`;
-      b.addEventListener("pointerdown", (e) => e.stopPropagation());
-      b.addEventListener("click", (e) => { e.stopPropagation(); onClick(); });
+      this._listen(b, "pointerdown", (e) => e.stopPropagation());
+      this._listen(b, "click", (e) => { e.stopPropagation(); onClick(); });
       bar.appendChild(b);
       if (toggles) this._modeBtns[toggles] = b;
       return b;
@@ -996,6 +1263,7 @@ class ChartView {
   }
 
   _setView(next, opts = {}) {
+    if (this._destroyed) return;
     const target = { x0: next.x0, x1: next.x1, y0: next.y0, y1: next.y1 };
     const animate = opts.animate === true && !this._prefersReducedMotion();
     const duration = opts.duration || 180;
@@ -1037,6 +1305,7 @@ class ChartView {
         Math.abs(a.y0 - b.y0), Math.abs(a.y1 - b.y1)) <= tol;
     };
     const step = (nowFrame) => {
+      if (this._destroyed) { this._animRaf = null; return; }
       const anim = this._viewAnim;
       if (!anim) { this._animRaf = null; return; }
       const dt = Math.max(0, Math.min(64, nowFrame - anim.last));
@@ -1159,10 +1428,11 @@ class ChartView {
   }
 
   _scheduleViewRequest(viewOverride = this.view, opts = {}) {
+    if (this._destroyed) return;
     if (!this.comm) return;
-    const needsLine = this.spec.traces.some((t) => t.tier === "decimated");
+    const needsDecimated = this.spec.traces.some((t) => t.tier === "decimated");
     const needsDensity = this.gpuTraces.some((g) => g.tier === "density");
-    if (!needsLine && !needsDensity) return;
+    if (!needsDecimated && !needsDensity) return;
     const seq = opts.seq ?? ++this.seq;
     const view = { ...viewOverride };
     const plotW = Math.round(this.plot.w);
@@ -1189,9 +1459,10 @@ class ChartView {
     }
     clearTimeout(this._viewTimer);
     const send = () => {
+      if (this._destroyed) return;
       this._viewRequestBurstStart = null;
       if (seq !== this.seq) return;
-      if (needsLine) {
+      if (needsDecimated) {
         this.comm.send({
           type: "view", seq,
           x0: view.x0, x1: view.x1, px: plotW,
@@ -1217,6 +1488,7 @@ class ChartView {
   }
 
   _onKernelMsg(msg, buffers) {
+    if (this._destroyed) return;
     if (!msg) return;
     if (msg.type === "tier_update") {
       if (msg.seq !== this.seq) return;
@@ -1231,6 +1503,12 @@ class ChartView {
         g.xMeta = { ...g.xMeta, offset: upd.x.offset, scale: upd.x.scale };
         g.yMeta = { ...g.yMeta, offset: upd.y.offset, scale: upd.y.scale };
         g.n = Math.min(upd.x.len, upd.y.len);
+        if (upd.base && g.baseBuf) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, g.baseBuf);
+          gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.base.buf]), gl.STATIC_DRAW);
+          g.baseMeta = { ...g.baseMeta, offset: upd.base.offset, scale: upd.base.scale };
+          g.n = Math.min(g.n, upd.base.len);
+        }
       }
       this.draw();
     } else if (msg.type === "density_update") {
@@ -1333,6 +1611,7 @@ class ChartView {
   }
 
   refreshTheme() {
+    if (this._destroyed) return;
     this.theme = readTheme(this.root);
     for (const g of this.gpuTraces) {
       // Re-resolve CSS-expressed constant colors (§36 live re-resolution);
@@ -1343,20 +1622,86 @@ class ChartView {
   }
 
   destroy() {
+    if (this._destroyed) return;
+    this._destroyed = true;
     this._ro?.disconnect();
     this._themeWatch?.removeEventListener?.("change", this._onScheme);
+    this._unsubscribeComm?.();
+    this._unsubscribeComm = null;
+    for (const { target, type, handler, options } of this._listeners.splice(0)) {
+      target.removeEventListener(type, handler, options);
+    }
     clearTimeout(this._viewTimer);
+    this._viewTimer = null;
     if (this._raf) cancelAnimationFrame(this._raf);
+    this._raf = null;
     this._cancelViewAnimation();
-    for (const g of this.gpuTraces || []) {
-      const seen = new Set();
-      for (const d of g.densityCache || []) {
-        if (d && d.tex && !seen.has(d.tex)) {
-          seen.add(d.tex);
-          this.gl.deleteTexture(d.tex);
-        }
+    this._destroyGlResources();
+    this.gl = null;
+    this.root.remove();
+  }
+
+  _deleteBuffers(obj, names) {
+    const gl = this.gl;
+    if (!gl || !obj) return;
+    const seen = new Set();
+    for (const name of names) {
+      const buf = obj[name];
+      if (buf && !seen.has(buf)) {
+        seen.add(buf);
+        gl.deleteBuffer(buf);
+      }
+      obj[name] = null;
+    }
+  }
+
+  _destroyTraceResources(g, texSeen) {
+    if (!g) return;
+    this._deleteBuffers(g, [
+      "xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "baseBuf",
+      "x0Buf", "x1Buf", "y0Buf", "y1Buf",
+      "posBuf", "value1Buf", "value0Buf",
+    ]);
+    this._deleteBuffers(g.drill, ["xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "dBuf"]);
+    const textures = [];
+    if (g.heatmap) textures.push(g.heatmap.tex);
+    for (const d of g.densityCache || []) textures.push(d && d.tex);
+    if (g.density) textures.push(g.density.tex);
+    if (g._shownDensity) textures.push(g._shownDensity.tex);
+    for (const tex of textures) {
+      if (tex && !texSeen.has(tex)) {
+        texSeen.add(tex);
+        this.gl.deleteTexture(tex);
       }
     }
-    this.root.remove();
+    g.drill = null;
+    g.density = null;
+    g._shownDensity = null;
+    g.densityCache = [];
+    g.heatmap = null;
+    g._cpu = null;
+  }
+
+  _destroyGlResources() {
+    const gl = this.gl;
+    if (!gl) return;
+    const texSeen = new Set();
+    for (const g of this.gpuTraces || []) this._destroyTraceResources(g, texSeen);
+    for (const tex of this._lutCache.values()) {
+      if (tex && !texSeen.has(tex)) {
+        texSeen.add(tex);
+        gl.deleteTexture(tex);
+      }
+    }
+    this._lutCache.clear();
+    if (this.pickFbo) gl.deleteFramebuffer(this.pickFbo);
+    if (this.pickTex && !texSeen.has(this.pickTex)) gl.deleteTexture(this.pickTex);
+    this.pickFbo = null;
+    this.pickTex = null;
+    if (this.quad) gl.deleteBuffer(this.quad);
+    this.quad = null;
+    for (const p of this._glPrograms || []) if (p) gl.deleteProgram(p);
+    this._glPrograms = [];
+    this.gpuTraces = [];
   }
 }

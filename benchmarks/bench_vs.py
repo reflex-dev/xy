@@ -50,8 +50,9 @@ import json
 import sys
 import time
 import tracemalloc
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _browser import first_paint_ms  # noqa: E402

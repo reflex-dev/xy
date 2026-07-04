@@ -7,7 +7,7 @@ name = "fastcharts"
 version = "0.1.0"
 description = "A faster charting engine: native Rust core, binary columnar transport, GPU render client"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 dependencies = [
     "numpy>=1.24",
@@ -23,6 +23,7 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["python/fastcharts"]
+dev-mode-dirs = ["python"]
 
 [tool.hatch.build.targets.wheel.hooks.custom]
 path = "hatch_build.py"
@@ -32,7 +33,7 @@ include = ["python", "src", "js/src", "Cargo.toml", "Cargo.lock", "hatch_build.p
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py311"
 src = ["python", "tests", "scripts", "benchmarks"]
 
 [tool.ruff.lint]
@@ -46,9 +47,9 @@ select = [
 ]
 ignore = [
     "E501",   # line length is the formatter's job
-    # Stylistic churn we opt out of (newer-ruff additions; the codebase
-    # deliberately uses typing.Optional/Union for its py3.9 floor, and unicode
-    # ×/– in prose comments is intended):
+    # Stylistic churn we opt out of (newer-ruff additions; the codebase keeps
+    # explicit typing.Optional/Union in some public-facing modules for clarity,
+    # and unicode ×/– in prose comments is intended):
     "UP007",  # Union[X, Y] -> X | Y
     "UP037",  # quoted annotations
     "UP045",  # Optional[X] -> X | None

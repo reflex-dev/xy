@@ -23,6 +23,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Verify committed JS bundles are fresh
+        run: node js/build.mjs --check
       - name: Build JS client
         run: node js/build.mjs
       - name: Build wheel (native core required)
@@ -37,6 +39,18 @@ jobs:
           uv tool install auditwheel
           uv tool run auditwheel repair dist/*.whl -w wheelhouse
           rm dist/*.whl && mv wheelhouse/*.whl dist/
+      - name: Verify wheel contents
+        shell: bash
+        run: |
+          whl=$(ls dist/*.whl)
+          python scripts/verify_wheel.py "$whl" --expect-native
+      - name: Install-size budget (<= 15 MB)
+        shell: bash
+        run: |
+          whl=$(ls dist/*.whl)
+          size=$(wc -c < "$whl" | tr -d ' ')
+          echo "wheel size: $size bytes ($whl)"
+          test "$size" -le 15728640
       - name: Verify the wheel installs and loads the native core
         shell: bash
         run: |
@@ -61,8 +75,37 @@ jobs:
       # The sdist carries the committed JS bundle; it builds the Rust core on the
       # user's machine if they install from sdist and have a toolchain, else it
       # falls back to NumPy (hatch_build.py). Wheels are the normal path.
+      - name: Verify committed JS bundles are fresh
+        run: node js/build.mjs --check
       - name: Build sdist
         run: uv build --sdist
+      - name: Verify sdist contents
+        shell: bash
+        run: |
+          sdist=$(ls dist/*.tar.gz)
+          python scripts/verify_sdist.py "$sdist"
+      - name: Verify sdist installs via fallback
+        shell: bash
+        env:
+          FASTCHARTS_SKIP_CARGO: "1"
+        run: |
+          uv venv smoke
+          uv pip install -p smoke dist/*.tar.gz numpy anywidget
+          ./smoke/bin/python - <<'PY'
+          import warnings
+          import numpy as np
+
+          with warnings.catch_warnings(record=True) as w:
+              warnings.simplefilter("always")
+              import fastcharts.kernels as k
+              from fastcharts import Figure
+
+          assert k.BACKEND == "numpy", k.BACKEND
+          spec, blob = Figure().scatter(np.arange(5.0), np.arange(5.0)).build_payload()
+          assert spec["traces"] and len(blob) > 0
+          assert any("NumPy fallback" in str(x.message) for x in w), "expected fallback warning"
+          print("sdist fallback install OK")
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: dist-sdist

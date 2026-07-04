@@ -28,6 +28,12 @@ def test_factories_return_components():
     assert isinstance(fc.scatter(x=[1], y=[2]), Mark)
     assert fc.scatter(x=[1], y=[2]).kind == "scatter"
     assert fc.line(x=[1], y=[2]).kind == "line"
+    assert fc.area(x=[1], y=[2]).kind == "area"
+    assert fc.histogram(values=[1, 2, 3]).kind == "histogram"
+    assert fc.hist(values=[1, 2, 3]).kind == "histogram"
+    assert fc.bar(x=["a"], y=[1]).kind == "bar"
+    assert fc.column(x=["a"], y=[1]).kind == "column"
+    assert fc.heatmap(z=[[1]]).kind == "heatmap"
     chart = fc.scatter_chart(fc.scatter(x=[1.0], y=[2.0]))
     assert isinstance(chart, Chart)
 
@@ -118,6 +124,113 @@ def test_line_chart():
     assert fig.traces[0].style["color"] == "#123456"
 
 
+def test_area_chart_resolves_base_column():
+    df = FakeFrame(
+        {
+            "x": np.arange(3.0),
+            "y": np.array([2.0, 4.0, 3.0]),
+            "base": np.array([1.0, 1.5, 1.0]),
+        }
+    )
+    fig = fc.area_chart(fc.area(x="x", y="y", base="base", color="#3355aa"), data=df).figure()
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["kind"] == "area"
+    assert tr["style"]["color"] == "#3355aa"
+    base = spec["columns"][tr["base"]]
+    vals = np.frombuffer(blob, dtype=np.float32, count=base["len"], offset=base["byte_offset"])
+    np.testing.assert_allclose(vals.astype(np.float64) + base["offset"], [1.0, 1.5, 1.0])
+
+
+def test_histogram_chart_data_key():
+    df = FakeFrame({"value": np.array([0.2, 0.4, 1.2, 1.8])})
+    chart = fc.histogram_chart(fc.histogram(values="value", bins=[0.0, 1.0, 2.0]), data=df)
+    fig = chart.figure()
+    spec, _ = fig.build_payload()
+    assert fig.traces[0].kind == "histogram"
+    assert spec["traces"][0]["n_points"] == 4
+    assert spec["traces"][0]["n_marks"] == 2
+
+
+def test_bar_chart_data_keys_and_category_axis():
+    df = FakeFrame({"label": np.array(["a", "b", "c"]), "value": np.array([3.0, 2.0, 4.0])})
+    chart = fc.bar_chart(fc.bar(x="label", y="value", color="#3355aa"), data=df)
+    fig = chart.figure()
+    assert fig.traces[0].kind == "bar"
+    assert fig.traces[0].style["color"] == "#3355aa"
+    spec, _ = fig.build_payload()
+    assert spec["x_axis"]["kind"] == "category"
+    assert spec["x_axis"]["categories"] == ["a", "b", "c"]
+
+
+def test_bar_chart_grouped_component_options():
+    df = FakeFrame(
+        {
+            "label": np.array(["a", "b"]),
+            "values": np.array([[3.0, 2.0], [4.0, 5.0]]),
+        }
+    )
+    fig = fc.bar_chart(
+        fc.bar(
+            x="label",
+            y="values",
+            mode="stacked",
+            series=["desktop", "mobile"],
+            colors=["#111111", "#222222"],
+        ),
+        data=df,
+    ).figure()
+    spec, _ = fig.build_payload()
+    assert len(spec["traces"]) == 2
+    assert [t["name"] for t in spec["traces"]] == ["desktop", "mobile"]
+    assert [t["style"]["role"] for t in spec["traces"]] == ["bar-stacked", "bar-stacked"]
+
+
+def test_bar_chart_horizontal_component_option():
+    df = FakeFrame({"label": np.array(["a", "b"]), "value": np.array([3.0, 2.0])})
+    fig = fc.bar_chart(fc.bar(x="label", y="value", orientation="horizontal"), data=df).figure()
+    spec, _ = fig.build_payload()
+    assert spec["y_axis"]["kind"] == "category"
+    assert spec["y_axis"]["categories"] == ["a", "b"]
+
+
+def test_column_chart_resolves_base_column():
+    df = FakeFrame(
+        {
+            "label": np.array(["a", "b"]),
+            "value": np.array([3.0, 2.0]),
+            "base": np.array([1.0, 10.0]),
+        }
+    )
+    fig = fc.column_chart(fc.column(x="label", y="value", base="base"), data=df).figure()
+    spec, blob = fig.build_payload()
+    bar = spec["traces"][0]["bar"]
+    y0 = spec["columns"][bar["value0"]]
+    vals = np.frombuffer(blob, dtype=np.float32, count=y0["len"], offset=y0["byte_offset"])
+    np.testing.assert_allclose(vals.astype(np.float64) + y0["offset"], [1.0, 10.0])
+
+
+def test_heatmap_chart_data_keys():
+    df = FakeFrame(
+        {
+            "z": np.array([[1.0, 2.0], [3.0, 4.0]]),
+            "cols": np.array(["a", "b"]),
+            "rows": np.array(["north", "south"]),
+        }
+    )
+    fig = fc.heatmap_chart(
+        fc.heatmap(z="z", x="cols", y="rows", colormap="cividis", name="values"),
+        data=df,
+    ).figure()
+    spec, _ = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["kind"] == "heatmap"
+    assert tr["name"] == "values"
+    assert tr["color"]["colormap"] == "cividis"
+    assert spec["x_axis"]["categories"] == ["a", "b"]
+    assert spec["y_axis"]["categories"] == ["north", "south"]
+
+
 def test_log_axis_warns():
     with pytest.warns(RuntimeWarning, match="log axes"):
         fc.scatter_chart(
@@ -169,3 +282,6 @@ def test_selection_payload():
     sx, sy = payload.xy(0)
     np.testing.assert_array_equal(sx, [2.0, 3.0, 4.0, 5.0])
     np.testing.assert_array_equal(payload.index, [2, 3, 4, 5])
+
+    with pytest.raises(ValueError, match="trace_id"):
+        payload.xy(-1)

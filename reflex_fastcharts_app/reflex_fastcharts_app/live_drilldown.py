@@ -123,7 +123,9 @@ class DensityOverview:
         integral[1:, 1:] = summed
         return cls(integral=integral, x_range=(x0, x1), y_range=(y0, y1), width=w, height=h)
 
-    def _edges(self, lo: float, hi: float, domain: tuple[float, float], cells: int, bins: int) -> np.ndarray:
+    def _edges(
+        self, lo: float, hi: float, domain: tuple[float, float], cells: int, bins: int
+    ) -> np.ndarray:
         d0, d1 = domain
         span = d1 - d0
         edges = (np.linspace(lo, hi, cells + 1) - d0) * (bins / span)
@@ -139,12 +141,7 @@ class DensityOverview:
         if bx1 <= bx0 or by1 <= by0:
             return 0
         ii = self.integral
-        return (
-            int(ii[by1, bx1])
-            - int(ii[by0, bx1])
-            - int(ii[by1, bx0])
-            + int(ii[by0, bx0])
-        )
+        return int(ii[by1, bx1]) - int(ii[by0, bx1]) - int(ii[by1, bx0]) + int(ii[by0, bx0])
 
     def density(
         self,
@@ -301,7 +298,12 @@ async def drilldown_endpoint(request: Request) -> JSONResponse:
             try:
                 if _density_is_stale(density_client_id or "default", density_seq):
                     return _response(
-                        {"type": "density_update", "seq": content.get("seq"), "stale": True, "traces": []}
+                        {
+                            "type": "density_update",
+                            "seq": content.get("seq"),
+                            "stale": True,
+                            "traces": [],
+                        }
                     )
                 update, buffers = _live_density_view(
                     store,

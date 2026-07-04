@@ -11,11 +11,14 @@ is ~16 bytes/point on the wire (x, y, color-scalar, size-scalar), matching the
 
 from __future__ import annotations
 
+import numbers
 from dataclasses import dataclass
 from typing import Any, Optional
 
 import numpy as np
 import numpy.typing as npt
+
+from . import kernels
 
 # Named colormaps the client knows (LUTs live in the JS client, §36). Kept
 # small and CVD-safe by default.
@@ -70,7 +73,125 @@ class SizeChannel:
 
 
 def _is_categorical(arr: np.ndarray) -> bool:
-    return arr.dtype.kind in ("U", "S", "O", "b")
+    if arr.dtype.kind in ("U", "S", "b"):
+        return True
+    if arr.dtype == object:
+        return not _object_array_is_real_numeric(arr)
+    return False
+
+
+def _is_missing_category(value: Any) -> bool:
+    if value is None:
+        return True
+    if value.__class__.__name__ in {"NAType", "NaTType"}:
+        return True
+    try:
+        # Covers float NaN, numpy scalar NaN/NaT, and pandas.NA-like values
+        # without importing pandas. Object comparisons can return arrays or
+        # raise, so keep this deliberately defensive.
+        return bool(value != value)
+    except Exception:
+        return False
+
+
+def category_label(value: Any) -> str:
+    """Canonical display label for category-like data.
+
+    Shared by categorical color channels and categorical axes so legends,
+    ticks, and composed marks agree on how messy labels display.
+    """
+    if _is_missing_category(value):
+        return "(missing)"
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, np.bytes_):
+        return bytes(value).decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _factorize_categories(arr: np.ndarray) -> tuple[list[str], npt.NDArray[np.float64]]:
+    """Factorize categorical data without relying on object sorting.
+
+    `np.unique(..., return_inverse=True)` sorts the raw Python objects; mixed
+    object arrays (`"a"`, `None`, `1`) raise in NumPy because those values are
+    not mutually orderable. Chart labels are strings on the client anyway, so
+    canonicalize to display labels first, sort those labels for deterministic
+    palettes, and then map each row back to its code.
+    """
+    labels = [category_label(v) for v in arr.astype(object)]
+    categories = sorted(set(labels))
+    index = {label: i for i, label in enumerate(categories)}
+    codes = np.fromiter((index[label] for label in labels), dtype=np.float64, count=len(labels))
+    return categories, codes
+
+
+def _object_array_is_real_numeric(arr: np.ndarray) -> bool:
+    seen = False
+    for value in arr:
+        if _is_missing_category(value):
+            continue
+        seen = True
+        if not _is_real_number_object(value):
+            return False
+    return seen
+
+
+def _is_real_number_object(value: Any) -> bool:
+    if isinstance(value, (bool, np.bool_, str, bytes, np.bytes_)):
+        return False
+    if isinstance(value, numbers.Real):
+        return True
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _as_real_array(values: np.ndarray, label: str) -> npt.NDArray[np.float64]:
+    if np.issubdtype(values.dtype, np.complexfloating):
+        raise ValueError(f"{label} must be real numeric")
+    if values.dtype == object and not _object_array_is_real_numeric(values):
+        raise ValueError(f"{label} must be real numeric")
+    try:
+        return values.astype(np.float64, copy=False)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"{label} must be real numeric") from e
+
+
+def _finite_scalar(value: Any, label: str) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{label} must be a finite real number")
+    try:
+        out = float(value)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"{label} must be a finite real number") from e
+    if not np.isfinite(out):
+        raise ValueError(f"{label} must be finite")
+    return out
+
+
+def _size_range(range_px: tuple[float, float]) -> tuple[float, float]:
+    try:
+        lo_raw, hi_raw = range_px
+    except (TypeError, ValueError) as e:
+        raise ValueError("size_range must contain exactly two finite pixel values") from e
+    lo = _finite_scalar(lo_raw, "size_range[0]")
+    hi = _finite_scalar(hi_raw, "size_range[1]")
+    if lo < 0 or hi < 0 or hi < lo:
+        raise ValueError("size_range must be non-negative and ordered low-to-high")
+    return (lo, hi)
+
+
+def _continuous_domain(values: npt.NDArray[np.float64]) -> tuple[float, float]:
+    bounds = kernels.min_max(values)
+    if bounds is None:
+        return (0.0, 1.0)
+    lo, hi = bounds
+    if lo == hi:
+        pad = abs(lo) * 0.05 or 0.5
+        return (lo - pad, hi + pad)
+    return (lo, hi)
 
 
 def resolve_color(
@@ -101,7 +222,7 @@ def resolve_color(
         raise ValueError(f"unknown colormap {colormap!r}; known: {COLORMAPS}")
 
     if _is_categorical(arr):
-        cats, codes = np.unique(arr.astype(object), return_inverse=True)
+        cats, codes = _factorize_categories(arr)
         if len(cats) > MAX_CATEGORIES:
             import warnings
 
@@ -117,43 +238,44 @@ def resolve_color(
             )
         return ColorChannel(
             mode="categorical",
-            codes=codes.astype(np.float64),
-            categories=[str(c) for c in cats.tolist()],
+            codes=codes,
+            categories=cats,
         )
 
-    vals = arr.astype(np.float64, copy=False)
-    finite = vals[np.isfinite(vals)]
-    lo = float(finite.min()) if len(finite) else 0.0
-    hi = float(finite.max()) if len(finite) else 1.0
-    return ColorChannel(mode="continuous", values=vals, domain=(lo, hi), colormap=colormap)
+    vals = _as_real_array(arr, "color array")
+    return ColorChannel(
+        mode="continuous", values=vals, domain=_continuous_domain(vals), colormap=colormap
+    )
 
 
 def resolve_size(size: Any, n: int, *, range_px: tuple[float, float] = (2.0, 18.0)) -> SizeChannel:
     if size is None:
         return SizeChannel(mode="constant")
     if np.isscalar(size):
-        return SizeChannel(mode="constant", constant=float(size))
+        constant = _finite_scalar(size, "size")
+        if constant < 0:
+            raise ValueError("size must be non-negative")
+        return SizeChannel(mode="constant", constant=constant)
 
     if hasattr(size, "to_numpy"):
         size = size.to_numpy()
     arr = np.asarray(size)
     if arr.ndim != 1 or len(arr) != n:
         raise ValueError(f"size array must be 1-D length {n}, got shape {arr.shape}")
-    vals = arr.astype(np.float64, copy=False)
-    finite = vals[np.isfinite(vals)]
-    lo = float(finite.min()) if len(finite) else 0.0
-    hi = float(finite.max()) if len(finite) else 1.0
-    return SizeChannel(mode="continuous", values=vals, domain=(lo, hi), range_px=range_px)
+    vals = _as_real_array(arr, "size array")
+    return SizeChannel(
+        mode="continuous",
+        values=vals,
+        domain=_continuous_domain(vals),
+        range_px=_size_range(range_px),
+    )
 
 
 def normalize_to_unit(values: npt.NDArray[np.float64], domain: tuple[float, float]) -> np.ndarray:
     """Map values to [0,1] over `domain` (for continuous color/size upload).
     Non-finite (NaN, ±inf) → domain floor so it never poisons a vertex (§19);
     the validity story tightens with real bitmaps later."""
-    lo, hi = domain
-    span = hi - lo if hi > lo else 1.0
-    safe = np.where(np.isfinite(values), values, lo)
-    return np.clip((safe - lo) / span, 0.0, 1.0)
+    return kernels.normalize_f32(values, domain, nonfinite="zero")
 
 
 def ship_channels(trace: Any, sel: Any, ship_scalar: Any, palette: list[str]) -> tuple[Any, Any]:
@@ -166,19 +288,31 @@ def ship_channels(trace: Any, sel: Any, ship_scalar: Any, palette: list[str]) ->
     precomputed global domain, and drill updates call this per zoom step —
     normalizing all N rows to ship a 200k window is O(N) work for nothing.
     Returns (color_spec, size_spec)."""
-    cc = trace.color_ch
+    cc = trace.color_ch or ColorChannel(mode="constant", constant=None)
     color_spec = cc.spec()
     if cc.mode == "continuous":
-        vals = cc.values if sel is None else cc.values[sel]
-        color_spec["buf"] = ship_scalar(normalize_to_unit(vals, cc.domain))
+        values = cc.values
+        domain = cc.domain
+        if values is None or domain is None:
+            raise ValueError("continuous color channel missing values or domain")
+        vals = values if sel is None else values[sel]
+        color_spec["buf"] = ship_scalar(normalize_to_unit(vals, domain))
     elif cc.mode == "categorical":
-        codes = cc.codes if sel is None else cc.codes[sel]
+        code_values = cc.codes
+        categories = cc.categories
+        if code_values is None or categories is None:
+            raise ValueError("categorical color channel missing codes or categories")
+        codes = code_values if sel is None else code_values[sel]
         color_spec["buf"] = ship_scalar(codes)
-        color_spec["palette"] = [palette[i % len(palette)] for i in range(len(cc.categories))]
+        color_spec["palette"] = [palette[i % len(palette)] for i in range(len(categories))]
 
-    sc = trace.size_ch
+    sc = trace.size_ch or SizeChannel(mode="constant")
     size_spec = sc.spec()
     if sc.mode == "continuous":
-        vals = sc.values if sel is None else sc.values[sel]
-        size_spec["buf"] = ship_scalar(normalize_to_unit(vals, sc.domain))
+        values = sc.values
+        domain = sc.domain
+        if values is None or domain is None:
+            raise ValueError("continuous size channel missing values or domain")
+        vals = values if sel is None else values[sel]
+        size_spec["buf"] = ship_scalar(normalize_to_unit(vals, domain))
     return color_spec, size_spec
