@@ -256,17 +256,20 @@ function makeProgram(gl, vs, fs) {
 // is a 256×1 texture (colormap or cycled palette). Size mode maps a_sval into a
 // px range. SDF-antialiased in the fragment stage.
 const POINT_VS = `#version 300 es
-in float ax; in float ay; in float a_cval; in float a_sval; in float a_sel;
+in float ax; in float ay; in float a_cval; in float a_sval; in float a_sel; in float a_dval;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange;
 uniform int u_colorMode; uniform float u_dpr; uniform int u_selActive;
-out float v_lutCoord; out float v_dim;
+out float v_lutCoord; out float v_dim; out float v_dval;
 void main() {
   gl_Position = vec4(ax * u_xmap.x + u_xmap.y, ay * u_ymap.x + u_ymap.y, 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = sz * u_dpr;
   // continuous: coord = value in [0,1]; categorical: center of texel a_cval.
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  // Local log-density LUT coord (drill handoff, §5): lets freshly drilled
+  // points wear the density colormap so the texture->points swap is seamless.
+  v_dval = a_dval;
   // Unselected marks dim when a selection is active (§34 selected/unselected styling).
   v_dim = (u_selActive == 1 && a_sel < 0.5) ? 0.12 : 1.0;
 }`;
@@ -274,7 +277,8 @@ void main() {
 const POINT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
-in float v_lutCoord; in float v_dim;
+uniform sampler2D u_dlut; uniform float u_dblend;
+in float v_lutCoord; in float v_dim; in float v_dval;
 out vec4 outColor;
 void main() {
   vec2 d = gl_PointCoord - 0.5;
@@ -283,6 +287,12 @@ void main() {
   float cov = 1.0 - smoothstep(1.0 - aa, 1.0, r);
   if (cov <= 0.001) discard;
   vec3 rgb = u_colorMode == 0 ? u_color.rgb : texture(u_lut, vec2(clamp(v_lutCoord, 0.0, 1.0), 0.5)).rgb;
+  // Drill handoff (§5): near the density boundary, paint by local density with
+  // the density ramp; ease into native colors as the zoom deepens (u_dblend->0).
+  if (u_dblend > 0.001) {
+    vec3 drgb = texture(u_dlut, vec2(clamp(v_dval, 0.0, 1.0), 0.5)).rgb;
+    rgb = mix(rgb, drgb, u_dblend);
+  }
   float alpha = cov * u_opacity * v_dim;
   outColor = vec4(rgb * alpha, alpha);
 }`;
@@ -960,6 +970,30 @@ class ChartView {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
       gl.uniform1i(u("u_lut"), 0);
+    }
+    // Drill handoff (§5): blend from the density ramp toward native colors.
+    // The shown weight eases toward the kernel's target so successive drill
+    // updates recolor smoothly instead of stepping.
+    const blendTarget = g.lodBlend ?? 0;
+    let blend = g.lodBlendShown ?? blendTarget;
+    if (Math.abs(blend - blendTarget) > 0.005) {
+      blend += (blendTarget - blend) * 0.18;
+      g.lodBlendShown = blend;
+      this.draw();
+    } else {
+      g.lodBlendShown = blend = blendTarget;
+    }
+    gl.uniform1f(u("u_dblend"), blend);
+    if (blend > 0.001 && g.dBuf && g.dlut) {
+      this._bindScalarAttr(prog, "a_dval", g.dBuf, 0, 0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, g.dlut);
+      gl.uniform1i(u("u_dlut"), 1);
+    } else {
+      this._disableAttr(prog, "a_dval");
+      const loc = gl.getAttribLocation(prog, "a_dval");
+      if (loc >= 0) gl.vertexAttrib1f(loc, 0);
+      gl.uniform1i(u("u_dlut"), 1); // sampler must still point at a valid unit
     }
     gl.drawArrays(gl.POINTS, 0, g.n);
   }
@@ -1712,6 +1746,22 @@ class ChartView {
       gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.size.buf]), gl.STATIC_DRAW);
       d.sizeRange = upd.size.range_px;
     }
+    // Color-continuous handoff (§5): per-point local log-density + a blend
+    // weight. Fresh at the boundary (blend≈1) the points wear the density
+    // colormap, so the texture->points swap doesn't recolor the chart; deeper
+    // zooms ship smaller blends and the native colors ease in (tweened in
+    // _drawPoints so successive updates don't step).
+    if (upd.density_val && upd.density_val.buf !== undefined) {
+      if (!d.dBuf) d.dBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, d.dBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.density_val.buf]), gl.STATIC_DRAW);
+      d.dlut = this._lut(upd.density_colormap || "viridis");
+      const first = d.lodBlend === undefined;
+      d.lodBlend = Math.min(1, upd.lod_blend ?? 0);
+      if (first) d.lodBlendShown = d.lodBlend; // no tween-from-zero on arrival
+    } else {
+      d.lodBlend = 0;
+    }
     g._drillFadeStart = performance.now();
   }
 
@@ -1773,7 +1823,7 @@ class ChartView {
     const d = g.drill;
     if (!d) return;
     const gl = this.gl;
-    for (const b of [d.xBuf, d.yBuf, d.cBuf, d.sBuf, d.selBuf]) if (b) gl.deleteBuffer(b);
+    for (const b of [d.xBuf, d.yBuf, d.cBuf, d.sBuf, d.selBuf, d.dBuf]) if (b) gl.deleteBuffer(b);
     g.drill = null;
     g._drillFadeStart = 0;
   }

@@ -575,6 +575,30 @@ class ChartView {
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
       gl.uniform1i(u("u_lut"), 0);
     }
+    // Drill handoff (§5): blend from the density ramp toward native colors.
+    // The shown weight eases toward the kernel's target so successive drill
+    // updates recolor smoothly instead of stepping.
+    const blendTarget = g.lodBlend ?? 0;
+    let blend = g.lodBlendShown ?? blendTarget;
+    if (Math.abs(blend - blendTarget) > 0.005) {
+      blend += (blendTarget - blend) * 0.18;
+      g.lodBlendShown = blend;
+      this.draw();
+    } else {
+      g.lodBlendShown = blend = blendTarget;
+    }
+    gl.uniform1f(u("u_dblend"), blend);
+    if (blend > 0.001 && g.dBuf && g.dlut) {
+      this._bindScalarAttr(prog, "a_dval", g.dBuf, 0, 0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, g.dlut);
+      gl.uniform1i(u("u_dlut"), 1);
+    } else {
+      this._disableAttr(prog, "a_dval");
+      const loc = gl.getAttribLocation(prog, "a_dval");
+      if (loc >= 0) gl.vertexAttrib1f(loc, 0);
+      gl.uniform1i(u("u_dlut"), 1); // sampler must still point at a valid unit
+    }
     gl.drawArrays(gl.POINTS, 0, g.n);
   }
 
@@ -1326,6 +1350,22 @@ class ChartView {
       gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.size.buf]), gl.STATIC_DRAW);
       d.sizeRange = upd.size.range_px;
     }
+    // Color-continuous handoff (§5): per-point local log-density + a blend
+    // weight. Fresh at the boundary (blend≈1) the points wear the density
+    // colormap, so the texture->points swap doesn't recolor the chart; deeper
+    // zooms ship smaller blends and the native colors ease in (tweened in
+    // _drawPoints so successive updates don't step).
+    if (upd.density_val && upd.density_val.buf !== undefined) {
+      if (!d.dBuf) d.dBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, d.dBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.density_val.buf]), gl.STATIC_DRAW);
+      d.dlut = this._lut(upd.density_colormap || "viridis");
+      const first = d.lodBlend === undefined;
+      d.lodBlend = Math.min(1, upd.lod_blend ?? 0);
+      if (first) d.lodBlendShown = d.lodBlend; // no tween-from-zero on arrival
+    } else {
+      d.lodBlend = 0;
+    }
     g._drillFadeStart = performance.now();
   }
 
@@ -1387,7 +1427,7 @@ class ChartView {
     const d = g.drill;
     if (!d) return;
     const gl = this.gl;
-    for (const b of [d.xBuf, d.yBuf, d.cBuf, d.sBuf, d.selBuf]) if (b) gl.deleteBuffer(b);
+    for (const b of [d.xBuf, d.yBuf, d.cBuf, d.sBuf, d.selBuf, d.dBuf]) if (b) gl.deleteBuffer(b);
     g.drill = null;
     g._drillFadeStart = 0;
   }
