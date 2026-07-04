@@ -51,13 +51,11 @@ Ordered by how much each compounds as kinds multiply.
   screen-bounded payload, re-fire the view request to re-sync live tiers).
   Smoke probe forces `WEBGL_lose_context` loss/restore and asserts the
   rebuilt frame hashes pixel-identical (`ctxloss` flag).
-- **R5 — Shader source conventions are informal.** Naming is consistent by
-  care (`u_xmap/u_ymap/u_res/u_opacity`, `a_*` attribs, highp rule after the
-  precision bug) but nothing enforces it.
-  *Fix:* codify in `40_gl.js` header + a build-time lint in `build.mjs`
-  (regex: every FS with shared uniforms declares highp; every program
-  declares u_xmap/u_ymap unless whitelisted). Cheap, prevents the next
-  precision-mismatch hunt.
+- **R5 — Shader source conventions are informal.** ✅ **Done.** `build.mjs`
+  lints every shader at build time: `#version 300 es` first line, every FS
+  declares `precision highp float;`, every VS references a `u_*map` uniform
+  (quad shaders exempted by name), uniforms `u_`-prefixed, attributes
+  `a`-prefixed. Violations fail the build (negative-tested).
 - **R6 — Instancing is per-mark bespoke.** Line uses 4-corner strip +
   divisor-1 endpoints; rects likewise; points use POINTS. Fine at 5 kinds,
   but each new rect-family kind re-writes the same corner-expansion VS

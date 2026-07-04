@@ -26,6 +26,46 @@ const checkOnly = process.argv.includes("--check");
 const src = PARTS.map((p) => readFileSync(join(here, "src", p), "utf8")).join("");
 const outDir = join(here, "..", "python", "fastcharts", "static");
 
+// Shader convention lint (renderer audit R5). The conventions are load-bearing:
+// a non-highp fragment default already caused one precision-mismatch hunt
+// (§16), and the u_*map uniform pair is how every mark stays pan/zoom-cheap.
+// Enforce at build time so a new mark kind can't drift silently.
+{
+  // Fullscreen/texture quads position via corner constants, not data maps.
+  const VIEWMAP_EXEMPT = new Set(["DENSITY_VS", "HEATMAP_VS"]);
+  const glSrc = readFileSync(join(here, "src", "40_gl.js"), "utf8");
+  const errs = [];
+  let shaders = 0;
+  for (const m of glSrc.matchAll(/const (\w+_(?:VS|FS)) = `([^`]*)`/g)) {
+    const [, name, shader] = m;
+    shaders++;
+    if (!shader.startsWith("#version 300 es")) {
+      errs.push(`${name}: must start with '#version 300 es'`);
+    }
+    if (name.endsWith("_FS") && !shader.includes("precision highp float;")) {
+      errs.push(`${name}: fragment shaders must declare 'precision highp float;' (§16)`);
+    }
+    if (name.endsWith("_VS") && !VIEWMAP_EXEMPT.has(name) && !/u_\w*map/.test(shader)) {
+      errs.push(
+        `${name}: vertex shaders map data via u_*map uniforms (or add to VIEWMAP_EXEMPT with a reason)`
+      );
+    }
+    for (const u of shader.matchAll(/uniform\s+\w+\s+(\w+)/g)) {
+      if (!u[1].startsWith("u_")) errs.push(`${name}: uniform '${u[1]}' must be u_-prefixed`);
+    }
+    if (name.endsWith("_VS")) {
+      for (const a of shader.matchAll(/^\s*in\s+\w+\s+(\w+)/gm)) {
+        if (!a[1].startsWith("a")) errs.push(`${name}: attribute '${a[1]}' must be a-prefixed`);
+      }
+    }
+  }
+  if (shaders === 0) errs.push("shader lint found no shaders — extraction regex is broken");
+  if (errs.length) {
+    console.error("shader convention lint failed:\n  " + errs.join("\n  "));
+    process.exit(1);
+  }
+}
+
 // standalone build: strip the export tail, expose a window global.
 const marker = "// ---- exports ----";
 const cut = src.indexOf(marker);
