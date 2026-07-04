@@ -414,6 +414,7 @@ class ChartView {
     this._densityStamp = 0;
     this._viewAnim = null;
     this._animRaf = null;
+    this._lastLabelDraw = null;
     this._lutCache = new Map();
     this._hoverId = -1;
     this.dragMode = "pan"; // "pan" | "zoom" (box zoom); toggled via the modebar
@@ -670,6 +671,7 @@ class ChartView {
         tex: this._uploadGrid(grid, d.w, d.h, d.max),
         lut: this._lut(d.colormap),
       };
+      g._shownDensity = g.density;
       this._rememberDensity(g, g.density);
       return g;
     }
@@ -857,7 +859,7 @@ class ChartView {
   }
 
   _lodFade(start, duration = 140) {
-    if (!start || duration <= 0 || this._prefersReducedMotion()) return 1;
+    if (start === undefined || start === null || duration <= 0 || this._prefersReducedMotion()) return 1;
     const t = Math.min(1, Math.max(0, (performance.now() - start) / duration));
     return t * t * (3 - 2 * t);
   }
@@ -885,17 +887,25 @@ class ChartView {
         const inside = d && this._viewInside(d.win);
         const density = this._densityForView(g);
         if (inside) {
+          g._drillExitFadeStart = null;
           const fade = this._lodFade(g._drillFadeStart);
           if (fade < 1 && density && density.tex) {
             this._drawDensity(g, density, 1 - fade);
             this._drawPoints(d, this._map(d.xMeta, x0, x1), this._map(d.yMeta, y0, y1), fade);
             this.draw();
           } else {
-            g._drillFadeStart = 0;
+            g._drillFadeStart = null;
             this._drawPoints(d, this._map(d.xMeta, x0, x1), this._map(d.yMeta, y0, y1));
           }
         } else if (density && density.tex) {
-          this._drawDensityWithFade(g, density);
+          const exitFade = d ? this._drillExitFade(g) : 1;
+          if (exitFade < 1) {
+            this._drawDensityWithFade(g, density, exitFade);
+            this._drawPoints(d, this._map(d.xMeta, x0, x1), this._map(d.yMeta, y0, y1), 1 - exitFade);
+            this.draw();
+          } else {
+            this._drawDensityWithFade(g, density);
+          }
         } else if (d) {
           this._drawPoints(d, this._map(d.xMeta, x0, x1), this._map(d.yMeta, y0, y1));
         }
@@ -1024,20 +1034,27 @@ class ChartView {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
-  _drawDensityWithFade(g, density) {
-    const fade = density === g.density ? this._lodFade(g._densityFadeStart) : 1;
-    const prev = g.prevDensity;
-    if (fade < 1 && prev && prev.tex && this._viewInsideRange(prev.xRange, prev.yRange)) {
-      this._drawDensity(g, prev, 1 - fade);
-      this._drawDensity(g, density, fade);
+  _drawDensityWithFade(g, density, opacityScale = 1) {
+    if (density !== g._shownDensity) {
+      g._densitySwitchPrev = g._shownDensity;
+      g._densitySwitchFadeStart = performance.now();
+      g._shownDensity = density;
+    }
+    const prev = g._densitySwitchPrev;
+    const fade = prev && prev.tex ? this._lodFade(g._densitySwitchFadeStart, 140) : 1;
+    if (fade < 1) {
+      this._drawDensity(g, prev, (1 - fade) * opacityScale);
+      this._drawDensity(g, density, fade * opacityScale);
       this.draw();
       return;
     }
     if (fade >= 1) {
-      g.prevDensity = null;
-      g._densityFadeStart = 0;
+      if (g.prevDensity === g._densitySwitchPrev) g.prevDensity = null;
+      g._densitySwitchPrev = null;
+      g._densitySwitchFadeStart = null;
+      if (density === g.density) g._densityFadeStart = null;
     }
-    this._drawDensity(g, density);
+    this._drawDensity(g, density, opacityScale);
   }
 
   _drawLine(g, xm, ym) {
@@ -1064,7 +1081,15 @@ class ChartView {
     const ctx = this.chrome.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, this.size.w, this.size.h);
-    this.labels.textContent = "";
+    const now = performance.now();
+    const labelCadenceMs = this._viewAnim ? 80 : 0;
+    const updateLabels = labelCadenceMs === 0
+      || this._lastLabelDraw === null
+      || now - this._lastLabelDraw >= labelCadenceMs;
+    if (updateLabels) {
+      this.labels.textContent = "";
+      this._lastLabelDraw = now;
+    }
 
     const { x0, x1, y0, y1 } = this.view;
     const p = this.plot;
@@ -1095,6 +1120,7 @@ class ChartView {
     ctx.stroke();
 
     const label = (text, css) => {
+      if (!updateLabels) return;
       const d = document.createElement("div");
       d.textContent = text;
       d.style.cssText = "position:absolute;color:" + cssColor(this.theme.label) + ";" + css;
@@ -1118,6 +1144,16 @@ class ChartView {
       label(s.y_axis.label,
         `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`);
     }
+  }
+
+  _transitionActive() {
+    const activeStart = (v) => v !== undefined && v !== null;
+    return !!this._viewAnim || this.gpuTraces.some((g) =>
+      activeStart(g._densityFadeStart) ||
+      activeStart(g._densitySwitchFadeStart) ||
+      activeStart(g._drillFadeStart) ||
+      activeStart(g._drillExitFadeStart) ||
+      !!g._densityNormAnim);
   }
 
   // -- picking (§17) --------------------------------------------------------
@@ -1482,30 +1518,57 @@ class ChartView {
       return;
     }
 
-    this._cancelViewAnimation();
     clearTimeout(this._viewTimer);
-    const start = { ...this.view };
-    const startTime = performance.now();
-    this._viewAnim = { start, target };
-    const ease = (t) => 1 - Math.pow(1 - t, 3);
+    this.seq += 1; // invalidate in-flight LOD replies for the pre-animation view
+    const now = performance.now();
+    const tau = Math.max(18, duration / 5);
+    if (this._viewAnim) {
+      this._viewAnim.target = target;
+      this._viewAnim.deadline = now + duration;
+      this._viewAnim.tau = tau;
+      this._viewAnim.request = this._viewAnim.request || opts.request !== false;
+      return;
+    }
+
+    this._viewAnim = {
+      target,
+      last: now,
+      deadline: now + duration,
+      tau,
+      request: opts.request !== false,
+    };
     const lerp = (a, b, t) => a + (b - a) * t;
-    const step = (now) => {
-      const t = Math.min(1, (now - startTime) / duration);
-      const k = ease(t);
+    const span = (v) => Math.max(Math.abs(v.x1 - v.x0), Math.abs(v.y1 - v.y0), 1e-12);
+    const closeEnough = (a, b) => {
+      const tol = span(b) * 1e-4;
+      return Math.max(
+        Math.abs(a.x0 - b.x0), Math.abs(a.x1 - b.x1),
+        Math.abs(a.y0 - b.y0), Math.abs(a.y1 - b.y1)) <= tol;
+    };
+    const step = (nowFrame) => {
+      const anim = this._viewAnim;
+      if (!anim) { this._animRaf = null; return; }
+      const dt = Math.max(0, Math.min(64, nowFrame - anim.last));
+      anim.last = nowFrame;
+      const k = 1 - Math.exp(-dt / anim.tau);
+      const t = nowFrame >= anim.deadline || closeEnough(this.view, anim.target) ? 1 : k;
       this.view = {
-        x0: lerp(start.x0, target.x0, k),
-        x1: lerp(start.x1, target.x1, k),
-        y0: lerp(start.y0, target.y0, k),
-        y1: lerp(start.y1, target.y1, k),
+        x0: lerp(this.view.x0, anim.target.x0, t),
+        x1: lerp(this.view.x1, anim.target.x1, t),
+        y0: lerp(this.view.y0, anim.target.y0, t),
+        y1: lerp(this.view.y1, anim.target.y1, t),
       };
-      this.draw();
       if (t < 1) {
+        this.draw();
         this._animRaf = requestAnimationFrame(step);
       } else {
+        const request = anim.request;
         this._animRaf = null;
         this._viewAnim = null;
-        this.view = target;
-        if (opts.request !== false) this._scheduleViewRequest();
+        this.view = anim.target;
+        this._lastLabelDraw = null;
+        this.draw();
+        if (request) this._scheduleViewRequest();
       }
     };
     this._animRaf = requestAnimationFrame(step);
@@ -1584,6 +1647,11 @@ class ChartView {
 
   _hover(e) {
     if (!this._pickable) return;
+    if (this._transitionActive()) {
+      this._hoverId = -1;
+      this.tooltip.style.display = "none";
+      return;
+    }
     const rect = this.canvas.getBoundingClientRect();
     const hit = this._pickAt(e.clientX - rect.left, e.clientY - rect.top);
     if (!hit) {
@@ -1606,22 +1674,26 @@ class ChartView {
     const needsLine = this.spec.traces.some((t) => t.tier === "decimated");
     const needsDensity = this.gpuTraces.some((g) => g.tier === "density");
     if (!needsLine && !needsDensity) return;
+    const seq = ++this.seq;
+    const view = { ...this.view };
+    const plotW = Math.round(this.plot.w);
+    const plotH = Math.round(this.plot.h);
     clearTimeout(this._viewTimer);
     this._viewTimer = setTimeout(() => {
-      this.seq += 1;
+      if (seq !== this.seq) return;
       if (needsLine) {
         this.comm.send({
-          type: "view", seq: this.seq,
-          x0: this.view.x0, x1: this.view.x1, px: Math.round(this.plot.w),
+          type: "view", seq,
+          x0: view.x0, x1: view.x1, px: plotW,
         });
       }
       if (needsDensity) {
         for (const g of this.gpuTraces) {
           if (g.tier !== "density") continue;
           this.comm.send({
-            type: "density_view", seq: this.seq, trace: g.trace.id,
-            x0: this.view.x0, x1: this.view.x1, y0: this.view.y0, y1: this.view.y1,
-            w: Math.round(this.plot.w), h: Math.round(this.plot.h),
+            type: "density_view", seq, trace: g.trace.id,
+            x0: view.x0, x1: view.x1, y0: view.y0, y1: view.y1,
+            w: plotW, h: plotH,
           });
         }
       }
@@ -1780,6 +1852,15 @@ class ChartView {
     return this._viewInside({ x0: xRange[0], x1: xRange[1], y0: yRange[0], y1: yRange[1] });
   }
 
+  _drillExitFade(g) {
+    if (g._drillExitFadeStart === undefined || g._drillExitFadeStart === null) {
+      g._drillExitFadeStart = performance.now();
+    }
+    const fade = this._lodFade(g._drillExitFadeStart, 120);
+    if (fade >= 1) g._drillExitFadeStart = null;
+    return fade;
+  }
+
   _densityArea(d) {
     return Math.abs((d.xRange[1] - d.xRange[0]) * (d.yRange[1] - d.yRange[0]));
   }
@@ -1806,6 +1887,7 @@ class ChartView {
         const cand = g.densityCache[i];
         if (cand === g.density) continue;
         if (cand === g.prevDensity) continue;
+        if (cand === g._densitySwitchPrev) continue;
         if (drop < 0) { drop = i; continue; }
         const dropArea = this._densityArea(g.densityCache[drop]);
         const candArea = this._densityArea(cand);
@@ -1815,7 +1897,9 @@ class ChartView {
       }
       if (drop < 0) break;
       const old = g.densityCache.splice(drop, 1)[0];
-      if (old !== g.density && old !== g.prevDensity) this.gl.deleteTexture(old.tex);
+      if (old !== g.density && old !== g.prevDensity && old !== g._densitySwitchPrev) {
+        this.gl.deleteTexture(old.tex);
+      }
     }
   }
 
@@ -1825,7 +1909,8 @@ class ChartView {
     const gl = this.gl;
     for (const b of [d.xBuf, d.yBuf, d.cBuf, d.sBuf, d.selBuf, d.dBuf]) if (b) gl.deleteBuffer(b);
     g.drill = null;
-    g._drillFadeStart = 0;
+    g._drillFadeStart = null;
+    g._drillExitFadeStart = null;
   }
 
   _asF32(b) {
