@@ -224,6 +224,22 @@ def test_histogram_constant_values_auto_expands_range():
     assert heights.max() == 3.0
 
 
+def test_histogram_range_validation_rejects_bool_and_malformed_without_mutation():
+    cases = [
+        (lambda fig: fig.histogram([0.0, 1.0], bins=4, range=(False, 1.0)), "range\\[0\\]"),
+        (lambda fig: fig.histogram([0.0, 1.0], bins="auto", range=(0.0, True)), "range\\[1\\]"),
+        (lambda fig: fig.histogram([0.0, 1.0], bins=4, range=(2.0, 1.0)), "increasing"),
+        (lambda fig: fig.histogram([0.0, 1.0], bins=4, range=(0.0, np.inf)), "range\\[1\\]"),
+        (lambda fig: fig.histogram([0.0, 1.0], bins=4, range=(0.0,)), "exactly two"),
+    ]
+    for call, match in cases:
+        fig = Figure()
+        with pytest.raises(ValueError, match=match):
+            call(fig)
+        assert fig.traces == []
+        assert len(fig.store) == 0
+
+
 def test_statistical_chart_inputs_reject_complex_without_warning_or_mutation():
     cases = [
         lambda fig: fig.histogram(np.array([1.0 + 2.0j])),
@@ -526,6 +542,23 @@ def test_heatmap_validation_errors():
         Figure().heatmap([[1.0, 2.0]], x=[1.0, 1.0])
     with pytest.raises(ValueError, match="domain"):
         Figure().heatmap([[1.0]], domain=(2.0, 1.0))
+
+
+def test_heatmap_domain_validation_rejects_bool_and_malformed_without_mutation():
+    cases = [
+        (lambda fig: fig.heatmap([[1.0]], domain=(False, 1.0)), "domain\\[0\\]"),
+        (lambda fig: fig.heatmap([[1.0]], domain=(0.0, np.bool_(True))), "domain\\[1\\]"),
+        (lambda fig: fig.heatmap([[1.0]], domain=(0.0, np.inf)), "domain\\[1\\]"),
+        (lambda fig: fig.heatmap([[1.0]], domain=(1.0, 1.0)), "increasing"),
+        (lambda fig: fig.heatmap([[1.0]], domain=(0.0,)), "exactly two"),
+    ]
+    for call, match in cases:
+        fig = Figure()
+        with pytest.raises(ValueError, match=match):
+            call(fig)
+        assert fig.traces == []
+        assert len(fig.store) == 0
+        assert fig._axis_categories == {}
 
 
 def test_heatmap_duplicate_normalized_categories_raise_clear_error_without_mutating_axis():

@@ -419,14 +419,15 @@ class Figure:
             if range is None:
                 lo, hi = self._auto_domain(kernels.min_max(vals))
             else:
-                lo, hi = float(range[0]), float(range[1])
-            if not np.isfinite(lo) or not np.isfinite(hi) or not hi > lo:
-                raise ValueError("histogram range must be increasing")
+                lo, hi = self._finite_increasing_pair(range, "histogram range")
             counts, edges = kernels.histogram_uniform(vals, lo, hi, n_bins, density=density)
         else:
             finite = vals[np.isfinite(vals)]
             hist_bins = 10 if len(finite) == 0 and isinstance(bins, str) else bins
-            counts, edges = np.histogram(finite, bins=hist_bins, range=range, density=density)
+            hist_range = (
+                None if range is None else self._finite_increasing_pair(range, "histogram range")
+            )
+            counts, edges = np.histogram(finite, bins=hist_bins, range=hist_range, density=density)
         zeros = np.zeros_like(counts, dtype=np.float64)
         self._append_rect_trace(
             "histogram",
@@ -560,9 +561,7 @@ class Figure:
         if domain is None:
             lo, hi = self._auto_domain(kernels.min_max(z_flat))
         else:
-            lo, hi = float(domain[0]), float(domain[1])
-            if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
-                raise ValueError("heatmap domain must be finite and increasing")
+            lo, hi = self._finite_increasing_pair(domain, "heatmap domain")
         self._commit_axis_positions(x, "x")
         self._commit_axis_positions(y, "y")
         self.traces.append(
@@ -729,6 +728,18 @@ class Figure:
         if not np.isfinite(out):
             raise ValueError(f"{label} must be finite")
         return out
+
+    @staticmethod
+    def _finite_increasing_pair(values: Any, label: str) -> tuple[float, float]:
+        try:
+            lo_raw, hi_raw = values
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"{label} must contain exactly two finite values") from e
+        lo = Figure._finite_scalar(lo_raw, f"{label}[0]")
+        hi = Figure._finite_scalar(hi_raw, f"{label}[1]")
+        if hi <= lo:
+            raise ValueError(f"{label} must be finite and increasing")
+        return lo, hi
 
     @staticmethod
     def _positive_scalar(value: Any, label: str) -> float:
