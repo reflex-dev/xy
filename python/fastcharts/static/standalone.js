@@ -396,6 +396,9 @@ void main() {
   outColor = vec4(u_color.rgb * alpha, alpha);
 }`;
 // ---------------------------------------------------------------------------
+
+const LOD_DIRECT_POINT_BUDGET = 200000;
+const LOD_DRILL_EXIT_FACTOR = 1.15;
 // View-dependent LOD machinery (§5/§28) — chart-agnostic.
 //
 // Everything a tiered trace needs client-side, factored out of ChartView so a
@@ -513,14 +516,44 @@ function lodDensityArea(d) {
   return Math.abs((d.xRange[1] - d.xRange[0]) * (d.yRange[1] - d.yRange[0]));
 }
 
+function lodWindowArea(win) {
+  if (!win) return 0;
+  return Math.abs((win.x1 - win.x0) * (win.y1 - win.y0));
+}
+
+function lodWindowCenterInside(win, view) {
+  if (!win || !view) return false;
+  const cx = (view.x0 + view.x1) / 2;
+  const cy = (view.y0 + view.y1) / 2;
+  return cx >= win.x0 && cx <= win.x1 && cy >= win.y0 && cy <= win.y1;
+}
+
 function lodDensityForView(view, g) {
   const cache = g.densityCache || (g.density ? [g.density] : []);
   let best = null;
+  let broadest = null;
   for (const d of cache) {
-    if (!d || !d.tex || !view._viewInsideRange(d.xRange, d.yRange)) continue;
+    if (!d || !d.tex) continue;
+    if (!broadest || lodDensityArea(d) > lodDensityArea(broadest)) broadest = d;
+    if (!view._viewInsideRange(d.xRange, d.yRange)) continue;
     if (!best || lodDensityArea(d) < lodDensityArea(best)) best = d;
   }
-  return best || g.density;
+  return best || broadest || g.density;
+}
+
+function lodHoldPendingDrill(view, g, d) {
+  const pending = g._lodPendingView;
+  if (!d || !pending || g._drillDying) return false;
+  if (g._lodPendingSeq !== view.seq) return false;
+  if (g._lodPendingAt && performance.now() - g._lodPendingAt > 1200) return false;
+  if (!lodWindowCenterInside(d.win, pending)) return false;
+  const drillArea = lodWindowArea(d.win);
+  const pendingArea = lodWindowArea(pending);
+  if (!Number.isFinite(drillArea) || !Number.isFinite(pendingArea) || drillArea <= 0) return false;
+  const baseVisible = Number.isFinite(d.visible) ? d.visible : d.n;
+  if (!Number.isFinite(baseVisible) || baseVisible <= 0) return false;
+  const estimatedVisible = baseVisible * Math.max(1, pendingArea / drillArea);
+  return estimatedVisible <= LOD_DIRECT_POINT_BUDGET * LOD_DRILL_EXIT_FACTOR;
 }
 
 function lodRememberDensity(view, g, d) {
@@ -571,6 +604,7 @@ function lodApplyDrill(view, g, upd, buffers) {
   d.yMeta = { offset: upd.y.offset, scale: upd.y.scale };
   d.win = { x0: upd.x_range[0], x1: upd.x_range[1], y0: upd.y_range[0], y1: upd.y_range[1] };
   d.n = Math.min(upd.x.len, upd.y.len);
+  d.visible = upd.visible ?? d.n;
   d.seq = upd.drill_seq; // subset version — echoed with picks, gates selections
   d.selActive = false; // drilled subset changed; old mask indices are stale
   // The point under the cursor is a different row now; a cached tooltip for
@@ -621,6 +655,7 @@ function lodApplyDrill(view, g, upd, buffers) {
   // exit fade rather than fighting it.
   g._drillDying = false;
   g._drillExitFadeStart = null;
+  g._drillWasInside = false;
 }
 
 function lodDropDrill(view, g) {
@@ -631,6 +666,7 @@ function lodDropDrill(view, g) {
   g.drill = null;
   g._drillFadeStart = null;
   g._drillExitFadeStart = null;
+  g._drillWasInside = false;
   g._drillDying = false;
   view._hoverId = -1; // drilled indices are dead; don't reuse a cached row
   view._lastRow = null;
@@ -715,6 +751,7 @@ function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
   const inside = d && !g._drillDying && view._viewInside(d.win);
   const density = lodDensityForView(view, g);
   if (inside) {
+    g._drillWasInside = true;
     g._drillExitFadeStart = null;
     const fade = lodFade(view, g._drillFadeStart);
     if (fade < 1 && density && density.tex) {
@@ -726,13 +763,21 @@ function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
       view._drawPoints(d, view._map(d.xMeta, x0, x1), view._map(d.yMeta, y0, y1));
     }
   } else if (density && density.tex) {
-    const exitFade = d ? lodDrillExitFade(view, g) : 1;
-    if (exitFade < 1) {
+    if (lodHoldPendingDrill(view, g, d)) {
+      g._drillExitFadeStart = null;
+      view._drawPoints(d, view._map(d.xMeta, x0, x1), view._map(d.yMeta, y0, y1));
+      if (view._viewAnim) view.draw();
+      return;
+    }
+    const exitingDrill = d && g._drillWasInside;
+    const exitFade = exitingDrill ? lodDrillExitFade(view, g) : 1;
+    if (exitingDrill && exitFade < 1) {
       lodDrawDensityWithFade(view, g, density, exitFade);
       view._drawPoints(d, view._map(d.xMeta, x0, x1), view._map(d.yMeta, y0, y1), 1 - exitFade);
       view.draw();
     } else {
       if (g._drillDying) lodDropDrill(view, g); // fade done: free the buffers
+      else if (exitingDrill) g._drillWasInside = false;
       lodDrawDensityWithFade(view, g, density);
     }
   } else if (d) {
@@ -757,6 +802,7 @@ class ChartView {
     this.comm = comm;
     this.seq = 0;
     this._densityStamp = 0;
+    this._viewRequestBurstStart = null;
     this._viewAnim = null;
     this._animRaf = null;
     this._lastLabelDraw = null;
@@ -1738,22 +1784,24 @@ class ChartView {
 
     clearTimeout(this._viewTimer);
     this.seq += 1; // invalidate in-flight LOD replies for the pre-animation view
+    const request = opts.request !== false;
+    const requestDelay = opts.requestDelay ?? Math.min(55, Math.max(24, duration * 0.35));
+    const requestMaxWait = opts.requestMaxWait ?? 130;
+    if (request) {
+      this._scheduleViewRequest(target, { seq: this.seq, delay: requestDelay, maxWait: requestMaxWait });
+    }
     const now = performance.now();
     const tau = Math.max(18, duration / 5);
     if (this._viewAnim) {
       this._viewAnim.target = target;
-      this._viewAnim.deadline = now + duration;
       this._viewAnim.tau = tau;
-      this._viewAnim.request = this._viewAnim.request || opts.request !== false;
       return;
     }
 
     this._viewAnim = {
       target,
       last: now,
-      deadline: now + duration,
       tau,
-      request: opts.request !== false,
     };
     const lerp = (a, b, t) => a + (b - a) * t;
     const span = (v) => Math.max(Math.abs(v.x1 - v.x0), Math.abs(v.y1 - v.y0), 1e-12);
@@ -1769,7 +1817,7 @@ class ChartView {
       const dt = Math.max(0, Math.min(64, nowFrame - anim.last));
       anim.last = nowFrame;
       const k = 1 - Math.exp(-dt / anim.tau);
-      const t = nowFrame >= anim.deadline || closeEnough(this.view, anim.target) ? 1 : k;
+      const t = closeEnough(this.view, anim.target) ? 1 : k;
       this.view = {
         x0: lerp(this.view.x0, anim.target.x0, t),
         x1: lerp(this.view.x1, anim.target.x1, t),
@@ -1780,13 +1828,11 @@ class ChartView {
         this.draw();
         this._animRaf = requestAnimationFrame(step);
       } else {
-        const request = anim.request;
         this._animRaf = null;
         this._viewAnim = null;
         this.view = anim.target;
         this._lastLabelDraw = null;
         this.draw();
-        if (request) this._scheduleViewRequest();
       }
     };
     this._animRaf = requestAnimationFrame(step);
@@ -1887,17 +1933,38 @@ class ChartView {
     this._showTooltip(hit, e.clientX, e.clientY);
   }
 
-  _scheduleViewRequest() {
+  _scheduleViewRequest(viewOverride = this.view, opts = {}) {
     if (!this.comm) return;
     const needsLine = this.spec.traces.some((t) => t.tier === "decimated");
     const needsDensity = this.gpuTraces.some((g) => g.tier === "density");
     if (!needsLine && !needsDensity) return;
-    const seq = ++this.seq;
-    const view = { ...this.view };
+    const seq = opts.seq ?? ++this.seq;
+    const view = { ...viewOverride };
     const plotW = Math.round(this.plot.w);
     const plotH = Math.round(this.plot.h);
+    if (needsDensity) {
+      const now = performance.now();
+      for (const g of this.gpuTraces) {
+        if (g.tier !== "density") continue;
+        g._lodPendingView = view;
+        g._lodPendingSeq = seq;
+        g._lodPendingAt = now;
+      }
+    }
+    let delay = opts.delay ?? 120;
+    if (opts.maxWait !== undefined && opts.maxWait !== null) {
+      const now = performance.now();
+      if (this._viewRequestBurstStart === undefined || this._viewRequestBurstStart === null) {
+        this._viewRequestBurstStart = now;
+      }
+      const remaining = opts.maxWait - (now - this._viewRequestBurstStart);
+      delay = remaining <= 0 ? 0 : Math.min(delay, remaining);
+    } else {
+      this._viewRequestBurstStart = null;
+    }
     clearTimeout(this._viewTimer);
-    this._viewTimer = setTimeout(() => {
+    const send = () => {
+      this._viewRequestBurstStart = null;
       if (seq !== this.seq) return;
       if (needsLine) {
         this.comm.send({
@@ -1915,7 +1982,13 @@ class ChartView {
           });
         }
       }
-    }, 120);
+    };
+    if (delay <= 0) {
+      send();
+    } else {
+      this._viewTimer = setTimeout(send, delay);
+    }
+    return seq;
   }
 
   _onKernelMsg(msg, buffers) {
@@ -1940,6 +2013,11 @@ class ChartView {
       for (const upd of msg.traces) {
         const g = this.gpuTraces.find((t) => t.trace.id === upd.id && t.tier === "density");
         if (!g) continue;
+        if (msg.seq === undefined || g._lodPendingSeq === msg.seq) {
+          g._lodPendingView = null;
+          g._lodPendingSeq = null;
+          g._lodPendingAt = null;
+        }
         if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }
         lodApplyDensityUpdate(this, g, upd, buffers);
       }

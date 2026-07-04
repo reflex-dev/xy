@@ -9,6 +9,7 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = APP_ROOT.parent
 ASSET_DIR = APP_ROOT / "assets" / "charts"
 PLOTLY_SAMPLE_POINTS = 100_000
+STATIC_COLORED_SCATTER_POINTS = 10_000_000
 
 # Prefer the checkout source when running the example from this repository.
 sys.path.insert(0, str(APP_ROOT))
@@ -31,10 +32,10 @@ def write_chart(fig: Figure, name: str) -> None:
     print(f"wrote {path.relative_to(APP_ROOT)}")
 
 
-def write_live_drilldown_chart(name: str) -> None:
+def write_live_drilldown_chart(name: str, html: str | None = None) -> None:
     ASSET_DIR.mkdir(parents=True, exist_ok=True)
     path = ASSET_DIR / name
-    path.write_text(live_drilldown_html(), encoding="utf-8")
+    path.write_text(html or live_drilldown_html(), encoding="utf-8")
     print(f"wrote {path.relative_to(APP_ROOT)}")
 
 
@@ -93,8 +94,8 @@ def line_walk() -> Figure:
 
 def colored_scatter() -> Figure:
     return colored_scatter_figure(
-        LIVE_SCATTER_POINTS,
-        title="10M colored scatter",
+        STATIC_COLORED_SCATTER_POINTS,
+        title=f"{STATIC_COLORED_SCATTER_POINTS // 1_000_000}M colored scatter",
         width="100%",
         height=430,
     )
@@ -119,7 +120,9 @@ def density_scatter() -> Figure:
 
 
 def main() -> None:
-    write_live_drilldown_chart("live_drilldown_10m.html")
+    live_html = live_drilldown_html()
+    write_live_drilldown_chart("live_drilldown_100m.html", live_html)
+    write_live_drilldown_chart("live_drilldown_10m.html", live_html)
     write_chart(line_walk(), "line_walk.html")
     write_chart(colored_scatter(), "colored_scatter.html")
     write_plotly_chart("plotly_colored_scatter.html")

@@ -1,4 +1,7 @@
 // ---------------------------------------------------------------------------
+
+const LOD_DIRECT_POINT_BUDGET = 200000;
+const LOD_DRILL_EXIT_FACTOR = 1.15;
 // View-dependent LOD machinery (§5/§28) — chart-agnostic.
 //
 // Everything a tiered trace needs client-side, factored out of ChartView so a
@@ -116,14 +119,44 @@ function lodDensityArea(d) {
   return Math.abs((d.xRange[1] - d.xRange[0]) * (d.yRange[1] - d.yRange[0]));
 }
 
+function lodWindowArea(win) {
+  if (!win) return 0;
+  return Math.abs((win.x1 - win.x0) * (win.y1 - win.y0));
+}
+
+function lodWindowCenterInside(win, view) {
+  if (!win || !view) return false;
+  const cx = (view.x0 + view.x1) / 2;
+  const cy = (view.y0 + view.y1) / 2;
+  return cx >= win.x0 && cx <= win.x1 && cy >= win.y0 && cy <= win.y1;
+}
+
 function lodDensityForView(view, g) {
   const cache = g.densityCache || (g.density ? [g.density] : []);
   let best = null;
+  let broadest = null;
   for (const d of cache) {
-    if (!d || !d.tex || !view._viewInsideRange(d.xRange, d.yRange)) continue;
+    if (!d || !d.tex) continue;
+    if (!broadest || lodDensityArea(d) > lodDensityArea(broadest)) broadest = d;
+    if (!view._viewInsideRange(d.xRange, d.yRange)) continue;
     if (!best || lodDensityArea(d) < lodDensityArea(best)) best = d;
   }
-  return best || g.density;
+  return best || broadest || g.density;
+}
+
+function lodHoldPendingDrill(view, g, d) {
+  const pending = g._lodPendingView;
+  if (!d || !pending || g._drillDying) return false;
+  if (g._lodPendingSeq !== view.seq) return false;
+  if (g._lodPendingAt && performance.now() - g._lodPendingAt > 1200) return false;
+  if (!lodWindowCenterInside(d.win, pending)) return false;
+  const drillArea = lodWindowArea(d.win);
+  const pendingArea = lodWindowArea(pending);
+  if (!Number.isFinite(drillArea) || !Number.isFinite(pendingArea) || drillArea <= 0) return false;
+  const baseVisible = Number.isFinite(d.visible) ? d.visible : d.n;
+  if (!Number.isFinite(baseVisible) || baseVisible <= 0) return false;
+  const estimatedVisible = baseVisible * Math.max(1, pendingArea / drillArea);
+  return estimatedVisible <= LOD_DIRECT_POINT_BUDGET * LOD_DRILL_EXIT_FACTOR;
 }
 
 function lodRememberDensity(view, g, d) {
@@ -174,6 +207,7 @@ function lodApplyDrill(view, g, upd, buffers) {
   d.yMeta = { offset: upd.y.offset, scale: upd.y.scale };
   d.win = { x0: upd.x_range[0], x1: upd.x_range[1], y0: upd.y_range[0], y1: upd.y_range[1] };
   d.n = Math.min(upd.x.len, upd.y.len);
+  d.visible = upd.visible ?? d.n;
   d.seq = upd.drill_seq; // subset version — echoed with picks, gates selections
   d.selActive = false; // drilled subset changed; old mask indices are stale
   // The point under the cursor is a different row now; a cached tooltip for
@@ -224,6 +258,7 @@ function lodApplyDrill(view, g, upd, buffers) {
   // exit fade rather than fighting it.
   g._drillDying = false;
   g._drillExitFadeStart = null;
+  g._drillWasInside = false;
 }
 
 function lodDropDrill(view, g) {
@@ -234,6 +269,7 @@ function lodDropDrill(view, g) {
   g.drill = null;
   g._drillFadeStart = null;
   g._drillExitFadeStart = null;
+  g._drillWasInside = false;
   g._drillDying = false;
   view._hoverId = -1; // drilled indices are dead; don't reuse a cached row
   view._lastRow = null;
@@ -318,6 +354,7 @@ function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
   const inside = d && !g._drillDying && view._viewInside(d.win);
   const density = lodDensityForView(view, g);
   if (inside) {
+    g._drillWasInside = true;
     g._drillExitFadeStart = null;
     const fade = lodFade(view, g._drillFadeStart);
     if (fade < 1 && density && density.tex) {
@@ -329,13 +366,21 @@ function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
       view._drawPoints(d, view._map(d.xMeta, x0, x1), view._map(d.yMeta, y0, y1));
     }
   } else if (density && density.tex) {
-    const exitFade = d ? lodDrillExitFade(view, g) : 1;
-    if (exitFade < 1) {
+    if (lodHoldPendingDrill(view, g, d)) {
+      g._drillExitFadeStart = null;
+      view._drawPoints(d, view._map(d.xMeta, x0, x1), view._map(d.yMeta, y0, y1));
+      if (view._viewAnim) view.draw();
+      return;
+    }
+    const exitingDrill = d && g._drillWasInside;
+    const exitFade = exitingDrill ? lodDrillExitFade(view, g) : 1;
+    if (exitingDrill && exitFade < 1) {
       lodDrawDensityWithFade(view, g, density, exitFade);
       view._drawPoints(d, view._map(d.xMeta, x0, x1), view._map(d.yMeta, y0, y1), 1 - exitFade);
       view.draw();
     } else {
       if (g._drillDying) lodDropDrill(view, g); // fade done: free the buffers
+      else if (exitingDrill) g._drillWasInside = false;
       lodDrawDensityWithFade(view, g, density);
     }
   } else if (d) {

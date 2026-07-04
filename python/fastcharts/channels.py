@@ -121,7 +121,7 @@ def resolve_color(
             categories=[str(c) for c in cats.tolist()],
         )
 
-    vals = arr.astype(np.float64)
+    vals = arr.astype(np.float64, copy=False)
     finite = vals[np.isfinite(vals)]
     lo = float(finite.min()) if len(finite) else 0.0
     hi = float(finite.max()) if len(finite) else 1.0
@@ -139,7 +139,7 @@ def resolve_size(size: Any, n: int, *, range_px: tuple[float, float] = (2.0, 18.
     arr = np.asarray(size)
     if arr.ndim != 1 or len(arr) != n:
         raise ValueError(f"size array must be 1-D length {n}, got shape {arr.shape}")
-    vals = arr.astype(np.float64)
+    vals = arr.astype(np.float64, copy=False)
     finite = vals[np.isfinite(vals)]
     lo = float(finite.min()) if len(finite) else 0.0
     hi = float(finite.max()) if len(finite) else 1.0
