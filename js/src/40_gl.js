@@ -29,7 +29,19 @@ function makeProgram(gl, vs, fs) {
     gl.deleteProgram(p);
     throw new Error("program link: " + info);
   }
+  // Uniform-location cache (renderer audit R1): draw paths look locations up
+  // by name every frame; memoize per program so each name hits the driver once.
+  p._u = Object.create(null);
   return p;
+}
+
+function uniformOf(gl, prog, name) {
+  let loc = prog._u[name];
+  if (loc === undefined) {
+    loc = gl.getUniformLocation(prog, name);
+    prog._u[name] = loc;
+  }
+  return loc;
 }
 
 // Points: per-vertex position, plus optional per-vertex color scalar (a_cval)
