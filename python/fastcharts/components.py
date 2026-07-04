@@ -29,6 +29,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Optional, Union
 
+import numpy as np
+
 from .figure import Figure
 
 # ---------------------------------------------------------------------------
@@ -299,15 +301,17 @@ def heatmap(
 
 
 def x_axis(*, label: Optional[str] = None, type_: Optional[str] = None) -> Axis:
+    _validate_axis_type(type_)
     return Axis(which="x", label=label, type_=type_)
 
 
 def y_axis(*, label: Optional[str] = None, type_: Optional[str] = None) -> Axis:
+    _validate_axis_type(type_)
     return Axis(which="y", label=label, type_=type_)
 
 
 def legend(show: bool = True) -> Legend:
-    return Legend(show=show)
+    return Legend(show=_strict_bool(show, "legend show"))
 
 
 # ---------------------------------------------------------------------------
@@ -366,8 +370,12 @@ class Chart(Component):
             return self._figure
 
         marks = [c for c in self.children if isinstance(c, Mark)]
-        axes = {c.which: c for c in self.children if isinstance(c, Axis)}
+        axis_children = [c for c in self.children if isinstance(c, Axis)]
+        for axis in axis_children:
+            _validate_axis(axis)
+        axes = {c.which: c for c in axis_children}
         legends = [c for c in self.children if isinstance(c, Legend)]
+        legend_shows = [_strict_bool(c.show, "legend show") for c in legends]
         unknown = [c for c in self.children if not isinstance(c, (Mark, Axis, Legend))]
         if unknown:
             raise TypeError(
@@ -401,7 +409,7 @@ class Chart(Component):
                 raise TypeError(f"no applier registered for mark kind {m.kind!r}")
             applier(fig, m, data)
 
-        if legends and not legends[-1].show:
+        if legend_shows and not legend_shows[-1]:
             fig.show_legend = False
         self._figure = fig
         return fig
@@ -440,6 +448,24 @@ def _resolve_color(data: Any, color: Any) -> Any:
     if _looks_like_css(color):
         return color  # constant color
     return _resolve(data, color)  # column name → values (raises if no data)
+
+
+def _strict_bool(value: Any, label: str) -> bool:
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    raise ValueError(f"{label} must be True or False")
+
+
+def _validate_axis(axis: Axis) -> None:
+    if axis.which not in {"x", "y"}:
+        raise ValueError(f"axis.which must be 'x' or 'y', got {axis.which!r}")
+    _validate_axis_type(axis.type_)
+
+
+def _validate_axis_type(type_: Optional[str]) -> None:
+    if type_ is None or type_ in {"linear", "time", "log"}:
+        return
+    raise ValueError(f"axis type_ must be one of None, 'linear', 'time', or 'log', got {type_!r}")
 
 
 def _looks_like_css(s: str) -> bool:

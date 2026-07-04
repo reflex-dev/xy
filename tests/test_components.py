@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 import fastcharts as fc
-from fastcharts.components import Chart, Mark
+from fastcharts.components import Axis, Chart, Legend, Mark
 from fastcharts.widget import Selection
 
 
@@ -114,6 +114,46 @@ def test_legend_off():
     )
     spec, _ = chart.figure().build_payload()
     assert spec["show_legend"] is False
+
+
+def test_component_axis_and_legend_validate_public_props_without_caching_failure():
+    with pytest.raises(ValueError, match="axis type_"):
+        fc.x_axis(type_="logg")
+    with pytest.raises(ValueError, match="legend show"):
+        fc.legend(show="false")
+
+    bad_axis = Axis(which="z")
+    chart = fc.scatter_chart(fc.scatter(x=np.arange(3.0), y=np.arange(3.0)), bad_axis)
+    with pytest.raises(ValueError, match=r"axis\.which"):
+        chart.figure()
+    assert chart._figure is None
+
+    bad_axis.which = "x"
+    fig = chart.figure()
+    assert fig is chart.figure()
+    assert fig.x_label is None
+
+    bad_legend = Legend(show="false")
+    chart2 = fc.scatter_chart(fc.scatter(x=np.arange(3.0), y=np.arange(3.0)), bad_legend)
+    with pytest.raises(ValueError, match="legend show"):
+        chart2.figure()
+    assert chart2._figure is None
+    assert bad_legend.show == "false"
+
+
+def test_component_axis_types_accept_current_surface_and_warn_for_log_only():
+    fig = fc.scatter_chart(
+        fc.scatter(x=np.arange(3.0), y=np.arange(3.0)),
+        fc.x_axis(type_="linear"),
+        fc.y_axis(type_="time"),
+    ).figure()
+    assert len(fig.traces) == 1
+
+    with pytest.warns(RuntimeWarning, match="log axes"):
+        fc.scatter_chart(
+            fc.scatter(x=np.arange(3.0), y=np.arange(3.0)),
+            Axis(which="y", type_="log"),
+        ).figure()
 
 
 def test_line_chart():
