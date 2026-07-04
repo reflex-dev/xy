@@ -319,6 +319,12 @@ pub fn local_log_density(
         return;
     }
     let denom = gmax.ln_1p();
+    // Fold the log-normalization into the grid once per cell (w*h calls) rather
+    // than once per point (n calls) — the per-point pass then only gathers a
+    // precomputed value. Identical f32 arithmetic, so bitwise-equal output.
+    for c in grid.iter_mut() {
+        *c = if *c > 0.0 { c.ln_1p() / denom } else { 0.0 };
+    }
     let sx = w as f64 / (hi_x - lo_x);
     let sy = h as f64 / (hi_y - lo_y);
     for i in 0..x.len() {
@@ -330,8 +336,7 @@ pub fn local_log_density(
         }
         let cx = (((xv - lo_x) * sx) as isize).clamp(0, w as isize - 1) as usize;
         let cy = (((yv - lo_y) * sy) as isize).clamp(0, h as isize - 1) as usize;
-        let c = grid[cy * w + cx];
-        out[i] = if c > 0.0 { c.ln_1p() / denom } else { 0.0 };
+        out[i] = grid[cy * w + cx];
     }
 }
 
