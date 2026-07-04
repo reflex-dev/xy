@@ -118,7 +118,9 @@ jobs:
       - name: Install package for Python 3.11
         run: |
           python -VV
-          uv venv .venv --python python
+          # Absolute path: newer uv resolves a bare name as a directory, not
+          # the interpreter setup-python put on PATH.
+          uv venv .venv --python "$(command -v python)"
           uv pip install -p .venv/bin/python -e . "pytest>=8,<9"
 
       - name: Python 3.11 tests (native core)
