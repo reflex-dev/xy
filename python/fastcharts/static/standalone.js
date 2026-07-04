@@ -1072,6 +1072,17 @@ class ChartView {
       return g;
     }
 
+    // Per-mark GPU setup is dispatched through MARK_KINDS (55_marks.js) so a
+    // new chart kind is an entry in that registry, not another branch here.
+    const mark = MARK_KINDS[t.kind] || MARK_KINDS.scatter;
+    mark.build(this, g, t, buffer);
+    return g;
+  }
+
+  // Shared (x,y) geometry setup for xy-shaped marks (scatter, line, area, …).
+  // A mark whose geometry isn't a plain x/y pair (bars/candles have their own
+  // vertex layout) skips this and uploads its own buffers in build().
+  _buildXY(g, t, buffer) {
     const x = this._columnView(buffer, this.spec.columns[t.x]);
     const y = this._columnView(buffer, this.spec.columns[t.y]);
     g.xMeta = { ...this.spec.columns[t.x] };
@@ -1079,31 +1090,34 @@ class ChartView {
     g.n = Math.min(x.length, y.length);
     g.xBuf = this._upload(x);
     g.yBuf = this._upload(y);
+  }
 
-    if (t.kind === "scatter") {
-      g.colorMode = 0;
-      g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
-      if (t.color && t.color.mode === "continuous") {
-        g.colorMode = 1;
-        g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
-        g.lut = this._lut(t.color.colormap);
-      } else if (t.color && t.color.mode === "categorical") {
-        g.colorMode = 2;
-        g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
-        g.lut = this._paletteLut(t.color.palette);
-      }
-      g.sizeMode = 0;
-      g.size = (t.size && t.size.size) || 4.0;
-      g.sizeRange = [2, 18];
-      if (t.size && t.size.mode === "continuous") {
-        g.sizeMode = 1;
-        g.sBuf = this._upload(this._columnView(buffer, this.spec.columns[t.size.buf]));
-        g.sizeRange = t.size.range_px;
-      }
-    } else {
-      g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+  _buildScatterMark(g, t, buffer) {
+    this._buildXY(g, t, buffer);
+    g.colorMode = 0;
+    g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
+    if (t.color && t.color.mode === "continuous") {
+      g.colorMode = 1;
+      g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+      g.lut = this._lut(t.color.colormap);
+    } else if (t.color && t.color.mode === "categorical") {
+      g.colorMode = 2;
+      g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+      g.lut = this._paletteLut(t.color.palette);
     }
-    return g;
+    g.sizeMode = 0;
+    g.size = (t.size && t.size.size) || 4.0;
+    g.sizeRange = [2, 18];
+    if (t.size && t.size.mode === "continuous") {
+      g.sizeMode = 1;
+      g.sBuf = this._upload(this._columnView(buffer, this.spec.columns[t.size.buf]));
+      g.sizeRange = t.size.range_px;
+    }
+  }
+
+  _buildLineMark(g, t, buffer) {
+    this._buildXY(g, t, buffer);
+    g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
   }
 
   _uploadGrid(f32, w, h, maxVal) {
@@ -1186,10 +1200,8 @@ class ChartView {
         lodDrawDensityTier(this, g, x0, x1, y0, y1);
         continue;
       }
-      const xm = this._map(g.xMeta, x0, x1);
-      const ym = this._map(g.yMeta, y0, y1);
-      if (g.trace.kind === "scatter") this._drawPoints(g, xm, ym);
-      else this._drawLine(g, xm, ym);
+      const mark = MARK_KINDS[g.trace.kind] || MARK_KINDS.scatter;
+      mark.draw(this, g, x0, x1, y0, y1);
     }
     this._pickDirty = true;
     this._drawChrome();
@@ -2139,6 +2151,41 @@ class ChartView {
     this.root.remove();
   }
 }
+// ---------------------------------------------------------------------------
+// Mark-renderer registry — the client-side dispatch for chart kinds.
+//
+// Mirrors the kernel's `_emit_<kind>` dispatch (figure.py) so the two sides
+// stay symmetric: adding a 2D chart is an entry here plus an `_emit_<kind>`,
+// not another branch inside ChartView. A renderer owns two steps for its kind:
+//
+//   build(view, g, trace, buffer)   — GPU setup: upload geometry/attribute
+//                                     buffers onto the gpu record `g`. Reuse
+//                                     view._buildXY for plain (x,y) marks; a
+//                                     mark with its own vertex layout (bars,
+//                                     candles) uploads its own buffers.
+//   draw(view, g, x0, x1, y0, y1)   — one frame in the current data window.
+//                                     xy marks map with view._map(); a mark
+//                                     with a different transform maps itself.
+//
+// Tiering is orthogonal: a density-tier trace is handled by 45_lod.js before
+// this registry is consulted (its drilled marks still render as points today).
+// Picking and legend swatches are separate extension points documented in
+// docs/chart-kind-contract.md — generalize them when a pickable non-point
+// mark actually lands, not preemptively.
+// ---------------------------------------------------------------------------
+
+const MARK_KINDS = {
+  scatter: {
+    build: (view, g, t, buffer) => view._buildScatterMark(g, t, buffer),
+    draw: (view, g, x0, x1, y0, y1) =>
+      view._drawPoints(g, view._map(g.xMeta, x0, x1), view._map(g.yMeta, y0, y1)),
+  },
+  line: {
+    build: (view, g, t, buffer) => view._buildLineMark(g, t, buffer),
+    draw: (view, g, x0, x1, y0, y1) =>
+      view._drawLine(g, view._map(g.xMeta, x0, x1), view._map(g.yMeta, y0, y1)),
+  },
+};
 // ---------------------------------------------------------------------------
 // Entry points
 // ---------------------------------------------------------------------------

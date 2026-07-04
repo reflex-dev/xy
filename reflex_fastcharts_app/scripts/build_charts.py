@@ -16,7 +16,6 @@ sys.path.insert(0, str(APP_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "python"))
 
 from reflex_fastcharts_app.live_drilldown import (  # noqa: E402
-    LIVE_SCATTER_POINTS,
     colored_scatter_data,
     colored_scatter_figure,
     live_drilldown_html,
