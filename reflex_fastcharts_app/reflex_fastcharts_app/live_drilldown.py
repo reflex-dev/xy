@@ -90,10 +90,17 @@ async def drilldown_endpoint(request: Request) -> JSONResponse:
                 )
             except (KeyError, ValueError, IndexError):
                 return JSONResponse({"error": "bad density_view request"}, status_code=400)
-            return _response({"type": "density_update", "seq": content.get("seq"), **update}, buffers)
+            return _response(
+                {"type": "density_update", "seq": content.get("seq"), **update}, buffers
+            )
 
         if kind == "pick":
-            row = fig.pick(int(content.get("trace", -1)), int(content.get("index", -1)))
+            dseq = content.get("drill_seq")
+            row = fig.pick(
+                int(content.get("trace", -1)),
+                int(content.get("index", -1)),
+                None if dseq is None else int(dseq),
+            )
             return _response({"type": "pick_result", "seq": content.get("seq"), "row": row})
 
         if kind in {"select", "select_clear"}:

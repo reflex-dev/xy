@@ -52,6 +52,11 @@ class Trace:
     # current view ships real points instead of the density grid. Kernel-side
     # only — the per-view decision itself rides each update (§28).
     drill_mode: bool = False
+    # Monotonic version of shipped_sel. Every drill update bumps it and ships
+    # it; pick/selection echo it back so a reply computed against a *different*
+    # subset is dropped instead of translating indices in the wrong space
+    # (§16/§17: exact readout beats stale availability).
+    drill_seq: int = 0
 
     @property
     def n_points(self) -> int:
@@ -435,8 +440,12 @@ class Figure:
         cc = t.color_ch
         color_spec = cc.spec()
         if cc.mode == "continuous":
-            unit = channels.normalize_to_unit(cc.values, cc.domain)
-            color_spec["buf"] = ship_scalar(unit if sel is None else unit[sel])
+            # Slice *before* normalizing: normalization is element-wise over a
+            # precomputed global domain, and drill updates call this per zoom
+            # step — normalizing all N rows to ship a 200k window is O(N) work
+            # and ~8 bytes/row of temporaries for nothing.
+            vals = cc.values if sel is None else cc.values[sel]
+            color_spec["buf"] = ship_scalar(channels.normalize_to_unit(vals, cc.domain))
         elif cc.mode == "categorical":
             codes = cc.codes if sel is None else cc.codes[sel]
             color_spec["buf"] = ship_scalar(codes)
@@ -447,8 +456,8 @@ class Figure:
         sc = t.size_ch
         size_spec = sc.spec()
         if sc.mode == "continuous":
-            unit = channels.normalize_to_unit(sc.values, sc.domain)
-            size_spec["buf"] = ship_scalar(unit if sel is None else unit[sel])
+            vals = sc.values if sel is None else sc.values[sel]
+            size_spec["buf"] = ship_scalar(channels.normalize_to_unit(vals, sc.domain))
         return color_spec, size_spec
 
     def _density_trace_spec(self, t: Trace, xr, yr, w, h, ship_scalar) -> dict[str, Any]:  # noqa: ANN001
@@ -495,11 +504,15 @@ class Figure:
         """Re-bin a Tier-2 scatter for a new viewport (§5)."""
         return interaction.density_view(self, trace_id, x0, x1, y0, y1, w, h)
 
-    def pick(self, trace_id: int, index: int) -> Optional[dict[str, Any]]:
+    def pick(
+        self, trace_id: int, index: int, drill_seq: Optional[int] = None
+    ) -> Optional[dict[str, Any]]:
         """Exact source-row readout for a hover/pick (§16/§17); `index` is a
         shipped vertex index, translated to a canonical row when NaN rows were
-        dropped at ship time (§19)."""
-        return interaction.pick(self, trace_id, index)
+        dropped at ship time (§19). Pass the client's `drill_seq` to reject a
+        pick that raced a drill update (wrong index space → None, never a
+        wrong row)."""
+        return interaction.pick(self, trace_id, index, drill_seq)
 
     def select_range(
         self, x0: float, x1: float, y0: float, y1: float, trace_id: Optional[int] = None

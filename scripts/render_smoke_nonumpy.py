@@ -244,11 +244,12 @@ try{{
     const ds3=new Float32Array(n3);
     for(let i=0;i<n3;i++){{xs3[i]=(i%5-2)*1.5; ys3[i]=(Math.floor(i/5)-2)*1.5; cs3[i]=i/n3;
       ds3[i]=1-i/n3;}}
+    v._hoverId=42; v._lastRow={{x:1}}; // must be invalidated by the subset swap
     v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"points",visible:n3,
       x_range:[5000,5010],y_range:[5000,5010],
       x:{{buf:0,len:n3,offset:5005,scale:1}},y:{{buf:1,len:n3,offset:5005,scale:1}},
       color:{{mode:"continuous",colormap:"viridis",buf:2}},size:{{mode:"constant",size:8}},
-      density_val:{{buf:3}},lod_blend:0.85,density_colormap:"magma"}}]}},
+      density_val:{{buf:3}},lod_blend:0.85,density_colormap:"magma",drill_seq:5}}]}},
       [xs3.buffer,ys3.buffer,cs3.buffer,ds3.buffer]);
     const drilled=(gd.drill && gd.drill.n===n3 && gd.drill.colorMode===1
       && v._viewInside(gd.drill.win)===true)?1:0;
@@ -257,6 +258,20 @@ try{{
     const dblend=(gd.drill && gd.drill.dBuf && gd.drill.dlut
       && Math.abs(gd.drill.lodBlend-0.85)<1e-6
       && gd.drill.lodBlendShown===gd.drill.lodBlend)?1:0;
+    // Staff-review invariants: subset version stored, stale hover cache
+    // invalidated, stale selection masks dropped (wrong index space), and
+    // palette LUTs cached (categorical drills leaked a texture per update).
+    const dseq=(gd.drill && gd.drill.seq===5)?1:0;
+    const hov=(v._hoverId===-1 && !v._lastRow)?1:0;
+    const selIdx=new Uint32Array([0,1,2]);
+    v._onKernelMsg({{type:"selection",total:3,traces:[{{id:gd.trace.id,buf:0,drill_seq:4}}]}},
+      [selIdx.buffer]);
+    const sstale=(gd.drill.selActive!==true)?1:0;
+    v._onKernelMsg({{type:"selection",total:3,traces:[{{id:gd.trace.id,buf:0,drill_seq:5}}]}},
+      [selIdx.buffer]);
+    const sfresh=(gd.drill.selActive===true)?1:0;
+    v._clearSelection();
+    const plut=(v._paletteLut(["#112233","#445566"])===v._paletteLut(["#112233","#445566"]))?1:0;
     v._drawNow();
     const hit3=v._pickAt(v.plot.w/2, v.plot.h/2);
     const dpick=(hit3 && hit3.trace===gd.trace.id)?1:0;
@@ -342,7 +357,7 @@ try{{
     const stale=(staleReply && staleQueued && staleAnim)?1:0;
     v.view=oldView;
     v._drawNow();
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} dblend=${{dblend}} dpick=${{dpick}} zoomout=${{zoomout}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}}`;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} dpick=${{dpick}} zoomout=${{zoomout}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -416,6 +431,11 @@ try{{
     pick2 = int(re.search(r"pick2=(\d+)", title).group(1))
     drill = int(re.search(r"drill=(\d+)", title).group(1))
     dblend = int(re.search(r"dblend=(\d+)", title).group(1))
+    dseq = int(re.search(r"dseq=(\d+)", title).group(1))
+    hov = int(re.search(r"hov=(\d+)", title).group(1))
+    sstale = int(re.search(r"sstale=(\d+)", title).group(1))
+    sfresh = int(re.search(r"sfresh=(\d+)", title).group(1))
+    plut = int(re.search(r"plut=(\d+)", title).group(1))
     density_lit = int(re.search(r"densityLit=(\d+)", title).group(1))
     dpick = int(re.search(r"dpick=(\d+)", title).group(1))
     zoomout = int(re.search(r"zoomout=(\d+)", title).group(1))
@@ -430,7 +450,9 @@ try{{
         f"modebar btns: {btns}, zoom-in: {zin}, box-zoom: {box}, zoom-mode: {zmode}, "
         f"fluid: {fluid}, resize grew: {grew}, pick realloc: {pick2}"
     )
-    if not (0.001 < frac < 0.95):
+    # Upper bound guards "every pixel lit = blend/clear broke", not brightness:
+    # the current density opacity ramp legitimately lights ~95% of the plot.
+    if not (0.001 < frac < 0.985):
         raise SystemExit(f"suspicious lit fraction {frac}")
     if labels < 6:
         raise SystemExit(f"too few DOM tick labels: {labels}")
@@ -472,6 +494,16 @@ try{{
         raise SystemExit("density trace did not drill in to points on a points update")
     if dblend != 1:
         raise SystemExit("drill update did not carry the local-density color blend")
+    if dseq != 1:
+        raise SystemExit("drill subset version (drill_seq) was not stored on the client")
+    if hov != 1:
+        raise SystemExit("stale hover cache survived a drilled-subset swap")
+    if sstale != 1:
+        raise SystemExit("selection mask from another drill_seq was applied (index-space bug)")
+    if sfresh != 1:
+        raise SystemExit("matching-drill_seq selection mask was not applied")
+    if plut != 1:
+        raise SystemExit("palette LUT not cached (GL texture leak per categorical drill)")
     if density_lit != 1:
         raise SystemExit("density trace did not render visible pixels by itself")
     if dpick != 1:

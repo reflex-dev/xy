@@ -75,6 +75,7 @@ def write_plotly_chart(name: str) -> None:
     )
     print(f"wrote {path.relative_to(APP_ROOT)}")
 
+
 def line_walk() -> Figure:
     rng = np.random.default_rng(7)
     n = 120_000
