@@ -1,0 +1,127 @@
+# Benchmark Methodology — Defensible Numbers
+
+**Status:** methodology spec. Extends the shipped harness (`benchmarks/
+bench_vs.py` adapters, `categories.py` registry, `_browser.py` FCP-based
+TTFR, `bench_scatter_native.py`, CI `benchmark` job feeding
+`docs/benchmark.md`). Written to survive a hostile Hacker News thread: every
+number is mode-scoped, reproducible, oracle-checked, and the cases we *lose*
+are published.
+
+## 0. The three rules
+
+1. **Mode-scoped claims only** (§2 of the dossier, already policy): "10M
+   density in X ms" is a different claim from "10M individually-styled
+   markers." Output labels every row `direct | decimated | density | sampled`
+   — a reader can never mistake an aggregate result for a raw-marker result.
+2. **Same-work comparisons.** Each competitor renders the *same visual
+   contract*, not the same API call: if FastCharts aggregates at 10M, the
+   fair Plotly comparison is Plotly failing/succeeding at raw markers AND
+   Plotly+Datashader doing aggregation — both are reported. We never
+   benchmark our fast path against a competitor's wrong tool.
+3. **Truthfulness is a benchmark axis, not a footnote** (§6). Fast-but-wrong
+   fails the suite.
+
+## 1. Metric definitions (each with a precise probe)
+
+| Metric | Definition | Probe |
+|---|---|---|
+| payload prep | wall time: canonical arrays → wire payload (spec+blob) | `perf_counter` around `build_payload`; competitors: their figure→HTML/JSON serialize |
+| wire size | bytes crossing to the client | `len(blob)+len(spec_json)`; competitors: HTML/JSON size |
+| browser TTFR | navigation → first contentful paint of the chart | shipped `_browser.py` (headless Chromium, FCP entry); identical page harness per library |
+| interaction-ready | navigation → first successful synthetic wheel-zoom applied (view actually changes) | extend page probe: dispatch wheel, RAF-poll view/transform change |
+| pan/zoom latency | p50/p95/p99 of input→pixels for a scripted 60-step pan and 20-step zoom | `performance.now()` deltas around dispatched events + RAF completion; report *percentiles*, never means (§17 framing) |
+| memory (kernel) | peak RSS delta + tracemalloc peak during prep | shipped psutil/tracemalloc pattern |
+| memory (browser) | JS heap + (where available) GPU memory after settle | CDP `Performance.getMetrics`; disclose that GPU numbers are best-effort |
+| install size | `pip install` into a fresh venv: total site-packages bytes + wheel bytes + transitive dep count | scripted venv; competitors measured identically (Plotly+kaleido vs plotly alone reported separately) |
+| cold import | `python -c "import lib"` best-of-5 fresh interpreters | subprocess timing (already the §33 import-budget concern) |
+| small-data | full pipeline at N=1k/10k: prep+TTFR+interaction-ready | the "performance library must not lose the everyday case" check |
+| large-data | N=1M/10M/100M per mode ladder | scatter+line+heatmap scenarios |
+
+## 2. Truthfulness/exactness checks (the novel part)
+
+Every performance scenario carries an **oracle assertion**; a run that fails
+its oracle produces no number (it produces a bug):
+
+- **Extrema preservation (lines):** decimated polyline's per-pixel-column
+  min/max equals NumPy oracle min/max (M4's contract). Global max/min pixels
+  are lit within ±1px column.
+- **Count conservation (density/histogram):** sum(grid) == in-window row
+  count (already the pattern in kernel tests; promoted to the bench harness
+  at 10M/100M).
+- **Channel honesty (after LOD phase 1):** per-cell mean grid equals NumPy
+  groupby-mean oracle within f32 eps; majority cells match; purity ∈ [0,1].
+- **Drill exactness:** zoom to ≤ budget ⇒ rendered point count == oracle
+  window count; hover row values equal source f64 exactly.
+- **Determinism:** two identical runs produce byte-identical payloads and
+  (SwiftShader) identical pixel hashes — the anti-shimmer guarantee, and
+  it's what makes all other numbers reproducible.
+- **Reduction disclosure:** spec records tier/mode/visible for every
+  reduced trace (assert present) — "no silent quality changes" as a test.
+
+Competitors get the same oracles where the claim applies (e.g. Datashader
+count conservation — it passes; Plotly scattergl marker dropout at high N —
+documented finding, with repro).
+
+## 3. Competitor matrix
+
+Shipped adapters: fastcharts, Plotly, matplotlib, seaborn, Bokeh, Altair,
+Datashader, hvPlot/HoloViews. Add: **PyGWalker** (adapter: programmatic
+`walk()` export path; if headless render proves unstable, report
+prep+payload only and say so) and **plotly-resampler** (the honest line
+competitor — it's the same decimation thesis; comparing against vanilla
+Plotly alone on lines would be a strawman). Every adapter: pinned versions
+in the CI lockstep, `unavailable` rows rather than silent omission (already
+harness behavior).
+
+Per-competitor fairness notes ship in the report: Plotly measured both via
+kaleido-PNG (their static path) and browser-HTML (their interactive path);
+matplotlib is Agg (it's not interactive — its interaction rows are `n/a`,
+not zero); Datashader is prep-only unless embedded in HoloViews (both
+reported).
+
+## 4. Environment & disclosure protocol
+
+- **Two tiers of numbers:** (a) CI numbers — GitHub Actions ubuntu runner,
+  SwiftShader software GL; reproducible by anyone from the repo, labeled
+  "CI (software GL)"; (b) reference-hardware numbers — one pinned desktop
+  spec (documented CPU/GPU/driver/browser build), labeled as such. Never mix
+  tiers in one table. HN's first attack is "benchmarked on a potato/cherry
+  machine" — pre-empt by publishing both.
+- Every table header carries: dataset generator + seed, library versions,
+  timestamp, harness commit. `benchmark.json` (already emitted by CI) is the
+  canonical artifact; `docs/benchmark.md` renders from it — numbers in prose
+  that don't exist in the artifact are banned (existing policy, kept).
+- **Warm/cold discipline:** every timing reports which it is; first-run
+  (cold cache) and steady-state are separate rows for TTFR and import.
+- **Losses ship.** The report has a standing "where FastCharts loses" table
+  (e.g., tiny-data static PNG export vs matplotlib; ecosystem breadth).
+  Nothing buys credibility like published losses.
+
+## 5. Scenario set (the public story)
+
+1. `small_startup`: 1k line + 10k scatter — TTFR/interaction-ready vs all.
+2. `line_10M`: decimated line vs plotly-resampler vs Bokeh — extrema oracle.
+3. `scatter_10M_plain` and `scatter_10M_channels`: density path vs
+   Datashader/HoloViews; channel-honesty oracle; Plotly raw as the
+   documented-failure row.
+4. `scatter_100M_pan`: pyramid pan/zoom percentiles (post LOD phase 3) —
+   the headline; includes never-blank check (frame sampling: no frame
+   without chart pixels).
+5. `drilldown_truth`: 10M → zoom to 50k ⇒ exact points + exact hover.
+6. `dashboard_20`: 20 mixed charts on one page — total TTFR/memory (the
+   Reflex story; competitors: Plotly/Bokeh equivalents).
+7. `install_import`: sizes + cold import vs all.
+
+## 6. Implementation plan
+
+1. Percentile interaction probe in `_browser.py` (dispatch synthetic wheel/
+   pointer events; collect RAF-timed deltas) — unlocks pan/zoom latency and
+   interaction-ready.
+2. Oracle module `benchmarks/oracles.py` (NumPy references + assertions),
+   wired into `bench_vs.py` scenario runs.
+3. PyGWalker + plotly-resampler adapters; `dashboard_20` scenario page.
+4. `benchmark.json` schema v2: add mode labels, oracle pass/fail, env tier,
+   percentiles; `docs/benchmark.md` regenerated from it (keep the "measured,
+   not cited" rule).
+5. Reference-hardware runbook (`benchmarks/README`): exact pins + one-command
+   repro; publish both tiers on the next README refresh.
