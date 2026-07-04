@@ -272,6 +272,18 @@ try{{
     const sfresh=(gd.drill.selActive===true)?1:0;
     v._clearSelection();
     const plut=(v._paletteLut(["#112233","#445566"])===v._paletteLut(["#112233","#445566"]))?1:0;
+    // Flashing fix: a points REFRESH (already drilled) must not restart the
+    // entry fade — restarting blanked the points to ~0 alpha on every kernel
+    // reply while zooming inside a drilled view.
+    gd._drillFadeStart=null; // entry fade settled
+    v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"points",visible:n3,
+      x_range:[5000,5010],y_range:[5000,5010],
+      x:{{buf:0,len:n3,offset:5005,scale:1}},y:{{buf:1,len:n3,offset:5005,scale:1}},
+      color:{{mode:"continuous",colormap:"viridis",buf:2}},size:{{mode:"constant",size:8}},
+      density_val:{{buf:3}},lod_blend:0.7,density_colormap:"magma",drill_seq:6}}]}},
+      [xs3.buffer,ys3.buffer,cs3.buffer,ds3.buffer]);
+    const refresh=(gd.drill && gd.drill.seq===6 && gd._drillFadeStart===null
+      && gd._drillDying!==true)?1:0;
     v._drawNow();
     const hit3=v._pickAt(v.plot.w/2, v.plot.h/2);
     const dpick=(hit3 && hit3.trace===gd.trace.id)?1:0;
@@ -322,8 +334,14 @@ try{{
     const grid3=new Float32Array(16).fill(1);
     v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"density",visible:999999,
       density:{{buf:0,w:4,h:4,max:1,x_range:[5000,5010],y_range:[5000,5010]}}}}]}},[grid3.buffer]);
-    const dback=(!gd.drill)?1:0;
+    // Flashing fix: drill-out must not hard-cut the points. The drill is
+    // marked dying, fades over the incoming density, and is freed only when
+    // the exit fade completes.
+    const dying=(gd.drill && gd._drillDying===true && gd._drillExitFadeStart!=null)?1:0;
     const dnorm=(gd.density && gd.density.max===1 && gd.density.normMax>gd.density.max)?1:0;
+    gd._drillExitFadeStart-=999; // expire the exit fade
+    v._drawNow();
+    const dback=(!gd.drill && gd._drillDying!==true)?1:0;
     if(gd._densityNormAnim) gd._densityNormAnim.startedAt-=gd._densityNormAnim.duration+1;
     v._drawNow();
     const dnormDone=(gd.density && Math.abs(gd.density.normMax-gd.density.max)<1e-6
@@ -357,7 +375,7 @@ try{{
     const stale=(staleReply && staleQueued && staleAnim)?1:0;
     v.view=oldView;
     v._drawNow();
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} dpick=${{dpick}} zoomout=${{zoomout}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}}`;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} refresh=${{refresh}} dpick=${{dpick}} zoomout=${{zoomout}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -436,6 +454,8 @@ try{{
     sstale = int(re.search(r"sstale=(\d+)", title).group(1))
     sfresh = int(re.search(r"sfresh=(\d+)", title).group(1))
     plut = int(re.search(r"plut=(\d+)", title).group(1))
+    refresh = int(re.search(r"refresh=(\d+)", title).group(1))
+    dying = int(re.search(r"dying=(\d+)", title).group(1))
     density_lit = int(re.search(r"densityLit=(\d+)", title).group(1))
     dpick = int(re.search(r"dpick=(\d+)", title).group(1))
     zoomout = int(re.search(r"zoomout=(\d+)", title).group(1))
@@ -504,6 +524,10 @@ try{{
         raise SystemExit("matching-drill_seq selection mask was not applied")
     if plut != 1:
         raise SystemExit("palette LUT not cached (GL texture leak per categorical drill)")
+    if refresh != 1:
+        raise SystemExit("points refresh restarted the entry fade (per-reply flash)")
+    if dying != 1:
+        raise SystemExit("drill-out dropped points instantly instead of fading (flash)")
     if density_lit != 1:
         raise SystemExit("density trace did not render visible pixels by itself")
     if dpick != 1:

@@ -890,7 +890,10 @@ class ChartView {
         // overview instead until the kernel sends a fresh subset/grid for the
         // wider view.
         const d = g.drill;
-        const inside = d && this._viewInside(d.win);
+        // A dying drill (density update arrived while drilled) always takes
+        // the exit-fade path — even with the view still inside its window —
+        // so the points→density handoff is a fade, never a hard cut.
+        const inside = d && !g._drillDying && this._viewInside(d.win);
         const density = this._densityForView(g);
         if (inside) {
           g._drillExitFadeStart = null;
@@ -910,6 +913,7 @@ class ChartView {
             this._drawPoints(d, this._map(d.xMeta, x0, x1), this._map(d.yMeta, y0, y1), 1 - exitFade);
             this.draw();
           } else {
+            if (g._drillDying) this._dropDrill(g); // fade done: free the buffers
             this._drawDensityWithFade(g, density);
           }
         } else if (d) {
@@ -1189,7 +1193,7 @@ class ChartView {
       // Density traces pick only while drilled to points (§5); the drill
       // sibling carries the buffers, the host g keeps the slot → trace id.
       const pg = g.tier === "density"
-        ? (g.drill && this._viewInside(g.drill.win) ? g.drill : null)
+        ? (g.drill && !g._drillDying && this._viewInside(g.drill.win) ? g.drill : null)
         : (g.trace.kind === "scatter" ? g : null);
       if (!pg || !pg.n) { g.pickSlot = -1; continue; } // stale slots must not alias
       const xm = this._map(pg.xMeta, x0, x1);
@@ -1741,7 +1745,14 @@ class ChartView {
         const g = this.gpuTraces.find((t) => t.trace.id === upd.id && t.tier === "density");
         if (!g) continue;
         if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }
-        this._dropDrill(g); // window over budget again → back to the aggregate
+        // Window over budget again → back to the aggregate. Don't drop the
+        // points instantly (that hard-cut the exit fade mid-flight — a visible
+        // flash on drill-out): mark the drill dying, let the draw path fade it
+        // over the incoming density and free it when the fade completes.
+        if (g.drill) {
+          g._drillDying = true;
+          if (g._drillExitFadeStart == null) g._drillExitFadeStart = performance.now();
+        }
         const d = upd.density;
         const grid = this._copyGrid(this._asF32(buffers[d.buf]));
         const normStart = this._densityNormMax(g, d.max);
@@ -1809,6 +1820,7 @@ class ChartView {
   // switches back.
   _applyDrill(g, upd, buffers) {
     const gl = this.gl;
+    const fresh = !g.drill; // transition INTO drill vs refresh of a live drill
     let d = g.drill;
     if (!d) {
       d = g.drill = { trace: g.trace, xBuf: gl.createBuffer(), yBuf: gl.createBuffer() };
@@ -1864,7 +1876,14 @@ class ChartView {
     } else {
       d.lodBlend = 0;
     }
-    g._drillFadeStart = performance.now();
+    // The entry fade runs ONLY on the density→points transition. Restarting it
+    // on every refresh made the points blink to ~0 alpha after each kernel
+    // reply — a steady flash while zooming within a drilled view.
+    if (fresh) g._drillFadeStart = performance.now();
+    // A live points update revives a dying drill (hysteresis flip): cancel the
+    // exit fade rather than fighting it.
+    g._drillDying = false;
+    g._drillExitFadeStart = null;
   }
 
   // Is the current view fully covered by a drilled window? A tiny epsilon
@@ -1941,6 +1960,7 @@ class ChartView {
     g.drill = null;
     g._drillFadeStart = null;
     g._drillExitFadeStart = null;
+    g._drillDying = false;
     this._hoverId = -1; // drilled indices are dead; don't reuse a cached row
     this._lastRow = null;
   }
