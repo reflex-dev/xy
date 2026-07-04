@@ -561,3 +561,247 @@ mod tests {
         assert_eq!(out[3], 0.0);
     }
 }
+
+#[cfg(test)]
+mod fuzz {
+    //! Deterministic fuzz: hostile inputs (NaN, ±inf, huge/tiny magnitudes,
+    //! empty/short arrays) against kernel invariants. Zero-crate by design —
+    //! a seeded xorshift64* PRNG makes every failure reproducible from its
+    //! iteration number. These are the properties humans forget to hand-test.
+    use super::*;
+
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            // xorshift64* — deterministic, no crates.
+            let mut x = self.0;
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            self.0 = x;
+            x.wrapping_mul(0x2545F4914F6CDD1D)
+        }
+        fn f01(&mut self) -> f64 {
+            (self.next() >> 11) as f64 / (1u64 << 53) as f64
+        }
+        /// Hostile scalar: mostly in-range, salted with NaN/±inf/huge/tiny/-0.
+        fn hostile(&mut self, lo: f64, hi: f64) -> f64 {
+            match self.next() % 16 {
+                0 => f64::NAN,
+                1 => f64::INFINITY,
+                2 => f64::NEG_INFINITY,
+                3 => 1e300,
+                4 => -1e300,
+                5 => 1e-300,
+                6 => -0.0,
+                _ => lo + self.f01() * (hi - lo),
+            }
+        }
+        fn hostile_vec(&mut self, n: usize, lo: f64, hi: f64) -> Vec<f64> {
+            (0..n).map(|_| self.hostile(lo, hi)).collect()
+        }
+    }
+
+    fn naive_in_window(x: &[f64], y: &[f64], x0: f64, x1: f64, y0: f64, y1: f64) -> usize {
+        x.iter()
+            .zip(y)
+            .filter(|(&a, &b)| {
+                a.is_finite() && b.is_finite() && a >= x0 && a < x1 && b >= y0 && b < y1
+            })
+            .count()
+    }
+
+    #[test]
+    fn fuzz_zone_maps_accounting() {
+        let mut rng = Rng(0x5EED_0001);
+        for it in 0..200 {
+            let n = (rng.next() % 300) as usize;
+            let data = rng.hostile_vec(n, -50.0, 50.0);
+            let maps = zone_maps(&data, 64);
+            // Contract (pinned by zone_maps_inf_is_null): `count` is FINITE
+            // rows only; non-finite rows land in `null_count`; they partition n.
+            let finite: u64 = maps.iter().map(|m| m.count).sum();
+            let nulls: u64 = maps.iter().map(|m| m.null_count).sum();
+            let naive_nulls = data.iter().filter(|v| !v.is_finite()).count() as u64;
+            assert_eq!(finite + nulls, n as u64, "partition it={it}");
+            assert_eq!(nulls, naive_nulls, "it={it}");
+            // per-chunk min/max are finite whenever the chunk has a finite value
+            for m in &maps {
+                if m.count > 0 {
+                    assert!(m.min.is_finite() && m.max.is_finite() && m.min <= m.max, "it={it}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fuzz_min_max_matches_naive() {
+        let mut rng = Rng(0x5EED_0002);
+        for it in 0..200 {
+            let n = (rng.next() % 200) as usize;
+            let data = rng.hostile_vec(n, -1e6, 1e6);
+            let got = min_max(&data);
+            let finite: Vec<f64> = data.iter().copied().filter(|v| v.is_finite()).collect();
+            match got {
+                None => assert!(finite.is_empty(), "it={it}"),
+                Some((lo, hi)) => {
+                    let nlo = finite.iter().copied().fold(f64::INFINITY, f64::min);
+                    let nhi = finite.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                    assert_eq!((lo, hi), (nlo, nhi), "it={it}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fuzz_encode_f32_shape_and_determinism() {
+        let mut rng = Rng(0x5EED_0003);
+        for it in 0..200 {
+            let n = (rng.next() % 200) as usize;
+            let data = rng.hostile_vec(n, -1e4, 1e4);
+            let offset = rng.hostile(-1e4, 1e4);
+            let mut a = Vec::new();
+            let mut b = Vec::new();
+            encode_f32(&data, offset, 1.0, &mut a);
+            encode_f32(&data, offset, 1.0, &mut b);
+            assert_eq!(a.len(), n, "it={it}");
+            // NaN != NaN, so determinism is a BITWISE property.
+            let bits = |v: &Vec<f32>| v.iter().map(|f| f.to_bits()).collect::<Vec<u32>>();
+            assert_eq!(bits(&a), bits(&b), "determinism it={it}");
+            if offset.is_finite() {
+                for (i, (&v, &e)) in data.iter().zip(&a).enumerate() {
+                    // moderate finite inputs stay finite through the encoding
+                    if v.is_finite() && v.abs() < 1e30 && offset.abs() < 1e30 {
+                        assert!(e.is_finite(), "it={it} i={i} v={v} off={offset}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fuzz_m4_indices_window_and_bounds() {
+        let mut rng = Rng(0x5EED_0004);
+        for it in 0..200 {
+            let n = (rng.next() % 300) as usize;
+            // x must be ascending (ingest contract); y is hostile.
+            let mut x: Vec<f64> = (0..n).map(|i| i as f64).collect();
+            // salt some non-finite y and occasional NaN x tail (argsort-last shape)
+            let y = rng.hostile_vec(n, -100.0, 100.0);
+            if n > 4 && rng.next() % 4 == 0 {
+                let k = n - 1;
+                x[k] = f64::NAN;
+            }
+            let buckets = 1 + (rng.next() % 64) as usize;
+            let x0 = rng.f01() * (n as f64);
+            let x1 = x0 + 1.0 + rng.f01() * (n as f64);
+            let idx = m4_indices(&x, &y, x0, x1, buckets);
+            let idx2 = m4_indices(&x, &y, x0, x1, buckets);
+            assert_eq!(idx, idx2, "determinism it={it}");
+            assert!(idx.len() <= 4 * buckets, "it={it}");
+            let mut prev: i64 = -1;
+            for &i in &idx {
+                assert!((i as usize) < n, "it={it}");
+                assert!(i as i64 > prev, "sorted+dedup it={it}");
+                prev = i as i64;
+                let xv = x[i as usize];
+                assert!(xv.is_finite() && xv >= x0 && xv < x1, "window it={it}");
+                assert!(y[i as usize].is_finite(), "§19 it={it}");
+            }
+        }
+    }
+
+    #[test]
+    fn fuzz_bin_2d_count_conservation() {
+        let mut rng = Rng(0x5EED_0005);
+        for it in 0..200 {
+            let n = (rng.next() % 300) as usize;
+            let x = rng.hostile_vec(n, -10.0, 10.0);
+            let y = rng.hostile_vec(n, -10.0, 10.0);
+            let (w, h) = (1 + (rng.next() % 16) as usize, 1 + (rng.next() % 12) as usize);
+            let (x0, x1, y0, y1) = (-5.0, 7.0, -6.0, 4.0);
+            let mut grid = vec![0f32; w * h];
+            bin_2d(&x, &y, x0, x1, y0, y1, w, h, &mut grid);
+            let total: f64 = grid.iter().map(|&c| c as f64).sum();
+            let naive = naive_in_window(&x, &y, x0, x1, y0, y1) as f64;
+            assert_eq!(total, naive, "conservation it={it}");
+            assert!(grid.iter().all(|&c| c >= 0.0), "it={it}");
+        }
+    }
+
+    #[test]
+    fn fuzz_histogram_uniform_conservation() {
+        let mut rng = Rng(0x5EED_0006);
+        for it in 0..200 {
+            let n = (rng.next() % 400) as usize;
+            let data = rng.hostile_vec(n, -20.0, 20.0);
+            let bins = 1 + (rng.next() % 64) as usize;
+            let (lo, hi) = (-10.0, 15.0);
+            let mut out = vec![0f64; bins];
+            let counted = histogram_uniform(&data, lo, hi, &mut out);
+            let naive = data
+                .iter()
+                .filter(|v| v.is_finite() && **v >= lo && **v <= hi)
+                .count() as u64;
+            assert_eq!(counted, naive, "it={it}");
+            let total: f64 = out.iter().sum();
+            assert_eq!(total, naive as f64, "sum it={it}");
+            assert!(out.iter().all(|&c| c >= 0.0), "it={it}");
+        }
+    }
+
+    #[test]
+    fn fuzz_range_indices_sorted_exact() {
+        let mut rng = Rng(0x5EED_0007);
+        for it in 0..200 {
+            let n = (rng.next() % 300) as usize;
+            let x = rng.hostile_vec(n, -10.0, 10.0);
+            let y = rng.hostile_vec(n, -10.0, 10.0);
+            let (lo_x, hi_x, lo_y, hi_y) = (-4.0, 8.0, -9.0, 3.0);
+            let mut out = vec![0u32; n];
+            let m = range_indices(&x, &y, lo_x, hi_x, lo_y, hi_y, &mut out);
+            let naive: Vec<u32> = (0..n)
+                .filter(|&i| x[i] >= lo_x && x[i] <= hi_x && y[i] >= lo_y && y[i] <= hi_y)
+                .map(|i| i as u32)
+                .collect();
+            assert_eq!(&out[..m], naive.as_slice(), "it={it}");
+            // NaN/±inf can never satisfy the closed-range comparisons
+            for &i in &out[..m] {
+                assert!(x[i as usize].is_finite() && y[i as usize].is_finite(), "it={it}");
+            }
+        }
+    }
+
+    #[test]
+    fn fuzz_normalize_f32_unit_range() {
+        let mut rng = Rng(0x5EED_0008);
+        for it in 0..200 {
+            let n = (rng.next() % 200) as usize;
+            let data = rng.hostile_vec(n, -1e3, 1e3);
+            let mut out = vec![0f32; n];
+            normalize_f32_into(&data, -500.0, 500.0, 0.0, &mut out);
+            for (i, (&v, &o)) in data.iter().zip(&out).enumerate() {
+                if v.is_finite() {
+                    assert!((0.0..=1.0).contains(&o), "unit it={it} i={i} o={o}");
+                } else {
+                    assert_eq!(o, 0.0, "nan_value it={it} i={i}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fuzz_local_log_density_unit_range() {
+        let mut rng = Rng(0x5EED_0009);
+        for it in 0..100 {
+            let n = (rng.next() % 200) as usize;
+            let x = rng.hostile_vec(n, 0.0, 10.0);
+            let y = rng.hostile_vec(n, 0.0, 10.0);
+            let mut out = vec![0f32; n];
+            local_log_density(&x, &y, 0.0, 10.0, 0.0, 10.0, 8, 8, &mut out);
+            for (i, &d) in out.iter().enumerate() {
+                assert!((0.0..=1.0).contains(&d), "it={it} i={i} d={d}");
+            }
+        }
+    }
+}

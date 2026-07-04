@@ -574,7 +574,54 @@ try{{
     vHist.destroy(); holderHist.remove();
     const expectPad=-(2*Math.max(2,Math.ceil(v.dpr||1)))/200;
     const edgepad=Math.abs(v._edgePadForValue(0,0,8,200)-expectPad)<1e-9?1:0;
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}}`;
+    // Hostile-spec suite: the renderer must fail LOUDLY (throw / visible
+    // message), never hang or silently draw garbage (§28/§33 contracts).
+    const mk = () => {{ const d = document.createElement("div"); document.body.appendChild(d); return d; }};
+    const throws = (fn) => {{ try {{ fn(); return false; }} catch (e) {{ return true; }} }};
+    // m1: protocol mismatch -> constructor throws AND leaves a visible message
+    const m1el = mk();
+    const badProto = JSON.parse(JSON.stringify(spec)); badProto.protocol = 999;
+    const m1 = throws(() => fastcharts.renderStandalone(m1el, badProto, bytes.buffer))
+      && m1el.textContent.indexOf("protocol mismatch") >= 0 ? 1 : 0;
+    // m2: trace referencing a column index that does not exist -> throws
+    const badRef = JSON.parse(JSON.stringify(spec)); badRef.traces = [badRef.traces[0]];
+    badRef.traces[0] = {{...badRef.traces[0], x: 999}};
+    const m2 = throws(() => fastcharts.renderStandalone(mk(), badRef, bytes.buffer)) ? 1 : 0;
+    // m3: column window outside the blob -> typed-array construction throws
+    const badOff = JSON.parse(JSON.stringify(spec));
+    badOff.columns[badOff.traces[0].x] = {{...badOff.columns[badOff.traces[0].x],
+      byte_offset: bytes.buffer.byteLength + 64}};
+    badOff.traces = [badOff.traces[0]];
+    const m3 = throws(() => fastcharts.renderStandalone(mk(), badOff, bytes.buffer)) ? 1 : 0;
+    // m4: unknown kind with valid geometry -> scatter fallback renders, no throw
+    const unk = JSON.parse(JSON.stringify(spec));
+    unk.traces = [{{...unk.traces[0], kind: "sparkle-9000", style: {{}}}}];
+    let m4 = 0;
+    try {{ const uv = fastcharts.renderStandalone(mk(), unk, bytes.buffer); uv._drawNow(); m4 = 1; }}
+    catch (e) {{ m4 = 0; }}
+    // m5: empty traces -> chrome-only chart, no throw
+    const emp = JSON.parse(JSON.stringify(spec)); emp.traces = [];
+    let m5 = 0;
+    try {{ const ev = fastcharts.renderStandalone(mk(), emp, bytes.buffer); ev._drawNow(); m5 = 1; }}
+    catch (e) {{ m5 = 0; }}
+    const malformed = (m1 && m2 && m3 && m4 && m5) ? 1 : 0;
+    // Pixel determinism: two fresh renders of the same payload hash identically
+    // (the anti-shimmer guarantee — no RNG/time may reach the render path).
+    const pixhash = (view) => {{
+      view._drawNow();
+      const g2 = view.gl, W = g2.drawingBufferWidth, H = g2.drawingBufferHeight;
+      const p2 = new Uint8Array(W * H * 4);
+      g2.readPixels(0, 0, W, H, g2.RGBA, g2.UNSIGNED_BYTE, p2);
+      let hsh = 0x811c9dc5;
+      for (let i = 0; i < p2.length; i++) {{ hsh ^= p2[i]; hsh = (hsh * 0x01000193) >>> 0; }}
+      return hsh;
+    }};
+    const dv1 = fastcharts.renderStandalone(mk(), JSON.parse(JSON.stringify(spec)), bytes.buffer);
+    const dv2 = fastcharts.renderStandalone(mk(), JSON.parse(JSON.stringify(spec)), bytes.buffer);
+    if (dv1.gpuTraces) for (const gg of dv1.gpuTraces) gg._densityNormAnim = null;
+    if (dv2.gpuTraces) for (const gg of dv2.gpuTraces) gg._densityNormAnim = null;
+    const pixdet = pixhash(dv1) === pixhash(dv2) ? 1 : 0;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} malformed=${{malformed}} pixdet=${{pixdet}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -694,6 +741,8 @@ try{{
     dnorm = int(re.search(r"dnorm=(\d+)", title).group(1))
     dnorm_done = int(re.search(r"dnormDone=(\d+)", title).group(1))
     stale = int(re.search(r"stale=(\d+)", title).group(1))
+    malformed = int(re.search(r"malformed=(\d+)", title).group(1))
+    pixdet = int(re.search(r"pixdet=(\d+)", title).group(1))
     bar_base = int(re.search(r"barBase=(\d+)", title).group(1))
     hist_base = int(re.search(r"histBase=(\d+)", title).group(1))
     edgepad = int(re.search(r"edgepad=(\d+)", title).group(1))
@@ -793,6 +842,10 @@ try{{
         raise SystemExit("density color normalization snapped to the new max instead of easing")
     if dnorm_done != 1:
         raise SystemExit("density color normalization did not settle to the true max")
+    if malformed != 1:
+        raise SystemExit("hostile-spec suite failed (renderer must fail loudly, never hang)")
+    if pixdet != 1:
+        raise SystemExit("pixel determinism failed (render path must be RNG/time-free)")
     if stale != 1:
         raise SystemExit("stale density update resurrected a drilled point subset")
     if bar_base != 1:
