@@ -14,10 +14,10 @@ reduces to a few GPU primitives on top of the shared infrastructure.
 | Primitive | Status | Charts it unlocks |
 |---|---|---|
 | Points | built (`scatter`) | scatter, bubble |
-| Lines | built (`line`) | line, area (fill), spline, ECDF, error bands |
-| Rectangles | **next** | bar, histogram, candlestick/OHLC, waterfall, error bars, heatmap cells |
-| Filled polygons | planned | area fill, violin, confidence bands |
-| Grid texture | built (`density` tier) | heatmap, 2D histogram, hexbin |
+| Lines | built (`line`) | line, spline, ECDF, error bands |
+| Rectangles | built (`histogram`; compact-bar variant for `bar`/`column`) | bar, histogram, candlestick/OHLC, waterfall, error bars |
+| Filled polygons | built (`area`) | area fill, confidence bands, stacked area |
+| Grid texture | built (`density` tier, `heatmap`) | heatmap, image, 2D histogram, hexbin |
 
 Establish the primitive once; the charts sharing it are mostly wiring.
 
@@ -39,7 +39,8 @@ by the string `K` on the wire (`trace.kind`).
   equal-length (x,y) contract; a non-xy mark ingests its own columns.
 - **Channels** (optional): if the mark has per-mark color/size, reuse
   `channels.ship_channels(trace, sel, ship_scalar, palette)` — the same wire
-  shape scatter uses, so continuous/categorical color and size come for free.
+  shape scatter and heatmap use, so continuous/categorical color and size come
+  from one path.
 
 ### 2. Client — `js/src/`
 
@@ -53,6 +54,21 @@ by the string `K` on the wire (`trace.kind`).
   shaders must be `precision highp` for any uniform shared with the vertex stage
   (a caught precision-mismatch bug). Reuse `POINT`/`LINE` programs where the
   geometry matches.
+
+### Rectangle-family wire formats
+
+The rectangle family deliberately has two wire shapes:
+
+- **Full rectangles** (`histogram` today, and later irregular cells/candles):
+  four edge columns, `x0/x1/y0/y1`. Use this when widths are irregular or both
+  axes need independent per-mark edges.
+- **Compact bars** (`bar`/`column`): one position column, one endpoint value
+  column, an optional baseline column or scalar `value0_const`, and scalar
+  `width`. This keeps common bars to two data columns instead of four while
+  preserving the same rect fragment shader and legend/color path.
+
+Do not regress bars back to full rectangles for convenience; the 10k-category
+benchmark tracks this as part of the core 2D payload budget.
 
 ## What you get for free (do not re-implement)
 
@@ -93,8 +109,9 @@ usually wrong). Each has an explicit trigger:
   continuous / named-series), not mark kinds — a colored bar inherits swatches
   for free. *Trigger: a mark needing a swatch that isn't channel-shaped.*
 - **Decimation** (`interaction.decimate_view`): line-only (`t.kind == "line"`).
-  *Trigger: the first other 1D-orderable mark (area, candlestick/OHLC)* — open
-  the gate into a per-kind decimator hook.
+  Area uses line-style M4 on first payload today. *Trigger: the first interactive
+  view-updated non-line 1D mark (area, candlestick/OHLC)* — open the gate into a
+  per-kind decimator hook.
 - **The drill "real marks"** render as points (`lod` calls `_drawPoints`).
   *Trigger: a drilling kind whose drilled marks aren't points* — route through
   `MARK_KINDS` at that call site.
@@ -105,19 +122,18 @@ usually wrong). Each has an explicit trigger:
   (candlestick y-range = min(low)..max(high), not close). *Trigger: first
   multi-column mark* — add an optional per-kind range hook next to
   `_emit_<kind>` and an `extra columns` convention on Trace; both additive.
-- **Categorical axis**: `x_axis.kind` is `linear | time` only. Bar/box/violin
-  need category axes: positions ship as f64 codes (the wire already handles
-  that), the spec's axis entry gains `kind: "category"` + a `categories` label
-  table, and the client ticks/labels from the table instead of numeric
-  formatting. Design this *with bar* (the protocol is versioned; the change is
-  additive) — but do not ship bar without it.
+- **Categorical axis**: `x_axis.kind` now supports `category` for basic
+  bar/column charts: category positions ship as f64 codes, the axis spec carries
+  a `categories` label table, and the client ticks from that table. Future
+  grouped/stacked bars, box/violin, and mixed categorical charts should reuse
+  this axis path rather than inventing per-chart label rendering.
 - **View-request protocol**: the client enumerates tier needs per message type
   (`view` for decimated lines, `density_view` per density trace) and the
   widget's handler chain mirrors that. The kernel already knows every trace's
   tier — the client doesn't need to enumerate. *Trigger: the first new
-  aggregating kind (histogram)* — unify into one viewport message the kernel
-  answers per trace, and bump PROTOCOL once, instead of accreting a message
-  type per tier.
+  view-dependent aggregating kind beyond scatter density* — unify into one
+  viewport message the kernel answers per trace, and bump PROTOCOL once, instead
+  of accreting a message type per tier.
 
 ## Checklist for a new kind
 

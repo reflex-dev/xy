@@ -17,6 +17,7 @@ import traitlets
 # Selection lives in figure.py (it's the on_select payload and has no widget
 # dependency); re-exported here for backward compatibility.
 from .figure import Selection
+from .interaction import _integer_id
 
 if TYPE_CHECKING:
     from .figure import Figure
@@ -71,13 +72,19 @@ class FigureWidget(anywidget.AnyWidget):
             # Zoom/pan crossed what the shipped decimation can serve: recompute
             # for the visible window only (§28), stale-while-revalidate on the
             # client (§17 — it keeps drawing the old tier until this arrives).
-            x0 = float(content["x0"])
-            x1 = float(content["x1"])
-            px = int(content.get("px", 2048))
             seq = content.get("seq")
-            if not x1 > x0:
+            try:
+                x0 = float(content["x0"])
+                x1 = float(content["x1"])
+                if not x1 > x0:
+                    return
+                update, buffers = self._figure.decimate_view(
+                    x0,
+                    x1,
+                    content.get("px", 2048),
+                )
+            except (KeyError, TypeError, ValueError):
                 return
-            update, buffers = self._figure.decimate_view(x0, x1, px)
             if update["traces"]:
                 self.send({"type": "tier_update", "seq": seq, **update}, buffers=buffers)
         elif kind == "density_view":
@@ -85,15 +92,15 @@ class FigureWidget(anywidget.AnyWidget):
             seq = content.get("seq")
             try:
                 update, buffers = self._figure.density_view(
-                    int(content["trace"]),
-                    float(content["x0"]),
-                    float(content["x1"]),
-                    float(content["y0"]),
-                    float(content["y1"]),
-                    int(content.get("w", 512)),
-                    int(content.get("h", 384)),
+                    content["trace"],
+                    content["x0"],
+                    content["x1"],
+                    content["y0"],
+                    content["y1"],
+                    content.get("w", 512),
+                    content.get("h", 384),
                 )
-            except (KeyError, ValueError, IndexError):
+            except (KeyError, TypeError, ValueError, IndexError):
                 return
             if update["traces"]:
                 self.send({"type": "density_update", "seq": seq, **update}, buffers=buffers)
@@ -101,11 +108,17 @@ class FigureWidget(anywidget.AnyWidget):
             # Hover/click drill: exact f64 row from canonical (§16/§17). The
             # client's drill_seq rejects picks that raced a subset swap.
             dseq = content.get("drill_seq")
-            row = self._figure.pick(
-                int(content.get("trace", -1)),
-                int(content.get("index", -1)),
-                None if dseq is None else int(dseq),
-            )
+            try:
+                trace_id = _integer_id(content.get("trace", -1), "trace")
+                index = _integer_id(content.get("index", -1), "index")
+                drill_seq = None if dseq is None else _integer_id(dseq, "drill_seq")
+                row = self._figure.pick(
+                    trace_id,
+                    index,
+                    drill_seq,
+                )
+            except (TypeError, ValueError):
+                return
             self.send({"type": "pick_result", "seq": content.get("seq"), "row": row})
             if row is not None and self._on_hover is not None:
                 self._on_hover(row)
@@ -115,12 +128,12 @@ class FigureWidget(anywidget.AnyWidget):
             # the resolved indices (Arrow-slice-shaped, not JSON — §34 API note).
             try:
                 sel = self._figure.select_range(
-                    float(content["x0"]),
-                    float(content["x1"]),
-                    float(content["y0"]),
-                    float(content["y1"]),
+                    content["x0"],
+                    content["x1"],
+                    content["y0"],
+                    content["y1"],
                 )
-            except (KeyError, ValueError):
+            except (KeyError, TypeError, ValueError):
                 return
             traces = []
             buffers = []

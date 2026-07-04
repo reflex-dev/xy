@@ -17,7 +17,7 @@ import sys
 from array import array
 from pathlib import Path
 
-ABI_VERSION = 2
+ABI_VERSION = 3
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -72,6 +72,33 @@ def load() -> ctypes.CDLL:
     Z = ctypes.c_size_t
     lib.fc_bin_2d.restype = ctypes.c_int32
     lib.fc_bin_2d.argtypes = [F64P, F64P, Z, D, D, D, D, Z, Z, F32P]
+    lib.fc_histogram_uniform.restype = ctypes.c_size_t
+    lib.fc_histogram_uniform.argtypes = [
+        F64P,
+        ctypes.c_size_t,
+        D,
+        D,
+        ctypes.c_size_t,
+        ctypes.c_int32,
+        F64P,
+    ]
+    lib.fc_normalize_f32.restype = None
+    lib.fc_normalize_f32.argtypes = [F64P, ctypes.c_size_t, D, D, ctypes.c_int32, F32P]
+    lib.fc_range_indices.restype = ctypes.c_size_t
+    lib.fc_range_indices.argtypes = [F64P, F64P, ctypes.c_size_t, D, D, D, D, U32P]
+    lib.fc_local_log_density.restype = ctypes.c_int32
+    lib.fc_local_log_density.argtypes = [
+        F64P,
+        F64P,
+        ctypes.c_size_t,
+        D,
+        D,
+        D,
+        D,
+        Z,
+        Z,
+        F32P,
+    ]
     return lib
 
 
@@ -83,6 +110,15 @@ def _ptr(a: array, ct):  # noqa: ANN001
 def main() -> None:
     lib = load()
     checks = 0
+    size_max = ctypes.c_size_t(-1).value
+    F64P = ctypes.POINTER(ctypes.c_double)
+    F32P = ctypes.POINTER(ctypes.c_float)
+    U64P = ctypes.POINTER(ctypes.c_uint64)
+    U32P = ctypes.POINTER(ctypes.c_uint32)
+    null_f64 = F64P()
+    null_f32 = F32P()
+    null_u64 = U64P()
+    null_u32 = U32P()
 
     def ok(cond: bool, msg: str) -> None:
         nonlocal checks
@@ -91,6 +127,104 @@ def main() -> None:
         checks += 1
 
     ok(lib.fc_abi_version() == ABI_VERSION, "abi version")
+
+    # Boundary guardrails: empty inputs may carry null pointers; invalid
+    # non-empty null inputs must return sentinels/flags rather than crash.
+    lib.fc_encode_f32(null_f64, 0, 0.0, 1.0, null_f32)
+    ok(True, "encode_f32 accepts empty/null")
+    tiny_f = array("f", [123.0])
+    lib.fc_encode_f32(null_f64, 1, 0.0, 1.0, _ptr(tiny_f, ctypes.c_float))
+    ok(tiny_f[0] == 123.0, "encode_f32 rejects null input without writing")
+    ok(
+        lib.fc_m4_indices(null_f64, null_f64, 0, 0.0, 1.0, 4, null_u32) == 0,
+        "m4 empty/null returns zero",
+    )
+    ok(
+        lib.fc_m4_indices(null_f64, null_f64, 1, 0.0, 1.0, 4, null_u32) == size_max,
+        "m4 non-empty/null sentinel",
+    )
+    ok(
+        lib.fc_zone_maps(
+            null_f64, 0, 65_536, null_f64, null_f64, null_u64, null_u64, null_f64, null_f64
+        )
+        == 0,
+        "zone_maps empty/null returns zero",
+    )
+    ok(
+        lib.fc_zone_maps(
+            null_f64, 1, 65_536, null_f64, null_f64, null_u64, null_u64, null_f64, null_f64
+        )
+        == size_max,
+        "zone_maps non-empty/null sentinel",
+    )
+    ok(
+        lib.fc_min_max(
+            null_f64, 0, ctypes.byref(ctypes.c_double()), ctypes.byref(ctypes.c_double())
+        )
+        == 0,
+        "min_max empty/null returns zero",
+    )
+    empty_grid = array("f", [99.0]) * 4
+    ok(
+        lib.fc_bin_2d(
+            null_f64, null_f64, 0, 0.0, 1.0, 0.0, 1.0, 2, 2, _ptr(empty_grid, ctypes.c_float)
+        )
+        == 1
+        and list(empty_grid) == [0.0, 0.0, 0.0, 0.0],
+        "bin_2d empty/null zeroes grid",
+    )
+    ok(
+        lib.fc_bin_2d(
+            null_f64, null_f64, 1, 0.0, 1.0, 0.0, 1.0, 2, 2, _ptr(empty_grid, ctypes.c_float)
+        )
+        == 0,
+        "bin_2d non-empty/null error flag",
+    )
+    empty_hist = array("d", [99.0]) * 4
+    ok(
+        lib.fc_histogram_uniform(null_f64, 0, 0.0, 1.0, 4, 0, _ptr(empty_hist, ctypes.c_double))
+        == 0
+        and list(empty_hist) == [0.0, 0.0, 0.0, 0.0],
+        "histogram empty/null zeroes counts",
+    )
+    ok(
+        lib.fc_histogram_uniform(null_f64, 1, 0.0, 1.0, 4, 0, _ptr(empty_hist, ctypes.c_double))
+        == size_max,
+        "histogram non-empty/null sentinel",
+    )
+    lib.fc_normalize_f32(null_f64, 0, 0.0, 1.0, 0, null_f32)
+    ok(True, "normalize_f32 accepts empty/null")
+    tiny_norm = array("f", [123.0])
+    lib.fc_normalize_f32(null_f64, 1, 0.0, 1.0, 0, _ptr(tiny_norm, ctypes.c_float))
+    ok(tiny_norm[0] == 123.0, "normalize_f32 rejects null input without writing")
+    ok(
+        lib.fc_range_indices(null_f64, null_f64, 0, 0.0, 1.0, 0.0, 1.0, null_u32) == 0,
+        "range_indices empty/null returns zero",
+    )
+    ok(
+        lib.fc_range_indices(null_f64, null_f64, 1, 0.0, 1.0, 0.0, 1.0, null_u32) == size_max,
+        "range_indices non-empty/null sentinel",
+    )
+    ok(
+        lib.fc_local_log_density(null_f64, null_f64, 0, 0.0, 1.0, 0.0, 1.0, 2, 2, null_f32) == 1,
+        "local_log_density empty/null ok",
+    )
+    ok(
+        lib.fc_local_log_density(
+            null_f64,
+            null_f64,
+            1,
+            0.0,
+            1.0,
+            0.0,
+            1.0,
+            2,
+            2,
+            _ptr(tiny_norm, ctypes.c_float),
+        )
+        == 0,
+        "local_log_density non-empty/null error flag",
+    )
 
     # encode_f32: the §16 precision claim, verified through the real ABI.
     t0 = 1.6e12
@@ -228,6 +362,79 @@ def main() -> None:
         _ptr(g2, ctypes.c_float),
     )
     ok(g2[0] == 500.0 and g2[3] == 1.0, "bin_2d density hotspot")
+
+    # histogram_uniform: fixed-bin counts, last edge closed.
+    hx = array("d", [0.0, 0.2, 0.9, 1.0, 1.1, float("nan"), float("inf")])
+    hist = array("d", [0.0]) * 4
+    total = lib.fc_histogram_uniform(
+        _ptr(hx, ctypes.c_double),
+        len(hx),
+        0.0,
+        1.0,
+        4,
+        0,
+        _ptr(hist, ctypes.c_double),
+    )
+    ok(total == 4, "histogram valid total")
+    ok(list(hist) == [2.0, 0.0, 0.0, 2.0], "histogram counts")
+
+    # normalize_f32: clamp finite values, route non-finite values by mode.
+    nx = array("d", [-1.0, 0.0, 5.0, 10.0, 11.0, float("nan"), float("inf")])
+    norm = array("f", [0.0]) * len(nx)
+    lib.fc_normalize_f32(
+        _ptr(nx, ctypes.c_double),
+        len(nx),
+        0.0,
+        10.0,
+        0,
+        _ptr(norm, ctypes.c_float),
+    )
+    ok(list(norm) == [0.0, 0.0, 0.5, 1.0, 1.0, 0.0, 0.0], "normalize zero mode")
+    lib.fc_normalize_f32(
+        _ptr(nx, ctypes.c_double),
+        len(nx),
+        0.0,
+        10.0,
+        1,
+        _ptr(norm, ctypes.c_float),
+    )
+    ok(math.isnan(norm[5]) and math.isnan(norm[6]), "normalize nan mode")
+
+    # range_indices: canonical inclusive rectangular selection.
+    rx = array("d", [0.0, 1.0, 2.0, 3.0, float("nan")])
+    ry = array("d", [0.0, 1.5, 2.5, 4.0, 1.0])
+    ridx = array("I", [0]) * len(rx)
+    written = lib.fc_range_indices(
+        _ptr(rx, ctypes.c_double),
+        _ptr(ry, ctypes.c_double),
+        len(rx),
+        1.0,
+        3.0,
+        1.0,
+        3.0,
+        _ptr(ridx, ctypes.c_uint32),
+    )
+    ok(written == 2 and list(ridx[:written]) == [1, 2], "range_indices")
+
+    # local_log_density: per-point density stays normalized and hotspot wins.
+    lx = array("d", [0.1, 0.1, 0.1, 0.9])
+    ly = array("d", [0.1, 0.1, 0.1, 0.9])
+    lout = array("f", [0.0]) * len(lx)
+    got = lib.fc_local_log_density(
+        _ptr(lx, ctypes.c_double),
+        _ptr(ly, ctypes.c_double),
+        len(lx),
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        2,
+        2,
+        _ptr(lout, ctypes.c_float),
+    )
+    ok(got == 1, "local_log_density ok flag")
+    ok(0.0 <= min(lout) <= max(lout) <= 1.0, "local_log_density normalized")
+    ok(lout[0] == lout[1] == lout[2] and lout[0] > lout[3], "local_log_density hotspot")
 
     print(f"ABI smoke: {checks} checks passed against {_lib_name()}")
 

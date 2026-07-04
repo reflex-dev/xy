@@ -15,13 +15,24 @@ if TYPE_CHECKING:
 EMBED_WARN_BYTES = 64 * 2**20
 
 
+def _json_for_inline_script(value: object) -> str:
+    """JSON literal safe to embed directly inside an inline <script> block."""
+    return (
+        json.dumps(value, separators=(",", ":"), allow_nan=False)
+        .replace("&", "\\u0026")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+
+
 def to_html(fig: "Figure", path: Optional[str] = None) -> str:
     """Render `fig` to a standalone interactive HTML string (optionally saved).
 
     User strings (title, names, labels) ride inside <script>/<title> blocks:
-    "</" is escaped so "</script>"-shaped content can't break out of the script
-    context (markup injection in exported files), and the <title> text is
-    entity-escaped."""
+    HTML-sensitive JSON characters are escaped so user text cannot alter the
+    script parse state, and the <title> text is entity-escaped."""
     # Lazy: bundled_js lives in widget.py, which imports anywidget — keep that
     # out of `import fastcharts` (§33 import-time budget).
     from .widget import bundled_js
@@ -36,12 +47,15 @@ def to_html(fig: "Figure", path: Optional[str] = None) -> str:
             RuntimeWarning,
             stacklevel=3,
         )
-    spec_js = json.dumps(spec).replace("</", "<\\/")
+    spec_js = _json_for_inline_script(spec)
     title_html = _html.escape(fig.title or "fastcharts")
     doc = f"""<!doctype html>
 <html>
 <head><meta charset="utf-8"><title>{title_html}</title>
-<style>body{{margin:24px;font-family:system-ui,sans-serif;background:#fff}}</style>
+<style>
+html,body{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;background:#fff;}}
+#chart{{width:100%;}}
+</style>
 </head>
 <body>
 <div id="chart"></div>

@@ -102,6 +102,51 @@ def bench(lib, n: int) -> dict:
     bin_mpts = n / t / 1e6
     bin_ms = t * 1e3
 
+    # histogram_uniform: fixed-bin histogram path for the public histogram API.
+    bins = 512
+    counts = array("d", bytes(8 * bins))
+    t = timeit(
+        lambda: lib.fc_histogram_uniform(_ptr(x, D), n, 0.0, float(n), bins, 0, _ptr(counts, D))
+    )
+    hist_mpts = n / t / 1e6
+    hist_ms = t * 1e3
+
+    # normalize_f32: color/size channels and heatmap normalization.
+    norm = array("f", bytes(4 * n))
+    t = timeit(lambda: lib.fc_normalize_f32(_ptr(y, D), n, -1.0, 1.0, 0, _ptr(norm, F)))
+    norm_mpts = n / t / 1e6
+
+    # range_indices: rectangular viewport/selection scan used by drilldown.
+    sel = array("I", bytes(4 * n))
+    t = timeit(
+        lambda: lib.fc_range_indices(
+            _ptr(x, D), _ptr(y, D), n, n * 0.45, n * 0.55, -2.0, 2.0, _ptr(sel, U32)
+        )
+    )
+    range_mpts = n / t / 1e6
+    range_ms = t * 1e3
+
+    # local_log_density is only used once the visible drill subset is bounded,
+    # so benchmark it at the interactive budget rather than full-N.
+    local_n = min(n, 200_000)
+    local = array("f", bytes(4 * local_n))
+    t = timeit(
+        lambda: lib.fc_local_log_density(
+            _ptr(x, D),
+            _ptr(y, D),
+            local_n,
+            0.0,
+            float(local_n),
+            -3.0,
+            3.0,
+            gw,
+            gh,
+            _ptr(local, F),
+        )
+    )
+    local_mpts = local_n / t / 1e6
+    local_ms = t * 1e3
+
     return {
         "n": n,
         "encode_mpts_s": encode_mpts,
@@ -110,6 +155,14 @@ def bench(lib, n: int) -> dict:
         "zoom_redecimate_ms": zoom_ms,
         "bin_2d_mpts_s": bin_mpts,
         "bin_2d_ms": bin_ms,
+        "histogram_mpts_s": hist_mpts,
+        "histogram_ms": hist_ms,
+        "normalize_mpts_s": norm_mpts,
+        "range_mpts_s": range_mpts,
+        "range_ms": range_ms,
+        "local_density_n": local_n,
+        "local_density_mpts_s": local_mpts,
+        "local_density_ms": local_ms,
     }
 
 
@@ -120,14 +173,24 @@ def main() -> None:
     sizes = [int(float(s)) for s in args.sizes.split(",")]
     lib = load()
 
-    print("| points | encode f32 | zone maps | M4 (full) | zoom re-decimate | bin_2d (Tier2) |")
-    print("|---|---|---|---|---|---|")
+    print(
+        "| points | encode f32 | normalize | histogram | zone maps | M4 (full) | "
+        "zoom re-decimate | range scan | bin_2d (Tier2) | local density |"
+    )
+    print("|---|---|---|---|---|---|---|---|---|---|")
     for n in sizes:
         r = bench(lib, n)
         print(
-            f"| {r['n']:,} | {r['encode_mpts_s']:.0f} Mpt/s | {r['zone_maps_mpts_s']:.0f} Mpt/s "
-            f"| {r['m4_full_mpts_s']:.0f} Mpt/s | {r['zoom_redecimate_ms']:.2f} ms "
-            f"| {r['bin_2d_mpts_s']:.0f} Mpt/s ({r['bin_2d_ms']:.0f} ms) |"
+            f"| {r['n']:,} | {r['encode_mpts_s']:.0f} Mpt/s "
+            f"| {r['normalize_mpts_s']:.0f} Mpt/s "
+            f"| {r['histogram_mpts_s']:.0f} Mpt/s ({r['histogram_ms']:.2f} ms) "
+            f"| {r['zone_maps_mpts_s']:.0f} Mpt/s "
+            f"| {r['m4_full_mpts_s']:.0f} Mpt/s "
+            f"| {r['zoom_redecimate_ms']:.2f} ms "
+            f"| {r['range_mpts_s']:.0f} Mpt/s ({r['range_ms']:.2f} ms) "
+            f"| {r['bin_2d_mpts_s']:.0f} Mpt/s ({r['bin_2d_ms']:.0f} ms) "
+            f"| {r['local_density_mpts_s']:.0f} Mpt/s "
+            f"({r['local_density_ms']:.2f} ms/{r['local_density_n']:,}) |"
         )
 
 

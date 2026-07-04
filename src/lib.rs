@@ -11,17 +11,28 @@
 //! with Tier 2/3.
 //!
 //! Safety contract (enforced by the single ctypes wrapper in
-//! `python/fastcharts/_native.py`, the only caller): all pointers are non-null,
-//! properly aligned, and sized as documented per function.
+//! `python/fastcharts/_native.py`, the only in-tree caller): non-empty inputs
+//! use non-null, properly aligned pointers sized as documented per function.
+//! Empty inputs are accepted without dereferencing their pointers; invalid
+//! pointer/argument combinations return the documented error sentinel instead of
+//! panicking across the C boundary.
 
 pub mod kernels;
 
 use kernels::ZoneMap;
 
+fn finite_gt(lo: f64, hi: f64) -> bool {
+    lo.is_finite() && hi.is_finite() && hi > lo
+}
+
+fn finite_ordered(lo: f64, hi: f64) -> bool {
+    lo.is_finite() && hi.is_finite() && hi >= lo
+}
+
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 
 #[no_mangle]
 pub extern "C" fn fc_abi_version() -> u32 {
@@ -48,10 +59,35 @@ pub unsafe extern "C" fn fc_zone_maps(
     out_sum: *mut f64,
     out_sum_sq: *mut f64,
 ) -> usize {
+    if chunk_size == 0 {
+        return usize::MAX;
+    }
+    if len == 0 {
+        return 0;
+    }
+    let n_chunks = len.div_ceil(chunk_size);
+    if data.is_null()
+        || out_min.is_null()
+        || out_max.is_null()
+        || out_count.is_null()
+        || out_null_count.is_null()
+        || out_sum.is_null()
+        || out_sum_sq.is_null()
+    {
+        return usize::MAX;
+    }
     let data = std::slice::from_raw_parts(data, len);
     let zms = kernels::zone_maps(data, chunk_size);
+    debug_assert_eq!(zms.len(), n_chunks);
     for (i, zm) in zms.iter().enumerate() {
-        let ZoneMap { min, max, count, null_count, sum, sum_sq } = *zm;
+        let ZoneMap {
+            min,
+            max,
+            count,
+            null_count,
+            sum,
+            sum_sq,
+        } = *zm;
         *out_min.add(i) = min;
         *out_max.add(i) = max;
         *out_count.add(i) = count;
@@ -74,6 +110,12 @@ pub unsafe extern "C" fn fc_encode_f32(
     scale: f64,
     out: *mut f32,
 ) {
+    if len == 0 {
+        return;
+    }
+    if data.is_null() || out.is_null() {
+        return;
+    }
     let data = std::slice::from_raw_parts(data, len);
     let out = std::slice::from_raw_parts_mut(out, len);
     kernels::encode_f32_into(data, offset, scale, out);
@@ -83,7 +125,8 @@ pub unsafe extern "C" fn fc_encode_f32(
 /// bucket over the visible window `[x0, x1)`. `x` must be ascending.
 ///
 /// `out` must hold `4 * n_buckets` u32s. Returns the count written, or
-/// `usize::MAX` on invalid arguments (x1 <= x0 or n_buckets == 0).
+/// `usize::MAX` on invalid arguments (non-finite bounds, x1 <= x0, or
+/// n_buckets == 0).
 ///
 /// # Safety
 /// `x`/`y` must point to `len` readable f64s; `out` to `4 * n_buckets`
@@ -98,14 +141,24 @@ pub unsafe extern "C" fn fc_m4_indices(
     n_buckets: usize,
     out: *mut u32,
 ) -> usize {
-    // `!(x1 > x0)` (not `x1 <= x0`) deliberately rejects NaN bounds too.
-    #[allow(clippy::neg_cmp_op_on_partial_ord)]
-    if n_buckets == 0 || !(x1 > x0) {
+    if n_buckets == 0 || !finite_gt(x0, x1) {
+        return usize::MAX;
+    }
+    if len == 0 {
+        return 0;
+    }
+    if x.is_null() || y.is_null() {
         return usize::MAX;
     }
     let x = std::slice::from_raw_parts(x, len);
     let y = std::slice::from_raw_parts(y, len);
     let idx = kernels::m4_indices(x, y, x0, x1, n_buckets);
+    if idx.is_empty() {
+        return 0;
+    }
+    if out.is_null() {
+        return usize::MAX;
+    }
     let out = std::slice::from_raw_parts_mut(out, n_buckets * 4);
     out[..idx.len()].copy_from_slice(&idx);
     idx.len()
@@ -116,7 +169,7 @@ pub unsafe extern "C" fn fc_m4_indices(
 ///
 /// # Safety
 /// `x`/`y` must point to `len` readable f64s; `out` to `w * h` writable f32s;
-/// `w > 0 && h > 0 && x1 > x0 && y1 > y0`.
+/// `w > 0 && h > 0` and finite increasing bounds.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn fc_bin_2d(
@@ -131,14 +184,24 @@ pub unsafe extern "C" fn fc_bin_2d(
     h: usize,
     out: *mut f32,
 ) -> i32 {
-    // `!(a > b)` (not `a <= b`) deliberately rejects NaN bounds too.
-    #[allow(clippy::neg_cmp_op_on_partial_ord)]
-    let bad = w == 0 || h == 0 || !(x1 > x0) || !(y1 > y0);
+    let bad = w == 0 || h == 0 || !finite_gt(x0, x1) || !finite_gt(y0, y1);
     if bad {
         return 0;
     }
-    let x = std::slice::from_raw_parts(x, len);
-    let y = std::slice::from_raw_parts(y, len);
+    if out.is_null() {
+        return 0;
+    }
+    let (x, y) = if len == 0 {
+        (&[][..], &[][..])
+    } else {
+        if x.is_null() || y.is_null() {
+            return 0;
+        }
+        (
+            std::slice::from_raw_parts(x, len),
+            std::slice::from_raw_parts(y, len),
+        )
+    };
     let out = std::slice::from_raw_parts_mut(out, w * h);
     kernels::bin_2d(x, y, x0, x1, y0, y1, w, h, out);
     1
@@ -156,6 +219,12 @@ pub unsafe extern "C" fn fc_min_max(
     out_min: *mut f64,
     out_max: *mut f64,
 ) -> i32 {
+    if len == 0 {
+        return 0;
+    }
+    if data.is_null() || out_min.is_null() || out_max.is_null() {
+        return 0;
+    }
     let data = std::slice::from_raw_parts(data, len);
     match kernels::min_max(data) {
         Some((mn, mx)) => {
@@ -165,4 +234,140 @@ pub unsafe extern "C" fn fc_min_max(
         }
         None => 0,
     }
+}
+
+/// Uniform fixed-bin histogram. Returns the count of finite in-range values, or
+/// `usize::MAX` on invalid arguments. `out_counts` must hold `n_bins` f64s.
+///
+/// # Safety
+/// `data` must point to `len` readable f64s; `out_counts` to `n_bins` writable
+/// f64s; `n_bins > 0` and `lo`/`hi` finite increasing.
+#[no_mangle]
+pub unsafe extern "C" fn fc_histogram_uniform(
+    data: *const f64,
+    len: usize,
+    lo: f64,
+    hi: f64,
+    n_bins: usize,
+    density: i32,
+    out_counts: *mut f64,
+) -> usize {
+    let bad = n_bins == 0 || !finite_gt(lo, hi);
+    if bad {
+        return usize::MAX;
+    }
+    if out_counts.is_null() {
+        return usize::MAX;
+    }
+    let data = if len == 0 {
+        &[][..]
+    } else {
+        if data.is_null() {
+            return usize::MAX;
+        }
+        std::slice::from_raw_parts(data, len)
+    };
+    let out = std::slice::from_raw_parts_mut(out_counts, n_bins);
+    let total = kernels::histogram_uniform(data, lo, hi, out);
+    if density != 0 && total > 0 {
+        let bin_w = (hi - lo) / n_bins as f64;
+        let denom = total as f64 * bin_w;
+        for c in out.iter_mut() {
+            *c /= denom;
+        }
+    }
+    total as usize
+}
+
+/// Normalize f64 values into f32 `[0,1]`. `nan_mode=0` maps non-finite values to
+/// 0.0; `nan_mode=1` maps them to f32 NaN.
+///
+/// # Safety
+/// `data` must point to `len` readable f64s; `out` to `len` writable f32s.
+#[no_mangle]
+pub unsafe extern "C" fn fc_normalize_f32(
+    data: *const f64,
+    len: usize,
+    lo: f64,
+    hi: f64,
+    nan_mode: i32,
+    out: *mut f32,
+) {
+    if len == 0 {
+        return;
+    }
+    if data.is_null() || out.is_null() || !finite_gt(lo, hi) {
+        return;
+    }
+    let data = std::slice::from_raw_parts(data, len);
+    let out = std::slice::from_raw_parts_mut(out, len);
+    let nan_value = if nan_mode == 1 { f32::NAN } else { 0.0 };
+    kernels::normalize_f32_into(data, lo, hi, nan_value, out);
+}
+
+/// Canonical row indices inside an inclusive rectangular window. Returns the
+/// count written. `out` must hold `len` u32s.
+///
+/// # Safety
+/// `x`/`y` must point to `len` readable f64s; `out` to `len` writable u32s.
+#[no_mangle]
+pub unsafe extern "C" fn fc_range_indices(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    out: *mut u32,
+) -> usize {
+    if !finite_ordered(lo_x, hi_x) || !finite_ordered(lo_y, hi_y) {
+        return usize::MAX;
+    }
+    if len == 0 {
+        return 0;
+    }
+    if x.is_null() || y.is_null() || out.is_null() {
+        return usize::MAX;
+    }
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    let out = std::slice::from_raw_parts_mut(out, len);
+    kernels::range_indices(x, y, lo_x, hi_x, lo_y, hi_y, out)
+}
+
+/// Per-point local log density for a subset. Returns 1 on success, 0 on invalid
+/// grid/window arguments.
+///
+/// # Safety
+/// `x`/`y` must point to `len` readable f64s; `out` to `len` writable f32s.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fc_local_log_density(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    w: usize,
+    h: usize,
+    out: *mut f32,
+) -> i32 {
+    let bad = w == 0 || h == 0 || !finite_gt(lo_x, hi_x) || !finite_gt(lo_y, hi_y);
+    if bad {
+        return 0;
+    }
+    if len == 0 {
+        return 1;
+    }
+    if x.is_null() || y.is_null() || out.is_null() {
+        return 0;
+    }
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    let out = std::slice::from_raw_parts_mut(out, len);
+    kernels::local_log_density(x, y, lo_x, hi_x, lo_y, hi_y, w, h, out);
+    1
 }

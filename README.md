@@ -9,9 +9,11 @@ rendering, and level-of-detail tiers so notebooks and standalone HTML exports
 can stay interactive well past the point where JSON/SVG-heavy chart stacks run
 out of room.
 
-**Status:** Phase 0 is complete: lines, scatter, direct rendering, M4 line
-decimation, Tier-2 scatter density, hover, box select, and standalone HTML
-export all exist. See the full design dossier in
+**Status:** early alpha, with the core 2D surface now in place: line, scatter,
+area, histogram, bar/column, grouped/stacked bars, heatmap, direct rendering,
+M4 line/area decimation, Tier-2 scatter density, adaptive scatter drilldown,
+hover, box select/zoom, standalone HTML export, and a Reflex example app all
+exist. See the full design dossier in
 [`docs/design-dossier.md`](docs/design-dossier.md).
 
 ## Why fastcharts
@@ -42,7 +44,7 @@ serves every supported Python version.
 
 ### From source
 
-Python 3.9+ and `uv` (or plain `pip`) are the only hard requirements:
+Python 3.11+ and `uv` (or plain `pip`) are the only hard requirements:
 
 ```bash
 git clone https://github.com/Alek99/charts-exp.git
@@ -58,7 +60,8 @@ uv pip install -e ".[dev]"
   toolchain. Install Rust via [rustup](https://rustup.rs) for the fast path.
 - **Node is optional too** — the JS client ships as a committed artifact, so you
   only need Node (18+) if you're *editing* the client source under `js/src/` and want to
-  regenerate the bundle with `node js/build.mjs`.
+  regenerate the bundle with `node js/build.mjs`. Use `node js/build.mjs --check`
+  to verify the committed bundles are fresh.
 
 CI (`install_without_rust` job) builds and imports a wheel on a runner with no
 Rust and no Node to keep this promise honest.
@@ -110,7 +113,8 @@ fig.to_html("chart.html")
 ## Example Apps
 
 - [`reflex_fastcharts_app/`](reflex_fastcharts_app/) is a standalone Reflex
-  dashboard that embeds generated fastcharts line, scatter, and density charts.
+  dashboard that embeds generated fastcharts line, scatter, density, histogram,
+  area, bar, and heatmap charts, including large-data drilldown examples.
 
 ## API Styles
 
@@ -167,7 +171,9 @@ Run the fastcharts kernel/payload benchmarks:
 
 ```bash
 uv run python benchmarks/bench.py --sizes 1e5,1e6,1e7
+uv run python benchmarks/bench_native.py --sizes 1e5,1e6,1e7
 python benchmarks/bench_scatter_native.py --sizes 1e5,1e6,1e7 --render
+PYTHONPATH=python uv run python benchmarks/bench_2d_charts.py --profile smoke --ttfr
 ```
 
 ### 10M-point native benchmark
@@ -185,31 +191,19 @@ These CI numbers use the native Rust backend on Ubuntu. See
 At 10M points, fastcharts stays screen-bounded after density aggregation: the
 payload is fixed-size, and peak Python allocation stays near 2 MB.
 
-### Expanded adapter benchmark
+### Core 2D benchmark
 
-Measured locally with:
+Measured locally on July 4, 2026 with the native Rust backend and headless
+Chrome TTFR:
 
-```bash
-PYTHONPATH=python .venv/bin/python benchmarks/bench_vs.py \
-  --sizes 1e3,1e4,1e5 --budget 20
-```
-
-Environment note: this machine did not have Cargo available, so the fastcharts
-row below uses the NumPy fallback backend. The table is still useful for showing
-that all expanded adapters run and for comparing payload styles at 100k points.
-
-| Library | Render target | 100k total | Peak memory | Output bytes | Points/sec |
-|---|---|---:|---:|---:|---:|
-| fastcharts | binary payload, NumPy fallback | **1 ms** | **2 MB** | 781 KB | 156,985,881 |
-| matplotlib | Agg PNG | 49 ms | 6 MB | 46 KB | 2,055,087 |
-| seaborn | matplotlib PNG | 71 ms | 11 MB | 37 KB | 1,399,835 |
-| Plotly `Scattergl` | Kaleido PNG | 2,018 ms | 22 MB | 61 KB | 49,558 |
-| Plotly `Scatter` | Kaleido PNG | 2,835 ms | 22 MB | 107 KB | 35,269 |
-| Bokeh canvas | standalone HTML | 75 ms | 14 MB | 2 MB | 1,327,770 |
-| Bokeh WebGL | standalone HTML | 73 ms | 14 MB | 2 MB | 1,360,995 |
-| Altair / Vega-Lite | standalone HTML | 1,846 ms | 35 MB | 5 MB | 54,171 |
-| Datashader | PNG raster | 13 ms | 15 MB | 58 KB | 7,502,931 |
-| hvPlot / HoloViews | Bokeh HTML | 95 ms | 17 MB | 2 MB | 1,052,353 |
+| Chart | Workload | Payload-prep vs Plotly | Payload reduction | TTFR speedup |
+|---|---:|---:|---:|---:|
+| Histogram | 100k values / 200 bins | 303x faster | 348x smaller | 5.89x faster |
+| Area | 100k samples | 10.5x faster | 26.1x smaller | 3.19x faster |
+| Bar | 1k categories | 13.4x faster | 1.53x smaller | 3.23x faster |
+| Grouped bar | 1k categories x 4 | 10.3x faster | 2.06x smaller | 3.73x faster |
+| Stacked bar | 1k categories x 4 | 9.17x faster | 1.60x smaller | 2.91x faster |
+| Heatmap | 120 x 120 cells | 19.4x faster | 3.45x smaller | 3.06x faster |
 
 ## What Exists
 
@@ -217,8 +211,8 @@ that all expanded adapters run and for comparing payload styles at 100k points.
 |---|---|
 | Rust core: zone maps, offset-f32 encode, M4 decimation, 2-D binning | [`src/`](src/) |
 | ctypes native binding and NumPy fallback | [`python/fastcharts/_native.py`](python/fastcharts/_native.py), [`python/fastcharts/_fallback.py`](python/fastcharts/_fallback.py) |
-| Column store, autorange, memory accounting | [`python/fastcharts/column.py`](python/fastcharts/column.py) |
-| Figure API, payload builder, line/scatter traces | [`python/fastcharts/figure.py`](python/fastcharts/figure.py) |
+| Column store, autorange, memory accounting | [`python/fastcharts/columns.py`](python/fastcharts/columns.py) |
+| Figure API, payload builder, line/scatter/area/histogram/bar/heatmap traces | [`python/fastcharts/figure.py`](python/fastcharts/figure.py) |
 | Composition API | [`python/fastcharts/components.py`](python/fastcharts/components.py) |
 | anywidget and standalone WebGL2 client | [`js/src/`](js/src/) (parts concatenated by `js/build.mjs`) |
 | Benchmarks | [`benchmarks/`](benchmarks/) |
@@ -255,6 +249,7 @@ cargo clippy --all-targets -- -D warnings
 cargo build --release
 
 node js/build.mjs
+node js/build.mjs --check
 
 uv venv
 uv pip install -e ".[dev]"
@@ -270,12 +265,12 @@ for anywidget and wraps a standalone IIFE for `Figure.to_html`.
 ## Roadmap
 
 For chart-type ordering, see the single 2D-first
-[`docs/chart-roadmap.md`](docs/chart-roadmap.md). Short version: add histogram
-next, then bar/column, area, heatmap, box/violin, and finance traces, while
-tracking the full Plotly-class 2D breadth backlog from common charts through
-obscure compatibility surfaces. Long term, the goal is Plotly-class chart
-breadth across BI, data science, finance, science/engineering, product
-analytics, and dashboards.
+[`docs/chart-roadmap.md`](docs/chart-roadmap.md). Short version: keep hardening
+the common core charts already in place, then add box/violin, pie/donut,
+contour, error bars, annotations, and the rest of the Plotly-class 2D breadth
+backlog from common charts through obscure compatibility surfaces. Long term,
+the goal is Plotly-class chart breadth across BI, data science, finance,
+science/engineering, product analytics, and dashboards.
 
 - **Phase 1:** worker-side compute, SharedArrayBuffer where available, gap
   semantics, accessibility layer, filter Tier A.

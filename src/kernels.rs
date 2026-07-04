@@ -98,7 +98,7 @@ pub fn encode_f32_into(data: &[f64], offset: f64, scale: f64, out: &mut [f32]) {
 pub fn m4_indices(x: &[f64], y: &[f64], x0: f64, x1: f64, n_buckets: usize) -> Vec<u32> {
     assert_eq!(x.len(), y.len());
     assert!(n_buckets > 0);
-    assert!(x1 > x0, "x1 must be > x0");
+    assert!(x1_gt_x0(x0, x1), "x1 must be finite and > x0");
     if x.is_empty() {
         return Vec::new();
     }
@@ -197,7 +197,7 @@ pub fn bin_2d(
 ) {
     assert_eq!(x.len(), y.len());
     assert_eq!(out.len(), w * h);
-    assert!(w > 0 && h > 0 && x1 > x0 && y1 > y0);
+    assert!(w > 0 && h > 0 && x1_gt_x0(x0, x1) && x1_gt_x0(y0, y1));
     for c in out.iter_mut() {
         *c = 0.0;
     }
@@ -208,9 +208,7 @@ pub fn bin_2d(
         let yv = y[i];
         // Non-finite fails the range comparisons already, but check explicitly
         // so intent is clear and -∞/∞ can never index a cell.
-        if !xv.is_finite() || !yv.is_finite()
-            || xv < x0 || xv >= x1 || yv < y0 || yv >= y1
-        {
+        if !xv.is_finite() || !yv.is_finite() || xv < x0 || xv >= x1 || yv < y0 || yv >= y1 {
             continue;
         }
         let cx = ((xv - x0) * sx) as usize;
@@ -219,6 +217,128 @@ pub fn bin_2d(
         let cx = cx.min(w - 1);
         let cy = cy.min(h - 1);
         out[cy * w + cx] += 1.0;
+    }
+}
+
+/// Uniform-bin histogram over `[lo, hi]` with the last bin closed, matching
+/// NumPy's fixed-bin behavior for the common chart path. Non-finite values and
+/// values outside the range are skipped. `out` is fully overwritten.
+pub fn histogram_uniform(data: &[f64], lo: f64, hi: f64, out: &mut [f64]) -> u64 {
+    assert!(x1_gt_x0(lo, hi));
+    assert!(!out.is_empty());
+    for c in out.iter_mut() {
+        *c = 0.0;
+    }
+    let n_bins = out.len();
+    let scale = n_bins as f64 / (hi - lo);
+    let mut total = 0u64;
+    for &v in data {
+        if !v.is_finite() || v < lo || v > hi {
+            continue;
+        }
+        let idx = if v == hi {
+            n_bins - 1
+        } else {
+            (((v - lo) * scale) as usize).min(n_bins - 1)
+        };
+        out[idx] += 1.0;
+        total += 1;
+    }
+    total
+}
+
+/// Normalize values over `[lo, hi]` into f32 `[0,1]`. Non-finite values either
+/// become 0.0 (channel path: no poison vertices) or NaN (heatmap path:
+/// transparent missing cells on the client).
+pub fn normalize_f32_into(data: &[f64], lo: f64, hi: f64, nan_value: f32, out: &mut [f32]) {
+    assert_eq!(data.len(), out.len());
+    assert!(x1_gt_x0(lo, hi));
+    let span = hi - lo;
+    for (dst, &v) in out.iter_mut().zip(data) {
+        if v.is_finite() {
+            *dst = (((v - lo) / span).clamp(0.0, 1.0)) as f32;
+        } else {
+            *dst = nan_value;
+        }
+    }
+}
+
+/// Canonical row indices inside a rectangular window. Bounds are inclusive to
+/// match the existing Python selection/drill path.
+pub fn range_indices(
+    x: &[f64],
+    y: &[f64],
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    out: &mut [u32],
+) -> usize {
+    assert_eq!(x.len(), y.len());
+    assert!(out.len() >= x.len());
+    let mut n = 0usize;
+    for i in 0..x.len() {
+        let xv = x[i];
+        let yv = y[i];
+        if xv >= lo_x && xv <= hi_x && yv >= lo_y && yv <= hi_y {
+            out[n] = i as u32;
+            n += 1;
+        }
+    }
+    n
+}
+
+/// Per-point log-normalized local density for a subset. This fuses the
+/// grid-bin + point-lookup pass used during drill handoff, avoiding Python-side
+/// integer temp arrays.
+#[allow(clippy::too_many_arguments)]
+pub fn local_log_density(
+    x: &[f64],
+    y: &[f64],
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    w: usize,
+    h: usize,
+    out: &mut [f32],
+) {
+    assert_eq!(x.len(), y.len());
+    assert_eq!(x.len(), out.len());
+    assert!(w > 0 && h > 0 && x1_gt_x0(lo_x, hi_x) && x1_gt_x0(lo_y, hi_y));
+    for v in out.iter_mut() {
+        *v = 0.0;
+    }
+    if x.is_empty() {
+        return;
+    }
+    let mut grid = vec![0.0f32; w * h];
+    bin_2d(x, y, lo_x, hi_x, lo_y, hi_y, w, h, &mut grid);
+    let gmax = grid.iter().copied().fold(0.0f32, f32::max);
+    if gmax <= 0.0 {
+        return;
+    }
+    let denom = gmax.ln_1p();
+    let sx = w as f64 / (hi_x - lo_x);
+    let sy = h as f64 / (hi_y - lo_y);
+    for i in 0..x.len() {
+        let xv = x[i];
+        let yv = y[i];
+        if !xv.is_finite() || !yv.is_finite() || xv < lo_x || xv >= hi_x || yv < lo_y || yv >= hi_y
+        {
+            continue;
+        }
+        let cx = (((xv - lo_x) * sx) as isize).clamp(0, w as isize - 1) as usize;
+        let cy = (((yv - lo_y) * sy) as isize).clamp(0, h as isize - 1) as usize;
+        let c = grid[cy * w + cx];
+        out[i] = if c > 0.0 { c.ln_1p() / denom } else { 0.0 };
+    }
+}
+
+fn x1_gt_x0(x0: f64, x1: f64) -> bool {
+    #[allow(clippy::neg_cmp_op_on_partial_ord)]
+    {
+        x0.is_finite() && x1.is_finite() && x1 > x0
     }
 }
 
@@ -318,7 +438,10 @@ mod tests {
             .zip(&window)
             .map(|(&e, &v)| (e as f64 - v).abs())
             .fold(0.0f64, f64::max);
-        assert!(worst > 1.0, "naive f32 should be visibly wrong, got {worst}");
+        assert!(
+            worst > 1.0,
+            "naive f32 should be visibly wrong, got {worst}"
+        );
     }
 
     #[test]
@@ -363,7 +486,10 @@ mod tests {
     #[test]
     fn min_max_skips_non_finite() {
         assert_eq!(min_max(&[f64::NAN, 2.0, -1.0]), Some((-1.0, 2.0)));
-        assert_eq!(min_max(&[f64::INFINITY, 2.0, f64::NEG_INFINITY, -1.0]), Some((-1.0, 2.0)));
+        assert_eq!(
+            min_max(&[f64::INFINITY, 2.0, f64::NEG_INFINITY, -1.0]),
+            Some((-1.0, 2.0))
+        );
         assert_eq!(min_max(&[f64::NAN, f64::INFINITY]), None);
         assert_eq!(min_max(&[]), None);
     }
@@ -421,5 +547,17 @@ mod tests {
         bin_2d(&x, &y, 0.0, 1.0, 0.0, 1.0, 10, 10, &mut out);
         assert_eq!(grid_max(&out), 1000.0);
         assert_eq!(out.iter().sum::<f32>(), 1010.0);
+    }
+
+    #[test]
+    fn local_density_does_not_clamp_outside_points() {
+        let x = [0.1, 0.1, 2.0, 0.5];
+        let y = [0.1, 0.1, 0.1, f64::NAN];
+        let mut out = [0.0f32; 4];
+        local_log_density(&x, &y, 0.0, 1.0, 0.0, 1.0, 2, 2, &mut out);
+        assert!(out[0] > 0.0);
+        assert!(out[1] > 0.0);
+        assert_eq!(out[2], 0.0);
+        assert_eq!(out[3], 0.0);
     }
 }

@@ -24,14 +24,31 @@ from typing import Any
 import numpy as np
 
 from . import kernels
-from .config import DENSITY_TARGET_POINTS_PER_CELL, DRILL_EXIT_FACTOR
+from .config import DENSITY_TARGET_POINTS_PER_CELL, DRILL_EXIT_FACTOR, MAX_SCREEN_DIM
 
 
 def normalize_window(
-    x0: float, x1: float, y0: float, y1: float
+    x0: float, x1: float, y0: float, y1: float, *, require_area: bool = True
 ) -> tuple[float, float, float, float]:
-    """Order a possibly-flipped request window as (lo_x, hi_x, lo_y, hi_y)."""
-    return min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)
+    """Order a possibly-flipped request window as (lo_x, hi_x, lo_y, hi_y).
+
+    Browser events are untrusted input at this boundary: reject NaN/inf before
+    native kernels see them, and before a failed LOD request can mutate drill
+    state.
+    """
+    if any(isinstance(v, (bool, np.bool_)) for v in (x0, x1, y0, y1)):
+        raise ValueError("view window bounds must be finite")
+    try:
+        vals = [float(v) for v in (x0, x1, y0, y1)]
+    except (TypeError, ValueError) as e:
+        raise ValueError("view window bounds must be finite") from e
+    if not all(np.isfinite(vals)):
+        raise ValueError("view window bounds must be finite")
+    lo_x, hi_x = min(vals[0], vals[1]), max(vals[0], vals[1])
+    lo_y, hi_y = min(vals[2], vals[3]), max(vals[2], vals[3])
+    if require_area and (lo_x == hi_x or lo_y == hi_y):
+        raise ValueError("view window must have non-zero width and height")
+    return lo_x, hi_x, lo_y, hi_y
 
 
 def visible_mask(
@@ -108,8 +125,17 @@ def grid_shape(
     """Keep aggregation grids screen-bounded, but avoid one-pixel bins when
     the visible count is only barely over the direct budget. A few points per
     cell gives smoother drill-out aggregates and smaller updates."""
-    w = max(16, min(int(w), 4096))
-    h = max(16, min(int(h), 4096))
+    if isinstance(w, (bool, np.bool_)) or isinstance(h, (bool, np.bool_)):
+        raise ValueError("screen dimensions must be finite")
+    try:
+        wf = float(w)
+        hf = float(h)
+    except (TypeError, ValueError) as e:
+        raise ValueError("screen dimensions must be finite") from e
+    if not np.isfinite(wf) or not np.isfinite(hf):
+        raise ValueError("screen dimensions must be finite")
+    w = max(16, min(int(wf), MAX_SCREEN_DIM))
+    h = max(16, min(int(hf), MAX_SCREEN_DIM))
     requested = w * h
     if visible <= 0:
         return w, h
@@ -133,13 +159,6 @@ def local_log_density(
     """Per-point log-normalized local density in [0,1] — the LUT coordinate
     the client blends during the drill handoff so freshly drilled marks wear
     the aggregate's colormap (§5: never a palette jump)."""
-    n = len(xs)
-    dval = np.zeros(n, dtype=np.float32)
-    if n and hi_x > lo_x and hi_y > lo_y:
-        grid = kernels.bin_2d(xs, ys, lo_x, hi_x, lo_y, hi_y, gw, gh)
-        gmax = float(grid.max()) if grid.size else 0.0
-        if gmax > 0:
-            ix = np.clip(((xs - lo_x) * (gw / (hi_x - lo_x))).astype(np.int64), 0, gw - 1)
-            iy = np.clip(((ys - lo_y) * (gh / (hi_y - lo_y))).astype(np.int64), 0, gh - 1)
-            dval = (np.log1p(grid[iy, ix]) / np.log1p(gmax)).astype(np.float32)
-    return dval
+    if len(xs) and hi_x > lo_x and hi_y > lo_y:
+        return kernels.local_log_density(xs, ys, lo_x, hi_x, lo_y, hi_y, gw, gh)
+    return np.zeros(len(xs), dtype=np.float32)

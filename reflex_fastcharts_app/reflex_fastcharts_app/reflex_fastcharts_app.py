@@ -33,11 +33,53 @@ LINE_CHART = {
     "stat": "120k points",
 }
 
+AREA_CHART = {
+    "title": "Filled Area",
+    "subtitle": "80k samples filled against a baseline with a line overlay.",
+    "src": "/charts/area.html",
+    "stat": "80k points",
+}
+
 DENSITY_CHART = {
     "title": "Density Scatter",
     "subtitle": "10M raw points aggregated into a responsive density texture.",
     "src": "/charts/density_scatter.html",
     "stat": "10M points",
+}
+
+HISTOGRAM_CHART = {
+    "title": "Histogram",
+    "subtitle": "500k values binned into a shared rectangle-renderer chart.",
+    "src": "/charts/histogram.html",
+    "stat": "500k values",
+}
+
+BAR_CHART = {
+    "title": "Grouped Bars",
+    "subtitle": "Multiple category series sharing the rectangle primitive.",
+    "src": "/charts/bar_column.html",
+    "stat": "grouped",
+}
+
+STACKED_BAR_CHART = {
+    "title": "Stacked Bars",
+    "subtitle": "Positive series stacked from a shared baseline.",
+    "src": "/charts/stacked_bar.html",
+    "stat": "stacked",
+}
+
+HORIZONTAL_BAR_CHART = {
+    "title": "Horizontal Bars",
+    "subtitle": "Category labels on the y-axis with value bars extending along x.",
+    "src": "/charts/horizontal_bar.html",
+    "stat": "horizontal",
+}
+
+HEATMAP_CHART = {
+    "title": "Heatmap",
+    "subtitle": "Matrix values rendered as colored cells on categorical axes.",
+    "src": "/charts/heatmap.html",
+    "stat": "grid",
 }
 
 
@@ -55,16 +97,19 @@ def metric(label: str, value: str) -> rx.Component:
 
 def chart_panel(chart: dict[str, str], *, fluid: bool = False) -> rx.Component:
     return rx.box(
-        rx.hstack(
-            rx.box(
-                rx.heading(chart["title"], size="5"),
-                rx.text(chart["subtitle"], size="2", color="gray", margin_top="0.25rem"),
+        rx.box(
+            rx.hstack(
+                rx.box(
+                    rx.heading(chart["title"], size="5"),
+                    rx.text(chart["subtitle"], size="2", color="gray", margin_top="0.25rem"),
+                ),
+                rx.badge(chart["stat"], variant="soft", color_scheme="blue"),
+                justify="between",
+                align="start",
+                width="100%",
+                gap="1rem",
             ),
-            rx.badge(chart["stat"], variant="soft", color_scheme="blue"),
-            justify="between",
-            align="start",
-            width="100%",
-            gap="1rem",
+            padding="1rem",
         ),
         rx.box(
             rx.el.iframe(
@@ -79,18 +124,16 @@ def chart_panel(chart: dict[str, str], *, fluid: bool = False) -> rx.Component:
                     "background": "#ffffff",
                 },
             ),
-            margin_top="1rem",
-            border="1px solid #dde3ea",
-            border_radius="8px",
+            border_top="1px solid #dde3ea",
             overflow_x="auto",
             overflow_y="hidden",
             background="#ffffff",
             width="100%",
         ),
-        padding="1rem",
         border="1px solid #dde3ea",
         border_radius="8px",
         background="#fbfcfe",
+        overflow="hidden",
         width="100%",
     )
 
@@ -129,7 +172,28 @@ def index() -> rx.Component:
                 gap="1rem",
                 width="100%",
             ),
-            chart_panel(LINE_CHART),
+            rx.grid(
+                chart_panel(LINE_CHART, fluid=True),
+                chart_panel(AREA_CHART, fluid=True),
+                columns={"initial": "1", "lg": "2"},
+                gap="1rem",
+                width="100%",
+            ),
+            rx.grid(
+                chart_panel(HISTOGRAM_CHART, fluid=True),
+                chart_panel(BAR_CHART, fluid=True),
+                columns={"initial": "1", "lg": "2"},
+                gap="1rem",
+                width="100%",
+            ),
+            rx.grid(
+                chart_panel(STACKED_BAR_CHART, fluid=True),
+                chart_panel(HORIZONTAL_BAR_CHART, fluid=True),
+                columns={"initial": "1", "lg": "2"},
+                gap="1rem",
+                width="100%",
+            ),
+            chart_panel(HEATMAP_CHART, fluid=True),
             chart_panel(DENSITY_CHART, fluid=True),
             spacing="5",
             width="100%",

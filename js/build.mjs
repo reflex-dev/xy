@@ -4,7 +4,7 @@
 // final part). Building = concatenating them (anywidget ESM) and wrapping the
 // export-free body (standalone IIFE for static HTML export). No npm, no
 // registry, no supply chain — deliberate (§33).
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,12 +22,9 @@ const PARTS = [
 ];
 
 const here = dirname(fileURLToPath(import.meta.url));
+const checkOnly = process.argv.includes("--check");
 const src = PARTS.map((p) => readFileSync(join(here, "src", p), "utf8")).join("");
 const outDir = join(here, "..", "python", "fastcharts", "static");
-mkdirSync(outDir, { recursive: true });
-
-// anywidget build: the concatenated module as-is.
-writeFileSync(join(outDir, "index.js"), src);
 
 // standalone build: strip the export tail, expose a window global.
 const marker = "// ---- exports ----";
@@ -35,6 +32,34 @@ const cut = src.indexOf(marker);
 if (cut < 0) throw new Error("export marker not found in 60_entries.js");
 const body = src.slice(0, cut);
 const iife = `(() => {\n${body}\nwindow.fastcharts = { render, renderStandalone, ChartView, MARK_KINDS, markOf };\n})();\n`;
-writeFileSync(join(outDir, "standalone.js"), iife);
 
-console.log(`built static/index.js and static/standalone.js from ${PARTS.length} parts`);
+const outputs = [
+  ["index.js", src],
+  ["standalone.js", iife],
+];
+
+if (checkOnly) {
+  const stale = [];
+  for (const [name, expected] of outputs) {
+    const path = join(outDir, name);
+    let actual = null;
+    try {
+      actual = readFileSync(path, "utf8");
+    } catch {
+      stale.push(`${name} missing`);
+      continue;
+    }
+    if (actual !== expected) stale.push(`${name} is stale`);
+  }
+  if (stale.length) {
+    console.error(
+      `static JS bundle check failed: ${stale.join(", ")}. Run \`node js/build.mjs\` and commit python/fastcharts/static/*.js.`
+    );
+    process.exit(1);
+  }
+  console.log(`static JS bundles are fresh (${PARTS.length} parts)`);
+} else {
+  mkdirSync(outDir, { recursive: true });
+  for (const [name, data] of outputs) writeFileSync(join(outDir, name), data);
+  console.log(`built static/index.js and static/standalone.js from ${PARTS.length} parts`);
+}

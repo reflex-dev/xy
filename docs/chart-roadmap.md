@@ -19,9 +19,12 @@ fastcharts should become a **Plotly-class general-purpose charting library** for
 analytics, science, finance, operations, and dashboards. Performance is the
 entry point, not the boundary of the product.
 
-The current implemented surface is **line** and **scatter**. Scatter already
-covers direct points, color/size channels, GPU picking, selection, and Tier-2
-density aggregation. Line already covers direct and M4-decimated time series.
+The current implemented surface is **line**, **scatter**, **area**,
+**histogram**, **bar/column**, and **heatmap**. Scatter already covers direct
+points, color/size channels, GPU picking, selection, and Tier-2 density
+aggregation. Line and area cover direct and M4-decimated time series. Histogram
+and bar/column share the instanced rectangle renderer; heatmap ships a compact
+grid texture.
 
 ## Source Signals
 
@@ -48,6 +51,10 @@ These sources are used as popularity proxies, not as exact usage telemetry:
 | Line | Implemented | Direct and M4-decimated line rendering. |
 | Scatter | Implemented | Direct, color/size channels, density tier, hover, box select. |
 | Bubble | Mostly covered | Scatter with `size=` already covers the core bubble use case; add a named alias later. |
+| Area | Implemented core | Filled time-series area with scalar/array baselines and optional line overlay. |
+| Histogram | Implemented core | Python-side binning plus shared rectangle renderer. |
+| Bar / column | Implemented core | Category/numeric axes, grouped, stacked, vertical, horizontal. |
+| Heatmap | Implemented core | 2D matrix to compact colored grid texture with numeric or categorical axes. |
 
 ### Ranked 2D coverage backlog
 
@@ -59,11 +66,11 @@ not fall out of sight.
 |---:|---|---|---|---|
 | 1 | Line and time series | line, step line, spline, markers+line, multi-line, streaming line | Implemented core | Most universal analytical chart; core for finance, monitoring, science, product metrics. |
 | 2 | Scatter / marker plots | scatter, scattergl-style, bubble, colored scatter, sized scatter | Implemented core | Large-point interactivity is the fastcharts wedge; basis for drilldown, selection, and density. |
-| 3 | Bar / column | vertical bar, horizontal bar, grouped, stacked, normalized stacked, diverging bar | Planned | Expected in every BI/product library; unlocks categorical comparison and rectangle primitives. |
-| 4 | Area | filled line, stacked area, streamgraph, ridgeline-lite area bands | Planned | Common time-series companion; shares line decimation plus filled polygon rendering. |
-| 5 | Histogram | count, probability, density, cumulative histogram | Planned next | Core data-science chart and ideal screen-bounded aggregation primitive. |
+| 3 | Bar / column | vertical bar, horizontal bar, grouped, stacked, normalized stacked, diverging bar | Implemented core | `Figure().bar(...)` / `Figure().column(...)` ship categorical/numeric vertical and horizontal bars, grouped bars, and stacked bars through the shared rectangle renderer. Follow-ups: normalized stacked bars and labels. |
+| 4 | Area | filled line, stacked area, streamgraph, ridgeline-lite area bands | Implemented core | `Figure().area(...)` ships a filled area with scalar/array baseline and optional line overlay. Follow-ups: stacked area helpers and streamgraph offsets. |
+| 5 | Histogram | count, probability, density, cumulative histogram | Implemented core | Python-side binning plus the shared rectangle renderer; follow-ups: cumulative histograms and viewport-aware re-binning for huge streamed distributions. |
 | 6 | Pie / donut | pie, donut, nested donut, variable-radius pie | Planned compatibility | Extremely common in dashboards even though performance differentiation is low. |
-| 7 | Heatmap / image / matrix | heatmap, image, annotated matrix, correlation matrix, cohort heatmap | Planned | Reuses density texture machinery and supports science, BI, and product analytics. |
+| 7 | Heatmap / image / matrix | heatmap, image, annotated matrix, correlation matrix, cohort heatmap | Implemented core | `Figure().heatmap(...)` renders matrix cells through a compact grid texture with continuous colormaps and categorical/numeric axes. Follow-ups: annotation and tiled huge-image paths. |
 | 8 | Box plot | box, grouped box, notched box, outlier points | Planned | Standard distribution summary across Plotly, Matplotlib, Seaborn, Altair. |
 | 9 | Candlestick / OHLC | candlestick, OHLC bars, volume overlay, range selector | Planned | Critical finance surface; should inherit LOD and time-axis work from core primitives. |
 | 10 | Error and interval charts | error bars, error bands, confidence intervals, line range, bar range, whisker, rule | Planned | Needed for science, experimentation, forecasting, and statistical dashboards. |
@@ -102,14 +109,14 @@ not fall out of sight.
 
 | Rank | Chart | Why it is popular | Why it fits fastcharts | Suggested API |
 |---:|---|---|---|---|
-| 1 | Histogram | Core statistical chart in Plotly, Matplotlib, Altair; common first chart for distributions. | Huge data collapses to fixed bins; 1D binning is cheap and screen-bounded. | `Figure().hist(values, bins=512)` |
-| 2 | Bar / column | Present in every major library; expected for categorical comparison. | Bars are bounded by categories; reuse instanced rectangle renderer needed by histograms. | `Figure().bar(x, y)` |
-| 3 | Area / filled line | Common extension of line charts in Plotly, Chart.js, Highcharts, Altair. | Reuses sorted x, line decimation, and WebGL segment infrastructure; unlocks stacked area. | `Figure().area(x, y)` |
-| 4 | Heatmap / image | Common in scientific and BI tools; Matplotlib, Plotly, Altair, Highcharts all surface it. | Existing scatter density already ships grid textures; this generalizes to user-provided grids. | `Figure().heatmap(z, x=None, y=None)` |
+| 1 | Histogram | Core statistical chart in Plotly, Matplotlib, Altair; common first chart for distributions. | Implemented core: Python-side binning + shared instanced rectangle renderer. Follow-up: viewport-aware re-binning for very large streamed distributions. | `Figure().hist(values, bins=512)` |
+| 2 | Bar / column | Present in every major library; expected for categorical comparison. | Implemented core: category axis + shared instanced rectangle renderer for basic, grouped, stacked, and horizontal bars. Follow-up: normalized stacked bars and labels. | `Figure().bar(x, y)` |
+| 3 | Area / filled line | Common extension of line charts in Plotly, Chart.js, Highcharts, Altair. | Implemented core: sorted x, M4 first payload, and filled WebGL segment strips. Follow-up: stacked area helper. | `Figure().area(x, y)` |
+| 4 | Heatmap / image | Common in scientific and BI tools; Matplotlib, Plotly, Altair, Highcharts all surface it. | Implemented core: matrix-to-grid texture path with color channel reuse. Follow-up: image/raster tiling for huge grids. | `Figure().heatmap(z, x=None, y=None)` |
 
-P1 should be the next implementation block. It maximizes user familiarity while
-adding engine primitives that many later charts share: rectangles, filled
-polygons, and grid textures.
+P1 is now implemented at the core primitive level. The next implementation block
+should add statistical breadth on top of these primitives: box plots, error
+bars/bands, ECDF/cumulative histograms, and first-class 2D density chart types.
 
 ### P2 - Statistical and analytical breadth
 
@@ -278,17 +285,17 @@ interaction-latency comparison, not assumed.
 
 ## Recommended Sequence
 
-1. **Histogram**
-   - Add native 1D binning kernel.
-   - Render bins as instanced rectangles.
-   - Support count, probability, density, cumulative.
-   - Add hover for bin range and count.
-   - Benchmark against Matplotlib, Plotly, Altair, Datashader.
+1. **Histogram** - implemented core
+   - Python-side 1D binning and instanced rectangle rendering are in place.
+   - Follow-ups: native 1D binning, cumulative/probability modes, bin hover,
+     viewport-aware re-binning, and benchmarks against Matplotlib, Plotly,
+     Altair, and Datashader.
 
-2. **Bar / column**
-   - Reuse rectangle renderer from histogram.
-   - Support vertical, horizontal, grouped, stacked, normalized stacked.
-   - Keep category counts bounded and warn above practical category ceilings.
+2. **Bar / column** - implemented core
+   - Vertical, horizontal, grouped, and stacked categorical/numeric bars reuse
+     the rectangle renderer.
+   - Follow-ups: normalized stacked bars, labels, category count warnings, and
+     richer hover payloads.
 
 3. **Area / stacked area**
    - Reuse line trace and sorted-x constraints.
@@ -314,7 +321,7 @@ interaction-latency comparison, not assumed.
 from fastcharts import Figure
 
 Figure().hist(values, bins=512, density=False, cumulative=False)
-Figure().bar(categories, values, orientation="vertical", stacked=False)
+Figure().bar(categories, values, mode="grouped", orientation="vertical")
 Figure().area(x, y, baseline=0.0, stacked=False)
 Figure().heatmap(z, x=None, y=None, colormap="viridis", color_scale="linear")
 Figure().box(values, group=None)
@@ -334,6 +341,6 @@ fc.heatmap_chart(fc.heatmap(z=matrix))
 
 ## Decision Summary
 
-The next chart should be **histogram**. It is popular, data-science-native, and
-strongly aligned with fastcharts' screen-bounded performance story. After that,
-add **bar/column**, **area**, and **heatmap** as the first breadth milestone.
+Histogram and bar/column are now the rectangle-renderer foundation. The next
+regular 2D chart work should move to **area/stacked area**, then
+**heatmap/image** as the rest of the first breadth milestone.

@@ -30,6 +30,11 @@ DIRECT_SOFT_CEILING = 2_000_000
 # requests a viewport-matched size on zoom via density_view.
 DENSITY_GRID = (512, 384)
 
+# Absolute cap for any browser-supplied screen dimension. Frontends normally
+# send plot CSS pixels, but widget/comm messages are still untrusted input; this
+# prevents a bad `px` from turning into huge decimation buckets or density grids.
+MAX_SCREEN_DIM = 4096
+
 # Hysteresis on the drill boundary (§5 "tier transitions hysteresis-guarded"):
 # once drilled to points, stay until the visible count clearly exceeds the
 # budget again, so a view hovering at the threshold doesn't thrash modes.

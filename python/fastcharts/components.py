@@ -25,8 +25,9 @@ chart renders in notebooks and exports to HTML exactly like the fluent API.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Union
+from typing import Any, Optional, Union
 
 from .figure import Figure
 
@@ -41,9 +42,9 @@ class Component:
 
 @dataclass
 class Mark(Component):
-    kind: str  # "scatter" | "line"
-    x: Any
-    y: Any
+    kind: str  # "scatter" | "line" | "area" | "histogram" | "bar" | "column" | "heatmap"
+    x: Any = None
+    y: Any = None
     data: Any = None
     name: Optional[str] = None
     props: dict = field(default_factory=dict)
@@ -117,6 +118,183 @@ def line(
         data=data,
         name=name,
         props={"color": color, "width": width, "opacity": opacity},
+    )
+
+
+def area(
+    x: Union[str, Any] = None,
+    y: Union[str, Any] = None,
+    *,
+    data: Any = None,
+    base: Union[str, float, Any] = 0.0,
+    name: Optional[str] = None,
+    color: Optional[str] = None,
+    opacity: float = 0.35,
+    line_width: float = 1.2,
+    line_opacity: float = 1.0,
+) -> Mark:
+    """A filled area series between `y` and `base`."""
+    return Mark(
+        kind="area",
+        x=x,
+        y=y,
+        data=data,
+        name=name,
+        props={
+            "base": base,
+            "color": color,
+            "opacity": opacity,
+            "line_width": line_width,
+            "line_opacity": line_opacity,
+        },
+    )
+
+
+def histogram(
+    values: Union[str, Any] = None,
+    *,
+    data: Any = None,
+    bins: Any = "auto",
+    range: Optional[tuple[float, float]] = None,
+    density: bool = False,
+    name: Optional[str] = None,
+    color: Optional[str] = None,
+    opacity: float = 0.85,
+) -> Mark:
+    """A 1D histogram. `values` may be an array or a column name in `data`."""
+    return Mark(
+        kind="histogram",
+        x=values,
+        data=data,
+        name=name,
+        props={
+            "bins": bins,
+            "range": range,
+            "density": density,
+            "color": color,
+            "opacity": opacity,
+        },
+    )
+
+
+def hist(
+    values: Union[str, Any] = None,
+    *,
+    data: Any = None,
+    bins: Any = "auto",
+    range: Optional[tuple[float, float]] = None,
+    density: bool = False,
+    name: Optional[str] = None,
+    color: Optional[str] = None,
+    opacity: float = 0.85,
+) -> Mark:
+    """Short alias for `histogram(...)`."""
+    return histogram(
+        values,
+        data=data,
+        bins=bins,
+        range=range,
+        density=density,
+        name=name,
+        color=color,
+        opacity=opacity,
+    )
+
+
+def bar(
+    x: Union[str, Any] = None,
+    y: Union[str, Any] = None,
+    *,
+    data: Any = None,
+    name: Optional[str] = None,
+    color: Any = None,
+    colors: Optional[list[str]] = None,
+    width: float = 0.8,
+    base: Union[str, float, Any] = 0.0,
+    mode: str = "grouped",
+    orientation: str = "vertical",
+    series: Optional[list[str]] = None,
+    opacity: float = 0.85,
+) -> Mark:
+    """A vertical bar series. 2D y values can render grouped or stacked."""
+    return Mark(
+        kind="bar",
+        x=x,
+        y=y,
+        data=data,
+        name=name,
+        props={
+            "color": color,
+            "colors": colors,
+            "width": width,
+            "base": base,
+            "mode": mode,
+            "orientation": orientation,
+            "series": series,
+            "opacity": opacity,
+        },
+    )
+
+
+def column(
+    x: Union[str, Any] = None,
+    y: Union[str, Any] = None,
+    *,
+    data: Any = None,
+    name: Optional[str] = None,
+    color: Any = None,
+    colors: Optional[list[str]] = None,
+    width: float = 0.8,
+    base: Union[str, float, Any] = 0.0,
+    mode: str = "grouped",
+    orientation: str = "vertical",
+    series: Optional[list[str]] = None,
+    opacity: float = 0.85,
+) -> Mark:
+    """Alias for vertical column charts; shares the bar renderer."""
+    return Mark(
+        kind="column",
+        x=x,
+        y=y,
+        data=data,
+        name=name,
+        props={
+            "color": color,
+            "colors": colors,
+            "width": width,
+            "base": base,
+            "mode": mode,
+            "orientation": orientation,
+            "series": series,
+            "opacity": opacity,
+        },
+    )
+
+
+def heatmap(
+    z: Union[str, Any] = None,
+    *,
+    x: Union[str, Any, None] = None,
+    y: Union[str, Any, None] = None,
+    data: Any = None,
+    name: Optional[str] = None,
+    colormap: str = "viridis",
+    domain: Optional[tuple[float, float]] = None,
+    opacity: float = 0.95,
+) -> Mark:
+    """A rectangular heatmap from a 2D matrix. `z`, `x`, and `y` may be data keys."""
+    return Mark(
+        kind="heatmap",
+        x=x,
+        y=y,
+        data=data,
+        name=name,
+        props={
+            "z": z,
+            "colormap": colormap,
+            "domain": domain,
+            "opacity": opacity,
+        },
     )
 
 
@@ -334,7 +512,84 @@ def _apply_line(fig: Figure, m: Mark, data: Any) -> None:
     )
 
 
+def _apply_area(fig: Figure, m: Mark, data: Any) -> None:
+    base = m.props["base"]
+    fig.area(
+        _resolve(data, m.x),
+        _resolve(data, m.y),
+        base=_resolve(data, base) if isinstance(base, str) else base,
+        name=m.name,
+        color=m.props["color"],
+        opacity=m.props["opacity"],
+        line_width=m.props["line_width"],
+        line_opacity=m.props["line_opacity"],
+    )
+
+
+def _apply_histogram(fig: Figure, m: Mark, data: Any) -> None:
+    fig.histogram(
+        _resolve(data, m.x),
+        bins=m.props["bins"],
+        range=m.props["range"],
+        density=m.props["density"],
+        name=m.name,
+        color=m.props["color"],
+        opacity=m.props["opacity"],
+    )
+
+
+def _apply_heatmap(fig: Figure, m: Mark, data: Any) -> None:
+    fig.heatmap(
+        _resolve(data, m.props["z"]),
+        x=_resolve(data, m.x) if m.x is not None else None,
+        y=_resolve(data, m.y) if m.y is not None else None,
+        name=m.name,
+        colormap=m.props["colormap"],
+        domain=m.props["domain"],
+        opacity=m.props["opacity"],
+    )
+
+
+def _apply_bar(fig: Figure, m: Mark, data: Any) -> None:
+    base = m.props["base"]
+    fig.bar(
+        _resolve(data, m.x),
+        _resolve(data, m.y),
+        name=m.name,
+        color=m.props["color"],
+        colors=m.props["colors"],
+        width=m.props["width"],
+        base=_resolve(data, base) if isinstance(base, str) else base,
+        mode=m.props["mode"],
+        orientation=m.props["orientation"],
+        series=m.props["series"],
+        opacity=m.props["opacity"],
+    )
+
+
+def _apply_column(fig: Figure, m: Mark, data: Any) -> None:
+    base = m.props["base"]
+    fig.column(
+        _resolve(data, m.x),
+        _resolve(data, m.y),
+        name=m.name,
+        color=m.props["color"],
+        colors=m.props["colors"],
+        width=m.props["width"],
+        base=_resolve(data, base) if isinstance(base, str) else base,
+        mode=m.props["mode"],
+        orientation=m.props["orientation"],
+        series=m.props["series"],
+        opacity=m.props["opacity"],
+    )
+
+
 _MARK_APPLIERS: dict[str, Callable[[Figure, Mark, Any], None]] = {
+    "area": _apply_area,
+    "bar": _apply_bar,
+    "column": _apply_column,
+    "heatmap": _apply_heatmap,
+    "histogram": _apply_histogram,
     "scatter": _apply_scatter,
     "line": _apply_line,
 }
@@ -348,3 +603,28 @@ def scatter_chart(*children: Component, **props: Any) -> Chart:
 def line_chart(*children: Component, **props: Any) -> Chart:
     """A line chart composing `line` marks and axis/legend children."""
     return Chart("line_chart", children, **props)
+
+
+def area_chart(*children: Component, **props: Any) -> Chart:
+    """An area chart composing `area` marks and axis/legend children."""
+    return Chart("area_chart", children, **props)
+
+
+def histogram_chart(*children: Component, **props: Any) -> Chart:
+    """A histogram chart composing `histogram` marks and axis/legend children."""
+    return Chart("histogram_chart", children, **props)
+
+
+def bar_chart(*children: Component, **props: Any) -> Chart:
+    """A bar chart composing `bar` marks and axis/legend children."""
+    return Chart("bar_chart", children, **props)
+
+
+def column_chart(*children: Component, **props: Any) -> Chart:
+    """A column chart composing `column` marks and axis/legend children."""
+    return Chart("column_chart", children, **props)
+
+
+def heatmap_chart(*children: Component, **props: Any) -> Chart:
+    """A heatmap chart composing `heatmap` marks and axis/legend children."""
+    return Chart("heatmap_chart", children, **props)

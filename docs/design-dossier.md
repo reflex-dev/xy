@@ -14,9 +14,10 @@ SVG node per point), **Apache Arrow binary transport** (not JSON parsing), a **n
 Rust core in the Python process** (not main-thread compute), and — the real unlock — a
 **multi-tier level-of-detail system** that never draws or ships more primitives than the
 screen can show. One Rust core runs natively inside the Python kernel doing all heavy
-work; a thin WASM client in the browser composes screen-bounded tiles on the GPU. The
-result targets **100M–1B+ points interactively** at **12–24 bytes/point** (direct) or
-screen-bounded memory (aggregated) — versus Plotly's practical ~1M ceiling.
+work; a thin JS/WebGL2 client in the browser composes screen-bounded tiles on the GPU
+today, with a WASM client remaining a future pure-browser path. The result targets
+**100M–1B+ points interactively** at **12–24 bytes/point** (direct) or screen-bounded
+memory (aggregated) — versus Plotly's practical ~1M ceiling.
 
 Every claim in this dossier is **mode-scoped and testable** — no universal numbers.
 
@@ -860,14 +861,17 @@ deliver three separately-hard artifacts.** Plotly.py's real-world engineering
 complexity lives almost entirely here, not in rendering. Miss any piece and the user
 hits a source build requiring a Rust toolchain — an instant adoption cliff.
 
-1. **The native core as prebuilt wheels.** Built with **maturin/PyO3**, using the
-   **`abi3` stable ABI** so one wheel per platform covers all CPython versions
-   (killing the version cross-product). Wheel matrix in CI, release-blocking:
-   manylinux (x86_64 + aarch64), musllinux, macOS (arm64 + x86_64), Windows x86_64.
-   A missing wheel is a build failure, not a runtime surprise.
-2. **The WASM + JS render client as bundled static assets** inside the same wheel —
-   versioned, hashed, no CDN dependency (notebooks are often airgapped; §23's CSP
-   rules apply).
+1. **The native core as prebuilt wheels.** Built as a dependency-free Rust
+   **`cdylib` with a plain C ABI**, compiled by the Hatchling build hook and loaded
+   from Python with `ctypes`. There is no CPython extension ABI at all, so one
+   `py3-none-<platform>` wheel covers every supported Python version on that platform
+   without PyO3 or `abi3`. Wheel matrix in CI, release-blocking: manylinux
+   (x86_64 + aarch64), macOS (arm64 + x86_64), Windows x86_64. A missing native wheel
+   is a release failure, not an end-user surprise.
+2. **The JS/WebGL2 render client as bundled static assets** inside the same wheel —
+   versioned, no CDN dependency (notebooks are often airgapped; §23's CSP rules
+   apply). A WASM client is a future pure-browser/export path, not the current shipped
+   client.
 3. **The notebook integration via `anywidget`** — the current standard: one widget
    implementation works across Jupyter, JupyterLab, VS Code, Colab, and Marimo, and
    gives us the binary comm channel (§29's Jupyter row) without maintaining N
@@ -879,13 +883,14 @@ hits a source build requiring a Rust toolchain — an instant adoption cliff.
   drift (cached notebook outputs, pinned server assets). Every message carries a
   protocol version; mismatch fails **loudly with an upgrade hint**, never silently
   renders wrong.
-- **No-wheel behavior is defined:** a clear error naming the missing platform + an
-  optional degraded fallback (kernel-side PNG streaming via any available renderer)
-  — never a silent attempt to compile Rust on the user's machine.
+- **No-wheel behavior is defined:** source installs compile the Rust core only when a
+  toolchain is present; otherwise they still install as a pure-Python wheel using the
+  NumPy fallback with a loud import warning. Published platform wheels require the
+  native core and fail the build if it is absent.
 - **Install-size budget** joins the §23 bundle budget: wheel ≤ ~15 MB target
-  (native core + WASM client + assets), CI-enforced like every other number.
-- **Import-time budget**: `import` does no heavy work (< 200 ms); the native core
-  initializes lazily on first figure.
+  (native core + JS client + assets), CI-enforced like every other number.
+- **Import-time budget**: `import fastcharts` does no heavy work (< 200 ms); NumPy and
+  the native core initialize lazily when a chart-building API is first imported/used.
 
 ## 34. Filtering, selection & linked views — the pyramid alone cannot answer them (F2)
 
@@ -1455,20 +1460,22 @@ detail or honesty.
 ### F1 — Packaging & distribution is unspecified. For Python-only, it's the highest risk. [Critical]
 **Failure scenario.** `pip install <engine>` must deliver three separately-hard things:
 (a) the **native Rust core** as prebuilt wheels across the matrix — manylinux (x86_64 +
-aarch64), macOS (arm64 + x86_64), Windows, × CPython 3.9–3.13 — via maturin/PyO3, ideally
-`abi3` to cut the Python cross-product; (b) the compiled **WASM + JS render client** as
-bundled static assets; (c) a **notebook front-end integration** that injects that client
+aarch64), macOS (arm64 + x86_64), Windows — via a plain C-ABI `cdylib` built by
+Hatchling, so the Python-version cross-product disappears without PyO3 or `abi3`; (b)
+the compiled **JS/WebGL2 render client** as bundled static assets; (c) a **notebook
+front-end integration** that injects that client
 into an output cell and speaks the comm protocol. Miss one wheel and the user falls back
 to a source build that needs a Rust toolchain — an instant adoption cliff, and the exact
 friction that dogged early Rust-backed Python packages. The doc's §23 covers *runtime*
 environments but nothing about *shipping the bits*.
-**Fix.** Add a Distribution section: maturin + `abi3` wheels with a CI wheel matrix;
+**Fix.** Add a Distribution section: C-ABI platform wheels with a CI wheel matrix;
 **`anywidget`** as the notebook client substrate (current standard — one implementation
 works across Jupyter, Lab, VS Code, Colab, Marimo, and Reflex-style servers); explicit
 asset bundling; **comm-protocol versioning** between the native core and the JS client
-(they ship together but must fail loudly on mismatch); and a defined behavior when no
-wheel matches (clear error + optional pure-Python/pixel-streaming fallback, not a silent
-compile attempt). This is bigger than any single rendering decision.
+(they ship together but must fail loudly on mismatch); and a defined source-install
+fallback when no native core is available (NumPy fallback with a loud warning, not a
+silent quality or correctness change). This is bigger than any single rendering
+decision.
 
 ### F2 — No filtering / selection / linked-brushing; the pyramid is stale under any filter. [Critical]
 **Failure scenario.** The user filters (`df[df.region=="US"]`) or box-selects a region to
@@ -1585,8 +1592,8 @@ not inventing the pyramid. Protects credibility and sharpens the actual claim.
 
 ## Corrections to fold into the main design doc
 
-- **New section — Distribution** (F1): wheels/maturin/abi3, anywidget client, comm
-  versioning, no-wheel fallback.
+- **New section — Distribution** (F1): C-ABI platform wheels, anywidget client, static
+  asset bundling, comm versioning, no-wheel fallback.
 - **New section — Filtering, selection & linked views** (F2): three-tier filter model +
   Falcon summed-area index. Update §28 to reference it.
 - **§2 / §5** (F3): tier heuristic = `f(count, mark_area × overdraw)`; buffer chunking;

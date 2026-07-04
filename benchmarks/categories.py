@@ -81,6 +81,15 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "status": "tracked",
         "goal": "Keep data payloads binary and screen-bounded where possible; warn when exact export would be huge.",
     },
+    {
+        "id": "core_2d_chart_breadth",
+        "name": "Core 2D chart breadth",
+        "why": "The library needs to stay fast beyond the scatter wedge: bars, histograms, areas, and heatmaps are everyday chart workloads.",
+        "metrics": "payload-prep time, payload bytes, standalone HTML bytes, TTFR",
+        "harness": "benchmarks/bench_2d_charts.py smoke/standard profiles vs Plotly",
+        "status": "tracked",
+        "goal": "Beat Plotly on user-visible first paint for common 2D charts while keeping payloads comparable or smaller.",
+    },
 )
 
 CATEGORY_BY_ID = {category["id"]: category for category in BENCHMARK_CATEGORIES}
@@ -90,15 +99,15 @@ def categories_for(ids: Iterable[str]) -> list[dict[str, str]]:
     return [CATEGORY_BY_ID[category_id] for category_id in ids]
 
 
-def markdown_category_table(categories: Iterable[dict[str, str]] = BENCHMARK_CATEGORIES) -> list[str]:
+def markdown_category_table(
+    categories: Iterable[dict[str, str]] = BENCHMARK_CATEGORIES,
+) -> list[str]:
     lines = [
         "| id | category | status | primary metrics | current/planned harness | goal |",
         "|---|---|---|---|---|---|",
     ]
     for category in categories:
         lines.append(
-            "| {id} | {name} | {status} | {metrics} | {harness} | {goal} |".format(
-                **category
-            )
+            "| {id} | {name} | {status} | {metrics} | {harness} | {goal} |".format(**category)
         )
     return lines

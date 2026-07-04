@@ -49,8 +49,8 @@ def encode_f32(vals, offset):  # noqa: ANN001
 
 
 def build_payload():
-    # Exercises the full scatter path: a line, a scatter with continuous color
-    # + variable size, and a Tier-2 density surface — all in Figure's wire shape.
+    # Exercises the main client paths: line, area, colored/sized scatter,
+    # density, compact bars, and color-mapped heatmap cells.
     n = 2000
     xs = [float(i) for i in range(n)]
     ys = [math.sin(i * 0.02) for i in range(n)]
@@ -86,6 +86,7 @@ def build_payload():
     for i in range(gw * gh):
         grid[i] += i % 3
     density_buf = ship_scalar(grid)
+    heat_buf = ship_scalar([0.1, 0.45, 0.7, 1.0])
 
     traces = [
         {
@@ -100,6 +101,17 @@ def build_payload():
         },
         {
             "id": 1,
+            "kind": "area",
+            "name": "area",
+            "tier": "direct",
+            "n_points": n,
+            "style": {"color": "#0891b2", "opacity": 0.32, "line_width": 1.0, "line_opacity": 1.0},
+            "x": ship(xs),
+            "y": ship([v - 1.0 for v in ys]),
+            "base": ship([-2.5] * n),
+        },
+        {
+            "id": 2,
             "kind": "scatter",
             "name": "pts",
             "tier": "direct",
@@ -116,7 +128,7 @@ def build_payload():
             "size": {"mode": "continuous", "range_px": [3.0, 16.0], "buf": ship_scalar(svals)},
         },
         {
-            "id": 2,
+            "id": 3,
             "kind": "scatter",
             "name": "density",
             "tier": "density",
@@ -132,6 +144,45 @@ def build_payload():
                 "y_range": [-3.0, 8.0],
                 "channels_dropped": False,
             },
+        },
+        {
+            "id": 4,
+            "kind": "bar",
+            "name": "bars",
+            "tier": "direct",
+            "n_points": 3,
+            "style": {
+                "color": "#16a34a",
+                "opacity": 0.85,
+                "role": "bar",
+                "orientation": "vertical",
+            },
+            "bar": {
+                "orientation": "vertical",
+                "value_axis": "y",
+                "pos": ship([1245.0, 1395.0, 1545.0]),
+                "value1": ship([5.5, 7.0, 4.5]),
+                "value0_const": 0.0,
+                "width": 90.0,
+            },
+        },
+        {
+            "id": 5,
+            "kind": "heatmap",
+            "name": "heat",
+            "tier": "direct",
+            "n_points": 4,
+            "style": {"color": None, "opacity": 0.92, "role": "heatmap"},
+            "heatmap": {
+                "buf": heat_buf,
+                "w": 2,
+                "h": 2,
+                "x_range": [100.0, 340.0],
+                "y_range": [5.5, 7.5],
+                "colormap": "turbo",
+                "domain": [0.0, 1.0],
+            },
+            "color": {"mode": "continuous", "colormap": "turbo", "domain": [0.0, 1.0]},
         },
     ]
     spec = {
@@ -338,6 +389,12 @@ try{{
     const reg=(typeof fastcharts.MARK_KINDS==="object"
       && fastcharts.MARK_KINDS.scatter.pointPick===true && fastcharts.MARK_KINDS.scatter.retainCpu===true
       && !fastcharts.MARK_KINDS.line.pointPick
+      && typeof fastcharts.MARK_KINDS.area.draw==="function"
+      && typeof fastcharts.MARK_KINDS.bar.draw==="function"
+      && fastcharts.MARK_KINDS.bar!==fastcharts.MARK_KINDS.histogram
+      && fastcharts.MARK_KINDS.column===fastcharts.MARK_KINDS.bar
+      && typeof fastcharts.MARK_KINDS.heatmap.draw==="function"
+      && fastcharts.MARK_KINDS.heatmap!==fastcharts.MARK_KINDS.histogram
       && typeof fastcharts.MARK_KINDS.scatter.refreshColor==="function"
       && typeof fastcharts.MARK_KINDS.line.refreshColor==="function"
       && fastcharts.markOf("nonexistent")===fastcharts.MARK_KINDS.scatter)?1:0;
@@ -470,7 +527,54 @@ try{{
     const stale=(staleReply && staleQueued && staleAnim)?1:0;
     v.view=oldView;
     v._drawNow();
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}}`;
+    // Positive bars/histograms pin zero to the bottom axis. Sample the bottom
+    // physical rows under a mark so a DPR/half-pixel underfill cannot slip back.
+    function baselineLit(view, cssX){{
+      view._drawNow();
+      const gl=view.gl;
+      const rows=Math.max(1,Math.ceil(view.dpr||1));
+      const x=Math.max(0,Math.min(gl.drawingBufferWidth-1,Math.round(cssX*(view.dpr||1))));
+      const px=new Uint8Array(rows*4);
+      gl.readPixels(x,0,1,rows,gl.RGBA,gl.UNSIGNED_BYTE,px);
+      let maxA=0;for(let i=3;i<px.length;i+=4)maxA=Math.max(maxA,px[i]);
+      return maxA>8?1:0;
+    }}
+    const barSpec=JSON.parse(JSON.stringify(spec));
+    barSpec.width=220; barSpec.height=170; barSpec.title="";
+    barSpec.show_legend=false; barSpec.show_modebar=false;
+    barSpec.x_axis={{kind:"linear",label:"",range:[1200,1600]}};
+    barSpec.y_axis={{kind:"linear",label:"",range:[0,8]}};
+    barSpec.traces=[spec.traces.find(t=>t.kind==="bar")];
+    const holderBar=document.createElement("div");
+    document.body.appendChild(holderBar);
+    const vBar=fastcharts.renderStandalone(holderBar,barSpec,bytes.buffer);
+    const barBase=baselineLit(vBar,((1245-1200)/(1600-1200))*vBar.plot.w);
+    vBar.destroy(); holderBar.remove();
+    const hbuf=new ArrayBuffer(32);
+    const hcols=[]; let hoff=0;
+    function hcol(vals){{
+      new Float32Array(hbuf,hoff*4,vals.length).set(vals);
+      hcols.push({{byte_offset:hoff*4,len:vals.length,offset:0,scale:1,kind:"float"}});
+      hoff+=vals.length;
+      return hcols.length-1;
+    }}
+    const histSpec={{
+      protocol:2,width:220,height:170,title:"",
+      x_axis:{{kind:"linear",label:"",range:[-1,2]}},
+      y_axis:{{kind:"linear",label:"",range:[0,8]}},
+      traces:[{{id:0,kind:"histogram",name:"hist",style:{{color:"#3b82f6",opacity:1,role:"histogram"}},
+        tier:"direct",n_points:10,n_marks:2,x0:hcol([-0.5,0.5]),x1:hcol([0.5,1.5]),
+        y0:hcol([0,0]),y1:hcol([6,4])}}],
+      columns:hcols,backend:"none",show_legend:false,show_modebar:false
+    }};
+    const holderHist=document.createElement("div");
+    document.body.appendChild(holderHist);
+    const vHist=fastcharts.renderStandalone(holderHist,histSpec,hbuf);
+    const histBase=baselineLit(vHist,((0-(-1))/(2-(-1)))*vHist.plot.w);
+    vHist.destroy(); holderHist.remove();
+    const expectPad=-(2*Math.max(2,Math.ceil(v.dpr||1)))/200;
+    const edgepad=Math.abs(v._edgePadForValue(0,0,8,200)-expectPad)<1e-9?1:0;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -491,7 +595,30 @@ try{{
         && v2.chrome.height===360*v2.dpr)?1:0;
       v2._pickAt(4,4); // exercises _renderPick -> deferred pick-FBO realloc
       const pick2=(v2._pickW===v2.canvas.width && v2._pickH===v2.canvas.height)?1:0;
-      document.title=`${{base}} fluid=${{fluid0}} grew=${{grew}} pick2=${{pick2}}`;
+      const root2=v2.root;
+      v2.destroy();
+      const realRaf2=window.requestAnimationFrame;
+      let rafAfterDestroy=0;
+      window.requestAnimationFrame=(cb)=>{{rafAfterDestroy++; return 999;}};
+      v2.draw();
+      window.requestAnimationFrame=realRaf2;
+      v2._onKernelMsg({{type:"selection",traces:[],total:0}},[]);
+      const destroyed=(v2._destroyed===true && v2.gl===null && v2.gpuTraces.length===0
+        && v2._listeners.length===0 && !document.body.contains(root2) && rafAfterDestroy===0)?1:0;
+      const holder3=document.createElement("div");
+      document.body.appendChild(holder3);
+      let onHandler=null, offCalled=0;
+      const model={{
+        get(k){{ return k==="spec" ? spec : bytes.buffer; }},
+        send(m){{}},
+        on(ev,h){{ if(ev==="msg:custom") onHandler=h; }},
+        off(ev,h){{ if(ev==="msg:custom" && h===onHandler) offCalled++; }},
+      }};
+      const cleanup=fastcharts.render({{model,el:holder3}});
+      cleanup();
+      const unsub=(offCalled===1 && holder3.querySelector(".fastcharts")===null)?1:0;
+      holder3.remove();
+      document.title=`${{base}} fluid=${{fluid0}} grew=${{grew}} pick2=${{pick2}} destroyed=${{destroyed}} unsub=${{unsub}}`;
     }}catch(e){{document.title="FC_ERROR "+e.message}}}},250);
   }}catch(e){{document.title="FC_ERROR "+e.message}}}},200);
 }}catch(e){{document.title="FC_ERROR "+e.message}}
@@ -545,6 +672,8 @@ try{{
     fluid = int(re.search(r"fluid=(\d+)", title).group(1))
     grew = int(re.search(r"grew=(\d+)", title).group(1))
     pick2 = int(re.search(r"pick2=(\d+)", title).group(1))
+    destroyed = int(re.search(r"destroyed=(\d+)", title).group(1))
+    unsub = int(re.search(r"unsub=(\d+)", title).group(1))
     drill = int(re.search(r"drill=(\d+)", title).group(1))
     pending = int(re.search(r"pending=(\d+)", title).group(1))
     dblend = int(re.search(r"dblend=(\d+)", title).group(1))
@@ -565,12 +694,16 @@ try{{
     dnorm = int(re.search(r"dnorm=(\d+)", title).group(1))
     dnorm_done = int(re.search(r"dnormDone=(\d+)", title).group(1))
     stale = int(re.search(r"stale=(\d+)", title).group(1))
+    bar_base = int(re.search(r"barBase=(\d+)", title).group(1))
+    hist_base = int(re.search(r"histBase=(\d+)", title).group(1))
+    edgepad = int(re.search(r"edgepad=(\d+)", title).group(1))
     frac = lit / max(total, 1)
     print(
         f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}, pick hits: {pick}, "
         f"row-decoded: {rowok}, select all/sub: {sel_all}/{sel_some}, mask active: {active}, "
         f"modebar btns: {btns}, zoom-in: {zin}, box-zoom: {box}, zoom-mode: {zmode}, "
-        f"fluid: {fluid}, resize grew: {grew}, pick realloc: {pick2}"
+        f"fluid: {fluid}, resize grew: {grew}, pick realloc: {pick2}, "
+        f"destroyed: {destroyed}, unsub: {unsub}"
     )
     # Upper bound guards "every pixel lit = blend/clear broke", not brightness:
     # the current density opacity ramp legitimately lights ~95% of the plot.
@@ -618,6 +751,10 @@ try{{
         raise SystemExit("ResizeObserver resize did not re-render at the new width")
     if pick2 != 1:
         raise SystemExit("pick FBO was not reallocated to the resized canvas")
+    if destroyed != 1:
+        raise SystemExit("destroy() did not cleanly tear down DOM/listeners/GL state")
+    if unsub != 1:
+        raise SystemExit("widget render cleanup did not unsubscribe kernel messages")
     if drill != 1:
         raise SystemExit("density trace did not drill in to points on a points update")
     if pending != 1:
@@ -658,9 +795,16 @@ try{{
         raise SystemExit("density color normalization did not settle to the true max")
     if stale != 1:
         raise SystemExit("stale density update resurrected a drilled point subset")
+    if bar_base != 1:
+        raise SystemExit("zero-pinned bars left a lit-pixel gap above the x-axis")
+    if hist_base != 1:
+        raise SystemExit("zero-pinned histogram left a lit-pixel gap above the x-axis")
+    if edgepad != 1:
+        raise SystemExit("baseline edge pad is not DPR-aware")
     print(
         "render smoke OK (no numpy): line + colored/sized scatter + density + "
-        "picking + box-select + modebar/box-zoom + responsive resize + LOD drill-in"
+        "area + bars + heatmap + picking + box-select + modebar/box-zoom + "
+        "responsive resize + LOD drill-in"
     )
 
 

@@ -18,6 +18,9 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Verify committed JS bundles are fresh
+        run: node js/build.mjs --check
+
       - name: Rust unit tests
         run: cargo test
 
@@ -34,6 +37,9 @@ jobs:
         run: |
           node -e "import('./python/fastcharts/static/index.js').then(m => { if (!m.default.render) throw new Error('no render export'); })"
           node --check python/fastcharts/static/standalone.js
+
+      - name: Python 3.11 floor syntax check
+        run: python3 scripts/check_python_floor.py
 
       # Dependency-free gates — verify the two seams cargo can't (the C ABI and
       # the WebGL2 render path) and run even if PyPI is unreachable.
@@ -92,6 +98,35 @@ jobs:
       - name: Benchmark smoke (1e5/1e6 — §12 harness runs every phase)
         run: .venv/bin/python scripts/bench.py --sizes 1e5,1e6
 
+  python_floor:
+    name: Python 3.11 floor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Verify syntax/annotation floor
+        run: python scripts/check_python_floor.py
+
+      - name: Build native core
+        run: cargo build --release
+
+      - name: Install package for Python 3.11
+        run: |
+          python -VV
+          uv venv .venv --python python
+          uv pip install -p .venv/bin/python -e . "pytest>=8,<9"
+
+      - name: Python 3.11 tests (native core)
+        run: .venv/bin/python -m pytest -q
+
+      - name: Python 3.11 tests (NumPy fallback)
+        run: FASTCHARTS_FORCE_FALLBACK=1 .venv/bin/python -m pytest -q
+
   # Cross-library scatter benchmark incl. time-to-first-render (docs/benchmark.md).
   # Non-blocking: it's a measurement, not a gate. Uploads the report as an
   # artifact and prints it to the log.
@@ -135,6 +170,51 @@ jobs:
             docs/benchmark_ci.md
             benchmark.json
 
+  sdist:
+    name: Source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Verify committed JS bundles are fresh
+        run: node js/build.mjs --check
+
+      - name: Build sdist
+        run: uv build --sdist
+
+      - name: Verify sdist contents
+        shell: bash
+        run: |
+          sdist=$(ls dist/*.tar.gz)
+          python scripts/verify_sdist.py "$sdist"
+
+      - name: Verify sdist installs via fallback
+        shell: bash
+        env:
+          FASTCHARTS_SKIP_CARGO: "1"
+        run: |
+          uv venv smoke
+          uv pip install -p smoke dist/*.tar.gz numpy anywidget
+          ./smoke/bin/python - <<'PY'
+          import warnings
+          import numpy as np
+
+          with warnings.catch_warnings(record=True) as w:
+              warnings.simplefilter("always")
+              import fastcharts.kernels as k
+              from fastcharts import Figure
+
+          assert k.BACKEND == "numpy", k.BACKEND
+          spec, blob = Figure().scatter(np.arange(5.0), np.arange(5.0)).build_payload()
+          assert spec["traces"] and len(blob) > 0
+          assert any("NumPy fallback" in str(x.message) for x in w), "expected fallback warning"
+          print("sdist fallback install OK")
+          PY
+
   # Wheel matrix (§33): a missing wheel is a build failure, not a runtime
   # surprise. The core is a C-ABI cdylib → one `py3-none-<platform>` wheel per
   # platform covers every CPython version.
@@ -153,6 +233,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+
+      - name: Verify committed JS bundles are fresh
+        run: node js/build.mjs --check
 
       - name: Build JS client
         run: node js/build.mjs
@@ -177,6 +260,12 @@ jobs:
           uv tool run auditwheel repair dist/*.whl -w wheelhouse
           rm dist/*.whl && mv wheelhouse/*.whl dist/
           ls -la dist/
+
+      - name: Verify wheel contents
+        shell: bash
+        run: |
+          whl=$(ls dist/*.whl)
+          python scripts/verify_wheel.py "$whl" --expect-native
 
       - name: Install-size budget (≤ 15 MB, §33)
         shell: bash
@@ -223,6 +312,11 @@ jobs:
       - name: Wheel is pure-Python (py3-none-any)
         shell: bash
         run: ls dist/ && ls dist/*-py3-none-any.whl
+      - name: Verify pure fallback wheel contents
+        shell: bash
+        run: |
+          whl=$(ls dist/*.whl)
+          python scripts/verify_wheel.py "$whl" --expect-pure
       - name: Install and verify it works via the fallback
         shell: bash
         run: |

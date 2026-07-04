@@ -20,6 +20,18 @@ function linearTicks(lo, hi, target = 6) {
   return { ticks: out, step };
 }
 
+function categoryTicks(lo, hi, categories, target = 6) {
+  if (!categories || !categories.length) return { ticks: [], step: 1 };
+  const start = Math.max(0, Math.ceil(lo));
+  const stop = Math.min(categories.length - 1, Math.floor(hi));
+  if (stop < start) return { ticks: [], step: 1 };
+  const visible = stop - start + 1;
+  const step = Math.max(1, Math.ceil(visible / Math.max(1, target)));
+  const out = [];
+  for (let v = start; v <= stop && out.length < 200; v += step) out.push(v);
+  return { ticks: out, step };
+}
+
 const MS = { s: 1e3, m: 6e4, h: 36e5, d: 864e5 };
 const TIME_STEPS = [
   1, 2, 5, 10, 20, 50, 100, 200, 500,
@@ -89,6 +101,11 @@ function fmtLinear(v, step) {
   return s;
 }
 
+function fmtCategory(v, categories) {
+  const i = Math.round(v);
+  return i >= 0 && i < categories.length ? String(categories[i]) : "";
+}
+
 function fmtValue(v, kind) {
   if (kind === "time_ms") {
     const d = new Date(v);
@@ -99,4 +116,3 @@ function fmtValue(v, kind) {
   if (av >= 1e6 || av < 1e-4) return v.toExponential(3);
   return (Math.round(v * 1e4) / 1e4).toString();
 }
-

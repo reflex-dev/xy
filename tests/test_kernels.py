@@ -7,11 +7,14 @@ guarantees.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 
 from fastcharts import _fallback
 from fastcharts import kernels as k
+from fastcharts.config import MAX_SCREEN_DIM
 
 BACKENDS = [pytest.param(k, id=f"dispatch[{k.BACKEND}]"), pytest.param(_fallback, id="numpy")]
 
@@ -81,6 +84,21 @@ def test_zone_maps_autorange_matches_full_scan(impl):
 def test_zone_maps_empty(impl):
     out = impl.zone_maps(np.array([], dtype=np.float64))
     assert all(len(a) == 0 for a in out)
+
+
+def test_zone_maps_huge_values_do_not_warn(impl):
+    data = np.array([1.0e308, np.nextafter(1.0e308, np.inf)], dtype=np.float64)
+    with warnings.catch_warnings(record=True) as seen:
+        warnings.simplefilter("always", RuntimeWarning)
+        mins, maxs, counts, nulls, sums, sum_sqs = impl.zone_maps(data, 65_536)
+    runtime_warnings = [w for w in seen if issubclass(w.category, RuntimeWarning)]
+    assert runtime_warnings == []
+    assert int(counts.sum()) == 2
+    assert int(nulls.sum()) == 0
+    assert np.isfinite(mins[0])
+    assert np.isfinite(maxs[0])
+    assert np.isinf(sums[0])
+    assert np.isinf(sum_sqs[0])
 
 
 # -- M4 decimation (§5 Tier 1) ----------------------------------------------
@@ -191,6 +209,157 @@ def test_bin_2d_invalid_args(impl):
         impl.bin_2d(x, x, 0.0, 1.0, 0.0, 1.0, 0, 4)
 
 
+# -- chart-prep kernels -------------------------------------------------------
+
+
+def test_histogram_uniform_matches_numpy_counts(impl):
+    x = np.array([0.0, 0.2, 0.9, 1.0, 1.1, np.nan, np.inf])
+    counts, edges = impl.histogram_uniform(x, 0.0, 1.0, 4)
+    expect_counts, expect_edges = np.histogram(x[np.isfinite(x)], bins=4, range=(0.0, 1.0))
+    np.testing.assert_allclose(counts, expect_counts)
+    np.testing.assert_allclose(edges, expect_edges)
+
+
+def test_histogram_uniform_density(impl):
+    x = np.array([0.0, 0.2, 0.8, 1.0])
+    counts, _edges = impl.histogram_uniform(x, 0.0, 1.0, 2, density=True)
+    expect, _ = np.histogram(x, bins=2, range=(0.0, 1.0), density=True)
+    np.testing.assert_allclose(counts, expect)
+
+
+def test_normalize_f32_modes(impl):
+    x = np.array([-1.0, 0.0, 5.0, 10.0, 11.0, np.nan, np.inf])
+    zero = impl.normalize_f32(x, (0.0, 10.0), nonfinite="zero")
+    np.testing.assert_allclose(zero, [0.0, 0.0, 0.5, 1.0, 1.0, 0.0, 0.0])
+    nan = impl.normalize_f32(x, (0.0, 10.0), nonfinite="nan")
+    np.testing.assert_allclose(nan[:5], [0.0, 0.0, 0.5, 1.0, 1.0])
+    assert np.isnan(nan[5]) and np.isnan(nan[6])
+
+
+def test_normalize_f32_rejects_unknown_nonfinite_mode(impl):
+    with pytest.raises(ValueError, match="nonfinite"):
+        impl.normalize_f32(np.array([1.0]), (0.0, 1.0), nonfinite="drop")
+
+
+def test_chart_prep_kernels_reject_nonfinite_or_degenerate_domains(impl):
+    x = np.arange(4.0)
+    with pytest.raises(ValueError):
+        impl.m4_indices(x, x, 0.0, np.inf, 8)
+    with pytest.raises(ValueError):
+        impl.bin_2d(x, x, 0.0, np.inf, 0.0, 1.0, 4, 4)
+    with pytest.raises(ValueError):
+        impl.histogram_uniform(x, 0.0, np.inf, 4)
+    with pytest.raises(ValueError):
+        impl.normalize_f32(x, (1.0, 1.0))
+    with pytest.raises(ValueError):
+        impl.range_indices(x, x, 0.0, np.inf, 0.0, 1.0)
+    with pytest.raises(ValueError):
+        impl.local_log_density(x, x, 0.0, 1.0, 0.0, np.inf, 4, 4)
+
+
+def test_kernel_wrappers_reject_non_1d_inputs_before_native_boundary(impl):
+    arr = np.arange(6.0).reshape(2, 3)
+    one = np.arange(6.0)
+    with pytest.raises(ValueError, match="1-D"):
+        impl.zone_maps(arr)
+    with pytest.raises(ValueError, match="1-D"):
+        impl.encode_f32(arr, 0.0)
+    with pytest.raises(ValueError, match="1-D"):
+        impl.min_max(arr)
+    with pytest.raises(ValueError, match="1-D"):
+        impl.histogram_uniform(arr, 0.0, 6.0, 3)
+    with pytest.raises(ValueError, match="1-D"):
+        impl.normalize_f32(arr, (0.0, 6.0))
+    with pytest.raises(ValueError, match="1-D"):
+        impl.m4_indices(arr, arr, 0.0, 6.0, 4)
+    with pytest.raises(ValueError, match="1-D"):
+        impl.bin_2d(arr, arr, 0.0, 6.0, 0.0, 6.0, 4, 4)
+    with pytest.raises(ValueError, match="1-D"):
+        impl.range_indices(arr, one, 0.0, 6.0, 0.0, 6.0)
+    with pytest.raises(ValueError, match="1-D"):
+        impl.local_log_density(one, arr, 0.0, 6.0, 0.0, 6.0, 4, 4)
+
+
+def test_kernel_wrappers_reject_bad_integer_dimensions(impl):
+    x = np.arange(4.0)
+    with pytest.raises(ValueError, match="chunk_size"):
+        impl.zone_maps(x, 1.5)
+    with pytest.raises(ValueError, match="n_buckets"):
+        impl.m4_indices(x, x, 0.0, 4.0, 1.5)
+    with pytest.raises(ValueError, match="n_buckets"):
+        impl.m4_indices(x, x, 0.0, 4.0, True)
+    with pytest.raises(ValueError, match="w"):
+        impl.bin_2d(x, x, 0.0, 4.0, 0.0, 4.0, True, 4)
+    with pytest.raises(ValueError, match="h"):
+        impl.local_log_density(x, x, 0.0, 4.0, 0.0, 4.0, 4, 1.5)
+    with pytest.raises(ValueError, match="n_bins"):
+        impl.histogram_uniform(x, 0.0, 4.0, True)
+
+
+def test_kernel_wrappers_reject_oversized_allocation_dimensions(impl):
+    x = np.arange(4.0)
+    too_many = MAX_SCREEN_DIM + 1
+    with pytest.raises(ValueError, match="n_buckets"):
+        impl.m4_indices(x, x, 0.0, 4.0, too_many)
+    with pytest.raises(ValueError, match="w"):
+        impl.bin_2d(x, x, 0.0, 4.0, 0.0, 4.0, too_many, 4)
+    with pytest.raises(ValueError, match="h"):
+        impl.bin_2d(x, x, 0.0, 4.0, 0.0, 4.0, 4, too_many)
+    with pytest.raises(ValueError, match="n_bins"):
+        impl.histogram_uniform(x, 0.0, 4.0, too_many)
+    with pytest.raises(ValueError, match="w"):
+        impl.local_log_density(x, x, 0.0, 4.0, 0.0, 4.0, too_many, 4)
+
+
+def test_encode_f32_rejects_nonfinite_offset_or_scale(impl):
+    x = np.arange(4.0)
+    with pytest.raises(ValueError, match="offset"):
+        impl.encode_f32(x, np.inf)
+    with pytest.raises(ValueError, match="scale"):
+        impl.encode_f32(x, 0.0, np.nan)
+
+
+def test_range_indices(impl):
+    x = np.array([0.0, 1.0, 2.0, 3.0, np.nan])
+    y = np.array([0.0, 1.5, 2.5, 4.0, 1.0])
+    idx = impl.range_indices(x, y, 1.0, 3.0, 1.0, 3.0)
+    np.testing.assert_array_equal(idx, [1, 2])
+
+
+def test_local_log_density_shape_and_range(impl):
+    x = np.array([0.1, 0.1, 0.1, 0.9], dtype=np.float64)
+    y = np.array([0.1, 0.1, 0.1, 0.9], dtype=np.float64)
+    d = impl.local_log_density(x, y, 0.0, 1.0, 0.0, 1.0, 2, 2)
+    assert d.dtype == np.float32
+    assert d.shape == x.shape
+    assert d.min() >= 0.0 and d.max() <= 1.0
+    assert d[0] == d[1] == d[2]
+    assert d[0] > d[3]
+
+
+def test_chart_prep_kernels_handle_empty_inputs(impl):
+    x = np.array([], dtype=np.float64)
+    counts, edges = impl.histogram_uniform(x, 0.0, 1.0, 4)
+    np.testing.assert_array_equal(counts, np.zeros(4))
+    np.testing.assert_allclose(edges, np.linspace(0.0, 1.0, 5))
+    np.testing.assert_array_equal(impl.normalize_f32(x, (0.0, 1.0)), np.array([], dtype=np.float32))
+    np.testing.assert_array_equal(
+        impl.range_indices(x, x, 0.0, 1.0, 0.0, 1.0), np.array([], dtype=np.uint32)
+    )
+    np.testing.assert_array_equal(
+        impl.local_log_density(x, x, 0.0, 1.0, 0.0, 1.0, 4, 4), np.array([], dtype=np.float32)
+    )
+
+
+def test_local_log_density_does_not_clamp_outside_window(impl):
+    x = np.array([0.1, 0.1, 2.0, 0.5], dtype=np.float64)
+    y = np.array([0.1, 0.1, 0.1, np.nan], dtype=np.float64)
+    d = impl.local_log_density(x, y, 0.0, 1.0, 0.0, 1.0, 2, 2)
+    assert d[0] > 0.0 and d[1] > 0.0
+    assert d[2] == 0.0
+    assert d[3] == 0.0
+
+
 # -- native/fallback parity (§33: the fallback is semantically identical) ------
 
 
@@ -210,7 +379,7 @@ def test_backends_agree():
     np.testing.assert_array_equal(
         _native.encode_f32(y, 0.5, 2.0), _fallback.encode_f32(y, 0.5, 2.0)
     )
-    for a, b in zip(_native.zone_maps(x, 4096), _fallback.zone_maps(x, 4096)):
+    for a, b in zip(_native.zone_maps(x, 4096), _fallback.zone_maps(x, 4096), strict=True):
         np.testing.assert_allclose(a, b)
     assert _native.min_max(y) == _fallback.min_max(y)
 
@@ -219,4 +388,20 @@ def test_backends_agree():
     np.testing.assert_array_equal(
         _native.bin_2d(xr, yr, 5.0, 95.0, 5.0, 95.0, 128, 96),
         _fallback.bin_2d(xr, yr, 5.0, 95.0, 5.0, 95.0, 128, 96),
+    )
+    np.testing.assert_allclose(
+        _native.histogram_uniform(xr, 0.0, 100.0, 64)[0],
+        _fallback.histogram_uniform(xr, 0.0, 100.0, 64)[0],
+    )
+    np.testing.assert_array_equal(
+        _native.normalize_f32(yr, (0.0, 100.0), nonfinite="zero"),
+        _fallback.normalize_f32(yr, (0.0, 100.0), nonfinite="zero"),
+    )
+    np.testing.assert_array_equal(
+        _native.range_indices(xr, yr, 10.0, 20.0, 30.0, 40.0),
+        _fallback.range_indices(xr, yr, 10.0, 20.0, 30.0, 40.0),
+    )
+    np.testing.assert_allclose(
+        _native.local_log_density(xr[:1000], yr[:1000], 0.0, 100.0, 0.0, 100.0, 32, 24),
+        _fallback.local_log_density(xr[:1000], yr[:1000], 0.0, 100.0, 0.0, 100.0, 32, 24),
     )

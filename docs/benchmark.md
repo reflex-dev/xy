@@ -47,6 +47,7 @@ dashboards can group results by these goals.
 | `many_chart_dashboards` | Many-chart dashboards | planned | Plotly-class apps often fail from total page weight and many live canvases, not one chart. | total TTFR, memory, CPU after idle, number of charts before degradation | planned dashboard benchmark | Load 10-50 interactive charts with lower total memory and faster first usable dashboard than Plotly/Bokeh. |
 | `interaction_smoothness` | Interaction smoothness | planned | Users judge performance by pan/zoom/hover, not just export time. | pan/zoom FPS, wheel latency, hover latency, selection latency | planned browser automation benchmark | Stay responsive during interaction, then refine view after interaction settles. |
 | `payload_export_size` | Payload/export size | tracked | Notebooks, static HTML, docs, and dashboards pay for every byte shipped. | standalone HTML bytes, binary payload bytes, bundle bytes | `bench_vs.py`, `bench_scatter_native.py`, example app asset sizes | Keep data payloads binary and screen-bounded where possible; warn when exact export would be huge. |
+| `core_2d_chart_breadth` | Core 2D chart breadth | tracked | The library needs to stay fast beyond the scatter wedge: bars, histograms, areas, and heatmaps are everyday chart workloads. | payload-prep time, payload bytes, standalone HTML bytes, TTFR | `benchmarks/bench_2d_charts.py` smoke/standard profiles vs Plotly | Beat Plotly on user-visible first paint for common 2D charts while keeping payloads comparable or smaller. |
 
 Mode labels in benchmark output should stay explicit: `direct`, `decimated`,
 `density`, `sampled`, or `adaptive`. A 10M density result is a real large-data
@@ -99,6 +100,80 @@ backend in the non-blocking benchmark job.
 | Altair / Vega-Lite | standalone HTML | 1,846 ms | 35 MB | 5 MB | 54,171 |
 | Datashader | PNG raster | 13 ms | 15 MB | 58 KB | 7,502,931 |
 | hvPlot / HoloViews | Bokeh HTML | 95 ms | 17 MB | 2 MB | 1,052,353 |
+
+---
+
+## Core 2D chart benchmark — fastcharts vs Plotly
+
+The regular 2D chart harness lives in `benchmarks/bench_2d_charts.py`. It
+compares the new core chart families against Plotly: histogram, area, simple
+bar, grouped bar, stacked bar, and heatmap. It reports payload-prep time,
+payload bytes (excluding JS runtime), standalone HTML bytes, and optional
+headless-Chromium TTFR.
+
+Measured locally on July 4, 2026 with the native Rust backend
+(`fastcharts backend: native`, Rust 1.96.1):
+
+```bash
+PYTHONPATH=python .venv/bin/python benchmarks/bench_2d_charts.py \
+  --profile smoke --ttfr --ttfr-max-work-units 200000
+
+PYTHONPATH=python .venv/bin/python benchmarks/bench_2d_charts.py \
+  --profile standard --ttfr --ttfr-max-work-units 50000
+```
+
+Environment note: TTFR probes require launching local headless Chrome; under the
+Codex sandbox the probe returns `None`, so local TTFR runs need browser-launch
+permission.
+
+### Smoke profile with browser TTFR
+
+| Chart | Workload | Payload-prep vs Plotly | Payload reduction | TTFR speedup | Verdict |
+|---|---:|---:|---:|---:|---|
+| Histogram | 100k values / 200 bins | 303x faster | 348x smaller | 5.89x faster | pass |
+| Area | 100k samples | 10.5x faster | 26.1x smaller | 3.19x faster | pass |
+| Bar | 1k categories | 13.4x faster | 1.53x smaller | 3.23x faster | pass |
+| Grouped bar | 1k categories x 4 | 10.3x faster | 2.06x smaller | 3.73x faster | pass |
+| Stacked bar | 1k categories x 4 | 9.17x faster | 1.60x smaller | 2.91x faster | pass |
+| Heatmap | 120 x 120 cells | 19.4x faster | 3.45x smaller | 3.06x faster | pass |
+
+The heatmap result uses the compact grid-texture path: one normalized scalar
+grid instead of four rectangle geometry columns per cell.
+
+### Standard profile scaling notes
+
+The larger profile extends to 1M histogram/area samples, 10k simple bars, and a
+500 x 500 heatmap. Results stayed strong:
+
+- Histogram: 1M values produced a 4 KB fastcharts payload vs 13 MB Plotly JSON,
+  with 18.6x faster payload prep on the native backend.
+- Heatmap: 500 x 500 cells produced a 984 KB fastcharts payload vs 3 MB Plotly
+  JSON, with 9.74x faster payload prep.
+- Area: 1M samples produced an 89 KB fastcharts payload vs 21 MB Plotly JSON,
+  with 4.96x faster payload prep.
+- Bars: the compact bar primitive removed the previous 10k-category `watch`
+  item. Simple 10k bars now ship 167 KB vs Plotly's 205 KB and prepare 4.35x
+  faster; grouped 1k bars ship 42 KB vs Plotly's 86 KB.
+
+### Native kernel microbench
+
+The Rust core benchmark (`benchmarks/bench_native.py`) now includes the v3 chart
+prep kernels: fixed-bin histogram, normalization, range selection, and
+local-density lookup.
+
+| points | histogram | normalize | range scan | bin_2d | local density |
+|---:|---:|---:|---:|---:|---:|
+| 100k | 0.31 ms | 3,093 Mpt/s | 0.05 ms | <1 ms | 0.55 ms / 100k |
+| 1M | 3.05 ms | 3,187 Mpt/s | 0.48 ms | 3 ms | 1.11 ms / 200k |
+| 10M | 29.93 ms | 3,184 Mpt/s | 4.76 ms | 30 ms | 1.14 ms / 200k |
+
+The large scatter harness (`benchmarks/bench_scatter_native.py`) reported:
+
+| points | tier | data prep | wire bytes | browser render |
+|---:|---|---:|---:|---:|
+| 100k | direct | <0.1 ms | 781 KB | 78.5 ms |
+| 1M | density | 1.0 ms | 768 KB | 72.2 ms |
+| 10M | density | 10.6 ms | 768 KB | not remeasured; same density payload shape as 1M |
 
 ---
 

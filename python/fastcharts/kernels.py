@@ -38,5 +38,20 @@ encode_f32 = _impl.encode_f32
 m4_indices = _impl.m4_indices
 min_max = _impl.min_max
 bin_2d = _impl.bin_2d
+histogram_uniform = _impl.histogram_uniform
+normalize_f32 = _impl.normalize_f32
+range_indices = _impl.range_indices
+local_log_density = _impl.local_log_density
 
-__all__ = ["BACKEND", "bin_2d", "encode_f32", "m4_indices", "min_max", "zone_maps"]
+__all__ = [
+    "BACKEND",
+    "bin_2d",
+    "encode_f32",
+    "histogram_uniform",
+    "local_log_density",
+    "m4_indices",
+    "min_max",
+    "normalize_f32",
+    "range_indices",
+    "zone_maps",
+]
