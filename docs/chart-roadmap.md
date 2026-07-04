@@ -65,7 +65,7 @@ not fall out of sight.
 | 6 | Pie / donut | pie, donut, nested donut, variable-radius pie | Planned compatibility | Extremely common in dashboards even though performance differentiation is low. |
 | 7 | Heatmap / image / matrix | heatmap, image, annotated matrix, correlation matrix, cohort heatmap | Planned | Reuses density texture machinery and supports science, BI, and product analytics. |
 | 8 | Box plot | box, grouped box, notched box, outlier points | Planned | Standard distribution summary across Plotly, Matplotlib, Seaborn, Altair. |
-| 9 | Candlestick / OHLC | candlestick, OHLC bars, volume overlay, range selector | Planned | Critical finance surface; should inherit LOD and time-axis work from core primitives. |
+| 9 | Candlestick / OHLC | candlestick, OHLC bars, volume overlay, range selector | Implemented core | `Figure().candlestick(...)`: body+wick instanced rects, up/down color, low..high autorange, OHLC-bucket decimation, CPU nearest-candle hover. Follow-ups: zoom re-decimation, volume pane, range selector, rangebreak gaps, category x. |
 | 10 | Error and interval charts | error bars, error bands, confidence intervals, line range, bar range, whisker, rule | Planned | Needed for science, experimentation, forecasting, and statistical dashboards. |
 | 11 | 2D density charts | 2D histogram, hexbin, density heatmap, KDE contours | Planned | Makes dense scatter honest at scale and exposes aggregation as a first-class chart type. |
 | 12 | Violin and distribution shapes | violin, split violin, KDE plot, density ridge | Planned | Common in data science; builds on density and filled polygons. |

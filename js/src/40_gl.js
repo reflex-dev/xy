@@ -166,3 +166,39 @@ void main() {
   if (alpha <= 0.001) discard;
   outColor = vec4(u_color.rgb * alpha, alpha);
 }`;
+
+// Candlestick: one instanced quad per candle, drawn twice per frame — the wick
+// (low→high, thin) and the body (open↔close, wide). u_part selects which. A
+// minimum 1px extent keeps doji (open==close) and flat wicks visible. Up/down
+// color chosen per candle from a_dir. The rectangle primitive the bar /
+// histogram / waterfall / error-bar family will share.
+const CANDLE_VS = `#version 300 es
+in float a_x; in float a_open; in float a_high; in float a_low; in float a_close; in float a_dir;
+uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res;
+uniform float u_halfPx; uniform int u_part; // 0 = wick, 1 = body
+out float v_dir;
+const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
+void main() {
+  float yLo = u_part == 1 ? min(a_open, a_close) : a_low;
+  float yHi = u_part == 1 ? max(a_open, a_close) : a_high;
+  float xc = a_x * u_xmap.x + u_xmap.y;
+  float ylPx = ((yLo * u_ymap.x + u_ymap.y) * 0.5 + 0.5) * u_res.y;
+  float yhPx = ((yHi * u_ymap.x + u_ymap.y) * 0.5 + 0.5) * u_res.y;
+  if (abs(yhPx - ylPx) < 1.0) { float mid = (ylPx + yhPx) * 0.5; ylPx = mid - 0.5; yhPx = mid + 0.5; }
+  vec2 c = corners[gl_VertexID];
+  float xPx = ((xc * 0.5 + 0.5) * u_res.x) + (c.x * 2.0 - 1.0) * u_halfPx;
+  float yPx = mix(ylPx, yhPx, c.y);
+  gl_Position = vec4(vec2(xPx / u_res.x, yPx / u_res.y) * 2.0 - 1.0, 0.0, 1.0);
+  v_dir = a_dir;
+}`;
+
+const CANDLE_FS = `#version 300 es
+precision highp float; precision highp int;
+uniform vec4 u_up; uniform vec4 u_down; uniform float u_opacity;
+in float v_dir;
+out vec4 outColor;
+void main() {
+  vec3 rgb = v_dir > 0.5 ? u_up.rgb : u_down.rgb;
+  float a = u_opacity;
+  outColor = vec4(rgb * a, a);
+}`;
