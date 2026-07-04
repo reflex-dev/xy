@@ -65,11 +65,10 @@ Ordered by how much each compounds as kinds multiply.
   helpers) via string includes in `40_gl.js` (`GLSL_COMMON`), not a shader
   framework. Deliberately stop there — a "shader graph" is over-engineering
   at this scale.
-- **R7 — DPR/zoom *changes* aren't observed.** Backing stores are sized at
-  init/resize with the then-current dpr; browser-zoom mid-session leaves
-  blurry marks until a container resize fires. *Fix:* fold
-  `matchMedia('(resolution)')`-style dpr watch into the existing
-  ResizeObserver path (same `_resize` machinery).
+- **R7 — DPR/zoom *changes* aren't observed.** ✅ **Done.** `_armDprWatch`
+  re-arms a one-shot `matchMedia('(resolution: Ndppx)')` per dpr value;
+  `_resize` re-reads devicePixelRatio so a pure-DPR change re-derives
+  backing stores with no container resize. Smoke `dprw` flag covers it.
 - **R8 — Lifecycle cleanup.** ✅ **Already complete** (re-audit): `destroy()`
   → `_destroyGlResources` frees per-trace static + drill buffers, density/
   heatmap/LUT textures (dedup via `texSeen`), pick FBO/texture, the quad, and
