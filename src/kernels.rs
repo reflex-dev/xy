@@ -198,9 +198,36 @@ pub fn bin_2d(
     assert_eq!(x.len(), y.len());
     assert_eq!(out.len(), w * h);
     assert!(w > 0 && h > 0 && x1_gt_x0(x0, x1) && x1_gt_x0(y0, y1));
-    for c in out.iter_mut() {
-        *c = 0.0;
+    bin_2d_impl(x, y, x0, x1, y0, y1, w, h, par_threads(x.len()), out);
+}
+
+/// Row-scan kernels fan out across cores only past this size, where thread
+/// spawn + merge cost is well amortized. Threading stays inside the call —
+/// the ABI remains synchronous (engine doc E5).
+const PAR_THRESHOLD: usize = 1 << 19;
+
+fn par_threads(n: usize) -> usize {
+    if n >= PAR_THRESHOLD {
+        std::thread::available_parallelism().map_or(1, |p| p.get().min(8))
+    } else {
+        1
     }
+}
+
+/// Count in-window points per cell into a u32 grid (saturating). Shared by the
+/// serial and parallel paths so per-point behavior is identical by construction.
+#[allow(clippy::too_many_arguments)]
+fn bin_2d_count(
+    x: &[f64],
+    y: &[f64],
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    grid: &mut [u32],
+) {
     let sx = w as f64 / (x1 - x0);
     let sy = h as f64 / (y1 - y0);
     for i in 0..x.len() {
@@ -216,7 +243,59 @@ pub fn bin_2d(
         // Guard the top/right edge against f64 rounding landing exactly on w/h.
         let cx = cx.min(w - 1);
         let cy = cy.min(h - 1);
-        out[cy * w + cx] += 1.0;
+        grid[cy * w + cx] = grid[cy * w + cx].saturating_add(1);
+    }
+}
+
+/// Exact integer counts, converted to f32 once at the end. This is bitwise
+/// deterministic for ANY thread count (integer sums are associative), and
+/// strictly better than the old serial `f32 += 1.0`, which silently stalled
+/// at 2^24 points per cell; it also matches the NumPy fallback's exact f64
+/// accumulation.
+#[allow(clippy::too_many_arguments)]
+fn bin_2d_impl(
+    x: &[f64],
+    y: &[f64],
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    threads: usize,
+    out: &mut [f32],
+) {
+    let n = x.len();
+    if threads <= 1 || n < threads {
+        let mut grid = vec![0u32; w * h];
+        bin_2d_count(x, y, x0, x1, y0, y1, w, h, &mut grid);
+        for (o, c) in out.iter_mut().zip(grid) {
+            *o = c as f32;
+        }
+        return;
+    }
+    let chunk = n.div_ceil(threads);
+    let grids: Vec<Vec<u32>> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..threads)
+            .map(|t| {
+                let lo = (t * chunk).min(n);
+                let hi = ((t + 1) * chunk).min(n);
+                let (xs, ys) = (&x[lo..hi], &y[lo..hi]);
+                s.spawn(move || {
+                    let mut grid = vec![0u32; w * h];
+                    bin_2d_count(xs, ys, x0, x1, y0, y1, w, h, &mut grid);
+                    grid
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|hd| hd.join().expect("bin_2d worker panicked"))
+            .collect()
+    });
+    for (i, o) in out.iter_mut().enumerate() {
+        let c: u64 = grids.iter().map(|g| u64::from(g[i])).sum();
+        *o = c as f32;
     }
 }
 
@@ -226,10 +305,12 @@ pub fn bin_2d(
 pub fn histogram_uniform(data: &[f64], lo: f64, hi: f64, out: &mut [f64]) -> u64 {
     assert!(x1_gt_x0(lo, hi));
     assert!(!out.is_empty());
-    for c in out.iter_mut() {
-        *c = 0.0;
-    }
-    let n_bins = out.len();
+    histogram_uniform_impl(data, lo, hi, par_threads(data.len()), out)
+}
+
+/// Per-bin u64 counting shared by the serial and parallel paths.
+fn histogram_count(data: &[f64], lo: f64, hi: f64, bins: &mut [u64]) -> u64 {
+    let n_bins = bins.len();
     let scale = n_bins as f64 / (hi - lo);
     let mut total = 0u64;
     for &v in data {
@@ -241,8 +322,55 @@ pub fn histogram_uniform(data: &[f64], lo: f64, hi: f64, out: &mut [f64]) -> u64
         } else {
             (((v - lo) * scale) as usize).min(n_bins - 1)
         };
-        out[idx] += 1.0;
+        bins[idx] += 1;
         total += 1;
+    }
+    total
+}
+
+/// Exact u64 counts merged then converted to f64 once — identical to the old
+/// sequential `f64 += 1.0` (integers are exact in f64 far past any real N)
+/// and bitwise deterministic for any thread count.
+fn histogram_uniform_impl(
+    data: &[f64],
+    lo: f64,
+    hi: f64,
+    threads: usize,
+    out: &mut [f64],
+) -> u64 {
+    let n = data.len();
+    if threads <= 1 || n < threads {
+        let mut bins = vec![0u64; out.len()];
+        let total = histogram_count(data, lo, hi, &mut bins);
+        for (o, c) in out.iter_mut().zip(bins) {
+            *o = c as f64;
+        }
+        return total;
+    }
+    let chunk = n.div_ceil(threads);
+    let parts: Vec<(Vec<u64>, u64)> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..threads)
+            .map(|t| {
+                let seg = &data[(t * chunk).min(n)..((t + 1) * chunk).min(n)];
+                let n_bins = out.len();
+                s.spawn(move || {
+                    let mut bins = vec![0u64; n_bins];
+                    let total = histogram_count(seg, lo, hi, &mut bins);
+                    (bins, total)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|hd| hd.join().expect("histogram worker panicked"))
+            .collect()
+    });
+    let mut total = 0u64;
+    for (i, o) in out.iter_mut().enumerate() {
+        *o = parts.iter().map(|(b, _)| b[i]).sum::<u64>() as f64;
+    }
+    for (_, t) in &parts {
+        total += t;
     }
     total
 }
@@ -731,6 +859,37 @@ mod fuzz {
             let naive = naive_in_window(&x, &y, x0, x1, y0, y1) as f64;
             assert_eq!(total, naive, "conservation it={it}");
             assert!(grid.iter().all(|&c| c >= 0.0), "it={it}");
+        }
+    }
+
+    #[test]
+    fn fuzz_parallel_matches_serial() {
+        // The public fns only fan out past PAR_THRESHOLD, so drive the impl
+        // directly: hostile data must produce bitwise-identical results for
+        // every thread count (including threads > n and empty tail chunks).
+        let mut rng = Rng(0x5EED_000A);
+        for it in 0..120 {
+            let n = (rng.next() % 2000) as usize;
+            let x = rng.hostile_vec(n, -10.0, 10.0);
+            let y = rng.hostile_vec(n, -10.0, 10.0);
+            let (w, h) = (1 + (rng.next() % 16) as usize, 1 + (rng.next() % 12) as usize);
+            let (x0, x1, y0, y1) = (-5.0, 7.0, -6.0, 4.0);
+            let mut serial = vec![0f32; w * h];
+            bin_2d_impl(&x, &y, x0, x1, y0, y1, w, h, 1, &mut serial);
+            let bins = 1 + (rng.next() % 64) as usize;
+            let mut hs = vec![0f64; bins];
+            let ts = histogram_uniform_impl(&x, -8.0, 8.0, 1, &mut hs);
+            for threads in [2usize, 3, 5] {
+                let mut par = vec![0f32; w * h];
+                bin_2d_impl(&x, &y, x0, x1, y0, y1, w, h, threads, &mut par);
+                let sb: Vec<u32> = serial.iter().map(|v| v.to_bits()).collect();
+                let pb: Vec<u32> = par.iter().map(|v| v.to_bits()).collect();
+                assert_eq!(sb, pb, "bin_2d parity it={it} threads={threads}");
+                let mut hp = vec![0f64; bins];
+                let tp = histogram_uniform_impl(&x, -8.0, 8.0, threads, &mut hp);
+                assert_eq!(ts, tp, "histogram total parity it={it} threads={threads}");
+                assert_eq!(hs, hp, "histogram bins parity it={it} threads={threads}");
+            }
         }
     }
 
