@@ -665,7 +665,29 @@ try{{
       cleanup();
       const unsub=(offCalled===1 && holder3.querySelector(".fastcharts")===null)?1:0;
       holder3.remove();
-      document.title=`${{base}} fluid=${{fluid0}} grew=${{grew}} pick2=${{pick2}} destroyed=${{destroyed}} unsub=${{unsub}}`;
+      // R4: GL context loss must be survivable — preventDefault + rebuild from
+      // the retained payload on restore, ending pixel-identical to pre-loss.
+      const holder4=document.createElement("div");
+      document.body.appendChild(holder4);
+      const v4=fastcharts.renderStandalone(holder4,spec,bytes.buffer);
+      v4._densityNormAnim=null;
+      v4._drawNow();
+      const ctxHashBefore=pixhash(v4);
+      const loseExt=v4.gl.getExtension("WEBGL_lose_context");
+      let lostSeen=0;
+      if (loseExt) loseExt.loseContext();
+      setTimeout(()=>{{try{{
+        lostSeen=(v4._glLost===true)?1:0;
+        if (loseExt) loseExt.restoreContext();
+        setTimeout(()=>{{try{{
+          v4._densityNormAnim=null;
+          v4._drawNow();
+          const ctxloss=(loseExt && lostSeen===1 && v4._glLost===false
+            && pixhash(v4)===ctxHashBefore)?1:0;
+          v4.destroy(); holder4.remove();
+          document.title=`${{base}} fluid=${{fluid0}} grew=${{grew}} pick2=${{pick2}} destroyed=${{destroyed}} unsub=${{unsub}} ctxloss=${{ctxloss}}`;
+        }}catch(e){{document.title="FC_ERROR "+e.message}}}},250);
+      }}catch(e){{document.title="FC_ERROR "+e.message}}}},150);
     }}catch(e){{document.title="FC_ERROR "+e.message}}}},250);
   }}catch(e){{document.title="FC_ERROR "+e.message}}}},200);
 }}catch(e){{document.title="FC_ERROR "+e.message}}
@@ -743,6 +765,7 @@ try{{
     stale = int(re.search(r"stale=(\d+)", title).group(1))
     malformed = int(re.search(r"malformed=(\d+)", title).group(1))
     pixdet = int(re.search(r"pixdet=(\d+)", title).group(1))
+    ctxloss = int(re.search(r"ctxloss=(\d+)", title).group(1))
     bar_base = int(re.search(r"barBase=(\d+)", title).group(1))
     hist_base = int(re.search(r"histBase=(\d+)", title).group(1))
     edgepad = int(re.search(r"edgepad=(\d+)", title).group(1))
@@ -844,6 +867,8 @@ try{{
         raise SystemExit("density color normalization did not settle to the true max")
     if malformed != 1:
         raise SystemExit("hostile-spec suite failed (renderer must fail loudly, never hang)")
+    if ctxloss != 1:
+        raise SystemExit("GL context loss/restore did not rebuild pixel-identically")
     if pixdet != 1:
         raise SystemExit("pixel determinism failed (render path must be RNG/time-free)")
     if stale != 1:

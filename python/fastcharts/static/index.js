@@ -976,7 +976,13 @@ class ChartView {
 
     this._buildDom(el);
     this.theme = readTheme(this.root);
+    // Retained for GL context restore: the payload is screen-bounded (§29) so
+    // keeping it is cheap, and every GPU object is rebuildable from
+    // spec + payload by design (§18/§27).
+    this._payload = buffer;
+    this._glLost = false;
     this._initGl(buffer);
+    this._initContextLossRecovery();
     this._initInteraction();
     this._buildModebar(this.root); // after theme (icon color) + canvas (cursor)
 
@@ -1017,6 +1023,36 @@ class ChartView {
     target.addEventListener(type, handler, options);
     this._listeners.push({ target, type, handler, options });
     return handler;
+  }
+
+  // GL context loss/restore (renderer audit R4): a backgrounded tab on a busy
+  // GPU or a driver reset kills the context. preventDefault opts in to
+  // restoration; on restore every GPU object is recreated from the retained
+  // spec + payload, then a fresh view request re-syncs live tiers (kernel
+  // updates written into now-dead buffers are gone until it answers).
+  _initContextLossRecovery() {
+    this._listen(this.canvas, "webglcontextlost", (e) => {
+      e.preventDefault();
+      this._glLost = true;
+      if (this._raf) cancelAnimationFrame(this._raf);
+      this._raf = null;
+    });
+    this._listen(this.canvas, "webglcontextrestored", () => {
+      if (this._destroyed) return;
+      this._glLost = false;
+      // Old handles died with the context — drop them without delete calls.
+      this._lutCache.clear();
+      this.pickFbo = null;
+      this.pickTex = null;
+      try {
+        this._initGl(this._payload);
+      } catch (err) {
+        this.root.textContent = "fastcharts: WebGL2 context could not be restored.";
+        throw err;
+      }
+      this._scheduleViewRequest(this.view, { delay: 0 });
+      this.draw();
+    });
   }
 
   // Container size changed (fluid mode). Cheap on purpose: data GPU buffers
@@ -1473,7 +1509,7 @@ class ChartView {
 
 
   _drawNow() {
-    if (this._destroyed || !this.gl) return;
+    if (this._destroyed || !this.gl || this._glLost) return;
     const gl = this.gl;
     const { x0, x1, y0, y1 } = this.view;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
