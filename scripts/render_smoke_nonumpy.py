@@ -685,7 +685,20 @@ try{{
           const ctxloss=(loseExt && lostSeen===1 && v4._glLost===false
             && pixhash(v4)===ctxHashBefore)?1:0;
           v4.destroy(); holder4.remove();
-          document.title=`${{base}} fluid=${{fluid0}} grew=${{grew}} pick2=${{pick2}} destroyed=${{destroyed}} unsub=${{unsub}} ctxloss=${{ctxloss}}`;
+          // R7: a pure devicePixelRatio change (browser zoom) must re-derive
+          // backing stores even though the CSS size never changed.
+          const holder5=document.createElement("div");
+          document.body.appendChild(holder5);
+          const v5=fastcharts.renderStandalone(holder5,spec,bytes.buffer);
+          const dpr0=v5.dpr;
+          Object.defineProperty(window,"devicePixelRatio",{{value:dpr0*2,configurable:true}});
+          v5._onDprChange();
+          const dprw=(v5.dpr===dpr0*2 && v5.canvas.width===v5.plot.w*v5.dpr
+            && v5.chrome.width===v5.size.w*v5.dpr
+            && String(v5._dprMq.media).indexOf(`${{dpr0*2}}dppx`)>=0)?1:0;
+          Object.defineProperty(window,"devicePixelRatio",{{value:dpr0,configurable:true}});
+          v5.destroy(); holder5.remove();
+          document.title=`${{base}} fluid=${{fluid0}} grew=${{grew}} pick2=${{pick2}} destroyed=${{destroyed}} unsub=${{unsub}} ctxloss=${{ctxloss}} dprw=${{dprw}}`;
         }}catch(e){{document.title="FC_ERROR "+e.message}}}},250);
       }}catch(e){{document.title="FC_ERROR "+e.message}}}},150);
     }}catch(e){{document.title="FC_ERROR "+e.message}}}},250);
@@ -766,6 +779,7 @@ try{{
     malformed = int(re.search(r"malformed=(\d+)", title).group(1))
     pixdet = int(re.search(r"pixdet=(\d+)", title).group(1))
     ctxloss = int(re.search(r"ctxloss=(\d+)", title).group(1))
+    dprw = int(re.search(r"dprw=(\d+)", title).group(1))
     bar_base = int(re.search(r"barBase=(\d+)", title).group(1))
     hist_base = int(re.search(r"histBase=(\d+)", title).group(1))
     edgepad = int(re.search(r"edgepad=(\d+)", title).group(1))
@@ -867,6 +881,8 @@ try{{
         raise SystemExit("density color normalization did not settle to the true max")
     if malformed != 1:
         raise SystemExit("hostile-spec suite failed (renderer must fail loudly, never hang)")
+    if dprw != 1:
+        raise SystemExit("devicePixelRatio change did not re-derive backing stores")
     if ctxloss != 1:
         raise SystemExit("GL context loss/restore did not rebuild pixel-identically")
     if pixdet != 1:

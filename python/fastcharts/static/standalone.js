@@ -994,6 +994,7 @@ class ChartView {
       });
       this._ro.observe(this.root);
     }
+    this._armDprWatch();
 
     this.view0 = {
       x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
@@ -1024,6 +1025,23 @@ class ChartView {
     target.addEventListener(type, handler, options);
     this._listeners.push({ target, type, handler, options });
     return handler;
+  }
+
+  // DPR watch (renderer audit R7): browser zoom changes devicePixelRatio
+  // without firing the ResizeObserver, leaving blurry backing stores. A
+  // matchMedia resolution query fires exactly when dpr leaves its current
+  // value; the handler re-derives backing stores and re-arms for the new dpr.
+  _armDprWatch() {
+    if (typeof window.matchMedia !== "function") return;
+    this._dprMq?.removeEventListener?.("change", this._onDprChange);
+    const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    this._onDprChange = () => {
+      if (this._destroyed) return;
+      this._resize(this.size.w, this.size.h); // re-reads devicePixelRatio
+      this._armDprWatch();
+    };
+    mq.addEventListener?.("change", this._onDprChange, { once: true });
+    this._dprMq = mq;
   }
 
   // GL context loss/restore (renderer audit R4): a backgrounded tab on a busy
@@ -1064,7 +1082,11 @@ class ChartView {
   _resize(cssW, cssH) {
     const w = this.fluid && cssW ? Math.max(120, Math.round(cssW)) : this.size.w;
     const h = this.fluidH && cssH ? Math.max(120, Math.round(cssH)) : this.size.h;
-    if (w === this.size.w && h === this.size.h) return;
+    // Browser zoom changes devicePixelRatio with no container resize (R7);
+    // re-read it so backing stores stay crisp on a pure-DPR change too.
+    const dpr = window.devicePixelRatio || 1;
+    if (w === this.size.w && h === this.size.h && dpr === this.dpr) return;
+    this.dpr = dpr;
     this.size.w = w;
     this.size.h = h;
     this._layout();
@@ -2599,6 +2621,8 @@ class ChartView {
     this._destroyed = true;
     this._ro?.disconnect();
     this._themeWatch?.removeEventListener?.("change", this._onScheme);
+    this._dprMq?.removeEventListener?.("change", this._onDprChange);
+    this._dprMq = null;
     this._unsubscribeComm?.();
     this._unsubscribeComm = null;
     for (const { target, type, handler, options } of this._listeners.splice(0)) {
