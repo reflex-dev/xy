@@ -396,10 +396,22 @@ fn bin_2d_impl(
             .map(|hd| hd.join().expect("bin_2d worker panicked"))
             .collect()
     });
-    for (i, o) in out.iter_mut().enumerate() {
-        let c: u64 = grids.iter().map(|g| u64::from(g[i])).sum();
-        *o = c as f32;
-    }
+    // Merge in parallel too: at screen-sized grids the w*h reduction is a
+    // real fraction of the total. Disjoint output slices, integer sums —
+    // still bitwise deterministic for any thread count.
+    let cell_chunk = (w * h).div_ceil(threads);
+    let grids_ref = &grids;
+    std::thread::scope(|s| {
+        for (ci, oseg) in out.chunks_mut(cell_chunk).enumerate() {
+            let base = ci * cell_chunk;
+            s.spawn(move || {
+                for (j, o) in oseg.iter_mut().enumerate() {
+                    let c: u64 = grids_ref.iter().map(|g| u64::from(g[base + j])).sum();
+                    *o = c as f32;
+                }
+            });
+        }
+    });
 }
 
 /// Uniform-bin histogram over `[lo, hi]` with the last bin closed, matching
@@ -667,6 +679,10 @@ pub fn grid_max(grid: &[f32]) -> f32 {
 /// Min/max over a slice, NaN-skipping — the autorange primitive when zone maps
 /// aren't available (they make this O(chunks), §22).
 pub fn min_max(data: &[f64]) -> Option<(f64, f64)> {
+    min_max_impl(data, par_threads(data.len()))
+}
+
+fn min_max_scan(data: &[f64]) -> (f64, f64) {
     let mut min = f64::INFINITY;
     let mut max = f64::NEG_INFINITY;
     for &v in data {
@@ -675,6 +691,29 @@ pub fn min_max(data: &[f64]) -> Option<(f64, f64)> {
             max = max.max(v);
         }
     }
+    (min, max)
+}
+
+/// min/max are order-independent, so the chunked reduction is exactly the
+/// serial result for any thread count.
+fn min_max_impl(data: &[f64], threads: usize) -> Option<(f64, f64)> {
+    let (min, max) = if threads <= 1 || data.len() < threads {
+        min_max_scan(data)
+    } else {
+        let chunk = data.len().div_ceil(threads);
+        std::thread::scope(|s| {
+            let handles: Vec<_> = data
+                .chunks(chunk)
+                .map(|seg| s.spawn(move || min_max_scan(seg)))
+                .collect();
+            handles
+                .into_iter()
+                .map(|hd| hd.join().expect("min_max worker panicked"))
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |a, b| {
+                    (a.0.min(b.0), a.1.max(b.1))
+                })
+        })
+    };
     if min <= max {
         Some((min, max))
     } else {
@@ -1087,6 +1126,11 @@ mod fuzz {
                 let m4_par =
                     m4_indices_impl(&mx, &y, -1.0, n as f64 + 1.0, buckets_m4, s0, s1, threads);
                 assert_eq!(m4_serial, m4_par, "m4 parity it={it} threads={threads}");
+                assert_eq!(
+                    min_max_impl(&x, 1),
+                    min_max_impl(&x, threads),
+                    "min_max parity it={it} threads={threads}"
+                );
                 let mut ri_par = vec![0u32; n.max(1)];
                 let rn_par =
                     range_indices_impl(&x, &y, -5.0, 7.0, -6.0, 4.0, threads, &mut ri_par[..n]);
