@@ -77,8 +77,16 @@ per-kind knowledge lives in ChartView branches (the smoke's `reg` probe pins
 this contract): `pointPick` (participates in the point-geometry GPU pick pass),
 `retainCpu` (standalone export keeps CPU x/y copies for kernel-less hover,
 §37), `refreshColor(view, g)` (theme-change re-resolution of CSS constant
-colors, §36). The registry and `markOf()` are exported (`fastcharts.MARK_KINDS`)
-— it is the public extension surface.
+colors, §36), and `hover(view, g, dataX)` (a CPU nearest-mark readout that
+runs *before* the GPU point pick — candlestick/OHLC use it for O/H/L/C tooltips
+and to snap the crosshair; a mark without it falls back to GPU point picking).
+The registry and `markOf()` are exported (`fastcharts.MARK_KINDS`) — it is the
+public extension surface.
+
+Zoom re-decimation for a decimated mark plugs into `interaction.decimate_view`
+(kind-dispatched: line = M4, candlestick/OHLC = `ohlc_decimate`) and the client
+`tier_update` handler (branch on `upd.kind`). The crosshair is chart-wide (any
+kind) and snaps its vertical guide via the `hover` hook when present.
 
 ## Extension points not yet generalized (do it when the case lands)
 

@@ -336,21 +336,89 @@ class Figure:
         down_color: str = "#ef5350",
         width_frac: float = 0.7,  # body width as a fraction of candle slot
         opacity: float = 1.0,
+        hollow: bool = False,  # draw up-candle bodies as outlines (common convention)
+        wick_color: Optional[str] = None,  # wick color; defaults to the body color
     ) -> "Figure":
         """Add a candlestick (OHLC) trace. `x` is the time/period axis; `open`,
         `high`, `low`, `close` are equal-length series. Body spans open→close,
         wick spans low→high; up (close≥open) and down candles are colored
-        distinctly. Large series ship OHLC-bucketed for a screen-bounded first
-        paint (§5/§28). Y-autorange spans low..high."""
+        distinctly. `hollow=True` outlines up bodies (down stays filled) — the
+        hollow-candle convention; `wick_color` overrides the wick tint. Large
+        series ship OHLC-bucketed for a screen-bounded first paint (§5/§28).
+        Y-autorange spans low..high."""
+        return self._add_ohlc(
+            "candlestick",
+            x,
+            open,
+            high,
+            low,
+            close,
+            name=name,
+            up_color=up_color,
+            down_color=down_color,
+            width_frac=width_frac,
+            opacity=opacity,
+            hollow=hollow,
+            wick_color=wick_color,
+        )
+
+    def ohlc(
+        self,
+        x: Any,
+        open: Any,  # noqa: A002 - OHLC naming is the domain convention
+        high: Any,
+        low: Any,
+        close: Any,
+        *,
+        name: Optional[str] = None,
+        up_color: str = "#26a69a",
+        down_color: str = "#ef5350",
+        width_frac: float = 0.7,  # tick length as a fraction of the slot
+        opacity: float = 1.0,
+    ) -> "Figure":
+        """Add an OHLC bar trace — same data as `candlestick`, drawn as a
+        low→high stem with a left open tick and a right close tick."""
+        return self._add_ohlc(
+            "ohlc",
+            x,
+            open,
+            high,
+            low,
+            close,
+            name=name,
+            up_color=up_color,
+            down_color=down_color,
+            width_frac=width_frac,
+            opacity=opacity,
+            hollow=False,
+            wick_color=None,
+        )
+
+    def _add_ohlc(
+        self,
+        kind,
+        x,
+        open,
+        high,
+        low,
+        close,
+        *,
+        name,
+        up_color,  # noqa: A002, ANN001
+        down_color,
+        width_frac,
+        opacity,
+        hollow,
+        wick_color,
+    ) -> "Figure":
         cols = [self.store.ingest(v) for v in (x, open, high, low, close)]
         n0 = len(cols[0])
         if any(len(c) != n0 for c in cols):
             raise ValueError(
-                "candlestick x/open/high/low/close must have equal length, got "
-                f"{[len(c) for c in cols]}"
+                f"{kind} x/open/high/low/close must have equal length, got {[len(c) for c in cols]}"
             )
         xc = cols[0]
-        # Candles must be x-sorted (decimation buckets by x; §28 sorted rule).
+        # Bars must be x-sorted (decimation buckets by x; §28 sorted rule).
         if not np.all(np.diff(xc.values) >= 0):
             order = np.argsort(xc.values, kind="stable")
             cols = [self.store.ingest(c.values[order]) for c in cols]
@@ -358,7 +426,7 @@ class Figure:
         self.traces.append(
             Trace(
                 id=len(self.traces),
-                kind="candlestick",
+                kind=kind,
                 x=xc,
                 y=cc,  # close, so the shared xy machinery has a fallback
                 name=name,
@@ -367,6 +435,8 @@ class Figure:
                     "down_color": down_color,
                     "width_frac": float(width_frac),
                     "opacity": opacity,
+                    "hollow": bool(hollow),
+                    "wick_color": wick_color,
                 },
                 open_=oc,
                 high=hc,
@@ -536,7 +606,7 @@ class Figure:
         k = t.close.kind
         return {
             "id": t.id,
-            "kind": "candlestick",
+            "kind": t.kind,  # "candlestick" or "ohlc" — same wire shape
             "name": t.name,
             "style": dict(t.style),
             "tier": tier,
@@ -547,6 +617,10 @@ class Figure:
             "low": pw.ship_at(low, y_off, k),
             "close": pw.ship_at(c, y_off, k),
         }
+
+    # OHLC bar chart: identical data model and emitter as candlestick — the
+    # client renders tick bars instead of filled bodies.
+    _emit_ohlc = _emit_candlestick
 
     # -- channel & density helpers -------------------------------------------
 

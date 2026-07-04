@@ -154,6 +154,40 @@ def candlestick(
     )
 
 
+def ohlc(
+    x: Union[str, Any] = None,
+    open: Union[str, Any] = None,  # noqa: A002
+    high: Union[str, Any] = None,
+    low: Union[str, Any] = None,
+    close: Union[str, Any] = None,
+    *,
+    data: Any = None,
+    name: Optional[str] = None,
+    up_color: str = "#26a69a",
+    down_color: str = "#ef5350",
+    width_frac: float = 0.7,
+    opacity: float = 1.0,
+) -> Mark:
+    """An OHLC bar series (tick bars; OHLC-bucketed above the threshold, §5)."""
+    return Mark(
+        kind="ohlc",
+        x=x,
+        y=close,
+        data=data,
+        name=name,
+        props={
+            "open": open,
+            "high": high,
+            "low": low,
+            "close": close,
+            "up_color": up_color,
+            "down_color": down_color,
+            "width_frac": width_frac,
+            "opacity": opacity,
+        },
+    )
+
+
 def x_axis(*, label: Optional[str] = None, type_: Optional[str] = None) -> Axis:
     return Axis(which="x", label=label, type_=type_)
 
@@ -384,10 +418,27 @@ def _apply_candlestick(fig: Figure, m: Mark, data: Any) -> None:
     )
 
 
+def _apply_ohlc(fig: Figure, m: Mark, data: Any) -> None:
+    p = m.props
+    fig.ohlc(
+        _resolve(data, m.x),
+        _resolve(data, p["open"]),
+        _resolve(data, p["high"]),
+        _resolve(data, p["low"]),
+        _resolve(data, p["close"]),
+        name=m.name,
+        up_color=p["up_color"],
+        down_color=p["down_color"],
+        width_frac=p["width_frac"],
+        opacity=p["opacity"],
+    )
+
+
 _MARK_APPLIERS: dict[str, Callable[[Figure, Mark, Any], None]] = {
     "scatter": _apply_scatter,
     "line": _apply_line,
     "candlestick": _apply_candlestick,
+    "ohlc": _apply_ohlc,
 }
 
 
@@ -404,3 +455,8 @@ def line_chart(*children: Component, **props: Any) -> Chart:
 def candlestick_chart(*children: Component, **props: Any) -> Chart:
     """A candlestick chart composing `candlestick` marks and axis/legend children."""
     return Chart("candlestick_chart", children, **props)
+
+
+def ohlc_chart(*children: Component, **props: Any) -> Chart:
+    """An OHLC bar chart composing `ohlc` marks and axis/legend children."""
+    return Chart("ohlc_chart", children, **props)

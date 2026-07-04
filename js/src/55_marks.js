@@ -63,6 +63,16 @@ const MARK_KINDS = {
       g.candle.down = parseColor(view.root, g.trace.style.down_color, g.candle.down);
     },
   },
+  // OHLC bars: same OHLC data + build/hover as candlestick, tick-bar geometry.
+  ohlc: {
+    build: (view, g, t, buffer) => view._buildCandleMark(g, t, buffer),
+    draw: (view, g, x0, x1, y0, y1) => view._drawOHLC(g, x0, x1, y0, y1),
+    hover: (view, g, dataX) => view._candleHoverRow(g, dataX),
+    refreshColor: (view, g) => {
+      g.candle.up = parseColor(view.root, g.trace.style.up_color, g.candle.up);
+      g.candle.down = parseColor(view.root, g.trace.style.down_color, g.candle.down);
+    },
+  },
 };
 
 // Registry lookup with the scatter fallback every dispatch site shares.

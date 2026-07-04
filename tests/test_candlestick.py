@@ -6,7 +6,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from fastcharts import Figure, candlestick, candlestick_chart, kernels, x_axis
+from fastcharts import Figure, candlestick, candlestick_chart, kernels, ohlc, ohlc_chart, x_axis
 from fastcharts.figure import DECIMATION_THRESHOLD
 
 
@@ -98,6 +98,52 @@ def test_candlestick_length_mismatch_raises():
         Figure().candlestick([0, 1, 2], [1, 2], [3, 4, 5], [0, 1, 2], [1, 2, 3])
 
 
+def test_candlestick_hollow_and_wick_style():
+    x, o, h, low, c = _series(50)
+    fig = Figure().candlestick(x, o, h, low, c, hollow=True, wick_color="#888888")
+    tr = fig.build_payload()[0]["traces"][0]
+    assert tr["style"]["hollow"] is True
+    assert tr["style"]["wick_color"] == "#888888"
+
+
+def test_ohlc_shares_candlestick_wire_shape():
+    x, o, h, low, c = _series(400, seed=5)
+    fig = Figure().ohlc(x, o, h, low, c, name="bars")
+    spec, _ = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["kind"] == "ohlc"
+    for k in ("x", "open", "high", "low", "close"):
+        assert k in tr
+    # y-autorange spans low..high, same hook as candlestick.
+    y0, y1 = fig.y_range()
+    assert y0 <= low.min() and y1 >= h.max()
+
+
+def test_ohlc_decimates_above_threshold():
+    n = DECIMATION_THRESHOLD * 2
+    x, o, h, low, c = _series(n, seed=6)
+    tr = Figure().ohlc(x, o, h, low, c).build_payload(px_width=500)[0]["traces"][0]
+    assert tr["kind"] == "ohlc" and tr["tier"] == "decimated"
+
+
+def test_candlestick_zoom_redecimation():
+    # decimate_view re-buckets a candlestick for a zoomed window (§28), shipping
+    # the OHLC columns keyed by kind so the client refills its rect buffers.
+    n = DECIMATION_THRESHOLD * 4
+    x, o, h, low, c = _series(n, seed=9)
+    fig = Figure().candlestick(x, o, h, low, c)
+    fig.build_payload(px_width=1000)  # initial decimated paint
+    update, buffers = fig.decimate_view(1000.0, 2000.0, 600)
+    tr = next(t for t in update["traces"] if t["id"] == 0)
+    assert tr["kind"] == "candlestick"
+    for k in ("x", "open", "high", "low", "close"):
+        assert k in tr and "offset" in tr[k]
+    # x offset re-centers on the window midpoint (§16 deep-zoom rule).
+    assert tr["x"]["offset"] == pytest.approx(1500.0)
+    shipped = tr["x"]["len"]
+    assert 0 < shipped <= 600
+
+
 def test_candlestick_component_api():
     pd = pytest.importorskip("pandas")
 
@@ -117,3 +163,6 @@ def test_candlestick_component_api():
     spec, _ = chart.figure().build_payload()
     assert spec["traces"][0]["kind"] == "candlestick"
     assert spec["traces"][0]["name"] == "p"
+
+    bars = ohlc_chart(ohlc(x="t", open="o", high="h", low="l", close="c", data=df))
+    assert bars.figure().build_payload()[0]["traces"][0]["kind"] == "ohlc"

@@ -551,7 +551,35 @@ try{{
     const hrow=cv._candleHoverRow(cgt, 4.0);
     const chover=(hrow && hrow.ohlc && hrow.index===4
       && Math.abs(hrow.x-4.0)<1e-6 && hrow.ohlc.h>=hrow.ohlc.o)?1:0;
-    const candles=(clit>0 && up>0 && down>0 && creg===1 && chover===1)?1:0;
+    // Crosshair: hover the candle chart center → guides shown, x snapped to a candle.
+    const crect=cv.canvas.getBoundingClientRect();
+    cv._updateCrosshair({{clientX:crect.left+crect.width*0.5, clientY:crect.top+crect.height*0.5}});
+    const xhair=(cv._crosshair===true && cv._xhV.style.display==="block"
+      && cv._xhH.style.display==="block" && cv._xhXLab.textContent.length>0)?1:0;
+    // Zoom re-decimation: a candlestick "view" update refills the candle buffers.
+    const nD=6, xr=new Float32Array(nD), orr=new Float32Array(nD), hr=new Float32Array(nD),
+      lr=new Float32Array(nD), cr=new Float32Array(nD);
+    for(let i=0;i<nD;i++){{xr[i]=i-2.5; orr[i]=0.2*i-0.5; hr[i]=orr[i]+0.5;
+      lr[i]=orr[i]-0.5; cr[i]=orr[i]+(i%2?-0.3:0.3);}}
+    cv.seq=7;
+    cv._onKernelMsg({{type:"tier_update",seq:7,traces:[{{id:0,kind:"candlestick",
+      x:{{buf:0,len:nD,offset:5,scale:1}},open:{{buf:1,len:nD,offset:10,scale:1}},
+      high:{{buf:2,len:nD,offset:10,scale:1}},low:{{buf:3,len:nD,offset:10,scale:1}},
+      close:{{buf:4,len:nD,offset:10,scale:1}}}}]}},[xr.buffer,orr.buffer,hr.buffer,lr.buffer,cr.buffer]);
+    const redecim=(cv.gpuTraces[0].n===nD && Math.abs(cv.gpuTraces[0].xMeta.offset-5)<1e-6)?1:0;
+    // OHLC bar variant renders (isolated chart) with up+down colored bars.
+    const os=JSON.parse(JSON.stringify(candleSpec)); os.traces[0].kind="ohlc";
+    const oh=document.createElement("div"); document.body.appendChild(oh);
+    const ov=fastcharts.renderStandalone(oh,os,candleBytes.buffer); ov._drawNow();
+    const og=ov.gl, opx=new Uint8Array(og.drawingBufferWidth*og.drawingBufferHeight*4);
+    og.readPixels(0,0,og.drawingBufferWidth,og.drawingBufferHeight,og.RGBA,og.UNSIGNED_BYTE,opx);
+    let olit=0,oup=0,odn=0;
+    for(let i=0;i<opx.length;i+=4){{const r=opx[i],gg=opx[i+1],b=opx[i+2];
+      if(opx[i+3]<=8)continue; olit++; if(gg>r&&gg>b)oup++; else if(r>gg&&r>b)odn++;}}
+    const ohlcbars=(olit>0 && oup>0 && odn>0
+      && fastcharts.markOf("ohlc").pointPick!==true)?1:0;
+    const candles=(clit>0 && up>0 && down>0 && creg===1 && chover===1
+      && xhair===1 && redecim===1 && ohlcbars===1)?1:0;
     const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} candles=${{candles}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
