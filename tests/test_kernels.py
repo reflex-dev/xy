@@ -319,6 +319,28 @@ def test_encode_f32_rejects_nonfinite_offset_or_scale(impl):
         impl.encode_f32(x, 0.0, np.nan)
 
 
+def test_kernel_float_parameters_reject_bool_coercion(impl):
+    x = np.arange(4.0)
+    with pytest.raises(ValueError, match="offset"):
+        impl.encode_f32(x, True)
+    with pytest.raises(ValueError, match="scale"):
+        impl.encode_f32(x, 0.0, np.bool_(True))
+    with pytest.raises(ValueError, match="x range"):
+        impl.m4_indices(x, x, False, 4.0, 4)
+    with pytest.raises(ValueError, match="x range"):
+        impl.bin_2d(x, x, 0.0, True, 0.0, 4.0, 4, 4)
+    with pytest.raises(ValueError, match="y range"):
+        impl.bin_2d(x, x, 0.0, 4.0, np.bool_(False), 4.0, 4, 4)
+    with pytest.raises(ValueError, match="histogram range"):
+        impl.histogram_uniform(x, False, 4.0, 4)
+    with pytest.raises(ValueError, match="domain"):
+        impl.normalize_f32(x, (False, 4.0))
+    with pytest.raises(ValueError, match="x range"):
+        impl.range_indices(x, x, False, 4.0, 0.0, 4.0)
+    with pytest.raises(ValueError, match="y range"):
+        impl.local_log_density(x, x, 0.0, 4.0, False, 4.0, 4, 4)
+
+
 def test_range_indices(impl):
     x = np.array([0.0, 1.0, 2.0, 3.0, np.nan])
     y = np.array([0.0, 1.5, 2.5, 4.0, 1.0])

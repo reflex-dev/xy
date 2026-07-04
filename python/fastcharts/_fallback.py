@@ -42,6 +42,8 @@ def _bounded_positive_int(value: int, label: str, max_value: int = MAX_SCREEN_DI
 
 
 def _finite_float(value: float, label: str) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{label} must be a finite real number")
     out = float(value)
     if not np.isfinite(out):
         raise ValueError(f"{label} must be finite")
@@ -49,17 +51,17 @@ def _finite_float(value: float, label: str) -> float:
 
 
 def _finite_increasing(lo: float, hi: float, label: str) -> tuple[float, float]:
-    lo_f = float(lo)
-    hi_f = float(hi)
-    if not np.isfinite(lo_f) or not np.isfinite(hi_f) or not hi_f > lo_f:
+    lo_f = _finite_float(lo, label)
+    hi_f = _finite_float(hi, label)
+    if not hi_f > lo_f:
         raise ValueError(f"{label} must be finite and increasing")
     return lo_f, hi_f
 
 
 def _finite_ordered(lo: float, hi: float, label: str) -> tuple[float, float]:
-    lo_f = float(lo)
-    hi_f = float(hi)
-    if not np.isfinite(lo_f) or not np.isfinite(hi_f) or hi_f < lo_f:
+    lo_f = _finite_float(lo, label)
+    hi_f = _finite_float(hi, label)
+    if hi_f < lo_f:
         raise ValueError(f"{label} must be finite and ordered low-to-high")
     return lo_f, hi_f
 
