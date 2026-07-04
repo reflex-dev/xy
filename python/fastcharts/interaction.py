@@ -16,14 +16,13 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
-from . import channels, kernels
-from .config import DECIMATION_THRESHOLD, SCATTER_DENSITY_THRESHOLD
-
-# Hysteresis on the drill boundary (§5 "tier transitions hysteresis-guarded"):
-# once drilled to points, stay until the visible count clearly exceeds the
-# budget again, so a view hovering at the threshold doesn't thrash modes.
-DRILL_EXIT_FACTOR = 1.15
-DENSITY_TARGET_POINTS_PER_CELL = 16.0
+from . import channels, kernels, lod
+from .config import (
+    DECIMATION_THRESHOLD,
+    DENSITY_TARGET_POINTS_PER_CELL,  # noqa: F401  (historic import path)
+    DRILL_EXIT_FACTOR,  # noqa: F401  (historic import path)
+    SCATTER_DENSITY_THRESHOLD,
+)
 
 if TYPE_CHECKING:
     from .figure import Figure
@@ -156,22 +155,15 @@ def density_view(
     t = fig.traces[trace_id]
     if not t.use_density():
         return {"traces": []}, []
-    lo_x, hi_x = min(x0, x1), max(x0, x1)
-    lo_y, hi_y = min(y0, y1), max(y0, y1)
+    lo_x, hi_x, lo_y, hi_y = lod.normalize_window(x0, x1, y0, y1)
     xv, yv = t.x.values, t.y.values
-    # NaN/±inf compare False on either side, so non-finite rows never enter the
-    # drilled subset (§19: nothing non-finite reaches vertex buffers).
-    vis = (xv >= lo_x) & (xv <= hi_x) & (yv >= lo_y) & (yv <= hi_y)
+    vis = lod.visible_mask(xv, yv, lo_x, hi_x, lo_y, hi_y)
     visible = int(np.count_nonzero(vis))
-    budget = SCATTER_DENSITY_THRESHOLD * (DRILL_EXIT_FACTOR if t.drill_mode else 1.0)
-    if visible <= budget:
+    if lod.drill_decision(visible, SCATTER_DENSITY_THRESHOLD, t.drill_mode):
         return _drill_points(fig, t, vis, visible, lo_x, hi_x, lo_y, hi_y, w, h)
 
-    if t.drill_mode:
-        t.drill_seq += 1  # leaving drill: in-flight picks against it are dead
-    t.drill_mode = False
-    t.shipped_sel = None  # aggregate view: no per-point marks, no pick mapping
-    w, h = _density_grid_shape(w, h, visible)
+    lod.exit_drill(t)
+    w, h = lod.grid_shape(w, h, visible)
     grid = kernels.bin_2d(xv, yv, lo_x, hi_x, lo_y, hi_y, w, h)
     return (
         {
@@ -195,22 +187,6 @@ def density_view(
     )
 
 
-def _density_grid_shape(w: int, h: int, visible: int) -> tuple[int, int]:
-    """Keep density grids screen-bounded, but avoid one-pixel bins when the
-    visible count is only barely over the direct draw budget. A few points per
-    cell gives smoother drill-out density and smaller updates."""
-    w = max(16, min(int(w), 4096))
-    h = max(16, min(int(h), 4096))
-    requested = w * h
-    if visible <= 0:
-        return w, h
-    target = min(requested, max(16 * 16, int(np.ceil(visible / DENSITY_TARGET_POINTS_PER_CELL))))
-    if target >= requested:
-        return w, h
-    scale = float(np.sqrt(target / requested))
-    return max(16, int(round(w * scale))), max(16, int(round(h * scale)))
-
-
 def _drill_points(
     fig: "Figure",
     t: Any,
@@ -225,50 +201,28 @@ def _drill_points(
 ) -> tuple[dict[str, Any], list[bytes]]:
     """Ship the visible subset of a Tier-2 scatter as real points (§5 drill-in).
 
-    Channels ship in the same wire shape as a direct scatter, normalized over
-    their *global* domain so colors/sizes stay stable across views. Offsets
-    re-center on the window midpoint (§16 deep-zoom rule).
-
-    Each point also carries its *local log-density* plus a `lod_blend` weight
-    (visible/budget): right at the drill boundary the client paints points with
-    the density colormap by local density — the same picture as the texture,
-    just sharp — and eases into native channel colors as the zoom deepens. This
-    is what makes the density→points handoff color-continuous instead of a
-    palette jump."""
+    Scatter-specific wiring over the chart-agnostic pieces in `lod`: channels
+    ship in the direct-scatter wire shape, normalized over their *global*
+    domain so colors/sizes stay stable across views; offsets re-center on the
+    window midpoint (§16); each point carries its local log-density plus a
+    `lod_blend` weight (visible/budget) so the density→points handoff is
+    color-continuous instead of a palette jump (§5)."""
     sel = np.flatnonzero(vis)
-    t.drill_mode = True
-    t.shipped_sel = sel  # pick/selection translate through the drilled subset (§17)
-    t.drill_seq += 1  # new index space; stale picks/selections must miss
-    x_off = (lo_x + hi_x) / 2.0
-    y_off = (lo_y + hi_y) / 2.0
+    lod.enter_drill(t, sel)
     xs, ys = t.x.values[sel], t.y.values[sel]
-    if len(sel):
-        x_enc = kernels.encode_f32(xs, x_off, 1.0)
-        y_enc = kernels.encode_f32(ys, y_off, 1.0)
-    else:
-        x_enc = y_enc = np.empty(0, dtype=np.float32)
-    buffers: list[bytes] = [x_enc.tobytes(), y_enc.tobytes()]
+    x_off, y_off, x_enc, y_enc = lod.encode_window_xy(xs, ys, lo_x, hi_x, lo_y, hi_y)
+    writer = lod.BufferWriter()
+    writer.add_raw(x_enc.tobytes())
+    writer.add_raw(y_enc.tobytes())
+    buffers = writer.buffers
 
-    def ship_scalar(arr: np.ndarray) -> int:
-        buffers.append(np.ascontiguousarray(arr, dtype=np.float32).tobytes())
-        return len(buffers) - 1
-
-    color_spec, size_spec = fig._ship_channels(t, sel, ship_scalar)
+    color_spec, size_spec = fig._ship_channels(t, sel, writer.add_f32)
     n = len(sel)
 
-    # Local log-density per drilled point, normalized within the window — the
-    # LUT coordinate the client blends with. Binned at the same screen-derived
+    # Local log-density per drilled point, binned at the same screen-derived
     # grid shape density would use, so the two representations line up.
-    dval = np.zeros(n, dtype=np.float32)
-    if n and hi_x > lo_x and hi_y > lo_y:
-        gw, gh = _density_grid_shape(w, h, visible)
-        grid = kernels.bin_2d(xs, ys, lo_x, hi_x, lo_y, hi_y, gw, gh)
-        gmax = float(grid.max()) if grid.size else 0.0
-        if gmax > 0:
-            ix = np.clip(((xs - lo_x) * (gw / (hi_x - lo_x))).astype(np.int64), 0, gw - 1)
-            iy = np.clip(((ys - lo_y) * (gh / (hi_y - lo_y))).astype(np.int64), 0, gh - 1)
-            dval = (np.log1p(grid[iy, ix]) / np.log1p(gmax)).astype(np.float32)
-    dval_buf = ship_scalar(dval)
+    gw, gh = lod.grid_shape(w, h, visible)
+    dval_buf = writer.add_f32(lod.local_log_density(xs, ys, lo_x, hi_x, lo_y, hi_y, gw, gh))
     # 1.0 right at the boundary → density-colored points; →0 as zoom deepens.
     lod_blend = float(min(1.0, visible / SCATTER_DENSITY_THRESHOLD))
     cmap = (

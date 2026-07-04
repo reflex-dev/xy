@@ -15,6 +15,7 @@ const PARTS = [
   "20_theme.js", //      CSS color resolution + --chart-* tokens (§36)
   "30_ticks.js", //      f64 tick/format math — never through f32 (§16)
   "40_gl.js", //         GL helpers + all shaders (marks, pick, density, line)
+  "45_lod.js", //        chart-agnostic tier LOD: drill lifecycle, fades, cache (§5/§28)
   "50_chartview.js", //  ChartView: render, interaction, kernel comm
   "60_entries.js", //    anywidget + standalone entry points, export tail
 ];
