@@ -693,7 +693,7 @@ mod fuzz {
             let mut x: Vec<f64> = (0..n).map(|i| i as f64).collect();
             // salt some non-finite y and occasional NaN x tail (argsort-last shape)
             let y = rng.hostile_vec(n, -100.0, 100.0);
-            if n > 4 && rng.next() % 4 == 0 {
+            if n > 4 && rng.next().is_multiple_of(4) {
                 let k = n - 1;
                 x[k] = f64::NAN;
             }
