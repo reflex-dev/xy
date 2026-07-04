@@ -104,19 +104,43 @@ class BufferWriter:
         return len(self.buffers) - 1
 
 
+# Encoded extremes stay well inside f32 (max ~3.4e38); the margin also keeps
+# the client's 1/(span*scale) map uniforms clear of f32 subnormals.
+F32_SAFE_MAG = 1e37
+
+
+def f32_safe_scale(offset: float, lo: float, hi: float) -> float:
+    """Scale for offset-encoding so finite f64 can never overflow f32 (§19:
+    nothing non-finite may reach a vertex buffer — a 1e300-magnitude domain
+    would otherwise encode to ±inf). Exactly 1.0 for every normal domain, so
+    the common path is unchanged; only absurd magnitudes normalize."""
+    half = max(abs(lo - offset), abs(hi - offset))
+    if not np.isfinite(half) or half <= F32_SAFE_MAG:
+        return 1.0
+    return F32_SAFE_MAG / half
+
+
 def encode_window_xy(
     xs: np.ndarray, ys: np.ndarray, lo_x: float, hi_x: float, lo_y: float, hi_y: float
-) -> tuple[float, float, np.ndarray, np.ndarray]:
+) -> tuple[dict, dict, np.ndarray, np.ndarray]:
     """Offset-encode a drilled subset re-centered on the window midpoint (§16
-    deep-zoom rule) — f32 precision follows the viewport, not the dataset."""
+    deep-zoom rule) — f32 precision follows the viewport, not the dataset.
+    Returns wire metas ({offset, scale}) plus the encoded arrays."""
     x_off = (lo_x + hi_x) / 2.0
     y_off = (lo_y + hi_y) / 2.0
+    x_scale = f32_safe_scale(x_off, lo_x, hi_x)
+    y_scale = f32_safe_scale(y_off, lo_y, hi_y)
     if len(xs):
-        x_enc = kernels.encode_f32(xs, x_off, 1.0)
-        y_enc = kernels.encode_f32(ys, y_off, 1.0)
+        x_enc = kernels.encode_f32(xs, x_off, x_scale)
+        y_enc = kernels.encode_f32(ys, y_off, y_scale)
     else:
         x_enc = y_enc = np.empty(0, dtype=np.float32)
-    return x_off, y_off, x_enc, y_enc
+    return (
+        {"offset": x_off, "scale": x_scale},
+        {"offset": y_off, "scale": y_scale},
+        x_enc,
+        y_enc,
+    )
 
 
 def grid_shape(
