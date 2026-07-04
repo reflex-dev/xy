@@ -32,20 +32,13 @@ from .config import (  # noqa: E402
 @dataclass
 class Trace:
     id: int
-    kind: str  # "line" | "scatter" | "candlestick"
+    kind: str  # "line" | "scatter"
     x: Column
     y: Column
     name: Optional[str] = None
     style: dict[str, Any] = field(default_factory=dict)
     color_ch: Optional[ColorChannel] = None  # scatter color encoding
     size_ch: Optional[SizeChannel] = None  # scatter size encoding
-    # OHLC columns for candlestick/bar-range marks (§28: multi-column mark).
-    # `y` mirrors close so the shared xy machinery has a sensible fallback; the
-    # y-autorange hook below uses low/high, not close.
-    open_: Optional[Column] = None
-    high: Optional[Column] = None
-    low: Optional[Column] = None
-    close: Optional[Column] = None
     # Tri-state density override: None = auto (threshold), True/False = forced.
     # (A bool here silently ignored density=False — staff-review finding.)
     force_density: Optional[bool] = None
@@ -68,16 +61,6 @@ class Trace:
     @property
     def n_points(self) -> int:
         return len(self.x)
-
-    def range_for(self, axis: str) -> tuple[float, float]:
-        """Data extent this trace contributes to autorange on `axis`. The
-        per-kind hook (§28): candlesticks must span low..high on y, not close —
-        clamping to close would clip every wick."""
-        if axis == "x":
-            return self.x.min, self.x.max
-        if self.close is not None:
-            return self.low.min, self.high.max
-        return self.y.min, self.y.max
 
     def use_density(self) -> bool:
         """Whether this scatter renders as a Tier-2 density grid (§5)."""
@@ -114,14 +97,6 @@ class _PayloadWriter:
         offset = col.suggest_offset()
         enc = kernels.encode_f32(values, offset, 1.0)
         return self._append(enc, {"offset": offset, "scale": 1.0, "kind": col.kind})
-
-    def ship_at(self, values: np.ndarray, offset: float, kind: str = "float") -> int:
-        """Offset-encode against an *explicit* shared offset — for a group of
-        columns that must map on one axis together (a candle's open/high/low/
-        close all ride the y offset, §16), where each column's own midpoint
-        would desync them."""
-        enc = kernels.encode_f32(values, offset, 1.0)
-        return self._append(enc, {"offset": offset, "scale": 1.0, "kind": kind})
 
     def ship_scalar(self, values: np.ndarray) -> int:
         """Raw f32 column already in final units (no offset): channel/grid/heights."""
@@ -323,129 +298,6 @@ class Figure:
         self.traces.append(trace)
         return self
 
-    def candlestick(
-        self,
-        x: Any,
-        open: Any,  # noqa: A002 - OHLC naming is the domain convention
-        high: Any,
-        low: Any,
-        close: Any,
-        *,
-        name: Optional[str] = None,
-        up_color: str = "#26a69a",  # teal/orange default — CVD-safer than green/red
-        down_color: str = "#ef5350",
-        width_frac: float = 0.7,  # body width as a fraction of candle slot
-        opacity: float = 1.0,
-        hollow: bool = False,  # draw up-candle bodies as outlines (common convention)
-        wick_color: Optional[str] = None,  # wick color; defaults to the body color
-    ) -> "Figure":
-        """Add a candlestick (OHLC) trace. `x` is the time/period axis; `open`,
-        `high`, `low`, `close` are equal-length series. Body spans open→close,
-        wick spans low→high; up (close≥open) and down candles are colored
-        distinctly. `hollow=True` outlines up bodies (down stays filled) — the
-        hollow-candle convention; `wick_color` overrides the wick tint. Large
-        series ship OHLC-bucketed for a screen-bounded first paint (§5/§28).
-        Y-autorange spans low..high."""
-        return self._add_ohlc(
-            "candlestick",
-            x,
-            open,
-            high,
-            low,
-            close,
-            name=name,
-            up_color=up_color,
-            down_color=down_color,
-            width_frac=width_frac,
-            opacity=opacity,
-            hollow=hollow,
-            wick_color=wick_color,
-        )
-
-    def ohlc(
-        self,
-        x: Any,
-        open: Any,  # noqa: A002 - OHLC naming is the domain convention
-        high: Any,
-        low: Any,
-        close: Any,
-        *,
-        name: Optional[str] = None,
-        up_color: str = "#26a69a",
-        down_color: str = "#ef5350",
-        width_frac: float = 0.7,  # tick length as a fraction of the slot
-        opacity: float = 1.0,
-    ) -> "Figure":
-        """Add an OHLC bar trace — same data as `candlestick`, drawn as a
-        low→high stem with a left open tick and a right close tick."""
-        return self._add_ohlc(
-            "ohlc",
-            x,
-            open,
-            high,
-            low,
-            close,
-            name=name,
-            up_color=up_color,
-            down_color=down_color,
-            width_frac=width_frac,
-            opacity=opacity,
-            hollow=False,
-            wick_color=None,
-        )
-
-    def _add_ohlc(
-        self,
-        kind,
-        x,
-        open,
-        high,
-        low,
-        close,
-        *,
-        name,
-        up_color,  # noqa: A002, ANN001
-        down_color,
-        width_frac,
-        opacity,
-        hollow,
-        wick_color,
-    ) -> "Figure":
-        cols = [self.store.ingest(v) for v in (x, open, high, low, close)]
-        n0 = len(cols[0])
-        if any(len(c) != n0 for c in cols):
-            raise ValueError(
-                f"{kind} x/open/high/low/close must have equal length, got {[len(c) for c in cols]}"
-            )
-        xc = cols[0]
-        # Bars must be x-sorted (decimation buckets by x; §28 sorted rule).
-        if not np.all(np.diff(xc.values) >= 0):
-            order = np.argsort(xc.values, kind="stable")
-            cols = [self.store.ingest(c.values[order]) for c in cols]
-        xc, oc, hc, lc, cc = cols
-        self.traces.append(
-            Trace(
-                id=len(self.traces),
-                kind=kind,
-                x=xc,
-                y=cc,  # close, so the shared xy machinery has a fallback
-                name=name,
-                style={
-                    "up_color": up_color,
-                    "down_color": down_color,
-                    "width_frac": float(width_frac),
-                    "opacity": opacity,
-                    "hollow": bool(hollow),
-                    "wick_color": wick_color,
-                },
-                open_=oc,
-                high=hc,
-                low=lc,
-                close=cc,
-            )
-        )
-        return self
-
     # -- ranges ---------------------------------------------------------------
 
     def x_range(self) -> tuple[float, float]:
@@ -459,9 +311,9 @@ class Figure:
         lo = np.inf
         hi = -np.inf
         for t in self.traces:
-            t_lo, t_hi = t.range_for(axis)
-            lo = min(lo, t_lo)
-            hi = max(hi, t_hi)
+            col = t.x if axis == "x" else t.y
+            lo = min(lo, col.min)
+            hi = max(hi, col.max)
         if not np.isfinite(lo) or not np.isfinite(hi):
             return (0.0, 1.0)
         if lo == hi:
@@ -579,48 +431,6 @@ class Figure:
         entry["color"], entry["size"] = self._ship_channels(t, sel, pw.ship_scalar)
         t.shipped_sel = sel  # pick/selection translation (§17)
         return entry
-
-    def _emit_candlestick(
-        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
-    ) -> dict[str, Any]:
-        x = t.x.values
-        o, h, low, c = t.open_.values, t.high.values, t.low.values, t.close.values
-        tier = "direct"
-        if t.n_points > DECIMATION_THRESHOLD:
-            # OHLC-bucket per pixel column: screen-bounded first paint (§5). The
-            # candlestick analog of M4 — open=first, high=max, low=min,
-            # close=last per bucket preserves the candle's meaning.
-            xd, od, hd, ld, cd = kernels.ohlc_decimate(
-                x, o, h, low, c, xr[0], xr[1] + np.finfo(np.float64).eps, px_width
-            )
-            if len(xd):
-                x, o, h, low, c, tier = xd, od, hd, ld, cd, "decimated"
-        else:
-            finite = (
-                np.isfinite(x) & np.isfinite(o) & np.isfinite(h) & np.isfinite(low) & np.isfinite(c)
-            )
-            if not finite.all():
-                x, o, h, low, c = x[finite], o[finite], h[finite], low[finite], c[finite]
-        # open/high/low/close share the y offset so they map on one axis (§16).
-        y_off = t.close.suggest_offset()
-        k = t.close.kind
-        return {
-            "id": t.id,
-            "kind": t.kind,  # "candlestick" or "ohlc" — same wire shape
-            "name": t.name,
-            "style": dict(t.style),
-            "tier": tier,
-            "n_points": t.n_points,
-            "x": pw.ship(x, t.x),
-            "open": pw.ship_at(o, y_off, k),
-            "high": pw.ship_at(h, y_off, k),
-            "low": pw.ship_at(low, y_off, k),
-            "close": pw.ship_at(c, y_off, k),
-        }
-
-    # OHLC bar chart: identical data model and emitter as candlestick — the
-    # client renders tick bars instead of filled bodies.
-    _emit_ohlc = _emit_candlestick
 
     # -- channel & density helpers -------------------------------------------
 

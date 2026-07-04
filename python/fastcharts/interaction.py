@@ -114,48 +114,31 @@ def decimate_view(
     """
     updates: list[dict[str, Any]] = []
     buffers: list[bytes] = []
-    px = max(16, px_width)
-    x_off = (x0 + x1) / 2.0  # §16: precision follows the viewport midpoint
-
-    def _col(values: np.ndarray, off: float) -> dict[str, Any]:
-        enc = kernels.encode_f32(values, off, 1.0)
-        buffers.append(enc.tobytes())
-        return {"buf": len(buffers) - 1, "len": len(enc), "offset": off, "scale": 1.0}
-
     for t in fig.traces:
-        if t.n_points <= DECIMATION_THRESHOLD:
+        if t.kind != "line" or t.n_points <= DECIMATION_THRESHOLD:
             continue
-        if t.kind == "line":
-            idx = kernels.m4_indices(t.x.values, t.y.values, x0, x1, px)
-            if len(idx) == 0:
-                continue
-            y_off = t.y.suggest_offset()
-            updates.append(
-                {
-                    "id": t.id,
-                    "kind": "line",
-                    "x": _col(t.x.values[idx], x_off),
-                    "y": _col(t.y.values[idx], y_off),
-                }
-            )
-        elif t.kind in ("candlestick", "ohlc"):
-            xd, od, hd, ld, cd = kernels.ohlc_decimate(
-                t.x.values, t.open_.values, t.high.values, t.low.values, t.close.values, x0, x1, px
-            )
-            if len(xd) == 0:
-                continue
-            y_off = t.close.suggest_offset()
-            updates.append(
-                {
-                    "id": t.id,
-                    "kind": t.kind,
-                    "x": _col(xd, x_off),
-                    "open": _col(od, y_off),
-                    "high": _col(hd, y_off),
-                    "low": _col(ld, y_off),
-                    "close": _col(cd, y_off),
-                }
-            )
+        idx = kernels.m4_indices(t.x.values, t.y.values, x0, x1, max(16, px_width))
+        if len(idx) == 0:
+            continue
+        xv, yv = t.x.values[idx], t.y.values[idx]
+        x_off = (x0 + x1) / 2.0
+        y_off = t.y.suggest_offset()
+        x_enc = kernels.encode_f32(xv, x_off, 1.0)
+        y_enc = kernels.encode_f32(yv, y_off, 1.0)
+        updates.append(
+            {
+                "id": t.id,
+                "x": {"buf": len(buffers), "len": len(x_enc), "offset": x_off, "scale": 1.0},
+                "y": {
+                    "buf": len(buffers) + 1,
+                    "len": len(y_enc),
+                    "offset": y_off,
+                    "scale": 1.0,
+                },
+            }
+        )
+        buffers.append(x_enc.tobytes())
+        buffers.append(y_enc.tobytes())
     return {"traces": updates}, buffers
 
 
