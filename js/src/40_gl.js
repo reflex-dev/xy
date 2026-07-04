@@ -175,30 +175,53 @@ void main() {
 const CANDLE_VS = `#version 300 es
 in float a_x; in float a_open; in float a_high; in float a_low; in float a_close; in float a_dir;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res;
-uniform float u_halfPx; uniform int u_part; // 0 = wick, 1 = body
-out float v_dir;
+uniform float u_halfPx; uniform int u_part;
+// part: 0 wick (low→high), 1 body (open↔close), 2 OHLC open tick (left),
+//       3 OHLC close tick (right). Candlesticks use 0+1; OHLC bars use 0+2+3.
+out float v_dir; out vec2 v_local; flat out float v_hpx;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 void main() {
-  float yLo = u_part == 1 ? min(a_open, a_close) : a_low;
-  float yHi = u_part == 1 ? max(a_open, a_close) : a_high;
-  float xc = a_x * u_xmap.x + u_xmap.y;
+  float yLo, yHi;
+  if (u_part == 1) { yLo = min(a_open, a_close); yHi = max(a_open, a_close); }
+  else if (u_part == 2) { yLo = a_open; yHi = a_open; }   // flat open tick
+  else if (u_part == 3) { yLo = a_close; yHi = a_close; } // flat close tick
+  else { yLo = a_low; yHi = a_high; }
+  float xcPx = ((a_x * u_xmap.x + u_xmap.y) * 0.5 + 0.5) * u_res.x;
   float ylPx = ((yLo * u_ymap.x + u_ymap.y) * 0.5 + 0.5) * u_res.y;
   float yhPx = ((yHi * u_ymap.x + u_ymap.y) * 0.5 + 0.5) * u_res.y;
   if (abs(yhPx - ylPx) < 1.0) { float mid = (ylPx + yhPx) * 0.5; ylPx = mid - 0.5; yhPx = mid + 0.5; }
   vec2 c = corners[gl_VertexID];
-  float xPx = ((xc * 0.5 + 0.5) * u_res.x) + (c.x * 2.0 - 1.0) * u_halfPx;
+  // Ticks extend to one side of center; wick/body straddle it.
+  float xL = u_part == 3 ? xcPx : xcPx - u_halfPx;
+  float xR = u_part == 2 ? xcPx : xcPx + u_halfPx;
+  float xPx = mix(xL, xR, c.x);
   float yPx = mix(ylPx, yhPx, c.y);
   gl_Position = vec4(vec2(xPx / u_res.x, yPx / u_res.y) * 2.0 - 1.0, 0.0, 1.0);
   v_dir = a_dir;
+  v_local = c;           // 0..1 within the quad (for the hollow-body outline)
+  v_hpx = abs(yhPx - ylPx);
 }`;
 
 const CANDLE_FS = `#version 300 es
 precision highp float; precision highp int;
-uniform vec4 u_up; uniform vec4 u_down; uniform float u_opacity;
-in float v_dir;
+uniform vec4 u_up; uniform vec4 u_down; uniform vec4 u_wick; uniform float u_opacity;
+uniform float u_halfPx; uniform int u_isWick; uniform int u_wickFixed; uniform int u_hollowUp;
+in float v_dir; in vec2 v_local; flat in float v_hpx;
 out vec4 outColor;
 void main() {
-  vec3 rgb = v_dir > 0.5 ? u_up.rgb : u_down.rgb;
+  bool up = v_dir > 0.5;
+  vec3 rgb;
+  if (u_isWick == 1) {
+    rgb = u_wickFixed == 1 ? u_wick.rgb : (up ? u_up.rgb : u_down.rgb);
+  } else {
+    rgb = up ? u_up.rgb : u_down.rgb;
+    // Hollow up-candles: keep a ~1px border, discard the interior.
+    if (u_hollowUp == 1 && up) {
+      float ex = min(v_local.x, 1.0 - v_local.x) * (u_halfPx * 2.0);
+      float ey = min(v_local.y, 1.0 - v_local.y) * v_hpx;
+      if (ex > 1.0 && ey > 1.0) discard;
+    }
+  }
   float a = u_opacity;
   outColor = vec4(rgb * a, a);
 }`;
