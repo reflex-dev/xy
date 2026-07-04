@@ -34,17 +34,18 @@ Ordered by how much each compounds as kinds multiply.
   hits the driver once at first use. Verified by the pixel-determinism
   smoke probe (bitwise-identical frames through the cached path).
 - **R2 — No VAOs.** Every draw re-binds attributes via `_bindScalarAttr`
-  (verified: zero `createVertexArray` in the bundle) and one defensive site
-  disables *all* attributes in a loop. WebGL2 gives VAOs for free.
-  *Fix:* one VAO per gpu-record per program, built at upload, rebuilt on
-  buffer swap (tier_update/drill). Removes the disable-all hack and the
-  stale-attribute class of bugs the drill path already fought.
-- **R3 — Draw-state discipline is by-convention.** Blend mode, texture
-  units, and program switches are set ad hoc per `_draw*`. One forgotten
-  `gl.enable(BLEND)` restore already bit the pick pass once.
-  *Fix:* a tiny `withState(gl, {prog, blend, textures}, fn)` helper (or
-  begin/end pairs) that every mark draw goes through; it's ~40 lines and
-  turns convention into API.
+  (verified: zero `createVertexArray` in the bundle). **Deferred with a
+  stated trigger:** at ~6 kinds the per-frame rebinding is unmeasurable and
+  the refactor risks exactly the stale-attribute bugs it would prevent.
+  Adopt together with the first rect-family pick geometry (the R9 trigger),
+  when draw+pick sharing VAO layouts pays twice.
+- **R3 — Draw-state discipline.** Re-audit: the discipline is currently
+  sound — BLEND is enabled once at init and toggled in exactly one place
+  (the pick pass, correctly paired), and every texture bind sets its unit
+  explicitly. A `withState` helper today would be ~40 lines guarding one
+  pair — over-engineering by this codebase's own standard. **Deferred:**
+  adopt when a second state-toggling pass lands (e.g. scissored panels or
+  an additive-blend mark).
 - **R4 — No GL context-loss handling.** ✅ **Done.**
   `_initContextLossRecovery` listens for loss (preventDefault, halt RAF) and
   restore (drop dead handles, re-run `_initGl` from the retained
