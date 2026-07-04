@@ -17,6 +17,7 @@ const PARTS = [
   "40_gl.js", //         GL helpers + all shaders (marks, pick, density, line)
   "45_lod.js", //        chart-agnostic tier LOD: drill lifecycle, fades, cache (§5/§28)
   "50_chartview.js", //  ChartView: render, interaction, kernel comm
+  "55_marks.js", //      MARK_KINDS: per-chart-kind build/draw dispatch registry
   "60_entries.js", //    anywidget + standalone entry points, export tail
 ];
 
