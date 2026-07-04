@@ -29,12 +29,10 @@ below are verified against the source, not hypothetical.
 
 Ordered by how much each compounds as kinds multiply.
 
-- **R1 — Per-draw uniform lookups.** Eight call sites build
-  `u = (n) => gl.getUniformLocation(prog, n)` and query by string every
-  draw, every frame. With 5 kinds it's invisible; with 25 marks × 60fps it's
-  thousands of string lookups/frame and real driver chatter.
-  *Fix:* cache locations at program link into a `prog.u.<name>` map
-  (one `makeProgram` change); mechanical.
+- **R1 — Per-draw uniform lookups.** ✅ **Done.** `makeProgram` attaches a
+  per-program memo and all draw sites go through `uniformOf()`; each name
+  hits the driver once at first use. Verified by the pixel-determinism
+  smoke probe (bitwise-identical frames through the cached path).
 - **R2 — No VAOs.** Every draw re-binds attributes via `_bindScalarAttr`
   (verified: zero `createVertexArray` in the bundle) and one defensive site
   disables *all* attributes in a loop. WebGL2 gives VAOs for free.
@@ -47,14 +45,12 @@ Ordered by how much each compounds as kinds multiply.
   *Fix:* a tiny `withState(gl, {prog, blend, textures}, fn)` helper (or
   begin/end pairs) that every mark draw goes through; it's ~40 lines and
   turns convention into API.
-- **R4 — No GL context-loss handling.** Verified: no `webglcontextlost`
-  listener. A tab backgrounded on a busy GPU, or a driver reset, currently
-  leaves a dead canvas until reload. All GPU state is already rebuildable
-  from `spec`+buffers (dossier §18 requirement — the data design anticipated
-  this); only the hook is missing.
-  *Fix:* listen for loss (preventDefault) + restore → re-run `_initGl` +
-  re-upload from retained payload/updates. Smoke-testable via
-  `WEBGL_lose_context`.
+- **R4 — No GL context-loss handling.** ✅ **Done.**
+  `_initContextLossRecovery` listens for loss (preventDefault, halt RAF) and
+  restore (drop dead handles, re-run `_initGl` from the retained
+  screen-bounded payload, re-fire the view request to re-sync live tiers).
+  Smoke probe forces `WEBGL_lose_context` loss/restore and asserts the
+  rebuilt frame hashes pixel-identical (`ctxloss` flag).
 - **R5 — Shader source conventions are informal.** Naming is consistent by
   care (`u_xmap/u_ymap/u_res/u_opacity`, `a_*` attribs, highp rule after the
   precision bug) but nothing enforces it.
@@ -74,14 +70,12 @@ Ordered by how much each compounds as kinds multiply.
   blurry marks until a container resize fires. *Fix:* fold
   `matchMedia('(resolution)')`-style dpr watch into the existing
   ResizeObserver path (same `_resize` machinery).
-- **R8 — Lifecycle cleanup is partial.** `destroy()` disconnects observers,
-  cancels RAFs/timeouts, frees density cache textures; drill buffers free on
-  drop. But per-trace static buffers (`xBuf/yBuf/cBuf/sBuf`), programs, pick
-  FBO/texture, and LUT cache textures are left to context GC.
-  Fine for one chart per page; a Reflex dashboard mounting/unmounting dozens
-  of widgets leaks real VRAM. *Fix:* registry gains `dispose(view, g)`
-  (per-kind buffers) + ChartView frees programs/FBO/LUTs; the widget path
-  already calls `destroy()` on unmount, so the hook placement exists.
+- **R8 — Lifecycle cleanup.** ✅ **Already complete** (re-audit): `destroy()`
+  → `_destroyGlResources` frees per-trace static + drill buffers, density/
+  heatmap/LUT textures (dedup via `texSeen`), pick FBO/texture, the quad, and
+  all programs. The original finding is stale. Remaining nicety only: move
+  per-kind buffer-name lists into a registry `dispose` hook when a kind
+  arrives whose resources don't fit the shared name list.
 - **R9 — Picking model won't stretch as-is.** GPU ID pass is point-only
   (`pointPick`); rect-family picking (bars/candles) is planned as a
   registry `pick` step (contract). Two additions when that lands:
