@@ -23,7 +23,11 @@ const PARTS = [
 
 const here = dirname(fileURLToPath(import.meta.url));
 const checkOnly = process.argv.includes("--check");
-const src = PARTS.map((p) => readFileSync(join(here, "src", p), "utf8")).join("");
+// Normalize CRLF: a Windows checkout with autocrlf otherwise mixes CRLF part
+// content with the wrapper's literal \n, making the freshness check fail on
+// exactly one platform. Build output is LF everywhere, deterministically.
+const readText = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
+const src = PARTS.map((p) => readText(join(here, "src", p))).join("");
 const outDir = join(here, "..", "python", "fastcharts", "static");
 
 // Shader convention lint (renderer audit R5). The conventions are load-bearing:
@@ -33,7 +37,7 @@ const outDir = join(here, "..", "python", "fastcharts", "static");
 {
   // Fullscreen/texture quads position via corner constants, not data maps.
   const VIEWMAP_EXEMPT = new Set(["DENSITY_VS", "HEATMAP_VS"]);
-  const glSrc = readFileSync(join(here, "src", "40_gl.js"), "utf8");
+  const glSrc = readText(join(here, "src", "40_gl.js"));
   const errs = [];
   let shaders = 0;
   for (const m of glSrc.matchAll(/const (\w+_(?:VS|FS)) = `([^`]*)`/g)) {
@@ -84,7 +88,7 @@ if (checkOnly) {
     const path = join(outDir, name);
     let actual = null;
     try {
-      actual = readFileSync(path, "utf8");
+      actual = readText(path);
     } catch {
       stale.push(`${name} missing`);
       continue;

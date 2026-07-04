@@ -1,0 +1,5 @@
+# LF everywhere for the JS client: the committed static/ bundles must compare
+# byte-equal to a fresh `node js/build.mjs` on every platform, including
+# Windows checkouts with autocrlf.
+*.js text eol=lf
+*.mjs text eol=lf
