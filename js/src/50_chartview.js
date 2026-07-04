@@ -16,6 +16,7 @@ class ChartView {
     this.comm = comm;
     this.seq = 0;
     this._densityStamp = 0;
+    this._viewRequestBurstStart = null;
     this._viewAnim = null;
     this._animRaf = null;
     this._lastLabelDraw = null;
@@ -997,22 +998,24 @@ class ChartView {
 
     clearTimeout(this._viewTimer);
     this.seq += 1; // invalidate in-flight LOD replies for the pre-animation view
+    const request = opts.request !== false;
+    const requestDelay = opts.requestDelay ?? Math.min(55, Math.max(24, duration * 0.35));
+    const requestMaxWait = opts.requestMaxWait ?? 130;
+    if (request) {
+      this._scheduleViewRequest(target, { seq: this.seq, delay: requestDelay, maxWait: requestMaxWait });
+    }
     const now = performance.now();
     const tau = Math.max(18, duration / 5);
     if (this._viewAnim) {
       this._viewAnim.target = target;
-      this._viewAnim.deadline = now + duration;
       this._viewAnim.tau = tau;
-      this._viewAnim.request = this._viewAnim.request || opts.request !== false;
       return;
     }
 
     this._viewAnim = {
       target,
       last: now,
-      deadline: now + duration,
       tau,
-      request: opts.request !== false,
     };
     const lerp = (a, b, t) => a + (b - a) * t;
     const span = (v) => Math.max(Math.abs(v.x1 - v.x0), Math.abs(v.y1 - v.y0), 1e-12);
@@ -1028,7 +1031,7 @@ class ChartView {
       const dt = Math.max(0, Math.min(64, nowFrame - anim.last));
       anim.last = nowFrame;
       const k = 1 - Math.exp(-dt / anim.tau);
-      const t = nowFrame >= anim.deadline || closeEnough(this.view, anim.target) ? 1 : k;
+      const t = closeEnough(this.view, anim.target) ? 1 : k;
       this.view = {
         x0: lerp(this.view.x0, anim.target.x0, t),
         x1: lerp(this.view.x1, anim.target.x1, t),
@@ -1039,13 +1042,11 @@ class ChartView {
         this.draw();
         this._animRaf = requestAnimationFrame(step);
       } else {
-        const request = anim.request;
         this._animRaf = null;
         this._viewAnim = null;
         this.view = anim.target;
         this._lastLabelDraw = null;
         this.draw();
-        if (request) this._scheduleViewRequest();
       }
     };
     this._animRaf = requestAnimationFrame(step);
@@ -1146,17 +1147,38 @@ class ChartView {
     this._showTooltip(hit, e.clientX, e.clientY);
   }
 
-  _scheduleViewRequest() {
+  _scheduleViewRequest(viewOverride = this.view, opts = {}) {
     if (!this.comm) return;
     const needsLine = this.spec.traces.some((t) => t.tier === "decimated");
     const needsDensity = this.gpuTraces.some((g) => g.tier === "density");
     if (!needsLine && !needsDensity) return;
-    const seq = ++this.seq;
-    const view = { ...this.view };
+    const seq = opts.seq ?? ++this.seq;
+    const view = { ...viewOverride };
     const plotW = Math.round(this.plot.w);
     const plotH = Math.round(this.plot.h);
+    if (needsDensity) {
+      const now = performance.now();
+      for (const g of this.gpuTraces) {
+        if (g.tier !== "density") continue;
+        g._lodPendingView = view;
+        g._lodPendingSeq = seq;
+        g._lodPendingAt = now;
+      }
+    }
+    let delay = opts.delay ?? 120;
+    if (opts.maxWait !== undefined && opts.maxWait !== null) {
+      const now = performance.now();
+      if (this._viewRequestBurstStart === undefined || this._viewRequestBurstStart === null) {
+        this._viewRequestBurstStart = now;
+      }
+      const remaining = opts.maxWait - (now - this._viewRequestBurstStart);
+      delay = remaining <= 0 ? 0 : Math.min(delay, remaining);
+    } else {
+      this._viewRequestBurstStart = null;
+    }
     clearTimeout(this._viewTimer);
-    this._viewTimer = setTimeout(() => {
+    const send = () => {
+      this._viewRequestBurstStart = null;
       if (seq !== this.seq) return;
       if (needsLine) {
         this.comm.send({
@@ -1174,7 +1196,13 @@ class ChartView {
           });
         }
       }
-    }, 120);
+    };
+    if (delay <= 0) {
+      send();
+    } else {
+      this._viewTimer = setTimeout(send, delay);
+    }
+    return seq;
   }
 
   _onKernelMsg(msg, buffers) {
@@ -1199,6 +1227,11 @@ class ChartView {
       for (const upd of msg.traces) {
         const g = this.gpuTraces.find((t) => t.trace.id === upd.id && t.tier === "density");
         if (!g) continue;
+        if (msg.seq === undefined || g._lodPendingSeq === msg.seq) {
+          g._lodPendingView = null;
+          g._lodPendingSeq = null;
+          g._lodPendingAt = null;
+        }
         if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }
         lodApplyDensityUpdate(this, g, upd, buffers);
       }

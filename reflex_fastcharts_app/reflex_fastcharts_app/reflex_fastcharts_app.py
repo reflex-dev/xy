@@ -5,10 +5,10 @@ import reflex as rx
 from .live_drilldown import LIVE_DRILLDOWN_ROUTE, drilldown_endpoint
 
 LIVE_DRILLDOWN_CHART = {
-    "title": "Live 10M Drilldown Scatter",
-    "subtitle": "10M source points with Reflex-backed adaptive LOD.",
-    "src": "/charts/live_drilldown_10m.html",
-    "stat": "10M live",
+    "title": "Live 100M Drilldown Scatter",
+    "subtitle": "100M source points with Reflex-backed adaptive LOD.",
+    "src": "/charts/live_drilldown_100m.html",
+    "stat": "100M live",
 }
 
 COMPARISON_CHARTS = [
@@ -117,7 +117,7 @@ def index() -> rx.Component:
             rx.grid(
                 metric("Renderer", "WebGL2"),
                 metric("Transport", "binary f32"),
-                metric("Largest demo", "10M points"),
+                metric("Largest demo", "100M points"),
                 columns={"initial": "1", "sm": "3"},
                 gap="1rem",
                 width="100%",

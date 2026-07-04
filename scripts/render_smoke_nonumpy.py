@@ -216,6 +216,50 @@ try{{
     const retarget=(v._viewAnim && v._animRaf
       && (v._viewAnim.target.x1-v._viewAnim.target.x0)<retarget0)?1:0;
     v._cancelViewAnimation();
+    v._raf=null;
+    const realRaf=window.requestAnimationFrame;
+    const realCancel=window.cancelAnimationFrame;
+    const rafFns=[];
+    window.requestAnimationFrame=(cb)=>{{rafFns.push(cb);return rafFns.length;}};
+    window.cancelAnimationFrame=()=>{{}};
+    v.view={{x0:0,x1:100,y0:0,y1:100}};
+    const noSnapTarget={{x0:0,x1:50,y0:0,y1:50}};
+    v._setView(noSnapTarget,{{animate:true,duration:20,request:false}});
+    const noSnapLast=v._viewAnim ? v._viewAnim.last : 0;
+    if(rafFns[0]) rafFns[0](noSnapLast+21);
+    const nosnap=(v._viewAnim && v.view.x1>noSnapTarget.x1+1e-3 && v.view.x1<100)?1:0;
+    window.requestAnimationFrame=realRaf;
+    window.cancelAnimationFrame=realCancel;
+    v._cancelViewAnimation();
+    v._raf=null;
+    v.comm={{sent:[],send(m){{this.sent.push(m);}}}};
+    const prefetchTarget={{x0:25,x1:125,y0:-2,y1:4}};
+    const prefetchOldSeq=v.seq;
+    v._setView(prefetchTarget,{{animate:true,duration:180,requestDelay:0}});
+    const prefetchSeq=v.seq;
+    const prefetchMsg=v.comm.sent.find(m=>m.type==="density_view");
+    const prefetch=(v._viewAnim && prefetchSeq===prefetchOldSeq+1 && prefetchMsg
+      && prefetchMsg.seq===prefetchSeq
+      && Math.abs(prefetchMsg.x0-prefetchTarget.x0)<1e-6
+      && Math.abs(prefetchMsg.x1-prefetchTarget.x1)<1e-6
+      && Math.abs(prefetchMsg.y0-prefetchTarget.y0)<1e-6
+      && Math.abs(prefetchMsg.y1-prefetchTarget.y1)<1e-6)?1:0;
+    v._cancelViewAnimation();
+    clearTimeout(v._viewTimer);
+    v.comm=null;
+    v.comm={{sent:[],send(m){{this.sent.push(m);}}}};
+    const maxWaitTarget={{x0:50,x1:80,y0:-1,y1:1}};
+    const maxWaitOldSeq=v.seq;
+    v._setView(maxWaitTarget,{{animate:true,duration:180,requestDelay:1000,requestMaxWait:0}});
+    const maxWaitSeq=v.seq;
+    const maxWaitMsg=v.comm.sent.find(m=>m.type==="density_view");
+    const maxwait=(v._viewAnim && maxWaitSeq===maxWaitOldSeq+1 && maxWaitMsg
+      && maxWaitMsg.seq===maxWaitSeq && v._viewRequestBurstStart===null
+      && Math.abs(maxWaitMsg.x0-maxWaitTarget.x0)<1e-6
+      && Math.abs(maxWaitMsg.x1-maxWaitTarget.x1)<1e-6)?1:0;
+    v._cancelViewAnimation();
+    clearTimeout(v._viewTimer);
+    v.comm=null;
     v._zoomToBox([10,0],[20,5]);    // box-zoom fits the rectangle
     const boxOk = (Math.abs(v.view.x0-10)<1e-6 && Math.abs(v.view.x1-20)<1e-6) ? 1 : 0;
     v.view = {{...v.view0}};
@@ -239,12 +283,28 @@ try{{
     v.view=preDensityView;
     v._drawNow();
     const oldView={{...v.view}};
-    v.view={{x0:5000,x1:5010,y0:5000,y1:5010}};
     const n3=25, xs3=new Float32Array(n3), ys3=new Float32Array(n3), cs3=new Float32Array(n3);
     const ds3=new Float32Array(n3);
     for(let i=0;i<n3;i++){{xs3[i]=(i%5-2)*1.5; ys3[i]=(Math.floor(i/5)-2)*1.5; cs3[i]=i/n3;
       ds3[i]=1-i/n3;}}
     v._hoverId=42; v._lastRow={{x:1}}; // must be invalidated by the subset swap
+    v.view={{x0:0,x1:2000,y0:-3,y1:8}};
+    v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"points",visible:n3,
+      x_range:[5000,5010],y_range:[5000,5010],
+      x:{{buf:0,len:n3,offset:5005,scale:1}},y:{{buf:1,len:n3,offset:5005,scale:1}},
+      color:{{mode:"continuous",colormap:"viridis",buf:2}},size:{{mode:"constant",size:8}},
+      density_val:{{buf:3}},lod_blend:0.85,density_colormap:"magma"}}]}},
+      [xs3.buffer,ys3.buffer,cs3.buffer,ds3.buffer]);
+    const pendingDensity0=v._drawDensity;
+    const pendingPoints0=v._drawPoints;
+    let pendingDensity=0, pendingPoints=0;
+    v._drawDensity=function(gg,dd,op){{if(gg===gd)pendingDensity++;return pendingDensity0.call(this,gg,dd,op);}};
+    v._drawPoints=function(gg,xm,ym,op){{if(gg===gd.drill)pendingPoints++;return pendingPoints0.call(this,gg,xm,ym,op);}};
+    v._drawNow();
+    const pending=(gd.drill && gd._drillWasInside!==true && pendingDensity>0 && pendingPoints===0)?1:0;
+    v._drawDensity=pendingDensity0;
+    v._drawPoints=pendingPoints0;
+    v.view={{x0:5000,x1:5010,y0:5000,y1:5010}};
     v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"points",visible:n3,
       x_range:[5000,5010],y_range:[5000,5010],
       x:{{buf:0,len:n3,offset:5005,scale:1}},y:{{buf:1,len:n3,offset:5005,scale:1}},
@@ -287,6 +347,26 @@ try{{
     v._drawNow();
     const hit3=v._pickAt(v.plot.w/2, v.plot.h/2);
     const dpick=(hit3 && hit3.trace===gd.trace.id)?1:0;
+    // Tiny drill-to-drill zoom-outs should not flash the broad density texture
+    // while the next point subset is pending. Keep the resident drilled marks
+    // for the short wait when the pending target is still under direct budget.
+    const holdDensity0=v._drawDensity;
+    const holdPoints0=v._drawPoints;
+    let holdDensity=0, holdPoints=0;
+    v._drawDensity=function(gg,dd,op){{if(gg===gd)holdDensity++;return holdDensity0.call(this,gg,dd,op);}};
+    v._drawPoints=function(gg,xm,ym,op){{if(gg===gd.drill)holdPoints++;return holdPoints0.call(this,gg,xm,ym,op);}};
+    v.seq+=1;
+    gd._lodPendingSeq=v.seq;
+    gd._lodPendingView={{x0:4980,x1:5030,y0:4980,y1:5030}};
+    gd._lodPendingAt=performance.now();
+    v.view={{...gd._lodPendingView}};
+    v._drawNow();
+    const hold=(holdPoints>0 && holdDensity===0 && gd._drillExitFadeStart==null)?1:0;
+    gd._lodPendingSeq=null;
+    gd._lodPendingView=null;
+    gd._lodPendingAt=null;
+    v._drawDensity=holdDensity0;
+    v._drawPoints=holdPoints0;
     // Zoom out past the drilled window: still drilled, but now a cached
     // overview must cover the view (no blank), even if the current density
     // texture is a narrower intermediate one.
@@ -298,10 +378,11 @@ try{{
     gd.densityCache=[savedOverview,gd.density];
     const drawDensity0=v._drawDensity;
     const drawPoints0=v._drawPoints;
-    let zdensity=0, zpoints=0, zcovered=0, zpointsDone=0, zphase="fade";
+    let zdensity=0, zpoints=0, zcovered=0, zpointsDone=0, broadfallback=0, zphase="fade";
     v._drawDensity=function(gg,dd,op){{
       if(gg===gd){{
         zdensity++;
+        if(zphase==="broad" && dd===savedOverview) broadfallback=1;
         if(dd && dd.xRange[0]<=v.view.x0 && dd.xRange[1]>=v.view.x1
           && dd.yRange[0]<=v.view.y0 && dd.yRange[1]>=v.view.y1)zcovered=1;
       }}
@@ -325,6 +406,11 @@ try{{
     zpoints=0;
     v._drawNow();
     const zswitchDone=(!gd._densitySwitchPrev && !gd._densitySwitchFadeStart)?1:0;
+    const broadView={{...v.view}};
+    v.view={{x0:-100,x1:3000,y0:-10,y1:20}};
+    zphase="broad";
+    v._drawNow();
+    v.view=broadView;
     v._drawDensity=drawDensity0;
     v._drawPoints=drawPoints0;
     const zoomout=(gd.drill && v._viewInside(gd.drill.win)===false
@@ -375,7 +461,7 @@ try{{
     const stale=(staleReply && staleQueued && staleAnim)?1:0;
     v.view=oldView;
     v._drawNow();
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} refresh=${{refresh}} dpick=${{dpick}} zoomout=${{zoomout}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}}`;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -442,12 +528,16 @@ try{{
     hover_skip = int(re.search(r"hoverSkip=(\d+)", title).group(1))
     zanch = int(re.search(r"zanch=(\d+)", title).group(1))
     retarget = int(re.search(r"retarget=(\d+)", title).group(1))
+    nosnap = int(re.search(r"nosnap=(\d+)", title).group(1))
+    prefetch = int(re.search(r"prefetch=(\d+)", title).group(1))
+    maxwait = int(re.search(r"maxwait=(\d+)", title).group(1))
     box = int(re.search(r"box=(\d+)", title).group(1))
     zmode = int(re.search(r"zmode=(\d+)", title).group(1))
     fluid = int(re.search(r"fluid=(\d+)", title).group(1))
     grew = int(re.search(r"grew=(\d+)", title).group(1))
     pick2 = int(re.search(r"pick2=(\d+)", title).group(1))
     drill = int(re.search(r"drill=(\d+)", title).group(1))
+    pending = int(re.search(r"pending=(\d+)", title).group(1))
     dblend = int(re.search(r"dblend=(\d+)", title).group(1))
     dseq = int(re.search(r"dseq=(\d+)", title).group(1))
     hov = int(re.search(r"hov=(\d+)", title).group(1))
@@ -458,7 +548,9 @@ try{{
     dying = int(re.search(r"dying=(\d+)", title).group(1))
     density_lit = int(re.search(r"densityLit=(\d+)", title).group(1))
     dpick = int(re.search(r"dpick=(\d+)", title).group(1))
+    hold = int(re.search(r"hold=(\d+)", title).group(1))
     zoomout = int(re.search(r"zoomout=(\d+)", title).group(1))
+    broad = int(re.search(r"broad=(\d+)", title).group(1))
     dback = int(re.search(r"dback=(\d+)", title).group(1))
     dnorm = int(re.search(r"dnorm=(\d+)", title).group(1))
     dnorm_done = int(re.search(r"dnormDone=(\d+)", title).group(1))
@@ -500,6 +592,12 @@ try{{
         raise SystemExit("cursor-anchored wheel zoom did not schedule a smooth transition")
     if retarget != 1:
         raise SystemExit("repeated wheel zoom did not retarget the active smooth transition")
+    if nosnap != 1:
+        raise SystemExit("animated zoom snapped to its target at the nominal deadline")
+    if prefetch != 1:
+        raise SystemExit("animated zoom did not prefetch the target LOD view")
+    if maxwait != 1:
+        raise SystemExit("continuous zoom max-wait did not force a target LOD request")
     if box != 1:
         raise SystemExit("box-zoom did not fit the dragged rectangle")
     if zmode != 1:
@@ -512,6 +610,8 @@ try{{
         raise SystemExit("pick FBO was not reallocated to the resized canvas")
     if drill != 1:
         raise SystemExit("density trace did not drill in to points on a points update")
+    if pending != 1:
+        raise SystemExit("prefetched drill points flashed before the view entered their window")
     if dblend != 1:
         raise SystemExit("drill update did not carry the local-density color blend")
     if dseq != 1:
@@ -532,8 +632,12 @@ try{{
         raise SystemExit("density trace did not render visible pixels by itself")
     if dpick != 1:
         raise SystemExit("drilled points were not pickable (GPU pick missed)")
+    if hold != 1:
+        raise SystemExit("small pending drill refresh fell back to density (yellow flash)")
     if zoomout != 1:
         raise SystemExit("zoom-out past the drilled window did not fall back to the overview")
+    if broad != 1:
+        raise SystemExit("density fallback did not prefer the broadest cached overview")
     if dback != 1:
         raise SystemExit("density update did not drop the drill state")
     if dnorm != 1:
