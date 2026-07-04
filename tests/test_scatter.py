@@ -242,6 +242,32 @@ def test_density_view_drills_to_points_when_window_fits():
     row = fig.pick(0, 0)
     assert row is not None and 0.0 <= row["x"] <= 10.0
     assert "color_value" in row
+    # Color-continuous handoff: per-point local log-density in [0,1], a blend
+    # weight = visible/budget, and the colormap the density surface uses —
+    # so freshly drilled points wear the density ramp (§5, never a palette jump).
+    dbuf = np.frombuffer(bufs[tr["density_val"]["buf"]], dtype=np.float32)
+    assert len(dbuf) == inwin
+    assert dbuf.min() >= 0.0 and dbuf.max() <= 1.0
+    assert dbuf.max() == pytest.approx(1.0)  # the hottest cell hits the ramp top
+    assert tr["lod_blend"] == pytest.approx(inwin / SCATTER_DENSITY_THRESHOLD)
+    assert tr["density_colormap"] == "viridis"  # continuous channel's colormap
+
+
+def test_drill_lod_blend_shrinks_as_zoom_deepens():
+    # The density-ramp blend eases out with the visible count, so colors morph
+    # gradually toward native channel colors instead of stepping at the boundary.
+    n = SCATTER_DENSITY_THRESHOLD + 50_000
+    rng = np.random.default_rng(7)
+    x = rng.uniform(0, 100, n)
+    y = rng.uniform(0, 100, n)
+    fig = Figure().scatter(x, y, density=True)
+    upd_wide, _ = fig.density_view(0, 0.0, 60.0, 0.0, 60.0, 512, 384)
+    upd_deep, _ = fig.density_view(0, 0.0, 5.0, 0.0, 5.0, 512, 384)
+    assert upd_wide["traces"][0]["mode"] == "points"
+    assert upd_deep["traces"][0]["mode"] == "points"
+    assert upd_deep["traces"][0]["lod_blend"] < upd_wide["traces"][0]["lod_blend"]
+    # constant-color scatter still gets the default density ramp for the handoff
+    assert upd_deep["traces"][0]["density_colormap"] == ch.DEFAULT_COLORMAP
 
 
 def test_density_view_returns_to_density_on_zoom_out():
