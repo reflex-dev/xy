@@ -269,11 +269,13 @@ for anywidget and wraps a standalone IIFE for `Figure.to_html`.
 
 ## Roadmap
 
-For chart-type ordering, see the detailed
+For chart-type ordering, see the single 2D-first
 [`docs/chart-roadmap.md`](docs/chart-roadmap.md). Short version: add histogram
-next, then bar/column, area, heatmap, box/violin, and finance traces. Long term,
-the goal is Plotly-class chart breadth across BI, data science, finance,
-science/engineering, product analytics, and dashboards.
+next, then bar/column, area, heatmap, box/violin, and finance traces, while
+tracking the full Plotly-class 2D breadth backlog from common charts through
+obscure compatibility surfaces. Long term, the goal is Plotly-class chart
+breadth across BI, data science, finance, science/engineering, product
+analytics, and dashboards.
 
 - **Phase 1:** worker-side compute, SharedArrayBuffer where available, gap
   semantics, accessibility layer, filter Tier A.
