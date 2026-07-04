@@ -34,7 +34,7 @@ const marker = "// ---- exports ----";
 const cut = src.indexOf(marker);
 if (cut < 0) throw new Error("export marker not found in 60_entries.js");
 const body = src.slice(0, cut);
-const iife = `(() => {\n${body}\nwindow.fastcharts = { render, renderStandalone, ChartView };\n})();\n`;
+const iife = `(() => {\n${body}\nwindow.fastcharts = { render, renderStandalone, ChartView, MARK_KINDS, markOf };\n})();\n`;
 writeFileSync(join(outDir, "standalone.js"), iife);
 
 console.log(`built static/index.js and static/standalone.js from ${PARTS.length} parts`);

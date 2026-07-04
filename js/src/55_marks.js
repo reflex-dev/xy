@@ -21,15 +21,40 @@
 // mark actually lands, not preemptively.
 // ---------------------------------------------------------------------------
 
+// Capabilities (beyond build/draw) so no per-kind knowledge leaks back into
+// ChartView branches:
+//   pointPick    — marks are point-shaped and participate in the GPU ID pick
+//                  pass (§17). A future rect/candle mark supplies its own pick
+//                  step instead (see docs/chart-kind-contract.md).
+//   retainCpu    — standalone export keeps CPU f32 copies of x/y so hover can
+//                  read approximate values with no kernel attached (§37).
+//   refreshColor — re-resolve CSS-expressed constant colors on theme change
+//                  (§36 live re-resolution); each kind knows where its
+//                  constant color lives in the spec.
 const MARK_KINDS = {
   scatter: {
     build: (view, g, t, buffer) => view._buildScatterMark(g, t, buffer),
     draw: (view, g, x0, x1, y0, y1) =>
       view._drawPoints(g, view._map(g.xMeta, x0, x1), view._map(g.yMeta, y0, y1)),
+    pointPick: true,
+    retainCpu: true,
+    refreshColor: (view, g) => {
+      if (g.colorMode === 0 && g.trace.color) {
+        g.color = parseColor(view.root, g.trace.color.color, g.color);
+      }
+    },
   },
   line: {
     build: (view, g, t, buffer) => view._buildLineMark(g, t, buffer),
     draw: (view, g, x0, x1, y0, y1) =>
       view._drawLine(g, view._map(g.xMeta, x0, x1), view._map(g.yMeta, y0, y1)),
+    refreshColor: (view, g) => {
+      g.color = parseColor(view.root, g.trace.style.color, g.color);
+    },
   },
 };
+
+// Registry lookup with the scatter fallback every dispatch site shares.
+function markOf(kind) {
+  return MARK_KINDS[kind] || MARK_KINDS.scatter;
+}
