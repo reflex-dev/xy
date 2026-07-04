@@ -154,3 +154,31 @@ def normalize_to_unit(values: npt.NDArray[np.float64], domain: tuple[float, floa
     span = hi - lo if hi > lo else 1.0
     safe = np.where(np.isfinite(values), values, lo)
     return np.clip((safe - lo) / span, 0.0, 1.0)
+
+
+def ship_channels(trace: Any, sel: Any, ship_scalar: Any, palette: list[str]) -> tuple[Any, Any]:
+    """Ship a trace's color and size channels in the standard wire shape
+    (§29/§36c): per-point channels carry a `buf` index into the blob; constant
+    channels ship spec-only. Used by the build path and by drill-in view
+    updates for any chart kind with per-mark channels.
+
+    Slices *before* normalizing: normalization is element-wise over a
+    precomputed global domain, and drill updates call this per zoom step —
+    normalizing all N rows to ship a 200k window is O(N) work for nothing.
+    Returns (color_spec, size_spec)."""
+    cc = trace.color_ch
+    color_spec = cc.spec()
+    if cc.mode == "continuous":
+        vals = cc.values if sel is None else cc.values[sel]
+        color_spec["buf"] = ship_scalar(normalize_to_unit(vals, cc.domain))
+    elif cc.mode == "categorical":
+        codes = cc.codes if sel is None else cc.codes[sel]
+        color_spec["buf"] = ship_scalar(codes)
+        color_spec["palette"] = [palette[i % len(palette)] for i in range(len(cc.categories))]
+
+    sc = trace.size_ch
+    size_spec = sc.spec()
+    if sc.mode == "continuous":
+        vals = sc.values if sel is None else sc.values[sel]
+        size_spec["buf"] = ship_scalar(normalize_to_unit(vals, sc.domain))
+    return color_spec, size_spec

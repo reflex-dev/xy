@@ -115,6 +115,19 @@ the shape: imMens/Nanocubes bound work by *screen* resolution via tiles and
 hierarchical aggregates; datashader rasterizes; plotly-resampler re-aggregates
 per view; deck.gl documents why 10M visible markers die on fill-rate/overdraw.
 
+**Where the machinery lives (reuse seams for new chart kinds):** the tier
+logic is chart-agnostic and factored out on both sides of the wire —
+`python/fastcharts/lod.py` (visible-window mask, hysteresis drill decision,
+drilled-subset bookkeeping incl. `drill_seq`, §16 window-centered encoding,
+screen-derived grid shape, per-point local log-density, wire-buffer packing)
+and `js/src/45_lod.js` (drill lifecycle with entry/exit fades and the dying
+state, density-source cache, texture crossfades, eased exposure
+normalization). `interaction.density_view` and ChartView are thin scatter
+wiring over these; a heatmap or histogram tier should reuse them with a
+different aggregate kernel rather than copy the logic (§28 per-kind rules).
+Channel shipping is shared too (`channels.ship_channels`) — the build path
+and drill updates emit the same wire shape.
+
 **Implemented — drill-in/drill-out (the §5 visible-count rule):**
 
 - Zoomed out, a Tier-2 scatter renders as the density texture (screen-bounded).

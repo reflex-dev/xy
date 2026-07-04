@@ -30,6 +30,16 @@ DIRECT_SOFT_CEILING = 2_000_000
 # requests a viewport-matched size on zoom via density_view.
 DENSITY_GRID = (512, 384)
 
+# Hysteresis on the drill boundary (§5 "tier transitions hysteresis-guarded"):
+# once drilled to points, stay until the visible count clearly exceeds the
+# budget again, so a view hovering at the threshold doesn't thrash modes.
+DRILL_EXIT_FACTOR = 1.15
+
+# Aggregation grids aim for this many points per cell when the visible count
+# is barely over the direct budget — one-point-per-pixel grids look like
+# static and re-ship large; a few points per cell keeps drill-out continuous.
+DENSITY_TARGET_POINTS_PER_CELL = 16.0
+
 # CVD-safe default categorical palette (§20/§36 default theme).
 DEFAULT_PALETTE = [
     "#4c78a8",

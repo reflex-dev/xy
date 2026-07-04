@@ -435,30 +435,9 @@ class Figure:
     # -- channel & density helpers -------------------------------------------
 
     def _ship_channels(self, t: Trace, sel, ship_scalar) -> tuple[Any, Any]:  # noqa: ANN001
-        """Ship a scatter's color and size channels. Returns (color_spec,
-        size_spec); per-point channels carry a `buf` index into the blob."""
-        cc = t.color_ch
-        color_spec = cc.spec()
-        if cc.mode == "continuous":
-            # Slice *before* normalizing: normalization is element-wise over a
-            # precomputed global domain, and drill updates call this per zoom
-            # step — normalizing all N rows to ship a 200k window is O(N) work
-            # and ~8 bytes/row of temporaries for nothing.
-            vals = cc.values if sel is None else cc.values[sel]
-            color_spec["buf"] = ship_scalar(channels.normalize_to_unit(vals, cc.domain))
-        elif cc.mode == "categorical":
-            codes = cc.codes if sel is None else cc.codes[sel]
-            color_spec["buf"] = ship_scalar(codes)
-            color_spec["palette"] = [
-                DEFAULT_PALETTE[i % len(DEFAULT_PALETTE)] for i in range(len(cc.categories))
-            ]
-
-        sc = t.size_ch
-        size_spec = sc.spec()
-        if sc.mode == "continuous":
-            vals = sc.values if sel is None else sc.values[sel]
-            size_spec["buf"] = ship_scalar(channels.normalize_to_unit(vals, sc.domain))
-        return color_spec, size_spec
+        """Ship a trace's color/size channels (delegates to channels.py — the
+        same wire shape serves the build path and drill-in view updates)."""
+        return channels.ship_channels(t, sel, ship_scalar, DEFAULT_PALETTE)
 
     def _density_trace_spec(self, t: Trace, xr, yr, w, h, ship_scalar) -> dict[str, Any]:  # noqa: ANN001
         """Bin a scatter into a density grid and build its spec entry (§5 Tier 2).
