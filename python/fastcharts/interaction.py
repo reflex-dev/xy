@@ -196,28 +196,33 @@ def decimate_view(
             bv = t.base.values[:0] if t.kind == "area" and t.base is not None else None
         x_off = (lo_x + hi_x) / 2.0
         y_off = t.y.suggest_offset()
-        x_enc = kernels.encode_f32(xv, x_off, 1.0)
-        y_enc = kernels.encode_f32(yv, y_off, 1.0)
+        # f32-safe scale: finite f64 must never overflow to ±inf in a vertex
+        # buffer (§19) — see lod.f32_safe_scale.
+        x_scale = lod.f32_safe_scale(x_off, lo_x, hi_x)
+        y_scale = lod.f32_safe_scale(y_off, t.y.min, t.y.max)
+        x_enc = kernels.encode_f32(xv, x_off, x_scale)
+        y_enc = kernels.encode_f32(yv, y_off, y_scale)
         update = {
             "id": t.id,
-            "x": {"buf": len(buffers), "len": len(x_enc), "offset": x_off, "scale": 1.0},
+            "x": {"buf": len(buffers), "len": len(x_enc), "offset": x_off, "scale": x_scale},
             "y": {
                 "buf": len(buffers) + 1,
                 "len": len(y_enc),
                 "offset": y_off,
-                "scale": 1.0,
+                "scale": y_scale,
             },
         }
         buffers.append(x_enc.tobytes())
         buffers.append(y_enc.tobytes())
         if bv is not None and t.base is not None:
             b_off = t.base.suggest_offset()
-            b_enc = kernels.encode_f32(bv, b_off, 1.0)
+            b_scale = lod.f32_safe_scale(b_off, t.base.min, t.base.max)
+            b_enc = kernels.encode_f32(bv, b_off, b_scale)
             update["base"] = {
                 "buf": len(buffers),
                 "len": len(b_enc),
                 "offset": b_off,
-                "scale": 1.0,
+                "scale": b_scale,
             }
             buffers.append(b_enc.tobytes())
         updates.append(update)
@@ -291,7 +296,7 @@ def _drill_points(
     `lod_blend` weight (visible/budget) so the density→points handoff is
     color-continuous instead of a palette jump (§5)."""
     xs, ys = t.x.values[sel], t.y.values[sel]
-    x_off, y_off, x_enc, y_enc = lod.encode_window_xy(xs, ys, lo_x, hi_x, lo_y, hi_y)
+    x_meta, y_meta, x_enc, y_enc = lod.encode_window_xy(xs, ys, lo_x, hi_x, lo_y, hi_y)
     writer = lod.BufferWriter()
     writer.add_raw(x_enc.tobytes())
     writer.add_raw(y_enc.tobytes())
@@ -325,8 +330,8 @@ def _drill_points(
                     # zooming out is never blank (§5 smooth transitions).
                     "x_range": [lo_x, hi_x],
                     "y_range": [lo_y, hi_y],
-                    "x": {"buf": 0, "len": n, "offset": x_off, "scale": 1.0},
-                    "y": {"buf": 1, "len": n, "offset": y_off, "scale": 1.0},
+                    "x": {"buf": 0, "len": n, **x_meta},
+                    "y": {"buf": 1, "len": n, **y_meta},
                     "color": color_spec,
                     "size": size_spec,
                     "density_val": {"buf": dval_buf},

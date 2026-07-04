@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from . import channels, export, interaction, kernels
+from . import channels, export, interaction, kernels, lod
 from .channels import ColorChannel, SizeChannel
 from .columns import Column, ColumnStore
 
@@ -109,10 +109,13 @@ class _PayloadWriter:
         self._pos = 0
 
     def ship(self, values: np.ndarray, col: "Column") -> int:
-        """Offset-encoded geometry column: `(v - offset)` as f32 (§4/§16)."""
+        """Offset-encoded geometry column: `(v - offset) * scale` as f32
+        (§4/§16). Scale is 1.0 except for absurd-magnitude domains, where it
+        normalizes so finite f64 can't overflow to ±inf in f32 (§19)."""
         offset = col.suggest_offset()
-        enc = kernels.encode_f32(values, offset, 1.0)
-        return self._append(enc, {"offset": offset, "scale": 1.0, "kind": col.kind})
+        scale = lod.f32_safe_scale(offset, col.min, col.max)
+        enc = kernels.encode_f32(values, offset, scale)
+        return self._append(enc, {"offset": offset, "scale": scale, "kind": col.kind})
 
     def ship_scalar(self, values: np.ndarray) -> int:
         """Raw f32 column already in final units (no offset): channel/grid/heights."""
@@ -124,8 +127,9 @@ class _PayloadWriter:
         vals = np.ascontiguousarray(values, dtype=np.float64)
         bounds = kernels.min_max(vals)
         offset = (bounds[0] + bounds[1]) / 2.0 if bounds is not None else 0.0
-        enc = kernels.encode_f32(vals, offset, 1.0)
-        return self._append(enc, {"offset": offset, "scale": 1.0, "kind": kind})
+        scale = lod.f32_safe_scale(offset, *bounds) if bounds is not None else 1.0
+        enc = kernels.encode_f32(vals, offset, scale)
+        return self._append(enc, {"offset": offset, "scale": scale, "kind": kind})
 
     def _append(self, enc: np.ndarray, meta: dict[str, Any]) -> int:
         raw = enc.tobytes()

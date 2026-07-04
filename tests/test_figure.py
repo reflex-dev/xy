@@ -876,3 +876,27 @@ def test_responsive_size_rejects_other_strings():
         Figure(width="50vw")
     with pytest.raises(ValueError, match="height"):
         Figure(height="50vh")
+
+
+def test_huge_magnitudes_encode_finite():
+    # §19: finite f64 must never overflow to ±inf in an f32 vertex buffer.
+    # 1e300-magnitude domains ship with an f32-safe scale (found by the
+    # Hypothesis suite: x=[0, 1e300] encoded y to -inf).
+    fig = Figure().line(np.array([0.0, 1e300]), np.array([-1e300, 1e300]))
+    spec, blob = fig.build_payload()
+    for c in spec["columns"]:
+        if "offset" not in c:
+            continue
+        enc = np.frombuffer(blob, np.float32, count=c["len"], offset=c["byte_offset"])
+        assert np.isfinite(enc).all(), "encoded geometry must stay finite"
+        # decode round-trips to the original magnitude (f32-relative accuracy)
+        dec = enc.astype(np.float64) / c["scale"] + c["offset"]
+        assert np.isfinite(dec).all()
+
+
+def test_normal_magnitudes_keep_unit_scale():
+    # The common path is unchanged: normal domains still ship scale == 1.0.
+    fig = Figure().line(np.arange(100.0), np.sin(np.arange(100.0)))
+    spec, _ = fig.build_payload()
+    scales = [c["scale"] for c in spec["columns"] if "scale" in c]
+    assert scales and all(s == 1.0 for s in scales)
