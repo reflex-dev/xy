@@ -183,7 +183,7 @@ def test_bar_hostile(y, labels):
         max_size=12,
     ).filter(lambda rows: len({len(r) for r in rows}) == 1),
 )
-def test_heatmap_hostile(z, /):
+def test_heatmap_hostile(z):
     build_or_reject("heatmap", np.asarray(z, dtype=np.float64))
 
 
