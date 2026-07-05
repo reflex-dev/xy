@@ -401,7 +401,7 @@ try{{
     // Flashing fix: a points REFRESH (already drilled) must not restart the
     // entry fade — restarting blanked the points to ~0 alpha on every kernel
     // reply while zooming inside a drilled view.
-    gd._drillFadeStart=null; // entry fade settled
+    gd._drillFadeStart=null; gd._drillWasInside=true; gd._drillShownAlpha=1; // entry fade settled (drawn inside)
     v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"points",visible:n3,
       x_range:[5000,5010],y_range:[5000,5010],
       x:{{buf:0,len:n3,offset:5005,scale:1}},y:{{buf:1,len:n3,offset:5005,scale:1}},
@@ -527,6 +527,67 @@ try{{
     const stale=(staleReply && staleQueued && staleAnim)?1:0;
     v.view=oldView;
     v._drawNow();
+    // --- Rapid zoom in/out torture (drill thrash): the marks/density alphas
+    // must be CONTINUOUS across window-boundary crossings, dying-drill
+    // revives, and kernel replies landing mid-transition. Runs on a virtual
+    // clock so the fades advance deterministically per synthetic frame.
+    const realNowT=performance.now.bind(performance);
+    let clockOfsT=0; performance.now=()=>realNowT()+clockOfsT;
+    gd._lodPendingView=null; gd._lodPendingSeq=null; gd._lodPendingAt=null;
+    const gridT=new Float32Array(64).fill(2);
+    v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"density",visible:500000,
+      density:{{buf:0,w:8,h:8,max:2,x_range:[0,100],y_range:[0,100]}}}}]}},[gridT.buffer]);
+    const nT=64; const xsT=new Float32Array(nT), ysT=new Float32Array(nT);
+    for(let i=0;i<nT;i++){{xsT[i]=(i%8-3.5)*2; ysT[i]=(Math.floor(i/8)-3.5)*2;}}
+    v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"points",visible:nT,
+      x_range:[40,60],y_range:[40,60],
+      x:{{buf:0,len:nT,offset:50,scale:1}},y:{{buf:1,len:nT,offset:50,scale:1}},
+      size:{{mode:"constant",size:6}},drill_seq:9}}]}},[xsT.buffer,ysT.buffer]);
+    const INV={{x0:45,x1:55,y0:45,y1:55}}, OUTV={{x0:15,x1:85,y0:15,y1:85}};
+    const dpT=v._drawPoints, ddT=v._drawDensity;
+    let mAlpha=0,dAlpha=0;
+    v._drawPoints=function(gg,xm,ym,op){{ if(gd.drill&&gg===gd.drill) mAlpha+=(op===undefined?1:op); return dpT.call(this,gg,xm,ym,op);}};
+    v._drawDensity=function(gg,dens,op){{ if(gg===gd) dAlpha+=(op===undefined?1:op); return ddT.call(this,gg,dens,op);}};
+    const framesT=[];
+    const stepT=(vw)=>{{ if(vw)v.view=vw; clockOfsT+=24; mAlpha=0;dAlpha=0; v._drawNow(); framesT.push([mAlpha,dAlpha]); }};
+    v.view=INV; clockOfsT+=500; v._drawNow(); // settle the entry fade
+    // phase 1: cross the drill-window boundary every 3 frames (72ms) — fades
+    // never complete, so any restart/snap shows up as an alpha jump.
+    for(let i=0;i<24;i++) stepT(Math.floor(i/3)%2? INV:OUTV);
+    // phase 2: while outside, a density reply marks the drill dying; the user
+    // dives straight back in. The drilled subset is still exact for the
+    // window — the marks must hand back continuously, not flash to density.
+    stepT(OUTV);
+    v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"density",visible:400000,
+      density:{{buf:0,w:8,h:8,max:2,x_range:[0,100],y_range:[0,100]}}}}]}},[gridT.buffer]);
+    stepT(OUTV);
+    const reviveBase=framesT.length;
+    for(let i=0;i<6;i++) stepT(INV);
+    const reviveAlive=(gd.drill && gd._drillDying!==true)?1:0;
+    // the kernel's points reply lands mid-revive: refresh, never snap
+    v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"points",visible:nT,
+      x_range:[40,60],y_range:[40,60],
+      x:{{buf:0,len:nT,offset:50,scale:1}},y:{{buf:1,len:nT,offset:50,scale:1}},
+      size:{{mode:"constant",size:6}},drill_seq:10}}]}},[xsT.buffer,ysT.buffer]);
+    for(let i=0;i<4;i++) stepT(INV);
+    let maxJump=0, minCover=Infinity;
+    for(let i=1;i<framesT.length;i++){{
+      maxJump=Math.max(maxJump, Math.abs(framesT[i][0]-framesT[i-1][0]));
+      minCover=Math.min(minCover, framesT[i][0]+framesT[i][1]);
+    }}
+    let reviveDip=1;
+    for(let i=reviveBase;i<framesT.length;i++) reviveDip=Math.min(reviveDip, framesT[i][0]);
+    const reviveRecovers=(framesT[reviveBase+3][0] > framesT[reviveBase][0]+0.15
+      && framesT[framesT.length-1][0] > 0.9)?1:0;
+    clockOfsT+=1000; v._drawNow();
+    const thrashEnd=(gd.drill && gd._drillDying!==true && v._viewInside(gd.drill.win)===true
+      && (gd.densityCache||[]).length<=8)?1:0;
+    v._drawPoints=dpT; v._drawDensity=ddT; performance.now=realNowT;
+    // one 24ms step of a 120ms smoothstep moves alpha at most ~0.31; anything
+    // bigger is a restart/snap. Cover: marks+density together never near-blank.
+    const thrash=(maxJump<0.45 && minCover>0.25 && reviveRecovers===1 && reviveAlive===1 && thrashEnd===1)?1:0;
+    v.view=oldView;
+    v._drawNow();
     // Positive bars/histograms pin zero to the bottom axis. Sample the bottom
     // physical rows under a mark so a DPR/half-pixel underfill cannot slip back.
     function baselineLit(view, cssX){{
@@ -621,7 +682,7 @@ try{{
     if (dv1.gpuTraces) for (const gg of dv1.gpuTraces) gg._densityNormAnim = null;
     if (dv2.gpuTraces) for (const gg of dv2.gpuTraces) gg._densityNormAnim = null;
     const pixdet = pixhash(dv1) === pixhash(dv2) ? 1 : 0;
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} malformed=${{malformed}} pixdet=${{pixdet}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}}`;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -776,6 +837,7 @@ try{{
     dnorm = int(re.search(r"dnorm=(\d+)", title).group(1))
     dnorm_done = int(re.search(r"dnormDone=(\d+)", title).group(1))
     stale = int(re.search(r"stale=(\d+)", title).group(1))
+    thrash = int(re.search(r"thrash=(\d+)", title).group(1))
     malformed = int(re.search(r"malformed=(\d+)", title).group(1))
     pixdet = int(re.search(r"pixdet=(\d+)", title).group(1))
     ctxloss = int(re.search(r"ctxloss=(\d+)", title).group(1))
@@ -887,6 +949,10 @@ try{{
         raise SystemExit("GL context loss/restore did not rebuild pixel-identically")
     if pixdet != 1:
         raise SystemExit("pixel determinism failed (render path must be RNG/time-free)")
+    if thrash != 1:
+        raise SystemExit(
+            "drill thrash: alpha discontinuity under rapid zoom in/out (see tj/td in title)"
+        )
     if stale != 1:
         raise SystemExit("stale density update resurrected a drilled point subset")
     if bar_base != 1:
