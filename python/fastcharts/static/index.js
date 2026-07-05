@@ -570,6 +570,22 @@ function lodFade(view, start, duration = 140) {
   return t * t * (3 - 2 * t);
 }
 
+// Quantized wire (density grids as log-encoded u8, ~4x smaller): decode back
+// to approximate counts so exposure normalization and re-encodes work
+// unchanged. The final texture is 8-bit log anyway, so the round-trip is
+// visually exact; decode is deterministic (no RNG/time).
+function lodDecodeLogU8(buf, maxVal) {
+  const u8 = buf instanceof ArrayBuffer ? new Uint8Array(buf) : new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+  const out = new Float32Array(u8.length);
+  const denom = Math.log1p(Math.max(0, maxVal || 0));
+  if (denom > 0) {
+    for (let i = 0; i < u8.length; i++) {
+      if (u8[i] > 0) out[i] = Math.expm1((u8[i] / 255) * denom);
+    }
+  }
+  return out;
+}
+
 function lodCopyGrid(f32) {
   return f32.slice ? f32.slice() : new Float32Array(f32);
 }
@@ -919,7 +935,9 @@ function lodBeginDrillExitContinuous(view, g) {
 function lodApplyDensityUpdate(view, g, upd, buffers) {
   lodMarkDrillDying(view, g);
   const d = upd.density;
-  const grid = lodCopyGrid(view._asF32(buffers[d.buf]));
+  const grid = d.enc === "log-u8"
+    ? lodDecodeLogU8(buffers[d.buf], d.max)
+    : lodCopyGrid(view._asF32(buffers[d.buf]));
   const normStart = lodNormMax(g, d.max);
   const normMax = view._prefersReducedMotion() ? d.max : normStart;
   g.densityNormMax = normMax;
