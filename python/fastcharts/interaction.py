@@ -21,8 +21,10 @@ from . import channels, kernels, lod
 from .config import (
     DECIMATION_THRESHOLD,
     DENSITY_TARGET_POINTS_PER_CELL,  # noqa: F401  (historic import path)
-    DRILL_EXIT_FACTOR,  # noqa: F401  (historic import path)
+    DRILL_EXIT_FACTOR,
     MAX_SCREEN_DIM,
+    PYRAMID_BASE_DIM,
+    PYRAMID_MIN_POINTS,
     SCATTER_DENSITY_THRESHOLD,
 )
 
@@ -229,6 +231,30 @@ def decimate_view(
     return {"traces": updates}, buffers
 
 
+def _ensure_pyramid(t) -> int | None:
+    """Lazily build the trace's count pyramid (§5 Tier 3). Cached on the
+    trace; 0 is remembered as "tried and not applicable" so we never rebuild.
+    Only worth the memory for genuinely large traces."""
+    handle = getattr(t, "_pyr_handle", None)
+    if handle is not None:
+        return handle or None
+    if len(t.x) < PYRAMID_MIN_POINTS:
+        t._pyr_handle = 0
+        return None
+    x0, x1, y0, y1 = t.x.min, t.x.max, t.y.min, t.y.max
+    import math
+
+    if not all(math.isfinite(v) for v in (x0, x1, y0, y1)) or not (x1 > x0 and y1 > y0):
+        t._pyr_handle = 0
+        return None
+    # Nudge the upper edge so points exactly at max land in the last cell
+    # (bin_2d's window is half-open).
+    x1 += (x1 - x0) * 1e-9
+    y1 += (y1 - y0) * 1e-9
+    t._pyr_handle = kernels.pyramid_build(t.x.values, t.y.values, x0, x1, y0, y1, PYRAMID_BASE_DIM)
+    return t._pyr_handle or None
+
+
 def density_view(
     fig: "Figure", trace_id: int, x0: float, x1: float, y0: float, y1: float, w: int, h: int
 ) -> tuple[dict[str, Any], list[bytes]]:
@@ -245,14 +271,34 @@ def density_view(
     if not t.use_density():
         return {"traces": []}, []
     xv, yv = t.x.values, t.y.values
-    sel = kernels.range_indices(xv, yv, lo_x, hi_x, lo_y, hi_y)
-    visible = int(len(sel))
-    if lod.drill_decision(visible, SCATTER_DENSITY_THRESHOLD, t.drill_mode):
-        return _drill_points(fig, t, sel, visible, lo_x, hi_x, lo_y, hi_y, w, h)
+    # Tile-pyramid fast path (§5 Tier 3): when the window is clearly still in
+    # density territory, the view is served from pre-binned counts in
+    # O(visible cells) — no O(N) rescan. The margin keeps the approximate
+    # pyramid count from ever usurping a would-be drill; anywhere near the
+    # budget we fall through to the exact scan that drilling needs anyway.
+    binning = "exact"
+    grid = None
+    pyr = _ensure_pyramid(t)
+    if pyr is not None:
+        est = kernels.pyramid_count(pyr, lo_x, hi_x, lo_y, hi_y)
+        if est is not None and est > SCATTER_DENSITY_THRESHOLD * DRILL_EXIT_FACTOR * 1.5:
+            gw, gh = lod.grid_shape(w, h, int(est))
+            res = kernels.pyramid_compose(pyr, lo_x, hi_x, lo_y, hi_y, gw, gh)
+            if res is not None:
+                grid, level = res
+                visible = int(est)
+                w, h = gw, gh
+                binning = f"pyramid-L{level}"
+                lod.exit_drill(t)
+    if grid is None:
+        sel = kernels.range_indices(xv, yv, lo_x, hi_x, lo_y, hi_y)
+        visible = int(len(sel))
+        if lod.drill_decision(visible, SCATTER_DENSITY_THRESHOLD, t.drill_mode):
+            return _drill_points(fig, t, sel, visible, lo_x, hi_x, lo_y, hi_y, w, h)
 
-    lod.exit_drill(t)
-    w, h = lod.grid_shape(w, h, visible)
-    grid = kernels.bin_2d(xv, yv, lo_x, hi_x, lo_y, hi_y, w, h)
+        lod.exit_drill(t)
+        w, h = lod.grid_shape(w, h, visible)
+        grid = kernels.bin_2d(xv, yv, lo_x, hi_x, lo_y, hi_y, w, h)
     return (
         {
             "traces": [
@@ -260,6 +306,7 @@ def density_view(
                     "id": trace_id,
                     "mode": "density",
                     "visible": visible,
+                    "binning": binning,
                     "density": {
                         "buf": 0,
                         "w": w,

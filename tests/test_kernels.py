@@ -427,3 +427,28 @@ def test_backends_agree():
         _native.local_log_density(xr[:1000], yr[:1000], 0.0, 100.0, 0.0, 100.0, 32, 24),
         _fallback.local_log_density(xr[:1000], yr[:1000], 0.0, 100.0, 0.0, 100.0, 32, 24),
     )
+
+
+def test_pyramid_matches_bin2d_and_conserves():
+    # §5 Tier 3: full-window compose is exactly the base grid; counts conserve;
+    # outresolving windows are refused (the exact path must run instead).
+    rng = np.random.default_rng(7)
+    x = rng.uniform(0, 100, 5000)
+    y = rng.uniform(0, 100, 5000)
+    h = kernels.pyramid_build(x, y, 0.0, 100.0, 0.0, 100.0, 64)
+    assert h != 0
+    try:
+        grid, level = kernels.pyramid_compose(h, 0.0, 100.0, 0.0, 100.0, 64, 64)
+        assert level == 0
+        direct = np.asarray(kernels.bin_2d(x, y, 0.0, 100.0, 0.0, 100.0, 64, 64))
+        np.testing.assert_array_equal(np.asarray(grid).ravel(), direct.ravel())
+        assert kernels.pyramid_count(h, 0.0, 100.0, 0.0, 100.0) == 5000.0
+        sub = kernels.pyramid_compose(h, 10.0, 60.0, 20.0, 70.0, 16, 16)
+        assert sub is not None
+        total = float(np.asarray(sub[0]).sum())
+        c0 = kernels.pyramid_count(h, 10.0, 60.0, 20.0, 70.0)
+        assert abs(total - c0) <= c0 * 0.02  # whole-cell edge band
+        assert kernels.pyramid_compose(h, 50.0, 50.4, 50.0, 50.4, 512, 512) is None
+    finally:
+        assert kernels.pyramid_free(h)
+    assert not kernels.pyramid_free(h)

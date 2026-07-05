@@ -17,7 +17,7 @@ import sys
 from array import array
 from pathlib import Path
 
-ABI_VERSION = 3
+ABI_VERSION = 4
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -435,6 +435,71 @@ def main() -> None:
     ok(got == 1, "local_log_density ok flag")
     ok(0.0 <= min(lout) <= max(lout) <= 1.0, "local_log_density normalized")
     ok(lout[0] == lout[1] == lout[2] and lout[0] > lout[3], "local_log_density hotspot")
+
+    # tile pyramid (§5 Tier 3): build → count → compose → free, plus stale
+    # handle semantics, through the real ABI.
+    n_p = 64
+    px = array("d", [float(i % 8) + 0.5 for i in range(n_p)])
+    py = array("d", [float(i // 8) + 0.5 for i in range(n_p)])
+    lib.fc_pyramid_build.restype = ctypes.c_uint64
+    lib.fc_pyramid_build.argtypes = [
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_uint32,
+    ]
+    lib.fc_pyramid_count.restype = ctypes.c_int32
+    lib.fc_pyramid_count.argtypes = [
+        ctypes.c_uint64,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.POINTER(ctypes.c_double),
+    ]
+    lib.fc_pyramid_compose.restype = ctypes.c_int32
+    lib.fc_pyramid_compose.argtypes = [
+        ctypes.c_uint64,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_float),
+    ]
+    lib.fc_pyramid_free.restype = ctypes.c_int32
+    lib.fc_pyramid_free.argtypes = [ctypes.c_uint64]
+    handle = lib.fc_pyramid_build(
+        _ptr(px, ctypes.c_double), _ptr(py, ctypes.c_double), n_p, 0.0, 8.0, 0.0, 8.0, 8
+    )
+    ok(handle != 0, "pyramid build returns a handle")
+    cnt = ctypes.c_double(0.0)
+    ok(
+        lib.fc_pyramid_count(ctypes.c_uint64(handle), 0.0, 8.0, 0.0, 8.0, ctypes.byref(cnt)) == 1,
+        "pyramid count ok",
+    )
+    ok(cnt.value == float(n_p), "pyramid count is exact on the full window")
+    grid_p = array("f", bytes(4 * 8 * 8))
+    lvl = lib.fc_pyramid_compose(
+        ctypes.c_uint64(handle), 0.0, 8.0, 0.0, 8.0, 8, 8, _ptr(grid_p, ctypes.c_float)
+    )
+    ok(lvl == 0, "full-window compose uses level 0")
+    ok(sum(grid_p) == float(n_p), "compose conserves the count")
+    tiny = array("f", bytes(4 * 64 * 64))
+    ok(
+        lib.fc_pyramid_compose(
+            ctypes.c_uint64(handle), 3.0, 3.1, 3.0, 3.1, 64, 64, _ptr(tiny, ctypes.c_float)
+        )
+        == -2,
+        "outresolving window is refused, not faked",
+    )
+    ok(lib.fc_pyramid_free(ctypes.c_uint64(handle)) == 1, "pyramid free")
+    ok(lib.fc_pyramid_free(ctypes.c_uint64(handle)) == 0, "double free is an error code")
 
     print(f"ABI smoke: {checks} checks passed against {_lib_name()}")
 

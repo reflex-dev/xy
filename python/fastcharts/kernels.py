@@ -42,6 +42,10 @@ histogram_uniform = _impl.histogram_uniform
 normalize_f32 = _impl.normalize_f32
 range_indices = _impl.range_indices
 local_log_density = _impl.local_log_density
+pyramid_build = _impl.pyramid_build
+pyramid_count = _impl.pyramid_count
+pyramid_compose = _impl.pyramid_compose
+pyramid_free = _impl.pyramid_free
 
 __all__ = [
     "BACKEND",
@@ -52,6 +56,10 @@ __all__ = [
     "m4_indices",
     "min_max",
     "normalize_f32",
+    "pyramid_build",
+    "pyramid_compose",
+    "pyramid_count",
+    "pyramid_free",
     "range_indices",
     "zone_maps",
 ]
