@@ -169,10 +169,12 @@ def bench(lib, n: int) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sizes", default="1e5,1e6,1e7")
+    ap.add_argument("--json", default=None, help="write per-size metric rows here")
     args = ap.parse_args()
     sizes = [int(float(s)) for s in args.sizes.split(",")]
     lib = load()
 
+    rows = []
     print(
         "| points | encode f32 | normalize | histogram | zone maps | M4 (full) | "
         "zoom re-decimate | range scan | bin_2d (Tier2) | local density |"
@@ -180,6 +182,7 @@ def main() -> None:
     print("|---|---|---|---|---|---|---|---|---|---|")
     for n in sizes:
         r = bench(lib, n)
+        rows.append(r)
         print(
             f"| {r['n']:,} | {r['encode_mpts_s']:.0f} Mpt/s "
             f"| {r['normalize_mpts_s']:.0f} Mpt/s "
@@ -192,6 +195,12 @@ def main() -> None:
             f"| {r['local_density_mpts_s']:.0f} Mpt/s "
             f"({r['local_density_ms']:.2f} ms/{r['local_density_n']:,}) |"
         )
+
+    if args.json:
+        import json
+
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump({"rows": rows}, f, indent=2)
 
 
 if __name__ == "__main__":

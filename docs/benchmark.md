@@ -227,6 +227,25 @@ bench_install.py`; best-of-5 fresh-interpreter import; distribution files only
 fastcharts imports 6–730× faster and is 40–75× smaller on disk than the
 mainstream libraries (the §33 import-budget goal, made comparative).
 
+### Regression gate (auto-generated, CI-enforced)
+
+`scripts/check_regressions.py` runs every CI build against a committed baseline
+(`benchmarks/baseline.json`) and splits metrics by how they behave on shared
+runners:
+
+- **Deterministic** — wire-payload bytes, bytes/point, and the density/direct
+  tier decision are pure functions of N and the grid, byte-identical on every
+  machine. These gate **hard**: a regression (the screen-bounded-payload
+  invariant breaking, or a tier flipping) **fails CI**.
+- **Timing** — kernel throughput / elapsed ms vary with the runner, so they're
+  **advisory**: surfaced as a `::warning::` and only flagged past a 2× band, so
+  a real algorithmic regression (e.g. losing the parallel path) is loud while
+  noise never breaks the build.
+
+The current metric table is regenerated (never hand-typed) into
+[`docs/benchmark_metrics.md`](benchmark_metrics.md); re-bless the baseline from
+a CI run with `check_regressions.py --update-baseline`.
+
 ### Static image export
 
 `Figure.to_png()` renders the standalone HTML in headless Chromium and
