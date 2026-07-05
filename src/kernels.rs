@@ -154,9 +154,27 @@ pub fn m4_indices(x: &[f64], y: &[f64], x0: f64, x1: f64, n_buckets: usize) -> V
     m4_indices_impl(x, y, x0, x1, n_buckets, start, end, par_threads(end - start))
 }
 
+/// Emit one bucket's {first, min, max, last} rows, sorted and deduplicated.
+/// Shared by the scalar and SIMD (simd.rs) M4 state machines so a bucket
+/// flush is identical by construction.
+pub(crate) fn m4_flush(first: u32, min_i: u32, max_i: u32, last: u32, out: &mut Vec<u32>) {
+    let mut ids = [first, min_i, max_i, last];
+    ids.sort_unstable();
+    let mut prev = u32::MAX;
+    for id in ids {
+        if id != prev {
+            out.push(id);
+            prev = id;
+        }
+    }
+}
+
 /// Serial M4 over rows `[lo, hi)` — the shared building block: the serial path
 /// runs it once over the whole window; the parallel path runs it per bucket-
-/// aligned segment and concatenates.
+/// aligned segment and concatenates. Stays scalar deliberately: a two-phase
+/// SIMD restructure (precomputed bucket ids) measured *slower* (472 vs
+/// 915 Mpt/s at 1M) — the sequential bucket state machine dominates, and the
+/// extra block store/load pass outweighs vectorizing the cheap float math.
 fn m4_range(x: &[f64], y: &[f64], x0: f64, inv_bucket_w: f64, n_buckets: usize, lo: usize, hi: usize) -> Vec<u32> {
     let mut out: Vec<u32> = Vec::with_capacity((n_buckets * 4).min((hi - lo) * 4));
 
@@ -170,18 +188,6 @@ fn m4_range(x: &[f64], y: &[f64], x0: f64, inv_bucket_w: f64, n_buckets: usize, 
     let mut max_v = f64::NEG_INFINITY;
     let mut has_any = false;
 
-    let flush = |first: u32, min_i: u32, max_i: u32, last: u32, out: &mut Vec<u32>| {
-        let mut ids = [first, min_i, max_i, last];
-        ids.sort_unstable();
-        let mut prev = u32::MAX;
-        for id in ids {
-            if id != prev {
-                out.push(id);
-                prev = id;
-            }
-        }
-    };
-
     for i in lo..hi {
         let yv = y[i];
         if !yv.is_finite() {
@@ -190,7 +196,7 @@ fn m4_range(x: &[f64], y: &[f64], x0: f64, inv_bucket_w: f64, n_buckets: usize, 
         let b = (((x[i] - x0) * inv_bucket_w) as usize).min(n_buckets - 1);
         if b != cur_bucket {
             if has_any {
-                flush(first, min_i, max_i, last, &mut out);
+                m4_flush(first, min_i, max_i, last, &mut out);
             }
             cur_bucket = b;
             first = i as u32;
@@ -212,7 +218,7 @@ fn m4_range(x: &[f64], y: &[f64], x0: f64, inv_bucket_w: f64, n_buckets: usize, 
         last = i as u32;
     }
     if has_any {
-        flush(first, min_i, max_i, last, &mut out);
+        m4_flush(first, min_i, max_i, last, &mut out);
     }
     out
 }
@@ -319,8 +325,27 @@ fn par_threads(n: usize) -> usize {
 
 /// Count in-window points per cell into a u32 grid (saturating). Shared by the
 /// serial and parallel paths so per-point behavior is identical by construction.
+/// Dispatches to the AVX2 clone when available (simd.rs).
 #[allow(clippy::too_many_arguments)]
 fn bin_2d_count(
+    x: &[f64],
+    y: &[f64],
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    grid: &mut [u32],
+) {
+    if crate::simd::try_bin_2d_count(x, y, x0, x1, y0, y1, w, h, grid) {
+        return;
+    }
+    bin_2d_count_scalar(x, y, x0, x1, y0, y1, w, h, grid);
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn bin_2d_count_scalar(
     x: &[f64],
     y: &[f64],
     x0: f64,
@@ -423,7 +448,9 @@ pub fn histogram_uniform(data: &[f64], lo: f64, hi: f64, out: &mut [f64]) -> u64
     histogram_uniform_impl(data, lo, hi, par_threads(data.len()), out)
 }
 
-/// Per-bin u64 counting shared by the serial and parallel paths.
+/// Per-bin u64 counting shared by the serial and parallel paths. Stays scalar
+/// deliberately: the blocked SIMD restructure measured ~8% slower — the
+/// scatter increment dominates and can't vectorize (see simd.rs rules).
 fn histogram_count(data: &[f64], lo: f64, hi: f64, bins: &mut [u64]) -> u64 {
     let n_bins = bins.len();
     let scale = n_bins as f64 / (hi - lo);
@@ -542,9 +569,26 @@ pub fn range_indices(
 
 /// Append the global indices (`base + i`) of in-window rows to `out`,
 /// returning the match count. NaN fails every comparison → skipped, matching
-/// the historical behavior.
+/// the historical behavior. Dispatches to the AVX2 clone when available.
 #[allow(clippy::too_many_arguments)]
 fn range_scan(
+    x: &[f64],
+    y: &[f64],
+    base: u32,
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    out: &mut [u32],
+) -> usize {
+    if let Some(n) = crate::simd::try_range_scan(x, y, base, lo_x, hi_x, lo_y, hi_y, out) {
+        return n;
+    }
+    range_scan_scalar(x, y, base, lo_x, hi_x, lo_y, hi_y, out)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn range_scan_scalar(
     x: &[f64],
     y: &[f64],
     base: u32,
@@ -648,6 +692,27 @@ pub fn local_log_density(
     for c in grid.iter_mut() {
         *c = if *c > 0.0 { c.ln_1p() / denom } else { 0.0 };
     }
+    if crate::simd::try_density_gather(x, y, lo_x, hi_x, lo_y, hi_y, w, h, &grid, out) {
+        return;
+    }
+    density_gather_scalar(x, y, lo_x, hi_x, lo_y, hi_y, w, h, &grid, out);
+}
+
+/// Per-point read-back of the normalized grid value (the drill-handoff color
+/// seed). Out-of-window/non-finite points keep their pre-zeroed 0.0.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn density_gather_scalar(
+    x: &[f64],
+    y: &[f64],
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    w: usize,
+    h: usize,
+    grid: &[f32],
+    out: &mut [f32],
+) {
     let sx = w as f64 / (hi_x - lo_x);
     let sy = h as f64 / (hi_y - lo_y);
     for i in 0..x.len() {
@@ -682,7 +747,15 @@ pub fn min_max(data: &[f64]) -> Option<(f64, f64)> {
     min_max_impl(data, par_threads(data.len()))
 }
 
+/// Dispatches to the AVX2 clone when available (simd.rs).
 fn min_max_scan(data: &[f64]) -> (f64, f64) {
+    if let Some(mm) = crate::simd::try_min_max(data) {
+        return mm;
+    }
+    min_max_scalar(data)
+}
+
+pub(crate) fn min_max_scalar(data: &[f64]) -> (f64, f64) {
     let mut min = f64::INFINITY;
     let mut max = f64::NEG_INFINITY;
     for &v in data {

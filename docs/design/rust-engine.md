@@ -113,6 +113,33 @@ pointers — a stale/double-freed handle is an error code, not UB. Python wraps
 each in an object with `__del__`/weakref finalizer. The NumPy fallback
 implements the same handle API over Python dicts, preserving parity.
 
+### 3.4 SIMD (contained in `src/simd.rs`)
+
+The cdylib builds for baseline x86-64 (SSE2), so hot scans never see 256-bit
+registers unless we ask. `simd.rs` holds branch-free clones of selected
+kernels compiled under `#[target_feature(enable = "avx2")]` (LLVM
+autovectorizes them — no hand-written intrinsics unless a loop demonstrably
+fails to vectorize) with runtime `is_x86_feature_detected!` dispatch and a
+`FASTCHARTS_SIMD=0` kill switch.
+
+Rules, in priority order:
+
+1. **Bitwise parity is non-negotiable.** Only order-independent kernels are
+   eligible: integer counts, exact comparisons, truncation casts, min/max.
+   Float *accumulation* (zone-map sum/sum_sq) must stay scalar — vector
+   reassociation changes the result. Parity is enforced by fuzz tests in
+   `simd.rs` comparing SIMD vs scalar on hostile data.
+2. **Only measured wins ship.** Every dispatch is justified by a before/after
+   number (via the kill switch); a kernel where the two-phase restructure
+   loses (M4's sequential bucket state machine, histogram's scatter-dominated
+   loop) is documented at its scalar definition and NOT dispatched.
+3. **`unsafe` containment.** This module is the one exception to "unsafe only
+   in `lib.rs`": the `#[target_feature]` wrappers are unsafe to call, and
+   every call site sits behind a safe `try_*` fn that checks detection first.
+   Kernels code never writes `unsafe` — it calls `simd::try_*` and falls back.
+4. **aarch64 needs no twin.** NEON is part of the aarch64 baseline, so the
+   scalar kernels already autovectorize at full width there.
+
 ## 4. What Python keeps forever
 
 Ingest normalization (pandas/arrow/dtype coercion — ecosystem glue),
