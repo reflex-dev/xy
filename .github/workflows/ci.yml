@@ -172,6 +172,8 @@ jobs:
             --sizes 1e3,1e4,1e5,1e6,3e6,1e7 --budget 45 \
             --ttfr --ttfr-max-n 1e5 --chromium "$CHROME" \
             --out docs/benchmark_ci.md --json benchmark.json
+      - name: Line decimation vs plotly-resampler (methodology line_10M)
+        run: .venv/bin/python benchmarks/bench_line.py --sizes 1e5,1e6,1e7 --json line.json | tee -a docs/benchmark_ci.md
       - name: Install footprint & cold import (methodology §1)
         run: .venv/bin/python benchmarks/bench_install.py --json install.json | tee -a docs/benchmark_ci.md
       - name: Show report

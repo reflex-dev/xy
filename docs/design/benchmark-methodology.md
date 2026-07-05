@@ -65,13 +65,16 @@ documented finding, with repro).
 ## 3. Competitor matrix
 
 Shipped adapters: fastcharts, Plotly, matplotlib, seaborn, Bokeh, Altair,
-Datashader, hvPlot/HoloViews. Add: **PyGWalker** (adapter: programmatic
-`walk()` export path; if headless render proves unstable, report
-prep+payload only and say so) and **plotly-resampler** (the honest line
-competitor — it's the same decimation thesis; comparing against vanilla
-Plotly alone on lines would be a strawman). Every adapter: pinned versions
-in the CI lockstep, `unavailable` rows rather than silent omission (already
-harness behavior).
+Datashader, hvPlot/HoloViews, and **plotly-resampler** ✅ (`bench_line.py` —
+the honest line competitor, same decimation thesis, so comparing against
+vanilla Plotly alone on lines would be a strawman; both run, with the M4
+extrema oracle on the fastcharts row). Still to add: **PyGWalker** (adapter:
+programmatic `walk()` export path; if headless render proves unstable, report
+prep+payload only and say so). Every adapter: `unavailable` rows rather than
+silent omission (harness behavior). Two adjacent metric harnesses now ship
+beside the scatter comparison: `bench_install.py` (cold import + install
+footprint, §1) and the PNG-export path (`Figure.to_png`) that makes the
+static-export size row a real, non-raster-only comparison.
 
 Per-competitor fairness notes ship in the report: Plotly measured both via
 kaleido-PNG (their static path) and browser-HTML (their interactive path);
