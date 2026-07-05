@@ -548,8 +548,18 @@ def _validate_core_2d_comparison(comparison: Any, path: str, errors: list[str]) 
     _require_positive_number(comparison, "work_units", path, errors)
     if comparison.get("verdict") not in COMPARISON_VERDICTS:
         errors.append(f"{path}.verdict has unknown value {comparison.get('verdict')!r}")
-    for key in ("speedup", "payload_reduction", "ttfr_speedup"):
+    for key in (
+        "speedup",
+        "payload_reduction",
+        "ttfr_speedup",
+        "seaborn_speedup",
+        "seaborn_payload_reduction",
+        "seaborn_ttfr_speedup",
+    ):
         _require_optional_nonnegative_number(comparison, key, path, errors)
+    seaborn_status = comparison.get("seaborn_status")
+    if seaborn_status is not None and not _status_kind(seaborn_status):
+        errors.append(f"{path}.seaborn_status has unknown value {seaborn_status!r}")
 
 
 def _validate_scatter_native(report: dict[str, Any], errors: list[str]) -> None:

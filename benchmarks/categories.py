@@ -95,9 +95,9 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "name": "Core 2D chart breadth",
         "why": "The library needs to stay fast beyond the scatter wedge: bars, histograms, areas, and heatmaps are everyday chart workloads.",
         "metrics": "payload-prep time, payload bytes, standalone HTML bytes, TTFR",
-        "harness": "benchmarks/bench_2d_charts.py smoke/standard profiles vs Plotly",
+        "harness": "benchmarks/bench_2d_charts.py smoke/standard profiles vs Plotly and Seaborn",
         "status": "tracked",
-        "goal": "Beat Plotly on user-visible first paint for common 2D charts while keeping payloads comparable or smaller.",
+        "goal": "Beat Plotly on user-visible first paint for common 2D charts while tracking Seaborn raster baselines where applicable.",
     },
 )
 

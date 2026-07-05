@@ -312,7 +312,9 @@ payload is fixed-size, and peak Python allocation stays near 2 MB.
 ### Core 2D benchmark
 
 Measured locally on July 4, 2026 with the native Rust backend and headless
-Chrome TTFR:
+Chrome TTFR. The harness also emits Seaborn/Agg raster rows for supported
+families so statistical-plot users can compare chart-to-pixels costs alongside
+the Plotly interactive baseline:
 
 | Chart | Workload | Payload-prep vs Plotly | Payload reduction | TTFR speedup |
 |---|---:|---:|---:|---:|
