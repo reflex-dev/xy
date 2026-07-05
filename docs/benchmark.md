@@ -175,6 +175,66 @@ The large scatter harness (`benchmarks/bench_scatter_native.py`) reported:
 | 1M | density | 1.0 ms | 768 KB | 72.2 ms |
 | 10M | density | 10.6 ms | 768 KB | not remeasured; same density payload shape as 1M |
 
+> The kernel microbench numbers above predate the kernel-parallelization pass:
+> `bin_2d`, `histogram`, `m4`, `zone_maps`, `range_indices`, `normalize` now fan
+> out across cores above 512k rows (bitwise-deterministic; see `src/kernels.rs`).
+> On a 4-core runner the 10M `bin_2d`/`histogram`/`m4` costs drop ~3–4× vs the
+> single-threaded figures here; CI regenerates the live numbers into
+> `benchmark_ci.md` each run. These committed rows stay as the conservative
+> single-threaded floor until refreshed from a CI artifact.
+
+### Line / time-series decimation — vs plotly-resampler
+
+fastcharts' M4 decimation (Tier 1) against vanilla Plotly and plotly-resampler
+(the same-thesis rival). `benchmarks/bench_line.py`; random-walk series;
+aggregating libraries target ~2000 on-screen points. **Measured** by the CI
+benchmark job (run 28724006099, commit `7de68f8`, Ubuntu, Python 3.12).
+
+| N | fastcharts | plotly (vanilla) | plotly-resampler |
+|---:|---:|---:|---:|
+| 100k | 3.1 ms / **55.6 KB** · oracle ✅ | 412 ms / 2.1 MB | unavailable¹ |
+| 1M | 6.3 ms / **58.9 KB** · oracle ✅ | 84 ms / 21.1 MB | unavailable¹ |
+| 10M | 47 ms / **60.1 KB** · oracle ✅ | 816 ms / **211.2 MB** | unavailable¹ |
+
+Payload is flat (~60 KB) regardless of N — the M4-decimated f32 blob is
+screen-bounded — and the extrema oracle (methodology §2) confirms the global
+y min/max survive decimation at every size. Vanilla Plotly ships the whole
+series (211 MB at 10M).
+
+¹ plotly-resampler 0.11.0 installs but fails to *import* under the CI's
+Plotly 6.8 (a library-version incompatibility); the adapter degrades to an
+honest `unavailable` row rather than a fabricated number. Lighting up this
+comparison needs a compatible Plotly/​resampler version pin — tracked.
+
+### Install footprint & cold import
+
+What a `pip install` costs before the first chart draws. `benchmarks/
+bench_install.py`; best-of-5 fresh-interpreter import; distribution files only
+(excludes transitive deps — a lower bound). **Measured** by the same CI run.
+
+| library | cold import | dist size |
+|---|---:|---:|
+| **fastcharts** | **6.4 ms** | **566 KB** |
+| plotly | 39 ms | 41.2 MB |
+| bokeh | 54 ms | 23.8 MB |
+| matplotlib | 181 ms | 24.4 MB |
+| holoviews | 259 ms | 16.8 MB |
+| altair | 526 ms | 5.6 MB |
+| datashader | 606 ms | 16.8 MB |
+| seaborn | 1.50 s | 1.0 MB |
+| hvplot | 4.65 s | 685 KB |
+
+fastcharts imports 6–730× faster and is 40–75× smaller on disk than the
+mainstream libraries (the §33 import-budget goal, made comparative).
+
+### Static image export
+
+`Figure.to_png()` renders the standalone HTML in headless Chromium and
+screenshots it — the raster matches the live WebGL chart, with no matplotlib/
+kaleido-class native dependency (Chromium discovered via env/PATH/Playwright
+cache). Verified by `scripts/png_export_smoke.py` (stdlib-only CI gate) and the
+`Figure.to_png` tests. HTML export (`to_html`) needs nothing extra.
+
 ---
 
 ## Headline — 10 M points
