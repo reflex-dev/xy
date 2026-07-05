@@ -149,17 +149,30 @@ validation and error messages (the new bounds/bool hardening lives at this
 layer and belongs there), widget/comm transport. This layer is the product's
 personality; keeping it in Python is a feature.
 
-## 5. Streaming append (design sketch, phase after pyramid)
+## 5. Streaming append (Phase-0 landed Python-side; Rust `stream.rs` later)
 
-`stream.rs`: per-column chunked append buffers (fixed 64k-row chunks) with
-per-chunk zone maps computed on seal — identical shape to today's ingest
-zone maps, so autorange/pruning code doesn't change. Appends mark
-intersecting pyramid tiles dirty; dirty tiles rebuild lazily on next fetch
-(bounded: a stream touching one region rebuilds ~1 tile/level). ABI:
+**Landed (Phase-0, Python-side canonical):** `Column.append` grows an
+amortized capacity buffer and extends zone maps incrementally (only chunks
+at/after the old length recompute — the splice is bitwise identical to a
+from-scratch ingest). `Figure.append(trace_id, x, y, color=, size=)`
+validates atomically (line appends must continue the sorted series;
+categorical channels and shared columns are rejected for now), frees the
+trace's pyramid for lazy rebuild, exits any drill, and returns an `append`
+message carrying a complete fresh payload — screen-bounded by construction
+(§29), so the wire never needs deltas. The client rebuilds only the traces
+named in `affected`, applies the follow policy (refit when at home, slide
+when pinned to the live right edge, hold when inspecting history), and
+refines tiered traces to its current window through the normal
+stale-while-revalidate request path (§17).
+
+**Still future (`stream.rs`):** Rust-owned chunked append buffers with
+zone maps computed on seal, and — the important one — appends marking
+intersecting pyramid tiles dirty with lazy per-tile rebuild (bounded: a
+stream touching one region rebuilds ~1 tile/level). Phase-0 instead frees
+the whole pyramid on append, so a >2M-point stream pays a full pyramid
+rebuild on its next far-out view — recorded, not hidden. ABI:
 `fc_stream_new/append/seal/free` + the pyramid fetch reading through the
-stream handle. Python-side `Figure.append(trace_id, **cols)` re-emits only
-affected view updates. This slots into the existing update protocol — no new
-message types (the unified view message from the contract covers it).
+stream handle.
 
 ## 6. Implementation order
 

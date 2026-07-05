@@ -699,7 +699,48 @@ try{{
     if (dv1.gpuTraces) for (const gg of dv1.gpuTraces) gg._densityNormAnim = null;
     if (dv2.gpuTraces) for (const gg of dv2.gpuTraces) gg._densityNormAnim = null;
     const pixdet = pixhash(dv1) === pixhash(dv2) ? 1 : 0;
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}}`;
+    // Streaming append (rust-engine §5): the affected trace rebuilds from the
+    // fresh payload and the view follows the data — refit when at home, hold
+    // when zoomed into history, slide when pinned to the live right edge.
+    const mkStream=(n,yTop)=>{{
+      const sbuf=new ArrayBuffer(n*8);
+      const scols=[]; let so=0;
+      const scol=(vals)=>{{new Float32Array(sbuf,so*4,vals.length).set(vals);
+        scols.push({{byte_offset:so*4,len:vals.length,offset:0,scale:1,kind:"float"}});
+        so+=vals.length; return scols.length-1;}};
+      const xs=[],ys=[];for(let i=0;i<n;i++){{xs.push(i);ys.push(i%5);}}
+      ys[n-1]=yTop;
+      return {{spec:{{protocol:2,width:220,height:170,title:"",show_legend:false,show_modebar:false,
+        x_axis:{{kind:"linear",label:"",range:[0,n-1]}},
+        y_axis:{{kind:"linear",label:"",range:[0,yTop]}},
+        traces:[{{id:0,kind:"scatter",name:"s",tier:"direct",n_points:n,n_marks:n,
+          style:{{opacity:0.9}},x:scol(xs),y:scol(ys),
+          color:{{mode:"constant",color:"#3b82f6"}},size:{{mode:"constant",size:6}}}}],
+        columns:scols,backend:"none"}},buf:sbuf}};
+    }};
+    const sp0=mkStream(40,4), sp1=mkStream(64,9);
+    const holderS=document.createElement("div");document.body.appendChild(holderS);
+    const vS=fastcharts.renderStandalone(holderS,sp0.spec,sp0.buf);
+    const g0S=vS.gpuTraces[0], n0S=g0S.n;
+    vS._onKernelMsg({{type:"append",affected:[0],spec:sp1.spec}},[sp1.buf]);
+    const gS=vS.gpuTraces[0];
+    const okGrow=(n0S===40&&gS.n===64&&gS!==g0S)?1:0;
+    const okHome=(Math.abs(vS.view.x1-63)<1e-9&&Math.abs(vS.view.y1-9)<1e-9)?1:0;
+    vS._drawNow();
+    vS.view={{x0:5,x1:15,y0:0,y1:9}};
+    const sp2=mkStream(80,9);
+    vS._onKernelMsg({{type:"append",affected:[0],spec:sp2.spec}},[sp2.buf]);
+    const okHoldS=(Math.abs(vS.view.x0-5)<1e-9&&Math.abs(vS.view.x1-15)<1e-9)?1:0;
+    vS.view={{x0:vS.view0.x1-10,x1:vS.view0.x1,y0:0,y1:9}};
+    const sp3=mkStream(100,9);
+    vS._onKernelMsg({{type:"append",affected:[0],spec:sp3.spec}},[sp3.buf]);
+    const okPin=(Math.abs(vS.view.x1-99)<1e-9&&Math.abs(vS.view.x1-vS.view.x0-10)<1e-9)?1:0;
+    const okPayload=(vS._payload&&vS._payload.byteLength===sp3.buf.byteLength
+      &&vS.spec.traces[0].n_points===100)?1:0;
+    vS._drawNow();
+    vS.destroy();holderS.remove();
+    const stream=(okGrow&&okHome&&okHoldS&&okPin&&okPayload)?1:0;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -856,6 +897,7 @@ try{{
     stale = int(re.search(r"stale=(\d+)", title).group(1))
     thrash = int(re.search(r"thrash=(\d+)", title).group(1))
     qwire = int(re.search(r"qwire=(\d+)", title).group(1))
+    stream = int(re.search(r"stream=(\d+)", title).group(1))
     malformed = int(re.search(r"malformed=(\d+)", title).group(1))
     pixdet = int(re.search(r"pixdet=(\d+)", title).group(1))
     ctxloss = int(re.search(r"ctxloss=(\d+)", title).group(1))
@@ -969,6 +1011,10 @@ try{{
         raise SystemExit("pixel determinism failed (render path must be RNG/time-free)")
     if qwire != 1:
         raise SystemExit("log-u8 density decode failed (quantized wire)")
+    if stream != 1:
+        raise SystemExit(
+            "streaming append failed (trace rebuild or follow policy: refit/hold/slide)"
+        )
     if thrash != 1:
         raise SystemExit(
             "drill thrash: alpha discontinuity under rapid zoom in/out (see tj/td in title)"

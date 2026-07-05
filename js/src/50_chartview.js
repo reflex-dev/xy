@@ -1545,6 +1545,59 @@ class ChartView {
     return seq;
   }
 
+  // Streaming append (rust-engine §5). The kernel ships a complete fresh
+  // payload — screen-bounded by construction (§29), so this is O(pixels) no
+  // matter how much data has accumulated — and names the traces whose data
+  // changed. Only those GPU traces rebuild; everything else keeps its state.
+  // Tiered traces then refine to the *current* window through the normal
+  // stale-while-revalidate request path (§17).
+  _applyAppend(msg, buffers) {
+    const spec = msg.spec;
+    const blobRaw = buffers && buffers[0];
+    if (!spec || !blobRaw || !spec.traces) return;
+    const blob = bytesToArrayBuffer(blobRaw);
+    // Follow policy, decided against the OLD home view before it moves:
+    // - at home (never zoomed, or axes reset): the chart follows its data —
+    //   refit both axes to the new domain, the live-dashboard default.
+    // - zoomed with the right edge pinned to the old live edge: slide the
+    //   window forward at constant width (tail-follow).
+    // - zoomed anywhere else: the user is inspecting history; don't move them.
+    const spanEps = (lo, hi) => Math.max(Math.abs(hi - lo), 1e-300) * 1e-9;
+    const ex = spanEps(this.view0.x0, this.view0.x1);
+    const ey = spanEps(this.view0.y0, this.view0.y1);
+    const atHome =
+      Math.abs(this.view.x0 - this.view0.x0) <= ex && Math.abs(this.view.x1 - this.view0.x1) <= ex &&
+      Math.abs(this.view.y0 - this.view0.y0) <= ey && Math.abs(this.view.y1 - this.view0.y1) <= ey;
+    const pinnedRight = !atHome && Math.abs(this.view.x1 - this.view0.x1) <= ex;
+    // Swap spec + retained payload together so GL context restore (§27)
+    // rebuilds the streamed state, not the initial one.
+    this.spec = spec;
+    this._payload = blob;
+    const texSeen = new Set();
+    for (const id of msg.affected || []) {
+      const i = this.gpuTraces.findIndex((g) => g.trace.id === id);
+      const ts = spec.traces.find((t) => t.id === id);
+      if (i < 0 || !ts) continue;
+      this._destroyTraceResources(this.gpuTraces[i], texSeen);
+      this.gpuTraces[i] = this._buildTrace(blob, ts);
+    }
+    this.view0 = {
+      x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
+      y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
+    };
+    if (atHome) {
+      this.view = { ...this.view0 };
+    } else if (pinnedRight) {
+      const w = this.view.x1 - this.view.x0;
+      this.view = { ...this.view, x1: this.view0.x1, x0: this.view0.x1 - w };
+    }
+    this._pickable = this.gpuTraces.some(
+      (g) => markOf(g.trace.kind).pointPick && (g.tier !== "density" || g.drill));
+    if (this._pickable && !this.pickFbo) this._initPickTarget();
+    this._scheduleViewRequest(this.view, { delay: 0 });
+    this.draw();
+  }
+
   _onKernelMsg(msg, buffers) {
     if (this._destroyed) return;
     if (!msg) return;
@@ -1602,6 +1655,8 @@ class ChartView {
         (t) => markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill));
       if (this._pickable && !this.pickFbo) this._initPickTarget();
       this.draw();
+    } else if (msg.type === "append") {
+      this._applyAppend(msg, buffers);
     } else if (msg.type === "pick_result") {
       if (!msg.row) { this.tooltip.style.display = "none"; return; }
       this._lastRow = msg.row;

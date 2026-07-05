@@ -27,6 +27,10 @@ from . import kernels
 
 ColumnStoreCheckpoint = tuple[int, dict[tuple[int, int, int], int]]
 
+# Zone-map chunk size — must match the kernels' default (§22) so incremental
+# appends splice tail chunks that align with a from-scratch recompute.
+ZONE_CHUNK = 65_536
+
 
 @dataclass
 class ZoneMaps:
@@ -86,6 +90,54 @@ class Column:
         if np.isnan(lo) or np.isnan(hi):
             return 0.0
         return (lo + hi) / 2.0
+
+    def append(self, data: Any) -> None:
+        """Streaming append (rust-engine §5, Phase-0 Python-side).
+
+        Canonicalizes `data` like ingest and extends this column in place:
+
+        - **Amortized growth buffer**: values live in a capacity-doubling
+          backing array, so a long append stream pays O(N) total copies, not
+          O(N) per append. Migrations are counted in `ingest_copies` (§29);
+          the tail write itself is inherent to appending, not a copy on the
+          books. (Zero-copy Arrow views migrate on first append — the read-only
+          Arrow buffer cannot be grown in place.)
+        - **Incremental zone maps** (§22): only chunks at or after the old
+          length are recomputed; the splice is bitwise identical to a
+          from-scratch recompute because chunks fold serially either way.
+        - Kind is sticky: appending floats to a `time_ms` column (or vice
+          versa) raises rather than silently mixing units.
+        """
+        arr, kind, _copies = _canonicalize(data)
+        if kind != self.kind:
+            raise ValueError(f"appended values are {kind!r}, column is {self.kind!r}")
+        if len(arr) == 0:
+            return
+        n_old = len(self.values)
+        n_new = n_old + len(arr)
+        grow = getattr(self, "_grow", None)
+        if grow is None or grow.shape[0] < n_new:
+            cap = max(n_new, n_old * 2, 1024)
+            new_buf = np.empty(cap, dtype=np.float64)
+            new_buf[:n_old] = self.values
+            self._grow = new_buf
+            self.ingest_copies += 1  # the migration is the O(N) event
+        self._grow[n_old:n_new] = arr
+        self.values = self._grow[:n_new]
+        # Recompute only the tail: the last (possibly partial) old chunk plus
+        # everything new. Slicing at a chunk boundary keeps alignment with a
+        # full recompute, so autorange/pruning consumers see identical maps.
+        k = n_old // ZONE_CHUNK
+        tail = ZoneMaps(*kernels.zone_maps(self.values[k * ZONE_CHUNK :]))
+        z = self.zone
+        self.zone = ZoneMaps(
+            mins=np.concatenate([z.mins[:k], tail.mins]),
+            maxs=np.concatenate([z.maxs[:k], tail.maxs]),
+            counts=np.concatenate([z.counts[:k], tail.counts]),
+            null_counts=np.concatenate([z.null_counts[:k], tail.null_counts]),
+            sums=np.concatenate([z.sums[:k], tail.sums]),
+            sum_sqs=np.concatenate([z.sum_sqs[:k], tail.sum_sqs]),
+        )
 
 
 class ColumnStore:
