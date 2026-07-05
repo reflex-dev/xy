@@ -305,3 +305,97 @@ def local_log_density(
                 iy = np.clip(((y[inside] - lo_y) * (h / (hi_y - lo_y))).astype(np.int64), 0, h - 1)
                 out[inside] = (np.log1p(grid[iy, ix]) / np.log1p(gmax)).astype(np.float32)
     return out
+
+
+# -- tile pyramid (§5 Tier 3) — parity with tiles.rs ---------------------------
+
+_PYRAMIDS: dict = {}
+_PYR_NEXT = [0]
+
+
+def _pyr_crange(lo, hi, flo, fhi, dim):
+    cell = (fhi - flo) / dim
+    first = max(0, int(np.ceil((lo - flo) / cell - 0.5)))
+    last = max(0, int(np.floor((hi - flo) / cell - 0.5)) + 1)
+    return min(first, dim), min(last, dim)
+
+
+def pyramid_build(x, y, x0, x1, y0, y1, base_dim):
+    x = _as_f64(x, "x")
+    y = _as_f64(y, "y")
+    base_dim = int(base_dim)
+    if (
+        len(x) != len(y)
+        or len(x) == 0
+        or base_dim < 2
+        or base_dim & (base_dim - 1)
+        or not np.all(np.isfinite([x0, x1, y0, y1]))
+        or not (x1 > x0 and y1 > y0)
+    ):
+        return 0
+    grid = np.asarray(bin_2d(x, y, x0, x1, y0, y1, base_dim, base_dim))
+    levels = [grid.reshape(base_dim, base_dim).astype(np.uint64)]
+    while levels[-1].shape[0] > 1:
+        g = levels[-1]
+        d = g.shape[0] // 2
+        levels.append(g.reshape(d, 2, d, 2).sum(axis=(1, 3)))
+    _PYR_NEXT[0] += 1
+    handle = _PYR_NEXT[0]
+    _PYRAMIDS[handle] = {"levels": levels, "bounds": (x0, x1, y0, y1)}
+    return handle
+
+
+def pyramid_count(handle, lo_x, hi_x, lo_y, hi_y):
+    p = _PYRAMIDS.get(handle)
+    if p is None or not (hi_x > lo_x and hi_y > lo_y):
+        return None
+    x0, x1, y0, y1 = p["bounds"]
+    lvl = p["levels"][0]
+    dim = lvl.shape[0]
+    cx0, cx1 = _pyr_crange(lo_x, hi_x, x0, x1, dim)
+    cy0, cy1 = _pyr_crange(lo_y, hi_y, y0, y1, dim)
+    return float(lvl[cy0:cy1, cx0:cx1].sum())
+
+
+def pyramid_compose(handle, lo_x, hi_x, lo_y, hi_y, w, h):
+    p = _PYRAMIDS.get(handle)
+    w = _bounded_positive_int(w, "w")
+    h = _bounded_positive_int(h, "h")
+    if p is None or not (hi_x > lo_x and hi_y > lo_y):
+        return None
+    x0, x1, y0, y1 = p["bounds"]
+    levels = p["levels"]
+    chosen = None
+    for level in range(len(levels) - 1, -1, -1):
+        dim = levels[level].shape[0]
+        cx0, cx1 = _pyr_crange(lo_x, hi_x, x0, x1, dim)
+        cy0, cy1 = _pyr_crange(lo_y, hi_y, y0, y1, dim)
+        if cx1 - cx0 >= w and cy1 - cy0 >= h:
+            chosen = level
+            break
+    if chosen is None:
+        dim = levels[0].shape[0]
+        cx0, cx1 = _pyr_crange(lo_x, hi_x, x0, x1, dim)
+        cy0, cy1 = _pyr_crange(lo_y, hi_y, y0, y1, dim)
+        if (cx1 - cx0) * 2 >= w and (cy1 - cy0) * 2 >= h:
+            chosen = 0
+        else:
+            return None
+    lvl = levels[chosen]
+    dim = lvl.shape[0]
+    cx0, cx1 = _pyr_crange(lo_x, hi_x, x0, x1, dim)
+    cy0, cy1 = _pyr_crange(lo_y, hi_y, y0, y1, dim)
+    sub = lvl[cy0:cy1, cx0:cx1]
+    cell_x = (x1 - x0) / dim
+    cell_y = (y1 - y0) / dim
+    xc = x0 + (np.arange(cx0, cx1) + 0.5) * cell_x
+    yc = y0 + (np.arange(cy0, cy1) + 0.5) * cell_y
+    ox = np.minimum(((xc - lo_x) * (w / (hi_x - lo_x))).astype(np.int64), w - 1)
+    oy = np.minimum(((yc - lo_y) * (h / (hi_y - lo_y))).astype(np.int64), h - 1)
+    out = np.zeros((h, w), dtype=np.float64)
+    np.add.at(out, (oy[:, None], ox[None, :]), sub)
+    return out.astype(np.float32).ravel(), int(chosen)
+
+
+def pyramid_free(handle) -> bool:
+    return _PYRAMIDS.pop(handle, None) is not None

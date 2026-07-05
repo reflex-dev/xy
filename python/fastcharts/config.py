@@ -58,3 +58,8 @@ DEFAULT_PALETTE = [
     "#9d755d",
     "#bab0ac",
 ]
+
+# Tile pyramid (§5 Tier 3): built lazily per density trace at/above this size;
+# base level is PYRAMID_BASE_DIM² u32 counts (~4·dim² bytes + 1/3 overhead).
+PYRAMID_MIN_POINTS = 2_000_000
+PYRAMID_BASE_DIM = 2048
