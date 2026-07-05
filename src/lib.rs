@@ -18,6 +18,7 @@
 //! panicking across the C boundary.
 
 pub mod kernels;
+mod simd;
 pub mod tiles;
 
 use kernels::ZoneMap;
