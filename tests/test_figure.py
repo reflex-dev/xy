@@ -900,3 +900,33 @@ def test_normal_magnitudes_keep_unit_scale():
     spec, _ = fig.build_payload()
     scales = [c["scale"] for c in spec["columns"] if "scale" in c]
     assert scales and all(s == 1.0 for s in scales)
+
+
+def test_to_png_full_path(tmp_path):
+    # End-to-end Figure.to_png: needs a Chromium binary; skip cleanly without
+    # one (the mechanism itself is covered dependency-free by png_export_smoke).
+    from fastcharts import export
+
+    if export.find_chromium() is None:
+        pytest.skip("no chromium for PNG export")
+    fig = Figure(width=320, height=200).line(np.arange(50.0), np.sin(np.arange(50.0)))
+    out = tmp_path / "chart.png"
+    data = fig.to_png(str(out))
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    assert out.read_bytes() == data
+    # 320x200 at default scale=2 -> 640x400
+    import struct
+
+    w, h = struct.unpack(">II", data[16:24])
+    assert (w, h) == (640, 400)
+
+
+def test_to_png_missing_chromium_is_clear(monkeypatch):
+    # Without a browser, the error names the fix (mirrors plotly needing kaleido)
+    # and never silently returns bad bytes.
+    from fastcharts import export
+
+    monkeypatch.setattr(export, "find_chromium", lambda explicit=None: None)
+    fig = Figure(width=200, height=150).scatter(np.arange(5.0), np.arange(5.0))
+    with pytest.raises(RuntimeError, match="Chromium"):
+        fig.to_png()
