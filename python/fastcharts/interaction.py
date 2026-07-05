@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
-from . import channels, kernels, lod
+from . import channels, columns, kernels, lod
 from .config import (
     DECIMATION_THRESHOLD,
     DENSITY_TARGET_POINTS_PER_CELL,  # noqa: F401  (historic import path)
@@ -419,3 +419,120 @@ def _drill_points(
         },
         buffers,
     )
+
+
+def append_data(
+    fig: "Figure",
+    trace_id: int,
+    x: Any,
+    y: Any,
+    color: Any = None,
+    size: Any = None,
+) -> tuple[dict[str, Any], list[bytes]]:
+    """Streaming append (rust-engine §5, Phase-0): extend a trace's canonical
+    columns in place and return the client refresh message.
+
+    The wire never ships deltas because it never needs to: every tier's payload
+    is screen-bounded by construction (§29 — direct ≤ budget, M4 ≤ 4·px,
+    density = grid), so re-emitting the affected trace costs O(pixels), not
+    O(N). The message carries a complete fresh payload; the client rebuilds
+    only the traces named in `affected` and re-requests its current view
+    through the normal stale-while-revalidate path (§17).
+
+    Phase-0 contract (violations raise before anything mutates):
+    - scatter and line traces only;
+    - line appends must be finite, ascending, and start at or after the
+      current last x (the ingest-time sort is never silently invalidated);
+    - a continuous color/size channel must be appended alongside x/y
+      (categorical channels would need new-category resolution — later);
+    - columns shared with another trace are rejected (a partial append would
+      desync that trace's lengths).
+
+    Cache effects: the trace's tile pyramid is freed for lazy rebuild (the §5
+    dirty-tile incremental rebuild is the known follow-up; a >2M-point stream
+    pays a full pyramid rebuild on its next far-out view for now — recorded
+    here, not hidden) and any active drill exits so the next view decision is
+    made against the new data.
+    """
+    t = _trace(fig, trace_id)
+    if t.kind not in {"scatter", "line"}:
+        raise ValueError(f"append supports scatter/line traces, not {t.kind!r}")
+
+    ax, x_kind, _ = columns._canonicalize(x)
+    ay, y_kind, _ = columns._canonicalize(y)
+    if x_kind != t.x.kind or y_kind != t.y.kind:
+        raise ValueError(
+            f"appended kinds ({x_kind!r}, {y_kind!r}) must match the trace's "
+            f"columns ({t.x.kind!r}, {t.y.kind!r})"
+        )
+    if len(ax) != len(ay):
+        raise ValueError(f"appended x and y must have equal length, got {len(ax)} and {len(ay)}")
+    if len(ax) == 0:
+        raise ValueError("append needs at least one row")
+
+    if t.kind == "line":
+        if not bool(np.all(np.isfinite(ax))):
+            raise ValueError("line append requires finite x values")
+        if len(ax) > 1 and bool(np.any(np.diff(ax) < 0)):
+            raise ValueError("line append requires ascending x")
+        prev = t.x.zone.max  # NaN when the column is empty/all-null
+        if np.isfinite(prev) and ax[0] < prev:
+            raise ValueError(
+                f"line append must continue the series: new x starts at {ax[0]!r}, "
+                f"before the current last x {prev!r} (lines are sorted once at ingest)"
+            )
+
+    def _channel_tail(ch: Any, values: Any, name: str) -> Optional[np.ndarray]:
+        has = ch is not None and ch.mode != "constant"
+        if has and ch.mode != "continuous":
+            raise ValueError(f"append does not support categorical {name} channels yet")
+        if has and values is None:
+            raise ValueError(f"trace {t.id} has a continuous {name} channel; pass {name}=")
+        if not has and values is not None:
+            raise ValueError(f"trace {t.id} has no per-point {name} channel")
+        if values is None:
+            return None
+        arr = np.asarray(values, dtype=np.float64).ravel()
+        if len(arr) != len(ax):
+            raise ValueError(f"{name} length {len(arr)} != appended row count {len(ax)}")
+        return arr
+
+    color_tail = _channel_tail(t.color_ch, color, "color")
+    size_tail = _channel_tail(t.size_ch, size, "size")
+
+    appended = {id(t.x), id(t.y)}
+    for other in fig.traces:
+        if other.id == t.id:
+            continue
+        for col in (
+            other.x,
+            other.y,
+            other.base,
+            other.grid,
+            other.x0,
+            other.x1,
+            other.y0,
+            other.y1,
+        ):
+            if col is not None and id(col) in appended:
+                raise ValueError(
+                    f"trace {t.id} shares a column with trace {other.id}; "
+                    "appending to shared columns is not supported"
+                )
+
+    # -- validation done; mutate ------------------------------------------------
+    t.x.append(ax)
+    t.y.append(ay)
+    if color_tail is not None:
+        t.color_ch.values = np.concatenate([t.color_ch.values, color_tail])
+    if size_tail is not None:
+        t.size_ch.values = np.concatenate([t.size_ch.values, size_tail])
+
+    handle = getattr(t, "_pyr_handle", None)
+    if handle:
+        kernels.pyramid_free(handle)
+    t._pyr_handle = None  # lazily rebuilt; n grew so "not applicable" may flip
+    lod.exit_drill(t)
+
+    spec, blob = fig.build_payload()
+    return {"type": "append", "affected": [t.id], "spec": spec}, [blob]

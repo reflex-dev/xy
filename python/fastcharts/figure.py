@@ -1530,6 +1530,16 @@ class Figure:
         """Re-decimate visible line windows on zoom (§28), offsets re-centered (§16)."""
         return interaction.decimate_view(self, x0, x1, px_width)
 
+    def append(
+        self, trace_id: int, x: Any, y: Any, *, color: Any = None, size: Any = None
+    ) -> tuple[dict[str, Any], list[bytes]]:
+        """Streaming append (rust-engine §5): extend a scatter/line trace's
+        canonical columns and get the client refresh message back. The widget's
+        `append` sends it; headless callers can inspect or discard it. Payloads
+        stay screen-bounded (§29), so this is O(pixels) on the wire regardless
+        of how much data has accumulated."""
+        return interaction.append_data(self, trace_id, x, y, color, size)
+
     # -- output -----------------------------------------------------------
 
     def widget(self) -> Any:
