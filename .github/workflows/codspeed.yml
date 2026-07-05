@@ -1,0 +1,38 @@
+name: CodSpeed
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  # `workflow_dispatch` allows CodSpeed to trigger backtest
+  # performance analysis in order to generate initial data.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # for OpenID Connect authentication with CodSpeed
+
+jobs:
+  benchmarks:
+    name: Run benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v5
+
+      # The native Rust core must be present so the benchmarks measure the
+      # native kernels (BACKEND == "native"), not the NumPy fallback.
+      - name: Build native core
+        run: cargo build --release
+
+      - name: Install package + benchmark deps
+        run: |
+          uv venv .venv
+          uv pip install -p .venv/bin/python -e ".[dev]" pytest-codspeed
+
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: simulation
+          run: .venv/bin/python -m pytest benchmarks/test_codspeed_kernels.py --codspeed
