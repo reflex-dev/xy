@@ -303,11 +303,15 @@ These CI numbers use the native Rust backend on Ubuntu. See
 |---|---|---:|---:|---:|
 | fastcharts | GPU binary payload | **86 ms** | **2 MB** | **768 KB** |
 | matplotlib | Agg PNG | 3,230 ms | 553 MB | 41 KB |
+| Seaborn | matplotlib/Agg PNG | pending CI refresh | pending | pending |
 | Plotly `Scattergl` | Kaleido PNG | 33,907 ms | 1,584 MB | 49 KB |
 | Plotly `Scatter` | SVG/Kaleido | over budget at 3M | 804 MB at 3M | 78 MB at 3M |
 
 At 10M points, fastcharts stays screen-bounded after density aggregation: the
 payload is fixed-size, and peak Python allocation stays near 2 MB.
+Seaborn is included in the cross-library scatter harness; its 10M headline row
+is marked pending until the CI benchmark snapshot is refreshed with a measured
+Seaborn/Agg run.
 
 ### Core 2D benchmark
 
