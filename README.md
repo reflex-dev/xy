@@ -1,5 +1,7 @@
 # fastcharts
 
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/Alek99/charts-exp?utm_source=badge)
+
 **fastcharts** is an experimental Python charting engine for very large,
 interactive line and scatter plots. Its core idea is simple: chart cost should
 scale with the pixels on screen, not with every point in the dataset.
