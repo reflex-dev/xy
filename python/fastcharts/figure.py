@@ -14,7 +14,7 @@ from typing import Any, Optional, TypeAlias
 
 import numpy as np
 
-from . import channels, export, interaction, kernels, lod
+from . import channels, columns, export, interaction, kernels, lod
 from .channels import ColorChannel, SizeChannel
 from .columns import Column, ColumnStore, ColumnStoreCheckpoint
 
@@ -849,7 +849,10 @@ class Figure:
 
     @staticmethod
     def _as_float_array(values: Any, label: str) -> np.ndarray:
-        if hasattr(values, "to_numpy"):
+        arrow = columns._arrow_to_numpy(values)
+        if arrow is not None:  # pyarrow channel input: nulls become NaN
+            values = arrow[0]
+        elif hasattr(values, "to_numpy"):
             values = values.to_numpy()
         arr = np.asarray(values)
         if arr.ndim not in (1, 2):
