@@ -66,6 +66,13 @@ jobs:
       - name: Native benchmark (stdlib only — executed numbers, no PyPI needed)
         run: python3 scripts/bench_native.py --sizes 1e5,1e6
 
+      - name: Regression gate (deterministic payloads = hard fail; timing = advisory)
+        run: |
+          python3 scripts/bench_scatter_native.py --sizes 1e5,1e6,1e7 --json scatter.json
+          python3 scripts/bench_native.py --sizes 1e6,1e7 --json kernel.json
+          python3 scripts/check_regressions.py --scatter scatter.json --kernel kernel.json \
+            --emit-md docs/benchmark_metrics.md
+
       - name: Install package + dev deps
         run: |
           uv venv .venv
