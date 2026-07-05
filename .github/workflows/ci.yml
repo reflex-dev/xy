@@ -6,6 +6,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Multiple sessions push to two branches in bursts; without this the runner
+# pool drowns in runs for superseded commits and fresh tips queue for ~30 min.
+# Only the newest run per ref carries signal — cancel the rest.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Test (Rust + Python + JS)

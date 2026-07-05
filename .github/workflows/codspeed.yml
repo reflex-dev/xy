@@ -12,6 +12,10 @@ permissions:
   contents: read
   id-token: write # for OpenID Connect authentication with CodSpeed
 
+concurrency:
+  group: codspeed-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   benchmarks:
     name: Run benchmarks
