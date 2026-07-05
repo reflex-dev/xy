@@ -316,22 +316,28 @@ Seaborn/Agg run.
 ### Core 2D benchmark
 
 Measured locally on July 4, 2026 with the native Rust backend and headless
-Chrome TTFR. The harness also emits Seaborn/Agg raster rows for supported
-families so statistical-plot users can compare chart-to-pixels costs alongside
-the Plotly interactive baseline:
+Chrome TTFR. The numeric summary below is only the Plotly interactive
+comparison.
 
-| Chart | Workload | Benchmarked against | Payload-prep vs Plotly | Payload reduction | TTFR speedup |
-|---|---:|---|---:|---:|---:|
-| Histogram | 100k values / 200 bins | Plotly, Seaborn/Agg | 303x faster | 348x smaller | 5.89x faster |
-| Area | 100k samples | Plotly | 10.5x faster | 26.1x smaller | 3.19x faster |
-| Bar | 1k categories | Plotly, Seaborn/Agg | 13.4x faster | 1.53x smaller | 3.23x faster |
-| Grouped bar | 1k categories x 4 | Plotly, Seaborn/Agg | 10.3x faster | 2.06x smaller | 3.73x faster |
-| Stacked bar | 1k categories x 4 | Plotly | 9.17x faster | 1.60x smaller | 2.91x faster |
-| Heatmap | 120 x 120 cells | Plotly, Seaborn/Agg | 19.4x faster | 3.45x smaller | 3.06x faster |
+| Chart | Workload | Payload-prep vs Plotly | Payload reduction vs Plotly | TTFR speedup vs Plotly |
+|---|---:|---:|---:|---:|
+| Histogram | 100k values / 200 bins | 303x faster | 348x smaller | 5.89x faster |
+| Area | 100k samples | 10.5x faster | 26.1x smaller | 3.19x faster |
+| Bar | 1k categories | 13.4x faster | 1.53x smaller | 3.23x faster |
+| Grouped bar | 1k categories x 4 | 10.3x faster | 2.06x smaller | 3.73x faster |
+| Stacked bar | 1k categories x 4 | 9.17x faster | 1.60x smaller | 2.91x faster |
+| Heatmap | 120 x 120 cells | 19.4x faster | 3.45x smaller | 3.06x faster |
 
-Seaborn/Agg rows are static chart-to-pixels baselines; unsupported
-Seaborn-native shapes, such as area and stacked bars, are marked unavailable in
-the benchmark JSON.
+The same harness also emits Seaborn/Agg rows as static chart-to-pixels baselines:
+
+| Chart | Seaborn/Agg status |
+|---|---|
+| Histogram | measured |
+| Area | unavailable; no direct Seaborn-native area primitive |
+| Bar | measured |
+| Grouped bar | measured |
+| Stacked bar | unavailable; no direct Seaborn-native stacked bar primitive |
+| Heatmap | measured |
 
 ## What Exists
 
