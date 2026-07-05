@@ -801,12 +801,23 @@ function lodApplyDrill(view, g, upd, buffers) {
   // The entry fade runs ONLY on the aggregate→marks transition. Restarting it
   // on every refresh made the marks blink to ~0 alpha after each kernel
   // reply — a steady flash while zooming within a drilled view.
-  if (fresh) g._drillFadeStart = performance.now();
-  // A live points update revives a dying drill (hysteresis flip): cancel the
-  // exit fade rather than fighting it.
+  if (fresh) {
+    g._drillFadeStart = performance.now();
+    g._drillWasInside = false;
+    g._drillShownAlpha = 0;
+    g._drillExitFadeStart = null;
+    g._drillDying = false;
+    g._drillDiedInsideWin = false;
+    return;
+  }
+  // A live points reply revives a dying/exiting drill (hysteresis flip or a
+  // fast zoom back in): hand the marks back at their CURRENT alpha — neither
+  // fighting the exit fade nor snapping to full.
+  if (g._drillDying || g._drillExitFadeStart != null) {
+    lodEnterDrillContinuous(view, g);
+  }
   g._drillDying = false;
-  g._drillExitFadeStart = null;
-  g._drillWasInside = false;
+  g._drillDiedInsideWin = false;
 }
 
 function lodDropDrill(view, g) {
@@ -818,7 +829,9 @@ function lodDropDrill(view, g) {
   g._drillFadeStart = null;
   g._drillExitFadeStart = null;
   g._drillWasInside = false;
+  g._drillShownAlpha = null;
   g._drillDying = false;
+  g._drillDiedInsideWin = false;
   view._hoverId = -1; // drilled indices are dead; don't reuse a cached row
   view._lastRow = null;
 }
@@ -826,20 +839,77 @@ function lodDropDrill(view, g) {
 // A density update arrived while drilled: don't drop the marks instantly
 // (that hard-cuts the exit fade — a visible flash on drill-out). Mark the
 // drill dying; the tier draw fades it over the incoming aggregate and frees
-// it when the fade completes.
-function lodMarkDrillDying(g) {
+// it when the fade completes. Records whether the view was inside the drill
+// window at death: if it was, the kernel explicitly chose density FOR this
+// view (forced density / data change) and the revive path must not override
+// it; if it wasn't, a fast zoom back in may revive the still-exact subset.
+function lodMarkDrillDying(view, g) {
   if (!g.drill) return;
   g._drillDying = true;
-  if (g._drillExitFadeStart == null) g._drillExitFadeStart = performance.now();
+  g._drillDiedInsideWin = view._viewInside(g.drill.win);
+  // Seed the exit clock continuously with the currently shown alpha —
+  // marks that had already faded out must not claim to be fully visible.
+  lodBeginDrillExitContinuous(view, g);
 }
 
 function lodDrillExitFade(view, g) {
   if (g._drillExitFadeStart === undefined || g._drillExitFadeStart === null) {
     g._drillExitFadeStart = performance.now();
   }
-  const fade = lodFade(view, g._drillExitFadeStart, 120);
+  const fade = lodFade(view, g._drillExitFadeStart, LOD_EXIT_FADE_MS);
   if (fade >= 1) g._drillExitFadeStart = null;
   return fade;
+}
+
+// -- alpha-continuous hand-offs (rapid zoom in/out) ---------------------------
+//
+// Entering, exiting, re-entering, and reviving the marks state must all
+// continue from the marks alpha CURRENTLY on screen. Restarting a fade at an
+// endpoint on every boundary crossing is exactly what rapid zoom in/out does
+// to a naive fade pair — and it reads as flicker. smoothstep is ~linear
+// mid-range, so mirroring t linearly is visually exact at these durations.
+
+const LOD_ENTRY_FADE_MS = 140;
+const LOD_EXIT_FADE_MS = 120;
+
+// Exact inverse of smoothstep (s(t) = 3t^2 - 2t^3) via the trisection
+// identity — a linear approximation compounds visible error at the fade
+// ends when clocks hand off repeatedly under rapid zoom thrash.
+function lodFadeInvert(alpha) {
+  const a = Math.min(1, Math.max(0, alpha));
+  return 0.5 - Math.sin(Math.asin(1 - 2 * a) / 3);
+}
+
+function lodDrillShownAlpha(view, g) {
+  if (g._drillExitFadeStart != null) {
+    return 1 - lodFade(view, g._drillExitFadeStart, LOD_EXIT_FADE_MS);
+  }
+  if (g._drillFadeStart != null) {
+    return lodFade(view, g._drillFadeStart, LOD_ENTRY_FADE_MS);
+  }
+  // No clock running: the alpha the tier draw last put on screen (kept
+  // explicitly — inferring it from other flags loses the memory across
+  // apply/refresh hand-offs).
+  if (g._drillShownAlpha != null) return g._drillShownAlpha;
+  return g._drillWasInside ? 1 : 0;
+}
+
+// Switch to the entry (fade-in) clock, seeded so it starts at the shown alpha.
+function lodEnterDrillContinuous(view, g) {
+  const alpha = lodDrillShownAlpha(view, g);
+  g._drillShownAlpha = alpha;
+  g._drillExitFadeStart = null;
+  g._drillFadeStart =
+    alpha >= 1 ? null : performance.now() - LOD_ENTRY_FADE_MS * lodFadeInvert(alpha);
+}
+
+// Switch to the exit (fade-out) clock, seeded the same way.
+function lodBeginDrillExitContinuous(view, g) {
+  if (g._drillExitFadeStart != null) return; // already exiting — keep its clock
+  const alpha = lodDrillShownAlpha(view, g);
+  g._drillShownAlpha = alpha;
+  g._drillFadeStart = null;
+  g._drillExitFadeStart = performance.now() - LOD_EXIT_FADE_MS * lodFadeInvert(1 - alpha);
 }
 
 // -- aggregate updates & tier drawing ----------------------------------------
@@ -848,7 +918,7 @@ function lodDrillExitFade(view, g) {
 // normalization, previous grid kept for the crossfade, source remembered in
 // the per-trace cache.
 function lodApplyDensityUpdate(view, g, upd, buffers) {
-  lodMarkDrillDying(g);
+  lodMarkDrillDying(view, g);
   const d = upd.density;
   const grid = lodCopyGrid(view._asF32(buffers[d.buf]));
   const normStart = lodNormMax(g, d.max);
@@ -869,8 +939,16 @@ function lodApplyDensityUpdate(view, g, upd, buffers) {
 
 function lodDrawDensityWithFade(view, g, density, opacityScale = 1) {
   if (density !== g._shownDensity) {
+    // Reversing a crossfade mid-flight (rapid alternation across two cached
+    // windows) swaps the roles with a mirrored clock so both textures keep
+    // their current alpha instead of popping to the endpoints.
+    if (density === g._densitySwitchPrev && g._densitySwitchFadeStart != null) {
+      const f = lodFade(view, g._densitySwitchFadeStart, 140);
+      g._densitySwitchFadeStart = performance.now() - 140 * lodFadeInvert(1 - f);
+    } else {
+      g._densitySwitchFadeStart = performance.now();
+    }
     g._densitySwitchPrev = g._shownDensity;
-    g._densitySwitchFadeStart = performance.now();
     g._shownDensity = density;
   }
   const prev = g._densitySwitchPrev;
@@ -897,14 +975,32 @@ function lodDrawDensityWithFade(view, g, density, opacityScale = 1) {
 function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
   lodStepNorm(view, g);
   const d = g.drill;
-  // A dying drill always takes the exit-fade path — even with the view still
-  // inside its window — so the marks→aggregate handoff is a fade, never a cut.
+  // Rapid zoom out→in revive: a dying drill whose window still covers the
+  // view is exact for it (the subset IS every point in that window). Cancel
+  // the death and hand the marks back alpha-continuously instead of flashing
+  // the aggregate while the kernel's points reply round-trips. (Hover picks
+  // against the stale drill_seq are dropped, not wrong — §16 exact-or-nothing
+  // holds; the pending reply re-arms them.)
+  if (d && g._drillDying && !g._drillDiedInsideWin && view._viewInside(d.win)) {
+    g._drillDying = false;
+    lodEnterDrillContinuous(view, g);
+    g._drillWasInside = true;
+  }
   const inside = d && !g._drillDying && view._viewInside(d.win);
   const density = lodDensityForView(view, g);
   if (inside) {
+    // Boundary re-entry — or entry with an exit fade mid-flight — continues
+    // from the marks alpha currently on screen; never a snap to full.
+    if (!g._drillWasInside || g._drillExitFadeStart != null) lodEnterDrillContinuous(view, g);
     g._drillWasInside = true;
     g._drillExitFadeStart = null;
     const fade = lodFade(view, g._drillFadeStart);
+    g._drillShownAlpha = fade;
+    // Marks own the frame; keep the density-switch machinery in sync so an
+    // eventual exit crossfades from what is actually on screen.
+    g._shownDensity = fade < 1 ? density : null;
+    g._densitySwitchPrev = null;
+    g._densitySwitchFadeStart = null;
     if (fade < 1 && density && density.tex) {
       view._drawDensity(g, density, 1 - fade);
       view._drawPoints(d, view._map(d.xMeta, x0, x1), view._map(d.yMeta, y0, y1), fade);
@@ -915,13 +1011,28 @@ function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
     }
   } else if (density && density.tex) {
     if (lodHoldPendingDrill(view, g, d)) {
-      g._drillExitFadeStart = null;
-      view._drawPoints(d, view._map(d.xMeta, x0, x1), view._map(d.yMeta, y0, y1));
+      // Held marks continue their own entry fade (with the aggregate under
+      // them until it completes) — a hold engaging mid-fade must not snap.
+      lodEnterDrillContinuous(view, g);
+      const fade = lodFade(view, g._drillFadeStart);
+      g._drillShownAlpha = fade;
+      if (fade < 1) {
+        view._drawDensity(g, density, 1 - fade);
+        view._drawPoints(d, view._map(d.xMeta, x0, x1), view._map(d.yMeta, y0, y1), fade);
+        view.draw();
+      } else {
+        g._drillFadeStart = null;
+        view._drawPoints(d, view._map(d.xMeta, x0, x1), view._map(d.yMeta, y0, y1));
+      }
       if (view._viewAnim) view.draw();
       return;
     }
     const exitingDrill = d && g._drillWasInside;
+    // Continuity in the other direction: exiting while the entry fade is
+    // still mid-flight starts the exit clock at the current alpha.
+    if (exitingDrill) lodBeginDrillExitContinuous(view, g);
     const exitFade = exitingDrill ? lodDrillExitFade(view, g) : 1;
+    if (d) g._drillShownAlpha = exitingDrill && exitFade < 1 ? 1 - exitFade : 0;
     if (exitingDrill && exitFade < 1) {
       lodDrawDensityWithFade(view, g, density, exitFade);
       view._drawPoints(d, view._map(d.xMeta, x0, x1), view._map(d.yMeta, y0, y1), 1 - exitFade);
