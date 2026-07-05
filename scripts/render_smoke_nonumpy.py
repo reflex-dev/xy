@@ -527,6 +527,23 @@ try{{
     const stale=(staleReply && staleQueued && staleAnim)?1:0;
     v.view=oldView;
     v._drawNow();
+    // Quantized wire: a log-u8 density update must decode to approximate
+    // counts (max restored), draw lit, and be 4x smaller than f32.
+    const qmax=9.0;
+    const qenc=new Uint8Array(64);
+    for(let i=0;i<64;i++){{const c=(i%4===0)?9:(i%7===0?1:0);
+      qenc[i]=c>0?Math.max(1,Math.min(255,Math.round(255*Math.log1p(c)/Math.log1p(qmax)))):0;}}
+    v._onKernelMsg({{type:"density_update",traces:[{{id:gd.trace.id,mode:"density",visible:12345,
+      binning:"pyramid-L2",
+      density:{{buf:0,w:8,h:8,max:qmax,enc:"log-u8",x_range:[0,100],y_range:[0,100]}}}}]}},[qenc.buffer]);
+    const qg=gd.density&&gd.density.grid;
+    let qok=qg&&qg.length===64?1:0;
+    if(qok){{
+      for(let i=0;i<64;i++){{const c=(i%4===0)?9:(i%7===0?1:0);
+        if(c===0&&qg[i]!==0)qok=0;
+        if(c>0&&Math.abs(qg[i]-c)/c>0.08)qok=0;}}
+    }}
+    const qwire=(qok && Math.abs(gd.density.max-qmax)<1e-9)?1:0;
     // --- Rapid zoom in/out torture (drill thrash): the marks/density alphas
     // must be CONTINUOUS across window-boundary crossings, dying-drill
     // revives, and kernel replies landing mid-transition. Runs on a virtual
@@ -682,7 +699,7 @@ try{{
     if (dv1.gpuTraces) for (const gg of dv1.gpuTraces) gg._densityNormAnim = null;
     if (dv2.gpuTraces) for (const gg of dv2.gpuTraces) gg._densityNormAnim = null;
     const pixdet = pixhash(dv1) === pixhash(dv2) ? 1 : 0;
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}}`;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -838,6 +855,7 @@ try{{
     dnorm_done = int(re.search(r"dnormDone=(\d+)", title).group(1))
     stale = int(re.search(r"stale=(\d+)", title).group(1))
     thrash = int(re.search(r"thrash=(\d+)", title).group(1))
+    qwire = int(re.search(r"qwire=(\d+)", title).group(1))
     malformed = int(re.search(r"malformed=(\d+)", title).group(1))
     pixdet = int(re.search(r"pixdet=(\d+)", title).group(1))
     ctxloss = int(re.search(r"ctxloss=(\d+)", title).group(1))
@@ -949,6 +967,8 @@ try{{
         raise SystemExit("GL context loss/restore did not rebuild pixel-identically")
     if pixdet != 1:
         raise SystemExit("pixel determinism failed (render path must be RNG/time-free)")
+    if qwire != 1:
+        raise SystemExit("log-u8 density decode failed (quantized wire)")
     if thrash != 1:
         raise SystemExit(
             "drill thrash: alpha discontinuity under rapid zoom in/out (see tj/td in title)"

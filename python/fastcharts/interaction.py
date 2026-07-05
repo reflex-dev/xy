@@ -255,6 +255,18 @@ def _ensure_pyramid(t) -> int | None:
     return t._pyr_handle or None
 
 
+def _encode_log_u8(grid: np.ndarray, gmax: float) -> bytes:
+    """Density grid -> log-encoded u8 wire bytes (client decodes via expm1).
+    Zero cells stay zero; any nonzero cell maps to at least 1 so the "lit if
+    occupied" texture contract survives quantization."""
+    arr = np.asarray(grid, dtype=np.float64).ravel()
+    if gmax <= 0.0:
+        return bytes(arr.size)
+    enc = np.round(255.0 * np.log1p(arr) / np.log1p(gmax)).astype(np.uint8)
+    enc[(arr > 0) & (enc == 0)] = 1
+    return enc.tobytes()
+
+
 def density_view(
     fig: "Figure", trace_id: int, x0: float, x1: float, y0: float, y1: float, w: int, h: int
 ) -> tuple[dict[str, Any], list[bytes]]:
@@ -299,6 +311,7 @@ def density_view(
         lod.exit_drill(t)
         w, h = lod.grid_shape(w, h, visible)
         grid = kernels.bin_2d(xv, yv, lo_x, hi_x, lo_y, hi_y, w, h)
+    gmax = float(grid.max()) if grid.size else 0.0
     return (
         {
             "traces": [
@@ -311,14 +324,18 @@ def density_view(
                         "buf": 0,
                         "w": w,
                         "h": h,
-                        "max": float(grid.max()) if grid.size else 0.0,
+                        "max": gmax,
+                        # Quantized wire: log-encoded u8 (4x smaller than f32).
+                        # The client's texture is 8-bit log anyway, so the
+                        # round-trip is visually exact; `max` restores scale.
+                        "enc": "log-u8",
                         "x_range": [lo_x, hi_x],
                         "y_range": [lo_y, hi_y],
                     },
                 }
             ]
         },
-        [grid.reshape(-1).astype(np.float32).tobytes()],
+        [_encode_log_u8(grid, gmax)],
     )
 
 
