@@ -14,6 +14,7 @@ import pytest
 import fastcharts as fc
 from fastcharts import Figure
 from fastcharts.figure import DIRECT_SOFT_CEILING, SCATTER_DENSITY_THRESHOLD
+from fastcharts.interaction import _decode_log_u8
 
 
 def _payload(fig):
@@ -357,11 +358,14 @@ def test_density_view_rebin_matches_range():
     y = rng.uniform(0, 100, n)
     fig = Figure().scatter(x, y)
     update, buffers = fig.density_view(0, 10.0, 90.0, 20.0, 80.0, 32, 32)
-    assert update["traces"][0]["mode"] == "density"
-    grid = np.frombuffer(buffers[0], dtype=np.float32)
+    tr = update["traces"][0]
+    assert tr["mode"] == "density"
+    # Quantized wire (§29): decode the log-u8 grid; totals carry a small band
+    # because the 8-bit log round-trip is lossy per cell.
+    grid = _decode_log_u8(buffers[0], tr["density"]["max"])
     expect = np.sum((x >= 10) & (x < 90) & (y >= 20) & (y < 80))
     assert expect > SCATTER_DENSITY_THRESHOLD
-    assert grid.sum() == pytest.approx(expect)
+    assert grid.sum() == pytest.approx(expect, rel=0.05)
 
 
 # --------------------------------------------------------------------------

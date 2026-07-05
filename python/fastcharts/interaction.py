@@ -267,6 +267,17 @@ def _encode_log_u8(grid: np.ndarray, gmax: float) -> bytes:
     return enc.tobytes()
 
 
+def _decode_log_u8(buf: bytes, gmax: float) -> np.ndarray:
+    """Inverse of :func:`_encode_log_u8` — the Python twin of the client's
+    ``lodDecodeLogU8`` and the executable wire contract for tests. Lossy
+    (8-bit in log space, sub-percent per-cell at typical maxima), but zeros
+    are exact and the grid max is restored exactly."""
+    v = np.frombuffer(buf, dtype=np.uint8).astype(np.float64)
+    if gmax <= 0.0:
+        return np.zeros(v.size, dtype=np.float64)
+    return np.expm1((v / 255.0) * np.log1p(gmax))
+
+
 def density_view(
     fig: "Figure", trace_id: int, x0: float, x1: float, y0: float, y1: float, w: int, h: int
 ) -> tuple[dict[str, Any], list[bytes]]:

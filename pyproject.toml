@@ -94,3 +94,7 @@ include = ["python"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Repo root on sys.path so tests can import the `benchmarks` package even when
+# pytest is invoked as a bare binary (CI does `.venv/bin/pytest`, which —
+# unlike `python -m pytest` — does not put the CWD on sys.path).
+pythonpath = ["."]

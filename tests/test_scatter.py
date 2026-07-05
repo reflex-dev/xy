@@ -12,6 +12,7 @@ from fastcharts import Figure
 from fastcharts import channels as ch
 from fastcharts.config import MAX_SCREEN_DIM
 from fastcharts.figure import DENSITY_GRID, SCATTER_DENSITY_THRESHOLD
+from fastcharts.interaction import _decode_log_u8
 
 
 def _col(spec, blob, ref, dtype=np.float32):
@@ -314,12 +315,18 @@ def test_density_view_rebins():
     assert update["traces"][0]["mode"] == "density"
     d = update["traces"][0]["density"]
     assert d["w"] == 64 and d["h"] == 48
-    grid = np.frombuffer(buffers[0], dtype=np.float32)
+    # Quantized wire (§29): density updates ship log-encoded u8, one byte per
+    # cell, with `max` restoring the scale on decode.
+    assert d["enc"] == "log-u8"
+    assert len(buffers[0]) == 64 * 48
+    grid = _decode_log_u8(buffers[0], d["max"])
     assert len(grid) == 64 * 48
-    # only points inside the requested window are counted
+    assert grid.max() == pytest.approx(d["max"])  # grid max survives exactly
+    # only points inside the requested window are counted; the 8-bit log
+    # round-trip is lossy per cell (sub-percent), so the total gets a band
     inwin = np.sum((x >= 10) & (x < 90) & (y >= 20) & (y < 80))
     assert inwin > SCATTER_DENSITY_THRESHOLD  # really over budget
-    assert grid.sum() == pytest.approx(inwin)
+    assert grid.sum() == pytest.approx(inwin, rel=0.05)
 
 
 def test_density_view_coarsens_sparse_screen_grid():
@@ -337,8 +344,8 @@ def test_density_view_coarsens_sparse_screen_grid():
     d = tr["density"]
     assert d["w"] < 1200 and d["h"] < 800
     assert d["w"] * d["h"] < 1200 * 800
-    grid = np.frombuffer(buffers[0], dtype=np.float32)
-    assert grid.sum() == pytest.approx(n)
+    grid = _decode_log_u8(buffers[0], d["max"])
+    assert grid.sum() == pytest.approx(n, rel=0.05)  # 8-bit log wire (§29)
 
 
 def test_density_view_drills_to_points_when_window_fits():
@@ -445,7 +452,7 @@ def test_density_view_clamps_huge_frontend_screen_shape(monkeypatch):
     assert 16 <= shape[1] <= MAX_SCREEN_DIM
     assert density["w"] == shape[0]
     assert density["h"] == shape[1]
-    assert len(buffers[0]) == 4
+    assert len(buffers[0]) == 1  # log-u8 wire: one byte per grid cell (§29)
 
 
 def test_drill_seq_guards_stale_picks():
