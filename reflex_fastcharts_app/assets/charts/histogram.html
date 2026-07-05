@@ -284,7 +284,19 @@ function makeProgram(gl, vs, fs) {
     gl.deleteProgram(p);
     throw new Error("program link: " + info);
   }
+  // Uniform-location cache (renderer audit R1): draw paths look locations up
+  // by name every frame; memoize per program so each name hits the driver once.
+  p._u = Object.create(null);
   return p;
+}
+
+function uniformOf(gl, prog, name) {
+  let loc = prog._u[name];
+  if (loc === undefined) {
+    loc = gl.getUniformLocation(prog, name);
+    prog._u[name] = loc;
+  }
+  return loc;
 }
 
 // Points: per-vertex position, plus optional per-vertex color scalar (a_cval)
@@ -975,7 +987,13 @@ class ChartView {
 
     this._buildDom(el);
     this.theme = readTheme(this.root);
+    // Retained for GL context restore: the payload is screen-bounded (§29) so
+    // keeping it is cheap, and every GPU object is rebuildable from
+    // spec + payload by design (§18/§27).
+    this._payload = buffer;
+    this._glLost = false;
     this._initGl(buffer);
+    this._initContextLossRecovery();
     this._initInteraction();
     this._buildModebar(this.root); // after theme (icon color) + canvas (cursor)
 
@@ -986,6 +1004,7 @@ class ChartView {
       });
       this._ro.observe(this.root);
     }
+    this._armDprWatch();
 
     this.view0 = {
       x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
@@ -1018,6 +1037,53 @@ class ChartView {
     return handler;
   }
 
+  // DPR watch (renderer audit R7): browser zoom changes devicePixelRatio
+  // without firing the ResizeObserver, leaving blurry backing stores. A
+  // matchMedia resolution query fires exactly when dpr leaves its current
+  // value; the handler re-derives backing stores and re-arms for the new dpr.
+  _armDprWatch() {
+    if (typeof window.matchMedia !== "function") return;
+    this._dprMq?.removeEventListener?.("change", this._onDprChange);
+    const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    this._onDprChange = () => {
+      if (this._destroyed) return;
+      this._resize(this.size.w, this.size.h); // re-reads devicePixelRatio
+      this._armDprWatch();
+    };
+    mq.addEventListener?.("change", this._onDprChange, { once: true });
+    this._dprMq = mq;
+  }
+
+  // GL context loss/restore (renderer audit R4): a backgrounded tab on a busy
+  // GPU or a driver reset kills the context. preventDefault opts in to
+  // restoration; on restore every GPU object is recreated from the retained
+  // spec + payload, then a fresh view request re-syncs live tiers (kernel
+  // updates written into now-dead buffers are gone until it answers).
+  _initContextLossRecovery() {
+    this._listen(this.canvas, "webglcontextlost", (e) => {
+      e.preventDefault();
+      this._glLost = true;
+      if (this._raf) cancelAnimationFrame(this._raf);
+      this._raf = null;
+    });
+    this._listen(this.canvas, "webglcontextrestored", () => {
+      if (this._destroyed) return;
+      this._glLost = false;
+      // Old handles died with the context — drop them without delete calls.
+      this._lutCache.clear();
+      this.pickFbo = null;
+      this.pickTex = null;
+      try {
+        this._initGl(this._payload);
+      } catch (err) {
+        this.root.textContent = "fastcharts: WebGL2 context could not be restored.";
+        throw err;
+      }
+      this._scheduleViewRequest(this.view, { delay: 0 });
+      this.draw();
+    });
+  }
+
   // Container size changed (fluid mode). Cheap on purpose: data GPU buffers
   // are untouched — the _map() uniforms absorb the new aspect — and the pick
   // FBO realloc is deferred to the next actual pick (_renderPick checks dims).
@@ -1026,7 +1092,11 @@ class ChartView {
   _resize(cssW, cssH) {
     const w = this.fluid && cssW ? Math.max(120, Math.round(cssW)) : this.size.w;
     const h = this.fluidH && cssH ? Math.max(120, Math.round(cssH)) : this.size.h;
-    if (w === this.size.w && h === this.size.h) return;
+    // Browser zoom changes devicePixelRatio with no container resize (R7);
+    // re-read it so backing stores stay crisp on a pure-DPR change too.
+    const dpr = window.devicePixelRatio || 1;
+    if (w === this.size.w && h === this.size.h && dpr === this.dpr) return;
+    this.dpr = dpr;
     this.size.w = w;
     this.size.h = h;
     this._layout();
@@ -1472,7 +1542,7 @@ class ChartView {
 
 
   _drawNow() {
-    if (this._destroyed || !this.gl) return;
+    if (this._destroyed || !this.gl || this._glLost) return;
     const gl = this.gl;
     const { x0, x1, y0, y1 } = this.view;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -1514,7 +1584,7 @@ class ChartView {
     const gl = this.gl;
     const prog = this.pointProg;
     gl.useProgram(prog);
-    const u = (n) => gl.getUniformLocation(prog, n);
+    const u = (n) => uniformOf(gl, prog, n);
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     gl.uniform1f(u("u_dpr"), this.dpr);
@@ -1591,7 +1661,7 @@ class ChartView {
     const gl = this.gl;
     const prog = this.densityProg;
     gl.useProgram(prog);
-    const u = (n) => gl.getUniformLocation(prog, n);
+    const u = (n) => uniformOf(gl, prog, n);
     const { x0, x1, y0, y1 } = this.view;
     gl.uniform4f(u("u_view"), x0, x1, y0, y1);
     const d = density || g.density;
@@ -1619,7 +1689,7 @@ class ChartView {
     const gl = this.gl;
     const prog = this.heatmapProg;
     gl.useProgram(prog);
-    const u = (n) => gl.getUniformLocation(prog, n);
+    const u = (n) => uniformOf(gl, prog, n);
     const { x0, x1, y0, y1 } = this.view;
     gl.uniform4f(u("u_view"), x0, x1, y0, y1);
     gl.uniform4f(u("u_gridRange"), h.xRange[0], h.xRange[1], h.yRange[0], h.yRange[1]);
@@ -1644,7 +1714,7 @@ class ChartView {
     if (g.n < 2) return;
     const gl = this.gl;
     gl.useProgram(this.lineProg);
-    const u = (n) => gl.getUniformLocation(this.lineProg, n);
+    const u = (n) => uniformOf(gl, this.lineProg, n);
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
@@ -1663,7 +1733,7 @@ class ChartView {
     const gl = this.gl;
     const prog = this.areaProg;
     gl.useProgram(prog);
-    const u = (n) => gl.getUniformLocation(prog, n);
+    const u = (n) => uniformOf(gl, prog, n);
     gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
     gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
     gl.uniform2f(u("u_bmap"), bm[0], bm[1]);
@@ -1683,7 +1753,7 @@ class ChartView {
     const gl = this.gl;
     const prog = this.rectProg;
     gl.useProgram(prog);
-    const u = (n) => gl.getUniformLocation(prog, n);
+    const u = (n) => uniformOf(gl, prog, n);
     gl.uniform2f(u("u_x0map"), x0[0], x0[1]);
     gl.uniform2f(u("u_x1map"), x1[0], x1[1]);
     gl.uniform2f(u("u_y0map"), y0[0], y0[1]);
@@ -1714,7 +1784,7 @@ class ChartView {
     const gl = this.gl;
     const prog = this.barProg;
     gl.useProgram(prog);
-    const u = (n) => gl.getUniformLocation(prog, n);
+    const u = (n) => uniformOf(gl, prog, n);
     gl.uniform2f(u("u_pmap"), pmap[0], pmap[1]);
     gl.uniform2f(u("u_v1map"), v1map[0], v1map[1]);
     gl.uniform2f(u("u_v0map"), v0map ? v0map[0] : 1, v0map ? v0map[1] : 0);
@@ -1854,7 +1924,7 @@ class ChartView {
     const { x0, x1, y0, y1 } = this.view;
     const prog = this.pickProg;
     gl.useProgram(prog);
-    const u = (n) => gl.getUniformLocation(prog, n);
+    const u = (n) => uniformOf(gl, prog, n);
     gl.uniform1f(u("u_dpr"), this.dpr);
     let slot = 0;
     for (const g of this.gpuTraces) {
@@ -2316,7 +2386,7 @@ class ChartView {
     const svg = (body) =>
       `<svg width="15" height="15" viewBox="0 0 20 20" fill="none" ` +
       `stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ` +
-      `stroke-linejoin="round">${body}</svg>`;
+      `stroke-linejoin="round">${body}<\/svg>`;
     switch (name) {
       case "zoomin":
         return svg('<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5 L17 17"/>' +
@@ -2448,14 +2518,29 @@ class ChartView {
       this.draw();
     } else if (msg.type === "density_update") {
       if (msg.seq !== undefined && msg.seq !== this.seq) return;
-      for (const upd of msg.traces) {
+      const densityTraces = msg.traces || [];
+      const pendingTraceIds = new Set(densityTraces.map((upd) => Number(upd.id)));
+      if (pendingTraceIds.size === 0 && msg.trace !== undefined) {
+        pendingTraceIds.add(Number(msg.trace));
+      }
+      const clearAllPending = pendingTraceIds.size === 0 && msg.stale;
+      const clearPending = (g) => {
+        if (msg.seq !== undefined && g._lodPendingSeq !== msg.seq) return;
+        g._lodPendingView = null;
+        g._lodPendingSeq = null;
+        g._lodPendingAt = null;
+      };
+      if (pendingTraceIds.size || clearAllPending) {
+        for (const g of this.gpuTraces) {
+          if (g.tier !== "density") continue;
+          if (!clearAllPending && !pendingTraceIds.has(g.trace.id)) continue;
+          clearPending(g);
+        }
+      }
+      for (const upd of densityTraces) {
         const g = this.gpuTraces.find((t) => t.trace.id === upd.id && t.tier === "density");
         if (!g) continue;
-        if (msg.seq === undefined || g._lodPendingSeq === msg.seq) {
-          g._lodPendingView = null;
-          g._lodPendingSeq = null;
-          g._lodPendingAt = null;
-        }
+        clearPending(g);
         if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }
         lodApplyDensityUpdate(this, g, upd, buffers);
       }
@@ -2561,6 +2646,8 @@ class ChartView {
     this._destroyed = true;
     this._ro?.disconnect();
     this._themeWatch?.removeEventListener?.("change", this._onScheme);
+    this._dprMq?.removeEventListener?.("change", this._onDprChange);
+    this._dprMq = null;
     this._unsubscribeComm?.();
     this._unsubscribeComm = null;
     for (const { target, type, handler, options } of this._listeners.splice(0)) {
@@ -2828,7 +2915,7 @@ window.fastcharts = { render, renderStandalone, ChartView, MARK_KINDS, markOf };
 })();
 </script>
 <script>
-  const spec = {"protocol": 2, "width": "100%", "height": 430, "title": "500k sample histogram", "x_axis": {"kind": "linear", "label": "value", "range": [-4.091187486548644, 5.285724660220645]}, "y_axis": {"kind": "linear", "label": "count", "range": [0.0, 10374.16]}, "traces": [{"id": 0, "kind": "histogram", "name": "distribution", "style": {"color": "#3b82f6", "opacity": 0.82, "role": "histogram"}, "tier": "direct", "n_points": 500000, "n_marks": 160, "x0": 0, "x1": 1, "y0": 2, "y1": 3}], "columns": [{"byte_offset": 0, "len": 160, "offset": 0.5696243882901006, "scale": 1.0, "kind": "float"}, {"byte_offset": 640, "len": 160, "offset": 0.6249127853819008, "scale": 1.0, "kind": "float"}, {"byte_offset": 1280, "len": 160, "offset": 0.0, "scale": 1.0, "kind": "float"}, {"byte_offset": 1920, "len": 160, "offset": 5036.0, "scale": 1.0, "kind": "float"}], "backend": "native", "show_legend": true};
+  const spec = {"protocol":2,"width":"100%","height":430,"title":"500k sample histogram","x_axis":{"kind":"linear","label":"value","range":[-4.091187486548644,5.285724660220645]},"y_axis":{"kind":"linear","label":"count","range":[0.0,10374.16]},"traces":[{"id":0,"kind":"histogram","name":"distribution","style":{"color":"#3b82f6","opacity":0.82,"role":"histogram"},"tier":"direct","n_points":500000,"n_marks":160,"x0":0,"x1":1,"y0":2,"y1":3}],"columns":[{"byte_offset":0,"len":160,"offset":0.5696243882901006,"scale":1.0,"kind":"float"},{"byte_offset":640,"len":160,"offset":0.6249127853819008,"scale":1.0,"kind":"float"},{"byte_offset":1280,"len":160,"offset":0.0,"scale":1.0,"kind":"float"},{"byte_offset":1920,"len":160,"offset":5036.0,"scale":1.0,"kind":"float"}],"backend":"native","show_legend":true};
   const b64 = "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";
   const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
   fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);

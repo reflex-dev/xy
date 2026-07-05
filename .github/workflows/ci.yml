@@ -41,6 +41,9 @@ jobs:
       - name: Python 3.11 floor syntax check
         run: python3 scripts/check_python_floor.py
 
+      - name: Workflow gate wiring
+        run: python3 scripts/verify_ci_workflow.py
+
       # Dependency-free gates — verify the two seams cargo can't (the C ABI and
       # the WebGL2 render path) and run even if PyPI is unreachable.
       - name: Native ABI smoke (stdlib only)
@@ -70,13 +73,32 @@ jobs:
         run: |
           python3 scripts/bench_scatter_native.py --sizes 1e5,1e6,1e7 --json scatter.json
           python3 scripts/bench_native.py --sizes 1e6,1e7 --json kernel.json
+          python3 scripts/verify_benchmark_report.py scatter.json --kind scatter-native
+          python3 scripts/verify_benchmark_report.py kernel.json --kind kernel-native
           python3 scripts/check_regressions.py --scatter scatter.json --kernel kernel.json \
             --emit-md docs/benchmark_metrics.md
+
+      - name: Upload regression benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-benchmark-report
+          if-no-files-found: warn
+          path: |
+            docs/benchmark_metrics.md
+            scatter.json
+            kernel.json
 
       - name: Install package + dev deps
         run: |
           uv venv .venv
           uv pip install -p .venv/bin/python -e ".[dev]"
+
+      - name: Public API coherence
+        run: .venv/bin/python scripts/check_public_api.py
+
+      - name: Claim guardrails
+        run: .venv/bin/python scripts/check_claim_guardrails.py
 
       - name: Lint (ruff)
         run: |
@@ -139,6 +161,9 @@ jobs:
           uv venv .venv --python "$(command -v python)"
           uv pip install -p .venv/bin/python -e . "pytest>=8,<9"
 
+      - name: Public API coherence
+        run: .venv/bin/python scripts/check_public_api.py
+
       - name: Python 3.11 tests (native core)
         run: .venv/bin/python -m pytest -q
 
@@ -151,6 +176,7 @@ jobs:
   benchmark:
     name: Benchmark vs Python charting libraries
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -183,14 +209,24 @@ jobs:
         run: .venv/bin/python benchmarks/bench_line.py --sizes 1e5,1e6,1e7 --json line.json | tee -a docs/benchmark_ci.md
       - name: Install footprint & cold import (methodology §1)
         run: .venv/bin/python benchmarks/bench_install.py --json install.json | tee -a docs/benchmark_ci.md
+      - name: Verify benchmark JSON artifacts
+        run: |
+          .venv/bin/python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs
+          .venv/bin/python scripts/verify_benchmark_report.py line.json --kind line-decimation
+          .venv/bin/python scripts/verify_benchmark_report.py install.json --kind install-footprint
       - name: Show report
         run: cat docs/benchmark_ci.md
-      - uses: actions/upload-artifact@v4
+      - name: Upload benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: benchmark-report
+          if-no-files-found: warn
           path: |
             docs/benchmark_ci.md
             benchmark.json
+            line.json
+            install.json
 
   sdist:
     name: Source distribution

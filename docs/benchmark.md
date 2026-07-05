@@ -32,14 +32,24 @@ The performance story should be measured by mode, not with one blanket
 large line, and a 30-chart dashboard stress different parts of the system. These
 are the categories we track or plan to add to CI.
 
-The stable category IDs live in `benchmarks/categories.py`. CI's
-`benchmark.json` includes the full registry plus `tracked_categories`, and the
+The stable category IDs live in `benchmarks/categories.py`. CI's benchmark JSON
+artifacts (`benchmark.json`, `line.json`, `install.json`, `scatter.json`, and
+`kernel.json`) use schema version 2: they include the full registry,
+`tracked_categories`, and a machine-readable `environment` block with Python,
+platform, package, executable, git commit, and dirty-worktree metadata. The
 fastcharts-only benchmark rows include `benchmark_categories` so future
-dashboards can group results by these goals.
+dashboards can group results by these goals. The core 2D, native scatter, and
+native kernel JSON reports carry the same top-level registry;
+`scripts/verify_benchmark_report.py` rejects artifacts that drop it. The
+verifier also requires finite numbers, positive problem sizes, and non-negative
+timings, payload sizes, and rates. On success it prints a compact summary of
+the report kind, row count, statuses/tiers, category counts, backend, and git
+commit so CI artifacts are quick to inspect from logs.
 
 | ID | Category | Status | Why it matters | Primary metrics | Current / planned harness | Goal |
 |---|---|---|---|---|---|---|
 | `small_data_startup` | Small-data startup | tracked | Everyday charts should feel instant; a performance library cannot only win at 10M rows. | time-to-first-render, JS payload, Python overhead | `benchmarks/bench_vs.py --ttfr` at 1k-100k | Beat Plotly/Bokeh/Altair on first interactive paint for common charts. |
+| `install_footprint_import_budget` | Install footprint and import budget | tracked | Notebook, CI, and serverless users feel package weight and cold import time before the first chart exists. | cold import time, installed distribution bytes, file count | `benchmarks/bench_install.py` | Keep fastcharts lightweight at import and smaller to install than broad plotting stacks. |
 | `medium_direct_scatter` | Medium direct scatter | partial | Proves exact marker rendering, hover, color, and size channels before aggregation kicks in. | FPS, TTFR, memory, payload bytes/point, hover latency | `benchmarks/bench_vs.py` at 100k-200k; browser interaction probes planned | Smooth exact WebGL scatter with bounded bytes/point and no JSON-number payload cliff. |
 | `huge_scatter_overview` | Huge scatter overview | tracked | Proves screen-bounded rendering for datasets larger than the browser should draw point-for-point. | ingest/bin time, density payload size, peak memory, TTFR | `bench_scatter_native.py`, `bench_vs.py`, example app assets | Keep resident/render payload flat in N while showing truthful density summaries. |
 | `adaptive_scatter_drilldown` | Adaptive scatter drilldown | planned | The large-data claim needs a credible path from overview to exact visible points. | visible-query latency, tier-switch latency, exact-point recovery, badge accuracy | planned spatial-index/tile benchmark | Exact points when visible count is under budget; sampled/density with explicit counts otherwise. |
@@ -53,6 +63,25 @@ Mode labels in benchmark output should stay explicit: `direct`, `decimated`,
 `density`, `sampled`, or `adaptive`. A 10M density result is a real large-data
 visualization result, but it is not the same claim as 10M individually styled
 markers. The benchmark reports should make that distinction impossible to miss.
+
+## Copyable claim taxonomy
+
+Use these shapes when turning benchmark rows into README text, release notes, or
+posts. The goal is to make every public claim reproducible from a row in this
+document or from a verified JSON artifact.
+
+| Claim shape | Safe wording pattern | Required context |
+|---|---|---|
+| Payload/prep comparison | "In the native backend smoke benchmark, histogram payload prep for 100k values / 200 bins was 303x faster than Plotly." | chart type, workload, backend, compared library, metric |
+| Browser first paint | "For the measured Chrome TTFR row, the 100k-value histogram first painted 5.89x faster than Plotly." | browser/render target, workload, chart type, TTFR included |
+| Large scatter overview | "The 10M scatter overview uses density mode with a 768 KB payload; it is not drawing 10M exact markers." | mode, point count, payload, exact-vs-aggregate wording |
+| Line decimation | "The 10M line benchmark ships an M4-decimated ~60 KB payload while preserving the extrema oracle." | mode, point count, payload, correctness oracle |
+| Install/import footprint | "In the install-footprint benchmark, cold import was 6.4 ms for the measured distribution." | benchmark name, metric, measured distribution |
+
+Do not shorten those into broad slogans such as "fastcharts is faster than
+Plotly" or "renders 10M points" without the row context. If a sentence does not
+name the chart type, workload, mode, backend, metric, and render target where
+they matter, it is not ready to publish.
 
 ## Time to first render (data → pixels)
 
@@ -243,8 +272,11 @@ runners:
   noise never breaks the build.
 
 The current metric table is regenerated (never hand-typed) into
-[`docs/benchmark_metrics.md`](benchmark_metrics.md); re-bless the baseline from
-a CI run with `check_regressions.py --update-baseline`.
+[`docs/benchmark_metrics.md`](benchmark_metrics.md). CI uploads that table plus
+the raw `scatter.json` and `kernel.json` inputs as the
+`regression-benchmark-report` artifact, even when the hard regression gate
+fails. Re-bless the baseline from a CI run with
+`check_regressions.py --update-baseline`.
 
 ### Static image export
 

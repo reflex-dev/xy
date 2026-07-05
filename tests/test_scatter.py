@@ -103,6 +103,10 @@ def test_complex_or_non_numeric_channels_rejected():
         ch.resolve_size(np.array([1 + 2j, 3 + 4j]), 2)
     with pytest.raises(ValueError, match="real numeric"):
         ch.resolve_size(np.array(["1", "2"], dtype=object), 2)
+    with pytest.raises(ValueError, match="boolean"):
+        ch.resolve_size(np.array([True, False]), 2)
+    with pytest.raises(ValueError, match="real numeric"):
+        ch.resolve_size(np.array([True, None], dtype=object), 2)
     with pytest.raises(ValueError, match="size"):
         ch.resolve_size(True, 1)
 

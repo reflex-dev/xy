@@ -37,6 +37,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _browser import first_paint_ms  # noqa: E402
+from categories import BENCHMARK_CATEGORIES, categories_for, markdown_category_table  # noqa: E402
+from environment import SCHEMA_VERSION, collect_environment_metadata  # noqa: E402
 
 try:
     import numpy as np
@@ -52,6 +54,11 @@ except Exception:
 
 RENDER_W, RENDER_H = 900, 420
 PROFILE_NAMES = ("smoke", "standard", "stress")
+BENCH_2D_CATEGORY_IDS = (
+    "core_2d_chart_breadth",
+    "payload_export_size",
+    "small_data_startup",
+)
 
 
 @dataclass(frozen=True)
@@ -460,6 +467,10 @@ def run(
         comparisons.append(comp)
 
     return {
+        "schema_version": SCHEMA_VERSION,
+        "environment": collect_environment_metadata(chromium=chromium),
+        "benchmark_categories": list(BENCHMARK_CATEGORIES),
+        "tracked_categories": categories_for(BENCH_2D_CATEGORY_IDS),
         "profile": profile,
         "ttfr": ttfr,
         "ttfr_max_work_units": ttfr_max_work_units,
@@ -483,6 +494,22 @@ def to_markdown(report: dict[str, Any]) -> str:
         f"(cap: {report['ttfr_max_work_units']:,} work units).",
         "",
     ]
+    environment = report.get("environment") or {}
+    if environment:
+        platform_info = environment.get("platform") or {}
+        python_info = environment.get("python") or {}
+        git_info = environment.get("git") or {}
+        lines += [
+            "## Run Environment",
+            "",
+            f"- generated: `{environment.get('generated_at_utc', 'unknown')}`",
+            f"- python: `{python_info.get('version', 'unknown')}` "
+            f"({python_info.get('implementation', 'unknown')})",
+            f"- platform: `{platform_info.get('system', 'unknown')} "
+            f"{platform_info.get('machine', 'unknown')}`",
+            f"- git: `{git_info.get('commit', 'unknown')}` (dirty: `{git_info.get('dirty')}`)",
+            "",
+        ]
     try:
         import fastcharts.kernels as kernels
 
@@ -491,6 +518,13 @@ def to_markdown(report: dict[str, Any]) -> str:
         pass
 
     lines += [
+        "## Benchmark Categories",
+        "",
+        *markdown_category_table(report.get("benchmark_categories", BENCHMARK_CATEGORIES)),
+        "",
+        "Tracked in this run: "
+        + ", ".join(f"`{category['id']}`" for category in report["tracked_categories"]),
+        "",
         "## Summary",
         "",
         "| family | case | speedup | payload reduction | TTFR speedup | verdict |",

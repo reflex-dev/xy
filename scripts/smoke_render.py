@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 
 from fastcharts import Figure
-from fastcharts.widget import bundled_js
+from fastcharts.export import _bundled_js
 
 CHROMIUM_CANDIDATES = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -60,7 +60,7 @@ def build_page() -> str:
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>pending</title></head>
 <body><div id="chart"></div>
-<script>{bundled_js("standalone")}</script>
+<script>{_bundled_js("standalone")}</script>
 <script>
   const spec = {json.dumps(spec)};
   const bytes = Uint8Array.from(atob("{base64.b64encode(blob).decode()}"), c => c.charCodeAt(0));

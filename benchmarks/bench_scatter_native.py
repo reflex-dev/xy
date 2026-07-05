@@ -43,12 +43,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from abi_smoke import load  # noqa: E402
-from categories import categories_for  # noqa: E402
+from categories import BENCHMARK_CATEGORIES, categories_for  # noqa: E402
+from environment import SCHEMA_VERSION, collect_environment_metadata  # noqa: E402
 
 # Mirror the Python defaults (fastcharts.figure).
 DENSITY_THRESHOLD = 200_000
 GRID_W, GRID_H = 512, 384
 RENDER_W, RENDER_H = 900, 420
+SCATTER_NATIVE_CATEGORY_IDS = (
+    "medium_direct_scatter",
+    "huge_scatter_overview",
+    "payload_export_size",
+)
 
 
 def _ptr(a: array, ct):
@@ -276,7 +282,15 @@ def main() -> None:
         print(line + " |")
         del x, y
     if args.json:
-        Path(args.json).write_text(json.dumps(rows, indent=2), encoding="utf-8")
+        chromium = find_chromium() if args.render else None
+        report = {
+            "schema_version": SCHEMA_VERSION,
+            "environment": collect_environment_metadata(chromium=chromium or None),
+            "benchmark_categories": list(BENCHMARK_CATEGORIES),
+            "tracked_categories": categories_for(SCATTER_NATIVE_CATEGORY_IDS),
+            "rows": rows,
+        }
+        Path(args.json).write_text(json.dumps(report, indent=2), encoding="utf-8")
 
 
 def _fmt(b: float) -> str:

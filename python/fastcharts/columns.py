@@ -163,8 +163,12 @@ def _canonicalize(data: Any) -> tuple[npt.NDArray[np.float64], str, int]:
         arr, copies = _datetime_to_float_ms(arr, copies)
         kind = "time_ms"
     else:
+        if np.issubdtype(arr.dtype, np.bool_):
+            raise ValueError("columns must be real numeric or datetime-like, not boolean")
         if np.issubdtype(arr.dtype, np.complexfloating):
             raise ValueError("columns must be real numeric or datetime-like")
+        if arr.dtype == object and any(isinstance(value, (bool, np.bool_)) for value in arr):
+            raise ValueError("columns must be real numeric or datetime-like, not boolean")
         try:
             arr, copies = _astype_counted(arr, np.float64, copies)
         except (TypeError, ValueError) as e:

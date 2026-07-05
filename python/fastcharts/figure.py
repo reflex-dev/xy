@@ -9,13 +9,14 @@ work is forbidden on the client).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from os import PathLike
+from typing import Any, Optional, TypeAlias
 
 import numpy as np
 
 from . import channels, export, interaction, kernels, lod
 from .channels import ColorChannel, SizeChannel
-from .columns import Column, ColumnStore
+from .columns import Column, ColumnStore, ColumnStoreCheckpoint
 
 # Tier/tuning constants live in config.py (shared with interaction/export);
 # re-exported here because this module is their historic import path.
@@ -27,6 +28,8 @@ from .config import (  # noqa: E402
     PROTOCOL_VERSION,
     SCATTER_DENSITY_THRESHOLD,
 )
+
+_FigureCheckpoint: TypeAlias = tuple[ColumnStoreCheckpoint, int, dict[str, list[str]]]
 
 
 @dataclass
@@ -147,7 +150,7 @@ class Selection:
     row indices per trace and lends convenient access to the underlying data —
     callbacks receive real arrays, never JSON."""
 
-    def __init__(self, figure: "Figure", per_trace: dict) -> None:
+    def __init__(self, figure: "Figure", per_trace: dict[int, np.ndarray]) -> None:
         self._figure = figure
         self.per_trace = per_trace  # {trace_id: np.ndarray[uint32]}
 
@@ -191,9 +194,9 @@ class Figure:
         # min-height.
         self.width = self._pixel_dimension(width, "width")
         self.height = self._pixel_dimension(height, "height")
-        self.title = title
-        self.x_label = x_label
-        self.y_label = y_label
+        self.title = self._optional_text(title, "title")
+        self.x_label = self._optional_text(x_label, "x_label")
+        self.y_label = self._optional_text(y_label, "y_label")
         self.store = ColumnStore()
         self.traces: list[Trace] = []
         self.show_legend = True
@@ -218,6 +221,19 @@ class Figure:
             self.store.rollback(checkpoint)
             raise
 
+    def _checkpoint(self) -> _FigureCheckpoint:
+        return (
+            self.store.checkpoint(),
+            len(self.traces),
+            {axis: list(labels) for axis, labels in self._axis_categories.items()},
+        )
+
+    def _rollback(self, checkpoint: _FigureCheckpoint) -> None:
+        store_checkpoint, trace_len, axis_categories = checkpoint
+        self.store.rollback(store_checkpoint)
+        del self.traces[trace_len:]
+        self._axis_categories = axis_categories
+
     def line(
         self,
         x: Any,
@@ -228,9 +244,10 @@ class Figure:
         width: float = 1.5,
         opacity: float = 1.0,
     ) -> "Figure":
+        name = self._optional_text(name, "line name")
         width = self._positive_scalar(width, "line width")
         opacity = self._opacity(opacity, "line opacity")
-        checkpoint = self.store.checkpoint()
+        checkpoint = self._checkpoint()
         try:
             xc, yc = self._ingest_xy(x, y, "line")
             if not np.all(np.diff(xc.values) >= 0):
@@ -254,7 +271,7 @@ class Figure:
             )
             return self
         except Exception:
-            self.store.rollback(checkpoint)
+            self._rollback(checkpoint)
             raise
 
     def area(
@@ -274,10 +291,11 @@ class Figure:
         `base` may be a scalar or a length-N array, which covers both the common
         zero-baseline area chart and future stacked-area construction.
         """
+        name = self._optional_text(name, "area name")
         opacity = self._opacity(opacity, "area opacity")
         line_width = self._nonnegative_scalar(line_width, "area line_width")
         line_opacity = self._opacity(line_opacity, "area line_opacity")
-        checkpoint = self.store.checkpoint()
+        checkpoint = self._checkpoint()
         try:
             xc, yc = self._ingest_xy(x, y, "area")
             bc = (
@@ -310,7 +328,7 @@ class Figure:
             )
             return self
         except Exception:
-            self.store.rollback(checkpoint)
+            self._rollback(checkpoint)
             raise
 
     def scatter(
@@ -334,9 +352,10 @@ class Figure:
         auto-switch to a Tier-2 density surface (§5); pass `density=True/False`
         to force it.
         """
+        name = self._optional_text(name, "scatter name")
         opacity = self._opacity(opacity, "scatter opacity")
         density = self._optional_bool(density, "scatter density")
-        checkpoint = self.store.checkpoint()
+        checkpoint = self._checkpoint()
         try:
             xc, yc = self._ingest_xy(x, y, "scatter")
             n = len(xc)
@@ -398,7 +417,7 @@ class Figure:
             self.traces.append(trace)
             return self
         except Exception:
-            self.store.rollback(checkpoint)
+            self._rollback(checkpoint)
             raise
 
     def histogram(
@@ -413,6 +432,7 @@ class Figure:
         opacity: float = 0.85,
     ) -> "Figure":
         """Add a 1D histogram backed by the shared rectangle primitive."""
+        name = self._optional_text(name, "histogram name")
         opacity = self._opacity(opacity, "histogram opacity")
         density = self._bool_param(density, "histogram density")
         vals = self._as_1d_float(values, "histogram values")
@@ -547,6 +567,7 @@ class Figure:
         `z` is shaped `(rows, columns)`. Optional `x` and `y` arrays name the
         column/row centers; string/object arrays become categorical axes.
         """
+        name = self._optional_text(name, "heatmap name")
         opacity = self._opacity(opacity, "heatmap opacity")
         if hasattr(z, "to_numpy"):
             z = z.to_numpy()
@@ -566,28 +587,33 @@ class Figure:
             lo, hi = self._auto_domain(kernels.min_max(z_flat))
         else:
             lo, hi = self._finite_increasing_pair(domain, "heatmap domain")
-        self._commit_axis_positions(x, "x")
-        self._commit_axis_positions(y, "y")
-        self.traces.append(
-            Trace(
-                id=len(self.traces),
-                kind="heatmap",
-                x=self.store.ingest(np.array([x_edges[0], x_edges[-1]], dtype=np.float64)),
-                y=self.store.ingest(np.array([y_edges[0], y_edges[-1]], dtype=np.float64)),
-                grid=self.store.ingest(z_flat),
-                grid_shape=(rows, cols),
-                count=int(z_flat.size),
-                name=name,
-                style={
-                    "opacity": opacity,
-                    "role": "heatmap",
-                    "colormap": colormap,
-                    "domain": [lo, hi],
-                    "x_range": [float(x_edges[0]), float(x_edges[-1])],
-                    "y_range": [float(y_edges[0]), float(y_edges[-1])],
-                },
+        checkpoint = self._checkpoint()
+        try:
+            self._commit_axis_positions(x, "x")
+            self._commit_axis_positions(y, "y")
+            self.traces.append(
+                Trace(
+                    id=len(self.traces),
+                    kind="heatmap",
+                    x=self.store.ingest(np.array([x_edges[0], x_edges[-1]], dtype=np.float64)),
+                    y=self.store.ingest(np.array([y_edges[0], y_edges[-1]], dtype=np.float64)),
+                    grid=self.store.ingest(z_flat),
+                    grid_shape=(rows, cols),
+                    count=int(z_flat.size),
+                    name=name,
+                    style={
+                        "opacity": opacity,
+                        "role": "heatmap",
+                        "colormap": colormap,
+                        "domain": [lo, hi],
+                        "x_range": [float(x_edges[0]), float(x_edges[-1])],
+                        "y_range": [float(y_edges[0]), float(y_edges[-1])],
+                    },
+                )
             )
-        )
+        except Exception:
+            self._rollback(checkpoint)
+            raise
         return self
 
     def _bar_like(
@@ -606,69 +632,75 @@ class Figure:
         series: Optional[list[str]],
         opacity: float,
     ) -> "Figure":
+        name = self._optional_text(name, f"{kind} name")
         width = self._positive_scalar(width, f"{kind} width")
         opacity = self._opacity(opacity, f"{kind} opacity")
         if mode not in {"grouped", "stacked"}:
-            raise ValueError("bar mode must be 'grouped' or 'stacked'")
+            raise ValueError(f"{kind} mode must be 'grouped' or 'stacked'")
         if orientation not in {"vertical", "horizontal"}:
-            raise ValueError("bar orientation must be 'vertical' or 'horizontal'")
+            raise ValueError(f"{kind} orientation must be 'vertical' or 'horizontal'")
         category_axis = "x" if orientation == "vertical" else "y"
         pos = self._axis_positions(x, category_axis, commit=False)
         vals = self._bar_value_matrix(y, len(pos), kind)
         base_vals = self._broadcast_base(base, len(pos), kind)
         series_names = self._series_names(name, series, vals.shape[0])
         series_colors = self._series_colors(color, colors, vals.shape[0])
-        self._commit_axis_positions(x, category_axis)
-        half = width / 2.0
-        if vals.shape[0] == 1:
-            self._append_bar_rect(
-                kind,
-                orientation,
-                pos - half,
-                pos + half,
-                base_vals,
-                base_vals + vals[0],
-                name=name,
-                color=series_colors[0],
-                opacity=opacity,
-                role=kind,
-            )
-        elif mode == "grouped":
-            slot = width / vals.shape[0]
-            for i, row in enumerate(vals):
-                p0 = pos - half + i * slot
-                self._append_bar_rect(
-                    kind,
-                    orientation,
-                    p0,
-                    p0 + slot,
-                    base_vals,
-                    base_vals + row,
-                    name=series_names[i],
-                    color=series_colors[i],
-                    opacity=opacity,
-                    role=f"{kind}-grouped",
-                )
-        else:
-            pos_base = base_vals.astype(np.float64, copy=True)
-            neg_base = base_vals.astype(np.float64, copy=True)
-            for i, row in enumerate(vals):
-                y0 = np.where(row >= 0, pos_base, neg_base)
-                y1 = y0 + row
+        checkpoint = self._checkpoint()
+        try:
+            self._commit_axis_positions(x, category_axis)
+            half = width / 2.0
+            if vals.shape[0] == 1:
                 self._append_bar_rect(
                     kind,
                     orientation,
                     pos - half,
                     pos + half,
-                    y0,
-                    y1,
-                    name=series_names[i],
-                    color=series_colors[i],
+                    base_vals,
+                    base_vals + vals[0],
+                    name=name,
+                    color=series_colors[0],
                     opacity=opacity,
-                    role=f"{kind}-stacked",
+                    role=kind,
                 )
-                pos_base = np.where(row >= 0, y1, pos_base)
-                neg_base = np.where(row < 0, y1, neg_base)
+            elif mode == "grouped":
+                slot = width / vals.shape[0]
+                for i, row in enumerate(vals):
+                    p0 = pos - half + i * slot
+                    self._append_bar_rect(
+                        kind,
+                        orientation,
+                        p0,
+                        p0 + slot,
+                        base_vals,
+                        base_vals + row,
+                        name=series_names[i],
+                        color=series_colors[i],
+                        opacity=opacity,
+                        role=f"{kind}-grouped",
+                    )
+            else:
+                pos_base = base_vals.astype(np.float64, copy=True)
+                neg_base = base_vals.astype(np.float64, copy=True)
+                for i, row in enumerate(vals):
+                    y0 = np.where(row >= 0, pos_base, neg_base)
+                    y1 = y0 + row
+                    self._append_bar_rect(
+                        kind,
+                        orientation,
+                        pos - half,
+                        pos + half,
+                        y0,
+                        y1,
+                        name=series_names[i],
+                        color=series_colors[i],
+                        opacity=opacity,
+                        role=f"{kind}-stacked",
+                    )
+                    pos_base = np.where(row >= 0, y1, pos_base)
+                    neg_base = np.where(row < 0, y1, neg_base)
+        except Exception:
+            self._rollback(checkpoint)
+            raise
         return self
 
     def _append_bar_rect(
@@ -781,6 +813,12 @@ class Figure:
         raise ValueError(f"{label} must be True or False")
 
     @staticmethod
+    def _optional_text(value: Any, label: str) -> Optional[str]:
+        if value is None or isinstance(value, str):
+            return value
+        raise ValueError(f"{label} must be a string or None")
+
+    @staticmethod
     def _pixel_dimension(value: Any, label: str) -> Any:
         if isinstance(value, str):
             if value == "100%":
@@ -820,6 +858,10 @@ class Figure:
 
     @staticmethod
     def _real_float_array(arr: np.ndarray, label: str) -> np.ndarray:
+        if np.issubdtype(arr.dtype, np.bool_):
+            raise ValueError(f"{label} must be real numeric, not boolean")
+        if arr.dtype == object and any(isinstance(value, (bool, np.bool_)) for value in arr.flat):
+            raise ValueError(f"{label} must be real numeric, not boolean")
         if np.issubdtype(arr.dtype, np.complexfloating):
             raise ValueError(f"{label} must be real numeric")
         try:
@@ -847,7 +889,12 @@ class Figure:
         if series is not None:
             if len(series) != n_series:
                 raise ValueError(f"series must have length {n_series}, got {len(series)}")
-            return [str(s) for s in series]
+            names: list[str] = []
+            for i, item in enumerate(series):
+                if not isinstance(item, str):
+                    raise ValueError(f"series[{i}] must be a string")
+                names.append(item)
+            return names
         if n_series == 1:
             return [name or ""]
         prefix = f"{name} " if name else "series "
@@ -966,6 +1013,7 @@ class Figure:
         size_ch: Optional[SizeChannel] = None,
         count: Optional[int] = None,
     ) -> None:
+        name = self._optional_text(name, f"{kind} name")
         opacity = self._opacity(opacity, f"{kind} opacity")
         lengths = {
             self._rect_edge_len(x0, f"{kind} x0"),
@@ -975,7 +1023,7 @@ class Figure:
         }
         if len(lengths) != 1:
             raise ValueError(f"{kind} rectangle columns must have equal length")
-        checkpoint = self.store.checkpoint()
+        checkpoint = self._checkpoint()
         try:
             x0c = self.store.ingest(x0)
             x1c = self.store.ingest(x1)
@@ -1004,7 +1052,7 @@ class Figure:
                 )
             )
         except Exception:
-            self.store.rollback(checkpoint)
+            self._rollback(checkpoint)
             raise
 
     @staticmethod
@@ -1083,6 +1131,7 @@ class Figure:
 
     def _axis_spec(self, axis: str, range_: tuple[float, float]) -> dict[str, Any]:
         label = self.x_label if axis == "x" else self.y_label
+        label = self._optional_text(label, f"{axis}_label")
         kind = self._axis_kind(axis)
         spec: dict[str, Any] = {"kind": kind, "label": label, "range": list(range_)}
         if kind == "category":
@@ -1117,7 +1166,7 @@ class Figure:
             "protocol": PROTOCOL_VERSION,
             "width": self.width,
             "height": self.height,
-            "title": self.title,
+            "title": self._optional_text(self.title, "title"),
             "x_axis": self._axis_spec("x", xr),
             "y_axis": self._axis_spec("y", yr),
             "traces": spec_traces,
@@ -1495,7 +1544,7 @@ class Figure:
 
         display(self.widget())
 
-    def to_html(self, path: Optional[str] = None) -> str:
+    def to_html(self, path: Optional[str | PathLike[str]] = None) -> str:
         """Standalone interactive HTML (export.py): JS client + spec + base64
         buffers in one self-contained file. Base64 carries a stated ~33% size
         tax (§29 static-export row)."""

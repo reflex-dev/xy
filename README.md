@@ -16,6 +16,34 @@ hover, box select/zoom, standalone HTML export, and a Reflex example app all
 exist. See the full design dossier in
 [`docs/design-dossier.md`](docs/design-dossier.md).
 
+## Stable Vs Experimental
+
+Stable enough to build on today:
+
+- Python 3.11+ package import, fluent `Figure` construction, and standalone
+  HTML export.
+- Implemented 2D chart families: line, scatter, area, histogram, bar/column,
+  grouped/stacked/horizontal bars, and heatmap.
+- Binary column payloads, committed JavaScript bundles, native Rust kernels
+  when a platform wheel is available, and the NumPy fallback when it is not.
+
+Still experimental and expected to change before 1.0:
+
+- Composition API details, Reflex integration, callback/event shapes, styling
+  hooks, and chart breadth beyond the implemented 2D core.
+- Large-data adaptive drilldown internals and performance thresholds.
+- Compatibility shims for Plotly/Recharts-style APIs.
+
+| Surface | Current status | Notes |
+|---|---|---|
+| Fluent `Figure` API | Stable alpha | Preferred public API for implemented 2D chart families and standalone export. |
+| Standalone HTML export | Stable alpha | Self-contained output with bundled JS, escaped metadata, and binary payloads. |
+| Native Rust backend | Stable alpha when a platform wheel is available | Used for fast ingest, binning, and decimation. |
+| NumPy fallback backend | Stable alpha | Same public behavior when Rust is unavailable, with slower compute. |
+| Composition API | Experimental | Useful for declarative children and callbacks; details may change before 1.0. |
+| Reflex integration | Experimental | Example app exists; first-class customization/state APIs are roadmap work. |
+| Adaptive drilldown internals | Experimental | Thresholds and request protocol may move as the LOD engine evolves. |
+
 ## Why fastcharts
 
 | Problem in large charts | fastcharts approach |
@@ -66,7 +94,53 @@ uv pip install -e ".[dev]"
 CI (`install_without_rust` job) builds and imports a wheel on a runner with no
 Rust and no Node to keep this promise honest.
 
+### Install/backend quick matrix
+
+| Path | Command | Toolchain needed | Backend result |
+|---|---|---|---|
+| Published wheel | `pip install fastcharts` | none | `native` on supported platform wheels |
+| Editable source with Rust | `uv pip install -e ".[dev]"` | Rust optional, Node only for JS edits | `native` if the local Rust build succeeds |
+| Editable source without Rust | `uv pip install -e ".[dev]"` | none beyond Python 3.11+ and runtime deps | `numpy` fallback, with the same public chart APIs |
+| Forced fallback check | `FASTCHARTS_FORCE_FALLBACK=1 python -c "import fastcharts.kernels as k; print(k.BACKEND)"` | none | `numpy` |
+
+### Check the active backend
+
+`import fastcharts` is intentionally lightweight: it does not import NumPy or
+load the native core. Import `fastcharts.kernels` when you want to initialize and
+inspect the compute backend:
+
+```bash
+python -c "import fastcharts.kernels as k; print(k.BACKEND)"
+```
+
+The value is `native` when the Rust core is available and `numpy` when the
+fallback is serving the same kernels. To test the fallback path explicitly:
+
+```bash
+FASTCHARTS_FORCE_FALLBACK=1 python -c "import fastcharts.kernels as k; print(k.BACKEND)"
+```
+
+Accessing chart-building APIs such as `Figure` or `scatter_chart` is the point
+where NumPy and the compute backend may initialize. Notebook widget dependencies
+stay deferred until `.widget()`/display; standalone `Figure.to_html()` reads the
+bundled static client directly.
+
 ## Getting Started
+
+Create a small business chart:
+
+```python
+from fastcharts import Figure
+
+months = [1, 2, 3, 4, 5, 6]
+revenue = [42, 45, 48, 51, 55, 59]
+pipeline = [35, 38, 42, 40, 46, 50]
+
+fig = Figure(title="Revenue vs pipeline", x_label="month", y_label="USD thousands")
+fig.line(months, revenue, name="revenue", color="#2563eb", width=2.0)
+fig.line(months, pipeline, name="pipeline", color="#16a34a", width=2.0)
+fig
+```
 
 Create a line chart:
 
@@ -74,7 +148,7 @@ Create a line chart:
 import numpy as np
 from fastcharts import Figure
 
-n = 1_000_000
+n = 100_000
 x = np.arange(n, dtype=np.float64)
 y = np.cumsum(np.random.default_rng(0).normal(size=n))
 
@@ -90,7 +164,7 @@ import numpy as np
 from fastcharts import Figure
 
 rng = np.random.default_rng(1)
-x = rng.normal(size=500_000)
+x = rng.normal(size=50_000)
 y = x * 0.5 + rng.normal(scale=0.6, size=len(x))
 
 Figure(title="Correlated cloud").scatter(
@@ -106,22 +180,48 @@ Figure(title="Correlated cloud").scatter(
 Export a standalone HTML file:
 
 ```python
+import numpy as np
+from fastcharts import Figure
+
+rng = np.random.default_rng(2)
+x = rng.normal(size=2_000)
+y = 0.35 * x + rng.normal(scale=0.4, size=len(x))
+
 fig = Figure(title="Standalone").scatter(x, y)
 fig.to_html("chart.html")
 ```
+
+### Standalone HTML Safety And CSP
+
+`Figure.to_html()` writes one self-contained document with the JavaScript client,
+JSON chart spec, and binary data blob inlined. That makes exports easy to share
+from notebooks, docs, and reports with no CDN or Python kernel required.
+
+Because standalone exports intentionally use inline scripts, strict
+Content-Security-Policy deployments need an application wrapper that serves the
+JavaScript bundle separately and applies the host's nonce or hash policy. User
+strings in titles, axis labels, trace names, legends, series names, and
+categories are escaped before entering inline JSON or `<title>`, and non-finite
+JSON metadata is rejected instead of emitted as browser-dependent JavaScript.
 
 ## Example Apps
 
 - [`reflex_fastcharts_app/`](reflex_fastcharts_app/) is a standalone Reflex
   dashboard that embeds generated fastcharts line, scatter, density, histogram,
   area, bar, and heatmap charts, including large-data drilldown examples.
+- [`docs/api-examples.md`](docs/api-examples.md) has copyable examples for the
+  currently implemented 2D chart families.
 
 ## API Styles
 
 Use the fluent API when you want quick imperative chart construction:
 
 ```python
+import numpy as np
 from fastcharts import Figure
+
+timestamps = np.arange("2026-01-01", "2026-01-08", dtype="datetime64[h]")
+values = np.sin(np.linspace(0, 12, len(timestamps)))
 
 Figure(title="Telemetry").line(timestamps, values, name="sensor A")
 ```
@@ -132,8 +232,15 @@ props:
 ```python
 import fastcharts as fc
 
+data = {
+    "gdp": [38_000, 46_000, 58_000, 71_000],
+    "life": [76.1, 79.4, 81.2, 83.1],
+    "continent": ["Europe", "Americas", "Asia", "Europe"],
+    "pop": [12, 33, 21, 8],
+}
+
 fc.scatter_chart(
-    fc.scatter(x="gdp", y="life", color="continent", size="pop", data=df),
+    fc.scatter(x="gdp", y="life", color="continent", size="pop", data=data),
     fc.x_axis(label="GDP per capita"),
     fc.y_axis(label="life expectancy"),
     fc.legend(),
@@ -158,14 +265,25 @@ overview, adaptive scatter drilldown, huge line/time-series, many-chart
 dashboards, interaction smoothness, and payload/export size. See
 [`docs/benchmark.md`](docs/benchmark.md) for the category goals and fairness
 notes. The stable category IDs are emitted in `benchmark.json` and attached to
-the fastcharts-only benchmark rows as `benchmark_categories`.
+the fastcharts-only benchmark rows as `benchmark_categories`. JSON benchmark
+artifacts also include a schema version and `environment` block with Python,
+platform, package, executable, and git metadata so performance claims keep their
+run context. The benchmark verifier rejects non-finite, negative, or
+non-positive work-size metrics so dashboards cannot publish impossible numbers.
 
 Run the expanded comparison:
 
 ```bash
 uv pip install matplotlib seaborn plotly kaleido bokeh altair datashader hvplot psutil
-uv run python benchmarks/bench_vs.py --sizes 1e3,1e4,1e5,1e6 --budget 45
+uv run python benchmarks/bench_vs.py --sizes 1e3,1e4,1e5,1e6 --budget 45 --json benchmark.json
+make check-benchmark-report BENCHMARK_JSON=benchmark.json BENCHMARK_KIND=scatter-vs
 ```
+
+Run `make check-benchmark-harness` after editing benchmark harness code,
+environment metadata, report validation, or regression comparison scripts.
+
+Run `make check-claims` after editing README/docs/package metadata or copying
+benchmark numbers into public-facing text.
 
 Run the fastcharts kernel/payload benchmarks:
 
@@ -244,23 +362,39 @@ Important properties:
 ## Development
 
 ```bash
-cargo test
-cargo clippy --all-targets -- -D warnings
-cargo build --release
-
-node js/build.mjs
-node js/build.mjs --check
-
 uv venv
 uv pip install -e ".[dev]"
-uv run pytest
-uv run ruff check .
-uv run ruff format --check .
-uv run ty check
+make check
 ```
 
 The JavaScript client is dependency-free. `js/build.mjs` copies the ESM client
 for anywidget and wraps a standalone IIFE for `Figure.to_html`.
+
+Use `make check-full` before production-facing changes; it adds fallback tests,
+JS bundle checks, Rust tests/lints/build, and the native ABI smoke. That full
+gate expects Node 18+ plus `cargo`, `rustc`, and clippy
+(`rustup component add clippy`). Use
+`make check-sdist` and `make check-wheel` before touching packaging/docs release
+surfaces; add `WHEEL_EXPECT=--expect-native` when verifying a native release
+wheel. Use `make check-artifacts SDIST=/path/to/fastcharts.tar.gz
+WHEEL=/path/to/fastcharts.whl` when CI or a release job has already produced the
+artifacts and you want to verify those exact files. Use `make check-ci` after
+editing workflow gates, release publishing, or benchmark artifact wiring. Use
+`make check-docs` after editing README/API prose or public benchmark wording. Use
+`make check-examples` after editing README snippets, `docs/api-examples.md`, or
+the Reflex dashboard chart registry. Use `make check-security` after touching
+standalone HTML export, tooltips, legends, labels, or browser client text
+insertion. Use `make check-errors` after changing validation, public errors,
+builder rollback behavior, or chart/widget caching. Use `make check-api` after
+changing public exports, lazy import mappings, component factories, or public
+annotations. Use `make check-import` after changing `fastcharts.__init__`,
+lazy import boundaries, widget/export boundaries, or backend import setup. Use
+`make check-browser CHROMIUM=/path/to/chrome` for the render smokes. The
+underlying `scripts/verify_local.py --list/--dry-run` commands show exactly
+what will run.
+
+See [`docs/contributing.md`](docs/contributing.md) for the PR checklist and
+chart-type contribution guide.
 
 ## Roadmap
 
@@ -279,3 +413,6 @@ science/engineering, product analytics, and dashboards.
 - **Phase 3:** CPU reference rasterizer, perceptual-diff CI, native export.
 - **Phase 4:** out-of-core tiling, shared-context dashboards, filter Tier C.
 - **Phase 5:** Plotly compatibility shim and generated conformance suite.
+
+For release gates and the current alpha stability contract, see
+[`docs/production-readiness.md`](docs/production-readiness.md).

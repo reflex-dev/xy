@@ -5,6 +5,7 @@ import reflex as rx
 from .live_drilldown import LIVE_DRILLDOWN_ROUTE, drilldown_endpoint
 
 LIVE_DRILLDOWN_CHART = {
+    "id": "live-drilldown",
     "title": "Live 100M Drilldown Scatter",
     "subtitle": "100M source points with Reflex-backed adaptive LOD.",
     "src": "/charts/live_drilldown_100m.html",
@@ -13,12 +14,14 @@ LIVE_DRILLDOWN_CHART = {
 
 COMPARISON_CHARTS = [
     {
+        "id": "fastcharts-scatter",
         "title": "fastcharts Colored Scatter",
         "subtitle": "10M source points with color and size, exported through the density tier.",
         "src": "/charts/colored_scatter.html",
         "stat": "10M source",
     },
     {
+        "id": "plotly-scatter",
         "title": "Plotly Scattergl",
         "subtitle": "100k sampled points from the same distribution, rendered as WebGL markers.",
         "src": "/charts/plotly_colored_scatter.html",
@@ -26,7 +29,24 @@ COMPARISON_CHARTS = [
     },
 ]
 
+BUSINESS_CHART = {
+    "id": "business-overview",
+    "title": "Business Overview",
+    "subtitle": "Small grouped revenue and pipeline columns for ordinary dashboard data.",
+    "src": "/charts/business_overview.html",
+    "stat": "small data",
+}
+
+RETENTION_CHART = {
+    "id": "retention-cohort",
+    "title": "Retention Cohort",
+    "subtitle": "Small product analytics heatmap with cohort rows and weekly retention columns.",
+    "src": "/charts/retention_cohort.html",
+    "stat": "small data",
+}
+
 LINE_CHART = {
+    "id": "line",
     "title": "Decimated Line",
     "subtitle": "120k sorted samples, shipped as a screen-bounded line payload.",
     "src": "/charts/line_walk.html",
@@ -34,6 +54,7 @@ LINE_CHART = {
 }
 
 AREA_CHART = {
+    "id": "area",
     "title": "Filled Area",
     "subtitle": "80k samples filled against a baseline with a line overlay.",
     "src": "/charts/area.html",
@@ -41,6 +62,7 @@ AREA_CHART = {
 }
 
 DENSITY_CHART = {
+    "id": "density-scatter",
     "title": "Density Scatter",
     "subtitle": "10M raw points aggregated into a responsive density texture.",
     "src": "/charts/density_scatter.html",
@@ -48,6 +70,7 @@ DENSITY_CHART = {
 }
 
 HISTOGRAM_CHART = {
+    "id": "histogram",
     "title": "Histogram",
     "subtitle": "500k values binned into a shared rectangle-renderer chart.",
     "src": "/charts/histogram.html",
@@ -55,6 +78,7 @@ HISTOGRAM_CHART = {
 }
 
 BAR_CHART = {
+    "id": "grouped-bars",
     "title": "Grouped Bars",
     "subtitle": "Multiple category series sharing the rectangle primitive.",
     "src": "/charts/bar_column.html",
@@ -62,6 +86,7 @@ BAR_CHART = {
 }
 
 STACKED_BAR_CHART = {
+    "id": "stacked-bars",
     "title": "Stacked Bars",
     "subtitle": "Positive series stacked from a shared baseline.",
     "src": "/charts/stacked_bar.html",
@@ -69,6 +94,7 @@ STACKED_BAR_CHART = {
 }
 
 HORIZONTAL_BAR_CHART = {
+    "id": "horizontal-bars",
     "title": "Horizontal Bars",
     "subtitle": "Category labels on the y-axis with value bars extending along x.",
     "src": "/charts/horizontal_bar.html",
@@ -76,11 +102,39 @@ HORIZONTAL_BAR_CHART = {
 }
 
 HEATMAP_CHART = {
+    "id": "heatmap",
     "title": "Heatmap",
     "subtitle": "Matrix values rendered as colored cells on categorical axes.",
     "src": "/charts/heatmap.html",
     "stat": "grid",
 }
+
+BUSINESS_CHARTS = [
+    BUSINESS_CHART,
+    RETENTION_CHART,
+]
+
+CORE_CHARTS = [
+    LINE_CHART,
+    AREA_CHART,
+    HISTOGRAM_CHART,
+    BAR_CHART,
+    STACKED_BAR_CHART,
+    HORIZONTAL_BAR_CHART,
+    HEATMAP_CHART,
+]
+
+LARGE_DATA_CHARTS = [
+    DENSITY_CHART,
+    *COMPARISON_CHARTS,
+    LIVE_DRILLDOWN_CHART,
+]
+
+CHART_NAV = [
+    *BUSINESS_CHARTS,
+    *CORE_CHARTS,
+    *LARGE_DATA_CHARTS,
+]
 
 
 def metric(label: str, value: str) -> rx.Component:
@@ -135,6 +189,51 @@ def chart_panel(chart: dict[str, str], *, fluid: bool = False) -> rx.Component:
         background="#fbfcfe",
         overflow="hidden",
         width="100%",
+        id=chart["id"],
+    )
+
+
+def chart_selector() -> rx.Component:
+    return rx.flex(
+        *[
+            rx.link(
+                chart["title"],
+                href=f"#{chart['id']}",
+                padding="0.45rem 0.65rem",
+                border="1px solid #ccd6e2",
+                border_radius="8px",
+                background="#ffffff",
+                color="#1d2939",
+                text_decoration="none",
+                font_size="0.875rem",
+                font_weight="500",
+            )
+            for chart in CHART_NAV
+        ],
+        align="center",
+        gap="0.5rem",
+        wrap="wrap",
+        width="100%",
+    )
+
+
+def chart_section(
+    title: str,
+    charts: list[dict[str, str]],
+    *,
+    columns: dict[str, str] | None = None,
+) -> rx.Component:
+    return rx.vstack(
+        rx.heading(title, size="6"),
+        rx.grid(
+            *[chart_panel(chart, fluid=True) for chart in charts],
+            columns=columns or {"initial": "1", "lg": "2"},
+            gap="1rem",
+            width="100%",
+        ),
+        spacing="3",
+        width="100%",
+        align="stretch",
     )
 
 
@@ -160,41 +259,16 @@ def index() -> rx.Component:
             rx.grid(
                 metric("Renderer", "WebGL2"),
                 metric("Transport", "binary f32"),
+                metric("Business demos", str(len(BUSINESS_CHARTS))),
                 metric("Largest demo", "100M points"),
-                columns={"initial": "1", "sm": "3"},
+                columns={"initial": "1", "sm": "2", "lg": "4"},
                 gap="1rem",
                 width="100%",
             ),
-            chart_panel(LIVE_DRILLDOWN_CHART, fluid=True),
-            rx.grid(
-                *[chart_panel(chart, fluid=True) for chart in COMPARISON_CHARTS],
-                columns={"initial": "1", "lg": "2"},
-                gap="1rem",
-                width="100%",
-            ),
-            rx.grid(
-                chart_panel(LINE_CHART, fluid=True),
-                chart_panel(AREA_CHART, fluid=True),
-                columns={"initial": "1", "lg": "2"},
-                gap="1rem",
-                width="100%",
-            ),
-            rx.grid(
-                chart_panel(HISTOGRAM_CHART, fluid=True),
-                chart_panel(BAR_CHART, fluid=True),
-                columns={"initial": "1", "lg": "2"},
-                gap="1rem",
-                width="100%",
-            ),
-            rx.grid(
-                chart_panel(STACKED_BAR_CHART, fluid=True),
-                chart_panel(HORIZONTAL_BAR_CHART, fluid=True),
-                columns={"initial": "1", "lg": "2"},
-                gap="1rem",
-                width="100%",
-            ),
-            chart_panel(HEATMAP_CHART, fluid=True),
-            chart_panel(DENSITY_CHART, fluid=True),
+            chart_selector(),
+            chart_section("Business charts", BUSINESS_CHARTS),
+            chart_section("Core 2D gallery", CORE_CHARTS),
+            chart_section("Large-data demos", LARGE_DATA_CHARTS, columns={"initial": "1"}),
             spacing="5",
             width="100%",
             max_width="1280px",

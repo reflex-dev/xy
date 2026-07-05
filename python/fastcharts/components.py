@@ -27,11 +27,38 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from os import PathLike
 from typing import Any, Optional, Union
 
 import numpy as np
 
 from .figure import Figure
+
+__all__ = [
+    "Axis",
+    "Chart",
+    "Component",
+    "Legend",
+    "Mark",
+    "area",
+    "area_chart",
+    "bar",
+    "bar_chart",
+    "column",
+    "column_chart",
+    "heatmap",
+    "heatmap_chart",
+    "hist",
+    "histogram",
+    "histogram_chart",
+    "legend",
+    "line",
+    "line_chart",
+    "scatter",
+    "scatter_chart",
+    "x_axis",
+    "y_axis",
+]
 
 # ---------------------------------------------------------------------------
 # Component tree (lightweight declarative specs — no rendering here)
@@ -49,7 +76,7 @@ class Mark(Component):
     y: Any = None
     data: Any = None
     name: Optional[str] = None
-    props: dict = field(default_factory=dict)
+    props: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -319,19 +346,20 @@ def legend(show: bool = True) -> Legend:
 # ---------------------------------------------------------------------------
 
 
-def _resolve(data: Any, key: Any) -> Any:
+def _resolve(data: Any, key: Any, *, context: Optional[str] = None) -> Any:
     """Reflex `data_key` idiom: a string names a column in `data`; anything else
     is passed through as the values themselves."""
     if isinstance(key, str):
+        prefix = f"{context} " if context else ""
         if data is None:
             raise ValueError(
-                f"column name {key!r} given but no data= provided; pass data=df "
+                f"{prefix}column name {key!r} given but no data= provided; pass data=df "
                 "or give x/y/color/size as arrays"
             )
         try:
             return data[key]
         except (KeyError, TypeError, IndexError) as e:
-            raise ValueError(f"column {key!r} not found in data") from e
+            raise ValueError(f"{prefix}column {key!r} not found in data") from e
     return key
 
 
@@ -433,21 +461,38 @@ class Chart(Component):
 
         display(self.widget())
 
-    def to_html(self, path: Optional[str] = None) -> str:
+    def to_html(self, path: Optional[str | PathLike[str]] = None) -> str:
         return self.figure().to_html(path)
 
-    def memory_report(self) -> dict:
+    def to_png(
+        self,
+        path: Optional[str] = None,
+        *,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        scale: float = 2.0,
+        chromium: Optional[str] = None,
+    ) -> bytes:
+        return self.figure().to_png(
+            path,
+            width=width,
+            height=height,
+            scale=scale,
+            chromium=chromium,
+        )
+
+    def memory_report(self) -> dict[str, Any]:
         return self.figure().memory_report()
 
 
-def _resolve_color(data: Any, color: Any) -> Any:
+def _resolve_color(data: Any, color: Any, *, context: Optional[str] = None) -> Any:
     """Disambiguate a string `color`: a CSS color is a constant; any other
     string is a column name resolved from `data` (Reflex data_key idiom)."""
     if not isinstance(color, str):
         return color  # None, or an already-materialized array
     if _looks_like_css(color):
         return color  # constant color
-    return _resolve(data, color)  # column name → values (raises if no data)
+    return _resolve(data, color, context=context)  # column name → values (raises if no data)
 
 
 def _strict_bool(value: Any, label: str) -> bool:
@@ -515,11 +560,11 @@ _CSS_NAMES = {
 def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
     size = m.props["size"]
     fig.scatter(
-        _resolve(data, m.x),
-        _resolve(data, m.y),
+        _resolve(data, m.x, context=f"{m.kind}.x"),
+        _resolve(data, m.y, context=f"{m.kind}.y"),
         name=m.name,
-        color=_resolve_color(data, m.props["color"]),
-        size=_resolve(data, size) if isinstance(size, str) else size,
+        color=_resolve_color(data, m.props["color"], context=f"{m.kind}.color"),
+        size=_resolve(data, size, context=f"{m.kind}.size") if isinstance(size, str) else size,
         colormap=m.props["colormap"],
         size_range=m.props["size_range"],
         opacity=m.props["opacity"],
@@ -529,8 +574,8 @@ def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
 
 def _apply_line(fig: Figure, m: Mark, data: Any) -> None:
     fig.line(
-        _resolve(data, m.x),
-        _resolve(data, m.y),
+        _resolve(data, m.x, context=f"{m.kind}.x"),
+        _resolve(data, m.y, context=f"{m.kind}.y"),
         name=m.name,
         color=m.props["color"],
         width=m.props["width"],
@@ -541,9 +586,9 @@ def _apply_line(fig: Figure, m: Mark, data: Any) -> None:
 def _apply_area(fig: Figure, m: Mark, data: Any) -> None:
     base = m.props["base"]
     fig.area(
-        _resolve(data, m.x),
-        _resolve(data, m.y),
-        base=_resolve(data, base) if isinstance(base, str) else base,
+        _resolve(data, m.x, context=f"{m.kind}.x"),
+        _resolve(data, m.y, context=f"{m.kind}.y"),
+        base=_resolve(data, base, context=f"{m.kind}.base") if isinstance(base, str) else base,
         name=m.name,
         color=m.props["color"],
         opacity=m.props["opacity"],
@@ -554,7 +599,7 @@ def _apply_area(fig: Figure, m: Mark, data: Any) -> None:
 
 def _apply_histogram(fig: Figure, m: Mark, data: Any) -> None:
     fig.histogram(
-        _resolve(data, m.x),
+        _resolve(data, m.x, context=f"{m.kind}.values"),
         bins=m.props["bins"],
         range=m.props["range"],
         density=m.props["density"],
@@ -566,9 +611,9 @@ def _apply_histogram(fig: Figure, m: Mark, data: Any) -> None:
 
 def _apply_heatmap(fig: Figure, m: Mark, data: Any) -> None:
     fig.heatmap(
-        _resolve(data, m.props["z"]),
-        x=_resolve(data, m.x) if m.x is not None else None,
-        y=_resolve(data, m.y) if m.y is not None else None,
+        _resolve(data, m.props["z"], context=f"{m.kind}.z"),
+        x=_resolve(data, m.x, context=f"{m.kind}.x") if m.x is not None else None,
+        y=_resolve(data, m.y, context=f"{m.kind}.y") if m.y is not None else None,
         name=m.name,
         colormap=m.props["colormap"],
         domain=m.props["domain"],
@@ -579,13 +624,13 @@ def _apply_heatmap(fig: Figure, m: Mark, data: Any) -> None:
 def _apply_bar(fig: Figure, m: Mark, data: Any) -> None:
     base = m.props["base"]
     fig.bar(
-        _resolve(data, m.x),
-        _resolve(data, m.y),
+        _resolve(data, m.x, context=f"{m.kind}.x"),
+        _resolve(data, m.y, context=f"{m.kind}.y"),
         name=m.name,
         color=m.props["color"],
         colors=m.props["colors"],
         width=m.props["width"],
-        base=_resolve(data, base) if isinstance(base, str) else base,
+        base=_resolve(data, base, context=f"{m.kind}.base") if isinstance(base, str) else base,
         mode=m.props["mode"],
         orientation=m.props["orientation"],
         series=m.props["series"],
@@ -596,13 +641,13 @@ def _apply_bar(fig: Figure, m: Mark, data: Any) -> None:
 def _apply_column(fig: Figure, m: Mark, data: Any) -> None:
     base = m.props["base"]
     fig.column(
-        _resolve(data, m.x),
-        _resolve(data, m.y),
+        _resolve(data, m.x, context=f"{m.kind}.x"),
+        _resolve(data, m.y, context=f"{m.kind}.y"),
         name=m.name,
         color=m.props["color"],
         colors=m.props["colors"],
         width=m.props["width"],
-        base=_resolve(data, base) if isinstance(base, str) else base,
+        base=_resolve(data, base, context=f"{m.kind}.base") if isinstance(base, str) else base,
         mode=m.props["mode"],
         orientation=m.props["orientation"],
         series=m.props["series"],

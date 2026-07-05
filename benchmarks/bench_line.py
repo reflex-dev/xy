@@ -23,12 +23,16 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from benchmarks.bench_vs import _measure, np  # noqa: E402
+from categories import BENCHMARK_CATEGORIES, categories_for  # noqa: E402
+from environment import SCHEMA_VERSION, collect_environment_metadata  # noqa: E402
 
 # Default resampler downsample target; both aggregating libs aim for ~this many
 # on-screen points, so their payloads are compared at the same visual budget.
 N_OUT = 2000
+LINE_CATEGORY_IDS = ("huge_line_time_series", "payload_export_size")
 
 
 def _series(n: int):
@@ -139,11 +143,20 @@ def run(sizes: list[int]) -> dict:
                 row.pop("_artifact", None)
             except Exception as e:
                 row["status"] = f"failed({type(e).__name__}: {str(e)[:80]})"
+            row["pts_per_s"] = (n / row["total_s"]) if row.get("total_s") else None
             if name == "fastcharts":
                 row["extrema_oracle"] = "pass" if oracle else "FAIL"
             results[name].append(row)
         del x, y
-    return {"sizes": sizes, "n_out": N_OUT, "results": results}
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "environment": collect_environment_metadata(),
+        "benchmark_categories": list(BENCHMARK_CATEGORIES),
+        "tracked_categories": categories_for(LINE_CATEGORY_IDS),
+        "sizes": sizes,
+        "n_out": N_OUT,
+        "results": results,
+    }
 
 
 def _fmt_bytes(b: int | None) -> str:

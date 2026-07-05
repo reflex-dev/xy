@@ -29,6 +29,8 @@ Then open the URL printed by Reflex, usually `http://localhost:3000`.
 | Chart | File | What it shows |
 |---|---|---|
 | Live drilldown scatter | `assets/charts/live_drilldown_100m.html` | 100M-point adaptive LOD through the Reflex backend |
+| Business overview | `assets/charts/business_overview.html` | Small grouped revenue and pipeline columns for normal dashboard data |
+| Retention cohort | `assets/charts/retention_cohort.html` | Small product analytics heatmap for ordinary cohort retention |
 | Decimated line | `assets/charts/line_walk.html` | 120k-point time-series line |
 | Filled area | `assets/charts/area.html` | 80k-point filled time series with a baseline |
 | Colored scatter | `assets/charts/colored_scatter.html` | 10M points with color and size channels, aggregated for export |

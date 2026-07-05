@@ -29,6 +29,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from categories import BENCHMARK_CATEGORIES, categories_for  # noqa: E402
+from environment import SCHEMA_VERSION, collect_environment_metadata  # noqa: E402
+
 # import-name -> distribution name (they differ often enough to be explicit).
 # The import name is what `import X` costs; the distribution name is what
 # `importlib.metadata` sizes.
@@ -44,6 +49,11 @@ DEFAULT_TARGETS: list[tuple[str, str]] = [
     ("holoviews", "holoviews"),
     ("plotly_resampler", "plotly-resampler"),
 ]
+INSTALL_CATEGORY_IDS = (
+    "install_footprint_import_budget",
+    "small_data_startup",
+    "payload_export_size",
+)
 
 
 def cold_import_ms(module: str, repeat: int) -> tuple[float | None, str | None]:
@@ -116,7 +126,7 @@ def run(targets: list[tuple[str, str]], repeat: int) -> dict:
         size, nfiles, size_reason = dist_size_bytes(dist)
         status = "ok"
         if ms is None and size is None:
-            status = f"unavailable ({imp_reason or size_reason})"
+            status = f"unavailable({imp_reason or size_reason})"
         rows.append(
             {
                 "module": module,
@@ -130,7 +140,15 @@ def run(targets: list[tuple[str, str]], repeat: int) -> dict:
                 "status": status,
             }
         )
-    return {"repeat": repeat, "python": sys.version.split()[0], "results": rows}
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "environment": collect_environment_metadata(),
+        "benchmark_categories": list(BENCHMARK_CATEGORIES),
+        "tracked_categories": categories_for(INSTALL_CATEGORY_IDS),
+        "repeat": repeat,
+        "python": sys.version.split()[0],
+        "results": rows,
+    }
 
 
 def to_markdown(report: dict) -> str:

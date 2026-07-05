@@ -19,6 +19,15 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "goal": "Beat Plotly/Bokeh/Altair on first interactive paint for common charts.",
     },
     {
+        "id": "install_footprint_import_budget",
+        "name": "Install footprint and import budget",
+        "why": "Notebook, CI, and serverless users feel package weight and cold import time before the first chart exists.",
+        "metrics": "cold import time, installed distribution bytes, file count",
+        "harness": "benchmarks/bench_install.py",
+        "status": "tracked",
+        "goal": "Keep fastcharts lightweight at import and smaller to install than broad plotting stacks.",
+    },
+    {
         "id": "medium_direct_scatter",
         "name": "Medium direct scatter",
         "why": "Proves exact marker rendering, hover, color, and size channels before aggregation kicks in.",

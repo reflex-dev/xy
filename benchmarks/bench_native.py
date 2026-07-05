@@ -19,9 +19,19 @@ from array import array
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from abi_smoke import load  # noqa: E402
+from categories import BENCHMARK_CATEGORIES, categories_for  # noqa: E402
+from environment import SCHEMA_VERSION, collect_environment_metadata  # noqa: E402
+
+KERNEL_NATIVE_CATEGORY_IDS = (
+    "huge_line_time_series",
+    "huge_scatter_overview",
+    "core_2d_chart_breadth",
+    "interaction_smoothness",
+)
 
 
 def _ptr(a: array, ct):
@@ -149,6 +159,10 @@ def bench(lib, n: int) -> dict:
 
     return {
         "n": n,
+        "status": "ok",
+        "benchmark_categories": [
+            category["id"] for category in categories_for(KERNEL_NATIVE_CATEGORY_IDS)
+        ],
         "encode_mpts_s": encode_mpts,
         "zone_maps_mpts_s": zone_mpts,
         "m4_full_mpts_s": m4_mpts,
@@ -199,8 +213,15 @@ def main() -> None:
     if args.json:
         import json
 
+        report = {
+            "schema_version": SCHEMA_VERSION,
+            "environment": collect_environment_metadata(),
+            "benchmark_categories": list(BENCHMARK_CATEGORIES),
+            "tracked_categories": categories_for(KERNEL_NATIVE_CATEGORY_IDS),
+            "rows": rows,
+        }
         with open(args.json, "w", encoding="utf-8") as f:
-            json.dump({"rows": rows}, f, indent=2)
+            json.dump(report, f, indent=2)
 
 
 if __name__ == "__main__":
