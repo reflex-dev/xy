@@ -6,8 +6,12 @@ code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
 
 ## Layout
 
-- `src/` — Rust core, **zero external crates by design** (C ABI, no registry
-  access needed; one cdylib per platform serves every CPython version). Bump
+- `src/` — Rust core, **minimal external crates** (C ABI; one cdylib per
+  platform serves every CPython version). Dependencies are allowed when they
+  pay for themselves (measured win, small tree, well-maintained) — minimize,
+  don't prohibit. Caveat: crates.io is unreachable from the dev sandbox, so a
+  required crate must be vendored (`cargo vendor`) or the sandbox loses the
+  ability to build/test the core; prefer feature-gated optional deps. Bump
   `ABI_VERSION` in `src/lib.rs` *and* `python/fastcharts/_native.py` together
   on any signature change.
 - `python/fastcharts/` — package. `_native.py` (ctypes) and `_fallback.py`

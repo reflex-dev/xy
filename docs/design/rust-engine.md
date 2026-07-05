@@ -55,12 +55,13 @@ src/
 ```
 
 Rules: `lib.rs` is the only file with `unsafe`; kernel modules are pure
-functions over slices (fuzzable, testable without FFI); **zero external
-crates stays law** (the whole point: one cdylib per platform serves every
-CPython, no registry supply chain — dossier §33). std-only has been enough
-for hash/PRNG/sort needs so far; if SIMD argminmax (tsdownsample-class
-speed) ever justifies a dependency, it goes behind a cargo feature so the
-zero-dep build remains the default artifact.
+functions over slices (fuzzable, testable without FFI); **dependencies are
+minimized, not prohibited** (policy 2026-07-05): a crate may be added when it
+pays for itself — measured win, small dependency tree, well-maintained — and
+the C-ABI/one-cdylib-per-platform property is preserved. Note the dev sandbox
+cannot reach crates.io, so required crates must be vendored or the sandbox
+loses local build/test; prefer feature-gated optional deps (e.g. SIMD
+argminmax, tsdownsample-class speed) with the lean build as default.
 
 ## 3. FFI protocol — how it evolves without rewrites
 
