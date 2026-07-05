@@ -60,6 +60,9 @@ jobs:
           echo "using $CHROME"
           python3 scripts/render_smoke_nonumpy.py "$CHROME"
 
+      - name: Static PNG export smoke (stdlib + Chromium)
+        run: FASTCHARTS_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")" python3 scripts/png_export_smoke.py
+
       - name: Native benchmark (stdlib only — executed numbers, no PyPI needed)
         run: python3 scripts/bench_native.py --sizes 1e5,1e6
 
@@ -81,10 +84,16 @@ jobs:
         run: .venv/bin/ty check python || echo "::warning::ty reported type findings (advisory)"
 
       - name: Python tests (native core)
-        run: .venv/bin/pytest -q
+        # Point PNG-export tests at the Playwright Chromium (not on PATH) so the
+        # full Figure.to_png path runs here rather than skipping.
+        run: |
+          export FASTCHARTS_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")"
+          .venv/bin/pytest -q
 
       - name: Python tests (NumPy fallback — §33 no-wheel contract)
-        run: FASTCHARTS_FORCE_FALLBACK=1 .venv/bin/pytest -q
+        run: |
+          export FASTCHARTS_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")"
+          FASTCHARTS_FORCE_FALLBACK=1 .venv/bin/pytest -q
 
       # End-to-end: a real Figure (line decimation + scatter) through to_html's
       # exact payload path, rendered in Chromium, pixels read back. Complements
@@ -150,7 +159,7 @@ jobs:
         run: |
           uv venv .venv
           uv pip install -p .venv/bin/python -e .
-          uv pip install -p .venv/bin/python matplotlib seaborn plotly kaleido bokeh altair datashader hvplot psutil
+          uv pip install -p .venv/bin/python matplotlib seaborn plotly kaleido bokeh altair datashader hvplot plotly-resampler psutil
       # Playwright Chromium for the time-to-first-render (browser paint) pass.
       - name: Install Chromium (Playwright)
         run: |
@@ -163,6 +172,8 @@ jobs:
             --sizes 1e3,1e4,1e5,1e6,3e6,1e7 --budget 45 \
             --ttfr --ttfr-max-n 1e5 --chromium "$CHROME" \
             --out docs/benchmark_ci.md --json benchmark.json
+      - name: Install footprint & cold import (methodology §1)
+        run: .venv/bin/python benchmarks/bench_install.py --json install.json | tee -a docs/benchmark_ci.md
       - name: Show report
         run: cat docs/benchmark_ci.md
       - uses: actions/upload-artifact@v4

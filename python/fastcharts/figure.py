@@ -1501,6 +1501,21 @@ class Figure:
         tax (§29 static-export row)."""
         return export.to_html(self, path)
 
+    def to_png(
+        self,
+        path: Optional[str] = None,
+        *,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        scale: float = 2.0,
+        chromium: Optional[str] = None,
+    ) -> bytes:
+        """Static PNG (export.py): renders the standalone HTML in headless
+        Chromium and screenshots it, so the raster matches the live chart.
+        Needs a Chromium/Chrome binary (see export.find_chromium); HTML export
+        needs nothing extra."""
+        return export.to_png(self, path, width=width, height=height, scale=scale, chromium=chromium)
+
     def memory_report(self) -> dict[str, Any]:
         """§27: every byte class itemized; if it isn't in the report it isn't real."""
         spec, blob = self.build_payload()
