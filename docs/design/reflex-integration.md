@@ -179,7 +179,137 @@ the compute; SSE replaces comm push. If hover/pick volume ever argues for it,
 the data plane can switch POST→WebSocket without touching the message
 protocol — `comm` is already the abstraction seam.
 
-## 6. Build order
+## 6. What an example app looks like (target DX)
+
+A fleet-telemetry dashboard: 10M GPS pings as a drillable density scatter,
+box-select cross-filtering a latency histogram, and a live throughput line
+fed by a background task. This is the acceptance bar for the whole design —
+**aspirational code**, written against the API of §4, not runnable yet.
+
+```python
+import numpy as np
+import reflex as rx
+import fastcharts as fc
+import reflex_fastcharts as rfc
+
+
+def load_pings() -> dict[str, np.ndarray]:
+    ...  # 10M rows: lon, lat, latency_ms — parquet via pyarrow, zero-copy ingest
+
+
+class Telemetry(rx.State):
+    # Figure TOKENS are the only chart state — strings, cheap to diff.
+    # The figures themselves (80+ MB of canonical columns) live in the
+    # kernel-side registry, never in rx.State.
+    map_chart: str = ""
+    latency_chart: str = ""
+    live_chart: str = ""
+
+    hovered: dict = {}          # row under the cursor (semantic, small)
+    selected_count: int = 0
+    streaming: bool = False
+
+    @rx.event
+    def load(self):
+        pings = load_pings()
+        self._pings = pings     # backend-only var: raw arrays for cross-filter
+
+        # 10M points: ships as a density surface, drills to real points on
+        # zoom, hover reads exact f64 rows — all default behavior.
+        fig = fc.Figure().scatter(
+            pings["lon"], pings["lat"], color=pings["latency_ms"]
+        )
+        self.map_chart = rfc.register(fig)
+
+        self.latency_chart = rfc.register(
+            fc.Figure().histogram(pings["latency_ms"], bins=120)
+        )
+
+        self.live_chart = rfc.register(
+            fc.Figure().line(np.array([0.0]), np.array([0.0]))
+        )
+
+    @rx.event
+    def on_map_hover(self, row: dict):
+        self.hovered = row      # {'x': lon, 'y': lat, 'color_value': latency…}
+
+    @rx.event
+    def on_map_select(self, selection: dict):
+        # Box-select on 10M points → cross-filter the histogram. The
+        # selection payload carries indices (capped) + count; the handler
+        # rebuilds the small figure and swaps the token. One screen-bounded
+        # refetch on the client; rx.State never sees a data buffer.
+        idx = rfc.selection_indices(selection)          # np.ndarray[u32]
+        self.selected_count = int(len(idx))
+        rfc.release(self.latency_chart)
+        self.latency_chart = rfc.register(
+            fc.Figure().histogram(self._pings["latency_ms"][idx], bins=120)
+        )
+
+    @rx.event(background=True)
+    async def stream(self):
+        async with self:
+            self.streaming = True
+        t = 0.0
+        while self.streaming:
+            t += 1.0
+            # append → version bump → SSE push → client applies the same
+            # `append` message the notebook widget sends (follow policy:
+            # refit at home / slide when pinned to the live edge).
+            rfc.append(self.live_chart, x=[t], y=[throughput_sample()])
+            await asyncio.sleep(0.25)
+
+    @rx.event
+    def cleanup(self):
+        for token in (self.map_chart, self.latency_chart, self.live_chart):
+            rfc.release(token)
+
+
+def index() -> rx.Component:
+    return rx.vstack(
+        rx.hstack(
+            rfc.chart(                      # 10M-point drillable map
+                token=Telemetry.map_chart,
+                on_hover=Telemetry.on_map_hover,
+                on_select=Telemetry.on_map_select,
+                width="100%", height="520px",
+            ),
+            rx.vstack(
+                rfc.chart(token=Telemetry.latency_chart, height="250px"),
+                rfc.chart(token=Telemetry.live_chart, height="250px"),
+                rx.text(f"{Telemetry.selected_count:,} pings selected"),
+                rx.button("Go live", on_click=Telemetry.stream),
+            ),
+        ),
+        on_mount=Telemetry.load,
+        on_unmount=Telemetry.cleanup,
+    )
+
+
+app = rx.App()
+rfc.setup(app)                              # mounts /_fastcharts/* routes
+app.add_page(index)
+```
+
+What this example is designed to prove, line by line:
+
+- **State stays tiny.** Three token strings, a hovered row, a count, a flag.
+  The 10M-point figure never crosses the state serializer; `_pings` is a
+  backend-only var (never synced).
+- **Interaction costs what the notebook costs.** Pan/zoom on the map goes
+  component → `/msg` → pyramid/re-bin → framed binary back. No Reflex event
+  round-trip, no state diff, no re-render of anything else on the page.
+- **Cross-filtering is just Python.** `on_map_select` receives a semantic
+  selection, slices NumPy, registers a fresh small figure, swaps the token.
+  The component sees a new token prop and refetches one screen-bounded
+  payload. No special "linked charts" machinery to learn.
+- **Streaming is one call in a background task.** `rfc.append` reuses the
+  whole Phase-0 streaming stack; the client-side follow policy makes the
+  live line march without any frontend code.
+- **Lifecycle is visible.** `register`/`release` bracket the figures;
+  unmount cleans up; the TTL sweep catches whatever a crashed tab leaks.
+
+## 7. Build order
 
 1. `fastcharts/channel.py`: extract `handle_message` from `widget.py`; add
    the binary framing helpers + tests (no behavior change to the widget).
