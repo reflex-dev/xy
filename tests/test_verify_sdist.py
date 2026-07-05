@@ -96,6 +96,16 @@ CI_YML = (
     "      - run: python scripts/verify_ci_workflow.py\n"
     "      - uses: actions/upload-artifact@v4\n" + ("ci workflow padding\n" * 100)
 )
+CODSPEED_YML = (
+    "name: CodSpeed\n"
+    "jobs:\n"
+    "  benchmarks:\n"
+    "    steps:\n"
+    "      - uses: CodSpeedHQ/action@v4\n"
+    "      - run: uv pip install pytest-codspeed\n"
+    "      - run: python -c 'import fastcharts.kernels as k; assert k.BACKEND == \"native\"'\n"
+    + ("codspeed workflow padding\n" * 100)
+)
 RELEASE_YML = (
     "name: Release\n"
     "jobs:\n"
@@ -187,6 +197,8 @@ def _write_sdist(
                 data = BUSINESS_OVERVIEW_HTML.encode("utf-8")
             elif name == ".github/workflows/ci.yml":
                 data = CI_YML.encode("utf-8")
+            elif name == ".github/workflows/codspeed.yml":
+                data = CODSPEED_YML.encode("utf-8")
             elif name == ".github/workflows/release.yml":
                 data = RELEASE_YML.encode("utf-8")
             _add_file(tf, f"{root}/{name}", data)
@@ -417,6 +429,25 @@ def test_verify_sdist_rejects_missing_release_workflow(tmp_path: Path) -> None:
     _write_sdist(sdist, omit={".github/workflows/release.yml"})
 
     with pytest.raises(AssertionError, match=r"release\.yml"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+def test_verify_sdist_rejects_missing_codspeed_workflow(tmp_path: Path) -> None:
+    sdist = tmp_path / "fastcharts-0.1.0.tar.gz"
+    _write_sdist(sdist, omit={".github/workflows/codspeed.yml"})
+
+    with pytest.raises(AssertionError, match=r"codspeed\.yml"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
+def test_verify_sdist_rejects_corrupt_codspeed_workflow(tmp_path: Path) -> None:
+    sdist = tmp_path / "fastcharts-0.1.0.tar.gz"
+    _write_sdist(
+        sdist,
+        replacements={".github/workflows/codspeed.yml": "name: CodSpeed\n" + ("padding\n" * 200)},
+    )
+
+    with pytest.raises(AssertionError, match=r"codspeed\.yml"):
         verify_sdist.verify_sdist(str(sdist))
 
 

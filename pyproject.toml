@@ -35,6 +35,7 @@ path = "hatch_build.py"
 [tool.hatch.build.targets.sdist]
 include = [
     ".github/workflows/ci.yml",
+    ".github/workflows/codspeed.yml",
     ".github/workflows/release.yml",
     "python",
     "src",

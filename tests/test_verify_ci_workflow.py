@@ -23,6 +23,10 @@ def test_ci_workflow_accepts_current_gates() -> None:
     assert verify_ci_workflow.validate_ci_workflow() == []
 
 
+def test_codspeed_workflow_accepts_current_gates() -> None:
+    assert verify_ci_workflow.validate_codspeed_workflow() == []
+
+
 def test_all_workflows_accept_current_gates() -> None:
     assert verify_ci_workflow.validate_all_workflows() == []
 
@@ -91,6 +95,44 @@ def test_ci_workflow_rejects_missing_install_benchmark_verification(tmp_path: Pa
     errors = verify_ci_workflow.validate_workflow(path)
 
     assert any("benchmark" in error and "install-footprint" in error for error in errors)
+
+
+def test_ci_workflow_rejects_benchmark_job_without_native_backend_assertion(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    block = (
+        "      - name: Verify native benchmark backend\n"
+        "        run: |\n"
+        "          .venv/bin/python - <<'PY'\n"
+        "          import fastcharts.kernels as k\n"
+        '          assert k.BACKEND == "native", f"benchmark job requires native backend, got {k.BACKEND!r}"\n'
+        "          PY\n"
+    )
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace(block, ""), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("benchmark" in error and "native backend" in error for error in errors)
+
+
+def test_codspeed_workflow_rejects_missing_native_backend_assertion(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/codspeed.yml").read_text(encoding="utf-8")
+    block = (
+        "      - name: Verify native benchmark backend\n"
+        "        run: |\n"
+        "          .venv/bin/python - <<'PY'\n"
+        "          import fastcharts.kernels as k\n"
+        '          assert k.BACKEND == "native", f"CodSpeed requires native backend, got {k.BACKEND!r}"\n'
+        "          PY\n\n"
+    )
+    path = tmp_path / "codspeed.yml"
+    path.write_text(workflow.replace(block, ""), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_codspeed_workflow(path)
+
+    assert any("CodSpeed benchmarks job" in error and "native backend" in error for error in errors)
 
 
 def test_ci_workflow_rejects_missing_claim_guardrail_gate(tmp_path: Path) -> None:

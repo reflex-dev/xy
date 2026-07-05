@@ -200,6 +200,12 @@ jobs:
           uv venv .venv
           uv pip install -p .venv/bin/python -e .
           uv pip install -p .venv/bin/python matplotlib seaborn plotly kaleido bokeh altair datashader hvplot plotly-resampler psutil
+      - name: Verify native benchmark backend
+        run: |
+          .venv/bin/python - <<'PY'
+          import fastcharts.kernels as k
+          assert k.BACKEND == "native", f"benchmark job requires native backend, got {k.BACKEND!r}"
+          PY
       # Playwright Chromium for the time-to-first-render (browser paint) pass.
       - name: Install Chromium (Playwright)
         run: |

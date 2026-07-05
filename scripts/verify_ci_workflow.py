@@ -17,6 +17,7 @@ from typing import Optional
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+DEFAULT_CODSPEED_WORKFLOW = ROOT / ".github" / "workflows" / "codspeed.yml"
 DEFAULT_RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 DEFAULT_WORKFLOW = DEFAULT_CI_WORKFLOW
 REQUIRED_CI_JOBS = {
@@ -27,6 +28,7 @@ REQUIRED_CI_JOBS = {
     "wheels",
     "install_without_rust",
 }
+REQUIRED_CODSPEED_JOBS = {"benchmarks"}
 REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish"}
 
 
@@ -137,6 +139,9 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "CI",
         "non-blocking benchmark artifact path",
         "continue-on-error: true",
+        "Verify native benchmark backend",
+        'k.BACKEND == "native"',
+        "benchmark job requires native backend",
         "scripts/verify_benchmark_report.py",
         "Upload benchmark report",
         "if: always()",
@@ -189,6 +194,50 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
 def validate_workflow(path: Path = DEFAULT_WORKFLOW) -> list[str]:
     """Backward-compatible CI workflow verifier."""
     return validate_ci_workflow(path)
+
+
+def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[str]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"cannot read CodSpeed workflow {path}: {exc}"]
+
+    jobs = _job_blocks(text)
+    errors: list[str] = []
+    missing_jobs = sorted(REQUIRED_CODSPEED_JOBS - set(jobs))
+    if missing_jobs:
+        errors.append(f"CodSpeed workflow missing required jobs: {missing_jobs}")
+
+    _require_workflow_contains(
+        errors,
+        text,
+        "CodSpeed",
+        "push, PR, manual triggers, and OIDC permissions",
+        'branches: ["main"]',
+        "pull_request:",
+        "workflow_dispatch:",
+        "id-token: write",
+    )
+    _require_job_contains(
+        errors,
+        jobs,
+        "benchmarks",
+        "CodSpeed",
+        "native-only benchmark path",
+        "dtolnay/rust-toolchain@stable",
+        "actions/setup-python@v5",
+        'python-version: "3.11"',
+        "astral-sh/setup-uv@v5",
+        "cargo build --release",
+        "pytest-codspeed",
+        "Verify native benchmark backend",
+        'k.BACKEND == "native"',
+        "CodSpeed requires native backend",
+        "CodSpeedHQ/action@v4",
+        "mode: simulation",
+        "benchmarks/test_codspeed_kernels.py --codspeed",
+    )
+    return errors
 
 
 def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str]:
@@ -273,9 +322,14 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
 
 def validate_all_workflows(
     ci_path: Path = DEFAULT_CI_WORKFLOW,
+    codspeed_path: Path = DEFAULT_CODSPEED_WORKFLOW,
     release_path: Path = DEFAULT_RELEASE_WORKFLOW,
 ) -> list[str]:
-    return [*validate_ci_workflow(ci_path), *validate_release_workflow(release_path)]
+    return [
+        *validate_ci_workflow(ci_path),
+        *validate_codspeed_workflow(codspeed_path),
+        *validate_release_workflow(release_path),
+    ]
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -287,13 +341,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="legacy CI workflow path override; checks CI only when provided",
     )
     parser.add_argument("--ci-workflow", type=Path, default=DEFAULT_CI_WORKFLOW)
+    parser.add_argument("--codspeed-workflow", type=Path, default=DEFAULT_CODSPEED_WORKFLOW)
     parser.add_argument("--release-workflow", type=Path, default=DEFAULT_RELEASE_WORKFLOW)
     parser.add_argument("--ci-only", action="store_true")
+    parser.add_argument("--codspeed-only", action="store_true")
     parser.add_argument("--release-only", action="store_true")
     args = parser.parse_args(argv)
 
-    if args.ci_only and args.release_only:
-        parser.error("--ci-only and --release-only are mutually exclusive")
+    selected_modes = [args.ci_only, args.codspeed_only, args.release_only]
+    if sum(1 for selected in selected_modes if selected) > 1:
+        parser.error("--ci-only, --codspeed-only, and --release-only are mutually exclusive")
 
     if args.workflow is not None:
         errors = validate_ci_workflow(args.workflow)
@@ -301,12 +358,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     elif args.ci_only:
         errors = validate_ci_workflow(args.ci_workflow)
         checked = [args.ci_workflow]
+    elif args.codspeed_only:
+        errors = validate_codspeed_workflow(args.codspeed_workflow)
+        checked = [args.codspeed_workflow]
     elif args.release_only:
         errors = validate_release_workflow(args.release_workflow)
         checked = [args.release_workflow]
     else:
-        errors = validate_all_workflows(args.ci_workflow, args.release_workflow)
-        checked = [args.ci_workflow, args.release_workflow]
+        errors = validate_all_workflows(
+            args.ci_workflow, args.codspeed_workflow, args.release_workflow
+        )
+        checked = [args.ci_workflow, args.codspeed_workflow, args.release_workflow]
 
     if errors:
         print(
