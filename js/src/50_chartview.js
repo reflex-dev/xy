@@ -1571,14 +1571,29 @@ class ChartView {
       this.draw();
     } else if (msg.type === "density_update") {
       if (msg.seq !== undefined && msg.seq !== this.seq) return;
-      for (const upd of msg.traces) {
+      const densityTraces = msg.traces || [];
+      const pendingTraceIds = new Set(densityTraces.map((upd) => Number(upd.id)));
+      if (pendingTraceIds.size === 0 && msg.trace !== undefined) {
+        pendingTraceIds.add(Number(msg.trace));
+      }
+      const clearAllPending = pendingTraceIds.size === 0 && msg.stale;
+      const clearPending = (g) => {
+        if (msg.seq !== undefined && g._lodPendingSeq !== msg.seq) return;
+        g._lodPendingView = null;
+        g._lodPendingSeq = null;
+        g._lodPendingAt = null;
+      };
+      if (pendingTraceIds.size || clearAllPending) {
+        for (const g of this.gpuTraces) {
+          if (g.tier !== "density") continue;
+          if (!clearAllPending && !pendingTraceIds.has(g.trace.id)) continue;
+          clearPending(g);
+        }
+      }
+      for (const upd of densityTraces) {
         const g = this.gpuTraces.find((t) => t.trace.id === upd.id && t.tier === "density");
         if (!g) continue;
-        if (msg.seq === undefined || g._lodPendingSeq === msg.seq) {
-          g._lodPendingView = null;
-          g._lodPendingSeq = null;
-          g._lodPendingAt = null;
-        }
+        clearPending(g);
         if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }
         lodApplyDensityUpdate(this, g, upd, buffers);
       }

@@ -12,9 +12,14 @@ from __future__ import annotations
 import argparse
 import ast
 import sys
+import tomllib
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Optional
+
+PYTHON_FLOOR = ">=3.11"
+RUFF_TARGET_VERSION = "py311"
+DOC_FLOOR_TEXT = "Python 3.11+"
 
 DEFAULT_PATHS = (
     Path("python"),
@@ -34,6 +39,11 @@ SKIP_PARTS = {
     "__pycache__",
     "node_modules",
 }
+
+DECLARATION_DOCS = (
+    Path("README.md"),
+    Path("docs/production-readiness.md"),
+)
 
 
 def iter_python_files(paths: Iterable[Path]) -> list[Path]:
@@ -118,11 +128,47 @@ def check_paths(paths: Iterable[Path]) -> list[str]:
     return errors
 
 
+def check_declared_floor(root: Path = Path(".")) -> list[str]:
+    errors: list[str] = []
+    pyproject = root / "pyproject.toml"
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return [f"{pyproject}: cannot read Python floor declarations: {exc}"]
+
+    requires_python = ((data.get("project") or {}).get("requires-python") or "").strip()
+    if requires_python != PYTHON_FLOOR:
+        errors.append(
+            f"{pyproject}: project.requires-python must be {PYTHON_FLOOR!r}, "
+            f"got {requires_python!r}"
+        )
+
+    ruff_target = (((data.get("tool") or {}).get("ruff") or {}).get("target-version") or "").strip()
+    if ruff_target != RUFF_TARGET_VERSION:
+        errors.append(
+            f"{pyproject}: tool.ruff.target-version must be {RUFF_TARGET_VERSION!r}, "
+            f"got {ruff_target!r}"
+        )
+
+    for doc in DECLARATION_DOCS:
+        path = root / doc
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            errors.append(f"{path}: cannot read Python floor documentation: {exc}")
+            continue
+        if DOC_FLOOR_TEXT not in text:
+            errors.append(f"{path}: must document the supported floor as {DOC_FLOOR_TEXT!r}")
+
+    return errors
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", type=Path, default=list(DEFAULT_PATHS))
     args = parser.parse_args(argv)
-    errors = check_paths(args.paths)
+    errors = check_declared_floor()
+    errors.extend(check_paths(args.paths))
     if errors:
         print("Python floor check failed:", file=sys.stderr)
         for err in errors:

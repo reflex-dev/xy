@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "fastcharts"
 version = "0.1.0"
-description = "A faster charting engine: native Rust core, binary columnar transport, GPU render client"
+description = "Experimental Python charting engine with a native Rust core, binary columnar transport, and a GPU render client"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
@@ -30,7 +30,28 @@ dev-mode-dirs = ["python"]
 path = "hatch_build.py"
 
 [tool.hatch.build.targets.sdist]
-include = ["python", "src", "js/src", "Cargo.toml", "Cargo.lock", "hatch_build.py", "README.md"]
+include = [
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
+    "python",
+    "src",
+    "js/src",
+    "benchmarks",
+    "docs",
+    "reflex_fastcharts_app/README.md",
+    "reflex_fastcharts_app/requirements.txt",
+    "reflex_fastcharts_app/rxconfig.py",
+    "reflex_fastcharts_app/reflex_fastcharts_app/*.py",
+    "reflex_fastcharts_app/scripts/build_charts.py",
+    "reflex_fastcharts_app/assets/charts/*.html",
+    "scripts",
+    "tests",
+    "Cargo.toml",
+    "Cargo.lock",
+    "hatch_build.py",
+    "Makefile",
+    "README.md",
+]
 
 [tool.ruff]
 line-length = 100

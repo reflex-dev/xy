@@ -7,14 +7,16 @@ from __future__ import annotations
 import datetime as dt
 import json
 import warnings
+from pathlib import Path
 
 import numpy as np
 import pytest
 
+import fastcharts.export as export_module
 from fastcharts import Figure
 from fastcharts.columns import ColumnStore
 from fastcharts.config import MAX_SCREEN_DIM
-from fastcharts.export import _json_for_inline_script
+from fastcharts.export import _javascript_for_inline_script, _json_for_inline_script
 from fastcharts.figure import DECIMATION_THRESHOLD, PROTOCOL_VERSION
 
 
@@ -38,6 +40,25 @@ def _bar_payload(spec, blob, tr):
     else:
         value0 = np.full(len(value1), bar["value0_const"], dtype=np.float64)
     return bar, pos, value0, value1
+
+
+def _figure_state(fig):
+    return (
+        len(fig.traces),
+        len(fig.store),
+        {axis: list(labels) for axis, labels in fig._axis_categories.items()},
+    )
+
+
+class _AppendThenRaiseList(list):
+    def append(self, item):
+        super().append(item)
+        raise ValueError("synthetic trace append failure")
+
+
+def _inline_spec_literal(html: str) -> str:
+    body = html.split("<body>", 1)[1]
+    return body.rsplit("const spec = ", 1)[1].split(";\n  const b64", 1)[0]
 
 
 def test_spec_is_dataless_json():
@@ -114,6 +135,10 @@ def test_column_store_rejects_bad_shape_before_canonical_conversion():
 def test_column_store_rejects_complex_and_bad_object_columns():
     with pytest.raises(ValueError, match="real numeric"):
         ColumnStore().ingest(np.array([1 + 2j, 3 + 4j]))
+    with pytest.raises(ValueError, match="boolean"):
+        ColumnStore().ingest(np.array([True, False]))
+    with pytest.raises(ValueError, match="boolean"):
+        ColumnStore().ingest(np.array([True, None], dtype=object))
     with pytest.raises(ValueError, match="real numeric"):
         ColumnStore().ingest(np.array(["a", "b"], dtype=object))
 
@@ -258,6 +283,23 @@ def test_statistical_chart_inputs_reject_complex_without_warning_or_mutation():
         assert len(fig.store) == 0
 
 
+def test_numeric_chart_inputs_reject_boolean_without_mutation():
+    cases = [
+        (lambda fig: fig.line(np.array([False, True]), [0.0, 1.0]), "columns"),
+        (lambda fig: fig.scatter([0.0, 1.0], np.array([True, False])), "columns"),
+        (lambda fig: fig.histogram(np.array([True, False])), "histogram values"),
+        (lambda fig: fig.histogram(np.array([True, None], dtype=object)), "histogram values"),
+        (lambda fig: fig.bar(["a", "b"], np.array([True, False])), "bar y"),
+        (lambda fig: fig.heatmap(np.array([[True, False]])), "heatmap z"),
+    ]
+    for build, match in cases:
+        fig = Figure().line([0.0, 1.0], [1.0, 2.0], name="existing")
+        before = _figure_state(fig)
+        with pytest.raises(ValueError, match=match):
+            build(fig)
+        assert _figure_state(fig) == before
+
+
 def test_failed_rect_trace_validation_does_not_mutate_store():
     fig = Figure()
     with pytest.raises(ValueError, match="equal length"):
@@ -292,6 +334,66 @@ def test_failed_rect_trace_canonicalization_does_not_mutate_store():
         )
     assert fig.traces == []
     assert len(fig.store) == 0
+
+
+def test_histogram_late_append_failure_rolls_back_state(monkeypatch):
+    fig = Figure().line([0.0, 1.0], [1.0, 2.0])
+    before = _figure_state(fig)
+
+    def fail_append(*args, **kwargs):
+        del args, kwargs
+        raise ValueError("synthetic histogram append failure")
+
+    monkeypatch.setattr(fig, "_append_rect_trace", fail_append)
+
+    with pytest.raises(ValueError, match="synthetic histogram append failure"):
+        fig.histogram([0.0, 0.25, 0.5, 0.75], bins=2)
+
+    assert _figure_state(fig) == before
+
+
+def test_sorted_line_late_ingest_failure_preserves_existing_figure_state(monkeypatch):
+    fig = Figure().line([0.0, 1.0], [1.0, 2.0], name="existing")
+    before = _figure_state(fig)
+    original = fig.store.ingest
+    calls = {"count": 0}
+
+    def flaky_ingest(values):
+        calls["count"] += 1
+        if calls["count"] == 3:
+            raise ValueError("synthetic sorted line ingest failure")
+        return original(values)
+
+    monkeypatch.setattr(fig.store, "ingest", flaky_ingest)
+
+    with pytest.raises(ValueError, match="synthetic sorted line ingest failure"):
+        fig.line([2.0, 0.0, 1.0], [20.0, 0.0, 10.0], name="new")
+
+    assert _figure_state(fig) == before
+    spec, _blob = fig.build_payload()
+    assert [trace["name"] for trace in spec["traces"]] == ["existing"]
+
+
+def test_area_late_base_ingest_failure_preserves_existing_figure_state(monkeypatch):
+    fig = Figure().area([0.0, 1.0], [1.0, 2.0], name="existing")
+    before = _figure_state(fig)
+    original = fig.store.ingest
+    calls = {"count": 0}
+
+    def flaky_ingest(values):
+        calls["count"] += 1
+        if calls["count"] == 3:
+            raise ValueError("synthetic area base ingest failure")
+        return original(values)
+
+    monkeypatch.setattr(fig.store, "ingest", flaky_ingest)
+
+    with pytest.raises(ValueError, match="synthetic area base ingest failure"):
+        fig.area([0.0, 1.0], [3.0, 4.0], base=[0.0, 0.0], name="new")
+
+    assert _figure_state(fig) == before
+    spec, _blob = fig.build_payload()
+    assert [trace["name"] for trace in spec["traces"]] == ["existing"]
 
 
 def test_rect_trace_midpoint_avoids_large_domain_overflow():
@@ -343,6 +445,18 @@ def test_bar_category_axis_normalizes_missing_and_bytes_labels():
     _bar, pos, _value0, value1 = _bar_payload(spec, blob, tr)
     np.testing.assert_allclose(pos, [0.0, 1.0, 2.0, 1.0])
     np.testing.assert_allclose(value1, [1.0, 2.0, 3.0, 4.0])
+
+
+def test_bool_category_axes_remain_label_like():
+    fig = Figure().bar(np.array([True, False]), [1.0, 2.0])
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+
+    assert spec["x_axis"]["kind"] == "category"
+    assert spec["x_axis"]["categories"] == ["True", "False"]
+    _bar, pos, _value0, value1 = _bar_payload(spec, blob, tr)
+    np.testing.assert_allclose(pos, [0.0, 1.0])
+    np.testing.assert_allclose(value1, [1.0, 2.0])
 
 
 def test_column_alias_and_negative_bars_range_from_baseline():
@@ -454,6 +568,13 @@ def test_bar_2d_validation_errors():
         Figure().bar(["a"], [[1.0], [2.0]], colors=["#111111"])
 
 
+def test_column_validation_errors_name_column_api():
+    with pytest.raises(ValueError, match="column mode"):
+        Figure().column(["a"], [[1.0]], mode="overlay")
+    with pytest.raises(ValueError, match="column orientation"):
+        Figure().column(["a"], [1.0], orientation="diagonal")
+
+
 def test_bar_length_mismatch_raises():
     with pytest.raises(ValueError, match="equal length"):
         Figure().bar(["a", "b"], [1.0])
@@ -466,6 +587,45 @@ def test_failed_bar_does_not_register_category_labels():
     fig.bar(["good"], [2.0])
     spec, _blob = fig.build_payload()
     assert spec["x_axis"]["categories"] == ["good"]
+
+
+def test_failed_bar_preserves_existing_figure_state():
+    fig = Figure().bar(["existing"], [1.0])
+    cases = [
+        (lambda f: f.bar(["new"], [[1.0], [2.0]], series=["only"]), "series"),
+        (lambda f: f.bar(["new"], [[1.0], [2.0]], colors=["#111111"]), "colors"),
+        (lambda f: f.bar(["new"], [1.0], base=[0.0, 1.0]), "bar base"),
+        (lambda f: f.bar(["new", "extra"], [[1.0], [2.0], [3.0]]), "2-D y"),
+    ]
+    for call, match in cases:
+        before = _figure_state(fig)
+        with pytest.raises(ValueError, match=match):
+            call(fig)
+        assert _figure_state(fig) == before
+    spec, _blob = fig.build_payload()
+    assert spec["x_axis"]["categories"] == ["existing"]
+
+
+def test_grouped_bar_late_append_failure_rolls_back_state(monkeypatch):
+    fig = Figure().bar(["existing"], [1.0])
+    before = _figure_state(fig)
+    original = Figure._append_rect_trace
+    calls = {"count": 0}
+
+    def flaky_append(self, *args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise ValueError("synthetic append failure")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "_append_rect_trace", flaky_append)
+
+    with pytest.raises(ValueError, match="synthetic append failure"):
+        fig.bar(["new"], [[1.0], [2.0]], mode="grouped")
+
+    assert _figure_state(fig) == before
+    spec, _blob = fig.build_payload()
+    assert spec["x_axis"]["categories"] == ["existing"]
 
 
 def test_heatmap_ships_compact_grid_and_continuous_color():
@@ -579,6 +739,39 @@ def test_failed_heatmap_axis_order_does_not_register_new_categories():
     assert spec["x_axis"]["categories"] == ["b", "c"]
 
 
+def test_failed_heatmap_preserves_existing_figure_state():
+    fig = Figure().heatmap([[1.0, 2.0]], x=["existing", "safe"], y=["row"])
+    cases = [
+        (lambda f: f.heatmap([[1.0, 2.0]], x=[None, np.nan]), "categories"),
+        (lambda f: f.heatmap([[1.0, 2.0]], x=["new"]), "length 2"),
+        (lambda f: f.heatmap([[1.0, 2.0]], x=[2.0, 1.0]), "strictly increasing"),
+        (lambda f: f.heatmap([[1.0, 2.0]], x=["new", "ok"], domain=(0.0, np.inf)), "domain"),
+    ]
+    for call, match in cases:
+        before = _figure_state(fig)
+        with pytest.raises(ValueError, match=match):
+            call(fig)
+        assert _figure_state(fig) == before
+    spec, _blob = fig.build_payload()
+    assert spec["x_axis"]["categories"] == ["existing", "safe"]
+    assert spec["y_axis"]["categories"] == ["row"]
+
+
+def test_heatmap_late_ingest_failure_rolls_back_axis_categories(monkeypatch):
+    fig = Figure().bar(["existing"], [1.0])
+    before = _figure_state(fig)
+
+    def fail_ingest(_values):
+        raise ValueError("synthetic ingest failure")
+
+    monkeypatch.setattr(fig.store, "ingest", fail_ingest)
+
+    with pytest.raises(ValueError, match="synthetic ingest failure"):
+        fig.heatmap([[1.0, 2.0]], x=["new", "labels"], y=["row"])
+
+    assert _figure_state(fig) == before
+
+
 def test_scatter_rejects_invalid_size_scalars():
     with pytest.raises(ValueError, match="size"):
         Figure().scatter([0.0], [0.0], size=-1.0)
@@ -602,6 +795,38 @@ def test_figure_dimensions_are_strict_positive_integer_pixels_or_full_percent():
     for kwargs in bad:
         with pytest.raises(ValueError, match="positive integer pixel count"):
             Figure(**kwargs)
+
+
+def test_figure_text_metadata_is_string_or_none() -> None:
+    assert Figure(title=None, x_label="x", y_label="y").x_label == "x"
+
+    bad = [
+        ({"title": 123}, "title"),
+        ({"x_label": True}, "x_label"),
+        ({"y_label": np.nan}, "y_label"),
+    ]
+    for kwargs, match in bad:
+        with pytest.raises(ValueError, match=rf"{match} must be a string or None"):
+            Figure(**kwargs)
+
+
+def test_trace_names_are_string_or_none_without_mutating_figure() -> None:
+    cases = [
+        (lambda fig: fig.line([0.0], [1.0], name=123), "line name"),
+        (lambda fig: fig.scatter([0.0], [1.0], name=True), "scatter name"),
+        (lambda fig: fig.area([0.0], [1.0], name=object()), "area name"),
+        (lambda fig: fig.histogram([1.0, 2.0], name=123), "histogram name"),
+        (lambda fig: fig.bar(["a"], [1.0], name=False), "bar name"),
+        (lambda fig: fig.column(["a"], [1.0], name=123), "column name"),
+        (lambda fig: fig.heatmap([[1.0]], name=123), "heatmap name"),
+        (lambda fig: fig.bar(["a"], [[1.0], [2.0]], series=["ok", 2]), r"series\[1\]"),
+    ]
+    for build, match in cases:
+        fig = Figure().line([0.0, 1.0], [1.0, 2.0], name="existing")
+        before = _figure_state(fig)
+        with pytest.raises(ValueError, match=match):
+            build(fig)
+        assert _figure_state(fig) == before
 
 
 def test_style_scalars_reject_bad_values_without_mutating_figure():
@@ -644,10 +869,157 @@ def test_valid_style_numpy_scalars_ship_standard_json():
 
 
 def test_inline_json_export_rejects_nan_and_infinity():
-    with pytest.raises(ValueError, match="Out of range"):
+    with pytest.raises(ValueError, match=r"finite JSON.*NaN or infinity"):
         _json_for_inline_script({"bad": np.nan})
-    with pytest.raises(ValueError, match="Out of range"):
+    with pytest.raises(ValueError, match=r"finite JSON.*NaN or infinity"):
         _json_for_inline_script({"bad": np.inf})
+
+
+def test_inline_json_export_escapes_html_hazards_without_changing_data():
+    payload = {
+        "title": "</script><script>alert(1)</script>&\u2028\u2029",
+        "nested": ["<tag attr='x'>", "Fish & Chips", "\u2028line", "\u2029para"],
+    }
+
+    literal = _json_for_inline_script(payload)
+
+    assert json.loads(literal) == payload
+    assert "<" not in literal
+    assert ">" not in literal
+    assert "&" not in literal
+    assert "\u2028" not in literal
+    assert "\u2029" not in literal
+    assert "\\u003c/script\\u003e" in literal
+    assert "\\u003cscript" in literal
+    assert "\\u0026" in literal
+    assert "\\u2028" in literal
+    assert "\\u2029" in literal
+
+
+def test_inline_javascript_export_escapes_closing_script():
+    js = 'const label = "</script><img src=x onerror=alert(1)>";'
+
+    escaped = _javascript_for_inline_script(js)
+
+    assert "</script><img" not in escaped
+    assert "<\\/script><img src=x onerror=alert(1)>" in escaped
+
+
+def test_to_html_escapes_closing_script_inside_bundled_client(monkeypatch):
+    def hostile_bundle(which: str) -> str:
+        assert which == "standalone"
+        return (
+            "window.fastcharts = { renderStandalone() {} };\n"
+            'const userLikeFixture = "</script><img src=x onerror=alert(1)>";'
+        )
+
+    monkeypatch.setattr(export_module, "_bundled_js", hostile_bundle)
+
+    html = Figure().line([0.0, 1.0], [1.0, 2.0]).to_html()
+    body = html.split("<body>", 1)[1]
+
+    assert body.count("</script>") == 2
+    assert "</script><img" not in body
+    assert "<\\/script><img src=x onerror=alert(1)>" in body
+
+
+def test_to_html_escapes_every_chart_text_surface():
+    evil = "</script><svg onload=alert(1)>&\u2028\u2029"
+    also_evil = "<b data-x='1'>&</b>"
+    fig = Figure(title=evil, x_label=evil, y_label=also_evil)
+    fig.line([0.0, 1.0], [1.0, 2.0], name=evil)
+    fig.scatter(
+        [0.0, 1.0],
+        [1.0, 2.0],
+        color=np.array([evil, also_evil], dtype=object),
+        name=also_evil,
+    )
+    fig.bar([evil, "safe"], [[1.0, 2.0], [3.0, 4.0]], series=[evil, also_evil])
+    fig.heatmap([[1.0, 2.0]], x=[evil, "ok"], y=[also_evil], name=evil)
+
+    html = fig.to_html()
+    head = html.split("</head>", 1)[0]
+    body = html.split("<body>", 1)[1]
+    spec_literal = _inline_spec_literal(html)
+
+    assert "&lt;/script&gt;&lt;svg onload=alert(1)&gt;&amp;" in head
+    assert "</script><svg" not in body
+    assert "<b data-x=" not in body
+    assert "<" not in spec_literal
+    assert ">" not in spec_literal
+    assert "&" not in spec_literal
+    assert "\u2028" not in spec_literal
+    assert "\u2029" not in spec_literal
+    assert "\\u003c/script\\u003e" in spec_literal
+    assert "\\u0026" in spec_literal
+    assert "\\u2028" in spec_literal
+    assert "\\u2029" in spec_literal
+
+    decoded = json.loads(spec_literal)
+    assert decoded["title"] == evil
+    assert decoded["x_axis"]["label"] == evil
+    assert decoded["y_axis"]["label"] == also_evil
+    names = [trace["name"] for trace in decoded["traces"]]
+    assert evil in names
+    assert also_evil in names
+    color_categories = [
+        category
+        for trace in decoded["traces"]
+        for category in trace.get("color", {}).get("categories", [])
+    ]
+    assert evil in color_categories
+    assert also_evil in color_categories
+    assert evil in decoded["x_axis"]["categories"]
+    assert also_evil in decoded["y_axis"]["categories"]
+
+
+def test_to_html_path_writes_exact_document(tmp_path: Path):
+    target = tmp_path / "chart.html"
+    fig = Figure(title='export "quoted" & <safe>').bar(["a", "b"], [1.0, 2.0])
+
+    html = fig.to_html(target)
+
+    assert target.read_text(encoding="utf-8") == html
+    assert "<title>export &quot;quoted&quot; &amp; &lt;safe&gt;</title>" in html
+    decoded = json.loads(_inline_spec_literal(html))
+    assert decoded["title"] == 'export "quoted" & <safe>'
+
+
+def test_to_html_path_rejects_invalid_json_metadata_without_partial_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    target = tmp_path / "bad.html"
+    fig = Figure(title="bad export")
+
+    def bad_payload():
+        return {"protocol": PROTOCOL_VERSION, "bad": np.nan}, b""
+
+    monkeypatch.setattr(fig, "build_payload", bad_payload)
+
+    with pytest.raises(ValueError, match=r"finite JSON.*NaN or infinity"):
+        fig.to_html(target)
+
+    assert not target.exists()
+
+
+def test_to_html_revalidates_mutated_text_metadata_without_partial_file(tmp_path: Path) -> None:
+    target = tmp_path / "bad-title.html"
+    fig = Figure(title="ok").line([0.0, 1.0], [1.0, 2.0])
+    fig.title = object()
+
+    with pytest.raises(ValueError, match="title must be a string or None"):
+        fig.to_html(target)
+
+    assert not target.exists()
+
+
+def test_build_payload_revalidates_mutated_axis_labels() -> None:
+    fig = Figure(x_label="ok", y_label="still ok").line([0.0, 1.0], [1.0, 2.0])
+    fig.x_label = 42
+
+    with pytest.raises(ValueError, match="x_label must be a string or None"):
+        fig.build_payload()
 
 
 def test_nan_never_reaches_vertex_buffers():
@@ -722,6 +1094,68 @@ def test_failed_xy_builders_do_not_mutate_store():
         fig.area([0.0, 1.0], [1.0, 2.0], base=[0.0])
     assert fig.traces == []
     assert len(fig.store) == 0
+
+
+def test_failed_xy_and_histogram_builders_preserve_existing_figure_state():
+    fig = Figure().line([0.0, 1.0], [1.0, 2.0], name="existing")
+    cases = [
+        (lambda f: f.line([0.0, 1.0, 2.0], [0.0, 1.0]), "equal length"),
+        (lambda f: f.scatter([0.0, 1.0], [0.0, 1.0], size=[4.0]), "size"),
+        (
+            lambda f: f.scatter([0.0, 1.0], [0.0, 1.0], size=np.array([True, False])),
+            "boolean",
+        ),
+        (
+            lambda f: f.scatter(
+                [0.0, 1.0],
+                [0.0, 1.0],
+                color=[1.0, 2.0],
+                colormap="not-a-map",
+            ),
+            "colormap",
+        ),
+        (
+            lambda f: f.scatter(
+                [0.0, 1.0],
+                [0.0, 1.0],
+                size=[1.0, 2.0],
+                size_range=(2.0, np.nan),
+            ),
+            "size_range",
+        ),
+        (lambda f: f.area([0.0, 1.0], [1.0, 2.0], base=[0.0]), "area base"),
+        (lambda f: f.histogram([[1.0, 2.0]]), "1-D"),
+        (lambda f: f.histogram([1.0, 2.0], bins=0), "positive"),
+    ]
+
+    for call, match in cases:
+        before = _figure_state(fig)
+        with pytest.raises(ValueError, match=match):
+            call(fig)
+        assert _figure_state(fig) == before
+
+    spec, _blob = fig.build_payload()
+    assert [trace["name"] for trace in spec["traces"]] == ["existing"]
+
+
+def test_trace_append_failures_preserve_existing_figure_state():
+    cases = [
+        lambda f: f.line([0.0, 1.0], [2.0, 3.0], name="new-line"),
+        lambda f: f.scatter([0.0, 1.0], [2.0, 3.0], name="new-scatter"),
+        lambda f: f.area([0.0, 1.0], [2.0, 3.0], name="new-area"),
+        lambda f: f.histogram([0.0, 0.25, 0.5, 0.75], bins=2, name="new-histogram"),
+    ]
+    for call in cases:
+        fig = Figure().line([0.0, 1.0], [1.0, 2.0], name="existing")
+        fig.traces = _AppendThenRaiseList(fig.traces)
+        before = _figure_state(fig)
+
+        with pytest.raises(ValueError, match="synthetic trace append failure"):
+            call(fig)
+
+        assert _figure_state(fig) == before
+        spec, _blob = fig.build_payload()
+        assert [trace["name"] for trace in spec["traces"]] == ["existing"]
 
 
 def test_decimate_view_recenters_offset():
@@ -930,3 +1364,48 @@ def test_to_png_missing_chromium_is_clear(monkeypatch):
     fig = Figure(width=200, height=150).scatter(np.arange(5.0), np.arange(5.0))
     with pytest.raises(RuntimeError, match="Chromium"):
         fig.to_png()
+
+
+def test_to_png_rejects_bad_export_geometry_before_chromium_lookup(monkeypatch):
+    from fastcharts import export
+
+    def fail_lookup(explicit=None):
+        del explicit
+        raise AssertionError("Chromium lookup should not run for invalid PNG export options")
+
+    monkeypatch.setattr(export, "find_chromium", fail_lookup)
+    fig = Figure(width="100%", height="100%").line([0.0, 1.0], [1.0, 2.0])
+    cases = [
+        ({"width": 0}, "PNG width"),
+        ({"width": True}, "PNG width"),
+        ({"width": "100%"}, "PNG width"),
+        ({"height": -1}, "PNG height"),
+        ({"scale": 0}, "PNG scale"),
+        ({"scale": np.nan}, "PNG scale"),
+        ({"scale": True}, "PNG scale"),
+    ]
+
+    for kwargs, match in cases:
+        with pytest.raises(ValueError, match=match):
+            fig.to_png(**kwargs)
+
+
+def test_html_to_png_rejects_bad_mechanism_options_before_chromium_lookup(monkeypatch):
+    from fastcharts import export
+
+    def fail_lookup(explicit=None):
+        del explicit
+        raise AssertionError("Chromium lookup should not run for invalid PNG export options")
+
+    monkeypatch.setattr(export, "find_chromium", fail_lookup)
+    cases = [
+        ({"width": 0, "height": 200}, "PNG width"),
+        ({"width": 320, "height": False}, "PNG height"),
+        ({"width": 320, "height": 200, "scale": float("inf")}, "PNG scale"),
+        ({"width": 320, "height": 200, "time_budget_ms": 0}, "PNG time_budget_ms"),
+        ({"width": 320, "height": 200, "timeout_s": -1.0}, "PNG timeout_s"),
+    ]
+
+    for kwargs, match in cases:
+        with pytest.raises(ValueError, match=match):
+            export.html_to_png("<!doctype html>", **kwargs)

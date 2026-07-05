@@ -91,6 +91,53 @@ def line_walk() -> Figure:
     ).line(x, y, name="walk", color="#3267c8", width=1.4)
 
 
+def business_overview_demo() -> Figure:
+    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
+    values = np.array(
+        [
+            [42.0, 45.0, 48.0, 51.0, 55.0, 59.0],
+            [35.0, 38.0, 42.0, 40.0, 46.0, 50.0],
+        ]
+    )
+    return Figure(
+        title="Small business overview",
+        x_label="month",
+        y_label="USD thousands",
+        width="100%",
+        height=430,
+    ).column(
+        months,
+        values,
+        mode="grouped",
+        series=["Revenue", "Pipeline"],
+        colors=["#2563eb", "#16a34a"],
+        opacity=0.86,
+    )
+
+
+def retention_cohort_demo() -> Figure:
+    cohorts = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
+    weeks = ["W0", "W1", "W2", "W3", "W4", "W5"]
+    retention = np.array(
+        [
+            [1.00, 0.72, 0.61, 0.54, 0.48, 0.43],
+            [1.00, 0.75, 0.64, 0.57, 0.51, 0.46],
+            [1.00, 0.70, 0.59, 0.52, 0.47, 0.42],
+            [1.00, 0.78, 0.66, 0.60, 0.55, 0.50],
+            [1.00, 0.74, 0.63, 0.58, 0.53, 0.49],
+            [1.00, 0.77, 0.68, 0.62, 0.57, 0.52],
+        ],
+        dtype=np.float64,
+    )
+    return Figure(
+        title="Small retention cohort",
+        x_label="week",
+        y_label="signup cohort",
+        width="100%",
+        height=430,
+    ).heatmap(retention, x=weeks, y=cohorts, name="retention", colormap="viridis", opacity=0.94)
+
+
 def area_demo() -> Figure:
     rng = np.random.default_rng(13)
     n = 80_000
@@ -250,6 +297,8 @@ def main() -> None:
     live_html = live_drilldown_html()
     write_live_drilldown_chart("live_drilldown_100m.html", live_html)
     write_live_drilldown_chart("live_drilldown_10m.html", live_html)
+    write_chart(business_overview_demo(), "business_overview.html")
+    write_chart(retention_cohort_demo(), "retention_cohort.html")
     write_chart(line_walk(), "line_walk.html")
     write_chart(area_demo(), "area.html")
     write_chart(colored_scatter(), "colored_scatter.html")

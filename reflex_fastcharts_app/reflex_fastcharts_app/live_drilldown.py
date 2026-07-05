@@ -301,6 +301,7 @@ async def drilldown_endpoint(request: Request) -> JSONResponse:
                         {
                             "type": "density_update",
                             "seq": content.get("seq"),
+                            "trace": content.get("trace"),
                             "stale": True,
                             "traces": [],
                         }
@@ -318,7 +319,13 @@ async def drilldown_endpoint(request: Request) -> JSONResponse:
             except (KeyError, ValueError, IndexError):
                 return JSONResponse({"error": "bad density_view request"}, status_code=400)
             return _response(
-                {"type": "density_update", "seq": content.get("seq"), **update}, buffers
+                {
+                    "type": "density_update",
+                    "seq": content.get("seq"),
+                    "trace": content.get("trace"),
+                    **update,
+                },
+                buffers,
             )
 
         if kind == "pick":
@@ -363,12 +370,33 @@ const spec = {spec_js};
 const initialBytes = Uint8Array.from(atob("{b64}"), c => c.charCodeAt(0));
 const callbacks = [];
 const statusEl = document.getElementById("status");
+const REQUEST_TIMEOUT_MS = 15000;
+const overviewTrace = spec.traces.find((trace) => trace.kind === "scatter" && trace.density);
 const clientId = globalThis.crypto && globalThis.crypto.randomUUID
   ? globalThis.crypto.randomUUID()
   : `${{Date.now()}}-${{Math.random().toString(36).slice(2)}}`;
 let latestDensitySeq = -1;
 let pendingDensityMsg = null;
 let densityInFlight = false;
+const DIRECT_POINT_BUDGET = 200000;
+const LOCAL_DENSITY_EXACT_FACTOR = 4;
+let overviewIntegral = null;
+let overviewDensityBuffer = null;
+
+function overviewData() {{
+  if (!overviewTrace || !overviewTrace.density) return null;
+  const density = overviewTrace.density;
+  const col = spec.columns[density.buf];
+  if (!col) return null;
+  return {{
+    density,
+    values: new Float32Array(initialBytes.buffer, col.byte_offset || 0, col.len),
+    width: density.w,
+    height: density.h,
+  }};
+}}
+
+const overview = overviewData();
 
 function b64ToArrayBuffer(b64) {{
   const binary = atob(b64);
@@ -407,6 +435,173 @@ function currentDrillCoversView(view, candidate) {{
   return viewInsideWindow(candidate, trace.drill.win);
 }}
 
+function densityRequestPending(view) {{
+  const trace = view && view.gpuTraces && view.gpuTraces.find((g) => g.tier === "density");
+  if (!(trace && trace._lodPendingView && trace._lodPendingSeq === view.seq)) return false;
+  if (trace._lodPendingAt && performance.now() - trace._lodPendingAt > REQUEST_TIMEOUT_MS + 500) {{
+    return false;
+  }}
+  return true;
+}}
+
+function clearStaleUpdatingStatus() {{
+  if (statusEl.textContent !== "updating") return;
+  if (densityRequestPending(window.fastchartsLiveDrilldown)) return;
+  statusEl.textContent = "density";
+}}
+
+function sameRange(a0, a1, b0, b1) {{
+  const span = Math.max(Math.abs(b1 - b0), 1);
+  const eps = span * 1e-6;
+  return Math.abs(a0 - b0) <= eps && Math.abs(a1 - b1) <= eps;
+}}
+
+function isInitialOverviewRequest(msg) {{
+  if (!overviewTrace || !overviewTrace.density || Number(msg.trace) !== overviewTrace.id) return false;
+  const density = overviewTrace.density;
+  return (
+    sameRange(Number(msg.x0), Number(msg.x1), density.x_range[0], density.x_range[1]) &&
+    sameRange(Number(msg.y0), Number(msg.y1), density.y_range[0], density.y_range[1])
+  );
+}}
+
+function setDensityStatus(visible) {{
+  statusEl.textContent = `${{Number(visible || 0).toLocaleString()}} density`;
+}}
+
+function overviewDensityArrayBuffer() {{
+  if (!overview) return null;
+  if (!overviewDensityBuffer) {{
+    overviewDensityBuffer = overview.values.buffer.slice(
+      overview.values.byteOffset,
+      overview.values.byteOffset + overview.values.byteLength,
+    );
+  }}
+  return overviewDensityBuffer;
+}}
+
+function initialOverviewUpdate(msg) {{
+  if (!overview || !overviewTrace || !overviewTrace.density) return null;
+  const buffer = overviewDensityArrayBuffer();
+  if (!buffer) return null;
+  const density = overviewTrace.density;
+  return {{
+    visible: overviewTrace.n_points,
+    message: {{
+      type: "density_update",
+      seq: msg.seq,
+      traces: [{{
+        id: Number(msg.trace),
+        mode: "density",
+        visible: overviewTrace.n_points,
+        density: {{
+          buf: 0,
+          w: density.w,
+          h: density.h,
+          max: density.max,
+          x_range: density.x_range,
+          y_range: density.y_range,
+        }},
+      }}],
+    }},
+    buffers: [buffer],
+  }};
+}}
+
+function buildOverviewIntegral() {{
+  if (!overview) return null;
+  if (overviewIntegral) return overviewIntegral;
+  const {{ values, width, height }} = overview;
+  const stride = width + 1;
+  const integral = new Float64Array((height + 1) * stride);
+  for (let y = 0; y < height; y++) {{
+    let rowSum = 0;
+    for (let x = 0; x < width; x++) {{
+      rowSum += values[y * width + x] || 0;
+      integral[(y + 1) * stride + x + 1] = integral[y * stride + x + 1] + rowSum;
+    }}
+  }}
+  overviewIntegral = {{ integral, stride }};
+  return overviewIntegral;
+}}
+
+function overviewEdge(value, domain, cells) {{
+  const span = domain[1] - domain[0];
+  if (!Number.isFinite(value) || !Number.isFinite(span) || span <= 0) return 0;
+  const raw = Math.floor(((value - domain[0]) / span) * cells);
+  return Math.max(0, Math.min(cells, raw));
+}}
+
+function overviewSum(ii, stride, x0, x1, y0, y1) {{
+  return (
+    ii[y1 * stride + x1] -
+    ii[y0 * stride + x1] -
+    ii[y1 * stride + x0] +
+    ii[y0 * stride + x0]
+  );
+}}
+
+function localDensityUpdate(msg) {{
+  if (!overview || Number(msg.trace) !== overviewTrace.id) return null;
+  const built = buildOverviewIntegral();
+  if (!built) return null;
+  const {{ density, width, height }} = overview;
+  const loX = Math.min(Number(msg.x0), Number(msg.x1));
+  const hiX = Math.max(Number(msg.x0), Number(msg.x1));
+  const loY = Math.min(Number(msg.y0), Number(msg.y1));
+  const hiY = Math.max(Number(msg.y0), Number(msg.y1));
+  const bx0 = overviewEdge(loX, density.x_range, width);
+  const bx1 = overviewEdge(hiX, density.x_range, width);
+  const by0 = overviewEdge(loY, density.y_range, height);
+  const by1 = overviewEdge(hiY, density.y_range, height);
+  if (bx1 <= bx0 || by1 <= by0) return null;
+
+  const sourceW = bx1 - bx0;
+  const sourceH = by1 - by0;
+  const visible = overviewSum(built.integral, built.stride, bx0, bx1, by0, by1);
+  if (visible <= DIRECT_POINT_BUDGET * LOCAL_DENSITY_EXACT_FACTOR) return null;
+  if (sourceW < 16 || sourceH < 16) return null;
+
+  const requestedW = Math.round(Number(msg.w) || width);
+  const requestedH = Math.round(Number(msg.h) || height);
+  const outW = Math.max(16, Math.min(requestedW, width, sourceW));
+  const outH = Math.max(16, Math.min(requestedH, height, sourceH));
+  const grid = new Float32Array(outW * outH);
+  let max = 0;
+  for (let y = 0; y < outH; y++) {{
+    const y0 = Math.floor(by0 + (sourceH * y) / outH);
+    const y1 = Math.max(y0 + 1, Math.floor(by0 + (sourceH * (y + 1)) / outH));
+    for (let x = 0; x < outW; x++) {{
+      const x0 = Math.floor(bx0 + (sourceW * x) / outW);
+      const x1 = Math.max(x0 + 1, Math.floor(bx0 + (sourceW * (x + 1)) / outW));
+      const value = overviewSum(built.integral, built.stride, x0, x1, y0, y1);
+      grid[y * outW + x] = value;
+      if (value > max) max = value;
+    }}
+  }}
+  return {{
+    visible,
+    message: {{
+      type: "density_update",
+      seq: msg.seq,
+      traces: [{{
+        id: Number(msg.trace),
+        mode: "density",
+        visible: Math.round(visible),
+        density: {{
+          buf: 0,
+          w: outW,
+          h: outH,
+          max,
+          x_range: [loX, hiX],
+          y_range: [loY, hiY],
+        }},
+      }}],
+    }},
+    buffers: [grid.buffer],
+  }};
+}}
+
 async function endpointUrl() {{
   try {{
     const env = await fetch("/env.json").then((r) => r.ok ? r.json() : null);
@@ -418,11 +613,14 @@ async function endpointUrl() {{
 const endpoint = endpointUrl();
 async function sendMessage(msg) {{
   const outbound = {{ ...msg, client_id: clientId }};
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {{
     const res = await fetch(await endpoint, {{
       method: "POST",
       headers: {{ "Content-Type": "application/json" }},
       body: JSON.stringify(outbound),
+      signal: controller.signal,
     }});
     if (!res.ok) throw new Error(`HTTP ${{res.status}}`);
     const payload = await res.json();
@@ -431,7 +629,10 @@ async function sendMessage(msg) {{
       payload.message.type === "density_update" &&
       (payload.message.seq !== latestDensitySeq ||
         (window.fastchartsLiveDrilldown && payload.message.seq !== window.fastchartsLiveDrilldown.seq))
-    ) return;
+    ) {{
+      clearStaleUpdatingStatus();
+      return;
+    }}
     const buffers = (payload.buffers || []).map(b64ToArrayBuffer);
     for (const cb of callbacks) cb(payload.message, buffers);
     const trace = payload.message && payload.message.traces && payload.message.traces[0];
@@ -442,10 +643,14 @@ async function sendMessage(msg) {{
       }}
       const visible = Number(trace.visible || 0).toLocaleString();
       statusEl.textContent = trace.mode === "points" ? `${{visible}} points` : `${{visible}} density`;
+    }} else {{
+      clearStaleUpdatingStatus();
     }}
   }} catch (err) {{
     statusEl.textContent = "offline";
     console.error("fastcharts drilldown request failed", err);
+  }} finally {{
+    clearTimeout(timeout);
   }}
 }}
 
@@ -467,6 +672,24 @@ const comm = {{
     if (!["density_view", "pick", "select", "select_clear"].includes(msg.type)) return;
     if (msg.type === "density_view") {{
       latestDensitySeq = msg.seq;
+      if (isInitialOverviewRequest(msg)) {{
+        pendingDensityMsg = null;
+        const initial = initialOverviewUpdate(msg);
+        if (initial) {{
+          for (const cb of callbacks) cb(initial.message, initial.buffers);
+          setDensityStatus(initial.visible);
+        }} else {{
+          setDensityStatus(overviewTrace.n_points);
+        }}
+        return;
+      }}
+      const local = localDensityUpdate(msg);
+      if (local) {{
+        pendingDensityMsg = null;
+        for (const cb of callbacks) cb(local.message, local.buffers);
+        setDensityStatus(local.visible);
+        return;
+      }}
       pendingDensityMsg = msg;
       statusEl.textContent = "updating";
       void pumpDensity();
@@ -486,7 +709,9 @@ const view = new fastcharts.ChartView(
 const setView = view._setView.bind(view);
 view._setView = (next, opts) => {{
   const result = setView(next, opts);
-  if (!currentDrillCoversView(view, next)) statusEl.textContent = "updating";
+  if (densityRequestPending(view) && !currentDrillCoversView(view, next)) {{
+    statusEl.textContent = "updating";
+  }}
   return result;
 }};
 window.fastchartsLiveDrilldown = view;

@@ -10,17 +10,42 @@ checkout. Stdlib-only so CI can run it before installing anything.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 import tarfile
-from pathlib import PurePosixPath
+import tomllib
+from email.parser import Parser
+from pathlib import Path, PurePosixPath
 from typing import Optional
 
+ROOT = Path(__file__).resolve().parents[1]
+
 REQUIRED_FILES = {
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
     "Cargo.lock",
     "Cargo.toml",
+    "Makefile",
     "PKG-INFO",
     "README.md",
+    "benchmarks/__init__.py",
+    "benchmarks/_browser.py",
+    "benchmarks/baseline.json",
+    "benchmarks/bench.py",
+    "benchmarks/bench_2d_charts.py",
+    "benchmarks/bench_install.py",
+    "benchmarks/bench_line.py",
+    "benchmarks/bench_native.py",
+    "benchmarks/bench_scatter_native.py",
+    "benchmarks/bench_vs.py",
+    "benchmarks/categories.py",
+    "benchmarks/environment.py",
+    "docs/api-examples.md",
+    "docs/benchmark.md",
+    "docs/chart-roadmap.md",
+    "docs/contributing.md",
+    "docs/production-readiness.md",
     "hatch_build.py",
     "pyproject.toml",
     "js/src/00_header.js",
@@ -48,8 +73,49 @@ REQUIRED_FILES = {
     "python/fastcharts/static/index.js",
     "python/fastcharts/static/standalone.js",
     "python/fastcharts/widget.py",
+    "reflex_fastcharts_app/README.md",
+    "reflex_fastcharts_app/requirements.txt",
+    "reflex_fastcharts_app/rxconfig.py",
+    "reflex_fastcharts_app/assets/charts/area.html",
+    "reflex_fastcharts_app/assets/charts/bar_column.html",
+    "reflex_fastcharts_app/assets/charts/business_overview.html",
+    "reflex_fastcharts_app/assets/charts/colored_scatter.html",
+    "reflex_fastcharts_app/assets/charts/density_scatter.html",
+    "reflex_fastcharts_app/assets/charts/heatmap.html",
+    "reflex_fastcharts_app/assets/charts/histogram.html",
+    "reflex_fastcharts_app/assets/charts/horizontal_bar.html",
+    "reflex_fastcharts_app/assets/charts/line_walk.html",
+    "reflex_fastcharts_app/assets/charts/live_drilldown_100m.html",
+    "reflex_fastcharts_app/assets/charts/live_drilldown_10m.html",
+    "reflex_fastcharts_app/assets/charts/plotly_colored_scatter.html",
+    "reflex_fastcharts_app/assets/charts/stacked_bar.html",
+    "reflex_fastcharts_app/reflex_fastcharts_app/__init__.py",
+    "reflex_fastcharts_app/reflex_fastcharts_app/live_drilldown.py",
+    "reflex_fastcharts_app/reflex_fastcharts_app/reflex_fastcharts_app.py",
+    "reflex_fastcharts_app/scripts/build_charts.py",
+    "scripts/check_public_api.py",
+    "scripts/check_claim_guardrails.py",
+    "scripts/check_python_floor.py",
+    "scripts/check_regressions.py",
+    "scripts/verify_ci_workflow.py",
+    "scripts/verify_benchmark_report.py",
+    "scripts/verify_local.py",
+    "scripts/verify_sdist.py",
+    "scripts/verify_wheel.py",
     "src/kernels.rs",
     "src/lib.rs",
+    "tests/test_public_api.py",
+    "tests/test_claim_guardrails.py",
+    "tests/test_benchmark_environment.py",
+    "tests/test_check_regressions.py",
+    "tests/test_docs_examples.py",
+    "tests/test_reflex_example_assets.py",
+    "tests/test_type_surface.py",
+    "tests/test_verify_benchmark_report.py",
+    "tests/test_verify_ci_workflow.py",
+    "tests/test_verify_local.py",
+    "tests/test_verify_sdist.py",
+    "tests/test_verify_wheel.py",
 }
 
 FORBIDDEN_PARTS = {
@@ -57,11 +123,14 @@ FORBIDDEN_PARTS = {
     ".mypy_cache",
     ".pytest_cache",
     ".ruff_cache",
+    ".states",
     ".venv",
+    ".web",
     "__pycache__",
     "_native_lib",
     "dist",
     "node_modules",
+    "reflex.lock",
     "target",
     "wheelhouse",
 }
@@ -85,7 +154,10 @@ def _normalized_files(path: str) -> tuple[str, set[str]]:
             root = member_path.parts[0]
             roots.add(root)
             if member.isfile():
-                files.add("/".join(member_path.parts[1:]))
+                rel = "/".join(member_path.parts[1:])
+                if rel in files:
+                    raise AssertionError(f"sdist contains duplicate file member: {rel}")
+                files.add(rel)
             elif member.isdir():
                 continue
             else:
@@ -100,21 +172,52 @@ def _normalized_files(path: str) -> tuple[str, set[str]]:
     return root, files
 
 
+def _dependency_satisfies_floor(requirement: str, package: str, minimum: str) -> bool:
+    return bool(
+        re.match(
+            rf"^\s*{re.escape(package)}\s*(?:\[[^\]]+\])?\s*>=\s*"
+            rf"{re.escape(minimum)}(?:\b|[,;\s])",
+            requirement,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def _require_pkg_info(path: str, root: str) -> None:
     with tarfile.open(path, "r:gz") as tf:
         data = tf.extractfile(f"{root}/PKG-INFO")
         if data is None:
             raise AssertionError("PKG-INFO is missing")
         text = data.read().decode("utf-8")
-    required = {
-        "Name: fastcharts",
-        "Requires-Python: >=3.11",
-        "Requires-Dist: anywidget>=0.9",
-        "Requires-Dist: numpy>=1.24",
-    }
-    missing = sorted(line for line in required if line not in text)
+    metadata = Parser().parsestr(text)
+    missing: list[str] = []
+    if metadata.get("Name", "").strip() != "fastcharts":
+        missing.append("Name: fastcharts")
+    project_version = _project_version()
+    if metadata.get("Version", "").strip() != project_version:
+        missing.append(f"Version: {project_version}")
+    if metadata.get("Requires-Python", "").strip() != ">=3.11":
+        missing.append("Requires-Python: >=3.11")
+    requirements = metadata.get_all("Requires-Dist") or []
+    for package, minimum in (("anywidget", "0.9"), ("numpy", "1.24")):
+        if not any(
+            _dependency_satisfies_floor(requirement, package, minimum)
+            for requirement in requirements
+        ):
+            missing.append(f"Requires-Dist: {package}>={minimum}")
     if missing:
-        raise AssertionError(f"missing PKG-INFO lines: {missing}")
+        raise AssertionError(f"missing or invalid PKG-INFO lines: {missing}")
+
+
+def _project_version(pyproject_path: Path = ROOT / "pyproject.toml") -> str:
+    try:
+        data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise AssertionError(f"cannot read project version from {pyproject_path}: {exc}") from exc
+    version = str((data.get("project") or {}).get("version") or "").strip()
+    if not version:
+        raise AssertionError(f"{pyproject_path} is missing project.version")
+    return version
 
 
 def _require_file_contains(path: str, root: str, member: str, needles: set[str]) -> None:
@@ -128,6 +231,31 @@ def _require_file_contains(path: str, root: str, member: str, needles: set[str])
     missing = sorted(needle for needle in needles if needle not in text)
     if missing:
         raise AssertionError(f"{member} missing expected markers: {missing}")
+
+
+def _require_exact_file(path: str, root: str, member: str, expected: bytes) -> None:
+    with tarfile.open(path, "r:gz") as tf:
+        data = tf.extractfile(f"{root}/{member}")
+        if data is None:
+            raise AssertionError(f"{member} is missing")
+        actual = data.read()
+    if actual != expected:
+        raise AssertionError(f"{member} must be an empty full-package PEP 561 marker")
+
+
+def _require_baseline_json(path: str, root: str) -> None:
+    with tarfile.open(path, "r:gz") as tf:
+        data = tf.extractfile(f"{root}/benchmarks/baseline.json")
+        if data is None:
+            raise AssertionError("benchmarks/baseline.json is missing")
+        text = data.read().decode("utf-8")
+    try:
+        baseline = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(f"benchmarks/baseline.json is not valid JSON: {exc}") from exc
+    metrics = baseline.get("metrics") if isinstance(baseline, dict) else None
+    if not isinstance(metrics, dict) or not metrics:
+        raise AssertionError("benchmarks/baseline.json must contain a non-empty metrics object")
 
 
 def verify_sdist(path: str) -> None:
@@ -145,6 +273,8 @@ def verify_sdist(path: str) -> None:
     if forbidden:
         raise AssertionError(f"sdist contains generated/native artifacts: {forbidden}")
     _require_pkg_info(path, root)
+    _require_exact_file(path, root, "python/fastcharts/py.typed", b"")
+    _require_baseline_json(path, root)
     _require_file_contains(
         path,
         root,
@@ -162,6 +292,99 @@ def verify_sdist(path: str) -> None:
         root,
         "js/src/60_entries.js",
         {"function render(", "function renderStandalone(", "// ---- exports ----"},
+    )
+    _require_file_contains(
+        path,
+        root,
+        "README.md",
+        {"Stable Vs Experimental", "Python 3.11+", "docs/api-examples.md", "make check-examples"},
+    )
+    _require_file_contains(
+        path,
+        root,
+        "docs/api-examples.md",
+        {
+            "Chart Family Quick Reference",
+            "Small Business Chart",
+            "Revenue vs pipeline",
+            "Figure().heatmap",
+            "fc.heatmap_chart",
+        },
+    )
+    _require_file_contains(
+        path,
+        root,
+        "docs/benchmark.md",
+        {
+            "benchmark-report",
+            "regression-benchmark-report",
+            "docs/benchmark_metrics.md",
+            "scatter.json",
+            "kernel.json",
+        },
+    )
+    _require_file_contains(
+        path,
+        root,
+        "docs/production-readiness.md",
+        {
+            "Release-Blocking Gates",
+            "make check-artifacts",
+            "make check-examples",
+            "Reflex example app",
+            "package-only",
+            "sdist-only",
+            "scripts/verify_benchmark_report.py",
+            "scripts/verify_wheel.py",
+            "import fastcharts",
+        },
+    )
+    _require_file_contains(
+        path,
+        root,
+        "docs/contributing.md",
+        {
+            "Pull Request Checklist",
+            "make check-full",
+            "make check-sdist",
+            "make check-examples",
+            "make check-benchmark-report",
+            "Performance Claims",
+        },
+    )
+    _require_file_contains(
+        path,
+        root,
+        "reflex_fastcharts_app/README.md",
+        {
+            "fastcharts Reflex Example",
+            "Business overview",
+            "assets/charts/business_overview.html",
+            "python scripts/build_charts.py",
+        },
+    )
+    _require_file_contains(
+        path,
+        root,
+        "reflex_fastcharts_app/assets/charts/business_overview.html",
+        {"fastcharts.renderStandalone", "Small business overview", "Revenue", "Pipeline"},
+    )
+    _require_file_contains(
+        path,
+        root,
+        ".github/workflows/ci.yml",
+        {"scripts/verify_ci_workflow.py", "actions/upload-artifact@v4", "continue-on-error: true"},
+    )
+    _require_file_contains(
+        path,
+        root,
+        ".github/workflows/release.yml",
+        {
+            "pypa/gh-action-pypi-publish@release/v1",
+            "scripts/verify_wheel.py",
+            "scripts/verify_sdist.py",
+            "id-token: write",
+        },
     )
 
 

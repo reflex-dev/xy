@@ -5,6 +5,8 @@ data= column-name resolution, event-prop wiring, and box-select (§34)."""
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 
@@ -22,6 +24,11 @@ class FakeFrame:
 
     def __getitem__(self, key):
         return self._cols[key]
+
+
+def _inline_spec_literal(html: str) -> str:
+    body = html.split("<body>", 1)[1]
+    return body.rsplit("const spec = ", 1)[1].split(";\n  const b64", 1)[0]
 
 
 def test_factories_return_components():
@@ -98,13 +105,97 @@ def test_css_color_vs_column():
 
 def test_missing_column_errors():
     df = FakeFrame({"a": np.arange(3.0)})
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(ValueError, match=r"scatter\.y column 'missing' not found"):
         fc.scatter_chart(fc.scatter(x="a", y="missing", data=df)).figure()
 
 
+@pytest.mark.parametrize(
+    ("chart", "match"),
+    [
+        (
+            lambda df: fc.scatter_chart(fc.scatter(x="a", y="b", color="missing"), data=df),
+            r"scatter\.color column 'missing' not found",
+        ),
+        (
+            lambda df: fc.scatter_chart(fc.scatter(x="a", y="b", size="missing"), data=df),
+            r"scatter\.size column 'missing' not found",
+        ),
+        (
+            lambda df: fc.area_chart(fc.area(x="a", y="b", base="missing"), data=df),
+            r"area\.base column 'missing' not found",
+        ),
+        (
+            lambda df: fc.histogram_chart(fc.histogram(values="missing"), data=df),
+            r"histogram\.values column 'missing' not found",
+        ),
+        (
+            lambda df: fc.heatmap_chart(fc.heatmap(z="missing"), data=df),
+            r"heatmap\.z column 'missing' not found",
+        ),
+        (
+            lambda df: fc.bar_chart(fc.bar(x="label", y="value", base="missing"), data=df),
+            r"bar\.base column 'missing' not found",
+        ),
+        (
+            lambda df: fc.column_chart(fc.column(x="label", y="value", base="missing"), data=df),
+            r"column\.base column 'missing' not found",
+        ),
+    ],
+)
+def test_component_data_key_errors_name_mark_field(chart, match):
+    df = FakeFrame(
+        {
+            "a": np.arange(3.0),
+            "b": np.arange(3.0) + 1.0,
+            "label": np.array(["a", "b", "c"]),
+            "value": np.array([3.0, 2.0, 4.0]),
+        }
+    )
+
+    with pytest.raises(ValueError, match=match):
+        chart(df).figure()
+
+
+def test_failed_mark_application_does_not_cache_partial_chart_figure():
+    df = FakeFrame({"x": np.arange(3.0), "y": np.arange(3.0) * 2})
+    second = fc.scatter(x="x", y="missing")
+    chart = fc.scatter_chart(
+        fc.line(x="x", y="y", name="first"),
+        second,
+        data=df,
+    )
+
+    with pytest.raises(ValueError, match="not found"):
+        chart.figure()
+    assert chart._figure is None
+
+    second.y = "y"
+    fig = chart.figure()
+
+    assert chart.figure() is fig
+    assert [trace.kind for trace in fig.traces] == ["line", "scatter"]
+    assert [trace.name for trace in fig.traces] == ["first", None]
+
+
 def test_column_name_without_data_errors():
-    with pytest.raises(ValueError, match="no data"):
+    with pytest.raises(ValueError, match=r"scatter\.x.*no data"):
         fc.scatter_chart(fc.scatter(x="a", y="b")).figure()
+
+
+def test_unknown_mark_kind_failure_does_not_cache_partial_chart_figure():
+    mark = fc.line([0.0, 1.0], [1.0, 2.0])
+    mark.kind = "not-real"
+    chart = fc.line_chart(mark)
+
+    with pytest.raises(TypeError, match="not-real"):
+        chart.figure()
+    assert chart._figure is None
+
+    mark.kind = "line"
+    fig = chart.figure()
+
+    assert chart.figure() is fig
+    assert [trace.kind for trace in fig.traces] == ["line"]
 
 
 def test_legend_off():
@@ -139,6 +230,31 @@ def test_component_axis_and_legend_validate_public_props_without_caching_failure
         chart2.figure()
     assert chart2._figure is None
     assert bad_legend.show == "false"
+
+
+def test_component_text_metadata_errors_do_not_cache_partial_chart_figure():
+    chart = fc.scatter_chart(fc.scatter(x=np.arange(3.0), y=np.arange(3.0)), title=123)
+
+    with pytest.raises(ValueError, match="title must be a string or None"):
+        chart.figure()
+    assert chart._figure is None
+
+    chart.title = "ok"
+    fig = chart.figure()
+    assert chart.figure() is fig
+    assert fig.title == "ok"
+
+    bad_axis = fc.x_axis(label="ok")
+    bad_axis.label = 42
+    chart2 = fc.scatter_chart(fc.scatter(x=np.arange(3.0), y=np.arange(3.0)), bad_axis)
+    with pytest.raises(ValueError, match="x_label must be a string or None"):
+        chart2.figure()
+    assert chart2._figure is None
+
+    chart3 = fc.scatter_chart(fc.scatter(x=np.arange(3.0), y=np.arange(3.0), name=123))
+    with pytest.raises(ValueError, match="scatter name must be a string or None"):
+        chart3.figure()
+    assert chart3._figure is None
 
 
 def test_component_axis_types_accept_current_surface_and_warn_for_log_only():
@@ -224,6 +340,111 @@ def test_bar_chart_grouped_component_options():
     assert len(spec["traces"]) == 2
     assert [t["name"] for t in spec["traces"]] == ["desktop", "mobile"]
     assert [t["style"]["role"] for t in spec["traces"]] == ["bar-stacked", "bar-stacked"]
+
+
+def test_component_to_html_escapes_user_strings_across_public_surface(tmp_path):
+    evil = "</script><img src=x onerror=alert(1)>&\u2028\u2029"
+    also_evil = "<b data-x='1'>&</b>"
+    target = tmp_path / "component.html"
+    df = FakeFrame(
+        {
+            "label": np.array([evil, "safe"], dtype=object),
+            "values": np.array([[1.0, 3.0], [2.0, 4.0]], dtype=np.float64),
+        }
+    )
+    chart = fc.bar_chart(
+        fc.bar(
+            x="label",
+            y="values",
+            series=[evil, also_evil],
+            colors=["#111111", "#222222"],
+        ),
+        fc.x_axis(label=evil),
+        fc.y_axis(label=also_evil),
+        title=evil,
+        data=df,
+    )
+
+    html = chart.to_html(target)
+    spec_literal = _inline_spec_literal(html)
+
+    assert target.read_text(encoding="utf-8") == html
+    assert "&lt;/script&gt;&lt;img src=x onerror=alert(1)&gt;&amp;" in html.split("</head>", 1)[0]
+    assert "</script><img" not in html.split("<body>", 1)[1]
+    assert "<b data-x=" not in html.split("<body>", 1)[1]
+    assert "<" not in spec_literal
+    assert ">" not in spec_literal
+    assert "&" not in spec_literal
+    assert "\\u003c/script\\u003e" in spec_literal
+    assert "\\u0026" in spec_literal
+    assert "\\u2028" in spec_literal
+    assert "\\u2029" in spec_literal
+
+    decoded = json.loads(spec_literal)
+    assert decoded["title"] == evil
+    assert decoded["x_axis"]["label"] == evil
+    assert decoded["y_axis"]["label"] == also_evil
+    assert evil in decoded["x_axis"]["categories"]
+    assert [trace["name"] for trace in decoded["traces"]] == [evil, also_evil]
+
+
+def test_component_to_png_delegates_to_composed_figure(monkeypatch):
+    chart = fc.line_chart(fc.line([0, 1], [1, 2]))
+    seen = {}
+
+    def fake_to_png(self, path=None, *, width=None, height=None, scale=2.0, chromium=None):
+        seen.update(
+            {
+                "figure": self,
+                "path": path,
+                "width": width,
+                "height": height,
+                "scale": scale,
+                "chromium": chromium,
+            }
+        )
+        return b"PNG"
+
+    monkeypatch.setattr("fastcharts.figure.Figure.to_png", fake_to_png)
+
+    data = chart.to_png("out.png", width=320, height=200, scale=1.5, chromium="/chrome")
+
+    assert data == b"PNG"
+    assert seen == {
+        "figure": chart.figure(),
+        "path": "out.png",
+        "width": 320,
+        "height": 200,
+        "scale": 1.5,
+        "chromium": "/chrome",
+    }
+
+
+def test_widget_failure_does_not_cache_partial_widget(monkeypatch):
+    chart = fc.line_chart(fc.line([0.0, 1.0], [1.0, 2.0]))
+    fig = chart.figure()
+    calls = {"count": 0}
+
+    class FlakyWidget:
+        def __init__(self, figure, *, on_hover=None, on_select=None):
+            calls["count"] += 1
+            self.figure = figure
+            self.on_hover = on_hover
+            self.on_select = on_select
+            if calls["count"] == 1:
+                raise RuntimeError("synthetic widget failure")
+
+    monkeypatch.setattr("fastcharts.widget.FigureWidget", FlakyWidget)
+
+    with pytest.raises(RuntimeError, match="synthetic widget failure"):
+        chart.widget()
+    assert chart._widget is None
+
+    widget = chart.widget()
+
+    assert chart._widget is widget
+    assert widget.figure is fig
+    assert calls["count"] == 2
 
 
 def test_bar_chart_horizontal_component_option():

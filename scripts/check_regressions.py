@@ -27,20 +27,33 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 BASELINE = ROOT / "benchmarks" / "baseline.json"
 
 
-def flatten(scatter: list | None, kernel: dict | None) -> dict:
+def _report_rows(report: Any) -> list:
+    """Return benchmark rows from either legacy list JSON or schema-v2 report JSON."""
+    if report is None:
+        return []
+    if isinstance(report, list):
+        return report
+    if isinstance(report, dict):
+        rows = report.get("rows", [])
+        return rows if isinstance(rows, list) else []
+    return []
+
+
+def flatten(scatter: list | dict | None, kernel: dict | None) -> dict:
     """Both bench JSONs -> a flat {metric_id: value} map."""
     out: dict[str, object] = {}
-    for r in scatter or []:
+    for r in _report_rows(scatter):
         n = r["n"]
         out[f"scatter.tier.{n}"] = r["tier"]
         out[f"scatter.wire_bytes.{n}"] = r["wire_bytes"]
         out[f"scatter.wire_bytes_per_point.{n}"] = round(r["wire_bytes_per_point"], 4)
-    for r in (kernel or {}).get("rows", []):
+    for r in _report_rows(kernel):
         n = r["n"]
         for k, v in r.items():
             if k == "n" or not isinstance(v, (int, float)):

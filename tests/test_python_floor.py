@@ -18,6 +18,60 @@ def _load_floor_module():
 check_python_floor = _load_floor_module()
 
 
+def _write_floor_repo(
+    root: Path,
+    *,
+    requires_python: str = ">=3.11",
+    ruff_target: str = "py311",
+    readme: str = "Install with Python 3.11+.\n",
+    production_readiness: str = "The current contract is Python 3.11+ only.\n",
+) -> None:
+    root.joinpath("docs").mkdir()
+    root.joinpath("pyproject.toml").write_text(
+        "[project]\n"
+        f'requires-python = "{requires_python}"\n'
+        "\n"
+        "[tool.ruff]\n"
+        f'target-version = "{ruff_target}"\n',
+        encoding="utf-8",
+    )
+    root.joinpath("README.md").write_text(readme, encoding="utf-8")
+    root.joinpath("docs", "production-readiness.md").write_text(
+        production_readiness,
+        encoding="utf-8",
+    )
+
+
+def test_python_floor_accepts_current_declarations(tmp_path: Path) -> None:
+    _write_floor_repo(tmp_path)
+
+    assert check_python_floor.check_declared_floor(tmp_path) == []
+
+
+def test_python_floor_rejects_lower_project_floor(tmp_path: Path) -> None:
+    _write_floor_repo(tmp_path, requires_python=">=3.10")
+
+    errors = check_python_floor.check_declared_floor(tmp_path)
+
+    assert any("requires-python" in error and ">=3.11" in error for error in errors)
+
+
+def test_python_floor_rejects_mismatched_ruff_target(tmp_path: Path) -> None:
+    _write_floor_repo(tmp_path, ruff_target="py310")
+
+    errors = check_python_floor.check_declared_floor(tmp_path)
+
+    assert any("target-version" in error and "py311" in error for error in errors)
+
+
+def test_python_floor_rejects_missing_docs_floor(tmp_path: Path) -> None:
+    _write_floor_repo(tmp_path, readme="Install with Python.\n")
+
+    errors = check_python_floor.check_declared_floor(tmp_path)
+
+    assert any("README.md" in error and "Python 3.11+" in error for error in errors)
+
+
 def test_python_floor_accepts_annotated_file_with_future_annotations(tmp_path: Path) -> None:
     path = tmp_path / "ok.py"
     path.write_text(

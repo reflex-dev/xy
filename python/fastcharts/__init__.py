@@ -1,4 +1,4 @@
-"""fastcharts — a faster charting engine.
+"""fastcharts — an experimental Python charting engine.
 
 Cost scales with pixels on screen, not points in the dataset: native Rust core
 in the Python process, offset-encoded f32 binary transport, M4 decimation, GPU
@@ -30,10 +30,14 @@ from typing import TYPE_CHECKING, Any
 __version__ = "0.1.0"
 
 _EXPORTS = {
+    "Axis": ".components",
     "Chart": ".components",
     "Column": ".columns",
     "ColumnStore": ".columns",
+    "Component": ".components",
     "Figure": ".figure",
+    "Legend": ".components",
+    "Mark": ".components",
     "Selection": ".figure",
     "ZoneMaps": ".columns",
     "area": ".components",
@@ -57,10 +61,14 @@ _EXPORTS = {
 }
 
 __all__ = [
+    "Axis",
     "Chart",
     "Column",
     "ColumnStore",
+    "Component",
     "Figure",
+    "Legend",
+    "Mark",
     "Selection",
     "ZoneMaps",
     "__version__",
@@ -105,7 +113,11 @@ def __dir__() -> list[str]:
 if TYPE_CHECKING:
     from .columns import Column, ColumnStore, ZoneMaps
     from .components import (
+        Axis,
         Chart,
+        Component,
+        Legend,
+        Mark,
         area,
         area_chart,
         bar,

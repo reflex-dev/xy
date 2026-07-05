@@ -1,15 +1,37 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import textwrap
+from typing import Optional
+
+HEAVY_MODULES = {
+    "anywidget",
+    "numpy",
+    "traitlets",
+    "fastcharts.channels",
+    "fastcharts.columns",
+    "fastcharts.components",
+    "fastcharts.figure",
+    "fastcharts.interaction",
+    "fastcharts.kernels",
+    "fastcharts.lod",
+    "fastcharts._fallback",
+    "fastcharts._native",
+    "fastcharts.widget",
+}
 
 
-def _run_fresh(code: str) -> str:
+def _run_fresh(code: str, *, env: Optional[dict[str, str]] = None) -> str:
+    subprocess_env = os.environ.copy()
+    if env:
+        subprocess_env.update(env)
     proc = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(code)],
         check=True,
         capture_output=True,
+        env=subprocess_env,
         text=True,
     )
     return proc.stdout
@@ -17,7 +39,7 @@ def _run_fresh(code: str) -> str:
 
 def test_package_import_is_lazy_and_light() -> None:
     out = _run_fresh(
-        """
+        f"""
         import sys
         import time
 
@@ -25,29 +47,113 @@ def test_package_import_is_lazy_and_light() -> None:
         import fastcharts
         elapsed_ms = (time.perf_counter() - t0) * 1000
 
+        heavy = {sorted(HEAVY_MODULES)!r}
         eager = [
             name
-            for name in (
-                "numpy",
-                "fastcharts.columns",
-                "fastcharts.figure",
-                "fastcharts.kernels",
-                "fastcharts._native",
-            )
-            if name in sys.modules
+            for name in sys.modules
+            if name in heavy or name.startswith("fastcharts.")
         ]
         assert eager == [], eager
         assert elapsed_ms < 200, elapsed_ms
         assert fastcharts.__version__
-        print(f"{elapsed_ms:.3f}")
+        print(f"{{elapsed_ms:.3f}}")
         """
     )
     assert float(out.strip()) < 200
 
 
-def test_lazy_public_exports_still_work() -> None:
+def test_public_metadata_and_dir_are_lazy() -> None:
+    _run_fresh(
+        f"""
+        import sys
+
+        import fastcharts
+
+        names = dir(fastcharts)
+        assert "__version__" in fastcharts.__all__
+        assert "Figure" in names
+        assert "scatter_chart" in names
+        assert fastcharts.__version__
+
+        heavy = {sorted(HEAVY_MODULES)!r}
+        eager = [
+            name
+            for name in sys.modules
+            if name in heavy or name.startswith("fastcharts.")
+        ]
+        assert eager == [], eager
+        """
+    )
+
+
+def test_forced_fallback_env_still_keeps_package_import_lazy() -> None:
+    _run_fresh(
+        f"""
+        import sys
+
+        import fastcharts
+
+        assert fastcharts.__version__
+        heavy = {sorted(HEAVY_MODULES)!r}
+        eager = [
+            name
+            for name in sys.modules
+            if name in heavy or name.startswith("fastcharts.")
+        ]
+        assert eager == [], eager
+        """,
+        env={"FASTCHARTS_FORCE_FALLBACK": "1"},
+    )
+
+
+def test_export_helpers_do_not_load_widget_numpy_or_kernels() -> None:
+    for env in (None, {"FASTCHARTS_FORCE_FALLBACK": "1"}):
+        _run_fresh(
+            f"""
+            import sys
+
+            from fastcharts.export import _json_for_inline_script
+
+            assert _json_for_inline_script({{"x": "</script>&"}}) == '{{"x":"\\\\u003c/script\\\\u003e\\\\u0026"}}'
+            heavy = {sorted(HEAVY_MODULES)!r}
+            eager = [
+                name
+                for name in sys.modules
+                if name in heavy or (
+                    name.startswith("fastcharts.")
+                    and name not in {{"fastcharts.export"}}
+                )
+            ]
+            assert eager == [], eager
+            assert "fastcharts.export" in sys.modules
+            """,
+            env=env,
+        )
+
+
+def test_star_import_matches_public_all() -> None:
     _run_fresh(
         """
+        import fastcharts
+
+        ns = {}
+        exec("from fastcharts import *", ns)
+
+        exported = sorted(name for name in ns if name in fastcharts.__all__)
+        extras = sorted(
+            name for name in ns if not name.startswith("__") and name not in fastcharts.__all__
+        )
+        assert exported == sorted(fastcharts.__all__)
+        assert extras == []
+        assert ns["Figure"] is fastcharts.Figure
+        assert ns["scatter_chart"] is fastcharts.scatter_chart
+        """
+    )
+
+
+def test_lazy_public_exports_still_work() -> None:
+    _run_fresh(
+        f"""
         import sys
 
         import fastcharts
@@ -63,6 +169,103 @@ def test_lazy_public_exports_still_work() -> None:
         assert fastcharts.column(x=["a"], y=[1]).kind == "column"
         assert "fastcharts.figure" in sys.modules
         assert "numpy" in sys.modules
+
+        heavy = {sorted(HEAVY_MODULES)!r}
+        loaded = sorted(name for name in sys.modules if name in heavy)
+        assert "fastcharts._native" in loaded or "fastcharts._fallback" in loaded
+        """
+    )
+
+
+def test_figure_api_is_the_compute_import_boundary() -> None:
+    _run_fresh(
+        """
+        import sys
+
+        import fastcharts
+        assert "numpy" not in sys.modules
+        assert "fastcharts.figure" not in sys.modules
+        assert "fastcharts.kernels" not in sys.modules
+        assert "fastcharts.widget" not in sys.modules
+        assert "anywidget" not in sys.modules
+
+        Figure = fastcharts.Figure
+
+        assert Figure.__name__ == "Figure"
+        assert "fastcharts.figure" in sys.modules
+        assert "fastcharts.kernels" in sys.modules
+        assert "numpy" in sys.modules
+        assert "fastcharts._native" in sys.modules or "fastcharts._fallback" in sys.modules
+        assert "fastcharts.widget" not in sys.modules
+        assert "anywidget" not in sys.modules
+        assert "traitlets" not in sys.modules
+        """
+    )
+
+
+def test_composition_api_loads_compute_without_widget_stack() -> None:
+    _run_fresh(
+        """
+        import sys
+
+        import fastcharts
+        assert "numpy" not in sys.modules
+
+        scatter = fastcharts.scatter
+
+        assert callable(scatter)
+        assert "fastcharts.components" in sys.modules
+        assert "fastcharts.figure" in sys.modules
+        assert "fastcharts.kernels" in sys.modules
+        assert "numpy" in sys.modules
+        assert "fastcharts.widget" not in sys.modules
+        assert "anywidget" not in sys.modules
+        assert "traitlets" not in sys.modules
+        """
+    )
+
+
+def test_html_export_does_not_load_widget_stack() -> None:
+    _run_fresh(
+        """
+        import sys
+
+        import fastcharts
+
+        fig = fastcharts.Figure(title="lazy boundary").line([0, 1], [1, 2])
+        assert "fastcharts.widget" not in sys.modules
+        assert "anywidget" not in sys.modules
+        assert "traitlets" not in sys.modules
+
+        html = fig.to_html()
+
+        assert "lazy boundary" in html
+        assert "fastcharts.widget" not in sys.modules
+        assert "anywidget" not in sys.modules
+        assert "traitlets" not in sys.modules
+        """
+    )
+
+
+def test_widget_method_is_the_widget_import_boundary() -> None:
+    _run_fresh(
+        """
+        import sys
+
+        import fastcharts
+
+        fig = fastcharts.Figure(title="widget boundary").line([0, 1], [1, 2])
+        fig.to_html()
+        assert "fastcharts.widget" not in sys.modules
+        assert "anywidget" not in sys.modules
+        assert "traitlets" not in sys.modules
+
+        widget = fig.widget()
+
+        assert widget is fig.widget()
+        assert "fastcharts.widget" in sys.modules
+        assert "anywidget" in sys.modules
+        assert "traitlets" in sys.modules
         """
     )
 
