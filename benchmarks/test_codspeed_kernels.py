@@ -2,9 +2,8 @@
 
 These exercise the performance-critical kernels the whole engine is built on
 (§5 decimation tiers, §4/§16 f32 encoding, §22 zone maps) plus the end-to-end
-figure -> wire-payload path. They run through `fastcharts.kernels`, so they
-measure the native Rust core when it is available and the NumPy fallback
-otherwise.
+figure -> wire-payload path. CodSpeed must track the native Rust backend only;
+fallback timings are correctness smoke data, not production performance data.
 
 Run locally with:
 
@@ -24,6 +23,14 @@ from fastcharts import kernels as k
 N = 1_000_000
 GRID_W, GRID_H = 512, 384
 N_BUCKETS = 2048
+
+
+@pytest.fixture(scope="session", autouse=True)
+def require_native_backend() -> None:
+    assert k.BACKEND == "native", (
+        "CodSpeed benchmarks must run against the native Rust backend; "
+        f"got {k.BACKEND!r}. Build the native core before running them."
+    )
 
 
 @pytest.fixture(scope="module")

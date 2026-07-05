@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED_FILES = {
     ".github/workflows/ci.yml",
+    ".github/workflows/codspeed.yml",
     ".github/workflows/release.yml",
     "Cargo.lock",
     "Cargo.toml",
@@ -374,6 +375,12 @@ def verify_sdist(path: str) -> None:
         root,
         ".github/workflows/ci.yml",
         {"scripts/verify_ci_workflow.py", "actions/upload-artifact@v4", "continue-on-error: true"},
+    )
+    _require_file_contains(
+        path,
+        root,
+        ".github/workflows/codspeed.yml",
+        {"CodSpeedHQ/action@v4", "pytest-codspeed", 'k.BACKEND == "native"'},
     )
     _require_file_contains(
         path,

@@ -23,6 +23,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - uses: astral-sh/setup-uv@v5
 
       # The native Rust core must be present so the benchmarks measure the
@@ -34,6 +37,13 @@ jobs:
         run: |
           uv venv .venv
           uv pip install -p .venv/bin/python -e ".[dev]" pytest-codspeed
+
+      - name: Verify native benchmark backend
+        run: |
+          .venv/bin/python - <<'PY'
+          import fastcharts.kernels as k
+          assert k.BACKEND == "native", f"CodSpeed requires native backend, got {k.BACKEND!r}"
+          PY
 
       - name: Run benchmarks
         uses: CodSpeedHQ/action@v4
