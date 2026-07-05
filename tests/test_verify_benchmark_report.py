@@ -115,7 +115,21 @@ def _core_2d_report() -> dict:
                 "total_s": 0.003,
                 "payload_bytes": 4096,
                 "peak_mem_mb": 1.0,
-            }
+            },
+            {
+                "family": "bar",
+                "case": "1,000 categories",
+                "work_units": 1000,
+                "unit": "bars",
+                "library": "seaborn",
+                "status": "ok",
+                "build_s": 0.010,
+                "payload_s": 0.020,
+                "total_s": 0.030,
+                "payload_bytes": 8192,
+                "peak_mem_mb": 2.0,
+                "artifact_status": "raster",
+            },
         ],
         "comparisons": [
             {
@@ -124,6 +138,9 @@ def _core_2d_report() -> dict:
                 "work_units": 1000,
                 "unit": "bars",
                 "verdict": "pass",
+                "seaborn_status": "ok",
+                "seaborn_speedup": 10.0,
+                "seaborn_payload_reduction": 2.0,
             }
         ],
     }

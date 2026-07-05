@@ -132,13 +132,15 @@ backend in the non-blocking benchmark job.
 
 ---
 
-## Core 2D chart benchmark — fastcharts vs Plotly
+## Core 2D chart benchmark — fastcharts vs Plotly and Seaborn
 
 The regular 2D chart harness lives in `benchmarks/bench_2d_charts.py`. It
-compares the new core chart families against Plotly: histogram, area, simple
-bar, grouped bar, stacked bar, and heatmap. It reports payload-prep time,
-payload bytes (excluding JS runtime), standalone HTML bytes, and optional
-headless-Chromium TTFR.
+compares the new core chart families against Plotly and emits Seaborn rows
+where Seaborn has natural primitives: histogram, simple bar, grouped bar, and
+heatmap. Plotly remains the primary interactive verdict baseline for histogram,
+area, simple bar, grouped bar, stacked bar, and heatmap. The harness reports
+payload-prep time, payload bytes (excluding JS runtime), standalone HTML bytes,
+and optional headless-Chromium TTFR.
 
 Measured locally on July 4, 2026 with the native Rust backend
 (`fastcharts backend: native`, Rust 1.96.1):
@@ -154,6 +156,12 @@ PYTHONPATH=python .venv/bin/python benchmarks/bench_2d_charts.py \
 Environment note: TTFR probes require launching local headless Chrome; under the
 Codex sandbox the probe returns `None`, so local TTFR runs need browser-launch
 permission.
+
+Seaborn rows render through matplotlib/Agg PNG. For those static raster rows,
+TTFR is treated as total chart-to-pixels time because the image already exists
+after payload generation. Unsupported Seaborn chart shapes, such as filled area
+and stacked bars, are reported as unavailable rather than approximated with raw
+matplotlib calls.
 
 ### Smoke profile with browser TTFR
 

@@ -1,4 +1,4 @@
-"""Core 2D chart benchmark: fastcharts vs Plotly.
+"""Core 2D chart benchmark: fastcharts vs Plotly and Seaborn.
 
 This benchmark covers the regular 2D chart families added after the original
 scatter/line wedge: histogram, area, bar variants, and heatmap. It measures the
@@ -6,16 +6,18 @@ cost a Python charting library pays before a browser can render:
 
   build_s        construct the figure object from already-generated arrays
   payload_s      serialize/prepare the chart payload (fastcharts binary
-                 spec+blob; Plotly JSON figure)
+                 spec+blob; Plotly JSON figure; Seaborn Agg PNG)
   total_s        build + payload
   payload_bytes  chart data/spec bytes, excluding the JS runtime bundle
   html_bytes     standalone HTML bytes used for optional TTFR probing
   ttfr_ms        optional data→first-paint estimate in headless Chromium
 
-Data generation is excluded from timings. Plotly is the only comparison here on
-purpose: this harness answers "are the new fastcharts APIs up to par against the
-dominant Python interactive plotting library?" The broader scatter benchmark in
-`bench_vs.py` still covers matplotlib, Bokeh, Altair, Datashader, and friends.
+Data generation is excluded from timings. Plotly is the primary interactive
+comparison because this harness answers "are the new fastcharts APIs up to par
+against the dominant Python interactive plotting library?" Seaborn is included
+as a static/statistical Python baseline where it has natural chart primitives.
+The broader scatter benchmark in `bench_vs.py` still covers matplotlib, Bokeh,
+Altair, Datashader, and friends.
 
 Usage:
   PYTHONPATH=python .venv/bin/python benchmarks/bench_2d_charts.py --profile smoke --ttfr
@@ -26,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import io
 import json
 import sys
 import time
@@ -53,6 +56,7 @@ except Exception:
     _PROC = None
 
 RENDER_W, RENDER_H = 900, 420
+DPI = 100
 PROFILE_NAMES = ("smoke", "standard", "stress")
 BENCH_2D_CATEGORY_IDS = (
     "core_2d_chart_breadth",
@@ -69,6 +73,7 @@ class Case:
     unit: str
     fastcharts_build: Callable[[], Any]
     plotly_build: Callable[[], Any] | None
+    seaborn_build: Callable[[], Any] | None
 
 
 def _rss_mb() -> float | None:
@@ -85,20 +90,24 @@ def _measure(
     library: str,
     build: Callable[[], Any],
     payload: Callable[[Any], int],
-    artifact: Callable[[Any], str],
+    artifact: Callable[[Any], str] | None,
     *,
     ttfr: bool,
     chromium: str | None,
 ) -> dict[str, Any]:
     gc.collect()
     tracemalloc.start()
-    rss0 = _rss_mb()
-    t0 = time.perf_counter()
-    fig = build()
-    t1 = time.perf_counter()
-    payload_bytes = payload(fig)
-    t2 = time.perf_counter()
-    _current, peak = tracemalloc.get_traced_memory()
+    try:
+        rss0 = _rss_mb()
+        t0 = time.perf_counter()
+        fig = build()
+        t1 = time.perf_counter()
+        payload_bytes = payload(fig)
+        t2 = time.perf_counter()
+        _current, peak = tracemalloc.get_traced_memory()
+    except Exception:
+        tracemalloc.stop()
+        raise
     tracemalloc.stop()
     rss1 = _rss_mb()
 
@@ -113,22 +122,115 @@ def _measure(
         "status": "ok",
     }
 
-    try:
-        html = artifact(fig)
-        row["html_bytes"] = len(html.encode("utf-8"))
-    except Exception as e:
-        html = None
-        row["artifact_status"] = f"failed({type(e).__name__}: {str(e)[:100]})"
+    html = None
+    if artifact is None:
+        row["artifact_status"] = "raster"
         row["html_bytes"] = None
+    else:
+        try:
+            html = artifact(fig)
+            row["html_bytes"] = len(html.encode("utf-8"))
+        except Exception as e:
+            row["artifact_status"] = f"failed({type(e).__name__}: {str(e)[:100]})"
+            row["html_bytes"] = None
 
     if ttfr and html:
         paint_ms = first_paint_ms(html, chromium=chromium)
         row["browser_paint_ms"] = paint_ms
         row["ttfr_ms"] = row["total_s"] * 1e3 + paint_ms if paint_ms is not None else None
+    elif ttfr and artifact is None:
+        row["browser_paint_ms"] = 0.0
+        row["ttfr_ms"] = row["total_s"] * 1e3
 
     del fig
     gc.collect()
     return row
+
+
+def _measure_or_unavailable(
+    row: dict[str, Any],
+    library: str,
+    build: Callable[[], Any] | None,
+    payload: Callable[[Any], int],
+    artifact: Callable[[Any], str] | None,
+    *,
+    ttfr: bool,
+    chromium: str | None,
+) -> None:
+    if build is None:
+        row["status"] = "unavailable"
+        return
+    try:
+        row.update(
+            _measure(
+                library,
+                build,
+                payload,
+                artifact,
+                ttfr=ttfr,
+                chromium=chromium,
+            )
+        )
+    except RuntimeError as e:
+        if str(e).startswith("unsupported:"):
+            row["status"] = f"unavailable({str(e)[:140]})"
+        else:
+            row["status"] = f"failed({type(e).__name__}: {str(e)[:160]})"
+    except Exception as e:
+        row["status"] = f"failed({type(e).__name__}: {str(e)[:160]})"
+
+
+def _matplotlib_png_payload(state: Any) -> int:
+    fig, _ax, plt = state
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png")
+    plt.close(fig)
+    return buf.getbuffer().nbytes
+
+
+def _seaborn_or_none() -> tuple[Any, Any] | None:
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+    except ImportError:
+        return None
+    return plt, sns
+
+
+def _seaborn_figure(plt: Any) -> Any:
+    return plt.subplots(figsize=(RENDER_W / DPI, RENDER_H / DPI), dpi=DPI)
+
+
+def _seaborn_barplot(sns: Any, **kwargs: Any) -> Any:
+    try:
+        return sns.barplot(errorbar=None, **kwargs)
+    except TypeError as e:
+        if "errorbar" not in str(e):
+            raise
+        return sns.barplot(ci=None, **kwargs)
+
+
+def _payload_for(library: str) -> Callable[[Any], int]:
+    if library == "fastcharts":
+        return _fastcharts_payload
+    if library == "plotly":
+        return _plotly_payload
+    if library == "seaborn":
+        return _matplotlib_png_payload
+    raise ValueError(f"unknown library: {library}")
+
+
+def _artifact_for(library: str) -> Callable[[Any], str] | None:
+    if library == "fastcharts":
+        return _fastcharts_artifact
+    if library == "plotly":
+        return _plotly_artifact
+    if library == "seaborn":
+        return None
+    raise ValueError(f"unknown library: {library}")
 
 
 def _fastcharts_payload(fig: Any) -> int:
@@ -218,6 +320,7 @@ def make_cases(profile: str) -> list[Case]:
         raise ValueError(f"profile must be one of {PROFILE_NAMES}, got {profile!r}")
 
     go = _plotly_or_none()
+    seaborn = _seaborn_or_none()
     from fastcharts import Figure
 
     rng = np.random.default_rng(42)
@@ -239,8 +342,24 @@ def make_cases(profile: str) -> list[Case]:
             fig.update_layout(width=RENDER_W, height=RENDER_H, template="plotly_white")
             return fig
 
+        def sb():
+            plt, sns = seaborn
+            fig, ax = _seaborn_figure(plt)
+            sns.histplot(x=values, bins=bins, stat="count", color="#2563eb", ax=ax)
+            ax.set_xlabel("value")
+            ax.set_ylabel("count")
+            return fig, ax, plt
+
         cases.append(
-            Case("histogram", f"{n:,} values / {bins} bins", n, "values", fc, pl if go else None)
+            Case(
+                "histogram",
+                f"{n:,} values / {bins} bins",
+                n,
+                "values",
+                fc,
+                pl if go else None,
+                sb if seaborn else None,
+            )
         )
 
     def add_area(n: int) -> None:
@@ -257,7 +376,7 @@ def make_cases(profile: str) -> list[Case]:
             fig.update_layout(width=RENDER_W, height=RENDER_H, template="plotly_white")
             return fig
 
-        cases.append(Case("area", f"{n:,} samples", n, "samples", fc, pl if go else None))
+        cases.append(Case("area", f"{n:,} samples", n, "samples", fc, pl if go else None, None))
 
     def add_bar(n: int) -> None:
         labels = np.array([f"C{i:05d}" for i in range(n)], dtype=object)
@@ -271,13 +390,36 @@ def make_cases(profile: str) -> list[Case]:
             fig.update_layout(width=RENDER_W, height=RENDER_H, template="plotly_white")
             return fig
 
-        cases.append(Case("bar", f"{n:,} categories", n, "bars", fc, pl if go else None))
+        def sb():
+            plt, sns = seaborn
+            fig, ax = _seaborn_figure(plt)
+            _seaborn_barplot(sns, x=labels, y=values, color="#2563eb", ax=ax)
+            ax.set_xlabel("category")
+            ax.set_ylabel("value")
+            if n > 100:
+                ax.tick_params(axis="x", labelbottom=False)
+            return fig, ax, plt
+
+        cases.append(
+            Case(
+                "bar",
+                f"{n:,} categories",
+                n,
+                "bars",
+                fc,
+                pl if go else None,
+                sb if seaborn else None,
+            )
+        )
 
     def add_grouped_bar(n: int, series_count: int = 4) -> None:
         labels = np.array([f"G{i:05d}" for i in range(n)], dtype=object)
         values = (rng.random((series_count, n)) * 100).astype(np.float64)
         names = [f"S{i + 1}" for i in range(series_count)]
         colors = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626"][:series_count]
+        long_labels = np.repeat(labels, series_count)
+        long_series = np.tile(names, n)
+        long_values = values.T.reshape(-1)
 
         def fc():
             return Figure(width=RENDER_W, height=RENDER_H).bar(
@@ -300,6 +442,16 @@ def make_cases(profile: str) -> list[Case]:
             )
             return fig
 
+        def sb():
+            plt, sns = seaborn
+            fig, ax = _seaborn_figure(plt)
+            _seaborn_barplot(sns, x=long_labels, y=long_values, hue=long_series, ax=ax)
+            ax.set_xlabel("category")
+            ax.set_ylabel("value")
+            if n > 100:
+                ax.tick_params(axis="x", labelbottom=False)
+            return fig, ax, plt
+
         cases.append(
             Case(
                 "grouped_bar",
@@ -308,6 +460,7 @@ def make_cases(profile: str) -> list[Case]:
                 "bars",
                 fc,
                 pl if go else None,
+                sb if seaborn else None,
             )
         )
 
@@ -346,6 +499,7 @@ def make_cases(profile: str) -> list[Case]:
                 "bars",
                 fc,
                 pl if go else None,
+                None,
             )
         )
 
@@ -366,9 +520,25 @@ def make_cases(profile: str) -> list[Case]:
             fig.update_layout(width=RENDER_W, height=RENDER_H, template="plotly_white")
             return fig
 
+        def sb():
+            plt, sns = seaborn
+            fig, ax = _seaborn_figure(plt)
+            sns.heatmap(z, xticklabels=False, yticklabels=False, cmap="turbo", cbar=False, ax=ax)
+            ax.set_xlabel("x")
+            ax.set_ylabel("y")
+            return fig, ax, plt
+
         cells = rows * cols
         cases.append(
-            Case("heatmap", f"{rows:,} x {cols:,} cells", cells, "cells", fc, pl if go else None)
+            Case(
+                "heatmap",
+                f"{rows:,} x {cols:,} cells",
+                cells,
+                "cells",
+                fc,
+                pl if go else None,
+                sb if seaborn else None,
+            )
         )
 
     if profile == "smoke":
@@ -416,6 +586,7 @@ def run(
         for library, build in (
             ("fastcharts", case.fastcharts_build),
             ("plotly", case.plotly_build),
+            ("seaborn", case.seaborn_build),
         ):
             row: dict[str, Any] = {
                 "family": case.family,
@@ -424,24 +595,16 @@ def run(
                 "unit": case.unit,
                 "library": library,
             }
-            if build is None:
-                row["status"] = "unavailable"
-                rows.append(row)
-                continue
             should_ttfr = ttfr and case.work_units <= ttfr_max_work_units
-            try:
-                row.update(
-                    _measure(
-                        library,
-                        build,
-                        _fastcharts_payload if library == "fastcharts" else _plotly_payload,
-                        _fastcharts_artifact if library == "fastcharts" else _plotly_artifact,
-                        ttfr=should_ttfr,
-                        chromium=chromium,
-                    )
-                )
-            except Exception as e:
-                row["status"] = f"failed({type(e).__name__}: {str(e)[:160]})"
+            _measure_or_unavailable(
+                row,
+                library,
+                build,
+                _payload_for(library),
+                _artifact_for(library),
+                ttfr=should_ttfr,
+                chromium=chromium,
+            )
             if row.get("total_s"):
                 row["units_per_s"] = case.work_units / row["total_s"]
             rows.append(row)
@@ -450,6 +613,7 @@ def run(
     for case in cases:
         fc = _find_row(rows, case, "fastcharts")
         pl = _find_row(rows, case, "plotly")
+        sb = _find_row(rows, case, "seaborn")
         comp = {
             "family": case.family,
             "case": case.label,
@@ -464,6 +628,17 @@ def run(
             )
             if fc.get("ttfr_ms") is not None and pl.get("ttfr_ms") is not None:
                 comp["ttfr_speedup"] = pl["ttfr_ms"] / fc["ttfr_ms"] if fc["ttfr_ms"] else None
+        if fc and sb:
+            comp["seaborn_status"] = sb.get("status")
+        if fc and sb and fc.get("status") == "ok" and sb.get("status") == "ok":
+            comp["seaborn_speedup"] = sb["total_s"] / fc["total_s"] if fc["total_s"] else None
+            comp["seaborn_payload_reduction"] = (
+                sb["payload_bytes"] / fc["payload_bytes"] if fc["payload_bytes"] else None
+            )
+            if fc.get("ttfr_ms") is not None and sb.get("ttfr_ms") is not None:
+                comp["seaborn_ttfr_speedup"] = (
+                    sb["ttfr_ms"] / fc["ttfr_ms"] if fc["ttfr_ms"] else None
+                )
         comparisons.append(comp)
 
     return {
@@ -488,7 +663,7 @@ def _find_row(rows: list[dict[str, Any]], case: Case, library: str) -> dict[str,
 
 def to_markdown(report: dict[str, Any]) -> str:
     lines = [
-        "# Core 2D chart benchmark: fastcharts vs Plotly",
+        "# Core 2D chart benchmark: fastcharts vs Plotly and Seaborn",
         "",
         f"Profile: `{report['profile']}`. TTFR: `{report['ttfr']}` "
         f"(cap: {report['ttfr_max_work_units']:,} work units).",
@@ -527,17 +702,20 @@ def to_markdown(report: dict[str, Any]) -> str:
         "",
         "## Summary",
         "",
-        "| family | case | speedup | payload reduction | TTFR speedup | verdict |",
-        "|---|---|---:|---:|---:|---|",
+        "| family | case | vs Plotly speedup | vs Plotly payload reduction | vs Plotly TTFR speedup | vs Seaborn speedup | vs Seaborn payload reduction | vs Seaborn TTFR speedup | verdict |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---|",
     ]
     for comp in report["comparisons"]:
         lines.append(
-            "| {family} | {case} | {speedup} | {payload} | {ttfr} | {verdict} |".format(
+            "| {family} | {case} | {speedup} | {payload} | {ttfr} | {sb_speedup} | {sb_payload} | {sb_ttfr} | {verdict} |".format(
                 family=comp["family"],
                 case=comp["case"],
                 speedup=_fmt_ratio(comp.get("speedup")),
                 payload=_fmt_ratio(comp.get("payload_reduction")),
                 ttfr=_fmt_ratio(comp.get("ttfr_speedup")),
+                sb_speedup=_fmt_ratio(comp.get("seaborn_speedup")),
+                sb_payload=_fmt_ratio(comp.get("seaborn_payload_reduction")),
+                sb_ttfr=_fmt_ratio(comp.get("seaborn_ttfr_speedup")),
                 verdict=comp["verdict"],
             )
         )
@@ -575,11 +753,12 @@ def to_markdown(report: dict[str, Any]) -> str:
         "",
         "Notes:",
         "",
-        "- `payload bytes` excludes the JavaScript runtime bundle: fastcharts reports spec JSON + binary blob; Plotly reports figure JSON.",
-        "- `html bytes` is the standalone HTML used by the optional TTFR browser probe, with JavaScript inlined for both libraries.",
+        "- `payload bytes` excludes the JavaScript runtime bundle: fastcharts reports spec JSON + binary blob; Plotly reports figure JSON; Seaborn reports the Agg PNG bytes.",
+        "- `html bytes` is the standalone HTML used by the optional TTFR browser probe, with JavaScript inlined for browser-rendered libraries.",
+        "- Seaborn rows are static matplotlib/Agg raster output. Their TTFR is reported as total chart-to-pixels time because the PNG already exists after payload generation.",
         "- Histogram compares the public chart APIs: fastcharts bins in Python before shipping rectangles; Plotly `Histogram` ships raw values for plotly.js to bin.",
         "- When TTFR is measured, the verdict is based on user-visible first paint plus payload size; raw payload-prep time remains visible for backend-kernel regressions.",
-        "- Without TTFR, a `watch` verdict means Plotly matched or beat fastcharts on total payload-prep time or payload size.",
+        "- Without TTFR, a `watch` verdict means Plotly matched or beat fastcharts on total payload-prep time or payload size. Seaborn comparison metrics are reported separately and do not control the Plotly verdict.",
     ]
     return "\n".join(lines)
 
