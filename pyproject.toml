@@ -20,6 +20,9 @@ dev = [
     "ruff==0.15.8",
     "ty",
     "hypothesis>=6",
+    # Optional *input* format, never a runtime dependency: the Arrow ingest
+    # tests importorskip it, so it lives in dev where CI exercises them.
+    "pyarrow>=15",
 ]
 
 [tool.hatch.build.targets.wheel]

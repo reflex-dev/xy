@@ -5,7 +5,9 @@ Phase 0 contract:
   decimated buffer is a *derived cache*, recomputable from here (§27 rule 1).
 - Time columns (datetime64 / pandas datetime) are canonicalized to **ms since
   epoch as f64** — exact for |t| < 2^53, i.e. every real-world ms timestamp.
-  i64-nanosecond end-to-end fidelity (§16) arrives with Arrow ingest.
+- pyarrow Arrays / ChunkedArrays ingest **zero-copy** when null-free and
+  primitive (see `_arrow_to_numpy`); nulls/chunking pay counted copies.
+  i64-nanosecond end-to-end fidelity (§16) is still a later milestone.
 - Zone maps (§22) are computed once at ingest — one pass, reused for autorange,
   offset selection, and (later) Tier-3 pruning.
 - Ingest copy count is recorded, not hidden (§29: copies are counted, reported,
@@ -148,17 +150,68 @@ class ColumnStore:
         }
 
 
+def _arrow_to_numpy(data: Any) -> tuple[npt.NDArray[Any], int] | None:
+    """Ingest a pyarrow Array/ChunkedArray, zero-copy when possible.
+
+    Detected by module name so fastcharts itself never imports pyarrow (it
+    stays an optional input format, not a dependency). The contract, with
+    copies counted honestly (§29):
+
+    - null-free primitive numeric Array — the shape Arrow-native pipelines
+      ship — becomes a **zero-copy** (read-only) NumPy view of the Arrow
+      buffer; canonical columns are never written in place, so read-only is
+      safe.
+    - nulls force one counted copy: numerics are cast to float64 so nulls
+      materialize as NaN (the engine-wide null encoding, §19); temporal
+      arrays convert to datetime64 with NaT and take the existing time path.
+    - a multi-chunk ChunkedArray (a Table column) pays one counted
+      concatenation first; single-chunk is unwrapped for free.
+
+    Returns None when `data` is not a pyarrow value.
+    """
+    if (type(data).__module__ or "").split(".", 1)[0] != "pyarrow":
+        return None
+    copies = 0
+    if hasattr(data, "combine_chunks"):  # ChunkedArray
+        if data.num_chunks == 1:
+            data = data.chunk(0)
+        else:
+            data = data.combine_chunks()
+            copies += 1
+    if not (hasattr(data, "null_count") and hasattr(data, "to_numpy")):
+        return None  # a Table/scalar/etc. — let the generic error path speak
+    if data.null_count == 0:
+        try:
+            return data.to_numpy(), copies  # zero_copy_only=True by default
+        except Exception:
+            pass  # non-primitive layout (strings, dictionaries…): fall through
+    kind = str(data.type)
+    if not (kind.startswith("timestamp") or kind.startswith("date")):
+        try:
+            cast = data.cast("float64")
+        except Exception as e:
+            raise ValueError("columns must be real numeric or datetime-like") from e
+        if cast is not data:
+            copies += 1
+        data = cast
+    return data.to_numpy(zero_copy_only=False), copies + 1
+
+
 def _canonicalize(data: Any) -> tuple[npt.NDArray[np.float64], str, int]:
     """To contiguous f64 (+ time detection), counting copies honestly (§29)."""
+    arrow_copies = 0
+    arrow = _arrow_to_numpy(data)
+    if arrow is not None:
+        data, arrow_copies = arrow
     # pandas Series / Index / Arrow-backed things all expose to_numpy.
-    if hasattr(data, "to_numpy"):
+    elif hasattr(data, "to_numpy"):
         data = data.to_numpy()
     arr = np.asarray(data)
     if arr.ndim != 1:
         raise ValueError(f"columns must be 1-D, got shape {arr.shape}")
 
     kind = "float"
-    copies = 0
+    copies = arrow_copies
     if np.issubdtype(arr.dtype, np.datetime64) or _is_datetime_object_array(arr):
         arr, copies = _datetime_to_float_ms(arr, copies)
         kind = "time_ms"
