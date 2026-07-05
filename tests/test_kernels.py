@@ -435,20 +435,20 @@ def test_pyramid_matches_bin2d_and_conserves():
     rng = np.random.default_rng(7)
     x = rng.uniform(0, 100, 5000)
     y = rng.uniform(0, 100, 5000)
-    h = kernels.pyramid_build(x, y, 0.0, 100.0, 0.0, 100.0, 64)
+    h = k.pyramid_build(x, y, 0.0, 100.0, 0.0, 100.0, 64)
     assert h != 0
     try:
-        grid, level = kernels.pyramid_compose(h, 0.0, 100.0, 0.0, 100.0, 64, 64)
+        grid, level = k.pyramid_compose(h, 0.0, 100.0, 0.0, 100.0, 64, 64)
         assert level == 0
-        direct = np.asarray(kernels.bin_2d(x, y, 0.0, 100.0, 0.0, 100.0, 64, 64))
+        direct = np.asarray(k.bin_2d(x, y, 0.0, 100.0, 0.0, 100.0, 64, 64))
         np.testing.assert_array_equal(np.asarray(grid).ravel(), direct.ravel())
-        assert kernels.pyramid_count(h, 0.0, 100.0, 0.0, 100.0) == 5000.0
-        sub = kernels.pyramid_compose(h, 10.0, 60.0, 20.0, 70.0, 16, 16)
+        assert k.pyramid_count(h, 0.0, 100.0, 0.0, 100.0) == 5000.0
+        sub = k.pyramid_compose(h, 10.0, 60.0, 20.0, 70.0, 16, 16)
         assert sub is not None
         total = float(np.asarray(sub[0]).sum())
-        c0 = kernels.pyramid_count(h, 10.0, 60.0, 20.0, 70.0)
+        c0 = k.pyramid_count(h, 10.0, 60.0, 20.0, 70.0)
         assert abs(total - c0) <= c0 * 0.02  # whole-cell edge band
-        assert kernels.pyramid_compose(h, 50.0, 50.4, 50.0, 50.4, 512, 512) is None
+        assert k.pyramid_compose(h, 50.0, 50.4, 50.0, 50.4, 512, 512) is None
     finally:
-        assert kernels.pyramid_free(h)
-    assert not kernels.pyramid_free(h)
+        assert k.pyramid_free(h)
+    assert not k.pyramid_free(h)
