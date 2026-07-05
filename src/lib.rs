@@ -18,6 +18,7 @@
 //! panicking across the C boundary.
 
 pub mod kernels;
+pub mod tiles;
 
 use kernels::ZoneMap;
 
@@ -32,7 +33,7 @@ fn finite_ordered(lo: f64, hi: f64) -> bool {
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 3;
+pub const ABI_VERSION: u32 = 4;
 
 #[no_mangle]
 pub extern "C" fn fc_abi_version() -> u32 {
@@ -370,4 +371,92 @@ pub unsafe extern "C" fn fc_local_log_density(
     let out = std::slice::from_raw_parts_mut(out, len);
     kernels::local_log_density(x, y, lo_x, hi_x, lo_y, hi_y, w, h, out);
     1
+}
+
+// -- tile pyramid (§5 Tier 3): opaque u64 handles, engine doc §3.3 ------------
+
+/// Build a count pyramid over the given bounds. Returns a nonzero handle, or
+/// 0 on invalid arguments. The handle must be released with fc_pyramid_free.
+/// # Safety
+/// `x`/`y` must point to `len` readable f64s.
+#[no_mangle]
+pub unsafe extern "C" fn fc_pyramid_build(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    base_dim: u32,
+) -> u64 {
+    if x.is_null() || y.is_null() || len == 0 {
+        return 0;
+    }
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    match tiles::build(x, y, x0, x1, y0, y1, base_dim as usize) {
+        Some(p) => tiles::reg_insert(p),
+        None => 0,
+    }
+}
+
+/// Approximate in-window count from the finest level. 1 on success, 0 on a
+/// stale/invalid handle or bad arguments.
+/// # Safety
+/// `out_count` must point to a writable f64.
+#[no_mangle]
+pub unsafe extern "C" fn fc_pyramid_count(
+    handle: u64,
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    out_count: *mut f64,
+) -> i32 {
+    if out_count.is_null() || !finite_gt(lo_x, hi_x) || !finite_gt(lo_y, hi_y) {
+        return 0;
+    }
+    match tiles::reg_with(handle, |p| tiles::count(p, lo_x, hi_x, lo_y, hi_y)) {
+        Some(c) => {
+            *out_count = c;
+            1
+        }
+        None => 0,
+    }
+}
+
+/// Compose the window into a w×h grid. Returns the level used (>= 0),
+/// -1 on stale handle/bad args, -2 when the window outresolves the pyramid
+/// (caller must fall back to an exact re-bin and disclose it, §28).
+/// # Safety
+/// `out` must point to `w * h` writable f32s.
+#[no_mangle]
+pub unsafe extern "C" fn fc_pyramid_compose(
+    handle: u64,
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    w: usize,
+    h: usize,
+    out: *mut f32,
+) -> i32 {
+    if out.is_null() || w == 0 || h == 0 || !finite_gt(lo_x, hi_x) || !finite_gt(lo_y, hi_y) {
+        return -1;
+    }
+    let out = std::slice::from_raw_parts_mut(out, w * h);
+    match tiles::reg_with(handle, |p| tiles::compose(p, lo_x, hi_x, lo_y, hi_y, w, h, out)) {
+        Some(Some(level)) => level as i32,
+        Some(None) => -2,
+        None => -1,
+    }
+}
+
+/// Release a pyramid. 1 if it existed, 0 for stale/unknown handles.
+/// # Safety
+/// No pointer arguments; safe for any handle value.
+#[no_mangle]
+pub unsafe extern "C" fn fc_pyramid_free(handle: u64) -> i32 {
+    if tiles::reg_remove(handle) { 1 } else { 0 }
 }
