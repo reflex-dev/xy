@@ -262,6 +262,33 @@ def test_readme_getting_started_includes_small_business_chart() -> None:
         assert marker in text
 
 
+def test_readme_architecture_diagram_covers_major_boundaries() -> None:
+    text = " ".join(README.read_text(encoding="utf-8").split())
+    required = [
+        "```mermaid",
+        "Python kernel / app process",
+        "User APIs",
+        "ColumnStore",
+        "rollback checkpoints",
+        "Compute backend",
+        "Rust C ABI when available",
+        "NumPy fallback otherwise",
+        "Payload builder",
+        "Browser / notebook frontend",
+        "WebGL2 renderer",
+        "DOM chrome",
+        "Interaction layer",
+        "Adaptive large-data loop",
+        "direct, decimated",
+        "density, adaptive",
+        "spec JSON + raw f32 buffers",
+        "no JSON number arrays",
+        "new screen-bounded payload",
+    ]
+    for marker in required:
+        assert marker in text
+
+
 def test_benchmark_docs_name_ci_report_artifacts() -> None:
     text = " ".join(BENCHMARK_DOC.read_text(encoding="utf-8").split())
     required = [

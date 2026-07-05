@@ -338,25 +338,60 @@ Chrome TTFR:
 
 ## Architecture
 
-```text
-Python process                          Browser
-┌──────────────────────────────┐        ┌──────────────────────────────┐
-│ Figure / ColumnStore          │ spec   │ anywidget ESM client          │
-│ f64 canonical data            │ ─────► │ WebGL2 marks + DOM chrome     │
-│        │                      │ raw    │ pan/zoom = uniform update     │
-│ Rust core via C ABI           │ f32    │ GPU picking + selection mask  │
-│ zone maps, M4, bin_2d         │ ─────► │ density texture for big data  │
-│        ▲                      │        │        │                      │
-│        └── re-decimate view ◄─────────┘ debounced view changes         │
-└──────────────────────────────┘        └──────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph PY["Python kernel / app process"]
+        API["User APIs<br/>Figure fluent API<br/>Composition API"]
+        VALIDATE["Builder validation<br/>shape, dtype, ranges"]
+        STORE["ColumnStore<br/>canonical f64 data<br/>strings/categories<br/>rollback checkpoints"]
+        KERNELS["Compute backend<br/>Rust C ABI when available<br/>NumPy fallback otherwise"]
+        PAYLOAD["Payload builder<br/>trace specs<br/>offset-f32 columns<br/>tier/mode metadata"]
+        EXPORTS["Export surfaces<br/>anywidget buffers<br/>standalone HTML<br/>PNG via Chromium"]
+
+        API --> VALIDATE --> STORE
+        STORE --> KERNELS
+        KERNELS --> PAYLOAD
+        STORE --> PAYLOAD
+        PAYLOAD --> EXPORTS
+    end
+
+    subgraph BROWSER["Browser / notebook frontend"]
+        CLIENT["fastcharts client<br/>anywidget ESM or standalone IIFE"]
+        RENDER["WebGL2 renderer<br/>instanced marks<br/>line/area strips<br/>density textures"]
+        DOM["DOM chrome<br/>titles, axes, legend<br/>tooltips, modebar"]
+        PICK["Interaction layer<br/>GPU picking<br/>selection masks<br/>box zoom/select"]
+
+        CLIENT --> RENDER
+        CLIENT --> DOM
+        RENDER --> PICK
+        DOM --> PICK
+    end
+
+    subgraph LOD["Adaptive large-data loop"]
+        VIEW["View change<br/>pan, zoom, box zoom"]
+        DECIDE["LOD decision<br/>direct, decimated,<br/>density, adaptive"]
+        REFINE["Refine visible window<br/>M4 line decimation<br/>scatter density or exact points"]
+
+        VIEW --> DECIDE --> REFINE
+    end
+
+    EXPORTS -- "spec JSON + raw f32 buffers<br/>no JSON number arrays" --> CLIENT
+    PICK -- "hover/select rows" --> CLIENT
+    PICK -- "debounced view state" --> VIEW
+    REFINE -- "new screen-bounded payload" --> PAYLOAD
 ```
 
 Important properties:
 
 - Wire format is memory format: raw f32 buffers, not JSON arrays.
 - Canonical data stays f64 in Python so hover/select can return exact rows.
+- Builder validation uses rollback checkpoints so failed public calls do not
+  partially mutate the `Figure` or column store.
 - Long lines ship M4-decimated points for first paint and re-decimate on zoom.
-- Large scatters switch to a fixed-size density surface above the threshold.
+- Large scatters switch to a fixed-size density surface above the threshold,
+  then drill back to exact visible points when the view is small enough.
+- The same trace specs feed notebooks, standalone HTML, static PNG screenshots,
+  and the Reflex example app.
 - Standalone HTML embeds the same spec and buffers with no Python kernel needed.
 
 ## Development
