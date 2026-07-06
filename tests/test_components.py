@@ -392,7 +392,16 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
     chart = fc.line_chart(fc.line([0, 1], [1, 2]))
     seen = {}
 
-    def fake_to_png(self, path=None, *, width=None, height=None, scale=2.0, chromium=None):
+    def fake_to_png(
+        self,
+        path=None,
+        *,
+        width=None,
+        height=None,
+        scale=2.0,
+        chromium=None,
+        sandbox=True,
+    ):
         seen.update(
             {
                 "figure": self,
@@ -401,13 +410,21 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
                 "height": height,
                 "scale": scale,
                 "chromium": chromium,
+                "sandbox": sandbox,
             }
         )
         return b"PNG"
 
     monkeypatch.setattr("fastcharts.figure.Figure.to_png", fake_to_png)
 
-    data = chart.to_png("out.png", width=320, height=200, scale=1.5, chromium="/chrome")
+    data = chart.to_png(
+        "out.png",
+        width=320,
+        height=200,
+        scale=1.5,
+        chromium="/chrome",
+        sandbox=False,
+    )
 
     assert data == b"PNG"
     assert seen == {
@@ -417,6 +434,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         "height": 200,
         "scale": 1.5,
         "chromium": "/chrome",
+        "sandbox": False,
     }
 
 

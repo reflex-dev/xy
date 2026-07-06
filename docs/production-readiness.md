@@ -70,14 +70,19 @@ reports, and sharing a single file, but it has a clear security contract:
   `</script>` inside future client source cannot terminate the script element.
 - The export rejects `NaN` and infinity in JSON metadata instead of emitting
   browser-dependent invalid JavaScript.
+- The standalone file emits a defensive `Content-Security-Policy` meta tag that
+  blocks network fetches, workers, objects, forms, and external images while
+  allowing the inline scripts/styles required by single-file export.
 - The browser client inserts user-facing text with `textContent` or text nodes;
   HTML parser sinks such as `innerHTML` are reserved for fixed internal icons,
   not titles, labels, legends, categories, or tooltips.
-- The standalone file does not set a strict CSP because it intentionally uses
-  inline scripts. Hosts that need strict CSP should serve the JavaScript bundle
+- Hosts that need nonce/hash-only strict CSP should serve the JavaScript bundle
   as a separate asset and inject data through a nonce/hash-aware wrapper.
 - Static PNG export validates width, height, scale, and timeout options before
-  launching Chromium so bad user input produces actionable Python errors.
+  launching Chromium so bad user input produces actionable Python errors, and
+  keeps Chromium's sandbox enabled by default. Pass `sandbox=False` only for
+  trusted HTML in constrained CI/container environments that cannot launch a
+  sandboxed browser.
 - Export tests should include weird strings with `</script>`, HTML entities,
   mixed-case tags, and Unicode line/paragraph separators.
 

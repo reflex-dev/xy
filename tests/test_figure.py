@@ -923,6 +923,19 @@ def test_to_html_escapes_closing_script_inside_bundled_client(monkeypatch):
     assert "<\\/script><img src=x onerror=alert(1)>" in body
 
 
+def test_to_html_includes_defensive_csp_before_scripts():
+    html = Figure(title="csp").line([0.0, 1.0], [1.0, 2.0]).to_html()
+    head = html.split("</head>", 1)[0]
+
+    assert 'http-equiv="Content-Security-Policy"' in head
+    assert f'content="{export_module._STANDALONE_CSP}"' in head
+    assert head.index("Content-Security-Policy") < html.index("<script>")
+    assert "default-src 'none'" in head
+    assert "script-src 'unsafe-inline'" in head
+    assert "connect-src 'none'" in head
+    assert "base-uri 'none'" in head
+
+
 def test_to_html_escapes_every_chart_text_surface():
     evil = "</script><svg onload=alert(1)>&\u2028\u2029"
     also_evil = "<b data-x='1'>&</b>"
@@ -1383,6 +1396,7 @@ def test_to_png_rejects_bad_export_geometry_before_chromium_lookup(monkeypatch):
         ({"scale": 0}, "PNG scale"),
         ({"scale": np.nan}, "PNG scale"),
         ({"scale": True}, "PNG scale"),
+        ({"sandbox": "false"}, "PNG sandbox"),
     ]
 
     for kwargs, match in cases:
@@ -1404,8 +1418,34 @@ def test_html_to_png_rejects_bad_mechanism_options_before_chromium_lookup(monkey
         ({"width": 320, "height": 200, "scale": float("inf")}, "PNG scale"),
         ({"width": 320, "height": 200, "time_budget_ms": 0}, "PNG time_budget_ms"),
         ({"width": 320, "height": 200, "timeout_s": -1.0}, "PNG timeout_s"),
+        ({"width": 320, "height": 200, "sandbox": 1}, "PNG sandbox"),
     ]
 
     for kwargs, match in cases:
         with pytest.raises(ValueError, match=match):
             export.html_to_png("<!doctype html>", **kwargs)
+
+
+def test_html_to_png_uses_chromium_sandbox_by_default(monkeypatch):
+    from fastcharts import export
+
+    seen = []
+
+    monkeypatch.setattr(export, "find_chromium", lambda explicit=None: "/fake/chrome")
+
+    def fake_run(args, **kwargs):
+        del kwargs
+        seen.append(args)
+        shot = next(
+            arg.removeprefix("--screenshot=") for arg in args if arg.startswith("--screenshot=")
+        )
+        Path(shot).write_bytes(b"\x89PNG\r\n\x1a\nfake")
+        return export_module.subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(export.subprocess, "run", fake_run)
+
+    export.html_to_png("<!doctype html>", 320, 200)
+    export.html_to_png("<!doctype html>", 320, 200, sandbox=False)
+
+    assert "--no-sandbox" not in seen[0]
+    assert "--no-sandbox" in seen[1]

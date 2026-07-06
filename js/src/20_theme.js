@@ -23,7 +23,10 @@ function cssToken(el, name) {
 
 function hexColor(hex) {
   const h = hex.replace("#", "");
-  const full = h.length === 3 ? [...h].map((c) => c + c).join("") : h;
+  if (!/^(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(h)) {
+    return null;
+  }
+  const full = h.length === 3 || h.length === 4 ? [...h].map((c) => c + c).join("") : h;
   const n = parseInt(full.slice(0, 6), 16);
   const a = full.length === 8 ? parseInt(full.slice(6, 8), 16) / 255 : 1;
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, a];
@@ -31,8 +34,11 @@ function hexColor(hex) {
 
 function parseColor(host, c, fallback) {
   if (!c) return fallback;
-  if (c.startsWith("#")) return hexColor(c);
-  return resolveCssColor(host, c) || fallback;
+  if (typeof c !== "string") return fallback;
+  const expr = c.trim();
+  if (!expr) return fallback;
+  if (expr.startsWith("#")) return hexColor(expr) || fallback;
+  return resolveCssColor(host, expr) || fallback;
 }
 
 function readTheme(root) {
@@ -54,3 +60,10 @@ function cssColor([r, g, b, a]) {
   return `rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},${a})`;
 }
 
+function safeCssPaint(host, expr, fallback = [0.5, 0.5, 0.5, 1]) {
+  const parsed = parseColor(host, expr, fallback);
+  const color = Array.isArray(parsed) && parsed.length >= 4 && parsed.every(Number.isFinite)
+    ? parsed
+    : fallback;
+  return cssColor(color);
+}

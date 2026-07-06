@@ -18,6 +18,7 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
         "d.textContent = text;",
         "this.tooltip.appendChild(document.createTextNode(ln));",
     )
+    required_style_sinks = ("sw.style.background = safeCssPaint(this.root, bg);",)
     banned_html_sinks = (
         "insertAdjacentHTML",
         "outerHTML",
@@ -28,6 +29,8 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
         text = path.read_text(encoding="utf-8")
         for sink in required_text_sinks:
             assert sink in text, f"{path} no longer protects {sink!r}"
+        for sink in required_style_sinks:
+            assert sink in text, f"{path} no longer sanitizes {sink!r}"
         for sink in banned_html_sinks:
             assert sink not in text, f"{path} must not use HTML sink {sink}"
 

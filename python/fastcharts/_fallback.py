@@ -66,6 +66,25 @@ def _finite_ordered(lo: float, hi: float, label: str) -> tuple[float, float]:
     return lo_f, hi_f
 
 
+def _pyramid_handle(value: int) -> int:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError("pyramid handle must be an integer handle")
+    try:
+        out = operator.index(value)
+    except TypeError as e:
+        raise ValueError("pyramid handle must be an integer handle") from e
+    if out < 0:
+        raise ValueError("pyramid handle must be non-negative")
+    return int(out)
+
+
+def _pyramid_base_dim(value: int) -> int:
+    out = _bounded_positive_int(value, "base_dim")
+    if out < 2 or out & (out - 1):
+        raise ValueError("base_dim must be a power-of-two integer >= 2")
+    return out
+
+
 def zone_maps(
     data: npt.NDArray[np.float64], chunk_size: int = 65_536
 ) -> tuple[
@@ -321,17 +340,14 @@ def _pyr_crange(lo, hi, flo, fhi, dim):
 
 
 def pyramid_build(x, y, x0, x1, y0, y1, base_dim):
+    base_dim = _pyramid_base_dim(base_dim)
+    x0, x1 = _finite_increasing(x0, x1, "x range")
+    y0, y1 = _finite_increasing(y0, y1, "y range")
     x = _as_f64(x, "x")
     y = _as_f64(y, "y")
-    base_dim = int(base_dim)
-    if (
-        len(x) != len(y)
-        or len(x) == 0
-        or base_dim < 2
-        or base_dim & (base_dim - 1)
-        or not np.all(np.isfinite([x0, x1, y0, y1]))
-        or not (x1 > x0 and y1 > y0)
-    ):
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    if len(x) == 0:
         return 0
     grid = np.asarray(bin_2d(x, y, x0, x1, y0, y1, base_dim, base_dim))
     levels = [grid.reshape(base_dim, base_dim).astype(np.uint64)]
@@ -346,8 +362,11 @@ def pyramid_build(x, y, x0, x1, y0, y1, base_dim):
 
 
 def pyramid_count(handle, lo_x, hi_x, lo_y, hi_y):
+    handle = _pyramid_handle(handle)
+    lo_x, hi_x = _finite_increasing(lo_x, hi_x, "x range")
+    lo_y, hi_y = _finite_increasing(lo_y, hi_y, "y range")
     p = _PYRAMIDS.get(handle)
-    if p is None or not (hi_x > lo_x and hi_y > lo_y):
+    if p is None:
         return None
     x0, x1, y0, y1 = p["bounds"]
     lvl = p["levels"][0]
@@ -358,10 +377,13 @@ def pyramid_count(handle, lo_x, hi_x, lo_y, hi_y):
 
 
 def pyramid_compose(handle, lo_x, hi_x, lo_y, hi_y, w, h):
+    handle = _pyramid_handle(handle)
+    lo_x, hi_x = _finite_increasing(lo_x, hi_x, "x range")
+    lo_y, hi_y = _finite_increasing(lo_y, hi_y, "y range")
     p = _PYRAMIDS.get(handle)
     w = _bounded_positive_int(w, "w")
     h = _bounded_positive_int(h, "h")
-    if p is None or not (hi_x > lo_x and hi_y > lo_y):
+    if p is None:
         return None
     x0, x1, y0, y1 = p["bounds"]
     levels = p["levels"]
@@ -398,4 +420,5 @@ def pyramid_compose(handle, lo_x, hi_x, lo_y, hi_y, w, h):
 
 
 def pyramid_free(handle) -> bool:
+    handle = _pyramid_handle(handle)
     return _PYRAMIDS.pop(handle, None) is not None

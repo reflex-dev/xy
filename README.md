@@ -200,11 +200,18 @@ JSON chart spec, and binary data blob inlined. That makes exports easy to share
 from notebooks, docs, and reports with no CDN or Python kernel required.
 
 Because standalone exports intentionally use inline scripts, strict
-Content-Security-Policy deployments need an application wrapper that serves the
-JavaScript bundle separately and applies the host's nonce or hash policy. User
-strings in titles, axis labels, trace names, legends, series names, and
-categories are escaped before entering inline JSON or `<title>`, and non-finite
-JSON metadata is rejected instead of emitted as browser-dependent JavaScript.
+Content-Security-Policy deployments still need an application wrapper that
+serves the JavaScript bundle separately and applies the host's nonce or hash
+policy. The single-file export includes a defensive `Content-Security-Policy`
+meta tag that blocks network fetches and external images while allowing the
+inline scripts/styles required for a portable chart. User strings in titles,
+axis labels, trace names, legends, series names, and categories are escaped
+before entering inline JSON or `<title>`, and non-finite JSON metadata is
+rejected instead of emitted as browser-dependent JavaScript.
+
+`Figure.to_png()` screenshots the same standalone HTML in local Chromium with
+the browser sandbox enabled by default. Use `sandbox=False` only for trusted
+HTML in CI/container environments where sandboxed Chromium cannot launch.
 
 ## Example Apps
 

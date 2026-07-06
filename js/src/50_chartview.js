@@ -246,7 +246,7 @@ class ChartView {
         bg = `linear-gradient(90deg,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
         sw.style.background = bg;
       } else {
-        sw.style.background = bg;
+        sw.style.background = safeCssPaint(this.root, bg);
       }
       sw.style.cssText +=
         "display:inline-block;width:12px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px;";

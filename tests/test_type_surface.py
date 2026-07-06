@@ -178,6 +178,7 @@ def test_chart_and_figure_png_export_types_stay_in_sync() -> None:
         assert type(None) in args, key
     assert str in get_args(chart_hints["path"])
     assert chart_hints["scale"] is float
+    assert chart_hints["sandbox"] is bool
 
 
 def test_public_figure_methods_have_typed_signatures() -> None:
