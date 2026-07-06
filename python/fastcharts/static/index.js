@@ -1168,6 +1168,35 @@ class ChartView {
     return handler;
   }
 
+  _applyClass(el, className) {
+    if (typeof className !== "string") return;
+    for (const token of className.split(/\s+/).filter(Boolean)) {
+      try { el.classList.add(token); } catch (_) { /* Ignore invalid CSS class tokens. */ }
+    }
+  }
+
+  _applyStyle(el, style) {
+    if (!style || typeof style !== "object" || Array.isArray(style)) return;
+    for (const [key, value] of Object.entries(style)) {
+      if (typeof key !== "string") continue;
+      if (typeof value !== "string" && typeof value !== "number") continue;
+      el.style.setProperty(key, String(value));
+    }
+  }
+
+  _applySlot(el, slot) {
+    const dom = this.spec.dom;
+    if (!dom || typeof dom !== "object") return;
+    if (slot === "root") this._applyClass(el, dom.class_name);
+    if (dom.class_names && typeof dom.class_names === "object") {
+      this._applyClass(el, dom.class_names[slot]);
+    }
+    if (slot === "root") this._applyStyle(el, dom.style);
+    if (dom.styles && typeof dom.styles === "object") {
+      this._applyStyle(el, dom.styles[slot]);
+    }
+  }
+
   // DPR watch (renderer audit R7): browser zoom changes devicePixelRatio
   // without firing the ResizeObserver, leaving blurry backing stores. A
   // matchMedia resolution query fires exactly when dpr leaves its current
@@ -1255,6 +1284,7 @@ class ChartView {
       `height:${this.fluidH ? "100%" : this.size.h + "px"};` +
       (this.fluidH ? "min-height:120px;" : "") + // parent without a height -> visible floor
       "font:12px system-ui,sans-serif;user-select:none;";
+    this._applySlot(root, "root");
     el.appendChild(root);
     this.root = root;
 
@@ -1263,29 +1293,35 @@ class ChartView {
       t.textContent = s.title;
       t.style.cssText =
         "position:absolute;top:6px;left:0;right:0;text-align:center;font-size:14px;font-weight:600;";
+      this._applySlot(t, "title");
       root.appendChild(t);
     }
 
     this.chrome = document.createElement("canvas");
     this.chrome.style.cssText = "position:absolute;inset:0;pointer-events:none;";
+    this._applySlot(this.chrome, "chrome");
     root.appendChild(this.chrome);
 
     this.canvas = document.createElement("canvas");
     this.canvas.style.cssText =
       `position:absolute;left:${this.plot.x}px;top:${this.plot.y}px;` +
       `width:${this.plot.w}px;height:${this.plot.h}px;cursor:crosshair;touch-action:none;`;
+    this._applySlot(this.canvas, "canvas");
     root.appendChild(this.canvas);
 
     this.labels = document.createElement("div");
     this.labels.style.cssText = "position:absolute;inset:0;pointer-events:none;";
+    this._applySlot(this.labels, "labels");
     root.appendChild(this.labels);
 
     // Hover tooltip (§17) — DOM, so it's crisp and selectable (§7).
     this.tooltip = document.createElement("div");
     this.tooltip.style.cssText =
       "position:absolute;display:none;pointer-events:none;z-index:5;" +
-      "background:rgba(20,24,33,.92);color:#fff;padding:5px 8px;border-radius:4px;" +
+      "background:var(--chart-tooltip-bg, rgba(20,24,33,.92));" +
+      "color:var(--chart-tooltip-text, #fff);padding:5px 8px;border-radius:4px;" +
       "font-size:11px;line-height:1.35;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.3);";
+    this._applySlot(this.tooltip, "tooltip");
     root.appendChild(this.tooltip);
 
     this._buildLegend(root);
@@ -1313,10 +1349,13 @@ class ChartView {
     lg.style.cssText =
       `position:absolute;top:${this.plot.y + 6}px;right:${MARGIN.r + 6}px;` +
       "display:flex;flex-direction:column;gap:2px;font-size:11px;" +
-      "background:rgba(128,128,128,.08);border-radius:4px;padding:4px 8px;max-height:" +
+      "background:var(--chart-legend-bg, rgba(128,128,128,.08));" +
+      "border-radius:4px;padding:4px 8px;max-height:" +
       `${this.plot.h - 12}px;overflow:auto;`;
+    this._applySlot(lg, "legend");
     for (const it of items) {
       const row = document.createElement("div");
+      this._applySlot(row, "legend_item");
       const sw = document.createElement("span");
       let bg = it.swatch;
       if (it.swatch === "gradient") {
@@ -2147,11 +2186,7 @@ class ChartView {
     return row;
   }
 
-  _renderTooltip(row, clientX, clientY) {
-    if (!row) { this.tooltip.style.display = "none"; return; }
-    const rect = this.root.getBoundingClientRect();
-    const lx = clientX - rect.left;
-    const ly = clientY - rect.top;
+  _defaultTooltipLines(row) {
     const lines = [];
     if (row.x !== undefined) lines.push(`x: ${fmtValue(row.x, row.x_kind)}`);
     if (row.y !== undefined) lines.push(`y: ${fmtValue(row.y, row.y_kind)}`);
@@ -2159,6 +2194,61 @@ class ChartView {
     if (row.color_category !== undefined) lines.push(`${row.color_category}`);
     if (row.size_value !== undefined) lines.push(`size: ${fmtValue(row.size_value)}`);
     if (!lines.length) lines.push(`#${row.index}`);
+    return lines;
+  }
+
+  _tooltipLookup(row, field) {
+    const aliases = (this.spec.tooltip && this.spec.tooltip.aliases) || {};
+    const key = row[field] !== undefined ? field : aliases[field];
+    if (!key || row[key] === undefined) return [undefined, undefined];
+    return [row[key], row[`${key}_kind`]];
+  }
+
+  _formatTooltipValue(value, kind, format) {
+    if (typeof format === "string" && Number.isFinite(Number(value))) {
+      const match = format.match(/^(,)?\.([0-9]+)f$/);
+      if (match) {
+        const digits = Number(match[2]);
+        return match[1]
+          ? Number(value).toLocaleString(undefined, {
+            minimumFractionDigits: digits,
+            maximumFractionDigits: digits,
+          })
+          : Number(value).toFixed(digits);
+      }
+    }
+    return fmtValue(value, kind);
+  }
+
+  _tooltipLines(row) {
+    const tooltip = this.spec.tooltip || {};
+    if (!tooltip.title && !Array.isArray(tooltip.fields)) return this._defaultTooltipLines(row);
+    const formats = tooltip.format || {};
+    const lines = [];
+    if (typeof tooltip.title === "string") {
+      const title = tooltip.title.replace(/\{([^}]+)\}/g, (_, field) => {
+        const [value, kind] = this._tooltipLookup(row, field);
+        return value === undefined ? "" : this._formatTooltipValue(value, kind, formats[field]);
+      });
+      if (title) lines.push(title);
+    }
+    if (Array.isArray(tooltip.fields)) {
+      for (const field of tooltip.fields) {
+        if (typeof field !== "string") continue;
+        const [value, kind] = this._tooltipLookup(row, field);
+        if (value === undefined) continue;
+        lines.push(`${field}: ${this._formatTooltipValue(value, kind, formats[field])}`);
+      }
+    }
+    return lines.length ? lines : this._defaultTooltipLines(row);
+  }
+
+  _renderTooltip(row, clientX, clientY) {
+    if (!row) { this.tooltip.style.display = "none"; return; }
+    const rect = this.root.getBoundingClientRect();
+    const lx = clientX - rect.left;
+    const ly = clientY - rect.top;
+    const lines = this._tooltipLines(row);
     // Text nodes, not innerHTML: category labels are user data and must never
     // be parsed as markup (a category named "<img onerror=…>" is just a label).
     this.tooltip.textContent = "";
@@ -2183,7 +2273,9 @@ class ChartView {
     this.selRect = document.createElement("div");
     this.selRect.style.cssText =
       "position:absolute;display:none;pointer-events:none;z-index:4;" +
-      "border:1px solid rgba(90,140,240,.9);background:rgba(90,140,240,.15);";
+      "border:1px solid var(--chart-selection, rgba(90,140,240,.9));" +
+      "background:rgba(90,140,240,.15);";
+    this._applySlot(this.selRect, "selection");
     this.root.appendChild(this.selRect);
 
     const dataAt = (clientX, clientY) => {
@@ -2343,8 +2435,10 @@ class ChartView {
     bar.style.cssText =
       `position:absolute;top:${this.plot.y + 4}px;left:${this.plot.x + 4}px;z-index:6;` +
       "display:flex;gap:1px;opacity:.72;transition:opacity .15s;" +
-      "background:rgba(255,255,255,.78);border:1px solid rgba(128,128,128,.18);" +
+      "background:var(--chart-modebar-bg, rgba(255,255,255,.78));" +
+      "border:1px solid rgba(128,128,128,.18);" +
       "border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08);";
+    this._applySlot(bar, "modebar");
     this._listen(root, "pointerenter", () => { bar.style.opacity = "1"; });
     this._listen(root, "pointerleave", () => { bar.style.opacity = ".72"; });
     this._modebar = bar;
@@ -2360,6 +2454,7 @@ class ChartView {
         "display:flex;align-items:center;justify-content:center;width:26px;height:24px;" +
         "padding:0;border:none;background:transparent;cursor:pointer;border-radius:3px;" +
         `color:${col};pointer-events:auto;`;
+      this._applySlot(b, "modebar_button");
       this._listen(b, "pointerdown", (e) => e.stopPropagation());
       this._listen(b, "click", (e) => { e.stopPropagation(); onClick(); });
       bar.appendChild(b);
