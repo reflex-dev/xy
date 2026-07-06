@@ -222,11 +222,25 @@ jobs:
         run: .venv/bin/python benchmarks/bench_line.py --sizes 1e5,1e6,1e7 --json line.json | tee -a docs/benchmark_ci.md
       - name: Install footprint & cold import (methodology §1)
         run: .venv/bin/python benchmarks/bench_install.py --json install.json | tee -a docs/benchmark_ci.md
+      - name: Browser interaction latency (methodology interaction_smoothness)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python benchmarks/bench_interaction.py \
+            --sizes 1e4,1e5 --reps 8 --chromium "$CHROME" \
+            --json interaction.json | tee -a docs/benchmark_ci.md
+      - name: Many-chart dashboard startup (methodology dashboard_20)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python benchmarks/bench_dashboard.py \
+            --chart-counts 20 --chromium "$CHROME" \
+            --json dashboard.json | tee -a docs/benchmark_ci.md
       - name: Verify benchmark JSON artifacts
         run: |
           .venv/bin/python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs
           .venv/bin/python scripts/verify_benchmark_report.py line.json --kind line-decimation
           .venv/bin/python scripts/verify_benchmark_report.py install.json --kind install-footprint
+          .venv/bin/python scripts/verify_benchmark_report.py interaction.json --kind interaction-browser
+          .venv/bin/python scripts/verify_benchmark_report.py dashboard.json --kind dashboard-browser
       - name: Show report
         run: cat docs/benchmark_ci.md
       - name: Upload benchmark report
@@ -240,6 +254,8 @@ jobs:
             benchmark.json
             line.json
             install.json
+            interaction.json
+            dashboard.json
 
   sdist:
     name: Source distribution

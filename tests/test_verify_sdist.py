@@ -254,6 +254,10 @@ def test_verify_sdist_rejects_missing_pkg_info(tmp_path: Path) -> None:
             DEFAULT_PKG_INFO.replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.20"),
             r"numpy>=1\.24",
         ),
+        (
+            DEFAULT_PKG_INFO + "Requires-Dist: reflex>=0.8\n",
+            "no Reflex runtime dependency",
+        ),
     ],
 )
 def test_verify_sdist_rejects_invalid_pkg_info(tmp_path: Path, pkg_info: str, match: str) -> None:

@@ -32,8 +32,8 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "name": "Medium direct scatter",
         "why": "Proves exact marker rendering, hover, color, and size channels before aggregation kicks in.",
         "metrics": "FPS, TTFR, bytes/point, hover latency",
-        "harness": "benchmarks/bench_vs.py at 100k-200k; browser interaction probes planned",
-        "status": "partial",
+        "harness": "benchmarks/bench_vs.py at 100k-200k; benchmarks/bench_interaction.py",
+        "status": "tracked",
         "goal": "Smooth exact WebGL scatter with bounded bytes/point and no JSON-number payload cliff.",
     },
     {
@@ -50,8 +50,8 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "name": "Adaptive scatter drilldown",
         "why": "The large-data claim needs a credible path from overview to exact visible points.",
         "metrics": "visible-query latency, tier-switch latency, exact-point recovery, badge accuracy",
-        "harness": "planned spatial-index/tile benchmark",
-        "status": "planned",
+        "harness": "benchmarks/test_codspeed_kernels.py::test_adaptive_drilldown_cycle",
+        "status": "tracked",
         "goal": "Exact points when visible count is under budget; sampled/density with explicit counts otherwise.",
     },
     {
@@ -68,8 +68,8 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "name": "Many-chart dashboards",
         "why": "Plotly-class apps often fail from total page weight and many live canvases, not one chart.",
         "metrics": "total TTFR, memory, idle CPU, chart count ceiling",
-        "harness": "planned dashboard benchmark",
-        "status": "planned",
+        "harness": "benchmarks/bench_dashboard.py",
+        "status": "tracked",
         "goal": "Load 10-50 interactive charts with lower total memory and faster first usable dashboard than Plotly/Bokeh.",
     },
     {
@@ -77,8 +77,8 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "name": "Interaction smoothness",
         "why": "Users judge performance by pan/zoom/hover, not just export time.",
         "metrics": "pan/zoom FPS, wheel latency, hover latency, selection latency",
-        "harness": "planned browser automation benchmark",
-        "status": "planned",
+        "harness": "benchmarks/bench_interaction.py",
+        "status": "tracked",
         "goal": "Stay responsive during interaction, then refine view after interaction settles.",
     },
     {

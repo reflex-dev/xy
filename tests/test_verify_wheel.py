@@ -249,6 +249,10 @@ def test_verify_wheel_rejects_missing_metadata_file(tmp_path: Path) -> None:
             DEFAULT_METADATA.replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy>=1.20"),
             r"numpy>=1\.24",
         ),
+        (
+            DEFAULT_METADATA + "\nRequires-Dist: reflex>=0.8",
+            "no Reflex runtime dependency",
+        ),
     ],
 )
 def test_verify_wheel_rejects_invalid_metadata(tmp_path: Path, metadata: str, match: str) -> None:

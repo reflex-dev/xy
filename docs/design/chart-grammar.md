@@ -7,6 +7,9 @@ later. Grounded in what ships today (`components.py`: `Chart` + `Mark` +
 `_emit_<kind>` dispatch) — the proposal is an *extension* of that shape, not
 a replacement.
 
+Related: `reflex-shaped-api.md` covers the public API/styling proposal for a
+Reflex-like component surface without making Reflex a core dependency.
+
 ## 1. The model in one paragraph
 
 A **Figure** is a grid of **Panels** (1×1 today; faceting/subplots later).
@@ -145,7 +148,9 @@ panes is layout the Figure grid owns.
 
 The tree above is precisely a Reflex component tree's shape: snake_case
 props, children composition, `data=` + column-name resolution (`data_key`
-idiom), event props. The Reflex wrapper is therefore a *thin* codegen layer:
+idiom), event props. It remains a FastCharts-owned tree, not a Reflex object,
+so the core package keeps zero Reflex dependencies. A future Reflex wrapper is
+therefore a *thin* codegen layer:
 
 1. Each `fc.*` factory maps 1:1 to a Reflex component; props serialize as-is
    (they're plain scalars/strings/arrays).
