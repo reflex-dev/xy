@@ -165,9 +165,7 @@ def run(*, sizes: list[int], reps: int, chromium: str | None = None) -> dict[str
             "scenario": f"{tier}_scatter_interaction",
             "n": n,
             "tier": tier,
-            "benchmark_categories": [
-                category["id"] for category in categories_for(category_ids)
-            ],
+            "benchmark_categories": [category["id"] for category in categories_for(category_ids)],
             "payload_bytes": json_bytes(spec) + len(blob),
         }
         html = page_for_charts(
