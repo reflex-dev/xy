@@ -23,6 +23,7 @@ from fastcharts import kernels as k
 N = 1_000_000
 GRID_W, GRID_H = 512, 384
 N_BUCKETS = 2048
+DRILL_N = 600_000
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -39,6 +40,22 @@ def data() -> tuple[np.ndarray, np.ndarray]:
     x = np.arange(N, dtype=np.float64)
     y = rng.normal(0.0, 1.0, N)
     return x, y
+
+
+@pytest.fixture(scope="module")
+def drilldown_figure() -> Figure:
+    rng = np.random.default_rng(17)
+    x = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
+    y = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
+    fig = Figure()
+    fig.scatter(x, y, density=True)
+
+    # Warm the lazily-built pyramid so CodSpeed tracks interactive viewport
+    # refresh cost, not one-time index construction.
+    fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+    fig.density_view(0, 0.0, 10.0, 0.0, 10.0, GRID_W, GRID_H)
+    fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+    return fig
 
 
 def test_zone_maps(benchmark, data):
@@ -105,3 +122,29 @@ def test_decimate_view(benchmark, data):
     fig.line(x, y)
     x0, x1 = N * 0.495, N * 0.505
     benchmark(fig.decimate_view, x0, x1, N_BUCKETS)
+
+
+def _adaptive_drilldown_cycle(fig: Figure) -> int:
+    wide, wide_buffers = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+    deep, deep_buffers = fig.density_view(0, 0.0, 10.0, 0.0, 10.0, GRID_W, GRID_H)
+    back, back_buffers = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+
+    wide_trace = wide["traces"][0]
+    deep_trace = deep["traces"][0]
+    back_trace = back["traces"][0]
+    assert wide_trace["mode"] == "density"
+    assert deep_trace["mode"] == "points"
+    assert back_trace["mode"] == "density"
+    assert 0 < deep_trace["visible"] < wide_trace["visible"]
+    return (
+        int(wide_trace["visible"])
+        + int(deep_trace["visible"])
+        + int(back_trace["visible"])
+        + sum(len(buffer) for buffer in wide_buffers + deep_buffers + back_buffers)
+    )
+
+
+def test_adaptive_drilldown_cycle(benchmark, drilldown_figure):
+    """Adaptive scatter: density overview -> exact visible points -> density out."""
+    result = benchmark(_adaptive_drilldown_cycle, drilldown_figure)
+    assert result > DRILL_N

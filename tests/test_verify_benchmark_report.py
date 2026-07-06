@@ -250,6 +250,81 @@ def _kernel_native_report() -> dict:
     }
 
 
+def _interaction_browser_report() -> dict:
+    categories, tracked = _category_registry(
+        "medium_direct_scatter",
+        "huge_scatter_overview",
+        "interaction_smoothness",
+    )
+    return {
+        **_base(),
+        "kind": "interaction-browser",
+        "benchmark_categories": categories,
+        "tracked_categories": tracked,
+        "reps": 12,
+        "rows": [
+            {
+                "scenario": "direct_scatter_interaction",
+                "n": 100_000,
+                "tier": "direct",
+                "benchmark_categories": ["medium_direct_scatter", "interaction_smoothness"],
+                "payload_bytes": 8192,
+                "html_bytes": 16_384,
+                "status": "ok",
+                "nonblank_pixels": 128,
+                "view_changed": True,
+                "wheel_zoom_median_ms": 4.0,
+                "wheel_zoom_p95_ms": 7.0,
+                "wheel_zoom_max_ms": 9.0,
+                "wheel_zoom_reps": 12,
+                "pan_median_ms": 3.0,
+                "pan_p95_ms": 6.0,
+                "pan_max_ms": 7.0,
+                "pan_reps": 12,
+                "hover_median_ms": 2.0,
+                "hover_p95_ms": 5.0,
+                "hover_max_ms": 6.0,
+                "hover_reps": 12,
+                "box_zoom_median_ms": 4.0,
+                "box_zoom_p95_ms": 8.0,
+                "box_zoom_max_ms": 10.0,
+                "box_zoom_reps": 12,
+            }
+        ],
+    }
+
+
+def _dashboard_browser_report() -> dict:
+    categories, tracked = _category_registry(
+        "many_chart_dashboards",
+        "small_data_startup",
+        "payload_export_size",
+    )
+    return {
+        **_base(),
+        "kind": "dashboard-browser",
+        "benchmark_categories": categories,
+        "tracked_categories": tracked,
+        "rows": [
+            {
+                "scenario": "dashboard_20",
+                "chart_count": 20,
+                "benchmark_categories": [
+                    "many_chart_dashboards",
+                    "small_data_startup",
+                    "payload_export_size",
+                ],
+                "total_payload_bytes": 262_144,
+                "html_bytes": 524_288,
+                "status": "ok",
+                "render_ms": 140.0,
+                "ms_per_chart": 7.0,
+                "nonblank_charts": 20,
+            }
+        ],
+    }
+
+
 @pytest.mark.parametrize(
     ("payload", "kind"),
     [
@@ -257,6 +332,8 @@ def _kernel_native_report() -> dict:
         (_core_2d_report(), "core-2d"),
         (_scatter_native_report(), "scatter-native"),
         (_kernel_native_report(), "kernel-native"),
+        (_interaction_browser_report(), "interaction-browser"),
+        (_dashboard_browser_report(), "dashboard-browser"),
         (_line_decimation_report(), "line-decimation"),
         (_install_footprint_report(), "install-footprint"),
     ],

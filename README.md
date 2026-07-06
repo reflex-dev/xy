@@ -43,7 +43,7 @@ Still experimental and expected to change before 1.0:
 | Native Rust backend | Stable alpha when a platform wheel is available | Used for fast ingest, binning, and decimation. |
 | NumPy fallback backend | Stable alpha | Same public behavior when Rust is unavailable, with slower compute. |
 | Composition API | Experimental | Useful for declarative children and callbacks; details may change before 1.0. |
-| Reflex integration | Experimental | Example app exists; first-class customization/state APIs are roadmap work. |
+| Reflex integration | Experimental | Example app exists; core `fastcharts` has no Reflex dependency; any future adapter should use no hard Reflex dependency, or only a supported Reflex core/component package unless full Reflex is proven necessary. |
 | Adaptive drilldown internals | Experimental | Thresholds and request protocol may move as the LOD engine evolves. |
 
 ## Why fastcharts
@@ -217,7 +217,9 @@ HTML in CI/container environments where sandboxed Chromium cannot launch.
 
 - [`reflex_fastcharts_app/`](reflex_fastcharts_app/) is a standalone Reflex
   dashboard that embeds generated fastcharts line, scatter, density, histogram,
-  area, bar, and heatmap charts, including large-data drilldown examples.
+  area, bar, and heatmap charts, including large-data drilldown examples. Its
+  Reflex dependency is app-local; installing `fastcharts` itself must not pull
+  in Reflex.
 - [`docs/api-examples.md`](docs/api-examples.md) has copyable examples for the
   currently implemented 2D chart families.
 

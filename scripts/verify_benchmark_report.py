@@ -23,6 +23,8 @@ KNOWN_KINDS = (
     "core-2d",
     "scatter-native",
     "kernel-native",
+    "interaction-browser",
+    "dashboard-browser",
     "line-decimation",
     "install-footprint",
 )
@@ -267,6 +269,9 @@ def _validate_common(report: Any, errors: list[str]) -> None:
 
 
 def _detect_kind(report: dict[str, Any]) -> str:
+    declared = report.get("kind")
+    if declared in {"interaction-browser", "dashboard-browser"}:
+        return str(declared)
     if "results" in report and "ceilings" in report:
         return "scatter-vs"
     if "results" in report and "n_out" in report:
@@ -685,6 +690,134 @@ def _validate_kernel_native(report: dict[str, Any], errors: list[str]) -> None:
                     )
 
 
+def _validate_browser_category_list(
+    row: dict[str, Any],
+    path: str,
+    category_ids: set[str],
+    errors: list[str],
+) -> None:
+    categories = row.get("benchmark_categories")
+    if not isinstance(categories, list) or not categories:
+        errors.append(f"{path}.benchmark_categories must be a non-empty list")
+    elif category_ids:
+        for category_id in categories:
+            if category_id not in category_ids:
+                errors.append(
+                    f"{path}.benchmark_categories id {category_id!r} "
+                    "is not in benchmark_categories"
+                )
+
+
+def _validate_interaction_browser(report: dict[str, Any], errors: list[str]) -> None:
+    _require_keys(
+        report,
+        {"kind", "benchmark_categories", "tracked_categories", "rows", "reps"},
+        "report",
+        errors,
+    )
+    if report.get("kind") != "interaction-browser":
+        errors.append("report.kind must be 'interaction-browser'")
+    _require_positive_number(report, "reps", "report", errors)
+    category_ids = _validate_categories(report, errors)
+    rows = report.get("rows")
+    if not isinstance(rows, list) or not rows:
+        errors.append("rows must be a non-empty list")
+        return
+    _reject_duplicate_rows(
+        rows,
+        path="rows",
+        keys=("scenario", "n"),
+        label="interaction browser row",
+        errors=errors,
+    )
+    for i, row in enumerate(rows):
+        path = f"rows[{i}]"
+        _require_keys(
+            row,
+            {
+                "scenario",
+                "n",
+                "tier",
+                "benchmark_categories",
+                "payload_bytes",
+                "html_bytes",
+                "status",
+            },
+            path,
+            errors,
+        )
+        if not isinstance(row, dict):
+            continue
+        _require_positive_number(row, "n", path, errors)
+        if row.get("tier") not in {"direct", "density"}:
+            errors.append(f"{path}.tier must be 'direct' or 'density'")
+        for key in ("payload_bytes", "html_bytes"):
+            _require_nonnegative_number(row, key, path, errors)
+        status = _status_kind(row.get("status"))
+        if not status:
+            errors.append(f"{path}.status has unknown value {row.get('status')!r}")
+        _validate_browser_category_list(row, path, category_ids, errors)
+        if status == "ok":
+            _require_positive_number(row, "nonblank_pixels", path, errors)
+            if not isinstance(row.get("view_changed"), bool):
+                errors.append(f"{path}.view_changed must be a boolean")
+            for prefix in ("wheel_zoom", "pan", "hover", "box_zoom"):
+                for suffix in ("median_ms", "p95_ms", "max_ms"):
+                    _require_nonnegative_number(row, f"{prefix}_{suffix}", path, errors)
+                _require_positive_number(row, f"{prefix}_reps", path, errors)
+
+
+def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> None:
+    _require_keys(
+        report,
+        {"kind", "benchmark_categories", "tracked_categories", "rows"},
+        "report",
+        errors,
+    )
+    if report.get("kind") != "dashboard-browser":
+        errors.append("report.kind must be 'dashboard-browser'")
+    category_ids = _validate_categories(report, errors)
+    rows = report.get("rows")
+    if not isinstance(rows, list) or not rows:
+        errors.append("rows must be a non-empty list")
+        return
+    _reject_duplicate_rows(
+        rows,
+        path="rows",
+        keys=("scenario", "chart_count"),
+        label="dashboard browser row",
+        errors=errors,
+    )
+    for i, row in enumerate(rows):
+        path = f"rows[{i}]"
+        _require_keys(
+            row,
+            {
+                "scenario",
+                "chart_count",
+                "benchmark_categories",
+                "total_payload_bytes",
+                "html_bytes",
+                "status",
+            },
+            path,
+            errors,
+        )
+        if not isinstance(row, dict):
+            continue
+        _require_positive_number(row, "chart_count", path, errors)
+        for key in ("total_payload_bytes", "html_bytes"):
+            _require_nonnegative_number(row, key, path, errors)
+        status = _status_kind(row.get("status"))
+        if not status:
+            errors.append(f"{path}.status has unknown value {row.get('status')!r}")
+        _validate_browser_category_list(row, path, category_ids, errors)
+        if status == "ok":
+            for key in ("render_ms", "ms_per_chart"):
+                _require_nonnegative_number(row, key, path, errors)
+            _require_positive_number(row, "nonblank_charts", path, errors)
+
+
 def _report_rows(report: dict[str, Any], kind: str) -> list[dict[str, Any]]:
     if kind in {"scatter-vs", "line-decimation"}:
         results = report.get("results")
@@ -789,6 +922,10 @@ def validate_report(path: Path, *, kind: str = "auto") -> list[str]:
         _validate_scatter_native(report, errors)
     elif selected == "kernel-native":
         _validate_kernel_native(report, errors)
+    elif selected == "interaction-browser":
+        _validate_interaction_browser(report, errors)
+    elif selected == "dashboard-browser":
+        _validate_dashboard_browser(report, errors)
     else:
         errors.append(f"unknown benchmark report kind: {detected!r}")
     if kind != "auto" and detected != kind:

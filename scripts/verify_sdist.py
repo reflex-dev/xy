@@ -32,10 +32,13 @@ REQUIRED_FILES = {
     "README.md",
     "benchmarks/__init__.py",
     "benchmarks/_browser.py",
+    "benchmarks/_fastcharts_browser.py",
     "benchmarks/baseline.json",
     "benchmarks/bench.py",
     "benchmarks/bench_2d_charts.py",
+    "benchmarks/bench_dashboard.py",
     "benchmarks/bench_install.py",
+    "benchmarks/bench_interaction.py",
     "benchmarks/bench_line.py",
     "benchmarks/bench_native.py",
     "benchmarks/bench_scatter_native.py",
@@ -98,6 +101,8 @@ REQUIRED_FILES = {
     "scripts/check_claim_guardrails.py",
     "scripts/check_python_floor.py",
     "scripts/check_regressions.py",
+    "scripts/bench_dashboard.py",
+    "scripts/bench_interaction.py",
     "scripts/verify_ci_workflow.py",
     "scripts/verify_benchmark_report.py",
     "scripts/verify_local.py",
@@ -184,6 +189,17 @@ def _dependency_satisfies_floor(requirement: str, package: str, minimum: str) ->
     )
 
 
+def _dependency_name(requirement: str) -> str:
+    requirement = requirement.split(";", 1)[0].strip()
+    match = re.match(r"([A-Za-z0-9_.-]+)", requirement)
+    return "" if match is None else match.group(1).replace("_", "-").lower()
+
+
+def _is_reflex_dependency(requirement: str) -> bool:
+    name = _dependency_name(requirement)
+    return name == "reflex" or name.startswith("reflex-")
+
+
 def _require_pkg_info(path: str, root: str) -> None:
     with tarfile.open(path, "r:gz") as tf:
         data = tf.extractfile(f"{root}/PKG-INFO")
@@ -206,6 +222,11 @@ def _require_pkg_info(path: str, root: str) -> None:
             for requirement in requirements
         ):
             missing.append(f"Requires-Dist: {package}>={minimum}")
+    reflex_requirements = [
+        requirement for requirement in requirements if _is_reflex_dependency(requirement)
+    ]
+    if reflex_requirements:
+        missing.append(f"no Reflex runtime dependency ({reflex_requirements})")
     if missing:
         raise AssertionError(f"missing or invalid PKG-INFO lines: {missing}")
 

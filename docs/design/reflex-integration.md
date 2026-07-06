@@ -1,10 +1,16 @@
 # Reflex integration — design
 
 Status: **design** (validated in part by the working prototype in
-`reflex_fastcharts_app/`). The deliverable is a `reflex-fastcharts` package
-that makes a fastcharts figure a first-class Reflex component with the same
-performance contract as the notebook path: screen-bounded binary wire (§29),
-kernel-side canonical data (§27), stale-while-revalidate interaction (§17).
+`reflex_fastcharts_app/`). The deliverable is an external Reflex adapter
+package (working name: `reflex-fastcharts`) that makes a fastcharts figure a
+first-class Reflex component with the same performance contract as the notebook
+path: screen-bounded binary wire (§29), kernel-side canonical data (§27),
+stale-while-revalidate interaction (§17). The adapter dependency budget is
+strict: no Reflex dependency if practical, otherwise only a supported
+core/component Reflex package unless full Reflex is proven necessary. Full
+`reflex` is acceptable for demo apps and user application code, but not as a
+default dependency of `fastcharts`, and not as the adapter default unless a
+smaller public integration surface cannot work.
 
 ## 1. What the prototype proved, and what it fudged
 
@@ -76,11 +82,24 @@ Little-endian, `application/octet-stream`. The client already consumes
 base64 path. No JSON numbers for data, no 33% inflation, no giant-string
 JSON parse on the main thread.
 
-## 4. What lands in `reflex-fastcharts` (the new package)
+## 4. What lands in the Reflex adapter package
 
-Dependency direction: `reflex-fastcharts → fastcharts` (+ `reflex`).
-`fastcharts` itself stays Reflex-free (existing CLAUDE.md rule; also why
-`components.py` — the Reflex-flavored composition API — imports nothing).
+Dependency direction: adapter package → `fastcharts`; `fastcharts` itself stays
+Reflex-free (existing CLAUDE.md rule; also why `components.py` — the
+Reflex-flavored composition API — imports nothing).
+
+The adapter must use the smallest supported Reflex dependency surface:
+
+- Required for `fastcharts`: no Reflex dependency of any kind.
+- Best for the adapter: no hard Reflex dependency; expose registry/data-plane helpers and a
+  component declaration that works when a Reflex app already has Reflex
+  installed.
+- Good: depend only on a supported Reflex core/component package if Reflex
+  publishes one.
+- Last resort: depend on full `reflex`, with the reason documented and isolated
+  to an explicit adapter extra or app package. Full Reflex must never become a
+  transitive dependency of `fastcharts`, and should not be the default
+  `reflex-fastcharts` install unless there is no supported smaller API.
 
 ### 4.1 Figure registry
 
@@ -148,13 +167,14 @@ def index():
     )
 ```
 
-`rfc.chart` is an `rx.Component` whose React wrapper: (1) fetches the framed
-payload for `token`, (2) instantiates `ChartView(el, spec, blob, comm)` with
-a fetch/SSE comm adapter (the prototype's shim, productionized), (3) forwards
-`pick_result`/`selection` replies into the Reflex event dispatcher as plain
-JSON, (4) destroys the view and fires a release beacon on unmount. The JS
-client is the same committed ESM bundle the wheel ships — one renderer for
-notebooks, static export, and Reflex.
+`rfc.chart` is the thinnest Reflex-compatible component wrapper possible. If
+Reflex exposes a core component API, use that instead of importing the full app
+framework. Its React wrapper: (1) fetches the framed payload for `token`, (2)
+instantiates `ChartView(el, spec, blob, comm)` with a fetch/SSE comm adapter
+(the prototype's shim, productionized), (3) forwards `pick_result`/`selection`
+replies into the Reflex event dispatcher as plain JSON, (4) destroys the view
+and fires a release beacon on unmount. The JS client is the same committed ESM
+bundle the wheel ships — one renderer for notebooks, static export, and Reflex.
 
 ### 4.4 State-driven updates and streaming
 
@@ -313,9 +333,11 @@ What this example is designed to prove, line by line:
 
 1. `fastcharts/channel.py`: extract `handle_message` from `widget.py`; add
    the binary framing helpers + tests (no behavior change to the widget).
-2. `reflex-fastcharts` package: registry + routes + framed-wire JS comm
-   adapter; port the prototype's drilldown page onto it (deleting the
-   base64/global-figure shortcuts) as the acceptance test.
+2. External adapter package: registry + routes + framed-wire JS comm adapter;
+   use no Reflex dependency, or only a supported Reflex core/component
+   dependency, unless full Reflex is proven necessary. Port the prototype's
+   drilldown page onto it (deleting the base64/global-figure shortcuts) as the
+   acceptance test.
 3. The `rfc.chart` component + semantic event forwarding; demo app switches
    from iframes to components.
 4. SSE push + `rfc.append`; wire the streaming demo.

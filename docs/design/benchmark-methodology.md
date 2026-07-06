@@ -110,19 +110,23 @@ reported).
 4. `scatter_100M_pan`: pyramid pan/zoom percentiles (post LOD phase 3) —
    the headline; includes never-blank check (frame sampling: no frame
    without chart pixels).
-5. `drilldown_truth`: 10M → zoom to 50k ⇒ exact points + exact hover.
-6. `dashboard_20`: 20 mixed charts on one page — total TTFR/memory (the
+5. `drilldown_truth`: CodSpeed native cycle covers density overview → exact
+   points → density zoom-out; the 10M+ exact-hover oracle remains the larger
+   browser/widget follow-up.
+6. `dashboard_20`: `benchmarks/bench_dashboard.py` renders 20 mixed charts on
+   one page — total chart-to-pixels startup now, memory next (the
    Reflex story; competitors: Plotly/Bokeh equivalents).
 7. `install_import`: sizes + cold import vs all.
 
 ## 6. Implementation plan
 
-1. Percentile interaction probe in `_browser.py` (dispatch synthetic wheel/
-   pointer events; collect RAF-timed deltas) — unlocks pan/zoom latency and
-   interaction-ready.
+1. Percentile interaction probe in `benchmarks/bench_interaction.py` (dispatch
+   real ChartView zoom/pan/hover/box-zoom paths; collect RAF-timed deltas) —
+   unlocks pan/zoom latency and interaction-ready.
 2. Oracle module `benchmarks/oracles.py` (NumPy references + assertions),
    wired into `bench_vs.py` scenario runs.
-3. PyGWalker + plotly-resampler adapters; `dashboard_20` scenario page.
+3. PyGWalker + plotly-resampler adapters; Plotly/Bokeh equivalents for the
+   `dashboard_20` scenario.
 4. `benchmark.json` schema v2: add mode labels, oracle pass/fail, env tier,
    percentiles; `docs/benchmark.md` regenerated from it (keep the "measured,
    not cited" rule).

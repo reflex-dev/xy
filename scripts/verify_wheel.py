@@ -139,6 +139,17 @@ def _dependency_satisfies_floor(requirement: str, package: str, minimum: str) ->
     )
 
 
+def _dependency_name(requirement: str) -> str:
+    requirement = requirement.split(";", 1)[0].strip()
+    match = re.match(r"([A-Za-z0-9_.-]+)", requirement)
+    return "" if match is None else match.group(1).replace("_", "-").lower()
+
+
+def _is_reflex_dependency(requirement: str) -> bool:
+    name = _dependency_name(requirement)
+    return name == "reflex" or name.startswith("reflex-")
+
+
 def _require_metadata(names: set[str], data: bytes) -> None:
     text = data.decode("utf-8")
     metadata = Parser().parsestr(text)
@@ -157,6 +168,11 @@ def _require_metadata(names: set[str], data: bytes) -> None:
             for requirement in requirements
         ):
             missing.append(f"Requires-Dist: {package}>={minimum}")
+    reflex_requirements = [
+        requirement for requirement in requirements if _is_reflex_dependency(requirement)
+    ]
+    if reflex_requirements:
+        missing.append(f"no Reflex runtime dependency ({reflex_requirements})")
     if missing:
         raise AssertionError(f"missing or invalid METADATA lines: {missing}")
     _dist_info_name(names, "METADATA")
