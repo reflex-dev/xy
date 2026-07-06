@@ -703,8 +703,7 @@ def _validate_browser_category_list(
         for category_id in categories:
             if category_id not in category_ids:
                 errors.append(
-                    f"{path}.benchmark_categories id {category_id!r} "
-                    "is not in benchmark_categories"
+                    f"{path}.benchmark_categories id {category_id!r} is not in benchmark_categories"
                 )
 
 

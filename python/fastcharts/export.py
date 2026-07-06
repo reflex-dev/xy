@@ -225,8 +225,23 @@ def html_to_png(
             timeout=timeout_s,
         )
         if not shot.exists():
-            tail = (proc.stderr or "")[-500:]
-            raise RuntimeError(f"Chromium produced no screenshot (exit {proc.returncode}): {tail}")
+            first_tail = (proc.stderr or "")[-500:]
+            if sandbox:
+                retry_args = list(args)
+                retry_args.insert(2, "--no-sandbox")
+                proc = subprocess.run(
+                    retry_args,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout_s,
+                )
+            if not shot.exists():
+                tail = (proc.stderr or "")[-500:]
+                if sandbox:
+                    tail = f"sandboxed launch failed: {first_tail}\nno-sandbox retry failed: {tail}"
+                raise RuntimeError(
+                    f"Chromium produced no screenshot (exit {proc.returncode}): {tail}"
+                )
         data = shot.read_bytes()
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         raise RuntimeError("screenshot output was not a PNG")

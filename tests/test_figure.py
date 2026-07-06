@@ -1449,3 +1449,30 @@ def test_html_to_png_uses_chromium_sandbox_by_default(monkeypatch):
 
     assert "--no-sandbox" not in seen[0]
     assert "--no-sandbox" in seen[1]
+
+
+def test_html_to_png_retries_without_sandbox_when_chromium_crashes(monkeypatch):
+    from fastcharts import export
+
+    seen = []
+
+    monkeypatch.setattr(export, "find_chromium", lambda explicit=None: "/fake/chrome")
+
+    def fake_run(args, **kwargs):
+        del kwargs
+        seen.append(args)
+        if len(seen) == 2:
+            shot = next(
+                arg.removeprefix("--screenshot=") for arg in args if arg.startswith("--screenshot=")
+            )
+            Path(shot).write_bytes(b"\x89PNG\r\n\x1a\nfake")
+            return export_module.subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        return export_module.subprocess.CompletedProcess(args, -6, stdout="", stderr="crashed")
+
+    monkeypatch.setattr(export.subprocess, "run", fake_run)
+
+    data = export.html_to_png("<!doctype html>", 320, 200)
+
+    assert data == b"\x89PNG\r\n\x1a\nfake"
+    assert "--no-sandbox" not in seen[0]
+    assert "--no-sandbox" in seen[1]

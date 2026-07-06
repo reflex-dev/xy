@@ -53,8 +53,7 @@ def page_for_charts(
 ) -> str:
     payloads = inline_json(charts)
     css = body_css or (
-        "html,body{margin:0;background:#fff;font-family:system-ui,sans-serif;}"
-        "#root{padding:0;}"
+        "html,body{margin:0;background:#fff;font-family:system-ui,sans-serif;}#root{padding:0;}"
     )
     return f"""<!doctype html>
 <html>
