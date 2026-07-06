@@ -382,6 +382,45 @@ def test_local_log_density_does_not_clamp_outside_window(impl):
     assert d[3] == 0.0
 
 
+def test_pyramid_wrappers_reject_invalid_public_arguments(impl):
+    x = np.arange(8.0, dtype=np.float64)
+    short = np.arange(7.0, dtype=np.float64)
+
+    with pytest.raises(ValueError, match="equal length"):
+        impl.pyramid_build(x, short, 0.0, 8.0, 0.0, 8.0, 4)
+    with pytest.raises(ValueError, match="base_dim"):
+        impl.pyramid_build(x, x, 0.0, 8.0, 0.0, 8.0, True)
+    with pytest.raises(ValueError, match="power-of-two"):
+        impl.pyramid_build(x, x, 0.0, 8.0, 0.0, 8.0, 3)
+    with pytest.raises(ValueError, match="base_dim"):
+        impl.pyramid_build(x, x, 0.0, 8.0, 0.0, 8.0, MAX_SCREEN_DIM + 1)
+    with pytest.raises(ValueError, match="x range"):
+        impl.pyramid_build(x, x, False, 8.0, 0.0, 8.0, 4)
+    with pytest.raises(ValueError, match="y range"):
+        impl.pyramid_build(x, x, 0.0, 8.0, 0.0, np.nan, 4)
+    assert impl.pyramid_build(x[:0], x[:0], 0.0, 8.0, 0.0, 8.0, 4) == 0
+
+    handle = impl.pyramid_build(x, x, 0.0, 8.0, 0.0, 8.0, 4)
+    assert handle
+    try:
+        with pytest.raises(ValueError, match="pyramid handle"):
+            impl.pyramid_count(True, 0.0, 8.0, 0.0, 8.0)
+        with pytest.raises(ValueError, match="non-negative"):
+            impl.pyramid_compose(-1, 0.0, 8.0, 0.0, 8.0, 4, 4)
+        with pytest.raises(ValueError, match="x range"):
+            impl.pyramid_count(handle, 0.0, 0.0, 0.0, 8.0)
+        with pytest.raises(ValueError, match="y range"):
+            impl.pyramid_compose(handle, 0.0, 8.0, np.inf, 8.0, 4, 4)
+        with pytest.raises(ValueError, match="w"):
+            impl.pyramid_compose(handle, 0.0, 8.0, 0.0, 8.0, True, 4)
+        assert impl.pyramid_count(0, 0.0, 8.0, 0.0, 8.0) is None
+        assert impl.pyramid_compose(0, 0.0, 8.0, 0.0, 8.0, 4, 4) is None
+    finally:
+        assert impl.pyramid_free(handle)
+    with pytest.raises(ValueError, match="pyramid handle"):
+        impl.pyramid_free(True)
+
+
 # -- native/fallback parity (§33: the fallback is semantically identical) ------
 
 

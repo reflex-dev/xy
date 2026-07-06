@@ -257,6 +257,25 @@ def _finite_ordered(lo: float, hi: float, label: str) -> tuple[float, float]:
     return lo_f, hi_f
 
 
+def _pyramid_handle(value: int) -> int:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError("pyramid handle must be an integer handle")
+    try:
+        out = operator.index(value)
+    except TypeError as e:
+        raise ValueError("pyramid handle must be an integer handle") from e
+    if out < 0:
+        raise ValueError("pyramid handle must be non-negative")
+    return int(out)
+
+
+def _pyramid_base_dim(value: int) -> int:
+    out = _bounded_positive_int(value, "base_dim")
+    if out < 2 or out & (out - 1):
+        raise ValueError("base_dim must be a power-of-two integer >= 2")
+    return out
+
+
 def zone_maps(
     data: npt.NDArray[np.float64], chunk_size: int = 65_536
 ) -> tuple[
@@ -488,9 +507,14 @@ def pyramid_build(
     base_dim: int,
 ) -> int:
     """Build a count pyramid (§5 Tier 3). Returns a handle, 0 on failure."""
+    base_dim = _pyramid_base_dim(base_dim)
+    x0, x1 = _finite_increasing(x0, x1, "x range")
+    y0, y1 = _finite_increasing(y0, y1, "y range")
     x = _as_f64(x, "x")
     y = _as_f64(y, "y")
-    if len(x) != len(y) or len(x) == 0:
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    if len(x) == 0:
         return 0
     lib = _load()
     return int(
@@ -498,24 +522,27 @@ def pyramid_build(
             x.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
             y.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
             len(x),
-            float(x0),
-            float(x1),
-            float(y0),
-            float(y1),
-            int(base_dim),
+            x0,
+            x1,
+            y0,
+            y1,
+            base_dim,
         )
     )
 
 
 def pyramid_count(handle: int, lo_x: float, hi_x: float, lo_y: float, hi_y: float):
+    handle = _pyramid_handle(handle)
+    lo_x, hi_x = _finite_increasing(lo_x, hi_x, "x range")
+    lo_y, hi_y = _finite_increasing(lo_y, hi_y, "y range")
     lib = _load()
     out = ctypes.c_double(0.0)
     ok = lib.fc_pyramid_count(
         ctypes.c_uint64(handle),
-        float(lo_x),
-        float(hi_x),
-        float(lo_y),
-        float(hi_y),
+        lo_x,
+        hi_x,
+        lo_y,
+        hi_y,
         ctypes.byref(out),
     )
     return float(out.value) if ok == 1 else None
@@ -526,16 +553,19 @@ def pyramid_compose(
 ):
     """(grid f32 [h*w], level) from the pyramid, or None when the window
     outresolves it (caller falls back to an exact re-bin, §28)."""
+    handle = _pyramid_handle(handle)
+    lo_x, hi_x = _finite_increasing(lo_x, hi_x, "x range")
+    lo_y, hi_y = _finite_increasing(lo_y, hi_y, "y range")
     w = _bounded_positive_int(w, "w")
     h = _bounded_positive_int(h, "h")
     out = np.zeros(w * h, dtype=np.float32)
     lib = _load()
     level = lib.fc_pyramid_compose(
         ctypes.c_uint64(handle),
-        float(lo_x),
-        float(hi_x),
-        float(lo_y),
-        float(hi_y),
+        lo_x,
+        hi_x,
+        lo_y,
+        hi_y,
         w,
         h,
         out.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
@@ -546,7 +576,7 @@ def pyramid_compose(
 
 
 def pyramid_free(handle: int) -> bool:
-    return _load().fc_pyramid_free(ctypes.c_uint64(handle)) == 1
+    return _load().fc_pyramid_free(ctypes.c_uint64(_pyramid_handle(handle))) == 1
 
 
 def local_log_density(

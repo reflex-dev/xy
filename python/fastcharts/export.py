@@ -30,6 +30,17 @@ _CHROMIUM_ENV = "FASTCHARTS_CHROMIUM"
 _CHROMIUM_NAMES = ("chromium", "chromium-browser", "chrome", "google-chrome")
 _CHROMIUM_FALLBACKS = ("/opt/pw-browsers/chromium",)
 _STATIC = Path(__file__).parent / "static"
+_STANDALONE_CSP = (
+    "default-src 'none'; "
+    "script-src 'unsafe-inline'; "
+    "style-src 'unsafe-inline'; "
+    "img-src data:; "
+    "connect-src 'none'; "
+    "worker-src 'none'; "
+    "object-src 'none'; "
+    "base-uri 'none'; "
+    "form-action 'none'"
+)
 
 
 def _bundled_js(which: str = "standalone") -> str:
@@ -64,6 +75,12 @@ def _positive_finite_float(value: object, label: str) -> float:
     if not math.isfinite(out) or out <= 0:
         raise ValueError(f"{label} must be a finite positive number")
     return out
+
+
+def _bool_option(value: object, label: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f"{label} must be True or False")
 
 
 def _json_for_inline_script(value: object) -> str:
@@ -114,7 +131,9 @@ def to_html(fig: "Figure", path: Optional[str | PathLike[str]] = None) -> str:
     title_html = _html.escape(fig.title or "fastcharts")
     doc = f"""<!doctype html>
 <html>
-<head><meta charset="utf-8"><title>{title_html}</title>
+<head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="{_STANDALONE_CSP}">
+<title>{title_html}</title>
 <style>
 html,body{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;background:#fff;}}
 #chart{{width:100%;}}
@@ -161,6 +180,7 @@ def html_to_png(
     time_budget_ms: int = 4000,
     timeout_s: float = 120.0,
     chromium: Optional[str] = None,
+    sandbox: bool = True,
 ) -> bytes:
     """Rasterize a standalone chart HTML string to PNG bytes via headless
     Chromium `--screenshot`. Pure mechanism (no Figure), so it is testable
@@ -170,6 +190,7 @@ def html_to_png(
     scale = _positive_finite_float(scale, "PNG scale")
     time_budget_ms = _positive_pixel_count(time_budget_ms, "PNG time_budget_ms")
     timeout_s = _positive_finite_float(timeout_s, "PNG timeout_s")
+    sandbox = _bool_option(sandbox, "PNG sandbox")
     exe = find_chromium(chromium)
     if exe is None:
         raise RuntimeError(
@@ -182,21 +203,23 @@ def html_to_png(
         page = Path(td) / "chart.html"
         page.write_text(html, encoding="utf-8")
         shot = Path(td) / "out.png"
+        args = [
+            exe,
+            "--headless=new",
+            "--disable-dev-shm-usage",
+            "--hide-scrollbars",
+            "--use-angle=swiftshader",
+            "--enable-unsafe-swiftshader",
+            f"--force-device-scale-factor={scale}",
+            f"--window-size={int(width)},{int(height)}",
+            f"--virtual-time-budget={int(time_budget_ms)}",
+            f"--screenshot={shot}",
+            page.as_uri(),
+        ]
+        if not sandbox:
+            args.insert(2, "--no-sandbox")
         proc = subprocess.run(
-            [
-                exe,
-                "--headless=new",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--hide-scrollbars",
-                "--use-angle=swiftshader",
-                "--enable-unsafe-swiftshader",
-                f"--force-device-scale-factor={scale}",
-                f"--window-size={int(width)},{int(height)}",
-                f"--virtual-time-budget={int(time_budget_ms)}",
-                f"--screenshot={shot}",
-                page.as_uri(),
-            ],
+            args,
             capture_output=True,
             text=True,
             timeout=timeout_s,
@@ -218,6 +241,7 @@ def to_png(
     height: Optional[int] = None,
     scale: float = 2.0,
     chromium: Optional[str] = None,
+    sandbox: bool = True,
 ) -> bytes:
     """Rasterize `fig` to a PNG (bytes, optionally saved). Renders the same
     standalone HTML `to_html` produces in headless Chromium and screenshots it,
@@ -232,8 +256,9 @@ def to_png(
         "PNG height",
     )
     scale = _positive_finite_float(scale, "PNG scale")
+    sandbox = _bool_option(sandbox, "PNG sandbox")
     doc = to_html(fig)
-    data = html_to_png(doc, w, h, scale=scale, chromium=chromium)
+    data = html_to_png(doc, w, h, scale=scale, chromium=chromium, sandbox=sandbox)
     if path is not None:
         with open(path, "wb") as f:
             f.write(data)

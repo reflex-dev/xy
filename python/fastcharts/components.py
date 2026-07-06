@@ -472,6 +472,7 @@ class Chart(Component):
         height: Optional[int] = None,
         scale: float = 2.0,
         chromium: Optional[str] = None,
+        sandbox: bool = True,
     ) -> bytes:
         return self.figure().to_png(
             path,
@@ -479,6 +480,7 @@ class Chart(Component):
             height=height,
             scale=scale,
             chromium=chromium,
+            sandbox=sandbox,
         )
 
     def memory_report(self) -> dict[str, Any]:

@@ -29,6 +29,8 @@
 //! Non-x86_64 (e.g. aarch64) needs nothing here: NEON is part of the aarch64
 //! baseline, so the scalar kernels already autovectorize at full width there.
 
+#![allow(dead_code, reason = "SIMD kernels are staged behind parity tests before hot-path wiring")]
+
 /// Lane-block size for the two-phase scans: phase 1 computes per-point cell
 /// indices / masks branch-free into a stack block (vectorizes), phase 2 does
 /// the scalar scatter/compact that SIMD can't express without conflicts.
