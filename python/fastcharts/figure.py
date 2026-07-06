@@ -200,6 +200,12 @@ class Figure:
         self.store = ColumnStore()
         self.traces: list[Trace] = []
         self.show_legend = True
+        self.show_modebar = True
+        self.class_name: Optional[str] = None
+        self.class_names: dict[str, str] = {}
+        self.style: dict[str, str | int | float] = {}
+        self.chrome_styles: dict[str, dict[str, str | int | float]] = {}
+        self.tooltip: Optional[dict[str, Any]] = None
         self._axis_categories: dict[str, list[str]] = {}
         self._widget: Any = None
 
@@ -1177,7 +1183,34 @@ class Figure:
             "backend": kernels.BACKEND,
             "show_legend": self.show_legend,
         }
+        if self.show_modebar is False:
+            spec["show_modebar"] = False
+        dom = self._dom_spec()
+        if dom:
+            spec["dom"] = dom
+        if self.tooltip is not None:
+            spec["tooltip"] = self.tooltip
         return spec, pw.blob()
+
+    def _dom_spec(self) -> dict[str, Any]:
+        dom: dict[str, Any] = {}
+        class_name = self._optional_text(self.class_name, "class_name")
+        if class_name:
+            dom["class_name"] = class_name
+        class_names = self._string_mapping(self.class_names, "class_names")
+        if class_names:
+            dom["class_names"] = class_names
+        style = self._style_mapping(self.style, "style")
+        if style:
+            dom["style"] = style
+        styles = {
+            slot: self._style_mapping(slot_style, f"chrome_styles[{slot!r}]")
+            for slot, slot_style in self.chrome_styles.items()
+        }
+        styles = {slot: slot_style for slot, slot_style in styles.items() if slot_style}
+        if styles:
+            dom["styles"] = styles
+        return dom
 
     # -- per-kind payload emitters (extend here for new chart types) ---------
 
@@ -1563,6 +1596,10 @@ class Figure:
         tax (§29 static-export row)."""
         return export.to_html(self, path)
 
+    def html(self, path: Optional[str | PathLike[str]] = None) -> str:
+        """Alias for ``to_html`` for component-style API symmetry."""
+        return self.to_html(path)
+
     def to_png(
         self,
         path: Optional[str] = None,
@@ -1596,3 +1633,34 @@ class Figure:
         report["transport_bytes_per_point"] = len(blob) / n_total
         report["backend"] = kernels.BACKEND
         return report
+
+    @staticmethod
+    def _string_mapping(value: dict[str, Any], label: str) -> dict[str, str]:
+        if not isinstance(value, dict):
+            raise ValueError(f"{label} must be a dict[str, str]")
+        out: dict[str, str] = {}
+        for key, item in value.items():
+            if not isinstance(key, str) or not isinstance(item, str):
+                raise ValueError(f"{label} must be a dict[str, str]")
+            out[key] = item
+        return out
+
+    @staticmethod
+    def _style_mapping(value: dict[str, Any], label: str) -> dict[str, str | int | float]:
+        if not isinstance(value, dict):
+            raise ValueError(f"{label} must be a dict[str, str | int | float]")
+        out: dict[str, str | int | float] = {}
+        for key, item in value.items():
+            if not isinstance(key, str) or not isinstance(
+                item, (str, int, float, np.integer, np.floating)
+            ):
+                raise ValueError(f"{label} must be a dict[str, str | int | float]")
+            if isinstance(item, (bool, np.bool_)):
+                raise ValueError(f"{label} must be a dict[str, str | int | float]")
+            number = (
+                float(item) if isinstance(item, (int, float, np.integer, np.floating)) else None
+            )
+            if number is not None and not np.isfinite(number):
+                raise ValueError(f"{label} numeric values must be finite")
+            out[key] = item.item() if isinstance(item, (np.integer, np.floating)) else item
+        return out

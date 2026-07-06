@@ -28,7 +28,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from os import PathLike
-from typing import Any, Optional, Union
+from typing import Any, Optional, TypeAlias, Union
 
 import numpy as np
 
@@ -40,10 +40,14 @@ __all__ = [
     "Component",
     "Legend",
     "Mark",
+    "Modebar",
+    "Theme",
+    "Tooltip",
     "area",
     "area_chart",
     "bar",
     "bar_chart",
+    "chart",
     "column",
     "column_chart",
     "heatmap",
@@ -54,11 +58,16 @@ __all__ = [
     "legend",
     "line",
     "line_chart",
+    "modebar",
     "scatter",
     "scatter_chart",
+    "theme",
+    "tooltip",
     "x_axis",
     "y_axis",
 ]
+
+StyleValue: TypeAlias = str | int | float
 
 # ---------------------------------------------------------------------------
 # Component tree (lightweight declarative specs — no rendering here)
@@ -76,6 +85,7 @@ class Mark(Component):
     y: Any = None
     data: Any = None
     name: Optional[str] = None
+    class_name: Optional[str] = None
     props: dict[str, Any] = field(default_factory=dict)
 
 
@@ -89,6 +99,31 @@ class Axis(Component):
 @dataclass
 class Legend(Component):
     show: bool = True
+    class_name: Optional[str] = None
+    style: dict[str, StyleValue] = field(default_factory=dict)
+
+
+@dataclass
+class Tooltip(Component):
+    fields: Optional[list[str]] = None
+    title: Optional[str] = None
+    format: dict[str, str] = field(default_factory=dict)
+    class_name: Optional[str] = None
+    style: dict[str, StyleValue] = field(default_factory=dict)
+
+
+@dataclass
+class Modebar(Component):
+    show: bool = True
+    class_name: Optional[str] = None
+    style: dict[str, StyleValue] = field(default_factory=dict)
+    button_class_name: Optional[str] = None
+    button_style: dict[str, StyleValue] = field(default_factory=dict)
+
+
+@dataclass
+class Theme(Component):
+    style: dict[str, StyleValue] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +143,7 @@ def scatter(
     size_range: tuple[float, float] = (2.0, 18.0),
     opacity: float = 0.8,
     density: Optional[bool] = None,
+    class_name: Optional[str] = None,
 ) -> Mark:
     """A scatter series. `x`/`y`/`color`/`size` may be arrays or column names in
     `data`. `color` is auto-typed (numeric → colormap, categorical → palette);
@@ -118,6 +154,7 @@ def scatter(
         y=y,
         data=data,
         name=name,
+        class_name=class_name,
         props={
             "color": color,
             "size": size,
@@ -138,6 +175,7 @@ def line(
     color: Optional[str] = None,
     width: float = 1.5,
     opacity: float = 1.0,
+    class_name: Optional[str] = None,
 ) -> Mark:
     """A line series (M4-decimated above the threshold, §5 Tier 1)."""
     return Mark(
@@ -146,6 +184,7 @@ def line(
         y=y,
         data=data,
         name=name,
+        class_name=class_name,
         props={"color": color, "width": width, "opacity": opacity},
     )
 
@@ -161,6 +200,7 @@ def area(
     opacity: float = 0.35,
     line_width: float = 1.2,
     line_opacity: float = 1.0,
+    class_name: Optional[str] = None,
 ) -> Mark:
     """A filled area series between `y` and `base`."""
     return Mark(
@@ -169,6 +209,7 @@ def area(
         y=y,
         data=data,
         name=name,
+        class_name=class_name,
         props={
             "base": base,
             "color": color,
@@ -189,6 +230,7 @@ def histogram(
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.85,
+    class_name: Optional[str] = None,
 ) -> Mark:
     """A 1D histogram. `values` may be an array or a column name in `data`."""
     return Mark(
@@ -196,6 +238,7 @@ def histogram(
         x=values,
         data=data,
         name=name,
+        class_name=class_name,
         props={
             "bins": bins,
             "range": range,
@@ -216,6 +259,7 @@ def hist(
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.85,
+    class_name: Optional[str] = None,
 ) -> Mark:
     """Short alias for `histogram(...)`."""
     return histogram(
@@ -227,6 +271,7 @@ def hist(
         name=name,
         color=color,
         opacity=opacity,
+        class_name=class_name,
     )
 
 
@@ -244,6 +289,7 @@ def bar(
     orientation: str = "vertical",
     series: Optional[list[str]] = None,
     opacity: float = 0.85,
+    class_name: Optional[str] = None,
 ) -> Mark:
     """A vertical bar series. 2D y values can render grouped or stacked."""
     return Mark(
@@ -252,6 +298,7 @@ def bar(
         y=y,
         data=data,
         name=name,
+        class_name=class_name,
         props={
             "color": color,
             "colors": colors,
@@ -279,6 +326,7 @@ def column(
     orientation: str = "vertical",
     series: Optional[list[str]] = None,
     opacity: float = 0.85,
+    class_name: Optional[str] = None,
 ) -> Mark:
     """Alias for vertical column charts; shares the bar renderer."""
     return Mark(
@@ -287,6 +335,7 @@ def column(
         y=y,
         data=data,
         name=name,
+        class_name=class_name,
         props={
             "color": color,
             "colors": colors,
@@ -310,6 +359,7 @@ def heatmap(
     colormap: str = "viridis",
     domain: Optional[tuple[float, float]] = None,
     opacity: float = 0.95,
+    class_name: Optional[str] = None,
 ) -> Mark:
     """A rectangular heatmap from a 2D matrix. `z`, `x`, and `y` may be data keys."""
     return Mark(
@@ -318,6 +368,7 @@ def heatmap(
         y=y,
         data=data,
         name=name,
+        class_name=class_name,
         props={
             "z": z,
             "colormap": colormap,
@@ -337,8 +388,61 @@ def y_axis(*, label: Optional[str] = None, type_: Optional[str] = None) -> Axis:
     return Axis(which="y", label=label, type_=type_)
 
 
-def legend(show: bool = True) -> Legend:
-    return Legend(show=_strict_bool(show, "legend show"))
+def legend(
+    show: bool = True,
+    *,
+    class_name: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+) -> Legend:
+    return Legend(
+        show=_strict_bool(show, "legend show"),
+        class_name=_optional_string(class_name, "legend class_name"),
+        style=_style_dict(style, "legend style"),
+    )
+
+
+def tooltip(
+    *,
+    fields: Optional[list[str]] = None,
+    title: Optional[str] = None,
+    format: Optional[dict[str, str]] = None,
+    class_name: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+) -> Tooltip:
+    return Tooltip(
+        fields=_string_list(fields, "tooltip fields"),
+        title=_optional_string(title, "tooltip title"),
+        format=_string_dict(format, "tooltip format"),
+        class_name=_optional_string(class_name, "tooltip class_name"),
+        style=_style_dict(style, "tooltip style"),
+    )
+
+
+def modebar(
+    show: bool = True,
+    *,
+    class_name: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+    button_class_name: Optional[str] = None,
+    button_style: Optional[dict[str, StyleValue]] = None,
+) -> Modebar:
+    return Modebar(
+        show=_strict_bool(show, "modebar show"),
+        class_name=_optional_string(class_name, "modebar class_name"),
+        style=_style_dict(style, "modebar style"),
+        button_class_name=_optional_string(button_class_name, "modebar button_class_name"),
+        button_style=_style_dict(button_style, "modebar button_style"),
+    )
+
+
+def theme(
+    style: Optional[dict[str, StyleValue]] = None,
+    **tokens: StyleValue,
+) -> Theme:
+    merged = _style_dict(style, "theme style")
+    if tokens:
+        merged.update(_style_dict(tokens, "theme tokens"))
+    return Theme(style=merged)
 
 
 # ---------------------------------------------------------------------------
@@ -376,8 +480,12 @@ class Chart(Component):
         width: "int | str" = 900,  # pixels, or "100%" to fill the parent
         height: "int | str" = 420,  # pixels, or "100%" (parent needs a height)
         data: Any = None,
+        class_name: Optional[str] = None,
+        class_names: Optional[dict[str, str]] = None,
+        style: Optional[dict[str, StyleValue]] = None,
         on_hover: Optional[Callable[[dict], None]] = None,
         on_select: Optional[Callable[[Any], None]] = None,
+        on_view_change: Optional[Callable[[dict], None]] = None,
     ) -> None:
         self.kind = kind
         self.children = children
@@ -385,8 +493,12 @@ class Chart(Component):
         self.width = width
         self.height = height
         self.data = data  # chart-level default data for marks that omit their own
+        self.class_name = _optional_string(class_name, "chart class_name")
+        self.class_names = _string_dict(class_names, "chart class_names")
+        self.style = _style_dict(style, "chart style")
         self.on_hover = on_hover
         self.on_select = on_select
+        self.on_view_change = on_view_change
         self._figure: Optional[Figure] = None
         self._widget: Any = None
 
@@ -403,11 +515,15 @@ class Chart(Component):
             _validate_axis(axis)
         axes = {c.which: c for c in axis_children}
         legends = [c for c in self.children if isinstance(c, Legend)]
+        tooltips = [c for c in self.children if isinstance(c, Tooltip)]
+        modebars = [c for c in self.children if isinstance(c, Modebar)]
+        themes = [c for c in self.children if isinstance(c, Theme)]
         legend_shows = [_strict_bool(c.show, "legend show") for c in legends]
-        unknown = [c for c in self.children if not isinstance(c, (Mark, Axis, Legend))]
+        known = (Mark, Axis, Legend, Tooltip, Modebar, Theme)
+        unknown = [c for c in self.children if not isinstance(c, known)]
         if unknown:
             raise TypeError(
-                f"{self.kind}() children must be marks/axes/legend, got "
+                f"{self.kind}() children must be marks/axes/legend/tooltip/modebar/theme, got "
                 f"{[type(c).__name__ for c in unknown]}"
             )
 
@@ -419,6 +535,12 @@ class Chart(Component):
             x_label=xa.label if xa else None,
             y_label=ya.label if ya else None,
         )
+        fig.class_name = self.class_name
+        fig.class_names = dict(self.class_names)
+        fig.style = {}
+        for theme_node in themes:
+            fig.style.update(theme_node.style)
+        fig.style.update(self.style)
         for axis in (xa, ya):
             if axis and axis.type_ == "log":
                 import warnings
@@ -430,15 +552,34 @@ class Chart(Component):
                     stacklevel=2,
                 )
 
+        tooltip_aliases: dict[str, str] = {}
         for m in marks:
             data = m.data if m.data is not None else self.data
             applier = _MARK_APPLIERS.get(m.kind)
             if applier is None:
                 raise TypeError(f"no applier registered for mark kind {m.kind!r}")
+            before = len(fig.traces)
             applier(fig, m, data)
+            new_traces = fig.traces[before:]
+            if m.class_name is not None:
+                class_name = _optional_string(m.class_name, f"{m.kind} class_name")
+                for trace in new_traces:
+                    trace.style["class_name"] = class_name
+            _merge_tooltip_aliases(tooltip_aliases, m, new_traces)
 
+        if legends:
+            _apply_chrome_node(fig, "legend", legends[-1].class_name, legends[-1].style)
         if legend_shows and not legend_shows[-1]:
             fig.show_legend = False
+        if modebars:
+            node = modebars[-1]
+            _apply_chrome_node(fig, "modebar", node.class_name, node.style)
+            _apply_chrome_node(fig, "modebar_button", node.button_class_name, node.button_style)
+            fig.show_modebar = node.show
+        if tooltips:
+            node = tooltips[-1]
+            _apply_chrome_node(fig, "tooltip", node.class_name, node.style)
+            fig.tooltip = _tooltip_spec(node, tooltip_aliases)
         self._figure = fig
         return fig
 
@@ -463,6 +604,9 @@ class Chart(Component):
 
     def to_html(self, path: Optional[str | PathLike[str]] = None) -> str:
         return self.figure().to_html(path)
+
+    def html(self, path: Optional[str | PathLike[str]] = None) -> str:
+        return self.to_html(path)
 
     def to_png(
         self,
@@ -495,6 +639,83 @@ def _resolve_color(data: Any, color: Any, *, context: Optional[str] = None) -> A
     if _looks_like_css(color):
         return color  # constant color
     return _resolve(data, color, context=context)  # column name → values (raises if no data)
+
+
+def _optional_string(value: Any, label: str) -> Optional[str]:
+    if value is None or isinstance(value, str):
+        return value
+    raise ValueError(f"{label} must be a string or None")
+
+
+def _string_list(value: Any, label: str) -> Optional[list[str]]:
+    if value is None:
+        return None
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"{label} must be a list[str] or None")
+    return list(value)
+
+
+def _string_dict(value: Any, label: str) -> dict[str, str]:
+    if value is None:
+        return {}
+    return Figure._string_mapping(value, label)
+
+
+def _style_dict(value: Any, label: str) -> dict[str, StyleValue]:
+    if value is None:
+        return {}
+    return Figure._style_mapping(value, label)
+
+
+def _append_class(class_names: dict[str, str], slot: str, class_name: Optional[str]) -> None:
+    if not class_name:
+        return
+    existing = class_names.get(slot)
+    class_names[slot] = f"{existing} {class_name}" if existing else class_name
+
+
+def _apply_chrome_node(
+    fig: Figure,
+    slot: str,
+    class_name: Optional[str],
+    style: dict[str, StyleValue],
+) -> None:
+    _append_class(fig.class_names, slot, _optional_string(class_name, f"{slot} class_name"))
+    if style:
+        fig.chrome_styles[slot] = {**fig.chrome_styles.get(slot, {}), **style}
+
+
+def _tooltip_spec(node: Tooltip, aliases: dict[str, str]) -> dict[str, Any]:
+    spec: dict[str, Any] = {}
+    if node.fields:
+        spec["fields"] = list(node.fields)
+    if node.title is not None:
+        spec["title"] = node.title
+    if node.format:
+        spec["format"] = dict(node.format)
+    if aliases:
+        spec["aliases"] = dict(aliases)
+    return spec
+
+
+def _merge_tooltip_aliases(aliases: dict[str, str], mark: Mark, traces: list[Any]) -> None:
+    if isinstance(mark.x, str):
+        aliases.setdefault(mark.x, "x")
+    if isinstance(mark.y, str):
+        aliases.setdefault(mark.y, "y")
+    color = mark.props.get("color")
+    if isinstance(color, str) and not _looks_like_css(color):
+        channel = next((trace.color_ch for trace in traces if trace.color_ch is not None), None)
+        if channel is not None:
+            aliases.setdefault(
+                color,
+                "color_category" if channel.mode == "categorical" else "color_value",
+            )
+    size = mark.props.get("size")
+    if isinstance(size, str):
+        channel = next((trace.size_ch for trace in traces if trace.size_ch is not None), None)
+        if channel is not None:
+            aliases.setdefault(size, "size_value")
 
 
 def _strict_bool(value: Any, label: str) -> bool:
@@ -666,6 +887,11 @@ _MARK_APPLIERS: dict[str, Callable[[Figure, Mark, Any], None]] = {
     "scatter": _apply_scatter,
     "line": _apply_line,
 }
+
+
+def chart(*children: Component, **props: Any) -> Chart:
+    """A neutral single-panel chart for overlays and mixed mark composition."""
+    return Chart("chart", children, **props)
 
 
 def scatter_chart(*children: Component, **props: Any) -> Chart:

@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 import fastcharts as fc
-from fastcharts.components import Axis, Chart, Legend, Mark
+from fastcharts.components import Axis, Chart, Legend, Mark, Modebar, Theme, Tooltip
 from fastcharts.widget import Selection
 
 
@@ -41,8 +41,122 @@ def test_factories_return_components():
     assert fc.bar(x=["a"], y=[1]).kind == "bar"
     assert fc.column(x=["a"], y=[1]).kind == "column"
     assert fc.heatmap(z=[[1]]).kind == "heatmap"
+    assert isinstance(fc.tooltip(fields=["x"]), Tooltip)
+    assert isinstance(fc.modebar(show=False), Modebar)
+    assert isinstance(fc.theme(style={"--chart-bg": "transparent"}), Theme)
     chart = fc.scatter_chart(fc.scatter(x=[1.0], y=[2.0]))
     assert isinstance(chart, Chart)
+    assert isinstance(fc.chart(fc.scatter(x=[1.0], y=[2.0])), Chart)
+
+
+def test_neutral_chart_overlays_marks():
+    x = np.arange(20.0)
+    chart = fc.chart(
+        fc.scatter(x=x, y=np.sin(x), name="points"),
+        fc.line(x=x, y=np.cos(x), name="fit"),
+        fc.x_axis(label="x"),
+        fc.y_axis(label="y"),
+        title="overlay",
+    )
+
+    fig = chart.figure()
+
+    assert fig.title == "overlay"
+    assert fig.x_label == "x"
+    assert fig.y_label == "y"
+    assert [trace.kind for trace in fig.traces] == ["scatter", "line"]
+    assert [trace.name for trace in fig.traces] == ["points", "fit"]
+
+
+def test_component_api_default_payload_matches_fluent_figure():
+    x = np.arange(16.0)
+    y = x * 2
+
+    component = fc.chart(fc.line(x=x, y=y)).figure()
+    fluent = fc.Figure().line(x, y)
+    component_spec, component_blob = component.build_payload()
+    fluent_spec, fluent_blob = fluent.build_payload()
+
+    assert "dom" not in component_spec
+    assert "tooltip" not in component_spec
+    assert "show_modebar" not in component_spec
+    assert component_spec == fluent_spec
+    assert component_blob == fluent_blob
+
+
+def test_component_style_tooltip_and_modebar_metadata_is_opt_in():
+    df = FakeFrame(
+        {
+            "feature_a": np.array([1.0, 2.0, 3.0]),
+            "feature_b": np.array([2.0, 1.0, 4.0]),
+            "segment": np.array(["enterprise", "growth", "enterprise"]),
+        }
+    )
+    chart = fc.chart(
+        fc.scatter(
+            x="feature_a",
+            y="feature_b",
+            color="segment",
+            data=df,
+            name="accounts",
+            class_name="fc-mark-accounts",
+        ),
+        fc.legend(class_name="legend-node", style={"max-height": 220}),
+        fc.tooltip(
+            fields=["feature_a", "feature_b", "segment"],
+            title="{segment}",
+            format={"feature_a": ".2f"},
+            class_name="tooltip-node",
+            style={"background-color": "black"},
+        ),
+        fc.modebar(
+            show=False,
+            class_name="modebar-node",
+            button_class_name="modebar-button-node",
+            button_style={"border-radius": 4},
+        ),
+        fc.theme(style={"--chart-bg": "transparent", "--chart-grid": "rgba(0,0,0,.1)"}),
+        class_name="root-node",
+        class_names={"legend": "legend-slot", "tooltip": "tooltip-slot"},
+        style={"--chart-grid": "rgba(1,2,3,.25)", "--chart-axis": "currentColor"},
+    )
+
+    spec, _ = chart.figure().build_payload()
+
+    assert spec["show_modebar"] is False
+    assert spec["dom"]["class_name"] == "root-node"
+    assert spec["dom"]["class_names"]["legend"] == "legend-slot legend-node"
+    assert spec["dom"]["class_names"]["tooltip"] == "tooltip-slot tooltip-node"
+    assert spec["dom"]["class_names"]["modebar"] == "modebar-node"
+    assert spec["dom"]["class_names"]["modebar_button"] == "modebar-button-node"
+    assert spec["dom"]["style"] == {
+        "--chart-bg": "transparent",
+        "--chart-grid": "rgba(1,2,3,.25)",
+        "--chart-axis": "currentColor",
+    }
+    assert spec["dom"]["styles"]["legend"] == {"max-height": 220}
+    assert spec["dom"]["styles"]["tooltip"] == {"background-color": "black"}
+    assert spec["dom"]["styles"]["modebar_button"] == {"border-radius": 4}
+    assert spec["tooltip"] == {
+        "fields": ["feature_a", "feature_b", "segment"],
+        "title": "{segment}",
+        "format": {"feature_a": ".2f"},
+        "aliases": {
+            "feature_a": "x",
+            "feature_b": "y",
+            "segment": "color_category",
+        },
+    }
+    assert spec["traces"][0]["style"]["class_name"] == "fc-mark-accounts"
+
+
+def test_component_style_validation_rejects_non_serializable_values():
+    with pytest.raises(ValueError, match="chart class_names"):
+        fc.chart(fc.scatter(x=[1.0], y=[2.0]), class_names={"legend": 2})
+    with pytest.raises(ValueError, match="chart style"):
+        fc.chart(fc.scatter(x=[1.0], y=[2.0]), style={"--bad": np.inf})
+    with pytest.raises(ValueError, match="tooltip fields"):
+        fc.tooltip(fields=["x", 2])
 
 
 def test_composition_builds_figure():
