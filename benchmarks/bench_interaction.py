@@ -36,9 +36,29 @@ except ImportError:  # pragma: no cover
 INTERACTION_CATEGORY_IDS = (
     "medium_direct_scatter",
     "huge_scatter_overview",
+    "huge_line_time_series",
+    "core_2d_chart_breadth",
     "interaction_smoothness",
 )
 RENDER_W, RENDER_H = 900, 420
+TOOLTIP_SAMPLE_COUNT = 8
+INTERACTION_BUDGETS_MS = {
+    "wheel_zoom_p95_ms": 24.0,
+    "pan_p95_ms": 24.0,
+    "crosshair_p95_ms": 16.0,
+    "hover_p95_ms": 300.0,
+    "box_zoom_p95_ms": 32.0,
+    "brush_select_p95_ms": 120.0,
+}
+INTERACTION_VISUAL_BUDGETS = {
+    # Normalized mean RGB delta between adjacent zoom frames. This is a guard
+    # against the "flash to a totally different ramp" class of density/LOD bugs,
+    # not a perceptual golden image test.
+    "max_frame_color_delta": 0.85,
+    # WebGL readback floor during repeated zoom/pan/box interactions. This catches
+    # "technically nonblank but visibly collapsed" frames.
+    "min_interaction_lit_pixels": 64,
+}
 
 
 def _parse_sizes(text: str) -> list[int]:
@@ -53,13 +73,145 @@ def _scatter_figure(n: int) -> Any:
     rng = np.random.default_rng(70_011 + n)
     x = rng.normal(0.0, 1.0, n).astype(np.float64, copy=False)
     y = (0.58 * x + rng.normal(0.0, 0.72, n)).astype(np.float64, copy=False)
-    return Figure(
+    fig = Figure(
         width=RENDER_W,
         height=RENDER_H,
         title=f"{n:,} point interaction probe",
         x_label="x",
         y_label="y",
     ).scatter(x, y, name="points", opacity=0.72)
+    fig.set_interaction(
+        hover=True,
+        click=True,
+        select=True,
+        brush=True,
+        crosshair=True,
+        view_change=True,
+    )
+    return fig
+
+
+def _core_interaction_figures() -> list[dict[str, Any]]:
+    if np is None:
+        raise SystemExit("numpy is required for benchmarks/bench_interaction.py")
+    from fastcharts import Figure
+
+    rng = np.random.default_rng(89_021)
+
+    x_line = np.linspace(0.0, 18_000.0, 120_000, dtype=np.float64)
+    y_line = np.cumsum(rng.normal(0.0, 0.18, x_line.size)).astype(np.float64, copy=False)
+    line = Figure(
+        width=RENDER_W,
+        height=RENDER_H,
+        title="120k sample line interaction probe",
+        x_label="sample",
+        y_label="signal",
+    ).line(x_line, y_line, name="signal", width=1.4)
+    line.set_interaction(
+        hover=True,
+        click=True,
+        select=True,
+        brush=True,
+        crosshair=True,
+        view_change=True,
+    )
+
+    hist_values = np.concatenate(
+        [
+            rng.normal(-1.1, 0.52, 70_000),
+            rng.normal(1.35, 0.68, 50_000),
+        ]
+    )
+    hist = Figure(
+        width=RENDER_W,
+        height=RENDER_H,
+        title="120k value histogram interaction probe",
+        x_label="value",
+        y_label="count",
+    ).histogram(hist_values, bins=180, name="distribution")
+    hist.set_interaction(
+        hover=True,
+        click=True,
+        select=True,
+        brush=True,
+        crosshair=True,
+        view_change=True,
+    )
+
+    categories = [f"C{i:04d}" for i in range(1_200)]
+    values = (
+        42.0
+        + 18.0 * np.sin(np.linspace(0.0, 18.0, len(categories)))
+        + rng.normal(0.0, 3.0, len(categories))
+    )
+    bars = Figure(
+        width=RENDER_W,
+        height=RENDER_H,
+        title="1.2k bar interaction probe",
+        x_label="category",
+        y_label="value",
+    ).bar(categories, values, name="bars")
+    bars.set_interaction(
+        hover=True,
+        click=True,
+        select=True,
+        brush=True,
+        crosshair=True,
+        view_change=True,
+    )
+
+    hx = np.linspace(-3.0, 3.0, 220)
+    hy = np.linspace(-2.4, 2.4, 180)
+    xx, yy = np.meshgrid(hx, hy)
+    z = np.exp(-((xx - 0.85) ** 2 + (yy + 0.3) ** 2)) + 0.72 * np.exp(
+        -((xx + 1.2) ** 2 + (yy - 0.65) ** 2) / 0.52
+    )
+    heatmap = Figure(
+        width=RENDER_W,
+        height=RENDER_H,
+        title="220x180 heatmap interaction probe",
+        x_label="x",
+        y_label="y",
+    ).heatmap(z, x=hx, y=hy, name="heat")
+    heatmap.set_interaction(
+        hover=True,
+        click=True,
+        select=True,
+        brush=True,
+        crosshair=True,
+        view_change=True,
+    )
+
+    return [
+        {
+            "scenario": "line_120k_interaction",
+            "family": "line",
+            "n": int(x_line.size),
+            "category_ids": ("huge_line_time_series", "interaction_smoothness"),
+            "figure": line,
+        },
+        {
+            "scenario": "histogram_120k_interaction",
+            "family": "histogram",
+            "n": int(hist_values.size),
+            "category_ids": ("core_2d_chart_breadth", "interaction_smoothness"),
+            "figure": hist,
+        },
+        {
+            "scenario": "bar_1200_interaction",
+            "family": "bar",
+            "n": len(categories),
+            "category_ids": ("core_2d_chart_breadth", "interaction_smoothness"),
+            "figure": bars,
+        },
+        {
+            "scenario": "heatmap_39600_interaction",
+            "family": "heatmap",
+            "n": int(z.size),
+            "category_ids": ("core_2d_chart_breadth", "interaction_smoothness"),
+            "figure": heatmap,
+        },
+    ]
 
 
 def _probe_js(reps: int) -> str:
@@ -72,21 +224,273 @@ def _probe_js(reps: int) -> str:
     const view = fastcharts.renderStandalone(el, payload.spec, fcBytesFromB64(payload.b64));
     view._drawNow();
     const before = {{...view.view}};
+    const canvasRect = () => view.canvas.getBoundingClientRect();
+    const eventAt = (fx, fy) => {{
+      const r = canvasRect();
+      return {{
+        clientX: r.left + r.width * fx,
+        clientY: r.top + r.height * fy,
+      }};
+    }};
 
-    function measure(fn) {{
+    // Warm shader compilation, DOM tooltip layout, crosshair nodes, and local
+    // selection buffers so the measured p95 is steady-state interaction cost.
+    view._zoomAt(0.99, 0.5, 0.5, false);
+    view._setView(before, {{animate: false, request: false}});
+    view._updateCrosshair(eventAt(0.5, 0.5));
+    view.canvas.dispatchEvent(new PointerEvent("pointermove", {{
+      bubbles: true,
+      pointerId: 1,
+      ...eventAt(0.5, 0.5),
+    }}));
+    const warmX0 = before.x0 + (before.x1 - before.x0) * 0.35;
+    const warmX1 = before.x0 + (before.x1 - before.x0) * 0.65;
+    const warmY0 = before.y0 + (before.y1 - before.y0) * 0.35;
+    const warmY1 = before.y0 + (before.y1 - before.y0) * 0.65;
+    view._selectLocal(warmX0, warmX1, warmY0, warmY1);
+    view._clearSelection();
+    view._drawNow();
+
+    let viewChanged = false;
+    function noteViewChanged() {{
+      const v = view.view;
+      if (Math.abs(v.x0 - before.x0) > 1e-9 || Math.abs(v.x1 - before.x1) > 1e-9 ||
+          Math.abs(v.y0 - before.y0) > 1e-9 || Math.abs(v.y1 - before.y1) > 1e-9) {{
+        viewChanged = true;
+      }}
+    }}
+
+    function measure(fn, trackView = false) {{
       const values = [];
       for (let i = 0; i < {reps}; i++) {{
         const t0 = performance.now();
         fn(i);
+        if (trackView) noteViewChanged();
         view._drawNow();
         values.push(performance.now() - t0);
       }}
       return fcStats(values);
     }}
+    function nonblankCanvasPixels() {{
+      view._drawNow();
+      const gl = view.gl;
+      const w = gl.drawingBufferWidth;
+      const h = gl.drawingBufferHeight;
+      const pixels = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      let count = 0;
+      for (let i = 0; i < pixels.length; i += 4) {{
+        if (pixels[i] || pixels[i + 1] || pixels[i + 2] || pixels[i + 3]) count++;
+      }}
+      return count;
+    }}
+    function tickLabelOverlapCount() {{
+      view._lastLabelDraw = null;
+      view._drawNow();
+      const labels = Array.from(view.labels.querySelectorAll("[data-fc-label-kind='tick']"))
+        .filter((node) => {{
+          const style = getComputedStyle(node);
+          return style.display !== "none" && style.visibility !== "hidden";
+        }})
+        .map((node) => ({{
+          axis: node.dataset.fcAxis || "",
+          side: node.dataset.fcAxisSide || "",
+          text: node.textContent || "",
+          rect: node.getBoundingClientRect(),
+        }}))
+        .filter((item) => item.rect.width > 0 && item.rect.height > 0);
+      let overlaps = 0;
+      for (let i = 0; i < labels.length; i++) {{
+        for (let j = i + 1; j < labels.length; j++) {{
+          const a = labels[i], b = labels[j];
+          if (a.axis !== b.axis || a.side !== b.side) continue;
+          const gap = 1.0;
+          if (
+            a.rect.left < b.rect.right - gap &&
+            a.rect.right > b.rect.left + gap &&
+            a.rect.top < b.rect.bottom - gap &&
+            a.rect.bottom > b.rect.top + gap
+          ) {{
+            overlaps++;
+          }}
+        }}
+      }}
+      return {{ label_count: labels.length, tick_label_overlap_count: overlaps }};
+    }}
+    function interactionBlankFrameProbe() {{
+      const saved = {{...view.view}};
+      let blankFrameCount = 0;
+      let minLit = Infinity;
+      const record = () => {{
+        const lit = nonblankCanvasPixels();
+        minLit = Math.min(minLit, lit);
+        if (lit <= 0) blankFrameCount++;
+      }};
+      for (let i = 0; i < 8; i++) {{
+        view._zoomAt(i % 2 ? 1.08 : 0.92, 0.35 + (i % 3) * 0.15, 0.42, false);
+        record();
+      }}
+      for (let i = 0; i < 8; i++) {{
+        const v = view.view;
+        const dx = (v.x1 - v.x0) * (i % 2 ? 0.018 : -0.018);
+        const dy = (v.y1 - v.y0) * (i % 2 ? -0.012 : 0.012);
+        view._setView({{x0: v.x0 + dx, x1: v.x1 + dx, y0: v.y0 + dy, y1: v.y1 + dy}}, {{
+          animate: false,
+          request: false,
+        }});
+        record();
+      }}
+      for (let i = 0; i < 4; i++) {{
+        const v = view.view;
+        const x0 = v.x0 + (v.x1 - v.x0) * 0.25;
+        const x1 = v.x0 + (v.x1 - v.x0) * 0.75;
+        const y0 = v.y0 + (v.y1 - v.y0) * 0.25;
+        const y1 = v.y0 + (v.y1 - v.y0) * 0.75;
+        view._zoomToBox([x0, y0], [x1, y1], false);
+        record();
+        view._setView(saved, {{animate: false, request: false}});
+        record();
+      }}
+      view._setView(saved, {{animate: false, request: false}});
+      return {{
+        blank_frame_count: blankFrameCount,
+        min_interaction_lit_pixels: Number.isFinite(minLit) ? minLit : 0,
+      }};
+    }}
+    function frameRgbSample() {{
+      view._drawNow();
+      const gl = view.gl;
+      const fullW = gl.drawingBufferWidth;
+      const fullH = gl.drawingBufferHeight;
+      const w = Math.max(1, Math.min(96, fullW));
+      const h = Math.max(1, Math.min(64, fullH));
+      const x = Math.max(0, Math.floor((fullW - w) / 2));
+      const y = Math.max(0, Math.floor((fullH - h) / 2));
+      const pixels = new Uint8Array(w * h * 4);
+      gl.readPixels(x, y, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      return pixels;
+    }}
+    function meanRgbDelta(a, b) {{
+      if (!a || !b || a.length !== b.length || !a.length) return 0;
+      let sum = 0;
+      let samples = 0;
+      for (let i = 0; i < a.length; i += 4) {{
+        sum += Math.abs(a[i] - b[i]);
+        sum += Math.abs(a[i + 1] - b[i + 1]);
+        sum += Math.abs(a[i + 2] - b[i + 2]);
+        samples += 3;
+      }}
+      return sum / (samples * 255);
+    }}
+    function colorContinuityProbe() {{
+      const saved = {{...view.view}};
+      let prev = frameRgbSample();
+      let maxFrameColorDelta = 0;
+      for (let i = 0; i < 10; i++) {{
+        view._zoomAt(i % 2 ? 1.035 : 0.965, 0.48 + (i % 3) * 0.02, 0.52, false);
+        const next = frameRgbSample();
+        maxFrameColorDelta = Math.max(maxFrameColorDelta, meanRgbDelta(prev, next));
+        prev = next;
+      }}
+      view._setView(saved, {{animate: false, request: false}});
+      view._drawNow();
+      return {{ max_frame_color_delta: maxFrameColorDelta }};
+    }}
+    function tooltipProbe() {{
+      const eligible = view.gpuTraces.some((g) =>
+        fastcharts.markOf(g.trace.kind).pointPick && g.tier !== "density");
+      if (!eligible) return {{ tooltip_eligible: false, tooltip_stable: true, tooltip_visible_samples: 0 }};
+      let hit = null;
+      for (let sx = 4; sx < view.plot.w && !hit; sx += 5) {{
+        for (let sy = 4; sy < view.plot.h; sy += 5) {{
+          if (view._pickAt(sx, sy)) {{
+            hit = {{ sx, sy }};
+            break;
+          }}
+        }}
+      }}
+      if (!hit) return {{ tooltip_eligible: true, tooltip_stable: false, tooltip_visible_samples: 0 }};
+      let visible = 0;
+      let flickers = 0;
+      const rect = canvasRect();
+      for (let i = 0; i < {TOOLTIP_SAMPLE_COUNT}; i++) {{
+        view.canvas.dispatchEvent(new PointerEvent("pointermove", {{
+          bubbles: true,
+          pointerId: 1,
+          clientX: rect.left + hit.sx,
+          clientY: rect.top + hit.sy,
+        }}));
+        if (view.tooltip && view.tooltip.style.display !== "none") visible++;
+        else flickers++;
+      }}
+      return {{
+        tooltip_eligible: true,
+        tooltip_stable: flickers === 0,
+        tooltip_visible_samples: visible,
+      }};
+    }}
+    function viewsClose(a, b) {{
+      const sx = Math.max(Math.abs(a.x1 - a.x0), Math.abs(b.x1 - b.x0), 1);
+      const sy = Math.max(Math.abs(a.y1 - a.y0), Math.abs(b.y1 - b.y0), 1);
+      return Math.abs(a.x0 - b.x0) <= sx * 1e-8 &&
+        Math.abs(a.x1 - b.x1) <= sx * 1e-8 &&
+        Math.abs(a.y0 - b.y0) <= sy * 1e-8 &&
+        Math.abs(a.y1 - b.y1) <= sy * 1e-8;
+    }}
+    function span(v, axis) {{
+      return Math.abs(v[axis + "1"] - v[axis + "0"]);
+    }}
+    function boxZoomInvariantProbe() {{
+      view._setView(before, {{animate: false, request: false}});
+      const x0 = before.x0 + (before.x1 - before.x0) * 0.24;
+      const x1 = before.x0 + (before.x1 - before.x0) * 0.76;
+      const y0 = before.y0 + (before.y1 - before.y0) * 0.24;
+      const y1 = before.y0 + (before.y1 - before.y0) * 0.76;
+      view._zoomToBox([x0, y0], [x1, y1], false);
+      const after = {{...view.view}};
+      const finite = [after.x0, after.x1, after.y0, after.y1].every(Number.isFinite);
+      const changed = finite && !viewsClose(after, before);
+      const narrowed = finite &&
+        span(after, "x") < span(before, "x") * 0.75 &&
+        span(after, "y") < span(before, "y") * 0.75;
+      view._setView(before, {{animate: false, request: false}});
+      const restored = viewsClose(view.view, before);
+      return {{
+        box_zoom_changed: changed,
+        box_zoom_narrowed: narrowed,
+        box_zoom_restored: restored,
+      }};
+    }}
+    function brushSelectionInvariantProbe() {{
+      view._setView(before, {{animate: false, request: false}});
+      const eligible = view.gpuTraces.some((g) => g._cpu && g.tier !== "density" && g.n > 0);
+      if (!eligible) {{
+        view._clearSelection();
+        return {{
+          brush_select_eligible: false,
+          brush_select_count: 0,
+          brush_select_cleared: Number(view._selectionCount || 0) === 0,
+        }};
+      }}
+      const x0 = before.x0 + (before.x1 - before.x0) * 0.12;
+      const x1 = before.x0 + (before.x1 - before.x0) * 0.88;
+      const y0 = before.y0 + (before.y1 - before.y0) * 0.12;
+      const y1 = before.y0 + (before.y1 - before.y0) * 0.88;
+      view._selectLocal(x0, x1, y0, y1);
+      const count = Number(view._selectionCount || 0);
+      view._clearSelection();
+      const cleared = Number(view._selectionCount || 0) === 0 &&
+        view.gpuTraces.every((g) => !g.selActive && !(g.drill && g.drill.selActive));
+      return {{
+        brush_select_eligible: true,
+        brush_select_count: count,
+        brush_select_cleared: cleared,
+      }};
+    }}
 
     const wheel = measure((i) => {{
       view._zoomAt(i % 2 ? 1.04 : 0.96, 0.5, 0.5, false);
-    }});
+    }}, true);
     const pan = measure((i) => {{
       const v = view.view;
       const dx = (v.x1 - v.x0) * (i % 2 ? 0.012 : -0.012);
@@ -94,17 +498,16 @@ def _probe_js(reps: int) -> str:
         animate: false,
         request: false,
       }});
-    }});
+    }}, true);
     const hover = measure((i) => {{
-      const r = view.canvas.getBoundingClientRect();
-      const x = r.left + r.width * (0.18 + (i % 9) * 0.08);
-      const y = r.top + r.height * (0.25 + (i % 7) * 0.07);
       view.canvas.dispatchEvent(new PointerEvent("pointermove", {{
         bubbles: true,
-        clientX: x,
-        clientY: y,
         pointerId: 1,
+        ...eventAt(0.18 + (i % 9) * 0.08, 0.25 + (i % 7) * 0.07),
       }}));
+    }});
+    const crosshair = measure((i) => {{
+      view._updateCrosshair(eventAt(0.1 + (i % 8) * 0.1, 0.2 + (i % 6) * 0.1));
     }});
     const box = measure((i) => {{
       const v = view.view;
@@ -114,19 +517,44 @@ def _probe_js(reps: int) -> str:
       const y1 = v.y0 + (v.y1 - v.y0) * 0.78;
       view._zoomToBox([x0, y0], [x1, y1], false);
       if (i % 2) view._setView(before, {{animate: false, request: false}});
+    }}, true);
+    const brush = measure((i) => {{
+      const v = view.view;
+      const x0 = v.x0 + (v.x1 - v.x0) * (0.18 + (i % 4) * 0.03);
+      const x1 = v.x0 + (v.x1 - v.x0) * (0.68 + (i % 4) * 0.03);
+      const y0 = v.y0 + (v.y1 - v.y0) * 0.18;
+      const y1 = v.y0 + (v.y1 - v.y0) * 0.82;
+      view._selectLocal(x0, x1, y0, y1);
+      view._clearSelection();
     }});
-    const after = {{...view.view}};
-    const nonblank = fcNonblankPixels(view);
+    const nonblank = Math.max(fcNonblankPixels(view), nonblankCanvasPixels());
     if (nonblank <= 0) throw new Error("blank WebGL canvas");
+    const crosshairVisible = !!(view.crosshairX && view.crosshairY &&
+      view.crosshairX.style.display === "block" && view.crosshairY.style.display === "block");
+    const blankFrames = interactionBlankFrameProbe();
+    const labelLayout = tickLabelOverlapCount();
+    const colorContinuity = colorContinuityProbe();
+    const tooltip = tooltipProbe();
+    const boxZoomInvariant = boxZoomInvariantProbe();
+    const brushSelectionInvariant = brushSelectionInvariantProbe();
     fcReport("FC_INTERACTION", {{
       status: "ok",
       tier: payload.spec.traces[0].tier,
       nonblank_pixels: nonblank,
-      view_changed: Math.abs(after.x0 - before.x0) > 1e-9 || Math.abs(after.x1 - before.x1) > 1e-9,
+      view_changed: viewChanged,
+      crosshair_visible: crosshairVisible,
+      ...blankFrames,
+      ...labelLayout,
+      ...colorContinuity,
+      ...tooltip,
+      ...boxZoomInvariant,
+      ...brushSelectionInvariant,
       wheel_zoom: wheel,
       pan: pan,
       hover: hover,
+      crosshair: crosshair,
       box_zoom: box,
+      brush_select: brush,
     }});
   }} catch (err) {{
     fcFail("FC_INTERACTION", err);
@@ -142,7 +570,22 @@ def _flatten_probe_metrics(row: dict[str, Any], result: dict[str, Any]) -> None:
     row["tier"] = result.get("tier")
     row["nonblank_pixels"] = result.get("nonblank_pixels")
     row["view_changed"] = bool(result.get("view_changed"))
-    for name in ("wheel_zoom", "pan", "hover", "box_zoom"):
+    row["crosshair_visible"] = bool(result.get("crosshair_visible"))
+    row["blank_frame_count"] = result.get("blank_frame_count")
+    row["min_interaction_lit_pixels"] = result.get("min_interaction_lit_pixels")
+    row["label_count"] = result.get("label_count")
+    row["tick_label_overlap_count"] = result.get("tick_label_overlap_count")
+    row["max_frame_color_delta"] = result.get("max_frame_color_delta")
+    row["tooltip_eligible"] = bool(result.get("tooltip_eligible"))
+    row["tooltip_stable"] = bool(result.get("tooltip_stable"))
+    row["tooltip_visible_samples"] = result.get("tooltip_visible_samples")
+    row["box_zoom_changed"] = bool(result.get("box_zoom_changed"))
+    row["box_zoom_narrowed"] = bool(result.get("box_zoom_narrowed"))
+    row["box_zoom_restored"] = bool(result.get("box_zoom_restored"))
+    row["brush_select_eligible"] = bool(result.get("brush_select_eligible"))
+    row["brush_select_count"] = result.get("brush_select_count")
+    row["brush_select_cleared"] = bool(result.get("brush_select_cleared"))
+    for name in ("wheel_zoom", "pan", "hover", "crosshair", "box_zoom", "brush_select"):
         stats = result.get(name) or {}
         row[f"{name}_median_ms"] = stats.get("median_ms")
         row[f"{name}_p95_ms"] = stats.get("p95_ms")
@@ -178,12 +621,38 @@ def run(*, sizes: list[int], reps: int, chromium: str | None = None) -> dict[str
         _flatten_probe_metrics(row, result)
         rows.append(row)
 
+    for case in _core_interaction_figures():
+        spec, blob = case["figure"].build_payload()
+        tier = spec["traces"][0]["tier"]
+        row = {
+            "scenario": case["scenario"],
+            "family": case["family"],
+            "n": case["n"],
+            "tier": tier,
+            "benchmark_categories": [
+                category["id"] for category in categories_for(case["category_ids"])
+            ],
+            "payload_bytes": json_bytes(spec) + len(blob),
+        }
+        html = page_for_charts(
+            [chart_payload(case["scenario"], spec, blob)],
+            _probe_js(reps),
+            title=f"fastcharts {case['scenario']} probe",
+        )
+        row["html_bytes"] = len(html.encode("utf-8"))
+        result = run_json_probe(html, marker="FC_INTERACTION", chromium=chromium)
+        _flatten_probe_metrics(row, result)
+        rows.append(row)
+
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": "interaction-browser",
         "environment": collect_environment_metadata(chromium=chromium),
         "benchmark_categories": list(BENCHMARK_CATEGORIES),
         "tracked_categories": categories_for(INTERACTION_CATEGORY_IDS),
+        "interaction_budgets_ms": dict(INTERACTION_BUDGETS_MS),
+        "interaction_visual_budgets": dict(INTERACTION_VISUAL_BUDGETS),
+        "tooltip_sample_count": TOOLTIP_SAMPLE_COUNT,
         "reps": reps,
         "rows": rows,
     }
@@ -209,6 +678,7 @@ def to_markdown(report: dict[str, Any]) -> str:
         "# fastcharts browser interaction benchmark",
         "",
         f"Repetitions per gesture: `{report['reps']}`.",
+        f"Repeated tooltip samples per eligible row: `{report.get('tooltip_sample_count', 0)}`.",
         "",
         "## Benchmark Categories",
         "",
@@ -217,14 +687,31 @@ def to_markdown(report: dict[str, Any]) -> str:
         "Tracked in this run: "
         + ", ".join(f"`{category['id']}`" for category in report["tracked_categories"]),
         "",
+        "## Budgets",
+        "",
+        "| metric | p95 budget |",
+        "|---|---:|",
+    ]
+    for metric, budget in report["interaction_budgets_ms"].items():
+        lines.append(f"| `{metric}` | {budget:.1f} ms |")
+    lines += [
+        "",
+        "| visual invariant | budget |",
+        "|---|---:|",
+    ]
+    for metric, budget in report.get("interaction_visual_budgets", {}).items():
+        direction = ">=" if metric.startswith("min_") else "<="
+        lines.append(f"| `{metric}` | {direction} {budget:.2f} |")
+    lines += [
+        "",
         "## Results",
         "",
-        "| scenario | points | tier | payload | wheel p95 | pan p95 | hover p95 | box p95 | nonblank | status |",
-        "|---|---:|---|---:|---:|---:|---:|---:|---:|---|",
+        "| scenario | points | tier | payload | wheel p95 | pan p95 | hover p95 | crosshair p95 | box p95 | brush p95 | box zoom | brush select | blank frames | tick overlaps | color delta | tooltip | status |",
+        "|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|---|---|",
     ]
     for row in report["rows"]:
         lines.append(
-            "| {scenario} | {n:,} | {tier} | {payload} | {wheel} | {pan} | {hover} | {box} | {nonblank} | {status} |".format(
+            "| {scenario} | {n:,} | {tier} | {payload} | {wheel} | {pan} | {hover} | {crosshair} | {box} | {brush} | {box_state} | {brush_count} | {blank} | {overlaps} | {color_delta} | {tooltip} | {status} |".format(
                 scenario=row["scenario"],
                 n=row["n"],
                 tier=row.get("tier", "—"),
@@ -232,8 +719,29 @@ def to_markdown(report: dict[str, Any]) -> str:
                 wheel=_fmt_ms(row.get("wheel_zoom_p95_ms")),
                 pan=_fmt_ms(row.get("pan_p95_ms")),
                 hover=_fmt_ms(row.get("hover_p95_ms")),
+                crosshair=_fmt_ms(row.get("crosshair_p95_ms")),
                 box=_fmt_ms(row.get("box_zoom_p95_ms")),
-                nonblank=row.get("nonblank_pixels", "—"),
+                brush=_fmt_ms(row.get("brush_select_p95_ms")),
+                box_state=(
+                    "ok"
+                    if row.get("box_zoom_changed")
+                    and row.get("box_zoom_narrowed")
+                    and row.get("box_zoom_restored")
+                    else "fail"
+                ),
+                brush_count=(
+                    row.get("brush_select_count", "—")
+                    if row.get("brush_select_eligible")
+                    else "n/a"
+                ),
+                blank=row.get("blank_frame_count", "—"),
+                overlaps=row.get("tick_label_overlap_count", "—"),
+                color_delta=(
+                    "—"
+                    if row.get("max_frame_color_delta") is None
+                    else f"{row['max_frame_color_delta']:.3f}"
+                ),
+                tooltip="ok" if row.get("tooltip_stable") else "fail",
                 status=row.get("status", "unknown"),
             )
         )
@@ -242,7 +750,9 @@ def to_markdown(report: dict[str, Any]) -> str:
         "Notes:",
         "",
         "- Times are in-page `performance.now()` deltas through `ChartView` methods plus an immediate draw.",
-        "- `nonblank` is a WebGL readback sanity check from the chart canvas center.",
+        "- `nonblank` is a WebGL readback sanity check over the rendered chart canvas.",
+        "- Budget verification rejects blank canvases, blank interaction frames, missing view changes, missing crosshair chrome, box zoom that does not narrow/restore the viewport, brush selection that does not select/clear eligible marks, overlapping tick labels, unstable tooltips, oversized frame color jumps, and p95 values over the listed limits.",
+        "- Scatter rows sweep the requested sizes; line, histogram, bar, and heatmap rows are fixed core-family probes so interaction regressions are not scatter-only.",
         "- The density rows measure client interaction over the current density surface; backend drilldown switching is tracked separately in CodSpeed.",
     ]
     return "\n".join(lines)

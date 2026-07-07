@@ -49,16 +49,16 @@ commit so CI artifacts are quick to inspect from logs.
 
 | ID | Category | Status | Why it matters | Primary metrics | Current / planned harness | Goal |
 |---|---|---|---|---|---|---|
-| `small_data_startup` | Small-data startup | tracked | Everyday charts should feel instant; a performance library cannot only win at 10M rows. | time-to-first-render, JS payload, Python overhead | `benchmarks/bench_vs.py --ttfr` at 1k-100k | Beat Plotly/Bokeh/Altair on first interactive paint for common charts. |
+| `small_data_startup` | Small-data startup | tracked | Everyday charts should feel instant; a performance library cannot only win at 10M rows. | time-to-first-render, JS payload, Python overhead | `benchmarks/bench_vs.py --ttfr` at 1k-100k; `test_first_payload_scatter_small` | Beat Plotly/Bokeh/Altair on first interactive paint for common charts. |
 | `install_footprint_import_budget` | Install footprint and import budget | tracked | Notebook, CI, and serverless users feel package weight and cold import time before the first chart exists. | cold import time, installed distribution bytes, file count | `benchmarks/bench_install.py` | Keep fastcharts lightweight at import and smaller to install than broad plotting stacks. |
-| `medium_direct_scatter` | Medium direct scatter | tracked | Proves exact marker rendering, hover, color, and size channels before aggregation kicks in. | FPS, TTFR, memory, payload bytes/point, hover latency | `benchmarks/bench_vs.py` at 100k-200k; `benchmarks/bench_interaction.py` | Smooth exact WebGL scatter with bounded bytes/point and no JSON-number payload cliff. |
-| `huge_scatter_overview` | Huge scatter overview | tracked | Proves screen-bounded rendering for datasets larger than the browser should draw point-for-point. | ingest/bin time, density payload size, peak memory, TTFR | `bench_scatter_native.py`, `bench_vs.py`, example app assets | Keep resident/render payload flat in N while showing truthful density summaries. |
+| `medium_direct_scatter` | Medium direct scatter | tracked | Proves exact marker rendering, hover, color, and size channels before aggregation kicks in. | FPS, TTFR, memory, payload bytes/point, hover latency | `benchmarks/bench_vs.py` at 100k-200k; `benchmarks/bench_interaction.py`; `test_first_payload_scatter_medium` | Smooth exact WebGL scatter with bounded bytes/point and no JSON-number payload cliff. |
+| `huge_scatter_overview` | Huge scatter overview | tracked | Proves screen-bounded rendering for datasets larger than the browser should draw point-for-point. | ingest/bin time, density payload size, peak memory, TTFR | `bench_scatter_native.py`, `bench_vs.py`, `test_first_payload_density_large`, example app assets | Keep resident/render payload flat in N while showing truthful density summaries. |
 | `adaptive_scatter_drilldown` | Adaptive scatter drilldown | tracked | The large-data claim needs a credible path from overview to exact visible points. | visible-query latency, tier-switch latency, exact-point recovery, badge accuracy | `benchmarks/test_codspeed_kernels.py::test_adaptive_drilldown_cycle` | Exact points when visible count is under budget; sampled/density with explicit counts otherwise. |
-| `huge_line_time_series` | Huge line / time series | tracked | Common observability and finance workload; Plotly-resampler sets the bar here. | decimation time, zoom re-decimation latency, TTFR, extrema preservation | `benchmarks/bench.py`, `bench_native.py` | Screen-bounded line payloads with extrema-preserving decimation and fast zoom refresh. |
+| `huge_line_time_series` | Huge line / time series | tracked | Common observability and finance workload; Plotly-resampler sets the bar here. | decimation time, zoom re-decimation latency, TTFR, extrema preservation | `benchmarks/bench.py`, `bench_native.py`, `bench_interaction.py`, `test_decimate_view` | Screen-bounded line payloads with extrema-preserving decimation and fast zoom refresh. |
 | `many_chart_dashboards` | Many-chart dashboards | tracked | Plotly-class apps often fail from total page weight and many live canvases, not one chart. | total TTFR, memory, CPU after idle, number of charts before degradation | `benchmarks/bench_dashboard.py` | Load 10-50 interactive charts with lower total memory and faster first usable dashboard than Plotly/Bokeh. |
-| `interaction_smoothness` | Interaction smoothness | tracked | Users judge performance by pan/zoom/hover, not just export time. | pan/zoom FPS, wheel latency, hover latency, selection latency | `benchmarks/bench_interaction.py` | Stay responsive during interaction, then refine view after interaction settles. |
-| `payload_export_size` | Payload/export size | tracked | Notebooks, static HTML, docs, and dashboards pay for every byte shipped. | standalone HTML bytes, binary payload bytes, bundle bytes | `bench_vs.py`, `bench_scatter_native.py`, example app asset sizes | Keep data payloads binary and screen-bounded where possible; warn when exact export would be huge. |
-| `core_2d_chart_breadth` | Core 2D chart breadth | tracked | The library needs to stay fast beyond the scatter wedge: bars, histograms, areas, and heatmaps are everyday chart workloads. | payload-prep time, payload bytes, standalone HTML bytes, TTFR | `benchmarks/bench_2d_charts.py` smoke/standard profiles vs Plotly | Beat Plotly on user-visible first paint for common 2D charts while keeping payloads comparable or smaller. |
+| `interaction_smoothness` | Interaction smoothness | tracked | Users judge performance by pan/zoom/hover, not just export time. | pan/zoom FPS, wheel latency, hover latency, tooltip stability, selection latency, frame color delta | `benchmarks/bench_interaction.py` | Stay responsive during interaction, avoid blank/flickering frames, then refine view after interaction settles. |
+| `payload_export_size` | Payload/export size | tracked | Notebooks, static HTML, docs, and dashboards pay for every byte shipped. | standalone HTML bytes, binary payload bytes, bundle bytes | `bench_vs.py`, `bench_scatter_native.py`, `test_first_payload_density_large`, `test_memory_report_density_medium`, example app asset sizes | Keep data payloads binary and screen-bounded where possible; warn when exact export would be huge. |
+| `core_2d_chart_breadth` | Core 2D chart breadth | tracked | The library needs to stay fast beyond the scatter wedge: bars, histograms, areas, and heatmaps are everyday chart workloads. | payload-prep time, payload bytes, standalone HTML bytes, TTFR | `benchmarks/bench_2d_charts.py` smoke/standard profiles vs Plotly and Seaborn; `bench_interaction.py`; CodSpeed core-2D payload rows | Beat Plotly on user-visible first paint for common 2D charts while tracking Seaborn raster baselines where applicable. |
 
 Mode labels in benchmark output should stay explicit: `direct`, `decimated`,
 `density`, `sampled`, or `adaptive`. A 10M density result is a real large-data
@@ -67,12 +67,41 @@ markers. The benchmark reports should make that distinction impossible to miss.
 
 ## Interaction, drilldown, and dashboard probes
 
-CodSpeed now tracks the native adaptive drilldown cycle with
-`benchmarks/test_codspeed_kernels.py::test_adaptive_drilldown_cycle`: a warmed
-large scatter viewport moves from density overview, to exact visible points, and
-back out to density. That keeps the benchmark focused on native range queries,
-pyramid composition, and tier-switch payload generation instead of browser
-startup noise.
+CodSpeed is native-only and intentionally focused on hot paths that should not
+regress between commits. The suite asserts `fastcharts.kernels.BACKEND ==
+"native"` before timing anything. It tracks:
+
+- Rust kernels for f32 encoding, zone maps, M4 decimation, density binning,
+  histograms, normalization, and viewport range scans.
+- Small/medium/large first-payload prep rows:
+  `test_first_payload_scatter_small`,
+  `test_first_payload_scatter_medium`,
+  `test_first_payload_line_large`, and
+  `test_first_payload_density_large`.
+- Core 2D payload-prep rows:
+  `test_first_payload_histogram_core_2d`,
+  `test_first_payload_area_core_2d`,
+  `test_first_payload_bar_core_2d`,
+  `test_first_payload_heatmap_core_2d`, and
+  `test_first_payload_composed_layered_core_2d` for the public
+  `fc.chart(...)` layered API.
+- Zoom refresh with `test_m4_indices_zoom` and `test_decimate_view`.
+- Memory/payload accounting with `test_memory_report_density_medium`.
+- The native adaptive drilldown cycle with
+  `test_adaptive_drilldown_cycle`: a warmed large scatter viewport moves from
+  density overview, to exact visible points, and back out to density.
+
+That keeps CodSpeed focused on native range queries, pyramid composition,
+tier-switch payload generation, payload prep, zoom latency, and memory-report
+accounting instead of browser startup noise. Browser TTFR, payload bytes, peak
+RSS, and cross-library comparisons remain in the schema-verified JSON reports
+described below.
+
+The JSON verifier treats `scatter-native` and `kernel-native` reports as
+native-only artifacts: if their environment metadata says
+`fastcharts_backend` is anything other than `native`, verification fails. That
+keeps fallback correctness smoke data from being mixed into native performance
+claims.
 
 The browser-heavy probes are opt-in scripts:
 
@@ -85,10 +114,28 @@ PYTHONPATH=python .venv/bin/python benchmarks/bench_dashboard.py \
 ```
 
 `bench_interaction.py` dispatches through the real `ChartView` zoom, pan, hover,
-and box-zoom paths and records gesture percentiles plus a WebGL nonblank-pixel
-sanity check. `bench_dashboard.py` renders a mixed line/scatter/histogram/bar/
-heatmap dashboard on one page and reports total chart-to-pixels startup time.
-Both scripts emit schema-versioned JSON with environment metadata and benchmark
+crosshair, box-zoom, and brush-select paths. It warms first-use GPU/DOM work,
+records gesture percentiles, checks WebGL nonblank pixels, and emits an
+`interaction_budgets_ms` block for p95 limits. The scatter rows sweep the
+requested dataset sizes; the fixed core-family rows cover line, histogram, bar,
+and heatmap so interaction regressions are not scatter-only. The benchmark
+verifier rejects blank canvases, missing view changes, hidden crosshair chrome,
+box zoom that does not narrow and restore the viewport, brush select that does
+not select and clear eligible marks, blank interaction frames, tick-label
+overlaps after gesture churn, unstable tooltips on pickable traces, tooltip
+probes that fail to keep every repeated hover sample visible, oversized
+frame-to-frame color jumps during zoom, missing budget metadata, and successful
+rows whose p95 values exceed the declared budgets. It also rejects reports that
+do not include successful direct scatter,
+density scatter, line, histogram, bar, and heatmap interaction rows, and it
+requires every per-gesture repetition count to match the report-level `reps`
+value so short probes cannot masquerade as the configured budget run. The report
+also declares `tooltip_sample_count`, and eligible rows must report that exact
+`tooltip_visible_samples` count so a tooltip that appears once and then flickers
+away fails verification.
+`bench_dashboard.py` renders a mixed line/scatter/histogram/bar/heatmap
+dashboard on one page and reports total chart-to-pixels startup time. Both
+scripts emit schema-versioned JSON with environment metadata and benchmark
 category IDs; `scripts/verify_benchmark_report.py` accepts them as
 `interaction-browser` and `dashboard-browser` reports.
 

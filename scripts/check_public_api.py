@@ -45,6 +45,68 @@ HEAVY_FASTCHARTS_IMPORTS = {
     "fastcharts.widget",
 }
 HEAVY_IMPORTS = HEAVY_THIRD_PARTY_IMPORTS | HEAVY_FASTCHARTS_IMPORTS
+COMPONENT_REEXPORTS = {"CHART_DOM_SLOTS"}
+DECLARATIVE_MARK_EXPORTS = (
+    "scatter",
+    "line",
+    "area",
+    "histogram",
+    "hist",
+    "bar",
+    "column",
+    "heatmap",
+)
+DECLARATIVE_ANNOTATION_EXPORTS = (
+    "arrow",
+    "callout",
+    "label",
+    "marker",
+    "threshold",
+    "threshold_zone",
+    "vline",
+    "hline",
+    "x_band",
+    "y_band",
+    "text",
+)
+DECLARATIVE_AXIS_EXPORTS = ("x_axis", "y_axis")
+DECLARATIVE_CHROME_EXPORTS = (
+    "legend",
+    "tooltip",
+    "modebar",
+    "theme",
+    "mark_style",
+    "interaction_config",
+)
+DECLARATIVE_CHART_EXPORTS = (
+    "chart",
+    "scatter_chart",
+    "line_chart",
+    "area_chart",
+    "histogram_chart",
+    "bar_chart",
+    "column_chart",
+    "heatmap_chart",
+)
+DECLARATIVE_CHART_READOUTS = (
+    "figure",
+    "widget",
+    "show",
+    "to_html",
+    "html",
+    "_repr_html_",
+    "to_png",
+    "memory_report",
+    "chrome_components",
+    "reflex_components",
+)
+DECLARATIVE_API_EXPORTS = (
+    *DECLARATIVE_MARK_EXPORTS,
+    *DECLARATIVE_ANNOTATION_EXPORTS,
+    *DECLARATIVE_AXIS_EXPORTS,
+    *DECLARATIVE_CHROME_EXPORTS,
+    *DECLARATIVE_CHART_EXPORTS,
+)
 
 
 def _string_list(value: Any, label: str, errors: list[str]) -> list[str]:
@@ -139,7 +201,12 @@ def validate_component_public_api(
         if module_name == ".components" and isinstance(name, str)
     }
     missing = sorted(component_exports - name_set)
-    extra = sorted(name_set - component_exports)
+    allowed_reexports = {
+        name
+        for name in COMPONENT_REEXPORTS
+        if name in name_set and exports.get(name) is not None and exports.get(name) != ".components"
+    }
+    extra = sorted(name_set - component_exports - allowed_reexports)
     if missing:
         errors.append(f"{components_module.__name__}.__all__ is missing root exports: {missing}")
     if extra:
@@ -151,6 +218,61 @@ def validate_component_public_api(
     for name in sorted(name_set):
         if not hasattr(components_module, name):
             errors.append(f"{components_module.__name__}.__all__ includes undefined name {name!r}")
+
+    return errors
+
+
+def validate_declarative_api_contract(
+    pkg: ModuleType, components_module: ModuleType | None = None
+) -> list[str]:
+    """Ensure the Reflex-shaped composition API remains a named public contract."""
+    errors: list[str] = []
+    exports = getattr(pkg, "_EXPORTS", None)
+    if not isinstance(exports, dict):
+        return ["cannot validate declarative API because _EXPORTS is not a dict[str, str]"]
+
+    public_names = set(_string_list(getattr(pkg, "__all__", None), "__all__", errors))
+
+    if components_module is None:
+        try:
+            components_module = importlib.import_module(".components", pkg.__name__)
+        except Exception as exc:
+            return [f"cannot import fastcharts.components for declarative API validation: {exc!r}"]
+
+    component_names = set(
+        _string_list(
+            getattr(components_module, "__all__", None),
+            f"{components_module.__name__}.__all__",
+            errors,
+        )
+    )
+
+    for name in DECLARATIVE_API_EXPORTS:
+        if name not in public_names:
+            errors.append(f"declarative API export {name!r} is missing from fastcharts.__all__")
+        if exports.get(name) != ".components":
+            errors.append(
+                f"declarative API export {name!r} must map to '.components', "
+                f"got {exports.get(name)!r}"
+            )
+        if name not in component_names:
+            errors.append(
+                f"declarative API export {name!r} is missing from "
+                f"{components_module.__name__}.__all__"
+            )
+        if not hasattr(components_module, name):
+            errors.append(
+                f"declarative API export {name!r} is undefined in {components_module.__name__}"
+            )
+
+    chart_class = getattr(components_module, "Chart", None)
+    if chart_class is None:
+        errors.append(f"{components_module.__name__}.Chart is missing")
+        return errors
+    for method in DECLARATIVE_CHART_READOUTS:
+        value = getattr(chart_class, method, None)
+        if not callable(value):
+            errors.append(f"declarative Chart readout {method!r} must be callable")
 
     return errors
 
@@ -353,6 +475,7 @@ def check_public_api(*, check_lazy_import: bool = True) -> list[str]:
     errors.extend(validate_pep561_marker())
     errors.extend(validate_public_api(pkg))
     errors.extend(validate_component_public_api(pkg))
+    errors.extend(validate_declarative_api_contract(pkg))
     if check_lazy_import:
         eager = sorted(after_import - before)
         errors[:0] = _format_eager_import_findings("in-process", eager)

@@ -113,16 +113,22 @@ reported).
 5. `drilldown_truth`: CodSpeed native cycle covers density overview → exact
    points → density zoom-out; the 10M+ exact-hover oracle remains the larger
    browser/widget follow-up.
-6. `dashboard_20`: `benchmarks/bench_dashboard.py` renders 20 mixed charts on
+6. `core_2d_payloads`: CodSpeed tracks native histogram, area, bar, heatmap,
+   and composed/layered `fc.chart(...)` payload prep;
+   `benchmarks/bench_2d_charts.py` stays the Plotly/Seaborn chart-to-pixels
+   comparison.
+7. `dashboard_20`: `benchmarks/bench_dashboard.py` renders 20 mixed charts on
    one page — total chart-to-pixels startup now, memory next (the
    Reflex story; competitors: Plotly/Bokeh equivalents).
-7. `install_import`: sizes + cold import vs all.
+8. `install_import`: sizes + cold import vs all.
 
 ## 6. Implementation plan
 
 1. Percentile interaction probe in `benchmarks/bench_interaction.py` (dispatch
-   real ChartView zoom/pan/hover/box-zoom paths; collect RAF-timed deltas) —
-   unlocks pan/zoom latency and interaction-ready.
+   real ChartView zoom/pan/hover/crosshair/box-zoom/brush-select paths across
+   scatter plus representative line/histogram/bar/heatmap rows; collect p95
+   deltas, WebGL nonblank checks, and enforced budget metadata) — unlocks
+   pan/zoom latency and interaction-ready beyond scatter-only coverage.
 2. Oracle module `benchmarks/oracles.py` (NumPy references + assertions),
    wired into `bench_vs.py` scenario runs.
 3. PyGWalker + plotly-resampler adapters; Plotly/Bokeh equivalents for the

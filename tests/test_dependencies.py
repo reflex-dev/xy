@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import ast
 import re
 import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+CORE_PACKAGE = ROOT / "python" / "fastcharts"
 
 
 def _dependency_name(requirement: str) -> str:
@@ -23,4 +25,26 @@ def test_core_runtime_dependencies_do_not_include_reflex() -> None:
     assert not any(name == "reflex" or name.startswith("reflex-") for name in runtime_names), (
         "fastcharts core must stay Reflex-free; put Reflex support in the example app "
         "or a separate optional adapter package"
+    )
+
+
+def test_core_package_does_not_import_reflex() -> None:
+    forbidden = ("reflex", "reflex_core", "reflex_base")
+    violations: list[str] = []
+    for path in sorted(CORE_PACKAGE.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    root = alias.name.split(".", 1)[0]
+                    if root in forbidden or root.startswith("reflex_"):
+                        violations.append(f"{path.relative_to(ROOT)} imports {alias.name}")
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                root = node.module.split(".", 1)[0]
+                if root in forbidden or root.startswith("reflex_"):
+                    violations.append(f"{path.relative_to(ROOT)} imports from {node.module}")
+
+    assert violations == [], (
+        "fastcharts core must stay framework-free; Reflex imports belong in "
+        f"reflex_fastcharts_app or a separate adapter: {violations}"
     )

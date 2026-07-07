@@ -24,10 +24,13 @@ from .config import (  # noqa: E402
     DECIMATION_THRESHOLD,
     DEFAULT_PALETTE,
     DENSITY_GRID,
+    DENSITY_SAMPLE_SEED,
+    DENSITY_SAMPLE_TARGET,
     DIRECT_SOFT_CEILING,
     PROTOCOL_VERSION,
     SCATTER_DENSITY_THRESHOLD,
 )
+from .dom import validate_dom_slots
 
 _FigureCheckpoint: TypeAlias = tuple[ColumnStoreCheckpoint, int, dict[str, list[str]], int]
 
@@ -117,10 +120,14 @@ class _PayloadWriter:
         """Offset-encoded geometry column: `(v - offset) * scale` as f32
         (§4/§16). Scale is 1.0 except for absurd-magnitude domains, where it
         normalizes so finite f64 can't overflow to ±inf in f32 (§19)."""
-        offset = col.suggest_offset()
-        scale = lod.f32_safe_scale(offset, col.min, col.max)
-        enc = kernels.encode_f32(values, offset, scale)
-        return self._append(enc, {"offset": offset, "scale": scale, "kind": col.kind})
+        encoded = lod.encode_f32_values(
+            values,
+            col.suggest_offset(),
+            col.min,
+            col.max,
+            kind=col.kind,
+        )
+        return self._append(encoded.values, encoded.meta)
 
     def ship_scalar(self, values: np.ndarray) -> int:
         """Raw f32 column already in final units (no offset): channel/grid/heights."""
@@ -132,9 +139,9 @@ class _PayloadWriter:
         vals = np.ascontiguousarray(values, dtype=np.float64)
         bounds = kernels.min_max(vals)
         offset = (bounds[0] + bounds[1]) / 2.0 if bounds is not None else 0.0
-        scale = lod.f32_safe_scale(offset, *bounds) if bounds is not None else 1.0
-        enc = kernels.encode_f32(vals, offset, scale)
-        return self._append(enc, {"offset": offset, "scale": scale, "kind": kind})
+        lo, hi = bounds if bounds is not None else (0.0, 0.0)
+        encoded = lod.encode_f32_values(vals, offset, lo, hi, kind=kind)
+        return self._append(encoded.values, encoded.meta)
 
     def _append(self, enc: np.ndarray, meta: dict[str, Any]) -> int:
         raw = enc.tobytes()
@@ -262,9 +269,7 @@ class Figure:
             "label_offset": self._optional_finite_scalar(
                 label_offset, f"{axis_id} axis label_offset"
             ),
-            "label_angle": self._optional_finite_scalar(
-                label_angle, f"{axis_id} axis label_angle"
-            ),
+            "label_angle": self._optional_finite_scalar(label_angle, f"{axis_id} axis label_angle"),
             "type": type_,
             "domain": domain,
             "reverse": self._bool_param(reverse, f"{axis_id} axis reverse"),
@@ -1819,7 +1824,9 @@ class Figure:
         label_angle = self._optional_finite_scalar(
             opts.get("label_angle"), f"{axis_id} axis label_angle"
         )
-        tick_count = self._optional_positive_int(opts.get("tick_count"), f"{axis_id} axis tick_count")
+        tick_count = self._optional_positive_int(
+            opts.get("tick_count"), f"{axis_id} axis tick_count"
+        )
         tick_label_angle = self._optional_finite_scalar(
             opts.get("tick_label_angle"), f"{axis_id} axis tick_label_angle"
         )
@@ -1966,8 +1973,10 @@ class Figure:
         if class_name:
             dom["class_name"] = class_name
         class_names = self._string_mapping(self.class_names, "class_names")
+        validate_dom_slots(class_names, "class_names")
         if class_names:
             dom["class_names"] = class_names
+        validate_dom_slots(self.chrome_styles, "chrome_styles")
         style = self._style_mapping(self.style, "style")
         if style:
             dom["style"] = style
@@ -2029,9 +2038,7 @@ class Figure:
                         "kind": "marker",
                         "x": self._annotation_value(annotation.get("x"), "x", f"{label}.x"),
                         "y": self._annotation_value(annotation.get("y"), "y", f"{label}.y"),
-                        "size": self._positive_scalar(
-                            annotation.get("size", 8.0), f"{label}.size"
-                        ),
+                        "size": self._positive_scalar(annotation.get("size", 8.0), f"{label}.size"),
                         "symbol": self._annotation_symbol(
                             annotation.get("symbol", "circle"), f"{label}.symbol"
                         ),
@@ -2249,7 +2256,7 @@ class Figure:
         if t.use_density():
             t.shipped_sel = None  # no per-point marks, no pick mapping
             t.drill_mode = False  # full view: density until a zoom drills in
-            return self._density_trace_spec(t, xr, yr, *DENSITY_GRID, pw.ship_scalar)
+            return self._density_trace_spec(t, xr, yr, *DENSITY_GRID, pw)
         xv, yv = t.x.values, t.y.values
         sel = self._finite_sel(t, xv, yv)
         if sel is not None:
@@ -2445,11 +2452,68 @@ class Figure:
         same wire shape serves the build path and drill-in view updates)."""
         return channels.ship_channels(t, sel, ship_scalar, DEFAULT_PALETTE)
 
-    def _density_trace_spec(self, t: Trace, xr, yr, w, h, ship_scalar) -> dict[str, Any]:  # noqa: ANN001
+    def _density_sample_spec(
+        self,
+        t: Trace,
+        sel: np.ndarray,
+        visible: int,
+        xr: tuple[float, float],
+        yr: tuple[float, float],
+        pw: "_PayloadWriter",
+    ) -> Optional[dict[str, Any]]:
+        if visible <= 0:
+            return None
+        row_ids = np.asarray(sel, dtype=np.uint64)
+        base_fraction = min(1.0, DENSITY_SAMPLE_TARGET / max(1, visible))
+        if t.color_ch and t.color_ch.mode == "categorical" and t.color_ch.codes is not None:
+            mask = lod.stratified_sample_keep_mask(
+                row_ids,
+                t.color_ch.codes[sel],
+                0,
+                base_fraction=base_fraction,
+                seed=DENSITY_SAMPLE_SEED,
+            )
+        else:
+            mask = lod.sample_keep_mask(
+                row_ids,
+                0,
+                base_fraction=base_fraction,
+                seed=DENSITY_SAMPLE_SEED,
+            )
+        sample_sel = sel[mask]
+        if len(sample_sel) == 0:
+            return None
+        color_spec, size_spec = self._ship_channels(t, sample_sel, pw.ship_scalar)
+        style = dict(t.style)
+        try:
+            style["opacity"] = min(float(style.get("opacity", 0.8)), 0.55)
+        except (TypeError, ValueError):
+            style["opacity"] = 0.55
+        x_col = pw.ship_values(t.x.values[sample_sel], kind=t.x.kind)
+        y_col = pw.ship_values(t.y.values[sample_sel], kind=t.y.kind)
+        return {
+            "mode": "sampled",
+            "n": int(len(sample_sel)),
+            "visible": int(visible),
+            "target": DENSITY_SAMPLE_TARGET,
+            "level": 0,
+            "seed": DENSITY_SAMPLE_SEED,
+            "x": {"col": x_col, **pw.columns[x_col]},
+            "y": {"col": y_col, **pw.columns[y_col]},
+            "x_range": list(xr),
+            "y_range": list(yr),
+            "color": color_spec,
+            "size": size_spec,
+            "style": style,
+        }
+
+    def _density_trace_spec(self, t: Trace, xr, yr, w, h, pw: "_PayloadWriter") -> dict[str, Any]:  # noqa: ANN001
         """Bin a scatter into a density grid and build its spec entry (§5 Tier 2).
         The grid ships as one f32 buffer (h×w counts); the client colormaps it,
         recomputing the normalization domain per view so brightness is stable (§F6)."""
         grid = kernels.bin_2d(t.x.values, t.y.values, xr[0], xr[1], yr[0], yr[1], w, h)
+        sel = kernels.range_indices(t.x.values, t.y.values, xr[0], xr[1], yr[0], yr[1])
+        visible = int(len(sel))
         gmax = float(grid.max()) if grid.size else 0.0
         # Honor the user's colormap for the density ramp even though the per-point
         # color *data* can't survive count-aggregation (needs the §5-F5 algebra).
@@ -2461,6 +2525,19 @@ class Figure:
         color_dropped = bool(t.color_ch and t.color_ch.mode != "constant")
         size_dropped = bool(t.size_ch and t.size_ch.mode != "constant")
         dropped = color_dropped or size_dropped
+        density = {
+            "buf": pw.ship_scalar(grid.reshape(-1)),
+            "w": w,
+            "h": h,
+            "max": gmax,
+            "colormap": cmap,
+            "x_range": list(xr),
+            "y_range": list(yr),
+            "channels_dropped": dropped,  # never silent (§28)
+        }
+        sample = self._density_sample_spec(t, sel, visible, xr, yr, pw)
+        if sample is not None:
+            density["sample"] = sample
         return {
             "id": t.id,
             "kind": "scatter",
@@ -2469,18 +2546,10 @@ class Figure:
             "tier": "density",
             "n_points": t.n_points,
             "n_marks": int(w * h),
+            "visible": visible,
             "x_axis": t.x_axis,
             "y_axis": t.y_axis,
-            "density": {
-                "buf": ship_scalar(grid.reshape(-1)),
-                "w": w,
-                "h": h,
-                "max": gmax,
-                "colormap": cmap,
-                "x_range": list(xr),
-                "y_range": list(yr),
-                "channels_dropped": dropped,  # never silent (§28)
-            },
+            "density": density,
         }
 
     # Interaction handlers live in interaction.py (§17/§34); these delegates are
@@ -2554,6 +2623,10 @@ class Figure:
     def html(self, path: Optional[str | PathLike[str]] = None) -> str:
         """Alias for ``to_html`` for component-style API symmetry."""
         return self.to_html(path)
+
+    def _repr_html_(self) -> str:
+        """Notebook HTML repr fallback using the standalone export path."""
+        return self.to_html()
 
     def to_png(
         self,

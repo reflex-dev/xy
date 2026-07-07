@@ -43,7 +43,7 @@ These must pass before publishing or making a broad performance claim.
 | Import-time budget | `fastcharts.__init__`, `dir(fastcharts)`, export helpers, Figure construction, and `.widget()` keep their lazy import boundaries | `make check-import` |
 | Claim guardrails | Public docs and package metadata avoid broad, unqualified performance claims | `make check-claims` |
 | CI/release workflows | Hard gates, non-blocking benchmarks, best-effort benchmark artifact upload/download, trusted publishing, and fallback jobs stay wired | `make check-ci` |
-| HTML export safety | Inline JSON/script escaping, hostile user strings, and browser client text-node insertion stay protected | `make check-security` |
+| HTML export safety | Inline JSON/script escaping, atomic path writes, hostile user strings, and browser client text-node insertion stay protected | `make check-security` |
 | Python tests | Native backend and NumPy fallback both pass | `pytest -q` and `FASTCHARTS_FORCE_FALLBACK=1 pytest -q` |
 | Python style | Library, tests, scripts, and benchmarks lint clean | `ruff check .` and `ruff format --check .` |
 | Type surface | Shippable library is type-checkable and ships a full-package `py.typed` marker | `ty check python` |
@@ -56,7 +56,7 @@ These must pass before publishing or making a broad performance claim.
 | Native wheel | Platform wheel contains package-only files, exactly one native library, `METADATA` version/dependencies matching `pyproject.toml`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
 | Fallback wheel | No-toolchain wheel contains package-only files, `METADATA` version/dependencies matching `pyproject.toml`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
 | Wheel size | Platform wheel remains small enough for notebook installs | CI budget: 15 MB |
-| Benchmark artifact | JSON benchmark reports carry schema, environment, categories, row status, and finite non-negative metrics | `python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs`; repeat for `line.json --kind line-decimation`, `install.json --kind install-footprint`, `scatter.json --kind scatter-native`, and `kernel.json --kind kernel-native` |
+| Benchmark artifact | JSON benchmark reports carry schema, environment, categories, row status, and finite non-negative metrics; `scatter-native` and `kernel-native` reports must declare the native backend | `python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs`; repeat for `line.json --kind line-decimation`, `install.json --kind install-footprint`, `scatter.json --kind scatter-native`, and `kernel.json --kind kernel-native` |
 
 ## Standalone HTML Safety
 
@@ -70,6 +70,9 @@ reports, and sharing a single file, but it has a clear security contract:
   `</script>` inside future client source cannot terminate the script element.
 - The export rejects `NaN` and infinity in JSON metadata instead of emitting
   browser-dependent invalid JavaScript.
+- Path-based exports write through a same-directory temporary file and only
+  replace the target after the full document is flushed, so failed writes do
+  not corrupt the previous standalone artifact.
 - The standalone file emits a defensive `Content-Security-Policy` meta tag that
   blocks network fetches, workers, objects, forms, and external images while
   allowing the inline scripts/styles required by single-file export.
@@ -95,16 +98,16 @@ production-facing push:
 |---|---|
 | README/API prose, examples, public benchmark wording | `make check-docs` |
 | README snippets, `docs/api-examples.md`, Reflex chart registry/assets | `make check-examples` |
-| Public validation, error messages, builder rollback, chart/widget caching | `make check-errors` |
+| Public validation, error messages, builder rollback, LOD/drill mutation boundaries, chart/widget caching | `make check-errors` |
 | Public exports, lazy import mappings, component factories, public annotations | `make check-api` |
-| Import-time budget, `fastcharts.__init__`, widget/export/backend import boundaries | `make check-import` |
-| Standalone HTML export, user text, tooltips, legends, browser DOM insertion | `make check-security` |
+| Import-time budget, `fastcharts.__init__`, dependency boundaries, widget/export/backend import boundaries | `make check-import` |
+| Standalone HTML export, path writes, user text, tooltips, legends, browser DOM insertion | `make check-security` |
 | Benchmark harness code, environment metadata, report schema, regressions | `make check-benchmark-harness` |
 | Generated benchmark JSON artifacts | `make check-benchmark-report BENCHMARK_JSON=benchmark.json BENCHMARK_KIND=scatter-vs` |
 | CI/release workflows, artifact upload/download, fallback install jobs | `make check-ci` |
 | Source distributions and wheels | `make check-sdist` and `make check-wheel` |
 | Existing release artifacts | `make check-artifacts SDIST=/path/to/fastcharts.tar.gz WHEEL=/path/to/fastcharts.whl` |
-| Browser render smoke | `make check-browser CHROMIUM=/path/to/chrome` |
+| Browser render/lifecycle/interaction smoke | `make check-browser CHROMIUM=/path/to/chrome` |
 | Production-facing PR | `make check-full` |
 
 Use this before pushing production-facing changes:
@@ -119,6 +122,26 @@ wording:
 ```bash
 make check-docs
 ```
+
+The browser gate includes three app-facing checks. The Reflex lifecycle smoke
+remounts every committed FastCharts iframe asset, the visual regression smoke
+screenshots generated representative chart families plus every committed
+FastCharts Reflex gallery asset except the Plotly comparison page, and the
+interaction stress smoke enforces real `ChartView` gesture budgets. The
+lifecycle smoke also requires every chart to report nonblank pixels
+through `initial`, `hash-navigation`, `narrow-resize`, `wide-resize`,
+`scroll-bottom`, `fast-scroll`, `visibility-change`, and `restore`, then names
+the custom chrome, business overview, and retention cohort assets as critical
+and requires each asset/phase pair to report pixels through every iframe shell
+phase, including in-place reload and hidden boot/reveal.
+The interaction stress smoke validates the real `ChartView` wheel zoom, pan,
+hover, crosshair, box zoom, and brush-select paths with p95 budgets plus visual
+invariants for blank frames, tick-label overlap, tooltip stability, crosshair
+visibility, view changes, box zoom narrow/restore behavior, brush select
+count/clear behavior, lit-pixel readback floors, and frame-to-frame color jumps.
+The visual regression smoke also validates title, plot, x-axis, and y-axis
+regions plus plot-region occupancy so a chart cannot collapse into a corner,
+lose axis chrome, or pass merely because some pixels exist somewhere.
 
 Use this after packaging, workflow, or source-distribution changes:
 
@@ -152,15 +175,16 @@ dashboard chart registry/assets:
 make check-examples
 ```
 
-Use this after touching standalone HTML export, inline JSON/script escaping,
-tooltips, legends, category labels, or browser client DOM text insertion:
+Use this after touching standalone HTML export, path writes, inline JSON/script
+escaping, tooltips, legends, category labels, or browser client DOM text
+insertion:
 
 ```bash
 make check-security
 ```
 
 Use this after changing public validation, error messages, builder rollback
-behavior, or chart/widget caching:
+behavior, LOD/drill mutation boundaries, or chart/widget caching:
 
 ```bash
 make check-errors
@@ -174,7 +198,7 @@ make check-api
 ```
 
 Use this after changing `fastcharts.__init__`, lazy import boundaries,
-widget/export boundaries, or backend import setup:
+dependency boundaries, widget/export boundaries, or backend import setup:
 
 ```bash
 make check-import
@@ -211,6 +235,26 @@ For browser checks, pass the local Chromium/Chrome binary explicitly:
 ```bash
 make check-browser CHROMIUM=/path/to/chrome
 ```
+
+The browser gate includes the Reflex demo lifecycle smoke. It loads each
+FastCharts iframe asset twice, requires every asset to survive the child-level
+`initial`, `hash-navigation`, `narrow-resize`, `wide-resize`, `scroll-bottom`,
+`fast-scroll`, `visibility-change`, and `restore` phases, then mounts all assets
+in a parent iframe shell and exercises hash navigation, fast scrolling, resize,
+visibility changes, full remount, in-place iframe reload, and a
+hidden-boot/reveal pass where charts initialize in zero-sized iframe slots
+before becoming visible.
+Empty canvases, destroyed views, shortened lifecycle reports, missing shell-phase
+reports, or missing per-phase critical custom chrome/business/cohort reports
+fail the gate.
+
+It also runs `scripts/interaction_stress_smoke.py`, which is a smaller gated
+version of `benchmarks/bench_interaction.py`. The smoke validates interaction
+budgets for direct scatter, density scatter, line, histogram, bar, and heatmap
+rows so performance regressions are not scatter-only and not direct-scatter-only.
+For pickable rows, tooltip stability means every declared repeated hover sample
+must remain visible, so a tooltip that appears and immediately disappears fails
+the gate.
 
 Use `make list-checks` to see the individual check names, or
 `python scripts/verify_local.py --dry-run --full` to print commands without

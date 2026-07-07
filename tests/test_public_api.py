@@ -283,15 +283,74 @@ def test_public_api_checker_rejects_missing_all_entry() -> None:
 
 def test_public_api_checker_accepts_component_module_all() -> None:
     fake = ModuleType("fastcharts")
-    fake._EXPORTS = {"Chart": ".components", "scatter": ".components", "Figure": ".figure"}
+    fake._EXPORTS = {
+        "CHART_DOM_SLOTS": ".dom",
+        "Chart": ".components",
+        "scatter": ".components",
+        "Figure": ".figure",
+    }
     fake_components = ModuleType("fastcharts.components")
-    fake_components.__all__ = ["Chart", "scatter"]
+    fake_components.__all__ = ["CHART_DOM_SLOTS", "Chart", "scatter"]
+    fake_components.CHART_DOM_SLOTS = ()
     fake_components.Chart = object()
     fake_components.scatter = object()
 
     errors = check_public_api.validate_component_public_api(fake, fake_components)
 
     assert errors == []
+
+
+def _fake_declarative_modules() -> tuple[ModuleType, ModuleType]:
+    fake = ModuleType("fastcharts")
+    fake.__all__ = ["__version__", *check_public_api.DECLARATIVE_API_EXPORTS]
+    fake._EXPORTS = {name: ".components" for name in check_public_api.DECLARATIVE_API_EXPORTS}
+
+    fake_components = ModuleType("fastcharts.components")
+    fake_components.__all__ = list(check_public_api.DECLARATIVE_API_EXPORTS)
+    for name in check_public_api.DECLARATIVE_API_EXPORTS:
+        setattr(fake_components, name, object())
+
+    class Chart:
+        pass
+
+    for method in check_public_api.DECLARATIVE_CHART_READOUTS:
+        setattr(Chart, method, lambda self: None)
+    fake_components.Chart = Chart
+    return fake, fake_components
+
+
+def test_public_api_checker_accepts_declarative_api_contract() -> None:
+    fake, fake_components = _fake_declarative_modules()
+
+    errors = check_public_api.validate_declarative_api_contract(fake, fake_components)
+
+    assert errors == []
+
+
+def test_public_api_checker_rejects_missing_declarative_export() -> None:
+    fake, fake_components = _fake_declarative_modules()
+    fake.__all__.remove("tooltip")
+    fake._EXPORTS.pop("tooltip")
+    fake_components.__all__.remove("tooltip")
+    del fake_components.tooltip
+    delattr(fake_components.Chart, "html")
+
+    errors = check_public_api.validate_declarative_api_contract(fake, fake_components)
+
+    assert any("tooltip" in error and "fastcharts.__all__" in error for error in errors)
+    assert any("tooltip" in error and "'.components'" in error for error in errors)
+    assert any("tooltip" in error and "fastcharts.components.__all__" in error for error in errors)
+    assert any("tooltip" in error and "undefined" in error for error in errors)
+    assert any("html" in error and "readout" in error for error in errors)
+
+
+def test_public_api_checker_rejects_misrouted_declarative_export() -> None:
+    fake, fake_components = _fake_declarative_modules()
+    fake._EXPORTS["chart"] = ".figure"
+
+    errors = check_public_api.validate_declarative_api_contract(fake, fake_components)
+
+    assert any("chart" in error and "'.components'" in error and ".figure" in error for error in errors)
 
 
 def test_public_api_checker_rejects_stale_component_module_all() -> None:

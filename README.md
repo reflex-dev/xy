@@ -24,6 +24,9 @@ Stable enough to build on today:
 
 - Python 3.11+ package import, fluent `Figure` construction, and standalone
   HTML export.
+- Core declarative composition with `fc.chart(...)`, layered marks, axes,
+  annotations, legends, tooltips, event props, CSS/Tailwind-friendly DOM hooks,
+  and the same notebook/static export methods as `Figure`.
 - Implemented 2D chart families: line, scatter, area, histogram, bar/column,
   grouped/stacked/horizontal bars, and heatmap.
 - Binary column payloads, committed JavaScript bundles, native Rust kernels
@@ -31,8 +34,8 @@ Stable enough to build on today:
 
 Still experimental and expected to change before 1.0:
 
-- Composition API details, Reflex integration, callback/event shapes, styling
-  hooks, and chart breadth beyond the implemented 2D core.
+- Reflex integration adapters, callback/event payload details, and chart
+  breadth beyond the implemented 2D core.
 - Large-data adaptive drilldown internals and performance thresholds.
 - Compatibility shims for Plotly/Recharts-style APIs.
 
@@ -42,7 +45,7 @@ Still experimental and expected to change before 1.0:
 | Standalone HTML export | Stable alpha | Self-contained output with bundled JS, escaped metadata, and binary payloads. |
 | Native Rust backend | Stable alpha when a platform wheel is available | Used for fast ingest, binning, and decimation. |
 | NumPy fallback backend | Stable alpha | Same public behavior when Rust is unavailable, with slower compute. |
-| Composition API | Experimental | Useful for declarative children and callbacks; details may change before 1.0. |
+| Composition API | Stabilizing alpha | Declarative `fc.chart(...children)`, layered marks, axes, annotations, custom legend/tooltip chrome, callbacks, CSS/Tailwind hooks, and notebook/static export parity. |
 | Reflex integration | Experimental | Example app exists; core `fastcharts` has no Reflex dependency; any future adapter should use no hard Reflex dependency, or only a supported Reflex core/component package unless full Reflex is proven necessary. |
 | Adaptive drilldown internals | Experimental | Thresholds and request protocol may move as the LOD engine evolves. |
 
@@ -290,6 +293,19 @@ chart
 Both APIs render in Jupyter, VS Code, Colab, Marimo, and standalone HTML through
 the same engine.
 
+The composition contract we are locking is intentionally narrow and durable:
+children are lightweight Python specs; `fc.chart(...)` can layer marks,
+annotations, axes, legends, tooltips, themes, and interaction config in one
+panel; `Chart` keeps `widget()`, `show()`, `to_html(...)`, `html(...)`,
+`_repr_html_()`, `to_png(...)`, and `memory_report()` parity with `Figure`;
+`class_name`, `class_names`, and `style` reach stable DOM slots for CSS/Tailwind
+styling; and opaque framework objects passed to `fc.legend(...)` /
+`fc.tooltip(...)` are returned by `chrome_components()` /
+`reflex_components()` without being serialized into standalone HTML. Python
+`on_*` callbacks stay widget-side: standalone HTML receives only the safe
+interaction flags needed for browser hover, click, brush, selection, and
+view-change behavior.
+
 ## Benchmark Snapshot
 
 Benchmarks live in [`benchmarks/`](benchmarks/). The cross-library harness now
@@ -299,7 +315,8 @@ Datashader, and hvPlot/HoloViews.
 The benchmark program tracks separate performance categories rather than one
 blurry "fastest" number: small-data startup, medium exact scatter, huge scatter
 overview, adaptive scatter drilldown, huge line/time-series, many-chart
-dashboards, interaction smoothness, and payload/export size. See
+dashboards, interaction smoothness, payload/export size, and core 2D chart
+breadth. See
 [`docs/benchmark.md`](docs/benchmark.md) for the category goals and fairness
 notes. The stable category IDs are emitted in `benchmark.json` and attached to
 the fastcharts-only benchmark rows as `benchmark_categories`. JSON benchmark
@@ -329,7 +346,14 @@ uv run python benchmarks/bench.py --sizes 1e5,1e6,1e7
 uv run python benchmarks/bench_native.py --sizes 1e5,1e6,1e7
 python benchmarks/bench_scatter_native.py --sizes 1e5,1e6,1e7 --render
 PYTHONPATH=python uv run python benchmarks/bench_2d_charts.py --profile smoke --ttfr
+PYTHONPATH=python uv run python benchmarks/bench_interaction.py --sizes 1e4,2.5e5 --json interaction.json
 ```
+
+The interaction benchmark sweeps the requested scatter sizes. Use at least one
+direct size and one density-tier size; the CI/browser smoke defaults do this
+with `1e4,2.5e5`. It also always adds fixed line, histogram, bar, and heatmap
+rows so pan/zoom/hover/brush budgets are not scatter-only. The report verifier
+fails if any of those required interaction rows disappear.
 
 ### 10M-point native benchmark
 
@@ -473,13 +497,20 @@ editing workflow gates, release publishing, or benchmark artifact wiring. Use
 the Reflex dashboard chart registry. Use `make check-security` after touching
 standalone HTML export, tooltips, legends, labels, or browser client text
 insertion. Use `make check-errors` after changing validation, public errors,
-builder rollback behavior, or chart/widget caching. Use `make check-api` after
+builder rollback behavior, LOD/drill mutation boundaries, or chart/widget
+caching. Use `make check-api` after
 changing public exports, lazy import mappings, component factories, or public
 annotations. Use `make check-import` after changing `fastcharts.__init__`,
-lazy import boundaries, widget/export boundaries, or backend import setup. Use
-`make check-browser CHROMIUM=/path/to/chrome` for the render smokes. The
-underlying `scripts/verify_local.py --list/--dry-run` commands show exactly
-what will run.
+lazy import boundaries, dependency boundaries, widget/export boundaries, or
+backend import setup. Use
+`make check-browser CHROMIUM=/path/to/chrome` for render, Reflex lifecycle, and
+screenshot smokes over the core families plus every FastCharts gallery asset
+except the Plotly comparison page. The Reflex lifecycle smoke verifies each
+FastCharts demo asset across fresh loads, explicit hash navigation, resize,
+scroll-bottom, fast-scroll, visibility, and restore phases, plus an all-iframe
+remount/reload shell so disappearing dashboard panels fail loudly. CI runs the
+scoped browser core-smoke gate with Playwright Chromium; the underlying
+`scripts/verify_local.py --list/--dry-run` commands show exactly what will run.
 
 See [`docs/contributing.md`](docs/contributing.md) for the PR checklist and
 chart-type contribution guide.

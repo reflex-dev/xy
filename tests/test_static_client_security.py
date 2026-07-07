@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from fastcharts.components import CHART_DOM_SLOTS
+
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT_FILES = (
     ROOT / "js/src/50_chartview.js",
@@ -13,6 +15,11 @@ FORMATTER_FILES = (
     ROOT / "python/fastcharts/static/index.js",
     ROOT / "python/fastcharts/static/standalone.js",
 )
+LOD_FILES = (
+    ROOT / "js/src/45_lod.js",
+    ROOT / "python/fastcharts/static/index.js",
+    ROOT / "python/fastcharts/static/standalone.js",
+)
 
 
 def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
@@ -20,6 +27,7 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
     required_text_sinks = (
         "t.textContent = s.title;",
         "row.appendChild(document.createTextNode(it.name));",
+        "badge.textContent = item;",
         "d.textContent = text;",
         "this.tooltip.appendChild(document.createTextNode(ln));",
     )
@@ -69,6 +77,39 @@ def test_client_numeric_styles_default_to_pixels_for_lengths() -> None:
         text = path.read_text(encoding="utf-8")
         for helper in required_style_helpers:
             assert helper in text, f"{path} no longer normalizes numeric component styles"
+
+
+def test_client_applies_every_public_dom_slot() -> None:
+    slot_snippets = {
+        "root": '_applySlot(root, "root")',
+        "title": '_applySlot(t, "title")',
+        "chrome": '_applySlot(this.chrome, "chrome")',
+        "canvas": '_applySlot(this.canvas, "canvas")',
+        "labels": '_applySlot(this.labels, "labels")',
+        "legend": '_applySlot(lg, "legend")',
+        "legend_item": '_applySlot(row, "legend_item")',
+        "tooltip": '_applySlot(this.tooltip, "tooltip")',
+        "modebar": '_applySlot(bar, "modebar")',
+        "modebar_button": '_applySlot(b, "modebar_button")',
+        "selection": '_applySlot(this.selRect, "selection")',
+        "crosshair_x": '_applySlot(this.crosshairX, "crosshair_x")',
+        "crosshair_y": '_applySlot(this.crosshairY, "crosshair_y")',
+        "badge": '_applySlot(box, "badge")',
+        "badge_item": '_applySlot(badge, "badge_item")',
+    }
+    assert tuple(slot_snippets) == CHART_DOM_SLOTS
+
+    for path in CLIENT_FILES:
+        text = path.read_text(encoding="utf-8")
+        for slot, snippet in slot_snippets.items():
+            assert snippet in text, f"{path} does not apply public DOM slot {slot!r}"
+
+
+def test_client_stamps_public_dom_slot_attributes() -> None:
+    for path in CLIENT_FILES:
+        text = path.read_text(encoding="utf-8")
+        assert "el.dataset.fcSlot = slot;" in text
+        assert text.index("el.dataset.fcSlot = slot;") < text.index("const dom = this.spec.dom;")
 
 
 def test_standalone_tooltips_retain_encoded_color_and_size_channels() -> None:
@@ -154,6 +195,64 @@ def test_client_hardens_responsive_visibility_recovery() -> None:
         text = path.read_text(encoding="utf-8")
         for marker in required:
             assert marker in text, f"{path} no longer exposes responsive marker {marker!r}"
+
+
+def test_client_refreshes_and_destroys_density_sample_overlays() -> None:
+    chartview_required = (
+        "_refreshReductionBadges()",
+        "_reductionBadgeItems()",
+        "entry.sampleOverlay && entry.sampleOverlay.sample",
+        "this._destroyDensitySample(g);",
+    )
+
+    for path in CLIENT_FILES:
+        text = path.read_text(encoding="utf-8")
+        for marker in chartview_required:
+            assert marker in text, f"{path} no longer maintains density sample marker {marker!r}"
+
+    lod_files = (
+        ROOT / "js/src/45_lod.js",
+        ROOT / "python/fastcharts/static/index.js",
+        ROOT / "python/fastcharts/static/standalone.js",
+    )
+    for path in lod_files:
+        text = path.read_text(encoding="utf-8")
+        assert "view._applyDensitySample(g, d.sample, buffers);" in text
+
+
+def test_client_lod_layer_stays_chart_agnostic_and_renderer_delegated() -> None:
+    source_lod = (ROOT / "js/src/45_lod.js").read_text(encoding="utf-8")
+    assert "trace.kind" not in source_lod
+    assert "markOf(" not in source_lod
+
+    lod_required = (
+        "future heatmap/histogram tier reuses it instead of copy-pasting",
+        "function lodApplyDrill(view, g, upd, buffers)",
+        "function lodApplyDensityUpdate(view, g, upd, buffers)",
+        "function lodDrawDensityTier(view, g, x0, x1, y0, y1)",
+        "lodRememberDensity(view, g, g.density);",
+        "view._drawDensity(g, density",
+        "view._drawPoints(",
+        "lodDropDrill(view, g)",
+    )
+    for path in LOD_FILES:
+        text = path.read_text(encoding="utf-8")
+        for marker in lod_required:
+            assert marker in text, f"{path} no longer preserves shared LOD marker {marker!r}"
+
+    chartview_required = (
+        "lodDrawDensityTier(this, g",
+        "markOf(g.trace.kind).draw(this, g",
+        'if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }',
+        "lodApplyDensityUpdate(this, g, upd, buffers);",
+        "lodApplyDrill(this, g, upd, buffers);",
+        "lodDropDrill(this, g);",
+        'markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill)',
+    )
+    for path in CLIENT_FILES:
+        text = path.read_text(encoding="utf-8")
+        for marker in chartview_required:
+            assert marker in text, f"{path} no longer delegates shared LOD marker {marker!r}"
 
 
 def test_client_coalesces_wheel_zoom_without_animation_lag() -> None:

@@ -28,7 +28,8 @@ every kind.
 | 3 | Out-of-core tiles | Tier-2 pyramid where not all tiles are resident | O(visible tiles) | **this doc** |
 
 **Invariant L1 (recorded reduction):** every update carries `tier`, `mode`,
-and `visible` (already true: `density_view` ships `mode`+`visible`, §28).
+`visible`, and `reduction` (implemented for scatter updates through
+`lod.LodPlan`; initial density traces carry `tier` plus density metadata).
 **Invariant L2 (exact under budget):** if `visible ≤ budget`, the user sees
 real marks with real channels — never a sample, never an aggregate.
 **Invariant L3 (index-space versioning):** any shipped subset is versioned
@@ -50,6 +51,33 @@ Tier-1 is "re-aggregate at the right resolution," and truthfulness means the
 *bin math* is exact, not that raw rows are drawn. Scatter is the only kind
 whose Tier 2 changes representation entirely; that's why the drill machinery
 lives there.
+
+### Shared Python contract
+
+Tiered chart kinds must enter through the common LOD primitives in
+`python/fastcharts/lod.py`:
+
+- `ViewportRequest.from_client(...)` normalizes flipped ranges, rejects
+  non-finite bounds, and clamps hostile/tiny screen dimensions before any
+  kernel, cache, or trace drill-state mutation sees them.
+- `plan_view_lod(...)` records the direct-vs-aggregate decision, hysteresis,
+  screen-bounded grid shape, `mode`, `tier`, `visible`, and `reduction`.
+- `EncodedColumn`, `encode_f32_values(...)`,
+  `encode_window_xy_columns(...)`, `add_window_xy(...)`, and
+  `BufferWriter.add_encoded(...)` are the shared geometry wire primitive: f64
+  data-space values become finite f32 buffers plus `{offset, scale, len}`
+  metadata in exactly one place.
+- `local_log_density(...)` provides the transition handoff values used when an
+  aggregate view drills into exact points without a visual hard cut.
+
+Scatter uses this today for density sample overlays and drill updates through
+`add_window_xy(...)`. Line and area zoom re-decimation also route incremental
+buffers through `BufferWriter.add_encoded` so the wire contract is shared even
+when the tier decision is simply "M4 for this x-window." Future candlestick,
+box plot, histogram, or heatmap LOD code should pass its own representation
+names (`ohlc-buckets`, `box-buckets`, `bins`, etc.) into
+`plan_view_lod(...)` instead of reimplementing viewport validation, tier
+metadata, or encoded-buffer assembly.
 
 ---
 
@@ -101,13 +129,16 @@ Wherever a representative *subset* is shown (Tier-2 hybrid overlay, future
   Thresholds are per-pyramid-level so zooming in only **adds** points
   (`threshold(l+1) ≥ threshold(l)`); the retained set at level l is a subset
   of level l+1. Pan does not reshuffle; zoom never *removes* a previously
-  shown point until its tier changes.
+  shown point until its tier changes. Implemented as
+  `lod.sample_keep_mask(row_ids, level, ...)` using a SplitMix64 row-id hash.
 - **No RNG anywhere in the render path.** The engine bans `Math.random()` /
   time-seeded sampling by rule; the smoke's determinism probe (see testing
-  suite) renders twice and asserts identical pixels.
+  suite) renders twice and asserts identical pixels. The Python primitive is
+  tested for determinism, row-order independence, and subset monotonicity.
 - Category-stratified variant: apply the same hash per category with
   per-category thresholds ∝ sqrt(share), floored at 1, so rare categories
-  survive (min-representation rule). Deterministic because the hash is.
+  survive (min-representation rule). Implemented as
+  `lod.stratified_sample_keep_mask(...)`; deterministic because the hash is.
 
 This is the datashader/imMens lesson combined: screen-bounded *and* stable.
 
@@ -190,8 +221,11 @@ invariants so future kinds don't regress them:
 - **T4 — normalization is eased, never stepped** (exposure-style normMax).
 - **T5 — stale replies die:** seq on view updates, drill_seq on subsets,
   pending-view hold for prefetched drills.
+- **T6 — invalid requests do not mutate:** malformed viewport/screen requests
+  fail before `enter_drill`, `exit_drill`, cache replacement, or buffer
+  version changes. The previous representation remains the authority.
 
-Any new tiered kind must state how it satisfies T1–T5 in its chart-kind
+Any new tiered kind must state how it satisfies T1–T6 in its chart-kind
 contract entry before it lands.
 
 ---
@@ -207,11 +241,14 @@ contract entry before it lands.
 3. Legend/badge rendering from spec facts; smoke probes: mean-cell color
    correctness, purity desaturation, badge presence.
 
-**Phase 2 — deterministic sampling utilities (~3 days)**
-4. `lod.py`: `keep_mask(row_ids, level)` splittable-hash sampler + stratified
-   variant; property tests for subset-monotonicity across levels.
-5. Optional "hybrid" scatter mode: density + sampled exact points overlay
-   (deterministic), badge "sampled n of N".
+**Phase 2 — deterministic sampling utilities**
+4. **Done:** `lod.sample_keep_mask(row_ids, level)` SplitMix64 sampler +
+   `lod.stratified_sample_keep_mask(...)`; tests assert row-order independence,
+   rare-category floors, validation, and subset-monotonicity across levels.
+5. **Done for exact density views:** hybrid scatter mode renders density plus
+   deterministic sampled exact points, with a visible "sampled n of N" badge.
+   Pyramid-served density views still need tile-aware sample overlays so the
+   same anti-shimmer contract holds without rescanning raw rows.
 
 **Phase 3 — pyramid (~2-3 wks)**
 6. `src/tiles.rs`: pyramid build + tile fetch (C ABI: `fc_pyramid_build`,

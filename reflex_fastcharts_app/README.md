@@ -45,5 +45,5 @@ Then open the URL printed by Reflex, usually `http://localhost:3000`.
 Regenerate the chart assets any time with:
 
 ```bash
-python scripts/build_charts.py
+PYTHONPATH=../python uv run python scripts/build_charts.py
 ```
