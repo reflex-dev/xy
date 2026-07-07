@@ -38,7 +38,12 @@ def test_widget_drops_malformed_view_messages():
 def test_widget_drops_malformed_density_pick_and_select_messages():
     fig = Figure().scatter(np.arange(10.0), np.arange(10.0))
     select_calls = []
-    widget, sent = _capturing_widget(fig, on_select=select_calls.append)
+    brush_calls = []
+    widget, sent = _capturing_widget(
+        fig,
+        on_brush=brush_calls.append,
+        on_select=select_calls.append,
+    )
 
     widget._on_custom_msg(None, {"type": "density_view", "trace": "bad"}, None)
     widget._on_custom_msg(None, {"type": "pick", "trace": "bad", "index": 0}, None)
@@ -48,6 +53,7 @@ def test_widget_drops_malformed_density_pick_and_select_messages():
     )
 
     assert sent == []
+    assert brush_calls == []
     assert select_calls == []
 
 
@@ -65,3 +71,29 @@ def test_widget_still_emits_valid_pick_results_after_malformed_messages():
     assert content["seq"] == 7
     assert content["row"]["index"] == 1
     assert content["row"]["x"] == 1.0
+
+
+def test_widget_emits_brush_range_before_selection_callback():
+    fig = Figure().scatter(np.arange(10.0), np.arange(10.0))
+    brush_calls = []
+    select_calls = []
+    widget, sent = _capturing_widget(
+        fig,
+        on_brush=brush_calls.append,
+        on_select=select_calls.append,
+    )
+
+    widget._on_custom_msg(
+        None,
+        {"type": "select", "x0": 5.0, "x1": 2.0, "y0": 0.0, "y1": 6.0},
+        None,
+    )
+
+    assert brush_calls == [{"x0": 2.0, "x1": 5.0, "y0": 0.0, "y1": 6.0}]
+    assert len(select_calls) == 1
+    np.testing.assert_array_equal(select_calls[0].index, [2, 3, 4, 5])
+    assert len(sent) == 1
+    content, buffers = sent[0]
+    assert content["type"] == "selection"
+    assert content["total"] == 4
+    assert buffers is not None

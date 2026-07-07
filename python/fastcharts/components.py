@@ -1073,6 +1073,7 @@ class Chart(Component):
         style: Optional[dict[str, StyleValue]] = None,
         on_hover: Optional[Callable[[dict], None]] = None,
         on_click: Optional[Callable[[dict], None]] = None,
+        on_brush: Optional[Callable[[dict], None]] = None,
         on_select: Optional[Callable[[Any], None]] = None,
         on_view_change: Optional[Callable[[dict], None]] = None,
         hover: Optional[bool] = None,
@@ -1095,6 +1096,7 @@ class Chart(Component):
         self.style = _style_dict(style, "chart style")
         self.on_hover = on_hover
         self.on_click = on_click
+        self.on_brush = on_brush
         self.on_select = on_select
         self.on_view_change = on_view_change
         self.hover = hover
@@ -1219,7 +1221,8 @@ class Chart(Component):
         fig.set_interaction(
             hover=True if self.on_hover is not None else None,
             click=True if self.on_click is not None else None,
-            select=True if self.on_select is not None else None,
+            brush=True if self.on_brush is not None else None,
+            select=True if self.on_brush is not None or self.on_select is not None else None,
             view_change=True if self.on_view_change is not None else None,
         )
         tooltip_aliases: dict[str, str] = {}
@@ -1298,6 +1301,7 @@ class Chart(Component):
                 self.figure(),
                 on_hover=self.on_hover,
                 on_click=self.on_click,
+                on_brush=self.on_brush,
                 on_select=self.on_select,
                 on_view_change=self.on_view_change,
             )

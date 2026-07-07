@@ -18,6 +18,7 @@ import traitlets
 # dependency); re-exported here for backward compatibility.
 from .figure import Selection
 from .interaction import _integer_id
+from .lod import normalize_window
 
 if TYPE_CHECKING:
     from .figure import Figure
@@ -55,6 +56,7 @@ class FigureWidget(anywidget.AnyWidget):
         *,
         on_hover: Any = None,
         on_click: Any = None,
+        on_brush: Any = None,
         on_select: Any = None,
         on_view_change: Any = None,
         **kwargs: Any,
@@ -62,6 +64,7 @@ class FigureWidget(anywidget.AnyWidget):
         self._figure = figure
         self._on_hover = on_hover
         self._on_click = on_click
+        self._on_brush = on_brush
         self._on_select = on_select
         self._on_view_change = on_view_change
         spec, blob = figure.build_payload()
@@ -166,14 +169,23 @@ class FigureWidget(anywidget.AnyWidget):
             # per trace so the client dims unselected marks; call on_select with
             # the resolved indices (Arrow-slice-shaped, not JSON — §34 API note).
             try:
-                sel = self._figure.select_range(
+                x0, x1, y0, y1 = normalize_window(
                     content["x0"],
                     content["x1"],
                     content["y0"],
                     content["y1"],
+                    require_area=False,
+                )
+                sel = self._figure.select_range(
+                    x0,
+                    x1,
+                    y0,
+                    y1,
                 )
             except (KeyError, TypeError, ValueError):
                 return
+            if self._on_brush is not None:
+                self._on_brush({"x0": x0, "x1": x1, "y0": y0, "y1": y1})
             traces = []
             buffers = []
             total = 0
