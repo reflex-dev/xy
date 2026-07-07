@@ -2739,6 +2739,50 @@ class ChartView {
     return safeCssPaint(this.root, style && style.color, fallback);
   }
 
+  _annotationLabelPaint(style, fallback) {
+    return safeCssPaint(this.root, style && (style.label_color || style.color), fallback);
+  }
+
+  _annotationStrokePaint(style, fallback) {
+    return safeCssPaint(this.root, style && style.stroke_color, fallback);
+  }
+
+  _drawAnnotationMarker(ctx, x, y, style, ann) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    const r = Math.max(1, this._styleNumber(style, "size", Number(ann.size) || 8) / 2);
+    const symbol = ["circle", "square", "diamond", "cross"].includes(ann.symbol) ? ann.symbol : "circle";
+    ctx.save();
+    ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
+    ctx.fillStyle = this._annotationPaint(style, [0.15, 0.39, 0.92, 1]);
+    ctx.strokeStyle = symbol === "cross"
+      ? this._annotationPaint(style, [0.15, 0.39, 0.92, 1])
+      : this._annotationStrokePaint(style, [1, 1, 1, 1]);
+    ctx.lineWidth = Math.max(0, this._styleNumber(style, "stroke_width", 1.5));
+    ctx.beginPath();
+    if (symbol === "square") {
+      ctx.rect(x - r, y - r, r * 2, r * 2);
+    } else if (symbol === "diamond") {
+      ctx.moveTo(x, y - r);
+      ctx.lineTo(x + r, y);
+      ctx.lineTo(x, y + r);
+      ctx.lineTo(x - r, y);
+      ctx.closePath();
+    } else if (symbol === "cross") {
+      ctx.moveTo(x - r, y);
+      ctx.lineTo(x + r, y);
+      ctx.moveTo(x, y - r);
+      ctx.lineTo(x, y + r);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    } else {
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+    }
+    ctx.fill();
+    if (ctx.lineWidth > 0) ctx.stroke();
+    ctx.restore();
+  }
+
   _drawArrowLine(ctx, x0, y0, x1, y1, style) {
     if (![x0, y0, x1, y1].every(Number.isFinite)) return;
     const angle = Math.atan2(y1 - y0, x1 - x0);
@@ -2827,6 +2871,14 @@ class ChartView {
         const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
         const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
         this._drawArrowLine(ctx, px + dx, py + dy, px, py, style);
+      } else if (ann.kind === "marker") {
+        this._drawAnnotationMarker(
+          ctx,
+          this._dataPxX(Number(ann.x)),
+          this._dataPxY(Number(ann.y)),
+          style,
+          ann
+        );
       }
     }
     ctx.restore();
@@ -2868,6 +2920,9 @@ class ChartView {
       } else if (ann.kind === "callout") {
         px = this._dataPxX(Number(ann.x));
         py = this._dataPxY(Number(ann.y));
+      } else if (ann.kind === "marker") {
+        px = this._dataPxX(Number(ann.x));
+        py = this._dataPxY(Number(ann.y));
       }
       if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
       if (px < p.x - 24 || px > p.x + p.w + 24 || py < p.y - 24 || py > p.y + p.h + 24) {
@@ -2881,10 +2936,10 @@ class ChartView {
       d.style.cssText =
         `position:absolute;left:${px + dx}px;top:${py + dy}px;` +
         `transform:translate(${anchor},0);pointer-events:none;` +
-        `color:${this._annotationPaint(style, this.theme.label)};` +
         "font-size:11px;line-height:1.2;font-weight:500;";
       this._applyClass(d, ann.class_name);
       this._applyStyle(d, style);
+      d.style.color = this._annotationLabelPaint(style, this.theme.label);
       this.labels.appendChild(d);
     }
   }
@@ -4628,7 +4683,7 @@ window.fastcharts = { render, renderStandalone, ChartView, MARK_KINDS, markOf };
 })();
 </script>
 <script>
-  const spec = {"protocol":2,"width":"100%","height":430,"title":"Annotated risk heatmap","x_axis":{"id":"x","kind":"category","label":"day","range":[-0.6799999999999999,5.68],"side":"bottom","style":{"tick_color":"#334155","label_color":"#0f172a","label_size":12},"categories":["Mon","Tue","Wed","Thu","Fri","Sat"]},"y_axis":{"id":"y","kind":"category","label":"risk tier","range":[-0.62,3.62],"side":"left","style":{"tick_color":"#334155","label_color":"#0f172a","label_size":12},"categories":["Low","Medium","High","Critical"]},"axes":{"x":{"id":"x","kind":"category","label":"day","range":[-0.6799999999999999,5.68],"side":"bottom","style":{"tick_color":"#334155","label_color":"#0f172a","label_size":12},"categories":["Mon","Tue","Wed","Thu","Fri","Sat"]},"y":{"id":"y","kind":"category","label":"risk tier","range":[-0.62,3.62],"side":"left","style":{"tick_color":"#334155","label_color":"#0f172a","label_size":12},"categories":["Low","Medium","High","Critical"]}},"traces":[{"id":0,"kind":"heatmap","name":"risk score","style":{"opacity":0.9,"role":"heatmap","colormap":"turbo","domain":[0.0,1.0],"x_range":[-0.5,5.5],"y_range":[-0.5,3.5]},"tier":"direct","n_points":24,"n_marks":24,"x_axis":"x","y_axis":"y","heatmap":{"buf":0,"w":6,"h":4,"x_range":[-0.5,5.5],"y_range":[-0.5,3.5],"colormap":"turbo","domain":[0.0,1.0]},"color":{"mode":"continuous","colormap":"turbo","domain":[0.0,1.0]}}],"columns":[{"byte_offset":0,"len":24}],"backend":"native","show_legend":false,"show_tooltip":false,"dom":{"style":{"--chart-bg":"#f8fafc","--chart-grid":"rgba(100, 116, 139, 0.16)","--chart-axis":"#cbd5e1","--chart-text":"#334155"}},"tooltip":{"fields":["day","risk_tier","risk_score"],"title":"{risk_tier} / {day}","format":{"risk_score":".0%"},"aliases":{"day":"x","risk_tier":"y"},"sources":{"day":[{"trace":0,"channel":"x"}],"risk_tier":[{"trace":0,"channel":"y"}],"risk_score":[{"trace":0,"channel":"color_value"}]}},"annotations":[{"text":"launch window","style":{"color":"#1d4ed8","opacity":0.1,"background":"rgba(219, 234, 254, 0.92)","border":"1px solid rgba(37, 99, 235, 0.22)","border_radius":6,"padding":"3px 6px","font_weight":700},"kind":"band","axis":"x","start":2.0,"end":4.0},{"text":"alert threshold","style":{"color":"#be123c","width":1.8,"opacity":1.0,"background":"rgba(255, 241, 242, 0.96)","border":"1px solid rgba(225, 29, 72, 0.22)","border_radius":6,"padding":"3px 6px","font_weight":700},"kind":"rule","axis":"y","value":2.0},{"text":"max load","style":{"color":"#ffffff","background":"rgba(15, 23, 42, 0.88)","border_radius":6,"padding":"3px 7px","box_shadow":"0 10px 24px rgba(15, 23, 42, 0.18)"},"kind":"text","x":3.0,"y":3.0,"dx":8.0,"dy":-12.0,"anchor":"start"},{"text":"escalation","style":{"color":"#7c3aed","width":1.5,"opacity":1.0},"kind":"arrow","x0":1.0,"y0":1.0,"x1":2.0,"y1":2.0},{"text":"ops review","style":{"color":"#0f172a","width":1.5,"opacity":1.0,"background":"rgba(255, 255, 255, 0.94)","border":"1px solid rgba(15, 23, 42, 0.16)","border_radius":6,"padding":"3px 7px"},"kind":"callout","x":4.0,"y":3.0,"dx":-78.0,"dy":-30.0,"anchor":"start"}]};
+  const spec = {"protocol":2,"width":"100%","height":430,"title":"Annotated risk heatmap","x_axis":{"id":"x","kind":"category","label":"day","range":[-0.6799999999999999,5.68],"side":"bottom","style":{"tick_color":"#334155","label_color":"#0f172a","label_size":12},"categories":["Mon","Tue","Wed","Thu","Fri","Sat"]},"y_axis":{"id":"y","kind":"category","label":"risk tier","range":[-0.62,3.62],"side":"left","style":{"tick_color":"#334155","label_color":"#0f172a","label_size":12},"categories":["Low","Medium","High","Critical"]},"axes":{"x":{"id":"x","kind":"category","label":"day","range":[-0.6799999999999999,5.68],"side":"bottom","style":{"tick_color":"#334155","label_color":"#0f172a","label_size":12},"categories":["Mon","Tue","Wed","Thu","Fri","Sat"]},"y":{"id":"y","kind":"category","label":"risk tier","range":[-0.62,3.62],"side":"left","style":{"tick_color":"#334155","label_color":"#0f172a","label_size":12},"categories":["Low","Medium","High","Critical"]}},"traces":[{"id":0,"kind":"heatmap","name":"risk score","style":{"opacity":0.9,"role":"heatmap","colormap":"turbo","domain":[0.0,1.0],"x_range":[-0.5,5.5],"y_range":[-0.5,3.5]},"tier":"direct","n_points":24,"n_marks":24,"x_axis":"x","y_axis":"y","heatmap":{"buf":0,"w":6,"h":4,"x_range":[-0.5,5.5],"y_range":[-0.5,3.5],"colormap":"turbo","domain":[0.0,1.0]},"color":{"mode":"continuous","colormap":"turbo","domain":[0.0,1.0]}}],"columns":[{"byte_offset":0,"len":24}],"backend":"native","show_legend":false,"show_tooltip":false,"dom":{"style":{"--chart-bg":"#f8fafc","--chart-grid":"rgba(100, 116, 139, 0.16)","--chart-axis":"#cbd5e1","--chart-text":"#334155"}},"tooltip":{"fields":["day","risk_tier","risk_score"],"title":"{risk_tier} / {day}","format":{"risk_score":".0%"},"aliases":{"day":"x","risk_tier":"y"},"sources":{"day":[{"trace":0,"channel":"x"}],"risk_tier":[{"trace":0,"channel":"y"}],"risk_score":[{"trace":0,"channel":"color_value"}]}},"annotations":[{"text":"launch window","style":{"color":"#1d4ed8","opacity":0.1,"background":"rgba(219, 234, 254, 0.92)","border":"1px solid rgba(37, 99, 235, 0.22)","border_radius":6,"padding":"3px 6px","font_weight":700},"kind":"band","axis":"x","start":2.0,"end":4.0},{"text":"alert threshold","style":{"color":"#be123c","width":1.8,"opacity":1.0,"background":"rgba(255, 241, 242, 0.96)","border":"1px solid rgba(225, 29, 72, 0.22)","border_radius":6,"padding":"3px 6px","font_weight":700},"kind":"rule","axis":"y","value":2.0},{"text":"max load","style":{"color":"#0f172a","stroke_color":"#ffffff","stroke_width":1.5,"opacity":1.0,"background":"rgba(15, 23, 42, 0.88)","label_color":"#ffffff","border_radius":6,"padding":"3px 7px","box_shadow":"0 10px 24px rgba(15, 23, 42, 0.18)"},"kind":"marker","x":3.0,"y":3.0,"size":9.0,"symbol":"diamond","dx":8.0,"dy":-12.0,"anchor":"start"},{"text":"escalation","style":{"color":"#7c3aed","width":1.5,"opacity":1.0},"kind":"arrow","x0":1.0,"y0":1.0,"x1":2.0,"y1":2.0},{"text":"ops review","style":{"color":"#0f172a","width":1.5,"opacity":1.0,"background":"rgba(255, 255, 255, 0.94)","border":"1px solid rgba(15, 23, 42, 0.16)","border_radius":6,"padding":"3px 7px"},"kind":"callout","x":4.0,"y":3.0,"dx":-78.0,"dy":-30.0,"anchor":"start"}]};
   const b64 = "7FE4Po/CdT6uR2E+mpmZPilcjz5cj0I+7FG4Pj0K1z4fhes+uB4FP0jh+j7D9ag+UrgeP3sULj/sUTg/FK5HP6RwPT/hehQ/hetRP/YoXD9mZmY/j8J1P8P1aD9cj0I/";
   const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
   window.__fastchartsAnnotatedHeatmapView = fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);

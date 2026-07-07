@@ -2739,6 +2739,50 @@ class ChartView {
     return safeCssPaint(this.root, style && style.color, fallback);
   }
 
+  _annotationLabelPaint(style, fallback) {
+    return safeCssPaint(this.root, style && (style.label_color || style.color), fallback);
+  }
+
+  _annotationStrokePaint(style, fallback) {
+    return safeCssPaint(this.root, style && style.stroke_color, fallback);
+  }
+
+  _drawAnnotationMarker(ctx, x, y, style, ann) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    const r = Math.max(1, this._styleNumber(style, "size", Number(ann.size) || 8) / 2);
+    const symbol = ["circle", "square", "diamond", "cross"].includes(ann.symbol) ? ann.symbol : "circle";
+    ctx.save();
+    ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
+    ctx.fillStyle = this._annotationPaint(style, [0.15, 0.39, 0.92, 1]);
+    ctx.strokeStyle = symbol === "cross"
+      ? this._annotationPaint(style, [0.15, 0.39, 0.92, 1])
+      : this._annotationStrokePaint(style, [1, 1, 1, 1]);
+    ctx.lineWidth = Math.max(0, this._styleNumber(style, "stroke_width", 1.5));
+    ctx.beginPath();
+    if (symbol === "square") {
+      ctx.rect(x - r, y - r, r * 2, r * 2);
+    } else if (symbol === "diamond") {
+      ctx.moveTo(x, y - r);
+      ctx.lineTo(x + r, y);
+      ctx.lineTo(x, y + r);
+      ctx.lineTo(x - r, y);
+      ctx.closePath();
+    } else if (symbol === "cross") {
+      ctx.moveTo(x - r, y);
+      ctx.lineTo(x + r, y);
+      ctx.moveTo(x, y - r);
+      ctx.lineTo(x, y + r);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    } else {
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+    }
+    ctx.fill();
+    if (ctx.lineWidth > 0) ctx.stroke();
+    ctx.restore();
+  }
+
   _drawArrowLine(ctx, x0, y0, x1, y1, style) {
     if (![x0, y0, x1, y1].every(Number.isFinite)) return;
     const angle = Math.atan2(y1 - y0, x1 - x0);
@@ -2827,6 +2871,14 @@ class ChartView {
         const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
         const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
         this._drawArrowLine(ctx, px + dx, py + dy, px, py, style);
+      } else if (ann.kind === "marker") {
+        this._drawAnnotationMarker(
+          ctx,
+          this._dataPxX(Number(ann.x)),
+          this._dataPxY(Number(ann.y)),
+          style,
+          ann
+        );
       }
     }
     ctx.restore();
@@ -2868,6 +2920,9 @@ class ChartView {
       } else if (ann.kind === "callout") {
         px = this._dataPxX(Number(ann.x));
         py = this._dataPxY(Number(ann.y));
+      } else if (ann.kind === "marker") {
+        px = this._dataPxX(Number(ann.x));
+        py = this._dataPxY(Number(ann.y));
       }
       if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
       if (px < p.x - 24 || px > p.x + p.w + 24 || py < p.y - 24 || py > p.y + p.h + 24) {
@@ -2881,10 +2936,10 @@ class ChartView {
       d.style.cssText =
         `position:absolute;left:${px + dx}px;top:${py + dy}px;` +
         `transform:translate(${anchor},0);pointer-events:none;` +
-        `color:${this._annotationPaint(style, this.theme.label)};` +
         "font-size:11px;line-height:1.2;font-weight:500;";
       this._applyClass(d, ann.class_name);
       this._applyStyle(d, style);
+      d.style.color = this._annotationLabelPaint(style, this.theme.label);
       this.labels.appendChild(d);
     }
   }
@@ -4628,7 +4683,7 @@ window.fastcharts = { render, renderStandalone, ChartView, MARK_KINDS, markOf };
 })();
 </script>
 <script>
-  const spec = {"protocol":2,"width":"100%","height":430,"title":"Composed layered chart","x_axis":{"id":"x","kind":"category","label":"month","range":[-0.5740000000000001,5.574000000000001],"side":"bottom","categories":["Jan","Feb","Mar","Apr","May","Jun"]},"y_axis":{"id":"y","kind":"linear","label":"pipeline","range":[0.0,65.92],"side":"left"},"axes":{"x":{"id":"x","kind":"category","label":"month","range":[-0.5740000000000001,5.574000000000001],"side":"bottom","categories":["Jan","Feb","Mar","Apr","May","Jun"]},"y":{"id":"y","kind":"linear","label":"pipeline","range":[0.0,65.92],"side":"left"}},"traces":[{"id":0,"kind":"bar","name":"bookings","style":{"color":"#f59e0b","opacity":0.34,"role":"bar","orientation":"vertical"},"tier":"direct","n_points":6,"n_marks":6,"x_axis":"x","y_axis":"y","bar":{"orientation":"vertical","value_axis":"y","pos":0,"value1":1,"width":0.8,"value0_const":0.0}},{"id":1,"kind":"area","name":"forecast band","style":{"color":"#14b8a6","opacity":0.18,"line_width":1.2,"line_opacity":1.0},"tier":"direct","n_points":6,"n_marks":6,"x":2,"y":3,"x_axis":"x","y_axis":"y","base":4},{"id":2,"kind":"scatter","name":"samples","style":{"opacity":0.86},"tier":"direct","n_points":6,"n_marks":6,"x":5,"y":6,"x_axis":"x","y_axis":"y","color":{"mode":"constant","color":"#2563eb"},"size":{"mode":"constant","size":8.0}},{"id":3,"kind":"line","name":"target","style":{"color":"#dc2626","width":2.0,"opacity":1.0},"tier":"direct","n_points":6,"n_marks":6,"x":7,"y":8,"x_axis":"x","y_axis":"y"}],"columns":[{"byte_offset":0,"len":6,"offset":2.5,"scale":1.0,"kind":"float"},{"byte_offset":24,"len":6,"offset":52.5,"scale":1.0,"kind":"float"},{"byte_offset":48,"len":6,"offset":2.5,"scale":1.0,"kind":"float"},{"byte_offset":72,"len":6,"offset":50.0,"scale":1.0,"kind":"float"},{"byte_offset":96,"len":6,"offset":36.0,"scale":1.0,"kind":"float"},{"byte_offset":120,"len":6,"offset":2.5,"scale":1.0,"kind":"float"},{"byte_offset":144,"len":6,"offset":52.5,"scale":1.0,"kind":"float"},{"byte_offset":168,"len":6,"offset":2.5,"scale":1.0,"kind":"float"},{"byte_offset":192,"len":6,"offset":52.5,"scale":1.0,"kind":"float"}],"backend":"native","show_legend":true,"tooltip":{"fields":["month","bookings","forecast","sample","target"],"title":"{month}","format":{"bookings":".1f","forecast":".1f","sample":".1f","target":".1f"},"aliases":{"month":"x","bookings":"y","forecast":"y","sample":"y","target":"y"},"sources":{"month":[{"trace":0,"channel":"x"},{"trace":1,"channel":"x"},{"trace":2,"channel":"x"},{"trace":3,"channel":"x"}],"bookings":[{"trace":0,"channel":"y"}],"forecast":[{"trace":1,"channel":"y"}],"sample":[{"trace":2,"channel":"y"}],"target":[{"trace":3,"channel":"y"}]}},"annotations":[{"text":"launch window","style":{"color":"#7c3aed","opacity":0.12},"kind":"band","axis":"x","start":2.0,"end":4.0},{"text":"release","style":{"color":"#7c3aed","width":1.8,"opacity":1.0},"kind":"rule","axis":"x","value":3.0}]};
+  const spec = {"protocol":2,"width":"100%","height":430,"title":"Composed layered chart","x_axis":{"id":"x","kind":"category","label":"month","range":[-0.5740000000000001,5.574000000000001],"side":"bottom","categories":["Jan","Feb","Mar","Apr","May","Jun"]},"y_axis":{"id":"y","kind":"linear","label":"pipeline","range":[0.0,65.92],"side":"left"},"axes":{"x":{"id":"x","kind":"category","label":"month","range":[-0.5740000000000001,5.574000000000001],"side":"bottom","categories":["Jan","Feb","Mar","Apr","May","Jun"]},"y":{"id":"y","kind":"linear","label":"pipeline","range":[0.0,65.92],"side":"left"}},"traces":[{"id":0,"kind":"bar","name":"bookings","style":{"color":"#f59e0b","opacity":0.34,"role":"bar","orientation":"vertical"},"tier":"direct","n_points":6,"n_marks":6,"x_axis":"x","y_axis":"y","bar":{"orientation":"vertical","value_axis":"y","pos":0,"value1":1,"width":0.8,"value0_const":0.0}},{"id":1,"kind":"area","name":"forecast band","style":{"color":"#14b8a6","opacity":0.18,"line_width":1.2,"line_opacity":1.0},"tier":"direct","n_points":6,"n_marks":6,"x":2,"y":3,"x_axis":"x","y_axis":"y","base":4},{"id":2,"kind":"scatter","name":"samples","style":{"opacity":0.86},"tier":"direct","n_points":6,"n_marks":6,"x":5,"y":6,"x_axis":"x","y_axis":"y","color":{"mode":"constant","color":"#2563eb"},"size":{"mode":"constant","size":8.0}},{"id":3,"kind":"line","name":"target","style":{"color":"#dc2626","width":2.0,"opacity":1.0},"tier":"direct","n_points":6,"n_marks":6,"x":7,"y":8,"x_axis":"x","y_axis":"y"}],"columns":[{"byte_offset":0,"len":6,"offset":2.5,"scale":1.0,"kind":"float"},{"byte_offset":24,"len":6,"offset":52.5,"scale":1.0,"kind":"float"},{"byte_offset":48,"len":6,"offset":2.5,"scale":1.0,"kind":"float"},{"byte_offset":72,"len":6,"offset":50.0,"scale":1.0,"kind":"float"},{"byte_offset":96,"len":6,"offset":36.0,"scale":1.0,"kind":"float"},{"byte_offset":120,"len":6,"offset":2.5,"scale":1.0,"kind":"float"},{"byte_offset":144,"len":6,"offset":52.5,"scale":1.0,"kind":"float"},{"byte_offset":168,"len":6,"offset":2.5,"scale":1.0,"kind":"float"},{"byte_offset":192,"len":6,"offset":52.5,"scale":1.0,"kind":"float"}],"backend":"native","show_legend":true,"tooltip":{"fields":["month","bookings","forecast","sample","target"],"title":"{month}","format":{"bookings":".1f","forecast":".1f","sample":".1f","target":".1f"},"aliases":{"month":"x","bookings":"y","forecast":"y","sample":"y","target":"y"},"sources":{"month":[{"trace":0,"channel":"x"},{"trace":1,"channel":"x"},{"trace":2,"channel":"x"},{"trace":3,"channel":"x"}],"bookings":[{"trace":0,"channel":"y"}],"forecast":[{"trace":1,"channel":"y"}],"sample":[{"trace":2,"channel":"y"}],"target":[{"trace":3,"channel":"y"}]}},"annotations":[{"text":"launch window","style":{"color":"#7c3aed","opacity":0.12},"kind":"band","axis":"x","start":2.0,"end":4.0},{"text":"release","style":{"color":"#7c3aed","width":1.8,"opacity":1.0},"kind":"rule","axis":"x","value":3.0},{"text":"sample peak","style":{"color":"#2563eb","stroke_color":"#ffffff","stroke_width":1.5,"opacity":1.0},"kind":"marker","x":5.0,"y":64.0,"size":10.0,"symbol":"diamond","dx":-12.0,"dy":-22.0,"anchor":"end"}]};
   const b64 = "AAAgwAAAwL8AAAC/AAAAPwAAwD8AACBAAAAowQAA8MAAAJDAAAAAvwAAsEAAAChBAAAgwAAAwL8AAAC/AAAAPwAAwD8AACBAAAAgwQAA4MAAAIDAAAAAAAAAoEAAACBBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgwAAAwL8AAAC/AAAAPwAAwD8AACBAAAA4wQAAsMAAAMDAAACAPwAAYEAAADhBAAAgwAAAwL8AAAC/AAAAPwAAwD8AACBAAAAIwQAA0MAAACDAAADAPwAAkEAAAAhB";
   const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
   fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);

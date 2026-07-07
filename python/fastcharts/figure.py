@@ -804,6 +804,40 @@ class Figure:
             style=style,
         )
 
+    def threshold(
+        self,
+        value: Any,
+        *,
+        axis: str = "y",
+        text: Optional[str] = None,
+        color: Optional[str] = "#e11d48",
+        width: float = 1.5,
+        opacity: float = 1.0,
+        class_name: Optional[str] = None,
+        style: Optional[dict[str, Any]] = None,
+    ) -> "Figure":
+        """Add a semantic threshold rule on the x or y axis."""
+        axis = self._annotation_axis(axis, "threshold axis")
+        if axis == "x":
+            return self.vline(
+                value,
+                text=text,
+                color=color,
+                width=width,
+                opacity=opacity,
+                class_name=class_name,
+                style=style,
+            )
+        return self.hline(
+            value,
+            text=text,
+            color=color,
+            width=width,
+            opacity=opacity,
+            class_name=class_name,
+            style=style,
+        )
+
     def x_band(
         self,
         x0: Any,
@@ -850,6 +884,40 @@ class Figure:
             style=style,
         )
 
+    def threshold_zone(
+        self,
+        start: Any,
+        end: Any,
+        *,
+        axis: str = "y",
+        text: Optional[str] = None,
+        color: Optional[str] = "#e11d48",
+        opacity: float = 0.12,
+        class_name: Optional[str] = None,
+        style: Optional[dict[str, Any]] = None,
+    ) -> "Figure":
+        """Add a semantic threshold band on the x or y axis."""
+        axis = self._annotation_axis(axis, "threshold_zone axis")
+        if axis == "x":
+            return self.x_band(
+                start,
+                end,
+                text=text,
+                color=color,
+                opacity=opacity,
+                class_name=class_name,
+                style=style,
+            )
+        return self.y_band(
+            start,
+            end,
+            text=text,
+            color=color,
+            opacity=opacity,
+            class_name=class_name,
+            style=style,
+        )
+
     def text(
         self,
         x: Any,
@@ -883,6 +951,81 @@ class Figure:
                     **self._style_mapping(style or {}, "text annotation style"),
                 },
                 "class_name": self._optional_text(class_name, "text annotation class_name"),
+            }
+        )
+        return self
+
+    def label(
+        self,
+        x: Any,
+        y: Any,
+        text: str,
+        *,
+        dx: float = 6.0,
+        dy: float = -6.0,
+        color: Optional[str] = None,
+        anchor: str = "start",
+        class_name: Optional[str] = None,
+        style: Optional[dict[str, Any]] = None,
+    ) -> "Figure":
+        """Alias for a positioned text annotation."""
+        return self.text(
+            x,
+            y,
+            text,
+            dx=dx,
+            dy=dy,
+            color=color,
+            anchor=anchor,
+            class_name=class_name,
+            style=style,
+        )
+
+    def marker(
+        self,
+        x: Any,
+        y: Any,
+        *,
+        text: Optional[str] = None,
+        color: Optional[str] = "#2563eb",
+        size: float = 8.0,
+        symbol: str = "circle",
+        stroke_color: Optional[str] = "#ffffff",
+        stroke_width: float = 1.5,
+        opacity: float = 1.0,
+        dx: float = 8.0,
+        dy: float = -8.0,
+        anchor: str = "start",
+        class_name: Optional[str] = None,
+        style: Optional[dict[str, Any]] = None,
+    ) -> "Figure":
+        """Add a point marker annotation with an optional label."""
+        size = self._positive_scalar(size, "marker size")
+        stroke_width = self._nonnegative_scalar(stroke_width, "marker stroke_width")
+        opacity = self._opacity(opacity, "marker opacity")
+        dx = self._finite_scalar(dx, "marker dx")
+        dy = self._finite_scalar(dy, "marker dy")
+        symbol = self._annotation_symbol(symbol, "marker symbol")
+        anchor = self._annotation_anchor(anchor, "marker anchor")
+        self.annotations.append(
+            {
+                "kind": "marker",
+                "x": x,
+                "y": y,
+                "text": self._optional_text(text, "marker text"),
+                "dx": dx,
+                "dy": dy,
+                "anchor": anchor,
+                "size": size,
+                "symbol": symbol,
+                "style": {
+                    "color": self._optional_text(color, "marker color"),
+                    "stroke_color": self._optional_text(stroke_color, "marker stroke_color"),
+                    "stroke_width": stroke_width,
+                    "opacity": opacity,
+                    **self._style_mapping(style or {}, "marker style"),
+                },
+                "class_name": self._optional_text(class_name, "marker class_name"),
             }
         )
         return self
@@ -1879,6 +2022,26 @@ class Figure:
                         ),
                     }
                 )
+            elif kind == "marker":
+                specs.append(
+                    self._annotation_common(annotation)
+                    | {
+                        "kind": "marker",
+                        "x": self._annotation_value(annotation.get("x"), "x", f"{label}.x"),
+                        "y": self._annotation_value(annotation.get("y"), "y", f"{label}.y"),
+                        "size": self._positive_scalar(
+                            annotation.get("size", 8.0), f"{label}.size"
+                        ),
+                        "symbol": self._annotation_symbol(
+                            annotation.get("symbol", "circle"), f"{label}.symbol"
+                        ),
+                        "dx": self._finite_scalar(annotation.get("dx", 0.0), f"{label}.dx"),
+                        "dy": self._finite_scalar(annotation.get("dy", 0.0), f"{label}.dy"),
+                        "anchor": self._annotation_anchor(
+                            annotation.get("anchor", "start"), f"{label}.anchor"
+                        ),
+                    }
+                )
             elif kind == "arrow":
                 specs.append(
                     self._annotation_common(annotation)
@@ -1907,7 +2070,7 @@ class Figure:
                 )
             else:
                 raise ValueError(
-                    f"{label} kind must be 'rule', 'band', 'text', 'arrow', or 'callout'"
+                    f"{label} kind must be 'rule', 'band', 'text', 'marker', 'arrow', or 'callout'"
                 )
         return specs
 
@@ -1939,6 +2102,13 @@ class Figure:
         if anchor not in {"start", "middle", "end"}:
             raise ValueError(f"{label} must be 'start', 'middle', or 'end'")
         return anchor
+
+    @staticmethod
+    def _annotation_symbol(symbol: Any, label: str) -> str:
+        allowed = {"circle", "square", "diamond", "cross"}
+        if symbol not in allowed:
+            raise ValueError(f"{label} must be one of {sorted(allowed)}")
+        return symbol
 
     def _annotation_value(self, value: Any, axis: str, label: str) -> float:
         categories = self._axis_categories.get(axis)

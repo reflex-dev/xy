@@ -327,6 +327,17 @@ def composed_layers_demo() -> fc.Chart:
         fc.line(x="month", y="target", data=monthly, name="target", color="#dc2626", width=2.0),
         fc.x_band("Mar", "May", text="launch window", color="#7c3aed", opacity=0.12),
         fc.vline("Apr", text="release", color="#7c3aed", width=1.8),
+        fc.marker(
+            "Jun",
+            64.0,
+            text="sample peak",
+            color="#2563eb",
+            size=10.0,
+            symbol="diamond",
+            dx=-12.0,
+            dy=-22.0,
+            anchor="end",
+        ),
         fc.x_axis(label="month"),
         fc.y_axis(label="pipeline"),
         fc.tooltip(
@@ -373,9 +384,10 @@ def annotated_heatmap_demo() -> fc.Chart:
             domain=(0.0, 1.0),
             opacity=0.90,
         ),
-        fc.x_band(
+        fc.threshold_zone(
             "Wed",
             "Fri",
+            axis="x",
             text="launch window",
             color="#2563eb",
             opacity=0.10,
@@ -388,8 +400,9 @@ def annotated_heatmap_demo() -> fc.Chart:
                 "font_weight": 700,
             },
         ),
-        fc.hline(
+        fc.threshold(
             "High",
+            axis="y",
             text="alert threshold",
             color="#e11d48",
             width=1.8,
@@ -402,16 +415,18 @@ def annotated_heatmap_demo() -> fc.Chart:
                 "font_weight": 700,
             },
         ),
-        fc.text(
+        fc.marker(
             "Thu",
             "Critical",
-            "max load",
+            text="max load",
+            color="#0f172a",
+            size=9.0,
+            symbol="diamond",
             dx=8.0,
             dy=-12.0,
-            color="#0f172a",
             style={
                 "background": "rgba(15, 23, 42, 0.88)",
-                "color": "#ffffff",
+                "label_color": "#ffffff",
                 "border_radius": 6,
                 "padding": "3px 7px",
                 "box_shadow": "0 10px 24px rgba(15, 23, 42, 0.18)",

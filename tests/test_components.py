@@ -66,6 +66,10 @@ def test_factories_return_components():
     assert isinstance(fc.x_band(0.0, 1.0), Annotation)
     assert isinstance(fc.y_band(0.0, 1.0), Annotation)
     assert isinstance(fc.text(0.0, 1.0, "label"), Annotation)
+    assert isinstance(fc.label(0.0, 1.0, "label"), Annotation)
+    assert isinstance(fc.marker(0.0, 1.0), Annotation)
+    assert isinstance(fc.threshold(1.0), Annotation)
+    assert isinstance(fc.threshold_zone(0.0, 1.0), Annotation)
     assert isinstance(fc.tooltip(fields=["x"]), Tooltip)
     assert isinstance(fc.modebar(show=False), Modebar)
     assert isinstance(fc.theme(style={"--chart-bg": "transparent"}), Theme)
@@ -206,6 +210,79 @@ def test_heatmap_can_compose_with_category_annotations():
             "anchor": "start",
         },
     ]
+
+
+def test_semantic_annotations_and_markers_emit_expected_specs():
+    chart = fc.chart(
+        fc.scatter(x=[1.0, 2.0, 3.0], y=[2.0, 5.0, 4.0]),
+        fc.marker(
+            2.0,
+            5.0,
+            text="peak",
+            color="#16a34a",
+            size=10,
+            symbol="diamond",
+            stroke_color="#052e16",
+            stroke_width=2,
+            dx=10,
+            dy=-12,
+            anchor="middle",
+        ),
+        fc.label(3.0, 4.0, "last", anchor="end"),
+        fc.threshold(4.5, text="target"),
+        fc.threshold_zone(4.0, 6.0, text="warning"),
+    )
+
+    spec, _ = chart.figure().build_payload()
+
+    assert spec["annotations"] == [
+        {
+            "text": "peak",
+            "style": {
+                "color": "#16a34a",
+                "stroke_color": "#052e16",
+                "stroke_width": 2.0,
+                "opacity": 1.0,
+            },
+            "kind": "marker",
+            "x": 2.0,
+            "y": 5.0,
+            "size": 10.0,
+            "symbol": "diamond",
+            "dx": 10.0,
+            "dy": -12.0,
+            "anchor": "middle",
+        },
+        {
+            "kind": "text",
+            "x": 3.0,
+            "y": 4.0,
+            "text": "last",
+            "dx": 6.0,
+            "dy": -6.0,
+            "anchor": "end",
+        },
+        {
+            "text": "target",
+            "style": {"color": "#e11d48", "width": 1.5, "opacity": 1.0},
+            "kind": "rule",
+            "axis": "y",
+            "value": 4.5,
+        },
+        {
+            "text": "warning",
+            "style": {"color": "#e11d48", "opacity": 0.12},
+            "kind": "band",
+            "axis": "y",
+            "start": 4.0,
+            "end": 6.0,
+        },
+    ]
+
+    with pytest.raises(ValueError, match="marker symbol"):
+        fc.chart(fc.scatter(x=[1.0], y=[1.0]), fc.marker(1.0, 1.0, symbol="pin")).figure()
+    with pytest.raises(ValueError, match="threshold axis"):
+        fc.threshold(1.0, axis="z")
 
 
 def test_layered_tooltip_sources_keep_fields_tied_to_their_traces():
