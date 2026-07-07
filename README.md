@@ -306,6 +306,11 @@ styling; and opaque framework objects passed to `fc.legend(...)` /
 interaction flags needed for browser hover, click, brush, selection, and
 view-change behavior.
 
+`chrome_components()` returns a keyed slot map, for example
+`{"legend": my_legend, "tooltip": my_tooltip}`. Adapters should mount those
+objects by slot name next to the FastCharts HTML/widget container; it is not an
+iterable child list.
+
 ## Benchmark Snapshot
 
 Benchmarks live in [`benchmarks/`](benchmarks/). The cross-library harness now
