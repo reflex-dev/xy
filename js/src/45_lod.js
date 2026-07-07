@@ -144,7 +144,12 @@ function lodWindowCenterInside(win, view) {
   if (!win || !view) return false;
   const cx = (view.x0 + view.x1) / 2;
   const cy = (view.y0 + view.y1) / 2;
-  return cx >= win.x0 && cx <= win.x1 && cy >= win.y0 && cy <= win.y1;
+  return (
+    cx >= Math.min(win.x0, win.x1) &&
+    cx <= Math.max(win.x0, win.x1) &&
+    cy >= Math.min(win.y0, win.y1) &&
+    cy <= Math.max(win.y0, win.y1)
+  );
 }
 
 function lodDensityForView(view, g) {
@@ -215,6 +220,8 @@ function lodApplyDrill(view, g, upd, buffers) {
   if (!d) {
     d = g.drill = { trace: g.trace, xBuf: gl.createBuffer(), yBuf: gl.createBuffer() };
   }
+  d.xAxis = g.xAxis;
+  d.yAxis = g.yAxis;
   gl.bindBuffer(gl.ARRAY_BUFFER, d.xBuf);
   gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.x.buf]), gl.STATIC_DRAW);
   gl.bindBuffer(gl.ARRAY_BUFFER, d.yBuf);
@@ -473,11 +480,20 @@ function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
     g._densitySwitchFadeStart = null;
     if (fade < 1 && density && density.tex) {
       view._drawDensity(g, density, 1 - fade);
-      view._drawPoints(d, view._map(d.xMeta, x0, x1), view._map(d.yMeta, y0, y1), fade);
+      view._drawPoints(
+        d,
+        view._map(d.xMeta, x0, x1, d.xAxis),
+        view._map(d.yMeta, y0, y1, d.yAxis),
+        fade
+      );
       view.draw();
     } else {
       g._drillFadeStart = null;
-      view._drawPoints(d, view._map(d.xMeta, x0, x1), view._map(d.yMeta, y0, y1));
+      view._drawPoints(
+        d,
+        view._map(d.xMeta, x0, x1, d.xAxis),
+        view._map(d.yMeta, y0, y1, d.yAxis)
+      );
     }
   } else if (density && density.tex) {
     if (lodHoldPendingDrill(view, g, d)) {
@@ -488,11 +504,20 @@ function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
       g._drillShownAlpha = fade;
       if (fade < 1) {
         view._drawDensity(g, density, 1 - fade);
-        view._drawPoints(d, view._map(d.xMeta, x0, x1), view._map(d.yMeta, y0, y1), fade);
+        view._drawPoints(
+          d,
+          view._map(d.xMeta, x0, x1, d.xAxis),
+          view._map(d.yMeta, y0, y1, d.yAxis),
+          fade
+        );
         view.draw();
       } else {
         g._drillFadeStart = null;
-        view._drawPoints(d, view._map(d.xMeta, x0, x1), view._map(d.yMeta, y0, y1));
+        view._drawPoints(
+          d,
+          view._map(d.xMeta, x0, x1, d.xAxis),
+          view._map(d.yMeta, y0, y1, d.yAxis)
+        );
       }
       if (view._viewAnim) view.draw();
       return;
@@ -505,7 +530,12 @@ function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
     if (d) g._drillShownAlpha = exitingDrill && exitFade < 1 ? 1 - exitFade : 0;
     if (exitingDrill && exitFade < 1) {
       lodDrawDensityWithFade(view, g, density, exitFade);
-      view._drawPoints(d, view._map(d.xMeta, x0, x1), view._map(d.yMeta, y0, y1), 1 - exitFade);
+      view._drawPoints(
+        d,
+        view._map(d.xMeta, x0, x1, d.xAxis),
+        view._map(d.yMeta, y0, y1, d.yAxis),
+        1 - exitFade
+      );
       view.draw();
     } else {
       if (g._drillDying) lodDropDrill(view, g); // fade done: free the buffers
@@ -513,6 +543,10 @@ function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
       lodDrawDensityWithFade(view, g, density);
     }
   } else if (d) {
-    view._drawPoints(d, view._map(d.xMeta, x0, x1), view._map(d.yMeta, y0, y1));
+    view._drawPoints(
+      d,
+      view._map(d.xMeta, x0, x1, d.xAxis),
+      view._map(d.yMeta, y0, y1, d.yAxis)
+    );
   }
 }

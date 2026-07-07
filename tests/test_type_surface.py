@@ -23,6 +23,15 @@ MARK_FACTORIES = (
     "column",
     "heatmap",
 )
+ANNOTATION_FACTORIES = (
+    "arrow",
+    "callout",
+    "vline",
+    "hline",
+    "x_band",
+    "y_band",
+    "text",
+)
 CHART_FACTORIES = (
     "scatter_chart",
     "line_chart",
@@ -41,6 +50,13 @@ FIGURE_BUILDERS = (
     "bar",
     "column",
     "heatmap",
+    "arrow",
+    "callout",
+    "vline",
+    "hline",
+    "x_band",
+    "y_band",
+    "text",
 )
 FIGURE_READOUTS = (
     "build_payload",
@@ -67,7 +83,16 @@ def test_source_package_carries_pep561_marker() -> None:
 
 
 def test_component_types_are_lazy_public_root_exports() -> None:
-    for name in ("Component", "Mark", "Axis", "Legend", "Chart"):
+    for name in (
+        "Component",
+        "Mark",
+        "MarkStyle",
+        "Annotation",
+        "Axis",
+        "Interaction",
+        "Legend",
+        "Chart",
+    ):
         assert name in fc.__all__
         assert getattr(fc, name) is getattr(components, name)
 
@@ -86,9 +111,12 @@ def test_components_module_all_matches_root_component_exports() -> None:
 def test_public_factories_are_typed_root_exports() -> None:
     for name in (
         *MARK_FACTORIES,
+        *ANNOTATION_FACTORIES,
         "x_axis",
         "y_axis",
         "legend",
+        "mark_style",
+        "interaction_config",
         *CHART_FACTORIES,
     ):
         root_fn = getattr(fc, name)
@@ -102,9 +130,12 @@ def test_public_factories_are_typed_root_exports() -> None:
 def test_public_component_factories_have_typed_signatures() -> None:
     expected_returns = {
         **{name: components.Mark for name in MARK_FACTORIES},
+        **{name: components.Annotation for name in ANNOTATION_FACTORIES},
         "x_axis": components.Axis,
         "y_axis": components.Axis,
         "legend": components.Legend,
+        "mark_style": components.MarkStyle,
+        "interaction_config": components.Interaction,
         **{name: components.Chart for name in CHART_FACTORIES},
     }
     for name, expected_return in expected_returns.items():
@@ -128,6 +159,31 @@ def test_mark_factory_kinds_are_registered_with_typed_appliers() -> None:
         assert hints["fig"] is figure_module.Figure, kind
         assert hints["m"] is components.Mark, kind
         assert hints["data"] is Any, kind
+        assert hints["return"] is type(None), kind
+
+
+def test_annotation_factory_kinds_are_registered_with_typed_appliers() -> None:
+    factory_kinds = set()
+    for name in ANNOTATION_FACTORIES:
+        if name == "arrow":
+            annotation = components.arrow(0.0, 1.0, 2.0, 3.0)
+        elif name == "callout":
+            annotation = components.callout(0.0, 1.0, "label")
+        elif name == "text":
+            annotation = components.text(0.0, 1.0, "label")
+        elif name.endswith("_band"):
+            annotation = getattr(components, name)(0.0, 1.0)
+        else:
+            annotation = getattr(components, name)(0.0)
+        factory_kinds.add(annotation.kind)
+
+    assert factory_kinds == set(components._ANNOTATION_APPLIERS)
+    for kind, applier in components._ANNOTATION_APPLIERS.items():
+        signature = inspect.signature(applier)
+        hints = get_type_hints(applier)
+        assert tuple(signature.parameters) == ("fig", "annotation"), kind
+        assert hints["fig"] is figure_module.Figure, kind
+        assert hints["annotation"] is components.Annotation, kind
         assert hints["return"] is type(None), kind
 
 

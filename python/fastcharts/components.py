@@ -25,6 +25,7 @@ chart renders in notebooks and exports to HTML exactly like the fluent API.
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from os import PathLike
@@ -35,18 +36,23 @@ import numpy as np
 from .figure import Figure
 
 __all__ = [
+    "Annotation",
     "Axis",
     "Chart",
     "Component",
+    "Interaction",
     "Legend",
     "Mark",
+    "MarkStyle",
     "Modebar",
     "Theme",
     "Tooltip",
     "area",
     "area_chart",
+    "arrow",
     "bar",
     "bar_chart",
+    "callout",
     "chart",
     "column",
     "column_chart",
@@ -55,19 +61,27 @@ __all__ = [
     "hist",
     "histogram",
     "histogram_chart",
+    "hline",
+    "interaction_config",
     "legend",
     "line",
     "line_chart",
+    "mark_style",
     "modebar",
     "scatter",
     "scatter_chart",
+    "text",
     "theme",
     "tooltip",
+    "vline",
     "x_axis",
+    "x_band",
     "y_axis",
+    "y_band",
 ]
 
 StyleValue: TypeAlias = str | int | float
+AxisLabelPosition: TypeAlias = str | dict[str, StyleValue]
 
 # ---------------------------------------------------------------------------
 # Component tree (lightweight declarative specs — no rendering here)
@@ -90,10 +104,31 @@ class Mark(Component):
 
 
 @dataclass
+class Annotation(Component):
+    kind: str  # "rule" | "band" | "text"
+    axis: Optional[str] = None
+    x: Any = None
+    y: Any = None
+    text: Optional[str] = None
+    class_name: Optional[str] = None
+    style: dict[str, StyleValue] = field(default_factory=dict)
+    props: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class Axis(Component):
     which: str  # "x" | "y"
+    id: Optional[str] = None
     label: Optional[str] = None
-    type_: Optional[str] = None  # "linear" | "time" (auto-detected if None)
+    label_position: Optional[AxisLabelPosition] = None
+    label_offset: Optional[float] = None
+    label_angle: Optional[float] = None
+    type_: Optional[str] = None  # "linear" | "time" | "log" (auto-detected if None)
+    domain: Optional[tuple[float, float]] = None
+    reverse: bool = False
+    format: Optional[str] = None
+    side: Optional[str] = None
+    style: dict[str, StyleValue] = field(default_factory=dict)
 
 
 @dataclass
@@ -101,15 +136,18 @@ class Legend(Component):
     show: bool = True
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
+    render: Any = None
 
 
 @dataclass
 class Tooltip(Component):
+    show: bool = True
     fields: Optional[list[str]] = None
     title: Optional[str] = None
     format: dict[str, str] = field(default_factory=dict)
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
+    render: Any = None
 
 
 @dataclass
@@ -124,6 +162,24 @@ class Modebar(Component):
 @dataclass
 class Theme(Component):
     style: dict[str, StyleValue] = field(default_factory=dict)
+
+
+@dataclass
+class MarkStyle(Component):
+    hover: dict[str, StyleValue] = field(default_factory=dict)
+    selected: dict[str, StyleValue] = field(default_factory=dict)
+    unselected: dict[str, StyleValue] = field(default_factory=dict)
+
+
+@dataclass
+class Interaction(Component):
+    hover: Optional[bool] = None
+    click: Optional[bool] = None
+    select: Optional[bool] = None
+    brush: Optional[bool] = None
+    crosshair: Optional[bool] = None
+    link_group: Optional[str] = None
+    link_axes: tuple[str, ...] = ("x", "y")
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +200,8 @@ def scatter(
     opacity: float = 0.8,
     density: Optional[bool] = None,
     class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
 ) -> Mark:
     """A scatter series. `x`/`y`/`color`/`size` may be arrays or column names in
     `data`. `color` is auto-typed (numeric → colormap, categorical → palette);
@@ -162,6 +220,8 @@ def scatter(
             "size_range": size_range,
             "opacity": opacity,
             "density": density,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
         },
     )
 
@@ -176,6 +236,8 @@ def line(
     width: float = 1.5,
     opacity: float = 1.0,
     class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
 ) -> Mark:
     """A line series (M4-decimated above the threshold, §5 Tier 1)."""
     return Mark(
@@ -185,7 +247,13 @@ def line(
         data=data,
         name=name,
         class_name=class_name,
-        props={"color": color, "width": width, "opacity": opacity},
+        props={
+            "color": color,
+            "width": width,
+            "opacity": opacity,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
+        },
     )
 
 
@@ -201,6 +269,8 @@ def area(
     line_width: float = 1.2,
     line_opacity: float = 1.0,
     class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
 ) -> Mark:
     """A filled area series between `y` and `base`."""
     return Mark(
@@ -216,6 +286,8 @@ def area(
             "opacity": opacity,
             "line_width": line_width,
             "line_opacity": line_opacity,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
         },
     )
 
@@ -231,6 +303,8 @@ def histogram(
     color: Optional[str] = None,
     opacity: float = 0.85,
     class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
 ) -> Mark:
     """A 1D histogram. `values` may be an array or a column name in `data`."""
     return Mark(
@@ -245,6 +319,8 @@ def histogram(
             "density": density,
             "color": color,
             "opacity": opacity,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
         },
     )
 
@@ -260,6 +336,8 @@ def hist(
     color: Optional[str] = None,
     opacity: float = 0.85,
     class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
 ) -> Mark:
     """Short alias for `histogram(...)`."""
     return histogram(
@@ -272,6 +350,8 @@ def hist(
         color=color,
         opacity=opacity,
         class_name=class_name,
+        x_axis=x_axis,
+        y_axis=y_axis,
     )
 
 
@@ -290,6 +370,8 @@ def bar(
     series: Optional[list[str]] = None,
     opacity: float = 0.85,
     class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
 ) -> Mark:
     """A vertical bar series. 2D y values can render grouped or stacked."""
     return Mark(
@@ -308,6 +390,8 @@ def bar(
             "orientation": orientation,
             "series": series,
             "opacity": opacity,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
         },
     )
 
@@ -327,6 +411,8 @@ def column(
     series: Optional[list[str]] = None,
     opacity: float = 0.85,
     class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
 ) -> Mark:
     """Alias for vertical column charts; shares the bar renderer."""
     return Mark(
@@ -345,6 +431,8 @@ def column(
             "orientation": orientation,
             "series": series,
             "opacity": opacity,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
         },
     )
 
@@ -360,6 +448,8 @@ def heatmap(
     domain: Optional[tuple[float, float]] = None,
     opacity: float = 0.95,
     class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
 ) -> Mark:
     """A rectangular heatmap from a 2D matrix. `z`, `x`, and `y` may be data keys."""
     return Mark(
@@ -374,47 +464,285 @@ def heatmap(
             "colormap": colormap,
             "domain": domain,
             "opacity": opacity,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
         },
     )
 
 
-def x_axis(*, label: Optional[str] = None, type_: Optional[str] = None) -> Axis:
-    _validate_axis_type(type_)
-    return Axis(which="x", label=label, type_=type_)
+def vline(
+    x: Any,
+    *,
+    text: Optional[str] = None,
+    color: Optional[str] = "#667085",
+    width: float = 1.5,
+    opacity: float = 1.0,
+    class_name: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+) -> Annotation:
+    """A vertical rule annotation at an x coordinate or x-axis category."""
+    return Annotation(
+        kind="rule",
+        axis="x",
+        x=x,
+        text=_optional_string(text, "vline text"),
+        class_name=_optional_string(class_name, "vline class_name"),
+        style=_style_dict(style, "vline style"),
+        props={"color": color, "width": width, "opacity": opacity},
+    )
 
 
-def y_axis(*, label: Optional[str] = None, type_: Optional[str] = None) -> Axis:
+def hline(
+    y: Any,
+    *,
+    text: Optional[str] = None,
+    color: Optional[str] = "#667085",
+    width: float = 1.5,
+    opacity: float = 1.0,
+    class_name: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+) -> Annotation:
+    """A horizontal rule annotation at a y coordinate or y-axis category."""
+    return Annotation(
+        kind="rule",
+        axis="y",
+        y=y,
+        text=_optional_string(text, "hline text"),
+        class_name=_optional_string(class_name, "hline class_name"),
+        style=_style_dict(style, "hline style"),
+        props={"color": color, "width": width, "opacity": opacity},
+    )
+
+
+def x_band(
+    x0: Any,
+    x1: Any,
+    *,
+    text: Optional[str] = None,
+    color: Optional[str] = "#64748b",
+    opacity: float = 0.14,
+    class_name: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+) -> Annotation:
+    """A vertical span annotation between two x coordinates or categories."""
+    return Annotation(
+        kind="band",
+        axis="x",
+        x=x0,
+        y=x1,
+        text=_optional_string(text, "x_band text"),
+        class_name=_optional_string(class_name, "x_band class_name"),
+        style=_style_dict(style, "x_band style"),
+        props={"color": color, "opacity": opacity},
+    )
+
+
+def y_band(
+    y0: Any,
+    y1: Any,
+    *,
+    text: Optional[str] = None,
+    color: Optional[str] = "#64748b",
+    opacity: float = 0.14,
+    class_name: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+) -> Annotation:
+    """A horizontal span annotation between two y coordinates or categories."""
+    return Annotation(
+        kind="band",
+        axis="y",
+        x=y0,
+        y=y1,
+        text=_optional_string(text, "y_band text"),
+        class_name=_optional_string(class_name, "y_band class_name"),
+        style=_style_dict(style, "y_band style"),
+        props={"color": color, "opacity": opacity},
+    )
+
+
+def text(
+    x: Any,
+    y: Any,
+    value: str,
+    *,
+    dx: float = 6.0,
+    dy: float = -6.0,
+    color: Optional[str] = None,
+    anchor: str = "start",
+    class_name: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+) -> Annotation:
+    """A text annotation anchored at an x/y coordinate or category."""
+    if not isinstance(value, str):
+        raise ValueError("text value must be a string")
+    return Annotation(
+        kind="text",
+        x=x,
+        y=y,
+        text=value,
+        class_name=_optional_string(class_name, "text class_name"),
+        style=_style_dict(style, "text style"),
+        props={"dx": dx, "dy": dy, "color": color, "anchor": anchor},
+    )
+
+
+def arrow(
+    x0: Any,
+    y0: Any,
+    x1: Any,
+    y1: Any,
+    *,
+    text: Optional[str] = None,
+    color: Optional[str] = "#667085",
+    width: float = 1.5,
+    opacity: float = 1.0,
+    class_name: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+) -> Annotation:
+    """An arrow annotation from one data coordinate to another."""
+    return Annotation(
+        kind="arrow",
+        x=x0,
+        y=y0,
+        text=_optional_string(text, "arrow text"),
+        class_name=_optional_string(class_name, "arrow class_name"),
+        style=_style_dict(style, "arrow style"),
+        props={"x1": x1, "y1": y1, "color": color, "width": width, "opacity": opacity},
+    )
+
+
+def callout(
+    x: Any,
+    y: Any,
+    value: str,
+    *,
+    dx: float = 36.0,
+    dy: float = -30.0,
+    color: Optional[str] = "#344054",
+    width: float = 1.5,
+    opacity: float = 1.0,
+    anchor: str = "start",
+    class_name: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+) -> Annotation:
+    """A text callout offset from a data coordinate with a pointer arrow."""
+    if not isinstance(value, str):
+        raise ValueError("callout value must be a string")
+    return Annotation(
+        kind="callout",
+        x=x,
+        y=y,
+        text=value,
+        class_name=_optional_string(class_name, "callout class_name"),
+        style=_style_dict(style, "callout style"),
+        props={
+            "dx": dx,
+            "dy": dy,
+            "color": color,
+            "width": width,
+            "opacity": opacity,
+            "anchor": anchor,
+        },
+    )
+
+
+def x_axis(
+    *,
+    id: str = "x",
+    label: Optional[str] = None,
+    label_position: Optional[AxisLabelPosition] = None,
+    label_offset: Optional[float] = None,
+    label_angle: Optional[float] = None,
+    type_: Optional[str] = None,
+    domain: Optional[tuple[float, float]] = None,
+    reverse: bool = False,
+    format: Optional[str] = None,
+    side: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+) -> Axis:
     _validate_axis_type(type_)
-    return Axis(which="y", label=label, type_=type_)
+    return Axis(
+        which="x",
+        id=_axis_id(id, "x_axis id"),
+        label=label,
+        label_position=_axis_label_position(label_position, "x_axis label_position"),
+        label_offset=_optional_finite_number(label_offset, "x_axis label_offset"),
+        label_angle=_optional_finite_number(label_angle, "x_axis label_angle"),
+        type_=type_,
+        domain=_axis_domain(domain, "x_axis domain"),
+        reverse=_strict_bool(reverse, "x_axis reverse"),
+        format=_optional_string(format, "x_axis format"),
+        side=_axis_side(side, "x"),
+        style=_style_dict(style, "x_axis style"),
+    )
+
+
+def y_axis(
+    *,
+    id: str = "y",
+    label: Optional[str] = None,
+    label_position: Optional[AxisLabelPosition] = None,
+    label_offset: Optional[float] = None,
+    label_angle: Optional[float] = None,
+    type_: Optional[str] = None,
+    domain: Optional[tuple[float, float]] = None,
+    reverse: bool = False,
+    format: Optional[str] = None,
+    side: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+) -> Axis:
+    _validate_axis_type(type_)
+    return Axis(
+        which="y",
+        id=_axis_id(id, "y_axis id"),
+        label=label,
+        label_position=_axis_label_position(label_position, "y_axis label_position"),
+        label_offset=_optional_finite_number(label_offset, "y_axis label_offset"),
+        label_angle=_optional_finite_number(label_angle, "y_axis label_angle"),
+        type_=type_,
+        domain=_axis_domain(domain, "y_axis domain"),
+        reverse=_strict_bool(reverse, "y_axis reverse"),
+        format=_optional_string(format, "y_axis format"),
+        side=_axis_side(side, "y"),
+        style=_style_dict(style, "y_axis style"),
+    )
 
 
 def legend(
+    *children: Any,
     show: bool = True,
-    *,
+    render: Any = None,
     class_name: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Legend:
+    show, render = _chrome_render_args(children, show, render, "legend")
     return Legend(
         show=_strict_bool(show, "legend show"),
         class_name=_optional_string(class_name, "legend class_name"),
         style=_style_dict(style, "legend style"),
+        render=render,
     )
 
 
 def tooltip(
-    *,
+    *children: Any,
+    show: bool = True,
+    render: Any = None,
     fields: Optional[list[str]] = None,
     title: Optional[str] = None,
     format: Optional[dict[str, str]] = None,
     class_name: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Tooltip:
+    show, render = _chrome_render_args(children, show, render, "tooltip")
     return Tooltip(
+        show=_strict_bool(show, "tooltip show"),
         fields=_string_list(fields, "tooltip fields"),
         title=_optional_string(title, "tooltip title"),
         format=_string_dict(format, "tooltip format"),
         class_name=_optional_string(class_name, "tooltip class_name"),
         style=_style_dict(style, "tooltip style"),
+        render=render,
     )
 
 
@@ -437,12 +765,82 @@ def modebar(
 
 def theme(
     style: Optional[dict[str, StyleValue]] = None,
+    *,
+    plot_background: Optional[StyleValue] = None,
+    grid_color: Optional[StyleValue] = None,
+    axis_color: Optional[StyleValue] = None,
+    text_color: Optional[StyleValue] = None,
+    crosshair_color: Optional[StyleValue] = None,
+    selection_color: Optional[StyleValue] = None,
+    selection_fill: Optional[StyleValue] = None,
     **tokens: StyleValue,
 ) -> Theme:
     merged = _style_dict(style, "theme style")
+    merged.update(
+        _theme_tokens(
+            {
+                "plot_background": plot_background,
+                "grid_color": grid_color,
+                "axis_color": axis_color,
+                "text_color": text_color,
+                "crosshair_color": crosshair_color,
+                "selection_color": selection_color,
+                "selection_fill": selection_fill,
+            },
+            "theme",
+        )
+    )
     if tokens:
-        merged.update(_style_dict(tokens, "theme tokens"))
+        merged.update(_theme_tokens(tokens, "theme tokens"))
     return Theme(style=merged)
+
+
+def mark_style(
+    *,
+    hover: Optional[dict[str, StyleValue]] = None,
+    selected: Optional[dict[str, StyleValue]] = None,
+    unselected: Optional[dict[str, StyleValue]] = None,
+) -> MarkStyle:
+    """Style mark interaction states declaratively.
+
+    The first renderer-backed fields are scatter hover highlights and
+    selected/unselected opacity. The component shape is shared by future mark
+    kinds so charts do not need an API migration when bars/lines gain richer
+    state styling.
+    """
+    return MarkStyle(
+        hover=_style_dict(hover, "mark_style hover"),
+        selected=_style_dict(selected, "mark_style selected"),
+        unselected=_style_dict(unselected, "mark_style unselected"),
+    )
+
+
+def interaction_config(
+    *,
+    hover: Optional[bool] = None,
+    click: Optional[bool] = None,
+    select: Optional[bool] = None,
+    brush: Optional[bool] = None,
+    crosshair: Optional[bool] = None,
+    link_group: Optional[str] = None,
+    link_axes: tuple[str, ...] = ("x", "y"),
+) -> Interaction:
+    """Configure browser interaction chrome and event emission.
+
+    `crosshair=True` draws plot-aligned hover guides. `click=True` emits click
+    events and widget callbacks for picked marks. `select`/`brush` control
+    shift-drag box selection. `link_group` synchronizes view ranges across
+    charts in the same browser page or same-origin iframes.
+    """
+    return Interaction(
+        hover=hover,
+        click=click,
+        select=select,
+        brush=brush,
+        crosshair=crosshair,
+        link_group=link_group,
+        link_axes=link_axes,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -467,6 +865,30 @@ def _resolve(data: Any, key: Any, *, context: Optional[str] = None) -> Any:
     return key
 
 
+def _resolve_axis_values(fig: Figure, data: Any, key: Any, axis: str, context: str) -> Any:
+    values = _resolve(data, key, context=context)
+    if values is not None and Figure._is_category_like(values) and not _is_datetime_like(values):
+        return fig._axis_positions(values, axis)
+    return values
+
+
+def _is_datetime_like(values: Any) -> bool:
+    if hasattr(values, "to_numpy"):
+        values = values.to_numpy()
+    arr = np.asarray(values)
+    if np.issubdtype(arr.dtype, np.datetime64):
+        return True
+    if arr.dtype != object:
+        return False
+    for value in arr.flat:
+        if value is None:
+            continue
+        if value.__class__.__name__ in {"NAType", "NaTType"}:
+            continue
+        return isinstance(value, (dt.datetime, dt.date, np.datetime64))
+    return False
+
+
 class Chart(Component):
     """Composes marks + axis/legend children into a `Figure`. Renders in
     notebooks and exports to HTML via the underlying engine."""
@@ -484,8 +906,16 @@ class Chart(Component):
         class_names: Optional[dict[str, str]] = None,
         style: Optional[dict[str, StyleValue]] = None,
         on_hover: Optional[Callable[[dict], None]] = None,
+        on_click: Optional[Callable[[dict], None]] = None,
         on_select: Optional[Callable[[Any], None]] = None,
         on_view_change: Optional[Callable[[dict], None]] = None,
+        hover: Optional[bool] = None,
+        click: Optional[bool] = None,
+        select: Optional[bool] = None,
+        brush: Optional[bool] = None,
+        crosshair: Optional[bool] = None,
+        link_group: Optional[str] = None,
+        link_axes: tuple[str, ...] = ("x", "y"),
     ) -> None:
         self.kind = kind
         self.children = children
@@ -497,8 +927,16 @@ class Chart(Component):
         self.class_names = _string_dict(class_names, "chart class_names")
         self.style = _style_dict(style, "chart style")
         self.on_hover = on_hover
+        self.on_click = on_click
         self.on_select = on_select
         self.on_view_change = on_view_change
+        self.hover = hover
+        self.click = click
+        self.select = select
+        self.brush = brush
+        self.crosshair = crosshair
+        self.link_group = link_group
+        self.link_axes = link_axes
         self._figure: Optional[Figure] = None
         self._widget: Any = None
 
@@ -510,20 +948,34 @@ class Chart(Component):
             return self._figure
 
         marks = [c for c in self.children if isinstance(c, Mark)]
+        annotations = [c for c in self.children if isinstance(c, Annotation)]
         axis_children = [c for c in self.children if isinstance(c, Axis)]
         for axis in axis_children:
             _validate_axis(axis)
-        axes = {c.which: c for c in axis_children}
+        axes = {c.id or c.which: c for c in axis_children}
         legends = [c for c in self.children if isinstance(c, Legend)]
         tooltips = [c for c in self.children if isinstance(c, Tooltip)]
         modebars = [c for c in self.children if isinstance(c, Modebar)]
         themes = [c for c in self.children if isinstance(c, Theme)]
+        mark_styles = [c for c in self.children if isinstance(c, MarkStyle)]
+        interactions = [c for c in self.children if isinstance(c, Interaction)]
         legend_shows = [_strict_bool(c.show, "legend show") for c in legends]
-        known = (Mark, Axis, Legend, Tooltip, Modebar, Theme)
+        known = (
+            Mark,
+            Annotation,
+            Axis,
+            Legend,
+            Tooltip,
+            Modebar,
+            Theme,
+            MarkStyle,
+            Interaction,
+        )
         unknown = [c for c in self.children if not isinstance(c, known)]
         if unknown:
             raise TypeError(
-                f"{self.kind}() children must be marks/axes/legend/tooltip/modebar/theme, got "
+                f"{self.kind}() children must be marks/annotations/axes/legend/tooltip/"
+                f"modebar/theme/mark_style/interaction_config, got "
                 f"{[type(c).__name__ for c in unknown]}"
             )
 
@@ -535,37 +987,93 @@ class Chart(Component):
             x_label=xa.label if xa else None,
             y_label=ya.label if ya else None,
         )
+        for axis in axis_children:
+            axis_id = axis.id or axis.which
+            fig.set_axis(
+                axis_id,
+                label=axis.label,
+                label_position=axis.label_position,
+                label_offset=axis.label_offset,
+                label_angle=axis.label_angle,
+                type_=axis.type_,
+                domain=axis.domain,
+                reverse=axis.reverse,
+                format=axis.format,
+                side=axis.side,
+                style=axis.style,
+            )
         fig.class_name = self.class_name
         fig.class_names = dict(self.class_names)
         fig.style = {}
         for theme_node in themes:
             fig.style.update(theme_node.style)
         fig.style.update(self.style)
-        for axis in (xa, ya):
-            if axis and axis.type_ == "log":
-                import warnings
-
-                warnings.warn(
-                    "log axes are on the v1 roadmap (§30) but not implemented "
-                    "yet; falling back to linear.",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
-
+        for node in mark_styles:
+            fig.set_mark_style(
+                hover=node.hover,
+                selected=node.selected,
+                unselected=node.unselected,
+            )
+        if (
+            self.hover is not None
+            or self.click is not None
+            or self.select is not None
+            or self.brush is not None
+            or self.crosshair is not None
+            or self.link_group is not None
+        ):
+            fig.set_interaction(
+                hover=self.hover,
+                click=self.click,
+                select=self.select,
+                brush=self.brush,
+                crosshair=self.crosshair,
+                link_group=self.link_group,
+                link_axes=self.link_axes,
+            )
+        for node in interactions:
+            fig.set_interaction(
+                hover=node.hover,
+                click=node.click,
+                select=node.select,
+                brush=node.brush,
+                crosshair=node.crosshair,
+                link_group=node.link_group,
+                link_axes=node.link_axes,
+            )
+        fig.set_interaction(
+            hover=True if self.on_hover is not None else None,
+            click=True if self.on_click is not None else None,
+            select=True if self.on_select is not None else None,
+            view_change=True if self.on_view_change is not None else None,
+        )
         tooltip_aliases: dict[str, str] = {}
+        tooltip_sources: dict[str, list[dict[str, Any]]] = {}
         for m in marks:
             data = m.data if m.data is not None else self.data
             applier = _MARK_APPLIERS.get(m.kind)
             if applier is None:
                 raise TypeError(f"no applier registered for mark kind {m.kind!r}")
+            x_axis_id, y_axis_id = _mark_axis_ids(m, axes)
             before = len(fig.traces)
             applier(fig, m, data)
             new_traces = fig.traces[before:]
+            for trace in new_traces:
+                trace.x_axis = x_axis_id
+                trace.y_axis = y_axis_id
             if m.class_name is not None:
                 class_name = _optional_string(m.class_name, f"{m.kind} class_name")
                 for trace in new_traces:
                     trace.style["class_name"] = class_name
             _merge_tooltip_aliases(tooltip_aliases, m, new_traces)
+            _merge_tooltip_sources(tooltip_sources, m, new_traces)
+
+        for annotation in annotations:
+            applier = _ANNOTATION_APPLIERS.get(annotation.kind)
+            if applier is None:
+                raise TypeError(f"no applier registered for annotation kind {annotation.kind!r}")
+            applier(fig, annotation)
+        fig._annotation_specs()
 
         if legends:
             _apply_chrome_node(fig, "legend", legends[-1].class_name, legends[-1].style)
@@ -579,18 +1087,44 @@ class Chart(Component):
         if tooltips:
             node = tooltips[-1]
             _apply_chrome_node(fig, "tooltip", node.class_name, node.style)
-            fig.tooltip = _tooltip_spec(node, tooltip_aliases)
+            fig.show_tooltip = node.show
+            fig.tooltip = _tooltip_spec(node, tooltip_aliases, tooltip_sources)
         self._figure = fig
         return fig
 
     # -- render (delegates to the engine) ------------------------------------
+
+    def chrome_components(self) -> dict[str, Any]:
+        """Opaque user chrome objects for adapters such as Reflex.
+
+        Core fastcharts does not import or serialize framework components. The
+        objects returned here are the exact Python objects passed to
+        `fc.legend(...)` / `fc.tooltip(...)`, so an adapter can mount them while
+        standalone HTML keeps using the built-in safe DOM fallback.
+        """
+        result: dict[str, Any] = {}
+        legends = [c for c in self.children if isinstance(c, Legend)]
+        if legends and legends[-1].render is not None:
+            result["legend"] = legends[-1].render
+        tooltips = [c for c in self.children if isinstance(c, Tooltip)]
+        if tooltips and tooltips[-1].render is not None:
+            result["tooltip"] = tooltips[-1].render
+        return result
+
+    def reflex_components(self) -> dict[str, Any]:
+        """Alias for `chrome_components()` for Reflex adapter/user code."""
+        return self.chrome_components()
 
     def widget(self) -> Any:
         if self._widget is None:
             from .widget import FigureWidget
 
             self._widget = FigureWidget(
-                self.figure(), on_hover=self.on_hover, on_select=self.on_select
+                self.figure(),
+                on_hover=self.on_hover,
+                on_click=self.on_click,
+                on_select=self.on_select,
+                on_view_change=self.on_view_change,
             )
         return self._widget
 
@@ -667,6 +1201,44 @@ def _style_dict(value: Any, label: str) -> dict[str, StyleValue]:
     return Figure._style_mapping(value, label)
 
 
+_THEME_TOKEN_ALIASES = {
+    "plot_background": "--chart-bg",
+    "background": "--chart-bg",
+    "grid_color": "--chart-grid",
+    "axis_color": "--chart-axis",
+    "text_color": "--chart-text",
+    "crosshair_color": "--chart-crosshair",
+    "selection_color": "--chart-selection",
+    "selection_fill": "--chart-selection-fill",
+}
+
+
+def _theme_tokens(values: dict[str, Any], label: str) -> dict[str, StyleValue]:
+    raw = {key: value for key, value in values.items() if value is not None}
+    mapped = {_THEME_TOKEN_ALIASES.get(key, key): value for key, value in raw.items()}
+    return _style_dict(mapped, label)
+
+
+def _chrome_render_args(
+    children: tuple[Any, ...],
+    show: Any,
+    render: Any,
+    label: str,
+) -> tuple[Any, Any]:
+    if len(children) > 1:
+        raise TypeError(f"{label}() accepts at most one component child")
+    if not children:
+        return show, render
+    child = children[0]
+    if isinstance(child, (bool, np.bool_)):
+        if render is not None:
+            raise TypeError(f"{label}() cannot combine positional show with render=")
+        return bool(child), None
+    if render is not None:
+        raise TypeError(f"{label}() cannot combine a component child with render=")
+    return show, child
+
+
 def _append_class(class_names: dict[str, str], slot: str, class_name: Optional[str]) -> None:
     if not class_name:
         return
@@ -685,7 +1257,11 @@ def _apply_chrome_node(
         fig.chrome_styles[slot] = {**fig.chrome_styles.get(slot, {}), **style}
 
 
-def _tooltip_spec(node: Tooltip, aliases: dict[str, str]) -> dict[str, Any]:
+def _tooltip_spec(
+    node: Tooltip,
+    aliases: dict[str, str],
+    sources: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
     spec: dict[str, Any] = {}
     if node.fields:
         spec["fields"] = list(node.fields)
@@ -695,7 +1271,51 @@ def _tooltip_spec(node: Tooltip, aliases: dict[str, str]) -> dict[str, Any]:
         spec["format"] = dict(node.format)
     if aliases:
         spec["aliases"] = dict(aliases)
+    if sources:
+        spec["sources"] = {field: list(entries) for field, entries in sources.items()}
     return spec
+
+
+def _add_tooltip_source(
+    sources: dict[str, list[dict[str, Any]]],
+    field: str,
+    traces: list[Any],
+    channel: str,
+) -> None:
+    entries = sources.setdefault(field, [])
+    seen = {(entry["trace"], entry["channel"]) for entry in entries}
+    for trace in traces:
+        key = (trace.id, channel)
+        if key in seen:
+            continue
+        entries.append({"trace": trace.id, "channel": channel})
+        seen.add(key)
+
+
+def _merge_tooltip_sources(
+    sources: dict[str, list[dict[str, Any]]], mark: Mark, traces: list[Any]
+) -> None:
+    if isinstance(mark.x, str):
+        _add_tooltip_source(sources, mark.x, traces, "x")
+    if isinstance(mark.y, str):
+        _add_tooltip_source(sources, mark.y, traces, "y")
+    if mark.kind == "heatmap" and isinstance(mark.props.get("z"), str):
+        _add_tooltip_source(sources, mark.props["z"], traces, "color_value")
+    color = mark.props.get("color")
+    if isinstance(color, str) and not _looks_like_css(color):
+        channel = next((trace.color_ch for trace in traces if trace.color_ch is not None), None)
+        if channel is not None:
+            _add_tooltip_source(
+                sources,
+                color,
+                traces,
+                "color_category" if channel.mode == "categorical" else "color_value",
+            )
+    size = mark.props.get("size")
+    if isinstance(size, str):
+        channel = next((trace.size_ch for trace in traces if trace.size_ch is not None), None)
+        if channel is not None:
+            _add_tooltip_source(sources, size, traces, "size_value")
 
 
 def _merge_tooltip_aliases(aliases: dict[str, str], mark: Mark, traces: list[Any]) -> None:
@@ -727,13 +1347,102 @@ def _strict_bool(value: Any, label: str) -> bool:
 def _validate_axis(axis: Axis) -> None:
     if axis.which not in {"x", "y"}:
         raise ValueError(f"axis.which must be 'x' or 'y', got {axis.which!r}")
+    axis_id = axis.id or axis.which
+    _axis_id(axis_id, f"{axis.which}_axis id")
+    if not axis_id.startswith(axis.which):
+        raise ValueError(f"{axis.which}_axis id must start with {axis.which!r}")
     _validate_axis_type(axis.type_)
+    _axis_domain(axis.domain, f"{axis.which}_axis domain")
+    _strict_bool(axis.reverse, f"{axis.which}_axis reverse")
+    _axis_side(axis.side, axis.which)
+    _axis_label_position(axis.label_position, f"{axis.which}_axis label_position")
+    _optional_finite_number(axis.label_offset, f"{axis.which}_axis label_offset")
+    _optional_finite_number(axis.label_angle, f"{axis.which}_axis label_angle")
+
+
+def _mark_axis_ids(mark: Mark, axes: dict[str, Axis]) -> tuple[str, str]:
+    x_axis_id = _axis_id(mark.props.get("x_axis", "x"), f"{mark.kind} x_axis")
+    y_axis_id = _axis_id(mark.props.get("y_axis", "y"), f"{mark.kind} y_axis")
+    if not x_axis_id.startswith("x"):
+        raise ValueError(f"{mark.kind} x_axis must start with 'x'")
+    if not y_axis_id.startswith("y"):
+        raise ValueError(f"{mark.kind} y_axis must start with 'y'")
+    for axis_id, factory in ((x_axis_id, "x_axis"), (y_axis_id, "y_axis")):
+        if axis_id in {"x", "y"} or axis_id in axes:
+            continue
+        raise ValueError(f"{mark.kind} {axis_id!r} has no matching fc.{factory}(id={axis_id!r})")
+    return x_axis_id, y_axis_id
 
 
 def _validate_axis_type(type_: Optional[str]) -> None:
     if type_ is None or type_ in {"linear", "time", "log"}:
         return
     raise ValueError(f"axis type_ must be one of None, 'linear', 'time', or 'log', got {type_!r}")
+
+
+def _axis_id(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label} must be a non-empty string")
+    if value[0] not in {"x", "y"}:
+        raise ValueError(f"{label} must start with 'x' or 'y'")
+    if not all(ch.isalnum() or ch in {"_", "-"} for ch in value):
+        raise ValueError(f"{label} may only contain letters, digits, '_' and '-'")
+    return value
+
+
+def _axis_domain(value: Any, label: str) -> Optional[tuple[float, float]]:
+    if value is None:
+        return None
+    try:
+        lo_raw, hi_raw = value
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must contain exactly two finite values") from exc
+    lo = _finite_number(lo_raw, f"{label}[0]")
+    hi = _finite_number(hi_raw, f"{label}[1]")
+    if hi <= lo:
+        raise ValueError(f"{label} must be finite and increasing")
+    return lo, hi
+
+
+def _axis_side(value: Any, which: str) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{which}_axis side must be a string")
+    allowed = {"top", "bottom"} if which == "x" else {"left", "right"}
+    if value not in allowed:
+        raise ValueError(f"{which}_axis side must be one of {sorted(allowed)}")
+    return value
+
+
+def _axis_label_position(value: Any, label: str) -> Optional[AxisLabelPosition]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        normalized = value.replace("-", "_")
+        allowed = {"start", "center", "end", "inside_start", "inside_center", "inside_end"}
+        if normalized not in allowed:
+            raise ValueError(f"{label} must be one of {sorted(allowed)} or a CSS style dict")
+        return normalized
+    return _style_dict(value, label)
+
+
+def _optional_finite_number(value: Any, label: str) -> Optional[float]:
+    if value is None:
+        return None
+    return _finite_number(value, label)
+
+
+def _finite_number(value: Any, label: str) -> float:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{label} must be a finite real number")
+    try:
+        out = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be a finite real number") from exc
+    if not np.isfinite(out):
+        raise ValueError(f"{label} must be finite")
+    return out
 
 
 def _looks_like_css(s: str) -> bool:
@@ -783,8 +1492,8 @@ _CSS_NAMES = {
 def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
     size = m.props["size"]
     fig.scatter(
-        _resolve(data, m.x, context=f"{m.kind}.x"),
-        _resolve(data, m.y, context=f"{m.kind}.y"),
+        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
+        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
         name=m.name,
         color=_resolve_color(data, m.props["color"], context=f"{m.kind}.color"),
         size=_resolve(data, size, context=f"{m.kind}.size") if isinstance(size, str) else size,
@@ -797,8 +1506,8 @@ def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
 
 def _apply_line(fig: Figure, m: Mark, data: Any) -> None:
     fig.line(
-        _resolve(data, m.x, context=f"{m.kind}.x"),
-        _resolve(data, m.y, context=f"{m.kind}.y"),
+        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
+        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
         name=m.name,
         color=m.props["color"],
         width=m.props["width"],
@@ -809,8 +1518,8 @@ def _apply_line(fig: Figure, m: Mark, data: Any) -> None:
 def _apply_area(fig: Figure, m: Mark, data: Any) -> None:
     base = m.props["base"]
     fig.area(
-        _resolve(data, m.x, context=f"{m.kind}.x"),
-        _resolve(data, m.y, context=f"{m.kind}.y"),
+        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
+        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
         base=_resolve(data, base, context=f"{m.kind}.base") if isinstance(base, str) else base,
         name=m.name,
         color=m.props["color"],
@@ -878,6 +1587,105 @@ def _apply_column(fig: Figure, m: Mark, data: Any) -> None:
     )
 
 
+def _annotation_style(annotation: Annotation) -> dict[str, StyleValue]:
+    style = dict(annotation.style)
+    color = annotation.props.get("color")
+    if color is not None:
+        if not isinstance(color, str):
+            raise ValueError(f"{annotation.kind} annotation color must be a string or None")
+        style.setdefault("color", color)
+    return style
+
+
+def _apply_rule_annotation(fig: Figure, annotation: Annotation) -> None:
+    if annotation.axis == "x":
+        fig.vline(
+            annotation.x,
+            text=annotation.text,
+            width=annotation.props["width"],
+            opacity=annotation.props["opacity"],
+            class_name=annotation.class_name,
+            style=_annotation_style(annotation),
+        )
+    elif annotation.axis == "y":
+        fig.hline(
+            annotation.y,
+            text=annotation.text,
+            width=annotation.props["width"],
+            opacity=annotation.props["opacity"],
+            class_name=annotation.class_name,
+            style=_annotation_style(annotation),
+        )
+    else:
+        raise ValueError("rule annotation axis must be 'x' or 'y'")
+
+
+def _apply_band_annotation(fig: Figure, annotation: Annotation) -> None:
+    if annotation.axis == "x":
+        fig.x_band(
+            annotation.x,
+            annotation.y,
+            text=annotation.text,
+            opacity=annotation.props["opacity"],
+            class_name=annotation.class_name,
+            style=_annotation_style(annotation),
+        )
+    elif annotation.axis == "y":
+        fig.y_band(
+            annotation.x,
+            annotation.y,
+            text=annotation.text,
+            opacity=annotation.props["opacity"],
+            class_name=annotation.class_name,
+            style=_annotation_style(annotation),
+        )
+    else:
+        raise ValueError("band annotation axis must be 'x' or 'y'")
+
+
+def _apply_text_annotation(fig: Figure, annotation: Annotation) -> None:
+    fig.text(
+        annotation.x,
+        annotation.y,
+        annotation.text or "",
+        dx=annotation.props["dx"],
+        dy=annotation.props["dy"],
+        color=annotation.props.get("color"),
+        anchor=annotation.props["anchor"],
+        class_name=annotation.class_name,
+        style=annotation.style,
+    )
+
+
+def _apply_arrow_annotation(fig: Figure, annotation: Annotation) -> None:
+    fig.arrow(
+        annotation.x,
+        annotation.y,
+        annotation.props["x1"],
+        annotation.props["y1"],
+        text=annotation.text,
+        width=annotation.props["width"],
+        opacity=annotation.props["opacity"],
+        class_name=annotation.class_name,
+        style=_annotation_style(annotation),
+    )
+
+
+def _apply_callout_annotation(fig: Figure, annotation: Annotation) -> None:
+    fig.callout(
+        annotation.x,
+        annotation.y,
+        annotation.text or "",
+        dx=annotation.props["dx"],
+        dy=annotation.props["dy"],
+        width=annotation.props["width"],
+        opacity=annotation.props["opacity"],
+        anchor=annotation.props["anchor"],
+        class_name=annotation.class_name,
+        style=_annotation_style(annotation),
+    )
+
+
 _MARK_APPLIERS: dict[str, Callable[[Figure, Mark, Any], None]] = {
     "area": _apply_area,
     "bar": _apply_bar,
@@ -886,6 +1694,15 @@ _MARK_APPLIERS: dict[str, Callable[[Figure, Mark, Any], None]] = {
     "histogram": _apply_histogram,
     "scatter": _apply_scatter,
     "line": _apply_line,
+}
+
+
+_ANNOTATION_APPLIERS: dict[str, Callable[[Figure, Annotation], None]] = {
+    "arrow": _apply_arrow_annotation,
+    "band": _apply_band_annotation,
+    "callout": _apply_callout_annotation,
+    "rule": _apply_rule_annotation,
+    "text": _apply_text_annotation,
 }
 
 

@@ -29,7 +29,7 @@ from .config import (  # noqa: E402
     SCATTER_DENSITY_THRESHOLD,
 )
 
-_FigureCheckpoint: TypeAlias = tuple[ColumnStoreCheckpoint, int, dict[str, list[str]]]
+_FigureCheckpoint: TypeAlias = tuple[ColumnStoreCheckpoint, int, dict[str, list[str]], int]
 
 
 @dataclass
@@ -38,6 +38,8 @@ class Trace:
     kind: str  # "line" | "scatter" | "area" | "histogram" | "bar" | "column" | "heatmap"
     x: Column
     y: Column
+    x_axis: str = "x"
+    y_axis: str = "y"
     name: Optional[str] = None
     style: dict[str, Any] = field(default_factory=dict)
     # Area-style marks keep an explicit baseline column; rectangle-like marks
@@ -197,17 +199,131 @@ class Figure:
         self.title = self._optional_text(title, "title")
         self.x_label = self._optional_text(x_label, "x_label")
         self.y_label = self._optional_text(y_label, "y_label")
+        self.axis_options: dict[str, dict[str, Any]] = {
+            "x": {"label": self.x_label, "side": "bottom"},
+            "y": {"label": self.y_label, "side": "left"},
+        }
         self.store = ColumnStore()
         self.traces: list[Trace] = []
         self.show_legend = True
         self.show_modebar = True
+        self.show_tooltip = True
         self.class_name: Optional[str] = None
         self.class_names: dict[str, str] = {}
         self.style: dict[str, str | int | float] = {}
         self.chrome_styles: dict[str, dict[str, str | int | float]] = {}
         self.tooltip: Optional[dict[str, Any]] = None
+        self.interaction: dict[str, Any] = {}
+        self.mark_style: dict[str, dict[str, str | int | float]] = {}
+        self.annotations: list[dict[str, Any]] = []
         self._axis_categories: dict[str, list[str]] = {}
         self._widget: Any = None
+
+    # -- axis config --------------------------------------------------------
+
+    def set_axis(
+        self,
+        axis_id: str,
+        *,
+        label: Optional[str] = None,
+        label_position: Optional[Any] = None,
+        label_offset: Optional[float] = None,
+        label_angle: Optional[float] = None,
+        type_: Optional[str] = None,
+        domain: Optional[tuple[float, float]] = None,
+        reverse: bool = False,
+        format: Optional[str] = None,
+        side: Optional[str] = None,
+        style: Optional[dict[str, Any]] = None,
+    ) -> "Figure":
+        axis_id = self._axis_id(axis_id, "axis id")
+        axis_dim = self._axis_dim(axis_id)
+        if type_ is not None and type_ not in {"linear", "time", "log"}:
+            raise ValueError("axis type_ must be one of None, 'linear', 'time', or 'log'")
+        if domain is not None:
+            domain = self._finite_increasing_pair(domain, f"{axis_id} axis domain")
+            if type_ == "log" and domain[0] <= 0:
+                raise ValueError(f"{axis_id} log axis domain must be positive")
+        if side is None:
+            side = "bottom" if axis_dim == "x" else ("right" if axis_id != "y" else "left")
+        elif axis_dim == "x" and side not in {"top", "bottom"}:
+            raise ValueError("x axis side must be 'top' or 'bottom'")
+        elif axis_dim == "y" and side not in {"left", "right"}:
+            raise ValueError("y axis side must be 'left' or 'right'")
+        self.axis_options[axis_id] = {
+            "label": self._optional_text(label, f"{axis_id} axis label"),
+            "label_position": self._axis_label_position(
+                label_position, f"{axis_id} axis label_position"
+            ),
+            "label_offset": self._optional_finite_scalar(
+                label_offset, f"{axis_id} axis label_offset"
+            ),
+            "label_angle": self._optional_finite_scalar(
+                label_angle, f"{axis_id} axis label_angle"
+            ),
+            "type": type_,
+            "domain": domain,
+            "reverse": self._bool_param(reverse, f"{axis_id} axis reverse"),
+            "format": self._optional_text(format, f"{axis_id} axis format"),
+            "side": side,
+            "style": self._optional_state_style(style, f"{axis_id} axis style"),
+        }
+        if axis_id == "x":
+            self.x_label = self.axis_options[axis_id]["label"]
+        elif axis_id == "y":
+            self.y_label = self.axis_options[axis_id]["label"]
+        return self
+
+    def set_interaction(
+        self,
+        *,
+        hover: Optional[bool] = None,
+        click: Optional[bool] = None,
+        select: Optional[bool] = None,
+        brush: Optional[bool] = None,
+        crosshair: Optional[bool] = None,
+        view_change: Optional[bool] = None,
+        link_group: Optional[str] = None,
+        link_axes: tuple[str, ...] = ("x", "y"),
+    ) -> "Figure":
+        updates: dict[str, Any] = {}
+        for name, value in (
+            ("hover", hover),
+            ("click", click),
+            ("select", select),
+            ("brush", brush),
+            ("crosshair", crosshair),
+            ("view_change", view_change),
+        ):
+            normalized = self._optional_bool(value, f"interaction {name}")
+            if normalized is not None:
+                updates[name] = normalized
+        if link_group is not None:
+            group = self._optional_text(link_group, "interaction link_group")
+            if not group:
+                raise ValueError("interaction link_group must be a non-empty string or None")
+            updates["link_group"] = group
+            updates["link_axes"] = self._link_axes(link_axes)
+        self.interaction.update(updates)
+        return self
+
+    def set_mark_style(
+        self,
+        *,
+        hover: Optional[dict[str, Any]] = None,
+        selected: Optional[dict[str, Any]] = None,
+        unselected: Optional[dict[str, Any]] = None,
+    ) -> "Figure":
+        """Configure mark hover/selection state styling."""
+        for state, value in (
+            ("hover", hover),
+            ("selected", selected),
+            ("unselected", unselected),
+        ):
+            style = self._optional_state_style(value, f"mark_style {state}")
+            if style:
+                self.mark_style[state] = {**self.mark_style.get(state, {}), **style}
+        return self
 
     # -- trace builders -----------------------------------------------------
 
@@ -232,12 +348,14 @@ class Figure:
             self.store.checkpoint(),
             len(self.traces),
             {axis: list(labels) for axis, labels in self._axis_categories.items()},
+            len(self.annotations),
         )
 
     def _rollback(self, checkpoint: _FigureCheckpoint) -> None:
-        store_checkpoint, trace_len, axis_categories = checkpoint
+        store_checkpoint, trace_len, axis_categories, annotation_len = checkpoint
         self.store.rollback(store_checkpoint)
         del self.traces[trace_len:]
+        del self.annotations[annotation_len:]
         self._axis_categories = axis_categories
 
     def line(
@@ -622,6 +740,279 @@ class Figure:
             raise
         return self
 
+    def vline(
+        self,
+        x: Any,
+        *,
+        text: Optional[str] = None,
+        color: Optional[str] = "#667085",
+        width: float = 1.5,
+        opacity: float = 1.0,
+        class_name: Optional[str] = None,
+        style: Optional[dict[str, Any]] = None,
+    ) -> "Figure":
+        """Add a vertical rule annotation at data coordinate `x`.
+
+        Rules live in the chart chrome layer: they stay crisp during pan/zoom
+        and annotate the current plot without adding a data trace or legend row.
+        """
+        return self._append_rule_annotation(
+            "x",
+            x,
+            text=text,
+            color=color,
+            width=width,
+            opacity=opacity,
+            class_name=class_name,
+            style=style,
+        )
+
+    def hline(
+        self,
+        y: Any,
+        *,
+        text: Optional[str] = None,
+        color: Optional[str] = "#667085",
+        width: float = 1.5,
+        opacity: float = 1.0,
+        class_name: Optional[str] = None,
+        style: Optional[dict[str, Any]] = None,
+    ) -> "Figure":
+        """Add a horizontal rule annotation at data coordinate `y`."""
+        return self._append_rule_annotation(
+            "y",
+            y,
+            text=text,
+            color=color,
+            width=width,
+            opacity=opacity,
+            class_name=class_name,
+            style=style,
+        )
+
+    def x_band(
+        self,
+        x0: Any,
+        x1: Any,
+        *,
+        text: Optional[str] = None,
+        color: Optional[str] = "#64748b",
+        opacity: float = 0.14,
+        class_name: Optional[str] = None,
+        style: Optional[dict[str, Any]] = None,
+    ) -> "Figure":
+        """Add a vertical span annotation from `x0` to `x1`."""
+        return self._append_band_annotation(
+            "x",
+            x0,
+            x1,
+            text=text,
+            color=color,
+            opacity=opacity,
+            class_name=class_name,
+            style=style,
+        )
+
+    def y_band(
+        self,
+        y0: Any,
+        y1: Any,
+        *,
+        text: Optional[str] = None,
+        color: Optional[str] = "#64748b",
+        opacity: float = 0.14,
+        class_name: Optional[str] = None,
+        style: Optional[dict[str, Any]] = None,
+    ) -> "Figure":
+        """Add a horizontal span annotation from `y0` to `y1`."""
+        return self._append_band_annotation(
+            "y",
+            y0,
+            y1,
+            text=text,
+            color=color,
+            opacity=opacity,
+            class_name=class_name,
+            style=style,
+        )
+
+    def text(
+        self,
+        x: Any,
+        y: Any,
+        text: str,
+        *,
+        dx: float = 6.0,
+        dy: float = -6.0,
+        color: Optional[str] = None,
+        anchor: str = "start",
+        class_name: Optional[str] = None,
+        style: Optional[dict[str, Any]] = None,
+    ) -> "Figure":
+        """Add a text annotation anchored at a data coordinate."""
+        text = self._required_text(text, "text annotation text")
+        dx = self._finite_scalar(dx, "text annotation dx")
+        dy = self._finite_scalar(dy, "text annotation dy")
+        if anchor not in {"start", "middle", "end"}:
+            raise ValueError("text annotation anchor must be 'start', 'middle', or 'end'")
+        self.annotations.append(
+            {
+                "kind": "text",
+                "x": x,
+                "y": y,
+                "text": text,
+                "dx": dx,
+                "dy": dy,
+                "anchor": anchor,
+                "style": {
+                    "color": self._optional_text(color, "text annotation color"),
+                    **self._style_mapping(style or {}, "text annotation style"),
+                },
+                "class_name": self._optional_text(class_name, "text annotation class_name"),
+            }
+        )
+        return self
+
+    def arrow(
+        self,
+        x0: Any,
+        y0: Any,
+        x1: Any,
+        y1: Any,
+        *,
+        text: Optional[str] = None,
+        color: Optional[str] = "#667085",
+        width: float = 1.5,
+        opacity: float = 1.0,
+        class_name: Optional[str] = None,
+        style: Optional[dict[str, Any]] = None,
+    ) -> "Figure":
+        """Add an arrow annotation from (`x0`, `y0`) to (`x1`, `y1`)."""
+        width = self._positive_scalar(width, "arrow width")
+        opacity = self._opacity(opacity, "arrow opacity")
+        self.annotations.append(
+            {
+                "kind": "arrow",
+                "x0": x0,
+                "y0": y0,
+                "x1": x1,
+                "y1": y1,
+                "text": self._optional_text(text, "arrow text"),
+                "style": {
+                    "color": self._optional_text(color, "arrow color"),
+                    "width": width,
+                    "opacity": opacity,
+                    **self._style_mapping(style or {}, "arrow style"),
+                },
+                "class_name": self._optional_text(class_name, "arrow class_name"),
+            }
+        )
+        return self
+
+    def callout(
+        self,
+        x: Any,
+        y: Any,
+        text: str,
+        *,
+        dx: float = 36.0,
+        dy: float = -30.0,
+        color: Optional[str] = "#344054",
+        width: float = 1.5,
+        opacity: float = 1.0,
+        anchor: str = "start",
+        class_name: Optional[str] = None,
+        style: Optional[dict[str, Any]] = None,
+    ) -> "Figure":
+        """Add a text callout offset from a data coordinate with a pointer arrow."""
+        text = self._required_text(text, "callout text")
+        dx = self._finite_scalar(dx, "callout dx")
+        dy = self._finite_scalar(dy, "callout dy")
+        width = self._positive_scalar(width, "callout width")
+        opacity = self._opacity(opacity, "callout opacity")
+        if anchor not in {"start", "middle", "end"}:
+            raise ValueError("callout anchor must be 'start', 'middle', or 'end'")
+        self.annotations.append(
+            {
+                "kind": "callout",
+                "x": x,
+                "y": y,
+                "text": text,
+                "dx": dx,
+                "dy": dy,
+                "anchor": anchor,
+                "style": {
+                    "color": self._optional_text(color, "callout color"),
+                    "width": width,
+                    "opacity": opacity,
+                    **self._style_mapping(style or {}, "callout style"),
+                },
+                "class_name": self._optional_text(class_name, "callout class_name"),
+            }
+        )
+        return self
+
+    def _append_rule_annotation(
+        self,
+        axis: str,
+        value: Any,
+        *,
+        text: Optional[str],
+        color: Optional[str],
+        width: float,
+        opacity: float,
+        class_name: Optional[str],
+        style: Optional[dict[str, Any]],
+    ) -> "Figure":
+        width = self._positive_scalar(width, f"{axis} rule width")
+        opacity = self._opacity(opacity, f"{axis} rule opacity")
+        self.annotations.append(
+            {
+                "kind": "rule",
+                "axis": axis,
+                "value": value,
+                "text": self._optional_text(text, f"{axis} rule text"),
+                "style": {
+                    "color": self._optional_text(color, f"{axis} rule color"),
+                    "width": width,
+                    "opacity": opacity,
+                    **self._style_mapping(style or {}, f"{axis} rule style"),
+                },
+                "class_name": self._optional_text(class_name, f"{axis} rule class_name"),
+            }
+        )
+        return self
+
+    def _append_band_annotation(
+        self,
+        axis: str,
+        start: Any,
+        end: Any,
+        *,
+        text: Optional[str],
+        color: Optional[str],
+        opacity: float,
+        class_name: Optional[str],
+        style: Optional[dict[str, Any]],
+    ) -> "Figure":
+        opacity = self._opacity(opacity, f"{axis} band opacity")
+        self.annotations.append(
+            {
+                "kind": "band",
+                "axis": axis,
+                "start": start,
+                "end": end,
+                "text": self._optional_text(text, f"{axis} band text"),
+                "style": {
+                    "color": self._optional_text(color, f"{axis} band color"),
+                    "opacity": opacity,
+                    **self._style_mapping(style or {}, f"{axis} band style"),
+                },
+                "class_name": self._optional_text(class_name, f"{axis} band class_name"),
+            }
+        )
+        return self
+
     def _bar_like(
         self,
         kind: str,
@@ -791,6 +1182,12 @@ class Figure:
         return out
 
     @staticmethod
+    def _optional_finite_scalar(value: Any, label: str) -> Optional[float]:
+        if value is None:
+            return None
+        return Figure._finite_scalar(value, label)
+
+    @staticmethod
     def _nonnegative_scalar(value: Any, label: str) -> float:
         out = Figure._finite_scalar(value, label)
         if out < 0:
@@ -819,10 +1216,57 @@ class Figure:
         raise ValueError(f"{label} must be True or False")
 
     @staticmethod
+    def _axis_id(value: Any, label: str) -> str:
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"{label} must be a non-empty string")
+        if value[0] not in {"x", "y"}:
+            raise ValueError(f"{label} must start with 'x' or 'y'")
+        if not all(ch.isalnum() or ch in {"_", "-"} for ch in value):
+            raise ValueError(f"{label} may only contain letters, digits, '_' and '-'")
+        return value
+
+    @staticmethod
+    def _axis_dim(axis_id: str) -> str:
+        return "x" if axis_id.startswith("x") else "y"
+
+    @staticmethod
+    def _link_axes(value: Any) -> list[str]:
+        if not isinstance(value, (tuple, list)):
+            raise ValueError("interaction link_axes must be a tuple/list containing 'x' and/or 'y'")
+        axes = list(value)
+        if not axes or any(axis not in {"x", "y"} for axis in axes):
+            raise ValueError("interaction link_axes must contain only 'x' and/or 'y'")
+        out: list[str] = []
+        for axis in axes:
+            if axis not in out:
+                out.append(axis)
+        return out
+
+    @staticmethod
     def _optional_text(value: Any, label: str) -> Optional[str]:
         if value is None or isinstance(value, str):
             return value
         raise ValueError(f"{label} must be a string or None")
+
+    @staticmethod
+    def _axis_label_position(
+        value: Any, label: str
+    ) -> Optional[str | dict[str, str | int | float]]:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            normalized = value.replace("-", "_")
+            allowed = {"start", "center", "end", "inside_start", "inside_center", "inside_end"}
+            if normalized not in allowed:
+                raise ValueError(f"{label} must be one of {sorted(allowed)} or a CSS style dict")
+            return normalized
+        return Figure._style_mapping(value, label)
+
+    @staticmethod
+    def _required_text(value: Any, label: str) -> str:
+        if isinstance(value, str):
+            return value
+        raise ValueError(f"{label} must be a string")
 
     @staticmethod
     def _pixel_dimension(value: Any, label: str) -> Any:
@@ -1081,37 +1525,64 @@ class Figure:
     def y_range(self) -> tuple[float, float]:
         return self._range("y")
 
-    def _range(self, axis: str) -> tuple[float, float]:
+    def _range(self, axis_id: str) -> tuple[float, float]:
+        opts = self.axis_options.get(axis_id, {})
+        fixed = opts.get("domain")
+        if fixed is not None:
+            lo, hi = fixed
+            return (hi, lo) if opts.get("reverse") else (lo, hi)
+
         # Autorange is O(chunks) via zone maps (§22), not an O(n) rescan.
         lo = np.inf
         hi = -np.inf
         for t in self.traces:
-            for col in self._range_columns(t, axis):
+            for col in self._range_columns(t, axis_id):
                 lo = min(lo, col.min)
                 hi = max(hi, col.max)
         if not np.isfinite(lo) or not np.isfinite(hi):
-            return (0.0, 1.0)
+            lo, hi = 0.0, 1.0
+        scale = self._axis_scale(axis_id)
+        if scale == "log":
+            positives: list[float] = []
+            for t in self.traces:
+                for col in self._range_columns(t, axis_id):
+                    finite = col.values[np.isfinite(col.values) & (col.values > 0)]
+                    if finite.size:
+                        positives.extend([float(np.min(finite)), float(np.max(finite))])
+            if not positives:
+                raise ValueError(f"{axis_id} log axis requires at least one positive value")
+            lo, hi = min(positives), max(positives)
         if lo == hi:
             pad = abs(lo) * 0.05 or 0.5
-            return (lo - pad, hi + pad)
+            lo, hi = lo - pad, hi + pad
+            if scale == "log" and lo <= 0:
+                lo = hi / 10.0
+            return (hi, lo) if opts.get("reverse") else (lo, hi)
         pad = (hi - lo) * 0.03
-        anchor = self._zero_baseline_anchor(axis)
+        anchor = self._zero_baseline_anchor(axis_id)
         out_lo = lo - pad
         out_hi = hi + pad
         if anchor == "lo" and lo == 0.0 and hi > 0.0:
             out_lo = 0.0
         elif anchor == "hi" and hi == 0.0 and lo < 0.0:
             out_hi = 0.0
-        return (out_lo, out_hi)
+        if scale == "log":
+            out_lo = max(out_lo, lo / 10.0, np.nextafter(0.0, 1.0))
+        return (out_hi, out_lo) if opts.get("reverse") else (out_lo, out_hi)
 
-    def _zero_baseline_anchor(self, axis: str) -> Optional[str]:
+    def _zero_baseline_anchor(self, axis_id: str) -> Optional[str]:
         """Pin zero to the plot edge for positive/negative rectangle charts.
 
         Histograms and bars encode their baseline as a rectangle edge. Padding
         away from that edge makes the bars visually float above the axis, so the
         value axis keeps zero flush when every mark extends in one direction.
         """
+        axis = self._axis_dim(axis_id)
         for t in self.traces:
+            if axis == "x" and t.x_axis != axis_id:
+                continue
+            if axis == "y" and t.y_axis != axis_id:
+                continue
             if t.x0 is None or t.x1 is None or t.y0 is None or t.y1 is None:
                 continue
             base = t.x0.values if axis == "x" else t.y0.values
@@ -1129,26 +1600,80 @@ class Figure:
                 return "hi"
         return None
 
-    def _axis_kind(self, axis: str) -> str:
+    def _axis_scale(self, axis_id: str) -> str:
+        return "log" if self.axis_options.get(axis_id, {}).get("type") == "log" else "linear"
+
+    def _axis_kind(self, axis_id: str) -> str:
+        axis = self._axis_dim(axis_id)
+        forced = self.axis_options.get(axis_id, {}).get("type")
+        if forced == "time":
+            return "time"
         if axis in self._axis_categories:
             return "category"
         for t in self.traces:
+            if axis == "x" and t.x_axis != axis_id:
+                continue
+            if axis == "y" and t.y_axis != axis_id:
+                continue
             col = t.x if axis == "x" else t.y
             if col.kind == "time_ms":
                 return "time"
         return "linear"
 
-    def _axis_spec(self, axis: str, range_: tuple[float, float]) -> dict[str, Any]:
-        label = self.x_label if axis == "x" else self.y_label
+    def _axis_spec(self, axis_id: str, range_: tuple[float, float]) -> dict[str, Any]:
+        axis = self._axis_dim(axis_id)
+        opts = self.axis_options.get(axis_id, {})
+        if axis_id == "x":
+            label = self.x_label
+        elif axis_id == "y":
+            label = self.y_label
+        else:
+            label = opts.get("label")
         label = self._optional_text(label, f"{axis}_label")
-        kind = self._axis_kind(axis)
-        spec: dict[str, Any] = {"kind": kind, "label": label, "range": list(range_)}
+        label_position = self._axis_label_position(
+            opts.get("label_position"), f"{axis_id} axis label_position"
+        )
+        label_offset = self._optional_finite_scalar(
+            opts.get("label_offset"), f"{axis_id} axis label_offset"
+        )
+        label_angle = self._optional_finite_scalar(
+            opts.get("label_angle"), f"{axis_id} axis label_angle"
+        )
+        kind = self._axis_kind(axis_id)
+        spec: dict[str, Any] = {
+            "id": axis_id,
+            "kind": kind,
+            "label": label,
+            "range": list(range_),
+            "side": opts.get("side", "bottom" if axis == "x" else "left"),
+        }
+        if label_position is not None:
+            spec["label_position"] = label_position
+        if label_offset is not None:
+            spec["label_offset"] = label_offset
+        if label_angle is not None:
+            spec["label_angle"] = label_angle
+        if self._axis_scale(axis_id) == "log":
+            spec["scale"] = "log"
+        if opts.get("reverse"):
+            spec["reverse"] = True
+        if opts.get("domain") is not None:
+            spec["domain"] = list(opts["domain"])
+        if opts.get("format") is not None:
+            spec["format"] = opts["format"]
+        style = self._optional_state_style(opts.get("style"), f"{axis_id} axis style")
+        if style:
+            spec["style"] = style
         if kind == "category":
             spec["categories"] = list(self._axis_categories.get(axis, []))
         return spec
 
-    @staticmethod
-    def _range_columns(t: Trace, axis: str) -> list[Column]:
+    def _range_columns(self, t: Trace, axis_id: str) -> list[Column]:
+        axis = self._axis_dim(axis_id)
+        if axis == "x" and t.x_axis != axis_id:
+            return []
+        if axis == "y" and t.y_axis != axis_id:
+            return []
         if t.kind == "area" and t.base is not None:
             return [t.x] if axis == "x" else [t.y, t.base]
         if t.x0 is not None and t.x1 is not None and t.y0 is not None and t.y1 is not None:
@@ -1167,17 +1692,25 @@ class Figure:
         reduction is recorded in the spec — no silent quality changes (§28).
         """
         pw = _PayloadWriter()
-        xr = self.x_range()
-        yr = self.y_range()
-        spec_traces = [self._emit_trace(t, pw, xr, yr, px_width) for t in self.traces]
+        spec_traces = []
+        for t in self.traces:
+            xr = self._range(t.x_axis)
+            yr = self._range(t.y_axis)
+            spec_traces.append(
+                self._emit_trace(t, pw, (min(xr), max(xr)), (min(yr), max(yr)), px_width)
+            )
+        axis_specs = {
+            axis_id: self._axis_spec(axis_id, self._range(axis_id)) for axis_id in self.axis_options
+        }
 
         spec = {
             "protocol": PROTOCOL_VERSION,
             "width": self.width,
             "height": self.height,
             "title": self._optional_text(self.title, "title"),
-            "x_axis": self._axis_spec("x", xr),
-            "y_axis": self._axis_spec("y", yr),
+            "x_axis": axis_specs["x"],
+            "y_axis": axis_specs["y"],
+            "axes": axis_specs,
             "traces": spec_traces,
             "columns": pw.columns,
             "backend": kernels.BACKEND,
@@ -1185,12 +1718,45 @@ class Figure:
         }
         if self.show_modebar is False:
             spec["show_modebar"] = False
+        if self.show_tooltip is False:
+            spec["show_tooltip"] = False
         dom = self._dom_spec()
         if dom:
             spec["dom"] = dom
         if self.tooltip is not None:
             spec["tooltip"] = self.tooltip
+        mark_style = self._mark_style_spec()
+        if mark_style:
+            spec["mark_style"] = mark_style
+        interaction = self._interaction_spec()
+        if interaction:
+            spec["interaction"] = interaction
+        annotations = self._annotation_specs()
+        if annotations:
+            spec["annotations"] = annotations
         return spec, pw.blob()
+
+    def _interaction_spec(self) -> dict[str, Any]:
+        spec: dict[str, Any] = {}
+        for name in ("hover", "click", "select", "brush", "crosshair", "view_change"):
+            if name in self.interaction:
+                spec[name] = self._bool_param(self.interaction[name], f"interaction {name}")
+        link_group = self.interaction.get("link_group")
+        if link_group is not None:
+            group = self._optional_text(link_group, "interaction link_group")
+            if not group:
+                raise ValueError("interaction link_group must be a non-empty string or None")
+            spec["link_group"] = group
+            spec["link_axes"] = self._link_axes(self.interaction.get("link_axes", ("x", "y")))
+        return spec
+
+    def _mark_style_spec(self) -> dict[str, Any]:
+        spec: dict[str, Any] = {}
+        for state in ("hover", "selected", "unselected"):
+            style = self._optional_state_style(self.mark_style.get(state), f"mark_style {state}")
+            if style:
+                spec[state] = style
+        return spec
 
     def _dom_spec(self) -> dict[str, Any]:
         dom: dict[str, Any] = {}
@@ -1211,6 +1777,133 @@ class Figure:
         if styles:
             dom["styles"] = styles
         return dom
+
+    def _annotation_specs(self) -> list[dict[str, Any]]:
+        specs: list[dict[str, Any]] = []
+        for i, annotation in enumerate(self.annotations):
+            kind = annotation.get("kind")
+            label = f"annotation[{i}]"
+            if kind == "rule":
+                axis = self._annotation_axis(annotation.get("axis"), f"{label}.axis")
+                specs.append(
+                    self._annotation_common(annotation)
+                    | {
+                        "kind": "rule",
+                        "axis": axis,
+                        "value": self._annotation_value(
+                            annotation.get("value"), axis, f"{label}.value"
+                        ),
+                    }
+                )
+            elif kind == "band":
+                axis = self._annotation_axis(annotation.get("axis"), f"{label}.axis")
+                start = self._annotation_value(annotation.get("start"), axis, f"{label}.start")
+                end = self._annotation_value(annotation.get("end"), axis, f"{label}.end")
+                if end <= start:
+                    raise ValueError(f"{label} end must be greater than start")
+                specs.append(
+                    self._annotation_common(annotation)
+                    | {"kind": "band", "axis": axis, "start": start, "end": end}
+                )
+            elif kind == "text":
+                specs.append(
+                    self._annotation_common(annotation)
+                    | {
+                        "kind": "text",
+                        "x": self._annotation_value(annotation.get("x"), "x", f"{label}.x"),
+                        "y": self._annotation_value(annotation.get("y"), "y", f"{label}.y"),
+                        "text": self._required_text(annotation.get("text"), f"{label}.text"),
+                        "dx": self._finite_scalar(annotation.get("dx", 0.0), f"{label}.dx"),
+                        "dy": self._finite_scalar(annotation.get("dy", 0.0), f"{label}.dy"),
+                        "anchor": self._annotation_anchor(
+                            annotation.get("anchor", "start"), f"{label}.anchor"
+                        ),
+                    }
+                )
+            elif kind == "arrow":
+                specs.append(
+                    self._annotation_common(annotation)
+                    | {
+                        "kind": "arrow",
+                        "x0": self._annotation_value(annotation.get("x0"), "x", f"{label}.x0"),
+                        "y0": self._annotation_value(annotation.get("y0"), "y", f"{label}.y0"),
+                        "x1": self._annotation_value(annotation.get("x1"), "x", f"{label}.x1"),
+                        "y1": self._annotation_value(annotation.get("y1"), "y", f"{label}.y1"),
+                    }
+                )
+            elif kind == "callout":
+                specs.append(
+                    self._annotation_common(annotation)
+                    | {
+                        "kind": "callout",
+                        "x": self._annotation_value(annotation.get("x"), "x", f"{label}.x"),
+                        "y": self._annotation_value(annotation.get("y"), "y", f"{label}.y"),
+                        "text": self._required_text(annotation.get("text"), f"{label}.text"),
+                        "dx": self._finite_scalar(annotation.get("dx", 0.0), f"{label}.dx"),
+                        "dy": self._finite_scalar(annotation.get("dy", 0.0), f"{label}.dy"),
+                        "anchor": self._annotation_anchor(
+                            annotation.get("anchor", "start"), f"{label}.anchor"
+                        ),
+                    }
+                )
+            else:
+                raise ValueError(
+                    f"{label} kind must be 'rule', 'band', 'text', 'arrow', or 'callout'"
+                )
+        return specs
+
+    def _annotation_common(self, annotation: dict[str, Any]) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        text = self._optional_text(annotation.get("text"), "annotation text")
+        if text is not None:
+            out["text"] = text
+        class_name = self._optional_text(annotation.get("class_name"), "annotation class_name")
+        if class_name is not None:
+            out["class_name"] = class_name
+        raw_style = annotation.get("style", {})
+        if not isinstance(raw_style, dict):
+            raise ValueError("annotation style must be a dict[str, str | int | float]")
+        raw_style = {key: value for key, value in raw_style.items() if value is not None}
+        style = self._style_mapping(raw_style, "annotation style")
+        if style:
+            out["style"] = style
+        return out
+
+    @staticmethod
+    def _annotation_axis(axis: Any, label: str) -> str:
+        if axis not in {"x", "y"}:
+            raise ValueError(f"{label} must be 'x' or 'y'")
+        return axis
+
+    @staticmethod
+    def _annotation_anchor(anchor: Any, label: str) -> str:
+        if anchor not in {"start", "middle", "end"}:
+            raise ValueError(f"{label} must be 'start', 'middle', or 'end'")
+        return anchor
+
+    def _annotation_value(self, value: Any, axis: str, label: str) -> float:
+        categories = self._axis_categories.get(axis)
+        if isinstance(value, str) and categories is not None:
+            normalized = channels.category_label(value)
+            try:
+                return float(categories.index(normalized))
+            except ValueError as e:
+                raise ValueError(
+                    f"{label} category {value!r} is not present on the {axis}-axis"
+                ) from e
+        if isinstance(value, str):
+            raise ValueError(
+                f"{label} must be a finite coordinate; string coordinates require "
+                f"a categorical {axis}-axis"
+            )
+        try:
+            arr, _kind, _copies = columns._canonicalize([value])
+        except ValueError as e:
+            raise ValueError(f"{label} must be a finite coordinate") from e
+        out = float(arr[0])
+        if not np.isfinite(out):
+            raise ValueError(f"{label} must be finite")
+        return out
 
     # -- per-kind payload emitters (extend here for new chart types) ---------
 
@@ -1236,6 +1929,8 @@ class Figure:
             "n_marks": int(len(xv)),
             "x": pw.ship(xv, t.x),
             "y": pw.ship(yv, t.y),
+            "x_axis": t.x_axis,
+            "y_axis": t.y_axis,
         }
 
     @staticmethod
@@ -1250,6 +1945,24 @@ class Figure:
         if not (t.x.zone.null_count or t.y.zone.null_count):
             return None
         return np.flatnonzero(np.isfinite(xv) & np.isfinite(yv))
+
+    def _log_visible_mask(
+        self,
+        t: Trace,
+        xv: np.ndarray,
+        yv: np.ndarray,
+        base: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        mask = np.isfinite(xv) & np.isfinite(yv)
+        if self._axis_scale(t.x_axis) == "log":
+            mask &= xv > 0
+        if self._axis_scale(t.y_axis) == "log":
+            mask &= yv > 0
+            if base is not None:
+                mask &= np.isfinite(base) & (base > 0)
+        elif base is not None:
+            mask &= np.isfinite(base)
+        return mask
 
     def _emit_line(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
@@ -1269,7 +1982,7 @@ class Figure:
             if sel is not None:
                 xv, yv = xv[sel], yv[sel]
         if len(xv):
-            finite = np.isfinite(xv) & np.isfinite(yv)
+            finite = self._log_visible_mask(t, xv, yv)
             if not bool(np.all(finite)):
                 xv, yv = xv[finite], yv[finite]
         style = dict(t.style)
@@ -1291,7 +2004,7 @@ class Figure:
                 xv, yv, bv = xv[idx], yv[idx], bv[idx]
             else:
                 xv, yv, bv = xv[:0], yv[:0], bv[:0]
-        sel = np.flatnonzero(np.isfinite(xv) & np.isfinite(yv) & np.isfinite(bv))
+        sel = np.flatnonzero(self._log_visible_mask(t, xv, yv, bv))
         if len(sel) != len(xv):
             xv, yv, bv = xv[sel], yv[sel], bv[sel]
         style = dict(t.style)
@@ -1312,6 +2025,11 @@ class Figure:
         sel = self._finite_sel(t, xv, yv)
         if sel is not None:
             xv, yv = xv[sel], yv[sel]
+        if len(xv):
+            visible = self._log_visible_mask(t, xv, yv)
+            if not bool(np.all(visible)):
+                sel = np.flatnonzero(visible) if sel is None else sel[visible]
+                xv, yv = xv[visible], yv[visible]
         entry = self._base_entry(t, pw, xv, yv, "direct", dict(t.style))
         entry["color"], entry["size"] = self._ship_channels(t, sel, pw.ship_scalar)
         t.shipped_sel = sel  # pick/selection translation (§17)
@@ -1350,6 +2068,8 @@ class Figure:
             "tier": "direct",
             "n_points": t.n_points,
             "n_marks": int(rows * cols),
+            "x_axis": t.x_axis,
+            "y_axis": t.y_axis,
             "heatmap": {
                 "buf": pw.ship_scalar(norm),
                 "w": int(cols),
@@ -1383,6 +2103,8 @@ class Figure:
             "tier": "direct",
             "n_points": t.n_points,
             "n_marks": int(len(x0v)),
+            "x_axis": t.x_axis,
+            "y_axis": t.y_axis,
             "x0": pw.ship(x0v, t.x0),
             "x1": pw.ship(x1v, t.x1),
             "y0": pw.ship(y0v, t.y0),
@@ -1456,6 +2178,8 @@ class Figure:
             "tier": "direct",
             "n_points": t.n_points,
             "n_marks": int(len(pos)),
+            "x_axis": t.x_axis,
+            "y_axis": t.y_axis,
             "bar": bar_spec,
         }
         if t.color_ch is not None:
@@ -1516,6 +2240,8 @@ class Figure:
             "tier": "density",
             "n_points": t.n_points,
             "n_marks": int(w * h),
+            "x_axis": t.x_axis,
+            "y_axis": t.y_axis,
             "density": {
                 "buf": ship_scalar(grid.reshape(-1)),
                 "w": w,
@@ -1664,3 +2390,11 @@ class Figure:
                 raise ValueError(f"{label} numeric values must be finite")
             out[key] = item.item() if isinstance(item, (np.integer, np.floating)) else item
         return out
+
+    @staticmethod
+    def _optional_state_style(
+        value: Optional[dict[str, Any]], label: str
+    ) -> dict[str, str | int | float]:
+        if value is None:
+            return {}
+        return Figure._style_mapping(value, label)

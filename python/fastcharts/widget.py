@@ -54,12 +54,16 @@ class FigureWidget(anywidget.AnyWidget):
         figure: "Figure",
         *,
         on_hover: Any = None,
+        on_click: Any = None,
         on_select: Any = None,
+        on_view_change: Any = None,
         **kwargs: Any,
     ) -> None:
         self._figure = figure
         self._on_hover = on_hover
+        self._on_click = on_click
         self._on_select = on_select
+        self._on_view_change = on_view_change
         spec, blob = figure.build_payload()
         super().__init__(spec=spec, buffers=blob, **kwargs)
         self.on_msg(self._on_custom_msg)
@@ -131,6 +135,32 @@ class FigureWidget(anywidget.AnyWidget):
             self.send({"type": "pick_result", "seq": content.get("seq"), "row": row})
             if row is not None and self._on_hover is not None:
                 self._on_hover(row)
+        elif kind == "click":
+            dseq = content.get("drill_seq")
+            row = None
+            try:
+                trace_id = _integer_id(content.get("trace", -1), "trace")
+                index = _integer_id(content.get("index", -1), "index")
+                drill_seq = None if dseq is None else _integer_id(dseq, "drill_seq")
+                row = self._figure.pick(trace_id, index, drill_seq)
+            except (TypeError, ValueError):
+                return
+            if row is not None and self._on_click is not None:
+                self._on_click(row)
+        elif kind == "view_change":
+            if self._on_view_change is None:
+                return
+            try:
+                view = {
+                    "x0": float(content["x0"]),
+                    "x1": float(content["x1"]),
+                    "y0": float(content["y0"]),
+                    "y1": float(content["y1"]),
+                    "source": str(content.get("source", "view")),
+                }
+            except (KeyError, TypeError, ValueError):
+                return
+            self._on_view_change(view)
         elif kind == "select":
             # Box-select → range predicate (§34 Tier A). Ship a selection mask
             # per trace so the client dims unselected marks; call on_select with

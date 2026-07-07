@@ -2,7 +2,7 @@
 <html>
 <head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
-<title>Horizontal category bars</title>
+<title>Custom Reflex legend + tooltip</title>
 <style>
 html,body{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;background:#fff;}
 #chart{width:100%;}
@@ -4051,10 +4051,59 @@ window.fastcharts = { render, renderStandalone, ChartView, MARK_KINDS, markOf };
 })();
 </script>
 <script>
-  const spec = {"protocol":2,"width":"100%","height":430,"title":"Horizontal category bars","x_axis":{"id":"x","kind":"linear","label":"revenue","range":[0.0,146.26],"side":"bottom"},"y_axis":{"id":"y","kind":"category","label":"region","range":[-0.544,4.5440000000000005],"side":"left","categories":["NA","EU","APAC","LATAM","MEA"]},"axes":{"x":{"id":"x","kind":"linear","label":"revenue","range":[0.0,146.26],"side":"bottom"},"y":{"id":"y","kind":"category","label":"region","range":[-0.544,4.5440000000000005],"side":"left","categories":["NA","EU","APAC","LATAM","MEA"]}},"traces":[{"id":0,"kind":"bar","name":"revenue","style":{"color":"#9333ea","opacity":0.86,"role":"bar","orientation":"horizontal"},"tier":"direct","n_points":5,"n_marks":5,"x_axis":"x","y_axis":"y","bar":{"orientation":"horizontal","value_axis":"x","pos":0,"value1":1,"width":0.8,"value0_const":0.0}}],"columns":[{"byte_offset":0,"len":5,"offset":2.0,"scale":1.0,"kind":"float"},{"byte_offset":20,"len":5,"offset":97.0,"scale":1.0,"kind":"float"}],"backend":"native","show_legend":true};
-  const b64 = "AAAAwAAAgL8AAAAAAACAPwAAAEAAADRCAAD4QQAAmEEAALjBAAA0wg==";
+  const spec = {"protocol":2,"width":"100%","height":430,"title":"Custom Reflex legend + tooltip","x_axis":{"id":"x","kind":"linear","label":"activation","range":[0.4768,0.9432],"side":"bottom"},"y_axis":{"id":"y","kind":"linear","label":"retention","range":[0.448,0.872],"side":"left"},"axes":{"x":{"id":"x","kind":"linear","label":"activation","range":[0.4768,0.9432],"side":"bottom"},"y":{"id":"y","kind":"linear","label":"retention","range":[0.448,0.872],"side":"left"}},"traces":[{"id":0,"kind":"scatter","name":"accounts","style":{"opacity":0.88},"tier":"direct","n_points":8,"n_marks":8,"x":0,"y":1,"x_axis":"x","y_axis":"y","color":{"mode":"categorical","categories":["Enterprise","Growth","Self serve"],"buf":2,"palette":["#4c78a8","#f58518","#54a24b"]},"size":{"mode":"constant","size":18.0}}],"columns":[{"byte_offset":0,"len":8,"offset":0.71,"scale":1.0,"kind":"float"},{"byte_offset":32,"len":8,"offset":0.66,"scale":1.0,"kind":"float"},{"byte_offset":64,"len":8}],"backend":"native","show_legend":false,"show_tooltip":false,"tooltip":{"fields":["activation","retention","segment"],"title":"{segment}","format":{"activation":".2f","retention":".2f"},"aliases":{"activation":"x","retention":"y","segment":"color_category"},"sources":{"activation":[{"trace":0,"channel":"x"}],"retention":[{"trace":0,"channel":"y"}],"segment":[{"trace":0,"channel":"color_category"}]}}};
+  const b64 = "CtcjPM3MzD24HgW+rkdhPs3MTL17FC4+rkdhvo/CdT3NzEy9CtejPSlcD77NzEw+7FG4vZqZGT7NzEy+j8L1PAAAAAAAAAAAAACAPwAAAAAAAABAAACAPwAAAEAAAIA/";
   const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-  fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);
+  window.__fastchartsCustomChromeView = fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);
 </script>
+
+<script>
+(() => {
+  const attach = () => {
+    const view = window.__fastchartsCustomChromeView;
+    if (!view || view.__customChromeBridge || !view.canvas) return false;
+    view.__customChromeBridge = true;
+    const send = (type, row, clientX, clientY) => {
+      const rect = view.canvas.getBoundingClientRect();
+      const x = Number(clientX) - rect.left;
+      const y = Number(clientY) - rect.top;
+      if (type === "hover" && (!Number.isFinite(x) || !Number.isFinite(y))) return;
+      window.parent.postMessage({
+        source: "fastcharts-custom-chrome",
+        chart: "custom-chrome",
+        type,
+        row,
+        x,
+        y,
+      }, window.location.origin);
+    };
+    view.canvas.addEventListener("pointermove", (event) => {
+      if (view._transitionActive && view._transitionActive()) {
+        send("leave", null, event.clientX, event.clientY);
+        return;
+      }
+      const rect = view.canvas.getBoundingClientRect();
+      const cssX = event.clientX - rect.left;
+      const cssY = event.clientY - rect.top;
+      const hit = (
+        (view._pickAt && view._pickAt(cssX, cssY)) ||
+        (view._hoverAt && view._hoverAt(cssX, cssY))
+      );
+      if (!hit || !view._localRow) {
+        send("leave", null, event.clientX, event.clientY);
+        return;
+      }
+      send("hover", view._localRow(hit), event.clientX, event.clientY);
+    });
+    view.canvas.addEventListener("pointerleave", () => send("leave", null, 0, 0));
+    return true;
+  };
+  if (attach()) return;
+  requestAnimationFrame(attach);
+  window.setTimeout(attach, 80);
+  window.setTimeout(attach, 300);
+})();
+</script>
+
 </body>
 </html>

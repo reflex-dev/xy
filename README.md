@@ -261,6 +261,32 @@ fc.scatter_chart(
 )
 ```
 
+The neutral `fc.chart(...)` container overlays mixed marks and annotations on
+one panel:
+
+```python
+import fastcharts as fc
+
+data = {
+    "month": ["Jan", "Feb", "Mar", "Apr"],
+    "actual": [12, 18, 16, 22],
+    "target": [14, 15, 17, 20],
+}
+
+chart = fc.chart(
+    fc.bar(x="month", y="actual", data=data, name="actual", color="#f59e0b"),
+    fc.line(x="month", y="target", data=data, name="target", color="#dc2626"),
+    fc.vline("Mar", text="release", color="#7c3aed"),
+    fc.callout("Apr", 22, "best month", dx=-70, dy=-26),
+    fc.tooltip(fields=["month", "actual", "target"], title="{month}"),
+    fc.x_axis(label="month"),
+    fc.y_axis(label="pipeline"),
+    fc.legend(),
+    title="Layered pipeline",
+)
+chart
+```
+
 Both APIs render in Jupyter, VS Code, Colab, Marimo, and standalone HTML through
 the same engine.
 

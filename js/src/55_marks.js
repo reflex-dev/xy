@@ -33,16 +33,18 @@
 //                  constant color lives in the spec.
 const RECT_MARK = {
   build: (view, g, t, buffer) => view._buildRectMark(g, t, buffer),
-  draw: (view, g, x0, x1, y0, y1) => {
+  draw: (view, g) => {
+    const [x0, x1] = view._axisRange(g.xAxis);
+    const [y0, y1] = view._axisRange(g.yAxis);
     const edgePad = g.trace.kind === "histogram"
       ? [0, 0, view._edgePadForValue(0, y0, y1, view.canvas.height), 0]
       : [0, 0, 0, 0];
     view._drawRects(
       g,
-      view._map(g.x0Meta, x0, x1),
-      view._map(g.x1Meta, x0, x1),
-      view._map(g.y0Meta, y0, y1),
-      view._map(g.y1Meta, y0, y1),
+      view._map(g.x0Meta, x0, x1, g.xAxis),
+      view._map(g.x1Meta, x0, x1, g.xAxis),
+      view._map(g.y0Meta, y0, y1, g.yAxis),
+      view._map(g.y1Meta, y0, y1, g.yAxis),
       edgePad
     );
   },
@@ -53,25 +55,29 @@ const RECT_MARK = {
 
 const BAR_MARK = {
   build: (view, g, t, buffer) => view._buildBarMark(g, t, buffer),
-  draw: (view, g, x0, x1, y0, y1) => {
+  draw: (view, g) => {
     if (!g.trace.bar) {
-      RECT_MARK.draw(view, g, x0, x1, y0, y1);
+      RECT_MARK.draw(view, g);
       return;
     }
     const horizontal = g.orientation === 1;
-    const pmap = horizontal ? view._map(g.posMeta, y0, y1) : view._map(g.posMeta, x0, x1);
-    const v1map = horizontal ? view._map(g.value1Meta, x0, x1) : view._map(g.value1Meta, y0, y1);
+    const pAxis = horizontal ? g.yAxis : g.xAxis;
+    const vAxis = horizontal ? g.xAxis : g.yAxis;
+    const [p0, p1] = view._axisRange(pAxis);
+    const [v0, v1] = view._axisRange(vAxis);
+    const pmap = view._map(g.posMeta, p0, p1, pAxis);
+    const v1map = view._map(g.value1Meta, v0, v1, vAxis);
     const v0map = g.value0Mode === 1
-      ? (horizontal ? view._map(g.value0Meta, x0, x1) : view._map(g.value0Meta, y0, y1))
+      ? view._map(g.value0Meta, v0, v1, vAxis)
       : null;
     const v0Const = g.value0Mode === 0
-      ? view._mapConst(g.value0Const, horizontal ? x0 : y0, horizontal ? x1 : y1)
+      ? view._mapConst(g.value0Const, v0, v1, vAxis)
       : null;
     const v0EdgePad = g.value0Mode === 0
       ? view._edgePadForValue(
         g.value0Const,
-        horizontal ? x0 : y0,
-        horizontal ? x1 : y1,
+        v0,
+        v1,
         horizontal ? view.canvas.width : view.canvas.height
       )
       : 0;
@@ -92,8 +98,11 @@ const MARK_KINDS = {
   },
   scatter: {
     build: (view, g, t, buffer) => view._buildScatterMark(g, t, buffer),
-    draw: (view, g, x0, x1, y0, y1) =>
-      view._drawPoints(g, view._map(g.xMeta, x0, x1), view._map(g.yMeta, y0, y1)),
+    draw: (view, g) => {
+      const [x0, x1] = view._axisRange(g.xAxis);
+      const [y0, y1] = view._axisRange(g.yAxis);
+      view._drawPoints(g, view._map(g.xMeta, x0, x1, g.xAxis), view._map(g.yMeta, y0, y1, g.yAxis));
+    },
     pointPick: true,
     retainCpu: true,
     refreshColor: (view, g) => {
@@ -104,18 +113,23 @@ const MARK_KINDS = {
   },
   line: {
     build: (view, g, t, buffer) => view._buildLineMark(g, t, buffer),
-    draw: (view, g, x0, x1, y0, y1) =>
-      view._drawLine(g, view._map(g.xMeta, x0, x1), view._map(g.yMeta, y0, y1)),
+    draw: (view, g) => {
+      const [x0, x1] = view._axisRange(g.xAxis);
+      const [y0, y1] = view._axisRange(g.yAxis);
+      view._drawLine(g, view._map(g.xMeta, x0, x1, g.xAxis), view._map(g.yMeta, y0, y1, g.yAxis));
+    },
     refreshColor: (view, g) => {
       g.color = parseColor(view.root, g.trace.style.color, g.color);
     },
   },
   area: {
     build: (view, g, t, buffer) => view._buildAreaMark(g, t, buffer),
-    draw: (view, g, x0, x1, y0, y1) => {
-      const xm = view._map(g.xMeta, x0, x1);
-      const ym = view._map(g.yMeta, y0, y1);
-      view._drawArea(g, xm, ym, view._map(g.baseMeta, y0, y1));
+    draw: (view, g) => {
+      const [x0, x1] = view._axisRange(g.xAxis);
+      const [y0, y1] = view._axisRange(g.yAxis);
+      const xm = view._map(g.xMeta, x0, x1, g.xAxis);
+      const ym = view._map(g.yMeta, y0, y1, g.yAxis);
+      view._drawArea(g, xm, ym, view._map(g.baseMeta, y0, y1, g.yAxis));
       if ((g.trace.style.line_width ?? 0) > 0) {
         view._drawLine(
           g,

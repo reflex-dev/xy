@@ -8,6 +8,10 @@ ROOT = Path(__file__).resolve().parents[1]
 CLIENT_SOURCE = ROOT / "js" / "src" / "50_chartview.js"
 APP_SOURCE = ROOT / "reflex_fastcharts_app" / "reflex_fastcharts_app" / "reflex_fastcharts_app.py"
 LIVE_SOURCE = ROOT / "reflex_fastcharts_app" / "reflex_fastcharts_app" / "live_drilldown.py"
+CUSTOM_CHROME_ASSET = ROOT / "reflex_fastcharts_app" / "assets" / "charts" / "custom_chrome.html"
+ANNOTATED_HEATMAP_ASSET = (
+    ROOT / "reflex_fastcharts_app" / "assets" / "charts" / "annotated_heatmap.html"
+)
 BUSINESS_ASSET = ROOT / "reflex_fastcharts_app" / "assets" / "charts" / "business_overview.html"
 RETENTION_ASSET = ROOT / "reflex_fastcharts_app" / "assets" / "charts" / "retention_cohort.html"
 LIVE_ASSETS = [
@@ -31,8 +35,21 @@ def _dashboard_constants() -> dict[str, Any]:
 
 
 def _resolve_dashboard_value(node: ast.AST, env: dict[str, Any]) -> Any:
+    if isinstance(node, ast.Constant):
+        return node.value
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "strip"
+        and not node.args
+        and not node.keywords
+    ):
+        return _resolve_dashboard_value(node.func.value, env).strip()
     if isinstance(node, ast.Dict):
-        return ast.literal_eval(node)
+        return {
+            _resolve_dashboard_value(key, env): _resolve_dashboard_value(value, env)
+            for key, value in zip(node.keys, node.values, strict=True)
+        }
     if isinstance(node, ast.List):
         values: list[Any] = []
         for item in node.elts:
@@ -87,7 +104,13 @@ def test_reflex_dashboard_has_selector_and_small_business_chart() -> None:
     required = [
         "def chart_selector()",
         "def chart_section(",
+        "def chart_code_drawer(",
+        "def custom_chrome_panel(",
+        "def custom_chrome_bridge(",
         "CHART_NAV",
+        "CHART_CODE_SNIPPETS",
+        "CORE_API_STATUS",
+        "CUSTOM_CHROME_CHART",
         "BUSINESS_CHART",
         "RETENTION_CHART",
         "BUSINESS_CHARTS",
@@ -96,29 +119,82 @@ def test_reflex_dashboard_has_selector_and_small_business_chart() -> None:
         'chart_section("Business charts", BUSINESS_CHARTS)',
         'chart_section("Core 2D gallery", CORE_CHARTS)',
         'chart_section("Large-data demos", LARGE_DATA_CHARTS',
+        "def core_api_status()",
+        "Core API status",
+        "Composable layers",
+        "Annotations",
+        "Axes and scales",
+        "Interaction",
+        "core-api-status",
+        "Custom Reflex Chrome",
         "Business Overview",
         "Retention Cohort",
+        "/charts/custom_chrome.html",
         "/charts/business_overview.html",
         "/charts/retention_cohort.html",
+        "custom-chrome",
+        "custom-chrome-legend",
+        "custom-chrome-tooltip",
+        "fastcharts-custom-chrome",
+        "ANNOTATED_HEATMAP_MARKERS",
+        "annotated_heatmap_panel",
+        "annotated_heatmap_legend",
+        "annotated_heatmap_tooltip",
+        "annotated_heatmap_bridge",
+        "annotated-heatmap-legend",
+        "annotated-heatmap-tooltip",
+        "fastcharts-annotated-heatmap",
+        "chart.reflex_components()",
+        "rx.el.details",
+        "rx.el.summary",
+        "chart_code_drawer(chart)",
+        "is_live_drilldown",
+        'loading="eager" if is_live_drilldown else "lazy"',
         "business-overview",
         "retention-cohort",
         "href=f\"#{chart['id']}\"",
+        'loading="lazy"',
     ]
     for marker in required:
         assert marker in source
+    assert 'loading="eager" if fluid else "lazy"' not in source
 
 
 def test_reflex_dashboard_groups_small_and_large_examples() -> None:
     constants = _dashboard_constants()
 
     assert [chart["id"] for chart in constants["BUSINESS_CHARTS"]] == [
+        "custom-chrome",
         "business-overview",
         "retention-cohort",
     ]
     assert "live-drilldown" not in {chart["id"] for chart in constants["BUSINESS_CHARTS"]}
     assert "live-drilldown" in {chart["id"] for chart in constants["LARGE_DATA_CHARTS"]}
-    assert constants["CHART_NAV"][:2] == constants["BUSINESS_CHARTS"]
-    assert constants["CHART_NAV"][2 : 2 + len(constants["CORE_CHARTS"])] == constants["CORE_CHARTS"]
+    business_count = len(constants["BUSINESS_CHARTS"])
+    assert constants["CHART_NAV"][:business_count] == constants["BUSINESS_CHARTS"]
+    assert (
+        constants["CHART_NAV"][business_count : business_count + len(constants["CORE_CHARTS"])]
+        == constants["CORE_CHARTS"]
+    )
+
+
+def test_reflex_dashboard_has_code_snippets_for_every_chart() -> None:
+    constants = _dashboard_constants()
+    chart_ids = {chart["id"] for chart in constants["CHART_NAV"]}
+    snippets = constants["CHART_CODE_SNIPPETS"]
+
+    assert set(snippets) == chart_ids
+    for chart_id, snippet in snippets.items():
+        assert isinstance(snippet, str)
+        assert snippet.strip()
+        assert (
+            "Figure" in snippet
+            or "fc.chart" in snippet
+            or "Plotly" in snippet
+            or "live_drilldown" in snippet
+        )
+        if chart_id != "plotly-scatter":
+            assert "fastcharts" in snippet or "Figure" in snippet or "fc." in snippet
 
 
 def test_reflex_dashboard_chart_nav_is_unique_and_asset_backed() -> None:
@@ -168,6 +244,31 @@ def test_reflex_dashboard_nav_assets_are_renderable_html() -> None:
             assert "window.fastchartsLiveDrilldown" in html
         else:
             assert "fastcharts.renderStandalone" in html
+
+
+def test_custom_chrome_chart_asset_disables_builtin_chrome() -> None:
+    html = CUSTOM_CHROME_ASSET.read_text(encoding="utf-8")
+    assert "fastcharts.renderStandalone" in html
+    assert "Custom Reflex legend + tooltip" in html
+    assert "fastcharts-custom-chrome" in html
+    assert "window.__fastchartsCustomChromeView" in html
+    assert 'addEventListener("pointermove"' in html
+    assert "_localRow(hit)" in html
+    assert '"show_legend":false' in html
+    assert '"show_tooltip":false' in html
+
+
+def test_annotated_heatmap_uses_reflex_custom_chrome_bridge() -> None:
+    html = ANNOTATED_HEATMAP_ASSET.read_text(encoding="utf-8")
+    assert "fastcharts.renderStandalone" in html
+    assert "Annotated risk heatmap" in html
+    assert "fastcharts-annotated-heatmap" in html
+    assert "window.__fastchartsAnnotatedHeatmapView" in html
+    assert 'addEventListener("pointermove"' in html
+    assert "_localRow(hit)" in html
+    assert '"show_legend":false' in html
+    assert '"show_tooltip":false' in html
+    assert '"risk_score"' in html
 
 
 def test_small_business_chart_asset_exists() -> None:

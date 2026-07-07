@@ -194,6 +194,7 @@ def test_numeric_object_size_payload_is_continuous():
     tr = spec["traces"][0]
     assert tr["size"]["mode"] == "continuous"
     assert tr["size"]["range_px"] == [2.0, 20.0]
+    assert tr["size"]["domain"] == [1.0, 3.0]
     sbuf = _col(spec, blob, tr["size"]["buf"])
     np.testing.assert_allclose(sbuf, [0.0, 0.0, 1.0, 0.0])
 
@@ -207,6 +208,7 @@ def test_variable_size_shipped():
     tr = spec["traces"][0]
     assert tr["size"]["mode"] == "continuous"
     assert tr["size"]["range_px"] == [2.0, 20.0]
+    assert tr["size"]["domain"] == [float(sz.min()), float(sz.max())]
     sbuf = _col(spec, blob, tr["size"]["buf"])
     assert sbuf.min() >= 0.0 and sbuf.max() <= 1.0
 

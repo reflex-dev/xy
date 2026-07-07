@@ -69,7 +69,11 @@ class SizeChannel:
     def spec(self) -> dict[str, Any]:
         if self.mode == "constant":
             return {"mode": "constant", "size": self.constant}
-        return {"mode": "continuous", "range_px": list(self.range_px)}
+        return {
+            "mode": "continuous",
+            "range_px": list(self.range_px),
+            "domain": list(self.domain) if self.domain else None,
+        }
 
 
 def _is_categorical(arr: np.ndarray) -> bool:
