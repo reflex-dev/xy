@@ -188,15 +188,20 @@ function logTicks(lo, hi, target = 6) {
   const span = Math.max(1, e1 - e0);
   const mults = span <= Math.max(2, target) ? [1, 2, 5] : [1];
   const out = [];
+  const labels = [];
+  const labelEvery = Math.max(1, Math.ceil((e1 - e0 + 1) / Math.max(1, target)));
   for (let e = e0; e <= e1 && out.length < 200; e++) {
     const base = Math.pow(10, e);
     for (const m of mults) {
       const v = m * base;
-      if (v >= a * (1 - 1e-12) && v <= b * (1 + 1e-12)) out.push(v);
+      if (v >= a * (1 - 1e-12) && v <= b * (1 + 1e-12)) {
+        out.push(v);
+        if (m === 1 && (e - e0) % labelEvery === 0) labels.push(v);
+      }
       if (out.length >= 200) break;
     }
   }
-  return { ticks: out, step: 1, log: true };
+  return { ticks: out, labels: labels.length ? labels : out, step: 1, log: true };
 }
 
 function categoryTicks(lo, hi, categories, target = 6) {
@@ -330,7 +335,11 @@ function fmtTimeSpec(ms, format) {
 function fmtAxis(axis, v, tickStep) {
   if (axis && axis.kind === "category") return fmtCategory(v, axis.categories || []);
   if (axis && axis.kind === "time") return fmtTimeSpec(v, axis.format) || fmtTime(v, tickStep);
-  return fmtNumberSpec(v, axis && axis.format) || fmtLinear(v, tickStep);
+  const formatted = fmtNumberSpec(v, axis && axis.format);
+  if (axis && axis.scale === "log" && Number(v) > 0 && Number(v) < 1 && formatted === "0") {
+    return fmtLinear(v, tickStep);
+  }
+  return formatted || fmtLinear(v, tickStep);
 }
 
 function fmtValue(v, kind) {
@@ -424,6 +433,7 @@ uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange;
 uniform int u_colorMode; uniform float u_dpr; uniform int u_selActive;
+uniform float u_selectedOpacity; uniform float u_unselectedOpacity;
 out float v_lutCoord; out float v_dim; out float v_dval;
 ${AXIS_GLSL}
 void main() {
@@ -436,7 +446,7 @@ void main() {
   // points wear the density colormap so the texture->points swap is seamless.
   v_dval = a_dval;
   // Unselected marks dim when a selection is active (§34 selected/unselected styling).
-  v_dim = (u_selActive == 1 && a_sel < 0.5) ? 0.12 : 1.0;
+  v_dim = u_selActive == 1 ? mix(u_unselectedOpacity, u_selectedOpacity, step(0.5, a_sel)) : 1.0;
 }`;
 
 const POINT_FS = `#version 300 es
@@ -1286,6 +1296,8 @@ class ChartView {
       throw new Error("protocol mismatch");
     }
     this.spec = spec;
+    this.interaction = spec.interaction || {};
+    this.markStyle = spec.mark_style || {};
     this.axes = this._normalizeAxes(spec);
     this.comm = comm;
     this.seq = 0;
@@ -1293,12 +1305,17 @@ class ChartView {
     this._viewRequestBurstStart = null;
     this._viewAnim = null;
     this._animRaf = null;
+    this._wheelZoomRaf = null;
+    this._pendingWheelZoom = null;
     this._lastLabelDraw = null;
     this._lutCache = new Map();
     this._listeners = [];
     this._glPrograms = [];
     this._destroyed = false;
     this._hoverId = -1;
+    this._hoverTarget = null;
+    this._viewEventRaf = null;
+    this._linkedSource = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     this.dragMode = "pan"; // "pan" | "zoom" (box zoom); toggled via the modebar
 
     // Responsive size: "100%" means the *container* owns that axis — measure
@@ -1331,6 +1348,7 @@ class ChartView {
       });
       this._ro.observe(this.root);
     }
+    this._armVisibilityResizeWatch();
     this._armDprWatch();
 
     this.view0 = {
@@ -1338,6 +1356,7 @@ class ChartView {
       y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
     };
     this.view = { ...this.view0 };
+    this._initLinkedCharts();
 
     this._themeWatch = window.matchMedia("(prefers-color-scheme: dark)");
     this._onScheme = () => this.refreshTheme();
@@ -1349,16 +1368,21 @@ class ChartView {
 
   _layout() {
     // Plot rect from the current size — margins fixed, data area flexes.
-    const topAxisRoom = this._axis("x").side === "top" ? 32 : 0;
-    const top = MARGIN.t + (this.spec.title ? 30 : 0) + topAxisRoom;
+    const compact = this.size.w < 520;
+    const marginLeft = compact ? 46 : MARGIN.l;
+    const marginRight = compact ? 8 : MARGIN.r;
+    const marginTop = compact ? 6 : MARGIN.t;
+    const marginBottom = compact ? 36 : MARGIN.b;
+    const topAxisRoom = this._axis("x").side === "top" ? (compact ? 26 : 32) : 0;
+    const top = marginTop + (this.spec.title ? (compact ? 26 : 30) : 0) + topAxisRoom;
     const extraRightAxes = Object.values(this.axes || {}).filter((axis) =>
       axis && axis.id !== "y" && String(axis.id || "").startsWith("y") && axis.side === "right");
-    const right = MARGIN.r + (extraRightAxes.length ? 54 : 0);
+    const right = marginRight + (extraRightAxes.length ? (compact ? 42 : 54) : 0);
     this.plot = {
-      x: MARGIN.l,
+      x: marginLeft,
       y: top,
-      w: Math.max(40, this.size.w - MARGIN.l - right),
-      h: Math.max(40, this.size.h - top - MARGIN.b),
+      w: Math.max(40, this.size.w - marginLeft - right),
+      h: Math.max(40, this.size.h - top - marginBottom),
     };
   }
 
@@ -1414,6 +1438,15 @@ class ChartView {
     return linearTicks(lo, hi, target);
   }
 
+  _axisTickTarget(axisId, fallback) {
+    const axis = this._axis(axisId);
+    const requested = Number(axis && axis.tick_count);
+    if (Number.isFinite(requested) && requested > 0) {
+      return Math.max(1, Math.min(200, requested));
+    }
+    return fallback;
+  }
+
   _dataPx(axisId, value) {
     const dim = this._axisDim(axisId);
     const axis = this._axis(axisId);
@@ -1430,6 +1463,81 @@ class ChartView {
     target.addEventListener(type, handler, options);
     this._listeners.push({ target, type, handler, options });
     return handler;
+  }
+
+  _interactionFlag(name, fallback = false) {
+    const value = this.interaction && this.interaction[name];
+    return value === undefined ? fallback : value === true;
+  }
+
+  _eventView(source = "view") {
+    return {
+      x0: this.view.x0,
+      x1: this.view.x1,
+      y0: this.view.y0,
+      y1: this.view.y1,
+      source,
+    };
+  }
+
+  _dispatchChartEvent(name, detail) {
+    if (!this.root || typeof CustomEvent !== "function") return;
+    this.root.dispatchEvent(new CustomEvent(`fastcharts:${name}`, {
+      detail,
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  _emitViewChange(source = "view", opts = {}) {
+    const shouldDispatch = this._interactionFlag("view_change") || this._linkChannel;
+    if (!shouldDispatch || this._destroyed) return;
+    const broadcast = opts.broadcast !== false;
+    this._pendingViewEvent = { source, broadcast };
+    if (this._viewEventRaf) return;
+    this._viewEventRaf = requestAnimationFrame(() => {
+      this._viewEventRaf = null;
+      const pending = this._pendingViewEvent || { source, broadcast };
+      this._pendingViewEvent = null;
+      const detail = this._eventView(pending.source);
+      if (this._interactionFlag("view_change")) {
+        this._dispatchChartEvent("view_change", detail);
+      }
+      if (this.comm && this._interactionFlag("view_change")) {
+        this.comm.send({ type: "view_change", ...detail });
+      }
+      if (pending.broadcast) this._broadcastLinkedView(detail);
+    });
+  }
+
+  _initLinkedCharts() {
+    const group = this.interaction && this.interaction.link_group;
+    if (!group || typeof BroadcastChannel !== "function") return;
+    this._linkAxes = Array.isArray(this.interaction.link_axes)
+      ? this.interaction.link_axes.filter((axis) => axis === "x" || axis === "y")
+      : ["x", "y"];
+    if (!this._linkAxes.length) this._linkAxes = ["x", "y"];
+    this._linkChannel = new BroadcastChannel(`fastcharts:${group}`);
+    this._linkChannel.onmessage = (event) => {
+      const msg = event.data || {};
+      if (!msg.view || msg.source === this._linkedSource) return;
+      const next = { ...this.view };
+      if (this._linkAxes.includes("x")) {
+        next.x0 = Number(msg.view.x0);
+        next.x1 = Number(msg.view.x1);
+      }
+      if (this._linkAxes.includes("y")) {
+        next.y0 = Number(msg.view.y0);
+        next.y1 = Number(msg.view.y1);
+      }
+      if (![next.x0, next.x1, next.y0, next.y1].every(Number.isFinite)) return;
+      this._setView(next, { animate: false, source: "linked", broadcast: false });
+    };
+  }
+
+  _broadcastLinkedView(detail) {
+    if (!this._linkChannel) return;
+    this._linkChannel.postMessage({ source: this._linkedSource, view: detail });
   }
 
   _applyClass(el, className) {
@@ -1481,6 +1589,49 @@ class ChartView {
     if (!style || typeof style !== "object" || Array.isArray(style)) return null;
     if (Object.prototype.hasOwnProperty.call(style, property)) return style[property];
     return null;
+  }
+
+  _syncContainerSize() {
+    if (this._destroyed || !(this.fluid || this.fluidH) || !this.root) return;
+    const rect = this.root.getBoundingClientRect();
+    if (rect.width || rect.height) this._resize(rect.width, rect.height);
+  }
+
+  _armVisibilityResizeWatch() {
+    if (!(this.fluid || this.fluidH)) return;
+    const syncSoon = () => {
+      if (this._destroyed) return;
+      requestAnimationFrame(() => this._syncContainerSize());
+    };
+    this._listen(window, "resize", syncSoon);
+    this._listen(window, "pageshow", syncSoon);
+    this._listen(document, "visibilitychange", syncSoon);
+    if (typeof IntersectionObserver !== "undefined") {
+      this._io = new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting || entry.intersectionRatio > 0)) {
+          syncSoon();
+        }
+      });
+      this._io.observe(this.root);
+    }
+  }
+
+  _markStateValue(state, property, fallback = null) {
+    const styles = this.markStyle && typeof this.markStyle === "object" ? this.markStyle[state] : null;
+    if (!styles || typeof styles !== "object" || Array.isArray(styles)) return fallback;
+    if (Object.prototype.hasOwnProperty.call(styles, property)) return styles[property];
+    return fallback;
+  }
+
+  _markStateNumber(state, property, fallback) {
+    const value = this._markStateValue(state, property, fallback);
+    if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+    return value;
+  }
+
+  _markStatePaint(state, property, fallback) {
+    const value = this._markStateValue(state, property, fallback);
+    return typeof value === "string" ? value : fallback;
   }
 
   // DPR watch (renderer audit R7): browser zoom changes devicePixelRatio
@@ -2065,6 +2216,7 @@ class ChartView {
       }
       markOf(g.trace.kind).draw(this, g, x0, x1, y0, y1);
     }
+    this._drawHoverState();
     this._pickDirty = true;
     this._drawChrome();
   }
@@ -2100,6 +2252,8 @@ class ChartView {
     gl.uniform2f(u("u_sizeRange"), g.sizeRange[0], g.sizeRange[1]);
     gl.uniform1i(u("u_colorMode"), g.colorMode);
     gl.uniform1f(u("u_opacity"), (g.trace.style.opacity ?? 0.8) * opacityScale);
+    gl.uniform1f(u("u_selectedOpacity"), this._markStateNumber("selected", "opacity", 1));
+    gl.uniform1f(u("u_unselectedOpacity"), this._markStateNumber("unselected", "opacity", 0.12));
     const [r, gg, b] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, 1);
 
@@ -2162,6 +2316,61 @@ class ChartView {
       gl.uniform1i(u("u_dlut"), 1); // sampler must still point at a valid unit
     }
     gl.drawArrays(gl.POINTS, 0, g.n);
+  }
+
+  _drawHoverState() {
+    const hit = this._hoverTarget;
+    if (!hit || !hit.g) return;
+    const g = hit.g;
+    if (g.trace.kind !== "scatter" || g.tier === "density") return;
+    if (!Number.isInteger(hit.index) || hit.index < 0 || hit.index >= g.n) return;
+    const [x0, x1] = this._axisRange(g.xAxis);
+    const [y0, y1] = this._axisRange(g.yAxis);
+    this._drawHoverPoint(
+      g,
+      hit.index,
+      this._map(g.xMeta, x0, x1, g.xAxis),
+      this._map(g.yMeta, y0, y1, g.yAxis)
+    );
+  }
+
+  _drawHoverPoint(g, index, xm, ym) {
+    const gl = this.gl;
+    const prog = this.pointProg;
+    gl.useProgram(prog);
+    const u = (n) => uniformOf(gl, prog, n);
+    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+    this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
+    this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+    const defaultSize = Math.max((g.size || 4) * 1.75, (g.size || 4) + 5);
+    const size = Math.max(0, this._markStateNumber("hover", "size", defaultSize));
+    const opacity = Math.max(0, Math.min(1, this._markStateNumber("hover", "opacity", 0.95)));
+    const color = parseColor(
+      this.root,
+      this._markStatePaint("hover", "color", "rgba(15,23,42,.92)"),
+      [0.06, 0.09, 0.16, 0.92]
+    );
+    gl.uniform1f(u("u_dpr"), this.dpr);
+    gl.uniform1f(u("u_size"), size);
+    gl.uniform1i(u("u_sizeMode"), 0);
+    gl.uniform2f(u("u_sizeRange"), size, size);
+    gl.uniform1i(u("u_colorMode"), 0);
+    gl.uniform1f(u("u_opacity"), opacity);
+    gl.uniform1f(u("u_selectedOpacity"), 1);
+    gl.uniform1f(u("u_unselectedOpacity"), 1);
+    gl.uniform4f(u("u_color"), color[0], color[1], color[2], 1);
+    gl.uniform1i(u("u_selActive"), 0);
+    gl.uniform1f(u("u_dblend"), 0);
+
+    this._bindScalarAttr(prog, "ax", g.xBuf, 0, 0);
+    this._bindScalarAttr(prog, "ay", g.yBuf, 0, 0);
+    for (const [name, value] of [["a_cval", 0], ["a_sval", 0.5], ["a_sel", 1], ["a_dval", 0]]) {
+      this._disableAttr(prog, name);
+      const loc = gl.getAttribLocation(prog, name);
+      if (loc >= 0) gl.vertexAttrib1f(loc, value);
+    }
+    gl.drawArrays(gl.POINTS, index, 1);
   }
 
   _drawDensity(g, density, opacityScale = 1) {
@@ -2365,6 +2574,167 @@ class ChartView {
     return Number.isFinite(value) ? value : fallback;
   }
 
+  _axisStyleNumber(axis, key, fallback) {
+    return this._styleNumber(axis && axis.style, key, fallback);
+  }
+
+  _axisStylePaint(axis, key, fallback) {
+    const style = axis && typeof axis.style === "object" ? axis.style : null;
+    return safeCssPaint(this.root, style && style[key], fallback);
+  }
+
+  _axisStyleValue(axis, key) {
+    const style = axis && typeof axis.style === "object" ? axis.style : null;
+    return style && Object.prototype.hasOwnProperty.call(style, key) ? style[key] : undefined;
+  }
+
+  _axisTickLabelStrategy(axis) {
+    const raw = axis && axis.tick_label_strategy !== undefined
+      ? axis.tick_label_strategy
+      : this._axisStyleValue(axis, "tick_label_strategy");
+    const value = String(raw || "auto").replace(/-/g, "_");
+    return ["auto", "hide", "rotate", "stagger", "none"].includes(value) ? value : "auto";
+  }
+
+  _axisTickLabelAngle(axis) {
+    const raw = axis && axis.tick_label_angle !== undefined
+      ? axis.tick_label_angle
+      : this._axisStyleValue(axis, "tick_label_angle");
+    const angle = Number(raw);
+    return Number.isFinite(angle) ? angle : null;
+  }
+
+  _axisTickLabelMinGap(axis, dim) {
+    const raw = axis && axis.tick_label_min_gap !== undefined
+      ? axis.tick_label_min_gap
+      : this._axisStyleValue(axis, "tick_label_min_gap");
+    const gap = Number(raw);
+    return Number.isFinite(gap) && gap >= 0 ? gap : (dim === "x" ? 8 : 4);
+  }
+
+  _estimateTickLabel(text, fontSize) {
+    const s = String(text || "");
+    return { w: Math.max(fontSize * 0.7, s.length * fontSize * 0.62), h: fontSize * 1.2 };
+  }
+
+  _tickLabelExtent(label, dim, fontSize) {
+    const size = this._estimateTickLabel(label.text, fontSize);
+    const angle = Math.abs(Number(label.angle || 0)) * Math.PI / 180;
+    return dim === "y"
+      ? Math.abs(Math.sin(angle)) * size.w + Math.abs(Math.cos(angle)) * size.h
+      : Math.abs(Math.cos(angle)) * size.w + Math.abs(Math.sin(angle)) * size.h;
+  }
+
+  _tickLabelsCollide(labels, dim, fontSize, minGap) {
+    const rows = new Map();
+    for (const label of labels) {
+      const row = Number(label.row || 0);
+      if (!rows.has(row)) rows.set(row, []);
+      rows.get(row).push(label);
+    }
+    for (const rowLabels of rows.values()) {
+      rowLabels.sort((a, b) => a.pos - b.pos);
+      let lastEnd = -Infinity;
+      for (const label of rowLabels) {
+        const extent = this._tickLabelExtent(label, dim, fontSize);
+        const start = label.pos - extent / 2;
+        const end = label.pos + extent / 2;
+        if (start < lastEnd + minGap) return true;
+        lastEnd = end;
+      }
+    }
+    return false;
+  }
+
+  _downsampleTickLabels(labels, dim, fontSize, minGap) {
+    if (labels.length <= 1) return labels;
+    for (let stride = 2; stride <= labels.length; stride++) {
+      const out = labels.filter((_, i) => i % stride === 0);
+      if (!this._tickLabelsCollide(out, dim, fontSize, minGap)) return out;
+    }
+    return labels.slice(0, 1);
+  }
+
+  _layoutTickLabels(axis, dim, labels) {
+    if (labels.length <= 1) return labels.map((label) => ({ ...label, angle: 0, row: 0 }));
+    const fontSize = Math.max(8, this._axisStyleNumber(axis, "tick_size", 11));
+    const minGap = this._axisTickLabelMinGap(axis, dim);
+    const explicitAngle = this._axisTickLabelAngle(axis);
+    const baseAngle = explicitAngle === null ? 0 : explicitAngle;
+    const withBase = labels.map((label) => ({ ...label, angle: baseAngle, row: 0 }));
+    let strategy = this._axisTickLabelStrategy(axis);
+    if (strategy === "none") return withBase;
+    if (strategy === "auto") {
+      if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap)) return withBase;
+      if (dim === "x" && axis.kind === "category" && labels.length <= 16) strategy = "rotate";
+      else if (dim === "x" && labels.length <= 24) strategy = "stagger";
+      else strategy = "hide";
+    }
+
+    let out = withBase;
+    if (strategy === "rotate" && dim === "x") {
+      const angle = explicitAngle === null ? (axis.side === "top" ? 35 : -35) : explicitAngle;
+      out = labels.map((label) => ({ ...label, angle, row: 0 }));
+    } else if (strategy === "stagger" && dim === "x") {
+      out = labels.map((label, i) => ({ ...label, angle: baseAngle, row: i % 2 }));
+    }
+
+    if (strategy === "hide" || this._tickLabelsCollide(out, dim, fontSize, minGap)) {
+      out = this._downsampleTickLabels(out, dim, fontSize, minGap);
+    }
+    return out;
+  }
+
+  _axisLabelCss(axis, dim, fallbackCss) {
+    const rawPosition = axis && axis.label_position;
+    const hasPosition = rawPosition !== undefined && rawPosition !== null;
+    const hasOffset = axis && Number.isFinite(Number(axis.label_offset));
+    const hasAngle = axis && Number.isFinite(Number(axis.label_angle));
+    if (!hasPosition && !hasOffset && !hasAngle) return { css: fallbackCss, style: null };
+    if (rawPosition && typeof rawPosition === "object" && !Array.isArray(rawPosition)) {
+      return { css: "font-weight:500;white-space:nowrap;", style: rawPosition };
+    }
+
+    const p = this.plot;
+    const position = String(hasPosition ? rawPosition : "center").replace(/-/g, "_");
+    const inside = position.startsWith("inside_");
+    const anchor = inside ? position.slice("inside_".length) : position;
+    const offset = hasOffset ? Number(axis.label_offset) : 0;
+    const side = axis && axis.side;
+    const anchorFrac = anchor === "start" ? 0 : (anchor === "end" ? 1 : 0.5);
+
+    if (dim === "x") {
+      const x = p.x + p.w * anchorFrac;
+      const outsideY = side === "top" ? p.y - 34 : p.y + p.h + 24;
+      const insideY = side === "top" ? p.y + 12 : p.y + p.h - 12;
+      const y = (inside ? insideY : outsideY) +
+        (side === "top" ? (inside ? offset : -offset) : (inside ? -offset : offset));
+      const translateX = anchor === "start" ? 0 : (anchor === "end" ? -100 : -50);
+      const angle = hasAngle ? Number(axis.label_angle) : 0;
+      return {
+        css:
+          `left:${x}px;top:${y}px;` +
+          `transform:translateX(${translateX}%) rotate(${angle}deg);` +
+          "transform-origin:center;font-weight:500;white-space:nowrap;",
+        style: null,
+      };
+    }
+
+    const xOutside = side === "right" ? p.x + p.w + 40 : 10;
+    const xInside = side === "right" ? p.x + p.w - 12 : p.x + 12;
+    const x = (inside ? xInside : xOutside) +
+      (side === "right" ? (inside ? -offset : offset) : (inside ? offset : -offset));
+    const y = p.y + p.h * (1 - anchorFrac);
+    const angle = hasAngle ? Number(axis.label_angle) : (side === "right" ? 90 : -90);
+    return {
+      css:
+        `left:${x}px;top:${y}px;` +
+        `transform:translate(-50%,-50%) rotate(${angle}deg);` +
+        "transform-origin:center;font-weight:500;white-space:nowrap;",
+      style: null,
+    };
+  }
+
   _annotationPaint(style, fallback) {
     return safeCssPaint(this.root, style && style.color, fallback);
   }
@@ -2538,13 +2908,16 @@ class ChartView {
     const p = this.plot;
     const xAxis = this._axis("x");
     const yAxis = this._axis("y");
-    const xt = this._axisTicks("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80)));
-    const yt = this._axisTicks("y", Math.max(3, p.h / 45));
+    const xt = this._axisTicks(
+      "x",
+      this._axisTickTarget("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80))),
+    );
+    const yt = this._axisTicks("y", this._axisTickTarget("y", Math.max(3, p.h / 45)));
     const xEdge = (px) => Math.min(p.x + p.w - 0.5, Math.max(p.x + 0.5, Math.round(px) + 0.5));
     const yEdge = (py) => Math.min(p.y + p.h - 0.5, Math.max(p.y + 0.5, Math.round(py) + 0.5));
 
-    ctx.strokeStyle = cssColor(this.theme.grid);
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = this._axisStylePaint(xAxis, "grid_color", this.theme.grid);
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xAxis, "grid_width", 1));
     ctx.beginPath();
     for (const v of xt.ticks) {
       const px = this._dataPx("x", v);
@@ -2553,6 +2926,11 @@ class ChartView {
       ctx.moveTo(x, p.y);
       ctx.lineTo(x, p.y + p.h);
     }
+    ctx.stroke();
+
+    ctx.strokeStyle = this._axisStylePaint(yAxis, "grid_color", this.theme.grid);
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(yAxis, "grid_width", 1));
+    ctx.beginPath();
     for (const v of yt.ticks) {
       const py = this._dataPx("y", v);
       if (!Number.isFinite(py)) continue;
@@ -2564,73 +2942,116 @@ class ChartView {
 
     this._drawAnnotationShapes(ctx);
 
-    ctx.strokeStyle = cssColor(this.theme.axis);
+    ctx.strokeStyle = this._axisStylePaint(yAxis, "axis_color", this.theme.axis);
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(yAxis, "axis_width", 1));
     ctx.beginPath();
     const yAxisX = yAxis.side === "right" ? p.x + p.w - 0.5 : p.x + 0.5;
-    const xAxisY = xAxis.side === "top" ? p.y + 0.5 : p.y + p.h - 0.5;
     ctx.moveTo(yAxisX, p.y);
     ctx.lineTo(yAxisX, p.y + p.h - 0.5);
+    ctx.stroke();
+
+    ctx.strokeStyle = this._axisStylePaint(xAxis, "axis_color", this.theme.axis);
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xAxis, "axis_width", 1));
+    ctx.beginPath();
+    const xAxisY = xAxis.side === "top" ? p.y + 0.5 : p.y + p.h - 0.5;
     ctx.moveTo(p.x, xAxisY);
     ctx.lineTo(p.x + p.w, xAxisY);
+    ctx.stroke();
+
     for (const axis of Object.values(this.axes)) {
       if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
+      ctx.strokeStyle = this._axisStylePaint(axis, "axis_color", this.theme.axis);
+      ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(axis, "axis_width", 1));
+      ctx.beginPath();
       const x = axis.side === "left" ? p.x + 0.5 : p.x + p.w + 0.5;
       ctx.moveTo(x, p.y);
       ctx.lineTo(x, p.y + p.h - 0.5);
+      ctx.stroke();
     }
-    ctx.stroke();
 
-    const label = (text, css) => {
+    const label = (text, css, axis, kind = "tick", extraStyle = null) => {
       if (!updateLabels) return;
       const d = document.createElement("div");
       d.textContent = text;
-      d.style.cssText = "position:absolute;color:" + cssColor(this.theme.label) + ";" + css;
+      const colorKey = kind === "label" ? "label_color" : "tick_color";
+      const sizeKey = kind === "label" ? "label_size" : "tick_size";
+      const defaultSize = kind === "label" ? 12 : 11;
+      d.style.cssText =
+        `position:absolute;color:${this._axisStylePaint(axis, colorKey, this.theme.label)};` +
+        `font-size:${Math.max(8, this._axisStyleNumber(axis, sizeKey, defaultSize))}px;` +
+        "line-height:1.2;white-space:nowrap;" + css;
+      this._applyStyle(d, extraStyle);
       this.labels.appendChild(d);
     };
-    for (const v of xt.ticks) {
+    const xLabelCandidates = [];
+    for (const v of (xt.labels || xt.ticks)) {
       const px = this._dataPx("x", v);
       if (px < p.x - 1 || px > p.x + p.w + 1) continue;
       const text = fmtAxis(xAxis, v, xt.step);
-      const top = xAxis.side === "top" ? p.y - 18 : p.y + p.h + 6;
-      label(text, `left:${px}px;top:${top}px;transform:translateX(-50%);`);
+      xLabelCandidates.push({ pos: px, text });
     }
-    for (const v of yt.ticks) {
+    for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
+      const rowOffset = Number(item.row || 0) * (Math.max(8, this._axisStyleNumber(xAxis, "tick_size", 11)) + 4);
+      const top = xAxis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
+      const transform = `translateX(-50%) rotate(${Number(item.angle || 0)}deg)`;
+      const origin = xAxis.side === "top" ? "bottom center" : "top center";
+      label(
+        item.text,
+        `left:${item.pos}px;top:${top}px;transform:${transform};transform-origin:${origin};`,
+        xAxis,
+      );
+    }
+    const yLabelCandidates = [];
+    for (const v of (yt.labels || yt.ticks)) {
       const py = this._dataPx("y", v);
       if (py < p.y - 1 || py > p.y + p.h + 1) continue;
       const text = fmtAxis(yAxis, v, yt.step);
+      yLabelCandidates.push({ pos: py, text });
+    }
+    for (const item of this._layoutTickLabels(yAxis, "y", yLabelCandidates)) {
+      const angle = Number(item.angle || 0);
       const css = yAxis.side === "right"
-        ? `left:${p.x + p.w + 8}px;top:${py}px;transform:translateY(-50%);`
-        : `right:${this.size.w - p.x + 8}px;top:${py}px;transform:translateY(-50%);`;
-      label(text, css);
+        ? `left:${p.x + p.w + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:left center;`
+        : `right:${this.size.w - p.x + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:right center;`;
+      label(item.text, css, yAxis);
     }
     for (const axis of Object.values(this.axes)) {
       if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
-      const ticks = this._axisTicks(axis.id, Math.max(3, p.h / 45));
-      for (const v of ticks.ticks) {
+      const ticks = this._axisTicks(axis.id, this._axisTickTarget(axis.id, Math.max(3, p.h / 45)));
+      const labelCandidates = [];
+      for (const v of (ticks.labels || ticks.ticks)) {
         const py = this._dataPx(axis.id, v);
         if (py < p.y - 1 || py > p.y + p.h + 1) continue;
         const text = fmtAxis(axis, v, ticks.step);
+        labelCandidates.push({ pos: py, text });
+      }
+      for (const item of this._layoutTickLabels(axis, "y", labelCandidates)) {
+        const angle = Number(item.angle || 0);
         const css = axis.side === "left"
-          ? `right:${this.size.w - p.x + 8}px;top:${py}px;transform:translateY(-50%);`
-          : `left:${p.x + p.w + 8}px;top:${py}px;transform:translateY(-50%);`;
-        label(text, css);
+          ? `right:${this.size.w - p.x + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:right center;`
+          : `left:${p.x + p.w + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:left center;`;
+        label(item.text, css, axis);
       }
       if (axis.label) {
-        const css = axis.side === "left"
+        const fallbackCss = axis.side === "left"
           ? `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`
           : `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`;
-        label(axis.label, css);
+        const placement = this._axisLabelCss(axis, "y", fallbackCss);
+        label(axis.label, placement.css, axis, "label", placement.style);
       }
     }
     if (s.x_axis.label) {
       const top = xAxis.side === "top" ? p.y - 34 : p.y + p.h + 24;
-      label(s.x_axis.label, `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`);
+      const fallbackCss = `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`;
+      const placement = this._axisLabelCss(xAxis, "x", fallbackCss);
+      label(s.x_axis.label, placement.css, xAxis, "label", placement.style);
     }
     if (s.y_axis.label) {
-      const css = yAxis.side === "right"
+      const fallbackCss = yAxis.side === "right"
         ? `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`
         : `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`;
-      label(s.y_axis.label, css);
+      const placement = this._axisLabelCss(yAxis, "y", fallbackCss);
+      label(s.y_axis.label, placement.css, yAxis, "label", placement.style);
     }
     this._drawAnnotationLabels(updateLabels);
   }
@@ -2852,6 +3273,14 @@ class ChartView {
     const row = this._localRow(hit);
     this._lastRow = row;
     this._renderTooltip(row, clientX, clientY);
+    if (this._interactionFlag("hover")) {
+      this._dispatchChartEvent("hover", {
+        row,
+        trace: hit.trace,
+        index: hit.index,
+        view: this._eventView("hover"),
+      });
+    }
     if (this.comm) {
       // Exact f64 values from the kernel canonical store (§16). The local row
       // (decoded from f32) shows instantly; the exact one replaces it.
@@ -2881,10 +3310,14 @@ class ChartView {
     if (hit.heatmap && g.heatmap && g._cpuHeatmap) {
       const h = g.heatmap;
       const { row: heatRow, col } = hit.heatmap;
-      row.x = h.xRange[0] + (col + 0.5) * ((h.xRange[1] - h.xRange[0]) / h.w);
-      row.y = h.yRange[0] + (heatRow + 0.5) * ((h.yRange[1] - h.yRange[0]) / h.h);
-      row.x_kind = "float";
-      row.y_kind = "float";
+      const rawX = h.xRange[0] + (col + 0.5) * ((h.xRange[1] - h.xRange[0]) / h.w);
+      const rawY = h.yRange[0] + (heatRow + 0.5) * ((h.yRange[1] - h.yRange[0]) / h.h);
+      const [x, xKind] = this._sourceDisplayValue(g, "x", rawX, "float");
+      const [y, yKind] = this._sourceDisplayValue(g, "y", rawY, "float");
+      row.x = x;
+      row.y = y;
+      if (xKind !== undefined) row.x_kind = xKind;
+      if (yKind !== undefined) row.y_kind = yKind;
       const norm = g._cpuHeatmap.grid[hit.index];
       row.color_value = this._denormalizeUnit(norm, g.trace.color && g.trace.color.domain);
     } else if (g._cpuRect) {
@@ -3079,9 +3512,24 @@ class ChartView {
     this.selRect.style.cssText =
       "position:absolute;display:none;pointer-events:none;z-index:4;" +
       "border:1px solid var(--chart-selection, rgba(90,140,240,.9));" +
-      "background:rgba(90,140,240,.15);";
+      "background:var(--chart-selection-fill, rgba(90,140,240,.15));";
     this._applySlot(this.selRect, "selection");
     this.root.appendChild(this.selRect);
+
+    if (this._interactionFlag("crosshair")) {
+      this.crosshairX = document.createElement("div");
+      this.crosshairX.style.cssText =
+        "position:absolute;display:none;pointer-events:none;z-index:3;" +
+        "width:1px;background:var(--chart-crosshair, rgba(15,23,42,.42));";
+      this._applySlot(this.crosshairX, "crosshair_x");
+      this.root.appendChild(this.crosshairX);
+      this.crosshairY = document.createElement("div");
+      this.crosshairY.style.cssText =
+        "position:absolute;display:none;pointer-events:none;z-index:3;" +
+        "height:1px;background:var(--chart-crosshair, rgba(15,23,42,.42));";
+      this._applySlot(this.crosshairY, "crosshair_y");
+      this.root.appendChild(this.crosshairY);
+    }
 
     const dataAt = (clientX, clientY) => {
       const r = c.getBoundingClientRect();
@@ -3092,7 +3540,8 @@ class ChartView {
       this._cancelViewAnimation();
       // Shift-drag box-selects (§34); a "zoom" modebar toggle turns a plain drag
       // into a box-zoom; otherwise a plain drag pans.
-      const mode = e.shiftKey && this._pickable ? "select"
+      const canBrush = this._interactionFlag("brush", true) && this._interactionFlag("select", true);
+      const mode = e.shiftKey && canBrush && this._pickable ? "select"
         : this.dragMode === "zoom" ? "zoom" : null;
       if (mode) {
         band = { mode, sx: e.clientX, sy: e.clientY, d0: dataAt(e.clientX, e.clientY) };
@@ -3123,8 +3572,10 @@ class ChartView {
         };
         this.draw();
         this._scheduleViewRequest();
+        this._emitViewChange("pan");
         return;
       }
+      this._updateCrosshair(e);
       this._hover(e);
     });
     const end = (e) => {
@@ -3135,16 +3586,27 @@ class ChartView {
         if (moved) {
           if (band.mode === "zoom") this._zoomToBox(band.d0, d1, true);
           else this._sendSelect(band.d0, d1);
+          this._ignoreNextClick = true;
         }
         band = null;
         return;
       }
+      if (drag && drag.moved) this._ignoreNextClick = true;
       if (drag && !drag.moved) this.tooltip.style.display = "none";
       drag = null;
     };
     this._listen(c, "pointerup", end);
     this._listen(c, "pointercancel", () => { this.selRect.style.display = "none"; band = null; drag = null; });
-    this._listen(c, "pointerleave", () => { this.tooltip.style.display = "none"; });
+    this._listen(c, "pointerleave", () => {
+      const hadHover = this._hoverId !== -1;
+      this._hoverId = -1;
+      this._hoverTarget = null;
+      this.tooltip.style.display = "none";
+      this._hideCrosshair();
+      this._dispatchChartEvent("leave", { view: this._eventView("leave") });
+      if (hadHover) this.draw();
+    });
+    this._listen(c, "click", (e) => this._click(e));
 
     this._listen(c, "wheel", (e) => {
       e.preventDefault();
@@ -3152,13 +3614,70 @@ class ChartView {
       const r = c.getBoundingClientRect();
       const fx = (e.clientX - r.left) / r.width;
       const fy = 1 - (e.clientY - r.top) / r.height;
-      this._zoomAt(f, fx, fy, true, 95);
+      this._queueWheelZoom(f, fx, fy);
     }, { passive: false });
 
     this._listen(c, "dblclick", () => {
       this._clearSelection();
       this._setView(this.view0, { animate: true });
     });
+  }
+
+  _updateCrosshair(e) {
+    if (!this.crosshairX || !this.crosshairY) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const rootRect = this.root.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    if (x < 0 || x > rect.width || y < 0 || y > rect.height) {
+      this._hideCrosshair();
+      return;
+    }
+    const left = e.clientX - rootRect.left;
+    const top = e.clientY - rootRect.top;
+    this.crosshairX.style.display = "block";
+    this.crosshairX.style.left = left + "px";
+    this.crosshairX.style.top = this.plot.y + "px";
+    this.crosshairX.style.height = this.plot.h + "px";
+    this.crosshairY.style.display = "block";
+    this.crosshairY.style.left = this.plot.x + "px";
+    this.crosshairY.style.top = top + "px";
+    this.crosshairY.style.width = this.plot.w + "px";
+  }
+
+  _hideCrosshair() {
+    if (this.crosshairX) this.crosshairX.style.display = "none";
+    if (this.crosshairY) this.crosshairY.style.display = "none";
+  }
+
+  _click(e) {
+    if (this._ignoreNextClick) {
+      this._ignoreNextClick = false;
+      return;
+    }
+    if (!this._interactionFlag("click")) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const cssX = e.clientX - rect.left;
+    const cssY = e.clientY - rect.top;
+    const [x, y] = this._dataFromCanvas(cssX, cssY);
+    const hit = this._pickAt(cssX, cssY) || this._hoverAt(cssX, cssY);
+    const detail = {
+      x,
+      y,
+      view: this._eventView("click"),
+      row: hit && this._localRow ? this._localRow(hit) : null,
+      trace: hit ? hit.trace : null,
+      index: hit ? hit.index : null,
+    };
+    this._dispatchChartEvent("click", detail);
+    if (hit && this.comm) {
+      const msg = { type: "click", trace: hit.trace, index: hit.index };
+      const g = hit.g;
+      if (g && g.tier === "density" && g.drill && g.drill.seq !== undefined) {
+        msg.drill_seq = g.drill.seq;
+      }
+      this.comm.send(msg);
+    }
   }
 
   _updateBand(band, e) {
@@ -3173,11 +3692,11 @@ class ChartView {
     const x2 = Math.min(x + w, px + this.plot.w), y2 = Math.min(y + h, py + this.plot.h);
     const cx = Math.max(x, px), cy = Math.max(y, py);
     if (band.mode === "zoom") {
-      this.selRect.style.border = "1px solid rgba(120,120,120,.9)";
-      this.selRect.style.background = "rgba(120,120,120,.12)";
+      this.selRect.style.border = "1px solid var(--chart-zoom-selection, rgba(120,120,120,.9))";
+      this.selRect.style.background = "var(--chart-zoom-selection-fill, rgba(120,120,120,.12))";
     } else {
-      this.selRect.style.border = "1px solid rgba(90,140,240,.9)";
-      this.selRect.style.background = "rgba(90,140,240,.15)";
+      this.selRect.style.border = "1px solid var(--chart-selection, rgba(90,140,240,.9))";
+      this.selRect.style.background = "var(--chart-selection-fill, rgba(90,140,240,.15))";
     }
     this.selRect.style.display = "block";
     this.selRect.style.left = cx + "px";
@@ -3190,6 +3709,8 @@ class ChartView {
   _sendSelect(d0, d1) {
     const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
     const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
+    const range = { x0, x1, y0, y1 };
+    this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
     if (this.comm) {
       this.comm.send({ type: "select", x0, x1, y0, y1 });
     } else {
@@ -3217,6 +3738,11 @@ class ChartView {
     }
     this._selectionCount = total;
     this.draw();
+    this._dispatchChartEvent("select", {
+      total,
+      range: { x0, x1, y0, y1 },
+      view: this._eventView("select"),
+    });
   }
 
   _applySelMask(g, maskF32) {
@@ -3234,6 +3760,7 @@ class ChartView {
     }
     this._selectionCount = 0;
     if (this.comm) this.comm.send({ type: "select_clear" });
+    this._dispatchChartEvent("select", { total: 0, view: this._eventView("select_clear") });
   }
 
   // -- modebar & zoom (Plotly-parity controls) ------------------------------
@@ -3314,6 +3841,7 @@ class ChartView {
       this.view = target;
       this.draw();
       if (opts.request !== false) this._scheduleViewRequest();
+      this._emitViewChange(opts.source || "view", { broadcast: opts.broadcast });
       return;
     }
 
@@ -3369,6 +3897,7 @@ class ChartView {
         this.view = anim.target;
         this._lastLabelDraw = null;
         this.draw();
+        this._emitViewChange(opts.source || "view", { broadcast: opts.broadcast });
       }
     };
     this._animRaf = requestAnimationFrame(step);
@@ -3408,6 +3937,24 @@ class ChartView {
     const yr = this._zoomAxisRange("y", y0, y1, f, fy);
     if (!xr || !yr) return;
     this._setView({ x0: xr[0], x1: xr[1], y0: yr[0], y1: yr[1] }, { animate, duration });
+  }
+
+  _queueWheelZoom(factor, fx, fy) {
+    if (!Number.isFinite(factor) || factor <= 0) return;
+    if (!this._pendingWheelZoom) {
+      this._pendingWheelZoom = { factor: 1, fx, fy };
+    }
+    this._pendingWheelZoom.factor *= factor;
+    this._pendingWheelZoom.fx = fx;
+    this._pendingWheelZoom.fy = fy;
+    if (this._wheelZoomRaf) return;
+    this._wheelZoomRaf = requestAnimationFrame(() => {
+      this._wheelZoomRaf = null;
+      const pending = this._pendingWheelZoom;
+      this._pendingWheelZoom = null;
+      if (!pending || this._destroyed) return;
+      this._zoomAt(pending.factor, pending.fx, pending.fy, false);
+    });
   }
 
   // Box-zoom: fit the view to the dragged data rectangle (§16 precision floor;
@@ -3461,8 +4008,11 @@ class ChartView {
 
   _hover(e) {
     if (this._transitionActive()) {
+      const hadHover = this._hoverId !== -1;
       this._hoverId = -1;
+      this._hoverTarget = null;
       this.tooltip.style.display = "none";
+      if (hadHover) this.draw();
       return;
     }
     const rect = this.canvas.getBoundingClientRect();
@@ -3470,8 +4020,11 @@ class ChartView {
     const cssY = e.clientY - rect.top;
     const hit = this._pickAt(cssX, cssY) || this._hoverAt(cssX, cssY);
     if (!hit) {
+      const hadHover = this._hoverId !== -1;
       this._hoverId = -1;
+      this._hoverTarget = null;
       this.tooltip.style.display = "none";
+      if (hadHover) this.draw();
       return;
     }
     const id = hit.trace * 1e9 + hit.index;
@@ -3481,7 +4034,9 @@ class ChartView {
       return;
     }
     this._hoverId = id;
+    this._hoverTarget = hit;
     this._showTooltip(hit, e.clientX, e.clientY);
+    this.draw();
   }
 
   _scheduleViewRequest(viewOverride = this.view, opts = {}) {
@@ -3663,6 +4218,15 @@ class ChartView {
       this._lastRow = msg.row;
       const xy = this._lastHoverXY;
       if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY);
+      if (this._interactionFlag("hover")) {
+        this._dispatchChartEvent("hover", {
+          row: msg.row,
+          trace: msg.row.trace,
+          index: msg.row.index,
+          exact: true,
+          view: this._eventView("hover"),
+        });
+      }
     } else if (msg.type === "selection") {
       if (!msg.traces || !msg.traces.length) {
         for (const g of this.gpuTraces) {
@@ -3692,6 +4256,10 @@ class ChartView {
       }
       this._selectionCount = msg.total || 0;
       this.draw();
+      this._dispatchChartEvent("select", {
+        total: this._selectionCount,
+        view: this._eventView("select"),
+      });
     }
   }
 
@@ -3758,6 +4326,8 @@ class ChartView {
     if (this._destroyed) return;
     this._destroyed = true;
     this._ro?.disconnect();
+    this._io?.disconnect();
+    this._io = null;
     this._themeWatch?.removeEventListener?.("change", this._onScheme);
     this._dprMq?.removeEventListener?.("change", this._onDprChange);
     this._dprMq = null;
@@ -3768,6 +4338,13 @@ class ChartView {
     }
     clearTimeout(this._viewTimer);
     this._viewTimer = null;
+    if (this._viewEventRaf) cancelAnimationFrame(this._viewEventRaf);
+    this._viewEventRaf = null;
+    if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
+    this._wheelZoomRaf = null;
+    this._pendingWheelZoom = null;
+    this._linkChannel?.close?.();
+    this._linkChannel = null;
     if (this._raf) cancelAnimationFrame(this._raf);
     this._raf = null;
     this._cancelViewAnimation();

@@ -403,6 +403,7 @@ def test_interaction_component_builds_declarative_spec():
             select=True,
             brush=True,
             crosshair=True,
+            view_change=True,
             link_group="dashboard",
             link_axes=("x",),
         ),
@@ -416,6 +417,7 @@ def test_interaction_component_builds_declarative_spec():
         "select": True,
         "brush": True,
         "crosshair": True,
+        "view_change": True,
         "link_group": "dashboard",
         "link_axes": ["x"],
     }
@@ -447,6 +449,15 @@ def test_bad_interaction_options_do_not_cache_partial_chart_figure():
     )
 
     with pytest.raises(ValueError, match="interaction click"):
+        chart.figure()
+    assert chart._figure is None
+
+    chart = fc.chart(
+        fc.scatter(x=[1.0], y=[2.0]),
+        fc.interaction_config(view_change="yes"),
+    )
+
+    with pytest.raises(ValueError, match="interaction view_change"):
         chart.figure()
     assert chart._figure is None
 
@@ -778,6 +789,35 @@ def test_component_axis_label_position_rejects_invalid_values():
         fc.y_axis(label_offset=True)
     with pytest.raises(ValueError, match="label_angle"):
         fc.y_axis(label_angle=np.nan)
+
+
+def test_component_axis_tick_layout_controls_emit_to_payload():
+    chart = fc.chart(
+        fc.line(x=np.arange(3.0), y=np.arange(3.0)),
+        fc.x_axis(
+            tick_count=4,
+            tick_label_angle=-35,
+            tick_label_strategy="stagger",
+            tick_label_min_gap=12,
+        ),
+        fc.y_axis(tick_count=3, tick_label_strategy="hide"),
+    )
+
+    spec, _ = chart.figure().build_payload()
+
+    assert spec["x_axis"]["tick_count"] == 4
+    assert spec["x_axis"]["tick_label_angle"] == -35.0
+    assert spec["x_axis"]["tick_label_strategy"] == "stagger"
+    assert spec["x_axis"]["tick_label_min_gap"] == 12.0
+    assert spec["y_axis"]["tick_count"] == 3
+    assert spec["y_axis"]["tick_label_strategy"] == "hide"
+
+    with pytest.raises(ValueError, match="tick_count"):
+        fc.x_axis(tick_count=0)
+    with pytest.raises(ValueError, match="tick_label_strategy"):
+        fc.x_axis(tick_label_strategy="squish")
+    with pytest.raises(ValueError, match="tick_label_min_gap"):
+        fc.y_axis(tick_label_min_gap=-1)
 
 
 def test_line_chart():

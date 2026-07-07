@@ -233,6 +233,10 @@ class Figure:
         domain: Optional[tuple[float, float]] = None,
         reverse: bool = False,
         format: Optional[str] = None,
+        tick_count: Optional[int] = None,
+        tick_label_angle: Optional[float] = None,
+        tick_label_strategy: Optional[str] = None,
+        tick_label_min_gap: Optional[float] = None,
         side: Optional[str] = None,
         style: Optional[dict[str, Any]] = None,
     ) -> "Figure":
@@ -265,6 +269,16 @@ class Figure:
             "domain": domain,
             "reverse": self._bool_param(reverse, f"{axis_id} axis reverse"),
             "format": self._optional_text(format, f"{axis_id} axis format"),
+            "tick_count": self._optional_positive_int(tick_count, f"{axis_id} axis tick_count"),
+            "tick_label_angle": self._optional_finite_scalar(
+                tick_label_angle, f"{axis_id} axis tick_label_angle"
+            ),
+            "tick_label_strategy": self._axis_tick_label_strategy(
+                tick_label_strategy, f"{axis_id} axis tick_label_strategy"
+            ),
+            "tick_label_min_gap": None
+            if tick_label_min_gap is None
+            else self._nonnegative_scalar(tick_label_min_gap, f"{axis_id} axis tick_label_min_gap"),
             "side": side,
             "style": self._optional_state_style(style, f"{axis_id} axis style"),
         }
@@ -1188,6 +1202,29 @@ class Figure:
         return Figure._finite_scalar(value, label)
 
     @staticmethod
+    def _optional_positive_int(value: Any, label: str) -> Optional[int]:
+        if value is None:
+            return None
+        if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
+            raise ValueError(f"{label} must be a positive integer")
+        out = int(value)
+        if out <= 0:
+            raise ValueError(f"{label} must be a positive integer")
+        return out
+
+    @staticmethod
+    def _axis_tick_label_strategy(value: Any, label: str) -> Optional[str]:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError(f"{label} must be a string or None")
+        normalized = value.replace("-", "_")
+        allowed = {"auto", "hide", "rotate", "stagger", "none"}
+        if normalized not in allowed:
+            raise ValueError(f"{label} must be one of {sorted(allowed)}")
+        return normalized
+
+    @staticmethod
     def _nonnegative_scalar(value: Any, label: str) -> float:
         out = Figure._finite_scalar(value, label)
         if out < 0:
@@ -1639,6 +1676,20 @@ class Figure:
         label_angle = self._optional_finite_scalar(
             opts.get("label_angle"), f"{axis_id} axis label_angle"
         )
+        tick_count = self._optional_positive_int(opts.get("tick_count"), f"{axis_id} axis tick_count")
+        tick_label_angle = self._optional_finite_scalar(
+            opts.get("tick_label_angle"), f"{axis_id} axis tick_label_angle"
+        )
+        tick_label_strategy = self._axis_tick_label_strategy(
+            opts.get("tick_label_strategy"), f"{axis_id} axis tick_label_strategy"
+        )
+        tick_label_min_gap = (
+            None
+            if opts.get("tick_label_min_gap") is None
+            else self._nonnegative_scalar(
+                opts.get("tick_label_min_gap"), f"{axis_id} axis tick_label_min_gap"
+            )
+        )
         kind = self._axis_kind(axis_id)
         spec: dict[str, Any] = {
             "id": axis_id,
@@ -1653,6 +1704,14 @@ class Figure:
             spec["label_offset"] = label_offset
         if label_angle is not None:
             spec["label_angle"] = label_angle
+        if tick_count is not None:
+            spec["tick_count"] = tick_count
+        if tick_label_angle is not None:
+            spec["tick_label_angle"] = tick_label_angle
+        if tick_label_strategy is not None:
+            spec["tick_label_strategy"] = tick_label_strategy
+        if tick_label_min_gap is not None:
+            spec["tick_label_min_gap"] = tick_label_min_gap
         if self._axis_scale(axis_id) == "log":
             spec["scale"] = "log"
         if opts.get("reverse"):

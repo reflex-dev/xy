@@ -220,3 +220,23 @@ def test_log_axis_uses_separate_readable_label_ticks() -> None:
         text = path.read_text(encoding="utf-8")
         for marker in required[3:]:
             assert marker in text, f"{path} no longer draws readable log tick labels"
+
+
+def test_client_axis_tick_labels_have_collision_layout() -> None:
+    required = (
+        "_axisTickTarget(axisId, fallback)",
+        "_axisTickLabelStrategy(axis)",
+        "_axisTickLabelAngle(axis)",
+        "_axisTickLabelMinGap(axis, dim)",
+        "_tickLabelsCollide(labels, dim, fontSize, minGap)",
+        "_downsampleTickLabels(labels, dim, fontSize, minGap)",
+        "_layoutTickLabels(axis, dim, labels)",
+        "tick_label_strategy",
+        "tick_label_angle",
+        "tick_label_min_gap",
+    )
+
+    for path in CLIENT_FILES:
+        text = path.read_text(encoding="utf-8")
+        for marker in required:
+            assert marker in text, f"{path} no longer protects crowded axis tick labels"
