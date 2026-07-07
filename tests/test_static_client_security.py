@@ -200,3 +200,23 @@ def test_client_exposes_axis_style_hooks() -> None:
         text = path.read_text(encoding="utf-8")
         for marker in required:
             assert marker in text, f"{path} no longer exposes axis styling marker {marker!r}"
+
+
+def test_log_axis_uses_separate_readable_label_ticks() -> None:
+    required = (
+        "const labels = [];",
+        "labels.push(v);",
+        "return { ticks: out, labels: labels.length ? labels : out, step: 1, log: true };",
+        "for (const v of (xt.labels || xt.ticks))",
+        "for (const v of (yt.labels || yt.ticks))",
+        "for (const v of (ticks.labels || ticks.ticks))",
+    )
+
+    for path in FORMATTER_FILES:
+        text = path.read_text(encoding="utf-8")
+        for marker in required[:3]:
+            assert marker in text, f"{path} no longer separates log tick labels"
+    for path in CLIENT_FILES:
+        text = path.read_text(encoding="utf-8")
+        for marker in required[3:]:
+            assert marker in text, f"{path} no longer draws readable log tick labels"

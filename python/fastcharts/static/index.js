@@ -175,15 +175,20 @@ function logTicks(lo, hi, target = 6) {
   const span = Math.max(1, e1 - e0);
   const mults = span <= Math.max(2, target) ? [1, 2, 5] : [1];
   const out = [];
+  const labels = [];
+  const labelEvery = Math.max(1, Math.ceil((e1 - e0 + 1) / Math.max(1, target)));
   for (let e = e0; e <= e1 && out.length < 200; e++) {
     const base = Math.pow(10, e);
     for (const m of mults) {
       const v = m * base;
-      if (v >= a * (1 - 1e-12) && v <= b * (1 + 1e-12)) out.push(v);
+      if (v >= a * (1 - 1e-12) && v <= b * (1 + 1e-12)) {
+        out.push(v);
+        if (m === 1 && (e - e0) % labelEvery === 0) labels.push(v);
+      }
       if (out.length >= 200) break;
     }
   }
-  return { ticks: out, step: 1, log: true };
+  return { ticks: out, labels: labels.length ? labels : out, step: 1, log: true };
 }
 
 function categoryTicks(lo, hi, categories, target = 6) {
@@ -317,7 +322,11 @@ function fmtTimeSpec(ms, format) {
 function fmtAxis(axis, v, tickStep) {
   if (axis && axis.kind === "category") return fmtCategory(v, axis.categories || []);
   if (axis && axis.kind === "time") return fmtTimeSpec(v, axis.format) || fmtTime(v, tickStep);
-  return fmtNumberSpec(v, axis && axis.format) || fmtLinear(v, tickStep);
+  const formatted = fmtNumberSpec(v, axis && axis.format);
+  if (axis && axis.scale === "log" && Number(v) > 0 && Number(v) < 1 && formatted === "0") {
+    return fmtLinear(v, tickStep);
+  }
+  return formatted || fmtLinear(v, tickStep);
 }
 
 function fmtValue(v, kind) {
@@ -2847,14 +2856,14 @@ class ChartView {
       this._applyStyle(d, extraStyle);
       this.labels.appendChild(d);
     };
-    for (const v of xt.ticks) {
+    for (const v of (xt.labels || xt.ticks)) {
       const px = this._dataPx("x", v);
       if (px < p.x - 1 || px > p.x + p.w + 1) continue;
       const text = fmtAxis(xAxis, v, xt.step);
       const top = xAxis.side === "top" ? p.y - 18 : p.y + p.h + 6;
       label(text, `left:${px}px;top:${top}px;transform:translateX(-50%);`, xAxis);
     }
-    for (const v of yt.ticks) {
+    for (const v of (yt.labels || yt.ticks)) {
       const py = this._dataPx("y", v);
       if (py < p.y - 1 || py > p.y + p.h + 1) continue;
       const text = fmtAxis(yAxis, v, yt.step);
@@ -2866,7 +2875,7 @@ class ChartView {
     for (const axis of Object.values(this.axes)) {
       if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
       const ticks = this._axisTicks(axis.id, Math.max(3, p.h / 45));
-      for (const v of ticks.ticks) {
+      for (const v of (ticks.labels || ticks.ticks)) {
         const py = this._dataPx(axis.id, v);
         if (py < p.y - 1 || py > p.y + p.h + 1) continue;
         const text = fmtAxis(axis, v, ticks.step);

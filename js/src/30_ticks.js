@@ -36,15 +36,20 @@ function logTicks(lo, hi, target = 6) {
   const span = Math.max(1, e1 - e0);
   const mults = span <= Math.max(2, target) ? [1, 2, 5] : [1];
   const out = [];
+  const labels = [];
+  const labelEvery = Math.max(1, Math.ceil((e1 - e0 + 1) / Math.max(1, target)));
   for (let e = e0; e <= e1 && out.length < 200; e++) {
     const base = Math.pow(10, e);
     for (const m of mults) {
       const v = m * base;
-      if (v >= a * (1 - 1e-12) && v <= b * (1 + 1e-12)) out.push(v);
+      if (v >= a * (1 - 1e-12) && v <= b * (1 + 1e-12)) {
+        out.push(v);
+        if (m === 1 && (e - e0) % labelEvery === 0) labels.push(v);
+      }
       if (out.length >= 200) break;
     }
   }
-  return { ticks: out, step: 1, log: true };
+  return { ticks: out, labels: labels.length ? labels : out, step: 1, log: true };
 }
 
 function categoryTicks(lo, hi, categories, target = 6) {
@@ -178,7 +183,11 @@ function fmtTimeSpec(ms, format) {
 function fmtAxis(axis, v, tickStep) {
   if (axis && axis.kind === "category") return fmtCategory(v, axis.categories || []);
   if (axis && axis.kind === "time") return fmtTimeSpec(v, axis.format) || fmtTime(v, tickStep);
-  return fmtNumberSpec(v, axis && axis.format) || fmtLinear(v, tickStep);
+  const formatted = fmtNumberSpec(v, axis && axis.format);
+  if (axis && axis.scale === "log" && Number(v) > 0 && Number(v) < 1 && formatted === "0") {
+    return fmtLinear(v, tickStep);
+  }
+  return formatted || fmtLinear(v, tickStep);
 }
 
 function fmtValue(v, kind) {

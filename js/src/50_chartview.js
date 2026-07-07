@@ -1611,14 +1611,14 @@ class ChartView {
       this._applyStyle(d, extraStyle);
       this.labels.appendChild(d);
     };
-    for (const v of xt.ticks) {
+    for (const v of (xt.labels || xt.ticks)) {
       const px = this._dataPx("x", v);
       if (px < p.x - 1 || px > p.x + p.w + 1) continue;
       const text = fmtAxis(xAxis, v, xt.step);
       const top = xAxis.side === "top" ? p.y - 18 : p.y + p.h + 6;
       label(text, `left:${px}px;top:${top}px;transform:translateX(-50%);`, xAxis);
     }
-    for (const v of yt.ticks) {
+    for (const v of (yt.labels || yt.ticks)) {
       const py = this._dataPx("y", v);
       if (py < p.y - 1 || py > p.y + p.h + 1) continue;
       const text = fmtAxis(yAxis, v, yt.step);
@@ -1630,7 +1630,7 @@ class ChartView {
     for (const axis of Object.values(this.axes)) {
       if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
       const ticks = this._axisTicks(axis.id, Math.max(3, p.h / 45));
-      for (const v of ticks.ticks) {
+      for (const v of (ticks.labels || ticks.ticks)) {
         const py = this._dataPx(axis.id, v);
         if (py < p.y - 1 || py > p.y + p.h + 1) continue;
         const text = fmtAxis(axis, v, ticks.step);
