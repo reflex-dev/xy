@@ -1035,6 +1035,37 @@ def test_build_payload_revalidates_mutated_axis_labels() -> None:
         fig.build_payload()
 
 
+def test_axis_label_position_options_emit_and_revalidate() -> None:
+    fig = Figure().line([0.0, 1.0], [1.0, 2.0])
+    fig.set_axis(
+        "x",
+        label="x",
+        label_position="inside_start",
+        label_offset=6,
+        label_angle=-8,
+    )
+    fig.set_axis(
+        "y",
+        label="y",
+        label_position={"right": 12, "top": "48%", "transform": "rotate(90deg)"},
+    )
+
+    spec, _ = fig.build_payload()
+
+    assert spec["x_axis"]["label_position"] == "inside_start"
+    assert spec["x_axis"]["label_offset"] == 6.0
+    assert spec["x_axis"]["label_angle"] == -8.0
+    assert spec["y_axis"]["label_position"] == {
+        "right": 12,
+        "top": "48%",
+        "transform": "rotate(90deg)",
+    }
+
+    fig.axis_options["x"]["label_position"] = "middle-ish"
+    with pytest.raises(ValueError, match="label_position"):
+        fig.build_payload()
+
+
 def test_nan_never_reaches_vertex_buffers():
     x = np.arange(1000.0)
     y = np.arange(1000.0)

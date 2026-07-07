@@ -326,8 +326,26 @@ Design rules:
 - Tooltip content is data, not raw HTML.
 - `fields`, `title`, and `format` compile to a safe client readout spec.
 - Text is inserted with `textContent` or text nodes.
-- Later, framework adapters can map tooltip payloads to framework-side custom
-  components, but the core standalone path must remain safe and useful.
+- Framework adapters can map tooltip payloads to framework-side custom
+  components. Core `fastcharts` stores those components as opaque Python
+  objects and does not import Reflex.
+
+Implemented adapter hook:
+
+```python
+chart = fc.chart(
+    fc.scatter(x="x", y="y", color="segment", data=df),
+    fc.legend(rx.vstack(...), show=False),
+    fc.tooltip(rx.box(...), show=False, fields=["x", "y", "segment"]),
+)
+
+chart.chrome_components()
+# {"legend": <rx.vstack ...>, "tooltip": <rx.box ...>}
+```
+
+The render objects are not serialized into standalone HTML. `show=False`
+suppresses the built-in DOM chrome when an adapter is replacing it; leaving
+`show=True` keeps the normal safe built-in fallback.
 
 Potential future advanced API:
 
@@ -335,8 +353,8 @@ Potential future advanced API:
 fc.tooltip(render="compact_metric")  # named client-side template
 ```
 
-Avoid accepting arbitrary JS or Python callbacks in standalone HTML. Notebook
-callbacks can stay on `on_hover`, where Python is present.
+Avoid accepting arbitrary JS callbacks in standalone HTML. Notebook callbacks
+can stay on `on_hover`, where Python is present.
 
 ## 6. Event Model
 

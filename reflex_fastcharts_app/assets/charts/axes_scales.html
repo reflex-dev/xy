@@ -2,7 +2,7 @@
 <html>
 <head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; worker-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
-<title>Horizontal category bars</title>
+<title>Log scale, reversed axis, fixed domains, dual y-axis</title>
 <style>
 html,body{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;background:#fff;}
 #chart{width:100%;}
@@ -424,6 +424,7 @@ uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange;
 uniform int u_colorMode; uniform float u_dpr; uniform int u_selActive;
+uniform float u_selectedOpacity; uniform float u_unselectedOpacity;
 out float v_lutCoord; out float v_dim; out float v_dval;
 ${AXIS_GLSL}
 void main() {
@@ -436,7 +437,7 @@ void main() {
   // points wear the density colormap so the texture->points swap is seamless.
   v_dval = a_dval;
   // Unselected marks dim when a selection is active (§34 selected/unselected styling).
-  v_dim = (u_selActive == 1 && a_sel < 0.5) ? 0.12 : 1.0;
+  v_dim = u_selActive == 1 ? mix(u_unselectedOpacity, u_selectedOpacity, step(0.5, a_sel)) : 1.0;
 }`;
 
 const POINT_FS = `#version 300 es
@@ -1286,6 +1287,8 @@ class ChartView {
       throw new Error("protocol mismatch");
     }
     this.spec = spec;
+    this.interaction = spec.interaction || {};
+    this.markStyle = spec.mark_style || {};
     this.axes = this._normalizeAxes(spec);
     this.comm = comm;
     this.seq = 0;
@@ -1293,12 +1296,17 @@ class ChartView {
     this._viewRequestBurstStart = null;
     this._viewAnim = null;
     this._animRaf = null;
+    this._wheelZoomRaf = null;
+    this._pendingWheelZoom = null;
     this._lastLabelDraw = null;
     this._lutCache = new Map();
     this._listeners = [];
     this._glPrograms = [];
     this._destroyed = false;
     this._hoverId = -1;
+    this._hoverTarget = null;
+    this._viewEventRaf = null;
+    this._linkedSource = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     this.dragMode = "pan"; // "pan" | "zoom" (box zoom); toggled via the modebar
 
     // Responsive size: "100%" means the *container* owns that axis — measure
@@ -1331,6 +1339,7 @@ class ChartView {
       });
       this._ro.observe(this.root);
     }
+    this._armVisibilityResizeWatch();
     this._armDprWatch();
 
     this.view0 = {
@@ -1338,6 +1347,7 @@ class ChartView {
       y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
     };
     this.view = { ...this.view0 };
+    this._initLinkedCharts();
 
     this._themeWatch = window.matchMedia("(prefers-color-scheme: dark)");
     this._onScheme = () => this.refreshTheme();
@@ -1349,16 +1359,21 @@ class ChartView {
 
   _layout() {
     // Plot rect from the current size — margins fixed, data area flexes.
-    const topAxisRoom = this._axis("x").side === "top" ? 32 : 0;
-    const top = MARGIN.t + (this.spec.title ? 30 : 0) + topAxisRoom;
+    const compact = this.size.w < 520;
+    const marginLeft = compact ? 46 : MARGIN.l;
+    const marginRight = compact ? 8 : MARGIN.r;
+    const marginTop = compact ? 6 : MARGIN.t;
+    const marginBottom = compact ? 36 : MARGIN.b;
+    const topAxisRoom = this._axis("x").side === "top" ? (compact ? 26 : 32) : 0;
+    const top = marginTop + (this.spec.title ? (compact ? 26 : 30) : 0) + topAxisRoom;
     const extraRightAxes = Object.values(this.axes || {}).filter((axis) =>
       axis && axis.id !== "y" && String(axis.id || "").startsWith("y") && axis.side === "right");
-    const right = MARGIN.r + (extraRightAxes.length ? 54 : 0);
+    const right = marginRight + (extraRightAxes.length ? (compact ? 42 : 54) : 0);
     this.plot = {
-      x: MARGIN.l,
+      x: marginLeft,
       y: top,
-      w: Math.max(40, this.size.w - MARGIN.l - right),
-      h: Math.max(40, this.size.h - top - MARGIN.b),
+      w: Math.max(40, this.size.w - marginLeft - right),
+      h: Math.max(40, this.size.h - top - marginBottom),
     };
   }
 
@@ -1432,6 +1447,81 @@ class ChartView {
     return handler;
   }
 
+  _interactionFlag(name, fallback = false) {
+    const value = this.interaction && this.interaction[name];
+    return value === undefined ? fallback : value === true;
+  }
+
+  _eventView(source = "view") {
+    return {
+      x0: this.view.x0,
+      x1: this.view.x1,
+      y0: this.view.y0,
+      y1: this.view.y1,
+      source,
+    };
+  }
+
+  _dispatchChartEvent(name, detail) {
+    if (!this.root || typeof CustomEvent !== "function") return;
+    this.root.dispatchEvent(new CustomEvent(`fastcharts:${name}`, {
+      detail,
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  _emitViewChange(source = "view", opts = {}) {
+    const shouldDispatch = this._interactionFlag("view_change") || this._linkChannel;
+    if (!shouldDispatch || this._destroyed) return;
+    const broadcast = opts.broadcast !== false;
+    this._pendingViewEvent = { source, broadcast };
+    if (this._viewEventRaf) return;
+    this._viewEventRaf = requestAnimationFrame(() => {
+      this._viewEventRaf = null;
+      const pending = this._pendingViewEvent || { source, broadcast };
+      this._pendingViewEvent = null;
+      const detail = this._eventView(pending.source);
+      if (this._interactionFlag("view_change")) {
+        this._dispatchChartEvent("view_change", detail);
+      }
+      if (this.comm && this._interactionFlag("view_change")) {
+        this.comm.send({ type: "view_change", ...detail });
+      }
+      if (pending.broadcast) this._broadcastLinkedView(detail);
+    });
+  }
+
+  _initLinkedCharts() {
+    const group = this.interaction && this.interaction.link_group;
+    if (!group || typeof BroadcastChannel !== "function") return;
+    this._linkAxes = Array.isArray(this.interaction.link_axes)
+      ? this.interaction.link_axes.filter((axis) => axis === "x" || axis === "y")
+      : ["x", "y"];
+    if (!this._linkAxes.length) this._linkAxes = ["x", "y"];
+    this._linkChannel = new BroadcastChannel(`fastcharts:${group}`);
+    this._linkChannel.onmessage = (event) => {
+      const msg = event.data || {};
+      if (!msg.view || msg.source === this._linkedSource) return;
+      const next = { ...this.view };
+      if (this._linkAxes.includes("x")) {
+        next.x0 = Number(msg.view.x0);
+        next.x1 = Number(msg.view.x1);
+      }
+      if (this._linkAxes.includes("y")) {
+        next.y0 = Number(msg.view.y0);
+        next.y1 = Number(msg.view.y1);
+      }
+      if (![next.x0, next.x1, next.y0, next.y1].every(Number.isFinite)) return;
+      this._setView(next, { animate: false, source: "linked", broadcast: false });
+    };
+  }
+
+  _broadcastLinkedView(detail) {
+    if (!this._linkChannel) return;
+    this._linkChannel.postMessage({ source: this._linkedSource, view: detail });
+  }
+
   _applyClass(el, className) {
     if (typeof className !== "string") return;
     for (const token of className.split(/\s+/).filter(Boolean)) {
@@ -1481,6 +1571,49 @@ class ChartView {
     if (!style || typeof style !== "object" || Array.isArray(style)) return null;
     if (Object.prototype.hasOwnProperty.call(style, property)) return style[property];
     return null;
+  }
+
+  _syncContainerSize() {
+    if (this._destroyed || !(this.fluid || this.fluidH) || !this.root) return;
+    const rect = this.root.getBoundingClientRect();
+    if (rect.width || rect.height) this._resize(rect.width, rect.height);
+  }
+
+  _armVisibilityResizeWatch() {
+    if (!(this.fluid || this.fluidH)) return;
+    const syncSoon = () => {
+      if (this._destroyed) return;
+      requestAnimationFrame(() => this._syncContainerSize());
+    };
+    this._listen(window, "resize", syncSoon);
+    this._listen(window, "pageshow", syncSoon);
+    this._listen(document, "visibilitychange", syncSoon);
+    if (typeof IntersectionObserver !== "undefined") {
+      this._io = new IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting || entry.intersectionRatio > 0)) {
+          syncSoon();
+        }
+      });
+      this._io.observe(this.root);
+    }
+  }
+
+  _markStateValue(state, property, fallback = null) {
+    const styles = this.markStyle && typeof this.markStyle === "object" ? this.markStyle[state] : null;
+    if (!styles || typeof styles !== "object" || Array.isArray(styles)) return fallback;
+    if (Object.prototype.hasOwnProperty.call(styles, property)) return styles[property];
+    return fallback;
+  }
+
+  _markStateNumber(state, property, fallback) {
+    const value = this._markStateValue(state, property, fallback);
+    if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+    return value;
+  }
+
+  _markStatePaint(state, property, fallback) {
+    const value = this._markStateValue(state, property, fallback);
+    return typeof value === "string" ? value : fallback;
   }
 
   // DPR watch (renderer audit R7): browser zoom changes devicePixelRatio
@@ -2065,6 +2198,7 @@ class ChartView {
       }
       markOf(g.trace.kind).draw(this, g, x0, x1, y0, y1);
     }
+    this._drawHoverState();
     this._pickDirty = true;
     this._drawChrome();
   }
@@ -2100,6 +2234,8 @@ class ChartView {
     gl.uniform2f(u("u_sizeRange"), g.sizeRange[0], g.sizeRange[1]);
     gl.uniform1i(u("u_colorMode"), g.colorMode);
     gl.uniform1f(u("u_opacity"), (g.trace.style.opacity ?? 0.8) * opacityScale);
+    gl.uniform1f(u("u_selectedOpacity"), this._markStateNumber("selected", "opacity", 1));
+    gl.uniform1f(u("u_unselectedOpacity"), this._markStateNumber("unselected", "opacity", 0.12));
     const [r, gg, b] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, 1);
 
@@ -2162,6 +2298,61 @@ class ChartView {
       gl.uniform1i(u("u_dlut"), 1); // sampler must still point at a valid unit
     }
     gl.drawArrays(gl.POINTS, 0, g.n);
+  }
+
+  _drawHoverState() {
+    const hit = this._hoverTarget;
+    if (!hit || !hit.g) return;
+    const g = hit.g;
+    if (g.trace.kind !== "scatter" || g.tier === "density") return;
+    if (!Number.isInteger(hit.index) || hit.index < 0 || hit.index >= g.n) return;
+    const [x0, x1] = this._axisRange(g.xAxis);
+    const [y0, y1] = this._axisRange(g.yAxis);
+    this._drawHoverPoint(
+      g,
+      hit.index,
+      this._map(g.xMeta, x0, x1, g.xAxis),
+      this._map(g.yMeta, y0, y1, g.yAxis)
+    );
+  }
+
+  _drawHoverPoint(g, index, xm, ym) {
+    const gl = this.gl;
+    const prog = this.pointProg;
+    gl.useProgram(prog);
+    const u = (n) => uniformOf(gl, prog, n);
+    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+    this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
+    this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+    const defaultSize = Math.max((g.size || 4) * 1.75, (g.size || 4) + 5);
+    const size = Math.max(0, this._markStateNumber("hover", "size", defaultSize));
+    const opacity = Math.max(0, Math.min(1, this._markStateNumber("hover", "opacity", 0.95)));
+    const color = parseColor(
+      this.root,
+      this._markStatePaint("hover", "color", "rgba(15,23,42,.92)"),
+      [0.06, 0.09, 0.16, 0.92]
+    );
+    gl.uniform1f(u("u_dpr"), this.dpr);
+    gl.uniform1f(u("u_size"), size);
+    gl.uniform1i(u("u_sizeMode"), 0);
+    gl.uniform2f(u("u_sizeRange"), size, size);
+    gl.uniform1i(u("u_colorMode"), 0);
+    gl.uniform1f(u("u_opacity"), opacity);
+    gl.uniform1f(u("u_selectedOpacity"), 1);
+    gl.uniform1f(u("u_unselectedOpacity"), 1);
+    gl.uniform4f(u("u_color"), color[0], color[1], color[2], 1);
+    gl.uniform1i(u("u_selActive"), 0);
+    gl.uniform1f(u("u_dblend"), 0);
+
+    this._bindScalarAttr(prog, "ax", g.xBuf, 0, 0);
+    this._bindScalarAttr(prog, "ay", g.yBuf, 0, 0);
+    for (const [name, value] of [["a_cval", 0], ["a_sval", 0.5], ["a_sel", 1], ["a_dval", 0]]) {
+      this._disableAttr(prog, name);
+      const loc = gl.getAttribLocation(prog, name);
+      if (loc >= 0) gl.vertexAttrib1f(loc, value);
+    }
+    gl.drawArrays(gl.POINTS, index, 1);
   }
 
   _drawDensity(g, density, opacityScale = 1) {
@@ -2365,6 +2556,65 @@ class ChartView {
     return Number.isFinite(value) ? value : fallback;
   }
 
+  _axisStyleNumber(axis, key, fallback) {
+    return this._styleNumber(axis && axis.style, key, fallback);
+  }
+
+  _axisStylePaint(axis, key, fallback) {
+    const style = axis && typeof axis.style === "object" ? axis.style : null;
+    return safeCssPaint(this.root, style && style[key], fallback);
+  }
+
+  _axisLabelCss(axis, dim, fallbackCss) {
+    const rawPosition = axis && axis.label_position;
+    const hasPosition = rawPosition !== undefined && rawPosition !== null;
+    const hasOffset = axis && Number.isFinite(Number(axis.label_offset));
+    const hasAngle = axis && Number.isFinite(Number(axis.label_angle));
+    if (!hasPosition && !hasOffset && !hasAngle) return { css: fallbackCss, style: null };
+    if (rawPosition && typeof rawPosition === "object" && !Array.isArray(rawPosition)) {
+      return { css: "font-weight:500;white-space:nowrap;", style: rawPosition };
+    }
+
+    const p = this.plot;
+    const position = String(hasPosition ? rawPosition : "center").replace(/-/g, "_");
+    const inside = position.startsWith("inside_");
+    const anchor = inside ? position.slice("inside_".length) : position;
+    const offset = hasOffset ? Number(axis.label_offset) : 0;
+    const side = axis && axis.side;
+    const anchorFrac = anchor === "start" ? 0 : (anchor === "end" ? 1 : 0.5);
+
+    if (dim === "x") {
+      const x = p.x + p.w * anchorFrac;
+      const outsideY = side === "top" ? p.y - 34 : p.y + p.h + 24;
+      const insideY = side === "top" ? p.y + 12 : p.y + p.h - 12;
+      const y = (inside ? insideY : outsideY) +
+        (side === "top" ? (inside ? offset : -offset) : (inside ? -offset : offset));
+      const translateX = anchor === "start" ? 0 : (anchor === "end" ? -100 : -50);
+      const angle = hasAngle ? Number(axis.label_angle) : 0;
+      return {
+        css:
+          `left:${x}px;top:${y}px;` +
+          `transform:translateX(${translateX}%) rotate(${angle}deg);` +
+          "transform-origin:center;font-weight:500;white-space:nowrap;",
+        style: null,
+      };
+    }
+
+    const xOutside = side === "right" ? p.x + p.w + 40 : 10;
+    const xInside = side === "right" ? p.x + p.w - 12 : p.x + 12;
+    const x = (inside ? xInside : xOutside) +
+      (side === "right" ? (inside ? -offset : offset) : (inside ? offset : -offset));
+    const y = p.y + p.h * (1 - anchorFrac);
+    const angle = hasAngle ? Number(axis.label_angle) : (side === "right" ? 90 : -90);
+    return {
+      css:
+        `left:${x}px;top:${y}px;` +
+        `transform:translate(-50%,-50%) rotate(${angle}deg);` +
+        "transform-origin:center;font-weight:500;white-space:nowrap;",
+      style: null,
+    };
+  }
+
   _annotationPaint(style, fallback) {
     return safeCssPaint(this.root, style && style.color, fallback);
   }
@@ -2543,8 +2793,8 @@ class ChartView {
     const xEdge = (px) => Math.min(p.x + p.w - 0.5, Math.max(p.x + 0.5, Math.round(px) + 0.5));
     const yEdge = (py) => Math.min(p.y + p.h - 0.5, Math.max(p.y + 0.5, Math.round(py) + 0.5));
 
-    ctx.strokeStyle = cssColor(this.theme.grid);
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = this._axisStylePaint(xAxis, "grid_color", this.theme.grid);
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xAxis, "grid_width", 1));
     ctx.beginPath();
     for (const v of xt.ticks) {
       const px = this._dataPx("x", v);
@@ -2553,6 +2803,11 @@ class ChartView {
       ctx.moveTo(x, p.y);
       ctx.lineTo(x, p.y + p.h);
     }
+    ctx.stroke();
+
+    ctx.strokeStyle = this._axisStylePaint(yAxis, "grid_color", this.theme.grid);
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(yAxis, "grid_width", 1));
+    ctx.beginPath();
     for (const v of yt.ticks) {
       const py = this._dataPx("y", v);
       if (!Number.isFinite(py)) continue;
@@ -2564,27 +2819,45 @@ class ChartView {
 
     this._drawAnnotationShapes(ctx);
 
-    ctx.strokeStyle = cssColor(this.theme.axis);
+    ctx.strokeStyle = this._axisStylePaint(yAxis, "axis_color", this.theme.axis);
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(yAxis, "axis_width", 1));
     ctx.beginPath();
     const yAxisX = yAxis.side === "right" ? p.x + p.w - 0.5 : p.x + 0.5;
-    const xAxisY = xAxis.side === "top" ? p.y + 0.5 : p.y + p.h - 0.5;
     ctx.moveTo(yAxisX, p.y);
     ctx.lineTo(yAxisX, p.y + p.h - 0.5);
+    ctx.stroke();
+
+    ctx.strokeStyle = this._axisStylePaint(xAxis, "axis_color", this.theme.axis);
+    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xAxis, "axis_width", 1));
+    ctx.beginPath();
+    const xAxisY = xAxis.side === "top" ? p.y + 0.5 : p.y + p.h - 0.5;
     ctx.moveTo(p.x, xAxisY);
     ctx.lineTo(p.x + p.w, xAxisY);
+    ctx.stroke();
+
     for (const axis of Object.values(this.axes)) {
       if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
+      ctx.strokeStyle = this._axisStylePaint(axis, "axis_color", this.theme.axis);
+      ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(axis, "axis_width", 1));
+      ctx.beginPath();
       const x = axis.side === "left" ? p.x + 0.5 : p.x + p.w + 0.5;
       ctx.moveTo(x, p.y);
       ctx.lineTo(x, p.y + p.h - 0.5);
+      ctx.stroke();
     }
-    ctx.stroke();
 
-    const label = (text, css) => {
+    const label = (text, css, axis, kind = "tick", extraStyle = null) => {
       if (!updateLabels) return;
       const d = document.createElement("div");
       d.textContent = text;
-      d.style.cssText = "position:absolute;color:" + cssColor(this.theme.label) + ";" + css;
+      const colorKey = kind === "label" ? "label_color" : "tick_color";
+      const sizeKey = kind === "label" ? "label_size" : "tick_size";
+      const defaultSize = kind === "label" ? 12 : 11;
+      d.style.cssText =
+        `position:absolute;color:${this._axisStylePaint(axis, colorKey, this.theme.label)};` +
+        `font-size:${Math.max(8, this._axisStyleNumber(axis, sizeKey, defaultSize))}px;` +
+        "line-height:1.2;" + css;
+      this._applyStyle(d, extraStyle);
       this.labels.appendChild(d);
     };
     for (const v of xt.ticks) {
@@ -2592,7 +2865,7 @@ class ChartView {
       if (px < p.x - 1 || px > p.x + p.w + 1) continue;
       const text = fmtAxis(xAxis, v, xt.step);
       const top = xAxis.side === "top" ? p.y - 18 : p.y + p.h + 6;
-      label(text, `left:${px}px;top:${top}px;transform:translateX(-50%);`);
+      label(text, `left:${px}px;top:${top}px;transform:translateX(-50%);`, xAxis);
     }
     for (const v of yt.ticks) {
       const py = this._dataPx("y", v);
@@ -2601,7 +2874,7 @@ class ChartView {
       const css = yAxis.side === "right"
         ? `left:${p.x + p.w + 8}px;top:${py}px;transform:translateY(-50%);`
         : `right:${this.size.w - p.x + 8}px;top:${py}px;transform:translateY(-50%);`;
-      label(text, css);
+      label(text, css, yAxis);
     }
     for (const axis of Object.values(this.axes)) {
       if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
@@ -2613,24 +2886,28 @@ class ChartView {
         const css = axis.side === "left"
           ? `right:${this.size.w - p.x + 8}px;top:${py}px;transform:translateY(-50%);`
           : `left:${p.x + p.w + 8}px;top:${py}px;transform:translateY(-50%);`;
-        label(text, css);
+        label(text, css, axis);
       }
       if (axis.label) {
-        const css = axis.side === "left"
+        const fallbackCss = axis.side === "left"
           ? `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`
           : `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`;
-        label(axis.label, css);
+        const placement = this._axisLabelCss(axis, "y", fallbackCss);
+        label(axis.label, placement.css, axis, "label", placement.style);
       }
     }
     if (s.x_axis.label) {
       const top = xAxis.side === "top" ? p.y - 34 : p.y + p.h + 24;
-      label(s.x_axis.label, `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`);
+      const fallbackCss = `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`;
+      const placement = this._axisLabelCss(xAxis, "x", fallbackCss);
+      label(s.x_axis.label, placement.css, xAxis, "label", placement.style);
     }
     if (s.y_axis.label) {
-      const css = yAxis.side === "right"
+      const fallbackCss = yAxis.side === "right"
         ? `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`
         : `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`;
-      label(s.y_axis.label, css);
+      const placement = this._axisLabelCss(yAxis, "y", fallbackCss);
+      label(s.y_axis.label, placement.css, yAxis, "label", placement.style);
     }
     this._drawAnnotationLabels(updateLabels);
   }
@@ -2852,6 +3129,14 @@ class ChartView {
     const row = this._localRow(hit);
     this._lastRow = row;
     this._renderTooltip(row, clientX, clientY);
+    if (this._interactionFlag("hover")) {
+      this._dispatchChartEvent("hover", {
+        row,
+        trace: hit.trace,
+        index: hit.index,
+        view: this._eventView("hover"),
+      });
+    }
     if (this.comm) {
       // Exact f64 values from the kernel canonical store (§16). The local row
       // (decoded from f32) shows instantly; the exact one replaces it.
@@ -2881,10 +3166,14 @@ class ChartView {
     if (hit.heatmap && g.heatmap && g._cpuHeatmap) {
       const h = g.heatmap;
       const { row: heatRow, col } = hit.heatmap;
-      row.x = h.xRange[0] + (col + 0.5) * ((h.xRange[1] - h.xRange[0]) / h.w);
-      row.y = h.yRange[0] + (heatRow + 0.5) * ((h.yRange[1] - h.yRange[0]) / h.h);
-      row.x_kind = "float";
-      row.y_kind = "float";
+      const rawX = h.xRange[0] + (col + 0.5) * ((h.xRange[1] - h.xRange[0]) / h.w);
+      const rawY = h.yRange[0] + (heatRow + 0.5) * ((h.yRange[1] - h.yRange[0]) / h.h);
+      const [x, xKind] = this._sourceDisplayValue(g, "x", rawX, "float");
+      const [y, yKind] = this._sourceDisplayValue(g, "y", rawY, "float");
+      row.x = x;
+      row.y = y;
+      if (xKind !== undefined) row.x_kind = xKind;
+      if (yKind !== undefined) row.y_kind = yKind;
       const norm = g._cpuHeatmap.grid[hit.index];
       row.color_value = this._denormalizeUnit(norm, g.trace.color && g.trace.color.domain);
     } else if (g._cpuRect) {
@@ -3079,9 +3368,24 @@ class ChartView {
     this.selRect.style.cssText =
       "position:absolute;display:none;pointer-events:none;z-index:4;" +
       "border:1px solid var(--chart-selection, rgba(90,140,240,.9));" +
-      "background:rgba(90,140,240,.15);";
+      "background:var(--chart-selection-fill, rgba(90,140,240,.15));";
     this._applySlot(this.selRect, "selection");
     this.root.appendChild(this.selRect);
+
+    if (this._interactionFlag("crosshair")) {
+      this.crosshairX = document.createElement("div");
+      this.crosshairX.style.cssText =
+        "position:absolute;display:none;pointer-events:none;z-index:3;" +
+        "width:1px;background:var(--chart-crosshair, rgba(15,23,42,.42));";
+      this._applySlot(this.crosshairX, "crosshair_x");
+      this.root.appendChild(this.crosshairX);
+      this.crosshairY = document.createElement("div");
+      this.crosshairY.style.cssText =
+        "position:absolute;display:none;pointer-events:none;z-index:3;" +
+        "height:1px;background:var(--chart-crosshair, rgba(15,23,42,.42));";
+      this._applySlot(this.crosshairY, "crosshair_y");
+      this.root.appendChild(this.crosshairY);
+    }
 
     const dataAt = (clientX, clientY) => {
       const r = c.getBoundingClientRect();
@@ -3092,7 +3396,8 @@ class ChartView {
       this._cancelViewAnimation();
       // Shift-drag box-selects (§34); a "zoom" modebar toggle turns a plain drag
       // into a box-zoom; otherwise a plain drag pans.
-      const mode = e.shiftKey && this._pickable ? "select"
+      const canBrush = this._interactionFlag("brush", true) && this._interactionFlag("select", true);
+      const mode = e.shiftKey && canBrush && this._pickable ? "select"
         : this.dragMode === "zoom" ? "zoom" : null;
       if (mode) {
         band = { mode, sx: e.clientX, sy: e.clientY, d0: dataAt(e.clientX, e.clientY) };
@@ -3123,8 +3428,10 @@ class ChartView {
         };
         this.draw();
         this._scheduleViewRequest();
+        this._emitViewChange("pan");
         return;
       }
+      this._updateCrosshair(e);
       this._hover(e);
     });
     const end = (e) => {
@@ -3135,16 +3442,27 @@ class ChartView {
         if (moved) {
           if (band.mode === "zoom") this._zoomToBox(band.d0, d1, true);
           else this._sendSelect(band.d0, d1);
+          this._ignoreNextClick = true;
         }
         band = null;
         return;
       }
+      if (drag && drag.moved) this._ignoreNextClick = true;
       if (drag && !drag.moved) this.tooltip.style.display = "none";
       drag = null;
     };
     this._listen(c, "pointerup", end);
     this._listen(c, "pointercancel", () => { this.selRect.style.display = "none"; band = null; drag = null; });
-    this._listen(c, "pointerleave", () => { this.tooltip.style.display = "none"; });
+    this._listen(c, "pointerleave", () => {
+      const hadHover = this._hoverId !== -1;
+      this._hoverId = -1;
+      this._hoverTarget = null;
+      this.tooltip.style.display = "none";
+      this._hideCrosshair();
+      this._dispatchChartEvent("leave", { view: this._eventView("leave") });
+      if (hadHover) this.draw();
+    });
+    this._listen(c, "click", (e) => this._click(e));
 
     this._listen(c, "wheel", (e) => {
       e.preventDefault();
@@ -3152,13 +3470,70 @@ class ChartView {
       const r = c.getBoundingClientRect();
       const fx = (e.clientX - r.left) / r.width;
       const fy = 1 - (e.clientY - r.top) / r.height;
-      this._zoomAt(f, fx, fy, true, 95);
+      this._queueWheelZoom(f, fx, fy);
     }, { passive: false });
 
     this._listen(c, "dblclick", () => {
       this._clearSelection();
       this._setView(this.view0, { animate: true });
     });
+  }
+
+  _updateCrosshair(e) {
+    if (!this.crosshairX || !this.crosshairY) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const rootRect = this.root.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    if (x < 0 || x > rect.width || y < 0 || y > rect.height) {
+      this._hideCrosshair();
+      return;
+    }
+    const left = e.clientX - rootRect.left;
+    const top = e.clientY - rootRect.top;
+    this.crosshairX.style.display = "block";
+    this.crosshairX.style.left = left + "px";
+    this.crosshairX.style.top = this.plot.y + "px";
+    this.crosshairX.style.height = this.plot.h + "px";
+    this.crosshairY.style.display = "block";
+    this.crosshairY.style.left = this.plot.x + "px";
+    this.crosshairY.style.top = top + "px";
+    this.crosshairY.style.width = this.plot.w + "px";
+  }
+
+  _hideCrosshair() {
+    if (this.crosshairX) this.crosshairX.style.display = "none";
+    if (this.crosshairY) this.crosshairY.style.display = "none";
+  }
+
+  _click(e) {
+    if (this._ignoreNextClick) {
+      this._ignoreNextClick = false;
+      return;
+    }
+    if (!this._interactionFlag("click")) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const cssX = e.clientX - rect.left;
+    const cssY = e.clientY - rect.top;
+    const [x, y] = this._dataFromCanvas(cssX, cssY);
+    const hit = this._pickAt(cssX, cssY) || this._hoverAt(cssX, cssY);
+    const detail = {
+      x,
+      y,
+      view: this._eventView("click"),
+      row: hit && this._localRow ? this._localRow(hit) : null,
+      trace: hit ? hit.trace : null,
+      index: hit ? hit.index : null,
+    };
+    this._dispatchChartEvent("click", detail);
+    if (hit && this.comm) {
+      const msg = { type: "click", trace: hit.trace, index: hit.index };
+      const g = hit.g;
+      if (g && g.tier === "density" && g.drill && g.drill.seq !== undefined) {
+        msg.drill_seq = g.drill.seq;
+      }
+      this.comm.send(msg);
+    }
   }
 
   _updateBand(band, e) {
@@ -3173,11 +3548,11 @@ class ChartView {
     const x2 = Math.min(x + w, px + this.plot.w), y2 = Math.min(y + h, py + this.plot.h);
     const cx = Math.max(x, px), cy = Math.max(y, py);
     if (band.mode === "zoom") {
-      this.selRect.style.border = "1px solid rgba(120,120,120,.9)";
-      this.selRect.style.background = "rgba(120,120,120,.12)";
+      this.selRect.style.border = "1px solid var(--chart-zoom-selection, rgba(120,120,120,.9))";
+      this.selRect.style.background = "var(--chart-zoom-selection-fill, rgba(120,120,120,.12))";
     } else {
-      this.selRect.style.border = "1px solid rgba(90,140,240,.9)";
-      this.selRect.style.background = "rgba(90,140,240,.15)";
+      this.selRect.style.border = "1px solid var(--chart-selection, rgba(90,140,240,.9))";
+      this.selRect.style.background = "var(--chart-selection-fill, rgba(90,140,240,.15))";
     }
     this.selRect.style.display = "block";
     this.selRect.style.left = cx + "px";
@@ -3190,6 +3565,8 @@ class ChartView {
   _sendSelect(d0, d1) {
     const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
     const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
+    const range = { x0, x1, y0, y1 };
+    this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
     if (this.comm) {
       this.comm.send({ type: "select", x0, x1, y0, y1 });
     } else {
@@ -3217,6 +3594,11 @@ class ChartView {
     }
     this._selectionCount = total;
     this.draw();
+    this._dispatchChartEvent("select", {
+      total,
+      range: { x0, x1, y0, y1 },
+      view: this._eventView("select"),
+    });
   }
 
   _applySelMask(g, maskF32) {
@@ -3234,6 +3616,7 @@ class ChartView {
     }
     this._selectionCount = 0;
     if (this.comm) this.comm.send({ type: "select_clear" });
+    this._dispatchChartEvent("select", { total: 0, view: this._eventView("select_clear") });
   }
 
   // -- modebar & zoom (Plotly-parity controls) ------------------------------
@@ -3314,6 +3697,7 @@ class ChartView {
       this.view = target;
       this.draw();
       if (opts.request !== false) this._scheduleViewRequest();
+      this._emitViewChange(opts.source || "view", { broadcast: opts.broadcast });
       return;
     }
 
@@ -3369,6 +3753,7 @@ class ChartView {
         this.view = anim.target;
         this._lastLabelDraw = null;
         this.draw();
+        this._emitViewChange(opts.source || "view", { broadcast: opts.broadcast });
       }
     };
     this._animRaf = requestAnimationFrame(step);
@@ -3408,6 +3793,24 @@ class ChartView {
     const yr = this._zoomAxisRange("y", y0, y1, f, fy);
     if (!xr || !yr) return;
     this._setView({ x0: xr[0], x1: xr[1], y0: yr[0], y1: yr[1] }, { animate, duration });
+  }
+
+  _queueWheelZoom(factor, fx, fy) {
+    if (!Number.isFinite(factor) || factor <= 0) return;
+    if (!this._pendingWheelZoom) {
+      this._pendingWheelZoom = { factor: 1, fx, fy };
+    }
+    this._pendingWheelZoom.factor *= factor;
+    this._pendingWheelZoom.fx = fx;
+    this._pendingWheelZoom.fy = fy;
+    if (this._wheelZoomRaf) return;
+    this._wheelZoomRaf = requestAnimationFrame(() => {
+      this._wheelZoomRaf = null;
+      const pending = this._pendingWheelZoom;
+      this._pendingWheelZoom = null;
+      if (!pending || this._destroyed) return;
+      this._zoomAt(pending.factor, pending.fx, pending.fy, false);
+    });
   }
 
   // Box-zoom: fit the view to the dragged data rectangle (§16 precision floor;
@@ -3461,8 +3864,11 @@ class ChartView {
 
   _hover(e) {
     if (this._transitionActive()) {
+      const hadHover = this._hoverId !== -1;
       this._hoverId = -1;
+      this._hoverTarget = null;
       this.tooltip.style.display = "none";
+      if (hadHover) this.draw();
       return;
     }
     const rect = this.canvas.getBoundingClientRect();
@@ -3470,8 +3876,11 @@ class ChartView {
     const cssY = e.clientY - rect.top;
     const hit = this._pickAt(cssX, cssY) || this._hoverAt(cssX, cssY);
     if (!hit) {
+      const hadHover = this._hoverId !== -1;
       this._hoverId = -1;
+      this._hoverTarget = null;
       this.tooltip.style.display = "none";
+      if (hadHover) this.draw();
       return;
     }
     const id = hit.trace * 1e9 + hit.index;
@@ -3481,7 +3890,9 @@ class ChartView {
       return;
     }
     this._hoverId = id;
+    this._hoverTarget = hit;
     this._showTooltip(hit, e.clientX, e.clientY);
+    this.draw();
   }
 
   _scheduleViewRequest(viewOverride = this.view, opts = {}) {
@@ -3663,6 +4074,15 @@ class ChartView {
       this._lastRow = msg.row;
       const xy = this._lastHoverXY;
       if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY);
+      if (this._interactionFlag("hover")) {
+        this._dispatchChartEvent("hover", {
+          row: msg.row,
+          trace: msg.row.trace,
+          index: msg.row.index,
+          exact: true,
+          view: this._eventView("hover"),
+        });
+      }
     } else if (msg.type === "selection") {
       if (!msg.traces || !msg.traces.length) {
         for (const g of this.gpuTraces) {
@@ -3692,6 +4112,10 @@ class ChartView {
       }
       this._selectionCount = msg.total || 0;
       this.draw();
+      this._dispatchChartEvent("select", {
+        total: this._selectionCount,
+        view: this._eventView("select"),
+      });
     }
   }
 
@@ -3758,6 +4182,8 @@ class ChartView {
     if (this._destroyed) return;
     this._destroyed = true;
     this._ro?.disconnect();
+    this._io?.disconnect();
+    this._io = null;
     this._themeWatch?.removeEventListener?.("change", this._onScheme);
     this._dprMq?.removeEventListener?.("change", this._onDprChange);
     this._dprMq = null;
@@ -3768,6 +4194,13 @@ class ChartView {
     }
     clearTimeout(this._viewTimer);
     this._viewTimer = null;
+    if (this._viewEventRaf) cancelAnimationFrame(this._viewEventRaf);
+    this._viewEventRaf = null;
+    if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
+    this._wheelZoomRaf = null;
+    this._pendingWheelZoom = null;
+    this._linkChannel?.close?.();
+    this._linkChannel = null;
     if (this._raf) cancelAnimationFrame(this._raf);
     this._raf = null;
     this._cancelViewAnimation();
@@ -4051,8 +4484,8 @@ window.fastcharts = { render, renderStandalone, ChartView, MARK_KINDS, markOf };
 })();
 </script>
 <script>
-  const spec = {"protocol":2,"width":"100%","height":430,"title":"Horizontal category bars","x_axis":{"id":"x","kind":"linear","label":"revenue","range":[0.0,146.26],"side":"bottom"},"y_axis":{"id":"y","kind":"category","label":"region","range":[-0.544,4.5440000000000005],"side":"left","categories":["NA","EU","APAC","LATAM","MEA"]},"axes":{"x":{"id":"x","kind":"linear","label":"revenue","range":[0.0,146.26],"side":"bottom"},"y":{"id":"y","kind":"category","label":"region","range":[-0.544,4.5440000000000005],"side":"left","categories":["NA","EU","APAC","LATAM","MEA"]}},"traces":[{"id":0,"kind":"bar","name":"revenue","style":{"color":"#9333ea","opacity":0.86,"role":"bar","orientation":"horizontal"},"tier":"direct","n_points":5,"n_marks":5,"x_axis":"x","y_axis":"y","bar":{"orientation":"horizontal","value_axis":"x","pos":0,"value1":1,"width":0.8,"value0_const":0.0}}],"columns":[{"byte_offset":0,"len":5,"offset":2.0,"scale":1.0,"kind":"float"},{"byte_offset":20,"len":5,"offset":97.0,"scale":1.0,"kind":"float"}],"backend":"native","show_legend":true};
-  const b64 = "AAAAwAAAgL8AAAAAAACAPwAAAEAAADRCAAD4QQAAmEEAALjBAAA0wg==";
+  const spec = {"protocol":2,"width":"100%","height":430,"title":"Log scale, reversed axis, fixed domains, dual y-axis","x_axis":{"id":"x","kind":"linear","label":"request volume","range":[1.0,1000000.0],"side":"bottom","label_position":"inside_end","label_offset":8.0,"scale":"log","domain":[1.0,1000000.0],"format":",.0f","style":{"grid_color":"rgba(37,99,235,.14)","tick_color":"#1d4ed8"}},"y_axis":{"id":"y","kind":"linear","label":"rank (reversed)","range":[100.0,0.0],"side":"left","label_position":"inside_start","label_offset":10.0,"label_angle":-90.0,"reverse":true,"domain":[0.0,100.0],"format":".0f","style":{"axis_color":"#2563eb","label_color":"#1e40af"}},"axes":{"x":{"id":"x","kind":"linear","label":"request volume","range":[1.0,1000000.0],"side":"bottom","label_position":"inside_end","label_offset":8.0,"scale":"log","domain":[1.0,1000000.0],"format":",.0f","style":{"grid_color":"rgba(37,99,235,.14)","tick_color":"#1d4ed8"}},"y":{"id":"y","kind":"linear","label":"rank (reversed)","range":[100.0,0.0],"side":"left","label_position":"inside_start","label_offset":10.0,"label_angle":-90.0,"reverse":true,"domain":[0.0,100.0],"format":".0f","style":{"axis_color":"#2563eb","label_color":"#1e40af"}},"y2":{"id":"y2","kind":"linear","label":"conversion","range":[0.0,0.35],"side":"right","label_position":{"right":16,"top":18,"transform":"none","textAlign":"right"},"domain":[0.0,0.35],"format":".0%","style":{"axis_color":"#dc2626","tick_color":"#991b1b","label_color":"#991b1b"}}},"traces":[{"id":0,"kind":"line","name":"quality rank","style":{"color":"#2563eb","width":2.0,"opacity":1.0},"tier":"direct","n_points":240,"n_marks":240,"x":0,"y":1,"x_axis":"x","y_axis":"y"},{"id":1,"kind":"scatter","name":"sampled checks","style":{"opacity":0.8},"tier":"direct","n_points":34,"n_marks":34,"x":2,"y":3,"x_axis":"x","y_axis":"y","color":{"mode":"constant","color":"#0f766e"},"size":{"mode":"constant","size":7.0}},{"id":2,"kind":"line","name":"conversion","style":{"color":"#dc2626","width":1.8,"opacity":1.0},"tier":"direct","n_points":240,"n_marks":240,"x":4,"y":5,"x_axis":"x","y_axis":"y2"}],"columns":[{"byte_offset":0,"len":240,"offset":500000.5,"scale":1.0,"kind":"float"},{"byte_offset":960,"len":240,"offset":60.373519129842485,"scale":1.0,"kind":"float"},{"byte_offset":1920,"len":34,"offset":500000.5,"scale":1.0,"kind":"float"},{"byte_offset":2056,"len":34,"offset":60.373519129842485,"scale":1.0,"kind":"float"},{"byte_offset":2192,"len":240,"offset":500000.5,"scale":1.0,"kind":"float"},{"byte_offset":3152,"len":240,"offset":0.19699660751300607,"scale":1.0,"kind":"float"}],"backend":"native","show_legend":true,"tooltip":{"fields":["x","y"],"format":{"x":",.0f","y":".2f"}}};
+  const b64 = "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";
   const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
   fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);
 </script>

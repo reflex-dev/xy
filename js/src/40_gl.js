@@ -48,14 +48,39 @@ function uniformOf(gl, prog, name) {
 // and size scalar (a_sval). Color mode selects how the LUT is sampled; the LUT
 // is a 256×1 texture (colormap or cycled palette). Size mode maps a_sval into a
 // px range. SDF-antialiased in the fragment stage.
+const AXIS_GLSL = `
+float fcDecode(float encoded, vec2 meta) {
+  return encoded / max(abs(meta.y), 1e-30) + meta.x;
+}
+float fcAxisCoord(float encoded, vec2 meta, int mode) {
+  float value = fcDecode(encoded, meta);
+  if (mode == 1) return value > 0.0 ? log(value) / log(10.0) : -1e30;
+  return value;
+}
+float fcMap(float encoded, vec2 map, vec2 meta, int mode) {
+  return fcAxisCoord(encoded, meta, mode) * map.x + map.y;
+}
+float fcViewCoord(float value, int mode) {
+  if (mode == 1) return value > 0.0 ? log(value) / log(10.0) : -1e30;
+  return value;
+}
+float fcViewValue(float coord, int mode) {
+  if (mode == 1) return pow(10.0, coord);
+  return coord;
+}
+`;
+
 const POINT_VS = `#version 300 es
 in float ax; in float ay; in float a_cval; in float a_sval; in float a_sel; in float a_dval;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
+uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange;
 uniform int u_colorMode; uniform float u_dpr; uniform int u_selActive;
+uniform float u_selectedOpacity; uniform float u_unselectedOpacity;
 out float v_lutCoord; out float v_dim; out float v_dval;
+${AXIS_GLSL}
 void main() {
-  gl_Position = vec4(ax * u_xmap.x + u_xmap.y, ay * u_ymap.x + u_ymap.y, 0.0, 1.0);
+  gl_Position = vec4(fcMap(ax, u_xmap, u_xmeta, u_xmode), fcMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = sz * u_dpr;
   // continuous: coord = value in [0,1]; categorical: center of texel a_cval.
@@ -64,7 +89,7 @@ void main() {
   // points wear the density colormap so the texture->points swap is seamless.
   v_dval = a_dval;
   // Unselected marks dim when a selection is active (§34 selected/unselected styling).
-  v_dim = (u_selActive == 1 && a_sel < 0.5) ? 0.12 : 1.0;
+  v_dim = u_selActive == 1 ? mix(u_unselectedOpacity, u_selectedOpacity, step(0.5, a_sel)) : 1.0;
 }`;
 
 const POINT_FS = `#version 300 es
@@ -96,10 +121,12 @@ void main() {
 const PICK_VS = `#version 300 es
 in float ax; in float ay; in float a_sval;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
+uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange; uniform float u_dpr;
 flat out int v_id;
+${AXIS_GLSL}
 void main() {
-  gl_Position = vec4(ax * u_xmap.x + u_xmap.y, ay * u_ymap.x + u_ymap.y, 0.0, 1.0);
+  gl_Position = vec4(fcMap(ax, u_xmap, u_xmeta, u_xmode), fcMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = max(sz, 6.0) * u_dpr; // enlarge hit target
   v_id = gl_VertexID;
@@ -130,10 +157,14 @@ void main() {
 const DENSITY_VS = `#version 300 es
 in vec2 a_corner;
 uniform vec4 u_view; // x0,x1,y0,y1
+uniform int u_xmode; uniform int u_ymode;
 out vec2 v_data;
+${AXIS_GLSL}
 void main() {
   gl_Position = vec4(a_corner * 2.0 - 1.0, 0.0, 1.0);
-  v_data = vec2(mix(u_view.x, u_view.y, a_corner.x), mix(u_view.z, u_view.w, a_corner.y));
+  float x = mix(fcViewCoord(u_view.x, u_xmode), fcViewCoord(u_view.y, u_xmode), a_corner.x);
+  float y = mix(fcViewCoord(u_view.z, u_ymode), fcViewCoord(u_view.w, u_ymode), a_corner.y);
+  v_data = vec2(fcViewValue(x, u_xmode), fcViewValue(y, u_ymode));
 }`;
 
 const DENSITY_FS = `#version 300 es
@@ -160,10 +191,14 @@ void main() {
 const HEATMAP_VS = `#version 300 es
 in vec2 a_corner;
 uniform vec4 u_view; // x0,x1,y0,y1
+uniform int u_xmode; uniform int u_ymode;
 out vec2 v_data;
+${AXIS_GLSL}
 void main() {
   gl_Position = vec4(a_corner * 2.0 - 1.0, 0.0, 1.0);
-  v_data = vec2(mix(u_view.x, u_view.y, a_corner.x), mix(u_view.z, u_view.w, a_corner.y));
+  float x = mix(fcViewCoord(u_view.x, u_xmode), fcViewCoord(u_view.y, u_xmode), a_corner.x);
+  float y = mix(fcViewCoord(u_view.z, u_ymode), fcViewCoord(u_view.w, u_ymode), a_corner.y);
+  v_data = vec2(fcViewValue(x, u_xmode), fcViewValue(y, u_ymode));
 }`;
 
 const HEATMAP_FS = `#version 300 es
@@ -187,11 +222,13 @@ void main() {
 const LINE_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
+uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 out float v_off;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
+${AXIS_GLSL}
 void main() {
-  vec2 p0 = vec2(ax0 * u_xmap.x + u_xmap.y, ay0 * u_ymap.x + u_ymap.y);
-  vec2 p1 = vec2(ax1 * u_xmap.x + u_xmap.y, ay1 * u_ymap.x + u_ymap.y);
+  vec2 p0 = vec2(fcMap(ax0, u_xmap, u_xmeta, u_xmode), fcMap(ay0, u_ymap, u_ymeta, u_ymode));
+  vec2 p1 = vec2(fcMap(ax1, u_xmap, u_xmeta, u_xmode), fcMap(ay1, u_ymap, u_ymeta, u_ymode));
   vec2 pix0 = (p0 * 0.5 + 0.5) * u_res;
   vec2 pix1 = (p1 * 0.5 + 0.5) * u_res;
   vec2 dir = pix1 - pix0;
@@ -222,15 +259,18 @@ void main() {
 const AREA_VS = `#version 300 es
 in float ax0; in float ax1; in float ay0; in float ay1; in float ab0; in float ab1;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_bmap;
+uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform vec2 u_bmeta;
+uniform int u_xmode; uniform int u_ymode;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
+${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
-  float x0 = ax0 * u_xmap.x + u_xmap.y;
-  float x1 = ax1 * u_xmap.x + u_xmap.y;
-  float y0 = ay0 * u_ymap.x + u_ymap.y;
-  float y1 = ay1 * u_ymap.x + u_ymap.y;
-  float b0 = ab0 * u_bmap.x + u_bmap.y;
-  float b1 = ab1 * u_bmap.x + u_bmap.y;
+  float x0 = fcMap(ax0, u_xmap, u_xmeta, u_xmode);
+  float x1 = fcMap(ax1, u_xmap, u_xmeta, u_xmode);
+  float y0 = fcMap(ay0, u_ymap, u_ymeta, u_ymode);
+  float y1 = fcMap(ay1, u_ymap, u_ymeta, u_ymode);
+  float b0 = fcMap(ab0, u_bmap, u_bmeta, u_ymode);
+  float b1 = fcMap(ab1, u_bmap, u_bmeta, u_ymode);
   float top = mix(y0, y1, c.x);
   float base = mix(b0, b1, c.x);
   gl_Position = vec4(mix(x0, x1, c.x), mix(base, top, c.y), 0.0, 1.0);
@@ -251,16 +291,19 @@ void main() {
 const RECT_VS = `#version 300 es
 in float ax0; in float ax1; in float ay0; in float ay1;
 uniform vec2 u_x0map; uniform vec2 u_x1map; uniform vec2 u_y0map; uniform vec2 u_y1map;
+uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
+uniform int u_xmode; uniform int u_ymode;
 uniform vec4 u_edgePad;
 in float a_cval; uniform int u_colorMode;
 out float v_lutCoord;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
+${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
-  float x0 = ax0 * u_x0map.x + u_x0map.y + u_edgePad.x;
-  float x1 = ax1 * u_x1map.x + u_x1map.y + u_edgePad.y;
-  float y0 = ay0 * u_y0map.x + u_y0map.y + u_edgePad.z;
-  float y1 = ay1 * u_y1map.x + u_y1map.y + u_edgePad.w;
+  float x0 = fcMap(ax0, u_x0map, u_x0meta, u_xmode) + u_edgePad.x;
+  float x1 = fcMap(ax1, u_x1map, u_x1meta, u_xmode) + u_edgePad.y;
+  float y0 = fcMap(ay0, u_y0map, u_y0meta, u_ymode) + u_edgePad.z;
+  float y1 = fcMap(ay1, u_y1map, u_y1meta, u_ymode) + u_edgePad.w;
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   gl_Position = vec4(mix(x0, x1, c.x), mix(y0, y1, c.y), 0.0, 1.0);
 }`;
@@ -272,17 +315,20 @@ void main() {
 const BAR_VS = `#version 300 es
 in float a_pos; in float a_v0; in float a_v1; in float a_cval;
 uniform vec2 u_pmap; uniform vec2 u_v0map; uniform vec2 u_v1map;
+uniform vec2 u_pmeta; uniform vec2 u_v0meta; uniform vec2 u_v1meta;
+uniform int u_pmode; uniform int u_vmode;
 uniform float u_width; uniform int u_orientation; uniform int u_v0Mode; uniform float u_v0Const;
 uniform float u_v0EdgePad;
 uniform int u_colorMode;
 out float v_lutCoord;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
+${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
-  float p = a_pos * u_pmap.x + u_pmap.y;
+  float p = fcMap(a_pos, u_pmap, u_pmeta, u_pmode);
   float halfW = abs(u_width * u_pmap.x) * 0.5;
-  float v0 = (u_v0Mode == 0 ? u_v0Const : a_v0 * u_v0map.x + u_v0map.y) + u_v0EdgePad;
-  float v1 = a_v1 * u_v1map.x + u_v1map.y;
+  float v0 = (u_v0Mode == 0 ? u_v0Const : fcMap(a_v0, u_v0map, u_v0meta, u_vmode)) + u_v0EdgePad;
+  float v1 = fcMap(a_v1, u_v1map, u_v1meta, u_vmode);
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   if (u_orientation == 0) {
     gl_Position = vec4(mix(p - halfW, p + halfW, c.x), mix(v0, v1, c.y), 0.0, 1.0);

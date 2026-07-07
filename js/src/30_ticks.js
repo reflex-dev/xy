@@ -3,6 +3,8 @@
 // ---------------------------------------------------------------------------
 
 function niceStep(rough) {
+  rough = Math.abs(rough);
+  if (!Number.isFinite(rough) || rough <= 0) return 1;
   const mag = Math.pow(10, Math.floor(Math.log10(rough)));
   for (const m of [1, 2, 5, 10]) {
     if (rough <= m * mag * (1 + 1e-12)) return m * mag;
@@ -11,19 +13,44 @@ function niceStep(rough) {
 }
 
 function linearTicks(lo, hi, target = 6) {
-  const step = niceStep((hi - lo) / target);
-  const first = Math.ceil(lo / step) * step;
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { ticks: [], step: 1 };
+  const a = Math.min(lo, hi);
+  const b = Math.max(lo, hi);
+  if (a === b) return { ticks: [a], step: 1 };
+  const step = niceStep((b - a) / target);
+  const first = Math.ceil(a / step) * step;
   const out = [];
-  for (let v = first; v <= hi + step * 1e-9 && out.length < 200; v += step) {
+  for (let v = first; v <= b + step * 1e-9 && out.length < 200; v += step) {
     out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
   }
   return { ticks: out, step };
 }
 
+function logTicks(lo, hi, target = 6) {
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { ticks: [], step: 1 };
+  const a = Math.min(lo, hi);
+  const b = Math.max(lo, hi);
+  if (a <= 0 || b <= 0) return { ticks: [], step: 1 };
+  const e0 = Math.floor(Math.log10(a));
+  const e1 = Math.ceil(Math.log10(b));
+  const span = Math.max(1, e1 - e0);
+  const mults = span <= Math.max(2, target) ? [1, 2, 5] : [1];
+  const out = [];
+  for (let e = e0; e <= e1 && out.length < 200; e++) {
+    const base = Math.pow(10, e);
+    for (const m of mults) {
+      const v = m * base;
+      if (v >= a * (1 - 1e-12) && v <= b * (1 + 1e-12)) out.push(v);
+      if (out.length >= 200) break;
+    }
+  }
+  return { ticks: out, step: 1, log: true };
+}
+
 function categoryTicks(lo, hi, categories, target = 6) {
   if (!categories || !categories.length) return { ticks: [], step: 1 };
-  const start = Math.max(0, Math.ceil(lo));
-  const stop = Math.min(categories.length - 1, Math.floor(hi));
+  const start = Math.max(0, Math.ceil(Math.min(lo, hi)));
+  const stop = Math.min(categories.length - 1, Math.floor(Math.max(lo, hi)));
   if (stop < start) return { ticks: [], step: 1 };
   const visible = stop - start + 1;
   const step = Math.max(1, Math.ceil(visible / Math.max(1, target)));
@@ -42,16 +69,19 @@ const TIME_STEPS = [
 ];
 
 function timeTicks(lo, hi, target = 6) {
-  const span = hi - lo;
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return { ticks: [], step: MS.d };
+  const a = Math.min(lo, hi);
+  const b = Math.max(lo, hi);
+  const span = b - a;
   const rough = span / target;
-  if (rough > 14 * MS.d) return calendarTicks(lo, hi, rough);
+  if (rough > 14 * MS.d) return calendarTicks(a, b, rough);
   let step = TIME_STEPS[TIME_STEPS.length - 1];
   for (const s of TIME_STEPS) {
     if (s >= rough) { step = s; break; }
   }
-  const first = Math.ceil(lo / step) * step;
+  const first = Math.ceil(a / step) * step;
   const out = [];
-  for (let v = first; v <= hi && out.length < 200; v += step) out.push(v);
+  for (let v = first; v <= b && out.length < 200; v += step) out.push(v);
   return { ticks: out, step };
 }
 
@@ -106,13 +136,61 @@ function fmtCategory(v, categories) {
   return i >= 0 && i < categories.length ? String(categories[i]) : "";
 }
 
+function fmtNumberSpec(v, format) {
+  if (typeof format !== "string" || !Number.isFinite(Number(v))) return null;
+  const percent = format.endsWith("%");
+  const raw = percent ? format.slice(0, -1) : format;
+  const match = raw.match(/^(,)?\.([0-9]+)f?$/);
+  if (!match) return null;
+  const digits = Number(match[2]);
+  const value = percent ? Number(v) * 100 : Number(v);
+  const text = match[1]
+    ? value.toLocaleString(undefined, {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    })
+    : value.toFixed(digits);
+  return percent ? `${text}%` : text;
+}
+
+function fmtTimeSpec(ms, format) {
+  if (typeof format !== "string") return null;
+  const d = new Date(ms);
+  if (!Number.isFinite(d.getTime())) return null;
+  const pad = (n, w = 2) => String(n).padStart(w, "0");
+  const shortMonth = d.toLocaleString("en", { month: "short", timeZone: "UTC" });
+  const longMonth = d.toLocaleString("en", { month: "long", timeZone: "UTC" });
+  return format.replace(/%[YmdHMSbB]/g, (token) => {
+    switch (token) {
+      case "%Y": return String(d.getUTCFullYear());
+      case "%m": return pad(d.getUTCMonth() + 1);
+      case "%d": return pad(d.getUTCDate());
+      case "%H": return pad(d.getUTCHours());
+      case "%M": return pad(d.getUTCMinutes());
+      case "%S": return pad(d.getUTCSeconds());
+      case "%b": return shortMonth;
+      case "%B": return longMonth;
+      default: return token;
+    }
+  });
+}
+
+function fmtAxis(axis, v, tickStep) {
+  if (axis && axis.kind === "category") return fmtCategory(v, axis.categories || []);
+  if (axis && axis.kind === "time") return fmtTimeSpec(v, axis.format) || fmtTime(v, tickStep);
+  return fmtNumberSpec(v, axis && axis.format) || fmtLinear(v, tickStep);
+}
+
 function fmtValue(v, kind) {
   if (kind === "time_ms") {
     const d = new Date(v);
     return d.toISOString().replace("T", " ").replace(".000Z", "Z");
   }
-  if (v === 0) return "0";
-  const av = Math.abs(v);
-  if (av >= 1e6 || av < 1e-4) return v.toExponential(3);
-  return (Math.round(v * 1e4) / 1e4).toString();
+  if (typeof v === "string") return v;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v);
+  if (n === 0) return "0";
+  const av = Math.abs(n);
+  if (av >= 1e6 || av < 1e-4) return n.toExponential(3);
+  return (Math.round(n * 1e4) / 1e4).toString();
 }

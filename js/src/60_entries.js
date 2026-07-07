@@ -26,16 +26,25 @@ function render({ model, el }) {
 }
 
 /** Standalone (static HTML export — no kernel). Retains CPU f32 copies of
- * scatter x/y so hover can read approximate values without a kernel (§37). */
+ * shipped channels so hover can read approximate values without a kernel (§37). */
 function renderStandalone(el, spec, arrayBuffer) {
   const buffer = bytesToArrayBuffer(arrayBuffer);
   const view = new ChartView(el, spec, buffer, null);
+  const column = (idx) => new Float32Array(buffer, spec.columns[idx].byte_offset, spec.columns[idx].len);
   for (const g of view.gpuTraces) {
     if (markOf(g.trace.kind).retainCpu && g.tier !== "density") {
       g._cpu = {
-        x: new Float32Array(buffer, spec.columns[g.trace.x].byte_offset, spec.columns[g.trace.x].len),
-        y: new Float32Array(buffer, spec.columns[g.trace.y].byte_offset, spec.columns[g.trace.y].len),
+        x: column(g.trace.x),
+        y: column(g.trace.y),
+        xMeta: g.xMeta,
+        yMeta: g.yMeta,
       };
+      if (g.trace.color && Number.isInteger(g.trace.color.buf)) {
+        g._cpu.color = column(g.trace.color.buf);
+      }
+      if (g.trace.size && Number.isInteger(g.trace.size.buf)) {
+        g._cpu.size = column(g.trace.size.buf);
+      }
     }
   }
   return view;

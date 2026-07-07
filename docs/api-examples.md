@@ -42,6 +42,27 @@ HTML document.
 | Horizontal bars | `Figure().bar(categories, values, orientation="horizontal")` | `fc.bar_chart(fc.bar(..., orientation="horizontal"))` |
 | Heatmap | `Figure().heatmap(z, x=x, y=y)` | `fc.heatmap_chart(fc.heatmap(...))` |
 
+## Axes And Scales
+
+```python
+import numpy as np
+import fastcharts as fc
+
+x = np.logspace(0, 6, 240)
+rank = 96 - np.log10(x) * 11.5
+conversion = 0.08 + np.log10(x) * 0.035
+
+chart = fc.chart(
+    fc.line(x=x, y=rank, name="rank", color="#2563eb"),
+    fc.line(x=x, y=conversion, y_axis="y2", name="conversion", color="#dc2626"),
+    fc.x_axis(label="request volume", type_="log", domain=(1, 1_000_000), format=",.0f"),
+    fc.y_axis(label="rank (reversed)", domain=(0, 100), reverse=True, format=".0f"),
+    fc.y_axis(id="y2", label="conversion", side="right", domain=(0, 0.35), format=".0%"),
+    title="Axes and scales",
+)
+chart
+```
+
 ## Small Business Chart
 
 ```python
@@ -252,3 +273,92 @@ chart
 
 Composed `Chart` objects expose the same `to_html(...)`, `to_png(...)`,
 `widget()`, `show()`, and `memory_report()` readout methods as `Figure`.
+
+## Layered Composition And Annotations
+
+Use the neutral `fc.chart(...)` container when marks need to share a panel.
+Children are painted in order, and rules, bands, and text annotations live in
+the chart chrome instead of becoming data traces.
+
+```python
+import fastcharts as fc
+
+data = {
+    "month": ["Jan", "Feb", "Mar", "Apr"],
+    "actual": [12, 18, 16, 22],
+    "target": [14, 15, 17, 20],
+    "sample": [13, 19, 15, 23],
+}
+
+chart = fc.chart(
+    fc.bar(x="month", y="actual", data=data, name="actual", color="#f59e0b"),
+    fc.scatter(x="month", y="sample", data=data, name="samples", color="#2563eb", size=8),
+    fc.line(x="month", y="target", data=data, name="target", color="#dc2626", width=2),
+    fc.x_band("Feb", "Apr", text="campaign", color="#7c3aed", opacity=0.12),
+    fc.vline("Mar", text="release", color="#7c3aed"),
+    fc.x_axis(label="month"),
+    fc.y_axis(label="pipeline"),
+    fc.tooltip(
+        fields=["month", "actual", "sample", "target"],
+        title="{month}",
+        format={"actual": ".1f", "sample": ".1f", "target": ".1f"},
+    ),
+    fc.legend(),
+    title="Layered pipeline",
+)
+chart
+```
+
+```python
+import fastcharts as fc
+
+z = [
+    [0.2, 0.4, 0.5],
+    [0.5, 0.7, 0.9],
+]
+
+chart = fc.chart(
+    fc.heatmap(z=z, x=["Mon", "Tue", "Wed"], y=["AM", "PM"], name="load"),
+    fc.hline("PM", text="busy threshold", color="#dc2626", width=2),
+    fc.text("Wed", "PM", "peak", dx=8, dy=-8, color="#111827"),
+    fc.arrow("Mon", "AM", "Tue", "PM", text="ramp", color="#7c3aed"),
+    fc.callout("Wed", "PM", "ops review", dx=-72, dy=-26, color="#0f172a"),
+    fc.x_axis(label="day"),
+    fc.y_axis(label="shift"),
+    title="Annotated heatmap",
+)
+chart
+```
+
+## Framework Chrome Hooks
+
+Legend and tooltip nodes can carry opaque framework components for adapters
+without making `fastcharts` depend on that framework. The objects are kept on
+the Python `Chart` and never serialized into standalone HTML.
+
+```python
+import fastcharts as fc
+
+# In a Reflex app these could be rx.box(...), rx.vstack(...), etc.
+class FrameworkComponent:
+    pass
+
+
+data = {"x": [1.0, 2.0], "y": [2.0, 3.0], "segment": ["enterprise", "growth"]}
+custom_legend = FrameworkComponent()
+custom_tooltip = FrameworkComponent()
+
+chart = fc.chart(
+    fc.scatter(x="x", y="y", color="segment", data=data),
+    fc.legend(custom_legend, show=False),
+    fc.tooltip(custom_tooltip, show=False, fields=["x", "y", "segment"]),
+)
+
+chrome = chart.chrome_components()
+# {"legend": custom_legend, "tooltip": custom_tooltip}
+chart
+```
+
+`show=False` disables the built-in DOM legend/tooltip for adapter replacement.
+Leaving it at the default keeps the safe built-in fallback for notebooks and
+standalone `.html` export.
