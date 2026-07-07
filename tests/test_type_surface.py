@@ -26,6 +26,10 @@ MARK_FACTORIES = (
 ANNOTATION_FACTORIES = (
     "arrow",
     "callout",
+    "label",
+    "marker",
+    "threshold",
+    "threshold_zone",
     "vline",
     "hline",
     "x_band",
@@ -52,6 +56,10 @@ FIGURE_BUILDERS = (
     "heatmap",
     "arrow",
     "callout",
+    "label",
+    "marker",
+    "threshold",
+    "threshold_zone",
     "vline",
     "hline",
     "x_band",
@@ -169,8 +177,16 @@ def test_annotation_factory_kinds_are_registered_with_typed_appliers() -> None:
             annotation = components.arrow(0.0, 1.0, 2.0, 3.0)
         elif name == "callout":
             annotation = components.callout(0.0, 1.0, "label")
+        elif name == "label":
+            annotation = components.label(0.0, 1.0, "label")
         elif name == "text":
             annotation = components.text(0.0, 1.0, "label")
+        elif name == "marker":
+            annotation = components.marker(0.0, 1.0)
+        elif name == "threshold_zone":
+            annotation = components.threshold_zone(0.0, 1.0)
+        elif name == "threshold":
+            annotation = components.threshold(1.0)
         elif name.endswith("_band"):
             annotation = getattr(components, name)(0.0, 1.0)
         else:

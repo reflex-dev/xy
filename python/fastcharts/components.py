@@ -63,15 +63,19 @@ __all__ = [
     "histogram_chart",
     "hline",
     "interaction_config",
+    "label",
     "legend",
     "line",
     "line_chart",
     "mark_style",
+    "marker",
     "modebar",
     "scatter",
     "scatter_chart",
     "text",
     "theme",
+    "threshold",
+    "threshold_zone",
     "tooltip",
     "vline",
     "x_axis",
@@ -592,6 +596,71 @@ def text(
     )
 
 
+def label(
+    x: Any,
+    y: Any,
+    value: str,
+    *,
+    dx: float = 6.0,
+    dy: float = -6.0,
+    color: Optional[str] = None,
+    anchor: str = "start",
+    class_name: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+) -> Annotation:
+    """Alias for a positioned text annotation."""
+    return text(
+        x,
+        y,
+        value,
+        dx=dx,
+        dy=dy,
+        color=color,
+        anchor=anchor,
+        class_name=class_name,
+        style=style,
+    )
+
+
+def marker(
+    x: Any,
+    y: Any,
+    *,
+    text: Optional[str] = None,
+    color: Optional[str] = "#2563eb",
+    size: float = 8.0,
+    symbol: str = "circle",
+    stroke_color: Optional[str] = "#ffffff",
+    stroke_width: float = 1.5,
+    opacity: float = 1.0,
+    dx: float = 8.0,
+    dy: float = -8.0,
+    anchor: str = "start",
+    class_name: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+) -> Annotation:
+    """A point marker annotation with an optional label."""
+    return Annotation(
+        kind="marker",
+        x=x,
+        y=y,
+        text=_optional_string(text, "marker text"),
+        class_name=_optional_string(class_name, "marker class_name"),
+        style=_style_dict(style, "marker style"),
+        props={
+            "color": color,
+            "size": size,
+            "symbol": symbol,
+            "stroke_color": stroke_color,
+            "stroke_width": stroke_width,
+            "opacity": opacity,
+            "dx": dx,
+            "dy": dy,
+            "anchor": anchor,
+        },
+    )
+
+
 def arrow(
     x0: Any,
     y0: Any,
@@ -614,6 +683,70 @@ def arrow(
         class_name=_optional_string(class_name, "arrow class_name"),
         style=_style_dict(style, "arrow style"),
         props={"x1": x1, "y1": y1, "color": color, "width": width, "opacity": opacity},
+    )
+
+
+def threshold(
+    value: Any,
+    *,
+    axis: str = "y",
+    text: Optional[str] = None,
+    color: Optional[str] = "#e11d48",
+    width: float = 1.5,
+    opacity: float = 1.0,
+    class_name: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+) -> Annotation:
+    """A semantic threshold rule on the x or y axis."""
+    axis = _annotation_axis_name(axis, "threshold axis")
+    return vline(
+        value,
+        text=text,
+        color=color,
+        width=width,
+        opacity=opacity,
+        class_name=class_name,
+        style=style,
+    ) if axis == "x" else hline(
+        value,
+        text=text,
+        color=color,
+        width=width,
+        opacity=opacity,
+        class_name=class_name,
+        style=style,
+    )
+
+
+def threshold_zone(
+    start: Any,
+    end: Any,
+    *,
+    axis: str = "y",
+    text: Optional[str] = None,
+    color: Optional[str] = "#e11d48",
+    opacity: float = 0.12,
+    class_name: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+) -> Annotation:
+    """A semantic threshold band on the x or y axis."""
+    axis = _annotation_axis_name(axis, "threshold_zone axis")
+    return x_band(
+        start,
+        end,
+        text=text,
+        color=color,
+        opacity=opacity,
+        class_name=class_name,
+        style=style,
+    ) if axis == "x" else y_band(
+        start,
+        end,
+        text=text,
+        color=color,
+        opacity=opacity,
+        class_name=class_name,
+        style=style,
     )
 
 
@@ -1473,6 +1606,12 @@ def _axis_label_position(value: Any, label: str) -> Optional[AxisLabelPosition]:
     return _style_dict(value, label)
 
 
+def _annotation_axis_name(value: Any, label: str) -> str:
+    if value not in {"x", "y"}:
+        raise ValueError(f"{label} must be 'x' or 'y'")
+    return value
+
+
 def _optional_positive_int(value: Any, label: str) -> Optional[int]:
     if value is None:
         return None
@@ -1735,6 +1874,25 @@ def _apply_text_annotation(fig: Figure, annotation: Annotation) -> None:
     )
 
 
+def _apply_marker_annotation(fig: Figure, annotation: Annotation) -> None:
+    fig.marker(
+        annotation.x,
+        annotation.y,
+        text=annotation.text,
+        color=annotation.props.get("color"),
+        size=annotation.props["size"],
+        symbol=annotation.props["symbol"],
+        stroke_color=annotation.props.get("stroke_color"),
+        stroke_width=annotation.props["stroke_width"],
+        opacity=annotation.props["opacity"],
+        dx=annotation.props["dx"],
+        dy=annotation.props["dy"],
+        anchor=annotation.props["anchor"],
+        class_name=annotation.class_name,
+        style=annotation.style,
+    )
+
+
 def _apply_arrow_annotation(fig: Figure, annotation: Annotation) -> None:
     fig.arrow(
         annotation.x,
@@ -1779,6 +1937,7 @@ _ANNOTATION_APPLIERS: dict[str, Callable[[Figure, Annotation], None]] = {
     "arrow": _apply_arrow_annotation,
     "band": _apply_band_annotation,
     "callout": _apply_callout_annotation,
+    "marker": _apply_marker_annotation,
     "rule": _apply_rule_annotation,
     "text": _apply_text_annotation,
 }

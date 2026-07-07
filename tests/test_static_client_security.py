@@ -240,3 +240,20 @@ def test_client_axis_tick_labels_have_collision_layout() -> None:
         text = path.read_text(encoding="utf-8")
         for marker in required:
             assert marker in text, f"{path} no longer protects crowded axis tick labels"
+
+
+def test_client_draws_first_class_annotation_markers() -> None:
+    required = (
+        "_annotationStrokePaint(style, fallback)",
+        "_drawAnnotationMarker(ctx, x, y, style, ann)",
+        'ann.kind === "marker"',
+        '"circle", "square", "diamond", "cross"',
+        "d.style.color = this._annotationLabelPaint(style, this.theme.label)",
+        "stroke_color",
+        "stroke_width",
+    )
+
+    for path in CLIENT_FILES:
+        text = path.read_text(encoding="utf-8")
+        for marker in required:
+            assert marker in text, f"{path} no longer draws annotation marker primitives"

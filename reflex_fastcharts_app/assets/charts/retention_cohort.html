@@ -2739,6 +2739,50 @@ class ChartView {
     return safeCssPaint(this.root, style && style.color, fallback);
   }
 
+  _annotationLabelPaint(style, fallback) {
+    return safeCssPaint(this.root, style && (style.label_color || style.color), fallback);
+  }
+
+  _annotationStrokePaint(style, fallback) {
+    return safeCssPaint(this.root, style && style.stroke_color, fallback);
+  }
+
+  _drawAnnotationMarker(ctx, x, y, style, ann) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    const r = Math.max(1, this._styleNumber(style, "size", Number(ann.size) || 8) / 2);
+    const symbol = ["circle", "square", "diamond", "cross"].includes(ann.symbol) ? ann.symbol : "circle";
+    ctx.save();
+    ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
+    ctx.fillStyle = this._annotationPaint(style, [0.15, 0.39, 0.92, 1]);
+    ctx.strokeStyle = symbol === "cross"
+      ? this._annotationPaint(style, [0.15, 0.39, 0.92, 1])
+      : this._annotationStrokePaint(style, [1, 1, 1, 1]);
+    ctx.lineWidth = Math.max(0, this._styleNumber(style, "stroke_width", 1.5));
+    ctx.beginPath();
+    if (symbol === "square") {
+      ctx.rect(x - r, y - r, r * 2, r * 2);
+    } else if (symbol === "diamond") {
+      ctx.moveTo(x, y - r);
+      ctx.lineTo(x + r, y);
+      ctx.lineTo(x, y + r);
+      ctx.lineTo(x - r, y);
+      ctx.closePath();
+    } else if (symbol === "cross") {
+      ctx.moveTo(x - r, y);
+      ctx.lineTo(x + r, y);
+      ctx.moveTo(x, y - r);
+      ctx.lineTo(x, y + r);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    } else {
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+    }
+    ctx.fill();
+    if (ctx.lineWidth > 0) ctx.stroke();
+    ctx.restore();
+  }
+
   _drawArrowLine(ctx, x0, y0, x1, y1, style) {
     if (![x0, y0, x1, y1].every(Number.isFinite)) return;
     const angle = Math.atan2(y1 - y0, x1 - x0);
@@ -2827,6 +2871,14 @@ class ChartView {
         const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
         const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
         this._drawArrowLine(ctx, px + dx, py + dy, px, py, style);
+      } else if (ann.kind === "marker") {
+        this._drawAnnotationMarker(
+          ctx,
+          this._dataPxX(Number(ann.x)),
+          this._dataPxY(Number(ann.y)),
+          style,
+          ann
+        );
       }
     }
     ctx.restore();
@@ -2868,6 +2920,9 @@ class ChartView {
       } else if (ann.kind === "callout") {
         px = this._dataPxX(Number(ann.x));
         py = this._dataPxY(Number(ann.y));
+      } else if (ann.kind === "marker") {
+        px = this._dataPxX(Number(ann.x));
+        py = this._dataPxY(Number(ann.y));
       }
       if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
       if (px < p.x - 24 || px > p.x + p.w + 24 || py < p.y - 24 || py > p.y + p.h + 24) {
@@ -2881,10 +2936,10 @@ class ChartView {
       d.style.cssText =
         `position:absolute;left:${px + dx}px;top:${py + dy}px;` +
         `transform:translate(${anchor},0);pointer-events:none;` +
-        `color:${this._annotationPaint(style, this.theme.label)};` +
         "font-size:11px;line-height:1.2;font-weight:500;";
       this._applyClass(d, ann.class_name);
       this._applyStyle(d, style);
+      d.style.color = this._annotationLabelPaint(style, this.theme.label);
       this.labels.appendChild(d);
     }
   }

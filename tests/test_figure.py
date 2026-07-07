@@ -1091,6 +1091,30 @@ def test_axis_tick_layout_options_emit_and_revalidate() -> None:
         fig.build_payload()
 
 
+def test_fluent_semantic_annotations_emit_marker_and_aliases() -> None:
+    fig = (
+        Figure()
+        .scatter([1.0, 2.0], [2.0, 3.0])
+        .marker(2.0, 3.0, text="peak", symbol="square")
+        .label(1.0, 2.0, "start")
+        .threshold(2.5)
+        .threshold_zone(2.0, 3.0)
+    )
+
+    spec, _ = fig.build_payload()
+
+    assert [annotation["kind"] for annotation in spec["annotations"]] == [
+        "marker",
+        "text",
+        "rule",
+        "band",
+    ]
+    assert spec["annotations"][0]["symbol"] == "square"
+    assert spec["annotations"][1]["text"] == "start"
+    assert spec["annotations"][2]["axis"] == "y"
+    assert spec["annotations"][3]["axis"] == "y"
+
+
 def test_nan_never_reaches_vertex_buffers():
     x = np.arange(1000.0)
     y = np.arange(1000.0)
