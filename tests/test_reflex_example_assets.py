@@ -269,6 +269,8 @@ def test_annotated_heatmap_uses_reflex_custom_chrome_bridge() -> None:
     assert '"show_legend":false' in html
     assert '"show_tooltip":false' in html
     assert '"risk_score"' in html
+    assert '"72%"' in html
+    assert '"96%"' in html
 
 
 def test_small_business_chart_asset_exists() -> None:

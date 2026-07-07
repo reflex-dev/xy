@@ -574,6 +574,8 @@ chart = fc.chart(
     fc.threshold_zone("Wed", "Fri", axis="x", text="launch window", color="#2563eb", opacity=0.10),
     fc.threshold("High", axis="y", text="alert threshold", color="#e11d48", width=1.8),
     fc.marker("Thu", "Critical", text="max load", dx=8, dy=-12, color="#0f172a", symbol="diamond"),
+    fc.label("Wed", "High", "72%", dx=0, dy=-6, color="#0f172a", anchor="middle"),
+    fc.label("Thu", "Critical", "96%", dx=0, dy=-6, color="#ffffff", anchor="middle"),
     fc.arrow("Tue", "Medium", "Wed", "High", text="escalation", color="#7c3aed"),
     fc.callout("Fri", "Critical", "ops review", dx=-78, dy=-30, color="#0f172a"),
     fc.theme(plot_background="#f8fafc", grid_color="rgba(100, 116, 139, 0.16)"),
