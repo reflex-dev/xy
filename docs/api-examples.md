@@ -365,3 +365,5 @@ chart
 `show=False` disables the built-in DOM legend/tooltip for adapter replacement.
 Leaving it at the default keeps the safe built-in fallback for notebooks and
 standalone `.html` export.
+The returned chrome object is a keyed slot map; framework adapters should mount
+`chrome["legend"]` and `chrome["tooltip"]` by name beside the chart container.

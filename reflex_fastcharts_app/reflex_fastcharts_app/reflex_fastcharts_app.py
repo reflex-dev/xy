@@ -294,11 +294,13 @@ chart = fc.chart(
 )
 
 # This example app embeds prebuilt chart.to_html() assets. The iframe bridge
-# owns that export detail; the custom Reflex chrome still comes from the chart.
+# owns that export detail; custom Reflex chrome stays keyed by slot name.
 def fastcharts_html_chart(chart, src):
+    chrome = chart.reflex_components()
     return rx.box(
         rx.el.iframe(src=src, width="100%"),
-        *chart.reflex_components(),
+        chrome["legend"],
+        chrome["tooltip"],
         position="relative",
     )
 

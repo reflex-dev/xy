@@ -103,6 +103,15 @@ def test_codspeed_suite_covers_native_core_hardening_workloads() -> None:
         assert "benchmark" in args, f"{name} must be timed by pytest-codspeed"
 
 
+def test_native_benchmark_reports_can_resolve_source_backend_metadata() -> None:
+    """Early CI native scripts run before package install, but still need backend metadata."""
+    for script_name in ("bench_scatter_native.py", "bench_native.py"):
+        source = (ROOT / "benchmarks" / script_name).read_text(encoding="utf-8")
+        python_path = 'sys.path.insert(0, str(ROOT / "python"))'
+        assert python_path in source
+        assert source.index(python_path) < source.index("from environment import")
+
+
 def test_interaction_browser_gates_cover_scatter_and_core_chart_families() -> None:
     smoke = (ROOT / "scripts" / "interaction_stress_smoke.py").read_text(encoding="utf-8")
     bench = (ROOT / "benchmarks" / "bench_interaction.py").read_text(encoding="utf-8")

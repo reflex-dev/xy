@@ -170,7 +170,9 @@ def test_reflex_dashboard_has_selector_and_small_business_chart() -> None:
         "annotated-heatmap-legend",
         "annotated-heatmap-tooltip",
         "fastcharts-annotated-heatmap",
-        "chart.reflex_components()",
+        "chrome = chart.reflex_components()",
+        'chrome["legend"]',
+        'chrome["tooltip"]',
         "rx.el.details",
         "rx.el.summary",
         "chart_code_drawer(chart)",
@@ -184,6 +186,7 @@ def test_reflex_dashboard_has_selector_and_small_business_chart() -> None:
     for marker in required:
         assert marker in source
     assert 'loading="eager" if fluid else "lazy"' not in source
+    assert "*chart.reflex_components()" not in source
 
 
 def test_reflex_dashboard_groups_small_and_large_examples() -> None:
