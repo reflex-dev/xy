@@ -669,6 +669,9 @@ x = np.linspace(0, 12, 180)
 actual = np.sin(x) + x * 0.08
 trend = x * 0.08
 
+def handle_brush(brush):
+    print("brushed range", brush)
+
 chart = fc.chart(
     fc.scatter(x=x[::6], y=actual[::6], name="samples", color="#2563eb", size=8),
     fc.line(x=x, y=trend, name="trend", color="#dc2626", width=2),
@@ -691,6 +694,7 @@ chart = fc.chart(
     fc.legend(),
     fc.x_axis(label="time"),
     fc.y_axis(label="value"),
+    on_brush=handle_brush,
     title="Crosshair, click, brush select, linked x-axis",
     width="100%",
     height=430,

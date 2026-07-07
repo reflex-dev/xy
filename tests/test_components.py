@@ -505,6 +505,7 @@ def test_chart_callbacks_enable_matching_event_streams():
         fc.scatter(x=[1.0, 2.0], y=[2.0, 3.0]),
         on_hover=lambda row: row,
         on_click=lambda row: row,
+        on_brush=lambda brush: brush,
         on_select=lambda sel: sel,
         on_view_change=lambda view: view,
     )
@@ -514,6 +515,7 @@ def test_chart_callbacks_enable_matching_event_streams():
     assert spec["interaction"] == {
         "hover": True,
         "click": True,
+        "brush": True,
         "select": True,
         "view_change": True,
     }
@@ -1095,6 +1097,7 @@ def test_widget_failure_does_not_cache_partial_widget(monkeypatch):
             *,
             on_hover=None,
             on_click=None,
+            on_brush=None,
             on_select=None,
             on_view_change=None,
         ):
@@ -1102,6 +1105,7 @@ def test_widget_failure_does_not_cache_partial_widget(monkeypatch):
             self.figure = figure
             self.on_hover = on_hover
             self.on_click = on_click
+            self.on_brush = on_brush
             self.on_select = on_select
             self.on_view_change = on_view_change
             if calls["count"] == 1:
