@@ -1438,6 +1438,15 @@ class ChartView {
     return linearTicks(lo, hi, target);
   }
 
+  _axisTickTarget(axisId, fallback) {
+    const axis = this._axis(axisId);
+    const requested = Number(axis && axis.tick_count);
+    if (Number.isFinite(requested) && requested > 0) {
+      return Math.max(1, Math.min(200, requested));
+    }
+    return fallback;
+  }
+
   _dataPx(axisId, value) {
     const dim = this._axisDim(axisId);
     const axis = this._axis(axisId);
@@ -2574,6 +2583,108 @@ class ChartView {
     return safeCssPaint(this.root, style && style[key], fallback);
   }
 
+  _axisStyleValue(axis, key) {
+    const style = axis && typeof axis.style === "object" ? axis.style : null;
+    return style && Object.prototype.hasOwnProperty.call(style, key) ? style[key] : undefined;
+  }
+
+  _axisTickLabelStrategy(axis) {
+    const raw = axis && axis.tick_label_strategy !== undefined
+      ? axis.tick_label_strategy
+      : this._axisStyleValue(axis, "tick_label_strategy");
+    const value = String(raw || "auto").replace(/-/g, "_");
+    return ["auto", "hide", "rotate", "stagger", "none"].includes(value) ? value : "auto";
+  }
+
+  _axisTickLabelAngle(axis) {
+    const raw = axis && axis.tick_label_angle !== undefined
+      ? axis.tick_label_angle
+      : this._axisStyleValue(axis, "tick_label_angle");
+    const angle = Number(raw);
+    return Number.isFinite(angle) ? angle : null;
+  }
+
+  _axisTickLabelMinGap(axis, dim) {
+    const raw = axis && axis.tick_label_min_gap !== undefined
+      ? axis.tick_label_min_gap
+      : this._axisStyleValue(axis, "tick_label_min_gap");
+    const gap = Number(raw);
+    return Number.isFinite(gap) && gap >= 0 ? gap : (dim === "x" ? 8 : 4);
+  }
+
+  _estimateTickLabel(text, fontSize) {
+    const s = String(text || "");
+    return { w: Math.max(fontSize * 0.7, s.length * fontSize * 0.62), h: fontSize * 1.2 };
+  }
+
+  _tickLabelExtent(label, dim, fontSize) {
+    const size = this._estimateTickLabel(label.text, fontSize);
+    const angle = Math.abs(Number(label.angle || 0)) * Math.PI / 180;
+    return dim === "y"
+      ? Math.abs(Math.sin(angle)) * size.w + Math.abs(Math.cos(angle)) * size.h
+      : Math.abs(Math.cos(angle)) * size.w + Math.abs(Math.sin(angle)) * size.h;
+  }
+
+  _tickLabelsCollide(labels, dim, fontSize, minGap) {
+    const rows = new Map();
+    for (const label of labels) {
+      const row = Number(label.row || 0);
+      if (!rows.has(row)) rows.set(row, []);
+      rows.get(row).push(label);
+    }
+    for (const rowLabels of rows.values()) {
+      rowLabels.sort((a, b) => a.pos - b.pos);
+      let lastEnd = -Infinity;
+      for (const label of rowLabels) {
+        const extent = this._tickLabelExtent(label, dim, fontSize);
+        const start = label.pos - extent / 2;
+        const end = label.pos + extent / 2;
+        if (start < lastEnd + minGap) return true;
+        lastEnd = end;
+      }
+    }
+    return false;
+  }
+
+  _downsampleTickLabels(labels, dim, fontSize, minGap) {
+    if (labels.length <= 1) return labels;
+    for (let stride = 2; stride <= labels.length; stride++) {
+      const out = labels.filter((_, i) => i % stride === 0);
+      if (!this._tickLabelsCollide(out, dim, fontSize, minGap)) return out;
+    }
+    return labels.slice(0, 1);
+  }
+
+  _layoutTickLabels(axis, dim, labels) {
+    if (labels.length <= 1) return labels.map((label) => ({ ...label, angle: 0, row: 0 }));
+    const fontSize = Math.max(8, this._axisStyleNumber(axis, "tick_size", 11));
+    const minGap = this._axisTickLabelMinGap(axis, dim);
+    const explicitAngle = this._axisTickLabelAngle(axis);
+    const baseAngle = explicitAngle === null ? 0 : explicitAngle;
+    const withBase = labels.map((label) => ({ ...label, angle: baseAngle, row: 0 }));
+    let strategy = this._axisTickLabelStrategy(axis);
+    if (strategy === "none") return withBase;
+    if (strategy === "auto") {
+      if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap)) return withBase;
+      if (dim === "x" && axis.kind === "category" && labels.length <= 16) strategy = "rotate";
+      else if (dim === "x" && labels.length <= 24) strategy = "stagger";
+      else strategy = "hide";
+    }
+
+    let out = withBase;
+    if (strategy === "rotate" && dim === "x") {
+      const angle = explicitAngle === null ? (axis.side === "top" ? 35 : -35) : explicitAngle;
+      out = labels.map((label) => ({ ...label, angle, row: 0 }));
+    } else if (strategy === "stagger" && dim === "x") {
+      out = labels.map((label, i) => ({ ...label, angle: baseAngle, row: i % 2 }));
+    }
+
+    if (strategy === "hide" || this._tickLabelsCollide(out, dim, fontSize, minGap)) {
+      out = this._downsampleTickLabels(out, dim, fontSize, minGap);
+    }
+    return out;
+  }
+
   _axisLabelCss(axis, dim, fallbackCss) {
     const rawPosition = axis && axis.label_position;
     const hasPosition = rawPosition !== undefined && rawPosition !== null;
@@ -2797,8 +2908,11 @@ class ChartView {
     const p = this.plot;
     const xAxis = this._axis("x");
     const yAxis = this._axis("y");
-    const xt = this._axisTicks("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80)));
-    const yt = this._axisTicks("y", Math.max(3, p.h / 45));
+    const xt = this._axisTicks(
+      "x",
+      this._axisTickTarget("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80))),
+    );
+    const yt = this._axisTicks("y", this._axisTickTarget("y", Math.max(3, p.h / 45)));
     const xEdge = (px) => Math.min(p.x + p.w - 0.5, Math.max(p.x + 0.5, Math.round(px) + 0.5));
     const yEdge = (py) => Math.min(p.y + p.h - 0.5, Math.max(p.y + 0.5, Math.round(py) + 0.5));
 
@@ -2865,37 +2979,58 @@ class ChartView {
       d.style.cssText =
         `position:absolute;color:${this._axisStylePaint(axis, colorKey, this.theme.label)};` +
         `font-size:${Math.max(8, this._axisStyleNumber(axis, sizeKey, defaultSize))}px;` +
-        "line-height:1.2;" + css;
+        "line-height:1.2;white-space:nowrap;" + css;
       this._applyStyle(d, extraStyle);
       this.labels.appendChild(d);
     };
+    const xLabelCandidates = [];
     for (const v of (xt.labels || xt.ticks)) {
       const px = this._dataPx("x", v);
       if (px < p.x - 1 || px > p.x + p.w + 1) continue;
       const text = fmtAxis(xAxis, v, xt.step);
-      const top = xAxis.side === "top" ? p.y - 18 : p.y + p.h + 6;
-      label(text, `left:${px}px;top:${top}px;transform:translateX(-50%);`, xAxis);
+      xLabelCandidates.push({ pos: px, text });
     }
+    for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
+      const rowOffset = Number(item.row || 0) * (Math.max(8, this._axisStyleNumber(xAxis, "tick_size", 11)) + 4);
+      const top = xAxis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
+      const transform = `translateX(-50%) rotate(${Number(item.angle || 0)}deg)`;
+      const origin = xAxis.side === "top" ? "bottom center" : "top center";
+      label(
+        item.text,
+        `left:${item.pos}px;top:${top}px;transform:${transform};transform-origin:${origin};`,
+        xAxis,
+      );
+    }
+    const yLabelCandidates = [];
     for (const v of (yt.labels || yt.ticks)) {
       const py = this._dataPx("y", v);
       if (py < p.y - 1 || py > p.y + p.h + 1) continue;
       const text = fmtAxis(yAxis, v, yt.step);
+      yLabelCandidates.push({ pos: py, text });
+    }
+    for (const item of this._layoutTickLabels(yAxis, "y", yLabelCandidates)) {
+      const angle = Number(item.angle || 0);
       const css = yAxis.side === "right"
-        ? `left:${p.x + p.w + 8}px;top:${py}px;transform:translateY(-50%);`
-        : `right:${this.size.w - p.x + 8}px;top:${py}px;transform:translateY(-50%);`;
-      label(text, css, yAxis);
+        ? `left:${p.x + p.w + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:left center;`
+        : `right:${this.size.w - p.x + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:right center;`;
+      label(item.text, css, yAxis);
     }
     for (const axis of Object.values(this.axes)) {
       if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
-      const ticks = this._axisTicks(axis.id, Math.max(3, p.h / 45));
+      const ticks = this._axisTicks(axis.id, this._axisTickTarget(axis.id, Math.max(3, p.h / 45)));
+      const labelCandidates = [];
       for (const v of (ticks.labels || ticks.ticks)) {
         const py = this._dataPx(axis.id, v);
         if (py < p.y - 1 || py > p.y + p.h + 1) continue;
         const text = fmtAxis(axis, v, ticks.step);
+        labelCandidates.push({ pos: py, text });
+      }
+      for (const item of this._layoutTickLabels(axis, "y", labelCandidates)) {
+        const angle = Number(item.angle || 0);
         const css = axis.side === "left"
-          ? `right:${this.size.w - p.x + 8}px;top:${py}px;transform:translateY(-50%);`
-          : `left:${p.x + p.w + 8}px;top:${py}px;transform:translateY(-50%);`;
-        label(text, css, axis);
+          ? `right:${this.size.w - p.x + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:right center;`
+          : `left:${p.x + p.w + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:left center;`;
+        label(item.text, css, axis);
       }
       if (axis.label) {
         const fallbackCss = axis.side === "left"
@@ -4493,7 +4628,7 @@ window.fastcharts = { render, renderStandalone, ChartView, MARK_KINDS, markOf };
 })();
 </script>
 <script>
-  const spec = {"protocol":2,"width":"100%","height":430,"title":"Log scale, reversed axis, fixed domains, dual y-axis","x_axis":{"id":"x","kind":"linear","label":"request volume","range":[1.0,1000000.0],"side":"bottom","label_position":"inside_end","label_offset":8.0,"scale":"log","domain":[1.0,1000000.0],"format":",.0f","style":{"grid_color":"rgba(37,99,235,.14)","tick_color":"#1d4ed8"}},"y_axis":{"id":"y","kind":"linear","label":"rank (reversed)","range":[100.0,0.0],"side":"left","label_position":"inside_start","label_offset":10.0,"label_angle":-90.0,"reverse":true,"domain":[0.0,100.0],"format":".0f","style":{"axis_color":"#2563eb","label_color":"#1e40af"}},"axes":{"x":{"id":"x","kind":"linear","label":"request volume","range":[1.0,1000000.0],"side":"bottom","label_position":"inside_end","label_offset":8.0,"scale":"log","domain":[1.0,1000000.0],"format":",.0f","style":{"grid_color":"rgba(37,99,235,.14)","tick_color":"#1d4ed8"}},"y":{"id":"y","kind":"linear","label":"rank (reversed)","range":[100.0,0.0],"side":"left","label_position":"inside_start","label_offset":10.0,"label_angle":-90.0,"reverse":true,"domain":[0.0,100.0],"format":".0f","style":{"axis_color":"#2563eb","label_color":"#1e40af"}},"y2":{"id":"y2","kind":"linear","label":"conversion","range":[0.0,0.35],"side":"right","label_position":{"right":16,"top":18,"transform":"none","textAlign":"right"},"domain":[0.0,0.35],"format":".0%","style":{"axis_color":"#dc2626","tick_color":"#991b1b","label_color":"#991b1b"}}},"traces":[{"id":0,"kind":"line","name":"quality rank","style":{"color":"#2563eb","width":2.0,"opacity":1.0},"tier":"direct","n_points":240,"n_marks":240,"x":0,"y":1,"x_axis":"x","y_axis":"y"},{"id":1,"kind":"scatter","name":"sampled checks","style":{"opacity":0.8},"tier":"direct","n_points":34,"n_marks":34,"x":2,"y":3,"x_axis":"x","y_axis":"y","color":{"mode":"constant","color":"#0f766e"},"size":{"mode":"constant","size":7.0}},{"id":2,"kind":"line","name":"conversion","style":{"color":"#dc2626","width":1.8,"opacity":1.0},"tier":"direct","n_points":240,"n_marks":240,"x":4,"y":5,"x_axis":"x","y_axis":"y2"}],"columns":[{"byte_offset":0,"len":240,"offset":500000.5,"scale":1.0,"kind":"float"},{"byte_offset":960,"len":240,"offset":60.373519129842485,"scale":1.0,"kind":"float"},{"byte_offset":1920,"len":34,"offset":500000.5,"scale":1.0,"kind":"float"},{"byte_offset":2056,"len":34,"offset":60.373519129842485,"scale":1.0,"kind":"float"},{"byte_offset":2192,"len":240,"offset":500000.5,"scale":1.0,"kind":"float"},{"byte_offset":3152,"len":240,"offset":0.19699660751300607,"scale":1.0,"kind":"float"}],"backend":"native","show_legend":true,"tooltip":{"fields":["x","y"],"format":{"x":",.0f","y":".2f"}}};
+  const spec = {"protocol":2,"width":"100%","height":430,"title":"Log scale, reversed axis, fixed domains, dual y-axis","x_axis":{"id":"x","kind":"linear","label":"request volume","range":[1.0,1000000.0],"side":"bottom","label_position":"inside_end","label_offset":8.0,"tick_count":9,"tick_label_strategy":"auto","tick_label_min_gap":18.0,"scale":"log","domain":[1.0,1000000.0],"format":",.0f","style":{"grid_color":"rgba(37,99,235,.14)","tick_color":"#1d4ed8"}},"y_axis":{"id":"y","kind":"linear","label":"rank (reversed)","range":[100.0,0.0],"side":"left","label_position":"inside_start","label_offset":10.0,"label_angle":-90.0,"tick_count":5,"tick_label_strategy":"hide","reverse":true,"domain":[0.0,100.0],"format":".0f","style":{"axis_color":"#2563eb","label_color":"#1e40af"}},"axes":{"x":{"id":"x","kind":"linear","label":"request volume","range":[1.0,1000000.0],"side":"bottom","label_position":"inside_end","label_offset":8.0,"tick_count":9,"tick_label_strategy":"auto","tick_label_min_gap":18.0,"scale":"log","domain":[1.0,1000000.0],"format":",.0f","style":{"grid_color":"rgba(37,99,235,.14)","tick_color":"#1d4ed8"}},"y":{"id":"y","kind":"linear","label":"rank (reversed)","range":[100.0,0.0],"side":"left","label_position":"inside_start","label_offset":10.0,"label_angle":-90.0,"tick_count":5,"tick_label_strategy":"hide","reverse":true,"domain":[0.0,100.0],"format":".0f","style":{"axis_color":"#2563eb","label_color":"#1e40af"}},"y2":{"id":"y2","kind":"linear","label":"conversion","range":[0.0,0.35],"side":"right","label_position":{"right":16,"top":18,"transform":"none","textAlign":"right"},"tick_count":4,"tick_label_strategy":"hide","domain":[0.0,0.35],"format":".0%","style":{"axis_color":"#dc2626","tick_color":"#991b1b","label_color":"#991b1b"}}},"traces":[{"id":0,"kind":"line","name":"quality rank","style":{"color":"#2563eb","width":2.0,"opacity":1.0},"tier":"direct","n_points":240,"n_marks":240,"x":0,"y":1,"x_axis":"x","y_axis":"y"},{"id":1,"kind":"scatter","name":"sampled checks","style":{"opacity":0.8},"tier":"direct","n_points":34,"n_marks":34,"x":2,"y":3,"x_axis":"x","y_axis":"y","color":{"mode":"constant","color":"#0f766e"},"size":{"mode":"constant","size":7.0}},{"id":2,"kind":"line","name":"conversion","style":{"color":"#dc2626","width":1.8,"opacity":1.0},"tier":"direct","n_points":240,"n_marks":240,"x":4,"y":5,"x_axis":"x","y_axis":"y2"}],"columns":[{"byte_offset":0,"len":240,"offset":500000.5,"scale":1.0,"kind":"float"},{"byte_offset":960,"len":240,"offset":60.373519129842485,"scale":1.0,"kind":"float"},{"byte_offset":1920,"len":34,"offset":500000.5,"scale":1.0,"kind":"float"},{"byte_offset":2056,"len":34,"offset":60.373519129842485,"scale":1.0,"kind":"float"},{"byte_offset":2192,"len":240,"offset":500000.5,"scale":1.0,"kind":"float"},{"byte_offset":3152,"len":240,"offset":0.19699660751300607,"scale":1.0,"kind":"float"}],"backend":"native","show_legend":true,"tooltip":{"fields":["x","y"],"format":{"x":",.0f","y":".2f"}}};
   const b64 = "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";
   const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
   fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);

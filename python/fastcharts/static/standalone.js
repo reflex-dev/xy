@@ -1426,6 +1426,15 @@ class ChartView {
     return linearTicks(lo, hi, target);
   }
 
+  _axisTickTarget(axisId, fallback) {
+    const axis = this._axis(axisId);
+    const requested = Number(axis && axis.tick_count);
+    if (Number.isFinite(requested) && requested > 0) {
+      return Math.max(1, Math.min(200, requested));
+    }
+    return fallback;
+  }
+
   _dataPx(axisId, value) {
     const dim = this._axisDim(axisId);
     const axis = this._axis(axisId);
@@ -2562,6 +2571,108 @@ class ChartView {
     return safeCssPaint(this.root, style && style[key], fallback);
   }
 
+  _axisStyleValue(axis, key) {
+    const style = axis && typeof axis.style === "object" ? axis.style : null;
+    return style && Object.prototype.hasOwnProperty.call(style, key) ? style[key] : undefined;
+  }
+
+  _axisTickLabelStrategy(axis) {
+    const raw = axis && axis.tick_label_strategy !== undefined
+      ? axis.tick_label_strategy
+      : this._axisStyleValue(axis, "tick_label_strategy");
+    const value = String(raw || "auto").replace(/-/g, "_");
+    return ["auto", "hide", "rotate", "stagger", "none"].includes(value) ? value : "auto";
+  }
+
+  _axisTickLabelAngle(axis) {
+    const raw = axis && axis.tick_label_angle !== undefined
+      ? axis.tick_label_angle
+      : this._axisStyleValue(axis, "tick_label_angle");
+    const angle = Number(raw);
+    return Number.isFinite(angle) ? angle : null;
+  }
+
+  _axisTickLabelMinGap(axis, dim) {
+    const raw = axis && axis.tick_label_min_gap !== undefined
+      ? axis.tick_label_min_gap
+      : this._axisStyleValue(axis, "tick_label_min_gap");
+    const gap = Number(raw);
+    return Number.isFinite(gap) && gap >= 0 ? gap : (dim === "x" ? 8 : 4);
+  }
+
+  _estimateTickLabel(text, fontSize) {
+    const s = String(text || "");
+    return { w: Math.max(fontSize * 0.7, s.length * fontSize * 0.62), h: fontSize * 1.2 };
+  }
+
+  _tickLabelExtent(label, dim, fontSize) {
+    const size = this._estimateTickLabel(label.text, fontSize);
+    const angle = Math.abs(Number(label.angle || 0)) * Math.PI / 180;
+    return dim === "y"
+      ? Math.abs(Math.sin(angle)) * size.w + Math.abs(Math.cos(angle)) * size.h
+      : Math.abs(Math.cos(angle)) * size.w + Math.abs(Math.sin(angle)) * size.h;
+  }
+
+  _tickLabelsCollide(labels, dim, fontSize, minGap) {
+    const rows = new Map();
+    for (const label of labels) {
+      const row = Number(label.row || 0);
+      if (!rows.has(row)) rows.set(row, []);
+      rows.get(row).push(label);
+    }
+    for (const rowLabels of rows.values()) {
+      rowLabels.sort((a, b) => a.pos - b.pos);
+      let lastEnd = -Infinity;
+      for (const label of rowLabels) {
+        const extent = this._tickLabelExtent(label, dim, fontSize);
+        const start = label.pos - extent / 2;
+        const end = label.pos + extent / 2;
+        if (start < lastEnd + minGap) return true;
+        lastEnd = end;
+      }
+    }
+    return false;
+  }
+
+  _downsampleTickLabels(labels, dim, fontSize, minGap) {
+    if (labels.length <= 1) return labels;
+    for (let stride = 2; stride <= labels.length; stride++) {
+      const out = labels.filter((_, i) => i % stride === 0);
+      if (!this._tickLabelsCollide(out, dim, fontSize, minGap)) return out;
+    }
+    return labels.slice(0, 1);
+  }
+
+  _layoutTickLabels(axis, dim, labels) {
+    if (labels.length <= 1) return labels.map((label) => ({ ...label, angle: 0, row: 0 }));
+    const fontSize = Math.max(8, this._axisStyleNumber(axis, "tick_size", 11));
+    const minGap = this._axisTickLabelMinGap(axis, dim);
+    const explicitAngle = this._axisTickLabelAngle(axis);
+    const baseAngle = explicitAngle === null ? 0 : explicitAngle;
+    const withBase = labels.map((label) => ({ ...label, angle: baseAngle, row: 0 }));
+    let strategy = this._axisTickLabelStrategy(axis);
+    if (strategy === "none") return withBase;
+    if (strategy === "auto") {
+      if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap)) return withBase;
+      if (dim === "x" && axis.kind === "category" && labels.length <= 16) strategy = "rotate";
+      else if (dim === "x" && labels.length <= 24) strategy = "stagger";
+      else strategy = "hide";
+    }
+
+    let out = withBase;
+    if (strategy === "rotate" && dim === "x") {
+      const angle = explicitAngle === null ? (axis.side === "top" ? 35 : -35) : explicitAngle;
+      out = labels.map((label) => ({ ...label, angle, row: 0 }));
+    } else if (strategy === "stagger" && dim === "x") {
+      out = labels.map((label, i) => ({ ...label, angle: baseAngle, row: i % 2 }));
+    }
+
+    if (strategy === "hide" || this._tickLabelsCollide(out, dim, fontSize, minGap)) {
+      out = this._downsampleTickLabels(out, dim, fontSize, minGap);
+    }
+    return out;
+  }
+
   _axisLabelCss(axis, dim, fallbackCss) {
     const rawPosition = axis && axis.label_position;
     const hasPosition = rawPosition !== undefined && rawPosition !== null;
@@ -2785,8 +2896,11 @@ class ChartView {
     const p = this.plot;
     const xAxis = this._axis("x");
     const yAxis = this._axis("y");
-    const xt = this._axisTicks("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80)));
-    const yt = this._axisTicks("y", Math.max(3, p.h / 45));
+    const xt = this._axisTicks(
+      "x",
+      this._axisTickTarget("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80))),
+    );
+    const yt = this._axisTicks("y", this._axisTickTarget("y", Math.max(3, p.h / 45)));
     const xEdge = (px) => Math.min(p.x + p.w - 0.5, Math.max(p.x + 0.5, Math.round(px) + 0.5));
     const yEdge = (py) => Math.min(p.y + p.h - 0.5, Math.max(p.y + 0.5, Math.round(py) + 0.5));
 
@@ -2853,37 +2967,58 @@ class ChartView {
       d.style.cssText =
         `position:absolute;color:${this._axisStylePaint(axis, colorKey, this.theme.label)};` +
         `font-size:${Math.max(8, this._axisStyleNumber(axis, sizeKey, defaultSize))}px;` +
-        "line-height:1.2;" + css;
+        "line-height:1.2;white-space:nowrap;" + css;
       this._applyStyle(d, extraStyle);
       this.labels.appendChild(d);
     };
+    const xLabelCandidates = [];
     for (const v of (xt.labels || xt.ticks)) {
       const px = this._dataPx("x", v);
       if (px < p.x - 1 || px > p.x + p.w + 1) continue;
       const text = fmtAxis(xAxis, v, xt.step);
-      const top = xAxis.side === "top" ? p.y - 18 : p.y + p.h + 6;
-      label(text, `left:${px}px;top:${top}px;transform:translateX(-50%);`, xAxis);
+      xLabelCandidates.push({ pos: px, text });
     }
+    for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
+      const rowOffset = Number(item.row || 0) * (Math.max(8, this._axisStyleNumber(xAxis, "tick_size", 11)) + 4);
+      const top = xAxis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
+      const transform = `translateX(-50%) rotate(${Number(item.angle || 0)}deg)`;
+      const origin = xAxis.side === "top" ? "bottom center" : "top center";
+      label(
+        item.text,
+        `left:${item.pos}px;top:${top}px;transform:${transform};transform-origin:${origin};`,
+        xAxis,
+      );
+    }
+    const yLabelCandidates = [];
     for (const v of (yt.labels || yt.ticks)) {
       const py = this._dataPx("y", v);
       if (py < p.y - 1 || py > p.y + p.h + 1) continue;
       const text = fmtAxis(yAxis, v, yt.step);
+      yLabelCandidates.push({ pos: py, text });
+    }
+    for (const item of this._layoutTickLabels(yAxis, "y", yLabelCandidates)) {
+      const angle = Number(item.angle || 0);
       const css = yAxis.side === "right"
-        ? `left:${p.x + p.w + 8}px;top:${py}px;transform:translateY(-50%);`
-        : `right:${this.size.w - p.x + 8}px;top:${py}px;transform:translateY(-50%);`;
-      label(text, css, yAxis);
+        ? `left:${p.x + p.w + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:left center;`
+        : `right:${this.size.w - p.x + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:right center;`;
+      label(item.text, css, yAxis);
     }
     for (const axis of Object.values(this.axes)) {
       if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
-      const ticks = this._axisTicks(axis.id, Math.max(3, p.h / 45));
+      const ticks = this._axisTicks(axis.id, this._axisTickTarget(axis.id, Math.max(3, p.h / 45)));
+      const labelCandidates = [];
       for (const v of (ticks.labels || ticks.ticks)) {
         const py = this._dataPx(axis.id, v);
         if (py < p.y - 1 || py > p.y + p.h + 1) continue;
         const text = fmtAxis(axis, v, ticks.step);
+        labelCandidates.push({ pos: py, text });
+      }
+      for (const item of this._layoutTickLabels(axis, "y", labelCandidates)) {
+        const angle = Number(item.angle || 0);
         const css = axis.side === "left"
-          ? `right:${this.size.w - p.x + 8}px;top:${py}px;transform:translateY(-50%);`
-          : `left:${p.x + p.w + 8}px;top:${py}px;transform:translateY(-50%);`;
-        label(text, css, axis);
+          ? `right:${this.size.w - p.x + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:right center;`
+          : `left:${p.x + p.w + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:left center;`;
+        label(item.text, css, axis);
       }
       if (axis.label) {
         const fallbackCss = axis.side === "left"

@@ -1066,6 +1066,31 @@ def test_axis_label_position_options_emit_and_revalidate() -> None:
         fig.build_payload()
 
 
+def test_axis_tick_layout_options_emit_and_revalidate() -> None:
+    fig = Figure().line([0.0, 1.0], [1.0, 2.0])
+    fig.set_axis(
+        "x",
+        tick_count=5,
+        tick_label_angle=-30,
+        tick_label_strategy="rotate",
+        tick_label_min_gap=9,
+    )
+    fig.set_axis("y", tick_count=4, tick_label_strategy="hide")
+
+    spec, _ = fig.build_payload()
+
+    assert spec["x_axis"]["tick_count"] == 5
+    assert spec["x_axis"]["tick_label_angle"] == -30.0
+    assert spec["x_axis"]["tick_label_strategy"] == "rotate"
+    assert spec["x_axis"]["tick_label_min_gap"] == 9.0
+    assert spec["y_axis"]["tick_count"] == 4
+    assert spec["y_axis"]["tick_label_strategy"] == "hide"
+
+    fig.axis_options["x"]["tick_label_strategy"] = "pile-up"
+    with pytest.raises(ValueError, match="tick_label_strategy"):
+        fig.build_payload()
+
+
 def test_nan_never_reaches_vertex_buffers():
     x = np.arange(1000.0)
     y = np.arange(1000.0)

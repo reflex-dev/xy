@@ -82,6 +82,7 @@ __all__ = [
 
 StyleValue: TypeAlias = str | int | float
 AxisLabelPosition: TypeAlias = str | dict[str, StyleValue]
+AxisTickLabelStrategy: TypeAlias = str
 
 # ---------------------------------------------------------------------------
 # Component tree (lightweight declarative specs — no rendering here)
@@ -127,6 +128,10 @@ class Axis(Component):
     domain: Optional[tuple[float, float]] = None
     reverse: bool = False
     format: Optional[str] = None
+    tick_count: Optional[int] = None
+    tick_label_angle: Optional[float] = None
+    tick_label_strategy: Optional[AxisTickLabelStrategy] = None
+    tick_label_min_gap: Optional[float] = None
     side: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
 
@@ -178,6 +183,7 @@ class Interaction(Component):
     select: Optional[bool] = None
     brush: Optional[bool] = None
     crosshair: Optional[bool] = None
+    view_change: Optional[bool] = None
     link_group: Optional[str] = None
     link_axes: tuple[str, ...] = ("x", "y")
 
@@ -657,6 +663,10 @@ def x_axis(
     domain: Optional[tuple[float, float]] = None,
     reverse: bool = False,
     format: Optional[str] = None,
+    tick_count: Optional[int] = None,
+    tick_label_angle: Optional[float] = None,
+    tick_label_strategy: Optional[AxisTickLabelStrategy] = None,
+    tick_label_min_gap: Optional[float] = None,
     side: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Axis:
@@ -672,6 +682,14 @@ def x_axis(
         domain=_axis_domain(domain, "x_axis domain"),
         reverse=_strict_bool(reverse, "x_axis reverse"),
         format=_optional_string(format, "x_axis format"),
+        tick_count=_optional_positive_int(tick_count, "x_axis tick_count"),
+        tick_label_angle=_optional_finite_number(tick_label_angle, "x_axis tick_label_angle"),
+        tick_label_strategy=_axis_tick_label_strategy(
+            tick_label_strategy, "x_axis tick_label_strategy"
+        ),
+        tick_label_min_gap=_optional_nonnegative_number(
+            tick_label_min_gap, "x_axis tick_label_min_gap"
+        ),
         side=_axis_side(side, "x"),
         style=_style_dict(style, "x_axis style"),
     )
@@ -688,6 +706,10 @@ def y_axis(
     domain: Optional[tuple[float, float]] = None,
     reverse: bool = False,
     format: Optional[str] = None,
+    tick_count: Optional[int] = None,
+    tick_label_angle: Optional[float] = None,
+    tick_label_strategy: Optional[AxisTickLabelStrategy] = None,
+    tick_label_min_gap: Optional[float] = None,
     side: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Axis:
@@ -703,6 +725,14 @@ def y_axis(
         domain=_axis_domain(domain, "y_axis domain"),
         reverse=_strict_bool(reverse, "y_axis reverse"),
         format=_optional_string(format, "y_axis format"),
+        tick_count=_optional_positive_int(tick_count, "y_axis tick_count"),
+        tick_label_angle=_optional_finite_number(tick_label_angle, "y_axis tick_label_angle"),
+        tick_label_strategy=_axis_tick_label_strategy(
+            tick_label_strategy, "y_axis tick_label_strategy"
+        ),
+        tick_label_min_gap=_optional_nonnegative_number(
+            tick_label_min_gap, "y_axis tick_label_min_gap"
+        ),
         side=_axis_side(side, "y"),
         style=_style_dict(style, "y_axis style"),
     )
@@ -822,6 +852,7 @@ def interaction_config(
     select: Optional[bool] = None,
     brush: Optional[bool] = None,
     crosshair: Optional[bool] = None,
+    view_change: Optional[bool] = None,
     link_group: Optional[str] = None,
     link_axes: tuple[str, ...] = ("x", "y"),
 ) -> Interaction:
@@ -830,7 +861,8 @@ def interaction_config(
     `crosshair=True` draws plot-aligned hover guides. `click=True` emits click
     events and widget callbacks for picked marks. `select`/`brush` control
     shift-drag box selection. `link_group` synchronizes view ranges across
-    charts in the same browser page or same-origin iframes.
+    charts in the same browser page or same-origin iframes. `view_change=True`
+    emits pan/zoom/reset ranges without requiring a Python callback.
     """
     return Interaction(
         hover=hover,
@@ -838,6 +870,7 @@ def interaction_config(
         select=select,
         brush=brush,
         crosshair=crosshair,
+        view_change=view_change,
         link_group=link_group,
         link_axes=link_axes,
     )
@@ -914,6 +947,7 @@ class Chart(Component):
         select: Optional[bool] = None,
         brush: Optional[bool] = None,
         crosshair: Optional[bool] = None,
+        view_change: Optional[bool] = None,
         link_group: Optional[str] = None,
         link_axes: tuple[str, ...] = ("x", "y"),
     ) -> None:
@@ -935,6 +969,7 @@ class Chart(Component):
         self.select = select
         self.brush = brush
         self.crosshair = crosshair
+        self.view_change = view_change
         self.link_group = link_group
         self.link_axes = link_axes
         self._figure: Optional[Figure] = None
@@ -999,6 +1034,10 @@ class Chart(Component):
                 domain=axis.domain,
                 reverse=axis.reverse,
                 format=axis.format,
+                tick_count=axis.tick_count,
+                tick_label_angle=axis.tick_label_angle,
+                tick_label_strategy=axis.tick_label_strategy,
+                tick_label_min_gap=axis.tick_label_min_gap,
                 side=axis.side,
                 style=axis.style,
             )
@@ -1020,6 +1059,7 @@ class Chart(Component):
             or self.select is not None
             or self.brush is not None
             or self.crosshair is not None
+            or self.view_change is not None
             or self.link_group is not None
         ):
             fig.set_interaction(
@@ -1028,6 +1068,7 @@ class Chart(Component):
                 select=self.select,
                 brush=self.brush,
                 crosshair=self.crosshair,
+                view_change=self.view_change,
                 link_group=self.link_group,
                 link_axes=self.link_axes,
             )
@@ -1038,6 +1079,7 @@ class Chart(Component):
                 select=node.select,
                 brush=node.brush,
                 crosshair=node.crosshair,
+                view_change=node.view_change,
                 link_group=node.link_group,
                 link_axes=node.link_axes,
             )
@@ -1358,6 +1400,10 @@ def _validate_axis(axis: Axis) -> None:
     _axis_label_position(axis.label_position, f"{axis.which}_axis label_position")
     _optional_finite_number(axis.label_offset, f"{axis.which}_axis label_offset")
     _optional_finite_number(axis.label_angle, f"{axis.which}_axis label_angle")
+    _optional_positive_int(axis.tick_count, f"{axis.which}_axis tick_count")
+    _optional_finite_number(axis.tick_label_angle, f"{axis.which}_axis tick_label_angle")
+    _axis_tick_label_strategy(axis.tick_label_strategy, f"{axis.which}_axis tick_label_strategy")
+    _optional_nonnegative_number(axis.tick_label_min_gap, f"{axis.which}_axis tick_label_min_gap")
 
 
 def _mark_axis_ids(mark: Mark, axes: dict[str, Axis]) -> tuple[str, str]:
@@ -1427,10 +1473,42 @@ def _axis_label_position(value: Any, label: str) -> Optional[AxisLabelPosition]:
     return _style_dict(value, label)
 
 
+def _optional_positive_int(value: Any, label: str) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
+        raise ValueError(f"{label} must be a positive integer")
+    out = int(value)
+    if out <= 0:
+        raise ValueError(f"{label} must be a positive integer")
+    return out
+
+
+def _axis_tick_label_strategy(value: Any, label: str) -> Optional[AxisTickLabelStrategy]:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string or None")
+    normalized = value.replace("-", "_")
+    allowed = {"auto", "hide", "rotate", "stagger", "none"}
+    if normalized not in allowed:
+        raise ValueError(f"{label} must be one of {sorted(allowed)}")
+    return normalized
+
+
 def _optional_finite_number(value: Any, label: str) -> Optional[float]:
     if value is None:
         return None
     return _finite_number(value, label)
+
+
+def _optional_nonnegative_number(value: Any, label: str) -> Optional[float]:
+    if value is None:
+        return None
+    out = _finite_number(value, label)
+    if out < 0:
+        raise ValueError(f"{label} must be non-negative")
+    return out
 
 
 def _finite_number(value: Any, label: str) -> float:

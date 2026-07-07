@@ -188,15 +188,20 @@ function logTicks(lo, hi, target = 6) {
   const span = Math.max(1, e1 - e0);
   const mults = span <= Math.max(2, target) ? [1, 2, 5] : [1];
   const out = [];
+  const labels = [];
+  const labelEvery = Math.max(1, Math.ceil((e1 - e0 + 1) / Math.max(1, target)));
   for (let e = e0; e <= e1 && out.length < 200; e++) {
     const base = Math.pow(10, e);
     for (const m of mults) {
       const v = m * base;
-      if (v >= a * (1 - 1e-12) && v <= b * (1 + 1e-12)) out.push(v);
+      if (v >= a * (1 - 1e-12) && v <= b * (1 + 1e-12)) {
+        out.push(v);
+        if (m === 1 && (e - e0) % labelEvery === 0) labels.push(v);
+      }
       if (out.length >= 200) break;
     }
   }
-  return { ticks: out, step: 1, log: true };
+  return { ticks: out, labels: labels.length ? labels : out, step: 1, log: true };
 }
 
 function categoryTicks(lo, hi, categories, target = 6) {
@@ -330,7 +335,11 @@ function fmtTimeSpec(ms, format) {
 function fmtAxis(axis, v, tickStep) {
   if (axis && axis.kind === "category") return fmtCategory(v, axis.categories || []);
   if (axis && axis.kind === "time") return fmtTimeSpec(v, axis.format) || fmtTime(v, tickStep);
-  return fmtNumberSpec(v, axis && axis.format) || fmtLinear(v, tickStep);
+  const formatted = fmtNumberSpec(v, axis && axis.format);
+  if (axis && axis.scale === "log" && Number(v) > 0 && Number(v) < 1 && formatted === "0") {
+    return fmtLinear(v, tickStep);
+  }
+  return formatted || fmtLinear(v, tickStep);
 }
 
 function fmtValue(v, kind) {
@@ -1296,6 +1305,8 @@ class ChartView {
     this._viewRequestBurstStart = null;
     this._viewAnim = null;
     this._animRaf = null;
+    this._wheelZoomRaf = null;
+    this._pendingWheelZoom = null;
     this._lastLabelDraw = null;
     this._lutCache = new Map();
     this._listeners = [];
@@ -1425,6 +1436,15 @@ class ChartView {
     if (axis.kind === "category") return categoryTicks(lo, hi, axis.categories || [], target);
     if (axis.scale === "log") return logTicks(lo, hi, target);
     return linearTicks(lo, hi, target);
+  }
+
+  _axisTickTarget(axisId, fallback) {
+    const axis = this._axis(axisId);
+    const requested = Number(axis && axis.tick_count);
+    if (Number.isFinite(requested) && requested > 0) {
+      return Math.max(1, Math.min(200, requested));
+    }
+    return fallback;
   }
 
   _dataPx(axisId, value) {
@@ -2563,6 +2583,158 @@ class ChartView {
     return safeCssPaint(this.root, style && style[key], fallback);
   }
 
+  _axisStyleValue(axis, key) {
+    const style = axis && typeof axis.style === "object" ? axis.style : null;
+    return style && Object.prototype.hasOwnProperty.call(style, key) ? style[key] : undefined;
+  }
+
+  _axisTickLabelStrategy(axis) {
+    const raw = axis && axis.tick_label_strategy !== undefined
+      ? axis.tick_label_strategy
+      : this._axisStyleValue(axis, "tick_label_strategy");
+    const value = String(raw || "auto").replace(/-/g, "_");
+    return ["auto", "hide", "rotate", "stagger", "none"].includes(value) ? value : "auto";
+  }
+
+  _axisTickLabelAngle(axis) {
+    const raw = axis && axis.tick_label_angle !== undefined
+      ? axis.tick_label_angle
+      : this._axisStyleValue(axis, "tick_label_angle");
+    const angle = Number(raw);
+    return Number.isFinite(angle) ? angle : null;
+  }
+
+  _axisTickLabelMinGap(axis, dim) {
+    const raw = axis && axis.tick_label_min_gap !== undefined
+      ? axis.tick_label_min_gap
+      : this._axisStyleValue(axis, "tick_label_min_gap");
+    const gap = Number(raw);
+    return Number.isFinite(gap) && gap >= 0 ? gap : (dim === "x" ? 8 : 4);
+  }
+
+  _estimateTickLabel(text, fontSize) {
+    const s = String(text || "");
+    return { w: Math.max(fontSize * 0.7, s.length * fontSize * 0.62), h: fontSize * 1.2 };
+  }
+
+  _tickLabelExtent(label, dim, fontSize) {
+    const size = this._estimateTickLabel(label.text, fontSize);
+    const angle = Math.abs(Number(label.angle || 0)) * Math.PI / 180;
+    return dim === "y"
+      ? Math.abs(Math.sin(angle)) * size.w + Math.abs(Math.cos(angle)) * size.h
+      : Math.abs(Math.cos(angle)) * size.w + Math.abs(Math.sin(angle)) * size.h;
+  }
+
+  _tickLabelsCollide(labels, dim, fontSize, minGap) {
+    const rows = new Map();
+    for (const label of labels) {
+      const row = Number(label.row || 0);
+      if (!rows.has(row)) rows.set(row, []);
+      rows.get(row).push(label);
+    }
+    for (const rowLabels of rows.values()) {
+      rowLabels.sort((a, b) => a.pos - b.pos);
+      let lastEnd = -Infinity;
+      for (const label of rowLabels) {
+        const extent = this._tickLabelExtent(label, dim, fontSize);
+        const start = label.pos - extent / 2;
+        const end = label.pos + extent / 2;
+        if (start < lastEnd + minGap) return true;
+        lastEnd = end;
+      }
+    }
+    return false;
+  }
+
+  _downsampleTickLabels(labels, dim, fontSize, minGap) {
+    if (labels.length <= 1) return labels;
+    for (let stride = 2; stride <= labels.length; stride++) {
+      const out = labels.filter((_, i) => i % stride === 0);
+      if (!this._tickLabelsCollide(out, dim, fontSize, minGap)) return out;
+    }
+    return labels.slice(0, 1);
+  }
+
+  _layoutTickLabels(axis, dim, labels) {
+    if (labels.length <= 1) return labels.map((label) => ({ ...label, angle: 0, row: 0 }));
+    const fontSize = Math.max(8, this._axisStyleNumber(axis, "tick_size", 11));
+    const minGap = this._axisTickLabelMinGap(axis, dim);
+    const explicitAngle = this._axisTickLabelAngle(axis);
+    const baseAngle = explicitAngle === null ? 0 : explicitAngle;
+    const withBase = labels.map((label) => ({ ...label, angle: baseAngle, row: 0 }));
+    let strategy = this._axisTickLabelStrategy(axis);
+    if (strategy === "none") return withBase;
+    if (strategy === "auto") {
+      if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap)) return withBase;
+      if (dim === "x" && axis.kind === "category" && labels.length <= 16) strategy = "rotate";
+      else if (dim === "x" && labels.length <= 24) strategy = "stagger";
+      else strategy = "hide";
+    }
+
+    let out = withBase;
+    if (strategy === "rotate" && dim === "x") {
+      const angle = explicitAngle === null ? (axis.side === "top" ? 35 : -35) : explicitAngle;
+      out = labels.map((label) => ({ ...label, angle, row: 0 }));
+    } else if (strategy === "stagger" && dim === "x") {
+      out = labels.map((label, i) => ({ ...label, angle: baseAngle, row: i % 2 }));
+    }
+
+    if (strategy === "hide" || this._tickLabelsCollide(out, dim, fontSize, minGap)) {
+      out = this._downsampleTickLabels(out, dim, fontSize, minGap);
+    }
+    return out;
+  }
+
+  _axisLabelCss(axis, dim, fallbackCss) {
+    const rawPosition = axis && axis.label_position;
+    const hasPosition = rawPosition !== undefined && rawPosition !== null;
+    const hasOffset = axis && Number.isFinite(Number(axis.label_offset));
+    const hasAngle = axis && Number.isFinite(Number(axis.label_angle));
+    if (!hasPosition && !hasOffset && !hasAngle) return { css: fallbackCss, style: null };
+    if (rawPosition && typeof rawPosition === "object" && !Array.isArray(rawPosition)) {
+      return { css: "font-weight:500;white-space:nowrap;", style: rawPosition };
+    }
+
+    const p = this.plot;
+    const position = String(hasPosition ? rawPosition : "center").replace(/-/g, "_");
+    const inside = position.startsWith("inside_");
+    const anchor = inside ? position.slice("inside_".length) : position;
+    const offset = hasOffset ? Number(axis.label_offset) : 0;
+    const side = axis && axis.side;
+    const anchorFrac = anchor === "start" ? 0 : (anchor === "end" ? 1 : 0.5);
+
+    if (dim === "x") {
+      const x = p.x + p.w * anchorFrac;
+      const outsideY = side === "top" ? p.y - 34 : p.y + p.h + 24;
+      const insideY = side === "top" ? p.y + 12 : p.y + p.h - 12;
+      const y = (inside ? insideY : outsideY) +
+        (side === "top" ? (inside ? offset : -offset) : (inside ? -offset : offset));
+      const translateX = anchor === "start" ? 0 : (anchor === "end" ? -100 : -50);
+      const angle = hasAngle ? Number(axis.label_angle) : 0;
+      return {
+        css:
+          `left:${x}px;top:${y}px;` +
+          `transform:translateX(${translateX}%) rotate(${angle}deg);` +
+          "transform-origin:center;font-weight:500;white-space:nowrap;",
+        style: null,
+      };
+    }
+
+    const xOutside = side === "right" ? p.x + p.w + 40 : 10;
+    const xInside = side === "right" ? p.x + p.w - 12 : p.x + 12;
+    const x = (inside ? xInside : xOutside) +
+      (side === "right" ? (inside ? -offset : offset) : (inside ? offset : -offset));
+    const y = p.y + p.h * (1 - anchorFrac);
+    const angle = hasAngle ? Number(axis.label_angle) : (side === "right" ? 90 : -90);
+    return {
+      css:
+        `left:${x}px;top:${y}px;` +
+        `transform:translate(-50%,-50%) rotate(${angle}deg);` +
+        "transform-origin:center;font-weight:500;white-space:nowrap;",
+      style: null,
+    };
+  }
+
   _annotationPaint(style, fallback) {
     return safeCssPaint(this.root, style && style.color, fallback);
   }
@@ -2736,8 +2908,11 @@ class ChartView {
     const p = this.plot;
     const xAxis = this._axis("x");
     const yAxis = this._axis("y");
-    const xt = this._axisTicks("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80)));
-    const yt = this._axisTicks("y", Math.max(3, p.h / 45));
+    const xt = this._axisTicks(
+      "x",
+      this._axisTickTarget("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80))),
+    );
+    const yt = this._axisTicks("y", this._axisTickTarget("y", Math.max(3, p.h / 45)));
     const xEdge = (px) => Math.min(p.x + p.w - 0.5, Math.max(p.x + 0.5, Math.round(px) + 0.5));
     const yEdge = (py) => Math.min(p.y + p.h - 0.5, Math.max(p.y + 0.5, Math.round(py) + 0.5));
 
@@ -2794,7 +2969,7 @@ class ChartView {
       ctx.stroke();
     }
 
-    const label = (text, css, axis, kind = "tick") => {
+    const label = (text, css, axis, kind = "tick", extraStyle = null) => {
       if (!updateLabels) return;
       const d = document.createElement("div");
       d.textContent = text;
@@ -2804,53 +2979,79 @@ class ChartView {
       d.style.cssText =
         `position:absolute;color:${this._axisStylePaint(axis, colorKey, this.theme.label)};` +
         `font-size:${Math.max(8, this._axisStyleNumber(axis, sizeKey, defaultSize))}px;` +
-        "line-height:1.2;" + css;
+        "line-height:1.2;white-space:nowrap;" + css;
+      this._applyStyle(d, extraStyle);
       this.labels.appendChild(d);
     };
-    for (const v of xt.ticks) {
+    const xLabelCandidates = [];
+    for (const v of (xt.labels || xt.ticks)) {
       const px = this._dataPx("x", v);
       if (px < p.x - 1 || px > p.x + p.w + 1) continue;
       const text = fmtAxis(xAxis, v, xt.step);
-      const top = xAxis.side === "top" ? p.y - 18 : p.y + p.h + 6;
-      label(text, `left:${px}px;top:${top}px;transform:translateX(-50%);`, xAxis);
+      xLabelCandidates.push({ pos: px, text });
     }
-    for (const v of yt.ticks) {
+    for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
+      const rowOffset = Number(item.row || 0) * (Math.max(8, this._axisStyleNumber(xAxis, "tick_size", 11)) + 4);
+      const top = xAxis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
+      const transform = `translateX(-50%) rotate(${Number(item.angle || 0)}deg)`;
+      const origin = xAxis.side === "top" ? "bottom center" : "top center";
+      label(
+        item.text,
+        `left:${item.pos}px;top:${top}px;transform:${transform};transform-origin:${origin};`,
+        xAxis,
+      );
+    }
+    const yLabelCandidates = [];
+    for (const v of (yt.labels || yt.ticks)) {
       const py = this._dataPx("y", v);
       if (py < p.y - 1 || py > p.y + p.h + 1) continue;
       const text = fmtAxis(yAxis, v, yt.step);
+      yLabelCandidates.push({ pos: py, text });
+    }
+    for (const item of this._layoutTickLabels(yAxis, "y", yLabelCandidates)) {
+      const angle = Number(item.angle || 0);
       const css = yAxis.side === "right"
-        ? `left:${p.x + p.w + 8}px;top:${py}px;transform:translateY(-50%);`
-        : `right:${this.size.w - p.x + 8}px;top:${py}px;transform:translateY(-50%);`;
-      label(text, css, yAxis);
+        ? `left:${p.x + p.w + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:left center;`
+        : `right:${this.size.w - p.x + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:right center;`;
+      label(item.text, css, yAxis);
     }
     for (const axis of Object.values(this.axes)) {
       if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
-      const ticks = this._axisTicks(axis.id, Math.max(3, p.h / 45));
-      for (const v of ticks.ticks) {
+      const ticks = this._axisTicks(axis.id, this._axisTickTarget(axis.id, Math.max(3, p.h / 45)));
+      const labelCandidates = [];
+      for (const v of (ticks.labels || ticks.ticks)) {
         const py = this._dataPx(axis.id, v);
         if (py < p.y - 1 || py > p.y + p.h + 1) continue;
         const text = fmtAxis(axis, v, ticks.step);
+        labelCandidates.push({ pos: py, text });
+      }
+      for (const item of this._layoutTickLabels(axis, "y", labelCandidates)) {
+        const angle = Number(item.angle || 0);
         const css = axis.side === "left"
-          ? `right:${this.size.w - p.x + 8}px;top:${py}px;transform:translateY(-50%);`
-          : `left:${p.x + p.w + 8}px;top:${py}px;transform:translateY(-50%);`;
-        label(text, css, axis);
+          ? `right:${this.size.w - p.x + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:right center;`
+          : `left:${p.x + p.w + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:left center;`;
+        label(item.text, css, axis);
       }
       if (axis.label) {
-        const css = axis.side === "left"
+        const fallbackCss = axis.side === "left"
           ? `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`
           : `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`;
-        label(axis.label, css, axis, "label");
+        const placement = this._axisLabelCss(axis, "y", fallbackCss);
+        label(axis.label, placement.css, axis, "label", placement.style);
       }
     }
     if (s.x_axis.label) {
       const top = xAxis.side === "top" ? p.y - 34 : p.y + p.h + 24;
-      label(s.x_axis.label, `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`, xAxis, "label");
+      const fallbackCss = `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`;
+      const placement = this._axisLabelCss(xAxis, "x", fallbackCss);
+      label(s.x_axis.label, placement.css, xAxis, "label", placement.style);
     }
     if (s.y_axis.label) {
-      const css = yAxis.side === "right"
+      const fallbackCss = yAxis.side === "right"
         ? `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`
         : `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`;
-      label(s.y_axis.label, css, yAxis, "label");
+      const placement = this._axisLabelCss(yAxis, "y", fallbackCss);
+      label(s.y_axis.label, placement.css, yAxis, "label", placement.style);
     }
     this._drawAnnotationLabels(updateLabels);
   }
@@ -3109,10 +3310,14 @@ class ChartView {
     if (hit.heatmap && g.heatmap && g._cpuHeatmap) {
       const h = g.heatmap;
       const { row: heatRow, col } = hit.heatmap;
-      row.x = h.xRange[0] + (col + 0.5) * ((h.xRange[1] - h.xRange[0]) / h.w);
-      row.y = h.yRange[0] + (heatRow + 0.5) * ((h.yRange[1] - h.yRange[0]) / h.h);
-      row.x_kind = "float";
-      row.y_kind = "float";
+      const rawX = h.xRange[0] + (col + 0.5) * ((h.xRange[1] - h.xRange[0]) / h.w);
+      const rawY = h.yRange[0] + (heatRow + 0.5) * ((h.yRange[1] - h.yRange[0]) / h.h);
+      const [x, xKind] = this._sourceDisplayValue(g, "x", rawX, "float");
+      const [y, yKind] = this._sourceDisplayValue(g, "y", rawY, "float");
+      row.x = x;
+      row.y = y;
+      if (xKind !== undefined) row.x_kind = xKind;
+      if (yKind !== undefined) row.y_kind = yKind;
       const norm = g._cpuHeatmap.grid[hit.index];
       row.color_value = this._denormalizeUnit(norm, g.trace.color && g.trace.color.domain);
     } else if (g._cpuRect) {
@@ -3409,7 +3614,7 @@ class ChartView {
       const r = c.getBoundingClientRect();
       const fx = (e.clientX - r.left) / r.width;
       const fy = 1 - (e.clientY - r.top) / r.height;
-      this._zoomAt(f, fx, fy, true, 95);
+      this._queueWheelZoom(f, fx, fy);
     }, { passive: false });
 
     this._listen(c, "dblclick", () => {
@@ -3732,6 +3937,24 @@ class ChartView {
     const yr = this._zoomAxisRange("y", y0, y1, f, fy);
     if (!xr || !yr) return;
     this._setView({ x0: xr[0], x1: xr[1], y0: yr[0], y1: yr[1] }, { animate, duration });
+  }
+
+  _queueWheelZoom(factor, fx, fy) {
+    if (!Number.isFinite(factor) || factor <= 0) return;
+    if (!this._pendingWheelZoom) {
+      this._pendingWheelZoom = { factor: 1, fx, fy };
+    }
+    this._pendingWheelZoom.factor *= factor;
+    this._pendingWheelZoom.fx = fx;
+    this._pendingWheelZoom.fy = fy;
+    if (this._wheelZoomRaf) return;
+    this._wheelZoomRaf = requestAnimationFrame(() => {
+      this._wheelZoomRaf = null;
+      const pending = this._pendingWheelZoom;
+      this._pendingWheelZoom = null;
+      if (!pending || this._destroyed) return;
+      this._zoomAt(pending.factor, pending.fx, pending.fy, false);
+    });
   }
 
   // Box-zoom: fit the view to the dragged data rectangle (§16 precision floor;
@@ -4117,6 +4340,9 @@ class ChartView {
     this._viewTimer = null;
     if (this._viewEventRaf) cancelAnimationFrame(this._viewEventRaf);
     this._viewEventRaf = null;
+    if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
+    this._wheelZoomRaf = null;
+    this._pendingWheelZoom = null;
     this._linkChannel?.close?.();
     this._linkChannel = null;
     if (this._raf) cancelAnimationFrame(this._raf);
@@ -4402,7 +4628,7 @@ window.fastcharts = { render, renderStandalone, ChartView, MARK_KINDS, markOf };
 })();
 </script>
 <script>
-  const spec = {"protocol":2,"width":"100%","height":430,"title":"Crosshair, click, brush select, linked x-axis","x_axis":{"id":"x","kind":"linear","label":"time","range":[-0.36,12.36],"side":"bottom"},"y_axis":{"id":"y","kind":"linear","label":"value","range":[-0.6742979662466821,1.6924279156029132],"side":"left"},"axes":{"x":{"id":"x","kind":"linear","label":"time","range":[-0.36,12.36],"side":"bottom"},"y":{"id":"y","kind":"linear","label":"value","range":[-0.6742979662466821,1.6924279156029132],"side":"left"}},"traces":[{"id":0,"kind":"scatter","name":"samples","style":{"opacity":0.8},"tier":"direct","n_points":30,"n_marks":30,"x":0,"y":1,"x_axis":"x","y_axis":"y","color":{"mode":"constant","color":"#2563eb"},"size":{"mode":"constant","size":8.0}},{"id":1,"kind":"line","name":"trend","style":{"color":"#dc2626","width":2.0,"opacity":1.0},"tier":"direct","n_points":180,"n_marks":180,"x":2,"y":3,"x_axis":"x","y_axis":"y"}],"columns":[{"byte_offset":0,"len":30,"offset":5.832402234636872,"scale":1.0,"kind":"float"},{"byte_offset":120,"len":30,"offset":0.5090649746781155,"scale":1.0,"kind":"float"},{"byte_offset":240,"len":180,"offset":6.0,"scale":1.0,"kind":"float"},{"byte_offset":960,"len":180,"offset":0.48,"scale":1.0,"kind":"float"}],"backend":"native","show_legend":true,"dom":{"style":{"--chart-bg":"white","--chart-grid":"rgba(37,99,235,.12)"}},"tooltip":{"fields":["x","y"],"format":{"x":".2f","y":".2f"}},"mark_style":{"hover":{"color":"#0f172a","size":18,"opacity":0.9},"selected":{"opacity":1},"unselected":{"opacity":0.18}},"interaction":{"hover":true,"click":true,"select":true,"brush":true,"crosshair":true,"link_group":"demo-linked-x","link_axes":["x"]}};
+  const spec = {"protocol":2,"width":"100%","height":430,"title":"Crosshair, click, brush select, linked x-axis","x_axis":{"id":"x","kind":"linear","label":"time","range":[-0.36,12.36],"side":"bottom"},"y_axis":{"id":"y","kind":"linear","label":"value","range":[-0.6742979662466821,1.6924279156029132],"side":"left"},"axes":{"x":{"id":"x","kind":"linear","label":"time","range":[-0.36,12.36],"side":"bottom"},"y":{"id":"y","kind":"linear","label":"value","range":[-0.6742979662466821,1.6924279156029132],"side":"left"}},"traces":[{"id":0,"kind":"scatter","name":"samples","style":{"opacity":0.8},"tier":"direct","n_points":30,"n_marks":30,"x":0,"y":1,"x_axis":"x","y_axis":"y","color":{"mode":"constant","color":"#2563eb"},"size":{"mode":"constant","size":8.0}},{"id":1,"kind":"line","name":"trend","style":{"color":"#dc2626","width":2.0,"opacity":1.0},"tier":"direct","n_points":180,"n_marks":180,"x":2,"y":3,"x_axis":"x","y_axis":"y"}],"columns":[{"byte_offset":0,"len":30,"offset":5.832402234636872,"scale":1.0,"kind":"float"},{"byte_offset":120,"len":30,"offset":0.5090649746781155,"scale":1.0,"kind":"float"},{"byte_offset":240,"len":180,"offset":6.0,"scale":1.0,"kind":"float"},{"byte_offset":960,"len":180,"offset":0.48,"scale":1.0,"kind":"float"}],"backend":"native","show_legend":true,"dom":{"style":{"--chart-bg":"white","--chart-grid":"rgba(37,99,235,.12)"}},"tooltip":{"fields":["x","y"],"format":{"x":".2f","y":".2f"}},"mark_style":{"hover":{"color":"#0f172a","size":18,"opacity":0.9},"selected":{"opacity":1},"unselected":{"opacity":0.18}},"interaction":{"hover":true,"click":true,"select":true,"brush":true,"crosshair":true,"view_change":true,"link_group":"demo-linked-x","link_axes":["x"]}};
   const b64 = "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";
   const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
   fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);
