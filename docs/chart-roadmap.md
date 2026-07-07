@@ -232,16 +232,17 @@ and drill updates emit the same wire shape.
   hysteresis-guarded (1.15×) so the boundary doesn't thrash. Every decision
   rides the update as `mode` + `visible` (§28, never silent).
 
-**Not yet built (the rest of the §5 ladder, in rough order of value):**
+**Partially built / not yet built (the rest of the §5 ladder, in rough order of value):**
 
+- *Hybrid overlay* — exact-scan density views now render a density background
+  plus a deterministic stratified sample of real points, with an explicit
+  "sampled n of N" badge. Remaining work: make pyramid-served density views
+  produce tile-aware sampled overlays without rescanning raw rows.
 - *Data-space tile pyramid* — today zoom-out re-bins the visible window
   (O(visible points)); the pyramid makes pan pure tile reuse and zoom a level
   step, O(visible tiles) per frame after a one-pass build (~1.33× cost).
 - *Progressive refinement* (§17) — bin a 1-in-k sample first so a coarse
   density appears <100 ms, refine over subsequent frames.
-- *Hybrid overlay* — density background + a stratified sample of real points
-  (rare categories/outliers kept) so zoomed-out views still show markers.
-  Requires a sampling pass with an explicit "sampled" badge (§28).
 - *Per-bin channel aggregation* (§5-F5) — mean/max color per density cell, so
   a zoomed-out colored scatter keeps *some* channel signal instead of
   `channels_dropped`.

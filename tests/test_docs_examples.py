@@ -11,6 +11,7 @@ API_EXAMPLES = ROOT / "docs" / "api-examples.md"
 README = ROOT / "README.md"
 BENCHMARK_DOC = ROOT / "docs" / "benchmark.md"
 PRODUCTION_DOC = ROOT / "docs" / "production-readiness.md"
+REFLEX_SHAPED_API_DOC = ROOT / "docs" / "design" / "reflex-shaped-api.md"
 EXPECTED_QUICK_REFERENCE = {
     "Line": ("Figure().line", "fc.line_chart", "fc.line"),
     "Scatter": ("Figure().scatter", "fc.scatter_chart", "fc.scatter"),
@@ -154,10 +155,48 @@ def test_api_examples_document_alpha_api_stability_boundary() -> None:
         "Use the composition API when you want Reflex-shaped",
         "column-name resolution through `data=`",
         "`on_hover` / `on_select` callbacks",
-        "still experimental before 1.0",
+        "core composition contract is now stabilizing",
+        "CSS/Tailwind-friendly DOM hooks",
+        "same notebook/static export methods as `Figure`",
+        "Callback payload details and future adapter packages may still evolve before 1.0",
         '`width="100%"`',
         "Standalone `to_html(...)` needs no browser dependency",
         "`to_png(...)` needs a local Chrome/Chromium executable",
+    ]
+    for marker in required:
+        assert marker in text
+
+
+def test_readme_documents_declarative_callback_serialization_boundary() -> None:
+    text = " ".join(README.read_text(encoding="utf-8").split())
+    required = [
+        "The composition contract we are locking is intentionally narrow and durable",
+        "opaque framework objects passed to `fc.legend(...)` / `fc.tooltip(...)`",
+        "without being serialized into standalone HTML",
+        "Python `on_*` callbacks stay widget-side",
+        "standalone HTML receives only the safe interaction flags",
+    ]
+    for marker in required:
+        assert marker in text
+
+
+def test_reflex_shaped_api_doc_tracks_locked_composition_contract() -> None:
+    text = " ".join(REFLEX_SHAPED_API_DOC.read_text(encoding="utf-8").split())
+    required = [
+        "Compatibility Contract",
+        "`Figure` fluent API",
+        "`Chart.figure()`",
+        "`Chart.widget()`",
+        "`Chart.show()`",
+        "`Chart.to_html(...)`",
+        "`Chart.to_png(...)`",
+        "Static HTML exports with no Python/Reflex runtime",
+        "No Reflex import in `fastcharts`",
+        "Neutral `fc.chart(...)`",
+        "`fc.tooltip(...)`, `fc.modebar(...)`, `fc.theme(...)`",
+        "`class_name`, `class_names`, and `style` props",
+        "Python callbacks notebook-only",
+        "Pulling full Reflex into any install path",
     ]
     for marker in required:
         assert marker in text
@@ -207,6 +246,9 @@ def test_readme_documents_stability_and_backend_contract() -> None:
         "Fluent `Figure` API",
         "Stable alpha",
         "Composition API",
+        "Stabilizing alpha",
+        "Declarative `fc.chart(...children)`",
+        "CSS/Tailwind hooks",
         "Reflex integration",
         "Adaptive drilldown internals",
         "Experimental",
@@ -358,13 +400,13 @@ def test_production_docs_include_focused_gate_matrix() -> None:
         "Focused gate",
         "README/API prose, examples, public benchmark wording",
         "`make check-docs`",
-        "Public validation, error messages, builder rollback, chart/widget caching",
+        "Public validation, error messages, builder rollback, LOD/drill mutation boundaries, chart/widget caching",
         "`make check-errors`",
         "Public exports, lazy import mappings, component factories, public annotations",
         "`make check-api`",
-        "Import-time budget, `fastcharts.__init__`, widget/export/backend import boundaries",
+        "Import-time budget, `fastcharts.__init__`, dependency boundaries, widget/export/backend import boundaries",
         "`make check-import`",
-        "Standalone HTML export, user text, tooltips, legends, browser DOM insertion",
+        "Standalone HTML export, path writes, user text, tooltips, legends, browser DOM insertion",
         "`make check-security`",
         "Benchmark harness code, environment metadata, report schema, regressions",
         "`make check-benchmark-harness`",
@@ -411,7 +453,7 @@ def test_production_docs_capture_html_export_dom_text_contract() -> None:
     text = " ".join(PRODUCTION_DOC.read_text(encoding="utf-8").split())
     required = [
         "HTML export safety",
-        "Inline JSON/script escaping, hostile user strings, and browser client text-node insertion",
+        "Inline JSON/script escaping, atomic path writes, hostile user strings, and browser client text-node insertion",
         "`make check-security`",
         "The browser client inserts user-facing text with `textContent` or text nodes",
         "HTML parser sinks such as `innerHTML` are reserved for fixed internal icons",

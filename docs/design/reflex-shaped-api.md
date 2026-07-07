@@ -49,6 +49,7 @@ chart = fc.chart(
 chart.show()                 # notebook / IPython display
 html = chart.to_html()       # standalone HTML
 chart.to_html("chart.html")  # shareable file
+chart._repr_html_()          # standalone HTML repr fallback
 chart.to_png("chart.png")    # optional Chromium screenshot
 ```
 
@@ -124,15 +125,15 @@ Target node types:
 
 | Node | Purpose | Status |
 |---|---|---|
-| `chart(...)` | Single-panel container | Add neutral alias; existing `*_chart` wrappers remain |
+| `chart(...)` | Single-panel container | Exists; existing `*_chart` wrappers remain |
 | `figure(...)` | Multi-panel container | Later |
 | `panel(...)` | Subplot/pane container | Later |
 | `scatter(...)`, `line(...)`, etc. | Mark nodes | Exists for core marks |
-| `x_axis(...)`, `y_axis(...)` | Scale chrome | Exists, grows styling/class hooks |
+| `x_axis(...)`, `y_axis(...)` | Scale chrome | Exists with scale, domain, side, label-position, format, and style hooks |
 | `legend(...)` | Legend chrome | Exists |
-| `tooltip(...)` | Tooltip chrome/customization | Proposed |
-| `modebar(...)` | Zoom/pan/reset controls | Proposed |
-| `theme(...)` | CSS variable defaults | Proposed optional sugar |
+| `tooltip(...)` | Tooltip chrome/customization | Exists |
+| `modebar(...)` | Zoom/pan/reset controls | Exists |
+| `theme(...)` | CSS variable defaults | Exists |
 
 The implementation can stay dataclass-like. It does not need React-style
 lifecycle in Python; lifecycle belongs to render targets.
@@ -179,18 +180,18 @@ chart.widget()       # anywidget object
 chart.show()         # display widget in notebook
 chart.to_html()      # standalone string
 chart.to_html(path)  # write standalone file
+chart.html()         # alias for to_html()
+chart._repr_html_()  # notebook/static HTML repr fallback
 chart.to_png(path)   # screenshot standalone HTML
 chart.memory_report()
 ```
 
-Optional API sugar:
-
-```python
-chart.html()         # alias for to_html()
-```
-
-If added, `html()` should be an alias only. `to_html()` remains the canonical
-method because it already exists and clearly communicates export behavior.
+`html()` is an alias only. `_repr_html_()` delegates to the standalone HTML
+export path for notebook/export tools that inspect HTML representations instead
+of anywidget display hooks. `to_html()` remains the canonical method because it
+already exists and clearly communicates export behavior. `Chart.to_html(path)`
+delegates to the same standalone export path as `Figure.to_html(path)`,
+including same-directory atomic file replacement for path writes.
 
 ## 4. Styling Contract
 
@@ -250,6 +251,7 @@ DOM chrome slots:
 |---|---|
 | `root` | Outermost `.fastcharts` wrapper |
 | `title` | Title chrome |
+| `chrome` | Canvas-backed axis/grid/annotation layer |
 | `canvas` | Plot canvas |
 | `labels` | Axis/tick label layer |
 | `legend` | Legend container |
@@ -258,6 +260,22 @@ DOM chrome slots:
 | `modebar` | Modebar container |
 | `modebar_button` | Modebar button |
 | `selection` | Selection rectangle |
+| `crosshair_x` | Vertical crosshair line |
+| `crosshair_y` | Horizontal crosshair line |
+| `badge` | Reduction/density badge container |
+| `badge_item` | Reduction/density badge row |
+
+Each rendered slot also receives `data-fc-slot="<slot>"`, so plain CSS,
+attribute selectors, and Tailwind arbitrary variants can target the same stable
+surface even when the caller does not add a class.
+The canonical slot tuple is exported as `fastcharts.CHART_DOM_SLOTS` so adapters
+and tests do not have to copy this table by hand. That root export resolves
+through the lightweight DOM contract module, so framework adapters can inspect
+the styling surface without importing NumPy, the chart engine, or widget stack.
+`class_names` keys are validated against that tuple; unknown keys fail fast
+instead of being silently ignored. The same validation is applied by the fluent
+`Figure` export path, so mutating `fig.class_names` or `fig.chrome_styles`
+cannot bypass the public DOM-slot contract.
 
 Tailwind example:
 
@@ -384,8 +402,10 @@ Event payloads:
 Render target behavior:
 
 - Notebook widget: callbacks can call Python.
-- Standalone HTML: no Python callback. Optionally dispatch DOM
-  `CustomEvent`s for host pages.
+- Standalone HTML: no Python callback and no serialized callable/framework
+  object. Event props compile only to interaction flags such as
+  `{"hover": true, "select": true}`. Optionally dispatch DOM `CustomEvent`s for
+  host pages.
 - Future Reflex adapter: map payloads to Reflex event handlers.
 
 ## 7. Render Targets
@@ -395,6 +415,7 @@ The component tree compiles once and can target multiple renderers.
 | Target | Method | Notes |
 |---|---|---|
 | Notebook widget | `show()` / `widget()` | Python callbacks available |
+| Notebook/static HTML repr | `_repr_html_()` | Self-contained fallback that reuses standalone export |
 | Standalone HTML | `to_html()` / optional `html()` alias | Self-contained, no Python callbacks |
 | Static PNG | `to_png()` | Screenshots same standalone render |
 | Future Reflex | external adapter package | Uses the smallest supported Reflex surface; core does not import Reflex |
@@ -620,12 +641,14 @@ Must keep:
 - Static HTML exports with no Python/Reflex runtime.
 - No Reflex import in `fastcharts`.
 
-Can add:
+Now part of the core alpha contract:
 
 - Neutral `fc.chart(...)`.
 - `fc.tooltip(...)`, `fc.modebar(...)`, `fc.theme(...)`.
 - `class_name`, `class_names`, and `style` props.
-- `html()` alias if it proves useful.
+
+Can add:
+
 - DOM `CustomEvent`s for standalone host integration.
 - A separate adapter package with optional/minimal Reflex integration.
 
@@ -647,8 +670,8 @@ Should avoid:
 - Add class hooks to DOM chrome in `ChartView`.
 - Preserve current inline styles as defaults, but let classes and CSS variables
   override where safe.
-- Add tests that generated DOM uses fixed class slots and user text still uses
-  text nodes.
+- Implemented: `CHART_DOM_SLOTS` exports the fixed slot list, client tests
+  verify every slot is applied, and user text still uses text nodes.
 
 ### Phase 2: Neutral Container And Tooltip Node
 

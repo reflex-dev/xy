@@ -117,6 +117,27 @@ def test_ci_workflow_rejects_benchmark_job_without_native_backend_assertion(
     assert any("benchmark" in error and "native backend" in error for error in errors)
 
 
+def test_ci_workflow_rejects_benchmark_job_without_required_native_install(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            '        env:\n          FASTCHARTS_REQUIRE_CARGO: "1"\n'
+            "        run: |\n          uv venv .venv\n"
+            "          uv pip install -p .venv/bin/python -e .\n",
+            "        run: |\n          uv venv .venv\n"
+            "          uv pip install -p .venv/bin/python -e .\n",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("benchmark" in error and "FASTCHARTS_REQUIRE_CARGO" in error for error in errors)
+
+
 def test_codspeed_workflow_rejects_missing_native_backend_assertion(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/codspeed.yml").read_text(encoding="utf-8")
     block = (
@@ -135,6 +156,28 @@ def test_codspeed_workflow_rejects_missing_native_backend_assertion(tmp_path: Pa
     assert any("CodSpeed benchmarks job" in error and "native backend" in error for error in errors)
 
 
+def test_codspeed_workflow_rejects_non_strict_native_install(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/codspeed.yml").read_text(encoding="utf-8")
+    path = tmp_path / "codspeed.yml"
+    path.write_text(
+        workflow.replace(
+            '        env:\n          FASTCHARTS_REQUIRE_CARGO: "1"\n'
+            "        run: |\n          uv venv .venv\n"
+            '          uv pip install -p .venv/bin/python -e ".[dev]" pytest-codspeed\n',
+            "        run: |\n          uv venv .venv\n"
+            '          uv pip install -p .venv/bin/python -e ".[dev]" pytest-codspeed\n',
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_codspeed_workflow(path)
+
+    assert any(
+        "CodSpeed benchmarks job" in error and "FASTCHARTS_REQUIRE_CARGO" in error
+        for error in errors
+    )
+
+
 def test_ci_workflow_rejects_missing_claim_guardrail_gate(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
@@ -150,6 +193,54 @@ def test_ci_workflow_rejects_missing_claim_guardrail_gate(tmp_path: Path) -> Non
     errors = verify_ci_workflow.validate_workflow(path)
 
     assert any("test job" in error and "check_claim_guardrails" in error for error in errors)
+
+
+def test_ci_workflow_rejects_missing_interaction_stress_smoke(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            '          .venv/bin/python scripts/interaction_stress_smoke.py "$CHROME"\n',
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("test job" in error and "interaction_stress_smoke" in error for error in errors)
+
+
+def test_ci_workflow_rejects_missing_reflex_lifecycle_smoke(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            '          .venv/bin/python scripts/reflex_lifecycle_smoke.py "$CHROME"\n',
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("test job" in error and "reflex_lifecycle_smoke" in error for error in errors)
+
+
+def test_ci_workflow_rejects_missing_visual_regression_smoke(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            '          .venv/bin/python scripts/visual_regression_smoke.py "$CHROME"\n',
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("test job" in error and "visual_regression_smoke" in error for error in errors)
 
 
 def test_ci_workflow_rejects_missing_regression_gate(tmp_path: Path) -> None:

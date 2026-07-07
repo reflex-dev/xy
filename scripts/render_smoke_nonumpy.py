@@ -70,7 +70,15 @@ def build_payload():
 
     def ship_scalar(vals):
         raw = array("f", [float(v) for v in vals]).tobytes()
-        cols.append({"byte_offset": len(blob), "len": len(vals)})
+        cols.append(
+            {
+                "byte_offset": len(blob),
+                "len": len(vals),
+                "offset": 0.0,
+                "scale": 1.0,
+                "kind": "float",
+            }
+        )
         blob.extend(raw)
         return len(cols) - 1
 
@@ -818,11 +826,11 @@ try{{
           Object.defineProperty(window,"devicePixelRatio",{{value:dpr0,configurable:true}});
           v5.destroy(); holder5.remove();
           document.title=`${{base}} fluid=${{fluid0}} grew=${{grew}} pick2=${{pick2}} destroyed=${{destroyed}} unsub=${{unsub}} ctxloss=${{ctxloss}} dprw=${{dprw}}`;
-        }}catch(e){{document.title="FC_ERROR "+e.message}}}},250);
-      }}catch(e){{document.title="FC_ERROR "+e.message}}}},150);
-    }}catch(e){{document.title="FC_ERROR "+e.message}}}},250);
-  }}catch(e){{document.title="FC_ERROR "+e.message}}}},200);
-}}catch(e){{document.title="FC_ERROR "+e.message}}
+        }}catch(e){{document.title="FC_ERROR "+(e.stack||e.message)}}}},250);
+      }}catch(e){{document.title="FC_ERROR "+(e.stack||e.message)}}}},150);
+    }}catch(e){{document.title="FC_ERROR "+(e.stack||e.message)}}}},250);
+  }}catch(e){{document.title="FC_ERROR "+(e.stack||e.message)}}}},200);
+}}catch(e){{document.title="FC_ERROR "+(e.stack||e.message)}}
 </script></body></html>"""
 
     with tempfile.TemporaryDirectory() as td:

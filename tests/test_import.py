@@ -9,6 +9,9 @@ from typing import Optional
 HEAVY_MODULES = {
     "anywidget",
     "numpy",
+    "reflex",
+    "reflex_base",
+    "reflex_core",
     "traitlets",
     "fastcharts.channels",
     "fastcharts.columns",
@@ -221,6 +224,33 @@ def test_composition_api_loads_compute_without_widget_stack() -> None:
         assert "fastcharts.widget" not in sys.modules
         assert "anywidget" not in sys.modules
         assert "traitlets" not in sys.modules
+        assert not any(
+            name == "reflex" or name.startswith("reflex.") or name.startswith("reflex_")
+            for name in sys.modules
+        )
+        """
+    )
+
+
+def test_dom_slot_contract_loads_without_compute_or_widget_stack() -> None:
+    _run_fresh(
+        """
+        import sys
+
+        import fastcharts
+
+        slots = fastcharts.CHART_DOM_SLOTS
+
+        assert slots[0] == "root"
+        assert "tooltip" in slots
+        assert "fastcharts.dom" in sys.modules
+        assert "fastcharts.components" not in sys.modules
+        assert "fastcharts.figure" not in sys.modules
+        assert "fastcharts.kernels" not in sys.modules
+        assert "fastcharts.widget" not in sys.modules
+        assert "numpy" not in sys.modules
+        assert "anywidget" not in sys.modules
+        assert "traitlets" not in sys.modules
         """
     )
 
@@ -243,6 +273,51 @@ def test_html_export_does_not_load_widget_stack() -> None:
         assert "fastcharts.widget" not in sys.modules
         assert "anywidget" not in sys.modules
         assert "traitlets" not in sys.modules
+        """
+    )
+
+
+def test_declarative_html_exports_do_not_load_widget_stack() -> None:
+    _run_fresh(
+        """
+        import sys
+
+        import fastcharts as fc
+
+        chart = fc.chart(
+            fc.scatter(x=[0, 1, 2], y=[1, 3, 2], name="points"),
+            fc.line(x=[0, 1, 2], y=[1, 2, 2.5], name="trend"),
+            fc.x_axis(label="x"),
+            fc.y_axis(label="y"),
+            fc.legend(),
+            fc.tooltip(fields=["x", "y"]),
+            title="declarative lazy boundary",
+        )
+        assert "fastcharts.widget" not in sys.modules
+        assert "anywidget" not in sys.modules
+        assert "traitlets" not in sys.modules
+        assert not any(
+            name == "reflex" or name.startswith("reflex.") or name.startswith("reflex_")
+            for name in sys.modules
+        )
+
+        html = chart.to_html()
+        alias = chart.html()
+        repr_html = chart._repr_html_()
+
+        assert "declarative lazy boundary" in html
+        assert "declarative lazy boundary" in alias
+        assert "declarative lazy boundary" in repr_html
+        assert html.startswith("<!doctype html>")
+        assert alias.startswith("<!doctype html>")
+        assert repr_html.startswith("<!doctype html>")
+        assert "fastcharts.widget" not in sys.modules
+        assert "anywidget" not in sys.modules
+        assert "traitlets" not in sys.modules
+        assert not any(
+            name == "reflex" or name.startswith("reflex.") or name.startswith("reflex_")
+            for name in sys.modules
+        )
         """
     )
 

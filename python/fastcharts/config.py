@@ -45,6 +45,12 @@ DRILL_EXIT_FACTOR = 1.15
 # static and re-ship large; a few points per cell keeps drill-out continuous.
 DENSITY_TARGET_POINTS_PER_CELL = 16.0
 
+# Hybrid density overlay (§5): when scatter is aggregated, ship a small,
+# deterministic sample of real points over the density texture. This keeps
+# zoomed-out views from becoming pure heatmaps while staying payload-bounded.
+DENSITY_SAMPLE_TARGET = 8_192
+DENSITY_SAMPLE_SEED = 0
+
 # CVD-safe default categorical palette (§20/§36 default theme).
 DEFAULT_PALETTE = [
     "#4c78a8",

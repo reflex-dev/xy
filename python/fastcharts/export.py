@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from contextlib import suppress
 from os import PathLike
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, SupportsFloat, SupportsIndex, cast
@@ -25,10 +26,15 @@ EMBED_WARN_BYTES = 64 * 2**20
 # Static PNG export shells out to a headless Chromium (the same engine that
 # renders the chart interactively) — no Python browser dependency, no
 # kaleido-class native package. Discovery order: explicit env var, then PATH,
-# then the Playwright cache this repo's CI/dev images populate.
+# then common local/CI browser installs.
 _CHROMIUM_ENV = "FASTCHARTS_CHROMIUM"
 _CHROMIUM_NAMES = ("chromium", "chromium-browser", "chrome", "google-chrome")
-_CHROMIUM_FALLBACKS = ("/opt/pw-browsers/chromium",)
+_CHROMIUM_FALLBACKS = (
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+    "/opt/pw-browsers/chromium",
+)
 _STATIC = Path(__file__).parent / "static"
 _STANDALONE_CSP = (
     "default-src 'none'; "
@@ -110,6 +116,33 @@ def _javascript_for_inline_script(source: str) -> str:
     return source.replace("</", "<\\/")
 
 
+def _atomic_write_text(path: str | PathLike[str], text: str) -> None:
+    """Write text through a same-directory temp file, then replace atomically."""
+    target = Path(path)
+    parent = target.parent
+    fd, tmp_name = tempfile.mkstemp(
+        dir=parent,
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            fd = -1
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, target)
+    except Exception:
+        if fd != -1:
+            with suppress(OSError):
+                os.close(fd)
+        with suppress(FileNotFoundError):
+            tmp_path.unlink()
+        raise
+
+
 def to_html(fig: "Figure", path: Optional[str | PathLike[str]] = None) -> str:
     """Render `fig` to a standalone interactive HTML string (optionally saved).
 
@@ -151,8 +184,7 @@ html,body{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;
 </body>
 </html>"""
     if path is not None:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(doc)
+        _atomic_write_text(path, doc)
     return doc
 
 

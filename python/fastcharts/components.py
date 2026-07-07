@@ -33,9 +33,11 @@ from typing import Any, Optional, TypeAlias, Union
 
 import numpy as np
 
+from .dom import CHART_DOM_SLOTS, validate_dom_slots
 from .figure import Figure
 
 __all__ = [
+    "CHART_DOM_SLOTS",
     "Annotation",
     "Axis",
     "Chart",
@@ -699,22 +701,26 @@ def threshold(
 ) -> Annotation:
     """A semantic threshold rule on the x or y axis."""
     axis = _annotation_axis_name(axis, "threshold axis")
-    return vline(
-        value,
-        text=text,
-        color=color,
-        width=width,
-        opacity=opacity,
-        class_name=class_name,
-        style=style,
-    ) if axis == "x" else hline(
-        value,
-        text=text,
-        color=color,
-        width=width,
-        opacity=opacity,
-        class_name=class_name,
-        style=style,
+    return (
+        vline(
+            value,
+            text=text,
+            color=color,
+            width=width,
+            opacity=opacity,
+            class_name=class_name,
+            style=style,
+        )
+        if axis == "x"
+        else hline(
+            value,
+            text=text,
+            color=color,
+            width=width,
+            opacity=opacity,
+            class_name=class_name,
+            style=style,
+        )
     )
 
 
@@ -731,22 +737,26 @@ def threshold_zone(
 ) -> Annotation:
     """A semantic threshold band on the x or y axis."""
     axis = _annotation_axis_name(axis, "threshold_zone axis")
-    return x_band(
-        start,
-        end,
-        text=text,
-        color=color,
-        opacity=opacity,
-        class_name=class_name,
-        style=style,
-    ) if axis == "x" else y_band(
-        start,
-        end,
-        text=text,
-        color=color,
-        opacity=opacity,
-        class_name=class_name,
-        style=style,
+    return (
+        x_band(
+            start,
+            end,
+            text=text,
+            color=color,
+            opacity=opacity,
+            class_name=class_name,
+            style=style,
+        )
+        if axis == "x"
+        else y_band(
+            start,
+            end,
+            text=text,
+            color=color,
+            opacity=opacity,
+            class_name=class_name,
+            style=style,
+        )
     )
 
 
@@ -1092,7 +1102,7 @@ class Chart(Component):
         self.height = height
         self.data = data  # chart-level default data for marks that omit their own
         self.class_name = _optional_string(class_name, "chart class_name")
-        self.class_names = _string_dict(class_names, "chart class_names")
+        self.class_names = _class_names_dict(class_names, "chart class_names")
         self.style = _style_dict(style, "chart style")
         self.on_hover = on_hover
         self.on_click = on_click
@@ -1321,6 +1331,9 @@ class Chart(Component):
     def html(self, path: Optional[str | PathLike[str]] = None) -> str:
         return self.to_html(path)
 
+    def _repr_html_(self) -> str:
+        return self.figure()._repr_html_()
+
     def to_png(
         self,
         path: Optional[str] = None,
@@ -1365,13 +1378,19 @@ def _string_list(value: Any, label: str) -> Optional[list[str]]:
         return None
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ValueError(f"{label} must be a list[str] or None")
-    return list(value)
+    return [item for item in value]
 
 
 def _string_dict(value: Any, label: str) -> dict[str, str]:
     if value is None:
         return {}
     return Figure._string_mapping(value, label)
+
+
+def _class_names_dict(value: Any, label: str) -> dict[str, str]:
+    class_names = _string_dict(value, label)
+    validate_dom_slots(class_names, label)
+    return class_names
 
 
 def _style_dict(value: Any, label: str) -> dict[str, StyleValue]:

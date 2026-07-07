@@ -34,6 +34,8 @@ jobs:
         run: cargo build --release
 
       - name: Install package + benchmark deps
+        env:
+          FASTCHARTS_REQUIRE_CARGO: "1"
         run: |
           uv venv .venv
           uv pip install -p .venv/bin/python -e ".[dev]" pytest-codspeed

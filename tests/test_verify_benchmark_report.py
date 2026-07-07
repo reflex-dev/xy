@@ -250,10 +250,76 @@ def _kernel_native_report() -> dict:
     }
 
 
+def _interaction_row(
+    scenario: str,
+    *,
+    n: int,
+    tier: str,
+    categories: list[str],
+    family: str | None = None,
+    tooltip_eligible: bool = True,
+) -> dict:
+    row = {
+        "scenario": scenario,
+        "n": n,
+        "tier": tier,
+        "benchmark_categories": categories,
+        "payload_bytes": 8192,
+        "html_bytes": 16_384,
+        "status": "ok",
+        "nonblank_pixels": 128,
+        "min_interaction_lit_pixels": 96,
+        "blank_frame_count": 0,
+        "label_count": 12,
+        "tick_label_overlap_count": 0,
+        "max_frame_color_delta": 0.12,
+        "view_changed": True,
+        "crosshair_visible": True,
+        "box_zoom_changed": True,
+        "box_zoom_narrowed": True,
+        "box_zoom_restored": True,
+        "brush_select_eligible": True,
+        "brush_select_count": 42,
+        "brush_select_cleared": True,
+        "tooltip_eligible": tooltip_eligible,
+        "tooltip_stable": True,
+        "tooltip_visible_samples": 8 if tooltip_eligible else 0,
+        "wheel_zoom_median_ms": 4.0,
+        "wheel_zoom_p95_ms": 7.0,
+        "wheel_zoom_max_ms": 9.0,
+        "wheel_zoom_reps": 12,
+        "pan_median_ms": 3.0,
+        "pan_p95_ms": 6.0,
+        "pan_max_ms": 7.0,
+        "pan_reps": 12,
+        "hover_median_ms": 2.0,
+        "hover_p95_ms": 5.0,
+        "hover_max_ms": 6.0,
+        "hover_reps": 12,
+        "crosshair_median_ms": 1.0,
+        "crosshair_p95_ms": 3.0,
+        "crosshair_max_ms": 4.0,
+        "crosshair_reps": 12,
+        "box_zoom_median_ms": 4.0,
+        "box_zoom_p95_ms": 8.0,
+        "box_zoom_max_ms": 10.0,
+        "box_zoom_reps": 12,
+        "brush_select_median_ms": 6.0,
+        "brush_select_p95_ms": 18.0,
+        "brush_select_max_ms": 22.0,
+        "brush_select_reps": 12,
+    }
+    if family is not None:
+        row["family"] = family
+    return row
+
+
 def _interaction_browser_report() -> dict:
     categories, tracked = _category_registry(
         "medium_direct_scatter",
         "huge_scatter_overview",
+        "huge_line_time_series",
+        "core_2d_chart_breadth",
         "interaction_smoothness",
     )
     return {
@@ -261,35 +327,66 @@ def _interaction_browser_report() -> dict:
         "kind": "interaction-browser",
         "benchmark_categories": categories,
         "tracked_categories": tracked,
+        "interaction_budgets_ms": {
+            "wheel_zoom_p95_ms": 24.0,
+            "pan_p95_ms": 24.0,
+            "crosshair_p95_ms": 16.0,
+            "hover_p95_ms": 300.0,
+            "box_zoom_p95_ms": 32.0,
+            "brush_select_p95_ms": 120.0,
+        },
+        "interaction_visual_budgets": {
+            "max_frame_color_delta": 0.85,
+            "min_interaction_lit_pixels": 64,
+        },
+        "tooltip_sample_count": 8,
         "reps": 12,
         "rows": [
-            {
-                "scenario": "direct_scatter_interaction",
-                "n": 100_000,
-                "tier": "direct",
-                "benchmark_categories": ["medium_direct_scatter", "interaction_smoothness"],
-                "payload_bytes": 8192,
-                "html_bytes": 16_384,
-                "status": "ok",
-                "nonblank_pixels": 128,
-                "view_changed": True,
-                "wheel_zoom_median_ms": 4.0,
-                "wheel_zoom_p95_ms": 7.0,
-                "wheel_zoom_max_ms": 9.0,
-                "wheel_zoom_reps": 12,
-                "pan_median_ms": 3.0,
-                "pan_p95_ms": 6.0,
-                "pan_max_ms": 7.0,
-                "pan_reps": 12,
-                "hover_median_ms": 2.0,
-                "hover_p95_ms": 5.0,
-                "hover_max_ms": 6.0,
-                "hover_reps": 12,
-                "box_zoom_median_ms": 4.0,
-                "box_zoom_p95_ms": 8.0,
-                "box_zoom_max_ms": 10.0,
-                "box_zoom_reps": 12,
-            }
+            _interaction_row(
+                "direct_scatter_interaction",
+                n=100_000,
+                tier="direct",
+                categories=["medium_direct_scatter", "interaction_smoothness"],
+            ),
+            _interaction_row(
+                "density_scatter_interaction",
+                n=250_000,
+                tier="density",
+                categories=["huge_scatter_overview", "interaction_smoothness"],
+                tooltip_eligible=False,
+            ),
+            _interaction_row(
+                "line_120k_interaction",
+                family="line",
+                n=120_000,
+                tier="decimated",
+                categories=["huge_line_time_series", "interaction_smoothness"],
+                tooltip_eligible=False,
+            ),
+            _interaction_row(
+                "histogram_120k_interaction",
+                family="histogram",
+                n=120_000,
+                tier="direct",
+                categories=["core_2d_chart_breadth", "interaction_smoothness"],
+                tooltip_eligible=False,
+            ),
+            _interaction_row(
+                "bar_1200_interaction",
+                family="bar",
+                n=1_200,
+                tier="direct",
+                categories=["core_2d_chart_breadth", "interaction_smoothness"],
+                tooltip_eligible=False,
+            ),
+            _interaction_row(
+                "heatmap_39600_interaction",
+                family="heatmap",
+                n=39_600,
+                tier="direct",
+                categories=["core_2d_chart_breadth", "interaction_smoothness"],
+                tooltip_eligible=False,
+            ),
         ],
     }
 
@@ -471,6 +568,24 @@ def test_verify_benchmark_report_rejects_unknown_row_category(tmp_path: Path) ->
     assert any("not_registered" in error for error in errors)
 
 
+@pytest.mark.parametrize(
+    ("payload", "kind"),
+    [(_scatter_native_report(), "scatter-native"), (_kernel_native_report(), "kernel-native")],
+)
+def test_verify_benchmark_report_rejects_native_reports_from_fallback_backend(
+    tmp_path: Path,
+    payload: dict,
+    kind: str,
+) -> None:
+    payload["environment"]["fastcharts_backend"] = "numpy"
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind=kind)
+
+    assert any("fastcharts_backend == 'native'" in error for error in errors)
+    assert any(kind in error for error in errors)
+
+
 def test_verify_benchmark_report_rejects_duplicate_category_ids(tmp_path: Path) -> None:
     payload = _core_2d_report()
     payload["benchmark_categories"].append(dict(payload["benchmark_categories"][0]))
@@ -580,6 +695,232 @@ def test_verify_benchmark_report_rejects_duplicate_install_rows(tmp_path: Path) 
 
     assert any("duplicates install footprint row" in error for error in errors)
     assert any("module='fastcharts'" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_missing_interaction_budgets(
+    tmp_path: Path,
+) -> None:
+    payload = _interaction_browser_report()
+    del payload["interaction_budgets_ms"]
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
+
+    assert any("interaction_budgets_ms" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_missing_interaction_visual_budgets(
+    tmp_path: Path,
+) -> None:
+    payload = _interaction_browser_report()
+    del payload["interaction_visual_budgets"]
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
+
+    assert any("interaction_visual_budgets" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_interaction_budget_regression(
+    tmp_path: Path,
+) -> None:
+    payload = _interaction_browser_report()
+    payload["rows"][0]["hover_p95_ms"] = payload["interaction_budgets_ms"]["hover_p95_ms"] + 1
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
+
+    assert any("hover_p95_ms" in error and "exceeds budget" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_interaction_repetition_mismatch(
+    tmp_path: Path,
+) -> None:
+    payload = _interaction_browser_report()
+    payload["rows"][0]["wheel_zoom_reps"] = payload["reps"] - 1
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
+
+    assert any("wheel_zoom_reps" in error and "must match report.reps" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_fractional_interaction_repetitions(
+    tmp_path: Path,
+) -> None:
+    payload = _interaction_browser_report()
+    payload["reps"] = 12.5
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
+
+    assert any("report.reps must be a positive integer" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_missing_tooltip_sample_count(
+    tmp_path: Path,
+) -> None:
+    payload = _interaction_browser_report()
+    del payload["tooltip_sample_count"]
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
+
+    assert any("tooltip_sample_count" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_interaction_color_jump_regression(
+    tmp_path: Path,
+) -> None:
+    payload = _interaction_browser_report()
+    payload["rows"][0]["max_frame_color_delta"] = (
+        payload["interaction_visual_budgets"]["max_frame_color_delta"] + 0.01
+    )
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
+
+    assert any("max_frame_color_delta" in error and "exceeds budget" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_interaction_lit_pixel_floor_regression(
+    tmp_path: Path,
+) -> None:
+    payload = _interaction_browser_report()
+    payload["rows"][0]["min_interaction_lit_pixels"] = (
+        payload["interaction_visual_budgets"]["min_interaction_lit_pixels"] - 1
+    )
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
+
+    assert any(
+        "min_interaction_lit_pixels" in error and "below budget" in error for error in errors
+    )
+
+
+def test_verify_benchmark_report_rejects_interaction_invariant_regression(
+    tmp_path: Path,
+) -> None:
+    payload = _interaction_browser_report()
+    payload["rows"][0]["view_changed"] = False
+    payload["rows"][0]["crosshair_visible"] = False
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
+
+    assert any("view_changed must be true" in error for error in errors)
+    assert any("crosshair_visible must be true" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_interaction_box_zoom_regression(
+    tmp_path: Path,
+) -> None:
+    payload = _interaction_browser_report()
+    row = payload["rows"][0]
+    row["box_zoom_changed"] = False
+    row["box_zoom_narrowed"] = False
+    row["box_zoom_restored"] = False
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
+
+    assert any("box_zoom_changed must be true" in error for error in errors)
+    assert any("box_zoom_narrowed must be true" in error for error in errors)
+    assert any("box_zoom_restored must be true" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_interaction_brush_selection_regression(
+    tmp_path: Path,
+) -> None:
+    payload = _interaction_browser_report()
+    row = payload["rows"][0]
+    row["brush_select_count"] = 0
+    row["brush_select_cleared"] = False
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
+
+    assert any("brush_select_count must be > 0" in error for error in errors)
+    assert any("brush_select_cleared must be true" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_interaction_visual_regression(
+    tmp_path: Path,
+) -> None:
+    payload = _interaction_browser_report()
+    row = payload["rows"][0]
+    row["blank_frame_count"] = 1
+    row["tick_label_overlap_count"] = 2
+    row["tooltip_stable"] = False
+    row["tooltip_visible_samples"] = 0
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
+
+    assert any("blank_frame_count must be 0" in error for error in errors)
+    assert any("tick_label_overlap_count must be 0" in error for error in errors)
+    assert any("tooltip_stable must be true" in error for error in errors)
+    assert any("tooltip_visible_samples must equal report.tooltip_sample_count" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_interaction_tooltip_partial_visibility(
+    tmp_path: Path,
+) -> None:
+    payload = _interaction_browser_report()
+    row = payload["rows"][0]
+    row["tooltip_stable"] = True
+    row["tooltip_visible_samples"] = payload["tooltip_sample_count"] - 1
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
+
+    assert any("tooltip_visible_samples must equal report.tooltip_sample_count" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_interaction_missing_required_scenarios(
+    tmp_path: Path,
+) -> None:
+    payload = _interaction_browser_report()
+    payload["rows"] = [
+        row for row in payload["rows"] if row["scenario"] != "density_scatter_interaction"
+    ]
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
+
+    assert any("missing required ok scenarios" in error for error in errors)
+    assert any("density_scatter_interaction" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_interaction_renamed_fixed_family_scenario(
+    tmp_path: Path,
+) -> None:
+    payload = _interaction_browser_report()
+    for row in payload["rows"]:
+        if row["scenario"] == "line_120k_interaction":
+            row["scenario"] = "line_renamed_interaction"
+            break
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
+
+    assert any("missing required ok scenarios" in error for error in errors)
+    assert any("line_120k_interaction" in error for error in errors)
+    assert not any("missing required ok families" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_interaction_missing_required_families(
+    tmp_path: Path,
+) -> None:
+    payload = _interaction_browser_report()
+    payload["rows"] = [row for row in payload["rows"] if row.get("family") != "heatmap"]
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
+
+    assert any("missing required ok families" in error for error in errors)
+    assert any("heatmap" in error for error in errors)
 
 
 def test_verify_benchmark_report_rejects_ok_row_missing_metrics(tmp_path: Path) -> None:

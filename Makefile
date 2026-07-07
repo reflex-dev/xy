@@ -19,10 +19,10 @@ help:
 		'  make check-browser    run browser smokes (set CHROMIUM=/path/to/chrome)' \
 		'  make check-docs       run docs examples and public claim guardrails' \
 		'  make check-examples   run README/API examples and Reflex asset registry checks' \
-		'  make check-security   run standalone HTML escaping and client text-sink checks' \
-		'  make check-errors     run public error and mutation-safety tests' \
+		'  make check-security   run standalone HTML safety and client text-sink checks' \
+		'  make check-errors     run public error, LOD, and mutation-safety tests' \
 		'  make check-api        run lazy public API and type-surface checks' \
-		'  make check-import     run import-time budget and lazy-boundary checks' \
+		'  make check-import     run import-time and dependency-boundary checks' \
 		'  make check-ci         run CI/release workflow invariant checks' \
 		'  make check-claims     run public performance-claim guardrails' \
 		'  make check-benchmark-harness run benchmark metadata/report/regression tests' \

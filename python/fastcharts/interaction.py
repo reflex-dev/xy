@@ -20,9 +20,10 @@ import numpy as np
 from . import channels, columns, kernels, lod
 from .config import (
     DECIMATION_THRESHOLD,
+    DENSITY_SAMPLE_SEED,
+    DENSITY_SAMPLE_TARGET,
     DENSITY_TARGET_POINTS_PER_CELL,  # noqa: F401  (historic import path)
     DRILL_EXIT_FACTOR,
-    MAX_SCREEN_DIM,
     PYRAMID_BASE_DIM,
     PYRAMID_MIN_POINTS,
     SCATTER_DENSITY_THRESHOLD,
@@ -56,16 +57,7 @@ def _screen_shape(w: int, h: int) -> tuple[int, int]:
     # `grid_shape` clamps tiny/zero browser sizes to a visible floor, but NaN/inf
     # and non-numeric dimensions are programmer/client bugs and must fail before
     # drill state changes.
-    if isinstance(w, (bool, np.bool_)) or isinstance(h, (bool, np.bool_)):
-        raise ValueError("screen dimensions must be finite")
-    try:
-        wf = float(w)
-        hf = float(h)
-    except (TypeError, ValueError) as e:
-        raise ValueError("screen dimensions must be finite") from e
-    if not np.isfinite(wf) or not np.isfinite(hf):
-        raise ValueError("screen dimensions must be finite")
-    return max(16, min(int(wf), MAX_SCREEN_DIM)), max(16, min(int(hf), MAX_SCREEN_DIM))
+    return lod.screen_shape(w, h)
 
 
 def pick(
@@ -179,7 +171,7 @@ def decimate_view(
     lo_x, hi_x, _lo_y, _hi_y = lod.normalize_window(x0, x1, 0.0, 1.0)
     px_width, _ = _screen_shape(px_width, 16)
     updates: list[dict[str, Any]] = []
-    buffers: list[bytes] = []
+    writer = lod.BufferWriter()
     for t in fig.traces:
         if t.kind not in {"line", "area"} or t.n_points <= DECIMATION_THRESHOLD:
             continue
@@ -196,39 +188,18 @@ def decimate_view(
         else:
             xv, yv = t.x.values[:0], t.y.values[:0]
             bv = t.base.values[:0] if t.kind == "area" and t.base is not None else None
-        x_off = (lo_x + hi_x) / 2.0
-        y_off = t.y.suggest_offset()
-        # f32-safe scale: finite f64 must never overflow to ±inf in a vertex
-        # buffer (§19) — see lod.f32_safe_scale.
-        x_scale = lod.f32_safe_scale(x_off, lo_x, hi_x)
-        y_scale = lod.f32_safe_scale(y_off, t.y.min, t.y.max)
-        x_enc = kernels.encode_f32(xv, x_off, x_scale)
-        y_enc = kernels.encode_f32(yv, y_off, y_scale)
+        x_col = lod.encode_f32_values(xv, (lo_x + hi_x) / 2.0, lo_x, hi_x)
+        y_col = lod.encode_f32_values(yv, t.y.suggest_offset(), t.y.min, t.y.max)
         update = {
             "id": t.id,
-            "x": {"buf": len(buffers), "len": len(x_enc), "offset": x_off, "scale": x_scale},
-            "y": {
-                "buf": len(buffers) + 1,
-                "len": len(y_enc),
-                "offset": y_off,
-                "scale": y_scale,
-            },
+            "x": writer.add_encoded(x_col),
+            "y": writer.add_encoded(y_col),
         }
-        buffers.append(x_enc.tobytes())
-        buffers.append(y_enc.tobytes())
         if bv is not None and t.base is not None:
-            b_off = t.base.suggest_offset()
-            b_scale = lod.f32_safe_scale(b_off, t.base.min, t.base.max)
-            b_enc = kernels.encode_f32(bv, b_off, b_scale)
-            update["base"] = {
-                "buf": len(buffers),
-                "len": len(b_enc),
-                "offset": b_off,
-                "scale": b_scale,
-            }
-            buffers.append(b_enc.tobytes())
+            b_col = lod.encode_f32_values(bv, t.base.suggest_offset(), t.base.min, t.base.max)
+            update["base"] = writer.add_encoded(b_col)
         updates.append(update)
-    return {"traces": updates}, buffers
+    return {"traces": updates}, writer.buffers
 
 
 def _ensure_pyramid(t) -> int | None:
@@ -278,6 +249,64 @@ def _decode_log_u8(buf: bytes, gmax: float) -> np.ndarray:
     return np.expm1((v / 255.0) * np.log1p(gmax))
 
 
+def _density_sample_update(
+    fig: "Figure",
+    t: Any,
+    sel: np.ndarray,
+    visible: int,
+    lo_x: float,
+    hi_x: float,
+    lo_y: float,
+    hi_y: float,
+    writer: lod.BufferWriter,
+) -> Optional[dict[str, Any]]:
+    if visible <= 0:
+        return None
+    row_ids = np.asarray(sel, dtype=np.uint64)
+    base_fraction = min(1.0, DENSITY_SAMPLE_TARGET / max(1, visible))
+    if t.color_ch and t.color_ch.mode == "categorical" and t.color_ch.codes is not None:
+        mask = lod.stratified_sample_keep_mask(
+            row_ids,
+            t.color_ch.codes[sel],
+            0,
+            base_fraction=base_fraction,
+            seed=DENSITY_SAMPLE_SEED,
+        )
+    else:
+        mask = lod.sample_keep_mask(
+            row_ids,
+            0,
+            base_fraction=base_fraction,
+            seed=DENSITY_SAMPLE_SEED,
+        )
+    sample_sel = sel[mask]
+    if len(sample_sel) == 0:
+        return None
+    xs, ys = t.x.values[sample_sel], t.y.values[sample_sel]
+    x_ref, y_ref = lod.add_window_xy(writer, xs, ys, lo_x, hi_x, lo_y, hi_y)
+    color_spec, size_spec = fig._ship_channels(t, sample_sel, writer.add_f32)
+    style = dict(t.style)
+    try:
+        style["opacity"] = min(float(style.get("opacity", 0.8)), 0.55)
+    except (TypeError, ValueError):
+        style["opacity"] = 0.55
+    return {
+        "mode": "sampled",
+        "n": int(len(sample_sel)),
+        "visible": int(visible),
+        "target": DENSITY_SAMPLE_TARGET,
+        "level": 0,
+        "seed": DENSITY_SAMPLE_SEED,
+        "x": x_ref,
+        "y": y_ref,
+        "x_range": [lo_x, hi_x],
+        "y_range": [lo_y, hi_y],
+        "color": color_spec,
+        "size": size_spec,
+        "style": style,
+    }
+
+
 def density_view(
     fig: "Figure", trace_id: int, x0: float, x1: float, y0: float, y1: float, w: int, h: int
 ) -> tuple[dict[str, Any], list[bytes]]:
@@ -289,8 +318,10 @@ def density_view(
     window fits the direct budget; zooming out returns to density. The per-view
     decision rides each update as `mode` — never silent (§28)."""
     t = _trace(fig, trace_id)
-    lo_x, hi_x, lo_y, hi_y = lod.normalize_window(x0, x1, y0, y1)
-    w, h = _screen_shape(w, h)
+    request = lod.ViewportRequest.from_client(x0, x1, y0, y1, w, h)
+    lo_x, hi_x = request.x_range
+    lo_y, hi_y = request.y_range
+    w, h = request.width, request.height
     if not t.use_density():
         return {"traces": []}, []
     xv, yv = t.x.values, t.y.values
@@ -305,48 +336,75 @@ def density_view(
     if pyr is not None:
         est = kernels.pyramid_count(pyr, lo_x, hi_x, lo_y, hi_y)
         if est is not None and est > SCATTER_DENSITY_THRESHOLD * DRILL_EXIT_FACTOR * 1.5:
-            gw, gh = lod.grid_shape(w, h, int(est))
-            res = kernels.pyramid_compose(pyr, lo_x, hi_x, lo_y, hi_y, gw, gh)
+            plan = lod.plan_view_lod(
+                request,
+                int(est),
+                SCATTER_DENSITY_THRESHOLD,
+                False,
+                aggregate_reduction="pyramid-count",
+            )
+            res = kernels.pyramid_compose(pyr, lo_x, hi_x, lo_y, hi_y, plan.grid_w, plan.grid_h)
             if res is not None:
                 grid, level = res
-                visible = int(est)
-                w, h = gw, gh
+                visible = plan.visible
+                w, h = plan.grid_w, plan.grid_h
                 binning = f"pyramid-L{level}"
                 lod.exit_drill(t)
     if grid is None:
         sel = kernels.range_indices(xv, yv, lo_x, hi_x, lo_y, hi_y)
-        visible = int(len(sel))
-        if lod.drill_decision(visible, SCATTER_DENSITY_THRESHOLD, t.drill_mode):
+        plan = lod.plan_view_lod(request, len(sel), SCATTER_DENSITY_THRESHOLD, t.drill_mode)
+        visible = plan.visible
+        if plan.exact:
             return _drill_points(fig, t, sel, visible, lo_x, hi_x, lo_y, hi_y, w, h)
 
         lod.exit_drill(t)
-        w, h = lod.grid_shape(w, h, visible)
+        w, h = plan.grid_w, plan.grid_h
         grid = kernels.bin_2d(xv, yv, lo_x, hi_x, lo_y, hi_y, w, h)
+    else:
+        plan = lod.plan_view_lod(
+            request,
+            visible,
+            SCATTER_DENSITY_THRESHOLD,
+            False,
+            aggregate_reduction="pyramid-count",
+        )
     gmax = float(grid.max()) if grid.size else 0.0
+    writer = lod.BufferWriter()
+    density_buf = writer.add_raw(_encode_log_u8(grid, gmax))
+    sample = (
+        _density_sample_update(fig, t, sel, visible, lo_x, hi_x, lo_y, hi_y, writer)
+        if binning == "exact"
+        else None
+    )
+    density = {
+        "buf": density_buf,
+        "w": w,
+        "h": h,
+        "max": gmax,
+        # Quantized wire: log-encoded u8 (4x smaller than f32).
+        # The client's texture is 8-bit log anyway, so the
+        # round-trip is visually exact; `max` restores scale.
+        "enc": "log-u8",
+        "x_range": [lo_x, hi_x],
+        "y_range": [lo_y, hi_y],
+    }
+    if sample is not None:
+        density["sample"] = sample
     return (
         {
             "traces": [
                 {
                     "id": trace_id,
                     "mode": "density",
+                    "tier": plan.tier,
                     "visible": visible,
+                    "reduction": plan.reduction,
                     "binning": binning,
-                    "density": {
-                        "buf": 0,
-                        "w": w,
-                        "h": h,
-                        "max": gmax,
-                        # Quantized wire: log-encoded u8 (4x smaller than f32).
-                        # The client's texture is 8-bit log anyway, so the
-                        # round-trip is visually exact; `max` restores scale.
-                        "enc": "log-u8",
-                        "x_range": [lo_x, hi_x],
-                        "y_range": [lo_y, hi_y],
-                    },
+                    "density": density,
                 }
             ]
         },
-        [_encode_log_u8(grid, gmax)],
+        writer.buffers,
     )
 
 
@@ -371,14 +429,11 @@ def _drill_points(
     `lod_blend` weight (visible/budget) so the density→points handoff is
     color-continuous instead of a palette jump (§5)."""
     xs, ys = t.x.values[sel], t.y.values[sel]
-    x_meta, y_meta, x_enc, y_enc = lod.encode_window_xy(xs, ys, lo_x, hi_x, lo_y, hi_y)
     writer = lod.BufferWriter()
-    writer.add_raw(x_enc.tobytes())
-    writer.add_raw(y_enc.tobytes())
+    x_ref, y_ref = lod.add_window_xy(writer, xs, ys, lo_x, hi_x, lo_y, hi_y)
     buffers = writer.buffers
 
     color_spec, size_spec = fig._ship_channels(t, sel, writer.add_f32)
-    n = len(sel)
 
     # Local log-density per drilled point, binned at the same screen-derived
     # grid shape density would use, so the two representations line up.
@@ -398,15 +453,17 @@ def _drill_points(
                 {
                     "id": t.id,
                     "mode": "points",
+                    "tier": "direct",
                     "visible": visible,
+                    "reduction": "none",
                     # The window these points cover: the client draws points
                     # while the view stays inside it, and falls back to the
                     # density overview the instant a zoom-out leaves it — so
                     # zooming out is never blank (§5 smooth transitions).
                     "x_range": [lo_x, hi_x],
                     "y_range": [lo_y, hi_y],
-                    "x": {"buf": 0, "len": n, **x_meta},
-                    "y": {"buf": 1, "len": n, **y_meta},
+                    "x": x_ref,
+                    "y": y_ref,
                     "color": color_spec,
                     "size": size_spec,
                     "density_val": {"buf": dval_buf},

@@ -30,6 +30,24 @@ KNOWN_KINDS = (
 )
 ROW_STATUSES = ("ok", "unavailable", "skipped", "failed")
 COMPARISON_VERDICTS = {"pass", "watch", "fail", "no-plotly"}
+INTERACTION_BUDGET_KEYS = (
+    "wheel_zoom_p95_ms",
+    "pan_p95_ms",
+    "crosshair_p95_ms",
+    "hover_p95_ms",
+    "box_zoom_p95_ms",
+    "brush_select_p95_ms",
+)
+INTERACTION_VISUAL_BUDGET_KEYS = ("max_frame_color_delta", "min_interaction_lit_pixels")
+INTERACTION_REQUIRED_SCENARIOS = (
+    "direct_scatter_interaction",
+    "density_scatter_interaction",
+    "line_120k_interaction",
+    "histogram_120k_interaction",
+    "bar_1200_interaction",
+    "heatmap_39600_interaction",
+)
+INTERACTION_REQUIRED_FAMILIES = ("line", "histogram", "bar", "heatmap")
 
 
 def _is_number(value: Any) -> bool:
@@ -72,6 +90,14 @@ def _require_positive_number(obj: dict[str, Any], key: str, path: str, errors: l
     value = obj.get(key)
     if not _is_number(value):
         errors.append(f"{path}.{key} must be a finite number")
+    elif value <= 0:
+        errors.append(f"{path}.{key} must be > 0")
+
+
+def _require_positive_integer(obj: dict[str, Any], key: str, path: str, errors: list[str]) -> None:
+    value = obj.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        errors.append(f"{path}.{key} must be a positive integer")
     elif value <= 0:
         errors.append(f"{path}.{key} must be > 0")
 
@@ -266,6 +292,16 @@ def _validate_common(report: Any, errors: list[str]) -> None:
     if report.get("schema_version") != SCHEMA_VERSION:
         errors.append(f"schema_version must be {SCHEMA_VERSION}")
     _validate_environment(report, errors)
+
+
+def _require_native_backend(report: dict[str, Any], kind: str, errors: list[str]) -> None:
+    env = report.get("environment")
+    backend = env.get("fastcharts_backend") if isinstance(env, dict) else None
+    if backend != "native":
+        errors.append(
+            f"{kind} reports must use environment.fastcharts_backend == 'native'; "
+            f"got {backend!r}"
+        )
 
 
 def _detect_kind(report: dict[str, Any]) -> str:
@@ -568,6 +604,7 @@ def _validate_core_2d_comparison(comparison: Any, path: str, errors: list[str]) 
 
 
 def _validate_scatter_native(report: dict[str, Any], errors: list[str]) -> None:
+    _require_native_backend(report, "scatter-native", errors)
     _require_keys(report, {"benchmark_categories", "tracked_categories", "rows"}, "report", errors)
     category_ids = _validate_categories(report, errors)
     rows = report.get("rows")
@@ -617,6 +654,7 @@ def _validate_scatter_native(report: dict[str, Any], errors: list[str]) -> None:
 
 
 def _validate_kernel_native(report: dict[str, Any], errors: list[str]) -> None:
+    _require_native_backend(report, "kernel-native", errors)
     _require_keys(report, {"benchmark_categories", "tracked_categories", "rows"}, "report", errors)
     category_ids = _validate_categories(report, errors)
     rows = report.get("rows")
@@ -710,13 +748,31 @@ def _validate_browser_category_list(
 def _validate_interaction_browser(report: dict[str, Any], errors: list[str]) -> None:
     _require_keys(
         report,
-        {"kind", "benchmark_categories", "tracked_categories", "rows", "reps"},
+        {
+            "kind",
+            "benchmark_categories",
+            "tracked_categories",
+            "rows",
+            "reps",
+            "tooltip_sample_count",
+            "interaction_budgets_ms",
+            "interaction_visual_budgets",
+        },
         "report",
         errors,
     )
     if report.get("kind") != "interaction-browser":
         errors.append("report.kind must be 'interaction-browser'")
-    _require_positive_number(report, "reps", "report", errors)
+    _require_positive_integer(report, "reps", "report", errors)
+    declared_reps = report.get("reps") if isinstance(report.get("reps"), int) else None
+    _require_positive_integer(report, "tooltip_sample_count", "report", errors)
+    declared_tooltip_samples = (
+        report.get("tooltip_sample_count")
+        if isinstance(report.get("tooltip_sample_count"), int)
+        else None
+    )
+    budgets = _validate_interaction_budget_block(report, errors)
+    visual_budgets = _validate_interaction_visual_budget_block(report, errors)
     category_ids = _validate_categories(report, errors)
     rows = report.get("rows")
     if not isinstance(rows, list) or not rows:
@@ -748,8 +804,11 @@ def _validate_interaction_browser(report: dict[str, Any], errors: list[str]) -> 
         if not isinstance(row, dict):
             continue
         _require_positive_number(row, "n", path, errors)
-        if row.get("tier") not in {"direct", "density"}:
-            errors.append(f"{path}.tier must be 'direct' or 'density'")
+        if row.get("tier") not in {"direct", "density", "decimated"}:
+            errors.append(f"{path}.tier must be 'direct', 'density', or 'decimated'")
+        family = row.get("family")
+        if family is not None:
+            _require_string_value(family, f"{path}.family", errors)
         for key in ("payload_bytes", "html_bytes"):
             _require_nonnegative_number(row, key, path, errors)
         status = _status_kind(row.get("status"))
@@ -758,12 +817,154 @@ def _validate_interaction_browser(report: dict[str, Any], errors: list[str]) -> 
         _validate_browser_category_list(row, path, category_ids, errors)
         if status == "ok":
             _require_positive_number(row, "nonblank_pixels", path, errors)
+            _require_positive_number(row, "min_interaction_lit_pixels", path, errors)
+            _require_nonnegative_number(row, "blank_frame_count", path, errors)
+            if _is_number(row.get("blank_frame_count")) and row["blank_frame_count"] != 0:
+                errors.append(f"{path}.blank_frame_count must be 0")
+            _require_positive_number(row, "label_count", path, errors)
+            _require_nonnegative_number(row, "tick_label_overlap_count", path, errors)
+            if (
+                _is_number(row.get("tick_label_overlap_count"))
+                and row["tick_label_overlap_count"] != 0
+            ):
+                errors.append(f"{path}.tick_label_overlap_count must be 0")
+            _require_nonnegative_number(row, "max_frame_color_delta", path, errors)
+            for metric, budget in visual_budgets.items():
+                value = row.get(metric)
+                if not _is_number(value):
+                    continue
+                if metric.startswith("max_") and value > budget:
+                    errors.append(f"{path}.{metric} {value:.3g} exceeds budget {budget:.3g}")
+                elif metric.startswith("min_") and value < budget:
+                    errors.append(f"{path}.{metric} {value:.3g} is below budget {budget:.3g}")
             if not isinstance(row.get("view_changed"), bool):
                 errors.append(f"{path}.view_changed must be a boolean")
-            for prefix in ("wheel_zoom", "pan", "hover", "box_zoom"):
+            elif not row["view_changed"]:
+                errors.append(f"{path}.view_changed must be true for an interaction probe")
+            if not isinstance(row.get("crosshair_visible"), bool):
+                errors.append(f"{path}.crosshair_visible must be a boolean")
+            elif not row["crosshair_visible"]:
+                errors.append(f"{path}.crosshair_visible must be true")
+            for key in ("box_zoom_changed", "box_zoom_narrowed", "box_zoom_restored"):
+                if not isinstance(row.get(key), bool):
+                    errors.append(f"{path}.{key} must be a boolean")
+                elif not row[key]:
+                    errors.append(f"{path}.{key} must be true")
+            if not isinstance(row.get("brush_select_eligible"), bool):
+                errors.append(f"{path}.brush_select_eligible must be a boolean")
+            _require_nonnegative_number(row, "brush_select_count", path, errors)
+            if not isinstance(row.get("brush_select_cleared"), bool):
+                errors.append(f"{path}.brush_select_cleared must be a boolean")
+            elif not row["brush_select_cleared"]:
+                errors.append(f"{path}.brush_select_cleared must be true")
+            if (
+                row.get("brush_select_eligible") is True
+                and _is_number(row.get("brush_select_count"))
+                and row["brush_select_count"] <= 0
+            ):
+                errors.append(
+                    f"{path}.brush_select_count must be > 0 when brush_select_eligible is true"
+                )
+            if not isinstance(row.get("tooltip_eligible"), bool):
+                errors.append(f"{path}.tooltip_eligible must be a boolean")
+            if not isinstance(row.get("tooltip_stable"), bool):
+                errors.append(f"{path}.tooltip_stable must be a boolean")
+            elif not row["tooltip_stable"]:
+                errors.append(f"{path}.tooltip_stable must be true")
+            _require_nonnegative_number(row, "tooltip_visible_samples", path, errors)
+            if (
+                row.get("tooltip_eligible") is True
+                and _is_number(row.get("tooltip_visible_samples"))
+                and declared_tooltip_samples is not None
+                and row["tooltip_visible_samples"] != declared_tooltip_samples
+            ):
+                errors.append(
+                    f"{path}.tooltip_visible_samples must equal report.tooltip_sample_count "
+                    f"{declared_tooltip_samples} when eligible, got "
+                    f"{row['tooltip_visible_samples']!r}"
+                )
+            for prefix in ("wheel_zoom", "pan", "hover", "crosshair", "box_zoom", "brush_select"):
                 for suffix in ("median_ms", "p95_ms", "max_ms"):
                     _require_nonnegative_number(row, f"{prefix}_{suffix}", path, errors)
-                _require_positive_number(row, f"{prefix}_reps", path, errors)
+                reps_key = f"{prefix}_reps"
+                _require_positive_integer(row, reps_key, path, errors)
+                if declared_reps is not None and row.get(reps_key) != declared_reps:
+                    errors.append(
+                        f"{path}.{reps_key} must match report.reps "
+                        f"{declared_reps}, got {row.get(reps_key)!r}"
+                    )
+            for metric, budget in budgets.items():
+                value = row.get(metric)
+                if _is_number(value) and value > budget:
+                    errors.append(f"{path}.{metric} {value:.3g} ms exceeds budget {budget:.3g} ms")
+
+    ok_rows = [
+        row for row in rows if isinstance(row, dict) and _status_kind(row.get("status")) == "ok"
+    ]
+    ok_scenarios = {str(row.get("scenario")) for row in ok_rows}
+    missing_scenarios = sorted(set(INTERACTION_REQUIRED_SCENARIOS) - ok_scenarios)
+    if missing_scenarios:
+        errors.append(f"interaction report missing required ok scenarios: {missing_scenarios}")
+    ok_families = {
+        str(row.get("family"))
+        for row in ok_rows
+        if isinstance(row.get("family"), str) and row.get("family")
+    }
+    missing_families = sorted(set(INTERACTION_REQUIRED_FAMILIES) - ok_families)
+    if missing_families:
+        errors.append(f"interaction report missing required ok families: {missing_families}")
+
+
+def _validate_interaction_budget_block(
+    report: dict[str, Any], errors: list[str]
+) -> dict[str, float]:
+    budgets = report.get("interaction_budgets_ms")
+    if not isinstance(budgets, dict):
+        errors.append("report.interaction_budgets_ms must be an object")
+        return {}
+    missing = [key for key in INTERACTION_BUDGET_KEYS if key not in budgets]
+    if missing:
+        errors.append(f"report.interaction_budgets_ms missing keys: {missing}")
+    extra = sorted(set(budgets) - set(INTERACTION_BUDGET_KEYS))
+    if extra:
+        errors.append(f"report.interaction_budgets_ms has unknown keys: {extra}")
+    valid: dict[str, float] = {}
+    for key in INTERACTION_BUDGET_KEYS:
+        value = budgets.get(key)
+        if not _is_number(value):
+            errors.append(f"report.interaction_budgets_ms.{key} must be a finite number")
+        elif value <= 0:
+            errors.append(f"report.interaction_budgets_ms.{key} must be > 0")
+        else:
+            valid[key] = float(value)
+    return valid
+
+
+def _validate_interaction_visual_budget_block(
+    report: dict[str, Any], errors: list[str]
+) -> dict[str, float]:
+    budgets = report.get("interaction_visual_budgets")
+    if not isinstance(budgets, dict):
+        errors.append("report.interaction_visual_budgets must be an object")
+        return {}
+    missing = [key for key in INTERACTION_VISUAL_BUDGET_KEYS if key not in budgets]
+    if missing:
+        errors.append(f"report.interaction_visual_budgets missing keys: {missing}")
+    extra = sorted(set(budgets) - set(INTERACTION_VISUAL_BUDGET_KEYS))
+    if extra:
+        errors.append(f"report.interaction_visual_budgets has unknown keys: {extra}")
+    valid: dict[str, float] = {}
+    for key in INTERACTION_VISUAL_BUDGET_KEYS:
+        value = budgets.get(key)
+        if not _is_number(value):
+            errors.append(f"report.interaction_visual_budgets.{key} must be a finite number")
+        elif key.startswith("max_") and (value <= 0 or value > 1):
+            errors.append(f"report.interaction_visual_budgets.{key} must be > 0 and <= 1")
+        elif key.startswith("min_") and value <= 0:
+            errors.append(f"report.interaction_visual_budgets.{key} must be > 0")
+        else:
+            valid[key] = float(value)
+    return valid
 
 
 def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> None:

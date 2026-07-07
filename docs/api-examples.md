@@ -18,9 +18,11 @@ notebook display, and memory reporting.
 
 Use the composition API when you want Reflex-shaped, declarative chart children,
 column-name resolution through `data=`, or `on_hover` / `on_select` callbacks.
-The composition layer delegates to the same `Figure` engine, but its component
-names, event payloads, and future overlay grammar are still experimental before
-1.0.
+The core composition contract is now stabilizing around lightweight Python
+children, layered marks, axes, annotations, built-in or custom legend/tooltip
+chrome, CSS/Tailwind-friendly DOM hooks, and the same notebook/static export
+methods as `Figure`. Callback payload details and future adapter packages may
+still evolve before 1.0.
 
 Both APIs accept `width="100%"` and/or `height="100%"` for responsive charts.
 Standalone `to_html(...)` needs no browser dependency; `to_png(...)` needs a
@@ -271,8 +273,9 @@ chart = fc.bar_chart(
 chart
 ```
 
-Composed `Chart` objects expose the same `to_html(...)`, `to_png(...)`,
-`widget()`, `show()`, and `memory_report()` readout methods as `Figure`.
+Composed `Chart` objects expose the same `to_html(...)`, `html(...)`,
+`_repr_html_()`, `to_png(...)`, `widget()`, `show()`, and `memory_report()`
+readout methods as `Figure`.
 
 ## Layered Composition And Annotations
 

@@ -410,6 +410,7 @@ function lodApplyDensityUpdate(view, g, upd, buffers) {
     tex: view._uploadGrid(grid, d.w, d.h, normMax),
     lut: g.density.lut,
   };
+  view._applyDensitySample(g, d.sample, buffers);
   lodStartNormAnim(view, g, normMax, d.max);
   lodRememberDensity(view, g, g.density);
 }
@@ -541,6 +542,7 @@ function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
       if (g._drillDying) lodDropDrill(view, g); // fade done: free the buffers
       else if (exitingDrill) g._drillWasInside = false;
       lodDrawDensityWithFade(view, g, density);
+      view._drawDensitySample(g, x0, x1, y0, y1);
     }
   } else if (d) {
     view._drawPoints(

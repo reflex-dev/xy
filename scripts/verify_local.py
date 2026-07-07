@@ -67,8 +67,8 @@ def _base_checks(
         Check("public_api", "lazy public API coherence", (py, "scripts/check_public_api.py")),
         Check(
             "import_budget",
-            "import-time budget and lazy-boundary tests",
-            (py, "-m", "pytest", "-q", "tests/test_import.py"),
+            "import-time budget and dependency-boundary tests",
+            (py, "-m", "pytest", "-q", "tests/test_import.py", "tests/test_dependencies.py"),
             requires_modules=("pytest",),
         ),
         Check(
@@ -101,6 +101,8 @@ def _base_checks(
                 "-q",
                 "tests/test_public_api.py",
                 "tests/test_type_surface.py",
+                "tests/test_components.py::test_declarative_core_contract_for_layered_axis_chrome_and_interaction",
+                "tests/test_components.py::test_declarative_chart_keeps_notebook_export_and_framework_chrome_contract",
             ),
             requires_modules=("pytest",),
         ),
@@ -124,7 +126,7 @@ def _base_checks(
         ),
         Check(
             "security_export",
-            "standalone HTML escaping and client text-sink guardrails",
+            "standalone HTML escaping, atomic writes, and client text-sink guardrails",
             (
                 py,
                 "-m",
@@ -135,8 +137,10 @@ def _base_checks(
                 "tests/test_figure.py::test_inline_javascript_export_escapes_closing_script",
                 "tests/test_figure.py::test_to_html_escapes_closing_script_inside_bundled_client",
                 "tests/test_figure.py::test_to_html_escapes_every_chart_text_surface",
+                "tests/test_figure.py::test_to_html_path_keeps_existing_file_on_atomic_replace_failure",
                 "tests/test_scatter.py::test_to_html_escapes_user_strings",
                 "tests/test_components.py::test_component_to_html_escapes_user_strings_across_public_surface",
+                "tests/test_components.py::test_component_to_html_path_keeps_existing_file_on_atomic_replace_failure",
                 "tests/test_docs_examples.py::test_readme_documents_standalone_html_security_contract",
                 "tests/test_docs_examples.py::test_production_docs_capture_html_export_dom_text_contract",
             ),
@@ -144,7 +148,7 @@ def _base_checks(
         ),
         Check(
             "error_safety",
-            "public error messages and mutation-safety tests",
+            "public error messages, LOD boundaries, and mutation-safety tests",
             (
                 py,
                 "-m",
@@ -152,6 +156,7 @@ def _base_checks(
                 "-q",
                 "tests/test_figure.py",
                 "tests/test_components.py",
+                "tests/test_lod.py",
             ),
             requires_modules=("pytest",),
         ),
@@ -224,6 +229,29 @@ def _base_checks(
             requires_chromium=True,
         ),
         Check(
+            "reflex_lifecycle_smoke",
+            "Reflex example iframe lifecycle smoke in Chromium",
+            (py, "scripts/reflex_lifecycle_smoke.py", chromium_arg),
+            requires_paths=chromium_paths,
+            requires_chromium=True,
+        ),
+        Check(
+            "visual_regression_smoke",
+            "representative chart screenshot smoke in Chromium",
+            (py, "scripts/visual_regression_smoke.py", chromium_arg),
+            requires_modules=("numpy",),
+            requires_paths=chromium_paths,
+            requires_chromium=True,
+        ),
+        Check(
+            "interaction_stress_smoke",
+            "browser interaction stress smoke with latency/visual budgets",
+            (py, "scripts/interaction_stress_smoke.py", chromium_arg),
+            requires_modules=("numpy",),
+            requires_paths=chromium_paths,
+            requires_chromium=True,
+        ),
+        Check(
             "sdist_artifact",
             "source distribution artifact contents",
             (py, "scripts/verify_sdist.py", sdist_arg),
@@ -259,7 +287,13 @@ FULL_EXTRA_CHECKS = (
     "rust_release_build",
     "abi_smoke",
 )
-BROWSER_CHECKS = ("render_smoke_nonumpy", "smoke_render")
+BROWSER_CHECKS = (
+    "render_smoke_nonumpy",
+    "smoke_render",
+    "reflex_lifecycle_smoke",
+    "visual_regression_smoke",
+    "interaction_stress_smoke",
+)
 PACKAGING_CHECKS = ("sdist_artifact", "wheel_artifact")
 
 

@@ -32,6 +32,7 @@ __version__ = "0.1.0"
 _EXPORTS = {
     "Annotation": ".components",
     "Axis": ".components",
+    "CHART_DOM_SLOTS": ".dom",
     "Chart": ".components",
     "Column": ".columns",
     "ColumnStore": ".columns",
@@ -84,6 +85,7 @@ _EXPORTS = {
 }
 
 __all__ = [
+    "CHART_DOM_SLOTS",
     "Annotation",
     "Axis",
     "Chart",
@@ -206,4 +208,5 @@ if TYPE_CHECKING:
         y_axis,
         y_band,
     )
+    from .dom import CHART_DOM_SLOTS
     from .figure import Figure, Selection

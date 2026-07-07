@@ -998,6 +998,64 @@ def test_to_html_path_writes_exact_document(tmp_path: Path):
     assert decoded["title"] == 'export "quoted" & <safe>'
 
 
+def test_to_html_path_keeps_existing_file_on_atomic_replace_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    target = tmp_path / "chart.html"
+    target.write_text("old chart artifact", encoding="utf-8")
+    fig = Figure(title="atomic export").line([0.0, 1.0], [1.0, 2.0])
+
+    def fail_replace(src: Path, dst: Path) -> None:
+        assert Path(src).name.startswith(".chart.html.")
+        assert Path(dst) == target
+        raise OSError("synthetic replace failure")
+
+    monkeypatch.setattr(export_module.os, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="synthetic replace failure"):
+        fig.to_html(target)
+
+    assert target.read_text(encoding="utf-8") == "old chart artifact"
+    assert not list(tmp_path.glob(".chart.html.*.tmp"))
+
+
+def test_figure_dom_slots_are_validated_before_export():
+    fig = Figure().line([0.0, 1.0], [1.0, 2.0])
+    fig.class_names = {"legend": "ok", "legnd": "typo"}
+
+    with pytest.raises(ValueError, match="class_names has unknown slot"):
+        fig.build_payload()
+
+    fig.class_names = {"legend": "ok"}
+    fig.chrome_styles = {"tooltip": {"background": "#111827"}, "plot": {"color": "red"}}
+
+    with pytest.raises(ValueError, match="chrome_styles has unknown slot"):
+        fig.to_html()
+
+    fig.chrome_styles = {"tooltip": {"background": "#111827"}}
+    spec, _ = fig.build_payload()
+
+    assert spec["dom"]["class_names"] == {"legend": "ok"}
+    assert spec["dom"]["styles"] == {"tooltip": {"background": "#111827"}}
+
+
+def test_figure_html_alias_and_repr_use_standalone_export_path(tmp_path: Path):
+    target = tmp_path / "chart-alias.html"
+    fig = Figure(title="notebook html").line([0.0, 1.0], [1.0, 2.0])
+
+    html = fig.html(target)
+    repr_html = fig._repr_html_()
+
+    assert target.read_text(encoding="utf-8") == html
+    assert html.startswith("<!doctype html>")
+    assert repr_html.startswith("<!doctype html>")
+    assert "notebook html" in repr_html
+    decoded = json.loads(_inline_spec_literal(repr_html))
+    assert decoded["title"] == "notebook html"
+    assert decoded["traces"][0]["kind"] == "line"
+
+
 def test_to_html_path_rejects_invalid_json_metadata_without_partial_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1446,6 +1504,17 @@ def test_to_png_full_path(tmp_path):
 
     w, h = struct.unpack(">II", data[16:24])
     assert (w, h) == (640, 400)
+
+
+def test_find_chromium_checks_standard_macos_app_paths(monkeypatch):
+    from fastcharts import export
+
+    chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    monkeypatch.delenv("FASTCHARTS_CHROMIUM", raising=False)
+    monkeypatch.setattr(export.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(export.Path, "exists", lambda path: str(path) == chrome)
+
+    assert export.find_chromium() == chrome
 
 
 def test_to_png_missing_chromium_is_clear(monkeypatch):

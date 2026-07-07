@@ -6,11 +6,13 @@ data= column-name resolution, event-prop wiring, and box-select (§34)."""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 import fastcharts as fc
+import fastcharts.export as export_module
 from fastcharts.components import (
     Annotation,
     Axis,
@@ -42,6 +44,19 @@ class FakeReflexComponent:
 
     def __init__(self, name: str):
         self.name = name
+
+
+class LeakyCallback:
+    """Callable whose repr would be obvious if it leaked into exported specs."""
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def __call__(self, payload):
+        return payload
+
+    def __repr__(self) -> str:
+        return f"<LeakyCallback {self.name}>"
 
 
 def _inline_spec_literal(html: str) -> str:
@@ -441,6 +456,169 @@ def test_component_style_tooltip_and_modebar_metadata_is_opt_in():
     assert spec["traces"][0]["style"]["class_name"] == "fc-mark-accounts"
 
 
+def test_declarative_core_contract_for_layered_axis_chrome_and_interaction():
+    legend_component = FakeReflexComponent("legend")
+    tooltip_component = FakeReflexComponent("tooltip")
+    data = FakeFrame(
+        {
+            "month": np.array(["Jan", "Feb", "Mar"]),
+            "revenue": np.array([40.0, 52.0, 61.0]),
+            "latency": np.array([100.0, 70.0, 30.0]),
+        }
+    )
+
+    chart = fc.chart(
+        fc.bar(
+            x="month",
+            y="revenue",
+            data=data,
+            name="revenue",
+            class_name="revenue-bars",
+        ),
+        fc.line(
+            x="month",
+            y="latency",
+            data=data,
+            name="latency",
+            y_axis="y2",
+            color="#dc2626",
+        ),
+        fc.vline("Feb", text="campaign", color="#7c3aed"),
+        fc.x_axis(
+            label="month",
+            tick_count=3,
+            tick_label_strategy="rotate",
+        ),
+        fc.y_axis(
+            label="revenue",
+            domain=(0.0, 100.0),
+            format="$,.0f",
+            side="left",
+        ),
+        fc.y_axis(
+            id="y2",
+            label="latency",
+            type_="log",
+            domain=(10.0, 1000.0),
+            reverse=True,
+            format=".0f",
+            side="right",
+            label_position={"right": 18, "top": "50%"},
+            style={"axis_color": "#dc2626"},
+        ),
+        fc.legend(
+            legend_component,
+            class_name="legend-node",
+            style={"max-height": 180},
+        ),
+        fc.tooltip(
+            tooltip_component,
+            show=False,
+            fields=["month", "revenue", "latency"],
+            title="{month}",
+            class_name="tooltip-node",
+            style={"background": "linear-gradient(red,blue)"},
+        ),
+        fc.modebar(
+            show=True,
+            class_name="modebar-node",
+            button_class_name="modebar-button",
+        ),
+        fc.theme(plot_background="transparent", crosshair_color="#0f172a"),
+        fc.interaction_config(
+            hover=True,
+            click=True,
+            brush=True,
+            crosshair=True,
+            view_change=True,
+            link_group="ops",
+            link_axes=("x",),
+        ),
+        title="ops overview",
+        class_name="chart-root",
+        class_names={"legend": "legend-slot"},
+        style={"--chart-axis": "#111827"},
+        width="100%",
+        height=430,
+    )
+
+    assert chart.chrome_components() == {
+        "legend": legend_component,
+        "tooltip": tooltip_component,
+    }
+
+    spec, _ = chart.figure().build_payload()
+
+    assert spec["width"] == "100%"
+    assert spec["height"] == 430
+    assert spec["show_legend"] is True
+    assert spec["show_tooltip"] is False
+    assert [trace["kind"] for trace in spec["traces"]] == ["bar", "line"]
+    assert [trace["y_axis"] for trace in spec["traces"]] == ["y", "y2"]
+    assert spec["traces"][0]["style"]["class_name"] == "revenue-bars"
+    assert spec["axes"]["x"]["kind"] == "category"
+    assert spec["axes"]["x"]["categories"] == ["Jan", "Feb", "Mar"]
+    assert spec["axes"]["x"]["tick_count"] == 3
+    assert spec["axes"]["x"]["tick_label_strategy"] == "rotate"
+    assert spec["axes"]["y"]["domain"] == [0.0, 100.0]
+    assert spec["axes"]["y"]["format"] == "$,.0f"
+    assert spec["axes"]["y2"] == {
+        "id": "y2",
+        "kind": "linear",
+        "label": "latency",
+        "range": [1000.0, 10.0],
+        "side": "right",
+        "label_position": {"right": 18, "top": "50%"},
+        "scale": "log",
+        "reverse": True,
+        "domain": [10.0, 1000.0],
+        "format": ".0f",
+        "style": {"axis_color": "#dc2626"},
+    }
+    assert spec["annotations"] == [
+        {
+            "text": "campaign",
+            "style": {"color": "#7c3aed", "width": 1.5, "opacity": 1.0},
+            "kind": "rule",
+            "axis": "x",
+            "value": 1.0,
+        }
+    ]
+    assert spec["dom"] == {
+        "class_name": "chart-root",
+        "class_names": {
+            "legend": "legend-slot legend-node",
+            "modebar": "modebar-node",
+            "modebar_button": "modebar-button",
+            "tooltip": "tooltip-node",
+        },
+        "style": {
+            "--chart-bg": "transparent",
+            "--chart-crosshair": "#0f172a",
+            "--chart-axis": "#111827",
+        },
+        "styles": {
+            "legend": {"max-height": 180},
+            "tooltip": {"background": "linear-gradient(red,blue)"},
+        },
+    }
+    assert spec["tooltip"]["fields"] == ["month", "revenue", "latency"]
+    assert spec["tooltip"]["sources"] == {
+        "month": [{"trace": 0, "channel": "x"}, {"trace": 1, "channel": "x"}],
+        "revenue": [{"trace": 0, "channel": "y"}],
+        "latency": [{"trace": 1, "channel": "y"}],
+    }
+    assert spec["interaction"] == {
+        "hover": True,
+        "click": True,
+        "brush": True,
+        "crosshair": True,
+        "view_change": True,
+        "link_group": "ops",
+        "link_axes": ["x"],
+    }
+
+
 def test_legend_and_tooltip_accept_opaque_framework_components_without_serializing():
     legend_component = FakeReflexComponent("legend")
     tooltip_component = FakeReflexComponent("tooltip")
@@ -469,6 +647,164 @@ def test_legend_and_tooltip_accept_opaque_framework_components_without_serializi
     html = chart.to_html()
     assert "FakeReflexComponent" not in html
     assert "show_tooltip" in html
+
+
+def test_declarative_chart_keeps_notebook_export_and_framework_chrome_contract(
+    monkeypatch,
+    tmp_path,
+):
+    legend_component = FakeReflexComponent("legend")
+    tooltip_component = FakeReflexComponent("tooltip")
+    events = {
+        "hover": lambda row: row,
+        "click": lambda row: row,
+        "brush": lambda brush: brush,
+        "select": lambda selection: selection,
+        "view": lambda view: view,
+    }
+    data = FakeFrame(
+        {
+            "activation": np.array([0.11, 0.24, 0.38]),
+            "retention": np.array([0.52, 0.61, 0.73]),
+            "segment": np.array(["enterprise", "growth", "enterprise"]),
+        }
+    )
+    chart = fc.chart(
+        fc.scatter(
+            x="activation",
+            y="retention",
+            color="segment",
+            size=12,
+            data=data,
+            name="accounts",
+            class_name="tw-mark-accounts",
+        ),
+        fc.line(
+            x="activation",
+            y="retention",
+            data=data,
+            name="trend",
+            color="var(--chart-trend)",
+        ),
+        fc.x_axis(label="activation", format=".0%"),
+        fc.y_axis(label="retention", format=".0%"),
+        fc.legend(
+            legend_component,
+            show=False,
+            class_name="tw-legend",
+            style={"display": "grid"},
+        ),
+        fc.tooltip(
+            tooltip_component,
+            show=False,
+            fields=["activation", "retention", "segment"],
+            title="{segment}",
+            format={"activation": ".1%", "retention": ".1%"},
+            class_name="tw-tooltip",
+            style={"background": "linear-gradient(135deg,#020617,#2563eb)"},
+        ),
+        fc.modebar(show=False, class_name="tw-modebar"),
+        fc.theme(grid_color="rgba(148,163,184,.28)"),
+        fc.interaction_config(hover=True, click=True, brush=True, crosshair=True),
+        title="Custom Reflex legend + tooltip",
+        width="100%",
+        height=360,
+        class_name="h-[360px] w-full rounded-md border border-slate-200",
+        class_names={"legend": "right-3 top-3", "tooltip": "pointer-events-none"},
+        style={"--chart-trend": "#dc2626", "--chart-axis": "currentColor"},
+        on_hover=events["hover"],
+        on_click=events["click"],
+        on_brush=events["brush"],
+        on_select=events["select"],
+        on_view_change=events["view"],
+    )
+
+    for name in (
+        "to_html",
+        "html",
+        "to_png",
+        "widget",
+        "show",
+        "memory_report",
+        "chrome_components",
+        "reflex_components",
+        "_repr_html_",
+    ):
+        assert callable(getattr(chart, name))
+
+    chrome = chart.chrome_components()
+    assert chrome == {"legend": legend_component, "tooltip": tooltip_component}
+    assert chart.reflex_components() == chrome
+
+    html_path = tmp_path / "chart.html"
+    html = chart.to_html(html_path)
+    assert html_path.read_text(encoding="utf-8") == html
+    assert "FakeReflexComponent" not in html
+    assert "Custom Reflex legend + tooltip" in html
+
+    alias_path = tmp_path / "chart-alias.html"
+    assert chart.html(alias_path) == alias_path.read_text(encoding="utf-8")
+    repr_html = chart._repr_html_()
+    assert repr_html.startswith("<!doctype html>")
+    assert "FakeReflexComponent" not in repr_html
+    assert "Custom Reflex legend + tooltip" in repr_html
+
+    spec = json.loads(_inline_spec_literal(html))
+    assert spec["show_legend"] is False
+    assert spec["show_tooltip"] is False
+    assert spec["show_modebar"] is False
+    assert spec["width"] == "100%"
+    assert spec["height"] == 360
+    assert spec["dom"]["class_name"] == "h-[360px] w-full rounded-md border border-slate-200"
+    assert spec["dom"]["class_names"]["legend"] == "right-3 top-3 tw-legend"
+    assert spec["dom"]["class_names"]["tooltip"] == "pointer-events-none tw-tooltip"
+    assert spec["dom"]["class_names"]["modebar"] == "tw-modebar"
+    assert spec["dom"]["style"] == {
+        "--chart-grid": "rgba(148,163,184,.28)",
+        "--chart-trend": "#dc2626",
+        "--chart-axis": "currentColor",
+    }
+    assert spec["dom"]["styles"]["legend"] == {"display": "grid"}
+    assert spec["dom"]["styles"]["tooltip"] == {
+        "background": "linear-gradient(135deg,#020617,#2563eb)"
+    }
+    assert spec["traces"][0]["style"]["class_name"] == "tw-mark-accounts"
+    assert spec["traces"][1]["style"]["color"] == "var(--chart-trend)"
+    assert spec["tooltip"]["fields"] == ["activation", "retention", "segment"]
+    assert spec["tooltip"]["format"] == {"activation": ".1%", "retention": ".1%"}
+
+    report = chart.memory_report()
+    assert report["transport_bytes_first_paint"] > 0
+    assert report["backend"] in {"native", "numpy"}
+
+    class CapturingWidget:
+        def __init__(
+            self,
+            figure,
+            *,
+            on_hover=None,
+            on_click=None,
+            on_brush=None,
+            on_select=None,
+            on_view_change=None,
+        ):
+            self.figure = figure
+            self.on_hover = on_hover
+            self.on_click = on_click
+            self.on_brush = on_brush
+            self.on_select = on_select
+            self.on_view_change = on_view_change
+
+    monkeypatch.setattr("fastcharts.widget.FigureWidget", CapturingWidget)
+
+    widget = chart.widget()
+    assert chart.show() is widget
+    assert widget.figure is chart.figure()
+    assert widget.on_hover is events["hover"]
+    assert widget.on_click is events["click"]
+    assert widget.on_brush is events["brush"]
+    assert widget.on_select is events["select"]
+    assert widget.on_view_change is events["view"]
 
 
 def test_interaction_component_builds_declarative_spec():
@@ -521,6 +857,72 @@ def test_chart_callbacks_enable_matching_event_streams():
     }
 
 
+def test_chart_callbacks_are_python_only_and_do_not_serialize_to_html(monkeypatch):
+    callbacks = {
+        "hover": LeakyCallback("hover"),
+        "click": LeakyCallback("click"),
+        "brush": LeakyCallback("brush"),
+        "select": LeakyCallback("select"),
+        "view": LeakyCallback("view"),
+    }
+    legend_component = FakeReflexComponent("legend")
+    tooltip_component = FakeReflexComponent("tooltip")
+    chart = fc.chart(
+        fc.scatter(x=[1.0, 2.0], y=[2.0, 3.0], name="points"),
+        fc.legend(legend_component, show=False),
+        fc.tooltip(tooltip_component, show=False, fields=["x", "y"]),
+        on_hover=callbacks["hover"],
+        on_click=callbacks["click"],
+        on_brush=callbacks["brush"],
+        on_select=callbacks["select"],
+        on_view_change=callbacks["view"],
+    )
+
+    spec, _ = chart.figure().build_payload()
+    assert spec["interaction"] == {
+        "hover": True,
+        "click": True,
+        "brush": True,
+        "select": True,
+        "view_change": True,
+    }
+
+    html = chart.to_html()
+    spec_json = _inline_spec_literal(html)
+    for forbidden in ("LeakyCallback", "FakeReflexComponent", "on_hover", "on_click"):
+        assert forbidden not in spec_json
+        assert forbidden not in html
+
+    class CapturingWidget:
+        def __init__(
+            self,
+            figure,
+            *,
+            on_hover=None,
+            on_click=None,
+            on_brush=None,
+            on_select=None,
+            on_view_change=None,
+        ):
+            self.figure = figure
+            self.on_hover = on_hover
+            self.on_click = on_click
+            self.on_brush = on_brush
+            self.on_select = on_select
+            self.on_view_change = on_view_change
+
+    monkeypatch.setattr("fastcharts.widget.FigureWidget", CapturingWidget)
+
+    widget = chart.widget()
+    assert widget.figure is chart.figure()
+    assert widget.on_hover is callbacks["hover"]
+    assert widget.on_click is callbacks["click"]
+    assert widget.on_brush is callbacks["brush"]
+    assert widget.on_select is callbacks["select"]
+    assert widget.on_view_change is callbacks["view"]
+    assert chart.show() is widget
+
+
 def test_bad_interaction_options_do_not_cache_partial_chart_figure():
     chart = fc.chart(
         fc.scatter(x=[1.0], y=[2.0]),
@@ -568,6 +970,8 @@ def test_legend_and_tooltip_accept_render_keyword_components():
 def test_component_style_validation_rejects_non_serializable_values():
     with pytest.raises(ValueError, match="chart class_names"):
         fc.chart(fc.scatter(x=[1.0], y=[2.0]), class_names={"legend": 2})
+    with pytest.raises(ValueError, match="unknown slot"):
+        fc.chart(fc.scatter(x=[1.0], y=[2.0]), class_names={"legnd": "typo"})
     with pytest.raises(ValueError, match="chart style"):
         fc.chart(fc.scatter(x=[1.0], y=[2.0]), style={"--bad": np.inf})
     with pytest.raises(ValueError, match="tooltip fields"):
@@ -1033,6 +1437,34 @@ def test_component_to_html_escapes_user_strings_across_public_surface(tmp_path):
     assert [trace["name"] for trace in decoded["traces"]] == [evil, also_evil]
     assert decoded["annotations"][0]["text"] == evil
     assert decoded["annotations"][0]["class_name"] == also_evil
+
+
+def test_component_to_html_path_keeps_existing_file_on_atomic_replace_failure(
+    tmp_path,
+    monkeypatch,
+):
+    target = tmp_path / "component.html"
+    target.write_text("old declarative chart artifact", encoding="utf-8")
+    chart = fc.chart(
+        fc.scatter(x=[1.0, 2.0], y=[2.0, 4.0], name="points"),
+        fc.line(x=[1.0, 2.0], y=[2.1, 3.9], name="trend"),
+        fc.legend(class_name="tw-legend"),
+        fc.tooltip(fields=["x", "y"]),
+        title="declarative atomic export",
+    )
+
+    def fail_replace(src, dst) -> None:
+        assert Path(src).name.startswith(".component.html.")
+        assert Path(dst) == target
+        raise OSError("synthetic component replace failure")
+
+    monkeypatch.setattr(export_module.os, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="synthetic component replace failure"):
+        chart.to_html(target)
+
+    assert target.read_text(encoding="utf-8") == "old declarative chart artifact"
+    assert not list(tmp_path.glob(".component.html.*.tmp"))
 
 
 def test_component_to_png_delegates_to_composed_figure(monkeypatch):

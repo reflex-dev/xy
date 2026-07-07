@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, get_args, get_origin, get_type_hints
 
 import numpy as np
+import pytest
 
 import fastcharts as fc
 import fastcharts.components as components
@@ -37,6 +38,7 @@ ANNOTATION_FACTORIES = (
     "text",
 )
 CHART_FACTORIES = (
+    "chart",
     "scatter_chart",
     "line_chart",
     "area_chart",
@@ -44,6 +46,26 @@ CHART_FACTORIES = (
     "bar_chart",
     "column_chart",
     "heatmap_chart",
+)
+CHROME_FACTORIES = (
+    "legend",
+    "tooltip",
+    "modebar",
+    "theme",
+    "mark_style",
+    "interaction_config",
+)
+CHART_READOUTS = (
+    "figure",
+    "widget",
+    "show",
+    "to_html",
+    "html",
+    "_repr_html_",
+    "to_png",
+    "memory_report",
+    "chrome_components",
+    "reflex_components",
 )
 FIGURE_BUILDERS = (
     "line",
@@ -78,6 +100,8 @@ FIGURE_READOUTS = (
     "widget",
     "show",
     "to_html",
+    "html",
+    "_repr_html_",
     "to_png",
     "memory_report",
 )
@@ -92,6 +116,7 @@ def test_source_package_carries_pep561_marker() -> None:
 
 def test_component_types_are_lazy_public_root_exports() -> None:
     for name in (
+        "CHART_DOM_SLOTS",
         "Component",
         "Mark",
         "MarkStyle",
@@ -105,12 +130,53 @@ def test_component_types_are_lazy_public_root_exports() -> None:
         assert getattr(fc, name) is getattr(components, name)
 
 
+def test_chart_dom_slots_are_public_styling_contract() -> None:
+    expected = (
+        "root",
+        "title",
+        "chrome",
+        "canvas",
+        "labels",
+        "legend",
+        "legend_item",
+        "tooltip",
+        "modebar",
+        "modebar_button",
+        "selection",
+        "crosshair_x",
+        "crosshair_y",
+        "badge",
+        "badge_item",
+    )
+
+    assert fc.CHART_DOM_SLOTS is components.CHART_DOM_SLOTS
+    assert expected == components.CHART_DOM_SLOTS
+    assert len(components.CHART_DOM_SLOTS) == len(set(components.CHART_DOM_SLOTS))
+    assert all(slot == slot.lower() and " " not in slot for slot in components.CHART_DOM_SLOTS)
+
+    design = (ROOT / "docs" / "design" / "reflex-shaped-api.md").read_text(encoding="utf-8")
+    for slot in components.CHART_DOM_SLOTS:
+        assert f"`{slot}`" in design
+
+
+def test_chart_class_names_are_limited_to_public_dom_slots() -> None:
+    chart = fc.chart(
+        fc.scatter(x=[1.0], y=[2.0]),
+        class_names={slot: f"slot-{slot}" for slot in fc.CHART_DOM_SLOTS},
+    )
+
+    assert chart.class_names["legend"] == "slot-legend"
+    with pytest.raises(ValueError, match="unknown slot"):
+        fc.chart(fc.scatter(x=[1.0], y=[2.0]), class_names={"plot": "not-a-slot"})
+
+
 def test_components_module_all_matches_root_component_exports() -> None:
     component_exports = {
         name for name, module_name in fc._EXPORTS.items() if module_name == ".components"
     }
+    component_reexports = {"CHART_DOM_SLOTS"}
 
-    assert set(components.__all__) == component_exports
+    assert set(components.__all__) == component_exports | component_reexports
     assert len(components.__all__) == len(set(components.__all__))
     for name in components.__all__:
         assert hasattr(components, name), name
@@ -122,9 +188,7 @@ def test_public_factories_are_typed_root_exports() -> None:
         *ANNOTATION_FACTORIES,
         "x_axis",
         "y_axis",
-        "legend",
-        "mark_style",
-        "interaction_config",
+        *CHROME_FACTORIES,
         *CHART_FACTORIES,
     ):
         root_fn = getattr(fc, name)
@@ -135,6 +199,27 @@ def test_public_factories_are_typed_root_exports() -> None:
         assert get_type_hints(root_fn) == get_type_hints(component_fn)
 
 
+def test_composition_alpha_contract_is_explicitly_exported() -> None:
+    contract = {
+        *MARK_FACTORIES,
+        *ANNOTATION_FACTORIES,
+        *CHART_FACTORIES,
+        *CHROME_FACTORIES,
+        "x_axis",
+        "y_axis",
+    }
+
+    for name in sorted(contract):
+        assert name in fc.__all__
+        assert name in components.__all__
+        assert fc._EXPORTS[name] == ".components"
+        assert getattr(fc, name) is getattr(components, name)
+
+    for method in CHART_READOUTS:
+        assert hasattr(components.Chart, method)
+        assert callable(getattr(components.Chart, method))
+
+
 def test_public_component_factories_have_typed_signatures() -> None:
     expected_returns = {
         **{name: components.Mark for name in MARK_FACTORIES},
@@ -142,6 +227,9 @@ def test_public_component_factories_have_typed_signatures() -> None:
         "x_axis": components.Axis,
         "y_axis": components.Axis,
         "legend": components.Legend,
+        "tooltip": components.Tooltip,
+        "modebar": components.Modebar,
+        "theme": components.Theme,
         "mark_style": components.MarkStyle,
         "interaction_config": components.Interaction,
         **{name: components.Chart for name in CHART_FACTORIES},
@@ -227,15 +315,22 @@ def test_component_dataclass_and_chart_method_types_are_specific() -> None:
 def test_chart_and_figure_html_export_types_stay_in_sync() -> None:
     figure_hints = get_type_hints(figure_module.Figure.to_html)
     chart_hints = get_type_hints(components.Chart.to_html)
+    figure_alias_hints = get_type_hints(figure_module.Figure.html)
+    chart_alias_hints = get_type_hints(components.Chart.html)
 
     assert chart_hints["return"] is str
     assert chart_hints == figure_hints
+    assert chart_alias_hints == figure_alias_hints == figure_hints
 
     path_hint = chart_hints["path"]
     path_args = get_args(path_hint)
     assert str in path_args
     assert type(None) in path_args
     assert any(get_origin(arg) is PathLike for arg in path_args)
+
+    figure_repr_hints = get_type_hints(figure_module.Figure._repr_html_)
+    chart_repr_hints = get_type_hints(components.Chart._repr_html_)
+    assert figure_repr_hints == chart_repr_hints == {"return": str}
 
 
 def test_chart_and_figure_png_export_types_stay_in_sync() -> None:

@@ -43,7 +43,9 @@ def test_browser_selection_requires_browser_checks_to_exist() -> None:
     checks = verify_local._base_checks(Path("/tmp/chrome"))
     selected = verify_local.select_checks(checks, browser=True)
 
-    assert [check.name for check in selected][-2:] == list(verify_local.BROWSER_CHECKS)
+    assert [check.name for check in selected][-len(verify_local.BROWSER_CHECKS) :] == list(
+        verify_local.BROWSER_CHECKS
+    )
 
 
 def test_packaging_selection_runs_artifact_checks_only(tmp_path: Path) -> None:
@@ -63,6 +65,9 @@ def test_browser_checks_are_listed_without_chromium(capsys: pytest.CaptureFixtur
     assert rc == 0
     assert "render_smoke_nonumpy" in out
     assert "smoke_render" in out
+    assert "reflex_lifecycle_smoke" in out
+    assert "visual_regression_smoke" in out
+    assert "interaction_stress_smoke" in out
     assert "chromium" in out
 
 
@@ -94,7 +99,15 @@ def test_security_export_check_is_known_as_targeted_gate() -> None:
     assert "tests/test_static_client_security.py" in command
     assert "tests/test_figure.py::test_to_html_escapes_every_chart_text_surface" in command
     assert (
+        "tests/test_figure.py::test_to_html_path_keeps_existing_file_on_atomic_replace_failure"
+        in command
+    )
+    assert (
         "tests/test_components.py::test_component_to_html_escapes_user_strings_across_public_surface"
+        in command
+    )
+    assert (
+        "tests/test_components.py::test_component_to_html_path_keeps_existing_file_on_atomic_replace_failure"
         in command
     )
     assert selected[0].requires_modules == ("pytest",)
@@ -105,7 +118,11 @@ def test_error_safety_check_is_known_as_targeted_gate() -> None:
     selected = verify_local.select_checks(checks, only={"error_safety"})
 
     assert [check.name for check in selected] == ["error_safety"]
-    assert selected[0].command[-2:] == ("tests/test_figure.py", "tests/test_components.py")
+    assert selected[0].command[-3:] == (
+        "tests/test_figure.py",
+        "tests/test_components.py",
+        "tests/test_lod.py",
+    )
     assert selected[0].requires_modules == ("pytest",)
 
 
@@ -127,9 +144,16 @@ def test_api_surface_check_is_known_as_targeted_gate() -> None:
     selected = verify_local.select_checks(checks, only={"api_surface"})
 
     assert [check.name for check in selected] == ["api_surface"]
-    assert selected[0].command[-2:] == (
-        "tests/test_public_api.py",
-        "tests/test_type_surface.py",
+    command = selected[0].command
+    assert "tests/test_public_api.py" in command
+    assert "tests/test_type_surface.py" in command
+    assert (
+        "tests/test_components.py::test_declarative_core_contract_for_layered_axis_chrome_and_interaction"
+        in command
+    )
+    assert (
+        "tests/test_components.py::test_declarative_chart_keeps_notebook_export_and_framework_chrome_contract"
+        in command
     )
     assert selected[0].requires_modules == ("pytest",)
 
@@ -139,7 +163,7 @@ def test_import_budget_check_is_known_as_targeted_gate() -> None:
     selected = verify_local.select_checks(checks, only={"import_budget"})
 
     assert [check.name for check in selected] == ["import_budget"]
-    assert selected[0].command[-1:] == ("tests/test_import.py",)
+    assert selected[0].command[-2:] == ("tests/test_import.py", "tests/test_dependencies.py")
     assert selected[0].requires_modules == ("pytest",)
 
 
@@ -326,6 +350,8 @@ def test_dry_run_includes_security_export_gate(capsys) -> None:
     assert "security_export" in out
     assert "tests/test_static_client_security.py" in out
     assert "test_inline_json_export_escapes_html_hazards_without_changing_data" in out
+    assert "test_to_html_path_keeps_existing_file_on_atomic_replace_failure" in out
+    assert "test_component_to_html_path_keeps_existing_file_on_atomic_replace_failure" in out
 
 
 def test_dry_run_includes_error_safety_gate(capsys) -> None:
@@ -336,6 +362,7 @@ def test_dry_run_includes_error_safety_gate(capsys) -> None:
     assert "error_safety" in out
     assert "tests/test_figure.py" in out
     assert "tests/test_components.py" in out
+    assert "tests/test_lod.py" in out
 
 
 def test_dry_run_includes_benchmark_harness_gate(capsys) -> None:
@@ -369,6 +396,7 @@ def test_dry_run_includes_import_budget_gate(capsys) -> None:
     assert "scripts/check_public_api.py" in out
     assert "import_budget" in out
     assert "tests/test_import.py" in out
+    assert "tests/test_dependencies.py" in out
 
 
 def test_packaging_dry_run_prints_artifact_verifiers(
@@ -481,7 +509,7 @@ def test_makefile_exposes_security_verification_shortcut() -> None:
     assert "check-security:" in makefile
     assert "scripts/verify_local.py --only security_export" in makefile
     assert "make check-security" in makefile
-    assert "standalone HTML escaping" in makefile
+    assert "standalone HTML safety" in makefile
 
 
 def test_makefile_exposes_error_safety_verification_shortcut() -> None:
@@ -490,7 +518,7 @@ def test_makefile_exposes_error_safety_verification_shortcut() -> None:
     assert "check-errors:" in makefile
     assert "scripts/verify_local.py --only error_safety" in makefile
     assert "make check-errors" in makefile
-    assert "public error and mutation-safety tests" in makefile
+    assert "public error, LOD, and mutation-safety tests" in makefile
 
 
 def test_makefile_exposes_api_surface_verification_shortcut() -> None:
@@ -508,7 +536,7 @@ def test_makefile_exposes_import_budget_verification_shortcut() -> None:
     assert "check-import:" in makefile
     assert "scripts/verify_local.py --only public_api,import_budget" in makefile
     assert "make check-import" in makefile
-    assert "import-time budget and lazy-boundary checks" in makefile
+    assert "import-time and dependency-boundary checks" in makefile
 
 
 def test_makefile_exposes_ci_workflow_verification_shortcut() -> None:
@@ -585,8 +613,11 @@ def test_docs_name_error_safety_verification_shortcut() -> None:
     for text in (contributing, production, readme):
         assert "make check-errors" in text
     assert "builder rollback behavior" in contributing
+    assert "LOD/drill mutation boundaries" in contributing
     assert "chart/widget caching" in production
+    assert "LOD/drill mutation boundaries" in production
     assert "public errors" in readme
+    assert "LOD/drill mutation boundaries" in readme
 
 
 def test_docs_name_api_surface_verification_shortcut() -> None:
@@ -610,6 +641,7 @@ def test_docs_name_import_budget_verification_shortcut() -> None:
     for text in (contributing, production, readme):
         assert "make check-import" in text
         assert "lazy import" in text
+        assert "dependency boundaries" in text
     assert "fastcharts.__init__" in contributing
     assert "widget/export boundaries" in readme
     assert "backend import boundaries" in production

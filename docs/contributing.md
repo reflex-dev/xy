@@ -103,15 +103,15 @@ dashboard registry/assets, run:
 make check-examples
 ```
 
-When you touch standalone HTML export, user-facing text surfaces, tooltips,
-legends, or the browser client DOM code, run:
+When you touch standalone HTML export, path writes, user-facing text surfaces,
+tooltips, legends, or the browser client DOM code, run:
 
 ```bash
 make check-security
 ```
 
-When you change validation, public errors, builder rollback behavior, or chart
-composition caching, run:
+When you change validation, public errors, builder rollback behavior, chart
+composition caching, or LOD/drill mutation boundaries, run:
 
 ```bash
 make check-errors
@@ -123,8 +123,8 @@ When you add, remove, rename, or re-type a public export, run:
 make check-api
 ```
 
-When you change `fastcharts.__init__`, lazy imports, widget/export boundaries,
-or backend import setup, run:
+When you change `fastcharts.__init__`, lazy imports, dependency boundaries,
+widget/export boundaries, or backend import setup, run:
 
 ```bash
 make check-import
@@ -135,6 +135,37 @@ For browser render smoke checks, pass a local Chrome/Chromium executable:
 ```bash
 make check-browser CHROMIUM=/path/to/chrome
 ```
+
+This includes the Reflex lifecycle smoke: every committed FastCharts demo asset
+is loaded repeatedly, and each child chart must stay nonblank through the named
+`initial`, `hash-navigation`, `narrow-resize`, `wide-resize`, `scroll-bottom`,
+`fast-scroll`, `visibility-change`, and `restore` phases. The iframe shell also
+exercises hash navigation, fast scrolling, resize and visibility events, a full
+iframe remount, an in-place iframe reload, and a hidden-boot/reveal pass where
+charts initialize at zero-sized iframe dimensions before becoming visible. The custom
+chrome, business overview, and retention cohort assets are tracked as critical
+reports in every shell phase. A blank, destroyed, shortened lifecycle, or
+missing critical asset/phase pair is a failing browser gate.
+
+The same browser gate also runs `scripts/interaction_stress_smoke.py`, a
+smoke-sized interaction benchmark that validates p95 budgets and visual
+invariants for wheel zoom, pan, hover, crosshair, box zoom, and brush select.
+The smoke includes both a direct scatter and a density-tier scatter, plus line,
+histogram, bar, and heatmap rows. It fails on blank interaction frames,
+tick-label overlaps, tooltip flicker, eligible tooltips that do not stay visible
+for every repeated hover sample, missing crosshair chrome, missing view changes,
+box zoom that does not narrow/restore the viewport, brush selection that does
+not select/clear eligible marks, undersized lit-pixel readbacks, and oversized
+frame color jumps.
+
+The visual regression smoke is layout-aware: beyond global nonblank/color
+checks, it verifies title, plot, x-axis, and y-axis regions, rejects collapsed
+plot occupancy, and still runs tick-label overlap probes. It screenshots the
+generated core-family cases plus every committed FastCharts Reflex gallery
+asset; the Plotly comparison page is intentionally excluded because it does not
+use FastCharts' DOM or tick-label probes.
+This catches charts that render pixels in the wrong place or lose browser chrome
+while avoiding a fragile pixel-perfect golden file.
 
 On macOS, pass the executable inside the app bundle, for example
 `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`, not the

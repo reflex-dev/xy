@@ -694,7 +694,7 @@ chart = fc.chart(
     fc.theme(plot_background="white", grid_color="rgba(37,99,235,.12)"),
     fc.tooltip(fields=["x", "y"], format={"x": ".2f", "y": ".2f"}),
     fc.legend(),
-    fc.x_axis(label="time"),
+    fc.x_axis(label="time", tick_count=13),
     fc.y_axis(label="value"),
     on_brush=handle_brush,
     title="Crosshair, click, brush select, linked x-axis",
@@ -882,8 +882,12 @@ def chart_code_drawer(chart: dict[str, str]) -> rx.Component:
     )
 
 
-def chart_panel(chart: dict[str, str], *, fluid: bool = False) -> rx.Component:
-    is_live_drilldown = chart["id"] == LIVE_DRILLDOWN_CHART["id"]
+def chart_panel(
+    chart: dict[str, str],
+    *,
+    fluid: bool = False,
+    loading: str = "lazy",
+) -> rx.Component:
     return rx.box(
         rx.box(
             rx.hstack(
@@ -901,9 +905,10 @@ def chart_panel(chart: dict[str, str], *, fluid: bool = False) -> rx.Component:
         ),
         rx.box(
             rx.el.iframe(
+                id=f"{chart['id']}-frame",
                 src=chart["src"],
                 title=chart["title"],
-                loading="eager" if is_live_drilldown else "lazy",
+                loading=loading,
                 style={
                     "border": "0",
                     "width": "100%" if fluid else "1040px",
@@ -917,6 +922,7 @@ def chart_panel(chart: dict[str, str], *, fluid: bool = False) -> rx.Component:
             overflow_y="hidden",
             background="#ffffff",
             width="100%",
+            id=f"{chart['id']}-frame-wrap",
         ),
         chart_code_drawer(chart),
         border="1px solid #dde3ea",
@@ -1450,7 +1456,8 @@ def chart_card(chart: dict[str, str], *, fluid: bool = False) -> rx.Component:
         return custom_chrome_panel(chart)
     if chart["id"] == ANNOTATED_HEATMAP_CHART["id"]:
         return annotated_heatmap_panel(chart)
-    return chart_panel(chart, fluid=fluid)
+    loading = "eager" if chart["id"] in {"business-overview", "retention-cohort"} else "lazy"
+    return chart_panel(chart, fluid=fluid, loading=loading)
 
 
 def chart_selector() -> rx.Component:

@@ -140,6 +140,13 @@ jobs:
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
           .venv/bin/python scripts/smoke_render.py "$CHROME"
 
+      - name: Browser core lifecycle, visual, and interaction smoke (Chromium)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python scripts/reflex_lifecycle_smoke.py "$CHROME"
+          .venv/bin/python scripts/visual_regression_smoke.py "$CHROME"
+          .venv/bin/python scripts/interaction_stress_smoke.py "$CHROME"
+
       - name: Benchmark smoke (1e5/1e6 — §12 harness runs every phase)
         run: .venv/bin/python scripts/bench.py --sizes 1e5,1e6
 
@@ -196,6 +203,8 @@ jobs:
           node js/build.mjs
           cargo build --release
       - name: Install fastcharts + competitors
+        env:
+          FASTCHARTS_REQUIRE_CARGO: "1"
         run: |
           uv venv .venv
           uv pip install -p .venv/bin/python -e .
@@ -226,7 +235,7 @@ jobs:
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
           .venv/bin/python benchmarks/bench_interaction.py \
-            --sizes 1e4,1e5 --reps 8 --chromium "$CHROME" \
+            --sizes 1e4,2.5e5 --reps 8 --chromium "$CHROME" \
             --json interaction.json | tee -a docs/benchmark_ci.md
       - name: Many-chart dashboard startup (methodology dashboard_20)
         run: |

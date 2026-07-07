@@ -1103,6 +1103,7 @@ function lodApplyDensityUpdate(view, g, upd, buffers) {
     tex: view._uploadGrid(grid, d.w, d.h, normMax),
     lut: g.density.lut,
   };
+  view._applyDensitySample(g, d.sample, buffers);
   lodStartNormAnim(view, g, normMax, d.max);
   lodRememberDensity(view, g, g.density);
 }
@@ -1234,6 +1235,7 @@ function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
       if (g._drillDying) lodDropDrill(view, g); // fade done: free the buffers
       else if (exitingDrill) g._drillWasInside = false;
       lodDrawDensityWithFade(view, g, density);
+      view._drawDensitySample(g, x0, x1, y0, y1);
     }
   } else if (d) {
     view._drawPoints(
@@ -1558,6 +1560,7 @@ class ChartView {
   }
 
   _applySlot(el, slot) {
+    if (el && el.dataset) el.dataset.fcSlot = slot;
     const dom = this.spec.dom;
     if (!dom || typeof dom !== "object") return;
     if (slot === "root") this._applyClass(el, dom.class_name);
@@ -1700,6 +1703,7 @@ class ChartView {
     ) {
       this._legend.style.maxHeight = p.h - 12 + "px";
     }
+    this._positionReductionBadges();
     this._pickDirty = true;
     this.draw();
     this._scheduleViewRequest();
@@ -1755,6 +1759,72 @@ class ChartView {
     root.appendChild(this.tooltip);
 
     this._buildLegend(root);
+    this._buildReductionBadges(root);
+  }
+
+  _compactInt(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "0";
+    return Math.round(n).toLocaleString();
+  }
+
+  _positionReductionBadges() {
+    if (!this._badges) return;
+    const rightInset = this.size.w - (this.plot.x + this.plot.w);
+    const bottomInset = this.size.h - (this.plot.y + this.plot.h);
+    this._badges.style.right = `${rightInset + 6}px`;
+    this._badges.style.bottom = `${bottomInset + 6}px`;
+  }
+
+  _reductionBadgeItems() {
+    const items = [];
+    const traces = this.gpuTraces && this.gpuTraces.length
+      ? this.gpuTraces
+      : (this.spec.traces || []);
+    for (const entry of traces) {
+      const t = entry.trace || entry;
+      if (t.tier !== "density" || !t.density) continue;
+      const sample = entry.sampleOverlay && entry.sampleOverlay.sample
+        ? entry.sampleOverlay.sample
+        : t.density.sample;
+      if (sample && Number(sample.n) > 0) {
+        items.push(`sampled ${this._compactInt(sample.n)} of ${this._compactInt(sample.visible)}`);
+      }
+      if (t.density.channels_dropped) items.push("aggregated channels");
+    }
+    return items;
+  }
+
+  _refreshReductionBadges() {
+    if (!this._badges) return;
+    const items = this._reductionBadgeItems();
+    this._badges.textContent = "";
+    this._badges.hidden = items.length === 0;
+    for (const item of items) {
+      const badge = document.createElement("div");
+      badge.textContent = item;
+      badge.style.cssText =
+        "padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);" +
+        "background:var(--chart-badge-bg,rgba(255,255,255,.82));" +
+        "box-shadow:0 1px 4px rgba(15,23,42,.14);";
+      this._applySlot(badge, "badge_item");
+      this._badges.appendChild(badge);
+    }
+    this._positionReductionBadges();
+  }
+
+  _buildReductionBadges(root) {
+    const items = this._reductionBadgeItems();
+    const hasDensityTrace = (this.spec.traces || []).some((t) => t.tier === "density");
+    if (!items.length && !hasDensityTrace) return;
+    const box = document.createElement("div");
+    box.style.cssText =
+      "position:absolute;display:flex;flex-direction:column;align-items:flex-end;gap:3px;" +
+      "pointer-events:none;z-index:4;font-size:11px;line-height:1.2;";
+    this._applySlot(box, "badge");
+    root.appendChild(box);
+    this._badges = box;
+    this._refreshReductionBadges();
   }
 
   _buildLegend(root) {
@@ -1910,6 +1980,7 @@ class ChartView {
         tex: this._uploadGrid(grid, d.w, d.h, d.max),
         lut: this._lut(d.colormap),
       };
+      g.sampleOverlay = this._buildDensitySample(t, d.sample, buffer);
       g._shownDensity = g.density;
       lodRememberDensity(this, g, g.density);
       return g;
@@ -1956,6 +2027,126 @@ class ChartView {
       g.sBuf = this._upload(this._columnView(buffer, this.spec.columns[t.size.buf]));
       g.sizeRange = t.size.range_px;
     }
+  }
+
+  _sampleTraceSpec(parentTrace, sample) {
+    return {
+      id: parentTrace.id,
+      kind: "scatter",
+      name: parentTrace.name,
+      style: sample.style || parentTrace.style || {},
+      tier: "sampled",
+      x: sample.x && sample.x.col,
+      y: sample.y && sample.y.col,
+      x_axis: parentTrace.x_axis,
+      y_axis: parentTrace.y_axis,
+      color: sample.color,
+      size: sample.size,
+    };
+  }
+
+  _buildDensitySample(parentTrace, sample, buffer) {
+    if (!sample || !sample.x || !sample.y || sample.x.col === undefined || sample.y.col === undefined) {
+      return null;
+    }
+    const trace = this._sampleTraceSpec(parentTrace, sample);
+    const g = {
+      trace,
+      tier: "sampled",
+      xAxis: typeof parentTrace.x_axis === "string" ? parentTrace.x_axis : "x",
+      yAxis: typeof parentTrace.y_axis === "string" ? parentTrace.y_axis : "y",
+    };
+    this._buildScatterMark(g, trace, buffer);
+    g.win = {
+      x0: sample.x_range[0], x1: sample.x_range[1],
+      y0: sample.y_range[0], y1: sample.y_range[1],
+    };
+    g.sample = { n: sample.n, visible: sample.visible };
+    return g;
+  }
+
+  _destroyDensitySample(g) {
+    const s = g && g.sampleOverlay;
+    if (!s || !this.gl) return;
+    for (const b of [s.xBuf, s.yBuf, s.cBuf, s.sBuf, s.selBuf, s.dBuf]) {
+      if (b) this.gl.deleteBuffer(b);
+    }
+    g.sampleOverlay = null;
+  }
+
+  _applyDensitySample(g, sample, buffers) {
+    this._destroyDensitySample(g);
+    if (!sample || !sample.x || !sample.y || sample.x.buf === undefined || sample.y.buf === undefined) {
+      this._refreshReductionBadges();
+      return;
+    }
+    const gl = this.gl;
+    const trace = {
+      id: g.trace.id,
+      kind: "scatter",
+      name: g.trace.name,
+      style: sample.style || g.trace.style || {},
+      tier: "sampled",
+      x_axis: g.trace.x_axis,
+      y_axis: g.trace.y_axis,
+      color: sample.color,
+      size: sample.size,
+    };
+    const s = {
+      trace,
+      tier: "sampled",
+      xAxis: g.xAxis,
+      yAxis: g.yAxis,
+      xBuf: gl.createBuffer(),
+      yBuf: gl.createBuffer(),
+      xMeta: { offset: sample.x.offset, scale: sample.x.scale },
+      yMeta: { offset: sample.y.offset, scale: sample.y.scale },
+      n: Math.min(sample.x.len, sample.y.len),
+      win: {
+        x0: sample.x_range[0], x1: sample.x_range[1],
+        y0: sample.y_range[0], y1: sample.y_range[1],
+      },
+      sample: { n: sample.n, visible: sample.visible },
+      selActive: false,
+      colorMode: 0,
+      color: parseColor(this.root, sample.color && sample.color.color, [0.3, 0.47, 0.66, 1]),
+      sizeMode: 0,
+      size: (sample.size && sample.size.size) || 4.0,
+      sizeRange: [2, 18],
+    };
+    gl.bindBuffer(gl.ARRAY_BUFFER, s.xBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.x.buf]), gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, s.yBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.y.buf]), gl.STATIC_DRAW);
+    if (sample.color && sample.color.buf !== undefined) {
+      s.colorMode = sample.color.mode === "continuous" ? 1 : 2;
+      s.cBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, s.cBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.color.buf]), gl.STATIC_DRAW);
+      s.lut = sample.color.mode === "continuous"
+        ? this._lut(sample.color.colormap)
+        : this._paletteLut(sample.color.palette);
+    }
+    if (sample.size && sample.size.mode === "continuous") {
+      s.sizeMode = 1;
+      s.sBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, s.sBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.size.buf]), gl.STATIC_DRAW);
+      s.sizeRange = sample.size.range_px;
+    }
+    g.sampleOverlay = s;
+    this._refreshReductionBadges();
+  }
+
+  _drawDensitySample(g, x0, x1, y0, y1, opacityScale = 1) {
+    const s = g && g.sampleOverlay;
+    if (!s || !s.n || !this._viewInside(s.win)) return;
+    this._drawPoints(
+      s,
+      this._map(s.xMeta, x0, x1, s.xAxis),
+      this._map(s.yMeta, y0, y1, s.yAxis),
+      opacityScale
+    );
   }
 
   _buildLineMark(g, t, buffer) {
@@ -3015,6 +3206,9 @@ class ChartView {
       if (!updateLabels) return;
       const d = document.createElement("div");
       d.textContent = text;
+      d.dataset.fcLabelKind = kind;
+      d.dataset.fcAxis = axis && axis.id !== undefined ? String(axis.id) : "";
+      d.dataset.fcAxisSide = axis && axis.side ? String(axis.side) : "";
       const colorKey = kind === "label" ? "label_color" : "tick_color";
       const sizeKey = kind === "label" ? "label_size" : "tick_size";
       const defaultSize = kind === "label" ? 12 : 11;
@@ -3767,8 +3961,10 @@ class ChartView {
       // _cpu only exists where the standalone entry retained copies (retainCpu).
       if (!g._cpu || g.tier === "density") continue;
       const cx = g._cpu.x, cy = g._cpu.y;
-      const ox = g.xMeta.offset, sx = g.xMeta.scale || 1;
-      const oy = g.yMeta.offset, sy = g.yMeta.scale || 1;
+      const xMeta = g._cpu.xMeta || g.xMeta;
+      const yMeta = g._cpu.yMeta || g.yMeta;
+      const ox = xMeta.offset, sx = xMeta.scale || 1;
+      const oy = yMeta.offset, sy = yMeta.scale || 1;
       const mask = new Float32Array(g.n);
       let cnt = 0;
       for (let i = 0; i < g.n; i++) {
@@ -4411,6 +4607,7 @@ class ChartView {
 
   _destroyTraceResources(g, texSeen) {
     if (!g) return;
+    this._destroyDensitySample(g);
     this._deleteBuffers(g, [
       "xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "baseBuf",
       "x0Buf", "x1Buf", "y0Buf", "y1Buf",

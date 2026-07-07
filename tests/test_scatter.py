@@ -10,7 +10,7 @@ import pytest
 
 from fastcharts import Figure
 from fastcharts import channels as ch
-from fastcharts.config import MAX_SCREEN_DIM
+from fastcharts.config import DENSITY_SAMPLE_TARGET, MAX_SCREEN_DIM
 from fastcharts.figure import DENSITY_GRID, SCATTER_DENSITY_THRESHOLD
 from fastcharts.interaction import _decode_log_u8
 
@@ -18,6 +18,12 @@ from fastcharts.interaction import _decode_log_u8
 def _col(spec, blob, ref, dtype=np.float32):
     m = spec["columns"][ref]
     return np.frombuffer(blob, dtype=dtype, count=m["len"], offset=m["byte_offset"])
+
+
+def _decoded_col(spec, blob, ref):
+    meta = spec["columns"][ref]
+    values = _col(spec, blob, ref).astype(np.float64)
+    return values / meta.get("scale", 1.0) + meta.get("offset", 0.0)
 
 
 # -- channel resolution ------------------------------------------------------
@@ -290,6 +296,61 @@ def test_large_scatter_uses_density():
     assert tr["density"]["max"] == grid.max()
 
 
+def test_density_payload_includes_deterministic_sample_overlay():
+    n = SCATTER_DENSITY_THRESHOLD + 50_000
+    rng = np.random.default_rng(30)
+    x = rng.normal(size=n)
+    y = rng.normal(size=n)
+
+    fig = Figure().scatter(x, y, density=True)
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    sample = tr["density"]["sample"]
+
+    assert sample["mode"] == "sampled"
+    assert sample["visible"] == tr["visible"]
+    assert 0 < sample["n"] <= int(DENSITY_SAMPLE_TARGET * 1.2)
+    assert sample["target"] == DENSITY_SAMPLE_TARGET
+    assert sample["style"]["opacity"] <= 0.55
+    assert spec["columns"][sample["x"]["col"]]["len"] == sample["n"]
+    assert spec["columns"][sample["y"]["col"]]["len"] == sample["n"]
+
+    xs = _decoded_col(spec, blob, sample["x"]["col"])
+    ys = _decoded_col(spec, blob, sample["y"]["col"])
+    assert xs.min() >= sample["x_range"][0]
+    assert xs.max() <= sample["x_range"][1]
+    assert ys.min() >= sample["y_range"][0]
+    assert ys.max() <= sample["y_range"][1]
+
+    spec2, blob2 = Figure().scatter(x, y, density=True).build_payload()
+    sample2 = spec2["traces"][0]["density"]["sample"]
+    np.testing.assert_array_equal(
+        _col(spec, blob, sample["x"]["col"]), _col(spec2, blob2, sample2["x"]["col"])
+    )
+    np.testing.assert_array_equal(
+        _col(spec, blob, sample["y"]["col"]), _col(spec2, blob2, sample2["y"]["col"])
+    )
+
+
+def test_density_sample_overlay_preserves_rare_categories():
+    n = SCATTER_DENSITY_THRESHOLD + 50_000
+    rng = np.random.default_rng(31)
+    x = rng.normal(size=n)
+    y = rng.normal(size=n)
+    color = np.full(n, "common", dtype=object)
+    color[17] = "rare"
+    color[n // 3] = "tail"
+
+    spec, blob = Figure().scatter(x, y, color=color, density=True).build_payload()
+    sample = spec["traces"][0]["density"]["sample"]
+    color_spec = sample["color"]
+    codes = _col(spec, blob, color_spec["buf"])
+
+    assert color_spec["mode"] == "categorical"
+    assert "rare" in color_spec["categories"]
+    assert int(color_spec["categories"].index("rare")) in set(codes.astype(int))
+
+
 def test_small_scatter_stays_direct():
     fig = Figure().scatter(np.arange(1000.0), np.arange(1000.0))
     assert not fig.traces[0].use_density()
@@ -315,6 +376,8 @@ def test_density_view_rebins():
     update, buffers = fig.density_view(0, 10.0, 90.0, 20.0, 80.0, 64, 48)
     assert len(update["traces"]) == 1
     assert update["traces"][0]["mode"] == "density"
+    assert update["traces"][0]["tier"] == "density"
+    assert update["traces"][0]["reduction"] == "count"
     d = update["traces"][0]["density"]
     assert d["w"] == 64 and d["h"] == 48
     # Quantized wire (§29): density updates ship log-encoded u8, one byte per
@@ -329,6 +392,14 @@ def test_density_view_rebins():
     inwin = np.sum((x >= 10) & (x < 90) & (y >= 20) & (y < 80))
     assert inwin > SCATTER_DENSITY_THRESHOLD  # really over budget
     assert grid.sum() == pytest.approx(inwin, rel=0.05)
+    sample = d["sample"]
+    assert sample["mode"] == "sampled"
+    assert sample["visible"] == update["traces"][0]["visible"] == inwin
+    assert 0 < sample["n"] <= int(DENSITY_SAMPLE_TARGET * 1.2)
+    xs = np.frombuffer(buffers[sample["x"]["buf"]], dtype=np.float32)
+    ys = np.frombuffer(buffers[sample["y"]["buf"]], dtype=np.float32)
+    assert len(xs) == sample["n"]
+    assert len(ys) == sample["n"]
 
 
 def test_density_view_coarsens_sparse_screen_grid():
@@ -363,6 +434,8 @@ def test_density_view_drills_to_points_when_window_fits():
     upd, bufs = fig.density_view(0, 0.0, 10.0, 0.0, 10.0, 512, 384)
     tr = upd["traces"][0]
     assert tr["mode"] == "points"
+    assert tr["tier"] == "direct"
+    assert tr["reduction"] == "none"
     inwin = int(np.sum((x >= 0) & (x <= 10) & (y >= 0) & (y <= 10)))
     assert 0 < inwin <= SCATTER_DENSITY_THRESHOLD
     assert tr["visible"] == inwin and tr["x"]["len"] == inwin

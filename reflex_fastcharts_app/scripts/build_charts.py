@@ -593,7 +593,7 @@ def interaction_basics_demo() -> fc.Chart:
         fc.theme(plot_background="white", grid_color="rgba(37,99,235,.12)"),
         fc.tooltip(fields=["x", "y"], format={"x": ".2f", "y": ".2f"}),
         fc.legend(),
-        fc.x_axis(label="time"),
+        fc.x_axis(label="time", tick_count=13),
         fc.y_axis(label="value"),
         title="Crosshair, click, brush select, linked x-axis",
         width="100%",

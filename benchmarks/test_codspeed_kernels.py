@@ -15,15 +15,23 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import fastcharts as fc
 from fastcharts import Figure
 from fastcharts import kernels as k
 
-# One million points: a representative "large dataset" workload where the
-# engine's cost-scales-with-pixels design is what keeps interaction fast.
-N = 1_000_000
+# Small/medium/large sizes keep CodSpeed honest across normal dashboard charts,
+# exact WebGL workloads, and screen-bounded large-data paths without turning it
+# into the full cross-library benchmark suite.
+SMALL_N = 10_000
+MEDIUM_N = 100_000
+N = LARGE_N = 1_000_000
 GRID_W, GRID_H = 512, 384
 N_BUCKETS = 2048
 DRILL_N = 600_000
+HIST_N = 100_000
+AREA_N = 100_000
+BAR_N = 1_000
+HEATMAP_W, HEATMAP_H = 160, 120
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -40,6 +48,70 @@ def data() -> tuple[np.ndarray, np.ndarray]:
     x = np.arange(N, dtype=np.float64)
     y = rng.normal(0.0, 1.0, N)
     return x, y
+
+
+@pytest.fixture(scope="module")
+def small_data() -> tuple[np.ndarray, np.ndarray]:
+    rng = np.random.default_rng(7)
+    x = np.arange(SMALL_N, dtype=np.float64)
+    y = rng.normal(0.0, 1.0, SMALL_N)
+    return x, y
+
+
+@pytest.fixture(scope="module")
+def medium_data() -> tuple[np.ndarray, np.ndarray]:
+    rng = np.random.default_rng(11)
+    x = np.arange(MEDIUM_N, dtype=np.float64)
+    y = rng.normal(0.0, 1.0, MEDIUM_N)
+    return x, y
+
+
+@pytest.fixture(scope="module")
+def core_2d_data() -> dict[str, object]:
+    rng = np.random.default_rng(31)
+    hist_values = np.concatenate(
+        [
+            rng.normal(-1.1, 0.52, HIST_N // 2),
+            rng.normal(1.35, 0.68, HIST_N - HIST_N // 2),
+        ]
+    ).astype(np.float64, copy=False)
+    categories = [f"C{i:04d}" for i in range(BAR_N)]
+    bar_values = (
+        42.0 + 18.0 * np.sin(np.linspace(0.0, 18.0, BAR_N)) + rng.normal(0.0, 3.0, BAR_N)
+    ).astype(np.float64, copy=False)
+    target_values = (
+        46.0 + 12.0 * np.cos(np.linspace(0.0, 14.0, BAR_N)) + rng.normal(0.0, 1.5, BAR_N)
+    ).astype(np.float64, copy=False)
+    sample_values = (0.62 * bar_values + 0.38 * target_values).astype(np.float64, copy=False)
+    area_x = np.arange(AREA_N, dtype=np.float64)
+    area_y = (
+        35.0
+        + 4.0 * np.sin(np.linspace(0.0, 18.0, AREA_N))
+        + np.cumsum(rng.normal(0.0, 0.018, AREA_N))
+    ).astype(np.float64, copy=False)
+    hx = np.linspace(-3.0, 3.0, HEATMAP_W, dtype=np.float64)
+    hy = np.linspace(-2.4, 2.4, HEATMAP_H, dtype=np.float64)
+    xx, yy = np.meshgrid(hx, hy)
+    heatmap = (
+        np.exp(-((xx - 0.85) ** 2 + (yy + 0.3) ** 2))
+        + 0.72 * np.exp(-((xx + 1.2) ** 2 + (yy - 0.65) ** 2) / 0.52)
+    ).astype(np.float64, copy=False)
+    return {
+        "hist_values": hist_values,
+        "area_x": area_x,
+        "area_y": area_y,
+        "bar_categories": categories,
+        "bar_values": bar_values,
+        "composed_data": {
+            "category": categories,
+            "actual": bar_values,
+            "target": target_values,
+            "sample": sample_values,
+        },
+        "heatmap_x": hx,
+        "heatmap_y": hy,
+        "heatmap_z": heatmap,
+    }
 
 
 @pytest.fixture(scope="module")
@@ -101,6 +173,165 @@ def test_range_indices(benchmark, data):
     """Rectangular selection/viewport scan used by drilldown."""
     x, y = data
     benchmark(k.range_indices, x, y, N * 0.45, N * 0.55, -2.0, 2.0)
+
+
+def _scatter_payload(x: np.ndarray, y: np.ndarray, *, density: bool | None = None) -> int:
+    fig = Figure()
+    fig.scatter(x, y, density=density)
+    _spec, blob = fig.build_payload(N_BUCKETS)
+    return len(blob)
+
+
+def _line_payload(x: np.ndarray, y: np.ndarray) -> int:
+    fig = Figure()
+    fig.line(x, y)
+    _spec, blob = fig.build_payload(N_BUCKETS)
+    return len(blob)
+
+
+def _density_memory_report(x: np.ndarray, y: np.ndarray) -> dict[str, object]:
+    fig = Figure()
+    fig.scatter(x, y, density=True)
+    return fig.memory_report()
+
+
+def _histogram_payload(values: np.ndarray) -> int:
+    fig = Figure()
+    fig.histogram(values, bins=200)
+    _spec, blob = fig.build_payload(N_BUCKETS)
+    return len(blob)
+
+
+def _area_payload(x: np.ndarray, y: np.ndarray) -> int:
+    fig = Figure()
+    fig.area(x, y)
+    _spec, blob = fig.build_payload(N_BUCKETS)
+    return len(blob)
+
+
+def _bar_payload(categories: list[str], values: np.ndarray) -> int:
+    fig = Figure()
+    fig.bar(categories, values)
+    _spec, blob = fig.build_payload(N_BUCKETS)
+    return len(blob)
+
+
+def _heatmap_payload(z: np.ndarray, x: np.ndarray, y: np.ndarray) -> int:
+    fig = Figure()
+    fig.heatmap(z, x=x, y=y)
+    _spec, blob = fig.build_payload(N_BUCKETS)
+    return len(blob)
+
+
+def _composed_layered_payload(data: dict[str, object]) -> int:
+    chart = fc.chart(
+        fc.bar(x="category", y="actual", data=data, name="actual", color="#f59e0b"),
+        fc.scatter(x="category", y="sample", data=data, name="sample", color="#2563eb", size=8),
+        fc.line(x="category", y="target", data=data, name="target", color="#dc2626", width=2),
+        fc.x_band("C0200", "C0400", text="campaign", color="#7c3aed", opacity=0.12),
+        fc.vline("C0500", text="release", color="#7c3aed"),
+        fc.x_axis(label="category", tick_label_strategy="auto", tick_label_min_gap=28),
+        fc.y_axis(label="pipeline"),
+        fc.tooltip(
+            fields=["category", "actual", "sample", "target"],
+            title="{category}",
+            format={"actual": ".1f", "sample": ".1f", "target": ".1f"},
+        ),
+        fc.legend(),
+        title="CodSpeed layered core 2D",
+        width=720,
+        height=420,
+        class_name="fc-chart",
+        class_names={"legend": "fc-legend", "tooltip": "fc-tooltip"},
+        style={"--fc-accent": "#2563eb"},
+    )
+    _spec, blob = chart.figure().build_payload(N_BUCKETS)
+    return len(blob)
+
+
+def test_first_payload_scatter_small(benchmark, small_data):
+    """Small-data first payload: everyday exact scatter startup."""
+    x, y = small_data
+    payload_bytes = benchmark(_scatter_payload, x, y)
+    assert payload_bytes > 0
+
+
+def test_first_payload_scatter_medium(benchmark, medium_data):
+    """Medium exact scatter first payload before aggregation is needed."""
+    x, y = medium_data
+    payload_bytes = benchmark(_scatter_payload, x, y)
+    assert payload_bytes > 0
+
+
+def test_first_payload_line_large(benchmark, data):
+    """Large line first payload, including M4 decimation and binary transport."""
+    x, y = data
+    payload_bytes = benchmark(_line_payload, x, y)
+    assert 0 < payload_bytes < x.nbytes + y.nbytes
+
+
+def test_first_payload_density_large(benchmark, data):
+    """Large scatter overview first payload through the density tier."""
+    x, y = data
+    payload_bytes = benchmark(_scatter_payload, x, y, density=True)
+    assert 0 < payload_bytes < x.nbytes + y.nbytes
+
+
+def test_memory_report_density_medium(benchmark, medium_data):
+    """Memory/payload accounting path for screen-bounded density charts."""
+    x, y = medium_data
+    report = benchmark(_density_memory_report, x, y)
+    assert report["backend"] == "native"
+    assert report["transport_bytes_first_paint"] > 0
+    assert report["transport_bytes_per_point"] > 0
+
+
+def test_first_payload_histogram_core_2d(benchmark, core_2d_data):
+    """Core 2D payload prep: histogram binning plus rectangle transport."""
+    values = core_2d_data["hist_values"]
+    assert isinstance(values, np.ndarray)
+    payload_bytes = benchmark(_histogram_payload, values)
+    assert 0 < payload_bytes < values.nbytes
+
+
+def test_first_payload_area_core_2d(benchmark, core_2d_data):
+    """Core 2D payload prep: filled area series and binary transport."""
+    x = core_2d_data["area_x"]
+    y = core_2d_data["area_y"]
+    assert isinstance(x, np.ndarray)
+    assert isinstance(y, np.ndarray)
+    payload_bytes = benchmark(_area_payload, x, y)
+    assert 0 < payload_bytes < x.nbytes + y.nbytes
+
+
+def test_first_payload_bar_core_2d(benchmark, core_2d_data):
+    """Core 2D payload prep: categorical rectangles and category axis metadata."""
+    categories = core_2d_data["bar_categories"]
+    values = core_2d_data["bar_values"]
+    assert isinstance(categories, list)
+    assert isinstance(values, np.ndarray)
+    payload_bytes = benchmark(_bar_payload, categories, values)
+    assert 0 < payload_bytes < values.nbytes * 2
+
+
+def test_first_payload_heatmap_core_2d(benchmark, core_2d_data):
+    """Core 2D payload prep: dense cell grid normalization and binary transport."""
+    z = core_2d_data["heatmap_z"]
+    x = core_2d_data["heatmap_x"]
+    y = core_2d_data["heatmap_y"]
+    assert isinstance(z, np.ndarray)
+    assert isinstance(x, np.ndarray)
+    assert isinstance(y, np.ndarray)
+    payload_bytes = benchmark(_heatmap_payload, z, x, y)
+    assert 0 < payload_bytes < z.nbytes
+
+
+def test_first_payload_composed_layered_core_2d(benchmark, core_2d_data):
+    """Core 2D payload prep through the public declarative layered API."""
+    data = core_2d_data["composed_data"]
+    assert isinstance(data, dict)
+    payload_bytes = benchmark(_composed_layered_payload, data)
+    assert payload_bytes > 0
 
 
 def test_build_payload(benchmark, data):
