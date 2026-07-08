@@ -414,22 +414,30 @@ fails if any of those required interaction rows disappear.
 
 ### 10M-point native benchmark
 
-These CI numbers use the native Rust backend on Ubuntu. See
+Measured by the `benchmark-refresh` CI workflow on 2026-07-08 (Ubuntu, native
+Rust backend) — every library in one consistent run of `benchmarks/bench_vs.py`.
+`Total` is build + static render; `Peak` is the tracemalloc peak across that
+whole pipeline, so it includes fastcharts copying the raw 10M points into its
+canonical f64 store (a transient the raster libraries pay too); `Resident Δ` is
+the lasting RSS growth after the work settles. See
 [`docs/benchmark.md`](docs/benchmark.md) for the full tables and fairness notes.
 
-| Library | Target | Total | Peak memory | Payload / output |
-|---|---|---:|---:|---:|
-| fastcharts | GPU binary payload | **86 ms** | **2 MB** | **768 KB** |
-| matplotlib | Agg PNG | 3,230 ms | 553 MB | 41 KB |
-| Seaborn | matplotlib/Agg PNG | pending CI refresh | pending | pending |
-| Plotly `Scattergl` | Kaleido PNG | 33,907 ms | 1,584 MB | 49 KB |
-| Plotly `Scatter` | SVG/Kaleido | over budget at 3M | 804 MB at 3M | 78 MB at 3M |
+| Library | Target | Total | Peak mem | Resident Δ | Payload / output |
+|---|---|---:|---:|---:|---:|
+| fastcharts | GPU binary payload | **274 ms** | 269 MB | **+15 MB** | **832 KB** |
+| matplotlib | Agg PNG | 3,339 ms | 553 MB | +225 MB | 42 KB |
+| Seaborn | matplotlib/Agg PNG | 8,452 ms | 1,088 MB | +695 MB | 32 KB |
+| Plotly `Scattergl` | Kaleido PNG | 55,469 ms | 1,584 MB | +376 MB | 49 KB |
+| Plotly `Scatter` | SVG/Kaleido | over budget above 1M | 184 MB at 1M | — | 109 KB at 1M |
 
-At 10M points, fastcharts stays screen-bounded after density aggregation: the
-payload is fixed-size, and peak Python allocation stays near 2 MB.
-Seaborn is included in the cross-library scatter harness; its 10M headline row
-is marked pending until the CI benchmark snapshot is refreshed with a measured
-Seaborn/Agg run.
+At 10M points fastcharts is 12x faster than matplotlib, 31x than Seaborn, and
+200x than Plotly `Scattergl`, at 2-6x lower peak memory. That 269 MB peak is
+dominated by the transient f64 copy of the raw points every library must hold;
+fastcharts' *own* output stays screen-bounded — a fixed 832 KB density payload
+and only ~15 MB of lasting resident growth, versus +225–695 MB for the raster
+libraries. (The payload-only native benchmark in
+[`docs/benchmark.md`](docs/benchmark.md) reports that screen-bounded allocation
+in isolation, where it stays near 2 MB regardless of N.)
 
 ### Core 2D benchmark
 
