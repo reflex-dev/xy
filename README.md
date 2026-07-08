@@ -441,29 +441,37 @@ in isolation, where it stays near 2 MB regardless of N.)
 
 ### Core 2D benchmark
 
-Measured locally on July 4, 2026 with the native Rust backend and headless
-Chrome TTFR. The numeric summary below is only the Plotly interactive
-comparison.
+Measured by the `benchmark-refresh` CI workflow on 2026-07-08 (Ubuntu, native
+Rust backend, headless-Chrome TTFR). `Speedup` is total payload-prep time
+(Plotly's `total` ÷ fastcharts' `total`); the harness warms each library once
+before timing so no row is charged a one-time cold-start. Rows are interactive
+sizes where a browser TTFR was measured.
 
-| Chart | Workload | Payload-prep vs Plotly | Payload reduction vs Plotly | TTFR speedup vs Plotly |
-|---|---:|---:|---:|---:|
-| Histogram | 100k values / 200 bins | 303x faster | 348x smaller | 5.89x faster |
-| Area | 100k samples | 10.5x faster | 26.1x smaller | 3.19x faster |
-| Bar | 1k categories | 13.4x faster | 1.53x smaller | 3.23x faster |
-| Grouped bar | 1k categories x 4 | 10.3x faster | 2.06x smaller | 3.73x faster |
-| Stacked bar | 1k categories x 4 | 9.17x faster | 1.60x smaller | 2.91x faster |
-| Heatmap | 120 x 120 cells | 19.4x faster | 3.45x smaller | 3.06x faster |
+| Chart | Workload | Speedup vs Plotly | Payload reduction vs Plotly | TTFR speedup vs Plotly |
+|---|---|---:|---:|---:|
+| Histogram | 10k values / 200 bins | 15.9x faster | 33.4x smaller | 5.8x faster |
+| Area | 10k samples | 19.5x faster | 1.9x smaller | 3.6x faster |
+| Bar | 100 categories | 11.5x faster | 2.5x smaller | 4.4x faster |
+| Grouped bar | 100 categories x 4 | 5.7x faster | 2.1x smaller | 4.9x faster |
+| Stacked bar | 100 categories x 4 | 4.8x faster | 1.7x smaller | 4.7x faster |
+| Heatmap | 50 x 50 cells | 33.3x faster | 3.4x smaller | 4.1x faster |
 
-The same harness also emits Seaborn/Agg rows as static chart-to-pixels baselines:
+Payload reduction grows sharply with data size, because fastcharts bins
+Python-side and ships fixed-size rectangles while Plotly ships raw values: the
+histogram payload advantage goes from 33x smaller at 10k values to **321x at
+100k and 3192x at 1M**.
 
-| Chart | Seaborn/Agg status |
+The same harness also measures Seaborn/Agg as a static chart-to-pixels baseline
+(total-time speedup where a Seaborn-native primitive exists):
+
+| Chart | vs Seaborn/Agg |
 |---|---|
-| Histogram | measured |
+| Histogram | 164x–196x faster |
 | Area | unavailable; no direct Seaborn-native area primitive |
-| Bar | measured |
-| Grouped bar | measured |
+| Bar | 329x–725x faster |
+| Grouped bar | 211x–903x faster |
 | Stacked bar | unavailable; no direct Seaborn-native stacked bar primitive |
-| Heatmap | measured |
+| Heatmap | 20x–26x faster |
 
 ## What Exists
 
