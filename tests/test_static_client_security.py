@@ -5,28 +5,31 @@ from pathlib import Path
 from fastcharts.components import CHART_DOM_SLOTS
 
 ROOT = Path(__file__).resolve().parents[1]
-CLIENT_FILES = (
-    ROOT / "js/src/50_chartview.js",
-    ROOT / "python/fastcharts/static/index.js",
-    ROOT / "python/fastcharts/static/standalone.js",
+_STATIC = ROOT / "python" / "fastcharts" / "static"
+
+
+def _read(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+# The hand-written client is split across ordered js/src parts — 50_chartview.js
+# was decomposed into 50 (core) + 51_annotations/52_tooltip/53_interaction/
+# 54_kernel. Assert source-level invariants against the whole concatenation so a
+# further split never silently drops a check, plus each built bundle separately.
+# (label, text) pairs: the label only names the source in failure messages.
+_CLIENT_SRC = (
+    "js/src/*.js",
+    "\n".join(_read(p) for p in sorted((ROOT / "js" / "src").glob("*.js"))),
 )
-FORMATTER_FILES = (
-    ROOT / "js/src/30_ticks.js",
-    ROOT / "python/fastcharts/static/index.js",
-    ROOT / "python/fastcharts/static/standalone.js",
-)
-LOD_FILES = (
-    ROOT / "js/src/45_lod.js",
-    ROOT / "python/fastcharts/static/index.js",
-    ROOT / "python/fastcharts/static/standalone.js",
-)
+_INDEX = ("static/index.js", _read(_STATIC / "index.js"))
+_STANDALONE = ("static/standalone.js", _read(_STATIC / "standalone.js"))
+
+CLIENT_FILES = (_CLIENT_SRC, _INDEX, _STANDALONE)
+FORMATTER_FILES = (("js/src/30_ticks.js", _read(ROOT / "js/src/30_ticks.js")), _INDEX, _STANDALONE)
+LOD_FILES = (("js/src/45_lod.js", _read(ROOT / "js/src/45_lod.js")), _INDEX, _STANDALONE)
 # The chrome default stylesheet lives in the theme part; both built bundles
 # concatenate it.
-THEME_FILES = (
-    ROOT / "js/src/20_theme.js",
-    ROOT / "python/fastcharts/static/index.js",
-    ROOT / "python/fastcharts/static/standalone.js",
-)
+THEME_FILES = (("js/src/20_theme.js", _read(ROOT / "js/src/20_theme.js")), _INDEX, _STANDALONE)
 
 
 def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
@@ -59,8 +62,7 @@ def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
         "--chart-badge-bg",
         "--chart-badge-text",
     )
-    for path in THEME_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in THEME_FILES:
         for rule in where_rules:
             assert rule in text, f"{path} missing defeatable chrome rule {rule!r}"
         for token in tokens:
@@ -72,7 +74,9 @@ def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
     chartview = (ROOT / "js/src/50_chartview.js").read_text(encoding="utf-8")
     assert "ensureChromeStylesheet(root);" in chartview
     assert "background:var(--chart-tooltip-bg" not in chartview
-    assert 'btn.classList.toggle("fc-active"' in chartview  # active state is a class, not inline
+    # modebar active state is a class toggle, never inline (its builder now lives
+    # in 53_interaction.js, so assert against the whole client source).
+    assert 'btn.classList.toggle("fc-active"' in _CLIENT_SRC[1]
 
 
 def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
@@ -91,8 +95,7 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
         "document.write",
     )
 
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in CLIENT_FILES:
         for sink in required_text_sinks:
             assert sink in text, f"{path} no longer protects {sink!r}"
         for sink in required_style_sinks:
@@ -111,8 +114,7 @@ def test_client_respects_user_legend_max_height_style() -> None:
         'this._slotStyleValue("legend", "maxHeight") == null',
     )
 
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in CLIENT_FILES:
         for guard in required_guards:
             assert guard in text, f"{path} no longer preserves explicit legend max-height"
 
@@ -126,8 +128,7 @@ def test_client_numeric_styles_default_to_pixels_for_lengths() -> None:
         "return `${value}px`;",
     )
 
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in CLIENT_FILES:
         for helper in required_style_helpers:
             assert helper in text, f"{path} no longer normalizes numeric component styles"
 
@@ -156,29 +157,32 @@ def test_client_applies_every_public_dom_slot() -> None:
     }
     assert tuple(slot_snippets) == CHART_DOM_SLOTS
 
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in CLIENT_FILES:
         for slot, snippet in slot_snippets.items():
             assert snippet in text, f"{path} does not apply public DOM slot {slot!r}"
 
 
 def test_client_stamps_public_dom_slot_attributes() -> None:
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
-        assert "el.dataset.fcSlot = slot;" in text
-        assert text.index("el.dataset.fcSlot = slot;") < text.index("const dom = this.spec.dom;")
+    for path, text in CLIENT_FILES:
+        assert "el.dataset.fcSlot = slot;" in text, f"{path} no longer stamps data-fc-slot"
+        assert text.index("el.dataset.fcSlot = slot;") < text.index("const dom = this.spec.dom;"), (
+            f"{path} stamps slot attributes after reading spec.dom"
+        )
 
 
 def test_standalone_tooltips_retain_encoded_color_and_size_channels() -> None:
     """Static HTML hovers should expose the same tooltip fields as widget hovers."""
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
-        assert "this._lastRow = row;" in text
-        assert "row.color_category = String(color.categories[code]);" in text
+    for path, text in CLIENT_FILES:
+        assert "this._lastRow = row;" in text, f"{path} no longer caches the hovered row"
+        assert "row.color_category = String(color.categories[code]);" in text, (
+            f"{path} drops color_category"
+        )
         assert (
             "row.color_value = this._denormalizeUnit(cpu.color[hit.index], color.domain);" in text
-        )
-        assert "row.size_value = this._denormalizeUnit(cpu.size[hit.index], size.domain);" in text
+        ), f"{path} drops color_value"
+        assert (
+            "row.size_value = this._denormalizeUnit(cpu.size[hit.index], size.domain);" in text
+        ), f"{path} drops size_value"
 
     standalone = (ROOT / "js/src/60_entries.js").read_text(encoding="utf-8")
     generated = (ROOT / "python/fastcharts/static/standalone.js").read_text(encoding="utf-8")
@@ -188,16 +192,20 @@ def test_standalone_tooltips_retain_encoded_color_and_size_channels() -> None:
 
 
 def test_client_tooltip_value_formatter_preserves_strings() -> None:
-    for path in FORMATTER_FILES:
-        text = path.read_text(encoding="utf-8")
-        assert 'if (typeof v === "string") return v;' in text
-        assert "if (!Number.isFinite(n)) return String(v);" in text
+    for path, text in FORMATTER_FILES:
+        assert 'if (typeof v === "string") return v;' in text, (
+            f"{path} coerces string tooltip values"
+        )
+        assert "if (!Number.isFinite(n)) return String(v);" in text, (
+            f"{path} drops non-finite fallback"
+        )
 
 
 def test_client_can_suppress_builtin_tooltip_for_framework_chrome() -> None:
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
-        assert "this.spec.show_tooltip === false" in text
+    for path, text in CLIENT_FILES:
+        assert "this.spec.show_tooltip === false" in text, (
+            f"{path} can't suppress the builtin tooltip"
+        )
 
 
 def test_client_exposes_first_class_interaction_events() -> None:
@@ -212,8 +220,7 @@ def test_client_exposes_first_class_interaction_events() -> None:
         "new BroadcastChannel(`fastcharts:${group}`)",
     )
 
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in CLIENT_FILES:
         for marker in required:
             assert marker in text, f"{path} no longer exposes interaction marker {marker!r}"
 
@@ -248,8 +255,7 @@ def test_client_interaction_event_payload_contract_is_stable() -> None:
         'this.comm.send({ type: "view_change", ...detail });',
     )
 
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in CLIENT_FILES:
         for marker in required:
             assert marker in text, f"{path} changed interaction event payload marker {marker!r}"
         assert text.count('if (this._interactionFlag("select", true)) {') >= 2, (
@@ -269,8 +275,7 @@ def test_client_exposes_first_class_mark_state_styling() -> None:
         "var(--chart-zoom-selection-fill",
     )
 
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in CLIENT_FILES:
         for marker in required:
             assert marker in text, f"{path} no longer exposes mark-state styling marker {marker!r}"
 
@@ -286,8 +291,7 @@ def test_client_hardens_responsive_visibility_recovery() -> None:
         "const compact = this.size.w < 520;",
     )
 
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in CLIENT_FILES:
         for marker in required:
             assert marker in text, f"{path} no longer exposes responsive marker {marker!r}"
 
@@ -300,8 +304,7 @@ def test_client_refreshes_and_destroys_density_sample_overlays() -> None:
         "this._destroyDensitySample(g);",
     )
 
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in CLIENT_FILES:
         for marker in chartview_required:
             assert marker in text, f"{path} no longer maintains density sample marker {marker!r}"
 
@@ -333,8 +336,7 @@ def test_client_lod_layer_stays_chart_agnostic_and_renderer_delegated() -> None:
         "view._drawPoints(",
         "lodDropDrill(view, g)",
     )
-    for path in LOD_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in LOD_FILES:
         for marker in lod_required:
             assert marker in text, f"{path} no longer preserves shared LOD marker {marker!r}"
 
@@ -347,8 +349,7 @@ def test_client_lod_layer_stays_chart_agnostic_and_renderer_delegated() -> None:
         "lodDropDrill(this, g);",
         'markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill)',
     )
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in CLIENT_FILES:
         for marker in chartview_required:
             assert marker in text, f"{path} no longer delegates shared LOD marker {marker!r}"
 
@@ -362,8 +363,7 @@ def test_client_coalesces_wheel_zoom_without_animation_lag() -> None:
         "this._queueWheelZoom(f, fx, fy);",
     )
 
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in CLIENT_FILES:
         for marker in required:
             assert marker in text, f"{path} no longer coalesces wheel zoom marker {marker!r}"
 
@@ -376,8 +376,7 @@ def test_client_heatmap_hover_rows_use_axis_display_values() -> None:
         "row.y = y;",
     )
 
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in CLIENT_FILES:
         for marker in required:
             assert marker in text, f"{path} no longer exposes heatmap display marker {marker!r}"
 
@@ -393,8 +392,7 @@ def test_client_exposes_axis_style_hooks() -> None:
         '"label_size"',
     )
 
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in CLIENT_FILES:
         for marker in required:
             assert marker in text, f"{path} no longer exposes axis styling marker {marker!r}"
 
@@ -409,12 +407,10 @@ def test_log_axis_uses_separate_readable_label_ticks() -> None:
         "for (const v of (ticks.labels || ticks.ticks))",
     )
 
-    for path in FORMATTER_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in FORMATTER_FILES:
         for marker in required[:3]:
             assert marker in text, f"{path} no longer separates log tick labels"
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in CLIENT_FILES:
         for marker in required[3:]:
             assert marker in text, f"{path} no longer draws readable log tick labels"
 
@@ -433,8 +429,7 @@ def test_client_axis_tick_labels_have_collision_layout() -> None:
         "tick_label_min_gap",
     )
 
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in CLIENT_FILES:
         for marker in required:
             assert marker in text, f"{path} no longer protects crowded axis tick labels"
 
@@ -450,7 +445,23 @@ def test_client_draws_first_class_annotation_markers() -> None:
         "stroke_width",
     )
 
-    for path in CLIENT_FILES:
-        text = path.read_text(encoding="utf-8")
+    for path, text in CLIENT_FILES:
         for marker in required:
             assert marker in text, f"{path} no longer draws annotation marker primitives"
+
+
+def test_widget_bundle_is_valid_esm_not_leaking_marker_prose() -> None:
+    """index.js is anywidget's `_esm` (widget.py). The bundler splits 60_entries
+    on `// ---- exports ----`; any text trailing that marker on its line would
+    land as bare, unparseable code in the module. Guard the exact regression:
+    the ESM must carry no marker prose and must tail with `export` statements."""
+    index_text = _read(_STATIC / "index.js")
+    assert "stripped for the IIFE build" not in index_text, (
+        "index.js leaked the export-marker comment prose as bare code"
+    )
+    tail = [ln for ln in index_text.splitlines() if ln.strip()][-2:]
+    assert all(ln.startswith("export ") for ln in tail), (
+        f"index.js must end with export statements, got {tail!r}"
+    )
+    # The IIFE bundle is export-free (exports are illegal in a Function body).
+    assert "export {" not in _read(_STATIC / "standalone.js")

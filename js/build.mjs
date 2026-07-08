@@ -16,7 +16,11 @@ const PARTS = [
   "30_ticks.js", //      f64 tick/format math — never through f32 (§16)
   "40_gl.js", //         GL helpers + all shaders (marks, pick, density, line)
   "45_lod.js", //        chart-agnostic tier LOD: drill lifecycle, fades, cache (§5/§28)
-  "50_chartview.js", //  ChartView: render, interaction, kernel comm
+  "50_chartview.js", //  ChartView core: layout, GL, marks, draw, chrome, pick
+  "51_annotations.js", // + annotation canvas overlay (prototype augmentation)
+  "52_tooltip.js", //    + hover->row tooltip resolution + DOM
+  "53_interaction.js", //+ pointer/drag/wheel, selection, modebar, view anim
+  "54_kernel.js", //     + kernel comm: view-requests, append, drill (§16)
   "55_marks.js", //      MARK_KINDS: per-chart-kind build/draw dispatch registry
   "60_entries.js", //    anywidget + standalone entry points, export tail
 ];
@@ -199,12 +203,20 @@ function compact(source) {
 const marker = "// ---- exports ----";
 const cut = src.indexOf(marker);
 if (cut < 0) throw new Error("export marker not found in 60_entries.js");
+// The marker must own its whole line: exportTail is emitted raw into index.js,
+// so any text trailing the marker on its line would land as bare (invalid) code
+// in the ESM bundle. Split at the line boundary and reject a non-empty tail.
+const markerLineEnd = src.indexOf("\n", cut);
+const trailing = src.slice(cut + marker.length, markerLineEnd < 0 ? undefined : markerLineEnd);
+if (trailing.trim()) {
+  throw new Error(`text after "${marker}" would leak into index.js: "${trailing.trim()}"`);
+}
 const body = compact(src.slice(0, cut));
 // Parse-validate the compacted body: a compactor bug must fail the build, not
 // ship a corrupted client. new Function parses (without executing) everything
 // but import/export syntax — the body is export-free by construction.
 new Function(body);
-const exportTail = src.slice(cut + marker.length);
+const exportTail = markerLineEnd < 0 ? "" : src.slice(markerLineEnd + 1);
 const iife = `(() => {\n${body}\nwindow.fastcharts = { render, renderStandalone, ChartView, MARK_KINDS, markOf };\n})();\n`;
 new Function(iife);
 
