@@ -289,6 +289,13 @@ Before tagging a release:
 - Run `make check-ci` to confirm CI and release workflow
   gates still include artifact verification, upload/download, and trusted PyPI
   publishing.
+- Before the first release after a change to the wheel matrix (new target,
+  cross-compile toolchain, or tagging scheme), manually run the release
+  workflow (`workflow_dispatch`, `dry_run` defaults to `true`) and confirm
+  every leg of the cross-compile matrix — including the newer aarch64/armv7/
+  musllinux/win-arm64 targets and the wasm job — actually builds, since a
+  target added to the matrix but never exercised in CI is unverified, not
+  working.
 - Confirm CI built and verified native wheels for Linux glibc and musl/Alpine
   (x86-64, aarch64, armv7), macOS (x86-64, Apple Silicon), and Windows (x86, x64,
   arm64), plus the best-effort Pyodide/Emscripten WASM wheel.
@@ -350,8 +357,12 @@ Keep pushing these in low-conflict increments:
 - Keep weird-string export tests covering every text surface added to the
   public API, including titles, labels, legends, categories, and series names.
 - Keep benchmark environment metadata and category IDs on every new generated report.
-- Automate a PyPI/TestPyPI dry-run check for version bumps, tags, artifacts, and
-  refreshed benchmark reports.
+- The release workflow's `workflow_dispatch` `dry_run` input (default `true`)
+  now builds and verifies every wheel/sdist/wasm artifact without publishing;
+  remaining follow-up is wiring an actual TestPyPI upload into that dry-run
+  path (today it only stops short of a real publish, it doesn't yet push to a
+  test index), plus tying it to version-bump/tag validation and refreshed
+  benchmark reports.
 - Keep example app pages split between small business charts and large-data
   demos so ordinary usage does not get buried by the 100M stress cases.
 - Add first-class docs for the supported-platform matrix and the clear-error

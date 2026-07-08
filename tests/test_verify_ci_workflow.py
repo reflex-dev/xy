@@ -386,3 +386,33 @@ def test_release_workflow_rejects_pypi_token_publish(tmp_path: Path) -> None:
     errors = verify_ci_workflow.validate_release_workflow(path)
 
     assert any("trusted publishing" in error and "token" in error for error in errors)
+
+
+def test_release_workflow_rejects_missing_dry_run_input(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(workflow.replace("      dry_run:\n", "      dry_ran:\n"), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("dry-run input" in error for error in errors)
+
+
+def test_release_workflow_rejects_ungated_pypi_publish_step(tmp_path: Path) -> None:
+    """A sibling step's `if:` (the dry-run summary) must not mask a missing
+    gate on the actual PyPI upload step — regression for a bug where the
+    checker's own regex matched across step boundaries under re.DOTALL."""
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            "        if: github.event_name != 'workflow_dispatch' "
+            "|| github.event.inputs.dry_run != 'true'\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("has no if: condition of its own" in error for error in errors)
