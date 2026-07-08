@@ -508,14 +508,18 @@ changing public exports, lazy import mappings, component factories, or public
 annotations. Use `make check-import` after changing `fastcharts.__init__`,
 lazy import boundaries, dependency boundaries, widget/export boundaries, or
 backend import setup. Use
-`make check-browser CHROMIUM=/path/to/chrome` for render, Reflex lifecycle, and
-screenshot smokes over the core families plus every FastCharts gallery asset
-except the Plotly comparison page. The Reflex lifecycle smoke verifies each
-FastCharts demo asset across fresh loads, explicit hash navigation, resize,
-scroll-bottom, fast-scroll, visibility, and restore phases, plus an all-iframe
-remount/reload shell so disappearing dashboard panels fail loudly. CI runs the
-scoped browser core-smoke gate with Playwright Chromium; the underlying
-`scripts/verify_local.py --list/--dry-run` commands show exactly what will run.
+`make check-browser CHROMIUM=/path/to/chrome` for the split browser hardening
+gates: lifecycle, visual regression, and interaction stress. The lifecycle
+smoke verifies each FastCharts demo asset across fresh loads, explicit hash
+navigation, resize, scroll-bottom, fast-scroll, visibility, restore, and an
+all-iframe remount/reload shell so disappearing dashboard panels fail loudly.
+The visual smoke screenshots generated core families plus every FastCharts
+gallery asset except the Plotly comparison page, and the interaction smoke
+budgets zoom, pan, hover, crosshair, box zoom, and brush select. CI runs these
+as `Browser lifecycle smoke (Chromium)`, `Browser visual regression smoke
+(Chromium)`, and `Browser interaction stress smoke (Chromium)` with Playwright
+Chromium; the underlying `scripts/verify_local.py --list/--dry-run` commands
+show exactly what will run.
 
 See [`docs/contributing.md`](docs/contributing.md) for the PR checklist and
 chart-type contribution guide.
