@@ -147,8 +147,8 @@ document or from a verified JSON artifact.
 
 | Claim shape | Safe wording pattern | Required context |
 |---|---|---|
-| Payload/prep comparison | "In the native backend benchmark, histogram payload prep for 10k values / 200 bins was 15.9x faster than Plotly." | chart type, workload, backend, compared library, metric |
-| Browser first paint | "For the measured Chrome TTFR row, the 10k-value histogram first painted 5.8x faster than Plotly." | browser/render target, workload, chart type, TTFR included |
+| Payload/prep comparison | "In the native backend benchmark, histogram payload prep for 10k values / 200 bins was 17.3x faster than Plotly." | chart type, workload, backend, compared library, metric |
+| Browser first paint | "For the measured Chrome TTFR row, the 10k-value histogram first painted 5.0x faster than Plotly." | browser/render target, workload, chart type, TTFR included |
 | Large scatter overview | "The 10M scatter overview uses density mode with a 768 KB payload; it is not drawing 10M exact markers." | mode, point count, payload, exact-vs-aggregate wording |
 | Line decimation | "The 10M line benchmark ships an M4-decimated ~60 KB payload while preserving the extrema oracle." | mode, point count, payload, correctness oracle |
 | Install/import footprint | "In the install-footprint benchmark, cold import was 6.4 ms for the measured distribution." | benchmark name, metric, measured distribution |
@@ -246,12 +246,12 @@ matplotlib calls.
 
 | Chart | Workload | Speedup vs Plotly | Payload reduction | TTFR speedup | Verdict |
 |---|---|---:|---:|---:|---|
-| Histogram | 10k values / 200 bins | 15.9x faster | 33.4x smaller | 5.8x faster | pass |
-| Area | 10k samples | 19.5x faster | 1.9x smaller | 3.6x faster | pass |
-| Bar | 100 categories | 11.5x faster | 2.5x smaller | 4.4x faster | pass |
-| Grouped bar | 100 categories x 4 | 5.7x faster | 2.1x smaller | 4.9x faster | pass |
-| Stacked bar | 100 categories x 4 | 4.8x faster | 1.7x smaller | 4.7x faster | pass |
-| Heatmap | 50 x 50 cells | 33.3x faster | 3.4x smaller | 4.1x faster | pass |
+| Histogram | 10k values / 200 bins | 17.3x faster | 33.4x smaller | 5.0x faster | pass |
+| Area | 10k samples | 17.2x faster | 1.9x smaller | 4.0x faster | pass |
+| Bar | 100 categories | 11.3x faster | 2.5x smaller | 3.8x faster | pass |
+| Grouped bar | 100 categories x 4 | 4.5x faster | 2.1x smaller | 4.1x faster | pass |
+| Stacked bar | 100 categories x 4 | 4.5x faster | 1.7x smaller | 5.1x faster | pass |
+| Heatmap | 50 x 50 cells | 32.2x faster | 3.4x smaller | 4.6x faster | pass |
 
 The heatmap result uses the compact grid-texture path: one normalized scalar
 grid instead of four rectangle geometry columns per cell.
@@ -264,9 +264,9 @@ The larger profile extends to 1M histogram/area samples, 10k simple bars, and a
 - Histogram: 1M values produced a 4 KB fastcharts payload vs 13 MB Plotly JSON
   (3192x smaller), with 11.2x faster payload prep on the native backend.
 - Heatmap: 500 x 500 cells produced a 991 KB fastcharts payload vs 3 MB Plotly
-  JSON, with 6.2x faster payload prep.
+  JSON, with 5.9x faster payload prep.
 - Area: 1M samples produced an 89 KB fastcharts payload vs 21 MB Plotly JSON
-  (242x smaller), with 7.6x faster payload prep.
+  (242x smaller), with 6.0x faster payload prep.
 - Bars: the compact bar primitive removed the previous 10k-category `watch`
   item. Simple 10k bars now ship 167 KB vs Plotly's 205 KB and prepare 4.35x
   faster; grouped 1k bars ship 42 KB vs Plotly's 86 KB.
@@ -382,28 +382,30 @@ Rust backend), all libraries in one consistent `benchmarks/bench_vs.py` run.
 
 | library | total time | peak memory | resident Δ | render payload | points/sec |
 |---|---|---|---|---|---|
-| **fastcharts** | **274 ms** | 269 MB | **+15 MB** | **832 KB** | 36,500,000 |
-| matplotlib (Agg→PNG) | 3,339 ms | 553 MB | +225 MB | 42 KB PNG | 3,000,000 |
-| Seaborn (Agg→PNG) | 8,452 ms | 1,088 MB | +695 MB | 32 KB PNG | 1,180,000 |
-| Plotly `Scattergl` (→PNG) | 55,469 ms | 1,584 MB | +376 MB | 49 KB PNG | 180,000 |
+| **fastcharts** | **203 ms** | **126 MB** | **+10 MB** | **832 KB** | 49,300,000 |
+| matplotlib (Agg→PNG) | 3,239 ms | 553 MB | +223 MB | 42 KB PNG | 3,090,000 |
+| Seaborn (Agg→PNG) | 7,918 ms | 1,088 MB | +695 MB | 32 KB PNG | 1,260,000 |
+| Plotly `Scattergl` (→PNG) | 54,064 ms | 1,584 MB | +382 MB | 49 KB PNG | 185,000 |
 | Plotly `Scatter` (SVG) | — over budget above 1 M | | | | |
 
-At 10 M points fastcharts is **~12× faster than matplotlib**, **~31× faster than
-Seaborn**, and **~200× faster than Plotly's WebGL path**, at **2–6× lower peak
+At 10 M points fastcharts is **~16× faster than matplotlib**, **~39× faster than
+Seaborn**, and **~266× faster than Plotly's WebGL path**, at **4–13× lower peak
 memory**. Plotly's SVG path never reached 10 M (over budget above 1 M).
 
-> Scope note (important): every column above is the same full-pipeline
-> measurement — `total` is build + static/kernel render, and `peak memory` is the
-> tracemalloc peak across it. For fastcharts that peak (269 MB) is dominated by
-> the transient f64 copy of the raw 10 M points into the canonical store — a cost
-> every library pays to hold the data. fastcharts' *own* screen-bounded output is
-> far smaller: a fixed 832 KB density payload and ~15 MB of lasting resident
-> growth. The payload-only native benchmark below measures that screen-bounded
-> allocation in isolation (~2 MB, flat in N) — a different, narrower scope than
-> this cross-library table. fastcharts' "total" is prepare-the-GPU-payload
-> (encode/bin kernel-side) while the raster libraries' "total" is to-pixels
-> (a PNG), so the cleanest apples-to-apples columns are **peak memory**,
-> **payload size**, and the **ceiling**.
+> Scope note (important): every column above comes from the same harness pass
+> structure — `total` is build + static/kernel render timed with no memory
+> tracer active, and `peak memory` is the tracemalloc peak from a separate,
+> untimed pass over the same work. Ingest is zero-copy for well-formed f64
+> arrays (the canonical store holds a reference, not a duplicate), so
+> fastcharts' 126 MB peak is transient working buffers — visible-row indices,
+> sample gathers, encode staging — released after the payload is built. What
+> lasts is screen-bounded: a fixed 832 KB density payload and ~10 MB of
+> resident growth. The payload-only native benchmark below measures the
+> payload-build allocation in isolation (~2 MB, flat in N) — a different,
+> narrower scope than this cross-library table. fastcharts' "total" is
+> prepare-the-GPU-payload (encode/bin kernel-side) while the raster libraries'
+> "total" is to-pixels (a PNG), so the cleanest apples-to-apples columns are
+> **peak memory**, **payload size**, and the **ceiling**.
 
 ### Ceiling — largest N rendered under a 45 s budget
 
@@ -437,9 +439,9 @@ The payload flips from 8 B/pt (direct) to a **constant 768 KB** at the density
 threshold (200 k) — 0.08 B/pt at 10 M. This table's scope is fastcharts'
 payload-build allocation only, which stays near 2 MB regardless of N; the
 cross-library **Headline** table above measures the full pipeline (build +
-render, and the transient f64 ingest of the raw points), where fastcharts' peak
-is 269 MB at 10 M and total is 274 ms — the same-harness figures to compare
-against matplotlib/Seaborn/Plotly.
+render, including transient working buffers for selection, sampling, and
+encode staging), where fastcharts' peak is 126 MB at 10 M and total is 203 ms
+— the same-harness figures to compare against matplotlib/Seaborn/Plotly.
 
 ### matplotlib (`Agg`, `savefig` PNG)
 
@@ -493,12 +495,13 @@ falls over. This is the path fastcharts exists to replace.
    ingest/bin pass. matplotlib grows ∝ N in time *and* memory; both Plotly paths
    grow ∝ N in memory and render time.
 2. **Memory is the starkest axis.** At 10 M the full-pipeline peak is fastcharts
-   269 MB vs matplotlib 553 MB vs Seaborn 1.09 GB vs Plotly-GL 1.58 GB — and
-   fastcharts' *lasting* resident growth is only ~15 MB (its screen-bounded
-   representation) vs +225–695 MB for the raster libraries, which hold every
-   point and its copies resident. Most of fastcharts' peak is the transient f64
-   ingest of the raw points, released once the density surface is built. This is
-   the §1/§27 thesis.
+   126 MB vs matplotlib 553 MB vs Seaborn 1.09 GB vs Plotly-GL 1.58 GB — and
+   fastcharts' *lasting* resident growth is only ~10 MB (its screen-bounded
+   representation) vs +223–695 MB for the raster libraries, which hold every
+   point and its copies resident. Ingest is zero-copy for f64 arrays, so
+   fastcharts' peak is transient working buffers (selection indices, sample
+   gathers, encode staging), released once the density surface is built. This
+   is the §1/§27 thesis.
 3. **The SVG path has a hard ceiling** (~1–3 M, then unusable) exactly as
    predicted; the WebGL path scales further but pays ∝ N memory and seconds of
    render time.
