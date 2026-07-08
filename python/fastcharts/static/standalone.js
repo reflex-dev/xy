@@ -591,7 +591,9 @@ out vec4 outColor;
 ${GRAD_GLSL}
 void main() {
   vec4 premult = vec4(u_color.rgb * u_color.a, u_color.a);
-  if (u_gradMode != 0) premult = fcGradSample(fcGradT(v_t, u_res));
+  // Compose the mark opacity (u_color.a) over the gradient — premultiplied, so
+  // one scalar multiply fades every stop, including a fade-to-transparent.
+  if (u_gradMode != 0) premult = fcGradSample(fcGradT(v_t, u_res)) * u_color.a;
   if (premult.a <= 0.001) discard;
   outColor = premult;
 }`;
@@ -672,7 +674,9 @@ ${GRAD_GLSL}
 void main() {
   vec3 rgb = u_colorMode == 0 ? u_color.rgb : texture(u_lut, vec2(clamp(v_lutCoord, 0.0, 1.0), 0.5)).rgb;
   vec4 premult = vec4(rgb * u_color.a, u_color.a);
-  if (u_gradMode != 0) premult = fcGradSample(fcGradT(v_t, u_res));
+  // Compose the mark opacity (u_color.a) over the gradient — premultiplied, so
+  // one scalar multiply fades every stop, including a fade-to-transparent.
+  if (u_gradMode != 0) premult = fcGradSample(fcGradT(v_t, u_res)) * u_color.a;
   if (u_radius.x > 0.0 || u_radius.y > 0.0 || u_strokeWidth > 0.0) {
     // u_radius = (tip, base) in mark space: v_t > 0.5 is the tip half, so
     // corner_radius=(6, 0) rounds only the value end of the bar. On the
