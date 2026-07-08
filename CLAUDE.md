@@ -14,8 +14,9 @@ code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
   ability to build/test the core; prefer feature-gated optional deps. Bump
   `ABI_VERSION` in `src/lib.rs` *and* `python/fastcharts/_native.py` together
   on any signature change.
-- `python/fastcharts/` — package. `_native.py` (ctypes) and `_fallback.py`
-  (NumPy) must stay semantically identical; parity is tested. `components.py`
+- `python/fastcharts/` — package. `_native.py` (ctypes) binds the required
+  Rust core; there is no NumPy fallback — `kernels.py` raises a clear
+  ImportError if the native core can't load. `components.py`
   is the Reflex-flavored composition API (`scatter_chart`/`line_chart` + marks/
   axes) — it builds a `Figure`; keep it dependency-free (no `reflex` import).
   `channels.py` resolves scatter color/size encodings.
@@ -34,7 +35,7 @@ node js/build.mjs                     # regenerate static/ after JS edits
 python3 scripts/abi_smoke.py          # C-ABI seam, stdlib only (no PyPI needed)
 python3 scripts/render_smoke_nonumpy.py  # WebGL2 render path in headless Chromium
 uv venv && uv pip install -e ".[dev]"
-uv run pytest                         # + FASTCHARTS_FORCE_FALLBACK=1 pytest
+uv run pytest                         # native core required (no fallback)
 uv run ruff check . && uv run ruff format . && uv run ty check
 uv run python scripts/bench.py        # §12 benchmark harness
 python3 scripts/bench_scatter_native.py --render   # fastcharts scatter, no deps

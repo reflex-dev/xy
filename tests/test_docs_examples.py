@@ -256,15 +256,15 @@ def test_readme_documents_stability_and_backend_contract() -> None:
         "Python 3.11+ package import",
         "Implemented 2D chart families",
         "native Rust kernels",
-        "NumPy fallback",
+        "required compute core",
+        "raises a clear error rather than degrading",
         "Check the active backend",
         "is intentionally lightweight",
         "does not import NumPy or load the native core",
         "fastcharts.kernels",
         "print(k.BACKEND)",
-        "native",
-        "numpy",
-        "FASTCHARTS_FORCE_FALLBACK=1",
+        "`BACKEND` is always `native`",
+        "raises `ImportError` with remediation",
     ]
     for marker in required:
         assert marker in text
@@ -274,19 +274,16 @@ def test_readme_documents_install_backend_matrix() -> None:
     text = " ".join(README.read_text(encoding="utf-8").split())
     required = [
         "Install/backend quick matrix",
-        "| Path | Command | Toolchain needed | Backend result |",
+        "| Path | Command | Toolchain needed | Result |",
         "Published wheel",
         "`pip install fastcharts`",
         "none",
         "`native` on supported platform wheels",
-        "Editable source with Rust",
+        "Source with Rust",
         '`uv pip install -e ".[dev]"`',
-        "`native` if the local Rust build succeeds",
-        "Editable source without Rust",
-        "Python 3.11+ and runtime deps",
-        "`numpy` fallback, with the same public chart APIs",
-        "Forced fallback check",
-        "FASTCHARTS_FORCE_FALLBACK=1",
+        "Platform/build with no native core",
+        "clear `ImportError` on first compute, naming supported platforms",
+        "Rust is required from source",
     ]
     for marker in required:
         assert marker in text
@@ -313,9 +310,9 @@ def test_readme_architecture_diagram_covers_major_boundaries() -> None:
         "User APIs",
         "ColumnStore",
         "rollback checkpoints",
-        "Compute backend",
-        "Rust C ABI when available",
-        "NumPy fallback otherwise",
+        "Compute core",
+        "native Rust C ABI",
+        "(required; no fallback)",
         "Payload builder",
         "Browser / notebook frontend",
         "WebGL2 renderer",
@@ -411,7 +408,7 @@ def test_production_docs_include_focused_gate_matrix() -> None:
         "`make check-security`",
         "Benchmark harness code, environment metadata, report schema, regressions",
         "`make check-benchmark-harness`",
-        "CI/release workflows, artifact upload/download, fallback install jobs",
+        "CI/release workflows, artifact upload/download, no-Rust clear-error jobs",
         "`make check-ci`",
         "Source distributions and wheels",
         "`make check-sdist` and `make check-wheel`",
@@ -430,7 +427,7 @@ def test_production_docs_name_ci_workflow_gate_shortcut() -> None:
         "trusted publishing",
         "`make check-ci`",
         "benchmark artifact upload/download",
-        "fallback install jobs",
+        "no-Rust clear-error jobs",
     ]
     for marker in required:
         assert marker in text

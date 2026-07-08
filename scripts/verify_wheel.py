@@ -26,7 +26,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED_FILES = {
     "fastcharts/__init__.py",
-    "fastcharts/_fallback.py",
     "fastcharts/_native.py",
     "fastcharts/channels.py",
     "fastcharts/columns.py",
@@ -318,7 +317,7 @@ def verify_wheel(path: Path, *, expect_native: Optional[bool]) -> None:
         _require_text_markers(
             "fastcharts/kernels.py",
             zf.read("fastcharts/kernels.py"),
-            {"BACKEND", "FASTCHARTS_FORCE_FALLBACK", "warnings.warn"},
+            {"BACKEND", "_native", "ImportError"},
         )
         _require_py_typed_marker(zf.read("fastcharts/py.typed"))
         _require_static_bundle(
@@ -358,12 +357,14 @@ def verify_wheel(path: Path, *, expect_native: Optional[bool]) -> None:
             raise AssertionError(f"native wheel must not use a pure tag: {wheel.tags}")
     elif expect_native is False:
         if native_libs:
-            raise AssertionError(f"pure fallback wheel must not contain native libs: {native_libs}")
+            raise AssertionError(
+                f"pure (no-native) wheel must not contain native libs: {native_libs}"
+            )
         if not wheel.root_is_purelib:
-            raise AssertionError("pure fallback wheel must set Root-Is-Purelib: true")
+            raise AssertionError("pure (no-native) wheel must set Root-Is-Purelib: true")
         if "py3-none-any" not in wheel.tags:
             raise AssertionError(
-                f"pure fallback wheel must advertise py3-none-any, got {wheel.tags}"
+                f"pure (no-native) wheel must advertise py3-none-any, got {wheel.tags}"
             )
     elif native_libs and wheel.root_is_purelib:
         raise AssertionError("wheel contains a native lib but is tagged pure")

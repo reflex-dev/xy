@@ -2,8 +2,7 @@
 
 Every combination a user is likely to hit: color/size modes and input dtypes,
 NaN/inf/empty/degenerate data, tier boundaries, multi-trace, and the pick/select
-interactions across tiers. Runs under both backends (native + NumPy fallback)
-via the FASTCHARTS_FORCE_FALLBACK matrix in CI.
+interactions across tiers, exercised against the native Rust core.
 """
 
 from __future__ import annotations

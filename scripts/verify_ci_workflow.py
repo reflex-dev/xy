@@ -107,7 +107,6 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "scripts/check_public_api.py",
         "scripts/check_claim_guardrails.py",
         "ruff check .",
-        "FASTCHARTS_FORCE_FALLBACK=1",
         "scripts/smoke_render.py",
         "Browser lifecycle smoke",
         "Browser visual regression smoke",
@@ -195,11 +194,11 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         jobs,
         "install_without_rust",
         "CI",
-        "pure fallback wheel verification",
+        "no-Rust wheel builds but errors clearly on compute",
         "Remove preinstalled Rust",
         "scripts/verify_wheel.py",
         "--expect-pure",
-        'BACKEND == "numpy"',
+        "native Rust core",
     )
     return errors
 
@@ -300,7 +299,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         jobs,
         "sdist",
         "release",
-        "sdist build, content verification, fallback install smoke, and upload",
+        "sdist build, content verification, no-Rust clear-error smoke, and upload",
         "astral-sh/setup-uv@v5",
         "actions/setup-node@v4",
         'node-version: "22"',
@@ -308,7 +307,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "uv build --sdist",
         "scripts/verify_sdist.py",
         "FASTCHARTS_SKIP_CARGO",
-        'BACKEND == "numpy"',
+        "native Rust core",
         "actions/upload-artifact@v4",
         "dist/*.tar.gz",
     )

@@ -126,11 +126,6 @@ jobs:
           export FASTCHARTS_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")"
           .venv/bin/pytest -q
 
-      - name: Python tests (NumPy fallback — §33 no-wheel contract)
-        run: |
-          export FASTCHARTS_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")"
-          FASTCHARTS_FORCE_FALLBACK=1 .venv/bin/pytest -q
-
       # End-to-end: a real Figure (line decimation + scatter) through to_html's
       # exact payload path, rendered in Chromium, pixels read back. Complements
       # the stdlib smoke, which hand-builds payloads. (Was dead code — audit
@@ -188,9 +183,6 @@ jobs:
 
       - name: Python 3.11 tests (native core)
         run: .venv/bin/python -m pytest -q
-
-      - name: Python 3.11 tests (NumPy fallback)
-        run: FASTCHARTS_FORCE_FALLBACK=1 .venv/bin/python -m pytest -q
 
   # Cross-library scatter benchmark incl. time-to-first-render (docs/benchmark.md).
   # Non-blocking: it's a measurement, not a gate. Uploads the report as an
@@ -296,7 +288,7 @@ jobs:
           sdist=$(ls dist/*.tar.gz)
           python scripts/verify_sdist.py "$sdist"
 
-      - name: Verify sdist installs via fallback
+      - name: Verify sdist without Rust errors clearly on import
         shell: bash
         env:
           FASTCHARTS_SKIP_CARGO: "1"
@@ -304,19 +296,21 @@ jobs:
           uv venv smoke
           uv pip install -p smoke dist/*.tar.gz numpy anywidget
           ./smoke/bin/python - <<'PY'
-          import warnings
-          import numpy as np
+          # No native core and no fallback: importing the compute layer must
+          # raise a clear, actionable error (§33: no-wheel behavior is defined
+          # as a loud failure, not a silent degrade).
+          import fastcharts
 
-          with warnings.catch_warnings(record=True) as w:
-              warnings.simplefilter("always")
-              import fastcharts.kernels as k
-              from fastcharts import Figure
-
-          assert k.BACKEND == "numpy", k.BACKEND
-          spec, blob = Figure().scatter(np.arange(5.0), np.arange(5.0)).build_payload()
-          assert spec["traces"] and len(blob) > 0
-          assert any("NumPy fallback" in str(x.message) for x in w), "expected fallback warning"
-          print("sdist fallback install OK")
+          assert fastcharts.__version__
+          try:
+              import fastcharts.kernels  # noqa: F401
+          except ImportError as err:
+              msg = str(err)
+              assert "native Rust core" in msg, msg
+              assert "rustup.rs" in msg, msg
+              print("sdist without Rust errors clearly on import")
+          else:
+              raise SystemExit("expected ImportError without the native core")
           PY
 
   # Wheel matrix (§33): a missing wheel is a build failure, not a runtime
@@ -393,10 +387,12 @@ jobs:
           name: wheel-${{ matrix.os }}
           path: dist/*.whl
 
-  # Proves the ergonomics promise: a source build with NO Rust toolchain still
-  # installs and works (pure-Python wheel + NumPy fallback), never erroring.
+  # Proves the no-wheel contract (§33): a source build with NO Rust toolchain
+  # produces a pure-Python wheel that imports the package fine but raises a
+  # clear, actionable error the moment compute is needed — never a silent
+  # fallback and never an opaque crash.
   install_without_rust:
-    name: Install without Rust (NumPy fallback)
+    name: Install without Rust (clear error)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -416,25 +412,27 @@ jobs:
       - name: Wheel is pure-Python (py3-none-any)
         shell: bash
         run: ls dist/ && ls dist/*-py3-none-any.whl
-      - name: Verify pure fallback wheel contents
+      - name: Verify pure (no-native) wheel contents
         shell: bash
         run: |
           whl=$(ls dist/*.whl)
           python scripts/verify_wheel.py "$whl" --expect-pure
-      - name: Install and verify it works via the fallback
+      - name: Install and verify it errors clearly on compute
         shell: bash
         run: |
           uv venv smoke
           uv pip install -p smoke dist/*.whl numpy anywidget
           ./smoke/bin/python - <<'PY'
-          import warnings, numpy as np
-          with warnings.catch_warnings(record=True) as w:
-              warnings.simplefilter("always")
-              import fastcharts.kernels as k
-              from fastcharts import Figure
-          assert k.BACKEND == "numpy", k.BACKEND
-          spec, blob = Figure().scatter(np.arange(5.0), np.arange(5.0)).build_payload()
-          assert len(blob) > 0
-          assert any("NumPy fallback" in str(x.message) for x in w), "expected loud fallback warning"
-          print("pure-Python install OK; backend:", k.BACKEND)
+          import fastcharts  # lazy top-level import still succeeds
+
+          assert fastcharts.__version__
+          try:
+              import fastcharts.kernels  # noqa: F401
+          except ImportError as err:
+              msg = str(err)
+              assert "native Rust core" in msg, msg
+              assert "rustup.rs" in msg, msg
+              print("no-Rust install errors clearly on import; OK")
+          else:
+              raise SystemExit("expected ImportError without the native core")
           PY

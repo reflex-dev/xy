@@ -2,9 +2,9 @@
 
 **Status:** design. Decides what lives in Rust vs Python and how the FFI seam
 evolves without rewrites. Grounded in the shipped engine: zero-crate cdylib
-(`src/lib.rs`, ABI v3, 10 exported symbols), ctypes binding (`_native.py`),
-NumPy fallback with enforced parity (`_fallback.py`, `FASTCHARTS_FORCE_FALLBACK`
-tests), dispatch in `kernels.py`.
+(`src/lib.rs`, ABI v3, 10 exported symbols), ctypes binding (`_native.py`), and
+dispatch in `kernels.py`. The native core is required — `kernels.py` raises a
+clear ImportError when it can't load, with no pure-Python fallback.
 
 ## 1. The placement rule
 
@@ -72,9 +72,10 @@ argminmax, tsdownsample-class speed) with the lean build as default.
   into them and returns counts. No cross-language ownership for array data.
 - **f64 in, f32 out** for geometry (offset-encoded, §16); u32 for indices.
 - **Lockstep `ABI_VERSION`** in `src/lib.rs` + `_native.py`, checked at load,
-  fallback on mismatch — an old wheel never mis-calls a new lib.
-- **Fallback parity as a contract**: every kernel exists twice (Rust, NumPy)
-  and CI runs the suite both ways. A kernel without a fallback doesn't merge.
+  hard error on mismatch — an old wheel never mis-calls a new lib.
+- **The native core is the single implementation.** There is no pure-Python
+  fallback; every kernel is tested directly against the Rust core, and a
+  platform that can't load the core gets a clear ImportError, not a degrade.
 
 ### 3.2 Evolution rules (the anti-rewrite discipline)
 
@@ -110,8 +111,7 @@ void fc_pyramid_free(u64 h);
 
 Handles are indices into a Rust-side registry (mutex-guarded slab), not raw
 pointers — a stale/double-freed handle is an error code, not UB. Python wraps
-each in an object with `__del__`/weakref finalizer. The NumPy fallback
-implements the same handle API over Python dicts, preserving parity.
+each in an object with `__del__`/weakref finalizer.
 
 ### 3.4 SIMD (contained in `src/simd.rs`)
 

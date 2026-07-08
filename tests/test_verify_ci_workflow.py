@@ -345,7 +345,7 @@ def test_release_workflow_rejects_missing_native_wheel_verifier(tmp_path: Path) 
     assert any("release wheels job" in error and "verify_wheel" in error for error in errors)
 
 
-def test_release_workflow_rejects_missing_sdist_fallback_smoke(tmp_path: Path) -> None:
+def test_release_workflow_rejects_missing_sdist_norust_smoke(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     path = tmp_path / "release.yml"
     path.write_text(

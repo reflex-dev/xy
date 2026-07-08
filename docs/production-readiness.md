@@ -11,7 +11,7 @@ screen-bounded performance core, but the stable commitments today are narrower:
 
 - Python 3.11+ only.
 - `import fastcharts` stays lightweight and does not import NumPy or load the
-  native core, even when `FASTCHARTS_FORCE_FALLBACK=1` is set. The public API
+  native core. The public API
   gate verifies this in fresh interpreters and keeps package import under a
   200 ms budget. Chart-building APIs are the compute import boundary; notebook
   widget dependencies stay deferred until `.widget()`/display, and standalone
@@ -22,8 +22,10 @@ screen-bounded performance core, but the stable commitments today are narrower:
 - Source distributions include the release support surface: docs, tests,
   benchmark harnesses/baselines, scripts, Rust/JS source, and the Reflex example
   app source plus generated chart assets.
-- Source installs succeed without Rust by using the NumPy fallback with a loud
-  warning.
+- Source installs require a Rust toolchain to build the native core. There is no
+  NumPy fallback: on a platform with no wheel and no local Rust build, importing
+  the compute layer raises a clear, actionable error naming the supported
+  platforms.
 - Standalone HTML exports embed the same render client and data payloads used
   by notebooks.
 - Benchmark reports must label rendering modes explicitly: `direct`,
@@ -42,9 +44,9 @@ These must pass before publishing or making a broad performance claim.
 | Public API | `__all__`, lazy exports, `__version__`, the source `py.typed` marker, focused type-surface tests, and fresh-process import-time budget stay coherent | `make check-api` |
 | Import-time budget | `fastcharts.__init__`, `dir(fastcharts)`, export helpers, Figure construction, and `.widget()` keep their lazy import boundaries | `make check-import` |
 | Claim guardrails | Public docs and package metadata avoid broad, unqualified performance claims | `make check-claims` |
-| CI/release workflows | Hard gates, non-blocking benchmarks, best-effort benchmark artifact upload/download, trusted publishing, and fallback jobs stay wired | `make check-ci` |
+| CI/release workflows | Hard gates, non-blocking benchmarks, best-effort benchmark artifact upload/download, trusted publishing, and no-Rust clear-error jobs stay wired | `make check-ci` |
 | HTML export safety | Inline JSON/script escaping, atomic path writes, hostile user strings, and browser client text-node insertion stay protected | `make check-security` |
-| Python tests | Native backend and NumPy fallback both pass | `pytest -q` and `FASTCHARTS_FORCE_FALLBACK=1 pytest -q` |
+| Python tests | Native backend passes | `pytest -q` |
 | Python style | Library, tests, scripts, and benchmarks lint clean | `ruff check .` and `ruff format --check .` |
 | Type surface | Shippable library is type-checkable and ships a full-package `py.typed` marker | `ty check python` |
 | Rust core | Native kernels pass and lint clean | `cargo test` and `cargo clippy --all-targets -- -D warnings` |
@@ -104,7 +106,7 @@ production-facing push:
 | Standalone HTML export, path writes, user text, tooltips, legends, browser DOM insertion | `make check-security` |
 | Benchmark harness code, environment metadata, report schema, regressions | `make check-benchmark-harness` |
 | Generated benchmark JSON artifacts | `make check-benchmark-report BENCHMARK_JSON=benchmark.json BENCHMARK_KIND=scatter-vs` |
-| CI/release workflows, artifact upload/download, fallback install jobs | `make check-ci` |
+| CI/release workflows, artifact upload/download, no-Rust clear-error jobs | `make check-ci` |
 | Source distributions and wheels | `make check-sdist` and `make check-wheel` |
 | Existing release artifacts | `make check-artifacts SDIST=/path/to/fastcharts.tar.gz WHEEL=/path/to/fastcharts.whl` |
 | Browser render/lifecycle/interaction smoke | `make check-browser CHROMIUM=/path/to/chrome` |
@@ -158,10 +160,10 @@ make check-wheel
 
 Use `make check-wheel WHEEL_EXPECT=--expect-native` when verifying a native
 release wheel, or `WHEEL_EXPECT=--expect-pure` when intentionally checking the
-fallback artifact.
+no-native artifact (it imports but errors clearly the moment compute is needed).
 
 Use this after editing CI/release workflows, benchmark artifact upload/download
-wiring, trusted publishing, or fallback install jobs:
+wiring, trusted publishing, or the no-Rust clear-error install jobs:
 
 ```bash
 make check-ci
@@ -289,7 +291,8 @@ Before tagging a release:
   publishing.
 - Confirm CI built and verified native wheels for Linux x86-64/arm64, macOS
   arm64/x86-64, and Windows x86-64.
-- Confirm the pure fallback/no-Rust install job passed.
+- Confirm the no-Rust install job passed (it must build, install, and then
+  raise a clear ImportError on first compute — never a silent fallback).
 - Confirm the sdist verifier passed and the source archive contains the expected
   `PKG-INFO` package name, Python floor, runtime dependencies, docs, tests,
   scripts, benchmark harnesses/baselines, Reflex example app, and no native
@@ -325,8 +328,9 @@ Claims that need qualification:
   density/adaptive representation.
 - "Faster than Plotly" must name the chart type, data size, render target,
   backend, and whether browser TTFR is included.
-- "Works without Rust" means source or pure fallback install works with NumPy;
-  published wheels should still carry the native core.
+- "Install without Rust" means a published wheel (which carries the native core)
+  installs with no toolchain; a source build still requires Rust, and a
+  platform with no native core raises a clear ImportError rather than degrading.
 
 Not yet safe:
 
@@ -349,7 +353,7 @@ Keep pushing these in low-conflict increments:
   refreshed benchmark reports.
 - Keep example app pages split between small business charts and large-data
   demos so ordinary usage does not get buried by the 100M stress cases.
-- Add first-class docs for native vs fallback behavior, including how to tell
-  which backend is active.
+- Add first-class docs for the supported-platform matrix and the clear-error
+  behavior when the native core is unavailable.
 - Move advisory type checking to a hard gate once the checker and codebase agree
   on the dynamic `ctypes` and callback surfaces.

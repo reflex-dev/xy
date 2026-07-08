@@ -30,7 +30,7 @@ def test_default_selection_is_quick_checks_only() -> None:
     assert "ci_workflow" in verify_local.QUICK_CHECKS
 
 
-def test_full_selection_adds_fallback_js_rust_and_abi_checks() -> None:
+def test_full_selection_adds_js_rust_and_abi_checks() -> None:
     checks = verify_local._base_checks()
     selected = verify_local.select_checks(checks, full=True)
 

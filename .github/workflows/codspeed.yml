@@ -29,7 +29,8 @@ jobs:
       - uses: astral-sh/setup-uv@v5
 
       # The native Rust core must be present so the benchmarks measure the
-      # native kernels (BACKEND == "native"), not the NumPy fallback.
+      # native kernels (BACKEND == "native"); without it, importing the compute
+      # layer errors rather than running.
       - name: Build native core
         run: cargo build --release
 

@@ -1,37 +1,30 @@
-"""Kernel dispatch: native Rust core when available, NumPy fallback otherwise.
+"""Kernel dispatch: the native Rust core is required.
 
-The fallback is loud, never silent (§33: "no-wheel behavior is defined") — one
-warning at import, and `BACKEND` is inspectable so tests and debug tooling can
-assert which path served a figure (§28: every tier decision is observable).
+fastcharts computes through a compiled Rust C-ABI core. There is no pure-Python
+fallback: if the native core cannot be loaded — an unsupported platform with no
+published wheel and no local Rust build — importing this module raises
+ImportError with remediation, rather than silently degrading (§33: no-wheel
+behavior is defined, and it is a loud failure).
 
-Set FASTCHARTS_FORCE_FALLBACK=1 to force the NumPy path (used by parity tests).
+`BACKEND` stays inspectable (always ``"native"``) so tooling can keep asserting
+which path served a figure (§28: every tier decision is observable).
 """
 
 from __future__ import annotations
 
-import os
-import warnings
+try:
+    from . import _native as _impl
+except ImportError as err:  # pragma: no cover - platform-dependent
+    raise ImportError(
+        "fastcharts requires its native Rust core, which could not be loaded "
+        f"({err}). Prebuilt wheels cover Linux (x86-64, aarch64), macOS "
+        "(x86-64, arm64), and Windows (x86-64); on those platforms "
+        "`pip install fastcharts` needs no toolchain. On any other platform, "
+        "install a Rust toolchain (https://rustup.rs) and reinstall from "
+        "source (or run `cargo build --release`)."
+    ) from err
 
-if os.environ.get("FASTCHARTS_FORCE_FALLBACK") == "1":
-    from . import _fallback as _impl
-
-    BACKEND = "numpy"
-else:
-    try:
-        from . import _native as _impl  # type: ignore[no-redef]
-
-        BACKEND = "native"
-    except ImportError as err:
-        from . import _fallback as _impl  # type: ignore[no-redef]
-
-        BACKEND = "numpy"
-        warnings.warn(
-            f"fastcharts: native core unavailable ({err}); using the NumPy "
-            "fallback. Interaction stays correct but ingest/decimation is "
-            "slower — install a platform wheel or `cargo build --release`.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
+BACKEND = "native"
 
 zone_maps = _impl.zone_maps
 encode_f32 = _impl.encode_f32

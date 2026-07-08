@@ -6,10 +6,11 @@ Install ergonomics, by audience (design dossier §33):
   from the CI matrix — the compiled core *and* the JS client are already inside
   it. **No Rust, no Node, no toolchain.** This is the front door.
 - **Source builds** (`pip install .` / `-e .` from a clone) compile the core if
-  a Rust toolchain is present. **If Rust is absent, the build does NOT fail** —
-  it produces a pure-Python install that uses the NumPy fallback (correct
-  output, slower ingest/decimation, one loud warning at import). Install is
-  never blocked on a toolchain.
+  a Rust toolchain is present. **If Rust is absent, the build still succeeds**
+  but produces a pure-Python install with no native core — and since there is no
+  NumPy fallback, importing the compute layer then raises a clear, actionable
+  error (see `fastcharts.kernels`). Install a Rust toolchain, or use a published
+  wheel, for a working compute backend.
 - The JS client (`python/fastcharts/static/*`) is a **committed artifact**, so
   Node is only needed to *edit* the client, never to install.
 
@@ -70,14 +71,16 @@ class CustomBuildHook(BuildHookInterface):
                 f"fastcharts/_native_lib/{lib_name}"
             )
         else:
-            # No toolchain / build skipped: ship a pure-Python wheel. The JS
-            # client is included via package data (committed); the runtime uses
-            # the NumPy fallback with a loud warning (fastcharts.kernels).
+            # No toolchain / build skipped: ship a pure-Python wheel (the JS
+            # client is included via committed package data). There is no NumPy
+            # fallback, so this install imports fine but raises a clear error the
+            # moment compute is needed (fastcharts.kernels).
             print(
                 "fastcharts: building WITHOUT the native Rust core (cargo not "
-                "found or build skipped). The install works via the NumPy "
-                "fallback — correct, but slower. Install a prebuilt wheel or a "
-                "Rust toolchain (https://rustup.rs) for the fast path.",
+                "found or build skipped). This install has no compute backend "
+                "and will raise a clear error on first use. Install a prebuilt "
+                "wheel or a Rust toolchain (https://rustup.rs) for a working "
+                "install.",
                 file=sys.stderr,
             )
             build_data["pure_python"] = True

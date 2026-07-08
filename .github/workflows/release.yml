@@ -84,7 +84,7 @@ jobs:
         run: |
           sdist=$(ls dist/*.tar.gz)
           python scripts/verify_sdist.py "$sdist"
-      - name: Verify sdist installs via fallback
+      - name: Verify sdist without Rust errors clearly on import
         shell: bash
         env:
           FASTCHARTS_SKIP_CARGO: "1"
@@ -92,19 +92,20 @@ jobs:
           uv venv smoke
           uv pip install -p smoke dist/*.tar.gz numpy anywidget
           ./smoke/bin/python - <<'PY'
-          import warnings
-          import numpy as np
+          # No native core and no fallback: the compute layer must raise a
+          # clear, actionable error (§33: no-wheel behavior is defined).
+          import fastcharts
 
-          with warnings.catch_warnings(record=True) as w:
-              warnings.simplefilter("always")
-              import fastcharts.kernels as k
-              from fastcharts import Figure
-
-          assert k.BACKEND == "numpy", k.BACKEND
-          spec, blob = Figure().scatter(np.arange(5.0), np.arange(5.0)).build_payload()
-          assert spec["traces"] and len(blob) > 0
-          assert any("NumPy fallback" in str(x.message) for x in w), "expected fallback warning"
-          print("sdist fallback install OK")
+          assert fastcharts.__version__
+          try:
+              import fastcharts.kernels  # noqa: F401
+          except ImportError as err:
+              msg = str(err)
+              assert "native Rust core" in msg, msg
+              assert "rustup.rs" in msg, msg
+              print("sdist without Rust errors clearly on import")
+          else:
+              raise SystemExit("expected ImportError without the native core")
           PY
       - uses: actions/upload-artifact@v4
         with:

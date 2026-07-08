@@ -107,10 +107,9 @@ def test_fresh_import_budget_rejects_invalid_eager_shape(
     assert any("invalid eager list" in error and "numpy" in error for error in errors)
 
 
-def test_all_import_budgets_probe_default_and_forced_fallback(
+def test_all_import_budgets_probe_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("FASTCHARTS_FORCE_FALLBACK", raising=False)
     seen: list[str | None] = []
 
     def fake_run(*args, **kwargs):
@@ -128,36 +127,8 @@ def test_all_import_budgets_probe_default_and_forced_fallback(
     errors = check_public_api.check_all_fresh_import_budgets()
 
     assert errors == []
-    assert seen == [None, "1"]
-
-
-def test_forced_fallback_import_budget_rejects_backend_import(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fake_run(*args, **kwargs):
-        del args, kwargs
-        return subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout=_fresh_import_stdout(
-                eager=["fastcharts.kernels", "fastcharts._fallback", "numpy"]
-            ),
-            stderr="",
-        )
-
-    monkeypatch.setattr(check_public_api.subprocess, "run", fake_run)
-
-    errors = check_public_api.check_fresh_import_budget(
-        label="forced-fallback",
-        extra_env={"FASTCHARTS_FORCE_FALLBACK": "1"},
-    )
-
-    assert any(
-        "forced-fallback" in error
-        and "fastcharts submodules" in error
-        and "fastcharts._fallback" in error
-        for error in errors
-    )
+    # Native-only: there is no forced-fallback probe, so the env is never set.
+    assert seen == [None]
 
 
 def test_fresh_import_budget_rejects_eager_widget_dependencies(

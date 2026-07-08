@@ -40,7 +40,6 @@ HEAVY_FASTCHARTS_IMPORTS = {
     "fastcharts.interaction",
     "fastcharts.kernels",
     "fastcharts.lod",
-    "fastcharts._fallback",
     "fastcharts._native",
     "fastcharts.widget",
 }
@@ -455,14 +454,7 @@ def check_fresh_import_budget(
 
 
 def check_all_fresh_import_budgets() -> list[str]:
-    errors = check_fresh_import_budget(label="default")
-    errors.extend(
-        check_fresh_import_budget(
-            label="forced-fallback",
-            extra_env={"FASTCHARTS_FORCE_FALLBACK": "1"},
-        )
-    )
-    return errors
+    return check_fresh_import_budget(label="default")
 
 
 def check_public_api(*, check_lazy_import: bool = True) -> list[str]:

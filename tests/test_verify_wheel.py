@@ -40,11 +40,11 @@ def html_to_png(html, width, height): ...
 def to_png(fig): ...
 """
 KERNELS_PY = """
-import warnings
+try:
+    from . import _native as _impl
+except ImportError as err:
+    raise ImportError("native core required") from err
 BACKEND = "native"
-if False:
-    FASTCHARTS_FORCE_FALLBACK = "1"
-    warnings.warn("fallback")
 """
 INDEX_JS = (
     "class ChartView {}\n"

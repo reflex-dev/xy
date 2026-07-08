@@ -239,7 +239,7 @@ contract entry before it lands.
 
 **Phase 1 — channel-truthful density (kernel+client, ~1 wk)**
 1. `bin_2d_channels` kernel: count + sum(channel) [+ top-k category counts]
-   in one pass (Rust; NumPy fallback parity).
+   in one pass (native Rust core).
 2. Wire mean/majority+purity grids through `density_view` and the initial
    emit; extend DENSITY_FS to blend channel color over the count ramp with
    the purity desaturation; count-floor uniform.

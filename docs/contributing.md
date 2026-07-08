@@ -61,7 +61,8 @@ make check-ci
 ```
 
 Set `WHEEL_EXPECT=--expect-native` for native release wheels, or
-`WHEEL_EXPECT=--expect-pure` for an intentional fallback artifact.
+`WHEEL_EXPECT=--expect-pure` for an intentional no-native artifact (which
+imports but errors clearly the moment compute is needed).
 
 When CI, a release job, or a local build has already produced artifacts, verify
 those exact files with:
@@ -191,8 +192,7 @@ dry-run output uses `<CHROMIUM>` until you pass `--chromium` or `CHROMIUM=...`.
 - Failed public builder calls leave `Figure.traces`, `ColumnStore`, and category
   axes unchanged.
 - `import fastcharts` stays lazy and under budget in fresh interpreters; no
-  NumPy/native-core import on package import, including with
-  `FASTCHARTS_FORCE_FALLBACK=1`.
+  NumPy/native-core import on package import.
 - Standalone HTML handles hostile user strings in every text surface touched by
   the patch; run `make check-security` for export/client text-sink changes.
 - Benchmarks label mode truthfully: `direct`, `decimated`, `density`, `sampled`,
