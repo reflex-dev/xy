@@ -601,6 +601,7 @@ def test_visual_regression_smoke_checks_layout_regions_not_just_blankness() -> N
         "asset=True",
         "runner-specific",
         "x_axis_box = (0.08, 0.70, 0.94, 0.99)",
+        '"x-axis": (700, 250 if asset else 40)',
     ]
     for marker in required:
         assert marker in source
