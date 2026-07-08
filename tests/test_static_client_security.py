@@ -162,6 +162,39 @@ def test_client_exposes_first_class_interaction_events() -> None:
             assert marker in text, f"{path} no longer exposes interaction marker {marker!r}"
 
 
+def test_client_interaction_event_payload_contract_is_stable() -> None:
+    required = (
+        '_eventView(source = "view")',
+        "source,",
+        'if (this._interactionFlag("hover")) {',
+        'this._dispatchChartEvent("hover", {',
+        "row,",
+        "trace: hit.trace,",
+        "index: hit.index,",
+        'view: this._eventView("hover"),',
+        'this._dispatchChartEvent("leave", { view: this._eventView("leave") });',
+        'this._dispatchChartEvent("click", detail);',
+        "const detail = {",
+        "x,",
+        "y,",
+        'view: this._eventView("click"),',
+        "row: hit && this._localRow ? this._localRow(hit) : null,",
+        "trace: hit ? hit.trace : null,",
+        "index: hit ? hit.index : null,",
+        'this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });',
+        'this._dispatchChartEvent("select", {',
+        "range: { x0, x1, y0, y1 },",
+        'view: this._eventView("select"),',
+        'this._dispatchChartEvent("view_change", detail);',
+        'this.comm.send({ type: "view_change", ...detail });',
+    )
+
+    for path in CLIENT_FILES:
+        text = path.read_text(encoding="utf-8")
+        for marker in required:
+            assert marker in text, f"{path} changed interaction event payload marker {marker!r}"
+
+
 def test_client_exposes_first_class_mark_state_styling() -> None:
     required = (
         "this.markStyle = spec.mark_style || {};",
