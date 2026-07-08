@@ -353,7 +353,12 @@ def sample_keep_mask(
         return np.zeros(0, dtype=bool)
     if fraction >= 1.0:
         return np.ones(len(ids), dtype=bool)
-    return hash_row_ids(ids, seed=seed) <= _sample_threshold(fraction)
+    seed_i = _integer_param(seed, "sample seed", max_value=_UINT64_MAX_INT)
+    # Fused native pass — bit-identical to
+    # `hash_row_ids(ids, seed=seed) <= _sample_threshold(fraction)` (the NumPy
+    # reference, parity-tested), but without five full-width u64 temporaries.
+    # At 10M rows this was ~68% of the density payload build.
+    return kernels.sample_mask(ids, seed_i, int(_sample_threshold(fraction)))
 
 
 def stratified_sample_keep_mask(

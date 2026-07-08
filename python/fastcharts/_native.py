@@ -23,12 +23,13 @@ import numpy.typing as npt
 
 from .config import MAX_SCREEN_DIM
 
-ABI_VERSION = 4
+ABI_VERSION = 5
 
 _F64_P = ctypes.POINTER(ctypes.c_double)
 _F32_P = ctypes.POINTER(ctypes.c_float)
 _U64_P = ctypes.POINTER(ctypes.c_uint64)
 _U32_P = ctypes.POINTER(ctypes.c_uint32)
+_U8_P = ctypes.POINTER(ctypes.c_uint8)
 
 
 def _lib_filename() -> str:
@@ -149,6 +150,14 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_double,
         _U32_P,
+    ]
+    lib.fc_sample_mask.restype = None
+    lib.fc_sample_mask.argtypes = [
+        _U64_P,
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        _U8_P,
     ]
     lib.fc_pyramid_build.restype = ctypes.c_uint64
     lib.fc_pyramid_build.argtypes = [
@@ -495,6 +504,32 @@ def range_indices(
     if written == np.iinfo(np.uint64).max:
         raise ValueError("invalid range_indices arguments")
     return out[:written].copy()
+
+
+def sample_mask(
+    ids: npt.NDArray[np.uint64],
+    seed: int,
+    threshold: int,
+) -> npt.NDArray[np.bool_]:
+    """Deterministic sampling mask: `splitmix64(ids + seed) <= threshold`.
+
+    Bit-identical to `lod.hash_row_ids(ids, seed=seed) <= threshold` (the
+    NumPy reference, asserted by the parity test), fused into one native pass
+    with no full-width u64 temporaries.
+    """
+    ids = np.ascontiguousarray(ids, dtype=np.uint64)
+    if ids.ndim != 1:
+        raise ValueError("ids must be a one-dimensional uint64 array")
+    out = np.empty(len(ids), dtype=np.uint8)
+    if len(ids):
+        _lib.fc_sample_mask(
+            ids.ctypes.data_as(_U64_P),
+            len(ids),
+            ctypes.c_uint64(int(seed)),
+            ctypes.c_uint64(int(threshold)),
+            out.ctypes.data_as(_U8_P),
+        )
+    return out.view(np.bool_)
 
 
 def pyramid_build(
