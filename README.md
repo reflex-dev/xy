@@ -119,9 +119,12 @@ never compile it. Each platform wheel bundles the compiled C-ABI core, the
 Python package, **and** the JavaScript client, so there's **no Rust, no Node, no
 npm, no CDN** at install time. Wheels are published per platform by the release
 workflow — Linux glibc **and** musl/Alpine (x86-64, aarch64, armv7), macOS
-(x86-64, Apple Silicon), and Windows (x86, x64, arm64), plus a best-effort
-Pyodide/Emscripten WASM wheel; because the core is a plain C ABI with no CPython
-ABI, one wheel per platform serves every supported Python version.
+(x86-64, Apple Silicon), and Windows (x86, x64, arm64). Because the core is a
+plain C ABI with no CPython ABI, one wheel per platform serves every supported
+Python version. An experimental Pyodide/Emscripten WASM wheel is also built,
+but does **not** yet load in-browser — the Rust core's `panic=unwind` emits a
+`__cpp_exception` import Pyodide's runtime can't satisfy — so it is not part of
+the supported set (see [`docs/production-readiness.md`](docs/production-readiness.md)).
 
 ### From source
 
@@ -159,9 +162,10 @@ loudly on import, keeping the no-wheel behavior a defined, actionable error.
 | Platform/build with no native core | — | — | clear `ImportError` on first compute, naming supported platforms |
 
 Published wheels cover Linux glibc and musl/Alpine (x86-64, aarch64, armv7),
-macOS (x86-64, Apple Silicon), and Windows (x86, x64, arm64), plus a best-effort
-Pyodide/Emscripten WASM wheel; the C-ABI core means one wheel per platform serves
-every supported Python version.
+macOS (x86-64, Apple Silicon), and Windows (x86, x64, arm64); the C-ABI core
+means one wheel per platform serves every supported Python version. An
+experimental Pyodide/Emscripten WASM wheel is built but does not yet load
+in-browser (see [`docs/production-readiness.md`](docs/production-readiness.md)).
 
 ### Check the active backend
 
