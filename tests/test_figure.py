@@ -234,6 +234,38 @@ def test_histogram_ships_rect_columns():
     assert spec["y_axis"]["range"][0] == 0.0
 
 
+def test_histogram_cumulative_count_accumulates_and_records_mode():
+    fig = Figure().histogram([0.1, 0.2, 1.2, 2.4], bins=[0.0, 1.0, 2.0, 3.0], cumulative=True)
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    y1, y1m = _payload_col(spec, blob, tr["y1"])
+    heights = y1.astype(np.float64) + y1m["offset"]
+    # per-bin counts [2, 1, 1] accumulate to [2, 3, 4]
+    np.testing.assert_allclose(heights, [2.0, 3.0, 4.0])
+    assert np.all(np.diff(heights) >= 0)
+    assert fig.traces[0].style["cumulative"] is True
+
+
+def test_histogram_cumulative_density_is_empirical_cdf():
+    values = [0.1, 0.2, 1.2, 2.4]
+    fig = Figure().histogram(values, bins=[0.0, 1.0, 2.0, 3.0], density=True, cumulative=True)
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    y1, y1m = _payload_col(spec, blob, tr["y1"])
+    heights = y1.astype(np.float64) + y1m["offset"]
+    # CDF is non-decreasing and reaches 1.0 (all values inside the bin range)
+    assert np.all(np.diff(heights) >= 0)
+    np.testing.assert_allclose(heights[-1], 1.0)
+
+
+def test_histogram_cumulative_rejects_non_bool_without_mutation():
+    fig = Figure()
+    with pytest.raises((TypeError, ValueError)):
+        fig.histogram([0.0, 1.0], bins=4, cumulative="yes")
+    assert fig.traces == []
+    assert len(fig.store) == 0
+
+
 def test_histogram_constant_values_auto_expands_range():
     fig = Figure().histogram([5.0, 5.0, 5.0], bins=4)
     spec, blob = fig.build_payload()

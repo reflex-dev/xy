@@ -570,14 +570,21 @@ class Figure:
         bins: Any = "auto",
         range: Optional[tuple[float, float]] = None,
         density: bool = False,
+        cumulative: bool = False,
         name: Optional[str] = None,
         color: Optional[str] = None,
         opacity: float = 0.85,
     ) -> "Figure":
-        """Add a 1D histogram backed by the shared rectangle primitive."""
+        """Add a 1D histogram backed by the shared rectangle primitive.
+
+        `cumulative=True` accumulates bins left-to-right: with the default
+        count mode the last bin equals the number of in-range values; combined
+        with `density=True` it becomes the empirical CDF (last bin ~1.0).
+        """
         name = self._optional_text(name, "histogram name")
         opacity = self._opacity(opacity, "histogram opacity")
         density = self._bool_param(density, "histogram density")
+        cumulative = self._bool_param(cumulative, "histogram cumulative")
         vals = self._as_1d_float(values, "histogram values")
         if isinstance(bins, (int, np.integer)) and not isinstance(bins, bool):
             n_bins = int(bins)
@@ -595,18 +602,25 @@ class Figure:
                 None if range is None else self._finite_increasing_pair(range, "histogram range")
             )
             counts, edges = np.histogram(finite, bins=hist_bins, range=hist_range, density=density)
+        counts = counts.astype(np.float64, copy=False)
+        if cumulative:
+            # Density mode integrates density*width into an empirical CDF whose
+            # last bin is ~1.0 (exactly 1.0 when every value is in range); count
+            # mode simply accumulates bin counts.
+            counts = np.cumsum(counts * np.diff(edges)) if density else np.cumsum(counts)
         zeros = np.zeros_like(counts, dtype=np.float64)
         self._append_rect_trace(
             "histogram",
             edges[:-1],
             edges[1:],
             zeros,
-            counts.astype(np.float64, copy=False),
+            counts,
             name=name,
             color=color,
             opacity=opacity,
             role="histogram",
             count=int(len(vals)),
+            extra_style={"cumulative": cumulative, "density": density},
         )
         return self
 
@@ -617,6 +631,7 @@ class Figure:
         bins: Any = "auto",
         range: Optional[tuple[float, float]] = None,
         density: bool = False,
+        cumulative: bool = False,
         name: Optional[str] = None,
         color: Optional[str] = None,
         opacity: float = 0.85,
@@ -627,6 +642,7 @@ class Figure:
             bins=bins,
             range=range,
             density=density,
+            cumulative=cumulative,
             name=name,
             color=color,
             opacity=opacity,
@@ -1650,6 +1666,7 @@ class Figure:
         color_ch: Optional[ColorChannel] = None,
         size_ch: Optional[SizeChannel] = None,
         count: Optional[int] = None,
+        extra_style: Optional[dict[str, Any]] = None,
     ) -> None:
         name = self._optional_text(name, f"{kind} name")
         opacity = self._opacity(opacity, f"{kind} opacity")
@@ -1672,6 +1689,8 @@ class Figure:
             style: dict[str, Any] = {"color": color, "opacity": opacity, "role": role}
             if orientation is not None:
                 style["orientation"] = orientation
+            if extra_style is not None:
+                style.update(extra_style)
             self.traces.append(
                 Trace(
                     id=len(self.traces),

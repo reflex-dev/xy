@@ -68,7 +68,7 @@ not fall out of sight.
 | 2 | Scatter / marker plots | scatter, scattergl-style, bubble, colored scatter, sized scatter | Implemented core | Large-point interactivity is the fastcharts wedge; basis for drilldown, selection, and density. |
 | 3 | Bar / column | vertical bar, horizontal bar, grouped, stacked, normalized stacked, diverging bar | Implemented core | `Figure().bar(...)` / `Figure().column(...)` ship categorical/numeric vertical and horizontal bars, grouped bars, and stacked bars through the shared rectangle renderer. Follow-ups: normalized stacked bars and labels. |
 | 4 | Area | filled line, stacked area, streamgraph, ridgeline-lite area bands | Implemented core | `Figure().area(...)` ships a filled area with scalar/array baseline and optional line overlay. Follow-ups: stacked area helpers and streamgraph offsets. |
-| 5 | Histogram | count, probability, density, cumulative histogram | Implemented core | Python-side binning plus the shared rectangle renderer; follow-ups: cumulative histograms and viewport-aware re-binning for huge streamed distributions. |
+| 5 | Histogram | count, probability, density, cumulative histogram | Implemented core | Python-side binning plus the shared rectangle renderer; `cumulative=True` (count CDF and, with `density=True`, empirical CDF) is implemented. Follow-up: viewport-aware re-binning for huge streamed distributions. |
 | 6 | Pie / donut | pie, donut, nested donut, variable-radius pie | Planned compatibility | Extremely common in dashboards even though performance differentiation is low. |
 | 7 | Heatmap / image / matrix | heatmap, image, annotated matrix, correlation matrix, cohort heatmap | Implemented core | `Figure().heatmap(...)` renders matrix cells through a compact grid texture with continuous colormaps and categorical/numeric axes. Follow-ups: annotation and tiled huge-image paths. |
 | 8 | Box plot | box, grouped box, notched box, outlier points | Planned | Standard distribution summary across Plotly, Matplotlib, Seaborn, Altair. |
@@ -109,7 +109,7 @@ not fall out of sight.
 
 | Rank | Chart | Why it is popular | Why it fits fastcharts | Suggested API |
 |---:|---|---|---|---|
-| 1 | Histogram | Core statistical chart in Plotly, Matplotlib, Altair; common first chart for distributions. | Implemented core: Python-side binning + shared instanced rectangle renderer. Follow-up: viewport-aware re-binning for very large streamed distributions. | `Figure().hist(values, bins=512)` |
+| 1 | Histogram | Core statistical chart in Plotly, Matplotlib, Altair; common first chart for distributions. | Implemented core: Python-side binning + shared instanced rectangle renderer, incl. `density` and `cumulative` modes. Follow-up: viewport-aware re-binning for very large streamed distributions. | `Figure().hist(values, bins=512, cumulative=True)` |
 | 2 | Bar / column | Present in every major library; expected for categorical comparison. | Implemented core: category axis + shared instanced rectangle renderer for basic, grouped, stacked, and horizontal bars. Follow-up: normalized stacked bars and labels. | `Figure().bar(x, y)` |
 | 3 | Area / filled line | Common extension of line charts in Plotly, Chart.js, Highcharts, Altair. | Implemented core: sorted x, M4 first payload, and filled WebGL segment strips. Follow-up: stacked area helper. | `Figure().area(x, y)` |
 | 4 | Heatmap / image | Common in scientific and BI tools; Matplotlib, Plotly, Altair, Highcharts all surface it. | Implemented core: matrix-to-grid texture path with color channel reuse. Follow-up: image/raster tiling for huge grids. | `Figure().heatmap(z, x=None, y=None)` |
@@ -288,9 +288,10 @@ interaction-latency comparison, not assumed.
 
 1. **Histogram** - implemented core
    - Python-side 1D binning and instanced rectangle rendering are in place.
-   - Follow-ups: native 1D binning, cumulative/probability modes, bin hover,
-     viewport-aware re-binning, and benchmarks against Matplotlib, Plotly,
-     Altair, and Datashader.
+   - `cumulative=True` (count CDF, and empirical CDF with `density=True`) is
+     implemented.
+   - Follow-ups: native 1D binning, bin hover, viewport-aware re-binning, and
+     benchmarks against Matplotlib, Plotly, Altair, and Datashader.
 
 2. **Bar / column** - implemented core
    - Vertical, horizontal, grouped, and stacked categorical/numeric bars reuse
