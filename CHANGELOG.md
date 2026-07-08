@@ -9,6 +9,25 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- **CSS/Tailwind:** every DOM chrome element now takes per-slot `class_names` /
+  `chrome_styles`, and its visual defaults live in one zero-specificity
+  `:where([data-fc-slot="…"])` stylesheet — so a utility class or inline style
+  overrides the built-in look **without `!important`**. New slots
+  `legend_swatch`, `tick_label`, `axis_title`; class-driven modebar active
+  state (`--chart-modebar-active`). `Figure.to_html(..., custom_css=...)`
+  injects an author stylesheet so those classes resolve in the standalone
+  export.
+- `LICENSE` (Apache-2.0), `CHANGELOG.md`, `SECURITY.md`, root `CONTRIBUTING.md`.
+
+### Changed
+- **Performance:** WebGL client now uses vertex-array objects (no per-frame
+  attribute re-binding), lazily compiles shader programs on first use, and
+  ships a compacted bundle (193 KB → 154 KB) that every `to_html()` inlines.
+- **Robustness:** the native C ABI wraps every entry point in a panic backstop
+  (a kernel panic can no longer abort the host interpreter) and converges on
+  `i32` status returns; ABI bumped to 7.
+
+### Added
 - Cumulative histogram mode: `Figure.histogram(..., cumulative=True)` and
   `fc.histogram(cumulative=...)`; combined with `density=True` it yields the
   empirical CDF.
