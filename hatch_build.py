@@ -22,11 +22,23 @@ Env switches:
   published wheel never silently ships without the core.
 - `FASTCHARTS_CARGO_TARGET=<triple>` — cross-compile the core for a Rust target
   triple (e.g. `aarch64-unknown-linux-musl`, `aarch64-pc-windows-msvc`). The
-  built lib is read from `target/<triple>/release/` instead of `target/release/`.
-  The release matrix sets this to reach every platform in one CI run.
+  built lib is looked for under `target/<triple>/release/` instead of
+  `target/release/`; if the crate's cdylib doesn't land under the host's usual
+  suffix there (e.g. `wasm32-unknown-emscripten` isn't a `.so`), the target's
+  release dir is scanned for whatever `fastcharts_core.*` artifact cargo
+  actually produced, rather than assuming one fixed filename. The release
+  matrix sets this to reach every platform in one CI run.
 - `FASTCHARTS_WHEEL_PLATFORM=<tag>` — override the wheel's platform tag (e.g.
   `musllinux_1_2_aarch64`, `win_arm64`). Cross-compiled builds need this because
   the build host's `sysconfig.get_platform()` describes the host, not the target.
+
+Musl targets need one more thing this hook doesn't control: `*-unknown-linux-musl`
+defaults to fully static linking (`crt-static`), under which rustc silently
+*drops* the cdylib output entirely (a warning, not an error — cargo "succeeds"
+having built nothing). The release workflow passes
+`RUSTFLAGS=-C target-feature=-crt-static` for musl targets so a real cdylib
+gets produced; that flag lives in CI, not here, since it's about how cargo is
+invoked, not what this hook does with the result.
 """
 
 from __future__ import annotations
@@ -48,6 +60,36 @@ def _lib_filename() -> str:
     if sys.platform == "darwin":
         return "libfastcharts_core.dylib"
     return "libfastcharts_core.so"
+
+
+_CDYLIB_SUFFIXES = (".so", ".dylib", ".dll", ".wasm")
+
+
+def _find_cross_compiled_lib(release_dir: Path) -> Optional[Path]:
+    """Cross-compiling to an exotic target can produce a cdylib under a suffix
+    `_lib_filename()`'s host-platform guess never anticipated — e.g.
+    `wasm32-unknown-emscripten` doesn't emit a `.so`. Scan the target's own
+    release directory for whatever cdylib-shaped artifact cargo actually
+    produced, keyed on the crate's lib name, instead of assuming one fixed
+    filename derived from the *build host's* platform."""
+    if not release_dir.is_dir():
+        return None
+    candidates = sorted(
+        p
+        for p in release_dir.iterdir()
+        if p.is_file() and "fastcharts_core" in p.stem and p.suffix in _CDYLIB_SUFFIXES
+    )
+    return candidates[0] if candidates else None
+
+
+def _resolve_built(built: Path, target: Optional[str]) -> Optional[Path]:
+    """Prefer the host-platform-derived guess; for a cross-compiled target
+    where that guess doesn't exist, fall back to scanning its release dir."""
+    if built.exists():
+        return built
+    if target is None:
+        return None
+    return _find_cross_compiled_lib(built.parent)
 
 
 def _platform_tag() -> str:
@@ -122,12 +164,15 @@ class CustomBuildHook(BuildHookInterface):
         if os.environ.get("FASTCHARTS_SKIP_CARGO") == "1":
             if dest.exists():
                 return dest
-            if built.exists():
-                return built
+            resolved = _resolve_built(built, target)
+            if resolved is not None:
+                return resolved
             if require:
                 raise RuntimeError(
                     f"FASTCHARTS_REQUIRE_CARGO=1 and FASTCHARTS_SKIP_CARGO=1 but "
-                    f"neither {dest} nor {built} exists — prebuild the core before this step."
+                    f"neither {dest} nor {built} exists, and no fastcharts_core.* "
+                    f"artifact was found in {built.parent} — prebuild the core "
+                    "before this step."
                 )
             return None
 
@@ -149,8 +194,12 @@ class CustomBuildHook(BuildHookInterface):
                 raise RuntimeError(f"cargo build failed: {e}") from e
             return None
 
-        if not built.exists():
+        resolved = _resolve_built(built, target)
+        if resolved is None:
             if require:
-                raise RuntimeError(f"cargo build succeeded but {built} is missing")
+                raise RuntimeError(
+                    f"cargo build succeeded but {built} is missing, and no "
+                    f"fastcharts_core.* artifact was found in {built.parent}"
+                )
             return None
-        return built
+        return resolved

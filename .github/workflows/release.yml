@@ -37,10 +37,14 @@ jobs:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, zigtarget: x86_64-unknown-linux-gnu.2.17, plat: manylinux_2_17_x86_64, zig: true, native: true }
           - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, zigtarget: aarch64-unknown-linux-gnu.2.17, plat: manylinux_2_17_aarch64, zig: true, native: false }
           - { os: ubuntu-latest, target: armv7-unknown-linux-gnueabihf, zigtarget: armv7-unknown-linux-gnueabihf.2.17, plat: manylinux_2_17_armv7l, zig: true, native: false }
-          # Linux musl / Alpine.
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, zigtarget: x86_64-unknown-linux-musl, plat: musllinux_1_2_x86_64, zig: true, native: false }
-          - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, zigtarget: aarch64-unknown-linux-musl, plat: musllinux_1_2_aarch64, zig: true, native: false }
-          - { os: ubuntu-latest, target: armv7-unknown-linux-musleabihf, zigtarget: armv7-unknown-linux-musleabihf, plat: musllinux_1_2_armv7l, zig: true, native: false }
+          # Linux musl / Alpine. crt-static is musl's default, and rustc
+          # silently *drops* cdylib output under it (a warning, not an error)
+          # since a fully-static binary can't also be a shared library —
+          # -C target-feature=-crt-static switches to dynamic linking against
+          # musl libc so a real cdylib gets produced.
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, zigtarget: x86_64-unknown-linux-musl, plat: musllinux_1_2_x86_64, zig: true, native: false, rustflags: "-C target-feature=-crt-static" }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, zigtarget: aarch64-unknown-linux-musl, plat: musllinux_1_2_aarch64, zig: true, native: false, rustflags: "-C target-feature=-crt-static" }
+          - { os: ubuntu-latest, target: armv7-unknown-linux-musleabihf, zigtarget: armv7-unknown-linux-musleabihf, plat: musllinux_1_2_armv7l, zig: true, native: false, rustflags: "-C target-feature=-crt-static" }
           # macOS (native per runner arch).
           - { os: macos-13, target: x86_64-apple-darwin, plat: macosx_10_12_x86_64, zig: false, native: true }
           - { os: macos-14, target: aarch64-apple-darwin, plat: macosx_11_0_arm64, zig: false, native: true }
@@ -63,6 +67,8 @@ jobs:
         run: node js/build.mjs
       - name: Cross-compile the native core (zig)
         if: matrix.zig
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
         run: |
           uv tool install cargo-zigbuild
           uv tool run cargo-zigbuild build --release --target ${{ matrix.zigtarget }}
