@@ -96,21 +96,17 @@ def _measure(
     ttfr: bool,
     chromium: str | None,
 ) -> dict[str, Any]:
+    # Timing and memory come from two separate passes (see bench_vs.py's
+    # _measure for the rationale): tracemalloc's per-allocation overhead
+    # scales with allocation count, not size, so tracing during the timed
+    # pass would penalize allocation-heavy libraries more than fastcharts'
+    # handful of large buffer operations.
     gc.collect()
-    tracemalloc.start()
-    try:
-        rss0 = _rss_mb()
-        t0 = time.perf_counter()
-        fig = build()
-        t1 = time.perf_counter()
-        payload_bytes = payload(fig)
-        t2 = time.perf_counter()
-        _current, peak = tracemalloc.get_traced_memory()
-    except Exception:
-        tracemalloc.stop()
-        raise
-    tracemalloc.stop()
-    rss1 = _rss_mb()
+    t0 = time.perf_counter()
+    fig = build()
+    t1 = time.perf_counter()
+    payload_bytes = payload(fig)
+    t2 = time.perf_counter()
 
     row = {
         "library": library,
@@ -118,8 +114,6 @@ def _measure(
         "payload_s": t2 - t1,
         "total_s": t2 - t0,
         "payload_bytes": payload_bytes,
-        "peak_mem_mb": peak / 2**20,
-        "rss_delta_mb": (rss1 - rss0) if (rss0 is not None and rss1 is not None) else None,
         "status": "ok",
     }
 
@@ -145,6 +139,25 @@ def _measure(
 
     del fig
     gc.collect()
+
+    # Second, untimed pass on a fresh build: peak allocation only.
+    gc.collect()
+    tracemalloc.start()
+    try:
+        rss0 = _rss_mb()
+        fig2 = build()
+        payload(fig2)
+        _current, peak = tracemalloc.get_traced_memory()
+    except Exception:
+        tracemalloc.stop()
+        raise
+    tracemalloc.stop()
+    rss1 = _rss_mb()
+    row["peak_mem_mb"] = peak / 2**20
+    row["rss_delta_mb"] = (rss1 - rss0) if (rss0 is not None and rss1 is not None) else None
+    del fig2
+    gc.collect()
+
     return row
 
 

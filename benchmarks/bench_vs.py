@@ -98,28 +98,45 @@ def _measure(
 ) -> dict:
     """Run build() then render(fig)->out_bytes, timing and memory-profiling both.
 
+    Timing and memory come from two separate passes. tracemalloc captures a
+    Python stack trace on every malloc/free while active — real overhead that
+    scales with allocation *count*, not size. Tracing during the timed pass
+    would not inflate every library's total_s uniformly: it would penalize
+    allocation-heavy libraries (matplotlib/Plotly building thousands of small
+    Python objects) far more than fastcharts, which does a handful of large
+    NumPy/native buffer operations. So the first pass times build+render with
+    no tracer active; a second, untimed pass on a fresh build measures peak
+    allocation.
+
     If `artifact_fn` is given (browser-rendered libraries), capture the page HTML
-    after render — untimed — so the TTFR stage can paint it. Raster libraries
-    (PNG) leave it None: their render already produced pixels."""
+    from the timed pass's figure — untimed — so the TTFR stage can paint it.
+    Raster libraries (PNG) leave it None: their render already produced pixels."""
     gc.collect()
-    tracemalloc.start()
-    rss0 = _rss_mb()
     t0 = time.perf_counter()
     fig = build()
     t1 = time.perf_counter()
     out_bytes = render(fig)
     t2 = time.perf_counter()
-    _, peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
     artifact = None
     if artifact_fn is not None:
         try:
             artifact = artifact_fn(fig)
         except Exception:  # artifact for TTFR is best-effort, never fails a row
             artifact = None
-    rss1 = _rss_mb()
     del fig
     gc.collect()
+
+    gc.collect()
+    tracemalloc.start()
+    rss0 = _rss_mb()
+    fig2 = build()
+    render(fig2)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    rss1 = _rss_mb()
+    del fig2
+    gc.collect()
+
     return {
         "build_s": t1 - t0,
         "render_s": t2 - t1,
