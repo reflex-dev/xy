@@ -41,6 +41,7 @@ CommandRunner = Callable[[Sequence[str], Path | None, float], str | None]
 def collect_environment_metadata(
     *,
     chromium: str | None = None,
+    fastcharts_backend: str | None = None,
     package_names: Iterable[str] = DEFAULT_PACKAGE_NAMES,
     now: datetime | None = None,
     root: Path = ROOT,
@@ -81,7 +82,7 @@ def collect_environment_metadata(
         "cpu_count": os.cpu_count(),
         "package_versions": _package_versions(package_names),
         "executables": executables,
-        "fastcharts_backend": _fastcharts_backend(),
+        "fastcharts_backend": fastcharts_backend or _fastcharts_backend(),
         "git": _git_metadata(root, command_runner),
     }
 
