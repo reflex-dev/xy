@@ -28,6 +28,7 @@ class FigureHost(Protocol):
     title: Optional[str]
     width: Any
     height: Any
+    padding: Any
     tooltip: Optional[dict[str, Any]]
     show_legend: bool
     show_modebar: bool

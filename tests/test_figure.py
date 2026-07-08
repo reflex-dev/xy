@@ -1853,3 +1853,26 @@ def test_bar_corner_radius_tip_base_pair() -> None:
         Figure().bar(["a"], [1.0], corner_radius=(-1, 0))
     with pytest.raises(ValueError, match="histogram corner_radius base"):
         Figure().histogram([1.0, 2.0], corner_radius=(2, -3))
+
+
+def test_padding_overrides_plot_margins() -> None:
+    spec, _ = Figure(padding=0).scatter([0.0, 1.0], [0.0, 1.0]).build_payload()
+    assert spec["padding"] == [0.0, 0.0, 0.0, 0.0]
+
+    spec2, _ = Figure(padding=[6, 1, 2, 1]).scatter([0.0], [0.0]).build_payload()
+    assert spec2["padding"] == [6.0, 1.0, 2.0, 1.0]
+
+    # None (default) emits no padding key — the client keeps its label-aware margins
+    spec3, _ = Figure().scatter([0.0], [0.0]).build_payload()
+    assert "padding" not in spec3
+
+
+def test_padding_validation() -> None:
+    with pytest.raises(ValueError, match="padding"):
+        Figure(padding=-1)
+    with pytest.raises(ValueError, match=r"padding\[2\]"):
+        Figure(padding=[1, 2, -3, 4])
+    with pytest.raises(ValueError, match="4 values"):
+        Figure(padding=[1, 2, 3])
+    with pytest.raises(ValueError, match=r"number or a .* sequence"):
+        Figure(padding="0")

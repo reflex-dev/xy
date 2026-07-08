@@ -113,10 +113,13 @@ class ChartView {
   _layout() {
     // Plot rect from the current size — margins fixed, data area flexes.
     const compact = this.size.w < 520;
-    const marginLeft = compact ? 46 : MARGIN.l;
-    const marginRight = compact ? 8 : MARGIN.r;
-    const marginTop = compact ? 6 : MARGIN.t;
-    const marginBottom = compact ? 36 : MARGIN.b;
+    // Explicit padding (spec.padding = [top,right,bottom,left]) overrides the
+    // label-aware defaults — zero padding gives an edge-to-edge sparkline.
+    const pad = Array.isArray(this.spec.padding) ? this.spec.padding : null;
+    const marginLeft = pad ? pad[3] : compact ? 46 : MARGIN.l;
+    const marginRight = pad ? pad[1] : compact ? 8 : MARGIN.r;
+    const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
+    const marginBottom = pad ? pad[2] : compact ? 36 : MARGIN.b;
     const topAxisRoom = this._axis("x").side === "top" ? (compact ? 26 : 32) : 0;
     const top = marginTop + (this.spec.title ? (compact ? 26 : 30) : 0) + topAxisRoom;
     const extraRightAxes = Object.values(this.axes || {}).filter((axis) =>
@@ -1755,7 +1758,7 @@ class ChartView {
     const baseAngle = explicitAngle === null ? 0 : explicitAngle;
     const withBase = labels.map((label) => ({ ...label, angle: baseAngle, row: 0 }));
     let strategy = this._axisTickLabelStrategy(axis);
-    if (strategy === "none") return withBase;
+    if (strategy === "none") return []; // hide every tick label (sparklines)
     if (strategy === "auto") {
       if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap)) return withBase;
       if (dim === "x" && axis.kind === "category" && labels.length <= 16) strategy = "rotate";
