@@ -574,6 +574,50 @@ def test_stacked_bar_handles_positive_and_negative_series():
     assert spec["y_axis"]["range"][1] > 5.0
 
 
+def test_normalized_bar_segments_sum_to_one_per_category():
+    y = [[30.0, 10.0, 0.0], [50.0, 30.0, 0.0], [20.0, 60.0, 0.0]]
+    fig = Figure().bar(["A", "B", "C"], y, mode="normalized", series=["s1", "s2", "s3"])
+    spec, blob = fig.build_payload()
+    assert [t["style"]["role"] for t in spec["traces"]] == ["bar-normalized"] * 3
+    bases = []
+    tops = []
+    for tr in spec["traces"]:
+        _bar, _pos, base, top = _bar_payload(spec, blob, tr)
+        bases.append(base)
+        tops.append(top)
+    segments = np.array(tops) - np.array(bases)
+    # Fractions per category; the all-zero category stays empty, not NaN (§19).
+    np.testing.assert_allclose(segments.sum(axis=0), [1.0, 1.0, 0.0])
+    np.testing.assert_allclose(segments[:, 0], [0.3, 0.5, 0.2])
+    # Contiguous stack: each series starts where the previous ended.
+    np.testing.assert_allclose(bases[1], tops[0])
+    np.testing.assert_allclose(bases[2], tops[1])
+
+
+def test_normalized_bar_single_series_records_mode():
+    fig = Figure().bar(["A", "B"], [2.0, 8.0], mode="normalized")
+    spec, blob = fig.build_payload()
+    tr = spec["traces"][0]
+    assert tr["style"]["role"] == "bar-normalized"
+    _bar, _pos, _base, top = _bar_payload(spec, blob, tr)
+    np.testing.assert_allclose(top, [1.0, 1.0])
+
+
+def test_normalized_bar_rejects_negative_values_without_mutation():
+    fig = Figure()
+    with pytest.raises(ValueError, match="non-negative"):
+        fig.bar(["A"], [[1.0], [-2.0]], mode="normalized")
+    assert fig.traces == []
+    assert len(fig.store) == 0
+
+
+def test_normalized_bar_nan_segment_is_missing_not_renormalized_away():
+    fig = Figure().bar(["A"], [[np.nan], [1.0], [3.0]], mode="normalized")
+    segments = [float(t.y1.values[0] - t.y0.values[0]) for t in fig.traces]
+    assert np.isnan(segments[0])
+    np.testing.assert_allclose(segments[1:], [0.25, 0.75])
+
+
 def test_horizontal_bar_uses_category_y_axis():
     fig = Figure().bar(["low", "high"], [10.0, 20.0], orientation="horizontal")
     spec, blob = fig.build_payload()

@@ -21,6 +21,7 @@ EXPECTED_QUICK_REFERENCE = {
     "Column": ("Figure().column", "fc.column_chart", "fc.column"),
     "Grouped bars": ('mode="grouped"', "fc.bar_chart", "fc.bar"),
     "Stacked bars": ('mode="stacked"', "fc.bar_chart", "fc.bar"),
+    "Normalized bars": ('mode="normalized"', "fc.bar_chart", "fc.bar"),
     "Horizontal bars": ('orientation="horizontal"', "fc.bar_chart", "fc.bar"),
     "Heatmap": ("Figure().heatmap", "fc.heatmap_chart", "fc.heatmap"),
 }

@@ -389,7 +389,8 @@ def bar(
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
-    """A vertical bar series. 2D y values can render grouped or stacked."""
+    """A vertical bar series. 2D y values can render grouped, stacked, or
+    normalized (per-category fractions summing to 1)."""
     return Mark(
         kind="bar",
         x=x,
