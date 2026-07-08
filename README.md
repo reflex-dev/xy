@@ -428,14 +428,14 @@ full tables and fairness notes.
 
 | Library | Target | Total | Peak mem | Resident Δ | Payload / output |
 |---|---|---:|---:|---:|---:|
-| fastcharts | GPU binary payload | **203 ms** | **126 MB** | **+10 MB** | **832 KB** |
+| fastcharts | GPU binary payload | **169 ms** | **126 MB** | **+10 MB** | **832 KB** |
 | matplotlib | Agg PNG | 3,239 ms | 553 MB | +223 MB | 42 KB |
 | Seaborn | matplotlib/Agg PNG | 7,918 ms | 1,088 MB | +695 MB | 32 KB |
 | Plotly `Scattergl` | Kaleido PNG | 54,064 ms | 1,584 MB | +382 MB | 49 KB |
 | Plotly `Scatter` | SVG/Kaleido | over budget above 1M | 184 MB at 1M | — | 109 KB at 1M |
 
-At 10M points fastcharts is 16x faster than matplotlib, 39x than Seaborn, and
-266x than Plotly `Scattergl`, at 4-13x lower peak memory. Ingest is zero-copy
+At 10M points fastcharts is 19x faster than matplotlib, 47x than Seaborn, and
+321x than Plotly `Scattergl`, at 4-13x lower peak memory. Ingest is zero-copy
 for well-formed f64 arrays (the canonical store holds a reference, not a
 duplicate), so the 126 MB peak is transient working buffers — visible-row
 indices, sample gathers, encode staging — released after the payload is built.

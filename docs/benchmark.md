@@ -382,14 +382,14 @@ Rust backend), all libraries in one consistent `benchmarks/bench_vs.py` run.
 
 | library | total time | peak memory | resident Δ | render payload | points/sec |
 |---|---|---|---|---|---|
-| **fastcharts** | **203 ms** | **126 MB** | **+10 MB** | **832 KB** | 49,300,000 |
+| **fastcharts** | **169 ms** | **126 MB** | **+10 MB** | **832 KB** | 59,100,000 |
 | matplotlib (Agg→PNG) | 3,239 ms | 553 MB | +223 MB | 42 KB PNG | 3,090,000 |
 | Seaborn (Agg→PNG) | 7,918 ms | 1,088 MB | +695 MB | 32 KB PNG | 1,260,000 |
 | Plotly `Scattergl` (→PNG) | 54,064 ms | 1,584 MB | +382 MB | 49 KB PNG | 185,000 |
 | Plotly `Scatter` (SVG) | — over budget above 1 M | | | | |
 
-At 10 M points fastcharts is **~16× faster than matplotlib**, **~39× faster than
-Seaborn**, and **~266× faster than Plotly's WebGL path**, at **4–13× lower peak
+At 10 M points fastcharts is **~19× faster than matplotlib**, **~47× faster than
+Seaborn**, and **~321× faster than Plotly's WebGL path**, at **4–13× lower peak
 memory**. Plotly's SVG path never reached 10 M (over budget above 1 M).
 
 > Scope note (important): every column above comes from the same harness pass
@@ -440,7 +440,7 @@ threshold (200 k) — 0.08 B/pt at 10 M. This table's scope is fastcharts'
 payload-build allocation only, which stays near 2 MB regardless of N; the
 cross-library **Headline** table above measures the full pipeline (build +
 render, including transient working buffers for selection, sampling, and
-encode staging), where fastcharts' peak is 126 MB at 10 M and total is 203 ms
+encode staging), where fastcharts' peak is 126 MB at 10 M and total is 169 ms
 — the same-harness figures to compare against matplotlib/Seaborn/Plotly.
 
 ### matplotlib (`Agg`, `savefig` PNG)
