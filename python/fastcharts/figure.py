@@ -15,7 +15,7 @@ from typing import Any, Optional, TypeAlias
 
 import numpy as np
 
-from . import channels, columns, export, interaction, kernels, lod
+from . import _validate, channels, columns, export, interaction, kernels, lod
 from .channels import ColorChannel, SizeChannel
 from .columns import Column, ColumnStore, ColumnStoreCheckpoint
 
@@ -1337,103 +1337,23 @@ class Figure:
             raise ValueError(f"{label} must be 1-D, got shape {arr.shape}")
         return Figure._real_float_array(arr, label)
 
-    @staticmethod
-    def _finite_scalar(value: Any, label: str) -> float:
-        if isinstance(value, (bool, np.bool_)):
-            raise ValueError(f"{label} must be a finite real number")
-        try:
-            out = float(value)
-        except (TypeError, ValueError) as e:
-            raise ValueError(f"{label} must be a finite real number") from e
-        if not np.isfinite(out):
-            raise ValueError(f"{label} must be finite")
-        return out
-
-    @staticmethod
-    def _finite_increasing_pair(values: Any, label: str) -> tuple[float, float]:
-        try:
-            lo_raw, hi_raw = values
-        except (TypeError, ValueError) as e:
-            raise ValueError(f"{label} must contain exactly two finite values") from e
-        lo = Figure._finite_scalar(lo_raw, f"{label}[0]")
-        hi = Figure._finite_scalar(hi_raw, f"{label}[1]")
-        if hi <= lo:
-            raise ValueError(f"{label} must be finite and increasing")
-        return lo, hi
-
-    @staticmethod
-    def _positive_scalar(value: Any, label: str) -> float:
-        out = Figure._finite_scalar(value, label)
-        if out <= 0:
-            raise ValueError(f"{label} must be positive")
-        return out
-
-    @staticmethod
-    def _optional_finite_scalar(value: Any, label: str) -> Optional[float]:
-        if value is None:
-            return None
-        return Figure._finite_scalar(value, label)
-
-    @staticmethod
-    def _optional_positive_int(value: Any, label: str) -> Optional[int]:
-        if value is None:
-            return None
-        if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-            raise ValueError(f"{label} must be a positive integer")
-        out = int(value)
-        if out <= 0:
-            raise ValueError(f"{label} must be a positive integer")
-        return out
-
-    @staticmethod
-    def _axis_tick_label_strategy(value: Any, label: str) -> Optional[str]:
-        if value is None:
-            return None
-        if not isinstance(value, str):
-            raise ValueError(f"{label} must be a string or None")
-        normalized = value.replace("-", "_")
-        allowed = {"auto", "hide", "rotate", "stagger", "none"}
-        if normalized not in allowed:
-            raise ValueError(f"{label} must be one of {sorted(allowed)}")
-        return normalized
-
-    @staticmethod
-    def _nonnegative_scalar(value: Any, label: str) -> float:
-        out = Figure._finite_scalar(value, label)
-        if out < 0:
-            raise ValueError(f"{label} must be non-negative")
-        return out
-
-    @staticmethod
-    def _opacity(value: Any, label: str) -> float:
-        out = Figure._finite_scalar(value, label)
-        if out < 0 or out > 1:
-            raise ValueError(f"{label} must be between 0 and 1")
-        return out
-
-    @staticmethod
-    def _optional_bool(value: Any, label: str) -> Optional[bool]:
-        if value is None:
-            return None
-        if isinstance(value, (bool, np.bool_)):
-            return bool(value)
-        raise ValueError(f"{label} must be True, False, or None")
-
-    @staticmethod
-    def _bool_param(value: Any, label: str) -> bool:
-        if isinstance(value, (bool, np.bool_)):
-            return bool(value)
-        raise ValueError(f"{label} must be True or False")
-
-    @staticmethod
-    def _axis_id(value: Any, label: str) -> str:
-        if not isinstance(value, str) or not value:
-            raise ValueError(f"{label} must be a non-empty string")
-        if value[0] not in {"x", "y"}:
-            raise ValueError(f"{label} must start with 'x' or 'y'")
-        if not all(ch.isalnum() or ch in {"_", "-"} for ch in value):
-            raise ValueError(f"{label} may only contain letters, digits, '_' and '-'")
-        return value
+    # Shared argument validators (bodies live in `_validate`); these thin
+    # staticmethod aliases keep `self._foo(...)` call sites — and the two
+    # helpers `components` reaches through `Figure` — unchanged.
+    _finite_scalar = staticmethod(_validate.finite_scalar)
+    _finite_increasing_pair = staticmethod(_validate.finite_increasing_pair)
+    _positive_scalar = staticmethod(_validate.positive_scalar)
+    _optional_finite_scalar = staticmethod(_validate.optional_finite_scalar)
+    _optional_positive_int = staticmethod(_validate.optional_positive_int)
+    _axis_tick_label_strategy = staticmethod(_validate.axis_tick_label_strategy)
+    _nonnegative_scalar = staticmethod(_validate.nonnegative_scalar)
+    _opacity = staticmethod(_validate.opacity)
+    _optional_bool = staticmethod(_validate.optional_bool)
+    _bool_param = staticmethod(_validate.bool_param)
+    _axis_id = staticmethod(_validate.axis_id)
+    _optional_text = staticmethod(_validate.optional_text)
+    _string_mapping = staticmethod(_validate.string_mapping)
+    _style_mapping = staticmethod(_validate.style_mapping)
 
     @staticmethod
     def _axis_dim(axis_id: str) -> str:
@@ -1452,25 +1372,7 @@ class Figure:
                 out.append(axis)
         return out
 
-    @staticmethod
-    def _optional_text(value: Any, label: str) -> Optional[str]:
-        if value is None or isinstance(value, str):
-            return value
-        raise ValueError(f"{label} must be a string or None")
-
-    @staticmethod
-    def _axis_label_position(
-        value: Any, label: str
-    ) -> Optional[str | dict[str, str | int | float]]:
-        if value is None:
-            return None
-        if isinstance(value, str):
-            normalized = value.replace("-", "_")
-            allowed = {"start", "center", "end", "inside_start", "inside_center", "inside_end"}
-            if normalized not in allowed:
-                raise ValueError(f"{label} must be one of {sorted(allowed)} or a CSS style dict")
-            return normalized
-        return Figure._style_mapping(value, label)
+    _axis_label_position = staticmethod(_validate.axis_label_position)
 
     @staticmethod
     def _required_text(value: Any, label: str) -> str:
@@ -2692,37 +2594,6 @@ class Figure:
         report["transport_bytes_per_point"] = len(blob) / n_total
         report["backend"] = kernels.BACKEND
         return report
-
-    @staticmethod
-    def _string_mapping(value: dict[str, Any], label: str) -> dict[str, str]:
-        if not isinstance(value, dict):
-            raise ValueError(f"{label} must be a dict[str, str]")
-        out: dict[str, str] = {}
-        for key, item in value.items():
-            if not isinstance(key, str) or not isinstance(item, str):
-                raise ValueError(f"{label} must be a dict[str, str]")
-            out[key] = item
-        return out
-
-    @staticmethod
-    def _style_mapping(value: dict[str, Any], label: str) -> dict[str, str | int | float]:
-        if not isinstance(value, dict):
-            raise ValueError(f"{label} must be a dict[str, str | int | float]")
-        out: dict[str, str | int | float] = {}
-        for key, item in value.items():
-            if not isinstance(key, str) or not isinstance(
-                item, (str, int, float, np.integer, np.floating)
-            ):
-                raise ValueError(f"{label} must be a dict[str, str | int | float]")
-            if isinstance(item, (bool, np.bool_)):
-                raise ValueError(f"{label} must be a dict[str, str | int | float]")
-            number = (
-                float(item) if isinstance(item, (int, float, np.integer, np.floating)) else None
-            )
-            if number is not None and not np.isfinite(number):
-                raise ValueError(f"{label} numeric values must be finite")
-            out[key] = item.item() if isinstance(item, (np.integer, np.floating)) else item
-        return out
 
     @staticmethod
     def _optional_state_style(

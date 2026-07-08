@@ -18,7 +18,9 @@ from typing import Any, Optional
 import numpy as np
 import numpy.typing as npt
 
-from . import kernels
+from . import _validate, kernels
+
+_finite_scalar = _validate.finite_scalar
 
 # Named colormaps the client knows (LUTs live in the JS client, §36). Kept
 # small and CVD-safe by default.
@@ -163,18 +165,6 @@ def _as_real_array(values: np.ndarray, label: str) -> npt.NDArray[np.float64]:
         return values.astype(np.float64, copy=False)
     except (TypeError, ValueError) as e:
         raise ValueError(f"{label} must be real numeric") from e
-
-
-def _finite_scalar(value: Any, label: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
-        raise ValueError(f"{label} must be a finite real number")
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as e:
-        raise ValueError(f"{label} must be a finite real number") from e
-    if not np.isfinite(out):
-        raise ValueError(f"{label} must be finite")
-    return out
 
 
 def _size_range(range_px: tuple[float, float]) -> tuple[float, float]:
