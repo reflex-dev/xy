@@ -100,13 +100,19 @@ def _measure(
     # _measure for the rationale): tracemalloc's per-allocation overhead
     # scales with allocation count, not size, so tracing during the timed
     # pass would penalize allocation-heavy libraries more than fastcharts'
-    # handful of large buffer operations.
+    # handful of large buffer operations. RSS is measured around this first,
+    # timed pass — not the tracemalloc pass — because freed arenas are
+    # typically not returned to the OS, so a second pass's "before" baseline
+    # would already be elevated and collapse a real resident-growth number
+    # into noise.
     gc.collect()
+    rss0 = _rss_mb()
     t0 = time.perf_counter()
     fig = build()
     t1 = time.perf_counter()
     payload_bytes = payload(fig)
     t2 = time.perf_counter()
+    rss1 = _rss_mb()
 
     row = {
         "library": library,
@@ -140,11 +146,10 @@ def _measure(
     del fig
     gc.collect()
 
-    # Second, untimed pass on a fresh build: peak allocation only.
+    # Second, untimed pass on a fresh build: peak allocation only (tracemalloc).
     gc.collect()
     tracemalloc.start()
     try:
-        rss0 = _rss_mb()
         fig2 = build()
         payload(fig2)
         _current, peak = tracemalloc.get_traced_memory()
@@ -152,7 +157,6 @@ def _measure(
         tracemalloc.stop()
         raise
     tracemalloc.stop()
-    rss1 = _rss_mb()
     row["peak_mem_mb"] = peak / 2**20
     row["rss_delta_mb"] = (rss1 - rss0) if (rss0 is not None and rss1 is not None) else None
     del fig2
