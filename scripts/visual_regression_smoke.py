@@ -214,7 +214,11 @@ def _assert_layout_regions(
     else:
         title_box = (0.18, 0.0, 0.82, 0.16)
         plot_box = (0.09, 0.15, 0.94, 0.83)
-        x_axis_box = (0.08, 0.82, 0.94, 0.99)
+        # Chromium screenshot geometry can place the bottom tick labels a bit
+        # above the final 18% of the viewport. Sample a broader lower band so
+        # the gate catches missing x-axis chrome instead of runner-specific
+        # subpixel layout.
+        x_axis_box = (0.08, 0.70, 0.94, 0.99)
     y_axis_box = (0.0, 0.15, 0.16, 0.83)
     regions = {
         "title": _region_stats(rgba, width, height, title_box),
