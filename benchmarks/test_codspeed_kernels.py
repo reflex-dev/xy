@@ -249,6 +249,20 @@ def _composed_layered_payload(data: dict[str, object]) -> int:
     return len(blob)
 
 
+def _composed_layered_memory_report(data: dict[str, object]) -> dict[str, object]:
+    chart = fc.chart(
+        fc.bar(x="category", y="actual", data=data, name="actual", color="#f59e0b"),
+        fc.scatter(x="category", y="sample", data=data, name="sample", color="#2563eb", size=8),
+        fc.line(x="category", y="target", data=data, name="target", color="#dc2626", width=2),
+        fc.x_axis(label="category", tick_label_strategy="auto", tick_label_min_gap=28),
+        fc.y_axis(label="pipeline"),
+        fc.tooltip(fields=["category", "actual", "sample", "target"]),
+        fc.legend(),
+        title="CodSpeed layered core 2D memory",
+    )
+    return chart.memory_report()
+
+
 def test_first_payload_scatter_small(benchmark, small_data):
     """Small-data first payload: everyday exact scatter startup."""
     x, y = small_data
@@ -332,6 +346,17 @@ def test_first_payload_composed_layered_core_2d(benchmark, core_2d_data):
     assert isinstance(data, dict)
     payload_bytes = benchmark(_composed_layered_payload, data)
     assert payload_bytes > 0
+
+
+def test_memory_report_composed_layered_core_2d(benchmark, core_2d_data):
+    """Core 2D memory accounting through the public declarative layered API."""
+    data = core_2d_data["composed_data"]
+    assert isinstance(data, dict)
+    report = benchmark(_composed_layered_memory_report, data)
+    assert report["backend"] == "native"
+    assert report["canonical_bytes"] > 0
+    assert len(report["columns"]) >= 6
+    assert report["transport_bytes_first_paint"] > 0
 
 
 def test_build_payload(benchmark, data):
