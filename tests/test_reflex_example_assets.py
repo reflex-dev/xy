@@ -262,8 +262,8 @@ def test_reflex_dashboard_parent_shell_keeps_stable_iframe_contract() -> None:
         assert not chart["id"].endswith("-frame")
         assert not chart["id"].endswith("-frame-wrap")
 
-    assert 'id=f"{chart[\'id\']}-frame"' in source
-    assert 'id=f"{chart[\'id\']}-frame-wrap"' in source
+    assert "id=f\"{chart['id']}-frame\"" in source
+    assert "id=f\"{chart['id']}-frame-wrap\"" in source
     assert 'id="custom-chrome-frame"' in source
     assert 'id="custom-chrome-frame-wrap"' in source
     assert 'id="annotated-heatmap-frame"' in source
@@ -275,7 +275,7 @@ def test_reflex_dashboard_parent_shell_keeps_stable_iframe_contract() -> None:
     assert 'document.getElementById("annotated-heatmap-frame-wrap")' in source
     assert source.count('loading="eager"') >= 1
     assert 'loading="lazy"' in source
-    assert 'loading=loading' in source
+    assert "loading=loading" in source
     assert (
         'loading = "eager" if chart["id"] in {"business-overview", "retention-cohort"} else "lazy"'
         in source
@@ -319,9 +319,7 @@ def test_reflex_lifecycle_smoke_covers_fastcharts_iframe_assets() -> None:
     constants = _dashboard_constants()
     lifecycle = _lifecycle_smoke_module()
     expected = {
-        Path(chart["src"]).name
-        for chart in constants["CHART_NAV"]
-        if "plotly" not in chart["src"]
+        Path(chart["src"]).name for chart in constants["CHART_NAV"] if "plotly" not in chart["src"]
     }
     expected.add("live_drilldown_10m.html")
 
@@ -338,9 +336,7 @@ def test_reflex_lifecycle_smoke_covers_fastcharts_iframe_assets() -> None:
         "live_drilldown_10m.html",
         "live_drilldown_100m.html",
     )
-    grouped_assets = [
-        asset for group in lifecycle.SHELL_ASSET_GROUPS for asset in group
-    ]
+    grouped_assets = [asset for group in lifecycle.SHELL_ASSET_GROUPS for asset in group]
     assert sorted(grouped_assets) == sorted(lifecycle.CHART_ASSETS)
     assert len(grouped_assets) == len(set(grouped_assets))
     assert lifecycle.LIFECYCLE_PHASES == (
@@ -579,9 +575,7 @@ def test_visual_regression_smoke_covers_flaky_dashboard_assets() -> None:
         "adaptive_density",
     ]
     expected_assets = {
-        Path(chart["src"]).name
-        for chart in constants["CHART_NAV"]
-        if "plotly" not in chart["src"]
+        Path(chart["src"]).name for chart in constants["CHART_NAV"] if "plotly" not in chart["src"]
     }
     expected_assets.add("live_drilldown_10m.html")
     assert set(visual.ASSET_CASES) == expected_assets

@@ -299,8 +299,7 @@ def _require_native_backend(report: dict[str, Any], kind: str, errors: list[str]
     backend = env.get("fastcharts_backend") if isinstance(env, dict) else None
     if backend != "native":
         errors.append(
-            f"{kind} reports must use environment.fastcharts_backend == 'native'; "
-            f"got {backend!r}"
+            f"{kind} reports must use environment.fastcharts_backend == 'native'; got {backend!r}"
         )
 
 

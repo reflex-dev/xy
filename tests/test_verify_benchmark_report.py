@@ -861,7 +861,10 @@ def test_verify_benchmark_report_rejects_interaction_visual_regression(
     assert any("blank_frame_count must be 0" in error for error in errors)
     assert any("tick_label_overlap_count must be 0" in error for error in errors)
     assert any("tooltip_stable must be true" in error for error in errors)
-    assert any("tooltip_visible_samples must equal report.tooltip_sample_count" in error for error in errors)
+    assert any(
+        "tooltip_visible_samples must equal report.tooltip_sample_count" in error
+        for error in errors
+    )
 
 
 def test_verify_benchmark_report_rejects_interaction_tooltip_partial_visibility(
@@ -875,7 +878,10 @@ def test_verify_benchmark_report_rejects_interaction_tooltip_partial_visibility(
 
     errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
 
-    assert any("tooltip_visible_samples must equal report.tooltip_sample_count" in error for error in errors)
+    assert any(
+        "tooltip_visible_samples must equal report.tooltip_sample_count" in error
+        for error in errors
+    )
 
 
 def test_verify_benchmark_report_rejects_interaction_missing_required_scenarios(

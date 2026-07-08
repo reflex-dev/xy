@@ -350,7 +350,9 @@ def test_public_api_checker_rejects_misrouted_declarative_export() -> None:
 
     errors = check_public_api.validate_declarative_api_contract(fake, fake_components)
 
-    assert any("chart" in error and "'.components'" in error and ".figure" in error for error in errors)
+    assert any(
+        "chart" in error and "'.components'" in error and ".figure" in error for error in errors
+    )
 
 
 def test_public_api_checker_rejects_stale_component_module_all() -> None:
