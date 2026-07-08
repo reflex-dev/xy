@@ -400,6 +400,52 @@ def stratified_sample_keep_mask(
     return keep
 
 
+def sample_rows_for_target(
+    row_ids: Any,
+    target: object,
+    *,
+    categories: Any | None = None,
+    level: int = 0,
+    growth: float = 2.0,
+    seed: int = 0,
+    min_per_category: int = 1,
+) -> np.ndarray:
+    """Return a deterministic, target-sized representative subset of rows.
+
+    Density overlays and future sampled tiers should share this wrapper instead
+    of reimplementing "target N rows from this viewport" math. The returned
+    rows preserve the caller's integer dtype, while hashing uses validated
+    uint64 row ids internally. Subsets are stable across row order and viewport
+    pans because row identity, not position in the current array, drives the
+    decision.
+    """
+    raw_ids = np.asarray(row_ids)
+    ids = _row_ids(raw_ids)
+    target_i = _integer_param(target, "sample target", min_value=1)
+    if len(ids) == 0:
+        return raw_ids[:0]
+    base_fraction = min(1.0, target_i / max(1, len(ids)))
+    if categories is None:
+        mask = sample_keep_mask(
+            ids,
+            level,
+            base_fraction=base_fraction,
+            growth=growth,
+            seed=seed,
+        )
+    else:
+        mask = stratified_sample_keep_mask(
+            ids,
+            categories,
+            level,
+            base_fraction=base_fraction,
+            growth=growth,
+            seed=seed,
+            min_per_category=min_per_category,
+        )
+    return raw_ids[mask]
+
+
 def enter_drill(trace: Any, sel: np.ndarray) -> int:
     """Adopt `sel` as the trace's shipped subset. Picks/selections translate
     through it (§17), and the version bump invalidates in-flight replies built

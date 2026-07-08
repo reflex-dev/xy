@@ -203,6 +203,7 @@ def test_lod_architecture_doc_names_shared_extension_points() -> None:
         "encode_window_xy_columns",
         "add_window_xy",
         "BufferWriter.add_encoded",
+        "sample_rows_for_target",
         "Line and area zoom",
         "local_log_density",
         "ohlc-buckets",
@@ -384,6 +385,47 @@ def test_stratified_sample_keep_mask_uses_stable_lowest_hash_floor() -> None:
     assert int(first[categories == "b"].sum()) == 2
 
 
+def test_sample_rows_for_target_is_order_independent_and_zoom_monotonic() -> None:
+    row_ids = np.arange(10_000, dtype=np.uint32)
+
+    broad = lod.sample_rows_for_target(row_ids, 64, seed=17)
+    reordered = lod.sample_rows_for_target(row_ids[::-1], 64, seed=17)
+    narrow_ids = row_ids[2_000:3_000]
+    narrow = lod.sample_rows_for_target(narrow_ids, 64, seed=17)
+
+    assert broad.dtype == row_ids.dtype
+    assert set(broad.tolist()) == set(reordered.tolist())
+    # Zooming into a subset raises the target fraction; any point already shown
+    # in the overlap must remain instead of being replaced by a fresh random set.
+    assert set(broad.tolist()) & set(narrow_ids.tolist()) <= set(narrow.tolist())
+
+
+def test_sample_rows_for_target_saturates_without_reordering_rows() -> None:
+    row_ids = np.array([9, 2, 7, 4], dtype=np.uint16)
+
+    sampled = lod.sample_rows_for_target(row_ids, 99, seed=4)
+
+    assert sampled.dtype == row_ids.dtype
+    np.testing.assert_array_equal(sampled, row_ids)
+
+
+def test_sample_rows_for_target_preserves_rare_categories_stably() -> None:
+    row_ids = np.arange(1_003, dtype=np.uint32)
+    categories = np.array(["common"] * 1_000 + ["rare"] * 3)
+    order = np.r_[np.arange(500, 1_003), np.arange(0, 500)]
+
+    sampled = lod.sample_rows_for_target(row_ids, 8, categories=categories, seed=19)
+    reordered = lod.sample_rows_for_target(
+        row_ids[order],
+        8,
+        categories=categories[order],
+        seed=19,
+    )
+
+    assert set(sampled.tolist()) == set(reordered.tolist())
+    assert set(sampled.tolist()) & set(row_ids[categories == "rare"].tolist())
+
+
 @pytest.mark.parametrize(
     ("row_ids", "message"),
     [
@@ -429,3 +471,19 @@ def test_stratified_sample_keep_mask_rejects_mismatched_categories() -> None:
             0,
             min_per_category=True,
         )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"target": 0}, "sample target"),
+        ({"target": True}, "sample target"),
+        ({"categories": ["a", "b"]}, "categories"),
+    ],
+)
+def test_sample_rows_for_target_rejects_bad_options(kwargs, message: str) -> None:
+    options = {"target": 4, "categories": None} | kwargs
+    target = options.pop("target")
+
+    with pytest.raises(ValueError, match=message):
+        lod.sample_rows_for_target(np.arange(3, dtype=np.int64), target, **options)

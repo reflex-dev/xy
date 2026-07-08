@@ -67,6 +67,9 @@ Tiered chart kinds must enter through the common LOD primitives in
   `BufferWriter.add_encoded(...)` are the shared geometry wire primitive: f64
   data-space values become finite f32 buffers plus `{offset, scale, len}`
   metadata in exactly one place.
+- `sample_rows_for_target(...)` is the shared target-bounded subset primitive:
+  density overlays and future sampled tiers ask for "about N stable rows from
+  this viewport" in one place instead of copying target-fraction math.
 - `local_log_density(...)` provides the transition handoff values used when an
   aggregate view drills into exact points without a visual hard cut.
 
@@ -130,7 +133,9 @@ Wherever a representative *subset* is shown (Tier-2 hybrid overlay, future
   (`threshold(l+1) ≥ threshold(l)`); the retained set at level l is a subset
   of level l+1. Pan does not reshuffle; zoom never *removes* a previously
   shown point until its tier changes. Implemented as
-  `lod.sample_keep_mask(row_ids, level, ...)` using a SplitMix64 row-id hash.
+  `lod.sample_keep_mask(row_ids, level, ...)` using a SplitMix64 row-id hash;
+  chart code should normally call `lod.sample_rows_for_target(...)`, which
+  turns a target overlay size into that stable mask.
 - **No RNG anywhere in the render path.** The engine bans `Math.random()` /
   time-seeded sampling by rule; the smoke's determinism probe (see testing
   suite) renders twice and asserts identical pixels. The Python primitive is
@@ -243,8 +248,11 @@ contract entry before it lands.
 
 **Phase 2 — deterministic sampling utilities**
 4. **Done:** `lod.sample_keep_mask(row_ids, level)` SplitMix64 sampler +
-   `lod.stratified_sample_keep_mask(...)`; tests assert row-order independence,
-   rare-category floors, validation, and subset-monotonicity across levels.
+   `lod.stratified_sample_keep_mask(...)`, plus
+   `lod.sample_rows_for_target(...)` for target-sized overlays; tests assert
+   row-order independence, rare-category floors, validation,
+   dtype-preserving saturation, and subset-monotonicity across levels and
+   viewport narrowing.
 5. **Done for exact density views:** hybrid scatter mode renders density plus
    deterministic sampled exact points, with a visible "sampled n of N" badge.
    Pyramid-served density views still need tile-aware sample overlays so the
