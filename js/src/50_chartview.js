@@ -53,6 +53,8 @@ class ChartView {
     this._lutCache = new Map();
     this._listeners = [];
     this._glPrograms = [];
+    this._progCache = new Map();
+    this._bufSeq = 0;
     this._destroyed = false;
     this._hoverId = -1;
     this._hoverTarget = null;
@@ -650,28 +652,46 @@ class ChartView {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
-    this.pointProg = makeProgram(gl, POINT_VS, POINT_FS);
-    this.lineProg = makeProgram(gl, LINE_VS, LINE_FS);
-    this.areaProg = makeProgram(gl, AREA_VS, AREA_FS);
-    this.rectProg = makeProgram(gl, RECT_VS, RECT_FS);
-    this.barProg = makeProgram(gl, BAR_VS, RECT_FS);
-    this.pickProg = makeProgram(gl, PICK_VS, PICK_FS);
-    this.densityProg = makeProgram(gl, GRID_VS, DENSITY_FS);
-    this.heatmapProg = makeProgram(gl, GRID_VS, HEATMAP_FS);
-    this._glPrograms = [
-      this.pointProg, this.lineProg, this.areaProg, this.rectProg,
-      this.barProg, this.pickProg, this.densityProg, this.heatmapProg,
-    ];
+    // Shader programs compile lazily on first use (small-data audit #2): a
+    // simple line chart links one program instead of paying seven unused
+    // synchronous compile+links before its first paint.
+    this._progCache = new Map();
+    this._glPrograms = this._progCache; // deletion iterates the cache values
 
-    // Fullscreen quad for density.
+    // Fullscreen quad for density/heatmap, plus its VAO (a_corner at slot 0).
     this.quad = gl.createBuffer();
+    this.quad._fcId = ++this._bufSeq;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
+    this.quadVao = gl.createVertexArray();
+    gl.bindVertexArray(this.quadVao);
+    gl.enableVertexAttribArray(ATTR_SLOTS.a_corner);
+    gl.vertexAttribPointer(ATTR_SLOTS.a_corner, 2, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribDivisor(ATTR_SLOTS.a_corner, 0);
+    gl.bindVertexArray(null);
 
     this.gpuTraces = this.spec.traces.map((t) => this._buildTrace(buffer, t));
     this._pickable = this.gpuTraces.some((g) => markOf(g.trace.kind).pointPick && g.tier !== "density");
     if (this._pickable) this._initPickTarget();
   }
+
+  _prog(key, vs, fs) {
+    let p = this._progCache.get(key);
+    if (!p) {
+      p = makeProgram(this.gl, vs, fs);
+      this._progCache.set(key, p);
+    }
+    return p;
+  }
+
+  get pointProg() { return this._prog("point", POINT_VS, POINT_FS); }
+  get lineProg() { return this._prog("line", LINE_VS, LINE_FS); }
+  get areaProg() { return this._prog("area", AREA_VS, AREA_FS); }
+  get rectProg() { return this._prog("rect", RECT_VS, RECT_FS); }
+  get barProg() { return this._prog("bar", BAR_VS, RECT_FS); }
+  get pickProg() { return this._prog("pick", PICK_VS, PICK_FS); }
+  get densityProg() { return this._prog("density", GRID_VS, DENSITY_FS); }
+  get heatmapProg() { return this._prog("heatmap", GRID_VS, HEATMAP_FS); }
 
   _lut(name) {
     if (this._lutCache.has(name)) return this._lutCache.get(name);
@@ -1041,9 +1061,57 @@ class ChartView {
   _upload(f32) {
     const gl = this.gl;
     const buf = gl.createBuffer();
+    // Identity tag for VAO config signatures: a replaced buffer (data update,
+    // drill swap) gets a new id, so any VAO built over the old one rebuilds.
+    buf._fcId = ++this._bufSeq;
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.bufferData(gl.ARRAY_BUFFER, f32, gl.STATIC_DRAW);
     return buf;
+  }
+
+  // -- vertex-array objects ---------------------------------------------------
+  //
+  // One VAO per (trace × draw-config). Attribute slots are fixed at link time
+  // (ATTR_SLOTS in 40_gl.js), so a VAO built over a trace's buffers is valid
+  // for every program that draws them (point + pick share one). `parts` is the
+  // config signature — buffer ids plus the on/off state of optional channels —
+  // and the VAO is rebuilt only when it changes. This removes the per-frame
+  // getAttribLocation + enable + pointer + divisor churn (renderer audit #1),
+  // and because VAOs isolate attribute-enable state per draw, the old
+  // "disable every leftover attrib" loops (and their per-frame
+  // gl.getParameter(MAX_VERTEX_ATTRIBS) driver round-trip) go away entirely.
+  _bindVao(g, key, parts, setup) {
+    const gl = this.gl;
+    if (!g._vaos) g._vaos = new Map();
+    const sig = parts.join("|");
+    let entry = g._vaos.get(key);
+    if (!entry || entry.sig !== sig) {
+      if (entry) gl.deleteVertexArray(entry.vao);
+      const vao = gl.createVertexArray();
+      gl.bindVertexArray(vao);
+      setup();
+      entry = { vao, sig };
+      g._vaos.set(key, entry);
+    } else {
+      gl.bindVertexArray(entry.vao);
+    }
+  }
+
+  _deleteVaos(g) {
+    if (!g || !g._vaos) return;
+    const gl = this.gl;
+    if (gl) for (const { vao } of g._vaos.values()) gl.deleteVertexArray(vao);
+    g._vaos = null;
+  }
+
+  // Enable slot + pointer into `buf` — only ever called inside a _bindVao
+  // setup closure, so the state lands in that VAO, not global state.
+  _vaoAttr(slot, buf, byteOffset, divisor, size = 1) {
+    const gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.enableVertexAttribArray(slot);
+    gl.vertexAttribPointer(slot, size, gl.FLOAT, false, 0, byteOffset);
+    gl.vertexAttribDivisor(slot, divisor);
   }
 
   _initPickTarget() {
@@ -1152,21 +1220,6 @@ class ChartView {
     this._drawChrome();
   }
 
-  _bindScalarAttr(prog, name, buf, byteOffset, divisor) {
-    const gl = this.gl;
-    const loc = gl.getAttribLocation(prog, name);
-    if (loc < 0) return;
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 1, gl.FLOAT, false, 0, byteOffset);
-    gl.vertexAttribDivisor(loc, divisor);
-  }
-
-  _disableAttr(prog, name) {
-    const gl = this.gl;
-    const loc = gl.getAttribLocation(prog, name);
-    if (loc >= 0) gl.disableVertexAttribArray(loc);
-  }
 
   _drawPoints(g, xm, ym, opacityScale = 1) {
     const gl = this.gl;
@@ -1188,30 +1241,10 @@ class ChartView {
     const [r, gg, b] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, 1);
 
-    this._bindScalarAttr(prog, "ax", g.xBuf, 0, 0);
-    this._bindScalarAttr(prog, "ay", g.yBuf, 0, 0);
-    if (g.colorMode !== 0 && g.cBuf) {
-      this._bindScalarAttr(prog, "a_cval", g.cBuf, 0, 0);
-    } else {
-      this._disableAttr(prog, "a_cval");
-      const loc = gl.getAttribLocation(prog, "a_cval");
-      if (loc >= 0) gl.vertexAttrib1f(loc, 0);
-    }
-    if (g.sizeMode === 1 && g.sBuf) {
-      this._bindScalarAttr(prog, "a_sval", g.sBuf, 0, 0);
-    } else {
-      this._disableAttr(prog, "a_sval");
-      const loc = gl.getAttribLocation(prog, "a_sval");
-      if (loc >= 0) gl.vertexAttrib1f(loc, 0.5);
-    }
     gl.uniform1i(u("u_selActive"), g.selActive ? 1 : 0);
-    if (g.selActive && g.selBuf) {
-      this._bindScalarAttr(prog, "a_sel", g.selBuf, 0, 0);
-    } else {
-      this._disableAttr(prog, "a_sel");
-      const loc = gl.getAttribLocation(prog, "a_sel");
-      if (loc >= 0) gl.vertexAttrib1f(loc, 1.0);
-    }
+    const colorOn = g.colorMode !== 0 && g.cBuf;
+    const sizeOn = g.sizeMode === 1 && g.sBuf;
+    const selOn = g.selActive && g.selBuf;
     if (g.lut) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -1235,17 +1268,38 @@ class ChartView {
       g._blendTick = 0;
     }
     gl.uniform1f(u("u_dblend"), blend);
-    if (blend > 0.001 && g.dBuf && g.dlut) {
-      this._bindScalarAttr(prog, "a_dval", g.dBuf, 0, 0);
+    const blendOn = blend > 0.001 && g.dBuf && g.dlut;
+    if (blendOn) {
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, g.dlut);
-      gl.uniform1i(u("u_dlut"), 1);
-    } else {
-      this._disableAttr(prog, "a_dval");
-      const loc = gl.getAttribLocation(prog, "a_dval");
-      if (loc >= 0) gl.vertexAttrib1f(loc, 0);
-      gl.uniform1i(u("u_dlut"), 1); // sampler must still point at a valid unit
     }
+    gl.uniform1i(u("u_dlut"), 1); // sampler must always point at a valid unit
+
+    this._bindVao(
+      g,
+      "points",
+      [
+        g.xBuf._fcId, g.yBuf._fcId,
+        colorOn ? g.cBuf._fcId : 0,
+        sizeOn ? g.sBuf._fcId : 0,
+        selOn ? g.selBuf._fcId : 0,
+        blendOn ? g.dBuf._fcId : 0,
+      ],
+      () => {
+        this._vaoAttr(ATTR_SLOTS.ax, g.xBuf, 0, 0);
+        this._vaoAttr(ATTR_SLOTS.ay, g.yBuf, 0, 0);
+        if (colorOn) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 0);
+        if (sizeOn) this._vaoAttr(ATTR_SLOTS.a_sval, g.sBuf, 0, 0);
+        if (selOn) this._vaoAttr(ATTR_SLOTS.a_sel, g.selBuf, 0, 0);
+        if (blendOn) this._vaoAttr(ATTR_SLOTS.a_dval, g.dBuf, 0, 0);
+      }
+    );
+    // Generic (constant) attribute values are context state, not VAO state —
+    // set the disabled channels' fallbacks each draw (no driver lookups).
+    if (!colorOn) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!sizeOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sval, 0.5);
+    if (!selOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sel, 1.0);
+    if (!blendOn) gl.vertexAttrib1f(ATTR_SLOTS.a_dval, 0);
     gl.drawArrays(gl.POINTS, 0, g.n);
   }
 
@@ -1294,13 +1348,14 @@ class ChartView {
     gl.uniform1i(u("u_selActive"), 0);
     gl.uniform1f(u("u_dblend"), 0);
 
-    this._bindScalarAttr(prog, "ax", g.xBuf, 0, 0);
-    this._bindScalarAttr(prog, "ay", g.yBuf, 0, 0);
-    for (const [name, value] of [["a_cval", 0], ["a_sval", 0.5], ["a_sel", 1], ["a_dval", 0]]) {
-      this._disableAttr(prog, name);
-      const loc = gl.getAttribLocation(prog, name);
-      if (loc >= 0) gl.vertexAttrib1f(loc, value);
-    }
+    this._bindVao(g, "hover", [g.xBuf._fcId, g.yBuf._fcId], () => {
+      this._vaoAttr(ATTR_SLOTS.ax, g.xBuf, 0, 0);
+      this._vaoAttr(ATTR_SLOTS.ay, g.yBuf, 0, 0);
+    });
+    gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    gl.vertexAttrib1f(ATTR_SLOTS.a_sval, 0.5);
+    gl.vertexAttrib1f(ATTR_SLOTS.a_sel, 1);
+    gl.vertexAttrib1f(ATTR_SLOTS.a_dval, 0);
     gl.drawArrays(gl.POINTS, index, 1);
   }
 
@@ -1324,13 +1379,7 @@ class ChartView {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, d.lut);
     gl.uniform1i(u("u_lut"), 1);
-    const loc = gl.getAttribLocation(prog, "a_corner");
-    const maxAttrs = gl.getParameter(gl.MAX_VERTEX_ATTRIBS);
-    for (let i = 0; i < maxAttrs; i++) gl.disableVertexAttribArray(i);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-    gl.vertexAttribDivisor(loc, 0);
+    gl.bindVertexArray(this.quadVao);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
@@ -1355,13 +1404,7 @@ class ChartView {
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, h.lut);
     gl.uniform1i(u("u_lut"), 1);
-    const loc = gl.getAttribLocation(prog, "a_corner");
-    const maxAttrs = gl.getParameter(gl.MAX_VERTEX_ATTRIBS);
-    for (let i = 0; i < maxAttrs; i++) gl.disableVertexAttribArray(i);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-    gl.vertexAttribDivisor(loc, 0);
+    gl.bindVertexArray(this.quadVao);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
@@ -1378,10 +1421,12 @@ class ChartView {
     gl.uniform1f(u("u_width"), (width ?? g.trace.style.width ?? 1.5) * this.dpr);
     const [r, gg, b, a] = color || g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a * (opacity ?? g.trace.style.opacity ?? 1));
-    this._bindScalarAttr(this.lineProg, "ax0", g.xBuf, 0, 1);
-    this._bindScalarAttr(this.lineProg, "ax1", g.xBuf, 4, 1);
-    this._bindScalarAttr(this.lineProg, "ay0", g.yBuf, 0, 1);
-    this._bindScalarAttr(this.lineProg, "ay1", g.yBuf, 4, 1);
+    this._bindVao(g, "line", [g.xBuf._fcId, g.yBuf._fcId], () => {
+      this._vaoAttr(ATTR_SLOTS.ax0, g.xBuf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ax1, g.xBuf, 4, 1);
+      this._vaoAttr(ATTR_SLOTS.ay0, g.yBuf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ay1, g.yBuf, 4, 1);
+    });
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n - 1);
   }
 
@@ -1399,12 +1444,14 @@ class ChartView {
     this._setAxisUniforms(prog, "u_b", g.baseMeta, g.yAxis);
     const [r, gg, b, a] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 0.35));
-    this._bindScalarAttr(prog, "ax0", g.xBuf, 0, 1);
-    this._bindScalarAttr(prog, "ax1", g.xBuf, 4, 1);
-    this._bindScalarAttr(prog, "ay0", g.yBuf, 0, 1);
-    this._bindScalarAttr(prog, "ay1", g.yBuf, 4, 1);
-    this._bindScalarAttr(prog, "ab0", g.baseBuf, 0, 1);
-    this._bindScalarAttr(prog, "ab1", g.baseBuf, 4, 1);
+    this._bindVao(g, "area", [g.xBuf._fcId, g.yBuf._fcId, g.baseBuf._fcId], () => {
+      this._vaoAttr(ATTR_SLOTS.ax0, g.xBuf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ax1, g.xBuf, 4, 1);
+      this._vaoAttr(ATTR_SLOTS.ay0, g.yBuf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ay1, g.yBuf, 4, 1);
+      this._vaoAttr(ATTR_SLOTS.ab0, g.baseBuf, 0, 1);
+      this._vaoAttr(ATTR_SLOTS.ab1, g.baseBuf, 4, 1);
+    });
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n - 1);
   }
 
@@ -1428,20 +1475,25 @@ class ChartView {
     const [r, gg, b, a] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
-    this._bindScalarAttr(prog, "ax0", g.x0Buf, 0, 1);
-    this._bindScalarAttr(prog, "ax1", g.x1Buf, 0, 1);
-    this._bindScalarAttr(prog, "ay0", g.y0Buf, 0, 1);
-    this._bindScalarAttr(prog, "ay1", g.y1Buf, 0, 1);
-    if (g.colorMode && g.cBuf) {
-      this._bindScalarAttr(prog, "a_cval", g.cBuf, 0, 1);
+    const colorOn = g.colorMode && g.cBuf;
+    if (colorOn) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
       gl.uniform1i(u("u_lut"), 0);
-    } else {
-      this._disableAttr(prog, "a_cval");
-      const loc = gl.getAttribLocation(prog, "a_cval");
-      if (loc >= 0) gl.vertexAttrib1f(loc, 0);
     }
+    this._bindVao(
+      g,
+      "rects",
+      [g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId, colorOn ? g.cBuf._fcId : 0],
+      () => {
+        this._vaoAttr(ATTR_SLOTS.ax0, g.x0Buf, 0, 1);
+        this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
+        this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
+        this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
+        if (colorOn) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+      }
+    );
+    if (!colorOn) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
   }
 
@@ -1469,25 +1521,30 @@ class ChartView {
     const [r, gg, b, a] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
-    this._bindScalarAttr(prog, "a_pos", g.posBuf, 0, 1);
-    this._bindScalarAttr(prog, "a_v1", g.value1Buf, 0, 1);
-    if (g.value0Mode === 1 && g.value0Buf) {
-      this._bindScalarAttr(prog, "a_v0", g.value0Buf, 0, 1);
-    } else {
-      this._disableAttr(prog, "a_v0");
-      const loc = gl.getAttribLocation(prog, "a_v0");
-      if (loc >= 0) gl.vertexAttrib1f(loc, 0);
-    }
-    if (g.colorMode && g.cBuf) {
-      this._bindScalarAttr(prog, "a_cval", g.cBuf, 0, 1);
+    const v0On = g.value0Mode === 1 && g.value0Buf;
+    const colorOn = g.colorMode && g.cBuf;
+    if (colorOn) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
       gl.uniform1i(u("u_lut"), 0);
-    } else {
-      this._disableAttr(prog, "a_cval");
-      const loc = gl.getAttribLocation(prog, "a_cval");
-      if (loc >= 0) gl.vertexAttrib1f(loc, 0);
     }
+    this._bindVao(
+      g,
+      "bars",
+      [
+        g.posBuf._fcId, g.value1Buf._fcId,
+        v0On ? g.value0Buf._fcId : 0,
+        colorOn ? g.cBuf._fcId : 0,
+      ],
+      () => {
+        this._vaoAttr(ATTR_SLOTS.a_pos, g.posBuf, 0, 1);
+        this._vaoAttr(ATTR_SLOTS.a_v1, g.value1Buf, 0, 1);
+        if (v0On) this._vaoAttr(ATTR_SLOTS.a_v0, g.value0Buf, 0, 1);
+        if (colorOn) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+      }
+    );
+    if (!v0On) gl.vertexAttrib1f(ATTR_SLOTS.a_v0, 0);
+    if (!colorOn) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
   }
 
@@ -2093,14 +2150,18 @@ class ChartView {
       gl.uniform2f(u("u_sizeRange"), pg.sizeRange[0], pg.sizeRange[1]);
       gl.uniform1i(u("u_slot"), slot);
       g.pickSlot = slot;
-      this._bindScalarAttr(prog, "ax", pg.xBuf, 0, 0);
-      this._bindScalarAttr(prog, "ay", pg.yBuf, 0, 0);
-      if (pg.sizeMode === 1 && pg.sBuf) this._bindScalarAttr(prog, "a_sval", pg.sBuf, 0, 0);
-      else {
-        this._disableAttr(prog, "a_sval");
-        const loc = gl.getAttribLocation(prog, "a_sval");
-        if (loc >= 0) gl.vertexAttrib1f(loc, 0.5);
-      }
+      const sizeOn = pg.sizeMode === 1 && pg.sBuf;
+      this._bindVao(
+        pg,
+        "pick",
+        [pg.xBuf._fcId, pg.yBuf._fcId, sizeOn ? pg.sBuf._fcId : 0],
+        () => {
+          this._vaoAttr(ATTR_SLOTS.ax, pg.xBuf, 0, 0);
+          this._vaoAttr(ATTR_SLOTS.ay, pg.yBuf, 0, 0);
+          if (sizeOn) this._vaoAttr(ATTR_SLOTS.a_sval, pg.sBuf, 0, 0);
+        }
+      );
+      if (!sizeOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sval, 0.5);
       gl.drawArrays(gl.POINTS, 0, pg.n);
       slot++;
     }
@@ -3367,6 +3428,8 @@ class ChartView {
   _destroyTraceResources(g, texSeen) {
     if (!g) return;
     this._destroyDensitySample(g);
+    this._deleteVaos(g);
+    this._deleteVaos(g.drill);
     this._deleteBuffers(g, [
       "xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "baseBuf",
       "x0Buf", "x1Buf", "y0Buf", "y1Buf",
@@ -3410,8 +3473,13 @@ class ChartView {
     this.pickTex = null;
     if (this.quad) gl.deleteBuffer(this.quad);
     this.quad = null;
-    for (const p of this._glPrograms || []) if (p) gl.deleteProgram(p);
-    this._glPrograms = [];
+    if (this.quadVao) gl.deleteVertexArray(this.quadVao);
+    this.quadVao = null;
+    for (const p of this._progCache ? this._progCache.values() : []) {
+      if (p) gl.deleteProgram(p);
+    }
+    if (this._progCache) this._progCache.clear();
+    this._glPrograms = this._progCache;
     this.gpuTraces = [];
   }
 }

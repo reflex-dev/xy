@@ -299,6 +299,7 @@ function lodDropDrill(view, g) {
   const d = g.drill;
   if (!d) return;
   const gl = view.gl;
+  view._deleteVaos(d); // the drill sibling carries its own VAOs
   for (const b of [d.xBuf, d.yBuf, d.cBuf, d.sBuf, d.selBuf, d.dBuf]) if (b) gl.deleteBuffer(b);
   g.drill = null;
   g._drillFadeStart = null;

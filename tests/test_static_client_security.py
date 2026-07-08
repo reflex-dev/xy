@@ -264,8 +264,11 @@ def test_client_lod_layer_stays_chart_agnostic_and_renderer_delegated() -> None:
     assert "trace.kind" not in source_lod
     assert "markOf(" not in source_lod
 
+    # The intent comment is a source-only assertion — the built bundles are
+    # compacted (comments stripped), so only code markers are checked there.
+    assert "future heatmap/histogram tier reuses it instead of copy-pasting" in source_lod
+
     lod_required = (
-        "future heatmap/histogram tier reuses it instead of copy-pasting",
         "function lodApplyDrill(view, g, upd, buffers)",
         "function lodApplyDensityUpdate(view, g, upd, buffers)",
         "function lodDrawDensityTier(view, g, x0, x1, y0, y1)",
