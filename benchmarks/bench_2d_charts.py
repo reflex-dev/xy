@@ -27,6 +27,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import gc
 import io
 import json
@@ -573,6 +574,18 @@ def make_cases(profile: str) -> list[Case]:
     return cases
 
 
+def _warm_up_libraries(case: Any) -> None:
+    """Build each library once, discarded and untimed, so import/first-figure
+    initialization is paid before the measured loop rather than landing on the
+    first timed case."""
+    for build in (case.fastcharts_build, case.plotly_build, case.seaborn_build):
+        # A library that can't build this case (missing dep, or e.g. Seaborn
+        # lacking a native primitive) simply isn't warmed — the timed loop
+        # records it as unavailable anyway.
+        with contextlib.suppress(Exception):
+            build()
+
+
 def run(
     *,
     profile: str,
@@ -582,6 +595,12 @@ def run(
 ) -> dict[str, Any]:
     cases = make_cases(profile)
     rows: list[dict[str, Any]] = []
+    # Warm up each library once, untimed. The first Plotly (and Seaborn) build in
+    # a fresh process pays a large one-time import/initialization cost (~1.5 s for
+    # Plotly) that would otherwise be charged entirely to the first timed case,
+    # inflating its speedup into a meaningless outlier (e.g. a 374x histogram row
+    # that is really just Plotly's cold-start, not a per-chart advantage).
+    _warm_up_libraries(cases[0])
     for case in cases:
         for library, build in (
             ("fastcharts", case.fastcharts_build),
