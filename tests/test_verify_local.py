@@ -113,6 +113,35 @@ def test_security_export_check_is_known_as_targeted_gate() -> None:
     assert selected[0].requires_modules == ("pytest",)
 
 
+def test_ty_check_is_advisory_matching_ci() -> None:
+    # ci.yml runs `ty check python || echo "::warning::..."` — advisory, not
+    # gating (pre-1.0, can't narrow Optionals / NumPy dtypes across stub
+    # versions). The local full gate must match, or `make check-full` fails on
+    # findings CI ignores. If ty ever goes gating, flip both together.
+    checks = verify_local._base_checks()
+    assert checks["ty"].advisory is True
+    # every other check stays gating
+    gating = [c.name for c in checks.values() if not c.advisory]
+    assert "ty" not in gating and "pytest" in gating and "ruff_check" in gating
+
+
+def test_advisory_check_findings_do_not_fail_the_gate() -> None:
+    # A failing advisory check warns but returns success; a failing gating
+    # check still fails. Drive main() with a stubbed runner.
+    import scripts.verify_local as vl
+
+    def fake_run(check: verify_local.Check) -> int:
+        return 1 if check.name == "ty" else 0
+
+    original = vl.run_check
+    vl.run_check = fake_run  # type: ignore[assignment]
+    try:
+        rc = vl.main(["--only", "ty"])
+    finally:
+        vl.run_check = original  # type: ignore[assignment]
+    assert rc == 0  # advisory finding does not gate
+
+
 def test_error_safety_check_is_known_as_targeted_gate() -> None:
     checks = verify_local._base_checks()
     selected = verify_local.select_checks(checks, only={"error_safety"})
