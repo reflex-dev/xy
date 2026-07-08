@@ -122,6 +122,8 @@ class PayloadMixin(_Host):
             spec["show_modebar"] = False
         if self.show_tooltip is False:
             spec["show_tooltip"] = False
+        if self.padding is not None:
+            spec["padding"] = list(self.padding)
         dom = self._dom_spec()
         if dom:
             spec["dom"] = dom

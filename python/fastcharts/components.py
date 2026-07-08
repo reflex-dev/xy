@@ -1134,6 +1134,7 @@ class Chart(Component):
         title: Optional[str] = None,
         width: "int | str" = 900,  # pixels, or "100%" to fill the parent
         height: "int | str" = 420,  # pixels, or "100%" (parent needs a height)
+        padding: Any = None,  # override plot margins; 0 = edge-to-edge sparkline
         data: Any = None,
         class_name: Optional[str] = None,
         class_names: Optional[dict[str, str]] = None,
@@ -1157,6 +1158,7 @@ class Chart(Component):
         self.title = title
         self.width = width
         self.height = height
+        self.padding = padding
         self.data = data  # chart-level default data for marks that omit their own
         self.class_name = _optional_string(class_name, "chart class_name")
         self.class_names = _class_names_dict(class_names, "chart class_names")
@@ -1220,6 +1222,7 @@ class Chart(Component):
         fig = Figure(
             width=self.width,
             height=self.height,
+            padding=self.padding,
             title=self.title,
             x_label=xa.label if xa else None,
             y_label=ya.label if ya else None,

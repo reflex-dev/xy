@@ -173,6 +173,24 @@ def style_mapping(value: dict[str, Any], label: str) -> dict[str, str | int | fl
     return out
 
 
+def plot_padding(value: Any, label: str) -> Optional[list[float]]:
+    """Plot-margin override: None (auto), a scalar (all four sides), or a
+    (top, right, bottom, left) sequence — each a non-negative px value."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(
+        value, (bool, np.bool_)
+    ):
+        side = nonnegative_scalar(value, label)
+        return [side, side, side, side]
+    if isinstance(value, str) or not hasattr(value, "__iter__"):
+        raise ValueError(f"{label} must be a number or a (top, right, bottom, left) sequence")
+    sides = list(value)
+    if len(sides) != 4:
+        raise ValueError(f"{label} sequence must have 4 values (top, right, bottom, left)")
+    return [nonnegative_scalar(s, f"{label}[{i}]") for i, s in enumerate(sides)]
+
+
 def curve(value: Any, label: str) -> str:
     """Line/area interpolation: 'linear' or 'smooth' (monotone cubic)."""
     if not isinstance(value, str) or value not in _CURVES:

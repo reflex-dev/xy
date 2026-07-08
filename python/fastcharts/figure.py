@@ -80,6 +80,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         title: Optional[str] = None,
         x_label: Optional[str] = None,
         y_label: Optional[str] = None,
+        padding: Any = None,
     ) -> None:
         # width/height: pixels, or "100%" to fill the parent container — the
         # client measures the container and re-renders on resize
@@ -89,6 +90,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # min-height.
         self.width = self._pixel_dimension(width, "width")
         self.height = self._pixel_dimension(height, "height")
+        # padding: override the auto plot margins (top, right, bottom, left) in
+        # px — a scalar sets all four. None keeps the label-aware defaults. Zero
+        # padding + hidden axes gives an edge-to-edge sparkline for dashboards.
+        self.padding = self._padding(padding, "padding")
         self.title = self._optional_text(title, "title")
         self.x_label = self._optional_text(x_label, "x_label")
         self.y_label = self._optional_text(y_label, "y_label")
@@ -919,6 +924,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
     _axis_tick_label_strategy = staticmethod(_validate.axis_tick_label_strategy)
     _nonnegative_scalar = staticmethod(_validate.nonnegative_scalar)
     _opacity = staticmethod(_validate.opacity)
+    _padding = staticmethod(_validate.plot_padding)
     _optional_bool = staticmethod(_validate.optional_bool)
     _bool_param = staticmethod(_validate.bool_param)
     _axis_id = staticmethod(_validate.axis_id)

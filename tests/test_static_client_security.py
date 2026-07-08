@@ -523,3 +523,17 @@ def test_client_renders_mark_level_styling() -> None:
     src = _CLIENT_SRC[1]
     assert "g._cpu = { x, y, xMeta: g.xMeta, yMeta: g.yMeta };" in src
     assert "g._cpu = { x, y, base, xMeta: g.xMeta, yMeta: g.yMeta };" in src
+
+
+def test_client_supports_edge_to_edge_sparklines() -> None:
+    """Dashboards need chrome-less, edge-to-edge charts: an explicit `padding`
+    override collapses the label-aware margins, and tick_label_strategy="none"
+    hides every tick label (not just skips collision layout)."""
+    src = _CLIENT_SRC[1]
+    # padding override feeds _layout's margins
+    assert "Array.isArray(this.spec.padding) ? this.spec.padding : null" in src
+    assert "marginLeft = pad ? pad[3]" in src
+    # "none" returns an empty label set (previously returned all labels unlaid-out)
+    assert 'if (strategy === "none") return [];' in src
+    for path, text in CLIENT_FILES:
+        assert 'if (strategy === "none") return [];' in text, f"{path} lost none-hides-labels"
