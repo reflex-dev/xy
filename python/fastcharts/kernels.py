@@ -17,11 +17,11 @@ try:
 except ImportError as err:  # pragma: no cover - platform-dependent
     raise ImportError(
         "fastcharts requires its native Rust core, which could not be loaded "
-        f"({err}). Prebuilt wheels cover Linux (x86-64, aarch64), macOS "
-        "(x86-64, arm64), and Windows (x86-64); on those platforms "
-        "`pip install fastcharts` needs no toolchain. On any other platform, "
-        "install a Rust toolchain (https://rustup.rs) and reinstall from "
-        "source (or run `cargo build --release`)."
+        f"({err}). Prebuilt wheels cover Linux glibc and musl (x86-64, aarch64, "
+        "armv7), macOS (x86-64, Apple Silicon), and Windows (x86, x64, arm64); "
+        "on those platforms `pip install fastcharts` needs no toolchain. On any "
+        "other platform, install a Rust toolchain (https://rustup.rs) and "
+        "reinstall from source (or run `cargo build --release`)."
     ) from err
 
 BACKEND = "native"

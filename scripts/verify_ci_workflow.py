@@ -29,7 +29,7 @@ REQUIRED_CI_JOBS = {
     "install_without_rust",
 }
 REQUIRED_CODSPEED_JOBS = {"benchmarks"}
-REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish"}
+REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish", "wasm"}
 
 
 def _job_blocks(text: str) -> dict[str, str]:
@@ -278,21 +278,36 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         jobs,
         "wheels",
         "release",
-        "native wheel build, verification, size budget, install smoke, and upload",
+        "cross-platform wheel matrix (glibc+musl, macOS, Windows), verification, and upload",
         "dtolnay/rust-toolchain@stable",
         "astral-sh/setup-uv@v5",
         "actions/setup-node@v4",
         'node-version: "22"',
         "node js/build.mjs --check",
+        "cargo-zigbuild",
         "uv build --wheel",
         "FASTCHARTS_REQUIRE_CARGO",
-        "auditwheel repair",
+        "FASTCHARTS_WHEEL_PLATFORM",
+        "musllinux_1_2_x86_64",
+        "win_arm64",
         "scripts/verify_wheel.py",
         "--expect-native",
         "Install-size budget (<= 15 MB)",
         "assert k.BACKEND=='native'",
         "actions/upload-artifact@v4",
         "dist/*.whl",
+    )
+    _require_job_contains(
+        errors,
+        jobs,
+        "wasm",
+        "release",
+        "best-effort Pyodide/Emscripten WASM wheel",
+        "continue-on-error: true",
+        "wasm32-unknown-emscripten",
+        "setup-emsdk",
+        "scripts/verify_wheel.py",
+        "--expect-native",
     )
     _require_job_contains(
         errors,
@@ -317,7 +332,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "publish",
         "release",
         "trusted PyPI publishing from downloaded artifacts",
-        "needs: [wheels, sdist]",
+        "needs: [wheels, sdist, wasm]",
         "environment: pypi",
         "id-token: write",
         "actions/download-artifact@v4",

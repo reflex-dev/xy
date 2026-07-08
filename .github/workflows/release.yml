@@ -9,16 +9,40 @@ on:
   workflow_dispatch:
 
 jobs:
+  # One wheel per platform (the C-ABI core is CPython-version-independent, so
+  # each entry produces a single py3-none-<platform> wheel). Coverage matches
+  # what the native core can target: Linux glibc + musl across x86-64/aarch64/
+  # armv7, macOS x86-64/arm64, and Windows x86/x64/arm64. Linux targets are
+  # cross-compiled with cargo-zigbuild (musl support + a low manylinux_2_17
+  # glibc floor without QEMU); the hook then packs the prebuilt core and stamps
+  # the platform tag (FASTCHARTS_CARGO_TARGET / FASTCHARTS_WHEEL_PLATFORM).
   wheels:
-    name: Wheel ${{ matrix.os }}
+    name: Wheel ${{ matrix.plat }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-13, macos-14, windows-latest]
+        include:
+          # Linux glibc (manylinux_2_17 floor) — cross-compiled with zig.
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, zigtarget: x86_64-unknown-linux-gnu.2.17, plat: manylinux_2_17_x86_64, zig: true, native: true }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, zigtarget: aarch64-unknown-linux-gnu.2.17, plat: manylinux_2_17_aarch64, zig: true, native: false }
+          - { os: ubuntu-latest, target: armv7-unknown-linux-gnueabihf, zigtarget: armv7-unknown-linux-gnueabihf.2.17, plat: manylinux_2_17_armv7l, zig: true, native: false }
+          # Linux musl / Alpine.
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, zigtarget: x86_64-unknown-linux-musl, plat: musllinux_1_2_x86_64, zig: true, native: false }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, zigtarget: aarch64-unknown-linux-musl, plat: musllinux_1_2_aarch64, zig: true, native: false }
+          - { os: ubuntu-latest, target: armv7-unknown-linux-musleabihf, zigtarget: armv7-unknown-linux-musleabihf, plat: musllinux_1_2_armv7l, zig: true, native: false }
+          # macOS (native per runner arch).
+          - { os: macos-13, target: x86_64-apple-darwin, plat: macosx_10_12_x86_64, zig: false, native: true }
+          - { os: macos-14, target: aarch64-apple-darwin, plat: macosx_11_0_arm64, zig: false, native: true }
+          # Windows x64 (native), x86 and arm64 (cross-compiled).
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, plat: win_amd64, zig: false, native: true }
+          - { os: windows-latest, target: i686-pc-windows-msvc, plat: win32, zig: false, native: false }
+          - { os: windows-latest, target: aarch64-pc-windows-msvc, plat: win_arm64, zig: false, native: false }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
       - uses: astral-sh/setup-uv@v5
       - uses: actions/setup-node@v4
         with:
@@ -27,18 +51,24 @@ jobs:
         run: node js/build.mjs --check
       - name: Build JS client
         run: node js/build.mjs
-      - name: Build wheel (native core required)
-        env:
-          FASTCHARTS_REQUIRE_CARGO: "1"
-        run: uv build --wheel
-      - name: Repair Linux wheel to manylinux
-        if: runner.os == 'Linux'
-        shell: bash
+      - name: Cross-compile the native core (zig)
+        if: matrix.zig
         run: |
-          sudo apt-get update && sudo apt-get install -y patchelf
-          uv tool install auditwheel
-          uv tool run auditwheel repair dist/*.whl -w wheelhouse
-          rm dist/*.whl && mv wheelhouse/*.whl dist/
+          uv tool install cargo-zigbuild
+          uv tool run cargo-zigbuild build --release --target ${{ matrix.zigtarget }}
+      - name: Compile the native core
+        if: ${{ !matrix.zig }}
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Build the platform wheel
+        shell: bash
+        env:
+          # The core is prebuilt above; the hook only packs it and stamps the
+          # platform tag. REQUIRE_CARGO keeps a coreless wheel from shipping.
+          FASTCHARTS_REQUIRE_CARGO: "1"
+          FASTCHARTS_SKIP_CARGO: "1"
+          FASTCHARTS_CARGO_TARGET: ${{ matrix.target }}
+          FASTCHARTS_WHEEL_PLATFORM: ${{ matrix.plat }}
+        run: uv build --wheel
       - name: Verify wheel contents
         shell: bash
         run: |
@@ -52,6 +82,9 @@ jobs:
           echo "wheel size: $size bytes ($whl)"
           test "$size" -le 15728640
       - name: Verify the wheel installs and loads the native core
+        # Only host-arch wheels can be imported on the runner; cross-compiled
+        # arches (aarch64/armv7/win-arm64/win32) are content-verified instead.
+        if: matrix.native
         shell: bash
         run: |
           uv venv smoke
@@ -60,7 +93,49 @@ jobs:
             || ./smoke/Scripts/python.exe -c "import fastcharts.kernels as k; assert k.BACKEND=='native', k.BACKEND; print('native')"
       - uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.os }}
+          name: dist-${{ matrix.plat }}
+          path: dist/*.whl
+
+  # Best-effort Pyodide / Emscripten WASM wheel for in-browser CPython. The core
+  # cross-compiles to wasm32-unknown-emscripten; loading a side-module cdylib via
+  # ctypes under Pyodide is the remaining risk, so this job is non-blocking and
+  # the wheel is treated as experimental (see docs/production-readiness.md).
+  wasm:
+    name: Wheel pyodide (experimental)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-emscripten
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: mymindstorm/setup-emsdk@v14
+      - name: Verify committed JS bundles are fresh
+        run: node js/build.mjs --check
+      - name: Build JS client
+        run: node js/build.mjs
+      - name: Cross-compile the native core (emscripten)
+        run: cargo build --release --target wasm32-unknown-emscripten
+      - name: Build the Pyodide wheel
+        shell: bash
+        env:
+          FASTCHARTS_REQUIRE_CARGO: "1"
+          FASTCHARTS_SKIP_CARGO: "1"
+          FASTCHARTS_CARGO_TARGET: wasm32-unknown-emscripten
+          FASTCHARTS_WHEEL_PLATFORM: pyodide_2024_0_wasm32
+        run: uv build --wheel
+      - name: Verify wheel contents
+        shell: bash
+        run: |
+          whl=$(ls dist/*.whl)
+          python scripts/verify_wheel.py "$whl" --expect-native
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-pyodide
           path: dist/*.whl
 
   sdist:
@@ -114,7 +189,9 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    needs: [wheels, sdist]
+    # wasm is best-effort (continue-on-error), so it never blocks the release; its
+    # artifact is collected by the dist-* download pattern when it succeeds.
+    needs: [wheels, sdist, wasm]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
