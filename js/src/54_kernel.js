@@ -128,19 +128,26 @@ Object.assign(ChartView.prototype, {
         const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
         if (!g) continue;
         const gl = this.gl;
+        const xArr = this._asF32(buffers[upd.x.buf]);
+        const yArr = this._asF32(buffers[upd.y.buf]);
+        const bArr = upd.base && g.baseBuf ? this._asF32(buffers[upd.base.buf]) : null;
+        let n = Math.min(upd.x.len, upd.y.len);
+        if (bArr) n = Math.min(n, upd.base.len);
+        // curve:"smooth" traces re-smooth every refined window, so the curve
+        // survives zoom-driven re-decimation instead of snapping to segments.
+        const sm = this._smoothArrays(g.trace, xArr, yArr, bArr, n);
         gl.bindBuffer(gl.ARRAY_BUFFER, g.xBuf);
-        gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.x.buf]), gl.STATIC_DRAW);
+        gl.bufferData(gl.ARRAY_BUFFER, sm ? sm.x : xArr, gl.STATIC_DRAW);
         gl.bindBuffer(gl.ARRAY_BUFFER, g.yBuf);
-        gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.y.buf]), gl.STATIC_DRAW);
+        gl.bufferData(gl.ARRAY_BUFFER, sm ? sm.y : yArr, gl.STATIC_DRAW);
         g.xMeta = { ...g.xMeta, offset: upd.x.offset, scale: upd.x.scale };
         g.yMeta = { ...g.yMeta, offset: upd.y.offset, scale: upd.y.scale };
-        g.n = Math.min(upd.x.len, upd.y.len);
-        if (upd.base && g.baseBuf) {
+        if (bArr) {
           gl.bindBuffer(gl.ARRAY_BUFFER, g.baseBuf);
-          gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.base.buf]), gl.STATIC_DRAW);
+          gl.bufferData(gl.ARRAY_BUFFER, sm ? sm.extra : bArr, gl.STATIC_DRAW);
           g.baseMeta = { ...g.baseMeta, offset: upd.base.offset, scale: upd.base.scale };
-          g.n = Math.min(g.n, upd.base.len);
         }
+        g.n = sm ? sm.n : n;
       }
       this.draw();
     } else if (msg.type === "density_update") {

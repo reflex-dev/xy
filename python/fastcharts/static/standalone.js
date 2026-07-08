@@ -537,11 +537,36 @@ void main() {
   if (alpha <= 0.001) discard;
   outColor = vec4(u_color.rgb * alpha, alpha);
 }`;
+const GRAD_GLSL = `
+uniform int u_gradMode; uniform int u_gradDir; uniform int u_gradCount;
+uniform float u_gradPos[8]; uniform vec4 u_gradColor[8];
+vec4 fcGradSample(float t) {
+  vec4 c0 = u_gradColor[0]; float p0 = u_gradPos[0];
+  if (t <= p0) return c0;
+  for (int i = 1; i < 8; i++) {
+    if (i >= u_gradCount) break;
+    float p1 = u_gradPos[i]; vec4 c1 = u_gradColor[i];
+    if (t <= p1) return mix(c0, c1, (t - p0) / max(p1 - p0, 1e-6));
+    p0 = p1; c0 = c1;
+  }
+  return c0;
+}
+float fcGradT(float markT, vec2 res) {
+  float t;
+  if (u_gradMode == 2) {
+    vec2 f = gl_FragCoord.xy / max(res, vec2(1.0));
+    t = u_gradDir == 0 ? 1.0 - f.y : u_gradDir == 1 ? f.y : u_gradDir == 2 ? 1.0 - f.x : f.x;
+  } else {
+    t = u_gradDir == 0 ? 1.0 - markT : markT;
+  }
+  return clamp(t, 0.0, 1.0);
+}`;
 const AREA_VS = `#version 300 es
 in float ax0; in float ax1; in float ay0; in float ay1; in float ab0; in float ab1;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_bmap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform vec2 u_bmeta;
 uniform int u_xmode; uniform int u_ymode;
+out float v_t;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -554,15 +579,21 @@ void main() {
   float b1 = fcMap(ab1, u_bmap, u_bmeta, u_ymode);
   float top = mix(y0, y1, c.x);
   float base = mix(b0, b1, c.x);
+  v_t = c.y;
   gl_Position = vec4(mix(x0, x1, c.x), mix(base, top, c.y), 0.0, 1.0);
 }`;
 const AREA_FS = `#version 300 es
-precision highp float;
+precision highp float; precision highp int;
 uniform vec4 u_color;
+uniform vec2 u_res;
+in float v_t;
 out vec4 outColor;
+${GRAD_GLSL}
 void main() {
-  if (u_color.a <= 0.001) discard;
-  outColor = vec4(u_color.rgb * u_color.a, u_color.a);
+  vec4 premult = vec4(u_color.rgb * u_color.a, u_color.a);
+  if (u_gradMode != 0) premult = fcGradSample(fcGradT(v_t, u_res));
+  if (premult.a <= 0.001) discard;
+  outColor = premult;
 }`;
 const RECT_VS = `#version 300 es
 in float ax0; in float ax1; in float ay0; in float ay1;
@@ -570,8 +601,10 @@ uniform vec2 u_x0map; uniform vec2 u_x1map; uniform vec2 u_y0map; uniform vec2 u
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
 uniform int u_xmode; uniform int u_ymode;
 uniform vec4 u_edgePad;
+uniform vec2 u_res;
 in float a_cval; uniform int u_colorMode;
 out float v_lutCoord;
+out vec2 v_local; out vec2 v_half; out float v_t;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -581,6 +614,13 @@ void main() {
   float y0 = fcMap(ay0, u_y0map, u_y0meta, u_ymode) + u_edgePad.z;
   float y1 = fcMap(ay1, u_y1map, u_y1meta, u_ymode) + u_edgePad.w;
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  // Pixel-space local frame for the rounded-corner/stroke SDF (v_half is
+  // constant across the quad; v_local interpolates to the fragment offset).
+  vec2 pA = (vec2(x0, y0) * 0.5 + 0.5) * u_res;
+  vec2 pB = (vec2(x1, y1) * 0.5 + 0.5) * u_res;
+  v_half = abs(pB - pA) * 0.5;
+  v_local = mix(pA, pB, c) - (pA + pB) * 0.5;
+  v_t = c.y;
   gl_Position = vec4(mix(x0, x1, c.x), mix(y0, y1, c.y), 0.0, 1.0);
 }`;
 const BAR_VS = `#version 300 es
@@ -590,8 +630,10 @@ uniform vec2 u_pmeta; uniform vec2 u_v0meta; uniform vec2 u_v1meta;
 uniform int u_pmode; uniform int u_vmode;
 uniform float u_width; uniform int u_orientation; uniform int u_v0Mode; uniform float u_v0Const;
 uniform float u_v0EdgePad;
+uniform vec2 u_res;
 uniform int u_colorMode;
 out float v_lutCoord;
+out vec2 v_local; out vec2 v_half; out float v_t;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -601,22 +643,119 @@ void main() {
   float v0 = (u_v0Mode == 0 ? u_v0Const : fcMap(a_v0, u_v0map, u_v0meta, u_vmode)) + u_v0EdgePad;
   float v1 = fcMap(a_v1, u_v1map, u_v1meta, u_vmode);
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  vec2 clipA, clipB;
   if (u_orientation == 0) {
-    gl_Position = vec4(mix(p - halfW, p + halfW, c.x), mix(v0, v1, c.y), 0.0, 1.0);
+    clipA = vec2(p - halfW, v0); clipB = vec2(p + halfW, v1);
+    gl_Position = vec4(mix(clipA.x, clipB.x, c.x), mix(clipA.y, clipB.y, c.y), 0.0, 1.0);
+    v_t = c.y;
   } else {
-    gl_Position = vec4(mix(v0, v1, c.x), mix(p - halfW, p + halfW, c.y), 0.0, 1.0);
+    clipA = vec2(v0, p - halfW); clipB = vec2(v1, p + halfW);
+    gl_Position = vec4(mix(clipA.x, clipB.x, c.x), mix(clipA.y, clipB.y, c.y), 0.0, 1.0);
+    v_t = c.x;
   }
+  // Pixel-space local frame for the rounded-corner/stroke SDF; v_t runs along
+  // the value axis (0 at the base, 1 at the bar tip) for mark-space gradients.
+  vec2 pA = (clipA * 0.5 + 0.5) * u_res;
+  vec2 pB = (clipB * 0.5 + 0.5) * u_res;
+  v_half = abs(pB - pA) * 0.5;
+  v_local = vec2(mix(pA.x, pB.x, c.x), mix(pA.y, pB.y, c.y)) - (pA + pB) * 0.5;
 }`;
 const RECT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut;
+uniform vec2 u_radius; uniform float u_strokeWidth; uniform vec4 u_stroke;
+uniform vec2 u_res;
 in float v_lutCoord;
+in vec2 v_local; in vec2 v_half; in float v_t;
 out vec4 outColor;
+${GRAD_GLSL}
 void main() {
-  if (u_color.a <= 0.001) discard;
   vec3 rgb = u_colorMode == 0 ? u_color.rgb : texture(u_lut, vec2(clamp(v_lutCoord, 0.0, 1.0), 0.5)).rgb;
-  outColor = vec4(rgb * u_color.a, u_color.a);
+  vec4 premult = vec4(rgb * u_color.a, u_color.a);
+  if (u_gradMode != 0) premult = fcGradSample(fcGradT(v_t, u_res));
+  if (u_radius.x > 0.0 || u_radius.y > 0.0 || u_strokeWidth > 0.0) {
+    // u_radius = (tip, base) in mark space: v_t > 0.5 is the tip half, so
+    // corner_radius=(6, 0) rounds only the value end of the bar. On the
+    // straight sides the SDF reduces to |local|-half independent of r, so
+    // differing radii meet with no seam.
+    float r = min(v_t > 0.5 ? u_radius.x : u_radius.y, min(v_half.x, v_half.y));
+    vec2 q = abs(v_local) - (v_half - vec2(r));
+    float d = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - r;
+    float aa = 0.75;
+    if (u_strokeWidth > 0.0) {
+      float inner = 1.0 - smoothstep(-aa, aa, d + u_strokeWidth);
+      premult = mix(u_stroke, premult, inner);
+    }
+    premult *= 1.0 - smoothstep(-aa, aa, d);
+  }
+  if (premult.a <= 0.001) discard;
+  outColor = premult;
 }`;
+function fcMonotoneTangents(x, y, n) {
+const d = new Float64Array(n - 1);
+const m = new Float64Array(n);
+for (let i = 0; i < n - 1; i++) {
+const dx = x[i + 1] - x[i];
+d[i] = dx > 0 ? (y[i + 1] - y[i]) / dx : 0;
+}
+m[0] = d[0];
+m[n - 1] = d[n - 2];
+for (let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) * 0.5;
+for (let i = 0; i < n - 1; i++) {
+if (d[i] === 0) { m[i] = 0; m[i + 1] = 0; continue; }
+const a = m[i] / d[i];
+const b = m[i + 1] / d[i];
+const s = a * a + b * b;
+if (s > 9) {
+const t = 3 / Math.sqrt(s);
+m[i] = t * a * d[i];
+m[i + 1] = t * b * d[i];
+}
+}
+return m;
+}
+function fcSmoothResample(x, y, extra, n, maxOut) {
+if (n < 3) return null;
+const sub = Math.max(1, Math.min(16, Math.floor(maxOut / n)));
+if (sub <= 1) return null; 
+for (let i = 0; i < n; i++) {
+if (!Number.isFinite(x[i]) || !Number.isFinite(y[i])) return null;
+if (i > 0 && x[i] < x[i - 1]) return null; 
+if (extra && !Number.isFinite(extra[i])) return null;
+}
+const my = fcMonotoneTangents(x, y, n);
+const me = extra ? fcMonotoneTangents(x, extra, n) : null;
+const outN = (n - 1) * sub + 1;
+const ox = new Float32Array(outN);
+const oy = new Float32Array(outN);
+const oe = extra ? new Float32Array(outN) : null;
+let k = 0;
+for (let i = 0; i < n - 1; i++) {
+const h = x[i + 1] - x[i];
+for (let s = 0; s < sub; s++) {
+const t = s / sub;
+ox[k] = x[i] + h * t;
+if (h > 0) {
+const t2 = t * t;
+const t3 = t2 * t;
+const h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+const h10 = t3 - 2.0 * t2 + t;
+const h01 = -2.0 * t3 + 3.0 * t2;
+const h11 = t3 - t2;
+oy[k] = h00 * y[i] + h10 * h * my[i] + h01 * y[i + 1] + h11 * h * my[i + 1];
+if (oe) oe[k] = h00 * extra[i] + h10 * h * me[i] + h01 * extra[i + 1] + h11 * h * me[i + 1];
+} else {
+oy[k] = y[i];
+if (oe) oe[k] = extra[i];
+}
+k++;
+}
+}
+ox[k] = x[n - 1];
+oy[k] = y[n - 1];
+if (oe) oe[k] = extra[n - 1];
+return { x: ox, y: oy, extra: oe, n: outN };
+}
 const LOD_DIRECT_POINT_BUDGET = 200000;
 const LOD_DRILL_EXIT_FACTOR = 1.15;
 function lodFade(view, start, duration = 140) {
@@ -1858,19 +1997,97 @@ this._map(s.yMeta, y0, y1, s.yAxis),
 opacityScale
 );
 }
+_resolveMarkFill(style, markColor) {
+const fill = style && style.fill;
+if (!fill || !Array.isArray(fill.stops) || fill.stops.length < 2) return null;
+const mode = fill.space === "plot" ? 2 : 1;
+const dir = { down: 0, up: 1, left: 2, right: 3 }[fill.dir] ?? 0;
+const count = Math.min(fill.stops.length, 8);
+const pos = new Float32Array(8);
+const colors = new Float32Array(32);
+for (let i = 0; i < count; i++) {
+const stop = fill.stops[i] || [];
+pos[i] = Math.min(Math.max(Number(stop[0]) || 0, 0), 1);
+const expr = String(stop[1] || "").trim();
+const c = expr.toLowerCase() === "currentcolor"
+? markColor
+: parseColor(this.root, expr, markColor);
+colors[i * 4] = c[0] * c[3];
+colors[i * 4 + 1] = c[1] * c[3];
+colors[i * 4 + 2] = c[2] * c[3];
+colors[i * 4 + 3] = c[3];
+}
+return { mode, dir, count, pos, colors };
+}
+_setGradientUniforms(prog, grad) {
+const gl = this.gl;
+const u = (n) => uniformOf(gl, prog, n);
+if (!grad) {
+gl.uniform1i(u("u_gradMode"), 0);
+return;
+}
+gl.uniform1i(u("u_gradMode"), grad.mode);
+gl.uniform1i(u("u_gradDir"), grad.dir);
+gl.uniform1i(u("u_gradCount"), grad.count);
+gl.uniform1fv(u("u_gradPos"), grad.pos);
+gl.uniform4fv(u("u_gradColor"), grad.colors);
+}
+_setRectStyleUniforms(prog, g) {
+const gl = this.gl;
+const u = (n) => uniformOf(gl, prog, n);
+gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
+const cr = g.cornerRadius || [0, 0];
+gl.uniform2f(u("u_radius"), cr[0] * this.dpr, cr[1] * this.dpr);
+gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
+const sc = g.strokeColor || [0, 0, 0, 0];
+gl.uniform4f(u("u_stroke"), sc[0] * sc[3], sc[1] * sc[3], sc[2] * sc[3], sc[3]);
+this._setGradientUniforms(prog, g.grad);
+}
+_rectMarkStyleGpu(g, t) {
+const s = t.style || {};
+const cr = s.corner_radius;
+g.cornerRadius = Array.isArray(cr)
+? [Number(cr[0]) || 0, Number(cr[1]) || 0]
+: [Number(cr) || 0, Number(cr) || 0];
+g.strokeWidth = Number(s.stroke_width) || 0;
+const opaque = [g.color[0], g.color[1], g.color[2], 1];
+g.strokeColor = s.stroke ? parseColor(this.root, s.stroke, opaque) : opaque;
+g.grad = this._resolveMarkFill(s, g.color);
+}
+_smoothArrays(t, x, y, base, n) {
+if (!t.style || t.style.curve !== "smooth") return null;
+return fcSmoothResample(x, y, base || null, n, 32768);
+}
 _buildLineMark(g, t, buffer) {
-this._buildXY(g, t, buffer);
+const x = this._columnView(buffer, this.spec.columns[t.x]);
+const y = this._columnView(buffer, this.spec.columns[t.y]);
+g.xMeta = { ...this.spec.columns[t.x] };
+g.yMeta = { ...this.spec.columns[t.y] };
+g.n = Math.min(x.length, y.length);
+g._cpu = { x, y, xMeta: g.xMeta, yMeta: g.yMeta };
+const sm = this._smoothArrays(t, x, y, null, g.n);
+g.xBuf = this._upload(sm ? sm.x : x);
+g.yBuf = this._upload(sm ? sm.y : y);
+if (sm) g.n = sm.n;
 g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
 }
 _buildAreaMark(g, t, buffer) {
-this._buildXY(g, t, buffer);
+const x = this._columnView(buffer, this.spec.columns[t.x]);
+const y = this._columnView(buffer, this.spec.columns[t.y]);
 const base = this._columnView(buffer, this.spec.columns[t.base]);
+g.xMeta = { ...this.spec.columns[t.x] };
+g.yMeta = { ...this.spec.columns[t.y] };
 g.baseMeta = { ...this.spec.columns[t.base] };
-g.n = Math.min(g.n, base.length);
-if (g._cpu) g._cpu.base = base;
-g.baseBuf = this._upload(base);
+g.n = Math.min(x.length, y.length, base.length);
+g._cpu = { x, y, base, xMeta: g.xMeta, yMeta: g.yMeta };
+const sm = this._smoothArrays(t, x, y, base, g.n);
+g.xBuf = this._upload(sm ? sm.x : x);
+g.yBuf = this._upload(sm ? sm.y : y);
+g.baseBuf = this._upload(sm ? sm.extra : base);
+if (sm) g.n = sm.n;
 g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
 g.lineColor = parseColor(this.root, t.style && t.style.color, g.color);
+g.grad = this._resolveMarkFill(t.style, g.color);
 }
 _buildRectMark(g, t, buffer) {
 const x0 = this._columnView(buffer, this.spec.columns[t.x0]);
@@ -1901,6 +2118,7 @@ g.colorMode = 2;
 g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
 g.lut = this._paletteLut(t.color.palette);
 }
+this._rectMarkStyleGpu(g, t);
 }
 _buildBarMark(g, t, buffer) {
 const b = t.bar;
@@ -1937,6 +2155,7 @@ g.colorMode = 2;
 g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
 g.lut = this._paletteLut(t.color.palette);
 }
+this._rectMarkStyleGpu(g, t);
 }
 _buildHeatmapMark(g, t, buffer) {
 const h = t.heatmap;
@@ -2318,6 +2537,8 @@ this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
 this._setAxisUniforms(prog, "u_b", g.baseMeta, g.yAxis);
 const [r, gg, b, a] = g.color;
 gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 0.35));
+gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
+this._setGradientUniforms(prog, g.grad);
 this._bindVao(g, "area", [g.xBuf._fcId, g.yBuf._fcId, g.baseBuf._fcId], () => {
 this._vaoAttr(ATTR_SLOTS.ax0, g.xBuf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.ax1, g.xBuf, 4, 1);
@@ -2348,6 +2569,7 @@ gl.uniform4f(u("u_edgePad"), edgePad[0], edgePad[1], edgePad[2], edgePad[3]);
 const [r, gg, b, a] = g.color;
 gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
 gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+this._setRectStyleUniforms(prog, g);
 const colorOn = g.colorMode && g.cBuf;
 if (colorOn) {
 gl.activeTexture(gl.TEXTURE0);
@@ -2393,6 +2615,7 @@ gl.uniform1f(u("u_v0EdgePad"), v0EdgePad);
 const [r, gg, b, a] = g.color;
 gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
 gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+this._setRectStyleUniforms(prog, g);
 const v0On = g.value0Mode === 1 && g.value0Buf;
 const colorOn = g.colorMode && g.cBuf;
 if (colorOn) {
@@ -4076,19 +4299,24 @@ for (const upd of msg.traces) {
 const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
 if (!g) continue;
 const gl = this.gl;
+const xArr = this._asF32(buffers[upd.x.buf]);
+const yArr = this._asF32(buffers[upd.y.buf]);
+const bArr = upd.base && g.baseBuf ? this._asF32(buffers[upd.base.buf]) : null;
+let n = Math.min(upd.x.len, upd.y.len);
+if (bArr) n = Math.min(n, upd.base.len);
+const sm = this._smoothArrays(g.trace, xArr, yArr, bArr, n);
 gl.bindBuffer(gl.ARRAY_BUFFER, g.xBuf);
-gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.x.buf]), gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, sm ? sm.x : xArr, gl.STATIC_DRAW);
 gl.bindBuffer(gl.ARRAY_BUFFER, g.yBuf);
-gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.y.buf]), gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, sm ? sm.y : yArr, gl.STATIC_DRAW);
 g.xMeta = { ...g.xMeta, offset: upd.x.offset, scale: upd.x.scale };
 g.yMeta = { ...g.yMeta, offset: upd.y.offset, scale: upd.y.scale };
-g.n = Math.min(upd.x.len, upd.y.len);
-if (upd.base && g.baseBuf) {
+if (bArr) {
 gl.bindBuffer(gl.ARRAY_BUFFER, g.baseBuf);
-gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.base.buf]), gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, sm ? sm.extra : bArr, gl.STATIC_DRAW);
 g.baseMeta = { ...g.baseMeta, offset: upd.base.offset, scale: upd.base.scale };
-g.n = Math.min(g.n, upd.base.len);
 }
+g.n = sm ? sm.n : n;
 }
 this.draw();
 } else if (msg.type === "density_update") {
@@ -4211,6 +4439,7 @@ edgePad
 },
 refreshColor: (view, g) => {
 if (!g.colorMode) g.color = parseColor(view.root, g.trace.style.color, g.color);
+view._rectMarkStyleGpu(g, g.trace);
 },
 };
 const BAR_MARK = {
@@ -4245,6 +4474,7 @@ view._drawBars(g, pmap, v1map, v0map, v0Const, v0EdgePad);
 },
 refreshColor: (view, g) => {
 if (!g.colorMode) g.color = parseColor(view.root, g.trace.style.color, g.color);
+view._rectMarkStyleGpu(g, g.trace);
 },
 };
 const MARK_KINDS = {
@@ -4303,6 +4533,7 @@ g.trace.style.line_opacity ?? 1
 refreshColor: (view, g) => {
 g.color = parseColor(view.root, g.trace.style.color, g.color);
 g.lineColor = parseColor(view.root, g.trace.style.color, g.lineColor || g.color);
+g.grad = view._resolveMarkFill(g.trace.style, g.color);
 },
 },
 };

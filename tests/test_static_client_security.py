@@ -486,7 +486,7 @@ def test_annotation_labels_and_cursor_stay_css_defeatable() -> None:
     assert "font-size:11px;line-height:1.2;font-weight:500;" not in annotations, (
         "annotation label pins font inline; move it to the :where() stylesheet"
     )
-    assert 'if (style && (style.label_color || style.color)) {' in annotations
+    assert "if (style && (style.label_color || style.color)) {" in annotations
 
     # Cursor is attribute-driven, never inline (inline cursor beats cursor-* utils).
     chartview = _read(ROOT / "js/src/50_chartview.js")
@@ -495,3 +495,31 @@ def test_annotation_labels_and_cursor_stay_css_defeatable() -> None:
     assert "this.canvas.style.cursor" not in interaction, "drag-mode re-pins cursor inline"
     assert "this.canvas.dataset.fcDragmode = mode;" in interaction
     assert "cursor:pointer" not in interaction, "modebar button pins cursor inline"
+
+
+def test_client_renders_mark_level_styling() -> None:
+    """Gradient fills (premultiplied, currentColor-aware), rounded corners +
+    stroke borders on both rect-family GPU programs, and curve:"smooth"
+    monotone-cubic densification are first-class mark styling
+    (docs/styling.md#styling-the-marks)."""
+    required = (
+        "fcGradSample(",  # gradient sampler shared by area + rect shaders
+        "u_gradMode",
+        'u("u_radius")',  # rounded-corner SDF uniform
+        'u("u_strokeWidth")',
+        "fcSmoothResample(",  # monotone cubic (Fritsch–Carlson)
+        "fcMonotoneTangents(",
+        "_resolveMarkFill(",
+        "_setRectStyleUniforms(",
+        '=== "currentcolor"',  # currentColor resolves to the mark's own color
+        'curve !== "smooth"',
+    )
+    for path, text in CLIENT_FILES:
+        for marker in required:
+            assert marker in text, f"{path} no longer supports mark styling marker {marker!r}"
+
+    # Smoothing is visual-only: hover reads the source rows, so the resample
+    # must never replace the retained CPU columns.
+    src = _CLIENT_SRC[1]
+    assert "g._cpu = { x, y, xMeta: g.xMeta, yMeta: g.yMeta };" in src
+    assert "g._cpu = { x, y, base, xMeta: g.xMeta, yMeta: g.yMeta };" in src

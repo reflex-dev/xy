@@ -262,6 +262,37 @@ void main() {
   outColor = vec4(u_color.rgb * alpha, alpha);
 }`;
 
+// Mark-fill gradients (docs/styling.md#styling-the-marks): up to 8 stops,
+// interpolated in premultiplied alpha so a fade to `transparent` keeps the hue
+// (no dark fringe). u_gradMode: 0=off, 1=mark space (t runs along the mark's
+// value axis, 0 at the base, 1 at the tip/line), 2=plot space (screen axes —
+// the canvas IS the plot box). Direction follows CSS: the first stop sits at
+// the gradient-line start, so "to bottom" (the default) starts at the tip.
+const GRAD_GLSL = `
+uniform int u_gradMode; uniform int u_gradDir; uniform int u_gradCount;
+uniform float u_gradPos[8]; uniform vec4 u_gradColor[8];
+vec4 fcGradSample(float t) {
+  vec4 c0 = u_gradColor[0]; float p0 = u_gradPos[0];
+  if (t <= p0) return c0;
+  for (int i = 1; i < 8; i++) {
+    if (i >= u_gradCount) break;
+    float p1 = u_gradPos[i]; vec4 c1 = u_gradColor[i];
+    if (t <= p1) return mix(c0, c1, (t - p0) / max(p1 - p0, 1e-6));
+    p0 = p1; c0 = c1;
+  }
+  return c0;
+}
+float fcGradT(float markT, vec2 res) {
+  float t;
+  if (u_gradMode == 2) {
+    vec2 f = gl_FragCoord.xy / max(res, vec2(1.0));
+    t = u_gradDir == 0 ? 1.0 - f.y : u_gradDir == 1 ? f.y : u_gradDir == 2 ? 1.0 - f.x : f.x;
+  } else {
+    t = u_gradDir == 0 ? 1.0 - markT : markT;
+  }
+  return clamp(t, 0.0, 1.0);
+}`;
+
 // Area: one instanced strip per segment, filling between the top line (y) and a
 // baseline column. Baseline is offset-encoded independently from y.
 const AREA_VS = `#version 300 es
@@ -269,6 +300,7 @@ in float ax0; in float ax1; in float ay0; in float ay1; in float ab0; in float a
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_bmap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform vec2 u_bmeta;
 uniform int u_xmode; uniform int u_ymode;
+out float v_t;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -281,16 +313,22 @@ void main() {
   float b1 = fcMap(ab1, u_bmap, u_bmeta, u_ymode);
   float top = mix(y0, y1, c.x);
   float base = mix(b0, b1, c.x);
+  v_t = c.y;
   gl_Position = vec4(mix(x0, x1, c.x), mix(base, top, c.y), 0.0, 1.0);
 }`;
 
 const AREA_FS = `#version 300 es
-precision highp float;
+precision highp float; precision highp int;
 uniform vec4 u_color;
+uniform vec2 u_res;
+in float v_t;
 out vec4 outColor;
+${GRAD_GLSL}
 void main() {
-  if (u_color.a <= 0.001) discard;
-  outColor = vec4(u_color.rgb * u_color.a, u_color.a);
+  vec4 premult = vec4(u_color.rgb * u_color.a, u_color.a);
+  if (u_gradMode != 0) premult = fcGradSample(fcGradT(v_t, u_res));
+  if (premult.a <= 0.001) discard;
+  outColor = premult;
 }`;
 
 // Rectangles: one instanced quad per mark. Geometry columns are left/right and
@@ -302,8 +340,10 @@ uniform vec2 u_x0map; uniform vec2 u_x1map; uniform vec2 u_y0map; uniform vec2 u
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
 uniform int u_xmode; uniform int u_ymode;
 uniform vec4 u_edgePad;
+uniform vec2 u_res;
 in float a_cval; uniform int u_colorMode;
 out float v_lutCoord;
+out vec2 v_local; out vec2 v_half; out float v_t;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -313,6 +353,13 @@ void main() {
   float y0 = fcMap(ay0, u_y0map, u_y0meta, u_ymode) + u_edgePad.z;
   float y1 = fcMap(ay1, u_y1map, u_y1meta, u_ymode) + u_edgePad.w;
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  // Pixel-space local frame for the rounded-corner/stroke SDF (v_half is
+  // constant across the quad; v_local interpolates to the fragment offset).
+  vec2 pA = (vec2(x0, y0) * 0.5 + 0.5) * u_res;
+  vec2 pB = (vec2(x1, y1) * 0.5 + 0.5) * u_res;
+  v_half = abs(pB - pA) * 0.5;
+  v_local = mix(pA, pB, c) - (pA + pB) * 0.5;
+  v_t = c.y;
   gl_Position = vec4(mix(x0, x1, c.x), mix(y0, y1, c.y), 0.0, 1.0);
 }`;
 
@@ -327,8 +374,10 @@ uniform vec2 u_pmeta; uniform vec2 u_v0meta; uniform vec2 u_v1meta;
 uniform int u_pmode; uniform int u_vmode;
 uniform float u_width; uniform int u_orientation; uniform int u_v0Mode; uniform float u_v0Const;
 uniform float u_v0EdgePad;
+uniform vec2 u_res;
 uniform int u_colorMode;
 out float v_lutCoord;
+out vec2 v_local; out vec2 v_half; out float v_t;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -338,20 +387,133 @@ void main() {
   float v0 = (u_v0Mode == 0 ? u_v0Const : fcMap(a_v0, u_v0map, u_v0meta, u_vmode)) + u_v0EdgePad;
   float v1 = fcMap(a_v1, u_v1map, u_v1meta, u_vmode);
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  vec2 clipA, clipB;
   if (u_orientation == 0) {
-    gl_Position = vec4(mix(p - halfW, p + halfW, c.x), mix(v0, v1, c.y), 0.0, 1.0);
+    clipA = vec2(p - halfW, v0); clipB = vec2(p + halfW, v1);
+    gl_Position = vec4(mix(clipA.x, clipB.x, c.x), mix(clipA.y, clipB.y, c.y), 0.0, 1.0);
+    v_t = c.y;
   } else {
-    gl_Position = vec4(mix(v0, v1, c.x), mix(p - halfW, p + halfW, c.y), 0.0, 1.0);
+    clipA = vec2(v0, p - halfW); clipB = vec2(v1, p + halfW);
+    gl_Position = vec4(mix(clipA.x, clipB.x, c.x), mix(clipA.y, clipB.y, c.y), 0.0, 1.0);
+    v_t = c.x;
   }
+  // Pixel-space local frame for the rounded-corner/stroke SDF; v_t runs along
+  // the value axis (0 at the base, 1 at the bar tip) for mark-space gradients.
+  vec2 pA = (clipA * 0.5 + 0.5) * u_res;
+  vec2 pB = (clipB * 0.5 + 0.5) * u_res;
+  v_half = abs(pB - pA) * 0.5;
+  v_local = vec2(mix(pA.x, pB.x, c.x), mix(pA.y, pB.y, c.y)) - (pA + pB) * 0.5;
 }`;
 
+// Shared by the rect and compact-bar programs: flat fill or LUT color, then an
+// optional mark gradient, then an optional rounded-corner + stroke SDF pass.
+// With radius/stroke/gradient at their defaults this reduces exactly to the
+// old flat-quad output (cover = 1, no SDF sampled), so plain bars stay
+// pixel-identical.
 const RECT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut;
+uniform vec2 u_radius; uniform float u_strokeWidth; uniform vec4 u_stroke;
+uniform vec2 u_res;
 in float v_lutCoord;
+in vec2 v_local; in vec2 v_half; in float v_t;
 out vec4 outColor;
+${GRAD_GLSL}
 void main() {
-  if (u_color.a <= 0.001) discard;
   vec3 rgb = u_colorMode == 0 ? u_color.rgb : texture(u_lut, vec2(clamp(v_lutCoord, 0.0, 1.0), 0.5)).rgb;
-  outColor = vec4(rgb * u_color.a, u_color.a);
+  vec4 premult = vec4(rgb * u_color.a, u_color.a);
+  if (u_gradMode != 0) premult = fcGradSample(fcGradT(v_t, u_res));
+  if (u_radius.x > 0.0 || u_radius.y > 0.0 || u_strokeWidth > 0.0) {
+    // u_radius = (tip, base) in mark space: v_t > 0.5 is the tip half, so
+    // corner_radius=(6, 0) rounds only the value end of the bar. On the
+    // straight sides the SDF reduces to |local|-half independent of r, so
+    // differing radii meet with no seam.
+    float r = min(v_t > 0.5 ? u_radius.x : u_radius.y, min(v_half.x, v_half.y));
+    vec2 q = abs(v_local) - (v_half - vec2(r));
+    float d = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - r;
+    float aa = 0.75;
+    if (u_strokeWidth > 0.0) {
+      float inner = 1.0 - smoothstep(-aa, aa, d + u_strokeWidth);
+      premult = mix(u_stroke, premult, inner);
+    }
+    premult *= 1.0 - smoothstep(-aa, aa, d);
+  }
+  if (premult.a <= 0.001) discard;
+  outColor = premult;
 }`;
+
+// ---------------------------------------------------------------------------
+// curve:"smooth" — monotone cubic (Fritsch–Carlson) resampling for line/area.
+// Purely visual: the GPU geometry densifies, while hover/tooltips keep reading
+// the source rows (`g._cpu` stays the original columns). The interpolant never
+// overshoots the data (its whole point), so it is safe on M4-decimated tiers,
+// and per-axis affine maps commute with the construction, so resampling the
+// offset-encoded f32 columns (§4) is exact. Output is capped at `maxOut`
+// vertices; past that the polyline is sub-pixel dense and smoothing is a no-op.
+// ---------------------------------------------------------------------------
+function fcMonotoneTangents(x, y, n) {
+  const d = new Float64Array(n - 1);
+  const m = new Float64Array(n);
+  for (let i = 0; i < n - 1; i++) {
+    const dx = x[i + 1] - x[i];
+    d[i] = dx > 0 ? (y[i + 1] - y[i]) / dx : 0;
+  }
+  m[0] = d[0];
+  m[n - 1] = d[n - 2];
+  for (let i = 1; i < n - 1; i++) m[i] = d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) * 0.5;
+  for (let i = 0; i < n - 1; i++) {
+    if (d[i] === 0) { m[i] = 0; m[i + 1] = 0; continue; }
+    const a = m[i] / d[i];
+    const b = m[i + 1] / d[i];
+    const s = a * a + b * b;
+    if (s > 9) {
+      const t = 3 / Math.sqrt(s);
+      m[i] = t * a * d[i];
+      m[i + 1] = t * b * d[i];
+    }
+  }
+  return m;
+}
+
+function fcSmoothResample(x, y, extra, n, maxOut) {
+  if (n < 3) return null;
+  const sub = Math.max(1, Math.min(16, Math.floor(maxOut / n)));
+  if (sub <= 1) return null; // already pixel-dense; identity at pixel scale
+  for (let i = 0; i < n; i++) {
+    if (!Number.isFinite(x[i]) || !Number.isFinite(y[i])) return null;
+    if (i > 0 && x[i] < x[i - 1]) return null; // needs sorted x (line ingest sorts)
+    if (extra && !Number.isFinite(extra[i])) return null;
+  }
+  const my = fcMonotoneTangents(x, y, n);
+  const me = extra ? fcMonotoneTangents(x, extra, n) : null;
+  const outN = (n - 1) * sub + 1;
+  const ox = new Float32Array(outN);
+  const oy = new Float32Array(outN);
+  const oe = extra ? new Float32Array(outN) : null;
+  let k = 0;
+  for (let i = 0; i < n - 1; i++) {
+    const h = x[i + 1] - x[i];
+    for (let s = 0; s < sub; s++) {
+      const t = s / sub;
+      ox[k] = x[i] + h * t;
+      if (h > 0) {
+        const t2 = t * t;
+        const t3 = t2 * t;
+        const h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+        const h10 = t3 - 2.0 * t2 + t;
+        const h01 = -2.0 * t3 + 3.0 * t2;
+        const h11 = t3 - t2;
+        oy[k] = h00 * y[i] + h10 * h * my[i] + h01 * y[i + 1] + h11 * h * my[i + 1];
+        if (oe) oe[k] = h00 * extra[i] + h10 * h * me[i] + h01 * extra[i + 1] + h11 * h * me[i + 1];
+      } else {
+        oy[k] = y[i];
+        if (oe) oe[k] = extra[i];
+      }
+      k++;
+    }
+  }
+  ox[k] = x[n - 1];
+  oy[k] = y[n - 1];
+  if (oe) oe[k] = extra[n - 1];
+  return { x: ox, y: oy, extra: oe, n: outN };
+}

@@ -9,6 +9,21 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- **Mark-level styling** (both APIs; `docs/styling.md#styling-the-marks`):
+  - `fill="linear-gradient(...)"` on `area`/`bar`/`column`/`histogram` — real
+    CSS gradient syntax (2–8 stops, `%` positions, `currentColor` = the mark's
+    own resolved color, hue-preserving fades to `transparent`); mark-space by
+    default (along each mark's value axis), plot-space opt-in via
+    `fill={"gradient": ..., "space": "plot"}`.
+  - `corner_radius` / `stroke` / `stroke_width` on the bar family — the CSS
+    border analogues, rendered as an antialiased SDF (plain bars stay
+    pixel-identical). `corner_radius=(tip, base)` rounds only the value end —
+    the classic rounded-top bar — orientation- and sign-aware.
+  - `curve="smooth"` on `line`/`area` — monotone cubic (never overshoots),
+    re-applied per zoom-refined window; hover keeps reporting source rows.
+  - All mark colors (gradient stops and strokes included) resolve as live CSS
+    (`var(--accent)`, `oklch(...)`, named colors) and re-resolve on theme
+    change.
 - **CSS/Tailwind:** every DOM chrome element now takes per-slot `class_names` /
   `chrome_styles`, and its visual defaults live in one zero-specificity
   `:where([data-fc-slot="…"])` stylesheet — so a utility class or inline style
