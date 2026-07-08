@@ -686,6 +686,21 @@ def test_declarative_chart_keeps_notebook_export_and_framework_chrome_contract(
             name="trend",
             color="var(--chart-trend)",
         ),
+        fc.vline(
+            0.24,
+            text="release",
+            color="#7c3aed",
+            class_name="tw-release-marker",
+        ),
+        fc.callout(
+            0.38,
+            0.73,
+            "best cohort",
+            dx=-64,
+            dy=-24,
+            color="#0f172a",
+            class_name="tw-callout",
+        ),
         fc.x_axis(label="activation", format=".0%"),
         fc.y_axis(label="retention", format=".0%"),
         fc.legend(
@@ -753,6 +768,26 @@ def test_declarative_chart_keeps_notebook_export_and_framework_chrome_contract(
     assert spec["show_legend"] is False
     assert spec["show_tooltip"] is False
     assert spec["show_modebar"] is False
+    assert [annotation["kind"] for annotation in spec["annotations"]] == ["rule", "callout"]
+    assert spec["annotations"][0] == {
+        "text": "release",
+        "class_name": "tw-release-marker",
+        "style": {"color": "#7c3aed", "width": 1.5, "opacity": 1.0},
+        "kind": "rule",
+        "axis": "x",
+        "value": 0.24,
+    }
+    assert spec["annotations"][1] == {
+        "text": "best cohort",
+        "class_name": "tw-callout",
+        "style": {"color": "#0f172a", "width": 1.5, "opacity": 1.0},
+        "kind": "callout",
+        "x": 0.38,
+        "y": 0.73,
+        "dx": -64.0,
+        "dy": -24.0,
+        "anchor": "start",
+    }
     assert spec["width"] == "100%"
     assert spec["height"] == 360
     assert spec["dom"]["class_name"] == "h-[360px] w-full rounded-md border border-slate-200"
