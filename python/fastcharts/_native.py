@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_SCREEN_DIM
 
-ABI_VERSION = 6
+ABI_VERSION = 7
 
 _F64_P = ctypes.POINTER(ctypes.c_double)
 _F32_P = ctypes.POINTER(ctypes.c_float)
@@ -89,7 +89,7 @@ def _load() -> ctypes.CDLL:
         _F64_P,
         _F64_P,
     ]
-    lib.fc_encode_f32.restype = None
+    lib.fc_encode_f32.restype = ctypes.c_int32
     lib.fc_encode_f32.argtypes = [
         _F64_P,
         ctypes.c_size_t,
@@ -146,7 +146,7 @@ def _load() -> ctypes.CDLL:
         ctypes.c_int32,
         _F64_P,
     ]
-    lib.fc_normalize_f32.restype = None
+    lib.fc_normalize_f32.restype = ctypes.c_int32
     lib.fc_normalize_f32.argtypes = [
         _F64_P,
         ctypes.c_size_t,
@@ -166,7 +166,7 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         _U32_P,
     ]
-    lib.fc_sample_mask.restype = None
+    lib.fc_sample_mask.restype = ctypes.c_int32
     lib.fc_sample_mask.argtypes = [
         _U64_P,
         ctypes.c_size_t,
@@ -352,7 +352,9 @@ def encode_f32(
     if len(data) == 0:  # empty NumPy arrays may carry a null pointer
         return np.empty(0, dtype=np.float32)
     out = np.empty(len(data), dtype=np.float32)
-    _lib.fc_encode_f32(_ptr_f64(data), len(data), offset, scale, out.ctypes.data_as(_F32_P))
+    ok = _lib.fc_encode_f32(_ptr_f64(data), len(data), offset, scale, out.ctypes.data_as(_F32_P))
+    if ok != 1:
+        raise RuntimeError("fastcharts native encode_f32 failed (output undefined)")
     return out
 
 
@@ -528,9 +530,11 @@ def normalize_f32(
     out = np.empty(len(data), dtype=np.float32)
     nan_mode = 1 if nonfinite == "nan" else 0
     if len(data):
-        _lib.fc_normalize_f32(
+        ok = _lib.fc_normalize_f32(
             _ptr_f64(data), len(data), lo, hi, nan_mode, out.ctypes.data_as(_F32_P)
         )
+        if ok != 1:
+            raise RuntimeError("fastcharts native normalize_f32 failed (output undefined)")
     return out
 
 
@@ -583,13 +587,15 @@ def sample_mask(
         raise ValueError("ids must be a one-dimensional uint64 array")
     out = np.empty(len(ids), dtype=np.uint8)
     if len(ids):
-        _lib.fc_sample_mask(
+        ok = _lib.fc_sample_mask(
             ids.ctypes.data_as(_U64_P),
             len(ids),
             ctypes.c_uint64(int(seed)),
             ctypes.c_uint64(int(threshold)),
             out.ctypes.data_as(_U8_P),
         )
+        if ok != 1:
+            raise RuntimeError("fastcharts native sample_mask failed (output undefined)")
     return out.view(np.bool_)
 
 

@@ -17,7 +17,7 @@ import sys
 from array import array
 from pathlib import Path
 
-ABI_VERSION = 6
+ABI_VERSION = 7
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -45,7 +45,7 @@ def load() -> ctypes.CDLL:
 
     lib.fc_abi_version.restype = ctypes.c_uint32
     lib.fc_abi_version.argtypes = []
-    lib.fc_encode_f32.restype = None
+    lib.fc_encode_f32.restype = ctypes.c_int32
     lib.fc_encode_f32.argtypes = [F64P, ctypes.c_size_t, ctypes.c_double, ctypes.c_double, F32P]
     lib.fc_m4_indices.restype = ctypes.c_size_t
     lib.fc_m4_indices.argtypes = [
@@ -84,11 +84,11 @@ def load() -> ctypes.CDLL:
         ctypes.c_int32,
         F64P,
     ]
-    lib.fc_normalize_f32.restype = None
+    lib.fc_normalize_f32.restype = ctypes.c_int32
     lib.fc_normalize_f32.argtypes = [F64P, ctypes.c_size_t, D, D, ctypes.c_int32, F32P]
     lib.fc_range_indices.restype = ctypes.c_size_t
     lib.fc_range_indices.argtypes = [F64P, F64P, ctypes.c_size_t, D, D, D, D, U32P]
-    lib.fc_sample_mask.restype = None
+    lib.fc_sample_mask.restype = ctypes.c_int32
     lib.fc_sample_mask.argtypes = [
         U64P,
         ctypes.c_size_t,
@@ -140,11 +140,13 @@ def main() -> None:
 
     # Boundary guardrails: empty inputs may carry null pointers; invalid
     # non-empty null inputs must return sentinels/flags rather than crash.
-    lib.fc_encode_f32(null_f64, 0, 0.0, 1.0, null_f32)
-    ok(True, "encode_f32 accepts empty/null")
+    ok(lib.fc_encode_f32(null_f64, 0, 0.0, 1.0, null_f32) == 1, "encode_f32 empty/null ok status")
     tiny_f = array("f", [123.0])
-    lib.fc_encode_f32(null_f64, 1, 0.0, 1.0, _ptr(tiny_f, ctypes.c_float))
-    ok(tiny_f[0] == 123.0, "encode_f32 rejects null input without writing")
+    status = lib.fc_encode_f32(null_f64, 1, 0.0, 1.0, _ptr(tiny_f, ctypes.c_float))
+    ok(
+        status == 0 and tiny_f[0] == 123.0,
+        "encode_f32 rejects null input with 0 status, without writing",
+    )
     ok(
         lib.fc_m4_indices(null_f64, null_f64, 0, 0.0, 1.0, 4, null_u32) == 0,
         "m4 empty/null returns zero",
@@ -202,11 +204,24 @@ def main() -> None:
         == size_max,
         "histogram non-empty/null sentinel",
     )
-    lib.fc_normalize_f32(null_f64, 0, 0.0, 1.0, 0, null_f32)
-    ok(True, "normalize_f32 accepts empty/null")
+    ok(
+        lib.fc_normalize_f32(null_f64, 0, 0.0, 1.0, 0, null_f32) == 1,
+        "normalize_f32 empty/null ok status",
+    )
     tiny_norm = array("f", [123.0])
-    lib.fc_normalize_f32(null_f64, 1, 0.0, 1.0, 0, _ptr(tiny_norm, ctypes.c_float))
-    ok(tiny_norm[0] == 123.0, "normalize_f32 rejects null input without writing")
+    status = lib.fc_normalize_f32(null_f64, 1, 0.0, 1.0, 0, _ptr(tiny_norm, ctypes.c_float))
+    ok(
+        status == 0 and tiny_norm[0] == 123.0,
+        "normalize_f32 rejects null input with 0 status, without writing",
+    )
+    one_val = array("d", [0.5])
+    status = lib.fc_normalize_f32(
+        _ptr(one_val, ctypes.c_double), 1, 1.0, 0.0, 0, _ptr(tiny_norm, ctypes.c_float)
+    )
+    ok(
+        status == 0 and tiny_norm[0] == 123.0,
+        "normalize_f32 inverted domain now signals 0 (was a silent void)",
+    )
     ok(
         lib.fc_range_indices(null_f64, null_f64, 0, 0.0, 1.0, 0.0, 1.0, null_u32) == 0,
         "range_indices empty/null returns zero",
@@ -289,14 +304,20 @@ def main() -> None:
     )
     ok(mask[0] == 0, "sample_mask splitmix64(0) reference vector exclusive")
     mask_null = array("B", [7])
-    lib.fc_sample_mask(
+    status = lib.fc_sample_mask(
         null_u64, 1, ctypes.c_uint64(0), ctypes.c_uint64(1), _ptr(mask_null, ctypes.c_uint8)
     )
-    ok(mask_null[0] == 7, "sample_mask rejects null input without writing")
-    lib.fc_sample_mask(
-        null_u64, 0, ctypes.c_uint64(0), ctypes.c_uint64(1), ctypes.POINTER(ctypes.c_uint8)()
+    ok(
+        status == 0 and mask_null[0] == 7,
+        "sample_mask rejects null input with 0 status, without writing",
     )
-    ok(True, "sample_mask accepts empty/null")
+    ok(
+        lib.fc_sample_mask(
+            null_u64, 0, ctypes.c_uint64(0), ctypes.c_uint64(1), ctypes.POINTER(ctypes.c_uint8)()
+        )
+        == 1,
+        "sample_mask empty/null ok status",
+    )
     ok(
         lib.fc_local_log_density(null_f64, null_f64, 0, 0.0, 1.0, 0.0, 1.0, 2, 2, null_f32) == 1,
         "local_log_density empty/null ok",
