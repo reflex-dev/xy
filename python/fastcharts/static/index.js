@@ -565,7 +565,7 @@ in float ax0; in float ax1; in float ay0; in float ay1; in float ab0; in float a
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_bmap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform vec2 u_bmeta;
 uniform int u_xmode; uniform int u_ymode;
-out float v_t;
+out float v_top; out float v_base; out float v_pos;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -579,25 +579,32 @@ void main() {
   float top = mix(y0, y1, c.x);
   float base = mix(b0, b1, c.x);
   float clipY = mix(base, top, c.y);
-  // Gradient position runs in the plot's vertical space (clip -1..1 -> 0..1),
-  // continuous across every segment. The old per-quad c.y normalized to each
-  // segment's own top, so segments of different height disagreed on the
-  // gradient value at a shared screen row and left vertical seams.
-  v_t = clipY * 0.5 + 0.5;
+  // Carry the curve top, baseline, and this fragment's Y *separately* (each is
+  // linear in x and continuous across segments); the fragment divides them for
+  // a true per-column height fraction. Interpolating the ratio itself (the old
+  // c.y) facets over the slanted-top quad and streaks — this doesn't, and the
+  // fill stays evenly saturated at the curve whatever its height.
+  v_top = top;
+  v_base = base;
+  v_pos = clipY;
   gl_Position = vec4(mix(x0, x1, c.x), clipY, 0.0, 1.0);
 }`;
 const AREA_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color;
 uniform vec2 u_res;
-in float v_t;
+in float v_top; in float v_base; in float v_pos;
 out vec4 outColor;
 ${GRAD_GLSL}
 void main() {
   vec4 premult = vec4(u_color.rgb * u_color.a, u_color.a);
-  // Compose the mark opacity (u_color.a) over the gradient — premultiplied, so
-  // one scalar multiply fades every stop, including a fade-to-transparent.
-  if (u_gradMode != 0) premult = fcGradSample(fcGradT(v_t, u_res)) * u_color.a;
+  if (u_gradMode != 0) {
+    // 0 at the baseline, 1 exactly at the curve — even at the curve everywhere.
+    float denom = v_top - v_base;
+    float markT = clamp((v_pos - v_base) / (abs(denom) > 1e-6 ? denom : 1e-6), 0.0, 1.0);
+    // Compose the mark opacity (premultiplied) over the gradient sample.
+    premult = fcGradSample(fcGradT(markT, u_res)) * u_color.a;
+  }
   if (premult.a <= 0.001) discard;
   outColor = premult;
 }`;

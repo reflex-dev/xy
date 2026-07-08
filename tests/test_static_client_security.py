@@ -508,7 +508,7 @@ def test_client_renders_mark_level_styling() -> None:
         'u("u_radius")',  # rounded-corner SDF uniform
         'u("u_strokeWidth")',
         "fcGradSample(fcGradT(v_t, u_res)) * u_color.a",  # opacity composes w/ gradient
-        "v_t = clipY * 0.5 + 0.5;",  # area gradient is plot-vertical (no per-segment streaks)
+        "(v_pos - v_base) / (abs(denom)",  # area gradient: per-column, seam-free + even
         "fcSmoothResample(",  # monotone cubic (Fritsch–Carlson)
         "fcMonotoneTangents(",
         "_resolveMarkFill(",
