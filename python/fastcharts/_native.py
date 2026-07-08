@@ -23,7 +23,7 @@ import numpy.typing as npt
 
 from .config import MAX_SCREEN_DIM
 
-ABI_VERSION = 5
+ABI_VERSION = 6
 
 _F64_P = ctypes.POINTER(ctypes.c_double)
 _F32_P = ctypes.POINTER(ctypes.c_float)
@@ -120,6 +120,20 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,
         ctypes.c_size_t,
         _F32_P,
+    ]
+    lib.fc_bin_2d_indices.restype = ctypes.c_size_t
+    lib.fc_bin_2d_indices.argtypes = [
+        _F64_P,
+        _F64_P,
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        _F32_P,
+        _U32_P,
     ]
     lib.fc_histogram_uniform.restype = ctypes.c_size_t
     lib.fc_histogram_uniform.argtypes = [
@@ -408,6 +422,52 @@ def bin_2d(
         if not ok:
             raise ValueError("invalid bin_2d arguments")
     return out
+
+
+def bin_2d_indices(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+    w: int,
+    h: int,
+) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.uint32]]:
+    """Fused density scan: `(bin_2d grid, range_indices rows)` in one pass.
+
+    Each output is bitwise identical to its standalone kernel (asserted by the
+    parity test); fusing halves the column traffic on the Tier-2 density path,
+    which reads the full x/y columns twice otherwise.
+    """
+    w = _bounded_positive_int(w, "w")
+    h = _bounded_positive_int(h, "h")
+    x0, x1 = _finite_increasing(x0, x1, "x range")
+    y0, y1 = _finite_increasing(y0, y1, "y range")
+    x = _as_f64(x, "x")
+    y = _as_f64(y, "y")
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    grid = np.zeros((h, w), dtype=np.float32)
+    idx = np.empty(len(x), dtype=np.uint32)
+    if len(x) == 0:
+        return grid, idx
+    written = _lib.fc_bin_2d_indices(
+        _ptr_f64(x),
+        _ptr_f64(y),
+        len(x),
+        x0,
+        x1,
+        y0,
+        y1,
+        w,
+        h,
+        grid.ctypes.data_as(_F32_P),
+        idx.ctypes.data_as(_U32_P),
+    )
+    if written == np.iinfo(np.uint64).max:
+        raise ValueError("invalid bin_2d_indices arguments")
+    return grid, idx[:written].copy()
 
 
 def min_max(data: npt.NDArray[np.float64]) -> Optional[tuple[float, float]]:

@@ -2535,8 +2535,9 @@ class Figure:
         """Bin a scatter into a density grid and build its spec entry (§5 Tier 2).
         The grid ships as one f32 buffer (h×w counts); the client colormaps it,
         recomputing the normalization domain per view so brightness is stable (§F6)."""
-        grid = kernels.bin_2d(t.x.values, t.y.values, xr[0], xr[1], yr[0], yr[1], w, h)
-        sel = kernels.range_indices(t.x.values, t.y.values, xr[0], xr[1], yr[0], yr[1])
+        # Fused single pass: grid (bin_2d semantics) + visible rows
+        # (range_indices semantics) without re-reading the full columns twice.
+        grid, sel = kernels.bin_2d_indices(t.x.values, t.y.values, xr[0], xr[1], yr[0], yr[1], w, h)
         visible = int(len(sel))
         gmax = float(grid.max()) if grid.size else 0.0
         # Honor the user's colormap for the density ramp even though the per-point

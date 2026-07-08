@@ -31,6 +31,7 @@ encode_f32 = _impl.encode_f32
 m4_indices = _impl.m4_indices
 min_max = _impl.min_max
 bin_2d = _impl.bin_2d
+bin_2d_indices = _impl.bin_2d_indices
 histogram_uniform = _impl.histogram_uniform
 normalize_f32 = _impl.normalize_f32
 range_indices = _impl.range_indices
@@ -44,6 +45,7 @@ pyramid_free = _impl.pyramid_free
 __all__ = [
     "BACKEND",
     "bin_2d",
+    "bin_2d_indices",
     "encode_f32",
     "histogram_uniform",
     "local_log_density",
