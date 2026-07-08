@@ -31,10 +31,22 @@ fn finite_ordered(lo: f64, hi: f64) -> bool {
     lo.is_finite() && hi.is_finite() && hi >= lo
 }
 
+/// Panic backstop for the C ABI: a Rust panic must never unwind across
+/// `extern "C"` into the host interpreter — that is undefined behavior and in
+/// practice aborts the embedding CPython process. Any panic (an internal
+/// assert, a worker-join failure, an OOM unwind) maps to the calling entry
+/// point's error sentinel instead; output buffers may then be partially
+/// written, exactly like the existing invalid-argument paths, and callers
+/// already treat the sentinel as "output undefined". `AssertUnwindSafe` is
+/// sound because nothing observes the closure's captures after a panic.
+fn ffi_guard<R>(sentinel: R, body: impl FnOnce() -> R) -> R {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)).unwrap_or(sentinel)
+}
+
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 6;
+pub const ABI_VERSION: u32 = 7;
 
 #[no_mangle]
 pub extern "C" fn fc_abi_version() -> u32 {
@@ -79,7 +91,10 @@ pub unsafe extern "C" fn fc_zone_maps(
         return usize::MAX;
     }
     let data = std::slice::from_raw_parts(data, len);
-    let zms = kernels::zone_maps(data, chunk_size);
+    let zms = match ffi_guard(None, || Some(kernels::zone_maps(data, chunk_size))) {
+        Some(z) => z,
+        None => return usize::MAX,
+    };
     debug_assert_eq!(zms.len(), n_chunks);
     for (i, zm) in zms.iter().enumerate() {
         let ZoneMap {
@@ -101,6 +116,8 @@ pub unsafe extern "C" fn fc_zone_maps(
 }
 
 /// Offset-encode (§4/§16): `out[i] = (data[i] - offset) * scale` as f32.
+/// Returns 1 on success (including the empty no-op), 0 on null arguments —
+/// callers must treat 0 as "output undefined".
 ///
 /// # Safety
 /// `data` must point to `len` readable f64s, `out` to `len` writable f32s.
@@ -111,16 +128,19 @@ pub unsafe extern "C" fn fc_encode_f32(
     offset: f64,
     scale: f64,
     out: *mut f32,
-) {
+) -> i32 {
     if len == 0 {
-        return;
+        return 1;
     }
     if data.is_null() || out.is_null() {
-        return;
+        return 0;
     }
     let data = std::slice::from_raw_parts(data, len);
     let out = std::slice::from_raw_parts_mut(out, len);
-    kernels::encode_f32_into(data, offset, scale, out);
+    ffi_guard(0, || {
+        kernels::encode_f32_into(data, offset, scale, out);
+        1
+    })
 }
 
 /// M4 decimation (§5 Tier 1): source indices of {first, min, max, last} per
@@ -154,7 +174,10 @@ pub unsafe extern "C" fn fc_m4_indices(
     }
     let x = std::slice::from_raw_parts(x, len);
     let y = std::slice::from_raw_parts(y, len);
-    let idx = kernels::m4_indices(x, y, x0, x1, n_buckets);
+    let idx = match ffi_guard(None, || Some(kernels::m4_indices(x, y, x0, x1, n_buckets))) {
+        Some(idx) => idx,
+        None => return usize::MAX,
+    };
     if idx.is_empty() {
         return 0;
     }
@@ -205,8 +228,10 @@ pub unsafe extern "C" fn fc_bin_2d(
         )
     };
     let out = std::slice::from_raw_parts_mut(out, w * h);
-    kernels::bin_2d(x, y, x0, x1, y0, y1, w, h, out);
-    1
+    ffi_guard(0, || {
+        kernels::bin_2d(x, y, x0, x1, y0, y1, w, h, out);
+        1
+    })
 }
 
 /// Fused density scan (§5 Tier 2): one pass writing BOTH the count grid
@@ -253,7 +278,7 @@ pub unsafe extern "C" fn fc_bin_2d_indices(
         grid.fill(0.0);
         return 0;
     }
-    kernels::bin_2d_indices(x, y, x0, x1, y0, y1, w, h, grid, idx)
+    ffi_guard(usize::MAX, || kernels::bin_2d_indices(x, y, x0, x1, y0, y1, w, h, grid, idx))
 }
 
 /// NaN-skipping min/max (autorange primitive). Returns 1 and writes the result,
@@ -275,7 +300,7 @@ pub unsafe extern "C" fn fc_min_max(
         return 0;
     }
     let data = std::slice::from_raw_parts(data, len);
-    match kernels::min_max(data) {
+    match ffi_guard(None, || kernels::min_max(data)) {
         Some((mn, mx)) => {
             *out_min = mn;
             *out_max = mx;
@@ -317,7 +342,10 @@ pub unsafe extern "C" fn fc_histogram_uniform(
         std::slice::from_raw_parts(data, len)
     };
     let out = std::slice::from_raw_parts_mut(out_counts, n_bins);
-    let total = kernels::histogram_uniform(data, lo, hi, out);
+    let total = match ffi_guard(None, || Some(kernels::histogram_uniform(data, lo, hi, out))) {
+        Some(t) => t,
+        None => return usize::MAX,
+    };
     if density != 0 && total > 0 {
         let bin_w = (hi - lo) / n_bins as f64;
         let denom = total as f64 * bin_w;
@@ -329,7 +357,10 @@ pub unsafe extern "C" fn fc_histogram_uniform(
 }
 
 /// Normalize f64 values into f32 `[0,1]`. `nan_mode=0` maps non-finite values to
-/// 0.0; `nan_mode=1` maps them to f32 NaN.
+/// 0.0; `nan_mode=1` maps them to f32 NaN. Returns 1 on success (including the
+/// empty no-op), 0 on null arguments or a non-finite/inverted domain — the
+/// former silent-void failure left the output buffer uninitialized with no way
+/// to detect it.
 ///
 /// # Safety
 /// `data` must point to `len` readable f64s; `out` to `len` writable f32s.
@@ -341,22 +372,26 @@ pub unsafe extern "C" fn fc_normalize_f32(
     hi: f64,
     nan_mode: i32,
     out: *mut f32,
-) {
+) -> i32 {
     if len == 0 {
-        return;
+        return 1;
     }
     if data.is_null() || out.is_null() || !finite_gt(lo, hi) {
-        return;
+        return 0;
     }
     let data = std::slice::from_raw_parts(data, len);
     let out = std::slice::from_raw_parts_mut(out, len);
     let nan_value = if nan_mode == 1 { f32::NAN } else { 0.0 };
-    kernels::normalize_f32_into(data, lo, hi, nan_value, out);
+    ffi_guard(0, || {
+        kernels::normalize_f32_into(data, lo, hi, nan_value, out);
+        1
+    })
 }
 
 /// Deterministic sampling mask (§5/§17): `out[i] = 1` iff
 /// `splitmix64(ids[i] + seed) <= threshold`. Bit-identical to
 /// `fastcharts.lod.hash_row_ids` thresholding, fused into one pass.
+/// Returns 1 on success (including the empty no-op), 0 on null arguments.
 ///
 /// # Safety
 /// `ids` must point to `len` readable u64s; `out` to `len` writable u8s.
@@ -367,16 +402,19 @@ pub unsafe extern "C" fn fc_sample_mask(
     seed: u64,
     threshold: u64,
     out: *mut u8,
-) {
+) -> i32 {
     if len == 0 {
-        return;
+        return 1;
     }
     if ids.is_null() || out.is_null() {
-        return;
+        return 0;
     }
     let ids = std::slice::from_raw_parts(ids, len);
     let out = std::slice::from_raw_parts_mut(out, len);
-    kernels::sample_mask(ids, seed, threshold, out);
+    ffi_guard(0, || {
+        kernels::sample_mask(ids, seed, threshold, out);
+        1
+    })
 }
 
 /// Canonical row indices inside an inclusive rectangular window. Returns the
@@ -407,7 +445,7 @@ pub unsafe extern "C" fn fc_range_indices(
     let x = std::slice::from_raw_parts(x, len);
     let y = std::slice::from_raw_parts(y, len);
     let out = std::slice::from_raw_parts_mut(out, len);
-    kernels::range_indices(x, y, lo_x, hi_x, lo_y, hi_y, out)
+    ffi_guard(usize::MAX, || kernels::range_indices(x, y, lo_x, hi_x, lo_y, hi_y, out))
 }
 
 /// Per-point local log density for a subset. Returns 1 on success, 0 on invalid
@@ -442,8 +480,10 @@ pub unsafe extern "C" fn fc_local_log_density(
     let x = std::slice::from_raw_parts(x, len);
     let y = std::slice::from_raw_parts(y, len);
     let out = std::slice::from_raw_parts_mut(out, len);
-    kernels::local_log_density(x, y, lo_x, hi_x, lo_y, hi_y, w, h, out);
-    1
+    ffi_guard(0, || {
+        kernels::local_log_density(x, y, lo_x, hi_x, lo_y, hi_y, w, h, out);
+        1
+    })
 }
 
 // -- tile pyramid (§5 Tier 3): opaque u64 handles, engine doc §3.3 ------------
@@ -468,10 +508,10 @@ pub unsafe extern "C" fn fc_pyramid_build(
     }
     let x = std::slice::from_raw_parts(x, len);
     let y = std::slice::from_raw_parts(y, len);
-    match tiles::build(x, y, x0, x1, y0, y1, base_dim as usize) {
+    ffi_guard(0, || match tiles::build(x, y, x0, x1, y0, y1, base_dim as usize) {
         Some(p) => tiles::reg_insert(p),
         None => 0,
-    }
+    })
 }
 
 /// Approximate in-window count from the finest level. 1 on success, 0 on a
@@ -490,13 +530,15 @@ pub unsafe extern "C" fn fc_pyramid_count(
     if out_count.is_null() || !finite_gt(lo_x, hi_x) || !finite_gt(lo_y, hi_y) {
         return 0;
     }
-    match tiles::reg_with(handle, |p| tiles::count(p, lo_x, hi_x, lo_y, hi_y)) {
-        Some(c) => {
-            *out_count = c;
-            1
+    ffi_guard(0, || {
+        match tiles::reg_with(handle, |p| tiles::count(p, lo_x, hi_x, lo_y, hi_y)) {
+            Some(c) => {
+                *out_count = c;
+                1
+            }
+            None => 0,
         }
-        None => 0,
-    }
+    })
 }
 
 /// Compose the window into a w×h grid. Returns the level used (>= 0),
@@ -519,11 +561,13 @@ pub unsafe extern "C" fn fc_pyramid_compose(
         return -1;
     }
     let out = std::slice::from_raw_parts_mut(out, w * h);
-    match tiles::reg_with(handle, |p| tiles::compose(p, lo_x, hi_x, lo_y, hi_y, w, h, out)) {
-        Some(Some(level)) => level as i32,
-        Some(None) => -2,
-        None => -1,
-    }
+    ffi_guard(-1, || {
+        match tiles::reg_with(handle, |p| tiles::compose(p, lo_x, hi_x, lo_y, hi_y, w, h, out)) {
+            Some(Some(level)) => level as i32,
+            Some(None) => -2,
+            None => -1,
+        }
+    })
 }
 
 /// Release a pyramid. 1 if it existed, 0 for stale/unknown handles.
@@ -531,5 +575,23 @@ pub unsafe extern "C" fn fc_pyramid_compose(
 /// No pointer arguments; safe for any handle value.
 #[no_mangle]
 pub unsafe extern "C" fn fc_pyramid_free(handle: u64) -> i32 {
-    if tiles::reg_remove(handle) { 1 } else { 0 }
+    ffi_guard(0, || if tiles::reg_remove(handle) { 1 } else { 0 })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ffi_guard_maps_panic_to_sentinel() {
+        // A panic anywhere behind the C ABI must become the entry point's
+        // error sentinel, never an unwind across `extern "C"` (which would
+        // abort the embedding interpreter).
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {})); // silence the expected panic
+        let got = ffi_guard(usize::MAX, || panic!("deliberate test panic"));
+        std::panic::set_hook(hook);
+        assert_eq!(got, usize::MAX);
+        assert_eq!(ffi_guard(0i32, || 1i32), 1);
+    }
 }
