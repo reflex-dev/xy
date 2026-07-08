@@ -435,6 +435,30 @@ def test_production_docs_name_ci_workflow_gate_shortcut() -> None:
         assert marker in text
 
 
+def test_docs_name_split_browser_hardening_gates() -> None:
+    readme = " ".join(README.read_text(encoding="utf-8").split())
+    production = " ".join(PRODUCTION_DOC.read_text(encoding="utf-8").split())
+    contributing = " ".join((ROOT / "docs" / "contributing.md").read_text(encoding="utf-8").split())
+
+    step_names = [
+        "Browser lifecycle smoke (Chromium)",
+        "Browser visual regression smoke (Chromium)",
+        "Browser interaction stress smoke (Chromium)",
+    ]
+    scripts = [
+        "scripts/reflex_lifecycle_smoke.py",
+        "scripts/visual_regression_smoke.py",
+        "scripts/interaction_stress_smoke.py",
+    ]
+    for text in (readme, production, contributing):
+        assert "make check-browser" in text
+        for step_name in step_names:
+            assert step_name in text
+    for text in (production, contributing):
+        for script in scripts:
+            assert script in text
+
+
 def test_production_docs_define_sdist_wheel_boundary() -> None:
     text = " ".join(PRODUCTION_DOC.read_text(encoding="utf-8").split())
     required = [

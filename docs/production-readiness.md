@@ -123,25 +123,27 @@ wording:
 make check-docs
 ```
 
-The browser gate includes three app-facing checks. The Reflex lifecycle smoke
-remounts every committed FastCharts iframe asset, the visual regression smoke
-screenshots generated representative chart families plus every committed
-FastCharts Reflex gallery asset except the Plotly comparison page, and the
-interaction stress smoke enforces real `ChartView` gesture budgets. The
-lifecycle smoke also requires every chart to report nonblank pixels
-through `initial`, `hash-navigation`, `narrow-resize`, `wide-resize`,
-`scroll-bottom`, `fast-scroll`, `visibility-change`, and `restore`, then names
-the custom chrome, business overview, and retention cohort assets as critical
-and requires each asset/phase pair to report pixels through every iframe shell
-phase, including in-place reload and hidden boot/reveal.
-The interaction stress smoke validates the real `ChartView` wheel zoom, pan,
-hover, crosshair, box zoom, and brush-select paths with p95 budgets plus visual
-invariants for blank frames, tick-label overlap, tooltip stability, crosshair
-visibility, view changes, box zoom narrow/restore behavior, brush select
-count/clear behavior, lit-pixel readback floors, and frame-to-frame color jumps.
-The visual regression smoke also validates title, plot, x-axis, and y-axis
-regions plus plot-region occupancy so a chart cannot collapse into a corner,
-lose axis chrome, or pass merely because some pixels exist somewhere.
+The browser gates are split into three app-facing checks that match the CI step
+names: `Browser lifecycle smoke (Chromium)`, `Browser visual regression smoke
+(Chromium)`, and `Browser interaction stress smoke (Chromium)`. The Reflex
+lifecycle smoke remounts every committed FastCharts iframe asset, the visual
+regression smoke screenshots generated representative chart families plus every
+committed FastCharts Reflex gallery asset except the Plotly comparison page,
+and the interaction stress smoke enforces real `ChartView` gesture budgets. The
+lifecycle smoke also requires every chart to report nonblank pixels through
+`initial`, `hash-navigation`, `narrow-resize`, `wide-resize`, `scroll-bottom`,
+`fast-scroll`, `visibility-change`, and `restore`, then names the custom chrome,
+business overview, and retention cohort assets as critical and requires each
+asset/phase pair to report pixels through every iframe shell phase, including
+in-place reload and hidden boot/reveal. The interaction stress smoke validates
+the real `ChartView` wheel zoom, pan, hover, crosshair, box zoom, and
+brush-select paths with p95 budgets plus visual invariants for blank frames,
+tick-label overlap, tooltip stability, crosshair visibility, view changes, box
+zoom narrow/restore behavior, brush select count/clear behavior, lit-pixel
+readback floors, and frame-to-frame color jumps. The visual regression smoke
+also validates title, plot, x-axis, and y-axis regions plus plot-region
+occupancy so a chart cannot collapse into a corner, lose axis chrome, or pass
+merely because some pixels exist somewhere.
 
 Use this after packaging, workflow, or source-distribution changes:
 
@@ -236,25 +238,28 @@ For browser checks, pass the local Chromium/Chrome binary explicitly:
 make check-browser CHROMIUM=/path/to/chrome
 ```
 
-The browser gate includes the Reflex demo lifecycle smoke. It loads each
+The lifecycle gate runs `scripts/reflex_lifecycle_smoke.py`. It loads each
 FastCharts iframe asset twice, requires every asset to survive the child-level
 `initial`, `hash-navigation`, `narrow-resize`, `wide-resize`, `scroll-bottom`,
 `fast-scroll`, `visibility-change`, and `restore` phases, then mounts all assets
 in a parent iframe shell and exercises hash navigation, fast scrolling, resize,
 visibility changes, full remount, in-place iframe reload, and a
 hidden-boot/reveal pass where charts initialize in zero-sized iframe slots
-before becoming visible.
-Empty canvases, destroyed views, shortened lifecycle reports, missing shell-phase
-reports, or missing per-phase critical custom chrome/business/cohort reports
-fail the gate.
+before becoming visible. Empty canvases, destroyed views, shortened lifecycle
+reports, missing shell-phase reports, or missing per-phase critical custom
+chrome/business/cohort reports fail the gate.
 
-It also runs `scripts/interaction_stress_smoke.py`, which is a smaller gated
-version of `benchmarks/bench_interaction.py`. The smoke validates interaction
-budgets for direct scatter, density scatter, line, histogram, bar, and heatmap
-rows so performance regressions are not scatter-only and not direct-scatter-only.
-For pickable rows, tooltip stability means every declared repeated hover sample
-must remain visible, so a tooltip that appears and immediately disappears fails
-the gate.
+The visual gate runs `scripts/visual_regression_smoke.py`. It verifies generated
+core-family charts and committed FastCharts Reflex gallery assets with title,
+plot, x-axis, y-axis, occupancy, nonblank, color, and tick-overlap probes.
+
+The interaction gate runs `scripts/interaction_stress_smoke.py`, which is a
+smaller gated version of `benchmarks/bench_interaction.py`. The smoke validates
+interaction budgets for direct scatter, density scatter, line, histogram, bar,
+and heatmap rows so performance regressions are not scatter-only and not
+direct-scatter-only. For pickable rows, tooltip stability means every declared
+repeated hover sample must remain visible, so a tooltip that appears and
+immediately disappears fails the gate.
 
 Use `make list-checks` to see the individual check names, or
 `python scripts/verify_local.py --dry-run --full` to print commands without
