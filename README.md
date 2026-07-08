@@ -117,10 +117,11 @@ pip install fastcharts
 That's it. The Rust core ships **as a prebuilt binary inside the wheel** — you
 never compile it. Each platform wheel bundles the compiled C-ABI core, the
 Python package, **and** the JavaScript client, so there's **no Rust, no Node, no
-npm, no CDN** at install time. Wheels are published per platform (manylinux
-Linux x86-64/arm64, macOS arm64/x86-64, Windows x86-64) by the release workflow;
-because the core is a plain C ABI with no CPython ABI, one wheel per platform
-serves every supported Python version.
+npm, no CDN** at install time. Wheels are published per platform by the release
+workflow — Linux glibc **and** musl/Alpine (x86-64, aarch64, armv7), macOS
+(x86-64, Apple Silicon), and Windows (x86, x64, arm64), plus a best-effort
+Pyodide/Emscripten WASM wheel; because the core is a plain C ABI with no CPython
+ABI, one wheel per platform serves every supported Python version.
 
 ### From source
 
@@ -157,9 +158,10 @@ loudly on import, keeping the no-wheel behavior a defined, actionable error.
 | Source with Rust | `uv pip install -e ".[dev]"` | Rust (Node only for JS edits) | `native` |
 | Platform/build with no native core | — | — | clear `ImportError` on first compute, naming supported platforms |
 
-Published wheels cover Linux (x86-64, aarch64), macOS (x86-64, arm64), and
-Windows (x86-64); the C-ABI core means one wheel per platform serves every
-supported Python version.
+Published wheels cover Linux glibc and musl/Alpine (x86-64, aarch64, armv7),
+macOS (x86-64, Apple Silicon), and Windows (x86, x64, arm64), plus a best-effort
+Pyodide/Emscripten WASM wheel; the C-ABI core means one wheel per platform serves
+every supported Python version.
 
 ### Check the active backend
 

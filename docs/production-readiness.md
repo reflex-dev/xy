@@ -289,8 +289,9 @@ Before tagging a release:
 - Run `make check-ci` to confirm CI and release workflow
   gates still include artifact verification, upload/download, and trusted PyPI
   publishing.
-- Confirm CI built and verified native wheels for Linux x86-64/arm64, macOS
-  arm64/x86-64, and Windows x86-64.
+- Confirm CI built and verified native wheels for Linux glibc and musl/Alpine
+  (x86-64, aarch64, armv7), macOS (x86-64, Apple Silicon), and Windows (x86, x64,
+  arm64), plus the best-effort Pyodide/Emscripten WASM wheel.
 - Confirm the no-Rust install job passed (it must build, install, and then
   raise a clear ImportError on first compute — never a silent fallback).
 - Confirm the sdist verifier passed and the source archive contains the expected

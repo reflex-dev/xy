@@ -20,6 +20,13 @@ Env switches:
 - `FASTCHARTS_REQUIRE_CARGO=1` — the native core MUST end up in the wheel; a
   missing toolchain or failed build is an error. CI wheel builds set this so a
   published wheel never silently ships without the core.
+- `FASTCHARTS_CARGO_TARGET=<triple>` — cross-compile the core for a Rust target
+  triple (e.g. `aarch64-unknown-linux-musl`, `aarch64-pc-windows-msvc`). The
+  built lib is read from `target/<triple>/release/` instead of `target/release/`.
+  The release matrix sets this to reach every platform in one CI run.
+- `FASTCHARTS_WHEEL_PLATFORM=<tag>` — override the wheel's platform tag (e.g.
+  `musllinux_1_2_aarch64`, `win_arm64`). Cross-compiled builds need this because
+  the build host's `sysconfig.get_platform()` describes the host, not the target.
 """
 
 from __future__ import annotations
@@ -45,8 +52,17 @@ def _lib_filename() -> str:
 
 def _platform_tag() -> str:
     # e.g. linux_x86_64, macosx_11_0_arm64, win_amd64. CI repairs linux wheels
-    # to manylinux with auditwheel after the build.
+    # to manylinux/musllinux after the build. Cross-compiled builds can't infer
+    # the target from the host, so an explicit override wins when set.
+    override = os.environ.get("FASTCHARTS_WHEEL_PLATFORM")
+    if override:
+        return override.replace("-", "_").replace(".", "_")
     return sysconfig.get_platform().replace("-", "_").replace(".", "_")
+
+
+def _cargo_target() -> Optional[str]:
+    target = os.environ.get("FASTCHARTS_CARGO_TARGET", "").strip()
+    return target or None
 
 
 class CustomBuildHook(BuildHookInterface):
@@ -95,7 +111,14 @@ class CustomBuildHook(BuildHookInterface):
         force-include can place the built artifact at that wheel path directly,
         and generated platform binaries should not dirty the source tree.
         """
-        built = root / "target" / "release" / lib_name
+        target = _cargo_target()
+        # A cross-compiled build lands under target/<triple>/release/; a native
+        # build under target/release/.
+        built = (
+            root / "target" / target / "release" / lib_name
+            if target
+            else root / "target" / "release" / lib_name
+        )
         if os.environ.get("FASTCHARTS_SKIP_CARGO") == "1":
             if dest.exists():
                 return dest
@@ -116,8 +139,11 @@ class CustomBuildHook(BuildHookInterface):
                 )
             return None  # graceful: pure-Python wheel
 
+        cmd = ["cargo", "build", "--release"]
+        if target:
+            cmd += ["--target", target]
         try:
-            subprocess.run(["cargo", "build", "--release"], cwd=root, check=True)
+            subprocess.run(cmd, cwd=root, check=True)
         except (subprocess.CalledProcessError, OSError) as e:
             if require:
                 raise RuntimeError(f"cargo build failed: {e}") from e
