@@ -795,6 +795,13 @@ try{{
     const cTip=msRead(2,7.0), cBase=msRead(2,0.4), cCorner=msRead(1.73,7.35);
     const bgrad=(cTip[3]>110 && cBase[3]<25)?1:0;
     const bcorner=(cCorner[3]<25)?1:0;
+    // x/y axis baselines are DOM rules in the labels overlay (above the marks
+    // canvas) so filled bars/areas sit under a crisp line, not covering it.
+    let axisRuleN=0;
+    for (const d of vMs.labels.children){{
+      if (d.style.height==="1px" || d.style.width==="1px") axisRuleN++;
+    }}
+    const axisontop=(axisRuleN>=2)?1:0;
     vMs.destroy();holderMs.remove();
     // curve:"smooth": the GPU polyline densifies ((n-1)*16+1 verts) while the
     // hover/_cpu columns keep the 5 source rows; area smooths its base too.
@@ -820,7 +827,7 @@ try{{
     const gLn=vSm.gpuTraces[0], gAr=vSm.gpuTraces[1];
     const msmooth=(gLn.n===65 && gLn._cpu.x.length===5 && gAr.n===65 && gAr._cpu.base.length===5)?1:0;
     vSm.destroy();holderSm.remove();
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}}`;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -986,6 +993,7 @@ try{{
     hist_base = int(re.search(r"histBase=(\d+)", title).group(1))
     edgepad = int(re.search(r"edgepad=(\d+)", title).group(1))
     mark_grad = int(re.search(r"mgrad=(\d+)", title).group(1))
+    axis_on_top = int(re.search(r"axisontop=(\d+)", title).group(1))
     mark_tipbase = int(re.search(r"mtipbase=(\d+)", title).group(1))
     mark_corner = int(re.search(r"mcorner=(\d+)", title).group(1))
     mark_stroke = int(re.search(r"mstroke=(\d+)", title).group(1))
@@ -1114,6 +1122,8 @@ try{{
         raise SystemExit("zero-pinned histogram left a lit-pixel gap above the x-axis")
     if edgepad != 1:
         raise SystemExit("baseline edge pad is not DPR-aware")
+    if axis_on_top != 1:
+        raise SystemExit("axis baselines are not DOM rules in the overlay above the marks")
     if mark_grad != 1:
         raise SystemExit("mark-space gradient fill did not fade tip->base (rect program)")
     if mark_tipbase != 1:

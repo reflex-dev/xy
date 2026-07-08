@@ -1887,31 +1887,32 @@ class ChartView {
 
     this._drawAnnotationShapes(ctx);
 
-    ctx.strokeStyle = this._axisStylePaint(yAxis, "axis_color", this.theme.axis);
-    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(yAxis, "axis_width", 1));
-    ctx.beginPath();
-    const yAxisX = yAxis.side === "right" ? p.x + p.w - 0.5 : p.x + 0.5;
-    ctx.moveTo(yAxisX, p.y);
-    ctx.lineTo(yAxisX, p.y + p.h - 0.5);
-    ctx.stroke();
-
-    ctx.strokeStyle = this._axisStylePaint(xAxis, "axis_color", this.theme.axis);
-    ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xAxis, "axis_width", 1));
-    ctx.beginPath();
-    const xAxisY = xAxis.side === "top" ? p.y + 0.5 : p.y + p.h - 0.5;
-    ctx.moveTo(p.x, xAxisY);
-    ctx.lineTo(p.x + p.w, xAxisY);
-    ctx.stroke();
-
-    for (const axis of Object.values(this.axes)) {
-      if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
-      ctx.strokeStyle = this._axisStylePaint(axis, "axis_color", this.theme.axis);
-      ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(axis, "axis_width", 1));
-      ctx.beginPath();
-      const x = axis.side === "left" ? p.x + 0.5 : p.x + p.w + 0.5;
-      ctx.moveTo(x, p.y);
-      ctx.lineTo(x, p.y + p.h - 0.5);
-      ctx.stroke();
+    // Axis baselines render in the labels overlay — *above* the marks canvas —
+    // so a filled mark (bars, area) sits under a crisp, continuous baseline
+    // instead of covering the chrome line drawn behind it (grid lines stay on
+    // the chrome canvas, behind the data). Rebuilt with the labels; static
+    // between throttled zoom frames since the plot rect doesn't move on zoom.
+    if (updateLabels) {
+      const rule = (styleAxis, left, top, w, h) => {
+        const d = document.createElement("div");
+        d.style.cssText =
+          `position:absolute;left:${left}px;top:${top}px;width:${w}px;height:${h}px;` +
+          `background:${this._axisStylePaint(styleAxis, "axis_color", this.theme.axis)};` +
+          "pointer-events:none;";
+        this.labels.appendChild(d);
+      };
+      const yWidth = Math.max(1, Math.round(this._axisStyleNumber(yAxis, "axis_width", 1)));
+      const yAxisX = yAxis.side === "right" ? p.x + p.w - yWidth : p.x;
+      rule(yAxis, yAxisX, p.y, yWidth, p.h);
+      const xHeight = Math.max(1, Math.round(this._axisStyleNumber(xAxis, "axis_width", 1)));
+      const xTop = xAxis.side === "top" ? p.y : p.y + p.h - xHeight;
+      rule(xAxis, p.x, xTop, p.w, xHeight);
+      for (const axis of Object.values(this.axes)) {
+        if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
+        const w = Math.max(1, Math.round(this._axisStyleNumber(axis, "axis_width", 1)));
+        const x = axis.side === "left" ? p.x : p.x + p.w - w;
+        rule(axis, x, p.y, w, p.h);
+      }
     }
 
     const label = (text, css, axis, kind = "tick", extraStyle = null) => {
