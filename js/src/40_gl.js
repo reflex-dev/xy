@@ -149,12 +149,14 @@ void main() {
   );
 }`;
 
-// Density (Tier 2): a fullscreen quad; each fragment reconstructs its data-space
-// coordinate from the view range, maps into the grid's data range, samples the
-// pre-normalized log-density value, and colormaps (§5, §F6). Data outside the
-// grid range is transparent — so a stale grid stays correctly positioned during
-// pan until the re-bin arrives (§17).
-const DENSITY_VS = `#version 300 es
+// Shared grid-texture vertex stage (density Tier 2 + heatmap): a fullscreen
+// quad; each fragment reconstructs its data-space coordinate from the view
+// range so the fragment shader can sample the grid texture (§5, §F6). Data
+// outside the grid range is transparent — a stale grid stays correctly
+// positioned during pan until the re-bin arrives (§17). The two consumers
+// differ only in their fragment stage (log-density alpha ramp vs byte-
+// quantized heatmap values).
+const GRID_VS = `#version 300 es
 in vec2 a_corner;
 uniform vec4 u_view; // x0,x1,y0,y1
 uniform int u_xmode; uniform int u_ymode;
@@ -187,20 +189,8 @@ void main() {
 }`;
 
 // Heatmap grid: a regular value matrix as one R8 texture. Byte 0 means missing
-// (transparent); bytes 1..255 map back to normalized values [0,1].
-const HEATMAP_VS = `#version 300 es
-in vec2 a_corner;
-uniform vec4 u_view; // x0,x1,y0,y1
-uniform int u_xmode; uniform int u_ymode;
-out vec2 v_data;
-${AXIS_GLSL}
-void main() {
-  gl_Position = vec4(a_corner * 2.0 - 1.0, 0.0, 1.0);
-  float x = mix(fcViewCoord(u_view.x, u_xmode), fcViewCoord(u_view.y, u_xmode), a_corner.x);
-  float y = mix(fcViewCoord(u_view.z, u_ymode), fcViewCoord(u_view.w, u_ymode), a_corner.y);
-  v_data = vec2(fcViewValue(x, u_xmode), fcViewValue(y, u_ymode));
-}`;
-
+// (transparent); bytes 1..255 map back to normalized values [0,1]. Vertex
+// stage is the shared GRID_VS above.
 const HEATMAP_FS = `#version 300 es
 precision highp float;
 uniform sampler2D u_grid; uniform sampler2D u_lut;

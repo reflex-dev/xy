@@ -656,8 +656,8 @@ class ChartView {
     this.rectProg = makeProgram(gl, RECT_VS, RECT_FS);
     this.barProg = makeProgram(gl, BAR_VS, RECT_FS);
     this.pickProg = makeProgram(gl, PICK_VS, PICK_FS);
-    this.densityProg = makeProgram(gl, DENSITY_VS, DENSITY_FS);
-    this.heatmapProg = makeProgram(gl, HEATMAP_VS, HEATMAP_FS);
+    this.densityProg = makeProgram(gl, GRID_VS, DENSITY_FS);
+    this.heatmapProg = makeProgram(gl, GRID_VS, HEATMAP_FS);
     this._glPrograms = [
       this.pointProg, this.lineProg, this.areaProg, this.rectProg,
       this.barProg, this.pickProg, this.densityProg, this.heatmapProg,

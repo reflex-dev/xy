@@ -8,6 +8,7 @@ work is forbidden on the client).
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from os import PathLike
 from typing import Any, Optional, TypeAlias
@@ -522,8 +523,6 @@ class Figure:
 
             per_point = color_ch.mode != "constant" or size_ch.mode != "constant"
             if density is None and per_point and n > DIRECT_SOFT_CEILING:
-                import warnings
-
                 warnings.warn(
                     f"scatter has {n:,} points with per-point color/size — above the "
                     f"direct ceiling ({DIRECT_SOFT_CEILING:,}). Falling back to a "
@@ -535,8 +534,6 @@ class Figure:
                 )
                 trace.force_density = True
             elif density is None and n > DIRECT_SOFT_CEILING:
-                import warnings
-
                 warnings.warn(
                     f"scatter has {n:,} points above the soft ceiling "
                     f"({DIRECT_SOFT_CEILING:,}); using a density surface for the "
@@ -545,8 +542,6 @@ class Figure:
                     stacklevel=2,
                 )
             elif density is False and n > DIRECT_SOFT_CEILING:
-                import warnings
-
                 # §28: opting out of aggregation above the ceiling is allowed but
                 # never silent — fill-rate and the ~1 GB allocation cliff are real (§5 F3).
                 warnings.warn(
@@ -2233,20 +2228,36 @@ class Figure:
             mask &= np.isfinite(base)
         return mask
 
+    @staticmethod
+    def _default_styled(t: Trace) -> dict[str, Any]:
+        """Trace style dict with the per-trace palette default when no color
+        was given — the one place this rule lives (was copy-pasted per kind)."""
+        style = dict(t.style)
+        if style.get("color") is None:
+            style["color"] = DEFAULT_PALETTE[t.id % len(DEFAULT_PALETTE)]
+        return style
+
+    @staticmethod
+    def _m4_decimate(
+        t: Trace, xr: tuple, px_width: int, *arrays: np.ndarray
+    ) -> tuple[str, tuple[np.ndarray, ...]]:
+        """M4-decimate the parallel `arrays` (x first) when the trace is over
+        the threshold; M4 already excludes non-finite within the window (§19).
+        Returns `(tier, arrays)` — shared by the line and area emitters."""
+        if t.n_points <= DECIMATION_THRESHOLD:
+            return "direct", arrays
+        idx = kernels.m4_indices(
+            arrays[0], arrays[1], xr[0], xr[1] + np.finfo(np.float64).eps, px_width
+        )
+        if len(idx):
+            return "decimated", tuple(a[idx] for a in arrays)
+        return "decimated", tuple(a[:0] for a in arrays)
+
     def _emit_line(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
     ) -> dict[str, Any]:
-        xv, yv = t.x.values, t.y.values
-        tier = "direct"
-        if t.n_points > DECIMATION_THRESHOLD:
-            # M4 already excludes non-finite within the visible window (§19).
-            idx = kernels.m4_indices(xv, yv, xr[0], xr[1] + np.finfo(np.float64).eps, px_width)
-            tier = "decimated"
-            if len(idx):
-                xv, yv = xv[idx], yv[idx]
-            else:
-                xv, yv = xv[:0], yv[:0]
-        else:
+        tier, (xv, yv) = self._m4_decimate(t, xr, px_width, t.x.values, t.y.values)
+        if tier == "direct":
             sel = self._finite_sel(t, xv, yv)
             if sel is not None:
                 xv, yv = xv[sel], yv[sel]
@@ -2254,32 +2265,20 @@ class Figure:
             finite = self._log_visible_mask(t, xv, yv)
             if not bool(np.all(finite)):
                 xv, yv = xv[finite], yv[finite]
-        style = dict(t.style)
-        if style.get("color") is None:
-            style["color"] = DEFAULT_PALETTE[t.id % len(DEFAULT_PALETTE)]
-        return self._base_entry(t, pw, xv, yv, tier, style)
+        return self._base_entry(t, pw, xv, yv, tier, self._default_styled(t))
 
     def _emit_area(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
     ) -> dict[str, Any]:
         if t.base is None:
             raise ValueError("area trace missing baseline column")
-        xv, yv, bv = t.x.values, t.y.values, t.base.values
-        tier = "direct"
-        if t.n_points > DECIMATION_THRESHOLD:
-            idx = kernels.m4_indices(xv, yv, xr[0], xr[1] + np.finfo(np.float64).eps, px_width)
-            tier = "decimated"
-            if len(idx):
-                xv, yv, bv = xv[idx], yv[idx], bv[idx]
-            else:
-                xv, yv, bv = xv[:0], yv[:0], bv[:0]
+        tier, (xv, yv, bv) = self._m4_decimate(
+            t, xr, px_width, t.x.values, t.y.values, t.base.values
+        )
         sel = np.flatnonzero(self._log_visible_mask(t, xv, yv, bv))
         if len(sel) != len(xv):
             xv, yv, bv = xv[sel], yv[sel], bv[sel]
-        style = dict(t.style)
-        if style.get("color") is None:
-            style["color"] = DEFAULT_PALETTE[t.id % len(DEFAULT_PALETTE)]
-        entry = self._base_entry(t, pw, xv, yv, tier, style)
+        entry = self._base_entry(t, pw, xv, yv, tier, self._default_styled(t))
         entry["base"] = pw.ship(bv, t.base)
         return entry
 
@@ -2361,9 +2360,7 @@ class Figure:
         sel_arg = self._rect_finite_sel(t, x0v, x1v, y0v, y1v)
         if sel_arg is not None:
             x0v, x1v, y0v, y1v = x0v[sel_arg], x1v[sel_arg], y0v[sel_arg], y1v[sel_arg]
-        style = dict(t.style)
-        if style.get("color") is None:
-            style["color"] = DEFAULT_PALETTE[t.id % len(DEFAULT_PALETTE)]
+        style = self._default_styled(t)
         entry = {
             "id": t.id,
             "kind": t.kind,
@@ -2424,9 +2421,7 @@ class Figure:
             if not np.isfinite(width) or width <= 0 or not np.allclose(widths, width):
                 return self._emit_rect(t, pw, (), (), 0)
 
-        style = dict(t.style)
-        if style.get("color") is None:
-            style["color"] = DEFAULT_PALETTE[t.id % len(DEFAULT_PALETTE)]
+        style = self._default_styled(t)
         bar_spec: dict[str, Any] = {
             "orientation": orientation,
             "value_axis": value_axis,
