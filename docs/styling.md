@@ -202,6 +202,16 @@ square on the axis. Like gradients, the pair is orientation-aware (a
 horizontal bar rounds its right end) and correct for negative bars (the tip
 is below the baseline).
 
+### Opacity
+
+Every mark takes `opacity` (0–1) for its fill/body; it composes with everything
+— a solid color, a gradient fill (each stop is scaled, so a fade-to-transparent
+stays proportional), and the antialiased corner/stroke coverage. `area` also has
+`line_opacity` for its outline. For finer control, any color is a full CSS color
+**including alpha** — `rgba(37,99,235,.5)`, `#2563eb80`, `oklch(... / 40%)` — and
+because the stroke keeps its own color's alpha, a translucent fill with a solid
+border is just `bar(opacity=0.3, stroke="#2563eb", stroke_width=2)`.
+
 ### Smooth curves — `curve="smooth"` on `line`, `area`
 
 Monotone cubic (Fritsch–Carlson) through the points: follows the data, never
