@@ -18,6 +18,54 @@ hover, box select/zoom, standalone HTML export, and a Reflex example app all
 exist. See the full design dossier in
 [`docs/design-dossier.md`](docs/design-dossier.md).
 
+## How fastcharts Works (the 30-second tour)
+
+Most chart libraries write every data point out as text (`{"x": 3.14159, "y":
+2.71828}`) and draw one shape per point. At ten million points the browser
+drowns in parsing and shapes — even though your screen only has a couple million
+pixels, so most of that work is invisible anyway. fastcharts is built around one
+idea: **cost should scale with the pixels on screen, not with how much data you
+have.** Here is the whole pipeline, in plain terms.
+
+```
+Figure() / fc.chart()      you hand over raw numbers          (Python)
+        ↓
+ColumnStore                the "pantry": keeps your exact data, once, in
+  columns.py               full f64 precision — the source of truth for hover
+        ↓
+kernels                    the heavy math (e.g. bin 10M points into a
+  _native.py (Rust)        screen-sized grid). Two interchangeable cooks
+  _fallback.py (NumPy)     produce identical results; Rust is just faster.
+        ↓
+Payload builder            pack for delivery: a tiny JSON *spec* (title, axes,
+  figure.py                colors) plus the data as raw f32 *binary buffers* —
+  export.py / widget.py    never text. Ship the rice, not a recipe for it.
+        ↓
+JS client (WebGL2)         the browser hands those buffers straight to the GPU
+  js/src/*.js              and draws them in one pass — no per-point DOM nodes.
+        ↕  pan / zoom / hover
+LOD loop                   zoom into a small region and the browser asks Python
+  lod.py ⇄ 45_lod.js       for the *exact* points there; zoom out and it's back
+                           to the grid. Like a map loading streets as you zoom.
+```
+
+The three ideas that make this fast:
+
+1. **Keep the truth in Python.** Your full-precision data never leaves the
+   `ColumnStore`, so hover and selection always return exact original values.
+2. **Ship bytes, not text.** Data travels as raw f32 buffers, so a number costs
+   4 bytes instead of a dozen characters, and the browser skips parsing
+   entirely. (Only lightweight settings ride along as JSON.)
+3. **Draw the screen, not the dataset.** Zoomed out, a huge scatter becomes a
+   fixed-size density grid; zoom in and the *level-of-detail* (LOD) loop swaps
+   in the real points for just the region you're looking at.
+
+Net effect: a ten-million-point chart costs roughly what a few-thousand-point
+chart costs, because the amount of work is bounded by your screen. The
+[Architecture](#architecture) section below has the full diagram, and
+[`docs/design-dossier.md`](docs/design-dossier.md) is the authoritative deep
+dive.
+
 ## Stable Vs Experimental
 
 Stable enough to build on today:
