@@ -41,6 +41,7 @@ HTML document.
 | Column | `Figure().column(categories, values)` | `fc.column_chart(fc.column(...))` |
 | Grouped bars | `Figure().bar(categories, matrix, mode="grouped")` | `fc.bar_chart(fc.bar(..., mode="grouped"))` |
 | Stacked bars | `Figure().bar(categories, matrix, mode="stacked")` | `fc.bar_chart(fc.bar(..., mode="stacked"))` |
+| Normalized bars | `Figure().bar(categories, matrix, mode="normalized")` | `fc.bar_chart(fc.bar(..., mode="normalized"))` |
 | Horizontal bars | `Figure().bar(categories, values, orientation="horizontal")` | `fc.bar_chart(fc.bar(..., orientation="horizontal"))` |
 | Heatmap | `Figure().heatmap(z, x=x, y=y)` | `fc.heatmap_chart(fc.heatmap(...))` |
 
@@ -234,6 +235,34 @@ Figure(title="Stacked revenue").bar(
     quarters,
     values,
     mode="stacked",
+    series=["Product", "Services", "Partners"],
+)
+```
+
+## Normalized Stacked Bars
+
+`mode="normalized"` divides every stack by its per-category total, so each
+category renders the series' share of the whole (segments sum to 1):
+
+```python
+import numpy as np
+from fastcharts import Figure
+
+quarters = ["Q1", "Q2", "Q3", "Q4"]
+values = np.array(
+    [
+        [42, 21, 13],
+        [47, 25, 16],
+        [51, 29, 18],
+        [58, 31, 22],
+    ],
+    dtype=float,
+).T
+
+Figure(title="Revenue mix", y_label="share").bar(
+    quarters,
+    values,
+    mode="normalized",
     series=["Product", "Services", "Partners"],
 )
 ```

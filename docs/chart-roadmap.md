@@ -66,7 +66,7 @@ not fall out of sight.
 |---:|---|---|---|---|
 | 1 | Line and time series | line, step line, spline, markers+line, multi-line, streaming line | Implemented core | Most universal analytical chart; core for finance, monitoring, science, product metrics. |
 | 2 | Scatter / marker plots | scatter, scattergl-style, bubble, colored scatter, sized scatter | Implemented core | Large-point interactivity is the fastcharts wedge; basis for drilldown, selection, and density. |
-| 3 | Bar / column | vertical bar, horizontal bar, grouped, stacked, normalized stacked, diverging bar | Implemented core | `Figure().bar(...)` / `Figure().column(...)` ship categorical/numeric vertical and horizontal bars, grouped bars, and stacked bars through the shared rectangle renderer. Follow-ups: normalized stacked bars and labels. |
+| 3 | Bar / column | vertical bar, horizontal bar, grouped, stacked, normalized stacked, diverging bar | Implemented core | `Figure().bar(...)` / `Figure().column(...)` ship categorical/numeric vertical and horizontal bars, grouped bars, stacked bars, and normalized stacked bars (`mode="normalized"`) through the shared rectangle renderer. Follow-up: labels. |
 | 4 | Area | filled line, stacked area, streamgraph, ridgeline-lite area bands | Implemented core | `Figure().area(...)` ships a filled area with scalar/array baseline and optional line overlay. Follow-ups: stacked area helpers and streamgraph offsets. |
 | 5 | Histogram | count, probability, density, cumulative histogram | Implemented core | Python-side binning plus the shared rectangle renderer; `cumulative=True` (count CDF and, with `density=True`, empirical CDF) is implemented. Follow-up: viewport-aware re-binning for huge streamed distributions. |
 | 6 | Pie / donut | pie, donut, nested donut, variable-radius pie | Planned compatibility | Extremely common in dashboards even though performance differentiation is low. |
@@ -110,7 +110,7 @@ not fall out of sight.
 | Rank | Chart | Why it is popular | Why it fits fastcharts | Suggested API |
 |---:|---|---|---|---|
 | 1 | Histogram | Core statistical chart in Plotly, Matplotlib, Altair; common first chart for distributions. | Implemented core: Python-side binning + shared instanced rectangle renderer, incl. `density` and `cumulative` modes. Follow-up: viewport-aware re-binning for very large streamed distributions. | `Figure().hist(values, bins=512, cumulative=True)` |
-| 2 | Bar / column | Present in every major library; expected for categorical comparison. | Implemented core: category axis + shared instanced rectangle renderer for basic, grouped, stacked, and horizontal bars. Follow-up: normalized stacked bars and labels. | `Figure().bar(x, y)` |
+| 2 | Bar / column | Present in every major library; expected for categorical comparison. | Implemented core: category axis + shared instanced rectangle renderer for basic, grouped, stacked, normalized stacked, and horizontal bars. Follow-up: labels. | `Figure().bar(x, y)` |
 | 3 | Area / filled line | Common extension of line charts in Plotly, Chart.js, Highcharts, Altair. | Implemented core: sorted x, M4 first payload, and filled WebGL segment strips. Follow-up: stacked area helper. | `Figure().area(x, y)` |
 | 4 | Heatmap / image | Common in scientific and BI tools; Matplotlib, Plotly, Altair, Highcharts all surface it. | Implemented core: matrix-to-grid texture path with color channel reuse. Follow-up: image/raster tiling for huge grids. | `Figure().heatmap(z, x=None, y=None)` |
 
@@ -294,10 +294,10 @@ interaction-latency comparison, not assumed.
      benchmarks against Matplotlib, Plotly, Altair, and Datashader.
 
 2. **Bar / column** - implemented core
-   - Vertical, horizontal, grouped, and stacked categorical/numeric bars reuse
-     the rectangle renderer.
-   - Follow-ups: normalized stacked bars, labels, category count warnings, and
-     richer hover payloads.
+   - Vertical, horizontal, grouped, stacked, and normalized stacked
+     (`mode="normalized"`, per-category fractions summing to 1)
+     categorical/numeric bars reuse the rectangle renderer.
+   - Follow-ups: labels, category count warnings, and richer hover payloads.
 
 3. **Area / stacked area**
    - Reuse line trace and sorted-x constraints.

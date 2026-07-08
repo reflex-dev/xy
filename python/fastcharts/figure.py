@@ -663,7 +663,8 @@ class Figure:
         series: Optional[list[str]] = None,
         opacity: float = 0.85,
     ) -> "Figure":
-        """Add vertical bars. 2D y values render grouped or stacked series."""
+        """Add vertical bars. 2D y values render grouped, stacked, or
+        normalized (per-category fractions summing to 1) series."""
         return self._bar_like(
             "bar",
             x,
@@ -1210,13 +1211,24 @@ class Figure:
         name = self._optional_text(name, f"{kind} name")
         width = self._positive_scalar(width, f"{kind} width")
         opacity = self._opacity(opacity, f"{kind} opacity")
-        if mode not in {"grouped", "stacked"}:
-            raise ValueError(f"{kind} mode must be 'grouped' or 'stacked'")
+        if mode not in {"grouped", "stacked", "normalized"}:
+            raise ValueError(f"{kind} mode must be 'grouped', 'stacked', or 'normalized'")
         if orientation not in {"vertical", "horizontal"}:
             raise ValueError(f"{kind} orientation must be 'vertical' or 'horizontal'")
         category_axis = "x" if orientation == "vertical" else "y"
         pos = self._axis_positions(x, category_axis, commit=False)
         vals = self._bar_value_matrix(y, len(pos), kind)
+        if mode == "normalized":
+            if np.any(vals < 0):
+                raise ValueError(
+                    f"{kind} mode='normalized' requires non-negative values; "
+                    "normalizing mixed-sign stacks is ambiguous"
+                )
+            # Per-category fractions of the finite total (NaN = missing segment).
+            # Zero-total categories stay empty instead of emitting NaN, which
+            # must never reach vertex buffers (§19).
+            totals = np.nansum(vals, axis=0)
+            vals = vals / np.where(totals > 0.0, totals, 1.0)
         base_vals = self._broadcast_base(base, len(pos), kind)
         series_names = self._series_names(name, series, vals.shape[0])
         series_colors = self._series_colors(color, colors, vals.shape[0])
@@ -1235,7 +1247,9 @@ class Figure:
                     name=name,
                     color=series_colors[0],
                     opacity=opacity,
-                    role=kind,
+                    # grouped/stacked are no-ops for one series, but normalized
+                    # rescales even a single series — record it (§28).
+                    role=f"{kind}-normalized" if mode == "normalized" else kind,
                 )
             elif mode == "grouped":
                 slot = width / vals.shape[0]
@@ -1269,7 +1283,7 @@ class Figure:
                         name=series_names[i],
                         color=series_colors[i],
                         opacity=opacity,
-                        role=f"{kind}-stacked",
+                        role=f"{kind}-{mode}",
                     )
                     pos_base = np.where(row >= 0, y1, pos_base)
                     neg_base = np.where(row < 0, y1, neg_base)
