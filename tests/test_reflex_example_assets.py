@@ -11,7 +11,11 @@ from typing import Any
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-CLIENT_SOURCE = ROOT / "js" / "src" / "50_chartview.js"
+# The client is split across ordered js/src parts; concatenate so a source-level
+# check finds markers wherever a subsystem now lives (50 core + 51–54 mixins).
+CLIENT_SOURCE = "\n".join(
+    p.read_text(encoding="utf-8") for p in sorted((ROOT / "js" / "src").glob("*.js"))
+)
 APP_SOURCE = ROOT / "examples" / "reflex" / "reflex_fastcharts_app" / "reflex_fastcharts_app.py"
 LIVE_SOURCE = ROOT / "examples" / "reflex" / "reflex_fastcharts_app" / "live_drilldown.py"
 CUSTOM_CHROME_ASSET = ROOT / "examples" / "reflex" / "assets" / "charts" / "custom_chrome.html"
@@ -117,7 +121,7 @@ def test_live_drilldown_assets_keep_local_density_fallback() -> None:
 
 
 def test_density_update_without_traces_clears_pending_client_request() -> None:
-    source = CLIENT_SOURCE.read_text(encoding="utf-8")
+    source = CLIENT_SOURCE
     assert "const densityTraces = msg.traces || [];" in source
     assert "pendingTraceIds.add(Number(msg.trace));" in source
     assert "const clearAllPending = pendingTraceIds.size === 0 && msg.stale;" in source

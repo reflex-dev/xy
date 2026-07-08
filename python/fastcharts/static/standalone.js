@@ -2571,208 +2571,6 @@ css:
 style: null,
 };
 }
-_annotationPaint(style, fallback) {
-return safeCssPaint(this.root, style && style.color, fallback);
-}
-_annotationLabelPaint(style, fallback) {
-return safeCssPaint(this.root, style && (style.label_color || style.color), fallback);
-}
-_annotationStrokePaint(style, fallback) {
-return safeCssPaint(this.root, style && style.stroke_color, fallback);
-}
-_drawAnnotationMarker(ctx, x, y, style, ann) {
-if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-const r = Math.max(1, this._styleNumber(style, "size", Number(ann.size) || 8) / 2);
-const symbol = ["circle", "square", "diamond", "cross"].includes(ann.symbol) ? ann.symbol : "circle";
-ctx.save();
-ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
-ctx.fillStyle = this._annotationPaint(style, [0.15, 0.39, 0.92, 1]);
-ctx.strokeStyle = symbol === "cross"
-? this._annotationPaint(style, [0.15, 0.39, 0.92, 1])
-: this._annotationStrokePaint(style, [1, 1, 1, 1]);
-ctx.lineWidth = Math.max(0, this._styleNumber(style, "stroke_width", 1.5));
-ctx.beginPath();
-if (symbol === "square") {
-ctx.rect(x - r, y - r, r * 2, r * 2);
-} else if (symbol === "diamond") {
-ctx.moveTo(x, y - r);
-ctx.lineTo(x + r, y);
-ctx.lineTo(x, y + r);
-ctx.lineTo(x - r, y);
-ctx.closePath();
-} else if (symbol === "cross") {
-ctx.moveTo(x - r, y);
-ctx.lineTo(x + r, y);
-ctx.moveTo(x, y - r);
-ctx.lineTo(x, y + r);
-ctx.stroke();
-ctx.restore();
-return;
-} else {
-ctx.arc(x, y, r, 0, Math.PI * 2);
-}
-ctx.fill();
-if (ctx.lineWidth > 0) ctx.stroke();
-ctx.restore();
-}
-_drawArrowLine(ctx, x0, y0, x1, y1, style) {
-if (![x0, y0, x1, y1].every(Number.isFinite)) return;
-const angle = Math.atan2(y1 - y0, x1 - x0);
-const head = Math.max(7, this._styleNumber(style, "head_size", 8));
-ctx.save();
-ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
-ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
-ctx.fillStyle = ctx.strokeStyle;
-ctx.lineWidth = Math.max(0.5, this._styleNumber(style, "width", 1.5));
-ctx.beginPath();
-ctx.moveTo(x0, y0);
-ctx.lineTo(x1, y1);
-ctx.stroke();
-ctx.beginPath();
-ctx.moveTo(x1, y1);
-ctx.lineTo(
-x1 - head * Math.cos(angle - Math.PI / 6),
-y1 - head * Math.sin(angle - Math.PI / 6)
-);
-ctx.lineTo(
-x1 - head * Math.cos(angle + Math.PI / 6),
-y1 - head * Math.sin(angle + Math.PI / 6)
-);
-ctx.closePath();
-ctx.fill();
-ctx.restore();
-}
-_drawAnnotationShapes(ctx) {
-const annotations = Array.isArray(this.spec.annotations) ? this.spec.annotations : [];
-if (!annotations.length) return;
-const p = this.plot;
-ctx.save();
-ctx.beginPath();
-ctx.rect(p.x, p.y, p.w, p.h);
-ctx.clip();
-for (const ann of annotations) {
-const style = ann && typeof ann.style === "object" ? ann.style : {};
-if (ann.kind === "band") {
-const vertical = ann.axis === "x";
-const a = vertical ? this._dataPxX(Number(ann.start)) : this._dataPxY(Number(ann.start));
-const b = vertical ? this._dataPxX(Number(ann.end)) : this._dataPxY(Number(ann.end));
-if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
-const lo = Math.max(vertical ? p.x : p.y, Math.min(a, b));
-const hi = Math.min(vertical ? p.x + p.w : p.y + p.h, Math.max(a, b));
-if (hi <= lo) continue;
-ctx.save();
-ctx.globalAlpha = this._styleNumber(style, "opacity", 0.14);
-ctx.fillStyle = this._annotationPaint(style, [0.39, 0.45, 0.55, 1]);
-if (vertical) ctx.fillRect(lo, p.y, hi - lo, p.h);
-else ctx.fillRect(p.x, lo, p.w, hi - lo);
-ctx.restore();
-} else if (ann.kind === "rule") {
-const vertical = ann.axis === "x";
-const pos = vertical ? this._dataPxX(Number(ann.value)) : this._dataPxY(Number(ann.value));
-if (!Number.isFinite(pos)) continue;
-if (vertical && (pos < p.x - 1 || pos > p.x + p.w + 1)) continue;
-if (!vertical && (pos < p.y - 1 || pos > p.y + p.h + 1)) continue;
-const crisp = Math.round(pos) + 0.5;
-ctx.save();
-ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
-ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
-ctx.lineWidth = Math.max(0.5, this._styleNumber(style, "width", 1.5));
-ctx.beginPath();
-if (vertical) {
-ctx.moveTo(crisp, p.y);
-ctx.lineTo(crisp, p.y + p.h);
-} else {
-ctx.moveTo(p.x, crisp);
-ctx.lineTo(p.x + p.w, crisp);
-}
-ctx.stroke();
-ctx.restore();
-} else if (ann.kind === "arrow") {
-this._drawArrowLine(
-ctx,
-this._dataPxX(Number(ann.x0)),
-this._dataPxY(Number(ann.y0)),
-this._dataPxX(Number(ann.x1)),
-this._dataPxY(Number(ann.y1)),
-style
-);
-} else if (ann.kind === "callout") {
-const px = this._dataPxX(Number(ann.x));
-const py = this._dataPxY(Number(ann.y));
-const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
-const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
-this._drawArrowLine(ctx, px + dx, py + dy, px, py, style);
-} else if (ann.kind === "marker") {
-this._drawAnnotationMarker(
-ctx,
-this._dataPxX(Number(ann.x)),
-this._dataPxY(Number(ann.y)),
-style,
-ann
-);
-}
-}
-ctx.restore();
-}
-_drawAnnotationLabels(updateLabels) {
-if (!updateLabels) return;
-const annotations = Array.isArray(this.spec.annotations) ? this.spec.annotations : [];
-if (!annotations.length) return;
-const p = this.plot;
-for (const ann of annotations) {
-const text = typeof ann.text === "string" ? ann.text : "";
-if (!text) continue;
-const style = ann && typeof ann.style === "object" ? ann.style : {};
-let px = null;
-let py = null;
-if (ann.kind === "text") {
-px = this._dataPxX(Number(ann.x));
-py = this._dataPxY(Number(ann.y));
-} else if (ann.kind === "rule") {
-if (ann.axis === "x") {
-px = this._dataPxX(Number(ann.value));
-py = p.y + 6;
-} else {
-px = p.x + p.w - 6;
-py = this._dataPxY(Number(ann.value));
-}
-} else if (ann.kind === "band") {
-if (ann.axis === "x") {
-px = (this._dataPxX(Number(ann.start)) + this._dataPxX(Number(ann.end))) / 2;
-py = p.y + 6;
-} else {
-px = p.x + p.w - 6;
-py = (this._dataPxY(Number(ann.start)) + this._dataPxY(Number(ann.end))) / 2;
-}
-} else if (ann.kind === "arrow") {
-px = (this._dataPxX(Number(ann.x0)) + this._dataPxX(Number(ann.x1))) / 2;
-py = (this._dataPxY(Number(ann.y0)) + this._dataPxY(Number(ann.y1))) / 2;
-} else if (ann.kind === "callout") {
-px = this._dataPxX(Number(ann.x));
-py = this._dataPxY(Number(ann.y));
-} else if (ann.kind === "marker") {
-px = this._dataPxX(Number(ann.x));
-py = this._dataPxY(Number(ann.y));
-}
-if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
-if (px < p.x - 24 || px > p.x + p.w + 24 || py < p.y - 24 || py > p.y + p.h + 24) {
-continue;
-}
-const d = document.createElement("div");
-d.textContent = text;
-const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
-const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
-const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0";
-d.style.cssText =
-`position:absolute;left:${px + dx}px;top:${py + dy}px;` +
-`transform:translate(${anchor},0);pointer-events:none;` +
-"font-size:11px;line-height:1.2;font-weight:500;";
-this._applyClass(d, ann.class_name);
-this._applyStyle(d, style);
-d.style.color = this._annotationLabelPaint(style, this.theme.label);
-this.labels.appendChild(d);
-}
-}
 _drawChrome() {
 const s = this.spec;
 const dpr = this.dpr;
@@ -3142,666 +2940,6 @@ const col = Math.min(h.w - 1, Math.max(0, Math.floor(((dataX - x0) / (x1 - x0)) 
 const row = Math.min(h.h - 1, Math.max(0, Math.floor(((dataY - y0) / (y1 - y0)) * h.h)));
 return { trace: g.trace.id, index: row * h.w + col, g, heatmap: { row, col }, synthetic: true };
 }
-_showTooltip(hit, clientX, clientY) {
-const row = this._localRow(hit);
-this._lastRow = row;
-this._renderTooltip(row, clientX, clientY);
-if (this._interactionFlag("hover")) {
-this._dispatchChartEvent("hover", {
-row,
-trace: hit.trace,
-index: hit.index,
-view: this._eventView("hover"),
-});
-}
-if (this.comm) {
-this._pickSeq = (this._pickSeq || 0) + 1;
-const req = { type: "pick", seq: this._pickSeq, trace: hit.trace, index: hit.index };
-const hg = hit.g;
-if (hg && hg.tier === "density" && hg.drill && hg.drill.seq !== undefined) {
-req.drill_seq = hg.drill.seq;
-}
-this.comm.send(req);
-}
-}
-_localRow(hit) {
-const g = hit.g;
-const cpu = g._cpu;
-const row = { trace: g.trace.id, index: hit.index };
-if (hit.heatmap && g.heatmap && g._cpuHeatmap) {
-const h = g.heatmap;
-const { row: heatRow, col } = hit.heatmap;
-const rawX = h.xRange[0] + (col + 0.5) * ((h.xRange[1] - h.xRange[0]) / h.w);
-const rawY = h.yRange[0] + (heatRow + 0.5) * ((h.yRange[1] - h.yRange[0]) / h.h);
-const [x, xKind] = this._sourceDisplayValue(g, "x", rawX, "float");
-const [y, yKind] = this._sourceDisplayValue(g, "y", rawY, "float");
-row.x = x;
-row.y = y;
-if (xKind !== undefined) row.x_kind = xKind;
-if (yKind !== undefined) row.y_kind = yKind;
-const norm = g._cpuHeatmap.grid[hit.index];
-row.color_value = this._denormalizeUnit(norm, g.trace.color && g.trace.color.domain);
-} else if (g._cpuRect) {
-const r = g._cpuRect;
-const x0 = this._decodeValue(r.x0, r.x0Meta, hit.index);
-const x1 = this._decodeValue(r.x1, r.x1Meta, hit.index);
-const y0 = this._decodeValue(r.y0, r.y0Meta, hit.index);
-const y1 = this._decodeValue(r.y1, r.y1Meta, hit.index);
-row.x = x0 + (x1 - x0) / 2;
-row.y = y1;
-row.x_kind = r.x0Meta.kind;
-row.y_kind = r.y1Meta.kind;
-} else if (cpu) {
-const xMeta = cpu.xMeta || g.xMeta;
-const yMeta = cpu.yMeta || g.yMeta;
-row.x = this._decodeValue(cpu.x, xMeta, hit.index);
-row.y = this._decodeValue(cpu.y, yMeta, hit.index);
-row.x_kind = xMeta && xMeta.kind;
-row.y_kind = yMeta && yMeta.kind;
-const color = g.trace.color;
-if (cpu.color && color) {
-if (color.mode === "categorical" && Array.isArray(color.categories)) {
-const code = Math.round(cpu.color[hit.index]);
-if (code >= 0 && code < color.categories.length) {
-row.color_category = String(color.categories[code]);
-}
-} else if (color.mode === "continuous") {
-row.color_value = this._denormalizeUnit(cpu.color[hit.index], color.domain);
-}
-}
-const size = g.trace.size;
-if (cpu.size && size && size.mode === "continuous") {
-row.size_value = this._denormalizeUnit(cpu.size[hit.index], size.domain);
-}
-}
-this._applySharedTooltipFields(row);
-return row;
-}
-_sourceDisplayValue(g, channel, value, kind) {
-const axis = channel === "x" ? this._axis(g && g.xAxis) : this._axis(g && g.yAxis);
-if (channel === "x" && axis.kind === "category") {
-return [fmtCategory(value, axis.categories || []), undefined];
-}
-if (channel === "y" && axis.kind === "category") {
-return [fmtCategory(value, axis.categories || []), undefined];
-}
-return [value, kind];
-}
-_sourceValue(g, source, index) {
-if (!g || index < 0) return [undefined, undefined];
-const channel = source.channel;
-if (channel === "x" || channel === "y") {
-const cpu = g._cpu;
-if (!cpu || !cpu[channel]) return [undefined, undefined];
-const meta = channel === "x" ? (cpu.xMeta || g.xMeta) : (cpu.yMeta || g.yMeta);
-const value = this._decodeValue(cpu[channel], meta, index);
-if (!Number.isFinite(value)) return [undefined, undefined];
-return this._sourceDisplayValue(g, channel, value, meta && meta.kind);
-}
-if (channel === "color_value") {
-if (g._cpuHeatmap && g._cpuHeatmap.grid && g.trace.color) {
-return [this._denormalizeUnit(g._cpuHeatmap.grid[index], g.trace.color.domain), undefined];
-}
-if (g._cpu && g._cpu.color && g.trace.color) {
-return [this._denormalizeUnit(g._cpu.color[index], g.trace.color.domain), undefined];
-}
-}
-if (channel === "color_category" && g._cpu && g._cpu.color && g.trace.color) {
-const code = Math.round(g._cpu.color[index]);
-const categories = g.trace.color.categories || [];
-if (code >= 0 && code < categories.length) return [String(categories[code]), undefined];
-}
-if (channel === "size_value" && g._cpu && g._cpu.size && g.trace.size) {
-return [this._denormalizeUnit(g._cpu.size[index], g.trace.size.domain), undefined];
-}
-return [undefined, undefined];
-}
-_applySharedTooltipFields(row) {
-const sources = this.spec.tooltip && this.spec.tooltip.sources;
-if (!sources || typeof sources !== "object" || row.x === undefined) return;
-for (const [field, entries] of Object.entries(sources)) {
-if (!Array.isArray(entries) || row[field] !== undefined) continue;
-const source = entries.find((entry) => entry.trace === row.trace) || entries[0];
-if (!source || !Number.isFinite(Number(source.trace))) continue;
-const g = this.gpuTraces.find((trace) => trace.trace.id === source.trace);
-if (!g) continue;
-let idx = Number.isInteger(row.index) && source.trace === row.trace ? row.index : -1;
-if (
-!g._cpuHeatmap &&
-(idx < 0 || !g._cpu || !g._cpu.x || idx >= g._cpu.x.length)
-) {
-idx = this._nearestCpuIndex(g, row.x);
-}
-const [value, kind] = this._sourceValue(g, source, idx);
-if (value === undefined) continue;
-row[field] = value;
-if (kind !== undefined) row[`${field}_kind`] = kind;
-}
-}
-_denormalizeUnit(value, domain) {
-const v = Number(value);
-if (!Number.isFinite(v)) return v;
-if (!Array.isArray(domain) || domain.length < 2) return v;
-const lo = Number(domain[0]);
-const hi = Number(domain[1]);
-if (!Number.isFinite(lo) || !Number.isFinite(hi)) return v;
-return lo + v * (hi - lo);
-}
-_defaultTooltipLines(row) {
-const lines = [];
-if (row.x !== undefined) lines.push(`x: ${fmtValue(row.x, row.x_kind)}`);
-if (row.y !== undefined) lines.push(`y: ${fmtValue(row.y, row.y_kind)}`);
-if (row.color_value !== undefined) lines.push(`color: ${fmtValue(row.color_value)}`);
-if (row.color_category !== undefined) lines.push(`${row.color_category}`);
-if (row.size_value !== undefined) lines.push(`size: ${fmtValue(row.size_value)}`);
-if (!lines.length) lines.push(`#${row.index}`);
-return lines;
-}
-_tooltipLookup(row, field) {
-const aliases = (this.spec.tooltip && this.spec.tooltip.aliases) || {};
-const key = row[field] !== undefined ? field : aliases[field];
-if (!key || row[key] === undefined) return [undefined, undefined];
-return [row[key], row[`${key}_kind`]];
-}
-_formatTooltipValue(value, kind, format) {
-const formatted = fmtNumberSpec(value, format);
-if (formatted !== null) return formatted;
-return fmtValue(value, kind);
-}
-_tooltipLines(row) {
-const tooltip = this.spec.tooltip || {};
-if (!tooltip.title && !Array.isArray(tooltip.fields)) return this._defaultTooltipLines(row);
-const formats = tooltip.format || {};
-const lines = [];
-if (typeof tooltip.title === "string") {
-const title = tooltip.title.replace(/\{([^}]+)\}/g, (_, field) => {
-const [value, kind] = this._tooltipLookup(row, field);
-return value === undefined ? "" : this._formatTooltipValue(value, kind, formats[field]);
-});
-if (title) lines.push(title);
-}
-if (Array.isArray(tooltip.fields)) {
-for (const field of tooltip.fields) {
-if (typeof field !== "string") continue;
-const [value, kind] = this._tooltipLookup(row, field);
-if (value === undefined) continue;
-lines.push(`${field}: ${this._formatTooltipValue(value, kind, formats[field])}`);
-}
-}
-return lines.length ? lines : this._defaultTooltipLines(row);
-}
-_renderTooltip(row, clientX, clientY) {
-if (!row || this.spec.show_tooltip === false) {
-this.tooltip.style.display = "none";
-return;
-}
-const rect = this.root.getBoundingClientRect();
-const lx = clientX - rect.left;
-const ly = clientY - rect.top;
-const lines = this._tooltipLines(row);
-this.tooltip.textContent = "";
-lines.forEach((ln, i) => {
-if (i) this.tooltip.appendChild(document.createElement("br"));
-this.tooltip.appendChild(document.createTextNode(ln));
-});
-this.tooltip.style.display = "block";
-const tw = this.tooltip.offsetWidth;
-this.tooltip.style.left = Math.min(lx + 12, this.size.w - tw - 4) + "px";
-this.tooltip.style.top = ly + 12 + "px";
-}
-_initInteraction() {
-const c = this.canvas;
-let drag = null;
-let band = null;
-this.selRect = document.createElement("div");
-this.selRect.style.cssText = "position:absolute;display:none;pointer-events:none;z-index:4;";
-this._applySlot(this.selRect, "selection");
-this.root.appendChild(this.selRect);
-if (this._interactionFlag("crosshair")) {
-this.crosshairX = document.createElement("div");
-this.crosshairX.style.cssText =
-"position:absolute;display:none;pointer-events:none;z-index:3;width:1px;";
-this._applySlot(this.crosshairX, "crosshair_x");
-this.root.appendChild(this.crosshairX);
-this.crosshairY = document.createElement("div");
-this.crosshairY.style.cssText =
-"position:absolute;display:none;pointer-events:none;z-index:3;height:1px;";
-this._applySlot(this.crosshairY, "crosshair_y");
-this.root.appendChild(this.crosshairY);
-}
-const dataAt = (clientX, clientY) => {
-const r = c.getBoundingClientRect();
-return this._dataFromCanvas(clientX - r.left, clientY - r.top);
-};
-this._listen(c, "pointerdown", (e) => {
-this._cancelViewAnimation();
-const canBrush = this._interactionFlag("brush", true) && this._interactionFlag("select", true);
-const mode = e.shiftKey && canBrush && this._pickable ? "select"
-: this.dragMode === "zoom" ? "zoom" : null;
-if (mode) {
-band = { mode, sx: e.clientX, sy: e.clientY, d0: dataAt(e.clientX, e.clientY) };
-c.setPointerCapture(e.pointerId);
-this.tooltip.style.display = "none";
-return;
-}
-drag = { px: e.clientX, py: e.clientY, view: { ...this.view }, moved: false };
-c.setPointerCapture(e.pointerId);
-this.tooltip.style.display = "none";
-});
-this._listen(c, "pointermove", (e) => {
-if (band) { this._updateBand(band, e); return; }
-if (drag) {
-drag.moved = true;
-const { x0, x1, y0, y1 } = drag.view;
-const xa = this._axis("x");
-const ya = this._axis("y");
-const cx0 = this._axisCoord(xa, x0), cx1 = this._axisCoord(xa, x1);
-const cy0 = this._axisCoord(ya, y0), cy1 = this._axisCoord(ya, y1);
-const dx = ((e.clientX - drag.px) / this.plot.w) * (cx1 - cx0);
-const dy = ((e.clientY - drag.py) / this.plot.h) * (cy1 - cy0);
-this.view = {
-x0: this._axisValue(xa, cx0 - dx),
-x1: this._axisValue(xa, cx1 - dx),
-y0: this._axisValue(ya, cy0 + dy),
-y1: this._axisValue(ya, cy1 + dy),
-};
-this.draw();
-this._scheduleViewRequest();
-this._emitViewChange("pan");
-return;
-}
-this._updateCrosshair(e);
-this._hover(e);
-});
-const end = (e) => {
-if (band) {
-this.selRect.style.display = "none";
-const d1 = dataAt(e.clientX, e.clientY);
-const moved = Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
-if (moved) {
-if (band.mode === "zoom") this._zoomToBox(band.d0, d1, true);
-else this._sendSelect(band.d0, d1);
-this._ignoreNextClick = true;
-}
-band = null;
-return;
-}
-if (drag && drag.moved) this._ignoreNextClick = true;
-if (drag && !drag.moved) this.tooltip.style.display = "none";
-drag = null;
-};
-this._listen(c, "pointerup", end);
-this._listen(c, "pointercancel", () => { this.selRect.style.display = "none"; band = null; drag = null; });
-this._listen(c, "pointerleave", () => {
-const hadHover = this._hoverId !== -1;
-this._hoverId = -1;
-this._hoverTarget = null;
-this.tooltip.style.display = "none";
-this._hideCrosshair();
-if (this._interactionFlag("hover")) {
-this._dispatchChartEvent("leave", { view: this._eventView("leave") });
-}
-if (hadHover) this.draw();
-});
-this._listen(c, "click", (e) => this._click(e));
-this._listen(c, "wheel", (e) => {
-e.preventDefault();
-const f = Math.pow(1.0015, e.deltaY);
-const r = c.getBoundingClientRect();
-const fx = (e.clientX - r.left) / r.width;
-const fy = 1 - (e.clientY - r.top) / r.height;
-this._queueWheelZoom(f, fx, fy);
-}, { passive: false });
-this._listen(c, "dblclick", () => {
-this._clearSelection();
-this._setView(this.view0, { animate: true });
-});
-}
-_updateCrosshair(e) {
-if (!this.crosshairX || !this.crosshairY) return;
-const rect = this.canvas.getBoundingClientRect();
-const rootRect = this.root.getBoundingClientRect();
-const x = e.clientX - rect.left;
-const y = e.clientY - rect.top;
-if (x < 0 || x > rect.width || y < 0 || y > rect.height) {
-this._hideCrosshair();
-return;
-}
-const left = e.clientX - rootRect.left;
-const top = e.clientY - rootRect.top;
-this.crosshairX.style.display = "block";
-this.crosshairX.style.left = left + "px";
-this.crosshairX.style.top = this.plot.y + "px";
-this.crosshairX.style.height = this.plot.h + "px";
-this.crosshairY.style.display = "block";
-this.crosshairY.style.left = this.plot.x + "px";
-this.crosshairY.style.top = top + "px";
-this.crosshairY.style.width = this.plot.w + "px";
-}
-_hideCrosshair() {
-if (this.crosshairX) this.crosshairX.style.display = "none";
-if (this.crosshairY) this.crosshairY.style.display = "none";
-}
-_click(e) {
-if (this._ignoreNextClick) {
-this._ignoreNextClick = false;
-return;
-}
-if (!this._interactionFlag("click")) return;
-const rect = this.canvas.getBoundingClientRect();
-const cssX = e.clientX - rect.left;
-const cssY = e.clientY - rect.top;
-const [x, y] = this._dataFromCanvas(cssX, cssY);
-const hit = this._pickAt(cssX, cssY) || this._hoverAt(cssX, cssY);
-const detail = {
-x,
-y,
-view: this._eventView("click"),
-row: hit && this._localRow ? this._localRow(hit) : null,
-trace: hit ? hit.trace : null,
-index: hit ? hit.index : null,
-};
-this._dispatchChartEvent("click", detail);
-if (hit && this.comm) {
-const msg = { type: "click", trace: hit.trace, index: hit.index };
-const g = hit.g;
-if (g && g.tier === "density" && g.drill && g.drill.seq !== undefined) {
-msg.drill_seq = g.drill.seq;
-}
-this.comm.send(msg);
-}
-}
-_updateBand(band, e) {
-const rect = this.canvas.getBoundingClientRect();
-const rootRect = this.root.getBoundingClientRect();
-const x = Math.min(band.sx, e.clientX) - rootRect.left;
-const y = Math.min(band.sy, e.clientY) - rootRect.top;
-const w = Math.abs(e.clientX - band.sx);
-const h = Math.abs(e.clientY - band.sy);
-const px = this.plot.x, py = this.plot.y;
-const x2 = Math.min(x + w, px + this.plot.w), y2 = Math.min(y + h, py + this.plot.h);
-const cx = Math.max(x, px), cy = Math.max(y, py);
-if (band.mode === "zoom") {
-this.selRect.style.border = "1px solid var(--chart-zoom-selection, rgba(120,120,120,.9))";
-this.selRect.style.background = "var(--chart-zoom-selection-fill, rgba(120,120,120,.12))";
-} else {
-this.selRect.style.border = "1px solid var(--chart-selection, rgba(90,140,240,.9))";
-this.selRect.style.background = "var(--chart-selection-fill, rgba(90,140,240,.15))";
-}
-this.selRect.style.display = "block";
-this.selRect.style.left = cx + "px";
-this.selRect.style.top = cy + "px";
-this.selRect.style.width = Math.max(0, x2 - cx) + "px";
-this.selRect.style.height = Math.max(0, y2 - cy) + "px";
-void rect;
-}
-_sendSelect(d0, d1) {
-const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
-const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
-const range = { x0, x1, y0, y1 };
-this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
-if (this.comm) {
-this.comm.send({ type: "select", x0, x1, y0, y1 });
-} else {
-this._selectLocal(x0, x1, y0, y1); 
-}
-}
-_selectLocal(x0, x1, y0, y1) {
-let total = 0;
-for (const g of this.gpuTraces) {
-if (!g._cpu || g.tier === "density") continue;
-const cx = g._cpu.x, cy = g._cpu.y;
-const xMeta = g._cpu.xMeta || g.xMeta;
-const yMeta = g._cpu.yMeta || g.yMeta;
-const ox = xMeta.offset, sx = xMeta.scale || 1;
-const oy = yMeta.offset, sy = yMeta.scale || 1;
-const mask = new Float32Array(g.n);
-let cnt = 0;
-for (let i = 0; i < g.n; i++) {
-const dx = cx[i] / sx + ox, dy = cy[i] / sy + oy;
-if (dx >= x0 && dx <= x1 && dy >= y0 && dy <= y1) { mask[i] = 1; cnt++; }
-}
-this._applySelMask(g, mask);
-total += cnt;
-}
-this._selectionCount = total;
-this.draw();
-this._dispatchChartEvent("select", {
-total,
-range: { x0, x1, y0, y1 },
-view: this._eventView("select"),
-});
-}
-_applySelMask(g, maskF32) {
-const gl = this.gl;
-if (!g.selBuf) g.selBuf = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, g.selBuf);
-gl.bufferData(gl.ARRAY_BUFFER, maskF32, gl.STATIC_DRAW);
-g.selActive = true;
-}
-_clearSelection() {
-for (const g of this.gpuTraces) {
-g.selActive = false;
-if (g.drill) g.drill.selActive = false;
-}
-this._selectionCount = 0;
-if (this._interactionFlag("select", true)) {
-if (this.comm) this.comm.send({ type: "select_clear" });
-this._dispatchChartEvent("select", { total: 0, view: this._eventView("select_clear") });
-}
-}
-_buildModebar(root) {
-if (this.spec.show_modebar === false) return;
-const bar = document.createElement("div");
-bar.style.cssText =
-`position:absolute;top:${this.plot.y + 4}px;left:${this.plot.x + 4}px;z-index:6;` +
-"display:flex;opacity:.72;transition:opacity .15s;";
-this._applySlot(bar, "modebar");
-this._listen(root, "pointerenter", () => { bar.style.opacity = "1"; });
-this._listen(root, "pointerleave", () => { bar.style.opacity = ".72"; });
-this._modebar = bar;
-this._modeBtns = {};
-const mk = (name, title, onClick, toggles) => {
-const b = document.createElement("button");
-b.type = "button";
-b.title = title;
-b.innerHTML = this._icon(name);
-b.style.cssText =
-"display:flex;align-items:center;justify-content:center;cursor:pointer;pointer-events:auto;";
-this._applySlot(b, "modebar_button");
-this._listen(b, "pointerdown", (e) => e.stopPropagation());
-this._listen(b, "click", (e) => { e.stopPropagation(); onClick(); });
-bar.appendChild(b);
-if (toggles) this._modeBtns[toggles] = b;
-return b;
-};
-mk("zoomin", "Zoom in", () => this._zoomBy(0.5, true));
-mk("zoomout", "Zoom out", () => this._zoomBy(2, true));
-mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
-mk("zoom", "Box zoom", () => this._setDragMode("zoom"), "zoom");
-mk("reset", "Reset view", () => {
-this._clearSelection();
-this._setView(this.view0, { animate: true });
-});
-root.appendChild(bar);
-this._setDragMode(this.dragMode);
-}
-_setDragMode(mode) {
-this.dragMode = mode;
-if (this.canvas) this.canvas.style.cursor = mode === "zoom" ? "crosshair" : "grab";
-for (const [name, btn] of Object.entries(this._modeBtns || {})) {
-btn.classList.toggle("fc-active", name === mode);
-}
-}
-_prefersReducedMotion() {
-return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
-}
-_cancelViewAnimation() {
-if (this._animRaf) cancelAnimationFrame(this._animRaf);
-this._animRaf = null;
-this._viewAnim = null;
-}
-_setView(next, opts = {}) {
-if (this._destroyed) return;
-const target = { x0: next.x0, x1: next.x1, y0: next.y0, y1: next.y1 };
-const animate = opts.animate === true && !this._prefersReducedMotion();
-const duration = opts.duration || 180;
-if (!animate || duration <= 0) {
-this._cancelViewAnimation();
-this.view = target;
-this.draw();
-if (opts.request !== false) this._scheduleViewRequest();
-this._emitViewChange(opts.source || "view", { broadcast: opts.broadcast });
-return;
-}
-clearTimeout(this._viewTimer);
-this.seq += 1; 
-const request = opts.request !== false;
-const requestDelay = opts.requestDelay ?? Math.min(55, Math.max(24, duration * 0.35));
-const requestMaxWait = opts.requestMaxWait ?? 130;
-if (request) {
-this._scheduleViewRequest(target, { seq: this.seq, delay: requestDelay, maxWait: requestMaxWait });
-}
-const now = performance.now();
-const tau = Math.max(18, duration / 5);
-if (this._viewAnim) {
-this._viewAnim.target = target;
-this._viewAnim.tau = tau;
-return;
-}
-this._viewAnim = {
-target,
-last: now,
-tau,
-};
-const lerp = (a, b, t) => a + (b - a) * t;
-const span = (v) => Math.max(Math.abs(v.x1 - v.x0), Math.abs(v.y1 - v.y0), 1e-12);
-const closeEnough = (a, b) => {
-const tol = span(b) * 1e-4;
-return Math.max(
-Math.abs(a.x0 - b.x0), Math.abs(a.x1 - b.x1),
-Math.abs(a.y0 - b.y0), Math.abs(a.y1 - b.y1)) <= tol;
-};
-const step = (nowFrame) => {
-if (this._destroyed) { this._animRaf = null; return; }
-const anim = this._viewAnim;
-if (!anim) { this._animRaf = null; return; }
-const dt = Math.max(0, Math.min(64, nowFrame - anim.last));
-anim.last = nowFrame;
-const k = 1 - Math.exp(-dt / anim.tau);
-const t = closeEnough(this.view, anim.target) ? 1 : k;
-this.view = {
-x0: lerp(this.view.x0, anim.target.x0, t),
-x1: lerp(this.view.x1, anim.target.x1, t),
-y0: lerp(this.view.y0, anim.target.y0, t),
-y1: lerp(this.view.y1, anim.target.y1, t),
-};
-if (t < 1) {
-this.draw();
-this._animRaf = requestAnimationFrame(step);
-} else {
-this._animRaf = null;
-this._viewAnim = null;
-this.view = anim.target;
-this._lastLabelDraw = null;
-this.draw();
-this._emitViewChange(opts.source || "view", { broadcast: opts.broadcast });
-}
-};
-this._animRaf = requestAnimationFrame(step);
-}
-_zoomBy(f, animate = false) {
-const base = this._viewAnim ? this._viewAnim.target : this.view;
-const { x0, x1, y0, y1 } = base;
-const xr = this._zoomAxisRange("x", x0, x1, f, 0.5);
-const yr = this._zoomAxisRange("y", y0, y1, f, 0.5);
-if (!xr || !yr) return;
-this._setView({ x0: xr[0], x1: xr[1], y0: yr[0], y1: yr[1] }, { animate });
-}
-_zoomAxisRange(axisId, lo, hi, f, anchorFrac) {
-const axis = this._axis(axisId);
-const c0 = this._axisCoord(axis, lo);
-const c1 = this._axisCoord(axis, hi);
-if (![c0, c1].every(Number.isFinite) || c0 === c1) return null;
-const ca = c0 + anchorFrac * (c1 - c0);
-if (f < 1) {
-const minSpan = Math.max(Math.abs(ca), 1e-30) * 1e-12;
-if (Math.abs((c1 - c0) * f) < minSpan) return null;
-}
-return [
-this._axisValue(axis, ca - (ca - c0) * f),
-this._axisValue(axis, ca + (c1 - ca) * f),
-];
-}
-_zoomAt(f, fx, fy, animate = false, duration = 120) {
-const base = this._viewAnim ? this._viewAnim.target : this.view;
-const { x0, x1, y0, y1 } = base;
-const xr = this._zoomAxisRange("x", x0, x1, f, fx);
-const yr = this._zoomAxisRange("y", y0, y1, f, fy);
-if (!xr || !yr) return;
-this._setView({ x0: xr[0], x1: xr[1], y0: yr[0], y1: yr[1] }, { animate, duration });
-}
-_queueWheelZoom(factor, fx, fy) {
-if (!Number.isFinite(factor) || factor <= 0) return;
-if (!this._pendingWheelZoom) {
-this._pendingWheelZoom = { factor: 1, fx, fy };
-}
-this._pendingWheelZoom.factor *= factor;
-this._pendingWheelZoom.fx = fx;
-this._pendingWheelZoom.fy = fy;
-if (this._wheelZoomRaf) return;
-this._wheelZoomRaf = requestAnimationFrame(() => {
-this._wheelZoomRaf = null;
-const pending = this._pendingWheelZoom;
-this._pendingWheelZoom = null;
-if (!pending || this._destroyed) return;
-this._zoomAt(pending.factor, pending.fx, pending.fy, false);
-});
-}
-_zoomToBox(d0, d1, animate = false) {
-const xa = this._axis("x");
-const ya = this._axis("y");
-const xlo = Math.min(d0[0], d1[0]), xhi = Math.max(d0[0], d1[0]);
-const ylo = Math.min(d0[1], d1[1]), yhi = Math.max(d0[1], d1[1]);
-const cx0 = this._axisCoord(xa, xlo), cx1 = this._axisCoord(xa, xhi);
-const cy0 = this._axisCoord(ya, ylo), cy1 = this._axisCoord(ya, yhi);
-if (![cx0, cx1, cy0, cy1].every(Number.isFinite)) return;
-const minSpanX = Math.max(Math.abs(cx0), Math.abs(cx1), 1e-30) * 1e-12;
-const minSpanY = Math.max(Math.abs(cy0), Math.abs(cy1), 1e-30) * 1e-12;
-if (Math.abs(cx1 - cx0) < minSpanX || Math.abs(cy1 - cy0) < minSpanY) return;
-const xReversed = this.view.x1 < this.view.x0;
-const yReversed = this.view.y1 < this.view.y0;
-const x0 = xReversed ? xhi : xlo;
-const x1 = xReversed ? xlo : xhi;
-const y0 = yReversed ? yhi : ylo;
-const y1 = yReversed ? ylo : yhi;
-this._setView({ x0, x1, y0, y1 }, { animate });
-}
-_icon(name) {
-const svg = (body) =>
-`<svg width="15" height="15" viewBox="0 0 20 20" fill="none" ` +
-`stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ` +
-`stroke-linejoin="round">${body}</svg>`;
-switch (name) {
-case "zoomin":
-return svg('<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5 L17 17"/>' +
-'<path d="M8.5 6 V11 M6 8.5 H11"/>');
-case "zoomout":
-return svg('<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5 L17 17"/>' +
-'<path d="M6 8.5 H11"/>');
-case "pan":
-return svg('<path d="M10 3 V17 M3 10 H17"/><path d="M10 3 L8 5 M10 3 L12 5"/>' +
-'<path d="M10 17 L8 15 M10 17 L12 15"/><path d="M3 10 L5 8 M3 10 L5 12"/>' +
-'<path d="M17 10 L15 8 M17 10 L15 12"/>');
-case "zoom":
-return svg('<rect x="3.5" y="3.5" width="13" height="13" rx="1" ' +
-'stroke-dasharray="3 2"/>');
-case "reset":
-return svg('<path d="M4 10 a6 6 0 1 1 1.8 4.3"/><path d="M4 6 V10 H8"/>');
-default:
-return svg("");
-}
-}
 _hover(e) {
 if (this._transitionActive()) {
 const hadHover = this._hoverId !== -1;
@@ -3833,229 +2971,6 @@ this._hoverId = id;
 this._hoverTarget = hit;
 this._showTooltip(hit, e.clientX, e.clientY);
 this.draw();
-}
-_scheduleViewRequest(viewOverride = this.view, opts = {}) {
-if (this._destroyed) return;
-if (!this.comm) return;
-const needsDecimated = this.spec.traces.some((t) => t.tier === "decimated");
-const needsDensity = this.gpuTraces.some((g) => g.tier === "density");
-if (!needsDecimated && !needsDensity) return;
-const seq = opts.seq ?? ++this.seq;
-const view = { ...viewOverride };
-const plotW = Math.round(this.plot.w);
-const plotH = Math.round(this.plot.h);
-if (needsDensity) {
-const now = performance.now();
-for (const g of this.gpuTraces) {
-if (g.tier !== "density") continue;
-g._lodPendingView = view;
-g._lodPendingSeq = seq;
-g._lodPendingAt = now;
-}
-}
-let delay = opts.delay ?? 120;
-if (opts.maxWait !== undefined && opts.maxWait !== null) {
-const now = performance.now();
-if (this._viewRequestBurstStart === undefined || this._viewRequestBurstStart === null) {
-this._viewRequestBurstStart = now;
-}
-const remaining = opts.maxWait - (now - this._viewRequestBurstStart);
-delay = remaining <= 0 ? 0 : Math.min(delay, remaining);
-} else {
-this._viewRequestBurstStart = null;
-}
-clearTimeout(this._viewTimer);
-const send = () => {
-if (this._destroyed) return;
-this._viewRequestBurstStart = null;
-if (seq !== this.seq) return;
-if (needsDecimated) {
-this.comm.send({
-type: "view", seq,
-x0: Math.min(view.x0, view.x1), x1: Math.max(view.x0, view.x1), px: plotW,
-});
-}
-if (needsDensity) {
-for (const g of this.gpuTraces) {
-if (g.tier !== "density") continue;
-this.comm.send({
-type: "density_view", seq, trace: g.trace.id,
-x0: Math.min(view.x0, view.x1), x1: Math.max(view.x0, view.x1),
-y0: Math.min(view.y0, view.y1), y1: Math.max(view.y0, view.y1),
-w: plotW, h: plotH,
-});
-}
-}
-};
-if (delay <= 0) {
-send();
-} else {
-this._viewTimer = setTimeout(send, delay);
-}
-return seq;
-}
-_applyAppend(msg, buffers) {
-const spec = msg.spec;
-const blobRaw = buffers && buffers[0];
-if (!spec || !blobRaw || !spec.traces) return;
-const blob = bytesToArrayBuffer(blobRaw);
-const spanEps = (lo, hi) => Math.max(Math.abs(hi - lo), 1e-300) * 1e-9;
-const ex = spanEps(this.view0.x0, this.view0.x1);
-const ey = spanEps(this.view0.y0, this.view0.y1);
-const atHome =
-Math.abs(this.view.x0 - this.view0.x0) <= ex && Math.abs(this.view.x1 - this.view0.x1) <= ex &&
-Math.abs(this.view.y0 - this.view0.y0) <= ey && Math.abs(this.view.y1 - this.view0.y1) <= ey;
-const pinnedRight = !atHome && Math.abs(this.view.x1 - this.view0.x1) <= ex;
-this.spec = spec;
-this.axes = this._normalizeAxes(spec);
-this._payload = blob;
-const texSeen = new Set();
-for (const id of msg.affected || []) {
-const i = this.gpuTraces.findIndex((g) => g.trace.id === id);
-const ts = spec.traces.find((t) => t.id === id);
-if (i < 0 || !ts) continue;
-this._destroyTraceResources(this.gpuTraces[i], texSeen);
-this.gpuTraces[i] = this._buildTrace(blob, ts);
-}
-this.view0 = {
-x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
-y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
-};
-if (atHome) {
-this.view = { ...this.view0 };
-} else if (pinnedRight) {
-const w = this.view.x1 - this.view.x0;
-this.view = { ...this.view, x1: this.view0.x1, x0: this.view0.x1 - w };
-}
-this._pickable = this.gpuTraces.some(
-(g) => markOf(g.trace.kind).pointPick && (g.tier !== "density" || g.drill));
-if (this._pickable && !this.pickFbo) this._initPickTarget();
-this._scheduleViewRequest(this.view, { delay: 0 });
-this.draw();
-}
-_onKernelMsg(msg, buffers) {
-if (this._destroyed) return;
-if (!msg) return;
-if (msg.type === "tier_update") {
-if (msg.seq !== this.seq) return;
-for (const upd of msg.traces) {
-const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
-if (!g) continue;
-const gl = this.gl;
-gl.bindBuffer(gl.ARRAY_BUFFER, g.xBuf);
-gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.x.buf]), gl.STATIC_DRAW);
-gl.bindBuffer(gl.ARRAY_BUFFER, g.yBuf);
-gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.y.buf]), gl.STATIC_DRAW);
-g.xMeta = { ...g.xMeta, offset: upd.x.offset, scale: upd.x.scale };
-g.yMeta = { ...g.yMeta, offset: upd.y.offset, scale: upd.y.scale };
-g.n = Math.min(upd.x.len, upd.y.len);
-if (upd.base && g.baseBuf) {
-gl.bindBuffer(gl.ARRAY_BUFFER, g.baseBuf);
-gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.base.buf]), gl.STATIC_DRAW);
-g.baseMeta = { ...g.baseMeta, offset: upd.base.offset, scale: upd.base.scale };
-g.n = Math.min(g.n, upd.base.len);
-}
-}
-this.draw();
-} else if (msg.type === "density_update") {
-if (msg.seq !== undefined && msg.seq !== this.seq) return;
-const densityTraces = msg.traces || [];
-const pendingTraceIds = new Set(densityTraces.map((upd) => Number(upd.id)));
-if (pendingTraceIds.size === 0 && msg.trace !== undefined) {
-pendingTraceIds.add(Number(msg.trace));
-}
-const clearAllPending = pendingTraceIds.size === 0 && msg.stale;
-const clearPending = (g) => {
-if (msg.seq !== undefined && g._lodPendingSeq !== msg.seq) return;
-g._lodPendingView = null;
-g._lodPendingSeq = null;
-g._lodPendingAt = null;
-};
-if (pendingTraceIds.size || clearAllPending) {
-for (const g of this.gpuTraces) {
-if (g.tier !== "density") continue;
-if (!clearAllPending && !pendingTraceIds.has(g.trace.id)) continue;
-clearPending(g);
-}
-}
-for (const upd of densityTraces) {
-const g = this.gpuTraces.find((t) => t.trace.id === upd.id && t.tier === "density");
-if (!g) continue;
-clearPending(g);
-if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }
-lodApplyDensityUpdate(this, g, upd, buffers);
-}
-this._pickable = this.gpuTraces.some(
-(t) => markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill));
-if (this._pickable && !this.pickFbo) this._initPickTarget();
-this.draw();
-} else if (msg.type === "append") {
-this._applyAppend(msg, buffers);
-} else if (msg.type === "pick_result") {
-if (!msg.row) { this.tooltip.style.display = "none"; return; }
-this._lastRow = msg.row;
-const xy = this._lastHoverXY;
-if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY);
-if (this._interactionFlag("hover")) {
-this._dispatchChartEvent("hover", {
-row: msg.row,
-trace: msg.row.trace,
-index: msg.row.index,
-exact: true,
-view: this._eventView("hover"),
-});
-}
-} else if (msg.type === "selection") {
-if (!msg.traces || !msg.traces.length) {
-for (const g of this.gpuTraces) {
-g.selActive = false;
-if (g.drill) g.drill.selActive = false;
-}
-} else {
-for (const upd of msg.traces) {
-const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
-if (!g) continue;
-const pg = g.tier === "density" ? g.drill : g;
-if (!pg || !pg.n) continue;
-if (
-g.tier === "density" && upd.drill_seq !== undefined &&
-pg.seq !== undefined && upd.drill_seq !== pg.seq
-) continue;
-const idx = this._asU32(buffers[upd.buf]);
-const mask = new Float32Array(pg.n);
-for (let i = 0; i < idx.length; i++) if (idx[i] < pg.n) mask[idx[i]] = 1;
-this._applySelMask(pg, mask);
-}
-}
-this._selectionCount = msg.total || 0;
-this.draw();
-if (this._interactionFlag("select", true)) {
-this._dispatchChartEvent("select", {
-total: this._selectionCount,
-view: this._eventView("select"),
-});
-}
-}
-}
-_applyDrill(g, upd, buffers) {
-lodApplyDrill(this, g, upd, buffers);
-}
-_dropDrill(g) {
-lodDropDrill(this, g);
-}
-_viewInside(win) {
-if (!win) return false;
-const { x0, x1, y0, y1 } = this.view;
-const ex = Math.abs(x1 - x0) * 1e-4, ey = Math.abs(y1 - y0) * 1e-4;
-const vx0 = Math.min(x0, x1), vx1 = Math.max(x0, x1);
-const vy0 = Math.min(y0, y1), vy1 = Math.max(y0, y1);
-const wx0 = Math.min(win.x0, win.x1), wx1 = Math.max(win.x0, win.x1);
-const wy0 = Math.min(win.y0, win.y1), wy1 = Math.max(win.y0, win.y1);
-return vx0 >= wx0 - ex && vx1 <= wx1 + ex && vy0 >= wy0 - ey && vy1 <= wy1 + ey;
-}
-_viewInsideRange(xRange, yRange) {
-if (!xRange || !yRange) return false;
-return this._viewInside({ x0: xRange[0], x1: xRange[1], y0: yRange[0], y1: yRange[1] });
 }
 _asF32(b) {
 if (b instanceof ArrayBuffer) return new Float32Array(b);
@@ -4179,6 +3094,1099 @@ this._glPrograms = this._progCache;
 this.gpuTraces = [];
 }
 }
+Object.assign(ChartView.prototype, {
+_annotationPaint(style, fallback) {
+return safeCssPaint(this.root, style && style.color, fallback);
+},
+_annotationLabelPaint(style, fallback) {
+return safeCssPaint(this.root, style && (style.label_color || style.color), fallback);
+},
+_annotationStrokePaint(style, fallback) {
+return safeCssPaint(this.root, style && style.stroke_color, fallback);
+},
+_drawAnnotationMarker(ctx, x, y, style, ann) {
+if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+const r = Math.max(1, this._styleNumber(style, "size", Number(ann.size) || 8) / 2);
+const symbol = ["circle", "square", "diamond", "cross"].includes(ann.symbol) ? ann.symbol : "circle";
+ctx.save();
+ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
+ctx.fillStyle = this._annotationPaint(style, [0.15, 0.39, 0.92, 1]);
+ctx.strokeStyle = symbol === "cross"
+? this._annotationPaint(style, [0.15, 0.39, 0.92, 1])
+: this._annotationStrokePaint(style, [1, 1, 1, 1]);
+ctx.lineWidth = Math.max(0, this._styleNumber(style, "stroke_width", 1.5));
+ctx.beginPath();
+if (symbol === "square") {
+ctx.rect(x - r, y - r, r * 2, r * 2);
+} else if (symbol === "diamond") {
+ctx.moveTo(x, y - r);
+ctx.lineTo(x + r, y);
+ctx.lineTo(x, y + r);
+ctx.lineTo(x - r, y);
+ctx.closePath();
+} else if (symbol === "cross") {
+ctx.moveTo(x - r, y);
+ctx.lineTo(x + r, y);
+ctx.moveTo(x, y - r);
+ctx.lineTo(x, y + r);
+ctx.stroke();
+ctx.restore();
+return;
+} else {
+ctx.arc(x, y, r, 0, Math.PI * 2);
+}
+ctx.fill();
+if (ctx.lineWidth > 0) ctx.stroke();
+ctx.restore();
+},
+_drawArrowLine(ctx, x0, y0, x1, y1, style) {
+if (![x0, y0, x1, y1].every(Number.isFinite)) return;
+const angle = Math.atan2(y1 - y0, x1 - x0);
+const head = Math.max(7, this._styleNumber(style, "head_size", 8));
+ctx.save();
+ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
+ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
+ctx.fillStyle = ctx.strokeStyle;
+ctx.lineWidth = Math.max(0.5, this._styleNumber(style, "width", 1.5));
+ctx.beginPath();
+ctx.moveTo(x0, y0);
+ctx.lineTo(x1, y1);
+ctx.stroke();
+ctx.beginPath();
+ctx.moveTo(x1, y1);
+ctx.lineTo(
+x1 - head * Math.cos(angle - Math.PI / 6),
+y1 - head * Math.sin(angle - Math.PI / 6)
+);
+ctx.lineTo(
+x1 - head * Math.cos(angle + Math.PI / 6),
+y1 - head * Math.sin(angle + Math.PI / 6)
+);
+ctx.closePath();
+ctx.fill();
+ctx.restore();
+},
+_drawAnnotationShapes(ctx) {
+const annotations = Array.isArray(this.spec.annotations) ? this.spec.annotations : [];
+if (!annotations.length) return;
+const p = this.plot;
+ctx.save();
+ctx.beginPath();
+ctx.rect(p.x, p.y, p.w, p.h);
+ctx.clip();
+for (const ann of annotations) {
+const style = ann && typeof ann.style === "object" ? ann.style : {};
+if (ann.kind === "band") {
+const vertical = ann.axis === "x";
+const a = vertical ? this._dataPxX(Number(ann.start)) : this._dataPxY(Number(ann.start));
+const b = vertical ? this._dataPxX(Number(ann.end)) : this._dataPxY(Number(ann.end));
+if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+const lo = Math.max(vertical ? p.x : p.y, Math.min(a, b));
+const hi = Math.min(vertical ? p.x + p.w : p.y + p.h, Math.max(a, b));
+if (hi <= lo) continue;
+ctx.save();
+ctx.globalAlpha = this._styleNumber(style, "opacity", 0.14);
+ctx.fillStyle = this._annotationPaint(style, [0.39, 0.45, 0.55, 1]);
+if (vertical) ctx.fillRect(lo, p.y, hi - lo, p.h);
+else ctx.fillRect(p.x, lo, p.w, hi - lo);
+ctx.restore();
+} else if (ann.kind === "rule") {
+const vertical = ann.axis === "x";
+const pos = vertical ? this._dataPxX(Number(ann.value)) : this._dataPxY(Number(ann.value));
+if (!Number.isFinite(pos)) continue;
+if (vertical && (pos < p.x - 1 || pos > p.x + p.w + 1)) continue;
+if (!vertical && (pos < p.y - 1 || pos > p.y + p.h + 1)) continue;
+const crisp = Math.round(pos) + 0.5;
+ctx.save();
+ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
+ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
+ctx.lineWidth = Math.max(0.5, this._styleNumber(style, "width", 1.5));
+ctx.beginPath();
+if (vertical) {
+ctx.moveTo(crisp, p.y);
+ctx.lineTo(crisp, p.y + p.h);
+} else {
+ctx.moveTo(p.x, crisp);
+ctx.lineTo(p.x + p.w, crisp);
+}
+ctx.stroke();
+ctx.restore();
+} else if (ann.kind === "arrow") {
+this._drawArrowLine(
+ctx,
+this._dataPxX(Number(ann.x0)),
+this._dataPxY(Number(ann.y0)),
+this._dataPxX(Number(ann.x1)),
+this._dataPxY(Number(ann.y1)),
+style
+);
+} else if (ann.kind === "callout") {
+const px = this._dataPxX(Number(ann.x));
+const py = this._dataPxY(Number(ann.y));
+const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
+const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
+this._drawArrowLine(ctx, px + dx, py + dy, px, py, style);
+} else if (ann.kind === "marker") {
+this._drawAnnotationMarker(
+ctx,
+this._dataPxX(Number(ann.x)),
+this._dataPxY(Number(ann.y)),
+style,
+ann
+);
+}
+}
+ctx.restore();
+},
+_drawAnnotationLabels(updateLabels) {
+if (!updateLabels) return;
+const annotations = Array.isArray(this.spec.annotations) ? this.spec.annotations : [];
+if (!annotations.length) return;
+const p = this.plot;
+for (const ann of annotations) {
+const text = typeof ann.text === "string" ? ann.text : "";
+if (!text) continue;
+const style = ann && typeof ann.style === "object" ? ann.style : {};
+let px = null;
+let py = null;
+if (ann.kind === "text") {
+px = this._dataPxX(Number(ann.x));
+py = this._dataPxY(Number(ann.y));
+} else if (ann.kind === "rule") {
+if (ann.axis === "x") {
+px = this._dataPxX(Number(ann.value));
+py = p.y + 6;
+} else {
+px = p.x + p.w - 6;
+py = this._dataPxY(Number(ann.value));
+}
+} else if (ann.kind === "band") {
+if (ann.axis === "x") {
+px = (this._dataPxX(Number(ann.start)) + this._dataPxX(Number(ann.end))) / 2;
+py = p.y + 6;
+} else {
+px = p.x + p.w - 6;
+py = (this._dataPxY(Number(ann.start)) + this._dataPxY(Number(ann.end))) / 2;
+}
+} else if (ann.kind === "arrow") {
+px = (this._dataPxX(Number(ann.x0)) + this._dataPxX(Number(ann.x1))) / 2;
+py = (this._dataPxY(Number(ann.y0)) + this._dataPxY(Number(ann.y1))) / 2;
+} else if (ann.kind === "callout") {
+px = this._dataPxX(Number(ann.x));
+py = this._dataPxY(Number(ann.y));
+} else if (ann.kind === "marker") {
+px = this._dataPxX(Number(ann.x));
+py = this._dataPxY(Number(ann.y));
+}
+if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+if (px < p.x - 24 || px > p.x + p.w + 24 || py < p.y - 24 || py > p.y + p.h + 24) {
+continue;
+}
+const d = document.createElement("div");
+d.textContent = text;
+const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
+const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
+const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0";
+d.style.cssText =
+`position:absolute;left:${px + dx}px;top:${py + dy}px;` +
+`transform:translate(${anchor},0);pointer-events:none;` +
+"font-size:11px;line-height:1.2;font-weight:500;";
+this._applyClass(d, ann.class_name);
+this._applyStyle(d, style);
+d.style.color = this._annotationLabelPaint(style, this.theme.label);
+this.labels.appendChild(d);
+}
+},
+});
+Object.assign(ChartView.prototype, {
+_showTooltip(hit, clientX, clientY) {
+const row = this._localRow(hit);
+this._lastRow = row;
+this._renderTooltip(row, clientX, clientY);
+if (this._interactionFlag("hover")) {
+this._dispatchChartEvent("hover", {
+row,
+trace: hit.trace,
+index: hit.index,
+view: this._eventView("hover"),
+});
+}
+if (this.comm) {
+this._pickSeq = (this._pickSeq || 0) + 1;
+const req = { type: "pick", seq: this._pickSeq, trace: hit.trace, index: hit.index };
+const hg = hit.g;
+if (hg && hg.tier === "density" && hg.drill && hg.drill.seq !== undefined) {
+req.drill_seq = hg.drill.seq;
+}
+this.comm.send(req);
+}
+},
+_localRow(hit) {
+const g = hit.g;
+const cpu = g._cpu;
+const row = { trace: g.trace.id, index: hit.index };
+if (hit.heatmap && g.heatmap && g._cpuHeatmap) {
+const h = g.heatmap;
+const { row: heatRow, col } = hit.heatmap;
+const rawX = h.xRange[0] + (col + 0.5) * ((h.xRange[1] - h.xRange[0]) / h.w);
+const rawY = h.yRange[0] + (heatRow + 0.5) * ((h.yRange[1] - h.yRange[0]) / h.h);
+const [x, xKind] = this._sourceDisplayValue(g, "x", rawX, "float");
+const [y, yKind] = this._sourceDisplayValue(g, "y", rawY, "float");
+row.x = x;
+row.y = y;
+if (xKind !== undefined) row.x_kind = xKind;
+if (yKind !== undefined) row.y_kind = yKind;
+const norm = g._cpuHeatmap.grid[hit.index];
+row.color_value = this._denormalizeUnit(norm, g.trace.color && g.trace.color.domain);
+} else if (g._cpuRect) {
+const r = g._cpuRect;
+const x0 = this._decodeValue(r.x0, r.x0Meta, hit.index);
+const x1 = this._decodeValue(r.x1, r.x1Meta, hit.index);
+const y0 = this._decodeValue(r.y0, r.y0Meta, hit.index);
+const y1 = this._decodeValue(r.y1, r.y1Meta, hit.index);
+row.x = x0 + (x1 - x0) / 2;
+row.y = y1;
+row.x_kind = r.x0Meta.kind;
+row.y_kind = r.y1Meta.kind;
+} else if (cpu) {
+const xMeta = cpu.xMeta || g.xMeta;
+const yMeta = cpu.yMeta || g.yMeta;
+row.x = this._decodeValue(cpu.x, xMeta, hit.index);
+row.y = this._decodeValue(cpu.y, yMeta, hit.index);
+row.x_kind = xMeta && xMeta.kind;
+row.y_kind = yMeta && yMeta.kind;
+const color = g.trace.color;
+if (cpu.color && color) {
+if (color.mode === "categorical" && Array.isArray(color.categories)) {
+const code = Math.round(cpu.color[hit.index]);
+if (code >= 0 && code < color.categories.length) {
+row.color_category = String(color.categories[code]);
+}
+} else if (color.mode === "continuous") {
+row.color_value = this._denormalizeUnit(cpu.color[hit.index], color.domain);
+}
+}
+const size = g.trace.size;
+if (cpu.size && size && size.mode === "continuous") {
+row.size_value = this._denormalizeUnit(cpu.size[hit.index], size.domain);
+}
+}
+this._applySharedTooltipFields(row);
+return row;
+},
+_sourceDisplayValue(g, channel, value, kind) {
+const axis = channel === "x" ? this._axis(g && g.xAxis) : this._axis(g && g.yAxis);
+if (channel === "x" && axis.kind === "category") {
+return [fmtCategory(value, axis.categories || []), undefined];
+}
+if (channel === "y" && axis.kind === "category") {
+return [fmtCategory(value, axis.categories || []), undefined];
+}
+return [value, kind];
+},
+_sourceValue(g, source, index) {
+if (!g || index < 0) return [undefined, undefined];
+const channel = source.channel;
+if (channel === "x" || channel === "y") {
+const cpu = g._cpu;
+if (!cpu || !cpu[channel]) return [undefined, undefined];
+const meta = channel === "x" ? (cpu.xMeta || g.xMeta) : (cpu.yMeta || g.yMeta);
+const value = this._decodeValue(cpu[channel], meta, index);
+if (!Number.isFinite(value)) return [undefined, undefined];
+return this._sourceDisplayValue(g, channel, value, meta && meta.kind);
+}
+if (channel === "color_value") {
+if (g._cpuHeatmap && g._cpuHeatmap.grid && g.trace.color) {
+return [this._denormalizeUnit(g._cpuHeatmap.grid[index], g.trace.color.domain), undefined];
+}
+if (g._cpu && g._cpu.color && g.trace.color) {
+return [this._denormalizeUnit(g._cpu.color[index], g.trace.color.domain), undefined];
+}
+}
+if (channel === "color_category" && g._cpu && g._cpu.color && g.trace.color) {
+const code = Math.round(g._cpu.color[index]);
+const categories = g.trace.color.categories || [];
+if (code >= 0 && code < categories.length) return [String(categories[code]), undefined];
+}
+if (channel === "size_value" && g._cpu && g._cpu.size && g.trace.size) {
+return [this._denormalizeUnit(g._cpu.size[index], g.trace.size.domain), undefined];
+}
+return [undefined, undefined];
+},
+_applySharedTooltipFields(row) {
+const sources = this.spec.tooltip && this.spec.tooltip.sources;
+if (!sources || typeof sources !== "object" || row.x === undefined) return;
+for (const [field, entries] of Object.entries(sources)) {
+if (!Array.isArray(entries) || row[field] !== undefined) continue;
+const source = entries.find((entry) => entry.trace === row.trace) || entries[0];
+if (!source || !Number.isFinite(Number(source.trace))) continue;
+const g = this.gpuTraces.find((trace) => trace.trace.id === source.trace);
+if (!g) continue;
+let idx = Number.isInteger(row.index) && source.trace === row.trace ? row.index : -1;
+if (
+!g._cpuHeatmap &&
+(idx < 0 || !g._cpu || !g._cpu.x || idx >= g._cpu.x.length)
+) {
+idx = this._nearestCpuIndex(g, row.x);
+}
+const [value, kind] = this._sourceValue(g, source, idx);
+if (value === undefined) continue;
+row[field] = value;
+if (kind !== undefined) row[`${field}_kind`] = kind;
+}
+},
+_denormalizeUnit(value, domain) {
+const v = Number(value);
+if (!Number.isFinite(v)) return v;
+if (!Array.isArray(domain) || domain.length < 2) return v;
+const lo = Number(domain[0]);
+const hi = Number(domain[1]);
+if (!Number.isFinite(lo) || !Number.isFinite(hi)) return v;
+return lo + v * (hi - lo);
+},
+_defaultTooltipLines(row) {
+const lines = [];
+if (row.x !== undefined) lines.push(`x: ${fmtValue(row.x, row.x_kind)}`);
+if (row.y !== undefined) lines.push(`y: ${fmtValue(row.y, row.y_kind)}`);
+if (row.color_value !== undefined) lines.push(`color: ${fmtValue(row.color_value)}`);
+if (row.color_category !== undefined) lines.push(`${row.color_category}`);
+if (row.size_value !== undefined) lines.push(`size: ${fmtValue(row.size_value)}`);
+if (!lines.length) lines.push(`#${row.index}`);
+return lines;
+},
+_tooltipLookup(row, field) {
+const aliases = (this.spec.tooltip && this.spec.tooltip.aliases) || {};
+const key = row[field] !== undefined ? field : aliases[field];
+if (!key || row[key] === undefined) return [undefined, undefined];
+return [row[key], row[`${key}_kind`]];
+},
+_formatTooltipValue(value, kind, format) {
+const formatted = fmtNumberSpec(value, format);
+if (formatted !== null) return formatted;
+return fmtValue(value, kind);
+},
+_tooltipLines(row) {
+const tooltip = this.spec.tooltip || {};
+if (!tooltip.title && !Array.isArray(tooltip.fields)) return this._defaultTooltipLines(row);
+const formats = tooltip.format || {};
+const lines = [];
+if (typeof tooltip.title === "string") {
+const title = tooltip.title.replace(/\{([^}]+)\}/g, (_, field) => {
+const [value, kind] = this._tooltipLookup(row, field);
+return value === undefined ? "" : this._formatTooltipValue(value, kind, formats[field]);
+});
+if (title) lines.push(title);
+}
+if (Array.isArray(tooltip.fields)) {
+for (const field of tooltip.fields) {
+if (typeof field !== "string") continue;
+const [value, kind] = this._tooltipLookup(row, field);
+if (value === undefined) continue;
+lines.push(`${field}: ${this._formatTooltipValue(value, kind, formats[field])}`);
+}
+}
+return lines.length ? lines : this._defaultTooltipLines(row);
+},
+_renderTooltip(row, clientX, clientY) {
+if (!row || this.spec.show_tooltip === false) {
+this.tooltip.style.display = "none";
+return;
+}
+const rect = this.root.getBoundingClientRect();
+const lx = clientX - rect.left;
+const ly = clientY - rect.top;
+const lines = this._tooltipLines(row);
+this.tooltip.textContent = "";
+lines.forEach((ln, i) => {
+if (i) this.tooltip.appendChild(document.createElement("br"));
+this.tooltip.appendChild(document.createTextNode(ln));
+});
+this.tooltip.style.display = "block";
+const tw = this.tooltip.offsetWidth;
+this.tooltip.style.left = Math.min(lx + 12, this.size.w - tw - 4) + "px";
+this.tooltip.style.top = ly + 12 + "px";
+},
+});
+Object.assign(ChartView.prototype, {
+_initInteraction() {
+const c = this.canvas;
+let drag = null;
+let band = null;
+this.selRect = document.createElement("div");
+this.selRect.style.cssText = "position:absolute;display:none;pointer-events:none;z-index:4;";
+this._applySlot(this.selRect, "selection");
+this.root.appendChild(this.selRect);
+if (this._interactionFlag("crosshair")) {
+this.crosshairX = document.createElement("div");
+this.crosshairX.style.cssText =
+"position:absolute;display:none;pointer-events:none;z-index:3;width:1px;";
+this._applySlot(this.crosshairX, "crosshair_x");
+this.root.appendChild(this.crosshairX);
+this.crosshairY = document.createElement("div");
+this.crosshairY.style.cssText =
+"position:absolute;display:none;pointer-events:none;z-index:3;height:1px;";
+this._applySlot(this.crosshairY, "crosshair_y");
+this.root.appendChild(this.crosshairY);
+}
+const dataAt = (clientX, clientY) => {
+const r = c.getBoundingClientRect();
+return this._dataFromCanvas(clientX - r.left, clientY - r.top);
+};
+this._listen(c, "pointerdown", (e) => {
+this._cancelViewAnimation();
+const canBrush = this._interactionFlag("brush", true) && this._interactionFlag("select", true);
+const mode = e.shiftKey && canBrush && this._pickable ? "select"
+: this.dragMode === "zoom" ? "zoom" : null;
+if (mode) {
+band = { mode, sx: e.clientX, sy: e.clientY, d0: dataAt(e.clientX, e.clientY) };
+c.setPointerCapture(e.pointerId);
+this.tooltip.style.display = "none";
+return;
+}
+drag = { px: e.clientX, py: e.clientY, view: { ...this.view }, moved: false };
+c.setPointerCapture(e.pointerId);
+this.tooltip.style.display = "none";
+});
+this._listen(c, "pointermove", (e) => {
+if (band) { this._updateBand(band, e); return; }
+if (drag) {
+drag.moved = true;
+const { x0, x1, y0, y1 } = drag.view;
+const xa = this._axis("x");
+const ya = this._axis("y");
+const cx0 = this._axisCoord(xa, x0), cx1 = this._axisCoord(xa, x1);
+const cy0 = this._axisCoord(ya, y0), cy1 = this._axisCoord(ya, y1);
+const dx = ((e.clientX - drag.px) / this.plot.w) * (cx1 - cx0);
+const dy = ((e.clientY - drag.py) / this.plot.h) * (cy1 - cy0);
+this.view = {
+x0: this._axisValue(xa, cx0 - dx),
+x1: this._axisValue(xa, cx1 - dx),
+y0: this._axisValue(ya, cy0 + dy),
+y1: this._axisValue(ya, cy1 + dy),
+};
+this.draw();
+this._scheduleViewRequest();
+this._emitViewChange("pan");
+return;
+}
+this._updateCrosshair(e);
+this._hover(e);
+});
+const end = (e) => {
+if (band) {
+this.selRect.style.display = "none";
+const d1 = dataAt(e.clientX, e.clientY);
+const moved = Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
+if (moved) {
+if (band.mode === "zoom") this._zoomToBox(band.d0, d1, true);
+else this._sendSelect(band.d0, d1);
+this._ignoreNextClick = true;
+}
+band = null;
+return;
+}
+if (drag && drag.moved) this._ignoreNextClick = true;
+if (drag && !drag.moved) this.tooltip.style.display = "none";
+drag = null;
+};
+this._listen(c, "pointerup", end);
+this._listen(c, "pointercancel", () => { this.selRect.style.display = "none"; band = null; drag = null; });
+this._listen(c, "pointerleave", () => {
+const hadHover = this._hoverId !== -1;
+this._hoverId = -1;
+this._hoverTarget = null;
+this.tooltip.style.display = "none";
+this._hideCrosshair();
+if (this._interactionFlag("hover")) {
+this._dispatchChartEvent("leave", { view: this._eventView("leave") });
+}
+if (hadHover) this.draw();
+});
+this._listen(c, "click", (e) => this._click(e));
+this._listen(c, "wheel", (e) => {
+e.preventDefault();
+const f = Math.pow(1.0015, e.deltaY);
+const r = c.getBoundingClientRect();
+const fx = (e.clientX - r.left) / r.width;
+const fy = 1 - (e.clientY - r.top) / r.height;
+this._queueWheelZoom(f, fx, fy);
+}, { passive: false });
+this._listen(c, "dblclick", () => {
+this._clearSelection();
+this._setView(this.view0, { animate: true });
+});
+},
+_updateCrosshair(e) {
+if (!this.crosshairX || !this.crosshairY) return;
+const rect = this.canvas.getBoundingClientRect();
+const rootRect = this.root.getBoundingClientRect();
+const x = e.clientX - rect.left;
+const y = e.clientY - rect.top;
+if (x < 0 || x > rect.width || y < 0 || y > rect.height) {
+this._hideCrosshair();
+return;
+}
+const left = e.clientX - rootRect.left;
+const top = e.clientY - rootRect.top;
+this.crosshairX.style.display = "block";
+this.crosshairX.style.left = left + "px";
+this.crosshairX.style.top = this.plot.y + "px";
+this.crosshairX.style.height = this.plot.h + "px";
+this.crosshairY.style.display = "block";
+this.crosshairY.style.left = this.plot.x + "px";
+this.crosshairY.style.top = top + "px";
+this.crosshairY.style.width = this.plot.w + "px";
+},
+_hideCrosshair() {
+if (this.crosshairX) this.crosshairX.style.display = "none";
+if (this.crosshairY) this.crosshairY.style.display = "none";
+},
+_click(e) {
+if (this._ignoreNextClick) {
+this._ignoreNextClick = false;
+return;
+}
+if (!this._interactionFlag("click")) return;
+const rect = this.canvas.getBoundingClientRect();
+const cssX = e.clientX - rect.left;
+const cssY = e.clientY - rect.top;
+const [x, y] = this._dataFromCanvas(cssX, cssY);
+const hit = this._pickAt(cssX, cssY) || this._hoverAt(cssX, cssY);
+const detail = {
+x,
+y,
+view: this._eventView("click"),
+row: hit && this._localRow ? this._localRow(hit) : null,
+trace: hit ? hit.trace : null,
+index: hit ? hit.index : null,
+};
+this._dispatchChartEvent("click", detail);
+if (hit && this.comm) {
+const msg = { type: "click", trace: hit.trace, index: hit.index };
+const g = hit.g;
+if (g && g.tier === "density" && g.drill && g.drill.seq !== undefined) {
+msg.drill_seq = g.drill.seq;
+}
+this.comm.send(msg);
+}
+},
+_updateBand(band, e) {
+const rect = this.canvas.getBoundingClientRect();
+const rootRect = this.root.getBoundingClientRect();
+const x = Math.min(band.sx, e.clientX) - rootRect.left;
+const y = Math.min(band.sy, e.clientY) - rootRect.top;
+const w = Math.abs(e.clientX - band.sx);
+const h = Math.abs(e.clientY - band.sy);
+const px = this.plot.x, py = this.plot.y;
+const x2 = Math.min(x + w, px + this.plot.w), y2 = Math.min(y + h, py + this.plot.h);
+const cx = Math.max(x, px), cy = Math.max(y, py);
+if (band.mode === "zoom") {
+this.selRect.style.border = "1px solid var(--chart-zoom-selection, rgba(120,120,120,.9))";
+this.selRect.style.background = "var(--chart-zoom-selection-fill, rgba(120,120,120,.12))";
+} else {
+this.selRect.style.border = "1px solid var(--chart-selection, rgba(90,140,240,.9))";
+this.selRect.style.background = "var(--chart-selection-fill, rgba(90,140,240,.15))";
+}
+this.selRect.style.display = "block";
+this.selRect.style.left = cx + "px";
+this.selRect.style.top = cy + "px";
+this.selRect.style.width = Math.max(0, x2 - cx) + "px";
+this.selRect.style.height = Math.max(0, y2 - cy) + "px";
+void rect;
+},
+_sendSelect(d0, d1) {
+const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
+const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
+const range = { x0, x1, y0, y1 };
+this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
+if (this.comm) {
+this.comm.send({ type: "select", x0, x1, y0, y1 });
+} else {
+this._selectLocal(x0, x1, y0, y1); 
+}
+},
+_selectLocal(x0, x1, y0, y1) {
+let total = 0;
+for (const g of this.gpuTraces) {
+if (!g._cpu || g.tier === "density") continue;
+const cx = g._cpu.x, cy = g._cpu.y;
+const xMeta = g._cpu.xMeta || g.xMeta;
+const yMeta = g._cpu.yMeta || g.yMeta;
+const ox = xMeta.offset, sx = xMeta.scale || 1;
+const oy = yMeta.offset, sy = yMeta.scale || 1;
+const mask = new Float32Array(g.n);
+let cnt = 0;
+for (let i = 0; i < g.n; i++) {
+const dx = cx[i] / sx + ox, dy = cy[i] / sy + oy;
+if (dx >= x0 && dx <= x1 && dy >= y0 && dy <= y1) { mask[i] = 1; cnt++; }
+}
+this._applySelMask(g, mask);
+total += cnt;
+}
+this._selectionCount = total;
+this.draw();
+this._dispatchChartEvent("select", {
+total,
+range: { x0, x1, y0, y1 },
+view: this._eventView("select"),
+});
+},
+_applySelMask(g, maskF32) {
+const gl = this.gl;
+if (!g.selBuf) g.selBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, g.selBuf);
+gl.bufferData(gl.ARRAY_BUFFER, maskF32, gl.STATIC_DRAW);
+g.selActive = true;
+},
+_clearSelection() {
+for (const g of this.gpuTraces) {
+g.selActive = false;
+if (g.drill) g.drill.selActive = false;
+}
+this._selectionCount = 0;
+if (this._interactionFlag("select", true)) {
+if (this.comm) this.comm.send({ type: "select_clear" });
+this._dispatchChartEvent("select", { total: 0, view: this._eventView("select_clear") });
+}
+},
+_buildModebar(root) {
+if (this.spec.show_modebar === false) return;
+const bar = document.createElement("div");
+bar.style.cssText =
+`position:absolute;top:${this.plot.y + 4}px;left:${this.plot.x + 4}px;z-index:6;` +
+"display:flex;opacity:.72;transition:opacity .15s;";
+this._applySlot(bar, "modebar");
+this._listen(root, "pointerenter", () => { bar.style.opacity = "1"; });
+this._listen(root, "pointerleave", () => { bar.style.opacity = ".72"; });
+this._modebar = bar;
+this._modeBtns = {};
+const mk = (name, title, onClick, toggles) => {
+const b = document.createElement("button");
+b.type = "button";
+b.title = title;
+b.innerHTML = this._icon(name);
+b.style.cssText =
+"display:flex;align-items:center;justify-content:center;cursor:pointer;pointer-events:auto;";
+this._applySlot(b, "modebar_button");
+this._listen(b, "pointerdown", (e) => e.stopPropagation());
+this._listen(b, "click", (e) => { e.stopPropagation(); onClick(); });
+bar.appendChild(b);
+if (toggles) this._modeBtns[toggles] = b;
+return b;
+};
+mk("zoomin", "Zoom in", () => this._zoomBy(0.5, true));
+mk("zoomout", "Zoom out", () => this._zoomBy(2, true));
+mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
+mk("zoom", "Box zoom", () => this._setDragMode("zoom"), "zoom");
+mk("reset", "Reset view", () => {
+this._clearSelection();
+this._setView(this.view0, { animate: true });
+});
+root.appendChild(bar);
+this._setDragMode(this.dragMode);
+},
+_setDragMode(mode) {
+this.dragMode = mode;
+if (this.canvas) this.canvas.style.cursor = mode === "zoom" ? "crosshair" : "grab";
+for (const [name, btn] of Object.entries(this._modeBtns || {})) {
+btn.classList.toggle("fc-active", name === mode);
+}
+},
+_prefersReducedMotion() {
+return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+},
+_cancelViewAnimation() {
+if (this._animRaf) cancelAnimationFrame(this._animRaf);
+this._animRaf = null;
+this._viewAnim = null;
+},
+_setView(next, opts = {}) {
+if (this._destroyed) return;
+const target = { x0: next.x0, x1: next.x1, y0: next.y0, y1: next.y1 };
+const animate = opts.animate === true && !this._prefersReducedMotion();
+const duration = opts.duration || 180;
+if (!animate || duration <= 0) {
+this._cancelViewAnimation();
+this.view = target;
+this.draw();
+if (opts.request !== false) this._scheduleViewRequest();
+this._emitViewChange(opts.source || "view", { broadcast: opts.broadcast });
+return;
+}
+clearTimeout(this._viewTimer);
+this.seq += 1; 
+const request = opts.request !== false;
+const requestDelay = opts.requestDelay ?? Math.min(55, Math.max(24, duration * 0.35));
+const requestMaxWait = opts.requestMaxWait ?? 130;
+if (request) {
+this._scheduleViewRequest(target, { seq: this.seq, delay: requestDelay, maxWait: requestMaxWait });
+}
+const now = performance.now();
+const tau = Math.max(18, duration / 5);
+if (this._viewAnim) {
+this._viewAnim.target = target;
+this._viewAnim.tau = tau;
+return;
+}
+this._viewAnim = {
+target,
+last: now,
+tau,
+};
+const lerp = (a, b, t) => a + (b - a) * t;
+const span = (v) => Math.max(Math.abs(v.x1 - v.x0), Math.abs(v.y1 - v.y0), 1e-12);
+const closeEnough = (a, b) => {
+const tol = span(b) * 1e-4;
+return Math.max(
+Math.abs(a.x0 - b.x0), Math.abs(a.x1 - b.x1),
+Math.abs(a.y0 - b.y0), Math.abs(a.y1 - b.y1)) <= tol;
+};
+const step = (nowFrame) => {
+if (this._destroyed) { this._animRaf = null; return; }
+const anim = this._viewAnim;
+if (!anim) { this._animRaf = null; return; }
+const dt = Math.max(0, Math.min(64, nowFrame - anim.last));
+anim.last = nowFrame;
+const k = 1 - Math.exp(-dt / anim.tau);
+const t = closeEnough(this.view, anim.target) ? 1 : k;
+this.view = {
+x0: lerp(this.view.x0, anim.target.x0, t),
+x1: lerp(this.view.x1, anim.target.x1, t),
+y0: lerp(this.view.y0, anim.target.y0, t),
+y1: lerp(this.view.y1, anim.target.y1, t),
+};
+if (t < 1) {
+this.draw();
+this._animRaf = requestAnimationFrame(step);
+} else {
+this._animRaf = null;
+this._viewAnim = null;
+this.view = anim.target;
+this._lastLabelDraw = null;
+this.draw();
+this._emitViewChange(opts.source || "view", { broadcast: opts.broadcast });
+}
+};
+this._animRaf = requestAnimationFrame(step);
+},
+_zoomBy(f, animate = false) {
+const base = this._viewAnim ? this._viewAnim.target : this.view;
+const { x0, x1, y0, y1 } = base;
+const xr = this._zoomAxisRange("x", x0, x1, f, 0.5);
+const yr = this._zoomAxisRange("y", y0, y1, f, 0.5);
+if (!xr || !yr) return;
+this._setView({ x0: xr[0], x1: xr[1], y0: yr[0], y1: yr[1] }, { animate });
+},
+_zoomAxisRange(axisId, lo, hi, f, anchorFrac) {
+const axis = this._axis(axisId);
+const c0 = this._axisCoord(axis, lo);
+const c1 = this._axisCoord(axis, hi);
+if (![c0, c1].every(Number.isFinite) || c0 === c1) return null;
+const ca = c0 + anchorFrac * (c1 - c0);
+if (f < 1) {
+const minSpan = Math.max(Math.abs(ca), 1e-30) * 1e-12;
+if (Math.abs((c1 - c0) * f) < minSpan) return null;
+}
+return [
+this._axisValue(axis, ca - (ca - c0) * f),
+this._axisValue(axis, ca + (c1 - ca) * f),
+];
+},
+_zoomAt(f, fx, fy, animate = false, duration = 120) {
+const base = this._viewAnim ? this._viewAnim.target : this.view;
+const { x0, x1, y0, y1 } = base;
+const xr = this._zoomAxisRange("x", x0, x1, f, fx);
+const yr = this._zoomAxisRange("y", y0, y1, f, fy);
+if (!xr || !yr) return;
+this._setView({ x0: xr[0], x1: xr[1], y0: yr[0], y1: yr[1] }, { animate, duration });
+},
+_queueWheelZoom(factor, fx, fy) {
+if (!Number.isFinite(factor) || factor <= 0) return;
+if (!this._pendingWheelZoom) {
+this._pendingWheelZoom = { factor: 1, fx, fy };
+}
+this._pendingWheelZoom.factor *= factor;
+this._pendingWheelZoom.fx = fx;
+this._pendingWheelZoom.fy = fy;
+if (this._wheelZoomRaf) return;
+this._wheelZoomRaf = requestAnimationFrame(() => {
+this._wheelZoomRaf = null;
+const pending = this._pendingWheelZoom;
+this._pendingWheelZoom = null;
+if (!pending || this._destroyed) return;
+this._zoomAt(pending.factor, pending.fx, pending.fy, false);
+});
+},
+_zoomToBox(d0, d1, animate = false) {
+const xa = this._axis("x");
+const ya = this._axis("y");
+const xlo = Math.min(d0[0], d1[0]), xhi = Math.max(d0[0], d1[0]);
+const ylo = Math.min(d0[1], d1[1]), yhi = Math.max(d0[1], d1[1]);
+const cx0 = this._axisCoord(xa, xlo), cx1 = this._axisCoord(xa, xhi);
+const cy0 = this._axisCoord(ya, ylo), cy1 = this._axisCoord(ya, yhi);
+if (![cx0, cx1, cy0, cy1].every(Number.isFinite)) return;
+const minSpanX = Math.max(Math.abs(cx0), Math.abs(cx1), 1e-30) * 1e-12;
+const minSpanY = Math.max(Math.abs(cy0), Math.abs(cy1), 1e-30) * 1e-12;
+if (Math.abs(cx1 - cx0) < minSpanX || Math.abs(cy1 - cy0) < minSpanY) return;
+const xReversed = this.view.x1 < this.view.x0;
+const yReversed = this.view.y1 < this.view.y0;
+const x0 = xReversed ? xhi : xlo;
+const x1 = xReversed ? xlo : xhi;
+const y0 = yReversed ? yhi : ylo;
+const y1 = yReversed ? ylo : yhi;
+this._setView({ x0, x1, y0, y1 }, { animate });
+},
+_icon(name) {
+const svg = (body) =>
+`<svg width="15" height="15" viewBox="0 0 20 20" fill="none" ` +
+`stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ` +
+`stroke-linejoin="round">${body}</svg>`;
+switch (name) {
+case "zoomin":
+return svg('<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5 L17 17"/>' +
+'<path d="M8.5 6 V11 M6 8.5 H11"/>');
+case "zoomout":
+return svg('<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5 L17 17"/>' +
+'<path d="M6 8.5 H11"/>');
+case "pan":
+return svg('<path d="M10 3 V17 M3 10 H17"/><path d="M10 3 L8 5 M10 3 L12 5"/>' +
+'<path d="M10 17 L8 15 M10 17 L12 15"/><path d="M3 10 L5 8 M3 10 L5 12"/>' +
+'<path d="M17 10 L15 8 M17 10 L15 12"/>');
+case "zoom":
+return svg('<rect x="3.5" y="3.5" width="13" height="13" rx="1" ' +
+'stroke-dasharray="3 2"/>');
+case "reset":
+return svg('<path d="M4 10 a6 6 0 1 1 1.8 4.3"/><path d="M4 6 V10 H8"/>');
+default:
+return svg("");
+}
+},
+});
+Object.assign(ChartView.prototype, {
+_scheduleViewRequest(viewOverride = this.view, opts = {}) {
+if (this._destroyed) return;
+if (!this.comm) return;
+const needsDecimated = this.spec.traces.some((t) => t.tier === "decimated");
+const needsDensity = this.gpuTraces.some((g) => g.tier === "density");
+if (!needsDecimated && !needsDensity) return;
+const seq = opts.seq ?? ++this.seq;
+const view = { ...viewOverride };
+const plotW = Math.round(this.plot.w);
+const plotH = Math.round(this.plot.h);
+if (needsDensity) {
+const now = performance.now();
+for (const g of this.gpuTraces) {
+if (g.tier !== "density") continue;
+g._lodPendingView = view;
+g._lodPendingSeq = seq;
+g._lodPendingAt = now;
+}
+}
+let delay = opts.delay ?? 120;
+if (opts.maxWait !== undefined && opts.maxWait !== null) {
+const now = performance.now();
+if (this._viewRequestBurstStart === undefined || this._viewRequestBurstStart === null) {
+this._viewRequestBurstStart = now;
+}
+const remaining = opts.maxWait - (now - this._viewRequestBurstStart);
+delay = remaining <= 0 ? 0 : Math.min(delay, remaining);
+} else {
+this._viewRequestBurstStart = null;
+}
+clearTimeout(this._viewTimer);
+const send = () => {
+if (this._destroyed) return;
+this._viewRequestBurstStart = null;
+if (seq !== this.seq) return;
+if (needsDecimated) {
+this.comm.send({
+type: "view", seq,
+x0: Math.min(view.x0, view.x1), x1: Math.max(view.x0, view.x1), px: plotW,
+});
+}
+if (needsDensity) {
+for (const g of this.gpuTraces) {
+if (g.tier !== "density") continue;
+this.comm.send({
+type: "density_view", seq, trace: g.trace.id,
+x0: Math.min(view.x0, view.x1), x1: Math.max(view.x0, view.x1),
+y0: Math.min(view.y0, view.y1), y1: Math.max(view.y0, view.y1),
+w: plotW, h: plotH,
+});
+}
+}
+};
+if (delay <= 0) {
+send();
+} else {
+this._viewTimer = setTimeout(send, delay);
+}
+return seq;
+},
+_applyAppend(msg, buffers) {
+const spec = msg.spec;
+const blobRaw = buffers && buffers[0];
+if (!spec || !blobRaw || !spec.traces) return;
+const blob = bytesToArrayBuffer(blobRaw);
+const spanEps = (lo, hi) => Math.max(Math.abs(hi - lo), 1e-300) * 1e-9;
+const ex = spanEps(this.view0.x0, this.view0.x1);
+const ey = spanEps(this.view0.y0, this.view0.y1);
+const atHome =
+Math.abs(this.view.x0 - this.view0.x0) <= ex && Math.abs(this.view.x1 - this.view0.x1) <= ex &&
+Math.abs(this.view.y0 - this.view0.y0) <= ey && Math.abs(this.view.y1 - this.view0.y1) <= ey;
+const pinnedRight = !atHome && Math.abs(this.view.x1 - this.view0.x1) <= ex;
+this.spec = spec;
+this.axes = this._normalizeAxes(spec);
+this._payload = blob;
+const texSeen = new Set();
+for (const id of msg.affected || []) {
+const i = this.gpuTraces.findIndex((g) => g.trace.id === id);
+const ts = spec.traces.find((t) => t.id === id);
+if (i < 0 || !ts) continue;
+this._destroyTraceResources(this.gpuTraces[i], texSeen);
+this.gpuTraces[i] = this._buildTrace(blob, ts);
+}
+this.view0 = {
+x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
+y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
+};
+if (atHome) {
+this.view = { ...this.view0 };
+} else if (pinnedRight) {
+const w = this.view.x1 - this.view.x0;
+this.view = { ...this.view, x1: this.view0.x1, x0: this.view0.x1 - w };
+}
+this._pickable = this.gpuTraces.some(
+(g) => markOf(g.trace.kind).pointPick && (g.tier !== "density" || g.drill));
+if (this._pickable && !this.pickFbo) this._initPickTarget();
+this._scheduleViewRequest(this.view, { delay: 0 });
+this.draw();
+},
+_onKernelMsg(msg, buffers) {
+if (this._destroyed) return;
+if (!msg) return;
+if (msg.type === "tier_update") {
+if (msg.seq !== this.seq) return;
+for (const upd of msg.traces) {
+const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
+if (!g) continue;
+const gl = this.gl;
+gl.bindBuffer(gl.ARRAY_BUFFER, g.xBuf);
+gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.x.buf]), gl.STATIC_DRAW);
+gl.bindBuffer(gl.ARRAY_BUFFER, g.yBuf);
+gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.y.buf]), gl.STATIC_DRAW);
+g.xMeta = { ...g.xMeta, offset: upd.x.offset, scale: upd.x.scale };
+g.yMeta = { ...g.yMeta, offset: upd.y.offset, scale: upd.y.scale };
+g.n = Math.min(upd.x.len, upd.y.len);
+if (upd.base && g.baseBuf) {
+gl.bindBuffer(gl.ARRAY_BUFFER, g.baseBuf);
+gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[upd.base.buf]), gl.STATIC_DRAW);
+g.baseMeta = { ...g.baseMeta, offset: upd.base.offset, scale: upd.base.scale };
+g.n = Math.min(g.n, upd.base.len);
+}
+}
+this.draw();
+} else if (msg.type === "density_update") {
+if (msg.seq !== undefined && msg.seq !== this.seq) return;
+const densityTraces = msg.traces || [];
+const pendingTraceIds = new Set(densityTraces.map((upd) => Number(upd.id)));
+if (pendingTraceIds.size === 0 && msg.trace !== undefined) {
+pendingTraceIds.add(Number(msg.trace));
+}
+const clearAllPending = pendingTraceIds.size === 0 && msg.stale;
+const clearPending = (g) => {
+if (msg.seq !== undefined && g._lodPendingSeq !== msg.seq) return;
+g._lodPendingView = null;
+g._lodPendingSeq = null;
+g._lodPendingAt = null;
+};
+if (pendingTraceIds.size || clearAllPending) {
+for (const g of this.gpuTraces) {
+if (g.tier !== "density") continue;
+if (!clearAllPending && !pendingTraceIds.has(g.trace.id)) continue;
+clearPending(g);
+}
+}
+for (const upd of densityTraces) {
+const g = this.gpuTraces.find((t) => t.trace.id === upd.id && t.tier === "density");
+if (!g) continue;
+clearPending(g);
+if (upd.mode === "points") { this._applyDrill(g, upd, buffers); continue; }
+lodApplyDensityUpdate(this, g, upd, buffers);
+}
+this._pickable = this.gpuTraces.some(
+(t) => markOf(t.trace.kind).pointPick && (t.tier !== "density" || t.drill));
+if (this._pickable && !this.pickFbo) this._initPickTarget();
+this.draw();
+} else if (msg.type === "append") {
+this._applyAppend(msg, buffers);
+} else if (msg.type === "pick_result") {
+if (!msg.row) { this.tooltip.style.display = "none"; return; }
+this._lastRow = msg.row;
+const xy = this._lastHoverXY;
+if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY);
+if (this._interactionFlag("hover")) {
+this._dispatchChartEvent("hover", {
+row: msg.row,
+trace: msg.row.trace,
+index: msg.row.index,
+exact: true,
+view: this._eventView("hover"),
+});
+}
+} else if (msg.type === "selection") {
+if (!msg.traces || !msg.traces.length) {
+for (const g of this.gpuTraces) {
+g.selActive = false;
+if (g.drill) g.drill.selActive = false;
+}
+} else {
+for (const upd of msg.traces) {
+const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
+if (!g) continue;
+const pg = g.tier === "density" ? g.drill : g;
+if (!pg || !pg.n) continue;
+if (
+g.tier === "density" && upd.drill_seq !== undefined &&
+pg.seq !== undefined && upd.drill_seq !== pg.seq
+) continue;
+const idx = this._asU32(buffers[upd.buf]);
+const mask = new Float32Array(pg.n);
+for (let i = 0; i < idx.length; i++) if (idx[i] < pg.n) mask[idx[i]] = 1;
+this._applySelMask(pg, mask);
+}
+}
+this._selectionCount = msg.total || 0;
+this.draw();
+if (this._interactionFlag("select", true)) {
+this._dispatchChartEvent("select", {
+total: this._selectionCount,
+view: this._eventView("select"),
+});
+}
+}
+},
+_applyDrill(g, upd, buffers) {
+lodApplyDrill(this, g, upd, buffers);
+},
+_dropDrill(g) {
+lodDropDrill(this, g);
+},
+_viewInside(win) {
+if (!win) return false;
+const { x0, x1, y0, y1 } = this.view;
+const ex = Math.abs(x1 - x0) * 1e-4, ey = Math.abs(y1 - y0) * 1e-4;
+const vx0 = Math.min(x0, x1), vx1 = Math.max(x0, x1);
+const vy0 = Math.min(y0, y1), vy1 = Math.max(y0, y1);
+const wx0 = Math.min(win.x0, win.x1), wx1 = Math.max(win.x0, win.x1);
+const wy0 = Math.min(win.y0, win.y1), wy1 = Math.max(win.y0, win.y1);
+return vx0 >= wx0 - ex && vx1 <= wx1 + ex && vy0 >= wy0 - ey && vy1 <= wy1 + ey;
+},
+_viewInsideRange(xRange, yRange) {
+if (!xRange || !yRange) return false;
+return this._viewInside({ x0: xRange[0], x1: xRange[1], y0: yRange[0], y1: yRange[1] });
+},
+});
 const RECT_MARK = {
 build: (view, g, t, buffer) => view._buildRectMark(g, t, buffer),
 draw: (view, g) => {

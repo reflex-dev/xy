@@ -50,6 +50,10 @@ function renderStandalone(el, spec, arrayBuffer) {
   return view;
 }
 
-// ---- exports ---- (everything below this marker is stripped for the IIFE build)
+// Everything from the next line on is stripped for the IIFE/standalone build
+// (ES `export` is illegal in a `new Function` body). The marker must be the
+// whole line — build.mjs splits on it and rejects any trailing text so this
+// description can never leak into the ESM bundle as bare code.
+// ---- exports ----
 export { render, renderStandalone, ChartView, MARK_KINDS, markOf };
 export default { render };
