@@ -26,7 +26,7 @@ DEFAULT_PATHS = (
     Path("scripts"),
     Path("benchmarks"),
     Path("tests"),
-    Path("reflex_fastcharts_app"),
+    Path("examples/reflex"),
     Path("hatch_build.py"),
 )
 

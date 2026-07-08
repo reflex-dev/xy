@@ -15,7 +15,7 @@ and requests exact visible points from Python after zooming into a small region.
 ## Run
 
 ```bash
-cd reflex_fastcharts_app
+cd examples/reflex
 uv venv
 uv pip install -r requirements.txt
 python scripts/build_charts.py

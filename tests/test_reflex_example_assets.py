@@ -12,19 +12,19 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT_SOURCE = ROOT / "js" / "src" / "50_chartview.js"
-APP_SOURCE = ROOT / "reflex_fastcharts_app" / "reflex_fastcharts_app" / "reflex_fastcharts_app.py"
-LIVE_SOURCE = ROOT / "reflex_fastcharts_app" / "reflex_fastcharts_app" / "live_drilldown.py"
-CUSTOM_CHROME_ASSET = ROOT / "reflex_fastcharts_app" / "assets" / "charts" / "custom_chrome.html"
+APP_SOURCE = ROOT / "examples" / "reflex" / "reflex_fastcharts_app" / "reflex_fastcharts_app.py"
+LIVE_SOURCE = ROOT / "examples" / "reflex" / "reflex_fastcharts_app" / "live_drilldown.py"
+CUSTOM_CHROME_ASSET = ROOT / "examples" / "reflex" / "assets" / "charts" / "custom_chrome.html"
 ANNOTATED_HEATMAP_ASSET = (
-    ROOT / "reflex_fastcharts_app" / "assets" / "charts" / "annotated_heatmap.html"
+    ROOT / "examples" / "reflex" / "assets" / "charts" / "annotated_heatmap.html"
 )
-BUSINESS_ASSET = ROOT / "reflex_fastcharts_app" / "assets" / "charts" / "business_overview.html"
-RETENTION_ASSET = ROOT / "reflex_fastcharts_app" / "assets" / "charts" / "retention_cohort.html"
+BUSINESS_ASSET = ROOT / "examples" / "reflex" / "assets" / "charts" / "business_overview.html"
+RETENTION_ASSET = ROOT / "examples" / "reflex" / "assets" / "charts" / "retention_cohort.html"
 LIVE_ASSETS = [
-    ROOT / "reflex_fastcharts_app" / "assets" / "charts" / "live_drilldown_100m.html",
-    ROOT / "reflex_fastcharts_app" / "assets" / "charts" / "live_drilldown_10m.html",
+    ROOT / "examples" / "reflex" / "assets" / "charts" / "live_drilldown_100m.html",
+    ROOT / "examples" / "reflex" / "assets" / "charts" / "live_drilldown_10m.html",
 ]
-CHART_ASSET_DIR = ROOT / "reflex_fastcharts_app" / "assets" / "charts"
+CHART_ASSET_DIR = ROOT / "examples" / "reflex" / "assets" / "charts"
 LIFECYCLE_SMOKE = ROOT / "scripts" / "reflex_lifecycle_smoke.py"
 VISUAL_SMOKE = ROOT / "scripts" / "visual_regression_smoke.py"
 

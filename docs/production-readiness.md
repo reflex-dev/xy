@@ -299,7 +299,7 @@ Before tagging a release:
   `METADATA` must keep `Name: fastcharts`, `Requires-Python: >=3.11`,
   `anywidget>=0.9`, and `numpy>=1.24`; wheel `RECORD` must list every archive
   file exactly once with matching `sha256` and size fields. Wheels must stay
-  package-only: docs, tests, benchmarks, scripts, and `reflex_fastcharts_app/`
+  package-only: docs, tests, benchmarks, scripts, and `examples/reflex/`
   are sdist-only.
 - Confirm the wheel size budget is still below 15 MB.
 - Confirm README examples and `docs/api-examples.md` run against the tagged API.

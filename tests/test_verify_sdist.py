@@ -58,7 +58,7 @@ PRODUCTION_READINESS_MD = (
     "Use `make check-artifacts` for exact artifact verification.\n"
     "Use `make check-examples` for docs and Reflex app checks.\n"
     "The sdist includes the Reflex example app, while wheels stay package-only. "
-    "Docs, tests, benchmarks, scripts, and reflex_fastcharts_app are sdist-only.\n"
+    "Docs, tests, benchmarks, scripts, and examples/reflex are sdist-only.\n"
     "Run scripts/verify_benchmark_report.py, scripts/verify_wheel.py, and "
     "scripts/verify_sdist.py before releases.\n" + ("production readiness padding\n" * 100)
 )
@@ -191,9 +191,9 @@ def _write_sdist(
                 data = PRODUCTION_READINESS_MD.encode("utf-8")
             elif name == "docs/contributing.md":
                 data = CONTRIBUTING_MD.encode("utf-8")
-            elif name == "reflex_fastcharts_app/README.md":
+            elif name == "examples/reflex/README.md":
                 data = REFLEX_README_MD.encode("utf-8")
-            elif name == "reflex_fastcharts_app/assets/charts/business_overview.html":
+            elif name == "examples/reflex/assets/charts/business_overview.html":
                 data = BUSINESS_OVERVIEW_HTML.encode("utf-8")
             elif name == ".github/workflows/ci.yml":
                 data = CI_YML.encode("utf-8")
@@ -338,13 +338,13 @@ def test_verify_sdist_rejects_missing_reflex_example_app_files(tmp_path: Path) -
     _write_sdist(
         sdist,
         omit={
-            "reflex_fastcharts_app/README.md",
-            "reflex_fastcharts_app/assets/charts/business_overview.html",
+            "examples/reflex/README.md",
+            "examples/reflex/assets/charts/business_overview.html",
             "tests/test_reflex_example_assets.py",
         },
     )
 
-    with pytest.raises(AssertionError, match="reflex_fastcharts_app"):
+    with pytest.raises(AssertionError, match="examples/reflex"):
         verify_sdist.verify_sdist(str(sdist))
 
 
@@ -406,10 +406,10 @@ def test_verify_sdist_rejects_stale_reflex_example_readme(tmp_path: Path) -> Non
     sdist = tmp_path / "fastcharts-0.1.0.tar.gz"
     _write_sdist(
         sdist,
-        replacements={"reflex_fastcharts_app/README.md": "# Reflex\n" + ("padding\n" * 200)},
+        replacements={"examples/reflex/README.md": "# Reflex\n" + ("padding\n" * 200)},
     )
 
-    with pytest.raises(AssertionError, match="reflex_fastcharts_app/README"):
+    with pytest.raises(AssertionError, match="examples/reflex/README"):
         verify_sdist.verify_sdist(str(sdist))
 
 
@@ -418,7 +418,7 @@ def test_verify_sdist_rejects_stale_business_example_asset(tmp_path: Path) -> No
     _write_sdist(
         sdist,
         replacements={
-            "reflex_fastcharts_app/assets/charts/business_overview.html": (
+            "examples/reflex/assets/charts/business_overview.html": (
                 "<html>" + ("padding\n" * 200) + "</html>"
             )
         },
@@ -486,9 +486,9 @@ def test_verify_sdist_rejects_corrupt_source_entry_bundle(tmp_path: Path) -> Non
     "artifact",
     [
         "python/fastcharts/__pycache__/figure.pyc",
-        "reflex_fastcharts_app/.web/package.json",
-        "reflex_fastcharts_app/.states/state.pkl",
-        "reflex_fastcharts_app/reflex.lock/package.json",
+        "examples/reflex/.web/package.json",
+        "examples/reflex/.states/state.pkl",
+        "examples/reflex/reflex.lock/package.json",
     ],
 )
 def test_verify_sdist_rejects_generated_artifacts(tmp_path: Path, artifact: str) -> None:
