@@ -17,7 +17,7 @@ import sys
 from array import array
 from pathlib import Path
 
-ABI_VERSION = 5
+ABI_VERSION = 6
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -72,6 +72,8 @@ def load() -> ctypes.CDLL:
     Z = ctypes.c_size_t
     lib.fc_bin_2d.restype = ctypes.c_int32
     lib.fc_bin_2d.argtypes = [F64P, F64P, Z, D, D, D, D, Z, Z, F32P]
+    lib.fc_bin_2d_indices.restype = ctypes.c_size_t
+    lib.fc_bin_2d_indices.argtypes = [F64P, F64P, Z, D, D, D, D, Z, Z, F32P, U32P]
     lib.fc_histogram_uniform.restype = ctypes.c_size_t
     lib.fc_histogram_uniform.argtypes = [
         F64P,
@@ -212,6 +214,43 @@ def main() -> None:
     ok(
         lib.fc_range_indices(null_f64, null_f64, 1, 0.0, 1.0, 0.0, 1.0, null_u32) == size_max,
         "range_indices non-empty/null sentinel",
+    )
+    # bin_2d_indices: fused grid + visible-row scan. A point exactly on the
+    # inclusive hi edge appears in the index list (range_indices semantics)
+    # but not in any grid cell (bin_2d's half-open semantics).
+    bx = array("d", [0.25, 1.0])
+    by = array("d", [0.25, 0.5])
+    bgrid = array("f", [9.0]) * 4
+    bidx = array("I", [7, 7])
+    written = lib.fc_bin_2d_indices(
+        _ptr(bx, ctypes.c_double),
+        _ptr(by, ctypes.c_double),
+        2,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        2,
+        2,
+        _ptr(bgrid, ctypes.c_float),
+        _ptr(bidx, ctypes.c_uint32),
+    )
+    ok(written == 2 and list(bidx) == [0, 1], "bin_2d_indices inclusive index list")
+    ok(sum(bgrid) == 1.0, "bin_2d_indices half-open grid excludes hi edge")
+    ok(
+        lib.fc_bin_2d_indices(
+            null_f64, null_f64, 0, 0.0, 1.0, 0.0, 1.0, 2, 2, _ptr(bgrid, ctypes.c_float), null_u32
+        )
+        == 0
+        and sum(bgrid) == 0.0,
+        "bin_2d_indices empty/null zeroes grid, returns zero",
+    )
+    ok(
+        lib.fc_bin_2d_indices(
+            null_f64, null_f64, 1, 0.0, 1.0, 0.0, 1.0, 2, 2, _ptr(bgrid, ctypes.c_float), null_u32
+        )
+        == size_max,
+        "bin_2d_indices non-empty/null sentinel",
     )
     # sample_mask: SplitMix64(id + seed) <= threshold, one byte per row.
     ids = array("Q", [0, 1, 2, 3])

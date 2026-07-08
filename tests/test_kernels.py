@@ -347,6 +347,40 @@ def test_range_indices(impl):
     np.testing.assert_array_equal(idx, [1, 2])
 
 
+def test_bin_2d_indices_matches_separate_kernels(impl):
+    rng = np.random.default_rng(5)
+    x = rng.uniform(-100, 100, 50_000)
+    y = rng.uniform(-100, 100, 50_000)
+    x[::971] = np.nan  # NaN skipped by both outputs
+    x[::1013] = 95.0  # exact hi edge: indexed (inclusive) but not binned (half-open)
+    args = (-95.0, 95.0, -80.0, 80.0, 64, 48)
+
+    grid, idx = impl.bin_2d_indices(x, y, *args)
+    grid_ref = impl.bin_2d(x, y, *args)
+    idx_ref = impl.range_indices(x, y, *args[:4])
+
+    assert grid.dtype == np.float32 and grid.shape == (48, 64)
+    np.testing.assert_array_equal(grid, grid_ref)
+    np.testing.assert_array_equal(idx, idx_ref)
+
+
+def test_bin_2d_indices_edge_point_indexed_but_not_binned(impl):
+    grid, idx = impl.bin_2d_indices(
+        np.array([1.0, 0.5]), np.array([0.5, 0.5]), 0.0, 1.0, 0.0, 1.0, 2, 2
+    )
+    np.testing.assert_array_equal(idx, [0, 1])
+    assert float(grid.sum()) == 1.0  # only the interior point lands in a cell
+
+
+def test_bin_2d_indices_empty_and_validation(impl):
+    grid, idx = impl.bin_2d_indices(np.array([]), np.array([]), 0.0, 1.0, 0.0, 1.0, 2, 2)
+    assert grid.shape == (2, 2) and float(grid.sum()) == 0.0 and idx.shape == (0,)
+    with pytest.raises(ValueError, match="equal length"):
+        impl.bin_2d_indices(np.array([1.0]), np.array([]), 0.0, 1.0, 0.0, 1.0, 2, 2)
+    with pytest.raises(ValueError, match="range"):
+        impl.bin_2d_indices(np.array([1.0]), np.array([1.0]), 1.0, 0.0, 0.0, 1.0, 2, 2)
+
+
 def test_sample_mask_matches_numpy_hash_reference(impl):
     # lod.hash_row_ids is the pure-NumPy SplitMix64 reference; the fused native
     # mask must be bit-identical to hashing + thresholding through it.

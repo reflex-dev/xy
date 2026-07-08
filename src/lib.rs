@@ -34,7 +34,7 @@ fn finite_ordered(lo: f64, hi: f64) -> bool {
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 5;
+pub const ABI_VERSION: u32 = 6;
 
 #[no_mangle]
 pub extern "C" fn fc_abi_version() -> u32 {
@@ -207,6 +207,53 @@ pub unsafe extern "C" fn fc_bin_2d(
     let out = std::slice::from_raw_parts_mut(out, w * h);
     kernels::bin_2d(x, y, x0, x1, y0, y1, w, h, out);
     1
+}
+
+/// Fused density scan (§5 Tier 2): one pass writing BOTH the count grid
+/// (bin_2d semantics: half-open finite window) and the ascending in-window
+/// row indices (range_indices semantics: inclusive window). Each output is
+/// bitwise identical to its standalone kernel. Returns the index count, or
+/// `usize::MAX` on invalid arguments.
+///
+/// # Safety
+/// `x`/`y` must point to `len` readable f64s; `grid` to `w*h` writable f32s;
+/// `idx` to `len` writable u32s.
+#[no_mangle]
+pub unsafe extern "C" fn fc_bin_2d_indices(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    grid: *mut f32,
+    idx: *mut u32,
+) -> usize {
+    let bad = w == 0 || h == 0 || !finite_gt(x0, x1) || !finite_gt(y0, y1);
+    if bad || grid.is_null() {
+        return usize::MAX;
+    }
+    let (x, y, idx) = if len == 0 {
+        (&[][..], &[][..], &mut [][..])
+    } else {
+        if x.is_null() || y.is_null() || idx.is_null() {
+            return usize::MAX;
+        }
+        (
+            std::slice::from_raw_parts(x, len),
+            std::slice::from_raw_parts(y, len),
+            std::slice::from_raw_parts_mut(idx, len),
+        )
+    };
+    let grid = std::slice::from_raw_parts_mut(grid, w * h);
+    if len == 0 {
+        grid.fill(0.0);
+        return 0;
+    }
+    kernels::bin_2d_indices(x, y, x0, x1, y0, y1, w, h, grid, idx)
 }
 
 /// NaN-skipping min/max (autorange primitive). Returns 1 and writes the result,

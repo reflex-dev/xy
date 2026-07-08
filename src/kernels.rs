@@ -438,6 +438,146 @@ fn bin_2d_impl(
     });
 }
 
+/// Fused density scan (§5 Tier 2): one pass over `x`/`y` producing BOTH the
+/// screen-bounded count grid and the ascending in-window row indices, instead
+/// of `bin_2d` + `range_indices` each re-reading the full columns. The two
+/// outputs keep their historical predicates — they are deliberately different:
+/// indices use the inclusive window (`>= lo && <= hi`, `range_indices`
+/// semantics) while grid cells use the half-open finite window (`>= lo && <
+/// hi`, `bin_2d` semantics) — so each output is bitwise identical to its
+/// standalone kernel. Returns the index count.
+#[allow(clippy::too_many_arguments)]
+pub fn bin_2d_indices(
+    x: &[f64],
+    y: &[f64],
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    w: usize,
+    h: usize,
+    grid: &mut [f32],
+    idx: &mut [u32],
+) -> usize {
+    assert_eq!(x.len(), y.len());
+    assert_eq!(grid.len(), w * h);
+    assert!(w > 0 && h > 0 && x1_gt_x0(lo_x, hi_x) && x1_gt_x0(lo_y, hi_y));
+    assert!(idx.len() >= x.len());
+    bin_2d_indices_impl(x, y, lo_x, hi_x, lo_y, hi_y, w, h, par_threads(x.len()), grid, idx)
+}
+
+/// Serial fused scan over one segment: local u32 grid counts + ascending
+/// `base + i` indices. Shared by the serial and parallel paths so per-point
+/// behavior is identical by construction.
+#[allow(clippy::too_many_arguments)]
+fn bin_2d_indices_scan(
+    x: &[f64],
+    y: &[f64],
+    base: u32,
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    w: usize,
+    h: usize,
+    grid: &mut [u32],
+    idx: &mut [u32],
+) -> usize {
+    let sx = w as f64 / (hi_x - lo_x);
+    let sy = h as f64 / (hi_y - lo_y);
+    let mut n = 0;
+    for i in 0..x.len() {
+        let xv = x[i];
+        let yv = y[i];
+        // range_indices predicate: inclusive on every side (NaN fails all).
+        if xv >= lo_x && xv <= hi_x && yv >= lo_y && yv <= hi_y {
+            idx[n] = base + i as u32;
+            n += 1;
+        }
+        // bin_2d predicate: half-open top/right, explicitly finite.
+        if !xv.is_finite() || !yv.is_finite() || xv < lo_x || xv >= hi_x || yv < lo_y || yv >= hi_y
+        {
+            continue;
+        }
+        let cx = (((xv - lo_x) * sx) as usize).min(w - 1);
+        let cy = (((yv - lo_y) * sy) as usize).min(h - 1);
+        grid[cy * w + cx] = grid[cy * w + cx].saturating_add(1);
+    }
+    n
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bin_2d_indices_impl(
+    x: &[f64],
+    y: &[f64],
+    lo_x: f64,
+    hi_x: f64,
+    lo_y: f64,
+    hi_y: f64,
+    w: usize,
+    h: usize,
+    threads: usize,
+    out: &mut [f32],
+    idx: &mut [u32],
+) -> usize {
+    let n = x.len();
+    if threads <= 1 || n < threads {
+        let mut grid = vec![0u32; w * h];
+        let written = bin_2d_indices_scan(x, y, 0, lo_x, hi_x, lo_y, hi_y, w, h, &mut grid, idx);
+        for (o, c) in out.iter_mut().zip(grid) {
+            *o = c as f32;
+        }
+        return written;
+    }
+    let chunk = n.div_ceil(threads);
+    // Workers fill disjoint idx segments aligned with their data chunk (a
+    // chunk can never yield more matches than its length) and a local grid;
+    // both merge steps below are order-preserving / integer sums, so the
+    // result is bitwise identical to the serial scan for any thread count.
+    let (grids, counts): (Vec<Vec<u32>>, Vec<usize>) = std::thread::scope(|s| {
+        let handles: Vec<_> = x
+            .chunks(chunk)
+            .zip(y.chunks(chunk))
+            .zip(idx[..n].chunks_mut(chunk))
+            .enumerate()
+            .map(|(t, ((xs, ys), iseg))| {
+                let base = (t * chunk) as u32;
+                s.spawn(move || {
+                    let mut grid = vec![0u32; w * h];
+                    let c = bin_2d_indices_scan(
+                        xs, ys, base, lo_x, hi_x, lo_y, hi_y, w, h, &mut grid, iseg,
+                    );
+                    (grid, c)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|hd| hd.join().expect("bin_2d_indices worker panicked"))
+            .unzip()
+    });
+    let mut write = counts[0];
+    for (t, &c) in counts.iter().enumerate().skip(1) {
+        let start = t * chunk;
+        idx.copy_within(start..start + c, write);
+        write += c;
+    }
+    let cell_chunk = (w * h).div_ceil(threads);
+    let grids_ref = &grids;
+    std::thread::scope(|s| {
+        for (ci, oseg) in out.chunks_mut(cell_chunk).enumerate() {
+            let base = ci * cell_chunk;
+            s.spawn(move || {
+                for (j, o) in oseg.iter_mut().enumerate() {
+                    let c: u64 = grids_ref.iter().map(|g| u64::from(g[base + j])).sum();
+                    *o = c as f32;
+                }
+            });
+        }
+    });
+    write
+}
+
 const SPLITMIX_INCREMENT: u64 = 0x9E37_79B9_7F4A_7C15;
 const SPLITMIX_MUL_1: u64 = 0xBF58_476D_1CE4_E5B9;
 const SPLITMIX_MUL_2: u64 = 0x94D0_49BB_1331_11EB;
@@ -839,6 +979,65 @@ fn min_max_impl(data: &[f64], threads: usize) -> Option<(f64, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bin_2d_indices_matches_separate_kernels() {
+        // Random data with NaN and exact-boundary values: the fused kernel's
+        // two outputs must be bitwise identical to bin_2d and range_indices.
+        let n = 1_200_000;
+        let mut x = Vec::with_capacity(n);
+        let mut y = Vec::with_capacity(n);
+        let mut state = 42u64;
+        let mut rnd = || {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (state >> 11) as f64 / (1u64 << 53) as f64 * 200.0 - 100.0
+        };
+        for i in 0..n {
+            if i % 997 == 0 {
+                x.push(f64::NAN);
+                y.push(rnd());
+            } else if i % 1013 == 0 {
+                // exact hi-edge: inside the inclusive index window,
+                // outside the half-open grid window.
+                x.push(95.0);
+                y.push(0.0);
+            } else {
+                x.push(rnd());
+                y.push(rnd());
+            }
+        }
+        let (lo_x, hi_x, lo_y, hi_y, w, h) = (-95.0, 95.0, -80.0, 80.0, 128, 96);
+
+        let mut grid_ref = vec![0.0f32; w * h];
+        bin_2d(&x, &y, lo_x, hi_x, lo_y, hi_y, w, h, &mut grid_ref);
+        let mut idx_ref = vec![0u32; n];
+        let m_ref = range_indices(&x, &y, lo_x, hi_x, lo_y, hi_y, &mut idx_ref);
+
+        for threads in [1, 4] {
+            let mut grid = vec![0.0f32; w * h];
+            let mut idx = vec![0u32; n];
+            let m = bin_2d_indices_impl(
+                &x, &y, lo_x, hi_x, lo_y, hi_y, w, h, threads, &mut grid, &mut idx,
+            );
+            assert_eq!(m, m_ref, "threads={threads}");
+            assert_eq!(idx[..m], idx_ref[..m_ref], "threads={threads}");
+            assert_eq!(grid, grid_ref, "threads={threads}");
+        }
+    }
+
+    #[test]
+    fn bin_2d_indices_edge_point_indexed_but_not_binned() {
+        // One point exactly on the inclusive hi edge: present in the index
+        // list (range semantics) but not counted in any cell (bin semantics).
+        let x = [1.0, 0.5];
+        let y = [0.5, 0.5];
+        let mut grid = vec![0.0f32; 4];
+        let mut idx = vec![0u32; 2];
+        let m = bin_2d_indices(&x, &y, 0.0, 1.0, 0.0, 1.0, 2, 2, &mut grid, &mut idx);
+        assert_eq!(m, 2);
+        assert_eq!(&idx[..2], &[0, 1]);
+        assert_eq!(grid.iter().sum::<f32>(), 1.0); // only the interior point binned
+    }
 
     #[test]
     fn splitmix64_known_vectors() {
