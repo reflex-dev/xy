@@ -141,6 +141,21 @@ values = np.concatenate(
 Figure(title="Distribution").histogram(values, bins=240, name="samples")
 ```
 
+Pass `cumulative=True` to accumulate bins left-to-right. Combined with
+`density=True` this is the empirical CDF, whose last bin is ~1.0:
+
+```python
+import numpy as np
+from fastcharts import Figure
+
+rng = np.random.default_rng(3)
+latency_ms = rng.gamma(shape=2.0, scale=40.0, size=100_000)
+
+Figure(title="Latency CDF", x_label="ms", y_label="fraction").hist(
+    latency_ms, bins=200, density=True, cumulative=True, name="p(x)"
+)
+```
+
 ## Bar
 
 ```python
