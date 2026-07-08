@@ -150,6 +150,7 @@ def test_chart_dom_slots_are_public_styling_contract() -> None:
         "badge_item",
         "tick_label",
         "axis_title",
+        "annotation_label",
     )
 
     assert fc.CHART_DOM_SLOTS is components.CHART_DOM_SLOTS

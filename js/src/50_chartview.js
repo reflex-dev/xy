@@ -494,9 +494,11 @@ class ChartView {
     root.appendChild(this.chrome);
 
     this.canvas = document.createElement("canvas");
+    // cursor is a defeatable stylesheet default keyed on data-fc-dragmode; only
+    // structural geometry + touch-action stay inline here.
     this.canvas.style.cssText =
       `position:absolute;left:${this.plot.x}px;top:${this.plot.y}px;` +
-      `width:${this.plot.w}px;height:${this.plot.h}px;cursor:crosshair;touch-action:none;`;
+      `width:${this.plot.w}px;height:${this.plot.h}px;touch-action:none;`;
     this._applySlot(this.canvas, "canvas");
     root.appendChild(this.canvas);
 
