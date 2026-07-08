@@ -359,14 +359,12 @@ WRAP_SCRIPT_TEMPLATE = r"""
 </script>
 """
 
-WRAP_SCRIPT = (
-    WRAP_SCRIPT_TEMPLATE.replace(
-        "__FASTCHARTS_PUBLIC_DOM_SLOTS__",
-        json.dumps(list(CHART_DOM_SLOTS)),
-    ).replace(
-        "__FASTCHARTS_REQUIRED_RUNTIME_DOM_SLOTS__",
-        json.dumps(list(REQUIRED_RUNTIME_DOM_SLOTS)),
-    )
+WRAP_SCRIPT = WRAP_SCRIPT_TEMPLATE.replace(
+    "__FASTCHARTS_PUBLIC_DOM_SLOTS__",
+    json.dumps(list(CHART_DOM_SLOTS)),
+).replace(
+    "__FASTCHARTS_REQUIRED_RUNTIME_DOM_SLOTS__",
+    json.dumps(list(REQUIRED_RUNTIME_DOM_SLOTS)),
 )
 
 
@@ -778,7 +776,9 @@ def main(argv: list[str] | None = None) -> int:
             group_children = [children_by_name[asset] for asset in group]
             critical_assets = tuple(asset for asset in CRITICAL_ASSETS if asset in group)
             shell = _write_shell_page(tmp, group_children, critical_assets)
-            shell_payload = _shell_result(_run_page(chromium, shell), len(group_children), critical_assets)
+            shell_payload = _shell_result(
+                _run_page(chromium, shell), len(group_children), critical_assets
+            )
             shell_payloads.append(shell_payload)
             print(
                 f"iframe shell {group_index}: "
