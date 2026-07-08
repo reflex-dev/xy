@@ -286,7 +286,10 @@ def main() -> None:
         chromium = find_chromium() if args.render else None
         report = {
             "schema_version": SCHEMA_VERSION,
-            "environment": collect_environment_metadata(chromium=chromium or None),
+            "environment": collect_environment_metadata(
+                chromium=chromium or None,
+                fastcharts_backend="native",
+            ),
             "benchmark_categories": list(BENCHMARK_CATEGORIES),
             "tracked_categories": categories_for(SCATTER_NATIVE_CATEGORY_IDS),
             "rows": rows,

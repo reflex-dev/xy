@@ -216,7 +216,7 @@ def main() -> None:
 
         report = {
             "schema_version": SCHEMA_VERSION,
-            "environment": collect_environment_metadata(),
+            "environment": collect_environment_metadata(fastcharts_backend="native"),
             "benchmark_categories": list(BENCHMARK_CATEGORIES),
             "tracked_categories": categories_for(KERNEL_NATIVE_CATEGORY_IDS),
             "rows": rows,
