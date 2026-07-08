@@ -159,9 +159,11 @@ beyond global nonblank/color checks, it verifies title, plot, x-axis, and y-axis
 regions, rejects collapsed plot occupancy, and still runs tick-label overlap
 probes. It screenshots the generated core-family cases plus every committed
 FastCharts Reflex gallery asset; the Plotly comparison page is intentionally
-excluded because it does not use FastCharts' DOM or tick-label probes. This
-catches charts that render pixels in the wrong place or lose browser chrome
-while avoiding a fragile pixel-perfect golden file.
+excluded because it does not use FastCharts' DOM or tick-label probes. It also
+screenshots static Reflex-style chrome shells for the custom legend/tooltip and
+annotated heatmap examples, requiring their external chrome DOM to be present
+and visible. This catches charts that render pixels in the wrong place or lose
+browser chrome while avoiding a fragile pixel-perfect golden file.
 
 The interaction gate runs `scripts/interaction_stress_smoke.py`, a smoke-sized
 interaction benchmark that validates p95 budgets and visual invariants for

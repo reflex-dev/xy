@@ -587,6 +587,25 @@ def test_visual_regression_smoke_covers_flaky_dashboard_assets() -> None:
     assert "plotly_colored_scatter.html" not in visual.ASSET_CASES
     for asset in visual.ASSET_CASES:
         assert (CHART_ASSET_DIR / asset).is_file()
+    assert [name for name, _asset, _ids in visual.CHROME_SHELL_CASES] == [
+        "custom_chrome_reflex_shell",
+        "annotated_heatmap_reflex_shell",
+    ]
+    shell_assets = [asset for _name, asset, _ids in visual.CHROME_SHELL_CASES]
+    assert shell_assets == ["custom_chrome.html", "annotated_heatmap.html"]
+    required_ids = {
+        required_id
+        for _name, _asset, ids in visual.CHROME_SHELL_CASES
+        for required_id in ids
+    }
+    assert {
+        "custom-chrome-frame",
+        "custom-chrome-legend",
+        "custom-chrome-tooltip",
+        "annotated-heatmap-frame",
+        "annotated-heatmap-legend",
+        "annotated-heatmap-tooltip",
+    } <= required_ids
 
 
 def test_visual_regression_smoke_checks_layout_regions_not_just_blankness() -> None:
@@ -606,6 +625,12 @@ def test_visual_regression_smoke_checks_layout_regions_not_just_blankness() -> N
         "runner-specific",
         "x_axis_box = (0.08, 0.70, 0.94, 0.99)",
         '"x-axis": (700, 250 if asset else 40)',
+        "CHROME_SHELL_CASES",
+        "data-fc-custom-chrome-shell",
+        "_write_chrome_shell",
+        "_assert_chrome_shell_dom",
+        "custom chrome shell missing nodes",
+        "custom chrome shell hidden nodes",
     ]
     for marker in required:
         assert marker in source
