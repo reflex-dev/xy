@@ -73,6 +73,26 @@ def _require_job_contains(
         errors.append(f"{workflow_label} {job} job missing {description}: {missing}")
 
 
+def _step_is_conditioned(job_text: str, step_needle: str) -> bool:
+    """True if the step whose `uses:`/`run:` line contains `step_needle` has its
+    own `if:` key — not just any `if:` elsewhere in the job (e.g. a sibling
+    step's dry-run summary). Scoped to the step's own indented block so a
+    same-level sibling step can't mask a missing gate.
+
+    The prefix (the step's own `uses:`/`name:`/`run:` line) is matched with
+    `[^\\n]*`, not a dot-all `.*` — under re.DOTALL a greedy `.*` would happily
+    span past earlier sibling steps and swallow their `if:` lines too, which
+    defeats the whole point of scoping this to one step.
+    """
+    match = re.search(
+        rf"( *)- (?:uses|name|run): [^\n]*{re.escape(step_needle)}[^\n]*\n([\s\S]*?)(?=\n\1- |\Z)",
+        job_text,
+    )
+    if match is None:
+        return False
+    return "if:" in match.group(0)
+
+
 def _require_workflow_contains(
     errors: list[str],
     text: str,
@@ -331,20 +351,40 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         jobs,
         "publish",
         "release",
-        "trusted PyPI publishing from downloaded artifacts",
+        "trusted PyPI publishing from downloaded artifacts, gated by a dry-run switch",
         "needs: [wheels, sdist, wasm]",
         "environment: pypi",
         "id-token: write",
         "actions/download-artifact@v4",
         "pattern: dist-*",
         "merge-multiple: true",
+        "dry_run",
         "pypa/gh-action-pypi-publish@release/v1",
         "packages-dir: dist/",
+    )
+    _require_workflow_contains(
+        errors,
+        text,
+        "release",
+        "a workflow_dispatch dry-run input defaulting to true, so a manual run "
+        "never accidentally publishes",
+        "workflow_dispatch:",
+        "dry_run:",
+        "type: boolean",
+        "default: true",
     )
 
     publish = jobs.get("publish", "")
     if "password:" in publish or "api-token" in publish:
         errors.append("release publish job should use trusted publishing, not a PyPI token")
+    if "pypa/gh-action-pypi-publish@release/v1" in publish and not _step_is_conditioned(
+        publish, "pypa/gh-action-pypi-publish@release/v1"
+    ):
+        errors.append(
+            "release publish job's PyPI upload step has no if: condition of its "
+            "own — it must be gated (dry_run) so a manual dispatch cannot "
+            "publish unintentionally, even if a sibling step also has an if:"
+        )
     return errors
 
 

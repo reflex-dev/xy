@@ -7,6 +7,16 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: >-
+          Dry run: build and verify every wheel/sdist/wasm artifact across the
+          full release matrix without publishing to PyPI. Use this to validate
+          the cross-compile matrix (musllinux, win-arm64, wasm, ...) before a
+          real version-tag release. Defaults to true so a manual dispatch
+          never accidentally publishes.
+        type: boolean
+        default: true
 
 jobs:
   # One wheel per platform (the C-ABI core is CPython-version-independent, so
@@ -204,6 +214,16 @@ jobs:
           merge-multiple: true
       - name: List artifacts
         run: ls -la dist/
+      # A manual workflow_dispatch defaults to dry_run=true: every wheel/sdist/
+      # wasm artifact is built and verified above, but nothing is uploaded to
+      # PyPI. Use this to validate the full cross-compile matrix before a real
+      # version-tag release. A tag push always publishes for real.
+      - name: Dry run summary (no PyPI publish)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true'
+        run: |
+          echo "::notice::Dry run — built and verified $(ls dist/*.whl dist/*.tar.gz 2>/dev/null | wc -l | tr -d ' ') artifacts across the full release matrix. Skipping PyPI publish."
+          echo "Re-run this workflow with dry_run=false, or push a v* tag, to publish for real."
       - uses: pypa/gh-action-pypi-publish@release/v1
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
         with:
           packages-dir: dist/
