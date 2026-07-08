@@ -147,8 +147,8 @@ document or from a verified JSON artifact.
 
 | Claim shape | Safe wording pattern | Required context |
 |---|---|---|
-| Payload/prep comparison | "In the native backend smoke benchmark, histogram payload prep for 100k values / 200 bins was 303x faster than Plotly." | chart type, workload, backend, compared library, metric |
-| Browser first paint | "For the measured Chrome TTFR row, the 100k-value histogram first painted 5.89x faster than Plotly." | browser/render target, workload, chart type, TTFR included |
+| Payload/prep comparison | "In the native backend benchmark, histogram payload prep for 10k values / 200 bins was 15.9x faster than Plotly." | chart type, workload, backend, compared library, metric |
+| Browser first paint | "For the measured Chrome TTFR row, the 10k-value histogram first painted 5.8x faster than Plotly." | browser/render target, workload, chart type, TTFR included |
 | Large scatter overview | "The 10M scatter overview uses density mode with a 768 KB payload; it is not drawing 10M exact markers." | mode, point count, payload, exact-vs-aggregate wording |
 | Line decimation | "The 10M line benchmark ships an M4-decimated ~60 KB payload while preserving the extrema oracle." | mode, point count, payload, correctness oracle |
 | Install/import footprint | "In the install-footprint benchmark, cold import was 6.4 ms for the measured distribution." | benchmark name, metric, measured distribution |
@@ -218,8 +218,11 @@ area, simple bar, grouped bar, stacked bar, and heatmap. The harness reports
 payload-prep time, payload bytes (excluding JS runtime), standalone HTML bytes,
 and optional headless-Chromium TTFR.
 
-Measured locally on July 4, 2026 with the native Rust backend
-(`fastcharts backend: native`, Rust 1.96.1):
+Measured by the `benchmark-refresh` CI workflow on 2026-07-08 (Ubuntu, native
+Rust backend). The harness warms each library once before timing, so no row is
+charged a one-time library cold-start (an unwarmed first Plotly build costs
+~1.5 s and would otherwise inflate the first case's speedup into a meaningless
+outlier). Reproduce locally with:
 
 ```bash
 PYTHONPATH=python .venv/bin/python benchmarks/bench_2d_charts.py \
@@ -241,14 +244,14 @@ matplotlib calls.
 
 ### Smoke profile with browser TTFR
 
-| Chart | Workload | Payload-prep vs Plotly | Payload reduction | TTFR speedup | Verdict |
-|---|---:|---:|---:|---:|---|
-| Histogram | 100k values / 200 bins | 303x faster | 348x smaller | 5.89x faster | pass |
-| Area | 100k samples | 10.5x faster | 26.1x smaller | 3.19x faster | pass |
-| Bar | 1k categories | 13.4x faster | 1.53x smaller | 3.23x faster | pass |
-| Grouped bar | 1k categories x 4 | 10.3x faster | 2.06x smaller | 3.73x faster | pass |
-| Stacked bar | 1k categories x 4 | 9.17x faster | 1.60x smaller | 2.91x faster | pass |
-| Heatmap | 120 x 120 cells | 19.4x faster | 3.45x smaller | 3.06x faster | pass |
+| Chart | Workload | Speedup vs Plotly | Payload reduction | TTFR speedup | Verdict |
+|---|---|---:|---:|---:|---|
+| Histogram | 10k values / 200 bins | 15.9x faster | 33.4x smaller | 5.8x faster | pass |
+| Area | 10k samples | 19.5x faster | 1.9x smaller | 3.6x faster | pass |
+| Bar | 100 categories | 11.5x faster | 2.5x smaller | 4.4x faster | pass |
+| Grouped bar | 100 categories x 4 | 5.7x faster | 2.1x smaller | 4.9x faster | pass |
+| Stacked bar | 100 categories x 4 | 4.8x faster | 1.7x smaller | 4.7x faster | pass |
+| Heatmap | 50 x 50 cells | 33.3x faster | 3.4x smaller | 4.1x faster | pass |
 
 The heatmap result uses the compact grid-texture path: one normalized scalar
 grid instead of four rectangle geometry columns per cell.
@@ -258,12 +261,12 @@ grid instead of four rectangle geometry columns per cell.
 The larger profile extends to 1M histogram/area samples, 10k simple bars, and a
 500 x 500 heatmap. Results stayed strong:
 
-- Histogram: 1M values produced a 4 KB fastcharts payload vs 13 MB Plotly JSON,
-  with 18.6x faster payload prep on the native backend.
-- Heatmap: 500 x 500 cells produced a 984 KB fastcharts payload vs 3 MB Plotly
-  JSON, with 9.74x faster payload prep.
-- Area: 1M samples produced an 89 KB fastcharts payload vs 21 MB Plotly JSON,
-  with 4.96x faster payload prep.
+- Histogram: 1M values produced a 4 KB fastcharts payload vs 13 MB Plotly JSON
+  (3192x smaller), with 11.2x faster payload prep on the native backend.
+- Heatmap: 500 x 500 cells produced a 991 KB fastcharts payload vs 3 MB Plotly
+  JSON, with 6.2x faster payload prep.
+- Area: 1M samples produced an 89 KB fastcharts payload vs 21 MB Plotly JSON
+  (242x smaller), with 7.6x faster payload prep.
 - Bars: the compact bar primitive removed the previous 10k-category `watch`
   item. Simple 10k bars now ship 167 KB vs Plotly's 205 KB and prepare 4.35x
   faster; grouped 1k bars ship 42 KB vs Plotly's 86 KB.
