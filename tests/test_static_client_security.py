@@ -196,6 +196,9 @@ def test_client_interaction_event_payload_contract_is_stable() -> None:
         text = path.read_text(encoding="utf-8")
         for marker in required:
             assert marker in text, f"{path} changed interaction event payload marker {marker!r}"
+        assert text.count('if (this._interactionFlag("select", true)) {') >= 2, (
+            f"{path} must gate both selection clear and kernel selection events"
+        )
 
 
 def test_client_exposes_first_class_mark_state_styling() -> None:

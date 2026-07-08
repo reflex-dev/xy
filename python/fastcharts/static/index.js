@@ -4498,10 +4498,12 @@ class ChartView {
       }
       this._selectionCount = msg.total || 0;
       this.draw();
-      this._dispatchChartEvent("select", {
-        total: this._selectionCount,
-        view: this._eventView("select"),
-      });
+      if (this._interactionFlag("select", true)) {
+        this._dispatchChartEvent("select", {
+          total: this._selectionCount,
+          view: this._eventView("select"),
+        });
+      }
     }
   }
 
