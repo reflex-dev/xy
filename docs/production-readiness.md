@@ -298,7 +298,20 @@ Before tagging a release:
   working.
 - Confirm CI built and verified native wheels for Linux glibc and musl/Alpine
   (x86-64, aarch64, armv7), macOS (x86-64, Apple Silicon), and Windows (x86, x64,
-  arm64), plus the best-effort Pyodide/Emscripten WASM wheel.
+  arm64).
+- The Pyodide/Emscripten WASM wheel is **built but not functional at runtime**
+  and is excluded from the supported set. Verified 2026-07-08 by loading the
+  wheel in Pyodide 0.26.4 (node): it is a structurally valid side-module (wasm
+  magic, `dylink` section, all `fc_*` symbols exported), and micropip installs
+  it, but `WebAssembly.instantiate` fails with `LinkError: Import "env"
+  "__cpp_exception": tag import requires a WebAssembly.Tag`. Root cause: the
+  Rust core builds with the default `panic=unwind`, which emits a C++
+  exception-handling tag import Pyodide's runtime does not provide. Fix
+  direction: build the `wasm32-unknown-emscripten` target with `panic=abort`
+  (likely `-Z build-std=std,panic_abort`) or force emscripten's legacy JS
+  exception handling, then re-verify with a Pyodide load. The wasm job stays
+  `continue-on-error` and the wheel is not advertised as working until a
+  Pyodide runtime load passes in CI.
 - Confirm the no-Rust install job passed (it must build, install, and then
   raise a clear ImportError on first compute — never a silent fallback).
 - Confirm the sdist verifier passed and the source archive contains the expected

@@ -158,6 +158,16 @@ jobs:
         run: |
           whl=$(ls dist/*.whl)
           python scripts/verify_wheel.py "$whl" --expect-native
+      # Runtime load probe: "builds" is not "loads". This installs the wheel in
+      # a real Pyodide (node) and calls a native kernel. It currently FAILS
+      # (Rust panic=unwind emits a __cpp_exception import Pyodide can't satisfy)
+      # — kept non-gating via the job's continue-on-error so the experimental
+      # wheel never blocks a release, but the status stays visible until fixed.
+      - name: Pyodide runtime load probe (informational)
+        run: |
+          npm i --no-save pyodide@0.26.4
+          whl=$(ls dist/*.whl)
+          python scripts/pyodide_load_smoke.py "$whl"
       - uses: actions/upload-artifact@v4
         with:
           name: dist-pyodide
