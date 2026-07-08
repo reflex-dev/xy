@@ -476,7 +476,8 @@ class PayloadMixin(_Host):
         # (range_indices semantics) without re-reading the full columns twice.
         grid, sel = kernels.bin_2d_indices(t.x.values, t.y.values, xr[0], xr[1], yr[0], yr[1], w, h)
         visible = int(len(sel))
-        gmax = float(grid.max()) if grid.size else 0.0
+        # numpy's .max() stub mis-resolves the overload for the kernel's f32 grid.
+        gmax = float(grid.max()) if grid.size else 0.0  # ty: ignore[invalid-argument-type]
         # Honor the user's colormap for the density ramp even though the per-point
         # color *data* can't survive count-aggregation (needs the §5-F5 algebra).
         cmap = (
