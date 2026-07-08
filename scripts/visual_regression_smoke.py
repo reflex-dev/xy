@@ -696,6 +696,202 @@ ASSET_CASES: tuple[str, ...] = (
     "live_drilldown_100m.html",
 )
 
+CHROME_SHELL_CASES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    (
+        "custom_chrome_reflex_shell",
+        "custom_chrome.html",
+        (
+            "custom-chrome-frame",
+            "custom-chrome-frame-wrap",
+            "custom-chrome-legend",
+            "custom-chrome-tooltip",
+            "custom-chrome-tooltip-title",
+            "custom-chrome-tooltip-activation",
+            "custom-chrome-tooltip-retention",
+        ),
+    ),
+    (
+        "annotated_heatmap_reflex_shell",
+        "annotated_heatmap.html",
+        (
+            "annotated-heatmap-frame",
+            "annotated-heatmap-frame-wrap",
+            "annotated-heatmap-legend",
+            "annotated-heatmap-tooltip",
+            "annotated-heatmap-tooltip-title",
+            "annotated-heatmap-tooltip-score",
+            "annotated-heatmap-tooltip-bar",
+            "annotated-heatmap-active-cell",
+            "annotated-heatmap-active-score",
+        ),
+    ),
+)
+
+
+def _chrome_shell_probe_script(required_ids: tuple[str, ...]) -> str:
+    return f"""
+<script>
+(() => {{
+  const required = {json.dumps(list(required_ids))};
+  const missing = [];
+  const hidden = [];
+  for (const id of required) {{
+    const el = document.getElementById(id);
+    if (!el) {{
+      missing.push(id);
+      continue;
+    }}
+    const style = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    if (
+      style.display === "none" ||
+      style.visibility === "hidden" ||
+      Number(style.opacity || 1) <= 0 ||
+      rect.width <= 0 ||
+      rect.height <= 0
+    ) {{
+      hidden.push(id);
+    }}
+  }}
+  document.body.setAttribute("data-fc-custom-chrome-shell", JSON.stringify({{
+    required,
+    missing,
+    hidden,
+  }}));
+}})();
+</script>
+"""
+
+
+def _write_chrome_shell(
+    tmp: Path,
+    name: str,
+    asset: str,
+    required_ids: tuple[str, ...],
+) -> Path:
+    chart_uri = (CHART_ASSET_DIR / asset).as_uri()
+    if asset == "custom_chrome.html":
+        body = f"""
+<section class="card custom-shell">
+  <div class="chart-wrap" id="custom-chrome-frame-wrap">
+    <iframe id="custom-chrome-frame" src="{chart_uri}" title="Custom chrome chart"></iframe>
+    <aside id="custom-chrome-legend" class="custom-chrome-legend">
+      <strong>Segment</strong>
+      <span><i style="background:#4c78a8"></i> Enterprise</span>
+      <span><i style="background:#f58518"></i> Growth</span>
+      <span><i style="background:#54a24b"></i> Self serve</span>
+    </aside>
+    <div id="custom-chrome-tooltip" class="custom-chrome-tooltip">
+      <strong id="custom-chrome-tooltip-title">Growth</strong>
+      <p>activation <b id="custom-chrome-tooltip-activation">0.74</b></p>
+      <p>retention <b id="custom-chrome-tooltip-retention">0.68</b></p>
+    </div>
+  </div>
+</section>
+"""
+    else:
+        body = f"""
+<section class="card annotated-shell">
+  <div class="heatmap-wrap" id="annotated-heatmap-frame-wrap">
+    <iframe id="annotated-heatmap-frame" src="{chart_uri}" title="Annotated heatmap"></iframe>
+    <div id="annotated-heatmap-tooltip" class="annotated-heatmap-tooltip">
+      <strong id="annotated-heatmap-tooltip-title">High / Thu</strong>
+      <span id="annotated-heatmap-tooltip-score">96%</span>
+      <div class="tooltip-meter"><i id="annotated-heatmap-tooltip-bar"></i></div>
+    </div>
+  </div>
+  <aside id="annotated-heatmap-legend" class="annotated-heatmap-legend">
+    <strong>Risk guide</strong>
+    <div class="risk-ramp"></div>
+    <div class="risk-row"><span>0%</span><span>100%</span></div>
+    <p><b>Launch window</b><br>Watch rollout-sensitive tiers.</p>
+    <p><b>Alert threshold</b><br>Investigate high and critical cells.</p>
+    <div class="active-cell">
+      <span id="annotated-heatmap-active-cell">Critical / Thu</span>
+      <b id="annotated-heatmap-active-score">96%</b>
+    </div>
+  </aside>
+</section>
+"""
+    page = tmp / f"{name}.html"
+    page.write_text(
+        f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{name}</title>
+  <style>
+    html, body {{ margin:0; width:100%; min-height:100%; background:#f1f5f9; font-family:system-ui,sans-serif; }}
+    .card {{ width:900px; height:520px; background:#fff; overflow:hidden; box-sizing:border-box; }}
+    iframe {{ border:0; width:100%; height:430px; display:block; background:#fff; }}
+    .chart-wrap {{ position:relative; width:100%; min-height:430px; background:#fff; }}
+    .custom-chrome-legend {{
+      position:absolute; top:14px; right:16px; z-index:4; display:grid; gap:7px;
+      min-width:132px; padding:11px 13px; border:1px solid rgba(148,163,184,.35);
+      border-radius:8px; background:rgba(255,255,255,.90); box-shadow:0 14px 28px rgba(15,23,42,.10);
+      color:#101828; font-size:12px;
+    }}
+    .custom-chrome-legend strong {{ color:#667085; font-size:11px; text-transform:uppercase; }}
+    .custom-chrome-legend span {{ display:flex; align-items:center; gap:7px; }}
+    .custom-chrome-legend i {{ width:10px; height:10px; border-radius:99px; display:inline-block; }}
+    .custom-chrome-tooltip, .annotated-heatmap-tooltip {{
+      position:absolute; z-index:5; display:block; opacity:1; color:#fff; border-radius:8px;
+      box-shadow:0 20px 42px rgba(30,41,59,.24); pointer-events:none;
+    }}
+    .custom-chrome-tooltip {{
+      left:92px; top:118px; min-width:148px; padding:12px 13px;
+      border:1px solid rgba(255,255,255,.24);
+      background:linear-gradient(135deg, rgba(37,99,235,.96), rgba(124,58,237,.94));
+    }}
+    .custom-chrome-tooltip p {{ display:flex; justify-content:space-between; gap:18px; margin:8px 0 0; font-size:12px; color:rgba(255,255,255,.76); }}
+    .custom-chrome-tooltip b {{ color:#fff; }}
+    .annotated-shell {{ display:flex; align-items:stretch; }}
+    .heatmap-wrap {{ position:relative; flex:1 1 615px; min-width:0; background:#fff; }}
+    .annotated-heatmap-legend {{
+      flex:0 0 285px; box-sizing:border-box; padding:18px; border-left:1px solid #dde3ea;
+      background:linear-gradient(180deg,#fff 0%,#f8fafc 100%); color:#0f172a;
+    }}
+    .annotated-heatmap-legend strong {{ font-size:15px; }}
+    .risk-ramp {{ height:10px; border-radius:99px; margin-top:14px; background:linear-gradient(90deg,#2563eb,#22c55e 36%,#facc15 68%,#ef4444); }}
+    .risk-row {{ display:flex; justify-content:space-between; margin-top:7px; color:#64748b; font-size:12px; font-weight:700; }}
+    .annotated-heatmap-legend p {{ margin:18px 0 0; font-size:12px; line-height:1.35; color:#64748b; }}
+    .annotated-heatmap-legend p b {{ color:#0f172a; }}
+    .active-cell {{ display:flex; justify-content:space-between; gap:12px; margin-top:18px; padding-top:16px; border-top:1px solid #e2e8f0; }}
+    .active-cell b {{ color:#7c3aed; }}
+    .annotated-heatmap-tooltip {{
+      left:310px; top:95px; min-width:190px; padding:12px 13px;
+      border:1px solid rgba(255,255,255,.20);
+      background:linear-gradient(135deg, rgba(15,23,42,.96), rgba(30,41,59,.94));
+    }}
+    .annotated-heatmap-tooltip span {{ float:right; color:#bae6fd; font-weight:800; }}
+    .tooltip-meter {{ clear:both; height:6px; margin-top:13px; border-radius:99px; background:rgba(255,255,255,.18); overflow:hidden; }}
+    .tooltip-meter i {{ display:block; height:100%; width:96%; border-radius:99px; background:linear-gradient(90deg,#38bdf8,#facc15,#fb7185); }}
+  </style>
+</head>
+<body>
+{body}
+{_chrome_shell_probe_script(required_ids)}
+</body>
+</html>
+""",
+        encoding="utf-8",
+    )
+    return page
+
+
+def _assert_chrome_shell_dom(name: str, dom: str) -> None:
+    error = re.search(r'data-fc-custom-chrome-shell-error="([^"]*)"', dom)
+    if error:
+        raise SystemExit(f"{name}: custom chrome shell probe failed: {html_lib.unescape(error.group(1))}")
+    match = re.search(r'data-fc-custom-chrome-shell="([^"]*)"', dom)
+    if not match:
+        raise SystemExit(f"{name}: custom chrome shell probe did not finish")
+    payload = json.loads(html_lib.unescape(match.group(1)))
+    if payload.get("missing"):
+        raise SystemExit(f"{name}: custom chrome shell missing nodes: {payload['missing']}")
+    if payload.get("hidden"):
+        raise SystemExit(f"{name}: custom chrome shell hidden nodes: {payload['hidden']}")
+
 
 def main() -> None:
     chromium = sys.argv[1] if len(sys.argv) > 1 else find_chromium()
@@ -726,7 +922,23 @@ def main() -> None:
             f"non-white={stats.non_white}, colored={stats.colored}, "
             f"colors={stats.unique_colors}"
         )
-    print(f"visual regression smoke OK: {len(CASES)} charts, {len(ASSET_CASES)} assets")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        for name, asset, required_ids in CHROME_SHELL_CASES:
+            page = _write_chrome_shell(tmp, name, asset, required_ids)
+            dom = _dump_dom(chromium, page)
+            _assert_chrome_shell_dom(name, dom)
+            png = _screenshot_page(chromium, page, width=ASSET_W, height=ASSET_H)
+            stats = _assert_visual(name, png, expected=(ASSET_W, ASSET_H), asset=True)
+            print(
+                f"{name}: {stats.width}x{stats.height}, "
+                f"non-white={stats.non_white}, colored={stats.colored}, "
+                f"colors={stats.unique_colors}"
+            )
+    print(
+        f"visual regression smoke OK: {len(CASES)} charts, "
+        f"{len(ASSET_CASES)} assets, {len(CHROME_SHELL_CASES)} chrome shells"
+    )
 
 
 if __name__ == "__main__":

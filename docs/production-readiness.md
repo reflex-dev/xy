@@ -144,8 +144,10 @@ tick-label overlap, tooltip stability, crosshair visibility, view changes, box
 zoom narrow/restore behavior, brush select count/clear behavior, lit-pixel
 readback floors, and frame-to-frame color jumps. The visual regression smoke
 also validates title, plot, x-axis, and y-axis regions plus plot-region
-occupancy so a chart cannot collapse into a corner, lose axis chrome, or pass
-merely because some pixels exist somewhere.
+occupancy, and it screenshots static Reflex-style chrome shells for the custom
+legend/tooltip and annotated heatmap examples. A chart cannot collapse into a
+corner, lose axis/custom chrome, or pass merely because some pixels exist
+somewhere.
 
 Use this after packaging, workflow, or source-distribution changes:
 
@@ -255,7 +257,10 @@ custom chrome/business/cohort reports fail the gate.
 
 The visual gate runs `scripts/visual_regression_smoke.py`. It verifies generated
 core-family charts and committed FastCharts Reflex gallery assets with title,
-plot, x-axis, y-axis, occupancy, nonblank, color, and tick-overlap probes.
+plot, x-axis, y-axis, occupancy, nonblank, color, and tick-overlap probes. It
+also renders static custom-chrome shells for the custom legend/tooltip and
+annotated heatmap examples, and fails if their external chrome DOM is missing
+or hidden.
 
 The interaction gate runs `scripts/interaction_stress_smoke.py`, which is a
 smaller gated version of `benchmarks/bench_interaction.py`. The smoke validates
