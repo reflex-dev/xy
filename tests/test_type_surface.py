@@ -307,9 +307,18 @@ def test_component_dataclass_and_chart_method_types_are_specific() -> None:
     assert get_origin(props_hint) is dict
     assert get_args(props_hint) == (str, Any)
 
+    assert get_type_hints(components.Chart.figure)["return"] is figure_module.Figure
+    assert get_type_hints(components.Chart.widget)["return"] is Any
+    assert get_type_hints(components.Chart.show)["return"] is Any
+
     memory_report_return = get_type_hints(components.Chart.memory_report)["return"]
     assert get_origin(memory_report_return) is dict
     assert get_args(memory_report_return) == (str, Any)
+
+    for method in ("chrome_components", "reflex_components"):
+        return_hint = get_type_hints(getattr(components.Chart, method))["return"]
+        assert get_origin(return_hint) is dict
+        assert get_args(return_hint) == (str, Any)
 
 
 def test_chart_and_figure_html_export_types_stay_in_sync() -> None:
