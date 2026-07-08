@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT / "python"))
 
 from fastcharts.dom import CHART_DOM_SLOTS  # noqa: E402
 
-CHART_DIR = ROOT / "reflex_fastcharts_app" / "assets" / "charts"
+CHART_DIR = ROOT / "examples" / "reflex" / "assets" / "charts"
 CHROMIUM_CANDIDATES = (
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",

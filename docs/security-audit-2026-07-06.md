@@ -121,7 +121,7 @@ Fix:
 
 - `uv tool run pip-audit --progress-spinner off .`: no known vulnerabilities.
 - `uv tool run pip-audit --progress-spinner off -r requirements.txt` from
-  `reflex_fastcharts_app/`: no known vulnerabilities; local editable
+  `examples/reflex/`: no known vulnerabilities; local editable
   `fastcharts` is skipped because it is not a PyPI package.
 - `cargo tree --locked`: only `fastcharts-core`, no third-party Rust crates.
 - `node js/build.mjs --check`: static JS bundles fresh.

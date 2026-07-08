@@ -24,7 +24,7 @@ DEFAULT_DOCS = (
     "docs/chart-roadmap.md",
     "docs/contributing.md",
     "docs/production-readiness.md",
-    "reflex_fastcharts_app/README.md",
+    "examples/reflex/README.md",
 )
 
 BROAD_SUPERLATIVE_RE = re.compile(

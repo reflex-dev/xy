@@ -1,7 +1,7 @@
 # Reflex integration — design
 
 Status: **design** (validated in part by the working prototype in
-`reflex_fastcharts_app/`). The deliverable is an external Reflex adapter
+`examples/reflex/`). The deliverable is an external Reflex adapter
 package (working name: `reflex-fastcharts`) that makes a fastcharts figure a
 first-class Reflex component with the same performance contract as the notebook
 path: screen-bounded binary wire (§29), kernel-side canonical data (§27),
@@ -14,7 +14,7 @@ smaller public integration surface cannot work.
 
 ## 1. What the prototype proved, and what it fudged
 
-`reflex_fastcharts_app/` (the demo dashboard) bridges with `Figure.to_html()`
+`examples/reflex/` (the demo dashboard) bridges with `Figure.to_html()`
 iframes plus one hand-rolled `POST /api/fastcharts/drilldown` route serving a
 100M-point drilldown chart. It proves the load-bearing claim: **the kernel-side
 Figure can serve a browser client over plain HTTP with in-frame-budget

@@ -218,7 +218,7 @@ HTML in CI/container environments where sandboxed Chromium cannot launch.
 
 ## Example Apps
 
-- [`reflex_fastcharts_app/`](reflex_fastcharts_app/) is a standalone Reflex
+- [`examples/reflex/`](examples/reflex/) is a standalone Reflex
   dashboard that embeds generated fastcharts line, scatter, density, histogram,
   area, bar, and heatmap charts, including large-data drilldown examples. Its
   Reflex dependency is app-local; installing `fastcharts` itself must not pull

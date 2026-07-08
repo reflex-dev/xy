@@ -371,7 +371,7 @@ def test_verify_wheel_rejects_unexpected_native_artifact(tmp_path: Path) -> None
         "docs/api-examples.md",
         "tests/test_docs_examples.py",
         "benchmarks/bench_vs.py",
-        "reflex_fastcharts_app/reflex_fastcharts_app/reflex_fastcharts_app.py",
+        "examples/reflex/reflex_fastcharts_app/reflex_fastcharts_app.py",
     ],
 )
 def test_verify_wheel_rejects_sdist_only_files(tmp_path: Path, extra_name: str) -> None:

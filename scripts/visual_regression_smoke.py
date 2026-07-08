@@ -30,7 +30,7 @@ sys.path.insert(0, str(ROOT / "python"))
 import fastcharts as fc  # noqa: E402
 from fastcharts.export import find_chromium  # noqa: E402
 
-CHART_ASSET_DIR = ROOT / "reflex_fastcharts_app" / "assets" / "charts"
+CHART_ASSET_DIR = ROOT / "examples" / "reflex" / "assets" / "charts"
 W, H, SCALE = 720, 440, 1.0
 EXPECTED_W = int(W * SCALE)
 EXPECTED_H = int(H * SCALE)

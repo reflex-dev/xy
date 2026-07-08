@@ -466,7 +466,7 @@ def test_production_docs_define_sdist_wheel_boundary() -> None:
         "Source distributions include the release support surface",
         "Reflex example app source plus generated chart assets",
         "Wheels must stay package-only",
-        "docs, tests, benchmarks, scripts, and `reflex_fastcharts_app/` are sdist-only",
+        "docs, tests, benchmarks, scripts, and `examples/reflex/` are sdist-only",
         "Platform wheel contains package-only files",
         "No-toolchain wheel contains package-only files",
     ]
