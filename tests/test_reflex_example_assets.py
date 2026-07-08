@@ -594,9 +594,7 @@ def test_visual_regression_smoke_covers_flaky_dashboard_assets() -> None:
     shell_assets = [asset for _name, asset, _ids in visual.CHROME_SHELL_CASES]
     assert shell_assets == ["custom_chrome.html", "annotated_heatmap.html"]
     required_ids = {
-        required_id
-        for _name, _asset, ids in visual.CHROME_SHELL_CASES
-        for required_id in ids
+        required_id for _name, _asset, ids in visual.CHROME_SHELL_CASES for required_id in ids
     }
     assert {
         "custom-chrome-frame",
