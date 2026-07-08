@@ -599,6 +599,8 @@ def test_visual_regression_smoke_checks_layout_regions_not_just_blankness() -> N
         "chart collapsed in plot region",
         "plot region has too little colored chart data",
         "asset=True",
+        "runner-specific",
+        "x_axis_box = (0.08, 0.70, 0.94, 0.99)",
     ]
     for marker in required:
         assert marker in source
