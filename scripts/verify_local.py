@@ -37,6 +37,10 @@ class Check:
     requires_rust_toolchain: bool = False
     requires_rust_clippy: bool = False
     requires_argument: Optional[str] = None
+    # Advisory checks report findings but do not fail the gate — mirrors how CI
+    # runs them (e.g. ty is pre-1.0 and can't narrow known-non-None Optionals or
+    # NumPy dtypes across stub versions). Keep this in sync with ci.yml.
+    advisory: bool = False
 
 
 def _python() -> str:
@@ -171,9 +175,10 @@ def _base_checks(
         ),
         Check(
             "ty",
-            "type check shippable Python package",
+            "type check shippable Python package (advisory)",
             (py, "-m", "ty", "check", "python"),
             requires_modules=("ty",),
+            advisory=True,
         ),
         Check("pytest", "Python tests", (py, "-m", "pytest", "-q"), requires_modules=("pytest",)),
         Check(
@@ -616,12 +621,21 @@ def main(argv: Optional[list[str]] = None) -> int:
             print(f"{check.name:22} {format_command(check)}")
         return 0
 
+    advisory_findings = 0
     for check in selected:
         rc = run_check(check)
         if rc != 0:
+            if check.advisory:
+                advisory_findings += 1
+                print(
+                    f"WARNING {check.name} reported findings (advisory, not gating)",
+                    file=sys.stderr,
+                )
+                continue
             print(f"FAILED {check.name} with exit code {rc}", file=sys.stderr)
             return rc
-    print(f"OK: {len(selected)} check(s) passed")
+    suffix = f" ({advisory_findings} advisory finding(s))" if advisory_findings else ""
+    print(f"OK: {len(selected)} check(s) passed{suffix}")
     return 0
 
 
