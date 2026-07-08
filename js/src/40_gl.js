@@ -12,12 +12,30 @@ function compile(gl, type, src) {
   return sh;
 }
 
+// Fixed vertex-attribute slots, bound before linking so every program sees the
+// same location for a given attribute name. This is what lets one VAO serve
+// multiple programs over the same buffers (draw + pick), and turns all
+// per-frame getAttribLocation lookups into compile-time constants. Names only
+// need distinct slots *within* each program; the groups below are disjoint per
+// shader (point: ax/ay + a_*; line/area: ax0..ab1; bar: a_pos/a_v1/a_v0;
+// grid quad: a_corner). WebGL2 guarantees >= 16 attribs; the max used is 10.
+const ATTR_SLOTS = {
+  ax: 0, ay: 1,
+  ax0: 0, ax1: 1, ay0: 2, ay1: 3, ab0: 4, ab1: 5,
+  a_pos: 0, a_v1: 1, a_v0: 2,
+  a_corner: 0,
+  a_cval: 6, a_sval: 7, a_sel: 8, a_dval: 9,
+};
+
 function makeProgram(gl, vs, fs) {
   const p = gl.createProgram();
   const vsh = compile(gl, gl.VERTEX_SHADER, vs);
   const fsh = compile(gl, gl.FRAGMENT_SHADER, fs);
   gl.attachShader(p, vsh);
   gl.attachShader(p, fsh);
+  for (const [name, slot] of Object.entries(ATTR_SLOTS)) {
+    gl.bindAttribLocation(p, slot, name); // no-op for names a shader lacks
+  }
   gl.linkProgram(p);
   const ok = gl.getProgramParameter(p, gl.LINK_STATUS);
   const info = gl.getProgramInfoLog(p);
