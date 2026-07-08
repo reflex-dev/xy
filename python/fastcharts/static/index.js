@@ -99,12 +99,15 @@ const FC_CHROME_CSS = `
 :where(.fastcharts [data-fc-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
 :where(.fastcharts [data-fc-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
 :where(.fastcharts [data-fc-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
-:where(.fastcharts [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-axis,currentColor)}
+:where(.fastcharts [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-axis,currentColor);cursor:pointer}
 :where(.fastcharts [data-fc-slot="modebar_button"].fc-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
 :where(.fastcharts [data-fc-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
 :where(.fastcharts [data-fc-slot="crosshair_x"],.fastcharts [data-fc-slot="crosshair_y"]){background:var(--chart-crosshair,rgba(15,23,42,.42))}
 :where(.fastcharts [data-fc-slot="tick_label"]){color:var(--chart-text,inherit)}
 :where(.fastcharts [data-fc-slot="axis_title"]){color:var(--chart-text,inherit);font-size:12px}
+:where(.fastcharts [data-fc-slot="annotation_label"]){font-size:11px;line-height:1.2;font-weight:500;color:var(--chart-annotation-text,var(--chart-text,inherit))}
+:where(.fastcharts [data-fc-slot="canvas"]){cursor:var(--chart-cursor,crosshair)}
+:where(.fastcharts [data-fc-slot="canvas"][data-fc-dragmode="pan"]){cursor:var(--chart-cursor-pan,grab)}
 `;
 function ensureChromeStylesheet(node) {
 let root = node && node.getRootNode ? node.getRootNode() : document;
@@ -1475,7 +1478,7 @@ root.appendChild(this.chrome);
 this.canvas = document.createElement("canvas");
 this.canvas.style.cssText =
 `position:absolute;left:${this.plot.x}px;top:${this.plot.y}px;` +
-`width:${this.plot.w}px;height:${this.plot.h}px;cursor:crosshair;touch-action:none;`;
+`width:${this.plot.w}px;height:${this.plot.h}px;touch-action:none;`;
 this._applySlot(this.canvas, "canvas");
 root.appendChild(this.canvas);
 this.labels = document.createElement("div");
@@ -3288,11 +3291,13 @@ const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
 const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0";
 d.style.cssText =
 `position:absolute;left:${px + dx}px;top:${py + dy}px;` +
-`transform:translate(${anchor},0);pointer-events:none;` +
-"font-size:11px;line-height:1.2;font-weight:500;";
+`transform:translate(${anchor},0);pointer-events:none;`;
+this._applySlot(d, "annotation_label");
 this._applyClass(d, ann.class_name);
 this._applyStyle(d, style);
+if (style && (style.label_color || style.color)) {
 d.style.color = this._annotationLabelPaint(style, this.theme.label);
+}
 this.labels.appendChild(d);
 }
 },
@@ -3765,7 +3770,7 @@ b.type = "button";
 b.title = title;
 b.innerHTML = this._icon(name);
 b.style.cssText =
-"display:flex;align-items:center;justify-content:center;cursor:pointer;pointer-events:auto;";
+"display:flex;align-items:center;justify-content:center;pointer-events:auto;";
 this._applySlot(b, "modebar_button");
 this._listen(b, "pointerdown", (e) => e.stopPropagation());
 this._listen(b, "click", (e) => { e.stopPropagation(); onClick(); });
@@ -3786,7 +3791,7 @@ this._setDragMode(this.dragMode);
 },
 _setDragMode(mode) {
 this.dragMode = mode;
-if (this.canvas) this.canvas.style.cursor = mode === "zoom" ? "crosshair" : "grab";
+if (this.canvas) this.canvas.dataset.fcDragmode = mode;
 for (const [name, btn] of Object.entries(this._modeBtns || {})) {
 btn.classList.toggle("fc-active", name === mode);
 }

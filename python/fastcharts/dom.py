@@ -23,6 +23,7 @@ CHART_DOM_SLOTS: tuple[str, ...] = (
     "badge_item",
     "tick_label",
     "axis_title",
+    "annotation_label",
 )
 """Stable `class_names` / chrome `style` slots emitted by the browser client."""
 

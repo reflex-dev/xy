@@ -355,7 +355,9 @@ annotations, axes, legends, tooltips, themes, and interaction config in one
 panel; `Chart` keeps `widget()`, `show()`, `to_html(...)`, `html(...)`,
 `_repr_html_()`, `to_png(...)`, and `memory_report()` parity with `Figure`;
 `class_name`, `class_names`, and `style` reach stable DOM slots for CSS/Tailwind
-styling; and opaque framework objects passed to `fc.legend(...)` /
+styling (see [`docs/styling.md`](docs/styling.md) for the full slot + token
+reference and the zero-specificity defaults contract); and opaque framework
+objects passed to `fc.legend(...)` /
 `fc.tooltip(...)` are returned by `chrome_components()` /
 `reflex_components()` without being serialized into standalone HTML. Python
 `on_*` callbacks stay widget-side: standalone HTML receives only the safe

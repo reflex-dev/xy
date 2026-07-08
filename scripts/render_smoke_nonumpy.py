@@ -323,7 +323,7 @@ try{{
     const boxOk = (Math.abs(v.view.x0-10)<1e-6 && Math.abs(v.view.x1-20)<1e-6) ? 1 : 0;
     v.view = {{...v.view0}};
     v._setDragMode("zoom");
-    const zmode = (v.dragMode==="zoom" && v.canvas.style.cursor==="crosshair") ? 1 : 0;
+    const zmode = (v.dragMode==="zoom" && v.canvas.dataset.fcDragmode==="zoom") ? 1 : 0;
     v._setDragMode("pan");
     // Adaptive LOD drill-in (§5): a synthetic kernel "points" update swaps the
     // density texture for real colored markers (pickable); a density update

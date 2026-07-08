@@ -267,6 +267,7 @@ DOM chrome slots:
 | `badge_item` | Reduction/density badge row |
 | `tick_label` | Axis tick label |
 | `axis_title` | Axis title label |
+| `annotation_label` | Text/label/callout annotation (DOM overlay) |
 
 Each rendered slot also receives `data-fc-slot="<slot>"`, so plain CSS,
 attribute selectors, and Tailwind arbitrary variants can target the same stable

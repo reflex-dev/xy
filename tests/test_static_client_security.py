@@ -49,6 +49,9 @@ def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
         ':where(.fastcharts [data-fc-slot="badge_item"]){',
         ':where(.fastcharts [data-fc-slot="tick_label"]){',
         ':where(.fastcharts [data-fc-slot="axis_title"]){',
+        ':where(.fastcharts [data-fc-slot="annotation_label"]){',
+        ':where(.fastcharts [data-fc-slot="canvas"]){cursor:',
+        ':where(.fastcharts [data-fc-slot="canvas"][data-fc-dragmode="pan"]){cursor:',
     )
     tokens = (
         "--chart-tooltip-bg",
@@ -154,6 +157,7 @@ def test_client_applies_every_public_dom_slot() -> None:
         # tick_label + axis_title share one call keyed on the label kind.
         "tick_label": '_applySlot(d, kind === "label" ? "axis_title" : "tick_label")',
         "axis_title": '_applySlot(d, kind === "label" ? "axis_title" : "tick_label")',
+        "annotation_label": '_applySlot(d, "annotation_label")',
     }
     assert tuple(slot_snippets) == CHART_DOM_SLOTS
 
@@ -465,3 +469,29 @@ def test_widget_bundle_is_valid_esm_not_leaking_marker_prose() -> None:
     )
     # The IIFE bundle is export-free (exports are illegal in a Function body).
     assert "export {" not in _read(_STATIC / "standalone.js")
+
+
+def test_annotation_labels_and_cursor_stay_css_defeatable() -> None:
+    """Annotation labels (DOM) and the interaction cursor must be overridable by
+    user CSS/Tailwind: the slot + font + cursor defaults live in the zero-
+    specificity :where() stylesheet, never as inline styles that beat classes."""
+    for path, text in CLIENT_FILES:
+        assert '_applySlot(d, "annotation_label")' in text, (
+            f"{path} annotation label carries no data-fc-slot for CSS targeting"
+        )
+
+    # Annotation label font is a stylesheet default, not inline (only the
+    # position/transform structural bits and an *explicit* color stay inline).
+    annotations = _read(ROOT / "js/src/51_annotations.js")
+    assert "font-size:11px;line-height:1.2;font-weight:500;" not in annotations, (
+        "annotation label pins font inline; move it to the :where() stylesheet"
+    )
+    assert 'if (style && (style.label_color || style.color)) {' in annotations
+
+    # Cursor is attribute-driven, never inline (inline cursor beats cursor-* utils).
+    chartview = _read(ROOT / "js/src/50_chartview.js")
+    interaction = _read(ROOT / "js/src/53_interaction.js")
+    assert "cursor:" not in chartview, "canvas re-pins cursor inline"
+    assert "this.canvas.style.cursor" not in interaction, "drag-mode re-pins cursor inline"
+    assert "this.canvas.dataset.fcDragmode = mode;" in interaction
+    assert "cursor:pointer" not in interaction, "modebar button pins cursor inline"

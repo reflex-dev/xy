@@ -202,13 +202,19 @@ Object.assign(ChartView.prototype, {
       const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
       const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
       const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0";
+      // Structural inline only (position telegraphs the anchor); font + default
+      // color live in the defeatable :where() stylesheet so utility classes win.
       d.style.cssText =
         `position:absolute;left:${px + dx}px;top:${py + dy}px;` +
-        `transform:translate(${anchor},0);pointer-events:none;` +
-        "font-size:11px;line-height:1.2;font-weight:500;";
+        `transform:translate(${anchor},0);pointer-events:none;`;
+      this._applySlot(d, "annotation_label");
       this._applyClass(d, ann.class_name);
       this._applyStyle(d, style);
-      d.style.color = this._annotationLabelPaint(style, this.theme.label);
+      // Only pin color inline when the annotation asked for one — otherwise the
+      // stylesheet's --chart-annotation-text default stays overridable by CSS.
+      if (style && (style.label_color || style.color)) {
+        d.style.color = this._annotationLabelPaint(style, this.theme.label);
+      }
       this.labels.appendChild(d);
     }
   },

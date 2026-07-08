@@ -290,7 +290,7 @@ Object.assign(ChartView.prototype, {
       // Box/size/color are stylesheet defaults (--chart-axis); only layout +
       // interactivity stay inline so a user class can restyle the button.
       b.style.cssText =
-        "display:flex;align-items:center;justify-content:center;cursor:pointer;pointer-events:auto;";
+        "display:flex;align-items:center;justify-content:center;pointer-events:auto;";
       this._applySlot(b, "modebar_button");
       this._listen(b, "pointerdown", (e) => e.stopPropagation());
       this._listen(b, "click", (e) => { e.stopPropagation(); onClick(); });
@@ -313,8 +313,10 @@ Object.assign(ChartView.prototype, {
 
   _setDragMode(mode) {
     this.dragMode = mode;
-    // Cursor telegraphs the gesture: grab for pan, crosshair for box-zoom.
-    if (this.canvas) this.canvas.style.cursor = mode === "zoom" ? "crosshair" : "grab";
+    // Cursor telegraphs the gesture (grab for pan, crosshair for box-zoom) but
+    // lives in the defeatable :where([data-fc-slot="canvas"]) stylesheet keyed on
+    // this attribute — inline cursor would beat a user's cursor-* utility class.
+    if (this.canvas) this.canvas.dataset.fcDragmode = mode;
     // Active state is a class (defeatable via the stylesheet's :where rule /
     // --chart-modebar-active), not an inline background that would beat classes.
     for (const [name, btn] of Object.entries(this._modeBtns || {})) {

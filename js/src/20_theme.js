@@ -76,12 +76,15 @@ const FC_CHROME_CSS = `
 :where(.fastcharts [data-fc-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
 :where(.fastcharts [data-fc-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
 :where(.fastcharts [data-fc-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
-:where(.fastcharts [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-axis,currentColor)}
+:where(.fastcharts [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-axis,currentColor);cursor:pointer}
 :where(.fastcharts [data-fc-slot="modebar_button"].fc-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
 :where(.fastcharts [data-fc-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
 :where(.fastcharts [data-fc-slot="crosshair_x"],.fastcharts [data-fc-slot="crosshair_y"]){background:var(--chart-crosshair,rgba(15,23,42,.42))}
 :where(.fastcharts [data-fc-slot="tick_label"]){color:var(--chart-text,inherit)}
 :where(.fastcharts [data-fc-slot="axis_title"]){color:var(--chart-text,inherit);font-size:12px}
+:where(.fastcharts [data-fc-slot="annotation_label"]){font-size:11px;line-height:1.2;font-weight:500;color:var(--chart-annotation-text,var(--chart-text,inherit))}
+:where(.fastcharts [data-fc-slot="canvas"]){cursor:var(--chart-cursor,crosshair)}
+:where(.fastcharts [data-fc-slot="canvas"][data-fc-dragmode="pan"]){cursor:var(--chart-cursor-pan,grab)}
 `;
 
 // Inject FC_CHROME_CSS once per DOM root (document head or shadow root), so
