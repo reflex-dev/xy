@@ -36,7 +36,9 @@ const outDir = join(here, "..", "python", "fastcharts", "static");
 // Enforce at build time so a new mark kind can't drift silently.
 {
   // Fullscreen/texture quads position via corner constants, not data maps.
-  const VIEWMAP_EXEMPT = new Set(["DENSITY_VS", "HEATMAP_VS"]);
+  // GRID_VS is the fullscreen-quad vertex stage shared by density + heatmap:
+  // it maps via u_view (data-space window), not per-vertex u_*map attributes.
+  const VIEWMAP_EXEMPT = new Set(["GRID_VS"]);
   const glSrc = readText(join(here, "src", "40_gl.js"));
   const errs = [];
   let shaders = 0;

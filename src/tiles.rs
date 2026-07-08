@@ -17,7 +17,7 @@
 //! are error codes, never UB.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::kernels;
 
@@ -169,9 +169,17 @@ pub fn compose(
 
 // -- handle registry (engine doc §3.3) ---------------------------------------
 
-static REGISTRY: OnceLock<Mutex<(u64, HashMap<u64, Pyramid>)>> = OnceLock::new();
+// Pyramids are stored as `Arc` so lookups can clone the handle out and drop
+// the registry lock before running any compute: holding the mutex across a
+// whole compose/count would serialize every pyramid operation process-wide,
+// and a panic inside the closure would poison the registry permanently,
+// bricking all later pyramid calls.
+/// `(next_handle, live pyramids)` — the registry state behind the lock.
+type Registry = (u64, HashMap<u64, Arc<Pyramid>>);
 
-fn registry() -> &'static Mutex<(u64, HashMap<u64, Pyramid>)> {
+static REGISTRY: OnceLock<Mutex<Registry>> = OnceLock::new();
+
+fn registry() -> &'static Mutex<Registry> {
     REGISTRY.get_or_init(|| Mutex::new((0, HashMap::new())))
 }
 
@@ -179,13 +187,16 @@ pub fn reg_insert(p: Pyramid) -> u64 {
     let mut g = registry().lock().expect("pyramid registry poisoned");
     g.0 += 1;
     let h = g.0;
-    g.1.insert(h, p);
+    g.1.insert(h, Arc::new(p));
     h
 }
 
 pub fn reg_with<R>(h: u64, f: impl FnOnce(&Pyramid) -> R) -> Option<R> {
-    let g = registry().lock().expect("pyramid registry poisoned");
-    g.1.get(&h).map(f)
+    let p = {
+        let g = registry().lock().expect("pyramid registry poisoned");
+        g.1.get(&h).cloned()
+    }; // lock dropped here — compute runs unserialized
+    p.map(|p| f(&p))
 }
 
 pub fn reg_remove(h: u64) -> bool {

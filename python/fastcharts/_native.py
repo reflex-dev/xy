@@ -5,8 +5,9 @@ pointers directly — zero copies across the Python/Rust boundary (§4: one
 physical copy of every value; §29: in-process transport is 0-copy).
 
 This module raises ImportError if the library is missing or ABI-mismatched;
-`fastcharts.kernels` catches that and falls back to NumPy *loudly* (§33: no-wheel
-behavior is defined, never silent).
+`fastcharts.kernels` re-raises that with remediation guidance. There is no
+pure-Python fallback — the native core is required (§33: no-wheel behavior is
+defined, and it is a loud failure, never a silent degrade).
 """
 
 from __future__ import annotations
@@ -611,9 +612,8 @@ def pyramid_build(
         raise ValueError("x and y must have equal length")
     if len(x) == 0:
         return 0
-    lib = _load()
     return int(
-        lib.fc_pyramid_build(
+        _lib.fc_pyramid_build(
             x.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
             y.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
             len(x),
@@ -630,9 +630,8 @@ def pyramid_count(handle: int, lo_x: float, hi_x: float, lo_y: float, hi_y: floa
     handle = _pyramid_handle(handle)
     lo_x, hi_x = _finite_increasing(lo_x, hi_x, "x range")
     lo_y, hi_y = _finite_increasing(lo_y, hi_y, "y range")
-    lib = _load()
     out = ctypes.c_double(0.0)
-    ok = lib.fc_pyramid_count(
+    ok = _lib.fc_pyramid_count(
         ctypes.c_uint64(handle),
         lo_x,
         hi_x,
@@ -654,8 +653,7 @@ def pyramid_compose(
     w = _bounded_positive_int(w, "w")
     h = _bounded_positive_int(h, "h")
     out = np.zeros(w * h, dtype=np.float32)
-    lib = _load()
-    level = lib.fc_pyramid_compose(
+    level = _lib.fc_pyramid_compose(
         ctypes.c_uint64(handle),
         lo_x,
         hi_x,
@@ -671,7 +669,7 @@ def pyramid_compose(
 
 
 def pyramid_free(handle: int) -> bool:
-    return _load().fc_pyramid_free(ctypes.c_uint64(_pyramid_handle(handle))) == 1
+    return _lib.fc_pyramid_free(ctypes.c_uint64(_pyramid_handle(handle))) == 1
 
 
 def local_log_density(
