@@ -256,6 +256,7 @@ DOM chrome slots:
 | `labels` | Axis/tick label layer |
 | `legend` | Legend container |
 | `legend_item` | Legend row |
+| `legend_swatch` | Legend color swatch |
 | `tooltip` | Tooltip container |
 | `modebar` | Modebar container |
 | `modebar_button` | Modebar button |
@@ -264,10 +265,17 @@ DOM chrome slots:
 | `crosshair_y` | Horizontal crosshair line |
 | `badge` | Reduction/density badge container |
 | `badge_item` | Reduction/density badge row |
+| `tick_label` | Axis tick label |
+| `axis_title` | Axis title label |
 
 Each rendered slot also receives `data-fc-slot="<slot>"`, so plain CSS,
 attribute selectors, and Tailwind arbitrary variants can target the same stable
-surface even when the caller does not add a class.
+surface even when the caller does not add a class. The client ships one
+zero-specificity `:where([data-fc-slot="…"])` default stylesheet, so a
+`class_names` utility class (or an inline `chrome_styles` value) always wins
+over the built-in look without needing `!important`. In the standalone
+`to_html(...)` export — which has no host page to inherit Tailwind from — pass
+`custom_css="…"` to inject the stylesheet that defines those utility classes.
 The canonical slot tuple is exported as `fastcharts.CHART_DOM_SLOTS` so adapters
 and tests do not have to copy this table by hand. That root export resolves
 through the lightweight DOM contract module, so framework adapters can inspect

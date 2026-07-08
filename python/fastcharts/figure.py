@@ -2634,15 +2634,26 @@ class Figure:
 
         display(self.widget())
 
-    def to_html(self, path: Optional[str | PathLike[str]] = None) -> str:
+    def to_html(
+        self,
+        path: Optional[str | PathLike[str]] = None,
+        *,
+        custom_css: Optional[str] = None,
+    ) -> str:
         """Standalone interactive HTML (export.py): JS client + spec + base64
         buffers in one self-contained file. Base64 carries a stated ~33% size
-        tax (§29 static-export row)."""
-        return export.to_html(self, path)
+        tax (§29 static-export row). `custom_css` injects an author stylesheet
+        so `class_names` utility classes (e.g. Tailwind) resolve in the export."""
+        return export.to_html(self, path, custom_css=custom_css)
 
-    def html(self, path: Optional[str | PathLike[str]] = None) -> str:
+    def html(
+        self,
+        path: Optional[str | PathLike[str]] = None,
+        *,
+        custom_css: Optional[str] = None,
+    ) -> str:
         """Alias for ``to_html`` for component-style API symmetry."""
-        return self.to_html(path)
+        return self.to_html(path, custom_css=custom_css)
 
     def _repr_html_(self) -> str:
         """Notebook HTML repr fallback using the standalone export path."""

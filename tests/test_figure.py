@@ -1012,6 +1012,25 @@ def test_to_html_includes_defensive_csp_before_scripts():
     assert "base-uri 'none'" in head
 
 
+def test_to_html_custom_css_injects_into_head_for_utility_classes():
+    css = ".fc-brand-tooltip{background:#123456}"
+    html = Figure(title="css").line([0.0, 1.0], [1.0, 2.0]).to_html(custom_css=css)
+    head = html.split("</head>", 1)[0]
+    # Injected into the head (so class_names/Tailwind resolve in standalone),
+    # after the base style, before the body.
+    assert f"<style>{css}</style>" in head
+    assert html.index(css) < html.index("<body>")
+    # None default emits no extra style block beyond the base one.
+    plain = Figure().line([0.0, 1.0], [1.0, 2.0]).to_html()
+    assert plain.count("<style>") == 1
+
+
+@pytest.mark.parametrize("evil", ["</style>", "</ style >", "a</STYLE>b", "x<!-- y"])
+def test_to_html_custom_css_rejects_style_breakout(evil):
+    with pytest.raises(ValueError, match="custom_css"):
+        Figure().line([0.0, 1.0], [1.0, 2.0]).to_html(custom_css=evil)
+
+
 def test_to_html_escapes_every_chart_text_surface():
     evil = "</script><svg onload=alert(1)>&\u2028\u2029"
     also_evil = "<b data-x='1'>&</b>"

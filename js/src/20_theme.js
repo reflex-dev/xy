@@ -60,6 +60,45 @@ function cssColor([r, g, b, a]) {
   return `rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},${a})`;
 }
 
+// Chrome *visual* defaults, one stylesheet per document. Every rule is wrapped
+// in :where(...) so it carries ZERO specificity — any user utility class
+// (`class_names[slot]`, specificity ≥ 0,1,0) or inline `styles[slot]` beats it
+// without needing !important, regardless of stylesheet source order. This is
+// what makes Tailwind actually win on the chrome: the elements now carry only
+// *structural* inline styles (position/size/z-index/state), while background,
+// color, padding, border, font, box-shadow live here as overridable defaults.
+// All colors flow through --chart-* tokens so container theming still cascades.
+const FC_CHROME_CSS = `
+:where(.fastcharts [data-fc-slot="title"]){text-align:center;font-size:14px;font-weight:600;color:var(--chart-text,inherit)}
+:where(.fastcharts [data-fc-slot="tooltip"]){background:var(--chart-tooltip-bg,rgba(20,24,33,.92));color:var(--chart-tooltip-text,#fff);padding:5px 8px;border-radius:4px;font-size:11px;line-height:1.35;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+:where(.fastcharts [data-fc-slot="legend"]){gap:2px;font-size:11px;background:var(--chart-legend-bg,rgba(128,128,128,.08));border-radius:4px;padding:4px 8px;color:var(--chart-text,inherit)}
+:where(.fastcharts [data-fc-slot="legend_swatch"]){width:12px;height:10px;border-radius:2px;margin-right:5px}
+:where(.fastcharts [data-fc-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
+:where(.fastcharts [data-fc-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
+:where(.fastcharts [data-fc-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+:where(.fastcharts [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-axis,currentColor)}
+:where(.fastcharts [data-fc-slot="modebar_button"].fc-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
+:where(.fastcharts [data-fc-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
+:where(.fastcharts [data-fc-slot="crosshair_x"],.fastcharts [data-fc-slot="crosshair_y"]){background:var(--chart-crosshair,rgba(15,23,42,.42))}
+:where(.fastcharts [data-fc-slot="tick_label"]){color:var(--chart-text,inherit)}
+:where(.fastcharts [data-fc-slot="axis_title"]){color:var(--chart-text,inherit);font-size:12px}
+`;
+
+// Inject FC_CHROME_CSS once per DOM root (document head or shadow root), so
+// multiple charts on one page share a single stylesheet.
+function ensureChromeStylesheet(node) {
+  let root = node && node.getRootNode ? node.getRootNode() : document;
+  const isShadow = typeof ShadowRoot !== "undefined" && root instanceof ShadowRoot;
+  if (!isShadow && !(root instanceof Document)) root = document; // detached subtree
+  const scope = isShadow ? root : (root.head || document.head || root.documentElement);
+  if (!scope || !scope.querySelector) return;
+  if (scope.querySelector("style[data-fastcharts-chrome]")) return;
+  const style = document.createElement("style");
+  style.setAttribute("data-fastcharts-chrome", "");
+  style.textContent = FC_CHROME_CSS;
+  scope.appendChild(style);
+}
+
 function safeCssPaint(host, expr, fallback = [0.5, 0.5, 0.5, 1]) {
   const parsed = parseColor(host, expr, fallback);
   const color = Array.isArray(parsed) && parsed.length >= 4 && parsed.every(Number.isFinite)

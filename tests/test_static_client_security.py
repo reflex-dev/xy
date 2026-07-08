@@ -20,6 +20,59 @@ LOD_FILES = (
     ROOT / "python/fastcharts/static/index.js",
     ROOT / "python/fastcharts/static/standalone.js",
 )
+# The chrome default stylesheet lives in the theme part; both built bundles
+# concatenate it.
+THEME_FILES = (
+    ROOT / "js/src/20_theme.js",
+    ROOT / "python/fastcharts/static/index.js",
+    ROOT / "python/fastcharts/static/standalone.js",
+)
+
+
+def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
+    """Themeable chrome styling lives in a zero-specificity :where() stylesheet
+    so user class_names / styles always win (the CSS+Tailwind contract).
+    Every chrome slot's visual defaults + --chart-* token must be present, and
+    the elements must carry only structural inline styles (no inline
+    background/color that would beat a utility class)."""
+    where_rules = (
+        ':where(.fastcharts [data-fc-slot="tooltip"]){',
+        ':where(.fastcharts [data-fc-slot="legend"]){',
+        ':where(.fastcharts [data-fc-slot="legend_swatch"]){',
+        ':where(.fastcharts [data-fc-slot="modebar"]){',
+        ':where(.fastcharts [data-fc-slot="modebar_button"]){',
+        ':where(.fastcharts [data-fc-slot="modebar_button"].fc-active){',
+        ':where(.fastcharts [data-fc-slot="selection"]){',
+        ':where(.fastcharts [data-fc-slot="badge_item"]){',
+        ':where(.fastcharts [data-fc-slot="tick_label"]){',
+        ':where(.fastcharts [data-fc-slot="axis_title"]){',
+    )
+    tokens = (
+        "--chart-tooltip-bg",
+        "--chart-tooltip-text",
+        "--chart-legend-bg",
+        "--chart-modebar-bg",
+        "--chart-modebar-active",
+        "--chart-selection",
+        "--chart-selection-fill",
+        "--chart-crosshair",
+        "--chart-badge-bg",
+        "--chart-badge-text",
+    )
+    for path in THEME_FILES:
+        text = path.read_text(encoding="utf-8")
+        for rule in where_rules:
+            assert rule in text, f"{path} missing defeatable chrome rule {rule!r}"
+        for token in tokens:
+            assert token in text, f"{path} no longer themes {token!r} in the stylesheet"
+        assert "ensureChromeStylesheet" in text
+
+    # The inline tooltip/legend/modebar cssText must not re-set themeable
+    # properties (that would beat utility classes on specificity).
+    chartview = (ROOT / "js/src/50_chartview.js").read_text(encoding="utf-8")
+    assert "ensureChromeStylesheet(root);" in chartview
+    assert "background:var(--chart-tooltip-bg" not in chartview
+    assert 'btn.classList.toggle("fc-active"' in chartview  # active state is a class, not inline
 
 
 def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
@@ -88,6 +141,7 @@ def test_client_applies_every_public_dom_slot() -> None:
         "labels": '_applySlot(this.labels, "labels")',
         "legend": '_applySlot(lg, "legend")',
         "legend_item": '_applySlot(row, "legend_item")',
+        "legend_swatch": '_applySlot(sw, "legend_swatch")',
         "tooltip": '_applySlot(this.tooltip, "tooltip")',
         "modebar": '_applySlot(bar, "modebar")',
         "modebar_button": '_applySlot(b, "modebar_button")',
@@ -96,6 +150,9 @@ def test_client_applies_every_public_dom_slot() -> None:
         "crosshair_y": '_applySlot(this.crosshairY, "crosshair_y")',
         "badge": '_applySlot(box, "badge")',
         "badge_item": '_applySlot(badge, "badge_item")',
+        # tick_label + axis_title share one call keyed on the label kind.
+        "tick_label": '_applySlot(d, kind === "label" ? "axis_title" : "tick_label")',
+        "axis_title": '_applySlot(d, kind === "label" ? "axis_title" : "tick_label")',
     }
     assert tuple(slot_snippets) == CHART_DOM_SLOTS
 
@@ -153,7 +210,6 @@ def test_client_exposes_first_class_interaction_events() -> None:
         'this.comm.send({ type: "view_change", ...detail });',
         'const msg = { type: "click", trace: hit.trace, index: hit.index };',
         "new BroadcastChannel(`fastcharts:${group}`)",
-        "var(--chart-crosshair",
     )
 
     for path in CLIENT_FILES:

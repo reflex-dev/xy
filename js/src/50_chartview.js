@@ -476,12 +476,14 @@ class ChartView {
     this._applySlot(root, "root");
     el.appendChild(root);
     this.root = root;
+    // Visual chrome defaults live in one zero-specificity stylesheet so user
+    // classes/styles win (§36). Only structural/state styles stay inline below.
+    ensureChromeStylesheet(root);
 
     if (s.title) {
       const t = document.createElement("div");
       t.textContent = s.title;
-      t.style.cssText =
-        "position:absolute;top:6px;left:0;right:0;text-align:center;font-size:14px;font-weight:600;";
+      t.style.cssText = "position:absolute;top:6px;left:0;right:0;";
       this._applySlot(t, "title");
       root.appendChild(t);
     }
@@ -503,13 +505,11 @@ class ChartView {
     this._applySlot(this.labels, "labels");
     root.appendChild(this.labels);
 
-    // Hover tooltip (§17) — DOM, so it's crisp and selectable (§7).
+    // Hover tooltip (§17) — DOM, so it's crisp and selectable (§7). Visual
+    // styling is in the shared stylesheet; only position/state stays inline.
     this.tooltip = document.createElement("div");
     this.tooltip.style.cssText =
-      "position:absolute;display:none;pointer-events:none;z-index:5;" +
-      "background:var(--chart-tooltip-bg, rgba(20,24,33,.92));" +
-      "color:var(--chart-tooltip-text, #fff);padding:5px 8px;border-radius:4px;" +
-      "font-size:11px;line-height:1.35;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.3);";
+      "position:absolute;display:none;pointer-events:none;z-index:5;white-space:nowrap;";
     this._applySlot(this.tooltip, "tooltip");
     root.appendChild(this.tooltip);
 
@@ -558,11 +558,7 @@ class ChartView {
     for (const item of items) {
       const badge = document.createElement("div");
       badge.textContent = item;
-      badge.style.cssText =
-        "padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);" +
-        "background:var(--chart-badge-bg,rgba(255,255,255,.82));" +
-        "box-shadow:0 1px 4px rgba(15,23,42,.14);";
-      this._applySlot(badge, "badge_item");
+      this._applySlot(badge, "badge_item"); // visual defaults in the stylesheet
       this._badges.appendChild(badge);
     }
     this._positionReductionBadges();
@@ -574,8 +570,8 @@ class ChartView {
     if (!items.length && !hasDensityTrace) return;
     const box = document.createElement("div");
     box.style.cssText =
-      "position:absolute;display:flex;flex-direction:column;align-items:flex-end;gap:3px;" +
-      "pointer-events:none;z-index:4;font-size:11px;line-height:1.2;";
+      "position:absolute;display:flex;flex-direction:column;align-items:flex-end;" +
+      "pointer-events:none;z-index:4;";
     this._applySlot(box, "badge");
     root.appendChild(box);
     this._badges = box;
@@ -604,15 +600,17 @@ class ChartView {
     const rightInset = this.size.w - (this.plot.x + this.plot.w);
     lg.style.cssText =
       `position:absolute;top:${this.plot.y + 6}px;right:${rightInset + 6}px;` +
-      "display:flex;flex-direction:column;gap:2px;font-size:11px;" +
-      "background:var(--chart-legend-bg, rgba(128,128,128,.08));" +
-      "border-radius:4px;padding:4px 8px;max-height:" +
-      `${this.plot.h - 12}px;overflow:auto;`;
+      "display:flex;flex-direction:column;overflow:auto;" +
+      `max-height:${this.plot.h - 12}px;`;
     this._applySlot(lg, "legend");
     for (const it of items) {
       const row = document.createElement("div");
       this._applySlot(row, "legend_item");
       const sw = document.createElement("span");
+      // Swatch geometry is a stylesheet default; only the paint (dynamic per
+      // series) stays inline, and it now has its own slot so it's classable.
+      sw.style.display = "inline-block";
+      sw.style.verticalAlign = "-1px";
       let bg = it.swatch;
       if (it.swatch === "gradient") {
         const stops = COLORMAP_STOPS[it.cmap] || COLORMAP_STOPS.viridis;
@@ -621,8 +619,7 @@ class ChartView {
       } else {
         sw.style.background = safeCssPaint(this.root, bg);
       }
-      sw.style.cssText +=
-        "display:inline-block;width:12px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px;";
+      this._applySlot(sw, "legend_swatch");
       row.appendChild(sw);
       row.appendChild(document.createTextNode(it.name));
       lg.appendChild(row);
@@ -2021,11 +2018,19 @@ class ChartView {
       d.dataset.fcAxisSide = axis && axis.side ? String(axis.side) : "";
       const colorKey = kind === "label" ? "label_color" : "tick_color";
       const sizeKey = kind === "label" ? "label_size" : "tick_size";
-      const defaultSize = kind === "label" ? 12 : 11;
-      d.style.cssText =
-        `position:absolute;color:${this._axisStylePaint(axis, colorKey, this.theme.label)};` +
-        `font-size:${Math.max(8, this._axisStyleNumber(axis, sizeKey, defaultSize))}px;` +
-        "line-height:1.2;white-space:nowrap;" + css;
+      // Color/size are inline ONLY when the axis spec set them explicitly (the
+      // Python set_axis API); otherwise the stylesheet's tick_label/axis_title
+      // default applies so a user utility class can win. Structure stays inline.
+      let color = "";
+      if (this._axisStyleValue(axis, colorKey) !== undefined) {
+        color = `color:${this._axisStylePaint(axis, colorKey, this.theme.label)};`;
+      }
+      let size = "";
+      if (this._axisStyleValue(axis, sizeKey) !== undefined) {
+        size = `font-size:${Math.max(8, this._axisStyleNumber(axis, sizeKey, 11))}px;`;
+      }
+      d.style.cssText = `position:absolute;line-height:1.2;white-space:nowrap;${color}${size}${css}`;
+      this._applySlot(d, kind === "label" ? "axis_title" : "tick_label");
       this._applyStyle(d, extraStyle);
       this.labels.appendChild(d);
     };
@@ -2558,25 +2563,21 @@ class ChartView {
     let band = null;
 
     // Rubber-band overlay for box-select (§34) — DOM, above the canvas.
+    // border/background come from the stylesheet (--chart-selection*).
     this.selRect = document.createElement("div");
-    this.selRect.style.cssText =
-      "position:absolute;display:none;pointer-events:none;z-index:4;" +
-      "border:1px solid var(--chart-selection, rgba(90,140,240,.9));" +
-      "background:var(--chart-selection-fill, rgba(90,140,240,.15));";
+    this.selRect.style.cssText = "position:absolute;display:none;pointer-events:none;z-index:4;";
     this._applySlot(this.selRect, "selection");
     this.root.appendChild(this.selRect);
 
     if (this._interactionFlag("crosshair")) {
       this.crosshairX = document.createElement("div");
       this.crosshairX.style.cssText =
-        "position:absolute;display:none;pointer-events:none;z-index:3;" +
-        "width:1px;background:var(--chart-crosshair, rgba(15,23,42,.42));";
+        "position:absolute;display:none;pointer-events:none;z-index:3;width:1px;";
       this._applySlot(this.crosshairX, "crosshair_x");
       this.root.appendChild(this.crosshairX);
       this.crosshairY = document.createElement("div");
       this.crosshairY.style.cssText =
-        "position:absolute;display:none;pointer-events:none;z-index:3;" +
-        "height:1px;background:var(--chart-crosshair, rgba(15,23,42,.42));";
+        "position:absolute;display:none;pointer-events:none;z-index:3;height:1px;";
       this._applySlot(this.crosshairY, "crosshair_y");
       this.root.appendChild(this.crosshairY);
     }
@@ -2825,29 +2826,26 @@ class ChartView {
     if (this.spec.show_modebar === false) return;
     const bar = document.createElement("div");
     // Visible by default, then stronger on hover. At .25 opacity the controls
-    // were technically present but easy to miss in embedded dashboards.
+    // were technically present but easy to miss in embedded dashboards. Layout
+    // + opacity state stay inline; the box styling is in the stylesheet.
     bar.style.cssText =
       `position:absolute;top:${this.plot.y + 4}px;left:${this.plot.x + 4}px;z-index:6;` +
-      "display:flex;gap:1px;opacity:.72;transition:opacity .15s;" +
-      "background:var(--chart-modebar-bg, rgba(255,255,255,.78));" +
-      "border:1px solid rgba(128,128,128,.18);" +
-      "border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08);";
+      "display:flex;opacity:.72;transition:opacity .15s;";
     this._applySlot(bar, "modebar");
     this._listen(root, "pointerenter", () => { bar.style.opacity = "1"; });
     this._listen(root, "pointerleave", () => { bar.style.opacity = ".72"; });
     this._modebar = bar;
     this._modeBtns = {};
 
-    const col = cssColor(this.theme.axis);
     const mk = (name, title, onClick, toggles) => {
       const b = document.createElement("button");
       b.type = "button";
       b.title = title;
       b.innerHTML = this._icon(name);
+      // Box/size/color are stylesheet defaults (--chart-axis); only layout +
+      // interactivity stay inline so a user class can restyle the button.
       b.style.cssText =
-        "display:flex;align-items:center;justify-content:center;width:26px;height:24px;" +
-        "padding:0;border:none;background:transparent;cursor:pointer;border-radius:3px;" +
-        `color:${col};pointer-events:auto;`;
+        "display:flex;align-items:center;justify-content:center;cursor:pointer;pointer-events:auto;";
       this._applySlot(b, "modebar_button");
       this._listen(b, "pointerdown", (e) => e.stopPropagation());
       this._listen(b, "click", (e) => { e.stopPropagation(); onClick(); });
@@ -2872,8 +2870,10 @@ class ChartView {
     this.dragMode = mode;
     // Cursor telegraphs the gesture: grab for pan, crosshair for box-zoom.
     if (this.canvas) this.canvas.style.cursor = mode === "zoom" ? "crosshair" : "grab";
+    // Active state is a class (defeatable via the stylesheet's :where rule /
+    // --chart-modebar-active), not an inline background that would beat classes.
     for (const [name, btn] of Object.entries(this._modeBtns || {})) {
-      btn.style.background = name === mode ? "rgba(128,128,128,.22)" : "transparent";
+      btn.classList.toggle("fc-active", name === mode);
     }
   }
 

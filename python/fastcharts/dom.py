@@ -12,6 +12,7 @@ CHART_DOM_SLOTS: tuple[str, ...] = (
     "labels",
     "legend",
     "legend_item",
+    "legend_swatch",
     "tooltip",
     "modebar",
     "modebar_button",
@@ -20,6 +21,8 @@ CHART_DOM_SLOTS: tuple[str, ...] = (
     "crosshair_y",
     "badge",
     "badge_item",
+    "tick_label",
+    "axis_title",
 )
 """Stable `class_names` / chrome `style` slots emitted by the browser client."""
 

@@ -261,16 +261,30 @@ colors accept any CSS expression (`var(--brand-500)`, named colors, etc.). So
 Tailwind can already drive the chart's **theme** by setting a text color or those
 variables on the container, and can style the wrapper freely.
 
-What it does **not** cover, and what fuller Tailwind support would add:
+**Status: shipped.** Every DOM chrome element now carries a `data-fc-slot`
+attribute and takes per-slot `class_names` / `chrome_styles`, and its *visual*
+defaults live in a single zero-specificity `:where([data-fc-slot="…"])`
+stylesheet injected once per document. Because `:where(...)` contributes zero
+specificity, a `class_names` utility class (or an inline `chrome_styles` value)
+always wins over the built-in look **without `!important`** — verified in a real
+browser (a `.bg-*` class on the tooltip changes its computed background). The
+elements keep only *structural* inline styles (position/size/z-index/state), so
+nothing themeable competes with a user class. The full slot list (including
+`legend_swatch`, `tick_label`, `axis_title`, and the class-driven modebar
+active state via `--chart-modebar-active`) is `fastcharts.CHART_DOM_SLOTS`.
 
-- A `class_name` (and per-element class) passthrough so utility classes reach the
-  DOM chrome — the tooltip, legend, and modebar currently use inline `cssText`,
-  which beats utility classes on specificity and offers no class hook.
-- Documented `--chart-*` theming recipes for Tailwind's arbitrary-property syntax.
+For the standalone `to_html(...)` export — which has no host page to inherit
+Tailwind from — pass `custom_css="…"` to inject the stylesheet defining those
+utility classes; the widget path inherits the host page's Tailwind directly.
 
 Explicitly **out of scope** (browser limit, not a backlog item): the plotted
 marks are WebGL2 canvas pixels — no CSS, Tailwind or otherwise, can style them.
 Mark appearance stays driven by the spec and resolved CSS colors.
+
+**Performance:** the `:where()` defaults are one static stylesheet injected
+once per document (not per frame, not per hover), so the class hook adds no
+draw-loop cost; the pre-existing `resolveCssColor` note below still applies only
+to the theme-token read path.
 
 **Performance caveat (why this is a candidate, not a commitment):** CSS-color
 resolution goes through `resolveCssColor`, which appends a probe element and calls

@@ -9,6 +9,7 @@ import json
 import math
 import numbers
 import os
+import re as _re
 import shutil
 import subprocess
 import tempfile
@@ -143,12 +144,39 @@ def _atomic_write_text(path: str | PathLike[str], text: str) -> None:
         raise
 
 
-def to_html(fig: "Figure", path: Optional[str | PathLike[str]] = None) -> str:
+def _custom_css_block(custom_css: Optional[str]) -> str:
+    """Validate + wrap author-supplied CSS for the standalone <head>.
+
+    This is how `class_names` / Tailwind utility classes become resolvable in
+    the browserless standalone export (the widget instead inherits the host
+    page's stylesheet). The chrome defaults are zero-specificity `:where()`
+    rules, so any rule here wins. The one hazard is a `</style>` breaking out of
+    the style element into markup — rejected (whitespace-tolerant, since the
+    HTML parser ignores whitespace inside a closing tag)."""
+    if custom_css is None:
+        return ""
+    if not isinstance(custom_css, str):
+        raise TypeError("custom_css must be a string")
+    if _re.search(r"<\s*/\s*style", custom_css, _re.IGNORECASE) or "<!--" in custom_css:
+        raise ValueError("custom_css must not contain a </style> or comment sequence")
+    return f"<style>{custom_css}</style>\n"
+
+
+def to_html(
+    fig: "Figure",
+    path: Optional[str | PathLike[str]] = None,
+    *,
+    custom_css: Optional[str] = None,
+) -> str:
     """Render `fig` to a standalone interactive HTML string (optionally saved).
 
     User strings (title, names, labels) ride inside <script>/<title> blocks:
     HTML-sensitive JSON characters are escaped so user text cannot alter the
-    script parse state, and the <title> text is entity-escaped."""
+    script parse state, and the <title> text is entity-escaped.
+
+    `custom_css` injects an author stylesheet into the document <head> so the
+    utility classes referenced by `class_names` (e.g. Tailwind) resolve in the
+    standalone export; it must not contain a `</style>` breakout sequence."""
     spec, blob = fig.build_payload()
     if len(blob) > EMBED_WARN_BYTES:
         import warnings
@@ -171,7 +199,7 @@ def to_html(fig: "Figure", path: Optional[str | PathLike[str]] = None) -> str:
 html,body{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;background:#fff;}}
 #chart{{width:100%;}}
 </style>
-</head>
+{_custom_css_block(custom_css)}</head>
 <body>
 <div id="chart"></div>
 <script>{client_js}</script>

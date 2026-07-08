@@ -139,6 +139,7 @@ def test_chart_dom_slots_are_public_styling_contract() -> None:
         "labels",
         "legend",
         "legend_item",
+        "legend_swatch",
         "tooltip",
         "modebar",
         "modebar_button",
@@ -147,6 +148,8 @@ def test_chart_dom_slots_are_public_styling_contract() -> None:
         "crosshair_y",
         "badge",
         "badge_item",
+        "tick_label",
+        "axis_title",
     )
 
     assert fc.CHART_DOM_SLOTS is components.CHART_DOM_SLOTS
