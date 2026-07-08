@@ -3999,8 +3999,10 @@ class ChartView {
       if (g.drill) g.drill.selActive = false;
     }
     this._selectionCount = 0;
-    if (this.comm) this.comm.send({ type: "select_clear" });
-    this._dispatchChartEvent("select", { total: 0, view: this._eventView("select_clear") });
+    if (this._interactionFlag("select", true)) {
+      if (this.comm) this.comm.send({ type: "select_clear" });
+      this._dispatchChartEvent("select", { total: 0, view: this._eventView("select_clear") });
+    }
   }
 
   // -- modebar & zoom (Plotly-parity controls) ------------------------------

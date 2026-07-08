@@ -185,6 +185,9 @@ def test_client_interaction_event_payload_contract_is_stable() -> None:
         'this._dispatchChartEvent("select", {',
         "range: { x0, x1, y0, y1 },",
         'view: this._eventView("select"),',
+        'if (this._interactionFlag("select", true)) {',
+        'if (this.comm) this.comm.send({ type: "select_clear" });',
+        'this._dispatchChartEvent("select", { total: 0, view: this._eventView("select_clear") });',
         'this._dispatchChartEvent("view_change", detail);',
         'this.comm.send({ type: "view_change", ...detail });',
     )
