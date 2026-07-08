@@ -1,0 +1,72 @@
+name: Benchmark refresh
+
+# Regenerate the cross-library benchmark tables (README "10M-point native
+# benchmark" and "Core 2D benchmark") from a real, consistent Ubuntu run —
+# the source those "pending CI refresh" rows are waiting on. Manual only: it
+# installs plotting libraries and runs 10M-point comparisons, so it is far too
+# heavy for every push. Download the uploaded benchmark JSON and update the
+# README/docs tables from it (numbers must be measured, never invented — §2).
+on:
+  workflow_dispatch:
+    inputs:
+      sizes:
+        description: Scatter sizes for the cross-library comparison.
+        type: string
+        default: "1e3,1e4,1e5,1e6,1e7"
+      budget:
+        description: Per-config wall-clock budget (seconds) before a library is marked over-budget.
+        type: string
+        default: "45"
+
+jobs:
+  cross-library:
+    name: Cross-library benchmark (Ubuntu, native)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build native core
+        run: cargo build --release
+      - name: Install package + comparison deps
+        # Only the libraries the refreshed tables actually cite (matplotlib,
+        # seaborn, plotly + kaleido for PNG). The harness skips any library it
+        # cannot import, so the heavier datashader/bokeh/altair/hvplot stack is
+        # deliberately left out to keep this job fast and reliable.
+        run: |
+          uv venv
+          uv pip install -e ".[dev]"
+          uv pip install matplotlib seaborn plotly kaleido psutil
+      - name: Verify native backend is active
+        run: uv run python -c "import fastcharts.kernels as k; assert k.BACKEND == 'native', k.BACKEND; print('native')"
+      - name: Resolve a Chromium for TTFR probes
+        id: chromium
+        run: |
+          uv run python -m playwright install chromium
+          echo "path=$(uv run node -e "console.log(require('playwright').chromium.executablePath())")" >> "$GITHUB_OUTPUT"
+      - name: Cross-library scatter comparison (10M table)
+        run: |
+          uv run python benchmarks/bench_vs.py \
+            --sizes "${{ inputs.sizes }}" --budget "${{ inputs.budget }}" \
+            --json scatter-vs.json --out scatter-vs.md
+          uv run python scripts/verify_benchmark_report.py scatter-vs.json --kind scatter-vs
+      - name: Core-2D comparison with headless-Chrome TTFR (core-2d table)
+        run: |
+          PYTHONPATH=python uv run python benchmarks/bench_2d_charts.py \
+            --profile standard --ttfr --chromium "${{ steps.chromium.outputs.path }}" \
+            --json core-2d.json --out core-2d.md
+          uv run python scripts/verify_benchmark_report.py core-2d.json --kind core-2d
+      - name: Upload refreshed benchmark reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-refresh
+          if-no-files-found: warn
+          path: |
+            scatter-vs.json
+            scatter-vs.md
+            core-2d.json
+            core-2d.md
