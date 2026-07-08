@@ -347,6 +347,7 @@ def test_reflex_lifecycle_smoke_covers_fastcharts_iframe_assets() -> None:
         "scroll-bottom",
         "fast-scroll",
         "visibility-change",
+        "context-restore",
         "restore",
     )
     assert lifecycle.SHELL_PHASES == (
@@ -399,6 +400,9 @@ def test_reflex_lifecycle_smoke_exercises_iframe_remounts() -> None:
         "scroll-bottom",
         "fast-scroll",
         "visibility-change",
+        "context-restore",
+        "WEBGL_lose_context",
+        "forceContextRestore",
         "HashChangeEvent",
         "criticalTargetIds",
         "critical lifecycle coverage incomplete",

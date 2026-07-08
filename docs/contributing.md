@@ -144,13 +144,15 @@ The lifecycle gate runs `scripts/reflex_lifecycle_smoke.py`: every committed
 FastCharts demo asset is loaded repeatedly, and each child chart must stay
 nonblank through the named
 `initial`, `hash-navigation`, `narrow-resize`, `wide-resize`, `scroll-bottom`,
-`fast-scroll`, `visibility-change`, and `restore` phases. The iframe shell also
-exercises hash navigation, fast scrolling, resize and visibility events, a full
-iframe remount, an in-place iframe reload, and a hidden-boot/reveal pass where
-charts initialize at zero-sized iframe dimensions before becoming visible. The custom
+`fast-scroll`, `visibility-change`, `context-restore`, and `restore` phases.
+The `context-restore` phase forces `WEBGL_lose_context` loss/restoration and
+requires the rebuilt chart to remain nonblank. The iframe shell also exercises
+hash navigation, fast scrolling, resize and visibility events, a full iframe
+remount, an in-place iframe reload, and a hidden-boot/reveal pass where charts
+initialize at zero-sized iframe dimensions before becoming visible. The custom
 chrome, business overview, and retention cohort assets are tracked as critical
-reports in every shell phase. A blank, destroyed, shortened lifecycle, or
-missing critical asset/phase pair is a failing browser gate.
+reports in every shell phase. A blank, destroyed, shortened lifecycle, failed
+context restore, or missing critical asset/phase pair is a failing browser gate.
 
 The visual gate runs `scripts/visual_regression_smoke.py`. It is layout-aware:
 beyond global nonblank/color checks, it verifies title, plot, x-axis, and y-axis

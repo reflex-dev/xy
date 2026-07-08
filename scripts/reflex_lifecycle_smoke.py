@@ -84,6 +84,7 @@ LIFECYCLE_PHASES = (
     "scroll-bottom",
     "fast-scroll",
     "visibility-change",
+    "context-restore",
     "restore",
 )
 
@@ -118,6 +119,19 @@ WRAP_SCRIPT_TEMPLATE = r"""
 
   function tick() {
     return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function waitFor(predicate, timeout = 2500) {
+    const deadline = performance.now() + timeout;
+    while (performance.now() < deadline) {
+      if (predicate()) return true;
+      await sleep(25);
+    }
+    return predicate();
   }
 
   function installLifecycleWrap() {
@@ -193,6 +207,37 @@ WRAP_SCRIPT_TEMPLATE = r"""
     return { counts, missing, unexpected: [...unexpected] };
   }
 
+  async function forceContextRestore(view) {
+    if (!view || !view.gl || !view.canvas) {
+      throw new Error("cannot force WebGL context restore without a live view");
+    }
+    const loseExt = view.gl.getExtension("WEBGL_lose_context");
+    if (!loseExt) {
+      throw new Error("WEBGL_lose_context extension unavailable");
+    }
+    let lostSeen = false;
+    let restoredSeen = false;
+    view.canvas.addEventListener("webglcontextlost", () => { lostSeen = true; }, { once: true });
+    view.canvas.addEventListener("webglcontextrestored", () => { restoredSeen = true; }, { once: true });
+    loseExt.loseContext();
+    const lostOk = await waitFor(() => lostSeen && view._glLost === true, 1500);
+    if (!lostOk) {
+      throw new Error("webglcontextlost did not mark the view as lost");
+    }
+    loseExt.restoreContext();
+    const restoredOk = await waitFor(
+      () => restoredSeen && view._glLost === false && view.gl && !view._destroyed,
+      3500,
+    );
+    if (!restoredOk) {
+      throw new Error("webglcontextrestored did not rebuild the view");
+    }
+    await tick();
+    await tick();
+    view._syncContainerSize?.();
+    view._drawNow?.();
+  }
+
   window.__fastchartsLifecycleCheck = async function () {
     await tick();
     await tick();
@@ -204,6 +249,7 @@ WRAP_SCRIPT_TEMPLATE = r"""
       "scroll-bottom",
       "fast-scroll",
       "visibility-change",
+      "context-restore",
       "restore",
     ];
     const results = [];
@@ -254,6 +300,8 @@ WRAP_SCRIPT_TEMPLATE = r"""
       window.dispatchEvent(new Event("focus"));
       await tick();
       capture("visibility-change");
+      await forceContextRestore(view);
+      capture("context-restore");
       if (view.root) view.root.style.width = oldWidth;
       window.scrollTo(oldScroll.x, oldScroll.y);
       view._syncContainerSize?.();
