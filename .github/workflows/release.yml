@@ -45,9 +45,14 @@ jobs:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, zigtarget: x86_64-unknown-linux-musl, plat: musllinux_1_2_x86_64, zig: true, native: false, rustflags: "-C target-feature=-crt-static" }
           - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, zigtarget: aarch64-unknown-linux-musl, plat: musllinux_1_2_aarch64, zig: true, native: false, rustflags: "-C target-feature=-crt-static" }
           - { os: ubuntu-latest, target: armv7-unknown-linux-musleabihf, zigtarget: armv7-unknown-linux-musleabihf, plat: musllinux_1_2_armv7l, zig: true, native: false, rustflags: "-C target-feature=-crt-static" }
-          # macOS (native per runner arch).
-          - { os: macos-13, target: x86_64-apple-darwin, plat: macosx_10_12_x86_64, zig: false, native: true }
-          - { os: macos-14, target: aarch64-apple-darwin, plat: macosx_11_0_arm64, zig: false, native: true }
+          # macOS. Both build on the arm64 runner (macos-14): Apple Silicon
+          # runners are plentiful, while the last Intel runner (macos-13) is
+          # deprecated and frequently unschedulable. The Apple toolchain
+          # cross-links x86_64 Mach-O natively, so the Intel wheel is a cross
+          # build (native: false -> content-verified, not import-smoked, since
+          # an x86_64 lib can't be imported on the arm64 runner).
+          - { os: macos-14, target: x86_64-apple-darwin, plat: macosx_10_12_x86_64, zig: false, native: false, deployment: "10.12" }
+          - { os: macos-14, target: aarch64-apple-darwin, plat: macosx_11_0_arm64, zig: false, native: true, deployment: "11.0" }
           # Windows x64 (native), x86 and arm64 (cross-compiled).
           - { os: windows-latest, target: x86_64-pc-windows-msvc, plat: win_amd64, zig: false, native: true }
           - { os: windows-latest, target: i686-pc-windows-msvc, plat: win32, zig: false, native: false }
@@ -74,6 +79,10 @@ jobs:
           uv tool run cargo-zigbuild build --release --target ${{ matrix.zigtarget }}
       - name: Compile the native core
         if: ${{ !matrix.zig }}
+        env:
+          # macOS min-version floor for the produced Mach-O; empty (Windows
+          # entries have no deployment key) is ignored by the MSVC toolchain.
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment }}
         run: cargo build --release --target ${{ matrix.target }}
       - name: Build the platform wheel
         shell: bash
