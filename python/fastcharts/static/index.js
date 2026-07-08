@@ -91,6 +91,33 @@ label: tok("--chart-text") || withA(text, 0.85),
 function cssColor([r, g, b, a]) {
 return `rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},${a})`;
 }
+const FC_CHROME_CSS = `
+:where(.fastcharts [data-fc-slot="title"]){text-align:center;font-size:14px;font-weight:600;color:var(--chart-text,inherit)}
+:where(.fastcharts [data-fc-slot="tooltip"]){background:var(--chart-tooltip-bg,rgba(20,24,33,.92));color:var(--chart-tooltip-text,#fff);padding:5px 8px;border-radius:4px;font-size:11px;line-height:1.35;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+:where(.fastcharts [data-fc-slot="legend"]){gap:2px;font-size:11px;background:var(--chart-legend-bg,rgba(128,128,128,.08));border-radius:4px;padding:4px 8px;color:var(--chart-text,inherit)}
+:where(.fastcharts [data-fc-slot="legend_swatch"]){width:12px;height:10px;border-radius:2px;margin-right:5px}
+:where(.fastcharts [data-fc-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
+:where(.fastcharts [data-fc-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
+:where(.fastcharts [data-fc-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+:where(.fastcharts [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-axis,currentColor)}
+:where(.fastcharts [data-fc-slot="modebar_button"].fc-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
+:where(.fastcharts [data-fc-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
+:where(.fastcharts [data-fc-slot="crosshair_x"],.fastcharts [data-fc-slot="crosshair_y"]){background:var(--chart-crosshair,rgba(15,23,42,.42))}
+:where(.fastcharts [data-fc-slot="tick_label"]){color:var(--chart-text,inherit)}
+:where(.fastcharts [data-fc-slot="axis_title"]){color:var(--chart-text,inherit);font-size:12px}
+`;
+function ensureChromeStylesheet(node) {
+let root = node && node.getRootNode ? node.getRootNode() : document;
+const isShadow = typeof ShadowRoot !== "undefined" && root instanceof ShadowRoot;
+if (!isShadow && !(root instanceof Document)) root = document; 
+const scope = isShadow ? root : (root.head || document.head || root.documentElement);
+if (!scope || !scope.querySelector) return;
+if (scope.querySelector("style[data-fastcharts-chrome]")) return;
+const style = document.createElement("style");
+style.setAttribute("data-fastcharts-chrome", "");
+style.textContent = FC_CHROME_CSS;
+scope.appendChild(style);
+}
 function safeCssPaint(host, expr, fallback = [0.5, 0.5, 0.5, 1]) {
 const parsed = parseColor(host, expr, fallback);
 const color = Array.isArray(parsed) && parsed.length >= 4 && parsed.every(Number.isFinite)
@@ -1433,11 +1460,11 @@ root.style.cssText =
 this._applySlot(root, "root");
 el.appendChild(root);
 this.root = root;
+ensureChromeStylesheet(root);
 if (s.title) {
 const t = document.createElement("div");
 t.textContent = s.title;
-t.style.cssText =
-"position:absolute;top:6px;left:0;right:0;text-align:center;font-size:14px;font-weight:600;";
+t.style.cssText = "position:absolute;top:6px;left:0;right:0;";
 this._applySlot(t, "title");
 root.appendChild(t);
 }
@@ -1457,10 +1484,7 @@ this._applySlot(this.labels, "labels");
 root.appendChild(this.labels);
 this.tooltip = document.createElement("div");
 this.tooltip.style.cssText =
-"position:absolute;display:none;pointer-events:none;z-index:5;" +
-"background:var(--chart-tooltip-bg, rgba(20,24,33,.92));" +
-"color:var(--chart-tooltip-text, #fff);padding:5px 8px;border-radius:4px;" +
-"font-size:11px;line-height:1.35;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.3);";
+"position:absolute;display:none;pointer-events:none;z-index:5;white-space:nowrap;";
 this._applySlot(this.tooltip, "tooltip");
 root.appendChild(this.tooltip);
 this._buildLegend(root);
@@ -1504,11 +1528,7 @@ this._badges.hidden = items.length === 0;
 for (const item of items) {
 const badge = document.createElement("div");
 badge.textContent = item;
-badge.style.cssText =
-"padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);" +
-"background:var(--chart-badge-bg,rgba(255,255,255,.82));" +
-"box-shadow:0 1px 4px rgba(15,23,42,.14);";
-this._applySlot(badge, "badge_item");
+this._applySlot(badge, "badge_item"); 
 this._badges.appendChild(badge);
 }
 this._positionReductionBadges();
@@ -1519,8 +1539,8 @@ const hasDensityTrace = (this.spec.traces || []).some((t) => t.tier === "density
 if (!items.length && !hasDensityTrace) return;
 const box = document.createElement("div");
 box.style.cssText =
-"position:absolute;display:flex;flex-direction:column;align-items:flex-end;gap:3px;" +
-"pointer-events:none;z-index:4;font-size:11px;line-height:1.2;";
+"position:absolute;display:flex;flex-direction:column;align-items:flex-end;" +
+"pointer-events:none;z-index:4;";
 this._applySlot(box, "badge");
 root.appendChild(box);
 this._badges = box;
@@ -1548,15 +1568,15 @@ const lg = document.createElement("div");
 const rightInset = this.size.w - (this.plot.x + this.plot.w);
 lg.style.cssText =
 `position:absolute;top:${this.plot.y + 6}px;right:${rightInset + 6}px;` +
-"display:flex;flex-direction:column;gap:2px;font-size:11px;" +
-"background:var(--chart-legend-bg, rgba(128,128,128,.08));" +
-"border-radius:4px;padding:4px 8px;max-height:" +
-`${this.plot.h - 12}px;overflow:auto;`;
+"display:flex;flex-direction:column;overflow:auto;" +
+`max-height:${this.plot.h - 12}px;`;
 this._applySlot(lg, "legend");
 for (const it of items) {
 const row = document.createElement("div");
 this._applySlot(row, "legend_item");
 const sw = document.createElement("span");
+sw.style.display = "inline-block";
+sw.style.verticalAlign = "-1px";
 let bg = it.swatch;
 if (it.swatch === "gradient") {
 const stops = COLORMAP_STOPS[it.cmap] || COLORMAP_STOPS.viridis;
@@ -1565,8 +1585,7 @@ sw.style.background = bg;
 } else {
 sw.style.background = safeCssPaint(this.root, bg);
 }
-sw.style.cssText +=
-"display:inline-block;width:12px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px;";
+this._applySlot(sw, "legend_swatch");
 row.appendChild(sw);
 row.appendChild(document.createTextNode(it.name));
 lg.appendChild(row);
@@ -2834,11 +2853,16 @@ d.dataset.fcAxis = axis && axis.id !== undefined ? String(axis.id) : "";
 d.dataset.fcAxisSide = axis && axis.side ? String(axis.side) : "";
 const colorKey = kind === "label" ? "label_color" : "tick_color";
 const sizeKey = kind === "label" ? "label_size" : "tick_size";
-const defaultSize = kind === "label" ? 12 : 11;
-d.style.cssText =
-`position:absolute;color:${this._axisStylePaint(axis, colorKey, this.theme.label)};` +
-`font-size:${Math.max(8, this._axisStyleNumber(axis, sizeKey, defaultSize))}px;` +
-"line-height:1.2;white-space:nowrap;" + css;
+let color = "";
+if (this._axisStyleValue(axis, colorKey) !== undefined) {
+color = `color:${this._axisStylePaint(axis, colorKey, this.theme.label)};`;
+}
+let size = "";
+if (this._axisStyleValue(axis, sizeKey) !== undefined) {
+size = `font-size:${Math.max(8, this._axisStyleNumber(axis, sizeKey, 11))}px;`;
+}
+d.style.cssText = `position:absolute;line-height:1.2;white-space:nowrap;${color}${size}${css}`;
+this._applySlot(d, kind === "label" ? "axis_title" : "tick_label");
 this._applyStyle(d, extraStyle);
 this.labels.appendChild(d);
 };
@@ -3329,23 +3353,18 @@ const c = this.canvas;
 let drag = null;
 let band = null;
 this.selRect = document.createElement("div");
-this.selRect.style.cssText =
-"position:absolute;display:none;pointer-events:none;z-index:4;" +
-"border:1px solid var(--chart-selection, rgba(90,140,240,.9));" +
-"background:var(--chart-selection-fill, rgba(90,140,240,.15));";
+this.selRect.style.cssText = "position:absolute;display:none;pointer-events:none;z-index:4;";
 this._applySlot(this.selRect, "selection");
 this.root.appendChild(this.selRect);
 if (this._interactionFlag("crosshair")) {
 this.crosshairX = document.createElement("div");
 this.crosshairX.style.cssText =
-"position:absolute;display:none;pointer-events:none;z-index:3;" +
-"width:1px;background:var(--chart-crosshair, rgba(15,23,42,.42));";
+"position:absolute;display:none;pointer-events:none;z-index:3;width:1px;";
 this._applySlot(this.crosshairX, "crosshair_x");
 this.root.appendChild(this.crosshairX);
 this.crosshairY = document.createElement("div");
 this.crosshairY.style.cssText =
-"position:absolute;display:none;pointer-events:none;z-index:3;" +
-"height:1px;background:var(--chart-crosshair, rgba(15,23,42,.42));";
+"position:absolute;display:none;pointer-events:none;z-index:3;height:1px;";
 this._applySlot(this.crosshairY, "crosshair_y");
 this.root.appendChild(this.crosshairY);
 }
@@ -3575,25 +3594,19 @@ if (this.spec.show_modebar === false) return;
 const bar = document.createElement("div");
 bar.style.cssText =
 `position:absolute;top:${this.plot.y + 4}px;left:${this.plot.x + 4}px;z-index:6;` +
-"display:flex;gap:1px;opacity:.72;transition:opacity .15s;" +
-"background:var(--chart-modebar-bg, rgba(255,255,255,.78));" +
-"border:1px solid rgba(128,128,128,.18);" +
-"border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08);";
+"display:flex;opacity:.72;transition:opacity .15s;";
 this._applySlot(bar, "modebar");
 this._listen(root, "pointerenter", () => { bar.style.opacity = "1"; });
 this._listen(root, "pointerleave", () => { bar.style.opacity = ".72"; });
 this._modebar = bar;
 this._modeBtns = {};
-const col = cssColor(this.theme.axis);
 const mk = (name, title, onClick, toggles) => {
 const b = document.createElement("button");
 b.type = "button";
 b.title = title;
 b.innerHTML = this._icon(name);
 b.style.cssText =
-"display:flex;align-items:center;justify-content:center;width:26px;height:24px;" +
-"padding:0;border:none;background:transparent;cursor:pointer;border-radius:3px;" +
-`color:${col};pointer-events:auto;`;
+"display:flex;align-items:center;justify-content:center;cursor:pointer;pointer-events:auto;";
 this._applySlot(b, "modebar_button");
 this._listen(b, "pointerdown", (e) => e.stopPropagation());
 this._listen(b, "click", (e) => { e.stopPropagation(); onClick(); });
@@ -3616,7 +3629,7 @@ _setDragMode(mode) {
 this.dragMode = mode;
 if (this.canvas) this.canvas.style.cursor = mode === "zoom" ? "crosshair" : "grab";
 for (const [name, btn] of Object.entries(this._modeBtns || {})) {
-btn.style.background = name === mode ? "rgba(128,128,128,.22)" : "transparent";
+btn.classList.toggle("fc-active", name === mode);
 }
 }
 _prefersReducedMotion() {

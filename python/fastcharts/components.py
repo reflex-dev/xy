@@ -1330,11 +1330,21 @@ class Chart(Component):
 
         display(self.widget())
 
-    def to_html(self, path: Optional[str | PathLike[str]] = None) -> str:
-        return self.figure().to_html(path)
+    def to_html(
+        self,
+        path: Optional[str | PathLike[str]] = None,
+        *,
+        custom_css: Optional[str] = None,
+    ) -> str:
+        return self.figure().to_html(path, custom_css=custom_css)
 
-    def html(self, path: Optional[str | PathLike[str]] = None) -> str:
-        return self.to_html(path)
+    def html(
+        self,
+        path: Optional[str | PathLike[str]] = None,
+        *,
+        custom_css: Optional[str] = None,
+    ) -> str:
+        return self.to_html(path, custom_css=custom_css)
 
     def _repr_html_(self) -> str:
         return self.figure()._repr_html_()
