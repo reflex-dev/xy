@@ -140,11 +140,19 @@ jobs:
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
           .venv/bin/python scripts/smoke_render.py "$CHROME"
 
-      - name: Browser core lifecycle, visual, and interaction smoke (Chromium)
+      - name: Browser lifecycle smoke (Chromium)
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
           .venv/bin/python scripts/reflex_lifecycle_smoke.py "$CHROME"
+
+      - name: Browser visual regression smoke (Chromium)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
           .venv/bin/python scripts/visual_regression_smoke.py "$CHROME"
+
+      - name: Browser interaction stress smoke (Chromium)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
           .venv/bin/python scripts/interaction_stress_smoke.py "$CHROME"
 
       - name: Benchmark smoke (1e5/1e6 — §12 harness runs every phase)
