@@ -17,7 +17,7 @@ import sys
 from array import array
 from pathlib import Path
 
-ABI_VERSION = 4
+ABI_VERSION = 5
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -86,6 +86,14 @@ def load() -> ctypes.CDLL:
     lib.fc_normalize_f32.argtypes = [F64P, ctypes.c_size_t, D, D, ctypes.c_int32, F32P]
     lib.fc_range_indices.restype = ctypes.c_size_t
     lib.fc_range_indices.argtypes = [F64P, F64P, ctypes.c_size_t, D, D, D, D, U32P]
+    lib.fc_sample_mask.restype = None
+    lib.fc_sample_mask.argtypes = [
+        U64P,
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.POINTER(ctypes.c_uint8),
+    ]
     lib.fc_local_log_density.restype = ctypes.c_int32
     lib.fc_local_log_density.argtypes = [
         F64P,
@@ -205,6 +213,51 @@ def main() -> None:
         lib.fc_range_indices(null_f64, null_f64, 1, 0.0, 1.0, 0.0, 1.0, null_u32) == size_max,
         "range_indices non-empty/null sentinel",
     )
+    # sample_mask: SplitMix64(id + seed) <= threshold, one byte per row.
+    ids = array("Q", [0, 1, 2, 3])
+    mask = array("B", [9, 9, 9, 9])
+    lib.fc_sample_mask(
+        _ptr(ids, ctypes.c_uint64),
+        4,
+        ctypes.c_uint64(0),
+        ctypes.c_uint64(2**64 - 1),
+        _ptr(mask, ctypes.c_uint8),
+    )
+    ok(list(mask) == [1, 1, 1, 1], "sample_mask threshold=max keeps all")
+    lib.fc_sample_mask(
+        _ptr(ids, ctypes.c_uint64),
+        4,
+        ctypes.c_uint64(0),
+        ctypes.c_uint64(0),
+        _ptr(mask, ctypes.c_uint8),
+    )
+    ok(list(mask) == [0, 0, 0, 0], "sample_mask threshold=0 keeps none")
+    # SplitMix64(0+0) reference value — must match lod.hash_row_ids bit-for-bit.
+    lib.fc_sample_mask(
+        _ptr(ids, ctypes.c_uint64),
+        1,
+        ctypes.c_uint64(0),
+        ctypes.c_uint64(0xE220A8397B1DCDAF),
+        _ptr(mask, ctypes.c_uint8),
+    )
+    ok(mask[0] == 1, "sample_mask splitmix64(0) reference vector inclusive")
+    lib.fc_sample_mask(
+        _ptr(ids, ctypes.c_uint64),
+        1,
+        ctypes.c_uint64(0),
+        ctypes.c_uint64(0xE220A8397B1DCDAF - 1),
+        _ptr(mask, ctypes.c_uint8),
+    )
+    ok(mask[0] == 0, "sample_mask splitmix64(0) reference vector exclusive")
+    mask_null = array("B", [7])
+    lib.fc_sample_mask(
+        null_u64, 1, ctypes.c_uint64(0), ctypes.c_uint64(1), _ptr(mask_null, ctypes.c_uint8)
+    )
+    ok(mask_null[0] == 7, "sample_mask rejects null input without writing")
+    lib.fc_sample_mask(
+        null_u64, 0, ctypes.c_uint64(0), ctypes.c_uint64(1), ctypes.POINTER(ctypes.c_uint8)()
+    )
+    ok(True, "sample_mask accepts empty/null")
     ok(
         lib.fc_local_log_density(null_f64, null_f64, 0, 0.0, 1.0, 0.0, 1.0, 2, 2, null_f32) == 1,
         "local_log_density empty/null ok",

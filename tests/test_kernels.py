@@ -347,6 +347,30 @@ def test_range_indices(impl):
     np.testing.assert_array_equal(idx, [1, 2])
 
 
+def test_sample_mask_matches_numpy_hash_reference(impl):
+    # lod.hash_row_ids is the pure-NumPy SplitMix64 reference; the fused native
+    # mask must be bit-identical to hashing + thresholding through it.
+    from fastcharts import lod
+
+    rng = np.random.default_rng(11)
+    ids = rng.integers(0, 2**63, size=100_000).astype(np.uint64)
+    for seed, fraction in [(0, 0.5), (7, 0.001), (2**40, 0.25)]:
+        threshold = lod._sample_threshold(fraction)
+        ref = lod.hash_row_ids(ids, seed=seed) <= threshold
+        got = impl.sample_mask(ids, seed, int(threshold))
+        assert got.dtype == np.bool_
+        np.testing.assert_array_equal(got, ref)
+
+
+def test_sample_mask_edges(impl):
+    ids = np.arange(64, dtype=np.uint64)
+    assert impl.sample_mask(ids[:0], 0, 2**63).shape == (0,)
+    assert impl.sample_mask(ids, 0, 2**64 - 1).all()  # threshold=max keeps all
+    assert not impl.sample_mask(ids, 0, 0).any()  # only exact-zero hashes
+    with pytest.raises(ValueError, match="one-dimensional"):
+        impl.sample_mask(ids.reshape(8, 8), 0, 1)
+
+
 def test_local_log_density_shape_and_range(impl):
     x = np.array([0.1, 0.1, 0.1, 0.9], dtype=np.float64)
     y = np.array([0.1, 0.1, 0.1, 0.9], dtype=np.float64)

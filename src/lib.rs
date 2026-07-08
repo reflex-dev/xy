@@ -34,7 +34,7 @@ fn finite_ordered(lo: f64, hi: f64) -> bool {
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 4;
+pub const ABI_VERSION: u32 = 5;
 
 #[no_mangle]
 pub extern "C" fn fc_abi_version() -> u32 {
@@ -305,6 +305,31 @@ pub unsafe extern "C" fn fc_normalize_f32(
     let out = std::slice::from_raw_parts_mut(out, len);
     let nan_value = if nan_mode == 1 { f32::NAN } else { 0.0 };
     kernels::normalize_f32_into(data, lo, hi, nan_value, out);
+}
+
+/// Deterministic sampling mask (§5/§17): `out[i] = 1` iff
+/// `splitmix64(ids[i] + seed) <= threshold`. Bit-identical to
+/// `fastcharts.lod.hash_row_ids` thresholding, fused into one pass.
+///
+/// # Safety
+/// `ids` must point to `len` readable u64s; `out` to `len` writable u8s.
+#[no_mangle]
+pub unsafe extern "C" fn fc_sample_mask(
+    ids: *const u64,
+    len: usize,
+    seed: u64,
+    threshold: u64,
+    out: *mut u8,
+) {
+    if len == 0 {
+        return;
+    }
+    if ids.is_null() || out.is_null() {
+        return;
+    }
+    let ids = std::slice::from_raw_parts(ids, len);
+    let out = std::slice::from_raw_parts_mut(out, len);
+    kernels::sample_mask(ids, seed, threshold, out);
 }
 
 /// Canonical row indices inside an inclusive rectangular window. Returns the

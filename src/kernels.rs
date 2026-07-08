@@ -438,6 +438,49 @@ fn bin_2d_impl(
     });
 }
 
+const SPLITMIX_INCREMENT: u64 = 0x9E37_79B9_7F4A_7C15;
+const SPLITMIX_MUL_1: u64 = 0xBF58_476D_1CE4_E5B9;
+const SPLITMIX_MUL_2: u64 = 0x94D0_49BB_1331_11EB;
+
+/// SplitMix64 of `(row_id + seed)` — the deterministic sampling hash (§5/§17).
+/// Must stay bit-identical to `fastcharts.lod.hash_row_ids` (wrapping u64
+/// arithmetic on both sides); the Python parity test asserts this.
+#[inline(always)]
+fn splitmix64(id: u64, seed: u64) -> u64 {
+    let mut z = id.wrapping_add(seed).wrapping_add(SPLITMIX_INCREMENT);
+    z = (z ^ (z >> 30)).wrapping_mul(SPLITMIX_MUL_1);
+    z = (z ^ (z >> 27)).wrapping_mul(SPLITMIX_MUL_2);
+    z ^ (z >> 31)
+}
+
+/// Deterministic sampling mask: `out[i] = splitmix64(ids[i], seed) <= threshold`.
+/// One fused pass — the NumPy expression allocates five full-width u64
+/// temporaries (~80 MB each at 10M rows) and dominated the density payload
+/// build; this reads ids once and writes the byte mask once.
+pub fn sample_mask(ids: &[u64], seed: u64, threshold: u64, out: &mut [u8]) {
+    assert_eq!(ids.len(), out.len());
+    sample_mask_impl(ids, seed, threshold, par_threads(ids.len()), out)
+}
+
+fn sample_mask_impl(ids: &[u64], seed: u64, threshold: u64, threads: usize, out: &mut [u8]) {
+    if threads <= 1 || ids.len() < 2 {
+        for (o, &id) in out.iter_mut().zip(ids) {
+            *o = u8::from(splitmix64(id, seed) <= threshold);
+        }
+        return;
+    }
+    let per = ids.len().div_ceil(threads);
+    std::thread::scope(|s| {
+        for (seg_ids, seg_out) in ids.chunks(per).zip(out.chunks_mut(per)) {
+            s.spawn(move || {
+                for (o, &id) in seg_out.iter_mut().zip(seg_ids) {
+                    *o = u8::from(splitmix64(id, seed) <= threshold);
+                }
+            });
+        }
+    });
+}
+
 /// Uniform-bin histogram over `[lo, hi]` with the last bin closed, matching
 /// NumPy's fixed-bin behavior for the common chart path. Non-finite values and
 /// values outside the range are skipped. `out` is fully overwritten.
@@ -796,6 +839,41 @@ fn min_max_impl(data: &[f64], threads: usize) -> Option<(f64, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn splitmix64_known_vectors() {
+        // Reference values from the Python side (lod.hash_row_ids), which the
+        // parity test in tests/test_kernels.py also asserts — keep in sync.
+        assert_eq!(splitmix64(0, 0), 0xE220_A839_7B1D_CDAF);
+        assert_eq!(splitmix64(1, 0), 0x910A_2DEC_8902_5CC1);
+        assert_eq!(splitmix64(0, 1), 0x910A_2DEC_8902_5CC1); // id+seed symmetric
+        assert_eq!(splitmix64(u64::MAX, 0), splitmix64(0, u64::MAX)); // wrapping
+    }
+
+    #[test]
+    fn sample_mask_serial_and_parallel_agree() {
+        let ids: Vec<u64> = (0..1_500_000).collect();
+        let threshold = u64::MAX / 64;
+        let mut serial = vec![0u8; ids.len()];
+        let mut parallel = vec![0u8; ids.len()];
+        sample_mask_impl(&ids, 7, threshold, 1, &mut serial);
+        sample_mask_impl(&ids, 7, threshold, 4, &mut parallel);
+        assert_eq!(serial, parallel);
+        let kept: usize = serial.iter().map(|&b| b as usize).sum();
+        // ~1/64 of rows expected; loose bounds guard against a broken hash
+        assert!(kept > ids.len() / 128 && kept < ids.len() / 32, "kept {kept}");
+    }
+
+    #[test]
+    fn sample_mask_empty_and_full_threshold() {
+        let ids: Vec<u64> = (0..100).collect();
+        let mut out = vec![0u8; 100];
+        sample_mask(&ids, 0, u64::MAX, &mut out);
+        assert!(out.iter().all(|&b| b == 1));
+        sample_mask(&ids, 0, 0, &mut out);
+        // threshold 0 keeps only rows whose hash is exactly 0 — none here
+        assert!(out.iter().all(|&b| b == 0));
+    }
 
     #[test]
     fn zone_maps_basic() {
