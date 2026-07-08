@@ -108,15 +108,25 @@ def _measure(
     no tracer active; a second, untimed pass on a fresh build measures peak
     allocation.
 
+    RSS (resident set) is measured around the *timed* pass, not the tracemalloc
+    pass: it is an OS-level number unaffected by whether tracemalloc is tracing,
+    and measuring it around a second pass would understate it — freed arenas
+    from the first pass are typically not returned to the OS, so the second
+    pass's "before" baseline is already elevated, collapsing a real ~170 MB
+    resident-growth story down to a few MB of noise. Caught by comparing this
+    run's numbers against the previous one before publishing them.
+
     If `artifact_fn` is given (browser-rendered libraries), capture the page HTML
     from the timed pass's figure — untimed — so the TTFR stage can paint it.
     Raster libraries (PNG) leave it None: their render already produced pixels."""
     gc.collect()
+    rss0 = _rss_mb()
     t0 = time.perf_counter()
     fig = build()
     t1 = time.perf_counter()
     out_bytes = render(fig)
     t2 = time.perf_counter()
+    rss1 = _rss_mb()
     artifact = None
     if artifact_fn is not None:
         try:
@@ -128,12 +138,10 @@ def _measure(
 
     gc.collect()
     tracemalloc.start()
-    rss0 = _rss_mb()
     fig2 = build()
     render(fig2)
     _, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
-    rss1 = _rss_mb()
     del fig2
     gc.collect()
 
