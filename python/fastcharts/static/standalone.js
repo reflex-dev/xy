@@ -579,8 +579,13 @@ void main() {
   float b1 = fcMap(ab1, u_bmap, u_bmeta, u_ymode);
   float top = mix(y0, y1, c.x);
   float base = mix(b0, b1, c.x);
-  v_t = c.y;
-  gl_Position = vec4(mix(x0, x1, c.x), mix(base, top, c.y), 0.0, 1.0);
+  float clipY = mix(base, top, c.y);
+  // Gradient position runs in the plot's vertical space (clip -1..1 -> 0..1),
+  // continuous across every segment. The old per-quad c.y normalized to each
+  // segment's own top, so segments of different height disagreed on the
+  // gradient value at a shared screen row and left vertical seams.
+  v_t = clipY * 0.5 + 0.5;
+  gl_Position = vec4(mix(x0, x1, c.x), clipY, 0.0, 1.0);
 }`;
 const AREA_FS = `#version 300 es
 precision highp float; precision highp int;
