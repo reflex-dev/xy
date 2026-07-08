@@ -748,7 +748,79 @@ try{{
     vS._drawNow();
     vS.destroy();holderS.remove();
     const stream=(okGrow&&okHome&&okHoldS&&okPin&&okPayload)?1:0;
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}}`;
+    // Mark styling (docs/styling.md#styling-the-marks): gradient fills,
+    // rounded corners, and stroke borders on BOTH rect-family programs
+    // (histogram uses RECT, compact bar uses BAR), plus curve:"smooth"
+    // monotone-cubic densification for line/area.
+    const msBuf=new ArrayBuffer(128);
+    const msCols=[]; let msOff=0;
+    const mscol=(vals)=>{{new Float32Array(msBuf,msOff*4,vals.length).set(vals);
+      msCols.push({{byte_offset:msOff*4,len:vals.length,offset:0,scale:1,kind:"float"}});
+      msOff+=vals.length; return msCols.length-1;}};
+    const msFill={{space:"mark",dir:"down",stops:[[0,"rgba(37,99,235,1)"],[1,"rgba(37,99,235,0)"]]}};
+    const msSpec={{protocol:2,width:200,height:160,title:"",backend:"none",
+      show_legend:false,show_modebar:false,
+      x_axis:{{kind:"linear",label:"",range:[0,4]}},
+      y_axis:{{kind:"linear",label:"",range:[0,8]}},
+      traces:[
+        {{id:0,kind:"histogram",name:"a",tier:"direct",n_points:1,n_marks:1,
+          style:{{color:"#2563eb",opacity:1,role:"histogram",corner_radius:40,fill:msFill}},
+          x0:mscol([0.5]),x1:mscol([1.5]),y0:mscol([0]),y1:mscol([6])}},
+        {{id:1,kind:"histogram",name:"b",tier:"direct",n_points:1,n_marks:1,
+          style:{{color:"#2563eb",opacity:1,role:"histogram",stroke:"#ff0000",stroke_width:6,
+            corner_radius:[12,0]}},
+          x0:mscol([2.5]),x1:mscol([3.5]),y0:mscol([0]),y1:mscol([6])}},
+        {{id:2,kind:"bar",name:"c",tier:"direct",n_points:1,n_marks:1,
+          style:{{color:"#2563eb",opacity:1,corner_radius:10,fill:msFill}},
+          bar:{{pos:mscol([2]),value1:mscol([7.5]),width:0.6,orientation:"vertical"}}}}
+      ],columns:msCols}};
+    const holderMs=document.createElement("div");document.body.appendChild(holderMs);
+    const vMs=fastcharts.renderStandalone(holderMs,msSpec,msBuf);
+    vMs._drawNow();
+    const msRead=(dx,dy)=>{{
+      const g3=vMs.gl,W3=g3.drawingBufferWidth,H3=g3.drawingBufferHeight;
+      const x=Math.max(0,Math.min(W3-1,Math.round(dx/4*W3)));
+      const y=Math.max(0,Math.min(H3-1,Math.round(dy/8*H3)));
+      const px=new Uint8Array(4);g3.readPixels(x,y,1,1,g3.RGBA,g3.UNSIGNED_BYTE,px);
+      return px;
+    }};
+    const aTip=msRead(1,5.2), aBase=msRead(1,0.5), aCorner=msRead(0.56,5.85), aCenter=msRead(1,3);
+    const mgrad=(aTip[3]>110 && aBase[3]<40 && aCenter[3]>40)?1:0;
+    const mcorner=(aCorner[3]<25 && aCenter[3]>40)?1:0;
+    const bMid=msRead(3,3), bEdge=msRead(2.55,3);
+    const mstroke=(bEdge[0]>140 && bEdge[2]<90 && bMid[2]>140 && bMid[0]<90)?1:0;
+    // corner_radius:[tip,base] — rounded value-end, square base (rect B).
+    const bTipC=msRead(2.55,5.92), bBaseC=msRead(2.55,0.2);
+    const mtipbase=(bTipC[3]<25 && bBaseC[3]>100 && bBaseC[0]>140)?1:0;
+    const cTip=msRead(2,7.0), cBase=msRead(2,0.4), cCorner=msRead(1.73,7.35);
+    const bgrad=(cTip[3]>110 && cBase[3]<25)?1:0;
+    const bcorner=(cCorner[3]<25)?1:0;
+    vMs.destroy();holderMs.remove();
+    // curve:"smooth": the GPU polyline densifies ((n-1)*16+1 verts) while the
+    // hover/_cpu columns keep the 5 source rows; area smooths its base too.
+    const smBuf=new ArrayBuffer(128); const smCols=[]; let smOff=0;
+    const smcol=(vals)=>{{new Float32Array(smBuf,smOff*4,vals.length).set(vals);
+      smCols.push({{byte_offset:smOff*4,len:vals.length,offset:0,scale:1,kind:"float"}});
+      smOff+=vals.length; return smCols.length-1;}};
+    const smSpec={{protocol:2,width:200,height:160,title:"",backend:"none",
+      show_legend:false,show_modebar:false,
+      x_axis:{{kind:"linear",label:"",range:[0,4]}},
+      y_axis:{{kind:"linear",label:"",range:[0,8]}},
+      traces:[
+        {{id:0,kind:"line",name:"l",tier:"direct",n_points:5,n_marks:5,
+          style:{{color:"#2563eb",width:2,opacity:1,curve:"smooth"}},
+          x:smcol([0,1,2,3,4]),y:smcol([1,6,2,7,3])}},
+        {{id:1,kind:"area",name:"ar",tier:"direct",n_points:5,n_marks:5,
+          style:{{color:"#2563eb",opacity:0.4,line_width:1,line_opacity:1,curve:"smooth",fill:msFill}},
+          x:smcol([0,1,2,3,4]),y:smcol([2,5,3,6,2]),base:smcol([0,0,0,0,0])}}
+      ],columns:smCols}};
+    const holderSm=document.createElement("div");document.body.appendChild(holderSm);
+    const vSm=fastcharts.renderStandalone(holderSm,smSpec,smBuf);
+    vSm._drawNow();
+    const gLn=vSm.gpuTraces[0], gAr=vSm.gpuTraces[1];
+    const msmooth=(gLn.n===65 && gLn._cpu.x.length===5 && gAr.n===65 && gAr._cpu.base.length===5)?1:0;
+    vSm.destroy();holderSm.remove();
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -913,6 +985,13 @@ try{{
     bar_base = int(re.search(r"barBase=(\d+)", title).group(1))
     hist_base = int(re.search(r"histBase=(\d+)", title).group(1))
     edgepad = int(re.search(r"edgepad=(\d+)", title).group(1))
+    mark_grad = int(re.search(r"mgrad=(\d+)", title).group(1))
+    mark_tipbase = int(re.search(r"mtipbase=(\d+)", title).group(1))
+    mark_corner = int(re.search(r"mcorner=(\d+)", title).group(1))
+    mark_stroke = int(re.search(r"mstroke=(\d+)", title).group(1))
+    bar_grad = int(re.search(r"bgrad=(\d+)", title).group(1))
+    bar_corner = int(re.search(r"bcorner=(\d+)", title).group(1))
+    mark_smooth = int(re.search(r"msmooth=(\d+)", title).group(1))
     frac = lit / max(total, 1)
     print(
         f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}, pick hits: {pick}, "
@@ -1035,10 +1114,25 @@ try{{
         raise SystemExit("zero-pinned histogram left a lit-pixel gap above the x-axis")
     if edgepad != 1:
         raise SystemExit("baseline edge pad is not DPR-aware")
+    if mark_grad != 1:
+        raise SystemExit("mark-space gradient fill did not fade tip->base (rect program)")
+    if mark_tipbase != 1:
+        raise SystemExit("corner_radius=(tip, base) did not round only the value end")
+    if mark_corner != 1:
+        raise SystemExit("corner_radius left the rect corner pixel lit")
+    if mark_stroke != 1:
+        raise SystemExit("stroke border did not paint the rect edge in the stroke color")
+    if bar_grad != 1:
+        raise SystemExit("mark-space gradient fill did not fade tip->base (bar program)")
+    if bar_corner != 1:
+        raise SystemExit("corner_radius left the bar corner pixel lit")
+    if mark_smooth != 1:
+        raise SystemExit("curve:'smooth' did not densify line/area GPU geometry")
     print(
         "render smoke OK (no numpy): line + colored/sized scatter + density + "
         "area + bars + heatmap + picking + box-select + modebar/box-zoom + "
-        "responsive resize + LOD drill-in"
+        "responsive resize + LOD drill-in + mark styling (gradient/radius/"
+        "stroke/smooth)"
     )
 
 

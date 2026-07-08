@@ -14,6 +14,7 @@ raises `ValueError` (occasionally `TypeError`) naming `label`.
 
 from __future__ import annotations
 
+import itertools
 from typing import Any, Optional
 
 import numpy as np
@@ -22,6 +23,14 @@ _TICK_LABEL_STRATEGIES = frozenset({"auto", "hide", "rotate", "stagger", "none"}
 _LABEL_POSITIONS = frozenset(
     {"start", "center", "end", "inside_start", "inside_center", "inside_end"}
 )
+_CURVES = frozenset({"linear", "smooth"})
+_FILL_SPACES = frozenset({"mark", "plot"})
+# CSS `<side-or-corner>` keywords -> wire direction. In mark space the gradient
+# line runs along each mark's value axis ("bottom" = the base, "top" = the
+# tip/line, matching the visual for vertical marks); in plot space it runs
+# across the plot box in screen directions. Angles and corner keywords are
+# rejected — GPU marks get the four axis-aligned directions.
+_GRADIENT_DIRS = {"to top": "up", "to bottom": "down", "to left": "left", "to right": "right"}
 
 
 def finite_scalar(value: Any, label: str) -> float:
@@ -162,6 +171,118 @@ def style_mapping(value: dict[str, Any], label: str) -> dict[str, str | int | fl
             raise ValueError(f"{label} numeric values must be finite")
         out[key] = item.item() if isinstance(item, (np.integer, np.floating)) else item
     return out
+
+
+def curve(value: Any, label: str) -> str:
+    """Line/area interpolation: 'linear' or 'smooth' (monotone cubic)."""
+    if not isinstance(value, str) or value not in _CURVES:
+        raise ValueError(f"{label} must be one of {sorted(_CURVES)}")
+    return value
+
+
+def _split_top_level(text: str) -> list[str]:
+    """Split on commas that sit outside parentheses (rgb()/var() stay intact)."""
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(text):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            parts.append(text[start:i])
+            start = i + 1
+    parts.append(text[start:])
+    return [p.strip() for p in parts]
+
+
+def _gradient_stop(item: str, label: str) -> tuple[Optional[float], str]:
+    """One CSS color stop: `<color> [<percentage>]` -> (position 0..1 | None, color)."""
+    tokens = item.rsplit(None, 1)
+    if len(tokens) == 2 and tokens[1].endswith("%"):
+        try:
+            pos = float(tokens[1][:-1]) / 100.0
+        except ValueError as e:
+            raise ValueError(f"{label} has an invalid stop position {tokens[1]!r}") from e
+        if not np.isfinite(pos):
+            raise ValueError(f"{label} stop positions must be finite")
+        return min(max(pos, 0.0), 1.0), tokens[0].strip()
+    return None, item.strip()
+
+
+def mark_fill(value: Any, label: str) -> Optional[dict[str, Any]]:
+    """Mark fill: a CSS `linear-gradient(...)` string, or `{"gradient": <that
+    string>, "space": "mark"|"plot"}`. Returns the normalized wire spec
+    `{"space", "dir", "stops": [[t, color], ...]}` with 2–8 resolved stops;
+    color strings stay unresolved for the client (`var()`/`currentColor` need
+    the live DOM)."""
+    if value is None:
+        return None
+    space = "mark"
+    if isinstance(value, dict):
+        unknown = sorted(set(value) - {"gradient", "space"})
+        if unknown:
+            raise ValueError(f"{label} has unknown key(s) {unknown}; expected gradient, space")
+        space = value.get("space", "mark")
+        if space not in _FILL_SPACES:
+            raise ValueError(f"{label} space must be one of {sorted(_FILL_SPACES)}")
+        value = value.get("gradient")
+    if not isinstance(value, str):
+        raise ValueError(
+            f"{label} must be a 'linear-gradient(...)' string or a dict with a 'gradient' key"
+        )
+    text = value.strip()
+    lowered = text.lower()
+    if not lowered.startswith("linear-gradient(") or not text.endswith(")"):
+        raise ValueError(f"{label} must be a CSS 'linear-gradient(...)' value")
+    args = _split_top_level(text[len("linear-gradient(") : -1])
+    direction = "down"
+    if args and args[0].lower() in _GRADIENT_DIRS:
+        direction = _GRADIENT_DIRS[args[0].lower()]
+        args = args[1:]
+    elif args and (args[0].lower().startswith("to ") or args[0].lower().endswith("deg")):
+        raise ValueError(
+            f"{label} direction must be one of {sorted(_GRADIENT_DIRS)} (angles unsupported)"
+        )
+    if direction in {"left", "right"} and space == "mark":
+        raise ValueError(
+            f"{label}: 'to left'/'to right' need space='plot' — mark-space gradients run "
+            "along each mark's value axis"
+        )
+    if not 2 <= len(args) <= 8:
+        raise ValueError(f"{label} must have between 2 and 8 color stops")
+    positions: list[Optional[float]] = []
+    colors: list[str] = []
+    for item in args:
+        pos, color = _gradient_stop(item, label)
+        if not color:
+            raise ValueError(f"{label} has an empty color stop")
+        positions.append(pos)
+        colors.append(color)
+    # CSS stop-position resolution: unpositioned endpoints default to 0%/100%,
+    # positions never decrease (each anchor clamps to its predecessor), and
+    # unpositioned interior stops spread evenly between their positioned
+    # neighbors — implemented as anchor points + linear fill between them.
+    count = len(positions)
+    anchors: dict[int, float] = {i: p for i, p in enumerate(positions) if p is not None}
+    anchors.setdefault(0, 0.0)
+    anchors.setdefault(count - 1, 1.0)
+    keys = sorted(anchors)
+    prev = 0.0
+    for i in keys:
+        prev = anchors[i] = max(anchors[i], prev)
+    resolved = [0.0] * count
+    for i0, i1 in itertools.pairwise(keys):
+        v0, v1 = anchors[i0], anchors[i1]
+        for k in range(i0, i1):
+            resolved[k] = v0 + (v1 - v0) * (k - i0) / (i1 - i0)
+    resolved[count - 1] = anchors[count - 1]
+    return {
+        "space": space,
+        "dir": direction,
+        "stops": [[p, c] for p, c in zip(resolved, colors, strict=True)],
+    }
 
 
 def axis_label_position(value: Any, label: str) -> Optional[str | dict[str, str | int | float]]:

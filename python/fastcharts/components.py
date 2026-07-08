@@ -259,11 +259,13 @@ def line(
     color: Optional[str] = None,
     width: float = 1.5,
     opacity: float = 1.0,
+    curve: str = "linear",
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
-    """A line series (M4-decimated above the threshold, §5 Tier 1)."""
+    """A line series (M4-decimated above the threshold, §5 Tier 1).
+    `curve="smooth"` renders a monotone cubic through the points."""
     return Mark(
         kind="line",
         x=x,
@@ -275,6 +277,7 @@ def line(
             "color": color,
             "width": width,
             "opacity": opacity,
+            "curve": curve,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -292,11 +295,14 @@ def area(
     opacity: float = 0.35,
     line_width: float = 1.2,
     line_opacity: float = 1.0,
+    fill: Any = None,
+    curve: str = "linear",
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
-    """A filled area series between `y` and `base`."""
+    """A filled area series between `y` and `base`. `fill` accepts a CSS
+    `linear-gradient(...)`; `curve="smooth"` renders a monotone cubic."""
     return Mark(
         kind="area",
         x=x,
@@ -310,6 +316,8 @@ def area(
             "opacity": opacity,
             "line_width": line_width,
             "line_opacity": line_opacity,
+            "fill": fill,
+            "curve": curve,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -327,6 +335,10 @@ def histogram(
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.85,
+    corner_radius: Any = 0.0,
+    stroke: Optional[str] = None,
+    stroke_width: float = 0.0,
+    fill: Any = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -345,6 +357,10 @@ def histogram(
             "cumulative": cumulative,
             "color": color,
             "opacity": opacity,
+            "corner_radius": corner_radius,
+            "stroke": stroke,
+            "stroke_width": stroke_width,
+            "fill": fill,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -362,6 +378,10 @@ def hist(
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.85,
+    corner_radius: Any = 0.0,
+    stroke: Optional[str] = None,
+    stroke_width: float = 0.0,
+    fill: Any = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -377,6 +397,10 @@ def hist(
         name=name,
         color=color,
         opacity=opacity,
+        corner_radius=corner_radius,
+        stroke=stroke,
+        stroke_width=stroke_width,
+        fill=fill,
         class_name=class_name,
         x_axis=x_axis,
         y_axis=y_axis,
@@ -397,6 +421,10 @@ def bar(
     orientation: str = "vertical",
     series: Optional[list[str]] = None,
     opacity: float = 0.85,
+    corner_radius: Any = 0.0,
+    stroke: Optional[str] = None,
+    stroke_width: float = 0.0,
+    fill: Any = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -419,6 +447,10 @@ def bar(
             "orientation": orientation,
             "series": series,
             "opacity": opacity,
+            "corner_radius": corner_radius,
+            "stroke": stroke,
+            "stroke_width": stroke_width,
+            "fill": fill,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -439,6 +471,10 @@ def column(
     orientation: str = "vertical",
     series: Optional[list[str]] = None,
     opacity: float = 0.85,
+    corner_radius: Any = 0.0,
+    stroke: Optional[str] = None,
+    stroke_width: float = 0.0,
+    fill: Any = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -460,6 +496,10 @@ def column(
             "orientation": orientation,
             "series": series,
             "opacity": opacity,
+            "corner_radius": corner_radius,
+            "stroke": stroke,
+            "stroke_width": stroke_width,
+            "fill": fill,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -1693,6 +1733,7 @@ def _apply_line(fig: Figure, m: Mark, data: Any) -> None:
         color=m.props["color"],
         width=m.props["width"],
         opacity=m.props["opacity"],
+        curve=m.props["curve"],
     )
 
 
@@ -1707,6 +1748,8 @@ def _apply_area(fig: Figure, m: Mark, data: Any) -> None:
         opacity=m.props["opacity"],
         line_width=m.props["line_width"],
         line_opacity=m.props["line_opacity"],
+        fill=m.props["fill"],
+        curve=m.props["curve"],
     )
 
 
@@ -1720,6 +1763,10 @@ def _apply_histogram(fig: Figure, m: Mark, data: Any) -> None:
         name=m.name,
         color=m.props["color"],
         opacity=m.props["opacity"],
+        corner_radius=m.props["corner_radius"],
+        stroke=m.props["stroke"],
+        stroke_width=m.props["stroke_width"],
+        fill=m.props["fill"],
     )
 
 
@@ -1749,6 +1796,10 @@ def _apply_bar(fig: Figure, m: Mark, data: Any) -> None:
         orientation=m.props["orientation"],
         series=m.props["series"],
         opacity=m.props["opacity"],
+        corner_radius=m.props["corner_radius"],
+        stroke=m.props["stroke"],
+        stroke_width=m.props["stroke_width"],
+        fill=m.props["fill"],
     )
 
 
@@ -1766,6 +1817,10 @@ def _apply_column(fig: Figure, m: Mark, data: Any) -> None:
         orientation=m.props["orientation"],
         series=m.props["series"],
         opacity=m.props["opacity"],
+        corner_radius=m.props["corner_radius"],
+        stroke=m.props["stroke"],
+        stroke_width=m.props["stroke_width"],
+        fill=m.props["fill"],
     )
 
 

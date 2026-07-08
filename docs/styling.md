@@ -146,15 +146,89 @@ to_html(fig, "chart.html", custom_css="""
 `custom_css` is injected as an author `<style>` and is rejected if it tries to
 break out of the tag (`</style>`, comment sequences).
 
+## Styling the marks
+
+The marks themselves — bars, areas, lines, points — are painted on the WebGL2
+canvas, so CSS *selectors* can't reach them. Instead, the mark props speak CSS:
+every color accepts any CSS color the browser can resolve (`var(--accent)`,
+`oklch(...)`, named colors, alpha hex), re-resolved live on theme change, and
+fills accept real CSS `linear-gradient(...)` syntax. The border trio mirrors
+CSS naming (`corner_radius`, `stroke`, `stroke_width`).
+
+```python
+# The classic dashboard look: smooth curve + gradient fade to the baseline
+fig.area(x, y, color="#3b82f6", curve="smooth",
+         fill="linear-gradient(currentColor, transparent)")
+
+# Rounded, bordered, gradient bars
+fig.bar(x, y,
+    corner_radius=6,                                   # like CSS border-radius (px)
+    stroke="var(--chart-axis)", stroke_width=1.5,      # like CSS border
+    fill="linear-gradient(to top, #2563eb, #93c5fd)")  # per-bar gradient
+```
+
+### Gradient fills — `fill=` on `area`, `bar`, `column`, `histogram`
+
+`fill` takes a CSS `linear-gradient(...)`: optional direction (`to top`,
+`to bottom` — the default, `to left`/`to right` in plot space), then 2–8 color
+stops with optional `%` positions (CSS rules: endpoints default to 0%/100%,
+unpositioned stops spread evenly). Two special colors:
+
+- `currentColor` — the mark's own resolved color (palette default, `var()`,
+  anything), so one string works across every trace.
+- `transparent` — stops interpolate in premultiplied alpha, so fades to
+  transparent keep their hue (no gray fringe).
+
+Gradients run in **mark space** by default: along each mark's value axis, `to
+bottom` starting at the tip/line and ending at the base — an area fades from
+its curve down to the baseline; every bar fades along its own height. For one
+gradient across the whole plot box instead, opt into **plot space**:
+
+```python
+fill={"gradient": "linear-gradient(to right, var(--a), var(--b))", "space": "plot"}
+```
+
+### Borders & radius — `bar`, `column`, `histogram`
+
+`corner_radius` (px, clamped to half the mark size — a radius of half-width
+gives pill bars), `stroke` (any CSS color; defaults to the mark color when only
+a width is given), `stroke_width` (px; a stroke color alone implies 1px).
+Rendered as an antialiased SDF in the fragment shader — zero cost when unset,
+and hover/tooltips still hit the full rectangular footprint.
+
+`corner_radius` also takes a `(tip, base)` pair in mark space — the classic
+rounded-top bar is `corner_radius=(6, 0)`: round the value end, keep the base
+square on the axis. Like gradients, the pair is orientation-aware (a
+horizontal bar rounds its right end) and correct for negative bars (the tip
+is below the baseline).
+
+### Smooth curves — `curve="smooth"` on `line`, `area`
+
+Monotone cubic (Fritsch–Carlson) through the points: follows the data, never
+overshoots (safe on decimated tiers), re-applied on every zoom-refined window.
+Hover and tooltips keep reporting the real data points, not interpolated ones.
+Densification caps at ~32k vertices — past that the polyline is sub-pixel
+dense and smoothing is invisible by construction.
+
+### The full mark-styling matrix
+
+| Mark | Color/opacity | Gradient fill | Corner radius | Stroke | Curve | Size/width |
+| --- | --- | --- | --- | --- | --- | --- |
+| `bar` / `column` | ✅ (+ per-series `colors`) | ✅ mark/plot space | ✅ all or `(tip, base)` | ✅ | — | ✅ `width` |
+| `histogram` | ✅ | ✅ | ✅ all or `(tip, base)` | ✅ | — | bin-driven |
+| `area` | ✅ (+ `line_width`/`line_opacity`) | ✅ | — | line is the stroke | ✅ | ✅ |
+| `line` | ✅ | — (stroke gradients: roadmap) | — | is a stroke | ✅ | ✅ `width` |
+| `scatter` | ✅ + color/size channels | — | point shape: roadmap | roadmap | — | ✅ + size channel |
+| `heatmap` | colormap + `domain` | colormap is the gradient | — | — | — | cell-driven |
+
+State styling (`mark_style`: hover / selected / unselected opacity & color)
+composes with all of the above. On the roadmap, in likely order: line dash
+patterns, scatter point strokes + shapes, per-mark drop shadows, gradient
+angles beyond the four axis directions, and stroke gradients.
+
 ## What CSS cannot restyle
 
-The **marks themselves** — points, lines, bars, heatmap cells — and annotation
-**shapes** (markers, arrows, filled zones) are painted on the WebGL2/2D canvas,
-not the DOM, so CSS selectors do not reach them. Style them through data instead:
-
-- Mark color/size/opacity: the trace's channels and `mark_style` (selected /
-  unselected / hover states).
-- Annotation shapes: the annotation's own `color` / `stroke_color` /
-  `stroke_width` / `opacity` arguments.
-
-Only annotation **labels** are DOM (`annotation_label`) and thus fully CSS-styleable.
+Annotation **shapes** (markers, arrows, filled zones) are canvas-painted; style
+them through the annotation's own `color` / `stroke_color` / `stroke_width` /
+`opacity` arguments. Only annotation **labels** are DOM (`annotation_label`)
+and thus fully CSS-styleable.

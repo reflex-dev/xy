@@ -50,6 +50,8 @@ const RECT_MARK = {
   },
   refreshColor: (view, g) => {
     if (!g.colorMode) g.color = parseColor(view.root, g.trace.style.color, g.color);
+    // stroke + gradient stops are CSS-expressed too — re-resolve with the theme.
+    view._rectMarkStyleGpu(g, g.trace);
   },
 };
 
@@ -85,6 +87,8 @@ const BAR_MARK = {
   },
   refreshColor: (view, g) => {
     if (!g.colorMode) g.color = parseColor(view.root, g.trace.style.color, g.color);
+    // stroke + gradient stops are CSS-expressed too — re-resolve with the theme.
+    view._rectMarkStyleGpu(g, g.trace);
   },
 };
 
@@ -144,6 +148,7 @@ const MARK_KINDS = {
     refreshColor: (view, g) => {
       g.color = parseColor(view.root, g.trace.style.color, g.color);
       g.lineColor = parseColor(view.root, g.trace.style.color, g.lineColor || g.color);
+      g.grad = view._resolveMarkFill(g.trace.style, g.color);
     },
   },
 };

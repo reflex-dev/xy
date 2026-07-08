@@ -921,20 +921,119 @@ class ChartView {
     );
   }
 
+  // Resolve a validated `style.fill` gradient (wire: {space, dir, stops}) into
+  // GPU uniform data. Stop colors resolve against the live DOM (var()/oklch/
+  // named colors); `currentColor` means the mark's own resolved color, so the
+  // one-liner `linear-gradient(currentColor, transparent)` follows the palette
+  // and theme. Colors are premultiplied here and interpolated premultiplied in
+  // the shader, so fades to transparent keep their hue.
+  _resolveMarkFill(style, markColor) {
+    const fill = style && style.fill;
+    if (!fill || !Array.isArray(fill.stops) || fill.stops.length < 2) return null;
+    const mode = fill.space === "plot" ? 2 : 1;
+    const dir = { down: 0, up: 1, left: 2, right: 3 }[fill.dir] ?? 0;
+    const count = Math.min(fill.stops.length, 8);
+    const pos = new Float32Array(8);
+    const colors = new Float32Array(32);
+    for (let i = 0; i < count; i++) {
+      const stop = fill.stops[i] || [];
+      pos[i] = Math.min(Math.max(Number(stop[0]) || 0, 0), 1);
+      const expr = String(stop[1] || "").trim();
+      const c = expr.toLowerCase() === "currentcolor"
+        ? markColor
+        : parseColor(this.root, expr, markColor);
+      colors[i * 4] = c[0] * c[3];
+      colors[i * 4 + 1] = c[1] * c[3];
+      colors[i * 4 + 2] = c[2] * c[3];
+      colors[i * 4 + 3] = c[3];
+    }
+    return { mode, dir, count, pos, colors };
+  }
+
+  _setGradientUniforms(prog, grad) {
+    const gl = this.gl;
+    const u = (n) => uniformOf(gl, prog, n);
+    if (!grad) {
+      gl.uniform1i(u("u_gradMode"), 0);
+      return;
+    }
+    gl.uniform1i(u("u_gradMode"), grad.mode);
+    gl.uniform1i(u("u_gradDir"), grad.dir);
+    gl.uniform1i(u("u_gradCount"), grad.count);
+    gl.uniform1fv(u("u_gradPos"), grad.pos);
+    gl.uniform4fv(u("u_gradColor"), grad.colors);
+  }
+
+  // Rect-family styling uniforms (rounded corners, stroke, gradient). Radius
+  // and stroke width are CSS px -> device px; the stroke color ships
+  // premultiplied to match the shader's blend space.
+  _setRectStyleUniforms(prog, g) {
+    const gl = this.gl;
+    const u = (n) => uniformOf(gl, prog, n);
+    gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
+    const cr = g.cornerRadius || [0, 0];
+    gl.uniform2f(u("u_radius"), cr[0] * this.dpr, cr[1] * this.dpr);
+    gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
+    const sc = g.strokeColor || [0, 0, 0, 0];
+    gl.uniform4f(u("u_stroke"), sc[0] * sc[3], sc[1] * sc[3], sc[2] * sc[3], sc[3]);
+    this._setGradientUniforms(prog, g.grad);
+  }
+
+  // Shared rect-family mark styling (bar/column/histogram): rounded corners,
+  // stroke, gradient. `corner_radius` is a scalar (all corners) or a
+  // [tip, base] pair in mark space — (6, 0) rounds only the value end. A
+  // stroke width with no stroke color borders in the mark color at full alpha.
+  _rectMarkStyleGpu(g, t) {
+    const s = t.style || {};
+    const cr = s.corner_radius;
+    g.cornerRadius = Array.isArray(cr)
+      ? [Number(cr[0]) || 0, Number(cr[1]) || 0]
+      : [Number(cr) || 0, Number(cr) || 0];
+    g.strokeWidth = Number(s.stroke_width) || 0;
+    const opaque = [g.color[0], g.color[1], g.color[2], 1];
+    g.strokeColor = s.stroke ? parseColor(this.root, s.stroke, opaque) : opaque;
+    g.grad = this._resolveMarkFill(s, g.color);
+  }
+
+  // curve:"smooth" resample for the polyline marks. Returns null unless the
+  // trace opted in and the data qualifies; hover keeps reading the original
+  // `_cpu` columns either way (`_nearestCpuIndex` limits to the source length).
+  _smoothArrays(t, x, y, base, n) {
+    if (!t.style || t.style.curve !== "smooth") return null;
+    return fcSmoothResample(x, y, base || null, n, 32768);
+  }
+
   _buildLineMark(g, t, buffer) {
-    this._buildXY(g, t, buffer);
+    const x = this._columnView(buffer, this.spec.columns[t.x]);
+    const y = this._columnView(buffer, this.spec.columns[t.y]);
+    g.xMeta = { ...this.spec.columns[t.x] };
+    g.yMeta = { ...this.spec.columns[t.y] };
+    g.n = Math.min(x.length, y.length);
+    g._cpu = { x, y, xMeta: g.xMeta, yMeta: g.yMeta };
+    const sm = this._smoothArrays(t, x, y, null, g.n);
+    g.xBuf = this._upload(sm ? sm.x : x);
+    g.yBuf = this._upload(sm ? sm.y : y);
+    if (sm) g.n = sm.n;
     g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
   }
 
   _buildAreaMark(g, t, buffer) {
-    this._buildXY(g, t, buffer);
+    const x = this._columnView(buffer, this.spec.columns[t.x]);
+    const y = this._columnView(buffer, this.spec.columns[t.y]);
     const base = this._columnView(buffer, this.spec.columns[t.base]);
+    g.xMeta = { ...this.spec.columns[t.x] };
+    g.yMeta = { ...this.spec.columns[t.y] };
     g.baseMeta = { ...this.spec.columns[t.base] };
-    g.n = Math.min(g.n, base.length);
-    if (g._cpu) g._cpu.base = base;
-    g.baseBuf = this._upload(base);
+    g.n = Math.min(x.length, y.length, base.length);
+    g._cpu = { x, y, base, xMeta: g.xMeta, yMeta: g.yMeta };
+    const sm = this._smoothArrays(t, x, y, base, g.n);
+    g.xBuf = this._upload(sm ? sm.x : x);
+    g.yBuf = this._upload(sm ? sm.y : y);
+    g.baseBuf = this._upload(sm ? sm.extra : base);
+    if (sm) g.n = sm.n;
     g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
     g.lineColor = parseColor(this.root, t.style && t.style.color, g.color);
+    g.grad = this._resolveMarkFill(t.style, g.color);
   }
 
   _buildRectMark(g, t, buffer) {
@@ -966,6 +1065,7 @@ class ChartView {
       g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
       g.lut = this._paletteLut(t.color.palette);
     }
+    this._rectMarkStyleGpu(g, t);
   }
 
   _buildBarMark(g, t, buffer) {
@@ -1003,6 +1103,7 @@ class ChartView {
       g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
       g.lut = this._paletteLut(t.color.palette);
     }
+    this._rectMarkStyleGpu(g, t);
   }
 
   _buildHeatmapMark(g, t, buffer) {
@@ -1443,6 +1544,8 @@ class ChartView {
     this._setAxisUniforms(prog, "u_b", g.baseMeta, g.yAxis);
     const [r, gg, b, a] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 0.35));
+    gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
+    this._setGradientUniforms(prog, g.grad);
     this._bindVao(g, "area", [g.xBuf._fcId, g.yBuf._fcId, g.baseBuf._fcId], () => {
       this._vaoAttr(ATTR_SLOTS.ax0, g.xBuf, 0, 1);
       this._vaoAttr(ATTR_SLOTS.ax1, g.xBuf, 4, 1);
@@ -1474,6 +1577,7 @@ class ChartView {
     const [r, gg, b, a] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+    this._setRectStyleUniforms(prog, g);
     const colorOn = g.colorMode && g.cBuf;
     if (colorOn) {
       gl.activeTexture(gl.TEXTURE0);
@@ -1520,6 +1624,7 @@ class ChartView {
     const [r, gg, b, a] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+    this._setRectStyleUniforms(prog, g);
     const v0On = g.value0Mode === 1 && g.value0Buf;
     const colorOn = g.colorMode && g.cBuf;
     if (colorOn) {

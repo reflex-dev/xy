@@ -1720,3 +1720,136 @@ def test_html_to_png_retries_without_sandbox_when_chromium_crashes(monkeypatch):
     assert data == b"\x89PNG\r\n\x1a\nfake"
     assert "--no-sandbox" not in seen[0]
     assert "--no-sandbox" in seen[1]
+
+
+# ---------------------------------------------------------------------------
+# Mark-level styling (docs/styling.md#styling-the-marks): CSS linear-gradient
+# fills, rounded corners + stroke borders on the rect family, smooth curves.
+# ---------------------------------------------------------------------------
+
+
+def test_mark_fill_parses_css_linear_gradient() -> None:
+    fig = Figure().area([0.0, 1.0], [1.0, 2.0], fill="linear-gradient(currentColor, transparent)")
+    spec, _ = fig.build_payload()
+    assert spec["traces"][0]["style"]["fill"] == {
+        "space": "mark",
+        "dir": "down",
+        "stops": [[0.0, "currentColor"], [1.0, "transparent"]],
+    }
+
+    fig2 = Figure().bar(
+        ["a"], [1.0], fill={"gradient": "linear-gradient(to right, red 10%, blue)", "space": "plot"}
+    )
+    spec2, _ = fig2.build_payload()
+    fill2 = spec2["traces"][0]["style"]["fill"]
+    assert fill2["space"] == "plot"
+    assert fill2["dir"] == "right"
+    assert fill2["stops"] == [[0.1, "red"], [1.0, "blue"]]
+
+    # CSS stop-position rules: unpositioned interior stops distribute evenly,
+    # nested function commas (rgb/var) don't split stops.
+    fig3 = Figure().area(
+        [0.0, 1.0], [1.0, 2.0], fill="linear-gradient(rgba(1,2,3,.5), var(--mid), rgb(9,9,9))"
+    )
+    spec3, _ = fig3.build_payload()
+    assert spec3["traces"][0]["style"]["fill"]["stops"] == [
+        [0.0, "rgba(1,2,3,.5)"],
+        [0.5, "var(--mid)"],
+        [1.0, "rgb(9,9,9)"],
+    ]
+
+
+def test_mark_fill_rejects_invalid_gradients() -> None:
+    fig = Figure()
+    with pytest.raises(ValueError, match="area fill"):
+        fig.area([0.0, 1.0], [1.0, 2.0], fill="radial-gradient(red, blue)")
+    with pytest.raises(ValueError, match="angles unsupported"):
+        fig.area([0.0, 1.0], [1.0, 2.0], fill="linear-gradient(45deg, red, blue)")
+    with pytest.raises(ValueError, match="space='plot'"):
+        fig.area([0.0, 1.0], [1.0, 2.0], fill="linear-gradient(to left, red, blue)")
+    with pytest.raises(ValueError, match="between 2 and 8"):
+        fig.area([0.0, 1.0], [1.0, 2.0], fill="linear-gradient(red)")
+    with pytest.raises(ValueError, match="unknown key"):
+        fig.area(
+            [0.0, 1.0], [1.0, 2.0], fill={"gradient": "linear-gradient(red, blue)", "mode": "x"}
+        )
+    # validation happens before ingest — the failed call leaves no partial trace
+    assert fig.traces == []
+
+
+def test_bar_corner_radius_and_stroke_emit_sparsely() -> None:
+    spec, _ = Figure().bar(["a", "b"], [1.0, 2.0]).build_payload()
+    style = spec["traces"][0]["style"]
+    for key in ("corner_radius", "stroke", "stroke_width", "fill"):
+        assert key not in style
+
+    spec2, _ = Figure().bar(["a"], [1.0], corner_radius=6, stroke="#123456").build_payload()
+    style2 = spec2["traces"][0]["style"]
+    assert style2["corner_radius"] == 6.0
+    assert style2["stroke"] == "#123456"
+    assert style2["stroke_width"] == 1.0  # a stroke color implies a 1px border
+
+    with pytest.raises(ValueError, match="bar corner_radius"):
+        Figure().bar(["a"], [1.0], corner_radius=-1)
+    with pytest.raises(ValueError, match="column stroke_width"):
+        Figure().column(["a"], [1.0], stroke_width=-0.5)
+
+
+def test_bar_mark_style_reaches_every_stacked_series() -> None:
+    spec, _ = (
+        Figure()
+        .bar(["a", "b"], [[1.0, 2.0], [3.0, 4.0]], mode="stacked", corner_radius=4, stroke="#000")
+        .build_payload()
+    )
+    assert len(spec["traces"]) == 2
+    for trace in spec["traces"]:
+        assert trace["style"]["corner_radius"] == 4.0
+        assert trace["style"]["stroke"] == "#000"
+
+
+def test_histogram_mark_style_reaches_spec() -> None:
+    spec, _ = (
+        Figure()
+        .histogram(
+            [1.0, 2.0, 3.0],
+            corner_radius=3,
+            stroke_width=2,
+            fill="linear-gradient(currentColor, transparent)",
+        )
+        .build_payload()
+    )
+    style = spec["traces"][0]["style"]
+    assert style["corner_radius"] == 3.0
+    assert style["stroke_width"] == 2.0
+    assert style["fill"]["stops"] == [[0.0, "currentColor"], [1.0, "transparent"]]
+
+
+def test_line_area_curve_smooth_emits_style_key() -> None:
+    fig = Figure()
+    fig.line([0.0, 1.0], [1.0, 2.0], curve="smooth")
+    fig.area([0.0, 1.0], [1.0, 2.0], curve="smooth")
+    spec, _ = fig.build_payload()
+    assert spec["traces"][0]["style"]["curve"] == "smooth"
+    assert spec["traces"][1]["style"]["curve"] == "smooth"
+
+    spec2, _ = Figure().line([0.0, 1.0], [1.0, 2.0]).build_payload()
+    assert "curve" not in spec2["traces"][0]["style"]
+
+    with pytest.raises(ValueError, match="line curve"):
+        Figure().line([0.0, 1.0], [1.0, 2.0], curve="spline")
+
+
+def test_bar_corner_radius_tip_base_pair() -> None:
+    spec, _ = Figure().bar(["a"], [1.0], corner_radius=(6, 0)).build_payload()
+    assert spec["traces"][0]["style"]["corner_radius"] == [6.0, 0.0]
+
+    # (0, 0) is the default — emitted sparsely, like the scalar 0
+    spec2, _ = Figure().bar(["a"], [1.0], corner_radius=(0, 0)).build_payload()
+    assert "corner_radius" not in spec2["traces"][0]["style"]
+
+    with pytest.raises(ValueError, match=r"corner_radius pair must be \(tip, base\)"):
+        Figure().bar(["a"], [1.0], corner_radius=(6,))
+    with pytest.raises(ValueError, match="corner_radius tip"):
+        Figure().bar(["a"], [1.0], corner_radius=(-1, 0))
+    with pytest.raises(ValueError, match="histogram corner_radius base"):
+        Figure().histogram([1.0, 2.0], corner_radius=(2, -3))

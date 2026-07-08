@@ -272,10 +272,12 @@ class Figure(AnnotationsMixin, PayloadMixin):
         color: Optional[str] = None,
         width: float = 1.5,
         opacity: float = 1.0,
+        curve: str = "linear",
     ) -> "Figure":
         name = self._optional_text(name, "line name")
         width = self._positive_scalar(width, "line width")
         opacity = self._opacity(opacity, "line opacity")
+        curve = _validate.curve(curve, "line curve")
         checkpoint = self._checkpoint()
         try:
             xc, yc = self._ingest_xy(x, y, "line")
@@ -288,6 +290,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 order = np.argsort(xc.values, kind="stable")
                 xc = self.store.ingest(xc.values[order])
                 yc = self.store.ingest(yc.values[order])
+            style: dict[str, Any] = {"color": color, "width": width, "opacity": opacity}
+            if curve != "linear":
+                style["curve"] = curve
             self.traces.append(
                 Trace(
                     id=len(self.traces),
@@ -295,7 +300,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
                     x=xc,
                     y=yc,
                     name=name,
-                    style={"color": color, "width": width, "opacity": opacity},
+                    style=style,
                 )
             )
             return self
@@ -314,16 +319,22 @@ class Figure(AnnotationsMixin, PayloadMixin):
         opacity: float = 0.35,
         line_width: float = 1.2,
         line_opacity: float = 1.0,
+        fill: Any = None,
+        curve: str = "linear",
     ) -> "Figure":
         """Add a filled area trace between `y` and `base`.
 
         `base` may be a scalar or a length-N array, which covers both the common
         zero-baseline area chart and future stacked-area construction.
+        `fill` accepts a CSS `linear-gradient(...)` (see docs/styling.md);
+        `curve="smooth"` renders a monotone cubic through the points.
         """
         name = self._optional_text(name, "area name")
         opacity = self._opacity(opacity, "area opacity")
         line_width = self._nonnegative_scalar(line_width, "area line_width")
         line_opacity = self._opacity(line_opacity, "area line_opacity")
+        fill_spec = _validate.mark_fill(fill, "area fill")
+        curve = _validate.curve(curve, "area curve")
         checkpoint = self._checkpoint()
         try:
             xc, yc = self._ingest_xy(x, y, "area")
@@ -339,6 +350,16 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 xc = self.store.ingest(xc.values[order])
                 yc = self.store.ingest(yc.values[order])
                 bc = self.store.ingest(bc.values[order])
+            style: dict[str, Any] = {
+                "color": color,
+                "opacity": opacity,
+                "line_width": line_width,
+                "line_opacity": line_opacity,
+            }
+            if fill_spec is not None:
+                style["fill"] = fill_spec
+            if curve != "linear":
+                style["curve"] = curve
             self.traces.append(
                 Trace(
                     id=len(self.traces),
@@ -347,12 +368,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
                     y=yc,
                     base=bc,
                     name=name,
-                    style={
-                        "color": color,
-                        "opacity": opacity,
-                        "line_width": line_width,
-                        "line_opacity": line_opacity,
-                    },
+                    style=style,
                 )
             )
             return self
@@ -454,6 +470,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
         name: Optional[str] = None,
         color: Optional[str] = None,
         opacity: float = 0.85,
+        corner_radius: Any = 0.0,
+        stroke: Optional[str] = None,
+        stroke_width: float = 0.0,
+        fill: Any = None,
     ) -> "Figure":
         """Add a 1D histogram backed by the shared rectangle primitive.
 
@@ -463,6 +483,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         """
         name = self._optional_text(name, "histogram name")
         opacity = self._opacity(opacity, "histogram opacity")
+        mark_style = self._rect_mark_style("histogram", corner_radius, stroke, stroke_width, fill)
         density = self._bool_param(density, "histogram density")
         cumulative = self._bool_param(cumulative, "histogram cumulative")
         vals = self._as_1d_float(values, "histogram values")
@@ -500,7 +521,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             opacity=opacity,
             role="histogram",
             count=int(len(vals)),
-            extra_style={"cumulative": cumulative, "density": density},
+            extra_style={"cumulative": cumulative, "density": density, **mark_style},
         )
         return self
 
@@ -515,6 +536,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
         name: Optional[str] = None,
         color: Optional[str] = None,
         opacity: float = 0.85,
+        corner_radius: Any = 0.0,
+        stroke: Optional[str] = None,
+        stroke_width: float = 0.0,
+        fill: Any = None,
     ) -> "Figure":
         """Short alias for `histogram(...)`, matching common Python chart APIs."""
         return self.histogram(
@@ -526,6 +551,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
             name=name,
             color=color,
             opacity=opacity,
+            corner_radius=corner_radius,
+            stroke=stroke,
+            stroke_width=stroke_width,
+            fill=fill,
         )
 
     def bar(
@@ -542,9 +571,17 @@ class Figure(AnnotationsMixin, PayloadMixin):
         orientation: str = "vertical",
         series: Optional[list[str]] = None,
         opacity: float = 0.85,
+        corner_radius: Any = 0.0,
+        stroke: Optional[str] = None,
+        stroke_width: float = 0.0,
+        fill: Any = None,
     ) -> "Figure":
         """Add vertical bars. 2D y values render grouped, stacked, or
-        normalized (per-category fractions summing to 1) series."""
+        normalized (per-category fractions summing to 1) series.
+
+        `corner_radius`/`stroke`/`stroke_width` are the CSS border analogues
+        rendered into the mark; `fill` accepts a CSS `linear-gradient(...)`
+        (docs/styling.md#styling-the-marks)."""
         return self._bar_like(
             "bar",
             x,
@@ -558,6 +595,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
             orientation=orientation,
             series=series,
             opacity=opacity,
+            corner_radius=corner_radius,
+            stroke=stroke,
+            stroke_width=stroke_width,
+            fill=fill,
         )
 
     def column(
@@ -574,6 +615,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
         orientation: str = "vertical",
         series: Optional[list[str]] = None,
         opacity: float = 0.85,
+        corner_radius: Any = 0.0,
+        stroke: Optional[str] = None,
+        stroke_width: float = 0.0,
+        fill: Any = None,
     ) -> "Figure":
         """Alias for vertical column charts; shares the bar/rect renderer."""
         return self._bar_like(
@@ -589,6 +634,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
             orientation=orientation,
             series=series,
             opacity=opacity,
+            corner_radius=corner_radius,
+            stroke=stroke,
+            stroke_width=stroke_width,
+            fill=fill,
         )
 
     def heatmap(
@@ -656,6 +705,48 @@ class Figure(AnnotationsMixin, PayloadMixin):
             raise
         return self
 
+    def _rect_mark_style(
+        self,
+        kind: str,
+        corner_radius: Any,
+        stroke: Optional[str],
+        stroke_width: float,
+        fill: Any,
+    ) -> dict[str, Any]:
+        """Validate the rect-family mark styling (rounded corners, border,
+        gradient fill) into the sparse style keys the client renders.
+
+        `corner_radius` is a px float for all four corners, or a `(tip, base)`
+        pair in mark space — `(6, 0)` rounds only the value end of each bar
+        (the top of a vertical bar), which stays correct for horizontal and
+        negative bars. Setting `stroke` alone implies a 1px border, matching
+        CSS expectations; the client defaults a widthed border with no color
+        to the mark color."""
+        style: dict[str, Any] = {}
+        if isinstance(corner_radius, (tuple, list)):
+            if len(corner_radius) != 2:
+                raise ValueError(f"{kind} corner_radius pair must be (tip, base)")
+            tip = self._nonnegative_scalar(corner_radius[0], f"{kind} corner_radius tip")
+            base = self._nonnegative_scalar(corner_radius[1], f"{kind} corner_radius base")
+            if tip or base:
+                style["corner_radius"] = [tip, base]
+        else:
+            radius = self._nonnegative_scalar(corner_radius, f"{kind} corner_radius")
+            if radius:
+                style["corner_radius"] = radius
+        stroke = self._optional_text(stroke, f"{kind} stroke")
+        stroke_width = self._nonnegative_scalar(stroke_width, f"{kind} stroke_width")
+        if stroke is not None and stroke_width == 0.0:
+            stroke_width = 1.0
+        fill_spec = _validate.mark_fill(fill, f"{kind} fill")
+        if stroke is not None:
+            style["stroke"] = stroke
+        if stroke_width:
+            style["stroke_width"] = stroke_width
+        if fill_spec is not None:
+            style["fill"] = fill_spec
+        return style
+
     def _bar_like(
         self,
         kind: str,
@@ -671,10 +762,15 @@ class Figure(AnnotationsMixin, PayloadMixin):
         orientation: str,
         series: Optional[list[str]],
         opacity: float,
+        corner_radius: Any = 0.0,
+        stroke: Optional[str] = None,
+        stroke_width: float = 0.0,
+        fill: Any = None,
     ) -> "Figure":
         name = self._optional_text(name, f"{kind} name")
         width = self._positive_scalar(width, f"{kind} width")
         opacity = self._opacity(opacity, f"{kind} opacity")
+        mark_style = self._rect_mark_style(kind, corner_radius, stroke, stroke_width, fill)
         if mode not in {"grouped", "stacked", "normalized"}:
             raise ValueError(f"{kind} mode must be 'grouped', 'stacked', or 'normalized'")
         if orientation not in {"vertical", "horizontal"}:
@@ -714,6 +810,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
                     # grouped/stacked are no-ops for one series, but normalized
                     # rescales even a single series — record it (§28).
                     role=f"{kind}-normalized" if mode == "normalized" else kind,
+                    extra_style=mark_style,
                 )
             elif mode == "grouped":
                 slot = width / vals.shape[0]
@@ -730,6 +827,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
                         color=series_colors[i],
                         opacity=opacity,
                         role=f"{kind}-grouped",
+                        extra_style=mark_style,
                     )
             else:
                 pos_base = base_vals.astype(np.float64, copy=True)
@@ -748,6 +846,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
                         color=series_colors[i],
                         opacity=opacity,
                         role=f"{kind}-{mode}",
+                        extra_style=mark_style,
                     )
                     pos_base = np.where(row >= 0, y1, pos_base)
                     neg_base = np.where(row < 0, y1, neg_base)
@@ -769,6 +868,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         color: Optional[str],
         opacity: float,
         role: str,
+        extra_style: Optional[dict[str, Any]] = None,
     ) -> None:
         if orientation == "vertical":
             self._append_rect_trace(
@@ -782,6 +882,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 opacity=opacity,
                 role=role,
                 orientation=orientation,
+                extra_style=extra_style,
             )
         else:
             self._append_rect_trace(
@@ -795,6 +896,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 opacity=opacity,
                 role=role,
                 orientation=orientation,
+                extra_style=extra_style,
             )
 
     @staticmethod
