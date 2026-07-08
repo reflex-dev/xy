@@ -132,11 +132,13 @@ committed FastCharts Reflex gallery asset except the Plotly comparison page,
 and the interaction stress smoke enforces real `ChartView` gesture budgets. The
 lifecycle smoke also requires every chart to report nonblank pixels through
 `initial`, `hash-navigation`, `narrow-resize`, `wide-resize`, `scroll-bottom`,
-`fast-scroll`, `visibility-change`, and `restore`, then names the custom chrome,
-business overview, and retention cohort assets as critical and requires each
-asset/phase pair to report pixels through every iframe shell phase, including
-in-place reload and hidden boot/reveal. The interaction stress smoke validates
-the real `ChartView` wheel zoom, pan, hover, crosshair, box zoom, and
+`fast-scroll`, `visibility-change`, `context-restore`, and `restore`, then
+names the custom chrome, business overview, and retention cohort assets as
+critical and requires each asset/phase pair to report pixels through every
+iframe shell phase, including in-place reload and hidden boot/reveal. The
+`context-restore` phase forces `WEBGL_lose_context` loss/restoration and
+requires the rebuilt chart to remain nonblank. The interaction stress smoke
+validates the real `ChartView` wheel zoom, pan, hover, crosshair, box zoom, and
 brush-select paths with p95 budgets plus visual invariants for blank frames,
 tick-label overlap, tooltip stability, crosshair visibility, view changes, box
 zoom narrow/restore behavior, brush select count/clear behavior, lit-pixel
@@ -241,13 +243,15 @@ make check-browser CHROMIUM=/path/to/chrome
 The lifecycle gate runs `scripts/reflex_lifecycle_smoke.py`. It loads each
 FastCharts iframe asset twice, requires every asset to survive the child-level
 `initial`, `hash-navigation`, `narrow-resize`, `wide-resize`, `scroll-bottom`,
-`fast-scroll`, `visibility-change`, and `restore` phases, then mounts all assets
-in a parent iframe shell and exercises hash navigation, fast scrolling, resize,
-visibility changes, full remount, in-place iframe reload, and a
-hidden-boot/reveal pass where charts initialize in zero-sized iframe slots
-before becoming visible. Empty canvases, destroyed views, shortened lifecycle
-reports, missing shell-phase reports, or missing per-phase critical custom
-chrome/business/cohort reports fail the gate.
+`fast-scroll`, `visibility-change`, `context-restore`, and `restore` phases,
+then mounts all assets in a parent iframe shell and exercises hash navigation,
+fast scrolling, resize, visibility changes, full remount, in-place iframe
+reload, and a hidden-boot/reveal pass where charts initialize in zero-sized
+iframe slots before becoming visible. The `context-restore` phase forces
+`WEBGL_lose_context` loss/restoration and requires the rebuilt chart to remain
+nonblank. Empty canvases, destroyed views, shortened lifecycle reports, failed
+context restores, missing shell-phase reports, or missing per-phase critical
+custom chrome/business/cohort reports fail the gate.
 
 The visual gate runs `scripts/visual_regression_smoke.py`. It verifies generated
 core-family charts and committed FastCharts Reflex gallery assets with title,
