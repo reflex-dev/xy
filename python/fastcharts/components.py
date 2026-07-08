@@ -33,8 +33,20 @@ from typing import Any, Optional, TypeAlias, Union
 
 import numpy as np
 
+from . import _validate
 from .dom import CHART_DOM_SLOTS, validate_dom_slots
 from .figure import Figure
+
+# Shared validators (single source of truth in `_validate`); these aliases keep
+# the module-private names their call sites already use.
+_optional_string = _validate.optional_text
+_finite_number = _validate.finite_scalar
+_axis_id = _validate.axis_id
+_optional_positive_int = _validate.optional_positive_int
+_axis_tick_label_strategy = _validate.axis_tick_label_strategy
+_axis_label_position = _validate.axis_label_position
+_optional_finite_number = _validate.optional_finite_scalar
+_optional_nonnegative_number = _validate.optional_nonnegative_scalar
 
 __all__ = [
     "CHART_DOM_SLOTS",
@@ -1382,12 +1394,6 @@ def _resolve_color(data: Any, color: Any, *, context: Optional[str] = None) -> A
     return _resolve(data, color, context=context)  # column name → values (raises if no data)
 
 
-def _optional_string(value: Any, label: str) -> Optional[str]:
-    if value is None or isinstance(value, str):
-        return value
-    raise ValueError(f"{label} must be a string or None")
-
-
 def _string_list(value: Any, label: str) -> Optional[list[str]]:
     if value is None:
         return None
@@ -1597,28 +1603,10 @@ def _validate_axis_type(type_: Optional[str]) -> None:
     raise ValueError(f"axis type_ must be one of None, 'linear', 'time', or 'log', got {type_!r}")
 
 
-def _axis_id(value: Any, label: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"{label} must be a non-empty string")
-    if value[0] not in {"x", "y"}:
-        raise ValueError(f"{label} must start with 'x' or 'y'")
-    if not all(ch.isalnum() or ch in {"_", "-"} for ch in value):
-        raise ValueError(f"{label} may only contain letters, digits, '_' and '-'")
-    return value
-
-
 def _axis_domain(value: Any, label: str) -> Optional[tuple[float, float]]:
     if value is None:
         return None
-    try:
-        lo_raw, hi_raw = value
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{label} must contain exactly two finite values") from exc
-    lo = _finite_number(lo_raw, f"{label}[0]")
-    hi = _finite_number(hi_raw, f"{label}[1]")
-    if hi <= lo:
-        raise ValueError(f"{label} must be finite and increasing")
-    return lo, hi
+    return _validate.finite_increasing_pair(value, label)
 
 
 def _axis_side(value: Any, which: str) -> Optional[str]:
@@ -1632,72 +1620,10 @@ def _axis_side(value: Any, which: str) -> Optional[str]:
     return value
 
 
-def _axis_label_position(value: Any, label: str) -> Optional[AxisLabelPosition]:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        normalized = value.replace("-", "_")
-        allowed = {"start", "center", "end", "inside_start", "inside_center", "inside_end"}
-        if normalized not in allowed:
-            raise ValueError(f"{label} must be one of {sorted(allowed)} or a CSS style dict")
-        return normalized
-    return _style_dict(value, label)
-
-
 def _annotation_axis_name(value: Any, label: str) -> str:
     if value not in {"x", "y"}:
         raise ValueError(f"{label} must be 'x' or 'y'")
     return value
-
-
-def _optional_positive_int(value: Any, label: str) -> Optional[int]:
-    if value is None:
-        return None
-    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
-        raise ValueError(f"{label} must be a positive integer")
-    out = int(value)
-    if out <= 0:
-        raise ValueError(f"{label} must be a positive integer")
-    return out
-
-
-def _axis_tick_label_strategy(value: Any, label: str) -> Optional[AxisTickLabelStrategy]:
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ValueError(f"{label} must be a string or None")
-    normalized = value.replace("-", "_")
-    allowed = {"auto", "hide", "rotate", "stagger", "none"}
-    if normalized not in allowed:
-        raise ValueError(f"{label} must be one of {sorted(allowed)}")
-    return normalized
-
-
-def _optional_finite_number(value: Any, label: str) -> Optional[float]:
-    if value is None:
-        return None
-    return _finite_number(value, label)
-
-
-def _optional_nonnegative_number(value: Any, label: str) -> Optional[float]:
-    if value is None:
-        return None
-    out = _finite_number(value, label)
-    if out < 0:
-        raise ValueError(f"{label} must be non-negative")
-    return out
-
-
-def _finite_number(value: Any, label: str) -> float:
-    if isinstance(value, (bool, np.bool_)):
-        raise ValueError(f"{label} must be a finite real number")
-    try:
-        out = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{label} must be a finite real number") from exc
-    if not np.isfinite(out):
-        raise ValueError(f"{label} must be finite")
-    return out
 
 
 def _looks_like_css(s: str) -> bool:
