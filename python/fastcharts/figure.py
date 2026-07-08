@@ -2463,24 +2463,15 @@ class Figure:
     ) -> Optional[dict[str, Any]]:
         if visible <= 0:
             return None
-        row_ids = np.asarray(sel, dtype=np.uint64)
-        base_fraction = min(1.0, DENSITY_SAMPLE_TARGET / max(1, visible))
+        categories = None
         if t.color_ch and t.color_ch.mode == "categorical" and t.color_ch.codes is not None:
-            mask = lod.stratified_sample_keep_mask(
-                row_ids,
-                t.color_ch.codes[sel],
-                0,
-                base_fraction=base_fraction,
-                seed=DENSITY_SAMPLE_SEED,
-            )
-        else:
-            mask = lod.sample_keep_mask(
-                row_ids,
-                0,
-                base_fraction=base_fraction,
-                seed=DENSITY_SAMPLE_SEED,
-            )
-        sample_sel = sel[mask]
+            categories = t.color_ch.codes[sel]
+        sample_sel = lod.sample_rows_for_target(
+            sel,
+            DENSITY_SAMPLE_TARGET,
+            categories=categories,
+            seed=DENSITY_SAMPLE_SEED,
+        )
         if len(sample_sel) == 0:
             return None
         color_spec, size_spec = self._ship_channels(t, sample_sel, pw.ship_scalar)
