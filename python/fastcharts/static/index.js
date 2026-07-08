@@ -3839,7 +3839,9 @@ class ChartView {
       this._hoverTarget = null;
       this.tooltip.style.display = "none";
       this._hideCrosshair();
-      this._dispatchChartEvent("leave", { view: this._eventView("leave") });
+      if (this._interactionFlag("hover")) {
+        this._dispatchChartEvent("leave", { view: this._eventView("leave") });
+      }
       if (hadHover) this.draw();
     });
     this._listen(c, "click", (e) => this._click(e));
