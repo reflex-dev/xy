@@ -55,6 +55,10 @@ include = [
     "hatch_build.py",
     "Makefile",
     "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
 ]
 
 [tool.ruff]
