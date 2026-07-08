@@ -34,8 +34,8 @@ ColumnStore                the "pantry": keeps your exact data, once, in
   columns.py               full f64 precision — the source of truth for hover
         ↓
 kernels                    the heavy math (e.g. bin 10M points into a
-  _native.py (Rust)        screen-sized grid). Two interchangeable cooks
-  _fallback.py (NumPy)     produce identical results; Rust is just faster.
+  _native.py (Rust)        screen-sized grid), run by the compiled Rust core
+                           bundled in every wheel — no pure-Python path.
         ↓
 Payload builder            pack for delivery: a tiny JSON *spec* (title, axes,
   figure.py                colors) plus the data as raw f32 *binary buffers* —
@@ -77,8 +77,8 @@ Stable enough to build on today:
   and the same notebook/static export methods as `Figure`.
 - Implemented 2D chart families: line, scatter, area, histogram, bar/column,
   grouped/stacked/horizontal bars, and heatmap.
-- Binary column payloads, committed JavaScript bundles, native Rust kernels
-  when a platform wheel is available, and the NumPy fallback when it is not.
+- Binary column payloads, committed JavaScript bundles, and native Rust kernels
+  bundled in every published platform wheel.
 
 Still experimental and expected to change before 1.0:
 
@@ -91,8 +91,7 @@ Still experimental and expected to change before 1.0:
 |---|---|---|
 | Fluent `Figure` API | Stable alpha | Preferred public API for implemented 2D chart families and standalone export. |
 | Standalone HTML export | Stable alpha | Self-contained output with bundled JS, escaped metadata, and binary payloads. |
-| Native Rust backend | Stable alpha when a platform wheel is available | Used for fast ingest, binning, and decimation. |
-| NumPy fallback backend | Stable alpha | Same public behavior when Rust is unavailable, with slower compute. |
+| Native Rust backend | Stable alpha; required compute core | Used for fast ingest, binning, and decimation. Bundled in every published wheel; on a platform with no wheel and no local Rust build, the compute layer raises a clear error rather than degrading. |
 | Composition API | Stabilizing alpha | Declarative `fc.chart(...children)`, layered marks, axes, annotations, custom legend/tooltip chrome, callbacks, CSS/Tailwind hooks, and notebook/static export parity. |
 | Reflex integration | Experimental | Example app exists; core `fastcharts` has no Reflex dependency; any future adapter should use no hard Reflex dependency, or only a supported Reflex core/component package unless full Reflex is proven necessary. |
 | Adaptive drilldown internals | Experimental | Thresholds and request protocol may move as the LOD engine evolves. |
@@ -125,7 +124,8 @@ serves every supported Python version.
 
 ### From source
 
-Python 3.11+ and `uv` (or plain `pip`) are the only hard requirements:
+Python 3.11+, `uv` (or plain `pip`), and a **Rust toolchain** are the
+requirements for a source build:
 
 ```bash
 git clone https://github.com/Alek99/charts-exp.git
@@ -134,27 +134,32 @@ uv venv
 uv pip install -e ".[dev]"
 ```
 
-- **Rust is optional.** If a Rust toolchain is present, the install compiles the
-  fast native core. **If it isn't, the install still succeeds** as a pure-Python
-  package that uses the NumPy fallback (identical results, slower ingest/
-  decimation, one loud warning at import). Install is never blocked on a
-  toolchain. Install Rust via [rustup](https://rustup.rs) for the fast path.
-- **Node is optional too** — the JS client ships as a committed artifact, so you
-  only need Node (18+) if you're *editing* the client source under `js/src/` and want to
-  regenerate the bundle with `node js/build.mjs`. Use `node js/build.mjs --check`
-  to verify the committed bundles are fresh.
+- **Rust is required from source.** fastcharts computes through a compiled Rust
+  core and there is no pure-Python fallback, so a source install compiles that
+  core — install [Rust via rustup](https://rustup.rs) first. On a supported
+  platform you can skip the toolchain entirely: `pip install fastcharts` pulls a
+  prebuilt wheel with the core already inside. If the native core cannot be
+  loaded, importing the compute layer raises a clear, actionable error that
+  names the supported platforms — never a silent degrade.
+- **Node is optional** — the JS client ships as a committed artifact, so you only
+  need Node (18+) if you're *editing* the client source under `js/src/` and want
+  to regenerate the bundle with `node js/build.mjs`. Use `node js/build.mjs
+  --check` to verify the committed bundles are fresh.
 
-CI (`install_without_rust` job) builds and imports a wheel on a runner with no
-Rust and no Node to keep this promise honest.
+CI (`install_without_rust` job) builds a no-toolchain wheel and asserts it fails
+loudly on import, keeping the no-wheel behavior a defined, actionable error.
 
 ### Install/backend quick matrix
 
-| Path | Command | Toolchain needed | Backend result |
+| Path | Command | Toolchain needed | Result |
 |---|---|---|---|
 | Published wheel | `pip install fastcharts` | none | `native` on supported platform wheels |
-| Editable source with Rust | `uv pip install -e ".[dev]"` | Rust optional, Node only for JS edits | `native` if the local Rust build succeeds |
-| Editable source without Rust | `uv pip install -e ".[dev]"` | none beyond Python 3.11+ and runtime deps | `numpy` fallback, with the same public chart APIs |
-| Forced fallback check | `FASTCHARTS_FORCE_FALLBACK=1 python -c "import fastcharts.kernels as k; print(k.BACKEND)"` | none | `numpy` |
+| Source with Rust | `uv pip install -e ".[dev]"` | Rust (Node only for JS edits) | `native` |
+| Platform/build with no native core | — | — | clear `ImportError` on first compute, naming supported platforms |
+
+Published wheels cover Linux (x86-64, aarch64), macOS (x86-64, arm64), and
+Windows (x86-64); the C-ABI core means one wheel per platform serves every
+supported Python version.
 
 ### Check the active backend
 
@@ -166,12 +171,9 @@ inspect the compute backend:
 python -c "import fastcharts.kernels as k; print(k.BACKEND)"
 ```
 
-The value is `native` when the Rust core is available and `numpy` when the
-fallback is serving the same kernels. To test the fallback path explicitly:
-
-```bash
-FASTCHARTS_FORCE_FALLBACK=1 python -c "import fastcharts.kernels as k; print(k.BACKEND)"
-```
+`BACKEND` is always `native`. On a platform where the native core cannot load,
+that import raises `ImportError` with remediation rather than returning a
+degraded backend.
 
 Accessing chart-building APIs such as `Figure` or `scatter_chart` is the point
 where NumPy and the compute backend may initialize. Notebook widget dependencies
@@ -458,7 +460,7 @@ The same harness also emits Seaborn/Agg rows as static chart-to-pixels baselines
 | Piece | Where |
 |---|---|
 | Rust core: zone maps, offset-f32 encode, M4 decimation, 2-D binning | [`src/`](src/) |
-| ctypes native binding and NumPy fallback | [`python/fastcharts/_native.py`](python/fastcharts/_native.py), [`python/fastcharts/_fallback.py`](python/fastcharts/_fallback.py) |
+| ctypes native binding to the Rust core | [`python/fastcharts/_native.py`](python/fastcharts/_native.py) |
 | Column store, autorange, memory accounting | [`python/fastcharts/columns.py`](python/fastcharts/columns.py) |
 | Figure API, payload builder, line/scatter/area/histogram/bar/heatmap traces | [`python/fastcharts/figure.py`](python/fastcharts/figure.py) |
 | Composition API | [`python/fastcharts/components.py`](python/fastcharts/components.py) |
@@ -474,7 +476,7 @@ flowchart LR
         API["User APIs<br/>Figure fluent API<br/>Composition API"]
         VALIDATE["Builder validation<br/>shape, dtype, ranges"]
         STORE["ColumnStore<br/>canonical f64 data<br/>strings/categories<br/>rollback checkpoints"]
-        KERNELS["Compute backend<br/>Rust C ABI when available<br/>NumPy fallback otherwise"]
+        KERNELS["Compute core<br/>native Rust C ABI<br/>(required; no fallback)"]
         PAYLOAD["Payload builder<br/>trace specs<br/>offset-f32 columns<br/>tier/mode metadata"]
         EXPORTS["Export surfaces<br/>anywidget buffers<br/>standalone HTML<br/>PNG via Chromium"]
 

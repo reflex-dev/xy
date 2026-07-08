@@ -177,13 +177,6 @@ def _base_checks(
         ),
         Check("pytest", "Python tests", (py, "-m", "pytest", "-q"), requires_modules=("pytest",)),
         Check(
-            "pytest_fallback",
-            "Python tests forced through NumPy fallback",
-            (py, "-m", "pytest", "-q"),
-            env={"FASTCHARTS_FORCE_FALLBACK": "1"},
-            requires_modules=("pytest",),
-        ),
-        Check(
             "js_bundle",
             "committed JavaScript bundles match source",
             ("node", "js/build.mjs", "--check"),
@@ -260,7 +253,7 @@ def _base_checks(
         ),
         Check(
             "wheel_artifact",
-            "wheel artifact contents and native/fallback tagging",
+            "wheel artifact contents and native/pure tagging",
             tuple(wheel_command),
             requires_files=(wheel,) if wheel is not None else (),
             requires_argument="--wheel",
@@ -280,7 +273,6 @@ QUICK_CHECKS = (
     "pytest",
 )
 FULL_EXTRA_CHECKS = (
-    "pytest_fallback",
     "js_bundle",
     "rust_test",
     "rust_clippy",
@@ -551,9 +543,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--quick", action="store_true", help="run fast Python/dev gates (default)")
-    mode.add_argument(
-        "--full", action="store_true", help="include fallback, JS, Rust, and ABI gates"
-    )
+    mode.add_argument("--full", action="store_true", help="include JS, Rust, and ABI gates")
     mode.add_argument(
         "--packaging",
         action="store_true",
@@ -580,7 +570,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         action="store_const",
         const="--expect-pure",
         dest="wheel_expect",
-        help="require an intentional pure fallback wheel artifact in packaging checks",
+        help="require an intentional pure (no-native) wheel artifact in packaging checks",
     )
     parser.add_argument(
         "--only", action="append", default=[], help="comma-separated check names to run"

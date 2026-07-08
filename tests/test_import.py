@@ -20,7 +20,6 @@ HEAVY_MODULES = {
     "fastcharts.interaction",
     "fastcharts.kernels",
     "fastcharts.lod",
-    "fastcharts._fallback",
     "fastcharts._native",
     "fastcharts.widget",
 }
@@ -89,49 +88,27 @@ def test_public_metadata_and_dir_are_lazy() -> None:
     )
 
 
-def test_forced_fallback_env_still_keeps_package_import_lazy() -> None:
+def test_export_helpers_do_not_load_widget_numpy_or_kernels() -> None:
     _run_fresh(
         f"""
         import sys
 
-        import fastcharts
+        from fastcharts.export import _json_for_inline_script
 
-        assert fastcharts.__version__
+        assert _json_for_inline_script({{"x": "</script>&"}}) == '{{"x":"\\\\u003c/script\\\\u003e\\\\u0026"}}'
         heavy = {sorted(HEAVY_MODULES)!r}
         eager = [
             name
             for name in sys.modules
-            if name in heavy or name.startswith("fastcharts.")
+            if name in heavy or (
+                name.startswith("fastcharts.")
+                and name not in {{"fastcharts.export"}}
+            )
         ]
         assert eager == [], eager
+        assert "fastcharts.export" in sys.modules
         """,
-        env={"FASTCHARTS_FORCE_FALLBACK": "1"},
     )
-
-
-def test_export_helpers_do_not_load_widget_numpy_or_kernels() -> None:
-    for env in (None, {"FASTCHARTS_FORCE_FALLBACK": "1"}):
-        _run_fresh(
-            f"""
-            import sys
-
-            from fastcharts.export import _json_for_inline_script
-
-            assert _json_for_inline_script({{"x": "</script>&"}}) == '{{"x":"\\\\u003c/script\\\\u003e\\\\u0026"}}'
-            heavy = {sorted(HEAVY_MODULES)!r}
-            eager = [
-                name
-                for name in sys.modules
-                if name in heavy or (
-                    name.startswith("fastcharts.")
-                    and name not in {{"fastcharts.export"}}
-                )
-            ]
-            assert eager == [], eager
-            assert "fastcharts.export" in sys.modules
-            """,
-            env=env,
-        )
 
 
 def test_star_import_matches_public_all() -> None:
@@ -175,7 +152,7 @@ def test_lazy_public_exports_still_work() -> None:
 
         heavy = {sorted(HEAVY_MODULES)!r}
         loaded = sorted(name for name in sys.modules if name in heavy)
-        assert "fastcharts._native" in loaded or "fastcharts._fallback" in loaded
+        assert "fastcharts._native" in loaded
         """
     )
 
@@ -198,7 +175,7 @@ def test_figure_api_is_the_compute_import_boundary() -> None:
         assert "fastcharts.figure" in sys.modules
         assert "fastcharts.kernels" in sys.modules
         assert "numpy" in sys.modules
-        assert "fastcharts._native" in sys.modules or "fastcharts._fallback" in sys.modules
+        assert "fastcharts._native" in sys.modules
         assert "fastcharts.widget" not in sys.modules
         assert "anywidget" not in sys.modules
         assert "traitlets" not in sys.modules

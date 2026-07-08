@@ -7,7 +7,7 @@ WHEEL ?=
 BENCHMARK_JSON ?= benchmark.json
 BENCHMARK_KIND ?= auto
 
-.PHONY: help setup check check-full check-browser check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-benchmark-harness check-sdist check-wheel check-artifacts check-benchmark-report list-checks test test-fallback lint format typecheck public-api python-floor js-check rust-check abi-smoke
+.PHONY: help setup check check-full check-browser check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-benchmark-harness check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
 
 help:
 	@printf '%s\n' \
@@ -15,7 +15,7 @@ help:
 		'' \
 		'  make setup            create .venv and install .[dev]' \
 		'  make check            run the fast local verification gate' \
-		'  make check-full       run fallback, JS, Rust, and ABI gates too' \
+		'  make check-full       run JS, Rust, and ABI gates too' \
 		'  make check-browser    run browser smokes (set CHROMIUM=/path/to/chrome)' \
 		'  make check-docs       run docs examples and public claim guardrails' \
 		'  make check-examples   run README/API examples and Reflex asset registry checks' \
@@ -33,7 +33,6 @@ help:
 		'                        override UV_CACHE_DIR if your uv cache lives elsewhere' \
 		'  make list-checks      list verifier check names' \
 		'  make test             run pytest' \
-		'  make test-fallback    run pytest through the NumPy fallback' \
 		'  make lint             run ruff check' \
 		'  make format           run ruff format --check' \
 		'  make typecheck        run ty over the shippable package' \
@@ -117,9 +116,6 @@ list-checks:
 
 test:
 	$(PYTHON) -m pytest -q
-
-test-fallback:
-	FASTCHARTS_FORCE_FALLBACK=1 $(PYTHON) -m pytest -q
 
 lint:
 	$(PYTHON) -m ruff check .

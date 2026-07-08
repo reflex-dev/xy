@@ -378,8 +378,7 @@ pub(crate) fn bin_2d_count_scalar(
 /// Exact integer counts, converted to f32 once at the end. This is bitwise
 /// deterministic for ANY thread count (integer sums are associative), and
 /// strictly better than the old serial `f32 += 1.0`, which silently stalled
-/// at 2^24 points per cell; it also matches the NumPy fallback's exact f64
-/// accumulation.
+/// at 2^24 points per cell; exact f64 accumulation avoids that ceiling.
 #[allow(clippy::too_many_arguments)]
 fn bin_2d_impl(
     x: &[f64],

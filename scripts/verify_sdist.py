@@ -62,7 +62,6 @@ REQUIRED_FILES = {
     "js/src/55_marks.js",
     "js/src/60_entries.js",
     "python/fastcharts/__init__.py",
-    "python/fastcharts/_fallback.py",
     "python/fastcharts/_native.py",
     "python/fastcharts/channels.py",
     "python/fastcharts/columns.py",

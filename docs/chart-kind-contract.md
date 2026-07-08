@@ -142,6 +142,6 @@ usually wrong). Each has an explicit trigger:
 3. Component wrapper: entry in `components._MARK_APPLIERS` + a `*_chart` fn.
 4. Tests: payload shape + tier decision (pytest); a render probe in
    `scripts/render_smoke_nonumpy.py` asserting it lights pixels.
-5. If aggregating: an aggregate kernel (native + NumPy-fallback parity) and wire
+5. If aggregating: an aggregate kernel (native Rust core) and wire
    it through the `lod` framework rather than a bespoke path.
 6. Roadmap: move the kind from planned → implemented.

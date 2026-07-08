@@ -1,4 +1,4 @@
-"""Kernel correctness — native core and NumPy fallback, asserted identical.
+"""Kernel correctness for the native Rust core.
 
 The two thesis-risk tests §25 moved to the front of Phase 0 live here:
 offset-encoding precision on ms timestamps, and M4's no-silent-data-loss
@@ -12,11 +12,10 @@ import warnings
 import numpy as np
 import pytest
 
-from fastcharts import _fallback
 from fastcharts import kernels as k
 from fastcharts.config import MAX_SCREEN_DIM
 
-BACKENDS = [pytest.param(k, id=f"dispatch[{k.BACKEND}]"), pytest.param(_fallback, id="numpy")]
+BACKENDS = [pytest.param(k, id=f"dispatch[{k.BACKEND}]")]
 
 
 @pytest.fixture(params=BACKENDS)
@@ -419,53 +418,6 @@ def test_pyramid_wrappers_reject_invalid_public_arguments(impl):
         assert impl.pyramid_free(handle)
     with pytest.raises(ValueError, match="pyramid handle"):
         impl.pyramid_free(True)
-
-
-# -- native/fallback parity (§33: the fallback is semantically identical) ------
-
-
-@pytest.mark.skipif(k.BACKEND != "native", reason="native core not built")
-def test_backends_agree():
-    from fastcharts import _native
-
-    rng = np.random.default_rng(3)
-    x = np.sort(rng.uniform(0, 1e6, 30_000))
-    y = rng.normal(0, 1, 30_000)
-    y[::500] = np.nan
-
-    np.testing.assert_array_equal(
-        _native.m4_indices(x, y, 0.0, 1e6, 777),
-        _fallback.m4_indices(x, y, 0.0, 1e6, 777),
-    )
-    np.testing.assert_array_equal(
-        _native.encode_f32(y, 0.5, 2.0), _fallback.encode_f32(y, 0.5, 2.0)
-    )
-    for a, b in zip(_native.zone_maps(x, 4096), _fallback.zone_maps(x, 4096), strict=True):
-        np.testing.assert_allclose(a, b)
-    assert _native.min_max(y) == _fallback.min_max(y)
-
-    xr = rng.uniform(0, 100, 30_000)
-    yr = rng.uniform(0, 100, 30_000)
-    np.testing.assert_array_equal(
-        _native.bin_2d(xr, yr, 5.0, 95.0, 5.0, 95.0, 128, 96),
-        _fallback.bin_2d(xr, yr, 5.0, 95.0, 5.0, 95.0, 128, 96),
-    )
-    np.testing.assert_allclose(
-        _native.histogram_uniform(xr, 0.0, 100.0, 64)[0],
-        _fallback.histogram_uniform(xr, 0.0, 100.0, 64)[0],
-    )
-    np.testing.assert_array_equal(
-        _native.normalize_f32(yr, (0.0, 100.0), nonfinite="zero"),
-        _fallback.normalize_f32(yr, (0.0, 100.0), nonfinite="zero"),
-    )
-    np.testing.assert_array_equal(
-        _native.range_indices(xr, yr, 10.0, 20.0, 30.0, 40.0),
-        _fallback.range_indices(xr, yr, 10.0, 20.0, 30.0, 40.0),
-    )
-    np.testing.assert_allclose(
-        _native.local_log_density(xr[:1000], yr[:1000], 0.0, 100.0, 0.0, 100.0, 32, 24),
-        _fallback.local_log_density(xr[:1000], yr[:1000], 0.0, 100.0, 0.0, 100.0, 32, 24),
-    )
 
 
 def test_pyramid_matches_bin2d_and_conserves():

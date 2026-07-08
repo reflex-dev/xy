@@ -100,7 +100,7 @@ described below.
 The JSON verifier treats `scatter-native` and `kernel-native` reports as
 native-only artifacts: if their environment metadata says
 `fastcharts_backend` is anything other than `native`, verification fails. That
-keeps fallback correctness smoke data from being mixed into native performance
+keeps any non-native measurement from being mixed into native performance
 claims.
 
 The browser-heavy probes are opt-in scripts:
@@ -188,13 +188,14 @@ PYTHONPATH=python .venv/bin/python benchmarks/bench_vs.py \
   --sizes 1e3,1e4,1e5 --budget 20
 ```
 
-Environment note: Cargo was not available in this shell, so the fastcharts row
-uses the NumPy fallback backend. CI should regenerate these rows with the native
-backend in the non-blocking benchmark job.
+Environment note: these fastcharts rows were captured in a shell without Cargo,
+before the native core became required, so they are stale and pending a native
+refresh from the non-blocking CI benchmark job. Treat them as illustrative, not
+as native performance claims.
 
 | Library | Render target | 100k total | Peak memory | Output bytes | Points/sec |
 |---|---|---:|---:|---:|---:|
-| fastcharts | binary payload, NumPy fallback | **1 ms** | **2 MB** | 781 KB | 156,985,881 |
+| fastcharts | binary payload (pending native refresh) | **1 ms** | **2 MB** | 781 KB | 156,985,881 |
 | matplotlib | Agg PNG | 49 ms | 6 MB | 46 KB | 2,055,087 |
 | seaborn | matplotlib PNG | 71 ms | 11 MB | 37 KB | 1,399,835 |
 | Plotly `Scattergl` | Kaleido PNG | 2,018 ms | 22 MB | 61 KB | 49,558 |

@@ -883,10 +883,12 @@ hits a source build requiring a Rust toolchain — an instant adoption cliff.
   drift (cached notebook outputs, pinned server assets). Every message carries a
   protocol version; mismatch fails **loudly with an upgrade hint**, never silently
   renders wrong.
-- **No-wheel behavior is defined:** source installs compile the Rust core only when a
-  toolchain is present; otherwise they still install as a pure-Python wheel using the
-  NumPy fallback with a loud import warning. Published platform wheels require the
-  native core and fail the build if it is absent.
+- **No-wheel behavior is defined:** the native Rust core is required and there is no
+  pure-Python fallback. A source install compiles the core (Rust toolchain required);
+  if the core cannot be loaded — an unsupported platform with no wheel and no local
+  build — importing the compute layer raises a clear, actionable ImportError naming
+  the supported platforms, never a silent degrade. Published platform wheels require
+  the native core and fail the build if it is absent.
 - **Install-size budget** joins the §23 bundle budget: wheel ≤ ~15 MB target
   (native core + JS client + assets), CI-enforced like every other number.
 - **Import-time budget**: `import fastcharts` does no heavy work (< 200 ms); NumPy and
@@ -1472,8 +1474,8 @@ environments but nothing about *shipping the bits*.
 **`anywidget`** as the notebook client substrate (current standard — one implementation
 works across Jupyter, Lab, VS Code, Colab, Marimo, and Reflex-style servers); explicit
 asset bundling; **comm-protocol versioning** between the native core and the JS client
-(they ship together but must fail loudly on mismatch); and a defined source-install
-fallback when no native core is available (NumPy fallback with a loud warning, not a
+(they ship together but must fail loudly on mismatch); and a defined no-native-core
+behavior (a clear, actionable ImportError naming the supported platforms — never a
 silent quality or correctness change). This is bigger than any single rendering
 decision.
 
