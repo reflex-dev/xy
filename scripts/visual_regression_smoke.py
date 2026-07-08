@@ -882,7 +882,9 @@ def _write_chrome_shell(
 def _assert_chrome_shell_dom(name: str, dom: str) -> None:
     error = re.search(r'data-fc-custom-chrome-shell-error="([^"]*)"', dom)
     if error:
-        raise SystemExit(f"{name}: custom chrome shell probe failed: {html_lib.unescape(error.group(1))}")
+        raise SystemExit(
+            f"{name}: custom chrome shell probe failed: {html_lib.unescape(error.group(1))}"
+        )
     match = re.search(r'data-fc-custom-chrome-shell="([^"]*)"', dom)
     if not match:
         raise SystemExit(f"{name}: custom chrome shell probe did not finish")
