@@ -1,81 +1,92 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="440" viewBox="0 0 1200 440" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="540" viewBox="0 0 1200 540" role="img" aria-labelledby="title desc">
   <title id="title">fastcharts 10M-point benchmark snapshot</title>
   <desc id="desc">A benchmark summary showing fastcharts rendering a 10M-point scatter workload in 169 milliseconds with 126 megabytes peak memory and an 832 kilobyte payload.</desc>
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0b1220"/>
-      <stop offset="52%" stop-color="#10223f"/>
-      <stop offset="100%" stop-color="#12201b"/>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M 48 0 L 0 0 0 48" fill="none" stroke="#E8E8EC" stroke-width="1"/>
+    </pattern>
+    <linearGradient id="primary" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#6E56CF"/>
+      <stop offset="100%" stop-color="#6550B9"/>
     </linearGradient>
-    <linearGradient id="fast" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#22d3ee"/>
-      <stop offset="100%" stop-color="#4ade80"/>
-    </linearGradient>
-    <linearGradient id="compare" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#64748b"/>
-      <stop offset="100%" stop-color="#94a3b8"/>
-    </linearGradient>
-    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
-      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#020617" flood-opacity="0.35"/>
+    <filter id="card-shadow" x="-8%" y="-8%" width="116%" height="116%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#1C2024" flood-opacity="0.06"/>
     </filter>
   </defs>
 
-  <rect width="1200" height="440" rx="28" fill="url(#bg)"/>
-  <g opacity="0.18">
-    <circle cx="1045" cy="95" r="155" fill="#22d3ee"/>
-    <circle cx="140" cy="390" r="180" fill="#4ade80"/>
+  <rect width="1200" height="540" fill="#FCFCFD"/>
+  <rect width="1200" height="540" fill="url(#grid)" opacity="0.58"/>
+
+  <g opacity="0.9">
+    <path d="M56 0V540" stroke="#E8E8EC"/>
+    <path d="M1144 0V540" stroke="#E8E8EC"/>
+    <path d="M0 48H1200" stroke="#E8E8EC"/>
+    <path d="M0 512H1200" stroke="#E8E8EC"/>
   </g>
 
-  <g filter="url(#shadow)">
-    <rect x="56" y="48" width="1088" height="344" rx="22" fill="#f8fafc" opacity="0.97"/>
+  <g filter="url(#card-shadow)">
+    <rect x="56" y="48" width="1088" height="464" rx="14" fill="#FFFFFF"/>
+    <rect x="56.5" y="48.5" width="1087" height="463" rx="13.5" fill="none" stroke="#E8E8EC"/>
   </g>
 
-  <text x="96" y="103" fill="#0f172a" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="34" font-weight="800">10M-point scatter benchmark</text>
-  <text x="96" y="134" fill="#475569" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="17">Ubuntu CI, native Rust backend. Total time is build plus static render; lower is better.</text>
+  <g font-family="Instrument Sans, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+    <text x="96" y="122" fill="#1C2024" font-size="36" font-weight="650" letter-spacing="0">10M-point scatter benchmark</text>
+    <text x="96" y="154" fill="#60646C" font-size="17" font-weight="500" letter-spacing="0">Ubuntu CI, native Rust backend. Total time is build plus static render; lower is better.</text>
 
-  <g font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
-    <g transform="translate(96 172)">
-      <rect width="220" height="92" rx="16" fill="#ecfeff"/>
-      <text x="20" y="33" fill="#0f766e" font-size="15" font-weight="700">Total</text>
-      <text x="20" y="69" fill="#0f172a" font-size="34" font-weight="800">169 ms</text>
-    </g>
-    <g transform="translate(340 172)">
-      <rect width="220" height="92" rx="16" fill="#f0fdf4"/>
-      <text x="20" y="33" fill="#15803d" font-size="15" font-weight="700">Peak memory</text>
-      <text x="20" y="69" fill="#0f172a" font-size="34" font-weight="800">126 MB</text>
-    </g>
-    <g transform="translate(584 172)">
-      <rect width="220" height="92" rx="16" fill="#fff7ed"/>
-      <text x="20" y="33" fill="#c2410c" font-size="15" font-weight="700">Payload</text>
-      <text x="20" y="69" fill="#0f172a" font-size="34" font-weight="800">832 KB</text>
-    </g>
-  </g>
+    <g transform="translate(96 194)">
+      <rect width="940" height="92" rx="12" fill="#FFFFFF" stroke="#E8E8EC"/>
+      <path d="M313.333 0V92" stroke="#E8E8EC"/>
+      <path d="M626.667 0V92" stroke="#E8E8EC"/>
 
-  <g transform="translate(96 302)" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
-    <text x="0" y="0" fill="#334155" font-size="14" font-weight="700">Total time vs. common renderers, log scale</text>
+      <g transform="translate(28 22)">
+        <rect width="10" height="10" rx="3" fill="#6E56CF"/>
+        <text x="18" y="10" fill="#60646C" font-size="13" font-weight="650">Total</text>
+        <text x="0" y="52" fill="#1C2024" font-size="32" font-weight="700">169 ms</text>
+      </g>
 
-    <g transform="translate(0 24)">
-      <text x="0" y="18" fill="#0f172a" font-size="15" font-weight="700">fastcharts</text>
-      <rect x="142" y="4" width="56" height="18" rx="9" fill="url(#fast)"/>
-      <text x="215" y="18" fill="#0f172a" font-size="15" font-weight="700">169 ms</text>
+      <g transform="translate(341 22)">
+        <rect width="10" height="10" rx="3" fill="#AA99EC"/>
+        <text x="18" y="10" fill="#60646C" font-size="13" font-weight="650">Peak memory</text>
+        <text x="0" y="52" fill="#1C2024" font-size="32" font-weight="700">126 MB</text>
+      </g>
+
+      <g transform="translate(654 22)">
+        <rect width="10" height="10" rx="3" fill="#EB8E90"/>
+        <text x="18" y="10" fill="#60646C" font-size="13" font-weight="650">Payload</text>
+        <text x="0" y="52" fill="#1C2024" font-size="32" font-weight="700">832 KB</text>
+      </g>
     </g>
 
-    <g transform="translate(0 58)">
-      <text x="0" y="18" fill="#475569" font-size="15">matplotlib</text>
-      <rect x="142" y="4" width="358" height="18" rx="9" fill="url(#compare)"/>
-      <text x="517" y="18" fill="#475569" font-size="15">3,239 ms</text>
-    </g>
+    <g transform="translate(96 316)">
+      <text x="0" y="0" fill="#1C2024" font-size="14" font-weight="650">Total time vs. common renderers, log scale</text>
 
-    <g transform="translate(0 92)">
-      <text x="0" y="18" fill="#475569" font-size="15">Seaborn</text>
-      <rect x="142" y="4" width="465" height="18" rx="9" fill="url(#compare)"/>
-      <text x="624" y="18" fill="#475569" font-size="15">7,918 ms</text>
-    </g>
+      <g transform="translate(0 24)">
+        <text x="0" y="18" fill="#1C2024" font-size="15" font-weight="650">fastcharts</text>
+        <rect x="142" y="4" width="760" height="18" rx="9" fill="#F0F0F3"/>
+        <rect x="142" y="4" width="56" height="18" rx="9" fill="url(#primary)"/>
+        <text x="215" y="18" fill="#1C2024" font-size="15" font-weight="650">169 ms</text>
+      </g>
 
-    <g transform="translate(0 126)">
-      <text x="0" y="18" fill="#475569" font-size="15">Plotly Scattergl</text>
-      <rect x="142" y="4" width="760" height="18" rx="9" fill="url(#compare)"/>
-      <text x="919" y="18" fill="#475569" font-size="15">54,064 ms</text>
+      <g transform="translate(0 58)">
+        <text x="0" y="18" fill="#60646C" font-size="15" font-weight="500">matplotlib</text>
+        <rect x="142" y="4" width="760" height="18" rx="9" fill="#F0F0F3"/>
+        <rect x="142" y="4" width="358" height="18" rx="9" fill="#D9D9E0"/>
+        <text x="517" y="18" fill="#60646C" font-size="15" font-weight="500">3,239 ms</text>
+      </g>
+
+      <g transform="translate(0 92)">
+        <text x="0" y="18" fill="#60646C" font-size="15" font-weight="500">Seaborn</text>
+        <rect x="142" y="4" width="760" height="18" rx="9" fill="#F0F0F3"/>
+        <rect x="142" y="4" width="465" height="18" rx="9" fill="#D9D9E0"/>
+        <text x="624" y="18" fill="#60646C" font-size="15" font-weight="500">7,918 ms</text>
+      </g>
+
+      <g transform="translate(0 126)">
+        <text x="0" y="18" fill="#60646C" font-size="15" font-weight="500">Plotly Scattergl</text>
+        <rect x="142" y="4" width="760" height="18" rx="9" fill="#F0F0F3"/>
+        <rect x="142" y="4" width="760" height="18" rx="9" fill="#B9BBC6"/>
+        <text x="919" y="18" fill="#60646C" font-size="15" font-weight="500">54,064 ms</text>
+      </g>
     </g>
   </g>
 </svg>
