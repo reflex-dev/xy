@@ -24,6 +24,13 @@ dev = [
     # tests importorskip it, so it lives in dev where CI exercises them.
     "pyarrow>=15",
 ]
+# Cross-library comparison charts (scripts/bench_vs.py three-way benchmark,
+# notebook side-by-sides). Kept out of `dev` so the main test/CI install stays
+# lean; opt in with `uv pip install -e ".[bench]"`.
+bench = [
+    "plotly>=5",
+    "matplotlib>=3",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["python/fastcharts"]
