@@ -27,6 +27,7 @@ def _chunk(tag: bytes, data: bytes) -> bytes:
 
 
 _SIG = b"\x89PNG\r\n\x1a\n"
+_COMPRESSION_LEVEL = 6
 
 
 def png_truecolor(w: int, h: int, rgba: bytes) -> bytes:
@@ -35,7 +36,10 @@ def png_truecolor(w: int, h: int, rgba: bytes) -> bytes:
     stride = w * 4
     raw = b"".join(b"\x00" + rgba[y * stride : (y + 1) * stride] for y in range(h))
     return (
-        _SIG + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", zlib.compress(raw, 9)) + _chunk(b"IEND", b"")
+        _SIG
+        + _chunk(b"IHDR", ihdr)
+        + _chunk(b"IDAT", zlib.compress(raw, _COMPRESSION_LEVEL))
+        + _chunk(b"IEND", b"")
     )
 
 
@@ -51,7 +55,7 @@ def _png_indexed(w: int, h: int, idx: np.ndarray, palette: np.ndarray) -> bytes:
     out = _SIG + _chunk(b"IHDR", ihdr) + _chunk(b"PLTE", plte)
     # tRNS may omit trailing opaque (255) entries; keep it simple and always emit.
     out += _chunk(b"tRNS", trns)
-    out += _chunk(b"IDAT", zlib.compress(rows.tobytes(), 9)) + _chunk(b"IEND", b"")
+    out += _chunk(b"IDAT", zlib.compress(rows.tobytes(), _COMPRESSION_LEVEL)) + _chunk(b"IEND", b"")
     return out
 
 

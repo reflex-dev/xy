@@ -111,6 +111,24 @@ def test_png_encoder_selects_indexed_for_few_colors() -> None:
     assert _ihdr(_png.encode(many))[2] == 6
 
 
+def test_png_encoder_uses_balanced_compression_level(monkeypatch) -> None:
+    levels: list[int] = []
+    compress = _png.zlib.compress
+
+    def recording_compress(data: bytes, level: int) -> bytes:
+        levels.append(level)
+        return compress(data, level)
+
+    monkeypatch.setattr(_png.zlib, "compress", recording_compress)
+    few = np.zeros((10, 10, 4), np.uint8)
+    many = (np.random.default_rng(4).random((20, 20, 4)) * 255).astype(np.uint8)
+
+    _png.encode(few)
+    _png.encode(many)
+
+    assert levels == [6, 6]
+
+
 def test_native_and_svg_share_layout() -> None:
     # Both exporters compute the same plot rect / tick labels from one spec.
     from fastcharts import _svg

@@ -146,6 +146,35 @@ def test_interaction_browser_gates_cover_scatter_and_core_chart_families() -> No
         assert marker in bench
 
 
+def test_interaction_benchmark_completes_gpu_warmup_before_timing() -> None:
+    bench = (ROOT / "benchmarks" / "bench_interaction.py").read_text(encoding="utf-8")
+    warm_start = bench.index("// Warm shader compilation")
+    timing_start = bench.index("let viewChanged = false", warm_start)
+    settle_start = bench.index("function settlePixels()", timing_start)
+    settle_end = bench.index("function measure(", settle_start)
+
+    assert "settlePixels();" in bench[warm_start:timing_start]
+    assert "cancelAnimationFrame(view._raf);" in bench[settle_start:settle_end]
+    assert "gl.readPixels(" in bench[settle_start:settle_end]
+
+
+def test_dashboard_benchmark_reports_eviction_and_scroll_telemetry() -> None:
+    bench = (ROOT / "benchmarks" / "bench_dashboard.py").read_text(encoding="utf-8")
+
+    for marker in (
+        'addEventListener("webglcontextlost"',
+        'addEventListener("webglcontextrestored"',
+        "scrollIntoView",
+        "context_lost_chart_ids",
+        "context_restored_chart_ids",
+        "initial_nonblank_chart_ids",
+        "scroll_nonblank_chart_ids",
+        'render_status: fullyNonblank ? "complete" : "partial"',
+    ):
+        assert marker in bench
+    assert "blank dashboard chart" not in bench
+
+
 def test_benchmark_categories_track_core_hardening_metrics() -> None:
     medium_scatter_metrics = CATEGORY_BY_ID["medium_direct_scatter"]["metrics"]
     interaction_metrics = CATEGORY_BY_ID["interaction_smoothness"]["metrics"]

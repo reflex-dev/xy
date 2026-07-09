@@ -116,6 +116,16 @@ def _require_positive_integer(obj: dict[str, Any], key: str, path: str, errors: 
         errors.append(f"{path}.{key} must be > 0")
 
 
+def _require_nonnegative_integer(
+    obj: dict[str, Any], key: str, path: str, errors: list[str]
+) -> None:
+    value = obj.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        errors.append(f"{path}.{key} must be a nonnegative integer")
+    elif value < 0:
+        errors.append(f"{path}.{key} must be >= 0")
+
+
 def _require_optional_nonnegative_number(
     obj: dict[str, Any], key: str, path: str, errors: list[str]
 ) -> None:
@@ -1156,22 +1166,64 @@ def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> No
             errors.append(f"{path}.status has unknown value {row.get('status')!r}")
         _validate_browser_category_list(row, path, category_ids, errors)
         if status == "ok":
+            _require_keys(
+                row,
+                {
+                    "render_status",
+                    "fully_nonblank",
+                    "render_ms",
+                    "ms_per_chart",
+                    "payload_prep_ms",
+                    "navigation_ready_ms",
+                    "scroll_pass_ms",
+                    "steady_redraw_p95_ms",
+                    "steady_redraw_active_charts",
+                    "created_charts",
+                    "creation_failed_charts",
+                    "creation_failure_ids",
+                    "nonblank_charts",
+                    "initial_nonblank_charts",
+                    "initial_nonblank_chart_ids",
+                    "initial_blank_chart_ids",
+                    "scroll_nonblank_charts",
+                    "scroll_nonblank_chart_ids",
+                    "scroll_blank_chart_ids",
+                    "context_lost_events",
+                    "context_restored_events",
+                    "context_lost_chart_ids",
+                    "context_restored_chart_ids",
+                    "currently_lost_chart_ids",
+                    "context_events",
+                },
+                path,
+                errors,
+            )
             for key in (
                 "render_ms",
                 "ms_per_chart",
                 "payload_prep_ms",
                 "navigation_ready_ms",
+                "scroll_pass_ms",
                 "steady_redraw_p95_ms",
             ):
                 _require_nonnegative_number(row, key, path, errors)
-            _require_positive_number(row, "nonblank_charts", path, errors)
-            if row.get("nonblank_charts") != row.get("chart_count"):
-                errors.append(f"{path}.nonblank_charts must equal chart_count")
+            for key in (
+                "steady_redraw_active_charts",
+                "created_charts",
+                "creation_failed_charts",
+                "nonblank_charts",
+                "initial_nonblank_charts",
+                "scroll_nonblank_charts",
+                "context_lost_events",
+                "context_restored_events",
+            ):
+                _require_nonnegative_integer(row, key, path, errors)
             for key in ("js_heap_before_bytes", "js_heap_bytes"):
                 _require_optional_nonnegative_number(row, key, path, errors)
             delta = row.get("js_heap_delta_bytes")
             if delta is not None and not _is_number(delta):
                 errors.append(f"{path}.js_heap_delta_bytes must be a finite number or null")
+            _validate_dashboard_telemetry(row, path, errors)
     attempted_counts = {row.get("chart_count") for row in rows if isinstance(row, dict)}
     missing_counts = sorted(DASHBOARD_REQUIRED_COUNTS - attempted_counts)
     if missing_counts:
@@ -1182,7 +1234,9 @@ def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> No
     ok_counts = {
         row.get("chart_count")
         for row in rows
-        if isinstance(row, dict) and _status_kind(row.get("status")) == "ok"
+        if isinstance(row, dict)
+        and _status_kind(row.get("status")) == "ok"
+        and row.get("fully_nonblank") is True
     }
     expected_ceiling = max(ok_counts) if ok_counts else None
     if report.get("chart_count_ceiling") != expected_ceiling:
@@ -1190,6 +1244,132 @@ def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> No
             "report.chart_count_ceiling must be the largest successful chart_count; "
             f"got {report.get('chart_count_ceiling')!r}, expected {expected_ceiling!r}"
         )
+
+
+def _dashboard_id_list(
+    row: dict[str, Any], key: str, path: str, expected_ids: set[str], errors: list[str]
+) -> set[str]:
+    value = row.get(key)
+    if not isinstance(value, list):
+        errors.append(f"{path}.{key} must be a list")
+        return set()
+    if any(not isinstance(item, str) for item in value):
+        errors.append(f"{path}.{key} must contain only strings")
+        return set()
+    ids = set(value)
+    if len(ids) != len(value):
+        errors.append(f"{path}.{key} must not contain duplicate chart IDs")
+    unknown = sorted(ids - expected_ids)
+    if unknown:
+        errors.append(f"{path}.{key} contains unknown chart IDs: {unknown}")
+    return ids
+
+
+def _validate_dashboard_telemetry(row: dict[str, Any], path: str, errors: list[str]) -> None:
+    chart_count = row.get("chart_count")
+    if isinstance(chart_count, bool) or not isinstance(chart_count, int) or chart_count <= 0:
+        return
+    expected_ids = {f"chart-{i}" for i in range(chart_count)}
+    id_keys = (
+        "creation_failure_ids",
+        "initial_nonblank_chart_ids",
+        "initial_blank_chart_ids",
+        "scroll_nonblank_chart_ids",
+        "scroll_blank_chart_ids",
+        "context_lost_chart_ids",
+        "context_restored_chart_ids",
+        "currently_lost_chart_ids",
+    )
+    ids = {key: _dashboard_id_list(row, key, path, expected_ids, errors) for key in id_keys}
+
+    count_keys = (
+        "steady_redraw_active_charts",
+        "created_charts",
+        "creation_failed_charts",
+        "nonblank_charts",
+        "initial_nonblank_charts",
+        "scroll_nonblank_charts",
+    )
+    for key in count_keys:
+        value = row.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value > chart_count:
+            errors.append(f"{path}.{key} must be <= chart_count")
+
+    expected_pairs = (
+        ("creation_failed_charts", "creation_failure_ids"),
+        ("initial_nonblank_charts", "initial_nonblank_chart_ids"),
+        ("scroll_nonblank_charts", "scroll_nonblank_chart_ids"),
+    )
+    for count_key, ids_key in expected_pairs:
+        if row.get(count_key) != len(ids[ids_key]):
+            errors.append(f"{path}.{count_key} must equal len({ids_key})")
+    if row.get("nonblank_charts") != row.get("initial_nonblank_charts"):
+        errors.append(f"{path}.nonblank_charts must equal initial_nonblank_charts")
+    if row.get("created_charts") != chart_count - len(ids["creation_failure_ids"]):
+        errors.append(f"{path}.created_charts must equal chart_count minus creation failures")
+    if row.get("steady_redraw_active_charts") != row.get("created_charts", 0) - len(
+        ids["currently_lost_chart_ids"]
+    ):
+        errors.append(
+            f"{path}.steady_redraw_active_charts must equal created charts minus currently lost"
+        )
+
+    for prefix in ("initial", "scroll"):
+        lit = ids[f"{prefix}_nonblank_chart_ids"]
+        blank = ids[f"{prefix}_blank_chart_ids"]
+        if lit & blank:
+            errors.append(f"{path}.{prefix} nonblank and blank chart IDs must be disjoint")
+        if lit | blank != expected_ids:
+            errors.append(f"{path}.{prefix} chart IDs must cover every attempted chart")
+
+    events = row.get("context_events")
+    lost_event_ids: list[str] = []
+    restored_event_ids: list[str] = []
+    if not isinstance(events, list):
+        errors.append(f"{path}.context_events must be a list")
+        events = []
+    for index, event in enumerate(events):
+        event_path = f"{path}.context_events[{index}]"
+        _require_keys(event, {"id", "type", "phase", "at_ms"}, event_path, errors)
+        if not isinstance(event, dict):
+            continue
+        event_id = event.get("id")
+        if event_id not in expected_ids:
+            errors.append(f"{event_path}.id must identify an attempted chart")
+        event_type = event.get("type")
+        if event_type not in {"lost", "restored"}:
+            errors.append(f"{event_path}.type must be 'lost' or 'restored'")
+        elif isinstance(event_id, str):
+            (lost_event_ids if event_type == "lost" else restored_event_ids).append(event_id)
+        if event.get("phase") not in {"create", "initial", "scroll", "redraw", "report"}:
+            errors.append(f"{event_path}.phase has an unknown value")
+        _require_nonnegative_number(event, "at_ms", event_path, errors)
+
+    if row.get("context_lost_events") != len(lost_event_ids):
+        errors.append(f"{path}.context_lost_events must equal lost context event count")
+    if row.get("context_restored_events") != len(restored_event_ids):
+        errors.append(f"{path}.context_restored_events must equal restored context event count")
+    if ids["context_lost_chart_ids"] != set(lost_event_ids):
+        errors.append(f"{path}.context_lost_chart_ids must match context_events")
+    if ids["context_restored_chart_ids"] != set(restored_event_ids):
+        errors.append(f"{path}.context_restored_chart_ids must match context_events")
+    if not ids["currently_lost_chart_ids"] <= ids["context_lost_chart_ids"]:
+        errors.append(f"{path}.currently_lost_chart_ids must be a subset of lost chart IDs")
+
+    expected_complete = (
+        row.get("created_charts") == chart_count
+        and row.get("initial_nonblank_charts") == chart_count
+        and row.get("scroll_nonblank_charts") == chart_count
+        and row.get("context_lost_events") == 0
+        and not ids["currently_lost_chart_ids"]
+    )
+    if not isinstance(row.get("fully_nonblank"), bool):
+        errors.append(f"{path}.fully_nonblank must be a boolean")
+    elif row.get("fully_nonblank") != expected_complete:
+        errors.append(f"{path}.fully_nonblank is inconsistent with dashboard telemetry")
+    expected_status = "complete" if expected_complete else "partial"
+    if row.get("render_status") != expected_status:
+        errors.append(f"{path}.render_status must be {expected_status!r}")
 
 
 def _validate_workflow_native(report: dict[str, Any], errors: list[str]) -> None:

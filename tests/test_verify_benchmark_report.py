@@ -422,6 +422,50 @@ def _dashboard_browser_report() -> dict:
         "small_data_startup",
         "payload_export_size",
     )
+
+    def row(count: int) -> dict:
+        chart_ids = [f"chart-{i}" for i in range(count)]
+        return {
+            "scenario": f"dashboard_{count}",
+            "chart_count": count,
+            "benchmark_categories": [
+                "many_chart_dashboards",
+                "small_data_startup",
+                "payload_export_size",
+            ],
+            "total_payload_bytes": 262_144,
+            "html_bytes": 524_288,
+            "status": "ok",
+            "render_status": "complete",
+            "fully_nonblank": True,
+            "render_ms": 7.0 * count,
+            "ms_per_chart": 7.0,
+            "payload_prep_ms": 3.0 * count,
+            "navigation_ready_ms": 12.0 * count,
+            "scroll_pass_ms": 5.0 * count,
+            "steady_redraw_p95_ms": 16.7,
+            "steady_redraw_active_charts": count,
+            "js_heap_before_bytes": 1_000_000,
+            "js_heap_bytes": 2_000_000,
+            "js_heap_delta_bytes": 1_000_000,
+            "created_charts": count,
+            "creation_failed_charts": 0,
+            "creation_failure_ids": [],
+            "nonblank_charts": count,
+            "initial_nonblank_charts": count,
+            "initial_nonblank_chart_ids": chart_ids,
+            "initial_blank_chart_ids": [],
+            "scroll_nonblank_charts": count,
+            "scroll_nonblank_chart_ids": chart_ids,
+            "scroll_blank_chart_ids": [],
+            "context_lost_events": 0,
+            "context_restored_events": 0,
+            "context_lost_chart_ids": [],
+            "context_restored_chart_ids": [],
+            "currently_lost_chart_ids": [],
+            "context_events": [],
+        }
+
     return {
         **_base(),
         "kind": "dashboard-browser",
@@ -429,31 +473,38 @@ def _dashboard_browser_report() -> dict:
         "tracked_categories": tracked,
         "attempted_chart_counts": [10, 20, 50],
         "chart_count_ceiling": 50,
-        "rows": [
-            {
-                "scenario": f"dashboard_{count}",
-                "chart_count": count,
-                "benchmark_categories": [
-                    "many_chart_dashboards",
-                    "small_data_startup",
-                    "payload_export_size",
-                ],
-                "total_payload_bytes": 262_144,
-                "html_bytes": 524_288,
-                "status": "ok",
-                "render_ms": 7.0 * count,
-                "ms_per_chart": 7.0,
-                "payload_prep_ms": 3.0 * count,
-                "navigation_ready_ms": 12.0 * count,
-                "steady_redraw_p95_ms": 16.7,
-                "js_heap_before_bytes": 1_000_000,
-                "js_heap_bytes": 2_000_000,
-                "js_heap_delta_bytes": 1_000_000,
-                "nonblank_charts": count,
-            }
-            for count in (10, 20, 50)
-        ],
+        "rows": [row(count) for count in (10, 20, 50)],
     }
+
+
+def _set_dashboard_partial(row: dict, nonblank: int = 16) -> None:
+    count = row["chart_count"]
+    blank_ids = [f"chart-{i}" for i in range(count - nonblank)]
+    lit_ids = [f"chart-{i}" for i in range(count - nonblank, count)]
+    events = [
+        {"id": chart_id, "type": "lost", "phase": "create", "at_ms": 10.0 + i}
+        for i, chart_id in enumerate(blank_ids)
+    ]
+    row.update(
+        {
+            "render_status": "partial",
+            "fully_nonblank": False,
+            "steady_redraw_active_charts": nonblank,
+            "nonblank_charts": nonblank,
+            "initial_nonblank_charts": nonblank,
+            "initial_nonblank_chart_ids": lit_ids,
+            "initial_blank_chart_ids": blank_ids,
+            "scroll_nonblank_charts": nonblank,
+            "scroll_nonblank_chart_ids": lit_ids,
+            "scroll_blank_chart_ids": blank_ids,
+            "context_lost_events": len(events),
+            "context_restored_events": 0,
+            "context_lost_chart_ids": blank_ids,
+            "context_restored_chart_ids": [],
+            "currently_lost_chart_ids": blank_ids,
+            "context_events": events,
+        }
+    )
 
 
 def _workflow_native_report() -> dict:
@@ -581,12 +632,24 @@ def test_scatter_report_requires_mode_target_and_oracle(tmp_path: Path) -> None:
 
 def test_dashboard_report_rejects_overstated_ceiling(tmp_path: Path) -> None:
     payload = _dashboard_browser_report()
-    payload["rows"][-1]["status"] = "failed(context limit)"
+    _set_dashboard_partial(payload["rows"][-1])
     path = _write_report(tmp_path, payload)
 
     errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
 
     assert any("chart_count_ceiling" in error for error in errors)
+
+
+def test_dashboard_report_accepts_partial_rows_with_context_telemetry(tmp_path: Path) -> None:
+    payload = _dashboard_browser_report()
+    _set_dashboard_partial(payload["rows"][1])
+    _set_dashboard_partial(payload["rows"][2])
+    payload["chart_count_ceiling"] = 10
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
+
+    assert errors == []
 
 
 def test_workflow_report_rejects_missing_required_scenario(tmp_path: Path) -> None:

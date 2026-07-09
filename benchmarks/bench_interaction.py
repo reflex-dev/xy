@@ -251,7 +251,7 @@ def _probe_js(reps: int) -> str:
     const warmY1 = before.y0 + (before.y1 - before.y0) * 0.65;
     view._selectLocal(warmX0, warmX1, warmY0, warmY1);
     view._clearSelection();
-    view._drawNow();
+    settlePixels();
 
     let viewChanged = false;
     function noteViewChanged() {{
@@ -274,6 +274,10 @@ def _probe_js(reps: int) -> str:
         const target = view._viewAnim.target;
         view._cancelViewAnimation();
         view.view = target;
+      }}
+      if (view._raf) {{
+        cancelAnimationFrame(view._raf);
+        view._raf = null;
       }}
       const gl = view.gl;
       view._drawNow();
