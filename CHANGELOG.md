@@ -9,6 +9,22 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- **CSS value validation in the native core** (ABI v9, `fc_css_check` /
+  `kernels.css_check`). One grammar (`src/css.rs`) now gates every styling
+  surface at build time: trace/annotation/series colors, gradient stops,
+  `mark_style` states, and `style=` declarations parse strictly where the
+  grammar is closed (hex — no more `#3b82zz` accepted as "valid hex" —
+  `rgb()`/`hsl()`, the full CSS named-color table, lengths, numbers), while
+  browser-resolved forms (`var()`, `oklch()`, `color-mix()`, `calc()`)
+  shape-check and pass through, and every value is checked for
+  declaration-context safety (no `;`/`{`/`}`/`</`/control characters,
+  balanced quotes/parens). Malformed styling raises a `ValueError` naming
+  the argument instead of rendering a silently wrong chart. The
+  color-vs-column disambiguation for `color=` and the native PNG rasterizer
+  resolve colors through this same parser — `color="rebeccapurple"` is a
+  constant color now, not a column lookup, and static exports cannot drift
+  from the API contract; the render client warns on unresolvable colors in
+  hand-written specs instead of silently painting the fallback.
 - **Browser-free native PNG export** (`Figure.to_png(engine="native")`, now the
   default). A dependency-free anti-aliased rasterizer in the Rust core (ABI v8,
   `fc_rasterize`) paints the same decimated payload the SVG exporter consumes,

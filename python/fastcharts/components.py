@@ -1457,7 +1457,15 @@ def _resolve_color(data: Any, color: Any, *, context: Optional[str] = None) -> A
         return color  # None, or an already-materialized array
     if _looks_like_css(color):
         return color  # constant color
-    return _resolve(data, color, context=context)  # column name → values (raises if no data)
+    try:
+        return _resolve(data, color, context=context)  # column name → values
+    except ValueError:
+        if color.startswith("#") or "(" in color:
+            # Color-shaped strings are never real column names; surface the
+            # precise CSS reason (the '#3b82zz' typo class) instead of a
+            # misleading column-lookup error.
+            _validate.css_color(color, context or "color")
+        raise
 
 
 def _string_list(value: Any, label: str) -> Optional[list[str]]:
@@ -1693,39 +1701,16 @@ def _annotation_axis_name(value: Any, label: str) -> str:
 
 
 def _looks_like_css(s: str) -> bool:
-    """Heuristic: a bare color string vs a column name. Hex, rgb(), and common
-    named colors are treated as constant colors; everything else is a column."""
-    if s.startswith("#") or s.startswith("rgb") or s.startswith("hsl") or s.startswith("oklch"):
-        return True
-    return s.lower() in _CSS_NAMES
+    """A string `color=` is a constant when it parses under the native CSS
+    color grammar (src/css.rs: hex, rgb()/hsl(), the full named-color table,
+    and browser-resolved forms like var()/oklch()); anything else is a column
+    name. The old prefix heuristic accepted any '#…' string, so a typo'd hex
+    like '#3b82zz' classified as a "valid" color and rendered silently wrong —
+    the exact grammar fails it over to column lookup, whose error names the
+    string."""
+    from . import kernels
 
-
-_CSS_NAMES = {
-    "black",
-    "white",
-    "red",
-    "green",
-    "blue",
-    "yellow",
-    "orange",
-    "purple",
-    "gray",
-    "grey",
-    "cyan",
-    "magenta",
-    "pink",
-    "brown",
-    "teal",
-    "navy",
-    "gold",
-    "silver",
-    "maroon",
-    "olive",
-    "lime",
-    "aqua",
-    "fuchsia",
-    "transparent",
-}
+    return kernels.css_check(kernels.CSS_COLOR, s)[0] > 0
 
 
 # ---------------------------------------------------------------------------

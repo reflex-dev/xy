@@ -281,6 +281,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         dash: Any = None,
     ) -> "Figure":
         name = self._optional_text(name, "line name")
+        color = self._optional_css_color(color, "line color")
         width = self._positive_scalar(width, "line width")
         opacity = self._opacity(opacity, "line opacity")
         curve = _validate.curve(curve, "line curve")
@@ -341,6 +342,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         dashes the outline.
         """
         name = self._optional_text(name, "area name")
+        color = self._optional_css_color(color, "area color")
         opacity = self._opacity(opacity, "area opacity")
         line_width = self._nonnegative_scalar(line_width, "area line_width")
         line_opacity = self._opacity(line_opacity, "area line_opacity")
@@ -419,7 +421,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         opacity = self._opacity(opacity, "scatter opacity")
         density = self._optional_bool(density, "scatter density")
         symbol = _validate.point_symbol(symbol, "scatter symbol")
-        stroke = self._optional_text(stroke, "scatter stroke")
+        stroke = self._optional_css_color(stroke, "scatter stroke")
         stroke_width = self._nonnegative_scalar(stroke_width, "scatter stroke_width")
         if stroke is not None and stroke_width == 0.0:
             stroke_width = 1.0
@@ -765,7 +767,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             radius = self._nonnegative_scalar(corner_radius, f"{kind} corner_radius")
             if radius:
                 style["corner_radius"] = radius
-        stroke = self._optional_text(stroke, f"{kind} stroke")
+        stroke = self._optional_css_color(stroke, f"{kind} stroke")
         stroke_width = self._nonnegative_scalar(stroke_width, f"{kind} stroke_width")
         if stroke is not None and stroke_width == 0.0:
             stroke_width = 1.0
@@ -955,6 +957,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
     _bool_param = staticmethod(_validate.bool_param)
     _axis_id = staticmethod(_validate.axis_id)
     _optional_text = staticmethod(_validate.optional_text)
+    _optional_css_color = staticmethod(_validate.optional_css_color)
     _string_mapping = staticmethod(_validate.string_mapping)
     _style_mapping = staticmethod(_validate.style_mapping)
 
@@ -1075,14 +1078,18 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if colors is not None:
             if len(colors) != n_series:
                 raise ValueError(f"colors must have length {n_series}, got {len(colors)}")
-            return list(colors)
+            return [_validate.css_color(c, f"colors[{i}]") for i, c in enumerate(colors)]
         if isinstance(color, (list, tuple, np.ndarray)) and not isinstance(color, str):
-            color_list: list[Optional[str]] = [str(c) for c in color]
+            color_list: list[Optional[str]] = [
+                _validate.css_color(str(c), f"color[{i}]") for i, c in enumerate(color)
+            ]
             if len(color_list) != n_series:
                 raise ValueError(
                     f"color sequence must have length {n_series}, got {len(color_list)}"
                 )
             return color_list
+        if color is not None:
+            color = _validate.css_color(color, "color")
         return [color for _ in range(n_series)]
 
     @staticmethod

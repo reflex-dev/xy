@@ -37,51 +37,29 @@ from ._svg import (
 _CLIP, _FILL, _GRAD, _STROKE, _POINT, _IMAGE, _TEXT_OP = 0, 1, 2, 3, 4, 5, 6
 _SYMBOLS = {"circle": 0, "square": 1, "diamond": 2, "triangle": 3, "cross": 4}
 
-_NAMED = {
-    "white": (255, 255, 255, 255),
-    "black": (0, 0, 0, 255),
-    "red": (255, 0, 0, 255),
-    "green": (0, 128, 0, 255),
-    "blue": (0, 0, 255, 255),
-    "gray": (128, 128, 128, 255),
-    "grey": (128, 128, 128, 255),
-    "orange": (255, 165, 0, 255),
-    "transparent": (0, 0, 0, 0),
-    "none": (0, 0, 0, 0),
-}
-
 
 def _parse_color(css: str, opacity: float = 1.0) -> tuple[int, int, int, int]:
-    """Resolve a CSS color string to RGBA8. Handles #hex (3/4/6/8),
-    rgb()/rgba(), and a small named set; unknown names fall back to a mid gray
-    so nothing renders invisible by accident."""
-    s = str(css).strip().lower()
-    r, g, b, a = 100, 100, 100, 255
-    if s.startswith("#"):
-        hx = s[1:]
-        try:
-            if len(hx) in (3, 4):
-                r, g, b = (int(hx[i] * 2, 16) for i in range(3))
-                a = int(hx[3] * 2, 16) if len(hx) == 4 else 255
-            elif len(hx) in (6, 8):
-                r, g, b = (int(hx[i : i + 2], 16) for i in (0, 2, 4))
-                a = int(hx[6:8], 16) if len(hx) == 8 else 255
-        except ValueError:
-            pass
-    elif s.startswith("rgb"):
-        try:
-            nums = s[s.index("(") + 1 : s.index(")")].replace("/", ",").split(",")
-            r, g, b = (int(round(float(nums[i].strip().rstrip("%")))) for i in range(3))
-            a = int(round(float(nums[3]) * 255)) if len(nums) >= 4 else 255
-        except (ValueError, IndexError):
-            pass
-    elif s in _NAMED:
-        r, g, b, a = _NAMED[s]
+    """Resolve a CSS color string to RGBA8 via the native grammar
+    (src/css.rs) — the same parser that validates figure input, so raster
+    colors can never drift from the API contract. `none` renders transparent
+    (the SVG idiom); browser-only forms that survive `_css`'s fallback (an
+    `oklch()` a DOM would resolve) and — defensively — anything unparseable
+    fall back to a mid gray so a static export never renders an invisible
+    mark."""
+    from . import kernels
+
+    s = str(css).strip()
+    if s.lower() == "none":
+        return (0, 0, 0, 0)
+    _status, rgba = kernels.css_check(kernels.CSS_COLOR, s)
+    if rgba is None:
+        rgba = (100.0 / 255.0, 100.0 / 255.0, 100.0 / 255.0, 1.0)
+    r, g, b, a = rgba
     return (
-        max(0, min(255, r)),
-        max(0, min(255, g)),
-        max(0, min(255, b)),
-        max(0, min(255, int(round(a * opacity)))),
+        int(round(r * 255)),
+        int(round(g * 255)),
+        int(round(b * 255)),
+        max(0, min(255, int(round(a * 255 * opacity)))),
     )
 
 

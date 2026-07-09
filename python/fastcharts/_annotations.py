@@ -218,7 +218,7 @@ class AnnotationsMixin(_Host):
                 "dy": dy,
                 "anchor": anchor,
                 "style": {
-                    "color": self._optional_text(color, "text annotation color"),
+                    "color": self._optional_css_color(color, "text annotation color"),
                     **self._style_mapping(style or {}, "text annotation style"),
                 },
                 "class_name": self._optional_text(class_name, "text annotation class_name"),
@@ -290,8 +290,8 @@ class AnnotationsMixin(_Host):
                 "size": size,
                 "symbol": symbol,
                 "style": {
-                    "color": self._optional_text(color, "marker color"),
-                    "stroke_color": self._optional_text(stroke_color, "marker stroke_color"),
+                    "color": self._optional_css_color(color, "marker color"),
+                    "stroke_color": self._optional_css_color(stroke_color, "marker stroke_color"),
                     "stroke_width": stroke_width,
                     "opacity": opacity,
                     **self._style_mapping(style or {}, "marker style"),
@@ -327,7 +327,7 @@ class AnnotationsMixin(_Host):
                 "y1": y1,
                 "text": self._optional_text(text, "arrow text"),
                 "style": {
-                    "color": self._optional_text(color, "arrow color"),
+                    "color": self._optional_css_color(color, "arrow color"),
                     "width": width,
                     "opacity": opacity,
                     **self._style_mapping(style or {}, "arrow style"),
@@ -370,7 +370,7 @@ class AnnotationsMixin(_Host):
                 "dy": dy,
                 "anchor": anchor,
                 "style": {
-                    "color": self._optional_text(color, "callout color"),
+                    "color": self._optional_css_color(color, "callout color"),
                     "width": width,
                     "opacity": opacity,
                     **self._style_mapping(style or {}, "callout style"),
@@ -401,7 +401,7 @@ class AnnotationsMixin(_Host):
                 "value": value,
                 "text": self._optional_text(text, f"{axis} rule text"),
                 "style": {
-                    "color": self._optional_text(color, f"{axis} rule color"),
+                    "color": self._optional_css_color(color, f"{axis} rule color"),
                     "width": width,
                     "opacity": opacity,
                     **self._style_mapping(style or {}, f"{axis} rule style"),
@@ -432,7 +432,7 @@ class AnnotationsMixin(_Host):
                 "end": end,
                 "text": self._optional_text(text, f"{axis} band text"),
                 "style": {
-                    "color": self._optional_text(color, f"{axis} band color"),
+                    "color": self._optional_css_color(color, f"{axis} band color"),
                     "opacity": opacity,
                     **self._style_mapping(style or {}, f"{axis} band style"),
                 },

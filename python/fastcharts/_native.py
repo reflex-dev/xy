@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_SCREEN_DIM
 
-ABI_VERSION = 8
+ABI_VERSION = 9
 
 _F64_P = ctypes.POINTER(ctypes.c_double)
 _F32_P = ctypes.POINTER(ctypes.c_float)
@@ -227,6 +227,15 @@ def _load() -> ctypes.CDLL:
         _U8_P,  # out (w*h*4 RGBA8)
         ctypes.c_size_t,  # w
         ctypes.c_size_t,  # h
+    ]
+    lib.fc_css_check.restype = ctypes.c_int32
+    lib.fc_css_check.argtypes = [
+        ctypes.c_uint32,  # kind (0 decl, 1 color, 2 length list, 3 number)
+        ctypes.c_char_p,  # prop (UTF-8; null only at len 0)
+        ctypes.c_size_t,  # prop_len
+        ctypes.c_char_p,  # value (UTF-8)
+        ctypes.c_size_t,  # value_len
+        _F32_P,  # out_rgba (4 f32s; written for statically-parsed colors)
     ]
     return lib
 
@@ -741,3 +750,30 @@ def rasterize(cmds: bytes, w: int, h: int) -> npt.NDArray[np.uint8]:
     if not ok:
         raise ValueError("native rasterizer rejected the command buffer")
     return out
+
+
+# fc_css_check kinds — keep in sync with `src/lib.rs`.
+CSS_DECLARATION = 0
+CSS_COLOR = 1
+CSS_LENGTH = 2
+CSS_NUMBER = 3
+
+
+def css_check(
+    kind: int, value: str, prop: str = ""
+) -> tuple[int, Optional[tuple[float, float, float, float]]]:
+    """Validate a CSS value against the native grammar (`src/css.rs`).
+
+    Returns ``(status, rgba)``: status 1 = parsed statically, 2 = valid but
+    browser-resolved (`var()`/`oklch()`/`calc()`/unknown-property
+    passthrough), negative = error code (see `fc_css_check` docs). ``rgba``
+    is the 0..1 channel tuple for statically-resolved colors, else None
+    (`currentColor` parses with no static channels). The error-message
+    mapping lives in `_validate.py`; this wrapper stays mechanical.
+    """
+    vb = value.encode("utf-8")
+    pb = prop.encode("utf-8")
+    out = (ctypes.c_float * 4)(float("nan"), 0.0, 0.0, 0.0)
+    status = int(_lib.fc_css_check(kind, pb or None, len(pb), vb or None, len(vb), out))
+    wrote = status == 1 and out[0] == out[0]  # NaN sentinel: untouched = no static color
+    return status, (out[0], out[1], out[2], out[3]) if wrote else None

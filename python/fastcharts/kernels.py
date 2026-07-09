@@ -26,6 +26,12 @@ except ImportError as err:  # pragma: no cover - platform-dependent
 
 BACKEND = "native"
 
+CSS_DECLARATION = _impl.CSS_DECLARATION
+CSS_COLOR = _impl.CSS_COLOR
+CSS_LENGTH = _impl.CSS_LENGTH
+CSS_NUMBER = _impl.CSS_NUMBER
+
+css_check = _impl.css_check
 zone_maps = _impl.zone_maps
 encode_f32 = _impl.encode_f32
 m4_indices = _impl.m4_indices
@@ -45,8 +51,13 @@ rasterize = _impl.rasterize
 
 __all__ = [
     "BACKEND",
+    "CSS_COLOR",
+    "CSS_DECLARATION",
+    "CSS_LENGTH",
+    "CSS_NUMBER",
     "bin_2d",
     "bin_2d_indices",
+    "css_check",
     "encode_f32",
     "histogram_uniform",
     "local_log_density",

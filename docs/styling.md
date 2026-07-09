@@ -271,6 +271,28 @@ measured in **screen-space arc length**, computed per frame, so dashes stay a
 constant on-screen size through zoom and run continuously across every segment
 of a curve — not reset per data point. `area` dashes its outline.
 
+## Validation — loud errors, never a silently wrong chart
+
+Every color, gradient stop, and `style`/`styles` declaration is validated at
+chart-build time by the native core's CSS grammar (`src/css.rs`, over
+`kernels.css_check`) — the same parser the built-in PNG rasterizer paints
+with, so what validates is exactly what renders:
+
+- **Closed grammars parse strictly.** A bad hex digit (`#3b82zz`), an unknown
+  color name (`bluu`), a non-length (`font_size: "big"`), or an unknown unit
+  (`12parsecs`) raises `ValueError` at the chart call, naming the argument
+  and the reason.
+- **Browser-resolved forms pass through.** `var(--accent)`, `oklch(…)`,
+  `color-mix(…)`, and `calc(…)` are shape-checked (known function, balanced)
+  and left for the client's probe element to resolve.
+- **Unknown properties are allowed** — your CSS is authority — but every
+  value must be declaration-safe: `;`, `{`, `}`, `</`, control characters,
+  and unbalanced quotes/parentheses are rejected on every styling surface.
+- **A string `color=` is a constant iff it parses as a CSS color**; any other
+  string is a `data=` column name. The full named-color table counts, so
+  `color="rebeccapurple"` is a color, and a color-shaped typo reports its
+  CSS reason instead of a misleading column-lookup error.
+
 ## What CSS cannot restyle
 
 Annotation **shapes** (markers, arrows, filled zones) are canvas-painted; style

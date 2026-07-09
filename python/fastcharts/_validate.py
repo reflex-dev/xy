@@ -155,7 +155,70 @@ def string_mapping(value: dict[str, Any], label: str) -> dict[str, str]:
     return out
 
 
+# fc_css_check error codes -> human reasons (the negated CssErr
+# discriminants; keep in sync with src/css.rs).
+_CSS_ERROR_REASONS = {
+    -1: "is empty",
+    -2: "contains an unsafe character (';', '{', '}', '</', or a control character)",
+    -3: "has unbalanced quotes or parentheses",
+    -4: "is not a valid hex color (use #rgb, #rgba, #rrggbb, or #rrggbbaa)",
+    -5: "is not valid color syntax",
+    -6: "is not a recognized CSS color name",
+    -7: "has an invalid number",
+    -8: "has an unknown unit",
+    -9: "uses an unknown function",
+    -10: "is not a valid CSS property name",
+}
+
+
+def _css_check(kind: int, value: str, prop: str = "") -> int:
+    # Lazy import: these validators run at chart-build time, inside the
+    # compute import boundary (§33) — but this module itself must stay
+    # importable without loading the native core.
+    from . import kernels
+
+    return kernels.css_check(kind, value, prop)[0]
+
+
+def _css_reason(status: int) -> str:
+    return _CSS_ERROR_REASONS.get(status, "is not valid CSS")
+
+
+def css_color(value: Any, label: str) -> str:
+    """A CSS `<color>` literal. Closed grammars (hex, `rgb()`/`hsl()`, the
+    full named-color table, `transparent`, `currentColor`) parse strictly in
+    the native core (src/css.rs); browser-resolved forms (`var()`,
+    `oklch()`, `color-mix()`, ...) are shape-checked and passed through. A
+    malformed color errors loudly here instead of rendering as a silently
+    wrong mark color (§28: no silent decisions)."""
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a CSS color string")
+    from . import kernels
+
+    status = _css_check(kernels.CSS_COLOR, value)
+    if status <= 0:
+        raise ValueError(f"{label} {value!r} {_css_reason(status)}")
+    return value.strip()
+
+
+def optional_css_color(value: Any, label: str) -> Optional[str]:
+    if value is None:
+        return None
+    return css_color(value, label)
+
+
+def _css_property_name(key: str) -> str:
+    """The declaration-check name for a style key: the Python API accepts
+    snake_case (`font_size`), CSS wants kebab (`font-size`); custom
+    properties keep their `--` prefix."""
+    if key.startswith("--"):
+        return "--" + key[2:].replace("_", "-")
+    return key.replace("_", "-")
+
+
 def style_mapping(value: dict[str, Any], label: str) -> dict[str, str | int | float]:
+    from . import kernels
+
     if not isinstance(value, dict):
         raise ValueError(f"{label} must be a dict[str, str | int | float]")
     out: dict[str, str | int | float] = {}
@@ -169,6 +232,14 @@ def style_mapping(value: dict[str, Any], label: str) -> dict[str, str | int | fl
         number = float(item) if isinstance(item, (int, float, np.integer, np.floating)) else None
         if number is not None and not np.isfinite(number):
             raise ValueError(f"{label} numeric values must be finite")
+        if isinstance(item, str):
+            # A string value is one CSS declaration: closed grammars
+            # (color/length/number properties) parse strictly, unknown
+            # properties pass through with declaration-context safety intact
+            # (src/css.rs; numeric values follow the px convention instead).
+            status = _css_check(kernels.CSS_DECLARATION, item, _css_property_name(key))
+            if status <= 0:
+                raise ValueError(f"{label}[{key!r}] {item!r} {_css_reason(status)}")
         out[key] = item.item() if isinstance(item, (np.integer, np.floating)) else item
     return out
 
@@ -313,7 +384,7 @@ def mark_fill(value: Any, label: str) -> Optional[dict[str, Any]]:
         if not color:
             raise ValueError(f"{label} has an empty color stop")
         positions.append(pos)
-        colors.append(color)
+        colors.append(css_color(color, f"{label} stop {len(colors) + 1} color"))
     # CSS stop-position resolution: unpositioned endpoints default to 0%/100%,
     # positions never decrease (each anchor clamps to its predecessor), and
     # unpositioned interior stops spread evenly between their positioned

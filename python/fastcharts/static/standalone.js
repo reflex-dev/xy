@@ -72,8 +72,12 @@ if (!c) return fallback;
 if (typeof c !== "string") return fallback;
 const expr = c.trim();
 if (!expr) return fallback;
-if (expr.startsWith("#")) return hexColor(expr) || fallback;
-return resolveCssColor(host, expr) || fallback;
+const out = expr.startsWith("#") ? hexColor(expr) : resolveCssColor(host, expr);
+if (out) return out;
+if (typeof console !== "undefined" && console.warn) {
+console.warn(`fastcharts: unresolvable color ${JSON.stringify(expr)}; using fallback`);
+}
+return fallback;
 }
 function readTheme(root) {
 const text = resolveCssColor(root, "currentColor") || [0.2, 0.2, 0.2, 1];

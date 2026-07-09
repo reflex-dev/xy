@@ -369,6 +369,10 @@ Keep pushing these in low-conflict increments:
   the `Figure` and column store unchanged.
 - Keep weird-string export tests covering every text surface added to the
   public API, including titles, labels, legends, categories, and series names.
+- Styling arguments (colors, gradient stops, `style=` declarations) are gated
+  by the native CSS grammar (`src/css.rs`; `tests/test_css_validation.py`) —
+  route any new mark/chrome styling prop through `_validate.css_color` or
+  `style_mapping` so no styling surface bypasses it.
 - Keep benchmark environment metadata and category IDs on every new generated report.
 - The release workflow's `workflow_dispatch` `dry_run` input (default `true`)
   now builds and verifies every wheel/sdist/wasm artifact without publishing;

@@ -206,7 +206,9 @@ def resolve_color(
     if color is None:
         return ColorChannel(mode="constant", constant=default_constant)
     if isinstance(color, str):
-        return ColorChannel(mode="constant", constant=color)
+        # Literal constant color: validated against the native CSS grammar so
+        # a typo errors here instead of rendering a silently wrong mark.
+        return ColorChannel(mode="constant", constant=_validate.css_color(color, "color"))
 
     if hasattr(color, "to_numpy"):
         color = color.to_numpy()
