@@ -1,55 +1,88 @@
-# fastcharts
+<h1 align="center">fastcharts</h1>
 
-[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/Alek99/charts-exp?utm_source=badge)
+<p align="center">
+  <strong>Interactive Python charts whose cost follows the screen, not the dataset.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/reflex-dev/reviz/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/reflex-dev/reviz/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://app.codspeed.io/Alek99/charts-exp?utm_source=badge"><img alt="CodSpeed" src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json"></a>
+  <a href="pyproject.toml"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab?logo=python&logoColor=white"></a>
+  <a href="src/"><img alt="Rust native core" src="https://img.shields.io/badge/Rust-native%20core-b7410e?logo=rust&logoColor=white"></a>
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
+</p>
+
+<p align="center">
+  <a href="#highlights">Highlights</a> ·
+  <a href="#installation">Installation</a> ·
+  <a href="#getting-started">Getting Started</a> ·
+  <a href="#benchmark-snapshot">Benchmarks</a> ·
+  <a href="#architecture">Architecture</a>
+</p>
+
+![fastcharts 10M-point benchmark snapshot](docs/assets/benchmark-snapshot.svg)
+
+<p align="center">
+  <sub>Measured by the benchmark-refresh CI workflow on 2026-07-08. See <a href="#10m-point-native-benchmark">the full benchmark notes</a> for methodology and caveats.</sub>
+</p>
 
 **fastcharts** is an experimental Python charting engine for very large,
-interactive line and scatter plots. Its core idea is simple: chart cost should
-scale with the pixels on screen, not with every point in the dataset.
-
+interactive line, scatter, density, area, histogram, bar, and heatmap charts.
 It combines a native Rust compute core, binary columnar transport, WebGL2
 rendering, and level-of-detail tiers so notebooks and standalone HTML exports
 can stay interactive well past the point where JSON/SVG-heavy chart stacks run
 out of room.
 
-**Status:** early alpha, with the core 2D surface now in place: line, scatter,
+**Status:** early alpha. The core 2D surface is now in place: line, scatter,
 area, histogram, bar/column, grouped/stacked bars, heatmap, direct rendering,
 M4 line/area decimation, Tier-2 scatter density, adaptive scatter drilldown,
-hover, box select/zoom, standalone HTML export, and static export (`to_svg` — millisecond, screen-bounded vector output; `to_png` via headless Chromium) all exist. Styling is
-first-class: every DOM chrome element is a CSS/Tailwind-addressable slot, and
-the marks themselves take gradient fills, rounded/stroked bars, smooth curves,
-and opacity ([`docs/styling.md`](docs/styling.md)) — enough to build
-dashboard-grade sparklines. See the full design dossier in
-[`docs/design-dossier.md`](docs/design-dossier.md).
+hover, box select/zoom, standalone HTML export, and static export (`to_svg` for
+millisecond, screen-bounded vector output; `to_png` via headless Chromium).
+Styling is first-class: every DOM chrome element is a CSS/Tailwind-addressable
+slot, and marks take gradient fills, rounded/stroked bars, smooth curves, and
+opacity. See [`docs/styling.md`](docs/styling.md) and the full design dossier
+in [`docs/design-dossier.md`](docs/design-dossier.md).
 
-## How fastcharts Works (the 30-second tour)
+## Highlights
+
+- **Screen-bounded by design.** Large scatters aggregate into fixed-size density
+  surfaces; long lines use M4 decimation, then refine as you zoom.
+- **Native compute, Python ergonomics.** Rust kernels handle binning,
+  decimation, and encoding while the public API stays notebook-friendly.
+- **Binary payloads, not JSON number soup.** Chart specs stay small and data
+  moves as raw f32 buffers the browser can hand to the GPU.
+- **Exact data stays in Python.** `ColumnStore` keeps canonical f64 values so
+  hover, selection, and drilldown can return original rows.
+- **One engine, many surfaces.** Render in Jupyter, VS Code, Colab, Marimo,
+  standalone HTML, PNG/SVG export, and the Reflex example dashboard.
+- **Dashboard-grade styling.** CSS/Tailwind chrome slots plus gradient fills,
+  stroked/rounded bars, smooth curves, opacity, and edge-to-edge sparklines.
+
+## How It Works
 
 Most chart libraries write every data point out as text (`{"x": 3.14159, "y":
 2.71828}`) and draw one shape per point. At ten million points the browser
-drowns in parsing and shapes — even though your screen only has a couple million
-pixels, so most of that work is invisible anyway. fastcharts is built around one
-idea: **cost should scale with the pixels on screen, not with how much data you
-have.** Here is the whole pipeline, in plain terms.
+drowns in parsing and shapes even though the screen only has a couple million
+pixels, so most of that work is invisible. fastcharts is built around one idea:
+**cost should scale with the pixels on screen, not with how much data you
+have.**
 
-```
-Figure() / fc.chart()      you hand over raw numbers          (Python)
-        ↓
-ColumnStore                the "pantry": keeps your exact data, once, in
-  columns.py               full f64 precision — the source of truth for hover
-        ↓
-kernels                    the heavy math (e.g. bin 10M points into a
-  _native.py (Rust)        screen-sized grid), run by the compiled Rust core
-                           bundled in every wheel — no pure-Python path.
-        ↓
-Payload builder            pack for delivery: a tiny JSON *spec* (title, axes,
-  figure.py                colors) plus the data as raw f32 *binary buffers* —
-  export.py / widget.py    never text. Ship the rice, not a recipe for it.
-        ↓
-JS client (WebGL2)         the browser hands those buffers straight to the GPU
-  js/src/*.js              and draws them in one pass — no per-point DOM nodes.
-        ↕  pan / zoom / hover
-LOD loop                   zoom into a small region and the browser asks Python
-  lod.py ⇄ 45_lod.js       for the *exact* points there; zoom out and it's back
-                           to the grid. Like a map loading streets as you zoom.
+```mermaid
+flowchart LR
+    API["Python APIs<br/>Figure() / fc.chart()"]
+    STORE["ColumnStore<br/>exact f64 source of truth"]
+    KERNELS["Native Rust kernels<br/>binning, M4 decimation, encode"]
+    PAYLOAD["Payload builder<br/>tiny JSON spec + raw f32 buffers"]
+    CLIENT["WebGL2 client<br/>GPU marks + DOM chrome"]
+    LOD["LOD loop<br/>pan, zoom, hover, select"]
+
+    API --> STORE
+    STORE --> KERNELS
+    KERNELS --> PAYLOAD
+    STORE --> PAYLOAD
+    PAYLOAD --> CLIENT
+    CLIENT <--> LOD
+    LOD --> KERNELS
 ```
 
 The three ideas that make this fast:
@@ -58,10 +91,10 @@ The three ideas that make this fast:
    `ColumnStore`, so hover and selection always return exact original values.
 2. **Ship bytes, not text.** Data travels as raw f32 buffers, so a number costs
    4 bytes instead of a dozen characters, and the browser skips parsing
-   entirely. (Only lightweight settings ride along as JSON.)
+   entirely. Only lightweight settings ride along as JSON.
 3. **Draw the screen, not the dataset.** Zoomed out, a huge scatter becomes a
-   fixed-size density grid; zoom in and the *level-of-detail* (LOD) loop swaps
-   in the real points for just the region you're looking at.
+   fixed-size density grid; zoom in and the level-of-detail loop swaps in the
+   real points for just the region you're looking at.
 
 Net effect: a ten-million-point chart costs roughly what a few-thousand-point
 chart costs, because the amount of work is bounded by your screen. The
@@ -69,7 +102,7 @@ chart costs, because the amount of work is bounded by your screen. The
 [`docs/design-dossier.md`](docs/design-dossier.md) is the authoritative deep
 dive.
 
-## Stable Vs Experimental
+## Stable vs. Experimental
 
 Stable enough to build on today:
 
@@ -135,8 +168,8 @@ Python 3.11+, `uv` (or plain `pip`), and a **Rust toolchain** are the
 requirements for a source build:
 
 ```bash
-git clone https://github.com/Alek99/charts-exp.git
-cd charts-exp
+git clone https://github.com/reflex-dev/reviz.git
+cd reviz
 uv venv
 uv pip install -e ".[dev]"
 ```

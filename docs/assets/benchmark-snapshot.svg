@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="440" viewBox="0 0 1200 440" role="img" aria-labelledby="title desc">
+  <title id="title">fastcharts 10M-point benchmark snapshot</title>
+  <desc id="desc">A benchmark summary showing fastcharts rendering a 10M-point scatter workload in 169 milliseconds with 126 megabytes peak memory and an 832 kilobyte payload.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1220"/>
+      <stop offset="52%" stop-color="#10223f"/>
+      <stop offset="100%" stop-color="#12201b"/>
+    </linearGradient>
+    <linearGradient id="fast" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#4ade80"/>
+    </linearGradient>
+    <linearGradient id="compare" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#64748b"/>
+      <stop offset="100%" stop-color="#94a3b8"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#020617" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="440" rx="28" fill="url(#bg)"/>
+  <g opacity="0.18">
+    <circle cx="1045" cy="95" r="155" fill="#22d3ee"/>
+    <circle cx="140" cy="390" r="180" fill="#4ade80"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="56" y="48" width="1088" height="344" rx="22" fill="#f8fafc" opacity="0.97"/>
+  </g>
+
+  <text x="96" y="103" fill="#0f172a" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="34" font-weight="800">10M-point scatter benchmark</text>
+  <text x="96" y="134" fill="#475569" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="17">Ubuntu CI, native Rust backend. Total time is build plus static render; lower is better.</text>
+
+  <g font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+    <g transform="translate(96 172)">
+      <rect width="220" height="92" rx="16" fill="#ecfeff"/>
+      <text x="20" y="33" fill="#0f766e" font-size="15" font-weight="700">Total</text>
+      <text x="20" y="69" fill="#0f172a" font-size="34" font-weight="800">169 ms</text>
+    </g>
+    <g transform="translate(340 172)">
+      <rect width="220" height="92" rx="16" fill="#f0fdf4"/>
+      <text x="20" y="33" fill="#15803d" font-size="15" font-weight="700">Peak memory</text>
+      <text x="20" y="69" fill="#0f172a" font-size="34" font-weight="800">126 MB</text>
+    </g>
+    <g transform="translate(584 172)">
+      <rect width="220" height="92" rx="16" fill="#fff7ed"/>
+      <text x="20" y="33" fill="#c2410c" font-size="15" font-weight="700">Payload</text>
+      <text x="20" y="69" fill="#0f172a" font-size="34" font-weight="800">832 KB</text>
+    </g>
+  </g>
+
+  <g transform="translate(96 302)" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+    <text x="0" y="0" fill="#334155" font-size="14" font-weight="700">Total time vs. common renderers, log scale</text>
+
+    <g transform="translate(0 24)">
+      <text x="0" y="18" fill="#0f172a" font-size="15" font-weight="700">fastcharts</text>
+      <rect x="142" y="4" width="56" height="18" rx="9" fill="url(#fast)"/>
+      <text x="215" y="18" fill="#0f172a" font-size="15" font-weight="700">169 ms</text>
+    </g>
+
+    <g transform="translate(0 58)">
+      <text x="0" y="18" fill="#475569" font-size="15">matplotlib</text>
+      <rect x="142" y="4" width="358" height="18" rx="9" fill="url(#compare)"/>
+      <text x="517" y="18" fill="#475569" font-size="15">3,239 ms</text>
+    </g>
+
+    <g transform="translate(0 92)">
+      <text x="0" y="18" fill="#475569" font-size="15">Seaborn</text>
+      <rect x="142" y="4" width="465" height="18" rx="9" fill="url(#compare)"/>
+      <text x="624" y="18" fill="#475569" font-size="15">7,918 ms</text>
+    </g>
+
+    <g transform="translate(0 126)">
+      <text x="0" y="18" fill="#475569" font-size="15">Plotly Scattergl</text>
+      <rect x="142" y="4" width="760" height="18" rx="9" fill="url(#compare)"/>
+      <text x="919" y="18" fill="#475569" font-size="15">54,064 ms</text>
+    </g>
+  </g>
+</svg>
