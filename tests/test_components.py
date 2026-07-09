@@ -1709,3 +1709,24 @@ def test_selection_payload():
 
     with pytest.raises(ValueError, match="trace_id"):
         payload.xy(-1)
+
+
+def test_chart_styles_prop_is_the_documented_per_slot_mechanism() -> None:
+    """docs/styling.md's fourth mechanism: `styles={slot: {...}}` on fc.chart —
+    slot-validated, CSS-validated, merged with per-component `style=`."""
+    xs = np.arange(6.0)
+    chart = fc.chart(
+        fc.scatter(x=xs, y=xs),
+        fc.tooltip(style={"color": "#fff"}),
+        styles={
+            "title": {"font_size": 18, "letter_spacing": "0.02em"},
+            "tooltip": {"border_radius": "10px"},
+        },
+    )
+    dom = chart.figure().build_payload()[0]["dom"]
+    assert dom["styles"]["title"] == {"font_size": 18, "letter_spacing": "0.02em"}
+    assert dom["styles"]["tooltip"] == {"color": "#fff", "border_radius": "10px"}
+    with pytest.raises(ValueError, match="unknown slot"):
+        fc.chart(fc.scatter(x=xs, y=xs), styles={"tooltp": {"color": "#fff"}})
+    with pytest.raises(ValueError, match="not a valid hex color"):
+        fc.chart(fc.scatter(x=xs, y=xs), styles={"title": {"color": "#3b82zz"}})

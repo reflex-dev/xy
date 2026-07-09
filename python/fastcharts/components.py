@@ -1151,6 +1151,7 @@ class Chart(Component):
         class_name: Optional[str] = None,
         class_names: Optional[dict[str, str]] = None,
         style: Optional[dict[str, StyleValue]] = None,
+        styles: Optional[dict[str, dict[str, StyleValue]]] = None,
         on_hover: Optional[Callable[[dict], None]] = None,
         on_click: Optional[Callable[[dict], None]] = None,
         on_brush: Optional[Callable[[dict], None]] = None,
@@ -1175,6 +1176,7 @@ class Chart(Component):
         self.class_name = _optional_string(class_name, "chart class_name")
         self.class_names = _class_names_dict(class_names, "chart class_names")
         self.style = _style_dict(style, "chart style")
+        self.styles = _slot_styles_dict(styles, "chart styles")
         self.on_hover = on_hover
         self.on_click = on_click
         self.on_brush = on_brush
@@ -1264,6 +1266,8 @@ class Chart(Component):
         for theme_node in themes:
             fig.style.update(theme_node.style)
         fig.style.update(self.style)
+        for slot, slot_style in self.styles.items():
+            fig.chrome_styles[slot] = {**fig.chrome_styles.get(slot, {}), **slot_style}
         for node in mark_styles:
             fig.set_mark_style(
                 hover=node.hover,
@@ -1492,6 +1496,20 @@ def _style_dict(value: Any, label: str) -> dict[str, StyleValue]:
     if value is None:
         return {}
     return Figure._style_mapping(value, label)
+
+
+def _slot_styles_dict(value: Any, label: str) -> dict[str, dict[str, StyleValue]]:
+    """Per-slot inline styles (`styles={slot: {...}}` — docs/styling.md's
+    fourth mechanism): slot names validate against `CHART_DOM_SLOTS`, each
+    inner dict through the same CSS-declaration gate as `style=`."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a dict mapping slot -> style dict")
+    validate_dom_slots(value, label)
+    return {
+        slot: _style_dict(slot_style, f"{label}[{slot!r}]") for slot, slot_style in value.items()
+    }
 
 
 _THEME_TOKEN_ALIASES = {
