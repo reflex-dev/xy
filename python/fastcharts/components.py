@@ -267,12 +267,13 @@ def line(
     width: float = 1.5,
     opacity: float = 1.0,
     curve: str = "linear",
+    dash: Any = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
     """A line series (M4-decimated above the threshold, §5 Tier 1).
-    `curve="smooth"` renders a monotone cubic through the points."""
+    `curve="smooth"` renders a monotone cubic; `dash` dashes the line."""
     return Mark(
         kind="line",
         x=x,
@@ -285,6 +286,7 @@ def line(
             "width": width,
             "opacity": opacity,
             "curve": curve,
+            "dash": dash,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -304,12 +306,14 @@ def area(
     line_opacity: float = 1.0,
     fill: Any = None,
     curve: str = "linear",
+    dash: Any = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
     """A filled area series between `y` and `base`. `fill` accepts a CSS
-    `linear-gradient(...)`; `curve="smooth"` renders a monotone cubic."""
+    `linear-gradient(...)`; `curve="smooth"` renders a monotone cubic; `dash`
+    dashes the outline."""
     return Mark(
         kind="area",
         x=x,
@@ -325,6 +329,7 @@ def area(
             "line_opacity": line_opacity,
             "fill": fill,
             "curve": curve,
+            "dash": dash,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -1747,6 +1752,7 @@ def _apply_line(fig: Figure, m: Mark, data: Any) -> None:
         width=m.props["width"],
         opacity=m.props["opacity"],
         curve=m.props["curve"],
+        dash=m.props["dash"],
     )
 
 
@@ -1763,6 +1769,7 @@ def _apply_area(fig: Figure, m: Mark, data: Any) -> None:
         line_opacity=m.props["line_opacity"],
         fill=m.props["fill"],
         curve=m.props["curve"],
+        dash=m.props["dash"],
     )
 
 

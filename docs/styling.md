@@ -250,19 +250,26 @@ dense and smoothing is invisible by construction.
 
 ### The full mark-styling matrix
 
-| Mark | Color/opacity | Gradient fill | Corner radius | Stroke | Curve | Size/width |
-| --- | --- | --- | --- | --- | --- | --- |
-| `bar` / `column` | ✅ (+ per-series `colors`) | ✅ mark/plot space | ✅ all or `(tip, base)` | ✅ | — | ✅ `width` |
-| `histogram` | ✅ | ✅ | ✅ all or `(tip, base)` | ✅ | — | bin-driven |
-| `area` | ✅ (+ `line_width`/`line_opacity`) | ✅ | — | line is the stroke | ✅ | ✅ |
-| `line` | ✅ | — (stroke gradients: roadmap) | — | is a stroke | ✅ | ✅ `width` |
-| `scatter` | ✅ + color/size channels | — | `symbol` (circle/square/diamond/triangle/cross) | ✅ `stroke`/`stroke_width` | — | ✅ + size channel |
-| `heatmap` | colormap + `domain` | colormap is the gradient | — | — | — | cell-driven |
+| Mark | Color/opacity | Gradient fill | Corner radius | Stroke | Curve | Dash | Size/width |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `bar` / `column` | ✅ (+ per-series `colors`) | ✅ mark/plot space | ✅ all or `(tip, base)` | ✅ | — | — | ✅ `width` |
+| `histogram` | ✅ | ✅ | ✅ all or `(tip, base)` | ✅ | — | — | bin-driven |
+| `area` | ✅ (+ `line_width`/`line_opacity`) | ✅ | — | line is the stroke | ✅ | ✅ outline | ✅ |
+| `line` | ✅ | — (stroke gradients: roadmap) | — | is a stroke | ✅ | ✅ | ✅ `width` |
+| `scatter` | ✅ + color/size channels | — | `symbol` (circle/square/diamond/triangle/cross) | ✅ `stroke`/`stroke_width` | — | — | ✅ + size channel |
+| `heatmap` | colormap + `domain` | colormap is the gradient | — | — | — | — | cell-driven |
 
 State styling (`mark_style`: hover / selected / unselected opacity & color)
-composes with all of the above. On the roadmap, in likely order: line dash
-patterns, per-mark drop shadows, gradient
-angles beyond the four axis directions, and stroke gradients.
+composes with all of the above. On the roadmap, in likely order: per-mark drop
+shadows, gradient angles beyond the four axis directions, and stroke gradients.
+
+### Dashes — `dash` on `line`, `area`
+
+`dash` takes a preset — `"dashed"`, `"dotted"`, `"dashdot"` (or `"solid"`) — or
+an explicit `[on, off, …]` px sequence (the SVG/CSS convention). The pattern is
+measured in **screen-space arc length**, computed per frame, so dashes stay a
+constant on-screen size through zoom and run continuously across every segment
+of a curve — not reset per data point. `area` dashes its outline.
 
 ## What CSS cannot restyle
 

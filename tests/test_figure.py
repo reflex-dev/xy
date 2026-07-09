@@ -1913,3 +1913,24 @@ def test_mark_style_states_carry_color_and_opacity() -> None:
     assert ms["hover"] == {"color": "#111", "size": 10}
     assert ms["selected"]["color"] == "#ff00ff"
     assert ms["unselected"] == {"color": "#dddddd", "opacity": 0.5}
+
+
+def test_line_dash_presets_and_custom() -> None:
+    spec, _ = Figure().line([0.0, 1.0, 2.0], [0.0, 1.0, 0.0], dash="dashed").build_payload()
+    assert spec["traces"][0]["style"]["dash"] == [6.0, 4.0]
+
+    spec2, _ = Figure().area([0.0, 1.0], [1.0, 2.0], dash=[8, 2, 2, 2]).build_payload()
+    assert spec2["traces"][0]["style"]["dash"] == [8.0, 2.0, 2.0, 2.0]
+
+    # "solid" and the default emit no dash key
+    spec3, _ = Figure().line([0.0, 1.0], [0.0, 1.0], dash="solid").build_payload()
+    assert "dash" not in spec3["traces"][0]["style"]
+    spec4, _ = Figure().line([0.0, 1.0], [0.0, 1.0]).build_payload()
+    assert "dash" not in spec4["traces"][0]["style"]
+
+    with pytest.raises(ValueError, match="line dash"):
+        Figure().line([0.0, 1.0], [0.0, 1.0], dash="dashy")
+    with pytest.raises(ValueError, match="between 2 and 8"):
+        Figure().line([0.0, 1.0], [0.0, 1.0], dash=[5.0])
+    with pytest.raises(ValueError, match=r"dash\[1\]"):
+        Figure().line([0.0, 1.0], [0.0, 1.0], dash=[5.0, -1.0])

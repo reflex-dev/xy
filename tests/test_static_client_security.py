@@ -514,6 +514,8 @@ def test_client_renders_mark_level_styling() -> None:
         "fcMarkerSdf(d, u_symbol)",  # scatter symbol shapes (circle/square/diamond/triangle/cross)
         "_pointMarkStyle(",  # point stroke + symbol resolution
         "rgb = mix(rgb, sc.rgb, sc.a);",  # selected/unselected recolor (mark_style)
+        "v_dash = mix(a_len0, a_len1, c.x);",  # screen-space arc-length line dashes
+        "_lineDash(g)",
         "_resolveMarkFill(",
         "_setRectStyleUniforms(",
         '=== "currentcolor"',  # currentColor resolves to the mark's own color

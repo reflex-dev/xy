@@ -331,6 +331,7 @@ ax0: 0, ax1: 1, ay0: 2, ay1: 3, ab0: 4, ab1: 5,
 a_pos: 0, a_v1: 1, a_v0: 2,
 a_corner: 0,
 a_cval: 6, a_sval: 7, a_sel: 8, a_dval: 9,
+a_len0: 10, a_len1: 11,
 };
 function makeProgram(gl, vs, fs) {
 const p = gl.createProgram();
@@ -544,7 +545,8 @@ const LINE_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
-out float v_off;
+in float a_len0; in float a_len1;
+out float v_off; out float v_dash;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -561,15 +563,37 @@ void main() {
   vec2 pos = mix(pix0, pix1, c.x) + dir * (c.x * 2.0 - 1.0) * 0.5 + n * c.y * half_w;
   gl_Position = vec4(pos / u_res * 2.0 - 1.0, 0.0, 1.0);
   v_off = c.y * half_w;
+  // Cumulative screen-space arc length at this fragment (device px), fed from
+  // CPU-computed per-vertex lengths so dashes stay continuous across segments
+  // and constant on screen through zoom.
+  v_dash = mix(a_len0, a_len1, c.x);
 }`;
 const LINE_FS = `#version 300 es
-precision highp float;
+precision highp float; precision highp int;
 uniform vec4 u_color; uniform float u_width;
-in float v_off;
+uniform int u_dashCount; uniform float u_dashArr[8]; uniform float u_dashPeriod;
+in float v_off; in float v_dash;
 out vec4 outColor;
 void main() {
   float half_w = u_width * 0.5;
   float alpha = (1.0 - smoothstep(half_w - 0.5, half_w + 0.5, abs(v_off))) * u_color.a;
+  if (u_dashCount > 0) {
+    float m = mod(v_dash, u_dashPeriod);
+    float acc = 0.0;
+    float on = 0.0;
+    for (int i = 0; i < 8; i++) {
+      if (i >= u_dashCount) break;
+      float next = acc + u_dashArr[i];
+      if (m < next) {
+        // 0.6px feather at each dash start/end so edges aren't aliased.
+        float d = min(m - acc, next - m);
+        on = (i % 2 == 0) ? clamp(d + 0.6, 0.0, 1.0) : 1.0 - clamp(d + 0.6, 0.0, 1.0);
+        break;
+      }
+      acc = next;
+    }
+    alpha *= on;
+  }
   if (alpha <= 0.001) discard;
   outColor = vec4(u_color.rgb * alpha, alpha);
 }`;
@@ -2132,6 +2156,8 @@ const sm = this._smoothArrays(t, x, y, null, g.n);
 g.xBuf = this._upload(sm ? sm.x : x);
 g.yBuf = this._upload(sm ? sm.y : y);
 if (sm) g.n = sm.n;
+g._dashX = sm ? sm.x : x;
+g._dashY = sm ? sm.y : y;
 g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
 }
 _buildAreaMark(g, t, buffer) {
@@ -2148,6 +2174,8 @@ g.xBuf = this._upload(sm ? sm.x : x);
 g.yBuf = this._upload(sm ? sm.y : y);
 g.baseBuf = this._upload(sm ? sm.extra : base);
 if (sm) g.n = sm.n;
+g._dashX = sm ? sm.x : x;
+g._dashY = sm ? sm.y : y;
 g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
 g.lineColor = parseColor(this.root, t.style && t.style.color, g.color);
 g.grad = this._resolveMarkFill(t.style, g.color);
@@ -2589,13 +2617,66 @@ gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
 gl.uniform1f(u("u_width"), (width ?? g.trace.style.width ?? 1.5) * this.dpr);
 const [r, gg, b, a] = color || g.color;
 gl.uniform4f(u("u_color"), r, gg, b, a * (opacity ?? g.trace.style.opacity ?? 1));
-this._bindVao(g, "line", [g.xBuf._fcId, g.yBuf._fcId], () => {
+const dashed = this._lineDash(g);
+this._bindVao(
+g,
+"line",
+dashed ? [g.xBuf._fcId, g.yBuf._fcId, g._lenBuf._fcId] : [g.xBuf._fcId, g.yBuf._fcId],
+() => {
 this._vaoAttr(ATTR_SLOTS.ax0, g.xBuf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.ax1, g.xBuf, 4, 1);
 this._vaoAttr(ATTR_SLOTS.ay0, g.yBuf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.ay1, g.yBuf, 4, 1);
-});
+if (dashed) {
+this._vaoAttr(ATTR_SLOTS.a_len0, g._lenBuf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.a_len1, g._lenBuf, 4, 1);
+}
+}
+);
 gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n - 1);
+}
+_lineDash(g) {
+const gl = this.gl;
+const u = (n) => uniformOf(gl, this.lineProg, n);
+const dash = g.trace.style && g.trace.style.dash;
+if (!dash || !dash.length || !g._dashX) {
+gl.uniform1i(u("u_dashCount"), 0);
+return false;
+}
+const n = g.n;
+if (!g._lenArr || g._lenArr.length !== n) g._lenArr = new Float32Array(n);
+const lens = g._lenArr;
+const dpr = this.dpr;
+let px = this._dataPx(g.xAxis, this._decodeValue(g._dashX, g.xMeta, 0));
+let py = this._dataPx(g.yAxis, this._decodeValue(g._dashY, g.yMeta, 0));
+let acc = 0;
+lens[0] = 0;
+for (let i = 1; i < n; i++) {
+const nx = this._dataPx(g.xAxis, this._decodeValue(g._dashX, g.xMeta, i));
+const ny = this._dataPx(g.yAxis, this._decodeValue(g._dashY, g.yMeta, i));
+if (Number.isFinite(nx) && Number.isFinite(ny) && Number.isFinite(px) && Number.isFinite(py)) {
+acc += Math.hypot(nx - px, ny - py) * dpr;
+}
+lens[i] = acc;
+px = nx;
+py = ny;
+}
+if (!g._lenBuf) g._lenBuf = this._upload(lens);
+else {
+gl.bindBuffer(gl.ARRAY_BUFFER, g._lenBuf);
+gl.bufferData(gl.ARRAY_BUFFER, lens, gl.DYNAMIC_DRAW);
+}
+const arr = new Float32Array(8);
+let period = 0;
+const count = Math.min(dash.length, 8);
+for (let i = 0; i < count; i++) {
+arr[i] = dash[i] * dpr;
+period += arr[i];
+}
+gl.uniform1i(u("u_dashCount"), count);
+gl.uniform1fv(u("u_dashArr"), arr);
+gl.uniform1f(u("u_dashPeriod"), Math.max(period, 1e-3));
+return true;
 }
 _drawArea(g, xm, ym, bm) {
 if (g.n < 2) return;
@@ -4383,6 +4464,8 @@ gl.bindBuffer(gl.ARRAY_BUFFER, g.yBuf);
 gl.bufferData(gl.ARRAY_BUFFER, sm ? sm.y : yArr, gl.STATIC_DRAW);
 g.xMeta = { ...g.xMeta, offset: upd.x.offset, scale: upd.x.scale };
 g.yMeta = { ...g.yMeta, offset: upd.y.offset, scale: upd.y.scale };
+g._dashX = sm ? sm.x : xArr;
+g._dashY = sm ? sm.y : yArr;
 if (bArr) {
 gl.bindBuffer(gl.ARRAY_BUFFER, g.baseBuf);
 gl.bufferData(gl.ARRAY_BUFFER, sm ? sm.extra : bArr, gl.STATIC_DRAW);
