@@ -9,6 +9,12 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- **Static SVG export**: `Figure.to_svg()` / `Chart.to_svg()` — a pure-Python,
+  dependency-free renderer over the same decimated payload the browser client
+  consumes. Screen-bounded by construction (a 10M-point line exports in ~4 ms
+  as a ~58 KB, resolution-independent SVG); covers every chart kind including
+  density/heatmap rasters, and the full mark styling surface (gradients,
+  dashes, symbols, rounded bars, smooth curves as exact cubic Béziers).
 - **Mark-level styling** (both APIs; `docs/styling.md#styling-the-marks`):
   - `fill="linear-gradient(...)"` on `area`/`bar`/`column`/`histogram` — real
     CSS gradient syntax (2–8 stops, `%` positions, `currentColor` = the mark's
