@@ -181,30 +181,31 @@ page; on real GPU hardware it is lower.
 
 ## Expanded adapter benchmark — 100k points
 
-Measured locally with:
+The fastcharts, matplotlib, seaborn, and Plotly rows are refreshed from the
+2026-07-09 `benchmark-refresh` CI run (Ubuntu, Python 3.12, native Rust core;
+Plotly via kaleido→PNG). The Bokeh, Altair, Datashader, and hvPlot rows (¹) are
+from an earlier local expanded run and are not re-measured here — the refresh
+workflow does not install those libraries. Reproduce the refreshed rows with:
 
 ```bash
 PYTHONPATH=python .venv/bin/python benchmarks/bench_vs.py \
   --sizes 1e3,1e4,1e5 --budget 20
 ```
 
-Environment note: these fastcharts rows were captured in a shell without Cargo,
-before the native core became required, so they are stale and pending a native
-refresh from the non-blocking CI benchmark job. Treat them as illustrative, not
-as native performance claims.
-
 | Library | Render target | 100k total | Peak memory | Output bytes | Points/sec |
 |---|---|---:|---:|---:|---:|
-| fastcharts | binary payload (pending native refresh) | **1 ms** | **2 MB** | 781 KB | 156,985,881 |
-| matplotlib | Agg PNG | 49 ms | 6 MB | 46 KB | 2,055,087 |
-| seaborn | matplotlib PNG | 71 ms | 11 MB | 37 KB | 1,399,835 |
-| Plotly `Scattergl` | Kaleido PNG | 2,018 ms | 22 MB | 61 KB | 49,558 |
-| Plotly `Scatter` | Kaleido PNG | 2,835 ms | 22 MB | 107 KB | 35,269 |
-| Bokeh canvas | standalone HTML | 75 ms | 14 MB | 2 MB | 1,327,770 |
-| Bokeh WebGL | standalone HTML | 73 ms | 14 MB | 2 MB | 1,360,995 |
-| Altair / Vega-Lite | standalone HTML | 1,846 ms | 35 MB | 5 MB | 54,171 |
-| Datashader | PNG raster | 13 ms | 15 MB | 58 KB | 7,502,931 |
-| hvPlot / HoloViews | Bokeh HTML | 95 ms | 17 MB | 2 MB | 1,052,353 |
+| fastcharts | binary payload (native) | **2 ms** | **2 MB** | 781 KB | 51,702,966 |
+| matplotlib | Agg PNG | 83 ms | 6 MB | 53 KB | 1,206,226 |
+| seaborn | matplotlib PNG | 152 ms | 11 MB | 39 KB | 657,728 |
+| Plotly `Scattergl` | Kaleido PNG | 2,991 ms | 22 MB | 61 KB | 33,434 |
+| Plotly `Scatter` | Kaleido PNG | 6,281 ms | 22 MB | 107 KB | 15,921 |
+| Bokeh canvas ¹ | standalone HTML | 75 ms | 14 MB | 2 MB | 1,327,770 |
+| Bokeh WebGL ¹ | standalone HTML | 73 ms | 14 MB | 2 MB | 1,360,995 |
+| Altair / Vega-Lite ¹ | standalone HTML | 1,846 ms | 35 MB | 5 MB | 54,171 |
+| Datashader ¹ | PNG raster | 13 ms | 15 MB | 58 KB | 7,502,931 |
+| hvPlot / HoloViews ¹ | Bokeh HTML | 95 ms | 17 MB | 2 MB | 1,052,353 |
+
+¹ Earlier local run, not re-measured in the 2026-07-09 CI refresh.
 
 ---
 
