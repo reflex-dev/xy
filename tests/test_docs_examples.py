@@ -240,7 +240,7 @@ def test_readme_documents_standalone_html_security_contract() -> None:
 def test_readme_documents_stability_and_backend_contract() -> None:
     text = " ".join(README.read_text(encoding="utf-8").split())
     required = [
-        "Stable Vs Experimental",
+        "Stable vs. Experimental",
         "Stable enough to build on today",
         "Still experimental and expected to change before 1.0",
         "| Surface | Current status | Notes |",

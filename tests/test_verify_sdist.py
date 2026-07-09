@@ -31,7 +31,7 @@ ENTRIES_JS = (
 )
 README_MD = (
     "# fastcharts\n\n"
-    "## Stable Vs Experimental\n\n"
+    "## Stable vs. Experimental\n\n"
     "Python 3.11+ package import is documented here.\n"
     "See docs/api-examples.md for examples.\n"
     "Run make check-examples after editing example docs.\n" + ("readme padding\n" * 100)

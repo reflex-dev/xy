@@ -322,7 +322,7 @@ def verify_sdist(path: str) -> None:
         path,
         root,
         "README.md",
-        {"Stable Vs Experimental", "Python 3.11+", "docs/api-examples.md", "make check-examples"},
+        {"Stable vs. Experimental", "Python 3.11+", "docs/api-examples.md", "make check-examples"},
     )
     _require_file_contains(
         path,
