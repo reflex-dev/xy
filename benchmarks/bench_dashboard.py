@@ -132,7 +132,10 @@ def _probe_js() -> str:
         const state = {lost: false};
         view.canvas.addEventListener("webglcontextlost", () => {
           state.lost = true;
-          contextEvents.push({id: payload.id, type: "lost", phase, at_ms: performance.now() - t0});
+          contextEvents.push({
+            id: payload.id, type: "lost", phase, at_ms: performance.now() - t0,
+            governed: view.canvas.dataset.fcCtx === "released",
+          });
         });
         view.canvas.addEventListener("webglcontextrestored", () => {
           state.lost = false;
@@ -180,10 +183,24 @@ def _probe_js() -> str:
     phase = "scroll";
     const scrollStart = performance.now();
     const scrollNonblankIds = [];
+    const scrollRecoveryMs = [];
+    // Context recovery is asynchronous (IntersectionObserver delivery ->
+    // restore/rebuild -> draw), so each visit settles until the chart paints
+    // or a hard deadline passes. The settle time IS the user-visible
+    // recovery latency for a chart scrolled back into view.
     for (const slot of slots) {
       slot.cell.scrollIntoView({block: "center", inline: "center"});
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      if (nonblankPixels(slot) > 0) scrollNonblankIds.push(slot.id);
+      const arriveMs = performance.now();
+      let lit = nonblankPixels(slot) > 0;
+      while (!lit && performance.now() - arriveMs < 400) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        lit = nonblankPixels(slot) > 0;
+      }
+      if (lit) {
+        scrollNonblankIds.push(slot.id);
+        scrollRecoveryMs.push(performance.now() - arriveMs);
+      }
     }
     window.scrollTo(0, 0);
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -202,10 +219,19 @@ def _probe_js() -> str:
     const heapAfter = performance.memory ? performance.memory.usedJSHeapSize : null;
     const lostEvents = contextEvents.filter((event) => event.type === "lost");
     const restoredEvents = contextEvents.filter((event) => event.type === "restored");
+    const governedLostEvents = lostEvents.filter((event) => event.governed === true);
     const uniqueIds = (events) => Array.from(new Set(events.map((event) => event.id)));
     const currentlyLostIds = slots
       .filter((slot) => slot.view && contextLost(slot))
       .map((slot) => slot.id);
+    const ctxState = (slot) =>
+      slot.view && slot.view.canvas && slot.view.canvas.dataset
+        ? slot.view.canvas.dataset.fcCtx || null
+        : null;
+    // End-state split (§28): "released" is a governed, recoverable release;
+    // "lost" is a browser-side eviction the governor could not prevent.
+    const releasedChartIds = slots.filter((slot) => ctxState(slot) === "released").map((s) => s.id);
+    const evictedChartIds = slots.filter((slot) => ctxState(slot) === "lost").map((s) => s.id);
     const createdCharts = slots.length - creationFailureIds.length;
     const fullyNonblank =
       createdCharts === slots.length &&
@@ -213,9 +239,18 @@ def _probe_js() -> str:
       scrollNonblankIds.length === slots.length &&
       lostEvents.length === 0 &&
       currentlyLostIds.length === 0;
+    // "governed": above the context budget, but every chart was created,
+    // every context loss was a governed release, and every chart proved
+    // nonblank while visited — the dashboard is fully usable, off-screen
+    // charts just hold no context.
+    const governedHealth =
+      !fullyNonblank &&
+      createdCharts === slots.length &&
+      scrollNonblankIds.length === slots.length &&
+      governedLostEvents.length === lostEvents.length;
     fcReport("FC_DASHBOARD", {
       status: "ok",
-      render_status: fullyNonblank ? "complete" : "partial",
+      render_status: fullyNonblank ? "complete" : governedHealth ? "governed" : "partial",
       fully_nonblank: fullyNonblank,
       render_ms: renderMs,
       navigation_ready_ms: navigationReadyMs,
@@ -235,6 +270,10 @@ def _probe_js() -> str:
       scroll_nonblank_charts: scrollNonblankIds.length,
       scroll_nonblank_chart_ids: scrollNonblankIds,
       scroll_blank_chart_ids: complement(scrollNonblankIds),
+      scroll_recovery_p95_ms: fcPercentile(scrollRecoveryMs, 95),
+      governed_context_lost_events: governedLostEvents.length,
+      released_chart_ids: releasedChartIds,
+      evicted_chart_ids: evictedChartIds,
       context_lost_events: lostEvents.length,
       context_restored_events: restoredEvents.length,
       context_lost_chart_ids: uniqueIds(lostEvents),
@@ -305,6 +344,10 @@ def run(*, chart_counts: list[int], chromium: str | None = None) -> dict[str, An
                 "scroll_nonblank_charts",
                 "scroll_nonblank_chart_ids",
                 "scroll_blank_chart_ids",
+                "scroll_recovery_p95_ms",
+                "governed_context_lost_events",
+                "released_chart_ids",
+                "evicted_chart_ids",
                 "context_lost_events",
                 "context_restored_events",
                 "context_lost_chart_ids",
@@ -323,6 +366,16 @@ def run(*, chart_counts: list[int], chromium: str | None = None) -> dict[str, An
         for row in rows
         if str(row.get("status", "")).startswith("ok") and row.get("fully_nonblank") is True
     ]
+    # A "governed" row is fully usable — every chart was created and proved
+    # nonblank while visited; off-screen charts hold no context by design —
+    # so it raises the *visible-stable* ceiling even though it is not
+    # loss-free.
+    visible_stable_counts = [
+        row["chart_count"]
+        for row in rows
+        if str(row.get("status", "")).startswith("ok")
+        and row.get("render_status") in {"complete", "governed"}
+    ]
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": "dashboard-browser",
@@ -331,6 +384,9 @@ def run(*, chart_counts: list[int], chromium: str | None = None) -> dict[str, An
         "tracked_categories": categories_for(DASHBOARD_CATEGORY_IDS),
         "attempted_chart_counts": list(chart_counts),
         "chart_count_ceiling": max(successful_counts) if successful_counts else None,
+        "visible_stable_chart_ceiling": (
+            max(visible_stable_counts) if visible_stable_counts else None
+        ),
         "rows": rows,
     }
 
@@ -361,22 +417,25 @@ def to_markdown(report: dict[str, Any]) -> str:
         "Tracked in this run: "
         + ", ".join(f"`{category['id']}`" for category in report["tracked_categories"]),
         "",
-        f"Stable loss-free chart-count ceiling: `{report.get('chart_count_ceiling')}`.",
+        f"Stable loss-free chart-count ceiling: `{report.get('chart_count_ceiling')}`; "
+        f"visible-stable ceiling (complete or governed): "
+        f"`{report.get('visible_stable_chart_ceiling')}`.",
         "",
         "## Results",
         "",
-        "| scenario | charts | prep | navigation ready | render | scroll pass | redraw submit p95 | active | JS heap | payload | html | initial/scroll nonblank | loss/restore | health |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+        "| scenario | charts | prep | navigation ready | render | scroll pass | recovery p95 | redraw submit p95 | active | JS heap | payload | html | initial/scroll nonblank | loss(gov)/restore | health |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for row in report["rows"]:
         lines.append(
-            "| {scenario} | {count} | {prep} | {navigation} | {render} | {scroll} | {idle} | {active} | {heap} | {payload} | {html} | {nonblank}/{scroll_nonblank} | {lost}/{restored} | {health} |".format(
+            "| {scenario} | {count} | {prep} | {navigation} | {render} | {scroll} | {recovery} | {idle} | {active} | {heap} | {payload} | {html} | {nonblank}/{scroll_nonblank} | {lost}({governed})/{restored} | {health} |".format(
                 scenario=row["scenario"],
                 count=row["chart_count"],
                 prep=_fmt_ms(row.get("payload_prep_ms")),
                 navigation=_fmt_ms(row.get("navigation_ready_ms")),
                 render=_fmt_ms(row.get("render_ms")),
                 scroll=_fmt_ms(row.get("scroll_pass_ms")),
+                recovery=_fmt_ms(row.get("scroll_recovery_p95_ms")),
                 idle=_fmt_ms(row.get("steady_redraw_p95_ms")),
                 active=row.get("steady_redraw_active_charts", "—"),
                 heap=_fmt_bytes(row.get("js_heap_bytes")),
@@ -385,6 +444,7 @@ def to_markdown(report: dict[str, Any]) -> str:
                 nonblank=row.get("nonblank_charts", "—"),
                 scroll_nonblank=row.get("scroll_nonblank_charts", "—"),
                 lost=row.get("context_lost_events", "—"),
+                governed=row.get("governed_context_lost_events", "—"),
                 restored=row.get("context_restored_events", "—"),
                 health=row.get("render_status", row.get("status", "unknown")),
             )

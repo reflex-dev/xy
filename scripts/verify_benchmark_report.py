@@ -1122,6 +1122,7 @@ def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> No
             "tracked_categories",
             "attempted_chart_counts",
             "chart_count_ceiling",
+            "visible_stable_chart_ceiling",
             "rows",
         },
         "report",
@@ -1188,6 +1189,10 @@ def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> No
                     "scroll_nonblank_charts",
                     "scroll_nonblank_chart_ids",
                     "scroll_blank_chart_ids",
+                    "scroll_recovery_p95_ms",
+                    "governed_context_lost_events",
+                    "released_chart_ids",
+                    "evicted_chart_ids",
                     "context_lost_events",
                     "context_restored_events",
                     "context_lost_chart_ids",
@@ -1204,6 +1209,7 @@ def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> No
                 "payload_prep_ms",
                 "navigation_ready_ms",
                 "scroll_pass_ms",
+                "scroll_recovery_p95_ms",
                 "steady_redraw_p95_ms",
             ):
                 _require_nonnegative_number(row, key, path, errors)
@@ -1216,6 +1222,7 @@ def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> No
                 "scroll_nonblank_charts",
                 "context_lost_events",
                 "context_restored_events",
+                "governed_context_lost_events",
             ):
                 _require_nonnegative_integer(row, key, path, errors)
             for key in ("js_heap_before_bytes", "js_heap_bytes"):
@@ -1243,6 +1250,20 @@ def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> No
         errors.append(
             "report.chart_count_ceiling must be the largest successful chart_count; "
             f"got {report.get('chart_count_ceiling')!r}, expected {expected_ceiling!r}"
+        )
+    visible_counts = {
+        row.get("chart_count")
+        for row in rows
+        if isinstance(row, dict)
+        and _status_kind(row.get("status")) == "ok"
+        and row.get("render_status") in {"complete", "governed"}
+    }
+    expected_visible = max(visible_counts) if visible_counts else None
+    if report.get("visible_stable_chart_ceiling") != expected_visible:
+        errors.append(
+            "report.visible_stable_chart_ceiling must be the largest complete-or-governed "
+            f"chart_count; got {report.get('visible_stable_chart_ceiling')!r}, "
+            f"expected {expected_visible!r}"
         )
 
 
@@ -1279,6 +1300,8 @@ def _validate_dashboard_telemetry(row: dict[str, Any], path: str, errors: list[s
         "context_lost_chart_ids",
         "context_restored_chart_ids",
         "currently_lost_chart_ids",
+        "released_chart_ids",
+        "evicted_chart_ids",
     )
     ids = {key: _dashboard_id_list(row, key, path, expected_ids, errors) for key in id_keys}
 
@@ -1356,6 +1379,21 @@ def _validate_dashboard_telemetry(row: dict[str, Any], path: str, errors: list[s
     if not ids["currently_lost_chart_ids"] <= ids["context_lost_chart_ids"]:
         errors.append(f"{path}.currently_lost_chart_ids must be a subset of lost chart IDs")
 
+    governed_lost = row.get("governed_context_lost_events")
+    if (
+        isinstance(governed_lost, int)
+        and not isinstance(governed_lost, bool)
+        and isinstance(row.get("context_lost_events"), int)
+        and governed_lost > row.get("context_lost_events")
+    ):
+        errors.append(f"{path}.governed_context_lost_events must be <= context_lost_events")
+    # Governed releases and browser evictions partition the still-lost set.
+    if (
+        not (ids["released_chart_ids"] | ids["evicted_chart_ids"])
+        <= ids["currently_lost_chart_ids"] | ids["context_lost_chart_ids"]
+    ):
+        errors.append(f"{path}.released/evicted chart IDs must come from context-lost charts")
+
     expected_complete = (
         row.get("created_charts") == chart_count
         and row.get("initial_nonblank_charts") == chart_count
@@ -1367,7 +1405,18 @@ def _validate_dashboard_telemetry(row: dict[str, Any], path: str, errors: list[s
         errors.append(f"{path}.fully_nonblank must be a boolean")
     elif row.get("fully_nonblank") != expected_complete:
         errors.append(f"{path}.fully_nonblank is inconsistent with dashboard telemetry")
-    expected_status = "complete" if expected_complete else "partial"
+    # "governed": every chart created and nonblank while visited, and every
+    # context loss was a governed (recoverable) release — the dashboard is
+    # fully usable above the context budget.
+    expected_governed = (
+        not expected_complete
+        and row.get("created_charts") == chart_count
+        and row.get("scroll_nonblank_charts") == chart_count
+        and row.get("governed_context_lost_events") == row.get("context_lost_events")
+    )
+    expected_status = (
+        "complete" if expected_complete else "governed" if expected_governed else "partial"
+    )
     if row.get("render_status") != expected_status:
         errors.append(f"{path}.render_status must be {expected_status!r}")
 

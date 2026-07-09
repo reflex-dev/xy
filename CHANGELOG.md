@@ -9,6 +9,23 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- **Dashboard context governor**: browsers cap live WebGL contexts per page
+  (~16 in Chrome) and LRU-evict the oldest on overflow, which permanently
+  blanked the earliest charts of a 20+/50-chart dashboard. The render client
+  now keeps itself inside a context budget (default 12,
+  `window.FASTCHARTS_CONTEXT_BUDGET` to override): at budget, the
+  least-recently-visible off-screen chart releases its own context
+  (`WEBGL_lose_context`, a controlled loss the existing restore machinery
+  undoes) and re-acquires when scrolled back into view — including canvas-swap
+  recovery for real browser evictions. Under the budget nothing releases, so
+  small pages are unaffected. Every decision is observable: `data-fc-ctx` on
+  the canvas reads live/released/lost. The dashboard benchmark now
+  settle-waits each scrolled chart (reporting per-visit recovery latency),
+  classifies governed releases vs evictions, adds a `governed` health tier,
+  and reports a `visible_stable_chart_ceiling`. Measured (Chrome/macOS): the
+  10/20/50 sweep goes from 16-of-50 permanently blank to 50-of-50 nonblank
+  when visited, recovery p95 ~8 ms, with 10-chart dashboards byte-identical
+  in behavior and heap/render times unchanged.
 - **CSS value validation in the native core** (ABI v9, `fc_css_check` /
   `kernels.css_check`). One grammar (`src/css.rs`) now gates every styling
   surface at build time: trace/annotation/series colors, gradient stops,

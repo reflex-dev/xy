@@ -1342,6 +1342,45 @@ const UNITLESS_STYLE_PROPS = new Set([
 "stroke-miterlimit",
 "stroke-opacity",
 ]);
+const FC_CONTEXT_GOVERNOR = {
+views: new Set(),
+seq: 1,
+budget() {
+const v = typeof window !== "undefined" ? window.FASTCHARTS_CONTEXT_BUDGET : null;
+return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 12;
+},
+register(view) {
+this.views.add(view);
+},
+unregister(view) {
+this.views.delete(view);
+},
+reserve(requester) {
+const live = [];
+for (const view of this.views) {
+if (view !== requester && view.gl && !view._glLost && !view._destroyed) live.push(view);
+}
+let over = live.length + 1 - this.budget();
+if (over <= 0) return;
+const candidates = live
+.filter((view) => !view._ctxVisible)
+.sort((a, b) => (a._ctxSeenSeq || 0) - (b._ctxSeenSeq || 0));
+for (const view of candidates) {
+if (over <= 0) break;
+if (view._releaseContext()) over -= 1;
+}
+},
+};
+function fcInitiallyVisible(el) {
+if (typeof window === "undefined" || !el.getBoundingClientRect) return true;
+const rect = el.getBoundingClientRect();
+if (!rect.width && !rect.height) return false; 
+const vh = window.innerHeight || 0;
+const vw = window.innerWidth || 0;
+return (
+rect.bottom > -0.25 * vh && rect.top < 1.25 * vh && rect.right > -0.25 * vw && rect.left < 1.25 * vw
+);
+}
 class ChartView {
 constructor(el, spec, buffer, comm) {
 if (spec.protocol !== PROTOCOL) {
@@ -1385,8 +1424,15 @@ this._buildDom(el);
 this.theme = readTheme(this.root);
 this._payload = buffer;
 this._glLost = false;
+this._ctxReleasedExt = null;
+this._ctxReleases = 0;
+this._ctxRecoveries = 0;
+this._ctxVisible = fcInitiallyVisible(el);
+FC_CONTEXT_GOVERNOR.register(this);
+if (this._ctxVisible) this._ctxSeenSeq = FC_CONTEXT_GOVERNOR.seq++;
 this._initGl(buffer);
 this._initContextLossRecovery();
+this._armContextVisibilityWatch();
 this._initInteraction();
 this._buildModebar(this.root); 
 if ((this.fluid || this.fluidH) && typeof ResizeObserver !== "undefined") {
@@ -1666,6 +1712,7 @@ _initContextLossRecovery() {
 this._listen(this.canvas, "webglcontextlost", (e) => {
 e.preventDefault();
 this._glLost = true;
+if (this.canvas.dataset.fcCtx !== "released") this.canvas.dataset.fcCtx = "lost";
 if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
 });
@@ -1684,6 +1731,76 @@ throw err;
 this._scheduleViewRequest(this.view, { delay: 0 });
 this.draw();
 });
+}
+_releaseContext() {
+if (this._destroyed || !this.gl || this._glLost || this.gl.isContextLost()) return false;
+const ext = this.gl.getExtension("WEBGL_lose_context");
+if (!ext) return false;
+this._ctxReleasedExt = ext;
+this._ctxReleases += 1;
+this._glLost = true; 
+this.canvas.dataset.fcCtx = "released";
+if (this._raf) cancelAnimationFrame(this._raf);
+this._raf = null;
+ext.loseContext();
+return true;
+}
+_recoverContext() {
+if (this._destroyed || !this._glLost) return;
+this._ctxRecoveries += 1;
+if (this._ctxReleasedExt) {
+const ext = this._ctxReleasedExt;
+this._ctxReleasedExt = null;
+try {
+ext.restoreContext(); 
+return;
+} catch (_err) {
+}
+}
+this._rebuildEvictedContext();
+}
+_rebuildEvictedContext() {
+const fresh = this.canvas.cloneNode(false);
+for (const record of this._listeners) {
+if (record.target === this.canvas) {
+this.canvas.removeEventListener(record.type, record.handler, record.options);
+fresh.addEventListener(record.type, record.handler, record.options);
+record.target = fresh;
+}
+}
+this.canvas.replaceWith(fresh);
+this.canvas = fresh;
+this._glLost = false;
+this._lutCache.clear();
+this.pickFbo = null;
+this.pickTex = null;
+try {
+this._initGl(this._payload);
+} catch (_err) {
+this._glLost = true;
+this.canvas.dataset.fcCtx = "lost";
+return; 
+}
+this._scheduleViewRequest(this.view, { delay: 0 });
+this.draw();
+}
+_armContextVisibilityWatch() {
+if (typeof IntersectionObserver === "undefined") {
+this._ctxVisible = true; 
+return;
+}
+this._ctxIo = new IntersectionObserver(
+(entries) => {
+const entry = entries[entries.length - 1];
+this._ctxVisible = entry.isIntersecting || entry.intersectionRatio > 0;
+if (this._ctxVisible) {
+this._ctxSeenSeq = FC_CONTEXT_GOVERNOR.seq++;
+if (this._glLost && !this._destroyed) this._recoverContext();
+}
+},
+{ rootMargin: "25% 0px 25% 0px" },
+);
+this._ctxIo.observe(this.root);
 }
 _resize(cssW, cssH) {
 const w = this.fluid && cssW ? Math.max(120, Math.round(cssW)) : this.size.w;
@@ -1870,6 +1987,7 @@ this.chrome.width = this.size.w * dpr;
 this.chrome.height = this.size.h * dpr;
 this.chrome.style.width = this.size.w + "px";
 this.chrome.style.height = this.size.h + "px";
+FC_CONTEXT_GOVERNOR.reserve(this);
 const gl = this.canvas.getContext("webgl2", {
 antialias: false, premultipliedAlpha: true, alpha: true,
 });
@@ -1878,6 +1996,7 @@ this.root.textContent = "fastcharts: WebGL2 unavailable in this browser.";
 throw new Error("webgl2 unavailable");
 }
 this.gl = gl;
+this.canvas.dataset.fcCtx = "live";
 gl.enable(gl.BLEND);
 gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 this._progCache = new Map();
@@ -3424,6 +3543,9 @@ this.draw();
 destroy() {
 if (this._destroyed) return;
 this._destroyed = true;
+FC_CONTEXT_GOVERNOR.unregister(this);
+this._ctxIo?.disconnect();
+this._ctxIo = null;
 clearTimeout(this._rebinTimer);
 if (this._rebinWorker) {
 this._rebinWorker.terminate();

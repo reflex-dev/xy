@@ -458,6 +458,10 @@ def _dashboard_browser_report() -> dict:
             "scroll_nonblank_charts": count,
             "scroll_nonblank_chart_ids": chart_ids,
             "scroll_blank_chart_ids": [],
+            "scroll_recovery_p95_ms": 4.0,
+            "governed_context_lost_events": 0,
+            "released_chart_ids": [],
+            "evicted_chart_ids": [],
             "context_lost_events": 0,
             "context_restored_events": 0,
             "context_lost_chart_ids": [],
@@ -473,6 +477,7 @@ def _dashboard_browser_report() -> dict:
         "tracked_categories": tracked,
         "attempted_chart_counts": [10, 20, 50],
         "chart_count_ceiling": 50,
+        "visible_stable_chart_ceiling": 50,
         "rows": [row(count) for count in (10, 20, 50)],
     }
 
@@ -482,7 +487,7 @@ def _set_dashboard_partial(row: dict, nonblank: int = 16) -> None:
     blank_ids = [f"chart-{i}" for i in range(count - nonblank)]
     lit_ids = [f"chart-{i}" for i in range(count - nonblank, count)]
     events = [
-        {"id": chart_id, "type": "lost", "phase": "create", "at_ms": 10.0 + i}
+        {"id": chart_id, "type": "lost", "phase": "create", "at_ms": 10.0 + i, "governed": False}
         for i, chart_id in enumerate(blank_ids)
     ]
     row.update(
@@ -497,11 +502,54 @@ def _set_dashboard_partial(row: dict, nonblank: int = 16) -> None:
             "scroll_nonblank_charts": nonblank,
             "scroll_nonblank_chart_ids": lit_ids,
             "scroll_blank_chart_ids": blank_ids,
+            "governed_context_lost_events": 0,
+            "released_chart_ids": [],
+            "evicted_chart_ids": blank_ids,
             "context_lost_events": len(events),
             "context_restored_events": 0,
             "context_lost_chart_ids": blank_ids,
             "context_restored_chart_ids": [],
             "currently_lost_chart_ids": blank_ids,
+            "context_events": events,
+        }
+    )
+
+
+def _set_dashboard_governed(row: dict, live: int = 12) -> None:
+    # A governed row: every chart created and nonblank while visited; all
+    # context losses were governed releases; off-screen charts hold no context.
+    count = row["chart_count"]
+    released_ids = [f"chart-{i}" for i in range(count - live)]
+    lit_now_ids = [f"chart-{i}" for i in range(count - live, count)]
+    all_ids = [f"chart-{i}" for i in range(count)]
+    events = [
+        {"id": cid, "type": "lost", "phase": "scroll", "at_ms": 40.0 + i, "governed": True}
+        for i, cid in enumerate(released_ids)
+    ] + [
+        {"id": cid, "type": "restored", "phase": "scroll", "at_ms": 60.0 + i}
+        for i, cid in enumerate(released_ids)
+    ]
+    row.update(
+        {
+            "render_status": "governed",
+            "fully_nonblank": False,
+            "steady_redraw_active_charts": live,
+            "nonblank_charts": live,
+            "initial_nonblank_charts": live,
+            "initial_nonblank_chart_ids": lit_now_ids,
+            "initial_blank_chart_ids": released_ids,
+            "scroll_nonblank_charts": count,
+            "scroll_nonblank_chart_ids": all_ids,
+            "scroll_blank_chart_ids": [],
+            "scroll_recovery_p95_ms": 9.0,
+            "governed_context_lost_events": len(released_ids),
+            "released_chart_ids": released_ids,
+            "evicted_chart_ids": [],
+            "context_lost_events": len(released_ids),
+            "context_restored_events": len(released_ids),
+            "context_lost_chart_ids": released_ids,
+            "context_restored_chart_ids": released_ids,
+            "currently_lost_chart_ids": released_ids,
             "context_events": events,
         }
     )
@@ -645,11 +693,41 @@ def test_dashboard_report_accepts_partial_rows_with_context_telemetry(tmp_path: 
     _set_dashboard_partial(payload["rows"][1])
     _set_dashboard_partial(payload["rows"][2])
     payload["chart_count_ceiling"] = 10
+    payload["visible_stable_chart_ceiling"] = 10
     path = _write_report(tmp_path, payload)
 
     errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
 
     assert errors == []
+
+
+def test_dashboard_report_accepts_governed_rows(tmp_path: Path) -> None:
+    payload = _dashboard_browser_report()
+    _set_dashboard_governed(payload["rows"][1])
+    _set_dashboard_governed(payload["rows"][2])
+    payload["chart_count_ceiling"] = 10
+    payload["visible_stable_chart_ceiling"] = 50
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
+
+    assert errors == []
+
+
+def test_dashboard_report_rejects_mislabeled_governed_row(tmp_path: Path) -> None:
+    payload = _dashboard_browser_report()
+    _set_dashboard_governed(payload["rows"][2])
+    # An ungoverned eviction must demote the row to "partial".
+    row = payload["rows"][2]
+    row["context_events"][0]["governed"] = False
+    row["governed_context_lost_events"] -= 1
+    payload["chart_count_ceiling"] = 10
+    payload["visible_stable_chart_ceiling"] = 50
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
+
+    assert any("render_status must be 'partial'" in error for error in errors)
 
 
 def test_workflow_report_rejects_missing_required_scenario(tmp_path: Path) -> None:

@@ -169,7 +169,10 @@ def test_dashboard_benchmark_reports_eviction_and_scroll_telemetry() -> None:
         "context_restored_chart_ids",
         "initial_nonblank_chart_ids",
         "scroll_nonblank_chart_ids",
-        'render_status: fullyNonblank ? "complete" : "partial"',
+        "scroll_recovery_p95_ms",
+        "governed_context_lost_events",
+        "released_chart_ids",
+        'render_status: fullyNonblank ? "complete" : governedHealth ? "governed" : "partial"',
     ):
         assert marker in bench
     assert "blank dashboard chart" not in bench
