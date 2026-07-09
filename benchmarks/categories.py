@@ -67,10 +67,10 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "id": "many_chart_dashboards",
         "name": "Many-chart dashboards",
         "why": "Plotly-class apps often fail from total page weight and many live canvases, not one chart.",
-        "metrics": "payload prep, navigation readiness, JS heap, steady redraw, chart count ceiling",
+        "metrics": "payload prep, navigation readiness, JS heap, redraw submission, scroll visibility, context loss/restore, stable chart-count ceiling",
         "harness": "benchmarks/bench_dashboard.py",
         "status": "tracked",
-        "goal": "Measure the 10-50 chart scaling curve and expose browser context ceilings.",
+        "goal": "Measure the 10-50 chart scaling curve and expose LRU context eviction without discarding partial-row metrics.",
     },
     {
         "id": "interaction_smoothness",

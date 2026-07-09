@@ -67,7 +67,8 @@ JSON artifacts, retain failed/over-budget rows, and label the table
 - Interactive TTFR is build + HTML serialization + chart-ready time.
 - Interaction browser rows are standalone client input-to-pixel-readback;
   backend LOD work is in CodSpeed and workflow rows.
-- Dashboard rows attempt 10/20/50 charts and publish the largest fully nonblank
-  count, including context-limit failures.
+- Dashboard rows attempt 10/20/50 charts, retain timings for partial dashboards,
+  record per-chart context loss/restoration plus initial/scrolled nonblank IDs,
+  and publish the largest stable loss-free count.
 - Density rows must include a count-conservation oracle and explicit aggregate
   dimensions. A density result is not an exact-marker result.

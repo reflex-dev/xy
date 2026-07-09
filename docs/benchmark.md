@@ -55,7 +55,7 @@ commit so CI artifacts are quick to inspect from logs.
 | `huge_scatter_overview` | Huge scatter overview | tracked | Proves screen-bounded rendering for datasets larger than the browser should draw point-for-point. | ingest/bin time, density payload size, peak memory, TTFR | `bench_scatter_native.py`, `bench_vs.py`, `test_first_payload_density_large`, example app assets | Keep resident/render payload flat in N while showing truthful density summaries. |
 | `adaptive_scatter_drilldown` | Adaptive scatter drilldown | tracked | The large-data claim needs a credible path from overview to exact visible points. | visible-query latency, tier-switch latency, exact-point recovery, badge accuracy | `benchmarks/test_codspeed_kernels.py::test_adaptive_drilldown_cycle` | Exact points when visible count is under budget; sampled/density with explicit counts otherwise. |
 | `huge_line_time_series` | Huge line / time series | tracked | Common observability and finance workload; Plotly-resampler sets the bar here. | decimation time, zoom re-decimation latency, TTFR, extrema preservation | `benchmarks/bench.py`, `bench_native.py`, `bench_interaction.py`, `test_decimate_view` | Screen-bounded line payloads with extrema-preserving decimation and fast zoom refresh. |
-| `many_chart_dashboards` | Many-chart dashboards | tracked | Plotly-class apps often fail from total page weight and many live canvases, not one chart. | payload prep, navigation readiness, JS heap, steady redraw, chart-count ceiling | `benchmarks/bench_dashboard.py` | Measure the 10-50 chart scaling curve and expose browser context ceilings. |
+| `many_chart_dashboards` | Many-chart dashboards | tracked | Plotly-class apps often fail from total page weight and many live canvases, not one chart. | payload prep, navigation readiness, JS heap, redraw submission, scroll visibility, context loss/restore, stable chart-count ceiling | `benchmarks/bench_dashboard.py` | Measure the 10-50 chart scaling curve and expose LRU context eviction without discarding partial-row metrics. |
 | `interaction_smoothness` | Interaction smoothness | tracked | Users judge performance by pan/zoom/hover, not just export time. | pan/zoom FPS, wheel latency, hover latency, tooltip stability, selection latency, frame color delta | `benchmarks/bench_interaction.py` | Stay responsive during interaction, avoid blank/flickering frames, then refine view after interaction settles. |
 | `payload_export_size` | Payload/export size | tracked | Notebooks, static HTML, docs, and dashboards pay for every byte shipped. | standalone HTML bytes, binary payload bytes, bundle bytes | `bench_vs.py`, `bench_scatter_native.py`, `test_first_payload_density_large`, `test_memory_report_density_medium`, example app asset sizes | Keep data payloads binary and screen-bounded where possible; warn when exact export would be huge. |
 | `core_2d_chart_breadth` | Core 2D chart breadth | tracked | The library needs to stay fast beyond the scatter wedge: bars, histograms, areas, and heatmaps are everyday chart workloads. | payload-prep time, payload bytes, standalone HTML bytes, TTFR | `benchmarks/bench_2d_charts.py` smoke/standard profiles vs Plotly and Seaborn; `bench_interaction.py`; CodSpeed core-2D payload rows | Beat Plotly on user-visible first paint for common 2D charts while tracking Seaborn raster baselines where applicable. |
@@ -142,8 +142,9 @@ also declares `tooltip_sample_count`, and eligible rows must report that exact
 `tooltip_visible_samples` count so a tooltip that appears once and then flickers
 away fails verification.
 `bench_dashboard.py` attempts 10/20/50 mixed dashboards and reports payload prep,
-navigation readiness, JS heap, steady-redraw p95, nonblank canvases, and the largest
-successful count. `bench_workflows.py` covers ingestion, streaming/pyramid
+navigation readiness, JS heap, redraw-submission p95, per-chart context loss and
+restore events, initial/scrolled nonblank IDs, and the largest stable loss-free
+count. Partial rows retain their timing and memory metrics. `bench_workflows.py` covers ingestion, streaming/pyramid
 invalidation, and separate HTML/SVG/native-PNG/Chromium-PNG export rows. All three emit schema-versioned JSON with
 environment metadata and benchmark category IDs.
 
@@ -200,20 +201,44 @@ PYTHONPATH=python .venv/bin/python benchmarks/bench_vs.py \
   --sizes 1e3,1e4,1e5 --budget 20
 ```
 
-| Library | Render target | 100k total | Peak memory | Output bytes | Points/sec |
+| Library | Render target | 100k total ¶ | Peak memory | Output bytes | Points/sec ¶ |
 |---|---|---:|---:|---:|---:|
-| fastcharts | binary payload (native) | **2 ms** | **2 MB** | 781 KB | 51,702,966 |
-| matplotlib | Agg PNG | 83 ms | 6 MB | 53 KB | 1,206,226 |
-| seaborn | matplotlib PNG | 152 ms | 11 MB | 39 KB | 657,728 |
-| Plotly `Scattergl` | Kaleido PNG | 2,991 ms | 22 MB | 61 KB | 33,434 |
-| Plotly `Scatter` | Kaleido PNG | 6,281 ms | 22 MB | 107 KB | 15,921 |
-| Bokeh canvas ¹ | standalone HTML | 75 ms | 14 MB | 2 MB | 1,327,770 |
-| Bokeh WebGL ¹ | standalone HTML | 73 ms | 14 MB | 2 MB | 1,360,995 |
-| Altair / Vega-Lite ¹ | standalone HTML | 1,846 ms | 35 MB | 5 MB | 54,171 |
-| Datashader ¹ | PNG raster | 13 ms | 15 MB | 58 KB | 7,502,931 |
-| hvPlot / HoloViews ¹ | Bokeh HTML | 95 ms | 17 MB | 2 MB | 1,052,353 |
+| fastcharts | binary payload (native) * | **2 ms** | **2 MB** | 781 KB | 51,702,966 |
+| matplotlib | Agg PNG † | 83 ms | 6 MB | 53 KB | 1,206,226 |
+| seaborn | matplotlib PNG † | 152 ms | 11 MB | 39 KB | 657,728 |
+| Plotly `Scattergl` | Kaleido PNG † | 2,991 ms | 22 MB | 61 KB | 33,434 |
+| Plotly `Scatter` | Kaleido PNG † | 6,281 ms | 22 MB | 107 KB | 15,921 |
+| Bokeh canvas ¹ | standalone HTML ‡ | 75 ms | 14 MB | 2 MB | 1,327,770 |
+| Bokeh WebGL ¹ | standalone HTML ‡ | 73 ms | 14 MB | 2 MB | 1,360,995 |
+| Altair / Vega-Lite ¹ | standalone HTML ‡ | 1,846 ms | 35 MB | 5 MB | 54,171 |
+| Datashader ¹ | PNG raster § | 13 ms | 15 MB | 58 KB | 7,502,931 |
+| hvPlot / HoloViews ¹ | Bokeh HTML ‡ | 95 ms | 17 MB | 2 MB | 1,052,353 |
 
 ¹ Earlier local run, not re-measured in the 2026-07-09 CI refresh.
+
+\* **Exact interactive wire payload.** The fastcharts row counts compact spec
+metadata plus the GPU-ready x/y float32 buffers, excluding the JavaScript runtime
+and HTML wrapper. At 100k direct points, two 4-byte coordinates account for about
+781 KiB (8 bytes/point); exact hover, selection, and view updates remain possible.
+
+† **Static raster output.** These byte counts are compressed finished pixels, not
+the source-point transport. The original coordinates cannot be recovered for
+exact hover, selection, or client-side re-rendering, so these values should not be
+compared directly with `*` or `‡` payload sizes.
+
+‡ **Interactive HTML output.** These artifacts retain chart data/specification and
+an HTML wrapper. Adapter resource modes differ (for example, a CDN reference may
+exclude the library runtime), so they are the closest interactive comparison to
+`*`, but not identical package/bundle measurements.
+
+§ **Aggregated raster output.** Datashader's PNG retains screen-sized density/count
+pixels rather than 100k exact points. Its compact size represents aggregation as
+well as PNG compression.
+
+¶ `total` and `points/sec` measure production of the target named in each row.
+They are useful for scaling within a target class, not as same-render-target
+speedups. Compare output bytes only between artifacts with equivalent retained
+information and runtime-inclusion rules.
 
 ---
 

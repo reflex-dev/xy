@@ -118,8 +118,10 @@ reported).
    `benchmarks/bench_2d_charts.py` stays the Plotly/Seaborn chart-to-pixels
    comparison.
 7. `dashboard_scale`: `benchmarks/bench_dashboard.py` attempts 10/20/50 mixed
-   charts, checks every canvas, and records payload prep, navigation readiness,
-   JS heap, steady-redraw p95, and the successful chart-count ceiling.
+   charts, checks every canvas initially and while scrolling, and records payload
+   prep, navigation readiness, JS heap, redraw-submission p95, per-chart context
+   loss/restoration events, and the stable loss-free chart-count ceiling. Partial
+   dashboards remain successful measurement rows rather than losing their metrics.
 8. `install_import`: lower-bound distribution size plus opt-in fresh-venv total
    site-packages, transitive distribution count, install time, and cold import.
 9. `public_workflows`: `benchmarks/bench_workflows.py` tracks ingestion shapes,
