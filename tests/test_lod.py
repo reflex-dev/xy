@@ -460,6 +460,30 @@ def test_sample_keep_mask_rejects_bad_sampling_options(kwargs, message: str) -> 
         lod.sample_keep_mask(np.arange(10, dtype=np.int64), level, **options)
 
 
+def test_stratified_sample_keep_mask_integer_fast_path_matches_labels() -> None:
+    # Small non-negative integer categories skip np.unique and serve directly
+    # as group codes (including a gap: code 2 is unused). The mask must be
+    # bit-identical to the same categories spelled as string labels, which
+    # take the np.unique dense-ranking path.
+    rng = np.random.default_rng(17)
+    row_ids = rng.permutation(4_000).astype(np.uint64)
+    codes = rng.choice(np.array([0, 1, 3, 4]), size=4_000, p=[0.7, 0.2, 0.09, 0.01])
+    labels = np.array(["a", "b", "d", "e"])[np.searchsorted([0, 1, 3, 4], codes)]
+
+    for level, min_count in ((0, 1), (3, 2)):
+        fast = lod.stratified_sample_keep_mask(
+            row_ids, codes, level, base_fraction=1 / 512, seed=5, min_per_category=min_count
+        )
+        ranked = lod.stratified_sample_keep_mask(
+            row_ids, labels, level, base_fraction=1 / 512, seed=5, min_per_category=min_count
+        )
+        assert np.array_equal(fast, ranked)
+    # Negative codes must fall back to the np.unique path, not crash.
+    negative = codes.astype(np.int64) - 5
+    mask = lod.stratified_sample_keep_mask(row_ids, negative, 0, min_per_category=1)
+    assert mask.shape == (4_000,)
+
+
 def test_stratified_sample_keep_mask_rejects_mismatched_categories() -> None:
     with pytest.raises(ValueError, match="categories"):
         lod.stratified_sample_keep_mask(np.arange(3, dtype=np.int64), ["a", "b"], 0)

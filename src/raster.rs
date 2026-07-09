@@ -21,6 +21,7 @@ const OP_STROKE: u8 = 3;
 const OP_POINT: u8 = 4;
 const OP_IMAGE: u8 = 5;
 const OP_TEXT: u8 = 6;
+const OP_POINTS: u8 = 7;
 
 const SS: usize = 4; // vertical supersamples per scanline for polygon AA
 
@@ -556,6 +557,41 @@ pub fn rasterize_into(cmds: &[u8], w: usize, h: usize, out: &mut [u8]) -> bool {
                     let s = r.bytes(nb)?;
                     text(&mut cv, x, y, anchor, size, c, s);
                 }
+                OP_POINTS => {
+                    // Batched marks, struct-of-arrays: one header (symbol +
+                    // shared stroke) then cx/cy/r f32 arrays and per-point
+                    // RGBA8 fills. Lets Python pack whole NumPy columns in one
+                    // shot instead of a per-point OP_POINT loop; each mark
+                    // paints exactly like OP_POINT (parity-tested below).
+                    let n = r.u32()? as usize;
+                    let sym = r.u8()?;
+                    let sw = r.f32()?;
+                    let st = r.rgba()?;
+                    let bytes4 = n.checked_mul(4)?;
+                    let xs = r.bytes(bytes4)?;
+                    let ys = r.bytes(bytes4)?;
+                    let rs = r.bytes(bytes4)?;
+                    let fills = r.bytes(bytes4)?;
+                    let f32_at = |b: &[u8], i: usize| {
+                        f32::from_le_bytes([b[4 * i], b[4 * i + 1], b[4 * i + 2], b[4 * i + 3]])
+                    };
+                    for i in 0..n {
+                        let (cx, cy, rr) = (f32_at(xs, i), f32_at(ys, i), f32_at(rs, i));
+                        // NaN coordinates poison the whole framebuffer via
+                        // NaN-vs-clip comparisons; skip them (the payload
+                        // ships only finite marks, this is a backstop).
+                        if !(cx.is_finite() && cy.is_finite() && rr.is_finite()) {
+                            continue;
+                        }
+                        let fill = [
+                            fills[4 * i] as f32 / 255.0,
+                            fills[4 * i + 1] as f32 / 255.0,
+                            fills[4 * i + 2] as f32 / 255.0,
+                            fills[4 * i + 3] as f32 / 255.0,
+                        ];
+                        point(&mut cv, cx, cy, rr, sym, fill, sw, st);
+                    }
+                }
                 _ => return None,
             }
             Some(())
@@ -699,5 +735,91 @@ mod tests {
         let cmd = vec![OP_FILL_POLY, 9, 9, 9, 9]; // claims a huge point count
         let mut out = vec![0u8; 4 * 4 * 4];
         assert!(!rasterize_into(&cmd, 4, 4, &mut out));
+    }
+
+    fn one_point(cx: f32, cy: f32, r: f32, sym: u8, fill: [u8; 4], sw: f32, st: [u8; 4]) -> Vec<u8> {
+        let mut cmd = vec![OP_POINT];
+        cmd.extend(f32le(cx));
+        cmd.extend(f32le(cy));
+        cmd.extend(f32le(r));
+        cmd.push(sym);
+        cmd.extend(fill);
+        cmd.extend(f32le(sw));
+        cmd.extend(st);
+        cmd
+    }
+
+    #[test]
+    fn points_batch_matches_point_loop() {
+        // The batched opcode must paint pixel-identically to the same marks
+        // issued as individual OP_POINT commands, per symbol and with strokes.
+        let marks: [(f32, f32, f32, [u8; 4]); 3] = [
+            (5.0, 5.0, 3.0, [200, 40, 40, 255]),
+            (14.0, 8.0, 2.5, [40, 200, 40, 128]),
+            (9.0, 15.0, 4.0, [40, 40, 200, 255]),
+        ];
+        for (sym, sw) in [(0u8, 0.0f32), (1, 0.0), (3, 1.0)] {
+            let st = [10u8, 10, 10, 255];
+            let mut batch = vec![OP_POINTS];
+            batch.extend(u32le(marks.len() as u32));
+            batch.push(sym);
+            batch.extend(f32le(sw));
+            batch.extend(st);
+            for &(cx, ..) in &marks {
+                batch.extend(f32le(cx));
+            }
+            for &(_, cy, ..) in &marks {
+                batch.extend(f32le(cy));
+            }
+            for &(_, _, r, _) in &marks {
+                batch.extend(f32le(r));
+            }
+            for &(.., fill) in &marks {
+                batch.extend(fill);
+            }
+            let mut singles = Vec::new();
+            for &(cx, cy, r, fill) in &marks {
+                singles.extend(one_point(cx, cy, r, sym, fill, sw, st));
+            }
+            let mut got = vec![0u8; 20 * 20 * 4];
+            let mut want = vec![0u8; 20 * 20 * 4];
+            assert!(rasterize_into(&batch, 20, 20, &mut got));
+            assert!(rasterize_into(&singles, 20, 20, &mut want));
+            assert_eq!(got, want, "sym={sym} sw={sw}");
+        }
+    }
+
+    #[test]
+    fn points_batch_skips_nonfinite_and_rejects_truncation() {
+        // A NaN mark must not poison the framebuffer.
+        let mut cmd = vec![OP_POINTS];
+        cmd.extend(u32le(2));
+        cmd.push(0);
+        cmd.extend(f32le(0.0));
+        cmd.extend([0, 0, 0, 0]);
+        for v in [f32::NAN, 5.0] {
+            cmd.extend(f32le(v)); // cx
+        }
+        for v in [2.0f32, 5.0] {
+            cmd.extend(f32le(v)); // cy
+        }
+        for v in [3.0f32, 3.0] {
+            cmd.extend(f32le(v)); // r
+        }
+        cmd.extend([255, 0, 0, 255]);
+        cmd.extend([0, 128, 0, 255]);
+        let mut out = vec![0u8; 10 * 10 * 4];
+        assert!(rasterize_into(&cmd, 10, 10, &mut out));
+        assert_eq!(px(&out, 10, 5, 5), [0, 128, 0, 255]); // finite mark painted
+        assert_eq!(px(&out, 10, 9, 9), [0, 0, 0, 0]); // NaN mark skipped
+
+        // A batch that claims more marks than the buffer holds is malformed.
+        let mut short = vec![OP_POINTS];
+        short.extend(u32le(1000));
+        short.push(0);
+        short.extend(f32le(0.0));
+        short.extend([0, 0, 0, 0]);
+        short.extend(f32le(1.0)); // far too few bytes for 1000 marks
+        assert!(!rasterize_into(&short, 10, 10, &mut out));
     }
 }

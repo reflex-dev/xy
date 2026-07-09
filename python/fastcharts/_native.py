@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_SCREEN_DIM
 
-ABI_VERSION = 9
+ABI_VERSION = 10
 
 _F64_P = ctypes.POINTER(ctypes.c_double)
 _F32_P = ctypes.POINTER(ctypes.c_float)
@@ -173,6 +173,17 @@ def _load() -> ctypes.CDLL:
         ctypes.c_uint64,
         ctypes.c_uint64,
         _U8_P,
+    ]
+    lib.fc_stratified_sample_mask.restype = ctypes.c_int32
+    lib.fc_stratified_sample_mask.argtypes = [
+        _U64_P,  # ids
+        _U32_P,  # groups
+        ctypes.c_size_t,  # len
+        ctypes.c_size_t,  # n_groups
+        ctypes.c_uint64,  # seed
+        ctypes.c_double,  # fraction
+        ctypes.c_uint64,  # min_count
+        _U8_P,  # out
     ]
     lib.fc_pyramid_build.restype = ctypes.c_uint64
     lib.fc_pyramid_build.argtypes = [
@@ -617,6 +628,55 @@ def sample_mask(
         )
         if ok != 1:
             raise RuntimeError("fastcharts native sample_mask failed (output undefined)")
+    return out.view(np.bool_)
+
+
+def stratified_sample_mask(
+    ids: npt.NDArray[np.uint64],
+    groups: npt.NDArray[np.uint32],
+    n_groups: int,
+    seed: int,
+    fraction: float,
+    min_count: int,
+) -> npt.NDArray[np.bool_]:
+    """Category-stratified deterministic sampling mask (§5/§17).
+
+    Per-category keep fractions scale as `min(1, fraction * sqrt(n / count))`
+    with a `min_count` lowest-hash floor per category. Bit-identical to the
+    per-category NumPy reference in `fastcharts.lod` (asserted by the parity
+    test), fused into one native pass instead of O(n · n_groups) rescans.
+    """
+    ids = np.ascontiguousarray(ids, dtype=np.uint64)
+    groups = np.ascontiguousarray(groups, dtype=np.uint32)
+    if ids.ndim != 1 or groups.ndim != 1:
+        raise ValueError("ids and groups must be one-dimensional arrays")
+    if len(ids) != len(groups):
+        raise ValueError("ids and groups must have equal length")
+    n_groups = _positive_int(n_groups, "n_groups")
+    fraction = _finite_float(fraction, "fraction")
+    if fraction <= 0.0:
+        raise ValueError("fraction must be > 0")
+    if isinstance(min_count, (bool, np.bool_)):
+        raise ValueError("min_count must be a non-negative integer")
+    min_count = operator.index(min_count)
+    if min_count < 0:
+        raise ValueError("min_count must be a non-negative integer")
+    out = np.empty(len(ids), dtype=np.uint8)
+    if len(ids):
+        ok = _lib.fc_stratified_sample_mask(
+            ids.ctypes.data_as(_U64_P),
+            groups.ctypes.data_as(_U32_P),
+            len(ids),
+            n_groups,
+            ctypes.c_uint64(int(seed)),
+            ctypes.c_double(fraction),
+            ctypes.c_uint64(min_count),
+            out.ctypes.data_as(_U8_P),
+        )
+        if ok != 1:
+            raise ValueError(
+                "invalid stratified_sample_mask arguments (group codes must be < n_groups)"
+            )
     return out.view(np.bool_)
 
 
