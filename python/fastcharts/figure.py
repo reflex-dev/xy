@@ -1582,6 +1582,21 @@ class Figure(AnnotationsMixin, PayloadMixin):
         """Notebook HTML repr fallback using the standalone export path."""
         return self.to_html()
 
+    def to_svg(
+        self,
+        path: Optional[str | PathLike[str]] = None,
+        *,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+    ) -> str:
+        """Static SVG (_svg.py): a pure-Python render of the same decimated
+        payload the browser client consumes — resolution-independent, tiny
+        (screen-bounded regardless of source size), and dependency-free.
+        `width`/`height` override the figure's pixel size."""
+        from . import _svg
+
+        return _svg.to_svg(self, path, width=width, height=height)
+
     def to_png(
         self,
         path: Optional[str] = None,

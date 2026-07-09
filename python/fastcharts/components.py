@@ -1416,6 +1416,15 @@ class Chart(Component):
     def _repr_html_(self) -> str:
         return self.figure()._repr_html_()
 
+    def to_svg(
+        self,
+        path: Optional[str] = None,
+        *,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+    ) -> str:
+        return self.figure().to_svg(path, width=width, height=height)
+
     def to_png(
         self,
         path: Optional[str] = None,

@@ -14,7 +14,7 @@ out of room.
 **Status:** early alpha, with the core 2D surface now in place: line, scatter,
 area, histogram, bar/column, grouped/stacked bars, heatmap, direct rendering,
 M4 line/area decimation, Tier-2 scatter density, adaptive scatter drilldown,
-hover, box select/zoom, and standalone HTML export all exist. Styling is
+hover, box select/zoom, standalone HTML export, and static export (`to_svg` — millisecond, screen-bounded vector output; `to_png` via headless Chromium) all exist. Styling is
 first-class: every DOM chrome element is a CSS/Tailwind-addressable slot, and
 the marks themselves take gradient fills, rounded/stroked bars, smooth curves,
 and opacity ([`docs/styling.md`](docs/styling.md)) — enough to build

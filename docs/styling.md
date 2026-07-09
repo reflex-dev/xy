@@ -277,3 +277,18 @@ Annotation **shapes** (markers, arrows, filled zones) are canvas-painted; style
 them through the annotation's own `color` / `stroke_color` / `stroke_width` /
 `opacity` arguments. Only annotation **labels** are DOM (`annotation_label`)
 and thus fully CSS-styleable.
+
+## Static export
+
+`fig.to_svg(path?, width=, height=)` renders the same decimated payload the
+browser client consumes into a standalone, resolution-independent SVG — pure
+Python, no browser, no extra dependencies. Because decimation runs first, the
+file is **screen-bounded**: a 10M-point line exports in ~4 ms as a ~58 KB SVG.
+Density/heatmap tiers embed as compact rasters. `fig.to_png(...)` (headless
+Chromium screenshot) remains the pixel-exact raster path.
+
+Static SVG carries the full mark styling surface — gradients, dashes, symbols,
+rounded/stroked bars, smooth curves (as exact cubic Béziers) — with two
+documented approximations: an area's mark-space gradient uses the area's
+bounding box (SVG has no per-column gradient), and `var(--x)` colors fall back
+to the mark color (there is no DOM to resolve them against).
