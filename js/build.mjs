@@ -16,6 +16,7 @@ const PARTS = [
   "30_ticks.js", //      f64 tick/format math — never through f32 (§16)
   "40_gl.js", //         GL helpers + all shaders (marks, pick, density, line)
   "45_lod.js", //        chart-agnostic tier LOD: drill lifecycle, fades, cache (§5/§28)
+  "46_worker.js", //     standalone density re-bin worker (blob URL, off-main-thread)
   "50_chartview.js", //  ChartView core: layout, GL, marks, draw, chrome, pick
   "51_annotations.js", // + annotation canvas overlay (prototype augmentation)
   "52_tooltip.js", //    + hover->row tooltip resolution + DOM

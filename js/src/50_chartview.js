@@ -550,6 +550,9 @@ class ChartView {
       if (sample && Number(sample.n) > 0) {
         items.push(`sampled ${this._compactInt(sample.n)} of ${this._compactInt(sample.visible)}`);
       }
+      // Standalone zoom refinement re-bins the sample in the worker — a
+      // quality reduction vs a kernel re-bin, so it is badged (§28).
+      if (entry._sampleRebinned) items.push("zoom re-binned from sample");
       if (t.density.channels_dropped) items.push("aggregated channels");
     }
     return items;
@@ -2428,6 +2431,12 @@ class ChartView {
   destroy() {
     if (this._destroyed) return;
     this._destroyed = true;
+    clearTimeout(this._rebinTimer);
+    if (this._rebinWorker) {
+      this._rebinWorker.terminate();
+      if (this._rebinWorker._fcUrl) URL.revokeObjectURL(this._rebinWorker._fcUrl);
+      this._rebinWorker = null;
+    }
     this._ro?.disconnect();
     this._io?.disconnect();
     this._io = null;

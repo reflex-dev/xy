@@ -9,6 +9,12 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- **Standalone density refinement, off the main thread** (dossier Phase 1):
+  kernel-less `to_html` exports now re-bin the recorded density sample in a
+  bundled Web Worker on zoom (blob-URL boot under a `worker-src blob:` CSP),
+  swapping in a view-fitted grid instead of stretching the overview texture —
+  with the reduction badged (§28), the full overview restored at the home
+  view, and a graceful fallback where workers are unavailable.
 - **Static SVG export**: `Figure.to_svg()` / `Chart.to_svg()` — a pure-Python,
   dependency-free renderer over the same decimated payload the browser client
   consumes. Screen-bounded by construction (a 10M-point line exports in ~4 ms

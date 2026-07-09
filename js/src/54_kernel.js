@@ -6,7 +6,12 @@
 Object.assign(ChartView.prototype, {
   _scheduleViewRequest(viewOverride = this.view, opts = {}) {
     if (this._destroyed) return;
-    if (!this.comm) return;
+    if (!this.comm) {
+      // Kernel-less (standalone HTML): density traces refine via the bundled
+      // re-bin worker instead of a kernel round-trip.
+      this._scheduleSampleRebin(viewOverride, opts);
+      return;
+    }
     const needsDecimated = this.spec.traces.some((t) => t.tier === "decimated");
     const needsDensity = this.gpuTraces.some((g) => g.tier === "density");
     if (!needsDecimated && !needsDensity) return;
@@ -63,6 +68,108 @@ Object.assign(ChartView.prototype, {
       this._viewTimer = setTimeout(send, delay);
     }
     return seq;
+  },
+
+  // Standalone (kernel-less) density refinement. Debounced like the kernel
+  // request path, then the retained §28 sample re-bins in the bundled worker —
+  // off the main thread — and applies like a density_update.
+  _scheduleSampleRebin(viewOverride = this.view, opts = {}) {
+    if (this._destroyed || this._sampleRebinDisabled) return;
+    const targets = (this.gpuTraces || []).filter(
+      (g) => g.tier === "density" && g.sampleOverlay && g.sampleOverlay._cpu
+    );
+    if (!targets.length) return;
+    const seq = opts.seq ?? ++this.seq;
+    const view = { ...viewOverride };
+    clearTimeout(this._rebinTimer);
+    this._rebinTimer = setTimeout(() => {
+      if (this._destroyed || seq !== this.seq) return;
+      for (const g of targets) this._requestSampleRebin(g, view, seq);
+    }, opts.delay ?? 120);
+  },
+
+  _requestSampleRebin(g, view, seq) {
+    if (!g._homeDensity) g._homeDensity = g.density;
+    // At (or beyond) the home view the full overview grid — binned from every
+    // source point kernel-side — beats any re-bin of the sample: restore it.
+    const v0 = this.view0;
+    const ex = Math.max(Math.abs(v0.x1 - v0.x0), 1e-300) * 1e-9;
+    const ey = Math.max(Math.abs(v0.y1 - v0.y0), 1e-300) * 1e-9;
+    const atHome =
+      Math.min(view.x0, view.x1) <= v0.x0 + ex && Math.max(view.x0, view.x1) >= v0.x1 - ex &&
+      Math.min(view.y0, view.y1) <= v0.y0 + ey && Math.max(view.y0, view.y1) >= v0.y1 - ey;
+    if (atHome) {
+      if (g.density !== g._homeDensity) {
+        const hd = g._homeDensity;
+        this._applySampleRebinGrid(g, {
+          ...hd,
+          tex: this._uploadGrid(hd.grid, hd.w, hd.h, hd.normMax || hd.max || 1),
+        }, false);
+      }
+      return;
+    }
+    if (this._sampleRebinDisabled) return;
+    if (!this._rebinWorker) {
+      this._rebinWorker = fcCreateRebinWorker();
+      if (!this._rebinWorker) {
+        this._sampleRebinDisabled = true; // no worker: stretched overview stays
+        return;
+      }
+      this._rebinWorker.onmessage = (e) => this._onRebinResult(e.data);
+      this._rebinInit = new Set();
+    }
+    if (!this._rebinInit.has(g.trace.id)) {
+      // Decode the offset-encoded sample once (f64, §16); the worker keeps it.
+      const cpu = g.sampleOverlay._cpu;
+      const n = Math.min(cpu.x.length, cpu.y.length);
+      const xs = new Float64Array(n);
+      const ys = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        xs[i] = this._decodeValue(cpu.x, cpu.xMeta, i);
+        ys[i] = this._decodeValue(cpu.y, cpu.yMeta, i);
+      }
+      this._rebinWorker.postMessage(
+        { type: "init", trace: g.trace.id, x: xs.buffer, y: ys.buffer },
+        [xs.buffer, ys.buffer]
+      );
+      this._rebinInit.add(g.trace.id);
+    }
+    this._rebinWorker.postMessage({
+      type: "rebin", trace: g.trace.id, seq,
+      x0: Math.min(view.x0, view.x1), x1: Math.max(view.x0, view.x1),
+      y0: Math.min(view.y0, view.y1), y1: Math.max(view.y0, view.y1),
+      w: Math.max(16, Math.min(2048, Math.round(this.plot.w))),
+      h: Math.max(16, Math.min(2048, Math.round(this.plot.h))),
+    });
+  },
+
+  _onRebinResult(msg) {
+    if (this._destroyed || !msg || msg.type !== "grid" || msg.seq !== this.seq) return;
+    const g = this.gpuTraces.find((t) => t.trace.id === msg.trace && t.tier === "density");
+    if (!g) return;
+    const grid = new Float32Array(msg.grid);
+    this._applySampleRebinGrid(g, {
+      w: msg.w, h: msg.h, max: msg.max, normMax: msg.max,
+      colormap: g.density.colormap,
+      xRange: [msg.x0, msg.x1], yRange: [msg.y0, msg.y1],
+      grid,
+      tex: this._uploadGrid(grid, msg.w, msg.h, msg.max || 1),
+      lut: g.density.lut,
+    }, true);
+  },
+
+  // Swap the density grid/texture only — unlike lodApplyDensityUpdate this
+  // leaves the retained sample overlay alone (it is the re-bin source and the
+  // deep-zoom point overlay). Texture lifetime stays with the LOD cache.
+  _applySampleRebinGrid(g, density, rebinned) {
+    g.prevDensity = g.density;
+    g._densityFadeStart = performance.now();
+    g.densityNormMax = density.normMax || density.max;
+    g.density = density;
+    g._sampleRebinned = !!rebinned; // badge: recorded reduction, never silent (§28)
+    lodRememberDensity(this, g, g.density);
+    this._refreshReductionBadges();
+    this.draw();
   },
 
   // Streaming append (rust-engine §5). The kernel ships a complete fresh

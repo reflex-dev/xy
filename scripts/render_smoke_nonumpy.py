@@ -151,6 +151,21 @@ def build_payload():
                 "x_range": [0.0, float(n)],
                 "y_range": [-3.0, 8.0],
                 "channels_dropped": False,
+                # Recorded §28 sample (real payloads always ship one): the
+                # standalone worker re-bins these rows on zoom.
+                "sample": {
+                    "mode": "sampled",
+                    "n": len(xs[::8]),
+                    "visible": 1_000_000,
+                    "target": 8192,
+                    "level": 0,
+                    "seed": 1,
+                    "x": {"col": ship(xs[::8])},
+                    "y": {"col": ship([v + 1.5 for v in ys[::8]])},
+                    "x_range": [0.0, float(n)],
+                    "y_range": [-3.0, 8.0],
+                    "style": {"opacity": 0.5},
+                },
             },
         },
         {
@@ -214,7 +229,17 @@ def main() -> None:
     assert len(blob) == sum(c["len"] for c in spec["columns"]) * 4
     struct.unpack_from("<f", blob, 0)  # decodes as little-endian f32
 
-    page = f"""<!doctype html><html><head><meta charset=utf-8><title>pending</title></head>
+    # Mirrors fastcharts.export._STANDALONE_CSP (this script is stdlib-only by
+    # design, so the string is inlined; a test asserts they stay identical) —
+    # every probe below, including the blob-URL re-bin worker, runs under the
+    # same policy a real to_html export ships.
+    csp = (
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+        "img-src data:; connect-src 'none'; worker-src blob:; object-src 'none'; "
+        "base-uri 'none'; form-action 'none'"
+    )
+    page = f"""<!doctype html><html><head><meta charset=utf-8>
+<meta http-equiv="Content-Security-Policy" content="{csp}"><title>pending</title></head>
 <body><div id=chart></div>
 <script>{standalone}</script>
 <script>
@@ -222,6 +247,7 @@ const spec={json.dumps(spec)};
 const bytes=Uint8Array.from(atob("{base64.b64encode(blob).decode()}"),c=>c.charCodeAt(0));
 try{{
   const v=fastcharts.renderStandalone(document.getElementById("chart"),spec,bytes.buffer);
+  v._sampleRebinDisabled = true; // probes below hand-feed kernel msgs
   setTimeout(()=>{{try{{
     v._drawNow();
     const gl=v.gl,w=gl.drawingBufferWidth,h=gl.drawingBufferHeight,px=new Uint8Array(w*h*4);
@@ -702,6 +728,16 @@ try{{
       for (let i = 0; i < p2.length; i++) {{ hsh ^= p2[i]; hsh = (hsh * 0x01000193) >>> 0; }}
       return hsh;
     }};
+    // Standalone worker re-bin (dossier Phase 1): zooming a kernel-less
+    // density chart re-bins the retained sample in the blob-URL worker and
+    // swaps in a view-fitted grid (badged, never silent - §28).
+    const vW = fastcharts.renderStandalone(mk(), JSON.parse(JSON.stringify(spec)), bytes.buffer);
+    const gW0 = vW.gpuTraces.find((g) => g.tier === "density");
+    const wHome = gW0 ? gW0.density : null;
+    if (gW0) {{
+      vW.view = {{ x0: 1200, x1: 1400, y0: 0, y1: 4 }};
+      vW._scheduleViewRequest(vW.view, {{ delay: 0 }});
+    }}
     const dv1 = fastcharts.renderStandalone(mk(), JSON.parse(JSON.stringify(spec)), bytes.buffer);
     const dv2 = fastcharts.renderStandalone(mk(), JSON.parse(JSON.stringify(spec)), bytes.buffer);
     if (dv1.gpuTraces) for (const gg of dv1.gpuTraces) gg._densityNormAnim = null;
@@ -838,6 +874,7 @@ try{{
     holder.style.height="300px";
     document.body.appendChild(holder);
     const v2=fastcharts.renderStandalone(holder,spec2,bytes.buffer);
+    v2._sampleRebinDisabled = true;
     const fluid0=(v2.fluid===true && v2.fluidH===true && v2.size.w===400 && v2.size.h===300
       && v2.root.style.width==="100%" && v2.root.style.height==="100%")?1:0;
     holder.style.width="640px";
@@ -904,7 +941,12 @@ try{{
             && String(v5._dprMq.media).indexOf(`${{dpr0*2}}dppx`)>=0)?1:0;
           Object.defineProperty(window,"devicePixelRatio",{{value:dpr0,configurable:true}});
           v5.destroy(); holder5.remove();
-          document.title=`${{base}} fluid=${{fluid0}} grew=${{grew}} pick2=${{pick2}} destroyed=${{destroyed}} unsub=${{unsub}} ctxloss=${{ctxloss}} dprw=${{dprw}}`;
+          const gW = vW.gpuTraces.find((g) => g.tier === "density");
+          const wBadge = [...vW._badges.children].some((b) => b.textContent.indexOf("re-binned") >= 0);
+          const wrebin = (gW && gW._sampleRebinned === true && gW.density !== wHome
+            && Math.abs(gW.density.xRange[0] - 1200) < 1e-6 && wBadge) ? 1 : 0;
+          vW.destroy();
+          document.title=`${{base}} fluid=${{fluid0}} grew=${{grew}} pick2=${{pick2}} destroyed=${{destroyed}} unsub=${{unsub}} ctxloss=${{ctxloss}} dprw=${{dprw}} wrebin=${{wrebin}}`;
         }}catch(e){{document.title="FC_ERROR "+(e.stack||e.message)}}}},250);
       }}catch(e){{document.title="FC_ERROR "+(e.stack||e.message)}}}},150);
     }}catch(e){{document.title="FC_ERROR "+(e.stack||e.message)}}}},250);
@@ -989,6 +1031,7 @@ try{{
     pixdet = int(re.search(r"pixdet=(\d+)", title).group(1))
     ctxloss = int(re.search(r"ctxloss=(\d+)", title).group(1))
     dprw = int(re.search(r"dprw=(\d+)", title).group(1))
+    wrebin = int(re.search(r"wrebin=(\d+)", title).group(1))
     bar_base = int(re.search(r"barBase=(\d+)", title).group(1))
     hist_base = int(re.search(r"histBase=(\d+)", title).group(1))
     edgepad = int(re.search(r"edgepad=(\d+)", title).group(1))
@@ -1122,6 +1165,8 @@ try{{
         raise SystemExit("zero-pinned histogram left a lit-pixel gap above the x-axis")
     if edgepad != 1:
         raise SystemExit("baseline edge pad is not DPR-aware")
+    if wrebin != 1:
+        raise SystemExit("standalone worker did not re-bin the density sample on zoom")
     if axis_on_top != 1:
         raise SystemExit("axis baselines are not DOM rules in the overlay above the marks")
     if mark_grad != 1:
