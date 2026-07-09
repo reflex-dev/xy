@@ -310,6 +310,37 @@ def test_kernel_wrappers_reject_oversized_allocation_dimensions(impl):
         impl.local_log_density(x, x, 0.0, 4.0, 0.0, 4.0, too_many, 4)
 
 
+def test_size_sentinel_detection_matches_platform_usize_width(monkeypatch):
+    """usize::MAX error sentinels must be detected at the platform c_size_t width.
+
+    On 32-bit targets (armv7 / win32 / wasm32 — all shipped wheels) the Rust
+    sentinel arrives as 2**32-1. A comparison hard-coded to 2**64-1 never
+    matches there, so an error return — including a panic converted by the
+    ffi_guard shield — would be sliced as valid data. Simulate the 32-bit ABI
+    by narrowing the module sentinel and stubbing each size-returning entry
+    point; every wrapper must consult the shared constant and raise.
+    """
+    import ctypes
+
+    from fastcharts import _native
+
+    assert _native._USIZE_MAX == ctypes.c_size_t(-1).value
+    sentinel = 2**32 - 1
+    monkeypatch.setattr(_native, "_USIZE_MAX", sentinel)
+    x = np.arange(8.0)
+    cases = [
+        ("fc_zone_maps", lambda: _native.zone_maps(x, 4)),
+        ("fc_m4_indices", lambda: _native.m4_indices(x, x, 0.0, 8.0, 2)),
+        ("fc_bin_2d_indices", lambda: _native.bin_2d_indices(x, x, 0.0, 8.0, 0.0, 8.0, 4, 4)),
+        ("fc_histogram_uniform", lambda: _native.histogram_uniform(x, 0.0, 8.0, 4)),
+        ("fc_range_indices", lambda: _native.range_indices(x, x, 0.0, 8.0, 0.0, 8.0)),
+    ]
+    for symbol, call in cases:
+        monkeypatch.setattr(_native._lib, symbol, lambda *args, _s=sentinel: _s)
+        with pytest.raises(ValueError):
+            call()
+
+
 def test_encode_f32_rejects_nonfinite_offset_or_scale(impl):
     x = np.arange(4.0)
     with pytest.raises(ValueError, match="offset"):
