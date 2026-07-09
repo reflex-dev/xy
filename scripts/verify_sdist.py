@@ -398,20 +398,20 @@ def verify_sdist(path: str) -> None:
         path,
         root,
         ".github/workflows/ci.yml",
-        {"scripts/verify_ci_workflow.py", "actions/upload-artifact@v4", "continue-on-error: true"},
+        {"scripts/verify_ci_workflow.py", "actions/upload-artifact@", "continue-on-error: true"},
     )
     _require_file_contains(
         path,
         root,
         ".github/workflows/codspeed.yml",
-        {"CodSpeedHQ/action@v4", "pytest-codspeed", 'k.BACKEND == "native"'},
+        {"CodSpeedHQ/action@", "pytest-codspeed", 'k.BACKEND == "native"'},
     )
     _require_file_contains(
         path,
         root,
         ".github/workflows/release.yml",
         {
-            "pypa/gh-action-pypi-publish@release/v1",
+            "pypa/gh-action-pypi-publish@",
             "scripts/verify_wheel.py",
             "scripts/verify_sdist.py",
             "id-token: write",

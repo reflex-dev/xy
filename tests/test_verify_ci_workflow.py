@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
+
+# Actions are pinned to full commit SHAs (`@<40-hex> # vX`) per the org policy,
+# so fixtures strip a step by its action *path*, not a version tag — a SHA bump
+# must not silently turn these negative tests into no-ops.
+_UPLOAD_ARTIFACT_USES = re.compile(r" *- uses: actions/upload-artifact@\S+.*\n")
 
 
 def _load_verify_module():
@@ -278,20 +284,17 @@ def test_ci_workflow_rejects_missing_kernel_benchmark_verification(tmp_path: Pat
 
 def test_ci_workflow_rejects_missing_regression_benchmark_upload(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    upload_block = (
-        "      - name: Upload regression benchmark report\n"
-        "        if: always()\n"
-        "        uses: actions/upload-artifact@v4\n"
-        "        with:\n"
-        "          name: regression-benchmark-report\n"
-        "          if-no-files-found: warn\n"
-        "          path: |\n"
-        "            docs/benchmark_metrics.md\n"
-        "            scatter.json\n"
-        "            kernel.json\n\n"
+    # Strip the whole "Upload regression benchmark report" step (name line through
+    # its trailing blank), independent of the pinned upload-artifact SHA.
+    broken = re.sub(
+        r" *- name: Upload regression benchmark report\n(?:[ \t]+.*\n|\n)*?(?=\S| *- |\Z)",
+        "",
+        workflow,
+        count=1,
     )
+    assert "regression-benchmark-report" not in broken
     path = tmp_path / "ci.yml"
-    path.write_text(workflow.replace(upload_block, ""), encoding="utf-8")
+    path.write_text(broken, encoding="utf-8")
 
     errors = verify_ci_workflow.validate_workflow(path)
 
@@ -319,9 +322,7 @@ def test_ci_workflow_rejects_regression_upload_that_skips_after_failures(
 def test_ci_workflow_rejects_missing_wheel_upload(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
-    path.write_text(
-        workflow.replace("      - uses: actions/upload-artifact@v4", ""), encoding="utf-8"
-    )
+    path.write_text(_UPLOAD_ARTIFACT_USES.sub("", workflow), encoding="utf-8")
 
     errors = verify_ci_workflow.validate_workflow(path)
 

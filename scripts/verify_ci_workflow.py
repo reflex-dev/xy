@@ -142,7 +142,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "--emit-md docs/benchmark_metrics.md",
         "Upload regression benchmark report",
         "if: always()",
-        "actions/upload-artifact@v4",
+        "actions/upload-artifact@",
         "regression-benchmark-report",
         "if-no-files-found: warn",
         "docs/benchmark_metrics.md",
@@ -171,7 +171,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "scripts/verify_benchmark_report.py",
         "Upload benchmark report",
         "if: always()",
-        "actions/upload-artifact@v4",
+        "actions/upload-artifact@",
         "benchmark.json",
         "line.json",
         "install.json",
@@ -206,7 +206,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "FASTCHARTS_REQUIRE_CARGO",
         "scripts/verify_wheel.py",
         "--expect-native",
-        "actions/upload-artifact@v4",
+        "actions/upload-artifact@",
         "dist/*.whl",
     )
     _require_job_contains(
@@ -256,17 +256,17 @@ def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[s
         "benchmarks",
         "CodSpeed",
         "native-only benchmark path",
-        "dtolnay/rust-toolchain@stable",
-        "actions/setup-python@v5",
+        "dtolnay/rust-toolchain@",
+        "actions/setup-python@",
         'python-version: "3.11"',
-        "astral-sh/setup-uv@v5",
+        "astral-sh/setup-uv@",
         "cargo build --release",
         "FASTCHARTS_REQUIRE_CARGO",
         "pytest-codspeed",
         "Verify native benchmark backend",
         'k.BACKEND == "native"',
         "CodSpeed requires native backend",
-        "CodSpeedHQ/action@v4",
+        "CodSpeedHQ/action@",
         "mode: simulation",
         "benchmarks/test_codspeed_kernels.py --codspeed",
     )
@@ -299,9 +299,9 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "wheels",
         "release",
         "cross-platform wheel matrix (glibc+musl, macOS, Windows), verification, and upload",
-        "dtolnay/rust-toolchain@stable",
-        "astral-sh/setup-uv@v5",
-        "actions/setup-node@v4",
+        "dtolnay/rust-toolchain@",
+        "astral-sh/setup-uv@",
+        "actions/setup-node@",
         'node-version: "22"',
         "node js/build.mjs --check",
         "cargo-zigbuild",
@@ -314,7 +314,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "--expect-native",
         "Install-size budget (<= 15 MB)",
         "assert k.BACKEND=='native'",
-        "actions/upload-artifact@v4",
+        "actions/upload-artifact@",
         "dist/*.whl",
     )
     _require_job_contains(
@@ -335,15 +335,15 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "sdist",
         "release",
         "sdist build, content verification, no-Rust clear-error smoke, and upload",
-        "astral-sh/setup-uv@v5",
-        "actions/setup-node@v4",
+        "astral-sh/setup-uv@",
+        "actions/setup-node@",
         'node-version: "22"',
         "node js/build.mjs --check",
         "uv build --sdist",
         "scripts/verify_sdist.py",
         "FASTCHARTS_SKIP_CARGO",
         "native Rust core",
-        "actions/upload-artifact@v4",
+        "actions/upload-artifact@",
         "dist/*.tar.gz",
     )
     _require_job_contains(
@@ -355,11 +355,11 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "needs: [wheels, sdist, wasm]",
         "environment: pypi",
         "id-token: write",
-        "actions/download-artifact@v4",
+        "actions/download-artifact@",
         "pattern: dist-*",
         "merge-multiple: true",
         "dry_run",
-        "pypa/gh-action-pypi-publish@release/v1",
+        "pypa/gh-action-pypi-publish@",
         "packages-dir: dist/",
     )
     _require_workflow_contains(
@@ -377,8 +377,8 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
     publish = jobs.get("publish", "")
     if "password:" in publish or "api-token" in publish:
         errors.append("release publish job should use trusted publishing, not a PyPI token")
-    if "pypa/gh-action-pypi-publish@release/v1" in publish and not _step_is_conditioned(
-        publish, "pypa/gh-action-pypi-publish@release/v1"
+    if "pypa/gh-action-pypi-publish@" in publish and not _step_is_conditioned(
+        publish, "pypa/gh-action-pypi-publish@"
     ):
         errors.append(
             "release publish job's PyPI upload step has no if: condition of its "
