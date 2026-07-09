@@ -278,11 +278,13 @@ class Figure(AnnotationsMixin, PayloadMixin):
         width: float = 1.5,
         opacity: float = 1.0,
         curve: str = "linear",
+        dash: Any = None,
     ) -> "Figure":
         name = self._optional_text(name, "line name")
         width = self._positive_scalar(width, "line width")
         opacity = self._opacity(opacity, "line opacity")
         curve = _validate.curve(curve, "line curve")
+        dash_spec = _validate.dash(dash, "line dash")
         checkpoint = self._checkpoint()
         try:
             xc, yc = self._ingest_xy(x, y, "line")
@@ -298,6 +300,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             style: dict[str, Any] = {"color": color, "width": width, "opacity": opacity}
             if curve != "linear":
                 style["curve"] = curve
+            if dash_spec is not None:
+                style["dash"] = dash_spec
             self.traces.append(
                 Trace(
                     id=len(self.traces),
@@ -326,13 +330,15 @@ class Figure(AnnotationsMixin, PayloadMixin):
         line_opacity: float = 1.0,
         fill: Any = None,
         curve: str = "linear",
+        dash: Any = None,
     ) -> "Figure":
         """Add a filled area trace between `y` and `base`.
 
         `base` may be a scalar or a length-N array, which covers both the common
         zero-baseline area chart and future stacked-area construction.
         `fill` accepts a CSS `linear-gradient(...)` (see docs/styling.md);
-        `curve="smooth"` renders a monotone cubic through the points.
+        `curve="smooth"` renders a monotone cubic through the points; `dash`
+        dashes the outline.
         """
         name = self._optional_text(name, "area name")
         opacity = self._opacity(opacity, "area opacity")
@@ -340,6 +346,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         line_opacity = self._opacity(line_opacity, "area line_opacity")
         fill_spec = _validate.mark_fill(fill, "area fill")
         curve = _validate.curve(curve, "area curve")
+        dash_spec = _validate.dash(dash, "area dash")
         checkpoint = self._checkpoint()
         try:
             xc, yc = self._ingest_xy(x, y, "area")
@@ -365,6 +372,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 style["fill"] = fill_spec
             if curve != "linear":
                 style["curve"] = curve
+            if dash_spec is not None:
+                style["dash"] = dash_spec
             self.traces.append(
                 Trace(
                     id=len(self.traces),

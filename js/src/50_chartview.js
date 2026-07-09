@@ -1030,6 +1030,9 @@ class ChartView {
     g.xBuf = this._upload(sm ? sm.x : x);
     g.yBuf = this._upload(sm ? sm.y : y);
     if (sm) g.n = sm.n;
+    // Drawn (offset-encoded) vertices kept for the screen-space dash arc length.
+    g._dashX = sm ? sm.x : x;
+    g._dashY = sm ? sm.y : y;
     g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
   }
 
@@ -1047,6 +1050,8 @@ class ChartView {
     g.yBuf = this._upload(sm ? sm.y : y);
     g.baseBuf = this._upload(sm ? sm.extra : base);
     if (sm) g.n = sm.n;
+    g._dashX = sm ? sm.x : x;
+    g._dashY = sm ? sm.y : y;
     g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
     g.lineColor = parseColor(this.root, t.style && t.style.color, g.color);
     g.grad = this._resolveMarkFill(t.style, g.color);
@@ -1549,13 +1554,71 @@ class ChartView {
     gl.uniform1f(u("u_width"), (width ?? g.trace.style.width ?? 1.5) * this.dpr);
     const [r, gg, b, a] = color || g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a * (opacity ?? g.trace.style.opacity ?? 1));
-    this._bindVao(g, "line", [g.xBuf._fcId, g.yBuf._fcId], () => {
-      this._vaoAttr(ATTR_SLOTS.ax0, g.xBuf, 0, 1);
-      this._vaoAttr(ATTR_SLOTS.ax1, g.xBuf, 4, 1);
-      this._vaoAttr(ATTR_SLOTS.ay0, g.yBuf, 0, 1);
-      this._vaoAttr(ATTR_SLOTS.ay1, g.yBuf, 4, 1);
-    });
+    const dashed = this._lineDash(g);
+    this._bindVao(
+      g,
+      "line",
+      dashed ? [g.xBuf._fcId, g.yBuf._fcId, g._lenBuf._fcId] : [g.xBuf._fcId, g.yBuf._fcId],
+      () => {
+        this._vaoAttr(ATTR_SLOTS.ax0, g.xBuf, 0, 1);
+        this._vaoAttr(ATTR_SLOTS.ax1, g.xBuf, 4, 1);
+        this._vaoAttr(ATTR_SLOTS.ay0, g.yBuf, 0, 1);
+        this._vaoAttr(ATTR_SLOTS.ay1, g.yBuf, 4, 1);
+        if (dashed) {
+          this._vaoAttr(ATTR_SLOTS.a_len0, g._lenBuf, 0, 1);
+          this._vaoAttr(ATTR_SLOTS.a_len1, g._lenBuf, 4, 1);
+        }
+      }
+    );
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n - 1);
+  }
+
+  // Dash setup for a line/area outline: recompute per-vertex cumulative
+  // screen-space arc length (device px) for the current view, upload it, and
+  // set the dash-pattern uniforms. Returns false (u_dashCount=0) for solid
+  // lines. Cost is O(vertices) per draw, dashed traces only.
+  _lineDash(g) {
+    const gl = this.gl;
+    const u = (n) => uniformOf(gl, this.lineProg, n);
+    const dash = g.trace.style && g.trace.style.dash;
+    if (!dash || !dash.length || !g._dashX) {
+      gl.uniform1i(u("u_dashCount"), 0);
+      return false;
+    }
+    const n = g.n;
+    if (!g._lenArr || g._lenArr.length !== n) g._lenArr = new Float32Array(n);
+    const lens = g._lenArr;
+    const dpr = this.dpr;
+    let px = this._dataPx(g.xAxis, this._decodeValue(g._dashX, g.xMeta, 0));
+    let py = this._dataPx(g.yAxis, this._decodeValue(g._dashY, g.yMeta, 0));
+    let acc = 0;
+    lens[0] = 0;
+    for (let i = 1; i < n; i++) {
+      const nx = this._dataPx(g.xAxis, this._decodeValue(g._dashX, g.xMeta, i));
+      const ny = this._dataPx(g.yAxis, this._decodeValue(g._dashY, g.yMeta, i));
+      if (Number.isFinite(nx) && Number.isFinite(ny) && Number.isFinite(px) && Number.isFinite(py)) {
+        acc += Math.hypot(nx - px, ny - py) * dpr;
+      }
+      lens[i] = acc;
+      px = nx;
+      py = ny;
+    }
+    if (!g._lenBuf) g._lenBuf = this._upload(lens);
+    else {
+      gl.bindBuffer(gl.ARRAY_BUFFER, g._lenBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, lens, gl.DYNAMIC_DRAW);
+    }
+    const arr = new Float32Array(8);
+    let period = 0;
+    const count = Math.min(dash.length, 8);
+    for (let i = 0; i < count; i++) {
+      arr[i] = dash[i] * dpr;
+      period += arr[i];
+    }
+    gl.uniform1i(u("u_dashCount"), count);
+    gl.uniform1fv(u("u_dashArr"), arr);
+    gl.uniform1f(u("u_dashPeriod"), Math.max(period, 1e-3));
+    return true;
   }
 
   _drawArea(g, xm, ym, bm) {

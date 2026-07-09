@@ -142,6 +142,8 @@ Object.assign(ChartView.prototype, {
         gl.bufferData(gl.ARRAY_BUFFER, sm ? sm.y : yArr, gl.STATIC_DRAW);
         g.xMeta = { ...g.xMeta, offset: upd.x.offset, scale: upd.x.scale };
         g.yMeta = { ...g.yMeta, offset: upd.y.offset, scale: upd.y.scale };
+        g._dashX = sm ? sm.x : xArr;
+        g._dashY = sm ? sm.y : yArr;
         if (bArr) {
           gl.bindBuffer(gl.ARRAY_BUFFER, g.baseBuf);
           gl.bufferData(gl.ARRAY_BUFFER, sm ? sm.extra : bArr, gl.STATIC_DRAW);

@@ -208,6 +208,32 @@ def point_symbol(value: Any, label: str) -> str:
     return value
 
 
+# Named dash patterns -> on/off (…) lengths in CSS px, the SVG/CSS convention.
+_DASH_PRESETS = {
+    "solid": None,
+    "dashed": [6.0, 4.0],
+    "dotted": [1.5, 3.0],
+    "dashdot": [6.0, 3.0, 1.5, 3.0],
+}
+
+
+def dash(value: Any, label: str) -> Optional[list[float]]:
+    """Line dash: None/"solid", a preset name ("dashed"/"dotted"/"dashdot"),
+    or an explicit [on, off, …] px sequence (2–8 positive lengths)."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if value not in _DASH_PRESETS:
+            raise ValueError(f"{label} must be one of {sorted(_DASH_PRESETS)} or an [on, off] list")
+        return _DASH_PRESETS[value]
+    if isinstance(value, (int, float)) or not hasattr(value, "__iter__"):
+        raise ValueError(f"{label} must be a preset name or an [on, off, …] sequence")
+    lengths = [positive_scalar(v, f"{label}[{i}]") for i, v in enumerate(value)]
+    if not 2 <= len(lengths) <= 8:
+        raise ValueError(f"{label} sequence must have between 2 and 8 lengths")
+    return lengths
+
+
 def _split_top_level(text: str) -> list[str]:
     """Split on commas that sit outside parentheses (rgb()/var() stay intact)."""
     parts: list[str] = []

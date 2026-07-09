@@ -25,6 +25,7 @@ const ATTR_SLOTS = {
   a_pos: 0, a_v1: 1, a_v0: 2,
   a_corner: 0,
   a_cval: 6, a_sval: 7, a_sel: 8, a_dval: 9,
+  a_len0: 10, a_len1: 11,
 };
 
 function makeProgram(gl, vs, fs) {
@@ -272,7 +273,8 @@ const LINE_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
-out float v_off;
+in float a_len0; in float a_len1;
+out float v_off; out float v_dash;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -289,16 +291,38 @@ void main() {
   vec2 pos = mix(pix0, pix1, c.x) + dir * (c.x * 2.0 - 1.0) * 0.5 + n * c.y * half_w;
   gl_Position = vec4(pos / u_res * 2.0 - 1.0, 0.0, 1.0);
   v_off = c.y * half_w;
+  // Cumulative screen-space arc length at this fragment (device px), fed from
+  // CPU-computed per-vertex lengths so dashes stay continuous across segments
+  // and constant on screen through zoom.
+  v_dash = mix(a_len0, a_len1, c.x);
 }`;
 
 const LINE_FS = `#version 300 es
-precision highp float;
+precision highp float; precision highp int;
 uniform vec4 u_color; uniform float u_width;
-in float v_off;
+uniform int u_dashCount; uniform float u_dashArr[8]; uniform float u_dashPeriod;
+in float v_off; in float v_dash;
 out vec4 outColor;
 void main() {
   float half_w = u_width * 0.5;
   float alpha = (1.0 - smoothstep(half_w - 0.5, half_w + 0.5, abs(v_off))) * u_color.a;
+  if (u_dashCount > 0) {
+    float m = mod(v_dash, u_dashPeriod);
+    float acc = 0.0;
+    float on = 0.0;
+    for (int i = 0; i < 8; i++) {
+      if (i >= u_dashCount) break;
+      float next = acc + u_dashArr[i];
+      if (m < next) {
+        // 0.6px feather at each dash start/end so edges aren't aliased.
+        float d = min(m - acc, next - m);
+        on = (i % 2 == 0) ? clamp(d + 0.6, 0.0, 1.0) : 1.0 - clamp(d + 0.6, 0.0, 1.0);
+        break;
+      }
+      acc = next;
+    }
+    alpha *= on;
+  }
   if (alpha <= 0.001) discard;
   outColor = vec4(u_color.rgb * alpha, alpha);
 }`;
