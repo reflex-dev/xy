@@ -27,11 +27,11 @@ are published.
 |---|---|---|
 | payload prep | wall time: canonical arrays → wire payload (spec+blob) | `perf_counter` around `build_payload`; competitors: their figure→HTML/JSON serialize |
 | wire size | bytes crossing to the client | `len(blob)+len(spec_json)`; competitors: HTML/JSON size |
-| browser TTFR | navigation → first contentful paint of the chart | shipped `_browser.py` (headless Chromium, FCP entry); identical page harness per library |
+| browser TTFR | figure build + interactive HTML serialization + navigation → visible chart surface | shipped `_browser.py` chart-ready probe; page FCP is diagnostic only |
 | interaction-ready | navigation → first successful synthetic wheel-zoom applied (view actually changes) | extend page probe: dispatch wheel, RAF-poll view/transform change |
-| pan/zoom latency | p50/p95/p99 of input→pixels for a scripted 60-step pan and 20-step zoom | `performance.now()` deltas around dispatched events + RAF completion; report *percentiles*, never means (§17 framing) |
+| pan/zoom latency | p50/p95/p99 of input→pixels for repeated gestures | dispatched DOM events + draw + WebGL readback in `bench_interaction.py`; standalone-client scope is explicit |
 | memory (kernel) | peak RSS delta + tracemalloc peak during prep | shipped psutil/tracemalloc pattern |
-| memory (browser) | JS heap + (where available) GPU memory after settle | CDP `Performance.getMetrics`; disclose that GPU numbers are best-effort |
+| memory (browser) | precise JS heap at chart-ready/dashboard settle; GPU memory remains unavailable | Chromium `performance.memory` with precise-memory flag; GPU numbers are not claimed |
 | install size | `pip install` into a fresh venv: total site-packages bytes + wheel bytes + transitive dep count | scripted venv; competitors measured identically (Plotly+kaleido vs plotly alone reported separately) |
 | cold import | `python -c "import lib"` best-of-5 fresh interpreters | subprocess timing (already the §33 import-budget concern) |
 | small-data | full pipeline at N=1k/10k: prep+TTFR+interaction-ready | the "performance library must not lose the everyday case" check |
@@ -117,24 +117,22 @@ reported).
    and composed/layered `fc.chart(...)` payload prep;
    `benchmarks/bench_2d_charts.py` stays the Plotly/Seaborn chart-to-pixels
    comparison.
-7. `dashboard_20`: `benchmarks/bench_dashboard.py` renders 20 mixed charts on
-   one page — total chart-to-pixels startup now, memory next (the
-   Reflex story; competitors: Plotly/Bokeh equivalents).
-8. `install_import`: sizes + cold import vs all.
+7. `dashboard_scale`: `benchmarks/bench_dashboard.py` attempts 10/20/50 mixed
+   charts, checks every canvas, and records payload prep, navigation readiness,
+   JS heap, steady-redraw p95, and the successful chart-count ceiling.
+8. `install_import`: lower-bound distribution size plus opt-in fresh-venv total
+   site-packages, transitive distribution count, install time, and cold import.
+9. `public_workflows`: `benchmarks/bench_workflows.py` tracks ingestion shapes,
+   streaming refresh/pyramid rebuild, and HTML/SVG/native-PNG/Chromium-PNG export independently.
 
-## 6. Implementation plan
+## 6. Remaining implementation plan
 
-1. Percentile interaction probe in `benchmarks/bench_interaction.py` (dispatch
-   real ChartView zoom/pan/hover/crosshair/box-zoom/brush-select paths across
-   scatter plus representative line/histogram/bar/heatmap rows; collect p95
-   deltas, WebGL nonblank checks, and enforced budget metadata) — unlocks
-   pan/zoom latency and interaction-ready beyond scatter-only coverage.
-2. Oracle module `benchmarks/oracles.py` (NumPy references + assertions),
-   wired into `bench_vs.py` scenario runs.
-3. PyGWalker + plotly-resampler adapters; Plotly/Bokeh equivalents for the
+1. Extend the shipped count-conservation and per-pixel line extrema oracles with
+   channel-aggregation and cross-library pixel-dropout oracles.
+2. Add a real widget/comm round-trip interaction probe; current browser rows are
+   explicitly standalone client input-to-readback, while backend work is timed
+   in CodSpeed/workflow rows.
+3. PyGWalker adapter and Plotly/Bokeh equivalents for the
    `dashboard_20` scenario.
-4. `benchmark.json` schema v2: add mode labels, oracle pass/fail, env tier,
-   percentiles; `docs/benchmark.md` regenerated from it (keep the "measured,
-   not cited" rule).
-5. Reference-hardware runbook (`benchmarks/README`): exact pins + one-command
+4. Reference-hardware runbook (`benchmarks/README`): exact pins + one-command
    repro; publish both tiers on the next README refresh.

@@ -120,6 +120,67 @@ def bench_prep(lib, n: int, x: array, y: array) -> dict:
     }
 
 
+def bench_production(n: int, x: array, y: array) -> dict:
+    """Time the real Figure -> spec/blob path and assert its reduction contract."""
+    import numpy as np
+
+    from fastcharts import Figure
+
+    reps = 3 if n <= 2_000_000 else 1
+    best = float("inf")
+    result = None
+    for _ in range(reps):
+        t0 = time.perf_counter()
+        fig = Figure(width=RENDER_W, height=RENDER_H).scatter(x, y)
+        spec, blob = fig.build_payload()
+        best = min(best, time.perf_counter() - t0)
+        result = (spec, blob)
+    assert result is not None
+    spec, blob = result
+    trace = spec["traces"][0]
+    tier = trace["tier"]
+    sample_points = 0
+    if tier == "density":
+        density = trace["density"]
+        column = spec["columns"][density["buf"]]
+        grid = np.frombuffer(
+            blob,
+            dtype=np.float32,
+            count=column["len"],
+            offset=column["byte_offset"],
+        )
+        actual = int(round(float(grid.sum())))
+        expected = int(trace["visible"])
+        if actual != expected:
+            raise AssertionError(f"density count oracle failed: {actual} != {expected}")
+        sample = density.get("sample") or {}
+        sample_points = int(sample.get("n", 0))
+    elif trace.get("n_marks") != n:
+        raise AssertionError(f"direct row-count oracle failed: {trace.get('n_marks')} != {n}")
+
+    spec_bytes = len(json.dumps(spec, separators=(",", ":"), default=str).encode("utf-8"))
+    wire = spec_bytes + len(blob)
+    category_ids = (
+        ("huge_scatter_overview", "payload_export_size")
+        if tier == "density"
+        else ("medium_direct_scatter", "payload_export_size")
+    )
+    return {
+        "n": n,
+        "tier": tier,
+        "benchmark_categories": [category["id"] for category in categories_for(category_ids)],
+        "data_prep_ms": best * 1e3,
+        "wire_bytes": wire,
+        "wire_bytes_per_point": wire / n,
+        "blob_bytes": len(blob),
+        "spec_bytes": spec_bytes,
+        "sample_points": sample_points,
+        "pts_per_s": n / best if best else None,
+        "oracle_status": "pass",
+        "measurement_scope": "production-figure-payload",
+    }
+
+
 def find_chromium() -> str:
     for c in (
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -253,13 +314,21 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sizes", default="1e4,1e5,1e6,1e7")
     ap.add_argument("--render", action="store_true", help="also time render-to-pixels in Chromium")
+    ap.add_argument(
+        "--production",
+        action="store_true",
+        help="time the installed fastcharts Figure payload path instead of the C-ABI kernel shape",
+    )
     ap.add_argument("--json", default=None)
     args = ap.parse_args()
+    if args.production and args.render:
+        ap.error("--production and --render are separate scopes; run them as separate reports")
     sizes = [int(float(s)) for s in args.sizes.split(",")]
     lib = load()
 
     rows = []
-    print(f"fastcharts scatter — native core, SwiftShader render. threshold={DENSITY_THRESHOLD:,}")
+    scope = "production Figure payload" if args.production else "native kernel shape"
+    print(f"fastcharts scatter — {scope}, SwiftShader render. threshold={DENSITY_THRESHOLD:,}")
     hdr = "| N | tier | data prep | wire bytes | B/pt"
     sep = "|---|---|---|---|---"
     if args.render:
@@ -269,7 +338,7 @@ def main() -> None:
     print(sep + " |")
     for n in sizes:
         x, y = gen(n)
-        r = bench_prep(lib, n, x, y)
+        r = bench_production(n, x, y) if args.production else bench_prep(lib, n, x, y)
         if args.render:
             r.update(bench_render(n, x, y))
         rows.append(r)
@@ -286,6 +355,9 @@ def main() -> None:
         chromium = find_chromium() if args.render else None
         report = {
             "schema_version": SCHEMA_VERSION,
+            "measurement_scope": (
+                "production-figure-payload" if args.production else "native-kernel-shape"
+            ),
             "environment": collect_environment_metadata(
                 chromium=chromium or None,
                 fastcharts_backend="native",

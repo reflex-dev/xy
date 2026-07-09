@@ -40,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("chromium", nargs="?", default=None)
     parser.add_argument("--chromium", dest="chromium_flag", default=None)
     parser.add_argument("--sizes", default="1e4,2.5e5")
-    parser.add_argument("--reps", type=int, default=4)
+    parser.add_argument("--reps", type=int, default=12)
     parser.add_argument("--json", default=None, help="write the validated JSON report here")
     parser.add_argument("--markdown", default=None, help="write the Markdown report here")
     args = parser.parse_args(argv)

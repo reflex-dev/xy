@@ -32,14 +32,14 @@ jobs:
       - name: Build native core
         run: cargo build --release
       - name: Install package + comparison deps
-        # Only the libraries the refreshed tables actually cite (matplotlib,
-        # seaborn, plotly + kaleido for PNG). The harness skips any library it
-        # cannot import, so the heavier datashader/bokeh/altair/hvplot stack is
-        # deliberately left out to keep this job fast and reliable.
+        # Install the full adapter set. In particular, a density-mode FastCharts
+        # row must publish beside Datashader/HoloViews rather than only raw-marker
+        # competitors; unavailable rows remain explicit in the report.
         run: |
           uv venv
           uv pip install -e ".[dev]"
-          uv pip install matplotlib seaborn plotly kaleido psutil
+          uv pip install matplotlib seaborn plotly kaleido bokeh altair \
+            datashader hvplot plotly-resampler psutil
       - name: Verify native backend is active
         run: uv run python -c "import fastcharts.kernels as k; assert k.BACKEND == 'native', k.BACKEND; print('native')"
       # The 10M scatter table (the one with the actual "pending" Seaborn rows)

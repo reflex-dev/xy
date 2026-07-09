@@ -35,9 +35,9 @@ Regenerated from the CI benchmark run; do not hand-edit.
 | scatter.tier.100000 | direct |
 | scatter.tier.1000000 | density |
 | scatter.tier.10000000 | density |
-| scatter.wire_bytes.100000 | 800,000 |
-| scatter.wire_bytes.1000000 | 786,432 |
-| scatter.wire_bytes.10000000 | 786,432 |
-| scatter.wire_bytes_per_point.100000 | 8.00 |
-| scatter.wire_bytes_per_point.1000000 | 0.79 |
-| scatter.wire_bytes_per_point.10000000 | 0.08 |
+| scatter.wire_bytes.100000 | 800,983 |
+| scatter.wire_bytes.1000000 | 855,778 |
+| scatter.wire_bytes.10000000 | 853,850 |
+| scatter.wire_bytes_per_point.100000 | 8.01 |
+| scatter.wire_bytes_per_point.1000000 | 0.86 |
+| scatter.wire_bytes_per_point.10000000 | 0.09 |

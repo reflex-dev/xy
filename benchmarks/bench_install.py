@@ -7,10 +7,9 @@ Two numbers a `pip install` costs you before a single chart is drawn:
   (module cache empty each time — the honest first-import latency, not a warm
   re-import). This is the §33 import-budget concern made comparative.
 - **distribution size**: on-disk bytes of the distribution's own installed
-  files via `importlib.metadata`. This is a *lower bound* on real install cost
-  — it excludes transitive dependencies (plotly→kaleido→…); the fresh-venv
-  total-footprint measure is the methodology's gold standard and stays a CI
-  runbook item. Labeled as such so the number is never oversold.
+  files via `importlib.metadata`, explicitly labeled as a lower bound.
+- **fresh environment** (`--fresh-venv`): isolated install time, total
+  site-packages bytes/files, transitive distribution count, and cold import.
 
 Libraries that aren't installed are reported `unavailable`, never silently
 dropped (harness policy shared with bench_vs.py). Run whatever is present:
@@ -27,6 +26,8 @@ import importlib.metadata as im
 import json
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -49,6 +50,7 @@ DEFAULT_TARGETS: list[tuple[str, str]] = [
     ("holoviews", "holoviews"),
     ("plotly_resampler", "plotly-resampler"),
 ]
+ROOT = Path(__file__).resolve().parent.parent
 INSTALL_CATEGORY_IDS = (
     "install_footprint_import_budget",
     "small_data_startup",
@@ -116,7 +118,74 @@ def _fmt_bytes(b: int | None) -> str:
     return f"{size:.1f} GB"
 
 
-def run(targets: list[tuple[str, str]], repeat: int) -> dict:
+def fresh_venv_footprint(module: str, dist: str) -> dict[str, int | float | str | None]:
+    """Install one target into an isolated uv venv and measure all dependencies."""
+    with tempfile.TemporaryDirectory() as td:
+        env_dir = Path(td) / "venv"
+        created = subprocess.run(
+            ["uv", "venv", "--python", sys.executable, str(env_dir)],
+            capture_output=True,
+            text=True,
+        )
+        if created.returncode != 0:
+            return {"fresh_note": (created.stderr or created.stdout).strip()[-160:]}
+        python = env_dir / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+        target = str(ROOT) if dist == "fastcharts" else dist
+        t0 = time.perf_counter()
+        installed = subprocess.run(
+            ["uv", "pip", "install", "--python", str(python), target],
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+        )
+        install_ms = (time.perf_counter() - t0) * 1e3
+        if installed.returncode != 0:
+            return {
+                "fresh_install_ms": install_ms,
+                "fresh_note": (installed.stderr or installed.stdout).strip()[-160:],
+            }
+        import_values = []
+        import_code = (
+            "import importlib,time;"
+            "t=time.perf_counter();"
+            f"importlib.import_module({module!r});"
+            "print((time.perf_counter()-t)*1000)"
+        )
+        for _ in range(3):
+            imported = subprocess.run(
+                [str(python), "-c", import_code], capture_output=True, text=True
+            )
+            if imported.returncode == 0:
+                import_values.append(float(imported.stdout.strip()))
+        probe = subprocess.run(
+            [
+                str(python),
+                "-c",
+                (
+                    "import json,pathlib,sysconfig,importlib.metadata as m;"
+                    "p=pathlib.Path(sysconfig.get_paths()['purelib']);"
+                    "fs=[x for x in p.rglob('*') if x.is_file()];"
+                    "print(json.dumps({'bytes':sum(x.stat().st_size for x in fs),"
+                    "'files':len(fs),'dists':len(list(m.distributions()))}))"
+                ),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode != 0:
+            return {"fresh_install_ms": install_ms, "fresh_note": "footprint probe failed"}
+        measured = json.loads(probe.stdout)
+        return {
+            "fresh_install_ms": install_ms,
+            "fresh_cold_import_ms": min(import_values) if import_values else None,
+            "fresh_site_bytes": int(measured["bytes"]),
+            "fresh_site_files": int(measured["files"]),
+            "fresh_dist_count": int(measured["dists"]),
+            "fresh_note": None,
+        }
+
+
+def run(targets: list[tuple[str, str]], repeat: int, *, fresh_venv: bool = False) -> dict:
     rows = []
     for module, dist in targets:
         version = None
@@ -127,25 +196,29 @@ def run(targets: list[tuple[str, str]], repeat: int) -> dict:
         status = "ok"
         if ms is None and size is None:
             status = f"unavailable({imp_reason or size_reason})"
-        rows.append(
-            {
-                "module": module,
-                "distribution": dist,
-                "version": version,
-                "cold_import_ms": ms,
-                "import_note": imp_reason,
-                "dist_bytes": size,
-                "dist_files": nfiles,
-                "size_note": size_reason,
-                "status": status,
-            }
-        )
+        row = {
+            "module": module,
+            "distribution": dist,
+            "version": version,
+            "cold_import_ms": ms,
+            "import_note": imp_reason,
+            "dist_bytes": size,
+            "dist_files": nfiles,
+            "size_note": size_reason,
+            "status": status,
+        }
+        if fresh_venv:
+            row.update(fresh_venv_footprint(module, dist))
+            if row.get("fresh_site_bytes") is None:
+                row["status"] = f"failed({row.get('fresh_note') or 'fresh install failed'})"
+        rows.append(row)
     return {
         "schema_version": SCHEMA_VERSION,
         "environment": collect_environment_metadata(),
         "benchmark_categories": list(BENCHMARK_CATEGORIES),
         "tracked_categories": categories_for(INSTALL_CATEGORY_IDS),
         "repeat": repeat,
+        "fresh_venv": fresh_venv,
         "python": sys.version.split()[0],
         "results": rows,
     }
@@ -159,8 +232,8 @@ def to_markdown(report: dict) -> str:
         "files only (excludes transitive deps — a lower bound on real install "
         f"cost). Python {report['python']}.",
         "",
-        "| library | version | cold import | dist size | files |",
-        "|---|---|---:|---:|---:|",
+        "| library | version | cold import | dist size | files | fresh env | deps | fresh import |",
+        "|---|---|---:|---:|---:|---:|---:|---:|",
     ]
 
     # fastest importer first, unavailable last
@@ -169,12 +242,19 @@ def to_markdown(report: dict) -> str:
 
     for r in sorted(report["results"], key=sort_key):
         if r["status"] != "ok":
-            out.append(f"| {r['module']} | — | {r['status']} | — | — |")
+            out.append(f"| {r['module']} | — | {r['status']} | — | — | — | — | — |")
             continue
         imp = f"{r['cold_import_ms']:.1f} ms" if r["cold_import_ms"] is not None else "—"
+        fresh_import = (
+            f"{r['fresh_cold_import_ms']:.1f} ms"
+            if r.get("fresh_cold_import_ms") is not None
+            else "—"
+        )
         out.append(
             f"| {r['module']} | {r['version'] or '—'} | {imp} "
-            f"| {_fmt_bytes(r['dist_bytes'])} | {r['dist_files'] or '—'} |"
+            f"| {_fmt_bytes(r['dist_bytes'])} | {r['dist_files'] or '—'} "
+            f"| {_fmt_bytes(r.get('fresh_site_bytes'))} | {r.get('fresh_dist_count') or '—'} "
+            f"| {fresh_import} |"
         )
     return "\n".join(out)
 
@@ -187,6 +267,11 @@ def main() -> None:
         help="comma-separated import names to override the default competitor set",
     )
     ap.add_argument("--repeat", type=int, default=5)
+    ap.add_argument(
+        "--fresh-venv",
+        action="store_true",
+        help="install each target into an isolated uv venv and include transitive footprint",
+    )
     ap.add_argument("--json", default=None, help="write JSON results here")
     args = ap.parse_args()
 
@@ -195,7 +280,7 @@ def main() -> None:
     else:
         targets = DEFAULT_TARGETS
 
-    report = run(targets, args.repeat)
+    report = run(targets, args.repeat, fresh_venv=args.fresh_venv)
     print(to_markdown(report))
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:

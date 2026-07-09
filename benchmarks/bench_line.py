@@ -25,6 +25,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from benchmarks._browser import chart_ready_metrics  # noqa: E402
 from benchmarks.bench_vs import _measure, np  # noqa: E402
 from categories import BENCHMARK_CATEGORIES, categories_for  # noqa: E402
 from environment import SCHEMA_VERSION, collect_environment_metadata  # noqa: E402
@@ -52,7 +53,7 @@ def make_fastcharts(x, y):
         return Figure(width=900, height=420).line(x, y)
 
     def render(fig):
-        _spec, blob = fig.build_payload()  # M4-decimated for large N (§5 Tier 1)
+        _spec, blob = fig.build_payload(N_OUT)  # same on-screen sample budget as resampler
         return len(blob)
 
     return build, render, (lambda fig: fig.to_html())
@@ -101,29 +102,71 @@ ADAPTERS = {
 
 
 def _extrema_ok(x, y) -> bool:
-    """M4 oracle (methodology §2): fastcharts' decimated line must retain the
-    global y min/max rows — losing an extremum is the classic decimation lie."""
+    """M4 oracle: every populated pixel bucket must retain its y min and max."""
     try:
         from fastcharts import Figure
     except ImportError:
-        return True  # can't check without the lib; not a failure of the oracle
+        return False
     fig = Figure(width=900, height=420).line(x, y)
-    spec, blob = fig.build_payload()
+    spec, blob = fig.build_payload(N_OUT)
     tr = spec["traces"][0]
-    if not isinstance(tr.get("y"), int):
-        return True
-    c = spec["columns"][tr["y"]]
-    ys = np.frombuffer(blob, np.float32, count=c["len"], offset=c["byte_offset"])
-    ys = ys.astype(np.float64) / c["scale"] + c["offset"]
-    finite = y[np.isfinite(y)]
-    if not len(finite) or not len(ys):
-        return True
-    # decimated extrema within a tolerance of the true extrema (f32 slack)
-    tol = (finite.max() - finite.min()) * 1e-4 + 1e-6
-    return abs(ys.max() - finite.max()) <= tol and abs(ys.min() - finite.min()) <= tol
+    if tr.get("tier") != "decimated" or not all(isinstance(tr.get(k), int) for k in ("x", "y")):
+        return False
+
+    def decode(ref: int) -> np.ndarray:
+        column = spec["columns"][ref]
+        values = np.frombuffer(
+            blob, np.float32, count=column["len"], offset=column["byte_offset"]
+        ).astype(np.float64)
+        return values / column.get("scale", 1.0) + column.get("offset", 0.0)
+
+    xs = decode(tr["x"])
+    ys = decode(tr["y"])
+    finite = np.isfinite(x) & np.isfinite(y)
+    if not bool(np.any(finite)):
+        return len(xs) == 0
+    source_x = x[finite]
+    source_y = y[finite]
+    x0, x1 = sorted(fig.x_range())
+    span = x1 - x0
+    if span <= 0 or not len(xs):
+        return False
+
+    def buckets(values: np.ndarray) -> np.ndarray:
+        return np.clip(((values - x0) / span * N_OUT).astype(np.int64), 0, N_OUT - 1)
+
+    expected_min = np.full(N_OUT, np.inf)
+    expected_max = np.full(N_OUT, -np.inf)
+    actual_min = np.full(N_OUT, np.inf)
+    actual_max = np.full(N_OUT, -np.inf)
+    np.minimum.at(expected_min, buckets(source_x), source_y)
+    np.maximum.at(expected_max, buckets(source_x), source_y)
+    # Re-associate encoded f32 x values with the nearest canonical row before
+    # assigning buckets. A point exactly on a bucket boundary can move by an ULP
+    # during wire encoding; that must not turn a correct M4 result into an oracle
+    # failure in the adjacent bucket.
+    positions = np.searchsorted(source_x, xs)
+    right = np.clip(positions, 0, len(source_x) - 1)
+    left = np.clip(positions - 1, 0, len(source_x) - 1)
+    nearest = np.where(np.abs(source_x[left] - xs) <= np.abs(source_x[right] - xs), left, right)
+    actual_buckets = buckets(source_x[nearest])
+    np.minimum.at(actual_min, actual_buckets, ys)
+    np.maximum.at(actual_max, actual_buckets, ys)
+    populated = np.isfinite(expected_min)
+    tol = (float(source_y.max()) - float(source_y.min())) * 1e-4 + 1e-6
+    return bool(
+        np.all(np.abs(actual_min[populated] - expected_min[populated]) <= tol)
+        and np.all(np.abs(actual_max[populated] - expected_max[populated]) <= tol)
+    )
 
 
-def run(sizes: list[int]) -> dict:
+def run(
+    sizes: list[int],
+    *,
+    ttfr: bool = False,
+    ttfr_max_n: int = 100_000,
+    chromium: str | None = None,
+) -> dict:
     if np is None:
         raise SystemExit("numpy is required to generate the time series")
     results: dict[str, list[dict]] = {name: [] for name in ADAPTERS}
@@ -137,15 +180,30 @@ def run(sizes: list[int]) -> dict:
                 row["status"] = "unavailable"
                 results[name].append(row)
                 continue
-            build, render, _artifact = adapter
+            build, render, artifact = adapter
             try:
-                row.update(_measure(build, render, None))
-                row.pop("_artifact", None)
+                row.update(_measure(build, render, artifact if ttfr and n <= ttfr_max_n else None))
+                html = row.pop("_artifact", None)
+                if html:
+                    browser = chart_ready_metrics(html, chromium=chromium)
+                    ready = None if browser is None else browser["ready_ms"]
+                    row["browser_ready_ms"] = ready
+                    row["browser_fcp_ms"] = None if browser is None else browser["fcp_ms"]
+                    row["browser_js_heap_bytes"] = (
+                        None if browser is None else browser["js_heap_bytes"]
+                    )
+                    artifact_s = row.get("artifact_s")
+                    row["ttfr_ms"] = (
+                        (row["build_s"] + artifact_s) * 1e3 + ready
+                        if ready is not None and artifact_s is not None
+                        else None
+                    )
             except Exception as e:
                 row["status"] = f"failed({type(e).__name__}: {str(e)[:80]})"
             row["pts_per_s"] = (n / row["total_s"]) if row.get("total_s") else None
             if name == "fastcharts":
                 row["extrema_oracle"] = "pass" if oracle else "FAIL"
+                row["oracle_kind"] = "per-pixel-column-minmax"
             results[name].append(row)
         del x, y
     return {
@@ -155,6 +213,8 @@ def run(sizes: list[int]) -> dict:
         "tracked_categories": categories_for(LINE_CATEGORY_IDS),
         "sizes": sizes,
         "n_out": N_OUT,
+        "ttfr": ttfr,
+        "ttfr_max_n": ttfr_max_n,
         "results": results,
     }
 
@@ -178,8 +238,8 @@ def to_markdown(report: dict) -> str:
         "points. Payload = bytes the browser must receive; fastcharts ships the "
         "M4-decimated f32 blob, Plotly ships HTML+data.",
         "",
-        "| N | library | prep | payload | extrema oracle |",
-        "|---:|---|---:|---:|:--:|",
+        "| N | library | prep | payload | interactive TTFR | chart ready | extrema oracle |",
+        "|---:|---|---:|---:|---:|---:|:--:|",
     ]
     for n in report["sizes"]:
         for name in ADAPTERS:
@@ -188,11 +248,18 @@ def to_markdown(report: dict) -> str:
                 {"status": "missing"},
             )
             if row.get("status") != "ok":
-                out.append(f"| {n:,} | {name} | {row.get('status', '—')} | — | — |")
+                out.append(f"| {n:,} | {name} | {row.get('status', '—')} | — | — | — | — |")
                 continue
             prep = f"{row['total_s'] * 1e3:.1f} ms"
+            ttfr = f"{row['ttfr_ms']:.1f} ms" if row.get("ttfr_ms") is not None else "—"
+            ready = (
+                f"{row['browser_ready_ms']:.1f} ms"
+                if row.get("browser_ready_ms") is not None
+                else "—"
+            )
             out.append(
                 f"| {n:,} | {name} | {prep} | {_fmt_bytes(row.get('out_bytes'))} "
+                f"| {ttfr} | {ready} "
                 f"| {row.get('extrema_oracle', '—')} |"
             )
     return "\n".join(out)
@@ -202,9 +269,17 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sizes", default="1e5,1e6,1e7")
     ap.add_argument("--json", default=None)
+    ap.add_argument("--ttfr", action="store_true")
+    ap.add_argument("--ttfr-max-n", type=float, default=1e5)
+    ap.add_argument("--chromium", default=None)
     args = ap.parse_args()
     sizes = [int(float(s)) for s in args.sizes.split(",")]
-    report = run(sizes)
+    report = run(
+        sizes,
+        ttfr=args.ttfr,
+        ttfr_max_n=int(args.ttfr_max_n),
+        chromium=args.chromium,
+    )
     print(to_markdown(report))
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:

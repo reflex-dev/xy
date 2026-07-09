@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _browser import first_paint_ms  # noqa: E402
+from _browser import chart_ready_metrics  # noqa: E402
 from categories import BENCHMARK_CATEGORIES, categories_for, markdown_category_table  # noqa: E402
 from environment import SCHEMA_VERSION, collect_environment_metadata  # noqa: E402
 
@@ -89,6 +89,7 @@ def _json_bytes(obj: Any) -> int:
 
 def _measure(
     library: str,
+    family: str,
     build: Callable[[], Any],
     payload: Callable[[Any], int],
     artifact: Callable[[Any], str] | None,
@@ -114,6 +115,34 @@ def _measure(
     t2 = time.perf_counter()
     rss1 = _rss_mb()
 
+    mode = "direct"
+    oracle_kind = "successful-chart-construction"
+    if library == "fastcharts":
+        oracle_spec, _oracle_blob = fig.build_payload()
+        traces = oracle_spec.get("traces", [])
+        expected_kind = {
+            "histogram": "histogram",
+            "area": "area",
+            "bar": "bar",
+            "grouped_bar": "bar",
+            "stacked_bar": "column",
+            "heatmap": "heatmap",
+        }[family]
+        trace_kinds = {str(trace.get("kind")) for trace in traces}
+        if trace_kinds != {expected_kind}:
+            raise AssertionError(
+                f"fastcharts {family} emitted trace kinds {trace_kinds}, expected {expected_kind!r}"
+            )
+        tiers = {str(trace.get("tier")) for trace in traces}
+        if not tiers or any(
+            tier not in {"direct", "decimated", "density", "sampled"} for tier in tiers
+        ):
+            raise AssertionError(f"invalid or undisclosed fastcharts reduction tiers: {tiers}")
+        mode = next(iter(tiers)) if len(tiers) == 1 else "adaptive"
+        oracle_kind = "family-reduction-and-mark-count"
+        if any(int(trace.get("n_marks", 0)) <= 0 for trace in traces):
+            raise AssertionError("fastcharts core-2D trace has no rendered marks")
+
     row = {
         "library": library,
         "build_s": t1 - t0,
@@ -121,24 +150,44 @@ def _measure(
         "total_s": t2 - t0,
         "payload_bytes": payload_bytes,
         "status": "ok",
+        "mode": mode,
+        "render_target": {
+            "fastcharts": "binary-spec",
+            "plotly": "json-spec",
+            "seaborn": "png-agg",
+        }[library],
+        "oracle_status": "pass",
+        "oracle_kind": oracle_kind,
     }
 
     html = None
+    artifact_s = None
     if artifact is None:
         row["artifact_status"] = "raster"
         row["html_bytes"] = None
     else:
         try:
+            ta0 = time.perf_counter()
             html = artifact(fig)
+            artifact_s = time.perf_counter() - ta0
             row["html_bytes"] = len(html.encode("utf-8"))
         except Exception as e:
             row["artifact_status"] = f"failed({type(e).__name__}: {str(e)[:100]})"
             row["html_bytes"] = None
 
     if ttfr and html:
-        paint_ms = first_paint_ms(html, chromium=chromium)
-        row["browser_paint_ms"] = paint_ms
-        row["ttfr_ms"] = row["total_s"] * 1e3 + paint_ms if paint_ms is not None else None
+        browser = chart_ready_metrics(html, chromium=chromium)
+        ready_ms = None if browser is None else browser["ready_ms"]
+        row["artifact_s"] = artifact_s
+        row["browser_ready_ms"] = ready_ms
+        row["browser_fcp_ms"] = None if browser is None else browser["fcp_ms"]
+        row["browser_js_heap_bytes"] = None if browser is None else browser["js_heap_bytes"]
+        row["browser_paint_ms"] = ready_ms  # schema-v2 compatibility
+        row["ttfr_ms"] = (
+            (row["build_s"] + artifact_s) * 1e3 + ready_ms
+            if ready_ms is not None and artifact_s is not None
+            else None
+        )
     elif ttfr and artifact is None:
         row["browser_paint_ms"] = 0.0
         row["ttfr_ms"] = row["total_s"] * 1e3
@@ -168,6 +217,7 @@ def _measure(
 def _measure_or_unavailable(
     row: dict[str, Any],
     library: str,
+    family: str,
     build: Callable[[], Any] | None,
     payload: Callable[[Any], int],
     artifact: Callable[[Any], str] | None,
@@ -182,6 +232,7 @@ def _measure_or_unavailable(
         row.update(
             _measure(
                 library,
+                family,
                 build,
                 payload,
                 artifact,
@@ -635,6 +686,7 @@ def run(
             _measure_or_unavailable(
                 row,
                 library,
+                case.family,
                 build,
                 _payload_for(library),
                 _artifact_for(library),

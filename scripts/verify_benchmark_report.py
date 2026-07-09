@@ -25,6 +25,7 @@ KNOWN_KINDS = (
     "kernel-native",
     "interaction-browser",
     "dashboard-browser",
+    "workflow-native",
     "line-decimation",
     "install-footprint",
 )
@@ -48,6 +49,19 @@ INTERACTION_REQUIRED_SCENARIOS = (
     "heatmap_39600_interaction",
 )
 INTERACTION_REQUIRED_FAMILIES = ("line", "histogram", "bar", "heatmap")
+WORKFLOW_REQUIRED_SCENARIOS = {
+    "ingest_numpy_f64_contiguous",
+    "ingest_numpy_f32_conversion",
+    "ingest_numpy_f64_noncontiguous",
+    "ingest_datetime64_axis",
+    "ingest_python_lists",
+    "stream_line_append_1k",
+    "stream_density_append_then_pyramid_rebuild",
+    "export_html_decimated_line",
+    "export_svg_decimated_line",
+    "export_png_native_decimated_line",
+}
+DASHBOARD_REQUIRED_COUNTS = {10, 20, 50}
 
 
 def _is_number(value: Any) -> bool:
@@ -164,6 +178,7 @@ def _validate_environment(report: dict[str, Any], errors: list[str]) -> None:
             "package_versions",
             "executables",
             "fastcharts_backend",
+            "browser_renderer",
             "git",
         },
         "environment",
@@ -207,6 +222,8 @@ def _validate_environment(report: dict[str, Any], errors: list[str]) -> None:
         errors,
         required_keys={"fastcharts"},
     )
+    if env.get("browser_renderer") not in {"software-gl", "hardware"}:
+        errors.append("environment.browser_renderer must be 'software-gl' or 'hardware'")
     _validate_string_or_none_mapping(
         env.get("executables"),
         "environment.executables",
@@ -305,7 +322,7 @@ def _require_native_backend(report: dict[str, Any], kind: str, errors: list[str]
 
 def _detect_kind(report: dict[str, Any]) -> str:
     declared = report.get("kind")
-    if declared in {"interaction-browser", "dashboard-browser"}:
+    if declared in {"interaction-browser", "dashboard-browser", "workflow-native"}:
         return str(declared)
     if "results" in report and "ceilings" in report:
         return "scatter-vs"
@@ -366,6 +383,8 @@ def _validate_scatter_vs(report: dict[str, Any], errors: list[str]) -> None:
     if not isinstance(ceilings, dict):
         errors.append("ceilings must be an object")
         ceilings = {}
+    if "fastcharts" not in results:
+        errors.append("results must include fastcharts")
     for library, rows in results.items():
         if not isinstance(rows, list) or not rows:
             errors.append(f"results[{library!r}] must be a non-empty list")
@@ -386,11 +405,34 @@ def _validate_scatter_vs(report: dict[str, Any], errors: list[str]) -> None:
                     errors.append(f"ceilings[{library!r}] must be a finite number or null")
                 elif ceiling < 0:
                     errors.append(f"ceilings[{library!r}] must be >= 0")
+        row_sizes = {
+            row.get("n") for row in rows if isinstance(row, dict) and _is_number(row.get("n"))
+        }
+        if isinstance(sizes, list) and row_sizes != set(sizes):
+            errors.append(
+                f"results[{library!r}] sizes must exactly match report.sizes; "
+                f"got {sorted(row_sizes)}, expected {sorted(sizes)}"
+            )
         for i, row in enumerate(rows):
             path = f"results[{library!r}][{i}]"
             _validate_scatter_vs_row(row, path, errors)
             if isinstance(row, dict) and row.get("library") != library:
                 errors.append(f"{path}.library must match enclosing results key {library!r}")
+        if isinstance(ceilings, dict) and library in ceilings:
+            eligible = [
+                row["n"]
+                for row in rows
+                if isinstance(row, dict)
+                and _status_kind(row.get("status")) == "ok"
+                and _is_number(row.get("total_s"))
+                and row["total_s"] <= report["budget_s"]
+            ]
+            expected_ceiling = max(eligible) if eligible else None
+            if ceilings[library] != expected_ceiling:
+                errors.append(
+                    f"ceilings[{library!r}] must be the largest successful N within budget; "
+                    f"got {ceilings[library]!r}, expected {expected_ceiling!r}"
+                )
 
 
 def _validate_scatter_vs_row(row: Any, path: str, errors: list[str]) -> None:
@@ -402,9 +444,31 @@ def _validate_scatter_vs_row(row: Any, path: str, errors: list[str]) -> None:
     if not status:
         errors.append(f"{path}.status has unknown value {row.get('status')!r}")
     if status == "ok":
+        _require_keys(
+            row,
+            {"mode", "render_target", "oracle_status", "oracle_kind"},
+            path,
+            errors,
+        )
+        if row.get("mode") not in {"direct", "density", "sampled", "adaptive"}:
+            errors.append(f"{path}.mode has unknown value {row.get('mode')!r}")
+        _require_string_value(row.get("render_target"), f"{path}.render_target", errors)
+        if row.get("oracle_status") != "pass":
+            errors.append(f"{path}.oracle_status must be 'pass'")
+        _require_string_value(row.get("oracle_kind"), f"{path}.oracle_kind", errors)
+        if row.get("mode") == "density":
+            _require_positive_integer(row, "aggregate_width", path, errors)
+            _require_positive_integer(row, "aggregate_height", path, errors)
         for key in ("build_s", "render_s", "total_s", "peak_mem_mb", "out_bytes", "pts_per_s"):
             _require_nonnegative_number(row, key, path, errors)
-        for key in ("browser_paint_ms", "ttfr_ms"):
+        for key in (
+            "artifact_s",
+            "browser_ready_ms",
+            "browser_fcp_ms",
+            "browser_js_heap_bytes",
+            "browser_paint_ms",
+            "ttfr_ms",
+        ):
             _require_optional_nonnegative_number(row, key, path, errors)
 
 
@@ -416,6 +480,8 @@ def _validate_line_decimation(report: dict[str, Any], errors: list[str]) -> None
             "tracked_categories",
             "sizes",
             "n_out",
+            "ttfr",
+            "ttfr_max_n",
             "results",
         },
         "report",
@@ -432,6 +498,9 @@ def _validate_line_decimation(report: dict[str, Any], errors: list[str]) -> None
             elif size <= 0:
                 errors.append(f"sizes[{i}] must be > 0")
     _require_positive_number(report, "n_out", "report", errors)
+    if not isinstance(report.get("ttfr"), bool):
+        errors.append("report.ttfr must be a boolean")
+    _require_positive_number(report, "ttfr_max_n", "report", errors)
     results = report.get("results")
     if not isinstance(results, dict) or not results:
         errors.append("results must be a non-empty object")
@@ -468,8 +537,20 @@ def _validate_line_decimation_row(row: Any, path: str, errors: list[str]) -> Non
     if status == "ok":
         for key in ("build_s", "render_s", "total_s", "peak_mem_mb", "out_bytes", "pts_per_s"):
             _require_nonnegative_number(row, key, path, errors)
+        for key in (
+            "artifact_s",
+            "browser_ready_ms",
+            "browser_fcp_ms",
+            "browser_js_heap_bytes",
+            "ttfr_ms",
+        ):
+            _require_optional_nonnegative_number(row, key, path, errors)
         if row.get("library") == "fastcharts" and oracle != "pass":
             errors.append(f"{path}.extrema_oracle must pass for fastcharts")
+        if row.get("library") == "fastcharts" and row.get("oracle_kind") != (
+            "per-pixel-column-minmax"
+        ):
+            errors.append(f"{path}.oracle_kind must be 'per-pixel-column-minmax' for fastcharts")
 
 
 def _validate_install_footprint(report: dict[str, Any], errors: list[str]) -> None:
@@ -479,6 +560,7 @@ def _validate_install_footprint(report: dict[str, Any], errors: list[str]) -> No
             "benchmark_categories",
             "tracked_categories",
             "repeat",
+            "fresh_venv",
             "python",
             "results",
         },
@@ -487,6 +569,8 @@ def _validate_install_footprint(report: dict[str, Any], errors: list[str]) -> No
     )
     _validate_categories(report, errors)
     _require_positive_number(report, "repeat", "report", errors)
+    if not isinstance(report.get("fresh_venv"), bool):
+        errors.append("report.fresh_venv must be a boolean")
     _require_string_value(report.get("python"), "python", errors)
     results = report.get("results")
     if not isinstance(results, list) or not results:
@@ -500,7 +584,13 @@ def _validate_install_footprint(report: dict[str, Any], errors: list[str]) -> No
         errors=errors,
     )
     for i, row in enumerate(results):
-        _validate_install_footprint_row(row, f"results[{i}]", errors)
+        path = f"results[{i}]"
+        _validate_install_footprint_row(row, path, errors)
+        if report.get("fresh_venv") is True and isinstance(row, dict) and row.get("status") == "ok":
+            for key in ("fresh_install_ms", "fresh_cold_import_ms", "fresh_site_bytes"):
+                _require_nonnegative_number(row, key, path, errors)
+            for key in ("fresh_site_files", "fresh_dist_count"):
+                _require_positive_integer(row, key, path, errors)
 
 
 def _validate_install_footprint_row(row: Any, path: str, errors: list[str]) -> None:
@@ -515,6 +605,12 @@ def _validate_install_footprint_row(row: Any, path: str, errors: list[str]) -> N
     _require_optional_nonnegative_number(row, "cold_import_ms", path, errors)
     _require_optional_nonnegative_number(row, "dist_bytes", path, errors)
     _require_optional_positive_integer(row, "dist_files", path, errors)
+    _require_optional_nonnegative_number(row, "fresh_install_ms", path, errors)
+    _require_optional_nonnegative_number(row, "fresh_cold_import_ms", path, errors)
+    _require_optional_nonnegative_number(row, "fresh_site_bytes", path, errors)
+    _require_optional_positive_integer(row, "fresh_site_files", path, errors)
+    _require_optional_positive_integer(row, "fresh_dist_count", path, errors)
+    _require_optional_string_value(row.get("fresh_note"), f"{path}.fresh_note", errors)
     status = _status_kind(row.get("status"))
     if not status:
         errors.append(f"{path}.status has unknown value {row.get('status')!r}")
@@ -575,9 +671,30 @@ def _validate_core_2d_row(row: Any, path: str, errors: list[str]) -> None:
     if not status:
         errors.append(f"{path}.status has unknown value {row.get('status')!r}")
     if status == "ok":
+        _require_keys(
+            row,
+            {"mode", "render_target", "oracle_status", "oracle_kind"},
+            path,
+            errors,
+        )
+        if row.get("mode") not in {"direct", "decimated", "density", "sampled", "adaptive"}:
+            errors.append(f"{path}.mode has unknown value {row.get('mode')!r}")
+        _require_string_value(row.get("render_target"), f"{path}.render_target", errors)
+        if row.get("oracle_status") != "pass":
+            errors.append(f"{path}.oracle_status must be 'pass'")
+        _require_string_value(row.get("oracle_kind"), f"{path}.oracle_kind", errors)
         for key in ("build_s", "payload_s", "total_s", "payload_bytes", "peak_mem_mb"):
             _require_nonnegative_number(row, key, path, errors)
-        for key in ("html_bytes", "browser_paint_ms", "ttfr_ms", "units_per_s"):
+        for key in (
+            "html_bytes",
+            "artifact_s",
+            "browser_ready_ms",
+            "browser_fcp_ms",
+            "browser_js_heap_bytes",
+            "browser_paint_ms",
+            "ttfr_ms",
+            "units_per_s",
+        ):
             _require_optional_nonnegative_number(row, key, path, errors)
 
 
@@ -604,7 +721,17 @@ def _validate_core_2d_comparison(comparison: Any, path: str, errors: list[str]) 
 
 def _validate_scatter_native(report: dict[str, Any], errors: list[str]) -> None:
     _require_native_backend(report, "scatter-native", errors)
-    _require_keys(report, {"benchmark_categories", "tracked_categories", "rows"}, "report", errors)
+    _require_keys(
+        report,
+        {"measurement_scope", "benchmark_categories", "tracked_categories", "rows"},
+        "report",
+        errors,
+    )
+    scope = report.get("measurement_scope")
+    if scope not in {"native-kernel-shape", "production-figure-payload"}:
+        errors.append(
+            "report.measurement_scope must be 'native-kernel-shape' or 'production-figure-payload'"
+        )
     category_ids = _validate_categories(report, errors)
     rows = report.get("rows")
     if not isinstance(rows, list) or not rows:
@@ -640,6 +767,11 @@ def _validate_scatter_native(report: dict[str, Any], errors: list[str]) -> None:
         _require_positive_number(row, "n", path, errors)
         for key in ("data_prep_ms", "wire_bytes", "wire_bytes_per_point", "pts_per_s"):
             _require_nonnegative_number(row, key, path, errors)
+        if scope == "production-figure-payload":
+            if row.get("measurement_scope") != scope:
+                errors.append(f"{path}.measurement_scope must match report.measurement_scope")
+            if row.get("oracle_status") != "pass":
+                errors.append(f"{path}.oracle_status must be 'pass' for production payload rows")
         categories = row.get("benchmark_categories")
         if not isinstance(categories, list) or not categories:
             errors.append(f"{path}.benchmark_categories must be a non-empty list")
@@ -749,6 +881,7 @@ def _validate_interaction_browser(report: dict[str, Any], errors: list[str]) -> 
         report,
         {
             "kind",
+            "measurement_scope",
             "benchmark_categories",
             "tracked_categories",
             "rows",
@@ -762,6 +895,10 @@ def _validate_interaction_browser(report: dict[str, Any], errors: list[str]) -> 
     )
     if report.get("kind") != "interaction-browser":
         errors.append("report.kind must be 'interaction-browser'")
+    if report.get("measurement_scope") != "standalone-client-input-to-pixel-readback":
+        errors.append(
+            "report.measurement_scope must be 'standalone-client-input-to-pixel-readback'"
+        )
     _require_positive_integer(report, "reps", "report", errors)
     declared_reps = report.get("reps") if isinstance(report.get("reps"), int) else None
     _require_positive_integer(report, "tooltip_sample_count", "report", errors)
@@ -883,7 +1020,7 @@ def _validate_interaction_browser(report: dict[str, Any], errors: list[str]) -> 
                     f"{row['tooltip_visible_samples']!r}"
                 )
             for prefix in ("wheel_zoom", "pan", "hover", "crosshair", "box_zoom", "brush_select"):
-                for suffix in ("median_ms", "p95_ms", "max_ms"):
+                for suffix in ("median_ms", "p95_ms", "p99_ms", "max_ms"):
                     _require_nonnegative_number(row, f"{prefix}_{suffix}", path, errors)
                 reps_key = f"{prefix}_reps"
                 _require_positive_integer(row, reps_key, path, errors)
@@ -969,7 +1106,14 @@ def _validate_interaction_visual_budget_block(
 def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> None:
     _require_keys(
         report,
-        {"kind", "benchmark_categories", "tracked_categories", "rows"},
+        {
+            "kind",
+            "benchmark_categories",
+            "tracked_categories",
+            "attempted_chart_counts",
+            "chart_count_ceiling",
+            "rows",
+        },
         "report",
         errors,
     )
@@ -1012,9 +1156,115 @@ def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> No
             errors.append(f"{path}.status has unknown value {row.get('status')!r}")
         _validate_browser_category_list(row, path, category_ids, errors)
         if status == "ok":
-            for key in ("render_ms", "ms_per_chart"):
+            for key in (
+                "render_ms",
+                "ms_per_chart",
+                "payload_prep_ms",
+                "navigation_ready_ms",
+                "steady_redraw_p95_ms",
+            ):
                 _require_nonnegative_number(row, key, path, errors)
             _require_positive_number(row, "nonblank_charts", path, errors)
+            if row.get("nonblank_charts") != row.get("chart_count"):
+                errors.append(f"{path}.nonblank_charts must equal chart_count")
+            for key in ("js_heap_before_bytes", "js_heap_bytes"):
+                _require_optional_nonnegative_number(row, key, path, errors)
+            delta = row.get("js_heap_delta_bytes")
+            if delta is not None and not _is_number(delta):
+                errors.append(f"{path}.js_heap_delta_bytes must be a finite number or null")
+    attempted_counts = {row.get("chart_count") for row in rows if isinstance(row, dict)}
+    missing_counts = sorted(DASHBOARD_REQUIRED_COUNTS - attempted_counts)
+    if missing_counts:
+        errors.append(f"dashboard report missing required attempted chart counts: {missing_counts}")
+    declared_attempts = report.get("attempted_chart_counts")
+    if not isinstance(declared_attempts, list) or set(declared_attempts) != attempted_counts:
+        errors.append("report.attempted_chart_counts must match dashboard row chart counts")
+    ok_counts = {
+        row.get("chart_count")
+        for row in rows
+        if isinstance(row, dict) and _status_kind(row.get("status")) == "ok"
+    }
+    expected_ceiling = max(ok_counts) if ok_counts else None
+    if report.get("chart_count_ceiling") != expected_ceiling:
+        errors.append(
+            "report.chart_count_ceiling must be the largest successful chart_count; "
+            f"got {report.get('chart_count_ceiling')!r}, expected {expected_ceiling!r}"
+        )
+
+
+def _validate_workflow_native(report: dict[str, Any], errors: list[str]) -> None:
+    _require_native_backend(report, "workflow-native", errors)
+    _require_keys(
+        report,
+        {"kind", "profile", "reps", "benchmark_categories", "tracked_categories", "rows"},
+        "report",
+        errors,
+    )
+    if report.get("kind") != "workflow-native":
+        errors.append("report.kind must be 'workflow-native'")
+    if report.get("profile") not in {"smoke", "standard"}:
+        errors.append("report.profile must be 'smoke' or 'standard'")
+    _require_positive_integer(report, "reps", "report", errors)
+    category_ids = _validate_categories(report, errors)
+    rows = report.get("rows")
+    if not isinstance(rows, list) or not rows:
+        errors.append("rows must be a non-empty list")
+        return
+    _reject_duplicate_rows(
+        rows,
+        path="rows",
+        keys=("scenario",),
+        label="workflow benchmark row",
+        errors=errors,
+    )
+    for i, row in enumerate(rows):
+        path = f"rows[{i}]"
+        _require_keys(
+            row,
+            {
+                "scenario",
+                "family",
+                "n",
+                "reps",
+                "median_ms",
+                "p95_ms",
+                "max_ms",
+                "output_bytes",
+                "peak_python_mb",
+                "scope",
+                "oracle_status",
+                "benchmark_categories",
+                "status",
+            },
+            path,
+            errors,
+        )
+        if not isinstance(row, dict):
+            continue
+        _require_string_value(row.get("scenario"), f"{path}.scenario", errors)
+        if row.get("family") not in {"ingestion", "streaming", "export"}:
+            errors.append(f"{path}.family has unknown value {row.get('family')!r}")
+        _require_positive_number(row, "n", path, errors)
+        _require_positive_integer(row, "reps", path, errors)
+        for key in ("median_ms", "p95_ms", "max_ms", "output_bytes", "peak_python_mb"):
+            _require_nonnegative_number(row, key, path, errors)
+        if row.get("family") == "ingestion":
+            _require_nonnegative_number(row, "ingest_copies", path, errors)
+            _require_positive_number(row, "canonical_bytes", path, errors)
+        _require_string_value(row.get("scope"), f"{path}.scope", errors)
+        if row.get("oracle_status") != "pass":
+            errors.append(f"{path}.oracle_status must be 'pass'")
+        if row.get("status") != "ok":
+            errors.append(f"{path}.status must be 'ok'")
+        _validate_browser_category_list(row, path, category_ids, errors)
+    scenarios = {
+        str(row.get("scenario"))
+        for row in rows
+        if isinstance(row, dict) and row.get("status") == "ok"
+    }
+    missing = sorted(WORKFLOW_REQUIRED_SCENARIOS - scenarios)
+    if missing:
+        errors.append(f"workflow report missing required ok scenarios: {missing}")
 
 
 def _report_rows(report: dict[str, Any], kind: str) -> list[dict[str, Any]]:
@@ -1125,6 +1375,8 @@ def validate_report(path: Path, *, kind: str = "auto") -> list[str]:
         _validate_interaction_browser(report, errors)
     elif selected == "dashboard-browser":
         _validate_dashboard_browser(report, errors)
+    elif selected == "workflow-native":
+        _validate_workflow_native(report, errors)
     else:
         errors.append(f"unknown benchmark report kind: {detected!r}")
     if kind != "auto" and detected != kind:

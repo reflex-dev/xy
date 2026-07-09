@@ -58,7 +58,7 @@ These must pass before publishing or making a broad performance claim.
 | Native wheel | Platform wheel contains package-only files, exactly one native library, `METADATA` version/dependencies matching `pyproject.toml`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
 | Fallback wheel | No-toolchain wheel contains package-only files, `METADATA` version/dependencies matching `pyproject.toml`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
 | Wheel size | Platform wheel remains small enough for notebook installs | CI budget: 15 MB |
-| Benchmark artifact | JSON benchmark reports carry schema, environment, categories, row status, and finite non-negative metrics; `scatter-native` and `kernel-native` reports must declare the native backend | `python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs`; repeat for `line.json --kind line-decimation`, `install.json --kind install-footprint`, `scatter.json --kind scatter-native`, and `kernel.json --kind kernel-native` |
+| Benchmark artifact | JSON benchmark reports carry schema, environment, categories, row status, and finite non-negative metrics; native reports must declare the native backend | `python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs`; repeat for line, install, core-2D, native, interaction, dashboard, and workflow artifacts |
 
 ## Standalone HTML Safety
 

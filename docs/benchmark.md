@@ -55,10 +55,13 @@ commit so CI artifacts are quick to inspect from logs.
 | `huge_scatter_overview` | Huge scatter overview | tracked | Proves screen-bounded rendering for datasets larger than the browser should draw point-for-point. | ingest/bin time, density payload size, peak memory, TTFR | `bench_scatter_native.py`, `bench_vs.py`, `test_first_payload_density_large`, example app assets | Keep resident/render payload flat in N while showing truthful density summaries. |
 | `adaptive_scatter_drilldown` | Adaptive scatter drilldown | tracked | The large-data claim needs a credible path from overview to exact visible points. | visible-query latency, tier-switch latency, exact-point recovery, badge accuracy | `benchmarks/test_codspeed_kernels.py::test_adaptive_drilldown_cycle` | Exact points when visible count is under budget; sampled/density with explicit counts otherwise. |
 | `huge_line_time_series` | Huge line / time series | tracked | Common observability and finance workload; Plotly-resampler sets the bar here. | decimation time, zoom re-decimation latency, TTFR, extrema preservation | `benchmarks/bench.py`, `bench_native.py`, `bench_interaction.py`, `test_decimate_view` | Screen-bounded line payloads with extrema-preserving decimation and fast zoom refresh. |
-| `many_chart_dashboards` | Many-chart dashboards | tracked | Plotly-class apps often fail from total page weight and many live canvases, not one chart. | total TTFR, memory, CPU after idle, number of charts before degradation | `benchmarks/bench_dashboard.py` | Load 10-50 interactive charts with lower total memory and faster first usable dashboard than Plotly/Bokeh. |
+| `many_chart_dashboards` | Many-chart dashboards | tracked | Plotly-class apps often fail from total page weight and many live canvases, not one chart. | payload prep, navigation readiness, JS heap, steady redraw, chart-count ceiling | `benchmarks/bench_dashboard.py` | Measure the 10-50 chart scaling curve and expose browser context ceilings. |
 | `interaction_smoothness` | Interaction smoothness | tracked | Users judge performance by pan/zoom/hover, not just export time. | pan/zoom FPS, wheel latency, hover latency, tooltip stability, selection latency, frame color delta | `benchmarks/bench_interaction.py` | Stay responsive during interaction, avoid blank/flickering frames, then refine view after interaction settles. |
 | `payload_export_size` | Payload/export size | tracked | Notebooks, static HTML, docs, and dashboards pay for every byte shipped. | standalone HTML bytes, binary payload bytes, bundle bytes | `bench_vs.py`, `bench_scatter_native.py`, `test_first_payload_density_large`, `test_memory_report_density_medium`, example app asset sizes | Keep data payloads binary and screen-bounded where possible; warn when exact export would be huge. |
 | `core_2d_chart_breadth` | Core 2D chart breadth | tracked | The library needs to stay fast beyond the scatter wedge: bars, histograms, areas, and heatmaps are everyday chart workloads. | payload-prep time, payload bytes, standalone HTML bytes, TTFR | `benchmarks/bench_2d_charts.py` smoke/standard profiles vs Plotly and Seaborn; `bench_interaction.py`; CodSpeed core-2D payload rows | Beat Plotly on user-visible first paint for common 2D charts while tracking Seaborn raster baselines where applicable. |
+| `input_ingestion` | Input ingestion | tracked | Real applications provide converted, strided, datetime, list, pandas, and Arrow inputs rather than only contiguous f64 arrays. | ingest latency, copies, peak Python memory | `benchmarks/bench_workflows.py` ingestion rows | Keep zero-copy inputs cheap and make unavoidable conversions visible. |
+| `streaming_updates` | Streaming updates | tracked | Monitoring and notebook workflows append repeatedly and can trigger payload refreshes or full pyramid rebuilds. | append latency, refresh bytes, post-append pyramid rebuild | `benchmarks/bench_workflows.py` streaming rows | Bound incremental update cost and expose rebuild stalls. |
+| `static_export` | Static export | tracked | HTML, SVG, and PNG have distinct serialization and browser costs. | export latency, output bytes, peak Python memory | `benchmarks/bench_workflows.py` export rows | Track each target independently without mixing browser and payload work. |
 
 Mode labels in benchmark output should stay explicit: `direct`, `decimated`,
 `density`, `sampled`, or `adaptive`. A 10M density result is a real large-data
@@ -71,8 +74,9 @@ CodSpeed is native-only and intentionally focused on hot paths that should not
 regress between commits. The suite asserts `fastcharts.kernels.BACKEND ==
 "native"` before timing anything. It tracks:
 
-- Rust kernels for f32 encoding, zone maps, M4 decimation, density binning,
-  histograms, normalization, and viewport range scans.
+- Rust kernels for f32 encoding, min/max, zone maps, M4 decimation, density
+  binning with/without visible indices, deterministic sampling, histograms,
+  normalization, viewport scans, and cold/warm pyramid operations.
 - Small/medium/large first-payload prep rows:
   `test_first_payload_scatter_small`,
   `test_first_payload_scatter_medium`,
@@ -110,12 +114,16 @@ PYTHONPATH=python .venv/bin/python benchmarks/bench_interaction.py \
   --sizes 1e4,1e5,1e6 --json interaction.json
 
 PYTHONPATH=python .venv/bin/python benchmarks/bench_dashboard.py \
-  --chart-counts 20 --json dashboard.json
+  --chart-counts 10,20,50 --json dashboard.json
+
+PYTHONPATH=python .venv/bin/python benchmarks/bench_workflows.py \
+  --profile standard --json workflows.json
 ```
 
-`bench_interaction.py` dispatches through the real `ChartView` zoom, pan, hover,
-crosshair, box-zoom, and brush-select paths. It warms first-use GPU/DOM work,
-records gesture percentiles, checks WebGL nonblank pixels, and emits an
+`bench_interaction.py` dispatches DOM wheel/pointer gestures through the real
+`ChartView` zoom, pan, hover, crosshair, box-zoom, and brush-select paths. It
+warms first-use GPU/DOM work, completes each sample with WebGL readback, records
+median/p95/p99/max, checks nonblank pixels, and emits an
 `interaction_budgets_ms` block for p95 limits. The scatter rows sweep the
 requested dataset sizes; the fixed core-family rows cover line, histogram, bar,
 and heatmap so interaction regressions are not scatter-only. The benchmark
@@ -133,11 +141,11 @@ value so short probes cannot masquerade as the configured budget run. The report
 also declares `tooltip_sample_count`, and eligible rows must report that exact
 `tooltip_visible_samples` count so a tooltip that appears once and then flickers
 away fails verification.
-`bench_dashboard.py` renders a mixed line/scatter/histogram/bar/heatmap
-dashboard on one page and reports total chart-to-pixels startup time. Both
-scripts emit schema-versioned JSON with environment metadata and benchmark
-category IDs; `scripts/verify_benchmark_report.py` accepts them as
-`interaction-browser` and `dashboard-browser` reports.
+`bench_dashboard.py` attempts 10/20/50 mixed dashboards and reports payload prep,
+navigation readiness, JS heap, steady-redraw p95, nonblank canvases, and the largest
+successful count. `bench_workflows.py` covers ingestion, streaming/pyramid
+invalidation, and separate HTML/SVG/native-PNG/Chromium-PNG export rows. All three emit schema-versioned JSON with
+environment metadata and benchmark category IDs.
 
 ## Copyable claim taxonomy
 
@@ -284,13 +292,19 @@ local-density lookup.
 | 1M | 3.05 ms | 3,187 Mpt/s | 0.48 ms | 3 ms | 1.11 ms / 200k |
 | 10M | 29.93 ms | 3,184 Mpt/s | 4.76 ms | 30 ms | 1.14 ms / 200k |
 
-The large scatter harness (`benchmarks/bench_scatter_native.py`) reported:
+The kernel-shape mode of `benchmarks/bench_scatter_native.py` reported the grid
+alone; it is not the production transport payload:
 
 | points | tier | data prep | wire bytes | browser render |
 |---:|---|---:|---:|---:|
 | 100k | direct | <0.1 ms | 781 KB | 78.5 ms |
 | 1M | density | 1.0 ms | 768 KB | 72.2 ms |
 | 10M | density | 10.6 ms | 768 KB | not remeasured; same density payload shape as 1M |
+
+CI regression gating now uses `--production`, which calls the real Figure
+payload compiler and includes compact spec metadata plus the sampled point
+overlay. The committed deterministic baseline is about 834–836 KB for 1M/10M,
+and the report carries a count-conservation oracle.
 
 > The kernel microbench numbers above predate the kernel-parallelization pass:
 > `bin_2d`, `histogram`, `m4`, `zone_maps`, `range_indices`, `normalize` now fan
@@ -344,6 +358,11 @@ bench_install.py`; best-of-5 fresh-interpreter import; distribution files only
 fastcharts imports 6–730× faster and is 40–75× smaller on disk than the
 mainstream libraries (the §33 import-budget goal, made comparative).
 
+The harness also has `--fresh-venv`, which installs each requested target into
+an isolated `uv` environment and reports total site-packages bytes, file count,
+transitive distribution count, install time, and cold import. CI runs this mode
+for fastcharts and Plotly alongside the faster distribution-only table above.
+
 ### Regression gate (auto-generated, CI-enforced)
 
 `scripts/check_regressions.py` runs every CI build against a committed baseline
@@ -380,6 +399,10 @@ cache). Verified by `scripts/png_export_smoke.py` (stdlib-only CI gate) and the
 
 Measured by the `benchmark-refresh` CI workflow on 2026-07-08 (Ubuntu, native
 Rust backend), all libraries in one consistent `benchmarks/bench_vs.py` run.
+The targets differ (binary payload prep versus Agg/Kaleido PNG), so this table
+is a scaling/memory comparison, not a same-render-target speedup claim. New
+interactive reports separately measure build + HTML serialization + chart-ready
+time and label each row's mode and target.
 
 | library | total time | peak memory | resident Δ | render payload | points/sec |
 |---|---|---|---|---|---|

@@ -108,6 +108,13 @@ def main() -> None:
 
     scatter = json.loads(Path(args.scatter).read_text()) if args.scatter else None
     kernel = json.loads(Path(args.kernel).read_text()) if args.kernel else None
+    if (
+        isinstance(scatter, dict)
+        and scatter.get("measurement_scope") != "production-figure-payload"
+    ):
+        raise SystemExit(
+            "scatter regression input must use benchmarks/bench_scatter_native.py --production"
+        )
     current = flatten(scatter, kernel)
     if not current:
         raise SystemExit("no metrics: pass --scatter and/or --kernel")
@@ -131,6 +138,7 @@ def main() -> None:
             continue
         if mid not in current:
             rows.append((mid, _fmt(base[mid]), "—", "missing"))
+            hard.append((mid, base[mid], "missing"))
             continue
         cmp, gate, tol = policy(mid)
         b, c = base[mid], current[mid]

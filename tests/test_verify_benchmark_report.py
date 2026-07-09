@@ -37,6 +37,7 @@ def _environment() -> dict:
         "package_versions": {"fastcharts": "0.1.0", "numpy": "2.0.0"},
         "executables": {"node": "v22.0.0", "rustc": "rustc 1.96.1", "cargo": "cargo 1.96.1"},
         "fastcharts_backend": "native",
+        "browser_renderer": "software-gl",
         "git": {"commit": "abc123", "branch": "main", "dirty": False},
     }
 
@@ -80,6 +81,10 @@ def _scatter_vs_report() -> dict:
         "peak_mem_mb": 1.0,
         "out_bytes": 8192,
         "pts_per_s": 333333.0,
+        "mode": "direct",
+        "render_target": "binary-spec",
+        "oracle_status": "pass",
+        "oracle_kind": "raw-row-count",
     }
     return {
         **_base(),
@@ -115,6 +120,10 @@ def _core_2d_report() -> dict:
                 "total_s": 0.003,
                 "payload_bytes": 4096,
                 "peak_mem_mb": 1.0,
+                "mode": "direct",
+                "render_target": "binary-spec",
+                "oracle_status": "pass",
+                "oracle_kind": "successful-chart-construction",
             },
             {
                 "family": "bar",
@@ -129,6 +138,10 @@ def _core_2d_report() -> dict:
                 "payload_bytes": 8192,
                 "peak_mem_mb": 2.0,
                 "artifact_status": "raster",
+                "mode": "direct",
+                "render_target": "png-agg",
+                "oracle_status": "pass",
+                "oracle_kind": "successful-chart-construction",
             },
         ],
         "comparisons": [
@@ -150,6 +163,7 @@ def _scatter_native_report() -> dict:
     categories, tracked = _category_registry("medium_direct_scatter", "huge_scatter_overview")
     return {
         **_base(),
+        "measurement_scope": "native-kernel-shape",
         "benchmark_categories": categories,
         "tracked_categories": tracked,
         "rows": [
@@ -179,6 +193,7 @@ def _line_decimation_report() -> dict:
         "out_bytes": 8192,
         "pts_per_s": 33_333_333.0,
         "extrema_oracle": "pass",
+        "oracle_kind": "per-pixel-column-minmax",
     }
     return {
         **_base(),
@@ -186,6 +201,8 @@ def _line_decimation_report() -> dict:
         "tracked_categories": tracked,
         "sizes": [100_000],
         "n_out": 2000,
+        "ttfr": False,
+        "ttfr_max_n": 100_000,
         "results": {"fastcharts": [row]},
     }
 
@@ -199,6 +216,7 @@ def _install_footprint_report() -> dict:
         "benchmark_categories": categories,
         "tracked_categories": tracked,
         "repeat": 5,
+        "fresh_venv": False,
         "python": "3.11.9",
         "results": [
             {
@@ -286,26 +304,32 @@ def _interaction_row(
         "tooltip_visible_samples": 8 if tooltip_eligible else 0,
         "wheel_zoom_median_ms": 4.0,
         "wheel_zoom_p95_ms": 7.0,
+        "wheel_zoom_p99_ms": 8.0,
         "wheel_zoom_max_ms": 9.0,
         "wheel_zoom_reps": 12,
         "pan_median_ms": 3.0,
         "pan_p95_ms": 6.0,
+        "pan_p99_ms": 6.5,
         "pan_max_ms": 7.0,
         "pan_reps": 12,
         "hover_median_ms": 2.0,
         "hover_p95_ms": 5.0,
+        "hover_p99_ms": 5.5,
         "hover_max_ms": 6.0,
         "hover_reps": 12,
         "crosshair_median_ms": 1.0,
         "crosshair_p95_ms": 3.0,
+        "crosshair_p99_ms": 3.5,
         "crosshair_max_ms": 4.0,
         "crosshair_reps": 12,
         "box_zoom_median_ms": 4.0,
         "box_zoom_p95_ms": 8.0,
+        "box_zoom_p99_ms": 9.0,
         "box_zoom_max_ms": 10.0,
         "box_zoom_reps": 12,
         "brush_select_median_ms": 6.0,
         "brush_select_p95_ms": 18.0,
+        "brush_select_p99_ms": 20.0,
         "brush_select_max_ms": 22.0,
         "brush_select_reps": 12,
     }
@@ -325,6 +349,7 @@ def _interaction_browser_report() -> dict:
     return {
         **_base(),
         "kind": "interaction-browser",
+        "measurement_scope": "standalone-client-input-to-pixel-readback",
         "benchmark_categories": categories,
         "tracked_categories": tracked,
         "interaction_budgets_ms": {
@@ -402,10 +427,12 @@ def _dashboard_browser_report() -> dict:
         "kind": "dashboard-browser",
         "benchmark_categories": categories,
         "tracked_categories": tracked,
+        "attempted_chart_counts": [10, 20, 50],
+        "chart_count_ceiling": 50,
         "rows": [
             {
-                "scenario": "dashboard_20",
-                "chart_count": 20,
+                "scenario": f"dashboard_{count}",
+                "chart_count": count,
                 "benchmark_categories": [
                     "many_chart_dashboards",
                     "small_data_startup",
@@ -414,10 +441,70 @@ def _dashboard_browser_report() -> dict:
                 "total_payload_bytes": 262_144,
                 "html_bytes": 524_288,
                 "status": "ok",
-                "render_ms": 140.0,
+                "render_ms": 7.0 * count,
                 "ms_per_chart": 7.0,
-                "nonblank_charts": 20,
+                "payload_prep_ms": 3.0 * count,
+                "navigation_ready_ms": 12.0 * count,
+                "steady_redraw_p95_ms": 16.7,
+                "js_heap_before_bytes": 1_000_000,
+                "js_heap_bytes": 2_000_000,
+                "js_heap_delta_bytes": 1_000_000,
+                "nonblank_charts": count,
             }
+            for count in (10, 20, 50)
+        ],
+    }
+
+
+def _workflow_native_report() -> dict:
+    categories, tracked = _category_registry(
+        "input_ingestion", "streaming_updates", "static_export"
+    )
+    scenarios = [
+        ("ingest_numpy_f64_contiguous", "ingestion", "input_ingestion"),
+        ("ingest_numpy_f32_conversion", "ingestion", "input_ingestion"),
+        ("ingest_numpy_f64_noncontiguous", "ingestion", "input_ingestion"),
+        ("ingest_datetime64_axis", "ingestion", "input_ingestion"),
+        ("ingest_python_lists", "ingestion", "input_ingestion"),
+        ("stream_line_append_1k", "streaming", "streaming_updates"),
+        (
+            "stream_density_append_then_pyramid_rebuild",
+            "streaming",
+            "streaming_updates",
+        ),
+        ("export_html_decimated_line", "export", "static_export"),
+        ("export_svg_decimated_line", "export", "static_export"),
+        ("export_png_native_decimated_line", "export", "static_export"),
+    ]
+    return {
+        **_base(),
+        "kind": "workflow-native",
+        "profile": "smoke",
+        "reps": 3,
+        "benchmark_categories": categories,
+        "tracked_categories": tracked,
+        "rows": [
+            {
+                "scenario": scenario,
+                "family": family,
+                "n": 10_000,
+                "reps": 3,
+                "median_ms": 1.0,
+                "p95_ms": 1.5,
+                "max_ms": 1.6,
+                "output_bytes": 1024,
+                "peak_python_mb": 2.0,
+                "scope": "public-operation",
+                "oracle_status": "pass",
+                "benchmark_categories": [category],
+                "status": "ok",
+                **(
+                    {"ingest_copies": 0, "canonical_bytes": 160_000}
+                    if family == "ingestion"
+                    else {}
+                ),
+            }
+            for scenario, family, category in scenarios
         ],
     }
 
@@ -431,6 +518,7 @@ def _dashboard_browser_report() -> dict:
         (_kernel_native_report(), "kernel-native"),
         (_interaction_browser_report(), "interaction-browser"),
         (_dashboard_browser_report(), "dashboard-browser"),
+        (_workflow_native_report(), "workflow-native"),
         (_line_decimation_report(), "line-decimation"),
         (_install_footprint_report(), "install-footprint"),
     ],
@@ -469,6 +557,46 @@ def test_benchmark_report_summary_groups_status_detail_by_status_class() -> None
     summary = verify_benchmark_report.summarize_report(payload, kind="scatter-vs")
 
     assert "statuses: ok:1, skipped:1" in summary
+
+
+def test_scatter_report_rejects_ceiling_above_budget(tmp_path: Path) -> None:
+    payload = _scatter_vs_report()
+    payload["results"]["fastcharts"][0]["total_s"] = 50.0
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="scatter-vs")
+
+    assert any("largest successful N within budget" in error for error in errors)
+
+
+def test_scatter_report_requires_mode_target_and_oracle(tmp_path: Path) -> None:
+    payload = _scatter_vs_report()
+    del payload["results"]["fastcharts"][0]["mode"]
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="scatter-vs")
+
+    assert any("mode" in error for error in errors)
+
+
+def test_dashboard_report_rejects_overstated_ceiling(tmp_path: Path) -> None:
+    payload = _dashboard_browser_report()
+    payload["rows"][-1]["status"] = "failed(context limit)"
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
+
+    assert any("chart_count_ceiling" in error for error in errors)
+
+
+def test_workflow_report_rejects_missing_required_scenario(tmp_path: Path) -> None:
+    payload = _workflow_native_report()
+    payload["rows"] = payload["rows"][1:]
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="workflow-native")
+
+    assert any("missing required ok scenarios" in error for error in errors)
 
 
 def test_verify_benchmark_report_cli_success_prints_summary(
@@ -566,6 +694,17 @@ def test_verify_benchmark_report_rejects_unknown_row_category(tmp_path: Path) ->
     errors = verify_benchmark_report.validate_report(path, kind="scatter-native")
 
     assert any("not_registered" in error for error in errors)
+
+
+def test_verify_benchmark_report_requires_production_scatter_oracle(tmp_path: Path) -> None:
+    payload = _scatter_native_report()
+    payload["measurement_scope"] = "production-figure-payload"
+    payload["rows"][0]["measurement_scope"] = "production-figure-payload"
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="scatter-native")
+
+    assert any("oracle_status must be 'pass'" in error for error in errors)
 
 
 @pytest.mark.parametrize(

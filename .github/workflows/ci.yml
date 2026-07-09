@@ -76,9 +76,15 @@ jobs:
       - name: Native benchmark (stdlib only — executed numbers, no PyPI needed)
         run: python3 scripts/bench_native.py --sizes 1e5,1e6
 
+      - name: Install package + dev deps
+        run: |
+          uv venv .venv
+          uv pip install -p .venv/bin/python -e ".[dev]"
+
       - name: Regression gate (deterministic payloads = hard fail; timing = advisory)
         run: |
-          python3 scripts/bench_scatter_native.py --sizes 1e5,1e6,1e7 --json scatter.json
+          .venv/bin/python benchmarks/bench_scatter_native.py \
+            --sizes 1e5,1e6,1e7 --production --json scatter.json
           python3 scripts/bench_native.py --sizes 1e6,1e7 --json kernel.json
           python3 scripts/verify_benchmark_report.py scatter.json --kind scatter-native
           python3 scripts/verify_benchmark_report.py kernel.json --kind kernel-native
@@ -95,11 +101,6 @@ jobs:
             docs/benchmark_metrics.md
             scatter.json
             kernel.json
-
-      - name: Install package + dev deps
-        run: |
-          uv venv .venv
-          uv pip install -p .venv/bin/python -e ".[dev]"
 
       - name: Public API coherence
         run: .venv/bin/python scripts/check_public_api.py
@@ -228,26 +229,41 @@ jobs:
             --ttfr --ttfr-max-n 1e5 --chromium "$CHROME" \
             --out docs/benchmark_ci.md --json benchmark.json
       - name: Line decimation vs plotly-resampler (methodology line_10M)
-        run: .venv/bin/python benchmarks/bench_line.py --sizes 1e5,1e6,1e7 --json line.json | tee -a docs/benchmark_ci.md
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python benchmarks/bench_line.py --sizes 1e5,1e6,1e7 \
+            --ttfr --ttfr-max-n 1e5 --chromium "$CHROME" --json line.json \
+            | tee -a docs/benchmark_ci.md
       - name: Install footprint & cold import (methodology §1)
         run: .venv/bin/python benchmarks/bench_install.py --json install.json | tee -a docs/benchmark_ci.md
+      - name: Fresh-environment footprint (fastcharts vs Plotly)
+        run: |
+          .venv/bin/python benchmarks/bench_install.py --packages fastcharts,plotly \
+            --repeat 3 --fresh-venv --json install-fresh.json | tee -a docs/benchmark_ci.md
+      - name: Ingestion, streaming, and export workflows
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python benchmarks/bench_workflows.py --profile standard --reps 5 \
+            --chromium "$CHROME" --json workflows.json | tee -a docs/benchmark_ci.md
       - name: Browser interaction latency (methodology interaction_smoothness)
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
           .venv/bin/python benchmarks/bench_interaction.py \
-            --sizes 1e4,2.5e5 --reps 8 --chromium "$CHROME" \
+            --sizes 1e4,2.5e5 --reps 24 --chromium "$CHROME" \
             --json interaction.json | tee -a docs/benchmark_ci.md
       - name: Many-chart dashboard startup (methodology dashboard_20)
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
           .venv/bin/python benchmarks/bench_dashboard.py \
-            --chart-counts 20 --chromium "$CHROME" \
+            --chart-counts 10,20,50 --chromium "$CHROME" \
             --json dashboard.json | tee -a docs/benchmark_ci.md
       - name: Verify benchmark JSON artifacts
         run: |
           .venv/bin/python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs
           .venv/bin/python scripts/verify_benchmark_report.py line.json --kind line-decimation
           .venv/bin/python scripts/verify_benchmark_report.py install.json --kind install-footprint
+          .venv/bin/python scripts/verify_benchmark_report.py install-fresh.json --kind install-footprint
+          .venv/bin/python scripts/verify_benchmark_report.py workflows.json --kind workflow-native
           .venv/bin/python scripts/verify_benchmark_report.py interaction.json --kind interaction-browser
           .venv/bin/python scripts/verify_benchmark_report.py dashboard.json --kind dashboard-browser
       - name: Show report
@@ -263,6 +279,8 @@ jobs:
             benchmark.json
             line.json
             install.json
+            install-fresh.json
+            workflows.json
             interaction.json
             dashboard.json
 

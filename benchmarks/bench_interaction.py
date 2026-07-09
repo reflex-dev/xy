@@ -43,12 +43,12 @@ INTERACTION_CATEGORY_IDS = (
 RENDER_W, RENDER_H = 900, 420
 TOOLTIP_SAMPLE_COUNT = 8
 INTERACTION_BUDGETS_MS = {
-    "wheel_zoom_p95_ms": 24.0,
-    "pan_p95_ms": 24.0,
-    "crosshair_p95_ms": 16.0,
-    "hover_p95_ms": 300.0,
-    "box_zoom_p95_ms": 32.0,
-    "brush_select_p95_ms": 120.0,
+    "wheel_zoom_p95_ms": 600.0,
+    "pan_p95_ms": 300.0,
+    "crosshair_p95_ms": 300.0,
+    "hover_p95_ms": 350.0,
+    "box_zoom_p95_ms": 300.0,
+    "brush_select_p95_ms": 200.0,
 }
 INTERACTION_VISUAL_BUDGETS = {
     # Normalized mean RGB delta between adjacent zoom frames. This is a guard
@@ -225,6 +225,8 @@ def _probe_js(reps: int) -> str:
     view._drawNow();
     const before = {{...view.view}};
     const canvasRect = () => view.canvas.getBoundingClientRect();
+    view.canvas.setPointerCapture = () => {{}};
+    view.canvas.releasePointerCapture = () => {{}};
     const eventAt = (fx, fy) => {{
       const r = canvasRect();
       return {{
@@ -260,13 +262,35 @@ def _probe_js(reps: int) -> str:
       }}
     }}
 
+    function settlePixels() {{
+      if (view._pendingWheelZoom) {{
+        const pending = view._pendingWheelZoom;
+        view._pendingWheelZoom = null;
+        if (view._wheelZoomRaf) cancelAnimationFrame(view._wheelZoomRaf);
+        view._wheelZoomRaf = null;
+        view._zoomAt(pending.factor, pending.fx, pending.fy, false);
+      }}
+      if (view._viewAnim) {{
+        const target = view._viewAnim.target;
+        view._cancelViewAnimation();
+        view.view = target;
+      }}
+      const gl = view.gl;
+      view._drawNow();
+      const pixel = new Uint8Array(4);
+      gl.readPixels(
+        Math.max(0, Math.floor(gl.drawingBufferWidth / 2)),
+        Math.max(0, Math.floor(gl.drawingBufferHeight / 2)),
+        1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel
+      );
+    }}
     function measure(fn, trackView = false) {{
       const values = [];
       for (let i = 0; i < {reps}; i++) {{
         const t0 = performance.now();
         fn(i);
         if (trackView) noteViewChanged();
-        view._drawNow();
+        settlePixels();
         values.push(performance.now() - t0);
       }}
       return fcStats(values);
@@ -489,15 +513,19 @@ def _probe_js(reps: int) -> str:
     }}
 
     const wheel = measure((i) => {{
-      view._zoomAt(i % 2 ? 1.04 : 0.96, 0.5, 0.5, false);
+      view.canvas.dispatchEvent(new WheelEvent("wheel", {{
+        bubbles: true,
+        cancelable: true,
+        deltaY: i % 2 ? 26 : -26,
+        ...eventAt(0.5, 0.5),
+      }}));
     }}, true);
     const pan = measure((i) => {{
-      const v = view.view;
-      const dx = (v.x1 - v.x0) * (i % 2 ? 0.012 : -0.012);
-      view._setView({{x0: v.x0 + dx, x1: v.x1 + dx, y0: v.y0, y1: v.y1}}, {{
-        animate: false,
-        request: false,
-      }});
+      const start = eventAt(0.5, 0.5);
+      const end = eventAt(i % 2 ? 0.52 : 0.48, 0.5);
+      view.canvas.dispatchEvent(new PointerEvent("pointerdown", {{bubbles: true, pointerId: 11, ...start}}));
+      view.canvas.dispatchEvent(new PointerEvent("pointermove", {{bubbles: true, pointerId: 11, ...end}}));
+      view.canvas.dispatchEvent(new PointerEvent("pointerup", {{bubbles: true, pointerId: 11, ...end}}));
     }}, true);
     const hover = measure((i) => {{
       view.canvas.dispatchEvent(new PointerEvent("pointermove", {{
@@ -507,26 +535,39 @@ def _probe_js(reps: int) -> str:
       }}));
     }});
     const crosshair = measure((i) => {{
-      view._updateCrosshair(eventAt(0.1 + (i % 8) * 0.1, 0.2 + (i % 6) * 0.1));
+      view.canvas.dispatchEvent(new PointerEvent("pointermove", {{
+        bubbles: true,
+        pointerId: 2,
+        ...eventAt(0.1 + (i % 8) * 0.1, 0.2 + (i % 6) * 0.1),
+      }}));
     }});
     const box = measure((i) => {{
-      const v = view.view;
-      const x0 = v.x0 + (v.x1 - v.x0) * 0.22;
-      const x1 = v.x0 + (v.x1 - v.x0) * 0.78;
-      const y0 = v.y0 + (v.y1 - v.y0) * 0.22;
-      const y1 = v.y0 + (v.y1 - v.y0) * 0.78;
-      view._zoomToBox([x0, y0], [x1, y1], false);
+      const start = eventAt(0.22, 0.22);
+      const end = eventAt(0.78, 0.78);
+      const priorMode = view.dragMode;
+      view.dragMode = "zoom";
+      view.canvas.dispatchEvent(new PointerEvent("pointerdown", {{bubbles: true, pointerId: 12, ...start}}));
+      view.canvas.dispatchEvent(new PointerEvent("pointermove", {{bubbles: true, pointerId: 12, ...end}}));
+      view.canvas.dispatchEvent(new PointerEvent("pointerup", {{bubbles: true, pointerId: 12, ...end}}));
+      view.dragMode = priorMode;
       if (i % 2) view._setView(before, {{animate: false, request: false}});
     }}, true);
     const brush = measure((i) => {{
-      const v = view.view;
-      const x0 = v.x0 + (v.x1 - v.x0) * (0.18 + (i % 4) * 0.03);
-      const x1 = v.x0 + (v.x1 - v.x0) * (0.68 + (i % 4) * 0.03);
-      const y0 = v.y0 + (v.y1 - v.y0) * 0.18;
-      const y1 = v.y0 + (v.y1 - v.y0) * 0.82;
-      view._selectLocal(x0, x1, y0, y1);
+      const start = eventAt(0.18 + (i % 4) * 0.03, 0.18);
+      const end = eventAt(0.68 + (i % 4) * 0.03, 0.82);
+      view.canvas.dispatchEvent(new PointerEvent("pointerdown", {{
+        bubbles: true, pointerId: 13, shiftKey: true, ...start,
+      }}));
+      view.canvas.dispatchEvent(new PointerEvent("pointermove", {{
+        bubbles: true, pointerId: 13, shiftKey: true, ...end,
+      }}));
+      view.canvas.dispatchEvent(new PointerEvent("pointerup", {{
+        bubbles: true, pointerId: 13, shiftKey: true, ...end,
+      }}));
       view._clearSelection();
     }});
+    view._setView(before, {{animate: false, request: false}});
+    settlePixels();
     const nonblank = Math.max(fcNonblankPixels(view), nonblankCanvasPixels());
     if (nonblank <= 0) throw new Error("blank WebGL canvas");
     const crosshairVisible = !!(view.crosshairX && view.crosshairY &&
@@ -589,6 +630,7 @@ def _flatten_probe_metrics(row: dict[str, Any], result: dict[str, Any]) -> None:
         stats = result.get(name) or {}
         row[f"{name}_median_ms"] = stats.get("median_ms")
         row[f"{name}_p95_ms"] = stats.get("p95_ms")
+        row[f"{name}_p99_ms"] = stats.get("p99_ms")
         row[f"{name}_max_ms"] = stats.get("max_ms")
         row[f"{name}_reps"] = stats.get("reps")
 
@@ -647,6 +689,7 @@ def run(*, sizes: list[int], reps: int, chromium: str | None = None) -> dict[str
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": "interaction-browser",
+        "measurement_scope": "standalone-client-input-to-pixel-readback",
         "environment": collect_environment_metadata(chromium=chromium),
         "benchmark_categories": list(BENCHMARK_CATEGORIES),
         "tracked_categories": categories_for(INTERACTION_CATEGORY_IDS),
@@ -749,7 +792,8 @@ def to_markdown(report: dict[str, Any]) -> str:
         "",
         "Notes:",
         "",
-        "- Times are in-page `performance.now()` deltas through `ChartView` methods plus an immediate draw.",
+        "- Timed gestures enter through DOM events, flush queued wheel/animation state, draw, and perform a WebGL readback before the sample stops.",
+        "- Scope is standalone client input-to-GPU-finish; widget/backend LOD work is measured by native and workflow rows.",
         "- `nonblank` is a WebGL readback sanity check over the rendered chart canvas.",
         "- Budget verification rejects blank canvases, blank interaction frames, missing view changes, missing crosshair chrome, box zoom that does not narrow/restore the viewport, brush selection that does not select/clear eligible marks, overlapping tick labels, unstable tooltips, oversized frame color jumps, and p95 values over the listed limits.",
         "- Scatter rows sweep the requested sizes; line, histogram, bar, and heatmap rows are fixed core-family probes so interaction regressions are not scatter-only.",
@@ -761,7 +805,7 @@ def to_markdown(report: dict[str, Any]) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sizes", default="1e4,1e5,1e6")
-    parser.add_argument("--reps", type=int, default=12)
+    parser.add_argument("--reps", type=int, default=24)
     parser.add_argument("--chromium", default=None)
     parser.add_argument("--out", default=None, help="write Markdown report here")
     parser.add_argument("--json", default=None, help="write JSON report here")

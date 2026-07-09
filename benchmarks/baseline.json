@@ -31,11 +31,11 @@
     "scatter.tier.100000": "direct",
     "scatter.tier.1000000": "density",
     "scatter.tier.10000000": "density",
-    "scatter.wire_bytes.100000": 800000,
-    "scatter.wire_bytes.1000000": 786432,
-    "scatter.wire_bytes.10000000": 786432,
-    "scatter.wire_bytes_per_point.100000": 8.0,
-    "scatter.wire_bytes_per_point.1000000": 0.7864,
-    "scatter.wire_bytes_per_point.10000000": 0.0786
+    "scatter.wire_bytes.100000": 800983,
+    "scatter.wire_bytes.1000000": 855778,
+    "scatter.wire_bytes.10000000": 853850,
+    "scatter.wire_bytes_per_point.100000": 8.0098,
+    "scatter.wire_bytes_per_point.1000000": 0.8558,
+    "scatter.wire_bytes_per_point.10000000": 0.0854
   }
 }

@@ -47,6 +47,7 @@ def test_collect_environment_metadata_is_machine_readable(tmp_path: Path) -> Non
     assert metadata["cpu_count"] is None or metadata["cpu_count"] > 0
     assert metadata["package_versions"]["definitely-not-installed-fastcharts-test-package"] is None
     assert metadata["fastcharts_backend"] == "native"
+    assert metadata["browser_renderer"] == "software-gl"
     assert metadata["executables"] == {
         "node": "v20.11.1",
         "rustc": "rustc 1.96.1",
@@ -62,6 +63,7 @@ def test_codspeed_suite_covers_native_core_hardening_workloads() -> None:
         "SMALL_N = 10_000",
         "MEDIUM_N = 100_000",
         "N = LARGE_N = 1_000_000",
+        "PYRAMID_N = 2_100_000",
         "HIST_N = 100_000",
         "AREA_N = 100_000",
         "BAR_N = 1_000",
@@ -80,6 +82,12 @@ def test_codspeed_suite_covers_native_core_hardening_workloads() -> None:
         "test_m4_indices_full",
         "test_m4_indices_zoom",
         "test_bin_2d",
+        "test_bin_2d_indices",
+        "test_min_max",
+        "test_sample_mask",
+        "test_pyramid_build",
+        "test_pyramid_count",
+        "test_pyramid_compose",
         "test_histogram_uniform",
         "test_normalize_f32",
         "test_range_indices",
@@ -121,7 +129,7 @@ def test_interaction_browser_gates_cover_scatter_and_core_chart_families() -> No
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
     assert 'parser.add_argument("--sizes", default="1e4,2.5e5")' in smoke
-    assert "--sizes 1e4,2.5e5 --reps 8" in workflow
+    assert "--sizes 1e4,2.5e5 --reps 24" in workflow
     required_markers = [
         "_core_interaction_figures",
         "line_120k_interaction",

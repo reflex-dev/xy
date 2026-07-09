@@ -17,7 +17,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from _browser import find_chromium
+from _browser import chromium_gl_flags, find_chromium
 
 
 def json_bytes(obj: Any) -> int:
@@ -94,6 +94,7 @@ function fcStats(values) {{
     min_ms: fcPercentile(values, 0),
     median_ms: fcPercentile(values, 50),
     p95_ms: fcPercentile(values, 95),
+    p99_ms: fcPercentile(values, 99),
     max_ms: fcPercentile(values, 100),
     reps: values.length,
   }};
@@ -141,9 +142,9 @@ def run_json_probe(
                     "--headless=new",
                     "--no-sandbox",
                     "--disable-dev-shm-usage",
-                    "--use-angle=swiftshader",
-                    "--enable-unsafe-swiftshader",
+                    *chromium_gl_flags(),
                     "--hide-scrollbars",
+                    "--enable-precise-memory-info",
                     f"--virtual-time-budget={virtual_time_ms}",
                     "--dump-dom",
                     page.as_uri(),

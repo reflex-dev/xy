@@ -83,6 +83,9 @@ def collect_environment_metadata(
         "package_versions": _package_versions(package_names),
         "executables": executables,
         "fastcharts_backend": fastcharts_backend or _fastcharts_backend(),
+        "browser_renderer": (
+            "hardware" if os.environ.get("FASTCHARTS_BENCH_HARDWARE_GL") == "1" else "software-gl"
+        ),
         "git": _git_metadata(root, command_runner),
     }
 

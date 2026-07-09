@@ -9,10 +9,10 @@ Measures, per library, per point count N, on identical random data:
                 fastcharts, render_s is the kernel-side "prepare to render"
                 cost: build the GPU-ready binary payload.
   total_s     — build + render
-  ttfr_ms     — time to first render (data → pixels), with --ttfr: browser-
+  ttfr_ms     — interactive build + HTML serialization + chart-ready time;
                 rendered libs (fastcharts, Plotly-HTML, Bokeh, Altair, hvPlot)
-                are loaded in headless Chromium and measured to first-contentful-
-                paint (JS inlined, no CDN); raster libs (matplotlib/seaborn/
+                are loaded in headless Chromium and measured to a visible chart
+                surface after two animation frames; raster libs (matplotlib/seaborn/
                 datashader/Plotly-kaleido) already produced pixels at render, so
                 TTFR = total. This is the only cross-library "how fast to actual
                 pixels" number — serialize time and byte counts are not pixels.
@@ -31,9 +31,9 @@ Design notes / fairness:
   browser libraries still generally ship/hold per-point buffers. Datashader and
   fastcharts exercise the screen-bounded density path; fastcharts additionally
   reports the binary transport cost that crosses to the browser/GPU.
-- render_s is not perfectly apples-to-apples (three different render targets);
-  each cell records what it measured. The honest cross-library number is
-  out_bytes and the ceiling probe.
+- Static render rows are target-scoped (binary spec, HTML, or PNG) and must not
+  be turned into cross-target speedup claims. Each successful row records mode,
+  target, and oracle; interactive TTFR uses a separate build+HTML+chart-ready path.
 
 Runs whatever libraries are installed; missing ones are reported as unavailable.
 
@@ -55,7 +55,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _browser import first_paint_ms  # noqa: E402
+from _browser import chart_ready_metrics  # noqa: E402
 from categories import (  # noqa: E402
     BENCHMARK_CATEGORIES,
     categories_for,
@@ -76,6 +76,7 @@ except Exception:
     _PROC = None
 
 RENDER_W, RENDER_H = 900, 420
+DENSITY_W, DENSITY_H = 512, 384
 DPI = 100
 BENCH_VS_CATEGORY_IDS = (
     "small_data_startup",
@@ -124,13 +125,22 @@ def _measure(
     t0 = time.perf_counter()
     fig = build()
     t1 = time.perf_counter()
-    out_bytes = render(fig)
+    render_result = render(fig)
     t2 = time.perf_counter()
+    if isinstance(render_result, dict):
+        out_bytes = int(render_result["out_bytes"])
+        render_metadata = {k: v for k, v in render_result.items() if k != "out_bytes"}
+    else:
+        out_bytes = int(render_result)
+        render_metadata = {}
     rss1 = _rss_mb()
     artifact = None
+    artifact_s = None
     if artifact_fn is not None:
         try:
+            ta0 = time.perf_counter()
             artifact = artifact_fn(fig)
+            artifact_s = time.perf_counter() - ta0
         except Exception:  # artifact for TTFR is best-effort, never fails a row
             artifact = None
     del fig
@@ -152,8 +162,10 @@ def _measure(
         "peak_mem_mb": peak / 2**20,
         "rss_delta_mb": (rss1 - rss0) if (rss0 is not None and rss1 is not None) else None,
         "out_bytes": out_bytes,
+        "artifact_s": artifact_s,
         "_artifact": artifact,  # HTML for browser libs, else None (raster)
         "status": "ok",
+        **render_metadata,
     }
 
 
@@ -181,7 +193,13 @@ def make_matplotlib(x, y):
         buf = io.BytesIO()
         fig.savefig(buf, format="png")
         plt.close(fig)
-        return buf.getbuffer().nbytes
+        return {
+            "out_bytes": buf.getbuffer().nbytes,
+            "mode": "direct",
+            "render_target": "png-agg",
+            "oracle_status": "pass",
+            "oracle_kind": "raw-row-count",
+        }
 
     return build, render
 
@@ -206,7 +224,13 @@ def make_seaborn(x, y):
         buf = io.BytesIO()
         fig.savefig(buf, format="png")
         plt.close(fig)
-        return buf.getbuffer().nbytes
+        return {
+            "out_bytes": buf.getbuffer().nbytes,
+            "mode": "direct",
+            "render_target": "png-agg",
+            "oracle_status": "pass",
+            "oracle_kind": "raw-row-count",
+        }
 
     return build, render
 
@@ -237,10 +261,22 @@ def _make_plotly(x, y, gl: bool):
         # payload a browser must parse — plotly embeds data as JSON).
         try:
             img = fig.to_image(format="png")  # kaleido
-            return len(img)
+            return {
+                "out_bytes": len(img),
+                "mode": "direct",
+                "render_target": "png-kaleido",
+                "oracle_status": "pass",
+                "oracle_kind": "raw-row-count",
+            }
         except Exception:
             html = fig.to_html(include_plotlyjs="cdn")
-            return len(html.encode("utf-8"))
+            return {
+                "out_bytes": len(html.encode("utf-8")),
+                "mode": "direct",
+                "render_target": "html-cdn-fallback",
+                "oracle_status": "pass",
+                "oracle_kind": "raw-row-count",
+            }
 
     # TTFR is the interactive browser path: plotly.js inlined (no CDN), painted.
     def artifact(fig):
@@ -277,7 +313,13 @@ def _make_bokeh(x, y, output_backend: str):
 
     def render(plot):
         html = file_html(plot, CDN, f"bokeh-{output_backend}-benchmark")
-        return len(html.encode("utf-8"))
+        return {
+            "out_bytes": len(html.encode("utf-8")),
+            "mode": "direct",
+            "render_target": f"html-bokeh-{output_backend}",
+            "oracle_status": "pass",
+            "oracle_kind": "raw-row-count",
+        }
 
     # TTFR: BokehJS inlined so the browser paint excludes CDN fetch.
     def artifact(plot):
@@ -306,7 +348,13 @@ def make_altair(x, y):
 
     def render(chart):
         html = chart.to_html()
-        return len(html.encode("utf-8"))
+        return {
+            "out_bytes": len(html.encode("utf-8")),
+            "mode": "direct",
+            "render_target": "html-vega",
+            "oracle_status": "pass",
+            "oracle_kind": "raw-row-count",
+        }
 
     return build, render, (lambda chart: chart.to_html())
 
@@ -322,8 +370,8 @@ def make_datashader(x, y):
     def build():
         df = pd.DataFrame({"x": x, "y": y})
         canvas = ds.Canvas(
-            plot_width=RENDER_W,
-            plot_height=RENDER_H,
+            plot_width=DENSITY_W,
+            plot_height=DENSITY_H,
             x_range=_padded_range(x),
             y_range=_padded_range(y),
         )
@@ -335,7 +383,18 @@ def make_datashader(x, y):
         image = tf.shade(agg, how="linear")
         buf = io.BytesIO()
         image.to_pil().save(buf, format="PNG")
-        return buf.getbuffer().nbytes
+        count = int(agg.sum().item())
+        if count != len(x):
+            raise AssertionError(f"datashader count oracle failed: {count} != {len(x)}")
+        return {
+            "out_bytes": buf.getbuffer().nbytes,
+            "mode": "density",
+            "render_target": "png-datashader",
+            "oracle_status": "pass",
+            "oracle_kind": "count-conservation",
+            "aggregate_width": DENSITY_W,
+            "aggregate_height": DENSITY_H,
+        }
 
     return build, render
 
@@ -366,7 +425,13 @@ def make_hvplot_bokeh(x, y):
     def render(obj):
         state = hv.renderer("bokeh").get_plot(obj).state
         html = file_html(state, CDN, "hvplot-bokeh-benchmark")
-        return len(html.encode("utf-8"))
+        return {
+            "out_bytes": len(html.encode("utf-8")),
+            "mode": "direct",
+            "render_target": "html-hvplot-bokeh",
+            "oracle_status": "pass",
+            "oracle_kind": "raw-row-count",
+        }
 
     def artifact(obj):
         from bokeh.resources import INLINE
@@ -390,8 +455,43 @@ def make_fastcharts(x, y):
         # The kernel-side "prepare to render" cost: encode direct f32, or bin to
         # a density grid above the threshold. The wire bytes are what crosses to
         # the GPU/browser — screen-bounded under density.
-        _spec, blob = fig.build_payload()
-        return len(blob)
+        spec, blob = fig.build_payload()
+        trace = spec["traces"][0]
+        mode = trace["tier"]
+        if mode == "density":
+            density = trace["density"]
+            column = spec["columns"][density["buf"]]
+            grid = np.frombuffer(
+                blob,
+                dtype=np.float32,
+                count=column["len"],
+                offset=column["byte_offset"],
+            )
+            actual = int(round(float(grid.sum())))
+            expected = int(trace["visible"])
+            if actual != expected:
+                raise AssertionError(f"fastcharts count oracle failed: {actual} != {expected}")
+            oracle_kind = "count-conservation"
+            aggregate_width = int(density["w"])
+            aggregate_height = int(density["h"])
+        else:
+            expected = len(x)
+            if trace.get("n_marks") != expected:
+                raise AssertionError(
+                    f"fastcharts direct-row oracle failed: {trace.get('n_marks')} != {expected}"
+                )
+            oracle_kind = "raw-row-count"
+            aggregate_width = None
+            aggregate_height = None
+        return {
+            "out_bytes": len(blob) + len(json.dumps(spec, separators=(",", ":")).encode()),
+            "mode": mode,
+            "render_target": "binary-spec",
+            "oracle_status": "pass",
+            "oracle_kind": oracle_kind,
+            "aggregate_width": aggregate_width,
+            "aggregate_height": aggregate_height,
+        }
 
     # TTFR: the standalone-export path (payload base64'd into HTML, decoded and
     # WebGL-drawn in the browser). The widget path is faster still (binary comm,
@@ -465,9 +565,20 @@ def run(
             if ttfr and row.get("status") == "ok" and (ttfr_max_n is None or n <= ttfr_max_n):
                 html = row.pop("_artifact", None)
                 if html:
-                    paint = first_paint_ms(html, chromium=chromium)
-                    row["browser_paint_ms"] = paint
-                    row["ttfr_ms"] = (row["total_s"] * 1e3 + paint) if paint is not None else None
+                    browser = chart_ready_metrics(html, chromium=chromium)
+                    ready = None if browser is None else browser["ready_ms"]
+                    row["browser_ready_ms"] = ready
+                    row["browser_fcp_ms"] = None if browser is None else browser["fcp_ms"]
+                    row["browser_js_heap_bytes"] = (
+                        None if browser is None else browser["js_heap_bytes"]
+                    )
+                    row["browser_paint_ms"] = ready  # schema-v2 compatibility
+                    artifact_s = row.get("artifact_s")
+                    row["ttfr_ms"] = (
+                        (row["build_s"] + artifact_s) * 1e3 + ready
+                        if ready is not None and artifact_s is not None
+                        else None
+                    )
                 else:  # raster: build+render already produced pixels
                     row["ttfr_ms"] = row["total_s"] * 1e3
             row.pop("_artifact", None)
@@ -479,7 +590,11 @@ def run(
 
     ceilings = {}
     for name, rows in results.items():
-        ok = [r["n"] for r in rows if r.get("status") == "ok"]
+        ok = [
+            r["n"]
+            for r in rows
+            if r.get("status") == "ok" and r.get("total_s", float("inf")) <= budget_s
+        ]
         ceilings[name] = max(ok) if ok else None
 
     return {
@@ -590,11 +705,11 @@ def to_markdown(report: dict) -> str:
         lines += [
             "## Time to first render (data → pixels)",
             "",
-            "Browser libraries include real headless-Chromium first-paint (JS "
-            "inlined, no CDN); raster libraries (PNG) already produced pixels at "
-            "render. `paint` is the browser-only portion.",
+            "Browser libraries include build + interactive HTML serialization + "
+            "headless-Chromium chart-ready time (JS inlined, no CDN). Raster "
+            "libraries report their independent PNG path.",
             "",
-            "| library | N | TTFR | of which browser paint |",
+            "| library | N | interactive TTFR | browser chart-ready |",
             "|---|---|---|---|",
         ]
         for name, rows in report["results"].items():
@@ -613,19 +728,23 @@ def to_markdown(report: dict) -> str:
         lines += [
             f"## {name}",
             "",
-            "| N | build | render | total | TTFR | peak mem | out bytes | pts/s | status |",
-            "|---|---|---|---|---|---|---|---|---|",
+            "| N | mode | target | build | render | total | TTFR | peak mem | out bytes | oracle | pts/s | status |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|",
         ]
         for r in rows:
             if r.get("status") != "ok":
-                lines.append(f"| {r['n']:,} | | | | | | | | {_fmt_status(r.get('status', '?'))} |")
+                lines.append(
+                    f"| {r['n']:,} | | | | | | | | | | | {_fmt_status(r.get('status', '?'))} |"
+                )
                 continue
             ttfr_ms = r.get("ttfr_ms")
             ttfr_s = f"{ttfr_ms:.0f} ms" if ttfr_ms is not None else "—"
             lines.append(
-                f"| {r['n']:,} | {r['build_s'] * 1e3:.0f} ms | {r['render_s'] * 1e3:.0f} ms "
+                f"| {r['n']:,} | {r.get('mode', '—')} | {r.get('render_target', '—')} "
+                f"| {r['build_s'] * 1e3:.0f} ms | {r['render_s'] * 1e3:.0f} ms "
                 f"| {r['total_s'] * 1e3:.0f} ms | {ttfr_s} | {r['peak_mem_mb']:.0f} MB "
-                f"| {_fmt_bytes(r['out_bytes'])} | {r['pts_per_s']:,.0f} | ok |"
+                f"| {_fmt_bytes(r['out_bytes'])} | {r.get('oracle_status', '—')} "
+                f"| {r['pts_per_s']:,.0f} | ok |"
             )
         lines.append("")
     return "\n".join(lines)

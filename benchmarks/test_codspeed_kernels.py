@@ -27,7 +27,8 @@ MEDIUM_N = 100_000
 N = LARGE_N = 1_000_000
 GRID_W, GRID_H = 512, 384
 N_BUCKETS = 2048
-DRILL_N = 600_000
+PYRAMID_N = 2_100_000
+DRILL_N = PYRAMID_N
 HIST_N = 100_000
 AREA_N = 100_000
 BAR_N = 1_000
@@ -64,6 +65,23 @@ def medium_data() -> tuple[np.ndarray, np.ndarray]:
     x = np.arange(MEDIUM_N, dtype=np.float64)
     y = rng.normal(0.0, 1.0, MEDIUM_N)
     return x, y
+
+
+@pytest.fixture(scope="module")
+def pyramid_data() -> tuple[np.ndarray, np.ndarray]:
+    rng = np.random.default_rng(19)
+    x = rng.uniform(0.0, 100.0, PYRAMID_N).astype(np.float64, copy=False)
+    y = rng.uniform(0.0, 100.0, PYRAMID_N).astype(np.float64, copy=False)
+    return x, y
+
+
+@pytest.fixture(scope="module")
+def pyramid_handle(pyramid_data):
+    x, y = pyramid_data
+    handle = k.pyramid_build(x, y, 0.0, 100.0, 0.0, 100.0, 2048)
+    assert handle
+    yield handle
+    assert k.pyramid_free(handle)
 
 
 @pytest.fixture(scope="module")
@@ -121,6 +139,7 @@ def drilldown_figure() -> Figure:
     y = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
     fig = Figure()
     fig.scatter(x, y, density=True)
+    fig._benchmark_deep_expected = int(np.count_nonzero((x < 10.0) & (y < 10.0)))
 
     # Warm the lazily-built pyramid so CodSpeed tracks interactive viewport
     # refresh cost, not one-time index construction.
@@ -157,6 +176,53 @@ def test_bin_2d(benchmark, data):
     """Tier-2 scatter density aggregation (§5) onto a screen-sized grid."""
     x, y = data
     benchmark(k.bin_2d, x, y, 0.0, float(N), -6.0, 6.0, GRID_W, GRID_H)
+
+
+def test_bin_2d_indices(benchmark, data):
+    """Production first-density pass: grid plus visible indices in one scan."""
+    x, y = data
+    grid, indices = benchmark(k.bin_2d_indices, x, y, 0.0, float(N), -6.0, 6.0, GRID_W, GRID_H)
+    assert grid.size == GRID_W * GRID_H
+    assert len(indices) == N
+
+
+def test_min_max(benchmark, data):
+    """Autorange and channel-domain scan used by every numeric chart."""
+    _, y = data
+    assert benchmark(k.min_max, y) is not None
+
+
+def test_sample_mask(benchmark, data):
+    """Deterministic density-overlay sampling over stable row ids."""
+    x, _ = data
+    row_ids = np.arange(len(x), dtype=np.uint64)
+    mask = benchmark(k.sample_mask, row_ids, 0, np.iinfo(np.uint64).max // 100)
+    assert mask.dtype == np.bool_
+
+
+def test_pyramid_build(benchmark, pyramid_data):
+    """Cold Tier-3 index construction at the real activation threshold."""
+    x, y = pyramid_data
+
+    def build_and_free() -> int:
+        handle = k.pyramid_build(x, y, 0.0, 100.0, 0.0, 100.0, 2048)
+        assert handle
+        assert k.pyramid_free(handle)
+        return handle
+
+    assert benchmark(build_and_free)
+
+
+def test_pyramid_count(benchmark, pyramid_handle):
+    """Warm viewport cardinality estimate used before every pyramid compose."""
+    count = benchmark(k.pyramid_count, pyramid_handle, 10.0, 90.0, 10.0, 90.0)
+    assert count is not None and count > 0
+
+
+def test_pyramid_compose(benchmark, pyramid_handle):
+    """Warm screen-sized density composition without rescanning source rows."""
+    result = benchmark(k.pyramid_compose, pyramid_handle, 10.0, 90.0, 10.0, 90.0, GRID_W, GRID_H)
+    assert result is not None
 
 
 def test_histogram_uniform(benchmark, data):
@@ -383,15 +449,25 @@ def test_decimate_view(benchmark, data):
 def _adaptive_drilldown_cycle(fig: Figure) -> int:
     wide, wide_buffers = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
     deep, deep_buffers = fig.density_view(0, 0.0, 10.0, 0.0, 10.0, GRID_W, GRID_H)
-    back, back_buffers = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
 
     wide_trace = wide["traces"][0]
     deep_trace = deep["traces"][0]
-    back_trace = back["traces"][0]
     assert wide_trace["mode"] == "density"
     assert deep_trace["mode"] == "points"
+    assert str(wide_trace.get("binning", "")).startswith("pyramid-L")
+    assert deep_trace["visible"] == fig._benchmark_deep_expected
+    drill_seq = deep_trace["drill_seq"]
+    row = fig.pick(0, 0, drill_seq)
+    assert row is not None
+    canonical_index = int(fig.traces[0].shipped_sel[0])
+    assert row["index"] == canonical_index
+    assert row["x"] == float(fig.traces[0].x.values[canonical_index])
+    assert row["y"] == float(fig.traces[0].y.values[canonical_index])
+
+    back, back_buffers = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+    back_trace = back["traces"][0]
     assert back_trace["mode"] == "density"
-    assert 0 < deep_trace["visible"] < wide_trace["visible"]
+    assert str(back_trace.get("binning", "")).startswith("pyramid-L")
     return (
         int(wide_trace["visible"])
         + int(deep_trace["visible"])

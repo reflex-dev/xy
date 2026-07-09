@@ -457,7 +457,7 @@ The benchmark program tracks separate performance categories rather than one
 blurry "fastest" number: small-data startup, medium exact scatter, huge scatter
 overview, adaptive scatter drilldown, huge line/time-series, many-chart
 dashboards, interaction smoothness, payload/export size, and core 2D chart
-breadth. See
+breadth, plus input ingestion, streaming updates, and static export. See
 [`docs/benchmark.md`](docs/benchmark.md) for the category goals and fairness
 notes. The stable category IDs are emitted in `benchmark.json` and attached to
 the fastcharts-only benchmark rows as `benchmark_categories`. JSON benchmark
@@ -485,9 +485,11 @@ Run the fastcharts kernel/payload benchmarks:
 ```bash
 uv run python benchmarks/bench.py --sizes 1e5,1e6,1e7
 uv run python benchmarks/bench_native.py --sizes 1e5,1e6,1e7
-python benchmarks/bench_scatter_native.py --sizes 1e5,1e6,1e7 --render
+python benchmarks/bench_scatter_native.py --sizes 1e5,1e6,1e7 --production
+python benchmarks/bench_scatter_native.py --sizes 1e5,1e6 --render
 PYTHONPATH=python uv run python benchmarks/bench_2d_charts.py --profile smoke --ttfr
 PYTHONPATH=python uv run python benchmarks/bench_interaction.py --sizes 1e4,2.5e5 --json interaction.json
+PYTHONPATH=python uv run python benchmarks/bench_workflows.py --profile standard --json workflows.json
 ```
 
 The interaction benchmark sweeps the requested scatter sizes. Use at least one
@@ -495,6 +497,12 @@ direct size and one density-tier size; the CI/browser smoke defaults do this
 with `1e4,2.5e5`. It also always adds fixed line, histogram, bar, and heatmap
 rows so pan/zoom/hover/brush budgets are not scatter-only. The report verifier
 fails if any of those required interaction rows disappear.
+
+`bench_workflows.py` covers contiguous/converted/strided/datetime/list/Arrow
+ingestion, line append, density append followed by a real 2M+ pyramid rebuild,
+and HTML/SVG/native-PNG/Chromium-PNG export. The dashboard benchmark attempts 10, 20, and 50 charts,
+records JS heap and steady-redraw pacing, and reports the largest fully nonblank
+count rather than assuming every attempted dashboard succeeded.
 
 ### 10M-point native benchmark
 
@@ -514,14 +522,13 @@ full tables and fairness notes.
 | Plotly `Scattergl` | Kaleido PNG | 54,064 ms | 1,584 MB | +382 MB | 49 KB |
 | Plotly `Scatter` | SVG/Kaleido | over budget above 1M | 184 MB at 1M | — | 109 KB at 1M |
 
-At 10M points fastcharts is 19x faster than matplotlib, 47x than Seaborn, and
-321x than Plotly `Scattergl`, at 4-13x lower peak memory. Ingest is zero-copy
+These rows intentionally name different targets: FastCharts binary preparation
+versus Agg/Kaleido PNG production. They demonstrate scaling, payload, and memory
+behavior, not a same-render-target "x times faster" claim. Ingest is zero-copy
 for well-formed f64 arrays (the canonical store holds a reference, not a
-duplicate), so the 126 MB peak is transient working buffers — visible-row
-indices, sample gathers, encode staging — released after the payload is built.
-What lasts is screen-bounded: a fixed 832 KB density payload and ~10 MB of
-resident growth, versus +223–695 MB for the raster libraries, which keep every
-rendered point's cost resident. (The payload-only native benchmark in
+duplicate), so the 126 MB peak is transient working buffers. What lasts is
+screen-bounded: a fixed 832 KB density payload and ~10 MB of resident growth,
+versus +223–695 MB for the raster libraries. (The payload-only native benchmark in
 [`docs/benchmark.md`](docs/benchmark.md) reports the payload-build allocation
 in isolation, where it stays near 2 MB regardless of N.)
 
@@ -582,7 +589,7 @@ flowchart LR
         STORE["ColumnStore<br/>canonical f64 data<br/>strings/categories<br/>rollback checkpoints"]
         KERNELS["Compute core<br/>native Rust C ABI<br/>(required; no fallback)"]
         PAYLOAD["Payload builder<br/>trace specs<br/>offset-f32 columns<br/>tier/mode metadata"]
-        EXPORTS["Export surfaces<br/>anywidget buffers<br/>standalone HTML<br/>PNG via Chromium"]
+        EXPORTS["Export surfaces<br/>anywidget buffers<br/>standalone HTML<br/>native or Chromium PNG"]
 
         API --> VALIDATE --> STORE
         STORE --> KERNELS

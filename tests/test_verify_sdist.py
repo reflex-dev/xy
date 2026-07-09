@@ -300,6 +300,14 @@ def test_verify_sdist_rejects_missing_benchmark_harness(tmp_path: Path) -> None:
         verify_sdist.verify_sdist(str(sdist))
 
 
+def test_verify_sdist_rejects_missing_workflow_benchmark(tmp_path: Path) -> None:
+    sdist = tmp_path / "fastcharts-0.1.0.tar.gz"
+    _write_sdist(sdist, omit={"benchmarks/bench_workflows.py"})
+
+    with pytest.raises(AssertionError, match="benchmarks/bench_workflows"):
+        verify_sdist.verify_sdist(str(sdist))
+
+
 def test_verify_sdist_rejects_missing_regression_gate_files(tmp_path: Path) -> None:
     sdist = tmp_path / "fastcharts-0.1.0.tar.gz"
     _write_sdist(
