@@ -513,6 +513,7 @@ def test_client_renders_mark_level_styling() -> None:
         "fcMonotoneTangents(",
         "fcMarkerSdf(d, u_symbol)",  # scatter symbol shapes (circle/square/diamond/triangle/cross)
         "_pointMarkStyle(",  # point stroke + symbol resolution
+        "rgb = mix(rgb, sc.rgb, sc.a);",  # selected/unselected recolor (mark_style)
         "_resolveMarkFill(",
         "_setRectStyleUniforms(",
         '=== "currentcolor"',  # currentColor resolves to the mark's own color

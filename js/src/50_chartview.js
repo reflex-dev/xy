@@ -1354,6 +1354,13 @@ class ChartView {
     gl.uniform1f(u("u_opacity"), (g.trace.style.opacity ?? 0.8) * opacityScale);
     gl.uniform1f(u("u_selectedOpacity"), this._markStateNumber("selected", "opacity", 1));
     gl.uniform1f(u("u_unselectedOpacity"), this._markStateNumber("unselected", "opacity", 0.12));
+    // Optional selected/unselected recolor (§34): .a=1 tints, .a=0 keeps native.
+    const stateColor = (loc, expr) => {
+      const c = expr ? parseColor(this.root, expr, [0, 0, 0, 1]) : null;
+      gl.uniform4f(loc, c ? c[0] : 0, c ? c[1] : 0, c ? c[2] : 0, c ? 1 : 0);
+    };
+    stateColor(u("u_selColor"), this._markStateValue("selected", "color"));
+    stateColor(u("u_unselColor"), this._markStateValue("unselected", "color"));
     const [r, gg, b] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, 1);
     gl.uniform1i(u("u_symbol"), g.symbol || 0);

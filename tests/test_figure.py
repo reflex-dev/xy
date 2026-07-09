@@ -1899,3 +1899,17 @@ def test_scatter_symbol_and_stroke_emit_to_spec() -> None:
         Figure().scatter([0.0], [0.0], symbol="star")
     with pytest.raises(ValueError, match="scatter stroke_width"):
         Figure().scatter([0.0], [0.0], stroke_width=-1)
+
+
+def test_mark_style_states_carry_color_and_opacity() -> None:
+    fig = Figure().scatter([0.0, 1.0], [0.0, 1.0])
+    fig.set_mark_style(
+        hover={"color": "#111", "size": 10},
+        selected={"color": "#ff00ff"},
+        unselected={"color": "#dddddd", "opacity": 0.5},
+    )
+    spec, _ = fig.build_payload()
+    ms = spec["mark_style"]
+    assert ms["hover"] == {"color": "#111", "size": 10}
+    assert ms["selected"]["color"] == "#ff00ff"
+    assert ms["unselected"] == {"color": "#dddddd", "opacity": 0.5}
