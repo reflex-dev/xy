@@ -43,7 +43,9 @@ _STANDALONE_CSP = (
     "style-src 'unsafe-inline'; "
     "img-src data:; "
     "connect-src 'none'; "
-    "worker-src 'none'; "
+    # blob: only — the density re-bin worker boots from a Blob URL of its own
+    # bundled source; no external worker script can ever load.
+    "worker-src blob:; "
     "object-src 'none'; "
     "base-uri 'none'; "
     "form-action 'none'"

@@ -1269,6 +1269,48 @@ view._map(d.yMeta, y0, y1, d.yAxis)
 );
 }
 }
+const FC_REBIN_WORKER_SRC = `
+const DATA = new Map();
+self.onmessage = (e) => {
+  const m = e.data;
+  if (m.type === "init") {
+    DATA.set(m.trace, { x: new Float64Array(m.x), y: new Float64Array(m.y) });
+    return;
+  }
+  const d = DATA.get(m.trace);
+  if (!d) return;
+  const w = m.w, h = m.h;
+  const grid = new Float32Array(w * h);
+  const sx = w / ((m.x1 - m.x0) || 1);
+  const sy = h / ((m.y1 - m.y0) || 1);
+  let max = 0;
+  const X = d.x, Y = d.y, n = X.length;
+  for (let i = 0; i < n; i++) {
+    const cx = (X[i] - m.x0) * sx;
+    const cy = (Y[i] - m.y0) * sy;
+    if (cx < 0 || cy < 0 || cx >= w || cy >= h) continue;
+    const v = ++grid[(cy | 0) * w + (cx | 0)];
+    if (v > max) max = v;
+  }
+  self.postMessage(
+    { type: "grid", seq: m.seq, trace: m.trace, w, h, max,
+      x0: m.x0, x1: m.x1, y0: m.y0, y1: m.y1, grid: grid.buffer },
+    [grid.buffer]
+  );
+};
+`;
+function fcCreateRebinWorker() {
+try {
+const url = URL.createObjectURL(
+new Blob([FC_REBIN_WORKER_SRC], { type: "application/javascript" })
+);
+const worker = new Worker(url);
+worker._fcUrl = url; 
+return worker;
+} catch (e) {
+return null; 
+}
+}
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
 const UNITLESS_STYLE_PROPS = new Set([
 "animation-iteration-count",
@@ -1736,6 +1778,7 @@ const sample = entry.sampleOverlay && entry.sampleOverlay.sample
 if (sample && Number(sample.n) > 0) {
 items.push(`sampled ${this._compactInt(sample.n)} of ${this._compactInt(sample.visible)}`);
 }
+if (entry._sampleRebinned) items.push("zoom re-binned from sample");
 if (t.density.channels_dropped) items.push("aggregated channels");
 }
 return items;
@@ -3376,6 +3419,12 @@ this.draw();
 destroy() {
 if (this._destroyed) return;
 this._destroyed = true;
+clearTimeout(this._rebinTimer);
+if (this._rebinWorker) {
+this._rebinWorker.terminate();
+if (this._rebinWorker._fcUrl) URL.revokeObjectURL(this._rebinWorker._fcUrl);
+this._rebinWorker = null;
+}
 this._ro?.disconnect();
 this._io?.disconnect();
 this._io = null;
@@ -4346,7 +4395,10 @@ return svg("");
 Object.assign(ChartView.prototype, {
 _scheduleViewRequest(viewOverride = this.view, opts = {}) {
 if (this._destroyed) return;
-if (!this.comm) return;
+if (!this.comm) {
+this._scheduleSampleRebin(viewOverride, opts);
+return;
+}
 const needsDecimated = this.spec.traces.some((t) => t.tier === "decimated");
 const needsDensity = this.gpuTraces.some((g) => g.tier === "density");
 if (!needsDecimated && !needsDensity) return;
@@ -4403,6 +4455,95 @@ send();
 this._viewTimer = setTimeout(send, delay);
 }
 return seq;
+},
+_scheduleSampleRebin(viewOverride = this.view, opts = {}) {
+if (this._destroyed || this._sampleRebinDisabled) return;
+const targets = (this.gpuTraces || []).filter(
+(g) => g.tier === "density" && g.sampleOverlay && g.sampleOverlay._cpu
+);
+if (!targets.length) return;
+const seq = opts.seq ?? ++this.seq;
+const view = { ...viewOverride };
+clearTimeout(this._rebinTimer);
+this._rebinTimer = setTimeout(() => {
+if (this._destroyed || seq !== this.seq) return;
+for (const g of targets) this._requestSampleRebin(g, view, seq);
+}, opts.delay ?? 120);
+},
+_requestSampleRebin(g, view, seq) {
+if (!g._homeDensity) g._homeDensity = g.density;
+const v0 = this.view0;
+const ex = Math.max(Math.abs(v0.x1 - v0.x0), 1e-300) * 1e-9;
+const ey = Math.max(Math.abs(v0.y1 - v0.y0), 1e-300) * 1e-9;
+const atHome =
+Math.min(view.x0, view.x1) <= v0.x0 + ex && Math.max(view.x0, view.x1) >= v0.x1 - ex &&
+Math.min(view.y0, view.y1) <= v0.y0 + ey && Math.max(view.y0, view.y1) >= v0.y1 - ey;
+if (atHome) {
+if (g.density !== g._homeDensity) {
+const hd = g._homeDensity;
+this._applySampleRebinGrid(g, {
+...hd,
+tex: this._uploadGrid(hd.grid, hd.w, hd.h, hd.normMax || hd.max || 1),
+}, false);
+}
+return;
+}
+if (this._sampleRebinDisabled) return;
+if (!this._rebinWorker) {
+this._rebinWorker = fcCreateRebinWorker();
+if (!this._rebinWorker) {
+this._sampleRebinDisabled = true; 
+return;
+}
+this._rebinWorker.onmessage = (e) => this._onRebinResult(e.data);
+this._rebinInit = new Set();
+}
+if (!this._rebinInit.has(g.trace.id)) {
+const cpu = g.sampleOverlay._cpu;
+const n = Math.min(cpu.x.length, cpu.y.length);
+const xs = new Float64Array(n);
+const ys = new Float64Array(n);
+for (let i = 0; i < n; i++) {
+xs[i] = this._decodeValue(cpu.x, cpu.xMeta, i);
+ys[i] = this._decodeValue(cpu.y, cpu.yMeta, i);
+}
+this._rebinWorker.postMessage(
+{ type: "init", trace: g.trace.id, x: xs.buffer, y: ys.buffer },
+[xs.buffer, ys.buffer]
+);
+this._rebinInit.add(g.trace.id);
+}
+this._rebinWorker.postMessage({
+type: "rebin", trace: g.trace.id, seq,
+x0: Math.min(view.x0, view.x1), x1: Math.max(view.x0, view.x1),
+y0: Math.min(view.y0, view.y1), y1: Math.max(view.y0, view.y1),
+w: Math.max(16, Math.min(2048, Math.round(this.plot.w))),
+h: Math.max(16, Math.min(2048, Math.round(this.plot.h))),
+});
+},
+_onRebinResult(msg) {
+if (this._destroyed || !msg || msg.type !== "grid" || msg.seq !== this.seq) return;
+const g = this.gpuTraces.find((t) => t.trace.id === msg.trace && t.tier === "density");
+if (!g) return;
+const grid = new Float32Array(msg.grid);
+this._applySampleRebinGrid(g, {
+w: msg.w, h: msg.h, max: msg.max, normMax: msg.max,
+colormap: g.density.colormap,
+xRange: [msg.x0, msg.x1], yRange: [msg.y0, msg.y1],
+grid,
+tex: this._uploadGrid(grid, msg.w, msg.h, msg.max || 1),
+lut: g.density.lut,
+}, true);
+},
+_applySampleRebinGrid(g, density, rebinned) {
+g.prevDensity = g.density;
+g._densityFadeStart = performance.now();
+g.densityNormMax = density.normMax || density.max;
+g.density = density;
+g._sampleRebinned = !!rebinned; 
+lodRememberDensity(this, g, g.density);
+this._refreshReductionBadges();
+this.draw();
 },
 _applyAppend(msg, buffers) {
 const spec = msg.spec;

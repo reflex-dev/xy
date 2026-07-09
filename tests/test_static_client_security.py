@@ -532,6 +532,42 @@ def test_client_renders_mark_level_styling() -> None:
     assert "g._cpu = { x, y, base, xMeta: g.xMeta, yMeta: g.yMeta };" in src
 
 
+def test_standalone_density_rebin_worker() -> None:
+    """Kernel-less pages refine density charts by re-binning the retained
+    §28 sample in a bundled blob-URL worker — off the main thread, recorded
+    as a badge, falling back to the stretched overview when workers are
+    unavailable. The smoke proves it end-to-end under the production CSP."""
+    required = (
+        "FC_REBIN_WORKER_SRC",  # worker source ships inside the bundle
+        "fcCreateRebinWorker(",
+        "_scheduleSampleRebin(",  # standalone branch of the view-request path
+        "_requestSampleRebin(",
+        '"zoom re-binned from sample"',  # §28: the reduction is badged
+        "this._rebinWorker.terminate();",  # lifecycle: destroy() tears it down
+    )
+    for path, text in CLIENT_FILES:
+        for marker in required:
+            assert marker in text, f"{path} lost standalone re-bin marker {marker!r}"
+    # The worker result path never touches the retained sample overlay (it is
+    # the re-bin source); only the grid/texture swap.
+    src = _CLIENT_SRC[1]
+    assert "_applySampleRebinGrid(g" in src
+
+
+def test_standalone_csp_allows_blob_workers_and_matches_smoke() -> None:
+    """worker-src must be exactly blob: (the bundled re-bin worker) — no
+    external worker scripts — and the render smoke must exercise the same
+    policy string so its probes prove production behavior."""
+    from fastcharts.export import _STANDALONE_CSP
+
+    assert "worker-src blob:; " in _STANDALONE_CSP
+    smoke = (ROOT / "scripts" / "render_smoke_nonumpy.py").read_text(encoding="utf-8")
+    assert "csp = (" in smoke, "smoke CSP block not found"
+    block = smoke.split("csp = (", 1)[1].split(")", 1)[0]
+    smoke_csp = "".join(part for part in block.split('"')[1::2])
+    assert smoke_csp == _STANDALONE_CSP, "smoke CSP diverged from export._STANDALONE_CSP"
+
+
 def test_client_supports_edge_to_edge_sparklines() -> None:
     """Dashboards need chrome-less, edge-to-edge charts: an explicit `padding`
     override collapses the label-aware margins, and tick_label_strategy="none"
