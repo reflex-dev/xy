@@ -17,8 +17,6 @@ colors fall back to the mark color (no DOM to resolve against).
 from __future__ import annotations
 
 import base64
-import struct
-import zlib
 from datetime import UTC, datetime
 from os import PathLike
 from typing import Any, Optional
@@ -26,6 +24,7 @@ from xml.sax.saxutils import escape
 
 import numpy as np
 
+from . import _png
 from .config import DEFAULT_PALETTE
 
 # Mirrors js/src/10_colormaps.js COLORMAP_STOPS (§36) — test-guarded.
@@ -331,22 +330,8 @@ def _num(v: float) -> str:
     return f"{v:.2f}".rstrip("0").rstrip(".")
 
 
-def _png_rgba(w: int, h: int, rgba: bytes) -> bytes:
-    """Minimal stdlib PNG encoder (RGBA8) for embedded heatmap/density rasters."""
-
-    def chunk(tag: bytes, data: bytes) -> bytes:
-        body = tag + data
-        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
-
-    ihdr = struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)
-    stride = w * 4
-    raw = b"".join(b"\x00" + rgba[y * stride : (y + 1) * stride] for y in range(h))
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", ihdr)
-        + chunk(b"IDAT", zlib.compress(raw, 6))
-        + chunk(b"IEND", b"")
-    )
+# Embedded heatmap/density rasters use the shared truecolor PNG encoder.
+_png_rgba = _png.png_truecolor
 
 
 def _monotone_tangents(x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -499,7 +484,9 @@ def _dash_attr(style: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def render_svg(spec: dict[str, Any], blob: bytes) -> str:
+def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
+    """Concrete pixel dimensions + plot rect from a spec — shared by the SVG and
+    native-PNG exporters so their chrome/plot geometry stays identical."""
     width = spec.get("width")
     height = spec.get("height")
     # Fluid ("100%") figures need concrete export dimensions.
@@ -523,7 +510,31 @@ def render_svg(spec: dict[str, Any], blob: bytes) -> str:
         "w": max(40, width - left - right),
         "h": max(40, height - top - bottom),
     }
+    return width, height, compact, plot
 
+
+def axis_ticks(
+    axis: dict[str, Any], length_px: float, is_x: bool
+) -> tuple[list[float], list[float], float]:
+    """(ticks, labeled ticks, step) for an axis at a given pixel length — shared
+    tick density so SVG and PNG label the same values."""
+    target = max(3, int(length_px / 80)) if is_x else max(3, int(length_px / 45))
+    kind = axis.get("kind")
+    lo, hi = axis["range"]
+    if kind == "log":
+        return _log_ticks(lo, hi, target)
+    if kind == "category":
+        t = [float(v) for v in _category_ticks(lo, hi, len(axis.get("categories") or []), target)]
+        return t, t, 1.0
+    if kind == "time":
+        t, step = _time_ticks(lo, hi, target)
+        return t, t, step
+    t, step = _linear_ticks(lo, hi, target)
+    return t, t, step
+
+
+def render_svg(spec: dict[str, Any], blob: bytes) -> str:
+    width, height, compact, plot = layout(spec)
     xa, ya = spec["x_axis"], spec["y_axis"]
     sx = _Scale(xa, plot["x"], plot["x"] + plot["w"])
     sy = _Scale(ya, plot["y"] + plot["h"], plot["y"])  # y grows downward in SVG
@@ -531,22 +542,7 @@ def render_svg(spec: dict[str, Any], blob: bytes) -> str:
     cols = spec["columns"]
 
     def ticks_for(axis: dict[str, Any], length_px: float) -> tuple[list[float], list[float], float]:
-        target = max(3, int(length_px / 80)) if axis is xa else max(3, int(length_px / 45))
-        kind = axis.get("kind")
-        lo, hi = axis["range"]
-        if kind == "log":
-            t, labels, step = _log_ticks(lo, hi, target)
-            return t, labels, step
-        if kind == "category":
-            t = [
-                float(v) for v in _category_ticks(lo, hi, len(axis.get("categories") or []), target)
-            ]
-            return t, t, 1.0
-        if kind == "time":
-            t, step = _time_ticks(lo, hi, target)
-            return t, t, step
-        t, step = _linear_ticks(lo, hi, target)
-        return t, t, step
+        return axis_ticks(axis, length_px, axis is xa)
 
     # -- grid + tick labels + baselines ------------------------------------
     xt, xlab, xstep = ticks_for(xa, plot["w"])
@@ -654,7 +650,7 @@ def render_svg(spec: dict[str, Any], blob: bytes) -> str:
     chrome: list[str] = []
     if spec.get("title"):
         chrome.append(
-            f'<text x="{_num(width / 2)}" y="{_num(top - (10 if compact else 12))}" '
+            f'<text x="{_num(width / 2)}" y="{_num(plot["y"] - (10 if compact else 12))}" '
             f'text-anchor="middle" font-size="14" font-weight="600" '
             f'fill="{_TEXT}">{escape(str(spec["title"]))}</text>'
         )

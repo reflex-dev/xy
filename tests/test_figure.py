@@ -1613,14 +1613,15 @@ def test_find_chromium_checks_standard_macos_app_paths(monkeypatch):
 
 
 def test_to_png_missing_chromium_is_clear(monkeypatch):
-    # Without a browser, the error names the fix (mirrors plotly needing kaleido)
-    # and never silently returns bad bytes.
+    # The chromium engine, without a browser, names the fix (mirrors plotly
+    # needing kaleido) and never silently returns bad bytes. (The default native
+    # engine needs no browser at all.)
     from fastcharts import export
 
     monkeypatch.setattr(export, "find_chromium", lambda explicit=None: None)
     fig = Figure(width=200, height=150).scatter(np.arange(5.0), np.arange(5.0))
     with pytest.raises(RuntimeError, match="Chromium"):
-        fig.to_png()
+        fig.to_png(engine="chromium")
 
 
 def test_to_png_rejects_bad_export_geometry_before_chromium_lookup(monkeypatch):

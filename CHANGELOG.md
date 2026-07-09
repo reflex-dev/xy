@@ -9,6 +9,15 @@ in the README).
 ## [Unreleased]
 
 ### Added
+- **Browser-free native PNG export** (`Figure.to_png(engine="native")`, now the
+  default). A dependency-free anti-aliased rasterizer in the Rust core (ABI v8,
+  `fc_rasterize`) paints the same decimated payload the SVG exporter consumes,
+  driven by a Python-built display-list command buffer — no Chromium, ~40 ms for
+  a 10M-point line, and indexed-palette PNGs for small files. Carries the full
+  mark-styling surface (gradients, dashes, symbols, rounded/stroked bars, smooth
+  curves) and density/heatmap rasters; text uses a baked bitmap font atlas
+  (`scripts/gen_font.py`). `engine="chromium"` keeps the pixel-exact browser
+  screenshot path.
 - **Standalone density refinement, off the main thread** (dossier Phase 1):
   kernel-less `to_html` exports now re-bin the recorded density sample in a
   bundled Web Worker on zoom (blob-URL boot under a `worker-src blob:` CSP),

@@ -317,13 +317,18 @@ def to_png(
     width: Optional[int] = None,
     height: Optional[int] = None,
     scale: float = 2.0,
+    engine: str = "native",
     chromium: Optional[str] = None,
     sandbox: bool = True,
 ) -> bytes:
-    """Rasterize `fig` to a PNG (bytes, optionally saved). Renders the same
-    standalone HTML `to_html` produces in headless Chromium and screenshots it,
-    so the pixels match the interactive chart. Fluid ("100%") sizes fall back
-    to an explicit export size since a screenshot needs concrete dimensions."""
+    """Rasterize `fig` to a PNG (bytes, optionally saved).
+
+    `engine="native"` (default) paints the decimated payload with the built-in
+    Rust rasterizer — no browser, millisecond export, small indexed PNGs.
+    `engine="chromium"` renders the standalone HTML in headless Chromium and
+    screenshots it, so the pixels match the interactive WebGL chart exactly
+    (needs a Chromium binary; honors `chromium`/`sandbox`). Fluid ("100%") sizes
+    fall back to an explicit export size since a raster needs concrete dims."""
     w = _positive_pixel_count(
         width if width is not None else (fig.width if isinstance(fig.width, int) else 800),
         "PNG width",
@@ -334,8 +339,15 @@ def to_png(
     )
     scale = _positive_finite_float(scale, "PNG scale")
     sandbox = _bool_option(sandbox, "PNG sandbox")
-    doc = to_html(fig)
-    data = html_to_png(doc, w, h, scale=scale, chromium=chromium, sandbox=sandbox)
+    if engine not in ("native", "chromium"):
+        raise ValueError(f"PNG engine must be 'native' or 'chromium', got {engine!r}")
+    if engine == "native":
+        from . import _raster
+
+        data = _raster.to_png(fig, None, width=w, height=h, scale=scale)
+    else:
+        doc = to_html(fig)
+        data = html_to_png(doc, w, h, scale=scale, chromium=chromium, sandbox=sandbox)
     if path is not None:
         with open(path, "wb") as f:
             f.write(data)

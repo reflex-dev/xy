@@ -17,7 +17,7 @@ import sys
 from array import array
 from pathlib import Path
 
-ABI_VERSION = 7
+ABI_VERSION = 8
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -42,6 +42,7 @@ def load() -> ctypes.CDLL:
     F32P = ctypes.POINTER(ctypes.c_float)
     U64P = ctypes.POINTER(ctypes.c_uint64)
     U32P = ctypes.POINTER(ctypes.c_uint32)
+    U8P = ctypes.POINTER(ctypes.c_uint8)
 
     lib.fc_abi_version.restype = ctypes.c_uint32
     lib.fc_abi_version.argtypes = []
@@ -96,6 +97,8 @@ def load() -> ctypes.CDLL:
         ctypes.c_uint64,
         ctypes.POINTER(ctypes.c_uint8),
     ]
+    lib.fc_rasterize.restype = ctypes.c_int32
+    lib.fc_rasterize.argtypes = [U8P, ctypes.c_size_t, U8P, ctypes.c_size_t, ctypes.c_size_t]
     lib.fc_local_log_density.restype = ctypes.c_int32
     lib.fc_local_log_density.argtypes = [
         F64P,
@@ -125,6 +128,7 @@ def main() -> None:
     F32P = ctypes.POINTER(ctypes.c_float)
     U64P = ctypes.POINTER(ctypes.c_uint64)
     U32P = ctypes.POINTER(ctypes.c_uint32)
+    U8P = ctypes.POINTER(ctypes.c_uint8)
     null_f64 = F64P()
     null_f32 = F32P()
     null_u64 = U64P()
@@ -613,6 +617,22 @@ def main() -> None:
     )
     ok(lib.fc_pyramid_free(ctypes.c_uint64(handle)) == 1, "pyramid free")
     ok(lib.fc_pyramid_free(ctypes.c_uint64(handle)) == 0, "double free is an error code")
+
+    # rasterize: caller-owned RGBA8 framebuffer; empty command buffer clears to
+    # transparent, a malformed op is rejected, and a null out is refused.
+    null_u8 = U8P()
+    fb = array("B", [9]) * (2 * 2 * 4)
+    ok(
+        lib.fc_rasterize(null_u8, 0, _ptr(fb, ctypes.c_uint8), 2, 2) == 1
+        and all(v == 0 for v in fb),
+        "rasterize empty buffer clears framebuffer",
+    )
+    bad = array("B", [1, 9, 9, 9, 9])  # FILL_POLY claiming a huge point count
+    ok(
+        lib.fc_rasterize(_ptr(bad, ctypes.c_uint8), len(bad), _ptr(fb, ctypes.c_uint8), 2, 2) == 0,
+        "rasterize rejects a malformed command buffer",
+    )
+    ok(lib.fc_rasterize(null_u8, 0, null_u8, 2, 2) == 0, "rasterize refuses a null framebuffer")
 
     print(f"ABI smoke: {checks} checks passed against {_lib_name()}")
 

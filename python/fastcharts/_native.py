@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_SCREEN_DIM
 
-ABI_VERSION = 7
+ABI_VERSION = 8
 
 _F64_P = ctypes.POINTER(ctypes.c_double)
 _F32_P = ctypes.POINTER(ctypes.c_float)
@@ -220,6 +220,14 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,
         _F32_P,
     ]
+    lib.fc_rasterize.restype = ctypes.c_int32
+    lib.fc_rasterize.argtypes = [
+        _U8_P,  # cmd
+        ctypes.c_size_t,  # cmd_len
+        _U8_P,  # out (w*h*4 RGBA8)
+        ctypes.c_size_t,  # w
+        ctypes.c_size_t,  # h
+    ]
     return lib
 
 
@@ -235,6 +243,10 @@ def _as_f64(arr: npt.NDArray[np.float64], label: str = "data") -> npt.NDArray[np
 
 def _ptr_f64(arr: npt.NDArray[np.float64]):  # noqa: ANN202
     return arr.ctypes.data_as(_F64_P)
+
+
+def _ptr_u8(arr: npt.NDArray[np.uint8]):  # noqa: ANN202
+    return arr.ctypes.data_as(_U8_P)
 
 
 def _positive_int(value: int, label: str) -> int:
@@ -713,4 +725,19 @@ def local_log_density(
         )
         if not ok:
             raise ValueError("invalid local_log_density arguments")
+    return out
+
+
+def rasterize(cmds: bytes, w: int, h: int) -> npt.NDArray[np.uint8]:
+    """Paint a display-list command buffer (`_raster.py`) into an ``(h, w, 4)``
+    straight-alpha RGBA8 image via the native rasterizer. Raises on a malformed
+    buffer (the Rust side returns 0 = output undefined)."""
+    w = _positive_int(w, "raster width")
+    h = _positive_int(h, "raster height")
+    buf = np.frombuffer(cmds, dtype=np.uint8)
+    out = np.zeros((h, w, 4), dtype=np.uint8)
+    cmd_ptr = _ptr_u8(buf) if buf.size else None
+    ok = _lib.fc_rasterize(cmd_ptr, buf.size, _ptr_u8(out), w, h)
+    if not ok:
+        raise ValueError("native rasterizer rejected the command buffer")
     return out

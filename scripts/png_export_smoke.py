@@ -1,15 +1,23 @@
-"""Static PNG export smoke — stdlib only (no numpy / no PyPI), needs Chromium.
+"""Static PNG export smoke — stdlib only (no numpy / no PyPI).
 
-Exercises `export.html_to_png` end-to-end (the mechanism behind `Figure.to_png`)
-by rendering a hand-built standalone chart HTML — the committed JS bundle plus a
-tiny by-hand spec/blob — through headless Chromium and asserting a real,
-correctly-sized, non-trivial PNG comes back. Mirrors render_smoke_nonumpy.py's
-no-dependency stance so CI verifies the export path without installing numpy.
+Two engines, both without installing numpy:
+
+- **native** (always runs): drives the Rust rasterizer `fc_rasterize` directly
+  via ctypes with a hand-built display-list command buffer, encodes the returned
+  framebuffer to PNG, and asserts a real, correctly-sized, non-blank image — the
+  end-to-end browser-free `Figure.to_png(engine="native")` mechanism.
+- **chromium** (skipped without a browser): renders a hand-built standalone
+  chart HTML through headless Chromium (`export.html_to_png`), the
+  `engine="chromium"` path.
+
+Mirrors render_smoke_nonumpy.py's no-dependency stance so CI verifies both
+export paths without numpy.
 """
 
 from __future__ import annotations
 
 import base64
+import ctypes
 import json
 import struct
 import sys
@@ -18,7 +26,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "python"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # for abi_smoke.load
 
+from abi_smoke import load  # noqa: E402
 from fastcharts.export import find_chromium, html_to_png  # noqa: E402
 
 W, H, SCALE = 320, 200, 2
@@ -88,9 +98,72 @@ def png_is_nonblank(data: bytes) -> bool:
     return len(set(raw[:: max(1, len(raw) // 4096)])) > 3
 
 
+def _encode_truecolor(w: int, h: int, rgba: bytes) -> bytes:
+    """Minimal stdlib RGBA8 PNG (mirrors fastcharts._png.png_truecolor, kept
+    inline so this smoke stays numpy-free)."""
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        body = tag + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    stride = w * 4
+    raw = b"".join(b"\x00" + rgba[y * stride : (y + 1) * stride] for y in range(h))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw, 6))
+        + chunk(b"IEND", b"")
+    )
+
+
+def native_smoke() -> None:
+    """Rasterize a hand-built command buffer (bg + rect + text) through
+    `fc_rasterize` and validate the encoded PNG — no browser, no numpy."""
+    lib = load()
+    w, h = 160, 100
+
+    def f(v: float) -> bytes:
+        return struct.pack("<f", v)
+
+    def u(v: int) -> bytes:
+        return struct.pack("<I", v)
+
+    def poly(pts, rgba: bytes) -> bytes:
+        return bytes([1]) + u(len(pts)) + b"".join(f(x) + f(y) for x, y in pts) + rgba
+
+    cmd = bytearray()
+    cmd += poly([(0, 0), (w, 0), (w, h), (0, h)], bytes([255, 255, 255, 255]))  # white bg
+    cmd += poly([(20, 20), (140, 20), (140, 80), (20, 80)], bytes([37, 99, 235, 255]))  # blue rect
+    s = b"PNG"
+    cmd += (
+        bytes([6])
+        + f(80)
+        + f(55)
+        + bytes([1])
+        + f(18)
+        + bytes([255, 255, 255, 255])
+        + u(len(s))
+        + s
+    )
+
+    out = (ctypes.c_uint8 * (w * h * 4))()
+    cbuf = (ctypes.c_uint8 * len(cmd)).from_buffer_copy(bytes(cmd))
+    ok = lib.fc_rasterize(cbuf, len(cmd), out, w, h)
+    if ok != 1:
+        raise SystemExit("fc_rasterize rejected a valid command buffer")
+    png = _encode_truecolor(w, h, bytes(out))
+    if png[:8] != b"\x89PNG\r\n\x1a\n":
+        raise SystemExit("native: not a PNG")
+    pw, ph = struct.unpack(">II", png[16:24])
+    if (pw, ph) != (w, h) or not png_is_nonblank(png):
+        raise SystemExit("native PNG looks blank — rasterizer did not paint")
+    print(f"native png smoke OK: {pw}x{ph}, {len(png)} bytes, non-blank")
+
+
 def main() -> None:
+    native_smoke()
     if find_chromium() is None:
-        print("png export smoke SKIPPED (no chromium)")
+        print("chromium png export smoke SKIPPED (no chromium)")
         return
     png = html_to_png(build_html(), W, H, scale=SCALE, time_budget_ms=3000)
     if png[:8] != b"\x89PNG\r\n\x1a\n":
@@ -100,7 +173,7 @@ def main() -> None:
         raise SystemExit(f"unexpected PNG dims {w}x{h}, want {W * SCALE}x{H * SCALE}")
     if len(png) < 2000 or not png_is_nonblank(png):
         raise SystemExit("PNG looks blank — chart did not render")
-    print(f"png export smoke OK: {w}x{h}, {len(png)} bytes, non-blank")
+    print(f"chromium png export smoke OK: {w}x{h}, {len(png)} bytes, non-blank")
 
 
 if __name__ == "__main__":

@@ -1604,19 +1604,22 @@ class Figure(AnnotationsMixin, PayloadMixin):
         width: Optional[int] = None,
         height: Optional[int] = None,
         scale: float = 2.0,
+        engine: str = "native",
         chromium: Optional[str] = None,
         sandbox: bool = True,
     ) -> bytes:
-        """Static PNG (export.py): renders the standalone HTML in headless
-        Chromium and screenshots it, so the raster matches the live chart.
-        Needs a Chromium/Chrome binary (see export.find_chromium); HTML export
-        needs nothing extra."""
+        """Static PNG (export.py). `engine="native"` (default) paints the
+        decimated payload with the built-in Rust rasterizer — no browser,
+        millisecond export, small indexed PNGs. `engine="chromium"` screenshots
+        the standalone HTML for a pixel-exact match to the live WebGL chart
+        (needs a Chromium/Chrome binary; see export.find_chromium)."""
         return export.to_png(
             self,
             path,
             width=width,
             height=height,
             scale=scale,
+            engine=engine,
             chromium=chromium,
             sandbox=sandbox,
         )

@@ -36,8 +36,9 @@ out of room.
 **Status:** early alpha. The core 2D surface is now in place: line, scatter,
 area, histogram, bar/column, grouped/stacked bars, heatmap, direct rendering,
 M4 line/area decimation, Tier-2 scatter density, adaptive scatter drilldown,
-hover, box select/zoom, standalone HTML export, and static export (`to_svg` for
-millisecond, screen-bounded vector output; `to_png` via headless Chromium).
+hover, box select/zoom, standalone HTML export, and static export (`to_svg` and
+a browser-free native `to_png` — both millisecond and screen-bounded; `to_png`
+also offers a pixel-exact `engine="chromium"` mode).
 Styling is first-class: every DOM chrome element is a CSS/Tailwind-addressable
 slot, and marks take gradient fills, rounded/stroked bars, smooth curves, and
 opacity. See [`docs/styling.md`](docs/styling.md) and the full design dossier
@@ -304,9 +305,13 @@ axis labels, trace names, legends, series names, and categories are escaped
 before entering inline JSON or `<title>`, and non-finite JSON metadata is
 rejected instead of emitted as browser-dependent JavaScript.
 
-`Figure.to_png()` screenshots the same standalone HTML in local Chromium with
-the browser sandbox enabled by default. Use `sandbox=False` only for trusted
-HTML in CI/container environments where sandboxed Chromium cannot launch.
+`Figure.to_png()` defaults to `engine="native"`: the built-in Rust rasterizer
+paints the same decimated payload with no browser — millisecond export, small
+indexed PNGs, and it works anywhere the wheel imports (no Chrome needed). Pass
+`engine="chromium"` for a pixel-exact screenshot of the standalone HTML in local
+Chromium (`to_png(..., engine="chromium")` needs a local Chrome/Chromium
+executable); the browser sandbox is on by default — use `sandbox=False` only for
+trusted HTML in CI/container environments where sandboxed Chromium cannot launch.
 
 ## Example Apps
 

@@ -284,11 +284,19 @@ and thus fully CSS-styleable.
 browser client consumes into a standalone, resolution-independent SVG — pure
 Python, no browser, no extra dependencies. Because decimation runs first, the
 file is **screen-bounded**: a 10M-point line exports in ~4 ms as a ~58 KB SVG.
-Density/heatmap tiers embed as compact rasters. `fig.to_png(...)` (headless
-Chromium screenshot) remains the pixel-exact raster path.
+Density/heatmap tiers embed as compact rasters.
 
-Static SVG carries the full mark styling surface — gradients, dashes, symbols,
-rounded/stroked bars, smooth curves (as exact cubic Béziers) — with two
-documented approximations: an area's mark-space gradient uses the area's
-bounding box (SVG has no per-column gradient), and `var(--x)` colors fall back
-to the mark color (there is no DOM to resolve them against).
+`fig.to_png(path?, width=, height=, scale=)` defaults to `engine="native"`: the
+built-in **Rust rasterizer** paints that same decimated payload — no browser,
+millisecond export (a 10M-point line rasterizes in ~40 ms), and indexed-palette
+PNGs for small files. Text uses a baked bitmap font (the dependency-free core
+has no FreeType), so small labels are slightly less refined than a browser's.
+For a pixel-exact match to the live WebGL chart, `engine="chromium"` screenshots
+the standalone HTML (needs a local Chrome/Chromium).
+
+Both static engines carry the full mark styling surface — gradients, dashes,
+symbols, rounded/stroked bars, smooth curves — with the same two documented
+approximations: an area's mark-space gradient uses the area's bounding box (no
+per-column gradient), and `var(--x)` colors fall back to the mark color (no DOM
+to resolve them against). SVG renders smooth curves as exact cubic Béziers; the
+native raster flattens them to a fine polyline.

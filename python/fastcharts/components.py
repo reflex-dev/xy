@@ -1432,6 +1432,7 @@ class Chart(Component):
         width: Optional[int] = None,
         height: Optional[int] = None,
         scale: float = 2.0,
+        engine: str = "native",
         chromium: Optional[str] = None,
         sandbox: bool = True,
     ) -> bytes:
@@ -1440,6 +1441,7 @@ class Chart(Component):
             width=width,
             height=height,
             scale=scale,
+            engine=engine,
             chromium=chromium,
             sandbox=sandbox,
         )

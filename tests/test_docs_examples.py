@@ -162,7 +162,7 @@ def test_api_examples_document_alpha_api_stability_boundary() -> None:
         "Callback payload details and future adapter packages may still evolve before 1.0",
         '`width="100%"`',
         "Standalone `to_html(...)` needs no browser dependency",
-        "`to_png(...)` needs a local Chrome/Chromium executable",
+        '`to_png(..., engine="chromium")` needs a local Chrome/Chromium executable',
     ]
     for marker in required:
         assert marker in text

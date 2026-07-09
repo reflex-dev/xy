@@ -25,9 +25,10 @@ methods as `Figure`. Callback payload details and future adapter packages may
 still evolve before 1.0.
 
 Both APIs accept `width="100%"` and/or `height="100%"` for responsive charts.
-Standalone `to_html(...)` needs no browser dependency; `to_png(...)` needs a
-local Chrome/Chromium executable because it screenshots the same standalone
-HTML document.
+Standalone `to_html(...)` needs no browser dependency, and `to_png(...)` defaults
+to a browser-free native rasterizer. `to_png(..., engine="chromium")` needs a
+local Chrome/Chromium executable because it screenshots the same standalone HTML
+document for a pixel-exact match to the live chart.
 
 ## Chart Family Quick Reference
 
