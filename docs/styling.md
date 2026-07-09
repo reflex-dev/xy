@@ -222,6 +222,24 @@ and the border is a true ring (a stroke width with no color borders in the mark
 color). Symbols compose with the color/size channels and the selected/unselected
 mark states.
 
+### Interaction states — `mark_style` / `set_mark_style(...)`
+
+Restyle marks by interaction state — `hover`, `selected`, `unselected` — each a
+style dict of `color` / `opacity` (and `size` for hover). Selecting a region
+recolors and dims in one pass on the GPU:
+
+```python
+fig.set_mark_style(
+    hover={"color": "#0f172a", "size": 10},   # the point under the cursor
+    selected={"color": "#f97316"},            # points inside the selection
+    unselected={"opacity": 0.15},             # everything else fades back
+)
+```
+
+`color` accepts any CSS color; a state that sets no `color` keeps the mark's
+native color (so `unselected={"opacity": 0.15}` is the classic dim-the-rest
+selection affordance).
+
 ### Smooth curves — `curve="smooth"` on `line`, `area`
 
 Monotone cubic (Fritsch–Carlson) through the points: follows the data, never

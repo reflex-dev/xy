@@ -391,13 +391,14 @@ uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_y
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange;
 uniform int u_colorMode; uniform float u_dpr; uniform int u_selActive;
 uniform float u_selectedOpacity; uniform float u_unselectedOpacity;
-out float v_lutCoord; out float v_dim; out float v_dval; out float v_ptSize;
+out float v_lutCoord; out float v_dim; out float v_dval; out float v_ptSize; out float v_sel;
 ${AXIS_GLSL}
 void main() {
   gl_Position = vec4(fcMap(ax, u_xmap, u_xmeta, u_xmode), fcMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = sz * u_dpr;
   v_ptSize = sz * u_dpr;
+  v_sel = a_sel;
   // continuous: coord = value in [0,1]; categorical: center of texel a_cval.
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   // Local log-density LUT coord (drill handoff, §5): lets freshly drilled
@@ -431,7 +432,8 @@ precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
 uniform sampler2D u_dlut; uniform float u_dblend;
 uniform int u_symbol; uniform vec4 u_ptStroke; uniform float u_ptStrokeWidth;
-in float v_lutCoord; in float v_dim; in float v_dval; in float v_ptSize;
+uniform int u_selActive; uniform vec4 u_selColor; uniform vec4 u_unselColor;
+in float v_lutCoord; in float v_dim; in float v_dval; in float v_ptSize; in float v_sel;
 out vec4 outColor;
 ${MARKER_SDF_GLSL}
 void main() {
@@ -446,6 +448,12 @@ void main() {
   if (u_dblend > 0.001) {
     vec3 drgb = texture(u_dlut, vec2(clamp(v_dval, 0.0, 1.0), 0.5)).rgb;
     rgb = mix(rgb, drgb, u_dblend);
+  }
+  // §34 selected/unselected recolor: when a selection is active, tint each point
+  // toward its state color (.a is the mix weight; 0 = keep native color).
+  if (u_selActive == 1) {
+    vec4 sc = v_sel > 0.5 ? u_selColor : u_unselColor;
+    rgb = mix(rgb, sc.rgb, sc.a);
   }
   float fillAlpha = u_opacity;
   vec4 px = vec4(rgb * fillAlpha, fillAlpha);   // premultiplied fill
@@ -2401,6 +2409,12 @@ gl.uniform1i(u("u_colorMode"), g.colorMode);
 gl.uniform1f(u("u_opacity"), (g.trace.style.opacity ?? 0.8) * opacityScale);
 gl.uniform1f(u("u_selectedOpacity"), this._markStateNumber("selected", "opacity", 1));
 gl.uniform1f(u("u_unselectedOpacity"), this._markStateNumber("unselected", "opacity", 0.12));
+const stateColor = (loc, expr) => {
+const c = expr ? parseColor(this.root, expr, [0, 0, 0, 1]) : null;
+gl.uniform4f(loc, c ? c[0] : 0, c ? c[1] : 0, c ? c[2] : 0, c ? 1 : 0);
+};
+stateColor(u("u_selColor"), this._markStateValue("selected", "color"));
+stateColor(u("u_unselColor"), this._markStateValue("unselected", "color"));
 const [r, gg, b] = g.color;
 gl.uniform4f(u("u_color"), r, gg, b, 1);
 gl.uniform1i(u("u_symbol"), g.symbol || 0);
