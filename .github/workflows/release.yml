@@ -183,8 +183,9 @@ jobs:
         with:
           node-version: "22"
       # The sdist carries the committed JS bundle; it builds the Rust core on the
-      # user's machine if they install from sdist and have a toolchain, else it
-      # falls back to NumPy (hatch_build.py). Wheels are the normal path.
+      # user's machine if they install from sdist and have a toolchain. There is
+      # no fallback: without a toolchain the compute layer raises a clear
+      # ImportError on first use (hatch_build.py). Wheels are the normal path.
       - name: Verify committed JS bundles are fresh
         run: node js/build.mjs --check
       - name: Build sdist
@@ -232,6 +233,14 @@ jobs:
     permissions:
       id-token: write # PyPI trusted publishing (OIDC) — no API token stored
     steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+      # The artifact verifiers check everything inside the wheels/sdist, but
+      # only this gate stops a mismatched tag from publishing whatever version
+      # sits in pyproject.toml: the tag must equal v<project.version> and
+      # CHANGELOG.md must carry a dated entry for it.
+      - name: Release version gate (tag == pyproject == CHANGELOG)
+        if: github.event_name == 'push'
+        run: python3 scripts/check_release_version.py
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
