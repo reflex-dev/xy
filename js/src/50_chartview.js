@@ -802,6 +802,19 @@ class ChartView {
       g.sBuf = this._upload(this._columnView(buffer, this.spec.columns[t.size.buf]));
       g.sizeRange = t.size.range_px;
     }
+    this._pointMarkStyle(g, t);
+  }
+
+  // Point symbol + stroke (scatter). symbol -> shader enum; a stroke width with
+  // no color borders in the mark color (matches the rect family).
+  _pointMarkStyle(g, t) {
+    const s = t.style || {};
+    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4 }[s.symbol] || 0;
+    g.pointStrokeWidth = Number(s.stroke_width) || 0;
+    const markOpaque = [g.color[0], g.color[1], g.color[2], 1];
+    g.pointStroke = s.stroke
+      ? parseColor(this.root, s.stroke, markOpaque)
+      : g.pointStrokeWidth > 0 ? markOpaque : null;
   }
 
   _sampleTraceSpec(parentTrace, sample) {
@@ -1343,6 +1356,11 @@ class ChartView {
     gl.uniform1f(u("u_unselectedOpacity"), this._markStateNumber("unselected", "opacity", 0.12));
     const [r, gg, b] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, 1);
+    gl.uniform1i(u("u_symbol"), g.symbol || 0);
+    const sc = g.pointStroke;
+    gl.uniform1f(u("u_ptStrokeWidth"), sc ? (g.pointStrokeWidth || 0) * this.dpr : 0);
+    gl.uniform4f(u("u_ptStroke"), sc ? sc[0] * sc[3] : 0, sc ? sc[1] * sc[3] : 0,
+      sc ? sc[2] * sc[3] : 0, sc ? sc[3] : 0);
 
     gl.uniform1i(u("u_selActive"), g.selActive ? 1 : 0);
     const colorOn = g.colorMode !== 0 && g.cBuf;

@@ -393,18 +393,27 @@ class Figure(AnnotationsMixin, PayloadMixin):
         colormap: str = channels.DEFAULT_COLORMAP,
         size_range: tuple[float, float] = (2.0, 18.0),
         density: Optional[bool] = None,
+        symbol: str = "circle",
+        stroke: Optional[str] = None,
+        stroke_width: float = 0.0,
     ) -> "Figure":
         """Add a scatter trace.
 
         `color` may be a CSS color (constant), a numeric array (continuous →
         colormap), or a categorical array (factorized → palette). `size` may be
-        a scalar or a numeric array (mapped to `size_range` px). Large scatters
-        auto-switch to a Tier-2 density surface (§5); pass `density=True/False`
-        to force it.
+        a scalar or a numeric array (mapped to `size_range` px). `symbol` picks
+        the marker shape (circle/square/diamond/triangle/cross); `stroke` /
+        `stroke_width` draw a point border. Large scatters auto-switch to a
+        Tier-2 density surface (§5); pass `density=True/False` to force it.
         """
         name = self._optional_text(name, "scatter name")
         opacity = self._opacity(opacity, "scatter opacity")
         density = self._optional_bool(density, "scatter density")
+        symbol = _validate.point_symbol(symbol, "scatter symbol")
+        stroke = self._optional_text(stroke, "scatter stroke")
+        stroke_width = self._nonnegative_scalar(stroke_width, "scatter stroke_width")
+        if stroke is not None and stroke_width == 0.0:
+            stroke_width = 1.0
         checkpoint = self._checkpoint()
         try:
             xc, yc = self._ingest_xy(x, y, "scatter")
@@ -415,13 +424,21 @@ class Figure(AnnotationsMixin, PayloadMixin):
             )
             size_ch = channels.resolve_size(size, n, range_px=size_range)
 
+            point_style: dict[str, Any] = {"opacity": opacity}
+            if symbol != "circle":
+                point_style["symbol"] = symbol
+            if stroke is not None:
+                point_style["stroke"] = stroke
+            if stroke_width:
+                point_style["stroke_width"] = stroke_width
+
             trace = Trace(
                 id=len(self.traces),
                 kind="scatter",
                 x=xc,
                 y=yc,
                 name=name,
-                style={"opacity": opacity},
+                style=point_style,
                 color_ch=color_ch,
                 size_ch=size_ch,
                 force_density=density,

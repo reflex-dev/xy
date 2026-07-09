@@ -95,12 +95,13 @@ uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_y
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange;
 uniform int u_colorMode; uniform float u_dpr; uniform int u_selActive;
 uniform float u_selectedOpacity; uniform float u_unselectedOpacity;
-out float v_lutCoord; out float v_dim; out float v_dval;
+out float v_lutCoord; out float v_dim; out float v_dval; out float v_ptSize;
 ${AXIS_GLSL}
 void main() {
   gl_Position = vec4(fcMap(ax, u_xmap, u_xmeta, u_xmode), fcMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = sz * u_dpr;
+  v_ptSize = sz * u_dpr;
   // continuous: coord = value in [0,1]; categorical: center of texel a_cval.
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   // Local log-density LUT coord (drill handoff, §5): lets freshly drilled
@@ -110,18 +111,44 @@ void main() {
   v_dim = u_selActive == 1 ? mix(u_unselectedOpacity, u_selectedOpacity, step(0.5, a_sel)) : 1.0;
 }`;
 
+// Marker signed distance in gl_PointCoord-centered space (d in [-0.5,0.5]),
+// <0 inside, 0 at the boundary. Symbols match the annotation markers plus
+// triangle. With u_symbol=0 and no stroke this reduces to the old circle.
+const MARKER_SDF_GLSL = `
+float fcMarkerSdf(vec2 d, int shape) {
+  if (shape == 1) return max(abs(d.x), abs(d.y)) - 0.5;              // square
+  if (shape == 2) return (abs(d.x) + abs(d.y)) - 0.5;               // diamond
+  if (shape == 4) {                                                 // cross / plus
+    vec2 a = abs(d);
+    return min(max(a.x - 0.17, a.y - 0.5), max(a.x - 0.5, a.y - 0.17));
+  }
+  if (shape == 3) {                                                 // triangle (apex up)
+    const float k = 1.7320508;
+    float r = 0.62;
+    vec2 p = vec2(d.x, -d.y);   // flip so the apex points up
+    p.x = abs(p.x) - r;
+    p.y = p.y + r / k;
+    if (p.x + k * p.y > 0.0) p = vec2(p.x - k * p.y, -k * p.x - p.y) / 2.0;
+    p.x -= clamp(p.x, -2.0 * r, 0.0);
+    return -length(p) * sign(p.y);
+  }
+  return length(d) - 0.5;                                           // circle
+}`;
+
 const POINT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
 uniform sampler2D u_dlut; uniform float u_dblend;
-in float v_lutCoord; in float v_dim; in float v_dval;
+uniform int u_symbol; uniform vec4 u_ptStroke; uniform float u_ptStrokeWidth;
+in float v_lutCoord; in float v_dim; in float v_dval; in float v_ptSize;
 out vec4 outColor;
+${MARKER_SDF_GLSL}
 void main() {
   vec2 d = gl_PointCoord - 0.5;
-  float r = length(d) * 2.0;
-  float aa = fwidth(r) + 1e-4;
-  float cov = 1.0 - smoothstep(1.0 - aa, 1.0, r);
-  if (cov <= 0.001) discard;
+  float sd = fcMarkerSdf(d, u_symbol);
+  float aa = fwidth(sd) + 1e-4;
+  float shapeCov = clamp(0.5 - sd / aa, 0.0, 1.0);
+  if (shapeCov <= 0.001) discard;
   vec3 rgb = u_colorMode == 0 ? u_color.rgb : texture(u_lut, vec2(clamp(v_lutCoord, 0.0, 1.0), 0.5)).rgb;
   // Drill handoff (§5): near the density boundary, paint by local density with
   // the density ramp; ease into native colors as the zoom deepens (u_dblend->0).
@@ -129,8 +156,14 @@ void main() {
     vec3 drgb = texture(u_dlut, vec2(clamp(v_dval, 0.0, 1.0), 0.5)).rgb;
     rgb = mix(rgb, drgb, u_dblend);
   }
-  float alpha = cov * u_opacity * v_dim;
-  outColor = vec4(rgb * alpha, alpha);
+  float fillAlpha = u_opacity;
+  vec4 px = vec4(rgb * fillAlpha, fillAlpha);   // premultiplied fill
+  if (u_ptStrokeWidth > 0.0) {
+    float sw = u_ptStrokeWidth / max(v_ptSize, 1.0);   // px -> gl_PointCoord units
+    float innerCov = clamp(0.5 - (sd + sw) / aa, 0.0, 1.0);
+    px = mix(u_ptStroke, px, innerCov);                // ring = stroke, inside = fill
+  }
+  outColor = px * (shapeCov * v_dim);
 }`;
 
 // Picking: same geometry + size, outputs an encoded ID (24-bit vertex index +

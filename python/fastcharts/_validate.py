@@ -198,6 +198,16 @@ def curve(value: Any, label: str) -> str:
     return value
 
 
+_POINT_SYMBOLS = frozenset({"circle", "square", "diamond", "triangle", "cross"})
+
+
+def point_symbol(value: Any, label: str) -> str:
+    """Scatter marker shape."""
+    if not isinstance(value, str) or value not in _POINT_SYMBOLS:
+        raise ValueError(f"{label} must be one of {sorted(_POINT_SYMBOLS)}")
+    return value
+
+
 def _split_top_level(text: str) -> list[str]:
     """Split on commas that sit outside parentheses (rgb()/var() stay intact)."""
     parts: list[str] = []
