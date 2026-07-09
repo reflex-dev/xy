@@ -14,8 +14,11 @@ out of room.
 **Status:** early alpha, with the core 2D surface now in place: line, scatter,
 area, histogram, bar/column, grouped/stacked bars, heatmap, direct rendering,
 M4 line/area decimation, Tier-2 scatter density, adaptive scatter drilldown,
-hover, box select/zoom, standalone HTML export, and a Reflex example app all
-exist. See the full design dossier in
+hover, box select/zoom, and standalone HTML export all exist. Styling is
+first-class: every DOM chrome element is a CSS/Tailwind-addressable slot, and
+the marks themselves take gradient fills, rounded/stroked bars, smooth curves,
+and opacity ([`docs/styling.md`](docs/styling.md)) — enough to build
+dashboard-grade sparklines. See the full design dossier in
 [`docs/design-dossier.md`](docs/design-dossier.md).
 
 ## How fastcharts Works (the 30-second tour)
@@ -279,6 +282,13 @@ HTML in CI/container environments where sandboxed Chromium cannot launch.
   area, bar, and heatmap charts, including large-data drilldown examples. Its
   Reflex dependency is app-local; installing `fastcharts` itself must not pull
   in Reflex.
+- [`examples/dashboard/site_overview.py`](examples/dashboard/site_overview.py)
+  recreates an Ahrefs-style metrics dashboard: five edge-to-edge sparklines
+  (`padding=0`, `curve="smooth"`, gradient fills) mounted into HTML cards, the
+  client bundle embedded once. Shows the mark-styling + sparkline surface.
+- [`docs/styling.md`](docs/styling.md) is the full styling reference — chrome
+  slots, `--chart-*` tokens, and the mark-styling matrix (gradients, corners,
+  strokes, curves, opacity).
 - [`docs/api-examples.md`](docs/api-examples.md) has copyable examples for the
   currently implemented 2D chart families.
 
@@ -368,6 +378,36 @@ view-change behavior.
 `{"legend": my_legend, "tooltip": my_tooltip}`. Adapters should mount those
 objects by slot name next to the FastCharts HTML/widget container; it is not an
 iterable child list.
+
+### Styling the marks
+
+Beyond the CSS/Tailwind chrome slots, the marks themselves take styling props
+that speak CSS — gradient fills, rounded/stroked bars, smooth curves, opacity,
+and full CSS-alpha colors (`docs/styling.md`):
+
+```python
+import numpy as np
+from fastcharts import Figure
+
+x = np.arange(24.0)
+y = np.abs(np.sin(x / 4.0)) * 10 + 2
+
+# The dashboard-sparkline look: smooth curve + gradient fading to the baseline
+Figure(padding=0).area(
+    x, y, color="#3b82f6", curve="smooth", opacity=0.5,
+    fill="linear-gradient(currentColor, transparent)",
+)
+
+# Rounded-top, gradient bars — corner_radius=(tip, base) rounds only the value end
+Figure().bar(
+    ["Q1", "Q2", "Q3", "Q4"], [4.0, 7.0, 5.0, 8.0],
+    corner_radius=(6, 0), stroke="#1d4ed8", stroke_width=1.5,
+    fill="linear-gradient(to top, #1e40af, #93c5fd)",
+)
+```
+
+For a chrome-less, edge-to-edge sparkline, `Figure(padding=0)` fills the box and
+`tick_label_strategy="none"` (with transparent grid/axis colors) hides the axes.
 
 ## Benchmark Snapshot
 
@@ -488,7 +528,7 @@ The same harness also measures Seaborn/Agg as a static chart-to-pixels baseline
 | Rust core: zone maps, offset-f32 encode, M4 decimation, 2-D binning | [`src/`](src/) |
 | ctypes native binding to the Rust core | [`python/fastcharts/_native.py`](python/fastcharts/_native.py) |
 | Column store, autorange, memory accounting | [`python/fastcharts/columns.py`](python/fastcharts/columns.py) |
-| Figure API, payload builder, line/scatter/area/histogram/bar/heatmap traces | [`python/fastcharts/figure.py`](python/fastcharts/figure.py) |
+| Figure API, payload builder, line/scatter/area/histogram/bar/heatmap traces, annotations, mark styling (gradient/stroke/radius/curve/opacity) | [`python/fastcharts/figure.py`](python/fastcharts/figure.py) |
 | Composition API | [`python/fastcharts/components.py`](python/fastcharts/components.py) |
 | anywidget and standalone WebGL2 client | [`js/src/`](js/src/) (parts concatenated by `js/build.mjs`) |
 | Benchmarks | [`benchmarks/`](benchmarks/) |
@@ -605,7 +645,7 @@ chart-type contribution guide.
 For chart-type ordering, see the single 2D-first
 [`docs/chart-roadmap.md`](docs/chart-roadmap.md). Short version: keep hardening
 the common core charts already in place, then add box/violin, pie/donut,
-contour, error bars, annotations, and the rest of the Plotly-class 2D breadth
+contour, error bars, and the rest of the Plotly-class 2D breadth
 backlog from common charts through obscure compatibility surfaces. Long term,
 the goal is Plotly-class chart breadth across BI, data science, finance,
 science/engineering, product analytics, and dashboards.
