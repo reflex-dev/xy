@@ -201,20 +201,44 @@ PYTHONPATH=python .venv/bin/python benchmarks/bench_vs.py \
   --sizes 1e3,1e4,1e5 --budget 20
 ```
 
-| Library | Render target | 100k total | Peak memory | Output bytes | Points/sec |
+| Library | Render target | 100k total ¶ | Peak memory | Output bytes | Points/sec ¶ |
 |---|---|---:|---:|---:|---:|
-| fastcharts | binary payload (native) | **2 ms** | **2 MB** | 781 KB | 51,702,966 |
-| matplotlib | Agg PNG | 83 ms | 6 MB | 53 KB | 1,206,226 |
-| seaborn | matplotlib PNG | 152 ms | 11 MB | 39 KB | 657,728 |
-| Plotly `Scattergl` | Kaleido PNG | 2,991 ms | 22 MB | 61 KB | 33,434 |
-| Plotly `Scatter` | Kaleido PNG | 6,281 ms | 22 MB | 107 KB | 15,921 |
-| Bokeh canvas ¹ | standalone HTML | 75 ms | 14 MB | 2 MB | 1,327,770 |
-| Bokeh WebGL ¹ | standalone HTML | 73 ms | 14 MB | 2 MB | 1,360,995 |
-| Altair / Vega-Lite ¹ | standalone HTML | 1,846 ms | 35 MB | 5 MB | 54,171 |
-| Datashader ¹ | PNG raster | 13 ms | 15 MB | 58 KB | 7,502,931 |
-| hvPlot / HoloViews ¹ | Bokeh HTML | 95 ms | 17 MB | 2 MB | 1,052,353 |
+| fastcharts | binary payload (native) * | **2 ms** | **2 MB** | 781 KB | 51,702,966 |
+| matplotlib | Agg PNG † | 83 ms | 6 MB | 53 KB | 1,206,226 |
+| seaborn | matplotlib PNG † | 152 ms | 11 MB | 39 KB | 657,728 |
+| Plotly `Scattergl` | Kaleido PNG † | 2,991 ms | 22 MB | 61 KB | 33,434 |
+| Plotly `Scatter` | Kaleido PNG † | 6,281 ms | 22 MB | 107 KB | 15,921 |
+| Bokeh canvas ¹ | standalone HTML ‡ | 75 ms | 14 MB | 2 MB | 1,327,770 |
+| Bokeh WebGL ¹ | standalone HTML ‡ | 73 ms | 14 MB | 2 MB | 1,360,995 |
+| Altair / Vega-Lite ¹ | standalone HTML ‡ | 1,846 ms | 35 MB | 5 MB | 54,171 |
+| Datashader ¹ | PNG raster § | 13 ms | 15 MB | 58 KB | 7,502,931 |
+| hvPlot / HoloViews ¹ | Bokeh HTML ‡ | 95 ms | 17 MB | 2 MB | 1,052,353 |
 
 ¹ Earlier local run, not re-measured in the 2026-07-09 CI refresh.
+
+\* **Exact interactive wire payload.** The fastcharts row counts compact spec
+metadata plus the GPU-ready x/y float32 buffers, excluding the JavaScript runtime
+and HTML wrapper. At 100k direct points, two 4-byte coordinates account for about
+781 KiB (8 bytes/point); exact hover, selection, and view updates remain possible.
+
+† **Static raster output.** These byte counts are compressed finished pixels, not
+the source-point transport. The original coordinates cannot be recovered for
+exact hover, selection, or client-side re-rendering, so these values should not be
+compared directly with `*` or `‡` payload sizes.
+
+‡ **Interactive HTML output.** These artifacts retain chart data/specification and
+an HTML wrapper. Adapter resource modes differ (for example, a CDN reference may
+exclude the library runtime), so they are the closest interactive comparison to
+`*`, but not identical package/bundle measurements.
+
+§ **Aggregated raster output.** Datashader's PNG retains screen-sized density/count
+pixels rather than 100k exact points. Its compact size represents aggregation as
+well as PNG compression.
+
+¶ `total` and `points/sec` measure production of the target named in each row.
+They are useful for scaling within a target class, not as same-render-target
+speedups. Compare output bytes only between artifacts with equivalent retained
+information and runtime-inclusion rules.
 
 ---
 
