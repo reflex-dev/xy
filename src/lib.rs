@@ -50,7 +50,7 @@ fn ffi_guard<R>(sentinel: R, body: impl FnOnce() -> R) -> R {
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 9;
+pub const ABI_VERSION: u32 = 10;
 
 #[no_mangle]
 pub extern "C" fn fc_abi_version() -> u32 {
@@ -538,6 +538,52 @@ pub unsafe extern "C" fn fc_sample_mask(
     ffi_guard(0, || {
         kernels::sample_mask(ids, seed, threshold, out);
         1
+    })
+}
+
+/// Category-stratified sampling mask (§5/§17): per-category keep fractions
+/// scale as `min(1, fraction * sqrt(len / count))` and every category keeps at
+/// least `min(min_count, count)` of its lowest-hash rows. Bit-identical to the
+/// per-category NumPy reference in `fastcharts.lod` (parity-tested), fused
+/// into one pass instead of O(len · n_groups) rescans.
+///
+/// Returns 1 on success (including the empty no-op), 0 on null arguments, a
+/// non-finite or non-positive `fraction`, or a group code `>= n_groups`
+/// (output undefined).
+///
+/// # Safety
+/// `ids` must point to `len` readable u64s, `groups` to `len` readable u32s,
+/// `out` to `len` writable u8s.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fc_stratified_sample_mask(
+    ids: *const u64,
+    groups: *const u32,
+    len: usize,
+    n_groups: usize,
+    seed: u64,
+    fraction: f64,
+    min_count: u64,
+    out: *mut u8,
+) -> i32 {
+    if len == 0 {
+        return 1;
+    }
+    if ids.is_null()
+        || groups.is_null()
+        || out.is_null()
+        || n_groups == 0
+        || !fraction.is_finite()
+        || fraction <= 0.0
+    {
+        return 0;
+    }
+    let ids = std::slice::from_raw_parts(ids, len);
+    let groups = std::slice::from_raw_parts(groups, len);
+    let out = std::slice::from_raw_parts_mut(out, len);
+    ffi_guard(0, || {
+        kernels::stratified_sample_mask(ids, groups, n_groups, seed, fraction, min_count, out)
+            as i32
     })
 }
 

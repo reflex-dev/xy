@@ -621,6 +621,122 @@ fn sample_mask_impl(ids: &[u64], seed: u64, threshold: u64, threads: usize, out:
     });
 }
 
+/// Sampling threshold for a keep fraction, matching the Python reference
+/// `lod._sample_threshold` bit-for-bit: fractions >= 1 keep every row;
+/// otherwise `fraction * (2^64 - 1)` in f64 (the constant rounds to 2^64),
+/// truncated with the same saturating clamp as Python's
+/// `max(0, min(u64_max, int(...)))`.
+fn sample_threshold(fraction: f64) -> u64 {
+    if fraction >= 1.0 {
+        u64::MAX
+    } else {
+        // `as` saturates: NaN/negative -> 0, overflow -> u64::MAX.
+        (fraction * u64::MAX as f64) as u64
+    }
+}
+
+/// Category-stratified deterministic sampling mask (§5/§17). Per-category keep
+/// fractions scale sublinearly (`min(1, fraction * sqrt(n / count))`) and every
+/// category keeps at least `min(min_count, count)` of its lowest-hash rows, so
+/// rare categories stay pinned into view. The mask is monotonic in `fraction`
+/// because the floor rows (lowest hashes) are the first any threshold admits.
+///
+/// One fused pass replaces the per-category NumPy loop, whose repeated
+/// `inverse == group` scans made it O(n·k). Ties on equal hashes break toward
+/// the lower row index, so the floor stays deterministic with duplicate ids
+/// (distinct ids can't tie — splitmix64 is a bijection).
+///
+/// `groups[i]` must be `< n_groups`; returns false (output undefined) on an
+/// out-of-range code.
+pub fn stratified_sample_mask(
+    ids: &[u64],
+    groups: &[u32],
+    n_groups: usize,
+    seed: u64,
+    fraction: f64,
+    min_count: u64,
+    out: &mut [u8],
+) -> bool {
+    assert_eq!(ids.len(), groups.len());
+    assert_eq!(ids.len(), out.len());
+    if ids.is_empty() {
+        return true;
+    }
+    let mut counts = vec![0u64; n_groups];
+    for &g in groups {
+        match counts.get_mut(g as usize) {
+            Some(c) => *c += 1,
+            None => return false,
+        }
+    }
+    let n = ids.len() as f64;
+    let thresholds: Vec<u64> = counts
+        .iter()
+        .map(|&c| sample_threshold(fraction * (n / c as f64).sqrt()))
+        .collect();
+
+    // Keep pass: parallel only when the per-thread kept-count vectors stay
+    // small; a degenerate all-distinct grouping falls back to one thread.
+    let threads = if n_groups <= 1024 { par_threads(ids.len()) } else { 1 };
+    let per = ids.len().div_ceil(threads);
+    let thresholds_ref = &thresholds;
+    let kept: Vec<u64> = std::thread::scope(|s| {
+        let handles: Vec<_> = ids
+            .chunks(per)
+            .zip(groups.chunks(per))
+            .zip(out.chunks_mut(per))
+            .map(|((seg_ids, seg_groups), seg_out)| {
+                s.spawn(move || {
+                    let mut kept = vec![0u64; n_groups];
+                    for ((o, &id), &g) in seg_out.iter_mut().zip(seg_ids).zip(seg_groups) {
+                        let keep = splitmix64(id, seed) <= thresholds_ref[g as usize];
+                        *o = u8::from(keep);
+                        kept[g as usize] += u64::from(keep);
+                    }
+                    kept
+                })
+            })
+            .collect();
+        let mut kept = vec![0u64; n_groups];
+        for h in handles {
+            for (t, p) in kept.iter_mut().zip(h.join().expect("keep-pass worker panicked")) {
+                *t += p;
+            }
+        }
+        kept
+    });
+
+    // Floor fill: gather (hash, row) only for deficient categories and admit
+    // each one's `floor` lowest hashes on top of the threshold survivors.
+    let deficient: Vec<bool> = counts
+        .iter()
+        .zip(&kept)
+        .map(|(&c, &k)| k < min_count.min(c))
+        .collect();
+    if deficient.iter().any(|&d| d) {
+        let mut pools: Vec<Vec<(u64, usize)>> = vec![Vec::new(); n_groups];
+        for (i, (&id, &g)) in ids.iter().zip(groups).enumerate() {
+            if deficient[g as usize] {
+                pools[g as usize].push((splitmix64(id, seed), i));
+            }
+        }
+        for (g, pool) in pools.iter_mut().enumerate() {
+            if !deficient[g] {
+                continue;
+            }
+            let floor = min_count.min(counts[g]) as usize;
+            if floor < pool.len() {
+                pool.select_nth_unstable(floor - 1);
+                pool.truncate(floor);
+            }
+            for &(_, i) in pool.iter() {
+                out[i] = 1;
+            }
+        }
+    }
+    true
+}
+
 /// Uniform-bin histogram over `[lo, hi]` with the last bin closed, matching
 /// NumPy's fixed-bin behavior for the common chart path. Non-finite values and
 /// values outside the range are skipped. `out` is fully overwritten.
@@ -1072,6 +1188,116 @@ mod tests {
         sample_mask(&ids, 0, 0, &mut out);
         // threshold 0 keeps only rows whose hash is exactly 0 — none here
         assert!(out.iter().all(|&b| b == 0));
+    }
+
+    /// Direct port of the per-category NumPy loop this kernel replaced
+    /// (`lod.stratified_sample_keep_mask` before the fused pass) — the
+    /// oracle for the parity test.
+    fn stratified_reference(
+        ids: &[u64],
+        groups: &[u32],
+        n_groups: usize,
+        seed: u64,
+        fraction: f64,
+        min_count: u64,
+    ) -> Vec<u8> {
+        let n = ids.len() as f64;
+        let mut out = vec![0u8; ids.len()];
+        for g in 0..n_groups as u32 {
+            let idx: Vec<usize> = (0..ids.len()).filter(|&i| groups[i] == g).collect();
+            if idx.is_empty() {
+                continue;
+            }
+            let gf = fraction * (n / idx.len() as f64).sqrt();
+            let th = sample_threshold(gf);
+            let mut kept = 0usize;
+            for &i in &idx {
+                if splitmix64(ids[i], seed) <= th {
+                    out[i] = 1;
+                    kept += 1;
+                }
+            }
+            let floor = (min_count as usize).min(idx.len());
+            if kept < floor {
+                let mut hashed: Vec<(u64, usize)> =
+                    idx.iter().map(|&i| (splitmix64(ids[i], seed), i)).collect();
+                hashed.sort_unstable();
+                for &(_, i) in &hashed[..floor] {
+                    out[i] = 1;
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn stratified_sample_mask_matches_reference() {
+        // Skewed groups: one dominant, one mid, one rare — plus distinct ids
+        // shuffled so group runs don't align with thread chunks.
+        let len = 30_000usize;
+        let ids: Vec<u64> = (0..len as u64).map(|i| splitmix64(i, 99)).collect();
+        let groups: Vec<u32> = (0..len)
+            .map(|i| match i % 1000 {
+                0 => 2,
+                x if x < 100 => 1,
+                _ => 0,
+            })
+            .collect();
+        for (fraction, min_count) in [(1.0 / 4096.0, 1), (1.0 / 64.0, 3), (0.5, 0)] {
+            let mut got = vec![0u8; len];
+            assert!(stratified_sample_mask(
+                &ids, &groups, 3, 7, fraction, min_count, &mut got
+            ));
+            let want = stratified_reference(&ids, &groups, 3, 7, fraction, min_count);
+            assert_eq!(got, want, "fraction={fraction} min_count={min_count}");
+        }
+    }
+
+    #[test]
+    fn stratified_sample_mask_pins_rare_and_stays_monotonic() {
+        let len = 8_104usize;
+        let ids: Vec<u64> = (0..len as u64).collect();
+        let groups: Vec<u32> = (0..len)
+            .map(|i| if i < 8_000 { 0 } else if i < 8_100 { 1 } else { 2 })
+            .collect();
+        let mut lo = vec![0u8; len];
+        let mut hi = vec![0u8; len];
+        let base = 1.0 / 4096.0;
+        assert!(stratified_sample_mask(&ids, &groups, 3, 23, base, 1, &mut lo));
+        assert!(stratified_sample_mask(&ids, &groups, 3, 23, base * 32.0, 1, &mut hi));
+        for g in 0..3u32 {
+            let kept: u64 = lo
+                .iter()
+                .zip(&groups)
+                .filter(|&(_, &gg)| gg == g)
+                .map(|(&k, _)| u64::from(k))
+                .sum();
+            assert!(kept >= 1, "group {g} lost its floor row");
+        }
+        assert!(lo.iter().zip(&hi).all(|(&a, &b)| a <= b), "mask not monotonic");
+        let (nlo, nhi): (u64, u64) = (
+            lo.iter().map(|&b| u64::from(b)).sum(),
+            hi.iter().map(|&b| u64::from(b)).sum(),
+        );
+        assert!(nhi > nlo);
+    }
+
+    #[test]
+    fn stratified_sample_mask_rejects_out_of_range_group() {
+        let ids = [1u64, 2, 3];
+        let groups = [0u32, 5, 0]; // 5 >= n_groups
+        let mut out = [0u8; 3];
+        assert!(!stratified_sample_mask(&ids, &groups, 2, 0, 0.5, 1, &mut out));
+    }
+
+    #[test]
+    fn sample_threshold_matches_python_reference() {
+        // int(0.5 * (2**64 - 1) as f64) computed by the Python reference.
+        assert_eq!(sample_threshold(0.5), 9_223_372_036_854_775_808);
+        assert_eq!(sample_threshold(1.0), u64::MAX);
+        assert_eq!(sample_threshold(2.0), u64::MAX);
+        assert_eq!(sample_threshold(0.0), 0);
+        assert_eq!(sample_threshold(-1.0), 0);
     }
 
     #[test]
