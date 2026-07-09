@@ -32,7 +32,12 @@ Beyond the mark set, three capability layers now ship on `main`:
   fills, rounded (`corner_radius`, independent tip/base) and stroked bars,
   line/area dashes, smooth (monotone-cubic) curves, scatter symbols + strokes,
   and per-state `mark_style` colors — all resolved from CSS so the marks obey
-  the same theme tokens as the chrome.
+  the same theme tokens as the chrome. Every styling input is validated at
+  build time by the native CSS grammar (`src/css.rs`, ABI v9): closed grammars
+  (hex/`rgb()`/`hsl()`/named colors, lengths, numbers) parse strictly,
+  browser-resolved forms (`var()`/`oklch()`/`calc()`) pass through, and a
+  malformed value raises instead of rendering a silently wrong chart (see
+  `docs/styling.md` § Validation).
 - **Static export:** `fig.to_svg(...)` (pure-Python, screen-bounded vector —
   a 10M-point line exports in ~4 ms / ~58 KB) and `fig.to_png(...)` (a
   browser-free native Rust rasterizer by default, ~50× faster than the
@@ -42,10 +47,12 @@ Beyond the mark set, three capability layers now ship on `main`:
   retained density sample in a bundled Web Worker on zoom (off the main
   thread), so a kernel-less page refines instead of stretching the overview.
 
-**In review (not yet on `main`):** candlestick + OHLC marks and a finance
+**Prototyped (not on `main`):** candlestick + OHLC marks and a finance
 overlay/indicator layer (volume pane, SMA, VWAP, Bollinger, RSI, MACD,
-drawings) are built on the `codex/finance-charting-surface` PR — see rank 9 and
-rank 35 below.
+drawings) were built on the `codex/finance-charting-surface` exploration PR,
+which is now **closed unmerged** ("[Don't Merge]"). The design and code exist
+on that branch; landing finance on `main` needs a fresh PR that re-bases the
+surface onto current primitives — see rank 9 and rank 35 below.
 
 ## Source Signals
 
@@ -93,7 +100,7 @@ not fall out of sight.
 | 6 | Pie / donut | pie, donut, nested donut, variable-radius pie | Planned compatibility | Extremely common in dashboards even though performance differentiation is low. |
 | 7 | Heatmap / image / matrix | heatmap, image, annotated matrix, correlation matrix, cohort heatmap | Implemented core | `Figure().heatmap(...)` renders matrix cells through a compact grid texture with continuous colormaps and categorical/numeric axes. Follow-ups: annotation and tiled huge-image paths. |
 | 8 | Box plot | box, grouped box, notched box, outlier points | Planned | Standard distribution summary across Plotly, Matplotlib, Seaborn, Altair. |
-| 9 | Candlestick / OHLC | candlestick, OHLC bars, volume overlay, range selector | Implemented — in review | `Figure().candlestick/ohlc(...)` + `fc.candlestick_chart(...)` on the `codex/finance-charting-surface` PR: OHLC decimation, shared-y f32 frame, time axes, hover, and a volume pane. Critical finance surface; inherits LOD and time-axis work from core primitives. |
+| 9 | Candlestick / OHLC | candlestick, OHLC bars, volume overlay, range selector | Prototyped (PR closed unmerged) | `Figure().candlestick/ohlc(...)` + `fc.candlestick_chart(...)` on the closed `codex/finance-charting-surface` exploration branch: OHLC decimation, shared-y f32 frame, time axes, hover, and a volume pane. Critical finance surface; inherits LOD and time-axis work from core primitives. |
 | 10 | Error and interval charts | error bars, error bands, confidence intervals, line range, bar range, whisker, rule | Planned | Needed for science, experimentation, forecasting, and statistical dashboards. |
 | 11 | 2D density charts | 2D histogram, hexbin, density heatmap, KDE contours | Planned | Makes dense scatter honest at scale and exposes aggregation as a first-class chart type. |
 | 12 | Violin and distribution shapes | violin, split violin, KDE plot, density ridge | Planned | Common in data science; builds on density and filled polygons. |
@@ -119,7 +126,7 @@ not fall out of sight.
 | 32 | Scientific vector fields | quiver, barbs, streamplot, wind rose | Planned later | Science/engineering breadth; needs arrows, vector fields, and polar variants. |
 | 33 | Irregular grid science | pcolormesh, tricontour, tripcolor, triangular mesh | Planned later | Matplotlib/science compatibility; separate data model from regular heatmaps. |
 | 34 | Specialist coordinate systems | ternary, Smith chart, carpet plot, polar scatter/line/bar | Planned later | Plotly/science compatibility; axis systems are the main work. |
-| 35 | Finance advanced | VWAP, moving averages, Bollinger bands, RSI, MACD, depth chart, order book heatmap, market profile, Renko, Heikin-Ashi, Kagi, point-and-figure | Partially implemented — in review | The `codex/finance-charting-surface` PR ships a `FinanceChart`/`FinanceLayer` system with volume bars, SMA, VWAP, Bollinger bands, RSI, and MACD as overlay/pane layers plus drawings. Remaining: depth/order-book, market profile, Renko/Heikin-Ashi/Kagi/P&F. |
+| 35 | Finance advanced | VWAP, moving averages, Bollinger bands, RSI, MACD, depth chart, order book heatmap, market profile, Renko, Heikin-Ashi, Kagi, point-and-figure | Prototyped (PR closed unmerged) | The closed `codex/finance-charting-surface` exploration branch has a `FinanceChart`/`FinanceLayer` system with volume bars, SMA, VWAP, Bollinger bands, RSI, and MACD as overlay/pane layers plus drawings. Remaining: depth/order-book, market profile, Renko/Heikin-Ashi/Kagi/P&F. |
 | 36 | Maps and geo | choropleth, tile choropleth, point map, bubble map, density map, route map, filled-area map | Deferred 2D domain | 2D, but requires projection/tile/geography stack; do after core chart breadth. |
 | 37 | Statistical evaluation | ROC, precision-recall, lift, calibration, Manhattan, volcano | Planned later | Mostly composed line/scatter variants with domain helpers. |
 | 38 | Composition/part-to-whole extras | waffle, mosaic/Mekko, variwide, packed bubble, Venn/Euler | Planned later | Useful compatibility charts; mostly layout algorithms plus rectangles/circles. |
@@ -158,8 +165,8 @@ bars/bands, ECDF/cumulative histograms, and first-class 2D density chart types.
 |---:|---|---|---|
 | 13 | Composed / mixed charts | Overlay line, scatter, bars, bands, candlesticks, and secondary axes cleanly. | API and spec work comes before many chart families. |
 | 14 | Pie / donut | Very popular in basic chart libraries and user expectations. | Low fastcharts differentiation; implement for completeness, not performance. |
-| 15 | Candlestick / OHLC | Important for finance users and appears in Plotly/Highcharts stock tooling. | **Implemented (in review):** candlestick/OHLC marks with date axes, gaps, and hover format on the finance PR. Remaining polish: range selectors. |
-| 16 | Finance overlays | Volume bars, VWAP, moving averages, Bollinger bands, depth/order-book heatmap, market profile, Renko, Heikin-Ashi, Kagi, point-and-figure. | **Partially implemented (in review):** volume pane, SMA, VWAP, Bollinger, RSI, MACD as `FinanceLayer`s reusing composed charts + time axes. Remaining: depth/order-book, market profile, Renko/Heikin-Ashi/Kagi/P&F. |
+| 15 | Candlestick / OHLC | Important for finance users and appears in Plotly/Highcharts stock tooling. | **Prototyped (PR closed unmerged):** candlestick/OHLC marks with date axes, gaps, and hover format on the closed finance exploration branch. Remaining polish: range selectors. |
+| 16 | Finance overlays | Volume bars, VWAP, moving averages, Bollinger bands, depth/order-book heatmap, market profile, Renko, Heikin-Ashi, Kagi, point-and-figure. | **Prototyped (PR closed unmerged):** volume pane, SMA, VWAP, Bollinger, RSI, MACD as `FinanceLayer`s reusing composed charts + time axes. Remaining: depth/order-book, market profile, Renko/Heikin-Ashi/Kagi/P&F. |
 | 17 | Waterfall | Common in business reporting and Plotly/Highcharts. | Mostly categorical bars plus running baseline. |
 | 18 | Funnel / funnel area | Common sales/product analytics chart. | Mostly categorical geometry plus labels. |
 | 19 | Calendar/cohort heatmap | Common product analytics and retention surface. | Grid plus date semantics. |
@@ -294,7 +301,7 @@ of it (gradients → `<linearGradient>`, smooth curves → exact cubic Béziers,
 etc.) with two documented approximations (area mark-space gradient uses the
 bbox; `var()` colors fall back to the mark color — no DOM).
 
-### Tailwind / utility-class styling (candidate — gated on performance)
+### Tailwind / utility-class styling (shipped)
 
 Today the client already resolves colors *through the DOM* (§36): `currentColor`
 and the `--chart-*` custom properties (`--chart-bg`, `--chart-grid`,
@@ -328,23 +335,21 @@ once per document (not per frame, not per hover), so the class hook adds no
 draw-loop cost; the pre-existing `resolveCssColor` note below still applies only
 to the theme-token read path.
 
-**Performance caveat (why this is a candidate, not a commitment):** CSS-color
+**Performance guardrail (why this stays bounded):** CSS-color
 resolution goes through `resolveCssColor`, which appends a probe element and calls
 `getComputedStyle` — a style/layout flush. That is acceptable today because it
 runs only at theme-read time and is effectively cached, never in the draw loop.
-Before broadening class-driven styling we must confirm resolution stays out of the
-hot path (cache resolved colors; re-resolve only on explicit theme change, not per
-frame or per hover), and that classable chrome doesn't reintroduce layout thrash
-on the tooltip's per-hover repositioning. If it can't be kept off the render path
-without measurable cost, we keep the current `--chart-*` token surface and decline
-the broader passthrough. Decision should be backed by a `scripts/bench.py` TTFR /
+Any broadening of class-driven styling must keep resolution out of the hot
+path (cache resolved colors; re-resolve only on explicit theme change, not per
+frame or per hover) and must not reintroduce layout thrash on the tooltip's
+per-hover repositioning — backed by a `scripts/bench.py` TTFR /
 interaction-latency comparison, not assumed.
 
 ## Recommended Sequence
 
 The first breadth milestone — **histogram, bar/column, area, heatmap** — is
 **done** (core primitives + styling). Candlestick/OHLC + finance overlays are
-**built and in review** on the finance PR. That clears the rectangle-,
+**prototyped on the closed finance exploration PR** and need a fresh landing. That clears the rectangle-,
 polygon-, and grid-texture foundations, so the next block is statistical
 breadth on top of them, then the two "completeness" charts users ask for first.
 
@@ -366,8 +371,9 @@ breadth on top of them, then the two "completeness" charts users ask for first.
 4. **Pie / donut** — low performance differentiation but a top dashboard ask;
    implement for completeness (arc geometry + label placement).
 
-5. **Merge the finance PR**, then extend rank-35 breadth (depth chart,
-   Heikin-Ashi, Renko) on the shipped `FinanceLayer` system.
+5. **Re-land the finance surface** (fresh PR from the closed exploration
+   branch, rebased onto current primitives), then extend rank-35 breadth
+   (depth chart, Heikin-Ashi, Renko) on the `FinanceLayer` system.
 
 Parallel, non-chart-type tracks:
 
@@ -391,7 +397,7 @@ Figure().hist(values, bins=512, density=False, cumulative=False)
 Figure().bar(categories, values, mode="grouped", orientation="vertical")
 Figure().area(x, y, baseline=0.0)          # + fill=linear-gradient, curve, dash
 Figure().heatmap(z, x=None, y=None, colormap="viridis")
-Figure().candlestick(x, open, high, low, close)   # in review (finance PR)
+Figure().candlestick(x, open, high, low, close)   # prototyped (closed finance PR)
 
 # next
 Figure().box(values, group=None)
@@ -407,7 +413,8 @@ Composition API equivalents follow the current style
 ## Decision Summary
 
 The rectangle / polygon / grid-texture foundations and full mark styling are
-in place, and finance (candlestick + indicators) is in review. The next regular
+in place, and finance (candlestick + indicators) is prototyped on a closed
+exploration PR awaiting a fresh landing. The next regular
 2D work is **statistical breadth** — box, violin, error bars/bands, hexbin —
 followed by **pie/donut** for dashboard completeness. In parallel, the **native
 PNG rasterizer** (perf) and the **Reflex-first reactive API** (the last deferred
