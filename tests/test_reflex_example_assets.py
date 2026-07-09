@@ -27,7 +27,11 @@ RETENTION_ASSET = ROOT / "examples" / "reflex" / "assets" / "charts" / "retentio
 LIVE_ASSETS = [
     ROOT / "examples" / "reflex" / "assets" / "charts" / "live_drilldown_100m.html",
     ROOT / "examples" / "reflex" / "assets" / "charts" / "live_drilldown_10m.html",
+    ROOT / "examples" / "reflex" / "assets" / "charts" / "live_drilldown_1b.html",
 ]
+CANDLESTICK_EDITOR_ASSET = (
+    ROOT / "examples" / "reflex" / "assets" / "charts" / "candlestick_editor.html"
+)
 CHART_ASSET_DIR = ROOT / "examples" / "reflex" / "assets" / "charts"
 LIFECYCLE_SMOKE = ROOT / "scripts" / "reflex_lifecycle_smoke.py"
 VISUAL_SMOKE = ROOT / "scripts" / "visual_regression_smoke.py"
@@ -145,9 +149,11 @@ def test_reflex_dashboard_has_selector_and_small_business_chart() -> None:
         "RETENTION_CHART",
         "BUSINESS_CHARTS",
         "CORE_CHARTS",
+        "FINANCE_CHARTS",
         "LARGE_DATA_CHARTS",
         'chart_section("Business charts", BUSINESS_CHARTS)',
         'chart_section("Core 2D gallery", CORE_CHARTS)',
+        'chart_section("Finance charts", FINANCE_CHARTS',
         'chart_section("Large-data demos", LARGE_DATA_CHARTS',
         "def core_api_status()",
         "Core API status",
@@ -157,6 +163,7 @@ def test_reflex_dashboard_has_selector_and_small_business_chart() -> None:
         "Interaction",
         "core-api-status",
         "Custom Reflex Chrome",
+        "Finance Layer Editor",
         "Business Overview",
         "Retention Cohort",
         "/charts/custom_chrome.html",
@@ -183,8 +190,10 @@ def test_reflex_dashboard_has_selector_and_small_business_chart() -> None:
         'loading="eager"',
         'loading="lazy"',
         'loading = "eager" if chart["id"] in {"business-overview", "retention-cohort"} else "lazy"',
+        "/charts/candlestick_editor.html",
         "business-overview",
         "retention-cohort",
+        "candlestick",
         "href=f\"#{chart['id']}\"",
     ]
     for marker in required:
@@ -202,13 +211,14 @@ def test_reflex_dashboard_groups_small_and_large_examples() -> None:
         "retention-cohort",
     ]
     assert "live-drilldown" not in {chart["id"] for chart in constants["BUSINESS_CHARTS"]}
+    assert [chart["id"] for chart in constants["FINANCE_CHARTS"]] == ["candlestick"]
     assert "live-drilldown" in {chart["id"] for chart in constants["LARGE_DATA_CHARTS"]}
     business_count = len(constants["BUSINESS_CHARTS"])
     assert constants["CHART_NAV"][:business_count] == constants["BUSINESS_CHARTS"]
-    assert (
-        constants["CHART_NAV"][business_count : business_count + len(constants["CORE_CHARTS"])]
-        == constants["CORE_CHARTS"]
-    )
+    core_end = business_count + len(constants["CORE_CHARTS"])
+    assert constants["CHART_NAV"][business_count:core_end] == constants["CORE_CHARTS"]
+    finance_end = core_end + len(constants["FINANCE_CHARTS"])
+    assert constants["CHART_NAV"][core_end:finance_end] == constants["FINANCE_CHARTS"]
 
 
 def test_reflex_dashboard_has_code_snippets_for_every_chart() -> None:
@@ -679,3 +689,20 @@ def test_small_retention_cohort_asset_exists() -> None:
     assert "Small retention cohort" in html
     assert "signup cohort" in html
     assert "retention" in html
+
+
+def test_candlestick_editor_asset_has_drag_palette() -> None:
+    html = CANDLESTICK_EDITOR_ASSET.read_text(encoding="utf-8")
+    required = [
+        "createFinanceLayerEditor",
+        "editor-palette",
+        'data-tool="long_position"',
+        'data-tool="short_position"',
+        'data-tool="anchored_vwap"',
+        'data-tool="fixed_range_volume_profile"',
+        'data-tool="ghost_feed"',
+        "window.fastchartsFinanceEditor",
+        "fastcharts.renderStandalone",
+    ]
+    for marker in required:
+        assert marker in html

@@ -67,6 +67,8 @@ __all__ = [
     "bar",
     "bar_chart",
     "callout",
+    "candlestick",
+    "candlestick_chart",
     "chart",
     "column",
     "column_chart",
@@ -84,6 +86,8 @@ __all__ = [
     "mark_style",
     "marker",
     "modebar",
+    "ohlc",
+    "ohlc_chart",
     "scatter",
     "scatter_chart",
     "text",
@@ -113,11 +117,12 @@ class Component:
 
 @dataclass
 class Mark(Component):
-    kind: str  # "scatter" | "line" | "area" | "histogram" | "bar" | "column" | "heatmap"
+    kind: str  # "scatter" | "line" | "area" | "histogram" | "bar" | "column" | "heatmap" | "candlestick" | "ohlc"
     x: Any = None
     y: Any = None
     data: Any = None
     name: Optional[str] = None
+    id: Optional[str] = None  # explicit trace id (finance layers reference it)
     class_name: Optional[str] = None
     props: dict[str, Any] = field(default_factory=dict)
 
@@ -151,6 +156,7 @@ class Axis(Component):
     tick_label_strategy: Optional[AxisTickLabelStrategy] = None
     tick_label_min_gap: Optional[float] = None
     side: Optional[str] = None
+    scale: Optional[str] = None  # finance-style alias for type_
     style: dict[str, StyleValue] = field(default_factory=dict)
 
 
@@ -307,6 +313,10 @@ def area(
     fill: Any = None,
     curve: str = "linear",
     dash: Any = None,
+    fill_color: Optional[str] = None,
+    width: Optional[float] = None,
+    fill_opacity: Optional[float] = None,
+    baseline: Any = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -330,8 +340,92 @@ def area(
             "fill": fill,
             "curve": curve,
             "dash": dash,
+            "fill_color": fill_color,
+            "width": width,
+            "fill_opacity": fill_opacity,
+            "baseline": baseline,
             "x_axis": x_axis,
             "y_axis": y_axis,
+        },
+    )
+
+
+def candlestick(
+    x: Union[str, Any] = None,
+    open: Union[str, Any] = None,  # noqa: A002 - OHLC domain naming
+    high: Union[str, Any] = None,
+    low: Union[str, Any] = None,
+    close: Union[str, Any] = None,
+    *,
+    volume: Union[str, Any, None] = None,
+    data: Any = None,
+    name: Optional[str] = None,
+    id: Optional[str] = None,
+    up_color: str = "#26a69a",
+    down_color: str = "#ef5350",
+    width_frac: float = 0.7,
+    opacity: float = 1.0,
+    hollow: bool = False,
+    wick_color: Optional[str] = None,
+) -> Mark:
+    """An OHLC candlestick series."""
+    return Mark(
+        kind="candlestick",
+        x=x,
+        y=close,
+        data=data,
+        name=name,
+        id=id,
+        props={
+            "open": open,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+            "up_color": up_color,
+            "down_color": down_color,
+            "width_frac": width_frac,
+            "opacity": opacity,
+            "hollow": hollow,
+            "wick_color": wick_color,
+        },
+    )
+
+
+def ohlc(
+    x: Union[str, Any] = None,
+    open: Union[str, Any] = None,  # noqa: A002
+    high: Union[str, Any] = None,
+    low: Union[str, Any] = None,
+    close: Union[str, Any] = None,
+    *,
+    volume: Union[str, Any, None] = None,
+    data: Any = None,
+    name: Optional[str] = None,
+    id: Optional[str] = None,
+    up_color: str = "#26a69a",
+    down_color: str = "#ef5350",
+    width_frac: float = 0.7,
+    opacity: float = 1.0,
+) -> Mark:
+    """An OHLC bar series."""
+    return Mark(
+        kind="ohlc",
+        x=x,
+        y=close,
+        data=data,
+        name=name,
+        id=id,
+        props={
+            "open": open,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+            "up_color": up_color,
+            "down_color": down_color,
+            "width_frac": width_frac,
+            "opacity": opacity,
         },
     )
 
@@ -923,8 +1017,12 @@ def y_axis(
     tick_label_strategy: Optional[AxisTickLabelStrategy] = None,
     tick_label_min_gap: Optional[float] = None,
     side: Optional[str] = None,
+    scale: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Axis:
+    if type_ is not None and scale is not None and type_ != scale:
+        raise ValueError("y_axis type_ and scale must match when both are provided")
+    type_ = type_ or scale
     _validate_axis_type(type_)
     return Axis(
         which="y",
@@ -946,6 +1044,7 @@ def y_axis(
             tick_label_min_gap, "y_axis tick_label_min_gap"
         ),
         side=_axis_side(side, "y"),
+        scale=scale,
         style=_style_dict(style, "y_axis style"),
     )
 
@@ -1238,6 +1337,7 @@ class Chart(Component):
             title=self.title,
             x_label=xa.label if xa else None,
             y_label=ya.label if ya else None,
+            y_side=ya.side if ya and ya.side else "left",
         )
         for axis in axis_children:
             axis_id = axis.id or axis.which
@@ -1779,6 +1879,42 @@ def _apply_area(fig: Figure, m: Mark, data: Any) -> None:
         fill=m.props["fill"],
         curve=m.props["curve"],
         dash=m.props["dash"],
+        fill_color=m.props["fill_color"],
+        width=m.props["width"],
+        fill_opacity=m.props["fill_opacity"],
+        baseline=m.props["baseline"],
+    )
+
+
+def _apply_candlestick(fig: Figure, m: Mark, data: Any) -> None:
+    fig.candlestick(
+        _resolve(data, m.x, context=f"{m.kind}.x"),
+        _resolve(data, m.props["open"], context=f"{m.kind}.open"),
+        _resolve(data, m.props["high"], context=f"{m.kind}.high"),
+        _resolve(data, m.props["low"], context=f"{m.kind}.low"),
+        _resolve(data, m.props["close"], context=f"{m.kind}.close"),
+        name=m.name,
+        up_color=m.props["up_color"],
+        down_color=m.props["down_color"],
+        width_frac=m.props["width_frac"],
+        opacity=m.props["opacity"],
+        hollow=m.props["hollow"],
+        wick_color=m.props["wick_color"],
+    )
+
+
+def _apply_ohlc(fig: Figure, m: Mark, data: Any) -> None:
+    fig.ohlc(
+        _resolve(data, m.x, context=f"{m.kind}.x"),
+        _resolve(data, m.props["open"], context=f"{m.kind}.open"),
+        _resolve(data, m.props["high"], context=f"{m.kind}.high"),
+        _resolve(data, m.props["low"], context=f"{m.kind}.low"),
+        _resolve(data, m.props["close"], context=f"{m.kind}.close"),
+        name=m.name,
+        up_color=m.props["up_color"],
+        down_color=m.props["down_color"],
+        width_frac=m.props["width_frac"],
+        opacity=m.props["opacity"],
     )
 
 
@@ -1974,9 +2110,11 @@ def _apply_callout_annotation(fig: Figure, annotation: Annotation) -> None:
 _MARK_APPLIERS: dict[str, Callable[[Figure, Mark, Any], None]] = {
     "area": _apply_area,
     "bar": _apply_bar,
+    "candlestick": _apply_candlestick,
     "column": _apply_column,
     "heatmap": _apply_heatmap,
     "histogram": _apply_histogram,
+    "ohlc": _apply_ohlc,
     "scatter": _apply_scatter,
     "line": _apply_line,
 }
@@ -2010,6 +2148,16 @@ def line_chart(*children: Component, **props: Any) -> Chart:
 def area_chart(*children: Component, **props: Any) -> Chart:
     """An area chart composing `area` marks and axis/legend children."""
     return Chart("area_chart", children, **props)
+
+
+def candlestick_chart(*children: Component, **props: Any) -> Chart:
+    """A candlestick chart composing `candlestick` marks and axis/legend children."""
+    return Chart("candlestick_chart", children, **props)
+
+
+def ohlc_chart(*children: Component, **props: Any) -> Chart:
+    """An OHLC bar chart composing `ohlc` marks and axis/legend children."""
+    return Chart("ohlc_chart", children, **props)
 
 
 def histogram_chart(*children: Component, **props: Any) -> Chart:

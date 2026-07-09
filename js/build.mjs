@@ -23,6 +23,7 @@ const PARTS = [
   "53_interaction.js", //+ pointer/drag/wheel, selection, modebar, view anim
   "54_kernel.js", //     + kernel comm: view-requests, append, drill (§16)
   "55_marks.js", //      MARK_KINDS: per-chart-kind build/draw dispatch registry
+  "57_layers.js", //     LAYER_KINDS: finance overlays/studies/drawings
   "60_entries.js", //    anywidget + standalone entry points, export tail
 ];
 
@@ -218,7 +219,7 @@ const body = compact(src.slice(0, cut));
 // but import/export syntax — the body is export-free by construction.
 new Function(body);
 const exportTail = markerLineEnd < 0 ? "" : src.slice(markerLineEnd + 1);
-const iife = `(() => {\n${body}\nwindow.fastcharts = { render, renderStandalone, ChartView, MARK_KINDS, markOf };\n})();\n`;
+const iife = `(() => {\n${body}\nwindow.fastcharts = { render, renderStandalone, ChartView, MARK_KINDS, markOf, LAYER_KINDS, layerOf };\n})();\n`;
 new Function(iife);
 
 const outputs = [

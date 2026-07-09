@@ -650,6 +650,14 @@ backlog from common charts through obscure compatibility surfaces. Long term,
 the goal is Plotly-class chart breadth across BI, data science, finance,
 science/engineering, product analytics, and dashboards.
 
+For the finance-specific path, see
+[`docs/quant-finance-roadmap.md`](docs/quant-finance-roadmap.md). It lays out
+the API plan for TradingView-class overlays: long/short position tools,
+forecasting drawings, ghost feed, sectors, anchored VWAP, volume profiles,
+manual chart patterns, snapping, persistence, and Reflex-controlled
+customization. These are planned as composed overlay/study/drawing components
+over `candlestick()` rather than extra candlestick kwargs.
+
 - **Phase 1:** worker-side compute, SharedArrayBuffer where available, gap
   semantics, accessibility layer, filter Tier A.
 - **Phase 2:** density pyramid, progressive refinement, fill-rate-aware tier

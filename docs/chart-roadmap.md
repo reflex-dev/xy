@@ -189,6 +189,15 @@ used today, while keeping fastcharts' transport and rendering model underneath.
 | Geography and logistics | point maps, choropleth, density maps, lines/routes, projected scatter |
 | Product analytics | cohort heatmaps, retention curves, funnels, event timelines, linked cross-filters |
 
+The finance target is broader than candlesticks. The detailed quant-finance
+plan lives in [`docs/quant-finance-roadmap.md`](quant-finance-roadmap.md) and
+covers TradingView-class forecasting, long/short position risk boxes, bars
+patterns, ghost feed, sectors, anchored VWAP, fixed/anchored volume profiles,
+manual chart patterns, snapping, persistence, Reflex-controlled customization,
+and multi-pane production requirements. The key API decision: these features
+should be first-class composed overlay/study/drawing components, not kwargs on
+`candlestick()`.
+
 Breadth should arrive after the core primitives are solid:
 
 1. rectangle marks for bar/histogram/waterfall/funnel,

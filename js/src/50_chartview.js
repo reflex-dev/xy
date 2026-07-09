@@ -61,6 +61,7 @@ class ChartView {
     this._viewEventRaf = null;
     this._linkedSource = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     this.dragMode = "pan"; // "pan" | "zoom" (box zoom); toggled via the modebar
+    this.layers = Array.isArray(spec.layers) ? spec.layers : [];
 
     // Responsive size: "100%" means the *container* owns that axis — measure
     // it now, track it with a ResizeObserver below. Numeric sizes are fixed.
@@ -116,8 +117,16 @@ class ChartView {
     // Explicit padding (spec.padding = [top,right,bottom,left]) overrides the
     // label-aware defaults — zero padding gives an edge-to-edge sparkline.
     const pad = Array.isArray(this.spec.padding) ? this.spec.padding : null;
-    const marginLeft = pad ? pad[3] : compact ? 46 : MARGIN.l;
-    const marginRight = pad ? pad[1] : compact ? 8 : MARGIN.r;
+    // Finance charts put the primary y (price) axis on the right: swap the
+    // wide/narrow margins so the tick labels get the room.
+    const yRight = this._yAxisSide() === "right";
+    let marginLeft = pad ? pad[3] : compact ? 46 : MARGIN.l;
+    let marginRight = pad ? pad[1] : compact ? 8 : MARGIN.r;
+    if (yRight && !pad) {
+      const wide = marginLeft;
+      marginLeft = marginRight;
+      marginRight = wide;
+    }
     const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
     const marginBottom = pad ? pad[2] : compact ? 36 : MARGIN.b;
     const topAxisRoom = this._axis("x").side === "top" ? (compact ? 26 : 32) : 0;
@@ -125,12 +134,73 @@ class ChartView {
     const extraRightAxes = Object.values(this.axes || {}).filter((axis) =>
       axis && axis.id !== "y" && String(axis.id || "").startsWith("y") && axis.side === "right");
     const right = marginRight + (extraRightAxes.length ? (compact ? 42 : 54) : 0);
+    // Finance panes (volume bars + oscillator studies) split the plot column:
+    // the price pane keeps the top, each extra pane gets a fixed-height strip.
+    const hasVolume = this._hasVolumePane();
+    const oscillatorLayers = this._oscillatorLayers();
+    const paneCount = (hasVolume ? 1 : 0) + oscillatorLayers.length;
+    const availableH = Math.max(40, this.size.h - top - marginBottom);
+    const paneGap = paneCount ? 10 : 0;
+    let paneH = paneCount ? Math.max(44, Math.min(86, Math.floor((availableH * 0.42) / paneCount))) : 0;
+    if (paneCount && availableH - (paneH * paneCount + paneGap * paneCount) < 90) {
+      paneH = Math.max(36, Math.floor((availableH - 90 - paneGap * paneCount) / paneCount));
+    }
+    const priceH = Math.max(40, availableH - (paneH * paneCount + paneGap * paneCount));
     this.plot = {
       x: marginLeft,
       y: top,
       w: Math.max(40, this.size.w - marginLeft - right),
-      h: Math.max(40, this.size.h - top - marginBottom),
+      h: priceH,
     };
+    let paneY = top + priceH;
+    this.volumePane = null;
+    if (hasVolume) {
+      paneY += paneGap;
+      this.volumePane = { x: this.plot.x, y: paneY, w: this.plot.w, h: paneH };
+      paneY += paneH;
+    }
+    this.oscillatorPanes = [];
+    for (const layer of oscillatorLayers) {
+      paneY += paneGap;
+      this.oscillatorPanes.push({ layer, x: this.plot.x, y: paneY, w: this.plot.w, h: paneH });
+      paneY += paneH;
+    }
+  }
+
+  _yAxisSide() {
+    return this.spec.y_axis && this.spec.y_axis.side === "right" ? "right" : "left";
+  }
+
+  _hasVolumePane() {
+    return (this.layers || []).some((layer) => {
+      const bars = layer && layer.props && layer.props.bars;
+      return layer.kind === "volume_bars" &&
+        layer.props?.pane !== "overlay" &&
+        bars &&
+        Array.isArray(bars.volume) &&
+        bars.volume.length > 0;
+    });
+  }
+
+  _oscillatorLayers() {
+    return (this.layers || []).filter((layer) => {
+      const series = layer && layer.props && layer.props.series;
+      return ["rsi", "macd", "stochastic", "equity_drawdown"].includes(layer.kind) &&
+        layer.props?.pane !== "overlay" &&
+        series &&
+        Array.isArray(series.x) &&
+        series.x.length > 0;
+    });
+  }
+
+  _oscillatorPaneFor(layer) {
+    return (this.oscillatorPanes || []).find((pane) => pane.layer === layer) || null;
+  }
+
+  _xAxisY() {
+    const panes = this.oscillatorPanes || [];
+    const pane = panes.length ? panes[panes.length - 1] : (this.volumePane || this.plot);
+    return pane.y + pane.h;
   }
 
   _normalizeAxes(spec) {
@@ -694,6 +764,7 @@ class ChartView {
   get areaProg() { return this._prog("area", AREA_VS, AREA_FS); }
   get rectProg() { return this._prog("rect", RECT_VS, RECT_FS); }
   get barProg() { return this._prog("bar", BAR_VS, RECT_FS); }
+  get candleProg() { return this._prog("candle", CANDLE_VS, CANDLE_FS); }
   get pickProg() { return this._prog("pick", PICK_VS, PICK_FS); }
   get densityProg() { return this._prog("density", GRID_VS, DENSITY_FS); }
   get heatmapProg() { return this._prog("heatmap", GRID_VS, HEATMAP_FS); }
@@ -1145,6 +1216,86 @@ class ChartView {
     g._cpuHeatmap = { grid };
   }
 
+  _buildCandleMark(g, t, buffer) {
+    const col = (ref) => this._columnView(buffer, this.spec.columns[ref]);
+    g.candle = {
+      up: parseColor(this.root, t.style.up_color, [0.15, 0.65, 0.6, 1]),
+      down: parseColor(this.root, t.style.down_color, [0.94, 0.33, 0.31, 1]),
+      widthFrac: t.style.width_frac ?? 0.7,
+      opacity: t.style.opacity ?? 1.0,
+      hollow: !!t.style.hollow,
+      wick: t.style.wick_color ? parseColor(this.root, t.style.wick_color, null) : null,
+    };
+    this._fillCandle(g, {
+      x: col(t.x),
+      o: col(t.open),
+      h: col(t.high),
+      l: col(t.low),
+      c: col(t.close),
+      xMeta: { ...this.spec.columns[t.x] },
+      yMeta: { ...this.spec.columns[t.close] },
+    });
+  }
+
+  _applyCandleUpdate(g, upd, buffers) {
+    if (!g.candle) return;
+    this._fillCandle(g, {
+      x: this._asF32(buffers[upd.x.buf]),
+      o: this._asF32(buffers[upd.open.buf]),
+      h: this._asF32(buffers[upd.high.buf]),
+      l: this._asF32(buffers[upd.low.buf]),
+      c: this._asF32(buffers[upd.close.buf]),
+      xMeta: { ...g.xMeta, offset: upd.x.offset, scale: upd.x.scale },
+      yMeta: { ...g.yMeta, offset: upd.close.offset, scale: upd.close.scale },
+    });
+  }
+
+  _fillCandle(g, enc) {
+    const gl = this.gl;
+    g.xMeta = enc.xMeta;
+    g.yMeta = enc.yMeta;
+    g.n = Math.min(enc.x.length, enc.o.length, enc.h.length, enc.l.length, enc.c.length);
+    const dir = new Float32Array(g.n);
+    for (let i = 0; i < g.n; i++) dir[i] = enc.c[i] >= enc.o[i] ? 1 : 0;
+    const cd = g.candle;
+    const set = (key, arr) => {
+      if (!cd[key]) cd[key] = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, cd[key]);
+      gl.bufferData(gl.ARRAY_BUFFER, arr, gl.STATIC_DRAW);
+    };
+    set("xBuf", enc.x);
+    set("oBuf", enc.o);
+    set("hBuf", enc.h);
+    set("lBuf", enc.l);
+    set("cBuf", enc.c);
+    set("dBuf", dir);
+
+    const xo = g.xMeta.offset || 0;
+    const yo = g.yMeta.offset || 0;
+    const xs = g.xMeta.scale || 1;
+    const ys = g.yMeta.scale || 1;
+    const xd = new Float64Array(g.n);
+    const od = new Float64Array(g.n);
+    const hd = new Float64Array(g.n);
+    const ld = new Float64Array(g.n);
+    const cdv = new Float64Array(g.n);
+    for (let i = 0; i < g.n; i++) {
+      xd[i] = enc.x[i] / xs + xo;
+      od[i] = enc.o[i] / ys + yo;
+      hd[i] = enc.h[i] / ys + yo;
+      ld[i] = enc.l[i] / ys + yo;
+      cdv[i] = enc.c[i] / ys + yo;
+    }
+    let dxMed = 1;
+    if (g.n > 1) {
+      const diffs = [];
+      for (let i = 1; i < g.n; i++) diffs.push(xd[i] - xd[i - 1]);
+      diffs.sort((a, b) => a - b);
+      dxMed = diffs[diffs.length >> 1] || 1;
+    }
+    cd.cpu = { x: xd, o: od, h: hd, l: ld, c: cdv, dxMed };
+  }
+
   _uploadGrid(f32, w, h, maxVal) {
     const gl = this.gl;
     const tex = gl.createTexture();
@@ -1298,6 +1449,71 @@ class ChartView {
     if (Math.abs(value - lo) <= eps) return -(2 * padPx) / px;
     if (Math.abs(value - hi) <= eps) return (2 * padPx) / px;
     return 0;
+  }
+
+  _dataToScreenX(x) {
+    const { x0, x1 } = this.view;
+    return this.plot.x + ((x - x0) / (x1 - x0)) * this.plot.w;
+  }
+
+  _dataToScreenY(y) {
+    const { y0, y1 } = this.view;
+    return this.plot.y + (1 - (y - y0) / (y1 - y0)) * this.plot.h;
+  }
+
+  _anchorPoint(anchor) {
+    if (!anchor) return null;
+    const hasX = anchor.x !== undefined && anchor.x !== null;
+    const hasY = anchor.y !== undefined && anchor.y !== null;
+    const num = (v) => {
+      const n = Number(v);
+      if (Number.isFinite(n)) return n;
+      const t = Date.parse(v);
+      return Number.isFinite(t) ? t : NaN;
+    };
+    return {
+      x: hasX ? num(anchor.x) : null,
+      y: hasY ? num(anchor.y) : null,
+      hasX,
+      hasY,
+    };
+  }
+
+  _layerColor(layer, key, fallback) {
+    return parseColor(this.root, layer.style && layer.style[key], fallback);
+  }
+
+  _drawLayers(ctx) {
+    if (!this.layers.length) return;
+    const volumeLayers = this.layers.filter((layer) => layer.kind === "volume_bars");
+    if (this.volumePane && volumeLayers.length) {
+      const pane = this.volumePane;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(pane.x, pane.y, pane.w, pane.h);
+      ctx.clip();
+      for (const layer of volumeLayers) layerOf(layer.kind).draw(this, ctx, layer);
+      ctx.restore();
+    }
+    for (const layer of this.layers) {
+      const pane = this._oscillatorPaneFor(layer);
+      if (!pane) continue;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(pane.x, pane.y, pane.w, pane.h);
+      ctx.clip();
+      layerOf(layer.kind).draw(this, ctx, layer);
+      ctx.restore();
+    }
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(this.plot.x, this.plot.y, this.plot.w, this.plot.h);
+    ctx.clip();
+    for (const layer of this.layers) {
+      if (layer.kind === "volume_bars" || this._oscillatorPaneFor(layer)) continue;
+      layerOf(layer.kind).draw(this, ctx, layer);
+    }
+    ctx.restore();
   }
 
   _setAxisUniforms(prog, prefix, meta, axisId) {
@@ -1651,6 +1867,87 @@ class ChartView {
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n - 1);
   }
 
+  _drawCandles(g, x0, x1, y0, y1) {
+    if (!g.n) return;
+    const gl = this.gl;
+    const prog = this.candleProg;
+    gl.useProgram(prog);
+    const u = (n) => uniformOf(gl, prog, n);
+    const xm = this._map(g.xMeta, x0, x1);
+    const ym = this._map(g.yMeta, y0, y1);
+    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+    gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
+    const cd = g.candle;
+    gl.uniform4f(u("u_up"), cd.up[0], cd.up[1], cd.up[2], 1);
+    gl.uniform4f(u("u_down"), cd.down[0], cd.down[1], cd.down[2], 1);
+    const wk = cd.wick || cd.up;
+    gl.uniform4f(u("u_wick"), wk[0], wk[1], wk[2], 1);
+    gl.uniform1i(u("u_wickFixed"), cd.wick ? 1 : 0);
+    gl.uniform1f(u("u_opacity"), cd.opacity);
+    const slotPx = (cd.cpu.dxMed / Math.max(x1 - x0, 1e-30)) * this.canvas.width;
+    const bodyHalf = Math.max(0.5, slotPx * cd.widthFrac * 0.5);
+    const wickHalf = Math.min(bodyHalf, Math.max(0.5 * this.dpr, 0.6 * this.dpr));
+    const bind = (name, buf) => this._bindScalarAttr(prog, name, buf, 0, 1);
+    bind("a_x", cd.xBuf);
+    bind("a_open", cd.oBuf);
+    bind("a_high", cd.hBuf);
+    bind("a_low", cd.lBuf);
+    bind("a_close", cd.cBuf);
+    bind("a_dir", cd.dBuf);
+
+    gl.uniform1i(u("u_part"), 0);
+    gl.uniform1i(u("u_isWick"), 1);
+    gl.uniform1i(u("u_hollowUp"), 0);
+    gl.uniform1f(u("u_halfPx"), wickHalf);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+
+    gl.uniform1i(u("u_part"), 1);
+    gl.uniform1i(u("u_isWick"), 0);
+    gl.uniform1i(u("u_hollowUp"), cd.hollow ? 1 : 0);
+    gl.uniform1f(u("u_halfPx"), bodyHalf);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+  }
+
+  _drawOHLC(g, x0, x1, y0, y1) {
+    if (!g.n) return;
+    const gl = this.gl;
+    const prog = this.candleProg;
+    gl.useProgram(prog);
+    const u = (n) => uniformOf(gl, prog, n);
+    const xm = this._map(g.xMeta, x0, x1);
+    const ym = this._map(g.yMeta, y0, y1);
+    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+    gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
+    const cd = g.candle;
+    gl.uniform4f(u("u_up"), cd.up[0], cd.up[1], cd.up[2], 1);
+    gl.uniform4f(u("u_down"), cd.down[0], cd.down[1], cd.down[2], 1);
+    gl.uniform4f(u("u_wick"), cd.down[0], cd.down[1], cd.down[2], 1);
+    gl.uniform1f(u("u_opacity"), cd.opacity);
+    gl.uniform1i(u("u_isWick"), 0);
+    gl.uniform1i(u("u_hollowUp"), 0);
+    gl.uniform1i(u("u_wickFixed"), 0);
+    const slotPx = (cd.cpu.dxMed / Math.max(x1 - x0, 1e-30)) * this.canvas.width;
+    const tickPx = Math.max(1, slotPx * cd.widthFrac * 0.5);
+    const stemHalf = Math.max(0.5 * this.dpr, 0.6 * this.dpr);
+    const bind = (name, buf) => this._bindScalarAttr(prog, name, buf, 0, 1);
+    bind("a_x", cd.xBuf);
+    bind("a_open", cd.oBuf);
+    bind("a_high", cd.hBuf);
+    bind("a_low", cd.lBuf);
+    bind("a_close", cd.cBuf);
+    bind("a_dir", cd.dBuf);
+    const drawPart = (part, halfPx) => {
+      gl.uniform1i(u("u_part"), part);
+      gl.uniform1f(u("u_halfPx"), halfPx);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+    };
+    drawPart(0, stemHalf);
+    drawPart(2, tickPx);
+    drawPart(3, tickPx);
+  }
+
   _drawRects(g, x0, x1, y0, y1, edgePad = [0, 0, 0, 0]) {
     if (!g.n) return;
     const gl = this.gl;
@@ -1979,6 +2276,7 @@ class ChartView {
     }
     ctx.stroke();
 
+    this._drawLayers(ctx);
     this._drawAnnotationShapes(ctx);
 
     // Axis baselines render in the labels overlay — *above* the marks canvas —
@@ -2360,6 +2658,8 @@ class ChartView {
 
 
   _hover(e) {
+    if (this._hoverNonPoint(e)) return;
+    if (!this._pickable) return;
     if (this._transitionActive()) {
       const hadHover = this._hoverId !== -1;
       this._hoverId = -1;
@@ -2390,6 +2690,47 @@ class ChartView {
     this._hoverTarget = hit;
     this._showTooltip(hit, e.clientX, e.clientY);
     this.draw();
+  }
+
+  _hoverNonPoint(e) {
+    const traces = this.gpuTraces.filter((g) => markOf(g.trace.kind).hover);
+    if (!traces.length) return false;
+    const rect = this.canvas.getBoundingClientRect();
+    const fx = (e.clientX - rect.left) / rect.width;
+    const dataX = this.view.x0 + fx * (this.view.x1 - this.view.x0);
+    let best = null;
+    for (const g of traces) {
+      const row = markOf(g.trace.kind).hover(this, g, dataX);
+      if (row && (!best || row._dist < best._dist)) best = row;
+    }
+    if (!best) {
+      this.tooltip.style.display = "none";
+      return true;
+    }
+    this._renderTooltip(best, e.clientX, e.clientY);
+    return true;
+  }
+
+  _candleHoverRow(g, dataX) {
+    const cpu = g.candle && g.candle.cpu;
+    if (!cpu || !g.n) return null;
+    const xs = cpu.x;
+    let lo = 0;
+    let hi = g.n - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (xs[mid] < dataX) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo > 0 && Math.abs(xs[lo - 1] - dataX) <= Math.abs(xs[lo] - dataX)) lo -= 1;
+    if (Math.abs(xs[lo] - dataX) > cpu.dxMed * 0.6) return null;
+    return {
+      x: xs[lo],
+      x_kind: g.xMeta.kind,
+      index: lo,
+      _dist: Math.abs(xs[lo] - dataX),
+      ohlc: { o: cpu.o[lo], h: cpu.h[lo], l: cpu.l[lo], c: cpu.c[lo] },
+    };
   }
 
 
@@ -2489,6 +2830,7 @@ class ChartView {
       "x0Buf", "x1Buf", "y0Buf", "y1Buf",
       "posBuf", "value1Buf", "value0Buf",
     ]);
+    this._deleteBuffers(g.candle, ["xBuf", "oBuf", "hBuf", "lBuf", "cBuf", "dBuf"]);
     this._deleteBuffers(g.drill, ["xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "dBuf"]);
     const textures = [];
     if (g.heatmap) textures.push(g.heatmap.tex);
@@ -2506,6 +2848,7 @@ class ChartView {
     g._shownDensity = null;
     g.densityCache = [];
     g.heatmap = null;
+    g.candle = null;
     g._cpu = null;
   }
 

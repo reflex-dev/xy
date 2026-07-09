@@ -410,6 +410,59 @@ void main() {
   outColor = premult;
 }`;
 
+// Candlestick: one instanced quad per candle, drawn as wick+body for candles
+// and as stem+ticks for OHLC bars. A minimum 1px extent keeps doji visible.
+const CANDLE_VS = `#version 300 es
+in float a_x; in float a_open; in float a_high; in float a_low; in float a_close; in float a_dir;
+uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res;
+uniform float u_halfPx; uniform int u_part;
+out float v_dir; out vec2 v_local; flat out float v_hpx;
+const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
+void main() {
+  float yLo, yHi;
+  if (u_part == 1) { yLo = min(a_open, a_close); yHi = max(a_open, a_close); }
+  else if (u_part == 2) { yLo = a_open; yHi = a_open; }
+  else if (u_part == 3) { yLo = a_close; yHi = a_close; }
+  else { yLo = a_low; yHi = a_high; }
+  float xcPx = ((a_x * u_xmap.x + u_xmap.y) * 0.5 + 0.5) * u_res.x;
+  float ylPx = ((yLo * u_ymap.x + u_ymap.y) * 0.5 + 0.5) * u_res.y;
+  float yhPx = ((yHi * u_ymap.x + u_ymap.y) * 0.5 + 0.5) * u_res.y;
+  if (abs(yhPx - ylPx) < 1.0) { float mid = (ylPx + yhPx) * 0.5; ylPx = mid - 0.5; yhPx = mid + 0.5; }
+  vec2 c = corners[gl_VertexID];
+  float xL = u_part == 3 ? xcPx : xcPx - u_halfPx;
+  float xR = u_part == 2 ? xcPx : xcPx + u_halfPx;
+  float xPx = mix(xL, xR, c.x);
+  float yPx = mix(ylPx, yhPx, c.y);
+  gl_Position = vec4(vec2(xPx / u_res.x, yPx / u_res.y) * 2.0 - 1.0, 0.0, 1.0);
+  v_dir = a_dir;
+  v_local = c;
+  v_hpx = abs(yhPx - ylPx);
+}`;
+
+const CANDLE_FS = `#version 300 es
+precision highp float; precision highp int;
+uniform vec4 u_up; uniform vec4 u_down; uniform vec4 u_wick; uniform float u_opacity;
+uniform float u_halfPx; uniform int u_isWick; uniform int u_wickFixed; uniform int u_hollowUp;
+in float v_dir; in vec2 v_local; flat in float v_hpx;
+out vec4 outColor;
+void main() {
+  bool up = v_dir > 0.5;
+  vec3 rgb;
+  if (u_isWick == 1) {
+    rgb = u_wickFixed == 1 ? u_wick.rgb : (up ? u_up.rgb : u_down.rgb);
+  } else {
+    rgb = up ? u_up.rgb : u_down.rgb;
+    if (u_hollowUp == 1 && up) {
+      float ex = min(v_local.x, 1.0 - v_local.x) * (u_halfPx * 2.0);
+      float ey = min(v_local.y, 1.0 - v_local.y) * v_hpx;
+      if (ex > 1.0 && ey > 1.0) discard;
+    }
+  }
+  float a = u_opacity;
+  if (a <= 0.001) discard;
+  outColor = vec4(rgb * a, a);
+}`;
+
 // Rectangles: one instanced quad per mark. Geometry columns are left/right and
 // bottom/top in data space, each offset-encoded independently (§4). This is the
 // primitive for histogram, bar/column, waterfall, and later heatmap cells.

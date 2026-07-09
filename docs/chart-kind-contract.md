@@ -86,6 +86,26 @@ benchmark tracks this as part of the core 2D payload budget.
 - **Transport**: data-less JSON spec + one binary blob; no JSON numbers (§29).
 - **Ticks / axes / time axis / autorange**: keyed on axis kind, not mark kind.
 
+## Drawing and finance overlay boundary
+
+Trading-workstation features such as long/short position boxes, forecasts,
+ghost feed, sectors, anchored VWAP, volume profiles, and chart patterns are not
+new `candlestick` options. They are a separate layer system over chart marks:
+
+- `Mark`: owns plotted data columns (`candlestick`, `ohlc`, `line`, `volume`).
+- `Study`: computes derived data from source marks (`anchored_vwap`, moving
+  averages, Bollinger bands, volume profile bins).
+- `Drawing`: stores user/Python-authored anchors and derived geometry
+  (`long_position`, `position_forecast`, `bars_pattern`, `xabcd_pattern`).
+- `ToolState`: active tool, selected drawing, snapping, visibility, locking,
+  object tree, templates, and Reflex event hooks.
+
+This preserves the chart-kind contract: new data marks still enter through
+`Figure.<K>` + `_emit_<K>` + `MARK_KINDS[K]`. Drawings and studies should add a
+parallel layer registry rather than branching the mark render loop or inflating
+`candlestick()`. See [`docs/quant-finance-roadmap.md`](quant-finance-roadmap.md)
+for the detailed API and implementation plan.
+
 ## Registry capabilities
 
 Beyond `build`/`draw`, `MARK_KINDS` entries carry capability flags/hooks so no

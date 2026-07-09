@@ -16,6 +16,7 @@ sys.path.insert(0, str(APP_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "python"))
 
 from reflex_fastcharts_app.live_drilldown import (  # noqa: E402
+    billion_drilldown_html,
     colored_scatter_data,
     colored_scatter_figure,
     live_drilldown_html,
@@ -779,6 +780,745 @@ def write_annotated_heatmap_chart(name: str = "annotated_heatmap.html") -> None:
     print(f"wrote {path.relative_to(APP_ROOT)}")
 
 
+def write_html_asset(name: str, html: str) -> None:
+    ASSET_DIR.mkdir(parents=True, exist_ok=True)
+    path = ASSET_DIR / name
+    path.write_text(html, encoding="utf-8")
+    print(f"wrote {path.relative_to(APP_ROOT)}")
+
+
+def finance_ohlcv() -> tuple[
+    np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
+]:
+    rng = np.random.default_rng(166)
+    n = 150
+    x = np.busday_offset("2026-01-02", np.arange(n)).astype("datetime64[ms]")
+    trend = np.linspace(0, 24, n)
+    wave = np.sin(np.linspace(0, 9, n)) * 8
+    close = 282 + trend + wave + np.cumsum(rng.normal(0, 1.4, n))
+    open_ = np.r_[close[0] - rng.normal(0, 1.2), close[:-1]] + rng.normal(0, 1.1, n)
+    high = np.maximum(open_, close) + rng.uniform(1.2, 4.8, n)
+    low = np.minimum(open_, close) - rng.uniform(1.0, 4.2, n)
+    volume = rng.lognormal(mean=17.3, sigma=0.25, size=n)
+    volume[-1] = max(volume[-1], volume.mean() * 1.8)
+    return x, open_, high, low, close, volume
+
+
+def candlestick_demo() -> fc.FinanceChart:
+    x, open_, high, low, close, volume = finance_ohlcv()
+    last_x = x[-1]
+    end_x = np.busday_offset(last_x.astype("datetime64[D]"), 18).astype("datetime64[ms]")
+    entry = float(close[-18])
+    return fc.finance_chart(
+        fc.candlestick(
+            x=x,
+            open=open_,
+            high=high,
+            low=low,
+            close=close,
+            volume=volume,
+            id="price",
+            name="AAPL",
+            up_color="#22ab94",
+            down_color="#f23645",
+            width_frac=0.82,
+            opacity=0.98,
+        ),
+        fc.x_axis(type_="time"),
+        fc.y_axis(side="right", scale="linear"),
+        fc.volume_bars(
+            source="price",
+            style={
+                "up_color": "#22ab94",
+                "down_color": "#f23645",
+                "grid_color": "#c8d0dc",
+                "label_color": "#5f6b7a",
+            },
+        ),
+        fc.bollinger_bands(
+            source="price",
+            window=20,
+            id="BB 20",
+            style={
+                "color": "#6d5dfc",
+                "band_color": "#7b61ff",
+                "opacity": 0.62,
+                "band_opacity": 0.34,
+            },
+        ),
+        fc.moving_average(
+            source="price", window=20, method="sma", id="MA 20", style={"color": "#2962ff"}
+        ),
+        fc.moving_average(
+            source="price", window=50, method="ema", id="EMA 50", style={"color": "#ff9800"}
+        ),
+        fc.vwap(source="price", bands=(1.0,), id="VWAP", style={"color": "#089981"}),
+        fc.short_position(
+            source="price",
+            entry=(last_x, entry),
+            stop=entry * 1.06,
+            target=entry * 0.92,
+            end=end_x,
+            id="Short setup",
+            style={"target_color": "#22ab94", "stop_color": "#f23645", "line_color": "#111827"},
+        ),
+        fc.finance_tools(active="crosshair", snap="ohlc", editable=True),
+        title="Finance layer editor",
+        width="100%",
+        height="100%",
+    )
+
+
+EDITOR_JS = r"""
+function createFinanceLayerEditor(view) {
+  const palette = document.getElementById("editor-palette");
+  const frame = document.getElementById("editor-chart-frame");
+  const layerList = document.getElementById("editor-layer-list");
+  const status = document.getElementById("editor-status");
+  const clearButton = document.getElementById("editor-clear");
+  const customIds = new Set();
+  let activeTool = null;
+  let pointerDrag = null;
+  let counter = 1;
+
+  const originalAvwapDraw = fastcharts.LAYER_KINDS.anchored_vwap.draw;
+  fastcharts.LAYER_KINDS.anchored_vwap.draw = (chart, ctx, layer) => {
+    originalAvwapDraw(chart, ctx, layer);
+    if (layer.props && layer.props.series) {
+      drawLineSeries(chart, ctx, layer.props.series, layer.style && layer.style.color || "#f59e0b", 1.6);
+    }
+  };
+  fastcharts.LAYER_KINDS.editor_line = {
+    draw: (chart, ctx, layer) => drawLineSeries(chart, ctx, layer.props.series, layer.style.color, layer.style.width || 1.5)
+  };
+  fastcharts.LAYER_KINDS.editor_bollinger = {
+    draw: (chart, ctx, layer) => {
+      const s = layer.props.series;
+      if (!s) return;
+      drawLineSeries(chart, ctx, { x: s.x, y: s.upper }, layer.style.band_color || "#7b61ff", 1);
+      drawLineSeries(chart, ctx, { x: s.x, y: s.lower }, layer.style.band_color || "#7b61ff", 1);
+      drawLineSeries(chart, ctx, { x: s.x, y: s.middle }, layer.style.color || "#6d5dfc", 1.3);
+    }
+  };
+
+  function candleGpu() {
+    return view.gpuTraces.find((g) => g.candle && g.candle.cpu);
+  }
+
+  function candleCpu() {
+    const g = candleGpu();
+    return g ? g.candle.cpu : null;
+  }
+
+  function volumeBars() {
+    const layer = view.layers.find((item) => item.kind === "volume_bars" && item.props && item.props.bars);
+    return layer && layer.props.bars;
+  }
+
+  function dataAt(clientX, clientY) {
+    const rect = view.root.getBoundingClientRect();
+    const sx = clientX - rect.left;
+    const sy = clientY - rect.top;
+    const p = view.plot;
+    const fx = Math.max(0, Math.min(1, (sx - p.x) / p.w));
+    const fy = Math.max(0, Math.min(1, (sy - p.y) / p.h));
+    return {
+      x: view.view.x0 + fx * (view.view.x1 - view.view.x0),
+      y: view.view.y1 - fy * (view.view.y1 - view.view.y0),
+    };
+  }
+
+  function nearestIndex(x) {
+    const cpu = candleCpu();
+    if (!cpu || !cpu.x.length) return -1;
+    let lo = 0;
+    let hi = cpu.x.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (cpu.x[mid] < x) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo > 0 && Math.abs(cpu.x[lo - 1] - x) <= Math.abs(cpu.x[lo] - x)) lo -= 1;
+    return lo;
+  }
+
+  function dx() {
+    const cpu = candleCpu();
+    return cpu && Number.isFinite(cpu.dxMed) ? cpu.dxMed : (view.view.x1 - view.view.x0) / 80;
+  }
+
+  function nextId(prefix) {
+    const id = `edit-${prefix}-${counter}`;
+    counter += 1;
+    return id;
+  }
+
+  function addLayer(layer) {
+    view.layers = [...view.layers, layer];
+    customIds.add(layer.id);
+    renderLayerList();
+    view.draw();
+    status.textContent = `${labelFor(layer.kind)} added`;
+  }
+
+  function removeLayer(id) {
+    view.layers = view.layers.filter((layer) => layer.id !== id);
+    customIds.delete(id);
+    renderLayerList();
+    view.draw();
+    status.textContent = "Layer removed";
+  }
+
+  function labelFor(kind) {
+    return {
+      position: "Position",
+      anchored_vwap: "Anchored VWAP",
+      fixed_range_volume_profile: "Fixed profile",
+      anchored_volume_profile: "Anchored profile",
+      position_forecast: "Forecast",
+      sector: "Sector",
+      bars_pattern: "Bars pattern",
+      ghost_feed: "Ghost feed",
+      editor_line: "Moving average",
+      editor_bollinger: "Bollinger bands",
+      volume_bars: "Volume",
+      moving_average: "Moving average",
+      bollinger_bands: "Bollinger bands",
+      vwap: "VWAP",
+    }[kind] || kind;
+  }
+
+  function renderLayerList() {
+    layerList.replaceChildren();
+    const visible = view.layers.filter((layer) => layer.kind !== "volume_bars" || !customIds.has(layer.id));
+    for (const layer of visible) {
+      const row = document.createElement("div");
+      row.className = "editor-layer-row";
+      const name = document.createElement("span");
+      name.textContent = layer.id || labelFor(layer.kind);
+      row.append(name);
+      if (layer.id && customIds.has(layer.id)) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = "Remove";
+        button.addEventListener("click", () => removeLayer(layer.id));
+        row.append(button);
+      }
+      layerList.append(row);
+    }
+  }
+
+  function drawLineSeries(chart, ctx, series, color, width) {
+    if (!series || !Array.isArray(series.x) || !Array.isArray(series.y)) return;
+    ctx.save();
+    ctx.strokeStyle = color || "#2962ff";
+    ctx.lineWidth = width || 1.5;
+    ctx.beginPath();
+    let started = false;
+    const n = Math.min(series.x.length, series.y.length);
+    for (let i = 0; i < n; i++) {
+      const x = Number(series.x[i]);
+      const y = Number(series.y[i]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        started = false;
+        continue;
+      }
+      const sx = chart._dataToScreenX(x);
+      const sy = chart._dataToScreenY(y);
+      if (started) ctx.lineTo(sx, sy);
+      else {
+        ctx.moveTo(sx, sy);
+        started = true;
+      }
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function movingAverageSeries(windowSize) {
+    const cpu = candleCpu();
+    if (!cpu) return { x: [], y: [] };
+    const x = Array.from(cpu.x);
+    const y = new Array(cpu.c.length).fill(null);
+    let acc = 0;
+    for (let i = 0; i < cpu.c.length; i++) {
+      acc += cpu.c[i];
+      if (i >= windowSize) acc -= cpu.c[i - windowSize];
+      if (i >= windowSize - 1) y[i] = acc / windowSize;
+    }
+    return { x, y };
+  }
+
+  function bollingerSeries(windowSize, deviations) {
+    const cpu = candleCpu();
+    if (!cpu) return { x: [], middle: [], upper: [], lower: [] };
+    const x = Array.from(cpu.x);
+    const middle = new Array(cpu.c.length).fill(null);
+    const upper = new Array(cpu.c.length).fill(null);
+    const lower = new Array(cpu.c.length).fill(null);
+    for (let i = windowSize - 1; i < cpu.c.length; i++) {
+      let sum = 0;
+      for (let j = i - windowSize + 1; j <= i; j++) sum += cpu.c[j];
+      const avg = sum / windowSize;
+      let variance = 0;
+      for (let j = i - windowSize + 1; j <= i; j++) variance += (cpu.c[j] - avg) ** 2;
+      const std = Math.sqrt(variance / windowSize);
+      middle[i] = avg;
+      upper[i] = avg + deviations * std;
+      lower[i] = avg - deviations * std;
+    }
+    return { x, middle, upper, lower };
+  }
+
+  function anchoredVwapSeries(anchorX) {
+    const cpu = candleCpu();
+    const bars = volumeBars();
+    const start = nearestIndex(anchorX);
+    if (!cpu || !bars || start < 0) return { x: [], y: [] };
+    const x = [];
+    const y = [];
+    let pv = 0;
+    let volSum = 0;
+    for (let i = start; i < cpu.x.length; i++) {
+      const vol = Number(bars.volume[i] || 0);
+      const typical = (cpu.h[i] + cpu.l[i] + cpu.c[i]) / 3;
+      if (Number.isFinite(vol) && vol > 0) {
+        pv += typical * vol;
+        volSum += vol;
+      }
+      x.push(cpu.x[i]);
+      y.push(volSum > 0 ? pv / volSum : null);
+    }
+    return { x, y };
+  }
+
+  function volumeProfile(startX, endX, rows) {
+    const cpu = candleCpu();
+    const bars = volumeBars();
+    if (!cpu || !bars) return null;
+    const loX = Math.min(startX, endX);
+    const hiX = Math.max(startX, endX);
+    const idxs = [];
+    let lowEdge = Infinity;
+    let highEdge = -Infinity;
+    for (let i = 0; i < cpu.x.length; i++) {
+      if (cpu.x[i] < loX || cpu.x[i] > hiX) continue;
+      idxs.push(i);
+      lowEdge = Math.min(lowEdge, cpu.l[i]);
+      highEdge = Math.max(highEdge, cpu.h[i]);
+    }
+    if (!idxs.length || !Number.isFinite(lowEdge) || !Number.isFinite(highEdge)) return null;
+    if (lowEdge === highEdge) {
+      lowEdge -= 1;
+      highEdge += 1;
+    }
+    const rowCount = Math.max(8, rows || 56);
+    const step = (highEdge - lowEdge) / rowCount;
+    const total = new Array(rowCount).fill(0);
+    const up = new Array(rowCount).fill(0);
+    const down = new Array(rowCount).fill(0);
+    for (const i of idxs) {
+      const barLow = Math.min(cpu.l[i], cpu.h[i]);
+      const barHigh = Math.max(cpu.l[i], cpu.h[i]);
+      const span = Math.max(barHigh - barLow, 1e-9);
+      const vol = Number(bars.volume[i] || 0);
+      const first = Math.max(0, Math.min(rowCount - 1, Math.floor((barLow - lowEdge) / step)));
+      const last = Math.max(0, Math.min(rowCount - 1, Math.floor((barHigh - lowEdge) / step)));
+      for (let r = first; r <= last; r++) {
+        const rowLow = lowEdge + r * step;
+        const rowHigh = rowLow + step;
+        const overlap = Math.max(0, Math.min(barHigh, rowHigh) - Math.max(barLow, rowLow));
+        if (overlap <= 0) continue;
+        const share = vol * overlap / span;
+        total[r] += share;
+        if (cpu.c[i] >= cpu.o[i]) up[r] += share;
+        else down[r] += share;
+      }
+    }
+    const maxTotal = Math.max(...total, 0);
+    const pocIndex = total.indexOf(maxTotal);
+    return {
+      price_low: total.map((_, i) => lowEdge + i * step),
+      price_high: total.map((_, i) => lowEdge + (i + 1) * step),
+      price_mid: total.map((_, i) => lowEdge + (i + 0.5) * step),
+      total,
+      up,
+      down,
+      delta: total.map((_, i) => up[i] - down[i]),
+      value_area: total.map((v) => v >= maxTotal * 0.34),
+      poc_index: pocIndex,
+      max_total: maxTotal,
+      rows: rowCount,
+    };
+  }
+
+  function ghostFeed(anchor, bars) {
+    const cpu = candleCpu();
+    const start = nearestIndex(anchor.x);
+    if (!cpu || start < 0) return null;
+    const out = { x: [], open: [], high: [], low: [], close: [] };
+    let lastClose = anchor.y;
+    const step = dx();
+    for (let i = 0; i < bars; i++) {
+      const drift = 0.42 * i + Math.sin(i * 0.75) * 1.4;
+      const open = lastClose;
+      const close = anchor.y + drift + (i % 3 - 1) * 0.9;
+      const high = Math.max(open, close) + 2.2 + (i % 4) * 0.35;
+      const low = Math.min(open, close) - 1.8 - (i % 5) * 0.25;
+      out.x.push(anchor.x + step * (i + 1));
+      out.open.push(open);
+      out.high.push(high);
+      out.low.push(low);
+      out.close.push(close);
+      lastClose = close;
+    }
+    return out;
+  }
+
+  function makeLayer(tool, point) {
+    const span = dx();
+    const id = nextId(tool.replace(/_/g, "-"));
+    const candle = candleCpu();
+    const idx = nearestIndex(point.x);
+    const snapX = idx >= 0 && candle ? candle.x[idx] : point.x;
+    const snapY = idx >= 0 && candle ? candle.c[idx] : point.y;
+    const anchor = { x: snapX, y: point.y };
+    if (tool === "long_position") {
+      const entry = Math.max(point.y, 1);
+      return {
+        role: "drawing",
+        kind: "position",
+        id,
+        source: "price",
+        side: "long",
+        anchors: { entry: { x: snapX, y: entry }, stop: { y: entry * 0.96 }, target: { y: entry * 1.08 }, end: { x: snapX + span * 28 } },
+        metrics: { risk_reward: 2 },
+        style: { target_color: "#22ab94", stop_color: "#f23645", line_color: "#111827" },
+      };
+    }
+    if (tool === "short_position") {
+      const entry = Math.max(point.y, 1);
+      return {
+        role: "drawing",
+        kind: "position",
+        id,
+        source: "price",
+        side: "short",
+        anchors: { entry: { x: snapX, y: entry }, stop: { y: entry * 1.06 }, target: { y: entry * 0.92 }, end: { x: snapX + span * 28 } },
+        metrics: { risk_reward: 1.33 },
+        style: { target_color: "#22ab94", stop_color: "#f23645", line_color: "#111827" },
+      };
+    }
+    if (tool === "anchored_vwap") {
+      return {
+        role: "study",
+        kind: "anchored_vwap",
+        id,
+        source: "price",
+        anchors: { anchor },
+        props: { price: "hlc3", bands: [], series: anchoredVwapSeries(snapX) },
+        style: { color: "#f59e0b", width: 1.5 },
+      };
+    }
+    if (tool === "anchored_volume_profile") {
+      const profile = volumeProfile(snapX, view.view.x1, 56);
+      return {
+        role: "study",
+        kind: "anchored_volume_profile",
+        id,
+        source: "price",
+        anchors: { anchor },
+        props: { rows: 56, volume: "up_down", value_area: 0.7, profile },
+        style: { color: "#667085", up_color: "#22ab94", down_color: "#f23645", poc_color: "#f59e0b" },
+      };
+    }
+    if (tool === "fixed_range_volume_profile") {
+      const start = snapX - span * 24;
+      const end = snapX + span * 24;
+      const profile = volumeProfile(start, end, 56);
+      return {
+        role: "study",
+        kind: "fixed_range_volume_profile",
+        id,
+        source: "price",
+        anchors: { start: { x: start, y: point.y }, end: { x: end, y: point.y } },
+        props: { rows: 56, volume: "up_down", value_area: 0.7, profile },
+        style: { color: "#667085", up_color: "#22ab94", down_color: "#f23645", poc_color: "#f59e0b" },
+      };
+    }
+    if (tool === "position_forecast") {
+      return {
+        role: "drawing",
+        kind: "position_forecast",
+        id,
+        source: "price",
+        anchors: { start: { x: snapX, y: snapY }, target: { x: snapX + span * 22, y: point.y } },
+        style: { color: "#2563eb" },
+      };
+    }
+    if (tool === "sector") {
+      return {
+        role: "drawing",
+        kind: "sector",
+        id,
+        source: "price",
+        anchors: { origin: { x: snapX, y: snapY }, horizon: { x: snapX + span * 28 }, target: { x: snapX + span * 28, y: point.y } },
+        style: { color: "#7c3aed" },
+      };
+    }
+    if (tool === "bars_pattern") {
+      const start = Math.max(0, idx - 28);
+      const end = Math.max(start + 4, idx - 4);
+      const pattern = candle ? {
+        x: Array.from(candle.x.slice(start, end)).map((x, i) => snapX + span * (i + 1)),
+        open: Array.from(candle.o.slice(start, end)),
+        high: Array.from(candle.h.slice(start, end)),
+        low: Array.from(candle.l.slice(start, end)),
+        close: Array.from(candle.c.slice(start, end)),
+      } : null;
+      return {
+        role: "drawing",
+        kind: "bars_pattern",
+        id,
+        source: "price",
+        anchors: { start: { bar: start }, end: { bar: end }, destination: { x: snapX, y: point.y } },
+        props: { mode: "candlestick", pattern },
+        style: { color: "#667085", opacity: 0.74 },
+      };
+    }
+    if (tool === "ghost_feed") {
+      return {
+        role: "drawing",
+        kind: "ghost_feed",
+        id,
+        source: "price",
+        anchors: { anchor: { x: snapX, y: point.y } },
+        props: { bars: 24, direction: "up", feed: ghostFeed({ x: snapX, y: point.y }, 24) },
+        style: { color: "#475467", opacity: 0.44 },
+      };
+    }
+    if (tool === "moving_average") {
+      return {
+        role: "study",
+        kind: "editor_line",
+        id,
+        source: "price",
+        props: { series: movingAverageSeries(20) },
+        style: { color: "#2563eb", width: 1.4 },
+      };
+    }
+    if (tool === "bollinger_bands") {
+      return {
+        role: "study",
+        kind: "editor_bollinger",
+        id,
+        source: "price",
+        props: { series: bollingerSeries(20, 2) },
+        style: { color: "#6d5dfc", band_color: "#7b61ff" },
+      };
+    }
+    return null;
+  }
+
+  function addTool(tool, point) {
+    const layer = makeLayer(tool, point);
+    if (!layer) {
+      status.textContent = "No layer added";
+      return;
+    }
+    addLayer(layer);
+  }
+
+  palette.addEventListener("dragstart", (event) => {
+    const tool = event.target.closest("[data-tool]")?.dataset.tool;
+    if (!tool) return;
+    event.dataTransfer.setData("text/plain", tool);
+    event.dataTransfer.effectAllowed = "copy";
+  });
+
+  palette.addEventListener("click", (event) => {
+    if (pointerDrag && pointerDrag.suppressClick) {
+      pointerDrag = null;
+      return;
+    }
+    const item = event.target.closest("[data-tool]");
+    if (!item) return;
+    activeTool = item.dataset.tool;
+    for (const el of palette.querySelectorAll("[data-tool]")) el.classList.toggle("active", el === item);
+    status.textContent = item.textContent;
+  });
+
+  palette.addEventListener("pointerdown", (event) => {
+    const item = event.target.closest("[data-tool]");
+    if (!item || event.button !== 0) return;
+    event.preventDefault();
+    const ghost = item.cloneNode(true);
+    ghost.className = "editor-drag-ghost";
+    document.body.append(ghost);
+    pointerDrag = {
+      tool: item.dataset.tool,
+      ghost,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+      suppressClick: false,
+    };
+    moveGhost(event.clientX, event.clientY);
+    item.setPointerCapture?.(event.pointerId);
+  });
+
+  document.addEventListener("pointermove", (event) => {
+    if (!pointerDrag) return;
+    const dist = Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY);
+    pointerDrag.moved = pointerDrag.moved || dist > 4;
+    if (pointerDrag.moved) {
+      event.preventDefault();
+      frame.classList.add("drag-over");
+      moveGhost(event.clientX, event.clientY);
+    }
+  });
+
+  document.addEventListener("pointerup", (event) => {
+    if (!pointerDrag) return;
+    const drag = pointerDrag;
+    frame.classList.remove("drag-over");
+    drag.ghost.remove();
+    const target = document.elementFromPoint(event.clientX, event.clientY);
+    const overChart = target && frame.contains(target);
+    if (drag.moved && overChart) {
+      drag.suppressClick = true;
+      addTool(drag.tool, dataAt(event.clientX, event.clientY));
+    }
+    pointerDrag = drag.suppressClick ? drag : null;
+  });
+
+  function moveGhost(x, y) {
+    if (!pointerDrag || !pointerDrag.ghost) return;
+    pointerDrag.ghost.style.transform = `translate(${x + 10}px, ${y + 10}px)`;
+  }
+
+  frame.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    frame.classList.add("drag-over");
+  });
+
+  frame.addEventListener("dragleave", () => frame.classList.remove("drag-over"));
+
+  frame.addEventListener("drop", (event) => {
+    event.preventDefault();
+    frame.classList.remove("drag-over");
+    const tool = event.dataTransfer.getData("text/plain");
+    if (!tool) return;
+    addTool(tool, dataAt(event.clientX, event.clientY));
+  });
+
+  view.canvas.addEventListener("click", (event) => {
+    if (!activeTool) return;
+    addTool(activeTool, dataAt(event.clientX, event.clientY));
+  });
+
+  clearButton.addEventListener("click", () => {
+    view.layers = view.layers.filter((layer) => !customIds.has(layer.id));
+    customIds.clear();
+    renderLayerList();
+    view.draw();
+    status.textContent = "Cleared";
+  });
+
+  renderLayerList();
+  return { addTool, removeLayer };
+}
+"""
+
+
+EDITOR_STYLE = r"""
+html,body{margin:0;width:100%;height:100%;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,sans-serif;background:#eef2f7;color:#101828;}
+button{font:inherit;}
+.editor-shell{height:100vh;min-height:700px;display:grid;grid-template-columns:280px minmax(0,1fr);gap:14px;padding:14px;box-sizing:border-box;}
+.editor-sidebar{background:#ffffff;border:1px solid #d7dee8;border-radius:8px;display:flex;flex-direction:column;min-height:0;overflow:hidden;}
+.editor-sidebar-header{padding:14px 14px 10px;border-bottom:1px solid #e4e9f0;}
+.editor-sidebar-header h2{margin:0;font-size:16px;line-height:1.2;}
+.editor-status{margin-top:8px;min-height:18px;color:#667085;font-size:12px;}
+.editor-palette{padding:12px;display:grid;grid-template-columns:1fr;gap:8px;border-bottom:1px solid #e4e9f0;}
+.editor-tool{height:34px;border:1px solid #cfd8e3;background:#f8fafc;color:#101828;border-radius:6px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;cursor:grab;font-weight:600;font-size:13px;}
+.editor-tool:after{content:"+";color:#2563eb;font-weight:800;}
+.editor-tool.active,.editor-tool:focus{border-color:#2563eb;background:#eff6ff;outline:none;}
+.editor-drag-ghost{position:fixed;left:0;top:0;z-index:9999;width:210px;height:34px;pointer-events:none;border:1px solid #2563eb;background:#eff6ff;color:#101828;border-radius:6px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;box-shadow:0 8px 22px rgba(16,24,40,.18);font-weight:700;font-size:13px;}
+.editor-drag-ghost:after{content:"+";color:#2563eb;font-weight:800;}
+.editor-layer-panel{padding:12px;min-height:0;overflow:auto;}
+.editor-layer-panel h3{margin:0 0 10px;font-size:13px;color:#344054;}
+.editor-layer-list{display:grid;gap:7px;}
+.editor-layer-row{min-height:30px;display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid #e4e9f0;background:#fbfcfe;border-radius:6px;padding:5px 7px;font-size:12px;}
+.editor-layer-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.editor-layer-row button,.editor-clear{border:1px solid #d0d5dd;background:#fff;border-radius:5px;color:#344054;padding:3px 7px;font-size:12px;cursor:pointer;}
+.editor-clear{margin-top:10px;width:100%;height:30px;}
+.editor-workspace{min-width:0;display:flex;flex-direction:column;}
+.editor-chart-frame{position:relative;flex:1;min-height:670px;border:1px solid #d7dee8;border-radius:8px;background:#fff;overflow:hidden;}
+.editor-chart-frame.drag-over{outline:2px solid #2563eb;outline-offset:-4px;}
+#chart{width:100%;height:100%;}
+@media (max-width:900px){
+  .editor-shell{grid-template-columns:1fr;height:auto;min-height:100vh;}
+  .editor-palette{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .editor-chart-frame{min-height:620px;}
+}
+"""
+
+
+EDITOR_BODY = r"""
+<div class="editor-shell">
+  <aside class="editor-sidebar">
+    <div class="editor-sidebar-header">
+      <h2>Finance Elements</h2>
+      <div id="editor-status" class="editor-status">Ready</div>
+    </div>
+    <div id="editor-palette" class="editor-palette">
+      <button class="editor-tool" type="button" draggable="true" data-tool="long_position">Long position</button>
+      <button class="editor-tool" type="button" draggable="true" data-tool="short_position">Short position</button>
+      <button class="editor-tool" type="button" draggable="true" data-tool="anchored_vwap">Anchored VWAP</button>
+      <button class="editor-tool" type="button" draggable="true" data-tool="anchored_volume_profile">Anchored profile</button>
+      <button class="editor-tool" type="button" draggable="true" data-tool="fixed_range_volume_profile">Fixed profile</button>
+      <button class="editor-tool" type="button" draggable="true" data-tool="position_forecast">Forecast</button>
+      <button class="editor-tool" type="button" draggable="true" data-tool="sector">Sector</button>
+      <button class="editor-tool" type="button" draggable="true" data-tool="bars_pattern">Bars pattern</button>
+      <button class="editor-tool" type="button" draggable="true" data-tool="ghost_feed">Ghost feed</button>
+      <button class="editor-tool" type="button" draggable="true" data-tool="moving_average">MA 20</button>
+      <button class="editor-tool" type="button" draggable="true" data-tool="bollinger_bands">Bollinger</button>
+    </div>
+    <div class="editor-layer-panel">
+      <h3>Layers</h3>
+      <div id="editor-layer-list" class="editor-layer-list"></div>
+      <button id="editor-clear" class="editor-clear" type="button">Clear added</button>
+    </div>
+  </aside>
+  <main class="editor-workspace">
+    <div id="editor-chart-frame" class="editor-chart-frame">
+      <div id="chart"></div>
+    </div>
+  </main>
+</div>
+"""
+
+
+def candlestick_editor_html() -> str:
+    html = candlestick_demo().to_html()
+    html = html.replace(
+        "html,body{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;background:#fff;}\n"
+        "#chart{width:100%;}",
+        EDITOR_STYLE.strip(),
+    )
+    html = html.replace('<div id="chart"></div>', EDITOR_BODY.strip())
+    html = html.replace(
+        "<script>\n  const spec = ",
+        f"<script>{EDITOR_JS}</script>\n<script>\n  const spec = ",
+    )
+    html = html.replace(
+        'fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);',
+        'const view = fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);\n'
+        "  window.fastchartsFinanceEditor = createFinanceLayerEditor(view);",
+    )
+    return html
+
+
 def main() -> None:
     live_html = live_drilldown_html()
     write_live_drilldown_chart("live_drilldown_100m.html", live_html)
@@ -786,6 +1526,9 @@ def main() -> None:
     write_custom_chrome_chart()
     write_chart(business_overview_demo(), "business_overview.html")
     write_chart(retention_cohort_demo(), "retention_cohort.html")
+    write_live_drilldown_chart("live_drilldown_1b.html", billion_drilldown_html())
+    write_chart(candlestick_demo(), "candlestick.html")
+    write_html_asset("candlestick_editor.html", candlestick_editor_html())
     write_chart(line_walk(), "line_walk.html")
     write_chart(area_demo(), "area.html")
     write_chart(colored_scatter(), "colored_scatter.html")

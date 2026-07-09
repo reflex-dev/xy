@@ -26,7 +26,9 @@ from fastcharts.components import _MARK_APPLIERS
 # Props the composition layer owns that intentionally never reach the engine:
 # `data` is resolved into arrays before the engine call, and the class/axis
 # hooks configure the Chart container rather than the trace.
-COMPOSITION_ONLY = {"data", "class_name", "x_axis", "y_axis"}
+# `id` names a trace for finance layers to reference; `volume` spawns a
+# volume_bars layer at Chart compile time — both are composition concepts.
+COMPOSITION_ONLY = {"data", "class_name", "x_axis", "y_axis", "id", "volume"}
 
 # factory name -> Figure method name (same-named today; the pairing is
 # explicit so a future rename must update the guard deliberately).
@@ -39,6 +41,8 @@ MARK_PAIRS = [
     ("bar", "bar"),
     ("column", "column"),
     ("heatmap", "heatmap"),
+    ("candlestick", "candlestick"),
+    ("ohlc", "ohlc"),
 ]
 
 # One inline-data Mark per applier kind, used to exercise real forwarding.
@@ -50,6 +54,12 @@ SAMPLE_MARKS = {
     "bar": lambda: fc.bar(x=["a", "b"], y=[1.0, 2.0]),
     "column": lambda: fc.column(x=["a", "b"], y=[1.0, 2.0]),
     "heatmap": lambda: fc.heatmap(z=[[1.0, 2.0], [3.0, 4.0]]),
+    "candlestick": lambda: fc.candlestick(
+        x=[1.0, 2.0], open=[1.0, 2.0], high=[2.0, 3.0], low=[0.5, 1.5], close=[1.5, 2.5]
+    ),
+    "ohlc": lambda: fc.ohlc(
+        x=[1.0, 2.0], open=[1.0, 2.0], high=[2.0, 3.0], low=[0.5, 1.5], close=[1.5, 2.5]
+    ),
 }
 
 

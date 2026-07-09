@@ -16,7 +16,9 @@ from .config import DIRECT_SOFT_CEILING, SCATTER_DENSITY_THRESHOLD
 @dataclass
 class Trace:
     id: int
-    kind: str  # "line" | "scatter" | "area" | "histogram" | "bar" | "column" | "heatmap"
+    # "line" | "scatter" | "area" | "histogram" | "bar" | "column" | "heatmap"
+    # | "candlestick" | "ohlc"
+    kind: str
     x: Column
     y: Column
     x_axis: str = "x"
@@ -26,6 +28,12 @@ class Trace:
     # Area-style marks keep an explicit baseline column; rectangle-like marks
     # use x0/x1/y0/y1 below.
     base: Optional[Column] = None
+    # OHLC columns for candlestick/bar-range marks (finance). `y` mirrors close
+    # so shared xy bookkeeping has a useful fallback; autorange uses low/high.
+    open_: Optional[Column] = None
+    high: Optional[Column] = None
+    low: Optional[Column] = None
+    close: Optional[Column] = None
     # Grid-like marks (heatmap/image) ship one scalar grid plus metadata instead
     # of four rectangle columns per cell.
     grid: Optional[Column] = None

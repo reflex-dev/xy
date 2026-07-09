@@ -56,6 +56,8 @@ CHART_ASSETS = (
     "stacked_bar.html",
     "horizontal_bar.html",
     "interaction_basics.html",
+    "candlestick_editor.html",
+    "live_drilldown_1b.html",
 )
 
 LIVE_CHART_ASSETS = (

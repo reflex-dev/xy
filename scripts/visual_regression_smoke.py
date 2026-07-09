@@ -694,6 +694,8 @@ ASSET_CASES: tuple[str, ...] = (
     "colored_scatter.html",
     "live_drilldown_10m.html",
     "live_drilldown_100m.html",
+    "candlestick_editor.html",
+    "live_drilldown_1b.html",
 )
 
 CHROME_SHELL_CASES: tuple[tuple[str, str, tuple[str, ...]], ...] = (

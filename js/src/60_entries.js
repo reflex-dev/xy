@@ -55,5 +55,5 @@ function renderStandalone(el, spec, arrayBuffer) {
 // whole line — build.mjs splits on it and rejects any trailing text so this
 // description can never leak into the ESM bundle as bare code.
 // ---- exports ----
-export { render, renderStandalone, ChartView, MARK_KINDS, markOf };
+export { render, renderStandalone, ChartView, MARK_KINDS, markOf, LAYER_KINDS, layerOf };
 export default { render };

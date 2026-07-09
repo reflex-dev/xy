@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import threading
 from dataclasses import dataclass
@@ -11,19 +12,41 @@ import numpy as np
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from fastcharts import Figure
-from fastcharts.config import DRILL_EXIT_FACTOR, SCATTER_DENSITY_THRESHOLD
+from fastcharts import Figure, kernels, lod
+from fastcharts.config import DRILL_EXIT_FACTOR, PROTOCOL_VERSION, SCATTER_DENSITY_THRESHOLD
 from fastcharts.lod import grid_shape
 from fastcharts.widget import bundled_js
 
 LIVE_SCATTER_POINTS = 100_000_000
+BILLION_SCATTER_POINTS = 1_000_000_000
 LIVE_DRILLDOWN_ROUTE = "/api/fastcharts/drilldown"
 DENSITY_OVERVIEW_BINS = 6144
 DENSITY_OVERVIEW_CHUNK = 1_000_000
 OVERVIEW_EXACT_FACTOR = 4.0
+BILLION_INITIAL_GRID = (1024, 512)
+BILLION_SERVER_GRID = (2048, 2048)
+BILLION_X_RANGE = (-7.0, 7.0)
+BILLION_Y_RANGE = (-5.5, 5.5)
 _FIGURE_LOCK = threading.Lock()
 _DENSITY_SEQ_LOCK = threading.Lock()
 _LATEST_DENSITY_SEQ: dict[str, int] = {}
+
+
+def _require_native_backend() -> None:
+    if kernels.BACKEND != "native":
+        raise RuntimeError(
+            "The 100M live drilldown demo requires the fastcharts native Rust backend. "
+            "Run `cargo build --release` before starting the Reflex app."
+        )
+
+
+def _encode_log_u8(grid: np.ndarray, gmax: float) -> bytes:
+    arr = np.asarray(grid, dtype=np.float64).ravel()
+    if gmax <= 0.0:
+        return bytes(arr.size)
+    enc = np.round(255.0 * np.log1p(arr) / np.log1p(gmax)).astype(np.uint8)
+    enc[(arr > 0) & (enc == 0)] = 1
+    return enc.tobytes()
 
 
 def _point_label(n: int) -> str:
@@ -76,6 +99,104 @@ def colored_scatter_figure(
     ).scatter(x, y, color=color, size=size, colormap="viridis", opacity=0.72, density=True)
 
 
+def _billion_density_field(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    return (
+        1.00 * np.exp(-0.5 * (((x + 1.2) / 1.75) ** 2 + ((y + 0.4 - x * 0.28) / 0.65) ** 2))
+        + 0.55 * np.exp(-0.5 * (((x - 1.8) / 1.15) ** 2 + ((y - 1.1 - x * 0.18) / 0.48) ** 2))
+        + 0.20 * np.exp(-0.5 * (((x + 3.5) / 0.75) ** 2 + ((y - 1.8) / 0.9) ** 2))
+    )
+
+
+def _billion_density_grid(
+    width: int,
+    height: int,
+    x_range: tuple[float, float],
+    y_range: tuple[float, float],
+    total: float,
+) -> np.ndarray:
+    xs = np.linspace(x_range[0], x_range[1], width, dtype=np.float64)
+    ys = np.linspace(y_range[0], y_range[1], height, dtype=np.float64)
+    xx, yy = np.meshgrid(xs, ys)
+    grid = _billion_density_field(xx, yy)
+    grid_sum = float(grid.sum())
+    if grid_sum > 0.0:
+        grid *= float(total) / grid_sum
+    return grid.astype(np.float32, copy=False)
+
+
+def _billion_seed(*values: float) -> int:
+    payload = ",".join(f"{value:.12g}" for value in values).encode("ascii")
+    digest = hashlib.blake2b(payload, digest_size=8).digest()
+    return int.from_bytes(digest, "little", signed=False)
+
+
+def _billion_sample_points(
+    x_range: tuple[float, float],
+    y_range: tuple[float, float],
+    n: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    if n <= 0:
+        empty = np.empty(0, dtype=np.float64)
+        return empty, empty
+    sx, sy = 256, 256
+    weights = _billion_density_grid(sx, sy, x_range, y_range, 1.0).reshape(-1).astype(np.float64)
+    total = float(weights.sum())
+    if total <= 0.0:
+        empty = np.empty(0, dtype=np.float64)
+        return empty, empty
+    rng = np.random.default_rng(_billion_seed(*x_range, *y_range, float(n)))
+    cells = rng.choice(weights.size, size=n, replace=True, p=weights / total)
+    cy, cx = np.divmod(cells, sx)
+    dx = (x_range[1] - x_range[0]) / sx
+    dy = (y_range[1] - y_range[0]) / sy
+    xs = x_range[0] + (cx + rng.random(n)) * dx
+    ys = y_range[0] + (cy + rng.random(n)) * dy
+    return xs.astype(np.float64, copy=False), ys.astype(np.float64, copy=False)
+
+
+def billion_drilldown_payload() -> tuple[dict[str, Any], bytes]:
+    w, h = BILLION_INITIAL_GRID
+    grid = _billion_density_grid(w, h, BILLION_X_RANGE, BILLION_Y_RANGE, BILLION_SCATTER_POINTS)
+    spec = {
+        "protocol": PROTOCOL_VERSION,
+        "width": "100%",
+        "height": 430,
+        "title": "1B live drilldown scatter",
+        "x_axis": {"kind": "linear", "label": "feature A", "range": list(BILLION_X_RANGE)},
+        "y_axis": {
+            "kind": "linear",
+            "label": "feature B",
+            "range": list(BILLION_Y_RANGE),
+            "side": "left",
+        },
+        "traces": [
+            {
+                "id": 0,
+                "kind": "scatter",
+                "name": "1B density",
+                "style": {"opacity": 0.9},
+                "tier": "density",
+                "n_points": BILLION_SCATTER_POINTS,
+                "n_marks": w * h,
+                "density": {
+                    "buf": 0,
+                    "w": w,
+                    "h": h,
+                    "max": float(grid.max()) if grid.size else 0.0,
+                    "colormap": "viridis",
+                    "x_range": list(BILLION_X_RANGE),
+                    "y_range": list(BILLION_Y_RANGE),
+                    "channels_dropped": False,
+                },
+            }
+        ],
+        "columns": [{"byte_offset": 0, "len": w * h}],
+        "backend": kernels.BACKEND,
+        "show_legend": True,
+    }
+    return spec, grid.reshape(-1).astype(np.float32, copy=False).tobytes()
+
+
 @lru_cache(maxsize=1)
 def live_figure() -> Figure:
     return live_store().figure
@@ -88,6 +209,21 @@ class DensityOverview:
     y_range: tuple[float, float]
     width: int
     height: int
+
+    @classmethod
+    def from_grid(
+        cls,
+        grid: np.ndarray,
+        x_range: tuple[float, float],
+        y_range: tuple[float, float],
+    ) -> "DensityOverview":
+        values = np.asarray(grid, dtype=np.float64)
+        summed = np.cumsum(values, axis=0, dtype=np.float64)
+        summed = np.cumsum(summed, axis=1, dtype=np.float64)
+        h, w = values.shape
+        integral = np.zeros((h + 1, w + 1), dtype=np.float64)
+        integral[1:, 1:] = summed
+        return cls(integral=integral, x_range=x_range, y_range=y_range, width=w, height=h)
 
     @classmethod
     def build(cls, fig: Figure, trace_id: int = 0) -> "DensityOverview":
@@ -141,7 +277,10 @@ class DensityOverview:
         if bx1 <= bx0 or by1 <= by0:
             return 0
         ii = self.integral
-        return int(ii[by1, bx1]) - int(ii[by0, bx1]) - int(ii[by1, bx0]) + int(ii[by0, bx0])
+        count = (
+            float(ii[by1, bx1]) - float(ii[by0, bx1]) - float(ii[by1, bx0]) + float(ii[by0, bx0])
+        )
+        return int(round(count))
 
     def density(
         self,
@@ -169,10 +308,10 @@ class DensityOverview:
         y_lo = y_edges[:-1]
         y_hi = y_edges[1:]
         grid = (
-            ii[y_hi[:, None], x_hi[None, :]].astype(np.int64)
-            - ii[y_lo[:, None], x_hi[None, :]].astype(np.int64)
-            - ii[y_hi[:, None], x_lo[None, :]].astype(np.int64)
-            + ii[y_lo[:, None], x_lo[None, :]].astype(np.int64)
+            ii[y_hi[:, None], x_hi[None, :]].astype(np.float64)
+            - ii[y_lo[:, None], x_hi[None, :]].astype(np.float64)
+            - ii[y_hi[:, None], x_lo[None, :]].astype(np.float64)
+            + ii[y_lo[:, None], x_lo[None, :]].astype(np.float64)
         )
         return grid.astype(np.float32, copy=False)
 
@@ -183,10 +322,28 @@ class LiveStore:
     overview: DensityOverview
 
 
+@dataclass
+class SyntheticBillionStore:
+    overview: DensityOverview
+    drill_mode: bool = False
+    drill_seq: int = 0
+
+
 @lru_cache(maxsize=1)
 def live_store() -> LiveStore:
+    _require_native_backend()
     fig = colored_scatter_figure()
     return LiveStore(figure=fig, overview=DensityOverview.build(fig))
+
+
+@lru_cache(maxsize=1)
+def billion_store() -> SyntheticBillionStore:
+    _require_native_backend()
+    w, h = BILLION_SERVER_GRID
+    grid = _billion_density_grid(w, h, BILLION_X_RANGE, BILLION_Y_RANGE, BILLION_SCATTER_POINTS)
+    return SyntheticBillionStore(
+        overview=DensityOverview.from_grid(grid, BILLION_X_RANGE, BILLION_Y_RANGE)
+    )
 
 
 def _b64(buf: bytes) -> str:
@@ -279,6 +436,100 @@ def _live_density_view(
     )
 
 
+def _billion_density_view(
+    store: SyntheticBillionStore,
+    trace_id: int,
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+    w: int,
+    h: int,
+) -> tuple[dict[str, Any], list[bytes]]:
+    if trace_id != 0:
+        return {"traces": []}, []
+    lo_x, hi_x, lo_y, hi_y = lod.normalize_window(x0, x1, y0, y1)
+    visible = store.overview.count(lo_x, hi_x, lo_y, hi_y)
+    budget = SCATTER_DENSITY_THRESHOLD * (DRILL_EXIT_FACTOR if store.drill_mode else 1.0)
+    if visible <= budget:
+        return _billion_drill_points(store, visible, lo_x, hi_x, lo_y, hi_y, w, h)
+
+    grid = store.overview.density(lo_x, hi_x, lo_y, hi_y, w, h, visible)
+    if grid is None:
+        gw, gh = grid_shape(w, h, visible)
+        grid = _billion_density_grid(gw, gh, (lo_x, hi_x), (lo_y, hi_y), visible)
+
+    if store.drill_mode:
+        store.drill_seq += 1
+    store.drill_mode = False
+    gmax = float(grid.max()) if grid.size else 0.0
+    return (
+        {
+            "traces": [
+                {
+                    "id": trace_id,
+                    "mode": "density",
+                    "visible": visible,
+                    "binning": "synthetic-overview",
+                    "density": {
+                        "buf": 0,
+                        "w": int(grid.shape[1]),
+                        "h": int(grid.shape[0]),
+                        "max": gmax,
+                        "enc": "log-u8",
+                        "x_range": [lo_x, hi_x],
+                        "y_range": [lo_y, hi_y],
+                    },
+                }
+            ]
+        },
+        [_encode_log_u8(grid, gmax)],
+    )
+
+
+def _billion_drill_points(
+    store: SyntheticBillionStore,
+    visible: int,
+    lo_x: float,
+    hi_x: float,
+    lo_y: float,
+    hi_y: float,
+    w: int,
+    h: int,
+) -> tuple[dict[str, Any], list[bytes]]:
+    xs, ys = _billion_sample_points((lo_x, hi_x), (lo_y, hi_y), visible)
+    x_meta, y_meta, x_enc, y_enc = lod.encode_window_xy(xs, ys, lo_x, hi_x, lo_y, hi_y)
+    buffers = [x_enc.tobytes(), y_enc.tobytes()]
+    gw, gh = grid_shape(w, h, visible)
+    density_val = lod.local_log_density(xs, ys, lo_x, hi_x, lo_y, hi_y, gw, gh)
+    buffers.append(np.ascontiguousarray(density_val, dtype=np.float32).tobytes())
+    store.drill_mode = True
+    store.drill_seq += 1
+    return (
+        {
+            "traces": [
+                {
+                    "id": 0,
+                    "mode": "points",
+                    "visible": visible,
+                    "x_range": [lo_x, hi_x],
+                    "y_range": [lo_y, hi_y],
+                    "x": {"buf": 0, "len": len(xs), **x_meta},
+                    "y": {"buf": 1, "len": len(ys), **y_meta},
+                    "color": {"mode": "constant", "color": "#2563eb"},
+                    "size": {"mode": "constant", "size": 3.5},
+                    "density_val": {"buf": 2},
+                    "lod_blend": float(min(1.0, visible / SCATTER_DENSITY_THRESHOLD)),
+                    "density_colormap": "viridis",
+                    "drill_seq": store.drill_seq,
+                    "style": {"opacity": 0.9},
+                }
+            ]
+        },
+        buffers,
+    )
+
+
 async def drilldown_endpoint(request: Request) -> JSONResponse:
     try:
         content = await request.json()
@@ -286,12 +537,52 @@ async def drilldown_endpoint(request: Request) -> JSONResponse:
         return JSONResponse({"error": "invalid json"}, status_code=400)
 
     kind = content.get("type")
+    dataset = str(request.query_params.get("dataset") or content.get("dataset") or "100m")
     density_client_id: str | None = None
     density_seq: int | None = None
     if kind == "density_view":
         density_client_id, density_seq = _mark_latest_density(content)
 
     with _FIGURE_LOCK:
+        if dataset in {"1b", "billion"}:
+            if kind == "density_view":
+                try:
+                    if _density_is_stale(density_client_id or "default", density_seq):
+                        return _response(
+                            {
+                                "type": "density_update",
+                                "seq": content.get("seq"),
+                                "trace": content.get("trace"),
+                                "stale": True,
+                                "traces": [],
+                            }
+                        )
+                    update, buffers = _billion_density_view(
+                        billion_store(),
+                        int(content["trace"]),
+                        float(content["x0"]),
+                        float(content["x1"]),
+                        float(content["y0"]),
+                        float(content["y1"]),
+                        int(content.get("w", 512)),
+                        int(content.get("h", 384)),
+                    )
+                except (KeyError, ValueError, IndexError):
+                    return JSONResponse({"error": "bad density_view request"}, status_code=400)
+                return _response(
+                    {
+                        "type": "density_update",
+                        "seq": content.get("seq"),
+                        "trace": content.get("trace"),
+                        **update,
+                    },
+                    buffers,
+                )
+            if kind == "pick":
+                return _response({"type": "pick_result", "seq": content.get("seq"), "row": None})
+            if kind in {"select", "select_clear"}:
+                return _response({"type": "selection", "traces": [], "total": 0})
+
         store = live_store()
         fig = store.figure
         if kind == "density_view":
@@ -344,17 +635,37 @@ async def drilldown_endpoint(request: Request) -> JSONResponse:
 
 
 def live_drilldown_html() -> str:
+    _require_native_backend()
     fig = colored_scatter_figure()
     spec, blob = fig.build_payload()
+    return _live_drilldown_document(
+        f"{_point_label(LIVE_SCATTER_POINTS)} live drilldown scatter",
+        spec,
+        blob,
+        LIVE_DRILLDOWN_ROUTE,
+    )
+
+
+def billion_drilldown_html() -> str:
+    _require_native_backend()
+    spec, blob = billion_drilldown_payload()
+    return _live_drilldown_document(
+        "1B live drilldown scatter",
+        spec,
+        blob,
+        f"{LIVE_DRILLDOWN_ROUTE}?dataset=1b",
+    )
+
+
+def _live_drilldown_document(title: str, spec: dict[str, Any], blob: bytes, route: str) -> str:
     spec_js = json.dumps(spec).replace("</", "<\\/")
     b64 = _b64(blob)
-    route = LIVE_DRILLDOWN_ROUTE
     js = bundled_js("standalone")
     return f"""<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>{_point_label(LIVE_SCATTER_POINTS)} live drilldown scatter</title>
+<title>{title}</title>
 <style>
 html,body{{margin:0;width:100%;height:100%;font-family:system-ui,sans-serif;background:#fff;}}
 #chart{{width:100%;height:430px;}}
