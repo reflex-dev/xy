@@ -19,6 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DOCS = (
     "pyproject.toml",
     "README.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
     "docs/api-examples.md",
     "docs/benchmark.md",
     "docs/chart-roadmap.md",
@@ -56,6 +58,10 @@ NUMERIC_PERFORMANCE_RE = re.compile(
     r"\b\d+(?:\.\d+)?\s*x\s+(?:faster|slower|smaller|larger|less|more)\b",
     re.IGNORECASE,
 )
+# The project has lived under earlier names (charts-exp, personal forks).
+# Public docs must point at the canonical repository — a stale URL here means
+# security reports, clones, and badges land on the wrong repo.
+STALE_REPO_RE = re.compile(r"github\.com/Alek99|app\.codspeed\.io/Alek99|charts-exp", re.IGNORECASE)
 
 POLICY_WORDS = re.compile(
     r"\b(do not|don't|must|should|guardrail|policy|claim|goal|planned|target|"
@@ -111,6 +117,16 @@ def _findings_for_file(path: Path) -> list[Finding]:
     findings: list[Finding] = []
     for index, line in enumerate(lines):
         window = _line_window(lines, index)
+        if STALE_REPO_RE.search(line):
+            # No policy-context exemption: a stale repo identity is always wrong.
+            findings.append(
+                Finding(
+                    path,
+                    index + 1,
+                    "stale repository identity; use github.com/reflex-dev/reviz",
+                    line,
+                )
+            )
         if BROAD_SUPERLATIVE_RE.search(line) and not _is_policy_or_negative_context(window):
             findings.append(
                 Finding(

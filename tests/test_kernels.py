@@ -324,7 +324,7 @@ def test_size_sentinel_detection_matches_platform_usize_width(monkeypatch):
 
     from fastcharts import _native
 
-    assert _native._USIZE_MAX == ctypes.c_size_t(-1).value
+    assert ctypes.c_size_t(-1).value == _native._USIZE_MAX
     sentinel = 2**32 - 1
     monkeypatch.setattr(_native, "_USIZE_MAX", sentinel)
     x = np.arange(8.0)

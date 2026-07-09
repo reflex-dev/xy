@@ -152,3 +152,21 @@ def test_claim_guardrail_accepts_mode_scoped_large_point_rendering(tmp_path: Pat
     findings = check_claim_guardrails.check_claims([path])
 
     assert findings == []
+
+
+def test_claim_guardrail_rejects_stale_repo_identity(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path,
+        "Report issues at https://github.com/Alek99/charts-exp/security/advisories/new\n",
+    )
+
+    findings = check_claim_guardrails.check_claims([path])
+
+    assert any("stale repository identity" in finding.message for finding in findings)
+
+
+def test_claim_guardrail_covers_security_and_contributing_docs() -> None:
+    defaults = check_claim_guardrails._default_paths()
+
+    assert check_claim_guardrails.ROOT / "SECURITY.md" in defaults
+    assert check_claim_guardrails.ROOT / "CONTRIBUTING.md" in defaults
