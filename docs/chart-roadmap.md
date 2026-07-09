@@ -34,9 +34,10 @@ Beyond the mark set, three capability layers now ship on `main`:
   and per-state `mark_style` colors — all resolved from CSS so the marks obey
   the same theme tokens as the chrome.
 - **Static export:** `fig.to_svg(...)` (pure-Python, screen-bounded vector —
-  a 10M-point line exports in ~4 ms / ~58 KB) and `fig.to_png(...)` (headless
-  Chromium raster). Both consume the same decimated payload, so export cost
-  scales with pixels, not points.
+  a 10M-point line exports in ~4 ms / ~58 KB) and `fig.to_png(...)` (a
+  browser-free native Rust rasterizer by default, ~50× faster than the
+  `engine="chromium"` screenshot). Both consume the same decimated payload, so
+  export cost scales with pixels, not points.
 - **Standalone LOD without a kernel:** `to_html` exports now re-bin the
   retained density sample in a bundled Web Worker on zoom (off the main
   thread), so a kernel-less page refines instead of stretching the overview.
@@ -368,14 +369,17 @@ breadth on top of them, then the two "completeness" charts users ask for first.
 5. **Merge the finance PR**, then extend rank-35 breadth (depth chart,
    Heikin-Ashi, Renko) on the shipped `FinanceLayer` system.
 
-Parallel, non-chart-type tracks that are also live:
+Parallel, non-chart-type tracks:
 
-- **Native PNG rasterizer** (perf): a Rust rasterizer + indexed-PNG encoder so
-  `to_png` drops from a browser screenshot (~1.5 s) to milliseconds with tiny
-  palette-quantized files. (Dossier Phase 3.)
+- **Native PNG rasterizer** (perf) — **shipped** (dossier Phase 3).
+  `Figure.to_png(engine="native")`, now the default, paints the decimated
+  payload with a dependency-free AA rasterizer in the Rust core (ABI v8,
+  `fc_rasterize`) — no browser, ~50× faster than the Chromium screenshot,
+  indexed-palette PNGs, and a baked bitmap font for text. `engine="chromium"`
+  stays for a pixel-exact WebGL screenshot.
 - **Reflex-first reactive API**: the one deliberately-deferred product
   requirement — a reactive/data-key-driven surface so charts bind to Reflex
-  state without manual payload rebuilds.
+  state without manual payload rebuilds. Now the main remaining non-breadth track.
 
 ## Near-Term API Sketch
 
