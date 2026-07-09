@@ -21,12 +21,14 @@ jobs:
     name: Run benchmarks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v5
+      # Actions pinned to full-length commit SHAs (repo policy requires it);
+      # the trailing comment records the human-readable version each SHA maps to.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
 
       # The native Rust core must be present so the benchmarks measure the
       # native kernels (BACKEND == "native"); without it, importing the compute
@@ -49,7 +51,7 @@ jobs:
           PY
 
       - name: Run benchmarks
-        uses: CodSpeedHQ/action@v4
+        uses: CodSpeedHQ/action@9f3a37ece7abc84992501a7fcd54d1704f3458fa # v4
         with:
           mode: simulation
           run: .venv/bin/python -m pytest benchmarks/test_codspeed_kernels.py --codspeed
