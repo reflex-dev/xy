@@ -511,6 +511,8 @@ def test_client_renders_mark_level_styling() -> None:
         "(v_pos - v_base) / (abs(denom)",  # area gradient: per-column, seam-free + even
         "fcSmoothResample(",  # monotone cubic (Fritsch–Carlson)
         "fcMonotoneTangents(",
+        "fcMarkerSdf(d, u_symbol)",  # scatter symbol shapes (circle/square/diamond/triangle/cross)
+        "_pointMarkStyle(",  # point stroke + symbol resolution
         "_resolveMarkFill(",
         "_setRectStyleUniforms(",
         '=== "currentcolor"',  # currentColor resolves to the mark's own color

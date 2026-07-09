@@ -223,13 +223,17 @@ def scatter(
     size_range: tuple[float, float] = (2.0, 18.0),
     opacity: float = 0.8,
     density: Optional[bool] = None,
+    symbol: str = "circle",
+    stroke: Optional[str] = None,
+    stroke_width: float = 0.0,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
     """A scatter series. `x`/`y`/`color`/`size` may be arrays or column names in
     `data`. `color` is auto-typed (numeric → colormap, categorical → palette);
-    large series auto-aggregate to a Tier-2 density surface (§5)."""
+    `symbol`/`stroke`/`stroke_width` style the markers; large series
+    auto-aggregate to a Tier-2 density surface (§5)."""
     return Mark(
         kind="scatter",
         x=x,
@@ -244,6 +248,9 @@ def scatter(
             "size_range": size_range,
             "opacity": opacity,
             "density": density,
+            "symbol": symbol,
+            "stroke": stroke,
+            "stroke_width": stroke_width,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -1725,6 +1732,9 @@ def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
         size_range=m.props["size_range"],
         opacity=m.props["opacity"],
         density=m.props["density"],
+        symbol=m.props["symbol"],
+        stroke=m.props["stroke"],
+        stroke_width=m.props["stroke_width"],
     )
 
 

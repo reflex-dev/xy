@@ -113,6 +113,7 @@ const MARK_KINDS = {
       if (g.colorMode === 0 && g.trace.color) {
         g.color = parseColor(view.root, g.trace.color.color, g.color);
       }
+      view._pointMarkStyle(g, g.trace);
     },
   },
   line: {

@@ -1876,3 +1876,26 @@ def test_padding_validation() -> None:
         Figure(padding=[1, 2, 3])
     with pytest.raises(ValueError, match=r"number or a .* sequence"):
         Figure(padding="0")
+
+
+def test_scatter_symbol_and_stroke_emit_to_spec() -> None:
+    spec, _ = (
+        Figure()
+        .scatter([0.0, 1.0], [0.0, 1.0], symbol="triangle", stroke="#111", stroke_width=2)
+        .build_payload()
+    )
+    style = spec["traces"][0]["style"]
+    assert style["symbol"] == "triangle"
+    assert style["stroke"] == "#111"
+    assert style["stroke_width"] == 2.0
+
+    # circle is the default (emitted sparsely); a stroke color alone implies 1px
+    spec2, _ = Figure().scatter([0.0], [0.0], stroke="#111").build_payload()
+    style2 = spec2["traces"][0]["style"]
+    assert "symbol" not in style2
+    assert style2["stroke_width"] == 1.0
+
+    with pytest.raises(ValueError, match="scatter symbol"):
+        Figure().scatter([0.0], [0.0], symbol="star")
+    with pytest.raises(ValueError, match="scatter stroke_width"):
+        Figure().scatter([0.0], [0.0], stroke_width=-1)

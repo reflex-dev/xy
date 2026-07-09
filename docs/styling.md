@@ -212,6 +212,16 @@ stays proportional), and the antialiased corner/stroke coverage. `area` also has
 because the stroke keeps its own color's alpha, a translucent fill with a solid
 border is just `bar(opacity=0.3, stroke="#2563eb", stroke_width=2)`.
 
+### Scatter markers — `symbol`, `stroke`, `stroke_width`
+
+`scatter` markers take a `symbol` — `circle` (default), `square`, `diamond`,
+`triangle`, or `cross` — plus a `stroke` color and `stroke_width` (px) for a
+border, e.g. `scatter(x, y, symbol="triangle", stroke="#fff", stroke_width=2)`.
+Each is an antialiased SDF in the point shader, so shapes stay crisp at any size
+and the border is a true ring (a stroke width with no color borders in the mark
+color). Symbols compose with the color/size channels and the selected/unselected
+mark states.
+
 ### Smooth curves — `curve="smooth"` on `line`, `area`
 
 Monotone cubic (Fritsch–Carlson) through the points: follows the data, never
@@ -228,12 +238,12 @@ dense and smoothing is invisible by construction.
 | `histogram` | ✅ | ✅ | ✅ all or `(tip, base)` | ✅ | — | bin-driven |
 | `area` | ✅ (+ `line_width`/`line_opacity`) | ✅ | — | line is the stroke | ✅ | ✅ |
 | `line` | ✅ | — (stroke gradients: roadmap) | — | is a stroke | ✅ | ✅ `width` |
-| `scatter` | ✅ + color/size channels | — | point shape: roadmap | roadmap | — | ✅ + size channel |
+| `scatter` | ✅ + color/size channels | — | `symbol` (circle/square/diamond/triangle/cross) | ✅ `stroke`/`stroke_width` | — | ✅ + size channel |
 | `heatmap` | colormap + `domain` | colormap is the gradient | — | — | — | cell-driven |
 
 State styling (`mark_style`: hover / selected / unselected opacity & color)
 composes with all of the above. On the roadmap, in likely order: line dash
-patterns, scatter point strokes + shapes, per-mark drop shadows, gradient
+patterns, per-mark drop shadows, gradient
 angles beyond the four axis directions, and stroke gradients.
 
 ## What CSS cannot restyle
