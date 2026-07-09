@@ -300,6 +300,31 @@ def test_client_hardens_responsive_visibility_recovery() -> None:
             assert marker in text, f"{path} no longer exposes responsive marker {marker!r}"
 
 
+def test_client_quiesces_and_rebuilds_repeated_context_loss() -> None:
+    required = (
+        'this.root.dataset.fcContextState = "lost";',
+        'this.root.dataset.fcContextState = "ready";',
+        "this._contextLossCount += 1;",
+        "this._contextRestoreCount += 1;",
+        'this._dispatchChartEvent("context_lost"',
+        'this._dispatchChartEvent("context_restored"',
+        "clearTimeout(this._viewTimer);",
+        "clearTimeout(this._rebinTimer);",
+        "if (this._destroyed || this._glLost || !this.gl) return;",
+        "if (this._destroyed || this._contextRecoveryError) return;",
+        'if (this._glLost && msg.type !== "append" && msg.type !== "pick_result") return;',
+    )
+
+    for path, text in CLIENT_FILES:
+        for marker in required:
+            assert marker in text, f"{path} lost context-recovery marker {marker!r}"
+
+    smoke = (ROOT / "scripts" / "render_smoke_nonumpy.py").read_text(encoding="utf-8")
+    assert "for(let cycle=0;cycle<3;cycle++)" in smoke
+    assert "ctxcycles != 3" in smoke
+    assert "ctxpost != 1" in smoke
+
+
 def test_client_refreshes_and_destroys_density_sample_overlays() -> None:
     chartview_required = (
         "_refreshReductionBadges()",

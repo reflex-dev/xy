@@ -72,6 +72,13 @@ in the README).
 - `LICENSE` (Apache-2.0), `CHANGELOG.md`, `SECURITY.md`, root `CONTRIBUTING.md`.
 
 ### Changed
+- **Rendering hardening:** context loss now quiesces draw/animation/re-bin work,
+  invalidates pre-loss replies, retains streamed canonical payloads, reports
+  recovery state, and rebuilds without throwing an unhandled event error. The
+  dependency-free browser smoke forces three pixel-identical recovery cycles
+  and verifies interaction afterward. CI now hard-gates a loss-free 10-chart
+  dashboard, pins interaction/visual budget ceilings in the verifier, and
+  fails timing regressions beyond 4x while retaining the 2x advisory band.
 - **Native PNG export compression** dropped from zlib level 9 to level 6: a
   1M-point line export goes from ~298 ms to ~64 ms (reference hardware) for
   ~2.65% larger output. Regression tests pin the level for both truecolor

@@ -1385,7 +1385,11 @@ this._buildDom(el);
 this.theme = readTheme(this.root);
 this._payload = buffer;
 this._glLost = false;
+this._contextLossCount = 0;
+this._contextRestoreCount = 0;
+this._contextRecoveryError = null;
 this._initGl(buffer);
+this.root.dataset.fcContextState = "ready";
 this._initContextLossRecovery();
 this._initInteraction();
 this._buildModebar(this.root); 
@@ -1665,24 +1669,57 @@ this._dprMq = mq;
 _initContextLossRecovery() {
 this._listen(this.canvas, "webglcontextlost", (e) => {
 e.preventDefault();
+if (this._destroyed || this._glLost) return;
 this._glLost = true;
+this._contextLossCount += 1;
+this._contextRecoveryError = null;
+this.root.dataset.fcContextState = "lost";
+this.seq += 1;
 if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
+if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
+this._wheelZoomRaf = null;
+this._pendingWheelZoom = null;
+this._cancelViewAnimation();
+clearTimeout(this._viewTimer);
+this._viewTimer = null;
+clearTimeout(this._rebinTimer);
+this._rebinTimer = null;
+this._viewRequestBurstStart = null;
+this._dispatchChartEvent("context_lost", {
+loss_count: this._contextLossCount,
+});
 });
 this._listen(this.canvas, "webglcontextrestored", () => {
-if (this._destroyed) return;
-this._glLost = false;
+if (this._destroyed || this._contextRecoveryError) return;
 this._lutCache.clear();
 this.pickFbo = null;
 this.pickTex = null;
 try {
 this._initGl(this._payload);
 } catch (err) {
+this._glLost = true;
+this._contextRecoveryError = err;
+this.root.dataset.fcContextState = "failed";
+try { this._destroyGlResources(); } catch (_cleanupErr) {}
+this.gl = null;
+this._dispatchChartEvent("context_restore_failed", {
+loss_count: this._contextLossCount,
+message: err instanceof Error ? err.message : String(err),
+});
 this.root.textContent = "fastcharts: WebGL2 context could not be restored.";
-throw err;
+return;
 }
+this._glLost = false;
+this._contextRestoreCount += 1;
+this._contextRecoveryError = null;
+this.root.dataset.fcContextState = "ready";
 this._scheduleViewRequest(this.view, { delay: 0 });
 this.draw();
+this._dispatchChartEvent("context_restored", {
+loss_count: this._contextLossCount,
+restore_count: this._contextRestoreCount,
+});
 });
 }
 _resize(cssW, cssH) {
@@ -2437,7 +2474,7 @@ gl.uniform2f(u(`${prefix}meta`), meta && Number.isFinite(meta.offset) ? meta.off
 gl.uniform1i(u(`${prefix}mode`), this._axisMode(axisId));
 }
 draw() {
-if (this._destroyed) return;
+if (this._destroyed || this._glLost || !this.gl) return;
 if (this._raf) return;
 this._raf = requestAnimationFrame(() => {
 this._raf = null;
@@ -4399,7 +4436,7 @@ return svg("");
 });
 Object.assign(ChartView.prototype, {
 _scheduleViewRequest(viewOverride = this.view, opts = {}) {
-if (this._destroyed) return;
+if (this._destroyed || this._glLost) return;
 if (!this.comm) {
 this._scheduleSampleRebin(viewOverride, opts);
 return;
@@ -4462,7 +4499,7 @@ this._viewTimer = setTimeout(send, delay);
 return seq;
 },
 _scheduleSampleRebin(viewOverride = this.view, opts = {}) {
-if (this._destroyed || this._sampleRebinDisabled) return;
+if (this._destroyed || this._glLost || this._sampleRebinDisabled) return;
 const targets = (this.gpuTraces || []).filter(
 (g) => g.tier === "density" && g.sampleOverlay && g.sampleOverlay._cpu
 );
@@ -4527,7 +4564,7 @@ h: Math.max(16, Math.min(2048, Math.round(this.plot.h))),
 });
 },
 _onRebinResult(msg) {
-if (this._destroyed || !msg || msg.type !== "grid" || msg.seq !== this.seq) return;
+if (this._destroyed || this._glLost || !msg || msg.type !== "grid" || msg.seq !== this.seq) return;
 const g = this.gpuTraces.find((t) => t.trace.id === msg.trace && t.tier === "density");
 if (!g) return;
 const grid = new Float32Array(msg.grid);
@@ -4565,14 +4602,6 @@ const pinnedRight = !atHome && Math.abs(this.view.x1 - this.view0.x1) <= ex;
 this.spec = spec;
 this.axes = this._normalizeAxes(spec);
 this._payload = blob;
-const texSeen = new Set();
-for (const id of msg.affected || []) {
-const i = this.gpuTraces.findIndex((g) => g.trace.id === id);
-const ts = spec.traces.find((t) => t.id === id);
-if (i < 0 || !ts) continue;
-this._destroyTraceResources(this.gpuTraces[i], texSeen);
-this.gpuTraces[i] = this._buildTrace(blob, ts);
-}
 this.view0 = {
 x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
 y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
@@ -4583,6 +4612,15 @@ this.view = { ...this.view0 };
 const w = this.view.x1 - this.view.x0;
 this.view = { ...this.view, x1: this.view0.x1, x0: this.view0.x1 - w };
 }
+if (this._glLost || !this.gl) return;
+const texSeen = new Set();
+for (const id of msg.affected || []) {
+const i = this.gpuTraces.findIndex((g) => g.trace.id === id);
+const ts = spec.traces.find((t) => t.id === id);
+if (i < 0 || !ts) continue;
+this._destroyTraceResources(this.gpuTraces[i], texSeen);
+this.gpuTraces[i] = this._buildTrace(blob, ts);
+}
 this._pickable = this.gpuTraces.some(
 (g) => markOf(g.trace.kind).pointPick && (g.tier !== "density" || g.drill));
 if (this._pickable && !this.pickFbo) this._initPickTarget();
@@ -4592,6 +4630,7 @@ this.draw();
 _onKernelMsg(msg, buffers) {
 if (this._destroyed) return;
 if (!msg) return;
+if (this._glLost && msg.type !== "append" && msg.type !== "pick_result") return;
 if (msg.type === "tier_update") {
 if (msg.seq !== this.seq) return;
 for (const upd of msg.traces) {

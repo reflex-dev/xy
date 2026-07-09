@@ -906,42 +906,91 @@ try{{
       cleanup();
       const unsub=(offCalled===1 && holder3.querySelector(".fastcharts")===null)?1:0;
       holder3.remove();
-      // R4: GL context loss must be survivable — preventDefault + rebuild from
-      // the retained payload on restore, ending pixel-identical to pre-loss.
-      const holder4=document.createElement("div");
-      document.body.appendChild(holder4);
-      const v4=fastcharts.renderStandalone(holder4,spec,bytes.buffer);
-      v4._densityNormAnim=null;
-      v4._drawNow();
-      const ctxHashBefore=pixhash(v4);
-      const loseExt=v4.gl.getExtension("WEBGL_lose_context");
-      let lostSeen=0;
-      if (loseExt) loseExt.loseContext();
-      setTimeout(()=>{{try{{
-        lostSeen=(v4._glLost===true)?1:0;
-        if (loseExt) loseExt.restoreContext();
-        setTimeout(()=>{{try{{
-          v4._densityNormAnim=null;
+      (async()=>{{try{{
+        // R4: force repeated loss/restore cycles. Each cycle queues draw,
+        // animation, and re-bin work first so the loss handler must quiesce
+        // every deferred GPU path and invalidate pre-loss replies.
+        const holder4=document.createElement("div");
+        document.body.appendChild(holder4);
+        const v4=fastcharts.renderStandalone(holder4,spec,bytes.buffer);
+        // Compare settled frames, not the constructor's intentionally
+        // transitional first density/sample handoff.
+        await new Promise((resolve)=>setTimeout(resolve,180));
+        for(const g of v4.gpuTraces) g._densityNormAnim=null;
+        v4._drawNow();
+        const ctxHashBefore=pixhash(v4);
+        let rootLost=0,rootRestored=0;
+        v4.root.addEventListener("fastcharts:context_lost",()=>rootLost++);
+        v4.root.addEventListener("fastcharts:context_restored",()=>rootRestored++);
+        const waitFor=(predicate,label)=>new Promise((resolve,reject)=>{{
+          const deadline=performance.now()+1500;
+          const poll=()=>{{
+            if(predicate()){{resolve();return;}}
+            if(performance.now()>=deadline){{reject(new Error(`timeout waiting for ${{label}}`));return;}}
+            setTimeout(poll,20);
+          }};
+          poll();
+        }});
+        const litcount=(view)=>{{
+          const gl=view.gl,w=gl.drawingBufferWidth,h=gl.drawingBufferHeight;
+          const px=new Uint8Array(w*h*4);gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,px);
+          let n=0;for(let i=0;i<px.length;i+=4)if(px[i]||px[i+1]||px[i+2]||px[i+3])n++;
+          return n;
+        }};
+        let ctxcycles=0,ctxquiet=1,ctxpixels=1;
+        const ctxhashes=[ctxHashBefore];
+        for(let cycle=0;cycle<3;cycle++){{
+          const ext=v4.gl.getExtension("WEBGL_lose_context");
+          if(!ext){{ctxquiet=0;break;}}
+          v4.draw();
+          v4._pendingWheelZoom={{factor:0.99,fx:0.5,fy:0.5}};
+          v4._wheelZoomRaf=requestAnimationFrame(()=>{{}});
+          v4._viewAnim={{target:{{...v4.view}},last:performance.now(),tau:36}};
+          v4._animRaf=requestAnimationFrame(()=>{{}});
+          v4._scheduleViewRequest(v4.view,{{delay:10000}});
+          const seqBeforeLoss=v4.seq;
+          ext.loseContext();
+          await waitFor(()=>v4._glLost===true,`loss ${{cycle+1}}`);
+          v4.draw();
+          if(v4._raf!==null || v4._wheelZoomRaf!==null || v4._animRaf!==null
+              || v4._viewTimer!==null || v4._rebinTimer!==null
+              || v4.seq<=seqBeforeLoss || v4.root.dataset.fcContextState!=="lost") ctxquiet=0;
+          ext.restoreContext();
+          await waitFor(()=>v4._glLost===false && v4.root.dataset.fcContextState==="ready",
+            `restore ${{cycle+1}}`);
+          for(const g of v4.gpuTraces) g._densityNormAnim=null;
           v4._drawNow();
-          const ctxloss=(loseExt && lostSeen===1 && v4._glLost===false
-            && pixhash(v4)===ctxHashBefore)?1:0;
-          v4.destroy(); holder4.remove();
-          // R7: a pure devicePixelRatio change (browser zoom) must re-derive
-          // backing stores even though the CSS size never changed.
-          const holder5=document.createElement("div");
-          document.body.appendChild(holder5);
-          const v5=fastcharts.renderStandalone(holder5,spec,bytes.buffer);
-          const dpr0=v5.dpr;
-          Object.defineProperty(window,"devicePixelRatio",{{value:dpr0*2,configurable:true}});
-          v5._onDprChange();
-          const dprw=(v5.dpr===dpr0*2 && v5.canvas.width===v5.plot.w*v5.dpr
-            && v5.chrome.width===v5.size.w*v5.dpr
-            && String(v5._dprMq.media).indexOf(`${{dpr0*2}}dppx`)>=0)?1:0;
-          Object.defineProperty(window,"devicePixelRatio",{{value:dpr0,configurable:true}});
-          v5.destroy(); holder5.remove();
-          document.title=`${{base}} fluid=${{fluid0}} grew=${{grew}} pick2=${{pick2}} destroyed=${{destroyed}} unsub=${{unsub}} ctxloss=${{ctxloss}} dprw=${{dprw}}`;
-        }}catch(e){{document.title="FC_ERROR "+(e.stack||e.message)}}}},250);
-      }}catch(e){{document.title="FC_ERROR "+(e.stack||e.message)}}}},150);
+          const restoredHash=pixhash(v4);
+          ctxhashes.push(restoredHash);
+          if(restoredHash!==ctxHashBefore) ctxpixels=0;
+          ctxcycles++;
+        }}
+        const savedView={{...v4.view}};
+        const span0=savedView.x1-savedView.x0;
+        v4._zoomAt(0.9,0.5,0.5,false);
+        v4._drawNow();
+        const ctxpost=((v4.view.x1-v4.view.x0)<span0 && litcount(v4)>0)?1:0;
+        v4._setView(savedView,{{animate:false,request:false}});
+        v4._drawNow();
+        const ctxloss=(ctxcycles===3 && ctxquiet===1 && ctxpixels===1 && ctxpost===1
+          && rootLost===3 && rootRestored===3 && v4._contextLossCount===3
+          && v4._contextRestoreCount===3 && pixhash(v4)===ctxHashBefore)?1:0;
+        v4.destroy(); holder4.remove();
+        // R7: a pure devicePixelRatio change (browser zoom) must re-derive
+        // backing stores even though the CSS size never changed.
+        const holder5=document.createElement("div");
+        document.body.appendChild(holder5);
+        const v5=fastcharts.renderStandalone(holder5,spec,bytes.buffer);
+        const dpr0=v5.dpr;
+        Object.defineProperty(window,"devicePixelRatio",{{value:dpr0*2,configurable:true}});
+        v5._onDprChange();
+        const dprw=(v5.dpr===dpr0*2 && v5.canvas.width===v5.plot.w*v5.dpr
+          && v5.chrome.width===v5.size.w*v5.dpr
+          && String(v5._dprMq.media).indexOf(`${{dpr0*2}}dppx`)>=0)?1:0;
+        Object.defineProperty(window,"devicePixelRatio",{{value:dpr0,configurable:true}});
+        v5.destroy(); holder5.remove();
+        document.title=`${{base}} fluid=${{fluid0}} grew=${{grew}} pick2=${{pick2}} destroyed=${{destroyed}} unsub=${{unsub}} ctxloss=${{ctxloss}} ctxcycles=${{ctxcycles}} ctxquiet=${{ctxquiet}} ctxpixels=${{ctxpixels}} ctxhashes=${{ctxhashes.join(",")}} ctxpost=${{ctxpost}} ctxevents=${{rootLost}}/${{rootRestored}} ctxcounts=${{v4._contextLossCount}}/${{v4._contextRestoreCount}} dprw=${{dprw}}`;
+      }}catch(e){{document.title="FC_ERROR "+(e.stack||e.message)}}}})();
     }}catch(e){{document.title="FC_ERROR "+(e.stack||e.message)}}}},250);
   }}catch(e){{document.title="FC_ERROR "+(e.stack||e.message)}}}},200);
 }}catch(e){{document.title="FC_ERROR "+(e.stack||e.message)}}
@@ -1023,6 +1072,9 @@ try{{
     malformed = int(re.search(r"malformed=(\d+)", title).group(1))
     pixdet = int(re.search(r"pixdet=(\d+)", title).group(1))
     ctxloss = int(re.search(r"ctxloss=(\d+)", title).group(1))
+    ctxcycles = int(re.search(r"ctxcycles=(\d+)", title).group(1))
+    ctxquiet = int(re.search(r"ctxquiet=(\d+)", title).group(1))
+    ctxpost = int(re.search(r"ctxpost=(\d+)", title).group(1))
     dprw = int(re.search(r"dprw=(\d+)", title).group(1))
     bar_base = int(re.search(r"barBase=(\d+)", title).group(1))
     hist_base = int(re.search(r"histBase=(\d+)", title).group(1))
@@ -1136,7 +1188,13 @@ try{{
     if dprw != 1:
         raise SystemExit("devicePixelRatio change did not re-derive backing stores")
     if ctxloss != 1:
-        raise SystemExit("GL context loss/restore did not rebuild pixel-identically")
+        raise SystemExit("GL context recovery did not quiesce and rebuild pixel-identically")
+    if ctxcycles != 3:
+        raise SystemExit(f"GL context recovery completed only {ctxcycles}/3 forced cycles")
+    if ctxquiet != 1:
+        raise SystemExit("GL context loss left deferred GPU work or stale replies active")
+    if ctxpost != 1:
+        raise SystemExit("chart was not interactive and nonblank after context restoration")
     if pixdet != 1:
         raise SystemExit("pixel determinism failed (render path must be RNG/time-free)")
     if qwire != 1:

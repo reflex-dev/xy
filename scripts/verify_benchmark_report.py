@@ -39,7 +39,19 @@ INTERACTION_BUDGET_KEYS = (
     "box_zoom_p95_ms",
     "brush_select_p95_ms",
 )
+INTERACTION_BUDGET_LIMITS_MS = {
+    "wheel_zoom_p95_ms": 600.0,
+    "pan_p95_ms": 300.0,
+    "crosshair_p95_ms": 300.0,
+    "hover_p95_ms": 350.0,
+    "box_zoom_p95_ms": 300.0,
+    "brush_select_p95_ms": 200.0,
+}
 INTERACTION_VISUAL_BUDGET_KEYS = ("max_frame_color_delta", "min_interaction_lit_pixels")
+INTERACTION_VISUAL_BUDGET_LIMITS = {
+    "max_frame_color_delta": 0.85,
+    "min_interaction_lit_pixels": 64.0,
+}
 INTERACTION_REQUIRED_SCENARIOS = (
     "direct_scatter_interaction",
     "density_scatter_interaction",
@@ -62,6 +74,13 @@ WORKFLOW_REQUIRED_SCENARIOS = {
     "export_png_native_decimated_line",
 }
 DASHBOARD_REQUIRED_COUNTS = {10, 20, 50}
+DASHBOARD_MIN_LOSS_FREE_CHARTS = 10
+DASHBOARD_SMOKE_BUDGETS_MS = {
+    "render_ms": 5_000.0,
+    "ms_per_chart": 500.0,
+    "scroll_pass_ms": 5_000.0,
+    "steady_redraw_p95_ms": 100.0,
+}
 
 
 def _is_number(value: Any) -> bool:
@@ -1083,6 +1102,12 @@ def _validate_interaction_budget_block(
             errors.append(f"report.interaction_budgets_ms.{key} must be > 0")
         else:
             valid[key] = float(value)
+            limit = INTERACTION_BUDGET_LIMITS_MS[key]
+            if value > limit:
+                errors.append(
+                    f"report.interaction_budgets_ms.{key} may not exceed the gate limit "
+                    f"{limit:g} ms"
+                )
     return valid
 
 
@@ -1110,6 +1135,17 @@ def _validate_interaction_visual_budget_block(
             errors.append(f"report.interaction_visual_budgets.{key} must be > 0")
         else:
             valid[key] = float(value)
+            limit = INTERACTION_VISUAL_BUDGET_LIMITS[key]
+            if key.startswith("max_") and value > limit:
+                errors.append(
+                    f"report.interaction_visual_budgets.{key} may not exceed the gate limit "
+                    f"{limit:g}"
+                )
+            elif key.startswith("min_") and value < limit:
+                errors.append(
+                    f"report.interaction_visual_budgets.{key} may not be below the gate floor "
+                    f"{limit:g}"
+                )
     return valid
 
 
@@ -1244,6 +1280,30 @@ def _validate_dashboard_browser(report: dict[str, Any], errors: list[str]) -> No
             "report.chart_count_ceiling must be the largest successful chart_count; "
             f"got {report.get('chart_count_ceiling')!r}, expected {expected_ceiling!r}"
         )
+    if not isinstance(expected_ceiling, int) or expected_ceiling < DASHBOARD_MIN_LOSS_FREE_CHARTS:
+        errors.append(
+            "dashboard must render at least "
+            f"{DASHBOARD_MIN_LOSS_FREE_CHARTS} charts without loss or blank frames"
+        )
+    smoke_rows = [
+        row
+        for row in rows
+        if isinstance(row, dict) and row.get("chart_count") == DASHBOARD_MIN_LOSS_FREE_CHARTS
+    ]
+    if len(smoke_rows) == 1:
+        smoke = smoke_rows[0]
+        if _status_kind(smoke.get("status")) != "ok" or smoke.get("fully_nonblank") is not True:
+            errors.append(
+                f"dashboard {DASHBOARD_MIN_LOSS_FREE_CHARTS}-chart smoke row must be "
+                "loss-free and fully nonblank"
+            )
+        for metric, limit in DASHBOARD_SMOKE_BUDGETS_MS.items():
+            value = smoke.get(metric)
+            if _is_number(value) and value > limit:
+                errors.append(
+                    f"dashboard {DASHBOARD_MIN_LOSS_FREE_CHARTS}-chart {metric} "
+                    f"{value:.3g} ms exceeds hard smoke budget {limit:.3g} ms"
+                )
 
 
 def _dashboard_id_list(
