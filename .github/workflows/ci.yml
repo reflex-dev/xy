@@ -151,6 +151,14 @@ jobs:
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
           .venv/bin/python scripts/interaction_stress_smoke.py "$CHROME"
 
+      - name: Browser dashboard reliability smoke (Chromium)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python benchmarks/bench_dashboard.py \
+            --chart-counts 10,20,50 --chromium "$CHROME" --json dashboard-smoke.json
+          .venv/bin/python scripts/verify_benchmark_report.py \
+            dashboard-smoke.json --kind dashboard-browser
+
       - name: Benchmark smoke (1e5/1e6 — §12 harness runs every phase)
         run: .venv/bin/python scripts/bench.py --sizes 1e5,1e6
 

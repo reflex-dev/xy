@@ -5,7 +5,7 @@
 
 Object.assign(ChartView.prototype, {
   _scheduleViewRequest(viewOverride = this.view, opts = {}) {
-    if (this._destroyed) return;
+    if (this._destroyed || this._glLost) return;
     if (!this.comm) {
       // Kernel-less (standalone HTML): density traces refine via the bundled
       // re-bin worker instead of a kernel round-trip.
@@ -74,7 +74,7 @@ Object.assign(ChartView.prototype, {
   // request path, then the retained §28 sample re-bins in the bundled worker —
   // off the main thread — and applies like a density_update.
   _scheduleSampleRebin(viewOverride = this.view, opts = {}) {
-    if (this._destroyed || this._sampleRebinDisabled) return;
+    if (this._destroyed || this._glLost || this._sampleRebinDisabled) return;
     const targets = (this.gpuTraces || []).filter(
       (g) => g.tier === "density" && g.sampleOverlay && g.sampleOverlay._cpu
     );
@@ -144,7 +144,7 @@ Object.assign(ChartView.prototype, {
   },
 
   _onRebinResult(msg) {
-    if (this._destroyed || !msg || msg.type !== "grid" || msg.seq !== this.seq) return;
+    if (this._destroyed || this._glLost || !msg || msg.type !== "grid" || msg.seq !== this.seq) return;
     const g = this.gpuTraces.find((t) => t.trace.id === msg.trace && t.tier === "density");
     if (!g) return;
     const grid = new Float32Array(msg.grid);
@@ -201,14 +201,6 @@ Object.assign(ChartView.prototype, {
     this.spec = spec;
     this.axes = this._normalizeAxes(spec);
     this._payload = blob;
-    const texSeen = new Set();
-    for (const id of msg.affected || []) {
-      const i = this.gpuTraces.findIndex((g) => g.trace.id === id);
-      const ts = spec.traces.find((t) => t.id === id);
-      if (i < 0 || !ts) continue;
-      this._destroyTraceResources(this.gpuTraces[i], texSeen);
-      this.gpuTraces[i] = this._buildTrace(blob, ts);
-    }
     this.view0 = {
       x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
       y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
@@ -218,6 +210,19 @@ Object.assign(ChartView.prototype, {
     } else if (pinnedRight) {
       const w = this.view.x1 - this.view.x0;
       this.view = { ...this.view, x1: this.view0.x1, x0: this.view0.x1 - w };
+    }
+    // Append payloads are canonical state, so retain them even while the
+    // context is lost. The restore path rebuilds every affected GPU object
+    // from this latest payload; attempting partial uploads to a dead context
+    // would only create handles that must immediately be discarded.
+    if (this._glLost || !this.gl) return;
+    const texSeen = new Set();
+    for (const id of msg.affected || []) {
+      const i = this.gpuTraces.findIndex((g) => g.trace.id === id);
+      const ts = spec.traces.find((t) => t.id === id);
+      if (i < 0 || !ts) continue;
+      this._destroyTraceResources(this.gpuTraces[i], texSeen);
+      this.gpuTraces[i] = this._buildTrace(blob, ts);
     }
     this._pickable = this.gpuTraces.some(
       (g) => markOf(g.trace.kind).pointPick && (g.tier !== "density" || g.drill));
@@ -229,6 +234,7 @@ Object.assign(ChartView.prototype, {
   _onKernelMsg(msg, buffers) {
     if (this._destroyed) return;
     if (!msg) return;
+    if (this._glLost && msg.type !== "append" && msg.type !== "pick_result") return;
     if (msg.type === "tier_update") {
       if (msg.seq !== this.seq) return;
       for (const upd of msg.traces) {

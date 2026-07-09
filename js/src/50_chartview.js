@@ -80,7 +80,11 @@ class ChartView {
     // spec + payload by design (§18/§27).
     this._payload = buffer;
     this._glLost = false;
+    this._contextLossCount = 0;
+    this._contextRestoreCount = 0;
+    this._contextRecoveryError = null;
     this._initGl(buffer);
+    this.root.dataset.fcContextState = "ready";
     this._initContextLossRecovery();
     this._initInteraction();
     this._buildModebar(this.root); // after theme (icon color) + canvas (cursor)
@@ -407,13 +411,35 @@ class ChartView {
   _initContextLossRecovery() {
     this._listen(this.canvas, "webglcontextlost", (e) => {
       e.preventDefault();
+      if (this._destroyed || this._glLost) return;
       this._glLost = true;
+      this._contextLossCount += 1;
+      this._contextRecoveryError = null;
+      this.root.dataset.fcContextState = "lost";
+      // Quiesce every source of deferred GPU work, not only the draw RAF.
+      // Incrementing seq makes pre-loss kernel/worker replies stale, so they
+      // cannot populate the newly restored context with an old view.
+      this.seq += 1;
       if (this._raf) cancelAnimationFrame(this._raf);
       this._raf = null;
+      if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
+      this._wheelZoomRaf = null;
+      this._pendingWheelZoom = null;
+      this._cancelViewAnimation();
+      clearTimeout(this._viewTimer);
+      this._viewTimer = null;
+      clearTimeout(this._rebinTimer);
+      this._rebinTimer = null;
+      this._viewRequestBurstStart = null;
+      this._dispatchChartEvent("context_lost", {
+        loss_count: this._contextLossCount,
+      });
     });
     this._listen(this.canvas, "webglcontextrestored", () => {
-      if (this._destroyed) return;
-      this._glLost = false;
+      // A failed recovery replaced the canvas with the error message; a later
+      // restore firing on the detached canvas must not resurrect GL state the
+      // user can no longer see.
+      if (this._destroyed || this._contextRecoveryError) return;
       // Old handles died with the context — drop them without delete calls.
       this._lutCache.clear();
       this.pickFbo = null;
@@ -421,11 +447,28 @@ class ChartView {
       try {
         this._initGl(this._payload);
       } catch (err) {
+        this._glLost = true;
+        this._contextRecoveryError = err;
+        this.root.dataset.fcContextState = "failed";
+        try { this._destroyGlResources(); } catch (_cleanupErr) {}
+        this.gl = null;
+        this._dispatchChartEvent("context_restore_failed", {
+          loss_count: this._contextLossCount,
+          message: err instanceof Error ? err.message : String(err),
+        });
         this.root.textContent = "fastcharts: WebGL2 context could not be restored.";
-        throw err;
+        return;
       }
+      this._glLost = false;
+      this._contextRestoreCount += 1;
+      this._contextRecoveryError = null;
+      this.root.dataset.fcContextState = "ready";
       this._scheduleViewRequest(this.view, { delay: 0 });
       this.draw();
+      this._dispatchChartEvent("context_restored", {
+        loss_count: this._contextLossCount,
+        restore_count: this._contextRestoreCount,
+      });
     });
   }
 
@@ -1308,7 +1351,7 @@ class ChartView {
   }
 
   draw() {
-    if (this._destroyed) return;
+    if (this._destroyed || this._glLost || !this.gl) return;
     if (this._raf) return;
     this._raf = requestAnimationFrame(() => {
       this._raf = null;

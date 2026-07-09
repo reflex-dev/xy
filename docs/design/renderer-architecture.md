@@ -47,11 +47,15 @@ Ordered by how much each compounds as kinds multiply.
   adopt when a second state-toggling pass lands (e.g. scissored panels or
   an additive-blend mark).
 - **R4 — No GL context-loss handling.** ✅ **Done.**
-  `_initContextLossRecovery` listens for loss (preventDefault, halt RAF) and
-  restore (drop dead handles, re-run `_initGl` from the retained
-  screen-bounded payload, re-fire the view request to re-sync live tiers).
-  Smoke probe forces `WEBGL_lose_context` loss/restore and asserts the
-  rebuilt frame hashes pixel-identical (`ctxloss` flag).
+  `_initContextLossRecovery` listens for loss, prevents default eviction
+  handling, quiesces draw/animation/re-bin work, and increments the request
+  sequence so pre-loss kernel/worker replies cannot mutate the rebuilt state.
+  Streaming appends still replace the retained canonical payload while the
+  context is down. Restore drops dead handles, re-runs `_initGl` from that
+  payload, and re-fires the view request to re-sync live tiers; a failed
+  restore remains explicitly failed instead of throwing from the event
+  handler. The dependency-free smoke forces three `WEBGL_lose_context`
+  cycles, checks pixel-identical frames after each, and zooms after recovery.
 - **R5 — Shader source conventions are informal.** ✅ **Done.** `build.mjs`
   lints every shader at build time: `#version 300 es` first line, every FS
   declares `precision highp float;`, every VS references a `u_*map` uniform

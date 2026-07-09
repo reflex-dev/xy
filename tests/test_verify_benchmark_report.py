@@ -652,6 +652,26 @@ def test_dashboard_report_accepts_partial_rows_with_context_telemetry(tmp_path: 
     assert errors == []
 
 
+def test_dashboard_report_rejects_broken_ten_chart_smoke(tmp_path: Path) -> None:
+    payload = _dashboard_browser_report()
+    _set_dashboard_partial(payload["rows"][0], nonblank=8)
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
+
+    assert any("10-chart smoke row" in error and "fully nonblank" in error for error in errors)
+
+
+def test_dashboard_report_rejects_catastrophic_smoke_timing(tmp_path: Path) -> None:
+    payload = _dashboard_browser_report()
+    payload["rows"][0]["steady_redraw_p95_ms"] = 101.0
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
+
+    assert any("steady_redraw_p95_ms" in error and "hard smoke budget" in error for error in errors)
+
+
 def test_workflow_report_rejects_missing_required_scenario(tmp_path: Path) -> None:
     payload = _workflow_native_report()
     payload["rows"] = payload["rows"][1:]
@@ -933,6 +953,20 @@ def test_verify_benchmark_report_rejects_interaction_budget_regression(
     errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
 
     assert any("hover_p95_ms" in error and "exceeds budget" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_relaxed_interaction_gate(
+    tmp_path: Path,
+) -> None:
+    payload = _interaction_browser_report()
+    payload["interaction_budgets_ms"]["wheel_zoom_p95_ms"] = 601.0
+    payload["interaction_visual_budgets"]["min_interaction_lit_pixels"] = 32
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="interaction-browser")
+
+    assert any("wheel_zoom_p95_ms" in error and "gate limit" in error for error in errors)
+    assert any("min_interaction_lit_pixels" in error and "gate floor" in error for error in errors)
 
 
 def test_verify_benchmark_report_rejects_interaction_repetition_mismatch(

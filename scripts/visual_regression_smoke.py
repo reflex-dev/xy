@@ -234,7 +234,12 @@ def _assert_layout_regions(
         # non-white threshold high, but only require enough dark pixels to prove
         # the axis chrome did not disappear.
         "x-axis": (700, 250 if asset else 40),
-        "y-axis": (500, 200),
+        # Current Chromium's lighter glyph antialiasing leaves some generated
+        # axes below 100 dark pixels while retaining >500 non-white chrome
+        # pixels. Keep assets strict and use the same cross-version dark floor
+        # as the generated x-axis so the gate catches disappearance, not font
+        # rasterizer choice.
+        "y-axis": (500, 200 if asset else 40),
     }
     for label, stats in regions.items():
         min_non_white, min_dark = minimums[label]

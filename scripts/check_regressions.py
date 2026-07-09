@@ -8,10 +8,10 @@ because they behave very differently in CI:
   functions of N and the grid — byte-identical on every machine. Gated **hard**
   with a hair of tolerance; a regression here is always a real one (the
   screen-bounded-payload invariant broke), so CI fails.
-- **Timing** (kernel Mpt/s, prep ms): vary wildly across shared runners. Gated
-  **advisory** with a 2x band — reported and annotated, but never fails the
-  build on noise. A >2x drop (e.g. someone deleted the parallel path) still
-  gets surfaced loudly.
+- **Timing** (kernel Mpt/s, prep ms): vary wildly across shared runners. A 2x
+  move is advisory; a 4x move is a hard catastrophic-regression gate. This
+  leaves room for shared-runner noise while still catching deleted fast paths,
+  accidental quadratic work, and other changes too large to wave away.
 
 The baseline stores only *measured values*; the gate policy lives here
 (classified by metric-id suffix) so re-blessing is a values-only diff.
@@ -90,6 +90,19 @@ def regressed(cmp: str, base, cur, tol: float) -> bool:
     return False
 
 
+def catastrophic_timing_regression(metric_id: str, base, cur) -> bool:
+    """True only for timing movement too large to attribute to CI noise."""
+    if base in (None, 0) or not isinstance(base, (int, float)):
+        return False
+    if not isinstance(cur, (int, float)):
+        return False
+    if "_mpts_s." in metric_id:
+        return cur < base * 0.25
+    if "_ms." in metric_id:
+        return cur > base * 4.0
+    return False
+
+
 def _fmt(v) -> str:
     if isinstance(v, float):
         return f"{v:,.2f}"
@@ -143,8 +156,10 @@ def main() -> None:
         cmp, gate, tol = policy(mid)
         b, c = base[mid], current[mid]
         if regressed(cmp, b, c, tol):
-            (hard if gate == "hard" else advisory).append((mid, b, c))
-            rows.append((mid, _fmt(b), _fmt(c), "REGRESS" if gate == "hard" else "warn"))
+            catastrophic = catastrophic_timing_regression(mid, b, c)
+            is_hard = gate == "hard" or catastrophic
+            (hard if is_hard else advisory).append((mid, b, c))
+            rows.append((mid, _fmt(b), _fmt(c), "REGRESS" if is_hard else "warn"))
         else:
             rows.append((mid, _fmt(b), _fmt(c), "ok"))
 
@@ -173,7 +188,7 @@ def main() -> None:
         Path(args.emit_md).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     if hard:
-        print(f"\n{len(hard)} HARD regression(s) — deterministic metric moved the wrong way:")
+        print(f"\n{len(hard)} HARD regression(s):")
         for mid, b, c in hard:
             print(f"  ✗ {mid}: baseline {_fmt(b)} -> current {_fmt(c)}")
         raise SystemExit(1)
