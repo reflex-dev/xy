@@ -72,6 +72,15 @@ class _PayloadWriter:
         encoded = lod.encode_f32_values(vals, offset, lo, hi, kind=kind)
         return self._append(encoded.values, encoded.meta)
 
+    def ship_at(
+        self, values: np.ndarray, *, offset: float, scale: float, kind: str = "float"
+    ) -> int:
+        """Offset-encode a column against an explicit shared axis offset —
+        candlestick ships open/high/low/close in one shared y frame so wick
+        and body geometry stay consistent after f32 encoding (§4)."""
+        enc = kernels.encode_f32(values, offset, scale)
+        return self._append(enc, {"offset": offset, "scale": scale, "kind": kind})
+
     def _append(self, enc: np.ndarray, meta: dict[str, Any]) -> int:
         raw = enc.tobytes()
         self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), **meta})
@@ -348,6 +357,57 @@ class PayloadMixin(_Host):
         if t.color_ch is not None:
             entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar)
         return entry
+
+    def _emit_candlestick(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        del yr
+        if t.open_ is None or t.high is None or t.low is None or t.close is None:
+            raise ValueError(f"{t.kind} trace missing OHLC columns")
+        x = t.x.values
+        o, h, low, c = t.open_.values, t.high.values, t.low.values, t.close.values
+        tier = "direct"
+        decimator = getattr(kernels, "ohlc_decimate", None)
+        if t.n_points > DECIMATION_THRESHOLD and callable(decimator):
+            xd, od, hd, ld, cd = decimator(
+                x, o, h, low, c, xr[0], xr[1] + np.finfo(np.float64).eps, px_width
+            )
+            if len(xd):
+                x, o, h, low, c = xd, od, hd, ld, cd
+            else:
+                x, o, h, low, c = x[:0], o[:0], h[:0], low[:0], c[:0]
+            tier = "decimated"
+        finite = (
+            np.isfinite(x) & np.isfinite(o) & np.isfinite(h) & np.isfinite(low) & np.isfinite(c)
+        )
+        if len(x) and not bool(np.all(finite)):
+            x, o, h, low, c = x[finite], o[finite], h[finite], low[finite], c[finite]
+
+        # One shared y frame for all four price columns (§4).
+        y_lo, y_hi = t.low.min, t.high.max
+        if np.isfinite(y_lo) and np.isfinite(y_hi):
+            y_off = (y_lo + y_hi) / 2.0
+            y_scale = lod.f32_safe_scale(y_off, y_lo, y_hi)
+        else:
+            y_off = 0.0
+            y_scale = 1.0
+        y_kind = t.close.kind
+        return {
+            "id": t.id,
+            "kind": t.kind,
+            "name": t.name,
+            "style": dict(t.style),
+            "tier": tier,
+            "n_points": t.n_points,
+            "n_marks": int(len(x)),
+            "x": pw.ship(x, t.x),
+            "open": pw.ship_at(o, offset=y_off, scale=y_scale, kind=y_kind),
+            "high": pw.ship_at(h, offset=y_off, scale=y_scale, kind=y_kind),
+            "low": pw.ship_at(low, offset=y_off, scale=y_scale, kind=y_kind),
+            "close": pw.ship_at(c, offset=y_off, scale=y_scale, kind=y_kind),
+        }
+
+    _emit_ohlc = _emit_candlestick
 
     def _emit_bar_compact(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int

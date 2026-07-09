@@ -53,9 +53,11 @@ def build_page() -> str:
     y = np.cumsum(rng.normal(size=n))
     fig = Figure(title="smoke")
     fig.line(x, y, name="walk")
+    fig.area(x, y - 30.0, name="area", color="#4c78a8", fill_opacity=0.16)
     fig.scatter(x[::100], y[::100] + 20.0, name="pts", size=3.0)
     spec, blob = fig.build_payload()
     assert spec["traces"][0]["tier"] == "decimated"
+    assert spec["traces"][1]["kind"] == "area" and spec["traces"][1]["tier"] == "decimated"
 
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>pending</title></head>
@@ -115,8 +117,8 @@ def main() -> None:
     labels = int(re.search(r"labels=(\d+)", title).group(1))  # type: ignore[union-attr]
     frac = lit / max(total, 1)
     print(f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}")
-    # A line + scatter across the plot should light a nontrivial pixel share,
-    # and axis labels must exist in the DOM (§7 chrome contract).
+    # A line + area + scatter across the plot should light a nontrivial pixel
+    # share, and axis labels must exist in the DOM (§7 chrome contract).
     if not (0.002 < frac < 0.9):
         raise SystemExit(f"suspicious lit fraction {frac:.4f}")
     if labels < 6:

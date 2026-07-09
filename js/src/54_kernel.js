@@ -234,6 +234,11 @@ Object.assign(ChartView.prototype, {
       for (const upd of msg.traces) {
         const g = this.gpuTraces.find((t) => t.trace.id === upd.id);
         if (!g) continue;
+        // OHLC tier updates re-upload all four price columns as one unit.
+        if (upd.open && upd.high && upd.low && upd.close && g.candle) {
+          this._applyCandleUpdate(g, upd, buffers);
+          continue;
+        }
         const gl = this.gl;
         const xArr = this._asF32(buffers[upd.x.buf]);
         const yArr = this._asF32(buffers[upd.y.buf]);

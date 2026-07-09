@@ -207,6 +207,138 @@ INTERACTION_CHART = {
     "stat": "events",
 }
 
+LIVE_BILLION_DRILLDOWN_CHART = {
+    "id": "live-billion-drilldown",
+    "title": "Live 1B Drilldown Scatter",
+    "subtitle": "1B synthetic source points with Reflex-backed adaptive LOD.",
+    "src": "/charts/live_drilldown_1b.html",
+    "stat": "1B live",
+}
+
+COMPARISON_CHARTS = [
+    {
+        "id": "fastcharts-scatter",
+        "title": "fastcharts Colored Scatter",
+        "subtitle": "10M source points with color and size, exported through the density tier.",
+        "src": "/charts/colored_scatter.html",
+        "stat": "10M source",
+    },
+    {
+        "id": "plotly-scatter",
+        "title": "Plotly Scattergl",
+        "subtitle": "100k sampled points from the same distribution, rendered as WebGL markers.",
+        "src": "/charts/plotly_colored_scatter.html",
+        "stat": "100k sample",
+    },
+]
+
+BUSINESS_CHART = {
+    "id": "business-overview",
+    "title": "Business Overview",
+    "subtitle": "Small grouped revenue and pipeline columns for ordinary dashboard data.",
+    "src": "/charts/business_overview.html",
+    "stat": "small data",
+}
+
+RETENTION_CHART = {
+    "id": "retention-cohort",
+    "title": "Retention Cohort",
+    "subtitle": "Small product analytics heatmap with cohort rows and weekly retention columns.",
+    "src": "/charts/retention_cohort.html",
+    "stat": "small data",
+}
+
+LINE_CHART = {
+    "id": "line",
+    "title": "Decimated Line",
+    "subtitle": "120k sorted samples, shipped as a screen-bounded line payload.",
+    "src": "/charts/line_walk.html",
+    "stat": "120k points",
+}
+
+AREA_CHART = {
+    "id": "area",
+    "title": "Filled Area",
+    "subtitle": "80k samples filled against a baseline with a line overlay.",
+    "src": "/charts/area.html",
+    "stat": "80k points",
+}
+
+DENSITY_CHART = {
+    "id": "density-scatter",
+    "title": "Density Scatter",
+    "subtitle": "10M raw points aggregated into a responsive density texture.",
+    "src": "/charts/density_scatter.html",
+    "stat": "10M points",
+}
+
+HISTOGRAM_CHART = {
+    "id": "histogram",
+    "title": "Histogram",
+    "subtitle": "500k values binned into a shared rectangle-renderer chart.",
+    "src": "/charts/histogram.html",
+    "stat": "500k values",
+}
+
+BAR_CHART = {
+    "id": "grouped-bars",
+    "title": "Grouped Bars",
+    "subtitle": "Multiple category series sharing the rectangle primitive.",
+    "src": "/charts/bar_column.html",
+    "stat": "grouped",
+}
+
+STACKED_BAR_CHART = {
+    "id": "stacked-bars",
+    "title": "Stacked Bars",
+    "subtitle": "Positive series stacked from a shared baseline.",
+    "src": "/charts/stacked_bar.html",
+    "stat": "stacked",
+}
+
+HORIZONTAL_BAR_CHART = {
+    "id": "horizontal-bars",
+    "title": "Horizontal Bars",
+    "subtitle": "Category labels on the y-axis with value bars extending along x.",
+    "src": "/charts/horizontal_bar.html",
+    "stat": "horizontal",
+}
+
+HEATMAP_CHART = {
+    "id": "heatmap",
+    "title": "Heatmap",
+    "subtitle": "Matrix values rendered as colored cells on categorical axes.",
+    "src": "/charts/heatmap.html",
+    "stat": "grid",
+}
+
+CANDLESTICK_CHART = {
+    "id": "candlestick",
+    "title": "Finance Layer Editor",
+    "subtitle": "AAPL-style OHLC candles with draggable finance drawings and studies.",
+    "src": "/charts/candlestick_editor.html",
+    "stat": "editor",
+}
+
+BUSINESS_CHARTS = [
+    BUSINESS_CHART,
+    RETENTION_CHART,
+]
+
+CORE_CHARTS = [
+    LINE_CHART,
+    AREA_CHART,
+    HISTOGRAM_CHART,
+    BAR_CHART,
+    STACKED_BAR_CHART,
+    HORIZONTAL_BAR_CHART,
+    HEATMAP_CHART,
+]
+
+FINANCE_CHARTS = [
+    CANDLESTICK_CHART,
+]
+
 BUSINESS_CHARTS = [
     CUSTOM_CHROME_CHART,
     BUSINESS_CHART,
@@ -231,15 +363,34 @@ LARGE_DATA_CHARTS = [
     DENSITY_CHART,
     *COMPARISON_CHARTS,
     LIVE_DRILLDOWN_CHART,
+    LIVE_BILLION_DRILLDOWN_CHART,
 ]
 
 CHART_NAV = [
     *BUSINESS_CHARTS,
     *CORE_CHARTS,
+    *FINANCE_CHARTS,
     *LARGE_DATA_CHARTS,
 ]
 
 CHART_CODE_SNIPPETS = {
+    "live-billion-drilldown": """
+# 1B synthetic source points; the Reflex backend answers adaptive LOD
+# drill requests, so the browser only ever holds a screen-bounded payload.
+from reflex_fastcharts_app.live_drilldown import billion_drilldown_html
+
+Path("assets/charts/live_drilldown_1b.html").write_text(billion_drilldown_html())
+""",
+    "candlestick": """
+from fastcharts import Figure
+
+# Fluent form; the composition form is fc.candlestick_chart(fc.candlestick(...))
+fig = Figure(title="Finance layer editor", y_side="right")
+fig.candlestick(
+    dates, o, h, l, c,
+    up_color="#26a69a", down_color="#ef5350",
+)
+""",
     "custom-chrome": """
 import fastcharts as fc
 import reflex as rx
@@ -890,6 +1041,7 @@ def chart_panel(
     fluid: bool = False,
     loading: str = "lazy",
 ) -> rx.Component:
+    iframe_height = "720px" if chart["id"] == "candlestick" else "430px"
     return rx.box(
         rx.box(
             rx.hstack(
@@ -914,7 +1066,7 @@ def chart_panel(
                 style={
                     "border": "0",
                     "width": "100%" if fluid else "1040px",
-                    "height": "430px",
+                    "height": iframe_height,
                     "display": "block",
                     "background": "#ffffff",
                 },
@@ -1541,7 +1693,7 @@ def index() -> rx.Component:
                 metric("Renderer", "WebGL2"),
                 metric("Transport", "binary f32"),
                 metric("Business demos", str(len(BUSINESS_CHARTS))),
-                metric("Largest demo", "100M points"),
+                metric("Largest demo", "1B points"),
                 columns={"initial": "1", "sm": "2", "lg": "4"},
                 gap="1rem",
                 width="100%",
@@ -1551,6 +1703,7 @@ def index() -> rx.Component:
             core_api_status(),
             chart_section("Business charts", BUSINESS_CHARTS),
             chart_section("Core 2D gallery", CORE_CHARTS),
+            chart_section("Finance charts", FINANCE_CHARTS, columns={"initial": "1"}),
             chart_section("Large-data demos", LARGE_DATA_CHARTS, columns={"initial": "1"}),
             spacing="5",
             width="100%",

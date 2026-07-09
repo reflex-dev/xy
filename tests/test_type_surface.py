@@ -23,6 +23,8 @@ MARK_FACTORIES = (
     "bar",
     "column",
     "heatmap",
+    "candlestick",
+    "ohlc",
 )
 ANNOTATION_FACTORIES = (
     "arrow",

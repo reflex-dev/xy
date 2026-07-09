@@ -81,6 +81,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         x_label: Optional[str] = None,
         y_label: Optional[str] = None,
         padding: Any = None,
+        y_side: str = "left",
     ) -> None:
         # width/height: pixels, or "100%" to fill the parent container — the
         # client measures the container and re-renders on resize
@@ -97,9 +98,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
         self.title = self._optional_text(title, "title")
         self.x_label = self._optional_text(x_label, "x_label")
         self.y_label = self._optional_text(y_label, "y_label")
+        if y_side not in {"left", "right"}:
+            raise ValueError("y_side must be 'left' or 'right'")
         self.axis_options: dict[str, dict[str, Any]] = {
             "x": {"label": self.x_label, "side": "bottom"},
-            "y": {"label": self.y_label, "side": "left"},
+            "y": {"label": self.y_label, "side": y_side},
         }
         self.store = ColumnStore()
         self.traces: list[Trace] = []
@@ -331,6 +334,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
         fill: Any = None,
         curve: str = "linear",
         dash: Any = None,
+        fill_color: Optional[str] = None,
+        width: Optional[float] = None,
+        fill_opacity: Optional[float] = None,
+        baseline: Any = None,
     ) -> "Figure":
         """Add a filled area trace between `y` and `base`.
 
@@ -341,6 +348,12 @@ class Figure(AnnotationsMixin, PayloadMixin):
         dashes the outline.
         """
         name = self._optional_text(name, "area name")
+        if baseline is not None:
+            base = baseline
+        if width is not None:
+            line_width = width
+        if fill_opacity is not None:
+            opacity = fill_opacity
         opacity = self._opacity(opacity, "area opacity")
         line_width = self._nonnegative_scalar(line_width, "area line_width")
         line_opacity = self._opacity(line_opacity, "area line_opacity")
@@ -374,6 +387,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 style["curve"] = curve
             if dash_spec is not None:
                 style["dash"] = dash_spec
+            if fill_color is not None:
+                style["fill_color"] = self._optional_text(fill_color, "area fill_color")
+            if np.isscalar(base):
+                # Finance layers read the scalar baseline back from the spec.
+                style["baseline"] = float(base)  # ty: ignore[invalid-argument-type]
             self.traces.append(
                 Trace(
                     id=len(self.traces),
@@ -485,6 +503,131 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 )
 
             self.traces.append(trace)
+            return self
+        except Exception:
+            self._rollback(checkpoint)
+            raise
+
+    def candlestick(
+        self,
+        x: Any,
+        open: Any,  # noqa: A002 - OHLC naming is the domain convention
+        high: Any,
+        low: Any,
+        close: Any,
+        *,
+        name: Optional[str] = None,
+        up_color: str = "#26a69a",
+        down_color: str = "#ef5350",
+        width_frac: float = 0.7,
+        opacity: float = 1.0,
+        hollow: bool = False,
+        wick_color: Optional[str] = None,
+    ) -> "Figure":
+        """Add a candlestick trace. The y range spans low/high, not close."""
+        return self._add_ohlc(
+            "candlestick",
+            x,
+            open,
+            high,
+            low,
+            close,
+            name=name,
+            up_color=up_color,
+            down_color=down_color,
+            width_frac=width_frac,
+            opacity=opacity,
+            hollow=hollow,
+            wick_color=wick_color,
+        )
+
+    def ohlc(
+        self,
+        x: Any,
+        open: Any,  # noqa: A002 - OHLC naming is the domain convention
+        high: Any,
+        low: Any,
+        close: Any,
+        *,
+        name: Optional[str] = None,
+        up_color: str = "#26a69a",
+        down_color: str = "#ef5350",
+        width_frac: float = 0.7,
+        opacity: float = 1.0,
+    ) -> "Figure":
+        """Add an OHLC bar trace."""
+        return self._add_ohlc(
+            "ohlc",
+            x,
+            open,
+            high,
+            low,
+            close,
+            name=name,
+            up_color=up_color,
+            down_color=down_color,
+            width_frac=width_frac,
+            opacity=opacity,
+            hollow=False,
+            wick_color=None,
+        )
+
+    def _add_ohlc(
+        self,
+        kind: str,
+        x: Any,
+        open: Any,  # noqa: A002
+        high: Any,
+        low: Any,
+        close: Any,
+        *,
+        name: Optional[str],
+        up_color: str,
+        down_color: str,
+        width_frac: float,
+        opacity: float,
+        hollow: bool,
+        wick_color: Optional[str],
+    ) -> "Figure":
+        name = self._optional_text(name, f"{kind} name")
+        width_frac = self._positive_scalar(width_frac, f"{kind} width_frac")
+        opacity = self._opacity(opacity, f"{kind} opacity")
+        hollow = self._bool_param(hollow, f"{kind} hollow")
+        checkpoint = self._checkpoint()
+        try:
+            cols = [self.store.ingest(v) for v in (x, open, high, low, close)]
+            n0 = len(cols[0])
+            if any(len(c) != n0 for c in cols):
+                raise ValueError(
+                    f"{kind} x/open/high/low/close must have equal length, "
+                    f"got {[len(c) for c in cols]}"
+                )
+            xc = cols[0]
+            if not np.all(np.diff(xc.values) >= 0):
+                order = np.argsort(xc.values, kind="stable")
+                cols = [self.store.ingest(c.values[order]) for c in cols]
+            xc, oc, hc, lc, cc = cols
+            self.traces.append(
+                Trace(
+                    id=len(self.traces),
+                    kind=kind,
+                    x=xc,
+                    y=cc,
+                    name=name,
+                    style={
+                        "up_color": up_color,
+                        "down_color": down_color,
+                        "width_frac": width_frac,
+                        "opacity": opacity,
+                        "hollow": hollow,
+                        "wick_color": wick_color,
+                    },
+                    open_=oc,
+                    high=hc,
+                    low=lc,
+                    close=cc,
+                )
+            )
             return self
         except Exception:
             self._rollback(checkpoint)
@@ -1416,6 +1559,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
             return []
         if axis == "y" and t.y_axis != axis_id:
             return []
+        # OHLC marks autorange y from the low/high columns (finance).
+        if t.open_ is not None and t.high is not None and t.low is not None and t.close is not None:
+            return [t.x] if axis == "x" else [t.low, t.high]
         if t.kind == "area" and t.base is not None:
             return [t.x] if axis == "x" else [t.y, t.base]
         if t.x0 is not None and t.x1 is not None and t.y0 is not None and t.y1 is not None:

@@ -94,6 +94,7 @@ REQUIRED_FILES = {
     "examples/reflex/assets/charts/line_walk.html",
     "examples/reflex/assets/charts/live_drilldown_100m.html",
     "examples/reflex/assets/charts/live_drilldown_10m.html",
+    "examples/reflex/assets/charts/live_drilldown_1b.html",
     "examples/reflex/assets/charts/plotly_colored_scatter.html",
     "examples/reflex/assets/charts/stacked_bar.html",
     "examples/reflex/reflex_fastcharts_app/__init__.py",

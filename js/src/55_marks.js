@@ -152,6 +152,30 @@ const MARK_KINDS = {
       g.grad = view._resolveMarkFill(g.trace.style, g.color);
     },
   },
+  candlestick: {
+    build: (view, g, t, buffer) => view._buildCandleMark(g, t, buffer),
+    draw: (view, g, x0, x1, y0, y1) => view._drawCandles(g, x0, x1, y0, y1),
+    hover: (view, g, dataX) => view._candleHoverRow(g, dataX),
+    refreshColor: (view, g) => {
+      g.candle.up = parseColor(view.root, g.trace.style.up_color, g.candle.up);
+      g.candle.down = parseColor(view.root, g.trace.style.down_color, g.candle.down);
+      g.candle.wick = g.trace.style.wick_color
+        ? parseColor(view.root, g.trace.style.wick_color, g.candle.wick)
+        : null;
+    },
+  },
+  ohlc: {
+    build: (view, g, t, buffer) => view._buildCandleMark(g, t, buffer),
+    draw: (view, g, x0, x1, y0, y1) => view._drawOHLC(g, x0, x1, y0, y1),
+    hover: (view, g, dataX) => view._candleHoverRow(g, dataX),
+    refreshColor: (view, g) => {
+      g.candle.up = parseColor(view.root, g.trace.style.up_color, g.candle.up);
+      g.candle.down = parseColor(view.root, g.trace.style.down_color, g.candle.down);
+      g.candle.wick = g.trace.style.wick_color
+        ? parseColor(view.root, g.trace.style.wick_color, g.candle.wick)
+        : null;
+    },
+  },
 };
 
 // Registry lookup with the scatter fallback every dispatch site shares.

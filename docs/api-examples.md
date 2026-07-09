@@ -44,6 +44,8 @@ HTML document.
 | Normalized bars | `Figure().bar(categories, matrix, mode="normalized")` | `fc.bar_chart(fc.bar(..., mode="normalized"))` |
 | Horizontal bars | `Figure().bar(categories, values, orientation="horizontal")` | `fc.bar_chart(fc.bar(..., orientation="horizontal"))` |
 | Heatmap | `Figure().heatmap(z, x=x, y=y)` | `fc.heatmap_chart(fc.heatmap(...))` |
+| Candlestick | `Figure().candlestick(x, open, high, low, close)` | `fc.candlestick_chart(fc.candlestick(...))` |
+| OHLC | `Figure().ohlc(x, open, high, low, close)` | `fc.ohlc_chart(fc.ohlc(...))` |
 
 ## Axes And Scales
 
