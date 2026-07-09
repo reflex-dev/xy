@@ -145,8 +145,11 @@ def _probe_js() -> str:
         slots.push({id: payload.id, cell, view: null, state: {lost: true}});
       }
     }
-    phase = "initial";
+    // webglcontextlost dispatches as a task, so evictions triggered by the
+    // creation loop above only fire during this yield — keep phase "create"
+    // until they have drained.
     await new Promise((resolve) => setTimeout(resolve, 0));
+    phase = "initial";
 
     function contextLost(slot) {
       if (!slot.view || !slot.view.gl) return true;

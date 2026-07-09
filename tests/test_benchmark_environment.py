@@ -174,6 +174,16 @@ def test_dashboard_benchmark_reports_eviction_and_scroll_telemetry() -> None:
         assert marker in bench
     assert "blank dashboard chart" not in bench
 
+    # webglcontextlost dispatches as a task, so the probe must yield before
+    # leaving the "create" phase or creation-loop evictions get mislabeled
+    # with whatever phase is current when the queued events finally fire.
+    creation_loop = bench.index('addEventListener("webglcontextlost"')
+    first_yield = bench.index(
+        "await new Promise((resolve) => setTimeout(resolve, 0));", creation_loop
+    )
+    phase_initial = bench.index('phase = "initial";', creation_loop)
+    assert first_yield < phase_initial
+
 
 def test_benchmark_categories_track_core_hardening_metrics() -> None:
     medium_scatter_metrics = CATEGORY_BY_ID["medium_direct_scatter"]["metrics"]

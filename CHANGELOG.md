@@ -72,6 +72,18 @@ in the README).
 - `LICENSE` (Apache-2.0), `CHANGELOG.md`, `SECURITY.md`, root `CONTRIBUTING.md`.
 
 ### Changed
+- **Native PNG export compression** dropped from zlib level 9 to level 6: a
+  1M-point line export goes from ~298 ms to ~64 ms (reference hardware) for
+  ~2.65% larger output. Regression tests pin the level for both truecolor
+  and indexed encoders.
+- **Dashboard benchmark telemetry:** `bench_dashboard.py` no longer discards
+  metrics when Chrome evicts WebGL contexts. Partial dashboards stay
+  measurement rows with per-chart `webglcontextlost`/`webglcontextrestored`
+  events (id, phase, timestamp), creation-failure vs eviction distinction,
+  initial and scrolled nonblank chart IDs, live-context redraw submission,
+  and a stable loss-free chart-count ceiling; the report verifier
+  cross-checks all of it. The interaction benchmark warm-up now completes
+  GPU work (draw + readback) before the first timed sample.
 - **Performance:** WebGL client now uses vertex-array objects (no per-frame
   attribute re-binding), lazily compiles shader programs on first use, and
   ships a compacted bundle (193 KB → 154 KB) that every `to_html()` inlines.
