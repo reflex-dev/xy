@@ -13,6 +13,7 @@ question — the widget (or any other frontend) is a thin transport over these.
 from __future__ import annotations
 
 import operator
+import weakref
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
@@ -222,8 +223,46 @@ def _ensure_pyramid(t) -> int | None:
     # (bin_2d's window is half-open).
     x1 += (x1 - x0) * 1e-9
     y1 += (y1 - y0) * 1e-9
-    t._pyr_handle = kernels.pyramid_build(t.x.values, t.y.values, x0, x1, y0, y1, PYRAMID_BASE_DIM)
-    return t._pyr_handle or None
+    handle = kernels.pyramid_build(t.x.values, t.y.values, x0, x1, y0, y1, PYRAMID_BASE_DIM)
+    t._pyr_handle = handle
+    if handle:
+        # §27: the pyramid is native-side memory owned by this trace. Tie its
+        # lifetime to the Trace object so a discarded Figure (the notebook
+        # cell-re-run pattern) frees it instead of leaking it in the
+        # process-lifetime registry.
+        t._pyr_finalizer = weakref.finalize(t, kernels.pyramid_free, handle)
+    return handle or None
+
+
+def _free_pyramid(t) -> None:
+    """Free the trace's pyramid now and disarm its GC finalizer.
+
+    Resets the handle to None ("never tried") so the next far-out view
+    rebuilds lazily; safe to call when no pyramid was ever built.
+    """
+    fin = getattr(t, "_pyr_finalizer", None)
+    if fin is not None:
+        fin()  # runs pyramid_free exactly once; later GC becomes a no-op
+        t._pyr_finalizer = None
+    elif getattr(t, "_pyr_handle", None):
+        kernels.pyramid_free(t._pyr_handle)
+    t._pyr_handle = None
+
+
+def _pyramid_resident_bytes(base_dim: int = PYRAMID_BASE_DIM) -> int:
+    """Exact native bytes of one count pyramid: u32 levels from base_dim²
+    halving per side down to 1² (mirrors tiles.rs level construction)."""
+    total, dim = 0, base_dim
+    while True:
+        total += dim * dim * 4
+        if dim == 1:
+            return total
+        dim >>= 1
+
+
+def pyramid_report_bytes(fig) -> int:
+    """§27 memory-report line: native bytes held by live trace pyramids."""
+    return sum(_pyramid_resident_bytes() for t in fig.traces if getattr(t, "_pyr_handle", 0))
 
 
 def _encode_log_u8(grid: np.ndarray, gmax: float) -> bytes:
@@ -577,10 +616,7 @@ def append_data(
     if size_tail is not None:
         t.size_ch.values = np.concatenate([t.size_ch.values, size_tail])
 
-    handle = getattr(t, "_pyr_handle", None)
-    if handle:
-        kernels.pyramid_free(handle)
-    t._pyr_handle = None  # lazily rebuilt; n grew so "not applicable" may flip
+    _free_pyramid(t)  # lazily rebuilt; n grew so "not applicable" may flip
     lod.exit_drill(t)
 
     spec, blob = fig.build_payload()
