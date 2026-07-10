@@ -222,6 +222,15 @@ def _probe_js(reps: int) -> str:
     const el = document.createElement("div");
     document.getElementById("root").appendChild(el);
     const view = fastcharts.renderStandalone(el, payload.spec, fcBytesFromB64(payload.b64));
+    // Under --virtual-time-budget an outstanding Web Worker round-trip pauses
+    // virtual time forever: the first density zoom schedules the standalone
+    // sample-rebin worker and the page deadlocks until the wall-clock timeout
+    // (bisected: real worker + rebin hangs even when the reply is ignored; a
+    // stubbed worker completes). Same class the render smoke already dropped
+    // its worker probe for. Disable the rebin here — density interactions
+    // measure the stretched-overview path, all visual invariants still run;
+    // the worker path itself needs a non-virtual-time harness (see PR notes).
+    view._sampleRebinDisabled = true;
     view._drawNow();
     const before = {{...view.view}};
     const canvasRect = () => view.canvas.getBoundingClientRect();
