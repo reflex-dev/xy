@@ -206,10 +206,16 @@ jobs:
         include:
           - name: native-and-webgl
             libraries: xy,plotly_gl,bokeh_webgl,datashader
+            max_n: 10000000
           - name: raster-and-svg
             libraries: matplotlib,seaborn,plotly_svg,bokeh_canvas
+            max_n: 10000000
           - name: html-adapters
             libraries: altair,hvplot_bokeh
+            # HTML serialization becomes pathological at multi-million-point
+            # sizes. Keep this group aligned with the existing TTFR cap; the
+            # skipped rows remain explicit in the merged report.
+            max_n: 100000
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
@@ -243,6 +249,7 @@ jobs:
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
           .venv/bin/python scripts/bench_vs.py \
             --libraries "${{ matrix.libraries }}" \
+            --max-n "${{ matrix.max_n }}" \
             --sizes 1e3,1e4,1e5,1e6,3e6,1e7 --budget 45 \
             --ttfr --ttfr-max-n 1e5 --chromium "$CHROME" \
             --out scatter-${{ matrix.name }}.md --json scatter-${{ matrix.name }}.json

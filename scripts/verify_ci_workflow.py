@@ -173,6 +173,7 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "fail-fast: false",
         "matrix:",
         "--libraries",
+        "--max-n",
         "Run cross-library benchmark group",
         "Upload cross-library benchmark part",
         "benchmark-vs-${{ matrix.name }}",

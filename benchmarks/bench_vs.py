@@ -40,6 +40,7 @@ Runs whatever libraries are installed; missing ones are reported as unavailable.
 Usage:
   python benchmarks/bench_vs.py [--sizes 1e3,1e4,1e5,1e6,1e7] [--budget 45] [--out report.md]
   python benchmarks/bench_vs.py --libraries xy,plotly_gl
+  python benchmarks/bench_vs.py --libraries altair,hvplot_bokeh --max-n 1e5
 """
 
 from __future__ import annotations
@@ -527,6 +528,7 @@ def run(
     budget_s: float,
     *,
     libraries: list[str] | None = None,
+    max_n: int | None = None,
     ttfr: bool = False,
     ttfr_max_n: int | None = None,
     chromium: str | None = None,
@@ -551,6 +553,16 @@ def run(
     over_budget: set[str] = set()
 
     for n in sizes:
+        if max_n is not None and n > max_n:
+            for name in selected:
+                results[name].append(
+                    {
+                        "n": n,
+                        "library": name,
+                        "status": "skipped(over configured max-n)",
+                    }
+                )
+            continue
         x = rng.normal(0, 1, n)
         y = x * 0.5 + rng.normal(0, 0.6, n)
         for name in selected:
@@ -775,6 +787,12 @@ def main() -> None:
         help="comma-separated adapter names to run (default: all adapters)",
     )
     ap.add_argument(
+        "--max-n",
+        type=int,
+        default=None,
+        help="skip configured sizes above this point count",
+    )
+    ap.add_argument(
         "--ttfr", action="store_true", help="measure time-to-first-render in headless Chromium"
     )
     ap.add_argument(
@@ -789,6 +807,7 @@ def main() -> None:
         sizes,
         args.budget,
         libraries=libraries,
+        max_n=args.max_n,
         ttfr=args.ttfr,
         ttfr_max_n=int(args.ttfr_max_n),
         chromium=args.chromium,
