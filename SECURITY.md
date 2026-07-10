@@ -2,13 +2,13 @@
 
 ## Supported versions
 
-fastcharts is pre-1.0; only the latest released version receives security
+xy is pre-1.0; only the latest released version receives security
 fixes.
 
 ## Reporting a vulnerability
 
 Please **do not** open a public issue for security reports. Instead, use
-[GitHub private vulnerability reporting](https://github.com/reflex-dev/reviz/security/advisories/new)
+[GitHub private vulnerability reporting](https://github.com/reflex-dev/xy/security/advisories/new)
 on this repository. Reports are acknowledged within a week.
 
 ## Scope notes for triage

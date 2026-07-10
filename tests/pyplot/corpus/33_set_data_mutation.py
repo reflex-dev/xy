@@ -3,7 +3,7 @@ import tempfile
 
 import numpy as np
 
-import fastcharts.pyplot as plt
+import xy.pyplot as plt
 
 x = np.linspace(0, 10, 200)
 (line,) = plt.plot(x, np.sin(x))

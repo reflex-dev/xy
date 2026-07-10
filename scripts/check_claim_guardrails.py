@@ -123,7 +123,7 @@ def _findings_for_file(path: Path) -> list[Finding]:
                 Finding(
                     path,
                     index + 1,
-                    "stale repository identity; use github.com/reflex-dev/reviz",
+                    "stale repository identity; use github.com/reflex-dev/xy",
                     line,
                 )
             )

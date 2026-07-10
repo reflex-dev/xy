@@ -1,7 +1,7 @@
 """The compatibility corpus, executed.
 
 Every file in tests/pyplot/corpus/ is a small, self-contained script written
-in plain matplotlib idiom (only the import line names fastcharts). Each must
+in plain matplotlib idiom (only the import line names xy). Each must
 run unmodified against the shim. The corpus *defines* the supported surface:
 a shim change that breaks a snippet is a compatibility regression, and a new
 supported idiom lands as a new snippet.
@@ -18,8 +18,8 @@ from typing import Any
 
 import pytest
 
-import fastcharts.pyplot as plt
-from fastcharts.pyplot._state import all_figures
+import xy.pyplot as plt
+from xy.pyplot._state import all_figures
 
 CORPUS_DIR = pathlib.Path(__file__).resolve().parent / "corpus"
 CORPUS = sorted(CORPUS_DIR.glob("[0-9][0-9]_*.py"))

@@ -9,8 +9,8 @@ import struct
 
 import numpy as np
 
-from fastcharts import _png, _raster
-from fastcharts._figure import Figure
+from xy import _png, _raster
+from xy._figure import Figure
 
 
 def _ihdr(png: bytes) -> tuple[int, int, int]:
@@ -91,7 +91,7 @@ def test_render_is_non_blank_and_has_background() -> None:
 def test_colormap_matches_lut() -> None:
     # The grid RGBA the rasterizer blits comes straight from `_lut`, so the
     # hottest heatmap cell is the colormap's top color (before blit/compositing).
-    from fastcharts import _scene
+    from xy import _scene
 
     rng = np.random.default_rng(2)
     fig = Figure(width=300, height=300).heatmap(rng.random((8, 8)), colormap="viridis")
@@ -132,7 +132,7 @@ def test_png_encoder_uses_balanced_compression_level(monkeypatch) -> None:
 
 def test_native_and_svg_share_layout() -> None:
     # Both exporters compute the same plot rect / tick labels from one spec.
-    from fastcharts import _svg
+    from xy import _svg
 
     fig = Figure(width=640, height=360, title="t", x_label="xx").line([0.0, 5.0], [0.0, 5.0])
     spec, _ = fig.build_payload()

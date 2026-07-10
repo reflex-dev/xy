@@ -20,7 +20,7 @@ from typing import Any
 SCHEMA_VERSION = 2
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PACKAGE_NAMES = (
-    "fastcharts",
+    "xy",
     "numpy",
     "plotly",
     "matplotlib",
@@ -41,7 +41,7 @@ CommandRunner = Callable[[Sequence[str], Path | None, float], str | None]
 def collect_environment_metadata(
     *,
     chromium: str | None = None,
-    fastcharts_backend: str | None = None,
+    xy_backend: str | None = None,
     package_names: Iterable[str] = DEFAULT_PACKAGE_NAMES,
     now: datetime | None = None,
     root: Path = ROOT,
@@ -82,9 +82,9 @@ def collect_environment_metadata(
         "cpu_count": os.cpu_count(),
         "package_versions": _package_versions(package_names),
         "executables": executables,
-        "fastcharts_backend": fastcharts_backend or _fastcharts_backend(),
+        "xy_backend": xy_backend or _xy_backend(),
         "browser_renderer": (
-            "hardware" if os.environ.get("FASTCHARTS_BENCH_HARDWARE_GL") == "1" else "software-gl"
+            "hardware" if os.environ.get("XY_BENCH_HARDWARE_GL") == "1" else "software-gl"
         ),
         "git": _git_metadata(root, command_runner),
     }
@@ -100,9 +100,9 @@ def _package_versions(package_names: Iterable[str]) -> dict[str, str | None]:
     return versions
 
 
-def _fastcharts_backend() -> str | None:
+def _xy_backend() -> str | None:
     try:
-        import fastcharts.kernels as kernels
+        import xy.kernels as kernels
     except Exception:
         return None
     return str(getattr(kernels, "BACKEND", None))

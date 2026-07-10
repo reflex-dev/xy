@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run local fastcharts verification checks with actionable missing-tool errors.
+"""Run local xy verification checks with actionable missing-tool errors.
 
 This is the contributor-friendly wrapper around the CI gates. It intentionally
 stays stdlib-only so it can explain what is missing before the dev environment

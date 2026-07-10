@@ -58,7 +58,7 @@ not break.
 ## 3. The 10 common charts (all expressible today or with planned nodes)
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 # 1. line
 fc.chart(fc.line(x="date", y="close", data=df), title="Price")
@@ -148,7 +148,7 @@ panes is layout the Figure grid owns.
 
 The tree above is precisely a Reflex component tree's shape: snake_case
 props, children composition, `data=` + column-name resolution (`data_key`
-idiom), event props. It remains a FastCharts-owned tree, not a Reflex object,
+idiom), event props. It remains a XY-owned tree, not a Reflex object,
 so the core package keeps zero Reflex dependencies. A future Reflex wrapper is
 therefore a *thin* codegen layer:
 

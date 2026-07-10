@@ -12,11 +12,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import fastcharts.export as export_module
-from fastcharts._figure import DECIMATION_THRESHOLD, PROTOCOL_VERSION, Figure
-from fastcharts.columns import ColumnStore
-from fastcharts.config import MAX_SCREEN_DIM
-from fastcharts.export import _javascript_for_inline_script, _json_for_inline_script
+import xy.export as export_module
+from xy._figure import DECIMATION_THRESHOLD, PROTOCOL_VERSION, Figure
+from xy.columns import ColumnStore
+from xy.config import MAX_SCREEN_DIM
+from xy.export import _javascript_for_inline_script, _json_for_inline_script
 
 
 def _payload_col(spec, blob, ref):
@@ -989,7 +989,7 @@ def test_to_html_escapes_closing_script_inside_bundled_client(monkeypatch):
     def hostile_bundle(which: str) -> str:
         assert which == "standalone"
         return (
-            "window.fastcharts = { renderStandalone() {} };\n"
+            "window.xy = { renderStandalone() {} };\n"
             'const userLikeFixture = "</script><img src=x onerror=alert(1)>";'
         )
 
@@ -1478,7 +1478,7 @@ def test_decimate_view_rejects_invalid_windows_and_screen_width():
 
 
 def test_decimate_view_clamps_huge_frontend_pixel_width(monkeypatch):
-    from fastcharts import interaction
+    from xy import interaction
 
     n = DECIMATION_THRESHOLD * 3
     x = np.arange(n, dtype=np.float64)
@@ -1548,7 +1548,7 @@ def test_to_html_standalone():
     fig = Figure(title="export").line(np.arange(100.0), np.arange(100.0))
     html = fig.to_html()
     assert "renderStandalone" in html
-    assert "webgl2" in html or "fastcharts" in html
+    assert "webgl2" in html or "xy" in html
     assert "margin:24px" not in html
     assert "html,body{margin:0" in html
 
@@ -1598,7 +1598,7 @@ def test_normal_magnitudes_keep_unit_scale():
 def test_to_png_full_path(tmp_path):
     # End-to-end Figure.to_png: needs a Chromium binary; skip cleanly without
     # one (the mechanism itself is covered dependency-free by png_export_smoke).
-    from fastcharts import export
+    from xy import export
 
     if export.find_chromium() is None:
         pytest.skip("no chromium for PNG export")
@@ -1615,10 +1615,10 @@ def test_to_png_full_path(tmp_path):
 
 
 def test_find_chromium_checks_standard_macos_app_paths(monkeypatch):
-    from fastcharts import export
+    from xy import export
 
     chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-    monkeypatch.delenv("FASTCHARTS_CHROMIUM", raising=False)
+    monkeypatch.delenv("XY_CHROMIUM", raising=False)
     monkeypatch.setattr(export.shutil, "which", lambda _name: None)
     monkeypatch.setattr(export.Path, "exists", lambda path: str(path) == chrome)
 
@@ -1629,7 +1629,7 @@ def test_to_png_missing_chromium_is_clear(monkeypatch):
     # The chromium engine, without a browser, names the fix (mirrors plotly
     # needing kaleido) and never silently returns bad bytes. (The default native
     # engine needs no browser at all.)
-    from fastcharts import export
+    from xy import export
 
     monkeypatch.setattr(export, "find_chromium", lambda explicit=None: None)
     fig = Figure(width=200, height=150).scatter(np.arange(5.0), np.arange(5.0))
@@ -1638,7 +1638,7 @@ def test_to_png_missing_chromium_is_clear(monkeypatch):
 
 
 def test_to_png_rejects_bad_export_geometry_before_chromium_lookup(monkeypatch):
-    from fastcharts import export
+    from xy import export
 
     def fail_lookup(explicit=None):
         del explicit
@@ -1663,7 +1663,7 @@ def test_to_png_rejects_bad_export_geometry_before_chromium_lookup(monkeypatch):
 
 
 def test_html_to_png_rejects_bad_mechanism_options_before_chromium_lookup(monkeypatch):
-    from fastcharts import export
+    from xy import export
 
     def fail_lookup(explicit=None):
         del explicit
@@ -1685,7 +1685,7 @@ def test_html_to_png_rejects_bad_mechanism_options_before_chromium_lookup(monkey
 
 
 def test_html_to_png_uses_chromium_sandbox_by_default(monkeypatch):
-    from fastcharts import export
+    from xy import export
 
     seen = []
 
@@ -1710,7 +1710,7 @@ def test_html_to_png_uses_chromium_sandbox_by_default(monkeypatch):
 
 
 def test_html_to_png_retries_without_sandbox_when_chromium_crashes(monkeypatch):
-    from fastcharts import export
+    from xy import export
 
     seen = []
 

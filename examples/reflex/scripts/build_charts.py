@@ -15,13 +15,13 @@ STATIC_COLORED_SCATTER_POINTS = 10_000_000
 sys.path.insert(0, str(APP_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "python"))
 
-from reflex_fastcharts_app.live_drilldown import (  # noqa: E402
+from reflex_xy_app.live_drilldown import (  # noqa: E402
     colored_scatter_chart,
     colored_scatter_data,
     live_drilldown_html,
 )
 
-import fastcharts as fc  # noqa: E402
+import xy as fc  # noqa: E402
 
 
 def write_chart(chart: fc.Chart, name: str) -> None:
@@ -662,19 +662,19 @@ def custom_chrome_demo() -> fc.Chart:
 def custom_chrome_html() -> str:
     html = custom_chrome_demo().to_html()
     render_call = (
-        'fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
+        'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
     )
     replacement = (
-        "window.__fastchartsCustomChromeView = "
-        'fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
+        "window.__xyCustomChromeView = "
+        'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
     )
     if render_call not in html:
-        raise RuntimeError("fastcharts standalone render call changed")
+        raise RuntimeError("xy standalone render call changed")
     bridge = """
 <script>
 (() => {
   const attach = () => {
-    const view = window.__fastchartsCustomChromeView;
+    const view = window.__xyCustomChromeView;
     if (!view || view.__customChromeBridge || !view.canvas) return false;
     view.__customChromeBridge = true;
     const send = (type, row, clientX, clientY) => {
@@ -683,7 +683,7 @@ def custom_chrome_html() -> str:
       const y = Number(clientY) - rect.top;
       if (type === "hover" && (!Number.isFinite(x) || !Number.isFinite(y))) return;
       window.parent.postMessage({
-        source: "fastcharts-custom-chrome",
+        source: "xy-custom-chrome",
         chart: "custom-chrome",
         type,
         row,
@@ -732,19 +732,19 @@ def write_custom_chrome_chart(name: str = "custom_chrome.html") -> None:
 def annotated_heatmap_html() -> str:
     html = annotated_heatmap_demo().to_html()
     render_call = (
-        'fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
+        'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
     )
     replacement = (
-        "window.__fastchartsAnnotatedHeatmapView = "
-        'fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
+        "window.__xyAnnotatedHeatmapView = "
+        'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
     )
     if render_call not in html:
-        raise RuntimeError("fastcharts standalone render call changed")
+        raise RuntimeError("xy standalone render call changed")
     bridge = """
 <script>
 (() => {
   const attach = () => {
-    const view = window.__fastchartsAnnotatedHeatmapView;
+    const view = window.__xyAnnotatedHeatmapView;
     if (!view || view.__annotatedHeatmapBridge || !view.canvas) return false;
     view.__annotatedHeatmapBridge = true;
     const send = (type, row, clientX, clientY) => {
@@ -753,7 +753,7 @@ def annotated_heatmap_html() -> str:
       const y = Number(clientY) - rect.top;
       if (type === "hover" && (!Number.isFinite(x) || !Number.isFinite(y))) return;
       window.parent.postMessage({
-        source: "fastcharts-annotated-heatmap",
+        source: "xy-annotated-heatmap",
         chart: "annotated-heatmap",
         type,
         row,

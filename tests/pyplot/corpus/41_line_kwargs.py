@@ -1,6 +1,6 @@
 import numpy as np
 
-import fastcharts.pyplot as plt
+import xy.pyplot as plt
 
 x = np.arange(12)
 plt.plot(

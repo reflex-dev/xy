@@ -14,8 +14,8 @@ LIVE_DRILLDOWN_CHART = {
 
 COMPARISON_CHARTS = [
     {
-        "id": "fastcharts-scatter",
-        "title": "fastcharts Colored Scatter",
+        "id": "xy-scatter",
+        "title": "xy Colored Scatter",
         "subtitle": "10M source points with color and size, exported through the density tier.",
         "src": "/charts/colored_scatter.html",
         "stat": "10M source",
@@ -32,7 +32,7 @@ COMPARISON_CHARTS = [
 CUSTOM_CHROME_CHART = {
     "id": "custom-chrome",
     "title": "Custom Reflex Chrome",
-    "subtitle": "Built-in FastCharts legend and tooltip are disabled; Reflex renders both.",
+    "subtitle": "Built-in XY legend and tooltip are disabled; Reflex renders both.",
     "src": "/charts/custom_chrome.html",
     "stat": "custom UI",
 }
@@ -241,7 +241,7 @@ CHART_NAV = [
 
 CHART_CODE_SNIPPETS = {
     "custom-chrome": """
-import fastcharts as fc
+import xy as fc
 import reflex as rx
 
 def my_legend():
@@ -276,7 +276,7 @@ chart = fc.chart(
         data=data,
         name="accounts",
     ),
-    # show=False disables the built-in FastCharts chrome. The Reflex
+    # show=False disables the built-in XY chrome. The Reflex
     # components still belong to the chart and can be mounted by the panel.
     fc.legend(my_legend(), show=False),
     fc.tooltip(
@@ -295,7 +295,7 @@ chart = fc.chart(
 
 # This example app embeds prebuilt chart.to_html() assets. The iframe bridge
 # owns that export detail; custom Reflex chrome stays keyed by slot name.
-def fastcharts_html_chart(chart, src):
+def xy_html_chart(chart, src):
     chrome = chart.reflex_components()
     return rx.box(
         rx.el.iframe(src=src, width="100%"),
@@ -305,10 +305,10 @@ def fastcharts_html_chart(chart, src):
     )
 
 def chart_panel():
-    return fastcharts_html_chart(chart, "/charts/custom_chrome.html")
+    return xy_html_chart(chart, "/charts/custom_chrome.html")
 """.strip(),
     "business-overview": """
-import fastcharts as fc
+import xy as fc
 import numpy as np
 
 months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
@@ -335,7 +335,7 @@ chart = fc.chart(
 chart.to_html("assets/charts/business_overview.html")
 """.strip(),
     "retention-cohort": """
-import fastcharts as fc
+import xy as fc
 import numpy as np
 
 cohorts = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
@@ -359,7 +359,7 @@ chart = fc.chart(
 )
 """.strip(),
     "line": """
-import fastcharts as fc
+import xy as fc
 import numpy as np
 
 rng = np.random.default_rng(7)
@@ -377,7 +377,7 @@ chart = fc.chart(
 )
 """.strip(),
     "area": """
-import fastcharts as fc
+import xy as fc
 import numpy as np
 
 rng = np.random.default_rng(13)
@@ -396,7 +396,7 @@ chart = fc.chart(
 )
 """.strip(),
     "histogram": """
-import fastcharts as fc
+import xy as fc
 import numpy as np
 
 rng = np.random.default_rng(41)
@@ -415,7 +415,7 @@ chart = fc.chart(
 )
 """.strip(),
     "grouped-bars": """
-import fastcharts as fc
+import xy as fc
 import numpy as np
 
 categories = ["Search", "Ads", "Email", "Direct", "Partner", "Social"]
@@ -441,7 +441,7 @@ chart = fc.chart(
 )
 """.strip(),
     "stacked-bars": """
-import fastcharts as fc
+import xy as fc
 import numpy as np
 
 quarters = ["Q1", "Q2", "Q3", "Q4"]
@@ -467,7 +467,7 @@ chart = fc.chart(
 )
 """.strip(),
     "horizontal-bars": """
-import fastcharts as fc
+import xy as fc
 import numpy as np
 
 regions = ["NA", "EU", "APAC", "LATAM", "MEA"]
@@ -483,7 +483,7 @@ chart = fc.chart(
 )
 """.strip(),
     "heatmap": """
-import fastcharts as fc
+import xy as fc
 import numpy as np
 
 cols = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -507,7 +507,7 @@ chart = fc.chart(
 )
 """.strip(),
     "composed-layers": """
-import fastcharts as fc
+import xy as fc
 import numpy as np
 
 data = {
@@ -540,7 +540,7 @@ chart = fc.chart(
 )
 """.strip(),
     "annotated-heatmap": """
-import fastcharts as fc
+import xy as fc
 import numpy as np
 import reflex as rx
 
@@ -615,7 +615,7 @@ def chart_panel():
     )
 """.strip(),
     "axes-scales": """
-import fastcharts as fc
+import xy as fc
 import numpy as np
 
 x = np.logspace(0, 6, 240)
@@ -675,7 +675,7 @@ chart = fc.chart(
 )
 """.strip(),
     "interaction-basics": """
-import fastcharts as fc
+import xy as fc
 import numpy as np
 
 x = np.linspace(0, 12, 180)
@@ -714,7 +714,7 @@ chart = fc.chart(
 )
 """.strip(),
     "density-scatter": """
-import fastcharts as fc
+import xy as fc
 import numpy as np
 
 rng = np.random.default_rng(23)
@@ -733,8 +733,8 @@ chart = fc.chart(
     height=430,
 )
 """.strip(),
-    "fastcharts-scatter": """
-from reflex_fastcharts_app.live_drilldown import colored_scatter_chart
+    "xy-scatter": """
+from reflex_xy_app.live_drilldown import colored_scatter_chart
 
 chart = colored_scatter_chart(
     10_000_000,
@@ -746,7 +746,7 @@ chart.to_html("assets/charts/colored_scatter.html")
 """.strip(),
     "plotly-scatter": """
 import plotly.graph_objects as go
-from reflex_fastcharts_app.live_drilldown import colored_scatter_data
+from reflex_xy_app.live_drilldown import colored_scatter_data
 
 x, y, color, size = colored_scatter_data(100_000)
 fig = go.Figure(
@@ -769,8 +769,8 @@ fig.write_html("assets/charts/plotly_colored_scatter.html", include_plotlyjs=Tru
 from pathlib import Path
 
 import reflex as rx
-from reflex_fastcharts_app.live_drilldown import LIVE_DRILLDOWN_ROUTE, drilldown_endpoint
-from reflex_fastcharts_app.live_drilldown import live_drilldown_html
+from reflex_xy_app.live_drilldown import LIVE_DRILLDOWN_ROUTE, drilldown_endpoint
+from reflex_xy_app.live_drilldown import live_drilldown_html
 
 app = rx.App()
 app.add_page(index, route="/")
@@ -1194,8 +1194,8 @@ def annotated_heatmap_bridge() -> rx.Component:
     return rx.script(
         """
 (() => {
-  if (window.__fastchartsAnnotatedHeatmapPanelBridge) return;
-  window.__fastchartsAnnotatedHeatmapPanelBridge = true;
+  if (window.__xyAnnotatedHeatmapPanelBridge) return;
+  window.__xyAnnotatedHeatmapPanelBridge = true;
 
   const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const tiers = ["Low", "Medium", "High", "Critical"];
@@ -1214,7 +1214,7 @@ def annotated_heatmap_bridge() -> rx.Component:
   window.addEventListener("message", (event) => {
     if (event.origin !== window.location.origin) return;
     const data = event.data || {};
-    if (data.source !== "fastcharts-annotated-heatmap" || data.chart !== "annotated-heatmap") {
+    if (data.source !== "xy-annotated-heatmap" || data.chart !== "annotated-heatmap") {
       return;
     }
 
@@ -1263,8 +1263,8 @@ def custom_chrome_bridge() -> rx.Component:
     return rx.script(
         """
 (() => {
-  if (window.__fastchartsCustomChromePanelBridge) return;
-  window.__fastchartsCustomChromePanelBridge = true;
+  if (window.__xyCustomChromePanelBridge) return;
+  window.__xyCustomChromePanelBridge = true;
 
   const formatValue = (value) => {
     const number = Number(value);
@@ -1278,7 +1278,7 @@ def custom_chrome_bridge() -> rx.Component:
   window.addEventListener("message", (event) => {
     if (event.origin !== window.location.origin) return;
     const data = event.data || {};
-    if (data.source !== "fastcharts-custom-chrome" || data.chart !== "custom-chrome") {
+    if (data.source !== "xy-custom-chrome" || data.chart !== "custom-chrome") {
       return;
     }
 
@@ -1317,8 +1317,8 @@ def hash_scroll_bridge() -> rx.Component:
     return rx.script(
         """
 (() => {
-  if (window.__fastchartsHashScroller) return;
-  window.__fastchartsHashScroller = true;
+  if (window.__xyHashScroller) return;
+  window.__xyHashScroller = true;
 
   const targetForHash = () => {
     const hash = window.location.hash;
@@ -1533,7 +1533,7 @@ def index() -> rx.Component:
         rx.vstack(
             rx.hstack(
                 rx.box(
-                    rx.heading("fastcharts Reflex dashboard", size="8"),
+                    rx.heading("xy Reflex dashboard", size="8"),
                     rx.text(
                         "Interactive WebGL charts embedded in a Reflex Python app.",
                         size="3",
@@ -1575,6 +1575,6 @@ def index() -> rx.Component:
 
 
 app = rx.App()
-app.add_page(index, route="/", title="fastcharts Reflex dashboard")
+app.add_page(index, route="/", title="xy Reflex dashboard")
 if app._api is not None:
     app._api.add_route(LIVE_DRILLDOWN_ROUTE, drilldown_endpoint, methods=["POST"])

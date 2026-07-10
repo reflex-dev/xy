@@ -120,7 +120,7 @@ registers unless we ask. `simd.rs` holds branch-free clones of selected
 kernels compiled under `#[target_feature(enable = "avx2")]` (LLVM
 autovectorizes them — no hand-written intrinsics unless a loop demonstrably
 fails to vectorize) with runtime `is_x86_feature_detected!` dispatch and a
-`FASTCHARTS_SIMD=0` kill switch.
+`XY_SIMD=0` kill switch.
 
 Rules, in priority order:
 

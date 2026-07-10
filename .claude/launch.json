@@ -8,7 +8,7 @@
         "lab",
         "--no-browser",
         "--port=8899",
-        "--IdentityProvider.token=fastcharts"
+        "--IdentityProvider.token=xy"
       ],
       "port": 8899
     }

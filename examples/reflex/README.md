@@ -1,15 +1,15 @@
-# fastcharts Reflex Example
+# xy Reflex Example
 
-A small Reflex dashboard that embeds standalone fastcharts charts plus a live
+A small Reflex dashboard that embeds standalone xy charts plus a live
 100M-point drilldown chart.
 
-The app uses fastcharts' `Figure.to_html()` export as the bridge: generated HTML
+The app uses xy' `Figure.to_html()` export as the bridge: generated HTML
 charts live under `assets/charts/`, and the Reflex UI displays them in iframes.
 This keeps the example pure Python while exercising the same WebGL2 renderer
 used by notebooks and standalone exports.
 
 The live drilldown chart adds one Reflex backend route at
-`/api/fastcharts/drilldown`. Its iframe starts from a 100M-point density payload
+`/api/xy/drilldown`. Its iframe starts from a 100M-point density payload
 and requests exact visible points from Python after zooming into a small region.
 
 ## Run

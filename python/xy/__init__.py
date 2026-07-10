@@ -1,4 +1,4 @@
-"""fastcharts — an experimental Python charting engine.
+"""xy — an experimental Python charting engine.
 
 Cost scales with pixels on screen, not points in the dataset: native Rust core
 in the Python process, offset-encoded f32 binary transport, M4 decimation, GPU
@@ -7,7 +7,7 @@ density aggregation, and a WebGL2 render client. See docs/design-dossier.md.
 One declarative API over one engine — Reflex-flavored composition with
 `on_*` event props:
 
-      import fastcharts as fc
+      import xy as fc
       fc.scatter_chart(
           fc.scatter(x="gdp", y="life", color="continent", size="pop", data=df),
           fc.x_axis(label="GDP"), fc.y_axis(label="life expectancy"),
@@ -16,7 +16,7 @@ One declarative API over one engine — Reflex-flavored composition with
       )
 
 Import does no heavy work (§33 import-time budget). Public symbols below are
-exported lazily so `import fastcharts` does not import NumPy or dlopen the
+exported lazily so `import xy` does not import NumPy or dlopen the
 native core; those initialize when a chart-building API is first imported/used.
 """
 

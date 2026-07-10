@@ -32,7 +32,7 @@ jobs:
       - name: Build native core
         run: cargo build --release
       - name: Install package + comparison deps
-        # Install the full adapter set. In particular, a density-mode FastCharts
+        # Install the full adapter set. In particular, a density-mode XY
         # row must publish beside Datashader/HoloViews rather than only raw-marker
         # competitors; unavailable rows remain explicit in the report.
         run: |
@@ -41,7 +41,7 @@ jobs:
           uv pip install matplotlib seaborn plotly kaleido bokeh altair \
             datashader hvplot plotly-resampler psutil
       - name: Verify native backend is active
-        run: uv run python -c "import fastcharts.kernels as k; assert k.BACKEND == 'native', k.BACKEND; print('native')"
+        run: uv run python -c "import xy.kernels as k; assert k.BACKEND == 'native', k.BACKEND; print('native')"
       # The 10M scatter table (the one with the actual "pending" Seaborn rows)
       # needs no browser, so it runs first and independently — a Chromium/TTFR
       # problem downstream must not skip it.

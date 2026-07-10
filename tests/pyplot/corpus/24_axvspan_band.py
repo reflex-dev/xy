@@ -1,6 +1,6 @@
 import numpy as np
 
-import fastcharts.pyplot as plt
+import xy.pyplot as plt
 
 x = np.linspace(0, 24, 200)
 plt.plot(x, 20 + 5 * np.sin(x / 24 * 2 * np.pi))

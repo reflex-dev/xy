@@ -1,4 +1,4 @@
-"""Browser interaction benchmark for fastcharts.
+"""Browser interaction benchmark for xy.
 
 This is intentionally opt-in instead of part of the core CodSpeed suite:
 headless Chromium is useful for user-visible latency, but too heavyweight and
@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fastcharts_browser import (  # noqa: E402
+from _xy_browser import (  # noqa: E402
     chart_payload,
     chromium_gl_flags,
     find_chromium,
@@ -73,7 +73,7 @@ def _parse_sizes(text: str) -> list[int]:
 def _scatter_figure(n: int) -> Any:
     if np is None:
         raise SystemExit("numpy is required for benchmarks/bench_interaction.py")
-    import fastcharts as fc
+    import xy as fc
 
     rng = np.random.default_rng(70_011 + n)
     x = rng.normal(0.0, 1.0, n).astype(np.float64, copy=False)
@@ -97,7 +97,7 @@ def _scatter_figure(n: int) -> Any:
 def _core_interaction_figures() -> list[dict[str, Any]]:
     if np is None:
         raise SystemExit("numpy is required for benchmarks/bench_interaction.py")
-    import fastcharts as fc
+    import xy as fc
 
     all_interactions = {
         "hover": True,
@@ -209,7 +209,7 @@ def _probe_js(reps: int) -> str:
     const payload = FC_CHARTS[0];
     const el = document.createElement("div");
     document.getElementById("root").appendChild(el);
-    const view = fastcharts.renderStandalone(el, payload.spec, fcBytesFromB64(payload.b64));
+    const view = xy.renderStandalone(el, payload.spec, fcBytesFromB64(payload.b64));
     // Under --virtual-time-budget an outstanding Web Worker round-trip pauses
     // virtual time forever: the first density zoom schedules the standalone
     // sample-rebin worker and the page deadlocks until the wall-clock timeout
@@ -423,7 +423,7 @@ def _probe_js(reps: int) -> str:
     }}
     function tooltipProbe() {{
       const eligible = view.gpuTraces.some((g) =>
-        fastcharts.markOf(g.trace.kind).pointPick && g.tier !== "density");
+        xy.markOf(g.trace.kind).pointPick && g.tier !== "density");
       if (!eligible) return {{ tooltip_eligible: false, tooltip_stable: true, tooltip_visible_samples: 0 }};
       let hit = null;
       for (let sx = 4; sx < view.plot.w && !hit; sx += 5) {{
@@ -653,7 +653,7 @@ WORKER_PROBE_TIMEOUT_S = 60
 def _worker_density_figure() -> Any:
     if np is None:
         raise SystemExit("numpy is required for benchmarks/bench_interaction.py")
-    from fastcharts._figure import Figure
+    from xy._figure import Figure
 
     rng = np.random.default_rng(91_017)
     n = 250_000
@@ -671,7 +671,7 @@ def _worker_probe_js() -> str:
     const payload = FC_CHARTS[0];
     const el = document.createElement("div");
     document.getElementById("root").appendChild(el);
-    const view = fastcharts.renderStandalone(el, payload.spec, fcBytesFromB64(payload.b64));
+    const view = xy.renderStandalone(el, payload.spec, fcBytesFromB64(payload.b64));
     const g = view.gpuTraces[0];
     if (!g || !g.sampleOverlay || !g.sampleOverlay._cpu) {
       fcReport("FC_WORKER", {status: "failed(no retained sample)"});
@@ -729,7 +729,7 @@ def run_worker_probe(*, chromium: str | None = None) -> dict[str, Any]:
     html = page_for_charts(
         [chart_payload("worker", spec, blob)],
         _worker_probe_js(),
-        title="fastcharts density worker probe",
+        title="xy density worker probe",
     )
     exe = find_chromium(chromium)
     if not exe:
@@ -739,14 +739,14 @@ const { chromium } = require("playwright");
 (async () => {
   const browser = await chromium.launch({
     headless: true,
-    executablePath: process.env.FASTCHARTS_CHROMIUM,
-    args: JSON.parse(process.env.FASTCHARTS_CHROME_ARGS || "[]"),
+    executablePath: process.env.XY_CHROMIUM,
+    args: JSON.parse(process.env.XY_CHROME_ARGS || "[]"),
   });
   try {
     const page = await browser.newPage();
     page.on("pageerror", (err) => console.error("PAGEERROR", err.stack || err));
     page.on("console", (msg) => console.error("CONSOLE", msg.text()));
-    await page.goto(process.env.FASTCHARTS_PROBE, {waitUntil: "load"});
+    await page.goto(process.env.XY_PROBE, {waitUntil: "load"});
     try {
       await page.waitForFunction(() => document.title.startsWith("FC_WORKER "), null, {timeout: 12000});
     } catch (err) {
@@ -763,9 +763,9 @@ const { chromium } = require("playwright");
         page = Path(td) / "worker.html"
         page.write_text(html, encoding="utf-8")
         env = os.environ.copy()
-        env["FASTCHARTS_CHROMIUM"] = exe
-        env["FASTCHARTS_PROBE"] = page.as_uri()
-        env["FASTCHARTS_CHROME_ARGS"] = json.dumps(chromium_gl_flags())
+        env["XY_CHROMIUM"] = exe
+        env["XY_PROBE"] = page.as_uri()
+        env["XY_CHROME_ARGS"] = json.dumps(chromium_gl_flags())
         try:
             completed = subprocess.run(
                 ["node", "-e", node_script],
@@ -847,7 +847,7 @@ def run(
         html = page_for_charts(
             [chart_payload("interaction", spec, blob)],
             _probe_js(reps),
-            title="fastcharts interaction probe",
+            title="xy interaction probe",
         )
         row["html_bytes"] = len(html.encode("utf-8"))
         result = _probe_with_retries(
@@ -872,7 +872,7 @@ def run(
         html = page_for_charts(
             [chart_payload(case["scenario"], spec, blob)],
             _probe_js(reps),
-            title=f"fastcharts {case['scenario']} probe",
+            title=f"xy {case['scenario']} probe",
         )
         row["html_bytes"] = len(html.encode("utf-8"))
         result = _probe_with_retries(
@@ -913,7 +913,7 @@ def _fmt_bytes(value: int | None) -> str:
 
 def to_markdown(report: dict[str, Any]) -> str:
     lines = [
-        "# fastcharts browser interaction benchmark",
+        "# xy browser interaction benchmark",
         "",
         f"Repetitions per gesture: `{report['reps']}`.",
         f"Repeated tooltip samples per eligible row: `{report.get('tooltip_sample_count', 0)}`.",

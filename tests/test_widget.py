@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from fastcharts._figure import DECIMATION_THRESHOLD, Figure
-from fastcharts.widget import FigureWidget
+from xy._figure import DECIMATION_THRESHOLD, Figure
+from xy.widget import FigureWidget
 
 
 def _capturing_widget(fig: Figure, **kwargs):

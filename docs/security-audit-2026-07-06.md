@@ -1,6 +1,6 @@
 # Security Audit - 2026-07-06
 
-Scope: FastCharts Python package, standalone/browser client, Rust native core,
+Scope: XY Python package, standalone/browser client, Rust native core,
 HTML/PNG export paths, example app dependency manifests, CI/release workflows,
 and packaging verifiers.
 
@@ -109,7 +109,7 @@ Fix:
   calls.
 - Cargo dependency tree is empty; the Rust core is std-only.
 - The JS bundle build is dependency-free source concatenation.
-- Release workflow builds native wheels with `FASTCHARTS_REQUIRE_CARGO=1`,
+- Release workflow builds native wheels with `XY_REQUIRE_CARGO=1`,
   verifies wheel contents, smokes native backend loading, and publishes through
   PyPI trusted publishing/OIDC.
 - Wheel and sdist verifiers check required files, native/pure expectations,
@@ -122,8 +122,8 @@ Fix:
 - `uv tool run pip-audit --progress-spinner off .`: no known vulnerabilities.
 - `uv tool run pip-audit --progress-spinner off -r requirements.txt` from
   `examples/reflex/`: no known vulnerabilities; local editable
-  `fastcharts` is skipped because it is not a PyPI package.
-- `cargo tree --locked`: only `fastcharts-core`, no third-party Rust crates.
+  `xy` is skipped because it is not a PyPI package.
+- `cargo tree --locked`: only `xy-core`, no third-party Rust crates.
 - `node js/build.mjs --check`: static JS bundles fresh.
 - `make check-security`: passed.
 - `make check-ci`: passed.
@@ -147,7 +147,7 @@ Fix:
 - CI/browser smoke scripts still pass `--no-sandbox` for trusted generated
   pages. That is separate from the public `to_png()` default, but it should not
   be copied into production services.
-- `FASTCHARTS_NATIVE_LIB` intentionally allows loading a developer-specified
+- `XY_NATIVE_LIB` intentionally allows loading a developer-specified
   native library. Treat that environment variable as trusted process
   configuration, not user input.
 - The Reflex demo live-drilldown endpoint is local/demo infrastructure and is

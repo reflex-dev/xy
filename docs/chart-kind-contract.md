@@ -26,7 +26,7 @@ Establish the primitive once; the charts sharing it are mostly wiring.
 A chart kind `K` is defined by a kernel emitter and a client renderer, matched
 by the string `K` on the wire (`trace.kind`).
 
-### 1. Kernel — `python/fastcharts/`
+### 1. Kernel — `python/xy/`
 
 - **`_figure.py`: `_emit_<K>(self, t, pw, xr, yr, px_width) -> dict`.** Dispatched
   by `_emit_trace` via `getattr(self, f"_emit_{t.kind}")` — no edit to the
@@ -94,7 +94,7 @@ per-kind knowledge lives in ChartView branches (the smoke's `reg` probe pins
 this contract): `pointPick` (participates in the point-geometry GPU pick pass),
 `retainCpu` (standalone export keeps CPU x/y copies for kernel-less hover,
 §37), `refreshColor(view, g)` (theme-change re-resolution of CSS constant
-colors, §36). The registry and `markOf()` are exported (`fastcharts.MARK_KINDS`)
+colors, §36). The registry and `markOf()` are exported (`xy.MARK_KINDS`)
 — it is the public extension surface.
 
 ## Extension points not yet generalized (do it when the case lands)

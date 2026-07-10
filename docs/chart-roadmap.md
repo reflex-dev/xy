@@ -1,6 +1,6 @@
 # Chart Type Roadmap
 
-This is the single chart-type roadmap for fastcharts. It is intentionally
+This is the single chart-type roadmap for xy. It is intentionally
 **2D-first**: the library should become broad enough for Plotly-class analytics,
 finance, science, operations, and dashboard use cases before spending product
 energy on 3D/volume rendering. Nothing in this section implies immediate
@@ -11,11 +11,11 @@ The roadmap prioritizes chart types by two signals:
 
 1. **Popularity signal:** chart types that appear prominently across mainstream
    plotting libraries and galleries.
-2. **fastcharts fit:** chart types where the engine can win on large data,
+2. **xy fit:** chart types where the engine can win on large data,
    binary transport, WebGL rendering, and screen-bounded aggregation.
 
 The near-term wedge is large data, but the long-term product goal is broader:
-fastcharts should become a **Plotly-class general-purpose charting library** for
+xy should become a **Plotly-class general-purpose charting library** for
 analytics, science, finance, operations, and dashboards. Performance is the
 entry point, not the boundary of the product.
 
@@ -93,7 +93,7 @@ not fall out of sight.
 | Rank | Chart family | Includes / aliases | Status | Why it matters |
 |---:|---|---|---|---|
 | 1 | Line and time series | line, step line, spline, markers+line, multi-line, streaming line | Implemented core | Most universal analytical chart; core for finance, monitoring, science, product metrics. |
-| 2 | Scatter / marker plots | scatter, scattergl-style, bubble, colored scatter, sized scatter | Implemented core | Large-point interactivity is the fastcharts wedge; basis for drilldown, selection, and density. |
+| 2 | Scatter / marker plots | scatter, scattergl-style, bubble, colored scatter, sized scatter | Implemented core | Large-point interactivity is the xy wedge; basis for drilldown, selection, and density. |
 | 3 | Bar / column | vertical bar, horizontal bar, grouped, stacked, normalized stacked, diverging bar | Implemented core | `fc.bar(...)` / `fc.column(...)` ship categorical/numeric vertical and horizontal bars, grouped bars, stacked bars, and normalized stacked bars (`mode="normalized"`) through the shared rectangle renderer. Follow-up: labels. |
 | 4 | Area | filled line, stacked area, streamgraph, ridgeline-lite area bands | Implemented core | `fc.area(...)` ships a filled area with scalar/array baseline and optional line overlay. Follow-ups: stacked area helpers and streamgraph offsets. |
 | 5 | Histogram | count, probability, density, cumulative histogram | Implemented core | Python-side binning plus the shared rectangle renderer; `cumulative=True` (count CDF and, with `density=True`, empirical CDF) is implemented. Follow-up: viewport-aware re-binning for huge streamed distributions. |
@@ -135,7 +135,7 @@ not fall out of sight.
 
 ### P1 - Add next
 
-| Rank | Chart | Why it is popular | Why it fits fastcharts | Suggested API |
+| Rank | Chart | Why it is popular | Why it fits xy | Suggested API |
 |---:|---|---|---|---|
 | 1 | Histogram | Core statistical chart in Plotly, Matplotlib, Altair; common first chart for distributions. | Implemented core: Python-side binning + shared instanced rectangle renderer, incl. `density` and `cumulative` modes. Follow-up: viewport-aware re-binning for very large streamed distributions. | `fc.histogram_chart(fc.hist(values, bins=512, cumulative=True))` |
 | 2 | Bar / column | Present in every major library; expected for categorical comparison. | Implemented core: category axis + shared instanced rectangle renderer for basic, grouped, stacked, normalized stacked, and horizontal bars. Follow-up: labels. | `fc.bar_chart(fc.bar(x, y))` |
@@ -164,7 +164,7 @@ bars/bands, ECDF/cumulative histograms, and first-class 2D density chart types.
 | Rank | Chart | Why it matters | Caveat |
 |---:|---|---|---|
 | 13 | Composed / mixed charts | Overlay line, scatter, bars, bands, candlesticks, and secondary axes cleanly. | API and spec work comes before many chart families. |
-| 14 | Pie / donut | Very popular in basic chart libraries and user expectations. | Low fastcharts differentiation; implement for completeness, not performance. |
+| 14 | Pie / donut | Very popular in basic chart libraries and user expectations. | Low xy differentiation; implement for completeness, not performance. |
 | 15 | Candlestick / OHLC | Important for finance users and appears in Plotly/Highcharts stock tooling. | **Prototyped (PR closed unmerged):** candlestick/OHLC marks with date axes, gaps, and hover format on the closed finance exploration branch. Remaining polish: range selectors. |
 | 16 | Finance overlays | Volume bars, VWAP, moving averages, Bollinger bands, depth/order-book heatmap, market profile, Renko, Heikin-Ashi, Kagi, point-and-figure. | **Prototyped (PR closed unmerged):** volume pane, SMA, VWAP, Bollinger, RSI, MACD as `FinanceLayer`s reusing composed charts + time axes. Remaining: depth/order-book, market profile, Renko/Heikin-Ashi/Kagi/P&F. |
 | 17 | Waterfall | Common in business reporting and Plotly/Highcharts. | Mostly categorical bars plus running baseline. |
@@ -206,7 +206,7 @@ bars/bands, ECDF/cumulative histograms, and first-class 2D density chart types.
 
 The long-term target is not only "fast large scatter." It is an expansive
 library with enough chart breadth to be used across industries the way Plotly is
-used today, while keeping fastcharts' transport and rendering model underneath.
+used today, while keeping xy' transport and rendering model underneath.
 
 | Industry / use case | Chart coverage needed |
 |---|---|
@@ -228,7 +228,7 @@ Breadth should arrive after the core primitives are solid:
 
 ## Cross-Cutting: Adaptive Scatter LOD
 
-How fastcharts answers "density is too blunt — zooming in should reveal real
+How xy answers "density is too blunt — zooming in should reveal real
 points." The dossier already prescribes this (§5: `tier = f(visible_count, …)`,
 not total count; transitions hysteresis-guarded), and the literature agrees on
 the shape: imMens/Nanocubes bound work by *screen* resolution via tiles and
@@ -237,7 +237,7 @@ per view; deck.gl documents why 10M visible markers die on fill-rate/overdraw.
 
 **Where the machinery lives (reuse seams for new chart kinds):** the tier
 logic is chart-agnostic and factored out on both sides of the wire —
-`python/fastcharts/lod.py` (visible-window mask, hysteresis drill decision,
+`python/xy/lod.py` (visible-window mask, hysteresis drill decision,
 drilled-subset bookkeeping incl. `drill_seq`, §16 window-centered encoding,
 screen-derived grid shape, per-point local log-density, wire-buffer packing)
 and `js/src/45_lod.js` (drill lifecycle with entry/exit fades and the dying
@@ -320,7 +320,7 @@ browser (a `.bg-*` class on the tooltip changes its computed background). The
 elements keep only *structural* inline styles (position/size/z-index/state), so
 nothing themeable competes with a user class. The full slot list (including
 `legend_swatch`, `tick_label`, `axis_title`, and the class-driven modebar
-active state via `--chart-modebar-active`) is `fastcharts.CHART_DOM_SLOTS`.
+active state via `--chart-modebar-active`) is `xy.CHART_DOM_SLOTS`.
 
 For the standalone `to_html(...)` export — which has no host page to inherit
 Tailwind from — pass `custom_css="…"` to inject the stylesheet defining those
@@ -390,7 +390,7 @@ Parallel, non-chart-type tracks:
 ## Near-Term API Sketch
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 # shipped
 fc.histogram_chart(fc.hist(values, bins=512, density=False, cumulative=False))

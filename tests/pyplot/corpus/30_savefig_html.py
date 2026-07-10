@@ -1,7 +1,7 @@
 import pathlib
 import tempfile
 
-import fastcharts.pyplot as plt
+import xy.pyplot as plt
 
 fig, ax = plt.subplots()
 ax.plot([0, 1, 2, 3], [10, 20, 15, 30], marker="o")

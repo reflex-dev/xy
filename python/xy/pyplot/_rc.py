@@ -29,7 +29,7 @@ class RcParams(dict):
         if key not in _DEFAULTS and key not in _warned:
             _warned.add(key)
             warnings.warn(
-                f"fastcharts.pyplot ignores rcParams[{key!r}] — see {COMPAT_URL}",
+                f"xy.pyplot ignores rcParams[{key!r}] — see {COMPAT_URL}",
                 stacklevel=2,
             )
         super().__setitem__(key, value)

@@ -1,4 +1,4 @@
-"""CodSpeed benchmarks for the fastcharts native compute core.
+"""CodSpeed benchmarks for the xy native compute core.
 
 These exercise the performance-critical kernels the whole engine is built on
 (§5 decimation tiers, §4/§16 f32 encoding, §22 zone maps) plus the end-to-end
@@ -15,9 +15,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import fastcharts as fc
-from fastcharts import kernels as k
-from fastcharts._figure import Figure  # harness type annotations only
+import xy as fc
+from xy import kernels as k
+from xy._figure import Figure  # harness type annotations only
 
 # Small/medium/large sizes keep CodSpeed honest across normal dashboard charts,
 # exact WebGL workloads, and screen-bounded large-data paths without turning it

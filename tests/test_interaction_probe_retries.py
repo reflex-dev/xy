@@ -77,8 +77,8 @@ def test_probe_headroom_exceeds_library_defaults():
     the run_json_probe defaults or the constants silently stop mattering."""
     import inspect
 
-    from benchmarks import _fastcharts_browser
+    from benchmarks import _xy_browser
 
-    sig = inspect.signature(_fastcharts_browser.run_json_probe)
+    sig = inspect.signature(_xy_browser.run_json_probe)
     assert sig.parameters["virtual_time_ms"].default < bench_interaction.PROBE_VIRTUAL_TIME_MS
     assert sig.parameters["timeout_s"].default < bench_interaction.PROBE_TIMEOUT_S

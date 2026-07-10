@@ -2,33 +2,33 @@
 
 Install ergonomics, by audience (design dossier §33):
 
-- **End users** run `pip install fastcharts` and get a prebuilt platform wheel
+- **End users** run `pip install xy` and get a prebuilt platform wheel
   from the CI matrix — the compiled core *and* the JS client are already inside
   it. **No Rust, no Node, no toolchain.** This is the front door.
 - **Source builds** (`pip install .` / `-e .` from a clone) compile the core if
   a Rust toolchain is present. **If Rust is absent, the build still succeeds**
   but produces a pure-Python install with no native core — and since there is no
   NumPy fallback, importing the compute layer then raises a clear, actionable
-  error (see `fastcharts.kernels`). Install a Rust toolchain, or use a published
+  error (see `xy.kernels`). Install a Rust toolchain, or use a published
   wheel, for a working compute backend.
-- The JS client (`python/fastcharts/static/*`) is a **committed artifact**, so
+- The JS client (`python/xy/static/*`) is a **committed artifact**, so
   Node is only needed to *edit* the client, never to install.
 
 Env switches:
-- `FASTCHARTS_SKIP_CARGO=1` — don't invoke cargo; use an already-built lib if
+- `XY_SKIP_CARGO=1` — don't invoke cargo; use an already-built lib if
   present, else build pure-Python. (Used when an earlier CI step prebuilt it.)
-- `FASTCHARTS_REQUIRE_CARGO=1` — the native core MUST end up in the wheel; a
+- `XY_REQUIRE_CARGO=1` — the native core MUST end up in the wheel; a
   missing toolchain or failed build is an error. CI wheel builds set this so a
   published wheel never silently ships without the core.
-- `FASTCHARTS_CARGO_TARGET=<triple>` — cross-compile the core for a Rust target
+- `XY_CARGO_TARGET=<triple>` — cross-compile the core for a Rust target
   triple (e.g. `aarch64-unknown-linux-musl`, `aarch64-pc-windows-msvc`). The
   built lib is looked for under `target/<triple>/release/` instead of
   `target/release/`; if the crate's cdylib doesn't land under the host's usual
   suffix there (e.g. `wasm32-unknown-emscripten` isn't a `.so`), the target's
-  release dir is scanned for whatever `fastcharts_core.*` artifact cargo
+  release dir is scanned for whatever `xy_core.*` artifact cargo
   actually produced, rather than assuming one fixed filename. The release
   matrix sets this to reach every platform in one CI run.
-- `FASTCHARTS_WHEEL_PLATFORM=<tag>` — override the wheel's platform tag (e.g.
+- `XY_WHEEL_PLATFORM=<tag>` — override the wheel's platform tag (e.g.
   `musllinux_1_2_aarch64`, `win_arm64`). Cross-compiled builds need this because
   the build host's `sysconfig.get_platform()` describes the host, not the target.
 
@@ -56,10 +56,10 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 def _lib_filename() -> str:
     if sys.platform == "win32":
-        return "fastcharts_core.dll"
+        return "xy_core.dll"
     if sys.platform == "darwin":
-        return "libfastcharts_core.dylib"
-    return "libfastcharts_core.so"
+        return "libxy_core.dylib"
+    return "libxy_core.so"
 
 
 _CDYLIB_SUFFIXES = (".so", ".dylib", ".dll", ".wasm")
@@ -77,7 +77,7 @@ def _find_cross_compiled_lib(release_dir: Path) -> Optional[Path]:
     candidates = sorted(
         p
         for p in release_dir.iterdir()
-        if p.is_file() and "fastcharts_core" in p.stem and p.suffix in _CDYLIB_SUFFIXES
+        if p.is_file() and "xy_core" in p.stem and p.suffix in _CDYLIB_SUFFIXES
     )
     return candidates[0] if candidates else None
 
@@ -96,14 +96,14 @@ def _platform_tag() -> str:
     # e.g. linux_x86_64, macosx_11_0_arm64, win_amd64. CI repairs linux wheels
     # to manylinux/musllinux after the build. Cross-compiled builds can't infer
     # the target from the host, so an explicit override wins when set.
-    override = os.environ.get("FASTCHARTS_WHEEL_PLATFORM")
+    override = os.environ.get("XY_WHEEL_PLATFORM")
     if override:
         return override.replace("-", "_").replace(".", "_")
     return sysconfig.get_platform().replace("-", "_").replace(".", "_")
 
 
 def _cargo_target() -> Optional[str]:
-    target = os.environ.get("FASTCHARTS_CARGO_TARGET", "").strip()
+    target = os.environ.get("XY_CARGO_TARGET", "").strip()
     return target or None
 
 
@@ -114,9 +114,9 @@ class CustomBuildHook(BuildHookInterface):
 
         root = Path(self.root)
         lib_name = _lib_filename()
-        dest_dir = root / "python" / "fastcharts" / "_native_lib"
+        dest_dir = root / "python" / "xy" / "_native_lib"
         dest = dest_dir / lib_name
-        require = os.environ.get("FASTCHARTS_REQUIRE_CARGO") == "1"
+        require = os.environ.get("XY_REQUIRE_CARGO") == "1"
 
         native_src = self._provision_native(root, lib_name, dest, require)
 
@@ -126,15 +126,15 @@ class CustomBuildHook(BuildHookInterface):
             build_data["pure_python"] = False
             build_data["tag"] = f"py3-none-{_platform_tag()}"
             build_data.setdefault("force_include", {})[str(native_src)] = (
-                f"fastcharts/_native_lib/{lib_name}"
+                f"xy/_native_lib/{lib_name}"
             )
         else:
             # No toolchain / build skipped: ship a pure-Python wheel (the JS
             # client is included via committed package data). There is no NumPy
             # fallback, so this install imports fine but raises a clear error the
-            # moment compute is needed (fastcharts.kernels).
+            # moment compute is needed (xy.kernels).
             print(
-                "fastcharts: building WITHOUT the native Rust core (cargo not "
+                "xy: building WITHOUT the native Rust core (cargo not "
                 "found or build skipped). This install has no compute backend "
                 "and will raise a clear error on first use. Install a prebuilt "
                 "wheel or a Rust toolchain (https://rustup.rs) for a working "
@@ -149,7 +149,7 @@ class CustomBuildHook(BuildHookInterface):
     ) -> Optional[Path]:
         """Return a native library path to include in the wheel, if available.
 
-        Do not copy into `python/fastcharts/_native_lib` during a normal build:
+        Do not copy into `python/xy/_native_lib` during a normal build:
         force-include can place the built artifact at that wheel path directly,
         and generated platform binaries should not dirty the source tree.
         """
@@ -161,7 +161,7 @@ class CustomBuildHook(BuildHookInterface):
             if target
             else root / "target" / "release" / lib_name
         )
-        if os.environ.get("FASTCHARTS_SKIP_CARGO") == "1":
+        if os.environ.get("XY_SKIP_CARGO") == "1":
             if dest.exists():
                 return dest
             resolved = _resolve_built(built, target)
@@ -169,8 +169,8 @@ class CustomBuildHook(BuildHookInterface):
                 return resolved
             if require:
                 raise RuntimeError(
-                    f"FASTCHARTS_REQUIRE_CARGO=1 and FASTCHARTS_SKIP_CARGO=1 but "
-                    f"neither {dest} nor {built} exists, and no fastcharts_core.* "
+                    f"XY_REQUIRE_CARGO=1 and XY_SKIP_CARGO=1 but "
+                    f"neither {dest} nor {built} exists, and no xy_core.* "
                     f"artifact was found in {built.parent} — prebuild the core "
                     "before this step."
                 )
@@ -179,7 +179,7 @@ class CustomBuildHook(BuildHookInterface):
         if shutil.which("cargo") is None:
             if require:
                 raise RuntimeError(
-                    "FASTCHARTS_REQUIRE_CARGO=1 but cargo is not on PATH — a "
+                    "XY_REQUIRE_CARGO=1 but cargo is not on PATH — a "
                     "published wheel must contain the native core."
                 )
             return None  # graceful: pure-Python wheel
@@ -199,7 +199,7 @@ class CustomBuildHook(BuildHookInterface):
             if require:
                 raise RuntimeError(
                     f"cargo build succeeded but {built} is missing, and no "
-                    f"fastcharts_core.* artifact was found in {built.parent}"
+                    f"xy_core.* artifact was found in {built.parent}"
                 )
             return None
         return resolved

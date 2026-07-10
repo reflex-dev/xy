@@ -11,7 +11,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-PACKAGE = Path(__file__).resolve().parents[2] / "python" / "fastcharts"
+PACKAGE = Path(__file__).resolve().parents[2] / "python" / "xy"
 
 
 def _run_fresh(code: str) -> None:
@@ -25,7 +25,7 @@ def _run_fresh(code: str) -> None:
 
 
 def test_core_never_imports_the_shim() -> None:
-    """No module outside python/fastcharts/pyplot/ may reference it."""
+    """No module outside python/xy/pyplot/ may reference it."""
     offenders: list[str] = []
     for path in PACKAGE.rglob("*.py"):
         if "pyplot" in path.parts:
@@ -46,11 +46,11 @@ def test_core_never_imports_the_shim() -> None:
     assert offenders == [], offenders
 
 
-def test_importing_fastcharts_does_not_load_the_shim() -> None:
+def test_importing_xy_does_not_load_the_shim() -> None:
     _run_fresh(
         """
         import sys
-        import fastcharts
+        import xy
         assert not any("pyplot" in name for name in sys.modules), [
             n for n in sys.modules if "pyplot" in n
         ]
@@ -63,9 +63,9 @@ def test_shim_import_stays_light() -> None:
     _run_fresh(
         """
         import sys
-        import fastcharts.pyplot as plt
+        import xy.pyplot as plt
         assert "matplotlib" not in sys.modules
-        assert "fastcharts.widget" not in sys.modules
+        assert "xy.widget" not in sys.modules
         assert "anywidget" not in sys.modules
         assert "traitlets" not in sys.modules
         assert callable(plt.plot)

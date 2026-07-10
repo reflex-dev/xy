@@ -12,7 +12,7 @@ import numpy as np
 
 from ._colors import resolve_color
 
-COMPAT_URL = "https://github.com/reflex-dev/reviz/blob/main/docs/matplotlib-compat.md"
+COMPAT_URL = "https://github.com/reflex-dev/xy/blob/main/docs/matplotlib-compat.md"
 
 LINESTYLE_TO_DASH = {
     "-": None,
@@ -61,7 +61,7 @@ MARKER_TO_SYMBOL = {
 def not_implemented(name: str, alternative: Optional[str] = None) -> "NotImplementedError":
     hint = f" Try {alternative} instead." if alternative else ""
     return NotImplementedError(
-        f"fastcharts.pyplot does not implement {name}.{hint} "
+        f"xy.pyplot does not implement {name}.{hint} "
         f"See the compatibility table: {COMPAT_URL}"
     )
 
@@ -109,6 +109,6 @@ def check_unsupported(kwargs: dict[str, Any], where: str) -> None:
     if kwargs:
         names = ", ".join(sorted(kwargs))
         raise TypeError(
-            f"fastcharts.pyplot {where} got unsupported keyword(s): {names}. "
+            f"xy.pyplot {where} got unsupported keyword(s): {names}. "
             f"See the compatibility table: {COMPAT_URL}"
         )

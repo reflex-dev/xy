@@ -12,7 +12,7 @@ html,body{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;b
 <div id="chart"></div>
 <script>(() => {
 /**
- * fastcharts render client.
+ * xy render client.
  *
  * A thin GPU render client (design dossier §32): receives a data-less spec +
  * offset-encoded f32 columns as raw binary (§29 — no JSON numbers, no parse),
@@ -1293,8 +1293,8 @@ class ChartView {
   constructor(el, spec, buffer, comm) {
     if (spec.protocol !== PROTOCOL) {
       el.textContent =
-        `fastcharts: protocol mismatch (client speaks ${PROTOCOL}, kernel sent ${spec.protocol}). ` +
-        "Update the fastcharts package and restart the kernel.";
+        `xy: protocol mismatch (client speaks ${PROTOCOL}, kernel sent ${spec.protocol}). ` +
+        "Update the xy package and restart the kernel.";
       throw new Error("protocol mismatch");
     }
     this.spec = spec;
@@ -1484,7 +1484,7 @@ class ChartView {
 
   _dispatchChartEvent(name, detail) {
     if (!this.root || typeof CustomEvent !== "function") return;
-    this.root.dispatchEvent(new CustomEvent(`fastcharts:${name}`, {
+    this.root.dispatchEvent(new CustomEvent(`xy:${name}`, {
       detail,
       bubbles: true,
       composed: true,
@@ -1519,7 +1519,7 @@ class ChartView {
       ? this.interaction.link_axes.filter((axis) => axis === "x" || axis === "y")
       : ["x", "y"];
     if (!this._linkAxes.length) this._linkAxes = ["x", "y"];
-    this._linkChannel = new BroadcastChannel(`fastcharts:${group}`);
+    this._linkChannel = new BroadcastChannel(`xy:${group}`);
     this._linkChannel.onmessage = (event) => {
       const msg = event.data || {};
       if (!msg.view || msg.source === this._linkedSource) return;
@@ -1676,7 +1676,7 @@ class ChartView {
       try {
         this._initGl(this._payload);
       } catch (err) {
-        this.root.textContent = "fastcharts: WebGL2 context could not be restored.";
+        this.root.textContent = "xy: WebGL2 context could not be restored.";
         throw err;
       }
       this._scheduleViewRequest(this.view, { delay: 0 });
@@ -1725,7 +1725,7 @@ class ChartView {
   _buildDom(el) {
     const s = this.spec;
     const root = document.createElement("div");
-    root.className = "fastcharts";
+    root.className = "xy";
     root.style.cssText =
       `position:relative;width:${this.fluid ? "100%" : this.size.w + "px"};` +
       `height:${this.fluidH ? "100%" : this.size.h + "px"};` +
@@ -1903,7 +1903,7 @@ class ChartView {
       antialias: false, premultipliedAlpha: true, alpha: true,
     });
     if (!gl) {
-      this.root.textContent = "fastcharts: WebGL2 unavailable in this browser.";
+      this.root.textContent = "xy: WebGL2 unavailable in this browser.";
       throw new Error("webgl2 unavailable");
     }
     this.gl = gl;
@@ -4876,14 +4876,14 @@ function renderStandalone(el, spec, arrayBuffer) {
 }
 
 
-window.fastcharts = { render, renderStandalone, ChartView, MARK_KINDS, markOf };
+window.xy = { render, renderStandalone, ChartView, MARK_KINDS, markOf };
 })();
 </script>
 <script>
   const spec = {"protocol":2,"width":"100%","height":430,"title":"Crosshair, click, brush select, linked x-axis","x_axis":{"id":"x","kind":"linear","label":"time","range":[-0.36,12.36],"side":"bottom","tick_count":13},"y_axis":{"id":"y","kind":"linear","label":"value","range":[-0.6742979662466821,1.6924279156029132],"side":"left"},"axes":{"x":{"id":"x","kind":"linear","label":"time","range":[-0.36,12.36],"side":"bottom","tick_count":13},"y":{"id":"y","kind":"linear","label":"value","range":[-0.6742979662466821,1.6924279156029132],"side":"left"}},"traces":[{"id":0,"kind":"scatter","name":"samples","style":{"opacity":0.8},"tier":"direct","n_points":30,"n_marks":30,"x":0,"y":1,"x_axis":"x","y_axis":"y","color":{"mode":"constant","color":"#2563eb"},"size":{"mode":"constant","size":8.0}},{"id":1,"kind":"line","name":"trend","style":{"color":"#dc2626","width":2.0,"opacity":1.0},"tier":"direct","n_points":180,"n_marks":180,"x":2,"y":3,"x_axis":"x","y_axis":"y"}],"columns":[{"byte_offset":0,"len":30,"offset":5.832402234636872,"scale":1.0,"kind":"float"},{"byte_offset":120,"len":30,"offset":0.5090649746781155,"scale":1.0,"kind":"float"},{"byte_offset":240,"len":180,"offset":6.0,"scale":1.0,"kind":"float"},{"byte_offset":960,"len":180,"offset":0.48,"scale":1.0,"kind":"float"}],"backend":"native","show_legend":true,"dom":{"style":{"--chart-bg":"white","--chart-grid":"rgba(37,99,235,.12)"}},"tooltip":{"fields":["x","y"],"format":{"x":".2f","y":".2f"}},"mark_style":{"hover":{"color":"#0f172a","size":18,"opacity":0.9},"selected":{"opacity":1},"unselected":{"opacity":0.18}},"interaction":{"hover":true,"click":true,"select":true,"brush":true,"crosshair":true,"view_change":true,"link_group":"demo-linked-x","link_axes":["x"]}};
   const b64 = "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";
   const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-  fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);
+  xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);
 </script>
 </body>
 </html>

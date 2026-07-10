@@ -23,7 +23,7 @@
 //! - `unsafe` is confined to the `#[target_feature]` wrappers here (the one
 //!   documented exception to "unsafe only in lib.rs"); every wrapper is
 //!   reached only through a safe `try_*` fn that has checked [`use_avx2`].
-//! - Kill switch: `FASTCHARTS_SIMD=0` forces the scalar paths — the
+//! - Kill switch: `XY_SIMD=0` forces the scalar paths — the
 //!   before/after benchmark and a debugging escape hatch.
 //!
 //! Non-x86_64 (e.g. aarch64) needs nothing here: NEON is part of the aarch64
@@ -46,7 +46,7 @@ pub(crate) fn use_avx2() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| {
-        std::env::var_os("FASTCHARTS_SIMD").is_none_or(|v| v != "0")
+        std::env::var_os("XY_SIMD").is_none_or(|v| v != "0")
             && std::arch::is_x86_feature_detected!("avx2")
     })
 }

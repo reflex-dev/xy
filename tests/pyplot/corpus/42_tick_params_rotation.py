@@ -1,4 +1,4 @@
-import fastcharts.pyplot as plt
+import xy.pyplot as plt
 
 fig, ax = plt.subplots()
 ax.bar(["alpha", "beta", "gamma"], [5, 3, 6])

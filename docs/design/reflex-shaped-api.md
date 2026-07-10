@@ -2,7 +2,7 @@
 
 **Status:** design proposal.
 
-Goal: make FastCharts feel like a Reflex component tree: declarative,
+Goal: make XY feel like a Reflex component tree: declarative,
 children-first, styleable with normal CSS/Tailwind, and easy to wrap in Reflex
 later. The core package must still have **no Reflex dependency** and must keep
 the notebook/static export ergonomics users already expect: `.show()`,
@@ -13,10 +13,10 @@ and overlays; this one defines the public API shape and styling contract.
 
 ## 1. Summary
 
-FastCharts should expose a small framework-agnostic component model:
+XY should expose a small framework-agnostic component model:
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 chart = fc.chart(
     fc.scatter(
@@ -53,7 +53,7 @@ chart._repr_html_()          # standalone HTML repr fallback
 chart.to_png("chart.png")    # optional Chromium screenshot
 ```
 
-The tree is not a Reflex tree. It is a pure FastCharts Python object graph that
+The tree is not a Reflex tree. It is a pure XY Python object graph that
 can be rendered by notebooks, static HTML export, and future adapters:
 
 ```mermaid
@@ -65,7 +65,7 @@ flowchart LR
   NB["Notebook widget<br/>.show()"]
   HTML["Standalone HTML<br/>to_html()"]
   PNG["PNG export<br/>to_png()"]
-  RX["Future reflex-fastcharts<br/>adapter"]
+  RX["Future reflex-xy<br/>adapter"]
 
   USER --> TREE --> FIG --> SPEC
   SPEC --> NB
@@ -76,14 +76,14 @@ flowchart LR
 
 ## 2. Design Principles
 
-- **No framework dependency in `fastcharts`.** The package may be easy to wrap
+- **No framework dependency in `xy`.** The package may be easy to wrap
   in Reflex, Dash, Streamlit, or plain web apps, but it imports none of them.
 - **Adapters use the thinnest possible dependency.** A future Reflex adapter
   should avoid depending on the full Reflex package unless that is the only
   supported public integration point. Prefer no hard Reflex dependency, or a
   core/component-only Reflex package if Reflex exposes one. Treat full Reflex as
   an optional app dependency, not something chart users inherit by installing
-  FastCharts.
+  XY.
 - **Full Reflex is not the default adapter dependency.** The target order is:
   no hard Reflex dependency first; then a supported Reflex core/component
   package if Reflex publishes one; then full `reflex` only as an explicit,
@@ -100,7 +100,7 @@ flowchart LR
   WebGL marks are pixels, so their color/opacity/width still come from mark
   props that may resolve CSS color tokens.
 - **Data never lives in framework state.** Component props describe bindings and
-  styling. Large canonical arrays stay in FastCharts column storage and ship as
+  styling. Large canonical arrays stay in XY column storage and ship as
   binary buffers.
 - **Notebook and static export stay first-class.** The declarative API is not
   only for web apps. It must render in Jupyter and export to standalone HTML.
@@ -196,7 +196,7 @@ atomic file replacement for path writes.
 
 ## 4. Styling Contract
 
-FastCharts should support styling through three layers, in this order:
+XY should support styling through three layers, in this order:
 
 1. **CSS variables** for theme tokens used by canvas and DOM chrome.
 2. **Class hooks** for DOM chrome and wrapper styling.
@@ -250,7 +250,7 @@ DOM chrome slots:
 
 | Slot | Element |
 |---|---|
-| `root` | Outermost `.fastcharts` wrapper |
+| `root` | Outermost `.xy` wrapper |
 | `title` | Title chrome |
 | `chrome` | Canvas-backed axis/grid/annotation layer |
 | `canvas` | Plot canvas |
@@ -278,7 +278,7 @@ zero-specificity `:where([data-fc-slot="…"])` default stylesheet, so a
 over the built-in look without needing `!important`. In the standalone
 `to_html(...)` export — which has no host page to inherit Tailwind from — pass
 `custom_css="…"` to inject the stylesheet that defines those utility classes.
-The canonical slot tuple is exported as `fastcharts.CHART_DOM_SLOTS` so adapters
+The canonical slot tuple is exported as `xy.CHART_DOM_SLOTS` so adapters
 and tests do not have to copy this table by hand. That root export resolves
 through the lightweight DOM contract module, so framework adapters can inspect
 the styling surface without importing NumPy, the chart engine, or widget stack.
@@ -355,7 +355,7 @@ Design rules:
 - `fields`, `title`, and `format` compile to a safe client readout spec.
 - Text is inserted with `textContent` or text nodes.
 - Framework adapters can map tooltip payloads to framework-side custom
-  components. Core `fastcharts` stores those components as opaque Python
+  components. Core `xy` stores those components as opaque Python
   objects and does not import Reflex.
 
 Implemented adapter hook:
@@ -431,12 +431,12 @@ The component tree compiles once and can target multiple renderers.
 | Future Reflex | external adapter package | Uses the smallest supported Reflex surface; core does not import Reflex |
 | Future server app | generic payload/message routes | Same wire protocol |
 
-This keeps the API framework-shaped without making FastCharts a framework
+This keeps the API framework-shaped without making XY a framework
 package.
 
 ## 8. What The Future Reflex Adapter Looks Like
 
-FastCharts core:
+XY core:
 
 ```python
 chart = fc.chart(
@@ -449,7 +449,7 @@ Future app code using an adapter:
 
 ```python
 import reflex as rx
-import reflex_fastcharts as rfc
+import reflex_xy as rfc
 
 class State(rx.State):
     chart_token: str = ""
@@ -478,14 +478,14 @@ should still use the minimum possible Reflex dependency surface:
 - Last resort: depend on full `reflex`, and document why the public API requires
   it.
 
-In every case, `fastcharts` remains pure and Reflex-free.
+In every case, `xy` remains pure and Reflex-free.
 
 Dependency rule:
 
 ```text
-pip install fastcharts                 # never installs Reflex
-pip install reflex-fastcharts          # should not install full Reflex by default
-pip install reflex-fastcharts[reflex]  # only if full Reflex is truly required
+pip install xy                 # never installs Reflex
+pip install reflex-xy          # should not install full Reflex by default
+pip install reflex-xy[reflex]  # only if full Reflex is truly required
 ```
 
 The adapter can assume it is running inside a Reflex app when the user imports
@@ -501,12 +501,12 @@ of the API before implementation details are locked.
 ### 9.1 Notebook-First Chart That Also Exports
 
 This is the core promise: the declarative API feels component-shaped, but it
-still works like today's notebook-friendly FastCharts objects.
+still works like today's notebook-friendly XY objects.
 
 ```python
 import numpy as np
 import pandas as pd
-import fastcharts as fc
+import xy as fc
 
 rng = np.random.default_rng(7)
 df = pd.DataFrame(
@@ -553,7 +553,7 @@ This example shows the styling contract: Tailwind classes style the wrapper and
 DOM chrome, while marks use props and CSS variables that the renderer resolves.
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 chart = fc.chart(
     fc.histogram(
@@ -599,14 +599,14 @@ framework-independent.
 
 ### 9.3 Future Reflex App With A Thin Adapter
 
-The future adapter should consume FastCharts objects; FastCharts itself does not
+The future adapter should consume XY objects; XY itself does not
 import Reflex. This example imports Reflex because it is user application code,
 not because the core charting package depends on Reflex.
 
 ```python
 import reflex as rx
-import fastcharts as fc
-import reflex_fastcharts as rfc
+import xy as fc
+import reflex_xy as rfc
 
 
 class Dashboard(rx.State):
@@ -634,7 +634,7 @@ def page():
 ```
 
 The adapter owns the registry and event forwarding. It should avoid owning a
-full Reflex dependency unless absolutely necessary. Core FastCharts owns the
+full Reflex dependency unless absolutely necessary. Core XY owns the
 declarative chart object, binary payload, and renderer.
 
 ## 10. Compatibility Contract
@@ -650,7 +650,7 @@ Must keep:
 - `Chart.to_html(...)`.
 - `Chart.to_png(...)`.
 - Static HTML exports with no Python/Reflex runtime.
-- No Reflex import in `fastcharts`.
+- No Reflex import in `xy`.
 
 Now part of the core alpha contract:
 
@@ -700,7 +700,7 @@ Should avoid:
 
 - Add `on_view_change`.
 - For standalone HTML, dispatch optional DOM `CustomEvent`s:
-  `fastcharts:hover`, `fastcharts:select`, `fastcharts:view`.
+  `xy:hover`, `xy:select`, `xy:view`.
 - Keep Python callbacks notebook-only.
 
 ### Phase 5: External Reflex Adapter
@@ -721,7 +721,7 @@ Should avoid:
   export.
 - The chart root and chrome can be styled with Tailwind classes.
 - Mark colors can be driven by CSS variables.
-- `pip install fastcharts` does not install Reflex.
+- `pip install xy` does not install Reflex.
 - Installing the adapter does not pull full Reflex unless that dependency is
   proven necessary and isolated behind an extra or clearly documented package.
 - Security tests still prove text is never inserted via HTML parser sinks.

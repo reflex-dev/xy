@@ -1,11 +1,11 @@
-"""Core 2D chart benchmark: fastcharts vs Plotly and Seaborn.
+"""Core 2D chart benchmark: xy vs Plotly and Seaborn.
 
 This benchmark covers the regular 2D chart families added after the original
 scatter/line wedge: histogram, area, bar variants, and heatmap. It measures the
 cost a Python charting library pays before a browser can render:
 
   build_s        construct the figure object from already-generated arrays
-  payload_s      serialize/prepare the chart payload (fastcharts binary
+  payload_s      serialize/prepare the chart payload (xy binary
                  spec+blob; Plotly JSON figure; Seaborn Agg PNG)
   total_s        build + payload
   payload_bytes  chart data/spec bytes, excluding the JS runtime bundle
@@ -13,7 +13,7 @@ cost a Python charting library pays before a browser can render:
   ttfr_ms        optional data→first-paint estimate in headless Chromium
 
 Data generation is excluded from timings. Plotly is the primary interactive
-comparison because this harness answers "are the new fastcharts APIs up to par
+comparison because this harness answers "are the new xy APIs up to par
 against the dominant Python interactive plotting library?" Seaborn is included
 as a static/statistical Python baseline where it has natural chart primitives.
 The broader scatter benchmark in `bench_vs.py` still covers matplotlib, Bokeh,
@@ -72,7 +72,7 @@ class Case:
     label: str
     work_units: int
     unit: str
-    fastcharts_build: Callable[[], Any]
+    xy_build: Callable[[], Any]
     plotly_build: Callable[[], Any] | None
     seaborn_build: Callable[[], Any] | None
 
@@ -100,7 +100,7 @@ def _measure(
     # Timing and memory come from two separate passes (see bench_vs.py's
     # _measure for the rationale): tracemalloc's per-allocation overhead
     # scales with allocation count, not size, so tracing during the timed
-    # pass would penalize allocation-heavy libraries more than fastcharts'
+    # pass would penalize allocation-heavy libraries more than xy'
     # handful of large buffer operations. RSS is measured around this first,
     # timed pass — not the tracemalloc pass — because freed arenas are
     # typically not returned to the OS, so a second pass's "before" baseline
@@ -117,7 +117,7 @@ def _measure(
 
     mode = "direct"
     oracle_kind = "successful-chart-construction"
-    if library == "fastcharts":
+    if library == "xy":
         oracle_spec, _oracle_blob = fig.build_payload()
         traces = oracle_spec.get("traces", [])
         expected_kind = {
@@ -131,17 +131,17 @@ def _measure(
         trace_kinds = {str(trace.get("kind")) for trace in traces}
         if trace_kinds != {expected_kind}:
             raise AssertionError(
-                f"fastcharts {family} emitted trace kinds {trace_kinds}, expected {expected_kind!r}"
+                f"xy {family} emitted trace kinds {trace_kinds}, expected {expected_kind!r}"
             )
         tiers = {str(trace.get("tier")) for trace in traces}
         if not tiers or any(
             tier not in {"direct", "decimated", "density", "sampled"} for tier in tiers
         ):
-            raise AssertionError(f"invalid or undisclosed fastcharts reduction tiers: {tiers}")
+            raise AssertionError(f"invalid or undisclosed xy reduction tiers: {tiers}")
         mode = next(iter(tiers)) if len(tiers) == 1 else "adaptive"
         oracle_kind = "family-reduction-and-mark-count"
         if any(int(trace.get("n_marks", 0)) <= 0 for trace in traces):
-            raise AssertionError("fastcharts core-2D trace has no rendered marks")
+            raise AssertionError("xy core-2D trace has no rendered marks")
 
     row = {
         "library": library,
@@ -152,7 +152,7 @@ def _measure(
         "status": "ok",
         "mode": mode,
         "render_target": {
-            "fastcharts": "binary-spec",
+            "xy": "binary-spec",
             "plotly": "json-spec",
             "seaborn": "png-agg",
         }[library],
@@ -283,8 +283,8 @@ def _seaborn_barplot(sns: Any, **kwargs: Any) -> Any:
 
 
 def _payload_for(library: str) -> Callable[[Any], int]:
-    if library == "fastcharts":
-        return _fastcharts_payload
+    if library == "xy":
+        return _xy_payload
     if library == "plotly":
         return _plotly_payload
     if library == "seaborn":
@@ -293,8 +293,8 @@ def _payload_for(library: str) -> Callable[[Any], int]:
 
 
 def _artifact_for(library: str) -> Callable[[Any], str] | None:
-    if library == "fastcharts":
-        return _fastcharts_artifact
+    if library == "xy":
+        return _xy_artifact
     if library == "plotly":
         return _plotly_artifact
     if library == "seaborn":
@@ -302,12 +302,12 @@ def _artifact_for(library: str) -> Callable[[Any], str] | None:
     raise ValueError(f"unknown library: {library}")
 
 
-def _fastcharts_payload(fig: Any) -> int:
+def _xy_payload(fig: Any) -> int:
     spec, blob = fig.build_payload()
     return _json_bytes(spec) + len(blob)
 
 
-def _fastcharts_artifact(fig: Any) -> str:
+def _xy_artifact(fig: Any) -> str:
     return fig.to_html()
 
 
@@ -390,7 +390,7 @@ def make_cases(profile: str) -> list[Case]:
 
     go = _plotly_or_none()
     seaborn = _seaborn_or_none()
-    from fastcharts import area, bar, chart, column, heatmap, hist
+    from xy import area, bar, chart, column, heatmap, hist
 
     rng = np.random.default_rng(42)
     cases: list[Case] = []
@@ -658,7 +658,7 @@ def _warm_up_libraries(case: Any) -> None:
     """Build each library once, discarded and untimed, so import/first-figure
     initialization is paid before the measured loop rather than landing on the
     first timed case."""
-    for build in (case.fastcharts_build, case.plotly_build, case.seaborn_build):
+    for build in (case.xy_build, case.plotly_build, case.seaborn_build):
         # A library that can't build this case (missing dep, or e.g. Seaborn
         # lacking a native primitive) simply isn't warmed — the timed loop
         # records it as unavailable anyway.
@@ -683,7 +683,7 @@ def run(
     _warm_up_libraries(cases[0])
     for case in cases:
         for library, build in (
-            ("fastcharts", case.fastcharts_build),
+            ("xy", case.xy_build),
             ("plotly", case.plotly_build),
             ("seaborn", case.seaborn_build),
         ):
@@ -711,7 +711,7 @@ def run(
 
     comparisons = []
     for case in cases:
-        fc = _find_row(rows, case, "fastcharts")
+        fc = _find_row(rows, case, "xy")
         pl = _find_row(rows, case, "plotly")
         sb = _find_row(rows, case, "seaborn")
         comp = {
@@ -763,7 +763,7 @@ def _find_row(rows: list[dict[str, Any]], case: Case, library: str) -> dict[str,
 
 def to_markdown(report: dict[str, Any]) -> str:
     lines = [
-        "# Core 2D chart benchmark: fastcharts vs Plotly and Seaborn",
+        "# Core 2D chart benchmark: xy vs Plotly and Seaborn",
         "",
         f"Profile: `{report['profile']}`. TTFR: `{report['ttfr']}` "
         f"(cap: {report['ttfr_max_work_units']:,} work units).",
@@ -786,9 +786,9 @@ def to_markdown(report: dict[str, Any]) -> str:
             "",
         ]
     try:
-        import fastcharts.kernels as kernels
+        import xy.kernels as kernels
 
-        lines += [f"fastcharts backend: `{kernels.BACKEND}`", ""]
+        lines += [f"xy backend: `{kernels.BACKEND}`", ""]
     except Exception:
         pass
 
@@ -853,12 +853,12 @@ def to_markdown(report: dict[str, Any]) -> str:
         "",
         "Notes:",
         "",
-        "- `payload bytes` excludes the JavaScript runtime bundle: fastcharts reports spec JSON + binary blob; Plotly reports figure JSON; Seaborn reports the Agg PNG bytes.",
+        "- `payload bytes` excludes the JavaScript runtime bundle: xy reports spec JSON + binary blob; Plotly reports figure JSON; Seaborn reports the Agg PNG bytes.",
         "- `html bytes` is the standalone HTML used by the optional TTFR browser probe, with JavaScript inlined for browser-rendered libraries.",
         "- Seaborn rows are static matplotlib/Agg raster output. Their TTFR is reported as total chart-to-pixels time because the PNG already exists after payload generation.",
-        "- Histogram compares the public chart APIs: fastcharts bins in Python before shipping rectangles; Plotly `Histogram` ships raw values for plotly.js to bin.",
+        "- Histogram compares the public chart APIs: xy bins in Python before shipping rectangles; Plotly `Histogram` ships raw values for plotly.js to bin.",
         "- When TTFR is measured, the verdict is based on user-visible first paint plus payload size; raw payload-prep time remains visible for backend-kernel regressions.",
-        "- Without TTFR, a `watch` verdict means Plotly matched or beat fastcharts on total payload-prep time or payload size. Seaborn comparison metrics are reported separately and do not control the Plotly verdict.",
+        "- Without TTFR, a `watch` verdict means Plotly matched or beat xy on total payload-prep time or payload size. Seaborn comparison metrics are reported separately and do not control the Plotly verdict.",
     ]
     return "\n".join(lines)
 

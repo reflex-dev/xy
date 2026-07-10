@@ -38,7 +38,7 @@ class Chart:
     def to_png(self): ...
 """
 EXPORT_PY = """
-FASTCHARTS_CHROMIUM = "FASTCHARTS_CHROMIUM"
+XY_CHROMIUM = "XY_CHROMIUM"
 def _bundled_js(which): ...
 def _json_for_inline_script(value): ...
 def _javascript_for_inline_script(source): ...
@@ -64,12 +64,12 @@ STANDALONE_JS = (
     "function render() {}\n"
     "function renderStandalone() {}\n"
     "const padding = '" + ("x" * 1000) + "';\n"
-    "window.fastcharts = { render, renderStandalone, ChartView };\n"
+    "window.xy = { render, renderStandalone, ChartView };\n"
 )
 DEFAULT_METADATA = "\n".join(
     [
         "Metadata-Version: 2.4",
-        "Name: fastcharts",
+        "Name: xy",
         "Version: 0.1.0",
         "Requires-Python: >=3.11",
         "Requires-Dist: anywidget>=0.9",
@@ -143,36 +143,36 @@ def _write_wheel(
     with zipfile.ZipFile(path, "w") as zf:
         for name in sorted(verify_wheel.REQUIRED_FILES - omit):
             data: bytes | str = replacements.get(name, "")
-            if name == "fastcharts/__init__.py" and name not in replacements:
+            if name == "xy/__init__.py" and name not in replacements:
                 data = INIT_PY
-            elif name == "fastcharts/_figure.py" and name not in replacements:
+            elif name == "xy/_figure.py" and name not in replacements:
                 data = FIGURE_PY
-            elif name == "fastcharts/marks.py" and name not in replacements:
+            elif name == "xy/marks.py" and name not in replacements:
                 data = MARKS_PY
-            elif name == "fastcharts/components.py" and name not in replacements:
+            elif name == "xy/components.py" and name not in replacements:
                 data = COMPONENTS_PY
-            elif name == "fastcharts/export.py" and name not in replacements:
+            elif name == "xy/export.py" and name not in replacements:
                 data = EXPORT_PY
-            elif name == "fastcharts/kernels.py" and name not in replacements:
+            elif name == "xy/kernels.py" and name not in replacements:
                 data = KERNELS_PY
-            elif name == "fastcharts/static/index.js" and name not in replacements:
+            elif name == "xy/static/index.js" and name not in replacements:
                 data = INDEX_JS
-            elif name == "fastcharts/static/standalone.js" and name not in replacements:
+            elif name == "xy/static/standalone.js" and name not in replacements:
                 data = STANDALONE_JS
             write(zf, name, data)
         if native:
-            write(zf, "fastcharts/_native_lib/libfastcharts_core.dylib", b"native")
+            write(zf, "xy/_native_lib/libxy_core.dylib", b"native")
         for name, data in extra.items():
             write(zf, name, data)
-        wheel_name = "fastcharts-0.1.0.dist-info/WHEEL"
+        wheel_name = "xy-0.1.0.dist-info/WHEEL"
         write(
             zf,
             wheel_name,
             (f"Wheel-Version: 1.0\nRoot-Is-Purelib: {str(root_is_purelib).lower()}\nTag: {tag}\n"),
         )
         if metadata is not None:
-            write(zf, "fastcharts-0.1.0.dist-info/METADATA", metadata)
-        record_name = "fastcharts-0.1.0.dist-info/RECORD"
+            write(zf, "xy-0.1.0.dist-info/METADATA", metadata)
+        record_name = "xy-0.1.0.dist-info/RECORD"
         record_data = (
             record_override
             if record_override is not None
@@ -187,21 +187,21 @@ def _write_wheel(
 
 
 def test_verify_native_wheel_accepts_required_artifact_shape(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
     _write_wheel(whl)
 
     verify_wheel.verify_wheel(whl, expect_native=True)
 
 
 def test_verify_pure_wheel_accepts_required_artifact_shape(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-any.whl"
+    whl = tmp_path / "xy-0.1.0-py3-none-any.whl"
     _write_wheel(whl, tag="py3-none-any", root_is_purelib=True, native=False)
 
     verify_wheel.verify_wheel(whl, expect_native=False)
 
 
 def test_verify_wheel_accepts_normalized_metadata_spacing(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
     metadata = DEFAULT_METADATA.replace(
         "Requires-Dist: anywidget>=0.9", "Requires-Dist: anywidget >= 0.9"
     ).replace("Requires-Dist: numpy>=1.24", "Requires-Dist: numpy >= 1.24")
@@ -211,7 +211,7 @@ def test_verify_wheel_accepts_normalized_metadata_spacing(tmp_path: Path) -> Non
 
 
 def test_verify_native_wheel_rejects_filename_tag_mismatch(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-any.whl"
+    whl = tmp_path / "xy-0.1.0-py3-none-any.whl"
     _write_wheel(whl, tag="py3-none-macosx_11_0_arm64")
 
     with pytest.raises(AssertionError, match="filename tag"):
@@ -219,7 +219,7 @@ def test_verify_native_wheel_rejects_filename_tag_mismatch(tmp_path: Path) -> No
 
 
 def test_verify_pure_wheel_rejects_filename_tag_mismatch(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
     _write_wheel(whl, tag="py3-none-any", root_is_purelib=True, native=False)
 
     with pytest.raises(AssertionError, match="filename tag"):
@@ -227,7 +227,7 @@ def test_verify_pure_wheel_rejects_filename_tag_mismatch(tmp_path: Path) -> None
 
 
 def test_verify_wheel_rejects_missing_metadata_file(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
     _write_wheel(whl, metadata=None)
 
     with pytest.raises(AssertionError, match="METADATA"):
@@ -238,8 +238,8 @@ def test_verify_wheel_rejects_missing_metadata_file(tmp_path: Path) -> None:
     ("metadata", "match"),
     [
         (
-            DEFAULT_METADATA.replace("Name: fastcharts", "Name: othercharts"),
-            "Name: fastcharts",
+            DEFAULT_METADATA.replace("Name: xy", "Name: othercharts"),
+            "Name: xy",
         ),
         (
             DEFAULT_METADATA.replace("Version: 0.1.0", "Version: 0.2.0"),
@@ -264,7 +264,7 @@ def test_verify_wheel_rejects_missing_metadata_file(tmp_path: Path) -> None:
     ],
 )
 def test_verify_wheel_rejects_invalid_metadata(tmp_path: Path, metadata: str, match: str) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
     _write_wheel(whl, metadata=metadata)
 
     with pytest.raises(AssertionError, match=match):
@@ -272,35 +272,35 @@ def test_verify_wheel_rejects_invalid_metadata(tmp_path: Path, metadata: str, ma
 
 
 def test_verify_wheel_rejects_missing_type_marker(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
-    _write_wheel(whl, omit={"fastcharts/py.typed"})
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, omit={"xy/py.typed"})
 
     with pytest.raises(AssertionError, match="py\\.typed"):
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 
 def test_verify_wheel_rejects_partial_type_marker(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
-    _write_wheel(whl, replacements={"fastcharts/py.typed": "partial\n"})
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, replacements={"xy/py.typed": "partial\n"})
 
     with pytest.raises(AssertionError, match="full-package PEP 561 marker"):
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 
 def test_verify_wheel_rejects_corrupt_python_module(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
-    _write_wheel(whl, replacements={"fastcharts/__init__.py": ""})
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, replacements={"xy/__init__.py": ""})
 
     with pytest.raises(AssertionError, match=r"__init__\.py"):
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 
 def test_verify_wheel_rejects_stale_figure_export_surface(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
     _write_wheel(
         whl,
         replacements={
-            "fastcharts/_figure.py": """
+            "xy/_figure.py": """
 from . import marks as _marks
 class Figure:
     line = _marks.line
@@ -315,11 +315,11 @@ class Figure:
 
 
 def test_verify_wheel_rejects_stale_marks_export_surface(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
     _write_wheel(
         whl,
         replacements={
-            "fastcharts/marks.py": """
+            "xy/marks.py": """
 def line(self, x, y): ...
 """
         },
@@ -330,11 +330,11 @@ def line(self, x, y): ...
 
 
 def test_verify_wheel_rejects_stale_component_export_surface(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
     _write_wheel(
         whl,
         replacements={
-            "fastcharts/components.py": """
+            "xy/components.py": """
 from typing import Any
 class Chart:
     props: dict[str, Any]
@@ -348,12 +348,12 @@ class Chart:
 
 
 def test_verify_wheel_rejects_stale_html_export_safety_surface(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
     _write_wheel(
         whl,
         replacements={
-            "fastcharts/export.py": """
-FASTCHARTS_CHROMIUM = "FASTCHARTS_CHROMIUM"
+            "xy/export.py": """
+XY_CHROMIUM = "XY_CHROMIUM"
 def _json_for_inline_script(value): ...
 def html_to_png(html, width, height): ...
 def to_png(fig): ...
@@ -366,24 +366,24 @@ def to_png(fig): ...
 
 
 def test_verify_wheel_rejects_missing_static_bundle(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
-    _write_wheel(whl, omit={"fastcharts/static/standalone.js"})
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, omit={"xy/static/standalone.js"})
 
     with pytest.raises(AssertionError, match="required package files"):
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 
 def test_verify_wheel_rejects_corrupt_static_bundle(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
-    _write_wheel(whl, replacements={"fastcharts/static/standalone.js": "not the client"})
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, replacements={"xy/static/standalone.js": "not the client"})
 
     with pytest.raises(AssertionError, match=r"standalone\.js"):
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 
 def test_verify_wheel_rejects_unexpected_native_artifact(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
-    _write_wheel(whl, extra={"fastcharts/bad_extension.so": b"native"})
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, extra={"xy/bad_extension.so": b"native"})
 
     with pytest.raises(AssertionError, match="unexpected native artifacts"):
         verify_wheel.verify_wheel(whl, expect_native=True)
@@ -395,11 +395,11 @@ def test_verify_wheel_rejects_unexpected_native_artifact(tmp_path: Path) -> None
         "docs/api-examples.md",
         "tests/test_docs_examples.py",
         "benchmarks/bench_vs.py",
-        "examples/reflex/reflex_fastcharts_app/reflex_fastcharts_app.py",
+        "examples/reflex/reflex_xy_app/reflex_xy_app.py",
     ],
 )
 def test_verify_wheel_rejects_sdist_only_files(tmp_path: Path, extra_name: str) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
     _write_wheel(whl, extra={extra_name: b"sdist only"})
 
     with pytest.raises(AssertionError, match="sdist only"):
@@ -407,7 +407,7 @@ def test_verify_wheel_rejects_sdist_only_files(tmp_path: Path, extra_name: str) 
 
 
 def test_verify_pure_wheel_rejects_native_library(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-any.whl"
+    whl = tmp_path / "xy-0.1.0-py3-none-any.whl"
     _write_wheel(whl, tag="py3-none-any", root_is_purelib=True, native=True)
 
     with pytest.raises(AssertionError, match="must not contain native libs"):
@@ -415,7 +415,7 @@ def test_verify_pure_wheel_rejects_native_library(tmp_path: Path) -> None:
 
 
 def test_verify_wheel_rejects_missing_record(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
     _write_wheel(whl)
     with zipfile.ZipFile(whl) as zf:
         entries = [
@@ -432,7 +432,7 @@ def test_verify_wheel_rejects_missing_record(tmp_path: Path) -> None:
 
 
 def test_verify_wheel_rejects_empty_record(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
     _write_wheel(whl, record_override="")
 
     with pytest.raises(AssertionError, match="does not list archive files"):
@@ -440,34 +440,34 @@ def test_verify_wheel_rejects_empty_record(tmp_path: Path) -> None:
 
 
 def test_verify_wheel_rejects_incomplete_record(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
-    _write_wheel(whl, record_omit={"fastcharts/widget.py"})
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, record_omit={"xy/widget.py"})
 
     with pytest.raises(AssertionError, match="does not match archive files"):
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 
 def test_verify_wheel_rejects_record_hash_mismatch(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
-    _write_wheel(whl, record_overrides={"fastcharts/widget.py": ("sha256=bad", "6559")})
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(whl, record_overrides={"xy/widget.py": ("sha256=bad", "6559")})
 
     with pytest.raises(AssertionError, match="hash mismatch"):
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 
 def test_verify_wheel_rejects_record_size_mismatch(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
     init_hash = f"sha256={_record_hash(INIT_PY.encode('utf-8'))}"
-    _write_wheel(whl, record_overrides={"fastcharts/__init__.py": (init_hash, "1")})
+    _write_wheel(whl, record_overrides={"xy/__init__.py": (init_hash, "1")})
 
     with pytest.raises(AssertionError, match="size mismatch"):
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 
 def test_verify_wheel_rejects_duplicate_archive_entries(tmp_path: Path) -> None:
-    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    whl = tmp_path / "xy-0.1.0-py3-none-macosx_11_0_arm64.whl"
     with pytest.warns(UserWarning, match="Duplicate name"):
-        _write_wheel(whl, extra={"fastcharts/widget.py": b"duplicate"})
+        _write_wheel(whl, extra={"xy/widget.py": b"duplicate"})
 
     with pytest.raises(AssertionError, match="duplicate archive entries"):
         verify_wheel.verify_wheel(whl, expect_native=True)

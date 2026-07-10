@@ -1,12 +1,12 @@
-<h1 align="center">fastcharts</h1>
+<h1 align="center">xy</h1>
 
 <p align="center">
   <strong>Interactive Python charts whose cost follows the screen, not the dataset.</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/reflex-dev/reviz/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/reflex-dev/reviz/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://app.codspeed.io/reflex-dev/reviz?utm_source=badge"><img alt="CodSpeed" src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json"></a>
+  <a href="https://github.com/reflex-dev/xy/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/reflex-dev/xy/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://app.codspeed.io/reflex-dev/xy?utm_source=badge"><img alt="CodSpeed" src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json"></a>
   <a href="pyproject.toml"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab?logo=python&logoColor=white"></a>
   <a href="src/"><img alt="Rust native core" src="https://img.shields.io/badge/Rust-native%20core-b7410e?logo=rust&logoColor=white"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
@@ -20,13 +20,13 @@
   <a href="#architecture">Architecture</a>
 </p>
 
-![fastcharts 10M-point benchmark snapshot](docs/assets/benchmark-snapshot.svg)
+![xy 10M-point benchmark snapshot](docs/assets/benchmark-snapshot.svg)
 
 <p align="center">
   <sub>Measured by the benchmark-refresh CI workflow on 2026-07-08. See <a href="#10m-point-native-benchmark">the full benchmark notes</a> for methodology and caveats.</sub>
 </p>
 
-**fastcharts** is an experimental Python charting engine for very large,
+**xy** is an experimental Python charting engine for very large,
 interactive line, scatter, density, area, histogram, bar, and heatmap charts.
 It combines a native Rust compute core, binary columnar transport, WebGL2
 rendering, and level-of-detail tiers so notebooks and standalone HTML exports
@@ -64,7 +64,7 @@ in [`docs/design-dossier.md`](docs/design-dossier.md).
 Most chart libraries write every data point out as text (`{"x": 3.14159, "y":
 2.71828}`) and draw one shape per point. At ten million points the browser
 drowns in parsing and shapes even though the screen only has a couple million
-pixels, so most of that work is invisible. fastcharts is built around one idea:
+pixels, so most of that work is invisible. xy is built around one idea:
 **cost should scale with the pixels on screen, not with how much data you
 have.**
 
@@ -128,12 +128,12 @@ Still experimental and expected to change before 1.0:
 | Composition API | Stabilizing alpha | The single public chart-building API: declarative `fc.chart(...children)`, layered marks, axes, annotations, custom legend/tooltip chrome, callbacks, CSS/Tailwind hooks, and notebook/static export methods. |
 | Standalone HTML export | Stable alpha | Self-contained output with bundled JS, escaped metadata, and binary payloads. |
 | Native Rust backend | Stable alpha; required compute core | Used for fast ingest, binning, and decimation. Bundled in every published wheel; on a platform with no wheel and no local Rust build, the compute layer raises a clear error rather than degrading. |
-| Reflex integration | Experimental | Example app exists; core `fastcharts` has no Reflex dependency; any future adapter should use no hard Reflex dependency, or only a supported Reflex core/component package unless full Reflex is proven necessary. |
+| Reflex integration | Experimental | Example app exists; core `xy` has no Reflex dependency; any future adapter should use no hard Reflex dependency, or only a supported Reflex core/component package unless full Reflex is proven necessary. |
 | Adaptive drilldown internals | Experimental | Thresholds and request protocol may move as the LOD engine evolves. |
 
-## Why fastcharts
+## Why xy
 
-| Problem in large charts | fastcharts approach |
+| Problem in large charts | xy approach |
 |---|---|
 | JSON payloads grow with every point | Binary f32 buffers ship as widget buffers |
 | SVG creates one DOM node per mark | WebGL2 draws instanced marks and line segments |
@@ -146,7 +146,7 @@ Still experimental and expected to change before 1.0:
 ### From a published wheel (recommended — no toolchain)
 
 ```bash
-pip install fastcharts
+pip install xy
 ```
 
 That's it. The Rust core ships **as a prebuilt binary inside the wheel** — you
@@ -167,16 +167,16 @@ Python 3.11+, `uv` (or plain `pip`), and a **Rust toolchain** are the
 requirements for a source build:
 
 ```bash
-git clone https://github.com/reflex-dev/reviz.git
-cd reviz
+git clone https://github.com/reflex-dev/xy.git
+cd xy
 uv venv
 uv pip install -e ".[dev]"
 ```
 
-- **Rust is required from source.** fastcharts computes through a compiled Rust
+- **Rust is required from source.** xy computes through a compiled Rust
   core and there is no pure-Python fallback, so a source install compiles that
   core — install [Rust via rustup](https://rustup.rs) first. On a supported
-  platform you can skip the toolchain entirely: `pip install fastcharts` pulls a
+  platform you can skip the toolchain entirely: `pip install xy` pulls a
   prebuilt wheel with the core already inside. If the native core cannot be
   loaded, importing the compute layer raises a clear, actionable error that
   names the supported platforms — never a silent degrade.
@@ -192,7 +192,7 @@ loudly on import, keeping the no-wheel behavior a defined, actionable error.
 
 | Path | Command | Toolchain needed | Result |
 |---|---|---|---|
-| Published wheel | `pip install fastcharts` | none | `native` on supported platform wheels |
+| Published wheel | `pip install xy` | none | `native` on supported platform wheels |
 | Source with Rust | `uv pip install -e ".[dev]"` | Rust (Node only for JS edits) | `native` |
 | Platform/build with no native core | — | — | clear `ImportError` on first compute, naming supported platforms |
 
@@ -204,12 +204,12 @@ in-browser (see [`docs/production-readiness.md`](docs/production-readiness.md)).
 
 ### Check the active backend
 
-`import fastcharts` is intentionally lightweight: it does not import NumPy or
-load the native core. Import `fastcharts.kernels` when you want to initialize and
+`import xy` is intentionally lightweight: it does not import NumPy or
+load the native core. Import `xy.kernels` when you want to initialize and
 inspect the compute backend:
 
 ```bash
-python -c "import fastcharts.kernels as k; print(k.BACKEND)"
+python -c "import xy.kernels as k; print(k.BACKEND)"
 ```
 
 `BACKEND` is always `native`. On a platform where the native core cannot load,
@@ -228,7 +228,7 @@ Change one line and keep your plotting code:
 ```python
 import numpy as np
 
-import fastcharts.pyplot as plt  # instead of: import matplotlib.pyplot as plt
+import xy.pyplot as plt  # instead of: import matplotlib.pyplot as plt
 
 x = np.linspace(0.0, 10.0, 200)
 fig, ax = plt.subplots()
@@ -249,7 +249,7 @@ is corpus-defined and CI-enforced: see
 Create a small business chart:
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 months = [1, 2, 3, 4, 5, 6]
 revenue = [42, 45, 48, 51, 55, 59]
@@ -269,7 +269,7 @@ Create a line chart:
 
 ```python
 import numpy as np
-import fastcharts as fc
+import xy as fc
 
 n = 100_000
 x = np.arange(n, dtype=np.float64)
@@ -288,7 +288,7 @@ Create a colored, sized scatter plot:
 
 ```python
 import numpy as np
-import fastcharts as fc
+import xy as fc
 
 rng = np.random.default_rng(1)
 x = rng.normal(size=50_000)
@@ -311,7 +311,7 @@ Export a standalone HTML file:
 
 ```python
 import numpy as np
-import fastcharts as fc
+import xy as fc
 
 rng = np.random.default_rng(2)
 x = rng.normal(size=2_000)
@@ -348,9 +348,9 @@ trusted HTML in CI/container environments where sandboxed Chromium cannot launch
 ## Example Apps
 
 - [`examples/reflex/`](examples/reflex/) is a standalone Reflex
-  dashboard that embeds generated fastcharts line, scatter, density, histogram,
+  dashboard that embeds generated xy line, scatter, density, histogram,
   area, bar, and heatmap charts, including large-data drilldown examples. Its
-  Reflex dependency is app-local; installing `fastcharts` itself must not pull
+  Reflex dependency is app-local; installing `xy` itself must not pull
   in Reflex.
 - [`examples/dashboard/site_overview.py`](examples/dashboard/site_overview.py)
   recreates an Ahrefs-style metrics dashboard: five edge-to-edge sparklines
@@ -364,13 +364,13 @@ trusted HTML in CI/container environments where sandboxed Chromium cannot launch
 
 ## The Composition API
 
-fastcharts has one public chart-building API: declarative composition. Charts
+xy has one public chart-building API: declarative composition. Charts
 are built from lightweight children — marks, axes, annotations, chrome — and
 take event props:
 
 ```python
 import numpy as np
-import fastcharts as fc
+import xy as fc
 
 timestamps = np.arange("2026-01-01", "2026-01-08", dtype="datetime64[h]")
 values = np.sin(np.linspace(0, 12, len(timestamps)))
@@ -382,7 +382,7 @@ Column names resolve through `data=`, and `on_*` props receive hover and
 selection events:
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 data = {
     "gdp": [38_000, 46_000, 58_000, 71_000],
@@ -406,7 +406,7 @@ The neutral `fc.chart(...)` container overlays mixed marks and annotations on
 one panel:
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 data = {
     "month": ["Jan", "Feb", "Mar", "Apr"],
@@ -448,7 +448,7 @@ view-change behavior.
 
 `chrome_components()` returns a keyed slot map, for example
 `{"legend": my_legend, "tooltip": my_tooltip}`. Adapters should mount those
-objects by slot name next to the FastCharts HTML/widget container; it is not an
+objects by slot name next to the XY HTML/widget container; it is not an
 iterable child list.
 
 ### Styling the marks
@@ -459,7 +459,7 @@ and full CSS-alpha colors (`docs/styling.md`):
 
 ```python
 import numpy as np
-import fastcharts as fc
+import xy as fc
 
 x = np.arange(24.0)
 y = np.abs(np.sin(x / 4.0)) * 10 + 2
@@ -489,7 +489,7 @@ For a chrome-less, edge-to-edge sparkline, `padding=0` fills the box and
 ## Benchmark Snapshot
 
 Benchmarks live in [`benchmarks/`](benchmarks/). The cross-library harness now
-compares fastcharts with matplotlib, seaborn, Plotly, Bokeh, Altair,
+compares xy with matplotlib, seaborn, Plotly, Bokeh, Altair,
 Datashader, and hvPlot/HoloViews.
 
 The benchmark program tracks separate performance categories rather than one
@@ -499,7 +499,7 @@ dashboards, interaction smoothness, payload/export size, and core 2D chart
 breadth, plus input ingestion, streaming updates, and static export. See
 [`docs/benchmark.md`](docs/benchmark.md) for the category goals and fairness
 notes. The stable category IDs are emitted in `benchmark.json` and attached to
-the fastcharts-only benchmark rows as `benchmark_categories`. JSON benchmark
+the xy-only benchmark rows as `benchmark_categories`. JSON benchmark
 artifacts also include a schema version and `environment` block with Python,
 platform, package, executable, and git metadata so performance claims keep their
 run context. The benchmark verifier rejects non-finite, negative, or
@@ -519,7 +519,7 @@ environment metadata, report validation, or regression comparison scripts.
 Run `make check-claims` after editing README/docs/package metadata or copying
 benchmark numbers into public-facing text.
 
-Run the fastcharts kernel/payload benchmarks:
+Run the xy kernel/payload benchmarks:
 
 ```bash
 uv run python benchmarks/bench.py --sizes 1e5,1e6,1e7
@@ -557,13 +557,13 @@ full tables and fairness notes.
 
 | Library | Target | Total | Peak mem | Resident Δ | Payload / output |
 |---|---|---:|---:|---:|---:|
-| fastcharts | GPU binary payload | **169 ms** | **126 MB** | **+10 MB** | **832 KB** |
+| xy | GPU binary payload | **169 ms** | **126 MB** | **+10 MB** | **832 KB** |
 | matplotlib | Agg PNG | 3,239 ms | 553 MB | +223 MB | 42 KB |
 | Seaborn | matplotlib/Agg PNG | 7,918 ms | 1,088 MB | +695 MB | 32 KB |
 | Plotly `Scattergl` | Kaleido PNG | 54,064 ms | 1,584 MB | +382 MB | 49 KB |
 | Plotly `Scatter` | SVG/Kaleido | over budget above 1M | 184 MB at 1M | — | 109 KB at 1M |
 
-These rows intentionally name different targets: FastCharts binary preparation
+These rows intentionally name different targets: XY binary preparation
 versus Agg/Kaleido PNG production. They demonstrate scaling, payload, and memory
 behavior, not a same-render-target "x times faster" claim. Ingest is zero-copy
 for well-formed f64 arrays (the canonical store holds a reference, not a
@@ -577,7 +577,7 @@ in isolation, where it stays near 2 MB regardless of N.)
 
 Measured by the `benchmark-refresh` CI workflow on 2026-07-08 (Ubuntu, native
 Rust backend, headless-Chrome TTFR). `Speedup` is total payload-prep time
-(Plotly's `total` ÷ fastcharts' `total`); the harness warms each library once
+(Plotly's `total` ÷ xy' `total`); the harness warms each library once
 before timing so no row is charged a one-time cold-start. Rows are interactive
 sizes where a browser TTFR was measured.
 
@@ -590,7 +590,7 @@ sizes where a browser TTFR was measured.
 | Stacked bar | 100 categories x 4 | 4.5x faster | 1.7x smaller | 5.1x faster |
 | Heatmap | 50 x 50 cells | 32.2x faster | 3.4x smaller | 4.6x faster |
 
-Payload reduction grows sharply with data size, because fastcharts bins
+Payload reduction grows sharply with data size, because xy bins
 Python-side and ships fixed-size rectangles while Plotly ships raw values: the
 histogram payload advantage goes from 33x smaller at 10k values to **321x at
 100k and 3192x at 1M**.
@@ -612,10 +612,10 @@ The same harness also measures Seaborn/Agg as a static chart-to-pixels baseline
 | Piece | Where |
 |---|---|
 | Rust core: zone maps, offset-f32 encode, M4 decimation, 2-D binning | [`src/`](src/) |
-| ctypes native binding to the Rust core | [`python/fastcharts/_native.py`](python/fastcharts/_native.py) |
-| Column store, autorange, memory accounting | [`python/fastcharts/columns.py`](python/fastcharts/columns.py) |
-| Internal scene/engine object, payload builder, line/scatter/area/histogram/bar/heatmap traces, annotations, mark styling (gradient/stroke/radius/curve/opacity) | [`python/fastcharts/_figure.py`](python/fastcharts/_figure.py) |
-| Composition API (the public chart-building surface) | [`python/fastcharts/components.py`](python/fastcharts/components.py) |
+| ctypes native binding to the Rust core | [`python/xy/_native.py`](python/xy/_native.py) |
+| Column store, autorange, memory accounting | [`python/xy/columns.py`](python/xy/columns.py) |
+| Internal scene/engine object, payload builder, line/scatter/area/histogram/bar/heatmap traces, annotations, mark styling (gradient/stroke/radius/curve/opacity) | [`python/xy/_figure.py`](python/xy/_figure.py) |
+| Composition API (the public chart-building surface) | [`python/xy/components.py`](python/xy/components.py) |
 | anywidget and standalone WebGL2 client | [`js/src/`](js/src/) (parts concatenated by `js/build.mjs`) |
 | Benchmarks | [`benchmarks/`](benchmarks/) |
 | Tests | [`tests/`](tests/) |
@@ -640,7 +640,7 @@ flowchart LR
     end
 
     subgraph BROWSER["Browser / notebook frontend"]
-        CLIENT["fastcharts client<br/>anywidget ESM or standalone IIFE"]
+        CLIENT["xy client<br/>anywidget ESM or standalone IIFE"]
         RENDER["WebGL2 renderer<br/>instanced marks<br/>line/area strips<br/>density textures"]
         DOM["DOM chrome<br/>titles, axes, legend<br/>tooltips, modebar"]
         PICK["Interaction layer<br/>GPU picking<br/>selection masks<br/>box zoom/select"]
@@ -695,8 +695,8 @@ gate expects Node 18+ plus `cargo`, `rustc`, and clippy
 (`rustup component add clippy`). Use
 `make check-sdist` and `make check-wheel` before touching packaging/docs release
 surfaces; add `WHEEL_EXPECT=--expect-native` when verifying a native release
-wheel. Use `make check-artifacts SDIST=/path/to/fastcharts.tar.gz
-WHEEL=/path/to/fastcharts.whl` when CI or a release job has already produced the
+wheel. Use `make check-artifacts SDIST=/path/to/xy.tar.gz
+WHEEL=/path/to/xy.whl` when CI or a release job has already produced the
 artifacts and you want to verify those exact files. Use `make check-ci` after
 editing workflow gates, release publishing, or benchmark artifact wiring. Use
 `make check-docs` after editing README/API prose or public benchmark wording. Use
@@ -707,15 +707,15 @@ insertion. Use `make check-errors` after changing validation, public errors,
 builder rollback behavior, LOD/drill mutation boundaries, or chart/widget
 caching. Use `make check-api` after
 changing public exports, lazy import mappings, component factories, or public
-annotations. Use `make check-import` after changing `fastcharts.__init__`,
+annotations. Use `make check-import` after changing `xy.__init__`,
 lazy import boundaries, dependency boundaries, widget/export boundaries, or
 backend import setup. Use
 `make check-browser CHROMIUM=/path/to/chrome` for the split browser hardening
 gates: lifecycle, visual regression, and interaction stress. The lifecycle
-smoke verifies each FastCharts demo asset across fresh loads, explicit hash
+smoke verifies each XY demo asset across fresh loads, explicit hash
 navigation, resize, scroll-bottom, fast-scroll, visibility, restore, and an
 all-iframe remount/reload shell so disappearing dashboard panels fail loudly.
-The visual smoke screenshots generated core families plus every FastCharts
+The visual smoke screenshots generated core families plus every XY
 gallery asset except the Plotly comparison page, and the interaction smoke
 budgets zoom, pan, hover, crosshair, box zoom, and brush select. CI runs these
 as `Browser lifecycle smoke (Chromium)`, `Browser visual regression smoke

@@ -15,9 +15,9 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import fastcharts as fc
+import xy as fc
 from categories import categories_for  # noqa: E402
-from fastcharts import kernels as k
+from xy import kernels as k
 
 BENCH_CATEGORY_IDS = ("huge_line_time_series", "payload_export_size")
 

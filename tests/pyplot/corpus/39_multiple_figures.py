@@ -1,4 +1,4 @@
-import fastcharts.pyplot as plt
+import xy.pyplot as plt
 
 plt.figure(1)
 plt.plot([1, 2, 3])

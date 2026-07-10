@@ -1,4 +1,4 @@
-# Styling FastCharts
+# Styling XY
 
 Every rendered chrome element is a stable, CSS-addressable surface. You can
 restyle the whole chart with plain CSS, attribute selectors, Tailwind, or
@@ -18,7 +18,7 @@ see [renderer-architecture.md](design/renderer-architecture.md).
 | `custom_css="..."` | A raw author stylesheet in the exported document | `to_html(fig, custom_css=...)` |
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 chart = fc.chart(
     fc.scatter(x=xs, y=ys),
@@ -67,9 +67,9 @@ raises before it reaches the client.
 
 ```css
 /* plain CSS — no build step, no classes on the Python side */
-.fastcharts [data-fc-slot="tooltip"] { border-radius: 10px; }
-.fastcharts [data-fc-slot="annotation_label"] { font-style: italic; }
-.fastcharts [data-fc-slot="canvas"] { cursor: cell; }
+.xy [data-fc-slot="tooltip"] { border-radius: 10px; }
+.xy [data-fc-slot="annotation_label"] { font-style: italic; }
+.xy [data-fc-slot="canvas"] { cursor: cell; }
 ```
 
 ```html
@@ -101,10 +101,10 @@ is authority.
 
 All default colors flow through `--chart-*` custom properties, so container
 theming cascades into the chart (including dark mode) without touching a slot.
-Set them on `.fastcharts` or any ancestor:
+Set them on `.xy` or any ancestor:
 
 ```css
-.fastcharts {
+.xy {
   --chart-bg: transparent;
   --chart-text: #e5e7eb;
   --chart-grid: rgba(255, 255, 255, 0.12);
@@ -135,11 +135,11 @@ Set them on `.fastcharts` or any ancestor:
 self-contained document, so exported charts style identically to the widget:
 
 ```python
-from fastcharts import to_html
+from xy import to_html
 
 to_html(fig, "chart.html", custom_css="""
-  .fastcharts { --chart-text: #1f2937; font-family: 'Inter', system-ui; }
-  .fastcharts [data-fc-slot="tooltip"] { backdrop-filter: blur(4px); }
+  .xy { --chart-text: #1f2937; font-family: 'Inter', system-ui; }
+  .xy [data-fc-slot="tooltip"] { backdrop-filter: blur(4px); }
 """)
 ```
 

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="540" viewBox="0 0 1200 540" role="img" aria-labelledby="title desc">
-  <title id="title">fastcharts 10M-point benchmark snapshot</title>
-  <desc id="desc">A benchmark summary showing fastcharts rendering a 10M-point scatter workload in 169 milliseconds with 126 megabytes peak memory and an 832 kilobyte payload.</desc>
+  <title id="title">xy 10M-point benchmark snapshot</title>
+  <desc id="desc">A benchmark summary showing xy rendering a 10M-point scatter workload in 169 milliseconds with 126 megabytes peak memory and an 832 kilobyte payload.</desc>
   <defs>
     <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
       <path d="M 48 0 L 0 0 0 48" fill="none" stroke="#E8E8EC" stroke-width="1"/>
@@ -61,7 +61,7 @@
       <text x="0" y="0" fill="#1C2024" font-size="14" font-weight="650">Total time vs. common renderers, log scale</text>
 
       <g transform="translate(0 24)">
-        <text x="0" y="18" fill="#1C2024" font-size="15" font-weight="650">fastcharts</text>
+        <text x="0" y="18" fill="#1C2024" font-size="15" font-weight="650">xy</text>
         <rect x="142" y="4" width="760" height="18" rx="9" fill="#F0F0F3"/>
         <rect x="142" y="4" width="56" height="18" rx="9" fill="url(#primary)"/>
         <text x="215" y="18" fill="#1C2024" font-size="15" font-weight="650">169 ms</text>

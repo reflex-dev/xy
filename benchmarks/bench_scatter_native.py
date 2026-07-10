@@ -1,6 +1,6 @@
-"""fastcharts scatter benchmark — stdlib only, no numpy, no PyPI.
+"""xy scatter benchmark — stdlib only, no numpy, no PyPI.
 
-Produces the fastcharts arm of the vs-Plotly/matplotlib comparison with real
+Produces the xy arm of the vs-Plotly/matplotlib comparison with real
 executed numbers even in a locked-down environment, measuring exactly what the
 cross-library harness (benchmarks/bench_vs.py) measures for the other libraries:
 
@@ -14,7 +14,7 @@ cross-library harness (benchmarks/bench_vs.py) measures for the other libraries:
                   Chromium: ChartView construct + draw + readback, timed with
                   performance.now() inside the page
 
-The point of comparison is the crossover: fastcharts' payload and render cost
+The point of comparison is the crossover: xy' payload and render cost
 go flat under density aggregation where CPU raster/vector libraries scale with N.
 
 Usage:
@@ -38,7 +38,7 @@ from array import array
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-STATIC = ROOT / "python" / "fastcharts" / "static"
+STATIC = ROOT / "python" / "xy" / "static"
 sys.path.insert(0, str(ROOT / "python"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -47,7 +47,7 @@ from abi_smoke import load  # noqa: E402
 from categories import BENCHMARK_CATEGORIES, categories_for  # noqa: E402
 from environment import SCHEMA_VERSION, collect_environment_metadata  # noqa: E402
 
-# Mirror the Python defaults (fastcharts._figure).
+# Mirror the Python defaults (xy._figure).
 DENSITY_THRESHOLD = 200_000
 GRID_W, GRID_H = 512, 384
 RENDER_W, RENDER_H = 900, 420
@@ -124,7 +124,7 @@ def bench_production(n: int, x: array, y: array) -> dict:
     """Time the real Figure -> spec/blob path and assert its reduction contract."""
     import numpy as np
 
-    import fastcharts as fc
+    import xy as fc
 
     reps = 3 if n <= 2_000_000 else 1
     best = float("inf")
@@ -276,7 +276,7 @@ const spec={json.dumps(spec)};
 const bytes=Uint8Array.from(atob("{base64.b64encode(bytes(blob)).decode()}"),c=>c.charCodeAt(0));
 try{{
   const t0=performance.now();
-  const v=fastcharts.renderStandalone(document.getElementById("chart"),spec,bytes.buffer);
+  const v=xy.renderStandalone(document.getElementById("chart"),spec,bytes.buffer);
   v._drawNow();
   const gl=v.gl; const px=new Uint8Array(4); gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,px);
   const t1=performance.now();
@@ -317,7 +317,7 @@ def main() -> None:
     ap.add_argument(
         "--production",
         action="store_true",
-        help="time the installed fastcharts Figure payload path instead of the C-ABI kernel shape",
+        help="time the installed xy Figure payload path instead of the C-ABI kernel shape",
     )
     ap.add_argument("--json", default=None)
     args = ap.parse_args()
@@ -328,7 +328,7 @@ def main() -> None:
 
     rows = []
     scope = "production Figure payload" if args.production else "native kernel shape"
-    print(f"fastcharts scatter — {scope}, SwiftShader render. threshold={DENSITY_THRESHOLD:,}")
+    print(f"xy scatter — {scope}, SwiftShader render. threshold={DENSITY_THRESHOLD:,}")
     hdr = "| N | tier | data prep | wire bytes | B/pt"
     sep = "|---|---|---|---|---"
     if args.render:
@@ -360,7 +360,7 @@ def main() -> None:
             ),
             "environment": collect_environment_metadata(
                 chromium=chromium or None,
-                fastcharts_backend="native",
+                xy_backend="native",
             ),
             "benchmark_categories": list(BENCHMARK_CATEGORIES),
             "tracked_categories": categories_for(SCATTER_NATIVE_CATEGORY_IDS),

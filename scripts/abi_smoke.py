@@ -25,11 +25,11 @@ def _expected_abi_version() -> int:
     wrapper imports numpy, so it can't be imported here). One less copy of
     the constant to keep in sync — src/lib.rs and _native.py stay the two
     authoritative locations (CLAUDE.md invariant)."""
-    source = (ROOT / "python" / "fastcharts" / "_native.py").read_text(encoding="utf-8")
+    source = (ROOT / "python" / "xy" / "_native.py").read_text(encoding="utf-8")
     for line in source.splitlines():
         if line.startswith("ABI_VERSION = "):
             return int(line.split("=", 1)[1].strip())
-    raise SystemExit("ABI_VERSION not found in python/fastcharts/_native.py")
+    raise SystemExit("ABI_VERSION not found in python/xy/_native.py")
 
 
 ABI_VERSION = _expected_abi_version()
@@ -37,10 +37,10 @@ ABI_VERSION = _expected_abi_version()
 
 def _lib_name() -> str:
     if sys.platform == "win32":
-        return "fastcharts_core.dll"
+        return "xy_core.dll"
     if sys.platform == "darwin":
-        return "libfastcharts_core.dylib"
-    return "libfastcharts_core.so"
+        return "libxy_core.dylib"
+    return "libxy_core.so"
 
 
 def load() -> ctypes.CDLL:

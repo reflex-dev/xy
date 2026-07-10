@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify fastcharts wheel artifacts before upload/install smoke tests.
+"""Verify xy wheel artifacts before upload/install smoke tests.
 
 The source checkout can pass every test while the wheel is still broken: missing
 static JS, no `py.typed`, a native build tagged pure, or generated junk bundled
@@ -25,27 +25,27 @@ from typing import Optional
 ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED_FILES = {
-    "fastcharts/__init__.py",
-    "fastcharts/_native.py",
-    "fastcharts/channels.py",
-    "fastcharts/channel.py",
-    "fastcharts/columns.py",
-    "fastcharts/components.py",
-    "fastcharts/config.py",
-    "fastcharts/export.py",
-    "fastcharts/_figure.py",
-    "fastcharts/marks.py",
-    "fastcharts/interaction.py",
-    "fastcharts/kernels.py",
-    "fastcharts/lod.py",
-    "fastcharts/py.typed",
-    "fastcharts/static/index.js",
-    "fastcharts/static/standalone.js",
-    "fastcharts/widget.py",
+    "xy/__init__.py",
+    "xy/_native.py",
+    "xy/channels.py",
+    "xy/channel.py",
+    "xy/columns.py",
+    "xy/components.py",
+    "xy/config.py",
+    "xy/export.py",
+    "xy/_figure.py",
+    "xy/marks.py",
+    "xy/interaction.py",
+    "xy/kernels.py",
+    "xy/lod.py",
+    "xy/py.typed",
+    "xy/static/index.js",
+    "xy/static/standalone.js",
+    "xy/widget.py",
 }
 
 NATIVE_LIB_RE = re.compile(
-    r"^fastcharts/_native_lib/(?:libfastcharts_core\.(?:so|dylib)|fastcharts_core\.dll)$"
+    r"^xy/_native_lib/(?:libxy_core\.(?:so|dylib)|xy_core\.dll)$"
 )
 NATIVE_ARTIFACT_SUFFIXES = (".dll", ".dylib", ".pyd", ".so")
 FORBIDDEN_PARTS = {"__pycache__", "target", "node_modules", ".pytest_cache", ".ruff_cache"}
@@ -81,7 +81,7 @@ def _require_only_shippable_roots(names: set[str]) -> None:
         name
         for name in names
         if name.rstrip("/")
-        and not (name.startswith("fastcharts/") or name.split("/", 1)[0].endswith(".dist-info"))
+        and not (name.startswith("xy/") or name.split("/", 1)[0].endswith(".dist-info"))
     )
     if unexpected:
         raise AssertionError(
@@ -155,8 +155,8 @@ def _require_metadata(names: set[str], data: bytes) -> None:
     text = data.decode("utf-8")
     metadata = Parser().parsestr(text)
     missing: list[str] = []
-    if metadata.get("Name", "").strip() != "fastcharts":
-        missing.append("Name: fastcharts")
+    if metadata.get("Name", "").strip() != "xy":
+        missing.append("Name: xy")
     project_version = _project_version()
     if metadata.get("Version", "").strip() != project_version:
         missing.append(f"Version: {project_version}")
@@ -210,7 +210,7 @@ def _require_text_markers(name: str, data: bytes, needles: set[str]) -> None:
 
 def _require_py_typed_marker(data: bytes) -> None:
     if data != b"":
-        raise AssertionError("fastcharts/py.typed must be an empty full-package PEP 561 marker")
+        raise AssertionError("xy/py.typed must be an empty full-package PEP 561 marker")
 
 
 def _record_hash(data: bytes) -> str:
@@ -290,13 +290,13 @@ def verify_wheel(path: Path, *, expect_native: Optional[bool]) -> None:
 
     with zipfile.ZipFile(path) as zf:
         _require_text_markers(
-            "fastcharts/__init__.py",
-            zf.read("fastcharts/__init__.py"),
+            "xy/__init__.py",
+            zf.read("xy/__init__.py"),
             {"__version__", "__all__", "_EXPORTS", "__getattr__"},
         )
         _require_text_markers(
-            "fastcharts/_figure.py",
-            zf.read("fastcharts/_figure.py"),
+            "xy/_figure.py",
+            zf.read("xy/_figure.py"),
             {
                 "class Figure",
                 "scatter = _marks.scatter",
@@ -306,42 +306,42 @@ def verify_wheel(path: Path, *, expect_native: Optional[bool]) -> None:
             },
         )
         _require_text_markers(
-            "fastcharts/marks.py",
-            zf.read("fastcharts/marks.py"),
+            "xy/marks.py",
+            zf.read("xy/marks.py"),
             {"def scatter(", "def line(", "def heatmap("},
         )
         _require_text_markers(
-            "fastcharts/components.py",
-            zf.read("fastcharts/components.py"),
+            "xy/components.py",
+            zf.read("xy/components.py"),
             {"class Chart", "def to_html(", "def to_png(", "dict[str, Any]"},
         )
         _require_text_markers(
-            "fastcharts/export.py",
-            zf.read("fastcharts/export.py"),
+            "xy/export.py",
+            zf.read("xy/export.py"),
             {
                 "_bundled_js",
                 "_json_for_inline_script",
                 "_javascript_for_inline_script",
                 "def html_to_png(",
                 "def to_png(",
-                "FASTCHARTS_CHROMIUM",
+                "XY_CHROMIUM",
             },
         )
         _require_text_markers(
-            "fastcharts/kernels.py",
-            zf.read("fastcharts/kernels.py"),
+            "xy/kernels.py",
+            zf.read("xy/kernels.py"),
             {"BACKEND", "_native", "ImportError"},
         )
-        _require_py_typed_marker(zf.read("fastcharts/py.typed"))
+        _require_py_typed_marker(zf.read("xy/py.typed"))
         _require_static_bundle(
-            "fastcharts/static/index.js",
-            zf.read("fastcharts/static/index.js"),
+            "xy/static/index.js",
+            zf.read("xy/static/index.js"),
             {"export { render", "function render(", "class ChartView"},
         )
         _require_static_bundle(
-            "fastcharts/static/standalone.js",
-            zf.read("fastcharts/static/standalone.js"),
-            {"window.fastcharts", "function renderStandalone(", "class ChartView"},
+            "xy/static/standalone.js",
+            zf.read("xy/static/standalone.js"),
+            {"window.xy", "function renderStandalone(", "class ChartView"},
         )
 
     forbidden = sorted(

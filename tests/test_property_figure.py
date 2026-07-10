@@ -34,7 +34,7 @@ hyp = pytest.importorskip("hypothesis")
 from hypothesis import given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
 
-from fastcharts._figure import Figure  # noqa: E402
+from xy._figure import Figure  # noqa: E402
 
 # Bounded so the whole module stays CI-cheap (< ~30s).
 COMMON = settings(max_examples=60, deadline=None)

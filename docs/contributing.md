@@ -1,6 +1,6 @@
 # Contributing
 
-fastcharts is still alpha, so the contribution bar is mostly about not losing
+xy is still alpha, so the contribution bar is mostly about not losing
 the hard-won production invariants while the chart surface grows.
 
 ## Before You Start
@@ -68,7 +68,7 @@ When CI, a release job, or a local build has already produced artifacts, verify
 those exact files with:
 
 ```bash
-make check-artifacts SDIST=/path/to/fastcharts.tar.gz WHEEL=/path/to/fastcharts.whl
+make check-artifacts SDIST=/path/to/xy.tar.gz WHEEL=/path/to/xy.whl
 ```
 
 When you generate a benchmark JSON artifact locally, validate it before copying
@@ -124,7 +124,7 @@ When you add, remove, rename, or re-type a public export, run:
 make check-api
 ```
 
-When you change `fastcharts.__init__`, lazy imports, dependency boundaries,
+When you change `xy.__init__`, lazy imports, dependency boundaries,
 widget/export boundaries, or backend import setup, run:
 
 ```bash
@@ -142,7 +142,7 @@ smoke (Chromium)`, `Browser visual regression smoke (Chromium)`, and `Browser
 interaction stress smoke (Chromium)`.
 
 The lifecycle gate runs `scripts/reflex_lifecycle_smoke.py`: every committed
-FastCharts demo asset is loaded repeatedly, and each child chart must stay
+XY demo asset is loaded repeatedly, and each child chart must stay
 nonblank through the named
 `initial`, `hash-navigation`, `narrow-resize`, `wide-resize`, `scroll-bottom`,
 `fast-scroll`, `visibility-change`, `context-restore`, and `restore` phases.
@@ -159,8 +159,8 @@ The visual gate runs `scripts/visual_regression_smoke.py`. It is layout-aware:
 beyond global nonblank/color checks, it verifies title, plot, x-axis, and y-axis
 regions, rejects collapsed plot occupancy, and still runs tick-label overlap
 probes. It screenshots the generated core-family cases plus every committed
-FastCharts Reflex gallery asset; the Plotly comparison page is intentionally
-excluded because it does not use FastCharts' DOM or tick-label probes. It also
+XY Reflex gallery asset; the Plotly comparison page is intentionally
+excluded because it does not use XY' DOM or tick-label probes. It also
 screenshots static Reflex-style chrome shells for the custom legend/tooltip and
 annotated heatmap examples, requiring their external chrome DOM to be present
 and visible. This catches charts that render pixels in the wrong place or lose
@@ -191,17 +191,17 @@ dry-run output uses `<CHROMIUM>` until you pass `--chromium` or `CHROMIUM=...`.
 - Public errors are actionable and name the bad parameter.
 - Failed public builder calls leave the internal `_figure.Figure` traces,
   `ColumnStore`, and category axes unchanged.
-- `import fastcharts` stays lazy and under budget in fresh interpreters; no
+- `import xy` stays lazy and under budget in fresh interpreters; no
   NumPy/native-core import on package import.
 - Standalone HTML handles hostile user strings in every text surface touched by
   the patch; run `make check-security` for export/client text-sink changes.
 - Benchmarks label mode truthfully: `direct`, `decimated`, `density`, `sampled`,
   or `adaptive`.
 - README/docs examples still match the current public API.
-- New public exports appear in `fastcharts.__all__`, lazy `_EXPORTS`, and tests;
+- New public exports appear in `xy.__all__`, lazy `_EXPORTS`, and tests;
   run `make check-api` after public export or annotation changes.
 - Lazy import boundaries still keep package import light; run
-  `make check-import` after changing `fastcharts.__init__`, export helpers,
+  `make check-import` after changing `xy.__init__`, export helpers,
   widget creation, or backend imports.
 - Wheel/sdist contents still include JS bundles, an empty full-package
   `py.typed` marker, valid package metadata, and the right native/pure tagging

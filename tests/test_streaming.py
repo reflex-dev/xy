@@ -7,8 +7,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from fastcharts._figure import SCATTER_DENSITY_THRESHOLD, Figure
-from fastcharts.columns import ZONE_CHUNK, ColumnStore
+from xy._figure import SCATTER_DENSITY_THRESHOLD, Figure
+from xy.columns import ZONE_CHUNK, ColumnStore
 
 # --------------------------------------------------------------------------
 # Column.append — the data layer
@@ -221,8 +221,8 @@ def test_append_density_trace_rebins_with_new_points():
 
 
 def test_append_invalidates_pyramid_for_lazy_rebuild():
-    from fastcharts.config import PYRAMID_MIN_POINTS
-    from fastcharts.interaction import _ensure_pyramid
+    from xy.config import PYRAMID_MIN_POINTS
+    from xy.interaction import _ensure_pyramid
 
     n = max(PYRAMID_MIN_POINTS, SCATTER_DENSITY_THRESHOLD + 1)
     rng = np.random.default_rng(31)
@@ -241,9 +241,9 @@ def test_pyramid_handle_freed_when_trace_is_garbage_collected():
     native pyramid in the process-lifetime registry."""
     import gc
 
-    from fastcharts import kernels
-    from fastcharts.config import PYRAMID_MIN_POINTS
-    from fastcharts.interaction import _ensure_pyramid
+    from xy import kernels
+    from xy.config import PYRAMID_MIN_POINTS
+    from xy.interaction import _ensure_pyramid
 
     n = max(PYRAMID_MIN_POINTS, SCATTER_DENSITY_THRESHOLD + 1)
     rng = np.random.default_rng(41)
@@ -262,9 +262,9 @@ def test_pyramid_handle_freed_when_trace_is_garbage_collected():
 def test_explicit_pyramid_free_disarms_gc_finalizer():
     import gc
 
-    from fastcharts import kernels
-    from fastcharts.config import PYRAMID_MIN_POINTS
-    from fastcharts.interaction import _ensure_pyramid
+    from xy import kernels
+    from xy.config import PYRAMID_MIN_POINTS
+    from xy.interaction import _ensure_pyramid
 
     n = max(PYRAMID_MIN_POINTS, SCATTER_DENSITY_THRESHOLD + 1)
     rng = np.random.default_rng(43)
@@ -287,8 +287,8 @@ def test_explicit_pyramid_free_disarms_gc_finalizer():
 
 
 def test_memory_report_itemizes_pyramid_bytes():
-    from fastcharts.config import PYRAMID_MIN_POINTS
-    from fastcharts.interaction import _ensure_pyramid, _pyramid_resident_bytes
+    from xy.config import PYRAMID_MIN_POINTS
+    from xy.interaction import _ensure_pyramid, _pyramid_resident_bytes
 
     n = max(PYRAMID_MIN_POINTS, SCATTER_DENSITY_THRESHOLD + 1)
     rng = np.random.default_rng(47)

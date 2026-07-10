@@ -1,4 +1,4 @@
-//! C ABI for the fastcharts native core (design dossier §32: the native Rust core
+//! C ABI for the xy native core (design dossier §32: the native Rust core
 //! runs inside the Python process, operating zero-copy over NumPy/Arrow buffers).
 //!
 //! Deliberately dependency-free (std only): builds with no registry access, and
@@ -11,7 +11,7 @@
 //! with Tier 2/3.
 //!
 //! Safety contract (enforced by the single ctypes wrapper in
-//! `python/fastcharts/_native.py`, the only in-tree caller): non-empty inputs
+//! `python/xy/_native.py`, the only in-tree caller): non-empty inputs
 //! use non-null, properly aligned pointers sized as documented per function.
 //! Empty inputs are accepted without dereferencing their pointers; invalid
 //! pointer/argument combinations return the documented error sentinel instead of
@@ -568,7 +568,7 @@ pub unsafe extern "C" fn fc_normalize_f32(
 
 /// Deterministic sampling mask (§5/§17): `out[i] = 1` iff
 /// `splitmix64(ids[i] + seed) <= threshold`. Bit-identical to
-/// `fastcharts.lod.hash_row_ids` thresholding, fused into one pass.
+/// `xy.lod.hash_row_ids` thresholding, fused into one pass.
 /// Returns 1 on success (including the empty no-op), 0 on null arguments.
 ///
 /// # Safety
@@ -598,7 +598,7 @@ pub unsafe extern "C" fn fc_sample_mask(
 /// Category-stratified sampling mask (§5/§17): per-category keep fractions
 /// scale as `min(1, fraction * sqrt(len / count))` and every category keeps at
 /// least `min(min_count, count)` of its lowest-hash rows. Bit-identical to the
-/// per-category NumPy reference in `fastcharts.lod` (parity-tested), fused
+/// per-category NumPy reference in `xy.lod` (parity-tested), fused
 /// into one pass instead of O(len · n_groups) rescans.
 ///
 /// Returns 1 on success (including the empty no-op), 0 on null arguments, a

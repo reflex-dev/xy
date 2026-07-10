@@ -12,7 +12,7 @@ html,body{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;b
 <div id="chart"></div>
 <script>(() => {
 /**
- * fastcharts render client.
+ * xy render client.
  *
  * A thin GPU render client (design dossier §32): receives a data-less spec +
  * offset-encoded f32 columns as raw binary (§29 — no JSON numbers, no parse),
@@ -1293,8 +1293,8 @@ class ChartView {
   constructor(el, spec, buffer, comm) {
     if (spec.protocol !== PROTOCOL) {
       el.textContent =
-        `fastcharts: protocol mismatch (client speaks ${PROTOCOL}, kernel sent ${spec.protocol}). ` +
-        "Update the fastcharts package and restart the kernel.";
+        `xy: protocol mismatch (client speaks ${PROTOCOL}, kernel sent ${spec.protocol}). ` +
+        "Update the xy package and restart the kernel.";
       throw new Error("protocol mismatch");
     }
     this.spec = spec;
@@ -1484,7 +1484,7 @@ class ChartView {
 
   _dispatchChartEvent(name, detail) {
     if (!this.root || typeof CustomEvent !== "function") return;
-    this.root.dispatchEvent(new CustomEvent(`fastcharts:${name}`, {
+    this.root.dispatchEvent(new CustomEvent(`xy:${name}`, {
       detail,
       bubbles: true,
       composed: true,
@@ -1519,7 +1519,7 @@ class ChartView {
       ? this.interaction.link_axes.filter((axis) => axis === "x" || axis === "y")
       : ["x", "y"];
     if (!this._linkAxes.length) this._linkAxes = ["x", "y"];
-    this._linkChannel = new BroadcastChannel(`fastcharts:${group}`);
+    this._linkChannel = new BroadcastChannel(`xy:${group}`);
     this._linkChannel.onmessage = (event) => {
       const msg = event.data || {};
       if (!msg.view || msg.source === this._linkedSource) return;
@@ -1676,7 +1676,7 @@ class ChartView {
       try {
         this._initGl(this._payload);
       } catch (err) {
-        this.root.textContent = "fastcharts: WebGL2 context could not be restored.";
+        this.root.textContent = "xy: WebGL2 context could not be restored.";
         throw err;
       }
       this._scheduleViewRequest(this.view, { delay: 0 });
@@ -1725,7 +1725,7 @@ class ChartView {
   _buildDom(el) {
     const s = this.spec;
     const root = document.createElement("div");
-    root.className = "fastcharts";
+    root.className = "xy";
     root.style.cssText =
       `position:relative;width:${this.fluid ? "100%" : this.size.w + "px"};` +
       `height:${this.fluidH ? "100%" : this.size.h + "px"};` +
@@ -1903,7 +1903,7 @@ class ChartView {
       antialias: false, premultipliedAlpha: true, alpha: true,
     });
     if (!gl) {
-      this.root.textContent = "fastcharts: WebGL2 unavailable in this browser.";
+      this.root.textContent = "xy: WebGL2 unavailable in this browser.";
       throw new Error("webgl2 unavailable");
     }
     this.gl = gl;
@@ -4876,14 +4876,14 @@ function renderStandalone(el, spec, arrayBuffer) {
 }
 
 
-window.fastcharts = { render, renderStandalone, ChartView, MARK_KINDS, markOf };
+window.xy = { render, renderStandalone, ChartView, MARK_KINDS, markOf };
 })();
 </script>
 <script>
   const spec = {"protocol":2,"width":"100%","height":430,"title":"Small retention cohort","x_axis":{"id":"x","kind":"category","label":"week","range":[-0.6799999999999999,5.68],"side":"bottom","categories":["W0","W1","W2","W3","W4","W5"]},"y_axis":{"id":"y","kind":"category","label":"signup cohort","range":[-0.6799999999999999,5.68],"side":"left","categories":["Jan","Feb","Mar","Apr","May","Jun"]},"axes":{"x":{"id":"x","kind":"category","label":"week","range":[-0.6799999999999999,5.68],"side":"bottom","categories":["W0","W1","W2","W3","W4","W5"]},"y":{"id":"y","kind":"category","label":"signup cohort","range":[-0.6799999999999999,5.68],"side":"left","categories":["Jan","Feb","Mar","Apr","May","Jun"]}},"traces":[{"id":0,"kind":"heatmap","name":"retention","style":{"opacity":0.94,"role":"heatmap","colormap":"viridis","domain":[0.42,1.0],"x_range":[-0.5,5.5],"y_range":[-0.5,5.5]},"tier":"direct","n_points":36,"n_marks":36,"x_axis":"x","y_axis":"y","heatmap":{"buf":0,"w":6,"h":6,"x_range":[-0.5,5.5],"y_range":[-0.5,5.5],"colormap":"viridis","domain":[0.42,1.0]},"color":{"mode":"continuous","colormap":"viridis","domain":[0.42,1.0]}}],"columns":[{"byte_offset":0,"len":36}],"backend":"native","show_legend":true};
   const b64 = "AACAP+5pBD9huac+sdxTPrHc0z3LPY08AACAP7mnET/3NMI+7mmEPoTlHj7LPY09AACAPyMs9z6oEZY+Po0wPj6NsD0AAAAAAACAP4TlHj+x3NM+hOWePmqEZT7LPQ0+AACAP8s9DT8aYbk+yz2NPvc0Qj4jLPc9AACAP5Z7Gj9qhOU+Po2wPu5phD4+jTA+";
   const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-  fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);
+  xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);
 </script>
 </body>
 </html>
