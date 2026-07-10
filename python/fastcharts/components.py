@@ -33,7 +33,7 @@ from typing import Any, Optional, TypeAlias, Union
 
 import numpy as np
 
-from . import _validate
+from . import _validate, channels
 from .dom import CHART_DOM_SLOTS, validate_dom_slots
 from .figure import Figure
 
@@ -219,7 +219,7 @@ def scatter(
     color: Union[str, Any, None] = None,
     size: Union[str, float, Any] = 4.0,
     name: Optional[str] = None,
-    colormap: str = "viridis",
+    colormap: str = channels.DEFAULT_COLORMAP,
     size_range: tuple[float, float] = (2.0, 18.0),
     opacity: float = 0.8,
     density: Optional[bool] = None,
@@ -525,7 +525,7 @@ def heatmap(
     y: Union[str, Any, None] = None,
     data: Any = None,
     name: Optional[str] = None,
-    colormap: str = "viridis",
+    colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     opacity: float = 0.95,
     class_name: Optional[str] = None,

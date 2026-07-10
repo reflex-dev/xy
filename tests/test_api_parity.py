@@ -1,16 +1,18 @@
-"""Guards that the composition API stays in sync with the fluent Figure engine.
+"""Guards that the two dialects stay one engine.
 
-The composition API is a declarative dialect compiled onto the fluent
-`Figure` engine: each mark factory builds a spec, and `_MARK_APPLIERS`
-replays it through the matching `Figure` method. That contract has one
-recurring failure mode — a new engine keyword that never gets threaded
-through the factory or the applier, leaving the composition API silently
-lagging. These tests turn that drift into a CI failure:
+`marks.py` is the single mark implementation — the declarative core. The
+fluent `Figure` binds those functions as its per-kind methods
+(`Figure.scatter is marks.scatter`), and the composition factories build
+specs that `_MARK_APPLIERS` replay through those same bound methods. The
+recurring failure mode is a keyword or default threaded through one dialect
+but not the other. These tests turn that drift into a CI failure:
 
 1. every factory prop must map to a real engine parameter (or be one of
    the explicit composition-only props),
-2. every engine keyword must be reachable from the factory, and
-3. every applier must forward every engine keyword to the engine call.
+2. every engine keyword must be reachable from the factory,
+3. every applier must forward every engine keyword to the engine call,
+4. the fluent methods must BE the marks implementations (identity), and
+5. factory keyword defaults must equal the engine defaults by value.
 """
 
 from __future__ import annotations
@@ -117,3 +119,33 @@ def test_applier_forwards_every_engine_keyword(kind, monkeypatch):
         f"_apply_{mark.kind} never forwards {sorted(dropped)} to "
         f"Figure.{method_name}; the composition API silently ignores those props"
     )
+
+
+def test_fluent_methods_are_the_declarative_implementations():
+    """The inversion guard: Figure's per-kind methods ARE the marks.py
+    functions, so fluent output == declarative output by construction (one
+    body, one signature, one set of defaults), not by sampling."""
+    from fastcharts import marks
+
+    for _factory_name, method_name in MARK_PAIRS:
+        assert getattr(Figure, method_name) is getattr(marks, method_name)
+
+
+@pytest.mark.parametrize(("factory_name", "method_name"), MARK_PAIRS)
+def test_factory_defaults_match_engine_defaults(factory_name, method_name):
+    """Factories restate keyword defaults (they add composition-only props and
+    make the data positionals optional for the data-key idiom); a default that
+    drifts from the engine's silently changes what the declarative dialect
+    renders. Compare values, not just names."""
+    factory_params = inspect.signature(getattr(fc, factory_name)).parameters
+    engine_params = inspect.signature(getattr(Figure, method_name)).parameters
+    for name, engine_param in engine_params.items():
+        if name in COMPOSITION_ONLY or name not in factory_params:
+            continue
+        if engine_param.default is inspect.Parameter.empty:
+            continue  # engine positional; factory defaults it to None for data keys
+        factory_default = factory_params[name].default
+        assert factory_default == engine_param.default, (
+            f"{factory_name}.{name} default {factory_default!r} != "
+            f"Figure.{method_name} default {engine_param.default!r}"
+        )
