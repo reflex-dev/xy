@@ -243,6 +243,43 @@ They are useful for scaling within a target class, not as same-render-target
 speedups. Compare output bytes only between artifacts with equivalent retained
 information and runtime-inclusion rules.
 
+## Expanded adapter benchmark — 10M points
+
+The 10M refresh covers the adapters installed by the `benchmark-refresh` CI run
+(Ubuntu, Python 3.12, native Rust core; Plotly via kaleido→PNG). The additional
+Bokeh, Altair, Datashader, and hvPlot rows from the 100k local expansion are not
+measured at this size, so they are marked explicitly below. Reproduce the
+refreshed core rows with:
+
+```bash
+PYTHONPATH=python .venv/bin/python benchmarks/bench_vs.py \
+  --sizes 1e7 --budget 45
+```
+
+| Library | Render target | 10M total ¶ | Peak memory | Output bytes | Points/sec ¶ |
+|---|---|---:|---:|---:|---:|
+| fastcharts | binary payload (native) * | **169 ms** | **126 MB** | **832 KB** | **59,100,000** |
+| matplotlib | Agg PNG † | 3,239 ms | 553 MB | 42 KB | 3,090,000 |
+| seaborn | matplotlib PNG † | 7,918 ms | 1,088 MB | 32 KB | 1,260,000 |
+| Plotly `Scattergl` | Kaleido PNG † | 54,064 ms | 1,584 MB | 49 KB | 185,000 |
+| Plotly `Scatter` | SVG/Kaleido † | over budget above 1M | — | — | — |
+| Bokeh canvas ¹ | standalone HTML ‡ | not measured | — | — | — |
+| Bokeh WebGL ¹ | standalone HTML ‡ | not measured | — | — | — |
+| Altair / Vega-Lite ¹ | standalone HTML ‡ | not measured | — | — | — |
+| Datashader ¹ | PNG raster § | not measured | — | — | — |
+| hvPlot / HoloViews ¹ | Bokeh HTML ‡ | not measured | — | — | — |
+
+¹ The expanded local adapters were not installed by the 10M CI refresh; no
+10M result is claimed for those rows. The 100k results above remain the latest
+measurements for that group.
+
+At 10M points, fastcharts prepares a fixed-size screen-bounded payload while
+the direct-rendering libraries retain work proportional to the input size. This
+is a scaling and memory comparison across different render targets, not a claim
+that a binary payload and a finished PNG are identical artifacts. The detailed
+ceiling and fairness analysis appears in the [Headline — 10 M points](#headline--10-m-points)
+section below.
+
 ---
 
 ## Core 2D chart benchmark — xy vs Plotly and Seaborn
