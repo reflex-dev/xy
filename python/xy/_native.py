@@ -373,31 +373,34 @@ def zone_maps(
             empty_f.copy(),
             empty_f.copy(),
         )
-    mins = np.empty(n_chunks, dtype=np.float64)
-    maxs = np.empty(n_chunks, dtype=np.float64)
-    counts = np.empty(n_chunks, dtype=np.uint64)
-    nulls = np.empty(n_chunks, dtype=np.uint64)
-    sums = np.empty(n_chunks, dtype=np.float64)
-    sum_sqs = np.empty(n_chunks, dtype=np.float64)
-    positive_mins = np.empty(n_chunks, dtype=np.float64)
-    positive_maxs = np.empty(n_chunks, dtype=np.float64)
+    # Two block allocations (6 f64 rows + 2 u64 rows) instead of eight
+    # scattered ones: zone maps run on every ingest, and the allocator +
+    # `.ctypes` round-trips were a measurable slice of small-chart builds.
+    # Row views stay C-contiguous, and both dtypes are 8 bytes wide.
+    f64_rows = np.empty((6, n_chunks), dtype=np.float64)
+    u64_rows = np.empty((2, n_chunks), dtype=np.uint64)
+    f64_ptr = f64_rows.ctypes.data
+    u64_ptr = u64_rows.ctypes.data
+    row_bytes = n_chunks * 8
     written = _lib.fc_zone_maps(
         _ptr_f64(data),
         n,
         chunk_size,
-        _ptr_f64(mins),
-        _ptr_f64(maxs),
-        counts.ctypes.data,
-        nulls.ctypes.data,
-        _ptr_f64(sums),
-        _ptr_f64(sum_sqs),
-        _ptr_f64(positive_mins),
-        _ptr_f64(positive_maxs),
+        f64_ptr,  # mins
+        f64_ptr + row_bytes,  # maxs
+        u64_ptr,  # counts
+        u64_ptr + row_bytes,  # null counts
+        f64_ptr + 2 * row_bytes,  # sums
+        f64_ptr + 3 * row_bytes,  # sum_sqs
+        f64_ptr + 4 * row_bytes,  # positive_mins
+        f64_ptr + 5 * row_bytes,  # positive_maxs
     )
     if written == _USIZE_MAX:
         raise ValueError("invalid zone_maps arguments")
     if written != n_chunks:
         raise RuntimeError(f"xy native zone_maps wrote {written} chunks, expected {n_chunks}")
+    mins, maxs, sums, sum_sqs, positive_mins, positive_maxs = f64_rows
+    counts, nulls = u64_rows
     return mins, maxs, counts, nulls, sums, sum_sqs, positive_mins, positive_maxs
 
 

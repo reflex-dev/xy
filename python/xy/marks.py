@@ -53,7 +53,7 @@ def _bar_like(
     if orientation not in {"vertical", "horizontal"}:
         raise ValueError(f"{kind} orientation must be 'vertical' or 'horizontal'")
     category_axis = "x" if orientation == "vertical" else "y"
-    pos = self._axis_positions(x, category_axis, commit=False)
+    pos, category_labels = self._axis_positions_with_labels(x, category_axis)
     vals = self._bar_value_matrix(y, len(pos), kind)
     if mode == "normalized":
         if np.any(vals < 0):
@@ -71,7 +71,8 @@ def _bar_like(
     series_colors = self._series_colors(color, colors, vals.shape[0])
     checkpoint = self._checkpoint()
     try:
-        self._commit_axis_positions(x, category_axis)
+        if category_labels is not None:
+            self._commit_category_labels(category_labels, category_axis)
         half = width / 2.0
         if vals.shape[0] == 1:
             self._append_bar_rect(

@@ -50,23 +50,35 @@ pub fn build(x: &[f64], y: &[f64], x0: f64, x1: f64, y0: f64, y1: f64, base_dim:
     dims.push(base_dim);
     let mut dim = base_dim;
     while dim > 1 {
-        let next = dim / 2;
         let prev = levels.last().expect("at least one level");
-        let mut lvl = vec![0u32; next * next];
-        for cy in 0..next {
-            for cx in 0..next {
-                let a = prev[(2 * cy) * dim + 2 * cx] as u64
-                    + prev[(2 * cy) * dim + 2 * cx + 1] as u64
-                    + prev[(2 * cy + 1) * dim + 2 * cx] as u64
-                    + prev[(2 * cy + 1) * dim + 2 * cx + 1] as u64;
-                lvl[cy * next + cx] = a.min(u32::MAX as u64) as u32;
-            }
-        }
+        let lvl = reduce_level(prev, dim);
+        dim /= 2;
         levels.push(lvl);
-        dims.push(next);
-        dim = next;
+        dims.push(dim);
     }
     Some(Pyramid { levels, dims, x0, x1, y0, y1 })
+}
+
+/// 4→1 exact reduction of one square level: each output cell is the u64 sum
+/// of its 2×2 source block, saturating to u32 (§5 — every level conserves the
+/// total exactly, up to saturation). Row slices + `chunks_exact(2)` keep the
+/// inner loop free of bounds checks so it autovectorizes.
+fn reduce_level(prev: &[u32], dim: usize) -> Vec<u32> {
+    let next = dim / 2;
+    let mut lvl = vec![0u32; next * next];
+    for (cy, out_row) in lvl.chunks_exact_mut(next).enumerate() {
+        let top = &prev[2 * cy * dim..2 * cy * dim + dim];
+        let bot = &prev[(2 * cy + 1) * dim..(2 * cy + 1) * dim + dim];
+        for ((o, t), b) in out_row
+            .iter_mut()
+            .zip(top.chunks_exact(2))
+            .zip(bot.chunks_exact(2))
+        {
+            let a = t[0] as u64 + t[1] as u64 + b[0] as u64 + b[1] as u64;
+            *o = a.min(u32::MAX as u64) as u32;
+        }
+    }
+    lvl
 }
 
 /// Cell-index range [lo, hi) of a level whose cell CENTERS fall inside the
@@ -85,12 +97,16 @@ pub fn count(p: &Pyramid, lo_x: f64, hi_x: f64, lo_y: f64, hi_y: f64) -> f64 {
     let dim = p.dims[0];
     let (cx0, cx1) = center_range(lo_x, hi_x, p.x0, p.x1, dim);
     let (cy0, cy1) = center_range(lo_y, hi_y, p.y0, p.y1, dim);
+    if cx1 <= cx0 || cy1 <= cy0 {
+        return 0.0;
+    }
     let mut total = 0u64;
     let lvl = &p.levels[0];
     for cy in cy0..cy1 {
-        for cx in cx0..cx1 {
-            total += lvl[cy * dim + cx] as u64;
-        }
+        // Per-row slice so the u32→u64 widen-add autovectorizes; integer sums
+        // are order-independent, so the total is unchanged.
+        let row = &lvl[cy * dim + cx0..cy * dim + cx1];
+        total += row.iter().map(|&c| c as u64).sum::<u64>();
     }
     total as f64
 }
@@ -149,17 +165,29 @@ pub fn compose(
     let sy = h as f64 / (hi_y - lo_y);
     let (cx0, cx1) = center_range(lo_x, hi_x, p.x0, p.x1, dim);
     let (cy0, cy1) = center_range(lo_y, hi_y, p.y0, p.y1, dim);
-    for cy in cy0..cy1 {
-        let ycen = p.y0 + (cy as f64 + 0.5) * cell_y;
-        let oy = (((ycen - lo_y) * sy) as usize).min(h - 1);
-        for cx in cx0..cx1 {
-            let c = lvl[cy * dim + cx];
-            if c == 0 {
-                continue;
+    // center_range can yield cx1 < cx0 for windows astronomically past the
+    // domain (the isize+1 in it wraps); the indexed loop iterated that as
+    // empty, but slicing would panic — keep the empty-window behavior.
+    if cx0 < cx1 {
+        // ox depends only on cx: hoist the center→output-bin math (same f64
+        // expression, so identical bins) out of the per-row loop.
+        let ox_of: Vec<u32> = (cx0..cx1)
+            .map(|cx| {
+                let xcen = p.x0 + (cx as f64 + 0.5) * cell_x;
+                (((xcen - lo_x) * sx) as usize).min(w - 1) as u32
+            })
+            .collect();
+        for cy in cy0..cy1 {
+            let ycen = p.y0 + (cy as f64 + 0.5) * cell_y;
+            let oy = (((ycen - lo_y) * sy) as usize).min(h - 1);
+            let row = &lvl[cy * dim + cx0..cy * dim + cx1];
+            let out_row = &mut out[oy * w..(oy + 1) * w];
+            for (&c, &ox) in row.iter().zip(ox_of.iter()) {
+                if c == 0 {
+                    continue;
+                }
+                out_row[ox as usize] += c as f32;
             }
-            let xcen = p.x0 + (cx as f64 + 0.5) * cell_x;
-            let ox = (((xcen - lo_x) * sx) as usize).min(w - 1);
-            out[oy * w + ox] += c as f32;
         }
     }
     Some(level)
@@ -283,6 +311,61 @@ mod tests {
         // deeper than level 0 can resolve at 2x upsample -> refused
         let mut tiny = vec![0.0f32; 512 * 512];
         assert!(compose(&p, 50.0, 51.0, 50.0, 51.0, 512, 512, &mut tiny).is_none());
+    }
+
+    #[test]
+    fn reduce_level_sums_blocks_and_saturates() {
+        // 4x4 of 0..16 -> 2x2: each output is the exact sum of its 2x2 block,
+        // e.g. top-left block {0, 1, 4, 5} sums to 10.
+        let prev: Vec<u32> = (0..16).collect();
+        assert_eq!(reduce_level(&prev, 4), vec![10, 18, 42, 50]);
+        // Block sums accumulate in u64 and clamp to u32::MAX — never wrap.
+        let big = vec![u32::MAX; 4];
+        assert_eq!(reduce_level(&big, 2), vec![u32::MAX]);
+        let mixed = vec![u32::MAX, 1, 0, 0];
+        assert_eq!(reduce_level(&mixed, 2), vec![u32::MAX]);
+    }
+
+    #[test]
+    fn count_matches_scalar_reference_and_handles_reversed_window() {
+        let (x, y) = cross(5000);
+        let p = build(&x, &y, 0.0, 100.0, 0.0, 100.0, 64).unwrap();
+        let dim = p.dims[0];
+        let (cx0, cx1) = center_range(13.0, 87.5, p.x0, p.x1, dim);
+        let (cy0, cy1) = center_range(22.4, 61.0, p.y0, p.y1, dim);
+        let mut reference = 0u64;
+        for cy in cy0..cy1 {
+            for cx in cx0..cx1 {
+                reference += p.levels[0][cy * dim + cx] as u64;
+            }
+        }
+        assert_eq!(count(&p, 13.0, 87.5, 22.4, 61.0), reference as f64);
+        // degenerate/reversed windows count zero cells, never panic
+        assert_eq!(count(&p, 90.0, 10.0, 0.0, 100.0), 0.0);
+        assert_eq!(count(&p, 50.0, 50.0, 0.0, 100.0), 0.0);
+    }
+
+    // Release-only: in debug builds center_range's `as isize + 1` panics on
+    // these magnitudes (pre-existing, caught by ffi_guard at the ABI); the
+    // wrap to cx1 < cx0 that reaches compose's row slicing only occurs in
+    // release, where the old indexed loop silently iterated it as empty.
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn compose_window_astronomically_past_domain_is_empty_not_panic() {
+        let (x, y) = cross(4000);
+        let p = build(&x, &y, 0.0, 100.0, 0.0, 100.0, 64).unwrap();
+        // hi so far past the domain that center_range saturates and wraps:
+        // cx range comes back reversed (cx0=32, cx1=0). Must compose to an
+        // all-zero grid with a level, exactly like the pre-slicing code.
+        let (w, h) = (2, 2);
+        let mut g = vec![7.0f32; w * h];
+        let level = compose(&p, 50.0, 1.0e21, 0.0, 100.0, w, h, &mut g);
+        assert!(level.is_some());
+        assert!(g.iter().all(|&c| c == 0.0), "wrapped window composes empty");
+        // nanosecond-epoch-scale garbage coordinates over a small domain
+        // (realistic bad input) must also never panic.
+        let mut g2 = vec![0.0f32; w * h];
+        let _ = compose(&p, 1.0e18, 1.75e18, 0.0, 100.0, w, h, &mut g2);
     }
 
     #[test]

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
+from functools import cached_property
 from typing import Any
 
 import numpy as np
@@ -45,33 +46,38 @@ class ZoneMaps:
     positive_mins: npt.NDArray[np.float64]
     positive_maxs: npt.NDArray[np.float64]
 
-    @property
+    # The folded reductions are cached: instances are replaced wholesale when a
+    # column changes (`Column.append` builds a fresh ZoneMaps), never mutated in
+    # place, so the fold is a pure function of construction-time state. Autorange
+    # and offset selection read min/max several times per payload build.
+
+    @cached_property
     def min(self) -> float:
         valid = self.mins[self.counts > 0]
         # numpy's .min()/.max() stub mis-resolves the overload for the mask-indexed
         # f64 view; the reduction is a finite scalar at runtime.
         return float(valid.min()) if len(valid) else float("nan")  # ty: ignore[invalid-argument-type]
 
-    @property
+    @cached_property
     def max(self) -> float:
         valid = self.maxs[self.counts > 0]
         return float(valid.max()) if len(valid) else float("nan")  # ty: ignore[invalid-argument-type]
 
-    @property
+    @cached_property
     def positive_min(self) -> float:
         valid = self.positive_mins[np.isfinite(self.positive_mins)]
         return float(valid.min()) if len(valid) else float("nan")
 
-    @property
+    @cached_property
     def positive_max(self) -> float:
         valid = self.positive_maxs[np.isfinite(self.positive_maxs)]
         return float(valid.max()) if len(valid) else float("nan")
 
-    @property
+    @cached_property
     def count(self) -> int:
         return int(self.counts.sum())
 
-    @property
+    @cached_property
     def null_count(self) -> int:
         return int(self.null_counts.sum())
 

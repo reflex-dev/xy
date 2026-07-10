@@ -15,6 +15,7 @@ raises `ValueError` (occasionally `TypeError`) naming `label`.
 from __future__ import annotations
 
 import itertools
+from functools import lru_cache
 from typing import Any, Optional
 
 import numpy as np
@@ -171,7 +172,11 @@ _CSS_ERROR_REASONS = {
 }
 
 
+@lru_cache(maxsize=1024)
 def _css_check(kind: int, value: str, prop: str = "") -> int:
+    # Pure function of its string arguments (the native grammar is static),
+    # so the verdict is memoized — dashboards re-validate the same palette
+    # colors and style declarations on every chart build.
     # Lazy import: these validators run at chart-build time, inside the
     # compute import boundary (§33) — but this module itself must stay
     # importable without loading the native core.

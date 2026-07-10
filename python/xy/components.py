@@ -1798,7 +1798,9 @@ def _looks_like_css(s: str) -> bool:
     string."""
     from . import kernels
 
-    return kernels.css_check(kernels.CSS_COLOR, s)[0] > 0
+    # Routed through `_validate._css_check` for its verdict memo — the same
+    # constant colors are re-classified on every chart build.
+    return _validate._css_check(kernels.CSS_COLOR, s) > 0
 
 
 # ---------------------------------------------------------------------------
