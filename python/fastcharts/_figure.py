@@ -714,15 +714,16 @@ class Figure(AnnotationsMixin, PayloadMixin):
             lo, hi = 0.0, 1.0
         scale = self._axis_scale(axis_id)
         if scale == "log":
-            positives: list[float] = []
+            positive_los: list[float] = []
+            positive_his: list[float] = []
             for t in self.traces:
                 for col in self._range_columns(t, axis_id):
-                    finite = col.values[np.isfinite(col.values) & (col.values > 0)]
-                    if finite.size:
-                        positives.extend([float(np.min(finite)), float(np.max(finite))])
-            if not positives:
+                    if np.isfinite(col.zone.positive_min):
+                        positive_los.append(col.zone.positive_min)
+                        positive_his.append(col.zone.positive_max)
+            if not positive_los:
                 raise ValueError(f"{axis_id} log axis requires at least one positive value")
-            lo, hi = min(positives), max(positives)
+            lo, hi = min(positive_los), max(positive_his)
         if lo == hi:
             pad = abs(lo) * 0.05 or 0.5
             lo, hi = lo - pad, hi + pad

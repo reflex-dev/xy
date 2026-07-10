@@ -842,7 +842,7 @@ function lodFade(view, start, duration = 140) {
 if (start === undefined || start === null || duration <= 0 || view._prefersReducedMotion()) {
 return 1;
 }
-const t = Math.min(1, Math.max(0, (performance.now() - start) / duration));
+const t = Math.min(1, Math.max(0, (view._now() - start) / duration));
 return t * t * (3 - 2 * t);
 }
 function lodDecodeLogU8(buf, maxVal) {
@@ -910,7 +910,7 @@ return;
 g._densityNormAnim = {
 start,
 target,
-startedAt: performance.now(),
+startedAt: view._now(),
 duration: target < start ? 420 : 260,
 };
 }
@@ -918,7 +918,7 @@ function lodStepNorm(view, g) {
 const anim = g._densityNormAnim;
 const d = g.density;
 if (!anim || !d || !d.grid || !d.tex) return;
-const t = Math.min(1, Math.max(0, (performance.now() - anim.startedAt) / anim.duration));
+const t = Math.min(1, Math.max(0, (view._now() - anim.startedAt) / anim.duration));
 const k = t * t * (3 - 2 * t);
 const norm = anim.start + (anim.target - anim.start) * k;
 const prev = d.normMax || 0;
@@ -970,7 +970,7 @@ function lodHoldPendingDrill(view, g, d) {
 const pending = g._lodPendingView;
 if (!d || !pending || g._drillDying) return false;
 if (g._lodPendingSeq !== view.seq) return false;
-if (g._lodPendingAt && performance.now() - g._lodPendingAt > 1200) return false;
+if (g._lodPendingAt && view._now() - g._lodPendingAt > 1200) return false;
 if (!lodWindowCenterInside(d.win, pending)) return false;
 const drillArea = lodWindowArea(d.win);
 const pendingArea = lodWindowArea(pending);
@@ -1062,7 +1062,7 @@ if (first) d.lodBlendShown = d.lodBlend;
 d.lodBlend = 0;
 }
 if (fresh) {
-g._drillFadeStart = performance.now();
+g._drillFadeStart = view._now();
 g._drillWasInside = false;
 g._drillShownAlpha = 0;
 g._drillExitFadeStart = null;
@@ -1100,7 +1100,7 @@ lodBeginDrillExitContinuous(view, g);
 }
 function lodDrillExitFade(view, g) {
 if (g._drillExitFadeStart === undefined || g._drillExitFadeStart === null) {
-g._drillExitFadeStart = performance.now();
+g._drillExitFadeStart = view._now();
 }
 const fade = lodFade(view, g._drillExitFadeStart, LOD_EXIT_FADE_MS);
 if (fade >= 1) g._drillExitFadeStart = null;
@@ -1127,14 +1127,14 @@ const alpha = lodDrillShownAlpha(view, g);
 g._drillShownAlpha = alpha;
 g._drillExitFadeStart = null;
 g._drillFadeStart =
-alpha >= 1 ? null : performance.now() - LOD_ENTRY_FADE_MS * lodFadeInvert(alpha);
+alpha >= 1 ? null : view._now() - LOD_ENTRY_FADE_MS * lodFadeInvert(alpha);
 }
 function lodBeginDrillExitContinuous(view, g) {
 if (g._drillExitFadeStart != null) return; 
 const alpha = lodDrillShownAlpha(view, g);
 g._drillShownAlpha = alpha;
 g._drillFadeStart = null;
-g._drillExitFadeStart = performance.now() - LOD_EXIT_FADE_MS * lodFadeInvert(1 - alpha);
+g._drillExitFadeStart = view._now() - LOD_EXIT_FADE_MS * lodFadeInvert(1 - alpha);
 }
 function lodApplyDensityUpdate(view, g, upd, buffers) {
 lodMarkDrillDying(view, g);
@@ -1146,7 +1146,7 @@ const normStart = lodNormMax(g, d.max);
 const normMax = view._prefersReducedMotion() ? d.max : normStart;
 g.densityNormMax = normMax;
 g.prevDensity = g.density;
-g._densityFadeStart = performance.now();
+g._densityFadeStart = view._now();
 g.density = {
 w: d.w, h: d.h, max: d.max, normMax, colormap: d.colormap || g.density.colormap,
 xRange: d.x_range, yRange: d.y_range,
@@ -1162,9 +1162,9 @@ function lodDrawDensityWithFade(view, g, density, opacityScale = 1) {
 if (density !== g._shownDensity) {
 if (density === g._densitySwitchPrev && g._densitySwitchFadeStart != null) {
 const f = lodFade(view, g._densitySwitchFadeStart, 140);
-g._densitySwitchFadeStart = performance.now() - 140 * lodFadeInvert(1 - f);
+g._densitySwitchFadeStart = view._now() - 140 * lodFadeInvert(1 - f);
 } else {
-g._densitySwitchFadeStart = performance.now();
+g._densitySwitchFadeStart = view._now();
 }
 g._densitySwitchPrev = g._shownDensity;
 g._shownDensity = density;
@@ -2640,6 +2640,9 @@ this._drawHoverState();
 this._pickDirty = true;
 this._drawChrome();
 }
+_now() {
+return performance.now();
+}
 _drawPoints(g, xm, ym, opacityScale = 1) {
 const gl = this.gl;
 const prog = this.pointProg;
@@ -2682,7 +2685,7 @@ gl.uniform1i(u("u_lut"), 0);
 const blendTarget = g.lodBlend ?? 0;
 let blend = g.lodBlendShown ?? blendTarget;
 if (Math.abs(blend - blendTarget) > 0.005 && !this._prefersReducedMotion()) {
-const now = performance.now();
+const now = this._now();
 const dt = g._blendTick ? Math.min(100, now - g._blendTick) : 16;
 g._blendTick = now;
 blend += (blendTarget - blend) * (1 - Math.exp(-dt / 90));
@@ -3178,7 +3181,7 @@ const dpr = this.dpr;
 const ctx = this.chrome.getContext("2d");
 ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 ctx.clearRect(0, 0, this.size.w, this.size.h);
-const now = performance.now();
+const now = this._now();
 const labelCadenceMs = this._viewAnim ? 80 : 0;
 const updateLabels = labelCadenceMs === 0
 || this._lastLabelDraw === null
@@ -4431,7 +4434,7 @@ const requestMaxWait = opts.requestMaxWait ?? 130;
 if (request) {
 this._scheduleViewRequest(target, { seq: this.seq, delay: requestDelay, maxWait: requestMaxWait });
 }
-const now = performance.now();
+const now = this._now();
 const tau = Math.max(18, duration / 5);
 if (this._viewAnim) {
 this._viewAnim.target = target;
@@ -4587,7 +4590,7 @@ const view = { ...viewOverride };
 const plotW = Math.round(this.plot.w);
 const plotH = Math.round(this.plot.h);
 if (needsDensity) {
-const now = performance.now();
+const now = this._now();
 for (const g of this.gpuTraces) {
 if (g.tier !== "density") continue;
 g._lodPendingView = view;
@@ -4597,7 +4600,7 @@ g._lodPendingAt = now;
 }
 let delay = opts.delay ?? 120;
 if (opts.maxWait !== undefined && opts.maxWait !== null) {
-const now = performance.now();
+const now = this._now();
 if (this._viewRequestBurstStart === undefined || this._viewRequestBurstStart === null) {
 this._viewRequestBurstStart = now;
 }
@@ -4717,7 +4720,7 @@ lut: g.density.lut,
 },
 _applySampleRebinGrid(g, density, rebinned) {
 g.prevDensity = g.density;
-g._densityFadeStart = performance.now();
+g._densityFadeStart = this._now();
 g.densityNormMax = density.normMax || density.max;
 g.density = density;
 g._sampleRebinned = !!rebinned; 

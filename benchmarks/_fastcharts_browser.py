@@ -125,7 +125,7 @@ def run_json_probe(
     *,
     marker: str,
     chromium: str | None,
-    virtual_time_ms: int = 15_000,
+    virtual_time_ms: int | None = 15_000,
     timeout_s: int = 180,
 ) -> dict[str, Any]:
     exe = find_chromium(chromium)
@@ -136,19 +136,20 @@ def run_json_probe(
         page = Path(td) / "probe.html"
         page.write_text(html, encoding="utf-8")
         try:
+            command = [
+                exe,
+                "--headless=new",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                *chromium_gl_flags(),
+                "--hide-scrollbars",
+                "--enable-precise-memory-info",
+            ]
+            if virtual_time_ms is not None:
+                command.append(f"--virtual-time-budget={virtual_time_ms}")
+            command.extend(["--dump-dom", page.as_uri()])
             completed = subprocess.run(
-                [
-                    exe,
-                    "--headless=new",
-                    "--no-sandbox",
-                    "--disable-dev-shm-usage",
-                    *chromium_gl_flags(),
-                    "--hide-scrollbars",
-                    "--enable-precise-memory-info",
-                    f"--virtual-time-budget={virtual_time_ms}",
-                    "--dump-dom",
-                    page.as_uri(),
-                ],
+                command,
                 capture_output=True,
                 text=True,
                 timeout=timeout_s,

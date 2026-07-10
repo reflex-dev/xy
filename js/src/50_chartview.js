@@ -1578,6 +1578,14 @@ class ChartView {
     this._drawChrome();
   }
 
+  // Centralized clock seam for animation state machines. Production uses the
+  // browser's monotonic clock; deterministic render probes can replace this
+  // private method without relying on platform-specific writability of
+  // performance.now.
+  _now() {
+    return performance.now();
+  }
+
 
   _drawPoints(g, xm, ym, opacityScale = 1) {
     const gl = this.gl;
@@ -1627,7 +1635,7 @@ class ChartView {
     const blendTarget = g.lodBlend ?? 0;
     let blend = g.lodBlendShown ?? blendTarget;
     if (Math.abs(blend - blendTarget) > 0.005 && !this._prefersReducedMotion()) {
-      const now = performance.now();
+      const now = this._now();
       const dt = g._blendTick ? Math.min(100, now - g._blendTick) : 16;
       g._blendTick = now;
       blend += (blendTarget - blend) * (1 - Math.exp(-dt / 90));
@@ -2168,7 +2176,7 @@ class ChartView {
     const ctx = this.chrome.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, this.size.w, this.size.h);
-    const now = performance.now();
+    const now = this._now();
     const labelCadenceMs = this._viewAnim ? 80 : 0;
     const updateLabels = labelCadenceMs === 0
       || this._lastLabelDraw === null

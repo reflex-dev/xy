@@ -61,7 +61,9 @@ def test_zone_maps_stats(impl):
     rng = np.random.default_rng(7)
     data = rng.normal(100.0, 5.0, 200_000)
     data[::1000] = np.nan
-    mins, maxs, counts, nulls, sums, sum_sqs = impl.zone_maps(data, 65_536)
+    mins, maxs, counts, nulls, sums, sum_sqs, positive_mins, positive_maxs = impl.zone_maps(
+        data, 65_536
+    )
     assert len(mins) == 4  # ceil(200k / 64k)
     valid = data[~np.isnan(data)]
     assert int(counts.sum()) == len(valid)
@@ -70,6 +72,9 @@ def test_zone_maps_stats(impl):
     assert np.isclose(maxs.max(), valid.max())
     assert np.isclose(sums.sum(), valid.sum())
     assert np.isclose(sum_sqs.sum(), (valid * valid).sum())
+    positive = valid[valid > 0]
+    assert np.isclose(positive_mins[counts > 0].min(), positive.min())
+    assert np.isclose(positive_maxs[counts > 0].max(), positive.max())
 
 
 def test_zone_maps_autorange_matches_full_scan(impl):
@@ -89,13 +94,17 @@ def test_zone_maps_huge_values_do_not_warn(impl):
     data = np.array([1.0e308, np.nextafter(1.0e308, np.inf)], dtype=np.float64)
     with warnings.catch_warnings(record=True) as seen:
         warnings.simplefilter("always", RuntimeWarning)
-        mins, maxs, counts, nulls, sums, sum_sqs = impl.zone_maps(data, 65_536)
+        mins, maxs, counts, nulls, sums, sum_sqs, positive_mins, positive_maxs = impl.zone_maps(
+            data, 65_536
+        )
     runtime_warnings = [w for w in seen if issubclass(w.category, RuntimeWarning)]
     assert runtime_warnings == []
     assert int(counts.sum()) == 2
     assert int(nulls.sum()) == 0
     assert np.isfinite(mins[0])
     assert np.isfinite(maxs[0])
+    assert positive_mins[0] == 1.0e308
+    assert positive_maxs[0] == np.nextafter(1.0e308, np.inf)
     assert np.isinf(sums[0])
     assert np.isinf(sum_sqs[0])
 

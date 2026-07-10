@@ -118,6 +118,15 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "goal": "Bound incremental update cost and expose full-index rebuilds before they become interaction stalls.",
     },
     {
+        "id": "log_autorange",
+        "name": "Log autorange",
+        "why": "Large positive/negative and non-finite series are common in monitoring and scientific charts, and log axes must avoid full-data rescans.",
+        "metrics": "range latency, positive-domain correctness, peak Python memory",
+        "harness": "benchmarks/bench_workflows.py log autorange row; tests/test_figure.py",
+        "status": "tracked",
+        "goal": "Compute correct positive log domains from zone statistics with cost proportional to chunks, not points.",
+    },
+    {
         "id": "static_export",
         "name": "Static export",
         "why": "HTML, SVG, and PNG export are common notebook, documentation, and reporting paths with different bottlenecks.",

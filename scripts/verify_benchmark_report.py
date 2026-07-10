@@ -69,6 +69,7 @@ WORKFLOW_REQUIRED_SCENARIOS = {
     "ingest_python_lists",
     "stream_line_append_1k",
     "stream_density_append_then_pyramid_rebuild",
+    "log_line_autorange",
     "export_html_decimated_line",
     "export_svg_decimated_line",
     "export_png_native_decimated_line",
@@ -1531,7 +1532,7 @@ def _validate_workflow_native(report: dict[str, Any], errors: list[str]) -> None
         if not isinstance(row, dict):
             continue
         _require_string_value(row.get("scenario"), f"{path}.scenario", errors)
-        if row.get("family") not in {"ingestion", "streaming", "export"}:
+        if row.get("family") not in {"ingestion", "streaming", "range", "export"}:
             errors.append(f"{path}.family has unknown value {row.get('family')!r}")
         _require_positive_number(row, "n", path, errors)
         _require_positive_integer(row, "reps", path, errors)

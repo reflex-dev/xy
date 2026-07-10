@@ -9,7 +9,9 @@ import numpy as np
 import pytest
 
 from fastcharts import channels as ch
+from fastcharts import interaction
 from fastcharts._figure import DENSITY_GRID, SCATTER_DENSITY_THRESHOLD, Figure
+from fastcharts.columns import ZONE_CHUNK
 from fastcharts.config import DENSITY_SAMPLE_TARGET, MAX_SCREEN_DIM
 from fastcharts.interaction import _decode_log_u8
 
@@ -710,6 +712,31 @@ def test_selection_translates_to_shipped_positions():
     np.testing.assert_array_equal(canonical, [2, 3])
     shipped = fig.to_shipped_indices(0, canonical)
     np.testing.assert_array_equal(shipped, [1, 2])  # positions in shipped buffer
+
+
+def test_selection_prunes_non_overlapping_zone_chunks(monkeypatch):
+    x = np.concatenate([np.zeros(ZONE_CHUNK), np.full(ZONE_CHUNK, 100.0)])
+    y = np.concatenate([np.zeros(ZONE_CHUNK), np.full(ZONE_CHUNK, 100.0)])
+    fig = Figure().scatter(x, y)
+    seen = []
+    expanded = []
+    original = interaction.kernels.range_indices
+    original_expand = interaction._expand_zone_chunks
+
+    def wrapped(xv, yv, *args):
+        seen.append(len(xv))
+        return original(xv, yv, *args)
+
+    def wrapped_expand(col, chunks):
+        expanded.append(len(chunks))
+        return original_expand(col, chunks)
+
+    monkeypatch.setattr(interaction.kernels, "range_indices", wrapped)
+    monkeypatch.setattr(interaction, "_expand_zone_chunks", wrapped_expand)
+    selected = fig.select_range(-1.0, 1.0, -1.0, 1.0)[0]
+    np.testing.assert_array_equal(selected, np.arange(ZONE_CHUNK, dtype=np.uint32))
+    assert seen == [ZONE_CHUNK]
+    assert expanded == [1]
 
 
 def test_to_shipped_indices_translates_nan_drop_before_payload_build():

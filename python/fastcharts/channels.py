@@ -12,7 +12,7 @@ is ~16 bytes/point on the wire (x, y, color-scalar, size-scalar), matching the
 from __future__ import annotations
 
 import numbers
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import numpy as np
@@ -47,6 +47,11 @@ class ColorChannel:
     # categorical: integer code per point + the category labels + palette.
     codes: Optional[npt.NDArray[np.float64]] = None
     categories: Optional[list[str]] = None
+    # Append-only backing storage for streaming continuous channels. Kept out
+    # of the wire/spec surface; values remains the exact-length view.
+    _buffer: Optional[npt.NDArray[np.float64]] = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     def spec(self) -> dict[str, Any]:
         if self.mode == "constant":
@@ -67,6 +72,10 @@ class SizeChannel:
     values: Optional[npt.NDArray[np.float64]] = None
     domain: Optional[tuple[float, float]] = None
     range_px: tuple[float, float] = (2.0, 18.0)
+    # See ColorChannel._buffer.
+    _buffer: Optional[npt.NDArray[np.float64]] = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     def spec(self) -> dict[str, Any]:
         if self.mode == "constant":
@@ -188,6 +197,49 @@ def _continuous_domain(values: npt.NDArray[np.float64]) -> tuple[float, float]:
         pad = abs(lo) * 0.05 or 0.5
         return (lo - pad, hi + pad)
     return (lo, hi)
+
+
+def append_continuous(channel: Any, values: npt.NDArray[np.float64], label: str) -> None:
+    """Append a continuous channel in amortized O(tail) time.
+
+    Geometry columns already use a capacity-doubling buffer for streaming;
+    channel arrays need the same contract. The domain expands monotonically so
+    a newly appended value is not silently clamped to the old color/size scale.
+    Non-finite values remain valid channel inputs and are handled by the
+    existing normalization policy; they do not expand the domain.
+    """
+    if channel.mode != "continuous" or channel.values is None:
+        raise ValueError(f"{label} channel is not continuous")
+    tail = np.ascontiguousarray(values, dtype=np.float64).ravel()
+    if len(tail) == 0:
+        return
+    current = channel.values
+    n_old = len(current)
+    n_new = n_old + len(tail)
+    buffer = channel._buffer
+    if buffer is None or len(buffer) < n_new:
+        capacity = max(n_new, n_old * 2, 1024)
+        buffer = np.empty(capacity, dtype=np.float64)
+        buffer[:n_old] = current
+        channel._buffer = buffer
+    elif not (
+        np.shares_memory(current, buffer)
+        and current.ndim == 1
+        and current.size == n_old
+        and current.strides == buffer.strides
+        and current.__array_interface__["data"][0] == buffer.__array_interface__["data"][0]
+    ):
+        # `values` is expected to remain the exact prefix view of `_buffer`.
+        # Re-copy if a future caller rebinds it, so a stale capacity buffer
+        # cannot silently corrupt the retained prefix.
+        buffer[:n_old] = current
+    buffer[n_old:n_new] = tail
+    channel.values = buffer[:n_new]
+
+    finite = tail[np.isfinite(tail)]
+    if len(finite):
+        lo, hi = channel.domain or _continuous_domain(current)
+        channel.domain = (min(lo, float(finite.min())), max(hi, float(finite.max())))
 
 
 def resolve_color(

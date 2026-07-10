@@ -19,7 +19,7 @@ function lodFade(view, start, duration = 140) {
   if (start === undefined || start === null || duration <= 0 || view._prefersReducedMotion()) {
     return 1;
   }
-  const t = Math.min(1, Math.max(0, (performance.now() - start) / duration));
+  const t = Math.min(1, Math.max(0, (view._now() - start) / duration));
   return t * t * (3 - 2 * t);
 }
 
@@ -101,7 +101,7 @@ function lodStartNormAnim(view, g, start, target) {
   g._densityNormAnim = {
     start,
     target,
-    startedAt: performance.now(),
+    startedAt: view._now(),
     duration: target < start ? 420 : 260,
   };
 }
@@ -110,7 +110,7 @@ function lodStepNorm(view, g) {
   const anim = g._densityNormAnim;
   const d = g.density;
   if (!anim || !d || !d.grid || !d.tex) return;
-  const t = Math.min(1, Math.max(0, (performance.now() - anim.startedAt) / anim.duration));
+  const t = Math.min(1, Math.max(0, (view._now() - anim.startedAt) / anim.duration));
   const k = t * t * (3 - 2 * t);
   const norm = anim.start + (anim.target - anim.start) * k;
   const prev = d.normMax || 0;
@@ -169,7 +169,7 @@ function lodHoldPendingDrill(view, g, d) {
   const pending = g._lodPendingView;
   if (!d || !pending || g._drillDying) return false;
   if (g._lodPendingSeq !== view.seq) return false;
-  if (g._lodPendingAt && performance.now() - g._lodPendingAt > 1200) return false;
+  if (g._lodPendingAt && view._now() - g._lodPendingAt > 1200) return false;
   if (!lodWindowCenterInside(d.win, pending)) return false;
   const drillArea = lodWindowArea(d.win);
   const pendingArea = lodWindowArea(pending);
@@ -277,7 +277,7 @@ function lodApplyDrill(view, g, upd, buffers) {
   // on every refresh made the marks blink to ~0 alpha after each kernel
   // reply — a steady flash while zooming within a drilled view.
   if (fresh) {
-    g._drillFadeStart = performance.now();
+    g._drillFadeStart = view._now();
     g._drillWasInside = false;
     g._drillShownAlpha = 0;
     g._drillExitFadeStart = null;
@@ -330,7 +330,7 @@ function lodMarkDrillDying(view, g) {
 
 function lodDrillExitFade(view, g) {
   if (g._drillExitFadeStart === undefined || g._drillExitFadeStart === null) {
-    g._drillExitFadeStart = performance.now();
+    g._drillExitFadeStart = view._now();
   }
   const fade = lodFade(view, g._drillExitFadeStart, LOD_EXIT_FADE_MS);
   if (fade >= 1) g._drillExitFadeStart = null;
@@ -376,7 +376,7 @@ function lodEnterDrillContinuous(view, g) {
   g._drillShownAlpha = alpha;
   g._drillExitFadeStart = null;
   g._drillFadeStart =
-    alpha >= 1 ? null : performance.now() - LOD_ENTRY_FADE_MS * lodFadeInvert(alpha);
+    alpha >= 1 ? null : view._now() - LOD_ENTRY_FADE_MS * lodFadeInvert(alpha);
 }
 
 // Switch to the exit (fade-out) clock, seeded the same way.
@@ -385,7 +385,7 @@ function lodBeginDrillExitContinuous(view, g) {
   const alpha = lodDrillShownAlpha(view, g);
   g._drillShownAlpha = alpha;
   g._drillFadeStart = null;
-  g._drillExitFadeStart = performance.now() - LOD_EXIT_FADE_MS * lodFadeInvert(1 - alpha);
+  g._drillExitFadeStart = view._now() - LOD_EXIT_FADE_MS * lodFadeInvert(1 - alpha);
 }
 
 // -- aggregate updates & tier drawing ----------------------------------------
@@ -403,7 +403,7 @@ function lodApplyDensityUpdate(view, g, upd, buffers) {
   const normMax = view._prefersReducedMotion() ? d.max : normStart;
   g.densityNormMax = normMax;
   g.prevDensity = g.density;
-  g._densityFadeStart = performance.now();
+  g._densityFadeStart = view._now();
   g.density = {
     w: d.w, h: d.h, max: d.max, normMax, colormap: d.colormap || g.density.colormap,
     xRange: d.x_range, yRange: d.y_range,
@@ -423,9 +423,9 @@ function lodDrawDensityWithFade(view, g, density, opacityScale = 1) {
     // their current alpha instead of popping to the endpoints.
     if (density === g._densitySwitchPrev && g._densitySwitchFadeStart != null) {
       const f = lodFade(view, g._densitySwitchFadeStart, 140);
-      g._densitySwitchFadeStart = performance.now() - 140 * lodFadeInvert(1 - f);
+      g._densitySwitchFadeStart = view._now() - 140 * lodFadeInvert(1 - f);
     } else {
-      g._densitySwitchFadeStart = performance.now();
+      g._densitySwitchFadeStart = view._now();
     }
     g._densitySwitchPrev = g._shownDensity;
     g._shownDensity = density;

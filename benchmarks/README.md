@@ -10,9 +10,9 @@ Use Python 3.12, the repository Rust toolchain, Node 22, and Playwright 1.48:
 ```bash
 cargo build --release
 uv venv .venv --python 3.12
-uv pip install -p .venv/bin/python -e ".[dev]"
+uv pip install -p .venv/bin/python -e ".[dev,codspeed]"
 uv pip install -p .venv/bin/python matplotlib seaborn plotly kaleido bokeh \
-  altair datashader hvplot plotly-resampler psutil pytest-codspeed
+  altair datashader hvplot plotly-resampler psutil
 npm i --no-save playwright@1.48
 npx playwright install chromium
 CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
@@ -45,6 +45,19 @@ These commands match the non-blocking GitHub Actions measurement lane:
 
 The browser helpers force SwiftShader themselves. Validate every artifact before
 publication with `scripts/verify_benchmark_report.py --kind ...`.
+
+The native CodSpeed suite is the reproducible backend/per-payload gate:
+
+```bash
+cargo build --release
+uv run --extra dev --extra codspeed python -m pytest \
+  benchmarks/test_codspeed_kernels.py --codspeed
+```
+
+It requires the native Rust backend. The GitHub Actions workflow runs the same
+suite in CodSpeed simulation mode; browser interaction and end-to-end alpha
+workloads remain separate, because they need a real browser and wall-clock
+timing.
 
 ## Reference Hardware
 

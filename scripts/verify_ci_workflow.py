@@ -269,7 +269,7 @@ def validate_codspeed_workflow(path: Path = DEFAULT_CODSPEED_WORKFLOW) -> list[s
         "astral-sh/setup-uv@",
         "cargo build --release",
         "FASTCHARTS_REQUIRE_CARGO",
-        "pytest-codspeed",
+        ".[dev,codspeed]",
         "Verify native benchmark backend",
         'k.BACKEND == "native"',
         "CodSpeed requires native backend",

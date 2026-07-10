@@ -126,8 +126,19 @@ def select_range(
             continue
         if tid is not None and t.id != tid:
             continue
-        xv, yv = t.x.values, t.y.values
-        out[t.id] = kernels.range_indices(xv, yv, lo_x, hi_x, lo_y, hi_y)
+        x_chunks = _zone_candidate_chunks(t.x, lo_x, hi_x)
+        y_chunks = _zone_candidate_chunks(t.y, lo_y, hi_y)
+        candidate_chunks = np.intersect1d(x_chunks, y_chunks, assume_unique=True)
+        if len(candidate_chunks) == len(t.x.zone.counts):
+            out[t.id] = kernels.range_indices(t.x.values, t.y.values, lo_x, hi_x, lo_y, hi_y)
+        elif len(candidate_chunks) == 0:
+            out[t.id] = np.empty(0, dtype=np.uint32)
+        else:
+            candidates = _expand_zone_chunks(t.x, candidate_chunks)
+            out[t.id] = kernels.range_indices(
+                t.x.values[candidates], t.y.values[candidates], lo_x, hi_x, lo_y, hi_y
+            )
+            out[t.id] = candidates[out[t.id]]
     return out
 
 
@@ -138,8 +149,39 @@ def to_shipped_indices(fig: "Figure", trace_id: int, canonical: np.ndarray) -> n
     sel = _point_shipped_sel(_trace(fig, trace_id))
     if sel is None:
         return np.asarray(canonical, dtype=np.uint32)
-    # sel is sorted ascending (flatnonzero/m4 output); membership → position.
-    return np.flatnonzero(np.isin(sel, canonical)).astype(np.uint32)
+    # `sel` is sorted ascending (flatnonzero/m4 output); membership maps each
+    # canonical input row to its shipped position, preserving canonical order
+    # and duplicate rows in `canonical`.
+    canonical = np.asarray(canonical, dtype=np.uint32).ravel()
+    positions = np.searchsorted(sel, canonical)
+    valid = positions < len(sel)
+    valid[valid] &= sel[positions[valid]] == canonical[valid]
+    return positions[valid].astype(np.uint32)
+
+
+def _zone_candidate_chunks(col: Any, lo: float, hi: float) -> np.ndarray:
+    """Return chunk ids whose zone can overlap an inclusive range."""
+    mins = col.zone.mins
+    maxs = col.zone.maxs
+    counts = col.zone.counts
+    return np.flatnonzero((counts > 0) & (maxs >= lo) & (mins <= hi)).astype(np.uint32, copy=False)
+
+
+def _expand_zone_chunks(col: Any, chunks: np.ndarray) -> np.ndarray:
+    """Expand selected chunk ids to canonical row ids once, after pruning."""
+    if len(chunks) == 0:
+        return np.empty(0, dtype=np.uint32)
+    widths = (
+        np.minimum((chunks.astype(np.int64) + 1) * columns.ZONE_CHUNK, len(col))
+        - chunks.astype(np.int64) * columns.ZONE_CHUNK
+    )
+    rows = np.empty(int(widths.sum()), dtype=np.uint32)
+    offset = 0
+    for chunk, width in zip(chunks, widths, strict=True):
+        start = int(chunk) * columns.ZONE_CHUNK
+        rows[offset : offset + int(width)] = np.arange(start, start + int(width), dtype=np.uint32)
+        offset += int(width)
+    return rows
 
 
 def _point_shipped_sel(t: Any) -> Optional[np.ndarray]:
@@ -612,9 +654,9 @@ def append_data(
     t.x.append(ax)
     t.y.append(ay)
     if color_tail is not None:
-        t.color_ch.values = np.concatenate([t.color_ch.values, color_tail])
+        channels.append_continuous(t.color_ch, color_tail, "color")
     if size_tail is not None:
-        t.size_ch.values = np.concatenate([t.size_ch.values, size_tail])
+        channels.append_continuous(t.size_ch, size_tail, "size")
 
     _free_pyramid(t)  # lazily rebuilt; n grew so "not applicable" may flip
     lod.exit_drill(t)

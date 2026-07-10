@@ -80,6 +80,8 @@ def load() -> ctypes.CDLL:
         U64P,
         F64P,
         F64P,
+        F64P,
+        F64P,
     ]
     lib.fc_min_max.restype = ctypes.c_int32
     lib.fc_min_max.argtypes = [F64P, ctypes.c_size_t, F64P, F64P]
@@ -188,14 +190,34 @@ def main() -> None:
     )
     ok(
         lib.fc_zone_maps(
-            null_f64, 0, 65_536, null_f64, null_f64, null_u64, null_u64, null_f64, null_f64
+            null_f64,
+            0,
+            65_536,
+            null_f64,
+            null_f64,
+            null_u64,
+            null_u64,
+            null_f64,
+            null_f64,
+            null_f64,
+            null_f64,
         )
         == 0,
         "zone_maps empty/null returns zero",
     )
     ok(
         lib.fc_zone_maps(
-            null_f64, 1, 65_536, null_f64, null_f64, null_u64, null_u64, null_f64, null_f64
+            null_f64,
+            1,
+            65_536,
+            null_f64,
+            null_f64,
+            null_u64,
+            null_u64,
+            null_f64,
+            null_f64,
+            null_f64,
+            null_f64,
         )
         == size_max,
         "zone_maps non-empty/null sentinel",
@@ -505,7 +527,7 @@ def main() -> None:
     data = array("d", [float(i) for i in range(10)])
     data[3] = float("nan")
     nchunks = 1
-    zm = [array("d", [0.0]) * nchunks for _ in range(4)]  # min,max,sum,sumsq
+    zm = [array("d", [0.0]) * nchunks for _ in range(6)]  # min,max,sum,sumsq,+positive min/max
     cnt = array("Q", [0]) * nchunks
     nul = array("Q", [0]) * nchunks
     wrote = lib.fc_zone_maps(
@@ -518,14 +540,17 @@ def main() -> None:
         _ptr(nul, ctypes.c_uint64),
         _ptr(zm[2], ctypes.c_double),
         _ptr(zm[3], ctypes.c_double),
+        _ptr(zm[4], ctypes.c_double),
+        _ptr(zm[5], ctypes.c_double),
     )
     ok(wrote == 1, "zone_maps chunk count")
     ok(cnt[0] == 9 and nul[0] == 1, "zone_maps counts NaN as null")
     ok(zm[0][0] == 0.0 and zm[1][0] == 9.0, "zone_maps min/max skip NaN")
+    ok(zm[4][0] == 1.0 and zm[5][0] == 9.0, "zone_maps positive min/max")
 
     # inf must be treated as null too (§19 hardening): min/max stay finite.
     idata = array("d", [1.0, float("inf"), float("-inf"), 3.0])
-    izm = [array("d", [0.0]) for _ in range(4)]
+    izm = [array("d", [0.0]) for _ in range(6)]
     icnt = array("Q", [0])
     inul = array("Q", [0])
     lib.fc_zone_maps(
@@ -538,9 +563,12 @@ def main() -> None:
         _ptr(inul, ctypes.c_uint64),
         _ptr(izm[2], ctypes.c_double),
         _ptr(izm[3], ctypes.c_double),
+        _ptr(izm[4], ctypes.c_double),
+        _ptr(izm[5], ctypes.c_double),
     )
     ok(icnt[0] == 2 and inul[0] == 2, "zone_maps counts inf as null")
     ok(izm[0][0] == 1.0 and izm[1][0] == 3.0, "zone_maps min/max skip inf")
+    ok(izm[4][0] == 1.0 and izm[5][0] == 3.0, "zone_maps positive skip inf")
 
     # min_max sentinel path.
     lo = ctypes.c_double()
