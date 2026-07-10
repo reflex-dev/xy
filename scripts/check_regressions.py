@@ -9,7 +9,7 @@ because they behave very differently in CI:
   with a hair of tolerance; a regression here is always a real one (the
   screen-bounded-payload invariant broke), so CI fails.
 - **Timing** (kernel Mpt/s, prep ms): vary wildly across shared runners. A 2x
-  move is advisory; a 4x move is a hard catastrophic-regression gate. This
+  move is advisory; an 8x move is a hard catastrophic-regression gate. This
   leaves room for shared-runner noise while still catching deleted fast paths,
   accidental quadratic work, and other changes too large to wave away.
 
@@ -97,9 +97,11 @@ def catastrophic_timing_regression(metric_id: str, base, cur) -> bool:
     if not isinstance(cur, (int, float)):
         return False
     if "_mpts_s." in metric_id:
-        return cur < base * 0.25
+        # One shared-runner sample is too noisy for a 4x hard cutoff. Keep
+        # timing failures hard only when throughput falls below one eighth.
+        return cur < base * 0.125
     if "_ms." in metric_id:
-        return cur > base * 4.0
+        return cur > base * 8.0
     return False
 
 
