@@ -319,8 +319,39 @@ chart
 ```
 
 Composed `Chart` objects expose the same `to_html(...)`, `html(...)`,
-`_repr_html_()`, `to_png(...)`, `widget()`, `show()`, and `memory_report()`
-readout methods as `Figure`.
+`_repr_html_()`, `to_png(...)`, `to_svg(...)`, `widget()`, `show()`, and
+`memory_report()` readout methods as `Figure`.
+
+## Live Data On A Composed Chart
+
+The data plane of a `Chart` is live — stream new points and read exact rows
+or selections from Python. Structure stays declarative: adding marks, axes,
+or annotations means composing a new chart.
+
+```python
+import fastcharts as fc
+
+chart = fc.scatter_chart(
+    fc.scatter(x=[0.0, 1.0, 2.0, 3.0], y=[0.0, 2.0, 4.0, 6.0], name="stream"),
+    fc.x_axis(label="t"),
+    fc.y_axis(label="value"),
+)
+
+# Streaming append: extends the trace in place. With a live widget the
+# client refreshes; headless, the next widget()/to_html() ships the
+# streamed state (already-exported HTML files are snapshots).
+chart.append(0, [4.0], [8.0])
+
+# Exact source-row readout from the canonical f64 store.
+row = chart.pick(0, 4)
+assert row["x"] == 4.0 and row["y"] == 8.0
+
+# Python-side box select: the same Selection object on_select receives.
+selection = chart.select_range(0.5, 3.5, 0.0, 10.0)
+assert len(selection) == 3
+xs, ys = selection.xy(0)
+chart
+```
 
 ## Layered Composition And Annotations
 

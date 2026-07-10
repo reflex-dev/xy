@@ -62,10 +62,14 @@ CHART_READOUTS = (
     "to_html",
     "html",
     "_repr_html_",
+    "to_svg",
     "to_png",
     "memory_report",
     "chrome_components",
     "reflex_components",
+    "append",
+    "pick",
+    "select_range",
 )
 FIGURE_BUILDERS = (
     "line",
@@ -318,6 +322,11 @@ def test_component_dataclass_and_chart_method_types_are_specific() -> None:
     memory_report_return = get_type_hints(components.Chart.memory_report)["return"]
     assert get_origin(memory_report_return) is dict
     assert get_args(memory_report_return) == (str, Any)
+
+    assert get_type_hints(components.Chart.append)["return"] is type(None)
+    pick_return = get_type_hints(components.Chart.pick)["return"]
+    assert type(None) in get_args(pick_return)  # Optional[dict[str, Any]]
+    assert get_type_hints(components.Chart.select_range)["return"] is figure_module.Selection
 
     for method in ("chrome_components", "reflex_components"):
         return_hint = get_type_hints(getattr(components.Chart, method))["return"]

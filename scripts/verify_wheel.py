@@ -28,6 +28,7 @@ REQUIRED_FILES = {
     "fastcharts/__init__.py",
     "fastcharts/_native.py",
     "fastcharts/channels.py",
+    "fastcharts/channel.py",
     "fastcharts/columns.py",
     "fastcharts/components.py",
     "fastcharts/config.py",

@@ -14,6 +14,7 @@ HEAVY_MODULES = {
     "reflex_core",
     "traitlets",
     "fastcharts.channels",
+    "fastcharts.channel",
     "fastcharts.columns",
     "fastcharts.components",
     "fastcharts.figure",
@@ -340,5 +341,43 @@ def test_column_factory_does_not_shadow_columns_submodule() -> None:
             pass
         else:
             raise AssertionError("fastcharts.column must stay the public factory, not a submodule")
+        """
+    )
+
+
+def test_channel_dispatcher_loads_without_widget_stack() -> None:
+    """The Reflex-forward guarantee: a server transport can drive
+    channel.handle_message with no anywidget/traitlets installed."""
+    _run_fresh(
+        """
+        import sys
+
+        from fastcharts.channel import ChannelCallbacks, handle_message
+
+        assert callable(handle_message)
+        assert ChannelCallbacks() == ChannelCallbacks()
+        assert "fastcharts.widget" not in sys.modules
+        assert "anywidget" not in sys.modules
+        assert "traitlets" not in sys.modules
+        """
+    )
+
+
+def test_chart_headless_append_does_not_load_widget_stack() -> None:
+    """chart.append on a never-shown chart must mutate the figure directly,
+    not instantiate the anywidget stack as a side effect."""
+    _run_fresh(
+        """
+        import sys
+
+        import fastcharts as fc
+
+        chart = fc.scatter_chart(fc.scatter(x=[0.0, 1.0], y=[0.0, 1.0]))
+        chart.append(0, [2.0], [3.0])
+
+        assert len(chart.figure().traces[0].x.values) == 3
+        assert "fastcharts.widget" not in sys.modules
+        assert "anywidget" not in sys.modules
+        assert "traitlets" not in sys.modules
         """
     )

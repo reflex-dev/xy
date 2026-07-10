@@ -14,11 +14,11 @@ from typing import TYPE_CHECKING, Any
 import anywidget
 import traitlets
 
+from .channel import ChannelCallbacks, handle_message
+
 # Selection lives in figure.py (it's the on_select payload and has no widget
 # dependency); re-exported here for backward compatibility.
 from .figure import Selection
-from .interaction import _integer_id
-from .lod import normalize_window
 
 if TYPE_CHECKING:
     from .figure import Figure
@@ -62,11 +62,13 @@ class FigureWidget(anywidget.AnyWidget):
         **kwargs: Any,
     ) -> None:
         self._figure = figure
-        self._on_hover = on_hover
-        self._on_click = on_click
-        self._on_brush = on_brush
-        self._on_select = on_select
-        self._on_view_change = on_view_change
+        self._callbacks = ChannelCallbacks(
+            on_hover=on_hover,
+            on_click=on_click,
+            on_brush=on_brush,
+            on_select=on_select,
+            on_view_change=on_view_change,
+        )
         spec, blob = figure.build_payload()
         super().__init__(spec=spec, buffers=blob, **kwargs)
         self.on_msg(self._on_custom_msg)
@@ -81,135 +83,10 @@ class FigureWidget(anywidget.AnyWidget):
         self.send(msg, buffers=buffers)
 
     def _on_custom_msg(self, widget: Any, content: Any, msg_buffers: Any) -> None:
-        if not isinstance(content, dict):
-            return
-        kind = content.get("type")
-        if kind == "view":
-            # Zoom/pan crossed what the shipped decimation can serve: recompute
-            # for the visible window only (§28), stale-while-revalidate on the
-            # client (§17 — it keeps drawing the old tier until this arrives).
-            seq = content.get("seq")
-            try:
-                x0 = float(content["x0"])
-                x1 = float(content["x1"])
-                if not x1 > x0:
-                    return
-                update, buffers = self._figure.decimate_view(
-                    x0,
-                    x1,
-                    content.get("px", 2048),
-                )
-            except (KeyError, TypeError, ValueError):
-                return
-            if update["traces"]:
-                self.send({"type": "tier_update", "seq": seq, **update}, buffers=buffers)
-        elif kind == "density_view":
-            # Tier-2 scatter panned/zoomed: re-bin the visible window (§5).
-            seq = content.get("seq")
-            try:
-                update, buffers = self._figure.density_view(
-                    content["trace"],
-                    content["x0"],
-                    content["x1"],
-                    content["y0"],
-                    content["y1"],
-                    content.get("w", 512),
-                    content.get("h", 384),
-                )
-            except (KeyError, TypeError, ValueError, IndexError):
-                return
-            if update["traces"]:
-                self.send({"type": "density_update", "seq": seq, **update}, buffers=buffers)
-        elif kind == "pick":
-            # Hover/click drill: exact f64 row from canonical (§16/§17). The
-            # client's drill_seq rejects picks that raced a subset swap.
-            dseq = content.get("drill_seq")
-            try:
-                trace_id = _integer_id(content.get("trace", -1), "trace")
-                index = _integer_id(content.get("index", -1), "index")
-                drill_seq = None if dseq is None else _integer_id(dseq, "drill_seq")
-                row = self._figure.pick(
-                    trace_id,
-                    index,
-                    drill_seq,
-                )
-            except (TypeError, ValueError):
-                return
-            self.send({"type": "pick_result", "seq": content.get("seq"), "row": row})
-            if row is not None and self._on_hover is not None:
-                self._on_hover(row)
-        elif kind == "click":
-            dseq = content.get("drill_seq")
-            row = None
-            try:
-                trace_id = _integer_id(content.get("trace", -1), "trace")
-                index = _integer_id(content.get("index", -1), "index")
-                drill_seq = None if dseq is None else _integer_id(dseq, "drill_seq")
-                row = self._figure.pick(trace_id, index, drill_seq)
-            except (TypeError, ValueError):
-                return
-            if row is not None and self._on_click is not None:
-                self._on_click(row)
-        elif kind == "view_change":
-            if self._on_view_change is None:
-                return
-            try:
-                view = {
-                    "x0": float(content["x0"]),
-                    "x1": float(content["x1"]),
-                    "y0": float(content["y0"]),
-                    "y1": float(content["y1"]),
-                    "source": str(content.get("source", "view")),
-                }
-            except (KeyError, TypeError, ValueError):
-                return
-            self._on_view_change(view)
-        elif kind == "select":
-            # Box-select → range predicate (§34 Tier A). Ship a selection mask
-            # per trace so the client dims unselected marks; call on_select with
-            # the resolved indices (Arrow-slice-shaped, not JSON — §34 API note).
-            try:
-                x0, x1, y0, y1 = normalize_window(
-                    content["x0"],
-                    content["x1"],
-                    content["y0"],
-                    content["y1"],
-                    require_area=False,
-                )
-                sel = self._figure.select_range(
-                    x0,
-                    x1,
-                    y0,
-                    y1,
-                )
-            except (KeyError, TypeError, ValueError):
-                return
-            if self._on_brush is not None:
-                self._on_brush({"x0": x0, "x1": x1, "y0": y0, "y1": y1})
-            traces = []
-            buffers = []
-            total = 0
-            for tid, idx in sel.items():
-                # The wire mask speaks shipped-vertex positions; the Selection
-                # callback below keeps canonical rows (§34 — callbacks get real
-                # data, the GPU gets its own coordinate space).
-                wire_idx = self._figure.to_shipped_indices(tid, idx)
-                traces.append(
-                    {
-                        "id": tid,
-                        "count": int(len(wire_idx)),
-                        "buf": len(buffers),
-                        # Which drilled subset this mask speaks for; the client
-                        # drops it if its buffers have moved on (§17).
-                        "drill_seq": self._figure.traces[tid].drill_seq,
-                    }
-                )
-                buffers.append(wire_idx.tobytes())
-                total += len(idx)
-            self.send({"type": "selection", "traces": traces, "total": total}, buffers=buffers)
-            if self._on_select is not None:
-                self._on_select(Selection(self._figure, sel))
-        elif kind == "select_clear":
-            self.send({"type": "selection", "traces": [], "total": 0})
-            if self._on_select is not None:
-                self._on_select(Selection(self._figure, {}))
+        # All dispatch and callback semantics live in channel.handle_message
+        # (reflex-integration §3.1) — this widget is one transport among
+        # (eventually) several; it only owns the anywidget comm send.
+        reply = handle_message(self._figure, content, msg_buffers, callbacks=self._callbacks)
+        if reply is not None:
+            msg, buffers = reply
+            self.send(msg, buffers=buffers)

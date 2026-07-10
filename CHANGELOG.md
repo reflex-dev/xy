@@ -8,6 +8,20 @@ in the README).
 
 ## [Unreleased]
 
+### Added
+- **Chart live surface (data-live, structure-immutable).** The declarative
+  `Chart` gains `append(trace_id, x, y, color=, size=)` (streaming — routed
+  through the live widget when one exists, else mutating the built figure
+  without touching the widget stack), `pick(trace_id, index)` (exact
+  canonical-row readout), and `select_range(...) -> Selection`. Structural
+  changes still mean composing a new chart.
+- **`fastcharts/channel.py`** — the kernel-side message dispatcher extracted
+  from `FigureWidget` (reflex-integration §3.1 build-order step 1):
+  `handle_message(fig, content, buffers, callbacks)` serves every transport;
+  the anywidget widget is now a thin comm wrapper over it, and a future
+  server transport (the planned Reflex adapter) drives the same tested
+  contract without importing the widget stack.
+
 ### Changed
 - **API layering inverted: the declarative layer is now the core.** The nine
   mark-builder implementations moved verbatim from `figure.py` into the new
