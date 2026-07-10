@@ -172,6 +172,36 @@ def test_min_max(impl):
     assert impl.min_max(np.array([], dtype=np.float64)) is None
 
 
+# -- sorted-ingest predicate --------------------------------------------------
+
+
+def test_is_sorted_matches_numpy_diff_predicate(impl):
+    cases = [
+        np.array([], dtype=np.float64),
+        np.array([3.0]),
+        np.array([np.nan]),
+        np.array([1.0, 1.0, 2.0]),
+        np.array([-np.inf, 0.0, np.inf]),
+        np.array([2.0, 1.0]),
+        np.array([1.0, np.nan, 3.0]),
+        np.array([1.0, 2.0, np.nan]),
+        np.array([np.nan, 1.0, 2.0]),
+        np.array([0.0, 1.0, 5.0, 4.0, 9.0]),
+        np.arange(10_000, dtype=np.float64),
+    ]
+    for data in cases:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            expected = bool(np.all(np.diff(data) >= 0))
+        assert impl.is_sorted(data) is expected, data
+
+
+def test_is_sorted_accepts_convertible_input(impl):
+    assert impl.is_sorted(np.arange(8, dtype=np.float32)) is True
+    assert impl.is_sorted([0, 1, 2]) is True
+    assert impl.is_sorted([2, 1]) is False
+
+
 # -- 2D density binning (§5 Tier 2) ------------------------------------------
 
 

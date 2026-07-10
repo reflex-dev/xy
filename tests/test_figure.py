@@ -13,11 +13,10 @@ import numpy as np
 import pytest
 
 import fastcharts.export as export_module
-from fastcharts import Figure
+from fastcharts._figure import DECIMATION_THRESHOLD, PROTOCOL_VERSION, Figure
 from fastcharts.columns import ColumnStore
 from fastcharts.config import MAX_SCREEN_DIM
 from fastcharts.export import _javascript_for_inline_script, _json_for_inline_script
-from fastcharts.figure import DECIMATION_THRESHOLD, PROTOCOL_VERSION
 
 
 def _payload_col(spec, blob, ref):

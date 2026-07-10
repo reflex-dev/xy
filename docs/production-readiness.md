@@ -42,7 +42,7 @@ These must pass before publishing or making a broad performance claim.
 |---|---|---|
 | Python floor | `pyproject.toml`, Ruff, docs, syntax, and annotations stay on the Python 3.11+ floor | `python scripts/check_python_floor.py` |
 | Public API | `__all__`, lazy exports, `__version__`, the source `py.typed` marker, focused type-surface tests, and fresh-process import-time budget stay coherent | `make check-api` |
-| Import-time budget | `fastcharts.__init__`, `dir(fastcharts)`, export helpers, Figure construction, and `.widget()` keep their lazy import boundaries | `make check-import` |
+| Import-time budget | `fastcharts.__init__`, `dir(fastcharts)`, export helpers, chart construction, and `.widget()` keep their lazy import boundaries | `make check-import` |
 | Claim guardrails | Public docs and package metadata avoid broad, unqualified performance claims | `make check-claims` |
 | CI/release workflows | Hard gates, non-blocking benchmarks, best-effort benchmark artifact upload/download, trusted publishing, and no-Rust clear-error jobs stay wired | `make check-ci` |
 | HTML export safety | Inline JSON/script escaping, atomic path writes, hostile user strings, and browser client text-node insertion stay protected | `make check-security` |
@@ -53,7 +53,7 @@ These must pass before publishing or making a broad performance claim.
 | Native ABI | C ABI can be loaded from the built core | `python scripts/abi_smoke.py` |
 | JavaScript | Committed bundles match source | `node js/build.mjs --check` |
 | Browser render | WebGL smoke reaches real pixels | `python scripts/render_smoke_nonumpy.py <chromium>` |
-| Real figure render | A real `Figure` exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |
+| Real chart render | A real composed chart exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |
 | sdist | Source archive contains required source/bundles, benchmark regression harness/baseline, release docs/tests/scripts, the Reflex example app, `PKG-INFO` version/dependencies matching `pyproject.toml`, no duplicate members, and no generated junk | `python scripts/verify_sdist.py dist/*.tar.gz` |
 | Native wheel | Platform wheel contains package-only files, exactly one native library, `METADATA` version/dependencies matching `pyproject.toml`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
 | Fallback wheel | No-toolchain wheel contains package-only files, `METADATA` version/dependencies matching `pyproject.toml`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
@@ -62,7 +62,7 @@ These must pass before publishing or making a broad performance claim.
 
 ## Standalone HTML Safety
 
-`Figure.to_html()` produces one self-contained document: inline JavaScript,
+`Chart.to_html()` produces one self-contained document: inline JavaScript,
 inline JSON spec, and a base64 data blob. That shape is convenient for notebooks,
 reports, and sharing a single file, but it has a clear security contract:
 
@@ -376,7 +376,7 @@ Not yet safe:
 Keep pushing these in low-conflict increments:
 
 - Add mutation-safety tests for every public builder: a failed call must leave
-  the `Figure` and column store unchanged.
+  the chart's internal figure and column store unchanged.
 - Keep weird-string export tests covering every text surface added to the
   public API, including titles, labels, legends, categories, and series names.
 - Styling arguments (colors, gradient stops, `style=` declarations) are gated

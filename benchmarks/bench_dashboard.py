@@ -48,7 +48,7 @@ def _parse_counts(text: str) -> list[int]:
 def _dashboard_figures(count: int) -> list[Any]:
     if np is None:
         raise SystemExit("numpy is required for benchmarks/bench_dashboard.py")
-    from fastcharts import Figure
+    import fastcharts as fc
 
     rng = np.random.default_rng(91_337)
     figures: list[Any] = []
@@ -59,18 +59,24 @@ def _dashboard_figures(count: int) -> list[Any]:
             x = np.arange(n, dtype=np.float64)
             y = np.cumsum(rng.normal(0.0, 0.05, n)).astype(np.float64, copy=False)
             figures.append(
-                Figure(width=RENDER_W, height=RENDER_H, title=f"Line {i + 1}").line(
-                    x, y, name="signal"
-                )
+                fc.chart(
+                    fc.line(x=x, y=y, name="signal"),
+                    width=RENDER_W,
+                    height=RENDER_H,
+                    title=f"Line {i + 1}",
+                ).figure()
             )
         elif kind == 1:
             n = 80_000
             x = rng.normal(0.0, 1.0, n).astype(np.float64, copy=False)
             y = (0.45 * x + rng.normal(0.0, 0.8, n)).astype(np.float64, copy=False)
             figures.append(
-                Figure(width=RENDER_W, height=RENDER_H, title=f"Scatter {i + 1}").scatter(
-                    x, y, name="points", opacity=0.65
-                )
+                fc.chart(
+                    fc.scatter(x=x, y=y, name="points", opacity=0.65),
+                    width=RENDER_W,
+                    height=RENDER_H,
+                    title=f"Scatter {i + 1}",
+                ).figure()
             )
         elif kind == 2:
             values = np.concatenate(
@@ -80,20 +86,28 @@ def _dashboard_figures(count: int) -> list[Any]:
                 ]
             ).astype(np.float64, copy=False)
             figures.append(
-                Figure(width=RENDER_W, height=RENDER_H, title=f"Histogram {i + 1}").hist(
-                    values, bins=160, name="distribution"
-                )
+                fc.chart(
+                    fc.hist(values, bins=160, name="distribution"),
+                    width=RENDER_W,
+                    height=RENDER_H,
+                    title=f"Histogram {i + 1}",
+                ).figure()
             )
         elif kind == 3:
             labels = np.array([f"C{j:02d}" for j in range(36)], dtype=object)
             values = rng.random((3, len(labels))) * 100
             figures.append(
-                Figure(width=RENDER_W, height=RENDER_H, title=f"Bars {i + 1}").bar(
-                    labels,
-                    values,
-                    mode="grouped",
-                    series=["A", "B", "C"],
-                )
+                fc.chart(
+                    fc.bar(
+                        labels,
+                        values,
+                        mode="grouped",
+                        series=["A", "B", "C"],
+                    ),
+                    width=RENDER_W,
+                    height=RENDER_H,
+                    title=f"Bars {i + 1}",
+                ).figure()
             )
         else:
             xs = np.linspace(-2.5, 2.5, 80)
@@ -104,9 +118,12 @@ def _dashboard_figures(count: int) -> list[Any]:
                 + rng.normal(0.0, 0.06, (len(ys), len(xs)))
             )
             figures.append(
-                Figure(width=RENDER_W, height=RENDER_H, title=f"Heatmap {i + 1}").heatmap(
-                    z, colormap="turbo"
-                )
+                fc.chart(
+                    fc.heatmap(z, colormap="turbo"),
+                    width=RENDER_W,
+                    height=RENDER_H,
+                    title=f"Heatmap {i + 1}",
+                ).figure()
             )
     return figures
 

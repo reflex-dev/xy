@@ -1,7 +1,8 @@
 """Headless render smoke that needs neither numpy nor PyPI.
 
 Builds a payload by hand (stdlib `array` + `struct`) in exactly the wire shape
-`Figure.build_payload` emits, drives the pre-installed Chromium against the
+the internal figure's `build_payload` emits, drives the pre-installed Chromium
+against the
 standalone JS bundle, and reads back a lit-pixel count via gl.readPixels. This
 verifies the *render client* — the half cargo can't touch — in a locked-down
 environment. The numpy-backed `scripts/smoke_render.py` supersedes it once deps

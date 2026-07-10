@@ -1,7 +1,7 @@
 """Annotation builders for `Figure` (vline/hline/band/callout/text/marker/
 arrow + reference-line and zone helpers) and the annotation spec compiler.
 
-Split out of `figure.py` as a mixin: `Figure` inherits `AnnotationsMixin`, so
+Split out of `_figure.py` as a mixin: `Figure` inherits `AnnotationsMixin`, so
 `fig.vline(...)` etc. are unchanged and every `self.*` (validators, the column
 store, `self.annotations`, rollback) resolves through the concrete `Figure` via
 the MRO. Only numpy + the columns/channels helpers are needed at module level."""
@@ -18,8 +18,8 @@ if TYPE_CHECKING:
     # Type-only host base: `self.*` (validators, column store, annotations)
     # resolves against the Figure surface. `FigureHost` is a Protocol, so there
     # is no nominal inheritance cycle; at runtime the base is plain `object`.
+    from ._figure import Figure  # noqa: F401  (resolves the `-> "Figure"` returns)
     from ._hosts import FigureHost as _Host
-    from .figure import Figure  # noqa: F401  (resolves the `-> "Figure"` returns)
 else:
     _Host = object
 

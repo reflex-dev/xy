@@ -15,8 +15,8 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fastcharts as fc
 from categories import categories_for  # noqa: E402
-from fastcharts import Figure
 from fastcharts import kernels as k
 
 BENCH_CATEGORY_IDS = ("huge_line_time_series", "payload_export_size")
@@ -54,8 +54,7 @@ def bench_size(n: int) -> dict:
     row["m4_out_points"] = len(idx)
 
     # End-to-end first paint: figure build → payload bytes on the wire.
-    fig = Figure()
-    fig.line(x, y)
+    fig = fc.chart(fc.line(x=x, y=y)).figure()
     t, (_spec, blob) = timeit(fig.build_payload, 2048, repeat=1)
     row["payload_build_s"] = t
     row["payload_bytes"] = len(blob)

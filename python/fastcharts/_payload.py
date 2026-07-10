@@ -1,6 +1,6 @@
 """Wire-spec compiler for `Figure`: `build_payload` plus the per-kind
 emitters and the Tier-2 density/sample specs, and the `_PayloadWriter` that
-owns the binary blob + column table. Split out of `figure.py` as a mixin;
+owns the binary blob + column table. Split out of `_figure.py` as a mixin;
 `Figure` inherits `PayloadMixin`, so every `self.*` resolves through the
 concrete `Figure` via the MRO (§29: data moves as raw f32 buffers)."""
 

@@ -8,10 +8,9 @@ import json
 import numpy as np
 import pytest
 
-from fastcharts import Figure
 from fastcharts import channels as ch
+from fastcharts._figure import DENSITY_GRID, SCATTER_DENSITY_THRESHOLD, Figure
 from fastcharts.config import DENSITY_SAMPLE_TARGET, MAX_SCREEN_DIM
-from fastcharts.figure import DENSITY_GRID, SCATTER_DENSITY_THRESHOLD
 from fastcharts.interaction import _decode_log_u8
 
 
@@ -616,7 +615,7 @@ def test_drill_hysteresis_holds_points_mode_near_boundary():
 
 
 def test_huge_scatter_with_channels_warns_and_drops():
-    from fastcharts.figure import DIRECT_SOFT_CEILING
+    from fastcharts._figure import DIRECT_SOFT_CEILING
 
     n = DIRECT_SOFT_CEILING + 1
     x = np.zeros(n)
@@ -763,7 +762,7 @@ def test_density_false_is_honored():
 
 
 def test_density_false_above_ceiling_warns():
-    from fastcharts.figure import DIRECT_SOFT_CEILING
+    from fastcharts._figure import DIRECT_SOFT_CEILING
 
     n = DIRECT_SOFT_CEILING + 1
     x = np.zeros(n)

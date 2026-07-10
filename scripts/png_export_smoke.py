@@ -5,7 +5,7 @@ Two engines, both without installing numpy:
 - **native** (always runs): drives the Rust rasterizer `fc_rasterize` directly
   via ctypes with a hand-built display-list command buffer, encodes the returned
   framebuffer to PNG, and asserts a real, correctly-sized, non-blank image — the
-  end-to-end browser-free `Figure.to_png(engine="native")` mechanism.
+  end-to-end browser-free `Chart.to_png(engine="native")` mechanism.
 - **chromium** (skipped without a browser): renders a hand-built standalone
   chart HTML through headless Chromium (`export.html_to_png`), the
   `engine="chromium"` path.

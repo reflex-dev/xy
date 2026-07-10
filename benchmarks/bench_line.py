@@ -45,12 +45,12 @@ def _series(n: int):
 
 def make_fastcharts(x, y):
     try:
-        from fastcharts import Figure
+        from fastcharts import chart, line
     except ImportError:
         return None
 
     def build():
-        return Figure(width=900, height=420).line(x, y)
+        return chart(line(x=x, y=y), width=900, height=420).figure()
 
     def render(fig):
         _spec, blob = fig.build_payload(N_OUT)  # same on-screen sample budget as resampler
@@ -104,10 +104,10 @@ ADAPTERS = {
 def _extrema_ok(x, y) -> bool:
     """M4 oracle: every populated pixel bucket must retain its y min and max."""
     try:
-        from fastcharts import Figure
+        from fastcharts import chart, line
     except ImportError:
         return False
-    fig = Figure(width=900, height=420).line(x, y)
+    fig = chart(line(x=x, y=y), width=900, height=420).figure()
     spec, blob = fig.build_payload(N_OUT)
     tr = spec["traces"][0]
     if tr.get("tier") != "decimated" or not all(isinstance(tr.get(k), int) for k in ("x", "y")):

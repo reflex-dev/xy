@@ -12,8 +12,8 @@ import pytest
 
 INIT_PY = """
 __version__ = "0.1.0"
-_EXPORTS = {"Figure": ".figure"}
-__all__ = ["Figure", "__version__"]
+_EXPORTS = {"Selection": "._figure"}
+__all__ = ["Selection", "__version__"]
 def __getattr__(name):
     raise AttributeError(name)
 """
@@ -145,7 +145,7 @@ def _write_wheel(
             data: bytes | str = replacements.get(name, "")
             if name == "fastcharts/__init__.py" and name not in replacements:
                 data = INIT_PY
-            elif name == "fastcharts/figure.py" and name not in replacements:
+            elif name == "fastcharts/_figure.py" and name not in replacements:
                 data = FIGURE_PY
             elif name == "fastcharts/marks.py" and name not in replacements:
                 data = MARKS_PY
@@ -300,7 +300,7 @@ def test_verify_wheel_rejects_stale_figure_export_surface(tmp_path: Path) -> Non
     _write_wheel(
         whl,
         replacements={
-            "fastcharts/figure.py": """
+            "fastcharts/_figure.py": """
 from . import marks as _marks
 class Figure:
     line = _marks.line

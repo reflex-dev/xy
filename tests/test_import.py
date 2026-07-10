@@ -17,7 +17,7 @@ HEAVY_MODULES = {
     "fastcharts.channel",
     "fastcharts.columns",
     "fastcharts.components",
-    "fastcharts.figure",
+    "fastcharts._figure",
     "fastcharts.interaction",
     "fastcharts.marks",
     "fastcharts.kernels",
@@ -75,7 +75,8 @@ def test_public_metadata_and_dir_are_lazy() -> None:
 
         names = dir(fastcharts)
         assert "__version__" in fastcharts.__all__
-        assert "Figure" in names
+        assert "Figure" not in names
+        assert "Figure" not in fastcharts.__all__
         assert "scatter_chart" in names
         assert fastcharts.__version__
 
@@ -127,7 +128,7 @@ def test_star_import_matches_public_all() -> None:
         )
         assert exported == sorted(fastcharts.__all__)
         assert extras == []
-        assert ns["Figure"] is fastcharts.Figure
+        assert "Figure" not in ns
         assert ns["scatter_chart"] is fastcharts.scatter_chart
         """
     )
@@ -141,15 +142,14 @@ def test_lazy_public_exports_still_work() -> None:
         import fastcharts
         assert "numpy" not in sys.modules
 
-        from fastcharts import Column, Figure, scatter, scatter_chart
+        from fastcharts import Column, scatter, scatter_chart
 
         assert Column is fastcharts.Column
-        assert Figure is fastcharts.Figure
         assert callable(scatter)
         assert callable(scatter_chart)
         assert callable(fastcharts.column)
         assert fastcharts.column(x=["a"], y=[1]).kind == "column"
-        assert "fastcharts.figure" in sys.modules
+        assert "fastcharts._figure" in sys.modules
         assert "numpy" in sys.modules
 
         heavy = {sorted(HEAVY_MODULES)!r}
@@ -159,28 +159,29 @@ def test_lazy_public_exports_still_work() -> None:
     )
 
 
-def test_figure_api_is_the_compute_import_boundary() -> None:
+def test_figure_is_not_public_and_denial_stays_light() -> None:
+    """`Figure` is internal now: the public attribute must raise, and the
+    failed lookup must not drag in the compute stack as a side effect."""
     _run_fresh(
         """
         import sys
 
         import fastcharts
         assert "numpy" not in sys.modules
-        assert "fastcharts.figure" not in sys.modules
+
+        try:
+            fastcharts.Figure
+        except AttributeError:
+            pass
+        else:
+            raise AssertionError("fastcharts.Figure must not be public")
+
+        assert "Figure" not in fastcharts.__all__
+        assert "numpy" not in sys.modules
+        assert "fastcharts._figure" not in sys.modules
         assert "fastcharts.kernels" not in sys.modules
         assert "fastcharts.widget" not in sys.modules
         assert "anywidget" not in sys.modules
-
-        Figure = fastcharts.Figure
-
-        assert Figure.__name__ == "Figure"
-        assert "fastcharts.figure" in sys.modules
-        assert "fastcharts.kernels" in sys.modules
-        assert "numpy" in sys.modules
-        assert "fastcharts._native" in sys.modules
-        assert "fastcharts.widget" not in sys.modules
-        assert "anywidget" not in sys.modules
-        assert "traitlets" not in sys.modules
         """
     )
 
@@ -197,7 +198,7 @@ def test_composition_api_loads_compute_without_widget_stack() -> None:
 
         assert callable(scatter)
         assert "fastcharts.components" in sys.modules
-        assert "fastcharts.figure" in sys.modules
+        assert "fastcharts._figure" in sys.modules
         assert "fastcharts.kernels" in sys.modules
         assert "numpy" in sys.modules
         assert "fastcharts.widget" not in sys.modules
@@ -224,7 +225,7 @@ def test_dom_slot_contract_loads_without_compute_or_widget_stack() -> None:
         assert "tooltip" in slots
         assert "fastcharts.dom" in sys.modules
         assert "fastcharts.components" not in sys.modules
-        assert "fastcharts.figure" not in sys.modules
+        assert "fastcharts._figure" not in sys.modules
         assert "fastcharts.kernels" not in sys.modules
         assert "fastcharts.widget" not in sys.modules
         assert "numpy" not in sys.modules
@@ -239,14 +240,14 @@ def test_html_export_does_not_load_widget_stack() -> None:
         """
         import sys
 
-        import fastcharts
+        import fastcharts as fc
 
-        fig = fastcharts.Figure(title="lazy boundary").line([0, 1], [1, 2])
+        chart = fc.line_chart(fc.line(x=[0, 1], y=[1, 2]), title="lazy boundary")
         assert "fastcharts.widget" not in sys.modules
         assert "anywidget" not in sys.modules
         assert "traitlets" not in sys.modules
 
-        html = fig.to_html()
+        html = chart.to_html()
 
         assert "lazy boundary" in html
         assert "fastcharts.widget" not in sys.modules
@@ -306,17 +307,17 @@ def test_widget_method_is_the_widget_import_boundary() -> None:
         """
         import sys
 
-        import fastcharts
+        import fastcharts as fc
 
-        fig = fastcharts.Figure(title="widget boundary").line([0, 1], [1, 2])
-        fig.to_html()
+        chart = fc.line_chart(fc.line(x=[0, 1], y=[1, 2]), title="widget boundary")
+        chart.to_html()
         assert "fastcharts.widget" not in sys.modules
         assert "anywidget" not in sys.modules
         assert "traitlets" not in sys.modules
 
-        widget = fig.widget()
+        widget = chart.widget()
 
-        assert widget is fig.widget()
+        assert widget is chart.widget()
         assert "fastcharts.widget" in sys.modules
         assert "anywidget" in sys.modules
         assert "traitlets" in sys.modules

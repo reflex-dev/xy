@@ -11,9 +11,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from fastcharts import Figure
+from fastcharts._figure import DECIMATION_THRESHOLD, Figure, Selection
 from fastcharts.channel import ChannelCallbacks, handle_message
-from fastcharts.figure import DECIMATION_THRESHOLD, Selection
 
 
 def handle(fig, content, **cbs):

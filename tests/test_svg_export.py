@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 
 import fastcharts as fc
-from fastcharts import Figure
+from fastcharts._figure import Figure
 from fastcharts._svg import COLORMAP_STOPS
 
 ROOT = Path(__file__).resolve().parents[1]

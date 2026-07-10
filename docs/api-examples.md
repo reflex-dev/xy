@@ -12,19 +12,23 @@ the later per-chart examples show the same APIs scaling up.
 
 ## API Stability Notes
 
-Use the fluent `Figure` API for the most stable alpha surface today. It is the
-direct path for implemented chart families, standalone HTML export, PNG export,
-notebook display, and memory reporting.
-
-Use the composition API when you want Reflex-shaped, declarative chart children,
-column-name resolution through `data=`, or `on_hover` / `on_select` callbacks.
+fastcharts has one public chart-building API: the declarative composition API.
+Charts are Reflex-shaped, declarative chart children — marks, axes,
+annotations, legend/tooltip chrome — composed inside a family container
+(`fc.line_chart(...)`, `fc.bar_chart(...)`, ...) or the neutral layering
+container `fc.chart(...)`. Marks accept arrays directly or column-name
+resolution through `data=`, and charts take `on_hover` / `on_select` callbacks.
 The core composition contract is now stabilizing around lightweight Python
 children, layered marks, axes, annotations, built-in or custom legend/tooltip
-chrome, CSS/Tailwind-friendly DOM hooks, and the same notebook/static export
-methods as `Figure`. Callback payload details and future adapter packages may
-still evolve before 1.0.
+chrome, and CSS/Tailwind-friendly DOM hooks. Callback payload details and
+future adapter packages may still evolve before 1.0.
 
-Both APIs accept `width="100%"` and/or `height="100%"` for responsive charts.
+Composed `Chart` objects handle standalone HTML export, PNG/SVG export,
+notebook display, and memory reporting directly. The internal engine object a
+chart compiles to is reachable via `chart.figure()` as an advanced escape
+hatch, but it is not part of the public chart-building surface.
+
+Charts accept `width="100%"` and/or `height="100%"` for responsive layouts.
 Standalone `to_html(...)` needs no browser dependency, and `to_png(...)` defaults
 to a browser-free native rasterizer. `to_png(..., engine="chromium")` needs a
 local Chrome/Chromium executable because it screenshots the same standalone HTML
@@ -32,19 +36,19 @@ document for a pixel-exact match to the live chart.
 
 ## Chart Family Quick Reference
 
-| Chart family | Fluent API | Composition API |
-|---|---|---|
-| Line | `Figure().line(x, y)` | `fc.line_chart(fc.line(...))` |
-| Scatter | `Figure().scatter(x, y)` | `fc.scatter_chart(fc.scatter(...))` |
-| Area | `Figure().area(x, y, base=0.0)` | `fc.area_chart(fc.area(...))` |
-| Histogram | `Figure().histogram(values, bins=...)` or `Figure().hist(...)` | `fc.histogram_chart(fc.histogram(...))` |
-| Bar | `Figure().bar(categories, values)` | `fc.bar_chart(fc.bar(...))` |
-| Column | `Figure().column(categories, values)` | `fc.column_chart(fc.column(...))` |
-| Grouped bars | `Figure().bar(categories, matrix, mode="grouped")` | `fc.bar_chart(fc.bar(..., mode="grouped"))` |
-| Stacked bars | `Figure().bar(categories, matrix, mode="stacked")` | `fc.bar_chart(fc.bar(..., mode="stacked"))` |
-| Normalized bars | `Figure().bar(categories, matrix, mode="normalized")` | `fc.bar_chart(fc.bar(..., mode="normalized"))` |
-| Horizontal bars | `Figure().bar(categories, values, orientation="horizontal")` | `fc.bar_chart(fc.bar(..., orientation="horizontal"))` |
-| Heatmap | `Figure().heatmap(z, x=x, y=y)` | `fc.heatmap_chart(fc.heatmap(...))` |
+| Chart family | Composition API |
+|---|---|
+| Line | `fc.line_chart(fc.line(...))` |
+| Scatter | `fc.scatter_chart(fc.scatter(...))` |
+| Area | `fc.area_chart(fc.area(...))` |
+| Histogram | `fc.histogram_chart(fc.histogram(...))` or `fc.hist(...)` |
+| Bar | `fc.bar_chart(fc.bar(...))` |
+| Column | `fc.column_chart(fc.column(...))` |
+| Grouped bars | `fc.bar_chart(fc.bar(..., mode="grouped"))` |
+| Stacked bars | `fc.bar_chart(fc.bar(..., mode="stacked"))` |
+| Normalized bars | `fc.bar_chart(fc.bar(..., mode="normalized"))` |
+| Horizontal bars | `fc.bar_chart(fc.bar(..., orientation="horizontal"))` |
+| Heatmap | `fc.heatmap_chart(fc.heatmap(...))` |
 
 ## Axes And Scales
 
@@ -70,50 +74,61 @@ chart
 ## Small Business Chart
 
 ```python
-from fastcharts import Figure
+import fastcharts as fc
 
 month_number = [1, 2, 3, 4, 5, 6]
 revenue = [42, 45, 48, 51, 55, 59]
 pipeline = [35, 38, 42, 40, 46, 50]
 
-fig = Figure(title="Revenue vs pipeline", x_label="month number", y_label="USD thousands")
-fig.line(month_number, revenue, name="revenue", color="#2563eb", width=2.0)
-fig.line(month_number, pipeline, name="pipeline", color="#16a34a", width=2.0)
-fig
+chart = fc.line_chart(
+    fc.line(month_number, revenue, name="revenue", color="#2563eb", width=2.0),
+    fc.line(month_number, pipeline, name="pipeline", color="#16a34a", width=2.0),
+    fc.x_axis(label="month number"),
+    fc.y_axis(label="USD thousands"),
+    title="Revenue vs pipeline",
+)
+chart
 ```
 
 ## Line
 
 ```python
 import numpy as np
-from fastcharts import Figure
+import fastcharts as fc
 
 rng = np.random.default_rng(0)
 x = np.arange(1_000_000, dtype=np.float64)
 y = np.cumsum(rng.normal(size=len(x)))
 
-fig = Figure(title="Random walk", x_label="sample", y_label="value")
-fig.line(x, y, name="walk")
-fig
+chart = fc.line_chart(
+    fc.line(x, y, name="walk"),
+    fc.x_axis(label="sample"),
+    fc.y_axis(label="value"),
+    title="Random walk",
+)
+chart
 ```
 
 ## Scatter
 
 ```python
 import numpy as np
-from fastcharts import Figure
+import fastcharts as fc
 
 rng = np.random.default_rng(1)
 x = rng.normal(size=500_000)
 y = 0.5 * x + rng.normal(scale=0.6, size=len(x))
 
-Figure(title="Correlated scatter").scatter(
-    x,
-    y,
-    color=y,
-    size=np.abs(y),
-    colormap="viridis",
-    size_range=(2, 14),
+fc.scatter_chart(
+    fc.scatter(
+        x,
+        y,
+        color=y,
+        size=np.abs(y),
+        colormap="viridis",
+        size_range=(2, 14),
+    ),
+    title="Correlated scatter",
 )
 ```
 
@@ -121,26 +136,32 @@ Figure(title="Correlated scatter").scatter(
 
 ```python
 import numpy as np
-from fastcharts import Figure
+import fastcharts as fc
 
 x = np.linspace(0, 10, 100_000)
 y = np.sin(x) + 0.15 * x
 
-Figure(title="Area").area(x, y, base=0.0, name="signal", opacity=0.35)
+fc.area_chart(
+    fc.area(x, y, base=0.0, name="signal", opacity=0.35),
+    title="Area",
+)
 ```
 
 ## Histogram
 
 ```python
 import numpy as np
-from fastcharts import Figure
+import fastcharts as fc
 
 rng = np.random.default_rng(2)
 values = np.concatenate(
     [rng.normal(-1.2, 0.45, 300_000), rng.normal(1.4, 0.6, 200_000)]
 )
 
-Figure(title="Distribution").histogram(values, bins=240, name="samples")
+fc.histogram_chart(
+    fc.histogram(values, bins=240, name="samples"),
+    title="Distribution",
+)
 ```
 
 Pass `cumulative=True` to accumulate bins left-to-right. Combined with
@@ -148,43 +169,48 @@ Pass `cumulative=True` to accumulate bins left-to-right. Combined with
 
 ```python
 import numpy as np
-from fastcharts import Figure
+import fastcharts as fc
 
 rng = np.random.default_rng(3)
 latency_ms = rng.gamma(shape=2.0, scale=40.0, size=100_000)
 
-Figure(title="Latency CDF", x_label="ms", y_label="fraction").hist(
-    latency_ms, bins=200, density=True, cumulative=True, name="p(x)"
+fc.histogram_chart(
+    fc.hist(latency_ms, bins=200, density=True, cumulative=True, name="p(x)"),
+    fc.x_axis(label="ms"),
+    fc.y_axis(label="fraction"),
+    title="Latency CDF",
 )
 ```
 
 ## Bar
 
 ```python
-from fastcharts import Figure
+import fastcharts as fc
 
 channels = ["Search", "Ads", "Email", "Direct", "Partner", "Social"]
 conversions = [120, 94, 72, 66, 43, 31]
 
-Figure(title="Conversions", x_label="channel", y_label="count").bar(
-    channels,
-    conversions,
-    name="Desktop",
+fc.bar_chart(
+    fc.bar(channels, conversions, name="Desktop"),
+    fc.x_axis(label="channel"),
+    fc.y_axis(label="count"),
+    title="Conversions",
 )
 ```
 
 ## Column
 
 ```python
-from fastcharts import Figure
+import fastcharts as fc
 
 quarters = ["Q1", "Q2", "Q3", "Q4"]
 revenue = [42, 47, 51, 58]
 
-Figure(title="Quarterly revenue", x_label="quarter", y_label="revenue").column(
-    quarters,
-    revenue,
-    name="Revenue",
+fc.column_chart(
+    fc.column(quarters, revenue, name="Revenue"),
+    fc.x_axis(label="quarter"),
+    fc.y_axis(label="revenue"),
+    title="Quarterly revenue",
 )
 ```
 
@@ -192,7 +218,7 @@ Figure(title="Quarterly revenue", x_label="quarter", y_label="revenue").column(
 
 ```python
 import numpy as np
-from fastcharts import Figure
+import fastcharts as fc
 
 channels = ["Search", "Ads", "Email", "Direct", "Partner", "Social"]
 values = np.array(
@@ -207,11 +233,14 @@ values = np.array(
     dtype=float,
 )
 
-Figure(title="Grouped channels").bar(
-    channels,
-    values,
-    mode="grouped",
-    series=["Desktop", "Mobile", "Tablet"],
+fc.bar_chart(
+    fc.bar(
+        channels,
+        values,
+        mode="grouped",
+        series=["Desktop", "Mobile", "Tablet"],
+    ),
+    title="Grouped channels",
 )
 ```
 
@@ -219,7 +248,7 @@ Figure(title="Grouped channels").bar(
 
 ```python
 import numpy as np
-from fastcharts import Figure
+import fastcharts as fc
 
 quarters = ["Q1", "Q2", "Q3", "Q4"]
 values = np.array(
@@ -232,11 +261,14 @@ values = np.array(
     dtype=float,
 )
 
-Figure(title="Stacked revenue").bar(
-    quarters,
-    values,
-    mode="stacked",
-    series=["Product", "Services", "Partners"],
+fc.bar_chart(
+    fc.bar(
+        quarters,
+        values,
+        mode="stacked",
+        series=["Product", "Services", "Partners"],
+    ),
+    title="Stacked revenue",
 )
 ```
 
@@ -247,7 +279,7 @@ category renders the series' share of the whole (segments sum to 1):
 
 ```python
 import numpy as np
-from fastcharts import Figure
+import fastcharts as fc
 
 quarters = ["Q1", "Q2", "Q3", "Q4"]
 values = np.array(
@@ -260,27 +292,34 @@ values = np.array(
     dtype=float,
 ).T
 
-Figure(title="Revenue mix", y_label="share").bar(
-    quarters,
-    values,
-    mode="normalized",
-    series=["Product", "Services", "Partners"],
+fc.bar_chart(
+    fc.bar(
+        quarters,
+        values,
+        mode="normalized",
+        series=["Product", "Services", "Partners"],
+    ),
+    fc.y_axis(label="share"),
+    title="Revenue mix",
 )
 ```
 
 ## Horizontal Bars
 
 ```python
-from fastcharts import Figure
+import fastcharts as fc
 
 teams = ["Platform", "Growth", "Data", "Support"]
 latency_ms = [42, 56, 31, 73]
 
-Figure(title="Median latency").bar(
-    teams,
-    latency_ms,
-    orientation="horizontal",
-    name="latency",
+fc.bar_chart(
+    fc.bar(
+        teams,
+        latency_ms,
+        orientation="horizontal",
+        name="latency",
+    ),
+    title="Median latency",
 )
 ```
 
@@ -288,17 +327,25 @@ Figure(title="Median latency").bar(
 
 ```python
 import numpy as np
-from fastcharts import Figure
+import fastcharts as fc
 
 x = np.linspace(-3, 3, 160)
 y = np.linspace(-2, 2, 120)
 xx, yy = np.meshgrid(x, y)
 z = np.exp(-(xx**2 + yy**2)) + 0.3 * np.exp(-((xx - 1.5) ** 2 + (yy + 0.8) ** 2))
 
-Figure(title="Heatmap", x_label="x", y_label="y").heatmap(z, x=x, y=y)
+fc.heatmap_chart(
+    fc.heatmap(z, x=x, y=y),
+    fc.x_axis(label="x"),
+    fc.y_axis(label="y"),
+    title="Heatmap",
+)
 ```
 
 ## Composition API
+
+Marks resolve column names through `data=`, so charts can bind straight to a
+dict, DataFrame, or any mapping of columns:
 
 ```python
 import fastcharts as fc
@@ -318,9 +365,9 @@ chart = fc.bar_chart(
 chart
 ```
 
-Composed `Chart` objects expose the same `to_html(...)`, `html(...)`,
-`_repr_html_()`, `to_png(...)`, `to_svg(...)`, `widget()`, `show()`, and
-`memory_report()` readout methods as `Figure`.
+Composed `Chart` objects expose `to_html(...)`, `html(...)`, `_repr_html_()`,
+`to_png(...)`, `to_svg(...)`, `widget()`, `show()`, and `memory_report()`
+readout methods directly.
 
 ## Live Data On A Composed Chart
 

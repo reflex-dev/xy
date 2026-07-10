@@ -18,10 +18,13 @@ code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
   Rust core; there is no NumPy fallback — `kernels.py` raises a clear
   ImportError if the native core can't load. `components.py`
   is the Reflex-flavored composition API (`scatter_chart`/`line_chart` + marks/
-  axes) — it builds a `Figure`; keep it dependency-free (no `reflex` import).
+  axes) — the **only public chart-building surface**; keep it dependency-free
+  (no `reflex` import). `_figure.py` is the internal scene/engine object
+  (`Figure`) that composed charts compile to via `Chart.figure()`; it is not
+  exported from `fastcharts` (only `Selection` is public from it).
   `marks.py` is the declarative mark core: the single implementation of every
-  chart kind, bound onto `Figure` as its fluent methods (one body, one
-  signature, one set of defaults — parity is identity, not convention).
+  chart kind, bound onto the internal `Figure` (one body, one signature, one
+  set of defaults — parity is identity, not convention).
   `channels.py` resolves scatter color/size encodings. `channel.py` (singular)
   is the transport-agnostic message dispatcher (widget comm today, Reflex
   routes later) — it must never import the widget stack.

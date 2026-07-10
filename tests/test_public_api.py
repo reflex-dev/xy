@@ -71,7 +71,9 @@ def test_fresh_import_budget_splits_third_party_and_fastcharts_modules(
         return subprocess.CompletedProcess(
             args=[],
             returncode=0,
-            stdout=_fresh_import_stdout(eager=["numpy", "fastcharts.figure", "fastcharts.kernels"]),
+            stdout=_fresh_import_stdout(
+                eager=["numpy", "fastcharts._figure", "fastcharts.kernels"]
+            ),
             stderr="",
         )
 
@@ -82,7 +84,7 @@ def test_fresh_import_budget_splits_third_party_and_fastcharts_modules(
     assert any("third-party" in error and "numpy" in error for error in errors)
     assert any(
         "fastcharts submodules" in error
-        and "fastcharts.figure" in error
+        and "fastcharts._figure" in error
         and "fastcharts.kernels" in error
         for error in errors
     )

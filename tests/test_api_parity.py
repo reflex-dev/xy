@@ -1,17 +1,18 @@
-"""Guards that the two dialects stay one engine.
+"""Guards that the public composition API and the internal engine stay one.
 
 `marks.py` is the single mark implementation — the declarative core. The
-fluent `Figure` binds those functions as its per-kind methods
-(`Figure.scatter is marks.scatter`), and the composition factories build
-specs that `_MARK_APPLIERS` replay through those same bound methods. The
-recurring failure mode is a keyword or default threaded through one dialect
-but not the other. These tests turn that drift into a CI failure:
+internal `Figure` scene binds those functions as its per-kind methods
+(`Figure.scatter is marks.scatter`), and the public composition factories
+build specs that `_MARK_APPLIERS` replay through those same bound methods.
+The recurring failure mode is a keyword or default threaded through one
+layer but not the other. These tests turn that drift into a CI failure:
 
 1. every factory prop must map to a real engine parameter (or be one of
    the explicit composition-only props),
 2. every engine keyword must be reachable from the factory,
 3. every applier must forward every engine keyword to the engine call,
-4. the fluent methods must BE the marks implementations (identity), and
+4. the engine's per-kind methods must BE the marks implementations
+   (identity), and
 5. factory keyword defaults must equal the engine defaults by value.
 """
 
@@ -22,7 +23,7 @@ import inspect
 import pytest
 
 import fastcharts as fc
-from fastcharts import Figure
+from fastcharts._figure import Figure
 from fastcharts.components import _MARK_APPLIERS
 
 # Props the composition layer owns that intentionally never reach the engine:

@@ -444,12 +444,12 @@ def make_hvplot_bokeh(x, y):
 
 def make_fastcharts(x, y):
     try:
-        from fastcharts import Figure
+        from fastcharts import scatter, scatter_chart
     except ImportError:
         return None
 
     def build():
-        return Figure(width=RENDER_W, height=RENDER_H).scatter(x, y)
+        return scatter_chart(scatter(x=x, y=y), width=RENDER_W, height=RENDER_H).figure()
 
     def render(fig):
         # The kernel-side "prepare to render" cost: encode direct f32, or bin to

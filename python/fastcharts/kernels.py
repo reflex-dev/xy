@@ -35,6 +35,7 @@ css_check = _impl.css_check
 zone_maps = _impl.zone_maps
 encode_f32 = _impl.encode_f32
 m4_indices = _impl.m4_indices
+is_sorted = _impl.is_sorted
 min_max = _impl.min_max
 bin_2d = _impl.bin_2d
 bin_2d_indices = _impl.bin_2d_indices
@@ -61,6 +62,7 @@ __all__ = [
     "css_check",
     "encode_f32",
     "histogram_uniform",
+    "is_sorted",
     "local_log_density",
     "m4_indices",
     "min_max",

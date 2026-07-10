@@ -50,7 +50,7 @@ fn ffi_guard<R>(sentinel: R, body: impl FnOnce() -> R) -> R {
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 10;
+pub const ABI_VERSION: u32 = 11;
 
 #[no_mangle]
 pub extern "C" fn fc_abi_version() -> u32 {
@@ -427,6 +427,26 @@ pub unsafe extern "C" fn fc_bin_2d_indices(
         return 0;
     }
     ffi_guard(usize::MAX, || kernels::bin_2d_indices(x, y, x0, x1, y0, y1, w, h, grid, idx))
+}
+
+/// Non-decreasing + NaN-poisoned check (`next >= prev` for every pair; any
+/// NaN fails its pairs) — the line/area sorted-ingest predicate (§28).
+/// Returns 1 when sorted, 0 when not. Null `data` with `len > 0` returns 0
+/// (callers then sort, which is always safe). Empty and single-element
+/// inputs are sorted.
+///
+/// # Safety
+/// `data` must point to `len` readable f64s (may be null only when `len == 0`).
+#[no_mangle]
+pub unsafe extern "C" fn fc_is_sorted(data: *const f64, len: usize) -> i32 {
+    if len < 2 {
+        return 1;
+    }
+    if data.is_null() {
+        return 0;
+    }
+    let data = std::slice::from_raw_parts(data, len);
+    ffi_guard(0, || i32::from(kernels::is_sorted_f64(data)))
 }
 
 /// NaN-skipping min/max (autorange primitive). Returns 1 and writes the result,

@@ -83,6 +83,8 @@ def load() -> ctypes.CDLL:
     ]
     lib.fc_min_max.restype = ctypes.c_int32
     lib.fc_min_max.argtypes = [F64P, ctypes.c_size_t, F64P, F64P]
+    lib.fc_is_sorted.restype = ctypes.c_int32
+    lib.fc_is_sorted.argtypes = [F64P, ctypes.c_size_t]
     D = ctypes.c_double
     Z = ctypes.c_size_t
     lib.fc_bin_2d.restype = ctypes.c_int32
@@ -205,6 +207,14 @@ def main() -> None:
         == 0,
         "min_max empty/null returns zero",
     )
+    ok(lib.fc_is_sorted(null_f64, 0) == 1, "is_sorted empty is sorted")
+    ok(lib.fc_is_sorted(null_f64, 2) == 0, "is_sorted null non-empty returns unsorted")
+    sorted_pair = array("d", [1.0, 2.0])
+    unsorted_pair = array("d", [2.0, 1.0])
+    nan_pair = array("d", [1.0, float("nan")])
+    ok(lib.fc_is_sorted(_ptr(sorted_pair, ctypes.c_double), 2) == 1, "is_sorted sorted pair")
+    ok(lib.fc_is_sorted(_ptr(unsorted_pair, ctypes.c_double), 2) == 0, "is_sorted unsorted pair")
+    ok(lib.fc_is_sorted(_ptr(nan_pair, ctypes.c_double), 2) == 0, "is_sorted NaN poisons")
     empty_grid = array("f", [99.0]) * 4
     ok(
         lib.fc_bin_2d(

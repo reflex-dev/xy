@@ -39,8 +39,8 @@ from typing import Any, Optional, TypeAlias, Union
 import numpy as np
 
 from . import _validate, channels
+from ._figure import Figure, Selection
 from .dom import CHART_DOM_SLOTS, validate_dom_slots
-from .figure import Figure, Selection
 
 # Shared validators (single source of truth in `_validate`); these aliases keep
 # the module-private names their call sites already use.
@@ -1117,14 +1117,36 @@ def _resolve(data: Any, key: Any, *, context: Optional[str] = None) -> Any:
 
 def _resolve_axis_values(fig: Figure, data: Any, key: Any, axis: str, context: str) -> Any:
     values = _resolve(data, key, context=context)
-    if values is not None and Figure._is_category_like(values) and not _is_datetime_like(values):
+    if values is None:
+        return None
+    # Fast paths that keep the dtype probes off the timed ingestion workflow
+    # (§12). A dtype-carrying numeric (NumPy array, pandas Series) can never
+    # be category- or datetime-like, so skip the probes outright. A plain
+    # Python list/tuple is converted exactly once here and the array is
+    # passed on — otherwise `_is_category_like`, `_is_datetime_like`, and
+    # engine ingest each re-run the same O(n) conversion on the raw list.
+    dtype = getattr(values, "dtype", None)
+    if dtype is not None:
+        if getattr(dtype, "kind", "") in "fiu":
+            return values
+    elif isinstance(values, (list, tuple)):
+        values = np.asarray(values)
+        if values.dtype.kind in "fiu":
+            return values
+    if Figure._is_category_like(values) and not _is_datetime_like(values):
         return fig._axis_positions(values, axis)
     return values
 
 
 def _is_datetime_like(values: Any) -> bool:
     if hasattr(values, "to_numpy"):
-        values = values.to_numpy()
+        try:
+            values = values.to_numpy()
+        except ValueError:
+            # pyarrow Arrays with nulls refuse the default zero-copy
+            # conversion (ArrowInvalid is a ValueError); this probe needs the
+            # actual values, so allow the copy.
+            values = values.to_numpy(zero_copy_only=False)
     arr = np.asarray(values)
     if np.issubdtype(arr.dtype, np.datetime64):
         return True

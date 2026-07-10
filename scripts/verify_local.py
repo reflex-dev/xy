@@ -220,7 +220,7 @@ def _base_checks(
         ),
         Check(
             "smoke_render",
-            "real Figure HTML render smoke in Chromium",
+            "real composed-chart HTML render smoke in Chromium",
             (py, "scripts/smoke_render.py", chromium_arg),
             requires_modules=("numpy",),
             requires_paths=chromium_paths,

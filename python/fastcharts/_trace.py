@@ -1,5 +1,5 @@
 """The `Trace` value object — one built chart series, canonical f64
-columns plus tier/drill bookkeeping. Split out of `figure.py` so both the
+columns plus tier/drill bookkeeping. Split out of `_figure.py` so both the
 builders (`figure`) and the wire-spec emitters (`_payload`) can share it
 without a load-time cycle."""
 
