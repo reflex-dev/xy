@@ -29,6 +29,79 @@ const UNITLESS_STYLE_PROPS = new Set([
   "stroke-opacity",
 ]);
 
+// Dashboard context governor (production-readiness: the WebGL-context cap).
+// Browsers cap live WebGL contexts per page (~16 in Chrome) and LRU-evict the
+// oldest on overflow, permanently blanking the earliest charts of a big
+// dashboard. The governor keeps this library inside a budget instead: when a
+// view is about to acquire a context and the page is at budget, the
+// least-recently-visible *off-screen* view releases its own context via
+// WEBGL_lose_context — a controlled loss the existing restore machinery can
+// undo — and re-acquires when scrolled back into view. Under the budget no
+// view ever releases, so pages with few charts behave exactly as before.
+// Every decision is observable (§28): `data-fc-ctx` on the canvas reads
+// "live" | "released" | "lost", and views count releases/recoveries.
+const FC_CONTEXT_GOVERNOR = {
+  views: new Set(),
+  seq: 1,
+  budget() {
+    const v = typeof window !== "undefined" ? window.FASTCHARTS_CONTEXT_BUDGET : null;
+    // 12 leaves headroom under Chrome's ~16 so host-page GL (maps, editors)
+    // does not push chart contexts into browser-side eviction.
+    return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 12;
+  },
+  register(view) {
+    this.views.add(view);
+  },
+  unregister(view) {
+    view._ctxPendingReservation = false;
+    this.views.delete(view);
+  },
+  // Called before a view acquires (or re-acquires) a GL context. Releases
+  // least-recently-visible off-screen views until the requester fits the
+  // budget. If every live view is visible, overflow is allowed — the browser
+  // may LRU-evict, and eviction recovery rebuilds on re-entry.
+  reserve(requester) {
+    const live = [];
+    let pending = 0;
+    for (const view of this.views) {
+      if (view !== requester && view.gl && !view._glLost && !view._destroyed) live.push(view);
+      if (view !== requester && view._ctxPendingReservation && !view._destroyed) pending += 1;
+    }
+    const needsReservation = !requester._ctxPendingReservation;
+    requester._ctxPendingReservation = true;
+    let over = live.length + pending + (needsReservation ? 1 : 0) - this.budget();
+    if (over <= 0) return;
+    const candidates = live
+      .filter((view) => !view._ctxVisible)
+      .sort((a, b) => (a._ctxSeenSeq || 0) - (b._ctxSeenSeq || 0));
+    for (const view of candidates) {
+      if (over <= 0) break;
+      if (view._releaseContext()) over -= 1;
+    }
+  },
+  acquired(requester) {
+    requester._ctxPendingReservation = false;
+  },
+  cancel(requester) {
+    requester._ctxPendingReservation = false;
+  },
+};
+
+// Initial visibility estimate for the governor: IntersectionObserver entries
+// arrive asynchronously, but big dashboards create every chart synchronously —
+// the estimate lets reserve() prefer below-the-fold charts immediately. The
+// 25% margin matches the observer's rootMargin (recovery hysteresis).
+function fcInitiallyVisible(el) {
+  if (typeof window === "undefined" || !el.getBoundingClientRect) return true;
+  const rect = el.getBoundingClientRect();
+  if (!rect.width && !rect.height) return false; // hidden boot slot: recoverable
+  const vh = window.innerHeight || 0;
+  const vw = window.innerWidth || 0;
+  return (
+    rect.bottom > -0.25 * vh && rect.top < 1.25 * vh && rect.right > -0.25 * vw && rect.left < 1.25 * vw
+  );
+}
+
 class ChartView {
   constructor(el, spec, buffer, comm) {
     if (spec.protocol !== PROTOCOL) {
@@ -80,12 +153,19 @@ class ChartView {
     // spec + payload by design (§18/§27).
     this._payload = buffer;
     this._glLost = false;
+    this._ctxReleasedExt = null;
+    this._ctxReleases = 0;
+    this._ctxRecoveries = 0;
+    this._ctxVisible = fcInitiallyVisible(el);
+    FC_CONTEXT_GOVERNOR.register(this);
+    if (this._ctxVisible) this._ctxSeenSeq = FC_CONTEXT_GOVERNOR.seq++;
     this._contextLossCount = 0;
     this._contextRestoreCount = 0;
     this._contextRecoveryError = null;
     this._initGl(buffer);
     this.root.dataset.fcContextState = "ready";
     this._initContextLossRecovery();
+    this._armContextVisibilityWatch();
     this._initInteraction();
     this._buildModebar(this.root); // after theme (icon color) + canvas (cursor)
 
@@ -411,8 +491,16 @@ class ChartView {
   _initContextLossRecovery() {
     this._listen(this.canvas, "webglcontextlost", (e) => {
       e.preventDefault();
-      if (this._destroyed || this._glLost) return;
+      if (this._destroyed) return;
+      const governedRelease = this.canvas.dataset.fcCtx === "released";
+      // _releaseContext marks the view lost synchronously before the browser
+      // dispatches this event. Still run the full quiesce/telemetry path for
+      // that first governed event; only ignore duplicate ungoverned losses.
+      if (this._glLost && !governedRelease) return;
       this._glLost = true;
+      // Governed releases already stamped "released"; anything else is a
+      // browser-side eviction/driver reset (§28: the difference stays legible).
+      if (!governedRelease) this.canvas.dataset.fcCtx = "lost";
       this._contextLossCount += 1;
       this._contextRecoveryError = null;
       this.root.dataset.fcContextState = "lost";
@@ -470,6 +558,103 @@ class ChartView {
         restore_count: this._contextRestoreCount,
       });
     });
+  }
+
+  // Governed release: give this view's GL context back to the page on purpose
+  // (WEBGL_lose_context), keeping total live contexts under the governor's
+  // budget so the *browser* never LRU-evicts a visible chart. The retained
+  // spec + payload rebuild everything on re-entry (§18/§27), riding the same
+  // lost/restored machinery the lifecycle gate already exercises.
+  _releaseContext() {
+    if (this._destroyed || !this.gl || this._glLost || this.gl.isContextLost()) return false;
+    const ext = this.gl.getExtension("WEBGL_lose_context");
+    if (!ext) return false;
+    this._ctxReleasedExt = ext;
+    this._ctxReleases += 1;
+    this._glLost = true; // synchronous: the lost *event* arrives as a task
+    this.canvas.dataset.fcCtx = "released";
+    if (this._raf) cancelAnimationFrame(this._raf);
+    this._raf = null;
+    ext.loseContext();
+    return true;
+  }
+
+  // Re-acquire on scroll-into-view. Governed releases undo via
+  // restoreContext() -> the existing restored handler rebuilds; a real
+  // browser eviction cannot be force-restored, so the canvas is swapped for a
+  // fresh one and rebuilt from the retained spec + payload.
+  _recoverContext() {
+    if (this._destroyed || !this._glLost) return;
+    this._ctxRecoveries += 1;
+    if (this._ctxReleasedExt) {
+      const ext = this._ctxReleasedExt;
+      this._ctxReleasedExt = null;
+      try {
+        // Reserve before asking the browser to restore. The restored event is
+        // asynchronous, so the pending reservation must count against later
+        // recoveries in the same IntersectionObserver delivery.
+        FC_CONTEXT_GOVERNOR.reserve(this);
+        ext.restoreContext(); // restored event -> full rebuild
+        return;
+      } catch (_err) {
+        FC_CONTEXT_GOVERNOR.cancel(this);
+        // Extension refused (context was also evicted for real): fall through.
+      }
+    }
+    this._rebuildEvictedContext();
+  }
+
+  _rebuildEvictedContext() {
+    // The evicted context object is dead for good and a canvas keeps its
+    // context forever, so recovery swaps in a fresh canvas (attributes
+    // cloned, listeners retargeted) and rebuilds — the same §18/§27 rebuild
+    // the restored path uses.
+    const fresh = this.canvas.cloneNode(false);
+    for (const record of this._listeners) {
+      if (record.target === this.canvas) {
+        this.canvas.removeEventListener(record.type, record.handler, record.options);
+        fresh.addEventListener(record.type, record.handler, record.options);
+        record.target = fresh;
+      }
+    }
+    this.canvas.replaceWith(fresh);
+    this.canvas = fresh;
+    this._glLost = false;
+    this._lutCache.clear();
+    this.pickFbo = null;
+    this.pickTex = null;
+    try {
+      this._initGl(this._payload);
+    } catch (_err) {
+      this._glLost = true;
+      this.canvas.dataset.fcCtx = "lost";
+      return; // context pressure persists; the next visibility pass retries
+    }
+    this._scheduleViewRequest(this.view, { delay: 0 });
+    this.draw();
+  }
+
+  // Visibility feed for the governor: tracks least-recently-visible order and
+  // re-acquires a released/evicted context when the chart scrolls back into
+  // view (25% rootMargin = pre-warm hysteresis; release is demand-driven only,
+  // so fast scrolling never thrashes contexts).
+  _armContextVisibilityWatch() {
+    if (typeof IntersectionObserver === "undefined") {
+      this._ctxVisible = true; // no observer: never treat as releasable
+      return;
+    }
+    this._ctxIo = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[entries.length - 1];
+        this._ctxVisible = entry.isIntersecting || entry.intersectionRatio > 0;
+        if (this._ctxVisible) {
+          this._ctxSeenSeq = FC_CONTEXT_GOVERNOR.seq++;
+          if (this._glLost && !this._destroyed) this._recoverContext();
+        }
+      },
+      { rootMargin: "25% 0px 25% 0px" },
+    );
+    this._ctxIo.observe(this.root);
   }
 
   // Container size changed (fluid mode). Cheap on purpose: data GPU buffers
@@ -689,14 +874,20 @@ class ChartView {
     this.chrome.style.width = this.size.w + "px";
     this.chrome.style.height = this.size.h + "px";
 
+    // Stay inside the page's context budget before acquiring (governor above):
+    // at budget, the least-recently-visible off-screen view releases first.
+    FC_CONTEXT_GOVERNOR.reserve(this);
     const gl = this.canvas.getContext("webgl2", {
       antialias: false, premultipliedAlpha: true, alpha: true,
     });
     if (!gl) {
+      FC_CONTEXT_GOVERNOR.cancel(this);
       this.root.textContent = "fastcharts: WebGL2 unavailable in this browser.";
       throw new Error("webgl2 unavailable");
     }
     this.gl = gl;
+    FC_CONTEXT_GOVERNOR.acquired(this);
+    this.canvas.dataset.fcCtx = "live";
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
@@ -2474,6 +2665,9 @@ class ChartView {
   destroy() {
     if (this._destroyed) return;
     this._destroyed = true;
+    FC_CONTEXT_GOVERNOR.unregister(this);
+    this._ctxIo?.disconnect();
+    this._ctxIo = null;
     clearTimeout(this._rebinTimer);
     if (this._rebinWorker) {
       this._rebinWorker.terminate();

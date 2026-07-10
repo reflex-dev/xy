@@ -143,7 +143,9 @@ also declares `tooltip_sample_count`, and eligible rows must report that exact
 away fails verification.
 `bench_dashboard.py` attempts 10/20/50 mixed dashboards and reports payload prep,
 navigation readiness, JS heap, redraw-submission p95, per-chart context loss and
-restore events, initial/scrolled nonblank IDs, and the largest stable loss-free
+restore events (governed releases labeled separately from browser evictions),
+initial/scrolled nonblank IDs, per-visit scroll recovery latency, and the
+largest stable loss-free
 count. Partial rows retain their timing and memory metrics. `bench_workflows.py` covers ingestion, streaming/pyramid
 invalidation, and separate HTML/SVG/native-PNG/Chromium-PNG export rows. All three emit schema-versioned JSON with
 environment metadata and benchmark category IDs.

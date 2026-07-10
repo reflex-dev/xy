@@ -360,6 +360,16 @@ Not yet safe:
 - Cross-browser/perceptual rendering conformance.
 - Exact-marker interaction for every possible 100M-point zoom path.
 - Production Reflex state integration as a first-class API.
+- More than ~12 charts *simultaneously in view* holding live WebGL contexts.
+  Browsers cap live contexts per page (~16 in Chrome); the render client's
+  context governor keeps fastcharts inside a budget (default 12) by having
+  the least-recently-visible off-screen chart release its context and
+  re-acquire on scroll-into-view. Measured (`benchmarks/bench_dashboard.py`,
+  2026-07-09, Chrome/macOS): 10/20/50-chart dashboards are all fully usable —
+  every chart nonblank when visited, recovery p95 ~8 ms, heap sublinear
+  (28 MB at 50 charts) — but a layout keeping more than the budget visible
+  at once can still hit browser-side eviction, so do not claim unbounded
+  simultaneous live charts.
 
 ## Hardening Backlog
 

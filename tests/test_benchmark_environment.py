@@ -169,7 +169,10 @@ def test_dashboard_benchmark_reports_eviction_and_scroll_telemetry() -> None:
         "context_restored_chart_ids",
         "initial_nonblank_chart_ids",
         "scroll_nonblank_chart_ids",
-        'render_status: fullyNonblank ? "complete" : "partial"',
+        "scroll_recovery_p95_ms",
+        "governed_context_lost_events",
+        "released_chart_ids",
+        'render_status: fullyNonblank ? "complete" : governedHealth ? "governed" : "partial"',
     ):
         assert marker in bench
     assert "blank dashboard chart" not in bench
@@ -183,6 +186,18 @@ def test_dashboard_benchmark_reports_eviction_and_scroll_telemetry() -> None:
     )
     phase_initial = bench.index('phase = "initial";', creation_loop)
     assert first_yield < phase_initial
+
+
+def test_context_governor_reserves_pending_restores() -> None:
+    """Concurrent visibility callbacks must count restores before their
+    asynchronous ``webglcontextrestored`` events acquire the contexts."""
+    client = (ROOT / "js" / "src" / "50_chartview.js").read_text(encoding="utf-8")
+
+    assert "view._ctxPendingReservation" in client
+    recover = client.index("_recoverContext()")
+    reserve = client.index("FC_CONTEXT_GOVERNOR.reserve(this);", recover)
+    restore = client.index("ext.restoreContext();", recover)
+    assert reserve < restore
 
 
 def test_benchmark_categories_track_core_hardening_metrics() -> None:
