@@ -96,10 +96,14 @@ DECLARATIVE_CHART_READOUTS = (
     "to_html",
     "html",
     "_repr_html_",
+    "to_svg",
     "to_png",
     "memory_report",
     "chrome_components",
     "reflex_components",
+    "append",
+    "pick",
+    "select_range",
 )
 DECLARATIVE_API_EXPORTS = (
     *DECLARATIVE_MARK_EXPORTS,

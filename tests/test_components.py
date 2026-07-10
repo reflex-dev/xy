@@ -1730,3 +1730,102 @@ def test_chart_styles_prop_is_the_documented_per_slot_mechanism() -> None:
         fc.chart(fc.scatter(x=xs, y=xs), styles={"tooltp": {"color": "#fff"}})
     with pytest.raises(ValueError, match="not a valid hex color"):
         fc.chart(fc.scatter(x=xs, y=xs), styles={"title": {"color": "#3b82zz"}})
+
+
+# -- Chart live surface (data-live, structure-immutable) ----------------------
+
+
+def test_chart_append_routes_through_live_widget(monkeypatch):
+    appends = []
+
+    class CapturingWidget:
+        def __init__(self, figure, **kwargs):
+            self.figure = figure
+
+        def append(self, trace_id, x, y, *, color=None, size=None):
+            appends.append((trace_id, x, y, color, size))
+
+    monkeypatch.setattr("fastcharts.widget.FigureWidget", CapturingWidget)
+    chart = fc.scatter_chart(fc.scatter(x=np.arange(3.0), y=np.arange(3.0)))
+    chart.widget()
+    n_before = len(chart.figure().traces[0].x.values)
+
+    chart.append(0, [3.0], [4.0])
+
+    assert appends == [(0, [3.0], [4.0], None, None)]
+    # Routed to the widget only — the figure was not double-appended (the
+    # real FigureWidget.append mutates it; the capture stub records instead).
+    assert len(chart.figure().traces[0].x.values) == n_before
+
+
+def test_chart_append_headless_mutates_figure_without_widget_stack():
+    chart = fc.scatter_chart(fc.scatter(x=np.arange(3.0), y=np.arange(3.0)))
+
+    chart.append(0, [3.0], [4.0])
+
+    assert chart._widget is None  # no widget instantiated as a side effect
+    trace = chart.figure().traces[0]
+    assert len(trace.x.values) == 4
+    assert trace.x.values[-1] == 3.0
+    spec, _blob = chart.figure().build_payload()
+    assert spec["traces"][0]["n_points"] == 4
+
+
+def test_chart_append_contract_violations_raise():
+    chart = fc.scatter_chart(fc.scatter(x=np.arange(3.0), y=np.arange(3.0)))
+
+    with pytest.raises(ValueError):
+        chart.append(0, [1.0], [1.0, 2.0])  # length mismatch
+
+
+def test_chart_pick_matches_figure_pick():
+    chart = fc.scatter_chart(fc.scatter(x=np.arange(5.0), y=np.arange(5.0) * 2))
+
+    row = chart.pick(0, 2)
+
+    assert row == chart.figure().pick(0, 2)
+    assert row["x"] == 2.0
+    assert row["y"] == 4.0
+    assert chart.pick(0, 99) is None  # out of range → None, like Figure
+
+
+def test_chart_select_range_returns_selection():
+    chart = fc.scatter_chart(fc.scatter(x=np.arange(10.0), y=np.arange(10.0)))
+
+    sel = chart.select_range(2.0, 5.0, 0.0, 6.0)
+
+    assert isinstance(sel, Selection)
+    np.testing.assert_array_equal(sel.index, [2, 3, 4, 5])
+    xs, ys = sel.xy(0)
+    np.testing.assert_array_equal(xs, [2.0, 3.0, 4.0, 5.0])
+    empty = chart.select_range(100.0, 200.0, 100.0, 200.0)
+    assert len(empty) == 0
+
+
+def test_declarative_chart_live_roundtrip():
+    """End to end: declarative chart -> real widget -> simulated client
+    messages fire callbacks -> chart.append streams -> readouts see new rows."""
+    hovered, brushes, sels = [], [], []
+    chart = fc.chart(
+        fc.scatter(x=np.arange(10.0), y=np.arange(10.0), name="pts"),
+        on_hover=hovered.append,
+        on_brush=brushes.append,
+        on_select=sels.append,
+    )
+    w = chart.widget()  # real FigureWidget -> real channel dispatch
+    sent = []
+    w.send = lambda content, buffers=None: sent.append((content, buffers))
+
+    w._on_custom_msg(None, {"type": "pick", "trace": 0, "index": 2, "seq": 1}, None)
+    w._on_custom_msg(None, {"type": "select", "x0": 5.0, "x1": 2.0, "y0": 0.0, "y1": 6.0}, None)
+    w._on_custom_msg(None, {"type": "select", "x0": "bad", "x1": 1, "y0": 0, "y1": 1}, None)
+    chart.append(0, [10.0], [11.0])
+
+    assert hovered[0]["x"] == 2.0
+    assert brushes == [{"x0": 2.0, "x1": 5.0, "y0": 0.0, "y1": 6.0}]  # normalized, before select
+    np.testing.assert_array_equal(sels[0].index, [2, 3, 4, 5])
+    kinds = [c["type"] for c, _ in sent]
+    assert kinds == ["pick_result", "selection", "append"]  # malformed select added nothing
+    assert w.spec["traces"][0]["n_points"] == 11  # trait re-sync carried the append
+    assert len(chart.figure().traces[0].x.values) == 11
+    assert chart.pick(0, 10)["x"] == 10.0  # readout sees the streamed row

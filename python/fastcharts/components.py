@@ -40,7 +40,7 @@ import numpy as np
 
 from . import _validate, channels
 from .dom import CHART_DOM_SLOTS, validate_dom_slots
-from .figure import Figure
+from .figure import Figure, Selection
 
 # Shared validators (single source of truth in `_validate`); these aliases keep
 # the module-private names their call sites already use.
@@ -1457,6 +1457,47 @@ class Chart(Component):
 
     def memory_report(self) -> dict[str, Any]:
         return self.figure().memory_report()
+
+    # -- live data (structure-immutable: build a new chart for new marks) ----
+
+    def append(self, trace_id: int, x: Any, y: Any, *, color: Any = None, size: Any = None) -> None:
+        """Streaming append: extend a trace's data in place.
+
+        Routed through the live widget when one exists (client refresh plus
+        notebook-reopen trait sync); otherwise the built figure mutates
+        directly and a later `widget()`/`to_html()` ships the streamed state.
+        Already-exported HTML files are snapshots and do not update. Trace ids
+        follow mark declaration order (one id per rendered series). Contract
+        violations (wrong trace kind, unsorted line x, missing channel tail)
+        raise exactly like `Figure.append`.
+        """
+        if self._widget is not None:
+            self._widget.append(trace_id, x, y, color=color, size=size)
+        else:
+            self.figure().append(trace_id, x, y, color=color, size=size)
+
+    def pick(self, trace_id: int, index: int) -> Optional[dict[str, Any]]:
+        """Exact source-row readout from the canonical f64 store.
+
+        Same index space as `Figure.pick`: a shipped vertex index, translated
+        to the canonical row when NaN rows were dropped at ship time. Returns
+        None when the index is out of range.
+        """
+        return self.figure().pick(trace_id, index)
+
+    def select_range(
+        self,
+        x0: float,
+        x1: float,
+        y0: float,
+        y1: float,
+        trace_id: Optional[int] = None,
+    ) -> "Selection":
+        """Python-side box select: points inside the window as a `Selection`
+        (canonical row indices per trace, with `.index` / `.xy()` access —
+        the same object `on_select` callbacks receive)."""
+        fig = self.figure()
+        return Selection(fig, fig.select_range(x0, x1, y0, y1, trace_id))
 
 
 def _resolve_color(data: Any, color: Any, *, context: Optional[str] = None) -> Any:

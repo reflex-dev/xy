@@ -361,3 +361,23 @@ def test_channel_dispatcher_loads_without_widget_stack() -> None:
         assert "traitlets" not in sys.modules
         """
     )
+
+
+def test_chart_headless_append_does_not_load_widget_stack() -> None:
+    """chart.append on a never-shown chart must mutate the figure directly,
+    not instantiate the anywidget stack as a side effect."""
+    _run_fresh(
+        """
+        import sys
+
+        import fastcharts as fc
+
+        chart = fc.scatter_chart(fc.scatter(x=[0.0, 1.0], y=[0.0, 1.0]))
+        chart.append(0, [2.0], [3.0])
+
+        assert len(chart.figure().traces[0].x.values) == 3
+        assert "fastcharts.widget" not in sys.modules
+        assert "anywidget" not in sys.modules
+        assert "traitlets" not in sys.modules
+        """
+    )
