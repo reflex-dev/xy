@@ -18,11 +18,17 @@ def __getattr__(name):
     raise AttributeError(name)
 """
 FIGURE_PY = """
+from . import marks as _marks
 class Figure:
-    def line(self, x, y): ...
-    def scatter(self, x, y): ...
+    line = _marks.line
+    scatter = _marks.scatter
     def to_html(self): ...
     def to_png(self): ...
+"""
+MARKS_PY = """
+def line(self, x, y): ...
+def scatter(self, x, y): ...
+def heatmap(self, z): ...
 """
 COMPONENTS_PY = """
 from typing import Any
@@ -141,6 +147,8 @@ def _write_wheel(
                 data = INIT_PY
             elif name == "fastcharts/figure.py" and name not in replacements:
                 data = FIGURE_PY
+            elif name == "fastcharts/marks.py" and name not in replacements:
+                data = MARKS_PY
             elif name == "fastcharts/components.py" and name not in replacements:
                 data = COMPONENTS_PY
             elif name == "fastcharts/export.py" and name not in replacements:
@@ -293,15 +301,31 @@ def test_verify_wheel_rejects_stale_figure_export_surface(tmp_path: Path) -> Non
         whl,
         replacements={
             "fastcharts/figure.py": """
+from . import marks as _marks
 class Figure:
-    def line(self, x, y): ...
-    def scatter(self, x, y): ...
+    line = _marks.line
+    scatter = _marks.scatter
     def to_html(self): ...
 """
         },
     )
 
     with pytest.raises(AssertionError, match=r"figure\.py.*to_png"):
+        verify_wheel.verify_wheel(whl, expect_native=True)
+
+
+def test_verify_wheel_rejects_stale_marks_export_surface(tmp_path: Path) -> None:
+    whl = tmp_path / "fastcharts-0.1.0-py3-none-macosx_11_0_arm64.whl"
+    _write_wheel(
+        whl,
+        replacements={
+            "fastcharts/marks.py": """
+def line(self, x, y): ...
+"""
+        },
+    )
+
+    with pytest.raises(AssertionError, match=r"marks\.py"):
         verify_wheel.verify_wheel(whl, expect_native=True)
 
 

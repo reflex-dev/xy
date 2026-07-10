@@ -21,6 +21,11 @@ Marks accept `x`/`y`/`color`/`size` as arrays *or* as string column names into
 `data` (a DataFrame, dict, or anything indexable) — the Reflex/Recharts
 `data_key` idiom, read more directly. Everything composes into a `Figure`, so a
 chart renders in notebooks and exports to HTML exactly like the fluent API.
+
+The declarative layer is the core: `marks.py` holds the single implementation
+of every chart kind, and `Figure` binds those functions as its fluent methods
+(`Figure.scatter is marks.scatter`) — so the two dialects cannot drift in
+behavior, signatures, or defaults (asserted by tests/test_api_parity.py).
 """
 
 from __future__ import annotations
@@ -33,7 +38,7 @@ from typing import Any, Optional, TypeAlias, Union
 
 import numpy as np
 
-from . import _validate
+from . import _validate, channels
 from .dom import CHART_DOM_SLOTS, validate_dom_slots
 from .figure import Figure
 
@@ -219,7 +224,7 @@ def scatter(
     color: Union[str, Any, None] = None,
     size: Union[str, float, Any] = 4.0,
     name: Optional[str] = None,
-    colormap: str = "viridis",
+    colormap: str = channels.DEFAULT_COLORMAP,
     size_range: tuple[float, float] = (2.0, 18.0),
     opacity: float = 0.8,
     density: Optional[bool] = None,
@@ -525,7 +530,7 @@ def heatmap(
     y: Union[str, Any, None] = None,
     data: Any = None,
     name: Optional[str] = None,
-    colormap: str = "viridis",
+    colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     opacity: float = 0.95,
     class_name: Optional[str] = None,
@@ -1656,23 +1661,20 @@ def _strict_bool(value: Any, label: str) -> bool:
 
 
 def _validate_axis(axis: Axis) -> None:
+    """Structural checks `Figure.set_axis` cannot make: the which/id agreement.
+
+    Field-level validation runs exactly once per field: eagerly in the
+    `x_axis`/`y_axis` factories for factory-built children, and in
+    `Figure.set_axis` (which every Axis child is replayed through inside the
+    same `Chart.figure()` call) for directly-constructed `Axis(...)` objects.
+    Re-checking every field here was a second/third pass over the same values.
+    """
     if axis.which not in {"x", "y"}:
         raise ValueError(f"axis.which must be 'x' or 'y', got {axis.which!r}")
     axis_id = axis.id or axis.which
     _axis_id(axis_id, f"{axis.which}_axis id")
     if not axis_id.startswith(axis.which):
         raise ValueError(f"{axis.which}_axis id must start with {axis.which!r}")
-    _validate_axis_type(axis.type_)
-    _axis_domain(axis.domain, f"{axis.which}_axis domain")
-    _strict_bool(axis.reverse, f"{axis.which}_axis reverse")
-    _axis_side(axis.side, axis.which)
-    _axis_label_position(axis.label_position, f"{axis.which}_axis label_position")
-    _optional_finite_number(axis.label_offset, f"{axis.which}_axis label_offset")
-    _optional_finite_number(axis.label_angle, f"{axis.which}_axis label_angle")
-    _optional_positive_int(axis.tick_count, f"{axis.which}_axis tick_count")
-    _optional_finite_number(axis.tick_label_angle, f"{axis.which}_axis tick_label_angle")
-    _axis_tick_label_strategy(axis.tick_label_strategy, f"{axis.which}_axis tick_label_strategy")
-    _optional_nonnegative_number(axis.tick_label_min_gap, f"{axis.which}_axis tick_label_min_gap")
 
 
 def _mark_axis_ids(mark: Mark, axes: dict[str, Axis]) -> tuple[str, str]:

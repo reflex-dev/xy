@@ -8,6 +8,19 @@ in the README).
 
 ## [Unreleased]
 
+### Changed
+- **API layering inverted: the declarative layer is now the core.** The nine
+  mark-builder implementations moved verbatim from `figure.py` into the new
+  `fastcharts/marks.py`; `Figure` binds them as its fluent methods
+  (`Figure.scatter is marks.scatter`), so both dialects share one body, one
+  signature, and one set of defaults. Payload output is byte-identical (
+  verified against a 19-case fluent+declarative fingerprint matrix), the
+  parity tests now assert method identity and default-value equality, the
+  scatter/heatmap factories read `channels.DEFAULT_COLORMAP` instead of a
+  duplicated literal, and `Chart.figure()` no longer re-validates axis fields
+  the factories and `Figure.set_axis` already validate (declarative build ~6%
+  faster; fluent path unchanged by construction).
+
 ### Added
 - **Dashboard context governor**: browsers cap live WebGL contexts per page
   (~16 in Chrome) and LRU-evict the oldest on overflow, which permanently

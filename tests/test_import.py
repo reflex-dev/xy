@@ -18,6 +18,7 @@ HEAVY_MODULES = {
     "fastcharts.components",
     "fastcharts.figure",
     "fastcharts.interaction",
+    "fastcharts.marks",
     "fastcharts.kernels",
     "fastcharts.lod",
     "fastcharts._native",

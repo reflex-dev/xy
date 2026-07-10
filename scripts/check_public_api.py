@@ -40,6 +40,7 @@ HEAVY_FASTCHARTS_IMPORTS = {
     "fastcharts.interaction",
     "fastcharts.kernels",
     "fastcharts.lod",
+    "fastcharts.marks",
     "fastcharts._native",
     "fastcharts.widget",
 }
