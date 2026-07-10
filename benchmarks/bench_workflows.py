@@ -28,7 +28,7 @@ from fastcharts import kernels as k  # noqa: E402
 from fastcharts._figure import Figure  # noqa: E402  (harness oracles/annotations only)
 from fastcharts.interaction import _ensure_pyramid  # noqa: E402
 
-WORKFLOW_CATEGORY_IDS = ("input_ingestion", "streaming_updates", "static_export")
+WORKFLOW_CATEGORY_IDS = ("input_ingestion", "streaming_updates", "log_autorange", "static_export")
 
 
 def _require_oracle(condition: bool, message: str) -> None:
@@ -257,6 +257,37 @@ def _streaming_rows(base_n: int, reps: int) -> list[dict[str, Any]]:
     return rows
 
 
+def _log_autorange_rows(n: int, reps: int) -> list[dict[str, Any]]:
+    x = np.arange(n, dtype=np.float64)
+    y = np.exp(np.linspace(-8.0, 8.0, n, dtype=np.float64))
+    y[::97] *= -1.0
+    y[::211] = np.nan
+    positive = y[np.isfinite(y) & (y > 0.0)]
+
+    def setup() -> Figure:
+        return Figure().line(x, y).set_axis("y", type_="log")
+
+    def oracle(_fig: Figure, value: tuple[float, float]) -> None:
+        lo, hi = value
+        _require_oracle(lo > 0.0 < hi, "log autorange returned a non-positive domain")
+        _require_oracle(lo <= float(np.min(positive)), "log autorange clipped the positive minimum")
+        _require_oracle(hi >= float(np.max(positive)), "log autorange clipped the positive maximum")
+
+    return [
+        _measure(
+            scenario="log_line_autorange",
+            family="range",
+            n=n,
+            setup=setup,
+            operation=lambda fig: fig.y_range(),
+            reps=reps,
+            category_ids=("log_autorange", "huge_line_time_series"),
+            scope="public-log-autorange-zone-stats",
+            oracle=oracle,
+        )
+    ]
+
+
 def _export_rows(n: int, reps: int, chromium: str | None) -> list[dict[str, Any]]:
     x = np.arange(n, dtype=np.float64)
     y = np.sin(x * 0.002) + np.cos(x * 0.0003)
@@ -329,6 +360,7 @@ def run(*, profile: str, reps: int, chromium: str | None = None) -> dict[str, An
     rows = [
         *_ingestion_rows(ingest_n, reps),
         *_streaming_rows(stream_n, reps),
+        *_log_autorange_rows(stream_n, reps),
         *_export_rows(export_n, reps, chromium),
     ]
     environment = collect_environment_metadata(chromium=chromium, fastcharts_backend=k.BACKEND)

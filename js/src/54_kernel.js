@@ -20,7 +20,7 @@ Object.assign(ChartView.prototype, {
     const plotW = Math.round(this.plot.w);
     const plotH = Math.round(this.plot.h);
     if (needsDensity) {
-      const now = performance.now();
+      const now = this._now();
       for (const g of this.gpuTraces) {
         if (g.tier !== "density") continue;
         g._lodPendingView = view;
@@ -30,7 +30,7 @@ Object.assign(ChartView.prototype, {
     }
     let delay = opts.delay ?? 120;
     if (opts.maxWait !== undefined && opts.maxWait !== null) {
-      const now = performance.now();
+      const now = this._now();
       if (this._viewRequestBurstStart === undefined || this._viewRequestBurstStart === null) {
         this._viewRequestBurstStart = now;
       }
@@ -163,7 +163,7 @@ Object.assign(ChartView.prototype, {
   // deep-zoom point overlay). Texture lifetime stays with the LOD cache.
   _applySampleRebinGrid(g, density, rebinned) {
     g.prevDensity = g.density;
-    g._densityFadeStart = performance.now();
+    g._densityFadeStart = this._now();
     g.densityNormMax = density.normMax || density.max;
     g.density = density;
     g._sampleRebinned = !!rebinned; // badge: recorded reduction, never silent (§28)

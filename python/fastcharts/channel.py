@@ -156,11 +156,14 @@ def handle_message(
         if callbacks.on_view_change is None:
             return None
         try:
+            x0, x1, y0, y1 = normalize_window(
+                content["x0"], content["x1"], content["y0"], content["y1"], require_area=False
+            )
             view = {
-                "x0": float(content["x0"]),
-                "x1": float(content["x1"]),
-                "y0": float(content["y0"]),
-                "y1": float(content["y1"]),
+                "x0": x0,
+                "x1": x1,
+                "y0": y0,
+                "y1": y1,
                 "source": str(content.get("source", "view")),
             }
         except (KeyError, TypeError, ValueError):

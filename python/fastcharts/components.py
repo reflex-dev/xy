@@ -1138,6 +1138,16 @@ def _resolve_axis_values(fig: Figure, data: Any, key: Any, axis: str, context: s
     return values
 
 
+def _call_with_axis_rollback(fig: Figure, apply: Callable[[], Any]) -> Any:
+    """Keep category-axis provisioning atomic for direct applier callers."""
+    checkpoint = {axis: list(labels) for axis, labels in fig._axis_categories.items()}
+    try:
+        return apply()
+    except Exception:
+        fig._axis_categories = checkpoint
+        raise
+
+
 def _is_datetime_like(values: Any) -> bool:
     if hasattr(values, "to_numpy"):
         try:
@@ -1347,7 +1357,15 @@ class Chart(Component):
                 raise TypeError(f"no applier registered for mark kind {m.kind!r}")
             x_axis_id, y_axis_id = _mark_axis_ids(m, axes)
             before = len(fig.traces)
-            applier(fig, m, data)
+            axis_checkpoint = {axis: list(labels) for axis, labels in fig._axis_categories.items()}
+            try:
+                applier(fig, m, data)
+            except Exception:
+                # `_resolve_axis_values` may provision category positions before
+                # the fluent mark reaches its own transactional checkpoint. Keep
+                # a failed declarative mark from leaking those labels.
+                fig._axis_categories = axis_checkpoint
+                raise
             new_traces = fig.traces[before:]
             for trace in new_traces:
                 trace.x_axis = x_axis_id
@@ -1671,50 +1689,45 @@ def _add_tooltip_source(
         seen.add(key)
 
 
+def _tooltip_bindings(mark: Mark, traces: list[Any]) -> list[tuple[str, str]]:
+    """Normalize data-backed mark fields to the wire fields they describe.
+
+    Tooltip aliases and explicit sources must agree about channel semantics;
+    keeping the lookup in one place prevents categorical/continuous color or
+    size handling from drifting between the two paths.
+    """
+    bindings: list[tuple[str, str]] = []
+    if isinstance(mark.x, str):
+        bindings.append((mark.x, "x"))
+    if isinstance(mark.y, str):
+        bindings.append((mark.y, "y"))
+    color = mark.props.get("color")
+    if isinstance(color, str) and not _looks_like_css(color):
+        channel = next((trace.color_ch for trace in traces if trace.color_ch is not None), None)
+        if channel is not None:
+            bindings.append(
+                (color, "color_category" if channel.mode == "categorical" else "color_value")
+            )
+    size = mark.props.get("size")
+    if isinstance(size, str):
+        channel = next((trace.size_ch for trace in traces if trace.size_ch is not None), None)
+        if channel is not None:
+            bindings.append((size, "size_value"))
+    return bindings
+
+
 def _merge_tooltip_sources(
     sources: dict[str, list[dict[str, Any]]], mark: Mark, traces: list[Any]
 ) -> None:
-    if isinstance(mark.x, str):
-        _add_tooltip_source(sources, mark.x, traces, "x")
-    if isinstance(mark.y, str):
-        _add_tooltip_source(sources, mark.y, traces, "y")
+    for data_field, wire_field in _tooltip_bindings(mark, traces):
+        _add_tooltip_source(sources, data_field, traces, wire_field)
     if mark.kind == "heatmap" and isinstance(mark.props.get("z"), str):
         _add_tooltip_source(sources, mark.props["z"], traces, "color_value")
-    color = mark.props.get("color")
-    if isinstance(color, str) and not _looks_like_css(color):
-        channel = next((trace.color_ch for trace in traces if trace.color_ch is not None), None)
-        if channel is not None:
-            _add_tooltip_source(
-                sources,
-                color,
-                traces,
-                "color_category" if channel.mode == "categorical" else "color_value",
-            )
-    size = mark.props.get("size")
-    if isinstance(size, str):
-        channel = next((trace.size_ch for trace in traces if trace.size_ch is not None), None)
-        if channel is not None:
-            _add_tooltip_source(sources, size, traces, "size_value")
 
 
 def _merge_tooltip_aliases(aliases: dict[str, str], mark: Mark, traces: list[Any]) -> None:
-    if isinstance(mark.x, str):
-        aliases.setdefault(mark.x, "x")
-    if isinstance(mark.y, str):
-        aliases.setdefault(mark.y, "y")
-    color = mark.props.get("color")
-    if isinstance(color, str) and not _looks_like_css(color):
-        channel = next((trace.color_ch for trace in traces if trace.color_ch is not None), None)
-        if channel is not None:
-            aliases.setdefault(
-                color,
-                "color_category" if channel.mode == "categorical" else "color_value",
-            )
-    size = mark.props.get("size")
-    if isinstance(size, str):
-        channel = next((trace.size_ch for trace in traces if trace.size_ch is not None), None)
-        if channel is not None:
-            aliases.setdefault(size, "size_value")
+    for data_field, wire_field in _tooltip_bindings(mark, traces):
+        aliases.setdefault(data_field, wire_field)
 
 
 def _strict_bool(value: Any, label: str) -> bool:
@@ -1806,49 +1819,58 @@ def _looks_like_css(s: str) -> bool:
 
 def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
     size = m.props["size"]
-    fig.scatter(
-        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
-        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
-        name=m.name,
-        color=_resolve_color(data, m.props["color"], context=f"{m.kind}.color"),
-        size=_resolve(data, size, context=f"{m.kind}.size") if isinstance(size, str) else size,
-        colormap=m.props["colormap"],
-        size_range=m.props["size_range"],
-        opacity=m.props["opacity"],
-        density=m.props["density"],
-        symbol=m.props["symbol"],
-        stroke=m.props["stroke"],
-        stroke_width=m.props["stroke_width"],
+    _call_with_axis_rollback(
+        fig,
+        lambda: fig.scatter(
+            _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
+            _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
+            name=m.name,
+            color=_resolve_color(data, m.props["color"], context=f"{m.kind}.color"),
+            size=_resolve(data, size, context=f"{m.kind}.size") if isinstance(size, str) else size,
+            colormap=m.props["colormap"],
+            size_range=m.props["size_range"],
+            opacity=m.props["opacity"],
+            density=m.props["density"],
+            symbol=m.props["symbol"],
+            stroke=m.props["stroke"],
+            stroke_width=m.props["stroke_width"],
+        ),
     )
 
 
 def _apply_line(fig: Figure, m: Mark, data: Any) -> None:
-    fig.line(
-        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
-        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
-        name=m.name,
-        color=m.props["color"],
-        width=m.props["width"],
-        opacity=m.props["opacity"],
-        curve=m.props["curve"],
-        dash=m.props["dash"],
+    _call_with_axis_rollback(
+        fig,
+        lambda: fig.line(
+            _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
+            _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
+            name=m.name,
+            color=m.props["color"],
+            width=m.props["width"],
+            opacity=m.props["opacity"],
+            curve=m.props["curve"],
+            dash=m.props["dash"],
+        ),
     )
 
 
 def _apply_area(fig: Figure, m: Mark, data: Any) -> None:
     base = m.props["base"]
-    fig.area(
-        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
-        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
-        base=_resolve(data, base, context=f"{m.kind}.base") if isinstance(base, str) else base,
-        name=m.name,
-        color=m.props["color"],
-        opacity=m.props["opacity"],
-        line_width=m.props["line_width"],
-        line_opacity=m.props["line_opacity"],
-        fill=m.props["fill"],
-        curve=m.props["curve"],
-        dash=m.props["dash"],
+    _call_with_axis_rollback(
+        fig,
+        lambda: fig.area(
+            _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
+            _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
+            base=_resolve(data, base, context=f"{m.kind}.base") if isinstance(base, str) else base,
+            name=m.name,
+            color=m.props["color"],
+            opacity=m.props["opacity"],
+            line_width=m.props["line_width"],
+            line_opacity=m.props["line_opacity"],
+            fill=m.props["fill"],
+            curve=m.props["curve"],
+            dash=m.props["dash"],
+        ),
     )
 
 
@@ -1881,9 +1903,9 @@ def _apply_heatmap(fig: Figure, m: Mark, data: Any) -> None:
     )
 
 
-def _apply_bar(fig: Figure, m: Mark, data: Any) -> None:
+def _apply_rect_mark(fig: Figure, m: Mark, data: Any, apply: Callable[..., Any]) -> None:
     base = m.props["base"]
-    fig.bar(
+    apply(
         _resolve(data, m.x, context=f"{m.kind}.x"),
         _resolve(data, m.y, context=f"{m.kind}.y"),
         name=m.name,
@@ -1900,27 +1922,14 @@ def _apply_bar(fig: Figure, m: Mark, data: Any) -> None:
         stroke_width=m.props["stroke_width"],
         fill=m.props["fill"],
     )
+
+
+def _apply_bar(fig: Figure, m: Mark, data: Any) -> None:
+    _apply_rect_mark(fig, m, data, fig.bar)
 
 
 def _apply_column(fig: Figure, m: Mark, data: Any) -> None:
-    base = m.props["base"]
-    fig.column(
-        _resolve(data, m.x, context=f"{m.kind}.x"),
-        _resolve(data, m.y, context=f"{m.kind}.y"),
-        name=m.name,
-        color=m.props["color"],
-        colors=m.props["colors"],
-        width=m.props["width"],
-        base=_resolve(data, base, context=f"{m.kind}.base") if isinstance(base, str) else base,
-        mode=m.props["mode"],
-        orientation=m.props["orientation"],
-        series=m.props["series"],
-        opacity=m.props["opacity"],
-        corner_radius=m.props["corner_radius"],
-        stroke=m.props["stroke"],
-        stroke_width=m.props["stroke_width"],
-        fill=m.props["fill"],
-    )
+    _apply_rect_mark(fig, m, data, fig.column)
 
 
 def _annotation_style(annotation: Annotation) -> dict[str, StyleValue]:

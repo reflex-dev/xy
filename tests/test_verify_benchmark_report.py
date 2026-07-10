@@ -557,7 +557,7 @@ def _set_dashboard_governed(row: dict, live: int = 12) -> None:
 
 def _workflow_native_report() -> dict:
     categories, tracked = _category_registry(
-        "input_ingestion", "streaming_updates", "static_export"
+        "input_ingestion", "streaming_updates", "log_autorange", "static_export"
     )
     scenarios = [
         ("ingest_numpy_f64_contiguous", "ingestion", "input_ingestion"),
@@ -571,6 +571,7 @@ def _workflow_native_report() -> dict:
             "streaming",
             "streaming_updates",
         ),
+        ("log_line_autorange", "range", "log_autorange"),
         ("export_html_decimated_line", "export", "static_export"),
         ("export_svg_decimated_line", "export", "static_export"),
         ("export_png_native_decimated_line", "export", "static_export"),

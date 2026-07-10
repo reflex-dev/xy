@@ -70,6 +70,8 @@ def bench(lib, n: int) -> dict:
     zmax = array("d", bytes(8 * nchunks))
     zsum = array("d", bytes(8 * nchunks))
     zsq = array("d", bytes(8 * nchunks))
+    zpmin = array("d", bytes(8 * nchunks))
+    zpmax = array("d", bytes(8 * nchunks))
     zc = array("Q", bytes(8 * nchunks))
     zn = array("Q", bytes(8 * nchunks))
     t = timeit(
@@ -83,6 +85,8 @@ def bench(lib, n: int) -> dict:
             _ptr(zn, U64),
             _ptr(zsum, D),
             _ptr(zsq, D),
+            _ptr(zpmin, D),
+            _ptr(zpmax, D),
         )
     )
     zone_mpts = n / t / 1e6

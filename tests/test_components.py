@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 import fastcharts as fc
+import fastcharts.components as components_module
 import fastcharts.export as export_module
 from fastcharts._figure import Figure
 from fastcharts.components import (
@@ -353,6 +354,17 @@ def test_bad_category_annotation_does_not_cache_partial_chart_figure():
     assert chart.figure() is fig
     spec, _ = fig.build_payload()
     assert spec["annotations"][0]["value"] == 1.0
+
+
+def test_failed_declarative_mark_does_not_leak_axis_categories():
+    fig = Figure()
+    mark = fc.scatter(x=["new-category"], y=[1.0], color=np.array([1.0, 2.0]))
+
+    with pytest.raises(ValueError, match="color array"):
+        components_module._apply_scatter(fig, mark, None)
+
+    assert fig.traces == []
+    assert fig._axis_categories == {}
 
 
 def test_component_api_default_payload_matches_fluent_figure():

@@ -516,7 +516,8 @@ fails if any of those required interaction rows disappear.
 
 `bench_workflows.py` covers contiguous/converted/strided/datetime/list/Arrow
 ingestion, line append, density append followed by a real 2M+ pyramid rebuild,
-and HTML/SVG/native-PNG/Chromium-PNG export. The dashboard benchmark attempts 10, 20, and 50 charts,
+and a 1M-point log autorange workload containing negative and non-finite values.
+It also covers HTML/SVG/native-PNG/Chromium-PNG export. The dashboard benchmark attempts 10, 20, and 50 charts,
 records per-chart context loss/restoration, initial and scrolled visibility, JS
 heap, and redraw submission pacing, then reports the largest loss-free nonblank
 count without discarding partial-dashboard metrics.

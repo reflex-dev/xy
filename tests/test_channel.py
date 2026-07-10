@@ -131,7 +131,24 @@ def test_view_change_short_circuits_without_callback():
     assert views == [{"x0": 0.0, "x1": 2.0, "y0": 0.0, "y1": 3.0, "source": "wheel"}]
     # Malformed with callback: dropped.
     assert handle(fig, {"type": "view_change", "x0": "bad"}, on_view_change=views.append) is None
-    assert len(views) == 1
+    assert (
+        handle(
+            fig,
+            {"type": "view_change", "x0": np.nan, "x1": 2.0, "y0": 0.0, "y1": 3.0},
+            on_view_change=views.append,
+        )
+        is None
+    )
+    assert (
+        handle(
+            fig,
+            {"type": "view_change", "x0": 2.0, "x1": 0.0, "y0": 3.0, "y1": 0.0},
+            on_view_change=views.append,
+        )
+        is None
+    )
+    assert len(views) == 2
+    assert views[-1] == {"x0": 0.0, "x1": 2.0, "y0": 0.0, "y1": 3.0, "source": "view"}
 
 
 def test_select_fires_brush_before_select_and_returns_selection_reply():

@@ -14,13 +14,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _fastcharts_browser import (  # noqa: E402
     chart_payload,
+    chromium_gl_flags,
+    find_chromium,
     json_bytes,
     page_for_charts,
     run_json_probe,
@@ -642,6 +647,148 @@ def _flatten_probe_metrics(row: dict[str, Any], result: dict[str, Any]) -> None:
 # gets matching headroom; a healthy probe never comes near either limit.
 PROBE_VIRTUAL_TIME_MS = 120_000
 PROBE_TIMEOUT_S = 600
+WORKER_PROBE_TIMEOUT_S = 30
+
+
+def _worker_density_figure() -> Any:
+    if np is None:
+        raise SystemExit("numpy is required for benchmarks/bench_interaction.py")
+    from fastcharts._figure import Figure
+
+    rng = np.random.default_rng(91_017)
+    n = 250_000
+    x = rng.normal(0.0, 1.0, n).astype(np.float64, copy=False)
+    y = (0.58 * x + rng.normal(0.0, 0.72, n)).astype(np.float64, copy=False)
+    return Figure(width=RENDER_W, height=RENDER_H, title="density worker probe").scatter(
+        x, y, density=True
+    )
+
+
+def _worker_probe_js() -> str:
+    return """
+(() => {
+  try {
+    const payload = FC_CHARTS[0];
+    const el = document.createElement("div");
+    document.getElementById("root").appendChild(el);
+    const view = fastcharts.renderStandalone(el, payload.spec, fcBytesFromB64(payload.b64));
+    const g = view.gpuTraces[0];
+    if (!g || !g.sampleOverlay || !g.sampleOverlay._cpu) {
+      fcReport("FC_WORKER", {status: "failed(no retained sample)"});
+      return;
+    }
+    const before = {...view.view};
+    const xSpan = before.x1 - before.x0;
+    const ySpan = before.y1 - before.y0;
+    const target = {
+      x0: before.x0 + xSpan * 0.18, x1: before.x0 + xSpan * 0.52,
+      y0: before.y0 + ySpan * 0.21, y1: before.y0 + ySpan * 0.61,
+    };
+    const started = performance.now();
+    view._setView(target, {animate: false, request: true});
+    const poll = () => {
+      if (g._sampleRebinned === true) {
+        view._drawNow();
+        fcReport("FC_WORKER", {
+          status: "ok",
+          worker_rebinned: true,
+          nonblank_pixels: fcNonblankPixels(view),
+          worker_created: !!view._rebinWorker,
+          x_range_changed: !!(g.density && g.density.xRange &&
+            Math.abs(g.density.xRange[0] - before.x0) > xSpan * 0.05),
+        });
+        return;
+      }
+      if (performance.now() - started >= 12_000) {
+        fcReport("FC_WORKER", {
+          status: "failed(timeout)",
+          worker_created: !!view._rebinWorker,
+          sample_rebinned: !!g._sampleRebinned,
+        });
+        return;
+      }
+      setTimeout(poll, 25);
+    };
+    setTimeout(poll, 150);
+  } catch (err) {
+    fcFail("FC_WORKER", err);
+  }
+})();
+"""
+
+
+def run_worker_probe(*, chromium: str | None = None) -> dict[str, Any]:
+    """Exercise standalone density rebinning with real wall-clock workers.
+
+    This intentionally omits Chromium's virtual-time flag: a real Worker
+    round-trip can deadlock virtual time, which is why the broader interaction
+    probe disables this path.
+    """
+    fig = _worker_density_figure()
+    spec, blob = fig.build_payload()
+    html = page_for_charts(
+        [chart_payload("worker", spec, blob)],
+        _worker_probe_js(),
+        title="fastcharts density worker probe",
+    )
+    exe = find_chromium(chromium)
+    if not exe:
+        return {"status": "skipped(no chromium)"}
+    node_script = r"""
+const { chromium } = require("playwright");
+(async () => {
+  const browser = await chromium.launch({
+    headless: true,
+    executablePath: process.env.FASTCHARTS_CHROMIUM,
+    args: JSON.parse(process.env.FASTCHARTS_CHROME_ARGS || "[]"),
+  });
+  try {
+    const page = await browser.newPage();
+    page.on("pageerror", (err) => console.error("PAGEERROR", err.stack || err));
+    page.on("console", (msg) => console.error("CONSOLE", msg.text()));
+    await page.goto(process.env.FASTCHARTS_PROBE, {waitUntil: "load"});
+    try {
+      await page.waitForFunction(() => document.title.startsWith("FC_WORKER "), null, {timeout: 12000});
+    } catch (err) {
+      console.error("TITLE", await page.title());
+      throw err;
+    }
+    console.log(await page.title());
+  } finally {
+    await browser.close();
+  }
+})().catch((err) => { console.error(err.stack || err); process.exit(1); });
+"""
+    with tempfile.TemporaryDirectory() as td:
+        page = Path(td) / "worker.html"
+        page.write_text(html, encoding="utf-8")
+        env = os.environ.copy()
+        env["FASTCHARTS_CHROMIUM"] = exe
+        env["FASTCHARTS_PROBE"] = page.as_uri()
+        env["FASTCHARTS_CHROME_ARGS"] = json.dumps(chromium_gl_flags())
+        try:
+            completed = subprocess.run(
+                ["node", "-e", node_script],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=WORKER_PROBE_TIMEOUT_S,
+            )
+        except FileNotFoundError:
+            return {"status": "skipped(no node)"}
+        except subprocess.TimeoutExpired:
+            return {"status": "failed(timeout)"}
+    if completed.returncode != 0:
+        error = (completed.stderr or completed.stdout).strip().splitlines()
+        detail = " ".join(error[-4:]) if error else "playwright"
+        return {"status": f"failed({detail[:480]})"}
+    title = completed.stdout.strip().splitlines()[-1] if completed.stdout.strip() else ""
+    if not title.startswith("FC_WORKER "):
+        return {"status": "failed(no worker probe title)"}
+    try:
+        return json.loads(title[len("FC_WORKER ") :])
+    except json.JSONDecodeError as exc:
+        return {"status": f"failed(bad worker probe JSON: {exc})"}
 
 
 def _probe_with_retries(

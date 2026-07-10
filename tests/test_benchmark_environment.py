@@ -113,6 +113,18 @@ def test_codspeed_suite_covers_native_core_hardening_workloads() -> None:
         assert "benchmark" in args, f"{name} must be timed by pytest-codspeed"
 
 
+def test_codspeed_dependency_is_declared_and_shared_by_ci_and_runbook() -> None:
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "codspeed.yml").read_text(encoding="utf-8")
+    runbook = (ROOT / "benchmarks" / "README.md").read_text(encoding="utf-8")
+
+    assert "codspeed = [" in pyproject
+    assert '"pytest-codspeed>=5,<6"' in pyproject
+    assert '-e ".[dev,codspeed]"' in workflow
+    assert '-e ".[dev,codspeed]"' in runbook
+    assert "--codspeed" in runbook
+
+
 def test_native_benchmark_reports_can_resolve_source_backend_metadata() -> None:
     """Early CI native scripts run before package install, but still need backend metadata."""
     for script_name in ("bench_scatter_native.py", "bench_native.py"):
@@ -136,6 +148,8 @@ def test_interaction_browser_gates_cover_scatter_and_core_chart_families() -> No
         "histogram_120k_interaction",
         "bar_1200_interaction",
         "heatmap_39600_interaction",
+        "run_worker_probe",
+        "omits Chromium's virtual-time flag",
         '"family": "line"',
         '"family": "histogram"',
         '"family": "bar"',
@@ -203,8 +217,10 @@ def test_context_governor_reserves_pending_restores() -> None:
 def test_benchmark_categories_track_core_hardening_metrics() -> None:
     medium_scatter_metrics = CATEGORY_BY_ID["medium_direct_scatter"]["metrics"]
     interaction_metrics = CATEGORY_BY_ID["interaction_smoothness"]["metrics"]
+    log_metrics = CATEGORY_BY_ID["log_autorange"]["metrics"]
 
     assert "memory" in medium_scatter_metrics
     assert "bytes/point" in medium_scatter_metrics
     assert "tooltip stability" in interaction_metrics
     assert "frame color delta" in interaction_metrics
+    assert "positive-domain correctness" in log_metrics

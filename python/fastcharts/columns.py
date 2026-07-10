@@ -42,6 +42,8 @@ class ZoneMaps:
     null_counts: npt.NDArray[np.uint64]
     sums: npt.NDArray[np.float64]
     sum_sqs: npt.NDArray[np.float64]
+    positive_mins: npt.NDArray[np.float64]
+    positive_maxs: npt.NDArray[np.float64]
 
     @property
     def min(self) -> float:
@@ -54,6 +56,16 @@ class ZoneMaps:
     def max(self) -> float:
         valid = self.maxs[self.counts > 0]
         return float(valid.max()) if len(valid) else float("nan")  # ty: ignore[invalid-argument-type]
+
+    @property
+    def positive_min(self) -> float:
+        valid = self.positive_mins[np.isfinite(self.positive_mins)]
+        return float(valid.min()) if len(valid) else float("nan")
+
+    @property
+    def positive_max(self) -> float:
+        valid = self.positive_maxs[np.isfinite(self.positive_maxs)]
+        return float(valid.max()) if len(valid) else float("nan")
 
     @property
     def count(self) -> int:
@@ -139,6 +151,8 @@ class Column:
             null_counts=np.concatenate([z.null_counts[:k], tail.null_counts]),
             sums=np.concatenate([z.sums[:k], tail.sums]),
             sum_sqs=np.concatenate([z.sum_sqs[:k], tail.sum_sqs]),
+            positive_mins=np.concatenate([z.positive_mins[:k], tail.positive_mins]),
+            positive_maxs=np.concatenate([z.positive_maxs[:k], tail.positive_maxs]),
         )
 
 

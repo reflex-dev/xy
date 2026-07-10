@@ -34,7 +34,16 @@ def test_column_append_zone_maps_match_full_recompute():
     col = ColumnStore().ingest(first)
     col.append(second)
     ref = ColumnStore().ingest(np.concatenate([first, second]))
-    for field in ("mins", "maxs", "counts", "null_counts", "sums", "sum_sqs"):
+    for field in (
+        "mins",
+        "maxs",
+        "counts",
+        "null_counts",
+        "sums",
+        "sum_sqs",
+        "positive_mins",
+        "positive_maxs",
+    ):
         np.testing.assert_array_equal(
             getattr(col.zone, field), getattr(ref.zone, field), err_msg=field
         )
@@ -144,6 +153,27 @@ def test_append_channel_contract():
         fig.append(0, [30.0], [30.0], size=[0.5])
     msg, _ = _msg(fig, 0, [30.0], [30.0], color=[0.5], size=[0.5])
     assert len(fig.traces[0].color_ch.values) == 31
+
+
+def test_append_continuous_channels_expand_domains_and_reuse_buffers():
+    values = np.arange(8.0)
+    fig = Figure().scatter(values, values, color=values, size=values)
+    trace = fig.traces[0]
+
+    fig.append(0, [8.0], [8.0], color=[100.0], size=[-50.0])
+    assert trace.color_ch.domain[1] >= 100.0
+    assert trace.size_ch.domain[0] <= -50.0
+    color_ptr = trace.color_ch.values.__array_interface__["data"][0]
+    size_ptr = trace.size_ch.values.__array_interface__["data"][0]
+
+    for i in range(9, 200):
+        fig.append(0, [float(i)], [float(i)], color=[float(i)], size=[float(i)])
+
+    assert trace.color_ch.values.__array_interface__["data"][0] == color_ptr
+    assert trace.size_ch.values.__array_interface__["data"][0] == size_ptr
+    assert trace.color_ch.domain[1] >= 199.0
+    assert trace.size_ch.domain[1] >= 199.0
+    assert len(trace.color_ch.values) == len(trace.size_ch.values) == 200
 
     plain = Figure().scatter(np.arange(10.0), np.arange(10.0))
     with pytest.raises(ValueError, match="no per-point color"):

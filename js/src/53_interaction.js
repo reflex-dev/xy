@@ -356,7 +356,7 @@ Object.assign(ChartView.prototype, {
     if (request) {
       this._scheduleViewRequest(target, { seq: this.seq, delay: requestDelay, maxWait: requestMaxWait });
     }
-    const now = performance.now();
+    const now = this._now();
     const tau = Math.max(18, duration / 5);
     if (this._viewAnim) {
       this._viewAnim.target = target;

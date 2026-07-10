@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_SCREEN_DIM
 
-ABI_VERSION = 11
+ABI_VERSION = 12
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.
@@ -84,6 +84,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -349,8 +351,11 @@ def zone_maps(
     npt.NDArray[np.uint64],
     npt.NDArray[np.float64],
     npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
 ]:
-    """Per-chunk (min, max, count, null_count, sum, sum_sq) — §22."""
+    """Per-chunk (min, max, count, null_count, sum, sum_sq, positive_min,
+    positive_max) — §22."""
     chunk_size = _positive_int(chunk_size, "chunk_size")
     data = _as_f64(data, "data")
     n = len(data)
@@ -358,13 +363,24 @@ def zone_maps(
     if n == 0:
         empty_f = np.empty(0, dtype=np.float64)
         empty_u = np.empty(0, dtype=np.uint64)
-        return empty_f, empty_f, empty_u, empty_u, empty_f.copy(), empty_f.copy()
+        return (
+            empty_f,
+            empty_f,
+            empty_u,
+            empty_u,
+            empty_f.copy(),
+            empty_f.copy(),
+            empty_f.copy(),
+            empty_f.copy(),
+        )
     mins = np.empty(n_chunks, dtype=np.float64)
     maxs = np.empty(n_chunks, dtype=np.float64)
     counts = np.empty(n_chunks, dtype=np.uint64)
     nulls = np.empty(n_chunks, dtype=np.uint64)
     sums = np.empty(n_chunks, dtype=np.float64)
     sum_sqs = np.empty(n_chunks, dtype=np.float64)
+    positive_mins = np.empty(n_chunks, dtype=np.float64)
+    positive_maxs = np.empty(n_chunks, dtype=np.float64)
     written = _lib.fc_zone_maps(
         _ptr_f64(data),
         n,
@@ -375,6 +391,8 @@ def zone_maps(
         nulls.ctypes.data,
         _ptr_f64(sums),
         _ptr_f64(sum_sqs),
+        _ptr_f64(positive_mins),
+        _ptr_f64(positive_maxs),
     )
     if written == _USIZE_MAX:
         raise ValueError("invalid zone_maps arguments")
@@ -382,7 +400,7 @@ def zone_maps(
         raise RuntimeError(
             f"fastcharts native zone_maps wrote {written} chunks, expected {n_chunks}"
         )
-    return mins, maxs, counts, nulls, sums, sum_sqs
+    return mins, maxs, counts, nulls, sums, sum_sqs, positive_mins, positive_maxs
 
 
 def encode_f32(

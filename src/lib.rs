@@ -50,7 +50,7 @@ fn ffi_guard<R>(sentinel: R, body: impl FnOnce() -> R) -> R {
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 11;
+pub const ABI_VERSION: u32 = 12;
 
 #[no_mangle]
 pub extern "C" fn fc_abi_version() -> u32 {
@@ -146,6 +146,8 @@ pub unsafe extern "C" fn fc_css_check(
 /// Zone maps (§22) over `data[0..len]` in chunks of `chunk_size`.
 ///
 /// Output arrays must each hold `ceil(len / chunk_size)` elements.
+/// The final two arrays contain the positive-only min/max values used by log
+/// autorange; empty positive chunks retain `+∞`/`-∞` sentinels.
 /// Returns the number of chunks written.
 ///
 /// # Safety
@@ -162,6 +164,8 @@ pub unsafe extern "C" fn fc_zone_maps(
     out_null_count: *mut u64,
     out_sum: *mut f64,
     out_sum_sq: *mut f64,
+    out_positive_min: *mut f64,
+    out_positive_max: *mut f64,
 ) -> usize {
     if chunk_size == 0 {
         return usize::MAX;
@@ -177,6 +181,8 @@ pub unsafe extern "C" fn fc_zone_maps(
         || out_null_count.is_null()
         || out_sum.is_null()
         || out_sum_sq.is_null()
+        || out_positive_min.is_null()
+        || out_positive_max.is_null()
     {
         return usize::MAX;
     }
@@ -190,6 +196,8 @@ pub unsafe extern "C" fn fc_zone_maps(
         let ZoneMap {
             min,
             max,
+            positive_min,
+            positive_max,
             count,
             null_count,
             sum,
@@ -201,6 +209,8 @@ pub unsafe extern "C" fn fc_zone_maps(
         *out_null_count.add(i) = null_count;
         *out_sum.add(i) = sum;
         *out_sum_sq.add(i) = sum_sq;
+        *out_positive_min.add(i) = positive_min;
+        *out_positive_max.add(i) = positive_max;
     }
     zms.len()
 }

@@ -37,6 +37,12 @@ bench = [
     "plotly>=5",
     "matplotlib>=3",
 ]
+# CodSpeed's pytest plugin is intentionally separate from the normal dev
+# environment: it is useful for performance runs, but is not needed for unit
+# tests or static analysis.
+codspeed = [
+    "pytest-codspeed>=5,<6",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["python/fastcharts"]

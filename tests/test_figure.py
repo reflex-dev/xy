@@ -233,6 +233,11 @@ def test_histogram_ships_rect_columns():
     assert spec["y_axis"]["range"][0] == 0.0
 
 
+def test_density_histogram_rejects_empty_finite_input_without_numpy_warning():
+    with pytest.raises(ValueError, match="at least one finite value"):
+        Figure().histogram([np.nan, np.inf, -np.inf], density=True)
+
+
 def test_histogram_cumulative_count_accumulates_and_records_mode():
     fig = Figure().histogram([0.1, 0.2, 1.2, 2.4], bins=[0.0, 1.0, 2.0, 3.0], cumulative=True)
     spec, blob = fig.build_payload()
@@ -1500,6 +1505,15 @@ def test_autorange_from_zone_maps():
     assert lo < -5 < 5 < hi
     (ylo, yhi) = fig.y_range()
     assert ylo < -10 < 10 < yhi
+
+
+def test_log_autorange_uses_positive_zone_stats():
+    values = np.array([-1000.0, -10.0, 0.0, 2.0, 100.0])
+    fig = Figure().scatter(np.arange(len(values), dtype=np.float64), values)
+    fig.set_axis("y", type_="log")
+    lo, hi = fig.y_range()
+    assert 0.0 < lo <= 2.0
+    assert hi >= 100.0
 
 
 def test_memory_report_accounts_for_bytes():

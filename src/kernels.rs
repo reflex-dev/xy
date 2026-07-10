@@ -22,6 +22,8 @@
 pub struct ZoneMap {
     pub min: f64,
     pub max: f64,
+    pub positive_min: f64,
+    pub positive_max: f64,
     pub count: u64,
     pub null_count: u64,
     pub sum: f64,
@@ -33,6 +35,8 @@ impl ZoneMap {
         ZoneMap {
             min: f64::INFINITY,
             max: f64::NEG_INFINITY,
+            positive_min: f64::INFINITY,
+            positive_max: f64::NEG_INFINITY,
             count: 0,
             null_count: 0,
             sum: 0.0,
@@ -59,6 +63,10 @@ fn zone_map_one(chunk: &[f64]) -> ZoneMap {
             zm.count += 1;
             zm.min = zm.min.min(v);
             zm.max = zm.max.max(v);
+            if v > 0.0 {
+                zm.positive_min = zm.positive_min.min(v);
+                zm.positive_max = zm.positive_max.max(v);
+            }
             zm.sum += v;
             zm.sum_sq += v * v;
         }
@@ -1316,6 +1324,8 @@ mod tests {
         assert_eq!(zms.len(), 3);
         assert_eq!(zms[0].min, 0.0);
         assert_eq!(zms[0].max, 3.0);
+        assert_eq!(zms[0].positive_min, 1.0);
+        assert_eq!(zms[0].positive_max, 3.0);
         assert_eq!(zms[0].count, 4);
         assert_eq!(zms[0].sum, 6.0);
         assert_eq!(zms[2].min, 8.0);
@@ -1331,6 +1341,8 @@ mod tests {
         assert_eq!(zms[0].null_count, 1);
         assert_eq!(zms[0].min, 1.0);
         assert_eq!(zms[0].max, 3.0);
+        assert_eq!(zms[0].positive_min, 1.0);
+        assert_eq!(zms[0].positive_max, 3.0);
     }
 
     #[test]
@@ -1344,6 +1356,8 @@ mod tests {
         assert_eq!(zms[0].min, 1.0);
         assert_eq!(zms[0].max, 3.0);
         assert_eq!(zms[0].sum, 4.0);
+        assert_eq!(zms[0].positive_min, 1.0);
+        assert_eq!(zms[0].positive_max, 3.0);
         assert!(zms[0].sum_sq.is_finite());
     }
 

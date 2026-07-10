@@ -85,6 +85,15 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  - scenario {row.get('scenario')!r}: status={status!r}", file=sys.stderr)
         return 1
 
+    worker = bench_interaction.run_worker_probe(chromium=chromium)
+    if worker.get("status") != "ok":
+        print(
+            "interaction stress smoke FAILED: standalone density worker probe "
+            f"returned {worker.get('status')!r}",
+            file=sys.stderr,
+        )
+        return 1
+
     print(
         "interaction stress smoke OK: "
         f"{len(report['rows'])} rows, reps={report['reps']}, "
@@ -103,6 +112,14 @@ def main(argv: list[str] | None = None) -> int:
                 overlaps=row["tick_label_overlap_count"],
             )
         )
+    print(
+        "  standalone_density_worker: rebinned={rebinned} worker={worker} "
+        "nonblank={nonblank}".format(
+            rebinned=worker.get("worker_rebinned"),
+            worker=worker.get("worker_created"),
+            nonblank=worker.get("nonblank_pixels"),
+        )
+    )
     return 0
 
 

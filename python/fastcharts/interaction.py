@@ -126,8 +126,18 @@ def select_range(
             continue
         if tid is not None and t.id != tid:
             continue
-        xv, yv = t.x.values, t.y.values
-        out[t.id] = kernels.range_indices(xv, yv, lo_x, hi_x, lo_y, hi_y)
+        x_candidates = _zone_candidates(t.x, lo_x, hi_x)
+        y_candidates = _zone_candidates(t.y, lo_y, hi_y)
+        candidates = np.intersect1d(x_candidates, y_candidates, assume_unique=True)
+        if len(candidates) == len(t.x):
+            out[t.id] = kernels.range_indices(t.x.values, t.y.values, lo_x, hi_x, lo_y, hi_y)
+        elif len(candidates) == 0:
+            out[t.id] = np.empty(0, dtype=np.uint32)
+        else:
+            out[t.id] = kernels.range_indices(
+                t.x.values[candidates], t.y.values[candidates], lo_x, hi_x, lo_y, hi_y
+            )
+            out[t.id] = candidates[out[t.id]]
     return out
 
 
@@ -139,7 +149,32 @@ def to_shipped_indices(fig: "Figure", trace_id: int, canonical: np.ndarray) -> n
     if sel is None:
         return np.asarray(canonical, dtype=np.uint32)
     # sel is sorted ascending (flatnonzero/m4 output); membership → position.
-    return np.flatnonzero(np.isin(sel, canonical)).astype(np.uint32)
+    canonical = np.asarray(canonical, dtype=np.uint32).ravel()
+    positions = np.searchsorted(sel, canonical)
+    valid = positions < len(sel)
+    valid[valid] &= sel[positions[valid]] == canonical[valid]
+    return positions[valid].astype(np.uint32)
+
+
+def _zone_candidates(col: Any, lo: float, hi: float) -> np.ndarray:
+    """Return row ids from chunks whose zone can overlap an inclusive range."""
+    if len(col) == 0:
+        return np.empty(0, dtype=np.uint32)
+    mins = col.zone.mins
+    maxs = col.zone.maxs
+    counts = col.zone.counts
+    chunks = np.flatnonzero((counts > 0) & (maxs >= lo) & (mins <= hi))
+    if len(chunks) == len(mins):
+        return np.arange(len(col), dtype=np.uint32)
+    pieces = [
+        np.arange(
+            int(chunk) * columns.ZONE_CHUNK,
+            min((int(chunk) + 1) * columns.ZONE_CHUNK, len(col)),
+            dtype=np.uint32,
+        )
+        for chunk in chunks
+    ]
+    return np.concatenate(pieces) if pieces else np.empty(0, dtype=np.uint32)
 
 
 def _point_shipped_sel(t: Any) -> Optional[np.ndarray]:
@@ -612,9 +647,9 @@ def append_data(
     t.x.append(ax)
     t.y.append(ay)
     if color_tail is not None:
-        t.color_ch.values = np.concatenate([t.color_ch.values, color_tail])
+        channels.append_continuous(t.color_ch, color_tail, "color")
     if size_tail is not None:
-        t.size_ch.values = np.concatenate([t.size_ch.values, size_tail])
+        channels.append_continuous(t.size_ch, size_tail, "size")
 
     _free_pyramid(t)  # lazily rebuilt; n grew so "not applicable" may flip
     lod.exit_drill(t)
