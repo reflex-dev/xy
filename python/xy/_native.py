@@ -397,9 +397,7 @@ def zone_maps(
     if written == _USIZE_MAX:
         raise ValueError("invalid zone_maps arguments")
     if written != n_chunks:
-        raise RuntimeError(
-            f"xy native zone_maps wrote {written} chunks, expected {n_chunks}"
-        )
+        raise RuntimeError(f"xy native zone_maps wrote {written} chunks, expected {n_chunks}")
     return mins, maxs, counts, nulls, sums, sum_sqs, positive_mins, positive_maxs
 
 

@@ -661,9 +661,7 @@ def custom_chrome_demo() -> fc.Chart:
 
 def custom_chrome_html() -> str:
     html = custom_chrome_demo().to_html()
-    render_call = (
-        'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
-    )
+    render_call = 'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
     replacement = (
         "window.__xyCustomChromeView = "
         'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
@@ -731,9 +729,7 @@ def write_custom_chrome_chart(name: str = "custom_chrome.html") -> None:
 
 def annotated_heatmap_html() -> str:
     html = annotated_heatmap_demo().to_html()
-    render_call = (
-        'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
-    )
+    render_call = 'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
     replacement = (
         "window.__xyAnnotatedHeatmapView = "
         'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
