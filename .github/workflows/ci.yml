@@ -146,6 +146,11 @@ jobs:
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
           .venv/bin/python scripts/visual_regression_smoke.py "$CHROME"
 
+      - name: Step tier-update smoke (Chromium)
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python scripts/step_tier_smoke.py "$CHROME"
+
       - name: Browser interaction stress smoke (Chromium)
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")

@@ -298,7 +298,6 @@ class PayloadMixin(_Host):
             xv, yv = xv[sel], yv[sel]
         entry = self._base_entry(t, pw, xv, yv, "direct", self._default_styled(t))
         entry["color"], entry["size"] = self._ship_channels(t, sel, pw.ship_scalar)
-        entry["hexbin"] = {"n_bins": int(len(xv))}
         return entry
 
     def _emit_histogram(
@@ -366,11 +365,15 @@ class PayloadMixin(_Host):
             raise ValueError(f"{t.kind} trace missing segment columns")
         x0v, x1v, y0v, y1v = t.x0.values, t.x1.values, t.y0.values, t.y1.values
         tier = "direct"
-        if t.kind == "errorbar" and t.count is not None and len(x0v) == 3 * t.count:
+        if t.kind == "errorbar" and t.count:
+            # Segments ship grouped by role, count per group: 3 groups with
+            # caps (main + two cap blocks), 1 without. Decimate per point
+            # across every group so caps stay attached to their bars.
+            seg_per, remainder = divmod(len(x0v), t.count)
             max_groups = max(1024, int(px_width) * 4)
-            if t.count > max_groups:
+            if remainder == 0 and seg_per >= 1 and t.count > max_groups:
                 chosen = np.linspace(0, t.count - 1, max_groups, dtype=np.int64)
-                indices = np.concatenate((chosen, chosen + t.count, chosen + 2 * t.count))
+                indices = np.concatenate([chosen + k * t.count for k in range(seg_per)])
                 x0v, x1v, y0v, y1v = x0v[indices], x1v[indices], y0v[indices], y1v[indices]
                 tier = "decimated"
         elif t.kind == "stem" and len(x0v) > max(1024, int(px_width) * 4):

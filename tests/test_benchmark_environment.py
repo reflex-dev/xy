@@ -103,6 +103,7 @@ def test_codspeed_suite_covers_native_core_hardening_workloads() -> None:
         "test_first_payload_heatmap_core_2d",
         "test_first_payload_statistical_core_2d",
         "test_first_payload_hexbin_core_2d",
+        "test_first_payload_errorbar_large",
         "test_first_payload_contour_core_2d",
         "test_first_payload_composed_layered_core_2d",
         "test_build_payload",

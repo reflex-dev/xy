@@ -97,7 +97,7 @@ const SEGMENT_MARK = {
   draw: (view, g) => {
     const [x0, x1] = view._axisRange(g.xAxis);
     const [y0, y1] = view._axisRange(g.yAxis);
-    view._drawLine(
+    view._drawSegments(
       g,
       view._map(g.x0Meta, x0, x1, g.xAxis),
       view._map(g.y0Meta, y0, y1, g.yAxis),

@@ -184,6 +184,20 @@ class Figure(AnnotationsMixin, PayloadMixin):
             self.y_label = self.axis_options[axis_id]["label"]
         return self
 
+    def _set_axis_domain(self, axis_id: str, domain: tuple[float, float]) -> "Figure":
+        """Update only an axis domain, preserving every other configured option.
+
+        Facet domain sharing must not reset `type_`/`label`/`reverse`/`format`/
+        tick options the way a full `set_axis` replay from defaults would.
+        """
+        axis_id = self._axis_id(axis_id, "axis id")
+        opts = self.axis_options.setdefault(axis_id, {})
+        domain = self._finite_increasing_pair(domain, f"{axis_id} axis domain")
+        if opts.get("type") == "log" and domain[0] <= 0:
+            raise ValueError(f"{axis_id} log axis domain must be positive")
+        opts["domain"] = domain
+        return self
+
     def set_interaction(
         self,
         *,
