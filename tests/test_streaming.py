@@ -190,3 +190,65 @@ def test_append_invalidates_pyramid_for_lazy_rebuild():
     assert t._pyr_handle is None  # freed; rebuilds lazily on next far-out view
     assert _ensure_pyramid(t) is not None
     assert t._pyr_handle != 0 and t._pyr_handle != old_handle
+
+
+def test_pyramid_handle_freed_when_trace_is_garbage_collected():
+    """§27: a discarded Figure (notebook cell re-run) must not leak its
+    native pyramid in the process-lifetime registry."""
+    import gc
+
+    from fastcharts import kernels
+    from fastcharts.config import PYRAMID_MIN_POINTS
+    from fastcharts.interaction import _ensure_pyramid
+
+    n = max(PYRAMID_MIN_POINTS, SCATTER_DENSITY_THRESHOLD + 1)
+    rng = np.random.default_rng(41)
+    fig = Figure().scatter(rng.uniform(0, 100, n), rng.uniform(0, 100, n))
+    t = fig.traces[0]
+    assert _ensure_pyramid(t) is not None
+    handle = t._pyr_handle
+    assert handle
+
+    del fig, t
+    gc.collect()
+    # The finalizer already freed the handle: a second free reports stale.
+    assert not kernels.pyramid_free(handle)
+
+
+def test_explicit_pyramid_free_disarms_gc_finalizer():
+    import gc
+
+    from fastcharts import kernels
+    from fastcharts.config import PYRAMID_MIN_POINTS
+    from fastcharts.interaction import _ensure_pyramid
+
+    n = max(PYRAMID_MIN_POINTS, SCATTER_DENSITY_THRESHOLD + 1)
+    rng = np.random.default_rng(43)
+    fig = Figure().scatter(rng.uniform(0, 100, n), rng.uniform(0, 100, n))
+    t = fig.traces[0]
+    assert _ensure_pyramid(t) is not None
+    old_handle = t._pyr_handle
+
+    # append frees eagerly (lazy rebuild); rebuild, then drop the figure —
+    # the rebuilt pyramid must be freed by GC, and the disarmed finalizer of
+    # the appended-over handle must not double-free a recycled slot.
+    fig.append(0, [50.0], [50.0])
+    assert t._pyr_handle is None
+    assert not kernels.pyramid_free(old_handle)  # already freed by append
+    assert _ensure_pyramid(t) is not None
+    new_handle = t._pyr_handle
+    del fig, t
+    gc.collect()
+    assert not kernels.pyramid_free(new_handle)
+
+
+def test_memory_report_itemizes_pyramid_bytes():
+    from fastcharts.config import PYRAMID_MIN_POINTS
+    from fastcharts.interaction import _ensure_pyramid, _pyramid_resident_bytes
+
+    n = max(PYRAMID_MIN_POINTS, SCATTER_DENSITY_THRESHOLD + 1)
+    rng = np.random.default_rng(47)
+    fig = Figure().scatter(rng.uniform(0, 100, n), rng.uniform(0, 100, n))
+    assert fig.memory_report()["pyramid_bytes"] == 0  # not built yet
+    assert _ensure_pyramid(fig.traces[0]) is not None
+    assert fig.memory_report()["pyramid_bytes"] == _pyramid_resident_bytes()

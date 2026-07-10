@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/reflex-dev/reviz/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/reflex-dev/reviz/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://app.codspeed.io/Alek99/charts-exp?utm_source=badge"><img alt="CodSpeed" src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json"></a>
+  <a href="https://app.codspeed.io/reflex-dev/reviz?utm_source=badge"><img alt="CodSpeed" src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json"></a>
   <a href="pyproject.toml"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab?logo=python&logoColor=white"></a>
   <a href="src/"><img alt="Rust native core" src="https://img.shields.io/badge/Rust-native%20core-b7410e?logo=rust&logoColor=white"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>

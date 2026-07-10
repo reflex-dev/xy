@@ -1633,11 +1633,14 @@ class Figure(AnnotationsMixin, PayloadMixin):
 
     def memory_report(self) -> dict[str, Any]:
         """§27: every byte class itemized; if it isn't in the report it isn't real."""
+        from . import interaction  # method-local: no load-time cycle
+
         spec, blob = self.build_payload()
         report = self.store.memory_report()
         report["transport_bytes_first_paint"] = len(blob)
         n_total = sum(t.n_points for t in self.traces) or 1
         report["transport_bytes_per_point"] = len(blob) / n_total
+        report["pyramid_bytes"] = interaction.pyramid_report_bytes(self)
         report["backend"] = kernels.BACKEND
         return report
 

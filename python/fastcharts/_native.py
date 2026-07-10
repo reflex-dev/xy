@@ -26,6 +26,14 @@ from .config import MAX_SCREEN_DIM
 
 ABI_VERSION = 10
 
+# Rust reports invalid arguments (and, via the ffi_guard panic shield, any
+# internal panic) by returning `usize::MAX` from size-returning entry points.
+# `usize` is `c_size_t`, whose width is platform-dependent — 32 bits on
+# armv7/win32/wasm32 — so the sentinel must be derived from ctypes. Comparing
+# against 2**64-1 would never match on 32-bit targets and an error return
+# would be sliced as data.
+_USIZE_MAX = ctypes.c_size_t(-1).value
+
 _F64_P = ctypes.POINTER(ctypes.c_double)
 _F32_P = ctypes.POINTER(ctypes.c_float)
 _U64_P = ctypes.POINTER(ctypes.c_uint64)
@@ -368,9 +376,12 @@ def zone_maps(
         _ptr_f64(sums),
         _ptr_f64(sum_sqs),
     )
-    if written == np.iinfo(np.uint64).max:
+    if written == _USIZE_MAX:
         raise ValueError("invalid zone_maps arguments")
-    assert written == n_chunks
+    if written != n_chunks:
+        raise RuntimeError(
+            f"fastcharts native zone_maps wrote {written} chunks, expected {n_chunks}"
+        )
     return mins, maxs, counts, nulls, sums, sum_sqs
 
 
@@ -416,7 +427,7 @@ def m4_indices(
         n_buckets,
         out.ctypes.data_as(_U32_P),
     )
-    if written == np.iinfo(np.uint64).max:  # usize::MAX sentinel
+    if written == _USIZE_MAX:
         raise ValueError("invalid m4 arguments")
     return out[:written].copy()
 
@@ -500,7 +511,7 @@ def bin_2d_indices(
         grid.ctypes.data_as(_F32_P),
         idx.ctypes.data_as(_U32_P),
     )
-    if written == np.iinfo(np.uint64).max:
+    if written == _USIZE_MAX:
         raise ValueError("invalid bin_2d_indices arguments")
     return grid, idx[:written].copy()
 
@@ -538,7 +549,7 @@ def histogram_uniform(
         int(density),
         _ptr_f64(counts),
     )
-    if written == np.iinfo(np.uint64).max:
+    if written == _USIZE_MAX:
         raise ValueError("invalid histogram arguments")
     edges = np.linspace(lo, hi, n_bins + 1, dtype=np.float64)
     return counts, edges
@@ -598,7 +609,7 @@ def range_indices(
         hi_y,
         out.ctypes.data_as(_U32_P),
     )
-    if written == np.iinfo(np.uint64).max:
+    if written == _USIZE_MAX:
         raise ValueError("invalid range_indices arguments")
     return out[:written].copy()
 

@@ -266,9 +266,9 @@ PYTHONPATH=python .venv/bin/python benchmarks/bench_2d_charts.py \
   --profile standard --ttfr --ttfr-max-work-units 50000
 ```
 
-Environment note: TTFR probes require launching local headless Chrome; under the
-Codex sandbox the probe returns `None`, so local TTFR runs need browser-launch
-permission.
+Environment note: TTFR probes require launching local headless Chrome; in a
+sandboxed environment without browser-launch permission the probe returns
+`None`.
 
 Seaborn rows render through matplotlib/Agg PNG. For those static raster rows,
 TTFR is treated as total chart-to-pixels time because the image already exists

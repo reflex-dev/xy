@@ -358,10 +358,12 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         jobs,
         "publish",
         "release",
-        "trusted PyPI publishing from downloaded artifacts, gated by a dry-run switch",
+        "trusted PyPI publishing from downloaded artifacts, gated by a dry-run switch "
+        "and a tag/version/CHANGELOG agreement gate",
         "needs: [wheels, sdist, wasm]",
         "environment: pypi",
         "id-token: write",
+        "scripts/check_release_version.py",
         "actions/download-artifact@",
         "pattern: dist-*",
         "merge-multiple: true",
