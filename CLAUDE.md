@@ -19,6 +19,9 @@ code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
   ImportError if the native core can't load. `components.py`
   is the Reflex-flavored composition API (`scatter_chart`/`line_chart` + marks/
   axes) — it builds a `Figure`; keep it dependency-free (no `reflex` import).
+  `marks.py` is the declarative mark core: the single implementation of every
+  chart kind, bound onto `Figure` as its fluent methods (one body, one
+  signature, one set of defaults — parity is identity, not convention).
   `channels.py` resolves scatter color/size encodings.
 - `js/src/*.js` — the render client as ordered parts (concat order in
   `js/build.mjs`; exports live only in `60_entries.js`), one dependency-free ES

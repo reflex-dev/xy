@@ -21,6 +21,11 @@ Marks accept `x`/`y`/`color`/`size` as arrays *or* as string column names into
 `data` (a DataFrame, dict, or anything indexable) — the Reflex/Recharts
 `data_key` idiom, read more directly. Everything composes into a `Figure`, so a
 chart renders in notebooks and exports to HTML exactly like the fluent API.
+
+The declarative layer is the core: `marks.py` holds the single implementation
+of every chart kind, and `Figure` binds those functions as its fluent methods
+(`Figure.scatter is marks.scatter`) — so the two dialects cannot drift in
+behavior, signatures, or defaults (asserted by tests/test_api_parity.py).
 """
 
 from __future__ import annotations
