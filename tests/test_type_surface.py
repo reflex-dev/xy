@@ -23,6 +23,16 @@ MARK_FACTORIES = (
     "bar",
     "column",
     "heatmap",
+    "error_band",
+    "errorbar",
+    "box",
+    "violin",
+    "ecdf",
+    "hexbin",
+    "contour",
+    "step",
+    "stairs",
+    "stem",
 )
 ANNOTATION_FACTORIES = (
     "arrow",
@@ -46,6 +56,16 @@ CHART_FACTORIES = (
     "bar_chart",
     "column_chart",
     "heatmap_chart",
+    "error_band_chart",
+    "errorbar_chart",
+    "box_chart",
+    "violin_chart",
+    "ecdf_chart",
+    "hexbin_chart",
+    "contour_chart",
+    "step_chart",
+    "stairs_chart",
+    "stem_chart",
 )
 CHROME_FACTORIES = (
     "legend",
@@ -80,6 +100,16 @@ FIGURE_BUILDERS = (
     "bar",
     "column",
     "heatmap",
+    "error_band",
+    "errorbar",
+    "box",
+    "violin",
+    "ecdf",
+    "hexbin",
+    "contour",
+    "step",
+    "stairs",
+    "stem",
     "arrow",
     "callout",
     "label",
@@ -122,6 +152,7 @@ def test_component_types_are_lazy_public_root_exports() -> None:
     for name in (
         "CHART_DOM_SLOTS",
         "Component",
+        "FacetChart",
         "Mark",
         "MarkStyle",
         "Annotation",
@@ -241,6 +272,7 @@ def test_public_component_factories_have_typed_signatures() -> None:
         "mark_style": components.MarkStyle,
         "interaction_config": components.Interaction,
         **{name: components.Chart for name in CHART_FACTORIES},
+        "facet_chart": components.FacetChart,
     }
     for name, expected_return in expected_returns.items():
         fn = getattr(components, name)

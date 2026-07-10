@@ -59,6 +59,7 @@ __all__ = [
     "Axis",
     "Chart",
     "Component",
+    "FacetChart",
     "Interaction",
     "Legend",
     "Mark",
@@ -71,12 +72,25 @@ __all__ = [
     "arrow",
     "bar",
     "bar_chart",
+    "box",
+    "box_chart",
     "callout",
     "chart",
     "column",
     "column_chart",
+    "contour",
+    "contour_chart",
+    "ecdf",
+    "ecdf_chart",
+    "error_band",
+    "error_band_chart",
+    "errorbar",
+    "errorbar_chart",
+    "facet_chart",
     "heatmap",
     "heatmap_chart",
+    "hexbin",
+    "hexbin_chart",
     "hist",
     "histogram",
     "histogram_chart",
@@ -91,11 +105,19 @@ __all__ = [
     "modebar",
     "scatter",
     "scatter_chart",
+    "stairs",
+    "stairs_chart",
+    "stem",
+    "stem_chart",
+    "step",
+    "step_chart",
     "text",
     "theme",
     "threshold",
     "threshold_zone",
     "tooltip",
+    "violin",
+    "violin_chart",
     "vline",
     "x_axis",
     "x_band",
@@ -118,7 +140,7 @@ class Component:
 
 @dataclass
 class Mark(Component):
-    kind: str  # "scatter" | "line" | "area" | "histogram" | "bar" | "column" | "heatmap"
+    kind: str  # chart mark registry key
     x: Any = None
     y: Any = None
     data: Any = None
@@ -335,6 +357,372 @@ def area(
             "fill": fill,
             "curve": curve,
             "dash": dash,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
+        },
+    )
+
+
+def error_band(
+    x: Union[str, Any] = None,
+    lower: Union[str, Any] = None,
+    upper: Union[str, Any] = None,
+    *,
+    data: Any = None,
+    name: Optional[str] = None,
+    color: Optional[str] = None,
+    opacity: float = 0.22,
+    line_width: float = 0.0,
+    line_opacity: float = 0.0,
+    fill: Any = None,
+    class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
+) -> Mark:
+    """A confidence/error band between lower and upper series."""
+    return Mark(
+        kind="error_band",
+        x=x,
+        y=lower,
+        data=data,
+        name=name,
+        class_name=class_name,
+        props={
+            "upper": upper,
+            "color": color,
+            "opacity": opacity,
+            "line_width": line_width,
+            "line_opacity": line_opacity,
+            "fill": fill,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
+        },
+    )
+
+
+def errorbar(
+    x: Union[str, Any] = None,
+    y: Union[str, Any] = None,
+    *,
+    data: Any = None,
+    yerr: Union[str, Any, None] = None,
+    xerr: Union[str, Any, None] = None,
+    name: Optional[str] = None,
+    color: Optional[str] = None,
+    width: float = 1.2,
+    cap_size: float = 0.12,
+    opacity: float = 1.0,
+    class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
+) -> Mark:
+    """Vertical and/or horizontal uncertainty bars."""
+    return Mark(
+        kind="errorbar",
+        x=x,
+        y=y,
+        data=data,
+        name=name,
+        class_name=class_name,
+        props={
+            "yerr": yerr,
+            "xerr": xerr,
+            "color": color,
+            "width": width,
+            "cap_size": cap_size,
+            "opacity": opacity,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
+        },
+    )
+
+
+def step(
+    x: Union[str, Any] = None,
+    y: Union[str, Any] = None,
+    *,
+    data: Any = None,
+    where: str = "post",
+    name: Optional[str] = None,
+    color: Optional[str] = None,
+    width: float = 1.5,
+    opacity: float = 1.0,
+    dash: Any = None,
+    class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
+) -> Mark:
+    """A stepped line series."""
+    return Mark(
+        kind="step",
+        x=x,
+        y=y,
+        data=data,
+        name=name,
+        class_name=class_name,
+        props={
+            "where": where,
+            "color": color,
+            "width": width,
+            "opacity": opacity,
+            "dash": dash,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
+        },
+    )
+
+
+def stairs(
+    values: Union[str, Any] = None,
+    edges: Union[str, Any, None] = None,
+    *,
+    data: Any = None,
+    where: str = "post",
+    name: Optional[str] = None,
+    color: Optional[str] = None,
+    width: float = 1.5,
+    opacity: float = 1.0,
+    dash: Any = None,
+    class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
+) -> Mark:
+    """A precomputed stairs series from values and bin edges."""
+    return Mark(
+        kind="stairs",
+        x=values,
+        y=edges,
+        data=data,
+        name=name,
+        class_name=class_name,
+        props={
+            "where": where,
+            "color": color,
+            "width": width,
+            "opacity": opacity,
+            "dash": dash,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
+        },
+    )
+
+
+def stem(
+    x: Union[str, Any] = None,
+    y: Union[str, Any] = None,
+    *,
+    data: Any = None,
+    base: Union[str, float, Any] = 0.0,
+    name: Optional[str] = None,
+    color: Optional[str] = None,
+    width: float = 1.2,
+    opacity: float = 1.0,
+    marker: bool = True,
+    marker_size: float = 5.0,
+    symbol: str = "circle",
+    class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
+) -> Mark:
+    """A stem plot with optional point markers."""
+    return Mark(
+        kind="stem",
+        x=x,
+        y=y,
+        data=data,
+        name=name,
+        class_name=class_name,
+        props={
+            "base": base,
+            "color": color,
+            "width": width,
+            "opacity": opacity,
+            "marker": marker,
+            "marker_size": marker_size,
+            "symbol": symbol,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
+        },
+    )
+
+
+def ecdf(
+    values: Union[str, Any] = None,
+    *,
+    data: Any = None,
+    bins: Optional[int] = None,
+    name: Optional[str] = None,
+    color: Optional[str] = None,
+    width: float = 1.5,
+    opacity: float = 1.0,
+    dash: Any = None,
+    class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
+) -> Mark:
+    """An empirical cumulative distribution function."""
+    return Mark(
+        kind="ecdf",
+        x=values,
+        data=data,
+        name=name,
+        class_name=class_name,
+        props={
+            "bins": bins,
+            "color": color,
+            "width": width,
+            "opacity": opacity,
+            "dash": dash,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
+        },
+    )
+
+
+def box(
+    values: Union[str, Any] = None,
+    *,
+    data: Any = None,
+    x: Union[str, Any, None] = None,
+    group: Union[str, Any, None] = None,
+    name: Optional[str] = None,
+    color: Optional[str] = None,
+    width: float = 0.6,
+    opacity: float = 0.85,
+    orientation: str = "vertical",
+    show_outliers: bool = True,
+    outlier_size: float = 4.0,
+    class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
+) -> Mark:
+    """Grouped Tukey box plots from 1-D or column-oriented 2-D values."""
+    return Mark(
+        kind="box",
+        x=values,
+        data=data,
+        name=name,
+        class_name=class_name,
+        props={
+            "x": x,
+            "group": group,
+            "color": color,
+            "width": width,
+            "opacity": opacity,
+            "orientation": orientation,
+            "show_outliers": show_outliers,
+            "outlier_size": outlier_size,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
+        },
+    )
+
+
+def violin(
+    values: Union[str, Any] = None,
+    *,
+    data: Any = None,
+    x: Union[str, Any, None] = None,
+    group: Union[str, Any, None] = None,
+    name: Optional[str] = None,
+    color: Optional[str] = None,
+    width: float = 0.8,
+    bins: int = 64,
+    opacity: float = 0.55,
+    orientation: str = "vertical",
+    class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
+) -> Mark:
+    """Grouped bounded-resolution violin distributions."""
+    return Mark(
+        kind="violin",
+        x=values,
+        data=data,
+        name=name,
+        class_name=class_name,
+        props={
+            "x": x,
+            "group": group,
+            "color": color,
+            "width": width,
+            "bins": bins,
+            "opacity": opacity,
+            "orientation": orientation,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
+        },
+    )
+
+
+def hexbin(
+    x: Union[str, Any] = None,
+    y: Union[str, Any] = None,
+    *,
+    data: Any = None,
+    gridsize: int | tuple[int, int] = 64,
+    range: Optional[tuple[tuple[float, float], tuple[float, float]]] = None,
+    bins: str = "count",
+    name: Optional[str] = None,
+    colormap: str = channels.DEFAULT_COLORMAP,
+    opacity: float = 0.9,
+    class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
+) -> Mark:
+    """A native-kernel binned hexagonal density plot."""
+    return Mark(
+        kind="hexbin",
+        x=x,
+        y=y,
+        data=data,
+        name=name,
+        class_name=class_name,
+        props={
+            "gridsize": gridsize,
+            "range": range,
+            "bins": bins,
+            "colormap": colormap,
+            "opacity": opacity,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
+        },
+    )
+
+
+def contour(
+    z: Union[str, Any] = None,
+    *,
+    x: Union[str, Any, None] = None,
+    y: Union[str, Any, None] = None,
+    data: Any = None,
+    levels: int | Any = 10,
+    filled: bool = False,
+    name: Optional[str] = None,
+    colormap: str = channels.DEFAULT_COLORMAP,
+    color: Optional[str] = None,
+    width: float = 1.1,
+    opacity: float = 0.9,
+    class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
+) -> Mark:
+    """Regular-grid isolines, optionally with a filled density surface."""
+    return Mark(
+        kind="contour",
+        x=x,
+        y=y,
+        data=data,
+        name=name,
+        class_name=class_name,
+        props={
+            "z": z,
+            "levels": levels,
+            "filled": filled,
+            "colormap": colormap,
+            "color": color,
+            "width": width,
+            "opacity": opacity,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -1728,6 +2116,135 @@ def _strict_bool(value: Any, label: str) -> bool:
     raise ValueError(f"{label} must be True or False")
 
 
+class FacetChart(Component):
+    """Composition wrapper for a chart repeated over a table column."""
+
+    def __init__(
+        self,
+        children: tuple[Component, ...],
+        *,
+        by: Any,
+        cols: int = 3,
+        share_x: bool = True,
+        share_y: bool = True,
+        gap: int = 12,
+        **props: Any,
+    ) -> None:
+        if (
+            isinstance(cols, (bool, np.bool_))
+            or not isinstance(cols, (int, np.integer))
+            or int(cols) <= 0
+        ):
+            raise ValueError("facet_chart cols must be a positive integer")
+        if (
+            isinstance(gap, (bool, np.bool_))
+            or not isinstance(gap, (int, np.integer))
+            or int(gap) < 0
+        ):
+            raise ValueError("facet_chart gap must be a non-negative integer")
+        self.children = children
+        self.by = by
+        self.cols = int(cols)
+        self.share_x = _strict_bool(share_x, "facet_chart share_x")
+        self.share_y = _strict_bool(share_y, "facet_chart share_y")
+        self.gap = int(gap)
+        self.props = dict(props)
+        self._grid: Any = None
+
+    def figure(self) -> Any:
+        if self._grid is not None:
+            return self._grid
+        from .facets import FacetGrid, _facet_values, _subset_data
+
+        data = self.props.get("data")
+        if isinstance(self.by, str) and data is None:
+            raise ValueError("facet_chart data is required when by is a column name")
+        raw, labels = _facet_values(data, self.by)
+        unique_labels: list[str] = []
+        for label in labels:
+            if label not in unique_labels:
+                unique_labels.append(label)
+        width = self.props.get("width", 900)
+        height = self.props.get("height", 420)
+        if not isinstance(width, (int, np.integer)) or isinstance(width, (bool, np.bool_)):
+            raise ValueError("facet_chart width must be a positive integer")
+        if not isinstance(height, (int, np.integer)) or isinstance(height, (bool, np.bool_)):
+            raise ValueError("facet_chart height must be a positive integer")
+        width, height = int(width), int(height)
+        if width <= 0 or height <= 0:
+            raise ValueError("facet_chart width and height must be positive")
+        panel_width = max(120, (width - (self.cols - 1) * self.gap) // self.cols)
+        base_title = self.props.get("title")
+        figures: list[Figure] = []
+        for label in unique_labels:
+            mask = np.asarray([item == label for item in labels], dtype=bool)
+            panel_props = dict(self.props)
+            panel_props["data"] = _subset_data(data, mask, len(labels))
+            panel_props["width"] = panel_width
+            panel_props["height"] = height
+            panel_props["title"] = f"{base_title} · {label}" if base_title else label
+            panel = Chart("facet_panel", self.children, **panel_props)
+            figures.append(panel.figure())
+        if self.share_x:
+            lo = min(fig.x_range()[0] for fig in figures)
+            hi = max(fig.x_range()[1] for fig in figures)
+            for fig in figures:
+                fig.set_axis("x", domain=(lo, hi))
+        if self.share_y:
+            lo = min(fig.y_range()[0] for fig in figures)
+            hi = max(fig.y_range()[1] for fig in figures)
+            for fig in figures:
+                fig.set_axis("y", domain=(lo, hi))
+        self._grid = FacetGrid(
+            figures,
+            unique_labels,
+            cols=self.cols,
+            width=width,
+            height=height,
+            gap=self.gap,
+            title=base_title,
+        )
+        return self._grid
+
+    def widget(self) -> list[Any]:
+        return self.figure().widget()
+
+    def show(self) -> list[Any]:
+        return self.widget()
+
+    def to_html(
+        self, path: Optional[str | PathLike[str]] = None, *, custom_css: Optional[str] = None
+    ) -> str:
+        return self.figure().to_html(path, custom_css=custom_css)
+
+    def html(
+        self, path: Optional[str | PathLike[str]] = None, *, custom_css: Optional[str] = None
+    ) -> str:
+        return self.to_html(path, custom_css=custom_css)
+
+    def _repr_html_(self) -> str:
+        return self.to_html()
+
+    def to_svg(self, path: Optional[str | PathLike[str]] = None) -> str:
+        return self.figure().to_svg(path)
+
+    def to_png(
+        self,
+        path: Optional[str | PathLike[str]] = None,
+        *,
+        scale: float = 2.0,
+        engine: str = "native",
+        chromium: Optional[str] = None,
+        sandbox: bool = True,
+    ) -> bytes:
+        return self.figure().to_png(
+            path, scale=scale, engine=engine, chromium=chromium, sandbox=sandbox
+        )
+
+    def memory_report(self) -> dict[str, Any]:
+        return self.figure().memory_report()
+
+
 def _validate_axis(axis: Axis) -> None:
     """Structural checks `Figure.set_axis` cannot make: the which/id agreement.
 
@@ -1865,6 +2382,152 @@ def _apply_area(fig: Figure, m: Mark, data: Any) -> None:
             curve=m.props["curve"],
             dash=m.props["dash"],
         ),
+    )
+
+
+def _apply_error_band(fig: Figure, m: Mark, data: Any) -> None:
+    fig.error_band(
+        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
+        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.lower"),
+        _resolve_axis_values(fig, data, m.props["upper"], "y", f"{m.kind}.upper"),
+        name=m.name,
+        color=m.props["color"],
+        opacity=m.props["opacity"],
+        line_width=m.props["line_width"],
+        line_opacity=m.props["line_opacity"],
+        fill=m.props["fill"],
+    )
+
+
+def _apply_errorbar(fig: Figure, m: Mark, data: Any) -> None:
+    yerr = m.props["yerr"]
+    xerr = m.props["xerr"]
+    fig.errorbar(
+        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
+        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
+        yerr=_resolve(data, yerr, context=f"{m.kind}.yerr") if isinstance(yerr, str) else yerr,
+        xerr=_resolve(data, xerr, context=f"{m.kind}.xerr") if isinstance(xerr, str) else xerr,
+        name=m.name,
+        color=m.props["color"],
+        width=m.props["width"],
+        cap_size=m.props["cap_size"],
+        opacity=m.props["opacity"],
+    )
+
+
+def _apply_step(fig: Figure, m: Mark, data: Any) -> None:
+    fig.step(
+        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
+        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
+        where=m.props["where"],
+        name=m.name,
+        color=m.props["color"],
+        width=m.props["width"],
+        opacity=m.props["opacity"],
+        dash=m.props["dash"],
+    )
+
+
+def _apply_stairs(fig: Figure, m: Mark, data: Any) -> None:
+    edges = _resolve(data, m.y, context=f"{m.kind}.edges") if m.y is not None else None
+    fig.stairs(
+        _resolve(data, m.x, context=f"{m.kind}.values"),
+        edges,
+        where=m.props["where"],
+        name=m.name,
+        color=m.props["color"],
+        width=m.props["width"],
+        opacity=m.props["opacity"],
+        dash=m.props["dash"],
+    )
+
+
+def _apply_stem(fig: Figure, m: Mark, data: Any) -> None:
+    base = m.props["base"]
+    fig.stem(
+        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
+        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
+        base=_resolve(data, base, context=f"{m.kind}.base") if isinstance(base, str) else base,
+        name=m.name,
+        color=m.props["color"],
+        width=m.props["width"],
+        opacity=m.props["opacity"],
+        marker=m.props["marker"],
+        marker_size=m.props["marker_size"],
+        symbol=m.props["symbol"],
+    )
+
+
+def _apply_ecdf(fig: Figure, m: Mark, data: Any) -> None:
+    fig.ecdf(
+        _resolve(data, m.x, context=f"{m.kind}.values"),
+        bins=m.props["bins"],
+        name=m.name,
+        color=m.props["color"],
+        width=m.props["width"],
+        opacity=m.props["opacity"],
+        dash=m.props["dash"],
+    )
+
+
+def _apply_box(fig: Figure, m: Mark, data: Any) -> None:
+    x = m.props["x"]
+    group = m.props["group"]
+    fig.box(
+        _resolve(data, m.x, context=f"{m.kind}.values"),
+        x=_resolve(data, x, context=f"{m.kind}.x") if isinstance(x, str) else x,
+        group=_resolve(data, group, context=f"{m.kind}.group") if isinstance(group, str) else group,
+        name=m.name,
+        color=m.props["color"],
+        width=m.props["width"],
+        opacity=m.props["opacity"],
+        orientation=m.props["orientation"],
+        show_outliers=m.props["show_outliers"],
+        outlier_size=m.props["outlier_size"],
+    )
+
+
+def _apply_violin(fig: Figure, m: Mark, data: Any) -> None:
+    x = m.props["x"]
+    group = m.props["group"]
+    fig.violin(
+        _resolve(data, m.x, context=f"{m.kind}.values"),
+        x=_resolve(data, x, context=f"{m.kind}.x") if isinstance(x, str) else x,
+        group=_resolve(data, group, context=f"{m.kind}.group") if isinstance(group, str) else group,
+        name=m.name,
+        color=m.props["color"],
+        width=m.props["width"],
+        bins=m.props["bins"],
+        opacity=m.props["opacity"],
+        orientation=m.props["orientation"],
+    )
+
+
+def _apply_hexbin(fig: Figure, m: Mark, data: Any) -> None:
+    fig.hexbin(
+        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
+        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
+        gridsize=m.props["gridsize"],
+        range=m.props["range"],
+        bins=m.props["bins"],
+        name=m.name,
+        colormap=m.props["colormap"],
+        opacity=m.props["opacity"],
+    )
+
+
+def _apply_contour(fig: Figure, m: Mark, data: Any) -> None:
+    fig.contour(
+        _resolve(data, m.props["z"], context=f"{m.kind}.z"),
+        x=_resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x") if m.x is not None else None,
+        y=_resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y") if m.y is not None else None,
+        levels=m.props["levels"],
+        filled=m.props["filled"],
+        name=m.name,
+        colormap=m.props["colormap"],
+        color=m.props["color"],
+        width=m.props["width"],
+        opacity=m.props["opacity"],
     )
 
 
@@ -2047,11 +2710,21 @@ def _apply_callout_annotation(fig: Figure, annotation: Annotation) -> None:
 _MARK_APPLIERS: dict[str, Callable[[Figure, Mark, Any], None]] = {
     "area": _apply_area,
     "bar": _apply_bar,
+    "box": _apply_box,
     "column": _apply_column,
+    "contour": _apply_contour,
+    "ecdf": _apply_ecdf,
+    "errorbar": _apply_errorbar,
+    "error_band": _apply_error_band,
+    "hexbin": _apply_hexbin,
     "heatmap": _apply_heatmap,
     "histogram": _apply_histogram,
     "scatter": _apply_scatter,
     "line": _apply_line,
+    "step": _apply_step,
+    "stairs": _apply_stairs,
+    "stem": _apply_stem,
+    "violin": _apply_violin,
 }
 
 
@@ -2095,6 +2768,11 @@ def bar_chart(*children: Component, **props: Any) -> Chart:
     return Chart("bar_chart", children, **props)
 
 
+def box_chart(*children: Component, **props: Any) -> Chart:
+    """A box/distribution chart composing `box` marks."""
+    return Chart("box_chart", children, **props)
+
+
 def column_chart(*children: Component, **props: Any) -> Chart:
     """A column chart composing `column` marks and axis/legend children."""
     return Chart("column_chart", children, **props)
@@ -2103,3 +2781,67 @@ def column_chart(*children: Component, **props: Any) -> Chart:
 def heatmap_chart(*children: Component, **props: Any) -> Chart:
     """A heatmap chart composing `heatmap` marks and axis/legend children."""
     return Chart("heatmap_chart", children, **props)
+
+
+def violin_chart(*children: Component, **props: Any) -> Chart:
+    """A violin chart composing `violin` marks."""
+    return Chart("violin_chart", children, **props)
+
+
+def contour_chart(*children: Component, **props: Any) -> Chart:
+    """A contour chart composing `contour` marks."""
+    return Chart("contour_chart", children, **props)
+
+
+def hexbin_chart(*children: Component, **props: Any) -> Chart:
+    """A hexbin chart composing `hexbin` marks."""
+    return Chart("hexbin_chart", children, **props)
+
+
+def ecdf_chart(*children: Component, **props: Any) -> Chart:
+    """An ECDF chart composing `ecdf` marks."""
+    return Chart("ecdf_chart", children, **props)
+
+
+def errorbar_chart(*children: Component, **props: Any) -> Chart:
+    """An error-bar chart composing `errorbar` marks."""
+    return Chart("errorbar_chart", children, **props)
+
+
+def error_band_chart(*children: Component, **props: Any) -> Chart:
+    """An uncertainty-band chart composing `error_band` marks."""
+    return Chart("error_band_chart", children, **props)
+
+
+def step_chart(*children: Component, **props: Any) -> Chart:
+    """A step chart composing `step` marks."""
+    return Chart("step_chart", children, **props)
+
+
+def stairs_chart(*children: Component, **props: Any) -> Chart:
+    """A stairs chart composing `stairs` marks."""
+    return Chart("stairs_chart", children, **props)
+
+
+def stem_chart(*children: Component, **props: Any) -> Chart:
+    """A stem chart composing `stem` marks."""
+    return Chart("stem_chart", children, **props)
+
+
+def facet_chart(
+    *children: Component,
+    by: Any = None,
+    cols: int = 3,
+    share_x: bool = True,
+    share_y: bool = True,
+    gap: int = 12,
+    **props: Any,
+) -> FacetChart:
+    """Repeat the child mark composition once per value of ``by``.
+
+    ``by`` is normally a column name resolved from chart-level ``data``;
+    panels share domains by default and retain the same per-panel LOD path.
+    """
+    return FacetChart(
+        children, by=by, cols=cols, share_x=share_x, share_y=share_y, gap=gap, **props
+    )

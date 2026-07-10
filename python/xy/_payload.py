@@ -262,6 +262,11 @@ class PayloadMixin(_Host):
         entry["base"] = pw.ship(bv, t.base)
         return entry
 
+    def _emit_error_band(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        return self._emit_area(t, pw, xr, yr, px_width)
+
     def _emit_scatter(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
     ) -> dict[str, Any]:
@@ -281,6 +286,19 @@ class PayloadMixin(_Host):
         entry = self._base_entry(t, pw, xv, yv, "direct", dict(t.style))
         entry["color"], entry["size"] = self._ship_channels(t, sel, pw.ship_scalar)
         t.shipped_sel = sel  # pick/selection translation (§17)
+        return entry
+
+    def _emit_hexbin(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        del xr, yr, px_width
+        xv, yv = t.x.values, t.y.values
+        sel = self._finite_sel(t, xv, yv)
+        if sel is not None:
+            xv, yv = xv[sel], yv[sel]
+        entry = self._base_entry(t, pw, xv, yv, "direct", self._default_styled(t))
+        entry["color"], entry["size"] = self._ship_channels(t, sel, pw.ship_scalar)
+        entry["hexbin"] = {"n_bins": int(len(xv))}
         return entry
 
     def _emit_histogram(
@@ -329,6 +347,82 @@ class PayloadMixin(_Host):
             },
             "color": {"mode": "continuous", "colormap": cmap, "domain": list(domain)},
         }
+
+    def _emit_box(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        return self._emit_rect(t, pw, xr, yr, px_width)
+
+    def _emit_violin(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        return self._emit_rect(t, pw, xr, yr, px_width)
+
+    def _emit_segments(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        del xr, yr
+        if t.x0 is None or t.x1 is None or t.y0 is None or t.y1 is None:
+            raise ValueError(f"{t.kind} trace missing segment columns")
+        x0v, x1v, y0v, y1v = t.x0.values, t.x1.values, t.y0.values, t.y1.values
+        tier = "direct"
+        if t.kind == "errorbar" and t.count is not None and len(x0v) == 3 * t.count:
+            max_groups = max(1024, int(px_width) * 4)
+            if t.count > max_groups:
+                chosen = np.linspace(0, t.count - 1, max_groups, dtype=np.int64)
+                indices = np.concatenate((chosen, chosen + t.count, chosen + 2 * t.count))
+                x0v, x1v, y0v, y1v = x0v[indices], x1v[indices], y0v[indices], y1v[indices]
+                tier = "decimated"
+        elif t.kind == "stem" and len(x0v) > max(1024, int(px_width) * 4):
+            chosen = np.linspace(0, len(x0v) - 1, max(1024, int(px_width) * 4), dtype=np.int64)
+            x0v, x1v, y0v, y1v = x0v[chosen], x1v[chosen], y0v[chosen], y1v[chosen]
+            tier = "decimated"
+        sel_arg = self._rect_finite_sel(t, x0v, x1v, y0v, y1v)
+        if sel_arg is not None:
+            x0v, x1v, y0v, y1v = x0v[sel_arg], x1v[sel_arg], y0v[sel_arg], y1v[sel_arg]
+        entry = {
+            "id": t.id,
+            "kind": t.kind,
+            "name": t.name,
+            "style": self._default_styled(t),
+            "tier": tier,
+            "n_points": t.n_points,
+            "n_marks": int(len(x0v)),
+            "x_axis": t.x_axis,
+            "y_axis": t.y_axis,
+            "x0": pw.ship(x0v, t.x0),
+            "x1": pw.ship(x1v, t.x1),
+            "y0": pw.ship(y0v, t.y0),
+            "y1": pw.ship(y1v, t.y1),
+        }
+        if t.color_ch is not None:
+            entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar)
+        return entry
+
+    def _emit_errorbar(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        return self._emit_segments(t, pw, xr, yr, px_width)
+
+    def _emit_stem(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        return self._emit_segments(t, pw, xr, yr, px_width)
+
+    def _emit_box_whisker(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        return self._emit_segments(t, pw, xr, yr, px_width)
+
+    def _emit_box_median(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        return self._emit_segments(t, pw, xr, yr, px_width)
+
+    def _emit_contour(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        return self._emit_segments(t, pw, xr, yr, px_width)
 
     def _emit_rect(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int

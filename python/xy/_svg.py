@@ -453,6 +453,25 @@ def _curve_path(xv: np.ndarray, yv: np.ndarray, sx: _Scale, sy: _Scale, smooth: 
     return " ".join(parts)
 
 
+def _step_arrays(xv: np.ndarray, yv: np.ndarray, where: str) -> tuple[np.ndarray, np.ndarray]:
+    if len(xv) < 2:
+        return xv, yv
+    xs = [float(xv[0])]
+    ys = [float(yv[0])]
+    for i in range(1, len(xv)):
+        if where == "pre":
+            xs.extend((xv[i - 1], xv[i]))
+            ys.extend((yv[i], yv[i]))
+        elif where == "mid":
+            mid = (xv[i - 1] + xv[i]) * 0.5
+            xs.extend((mid, mid, xv[i]))
+            ys.extend((yv[i - 1], yv[i], yv[i]))
+        else:
+            xs.extend((xv[i], xv[i]))
+            ys.extend((yv[i - 1], yv[i]))
+    return np.asarray(xs), np.asarray(ys)
+
+
 _SYMBOL_BUILDERS = {
     "square": lambda cx, cy, r: (
         f'<rect x="{_num(cx - r)}" y="{_num(cy - r)}" width="{_num(2 * r)}" height="{_num(2 * r)}"'
@@ -604,10 +623,12 @@ def render_svg(spec: dict[str, Any], blob: bytes) -> str:
         if kind == "line":
             xv = _column(blob, cols[t["x"]])
             yv = _column(blob, cols[t["y"]])
+            if style.get("step"):
+                xv, yv = _step_arrays(xv, yv, style["step"])
             d = _curve_path(xv, yv, sx, sy, style.get("curve") == "smooth")
             marks.append(f'<path d="{d}" {line_attrs(style, color)}/>')
 
-        elif kind == "area":
+        elif kind in ("area", "error_band"):
             xv = _column(blob, cols[t["x"]])
             yv = _column(blob, cols[t["y"]])
             bv = _column(blob, cols[t["base"]])
@@ -634,8 +655,11 @@ def render_svg(spec: dict[str, Any], blob: bytes) -> str:
                     + "/>"
                 )
 
-        elif kind == "scatter":
+        elif kind in ("scatter", "hexbin"):
             marks.append(_scatter_marks(t, blob, cols, sx, sy, style, color))
+
+        elif kind in {"errorbar", "stem", "box_whisker", "box_median", "contour"}:
+            marks.append(_segment_marks(t, blob, cols, sx, sy, style, color))
 
         elif kind in ("bar", "column") and t.get("bar"):
             marks.append(_bar_marks(t, blob, cols, sx, sy, style, color, svg, plot))
@@ -695,6 +719,26 @@ def render_svg(spec: dict[str, Any], blob: bytes) -> str:
         f'<g fill="{_TEXT}">{"".join(labels)}</g>'
         f"{''.join(chrome)}"
         f"</svg>"
+    )
+
+
+def _segment_marks(
+    t: dict[str, Any], blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict, color: str
+) -> str:
+    x0 = _column(blob, cols[t["x0"]])
+    x1 = _column(blob, cols[t["x1"]])
+    y0 = _column(blob, cols[t["y0"]])
+    y1 = _column(blob, cols[t["y1"]])
+    width = float(style.get("width", 1.2))
+    op = float(style.get("opacity", 1.0))
+    attrs = (
+        f'stroke="{escape(color)}" stroke-width="{_num(width)}" fill="none" '
+        f'stroke-linecap="round"' + (f' stroke-opacity="{_num(op)}"' if op < 1 else "")
+    )
+    return "".join(
+        f'<line x1="{_num(float(sx(x0[i])))}" y1="{_num(float(sy(y0[i])))}" '
+        f'x2="{_num(float(sx(x1[i])))}" y2="{_num(float(sy(y1[i])))}" {attrs}/>'
+        for i in range(len(x0))
     )
 
 

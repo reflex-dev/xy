@@ -92,8 +92,60 @@ const BAR_MARK = {
   },
 };
 
+const SEGMENT_MARK = {
+  build: (view, g, t, buffer) => view._buildSegmentMark(g, t, buffer),
+  draw: (view, g) => {
+    const [x0, x1] = view._axisRange(g.xAxis);
+    const [y0, y1] = view._axisRange(g.yAxis);
+    view._drawLine(
+      g,
+      view._map(g.x0Meta, x0, x1, g.xAxis),
+      view._map(g.y0Meta, y0, y1, g.yAxis),
+    );
+  },
+  refreshColor: (view, g) => {
+    if (!g.colorMode) g.color = parseColor(view.root, g.trace.style.color, g.color);
+  },
+};
+
+const AREA_MARK = {
+  build: (view, g, t, buffer) => view._buildAreaMark(g, t, buffer),
+  draw: (view, g) => {
+    const [x0, x1] = view._axisRange(g.xAxis);
+    const [y0, y1] = view._axisRange(g.yAxis);
+    const xm = view._map(g.xMeta, x0, x1, g.xAxis);
+    const ym = view._map(g.yMeta, y0, y1, g.yAxis);
+    view._drawArea(g, xm, ym, view._map(g.baseMeta, y0, y1, g.yAxis));
+    if ((g.trace.style.line_width ?? 0) > 0) {
+      view._drawLine(g, xm, ym, g.lineColor, g.trace.style.line_width, g.trace.style.line_opacity ?? 1);
+    }
+  },
+  refreshColor: (view, g) => {
+    g.color = parseColor(view.root, g.trace.style.color, g.color);
+    g.lineColor = parseColor(view.root, g.trace.style.color, g.lineColor || g.color);
+    g.grad = view._resolveMarkFill(g.trace.style, g.color);
+  },
+};
+
 const MARK_KINDS = {
   histogram: RECT_MARK,
+  box: RECT_MARK,
+  violin: RECT_MARK,
+  errorbar: SEGMENT_MARK,
+  stem: SEGMENT_MARK,
+  box_whisker: SEGMENT_MARK,
+  box_median: SEGMENT_MARK,
+  contour: SEGMENT_MARK,
+  error_band: AREA_MARK,
+  hexbin: {
+    build: (view, g, t, buffer) => view._buildScatterMark(g, t, buffer),
+    draw: (view, g) => {
+      const [x0, x1] = view._axisRange(g.xAxis);
+      const [y0, y1] = view._axisRange(g.yAxis);
+      view._drawPoints(g, view._map(g.xMeta, x0, x1, g.xAxis), view._map(g.yMeta, y0, y1, g.yAxis));
+    },
+    refreshColor: (view, g) => view._pointMarkStyle(g, g.trace),
+  },
   bar: BAR_MARK,
   column: BAR_MARK,
   heatmap: {
@@ -127,31 +179,7 @@ const MARK_KINDS = {
       g.color = parseColor(view.root, g.trace.style.color, g.color);
     },
   },
-  area: {
-    build: (view, g, t, buffer) => view._buildAreaMark(g, t, buffer),
-    draw: (view, g) => {
-      const [x0, x1] = view._axisRange(g.xAxis);
-      const [y0, y1] = view._axisRange(g.yAxis);
-      const xm = view._map(g.xMeta, x0, x1, g.xAxis);
-      const ym = view._map(g.yMeta, y0, y1, g.yAxis);
-      view._drawArea(g, xm, ym, view._map(g.baseMeta, y0, y1, g.yAxis));
-      if ((g.trace.style.line_width ?? 0) > 0) {
-        view._drawLine(
-          g,
-          xm,
-          ym,
-          g.lineColor,
-          g.trace.style.line_width,
-          g.trace.style.line_opacity ?? 1
-        );
-      }
-    },
-    refreshColor: (view, g) => {
-      g.color = parseColor(view.root, g.trace.style.color, g.color);
-      g.lineColor = parseColor(view.root, g.trace.style.color, g.lineColor || g.color);
-      g.grad = view._resolveMarkFill(g.trace.style, g.color);
-    },
-  },
+  area: AREA_MARK,
 };
 
 // Registry lookup with the scatter fallback every dispatch site shares.

@@ -420,6 +420,11 @@ float fcMarkerSdf(vec2 d, int shape) {
     vec2 a = abs(d);
     return min(max(a.x - 0.17, a.y - 0.5), max(a.x - 0.5, a.y - 0.17));
   }
+  if (shape == 5) {                                                 // regular hexagon
+    const float k = 0.8660254;
+    vec2 p = abs(d);
+    return max(p.x - 0.5, p.y * 0.5 + p.x * k - 0.5);
+  }
   if (shape == 3) {                                                 // triangle (apex up)
     const float k = 1.7320508;
     float r = 0.62;
@@ -546,16 +551,17 @@ void main() {
   outColor = vec4(rgb * u_opacity, u_opacity);
 }`;
 const LINE_VS = `#version 300 es
-in float ax0; in float ay0; in float ax1; in float ay1;
+in float ax0; in float ay0; in float ax1; in float ay1; in float a_cval;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
-uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
+uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
+uniform int u_x0mode; uniform int u_x1mode; uniform int u_y0mode; uniform int u_y1mode;
 in float a_len0; in float a_len1;
-out float v_off; out float v_dash;
+out float v_off; out float v_dash; out float v_cval;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
-  vec2 p0 = vec2(fcMap(ax0, u_xmap, u_xmeta, u_xmode), fcMap(ay0, u_ymap, u_ymeta, u_ymode));
-  vec2 p1 = vec2(fcMap(ax1, u_xmap, u_xmeta, u_xmode), fcMap(ay1, u_ymap, u_ymeta, u_ymode));
+  vec2 p0 = vec2(fcMap(ax0, u_xmap, u_x0meta, u_x0mode), fcMap(ay0, u_ymap, u_y0meta, u_y0mode));
+  vec2 p1 = vec2(fcMap(ax1, u_xmap, u_x1meta, u_x1mode), fcMap(ay1, u_ymap, u_y1meta, u_y1mode));
   vec2 pix0 = (p0 * 0.5 + 0.5) * u_res;
   vec2 pix1 = (p1 * 0.5 + 0.5) * u_res;
   vec2 dir = pix1 - pix0;
@@ -571,15 +577,17 @@ void main() {
   // CPU-computed per-vertex lengths so dashes stay continuous across segments
   // and constant on screen through zoom.
   v_dash = mix(a_len0, a_len1, c.x);
+  v_cval = a_cval;
 }`;
 const LINE_FS = `#version 300 es
 precision highp float; precision highp int;
-uniform vec4 u_color; uniform float u_width;
+uniform vec4 u_color; uniform float u_width; uniform int u_colorMode; uniform sampler2D u_lut;
 uniform int u_dashCount; uniform float u_dashArr[8]; uniform float u_dashPeriod;
-in float v_off; in float v_dash;
+in float v_off; in float v_dash; in float v_cval;
 out vec4 outColor;
 void main() {
   float half_w = u_width * 0.5;
+  vec3 rgb = u_colorMode == 1 ? texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb : u_color.rgb;
   float alpha = (1.0 - smoothstep(half_w - 0.5, half_w + 0.5, abs(v_off))) * u_color.a;
   if (u_dashCount > 0) {
     float m = mod(v_dash, u_dashPeriod);
@@ -599,7 +607,7 @@ void main() {
     alpha *= on;
   }
   if (alpha <= 0.001) discard;
-  outColor = vec4(u_color.rgb * alpha, alpha);
+  outColor = vec4(rgb * alpha, alpha);
 }`;
 const GRAD_GLSL = `
 uniform int u_gradMode; uniform int u_gradDir; uniform int u_gradCount;
@@ -2182,7 +2190,7 @@ this._pointMarkStyle(g, t);
 }
 _pointMarkStyle(g, t) {
 const s = t.style || {};
-g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4 }[s.symbol] || 0;
+g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5 }[s.symbol] || 0;
 g.pointStrokeWidth = Number(s.stroke_width) || 0;
 const markOpaque = [g.color[0], g.color[1], g.color[2], 1];
 g.pointStroke = s.stroke
@@ -2373,12 +2381,60 @@ g.yMeta = { ...this.spec.columns[t.y] };
 g.n = Math.min(x.length, y.length);
 g._cpu = { x, y, xMeta: g.xMeta, yMeta: g.yMeta };
 const sm = this._smoothArrays(t, x, y, null, g.n);
-g.xBuf = this._upload(sm ? sm.x : x);
-g.yBuf = this._upload(sm ? sm.y : y);
-if (sm) g.n = sm.n;
-g._dashX = sm ? sm.x : x;
-g._dashY = sm ? sm.y : y;
+const baseX = sm ? sm.x : x;
+const baseY = sm ? sm.y : y;
+let drawX = baseX;
+let drawY = baseY;
+const stepWhere = t.style && t.style.step;
+if (stepWhere && baseX.length > 1) {
+const sx = [baseX[0]];
+const sy = [baseY[0]];
+for (let i = 1; i < baseX.length; i++) {
+if (stepWhere === "pre") {
+sx.push(baseX[i - 1], baseX[i]);
+sy.push(baseY[i], baseY[i]);
+} else if (stepWhere === "mid") {
+const mid = (baseX[i - 1] + baseX[i]) * 0.5;
+sx.push(mid, mid, baseX[i]);
+sy.push(baseY[i - 1], baseY[i], baseY[i]);
+} else {
+sx.push(baseX[i], baseX[i]);
+sy.push(baseY[i - 1], baseY[i]);
+}
+}
+drawX = Float32Array.from(sx);
+drawY = Float32Array.from(sy);
+}
+g.xBuf = this._upload(drawX);
+g.yBuf = this._upload(drawY);
+g.n = drawX.length;
+g._dashX = drawX;
+g._dashY = drawY;
 g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+}
+_buildSegmentMark(g, t, buffer) {
+const x0 = this._columnView(buffer, this.spec.columns[t.x0]);
+const x1 = this._columnView(buffer, this.spec.columns[t.x1]);
+const y0 = this._columnView(buffer, this.spec.columns[t.y0]);
+const y1 = this._columnView(buffer, this.spec.columns[t.y1]);
+g.x0Meta = { ...this.spec.columns[t.x0] };
+g.x1Meta = { ...this.spec.columns[t.x1] };
+g.y0Meta = { ...this.spec.columns[t.y0] };
+g.y1Meta = { ...this.spec.columns[t.y1] };
+g.n = Math.min(x0.length, x1.length, y0.length, y1.length);
+g.segment = true;
+g.x0Buf = this._upload(x0);
+g.x1Buf = this._upload(x1);
+g.y0Buf = this._upload(y0);
+g.y1Buf = this._upload(y1);
+g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+g.colorMode = 0;
+if (t.color && t.color.mode === "continuous") {
+g.colorMode = 1;
+g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+g.lut = this._lut(t.color.colormap);
+}
+g._cpu = { x: x0, y: y1, xMeta: g.x0Meta, yMeta: g.y1Meta };
 }
 _buildAreaMark(g, t, buffer) {
 const x = this._columnView(buffer, this.spec.columns[t.x]);
@@ -2828,35 +2884,62 @@ gl.bindVertexArray(this.quadVao);
 gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
 _drawLine(g, xm, ym, color = null, width = null, opacity = null) {
-if (g.n < 2) return;
+if (g.n < (g.segment ? 1 : 2)) return;
 const gl = this.gl;
 gl.useProgram(this.lineProg);
 const u = (n) => uniformOf(gl, this.lineProg, n);
 gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
 gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
-this._setAxisUniforms(this.lineProg, "u_x", g.xMeta, g.xAxis);
-this._setAxisUniforms(this.lineProg, "u_y", g.yMeta, g.yAxis);
+if (g.segment) {
+this._setAxisUniforms(this.lineProg, "u_x0", g.x0Meta, g.xAxis);
+this._setAxisUniforms(this.lineProg, "u_x1", g.x1Meta, g.xAxis);
+this._setAxisUniforms(this.lineProg, "u_y0", g.y0Meta, g.yAxis);
+this._setAxisUniforms(this.lineProg, "u_y1", g.y1Meta, g.yAxis);
+} else {
+this._setAxisUniforms(this.lineProg, "u_x0", g.xMeta, g.xAxis);
+this._setAxisUniforms(this.lineProg, "u_x1", g.xMeta, g.xAxis);
+this._setAxisUniforms(this.lineProg, "u_y0", g.yMeta, g.yAxis);
+this._setAxisUniforms(this.lineProg, "u_y1", g.yMeta, g.yAxis);
+}
 gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
 gl.uniform1f(u("u_width"), (width ?? g.trace.style.width ?? 1.5) * this.dpr);
 const [r, gg, b, a] = color || g.color;
 gl.uniform4f(u("u_color"), r, gg, b, a * (opacity ?? g.trace.style.opacity ?? 1));
+gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+if (g.colorMode === 1 && g.lut) {
+gl.activeTexture(gl.TEXTURE0);
+gl.bindTexture(gl.TEXTURE_2D, g.lut);
+gl.uniform1i(u("u_lut"), 0);
+}
 const dashed = this._lineDash(g);
+const segmentParts = g.segment
+? [g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId, g.colorMode ? g.cBuf._fcId : 0]
+: null;
 this._bindVao(
 g,
 "line",
-dashed ? [g.xBuf._fcId, g.yBuf._fcId, g._lenBuf._fcId] : [g.xBuf._fcId, g.yBuf._fcId],
+segmentParts || (dashed ? [g.xBuf._fcId, g.yBuf._fcId, g._lenBuf._fcId] : [g.xBuf._fcId, g.yBuf._fcId]),
 () => {
+if (g.segment) {
+this._vaoAttr(ATTR_SLOTS.ax0, g.x0Buf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
+if (g.colorMode) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+} else {
 this._vaoAttr(ATTR_SLOTS.ax0, g.xBuf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.ax1, g.xBuf, 4, 1);
 this._vaoAttr(ATTR_SLOTS.ay0, g.yBuf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.ay1, g.yBuf, 4, 1);
-if (dashed) {
+}
+if (!g.segment && dashed) {
 this._vaoAttr(ATTR_SLOTS.a_len0, g._lenBuf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.a_len1, g._lenBuf, 4, 1);
 }
 }
 );
-gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n - 1);
+if (!g.segment) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.segment ? g.n : g.n - 1);
 }
 _lineDash(g) {
 const gl = this.gl;
@@ -4958,8 +5041,58 @@ if (!g.colorMode) g.color = parseColor(view.root, g.trace.style.color, g.color);
 view._rectMarkStyleGpu(g, g.trace);
 },
 };
+const SEGMENT_MARK = {
+build: (view, g, t, buffer) => view._buildSegmentMark(g, t, buffer),
+draw: (view, g) => {
+const [x0, x1] = view._axisRange(g.xAxis);
+const [y0, y1] = view._axisRange(g.yAxis);
+view._drawLine(
+g,
+view._map(g.x0Meta, x0, x1, g.xAxis),
+view._map(g.y0Meta, y0, y1, g.yAxis),
+);
+},
+refreshColor: (view, g) => {
+if (!g.colorMode) g.color = parseColor(view.root, g.trace.style.color, g.color);
+},
+};
+const AREA_MARK = {
+build: (view, g, t, buffer) => view._buildAreaMark(g, t, buffer),
+draw: (view, g) => {
+const [x0, x1] = view._axisRange(g.xAxis);
+const [y0, y1] = view._axisRange(g.yAxis);
+const xm = view._map(g.xMeta, x0, x1, g.xAxis);
+const ym = view._map(g.yMeta, y0, y1, g.yAxis);
+view._drawArea(g, xm, ym, view._map(g.baseMeta, y0, y1, g.yAxis));
+if ((g.trace.style.line_width ?? 0) > 0) {
+view._drawLine(g, xm, ym, g.lineColor, g.trace.style.line_width, g.trace.style.line_opacity ?? 1);
+}
+},
+refreshColor: (view, g) => {
+g.color = parseColor(view.root, g.trace.style.color, g.color);
+g.lineColor = parseColor(view.root, g.trace.style.color, g.lineColor || g.color);
+g.grad = view._resolveMarkFill(g.trace.style, g.color);
+},
+};
 const MARK_KINDS = {
 histogram: RECT_MARK,
+box: RECT_MARK,
+violin: RECT_MARK,
+errorbar: SEGMENT_MARK,
+stem: SEGMENT_MARK,
+box_whisker: SEGMENT_MARK,
+box_median: SEGMENT_MARK,
+contour: SEGMENT_MARK,
+error_band: AREA_MARK,
+hexbin: {
+build: (view, g, t, buffer) => view._buildScatterMark(g, t, buffer),
+draw: (view, g) => {
+const [x0, x1] = view._axisRange(g.xAxis);
+const [y0, y1] = view._axisRange(g.yAxis);
+view._drawPoints(g, view._map(g.xMeta, x0, x1, g.xAxis), view._map(g.yMeta, y0, y1, g.yAxis));
+},
+refreshColor: (view, g) => view._pointMarkStyle(g, g.trace),
+},
 bar: BAR_MARK,
 column: BAR_MARK,
 heatmap: {
@@ -4993,31 +5126,7 @@ refreshColor: (view, g) => {
 g.color = parseColor(view.root, g.trace.style.color, g.color);
 },
 },
-area: {
-build: (view, g, t, buffer) => view._buildAreaMark(g, t, buffer),
-draw: (view, g) => {
-const [x0, x1] = view._axisRange(g.xAxis);
-const [y0, y1] = view._axisRange(g.yAxis);
-const xm = view._map(g.xMeta, x0, x1, g.xAxis);
-const ym = view._map(g.yMeta, y0, y1, g.yAxis);
-view._drawArea(g, xm, ym, view._map(g.baseMeta, y0, y1, g.yAxis));
-if ((g.trace.style.line_width ?? 0) > 0) {
-view._drawLine(
-g,
-xm,
-ym,
-g.lineColor,
-g.trace.style.line_width,
-g.trace.style.line_opacity ?? 1
-);
-}
-},
-refreshColor: (view, g) => {
-g.color = parseColor(view.root, g.trace.style.color, g.color);
-g.lineColor = parseColor(view.root, g.trace.style.color, g.lineColor || g.color);
-g.grad = view._resolveMarkFill(g.trace.style, g.color);
-},
-},
+area: AREA_MARK,
 };
 function markOf(kind) {
 return MARK_KINDS[kind] || MARK_KINDS.scatter;

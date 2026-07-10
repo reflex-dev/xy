@@ -134,7 +134,8 @@ panes is layout the Figure grid owns.
 
 - Containers: `figure` (grid of panels; today implicit 1×1), `panel`
   (planned), `chart` ★ (sugar: figure with one panel).
-- Marks ★: `scatter, line, area, histogram, bar/column, heatmap` (+ every
+- Marks ★: `scatter, line, area, histogram, bar/column, heatmap, errorbar,
+  error_band, box, violin, ecdf, hexbin, contour, step, stairs, stem` (+ every
   future kind — one `Mark` node each, registry-dispatched).
 - Annotation marks (planned, same Mark machinery, tiny data): `rule`,
   `band`, `label`.
