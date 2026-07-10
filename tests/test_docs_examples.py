@@ -114,6 +114,12 @@ def test_readme_python_example_runs(
         if "chart.html" in source:
             assert (tmp_path / "chart.html").read_text(encoding="utf-8") == result
         return
+    if not hasattr(result, "figure") and not hasattr(result, "build_payload"):
+        # pyplot-shim figures display like notebooks display them.
+        html = result._repr_html_()
+        assert html.startswith("<!doctype html>"), f"{heading} README example produced no chart"
+        assert "fastcharts.renderStandalone" in html
+        return
     figure = result.figure() if hasattr(result, "figure") else result
     assert hasattr(figure, "build_payload"), f"{heading} README example did not produce a chart"
     spec, blob = figure.build_payload()

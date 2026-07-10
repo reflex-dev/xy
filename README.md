@@ -221,6 +221,29 @@ where NumPy and the compute backend may initialize. Notebook widget dependencies
 stay deferred until `.widget()`/display; standalone `Chart.to_html()` reads the
 bundled static client directly.
 
+## Coming from matplotlib
+
+Change one line and keep your plotting code:
+
+```python
+import numpy as np
+
+import fastcharts.pyplot as plt  # instead of: import matplotlib.pyplot as plt
+
+x = np.linspace(0.0, 10.0, 200)
+fig, ax = plt.subplots()
+ax.plot(x, np.sin(x), "r--o", label="trend")
+ax.legend()
+# fig.savefig("chart.png") writes a browser-free native PNG
+fig
+```
+
+The shim covers the high-frequency pyplot surface — `plot`/`scatter`/`bar`/
+`hist`/`imshow`, format strings, `subplots(n, m)`, `twinx`, `savefig`, the
+implicit-state API — and fails loudly on anything it doesn't. Compatibility
+is corpus-defined and CI-enforced: see
+[docs/matplotlib-compat.md](docs/matplotlib-compat.md).
+
 ## Getting Started
 
 Create a small business chart:

@@ -28,6 +28,10 @@ code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
   `channels.py` resolves scatter color/size encodings. `channel.py` (singular)
   is the transport-agnostic message dispatcher (widget comm today, Reflex
   routes later) — it must never import the widget stack.
+- `python/fastcharts/pyplot/` — the matplotlib shim, fully contained
+  (one-way dependency onto the public composition API; guardrails in
+  `tests/pyplot/test_boundaries.py`). Corpus-defined compatibility:
+  `tests/pyplot/corpus/` + `docs/matplotlib-compat.md`.
 - `js/src/*.js` — the render client as ordered parts (concat order in
   `js/build.mjs`; exports live only in `60_entries.js`), one dependency-free ES
   module. **No npm packages.** `node js/build.mjs` copies it to

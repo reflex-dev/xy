@@ -7,7 +7,7 @@ WHEEL ?=
 BENCHMARK_JSON ?= benchmark.json
 BENCHMARK_KIND ?= auto
 
-.PHONY: help setup check check-full check-browser check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-benchmark-harness check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
+.PHONY: help setup check check-full check-browser check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-benchmark-harness check-pyplot check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
 
 help:
 	@printf '%s\n' \
@@ -26,6 +26,7 @@ help:
 		'  make check-ci         run CI/release workflow invariant checks' \
 		'  make check-claims     run public performance-claim guardrails' \
 		'  make check-benchmark-harness run benchmark metadata/report/regression tests' \
+		'  make check-pyplot      run the matplotlib-shim suite and compatibility corpus' \
 		'  make check-sdist      build and verify the source distribution' \
 		'  make check-wheel      build and verify a wheel (set WHEEL_EXPECT=--expect-native)' \
 		'  make check-artifacts  verify prebuilt artifacts (set SDIST=... WHEEL=...)' \
@@ -61,6 +62,9 @@ check-docs:
 
 check-examples:
 	$(PYTHON) scripts/verify_local.py --only examples
+
+check-pyplot:
+	$(PYTHON) -m pytest tests/pyplot -q
 
 check-security:
 	$(PYTHON) scripts/verify_local.py --only security_export

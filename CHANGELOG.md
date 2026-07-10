@@ -20,6 +20,11 @@ in the README).
   to the internal engine object.
 
 ### Added
+
+- `fastcharts.pyplot`: a matplotlib-flavored shim over the composition
+  API (`import fastcharts.pyplot as plt`). Corpus-defined compatibility —
+  see `docs/matplotlib-compat.md`; fully contained in
+  `python/fastcharts/pyplot/` with boundary guardrails.
 - **Chart live surface (data-live, structure-immutable).** The declarative
   `Chart` gains `append(trace_id, x, y, color=, size=)` (streaming — routed
   through the live widget when one exists, else mutating the built figure
