@@ -82,6 +82,7 @@ def test_codspeed_suite_covers_native_core_hardening_workloads() -> None:
         "test_m4_indices_full",
         "test_m4_indices_zoom",
         "test_bin_2d",
+        "test_marching_squares",
         "test_bin_2d_indices",
         "test_min_max",
         "test_sample_mask",

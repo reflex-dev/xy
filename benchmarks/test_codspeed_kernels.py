@@ -197,6 +197,16 @@ def test_bin_2d(benchmark, data):
     benchmark(k.bin_2d, x, y, 0.0, float(N), -6.0, 6.0, GRID_W, GRID_H)
 
 
+def test_marching_squares(benchmark, core_2d_data):
+    """Regular-grid isolines over a bounded contour workload."""
+    z = core_2d_data["heatmap_z"]
+    x = core_2d_data["heatmap_x"]
+    y = core_2d_data["heatmap_y"]
+    levels = np.linspace(float(z.min()), float(z.max()), 11, dtype=np.float64)[1:-1]
+    result = benchmark(k.marching_squares, z, x, y, levels)
+    assert len(result) == 5
+
+
 def test_bin_2d_indices(benchmark, data):
     """Production first-density pass: grid plus visible indices in one scan."""
     x, y = data
