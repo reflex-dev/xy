@@ -54,6 +54,15 @@ python3 scripts/bench_scatter_native.py --render   # xy scatter, no deps
 uv run python scripts/bench_vs.py     # three-way vs plotly/matplotlib (needs both)
 ```
 
+Before every commit or push, run the repository hooks and Ruff checks across the
+full worktree. Do not commit if any of these commands fails:
+
+```bash
+uv run --with pre-commit pre-commit run --all-files
+uv run ruff check .
+uv run ruff format --check .
+```
+
 The two `*_smoke*` scripts need neither numpy nor PyPI — they verify the
 Python↔Rust ABI and the render client directly, and run first in CI.
 

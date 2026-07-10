@@ -39,6 +39,8 @@ Runs whatever libraries are installed; missing ones are reported as unavailable.
 
 Usage:
   python benchmarks/bench_vs.py [--sizes 1e3,1e4,1e5,1e6,1e7] [--budget 45] [--out report.md]
+  python benchmarks/bench_vs.py --libraries xy,plotly_gl
+  python benchmarks/bench_vs.py --libraries altair,hvplot_bokeh --max-n 1e5
 """
 
 from __future__ import annotations
@@ -525,6 +527,8 @@ def run(
     sizes: list[int],
     budget_s: float,
     *,
+    libraries: list[str] | None = None,
+    max_n: int | None = None,
     ttfr: bool = False,
     ttfr_max_n: int | None = None,
     chromium: str | None = None,
@@ -535,14 +539,34 @@ def run(
             "Install it, or run benchmarks/bench_scatter_native.py for the "
             "xy-only arm with no dependencies."
         )
+    selected = list(ADAPTERS) if libraries is None else libraries
+    unknown = sorted(set(selected) - set(ADAPTERS))
+    if unknown:
+        raise SystemExit(
+            f"unknown library name(s): {', '.join(unknown)}; choose from {', '.join(ADAPTERS)}"
+        )
+    if not selected:
+        raise SystemExit("--libraries must contain at least one library")
+
     rng = np.random.default_rng(0)
-    results: dict[str, list[dict]] = {name: [] for name in ADAPTERS}
+    results: dict[str, list[dict]] = {name: [] for name in selected}
     over_budget: set[str] = set()
 
     for n in sizes:
+        if max_n is not None and n > max_n:
+            for name in selected:
+                results[name].append(
+                    {
+                        "n": n,
+                        "library": name,
+                        "status": "skipped(over configured max-n)",
+                    }
+                )
+            continue
         x = rng.normal(0, 1, n)
         y = x * 0.5 + rng.normal(0, 0.6, n)
-        for name, factory in ADAPTERS.items():
+        for name in selected:
+            factory = ADAPTERS[name]
             row: dict[str, Any] = {"n": n, "library": name}
             if name in over_budget:
                 row["status"] = "skipped(over budget)"
@@ -600,6 +624,7 @@ def run(
     return {
         "schema_version": SCHEMA_VERSION,
         "environment": collect_environment_metadata(chromium=chromium),
+        "libraries": selected,
         "sizes": sizes,
         "budget_s": budget_s,
         "benchmark_categories": list(BENCHMARK_CATEGORIES),
@@ -757,6 +782,17 @@ def main() -> None:
     ap.add_argument("--out", default=None, help="write Markdown report here")
     ap.add_argument("--json", default=None, help="write JSON results here")
     ap.add_argument(
+        "--libraries",
+        default=None,
+        help="comma-separated adapter names to run (default: all adapters)",
+    )
+    ap.add_argument(
+        "--max-n",
+        type=int,
+        default=None,
+        help="skip configured sizes above this point count",
+    )
+    ap.add_argument(
         "--ttfr", action="store_true", help="measure time-to-first-render in headless Chromium"
     )
     ap.add_argument(
@@ -765,10 +801,13 @@ def main() -> None:
     ap.add_argument("--chromium", default=None, help="path to a Chromium/Chrome binary")
     args = ap.parse_args()
     sizes = [int(float(s)) for s in args.sizes.split(",")]
+    libraries = None if args.libraries is None else args.libraries.split(",")
 
     report = run(
         sizes,
         args.budget,
+        libraries=libraries,
+        max_n=args.max_n,
         ttfr=args.ttfr,
         ttfr_max_n=int(args.ttfr_max_n),
         chromium=args.chromium,

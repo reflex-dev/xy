@@ -120,7 +120,7 @@ def test_catastrophic_timing_regression_is_a_hard_failure(
     )
     kernel = tmp_path / "kernel.json"
     kernel.write_text(
-        json.dumps({"rows": [{"n": 1_000_000, "encode_mpts_s": 200.0}]}),
+        json.dumps({"rows": [{"n": 1_000_000, "encode_mpts_s": 100.0}]}),
         encoding="utf-8",
     )
     monkeypatch.setattr(check_regressions, "BASELINE", baseline)
@@ -143,6 +143,29 @@ def test_large_but_noncatastrophic_timing_regression_stays_advisory(
     kernel = tmp_path / "kernel.json"
     kernel.write_text(
         json.dumps({"rows": [{"n": 1_000_000, "encode_mpts_s": 400.0}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_regressions, "BASELINE", baseline)
+    monkeypatch.setattr(sys, "argv", ["check_regressions.py", "--kernel", str(kernel)])
+
+    check_regressions.main()
+
+    assert "advisory timing regression" in capsys.readouterr().out
+
+
+def test_shared_runner_sized_timing_regression_stays_advisory(
+    tmp_path: Path,
+    monkeypatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(
+        json.dumps({"metrics": {"kernel.zone_maps_mpts_s.10000000": 1_310.92}}),
+        encoding="utf-8",
+    )
+    kernel = tmp_path / "kernel.json"
+    kernel.write_text(
+        json.dumps({"rows": [{"n": 10_000_000, "zone_maps_mpts_s": 244.36}]}),
         encoding="utf-8",
     )
     monkeypatch.setattr(check_regressions, "BASELINE", baseline)
