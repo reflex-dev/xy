@@ -29,6 +29,7 @@ from ._svg import (
     _fmt_axis,
     _lut,
     _Scale,
+    _step_arrays,
     axis_ticks,
     layout,
 )
@@ -244,10 +245,12 @@ def render_raster(spec: dict[str, Any], blob: bytes, scale: float = 2.0) -> np.n
             _emit_grid(cmd, "density", t["density"], blob, cols, sx, sy, style)
         elif kind == "line":
             _emit_line(cmd, t, blob, cols, sx, sy, style, color)
-        elif kind == "area":
+        elif kind in ("area", "error_band"):
             _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot)
-        elif kind == "scatter":
+        elif kind in ("scatter", "hexbin"):
             _emit_scatter(cmd, t, blob, cols, sx, sy, style, color)
+        elif kind in {"errorbar", "stem", "box_whisker", "box_median", "contour"}:
+            _emit_segments(cmd, t, blob, cols, sx, sy, style, color)
         elif kind in ("bar", "column") and t.get("bar"):
             _emit_bars(cmd, t, blob, cols, sx, sy, style, color, plot)
         elif kind == "heatmap" and t.get("heatmap"):
@@ -289,6 +292,8 @@ def render_raster(spec: dict[str, Any], blob: bytes, scale: float = 2.0) -> np.n
 
 def _emit_line(cmd, t, blob, cols, sx, sy, style, color):
     xv, yv = _column(blob, cols[t["x"]]), _column(blob, cols[t["y"]])
+    if style.get("step"):
+        xv, yv = _step_arrays(xv, yv, style["step"])
     pts = _scene.curve_points(xv, yv, sx, sy, style.get("curve") == "smooth")
     c = _rgba(style.get("color"), color, float(style.get("opacity", 1.0)))
     cmd.stroke(pts.tolist(), float(style.get("width", 1.5)), c, dash=style.get("dash"))
@@ -351,6 +356,19 @@ def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
     sym = _SYMBOLS.get(style.get("symbol", "circle"), 0)
     stroke = _rgba(style.get("stroke"), color) if sw > 0 else (0, 0, 0, 0)
     cmd.points(px, py, radii, fills, sym, sw, stroke)
+
+
+def _emit_segments(cmd, t, blob, cols, sx, sy, style, color):
+    x0 = _column(blob, cols[t["x0"]])
+    x1 = _column(blob, cols[t["x1"]])
+    y0 = _column(blob, cols[t["y0"]])
+    y1 = _column(blob, cols[t["y1"]])
+    c = _rgba(style.get("color"), color, float(style.get("opacity", 1.0)))
+    width = float(style.get("width", 1.2))
+    for i in range(len(x0)):
+        cmd.stroke(
+            [(float(sx(x0[i])), float(sy(y0[i]))), (float(sx(x1[i])), float(sy(y1[i])))], width, c
+        )
 
 
 def _bar_geom(cmd, x, y, w, h, style, fill_cmd, stroke_c, sw, tip_top):

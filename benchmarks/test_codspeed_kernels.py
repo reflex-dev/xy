@@ -281,6 +281,27 @@ def _heatmap_payload(z: np.ndarray, x: np.ndarray, y: np.ndarray) -> int:
     return len(blob)
 
 
+def _statistical_payload(values: list[np.ndarray]) -> int:
+    fig = fc.chart(
+        fc.box(values=values, name="box"),
+        fc.violin(values=values, bins=64, name="violin"),
+    ).figure()
+    _spec, blob = fig.build_payload(N_BUCKETS)
+    return len(blob)
+
+
+def _hexbin_payload(x: np.ndarray, y: np.ndarray) -> int:
+    fig = fc.chart(fc.hexbin(x=x, y=y, gridsize=128)).figure()
+    _spec, blob = fig.build_payload(N_BUCKETS)
+    return len(blob)
+
+
+def _contour_payload(z: np.ndarray) -> int:
+    fig = fc.chart(fc.contour(z=z, levels=12, filled=True)).figure()
+    _spec, blob = fig.build_payload(N_BUCKETS)
+    return len(blob)
+
+
 def _composed_layered_payload(data: dict[str, object]) -> int:
     chart = fc.chart(
         fc.bar(x="category", y="actual", data=data, name="actual", color="#f59e0b"),
@@ -396,6 +417,29 @@ def test_first_payload_heatmap_core_2d(benchmark, core_2d_data):
     assert isinstance(y, np.ndarray)
     payload_bytes = benchmark(_heatmap_payload, z, x, y)
     assert 0 < payload_bytes < z.nbytes
+
+
+def test_first_payload_statistical_core_2d(benchmark, medium_data):
+    """Distribution summaries reduce raw observations to compact geometry."""
+    _x, y = medium_data
+    values = [y, y + 0.75]
+    payload_bytes = benchmark(_statistical_payload, values)
+    assert payload_bytes > 0
+
+
+def test_first_payload_hexbin_core_2d(benchmark, medium_data):
+    """Hexbin scans source points through the native screen-sized bin kernel."""
+    x, y = medium_data
+    payload_bytes = benchmark(_hexbin_payload, x, y)
+    assert 0 < payload_bytes < x.nbytes + y.nbytes
+
+
+def test_first_payload_contour_core_2d(benchmark, core_2d_data):
+    """Contour extraction is bounded by the regular input grid, not source rows."""
+    z = core_2d_data["heatmap_z"]
+    assert isinstance(z, np.ndarray)
+    payload_bytes = benchmark(_contour_payload, z)
+    assert payload_bytes > 0
 
 
 def test_first_payload_composed_layered_core_2d(benchmark, core_2d_data):

@@ -34,7 +34,9 @@ can stay interactive well past the point where JSON/SVG-heavy chart stacks run
 out of room.
 
 **Status:** early alpha. The core 2D surface is now in place: line, scatter,
-area, histogram, bar/column, grouped/stacked bars, heatmap, direct rendering,
+area, histogram, bar/column, grouped/stacked bars, heatmap, error bars/bands,
+box/violin/ECDF distributions, hexbin/contour density, step/stairs/stem
+variants, and faceted small multiples. It includes direct rendering,
 M4 line/area decimation, Tier-2 scatter density, adaptive scatter drilldown,
 hover, box select/zoom, standalone HTML export, and static export (`to_svg` and
 a browser-free native `to_png` — both millisecond and screen-bounded; `to_png`
@@ -112,7 +114,8 @@ Stable enough to build on today:
   annotations, legends, tooltips, event props, CSS/Tailwind-friendly DOM hooks,
   and notebook/static export methods on the composed `Chart`.
 - Implemented 2D chart families: line, scatter, area, histogram, bar/column,
-  grouped/stacked/horizontal bars, and heatmap.
+  grouped/stacked/horizontal bars, heatmap, error bars/bands,
+  box/violin/ECDF, hexbin/contour, step/stairs/stem, and faceted small multiples.
 - Binary column payloads, committed JavaScript bundles, and native Rust kernels
   bundled in every published platform wheel.
 

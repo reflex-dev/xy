@@ -20,11 +20,17 @@ in the README).
   to the internal engine object.
 
 ### Added
-
 - `xy.pyplot`: a matplotlib-flavored shim over the composition
   API (`import xy.pyplot as plt`). Corpus-defined compatibility —
   see `docs/matplotlib-compat.md`; fully contained in
   `python/xy/pyplot/` with boundary guardrails.
+- **Statistical and density chart breadth.** Added first-class `errorbar`/
+  `error_band`, `box`, `violin`, `ecdf`, `hexbin`, and `contour` marks plus
+  `step`, `stairs`, and `stem` variants. Segment marks share one instanced
+  binary geometry path; hexbin uses the native 2-D bin kernel; distribution
+  shapes ship bounded geometry rather than one browser object per observation.
+   `facet_chart` repeats a declarative chart over a table column with optional
+   shared domains and HTML/SVG/native-PNG grid export.
 - **Chart live surface (data-live, structure-immutable).** The declarative
   `Chart` gains `append(trace_id, x, y, color=, size=)` (streaming — routed
   through the live widget when one exists, else mutating the built figure
