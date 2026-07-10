@@ -35,6 +35,7 @@ css_check = _impl.css_check
 zone_maps = _impl.zone_maps
 encode_f32 = _impl.encode_f32
 m4_indices = _impl.m4_indices
+marching_squares = _impl.marching_squares
 is_sorted = _impl.is_sorted
 min_max = _impl.min_max
 bin_2d = _impl.bin_2d
@@ -65,6 +66,7 @@ __all__ = [
     "is_sorted",
     "local_log_density",
     "m4_indices",
+    "marching_squares",
     "min_max",
     "normalize_f32",
     "pyramid_build",

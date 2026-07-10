@@ -301,6 +301,102 @@ pub unsafe extern "C" fn fc_m4_indices(
     idx.len()
 }
 
+/// Marching-squares isoline extraction over a regular grid. The first call
+/// may pass `capacity == 0` and null output pointers to query the required
+/// segment count; a later call writes the five parallel f64 output arrays.
+/// Returns the required/written segment count, or `usize::MAX` on invalid
+/// arguments or a panic inside the kernel.
+///
+/// # Safety
+/// `z` points to `rows * cols` readable f64s; `x_coords` has `cols` values;
+/// `y_coords` has `rows` values; `levels` has `n_levels` values. When capacity
+/// is nonzero, every output pointer points to `capacity` writable f64s.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fc_marching_squares(
+    z: *const f64,
+    rows: usize,
+    cols: usize,
+    x_coords: *const f64,
+    y_coords: *const f64,
+    levels: *const f64,
+    n_levels: usize,
+    out_x0: *mut f64,
+    out_x1: *mut f64,
+    out_y0: *mut f64,
+    out_y1: *mut f64,
+    out_levels: *mut f64,
+    capacity: usize,
+) -> usize {
+    if rows < 2 || cols < 2 {
+        return usize::MAX;
+    }
+    let z_len = match rows.checked_mul(cols) {
+        Some(n) => n,
+        None => return usize::MAX,
+    };
+    if z.is_null() || x_coords.is_null() || y_coords.is_null() {
+        return usize::MAX;
+    }
+    if n_levels > 0 && levels.is_null() {
+        return usize::MAX;
+    }
+    if capacity > 0
+        && (out_x0.is_null()
+            || out_x1.is_null()
+            || out_y0.is_null()
+            || out_y1.is_null()
+            || out_levels.is_null())
+    {
+        return usize::MAX;
+    }
+    let z = std::slice::from_raw_parts(z, z_len);
+    let x_coords = std::slice::from_raw_parts(x_coords, cols);
+    let y_coords = std::slice::from_raw_parts(y_coords, rows);
+    let levels = if n_levels == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(levels, n_levels)
+    };
+    if !x_coords.windows(2).all(|pair| pair[1] > pair[0])
+        || !y_coords.windows(2).all(|pair| pair[1] > pair[0])
+        || !x_coords.iter().all(|value| value.is_finite())
+        || !y_coords.iter().all(|value| value.is_finite())
+        || !levels.iter().all(|value| value.is_finite())
+    {
+        return usize::MAX;
+    }
+    ffi_guard(usize::MAX, || {
+        if capacity == 0 {
+            let (empty_x0, empty_x1, empty_y0, empty_y1, empty_levels) =
+                (&mut [][..], &mut [][..], &mut [][..], &mut [][..], &mut [][..]);
+            kernels::marching_squares_into(
+                z,
+                rows,
+                cols,
+                x_coords,
+                y_coords,
+                levels,
+                empty_x0,
+                empty_x1,
+                empty_y0,
+                empty_y1,
+                empty_levels,
+            )
+        } else {
+            let x0_out = std::slice::from_raw_parts_mut(out_x0, capacity);
+            let x1_out = std::slice::from_raw_parts_mut(out_x1, capacity);
+            let y0_out = std::slice::from_raw_parts_mut(out_y0, capacity);
+            let y1_out = std::slice::from_raw_parts_mut(out_y1, capacity);
+            let level_out = std::slice::from_raw_parts_mut(out_levels, capacity);
+            kernels::marching_squares_into(
+                z, rows, cols, x_coords, y_coords, levels, x0_out, x1_out, y0_out, y1_out,
+                level_out,
+            )
+        }
+    })
+}
+
 /// 2D density aggregation (§5 Tier 2): additively bin points into a `w × h`
 /// grid over the viewport. `out` must be `w * h` f32s (fully overwritten).
 ///

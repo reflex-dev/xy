@@ -287,6 +287,138 @@ fn m4_indices_impl(
     out
 }
 
+fn contour_pairs(mask: u8) -> &'static [(u8, u8)] {
+    match mask {
+        1 => &[(3, 0)],
+        2 => &[(0, 1)],
+        3 => &[(3, 1)],
+        4 => &[(1, 2)],
+        5 => &[(3, 0), (1, 2)],
+        6 => &[(0, 2)],
+        7 => &[(3, 2)],
+        8 => &[(2, 3)],
+        9 => &[(0, 2)],
+        10 => &[(0, 1), (2, 3)],
+        11 => &[(1, 2)],
+        12 => &[(1, 3)],
+        13 => &[(0, 1)],
+        14 => &[(3, 0)],
+        _ => &[],
+    }
+}
+
+/// Scan a regular grid with marching squares and emit flat isoline segments.
+///
+/// The cell/level traversal and ambiguous-cell table intentionally mirror the
+/// Python reference that originally lived in `marks.py`. Keeping the output as
+/// independent segments avoids a topology/joining pass and lets the WebGL,
+/// SVG, and native raster paths share the existing segment primitive.
+#[allow(clippy::too_many_arguments)]
+fn marching_squares_scan<F>(
+    z: &[f64],
+    rows: usize,
+    cols: usize,
+    x_coords: &[f64],
+    y_coords: &[f64],
+    levels: &[f64],
+    mut emit: F,
+) -> usize
+where
+    F: FnMut(f64, f64, f64, f64, f64),
+{
+    assert_eq!(z.len(), rows * cols);
+    assert_eq!(x_coords.len(), cols);
+    assert_eq!(y_coords.len(), rows);
+    let mut count = 0usize;
+    for &level in levels {
+        for row in 0..rows - 1 {
+            for col in 0..cols - 1 {
+                let v00 = z[row * cols + col];
+                let v10 = z[row * cols + col + 1];
+                let v11 = z[(row + 1) * cols + col + 1];
+                let v01 = z[(row + 1) * cols + col];
+                if !(v00.is_finite() && v10.is_finite() && v11.is_finite() && v01.is_finite()) {
+                    continue;
+                }
+                let mask = u8::from(v00 >= level)
+                    | (u8::from(v10 >= level) << 1)
+                    | (u8::from(v11 >= level) << 2)
+                    | (u8::from(v01 >= level) << 3);
+                let pairs = contour_pairs(mask);
+                if pairs.is_empty() {
+                    continue;
+                }
+                let corners = [
+                    (x_coords[col], y_coords[row], v00),
+                    (x_coords[col + 1], y_coords[row], v10),
+                    (x_coords[col + 1], y_coords[row + 1], v11),
+                    (x_coords[col], y_coords[row + 1], v01),
+                ];
+                let mut points = [(0.0f64, 0.0f64); 4];
+                for edge in 0..4 {
+                    let (xa, ya, va) = corners[edge];
+                    let (xb, yb, vb) = corners[(edge + 1) % 4];
+                    let denom = vb - va;
+                    let fraction = if denom == 0.0 {
+                        0.5
+                    } else {
+                        ((level - va) / denom).clamp(0.0, 1.0)
+                    };
+                    points[edge] = (
+                        xa + (xb - xa) * fraction,
+                        ya + (yb - ya) * fraction,
+                    );
+                }
+                for &(edge_a, edge_b) in pairs {
+                    let (x0, y0) = points[edge_a as usize];
+                    let (x1, y1) = points[edge_b as usize];
+                    emit(x0, x1, y0, y1, level);
+                    count += 1;
+                }
+            }
+        }
+    }
+    count
+}
+
+/// Write marching-squares segments into caller-owned parallel output arrays.
+///
+/// Returns the required segment count even when the output capacity is too
+/// small; in that case only the prefix that fits is written. The C ABI uses
+/// this to perform a bounded count query followed by one exact allocation.
+#[allow(clippy::too_many_arguments)]
+pub fn marching_squares_into(
+    z: &[f64],
+    rows: usize,
+    cols: usize,
+    x_coords: &[f64],
+    y_coords: &[f64],
+    levels: &[f64],
+    x0_out: &mut [f64],
+    x1_out: &mut [f64],
+    y0_out: &mut [f64],
+    y1_out: &mut [f64],
+    level_out: &mut [f64],
+) -> usize {
+    let capacity = x0_out.len();
+    assert_eq!(x1_out.len(), capacity);
+    assert_eq!(y0_out.len(), capacity);
+    assert_eq!(y1_out.len(), capacity);
+    assert_eq!(level_out.len(), capacity);
+    let mut written = 0usize;
+    marching_squares_scan(z, rows, cols, x_coords, y_coords, levels, |x0, x1, y0, y1, level| {
+        if written < capacity {
+            x0_out[written] = x0;
+            x1_out[written] = x1;
+            y0_out[written] = y0;
+            y1_out[written] = y1;
+            level_out[written] = level;
+        }
+        written += 1;
+    });
+    written
+}
+
 /// 2D density aggregation (§5 Tier 2): additively bin points into a `w × h`
 /// grid over `[x0, x1) × [y0, y1)`, one count per cell. Points with NaN in
 /// either coordinate, or outside the viewport, are skipped. Output is f32
@@ -1174,6 +1306,62 @@ fn min_max_impl(data: &[f64], threads: usize) -> Option<(f64, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn marching_squares_extracts_ambiguous_cell_segments() {
+        let z = [0.0, 1.0, 1.0, 0.0];
+        let x = [0.0, 1.0];
+        let y = [0.0, 1.0];
+        let levels = [0.5];
+        let mut x0 = [0.0; 2];
+        let mut x1 = [0.0; 2];
+        let mut y0 = [0.0; 2];
+        let mut y1 = [0.0; 2];
+        let mut emitted_levels = [0.0; 2];
+        let written = marching_squares_into(
+            &z,
+            2,
+            2,
+            &x,
+            &y,
+            &levels,
+            &mut x0,
+            &mut x1,
+            &mut y0,
+            &mut y1,
+            &mut emitted_levels,
+        );
+        assert_eq!(written, 2);
+        assert_eq!(x0, [0.5, 0.5]);
+        assert_eq!(x1, [1.0, 0.0]);
+        assert_eq!(y0, [0.0, 1.0]);
+        assert_eq!(y1, [0.5, 0.5]);
+        assert_eq!(emitted_levels, [0.5, 0.5]);
+    }
+
+    #[test]
+    fn marching_squares_skips_nonfinite_cells() {
+        let z = [f64::NAN, 1.0, 1.0, 0.0];
+        let mut x0 = [0.0; 1];
+        let mut x1 = [0.0; 1];
+        let mut y0 = [0.0; 1];
+        let mut y1 = [0.0; 1];
+        let mut emitted_levels = [0.0; 1];
+        let written = marching_squares_into(
+            &z,
+            2,
+            2,
+            &[0.0, 1.0],
+            &[0.0, 1.0],
+            &[0.5],
+            &mut x0,
+            &mut x1,
+            &mut y0,
+            &mut y1,
+            &mut emitted_levels,
+        );
+        assert_eq!(written, 0);
+    }
 
     #[test]
     fn bin_2d_indices_matches_separate_kernels() {

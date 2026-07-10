@@ -18,7 +18,7 @@ import numpy as np
 
 from . import _validate, channels, kernels
 from ._trace import Trace
-from .config import DEFAULT_PALETTE, DIRECT_SOFT_CEILING
+from .config import DEFAULT_PALETTE, DIRECT_SOFT_CEILING, MAX_CONTOUR_WORK
 
 if TYPE_CHECKING:
     from ._figure import Figure
@@ -164,79 +164,11 @@ def _distribution_stats(group: np.ndarray) -> tuple[float, float, float, float, 
     return float(q1), float(median), float(q3), low, high, outliers
 
 
-def _contour_segments(z: np.ndarray, x_edges: np.ndarray, y_edges: np.ndarray, levels: np.ndarray):
-    """Marching-squares segments for a bounded regular grid.
-
-    The output is a flat segment list rather than joined polylines: that keeps
-    ambiguous cells and disconnected contours correct without NaN separators
-    or client-side topology work.
-    """
-    table = {
-        1: ((3, 0),),
-        2: ((0, 1),),
-        3: ((3, 1),),
-        4: ((1, 2),),
-        5: ((3, 0), (1, 2)),
-        6: ((0, 2),),
-        7: ((3, 2),),
-        8: ((2, 3),),
-        9: ((0, 2),),
-        10: ((0, 1), (2, 3)),
-        11: ((1, 2),),
-        12: ((1, 3),),
-        13: ((0, 1),),
-        14: ((3, 0),),
-    }
-    x0s: list[float] = []
-    x1s: list[float] = []
-    y0s: list[float] = []
-    y1s: list[float] = []
-    level_values: list[float] = []
-    rows, cols = z.shape
-    for level in levels:
-        for row in range(rows - 1):
-            for col in range(cols - 1):
-                v00, v10 = z[row, col], z[row, col + 1]
-                v11, v01 = z[row + 1, col + 1], z[row + 1, col]
-                vals = (v00, v10, v11, v01)
-                if not np.all(np.isfinite(vals)):
-                    continue
-                mask = (
-                    (v00 >= level)
-                    | ((v10 >= level) << 1)
-                    | ((v11 >= level) << 2)
-                    | ((v01 >= level) << 3)
-                )
-                pairs = table.get(int(mask), ())
-                if not pairs:
-                    continue
-                corners = (
-                    (x_edges[col], y_edges[row], v00),
-                    (x_edges[col + 1], y_edges[row], v10),
-                    (x_edges[col + 1], y_edges[row + 1], v11),
-                    (x_edges[col], y_edges[row + 1], v01),
-                )
-                points = []
-                for edge in range(4):
-                    a, b = edge, (edge + 1) % 4
-                    xa, ya, va = corners[a]
-                    xb, yb, vb = corners[b]
-                    denom = vb - va
-                    f = 0.5 if denom == 0 else float(np.clip((level - va) / denom, 0.0, 1.0))
-                    points.append((xa + (xb - xa) * f, ya + (yb - ya) * f))
-                for edge_a, edge_b in pairs:
-                    x0s.append(points[edge_a][0])
-                    y0s.append(points[edge_a][1])
-                    x1s.append(points[edge_b][0])
-                    y1s.append(points[edge_b][1])
-                    level_values.append(float(level))
-    return (
-        np.asarray(x0s),
-        np.asarray(x1s),
-        np.asarray(y0s),
-        np.asarray(y1s),
-        np.asarray(level_values),
-    )
+def _contour_segments(
+    z: np.ndarray, x_coords: np.ndarray, y_coords: np.ndarray, levels: np.ndarray
+):
+    """Extract flat contour segments through the native marching-squares kernel."""
+    return kernels.marching_squares(z, x_coords, y_coords, levels)
 
 
 def _bar_like(
@@ -1320,8 +1252,6 @@ def contour(
     rows, cols = arr.shape
     xpos = self._heatmap_axis_positions(x, cols, "x")
     ypos = self._heatmap_axis_positions(y, rows, "y")
-    x_edges = self._cell_edges(xpos, "contour x")
-    y_edges = self._cell_edges(ypos, "contour y")
     finite = arr[np.isfinite(arr)]
     if len(finite) == 0:
         raise ValueError("contour z must contain at least one finite value")
@@ -1340,6 +1270,11 @@ def contour(
         ):
             raise ValueError("contour levels must contain 1 to 256 finite values")
         level_values = np.sort(level_values)
+    work = (rows - 1) * (cols - 1) * len(level_values)
+    if work > MAX_CONTOUR_WORK:
+        raise ValueError(
+            f"contour grid x levels exceeds the bounded work budget ({MAX_CONTOUR_WORK:,})"
+        )
     if colormap not in channels.COLORMAPS:
         raise ValueError(f"unknown colormap {colormap!r}; known: {channels.COLORMAPS}")
     name = self._optional_text(name, "contour name")
@@ -1348,7 +1283,7 @@ def contour(
     opacity = self._opacity(opacity, "contour opacity")
     if filled:
         self.heatmap(arr, x=x, y=y, name=None, colormap=colormap, opacity=min(opacity, 0.7))
-    x0, x1, y0, y1, level_values = _contour_segments(arr, x_edges, y_edges, level_values)
+    x0, x1, y0, y1, level_values = _contour_segments(arr, xpos, ypos, level_values)
     if len(x0) == 0:
         raise ValueError("contour levels do not intersect the finite grid")
     domain = self._auto_domain((float(np.min(level_values)), float(np.max(level_values))))
