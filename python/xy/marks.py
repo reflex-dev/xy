@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
-from . import _validate, channels, kernels
+from . import _validate, channels, columns, kernels
 from ._trace import Trace
 from .config import DEFAULT_PALETTE, DIRECT_SOFT_CEILING, MAX_CONTOUR_WORK
 
@@ -96,58 +96,86 @@ def _error_extent(
     if arr.ndim == 1:
         if len(arr) != n:
             raise ValueError(f"{label} must have length {n}, got {len(arr)}")
-        if np.any(arr < 0):
-            raise ValueError(f"{label} must be non-negative")
-        return center - arr, center + arr
-    if arr.shape == (2, n):
-        if np.any(arr < 0):
-            raise ValueError(f"{label} must be non-negative")
-        return center - arr[0], center + arr[1]
-    if arr.shape == (n, 2):
-        if np.any(arr < 0):
-            raise ValueError(f"{label} must be non-negative")
-        return center - arr[:, 0], center + arr[:, 1]
-    raise ValueError(f"{label} must be a scalar, length-{n} array, or a 2x{n} array")
+        lower_amount, upper_amount = arr, arr
+    elif arr.shape == (2, n):
+        lower_amount, upper_amount = arr[0], arr[1]
+    elif arr.shape == (n, 2):
+        lower_amount, upper_amount = arr[:, 0], arr[:, 1]
+    else:
+        raise ValueError(f"{label} must be a scalar, length-{n} array, or a 2x{n} array")
+    # Non-finite extents must never reach vertex buffers (§19), and NaN
+    # slips past a `< 0` comparison — reject it here with the input's name.
+    if not np.all(np.isfinite(arr)):
+        raise ValueError(f"{label} must be finite")
+    if np.any(arr < 0):
+        raise ValueError(f"{label} must be non-negative")
+    return center - lower_amount, center + upper_amount
 
 
-def _distribution_groups(self, values: Any, x: Any, group: Any, kind: str):
-    """Return finite value groups and their category/position coordinates."""
+def _split_by_positions(
+    vals: np.ndarray, positions: np.ndarray
+) -> tuple[list[np.ndarray], np.ndarray]:
+    """Single-pass factorized grouping over per-row positions.
+
+    Output matches ``[vals[positions == p] for p in np.unique(positions)]`` —
+    groups in sorted-position order, within-group input order preserved —
+    without the O(n·k) rescan. NaN positions keep the mask semantics: NaN never
+    compares equal, so a NaN key carries an empty group.
+    """
+    unique, inverse = np.unique(positions, return_inverse=True)
+    order = np.argsort(inverse, kind="stable")
+    bounds = np.searchsorted(inverse[order], np.arange(1, len(unique)))
+    groups = np.split(vals[order], bounds)
+    for i in np.flatnonzero(np.isnan(unique)):
+        groups[i] = vals[:0]
+    return groups, unique
+
+
+def _distribution_groups(
+    self, values: Any, x: Any, group: Any, kind: str
+) -> tuple[list[np.ndarray], np.ndarray]:
+    """Return finite value groups and their category/position coordinates.
+
+    Axis categories are resolved with ``commit=False``; callers commit them
+    inside their checkpointed try (the `_bar_like` pattern) so a failing build
+    leaves no category residue on the figure.
+    """
     if x is not None and group is not None:
         raise ValueError(f"{kind} accepts either x or group, not both")
-    arr = self._as_float_array(values, f"{kind} values")
-    if arr.ndim == 2:
+    arr: Optional[np.ndarray] = None
+    groups: Optional[list[np.ndarray]] = None
+    if (
+        isinstance(values, (list, tuple))
+        and len(values)
+        and all(not isinstance(v, str) and np.ndim(v) == 1 for v in values)
+    ):
+        # Sequence-of-datasets shape (the matplotlib boxplot convention):
+        # one group per item, ragged lengths allowed.
+        groups = [self._as_1d_float(v, f"{kind} values") for v in values]
+    else:
+        arr = self._as_float_array(values, f"{kind} values")
+        if arr.ndim == 2:
+            # Column-oriented, per the box/violin docstrings: one group per column.
+            groups = [arr[:, i] for i in range(arr.shape[1])]
+    if groups is not None:
         if group is not None:
             raise ValueError(f"{kind} group is only valid with 1-D values")
-        if x is not None:
-            raw_x = x
-            if len(np.asarray(raw_x)) == arr.shape[0]:
-                arr = arr.T
-            elif len(np.asarray(raw_x)) != arr.shape[1]:
-                raise ValueError(f"{kind} x must have one label per group")
-        groups = (
-            [arr[i, :] for i in range(arr.shape[0])]
-            if x is None and arr.shape[0] < arr.shape[1]
-            else [arr[:, i] for i in range(arr.shape[1])]
-        )
-        positions = (
-            self._axis_positions(x, "x") if x is not None else np.arange(len(groups), dtype=float)
-        )
-        return groups, positions, None
-    if group is not None:
-        vals = self._as_1d_float(arr, f"{kind} values")
-        positions = self._axis_positions(group, "x")
-        labels = self._category_axis_labels(group, "x") if self._is_category_like(group) else None
-        unique = np.unique(positions)
-        return [vals[positions == p] for p in unique], unique, labels
+        if x is None:
+            return groups, np.arange(len(groups), dtype=np.float64)
+        if np.ndim(x) == 0:
+            raise ValueError(f"{kind} x must be 1-D with one label per group")
+        positions = self._axis_positions(x, "x", commit=False)
+        if len(positions) != len(groups):
+            raise ValueError(f"{kind} x must have one label per group")
+        return groups, positions
     vals = self._as_1d_float(arr, f"{kind} values")
-    if x is None:
-        return [vals], np.array([0.0]), None
-    positions = self._axis_positions(x, "x")
+    key, key_name = (group, "group") if group is not None else (x, "x")
+    if key is None:
+        return [vals], np.array([0.0])
+    positions = self._axis_positions(key, "x", commit=False)
     if len(positions) != len(vals):
-        raise ValueError(f"{kind} x must have length {len(vals)}, got {len(positions)}")
-    unique = np.unique(positions)
-    labels = self._category_axis_labels(x, "x") if self._is_category_like(x) else None
-    return [vals[positions == p] for p in unique], unique, labels
+        raise ValueError(f"{kind} {key_name} must have length {len(vals)}, got {len(positions)}")
+    return _split_by_positions(vals, positions)
 
 
 def _distribution_stats(group: np.ndarray) -> tuple[float, float, float, float, float, np.ndarray]:
@@ -158,8 +186,12 @@ def _distribution_stats(group: np.ndarray) -> tuple[float, float, float, float, 
     q1, median, q3 = np.percentile(finite, [25.0, 50.0, 75.0])
     iqr = q3 - q1
     lo_fence, hi_fence = q1 - 1.5 * iqr, q3 + 1.5 * iqr
-    low = max(float(np.min(finite)), float(lo_fence))
-    high = min(float(np.max(finite)), float(hi_fence))
+    # Whiskers end at the most extreme observation inside the Tukey fence
+    # (the matplotlib/plotly convention), never at the bare fence value.
+    # Both selections are non-empty: min <= q1 <= hi_fence and
+    # lo_fence < q3 <= max.
+    low = float(np.min(finite[finite >= lo_fence]))
+    high = float(np.max(finite[finite <= hi_fence]))
     outliers = finite[(finite < low) | (finite > high)]
     return float(q1), float(median), float(q3), low, high, outliers
 
@@ -434,7 +466,7 @@ def error_band(
     checkpoint = self._checkpoint()
     try:
         xc, lc = self._ingest_xy(x, lower, "error_band")
-        uc = self.store.ingest(upper)
+        uc = self.store.ingest(self._as_1d_float(upper, "error_band upper"))
         if len(uc) != len(xc):
             raise ValueError(f"error_band upper must have length {len(xc)}, got {len(uc)}")
         if not kernels.is_sorted(xc.values):
@@ -468,6 +500,18 @@ def error_band(
         raise
 
 
+def _auto_cap_size(positions: np.ndarray) -> float:
+    """Auto cap half-width in data units for error bars.
+
+    0.25x the median adjacent spacing of the distinct finite positions along
+    the cap's axis; 0.4 when fewer than two are distinct (no spacing exists).
+    """
+    distinct = np.unique(positions[np.isfinite(positions)])
+    if len(distinct) < 2:
+        return 0.4
+    return 0.25 * float(np.median(np.diff(distinct)))
+
+
 def errorbar(
     self,
     x: Any,
@@ -478,7 +522,7 @@ def errorbar(
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.2,
-    cap_size: float = 0.12,
+    cap_size: Optional[float] = None,
     opacity: float = 1.0,
 ) -> "Figure":
     """Add vertical and/or horizontal error bars as instanced segments.
@@ -486,6 +530,9 @@ def errorbar(
     ``yerr`` and ``xerr`` accept symmetric lengths or a ``(lower, upper)``
     pair. ``cap_size`` is expressed in the perpendicular data-axis units,
     which makes the geometry stable in both notebook and static exports.
+    The default (``None``) auto-sizes caps to 0.25x the median adjacent
+    spacing of the distinct positions along that axis (0.4 when fewer than
+    two are distinct); ``cap_size=0`` omits the caps entirely.
     """
     if yerr is None and xerr is None:
         raise ValueError("errorbar requires yerr, xerr, or both")
@@ -494,7 +541,8 @@ def errorbar(
     if color is None:
         color = DEFAULT_PALETTE[len(self.traces) % len(DEFAULT_PALETTE)]
     width = self._positive_scalar(width, "errorbar width")
-    cap_size = self._nonnegative_scalar(cap_size, "errorbar cap_size")
+    if cap_size is not None:
+        cap_size = self._nonnegative_scalar(cap_size, "errorbar cap_size")
     opacity = self._opacity(opacity, "errorbar opacity")
     checkpoint = self._checkpoint()
     try:
@@ -504,13 +552,21 @@ def errorbar(
         emitted = False
         if yerr is not None:
             low, high = _error_extent(yerr, n, yvals, "errorbar yerr")
-            cap = np.full(n, cap_size, dtype=np.float64)
+            cap = _auto_cap_size(xvals) if cap_size is None else cap_size
+            if cap > 0.0:
+                x0 = np.concatenate((xvals, xvals - cap, xvals - cap))
+                x1 = np.concatenate((xvals, xvals + cap, xvals + cap))
+                y0 = np.concatenate((low, low, high))
+                y1 = np.concatenate((high, low, high))
+            else:
+                # No caps: ship only the n main segments, not 2n degenerate ones.
+                x0, x1, y0, y1 = xvals, xvals, low, high
             self._append_segment_trace(
                 "errorbar",
-                np.concatenate((xvals, xvals - cap, xvals - cap)),
-                np.concatenate((xvals, xvals + cap, xvals + cap)),
-                np.concatenate((low, low, high)),
-                np.concatenate((high, low, high)),
+                x0,
+                x1,
+                y0,
+                y1,
                 name=name,
                 color=color,
                 opacity=opacity,
@@ -521,13 +577,20 @@ def errorbar(
             emitted = True
         if xerr is not None:
             low, high = _error_extent(xerr, n, xvals, "errorbar xerr")
-            cap = np.full(n, cap_size, dtype=np.float64)
+            cap = _auto_cap_size(yvals) if cap_size is None else cap_size
+            if cap > 0.0:
+                x0 = np.concatenate((low, low, high))
+                x1 = np.concatenate((high, low, high))
+                y0 = np.concatenate((yvals, yvals - cap, yvals - cap))
+                y1 = np.concatenate((yvals, yvals + cap, yvals + cap))
+            else:
+                x0, x1, y0, y1 = low, high, yvals, yvals
             self._append_segment_trace(
                 "errorbar",
-                np.concatenate((low, low, high)),
-                np.concatenate((high, low, high)),
-                np.concatenate((yvals, yvals - cap, yvals - cap)),
-                np.concatenate((yvals, yvals + cap, yvals + cap)),
+                x0,
+                x1,
+                y0,
+                y1,
                 name=None if emitted else name,
                 color=color,
                 opacity=opacity,
@@ -573,8 +636,19 @@ def stairs(
     opacity: float = 1.0,
     dash: Any = None,
 ) -> "Figure":
-    """Add a Matplotlib-style precomputed stairs series."""
+    """Add a Matplotlib-style precomputed stairs series.
+
+    Ships the compact canonical form — the k+1 edges as x plus k+1 values
+    with one endpoint duplicated — and lets the step tag do all expansion
+    client-side, so bins never pre-expand into polyline vertices. Every
+    ``where`` renders bin i at height ``values[i]``; ``mid`` moves the risers
+    to the bin centers.
+    """
+    if where not in {"pre", "post", "mid"}:
+        raise ValueError("stairs where must be 'pre', 'post', or 'mid'")
     vals = self._as_1d_float(values, "stairs values")
+    if len(vals) == 0:
+        raise ValueError("stairs values must contain at least one value")
     if edges is None:
         edge_values = np.arange(len(vals) + 1, dtype=np.float64)
     else:
@@ -583,27 +657,19 @@ def stairs(
         raise ValueError(f"stairs edges must have length {len(vals) + 1}, got {len(edge_values)}")
     if not np.all(np.isfinite(edge_values)) or not np.all(np.diff(edge_values) > 0):
         raise ValueError("stairs edges must be finite and strictly increasing")
-    if where == "post":
-        sx = np.repeat(edge_values, 2)[1:-1]
-        sy = np.repeat(vals, 2)
-    elif where == "pre":
-        sx = np.repeat(edge_values, 2)[1:-1]
-        sy = np.concatenate(([vals[0]], np.repeat(vals[1:], 2), [vals[-1]]))
-    elif where == "mid":
-        mids = (edge_values[:-1] + edge_values[1:]) / 2.0
-        sx_parts = [edge_values[0]]
-        sy_parts = [vals[0]]
-        for i in range(1, len(vals)):
-            sx_parts.extend((mids[i - 1], mids[i - 1]))
-            sy_parts.extend((vals[i - 1], vals[i]))
-        sx_parts.append(edge_values[-1])
-        sy_parts.append(vals[-1])
-        sx = np.asarray(sx_parts)
-        sy = np.asarray(sy_parts)
-    else:
-        raise ValueError("stairs where must be 'pre', 'post', or 'mid'")
+    # Step expansion holds each y from its riser onward: "pre" reads the value
+    # right of each edge from the next point, so the first value repeats;
+    # "post"/"mid" read it from the previous point, so the last value repeats.
+    sy = np.concatenate((vals[:1], vals)) if where == "pre" else np.append(vals, vals[-1])
     return self.step(
-        sx, sy, where=where, name=name, color=color, width=width, opacity=opacity, dash=dash
+        edge_values,
+        sy,
+        where=where,
+        name=name,
+        color=color,
+        width=width,
+        opacity=opacity,
+        dash=dash,
     )
 
 
@@ -638,15 +704,16 @@ def ecdf(
         lo, hi = self._auto_domain(kernels.min_max(vals))
         counts, edges = kernels.histogram_uniform(vals, lo, hi, int(bins), density=False)
         keep = counts > 0
-        sx = edges[:-1][keep]
-        sy = np.cumsum(counts)[keep] / len(vals)
-        if len(sx):
-            sx = np.concatenate((sx, [edges[-1]]))
-            sy = np.concatenate((sy, [1.0]))
+        # A bin's cumulative mass is only guaranteed at its RIGHT edge; the
+        # left edge would bias the CDF up by as much as one bin. Anchoring 0
+        # at edges[0] keeps the step right-continuous and never above the
+        # exact ECDF.
+        sx = np.concatenate(([edges[0]], edges[1:][keep]))
+        sy = np.concatenate(([0.0], np.cumsum(counts)[keep] / len(vals)))
         return self.step(
             sx, sy, where="post", name=name, color=color, width=width, opacity=opacity, dash=dash
         )
-    unique, counts = np.unique(np.sort(vals), return_counts=True)
+    unique, counts = np.unique(vals, return_counts=True)
     cdf = np.cumsum(counts, dtype=np.float64) / len(vals)
     sx = np.concatenate(([unique[0]], unique))
     sy = np.concatenate(([0.0], cdf))
@@ -943,7 +1010,7 @@ def box(
     opacity = self._opacity(opacity, "box opacity")
     show_outliers = self._bool_param(show_outliers, "box show_outliers")
     outlier_size = self._nonnegative_scalar(outlier_size, "box outlier_size")
-    groups, positions, _labels = _distribution_groups(self, values, x, group, "box")
+    groups, positions = _distribution_groups(self, values, x, group, "box")
     if len(groups) != len(positions):
         raise ValueError("box groups and positions must have equal length")
     stats = [_distribution_stats(g) for g in groups]
@@ -952,6 +1019,7 @@ def box(
         raise ValueError("box values must contain at least one finite group")
     checkpoint = self._checkpoint()
     try:
+        self._commit_axis_positions(x if x is not None else group, "x")
         q1 = np.asarray([s[0] for s in stats], dtype=np.float64)
         med = np.asarray([s[1] for s in stats], dtype=np.float64)
         q3 = np.asarray([s[2] for s in stats], dtype=np.float64)
@@ -1076,10 +1144,10 @@ def violin(
 ) -> "Figure":
     """Add bounded-resolution violin distributions.
 
-    KDE work is performed once in Python and only occupied, screen-sized
-    density bands are shipped. The client draws the bands through the shared
-    instanced rectangle path, so input cardinality does not become DOM/GPU
-    object cardinality.
+    Density estimation is a smoothed histogram computed once in Python; each
+    group ships its fixed ``bins``-sized band set. The client draws the bands
+    through the shared instanced rectangle path, so input cardinality does not
+    become DOM/GPU object cardinality.
     """
     if orientation not in {"vertical", "horizontal"}:
         raise ValueError("violin orientation must be 'vertical' or 'horizontal'")
@@ -1094,12 +1162,17 @@ def violin(
     color = self._optional_css_color(color, "violin color")
     width = self._positive_scalar(width, "violin width")
     opacity = self._opacity(opacity, "violin opacity")
-    groups, positions, _labels = _distribution_groups(self, values, x, group, "violin")
+    groups, positions = _distribution_groups(self, values, x, group, "violin")
     rect_x0: list[np.ndarray] = []
     rect_x1: list[np.ndarray] = []
     rect_y0: list[np.ndarray] = []
     rect_y1: list[np.ndarray] = []
     n_bins = int(bins)
+    kernel = np.array([1.0, 2.0, 3.0, 2.0, 1.0])
+    # mode="same" truncates the kernel at the boundaries; dividing by the
+    # per-bin kernel coverage keeps edge bins at full weight instead of
+    # pinching violins whose data piles at the min/max.
+    coverage = np.convolve(np.ones(n_bins), kernel, mode="same")
     for center, group_values in zip(positions, groups, strict=True):
         finite = group_values[np.isfinite(group_values)]
         if len(finite) == 0:
@@ -1110,9 +1183,7 @@ def violin(
             hi += 0.5
         edges = np.linspace(lo, hi, n_bins + 1)
         counts, _ = np.histogram(finite, bins=edges)
-        smooth = np.convolve(
-            counts.astype(np.float64), np.array([1.0, 2.0, 3.0, 2.0, 1.0]), mode="same"
-        )
+        smooth = np.convolve(counts.astype(np.float64), kernel, mode="same") / coverage
         peak = float(np.max(smooth)) or 1.0
         half_width = width * 0.5 * smooth / peak
         if orientation == "vertical":
@@ -1127,17 +1198,23 @@ def violin(
             rect_y1.append(center + half_width)
     if not rect_x0:
         raise ValueError("violin values must contain at least one finite group")
-    self._append_rect_trace(
-        "violin",
-        np.concatenate(rect_x0),
-        np.concatenate(rect_x1),
-        np.concatenate(rect_y0),
-        np.concatenate(rect_y1),
-        name=name,
-        color=color,
-        opacity=opacity,
-        role="violin",
-    )
+    checkpoint = self._checkpoint()
+    try:
+        self._commit_axis_positions(x if x is not None else group, "x")
+        self._append_rect_trace(
+            "violin",
+            np.concatenate(rect_x0),
+            np.concatenate(rect_x1),
+            np.concatenate(rect_y0),
+            np.concatenate(rect_y1),
+            name=name,
+            color=color,
+            opacity=opacity,
+            role="violin",
+        )
+    except Exception:
+        self._rollback(checkpoint)
+        raise
     return self
 
 
@@ -1179,11 +1256,19 @@ def hexbin(
     opacity = self._opacity(opacity, "hexbin opacity")
     if colormap not in channels.COLORMAPS:
         raise ValueError(f"unknown colormap {colormap!r}; known: {channels.COLORMAPS}")
-    xc, yc = self._ingest_xy(x, y, "hexbin")
-    finite = np.isfinite(xc.values) & np.isfinite(yc.values)
+    # Canonicalize WITHOUT ingesting: only occupied bin centers ship, so the
+    # raw points must not stay resident in the figure's column store.
+    x_all, _x_kind, _x_copies = columns._canonicalize(x)
+    y_all, _y_kind, _y_copies = columns._canonicalize(y)
+    if len(x_all) != len(y_all):
+        raise ValueError(
+            f"hexbin x and y must have equal length, got {len(x_all)} and {len(y_all)}"
+        )
+    n_points = len(x_all)
+    finite = np.isfinite(x_all) & np.isfinite(y_all)
     if not np.any(finite):
         raise ValueError("hexbin x and y must contain at least one finite pair")
-    xv, yv = xc.values[finite], yc.values[finite]
+    xv, yv = x_all[finite], y_all[finite]
     if range is None:
         xr = self._auto_domain(kernels.min_max(xv))
         yr = self._auto_domain(kernels.min_max(yv))
@@ -1220,7 +1305,7 @@ def hexbin(
                 },
                 color_ch=color_ch,
                 size_ch=channels.SizeChannel(mode="constant", constant=8.0),
-                count=int(len(xc)),
+                count=int(n_points),
             )
         )
         return self
@@ -1281,32 +1366,39 @@ def contour(
     color = self._optional_css_color(color, "contour color")
     width = self._positive_scalar(width, "contour width")
     opacity = self._opacity(opacity, "contour opacity")
-    if filled:
-        self.heatmap(arr, x=x, y=y, name=None, colormap=colormap, opacity=min(opacity, 0.7))
-    x0, x1, y0, y1, level_values = _contour_segments(arr, xpos, ypos, level_values)
-    if len(x0) == 0:
-        raise ValueError("contour levels do not intersect the finite grid")
-    domain = self._auto_domain((float(np.min(level_values)), float(np.max(level_values))))
-    color_ch = (
-        channels.ColorChannel(
-            mode="continuous", values=level_values, domain=domain, colormap=colormap
+    # Checkpoint spans the optional filled heatmap too: a level set that never
+    # intersects the grid must not leave a stray heatmap trace behind.
+    checkpoint = self._checkpoint()
+    try:
+        if filled:
+            self.heatmap(arr, x=x, y=y, name=None, colormap=colormap, opacity=min(opacity, 0.7))
+        x0, x1, y0, y1, level_values = _contour_segments(arr, xpos, ypos, level_values)
+        if len(x0) == 0:
+            raise ValueError("contour levels do not intersect the finite grid")
+        domain = self._auto_domain((float(np.min(level_values)), float(np.max(level_values))))
+        color_ch = (
+            channels.ColorChannel(
+                mode="continuous", values=level_values, domain=domain, colormap=colormap
+            )
+            if color is None
+            else None
         )
-        if color is None
-        else None
-    )
-    self._append_segment_trace(
-        "contour",
-        x0,
-        x1,
-        y0,
-        y1,
-        name=name,
-        color=color,
-        opacity=opacity,
-        width=width,
-        role="contour",
-        color_ch=color_ch,
-    )
+        self._append_segment_trace(
+            "contour",
+            x0,
+            x1,
+            y0,
+            y1,
+            name=name,
+            color=color,
+            opacity=opacity,
+            width=width,
+            role="contour",
+            color_ch=color_ch,
+        )
+    except Exception:
+        self._rollback(checkpoint)
+        raise
     return self
 
 

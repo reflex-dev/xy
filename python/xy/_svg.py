@@ -359,14 +359,17 @@ def _monotone_tangents(x: np.ndarray, y: np.ndarray) -> np.ndarray:
 class _Svg:
     """One export pass: collects defs + body elements, then assembles."""
 
-    def __init__(self) -> None:
+    def __init__(self, id_prefix: str = "") -> None:
         self.defs: list[str] = []
         self.body: list[str] = []
         self._uid = 0
+        # Composed documents (facet grids) nest several exports into one SVG;
+        # the prefix keeps ids unique so url(#...) refs stay panel-local.
+        self._id_prefix = id_prefix
 
     def uid(self, prefix: str) -> str:
         self._uid += 1
-        return f"{prefix}{self._uid}"
+        return f"{self._id_prefix}{prefix}{self._uid}"
 
     def gradient(self, fill: dict[str, Any], mark_color: str, plot: Optional[dict] = None) -> str:
         """Register a <linearGradient> for a validated fill spec; returns url(#id).
@@ -552,12 +555,12 @@ def axis_ticks(
     return t, t, step
 
 
-def render_svg(spec: dict[str, Any], blob: bytes) -> str:
+def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str:
     width, height, compact, plot = layout(spec)
     xa, ya = spec["x_axis"], spec["y_axis"]
     sx = _Scale(xa, plot["x"], plot["x"] + plot["w"])
     sy = _Scale(ya, plot["y"] + plot["h"], plot["y"])  # y grows downward in SVG
-    svg = _Svg()
+    svg = _Svg(id_prefix)
     cols = spec["columns"]
 
     def ticks_for(axis: dict[str, Any], length_px: float) -> tuple[list[float], list[float], float]:
@@ -967,12 +970,14 @@ def to_svg(
     *,
     width: Optional[int] = None,
     height: Optional[int] = None,
+    id_prefix: str = "",
 ) -> str:
     """Render `fig` to a standalone SVG string (optionally saved to `path`).
 
     `width`/`height` override the figure's pixel size (useful for fluid "100%"
     figures). Decimation runs at the export width, so output stays
-    screen-bounded no matter the source size."""
+    screen-bounded no matter the source size. `id_prefix` namespaces generated
+    element ids for composers that inline several exports in one document."""
     eff_w = (
         int(width)
         if width is not None
@@ -983,7 +988,7 @@ def to_svg(
         spec["width"] = int(width)
     if height is not None:
         spec["height"] = int(height)
-    out = render_svg(spec, blob)
+    out = render_svg(spec, blob, id_prefix=id_prefix)
     if path is not None:
         from .export import _atomic_write_text
 

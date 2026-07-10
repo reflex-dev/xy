@@ -242,6 +242,14 @@ def _base_checks(
             requires_chromium=True,
         ),
         Check(
+            "step_tier_smoke",
+            "step traces stay step-shaped through kernel tier updates",
+            (py, "scripts/step_tier_smoke.py", chromium_arg),
+            requires_modules=("numpy",),
+            requires_paths=chromium_paths,
+            requires_chromium=True,
+        ),
+        Check(
             "interaction_stress_smoke",
             "browser interaction stress smoke with latency/visual budgets",
             (py, "scripts/interaction_stress_smoke.py", chromium_arg),
@@ -289,6 +297,7 @@ BROWSER_CHECKS = (
     "smoke_render",
     "reflex_lifecycle_smoke",
     "visual_regression_smoke",
+    "step_tier_smoke",
     "interaction_stress_smoke",
 )
 PACKAGING_CHECKS = ("sdist_artifact", "wheel_artifact")

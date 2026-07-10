@@ -248,21 +248,25 @@ Object.assign(ChartView.prototype, {
         if (bArr) n = Math.min(n, upd.base.len);
         // curve:"smooth" traces re-smooth every refined window, so the curve
         // survives zoom-driven re-decimation instead of snapping to segments.
+        // style.step traces likewise re-expand so the step corners survive
+        // tier swaps instead of collapsing to a plain polyline.
         const sm = this._smoothArrays(g.trace, xArr, yArr, bArr, n);
+        const src = sm || { x: xArr, y: yArr, n };
+        const st = this._stepArrays(g.trace, src.x, src.y, src.n);
         gl.bindBuffer(gl.ARRAY_BUFFER, g.xBuf);
-        gl.bufferData(gl.ARRAY_BUFFER, sm ? sm.x : xArr, gl.STATIC_DRAW);
+        gl.bufferData(gl.ARRAY_BUFFER, st ? st.x : src.x, gl.STATIC_DRAW);
         gl.bindBuffer(gl.ARRAY_BUFFER, g.yBuf);
-        gl.bufferData(gl.ARRAY_BUFFER, sm ? sm.y : yArr, gl.STATIC_DRAW);
+        gl.bufferData(gl.ARRAY_BUFFER, st ? st.y : src.y, gl.STATIC_DRAW);
         g.xMeta = { ...g.xMeta, offset: upd.x.offset, scale: upd.x.scale };
         g.yMeta = { ...g.yMeta, offset: upd.y.offset, scale: upd.y.scale };
-        g._dashX = sm ? sm.x : xArr;
-        g._dashY = sm ? sm.y : yArr;
+        g._dashX = st ? st.x : src.x;
+        g._dashY = st ? st.y : src.y;
         if (bArr) {
           gl.bindBuffer(gl.ARRAY_BUFFER, g.baseBuf);
           gl.bufferData(gl.ARRAY_BUFFER, sm ? sm.extra : bArr, gl.STATIC_DRAW);
           g.baseMeta = { ...g.baseMeta, offset: upd.base.offset, scale: upd.base.scale };
         }
-        g.n = sm ? sm.n : n;
+        g.n = st ? st.n : src.n;
       }
       this.draw();
     } else if (msg.type === "density_update") {

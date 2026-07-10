@@ -2,10 +2,10 @@
 
 The *feel* is Reflex's (reflex.dev) Recharts components — a chart container with
 mark and axis children, snake_case keyword props, `data=` + column-name
-resolution, and `on_*` event props — but xy does **not** import or depend
-on Reflex. It's the same ergonomics on top of the xy engine (`Figure`):
+resolution, and `on_*` event props — but fastcharts does **not** import or depend
+on Reflex. It's the same ergonomics on top of the fastcharts engine (`Figure`):
 
-    import xy as fc
+    import fastcharts as fc
 
     fc.scatter_chart(
         fc.scatter(x="sepal_w", y="sepal_l", color="species", size="petal_l", data=df),
@@ -31,6 +31,8 @@ behavior, signatures, or defaults (asserted by tests/test_api_parity.py).
 from __future__ import annotations
 
 import datetime as dt
+import uuid
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from os import PathLike
@@ -135,7 +137,7 @@ AxisTickLabelStrategy: TypeAlias = str
 
 
 class Component:
-    """Base for every xy component (Reflex-style: props + children)."""
+    """Base for every fastcharts component (Reflex-style: props + children)."""
 
 
 @dataclass
@@ -410,7 +412,7 @@ def errorbar(
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.2,
-    cap_size: float = 0.12,
+    cap_size: Optional[float] = None,
     opacity: float = 1.0,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -1526,16 +1528,6 @@ def _resolve_axis_values(fig: Figure, data: Any, key: Any, axis: str, context: s
     return values
 
 
-def _call_with_axis_rollback(fig: Figure, apply: Callable[[], Any]) -> Any:
-    """Keep category-axis provisioning atomic for direct applier callers."""
-    checkpoint = {axis: list(labels) for axis, labels in fig._axis_categories.items()}
-    try:
-        return apply()
-    except Exception:
-        fig._axis_categories = checkpoint
-        raise
-
-
 def _is_datetime_like(values: Any) -> bool:
     if hasattr(values, "to_numpy"):
         try:
@@ -1617,6 +1609,9 @@ class Chart(Component):
         self.link_axes = link_axes
         self._figure: Optional[Figure] = None
         self._widget: Any = None
+        # Facet builds pre-seed a union category order here (per axis dim) so
+        # shared categorical domains align across panels; see FacetChart.
+        self._facet_axis_categories: dict[str, list[Any]] = {}
 
     # -- build ---------------------------------------------------------------
 
@@ -1685,6 +1680,12 @@ class Chart(Component):
                 side=axis.side,
                 style=axis.style,
             )
+        # Facet builds pre-seed the union category order (set as a private
+        # attribute by FacetChart) so shared categorical domains align the
+        # same categories at the same positions across panels; positions are
+        # committed at ingest, so this must land before the marks apply.
+        for axis_dim, categories in self._facet_axis_categories.items():
+            fig._axis_categories[axis_dim] = list(categories)
         fig.class_name = self.class_name
         fig.class_names = dict(self.class_names)
         fig.style = {}
@@ -1786,7 +1787,7 @@ class Chart(Component):
     def chrome_components(self) -> dict[str, Any]:
         """Opaque user chrome objects for adapters such as Reflex.
 
-        Core xy does not import or serialize framework components. The
+        Core fastcharts does not import or serialize framework components. The
         objects returned here are the exact Python objects passed to
         `fc.legend(...)` / `fc.tooltip(...)`, so an adapter can mount them while
         standalone HTML keeps using the built-in safe DOM fallback.
@@ -2069,51 +2070,105 @@ def _add_tooltip_source(
         seen.add(key)
 
 
-def _tooltip_bindings(mark: Mark, traces: list[Any]) -> list[tuple[str, str]]:
-    """Normalize data-backed mark fields to the wire fields they describe.
-
-    Tooltip aliases and explicit sources must agree about channel semantics;
-    keeping the lookup in one place prevents categorical/continuous color or
-    size handling from drifting between the two paths.
-    """
-    bindings: list[tuple[str, str]] = []
-    if isinstance(mark.x, str):
-        bindings.append((mark.x, "x"))
-    if isinstance(mark.y, str):
-        bindings.append((mark.y, "y"))
-    color = mark.props.get("color")
-    if isinstance(color, str) and not _looks_like_css(color):
-        channel = next((trace.color_ch for trace in traces if trace.color_ch is not None), None)
-        if channel is not None:
-            bindings.append(
-                (color, "color_category" if channel.mode == "categorical" else "color_value")
-            )
-    size = mark.props.get("size")
-    if isinstance(size, str):
-        channel = next((trace.size_ch for trace in traces if trace.size_ch is not None), None)
-        if channel is not None:
-            bindings.append((size, "size_value"))
-    return bindings
+def _mark_xy_channels(mark: Mark) -> tuple[str, str]:
+    """Tooltip channels for Mark.x/Mark.y. The stairs factory stores values in
+    Mark.x and edges in Mark.y, but the rendered channels are swapped (edges
+    become x positions, values become y heights)."""
+    return ("y", "x") if mark.kind == "stairs" else ("x", "y")
 
 
 def _merge_tooltip_sources(
     sources: dict[str, list[dict[str, Any]]], mark: Mark, traces: list[Any]
 ) -> None:
-    for data_field, wire_field in _tooltip_bindings(mark, traces):
-        _add_tooltip_source(sources, data_field, traces, wire_field)
+    x_channel, y_channel = _mark_xy_channels(mark)
+    if isinstance(mark.x, str):
+        _add_tooltip_source(sources, mark.x, traces, x_channel)
+    if isinstance(mark.y, str):
+        _add_tooltip_source(sources, mark.y, traces, y_channel)
     if mark.kind == "heatmap" and isinstance(mark.props.get("z"), str):
         _add_tooltip_source(sources, mark.props["z"], traces, "color_value")
+    color = mark.props.get("color")
+    if isinstance(color, str) and not _looks_like_css(color):
+        channel = next((trace.color_ch for trace in traces if trace.color_ch is not None), None)
+        if channel is not None:
+            _add_tooltip_source(
+                sources,
+                color,
+                traces,
+                "color_category" if channel.mode == "categorical" else "color_value",
+            )
+    size = mark.props.get("size")
+    if isinstance(size, str):
+        channel = next((trace.size_ch for trace in traces if trace.size_ch is not None), None)
+        if channel is not None:
+            _add_tooltip_source(sources, size, traces, "size_value")
 
 
 def _merge_tooltip_aliases(aliases: dict[str, str], mark: Mark, traces: list[Any]) -> None:
-    for data_field, wire_field in _tooltip_bindings(mark, traces):
-        aliases.setdefault(data_field, wire_field)
+    x_channel, y_channel = _mark_xy_channels(mark)
+    if isinstance(mark.x, str):
+        aliases.setdefault(mark.x, x_channel)
+    if isinstance(mark.y, str):
+        aliases.setdefault(mark.y, y_channel)
+    color = mark.props.get("color")
+    if isinstance(color, str) and not _looks_like_css(color):
+        channel = next((trace.color_ch for trace in traces if trace.color_ch is not None), None)
+        if channel is not None:
+            aliases.setdefault(
+                color,
+                "color_category" if channel.mode == "categorical" else "color_value",
+            )
+    size = mark.props.get("size")
+    if isinstance(size, str):
+        channel = next((trace.size_ch for trace in traces if trace.size_ch is not None), None)
+        if channel is not None:
+            aliases.setdefault(size, "size_value")
 
 
 def _strict_bool(value: Any, label: str) -> bool:
     if isinstance(value, (bool, np.bool_)):
         return bool(value)
     raise ValueError(f"{label} must be True or False")
+
+
+# Mark props that carry per-row data channels (besides Mark.x/Mark.y); facet
+# splitting must not let a raw length-n array slip whole into every panel.
+_FACET_CHANNEL_PROPS = ("color", "size", "upper", "yerr", "xerr", "base", "z", "x", "group")
+
+
+def _facet_check_mark_channels(mark: Mark, n: int) -> None:
+    items = [("x", mark.x), ("y", mark.y)]
+    items.extend((key, mark.props.get(key)) for key in _FACET_CHANNEL_PROPS)
+    for channel, value in items:
+        if value is None or isinstance(value, (str, bytes)) or np.isscalar(value):
+            continue
+        try:
+            length = len(value)
+        except TypeError:
+            continue
+        if length == n:
+            raise ValueError(
+                f"facet_chart cannot split raw {mark.kind} {channel}= values across "
+                "panels; pass column names with data= so each panel can subset its rows"
+            )
+
+
+def _facet_mark(mark: Mark, mask: np.ndarray, n: int) -> Mark:
+    """Panel copy of a mark: mark-level data= tables subset with the panel's
+    row mask (when row-aligned) so panels do not repeat the full dataset."""
+    if mark.data is None:
+        return mark
+    from .facets import _subset_data
+
+    return Mark(
+        kind=mark.kind,
+        x=mark.x,
+        y=mark.y,
+        data=_subset_data(mark.data, mask, n),
+        name=mark.name,
+        class_name=mark.class_name,
+        props=mark.props,
+    )
 
 
 class FacetChart(Component):
@@ -2130,6 +2185,10 @@ class FacetChart(Component):
         gap: int = 12,
         **props: Any,
     ) -> None:
+        if by is None:
+            raise TypeError(
+                "facet_chart requires by= — a column name in data= or per-row facet values"
+            )
         if (
             isinstance(cols, (bool, np.bool_))
             or not isinstance(cols, (int, np.integer))
@@ -2159,11 +2218,8 @@ class FacetChart(Component):
         data = self.props.get("data")
         if isinstance(self.by, str) and data is None:
             raise ValueError("facet_chart data is required when by is a column name")
-        raw, labels = _facet_values(data, self.by)
-        unique_labels: list[str] = []
-        for label in labels:
-            if label not in unique_labels:
-                unique_labels.append(label)
+        codes, unique_labels = _facet_values(data, self.by)
+        n = len(codes)
         width = self.props.get("width", 900)
         height = self.props.get("height", 420)
         if not isinstance(width, (int, np.integer)) or isinstance(width, (bool, np.bool_)):
@@ -2175,26 +2231,79 @@ class FacetChart(Component):
             raise ValueError("facet_chart width and height must be positive")
         panel_width = max(120, (width - (self.cols - 1) * self.gap) // self.cols)
         base_title = self.props.get("title")
-        figures: list[Figure] = []
-        for label in unique_labels:
-            mask = np.asarray([item == label for item in labels], dtype=bool)
-            panel_props = dict(self.props)
-            panel_props["data"] = _subset_data(data, mask, len(labels))
-            panel_props["width"] = panel_width
-            panel_props["height"] = height
-            panel_props["title"] = f"{base_title} · {label}" if base_title else label
-            panel = Chart("facet_panel", self.children, **panel_props)
-            figures.append(panel.figure())
-        if self.share_x:
-            lo = min(fig.x_range()[0] for fig in figures)
-            hi = max(fig.x_range()[1] for fig in figures)
+        for child in self.children:
+            if isinstance(child, Mark):
+                _facet_check_mark_channels(child, n)
+        masks = [codes == code for code in range(len(unique_labels))]
+
+        def build_panels(preseed: dict[str, list[str]]) -> list[Figure]:
+            figures: list[Figure] = []
+            for label, mask in zip(unique_labels, masks, strict=True):
+                panel_props = dict(self.props)
+                panel_props["data"] = None if data is None else _subset_data(data, mask, n)
+                panel_props["width"] = panel_width
+                panel_props["height"] = height
+                # Panel title is the facet label; the grid container renders
+                # the base title exactly once.
+                panel_props["title"] = label
+                children = tuple(
+                    _facet_mark(child, mask, n) if isinstance(child, Mark) else child
+                    for child in self.children
+                )
+                panel = Chart("facet_panel", children, **panel_props)
+                if preseed:
+                    panel._facet_axis_categories = preseed
+                figures.append(panel.figure())
+            return figures
+
+        figures = build_panels({})
+        shared_dims = [dim for dim, shared in (("x", self.share_x), ("y", self.share_y)) if shared]
+        unshareable: set[str] = set()
+        preseed: dict[str, list[str]] = {}
+        for dim in shared_dims:
+            per_panel = [fig._axis_categories.get(dim) for fig in figures]
+            if all(categories is None for categories in per_panel):
+                continue
+            if any(categories is None for categories in per_panel):
+                warnings.warn(
+                    f"facet_chart cannot share the {dim} axis: the {dim} channel is "
+                    "categorical in some panels but numeric in others; skipping "
+                    f"{dim} domain sharing",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                unshareable.add(dim)
+                continue
+            union: list[str] = []
+            seen: set[str] = set()
+            for categories in per_panel:
+                for category in categories or ():
+                    if category not in seen:
+                        seen.add(category)
+                        union.append(category)
+            if any(categories != union for categories in per_panel):
+                preseed[dim] = union
+        if preseed:
+            # Category positions commit at ingest, so panels with differing
+            # category sets must be rebuilt with the union order pre-seeded —
+            # otherwise a shared numeric domain aligns different categories
+            # at the same position.
+            figures = build_panels(preseed)
+        for dim in shared_dims:
+            if dim in unshareable:
+                continue
+            ranges = [fig.x_range() if dim == "x" else fig.y_range() for fig in figures]
+            # Reversed axes report descending (hi, lo) pairs; take the pairwise
+            # min/max so the merged domain is always increasing.
+            lo = min(min(pair) for pair in ranges)
+            hi = max(max(pair) for pair in ranges)
             for fig in figures:
-                fig.set_axis("x", domain=(lo, hi))
-        if self.share_y:
-            lo = min(fig.y_range()[0] for fig in figures)
-            hi = max(fig.y_range()[1] for fig in figures)
+                fig._set_axis_domain(dim, (lo, hi))
+        if shared_dims and not any("link_group" in fig.interaction for fig in figures):
+            # Shared-axis panels pan/zoom together in live outputs.
+            group = f"fc-facet-{uuid.uuid4().hex[:8]}"
             for fig in figures:
-                fig.set_axis("y", domain=(lo, hi))
+                fig.set_interaction(link_group=group, link_axes=tuple(shared_dims))
         self._grid = FacetGrid(
             figures,
             unique_labels,
@@ -2330,58 +2439,49 @@ def _looks_like_css(s: str) -> bool:
 
 def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
     size = m.props["size"]
-    _call_with_axis_rollback(
-        fig,
-        lambda: fig.scatter(
-            _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
-            _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
-            name=m.name,
-            color=_resolve_color(data, m.props["color"], context=f"{m.kind}.color"),
-            size=_resolve(data, size, context=f"{m.kind}.size") if isinstance(size, str) else size,
-            colormap=m.props["colormap"],
-            size_range=m.props["size_range"],
-            opacity=m.props["opacity"],
-            density=m.props["density"],
-            symbol=m.props["symbol"],
-            stroke=m.props["stroke"],
-            stroke_width=m.props["stroke_width"],
-        ),
+    fig.scatter(
+        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
+        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
+        name=m.name,
+        color=_resolve_color(data, m.props["color"], context=f"{m.kind}.color"),
+        size=_resolve(data, size, context=f"{m.kind}.size") if isinstance(size, str) else size,
+        colormap=m.props["colormap"],
+        size_range=m.props["size_range"],
+        opacity=m.props["opacity"],
+        density=m.props["density"],
+        symbol=m.props["symbol"],
+        stroke=m.props["stroke"],
+        stroke_width=m.props["stroke_width"],
     )
 
 
 def _apply_line(fig: Figure, m: Mark, data: Any) -> None:
-    _call_with_axis_rollback(
-        fig,
-        lambda: fig.line(
-            _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
-            _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
-            name=m.name,
-            color=m.props["color"],
-            width=m.props["width"],
-            opacity=m.props["opacity"],
-            curve=m.props["curve"],
-            dash=m.props["dash"],
-        ),
+    fig.line(
+        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
+        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
+        name=m.name,
+        color=m.props["color"],
+        width=m.props["width"],
+        opacity=m.props["opacity"],
+        curve=m.props["curve"],
+        dash=m.props["dash"],
     )
 
 
 def _apply_area(fig: Figure, m: Mark, data: Any) -> None:
     base = m.props["base"]
-    _call_with_axis_rollback(
-        fig,
-        lambda: fig.area(
-            _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
-            _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
-            base=_resolve(data, base, context=f"{m.kind}.base") if isinstance(base, str) else base,
-            name=m.name,
-            color=m.props["color"],
-            opacity=m.props["opacity"],
-            line_width=m.props["line_width"],
-            line_opacity=m.props["line_opacity"],
-            fill=m.props["fill"],
-            curve=m.props["curve"],
-            dash=m.props["dash"],
-        ),
+    fig.area(
+        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
+        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
+        base=_resolve(data, base, context=f"{m.kind}.base") if isinstance(base, str) else base,
+        name=m.name,
+        color=m.props["color"],
+        opacity=m.props["opacity"],
+        line_width=m.props["line_width"],
+        line_opacity=m.props["line_opacity"],
+        fill=m.props["fill"],
+        curve=m.props["curve"],
+        dash=m.props["dash"],
     )
 
 
@@ -2560,9 +2660,9 @@ def _apply_heatmap(fig: Figure, m: Mark, data: Any) -> None:
     )
 
 
-def _apply_rect_mark(fig: Figure, m: Mark, data: Any, apply: Callable[..., Any]) -> None:
+def _apply_bar(fig: Figure, m: Mark, data: Any) -> None:
     base = m.props["base"]
-    apply(
+    fig.bar(
         _resolve(data, m.x, context=f"{m.kind}.x"),
         _resolve(data, m.y, context=f"{m.kind}.y"),
         name=m.name,
@@ -2581,12 +2681,25 @@ def _apply_rect_mark(fig: Figure, m: Mark, data: Any, apply: Callable[..., Any])
     )
 
 
-def _apply_bar(fig: Figure, m: Mark, data: Any) -> None:
-    _apply_rect_mark(fig, m, data, fig.bar)
-
-
 def _apply_column(fig: Figure, m: Mark, data: Any) -> None:
-    _apply_rect_mark(fig, m, data, fig.column)
+    base = m.props["base"]
+    fig.column(
+        _resolve(data, m.x, context=f"{m.kind}.x"),
+        _resolve(data, m.y, context=f"{m.kind}.y"),
+        name=m.name,
+        color=m.props["color"],
+        colors=m.props["colors"],
+        width=m.props["width"],
+        base=_resolve(data, base, context=f"{m.kind}.base") if isinstance(base, str) else base,
+        mode=m.props["mode"],
+        orientation=m.props["orientation"],
+        series=m.props["series"],
+        opacity=m.props["opacity"],
+        corner_radius=m.props["corner_radius"],
+        stroke=m.props["stroke"],
+        stroke_width=m.props["stroke_width"],
+        fill=m.props["fill"],
+    )
 
 
 def _annotation_style(annotation: Annotation) -> dict[str, StyleValue]:

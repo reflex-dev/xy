@@ -111,8 +111,11 @@ usually wrong). Each has an explicit trigger:
   continuous / named-series), not mark kinds — a colored bar inherits swatches
   for free. *Trigger: a mark needing a swatch that isn't channel-shaped.*
 - **Decimation** (`interaction.decimate_view`): line and area-like marks use the
-  shared M4 path on first payload; segment marks use bounded geometry reduction
-  where needed. *Trigger: the first interactive view-updated non-line 1D mark
+  shared M4 path on first payload; errorbar/stem segments reduce to a
+  pixel-derived cap at emit time. Contour is NOT pixel-bounded: its segment
+  count is bounded only by grid cells × levels, so a dense grid with many
+  levels ships proportionally many segments. *Trigger: the first interactive
+  view-updated non-line 1D mark
   that needs a different reduction algebra (candlestick/OHLC, for example)* —
   open the gate into a per-kind decimator hook.
 - **The drill "real marks"** render as points (`lod` calls `_drawPoints`).

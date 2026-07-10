@@ -98,7 +98,7 @@ def test_api_example_builds_payload(heading: str, source: str) -> None:
         for panel in figure.figures:
             spec, blob = panel.build_payload()
             json.dumps(spec, allow_nan=False)
-            assert spec["traces"]
+            assert spec["traces"], f"{heading} example produced no traces"
             assert isinstance(blob, bytes)
 
 
