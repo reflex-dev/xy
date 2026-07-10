@@ -71,9 +71,7 @@ def test_fresh_import_budget_splits_third_party_and_xy_modules(
         return subprocess.CompletedProcess(
             args=[],
             returncode=0,
-            stdout=_fresh_import_stdout(
-                eager=["numpy", "xy._figure", "xy.kernels"]
-            ),
+            stdout=_fresh_import_stdout(eager=["numpy", "xy._figure", "xy.kernels"]),
             stderr="",
         )
 
@@ -83,9 +81,7 @@ def test_fresh_import_budget_splits_third_party_and_xy_modules(
 
     assert any("third-party" in error and "numpy" in error for error in errors)
     assert any(
-        "xy submodules" in error
-        and "xy._figure" in error
-        and "xy.kernels" in error
+        "xy submodules" in error and "xy._figure" in error and "xy.kernels" in error
         for error in errors
     )
 

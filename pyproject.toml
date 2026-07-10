@@ -94,6 +94,7 @@ select = [
     "SIM",           # simplify
     "RUF",
 ]
+
 ignore = [
     "E501",   # line length is the formatter's job
     # Stylistic churn we opt out of (newer-ruff additions; the codebase keeps
@@ -109,6 +110,9 @@ ignore = [
     "RUF059", # unused unpacked variable (tests unpack payloads for clarity)
     "RUF100", # unused noqa (kept for editors running broader rule sets)
 ]
+
+[tool.ruff.lint.isort]
+known-first-party = ["fastcharts", "xy"]
 
 [tool.ty.environment]
 python = ".venv"

@@ -339,9 +339,9 @@ jobs:
               raise SystemExit("expected ImportError without the native core")
           PY
 
-  # Wheel matrix (§33): a missing wheel is a build failure, not a runtime
-  # surprise. The core is a C-ABI cdylib → one `py3-none-<platform>` wheel per
-  # platform covers every CPython version.
+  # Linux and Windows wheel smoke matrix (§33). macOS wheels are built only by
+  # release.yml so pull requests do not consume macOS runners; release coverage
+  # still includes both Intel and Apple Silicon macOS wheels.
   wheels:
     name: Wheel ${{ matrix.os }}
     needs: test
@@ -349,7 +349,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-13, macos-14, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable

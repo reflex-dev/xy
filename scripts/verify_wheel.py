@@ -44,9 +44,7 @@ REQUIRED_FILES = {
     "xy/widget.py",
 }
 
-NATIVE_LIB_RE = re.compile(
-    r"^xy/_native_lib/(?:libxy_core\.(?:so|dylib)|xy_core\.dll)$"
-)
+NATIVE_LIB_RE = re.compile(r"^xy/_native_lib/(?:libxy_core\.(?:so|dylib)|xy_core\.dll)$")
 NATIVE_ARTIFACT_SUFFIXES = (".dll", ".dylib", ".pyd", ".so")
 FORBIDDEN_PARTS = {"__pycache__", "target", "node_modules", ".pytest_cache", ".ruff_cache"}
 FORBIDDEN_SUFFIXES = {".pyc", ".pyo"}

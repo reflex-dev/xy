@@ -43,12 +43,10 @@ pub fn build(x: &[f64], y: &[f64], x0: f64, x1: f64, y0: f64, y1: f64, base_dim:
     if !(x0.is_finite() && x1.is_finite() && y0.is_finite() && y1.is_finite() && x1 > x0 && y1 > y0) {
         return None;
     }
-    let mut grid_f = vec![0.0f32; base_dim * base_dim];
-    kernels::bin_2d(x, y, x0, x1, y0, y1, base_dim, base_dim, &mut grid_f);
+    let grid = kernels::bin_2d_counts(x, y, x0, x1, y0, y1, base_dim, base_dim);
     let mut levels: Vec<Vec<u32>> = Vec::new();
     let mut dims = Vec::new();
-    // bin_2d counts are exact integers in f32 up to 2^24; convert and clamp.
-    levels.push(grid_f.iter().map(|&c| c as u32).collect());
+    levels.push(grid);
     dims.push(base_dim);
     let mut dim = base_dim;
     while dim > 1 {

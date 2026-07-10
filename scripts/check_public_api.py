@@ -216,8 +216,7 @@ def validate_component_public_api(
         errors.append(f"{components_module.__name__}.__all__ is missing root exports: {missing}")
     if extra:
         errors.append(
-            f"{components_module.__name__}.__all__ contains names not exported from xy: "
-            f"{extra}"
+            f"{components_module.__name__}.__all__ contains names not exported from xy: {extra}"
         )
 
     for name in sorted(name_set):
@@ -318,9 +317,7 @@ def validate_pep561_marker(
 
 def _loaded_import_budget_modules() -> list[str]:
     return sorted(
-        name
-        for name in sys.modules
-        if name in HEAVY_THIRD_PARTY_IMPORTS or name.startswith("xy.")
+        name for name in sys.modules if name in HEAVY_THIRD_PARTY_IMPORTS or name.startswith("xy.")
     )
 
 
@@ -344,13 +341,11 @@ def _format_eager_import_findings(label: str, eager: Any) -> list[str]:
         )
     if xy_modules:
         errors.append(
-            f"{label} import xy eagerly loaded xy submodules before "
-            f"chart API use: {xy_modules}"
+            f"{label} import xy eagerly loaded xy submodules before chart API use: {xy_modules}"
         )
     if other:
         errors.append(
-            f"{label} import xy eagerly loaded unexpected modules before "
-            f"chart API use: {other}"
+            f"{label} import xy eagerly loaded unexpected modules before chart API use: {other}"
         )
     return errors
 
@@ -374,8 +369,7 @@ def _format_fresh_public_metadata_findings(label: str, result: dict[str, Any]) -
         )
     elif missing_from_dir:
         errors.append(
-            f"{label} dir(xy) is missing public names after a fresh import: "
-            f"{missing_from_dir}"
+            f"{label} dir(xy) is missing public names after a fresh import: {missing_from_dir}"
         )
     return errors
 
@@ -451,8 +445,7 @@ def check_fresh_import_budget(
         )
     elif elapsed_ms > IMPORT_BUDGET_MS:
         errors.append(
-            f"{label} import xy took {elapsed_ms:.1f} ms; "
-            f"budget is {IMPORT_BUDGET_MS:.0f} ms"
+            f"{label} import xy took {elapsed_ms:.1f} ms; budget is {IMPORT_BUDGET_MS:.0f} ms"
         )
     if not result.get("version"):
         errors.append(f"{label} fresh import-budget probe did not expose xy.__version__")

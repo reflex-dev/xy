@@ -383,6 +383,68 @@ pub(crate) fn bin_2d_count_scalar(
     }
 }
 
+/// Integer-count variant used by the tile pyramid. Keeping the first grid in
+/// its native representation avoids allocating a large f32 grid only to
+/// convert every cell back to u32 before building pyramid levels.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn bin_2d_counts(
+    x: &[f64],
+    y: &[f64],
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+) -> Vec<u32> {
+    let n = x.len();
+    let threads = par_threads(n);
+    if threads <= 1 || n < threads {
+        let mut grid = vec![0u32; w * h];
+        bin_2d_count(x, y, x0, x1, y0, y1, w, h, &mut grid);
+        return grid;
+    }
+
+    let chunk = n.div_ceil(threads);
+    let grids: Vec<Vec<u32>> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..threads)
+            .map(|t| {
+                let lo = (t * chunk).min(n);
+                let hi = ((t + 1) * chunk).min(n);
+                let (xs, ys) = (&x[lo..hi], &y[lo..hi]);
+                s.spawn(move || {
+                    let mut grid = vec![0u32; w * h];
+                    bin_2d_count(xs, ys, x0, x1, y0, y1, w, h, &mut grid);
+                    grid
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|hd| hd.join().expect("bin_2d worker panicked"))
+            .collect()
+    });
+
+    let mut grid = vec![0u32; w * h];
+    let cell_chunk = (w * h).div_ceil(threads);
+    let grids_ref = &grids;
+    std::thread::scope(|s| {
+        for (ci, out) in grid.chunks_mut(cell_chunk).enumerate() {
+            let base = ci * cell_chunk;
+            s.spawn(move || {
+                for (j, cell) in out.iter_mut().enumerate() {
+                    *cell = grids_ref
+                        .iter()
+                        .map(|g| g[base + j] as u64)
+                        .sum::<u64>()
+                        .min(u32::MAX as u64) as u32;
+                }
+            });
+        }
+    });
+    grid
+}
+
 /// Exact integer counts, converted to f32 once at the end. This is bitwise
 /// deterministic for ANY thread count (integer sums are associative), and
 /// strictly better than the old serial `f32 += 1.0`, which silently stalled
