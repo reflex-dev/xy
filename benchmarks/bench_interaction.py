@@ -639,7 +639,55 @@ def _flatten_probe_metrics(row: dict[str, Any], result: dict[str, Any]) -> None:
         row[f"{name}_reps"] = stats.get("reps")
 
 
-def run(*, sizes: list[int], reps: int, chromium: str | None = None) -> dict[str, Any]:
+# Virtual-time budget for the interaction probe pages. The default 15s is
+# plenty on developer hardware, but CI runs WebGL through SwiftShader on
+# shared runners, where the density scenario's reps can outlive it — the
+# probe then never writes its marker title and the row reports
+# "failed(no probe title)". Virtual time advances instantly once the page
+# goes idle, so a large budget costs nothing when the probe finishes early.
+# The wall-clock ceiling has the same failure mode — CI has produced
+# "failed(timeout)" for the density scenario at the default 180s — so it
+# gets matching headroom; a healthy probe never comes near either limit.
+PROBE_VIRTUAL_TIME_MS = 120_000
+PROBE_TIMEOUT_S = 600
+
+
+def _probe_with_retries(
+    html: str, *, chromium: str | None, scenario: str, retries: int
+) -> dict[str, Any]:
+    """One probe run, re-launched on a non-ok status up to `retries` times.
+
+    Headless-Chromium probes have environmental failure modes (budget
+    exhaustion, GPU init hiccups) that a fresh launch resolves; a genuine
+    client regression fails every attempt. Retries are printed, never
+    silent (§28: every reliability decision is recorded)."""
+    result = run_json_probe(
+        html,
+        marker="FC_INTERACTION",
+        chromium=chromium,
+        virtual_time_ms=PROBE_VIRTUAL_TIME_MS,
+        timeout_s=PROBE_TIMEOUT_S,
+    )
+    attempts = 1
+    while result.get("status") != "ok" and attempts <= retries:
+        print(
+            f"interaction probe retry {attempts}/{retries} for {scenario}: {result.get('status')}",
+            file=sys.stderr,
+        )
+        result = run_json_probe(
+            html,
+            marker="FC_INTERACTION",
+            chromium=chromium,
+            virtual_time_ms=PROBE_VIRTUAL_TIME_MS,
+            timeout_s=PROBE_TIMEOUT_S,
+        )
+        attempts += 1
+    return result
+
+
+def run(
+    *, sizes: list[int], reps: int, chromium: str | None = None, retries: int = 0
+) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     for n in sizes:
         fig = _scatter_figure(n)
@@ -663,7 +711,9 @@ def run(*, sizes: list[int], reps: int, chromium: str | None = None) -> dict[str
             title="fastcharts interaction probe",
         )
         row["html_bytes"] = len(html.encode("utf-8"))
-        result = run_json_probe(html, marker="FC_INTERACTION", chromium=chromium)
+        result = _probe_with_retries(
+            html, chromium=chromium, scenario=row["scenario"], retries=retries
+        )
         _flatten_probe_metrics(row, result)
         rows.append(row)
 
@@ -686,7 +736,9 @@ def run(*, sizes: list[int], reps: int, chromium: str | None = None) -> dict[str
             title=f"fastcharts {case['scenario']} probe",
         )
         row["html_bytes"] = len(html.encode("utf-8"))
-        result = run_json_probe(html, marker="FC_INTERACTION", chromium=chromium)
+        result = _probe_with_retries(
+            html, chromium=chromium, scenario=case["scenario"], retries=retries
+        )
         _flatten_probe_metrics(row, result)
         rows.append(row)
 
@@ -813,9 +865,20 @@ def main() -> None:
     parser.add_argument("--chromium", default=None)
     parser.add_argument("--out", default=None, help="write Markdown report here")
     parser.add_argument("--json", default=None, help="write JSON report here")
+    parser.add_argument(
+        "--retries",
+        type=int,
+        default=0,
+        help="per-scenario probe relaunches on a non-ok status (for shared CI runners)",
+    )
     args = parser.parse_args()
 
-    report = run(sizes=_parse_sizes(args.sizes), reps=args.reps, chromium=args.chromium)
+    report = run(
+        sizes=_parse_sizes(args.sizes),
+        reps=args.reps,
+        chromium=args.chromium,
+        retries=args.retries,
+    )
     md = to_markdown(report)
     print(md)
     if args.out:

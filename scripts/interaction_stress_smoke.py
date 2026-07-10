@@ -41,6 +41,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--chromium", dest="chromium_flag", default=None)
     parser.add_argument("--sizes", default="1e4,2.5e5")
     parser.add_argument("--reps", type=int, default=12)
+    parser.add_argument(
+        "--retries",
+        type=int,
+        default=2,
+        help="per-scenario probe relaunches on a non-ok status (headless "
+        "Chromium on shared runners has environmental failure modes a fresh "
+        "launch resolves; a real regression fails every attempt)",
+    )
     parser.add_argument("--json", default=None, help="write the validated JSON report here")
     parser.add_argument("--markdown", default=None, help="write the Markdown report here")
     args = parser.parse_args(argv)
@@ -51,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
         sizes=bench_interaction._parse_sizes(args.sizes),
         reps=args.reps,
         chromium=chromium,
+        retries=args.retries,
     )
     with tempfile.TemporaryDirectory() as td:
         report_path = Path(td) / "interaction.json"
@@ -68,6 +77,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {error}", file=sys.stderr)
         if len(errors) > 20:
             print(f"  ... {len(errors) - 20} more errors", file=sys.stderr)
+        # The report JSON is not kept in CI, so surface every non-ok row's
+        # status here — this is the only diagnostic a failed run leaves.
+        for row in report.get("rows", []):
+            status = row.get("status")
+            if status != "ok":
+                print(f"  - scenario {row.get('scenario')!r}: status={status!r}", file=sys.stderr)
         return 1
 
     print(
