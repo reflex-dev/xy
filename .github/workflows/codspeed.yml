@@ -47,7 +47,7 @@ jobs:
           PY
 
       - name: Run benchmarks
-        uses: CodSpeedHQ/action@9f3a37ece7abc84992501a7fcd54d1704f3458fa # v4
+        uses: CodSpeedHQ/action@4bee4eada46987d4607fc208971a36367352b83d # v4
         with:
           mode: simulation
           run: .venv/bin/python -m pytest benchmarks/test_codspeed_kernels.py --codspeed
