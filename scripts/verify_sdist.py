@@ -75,6 +75,7 @@ REQUIRED_FILES = {
     "python/fastcharts/config.py",
     "python/fastcharts/export.py",
     "python/fastcharts/figure.py",
+    "python/fastcharts/channel.py",
     "python/fastcharts/interaction.py",
     "python/fastcharts/kernels.py",
     "python/fastcharts/lod.py",

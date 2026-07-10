@@ -14,6 +14,7 @@ HEAVY_MODULES = {
     "reflex_core",
     "traitlets",
     "fastcharts.channels",
+    "fastcharts.channel",
     "fastcharts.columns",
     "fastcharts.components",
     "fastcharts.figure",
@@ -340,5 +341,23 @@ def test_column_factory_does_not_shadow_columns_submodule() -> None:
             pass
         else:
             raise AssertionError("fastcharts.column must stay the public factory, not a submodule")
+        """
+    )
+
+
+def test_channel_dispatcher_loads_without_widget_stack() -> None:
+    """The Reflex-forward guarantee: a server transport can drive
+    channel.handle_message with no anywidget/traitlets installed."""
+    _run_fresh(
+        """
+        import sys
+
+        from fastcharts.channel import ChannelCallbacks, handle_message
+
+        assert callable(handle_message)
+        assert ChannelCallbacks() == ChannelCallbacks()
+        assert "fastcharts.widget" not in sys.modules
+        assert "anywidget" not in sys.modules
+        assert "traitlets" not in sys.modules
         """
     )

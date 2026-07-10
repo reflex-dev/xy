@@ -34,6 +34,7 @@ HEAVY_THIRD_PARTY_IMPORTS = {
 }
 HEAVY_FASTCHARTS_IMPORTS = {
     "fastcharts.channels",
+    "fastcharts.channel",
     "fastcharts.columns",
     "fastcharts.components",
     "fastcharts.figure",
