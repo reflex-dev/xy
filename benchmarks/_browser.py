@@ -1,6 +1,6 @@
 """Headless-Chromium chart-ready measurement.
 
-For browser-rendered charts (fastcharts, Plotly-HTML, Bokeh, Altair, hvPlot) the
+For browser-rendered charts (xy, Plotly-HTML, Bokeh, Altair, hvPlot) the
 static-export byte count says nothing about how long the *browser* takes to parse
 the embedded JS, build the scene graph, and paint. This measures that by waiting
 for a visible chart canvas/SVG/image. Page-level FCP is
@@ -44,7 +44,7 @@ _PROBE = """
     return null;
   }
   function visibleChartSurface() {
-    var nodes = document.querySelectorAll('.fastcharts canvas,.js-plotly-plot canvas,' +
+    var nodes = document.querySelectorAll('.xy canvas,.js-plotly-plot canvas,' +
       '.js-plotly-plot svg,.bk-root canvas,.bk-root svg,canvas,svg,img');
     for (var i = 0; i < nodes.length; i++) {
       var node = nodes[i];
@@ -93,7 +93,7 @@ def find_chromium(explicit: str | None = None) -> str | None:
 
 
 def chromium_gl_flags() -> list[str]:
-    if os.environ.get("FASTCHARTS_BENCH_HARDWARE_GL") == "1":
+    if os.environ.get("XY_BENCH_HARDWARE_GL") == "1":
         return []
     return ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"]
 

@@ -1,11 +1,11 @@
-# matplotlib compatibility (`fastcharts.pyplot`)
+# matplotlib compatibility (`xy.pyplot`)
 
 ```python
-import fastcharts.pyplot as plt   # the one-line change
+import xy.pyplot as plt   # the one-line change
 ```
 
-`fastcharts.pyplot` is a shim over the declarative composition API: every
-call translates onto `fastcharts.chart(...)` and friends, so shim charts get
+`xy.pyplot` is a shim over the declarative composition API: every
+call translates onto `xy.chart(...)` and friends, so shim charts get
 the same engine — native Rust compute, binary transport, WebGL2 rendering,
 screen-bounded cost — with matplotlib's calling conventions.
 
@@ -43,7 +43,7 @@ CI executes every snippet, so this table cannot drift ahead of reality.
 | Colors | single letters, `C0`–`C9`, `tab:*`, gray `'0.5'`, RGB(A) tuples, any CSS color |
 | `plt.cm.*` / `cmap=` names | viridis, plasma, inferno, magma, cividis, gray, turbo, coolwarm (+ aliases; `*_r` renders unreversed) |
 | `rcParams` | `figure.figsize`, `figure.dpi`, `lines.linewidth`, `lines.markersize`, `axes.grid`; unknown keys warn once and are ignored |
-| `plt.style.use("fastcharts")` | switches from the matplotlib-flavored default theme to the engine-native look |
+| `plt.style.use("xy")` | switches from the matplotlib-flavored default theme to the engine-native look |
 
 ## Not supported (raises `NotImplementedError` pointing here)
 
@@ -68,6 +68,6 @@ naming the offending keyword — nothing is silently dropped.
 
 ## Boundaries (enforced by `tests/pyplot/test_boundaries.py`)
 
-The shim lives entirely in `python/fastcharts/pyplot/`; no engine module
-imports it, importing `fastcharts` never loads it, and importing the shim
+The shim lives entirely in `python/xy/pyplot/`; no engine module
+imports it, importing `xy` never loads it, and importing the shim
 never loads the widget stack or real matplotlib.

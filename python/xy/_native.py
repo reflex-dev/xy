@@ -5,7 +5,7 @@ pointers directly — zero copies across the Python/Rust boundary (§4: one
 physical copy of every value; §29: in-process transport is 0-copy).
 
 This module raises ImportError if the library is missing or ABI-mismatched;
-`fastcharts.kernels` re-raises that with remediation guidance. There is no
+`xy.kernels` re-raises that with remediation guidance. There is no
 pure-Python fallback — the native core is required (§33: no-wheel behavior is
 defined, and it is a loud failure, never a silent degrade).
 """
@@ -37,16 +37,16 @@ _USIZE_MAX = ctypes.c_size_t(-1).value
 
 def _lib_filename() -> str:
     if sys.platform == "win32":
-        return "fastcharts_core.dll"
+        return "xy_core.dll"
     if sys.platform == "darwin":
-        return "libfastcharts_core.dylib"
-    return "libfastcharts_core.so"
+        return "libxy_core.dylib"
+    return "libxy_core.so"
 
 
 def _find_library() -> Path:
     name = _lib_filename()
     candidates = []
-    env = os.environ.get("FASTCHARTS_NATIVE_LIB")
+    env = os.environ.get("XY_NATIVE_LIB")
     if env:
         candidates.append(Path(env))
     here = Path(__file__).resolve().parent
@@ -59,9 +59,9 @@ def _find_library() -> Path:
         if c.exists():
             return c
     raise ImportError(
-        f"fastcharts native core not found (looked for {name} in "
+        f"xy native core not found (looked for {name} in "
         f"{[str(c) for c in candidates]}). No prebuilt wheel exists for this "
-        "platform — see the fastcharts README for supported platforms, or build "
+        "platform — see the xy README for supported platforms, or build "
         "from source with `cargo build --release`."
     )
 
@@ -74,8 +74,8 @@ def _load() -> ctypes.CDLL:
     got = lib.fc_abi_version()
     if got != ABI_VERSION:
         raise ImportError(
-            f"fastcharts native core ABI mismatch: python wrapper expects "
-            f"{ABI_VERSION}, library reports {got}. Reinstall fastcharts so the "
+            f"xy native core ABI mismatch: python wrapper expects "
+            f"{ABI_VERSION}, library reports {got}. Reinstall xy so the "
             "wheel and package versions match."
         )
 
@@ -398,7 +398,7 @@ def zone_maps(
         raise ValueError("invalid zone_maps arguments")
     if written != n_chunks:
         raise RuntimeError(
-            f"fastcharts native zone_maps wrote {written} chunks, expected {n_chunks}"
+            f"xy native zone_maps wrote {written} chunks, expected {n_chunks}"
         )
     return mins, maxs, counts, nulls, sums, sum_sqs, positive_mins, positive_maxs
 
@@ -415,7 +415,7 @@ def encode_f32(
     out = np.empty(len(data), dtype=np.float32)
     ok = _lib.fc_encode_f32(_ptr_f64(data), len(data), offset, scale, out.ctypes.data)
     if ok != 1:
-        raise RuntimeError("fastcharts native encode_f32 failed (output undefined)")
+        raise RuntimeError("xy native encode_f32 failed (output undefined)")
     return out
 
 
@@ -602,7 +602,7 @@ def normalize_f32(
     if len(data):
         ok = _lib.fc_normalize_f32(_ptr_f64(data), len(data), lo, hi, nan_mode, out.ctypes.data)
         if ok != 1:
-            raise RuntimeError("fastcharts native normalize_f32 failed (output undefined)")
+            raise RuntimeError("xy native normalize_f32 failed (output undefined)")
     return out
 
 
@@ -663,7 +663,7 @@ def sample_mask(
             out.ctypes.data,
         )
         if ok != 1:
-            raise RuntimeError("fastcharts native sample_mask failed (output undefined)")
+            raise RuntimeError("xy native sample_mask failed (output undefined)")
     return out.view(np.bool_)
 
 
@@ -679,7 +679,7 @@ def stratified_sample_mask(
 
     Per-category keep fractions scale as `min(1, fraction * sqrt(n / count))`
     with a `min_count` lowest-hash floor per category. Bit-identical to the
-    per-category NumPy reference in `fastcharts.lod` (asserted by the parity
+    per-category NumPy reference in `xy.lod` (asserted by the parity
     test), fused into one native pass instead of O(n · n_groups) rescans.
     """
     ids = np.ascontiguousarray(ids, dtype=np.uint64)

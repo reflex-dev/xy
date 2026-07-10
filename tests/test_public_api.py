@@ -63,7 +63,7 @@ def test_fresh_import_budget_rejects_eager_modules(monkeypatch: pytest.MonkeyPat
     assert any("third-party" in error and "numpy" in error for error in errors)
 
 
-def test_fresh_import_budget_splits_third_party_and_fastcharts_modules(
+def test_fresh_import_budget_splits_third_party_and_xy_modules(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fake_run(*args, **kwargs):
@@ -72,7 +72,7 @@ def test_fresh_import_budget_splits_third_party_and_fastcharts_modules(
             args=[],
             returncode=0,
             stdout=_fresh_import_stdout(
-                eager=["numpy", "fastcharts._figure", "fastcharts.kernels"]
+                eager=["numpy", "xy._figure", "xy.kernels"]
             ),
             stderr="",
         )
@@ -83,9 +83,9 @@ def test_fresh_import_budget_splits_third_party_and_fastcharts_modules(
 
     assert any("third-party" in error and "numpy" in error for error in errors)
     assert any(
-        "fastcharts submodules" in error
-        and "fastcharts._figure" in error
-        and "fastcharts.kernels" in error
+        "xy submodules" in error
+        and "xy._figure" in error
+        and "xy.kernels" in error
         for error in errors
     )
 
@@ -116,7 +116,7 @@ def test_all_import_budgets_probe_default(
 
     def fake_run(*args, **kwargs):
         del args
-        seen.append(kwargs["env"].get("FASTCHARTS_FORCE_FALLBACK"))
+        seen.append(kwargs["env"].get("XY_FORCE_FALLBACK"))
         return subprocess.CompletedProcess(
             args=[],
             returncode=0,
@@ -192,8 +192,8 @@ def test_fresh_import_budget_probes_public_metadata(
     errors = check_public_api.check_fresh_import_budget()
 
     assert errors == []
-    assert "fastcharts.__all__" in seen_code
-    assert "dir(fastcharts)" in seen_code
+    assert "xy.__all__" in seen_code
+    assert "dir(xy)" in seen_code
 
 
 def test_fresh_import_budget_rejects_invalid_public_all(
@@ -231,11 +231,11 @@ def test_fresh_import_budget_rejects_dir_public_name_drift(
 
     errors = check_public_api.check_fresh_import_budget()
 
-    assert any("dir(fastcharts)" in error and "scatter_chart" in error for error in errors)
+    assert any("dir(xy)" in error and "scatter_chart" in error for error in errors)
 
 
 def test_public_api_checker_rejects_stale_all_entry() -> None:
-    fake = ModuleType("fastcharts")
+    fake = ModuleType("xy")
     fake.__all__ = ["Figure", "__version__", "old_name"]
     fake._EXPORTS = {"Figure": ".figure"}
 
@@ -245,7 +245,7 @@ def test_public_api_checker_rejects_stale_all_entry() -> None:
 
 
 def test_public_api_checker_rejects_missing_all_entry() -> None:
-    fake = ModuleType("fastcharts")
+    fake = ModuleType("xy")
     fake.__all__ = ["__version__"]
     fake._EXPORTS = {"Figure": ".figure"}
 
@@ -255,14 +255,14 @@ def test_public_api_checker_rejects_missing_all_entry() -> None:
 
 
 def test_public_api_checker_accepts_component_module_all() -> None:
-    fake = ModuleType("fastcharts")
+    fake = ModuleType("xy")
     fake._EXPORTS = {
         "CHART_DOM_SLOTS": ".dom",
         "Chart": ".components",
         "scatter": ".components",
         "Figure": ".figure",
     }
-    fake_components = ModuleType("fastcharts.components")
+    fake_components = ModuleType("xy.components")
     fake_components.__all__ = ["CHART_DOM_SLOTS", "Chart", "scatter"]
     fake_components.CHART_DOM_SLOTS = ()
     fake_components.Chart = object()
@@ -274,11 +274,11 @@ def test_public_api_checker_accepts_component_module_all() -> None:
 
 
 def _fake_declarative_modules() -> tuple[ModuleType, ModuleType]:
-    fake = ModuleType("fastcharts")
+    fake = ModuleType("xy")
     fake.__all__ = ["__version__", *check_public_api.DECLARATIVE_API_EXPORTS]
     fake._EXPORTS = {name: ".components" for name in check_public_api.DECLARATIVE_API_EXPORTS}
 
-    fake_components = ModuleType("fastcharts.components")
+    fake_components = ModuleType("xy.components")
     fake_components.__all__ = list(check_public_api.DECLARATIVE_API_EXPORTS)
     for name in check_public_api.DECLARATIVE_API_EXPORTS:
         setattr(fake_components, name, object())
@@ -310,9 +310,9 @@ def test_public_api_checker_rejects_missing_declarative_export() -> None:
 
     errors = check_public_api.validate_declarative_api_contract(fake, fake_components)
 
-    assert any("tooltip" in error and "fastcharts.__all__" in error for error in errors)
+    assert any("tooltip" in error and "xy.__all__" in error for error in errors)
     assert any("tooltip" in error and "'.components'" in error for error in errors)
-    assert any("tooltip" in error and "fastcharts.components.__all__" in error for error in errors)
+    assert any("tooltip" in error and "xy.components.__all__" in error for error in errors)
     assert any("tooltip" in error and "undefined" in error for error in errors)
     assert any("html" in error and "readout" in error for error in errors)
 
@@ -329,9 +329,9 @@ def test_public_api_checker_rejects_misrouted_declarative_export() -> None:
 
 
 def test_public_api_checker_rejects_stale_component_module_all() -> None:
-    fake = ModuleType("fastcharts")
+    fake = ModuleType("xy")
     fake._EXPORTS = {"Chart": ".components", "scatter": ".components", "line": ".components"}
-    fake_components = ModuleType("fastcharts.components")
+    fake_components = ModuleType("xy.components")
     fake_components.__all__ = ["Chart", "scatter", "old_name", "missing_value"]
     fake_components.Chart = object()
     fake_components.scatter = object()
@@ -340,12 +340,12 @@ def test_public_api_checker_rejects_stale_component_module_all() -> None:
     errors = check_public_api.validate_component_public_api(fake, fake_components)
 
     assert any("line" in error and "missing root exports" in error for error in errors)
-    assert any("old_name" in error and "not exported from fastcharts" in error for error in errors)
+    assert any("old_name" in error and "not exported from xy" in error for error in errors)
     assert any("missing_value" in error and "undefined name" in error for error in errors)
 
 
 def test_public_api_checker_accepts_matching_project_version(tmp_path: Path) -> None:
-    fake = ModuleType("fastcharts")
+    fake = ModuleType("xy")
     fake.__version__ = "1.2.3"
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
@@ -356,7 +356,7 @@ def test_public_api_checker_accepts_matching_project_version(tmp_path: Path) -> 
 
 
 def test_public_api_checker_rejects_version_mismatch(tmp_path: Path) -> None:
-    fake = ModuleType("fastcharts")
+    fake = ModuleType("xy")
     fake.__version__ = "1.2.3"
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text('[project]\nversion = "1.2.4"\n', encoding="utf-8")
@@ -367,7 +367,7 @@ def test_public_api_checker_rejects_version_mismatch(tmp_path: Path) -> None:
 
 
 def test_public_api_checker_rejects_missing_public_version(tmp_path: Path) -> None:
-    fake = ModuleType("fastcharts")
+    fake = ModuleType("xy")
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
 
@@ -377,7 +377,7 @@ def test_public_api_checker_rejects_missing_public_version(tmp_path: Path) -> No
 
 
 def test_public_api_checker_rejects_unreadable_project_version(tmp_path: Path) -> None:
-    fake = ModuleType("fastcharts")
+    fake = ModuleType("xy")
     fake.__version__ = "1.2.3"
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text("[project\n", encoding="utf-8")

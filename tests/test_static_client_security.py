@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastcharts.components import CHART_DOM_SLOTS
+from xy.components import CHART_DOM_SLOTS
 
 ROOT = Path(__file__).resolve().parents[1]
-_STATIC = ROOT / "python" / "fastcharts" / "static"
+_STATIC = ROOT / "python" / "xy" / "static"
 
 
 def _read(path: Path) -> str:
@@ -39,19 +39,19 @@ def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
     the elements must carry only structural inline styles (no inline
     background/color that would beat a utility class)."""
     where_rules = (
-        ':where(.fastcharts [data-fc-slot="tooltip"]){',
-        ':where(.fastcharts [data-fc-slot="legend"]){',
-        ':where(.fastcharts [data-fc-slot="legend_swatch"]){',
-        ':where(.fastcharts [data-fc-slot="modebar"]){',
-        ':where(.fastcharts [data-fc-slot="modebar_button"]){',
-        ':where(.fastcharts [data-fc-slot="modebar_button"].fc-active){',
-        ':where(.fastcharts [data-fc-slot="selection"]){',
-        ':where(.fastcharts [data-fc-slot="badge_item"]){',
-        ':where(.fastcharts [data-fc-slot="tick_label"]){',
-        ':where(.fastcharts [data-fc-slot="axis_title"]){',
-        ':where(.fastcharts [data-fc-slot="annotation_label"]){',
-        ':where(.fastcharts [data-fc-slot="canvas"]){cursor:',
-        ':where(.fastcharts [data-fc-slot="canvas"][data-fc-dragmode="pan"]){cursor:',
+        ':where(.xy [data-fc-slot="tooltip"]){',
+        ':where(.xy [data-fc-slot="legend"]){',
+        ':where(.xy [data-fc-slot="legend_swatch"]){',
+        ':where(.xy [data-fc-slot="modebar"]){',
+        ':where(.xy [data-fc-slot="modebar_button"]){',
+        ':where(.xy [data-fc-slot="modebar_button"].fc-active){',
+        ':where(.xy [data-fc-slot="selection"]){',
+        ':where(.xy [data-fc-slot="badge_item"]){',
+        ':where(.xy [data-fc-slot="tick_label"]){',
+        ':where(.xy [data-fc-slot="axis_title"]){',
+        ':where(.xy [data-fc-slot="annotation_label"]){',
+        ':where(.xy [data-fc-slot="canvas"]){cursor:',
+        ':where(.xy [data-fc-slot="canvas"][data-fc-dragmode="pan"]){cursor:',
     )
     tokens = (
         "--chart-tooltip-bg",
@@ -189,7 +189,7 @@ def test_standalone_tooltips_retain_encoded_color_and_size_channels() -> None:
         ), f"{path} drops size_value"
 
     standalone = (ROOT / "js/src/60_entries.js").read_text(encoding="utf-8")
-    generated = (ROOT / "python/fastcharts/static/standalone.js").read_text(encoding="utf-8")
+    generated = (ROOT / "python/xy/static/standalone.js").read_text(encoding="utf-8")
     for text in (standalone, generated):
         assert "g._cpu.color = column(g.trace.color.buf);" in text
         assert "g._cpu.size = column(g.trace.size.buf);" in text
@@ -215,13 +215,13 @@ def test_client_can_suppress_builtin_tooltip_for_framework_chrome() -> None:
 def test_client_exposes_first_class_interaction_events() -> None:
     required = (
         "this.interaction = spec.interaction || {};",
-        "new CustomEvent(`fastcharts:${name}`",
+        "new CustomEvent(`xy:${name}`",
         'this._dispatchChartEvent("click", detail);',
         'this._dispatchChartEvent("brush",',
         'this._dispatchChartEvent("select",',
         'this.comm.send({ type: "view_change", ...detail });',
         'const msg = { type: "click", trace: hit.trace, index: hit.index };',
-        "new BroadcastChannel(`fastcharts:${group}`)",
+        "new BroadcastChannel(`xy:${group}`)",
     )
 
     for path, text in CLIENT_FILES:
@@ -339,8 +339,8 @@ def test_client_refreshes_and_destroys_density_sample_overlays() -> None:
 
     lod_files = (
         ROOT / "js/src/45_lod.js",
-        ROOT / "python/fastcharts/static/index.js",
-        ROOT / "python/fastcharts/static/standalone.js",
+        ROOT / "python/xy/static/index.js",
+        ROOT / "python/xy/static/standalone.js",
     )
     for path in lod_files:
         text = path.read_text(encoding="utf-8")
@@ -583,7 +583,7 @@ def test_standalone_csp_allows_blob_workers_and_matches_smoke() -> None:
     """worker-src must be exactly blob: (the bundled re-bin worker) — no
     external worker scripts — and the render smoke must exercise the same
     policy string so its probes prove production behavior."""
-    from fastcharts.export import _STANDALONE_CSP
+    from xy.export import _STANDALONE_CSP
 
     assert "worker-src blob:; " in _STANDALONE_CSP
     smoke = (ROOT / "scripts" / "render_smoke_nonumpy.py").read_text(encoding="utf-8")

@@ -2,20 +2,20 @@
 
 Status: **design** (validated in part by the working prototype in
 `examples/reflex/`). The deliverable is an external Reflex adapter
-package (working name: `reflex-fastcharts`) that makes a fastcharts figure a
+package (working name: `reflex-xy`) that makes a xy figure a
 first-class Reflex component with the same performance contract as the notebook
 path: screen-bounded binary wire (§29), kernel-side canonical data (§27),
 stale-while-revalidate interaction (§17). The adapter dependency budget is
 strict: no Reflex dependency if practical, otherwise only a supported
 core/component Reflex package unless full Reflex is proven necessary. Full
 `reflex` is acceptable for demo apps and user application code, but not as a
-default dependency of `fastcharts`, and not as the adapter default unless a
+default dependency of `xy`, and not as the adapter default unless a
 smaller public integration surface cannot work.
 
 ## 1. What the prototype proved, and what it fudged
 
 `examples/reflex/` (the demo dashboard) bridges with `Figure.to_html()`
-iframes plus one hand-rolled `POST /api/fastcharts/drilldown` route serving a
+iframes plus one hand-rolled `POST /api/xy/drilldown` route serving a
 100M-point drilldown chart. It proves the load-bearing claim: **the kernel-side
 Figure can serve a browser client over plain HTTP with in-frame-budget
 latency** — the client's `ChartView` takes any `comm` object with
@@ -26,7 +26,7 @@ It also shows exactly what a real integration must fix:
 | Prototype shortcut | Real integration |
 |---|---|
 | buffers as **base64 inside JSON** (~33% overhead + megabyte JSON strings — against the §29 spirit) | length-prefixed binary responses (`application/octet-stream`) |
-| message dispatcher **hand-copied** from `widget.py` | one shared dispatcher in `fastcharts` proper (§3.1) |
+| message dispatcher **hand-copied** from `widget.py` | one shared dispatcher in `xy` proper (§3.1) |
 | **one global figure** behind a module lock | a session-scoped figure registry (§4) |
 | iframe + static HTML file per chart | a real `rx.Component` mounting `ChartView` directly (§5) |
 
@@ -41,7 +41,7 @@ wrong for data buffers. So the integration splits every chart into:
   These go through normal Reflex event handlers so app code composes the
   usual way. Row dicts and selection summaries are small by construction —
   never data buffers.
-- **Data plane (fastcharts-native, high-frequency, binary).** Initial payload,
+- **Data plane (xy-native, high-frequency, binary).** Initial payload,
   `density_view`/`view`/`pick`/`select` round-trips, and streaming `append`
   pushes, on dedicated backend routes mounted next to the Reflex API. Reflex
   state never sees a data byte, so state diffing cost is independent of data
@@ -51,7 +51,7 @@ This preserves every dossier invariant without asking Reflex to change: the
 figure kernel doesn't know it's inside Reflex, and Reflex doesn't know the
 chart ships megabytes.
 
-## 3. What lands in `fastcharts` (transport-agnostic)
+## 3. What lands in `xy` (transport-agnostic)
 
 ### 3.1 Factor the message dispatcher out of `widget.py`
 
@@ -59,7 +59,7 @@ Today the anywidget `_on_custom_msg` inlines the message→handler routing, and
 the prototype re-implements it. Extract:
 
 ```python
-# fastcharts/channel.py
+# xy/channel.py
 def handle_message(fig: Figure, content: dict) -> tuple[dict, list[bytes]] | None:
     """One kernel-side dispatcher for every transport: anywidget, Reflex
     routes, and anything else. Returns (reply_message, buffers) or None
@@ -84,13 +84,13 @@ JSON parse on the main thread.
 
 ## 4. What lands in the Reflex adapter package
 
-Dependency direction: adapter package → `fastcharts`; `fastcharts` itself stays
+Dependency direction: adapter package → `xy`; `xy` itself stays
 Reflex-free (existing CLAUDE.md rule; also why `components.py` — the
 Reflex-flavored composition API — imports nothing).
 
 The adapter must use the smallest supported Reflex dependency surface:
 
-- Required for `fastcharts`: no Reflex dependency of any kind.
+- Required for `xy`: no Reflex dependency of any kind.
 - Best for the adapter: no hard Reflex dependency; expose registry/data-plane helpers and a
   component declaration that works when a Reflex app already has Reflex
   installed.
@@ -98,8 +98,8 @@ The adapter must use the smallest supported Reflex dependency surface:
   publishes one.
 - Last resort: depend on full `reflex`, with the reason documented and isolated
   to an explicit adapter extra or app package. Full Reflex must never become a
-  transitive dependency of `fastcharts`, and should not be the default
-  `reflex-fastcharts` install unless there is no supported smaller API.
+  transitive dependency of `xy`, and should not be the default
+  `reflex-xy` install unless there is no supported smaller API.
 
 ### 4.1 Figure registry
 
@@ -132,9 +132,9 @@ Mounted on Reflex's FastAPI app by `rfc.setup(app)` (the prototype proves
 available):
 
 ```
-GET  /_fastcharts/{token}/payload          → framed spec+blob   (ETag: version)
-POST /_fastcharts/{token}/msg              → handle_message()   (framed reply)
-GET  /_fastcharts/{token}/events           → SSE stream of append/version pushes
+GET  /_xy/{token}/payload          → framed spec+blob   (ETag: version)
+POST /_xy/{token}/msg              → handle_message()   (framed reply)
+GET  /_xy/{token}/events           → SSE stream of append/version pushes
 ```
 
 `payload` is cacheable by version — a re-render after an unrelated state
@@ -146,7 +146,7 @@ client code (rebuild affected traces + follow policy).
 ### 4.3 The component
 
 ```python
-import reflex_fastcharts as rfc
+import reflex_xy as rfc
 
 class Dash(rx.State):
     chart: str = ""                      # figure token — the ONLY chart state
@@ -209,8 +209,8 @@ fed by a background task. This is the acceptance bar for the whole design —
 ```python
 import numpy as np
 import reflex as rx
-import fastcharts as fc
-import reflex_fastcharts as rfc
+import xy as fc
+import reflex_xy as rfc
 
 
 def load_pings() -> dict[str, np.ndarray]:
@@ -307,7 +307,7 @@ def index() -> rx.Component:
 
 
 app = rx.App()
-rfc.setup(app)                              # mounts /_fastcharts/* routes
+rfc.setup(app)                              # mounts /_xy/* routes
 app.add_page(index)
 ```
 
@@ -331,7 +331,7 @@ What this example is designed to prove, line by line:
 
 ## 7. Build order
 
-1. `fastcharts/channel.py`: extract `handle_message` from `widget.py`; add
+1. `xy/channel.py`: extract `handle_message` from `widget.py`; add
    the binary framing helpers + tests (no behavior change to the widget).
 2. External adapter package: registry + routes + framed-wire JS comm adapter;
    use no Reflex dependency, or only a supported Reflex core/component

@@ -34,9 +34,9 @@ def _environment() -> dict:
             "processor": "arm",
         },
         "cpu_count": 10,
-        "package_versions": {"fastcharts": "0.1.0", "numpy": "2.0.0"},
+        "package_versions": {"xy": "0.1.0", "numpy": "2.0.0"},
         "executables": {"node": "v22.0.0", "rustc": "rustc 1.96.1", "cargo": "cargo 1.96.1"},
-        "fastcharts_backend": "native",
+        "xy_backend": "native",
         "browser_renderer": "software-gl",
         "git": {"commit": "abc123", "branch": "main", "dirty": False},
     }
@@ -73,7 +73,7 @@ def _scatter_vs_report() -> dict:
     categories, tracked = _category_registry("small_data_startup")
     row = {
         "n": 1000,
-        "library": "fastcharts",
+        "library": "xy",
         "status": "ok",
         "build_s": 0.001,
         "render_s": 0.002,
@@ -92,8 +92,8 @@ def _scatter_vs_report() -> dict:
         "budget_s": 45.0,
         "benchmark_categories": categories,
         "tracked_categories": tracked,
-        "results": {"fastcharts": [row]},
-        "ceilings": {"fastcharts": 1000},
+        "results": {"xy": [row]},
+        "ceilings": {"xy": 1000},
         "ttfr": False,
     }
 
@@ -113,7 +113,7 @@ def _core_2d_report() -> dict:
                 "case": "1,000 categories",
                 "work_units": 1000,
                 "unit": "bars",
-                "library": "fastcharts",
+                "library": "xy",
                 "status": "ok",
                 "build_s": 0.001,
                 "payload_s": 0.002,
@@ -184,7 +184,7 @@ def _line_decimation_report() -> dict:
     categories, tracked = _category_registry("huge_line_time_series", "payload_export_size")
     row = {
         "n": 100_000,
-        "library": "fastcharts",
+        "library": "xy",
         "status": "ok",
         "build_s": 0.001,
         "render_s": 0.002,
@@ -203,7 +203,7 @@ def _line_decimation_report() -> dict:
         "n_out": 2000,
         "ttfr": False,
         "ttfr_max_n": 100_000,
-        "results": {"fastcharts": [row]},
+        "results": {"xy": [row]},
     }
 
 
@@ -220,8 +220,8 @@ def _install_footprint_report() -> dict:
         "python": "3.11.9",
         "results": [
             {
-                "module": "fastcharts",
-                "distribution": "fastcharts",
+                "module": "xy",
+                "distribution": "xy",
                 "version": "0.1.0",
                 "cold_import_ms": 12.5,
                 "import_note": None,
@@ -640,7 +640,7 @@ def test_benchmark_report_summary_names_shape_and_environment() -> None:
     assert "kind: scatter-vs" in summary
     assert "rows: 1" in summary
     assert "statuses: ok:1" in summary
-    assert "libraries: fastcharts:1" in summary
+    assert "libraries: xy:1" in summary
     assert "benchmark_categories: 1" in summary
     assert "tracked_categories: 1" in summary
     assert "backend: native" in summary
@@ -649,10 +649,10 @@ def test_benchmark_report_summary_names_shape_and_environment() -> None:
 
 def test_benchmark_report_summary_groups_status_detail_by_status_class() -> None:
     payload = _scatter_vs_report()
-    skipped = dict(payload["results"]["fastcharts"][0])
+    skipped = dict(payload["results"]["xy"][0])
     skipped["n"] = 2000
     skipped["status"] = "skipped(no playwright)"
-    payload["results"]["fastcharts"].append(skipped)
+    payload["results"]["xy"].append(skipped)
 
     summary = verify_benchmark_report.summarize_report(payload, kind="scatter-vs")
 
@@ -661,7 +661,7 @@ def test_benchmark_report_summary_groups_status_detail_by_status_class() -> None
 
 def test_scatter_report_rejects_ceiling_above_budget(tmp_path: Path) -> None:
     payload = _scatter_vs_report()
-    payload["results"]["fastcharts"][0]["total_s"] = 50.0
+    payload["results"]["xy"][0]["total_s"] = 50.0
     path = _write_report(tmp_path, payload)
 
     errors = verify_benchmark_report.validate_report(path, kind="scatter-vs")
@@ -671,7 +671,7 @@ def test_scatter_report_rejects_ceiling_above_budget(tmp_path: Path) -> None:
 
 def test_scatter_report_requires_mode_target_and_oracle(tmp_path: Path) -> None:
     payload = _scatter_vs_report()
-    del payload["results"]["fastcharts"][0]["mode"]
+    del payload["results"]["xy"][0]["mode"]
     path = _write_report(tmp_path, payload)
 
     errors = verify_benchmark_report.validate_report(path, kind="scatter-vs")
@@ -794,11 +794,11 @@ def test_verify_benchmark_report_rejects_missing_environment(tmp_path: Path) -> 
         (("environment", "cpu_count"), 0, "environment.cpu_count"),
         (("environment", "python", "version"), "", "python.version"),
         (("environment", "platform", "machine"), 42, "platform.machine"),
-        (("environment", "package_versions", "fastcharts"), DELETE, "package_versions"),
+        (("environment", "package_versions", "xy"), DELETE, "package_versions"),
         (("environment", "package_versions", "numpy"), 2.0, "package_versions['numpy']"),
         (("environment", "executables", "node"), DELETE, "executables"),
         (("environment", "executables", "cargo"), 123, "executables['cargo']"),
-        (("environment", "fastcharts_backend"), "wasm", "fastcharts_backend"),
+        (("environment", "xy_backend"), "wasm", "xy_backend"),
         (("environment", "git", "dirty"), "false", "git.dirty"),
     ],
 )
@@ -878,12 +878,12 @@ def test_verify_benchmark_report_rejects_native_reports_from_fallback_backend(
     payload: dict,
     kind: str,
 ) -> None:
-    payload["environment"]["fastcharts_backend"] = "numpy"
+    payload["environment"]["xy_backend"] = "numpy"
     path = _write_report(tmp_path, payload)
 
     errors = verify_benchmark_report.validate_report(path, kind=kind)
 
-    assert any("fastcharts_backend == 'native'" in error for error in errors)
+    assert any("xy_backend == 'native'" in error for error in errors)
     assert any(kind in error for error in errors)
 
 
@@ -899,7 +899,7 @@ def test_verify_benchmark_report_rejects_duplicate_category_ids(tmp_path: Path) 
 
 def test_verify_benchmark_report_rejects_duplicate_scatter_vs_rows(tmp_path: Path) -> None:
     payload = _scatter_vs_report()
-    payload["results"]["fastcharts"].append(dict(payload["results"]["fastcharts"][0]))
+    payload["results"]["xy"].append(dict(payload["results"]["xy"][0]))
     path = _write_report(tmp_path, payload)
 
     errors = verify_benchmark_report.validate_report(path, kind="scatter-vs")
@@ -910,12 +910,12 @@ def test_verify_benchmark_report_rejects_duplicate_scatter_vs_rows(tmp_path: Pat
 
 def test_verify_benchmark_report_rejects_scatter_vs_bucket_mismatch(tmp_path: Path) -> None:
     payload = _scatter_vs_report()
-    payload["results"]["fastcharts"][0]["library"] = "plotly"
+    payload["results"]["xy"][0]["library"] = "plotly"
     path = _write_report(tmp_path, payload)
 
     errors = verify_benchmark_report.validate_report(path, kind="scatter-vs")
 
-    assert any("must match enclosing results key 'fastcharts'" in error for error in errors)
+    assert any("must match enclosing results key 'xy'" in error for error in errors)
 
 
 def test_verify_benchmark_report_rejects_duplicate_core_2d_rows(tmp_path: Path) -> None:
@@ -926,7 +926,7 @@ def test_verify_benchmark_report_rejects_duplicate_core_2d_rows(tmp_path: Path) 
     errors = verify_benchmark_report.validate_report(path, kind="core-2d")
 
     assert any("duplicates core 2D row" in error for error in errors)
-    assert any("library='fastcharts'" in error for error in errors)
+    assert any("library='xy'" in error for error in errors)
 
 
 def test_verify_benchmark_report_rejects_duplicate_core_2d_comparisons(
@@ -975,11 +975,11 @@ def test_verify_benchmark_report_rejects_unknown_kernel_native_row_category(
     assert any("not_registered" in error for error in errors)
 
 
-def test_verify_benchmark_report_rejects_failed_fastcharts_line_oracle(
+def test_verify_benchmark_report_rejects_failed_xy_line_oracle(
     tmp_path: Path,
 ) -> None:
     payload = _line_decimation_report()
-    payload["results"]["fastcharts"][0]["extrema_oracle"] = "FAIL"
+    payload["results"]["xy"][0]["extrema_oracle"] = "FAIL"
     path = _write_report(tmp_path, payload)
 
     errors = verify_benchmark_report.validate_report(path, kind="line-decimation")
@@ -995,7 +995,7 @@ def test_verify_benchmark_report_rejects_duplicate_install_rows(tmp_path: Path) 
     errors = verify_benchmark_report.validate_report(path, kind="install-footprint")
 
     assert any("duplicates install footprint row" in error for error in errors)
-    assert any("module='fastcharts'" in error for error in errors)
+    assert any("module='xy'" in error for error in errors)
 
 
 def test_verify_benchmark_report_rejects_missing_interaction_budgets(
@@ -1266,7 +1266,7 @@ def test_verify_benchmark_report_rejects_nan_metrics(tmp_path: Path) -> None:
 
 def test_verify_benchmark_report_rejects_infinite_optional_metrics(tmp_path: Path) -> None:
     payload = _scatter_vs_report()
-    payload["results"]["fastcharts"][0]["ttfr_ms"] = float("inf")
+    payload["results"]["xy"][0]["ttfr_ms"] = float("inf")
     path = _write_report(tmp_path, payload)
 
     errors = verify_benchmark_report.validate_report(path, kind="scatter-vs")

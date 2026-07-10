@@ -1,8 +1,8 @@
 [package]
-name = "fastcharts-core"
+name = "xy-core"
 version = "0.1.0"
 edition = "2021"
-description = "Native compute core for the fastcharts engine: zone maps, offset-encoded f32, M4 decimation"
+description = "Native compute core for the xy engine: zone maps, offset-encoded f32, M4 decimation"
 license = "Apache-2.0"
 
 # Zero external dependencies, deliberately (design dossier §33): the core builds
@@ -11,7 +11,7 @@ license = "Apache-2.0"
 # stronger than abi3 (no Python ABI at all). Python binds via ctypes with
 # zero-copy NumPy pointers.
 [lib]
-name = "fastcharts_core"
+name = "xy_core"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

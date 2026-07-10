@@ -891,7 +891,7 @@ hits a source build requiring a Rust toolchain — an instant adoption cliff.
   the native core and fail the build if it is absent.
 - **Install-size budget** joins the §23 bundle budget: wheel ≤ ~15 MB target
   (native core + JS client + assets), CI-enforced like every other number.
-- **Import-time budget**: `import fastcharts` does no heavy work (< 200 ms); NumPy and
+- **Import-time budget**: `import xy` does no heavy work (< 200 ms); NumPy and
   the native core initialize lazily when a chart-building API is first imported/used.
 
 ## 34. Filtering, selection & linked views — the pyramid alone cannot answer them (F2)

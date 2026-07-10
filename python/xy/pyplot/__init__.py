@@ -1,13 +1,13 @@
-"""fastcharts.pyplot — a matplotlib-flavored shim over the composition API.
+"""xy.pyplot — a matplotlib-flavored shim over the composition API.
 
-    import fastcharts.pyplot as plt
+    import xy.pyplot as plt
 
     fig, ax = plt.subplots()
     ax.plot(x, y, "r--o", label="trend")
     ax.legend()
     plt.savefig("chart.png")
 
-Every call translates onto the public declarative API (`fastcharts.chart`
+Every call translates onto the public declarative API (`xy.chart`
 and friends); the engine never knows this module exists. Coverage is
 corpus-defined — see docs/matplotlib-compat.md for the supported surface
 and the loud `NotImplementedError` list.
@@ -225,15 +225,15 @@ cm = _CmapNamespace()
 
 
 class _StyleNamespace:
-    available = ("default", "fastcharts")
+    available = ("default", "xy")
 
     @staticmethod
     def use(name: Union[str, list[str]]) -> None:
-        if name not in ("default", "fastcharts"):
-            raise not_implemented(f"style.use({name!r})", "'default' or 'fastcharts'")
+        if name not in ("default", "xy"):
+            raise not_implemented(f"style.use({name!r})", "'default' or 'xy'")
         from . import _axes
 
-        if name == "fastcharts":
+        if name == "xy":
             _axes._MPL_THEME_TOKENS.clear()  # engine-native look
         # 'default' keeps the matplotlib-flavored theme
 

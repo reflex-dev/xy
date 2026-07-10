@@ -1,6 +1,6 @@
 import numpy as np
 
-import fastcharts.pyplot as plt
+import xy.pyplot as plt
 
 rng = np.random.default_rng(3)
 plt.scatter(

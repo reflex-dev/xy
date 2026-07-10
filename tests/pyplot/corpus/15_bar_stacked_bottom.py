@@ -1,4 +1,4 @@
-import fastcharts.pyplot as plt
+import xy.pyplot as plt
 
 labels = ["Q1", "Q2", "Q3", "Q4"]
 product_a = [20, 34, 30, 35]

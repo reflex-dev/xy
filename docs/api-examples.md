@@ -2,7 +2,7 @@
 
 These examples cover the currently implemented 2D chart families. They are
 short on purpose: each one should be copyable into a notebook or script after
-`pip install fastcharts`. The Python snippets in this file are executed by
+`pip install xy`. The Python snippets in this file are executed by
 `tests/test_docs_examples.py`, so docs changes should fail fast if the public
 API drifts.
 
@@ -12,7 +12,7 @@ the later per-chart examples show the same APIs scaling up.
 
 ## API Stability Notes
 
-fastcharts has one public chart-building API: the declarative composition API.
+xy has one public chart-building API: the declarative composition API.
 Charts are Reflex-shaped, declarative chart children — marks, axes,
 annotations, legend/tooltip chrome — composed inside a family container
 (`fc.line_chart(...)`, `fc.bar_chart(...)`, ...) or the neutral layering
@@ -54,7 +54,7 @@ document for a pixel-exact match to the live chart.
 
 ```python
 import numpy as np
-import fastcharts as fc
+import xy as fc
 
 x = np.logspace(0, 6, 240)
 rank = 96 - np.log10(x) * 11.5
@@ -74,7 +74,7 @@ chart
 ## Small Business Chart
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 month_number = [1, 2, 3, 4, 5, 6]
 revenue = [42, 45, 48, 51, 55, 59]
@@ -94,7 +94,7 @@ chart
 
 ```python
 import numpy as np
-import fastcharts as fc
+import xy as fc
 
 rng = np.random.default_rng(0)
 x = np.arange(1_000_000, dtype=np.float64)
@@ -113,7 +113,7 @@ chart
 
 ```python
 import numpy as np
-import fastcharts as fc
+import xy as fc
 
 rng = np.random.default_rng(1)
 x = rng.normal(size=500_000)
@@ -136,7 +136,7 @@ fc.scatter_chart(
 
 ```python
 import numpy as np
-import fastcharts as fc
+import xy as fc
 
 x = np.linspace(0, 10, 100_000)
 y = np.sin(x) + 0.15 * x
@@ -151,7 +151,7 @@ fc.area_chart(
 
 ```python
 import numpy as np
-import fastcharts as fc
+import xy as fc
 
 rng = np.random.default_rng(2)
 values = np.concatenate(
@@ -169,7 +169,7 @@ Pass `cumulative=True` to accumulate bins left-to-right. Combined with
 
 ```python
 import numpy as np
-import fastcharts as fc
+import xy as fc
 
 rng = np.random.default_rng(3)
 latency_ms = rng.gamma(shape=2.0, scale=40.0, size=100_000)
@@ -185,7 +185,7 @@ fc.histogram_chart(
 ## Bar
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 channels = ["Search", "Ads", "Email", "Direct", "Partner", "Social"]
 conversions = [120, 94, 72, 66, 43, 31]
@@ -201,7 +201,7 @@ fc.bar_chart(
 ## Column
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 quarters = ["Q1", "Q2", "Q3", "Q4"]
 revenue = [42, 47, 51, 58]
@@ -218,7 +218,7 @@ fc.column_chart(
 
 ```python
 import numpy as np
-import fastcharts as fc
+import xy as fc
 
 channels = ["Search", "Ads", "Email", "Direct", "Partner", "Social"]
 values = np.array(
@@ -248,7 +248,7 @@ fc.bar_chart(
 
 ```python
 import numpy as np
-import fastcharts as fc
+import xy as fc
 
 quarters = ["Q1", "Q2", "Q3", "Q4"]
 values = np.array(
@@ -279,7 +279,7 @@ category renders the series' share of the whole (segments sum to 1):
 
 ```python
 import numpy as np
-import fastcharts as fc
+import xy as fc
 
 quarters = ["Q1", "Q2", "Q3", "Q4"]
 values = np.array(
@@ -307,7 +307,7 @@ fc.bar_chart(
 ## Horizontal Bars
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 teams = ["Platform", "Growth", "Data", "Support"]
 latency_ms = [42, 56, 31, 73]
@@ -327,7 +327,7 @@ fc.bar_chart(
 
 ```python
 import numpy as np
-import fastcharts as fc
+import xy as fc
 
 x = np.linspace(-3, 3, 160)
 y = np.linspace(-2, 2, 120)
@@ -348,7 +348,7 @@ Marks resolve column names through `data=`, so charts can bind straight to a
 dict, DataFrame, or any mapping of columns:
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 data = {
     "channel": ["Search", "Ads", "Email", "Direct"],
@@ -376,7 +376,7 @@ or selections from Python. Structure stays declarative: adding marks, axes,
 or annotations means composing a new chart.
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 chart = fc.scatter_chart(
     fc.scatter(x=[0.0, 1.0, 2.0, 3.0], y=[0.0, 2.0, 4.0, 6.0], name="stream"),
@@ -407,7 +407,7 @@ Children are painted in order, and rules, bands, and text annotations live in
 the chart chrome instead of becoming data traces.
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 data = {
     "month": ["Jan", "Feb", "Mar", "Apr"],
@@ -436,7 +436,7 @@ chart
 ```
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 z = [
     [0.2, 0.4, 0.5],
@@ -459,11 +459,11 @@ chart
 ## Framework Chrome Hooks
 
 Legend and tooltip nodes can carry opaque framework components for adapters
-without making `fastcharts` depend on that framework. The objects are kept on
+without making `xy` depend on that framework. The objects are kept on
 the Python `Chart` and never serialized into standalone HTML.
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 # In a Reflex app these could be rx.box(...), rx.vstack(...), etc.
 class FrameworkComponent:

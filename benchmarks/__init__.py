@@ -1,1 +1,1 @@
-"""Benchmark entrypoints for fastcharts."""
+"""Benchmark entrypoints for xy."""

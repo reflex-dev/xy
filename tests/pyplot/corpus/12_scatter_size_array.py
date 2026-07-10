@@ -1,6 +1,6 @@
 import numpy as np
 
-import fastcharts.pyplot as plt
+import xy.pyplot as plt
 
 rng = np.random.default_rng(7)
 x = rng.random(40)

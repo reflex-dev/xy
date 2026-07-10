@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "fastcharts-core"
+name = "xy-core"
 version = "0.1.0"

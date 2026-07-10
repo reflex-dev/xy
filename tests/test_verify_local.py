@@ -49,8 +49,8 @@ def test_browser_selection_requires_browser_checks_to_exist() -> None:
 
 
 def test_packaging_selection_runs_artifact_checks_only(tmp_path: Path) -> None:
-    sdist = tmp_path / "fastcharts-0.1.0.tar.gz"
-    wheel = tmp_path / "fastcharts-0.1.0-py3-none-any.whl"
+    sdist = tmp_path / "xy-0.1.0.tar.gz"
+    wheel = tmp_path / "xy-0.1.0-py3-none-any.whl"
     checks = verify_local._base_checks(sdist=sdist, wheel=wheel)
     selected = verify_local.select_checks(checks, packaging=True)
 
@@ -216,8 +216,8 @@ def test_missing_requirement_messages_include_remediation() -> None:
         "needs_everything",
         "synthetic missing tool",
         ("missing-tool",),
-        requires_executables=("definitely-not-a-fastcharts-tool",),
-        requires_modules=("definitely_not_a_fastcharts_module",),
+        requires_executables=("definitely-not-a-xy-tool",),
+        requires_modules=("definitely_not_a_xy_module",),
         requires_paths=(Path("/definitely/not/chromium"),),
     )
 
@@ -432,8 +432,8 @@ def test_packaging_dry_run_prints_artifact_verifiers(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    sdist = tmp_path / "fastcharts-0.1.0.tar.gz"
-    wheel = tmp_path / "fastcharts-0.1.0-py3-none-any.whl"
+    sdist = tmp_path / "xy-0.1.0.tar.gz"
+    wheel = tmp_path / "xy-0.1.0-py3-none-any.whl"
 
     rc = verify_local.main(
         [
@@ -486,8 +486,8 @@ def test_makefile_exposes_prebuilt_artifact_verification_shortcut() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
 
     assert "check-artifacts:" in makefile
-    assert "Set SDIST=/path/to/fastcharts.tar.gz" in makefile
-    assert "Set WHEEL=/path/to/fastcharts.whl" in makefile
+    assert "Set SDIST=/path/to/xy.tar.gz" in makefile
+    assert "Set WHEEL=/path/to/xy.whl" in makefile
     assert "scripts/verify_local.py --packaging" in makefile
     assert "--sdist" in makefile
     assert "--wheel" in makefile
@@ -671,7 +671,7 @@ def test_docs_name_import_budget_verification_shortcut() -> None:
         assert "make check-import" in text
         assert "lazy import" in text
         assert "dependency boundaries" in text
-    assert "fastcharts.__init__" in contributing
+    assert "xy.__init__" in contributing
     assert "widget/export boundaries" in readme
     assert "backend import boundaries" in production
 

@@ -1,6 +1,6 @@
 import numpy as np
 
-import fastcharts.pyplot as plt
+import xy.pyplot as plt
 
 x = np.linspace(-5, 5, 200)
 plt.plot(x, np.tanh(x))

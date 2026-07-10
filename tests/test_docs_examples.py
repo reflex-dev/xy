@@ -79,7 +79,7 @@ def _capture_final_expression(source: str) -> ast.Module:
 
 @pytest.mark.parametrize(("heading", "source"), _python_examples(), ids=lambda value: str(value))
 def test_api_example_builds_payload(heading: str, source: str) -> None:
-    namespace: dict[str, object] = {"__name__": f"fastcharts_docs_example_{heading}"}
+    namespace: dict[str, object] = {"__name__": f"xy_docs_example_{heading}"}
 
     exec(compile(_capture_final_expression(source), str(API_EXAMPLES), "exec"), namespace)
 
@@ -103,14 +103,14 @@ def test_readme_python_example_runs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    namespace: dict[str, object] = {"__name__": f"fastcharts_readme_example_{heading}"}
+    namespace: dict[str, object] = {"__name__": f"xy_readme_example_{heading}"}
 
     exec(compile(_capture_final_expression(source), str(README), "exec"), namespace)
 
     result = namespace.get("__example_result__")
     assert result is not None, f"{heading} README example should end with an expression"
     if isinstance(result, str):
-        assert "fastcharts.renderStandalone" in result
+        assert "xy.renderStandalone" in result
         if "chart.html" in source:
             assert (tmp_path / "chart.html").read_text(encoding="utf-8") == result
         return
@@ -118,7 +118,7 @@ def test_readme_python_example_runs(
         # pyplot-shim figures display like notebooks display them.
         html = result._repr_html_()
         assert html.startswith("<!doctype html>"), f"{heading} README example produced no chart"
-        assert "fastcharts.renderStandalone" in html
+        assert "xy.renderStandalone" in html
         return
     figure = result.figure() if hasattr(result, "figure") else result
     assert hasattr(figure, "build_payload"), f"{heading} README example did not produce a chart"
@@ -198,7 +198,7 @@ def test_reflex_shaped_api_doc_tracks_locked_composition_contract() -> None:
         "`Chart.to_html(...)`",
         "`Chart.to_png(...)`",
         "Static HTML exports with no Python/Reflex runtime",
-        "No Reflex import in `fastcharts`",
+        "No Reflex import in `xy`",
         "Neutral `fc.chart(...)`",
         "`fc.tooltip(...)`, `fc.modebar(...)`, `fc.theme(...)`",
         "`class_name`, `class_names`, and `style` props",
@@ -219,7 +219,7 @@ def test_api_examples_quick_reference_matches_current_surface() -> None:
 
 
 def test_api_examples_quick_reference_covers_registered_composition_marks() -> None:
-    from fastcharts.components import _MARK_APPLIERS  # noqa: PLC2701 - docs sync guard.
+    from xy.components import _MARK_APPLIERS  # noqa: PLC2701 - docs sync guard.
 
     rows = "\n".join(_quick_reference_rows().values())
     for mark in sorted(_MARK_APPLIERS):
@@ -266,7 +266,7 @@ def test_readme_documents_stability_and_backend_contract() -> None:
         "Check the active backend",
         "is intentionally lightweight",
         "does not import NumPy or load the native core",
-        "fastcharts.kernels",
+        "xy.kernels",
         "print(k.BACKEND)",
         "`BACKEND` is always `native`",
         "raises `ImportError` with remediation",
@@ -281,7 +281,7 @@ def test_readme_documents_install_backend_matrix() -> None:
         "Install/backend quick matrix",
         "| Path | Command | Toolchain needed | Result |",
         "Published wheel",
-        "`pip install fastcharts`",
+        "`pip install xy`",
         "none",
         "`native` on supported platform wheels",
         "Source with Rust",
@@ -407,7 +407,7 @@ def test_production_docs_include_focused_gate_matrix() -> None:
         "`make check-errors`",
         "Public exports, lazy import mappings, component factories, public annotations",
         "`make check-api`",
-        "Import-time budget, `fastcharts.__init__`, dependency boundaries, widget/export/backend import boundaries",
+        "Import-time budget, `xy.__init__`, dependency boundaries, widget/export/backend import boundaries",
         "`make check-import`",
         "Standalone HTML export, path writes, user text, tooltips, legends, browser DOM insertion",
         "`make check-security`",

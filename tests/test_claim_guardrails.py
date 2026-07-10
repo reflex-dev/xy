@@ -36,7 +36,7 @@ def test_claim_guardrail_accepts_current_public_docs() -> None:
 
 
 def test_claim_guardrail_rejects_broad_fastest_claim(tmp_path: Path) -> None:
-    path = _write(tmp_path, "fastcharts is the fastest charting library.\n")
+    path = _write(tmp_path, "xy is the fastest charting library.\n")
 
     findings = check_claim_guardrails.check_claims([path])
 
@@ -44,7 +44,7 @@ def test_claim_guardrail_rejects_broad_fastest_claim(tmp_path: Path) -> None:
 
 
 def test_claim_guardrail_rejects_broad_best_charting_claim(tmp_path: Path) -> None:
-    path = _write(tmp_path, "fastcharts is the best Python charting library.\n")
+    path = _write(tmp_path, "xy is the best Python charting library.\n")
 
     findings = check_claim_guardrails.check_claims([path])
 
@@ -52,7 +52,7 @@ def test_claim_guardrail_rejects_broad_best_charting_claim(tmp_path: Path) -> No
 
 
 def test_claim_guardrail_rejects_most_performant_claim(tmp_path: Path) -> None:
-    path = _write(tmp_path, "fastcharts is the most performant graphing engine.\n")
+    path = _write(tmp_path, "xy is the most performant graphing engine.\n")
 
     findings = check_claim_guardrails.check_claims([path])
 
@@ -60,7 +60,7 @@ def test_claim_guardrail_rejects_most_performant_claim(tmp_path: Path) -> None:
 
 
 def test_claim_guardrail_rejects_broad_more_performant_claim(tmp_path: Path) -> None:
-    path = _write(tmp_path, "fastcharts is more performant than every data library.\n")
+    path = _write(tmp_path, "xy is more performant than every data library.\n")
 
     findings = check_claim_guardrails.check_claims([path])
 
@@ -79,7 +79,7 @@ def test_claim_guardrail_rejects_broad_package_metadata_claim(tmp_path: Path) ->
 
 
 def test_claim_guardrail_rejects_unqualified_plotly_claim(tmp_path: Path) -> None:
-    path = _write(tmp_path, "fastcharts is faster than Plotly.\n")
+    path = _write(tmp_path, "xy is faster than Plotly.\n")
 
     findings = check_claim_guardrails.check_claims([path])
 
@@ -101,7 +101,7 @@ def test_claim_guardrail_accepts_measured_qualified_plotly_claim(tmp_path: Path)
 
 
 def test_claim_guardrail_rejects_unqualified_numeric_multiplier(tmp_path: Path) -> None:
-    path = _write(tmp_path, "fastcharts is 10x faster and 5x smaller.\n")
+    path = _write(tmp_path, "xy is 10x faster and 5x smaller.\n")
 
     findings = check_claim_guardrails.check_claims([path])
 
@@ -136,7 +136,7 @@ def test_claim_guardrail_accepts_policy_text(tmp_path: Path) -> None:
 
 
 def test_claim_guardrail_requires_mode_for_large_point_rendering(tmp_path: Path) -> None:
-    path = _write(tmp_path, "fastcharts renders 100M points.\n")
+    path = _write(tmp_path, "xy renders 100M points.\n")
 
     findings = check_claim_guardrails.check_claims([path])
 

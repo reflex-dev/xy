@@ -1,7 +1,7 @@
 name: Release
 
 # Publish prebuilt wheels + sdist to PyPI on a version tag. This is what makes
-# `pip install fastcharts` a no-toolchain install: each platform wheel carries
+# `pip install xy` a no-toolchain install: each platform wheel carries
 # the compiled Rust core, so end users never see Rust or Node.
 on:
   push:
@@ -25,7 +25,7 @@ jobs:
   # armv7, macOS x86-64/arm64, and Windows x86/x64/arm64. Linux targets are
   # cross-compiled with cargo-zigbuild (musl support + a low manylinux_2_17
   # glibc floor without QEMU); the hook then packs the prebuilt core and stamps
-  # the platform tag (FASTCHARTS_CARGO_TARGET / FASTCHARTS_WHEEL_PLATFORM).
+  # the platform tag (XY_CARGO_TARGET / XY_WHEEL_PLATFORM).
   wheels:
     name: Wheel ${{ matrix.plat }}
     runs-on: ${{ matrix.os }}
@@ -89,10 +89,10 @@ jobs:
         env:
           # The core is prebuilt above; the hook only packs it and stamps the
           # platform tag. REQUIRE_CARGO keeps a coreless wheel from shipping.
-          FASTCHARTS_REQUIRE_CARGO: "1"
-          FASTCHARTS_SKIP_CARGO: "1"
-          FASTCHARTS_CARGO_TARGET: ${{ matrix.target }}
-          FASTCHARTS_WHEEL_PLATFORM: ${{ matrix.plat }}
+          XY_REQUIRE_CARGO: "1"
+          XY_SKIP_CARGO: "1"
+          XY_CARGO_TARGET: ${{ matrix.target }}
+          XY_WHEEL_PLATFORM: ${{ matrix.plat }}
         run: uv build --wheel
       - name: Verify wheel contents
         shell: bash
@@ -114,8 +114,8 @@ jobs:
         run: |
           uv venv smoke
           uv pip install -p smoke dist/*.whl numpy anywidget
-          ./smoke/bin/python -c "import fastcharts.kernels as k; assert k.BACKEND=='native', k.BACKEND; print('native', k.__file__)" \
-            || ./smoke/Scripts/python.exe -c "import fastcharts.kernels as k; assert k.BACKEND=='native', k.BACKEND; print('native')"
+          ./smoke/bin/python -c "import xy.kernels as k; assert k.BACKEND=='native', k.BACKEND; print('native', k.__file__)" \
+            || ./smoke/Scripts/python.exe -c "import xy.kernels as k; assert k.BACKEND=='native', k.BACKEND; print('native')"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dist-${{ matrix.plat }}
@@ -148,10 +148,10 @@ jobs:
       - name: Build the Pyodide wheel
         shell: bash
         env:
-          FASTCHARTS_REQUIRE_CARGO: "1"
-          FASTCHARTS_SKIP_CARGO: "1"
-          FASTCHARTS_CARGO_TARGET: wasm32-unknown-emscripten
-          FASTCHARTS_WHEEL_PLATFORM: pyodide_2024_0_wasm32
+          XY_REQUIRE_CARGO: "1"
+          XY_SKIP_CARGO: "1"
+          XY_CARGO_TARGET: wasm32-unknown-emscripten
+          XY_WHEEL_PLATFORM: pyodide_2024_0_wasm32
         run: uv build --wheel
       - name: Verify wheel contents
         shell: bash
@@ -198,18 +198,18 @@ jobs:
       - name: Verify sdist without Rust errors clearly on import
         shell: bash
         env:
-          FASTCHARTS_SKIP_CARGO: "1"
+          XY_SKIP_CARGO: "1"
         run: |
           uv venv smoke
           uv pip install -p smoke dist/*.tar.gz numpy anywidget
           ./smoke/bin/python - <<'PY'
           # No native core and no fallback: the compute layer must raise a
           # clear, actionable error (§33: no-wheel behavior is defined).
-          import fastcharts
+          import xy
 
-          assert fastcharts.__version__
+          assert xy.__version__
           try:
-              import fastcharts.kernels  # noqa: F401
+              import xy.kernels  # noqa: F401
           except ImportError as err:
               msg = str(err)
               assert "native Rust core" in msg, msg

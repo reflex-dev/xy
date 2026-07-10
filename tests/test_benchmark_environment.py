@@ -33,8 +33,8 @@ def test_collect_environment_metadata_is_machine_readable(tmp_path: Path) -> Non
 
     metadata = collect_environment_metadata(
         chromium="/Applications/Chromium",
-        fastcharts_backend="native",
-        package_names=("definitely-not-installed-fastcharts-test-package",),
+        xy_backend="native",
+        package_names=("definitely-not-installed-xy-test-package",),
         now=datetime(2026, 7, 4, 12, 0, tzinfo=UTC),
         root=tmp_path,
         command_runner=runner,
@@ -45,8 +45,8 @@ def test_collect_environment_metadata_is_machine_readable(tmp_path: Path) -> Non
     assert metadata["python"]["version"]
     assert metadata["platform"]["system"]
     assert metadata["cpu_count"] is None or metadata["cpu_count"] > 0
-    assert metadata["package_versions"]["definitely-not-installed-fastcharts-test-package"] is None
-    assert metadata["fastcharts_backend"] == "native"
+    assert metadata["package_versions"]["definitely-not-installed-xy-test-package"] is None
+    assert metadata["xy_backend"] == "native"
     assert metadata["browser_renderer"] == "software-gl"
     assert metadata["executables"] == {
         "node": "v20.11.1",
@@ -132,7 +132,7 @@ def test_native_benchmark_reports_can_resolve_source_backend_metadata() -> None:
         python_path = 'sys.path.insert(0, str(ROOT / "python"))'
         assert python_path in source
         assert source.index(python_path) < source.index("from environment import")
-        assert 'fastcharts_backend="native"' in source
+        assert 'xy_backend="native"' in source
 
 
 def test_interaction_browser_gates_cover_scatter_and_core_chart_families() -> None:

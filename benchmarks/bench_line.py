@@ -1,7 +1,7 @@
-"""Line / time-series decimation benchmark: fastcharts (M4) vs plotly-resampler
+"""Line / time-series decimation benchmark: xy (M4) vs plotly-resampler
 vs vanilla Plotly (methodology scenario `line_10M`).
 
-plotly-resampler is the *honest* rival — it shares fastcharts' decimation
+plotly-resampler is the *honest* rival — it shares xy' decimation
 thesis (ship only what the pixels can show), so comparing our lines against
 vanilla Plotly alone would be a strawman in our favor, and comparing against
 plotly-resampler alone hides how much raw Plotly pays. Both run. The M4
@@ -43,9 +43,9 @@ def _series(n: int):
     return x, y
 
 
-def make_fastcharts(x, y):
+def make_xy(x, y):
     try:
-        from fastcharts import chart, line
+        from xy import chart, line
     except ImportError:
         return None
 
@@ -95,7 +95,7 @@ def make_plotly_resampler(x, y):
 
 
 ADAPTERS = {
-    "fastcharts": make_fastcharts,
+    "xy": make_xy,
     "plotly_vanilla": make_plotly_vanilla,
     "plotly_resampler": make_plotly_resampler,
 }
@@ -104,7 +104,7 @@ ADAPTERS = {
 def _extrema_ok(x, y) -> bool:
     """M4 oracle: every populated pixel bucket must retain its y min and max."""
     try:
-        from fastcharts import chart, line
+        from xy import chart, line
     except ImportError:
         return False
     fig = chart(line(x=x, y=y), width=900, height=420).figure()
@@ -201,7 +201,7 @@ def run(
             except Exception as e:
                 row["status"] = f"failed({type(e).__name__}: {str(e)[:80]})"
             row["pts_per_s"] = (n / row["total_s"]) if row.get("total_s") else None
-            if name == "fastcharts":
+            if name == "xy":
                 row["extrema_oracle"] = "pass" if oracle else "FAIL"
                 row["oracle_kind"] = "per-pixel-column-minmax"
             results[name].append(row)
@@ -232,10 +232,10 @@ def _fmt_bytes(b: int | None) -> str:
 
 def to_markdown(report: dict) -> str:
     out = [
-        "### Line / time-series decimation (fastcharts M4 vs plotly-resampler)",
+        "### Line / time-series decimation (xy M4 vs plotly-resampler)",
         "",
         f"Random-walk series; aggregating libs target ~{report['n_out']} on-screen "
-        "points. Payload = bytes the browser must receive; fastcharts ships the "
+        "points. Payload = bytes the browser must receive; xy ships the "
         "M4-decimated f32 blob, Plotly ships HTML+data.",
         "",
         "| N | library | prep | payload | interactive TTFR | chart ready | extrema oracle |",

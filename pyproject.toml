@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "fastcharts"
+name = "xy"
 version = "0.1.0"
 description = "Experimental Python charting engine with a native Rust core, binary columnar transport, and a GPU render client"
 readme = "README.md"
@@ -15,10 +15,10 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/reflex-dev/reviz"
-Issues = "https://github.com/reflex-dev/reviz/issues"
-Changelog = "https://github.com/reflex-dev/reviz/blob/main/CHANGELOG.md"
-Security = "https://github.com/reflex-dev/reviz/blob/main/SECURITY.md"
+Repository = "https://github.com/reflex-dev/xy"
+Issues = "https://github.com/reflex-dev/xy/issues"
+Changelog = "https://github.com/reflex-dev/xy/blob/main/CHANGELOG.md"
+Security = "https://github.com/reflex-dev/xy/blob/main/SECURITY.md"
 
 [project.optional-dependencies]
 dev = [
@@ -45,7 +45,7 @@ codspeed = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["python/fastcharts"]
+packages = ["python/xy"]
 dev-mode-dirs = ["python"]
 
 [tool.hatch.build.targets.wheel.hooks.custom]
@@ -64,7 +64,7 @@ include = [
     "examples/reflex/README.md",
     "examples/reflex/requirements.txt",
     "examples/reflex/rxconfig.py",
-    "examples/reflex/reflex_fastcharts_app/*.py",
+    "examples/reflex/reflex_xy_app/*.py",
     "examples/reflex/scripts/build_charts.py",
     "examples/reflex/assets/charts/*.html",
     "scripts",

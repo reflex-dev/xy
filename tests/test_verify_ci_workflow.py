@@ -111,7 +111,7 @@ def test_ci_workflow_rejects_benchmark_job_without_native_backend_assertion(
         "      - name: Verify native benchmark backend\n"
         "        run: |\n"
         "          .venv/bin/python - <<'PY'\n"
-        "          import fastcharts.kernels as k\n"
+        "          import xy.kernels as k\n"
         '          assert k.BACKEND == "native", f"benchmark job requires native backend, got {k.BACKEND!r}"\n'
         "          PY\n"
     )
@@ -130,7 +130,7 @@ def test_ci_workflow_rejects_benchmark_job_without_required_native_install(
     path = tmp_path / "ci.yml"
     path.write_text(
         workflow.replace(
-            '        env:\n          FASTCHARTS_REQUIRE_CARGO: "1"\n'
+            '        env:\n          XY_REQUIRE_CARGO: "1"\n'
             "        run: |\n          uv venv .venv\n"
             "          uv pip install -p .venv/bin/python -e .\n",
             "        run: |\n          uv venv .venv\n"
@@ -141,7 +141,7 @@ def test_ci_workflow_rejects_benchmark_job_without_required_native_install(
 
     errors = verify_ci_workflow.validate_workflow(path)
 
-    assert any("benchmark" in error and "FASTCHARTS_REQUIRE_CARGO" in error for error in errors)
+    assert any("benchmark" in error and "XY_REQUIRE_CARGO" in error for error in errors)
 
 
 def test_codspeed_workflow_rejects_missing_native_backend_assertion(tmp_path: Path) -> None:
@@ -150,7 +150,7 @@ def test_codspeed_workflow_rejects_missing_native_backend_assertion(tmp_path: Pa
         "      - name: Verify native benchmark backend\n"
         "        run: |\n"
         "          .venv/bin/python - <<'PY'\n"
-        "          import fastcharts.kernels as k\n"
+        "          import xy.kernels as k\n"
         '          assert k.BACKEND == "native", f"CodSpeed requires native backend, got {k.BACKEND!r}"\n'
         "          PY\n\n"
     )
@@ -167,7 +167,7 @@ def test_codspeed_workflow_rejects_non_strict_native_install(tmp_path: Path) -> 
     path = tmp_path / "codspeed.yml"
     path.write_text(
         workflow.replace(
-            '        env:\n          FASTCHARTS_REQUIRE_CARGO: "1"\n'
+            '        env:\n          XY_REQUIRE_CARGO: "1"\n'
             "        run: |\n          uv venv .venv\n"
             '          uv pip install -p .venv/bin/python -e ".[dev,codspeed]"\n',
             "        run: |\n          uv venv .venv\n"
@@ -179,7 +179,7 @@ def test_codspeed_workflow_rejects_non_strict_native_install(tmp_path: Path) -> 
     errors = verify_ci_workflow.validate_codspeed_workflow(path)
 
     assert any(
-        "CodSpeed benchmarks job" in error and "FASTCHARTS_REQUIRE_CARGO" in error
+        "CodSpeed benchmarks job" in error and "XY_REQUIRE_CARGO" in error
         for error in errors
     )
 
@@ -369,13 +369,13 @@ def test_release_workflow_rejects_missing_sdist_norust_smoke(tmp_path: Path) -> 
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     path = tmp_path / "release.yml"
     path.write_text(
-        workflow.replace('          FASTCHARTS_SKIP_CARGO: "1"\n', ""), encoding="utf-8"
+        workflow.replace('          XY_SKIP_CARGO: "1"\n', ""), encoding="utf-8"
     )
 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
     assert any(
-        "release sdist job" in error and "FASTCHARTS_SKIP_CARGO" in error for error in errors
+        "release sdist job" in error and "XY_SKIP_CARGO" in error for error in errors
     )
 
 

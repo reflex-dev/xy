@@ -1,4 +1,4 @@
-"""Many-chart dashboard benchmark for fastcharts.
+"""Many-chart dashboard benchmark for xy.
 
 Single-chart performance does not predict dashboard performance: pages can fail
 because the total JS/data payload is too heavy or because too many canvases
@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _fastcharts_browser import (  # noqa: E402
+from _xy_browser import (  # noqa: E402
     chart_payload,
     json_bytes,
     page_for_charts,
@@ -48,7 +48,7 @@ def _parse_counts(text: str) -> list[int]:
 def _dashboard_figures(count: int) -> list[Any]:
     if np is None:
         raise SystemExit("numpy is required for benchmarks/bench_dashboard.py")
-    import fastcharts as fc
+    import xy as fc
 
     rng = np.random.default_rng(91_337)
     figures: list[Any] = []
@@ -145,7 +145,7 @@ def _probe_js() -> str:
       cell.dataset.chartId = payload.id;
       root.appendChild(cell);
       try {
-        const view = fastcharts.renderStandalone(cell, payload.spec, fcBytesFromB64(payload.b64));
+        const view = xy.renderStandalone(cell, payload.spec, fcBytesFromB64(payload.b64));
         const state = {lost: false};
         view.canvas.addEventListener("webglcontextlost", () => {
           state.lost = true;
@@ -320,7 +320,7 @@ def run(*, chart_counts: list[int], chromium: str | None = None) -> dict[str, An
         html = page_for_charts(
             payloads,
             _probe_js(),
-            title="fastcharts dashboard probe",
+            title="xy dashboard probe",
             body_css=(
                 "html,body{margin:0;background:#fff;font-family:system-ui,sans-serif;}"
                 "#root{display:grid;grid-template-columns:repeat(4,420px);gap:12px;padding:12px;}"
@@ -425,7 +425,7 @@ def _fmt_bytes(value: int | None) -> str:
 
 def to_markdown(report: dict[str, Any]) -> str:
     lines = [
-        "# fastcharts many-chart dashboard benchmark",
+        "# xy many-chart dashboard benchmark",
         "",
         "## Benchmark Categories",
         "",

@@ -11,11 +11,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import fastcharts as fc
-import fastcharts.components as components_module
-import fastcharts.export as export_module
-from fastcharts._figure import Figure
-from fastcharts.components import (
+import xy as fc
+import xy.components as components_module
+import xy.export as export_module
+from xy._figure import Figure
+from xy.components import (
     Annotation,
     Axis,
     Chart,
@@ -27,7 +27,7 @@ from fastcharts.components import (
     Theme,
     Tooltip,
 )
-from fastcharts.widget import Selection
+from xy.widget import Selection
 
 
 class FakeFrame:
@@ -843,7 +843,7 @@ def test_declarative_chart_keeps_notebook_export_and_framework_chrome_contract(
             self.on_select = on_select
             self.on_view_change = on_view_change
 
-    monkeypatch.setattr("fastcharts.widget.FigureWidget", CapturingWidget)
+    monkeypatch.setattr("xy.widget.FigureWidget", CapturingWidget)
 
     widget = chart.widget()
     assert chart.show() is widget
@@ -959,7 +959,7 @@ def test_chart_callbacks_are_python_only_and_do_not_serialize_to_html(monkeypatc
             self.on_select = on_select
             self.on_view_change = on_view_change
 
-    monkeypatch.setattr("fastcharts.widget.FigureWidget", CapturingWidget)
+    monkeypatch.setattr("xy.widget.FigureWidget", CapturingWidget)
 
     widget = chart.widget()
     assert widget.figure is chart.figure()
@@ -1544,7 +1544,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         )
         return b"PNG"
 
-    monkeypatch.setattr("fastcharts._figure.Figure.to_png", fake_to_png)
+    monkeypatch.setattr("xy._figure.Figure.to_png", fake_to_png)
 
     data = chart.to_png(
         "out.png",
@@ -1595,7 +1595,7 @@ def test_widget_failure_does_not_cache_partial_widget(monkeypatch):
             if calls["count"] == 1:
                 raise RuntimeError("synthetic widget failure")
 
-    monkeypatch.setattr("fastcharts.widget.FigureWidget", FlakyWidget)
+    monkeypatch.setattr("xy.widget.FigureWidget", FlakyWidget)
 
     with pytest.raises(RuntimeError, match="synthetic widget failure"):
         chart.widget()
@@ -1758,7 +1758,7 @@ def test_chart_append_routes_through_live_widget(monkeypatch):
         def append(self, trace_id, x, y, *, color=None, size=None):
             appends.append((trace_id, x, y, color, size))
 
-    monkeypatch.setattr("fastcharts.widget.FigureWidget", CapturingWidget)
+    monkeypatch.setattr("xy.widget.FigureWidget", CapturingWidget)
     chart = fc.scatter_chart(fc.scatter(x=np.arange(3.0), y=np.arange(3.0)))
     chart.widget()
     n_before = len(chart.figure().traces[0].x.values)

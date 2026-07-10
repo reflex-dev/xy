@@ -6,7 +6,7 @@ import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CORE_PACKAGE = ROOT / "python" / "fastcharts"
+CORE_PACKAGE = ROOT / "python" / "xy"
 
 
 def _dependency_name(requirement: str) -> str:
@@ -23,7 +23,7 @@ def test_core_runtime_dependencies_do_not_include_reflex() -> None:
     runtime_names = {_dependency_name(requirement) for requirement in dependencies}
 
     assert not any(name == "reflex" or name.startswith("reflex-") for name in runtime_names), (
-        "fastcharts core must stay Reflex-free; put Reflex support in the example app "
+        "xy core must stay Reflex-free; put Reflex support in the example app "
         "or a separate optional adapter package"
     )
 
@@ -45,6 +45,6 @@ def test_core_package_does_not_import_reflex() -> None:
                     violations.append(f"{path.relative_to(ROOT)} imports from {node.module}")
 
     assert violations == [], (
-        "fastcharts core must stay framework-free; Reflex imports belong in "
-        f"reflex_fastcharts_app or a separate adapter: {violations}"
+        "xy core must stay framework-free; Reflex imports belong in "
+        f"reflex_xy_app or a separate adapter: {violations}"
     )

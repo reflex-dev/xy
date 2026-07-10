@@ -1,6 +1,6 @@
 import numpy as np
 
-import fastcharts.pyplot as plt
+import xy.pyplot as plt
 
 fig, ax = plt.subplots(figsize=(10, 3))
 x = np.linspace(0, 100, 500)

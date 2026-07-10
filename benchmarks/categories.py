@@ -25,7 +25,7 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "metrics": "cold import time, installed distribution bytes, file count",
         "harness": "benchmarks/bench_install.py",
         "status": "tracked",
-        "goal": "Keep fastcharts lightweight at import and smaller to install than broad plotting stacks.",
+        "goal": "Keep xy lightweight at import and smaller to install than broad plotting stacks.",
     },
     {
         "id": "medium_direct_scatter",

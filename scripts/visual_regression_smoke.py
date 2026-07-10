@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Screenshot-level visual smoke for representative fastcharts charts.
+"""Screenshot-level visual smoke for representative xy charts.
 
 This complements the low-level WebGL readback smoke by exercising the public
 Python API plus Chromium screenshot path across the core chart families. It is
@@ -27,8 +27,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "python"))
 
-import fastcharts as fc  # noqa: E402
-from fastcharts.export import find_chromium  # noqa: E402
+import xy as fc  # noqa: E402
+from xy.export import find_chromium  # noqa: E402
 
 CHART_ASSET_DIR = ROOT / "examples" / "reflex" / "assets" / "charts"
 W, H, SCALE = 720, 440, 1.0
@@ -412,14 +412,14 @@ def _assert_no_tick_label_overlaps_from_document(
     chromium: str,
 ) -> None:
     standalone_render_call = (
-        'fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
+        'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
     )
     standalone_capture_call = (
-        "window.__fcProbeView = fastcharts.renderStandalone("
+        "window.__fcProbeView = xy.renderStandalone("
         'document.getElementById("chart"), spec, bytes.buffer);'
     )
-    live_render_call = "const view = new fastcharts.ChartView("
-    live_capture_call = "const view = window.__fcProbeView = new fastcharts.ChartView("
+    live_render_call = "const view = new xy.ChartView("
+    live_capture_call = "const view = window.__fcProbeView = new xy.ChartView("
     if standalone_render_call in document:
         document = document.replace(standalone_render_call, standalone_capture_call, 1)
     elif live_render_call in document:

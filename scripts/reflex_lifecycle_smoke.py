@@ -1,7 +1,7 @@
 """Reflex example chart lifecycle smoke for headless Chromium.
 
 The Reflex demo embeds committed chart HTML assets in iframes. This smoke wraps
-fastcharts constructors inside each committed chart asset, then verifies every
+xy constructors inside each committed chart asset, then verifies every
 target chart survives the lifecycle that has historically caused blank panels:
 fresh browser loads, hash/scroll churn, visibility/resize events, responsive
 width changes, iframe shell churn, remounts, and WebGL redraw/readback.
@@ -23,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
 
-from fastcharts.dom import CHART_DOM_SLOTS  # noqa: E402
+from xy.dom import CHART_DOM_SLOTS  # noqa: E402
 
 CHART_DIR = ROOT / "examples" / "reflex" / "assets" / "charts"
 CHROMIUM_CANDIDATES = (
@@ -104,7 +104,7 @@ REQUIRED_RUNTIME_DOM_SLOTS = (
 )
 
 BUNDLE_END = (
-    "window.fastcharts = { render, renderStandalone, ChartView, MARK_KINDS, markOf };\n"
+    "window.xy = { render, renderStandalone, ChartView, MARK_KINDS, markOf };\n"
     "})();\n"
     "</script>"
 )
@@ -113,9 +113,9 @@ WRAP_SCRIPT_TEMPLATE = r"""
 <script>
 (() => {
   const views = [];
-  const publicDomSlots = new Set(__FASTCHARTS_PUBLIC_DOM_SLOTS__);
-  const requiredRuntimeDomSlots = __FASTCHARTS_REQUIRED_RUNTIME_DOM_SLOTS__;
-  window.__fastchartsLifecycleViews = views;
+  const publicDomSlots = new Set(__XY_PUBLIC_DOM_SLOTS__);
+  const requiredRuntimeDomSlots = __XY_REQUIRED_RUNTIME_DOM_SLOTS__;
+  window.__xyLifecycleViews = views;
 
   function tick() {
     return new Promise((resolve) => setTimeout(resolve, 0));
@@ -135,7 +135,7 @@ WRAP_SCRIPT_TEMPLATE = r"""
   }
 
   function installLifecycleWrap() {
-    const fc = window.fastcharts;
+    const fc = window.xy;
     if (!fc || fc.__lifecycleWrapped) return false;
     fc.__lifecycleWrapped = true;
 
@@ -238,7 +238,7 @@ WRAP_SCRIPT_TEMPLATE = r"""
     view._drawNow?.();
   }
 
-  window.__fastchartsLifecycleCheck = async function () {
+  window.__xyLifecycleCheck = async function () {
     await tick();
     await tick();
     const lifecyclePhases = [
@@ -335,7 +335,7 @@ WRAP_SCRIPT_TEMPLATE = r"""
       window.dispatchEvent(new Event("resize"));
       await tick();
       window.scrollTo(0, 0);
-      const report = await window.__fastchartsLifecycleCheck();
+      const report = await window.__xyLifecycleCheck();
       const blank = report.results.find((r) =>
         r.destroyed || r.min_lit <= 8 ||
         r.phase_names.join("|") !== report.phase_names.join("|")
@@ -366,7 +366,7 @@ WRAP_SCRIPT_TEMPLATE = r"""
       };
       document.body.setAttribute("data-fc-child-lifecycle", JSON.stringify(payload));
       window.parent?.postMessage({
-        source: "fastcharts-lifecycle-smoke",
+        source: "xy-lifecycle-smoke",
         asset: decodeURIComponent(location.pathname.split("/").pop() || ""),
         phase: new URLSearchParams(location.search).get("phase") || "standalone",
         payload,
@@ -375,7 +375,7 @@ WRAP_SCRIPT_TEMPLATE = r"""
       const payload = (err && err.stack ? err.stack : String(err)).slice(0, 1200);
       document.body.setAttribute("data-fc-child-lifecycle-error", payload);
       window.parent?.postMessage({
-        source: "fastcharts-lifecycle-smoke",
+        source: "xy-lifecycle-smoke",
         asset: decodeURIComponent(location.pathname.split("/").pop() || ""),
         phase: new URLSearchParams(location.search).get("phase") || "standalone",
         error: payload,
@@ -384,7 +384,7 @@ WRAP_SCRIPT_TEMPLATE = r"""
   }
 
   if (!installLifecycleWrap()) {
-    window.__fastchartsLifecycleInstallFailed = true;
+    window.__xyLifecycleInstallFailed = true;
   }
   const deferProbe = new URLSearchParams(location.search).get("defer_probe") === "1";
   let probeStarted = false;
@@ -396,7 +396,7 @@ WRAP_SCRIPT_TEMPLATE = r"""
   window.addEventListener("message", (event) => {
     const data = event.data || {};
     if (
-      data.source === "fastcharts-lifecycle-parent" &&
+      data.source === "xy-lifecycle-parent" &&
       data.command === "run-probe"
     ) {
       startProbeOnce();
@@ -408,10 +408,10 @@ WRAP_SCRIPT_TEMPLATE = r"""
 """
 
 WRAP_SCRIPT = WRAP_SCRIPT_TEMPLATE.replace(
-    "__FASTCHARTS_PUBLIC_DOM_SLOTS__",
+    "__XY_PUBLIC_DOM_SLOTS__",
     json.dumps(list(CHART_DOM_SLOTS)),
 ).replace(
-    "__FASTCHARTS_REQUIRED_RUNTIME_DOM_SLOTS__",
+    "__XY_REQUIRED_RUNTIME_DOM_SLOTS__",
     json.dumps(list(REQUIRED_RUNTIME_DOM_SLOTS)),
 )
 
@@ -425,8 +425,8 @@ def find_chromium(explicit: str | None = None) -> str:
 
 
 def _inject_child_probe(source: str, asset: str) -> str:
-    if "window.fastcharts = {" not in source:
-        raise ValueError(f"{asset}: not a fastcharts standalone asset")
+    if "window.xy = {" not in source:
+        raise ValueError(f"{asset}: not a xy standalone asset")
     if BUNDLE_END not in source:
         raise ValueError(f"{asset}: cannot find standalone bundle boundary")
     return source.replace(BUNDLE_END, BUNDLE_END + WRAP_SCRIPT, 1)
@@ -458,7 +458,7 @@ def _write_shell_page(
 <html>
 <head>
   <meta charset="utf-8">
-  <title>fastcharts iframe lifecycle shell</title>
+  <title>xy iframe lifecycle shell</title>
   <style>
     body {{ margin: 0; font-family: sans-serif; background: #f8fafc; }}
     #viewport {{
@@ -530,7 +530,7 @@ def _write_shell_page(
       await sleep(80);
       for (const iframe of viewport.querySelectorAll("iframe")) {{
         iframe.contentWindow?.postMessage({{
-          source: "fastcharts-lifecycle-parent",
+          source: "xy-lifecycle-parent",
           command: "run-probe",
           phase,
         }}, "*");

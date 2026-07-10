@@ -42,8 +42,8 @@ jobs:
 
       - name: JS parses (ESM + IIFE)
         run: |
-          node -e "import('./python/fastcharts/static/index.js').then(m => { if (!m.default.render) throw new Error('no render export'); })"
-          node --check python/fastcharts/static/standalone.js
+          node -e "import('./python/xy/static/index.js').then(m => { if (!m.default.render) throw new Error('no render export'); })"
+          node --check python/xy/static/standalone.js
 
       - name: Python 3.11 floor syntax check
         run: python3 scripts/check_python_floor.py
@@ -71,7 +71,7 @@ jobs:
           python3 scripts/render_smoke_nonumpy.py "$CHROME"
 
       - name: Static PNG export smoke (stdlib + Chromium)
-        run: FASTCHARTS_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")" python3 scripts/png_export_smoke.py
+        run: XY_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")" python3 scripts/png_export_smoke.py
 
       - name: Native benchmark (stdlib only — executed numbers, no PyPI needed)
         run: python3 scripts/bench_native.py --sizes 1e5,1e6
@@ -124,7 +124,7 @@ jobs:
         # Point PNG-export tests at the Playwright Chromium (not on PATH) so the
         # full Figure.to_png path runs here rather than skipping.
         run: |
-          export FASTCHARTS_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")"
+          export XY_CHROMIUM="$(node -e "console.log(require('playwright').chromium.executablePath())")"
           .venv/bin/pytest -q
 
       # End-to-end: a real Figure (line decimation + scatter) through to_html's
@@ -211,9 +211,9 @@ jobs:
         run: |
           node js/build.mjs
           cargo build --release
-      - name: Install fastcharts + competitors
+      - name: Install xy + competitors
         env:
-          FASTCHARTS_REQUIRE_CARGO: "1"
+          XY_REQUIRE_CARGO: "1"
         run: |
           uv venv .venv
           uv pip install -p .venv/bin/python -e .
@@ -221,7 +221,7 @@ jobs:
       - name: Verify native benchmark backend
         run: |
           .venv/bin/python - <<'PY'
-          import fastcharts.kernels as k
+          import xy.kernels as k
           assert k.BACKEND == "native", f"benchmark job requires native backend, got {k.BACKEND!r}"
           PY
       # Playwright Chromium for the time-to-first-render (browser paint) pass.
@@ -244,9 +244,9 @@ jobs:
             | tee -a docs/benchmark_ci.md
       - name: Install footprint & cold import (methodology §1)
         run: .venv/bin/python benchmarks/bench_install.py --json install.json | tee -a docs/benchmark_ci.md
-      - name: Fresh-environment footprint (fastcharts vs Plotly)
+      - name: Fresh-environment footprint (xy vs Plotly)
         run: |
-          .venv/bin/python benchmarks/bench_install.py --packages fastcharts,plotly \
+          .venv/bin/python benchmarks/bench_install.py --packages xy,plotly \
             --repeat 3 --fresh-venv --json install-fresh.json | tee -a docs/benchmark_ci.md
       - name: Ingestion, streaming, and export workflows
         run: |
@@ -317,7 +317,7 @@ jobs:
       - name: Verify sdist without Rust errors clearly on import
         shell: bash
         env:
-          FASTCHARTS_SKIP_CARGO: "1"
+          XY_SKIP_CARGO: "1"
         run: |
           uv venv smoke
           uv pip install -p smoke dist/*.tar.gz numpy anywidget
@@ -325,11 +325,11 @@ jobs:
           # No native core and no fallback: importing the compute layer must
           # raise a clear, actionable error (§33: no-wheel behavior is defined
           # as a loud failure, not a silent degrade).
-          import fastcharts
+          import xy
 
-          assert fastcharts.__version__
+          assert xy.__version__
           try:
-              import fastcharts.kernels  # noqa: F401
+              import xy.kernels  # noqa: F401
           except ImportError as err:
               msg = str(err)
               assert "native Rust core" in msg, msg
@@ -368,7 +368,7 @@ jobs:
         # REQUIRE_CARGO: a published wheel must carry the native core — never
         # silently fall back to pure-Python at wheel-build time.
         env:
-          FASTCHARTS_REQUIRE_CARGO: "1"
+          XY_REQUIRE_CARGO: "1"
         run: uv build --wheel
 
       # A raw linux_x86_64 tag is not installable off this machine and PyPI
@@ -405,8 +405,8 @@ jobs:
         run: |
           uv venv smoke
           uv pip install -p smoke dist/*.whl numpy anywidget
-          ./smoke/bin/python -c "import fastcharts, fastcharts.kernels as k; assert k.BACKEND == 'native', k.BACKEND; print('native core loaded')" \
-            || ./smoke/Scripts/python.exe -c "import fastcharts, fastcharts.kernels as k; assert k.BACKEND == 'native', k.BACKEND; print('native core loaded')"
+          ./smoke/bin/python -c "import xy, xy.kernels as k; assert k.BACKEND == 'native', k.BACKEND; print('native core loaded')" \
+            || ./smoke/Scripts/python.exe -c "import xy, xy.kernels as k; assert k.BACKEND == 'native', k.BACKEND; print('native core loaded')"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -449,11 +449,11 @@ jobs:
           uv venv smoke
           uv pip install -p smoke dist/*.whl numpy anywidget
           ./smoke/bin/python - <<'PY'
-          import fastcharts  # lazy top-level import still succeeds
+          import xy  # lazy top-level import still succeeds
 
-          assert fastcharts.__version__
+          assert xy.__version__
           try:
-              import fastcharts.kernels  # noqa: F401
+              import xy.kernels  # noqa: F401
           except ImportError as err:
               msg = str(err)
               assert "native Rust core" in msg, msg

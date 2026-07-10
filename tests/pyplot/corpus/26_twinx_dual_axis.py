@@ -1,6 +1,6 @@
 import numpy as np
 
-import fastcharts.pyplot as plt
+import xy.pyplot as plt
 
 t = np.arange(0, 10, 0.5)
 fig, ax1 = plt.subplots()

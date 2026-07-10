@@ -20,7 +20,7 @@ check_release_version = _load_module()
 
 def _files(tmp_path: Path, version: str, changelog_heading: str) -> tuple[Path, Path]:
     pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text(f'[project]\nname = "fastcharts"\nversion = "{version}"\n')
+    pyproject.write_text(f'[project]\nname = "xy"\nversion = "{version}"\n')
     changelog = tmp_path / "CHANGELOG.md"
     changelog.write_text(f"# Changelog\n\n{changelog_heading}\n\n- Something.\n")
     return pyproject, changelog

@@ -33,7 +33,7 @@ const checkOnly = process.argv.includes("--check");
 // exactly one platform. Build output is LF everywhere, deterministically.
 const readText = (p) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
 const src = PARTS.map((p) => readText(join(here, "src", p))).join("");
-const outDir = join(here, "..", "python", "fastcharts", "static");
+const outDir = join(here, "..", "python", "xy", "static");
 
 // Shader convention lint (renderer audit R5). The conventions are load-bearing:
 // a non-highp fragment default already caused one precision-mismatch hunt
@@ -218,7 +218,7 @@ const body = compact(src.slice(0, cut));
 // but import/export syntax — the body is export-free by construction.
 new Function(body);
 const exportTail = markerLineEnd < 0 ? "" : src.slice(markerLineEnd + 1);
-const iife = `(() => {\n${body}\nwindow.fastcharts = { render, renderStandalone, ChartView, MARK_KINDS, markOf };\n})();\n`;
+const iife = `(() => {\n${body}\nwindow.xy = { render, renderStandalone, ChartView, MARK_KINDS, markOf };\n})();\n`;
 new Function(iife);
 
 const outputs = [
@@ -241,7 +241,7 @@ if (checkOnly) {
   }
   if (stale.length) {
     console.error(
-      `static JS bundle check failed: ${stale.join(", ")}. Run \`node js/build.mjs\` and commit python/fastcharts/static/*.js.`
+      `static JS bundle check failed: ${stale.join(", ")}. Run \`node js/build.mjs\` and commit python/xy/static/*.js.`
     );
     process.exit(1);
   }

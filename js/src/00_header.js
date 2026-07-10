@@ -1,5 +1,5 @@
 /**
- * fastcharts render client.
+ * xy render client.
  *
  * A thin GPU render client (design dossier §32): receives a data-less spec +
  * offset-encoded f32 columns as raw binary (§29 — no JSON numbers, no parse),

@@ -1,22 +1,22 @@
 # Production Readiness
 
-This is the release bar for fastcharts while the core renderer is still moving.
+This is the release bar for xy while the core renderer is still moving.
 It separates hard gates from advisory measurements so performance claims,
 packaging promises, and API stability do not depend on memory or vibes.
 
 ## Current Contract
 
-fastcharts is early alpha. The goal is Plotly-class chart breadth with a
+xy is early alpha. The goal is Plotly-class chart breadth with a
 screen-bounded performance core, but the stable commitments today are narrower:
 
 - Python 3.11+ only.
-- `import fastcharts` stays lightweight and does not import NumPy or load the
+- `import xy` stays lightweight and does not import NumPy or load the
   native core. The public API
   gate verifies this in fresh interpreters and keeps package import under a
   200 ms budget. Chart-building APIs are the compute import boundary; notebook
   widget dependencies stay deferred until `.widget()`/display, and standalone
   HTML export reads its static bundle without importing the widget stack.
-- Published wheels include only the shippable `fastcharts/` package,
+- Published wheels include only the shippable `xy/` package,
   `.dist-info`, static JavaScript bundles, `py.typed`, and, for native wheels,
   the Rust core. End users do not need Rust, Node, npm, or a CDN.
 - Source distributions include the release support surface: docs, tests,
@@ -42,7 +42,7 @@ These must pass before publishing or making a broad performance claim.
 |---|---|---|
 | Python floor | `pyproject.toml`, Ruff, docs, syntax, and annotations stay on the Python 3.11+ floor | `python scripts/check_python_floor.py` |
 | Public API | `__all__`, lazy exports, `__version__`, the source `py.typed` marker, focused type-surface tests, and fresh-process import-time budget stay coherent | `make check-api` |
-| Import-time budget | `fastcharts.__init__`, `dir(fastcharts)`, export helpers, chart construction, and `.widget()` keep their lazy import boundaries | `make check-import` |
+| Import-time budget | `xy.__init__`, `dir(xy)`, export helpers, chart construction, and `.widget()` keep their lazy import boundaries | `make check-import` |
 | Claim guardrails | Public docs and package metadata avoid broad, unqualified performance claims | `make check-claims` |
 | CI/release workflows | Hard gates, non-blocking benchmarks, best-effort benchmark artifact upload/download, trusted publishing, and no-Rust clear-error jobs stay wired | `make check-ci` |
 | HTML export safety | Inline JSON/script escaping, atomic path writes, hostile user strings, and browser client text-node insertion stay protected | `make check-security` |
@@ -102,13 +102,13 @@ production-facing push:
 | README snippets, `docs/api-examples.md`, Reflex chart registry/assets | `make check-examples` |
 | Public validation, error messages, builder rollback, LOD/drill mutation boundaries, chart/widget caching | `make check-errors` |
 | Public exports, lazy import mappings, component factories, public annotations | `make check-api` |
-| Import-time budget, `fastcharts.__init__`, dependency boundaries, widget/export/backend import boundaries | `make check-import` |
+| Import-time budget, `xy.__init__`, dependency boundaries, widget/export/backend import boundaries | `make check-import` |
 | Standalone HTML export, path writes, user text, tooltips, legends, browser DOM insertion | `make check-security` |
 | Benchmark harness code, environment metadata, report schema, regressions | `make check-benchmark-harness` |
 | Generated benchmark JSON artifacts | `make check-benchmark-report BENCHMARK_JSON=benchmark.json BENCHMARK_KIND=scatter-vs` |
 | CI/release workflows, artifact upload/download, no-Rust clear-error jobs | `make check-ci` |
 | Source distributions and wheels | `make check-sdist` and `make check-wheel` |
-| Existing release artifacts | `make check-artifacts SDIST=/path/to/fastcharts.tar.gz WHEEL=/path/to/fastcharts.whl` |
+| Existing release artifacts | `make check-artifacts SDIST=/path/to/xy.tar.gz WHEEL=/path/to/xy.whl` |
 | Browser render/lifecycle/interaction smoke | `make check-browser CHROMIUM=/path/to/chrome` |
 | Production-facing PR | `make check-full` |
 
@@ -128,9 +128,9 @@ make check-docs
 The browser gates are split into three app-facing checks that match the CI step
 names: `Browser lifecycle smoke (Chromium)`, `Browser visual regression smoke
 (Chromium)`, and `Browser interaction stress smoke (Chromium)`. The Reflex
-lifecycle smoke remounts every committed FastCharts iframe asset, the visual
+lifecycle smoke remounts every committed XY iframe asset, the visual
 regression smoke screenshots generated representative chart families plus every
-committed FastCharts Reflex gallery asset except the Plotly comparison page,
+committed XY Reflex gallery asset except the Plotly comparison page,
 and the interaction stress smoke enforces real `ChartView` gesture budgets. The
 lifecycle smoke also requires every chart to report nonblank pixels through
 `initial`, `hash-navigation`, `narrow-resize`, `wide-resize`, `scroll-bottom`,
@@ -173,7 +173,7 @@ Use this when release automation has already produced artifacts and you need to
 verify those exact files rather than rebuilding locally:
 
 ```bash
-make check-artifacts SDIST=/path/to/fastcharts.tar.gz WHEEL=/path/to/fastcharts.whl
+make check-artifacts SDIST=/path/to/xy.tar.gz WHEEL=/path/to/xy.whl
 ```
 
 Use this after editing README snippets, `docs/api-examples.md`, or the Reflex
@@ -205,7 +205,7 @@ factories, or public type annotations:
 make check-api
 ```
 
-Use this after changing `fastcharts.__init__`, lazy import boundaries,
+Use this after changing `xy.__init__`, lazy import boundaries,
 dependency boundaries, widget/export boundaries, or backend import setup:
 
 ```bash
@@ -245,7 +245,7 @@ make check-browser CHROMIUM=/path/to/chrome
 ```
 
 The lifecycle gate runs `scripts/reflex_lifecycle_smoke.py`. It loads each
-FastCharts iframe asset twice, requires every asset to survive the child-level
+XY iframe asset twice, requires every asset to survive the child-level
 `initial`, `hash-navigation`, `narrow-resize`, `wide-resize`, `scroll-bottom`,
 `fast-scroll`, `visibility-change`, `context-restore`, and `restore` phases,
 then mounts all assets in a parent iframe shell and exercises hash navigation,
@@ -258,7 +258,7 @@ context restores, missing shell-phase reports, or missing per-phase critical
 custom chrome/business/cohort reports fail the gate.
 
 The visual gate runs `scripts/visual_regression_smoke.py`. It verifies generated
-core-family charts and committed FastCharts Reflex gallery assets with title,
+core-family charts and committed XY Reflex gallery assets with title,
 plot, x-axis, y-axis, occupancy, nonblank, color, and tick-overlap probes. It
 also renders static custom-chrome shells for the custom legend/tooltip and
 annotated heatmap examples, and fails if their external chrome DOM is missing
@@ -319,8 +319,8 @@ Before tagging a release:
   scripts, benchmark harnesses/baselines, Reflex example app, and no native
   binaries or generated caches.
 - Confirm every wheel passes `scripts/verify_wheel.py --expect-native` and the
-  install smoke loads `fastcharts.kernels.BACKEND == "native"`. Wheel
-  `METADATA` must keep `Name: fastcharts`, `Requires-Python: >=3.11`,
+  install smoke loads `xy.kernels.BACKEND == "native"`. Wheel
+  `METADATA` must keep `Name: xy`, `Requires-Python: >=3.11`,
   `anywidget>=0.9`, and `numpy>=1.24`; wheel `RECORD` must list every archive
   file exactly once with matching `sha256` and size fields. Wheels must stay
   package-only: docs, tests, benchmarks, scripts, and `examples/reflex/`
@@ -336,7 +336,7 @@ Before tagging a release:
 
 Safe claims:
 
-- fastcharts avoids JSON-number payloads for core chart data.
+- xy avoids JSON-number payloads for core chart data.
 - Large scatter overview rendering is screen-bounded when using density mode.
 - The native backend is substantially faster than pure Python/NumPy for kernel
   work covered by the benchmarks.
@@ -362,7 +362,7 @@ Not yet safe:
 - Production Reflex state integration as a first-class API.
 - More than ~12 charts *simultaneously in view* holding live WebGL contexts.
   Browsers cap live contexts per page (~16 in Chrome); the render client's
-  context governor keeps fastcharts inside a budget (default 12) by having
+  context governor keeps xy inside a budget (default 12) by having
   the least-recently-visible off-screen chart release its context and
   re-acquire on scroll-into-view. Measured (`benchmarks/bench_dashboard.py`,
   2026-07-09, Chrome/macOS): 10/20/50-chart dashboards are all fully usable —

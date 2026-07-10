@@ -14,7 +14,7 @@ are published.
    markers." Output labels every row `direct | decimated | density | sampled`
    — a reader can never mistake an aggregate result for a raw-marker result.
 2. **Same-work comparisons.** Each competitor renders the *same visual
-   contract*, not the same API call: if FastCharts aggregates at 10M, the
+   contract*, not the same API call: if XY aggregates at 10M, the
    fair Plotly comparison is Plotly failing/succeeding at raw markers AND
    Plotly+Datashader doing aggregation — both are reported. We never
    benchmark our fast path against a competitor's wrong tool.
@@ -64,11 +64,11 @@ documented finding, with repro).
 
 ## 3. Competitor matrix
 
-Shipped adapters: fastcharts, Plotly, matplotlib, seaborn, Bokeh, Altair,
+Shipped adapters: xy, Plotly, matplotlib, seaborn, Bokeh, Altair,
 Datashader, hvPlot/HoloViews, and **plotly-resampler** ✅ (`bench_line.py` —
 the honest line competitor, same decimation thesis, so comparing against
 vanilla Plotly alone on lines would be a strawman; both run, with the M4
-extrema oracle on the fastcharts row). Still to add: **PyGWalker** (adapter:
+extrema oracle on the xy row). Still to add: **PyGWalker** (adapter:
 programmatic `walk()` export path; if headless render proves unstable, report
 prep+payload only and say so). Every adapter: `unavailable` rows rather than
 silent omission (harness behavior). Two adjacent metric harnesses now ship
@@ -96,7 +96,7 @@ reported).
   that don't exist in the artifact are banned (existing policy, kept).
 - **Warm/cold discipline:** every timing reports which it is; first-run
   (cold cache) and steady-state are separate rows for TTFR and import.
-- **Losses ship.** The report has a standing "where FastCharts loses" table
+- **Losses ship.** The report has a standing "where XY loses" table
   (e.g., tiny-data static PNG export vs matplotlib; ecosystem breadth).
   Nothing buys credibility like published losses.
 

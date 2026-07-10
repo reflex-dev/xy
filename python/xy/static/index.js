@@ -74,7 +74,7 @@ if (!expr) return fallback;
 const out = expr.startsWith("#") ? hexColor(expr) : resolveCssColor(host, expr);
 if (out) return out;
 if (typeof console !== "undefined" && console.warn) {
-console.warn(`fastcharts: unresolvable color ${JSON.stringify(expr)}; using fallback`);
+console.warn(`xy: unresolvable color ${JSON.stringify(expr)}; using fallback`);
 }
 return fallback;
 }
@@ -96,22 +96,22 @@ function cssColor([r, g, b, a]) {
 return `rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},${a})`;
 }
 const FC_CHROME_CSS = `
-:where(.fastcharts [data-fc-slot="title"]){text-align:center;font-size:14px;font-weight:600;color:var(--chart-text,inherit)}
-:where(.fastcharts [data-fc-slot="tooltip"]){background:var(--chart-tooltip-bg,rgba(20,24,33,.92));color:var(--chart-tooltip-text,#fff);padding:5px 8px;border-radius:4px;font-size:11px;line-height:1.35;box-shadow:0 2px 8px rgba(0,0,0,.3)}
-:where(.fastcharts [data-fc-slot="legend"]){gap:2px;font-size:11px;background:var(--chart-legend-bg,rgba(128,128,128,.08));border-radius:4px;padding:4px 8px;color:var(--chart-text,inherit)}
-:where(.fastcharts [data-fc-slot="legend_swatch"]){width:12px;height:10px;border-radius:2px;margin-right:5px}
-:where(.fastcharts [data-fc-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
-:where(.fastcharts [data-fc-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
-:where(.fastcharts [data-fc-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
-:where(.fastcharts [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-axis,currentColor);cursor:pointer}
-:where(.fastcharts [data-fc-slot="modebar_button"].fc-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
-:where(.fastcharts [data-fc-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
-:where(.fastcharts [data-fc-slot="crosshair_x"],.fastcharts [data-fc-slot="crosshair_y"]){background:var(--chart-crosshair,rgba(15,23,42,.42))}
-:where(.fastcharts [data-fc-slot="tick_label"]){color:var(--chart-text,inherit)}
-:where(.fastcharts [data-fc-slot="axis_title"]){color:var(--chart-text,inherit);font-size:12px}
-:where(.fastcharts [data-fc-slot="annotation_label"]){font-size:11px;line-height:1.2;font-weight:500;color:var(--chart-annotation-text,var(--chart-text,inherit))}
-:where(.fastcharts [data-fc-slot="canvas"]){cursor:var(--chart-cursor,crosshair)}
-:where(.fastcharts [data-fc-slot="canvas"][data-fc-dragmode="pan"]){cursor:var(--chart-cursor-pan,grab)}
+:where(.xy [data-fc-slot="title"]){text-align:center;font-size:14px;font-weight:600;color:var(--chart-text,inherit)}
+:where(.xy [data-fc-slot="tooltip"]){background:var(--chart-tooltip-bg,rgba(20,24,33,.92));color:var(--chart-tooltip-text,#fff);padding:5px 8px;border-radius:4px;font-size:11px;line-height:1.35;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+:where(.xy [data-fc-slot="legend"]){gap:2px;font-size:11px;background:var(--chart-legend-bg,rgba(128,128,128,.08));border-radius:4px;padding:4px 8px;color:var(--chart-text,inherit)}
+:where(.xy [data-fc-slot="legend_swatch"]){width:12px;height:10px;border-radius:2px;margin-right:5px}
+:where(.xy [data-fc-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
+:where(.xy [data-fc-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
+:where(.xy [data-fc-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+:where(.xy [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-axis,currentColor);cursor:pointer}
+:where(.xy [data-fc-slot="modebar_button"].fc-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
+:where(.xy [data-fc-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
+:where(.xy [data-fc-slot="crosshair_x"],.xy [data-fc-slot="crosshair_y"]){background:var(--chart-crosshair,rgba(15,23,42,.42))}
+:where(.xy [data-fc-slot="tick_label"]){color:var(--chart-text,inherit)}
+:where(.xy [data-fc-slot="axis_title"]){color:var(--chart-text,inherit);font-size:12px}
+:where(.xy [data-fc-slot="annotation_label"]){font-size:11px;line-height:1.2;font-weight:500;color:var(--chart-annotation-text,var(--chart-text,inherit))}
+:where(.xy [data-fc-slot="canvas"]){cursor:var(--chart-cursor,crosshair)}
+:where(.xy [data-fc-slot="canvas"][data-fc-dragmode="pan"]){cursor:var(--chart-cursor-pan,grab)}
 `;
 function ensureChromeStylesheet(node) {
 let root = node && node.getRootNode ? node.getRootNode() : document;
@@ -119,9 +119,9 @@ const isShadow = typeof ShadowRoot !== "undefined" && root instanceof ShadowRoot
 if (!isShadow && !(root instanceof Document)) root = document; 
 const scope = isShadow ? root : (root.head || document.head || root.documentElement);
 if (!scope || !scope.querySelector) return;
-if (scope.querySelector("style[data-fastcharts-chrome]")) return;
+if (scope.querySelector("style[data-xy-chrome]")) return;
 const style = document.createElement("style");
-style.setAttribute("data-fastcharts-chrome", "");
+style.setAttribute("data-xy-chrome", "");
 style.textContent = FC_CHROME_CSS;
 scope.appendChild(style);
 }
@@ -1345,7 +1345,7 @@ const FC_CONTEXT_GOVERNOR = {
 views: new Set(),
 seq: 1,
 budget() {
-const v = typeof window !== "undefined" ? window.FASTCHARTS_CONTEXT_BUDGET : null;
+const v = typeof window !== "undefined" ? window.XY_CONTEXT_BUDGET : null;
 return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 12;
 },
 register(view) {
@@ -1395,8 +1395,8 @@ class ChartView {
 constructor(el, spec, buffer, comm) {
 if (spec.protocol !== PROTOCOL) {
 el.textContent =
-`fastcharts: protocol mismatch (client speaks ${PROTOCOL}, kernel sent ${spec.protocol}). ` +
-"Update the fastcharts package and restart the kernel.";
+`xy: protocol mismatch (client speaks ${PROTOCOL}, kernel sent ${spec.protocol}). ` +
+"Update the xy package and restart the kernel.";
 throw new Error("protocol mismatch");
 }
 this.spec = spec;
@@ -1572,7 +1572,7 @@ source,
 }
 _dispatchChartEvent(name, detail) {
 if (!this.root || typeof CustomEvent !== "function") return;
-this.root.dispatchEvent(new CustomEvent(`fastcharts:${name}`, {
+this.root.dispatchEvent(new CustomEvent(`xy:${name}`, {
 detail,
 bubbles: true,
 composed: true,
@@ -1605,7 +1605,7 @@ this._linkAxes = Array.isArray(this.interaction.link_axes)
 ? this.interaction.link_axes.filter((axis) => axis === "x" || axis === "y")
 : ["x", "y"];
 if (!this._linkAxes.length) this._linkAxes = ["x", "y"];
-this._linkChannel = new BroadcastChannel(`fastcharts:${group}`);
+this._linkChannel = new BroadcastChannel(`xy:${group}`);
 this._linkChannel.onmessage = (event) => {
 const msg = event.data || {};
 if (!msg.view || msg.source === this._linkedSource) return;
@@ -1766,7 +1766,7 @@ this._dispatchChartEvent("context_restore_failed", {
 loss_count: this._contextLossCount,
 message: err instanceof Error ? err.message : String(err),
 });
-this.root.textContent = "fastcharts: WebGL2 context could not be restored.";
+this.root.textContent = "xy: WebGL2 context could not be restored.";
 return;
 }
 this._glLost = false;
@@ -1886,7 +1886,7 @@ this._scheduleViewRequest();
 _buildDom(el) {
 const s = this.spec;
 const root = document.createElement("div");
-root.className = "fastcharts";
+root.className = "xy";
 root.style.cssText =
 `position:relative;width:${this.fluid ? "100%" : this.size.w + "px"};` +
 `height:${this.fluidH ? "100%" : this.size.h + "px"};` +
@@ -2044,7 +2044,7 @@ antialias: false, premultipliedAlpha: true, alpha: true,
 });
 if (!gl) {
 FC_CONTEXT_GOVERNOR.cancel(this);
-this.root.textContent = "fastcharts: WebGL2 unavailable in this browser.";
+this.root.textContent = "xy: WebGL2 unavailable in this browser.";
 throw new Error("webgl2 unavailable");
 }
 this.gl = gl;

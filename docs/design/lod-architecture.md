@@ -2,8 +2,8 @@
 
 **Status:** design + implementation plan. Supersedes nothing — this refines
 dossier §5/§10/§16/§17/§22/§28 into a buildable spec, grounded in what already
-ships (`python/fastcharts/lod.py`, `js/src/45_lod.js`, `interaction.py`,
-kernels ABI v3). The whole FastCharts claim rests on one sentence:
+ships (`python/xy/lod.py`, `js/src/45_lod.js`, `interaction.py`,
+kernels ABI v3). The whole XY claim rests on one sentence:
 
 > **Large data stays truthful and interactive.**
 
@@ -55,7 +55,7 @@ lives there.
 ### Shared Python contract
 
 Tiered chart kinds must enter through the common LOD primitives in
-`python/fastcharts/lod.py`:
+`python/xy/lod.py`:
 
 - `ViewportRequest.from_client(...)` normalizes flipped ranges, rejects
   non-finite bounds, and clamps hostile/tiny screen dimensions before any

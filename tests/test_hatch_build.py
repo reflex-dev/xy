@@ -5,7 +5,7 @@ modes bit us in a real release dry-run and are guarded here:
 
 - `wasm32-unknown-emscripten` doesn't emit a `.so`, so a filename guessed from
   the *build host* platform never matches — the target's release dir must be
-  scanned for whatever `fastcharts_core.*` artifact cargo actually produced.
+  scanned for whatever `xy_core.*` artifact cargo actually produced.
 - A scan must not grab the wrong file (an `.rlib`, or an unrelated `.wasm`).
 
 `hatch_build.py` imports hatchling (a build-time-only dependency absent from the
@@ -53,24 +53,24 @@ def _release_dir(base: Path, triple: str) -> Path:
 
 def test_resolve_prefers_host_guess_when_present(tmp_path: Path) -> None:
     rel = _release_dir(tmp_path, "x86_64-unknown-linux-musl")
-    so = rel / "libfastcharts_core.so"
+    so = rel / "libxy_core.so"
     so.write_bytes(b"\x7fELF")
     assert hb._resolve_built(so, "x86_64-unknown-linux-musl") == so
 
 
 def test_resolve_scans_for_wasm_artifact_the_host_guess_misses(tmp_path: Path) -> None:
     rel = _release_dir(tmp_path, "wasm32-unknown-emscripten")
-    wasm = rel / "libfastcharts_core.wasm"
+    wasm = rel / "libxy_core.wasm"
     wasm.write_bytes(b"\0asm")
     # The host-derived guess (.so) does not exist; the scan must find the .wasm.
-    assert hb._resolve_built(rel / "libfastcharts_core.so", "wasm32-unknown-emscripten") == wasm
+    assert hb._resolve_built(rel / "libxy_core.so", "wasm32-unknown-emscripten") == wasm
 
 
 def test_resolve_ignores_wrong_suffix_and_wrong_stem(tmp_path: Path) -> None:
     rel = _release_dir(tmp_path, "wasm32-unknown-emscripten")
-    (rel / "libfastcharts_core.rlib").write_bytes(b"x")  # right stem, wrong suffix
+    (rel / "libxy_core.rlib").write_bytes(b"x")  # right stem, wrong suffix
     (rel / "something_else.wasm").write_bytes(b"x")  # right suffix, wrong stem
-    assert hb._resolve_built(rel / "libfastcharts_core.so", "wasm32-unknown-emscripten") is None
+    assert hb._resolve_built(rel / "libxy_core.so", "wasm32-unknown-emscripten") is None
 
 
 def test_resolve_does_not_scan_for_native_builds(tmp_path: Path) -> None:
@@ -78,14 +78,14 @@ def test_resolve_does_not_scan_for_native_builds(tmp_path: Path) -> None:
     # scanning of the release dir for a mystery artifact.
     rel = tmp_path / "target" / "release"
     rel.mkdir(parents=True)
-    stray = rel / "libfastcharts_core.wasm"
+    stray = rel / "libxy_core.wasm"
     stray.write_bytes(b"x")
-    assert hb._resolve_built(rel / "libfastcharts_core.so", None) is None
+    assert hb._resolve_built(rel / "libxy_core.so", None) is None
 
 
 @pytest.mark.parametrize("suffix", [".so", ".dylib", ".dll", ".wasm"])
 def test_resolve_accepts_every_cdylib_suffix(tmp_path: Path, suffix: str) -> None:
     rel = _release_dir(tmp_path, "some-cross-triple")
-    lib = rel / f"libfastcharts_core{suffix}"
+    lib = rel / f"libxy_core{suffix}"
     lib.write_bytes(b"x")
-    assert hb._resolve_built(rel / "libfastcharts_core.so", "some-cross-triple") == lib
+    assert hb._resolve_built(rel / "libxy_core.so", "some-cross-triple") == lib

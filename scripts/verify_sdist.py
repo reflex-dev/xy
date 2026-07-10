@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify fastcharts source distributions before upload/install smoke tests.
+"""Verify xy source distributions before upload/install smoke tests.
 
 An sdist is the escape hatch for users without a prebuilt wheel. It must carry
 the Rust source, committed JS bundles, package typing marker, and build hook,
@@ -37,7 +37,7 @@ REQUIRED_FILES = {
     "benchmarks/__init__.py",
     "benchmarks/README.md",
     "benchmarks/_browser.py",
-    "benchmarks/_fastcharts_browser.py",
+    "benchmarks/_xy_browser.py",
     "benchmarks/baseline.json",
     "benchmarks/bench.py",
     "benchmarks/bench_2d_charts.py",
@@ -67,22 +67,22 @@ REQUIRED_FILES = {
     "js/src/50_chartview.js",
     "js/src/55_marks.js",
     "js/src/60_entries.js",
-    "python/fastcharts/__init__.py",
-    "python/fastcharts/_native.py",
-    "python/fastcharts/channels.py",
-    "python/fastcharts/columns.py",
-    "python/fastcharts/components.py",
-    "python/fastcharts/config.py",
-    "python/fastcharts/export.py",
-    "python/fastcharts/_figure.py",
-    "python/fastcharts/channel.py",
-    "python/fastcharts/interaction.py",
-    "python/fastcharts/kernels.py",
-    "python/fastcharts/lod.py",
-    "python/fastcharts/py.typed",
-    "python/fastcharts/static/index.js",
-    "python/fastcharts/static/standalone.js",
-    "python/fastcharts/widget.py",
+    "python/xy/__init__.py",
+    "python/xy/_native.py",
+    "python/xy/channels.py",
+    "python/xy/columns.py",
+    "python/xy/components.py",
+    "python/xy/config.py",
+    "python/xy/export.py",
+    "python/xy/_figure.py",
+    "python/xy/channel.py",
+    "python/xy/interaction.py",
+    "python/xy/kernels.py",
+    "python/xy/lod.py",
+    "python/xy/py.typed",
+    "python/xy/static/index.js",
+    "python/xy/static/standalone.js",
+    "python/xy/widget.py",
     "examples/reflex/README.md",
     "examples/reflex/requirements.txt",
     "examples/reflex/rxconfig.py",
@@ -99,9 +99,9 @@ REQUIRED_FILES = {
     "examples/reflex/assets/charts/live_drilldown_10m.html",
     "examples/reflex/assets/charts/plotly_colored_scatter.html",
     "examples/reflex/assets/charts/stacked_bar.html",
-    "examples/reflex/reflex_fastcharts_app/__init__.py",
-    "examples/reflex/reflex_fastcharts_app/live_drilldown.py",
-    "examples/reflex/reflex_fastcharts_app/reflex_fastcharts_app.py",
+    "examples/reflex/reflex_xy_app/__init__.py",
+    "examples/reflex/reflex_xy_app/live_drilldown.py",
+    "examples/reflex/reflex_xy_app/reflex_xy_app.py",
     "examples/reflex/scripts/build_charts.py",
     "scripts/check_public_api.py",
     "scripts/check_claim_guardrails.py",
@@ -147,7 +147,7 @@ FORBIDDEN_PARTS = {
     "wheelhouse",
 }
 FORBIDDEN_SUFFIXES = {".dll", ".dylib", ".pyd", ".pyc", ".pyo", ".so", ".whl"}
-ROOT_RE = re.compile(r"^fastcharts-\d+\.\d+\.\d+(?:[A-Za-z0-9_.+-]*)?$")
+ROOT_RE = re.compile(r"^xy-\d+\.\d+\.\d+(?:[A-Za-z0-9_.+-]*)?$")
 
 
 def _member_path(name: str) -> PurePosixPath:
@@ -214,8 +214,8 @@ def _require_pkg_info(path: str, root: str) -> None:
         text = data.read().decode("utf-8")
     metadata = Parser().parsestr(text)
     missing: list[str] = []
-    if metadata.get("Name", "").strip() != "fastcharts":
-        missing.append("Name: fastcharts")
+    if metadata.get("Name", "").strip() != "xy":
+        missing.append("Name: xy")
     project_version = _project_version()
     if metadata.get("Version", "").strip() != project_version:
         missing.append(f"Version: {project_version}")
@@ -301,19 +301,19 @@ def verify_sdist(path: str) -> None:
     if forbidden:
         raise AssertionError(f"sdist contains generated/native artifacts: {forbidden}")
     _require_pkg_info(path, root)
-    _require_exact_file(path, root, "python/fastcharts/py.typed", b"")
+    _require_exact_file(path, root, "python/xy/py.typed", b"")
     _require_baseline_json(path, root)
     _require_file_contains(
         path,
         root,
-        "python/fastcharts/static/index.js",
+        "python/xy/static/index.js",
         {"export { render", "function render(", "class ChartView"},
     )
     _require_file_contains(
         path,
         root,
-        "python/fastcharts/static/standalone.js",
-        {"window.fastcharts", "function renderStandalone(", "class ChartView"},
+        "python/xy/static/standalone.js",
+        {"window.xy", "function renderStandalone(", "class ChartView"},
     )
     _require_file_contains(
         path,
@@ -364,7 +364,7 @@ def verify_sdist(path: str) -> None:
             "sdist-only",
             "scripts/verify_benchmark_report.py",
             "scripts/verify_wheel.py",
-            "import fastcharts",
+            "import xy",
         },
     )
     _require_file_contains(
@@ -385,7 +385,7 @@ def verify_sdist(path: str) -> None:
         root,
         "examples/reflex/README.md",
         {
-            "fastcharts Reflex Example",
+            "xy Reflex Example",
             "Business overview",
             "assets/charts/business_overview.html",
             "python scripts/build_charts.py",
@@ -395,7 +395,7 @@ def verify_sdist(path: str) -> None:
         path,
         root,
         "examples/reflex/assets/charts/business_overview.html",
-        {"fastcharts.renderStandalone", "Small business overview", "Revenue", "Pipeline"},
+        {"xy.renderStandalone", "Small business overview", "Revenue", "Pipeline"},
     )
     _require_file_contains(
         path,
