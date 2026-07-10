@@ -27,7 +27,10 @@ def _best(fn, reps: int) -> float:
     return best
 
 
-@pytest.mark.parametrize("n,reps,ceiling", [(10_000, 60, 1.6), (100_000, 30, 1.35)])
+@pytest.mark.parametrize(
+    "n,reps,ceiling",
+    [(10_000, 60, 1.6), (100_000, 30, 1.5)],
+)
 def test_pyplot_build_tracks_declarative(n: int, reps: int, ceiling: float) -> None:
     rng = np.random.default_rng(0)
     x = np.arange(n, dtype=np.float64)

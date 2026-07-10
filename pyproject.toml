@@ -94,6 +94,7 @@ select = [
     "SIM",           # simplify
     "RUF",
 ]
+
 ignore = [
     "E501",   # line length is the formatter's job
     # Stylistic churn we opt out of (newer-ruff additions; the codebase keeps
@@ -110,11 +111,8 @@ ignore = [
     "RUF100", # unused noqa (kept for editors running broader rule sets)
 ]
 
-[tool.ruff.lint.per-file-ignores]
-# This legacy notebook imports the historical `fastcharts` demo alias. Ruff's
-# first-party classification differs between the editable CI environment and
-# the local checkout, so import ordering is not a stable check for this file.
-"examples/demo.ipynb" = ["I001"]
+[tool.ruff.lint.isort]
+known-first-party = ["fastcharts", "xy"]
 
 [tool.ty.environment]
 python = ".venv"
