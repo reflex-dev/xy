@@ -46,18 +46,22 @@ These commands match the non-blocking GitHub Actions measurement lane:
 The browser helpers force SwiftShader themselves. Validate every artifact before
 publication with `scripts/verify_benchmark_report.py --kind ...`.
 
-The native CodSpeed suite is the reproducible backend/per-payload gate:
+The native CodSpeed suite is the reproducible backend/per-payload gate. Every
+module named `test_codspeed_*.py` is collected, so adding a dedicated CodSpeed
+test module automatically adds its benchmarks to the CI run:
 
 ```bash
 cargo build --release
 uv run --extra dev --extra codspeed python -m pytest \
-  benchmarks/test_codspeed_kernels.py --codspeed
+  benchmarks/test_codspeed_*.py --codspeed
 ```
 
 It requires the native Rust backend. The GitHub Actions workflow runs the same
-suite in CodSpeed simulation mode; browser interaction and end-to-end alpha
-workloads remain separate, because they need a real browser and wall-clock
-timing.
+suite in CodSpeed simulation mode. The browser interaction, dashboard,
+cross-library, and fresh-install workloads remain in the benchmark-refresh
+workflow because they need a real browser, separate processes/virtual
+environments, or wall-clock timing. They are still measured in CI, but are not
+reported as CodSpeed simulation benchmarks.
 
 ## Reference Hardware
 
