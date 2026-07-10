@@ -60,7 +60,7 @@ can be rendered by notebooks, static HTML export, and future adapters:
 flowchart LR
   USER["Python API<br/>fc.chart(...children)"]
   TREE["Framework-free<br/>component tree"]
-  FIG["Figure compiler<br/>ColumnStore + traces"]
+  FIG["Internal figure compiler<br/>ColumnStore + traces"]
   SPEC["Wire spec + buffers"]
   NB["Notebook widget<br/>.show()"]
   HTML["Standalone HTML<br/>to_html()"]
@@ -91,9 +91,10 @@ flowchart LR
 - **Declarative by default.** Component construction records intent. Rendering
   happens when the user calls `.show()`, `widget()`, `to_html(...)`,
   `to_png(...)`, or when an adapter mounts it.
-- **One chart vocabulary.** `Figure().scatter(...)` and
-  `fc.chart(fc.scatter(...))` use the same mark names, channel names, defaults,
-  and validation rules.
+- **One chart vocabulary.** Every mark factory (`fc.scatter(...)`,
+  `fc.line(...)`, ...) resolves to the single mark implementation in
+  `marks.py`, so mark names, channel names, defaults, and validation rules
+  cannot fork.
 - **CSS styles chrome, spec styles marks.** DOM chrome like title, tooltip,
   legend, modebar, and wrapper can be styled with classes and CSS variables.
   WebGL marks are pixels, so their color/opacity/width still come from mark
@@ -172,10 +173,10 @@ fc.line(x="t", y="p95", data=df, color="var(--chart-critical)", width=2)
 
 ### 3.3 Readout Methods
 
-Every renderable component should expose the same readouts as `Figure`:
+Every renderable component exposes the full readout surface directly:
 
 ```python
-chart.figure()       # compile to Figure
+chart.figure()       # advanced escape hatch: compile to the internal Figure
 chart.widget()       # anywidget object
 chart.show()         # display widget in notebook
 chart.to_html()      # standalone string
@@ -190,8 +191,8 @@ chart.memory_report()
 export path for notebook/export tools that inspect HTML representations instead
 of anywidget display hooks. `to_html()` remains the canonical method because it
 already exists and clearly communicates export behavior. `Chart.to_html(path)`
-delegates to the same standalone export path as `Figure.to_html(path)`,
-including same-directory atomic file replacement for path writes.
+delegates to the engine's standalone export path, including same-directory
+atomic file replacement for path writes.
 
 ## 4. Styling Contract
 
@@ -282,9 +283,9 @@ and tests do not have to copy this table by hand. That root export resolves
 through the lightweight DOM contract module, so framework adapters can inspect
 the styling surface without importing NumPy, the chart engine, or widget stack.
 `class_names` keys are validated against that tuple; unknown keys fail fast
-instead of being silently ignored. The same validation is applied by the fluent
-`Figure` export path, so mutating `fig.class_names` or `fig.chrome_styles`
-cannot bypass the public DOM-slot contract.
+instead of being silently ignored. The same validation is applied by the
+internal `_figure.Figure` export path, so mutating `fig.class_names` or
+`fig.chrome_styles` cannot bypass the public DOM-slot contract.
 
 Tailwind example:
 
@@ -538,8 +539,8 @@ chart.to_html("clusters.html")     # standalone shareable file
 chart.to_png("clusters.png")       # optional local Chromium screenshot
 ```
 
-The same object compiles to a `Figure`, so existing internals and future
-adapters share the same payload path:
+The same object compiles to the internal `_figure.Figure`, so engine
+internals and future adapters share the same payload path:
 
 ```python
 fig = chart.figure()
@@ -640,7 +641,8 @@ declarative chart object, binary payload, and renderer.
 
 Must keep:
 
-- `Figure` fluent API.
+- The composition API as the single public chart-building surface (the
+  internal `_figure.Figure` fluent API is no longer public).
 - Existing `scatter_chart`, `line_chart`, etc. wrappers.
 - `Chart.figure()`.
 - `Chart.widget()`.

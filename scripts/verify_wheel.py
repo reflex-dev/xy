@@ -33,7 +33,7 @@ REQUIRED_FILES = {
     "fastcharts/components.py",
     "fastcharts/config.py",
     "fastcharts/export.py",
-    "fastcharts/figure.py",
+    "fastcharts/_figure.py",
     "fastcharts/marks.py",
     "fastcharts/interaction.py",
     "fastcharts/kernels.py",
@@ -295,8 +295,8 @@ def verify_wheel(path: Path, *, expect_native: Optional[bool]) -> None:
             {"__version__", "__all__", "_EXPORTS", "__getattr__"},
         )
         _require_text_markers(
-            "fastcharts/figure.py",
-            zf.read("fastcharts/figure.py"),
+            "fastcharts/_figure.py",
+            zf.read("fastcharts/_figure.py"),
             {
                 "class Figure",
                 "scatter = _marks.scatter",

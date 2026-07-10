@@ -17,18 +17,18 @@ A Panel owns **Scales** (x, y, and later y2) and a z-ordered list of
 **Marks**. A Mark = kind + data bindings + style props + optional channel
 encodings. Axes, legend, and title are Panel/Figure chrome that *read* scales
 and marks — they never own data. Everything is a plain declarative node
-(dataclass), composable as children, and compiles to the existing engine
-`Figure` + wire spec. Two front doors, one engine:
+(dataclass), composable as children, and compiles to the existing internal
+engine figure + wire spec. One public front door over that engine:
 
-- **Fluent:** `Figure().scatter(...).line(...)` — imperative, notebook-quick.
 - **Compositional (Reflex-flavored):** `fc.chart(fc.scatter(...), fc.line(...),
   fc.x_axis(...))` — declarative, component-tree shaped, what a Reflex wrapper
-  serializes naturally.
+  serializes naturally. (The internal `_figure.Figure` fluent methods share the
+  same mark implementations, so the vocabulary cannot fork.)
 
-Rule G0: **the fluent and compositional APIs are the same vocabulary** (same
-mark names, same prop names, same defaults). A user must be able to translate
-between them mechanically. This is already true and is the thing we must not
-break.
+Rule G0: **the public composition API and the internal mark core are the same
+vocabulary** (same mark names, same prop names, same defaults — one
+implementation in `marks.py`). This is already true and is the thing we must
+not break.
 
 ## 2. The layering/overlay rules (what makes composition sound)
 

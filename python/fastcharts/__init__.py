@@ -4,10 +4,8 @@ Cost scales with pixels on screen, not points in the dataset: native Rust core
 in the Python process, offset-encoded f32 binary transport, M4 decimation, GPU
 density aggregation, and a WebGL2 render client. See docs/design-dossier.md.
 
-Two APIs over one engine:
-
-- **Fluent** (`Figure().scatter(...).line(...)`) — quick and imperative.
-- **Composition** (Reflex-flavored) — declarative, `on_*` event props:
+One declarative API over one engine — Reflex-flavored composition with
+`on_*` event props:
 
       import fastcharts as fc
       fc.scatter_chart(
@@ -37,13 +35,12 @@ _EXPORTS = {
     "Column": ".columns",
     "ColumnStore": ".columns",
     "Component": ".components",
-    "Figure": ".figure",
     "Interaction": ".components",
     "Legend": ".components",
     "Mark": ".components",
     "MarkStyle": ".components",
     "Modebar": ".components",
-    "Selection": ".figure",
+    "Selection": "._figure",
     "Theme": ".components",
     "Tooltip": ".components",
     "ZoneMaps": ".columns",
@@ -92,7 +89,6 @@ __all__ = [
     "Column",
     "ColumnStore",
     "Component",
-    "Figure",
     "Interaction",
     "Legend",
     "Mark",
@@ -159,6 +155,7 @@ def __dir__() -> list[str]:
 
 
 if TYPE_CHECKING:
+    from ._figure import Selection
     from .columns import Column, ColumnStore, ZoneMaps
     from .components import (
         Annotation,
@@ -209,4 +206,3 @@ if TYPE_CHECKING:
         y_band,
     )
     from .dom import CHART_DOM_SLOTS
-    from .figure import Figure, Selection

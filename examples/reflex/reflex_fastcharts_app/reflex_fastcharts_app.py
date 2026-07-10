@@ -308,7 +308,7 @@ def chart_panel():
     return fastcharts_html_chart(chart, "/charts/custom_chrome.html")
 """.strip(),
     "business-overview": """
-from fastcharts import Figure
+import fastcharts as fc
 import numpy as np
 
 months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
@@ -317,24 +317,25 @@ values = np.array([
     [35, 38, 42, 40, 46, 50],
 ])
 
-fig = Figure(
+chart = fc.chart(
+    fc.column(
+        months,
+        values,
+        mode="grouped",
+        series=["Revenue", "Pipeline"],
+        colors=["#2563eb", "#16a34a"],
+    ),
+    fc.x_axis(label="month"),
+    fc.y_axis(label="USD thousands"),
     title="Small business overview",
-    x_label="month",
-    y_label="USD thousands",
     width="100%",
     height=430,
-).column(
-    months,
-    values,
-    mode="grouped",
-    series=["Revenue", "Pipeline"],
-    colors=["#2563eb", "#16a34a"],
 )
 
-fig.to_html("assets/charts/business_overview.html")
+chart.to_html("assets/charts/business_overview.html")
 """.strip(),
     "retention-cohort": """
-from fastcharts import Figure
+import fastcharts as fc
 import numpy as np
 
 cohorts = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
@@ -348,16 +349,17 @@ retention = np.array([
     [1.00, 0.77, 0.68, 0.62, 0.57, 0.52],
 ])
 
-fig = Figure(
+chart = fc.chart(
+    fc.heatmap(retention, x=weeks, y=cohorts, name="retention", colormap="viridis"),
+    fc.x_axis(label="week"),
+    fc.y_axis(label="signup cohort"),
     title="Small retention cohort",
-    x_label="week",
-    y_label="signup cohort",
     width="100%",
     height=430,
-).heatmap(retention, x=weeks, y=cohorts, name="retention", colormap="viridis")
+)
 """.strip(),
     "line": """
-from fastcharts import Figure
+import fastcharts as fc
 import numpy as np
 
 rng = np.random.default_rng(7)
@@ -365,16 +367,17 @@ n = 120_000
 x = np.arange(n)
 y = np.cumsum(rng.normal(0, 0.35, n)) + np.sin(np.linspace(0, 24, n)) * 18
 
-fig = Figure(
+chart = fc.chart(
+    fc.line(x, y, name="walk", color="#3267c8", width=1.4),
+    fc.x_axis(label="sample"),
+    fc.y_axis(label="value"),
     title="120k sample random walk",
-    x_label="sample",
-    y_label="value",
     width="100%",
     height=430,
-).line(x, y, name="walk", color="#3267c8", width=1.4)
+)
 """.strip(),
     "area": """
-from fastcharts import Figure
+import fastcharts as fc
 import numpy as np
 
 rng = np.random.default_rng(13)
@@ -383,16 +386,17 @@ x = np.arange(n)
 y = 35 + np.sin(np.linspace(0, 28, n)) * 8 + np.cumsum(rng.normal(0, 0.025, n))
 base = np.full(n, 25.0)
 
-fig = Figure(
+chart = fc.chart(
+    fc.area(x, y, base=base, name="active users", color="#0891b2"),
+    fc.x_axis(label="sample"),
+    fc.y_axis(label="active users"),
     title="80k filled area",
-    x_label="sample",
-    y_label="active users",
     width="100%",
     height=430,
-).area(x, y, base=base, name="active users", color="#0891b2")
+)
 """.strip(),
     "histogram": """
-from fastcharts import Figure
+import fastcharts as fc
 import numpy as np
 
 rng = np.random.default_rng(41)
@@ -401,16 +405,17 @@ values = np.concatenate([
     rng.normal(1.4, 0.8, 250_000),
 ])
 
-fig = Figure(
+chart = fc.chart(
+    fc.hist(values, bins=160, name="distribution", color="#3b82f6"),
+    fc.x_axis(label="value"),
+    fc.y_axis(label="count"),
     title="500k sample histogram",
-    x_label="value",
-    y_label="count",
     width="100%",
     height=430,
-).hist(values, bins=160, name="distribution", color="#3b82f6")
+)
 """.strip(),
     "grouped-bars": """
-from fastcharts import Figure
+import fastcharts as fc
 import numpy as np
 
 categories = ["Search", "Ads", "Email", "Direct", "Partner", "Social"]
@@ -420,22 +425,23 @@ values = np.array([
     [42, 39, 26, 31, 19, 14],
 ])
 
-fig = Figure(
+chart = fc.chart(
+    fc.bar(
+        categories,
+        values,
+        mode="grouped",
+        series=["Desktop", "Mobile", "Tablet"],
+        colors=["#2563eb", "#16a34a", "#f59e0b"],
+    ),
+    fc.x_axis(label="channel"),
+    fc.y_axis(label="conversions"),
     title="Grouped category bars",
-    x_label="channel",
-    y_label="conversions",
     width="100%",
     height=430,
-).bar(
-    categories,
-    values,
-    mode="grouped",
-    series=["Desktop", "Mobile", "Tablet"],
-    colors=["#2563eb", "#16a34a", "#f59e0b"],
 )
 """.strip(),
     "stacked-bars": """
-from fastcharts import Figure
+import fastcharts as fc
 import numpy as np
 
 quarters = ["Q1", "Q2", "Q3", "Q4"]
@@ -445,37 +451,39 @@ values = np.array([
     [16, 19, 24, 29],
 ])
 
-fig = Figure(
+chart = fc.chart(
+    fc.column(
+        quarters,
+        values,
+        mode="stacked",
+        series=["Core", "Expansion", "Services"],
+        colors=["#0f766e", "#7c3aed", "#dc2626"],
+    ),
+    fc.x_axis(label="quarter"),
+    fc.y_axis(label="revenue"),
     title="Stacked revenue bars",
-    x_label="quarter",
-    y_label="revenue",
     width="100%",
     height=430,
-).column(
-    quarters,
-    values,
-    mode="stacked",
-    series=["Core", "Expansion", "Services"],
-    colors=["#0f766e", "#7c3aed", "#dc2626"],
 )
 """.strip(),
     "horizontal-bars": """
-from fastcharts import Figure
+import fastcharts as fc
 import numpy as np
 
 regions = ["NA", "EU", "APAC", "LATAM", "MEA"]
 values = np.array([142, 128, 116, 74, 52])
 
-fig = Figure(
+chart = fc.chart(
+    fc.bar(regions, values, orientation="horizontal", name="revenue", color="#9333ea"),
+    fc.x_axis(label="revenue"),
+    fc.y_axis(label="region"),
     title="Horizontal category bars",
-    x_label="revenue",
-    y_label="region",
     width="100%",
     height=430,
-).bar(regions, values, orientation="horizontal", name="revenue", color="#9333ea")
+)
 """.strip(),
     "heatmap": """
-from fastcharts import Figure
+import fastcharts as fc
 import numpy as np
 
 cols = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -489,13 +497,14 @@ z = np.array([
     [0.38, 0.40, 0.44, 0.48, 0.55, 0.58, 0.50],
 ])
 
-fig = Figure(
+chart = fc.chart(
+    fc.heatmap(z, x=cols, y=rows, name="activity", colormap="turbo"),
+    fc.x_axis(label="day"),
+    fc.y_axis(label="hour"),
     title="Weekly activity heatmap",
-    x_label="day",
-    y_label="hour",
     width="100%",
     height=430,
-).heatmap(z, x=cols, y=rows, name="activity", colormap="turbo")
+)
 """.strip(),
     "composed-layers": """
 import fastcharts as fc
@@ -705,7 +714,7 @@ chart = fc.chart(
 )
 """.strip(),
     "density-scatter": """
-from fastcharts import Figure
+import fastcharts as fc
 import numpy as np
 
 rng = np.random.default_rng(23)
@@ -715,24 +724,25 @@ groups = rng.integers(0, len(centers), n, dtype=np.int8)
 x = centers[groups, 0] + rng.normal(0, 0.33, n)
 y = centers[groups, 1] + rng.normal(0, 0.33, n)
 
-fig = Figure(
+chart = fc.chart(
+    fc.scatter(x, y, opacity=0.9),
+    fc.x_axis(label="x"),
+    fc.y_axis(label="y"),
     title="10M density scatter",
-    x_label="x",
-    y_label="y",
     width="100%",
     height=430,
-).scatter(x, y, opacity=0.9)
+)
 """.strip(),
     "fastcharts-scatter": """
-from reflex_fastcharts_app.live_drilldown import colored_scatter_figure
+from reflex_fastcharts_app.live_drilldown import colored_scatter_chart
 
-fig = colored_scatter_figure(
+chart = colored_scatter_chart(
     10_000_000,
     title="10M colored scatter",
     width="100%",
     height=430,
 )
-fig.to_html("assets/charts/colored_scatter.html")
+chart.to_html("assets/charts/colored_scatter.html")
 """.strip(),
     "plotly-scatter": """
 import plotly.graph_objects as go

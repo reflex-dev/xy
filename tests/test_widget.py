@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from fastcharts import Figure
-from fastcharts.figure import DECIMATION_THRESHOLD
+from fastcharts._figure import DECIMATION_THRESHOLD, Figure
 from fastcharts.widget import FigureWidget
 
 

@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 
 import fastcharts as fc
+import fastcharts._figure as figure_module
 import fastcharts.components as components
-import fastcharts.figure as figure_module
 
 ROOT = Path(__file__).resolve().parents[1]
 

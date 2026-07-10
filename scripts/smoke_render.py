@@ -2,7 +2,7 @@
 screen for a real payload? (§12 — a renderer's correctness oracle is an image.)
 
 Drives headless Chromium directly (no Playwright dependency): builds a
-standalone page the same way `Figure.to_html` does, adds a probe that draws
+standalone page the same way `Chart.to_html` does, adds a probe that draws
 synchronously and counts non-transparent pixels via gl.readPixels, then reads
 the result out of the dumped DOM title.
 
@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
-from fastcharts import Figure
+import fastcharts as fc
 from fastcharts.export import _bundled_js
 
 CHROMIUM_CANDIDATES = [
@@ -51,10 +51,12 @@ def build_page() -> str:
     x = np.arange(n, dtype=np.float64)
     rng = np.random.default_rng(1)
     y = np.cumsum(rng.normal(size=n))
-    fig = Figure(title="smoke")
-    fig.line(x, y, name="walk")
-    fig.scatter(x[::100], y[::100] + 20.0, name="pts", size=3.0)
-    spec, blob = fig.build_payload()
+    chart = fc.chart(
+        fc.line(x, y, name="walk"),
+        fc.scatter(x[::100], y[::100] + 20.0, name="pts", size=3.0),
+        title="smoke",
+    )
+    spec, blob = chart.figure().build_payload()
     assert spec["traces"][0]["tier"] == "decimated"
 
     return f"""<!doctype html>

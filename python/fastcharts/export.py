@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional, SupportsFloat, SupportsIndex, cast
 
 if TYPE_CHECKING:
-    from .figure import Figure
+    from ._figure import Figure
 
 # Warn above this payload size; base64 carries a stated ~33% tax (§29).
 EMBED_WARN_BYTES = 64 * 2**20

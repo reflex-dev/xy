@@ -16,19 +16,18 @@ sys.path.insert(0, str(APP_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "python"))
 
 from reflex_fastcharts_app.live_drilldown import (  # noqa: E402
+    colored_scatter_chart,
     colored_scatter_data,
-    colored_scatter_figure,
     live_drilldown_html,
 )
 
 import fastcharts as fc  # noqa: E402
-from fastcharts import Figure  # noqa: E402
 
 
-def write_chart(fig: Figure | fc.Chart, name: str) -> None:
+def write_chart(chart: fc.Chart, name: str) -> None:
     ASSET_DIR.mkdir(parents=True, exist_ok=True)
     path = ASSET_DIR / name
-    fig.to_html(str(path))
+    chart.to_html(str(path))
     print(f"wrote {path.relative_to(APP_ROOT)}")
 
 
@@ -77,22 +76,23 @@ def write_plotly_chart(name: str) -> None:
     print(f"wrote {path.relative_to(APP_ROOT)}")
 
 
-def line_walk() -> Figure:
+def line_walk() -> fc.Chart:
     rng = np.random.default_rng(7)
     n = 120_000
     x = np.arange(n, dtype=np.float64)
     trend = np.sin(np.linspace(0, 24, n)) * 18
     y = np.cumsum(rng.normal(0, 0.35, n)) + trend
-    return Figure(
+    return fc.line_chart(
+        fc.line(x, y, name="walk", color="#3267c8", width=1.4),
+        fc.x_axis(label="sample"),
+        fc.y_axis(label="value"),
         title="120k sample random walk",
-        x_label="sample",
-        y_label="value",
         width=980,
         height=430,
-    ).line(x, y, name="walk", color="#3267c8", width=1.4)
+    )
 
 
-def business_overview_demo() -> Figure:
+def business_overview_demo() -> fc.Chart:
     months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
     values = np.array(
         [
@@ -100,23 +100,24 @@ def business_overview_demo() -> Figure:
             [35.0, 38.0, 42.0, 40.0, 46.0, 50.0],
         ]
     )
-    return Figure(
+    return fc.column_chart(
+        fc.column(
+            months,
+            values,
+            mode="grouped",
+            series=["Revenue", "Pipeline"],
+            colors=["#2563eb", "#16a34a"],
+            opacity=0.86,
+        ),
+        fc.x_axis(label="month"),
+        fc.y_axis(label="USD thousands"),
         title="Small business overview",
-        x_label="month",
-        y_label="USD thousands",
         width="100%",
         height=430,
-    ).column(
-        months,
-        values,
-        mode="grouped",
-        series=["Revenue", "Pipeline"],
-        colors=["#2563eb", "#16a34a"],
-        opacity=0.86,
     )
 
 
-def retention_cohort_demo() -> Figure:
+def retention_cohort_demo() -> fc.Chart:
     cohorts = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
     weeks = ["W0", "W1", "W2", "W3", "W4", "W5"]
     retention = np.array(
@@ -130,33 +131,39 @@ def retention_cohort_demo() -> Figure:
         ],
         dtype=np.float64,
     )
-    return Figure(
+    return fc.heatmap_chart(
+        fc.heatmap(
+            retention, x=weeks, y=cohorts, name="retention", colormap="viridis", opacity=0.94
+        ),
+        fc.x_axis(label="week"),
+        fc.y_axis(label="signup cohort"),
         title="Small retention cohort",
-        x_label="week",
-        y_label="signup cohort",
         width="100%",
         height=430,
-    ).heatmap(retention, x=weeks, y=cohorts, name="retention", colormap="viridis", opacity=0.94)
+    )
 
 
-def area_demo() -> Figure:
+def area_demo() -> fc.Chart:
     rng = np.random.default_rng(13)
     n = 80_000
     x = np.arange(n, dtype=np.float64)
     seasonal = 35 + np.sin(np.linspace(0, 28, n)) * 8
     y = seasonal + np.cumsum(rng.normal(0, 0.025, n))
     base = np.full(n, 25.0)
-    return Figure(
+    return fc.area_chart(
+        fc.area(
+            x, y, base=base, name="active users", color="#0891b2", opacity=0.34, line_width=1.1
+        ),
+        fc.x_axis(label="sample"),
+        fc.y_axis(label="active users"),
         title="80k filled area",
-        x_label="sample",
-        y_label="active users",
         width="100%",
         height=430,
-    ).area(x, y, base=base, name="active users", color="#0891b2", opacity=0.34, line_width=1.1)
+    )
 
 
-def colored_scatter() -> Figure:
-    return colored_scatter_figure(
+def colored_scatter() -> fc.Chart:
+    return colored_scatter_chart(
         STATIC_COLORED_SCATTER_POINTS,
         title=f"{STATIC_COLORED_SCATTER_POINTS // 1_000_000}M colored scatter",
         width="100%",
@@ -164,7 +171,7 @@ def colored_scatter() -> Figure:
     )
 
 
-def density_scatter() -> Figure:
+def density_scatter() -> fc.Chart:
     rng = np.random.default_rng(23)
     n = 10_000_000
     centers = np.array([[-1.4, -0.9], [-0.2, 0.8], [1.0, -0.2], [1.8, 1.1]])
@@ -173,16 +180,17 @@ def density_scatter() -> Figure:
     y = centers[groups, 1].astype(np.float64, copy=True)
     x += rng.normal(0, 0.33, n)
     y += rng.normal(0, 0.33, n)
-    return Figure(
+    return fc.scatter_chart(
+        fc.scatter(x, y, opacity=0.9),
+        fc.x_axis(label="x"),
+        fc.y_axis(label="y"),
         title="10M density scatter",
-        x_label="x",
-        y_label="y",
         width="100%",
         height=430,
-    ).scatter(x, y, opacity=0.9)
+    )
 
 
-def histogram_demo() -> Figure:
+def histogram_demo() -> fc.Chart:
     rng = np.random.default_rng(41)
     n = 500_000
     values = np.concatenate(
@@ -191,16 +199,17 @@ def histogram_demo() -> Figure:
             rng.normal(1.4, 0.8, n // 2),
         ]
     )
-    return Figure(
+    return fc.histogram_chart(
+        fc.hist(values, bins=160, name="distribution", color="#3b82f6", opacity=0.82),
+        fc.x_axis(label="value"),
+        fc.y_axis(label="count"),
         title="500k sample histogram",
-        x_label="value",
-        y_label="count",
         width="100%",
         height=430,
-    ).hist(values, bins=160, name="distribution", color="#3b82f6", opacity=0.82)
+    )
 
 
-def bar_column_demo() -> Figure:
+def bar_column_demo() -> fc.Chart:
     categories = ["Search", "Ads", "Email", "Direct", "Partner", "Social"]
     values = np.array(
         [
@@ -209,23 +218,24 @@ def bar_column_demo() -> Figure:
             [42.0, 39.0, 26.0, 31.0, 19.0, 14.0],
         ]
     )
-    return Figure(
+    return fc.bar_chart(
+        fc.bar(
+            categories,
+            values,
+            mode="grouped",
+            series=["Desktop", "Mobile", "Tablet"],
+            colors=["#2563eb", "#16a34a", "#f59e0b"],
+            opacity=0.86,
+        ),
+        fc.x_axis(label="channel"),
+        fc.y_axis(label="conversions"),
         title="Grouped category bars",
-        x_label="channel",
-        y_label="conversions",
         width="100%",
         height=430,
-    ).bar(
-        categories,
-        values,
-        mode="grouped",
-        series=["Desktop", "Mobile", "Tablet"],
-        colors=["#2563eb", "#16a34a", "#f59e0b"],
-        opacity=0.86,
     )
 
 
-def stacked_bar_demo() -> Figure:
+def stacked_bar_demo() -> fc.Chart:
     quarters = ["Q1", "Q2", "Q3", "Q4"]
     values = np.array(
         [
@@ -234,42 +244,44 @@ def stacked_bar_demo() -> Figure:
             [16.0, 19.0, 24.0, 29.0],
         ]
     )
-    return Figure(
+    return fc.column_chart(
+        fc.column(
+            quarters,
+            values,
+            mode="stacked",
+            series=["Core", "Expansion", "Services"],
+            colors=["#0f766e", "#7c3aed", "#dc2626"],
+            opacity=0.88,
+        ),
+        fc.x_axis(label="quarter"),
+        fc.y_axis(label="revenue"),
         title="Stacked revenue bars",
-        x_label="quarter",
-        y_label="revenue",
         width="100%",
         height=430,
-    ).column(
-        quarters,
-        values,
-        mode="stacked",
-        series=["Core", "Expansion", "Services"],
-        colors=["#0f766e", "#7c3aed", "#dc2626"],
-        opacity=0.88,
     )
 
 
-def horizontal_bar_demo() -> Figure:
+def horizontal_bar_demo() -> fc.Chart:
     regions = ["NA", "EU", "APAC", "LATAM", "MEA"]
     values = np.array([142.0, 128.0, 116.0, 74.0, 52.0])
-    return Figure(
+    return fc.bar_chart(
+        fc.bar(
+            regions,
+            values,
+            orientation="horizontal",
+            name="revenue",
+            color="#9333ea",
+            opacity=0.86,
+        ),
+        fc.x_axis(label="revenue"),
+        fc.y_axis(label="region"),
         title="Horizontal category bars",
-        x_label="revenue",
-        y_label="region",
         width="100%",
         height=430,
-    ).bar(
-        regions,
-        values,
-        orientation="horizontal",
-        name="revenue",
-        color="#9333ea",
-        opacity=0.86,
     )
 
 
-def heatmap_demo() -> Figure:
+def heatmap_demo() -> fc.Chart:
     rng = np.random.default_rng(97)
     cols = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     rows = ["00", "04", "08", "12", "16", "20"]
@@ -285,13 +297,14 @@ def heatmap_demo() -> Figure:
         dtype=np.float64,
     )
     z = base + rng.normal(0, 0.025, base.shape)
-    return Figure(
+    return fc.heatmap_chart(
+        fc.heatmap(z, x=cols, y=rows, name="activity", colormap="turbo", opacity=0.94),
+        fc.x_axis(label="day"),
+        fc.y_axis(label="hour"),
         title="Weekly activity heatmap",
-        x_label="day",
-        y_label="hour",
         width="100%",
         height=430,
-    ).heatmap(z, x=cols, y=rows, name="activity", colormap="turbo", opacity=0.94)
+    )
 
 
 def composed_layers_demo() -> fc.Chart:

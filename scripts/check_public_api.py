@@ -37,7 +37,7 @@ HEAVY_FASTCHARTS_IMPORTS = {
     "fastcharts.channel",
     "fastcharts.columns",
     "fastcharts.components",
-    "fastcharts.figure",
+    "fastcharts._figure",
     "fastcharts.interaction",
     "fastcharts.kernels",
     "fastcharts.lod",

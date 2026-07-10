@@ -35,12 +35,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
-from .figure import Selection
+from ._figure import Selection
 from .interaction import _integer_id
 from .lod import normalize_window
 
 if TYPE_CHECKING:
-    from .figure import Figure
+    from ._figure import Figure
 
 __all__ = ["ChannelCallbacks", "handle_message"]
 

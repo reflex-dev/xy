@@ -74,7 +74,7 @@ REQUIRED_FILES = {
     "python/fastcharts/components.py",
     "python/fastcharts/config.py",
     "python/fastcharts/export.py",
-    "python/fastcharts/figure.py",
+    "python/fastcharts/_figure.py",
     "python/fastcharts/channel.py",
     "python/fastcharts/interaction.py",
     "python/fastcharts/kernels.py",
@@ -335,7 +335,7 @@ def verify_sdist(path: str) -> None:
             "Chart Family Quick Reference",
             "Small Business Chart",
             "Revenue vs pipeline",
-            "Figure().heatmap",
+            "fc.heatmap(",
             "fc.heatmap_chart",
         },
     )

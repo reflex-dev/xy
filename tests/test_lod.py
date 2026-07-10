@@ -73,7 +73,8 @@ def test_plan_view_lod_supports_non_scatter_representations() -> None:
 
 
 def test_scatter_density_view_routes_through_shared_lod_primitives(monkeypatch) -> None:
-    from fastcharts import Figure, interaction
+    from fastcharts import interaction
+    from fastcharts._figure import Figure
 
     calls: dict[str, list[object]] = {
         "request": [],
@@ -141,7 +142,8 @@ def test_scatter_density_view_routes_through_shared_lod_primitives(monkeypatch) 
 
 
 def test_density_view_rejects_bad_viewport_before_mutating_drill_state(monkeypatch) -> None:
-    from fastcharts import Figure, interaction
+    from fastcharts import interaction
+    from fastcharts._figure import Figure
 
     monkeypatch.setattr(interaction, "SCATTER_DENSITY_THRESHOLD", 80)
     monkeypatch.setattr(interaction, "PYRAMID_MIN_POINTS", 1_000_000)
@@ -165,7 +167,8 @@ def test_density_view_rejects_bad_viewport_before_mutating_drill_state(monkeypat
 
 
 def test_line_area_decimate_view_routes_through_shared_buffer_writer(monkeypatch) -> None:
-    from fastcharts import Figure, interaction
+    from fastcharts import interaction
+    from fastcharts._figure import Figure
     from fastcharts.config import DECIMATION_THRESHOLD
 
     calls: list[dict[str, object]] = []

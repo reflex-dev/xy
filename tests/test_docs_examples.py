@@ -13,17 +13,17 @@ BENCHMARK_DOC = ROOT / "docs" / "benchmark.md"
 PRODUCTION_DOC = ROOT / "docs" / "production-readiness.md"
 REFLEX_SHAPED_API_DOC = ROOT / "docs" / "design" / "reflex-shaped-api.md"
 EXPECTED_QUICK_REFERENCE = {
-    "Line": ("Figure().line", "fc.line_chart", "fc.line"),
-    "Scatter": ("Figure().scatter", "fc.scatter_chart", "fc.scatter"),
-    "Area": ("Figure().area", "fc.area_chart", "fc.area"),
-    "Histogram": ("Figure().histogram", "fc.histogram_chart", "fc.histogram"),
-    "Bar": ("Figure().bar", "fc.bar_chart", "fc.bar"),
-    "Column": ("Figure().column", "fc.column_chart", "fc.column"),
+    "Line": ("fc.line_chart", "fc.line"),
+    "Scatter": ("fc.scatter_chart", "fc.scatter"),
+    "Area": ("fc.area_chart", "fc.area"),
+    "Histogram": ("fc.histogram_chart", "fc.histogram"),
+    "Bar": ("fc.bar_chart", "fc.bar"),
+    "Column": ("fc.column_chart", "fc.column"),
     "Grouped bars": ('mode="grouped"', "fc.bar_chart", "fc.bar"),
     "Stacked bars": ('mode="stacked"', "fc.bar_chart", "fc.bar"),
     "Normalized bars": ('mode="normalized"', "fc.bar_chart", "fc.bar"),
     "Horizontal bars": ('orientation="horizontal"', "fc.bar_chart", "fc.bar"),
-    "Heatmap": ("Figure().heatmap", "fc.heatmap_chart", "fc.heatmap"),
+    "Heatmap": ("fc.heatmap_chart", "fc.heatmap"),
 }
 
 
@@ -152,14 +152,13 @@ def test_api_examples_document_alpha_api_stability_boundary() -> None:
     text = " ".join(API_EXAMPLES.read_text(encoding="utf-8").split())
     required = [
         "API Stability Notes",
-        "Use the fluent `Figure` API for the most stable alpha surface today",
-        "Use the composition API when you want Reflex-shaped",
+        "one public chart-building API: the declarative composition API",
         "column-name resolution through `data=`",
         "`on_hover` / `on_select` callbacks",
         "core composition contract is now stabilizing",
         "CSS/Tailwind-friendly DOM hooks",
-        "same notebook/static export methods as `Figure`",
         "Callback payload details and future adapter packages may still evolve before 1.0",
+        "`chart.figure()` as an advanced escape hatch",
         '`width="100%"`',
         "Standalone `to_html(...)` needs no browser dependency",
         '`to_png(..., engine="chromium")` needs a local Chrome/Chromium executable',
@@ -185,7 +184,8 @@ def test_reflex_shaped_api_doc_tracks_locked_composition_contract() -> None:
     text = " ".join(REFLEX_SHAPED_API_DOC.read_text(encoding="utf-8").split())
     required = [
         "Compatibility Contract",
-        "`Figure` fluent API",
+        "single public chart-building surface",
+        "internal `_figure.Figure` fluent API is no longer public",
         "`Chart.figure()`",
         "`Chart.widget()`",
         "`Chart.show()`",
@@ -217,7 +217,6 @@ def test_api_examples_quick_reference_covers_registered_composition_marks() -> N
 
     rows = "\n".join(_quick_reference_rows().values())
     for mark in sorted(_MARK_APPLIERS):
-        assert f"Figure().{mark}" in rows or mark == "histogram"
         assert f"fc.{mark}" in rows
         assert f"fc.{mark}_chart" in rows or mark in {"bar"}
 
@@ -244,11 +243,11 @@ def test_readme_documents_stability_and_backend_contract() -> None:
         "Stable enough to build on today",
         "Still experimental and expected to change before 1.0",
         "| Surface | Current status | Notes |",
-        "Fluent `Figure` API",
         "Stable alpha",
         "Composition API",
+        "single public chart-building API",
         "Stabilizing alpha",
-        "Declarative `fc.chart(...children)`",
+        "declarative `fc.chart(...children)`",
         "CSS/Tailwind hooks",
         "Reflex integration",
         "Adaptive drilldown internals",
@@ -295,8 +294,8 @@ def test_readme_getting_started_includes_small_business_chart() -> None:
         "Create a small business chart",
         "Revenue vs pipeline",
         "USD thousands",
-        "fig.line(months, revenue",
-        "fig.line(months, pipeline",
+        "fc.line(months, revenue",
+        "fc.line(months, pipeline",
     ]
     for marker in required:
         assert marker in text

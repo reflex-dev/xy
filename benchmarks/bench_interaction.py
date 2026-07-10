@@ -68,53 +68,54 @@ def _parse_sizes(text: str) -> list[int]:
 def _scatter_figure(n: int) -> Any:
     if np is None:
         raise SystemExit("numpy is required for benchmarks/bench_interaction.py")
-    from fastcharts import Figure
+    import fastcharts as fc
 
     rng = np.random.default_rng(70_011 + n)
     x = rng.normal(0.0, 1.0, n).astype(np.float64, copy=False)
     y = (0.58 * x + rng.normal(0.0, 0.72, n)).astype(np.float64, copy=False)
-    fig = Figure(
+    return fc.scatter_chart(
+        fc.scatter(x=x, y=y, name="points", opacity=0.72),
+        fc.x_axis(label="x"),
+        fc.y_axis(label="y"),
         width=RENDER_W,
         height=RENDER_H,
         title=f"{n:,} point interaction probe",
-        x_label="x",
-        y_label="y",
-    ).scatter(x, y, name="points", opacity=0.72)
-    fig.set_interaction(
         hover=True,
         click=True,
         select=True,
         brush=True,
         crosshair=True,
         view_change=True,
-    )
-    return fig
+    ).figure()
 
 
 def _core_interaction_figures() -> list[dict[str, Any]]:
     if np is None:
         raise SystemExit("numpy is required for benchmarks/bench_interaction.py")
-    from fastcharts import Figure
+    import fastcharts as fc
+
+    all_interactions = {
+        "hover": True,
+        "click": True,
+        "select": True,
+        "brush": True,
+        "crosshair": True,
+        "view_change": True,
+    }
 
     rng = np.random.default_rng(89_021)
 
     x_line = np.linspace(0.0, 18_000.0, 120_000, dtype=np.float64)
     y_line = np.cumsum(rng.normal(0.0, 0.18, x_line.size)).astype(np.float64, copy=False)
-    line = Figure(
+    line = fc.line_chart(
+        fc.line(x=x_line, y=y_line, name="signal", width=1.4),
+        fc.x_axis(label="sample"),
+        fc.y_axis(label="signal"),
         width=RENDER_W,
         height=RENDER_H,
         title="120k sample line interaction probe",
-        x_label="sample",
-        y_label="signal",
-    ).line(x_line, y_line, name="signal", width=1.4)
-    line.set_interaction(
-        hover=True,
-        click=True,
-        select=True,
-        brush=True,
-        crosshair=True,
-        view_change=True,
-    )
+        **all_interactions,
+    ).figure()
 
     hist_values = np.concatenate(
         [
@@ -122,21 +123,15 @@ def _core_interaction_figures() -> list[dict[str, Any]]:
             rng.normal(1.35, 0.68, 50_000),
         ]
     )
-    hist = Figure(
+    hist = fc.histogram_chart(
+        fc.histogram(hist_values, bins=180, name="distribution"),
+        fc.x_axis(label="value"),
+        fc.y_axis(label="count"),
         width=RENDER_W,
         height=RENDER_H,
         title="120k value histogram interaction probe",
-        x_label="value",
-        y_label="count",
-    ).histogram(hist_values, bins=180, name="distribution")
-    hist.set_interaction(
-        hover=True,
-        click=True,
-        select=True,
-        brush=True,
-        crosshair=True,
-        view_change=True,
-    )
+        **all_interactions,
+    ).figure()
 
     categories = [f"C{i:04d}" for i in range(1_200)]
     values = (
@@ -144,21 +139,15 @@ def _core_interaction_figures() -> list[dict[str, Any]]:
         + 18.0 * np.sin(np.linspace(0.0, 18.0, len(categories)))
         + rng.normal(0.0, 3.0, len(categories))
     )
-    bars = Figure(
+    bars = fc.bar_chart(
+        fc.bar(categories, values, name="bars"),
+        fc.x_axis(label="category"),
+        fc.y_axis(label="value"),
         width=RENDER_W,
         height=RENDER_H,
         title="1.2k bar interaction probe",
-        x_label="category",
-        y_label="value",
-    ).bar(categories, values, name="bars")
-    bars.set_interaction(
-        hover=True,
-        click=True,
-        select=True,
-        brush=True,
-        crosshair=True,
-        view_change=True,
-    )
+        **all_interactions,
+    ).figure()
 
     hx = np.linspace(-3.0, 3.0, 220)
     hy = np.linspace(-2.4, 2.4, 180)
@@ -166,21 +155,15 @@ def _core_interaction_figures() -> list[dict[str, Any]]:
     z = np.exp(-((xx - 0.85) ** 2 + (yy + 0.3) ** 2)) + 0.72 * np.exp(
         -((xx + 1.2) ** 2 + (yy - 0.65) ** 2) / 0.52
     )
-    heatmap = Figure(
+    heatmap = fc.heatmap_chart(
+        fc.heatmap(z, x=hx, y=hy, name="heat"),
+        fc.x_axis(label="x"),
+        fc.y_axis(label="y"),
         width=RENDER_W,
         height=RENDER_H,
         title="220x180 heatmap interaction probe",
-        x_label="x",
-        y_label="y",
-    ).heatmap(z, x=hx, y=hy, name="heat")
-    heatmap.set_interaction(
-        hover=True,
-        click=True,
-        select=True,
-        brush=True,
-        crosshair=True,
-        view_change=True,
-    )
+        **all_interactions,
+    ).figure()
 
     return [
         {

@@ -94,13 +94,13 @@ not fall out of sight.
 |---:|---|---|---|---|
 | 1 | Line and time series | line, step line, spline, markers+line, multi-line, streaming line | Implemented core | Most universal analytical chart; core for finance, monitoring, science, product metrics. |
 | 2 | Scatter / marker plots | scatter, scattergl-style, bubble, colored scatter, sized scatter | Implemented core | Large-point interactivity is the fastcharts wedge; basis for drilldown, selection, and density. |
-| 3 | Bar / column | vertical bar, horizontal bar, grouped, stacked, normalized stacked, diverging bar | Implemented core | `Figure().bar(...)` / `Figure().column(...)` ship categorical/numeric vertical and horizontal bars, grouped bars, stacked bars, and normalized stacked bars (`mode="normalized"`) through the shared rectangle renderer. Follow-up: labels. |
-| 4 | Area | filled line, stacked area, streamgraph, ridgeline-lite area bands | Implemented core | `Figure().area(...)` ships a filled area with scalar/array baseline and optional line overlay. Follow-ups: stacked area helpers and streamgraph offsets. |
+| 3 | Bar / column | vertical bar, horizontal bar, grouped, stacked, normalized stacked, diverging bar | Implemented core | `fc.bar(...)` / `fc.column(...)` ship categorical/numeric vertical and horizontal bars, grouped bars, stacked bars, and normalized stacked bars (`mode="normalized"`) through the shared rectangle renderer. Follow-up: labels. |
+| 4 | Area | filled line, stacked area, streamgraph, ridgeline-lite area bands | Implemented core | `fc.area(...)` ships a filled area with scalar/array baseline and optional line overlay. Follow-ups: stacked area helpers and streamgraph offsets. |
 | 5 | Histogram | count, probability, density, cumulative histogram | Implemented core | Python-side binning plus the shared rectangle renderer; `cumulative=True` (count CDF and, with `density=True`, empirical CDF) is implemented. Follow-up: viewport-aware re-binning for huge streamed distributions. |
 | 6 | Pie / donut | pie, donut, nested donut, variable-radius pie | Planned compatibility | Extremely common in dashboards even though performance differentiation is low. |
-| 7 | Heatmap / image / matrix | heatmap, image, annotated matrix, correlation matrix, cohort heatmap | Implemented core | `Figure().heatmap(...)` renders matrix cells through a compact grid texture with continuous colormaps and categorical/numeric axes. Follow-ups: annotation and tiled huge-image paths. |
+| 7 | Heatmap / image / matrix | heatmap, image, annotated matrix, correlation matrix, cohort heatmap | Implemented core | `fc.heatmap(...)` renders matrix cells through a compact grid texture with continuous colormaps and categorical/numeric axes. Follow-ups: annotation and tiled huge-image paths. |
 | 8 | Box plot | box, grouped box, notched box, outlier points | Planned | Standard distribution summary across Plotly, Matplotlib, Seaborn, Altair. |
-| 9 | Candlestick / OHLC | candlestick, OHLC bars, volume overlay, range selector | Prototyped (PR closed unmerged) | `Figure().candlestick/ohlc(...)` + `fc.candlestick_chart(...)` on the closed `codex/finance-charting-surface` exploration branch: OHLC decimation, shared-y f32 frame, time axes, hover, and a volume pane. Critical finance surface; inherits LOD and time-axis work from core primitives. |
+| 9 | Candlestick / OHLC | candlestick, OHLC bars, volume overlay, range selector | Prototyped (PR closed unmerged) | `fc.candlestick(...)`/`fc.ohlc(...)` + `fc.candlestick_chart(...)` on the closed `codex/finance-charting-surface` exploration branch: OHLC decimation, shared-y f32 frame, time axes, hover, and a volume pane. Critical finance surface; inherits LOD and time-axis work from core primitives. |
 | 10 | Error and interval charts | error bars, error bands, confidence intervals, line range, bar range, whisker, rule | Planned | Needed for science, experimentation, forecasting, and statistical dashboards. |
 | 11 | 2D density charts | 2D histogram, hexbin, density heatmap, KDE contours | Planned | Makes dense scatter honest at scale and exposes aggregation as a first-class chart type. |
 | 12 | Violin and distribution shapes | violin, split violin, KDE plot, density ridge | Planned | Common in data science; builds on density and filled polygons. |
@@ -137,10 +137,10 @@ not fall out of sight.
 
 | Rank | Chart | Why it is popular | Why it fits fastcharts | Suggested API |
 |---:|---|---|---|---|
-| 1 | Histogram | Core statistical chart in Plotly, Matplotlib, Altair; common first chart for distributions. | Implemented core: Python-side binning + shared instanced rectangle renderer, incl. `density` and `cumulative` modes. Follow-up: viewport-aware re-binning for very large streamed distributions. | `Figure().hist(values, bins=512, cumulative=True)` |
-| 2 | Bar / column | Present in every major library; expected for categorical comparison. | Implemented core: category axis + shared instanced rectangle renderer for basic, grouped, stacked, normalized stacked, and horizontal bars. Follow-up: labels. | `Figure().bar(x, y)` |
-| 3 | Area / filled line | Common extension of line charts in Plotly, Chart.js, Highcharts, Altair. | Implemented core: sorted x, M4 first payload, and filled WebGL segment strips. Follow-up: stacked area helper. | `Figure().area(x, y)` |
-| 4 | Heatmap / image | Common in scientific and BI tools; Matplotlib, Plotly, Altair, Highcharts all surface it. | Implemented core: matrix-to-grid texture path with color channel reuse. Follow-up: image/raster tiling for huge grids. | `Figure().heatmap(z, x=None, y=None)` |
+| 1 | Histogram | Core statistical chart in Plotly, Matplotlib, Altair; common first chart for distributions. | Implemented core: Python-side binning + shared instanced rectangle renderer, incl. `density` and `cumulative` modes. Follow-up: viewport-aware re-binning for very large streamed distributions. | `fc.histogram_chart(fc.hist(values, bins=512, cumulative=True))` |
+| 2 | Bar / column | Present in every major library; expected for categorical comparison. | Implemented core: category axis + shared instanced rectangle renderer for basic, grouped, stacked, normalized stacked, and horizontal bars. Follow-up: labels. | `fc.bar_chart(fc.bar(x, y))` |
+| 3 | Area / filled line | Common extension of line charts in Plotly, Chart.js, Highcharts, Altair. | Implemented core: sorted x, M4 first payload, and filled WebGL segment strips. Follow-up: stacked area helper. | `fc.area_chart(fc.area(x, y))` |
+| 4 | Heatmap / image | Common in scientific and BI tools; Matplotlib, Plotly, Altair, Highcharts all surface it. | Implemented core: matrix-to-grid texture path with color channel reuse. Follow-up: image/raster tiling for huge grids. | `fc.heatmap_chart(fc.heatmap(z, x=None, y=None))` |
 
 P1 is now implemented at the core primitive level. The next implementation block
 should add statistical breadth on top of these primitives: box plots, error
@@ -366,7 +366,7 @@ breadth on top of them, then the two "completeness" charts users ask for first.
 
 3. **2D density / hexbin** — makes dense scatter honest as a *named* chart.
    - Generalize the existing Tier-2 density path: expose counts, log color
-     scaling, and hover readout as `Figure().hexbin(...)` / `density_heatmap`.
+     scaling, and hover readout as `fc.hexbin(...)` / `density_heatmap`.
 
 4. **Pie / donut** — low performance differentiation but a top dashboard ask;
    implement for completeness (arc geometry + label placement).
@@ -378,7 +378,7 @@ breadth on top of them, then the two "completeness" charts users ask for first.
 Parallel, non-chart-type tracks:
 
 - **Native PNG rasterizer** (perf) — **shipped** (dossier Phase 3).
-  `Figure.to_png(engine="native")`, now the default, paints the decimated
+  `Chart.to_png(engine="native")`, now the default, paints the decimated
   payload with a dependency-free AA rasterizer in the Rust core (ABI v8,
   `fc_rasterize`) — no browser, ~50× faster than the Chromium screenshot,
   indexed-palette PNGs, and a baked bitmap font for text. `engine="chromium"`
@@ -390,24 +390,24 @@ Parallel, non-chart-type tracks:
 ## Near-Term API Sketch
 
 ```python
-from fastcharts import Figure
+import fastcharts as fc
 
 # shipped
-Figure().hist(values, bins=512, density=False, cumulative=False)
-Figure().bar(categories, values, mode="grouped", orientation="vertical")
-Figure().area(x, y, baseline=0.0)          # + fill=linear-gradient, curve, dash
-Figure().heatmap(z, x=None, y=None, colormap="viridis")
-Figure().candlestick(x, open, high, low, close)   # prototyped (closed finance PR)
+fc.histogram_chart(fc.hist(values, bins=512, density=False, cumulative=False))
+fc.bar_chart(fc.bar(categories, values, mode="grouped", orientation="vertical"))
+fc.area_chart(fc.area(x, y, base=0.0))     # + fill=linear-gradient, curve, dash
+fc.heatmap_chart(fc.heatmap(z, x=None, y=None, colormap="viridis"))
+fc.candlestick_chart(fc.candlestick(x, open, high, low, close))  # prototyped (closed finance PR)
 
 # next
-Figure().box(values, group=None)
-Figure().violin(values, group=None, bandwidth="auto")
-Figure().errorbar(x, y, yerr=..., xerr=...)
-Figure().hexbin(x, y, gridsize=50, color_scale="log")
-Figure().pie(values, labels=..., donut=0.0)
+fc.box_chart(fc.box(values, group=None))
+fc.violin_chart(fc.violin(values, group=None, bandwidth="auto"))
+fc.chart(fc.errorbar(x, y, yerr=..., xerr=...))
+fc.chart(fc.hexbin(x, y, gridsize=50, color_scale="log"))
+fc.pie_chart(fc.pie(values, labels=..., donut=0.0))
 ```
 
-Composition API equivalents follow the current style
+New chart kinds land as composition marks plus a family container
 (`fc.box_chart(fc.box(...))`, `fc.pie_chart(fc.pie(...))`, …).
 
 ## Decision Summary

@@ -7,9 +7,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from fastcharts import Figure
+from fastcharts._figure import SCATTER_DENSITY_THRESHOLD, Figure
 from fastcharts.columns import ZONE_CHUNK, ColumnStore
-from fastcharts.figure import SCATTER_DENSITY_THRESHOLD
 
 # --------------------------------------------------------------------------
 # Column.append — the data layer

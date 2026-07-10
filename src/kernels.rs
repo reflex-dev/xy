@@ -1045,6 +1045,15 @@ pub fn min_max(data: &[f64]) -> Option<(f64, f64)> {
     min_max_impl(data, par_threads(data.len()))
 }
 
+/// Non-decreasing check with NaN-poisoning: every consecutive pair must
+/// satisfy `next >= prev`, and any NaN in either position fails the pair
+/// (IEEE comparisons with NaN are false). This is exactly NumPy's
+/// `all(diff(x) >= 0)` — the line/area sorted-ingest predicate (§28) — but
+/// single-pass, allocation-free, and early-exit on the first violation.
+pub fn is_sorted_f64(data: &[f64]) -> bool {
+    data.windows(2).all(|pair| pair[1] >= pair[0])
+}
+
 /// Dispatches to the AVX2 clone when available (simd.rs).
 fn min_max_scan(data: &[f64]) -> (f64, f64) {
     if let Some(mm) = crate::simd::try_min_max(data) {
@@ -1817,5 +1826,19 @@ mod fuzz {
                 assert!((0.0..=1.0).contains(&d), "it={it} i={i} d={d}");
             }
         }
+    }
+
+    #[test]
+    fn is_sorted_matches_numpy_diff_predicate() {
+        assert!(is_sorted_f64(&[]));
+        assert!(is_sorted_f64(&[3.0]));
+        assert!(is_sorted_f64(&[f64::NAN])); // no pairs -> sorted, like all(diff) on empty
+        assert!(is_sorted_f64(&[1.0, 1.0, 2.0]));
+        assert!(is_sorted_f64(&[f64::NEG_INFINITY, 0.0, f64::INFINITY]));
+        assert!(!is_sorted_f64(&[2.0, 1.0]));
+        assert!(!is_sorted_f64(&[1.0, f64::NAN, 3.0])); // NaN poisons its pairs
+        assert!(!is_sorted_f64(&[1.0, 2.0, f64::NAN]));
+        assert!(!is_sorted_f64(&[f64::NAN, 1.0, 2.0]));
+        assert!(!is_sorted_f64(&[0.0, 1.0, 5.0, 4.0, 9.0]));
     }
 }

@@ -70,7 +70,7 @@ have.**
 
 ```mermaid
 flowchart LR
-    API["Python APIs<br/>Figure() / fc.chart()"]
+    API["Python API<br/>fc.chart() composition"]
     STORE["ColumnStore<br/>exact f64 source of truth"]
     KERNELS["Native Rust kernels<br/>binning, M4 decimation, encode"]
     PAYLOAD["Payload builder<br/>tiny JSON spec + raw f32 buffers"]
@@ -107,11 +107,10 @@ dive.
 
 Stable enough to build on today:
 
-- Python 3.11+ package import, fluent `Figure` construction, and standalone
-  HTML export.
+- Python 3.11+ package import and standalone HTML export.
 - Core declarative composition with `fc.chart(...)`, layered marks, axes,
   annotations, legends, tooltips, event props, CSS/Tailwind-friendly DOM hooks,
-  and the same notebook/static export methods as `Figure`.
+  and notebook/static export methods on the composed `Chart`.
 - Implemented 2D chart families: line, scatter, area, histogram, bar/column,
   grouped/stacked/horizontal bars, and heatmap.
 - Binary column payloads, committed JavaScript bundles, and native Rust kernels
@@ -126,10 +125,9 @@ Still experimental and expected to change before 1.0:
 
 | Surface | Current status | Notes |
 |---|---|---|
-| Fluent `Figure` API | Stable alpha | Preferred public API for implemented 2D chart families and standalone export. |
+| Composition API | Stabilizing alpha | The single public chart-building API: declarative `fc.chart(...children)`, layered marks, axes, annotations, custom legend/tooltip chrome, callbacks, CSS/Tailwind hooks, and notebook/static export methods. |
 | Standalone HTML export | Stable alpha | Self-contained output with bundled JS, escaped metadata, and binary payloads. |
 | Native Rust backend | Stable alpha; required compute core | Used for fast ingest, binning, and decimation. Bundled in every published wheel; on a platform with no wheel and no local Rust build, the compute layer raises a clear error rather than degrading. |
-| Composition API | Stabilizing alpha | Declarative `fc.chart(...children)`, layered marks, axes, annotations, custom legend/tooltip chrome, callbacks, CSS/Tailwind hooks, and notebook/static export parity. |
 | Reflex integration | Experimental | Example app exists; core `fastcharts` has no Reflex dependency; any future adapter should use no hard Reflex dependency, or only a supported Reflex core/component package unless full Reflex is proven necessary. |
 | Adaptive drilldown internals | Experimental | Thresholds and request protocol may move as the LOD engine evolves. |
 
@@ -218,9 +216,9 @@ python -c "import fastcharts.kernels as k; print(k.BACKEND)"
 that import raises `ImportError` with remediation rather than returning a
 degraded backend.
 
-Accessing chart-building APIs such as `Figure` or `scatter_chart` is the point
+Accessing chart-building APIs such as `fc.scatter_chart` is the point
 where NumPy and the compute backend may initialize. Notebook widget dependencies
-stay deferred until `.widget()`/display; standalone `Figure.to_html()` reads the
+stay deferred until `.widget()`/display; standalone `Chart.to_html()` reads the
 bundled static client directly.
 
 ## Getting Started
@@ -228,50 +226,61 @@ bundled static client directly.
 Create a small business chart:
 
 ```python
-from fastcharts import Figure
+import fastcharts as fc
 
 months = [1, 2, 3, 4, 5, 6]
 revenue = [42, 45, 48, 51, 55, 59]
 pipeline = [35, 38, 42, 40, 46, 50]
 
-fig = Figure(title="Revenue vs pipeline", x_label="month", y_label="USD thousands")
-fig.line(months, revenue, name="revenue", color="#2563eb", width=2.0)
-fig.line(months, pipeline, name="pipeline", color="#16a34a", width=2.0)
-fig
+chart = fc.line_chart(
+    fc.line(months, revenue, name="revenue", color="#2563eb", width=2.0),
+    fc.line(months, pipeline, name="pipeline", color="#16a34a", width=2.0),
+    fc.x_axis(label="month"),
+    fc.y_axis(label="USD thousands"),
+    title="Revenue vs pipeline",
+)
+chart
 ```
 
 Create a line chart:
 
 ```python
 import numpy as np
-from fastcharts import Figure
+import fastcharts as fc
 
 n = 100_000
 x = np.arange(n, dtype=np.float64)
 y = np.cumsum(np.random.default_rng(0).normal(size=n))
 
-fig = Figure(title="Random walk", x_label="sample", y_label="value")
-fig.line(x, y, name="walk")
-fig
+chart = fc.line_chart(
+    fc.line(x, y, name="walk"),
+    fc.x_axis(label="sample"),
+    fc.y_axis(label="value"),
+    title="Random walk",
+)
+chart
 ```
 
 Create a colored, sized scatter plot:
 
 ```python
 import numpy as np
-from fastcharts import Figure
+import fastcharts as fc
 
 rng = np.random.default_rng(1)
 x = rng.normal(size=50_000)
 y = x * 0.5 + rng.normal(scale=0.6, size=len(x))
 
-Figure(title="Correlated cloud").scatter(
-    x,
-    y,
-    color=y,
-    size=np.abs(y),
-    colormap="viridis",
-    size_range=(2, 14),
+fc.scatter_chart(
+    fc.scatter(
+        x,
+        y,
+        color=y,
+        size=np.abs(y),
+        colormap="viridis",
+        size_range=(2, 14),
+    ),
+    title="Correlated cloud",
 )
 ```
 
@@ -279,19 +288,19 @@ Export a standalone HTML file:
 
 ```python
 import numpy as np
-from fastcharts import Figure
+import fastcharts as fc
 
 rng = np.random.default_rng(2)
 x = rng.normal(size=2_000)
 y = 0.35 * x + rng.normal(scale=0.4, size=len(x))
 
-fig = Figure(title="Standalone").scatter(x, y)
-fig.to_html("chart.html")
+chart = fc.scatter_chart(fc.scatter(x, y), title="Standalone")
+chart.to_html("chart.html")
 ```
 
 ### Standalone HTML Safety And CSP
 
-`Figure.to_html()` writes one self-contained document with the JavaScript client,
+`Chart.to_html()` writes one self-contained document with the JavaScript client,
 JSON chart spec, and binary data blob inlined. That makes exports easy to share
 from notebooks, docs, and reports with no CDN or Python kernel required.
 
@@ -305,7 +314,7 @@ axis labels, trace names, legends, series names, and categories are escaped
 before entering inline JSON or `<title>`, and non-finite JSON metadata is
 rejected instead of emitted as browser-dependent JavaScript.
 
-`Figure.to_png()` defaults to `engine="native"`: the built-in Rust rasterizer
+`Chart.to_png()` defaults to `engine="native"`: the built-in Rust rasterizer
 paints the same decimated payload with no browser — millisecond export, small
 indexed PNGs, and it works anywhere the wheel imports (no Chrome needed). Pass
 `engine="chromium"` for a pixel-exact screenshot of the standalone HTML in local
@@ -330,22 +339,24 @@ trusted HTML in CI/container environments where sandboxed Chromium cannot launch
 - [`docs/api-examples.md`](docs/api-examples.md) has copyable examples for the
   currently implemented 2D chart families.
 
-## API Styles
+## The Composition API
 
-Use the fluent API when you want quick imperative chart construction:
+fastcharts has one public chart-building API: declarative composition. Charts
+are built from lightweight children — marks, axes, annotations, chrome — and
+take event props:
 
 ```python
 import numpy as np
-from fastcharts import Figure
+import fastcharts as fc
 
 timestamps = np.arange("2026-01-01", "2026-01-08", dtype="datetime64[h]")
 values = np.sin(np.linspace(0, 12, len(timestamps)))
 
-Figure(title="Telemetry").line(timestamps, values, name="sensor A")
+fc.line_chart(fc.line(timestamps, values, name="sensor A"), title="Telemetry")
 ```
 
-Use the composition API when you prefer declarative chart children and event
-props:
+Column names resolve through `data=`, and `on_*` props receive hover and
+selection events:
 
 ```python
 import fastcharts as fc
@@ -394,14 +405,14 @@ chart = fc.chart(
 chart
 ```
 
-Both APIs render in Jupyter, VS Code, Colab, Marimo, and standalone HTML through
-the same engine.
+Composed charts render in Jupyter, VS Code, Colab, Marimo, and standalone HTML
+through the same engine.
 
 The composition contract we are locking is intentionally narrow and durable:
 children are lightweight Python specs; `fc.chart(...)` can layer marks,
 annotations, axes, legends, tooltips, themes, and interaction config in one
-panel; `Chart` keeps `widget()`, `show()`, `to_html(...)`, `html(...)`,
-`_repr_html_()`, `to_png(...)`, and `memory_report()` parity with `Figure`;
+panel; `Chart` exposes `widget()`, `show()`, `to_html(...)`, `html(...)`,
+`_repr_html_()`, `to_png(...)`, and `memory_report()` directly;
 `class_name`, `class_names`, and `style` reach stable DOM slots for CSS/Tailwind
 styling (see [`docs/styling.md`](docs/styling.md) for the full slot + token
 reference and the zero-specificity defaults contract); and opaque framework
@@ -425,26 +436,31 @@ and full CSS-alpha colors (`docs/styling.md`):
 
 ```python
 import numpy as np
-from fastcharts import Figure
+import fastcharts as fc
 
 x = np.arange(24.0)
 y = np.abs(np.sin(x / 4.0)) * 10 + 2
 
 # The dashboard-sparkline look: smooth curve + gradient fading to the baseline
-Figure(padding=0).area(
-    x, y, color="#3b82f6", curve="smooth", opacity=0.5,
-    fill="linear-gradient(currentColor, transparent)",
+fc.area_chart(
+    fc.area(
+        x, y, color="#3b82f6", curve="smooth", opacity=0.5,
+        fill="linear-gradient(currentColor, transparent)",
+    ),
+    padding=0,
 )
 
 # Rounded-top, gradient bars — corner_radius=(tip, base) rounds only the value end
-Figure().bar(
-    ["Q1", "Q2", "Q3", "Q4"], [4.0, 7.0, 5.0, 8.0],
-    corner_radius=(6, 0), stroke="#1d4ed8", stroke_width=1.5,
-    fill="linear-gradient(to top, #1e40af, #93c5fd)",
+fc.bar_chart(
+    fc.bar(
+        ["Q1", "Q2", "Q3", "Q4"], [4.0, 7.0, 5.0, 8.0],
+        corner_radius=(6, 0), stroke="#1d4ed8", stroke_width=1.5,
+        fill="linear-gradient(to top, #1e40af, #93c5fd)",
+    ),
 )
 ```
 
-For a chrome-less, edge-to-edge sparkline, `Figure(padding=0)` fills the box and
+For a chrome-less, edge-to-edge sparkline, `padding=0` fills the box and
 `tick_label_strategy="none"` (with transparent grid/axis colors) hides the axes.
 
 ## Benchmark Snapshot
@@ -574,8 +590,8 @@ The same harness also measures Seaborn/Agg as a static chart-to-pixels baseline
 | Rust core: zone maps, offset-f32 encode, M4 decimation, 2-D binning | [`src/`](src/) |
 | ctypes native binding to the Rust core | [`python/fastcharts/_native.py`](python/fastcharts/_native.py) |
 | Column store, autorange, memory accounting | [`python/fastcharts/columns.py`](python/fastcharts/columns.py) |
-| Figure API, payload builder, line/scatter/area/histogram/bar/heatmap traces, annotations, mark styling (gradient/stroke/radius/curve/opacity) | [`python/fastcharts/figure.py`](python/fastcharts/figure.py) |
-| Composition API | [`python/fastcharts/components.py`](python/fastcharts/components.py) |
+| Internal scene/engine object, payload builder, line/scatter/area/histogram/bar/heatmap traces, annotations, mark styling (gradient/stroke/radius/curve/opacity) | [`python/fastcharts/_figure.py`](python/fastcharts/_figure.py) |
+| Composition API (the public chart-building surface) | [`python/fastcharts/components.py`](python/fastcharts/components.py) |
 | anywidget and standalone WebGL2 client | [`js/src/`](js/src/) (parts concatenated by `js/build.mjs`) |
 | Benchmarks | [`benchmarks/`](benchmarks/) |
 | Tests | [`tests/`](tests/) |
@@ -585,7 +601,7 @@ The same harness also measures Seaborn/Agg as a static chart-to-pixels baseline
 ```mermaid
 flowchart LR
     subgraph PY["Python kernel / app process"]
-        API["User APIs<br/>Figure fluent API<br/>Composition API"]
+        API["User APIs<br/>Composition API<br/>fc.chart() + marks"]
         VALIDATE["Builder validation<br/>shape, dtype, ranges"]
         STORE["ColumnStore<br/>canonical f64 data<br/>strings/categories<br/>rollback checkpoints"]
         KERNELS["Compute core<br/>native Rust C ABI<br/>(required; no fallback)"]
@@ -630,7 +646,7 @@ Important properties:
 - Wire format is memory format: raw f32 buffers, not JSON arrays.
 - Canonical data stays f64 in Python so hover/select can return exact rows.
 - Builder validation uses rollback checkpoints so failed public calls do not
-  partially mutate the `Figure` or column store.
+  partially mutate the chart's internal figure or column store.
 - Long lines ship M4-decimated points for first paint and re-decimate on zoom.
 - Large scatters switch to a fixed-size density surface above the threshold,
   then drill back to exact visible points when the view is small enough.
@@ -647,7 +663,7 @@ make check
 ```
 
 The JavaScript client is dependency-free. `js/build.mjs` copies the ESM client
-for anywidget and wraps a standalone IIFE for `Figure.to_html`.
+for anywidget and wraps a standalone IIFE for `Chart.to_html`.
 
 Use `make check-full` before production-facing changes; it adds fallback tests,
 JS bundle checks, Rust tests/lints/build, and the native ABI smoke. That full

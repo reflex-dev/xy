@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_SCREEN_DIM
 
-ABI_VERSION = 10
+ABI_VERSION = 11
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.
@@ -33,12 +33,6 @@ ABI_VERSION = 10
 # against 2**64-1 would never match on 32-bit targets and an error return
 # would be sliced as data.
 _USIZE_MAX = ctypes.c_size_t(-1).value
-
-_F64_P = ctypes.POINTER(ctypes.c_double)
-_F32_P = ctypes.POINTER(ctypes.c_float)
-_U64_P = ctypes.POINTER(ctypes.c_uint64)
-_U32_P = ctypes.POINTER(ctypes.c_uint32)
-_U8_P = ctypes.POINTER(ctypes.c_uint8)
 
 
 def _lib_filename() -> str:
@@ -87,40 +81,42 @@ def _load() -> ctypes.CDLL:
 
     lib.fc_zone_maps.restype = ctypes.c_size_t
     lib.fc_zone_maps.argtypes = [
-        _F64_P,
+        ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_size_t,
-        _F64_P,
-        _F64_P,
-        _U64_P,
-        _U64_P,
-        _F64_P,
-        _F64_P,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
     ]
     lib.fc_encode_f32.restype = ctypes.c_int32
     lib.fc_encode_f32.argtypes = [
-        _F64_P,
+        ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_double,
         ctypes.c_double,
-        _F32_P,
+        ctypes.c_void_p,
     ]
     lib.fc_m4_indices.restype = ctypes.c_size_t
     lib.fc_m4_indices.argtypes = [
-        _F64_P,
-        _F64_P,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_double,
         ctypes.c_double,
         ctypes.c_size_t,
-        _U32_P,
+        ctypes.c_void_p,
     ]
     lib.fc_min_max.restype = ctypes.c_int32
-    lib.fc_min_max.argtypes = [_F64_P, ctypes.c_size_t, _F64_P, _F64_P]
+    lib.fc_min_max.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.c_void_p]
+    lib.fc_is_sorted.restype = ctypes.c_int32
+    lib.fc_is_sorted.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
     lib.fc_bin_2d.restype = ctypes.c_int32
     lib.fc_bin_2d.argtypes = [
-        _F64_P,
-        _F64_P,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_double,
         ctypes.c_double,
@@ -128,12 +124,12 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_size_t,
         ctypes.c_size_t,
-        _F32_P,
+        ctypes.c_void_p,
     ]
     lib.fc_bin_2d_indices.restype = ctypes.c_size_t
     lib.fc_bin_2d_indices.argtypes = [
-        _F64_P,
-        _F64_P,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_double,
         ctypes.c_double,
@@ -141,62 +137,62 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_size_t,
         ctypes.c_size_t,
-        _F32_P,
-        _U32_P,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
     ]
     lib.fc_histogram_uniform.restype = ctypes.c_size_t
     lib.fc_histogram_uniform.argtypes = [
-        _F64_P,
+        ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_double,
         ctypes.c_double,
         ctypes.c_size_t,
         ctypes.c_int32,
-        _F64_P,
+        ctypes.c_void_p,
     ]
     lib.fc_normalize_f32.restype = ctypes.c_int32
     lib.fc_normalize_f32.argtypes = [
-        _F64_P,
+        ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_double,
         ctypes.c_double,
         ctypes.c_int32,
-        _F32_P,
+        ctypes.c_void_p,
     ]
     lib.fc_range_indices.restype = ctypes.c_size_t
     lib.fc_range_indices.argtypes = [
-        _F64_P,
-        _F64_P,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_double,
         ctypes.c_double,
         ctypes.c_double,
         ctypes.c_double,
-        _U32_P,
+        ctypes.c_void_p,
     ]
     lib.fc_sample_mask.restype = ctypes.c_int32
     lib.fc_sample_mask.argtypes = [
-        _U64_P,
+        ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_uint64,
         ctypes.c_uint64,
-        _U8_P,
+        ctypes.c_void_p,
     ]
     lib.fc_stratified_sample_mask.restype = ctypes.c_int32
     lib.fc_stratified_sample_mask.argtypes = [
-        _U64_P,  # ids
-        _U32_P,  # groups
+        ctypes.c_void_p,  # ids
+        ctypes.c_void_p,  # groups
         ctypes.c_size_t,  # len
         ctypes.c_size_t,  # n_groups
         ctypes.c_uint64,  # seed
         ctypes.c_double,  # fraction
         ctypes.c_uint64,  # min_count
-        _U8_P,  # out
+        ctypes.c_void_p,  # out
     ]
     lib.fc_pyramid_build.restype = ctypes.c_uint64
     lib.fc_pyramid_build.argtypes = [
-        ctypes.POINTER(ctypes.c_double),
-        ctypes.POINTER(ctypes.c_double),
+        ctypes.c_void_p,
+        ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_double,
         ctypes.c_double,
@@ -211,7 +207,7 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_double,
         ctypes.c_double,
-        ctypes.POINTER(ctypes.c_double),
+        ctypes.c_void_p,
     ]
     lib.fc_pyramid_compose.restype = ctypes.c_int32
     lib.fc_pyramid_compose.argtypes = [
@@ -222,14 +218,14 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_size_t,
         ctypes.c_size_t,
-        ctypes.POINTER(ctypes.c_float),
+        ctypes.c_void_p,
     ]
     lib.fc_pyramid_free.restype = ctypes.c_int32
     lib.fc_pyramid_free.argtypes = [ctypes.c_uint64]
     lib.fc_local_log_density.restype = ctypes.c_int32
     lib.fc_local_log_density.argtypes = [
-        _F64_P,
-        _F64_P,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_double,
         ctypes.c_double,
@@ -237,13 +233,13 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_size_t,
         ctypes.c_size_t,
-        _F32_P,
+        ctypes.c_void_p,
     ]
     lib.fc_rasterize.restype = ctypes.c_int32
     lib.fc_rasterize.argtypes = [
-        _U8_P,  # cmd
+        ctypes.c_void_p,  # cmd
         ctypes.c_size_t,  # cmd_len
-        _U8_P,  # out (w*h*4 RGBA8)
+        ctypes.c_void_p,  # out (w*h*4 RGBA8)
         ctypes.c_size_t,  # w
         ctypes.c_size_t,  # h
     ]
@@ -254,7 +250,7 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,  # prop_len
         ctypes.c_char_p,  # value (UTF-8)
         ctypes.c_size_t,  # value_len
-        _F32_P,  # out_rgba (4 f32s; written for statically-parsed colors)
+        ctypes.c_void_p,  # out_rgba (4 f32s; written for statically-parsed colors)
     ]
     return lib
 
@@ -269,12 +265,16 @@ def _as_f64(arr: npt.NDArray[np.float64], label: str = "data") -> npt.NDArray[np
     return out
 
 
-def _ptr_f64(arr: npt.NDArray[np.float64]):  # noqa: ANN202
-    return arr.ctypes.data_as(_F64_P)
+def _ptr_f64(arr: npt.NDArray[np.float64]) -> int:
+    # Raw address int for a c_void_p parameter: ~2x cheaper per call than
+    # `ctypes.data_as(...)`, which allocates a fresh pointer object. The
+    # typed wrappers above are the type-safety layer (`_as_f64` etc.), so
+    # the C boundary can take the untyped address.
+    return arr.ctypes.data
 
 
-def _ptr_u8(arr: npt.NDArray[np.uint8]):  # noqa: ANN202
-    return arr.ctypes.data_as(_U8_P)
+def _ptr_u8(arr: npt.NDArray[np.uint8]) -> int:
+    return arr.ctypes.data
 
 
 def _positive_int(value: int, label: str) -> int:
@@ -371,8 +371,8 @@ def zone_maps(
         chunk_size,
         _ptr_f64(mins),
         _ptr_f64(maxs),
-        counts.ctypes.data_as(_U64_P),
-        nulls.ctypes.data_as(_U64_P),
+        counts.ctypes.data,
+        nulls.ctypes.data,
         _ptr_f64(sums),
         _ptr_f64(sum_sqs),
     )
@@ -395,7 +395,7 @@ def encode_f32(
     if len(data) == 0:  # empty NumPy arrays may carry a null pointer
         return np.empty(0, dtype=np.float32)
     out = np.empty(len(data), dtype=np.float32)
-    ok = _lib.fc_encode_f32(_ptr_f64(data), len(data), offset, scale, out.ctypes.data_as(_F32_P))
+    ok = _lib.fc_encode_f32(_ptr_f64(data), len(data), offset, scale, out.ctypes.data)
     if ok != 1:
         raise RuntimeError("fastcharts native encode_f32 failed (output undefined)")
     return out
@@ -425,7 +425,7 @@ def m4_indices(
         x0,
         x1,
         n_buckets,
-        out.ctypes.data_as(_U32_P),
+        out.ctypes.data,
     )
     if written == _USIZE_MAX:
         raise ValueError("invalid m4 arguments")
@@ -463,7 +463,7 @@ def bin_2d(
             y1,
             w,
             h,
-            out.ctypes.data_as(_F32_P),
+            out.ctypes.data,
         )
         if not ok:
             raise ValueError("invalid bin_2d arguments")
@@ -508,12 +508,21 @@ def bin_2d_indices(
         y1,
         w,
         h,
-        grid.ctypes.data_as(_F32_P),
-        idx.ctypes.data_as(_U32_P),
+        grid.ctypes.data,
+        idx.ctypes.data,
     )
     if written == _USIZE_MAX:
         raise ValueError("invalid bin_2d_indices arguments")
     return grid, idx[:written].copy()
+
+
+def is_sorted(data: npt.NDArray[np.float64]) -> bool:
+    """Non-decreasing check with NaN-poisoning (any NaN fails its pairs) —
+    identical to ``np.all(np.diff(data) >= 0)`` without the two temporaries."""
+    data = _as_f64(data, "data")
+    if len(data) < 2:
+        return True
+    return bool(_lib.fc_is_sorted(_ptr_f64(data), len(data)))
 
 
 def min_max(data: npt.NDArray[np.float64]) -> Optional[tuple[float, float]]:
@@ -573,9 +582,7 @@ def normalize_f32(
     out = np.empty(len(data), dtype=np.float32)
     nan_mode = 1 if nonfinite == "nan" else 0
     if len(data):
-        ok = _lib.fc_normalize_f32(
-            _ptr_f64(data), len(data), lo, hi, nan_mode, out.ctypes.data_as(_F32_P)
-        )
+        ok = _lib.fc_normalize_f32(_ptr_f64(data), len(data), lo, hi, nan_mode, out.ctypes.data)
         if ok != 1:
             raise RuntimeError("fastcharts native normalize_f32 failed (output undefined)")
     return out
@@ -607,7 +614,7 @@ def range_indices(
         hi_x,
         lo_y,
         hi_y,
-        out.ctypes.data_as(_U32_P),
+        out.ctypes.data,
     )
     if written == _USIZE_MAX:
         raise ValueError("invalid range_indices arguments")
@@ -631,11 +638,11 @@ def sample_mask(
     out = np.empty(len(ids), dtype=np.uint8)
     if len(ids):
         ok = _lib.fc_sample_mask(
-            ids.ctypes.data_as(_U64_P),
+            ids.ctypes.data,
             len(ids),
             ctypes.c_uint64(int(seed)),
             ctypes.c_uint64(int(threshold)),
-            out.ctypes.data_as(_U8_P),
+            out.ctypes.data,
         )
         if ok != 1:
             raise RuntimeError("fastcharts native sample_mask failed (output undefined)")
@@ -675,14 +682,14 @@ def stratified_sample_mask(
     out = np.empty(len(ids), dtype=np.uint8)
     if len(ids):
         ok = _lib.fc_stratified_sample_mask(
-            ids.ctypes.data_as(_U64_P),
-            groups.ctypes.data_as(_U32_P),
+            ids.ctypes.data,
+            groups.ctypes.data,
             len(ids),
             n_groups,
             ctypes.c_uint64(int(seed)),
             ctypes.c_double(fraction),
             ctypes.c_uint64(min_count),
-            out.ctypes.data_as(_U8_P),
+            out.ctypes.data,
         )
         if ok != 1:
             raise ValueError(
@@ -712,8 +719,8 @@ def pyramid_build(
         return 0
     return int(
         _lib.fc_pyramid_build(
-            x.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
-            y.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+            x.ctypes.data,
+            y.ctypes.data,
             len(x),
             x0,
             x1,
@@ -759,7 +766,7 @@ def pyramid_compose(
         hi_y,
         w,
         h,
-        out.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        out.ctypes.data,
     )
     if level < 0:
         return None
@@ -801,7 +808,7 @@ def local_log_density(
             hi_y,
             w,
             h,
-            out.ctypes.data_as(_F32_P),
+            out.ctypes.data,
         )
         if not ok:
             raise ValueError("invalid local_log_density arguments")

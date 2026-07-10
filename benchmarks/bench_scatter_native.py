@@ -47,7 +47,7 @@ from abi_smoke import load  # noqa: E402
 from categories import BENCHMARK_CATEGORIES, categories_for  # noqa: E402
 from environment import SCHEMA_VERSION, collect_environment_metadata  # noqa: E402
 
-# Mirror the Python defaults (fastcharts.figure).
+# Mirror the Python defaults (fastcharts._figure).
 DENSITY_THRESHOLD = 200_000
 GRID_W, GRID_H = 512, 384
 RENDER_W, RENDER_H = 900, 420
@@ -124,14 +124,14 @@ def bench_production(n: int, x: array, y: array) -> dict:
     """Time the real Figure -> spec/blob path and assert its reduction contract."""
     import numpy as np
 
-    from fastcharts import Figure
+    import fastcharts as fc
 
     reps = 3 if n <= 2_000_000 else 1
     best = float("inf")
     result = None
     for _ in range(reps):
         t0 = time.perf_counter()
-        fig = Figure(width=RENDER_W, height=RENDER_H).scatter(x, y)
+        fig = fc.scatter_chart(fc.scatter(x=x, y=y), width=RENDER_W, height=RENDER_H).figure()
         spec, blob = fig.build_payload()
         best = min(best, time.perf_counter() - t0)
         result = (spec, blob)

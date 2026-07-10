@@ -1,15 +1,16 @@
 """A site-overview dashboard built from fastcharts sparklines.
 
-Card chrome is plain HTML/CSS; every metric sparkline is a real fastcharts
-`Figure` — chrome-hidden, edge-to-edge (`padding=0`), gradient area fills, and
-smooth curves. The client bundle is embedded once and each chart renders from
-its own spec + base64 blob into its card.
+Card chrome is plain HTML/CSS; every metric sparkline is a real composed
+fastcharts chart — chrome-hidden, edge-to-edge (`padding=...`), gradient area
+fills, and smooth curves. The client bundle is embedded once and each chart
+renders from its own spec + base64 blob into its card.
 
     uv run python examples/dashboard/site_overview.py       # writes site_overview.html
     uv run python examples/dashboard/site_overview.py --png  # also renders a PNG
 
-Showcases: `Figure(padding=...)`, `curve="smooth"`, `fill="linear-gradient(...)"`,
-`tick_label_strategy="none"`, and `width="100%"` responsive sizing.
+Showcases: `fc.chart(..., padding=...)`, `curve="smooth"`,
+`fill="linear-gradient(...)"`, `tick_label_strategy="none"`, and
+`width="100%"` responsive sizing.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
-from fastcharts import Figure
+import fastcharts as fc
 from fastcharts.export import _STANDALONE_CSP, _bundled_js, _json_for_inline_script
 
 HERE = Path(__file__).resolve().parent
@@ -33,9 +34,8 @@ def spark(kind: str, x, y, color: str, *, fill: bool = True, width: float = 2.4)
     `width="100%"` fills the (narrower) dashboard panel via the client's
     ResizeObserver rather than overflowing at a fixed pixel width.
     """
-    fig = Figure(width="100%", height=104, padding=[6, 1, 2, 1])
     if kind == "area":
-        fig.area(
+        mark = fc.area(
             x,
             y,
             color=color,
@@ -45,15 +45,23 @@ def spark(kind: str, x, y, color: str, *, fill: bool = True, width: float = 2.4)
             fill="linear-gradient(currentColor, transparent)" if fill else None,
         )
     else:
-        fig.line(x, y, color=color, curve="smooth", width=width)
-    fig.show_legend = fig.show_modebar = fig.show_tooltip = False
-    for ax in ("x", "y"):
-        fig.set_axis(
-            ax,
-            style={"grid_color": "rgba(0,0,0,0)", "axis_color": "rgba(0,0,0,0)"},
-            tick_label_strategy="none",
-        )
-    spec, blob = fig.build_payload()
+        mark = fc.line(x, y, color=color, curve="smooth", width=width)
+    hidden_axis = {
+        "style": {"grid_color": "rgba(0,0,0,0)", "axis_color": "rgba(0,0,0,0)"},
+        "tick_label_strategy": "none",
+    }
+    chart = fc.chart(
+        mark,
+        fc.x_axis(**hidden_axis),
+        fc.y_axis(**hidden_axis),
+        fc.legend(show=False),
+        fc.tooltip(show=False),
+        fc.modebar(show=False),
+        width="100%",
+        height=104,
+        padding=[6, 1, 2, 1],
+    )
+    spec, blob = chart.figure().build_payload()
     return spec, base64.b64encode(blob).decode("ascii")
 
 

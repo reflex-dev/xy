@@ -11,8 +11,7 @@ import numpy as np
 import pytest
 
 import fastcharts as fc
-from fastcharts import Figure
-from fastcharts.figure import DIRECT_SOFT_CEILING, SCATTER_DENSITY_THRESHOLD
+from fastcharts._figure import DIRECT_SOFT_CEILING, SCATTER_DENSITY_THRESHOLD, Figure
 from fastcharts.interaction import _decode_log_u8
 
 

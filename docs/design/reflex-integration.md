@@ -152,8 +152,8 @@ class Dash(rx.State):
     chart: str = ""                      # figure token — the ONLY chart state
 
     def load(self):
-        fig = fc.Figure().scatter(x, y, color=c)   # or fc.scatter_chart(...)
-        self.chart = rfc.register(fig)
+        chart = fc.scatter_chart(fc.scatter(x, y, color=c))
+        self.chart = rfc.register(chart)
 
     def picked(self, row: dict): ...
     def selected(self, sel: dict): ...
@@ -236,17 +236,17 @@ class Telemetry(rx.State):
 
         # 10M points: ships as a density surface, drills to real points on
         # zoom, hover reads exact f64 rows — all default behavior.
-        fig = fc.Figure().scatter(
-            pings["lon"], pings["lat"], color=pings["latency_ms"]
+        chart = fc.scatter_chart(
+            fc.scatter(pings["lon"], pings["lat"], color=pings["latency_ms"])
         )
-        self.map_chart = rfc.register(fig)
+        self.map_chart = rfc.register(chart)
 
         self.latency_chart = rfc.register(
-            fc.Figure().histogram(pings["latency_ms"], bins=120)
+            fc.histogram_chart(fc.histogram(pings["latency_ms"], bins=120))
         )
 
         self.live_chart = rfc.register(
-            fc.Figure().line(np.array([0.0]), np.array([0.0]))
+            fc.line_chart(fc.line(np.array([0.0]), np.array([0.0])))
         )
 
     @rx.event
@@ -263,7 +263,7 @@ class Telemetry(rx.State):
         self.selected_count = int(len(idx))
         rfc.release(self.latency_chart)
         self.latency_chart = rfc.register(
-            fc.Figure().histogram(self._pings["latency_ms"][idx], bins=120)
+            fc.histogram_chart(fc.histogram(self._pings["latency_ms"][idx], bins=120))
         )
 
     @rx.event(background=True)

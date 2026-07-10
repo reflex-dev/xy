@@ -13,7 +13,8 @@ import numpy as np
 import pytest
 
 import fastcharts as fc
-from fastcharts import Figure, kernels
+from fastcharts import kernels
+from fastcharts._figure import Figure
 from fastcharts._raster import _parse_color
 
 X = np.arange(8.0)

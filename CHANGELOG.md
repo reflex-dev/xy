@@ -8,6 +8,17 @@ in the README).
 
 ## [Unreleased]
 
+### Removed
+- **The fluent `Figure` API is removed from the public surface.**
+  `fastcharts.Figure` is no longer exported; `figure.py` is internalized as
+  `fastcharts/_figure.py`. The declarative composition API (`fc.chart(...)`,
+  `fc.line_chart(...)`, `fc.scatter_chart(...)`, marks, axes, annotations,
+  chrome) is now the single public chart-building API. `Selection` stays
+  public, composed `Chart` objects keep the full readout surface
+  (`to_html`/`to_png`/`to_svg`/`widget`/`show`/`append`/`pick`/`select_range`/
+  `memory_report`), and `Chart.figure()` remains as an advanced escape hatch
+  to the internal engine object.
+
 ### Added
 - **Chart live surface (data-live, structure-immutable).** The declarative
   `Chart` gains `append(trace_id, x, y, color=, size=)` (streaming — routed

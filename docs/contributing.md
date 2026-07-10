@@ -189,8 +189,8 @@ dry-run output uses `<CHROMIUM>` until you pass `--chromium` or `CHROMIUM=...`.
 ## Pull Request Checklist
 
 - Public errors are actionable and name the bad parameter.
-- Failed public builder calls leave `Figure.traces`, `ColumnStore`, and category
-  axes unchanged.
+- Failed public builder calls leave the internal `_figure.Figure` traces,
+  `ColumnStore`, and category axes unchanged.
 - `import fastcharts` stays lazy and under budget in fresh interpreters; no
   NumPy/native-core import on package import.
 - Standalone HTML handles hostile user strings in every text surface touched by

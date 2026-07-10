@@ -31,7 +31,7 @@ from .config import (
 )
 
 if TYPE_CHECKING:
-    from .figure import Figure
+    from ._figure import Figure
 
 
 def _integer_id(value: int, label: str) -> int:

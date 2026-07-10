@@ -13,6 +13,7 @@ import pytest
 
 import fastcharts as fc
 import fastcharts.export as export_module
+from fastcharts._figure import Figure
 from fastcharts.components import (
     Annotation,
     Axis,
@@ -359,7 +360,7 @@ def test_component_api_default_payload_matches_fluent_figure():
     y = x * 2
 
     component = fc.chart(fc.line(x=x, y=y)).figure()
-    fluent = fc.Figure().line(x, y)
+    fluent = Figure().line(x, y)
     component_spec, component_blob = component.build_payload()
     fluent_spec, fluent_blob = fluent.build_payload()
 
@@ -1531,7 +1532,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         )
         return b"PNG"
 
-    monkeypatch.setattr("fastcharts.figure.Figure.to_png", fake_to_png)
+    monkeypatch.setattr("fastcharts._figure.Figure.to_png", fake_to_png)
 
     data = chart.to_png(
         "out.png",
@@ -1679,7 +1680,7 @@ def test_figure_cached():
 def test_select_range():
     x = np.arange(100.0)
     y = np.arange(100.0)
-    fig = fc.Figure().scatter(x, y)
+    fig = Figure().scatter(x, y)
     sel = fig.select_range(10.0, 20.0, 0.0, 1000.0)
     idx = sel[0]
     assert idx.dtype == np.uint32
@@ -1690,7 +1691,7 @@ def test_select_range_box():
     rng = np.random.default_rng(0)
     x = rng.uniform(0, 100, 1000)
     y = rng.uniform(0, 100, 1000)
-    fig = fc.Figure().scatter(x, y)
+    fig = Figure().scatter(x, y)
     sel = fig.select_range(25.0, 75.0, 25.0, 75.0)
     idx = sel[0]
     expect = np.flatnonzero((x >= 25) & (x <= 75) & (y >= 25) & (y <= 75))
@@ -1699,7 +1700,7 @@ def test_select_range_box():
 
 def test_selection_payload():
     x = np.arange(10.0)
-    fig = fc.Figure().scatter(x, x)
+    fig = Figure().scatter(x, x)
     sel = fig.select_range(2.0, 5.0, 0.0, 100.0)
     payload = Selection(fig, sel)
     assert len(payload) == 4  # indices 2,3,4,5

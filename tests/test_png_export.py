@@ -9,7 +9,8 @@ import struct
 
 import numpy as np
 
-from fastcharts import Figure, _png, _raster
+from fastcharts import _png, _raster
+from fastcharts._figure import Figure
 
 
 def _ihdr(png: bytes) -> tuple[int, int, int]:

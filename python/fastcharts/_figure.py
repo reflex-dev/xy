@@ -23,7 +23,7 @@ from .columns import Column, ColumnStore, ColumnStoreCheckpoint
 
 # Tier/tuning constants live in config.py (shared with interaction/export/
 # _payload); several are re-exported here — this module is their historic
-# import path and tests import them from `fastcharts.figure` (F401 kept for
+# import path and tests import them from `fastcharts._figure` (F401 kept for
 # the re-exports; DIRECT_SOFT_CEILING/DEFAULT_PALETTE are also used below).
 from .config import (  # noqa: E402, F401
     DECIMATION_THRESHOLD,
@@ -529,7 +529,14 @@ class Figure(AnnotationsMixin, PayloadMixin):
     @staticmethod
     def _is_category_like(values: Any) -> bool:
         if hasattr(values, "to_numpy"):
-            values = values.to_numpy()
+            try:
+                values = values.to_numpy()
+            except ValueError:
+                # pyarrow Arrays with nulls refuse the default zero-copy
+                # conversion (ArrowInvalid is a ValueError). This is only a
+                # dtype probe, so inspect an empty slice instead of paying an
+                # O(n) copy of the column.
+                values = values[:0].to_numpy(zero_copy_only=False)
         arr = np.asarray(values)
         return arr.dtype.kind in ("U", "S", "O", "b")
 
@@ -540,6 +547,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
         arr = np.asarray(values)
         if arr.ndim != 1:
             raise ValueError(f"{axis} categories must be 1-D, got shape {arr.shape}")
+        if arr.dtype.kind == "U":
+            # A unicode array cannot hold missing/bytes values, so
+            # `category_label` reduces to `str` — and `tolist()` already
+            # yields plain `str`. Skips two O(n) Python passes per axis.
+            return arr.tolist()
         return [channels.category_label(raw) for raw in arr.astype(object)]
 
     def _axis_positions(self, values: Any, axis: str, *, commit: bool = True) -> np.ndarray:

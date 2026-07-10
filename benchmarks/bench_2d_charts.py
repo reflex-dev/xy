@@ -390,7 +390,7 @@ def make_cases(profile: str) -> list[Case]:
 
     go = _plotly_or_none()
     seaborn = _seaborn_or_none()
-    from fastcharts import Figure
+    from fastcharts import area, bar, chart, column, heatmap, hist
 
     rng = np.random.default_rng(42)
     cases: list[Case] = []
@@ -404,7 +404,7 @@ def make_cases(profile: str) -> list[Case]:
         ).astype(np.float64, copy=False)
 
         def fc():
-            return Figure(width=RENDER_W, height=RENDER_H).hist(values, bins=bins)
+            return chart(hist(values, bins=bins), width=RENDER_W, height=RENDER_H).figure()
 
         def pl():
             fig = go.Figure(go.Histogram(x=values, nbinsx=bins, marker_color="#2563eb"))
@@ -436,7 +436,7 @@ def make_cases(profile: str) -> list[Case]:
         y = 30 + np.sin(np.linspace(0, 32, n)) * 9 + np.cumsum(rng.normal(0, 0.025, n))
 
         def fc():
-            return Figure(width=RENDER_W, height=RENDER_H).area(x, y, color="#0891b2")
+            return chart(area(x, y, color="#0891b2"), width=RENDER_W, height=RENDER_H).figure()
 
         def pl():
             fig = go.Figure(
@@ -452,7 +452,9 @@ def make_cases(profile: str) -> list[Case]:
         values = (rng.random(n) * 100).astype(np.float64)
 
         def fc():
-            return Figure(width=RENDER_W, height=RENDER_H).bar(labels, values, color="#2563eb")
+            return chart(
+                bar(labels, values, color="#2563eb"), width=RENDER_W, height=RENDER_H
+            ).figure()
 
         def pl():
             fig = go.Figure(go.Bar(x=labels, y=values, marker_color="#2563eb"))
@@ -491,13 +493,17 @@ def make_cases(profile: str) -> list[Case]:
         long_values = values.T.reshape(-1)
 
         def fc():
-            return Figure(width=RENDER_W, height=RENDER_H).bar(
-                labels,
-                values,
-                mode="grouped",
-                series=names,
-                colors=colors,
-            )
+            return chart(
+                bar(
+                    labels,
+                    values,
+                    mode="grouped",
+                    series=names,
+                    colors=colors,
+                ),
+                width=RENDER_W,
+                height=RENDER_H,
+            ).figure()
 
         def pl():
             fig = go.Figure(
@@ -540,13 +546,17 @@ def make_cases(profile: str) -> list[Case]:
         colors = ["#0f766e", "#7c3aed", "#dc2626", "#0891b2"][:series_count]
 
         def fc():
-            return Figure(width=RENDER_W, height=RENDER_H).column(
-                labels,
-                values,
-                mode="stacked",
-                series=names,
-                colors=colors,
-            )
+            return chart(
+                column(
+                    labels,
+                    values,
+                    mode="stacked",
+                    series=names,
+                    colors=colors,
+                ),
+                width=RENDER_W,
+                height=RENDER_H,
+            ).figure()
 
         def pl():
             fig = go.Figure(
@@ -582,7 +592,9 @@ def make_cases(profile: str) -> list[Case]:
         )
 
         def fc():
-            return Figure(width=RENDER_W, height=RENDER_H).heatmap(z, x=x, y=y, colormap="turbo")
+            return chart(
+                heatmap(z, x=x, y=y, colormap="turbo"), width=RENDER_W, height=RENDER_H
+            ).figure()
 
         def pl():
             fig = go.Figure(go.Heatmap(z=z, x=x, y=y, colorscale="Turbo"))

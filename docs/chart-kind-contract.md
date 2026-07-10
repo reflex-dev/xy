@@ -28,13 +28,14 @@ by the string `K` on the wire (`trace.kind`).
 
 ### 1. Kernel — `python/fastcharts/`
 
-- **`figure.py`: `_emit_<K>(self, t, pw, xr, yr, px_width) -> dict`.** Dispatched
+- **`_figure.py`: `_emit_<K>(self, t, pw, xr, yr, px_width) -> dict`.** Dispatched
   by `_emit_trace` via `getattr(self, f"_emit_{t.kind}")` — no edit to the
   dispatcher. Returns the trace's spec entry and ships its columns through the
   `_PayloadWriter` (`pw.ship` for §4 offset-encoded geometry, `pw.ship_scalar`
   for raw f32 channels/grids). Set `tier` explicitly (`direct` | `decimated` |
   `density`) — every tier decision is recorded, never silent (§28).
-- **A builder on `Figure`** (e.g. `hist(...)`, `bar(...)`) that ingests columns
+- **A builder on the internal `Figure`** (`marks.py`, e.g. `hist(...)`,
+  `bar(...)`) that ingests columns
   into the `ColumnStore` and appends a `Trace`. Reuse `_ingest_xy` for the
   equal-length (x,y) contract; a non-xy mark ingests its own columns.
 - **Channels** (optional): if the mark has per-mark color/size, reuse
@@ -137,9 +138,11 @@ usually wrong). Each has an explicit trigger:
 
 ## Checklist for a new kind
 
-1. `Figure.<K>(...)` builder + `_emit_<K>` (kernel spec/columns, explicit tier).
+1. Internal `Figure.<K>(...)` builder (`marks.py`) + `_emit_<K>` (kernel
+   spec/columns, explicit tier).
 2. `MARK_KINDS[K] = { build, draw }` (+ shaders if a new primitive).
-3. Component wrapper: entry in `components._MARK_APPLIERS` + a `*_chart` fn.
+3. Public composition surface: a `fc.<K>(...)` mark factory, an entry in
+   `components._MARK_APPLIERS`, and a `*_chart` fn.
 4. Tests: payload shape + tier decision (pytest); a render probe in
    `scripts/render_smoke_nonumpy.py` asserting it lights pixels.
 5. If aggregating: an aggregate kernel (native Rust core) and wire

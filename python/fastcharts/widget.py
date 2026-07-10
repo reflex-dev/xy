@@ -14,14 +14,13 @@ from typing import TYPE_CHECKING, Any
 import anywidget
 import traitlets
 
-from .channel import ChannelCallbacks, handle_message
-
 # Selection lives in figure.py (it's the on_select payload and has no widget
 # dependency); re-exported here for backward compatibility.
-from .figure import Selection
+from ._figure import Selection
+from .channel import ChannelCallbacks, handle_message
 
 if TYPE_CHECKING:
-    from .figure import Figure
+    from ._figure import Figure
 
 _STATIC = pathlib.Path(__file__).parent / "static"
 

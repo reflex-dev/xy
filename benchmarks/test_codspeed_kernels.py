@@ -16,8 +16,8 @@ import numpy as np
 import pytest
 
 import fastcharts as fc
-from fastcharts import Figure
 from fastcharts import kernels as k
+from fastcharts._figure import Figure  # harness type annotations only
 
 # Small/medium/large sizes keep CodSpeed honest across normal dashboard charts,
 # exact WebGL workloads, and screen-bounded large-data paths without turning it
@@ -137,8 +137,7 @@ def drilldown_figure() -> Figure:
     rng = np.random.default_rng(17)
     x = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
     y = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
-    fig = Figure()
-    fig.scatter(x, y, density=True)
+    fig = fc.chart(fc.scatter(x=x, y=y, density=True)).figure()
     fig._benchmark_deep_expected = int(np.count_nonzero((x < 10.0) & (y < 10.0)))
 
     # Warm the lazily-built pyramid so CodSpeed tracks interactive viewport
@@ -242,49 +241,42 @@ def test_range_indices(benchmark, data):
 
 
 def _scatter_payload(x: np.ndarray, y: np.ndarray, *, density: bool | None = None) -> int:
-    fig = Figure()
-    fig.scatter(x, y, density=density)
+    fig = fc.chart(fc.scatter(x=x, y=y, density=density)).figure()
     _spec, blob = fig.build_payload(N_BUCKETS)
     return len(blob)
 
 
 def _line_payload(x: np.ndarray, y: np.ndarray) -> int:
-    fig = Figure()
-    fig.line(x, y)
+    fig = fc.chart(fc.line(x=x, y=y)).figure()
     _spec, blob = fig.build_payload(N_BUCKETS)
     return len(blob)
 
 
 def _density_memory_report(x: np.ndarray, y: np.ndarray) -> dict[str, object]:
-    fig = Figure()
-    fig.scatter(x, y, density=True)
+    fig = fc.chart(fc.scatter(x=x, y=y, density=True)).figure()
     return fig.memory_report()
 
 
 def _histogram_payload(values: np.ndarray) -> int:
-    fig = Figure()
-    fig.histogram(values, bins=200)
+    fig = fc.chart(fc.histogram(values, bins=200)).figure()
     _spec, blob = fig.build_payload(N_BUCKETS)
     return len(blob)
 
 
 def _area_payload(x: np.ndarray, y: np.ndarray) -> int:
-    fig = Figure()
-    fig.area(x, y)
+    fig = fc.chart(fc.area(x, y)).figure()
     _spec, blob = fig.build_payload(N_BUCKETS)
     return len(blob)
 
 
 def _bar_payload(categories: list[str], values: np.ndarray) -> int:
-    fig = Figure()
-    fig.bar(categories, values)
+    fig = fc.chart(fc.bar(categories, values)).figure()
     _spec, blob = fig.build_payload(N_BUCKETS)
     return len(blob)
 
 
 def _heatmap_payload(z: np.ndarray, x: np.ndarray, y: np.ndarray) -> int:
-    fig = Figure()
-    fig.heatmap(z, x=x, y=y)
+    fig = fc.chart(fc.heatmap(z, x=x, y=y)).figure()
     _spec, blob = fig.build_payload(N_BUCKETS)
     return len(blob)
 
@@ -430,8 +422,7 @@ def test_build_payload(benchmark, data):
     x, y = data
 
     def build():
-        fig = Figure()
-        fig.line(x, y)
+        fig = fc.chart(fc.line(x=x, y=y)).figure()
         return fig.build_payload(N_BUCKETS)
 
     benchmark(build)
@@ -440,8 +431,7 @@ def test_build_payload(benchmark, data):
 def test_decimate_view(benchmark, data):
     """Zoom interaction: kernel-side re-decimation of a 1% window."""
     x, y = data
-    fig = Figure()
-    fig.line(x, y)
+    fig = fc.chart(fc.line(x=x, y=y)).figure()
     x0, x1 = N * 0.495, N * 0.505
     benchmark(fig.decimate_view, x0, x1, N_BUCKETS)
 

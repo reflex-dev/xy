@@ -4,7 +4,7 @@ Each function here IS both public dialects: `Figure` binds them as its fluent
 methods (`Figure.scatter is marks.scatter`), and the composition API's
 appliers call those same bound methods. One body, one signature, one set of
 defaults — the parity tests assert the identity. Functions take the figure
-as `self` (they are written as methods; `figure.py` assigns them in the class
+as `self` (they are written as methods; `__figure.py` assigns them in the class
 body) and reach engine state — store, traces, checkpoint/rollback, ingest and
 axis-position helpers — through it.
 """
@@ -21,7 +21,7 @@ from ._trace import Trace
 from .config import DEFAULT_PALETTE, DIRECT_SOFT_CEILING
 
 if TYPE_CHECKING:
-    from .figure import Figure
+    from ._figure import Figure
 
 
 def _bar_like(
@@ -154,11 +154,11 @@ def line(
     checkpoint = self._checkpoint()
     try:
         xc, yc = self._ingest_xy(x, y, "line")
-        if not np.all(np.diff(xc.values) >= 0):
+        if not kernels.is_sorted(xc.values):
             # LOD contract (§28): line x must be sorted; the engine sorts once
             # at ingest, and says so. The predicate is NaN-safe on purpose:
-            # `any(diff < 0)` is False for NaN diffs, which would let a
-            # NaN-carrying x skip the sort and violate M4's sorted precondition.
+            # a NaN fails its pairs, so a NaN-carrying x cannot skip the sort
+            # and violate M4's sorted precondition.
             # argsort places NaNs last, where the m4 window excludes them.
             order = np.argsort(xc.values, kind="stable")
             xc = self.store.ingest(xc.values[order])
@@ -225,7 +225,7 @@ def area(
         )
         if len(bc) != len(xc):
             raise ValueError(f"area base must have length {len(xc)}, got {len(bc)}")
-        if not np.all(np.diff(xc.values) >= 0):
+        if not kernels.is_sorted(xc.values):
             order = np.argsort(xc.values, kind="stable")
             xc = self.store.ingest(xc.values[order])
             yc = self.store.ingest(yc.values[order])

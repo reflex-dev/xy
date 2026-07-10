@@ -12,7 +12,7 @@ import pytest
 
 pa = pytest.importorskip("pyarrow")
 
-from fastcharts import Figure  # noqa: E402
+from fastcharts._figure import Figure  # noqa: E402
 from fastcharts.columns import ColumnStore  # noqa: E402
 
 

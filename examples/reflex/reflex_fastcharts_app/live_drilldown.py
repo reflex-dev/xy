@@ -11,7 +11,12 @@ import numpy as np
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from fastcharts import Figure
+import fastcharts as fc
+
+# The live drilldown server probes the engine directly (traces, density_view,
+# drill bookkeeping), so it works on the internal figure compiled from the
+# public composition API via `Chart.figure()`.
+from fastcharts._figure import Figure
 from fastcharts.config import DRILL_EXIT_FACTOR, SCATTER_DENSITY_THRESHOLD
 from fastcharts.lod import grid_shape
 from fastcharts.widget import bundled_js
@@ -58,6 +63,25 @@ def colored_scatter_data(
     return x, y, color, size
 
 
+def colored_scatter_chart(
+    n: int = LIVE_SCATTER_POINTS,
+    *,
+    title: str | None = None,
+    width: Union[str, int] = "100%",
+    height: int = 430,
+) -> fc.Chart:
+    title = title or f"{_point_label(n)} live drilldown scatter"
+    x, y, color, size = colored_scatter_data(n)
+    return fc.scatter_chart(
+        fc.scatter(x, y, color=color, size=size, colormap="viridis", opacity=0.72, density=True),
+        fc.x_axis(label="feature A"),
+        fc.y_axis(label="feature B"),
+        title=title,
+        width=width,
+        height=height,
+    )
+
+
 def colored_scatter_figure(
     n: int = LIVE_SCATTER_POINTS,
     *,
@@ -65,15 +89,7 @@ def colored_scatter_figure(
     width: Union[str, int] = "100%",
     height: int = 430,
 ) -> Figure:
-    title = title or f"{_point_label(n)} live drilldown scatter"
-    x, y, color, size = colored_scatter_data(n)
-    return Figure(
-        title=title,
-        x_label="feature A",
-        y_label="feature B",
-        width=width,
-        height=height,
-    ).scatter(x, y, color=color, size=size, colormap="viridis", opacity=0.72, density=True)
+    return colored_scatter_chart(n, title=title, width=width, height=height).figure()
 
 
 @lru_cache(maxsize=1)
