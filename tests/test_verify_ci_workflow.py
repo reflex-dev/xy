@@ -217,6 +217,25 @@ def test_ci_workflow_rejects_missing_interaction_stress_smoke(tmp_path: Path) ->
     assert any("test job" in error and "interaction_stress_smoke" in error for error in errors)
 
 
+def test_ci_workflow_rejects_missing_dashboard_reliability_smoke(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    block = (
+        "      - name: Browser dashboard reliability smoke (Chromium)\n"
+        "        run: |\n"
+        "          CHROME=$(node -e \"console.log(require('playwright').chromium.executablePath())\")\n"
+        "          .venv/bin/python benchmarks/bench_dashboard.py \\\n"
+        '            --chart-counts 10,20,50 --chromium "$CHROME" --json dashboard-smoke.json\n'
+        "          .venv/bin/python scripts/verify_benchmark_report.py \\\n"
+        "            dashboard-smoke.json --kind dashboard-browser\n\n"
+    )
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace(block, ""), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("test job" in error and "dashboard reliability" in error for error in errors)
+
+
 def test_ci_workflow_rejects_missing_reflex_lifecycle_smoke(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"

@@ -310,6 +310,37 @@ def test_kernel_wrappers_reject_oversized_allocation_dimensions(impl):
         impl.local_log_density(x, x, 0.0, 4.0, 0.0, 4.0, too_many, 4)
 
 
+def test_size_sentinel_detection_matches_platform_usize_width(monkeypatch):
+    """usize::MAX error sentinels must be detected at the platform c_size_t width.
+
+    On 32-bit targets (armv7 / win32 / wasm32 — all shipped wheels) the Rust
+    sentinel arrives as 2**32-1. A comparison hard-coded to 2**64-1 never
+    matches there, so an error return — including a panic converted by the
+    ffi_guard shield — would be sliced as valid data. Simulate the 32-bit ABI
+    by narrowing the module sentinel and stubbing each size-returning entry
+    point; every wrapper must consult the shared constant and raise.
+    """
+    import ctypes
+
+    from fastcharts import _native
+
+    assert ctypes.c_size_t(-1).value == _native._USIZE_MAX
+    sentinel = 2**32 - 1
+    monkeypatch.setattr(_native, "_USIZE_MAX", sentinel)
+    x = np.arange(8.0)
+    cases = [
+        ("fc_zone_maps", lambda: _native.zone_maps(x, 4)),
+        ("fc_m4_indices", lambda: _native.m4_indices(x, x, 0.0, 8.0, 2)),
+        ("fc_bin_2d_indices", lambda: _native.bin_2d_indices(x, x, 0.0, 8.0, 0.0, 8.0, 4, 4)),
+        ("fc_histogram_uniform", lambda: _native.histogram_uniform(x, 0.0, 8.0, 4)),
+        ("fc_range_indices", lambda: _native.range_indices(x, x, 0.0, 8.0, 0.0, 8.0)),
+    ]
+    for symbol, call in cases:
+        monkeypatch.setattr(_native._lib, symbol, lambda *args, _s=sentinel: _s)
+        with pytest.raises(ValueError):
+            call()
+
+
 def test_encode_f32_rejects_nonfinite_offset_or_scale(impl):
     x = np.arange(4.0)
     with pytest.raises(ValueError, match="offset"):
@@ -403,6 +434,57 @@ def test_sample_mask_edges(impl):
     assert not impl.sample_mask(ids, 0, 0).any()  # only exact-zero hashes
     with pytest.raises(ValueError, match="one-dimensional"):
         impl.sample_mask(ids.reshape(8, 8), 0, 1)
+
+
+def test_stratified_sample_mask_matches_numpy_reference(impl):
+    # Direct port of the per-category NumPy loop the fused kernel replaced:
+    # hash-threshold per category plus an argpartition floor fill. Distinct ids
+    # can't tie on hashes (SplitMix64 is a bijection), so equality is exact.
+    from fastcharts import lod
+
+    rng = np.random.default_rng(3)
+    n = 50_000
+    ids = rng.permutation(n).astype(np.uint64)
+    groups = rng.choice(4, size=n, p=[0.9, 0.06, 0.039, 0.001]).astype(np.uint32)
+
+    def reference(fraction: float, min_count: int) -> np.ndarray:
+        hashes = lod.hash_row_ids(ids, seed=9)
+        keep = np.zeros(n, dtype=bool)
+        counts = np.bincount(groups, minlength=4)
+        for group, count in enumerate(counts):
+            idx = np.flatnonzero(groups == group)
+            group_fraction = min(1.0, fraction * float(np.sqrt(n / float(count))))
+            group_keep = hashes[idx] <= lod._sample_threshold(group_fraction)
+            floor = min(min_count, len(idx))
+            if floor and int(group_keep.sum()) < floor:
+                winners = np.argpartition(hashes[idx], floor - 1)[:floor]
+                group_keep[winners] = True
+            keep[idx] = group_keep
+        return keep
+
+    for fraction, min_count in [(1 / 4096, 1), (1 / 64, 5), (0.5, 0)]:
+        got = impl.stratified_sample_mask(ids, groups, 4, 9, fraction, min_count)
+        assert got.dtype == np.bool_
+        np.testing.assert_array_equal(got, reference(fraction, min_count))
+
+
+def test_stratified_sample_mask_edges(impl):
+    ids = np.arange(64, dtype=np.uint64)
+    groups = (ids % 4).astype(np.uint32)
+    assert impl.stratified_sample_mask(ids[:0], groups[:0], 4, 0, 0.5, 1).shape == (0,)
+    with pytest.raises(ValueError, match="equal length"):
+        impl.stratified_sample_mask(ids, groups[:10], 4, 0, 0.5, 1)
+    with pytest.raises(ValueError, match="fraction"):
+        impl.stratified_sample_mask(ids, groups, 4, 0, 0.0, 1)
+    with pytest.raises(ValueError, match="min_count"):
+        impl.stratified_sample_mask(ids, groups, 4, 0, 0.5, -1)
+    with pytest.raises(ValueError, match="n_groups"):
+        impl.stratified_sample_mask(ids, groups, 0, 0, 0.5, 1)
+    # Out-of-range group codes are rejected by the native side, not clamped.
+    bad = groups.copy()
+    bad[7] = 9
+    with pytest.raises(ValueError, match="n_groups"):
+        impl.stratified_sample_mask(ids, bad, 4, 0, 0.5, 1)
 
 
 def test_local_log_density_shape_and_range(impl):

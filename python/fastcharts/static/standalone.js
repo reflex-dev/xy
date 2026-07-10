@@ -1353,14 +1353,19 @@ register(view) {
 this.views.add(view);
 },
 unregister(view) {
+view._ctxPendingReservation = false;
 this.views.delete(view);
 },
 reserve(requester) {
 const live = [];
+let pending = 0;
 for (const view of this.views) {
 if (view !== requester && view.gl && !view._glLost && !view._destroyed) live.push(view);
+if (view !== requester && view._ctxPendingReservation && !view._destroyed) pending += 1;
 }
-let over = live.length + 1 - this.budget();
+const needsReservation = !requester._ctxPendingReservation;
+requester._ctxPendingReservation = true;
+let over = live.length + pending + (needsReservation ? 1 : 0) - this.budget();
 if (over <= 0) return;
 const candidates = live
 .filter((view) => !view._ctxVisible)
@@ -1369,6 +1374,12 @@ for (const view of candidates) {
 if (over <= 0) break;
 if (view._releaseContext()) over -= 1;
 }
+},
+acquired(requester) {
+requester._ctxPendingReservation = false;
+},
+cancel(requester) {
+requester._ctxPendingReservation = false;
 },
 };
 function fcInitiallyVisible(el) {
@@ -1430,7 +1441,11 @@ this._ctxRecoveries = 0;
 this._ctxVisible = fcInitiallyVisible(el);
 FC_CONTEXT_GOVERNOR.register(this);
 if (this._ctxVisible) this._ctxSeenSeq = FC_CONTEXT_GOVERNOR.seq++;
+this._contextLossCount = 0;
+this._contextRestoreCount = 0;
+this._contextRecoveryError = null;
 this._initGl(buffer);
+this.root.dataset.fcContextState = "ready";
 this._initContextLossRecovery();
 this._armContextVisibilityWatch();
 this._initInteraction();
@@ -1711,25 +1726,60 @@ this._dprMq = mq;
 _initContextLossRecovery() {
 this._listen(this.canvas, "webglcontextlost", (e) => {
 e.preventDefault();
+if (this._destroyed) return;
+const governedRelease = this.canvas.dataset.fcCtx === "released";
+if (this._glLost && !governedRelease) return;
 this._glLost = true;
-if (this.canvas.dataset.fcCtx !== "released") this.canvas.dataset.fcCtx = "lost";
+if (!governedRelease) this.canvas.dataset.fcCtx = "lost";
+this._contextLossCount += 1;
+this._contextRecoveryError = null;
+this.root.dataset.fcContextState = "lost";
+this.seq += 1;
 if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
+if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
+this._wheelZoomRaf = null;
+this._pendingWheelZoom = null;
+this._cancelViewAnimation();
+clearTimeout(this._viewTimer);
+this._viewTimer = null;
+clearTimeout(this._rebinTimer);
+this._rebinTimer = null;
+this._viewRequestBurstStart = null;
+this._dispatchChartEvent("context_lost", {
+loss_count: this._contextLossCount,
+});
 });
 this._listen(this.canvas, "webglcontextrestored", () => {
-if (this._destroyed) return;
-this._glLost = false;
+if (this._destroyed || this._contextRecoveryError) return;
 this._lutCache.clear();
 this.pickFbo = null;
 this.pickTex = null;
 try {
 this._initGl(this._payload);
 } catch (err) {
+this._glLost = true;
+this._contextRecoveryError = err;
+this.root.dataset.fcContextState = "failed";
+try { this._destroyGlResources(); } catch (_cleanupErr) {}
+this.gl = null;
+this._dispatchChartEvent("context_restore_failed", {
+loss_count: this._contextLossCount,
+message: err instanceof Error ? err.message : String(err),
+});
 this.root.textContent = "fastcharts: WebGL2 context could not be restored.";
-throw err;
+return;
 }
+this._glLost = false;
+this._contextRestoreCount += 1;
+this._contextRecoveryError = null;
+this.root.dataset.fcContextState = "ready";
 this._scheduleViewRequest(this.view, { delay: 0 });
 this.draw();
+this._dispatchChartEvent("context_restored", {
+loss_count: this._contextLossCount,
+restore_count: this._contextRestoreCount,
+});
 });
 }
 _releaseContext() {
@@ -1752,9 +1802,11 @@ if (this._ctxReleasedExt) {
 const ext = this._ctxReleasedExt;
 this._ctxReleasedExt = null;
 try {
+FC_CONTEXT_GOVERNOR.reserve(this);
 ext.restoreContext(); 
 return;
 } catch (_err) {
+FC_CONTEXT_GOVERNOR.cancel(this);
 }
 }
 this._rebuildEvictedContext();
@@ -1992,10 +2044,12 @@ const gl = this.canvas.getContext("webgl2", {
 antialias: false, premultipliedAlpha: true, alpha: true,
 });
 if (!gl) {
+FC_CONTEXT_GOVERNOR.cancel(this);
 this.root.textContent = "fastcharts: WebGL2 unavailable in this browser.";
 throw new Error("webgl2 unavailable");
 }
 this.gl = gl;
+FC_CONTEXT_GOVERNOR.acquired(this);
 this.canvas.dataset.fcCtx = "live";
 gl.enable(gl.BLEND);
 gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -2556,7 +2610,7 @@ gl.uniform2f(u(`${prefix}meta`), meta && Number.isFinite(meta.offset) ? meta.off
 gl.uniform1i(u(`${prefix}mode`), this._axisMode(axisId));
 }
 draw() {
-if (this._destroyed) return;
+if (this._destroyed || this._glLost || !this.gl) return;
 if (this._raf) return;
 this._raf = requestAnimationFrame(() => {
 this._raf = null;
@@ -4521,7 +4575,7 @@ return svg("");
 });
 Object.assign(ChartView.prototype, {
 _scheduleViewRequest(viewOverride = this.view, opts = {}) {
-if (this._destroyed) return;
+if (this._destroyed || this._glLost) return;
 if (!this.comm) {
 this._scheduleSampleRebin(viewOverride, opts);
 return;
@@ -4584,7 +4638,7 @@ this._viewTimer = setTimeout(send, delay);
 return seq;
 },
 _scheduleSampleRebin(viewOverride = this.view, opts = {}) {
-if (this._destroyed || this._sampleRebinDisabled) return;
+if (this._destroyed || this._glLost || this._sampleRebinDisabled) return;
 const targets = (this.gpuTraces || []).filter(
 (g) => g.tier === "density" && g.sampleOverlay && g.sampleOverlay._cpu
 );
@@ -4649,7 +4703,7 @@ h: Math.max(16, Math.min(2048, Math.round(this.plot.h))),
 });
 },
 _onRebinResult(msg) {
-if (this._destroyed || !msg || msg.type !== "grid" || msg.seq !== this.seq) return;
+if (this._destroyed || this._glLost || !msg || msg.type !== "grid" || msg.seq !== this.seq) return;
 const g = this.gpuTraces.find((t) => t.trace.id === msg.trace && t.tier === "density");
 if (!g) return;
 const grid = new Float32Array(msg.grid);
@@ -4687,14 +4741,6 @@ const pinnedRight = !atHome && Math.abs(this.view.x1 - this.view0.x1) <= ex;
 this.spec = spec;
 this.axes = this._normalizeAxes(spec);
 this._payload = blob;
-const texSeen = new Set();
-for (const id of msg.affected || []) {
-const i = this.gpuTraces.findIndex((g) => g.trace.id === id);
-const ts = spec.traces.find((t) => t.id === id);
-if (i < 0 || !ts) continue;
-this._destroyTraceResources(this.gpuTraces[i], texSeen);
-this.gpuTraces[i] = this._buildTrace(blob, ts);
-}
 this.view0 = {
 x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
 y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
@@ -4705,6 +4751,15 @@ this.view = { ...this.view0 };
 const w = this.view.x1 - this.view.x0;
 this.view = { ...this.view, x1: this.view0.x1, x0: this.view0.x1 - w };
 }
+if (this._glLost || !this.gl) return;
+const texSeen = new Set();
+for (const id of msg.affected || []) {
+const i = this.gpuTraces.findIndex((g) => g.trace.id === id);
+const ts = spec.traces.find((t) => t.id === id);
+if (i < 0 || !ts) continue;
+this._destroyTraceResources(this.gpuTraces[i], texSeen);
+this.gpuTraces[i] = this._buildTrace(blob, ts);
+}
 this._pickable = this.gpuTraces.some(
 (g) => markOf(g.trace.kind).pointPick && (g.tier !== "density" || g.drill));
 if (this._pickable && !this.pickFbo) this._initPickTarget();
@@ -4714,6 +4769,7 @@ this.draw();
 _onKernelMsg(msg, buffers) {
 if (this._destroyed) return;
 if (!msg) return;
+if (this._glLost && msg.type !== "append" && msg.type !== "pick_result") return;
 if (msg.type === "tier_update") {
 if (msg.seq !== this.seq) return;
 for (const upd of msg.traces) {

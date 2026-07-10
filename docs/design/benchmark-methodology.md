@@ -122,6 +122,8 @@ reported).
    prep, navigation readiness, JS heap, redraw-submission p95, per-chart context
    loss/restoration events, and the stable loss-free chart-count ceiling. Partial
    dashboards remain successful measurement rows rather than losing their metrics.
+   CI hard-gates the 10-chart row as loss-free/nonblank and applies deliberately
+   loose catastrophic budgets to its render, scroll, and redraw timings.
 8. `install_import`: lower-bound distribution size plus opt-in fresh-venv total
    site-packages, transitive distribution count, install time, and cold import.
 9. `public_workflows`: `benchmarks/bench_workflows.py` tracks ingestion shapes,
@@ -138,3 +140,8 @@ reported).
    `dashboard_20` scenario.
 4. Reference-hardware runbook (`benchmarks/README`): exact pins + one-command
    repro; publish both tiers on the next README refresh.
+
+Timing regression policy is two-level: movement beyond 2x is advisory on shared
+runners, while movement beyond 4x is a hard failure. Interaction and visual
+budgets are capped in the report verifier so a benchmark change cannot silently
+make its own gate easier.

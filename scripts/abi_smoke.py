@@ -111,6 +111,17 @@ def load() -> ctypes.CDLL:
         ctypes.c_uint64,
         ctypes.POINTER(ctypes.c_uint8),
     ]
+    lib.fc_stratified_sample_mask.restype = ctypes.c_int32
+    lib.fc_stratified_sample_mask.argtypes = [
+        U64P,
+        U32P,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+        ctypes.c_double,
+        ctypes.c_uint64,
+        ctypes.POINTER(ctypes.c_uint8),
+    ]
     lib.fc_rasterize.restype = ctypes.c_int32
     lib.fc_rasterize.argtypes = [U8P, ctypes.c_size_t, U8P, ctypes.c_size_t, ctypes.c_size_t]
     lib.fc_local_log_density.restype = ctypes.c_int32
@@ -335,6 +346,81 @@ def main() -> None:
         )
         == 1,
         "sample_mask empty/null ok status",
+    )
+    # stratified_sample_mask: per-category thresholds + lowest-hash floor.
+    sgroups = array("I", [0, 0, 0, 1])
+    smask = array("B", [9, 9, 9, 9])
+    status = lib.fc_stratified_sample_mask(
+        _ptr(ids, ctypes.c_uint64),
+        _ptr(sgroups, ctypes.c_uint32),
+        4,
+        2,
+        ctypes.c_uint64(0),
+        ctypes.c_double(1.0),
+        ctypes.c_uint64(1),
+        _ptr(smask, ctypes.c_uint8),
+    )
+    ok(
+        status == 1 and list(smask) == [1, 1, 1, 1],
+        "stratified_sample_mask fraction=1 keeps all",
+    )
+    status = lib.fc_stratified_sample_mask(
+        _ptr(ids, ctypes.c_uint64),
+        _ptr(sgroups, ctypes.c_uint32),
+        4,
+        2,
+        ctypes.c_uint64(0),
+        ctypes.c_double(1e-18),
+        ctypes.c_uint64(1),
+        _ptr(smask, ctypes.c_uint8),
+    )
+    ok(
+        status == 1 and sum(smask) == 2 and smask[3] == 1,
+        "stratified_sample_mask floor pins one row per category",
+    )
+    smask_bad = array("B", [7, 7, 7, 7])
+    bad_groups = array("I", [0, 0, 0, 5])  # 5 >= n_groups
+    ok(
+        lib.fc_stratified_sample_mask(
+            _ptr(ids, ctypes.c_uint64),
+            _ptr(bad_groups, ctypes.c_uint32),
+            4,
+            2,
+            ctypes.c_uint64(0),
+            ctypes.c_double(0.5),
+            ctypes.c_uint64(1),
+            _ptr(smask_bad, ctypes.c_uint8),
+        )
+        == 0,
+        "stratified_sample_mask rejects out-of-range group codes",
+    )
+    ok(
+        lib.fc_stratified_sample_mask(
+            null_u64,
+            _ptr(sgroups, ctypes.c_uint32),
+            4,
+            2,
+            ctypes.c_uint64(0),
+            ctypes.c_double(0.5),
+            ctypes.c_uint64(1),
+            _ptr(smask_bad, ctypes.c_uint8),
+        )
+        == 0,
+        "stratified_sample_mask rejects null ids with 0 status",
+    )
+    ok(
+        lib.fc_stratified_sample_mask(
+            null_u64,
+            null_u32,
+            0,
+            1,
+            ctypes.c_uint64(0),
+            ctypes.c_double(0.5),
+            ctypes.c_uint64(1),
+            ctypes.POINTER(ctypes.c_uint8)(),
+        )
+        == 1,
+        "stratified_sample_mask empty/null ok status",
     )
     ok(
         lib.fc_local_log_density(null_f64, null_f64, 0, 0.0, 1.0, 0.0, 1.0, 2, 2, null_f32) == 1,

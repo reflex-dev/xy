@@ -188,6 +188,18 @@ def test_dashboard_benchmark_reports_eviction_and_scroll_telemetry() -> None:
     assert first_yield < phase_initial
 
 
+def test_context_governor_reserves_pending_restores() -> None:
+    """Concurrent visibility callbacks must count restores before their
+    asynchronous ``webglcontextrestored`` events acquire the contexts."""
+    client = (ROOT / "js" / "src" / "50_chartview.js").read_text(encoding="utf-8")
+
+    assert "view._ctxPendingReservation" in client
+    recover = client.index("_recoverContext()")
+    reserve = client.index("FC_CONTEXT_GOVERNOR.reserve(this);", recover)
+    restore = client.index("ext.restoreContext();", recover)
+    assert reserve < restore
+
+
 def test_benchmark_categories_track_core_hardening_metrics() -> None:
     medium_scatter_metrics = CATEGORY_BY_ID["medium_direct_scatter"]["metrics"]
     interaction_metrics = CATEGORY_BY_ID["interaction_smoothness"]["metrics"]

@@ -26,6 +26,27 @@ in the README).
   10/20/50 sweep goes from 16-of-50 permanently blank to 50-of-50 nonblank
   when visited, recovery p95 ~8 ms, with 10-chart dashboards byte-identical
   in behavior and heap/render times unchanged.
+- **Stratified sampling in the native core** (ABI v10,
+  `fc_stratified_sample_mask` / `kernels.stratified_sample_mask`).
+  `lod.stratified_sample_keep_mask` — the category-aware mask behind
+  categorical density overlays — now runs as one fused native pass
+  (per-category `sqrt`-scaled hash thresholds plus the lowest-hash
+  `min_per_category` floor) instead of a per-category NumPy loop whose
+  `inverse == group` rescans were O(n · categories). Small non-negative
+  integer categories (the channel-codes hot path) skip `np.unique` entirely
+  and serve directly as group codes. Bit-identical masks (parity-tested
+  against the NumPy reference on both sides of the ABI); ~20× faster on a
+  5M-row / 12-category mask (168 ms → 8.5 ms, Apple Silicon dev box).
+- **Batched scatter marks in the PNG display list** (`OP_POINTS`,
+  `src/raster.rs` / `_raster.py`). Native PNG export now ships scatter marks
+  as one struct-of-arrays command — NumPy-packed coordinate/radius/fill
+  columns plus a shared symbol/stroke header — replacing the per-point
+  `struct.pack` loop and the per-point CSS color re-parse for categorical
+  palettes (each palette entry now resolves once). Pixel-identical to the
+  per-mark opcode (parity-tested in Rust); display-list build for a
+  100k-point categorical scatter drops ~186 ms → ~1 ms, and the command
+  buffer shrinks ~40%. The batch skips non-finite marks defensively and
+  truncated buffers are rejected like every other opcode.
 - **CSS value validation in the native core** (ABI v9, `fc_css_check` /
   `kernels.css_check`). One grammar (`src/css.rs`) now gates every styling
   surface at build time: trace/annotation/series colors, gradient stops,
@@ -89,6 +110,13 @@ in the README).
 - `LICENSE` (Apache-2.0), `CHANGELOG.md`, `SECURITY.md`, root `CONTRIBUTING.md`.
 
 ### Changed
+- **Rendering hardening:** context loss now quiesces draw/animation/re-bin work,
+  invalidates pre-loss replies, retains streamed canonical payloads, reports
+  recovery state, and rebuilds without throwing an unhandled event error. The
+  dependency-free browser smoke forces three pixel-identical recovery cycles
+  and verifies interaction afterward. CI now hard-gates a loss-free 10-chart
+  dashboard, pins interaction/visual budget ceilings in the verifier, and
+  fails timing regressions beyond 4x while retaining the 2x advisory band.
 - **Native PNG export compression** dropped from zlib level 9 to level 6: a
   1M-point line export goes from ~298 ms to ~64 ms (reference hardware) for
   ~2.65% larger output. Regression tests pin the level for both truecolor

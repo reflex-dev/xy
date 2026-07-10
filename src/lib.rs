@@ -50,7 +50,7 @@ fn ffi_guard<R>(sentinel: R, body: impl FnOnce() -> R) -> R {
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 9;
+pub const ABI_VERSION: u32 = 10;
 
 #[no_mangle]
 pub extern "C" fn fc_abi_version() -> u32 {
@@ -237,8 +237,8 @@ pub unsafe extern "C" fn fc_encode_f32(
 /// bucket over the visible window `[x0, x1)`. `x` must be ascending.
 ///
 /// `out` must hold `4 * n_buckets` u32s. Returns the count written, or
-/// `usize::MAX` on invalid arguments (non-finite bounds, x1 <= x0, or
-/// n_buckets == 0).
+/// `usize::MAX` on invalid arguments (non-finite bounds, x1 <= x0,
+/// n_buckets == 0, `len > u32::MAX`, or a `4 * n_buckets` that overflows).
 ///
 /// # Safety
 /// `x`/`y` must point to `len` readable f64s; `out` to `4 * n_buckets`
@@ -256,6 +256,18 @@ pub unsafe extern "C" fn fc_m4_indices(
     if n_buckets == 0 || !finite_gt(x0, x1) {
         return usize::MAX;
     }
+    // Emitted indices are u32 row ids: a longer column would wrap them into
+    // valid-looking wrong rows. The in-tree caller never ships one, but the
+    // ABI must not depend on that.
+    if len > u32::MAX as usize {
+        return usize::MAX;
+    }
+    // Same defensive posture as fc_rasterize: a caller-supplied size product
+    // must not wrap in release builds into a too-short slice.
+    let out_len = match n_buckets.checked_mul(4) {
+        Some(n) => n,
+        None => return usize::MAX,
+    };
     if len == 0 {
         return 0;
     }
@@ -274,7 +286,7 @@ pub unsafe extern "C" fn fc_m4_indices(
     if out.is_null() {
         return usize::MAX;
     }
-    let out = std::slice::from_raw_parts_mut(out, n_buckets * 4);
+    let out = std::slice::from_raw_parts_mut(out, out_len);
     out[..idx.len()].copy_from_slice(&idx);
     idx.len()
 }
@@ -306,6 +318,10 @@ pub unsafe extern "C" fn fc_bin_2d(
     if out.is_null() {
         return 0;
     }
+    let grid_len = match w.checked_mul(h) {
+        Some(n) => n,
+        None => return 0,
+    };
     let (x, y) = if len == 0 {
         (&[][..], &[][..])
     } else {
@@ -317,7 +333,7 @@ pub unsafe extern "C" fn fc_bin_2d(
             std::slice::from_raw_parts(y, len),
         )
     };
-    let out = std::slice::from_raw_parts_mut(out, w * h);
+    let out = std::slice::from_raw_parts_mut(out, grid_len);
     ffi_guard(0, || {
         kernels::bin_2d(x, y, x0, x1, y0, y1, w, h, out);
         1
@@ -385,6 +401,14 @@ pub unsafe extern "C" fn fc_bin_2d_indices(
     if bad || grid.is_null() {
         return usize::MAX;
     }
+    // u32 index ceiling + unwrappable grid size — see fc_m4_indices.
+    if len > u32::MAX as usize {
+        return usize::MAX;
+    }
+    let grid_len = match w.checked_mul(h) {
+        Some(n) => n,
+        None => return usize::MAX,
+    };
     let (x, y, idx) = if len == 0 {
         (&[][..], &[][..], &mut [][..])
     } else {
@@ -397,7 +421,7 @@ pub unsafe extern "C" fn fc_bin_2d_indices(
             std::slice::from_raw_parts_mut(idx, len),
         )
     };
-    let grid = std::slice::from_raw_parts_mut(grid, w * h);
+    let grid = std::slice::from_raw_parts_mut(grid, grid_len);
     if len == 0 {
         grid.fill(0.0);
         return 0;
@@ -541,6 +565,52 @@ pub unsafe extern "C" fn fc_sample_mask(
     })
 }
 
+/// Category-stratified sampling mask (§5/§17): per-category keep fractions
+/// scale as `min(1, fraction * sqrt(len / count))` and every category keeps at
+/// least `min(min_count, count)` of its lowest-hash rows. Bit-identical to the
+/// per-category NumPy reference in `fastcharts.lod` (parity-tested), fused
+/// into one pass instead of O(len · n_groups) rescans.
+///
+/// Returns 1 on success (including the empty no-op), 0 on null arguments, a
+/// non-finite or non-positive `fraction`, or a group code `>= n_groups`
+/// (output undefined).
+///
+/// # Safety
+/// `ids` must point to `len` readable u64s, `groups` to `len` readable u32s,
+/// `out` to `len` writable u8s.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fc_stratified_sample_mask(
+    ids: *const u64,
+    groups: *const u32,
+    len: usize,
+    n_groups: usize,
+    seed: u64,
+    fraction: f64,
+    min_count: u64,
+    out: *mut u8,
+) -> i32 {
+    if len == 0 {
+        return 1;
+    }
+    if ids.is_null()
+        || groups.is_null()
+        || out.is_null()
+        || n_groups == 0
+        || !fraction.is_finite()
+        || fraction <= 0.0
+    {
+        return 0;
+    }
+    let ids = std::slice::from_raw_parts(ids, len);
+    let groups = std::slice::from_raw_parts(groups, len);
+    let out = std::slice::from_raw_parts_mut(out, len);
+    ffi_guard(0, || {
+        kernels::stratified_sample_mask(ids, groups, n_groups, seed, fraction, min_count, out)
+            as i32
+    })
+}
+
 /// Canonical row indices inside an inclusive rectangular window. Returns the
 /// count written. `out` must hold `len` u32s.
 ///
@@ -558,6 +628,10 @@ pub unsafe extern "C" fn fc_range_indices(
     out: *mut u32,
 ) -> usize {
     if !finite_ordered(lo_x, hi_x) || !finite_ordered(lo_y, hi_y) {
+        return usize::MAX;
+    }
+    // u32 index ceiling — see fc_m4_indices.
+    if len > u32::MAX as usize {
         return usize::MAX;
     }
     if len == 0 {
@@ -684,7 +758,11 @@ pub unsafe extern "C" fn fc_pyramid_compose(
     if out.is_null() || w == 0 || h == 0 || !finite_gt(lo_x, hi_x) || !finite_gt(lo_y, hi_y) {
         return -1;
     }
-    let out = std::slice::from_raw_parts_mut(out, w * h);
+    let out_len = match w.checked_mul(h) {
+        Some(n) => n,
+        None => return -1,
+    };
+    let out = std::slice::from_raw_parts_mut(out, out_len);
     ffi_guard(-1, || {
         match tiles::reg_with(handle, |p| tiles::compose(p, lo_x, hi_x, lo_y, hi_y, w, h, out)) {
             Some(Some(level)) => level as i32,
@@ -717,5 +795,105 @@ mod tests {
         std::panic::set_hook(hook);
         assert_eq!(got, usize::MAX);
         assert_eq!(ffi_guard(0i32, || 1i32), 1);
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn index_emitting_entry_points_reject_u32_overflowing_len() {
+        // Emitted row indices are u32: a column longer than u32::MAX would
+        // wrap into valid-looking wrong rows. The guards fire before any
+        // pointer is dereferenced, so tiny arrays with an absurd `len` are
+        // safe to pass here.
+        let x = [0.0f64, 1.0];
+        let y = [0.0f64, 1.0];
+        let too_long = u32::MAX as usize + 1;
+        let mut idx = [0u32; 8];
+        let mut grid = [0f32; 4];
+        unsafe {
+            assert_eq!(
+                fc_m4_indices(x.as_ptr(), y.as_ptr(), too_long, 0.0, 1.0, 2, idx.as_mut_ptr()),
+                usize::MAX
+            );
+            assert_eq!(
+                fc_range_indices(
+                    x.as_ptr(),
+                    y.as_ptr(),
+                    too_long,
+                    0.0,
+                    1.0,
+                    0.0,
+                    1.0,
+                    idx.as_mut_ptr()
+                ),
+                usize::MAX
+            );
+            assert_eq!(
+                fc_bin_2d_indices(
+                    x.as_ptr(),
+                    y.as_ptr(),
+                    too_long,
+                    0.0,
+                    1.0,
+                    0.0,
+                    1.0,
+                    2,
+                    2,
+                    grid.as_mut_ptr(),
+                    idx.as_mut_ptr()
+                ),
+                usize::MAX
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn grid_size_products_that_overflow_are_rejected() {
+        // In release builds an unchecked `w * h` wraps silently and the slice
+        // built from it is shorter than the kernel-side expectation; every
+        // grid entry point must refuse instead (fc_rasterize already did).
+        let x = [0.5f64];
+        let y = [0.5f64];
+        let huge = usize::MAX / 2 + 1; // huge * 2 wraps to 0
+        let mut grid = [0f32; 4];
+        let mut idx = [0u32; 4];
+        unsafe {
+            assert_eq!(
+                fc_bin_2d(x.as_ptr(), y.as_ptr(), 1, 0.0, 1.0, 0.0, 1.0, huge, 2, grid.as_mut_ptr()),
+                0
+            );
+            assert_eq!(
+                fc_bin_2d_indices(
+                    x.as_ptr(),
+                    y.as_ptr(),
+                    1,
+                    0.0,
+                    1.0,
+                    0.0,
+                    1.0,
+                    huge,
+                    2,
+                    grid.as_mut_ptr(),
+                    idx.as_mut_ptr()
+                ),
+                usize::MAX
+            );
+            assert_eq!(
+                fc_m4_indices(
+                    x.as_ptr(),
+                    y.as_ptr(),
+                    1,
+                    0.0,
+                    1.0,
+                    usize::MAX / 4 + 1, // n_buckets * 4 wraps
+                    idx.as_mut_ptr()
+                ),
+                usize::MAX
+            );
+            assert_eq!(
+                fc_pyramid_compose(0, 0.0, 1.0, 0.0, 1.0, huge, 2, grid.as_mut_ptr()),
+                -1
+            );
+        }
     }
 }

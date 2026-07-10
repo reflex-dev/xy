@@ -33,6 +33,9 @@ _SPLITMIX_MUL_1 = np.uint64(0xBF58476D1CE4E5B9)
 _SPLITMIX_MUL_2 = np.uint64(0x94D049BB133111EB)
 _UINT64_MAX_INT = (1 << 64) - 1
 _DEFAULT_SAMPLE_BASE_FRACTION = 1.0 / 1024.0
+# Integer categories at or above this go through np.unique instead of serving
+# directly as group codes, bounding the native kernel's per-group state.
+_MAX_DIRECT_CATEGORY_CODE = 1 << 20
 
 
 @dataclass(frozen=True)
@@ -389,20 +392,24 @@ def stratified_sample_keep_mask(
     if fraction >= 1.0:
         return np.ones(len(ids), dtype=bool)
 
-    hashes = hash_row_ids(ids, seed=seed)
-    keep = np.zeros(len(ids), dtype=bool)
+    seed_i = _integer_param(seed, "sample seed", max_value=_UINT64_MAX_INT)
+    # Fused native pass — bit-identical to the per-category NumPy loop this
+    # replaced (hash-threshold per category plus an argpartition floor fill;
+    # parity-tested), but without the O(n · n_categories) `inverse == group`
+    # rescans that dominated categorical density builds. Small non-negative
+    # integer categories (the channel-codes hot path) go straight in as group
+    # codes: empty codes form zero-count groups no row maps to, so the mask is
+    # identical to the dense `np.unique` ranking without its O(n log n) sort.
+    if np.issubdtype(cats.dtype, np.integer):
+        lo, hi = int(cats.min()), int(cats.max())
+        if lo >= 0 and hi < _MAX_DIRECT_CATEGORY_CODE:
+            return kernels.stratified_sample_mask(
+                ids, cats.astype(np.uint32, copy=False), hi + 1, seed_i, fraction, min_count
+            )
     _, inverse, counts = np.unique(cats, return_inverse=True, return_counts=True)
-    n = float(len(ids))
-    for group, count in enumerate(counts):
-        idx = np.flatnonzero(inverse == group)
-        group_fraction = min(1.0, fraction * float(np.sqrt(n / float(count))))
-        group_keep = hashes[idx] <= _sample_threshold(group_fraction)
-        floor = min(min_count, len(idx))
-        if floor and int(group_keep.sum()) < floor:
-            winners = np.argpartition(hashes[idx], floor - 1)[:floor]
-            group_keep[winners] = True
-        keep[idx] = group_keep
-    return keep
+    return kernels.stratified_sample_mask(
+        ids, inverse.astype(np.uint32, copy=False), len(counts), seed_i, fraction, min_count
+    )
 
 
 def sample_rows_for_target(

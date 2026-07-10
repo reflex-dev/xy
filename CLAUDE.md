@@ -1,4 +1,4 @@
-# charts-exp / fastcharts
+# reviz / fastcharts
 
 A high-performance charting engine. The authoritative design is
 `docs/design-dossier.md` — **read the relevant § before changing behavior**;

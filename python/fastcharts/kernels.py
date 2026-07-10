@@ -48,6 +48,7 @@ pyramid_count = _impl.pyramid_count
 pyramid_compose = _impl.pyramid_compose
 pyramid_free = _impl.pyramid_free
 rasterize = _impl.rasterize
+stratified_sample_mask = _impl.stratified_sample_mask
 
 __all__ = [
     "BACKEND",
@@ -71,5 +72,6 @@ __all__ = [
     "range_indices",
     "rasterize",
     "sample_mask",
+    "stratified_sample_mask",
     "zone_maps",
 ]

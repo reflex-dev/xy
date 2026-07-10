@@ -53,6 +53,7 @@ const FC_CONTEXT_GOVERNOR = {
     this.views.add(view);
   },
   unregister(view) {
+    view._ctxPendingReservation = false;
     this.views.delete(view);
   },
   // Called before a view acquires (or re-acquires) a GL context. Releases
@@ -61,10 +62,14 @@ const FC_CONTEXT_GOVERNOR = {
   // may LRU-evict, and eviction recovery rebuilds on re-entry.
   reserve(requester) {
     const live = [];
+    let pending = 0;
     for (const view of this.views) {
       if (view !== requester && view.gl && !view._glLost && !view._destroyed) live.push(view);
+      if (view !== requester && view._ctxPendingReservation && !view._destroyed) pending += 1;
     }
-    let over = live.length + 1 - this.budget();
+    const needsReservation = !requester._ctxPendingReservation;
+    requester._ctxPendingReservation = true;
+    let over = live.length + pending + (needsReservation ? 1 : 0) - this.budget();
     if (over <= 0) return;
     const candidates = live
       .filter((view) => !view._ctxVisible)
@@ -73,6 +78,12 @@ const FC_CONTEXT_GOVERNOR = {
       if (over <= 0) break;
       if (view._releaseContext()) over -= 1;
     }
+  },
+  acquired(requester) {
+    requester._ctxPendingReservation = false;
+  },
+  cancel(requester) {
+    requester._ctxPendingReservation = false;
   },
 };
 
@@ -148,7 +159,11 @@ class ChartView {
     this._ctxVisible = fcInitiallyVisible(el);
     FC_CONTEXT_GOVERNOR.register(this);
     if (this._ctxVisible) this._ctxSeenSeq = FC_CONTEXT_GOVERNOR.seq++;
+    this._contextLossCount = 0;
+    this._contextRestoreCount = 0;
+    this._contextRecoveryError = null;
     this._initGl(buffer);
+    this.root.dataset.fcContextState = "ready";
     this._initContextLossRecovery();
     this._armContextVisibilityWatch();
     this._initInteraction();
@@ -476,16 +491,43 @@ class ChartView {
   _initContextLossRecovery() {
     this._listen(this.canvas, "webglcontextlost", (e) => {
       e.preventDefault();
+      if (this._destroyed) return;
+      const governedRelease = this.canvas.dataset.fcCtx === "released";
+      // _releaseContext marks the view lost synchronously before the browser
+      // dispatches this event. Still run the full quiesce/telemetry path for
+      // that first governed event; only ignore duplicate ungoverned losses.
+      if (this._glLost && !governedRelease) return;
       this._glLost = true;
       // Governed releases already stamped "released"; anything else is a
       // browser-side eviction/driver reset (§28: the difference stays legible).
-      if (this.canvas.dataset.fcCtx !== "released") this.canvas.dataset.fcCtx = "lost";
+      if (!governedRelease) this.canvas.dataset.fcCtx = "lost";
+      this._contextLossCount += 1;
+      this._contextRecoveryError = null;
+      this.root.dataset.fcContextState = "lost";
+      // Quiesce every source of deferred GPU work, not only the draw RAF.
+      // Incrementing seq makes pre-loss kernel/worker replies stale, so they
+      // cannot populate the newly restored context with an old view.
+      this.seq += 1;
       if (this._raf) cancelAnimationFrame(this._raf);
       this._raf = null;
+      if (this._wheelZoomRaf) cancelAnimationFrame(this._wheelZoomRaf);
+      this._wheelZoomRaf = null;
+      this._pendingWheelZoom = null;
+      this._cancelViewAnimation();
+      clearTimeout(this._viewTimer);
+      this._viewTimer = null;
+      clearTimeout(this._rebinTimer);
+      this._rebinTimer = null;
+      this._viewRequestBurstStart = null;
+      this._dispatchChartEvent("context_lost", {
+        loss_count: this._contextLossCount,
+      });
     });
     this._listen(this.canvas, "webglcontextrestored", () => {
-      if (this._destroyed) return;
-      this._glLost = false;
+      // A failed recovery replaced the canvas with the error message; a later
+      // restore firing on the detached canvas must not resurrect GL state the
+      // user can no longer see.
+      if (this._destroyed || this._contextRecoveryError) return;
       // Old handles died with the context — drop them without delete calls.
       this._lutCache.clear();
       this.pickFbo = null;
@@ -493,11 +535,28 @@ class ChartView {
       try {
         this._initGl(this._payload);
       } catch (err) {
+        this._glLost = true;
+        this._contextRecoveryError = err;
+        this.root.dataset.fcContextState = "failed";
+        try { this._destroyGlResources(); } catch (_cleanupErr) {}
+        this.gl = null;
+        this._dispatchChartEvent("context_restore_failed", {
+          loss_count: this._contextLossCount,
+          message: err instanceof Error ? err.message : String(err),
+        });
         this.root.textContent = "fastcharts: WebGL2 context could not be restored.";
-        throw err;
+        return;
       }
+      this._glLost = false;
+      this._contextRestoreCount += 1;
+      this._contextRecoveryError = null;
+      this.root.dataset.fcContextState = "ready";
       this._scheduleViewRequest(this.view, { delay: 0 });
       this.draw();
+      this._dispatchChartEvent("context_restored", {
+        loss_count: this._contextLossCount,
+        restore_count: this._contextRestoreCount,
+      });
     });
   }
 
@@ -531,9 +590,14 @@ class ChartView {
       const ext = this._ctxReleasedExt;
       this._ctxReleasedExt = null;
       try {
+        // Reserve before asking the browser to restore. The restored event is
+        // asynchronous, so the pending reservation must count against later
+        // recoveries in the same IntersectionObserver delivery.
+        FC_CONTEXT_GOVERNOR.reserve(this);
         ext.restoreContext(); // restored event -> full rebuild
         return;
       } catch (_err) {
+        FC_CONTEXT_GOVERNOR.cancel(this);
         // Extension refused (context was also evicted for real): fall through.
       }
     }
@@ -817,10 +881,12 @@ class ChartView {
       antialias: false, premultipliedAlpha: true, alpha: true,
     });
     if (!gl) {
+      FC_CONTEXT_GOVERNOR.cancel(this);
       this.root.textContent = "fastcharts: WebGL2 unavailable in this browser.";
       throw new Error("webgl2 unavailable");
     }
     this.gl = gl;
+    FC_CONTEXT_GOVERNOR.acquired(this);
     this.canvas.dataset.fcCtx = "live";
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -1476,7 +1542,7 @@ class ChartView {
   }
 
   draw() {
-    if (this._destroyed) return;
+    if (this._destroyed || this._glLost || !this.gl) return;
     if (this._raf) return;
     this._raf = requestAnimationFrame(() => {
       this._raf = null;

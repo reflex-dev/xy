@@ -34,7 +34,7 @@ from ._svg import (
 )
 
 # Opcodes — must match src/raster.rs.
-_CLIP, _FILL, _GRAD, _STROKE, _POINT, _IMAGE, _TEXT_OP = 0, 1, 2, 3, 4, 5, 6
+_CLIP, _FILL, _GRAD, _STROKE, _POINT, _IMAGE, _TEXT_OP, _POINTS = 0, 1, 2, 3, 4, 5, 6, 7
 _SYMBOLS = {"circle": 0, "square": 1, "diamond": 2, "triangle": 3, "cross": 4}
 
 
@@ -146,6 +146,24 @@ class _Cmd:
         self._rgba(fill)
         self._f(sw)
         self._rgba(stroke)
+
+    def points(self, cx, cy, r, fills, symbol, sw, stroke) -> None:
+        """Batched marks, struct-of-arrays: whole NumPy columns are packed in
+        one shot (`cx`/`cy`/`r` arrays, `fills` as `(n, 4)` RGBA8) and the
+        native side loops — pixel-identical to per-mark `point()` calls,
+        without the per-point Python byte-packing that dominated PNG export."""
+        n = len(cx)
+        if n == 0:
+            return
+        self.buf.append(_POINTS)
+        self._u32(n)
+        self.buf.append(symbol)
+        self._f(sw)
+        self._rgba(stroke)
+        for arr in (cx, cy, r):
+            scaled = np.asarray(arr, dtype=np.float64) * self.s
+            self.buf += scaled.astype("<f4").tobytes()
+        self.buf += np.ascontiguousarray(fills, dtype=np.uint8).tobytes()
 
     def image(self, dx, dy, dw, dh, iw, ih, rgba_bytes) -> None:
         self.buf.append(_IMAGE)
@@ -307,15 +325,19 @@ def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
     px, py = sx(xv), sy(yv)
     n = len(xv)
     ch = t.get("color") or {}
+    op = float(style.get("opacity", 0.8))
+    fills = np.empty((n, 4), dtype=np.uint8)
+    fills[:, 3] = max(0, min(255, int(round(op * 255))))
     if ch.get("mode") == "continuous":
-        rgb = _lut(ch.get("colormap", "viridis"), _column(blob, cols[ch["buf"]]))
-        fills = [(int(r), int(g), int(b)) for r, g, b in rgb]
+        fills[:, :3] = _lut(ch.get("colormap", "viridis"), _column(blob, cols[ch["buf"]]))
     elif ch.get("mode") == "categorical":
-        codes = _column(blob, cols[ch["buf"]]).astype(int)
+        codes = _column(blob, cols[ch["buf"]]).astype(np.int64)
         pal = ch.get("palette") or DEFAULT_PALETTE
-        fills = [_parse_color(pal[c % len(pal)])[:3] for c in codes]
+        # Resolve each palette entry once; per-point colors are a table gather.
+        pal_rgb = np.array([_parse_color(c)[:3] for c in pal], dtype=np.uint8)
+        fills[:, :3] = pal_rgb[codes % len(pal)]
     else:
-        fills = [_parse_color(_css(ch.get("color"), color))[:3]] * n
+        fills[:, :3] = _parse_color(_css(ch.get("color"), color))[:3]
 
     size_ch = t.get("size") or {}
     if size_ch.get("mode") == "continuous":
@@ -325,14 +347,10 @@ def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
     else:
         radii = np.full(n, float(size_ch.get("size", 4.0)) / 2)
 
-    op = float(style.get("opacity", 0.8))
-    alpha = int(round(op * 255))
     sw = float(style.get("stroke_width", 0.0))
     sym = _SYMBOLS.get(style.get("symbol", "circle"), 0)
     stroke = _rgba(style.get("stroke"), color) if sw > 0 else (0, 0, 0, 0)
-    for i in range(n):
-        fill = (fills[i][0], fills[i][1], fills[i][2], alpha)
-        cmd.point(float(px[i]), float(py[i]), float(radii[i]), sym, fill, sw, stroke)
+    cmd.points(px, py, radii, fills, sym, sw, stroke)
 
 
 def _bar_geom(cmd, x, y, w, h, style, fill_cmd, stroke_c, sw, tip_top):
