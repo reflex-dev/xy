@@ -577,9 +577,7 @@ def _validate_line_decimation_row(row: Any, path: str, errors: list[str]) -> Non
             _require_optional_nonnegative_number(row, key, path, errors)
         if row.get("library") == "xy" and oracle != "pass":
             errors.append(f"{path}.extrema_oracle must pass for xy")
-        if row.get("library") == "xy" and row.get("oracle_kind") != (
-            "per-pixel-column-minmax"
-        ):
+        if row.get("library") == "xy" and row.get("oracle_kind") != ("per-pixel-column-minmax"):
             errors.append(f"{path}.oracle_kind must be 'per-pixel-column-minmax' for xy")
 
 

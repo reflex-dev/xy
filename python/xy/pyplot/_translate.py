@@ -61,8 +61,7 @@ MARKER_TO_SYMBOL = {
 def not_implemented(name: str, alternative: Optional[str] = None) -> "NotImplementedError":
     hint = f" Try {alternative} instead." if alternative else ""
     return NotImplementedError(
-        f"xy.pyplot does not implement {name}.{hint} "
-        f"See the compatibility table: {COMPAT_URL}"
+        f"xy.pyplot does not implement {name}.{hint} See the compatibility table: {COMPAT_URL}"
     )
 
 

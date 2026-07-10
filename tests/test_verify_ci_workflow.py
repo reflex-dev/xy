@@ -179,8 +179,7 @@ def test_codspeed_workflow_rejects_non_strict_native_install(tmp_path: Path) -> 
     errors = verify_ci_workflow.validate_codspeed_workflow(path)
 
     assert any(
-        "CodSpeed benchmarks job" in error and "XY_REQUIRE_CARGO" in error
-        for error in errors
+        "CodSpeed benchmarks job" in error and "XY_REQUIRE_CARGO" in error for error in errors
     )
 
 
@@ -368,15 +367,11 @@ def test_release_workflow_rejects_missing_native_wheel_verifier(tmp_path: Path) 
 def test_release_workflow_rejects_missing_sdist_norust_smoke(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     path = tmp_path / "release.yml"
-    path.write_text(
-        workflow.replace('          XY_SKIP_CARGO: "1"\n', ""), encoding="utf-8"
-    )
+    path.write_text(workflow.replace('          XY_SKIP_CARGO: "1"\n', ""), encoding="utf-8")
 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
-    assert any(
-        "release sdist job" in error and "XY_SKIP_CARGO" in error for error in errors
-    )
+    assert any("release sdist job" in error and "XY_SKIP_CARGO" in error for error in errors)
 
 
 def test_release_workflow_rejects_missing_trusted_publishing(tmp_path: Path) -> None:

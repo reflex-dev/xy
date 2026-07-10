@@ -54,6 +54,12 @@ python3 scripts/bench_scatter_native.py --render   # xy scatter, no deps
 uv run python scripts/bench_vs.py     # three-way vs plotly/matplotlib (needs both)
 ```
 
+Before pushing any changes, run the repository hooks across the full worktree:
+
+```bash
+pre-commit run --all-files
+```
+
 The two `*_smoke*` scripts need neither numpy nor PyPI — they verify the
 Python↔Rust ABI and the render client directly, and run first in CI.
 
