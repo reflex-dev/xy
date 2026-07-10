@@ -50,4 +50,8 @@ jobs:
         uses: CodSpeedHQ/action@4bee4eada46987d4607fc208971a36367352b83d # v4
         with:
           mode: simulation
-          run: .venv/bin/python -m pytest benchmarks/test_codspeed_kernels.py --codspeed
+          # Run every CodSpeed-native pytest module. Keep browser/install and
+          # cross-library process benchmarks in benchmark-refresh.yml: they
+          # require wall-clock/browser measurements and are not meaningful in
+          # CodSpeed simulation mode.
+          run: .venv/bin/python -m pytest benchmarks/test_codspeed_*.py --codspeed
