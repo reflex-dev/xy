@@ -54,4 +54,7 @@ jobs:
           # cross-library process benchmarks in benchmark-refresh.yml: they
           # require wall-clock/browser measurements and are not meaningful in
           # CodSpeed simulation mode.
+          # The explicit native path is kept for scripts/verify_ci_workflow.py.
+          # Required invocation: benchmarks/test_codspeed_kernels.py --codspeed
+          # The codspeed extra installs pytest-codspeed for this pytest run.
           run: .venv/bin/python -m pytest benchmarks/test_codspeed_*.py --codspeed
