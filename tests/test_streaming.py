@@ -154,6 +154,14 @@ def test_append_channel_contract():
     msg, _ = _msg(fig, 0, [30.0], [30.0], color=[0.5], size=[0.5])
     assert len(fig.traces[0].color_ch.values) == 31
 
+    plain = Figure().scatter(np.arange(10.0), np.arange(10.0))
+    with pytest.raises(ValueError, match="no per-point color"):
+        plain.append(0, [10.0], [10.0], color=[0.5])
+
+    cat = Figure().scatter(np.arange(4.0), np.arange(4.0), color=np.array(["a", "b", "a", "b"]))
+    with pytest.raises(ValueError, match="categorical"):
+        cat.append(0, [4.0], [4.0], color=["a"])
+
 
 def test_append_continuous_channels_expand_domains_and_reuse_buffers():
     values = np.arange(8.0)
@@ -175,13 +183,20 @@ def test_append_continuous_channels_expand_domains_and_reuse_buffers():
     assert trace.size_ch.domain[1] >= 199.0
     assert len(trace.color_ch.values) == len(trace.size_ch.values) == 200
 
-    plain = Figure().scatter(np.arange(10.0), np.arange(10.0))
-    with pytest.raises(ValueError, match="no per-point color"):
-        plain.append(0, [10.0], [10.0], color=[0.5])
 
-    cat = Figure().scatter(np.arange(4.0), np.arange(4.0), color=np.array(["a", "b", "a", "b"]))
-    with pytest.raises(ValueError, match="categorical"):
-        cat.append(0, [4.0], [4.0], color=["a"])
+def test_append_continuous_channels_repairs_rebound_prefix():
+    values = np.arange(8.0)
+    fig = Figure().scatter(values, values, color=values)
+    channel = fig.traces[0].color_ch
+    fig.append(0, [8.0], [8.0], color=[8.0])  # initialize the capacity buffer
+
+    rebound = channel.values.copy()
+    rebound[0] = 123.0
+    channel.values = rebound
+    fig.append(0, [9.0], [9.0], color=[9.0])
+
+    assert channel.values[0] == 123.0
+    np.testing.assert_array_equal(channel.values[-2:], [8.0, 9.0])
 
 
 def test_append_density_trace_rebins_with_new_points():

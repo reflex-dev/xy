@@ -388,8 +388,7 @@ def histogram(
     density = self._bool_param(density, "histogram density")
     cumulative = self._bool_param(cumulative, "histogram cumulative")
     vals = self._as_1d_float(values, "histogram values")
-    finite = vals[np.isfinite(vals)]
-    if density and len(finite) == 0:
+    if density and not np.isfinite(vals).any():
         raise ValueError("histogram density requires at least one finite value")
     if isinstance(bins, (int, np.integer)) and not isinstance(bins, bool):
         n_bins = int(bins)
@@ -401,6 +400,7 @@ def histogram(
             lo, hi = self._finite_increasing_pair(range, "histogram range")
         counts, edges = kernels.histogram_uniform(vals, lo, hi, n_bins, density=density)
     else:
+        finite = vals[np.isfinite(vals)]
         hist_bins = 10 if len(finite) == 0 and isinstance(bins, str) else bins
         hist_range = (
             None if range is None else self._finite_increasing_pair(range, "histogram range")

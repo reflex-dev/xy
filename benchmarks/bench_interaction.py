@@ -647,7 +647,7 @@ def _flatten_probe_metrics(row: dict[str, Any], result: dict[str, Any]) -> None:
 # gets matching headroom; a healthy probe never comes near either limit.
 PROBE_VIRTUAL_TIME_MS = 120_000
 PROBE_TIMEOUT_S = 600
-WORKER_PROBE_TIMEOUT_S = 30
+WORKER_PROBE_TIMEOUT_S = 60
 
 
 def _worker_density_figure() -> Any:

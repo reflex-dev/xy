@@ -34,6 +34,9 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **View-change callback windows** now reject non-finite bounds and normalize
+  inverted ranges before callbacks receive them, matching selection and
+  autorange window semantics.
 - **API layering inverted: the declarative layer is now the core.** The nine
   mark-builder implementations moved verbatim from `figure.py` into the new
   `fastcharts/marks.py`; `Figure` binds them as its fluent methods

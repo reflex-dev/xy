@@ -1357,15 +1357,7 @@ class Chart(Component):
                 raise TypeError(f"no applier registered for mark kind {m.kind!r}")
             x_axis_id, y_axis_id = _mark_axis_ids(m, axes)
             before = len(fig.traces)
-            axis_checkpoint = {axis: list(labels) for axis, labels in fig._axis_categories.items()}
-            try:
-                applier(fig, m, data)
-            except Exception:
-                # `_resolve_axis_values` may provision category positions before
-                # the fluent mark reaches its own transactional checkpoint. Keep
-                # a failed declarative mark from leaking those labels.
-                fig._axis_categories = axis_checkpoint
-                raise
+            applier(fig, m, data)
             new_traces = fig.traces[before:]
             for trace in new_traces:
                 trace.x_axis = x_axis_id

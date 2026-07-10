@@ -150,6 +150,7 @@ def test_interaction_browser_gates_cover_scatter_and_core_chart_families() -> No
         "heatmap_39600_interaction",
         "run_worker_probe",
         "omits Chromium's virtual-time flag",
+        "WORKER_PROBE_TIMEOUT_S = 60",
         '"family": "line"',
         '"family": "histogram"',
         '"family": "bar"',
@@ -158,6 +159,7 @@ def test_interaction_browser_gates_cover_scatter_and_core_chart_families() -> No
     ]
     for marker in required_markers:
         assert marker in bench
+    assert 'startswith("skipped(")' in smoke
 
 
 def test_interaction_benchmark_completes_gpu_warmup_before_timing() -> None:

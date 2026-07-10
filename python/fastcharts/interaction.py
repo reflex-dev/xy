@@ -126,14 +126,15 @@ def select_range(
             continue
         if tid is not None and t.id != tid:
             continue
-        x_candidates = _zone_candidates(t.x, lo_x, hi_x)
-        y_candidates = _zone_candidates(t.y, lo_y, hi_y)
-        candidates = np.intersect1d(x_candidates, y_candidates, assume_unique=True)
-        if len(candidates) == len(t.x):
+        x_chunks = _zone_candidate_chunks(t.x, lo_x, hi_x)
+        y_chunks = _zone_candidate_chunks(t.y, lo_y, hi_y)
+        candidate_chunks = np.intersect1d(x_chunks, y_chunks, assume_unique=True)
+        if len(candidate_chunks) == len(t.x.zone.counts):
             out[t.id] = kernels.range_indices(t.x.values, t.y.values, lo_x, hi_x, lo_y, hi_y)
-        elif len(candidates) == 0:
+        elif len(candidate_chunks) == 0:
             out[t.id] = np.empty(0, dtype=np.uint32)
         else:
+            candidates = _expand_zone_chunks(t.x, candidate_chunks)
             out[t.id] = kernels.range_indices(
                 t.x.values[candidates], t.y.values[candidates], lo_x, hi_x, lo_y, hi_y
             )
@@ -148,7 +149,9 @@ def to_shipped_indices(fig: "Figure", trace_id: int, canonical: np.ndarray) -> n
     sel = _point_shipped_sel(_trace(fig, trace_id))
     if sel is None:
         return np.asarray(canonical, dtype=np.uint32)
-    # sel is sorted ascending (flatnonzero/m4 output); membership → position.
+    # `sel` is sorted ascending (flatnonzero/m4 output); membership maps each
+    # canonical input row to its shipped position, preserving canonical order
+    # and duplicate rows in `canonical`.
     canonical = np.asarray(canonical, dtype=np.uint32).ravel()
     positions = np.searchsorted(sel, canonical)
     valid = positions < len(sel)
@@ -156,25 +159,29 @@ def to_shipped_indices(fig: "Figure", trace_id: int, canonical: np.ndarray) -> n
     return positions[valid].astype(np.uint32)
 
 
-def _zone_candidates(col: Any, lo: float, hi: float) -> np.ndarray:
-    """Return row ids from chunks whose zone can overlap an inclusive range."""
-    if len(col) == 0:
-        return np.empty(0, dtype=np.uint32)
+def _zone_candidate_chunks(col: Any, lo: float, hi: float) -> np.ndarray:
+    """Return chunk ids whose zone can overlap an inclusive range."""
     mins = col.zone.mins
     maxs = col.zone.maxs
     counts = col.zone.counts
-    chunks = np.flatnonzero((counts > 0) & (maxs >= lo) & (mins <= hi))
-    if len(chunks) == len(mins):
-        return np.arange(len(col), dtype=np.uint32)
-    pieces = [
-        np.arange(
-            int(chunk) * columns.ZONE_CHUNK,
-            min((int(chunk) + 1) * columns.ZONE_CHUNK, len(col)),
-            dtype=np.uint32,
-        )
-        for chunk in chunks
-    ]
-    return np.concatenate(pieces) if pieces else np.empty(0, dtype=np.uint32)
+    return np.flatnonzero((counts > 0) & (maxs >= lo) & (mins <= hi)).astype(np.uint32, copy=False)
+
+
+def _expand_zone_chunks(col: Any, chunks: np.ndarray) -> np.ndarray:
+    """Expand selected chunk ids to canonical row ids once, after pruning."""
+    if len(chunks) == 0:
+        return np.empty(0, dtype=np.uint32)
+    widths = (
+        np.minimum((chunks.astype(np.int64) + 1) * columns.ZONE_CHUNK, len(col))
+        - chunks.astype(np.int64) * columns.ZONE_CHUNK
+    )
+    rows = np.empty(int(widths.sum()), dtype=np.uint32)
+    offset = 0
+    for chunk, width in zip(chunks, widths, strict=True):
+        start = int(chunk) * columns.ZONE_CHUNK
+        rows[offset : offset + int(width)] = np.arange(start, start + int(width), dtype=np.uint32)
+        offset += int(width)
+    return rows
 
 
 def _point_shipped_sel(t: Any) -> Optional[np.ndarray]:

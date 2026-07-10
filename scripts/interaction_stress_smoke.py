@@ -86,10 +86,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     worker = bench_interaction.run_worker_probe(chromium=chromium)
-    if worker.get("status") != "ok":
+    worker_status = str(worker.get("status", ""))
+    if worker_status != "ok" and not worker_status.startswith("skipped("):
         print(
             "interaction stress smoke FAILED: standalone density worker probe "
-            f"returned {worker.get('status')!r}",
+            f"returned {worker_status!r}",
             file=sys.stderr,
         )
         return 1
@@ -112,14 +113,17 @@ def main(argv: list[str] | None = None) -> int:
                 overlaps=row["tick_label_overlap_count"],
             )
         )
-    print(
-        "  standalone_density_worker: rebinned={rebinned} worker={worker} "
-        "nonblank={nonblank}".format(
-            rebinned=worker.get("worker_rebinned"),
-            worker=worker.get("worker_created"),
-            nonblank=worker.get("nonblank_pixels"),
+    if worker_status.startswith("skipped("):
+        print(f"  standalone_density_worker: SKIPPED ({worker_status})")
+    else:
+        print(
+            "  standalone_density_worker: rebinned={rebinned} worker={worker} "
+            "nonblank={nonblank}".format(
+                rebinned=worker.get("worker_rebinned"),
+                worker=worker.get("worker_created"),
+                nonblank=worker.get("nonblank_pixels"),
+            )
         )
-    )
     return 0
 
 

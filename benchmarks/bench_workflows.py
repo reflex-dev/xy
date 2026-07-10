@@ -269,7 +269,7 @@ def _log_autorange_rows(n: int, reps: int) -> list[dict[str, Any]]:
 
     def oracle(_fig: Figure, value: tuple[float, float]) -> None:
         lo, hi = value
-        _require_oracle(lo > 0.0 < hi, "log autorange returned a non-positive domain")
+        _require_oracle(lo > 0.0 and hi > 0.0, "log autorange returned a non-positive domain")
         _require_oracle(lo <= float(np.min(positive)), "log autorange clipped the positive minimum")
         _require_oracle(hi >= float(np.max(positive)), "log autorange clipped the positive maximum")
 

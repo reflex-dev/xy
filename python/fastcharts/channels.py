@@ -222,6 +222,17 @@ def append_continuous(channel: Any, values: npt.NDArray[np.float64], label: str)
         buffer = np.empty(capacity, dtype=np.float64)
         buffer[:n_old] = current
         channel._buffer = buffer
+    elif not (
+        np.shares_memory(current, buffer)
+        and current.ndim == 1
+        and current.size == n_old
+        and current.strides == buffer.strides
+        and current.__array_interface__["data"][0] == buffer.__array_interface__["data"][0]
+    ):
+        # `values` is expected to remain the exact prefix view of `_buffer`.
+        # Re-copy if a future caller rebinds it, so a stale capacity buffer
+        # cannot silently corrupt the retained prefix.
+        buffer[:n_old] = current
     buffer[n_old:n_new] = tail
     channel.values = buffer[:n_new]
 
