@@ -194,10 +194,71 @@ jobs:
         run: .venv/bin/python -m pytest -q
 
   # Cross-library scatter benchmark incl. time-to-first-render (docs/benchmark.md).
-  # Non-blocking: it's a measurement, not a gate. Uploads the report as an
-  # artifact and prints it to the log.
-  benchmark:
-    name: Benchmark vs Python charting libraries
+  # Each isolated group uses the same deterministic input sizes and runs in
+  # parallel. The report job below merges the partial results.
+  benchmark_vs:
+    name: Cross-library benchmark (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: native-and-webgl
+            libraries: xy,plotly_gl,bokeh_webgl,datashader
+          - name: raster-and-svg
+            libraries: matplotlib,seaborn,plotly_svg,bokeh_canvas
+          - name: html-adapters
+            libraries: altair,hvplot_bokeh
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: Build core + JS client
+        run: |
+          node js/build.mjs
+          cargo build --release
+      - name: Install xy + competitors
+        env:
+          XY_REQUIRE_CARGO: "1"
+        run: |
+          uv venv .venv
+          uv pip install -p .venv/bin/python -e .
+          uv pip install -p .venv/bin/python matplotlib seaborn plotly kaleido bokeh altair datashader hvplot plotly-resampler psutil
+      - name: Verify native benchmark backend
+        run: |
+          .venv/bin/python - <<'PY'
+          import xy.kernels as k
+          assert k.BACKEND == "native", f"benchmark job requires native backend, got {k.BACKEND!r}"
+          PY
+      - name: Install Chromium (Playwright)
+        run: |
+          npm i --no-save playwright@1.48
+          npx playwright install --with-deps chromium
+      - name: Run cross-library benchmark group
+        run: |
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python scripts/bench_vs.py \
+            --libraries "${{ matrix.libraries }}" \
+            --sizes 1e3,1e4,1e5,1e6,3e6,1e7 --budget 45 \
+            --ttfr --ttfr-max-n 1e5 --chromium "$CHROME" \
+            --out scatter-${{ matrix.name }}.md --json scatter-${{ matrix.name }}.json
+      - name: Upload cross-library benchmark part
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: benchmark-vs-${{ matrix.name }}
+          if-no-files-found: warn
+          path: |
+            scatter-${{ matrix.name }}.md
+            scatter-${{ matrix.name }}.json
+
+  # Other benchmark suites run concurrently with the cross-library matrix.
+  benchmark_methodology:
+    name: Benchmark methodology suites
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -229,13 +290,6 @@ jobs:
         run: |
           npm i --no-save playwright@1.48
           npx playwright install --with-deps chromium
-      - name: Run cross-library benchmark (with TTFR)
-        run: |
-          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
-          .venv/bin/python scripts/bench_vs.py \
-            --sizes 1e3,1e4,1e5,1e6,3e6,1e7 --budget 45 \
-            --ttfr --ttfr-max-n 1e5 --chromium "$CHROME" \
-            --out docs/benchmark_ci.md --json benchmark.json
       - name: Line decimation vs plotly-resampler (methodology line_10M)
         run: |
           CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
@@ -267,13 +321,65 @@ jobs:
             --json dashboard.json | tee -a docs/benchmark_ci.md
       - name: Verify benchmark JSON artifacts
         run: |
-          .venv/bin/python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs
           .venv/bin/python scripts/verify_benchmark_report.py line.json --kind line-decimation
           .venv/bin/python scripts/verify_benchmark_report.py install.json --kind install-footprint
           .venv/bin/python scripts/verify_benchmark_report.py install-fresh.json --kind install-footprint
           .venv/bin/python scripts/verify_benchmark_report.py workflows.json --kind workflow-native
           .venv/bin/python scripts/verify_benchmark_report.py interaction.json --kind interaction-browser
           .venv/bin/python scripts/verify_benchmark_report.py dashboard.json --kind dashboard-browser
+      - name: Show report
+        run: cat docs/benchmark_ci.md
+      - name: Upload benchmark methodology
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: benchmark-methodology
+          if-no-files-found: warn
+          path: |
+            docs/benchmark_ci.md
+            line.json
+            install.json
+            install-fresh.json
+            workflows.json
+            interaction.json
+            dashboard.json
+
+  benchmark:
+    name: Merge and verify benchmark reports
+    runs-on: ubuntu-latest
+    needs: [benchmark_vs, benchmark_methodology]
+    if: always()
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+      - name: Download cross-library benchmark parts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: benchmark-vs-*
+          path: benchmark-vs-parts
+      - name: Download methodology benchmark artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: benchmark-methodology
+          path: benchmark-methodology
+      - name: Merge cross-library benchmark parts
+        run: |
+          python scripts/merge_benchmark_reports.py \
+            --parts benchmark-vs-parts/*/*.json \
+            --expected-libraries xy,matplotlib,seaborn,plotly_gl,plotly_svg,bokeh_canvas,bokeh_webgl,altair,datashader,hvplot_bokeh \
+            --out benchmark.json --out-md scatter-vs.md
+      - name: Assemble benchmark report
+        run: |
+          cat scatter-vs.md benchmark-methodology/docs/benchmark_ci.md > docs/benchmark_ci.md
+      - name: Verify benchmark JSON artifacts
+        run: |
+          python scripts/verify_benchmark_report.py benchmark.json --kind scatter-vs
+          python scripts/verify_benchmark_report.py benchmark-methodology/line.json --kind line-decimation
+          python scripts/verify_benchmark_report.py benchmark-methodology/install.json --kind install-footprint
+          python scripts/verify_benchmark_report.py benchmark-methodology/install-fresh.json --kind install-footprint
+          python scripts/verify_benchmark_report.py benchmark-methodology/workflows.json --kind workflow-native
+          python scripts/verify_benchmark_report.py benchmark-methodology/interaction.json --kind interaction-browser
+          python scripts/verify_benchmark_report.py benchmark-methodology/dashboard.json --kind dashboard-browser
       - name: Show report
         run: cat docs/benchmark_ci.md
       - name: Upload benchmark report
@@ -285,12 +391,12 @@ jobs:
           path: |
             docs/benchmark_ci.md
             benchmark.json
-            line.json
-            install.json
-            install-fresh.json
-            workflows.json
-            interaction.json
-            dashboard.json
+            benchmark-methodology/line.json
+            benchmark-methodology/install.json
+            benchmark-methodology/install-fresh.json
+            benchmark-methodology/workflows.json
+            benchmark-methodology/interaction.json
+            benchmark-methodology/dashboard.json
 
   sdist:
     name: Source distribution
