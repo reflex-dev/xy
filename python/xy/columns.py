@@ -221,7 +221,7 @@ class ColumnStore:
 def _arrow_to_numpy(data: Any) -> tuple[npt.NDArray[Any], int] | None:
     """Ingest a pyarrow Array/ChunkedArray, zero-copy when possible.
 
-    Detected by module name so fastcharts itself never imports pyarrow (it
+    Detected by module name so xy itself never imports pyarrow (it
     stays an optional input format, not a dependency). The contract, with
     copies counted honestly (§29):
 

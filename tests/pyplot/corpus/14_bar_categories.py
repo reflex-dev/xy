@@ -1,4 +1,4 @@
-import fastcharts.pyplot as plt
+import xy.pyplot as plt
 
 fruits = ["apple", "banana", "cherry", "date"]
 counts = [12, 35, 8, 21]

@@ -8,9 +8,9 @@ from typing import Any, get_args, get_origin, get_type_hints
 import numpy as np
 import pytest
 
-import fastcharts as fc
-import fastcharts._figure as figure_module
-import fastcharts.components as components
+import xy as fc
+import xy._figure as figure_module
+import xy.components as components
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -112,7 +112,7 @@ FIGURE_READOUTS = (
 
 
 def test_source_package_carries_pep561_marker() -> None:
-    marker = ROOT / "python" / "fastcharts" / "py.typed"
+    marker = ROOT / "python" / "xy" / "py.typed"
 
     assert marker.is_file()
     assert marker.read_bytes() == b""

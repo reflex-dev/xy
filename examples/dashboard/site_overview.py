@@ -1,7 +1,7 @@
-"""A site-overview dashboard built from fastcharts sparklines.
+"""A site-overview dashboard built from xy sparklines.
 
 Card chrome is plain HTML/CSS; every metric sparkline is a real composed
-fastcharts chart — chrome-hidden, edge-to-edge (`padding=...`), gradient area
+xy chart — chrome-hidden, edge-to-edge (`padding=...`), gradient area
 fills, and smooth curves. The client bundle is embedded once and each chart
 renders from its own spec + base64 blob into its card.
 
@@ -21,8 +21,8 @@ from pathlib import Path
 
 import numpy as np
 
-import fastcharts as fc
-from fastcharts.export import _STANDALONE_CSP, _bundled_js, _json_for_inline_script
+import xy as fc
+from xy.export import _STANDALONE_CSP, _bundled_js, _json_for_inline_script
 
 HERE = Path(__file__).resolve().parent
 BLUE, PURPLE, ORANGE = "#2f6bff", "#8b5cf6", "#f97316"
@@ -172,7 +172,7 @@ def build_html() -> str:
         ("ok", spark("area", x, ok, ORANGE)),
     ]
     mounts = "\n".join(
-        f'<script>fastcharts.renderStandalone(document.getElementById("{cid}"),'
+        f'<script>xy.renderStandalone(document.getElementById("{cid}"),'
         f"{_json_for_inline_script(spec)},"
         f'Uint8Array.from(atob("{b64}"),c=>c.charCodeAt(0)).buffer);</script>'
         for cid, (spec, b64) in charts
@@ -224,7 +224,7 @@ def main() -> None:
     out.write_text(doc, encoding="utf-8")
     print(f"wrote {out}")
     if "--png" in sys.argv:
-        from fastcharts.export import html_to_png
+        from xy.export import html_to_png
 
         png = HERE / "site_overview.png"
         png.write_bytes(html_to_png(doc, 1336, 340))

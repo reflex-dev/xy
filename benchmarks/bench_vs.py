@@ -1,4 +1,4 @@
-"""Scatter benchmark: fastcharts vs popular Python charting libraries.
+"""Scatter benchmark: xy vs popular Python charting libraries.
 
 Measures, per library, per point count N, on identical random data:
 
@@ -6,11 +6,11 @@ Measures, per library, per point count N, on identical random data:
   render_s    — produce pixels where that is the library's normal static path
                 (matplotlib/seaborn PNG, datashader PNG), otherwise produce the
                 browser payload (Plotly/Bokeh/Altair/HoloViews HTML). For
-                fastcharts, render_s is the kernel-side "prepare to render"
+                xy, render_s is the kernel-side "prepare to render"
                 cost: build the GPU-ready binary payload.
   total_s     — build + render
   ttfr_ms     — interactive build + HTML serialization + chart-ready time;
-                rendered libs (fastcharts, Plotly-HTML, Bokeh, Altair, hvPlot)
+                rendered libs (xy, Plotly-HTML, Bokeh, Altair, hvPlot)
                 are loaded in headless Chromium and measured to a visible chart
                 surface after two animation frames; raster libs (matplotlib/seaborn/
                 datashader/Plotly-kaleido) already produced pixels at render, so
@@ -18,7 +18,7 @@ Measures, per library, per point count N, on identical random data:
                 pixels" number — serialize time and byte counts are not pixels.
   peak_mem_mb — Python-side peak allocation during build+render (tracemalloc);
                 RSS delta too when psutil is present
-  out_bytes   — PNG bytes / HTML bytes / fastcharts wire bytes
+  out_bytes   — PNG bytes / HTML bytes / xy wire bytes
   pts_per_s   — N / total_s
   status      — ok | failed(reason) | skipped(over budget)
 
@@ -29,7 +29,7 @@ Design notes / fairness:
 - Data generation is excluded from every timing (shared arrays).
 - matplotlib/seaborn and SVG/HTML-spec libraries grow cost ∝ N. WebGL-backed
   browser libraries still generally ship/hold per-point buffers. Datashader and
-  fastcharts exercise the screen-bounded density path; fastcharts additionally
+  xy exercise the screen-bounded density path; xy additionally
   reports the binary transport cost that crosses to the browser/GPU.
 - Static render rows are target-scoped (binary spec, HTML, or PNG) and must not
   be turned into cross-target speedup claims. Each successful row records mode,
@@ -104,7 +104,7 @@ def _measure(
     scales with allocation *count*, not size. Tracing during the timed pass
     would not inflate every library's total_s uniformly: it would penalize
     allocation-heavy libraries (matplotlib/Plotly building thousands of small
-    Python objects) far more than fastcharts, which does a handful of large
+    Python objects) far more than xy, which does a handful of large
     NumPy/native buffer operations. So the first pass times build+render with
     no tracer active; a second, untimed pass on a fresh build measures peak
     allocation.
@@ -442,9 +442,9 @@ def make_hvplot_bokeh(x, y):
     return build, render, artifact
 
 
-def make_fastcharts(x, y):
+def make_xy(x, y):
     try:
-        from fastcharts import scatter, scatter_chart
+        from xy import scatter, scatter_chart
     except ImportError:
         return None
 
@@ -470,7 +470,7 @@ def make_fastcharts(x, y):
             actual = int(round(float(grid.sum())))
             expected = int(trace["visible"])
             if actual != expected:
-                raise AssertionError(f"fastcharts count oracle failed: {actual} != {expected}")
+                raise AssertionError(f"xy count oracle failed: {actual} != {expected}")
             oracle_kind = "count-conservation"
             aggregate_width = int(density["w"])
             aggregate_height = int(density["h"])
@@ -478,7 +478,7 @@ def make_fastcharts(x, y):
             expected = len(x)
             if trace.get("n_marks") != expected:
                 raise AssertionError(
-                    f"fastcharts direct-row oracle failed: {trace.get('n_marks')} != {expected}"
+                    f"xy direct-row oracle failed: {trace.get('n_marks')} != {expected}"
                 )
             oracle_kind = "raw-row-count"
             aggregate_width = None
@@ -503,7 +503,7 @@ def make_fastcharts(x, y):
 
 
 ADAPTERS = {
-    "fastcharts": make_fastcharts,
+    "xy": make_xy,
     "matplotlib": make_matplotlib,
     "seaborn": make_seaborn,
     "plotly_gl": make_plotly_gl,
@@ -533,7 +533,7 @@ def run(
         raise SystemExit(
             "numpy is required to run the comparison (data generation). "
             "Install it, or run benchmarks/bench_scatter_native.py for the "
-            "fastcharts-only arm with no dependencies."
+            "xy-only arm with no dependencies."
         )
     rng = np.random.default_rng(0)
     results: dict[str, list[dict]] = {name: [] for name in ADAPTERS}
@@ -645,7 +645,7 @@ def _fmt_status(status: object) -> str:
 
 
 def to_markdown(report: dict) -> str:
-    lines = ["# Scatter benchmark: fastcharts vs Python charting libraries", ""]
+    lines = ["# Scatter benchmark: xy vs Python charting libraries", ""]
     environment = report.get("environment") or {}
     if environment:
         platform_info = environment.get("platform") or {}
@@ -664,9 +664,9 @@ def to_markdown(report: dict) -> str:
         ]
     env = []
     try:
-        import fastcharts.kernels as k
+        import xy.kernels as k
 
-        env.append(f"fastcharts backend: `{k.BACKEND}`")
+        env.append(f"xy backend: `{k.BACKEND}`")
     except Exception:
         pass
     if _PROC is not None:

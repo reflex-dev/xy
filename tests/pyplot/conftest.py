@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-import fastcharts.pyplot as plt
+import xy.pyplot as plt
 
 
 @pytest.fixture(autouse=True)

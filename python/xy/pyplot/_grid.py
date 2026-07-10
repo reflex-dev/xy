@@ -8,7 +8,7 @@ PNG: each panel renders through the engine's native rasterizer to an RGBA
 array; NumPy pastes them onto one canvas and the engine's PNG encoder writes
 the file. This module and `_mplfig.savefig` are the only places the shim
 reaches past the public API (via `Chart.figure()` + the `_raster`/`_png`
-modules); everything else goes through `fastcharts`' public surface.
+modules); everything else goes through `xy`' public surface.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def compose_html(charts: list[Any], nrows: int, ncols: int, suptitle: Optional[s
 
 
 def stitch_png(charts: list[Any], nrows: int, ncols: int, suptitle: Optional[str]) -> bytes:
-    from fastcharts import _png, _raster  # sanctioned escape hatch (see module doc)
+    from xy import _png, _raster  # sanctioned escape hatch (see module doc)
 
     if suptitle:
         warnings.warn(

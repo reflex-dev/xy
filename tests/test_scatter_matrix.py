@@ -10,9 +10,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import fastcharts as fc
-from fastcharts._figure import DIRECT_SOFT_CEILING, SCATTER_DENSITY_THRESHOLD, Figure
-from fastcharts.interaction import _decode_log_u8
+import xy as fc
+from xy._figure import DIRECT_SOFT_CEILING, SCATTER_DENSITY_THRESHOLD, Figure
+from xy.interaction import _decode_log_u8
 
 
 def _payload(fig):
@@ -393,6 +393,6 @@ def test_to_html_roundtrips_for_every_tier():
         Figure().line(np.arange(20000.0), np.sin(np.arange(20000.0))),  # decimated
     ):
         html = fig.to_html()
-        assert "fastcharts.renderStandalone" in html
+        assert "xy.renderStandalone" in html
         assert '<div id="chart">' in html
         assert len(html) > 1000

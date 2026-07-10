@@ -23,7 +23,7 @@ from .columns import Column, ColumnStore, ColumnStoreCheckpoint
 
 # Tier/tuning constants live in config.py (shared with interaction/export/
 # _payload); several are re-exported here — this module is their historic
-# import path and tests import them from `fastcharts._figure` (F401 kept for
+# import path and tests import them from `xy._figure` (F401 kept for
 # the re-exports; DIRECT_SOFT_CEILING/DEFAULT_PALETTE are also used below).
 from .config import (  # noqa: E402, F401
     DECIMATION_THRESHOLD,

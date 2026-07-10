@@ -12,7 +12,7 @@ on failure, but the wasm CI job runs it non-gating (continue-on-error) so the
 experimental wheel never blocks a release — it just keeps the status honest and
 visible until the exception-handling build is fixed.
 
-Usage: python scripts/pyodide_load_smoke.py path/to/fastcharts-...-pyodide_....whl
+Usage: python scripts/pyodide_load_smoke.py path/to/xy-...-pyodide_....whl
 Requires: node with the `pyodide` npm package resolvable from CWD.
 """
 
@@ -37,10 +37,10 @@ try {
   py.FS.writeFile("/wheels/" + name, fs.readFileSync(wheelPath));
   await micropip.install("emfs:/wheels/" + name);
   const r = await py.runPythonAsync(`
-import fastcharts.kernels as k
+import xy.kernels as k
 import numpy as np
 mn, mx = k.min_max(np.array([3.0, 1.0, 2.0]))
-from fastcharts import _native
+from xy import _native
 abi = _native._lib.fc_abi_version()
 f"{k.BACKEND}|{abi}|{mn}|{mx}"
 `);
@@ -88,7 +88,7 @@ def main() -> int:
 
     if result.get("ok"):
         print(
-            f"PASS: pyodide loaded fastcharts, backend={result['backend']} "
+            f"PASS: pyodide loaded xy, backend={result['backend']} "
             f"abi={result['abi']} min_max=({result['min']},{result['max']})"
         )
         return 0

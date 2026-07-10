@@ -13,7 +13,7 @@
 
 use crate::font;
 
-// ---- command opcodes (must match python/fastcharts/_raster.py) --------------
+// ---- command opcodes (must match python/xy/_raster.py) --------------
 const OP_CLIP: u8 = 0;
 const OP_FILL_POLY: u8 = 1;
 const OP_FILL_POLY_GRAD: u8 = 2;

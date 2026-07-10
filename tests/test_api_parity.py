@@ -22,9 +22,9 @@ import inspect
 
 import pytest
 
-import fastcharts as fc
-from fastcharts._figure import Figure
-from fastcharts.components import _MARK_APPLIERS
+import xy as fc
+from xy._figure import Figure
+from xy.components import _MARK_APPLIERS
 
 # Props the composition layer owns that intentionally never reach the engine:
 # `data` is resolved into arrays before the engine call, and the class/axis
@@ -126,7 +126,7 @@ def test_fluent_methods_are_the_declarative_implementations():
     """The inversion guard: Figure's per-kind methods ARE the marks.py
     functions, so fluent output == declarative output by construction (one
     body, one signature, one set of defaults), not by sampling."""
-    from fastcharts import marks
+    from xy import marks
 
     for _factory_name, method_name in MARK_PAIRS:
         assert getattr(Figure, method_name) is getattr(marks, method_name)

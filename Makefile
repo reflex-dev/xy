@@ -1,6 +1,6 @@
 PYTHON ?= .venv/bin/python
 CHROMIUM ?=
-UV_CACHE_DIR ?= /tmp/fastcharts_uv_cache
+UV_CACHE_DIR ?= /tmp/xy_uv_cache
 WHEEL_EXPECT ?=
 SDIST ?=
 WHEEL ?=
@@ -11,7 +11,7 @@ BENCHMARK_KIND ?= auto
 
 help:
 	@printf '%s\n' \
-		'fastcharts developer shortcuts' \
+		'xy developer shortcuts' \
 		'' \
 		'  make setup            create .venv and install .[dev]' \
 		'  make check            run the fast local verification gate' \
@@ -92,22 +92,22 @@ check-sdist:
 	OUT=$$(mktemp -d); \
 	echo "building sdist in $$OUT"; \
 	UV_CACHE_DIR="$(UV_CACHE_DIR)" uv build --sdist --out-dir "$$OUT"; \
-	$(PYTHON) scripts/verify_sdist.py "$$OUT"/fastcharts-*.tar.gz
+	$(PYTHON) scripts/verify_sdist.py "$$OUT"/xy-*.tar.gz
 
 check-wheel:
 	@set -e; \
 	OUT=$$(mktemp -d); \
 	echo "building wheel in $$OUT"; \
 	UV_CACHE_DIR="$(UV_CACHE_DIR)" uv build --wheel --out-dir "$$OUT"; \
-	$(PYTHON) scripts/verify_wheel.py "$$OUT"/fastcharts-*.whl $(WHEEL_EXPECT)
+	$(PYTHON) scripts/verify_wheel.py "$$OUT"/xy-*.whl $(WHEEL_EXPECT)
 
 check-artifacts:
 	@if [ -z "$(SDIST)" ]; then \
-		echo 'Set SDIST=/path/to/fastcharts.tar.gz for artifact verification.' >&2; \
+		echo 'Set SDIST=/path/to/xy.tar.gz for artifact verification.' >&2; \
 		exit 2; \
 	fi
 	@if [ -z "$(WHEEL)" ]; then \
-		echo 'Set WHEEL=/path/to/fastcharts.whl for artifact verification.' >&2; \
+		echo 'Set WHEEL=/path/to/xy.whl for artifact verification.' >&2; \
 		exit 2; \
 	fi
 	$(PYTHON) scripts/verify_local.py --packaging --sdist "$(SDIST)" --wheel "$(WHEEL)" $(WHEEL_EXPECT)

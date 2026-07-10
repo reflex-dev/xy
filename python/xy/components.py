@@ -2,10 +2,10 @@
 
 The *feel* is Reflex's (reflex.dev) Recharts components — a chart container with
 mark and axis children, snake_case keyword props, `data=` + column-name
-resolution, and `on_*` event props — but fastcharts does **not** import or depend
-on Reflex. It's the same ergonomics on top of the fastcharts engine (`Figure`):
+resolution, and `on_*` event props — but xy does **not** import or depend
+on Reflex. It's the same ergonomics on top of the xy engine (`Figure`):
 
-    import fastcharts as fc
+    import xy as fc
 
     fc.scatter_chart(
         fc.scatter(x="sepal_w", y="sepal_l", color="species", size="petal_l", data=df),
@@ -113,7 +113,7 @@ AxisTickLabelStrategy: TypeAlias = str
 
 
 class Component:
-    """Base for every fastcharts component (Reflex-style: props + children)."""
+    """Base for every xy component (Reflex-style: props + children)."""
 
 
 @dataclass
@@ -1398,7 +1398,7 @@ class Chart(Component):
     def chrome_components(self) -> dict[str, Any]:
         """Opaque user chrome objects for adapters such as Reflex.
 
-        Core fastcharts does not import or serialize framework components. The
+        Core xy does not import or serialize framework components. The
         objects returned here are the exact Python objects passed to
         `fc.legend(...)` / `fc.tooltip(...)`, so an adapter can mount them while
         standalone HTML keeps using the built-in safe DOM fallback.

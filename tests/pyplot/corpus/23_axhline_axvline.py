@@ -1,6 +1,6 @@
 import numpy as np
 
-import fastcharts.pyplot as plt
+import xy.pyplot as plt
 
 x = np.linspace(0, 4, 80)
 plt.plot(x, np.exp(-x) * np.cos(6 * x))

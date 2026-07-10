@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to **fastcharts** are documented here. The format follows
+All notable changes to **xy** are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/) once `1.0.0` ships;
 pre-1.0, minor versions may contain breaking changes (see the stability table
@@ -10,8 +10,8 @@ in the README).
 
 ### Removed
 - **The fluent `Figure` API is removed from the public surface.**
-  `fastcharts.Figure` is no longer exported; `figure.py` is internalized as
-  `fastcharts/_figure.py`. The declarative composition API (`fc.chart(...)`,
+  `xy.Figure` is no longer exported; `figure.py` is internalized as
+  `xy/_figure.py`. The declarative composition API (`fc.chart(...)`,
   `fc.line_chart(...)`, `fc.scatter_chart(...)`, marks, axes, annotations,
   chrome) is now the single public chart-building API. `Selection` stays
   public, composed `Chart` objects keep the full readout surface
@@ -21,17 +21,17 @@ in the README).
 
 ### Added
 
-- `fastcharts.pyplot`: a matplotlib-flavored shim over the composition
-  API (`import fastcharts.pyplot as plt`). Corpus-defined compatibility —
+- `xy.pyplot`: a matplotlib-flavored shim over the composition
+  API (`import xy.pyplot as plt`). Corpus-defined compatibility —
   see `docs/matplotlib-compat.md`; fully contained in
-  `python/fastcharts/pyplot/` with boundary guardrails.
+  `python/xy/pyplot/` with boundary guardrails.
 - **Chart live surface (data-live, structure-immutable).** The declarative
   `Chart` gains `append(trace_id, x, y, color=, size=)` (streaming — routed
   through the live widget when one exists, else mutating the built figure
   without touching the widget stack), `pick(trace_id, index)` (exact
   canonical-row readout), and `select_range(...) -> Selection`. Structural
   changes still mean composing a new chart.
-- **`fastcharts/channel.py`** — the kernel-side message dispatcher extracted
+- **`xy/channel.py`** — the kernel-side message dispatcher extracted
   from `FigureWidget` (reflex-integration §3.1 build-order step 1):
   `handle_message(fig, content, buffers, callbacks)` serves every transport;
   the anywidget widget is now a thin comm wrapper over it, and a future
@@ -44,7 +44,7 @@ in the README).
   autorange window semantics.
 - **API layering inverted: the declarative layer is now the core.** The nine
   mark-builder implementations moved verbatim from `figure.py` into the new
-  `fastcharts/marks.py`; `Figure` binds them as its fluent methods
+  `xy/marks.py`; `Figure` binds them as its fluent methods
   (`Figure.scatter is marks.scatter`), so both dialects share one body, one
   signature, and one set of defaults. Payload output is byte-identical (
   verified against a 19-case fluent+declarative fingerprint matrix), the
@@ -59,7 +59,7 @@ in the README).
   (~16 in Chrome) and LRU-evict the oldest on overflow, which permanently
   blanked the earliest charts of a 20+/50-chart dashboard. The render client
   now keeps itself inside a context budget (default 12,
-  `window.FASTCHARTS_CONTEXT_BUDGET` to override): at budget, the
+  `window.XY_CONTEXT_BUDGET` to override): at budget, the
   least-recently-visible off-screen chart releases its own context
   (`WEBGL_lose_context`, a controlled loss the existing restore machinery
   undoes) and re-acquires when scrolled back into view — including canvas-swap
@@ -208,8 +208,8 @@ in the README).
 - The native Rust core is now **required**: the NumPy fallback backend was
   removed. On platforms with no wheel and no local Rust build, importing the
   compute layer raises a clear, actionable `ImportError` instead of silently
-  degrading. `import fastcharts` remains lightweight.
-- The Reflex example app moved from `reflex_fastcharts_app/` to
+  degrading. `import xy` remains lightweight.
+- The Reflex example app moved from `reflex_xy_app/` to
   `examples/reflex/`.
 - 10M scatter payload build is ~3x faster (fused kernels; ABI v6), and the
   published benchmark tables were re-measured with a warmup-corrected,
@@ -218,8 +218,8 @@ in the README).
   bracketing corrected.
 
 ### Removed
-- `FASTCHARTS_FORCE_FALLBACK` environment switch and the pure-NumPy kernel
-  backend (`fastcharts/_fallback.py`).
+- `XY_FORCE_FALLBACK` environment switch and the pure-NumPy kernel
+  backend (`xy/_fallback.py`).
 
 ## [0.1.0] — unreleased development line
 

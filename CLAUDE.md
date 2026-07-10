@@ -1,4 +1,4 @@
-# reviz / fastcharts
+# xy / xy
 
 A high-performance charting engine. The authoritative design is
 `docs/design-dossier.md` — **read the relevant § before changing behavior**;
@@ -12,30 +12,30 @@ code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
   don't prohibit. Caveat: crates.io is unreachable from the dev sandbox, so a
   required crate must be vendored (`cargo vendor`) or the sandbox loses the
   ability to build/test the core; prefer feature-gated optional deps. Bump
-  `ABI_VERSION` in `src/lib.rs` *and* `python/fastcharts/_native.py` together
+  `ABI_VERSION` in `src/lib.rs` *and* `python/xy/_native.py` together
   on any signature change.
-- `python/fastcharts/` — package. `_native.py` (ctypes) binds the required
+- `python/xy/` — package. `_native.py` (ctypes) binds the required
   Rust core; there is no NumPy fallback — `kernels.py` raises a clear
   ImportError if the native core can't load. `components.py`
   is the Reflex-flavored composition API (`scatter_chart`/`line_chart` + marks/
   axes) — the **only public chart-building surface**; keep it dependency-free
   (no `reflex` import). `_figure.py` is the internal scene/engine object
   (`Figure`) that composed charts compile to via `Chart.figure()`; it is not
-  exported from `fastcharts` (only `Selection` is public from it).
+  exported from `xy` (only `Selection` is public from it).
   `marks.py` is the declarative mark core: the single implementation of every
   chart kind, bound onto the internal `Figure` (one body, one signature, one
   set of defaults — parity is identity, not convention).
   `channels.py` resolves scatter color/size encodings. `channel.py` (singular)
   is the transport-agnostic message dispatcher (widget comm today, Reflex
   routes later) — it must never import the widget stack.
-- `python/fastcharts/pyplot/` — the matplotlib shim, fully contained
+- `python/xy/pyplot/` — the matplotlib shim, fully contained
   (one-way dependency onto the public composition API; guardrails in
   `tests/pyplot/test_boundaries.py`). Corpus-defined compatibility:
   `tests/pyplot/corpus/` + `docs/matplotlib-compat.md`.
 - `js/src/*.js` — the render client as ordered parts (concat order in
   `js/build.mjs`; exports live only in `60_entries.js`), one dependency-free ES
   module. **No npm packages.** `node js/build.mjs` copies it to
-  `python/fastcharts/static/` (committed artifacts).
+  `python/xy/static/` (committed artifacts).
 - `tests/`, `scripts/bench.py` (§12 harness), `scripts/smoke_render.py`
   (headless Chromium pixel probe).
 
@@ -50,7 +50,7 @@ uv venv && uv pip install -e ".[dev]"
 uv run pytest                         # native core required (no fallback)
 uv run ruff check . && uv run ruff format . && uv run ty check
 uv run python scripts/bench.py        # §12 benchmark harness
-python3 scripts/bench_scatter_native.py --render   # fastcharts scatter, no deps
+python3 scripts/bench_scatter_native.py --render   # xy scatter, no deps
 uv run python scripts/bench_vs.py     # three-way vs plotly/matplotlib (needs both)
 ```
 

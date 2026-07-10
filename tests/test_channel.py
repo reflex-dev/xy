@@ -3,7 +3,7 @@
 `tests/test_widget.py` pins the anywidget wrapper path; this file pins
 `channel.handle_message` directly — return values instead of captured sends —
 so any future transport (the planned Reflex adapter routes) inherits a tested
-contract. Deliberately never imports `fastcharts.widget`.
+contract. Deliberately never imports `xy.widget`.
 """
 
 from __future__ import annotations
@@ -11,8 +11,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from fastcharts._figure import DECIMATION_THRESHOLD, Figure, Selection
-from fastcharts.channel import ChannelCallbacks, handle_message
+from xy._figure import DECIMATION_THRESHOLD, Figure, Selection
+from xy.channel import ChannelCallbacks, handle_message
 
 
 def handle(fig, content, **cbs):

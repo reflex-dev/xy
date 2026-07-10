@@ -207,7 +207,7 @@ def _validate_environment(report: dict[str, Any], errors: list[str]) -> None:
             "cpu_count",
             "package_versions",
             "executables",
-            "fastcharts_backend",
+            "xy_backend",
             "browser_renderer",
             "git",
         },
@@ -250,7 +250,7 @@ def _validate_environment(report: dict[str, Any], errors: list[str]) -> None:
         env.get("package_versions"),
         "environment.package_versions",
         errors,
-        required_keys={"fastcharts"},
+        required_keys={"xy"},
     )
     if env.get("browser_renderer") not in {"software-gl", "hardware"}:
         errors.append("environment.browser_renderer must be 'software-gl' or 'hardware'")
@@ -261,9 +261,9 @@ def _validate_environment(report: dict[str, Any], errors: list[str]) -> None:
         required_keys={"node", "rustc", "cargo"},
     )
 
-    backend = env.get("fastcharts_backend")
+    backend = env.get("xy_backend")
     if backend not in {"native", "numpy", None}:
-        errors.append("environment.fastcharts_backend must be 'native', 'numpy', or null")
+        errors.append("environment.xy_backend must be 'native', 'numpy', or null")
 
     git = env.get("git")
     _require_keys(git, {"commit", "branch", "dirty"}, "git", errors)
@@ -343,10 +343,10 @@ def _validate_common(report: Any, errors: list[str]) -> None:
 
 def _require_native_backend(report: dict[str, Any], kind: str, errors: list[str]) -> None:
     env = report.get("environment")
-    backend = env.get("fastcharts_backend") if isinstance(env, dict) else None
+    backend = env.get("xy_backend") if isinstance(env, dict) else None
     if backend != "native":
         errors.append(
-            f"{kind} reports must use environment.fastcharts_backend == 'native'; got {backend!r}"
+            f"{kind} reports must use environment.xy_backend == 'native'; got {backend!r}"
         )
 
 
@@ -413,8 +413,8 @@ def _validate_scatter_vs(report: dict[str, Any], errors: list[str]) -> None:
     if not isinstance(ceilings, dict):
         errors.append("ceilings must be an object")
         ceilings = {}
-    if "fastcharts" not in results:
-        errors.append("results must include fastcharts")
+    if "xy" not in results:
+        errors.append("results must include xy")
     for library, rows in results.items():
         if not isinstance(rows, list) or not rows:
             errors.append(f"results[{library!r}] must be a non-empty list")
@@ -575,12 +575,12 @@ def _validate_line_decimation_row(row: Any, path: str, errors: list[str]) -> Non
             "ttfr_ms",
         ):
             _require_optional_nonnegative_number(row, key, path, errors)
-        if row.get("library") == "fastcharts" and oracle != "pass":
-            errors.append(f"{path}.extrema_oracle must pass for fastcharts")
-        if row.get("library") == "fastcharts" and row.get("oracle_kind") != (
+        if row.get("library") == "xy" and oracle != "pass":
+            errors.append(f"{path}.extrema_oracle must pass for xy")
+        if row.get("library") == "xy" and row.get("oracle_kind") != (
             "per-pixel-column-minmax"
         ):
-            errors.append(f"{path}.oracle_kind must be 'per-pixel-column-minmax' for fastcharts")
+            errors.append(f"{path}.oracle_kind must be 'per-pixel-column-minmax' for xy")
 
 
 def _validate_install_footprint(report: dict[str, Any], errors: list[str]) -> None:
@@ -1628,8 +1628,8 @@ def summarize_report(report: dict[str, Any], *, kind: str) -> list[str]:
         summary.append(f"benchmark_categories: {len(categories)}")
     if isinstance(tracked, list):
         summary.append(f"tracked_categories: {len(tracked)}")
-    if env.get("fastcharts_backend") is not None:
-        summary.append(f"backend: {env['fastcharts_backend']}")
+    if env.get("xy_backend") is not None:
+        summary.append(f"backend: {env['xy_backend']}")
     commit = git.get("commit")
     if isinstance(commit, str) and commit:
         suffix = " dirty" if git.get("dirty") is True else ""

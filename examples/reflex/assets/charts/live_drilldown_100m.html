@@ -14,7 +14,7 @@ html,body{margin:0;width:100%;height:100%;font-family:system-ui,sans-serif;backg
 <div id="status">density</div>
 <script>(() => {
 /**
- * fastcharts render client.
+ * xy render client.
  *
  * A thin GPU render client (design dossier §32): receives a data-less spec +
  * offset-encoded f32 columns as raw binary (§29 — no JSON numbers, no parse),
@@ -1295,8 +1295,8 @@ class ChartView {
   constructor(el, spec, buffer, comm) {
     if (spec.protocol !== PROTOCOL) {
       el.textContent =
-        `fastcharts: protocol mismatch (client speaks ${PROTOCOL}, kernel sent ${spec.protocol}). ` +
-        "Update the fastcharts package and restart the kernel.";
+        `xy: protocol mismatch (client speaks ${PROTOCOL}, kernel sent ${spec.protocol}). ` +
+        "Update the xy package and restart the kernel.";
       throw new Error("protocol mismatch");
     }
     this.spec = spec;
@@ -1486,7 +1486,7 @@ class ChartView {
 
   _dispatchChartEvent(name, detail) {
     if (!this.root || typeof CustomEvent !== "function") return;
-    this.root.dispatchEvent(new CustomEvent(`fastcharts:${name}`, {
+    this.root.dispatchEvent(new CustomEvent(`xy:${name}`, {
       detail,
       bubbles: true,
       composed: true,
@@ -1521,7 +1521,7 @@ class ChartView {
       ? this.interaction.link_axes.filter((axis) => axis === "x" || axis === "y")
       : ["x", "y"];
     if (!this._linkAxes.length) this._linkAxes = ["x", "y"];
-    this._linkChannel = new BroadcastChannel(`fastcharts:${group}`);
+    this._linkChannel = new BroadcastChannel(`xy:${group}`);
     this._linkChannel.onmessage = (event) => {
       const msg = event.data || {};
       if (!msg.view || msg.source === this._linkedSource) return;
@@ -1678,7 +1678,7 @@ class ChartView {
       try {
         this._initGl(this._payload);
       } catch (err) {
-        this.root.textContent = "fastcharts: WebGL2 context could not be restored.";
+        this.root.textContent = "xy: WebGL2 context could not be restored.";
         throw err;
       }
       this._scheduleViewRequest(this.view, { delay: 0 });
@@ -1727,7 +1727,7 @@ class ChartView {
   _buildDom(el) {
     const s = this.spec;
     const root = document.createElement("div");
-    root.className = "fastcharts";
+    root.className = "xy";
     root.style.cssText =
       `position:relative;width:${this.fluid ? "100%" : this.size.w + "px"};` +
       `height:${this.fluidH ? "100%" : this.size.h + "px"};` +
@@ -1905,7 +1905,7 @@ class ChartView {
       antialias: false, premultipliedAlpha: true, alpha: true,
     });
     if (!gl) {
-      this.root.textContent = "fastcharts: WebGL2 unavailable in this browser.";
+      this.root.textContent = "xy: WebGL2 unavailable in this browser.";
       throw new Error("webgl2 unavailable");
     }
     this.gl = gl;
@@ -4878,7 +4878,7 @@ function renderStandalone(el, spec, arrayBuffer) {
 }
 
 
-window.fastcharts = { render, renderStandalone, ChartView, MARK_KINDS, markOf };
+window.xy = { render, renderStandalone, ChartView, MARK_KINDS, markOf };
 })();
 </script>
 <script>
@@ -4922,7 +4922,7 @@ function b64ToArrayBuffer(b64) {
 }
 
 function pointsPayloadInsideView(trace) {
-  const view = window.fastchartsLiveDrilldown;
+  const view = window.xyLiveDrilldown;
   if (!view || !trace || trace.mode !== "points" || !trace.x_range || !trace.y_range) return true;
   const candidate = view._viewAnim && view._viewAnim.target ? view._viewAnim.target : view.view;
   return viewInsideWindow(candidate, {
@@ -4962,7 +4962,7 @@ function densityRequestPending(view) {
 
 function clearStaleUpdatingStatus() {
   if (statusEl.textContent !== "updating") return;
-  if (densityRequestPending(window.fastchartsLiveDrilldown)) return;
+  if (densityRequestPending(window.xyLiveDrilldown)) return;
   statusEl.textContent = "density";
 }
 
@@ -5121,9 +5121,9 @@ function localDensityUpdate(msg) {
 async function endpointUrl() {
   try {
     const env = await fetch("/env.json").then((r) => r.ok ? r.json() : null);
-    if (env && env.PING) return new URL("/api/fastcharts/drilldown", env.PING).href;
+    if (env && env.PING) return new URL("/api/xy/drilldown", env.PING).href;
   } catch (err) {}
-  return "/api/fastcharts/drilldown";
+  return "/api/xy/drilldown";
 }
 
 const endpoint = endpointUrl();
@@ -5144,7 +5144,7 @@ async function sendMessage(msg) {
       payload.message &&
       payload.message.type === "density_update" &&
       (payload.message.seq !== latestDensitySeq ||
-        (window.fastchartsLiveDrilldown && payload.message.seq !== window.fastchartsLiveDrilldown.seq))
+        (window.xyLiveDrilldown && payload.message.seq !== window.xyLiveDrilldown.seq))
     ) {
       clearStaleUpdatingStatus();
       return;
@@ -5164,7 +5164,7 @@ async function sendMessage(msg) {
     }
   } catch (err) {
     statusEl.textContent = "offline";
-    console.error("fastcharts drilldown request failed", err);
+    console.error("xy drilldown request failed", err);
   } finally {
     clearTimeout(timeout);
   }
@@ -5216,7 +5216,7 @@ const comm = {
   onMessage: (cb) => callbacks.push(cb),
 };
 
-const view = new fastcharts.ChartView(
+const view = new xy.ChartView(
   document.getElementById("chart"),
   spec,
   initialBytes.buffer,
@@ -5230,7 +5230,7 @@ view._setView = (next, opts) => {
   }
   return result;
 };
-window.fastchartsLiveDrilldown = view;
+window.xyLiveDrilldown = view;
 </script>
 </body>
 </html>

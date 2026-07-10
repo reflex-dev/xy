@@ -12,8 +12,8 @@ import warnings
 import numpy as np
 import pytest
 
-from fastcharts import kernels as k
-from fastcharts.config import MAX_SCREEN_DIM
+from xy import kernels as k
+from xy.config import MAX_SCREEN_DIM
 
 BACKENDS = [pytest.param(k, id=f"dispatch[{k.BACKEND}]")]
 
@@ -361,7 +361,7 @@ def test_size_sentinel_detection_matches_platform_usize_width(monkeypatch):
     """
     import ctypes
 
-    from fastcharts import _native
+    from xy import _native
 
     assert ctypes.c_size_t(-1).value == _native._USIZE_MAX
     sentinel = 2**32 - 1
@@ -454,7 +454,7 @@ def test_bin_2d_indices_empty_and_validation(impl):
 def test_sample_mask_matches_numpy_hash_reference(impl):
     # lod.hash_row_ids is the pure-NumPy SplitMix64 reference; the fused native
     # mask must be bit-identical to hashing + thresholding through it.
-    from fastcharts import lod
+    from xy import lod
 
     rng = np.random.default_rng(11)
     ids = rng.integers(0, 2**63, size=100_000).astype(np.uint64)
@@ -479,7 +479,7 @@ def test_stratified_sample_mask_matches_numpy_reference(impl):
     # Direct port of the per-category NumPy loop the fused kernel replaced:
     # hash-threshold per category plus an argpartition floor fill. Distinct ids
     # can't tie on hashes (SplitMix64 is a bijection), so equality is exact.
-    from fastcharts import lod
+    from xy import lod
 
     rng = np.random.default_rng(3)
     n = 50_000

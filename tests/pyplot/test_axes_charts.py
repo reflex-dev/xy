@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import fastcharts.pyplot as plt
+import xy.pyplot as plt
 
 
 @pytest.fixture(autouse=True)

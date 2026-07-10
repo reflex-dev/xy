@@ -1,7 +1,7 @@
-"""Shared browser probes for fastcharts benchmark pages.
+"""Shared browser probes for xy benchmark pages.
 
 The regular TTFR helper in ``_browser.py`` answers "when did a page first
-paint?". These helpers are for richer fastcharts-specific pages that need the
+paint?". These helpers are for richer xy-specific pages that need the
 ``ChartView`` object, WebGL readback, and structured JSON results from
 headless Chromium.
 """
@@ -30,9 +30,9 @@ def inline_json(obj: Any) -> str:
 
 
 def _standalone_js() -> str:
-    import fastcharts
+    import xy
 
-    path = Path(fastcharts.__file__).resolve().parent / "static" / "standalone.js"
+    path = Path(xy.__file__).resolve().parent / "static" / "standalone.js"
     return path.read_text(encoding="utf-8")
 
 

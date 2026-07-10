@@ -21,8 +21,8 @@ from pathlib import Path
 
 import numpy as np
 
-import fastcharts as fc
-from fastcharts.export import _bundled_js
+import xy as fc
+from xy.export import _bundled_js
 
 CHROMIUM_CANDIDATES = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -67,7 +67,7 @@ def build_page() -> str:
   const spec = {json.dumps(spec)};
   const bytes = Uint8Array.from(atob("{base64.b64encode(blob).decode()}"), c => c.charCodeAt(0));
   try {{
-    const view = fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);
+    const view = xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);
     setTimeout(() => {{
       try {{
         view._drawNow();  // synchronous draw; read back in the same task
@@ -77,7 +77,7 @@ def build_page() -> str:
         gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
         let lit = 0;
         for (let i = 3; i < px.length; i += 4) if (px[i] > 8) lit++;
-        const labels = document.querySelectorAll(".fastcharts div").length;
+        const labels = document.querySelectorAll(".xy div").length;
         document.title = `FC_OK lit=${{lit}} total=${{w * h}} labels=${{labels}}`;
       }} catch (e) {{ document.title = "FC_ERROR " + e.message; }}
     }}, 200);

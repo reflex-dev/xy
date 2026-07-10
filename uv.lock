@@ -158,7 +158,7 @@ wheels = [
 ]
 
 [[package]]
-name = "fastcharts"
+name = "xy"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

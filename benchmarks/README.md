@@ -39,7 +39,7 @@ These commands match the non-blocking GitHub Actions measurement lane:
   --chromium "$CHROME" --json dashboard.json
 .venv/bin/python benchmarks/bench_workflows.py --profile standard --reps 5 \
   --chromium "$CHROME" --json workflows.json
-.venv/bin/python benchmarks/bench_install.py --packages fastcharts,plotly \
+.venv/bin/python benchmarks/bench_install.py --packages xy,plotly \
   --repeat 3 --fresh-venv --json install-fresh.json
 ```
 
@@ -65,7 +65,7 @@ reported as CodSpeed simulation benchmarks.
 
 ## Reference Hardware
 
-Set `FASTCHARTS_BENCH_HARDWARE_GL=1` to disable the benchmark helpers' SwiftShader
+Set `XY_BENCH_HARDWARE_GL=1` to disable the benchmark helpers' SwiftShader
 flags. Artifacts record `environment.browser_renderer=hardware`.
 The workflow benchmark measures native Rust PNG separately from the opt-in
 `engine="chromium"` screenshot row. The latter remains `software-gl` because

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Verify the lazy public API surface is coherent.
 
-`fastcharts.__init__` intentionally hand-maintains two things:
+`xy.__init__` intentionally hand-maintains two things:
 
-- `__all__`, the names users can import from `fastcharts`
-- `_EXPORTS`, the lazy export map that keeps `import fastcharts` lightweight
+- `__all__`, the names users can import from `xy`
+- `_EXPORTS`, the lazy export map that keeps `import xy` lightweight
 
 That is a good shape for import-time performance, but it is easy to forget one
 side when adding a chart family. This stdlib-only check catches drift before a
@@ -32,20 +32,20 @@ HEAVY_THIRD_PARTY_IMPORTS = {
     "numpy",
     "traitlets",
 }
-HEAVY_FASTCHARTS_IMPORTS = {
-    "fastcharts.channels",
-    "fastcharts.channel",
-    "fastcharts.columns",
-    "fastcharts.components",
-    "fastcharts._figure",
-    "fastcharts.interaction",
-    "fastcharts.kernels",
-    "fastcharts.lod",
-    "fastcharts.marks",
-    "fastcharts._native",
-    "fastcharts.widget",
+HEAVY_XY_IMPORTS = {
+    "xy.channels",
+    "xy.channel",
+    "xy.columns",
+    "xy.components",
+    "xy._figure",
+    "xy.interaction",
+    "xy.kernels",
+    "xy.lod",
+    "xy.marks",
+    "xy._native",
+    "xy.widget",
 }
-HEAVY_IMPORTS = HEAVY_THIRD_PARTY_IMPORTS | HEAVY_FASTCHARTS_IMPORTS
+HEAVY_IMPORTS = HEAVY_THIRD_PARTY_IMPORTS | HEAVY_XY_IMPORTS
 COMPONENT_REEXPORTS = {"CHART_DOM_SLOTS"}
 DECLARATIVE_MARK_EXPORTS = (
     "scatter",
@@ -159,7 +159,7 @@ def validate_public_api(pkg: ModuleType) -> list[str]:
     dir_names = set(dir(pkg))
     dir_missing = sorted(public_set - dir_names)
     if dir_missing:
-        errors.append(f"dir(fastcharts) is missing public names: {dir_missing}")
+        errors.append(f"dir(xy) is missing public names: {dir_missing}")
 
     for name, module_name in sorted(exports.items()):
         if not isinstance(name, str) or not isinstance(module_name, str):
@@ -188,7 +188,7 @@ def validate_component_public_api(
         try:
             components_module = importlib.import_module(".components", pkg.__name__)
         except Exception as exc:
-            return [f"cannot import fastcharts.components for public API validation: {exc!r}"]
+            return [f"cannot import xy.components for public API validation: {exc!r}"]
 
     names = _string_list(
         getattr(components_module, "__all__", None),
@@ -216,7 +216,7 @@ def validate_component_public_api(
         errors.append(f"{components_module.__name__}.__all__ is missing root exports: {missing}")
     if extra:
         errors.append(
-            f"{components_module.__name__}.__all__ contains names not exported from fastcharts: "
+            f"{components_module.__name__}.__all__ contains names not exported from xy: "
             f"{extra}"
         )
 
@@ -242,7 +242,7 @@ def validate_declarative_api_contract(
         try:
             components_module = importlib.import_module(".components", pkg.__name__)
         except Exception as exc:
-            return [f"cannot import fastcharts.components for declarative API validation: {exc!r}"]
+            return [f"cannot import xy.components for declarative API validation: {exc!r}"]
 
     component_names = set(
         _string_list(
@@ -254,7 +254,7 @@ def validate_declarative_api_contract(
 
     for name in DECLARATIVE_API_EXPORTS:
         if name not in public_names:
-            errors.append(f"declarative API export {name!r} is missing from fastcharts.__all__")
+            errors.append(f"declarative API export {name!r} is missing from xy.__all__")
         if exports.get(name) != ".components":
             errors.append(
                 f"declarative API export {name!r} must map to '.components', "
@@ -294,17 +294,17 @@ def validate_version_consistency(
     project_version = str((data.get("project") or {}).get("version") or "").strip()
     public_version = getattr(pkg, "__version__", None)
     if not isinstance(public_version, str) or not public_version.strip():
-        return [f"fastcharts.__version__ must be a non-empty string, got {public_version!r}"]
+        return [f"xy.__version__ must be a non-empty string, got {public_version!r}"]
     if project_version != public_version:
         return [
-            "fastcharts.__version__ must match pyproject.toml project.version: "
+            "xy.__version__ must match pyproject.toml project.version: "
             f"{public_version!r} != {project_version!r}"
         ]
     return []
 
 
 def validate_pep561_marker(
-    marker_path: Path = ROOT / "python" / "fastcharts" / "py.typed",
+    marker_path: Path = ROOT / "python" / "xy" / "py.typed",
 ) -> list[str]:
     """Ensure the source package advertises full-package typing support."""
     try:
@@ -312,7 +312,7 @@ def validate_pep561_marker(
     except OSError as exc:
         return [f"missing PEP 561 marker {marker_path}: {exc}"]
     if data != b"":
-        return [f"fastcharts py.typed must be an empty full-package PEP 561 marker; got {data!r}"]
+        return [f"xy py.typed must be an empty full-package PEP 561 marker; got {data!r}"]
     return []
 
 
@@ -320,7 +320,7 @@ def _loaded_import_budget_modules() -> list[str]:
     return sorted(
         name
         for name in sys.modules
-        if name in HEAVY_THIRD_PARTY_IMPORTS or name.startswith("fastcharts.")
+        if name in HEAVY_THIRD_PARTY_IMPORTS or name.startswith("xy.")
     )
 
 
@@ -329,27 +329,27 @@ def _format_eager_import_findings(label: str, eager: Any) -> list[str]:
         return [f"{label} fresh import-budget probe returned invalid eager list: {eager!r}"]
 
     third_party = sorted(name for name in eager if name in HEAVY_THIRD_PARTY_IMPORTS)
-    fastcharts_modules = sorted(name for name in eager if name.startswith("fastcharts."))
+    xy_modules = sorted(name for name in eager if name.startswith("xy."))
     other = sorted(
         name
         for name in eager
-        if name not in HEAVY_THIRD_PARTY_IMPORTS and not name.startswith("fastcharts.")
+        if name not in HEAVY_THIRD_PARTY_IMPORTS and not name.startswith("xy.")
     )
 
     errors: list[str] = []
     if third_party:
         errors.append(
-            f"{label} import fastcharts eagerly loaded third-party modules before "
+            f"{label} import xy eagerly loaded third-party modules before "
             f"chart API use: {third_party}"
         )
-    if fastcharts_modules:
+    if xy_modules:
         errors.append(
-            f"{label} import fastcharts eagerly loaded fastcharts submodules before "
-            f"chart API use: {fastcharts_modules}"
+            f"{label} import xy eagerly loaded xy submodules before "
+            f"chart API use: {xy_modules}"
         )
     if other:
         errors.append(
-            f"{label} import fastcharts eagerly loaded unexpected modules before "
+            f"{label} import xy eagerly loaded unexpected modules before "
             f"chart API use: {other}"
         )
     return errors
@@ -374,7 +374,7 @@ def _format_fresh_public_metadata_findings(label: str, result: dict[str, Any]) -
         )
     elif missing_from_dir:
         errors.append(
-            f"{label} dir(fastcharts) is missing public names after a fresh import: "
+            f"{label} dir(xy) is missing public names after a fresh import: "
             f"{missing_from_dir}"
         )
     return errors
@@ -399,22 +399,22 @@ def check_fresh_import_budget(
 
         third_party_imports = {sorted(HEAVY_THIRD_PARTY_IMPORTS)!r}
         t0 = time.perf_counter()
-        import fastcharts
+        import xy
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        public_all = list(fastcharts.__all__)
-        dir_names = set(dir(fastcharts))
+        public_all = list(xy.__all__)
+        dir_names = set(dir(xy))
         missing_from_dir = sorted(name for name in public_all if name not in dir_names)
         eager = sorted(
             name
             for name in sys.modules
-            if name in third_party_imports or name.startswith("fastcharts.")
+            if name in third_party_imports or name.startswith("xy.")
         )
         print(json.dumps({{
             "elapsed_ms": elapsed_ms,
             "eager": eager,
             "missing_from_dir": missing_from_dir,
             "public_all": public_all,
-            "version": fastcharts.__version__,
+            "version": xy.__version__,
         }}))
     """
     env = os.environ.copy()
@@ -451,11 +451,11 @@ def check_fresh_import_budget(
         )
     elif elapsed_ms > IMPORT_BUDGET_MS:
         errors.append(
-            f"{label} import fastcharts took {elapsed_ms:.1f} ms; "
+            f"{label} import xy took {elapsed_ms:.1f} ms; "
             f"budget is {IMPORT_BUDGET_MS:.0f} ms"
         )
     if not result.get("version"):
-        errors.append(f"{label} fresh import-budget probe did not expose fastcharts.__version__")
+        errors.append(f"{label} fresh import-budget probe did not expose xy.__version__")
     return errors
 
 
@@ -465,7 +465,7 @@ def check_all_fresh_import_budgets() -> list[str]:
 
 def check_public_api(*, check_lazy_import: bool = True) -> list[str]:
     before = set(_loaded_import_budget_modules())
-    pkg = importlib.import_module("fastcharts")
+    pkg = importlib.import_module("xy")
     after_import = set(_loaded_import_budget_modules())
 
     errors = check_all_fresh_import_budgets() if check_lazy_import else []
@@ -485,7 +485,7 @@ def check_public_api(*, check_lazy_import: bool = True) -> list[str]:
         try:
             getattr(pkg, name)
         except Exception as exc:
-            errors.append(f"getattr(fastcharts, {name!r}) failed: {exc!r}")
+            errors.append(f"getattr(xy, {name!r}) failed: {exc!r}")
 
     return errors
 

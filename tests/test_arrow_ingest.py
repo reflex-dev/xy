@@ -1,6 +1,6 @@
 """Zero-copy Arrow ingest (§4 / §29: copies are counted, never folklore).
 
-pyarrow is an optional *input* format — fastcharts never imports it (module-
+pyarrow is an optional *input* format — xy never imports it (module-
 name duck typing in columns._arrow_to_numpy), so these tests importorskip and
 run only where pyarrow is installed (CI's dev environment).
 """
@@ -12,8 +12,8 @@ import pytest
 
 pa = pytest.importorskip("pyarrow")
 
-from fastcharts._figure import Figure  # noqa: E402
-from fastcharts.columns import ColumnStore  # noqa: E402
+from xy._figure import Figure  # noqa: E402
+from xy.columns import ColumnStore  # noqa: E402
 
 
 def _buf_addr(arr: "pa.Array") -> int:

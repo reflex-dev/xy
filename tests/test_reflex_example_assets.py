@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CLIENT_SOURCE = "\n".join(
     p.read_text(encoding="utf-8") for p in sorted((ROOT / "js" / "src").glob("*.js"))
 )
-APP_SOURCE = ROOT / "examples" / "reflex" / "reflex_fastcharts_app" / "reflex_fastcharts_app.py"
-LIVE_SOURCE = ROOT / "examples" / "reflex" / "reflex_fastcharts_app" / "live_drilldown.py"
+APP_SOURCE = ROOT / "examples" / "reflex" / "reflex_xy_app" / "reflex_xy_app.py"
+LIVE_SOURCE = ROOT / "examples" / "reflex" / "reflex_xy_app" / "live_drilldown.py"
 CUSTOM_CHROME_ASSET = ROOT / "examples" / "reflex" / "assets" / "charts" / "custom_chrome.html"
 ANNOTATED_HEATMAP_ASSET = (
     ROOT / "examples" / "reflex" / "assets" / "charts" / "annotated_heatmap.html"
@@ -165,7 +165,7 @@ def test_reflex_dashboard_has_selector_and_small_business_chart() -> None:
         "custom-chrome",
         "custom-chrome-legend",
         "custom-chrome-tooltip",
-        "fastcharts-custom-chrome",
+        "xy-custom-chrome",
         "ANNOTATED_HEATMAP_MARKERS",
         "annotated_heatmap_panel",
         "annotated_heatmap_legend",
@@ -173,7 +173,7 @@ def test_reflex_dashboard_has_selector_and_small_business_chart() -> None:
         "annotated_heatmap_bridge",
         "annotated-heatmap-legend",
         "annotated-heatmap-tooltip",
-        "fastcharts-annotated-heatmap",
+        "xy-annotated-heatmap",
         "chrome = chart.reflex_components()",
         'chrome["legend"]',
         'chrome["tooltip"]',
@@ -227,7 +227,7 @@ def test_reflex_dashboard_has_code_snippets_for_every_chart() -> None:
             or "live_drilldown" in snippet
         )
         if chart_id != "plotly-scatter":
-            assert "fastcharts" in snippet or "Figure" in snippet or "fc." in snippet
+            assert "xy" in snippet or "Figure" in snippet or "fc." in snippet
 
 
 def test_reflex_dashboard_chart_nav_is_unique_and_asset_backed() -> None:
@@ -314,12 +314,12 @@ def test_reflex_dashboard_nav_assets_are_renderable_html() -> None:
         if chart["title"].startswith("Plotly"):
             assert "Plotly.newPlot" in html
         elif "live_drilldown" in chart["src"]:
-            assert "window.fastchartsLiveDrilldown" in html
+            assert "window.xyLiveDrilldown" in html
         else:
-            assert "fastcharts.renderStandalone" in html
+            assert "xy.renderStandalone" in html
 
 
-def test_reflex_lifecycle_smoke_covers_fastcharts_iframe_assets() -> None:
+def test_reflex_lifecycle_smoke_covers_xy_iframe_assets() -> None:
     constants = _dashboard_constants()
     lifecycle = _lifecycle_smoke_module()
     expected = {
@@ -384,7 +384,7 @@ def test_reflex_lifecycle_smoke_exercises_iframe_remounts() -> None:
         "reloadInPlace",
         "reloadIframes",
         'url.searchParams.set("reload", "1")',
-        "fastcharts-lifecycle-parent",
+        "xy-lifecycle-parent",
         "run-probe",
         "revealHiddenBoot",
         "data-fc-shell-lifecycle",
@@ -640,10 +640,10 @@ def test_visual_regression_smoke_checks_layout_regions_not_just_blankness() -> N
 
 def test_custom_chrome_chart_asset_disables_builtin_chrome() -> None:
     html = CUSTOM_CHROME_ASSET.read_text(encoding="utf-8")
-    assert "fastcharts.renderStandalone" in html
+    assert "xy.renderStandalone" in html
     assert "Custom Reflex legend + tooltip" in html
-    assert "fastcharts-custom-chrome" in html
-    assert "window.__fastchartsCustomChromeView" in html
+    assert "xy-custom-chrome" in html
+    assert "window.__xyCustomChromeView" in html
     assert 'addEventListener("pointermove"' in html
     assert "_localRow(hit)" in html
     assert '"show_legend":false' in html
@@ -652,10 +652,10 @@ def test_custom_chrome_chart_asset_disables_builtin_chrome() -> None:
 
 def test_annotated_heatmap_uses_reflex_custom_chrome_bridge() -> None:
     html = ANNOTATED_HEATMAP_ASSET.read_text(encoding="utf-8")
-    assert "fastcharts.renderStandalone" in html
+    assert "xy.renderStandalone" in html
     assert "Annotated risk heatmap" in html
-    assert "fastcharts-annotated-heatmap" in html
-    assert "window.__fastchartsAnnotatedHeatmapView" in html
+    assert "xy-annotated-heatmap" in html
+    assert "window.__xyAnnotatedHeatmapView" in html
     assert 'addEventListener("pointermove"' in html
     assert "_localRow(hit)" in html
     assert '"show_legend":false' in html
@@ -667,7 +667,7 @@ def test_annotated_heatmap_uses_reflex_custom_chrome_bridge() -> None:
 
 def test_small_business_chart_asset_exists() -> None:
     html = BUSINESS_ASSET.read_text(encoding="utf-8")
-    assert "fastcharts.renderStandalone" in html
+    assert "xy.renderStandalone" in html
     assert "Small business overview" in html
     assert "Revenue" in html
     assert "Pipeline" in html
@@ -675,7 +675,7 @@ def test_small_business_chart_asset_exists() -> None:
 
 def test_small_retention_cohort_asset_exists() -> None:
     html = RETENTION_ASSET.read_text(encoding="utf-8")
-    assert "fastcharts.renderStandalone" in html
+    assert "xy.renderStandalone" in html
     assert "Small retention cohort" in html
     assert "signup cohort" in html
     assert "retention" in html

@@ -28,7 +28,7 @@ EMBED_WARN_BYTES = 64 * 2**20
 # renders the chart interactively) — no Python browser dependency, no
 # kaleido-class native package. Discovery order: explicit env var, then PATH,
 # then common local/CI browser installs.
-_CHROMIUM_ENV = "FASTCHARTS_CHROMIUM"
+_CHROMIUM_ENV = "XY_CHROMIUM"
 _CHROMIUM_NAMES = ("chromium", "chromium-browser", "chrome", "google-chrome")
 _CHROMIUM_FALLBACKS = (
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -191,7 +191,7 @@ def to_html(
         )
     spec_js = _json_for_inline_script(spec)
     client_js = _javascript_for_inline_script(_bundled_js("standalone"))
-    title_html = _html.escape(fig.title or "fastcharts")
+    title_html = _html.escape(fig.title or "xy")
     doc = f"""<!doctype html>
 <html>
 <head><meta charset="utf-8">
@@ -209,7 +209,7 @@ html,body{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;
   const spec = {spec_js};
   const b64 = "{base64.b64encode(blob).decode("ascii")}";
   const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-  fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);
+  xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);
 </script>
 </body>
 </html>"""

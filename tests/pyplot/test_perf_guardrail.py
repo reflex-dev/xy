@@ -14,8 +14,8 @@ import time
 import numpy as np
 import pytest
 
-import fastcharts as fc
-import fastcharts.pyplot as plt
+import xy as fc
+import xy.pyplot as plt
 
 
 def _best(fn, reps: int) -> float:
@@ -51,7 +51,7 @@ def test_pyplot_build_tracks_declarative(n: int, reps: int, ceiling: float) -> N
 
 def test_theme_and_axis_components_are_shared() -> None:
     """CSS token validation must stay O(1) per process, not O(charts)."""
-    from fastcharts.pyplot import _axes
+    from xy.pyplot import _axes
 
     plt.close("all")
     _fig, ax = plt.subplots()

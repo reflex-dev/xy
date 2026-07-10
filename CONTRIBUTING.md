@@ -1,4 +1,4 @@
-# Contributing to fastcharts
+# Contributing to xy
 
 The full contributor guide — PR checklist, local gate commands, and the
 chart-type contribution walkthrough — lives at
@@ -7,8 +7,8 @@ chart-type contribution walkthrough — lives at
 Quick start:
 
 ```bash
-git clone https://github.com/reflex-dev/reviz.git
-cd reviz
+git clone https://github.com/reflex-dev/xy.git
+cd xy
 uv venv && uv pip install -e ".[dev]"
 make check        # fast gate
 make check-full   # full production gate (needs Rust + Node 18+)

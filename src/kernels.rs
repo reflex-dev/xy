@@ -591,7 +591,7 @@ const SPLITMIX_MUL_1: u64 = 0xBF58_476D_1CE4_E5B9;
 const SPLITMIX_MUL_2: u64 = 0x94D0_49BB_1331_11EB;
 
 /// SplitMix64 of `(row_id + seed)` — the deterministic sampling hash (§5/§17).
-/// Must stay bit-identical to `fastcharts.lod.hash_row_ids` (wrapping u64
+/// Must stay bit-identical to `xy.lod.hash_row_ids` (wrapping u64
 /// arithmetic on both sides); the Python parity test asserts this.
 #[inline(always)]
 fn splitmix64(id: u64, seed: u64) -> u64 {

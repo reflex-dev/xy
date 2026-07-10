@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import fastcharts.pyplot as plt
+import xy.pyplot as plt
 
 
 @pytest.fixture(autouse=True)

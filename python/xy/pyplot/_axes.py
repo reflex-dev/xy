@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-import fastcharts as fc
+import xy as fc
 
 from ._artists import BarContainer, Line2D, PathCollection
 from ._colors import PROP_CYCLE, resolve_cmap, resolve_color

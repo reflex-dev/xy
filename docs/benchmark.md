@@ -1,17 +1,17 @@
-# Scatter benchmark: fastcharts vs Python charting libraries
+# Scatter benchmark: xy vs Python charting libraries
 
 The same scatter (a correlated 2-D cloud) at growing point counts, across
 popular Python charting libraries, on four factors: **how many points each can
 render, how fast, how much memory, and the render payload size.**
 
 The cross-library harness lives in `benchmarks/bench_vs.py` and includes
-optional adapters for fastcharts, matplotlib, seaborn, Plotly, Bokeh, Altair,
+optional adapters for xy, matplotlib, seaborn, Plotly, Bokeh, Altair,
 Datashader, and hvPlot/HoloViews. Missing libraries are reported as
 `unavailable` rather than failing the run.
 
 The 10M headline and full original tables below are **measured**, not cited —
 produced by the CI `benchmark` job before the expanded adapter set landed
-(Ubuntu, Python 3.12; fastcharts native core; Plotly via kaleido→PNG;
+(Ubuntu, Python 3.12; xy native core; Plotly via kaleido→PNG;
 matplotlib `Agg`→PNG; memory via `tracemalloc` + `psutil`). The expanded adapter
 table is a local benchmark run that validates the new adapters at 100k points.
 
@@ -22,7 +22,7 @@ pip install numpy matplotlib seaborn plotly kaleido bokeh altair datashader hvpl
 python benchmarks/bench_vs.py
 ```
 
-The fastcharts-only arm also runs with no dependencies via
+The xy-only arm also runs with no dependencies via
 `benchmarks/bench_scatter_native.py`.
 
 ## Benchmark categories and goals
@@ -38,7 +38,7 @@ artifacts (`benchmark.json`, `line.json`, `install.json`, `interaction.json`,
 they include the full registry,
 `tracked_categories`, and a machine-readable `environment` block with Python,
 platform, package, executable, git commit, and dirty-worktree metadata. The
-fastcharts-only benchmark rows include `benchmark_categories` so future
+xy-only benchmark rows include `benchmark_categories` so future
 dashboards can group results by these goals. The core 2D, native scatter, and
 native kernel JSON reports carry the same top-level registry;
 `scripts/verify_benchmark_report.py` rejects artifacts that drop it. The
@@ -50,7 +50,7 @@ commit so CI artifacts are quick to inspect from logs.
 | ID | Category | Status | Why it matters | Primary metrics | Current / planned harness | Goal |
 |---|---|---|---|---|---|---|
 | `small_data_startup` | Small-data startup | tracked | Everyday charts should feel instant; a performance library cannot only win at 10M rows. | time-to-first-render, JS payload, Python overhead | `benchmarks/bench_vs.py --ttfr` at 1k-100k; `test_first_payload_scatter_small` | Beat Plotly/Bokeh/Altair on first interactive paint for common charts. |
-| `install_footprint_import_budget` | Install footprint and import budget | tracked | Notebook, CI, and serverless users feel package weight and cold import time before the first chart exists. | cold import time, installed distribution bytes, file count | `benchmarks/bench_install.py` | Keep fastcharts lightweight at import and smaller to install than broad plotting stacks. |
+| `install_footprint_import_budget` | Install footprint and import budget | tracked | Notebook, CI, and serverless users feel package weight and cold import time before the first chart exists. | cold import time, installed distribution bytes, file count | `benchmarks/bench_install.py` | Keep xy lightweight at import and smaller to install than broad plotting stacks. |
 | `medium_direct_scatter` | Medium direct scatter | tracked | Proves exact marker rendering, hover, color, and size channels before aggregation kicks in. | FPS, TTFR, memory, payload bytes/point, hover latency | `benchmarks/bench_vs.py` at 100k-200k; `benchmarks/bench_interaction.py`; `test_first_payload_scatter_medium` | Smooth exact WebGL scatter with bounded bytes/point and no JSON-number payload cliff. |
 | `huge_scatter_overview` | Huge scatter overview | tracked | Proves screen-bounded rendering for datasets larger than the browser should draw point-for-point. | ingest/bin time, density payload size, peak memory, TTFR | `bench_scatter_native.py`, `bench_vs.py`, `test_first_payload_density_large`, example app assets | Keep resident/render payload flat in N while showing truthful density summaries. |
 | `adaptive_scatter_drilldown` | Adaptive scatter drilldown | tracked | The large-data claim needs a credible path from overview to exact visible points. | visible-query latency, tier-switch latency, exact-point recovery, badge accuracy | `benchmarks/test_codspeed_kernels.py::test_adaptive_drilldown_cycle` | Exact points when visible count is under budget; sampled/density with explicit counts otherwise. |
@@ -72,7 +72,7 @@ markers. The benchmark reports should make that distinction impossible to miss.
 ## Interaction, drilldown, and dashboard probes
 
 CodSpeed is native-only and intentionally focused on hot paths that should not
-regress between commits. The suite asserts `fastcharts.kernels.BACKEND ==
+regress between commits. The suite asserts `xy.kernels.BACKEND ==
 "native"` before timing anything. It tracks:
 
 - Rust kernels for f32 encoding, min/max, zone maps, M4 decimation, density
@@ -104,7 +104,7 @@ described below.
 
 The JSON verifier treats `scatter-native` and `kernel-native` reports as
 native-only artifacts: if their environment metadata says
-`fastcharts_backend` is anything other than `native`, verification fails. That
+`xy_backend` is anything other than `native`, verification fails. That
 keeps any non-native measurement from being mixed into native performance
 claims.
 
@@ -165,7 +165,7 @@ document or from a verified JSON artifact.
 | Line decimation | "The 10M line benchmark ships an M4-decimated ~60 KB payload while preserving the extrema oracle." | mode, point count, payload, correctness oracle |
 | Install/import footprint | "In the install-footprint benchmark, cold import was 6.4 ms for the measured distribution." | benchmark name, metric, measured distribution |
 
-Do not shorten those into broad slogans such as "fastcharts is faster than
+Do not shorten those into broad slogans such as "xy is faster than
 Plotly" or "renders 10M points" without the row context. If a sentence does not
 name the chart type, workload, mode, backend, metric, and render target where
 they matter, it is not ready to publish.
@@ -173,7 +173,7 @@ they matter, it is not ready to publish.
 ## Time to first render (data → pixels)
 
 Byte counts and serialize time are **not** pixels. For the browser-rendered
-libraries (fastcharts, Plotly-HTML, Bokeh, Altair, hvPlot) the static-export size
+libraries (xy, Plotly-HTML, Bokeh, Altair, hvPlot) the static-export size
 says nothing about how long the browser takes to parse the embedded JS, build the
 scene, and paint — often the dominant cost (Bokeh/Altair ship megabytes of JS +
 data the browser must execute). So the harness measures **time-to-first-render**
@@ -183,17 +183,17 @@ inlined, no CDN, via `benchmarks/_browser.py`). Raster libraries
 (matplotlib/seaborn/datashader/Plotly-kaleido) already produced pixels at render,
 so their TTFR = build + render.
 
-This closes the biggest fairness gap: previously fastcharts' number excluded the
+This closes the biggest fairness gap: previously xy' number excluded the
 WebGL draw while the HTML libraries' numbers excluded the browser entirely — both
 stopped before pixels existed. The CI `benchmark` job now runs the TTFR pass
 (capped at 100k points, since each row launches a browser) and the numbers land
-in `docs/benchmark_ci.md` / the `benchmark-report` artifact. Locally, fastcharts'
+in `docs/benchmark_ci.md` / the `benchmark-report` artifact. Locally, xy'
 standalone-export TTFR under software GL (SwiftShader) is ~180 ms for a density
 page; on real GPU hardware it is lower.
 
 ## Expanded adapter benchmark — 100k points
 
-The fastcharts, matplotlib, seaborn, and Plotly rows are refreshed from the
+The xy, matplotlib, seaborn, and Plotly rows are refreshed from the
 2026-07-09 `benchmark-refresh` CI run (Ubuntu, Python 3.12, native Rust core;
 Plotly via kaleido→PNG). The Bokeh, Altair, Datashader, and hvPlot rows (¹) are
 from an earlier local expanded run and are not re-measured here — the refresh
@@ -206,7 +206,7 @@ PYTHONPATH=python .venv/bin/python benchmarks/bench_vs.py \
 
 | Library | Render target | 100k total ¶ | Peak memory | Output bytes | Points/sec ¶ |
 |---|---|---:|---:|---:|---:|
-| fastcharts | binary payload (native) * | **2 ms** | **2 MB** | 781 KB | 51,702,966 |
+| xy | binary payload (native) * | **2 ms** | **2 MB** | 781 KB | 51,702,966 |
 | matplotlib | Agg PNG † | 83 ms | 6 MB | 53 KB | 1,206,226 |
 | seaborn | matplotlib PNG † | 152 ms | 11 MB | 39 KB | 657,728 |
 | Plotly `Scattergl` | Kaleido PNG † | 2,991 ms | 22 MB | 61 KB | 33,434 |
@@ -219,7 +219,7 @@ PYTHONPATH=python .venv/bin/python benchmarks/bench_vs.py \
 
 ¹ Earlier local run, not re-measured in the 2026-07-09 CI refresh.
 
-\* **Exact interactive wire payload.** The fastcharts row counts compact spec
+\* **Exact interactive wire payload.** The xy row counts compact spec
 metadata plus the GPU-ready x/y float32 buffers, excluding the JavaScript runtime
 and HTML wrapper. At 100k direct points, two 4-byte coordinates account for about
 781 KiB (8 bytes/point); exact hover, selection, and view updates remain possible.
@@ -245,7 +245,7 @@ information and runtime-inclusion rules.
 
 ---
 
-## Core 2D chart benchmark — fastcharts vs Plotly and Seaborn
+## Core 2D chart benchmark — xy vs Plotly and Seaborn
 
 The regular 2D chart harness lives in `benchmarks/bench_2d_charts.py`. It
 compares the new core chart families against Plotly and emits Seaborn rows
@@ -298,11 +298,11 @@ grid instead of four rectangle geometry columns per cell.
 The larger profile extends to 1M histogram/area samples, 10k simple bars, and a
 500 x 500 heatmap. Results stayed strong:
 
-- Histogram: 1M values produced a 4 KB fastcharts payload vs 13 MB Plotly JSON
+- Histogram: 1M values produced a 4 KB xy payload vs 13 MB Plotly JSON
   (3192x smaller), with 11.2x faster payload prep on the native backend.
-- Heatmap: 500 x 500 cells produced a 991 KB fastcharts payload vs 3 MB Plotly
+- Heatmap: 500 x 500 cells produced a 991 KB xy payload vs 3 MB Plotly
   JSON, with 5.9x faster payload prep.
-- Area: 1M samples produced an 89 KB fastcharts payload vs 21 MB Plotly JSON
+- Area: 1M samples produced an 89 KB xy payload vs 21 MB Plotly JSON
   (242x smaller), with 6.0x faster payload prep.
 - Bars: the compact bar primitive removed the previous 10k-category `watch`
   item. Simple 10k bars now ship 167 KB vs Plotly's 205 KB and prepare 4.35x
@@ -344,12 +344,12 @@ and the report carries a count-conservation oracle.
 
 ### Line / time-series decimation — vs plotly-resampler
 
-fastcharts' M4 decimation (Tier 1) against vanilla Plotly and plotly-resampler
+xy' M4 decimation (Tier 1) against vanilla Plotly and plotly-resampler
 (the same-thesis rival). `benchmarks/bench_line.py`; random-walk series;
 aggregating libraries target ~2000 on-screen points. **Measured** by the CI
 benchmark job (run 28724006099, commit `7de68f8`, Ubuntu, Python 3.12).
 
-| N | fastcharts | plotly (vanilla) | plotly-resampler |
+| N | xy | plotly (vanilla) | plotly-resampler |
 |---:|---:|---:|---:|
 | 100k | 3.1 ms / **55.6 KB** · oracle ✅ | 412 ms / 2.1 MB | unavailable¹ |
 | 1M | 6.3 ms / **58.9 KB** · oracle ✅ | 84 ms / 21.1 MB | unavailable¹ |
@@ -373,7 +373,7 @@ bench_install.py`; best-of-5 fresh-interpreter import; distribution files only
 
 | library | cold import | dist size |
 |---|---:|---:|
-| **fastcharts** | **6.4 ms** | **566 KB** |
+| **xy** | **6.4 ms** | **566 KB** |
 | plotly | 39 ms | 41.2 MB |
 | bokeh | 54 ms | 23.8 MB |
 | matplotlib | 181 ms | 24.4 MB |
@@ -383,13 +383,13 @@ bench_install.py`; best-of-5 fresh-interpreter import; distribution files only
 | seaborn | 1.50 s | 1.0 MB |
 | hvplot | 4.65 s | 685 KB |
 
-fastcharts imports 6–730× faster and is 40–75× smaller on disk than the
+xy imports 6–730× faster and is 40–75× smaller on disk than the
 mainstream libraries (the §33 import-budget goal, made comparative).
 
 The harness also has `--fresh-venv`, which installs each requested target into
 an isolated `uv` environment and reports total site-packages bytes, file count,
 transitive distribution count, install time, and cold import. CI runs this mode
-for fastcharts and Plotly alongside the faster distribution-only table above.
+for xy and Plotly alongside the faster distribution-only table above.
 
 ### Regression gate (auto-generated, CI-enforced)
 
@@ -434,13 +434,13 @@ time and label each row's mode and target.
 
 | library | total time | peak memory | resident Δ | render payload | points/sec |
 |---|---|---|---|---|---|
-| **fastcharts** | **169 ms** | **126 MB** | **+10 MB** | **832 KB** | 59,100,000 |
+| **xy** | **169 ms** | **126 MB** | **+10 MB** | **832 KB** | 59,100,000 |
 | matplotlib (Agg→PNG) | 3,239 ms | 553 MB | +223 MB | 42 KB PNG | 3,090,000 |
 | Seaborn (Agg→PNG) | 7,918 ms | 1,088 MB | +695 MB | 32 KB PNG | 1,260,000 |
 | Plotly `Scattergl` (→PNG) | 54,064 ms | 1,584 MB | +382 MB | 49 KB PNG | 185,000 |
 | Plotly `Scatter` (SVG) | — over budget above 1 M | | | | |
 
-At 10 M points fastcharts is **~19× faster than matplotlib**, **~47× faster than
+At 10 M points xy is **~19× faster than matplotlib**, **~47× faster than
 Seaborn**, and **~321× faster than Plotly's WebGL path**, at **4–13× lower peak
 memory**. Plotly's SVG path never reached 10 M (over budget above 1 M).
 
@@ -449,12 +449,12 @@ memory**. Plotly's SVG path never reached 10 M (over budget above 1 M).
 > tracer active, and `peak memory` is the tracemalloc peak from a separate,
 > untimed pass over the same work. Ingest is zero-copy for well-formed f64
 > arrays (the canonical store holds a reference, not a duplicate), so
-> fastcharts' 126 MB peak is transient working buffers — visible-row indices,
+> xy' 126 MB peak is transient working buffers — visible-row indices,
 > sample gathers, encode staging — released after the payload is built. What
 > lasts is screen-bounded: a fixed 832 KB density payload and ~10 MB of
 > resident growth. The payload-only native benchmark below measures the
 > payload-build allocation in isolation (~2 MB, flat in N) — a different,
-> narrower scope than this cross-library table. fastcharts' "total" is
+> narrower scope than this cross-library table. xy' "total" is
 > prepare-the-GPU-payload (encode/bin kernel-side) while the raster libraries'
 > "total" is to-pixels (a PNG), so the cleanest apples-to-apples columns are
 > **peak memory**, **payload size**, and the **ceiling**.
@@ -463,12 +463,12 @@ memory**. Plotly's SVG path never reached 10 M (over budget above 1 M).
 
 | library | max points |
 |---|---|
-| fastcharts | 10,000,000 (screen-bounded; not the real ceiling) |
+| xy | 10,000,000 (screen-bounded; not the real ceiling) |
 | matplotlib | 10,000,000 |
 | Plotly `Scattergl` | 10,000,000 |
 | Plotly `Scatter` (SVG) | 3,000,000 |
 
-fastcharts' 10 M here is just the largest N the harness generated; its render
+xy' 10 M here is just the largest N the harness generated; its render
 cost is flat in N (density surface), so the practical ceiling is data *ingest*,
 not draw — the design targets 100 M–1 B (dossier §2).
 
@@ -476,7 +476,7 @@ not draw — the design targets 100 M–1 B (dossier §2).
 
 ## Full measured tables
 
-### fastcharts (native core; "render" = build GPU payload)
+### xy (native core; "render" = build GPU payload)
 
 | N | build | render | total | peak mem | payload | points/sec |
 |---|---|---|---|---|---|---|
@@ -488,11 +488,11 @@ not draw — the design targets 100 M–1 B (dossier §2).
 | 10,000,000 | 35 ms | 51 ms | 86 ms | 2 MB | **768 KB** | 116,889,352 |
 
 The payload flips from 8 B/pt (direct) to a **constant 768 KB** at the density
-threshold (200 k) — 0.08 B/pt at 10 M. This table's scope is fastcharts'
+threshold (200 k) — 0.08 B/pt at 10 M. This table's scope is xy'
 payload-build allocation only, which stays near 2 MB regardless of N; the
 cross-library **Headline** table above measures the full pipeline (build +
 render, including transient working buffers for selection, sampling, and
-encode staging), where fastcharts' peak is 126 MB at 10 M and total is 169 ms
+encode staging), where xy' peak is 126 MB at 10 M and total is 169 ms
 — the same-harness figures to compare against matplotlib/Seaborn/Plotly.
 
 ### matplotlib (`Agg`, `savefig` PNG)
@@ -535,23 +535,23 @@ crosses 1.5 GB at 10 M — consistent with the dossier's §1 multi-copy analysis
 | 10,000,000 | — | — | — | — | — | over budget |
 
 The one-node-per-point wall (dossier §1): 44 s at 1 M, 113 s at 3 M, then it
-falls over. This is the path fastcharts exists to replace.
+falls over. This is the path xy exists to replace.
 
 ---
 
 ## What the numbers show
 
-1. **fastcharts is the only one flat in N on the output side.** Above the
+1. **xy is the only one flat in N on the output side.** Above the
    density threshold its render payload (768–832 KB) and payload-build allocation
    (~2 MB) do not grow with point count; total time grows only with the linear
    ingest/bin pass. matplotlib grows ∝ N in time *and* memory; both Plotly paths
    grow ∝ N in memory and render time.
-2. **Memory is the starkest axis.** At 10 M the full-pipeline peak is fastcharts
+2. **Memory is the starkest axis.** At 10 M the full-pipeline peak is xy
    126 MB vs matplotlib 553 MB vs Seaborn 1.09 GB vs Plotly-GL 1.58 GB — and
-   fastcharts' *lasting* resident growth is only ~10 MB (its screen-bounded
+   xy' *lasting* resident growth is only ~10 MB (its screen-bounded
    representation) vs +223–695 MB for the raster libraries, which hold every
    point and its copies resident. Ingest is zero-copy for f64 arrays, so
-   fastcharts' peak is transient working buffers (selection indices, sample
+   xy' peak is transient working buffers (selection indices, sample
    gathers, encode staging), released once the density surface is built. This
    is the §1/§27 thesis.
 3. **The SVG path has a hard ceiling** (~1–3 M, then unusable) exactly as
@@ -564,7 +564,7 @@ falls over. This is the path fastcharts exists to replace.
 - `render` is not identical across targets (PNG rasterize vs GPU-payload build);
   see the fairness note above. Memory, payload size, and the ceiling are the
   clean cross-library comparisons.
-- fastcharts memory is Python-side `tracemalloc` peak; its GPU/native bytes are
+- xy memory is Python-side `tracemalloc` peak; its GPU/native bytes are
   separate and itemized by `Figure.memory_report()` (§27). The payload column is
   the transport cost across the kernel→browser boundary.
 - Single CI machine, one run; treat as order-of-magnitude, not a spec. Re-run in

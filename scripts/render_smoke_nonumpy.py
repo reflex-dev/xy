@@ -24,7 +24,7 @@ from array import array
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-STATIC = ROOT / "python" / "fastcharts" / "static"
+STATIC = ROOT / "python" / "xy" / "static"
 CHROMIUM_CANDIDATES = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
@@ -230,7 +230,7 @@ def main() -> None:
     assert len(blob) == sum(c["len"] for c in spec["columns"]) * 4
     struct.unpack_from("<f", blob, 0)  # decodes as little-endian f32
 
-    # Mirrors fastcharts.export._STANDALONE_CSP (this script is stdlib-only by
+    # Mirrors xy.export._STANDALONE_CSP (this script is stdlib-only by
     # design, so the string is inlined; a test asserts they stay identical) —
     # every probe below, including the blob-URL re-bin worker, runs under the
     # same policy a real to_html export ships.
@@ -247,14 +247,14 @@ def main() -> None:
 const spec={json.dumps(spec)};
 const bytes=Uint8Array.from(atob("{base64.b64encode(blob).decode()}"),c=>c.charCodeAt(0));
 try{{
-  const v=fastcharts.renderStandalone(document.getElementById("chart"),spec,bytes.buffer);
+  const v=xy.renderStandalone(document.getElementById("chart"),spec,bytes.buffer);
   v._sampleRebinDisabled = true; // probes below hand-feed kernel msgs
   setTimeout(()=>{{try{{
     v._drawNow();
     const gl=v.gl,w=gl.drawingBufferWidth,h=gl.drawingBufferHeight,px=new Uint8Array(w*h*4);
     gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,px);
     let lit=0;for(let i=3;i<px.length;i+=4)if(px[i]>8)lit++;
-    const labels=document.querySelectorAll(".fastcharts div").length;
+    const labels=document.querySelectorAll(".xy div").length;
     // Picking: scan the plot for any pickable scatter point (GPU ID readback).
     let hits=0, sampleRow=null;
     for(let sx=4; sx<v.plot.w && hits<1; sx+=3){{
@@ -421,18 +421,18 @@ try{{
     // Mark registry contract: all per-kind client knowledge lives in
     // MARK_KINDS (build/draw + capabilities); unknown kinds fall back to
     // scatter; lines are not point-pickable; theme refresh dispatches.
-    const reg=(typeof fastcharts.MARK_KINDS==="object"
-      && fastcharts.MARK_KINDS.scatter.pointPick===true && fastcharts.MARK_KINDS.scatter.retainCpu===true
-      && !fastcharts.MARK_KINDS.line.pointPick
-      && typeof fastcharts.MARK_KINDS.area.draw==="function"
-      && typeof fastcharts.MARK_KINDS.bar.draw==="function"
-      && fastcharts.MARK_KINDS.bar!==fastcharts.MARK_KINDS.histogram
-      && fastcharts.MARK_KINDS.column===fastcharts.MARK_KINDS.bar
-      && typeof fastcharts.MARK_KINDS.heatmap.draw==="function"
-      && fastcharts.MARK_KINDS.heatmap!==fastcharts.MARK_KINDS.histogram
-      && typeof fastcharts.MARK_KINDS.scatter.refreshColor==="function"
-      && typeof fastcharts.MARK_KINDS.line.refreshColor==="function"
-      && fastcharts.markOf("nonexistent")===fastcharts.MARK_KINDS.scatter)?1:0;
+    const reg=(typeof xy.MARK_KINDS==="object"
+      && xy.MARK_KINDS.scatter.pointPick===true && xy.MARK_KINDS.scatter.retainCpu===true
+      && !xy.MARK_KINDS.line.pointPick
+      && typeof xy.MARK_KINDS.area.draw==="function"
+      && typeof xy.MARK_KINDS.bar.draw==="function"
+      && xy.MARK_KINDS.bar!==xy.MARK_KINDS.histogram
+      && xy.MARK_KINDS.column===xy.MARK_KINDS.bar
+      && typeof xy.MARK_KINDS.heatmap.draw==="function"
+      && xy.MARK_KINDS.heatmap!==xy.MARK_KINDS.histogram
+      && typeof xy.MARK_KINDS.scatter.refreshColor==="function"
+      && typeof xy.MARK_KINDS.line.refreshColor==="function"
+      && xy.markOf("nonexistent")===xy.MARK_KINDS.scatter)?1:0;
     // Flashing fix: a points REFRESH (already drilled) must not restart the
     // entry fade — restarting blanked the points to ~0 alpha on every kernel
     // reply while zooming inside a drilled view.
@@ -662,7 +662,7 @@ try{{
     barSpec.traces=[spec.traces.find(t=>t.kind==="bar")];
     const holderBar=document.createElement("div");
     document.body.appendChild(holderBar);
-    const vBar=fastcharts.renderStandalone(holderBar,barSpec,bytes.buffer);
+    const vBar=xy.renderStandalone(holderBar,barSpec,bytes.buffer);
     const barBase=baselineLit(vBar,((1245-1200)/(1600-1200))*vBar.plot.w);
     vBar.destroy(); holderBar.remove();
     const hbuf=new ArrayBuffer(32);
@@ -684,7 +684,7 @@ try{{
     }};
     const holderHist=document.createElement("div");
     document.body.appendChild(holderHist);
-    const vHist=fastcharts.renderStandalone(holderHist,histSpec,hbuf);
+    const vHist=xy.renderStandalone(holderHist,histSpec,hbuf);
     const histBase=baselineLit(vHist,((0-(-1))/(2-(-1)))*vHist.plot.w);
     vHist.destroy(); holderHist.remove();
     const expectPad=-(2*Math.max(2,Math.ceil(v.dpr||1)))/200;
@@ -696,28 +696,28 @@ try{{
     // m1: protocol mismatch -> constructor throws AND leaves a visible message
     const m1el = mk();
     const badProto = JSON.parse(JSON.stringify(spec)); badProto.protocol = 999;
-    const m1 = throws(() => fastcharts.renderStandalone(m1el, badProto, bytes.buffer))
+    const m1 = throws(() => xy.renderStandalone(m1el, badProto, bytes.buffer))
       && m1el.textContent.indexOf("protocol mismatch") >= 0 ? 1 : 0;
     // m2: trace referencing a column index that does not exist -> throws
     const badRef = JSON.parse(JSON.stringify(spec)); badRef.traces = [badRef.traces[0]];
     badRef.traces[0] = {{...badRef.traces[0], x: 999}};
-    const m2 = throws(() => fastcharts.renderStandalone(mk(), badRef, bytes.buffer)) ? 1 : 0;
+    const m2 = throws(() => xy.renderStandalone(mk(), badRef, bytes.buffer)) ? 1 : 0;
     // m3: column window outside the blob -> typed-array construction throws
     const badOff = JSON.parse(JSON.stringify(spec));
     badOff.columns[badOff.traces[0].x] = {{...badOff.columns[badOff.traces[0].x],
       byte_offset: bytes.buffer.byteLength + 64}};
     badOff.traces = [badOff.traces[0]];
-    const m3 = throws(() => fastcharts.renderStandalone(mk(), badOff, bytes.buffer)) ? 1 : 0;
+    const m3 = throws(() => xy.renderStandalone(mk(), badOff, bytes.buffer)) ? 1 : 0;
     // m4: unknown kind with valid geometry -> scatter fallback renders, no throw
     const unk = JSON.parse(JSON.stringify(spec));
     unk.traces = [{{...unk.traces[0], kind: "sparkle-9000", style: {{}}}}];
     let m4 = 0;
-    try {{ const uv = fastcharts.renderStandalone(mk(), unk, bytes.buffer); uv._drawNow(); m4 = 1; }}
+    try {{ const uv = xy.renderStandalone(mk(), unk, bytes.buffer); uv._drawNow(); m4 = 1; }}
     catch (e) {{ m4 = 0; }}
     // m5: empty traces -> chrome-only chart, no throw
     const emp = JSON.parse(JSON.stringify(spec)); emp.traces = [];
     let m5 = 0;
-    try {{ const ev = fastcharts.renderStandalone(mk(), emp, bytes.buffer); ev._drawNow(); m5 = 1; }}
+    try {{ const ev = xy.renderStandalone(mk(), emp, bytes.buffer); ev._drawNow(); m5 = 1; }}
     catch (e) {{ m5 = 0; }}
     const malformed = (m1 && m2 && m3 && m4 && m5) ? 1 : 0;
     // Pixel determinism: two fresh renders of the same payload hash identically
@@ -739,8 +739,8 @@ try{{
     // tests/test_static_client_security.py; runtime behavior is verified
     // interactively. Every probe chart sets `_sampleRebinDisabled = true` so no
     // worker ever spawns during the smoke.
-    const dv1 = fastcharts.renderStandalone(mk(), JSON.parse(JSON.stringify(spec)), bytes.buffer);
-    const dv2 = fastcharts.renderStandalone(mk(), JSON.parse(JSON.stringify(spec)), bytes.buffer);
+    const dv1 = xy.renderStandalone(mk(), JSON.parse(JSON.stringify(spec)), bytes.buffer);
+    const dv2 = xy.renderStandalone(mk(), JSON.parse(JSON.stringify(spec)), bytes.buffer);
     if (dv1.gpuTraces) for (const gg of dv1.gpuTraces) gg._densityNormAnim = null;
     if (dv2.gpuTraces) for (const gg of dv2.gpuTraces) gg._densityNormAnim = null;
     const pixdet = pixhash(dv1) === pixhash(dv2) ? 1 : 0;
@@ -765,7 +765,7 @@ try{{
     }};
     const sp0=mkStream(40,4), sp1=mkStream(64,9);
     const holderS=document.createElement("div");document.body.appendChild(holderS);
-    const vS=fastcharts.renderStandalone(holderS,sp0.spec,sp0.buf);
+    const vS=xy.renderStandalone(holderS,sp0.spec,sp0.buf);
     const g0S=vS.gpuTraces[0], n0S=g0S.n;
     vS._onKernelMsg({{type:"append",affected:[0],spec:sp1.spec}},[sp1.buf]);
     const gS=vS.gpuTraces[0];
@@ -812,7 +812,7 @@ try{{
           bar:{{pos:mscol([2]),value1:mscol([7.5]),width:0.6,orientation:"vertical"}}}}
       ],columns:msCols}};
     const holderMs=document.createElement("div");document.body.appendChild(holderMs);
-    const vMs=fastcharts.renderStandalone(holderMs,msSpec,msBuf);
+    const vMs=xy.renderStandalone(holderMs,msSpec,msBuf);
     vMs._drawNow();
     const msRead=(dx,dy)=>{{
       const g3=vMs.gl,W3=g3.drawingBufferWidth,H3=g3.drawingBufferHeight;
@@ -859,7 +859,7 @@ try{{
           x:smcol([0,1,2,3,4]),y:smcol([2,5,3,6,2]),base:smcol([0,0,0,0,0])}}
       ],columns:smCols}};
     const holderSm=document.createElement("div");document.body.appendChild(holderSm);
-    const vSm=fastcharts.renderStandalone(holderSm,smSpec,smBuf);
+    const vSm=xy.renderStandalone(holderSm,smSpec,smBuf);
     vSm._drawNow();
     const gLn=vSm.gpuTraces[0], gAr=vSm.gpuTraces[1];
     const msmooth=(gLn.n===65 && gLn._cpu.x.length===5 && gAr.n===65 && gAr._cpu.base.length===5)?1:0;
@@ -874,7 +874,7 @@ try{{
     holder.style.width="400px";
     holder.style.height="300px";
     document.body.appendChild(holder);
-    const v2=fastcharts.renderStandalone(holder,spec2,bytes.buffer);
+    const v2=xy.renderStandalone(holder,spec2,bytes.buffer);
     v2._sampleRebinDisabled = true;
     const fluid0=(v2.fluid===true && v2.fluidH===true && v2.size.w===400 && v2.size.h===300
       && v2.root.style.width==="100%" && v2.root.style.height==="100%")?1:0;
@@ -905,9 +905,9 @@ try{{
         on(ev,h){{ if(ev==="msg:custom") onHandler=h; }},
         off(ev,h){{ if(ev==="msg:custom" && h===onHandler) offCalled++; }},
       }};
-      const cleanup=fastcharts.render({{model,el:holder3}});
+      const cleanup=xy.render({{model,el:holder3}});
       cleanup();
-      const unsub=(offCalled===1 && holder3.querySelector(".fastcharts")===null)?1:0;
+      const unsub=(offCalled===1 && holder3.querySelector(".xy")===null)?1:0;
       holder3.remove();
       (async()=>{{try{{
         // R4: force repeated loss/restore cycles. Each cycle queues draw,
@@ -915,7 +915,7 @@ try{{
         // every deferred GPU path and invalidate pre-loss replies.
         const holder4=document.createElement("div");
         document.body.appendChild(holder4);
-        const v4=fastcharts.renderStandalone(holder4,spec,bytes.buffer);
+        const v4=xy.renderStandalone(holder4,spec,bytes.buffer);
         // Compare settled frames, not the constructor's intentionally
         // transitional first density/sample handoff.
         await new Promise((resolve)=>setTimeout(resolve,180));
@@ -923,8 +923,8 @@ try{{
         v4._drawNow();
         const ctxHashBefore=pixhash(v4);
         let rootLost=0,rootRestored=0;
-        v4.root.addEventListener("fastcharts:context_lost",()=>rootLost++);
-        v4.root.addEventListener("fastcharts:context_restored",()=>rootRestored++);
+        v4.root.addEventListener("xy:context_lost",()=>rootLost++);
+        v4.root.addEventListener("xy:context_restored",()=>rootRestored++);
         const waitFor=(predicate,label)=>new Promise((resolve,reject)=>{{
           const deadline=performance.now()+1500;
           const poll=()=>{{
@@ -983,7 +983,7 @@ try{{
         // backing stores even though the CSS size never changed.
         const holder5=document.createElement("div");
         document.body.appendChild(holder5);
-        const v5=fastcharts.renderStandalone(holder5,spec,bytes.buffer);
+        const v5=xy.renderStandalone(holder5,spec,bytes.buffer);
         const dpr0=v5.dpr;
         Object.defineProperty(window,"devicePixelRatio",{{value:dpr0*2,configurable:true}});
         v5._onDprChange();

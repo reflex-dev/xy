@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from fastcharts.pyplot._fmt import parse_fmt
+from xy.pyplot._fmt import parse_fmt
 
 
 @pytest.mark.parametrize(

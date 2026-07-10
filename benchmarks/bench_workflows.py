@@ -20,13 +20,13 @@ from typing import Any
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import fastcharts as fc  # noqa: E402
+import xy as fc  # noqa: E402
 from _browser import find_chromium  # noqa: E402
 from categories import BENCHMARK_CATEGORIES, categories_for  # noqa: E402
 from environment import SCHEMA_VERSION, collect_environment_metadata  # noqa: E402
-from fastcharts import kernels as k  # noqa: E402
-from fastcharts._figure import Figure  # noqa: E402  (harness oracles/annotations only)
-from fastcharts.interaction import _ensure_pyramid  # noqa: E402
+from xy import kernels as k  # noqa: E402
+from xy._figure import Figure  # noqa: E402  (harness oracles/annotations only)
+from xy.interaction import _ensure_pyramid  # noqa: E402
 
 WORKFLOW_CATEGORY_IDS = ("input_ingestion", "streaming_updates", "log_autorange", "static_export")
 
@@ -301,7 +301,7 @@ def _export_rows(n: int, reps: int, chromium: str | None) -> list[dict[str, Any]
             "export_html_decimated_line",
             lambda fig: fig.to_html(),
             lambda _fig, value: _require_oracle(
-                isinstance(value, str) and "fastcharts.renderStandalone" in value,
+                isinstance(value, str) and "xy.renderStandalone" in value,
                 "invalid standalone HTML export",
             ),
         ),
@@ -363,7 +363,7 @@ def run(*, profile: str, reps: int, chromium: str | None = None) -> dict[str, An
         *_log_autorange_rows(stream_n, reps),
         *_export_rows(export_n, reps, chromium),
     ]
-    environment = collect_environment_metadata(chromium=chromium, fastcharts_backend=k.BACKEND)
+    environment = collect_environment_metadata(chromium=chromium, xy_backend=k.BACKEND)
     if chromium:
         # The opt-in Chromium row forces SwiftShader independently of benchmark flags.
         environment["browser_renderer"] = "software-gl"

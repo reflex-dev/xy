@@ -26,7 +26,7 @@ import verify_benchmark_report  # noqa: E402
 def _load_bench_interaction():
     sys.path.insert(0, str(ROOT / "benchmarks"))
     path = ROOT / "benchmarks" / "bench_interaction.py"
-    spec = importlib.util.spec_from_file_location("_fastcharts_bench_interaction", path)
+    spec = importlib.util.spec_from_file_location("_xy_bench_interaction", path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not load {path}")
     module = importlib.util.module_from_spec(spec)

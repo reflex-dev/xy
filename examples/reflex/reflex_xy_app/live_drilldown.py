@@ -11,18 +11,18 @@ import numpy as np
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-import fastcharts as fc
+import xy as fc
 
 # The live drilldown server probes the engine directly (traces, density_view,
 # drill bookkeeping), so it works on the internal figure compiled from the
 # public composition API via `Chart.figure()`.
-from fastcharts._figure import Figure
-from fastcharts.config import DRILL_EXIT_FACTOR, SCATTER_DENSITY_THRESHOLD
-from fastcharts.lod import grid_shape
-from fastcharts.widget import bundled_js
+from xy._figure import Figure
+from xy.config import DRILL_EXIT_FACTOR, SCATTER_DENSITY_THRESHOLD
+from xy.lod import grid_shape
+from xy.widget import bundled_js
 
 LIVE_SCATTER_POINTS = 100_000_000
-LIVE_DRILLDOWN_ROUTE = "/api/fastcharts/drilldown"
+LIVE_DRILLDOWN_ROUTE = "/api/xy/drilldown"
 DENSITY_OVERVIEW_BINS = 6144
 DENSITY_OVERVIEW_CHUNK = 1_000_000
 OVERVIEW_EXACT_FACTOR = 4.0
@@ -422,7 +422,7 @@ function b64ToArrayBuffer(b64) {{
 }}
 
 function pointsPayloadInsideView(trace) {{
-  const view = window.fastchartsLiveDrilldown;
+  const view = window.xyLiveDrilldown;
   if (!view || !trace || trace.mode !== "points" || !trace.x_range || !trace.y_range) return true;
   const candidate = view._viewAnim && view._viewAnim.target ? view._viewAnim.target : view.view;
   return viewInsideWindow(candidate, {{
@@ -462,7 +462,7 @@ function densityRequestPending(view) {{
 
 function clearStaleUpdatingStatus() {{
   if (statusEl.textContent !== "updating") return;
-  if (densityRequestPending(window.fastchartsLiveDrilldown)) return;
+  if (densityRequestPending(window.xyLiveDrilldown)) return;
   statusEl.textContent = "density";
 }}
 
@@ -644,7 +644,7 @@ async function sendMessage(msg) {{
       payload.message &&
       payload.message.type === "density_update" &&
       (payload.message.seq !== latestDensitySeq ||
-        (window.fastchartsLiveDrilldown && payload.message.seq !== window.fastchartsLiveDrilldown.seq))
+        (window.xyLiveDrilldown && payload.message.seq !== window.xyLiveDrilldown.seq))
     ) {{
       clearStaleUpdatingStatus();
       return;
@@ -664,7 +664,7 @@ async function sendMessage(msg) {{
     }}
   }} catch (err) {{
     statusEl.textContent = "offline";
-    console.error("fastcharts drilldown request failed", err);
+    console.error("xy drilldown request failed", err);
   }} finally {{
     clearTimeout(timeout);
   }}
@@ -716,7 +716,7 @@ const comm = {{
   onMessage: (cb) => callbacks.push(cb),
 }};
 
-const view = new fastcharts.ChartView(
+const view = new xy.ChartView(
   document.getElementById("chart"),
   spec,
   initialBytes.buffer,
@@ -730,7 +730,7 @@ view._setView = (next, opts) => {{
   }}
   return result;
 }};
-window.fastchartsLiveDrilldown = view;
+window.xyLiveDrilldown = view;
 </script>
 </body>
 </html>"""
