@@ -1656,23 +1656,20 @@ def _strict_bool(value: Any, label: str) -> bool:
 
 
 def _validate_axis(axis: Axis) -> None:
+    """Structural checks `Figure.set_axis` cannot make: the which/id agreement.
+
+    Field-level validation runs exactly once per field: eagerly in the
+    `x_axis`/`y_axis` factories for factory-built children, and in
+    `Figure.set_axis` (which every Axis child is replayed through inside the
+    same `Chart.figure()` call) for directly-constructed `Axis(...)` objects.
+    Re-checking every field here was a second/third pass over the same values.
+    """
     if axis.which not in {"x", "y"}:
         raise ValueError(f"axis.which must be 'x' or 'y', got {axis.which!r}")
     axis_id = axis.id or axis.which
     _axis_id(axis_id, f"{axis.which}_axis id")
     if not axis_id.startswith(axis.which):
         raise ValueError(f"{axis.which}_axis id must start with {axis.which!r}")
-    _validate_axis_type(axis.type_)
-    _axis_domain(axis.domain, f"{axis.which}_axis domain")
-    _strict_bool(axis.reverse, f"{axis.which}_axis reverse")
-    _axis_side(axis.side, axis.which)
-    _axis_label_position(axis.label_position, f"{axis.which}_axis label_position")
-    _optional_finite_number(axis.label_offset, f"{axis.which}_axis label_offset")
-    _optional_finite_number(axis.label_angle, f"{axis.which}_axis label_angle")
-    _optional_positive_int(axis.tick_count, f"{axis.which}_axis tick_count")
-    _optional_finite_number(axis.tick_label_angle, f"{axis.which}_axis tick_label_angle")
-    _axis_tick_label_strategy(axis.tick_label_strategy, f"{axis.which}_axis tick_label_strategy")
-    _optional_nonnegative_number(axis.tick_label_min_gap, f"{axis.which}_axis tick_label_min_gap")
 
 
 def _mark_axis_ids(mark: Mark, axes: dict[str, Axis]) -> tuple[str, str]:
