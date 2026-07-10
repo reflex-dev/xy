@@ -94,15 +94,26 @@ class PayloadMixin(_Host):
         reduction is recorded in the spec — no silent quality changes (§28).
         """
         pw = _PayloadWriter()
+        # `_range` is an O(traces x chunks) autorange scan and is invariant
+        # while this build runs (emitters only touch shipped_sel/drill state),
+        # so each axis pays for it once even when many traces share an axis.
+        ranges: dict[str, tuple[float, float]] = {}
+
+        def axis_range(axis_id: str) -> tuple[float, float]:
+            r = ranges.get(axis_id)
+            if r is None:
+                ranges[axis_id] = r = self._range(axis_id)
+            return r
+
         spec_traces = []
         for t in self.traces:
-            xr = self._range(t.x_axis)
-            yr = self._range(t.y_axis)
+            xr = axis_range(t.x_axis)
+            yr = axis_range(t.y_axis)
             spec_traces.append(
                 self._emit_trace(t, pw, (min(xr), max(xr)), (min(yr), max(yr)), px_width)
             )
         axis_specs = {
-            axis_id: self._axis_spec(axis_id, self._range(axis_id)) for axis_id in self.axis_options
+            axis_id: self._axis_spec(axis_id, axis_range(axis_id)) for axis_id in self.axis_options
         }
 
         spec = {

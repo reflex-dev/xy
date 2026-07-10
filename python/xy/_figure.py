@@ -554,7 +554,17 @@ class Figure(AnnotationsMixin, PayloadMixin):
             return arr.tolist()
         return [channels.category_label(raw) for raw in arr.astype(object)]
 
+    @staticmethod
+    def _materialize_sequence(values: Any) -> Any:
+        """Convert a plain list/tuple to an ndarray once, so the category
+        probe and label extraction below don't each re-run the same O(n)
+        conversion (`np.asarray` of an ndarray is free)."""
+        if isinstance(values, (list, tuple)):
+            return np.asarray(values)
+        return values
+
     def _axis_positions(self, values: Any, axis: str, *, commit: bool = True) -> np.ndarray:
+        values = self._materialize_sequence(values)
         if not self._is_category_like(values):
             return self._as_1d_float(values, f"{axis} values")
         raw_labels = self._category_axis_labels(values, axis)
@@ -563,20 +573,58 @@ class Figure(AnnotationsMixin, PayloadMixin):
             if commit
             else list(self._axis_categories.get(axis, []))
         )
-        lookup = {label: i for i, label in enumerate(labels)}
-        out = np.empty(len(raw_labels), dtype=np.float64)
-        for i, label in enumerate(raw_labels):
-            pos = lookup.get(label)
-            if pos is None:
-                pos = len(labels)
-                labels.append(label)
-                lookup[label] = pos
-            out[i] = float(pos)
-        return out
+        return self._category_positions(raw_labels, labels)
+
+    @staticmethod
+    def _category_positions(raw_labels: list[str], labels: list[str]) -> np.ndarray:
+        """Positions for `raw_labels` against `labels`, provisioning new labels
+        onto `labels` in first-appearance order (the category-axis contract)."""
+        lookup = dict(zip(labels, range(len(labels)), strict=True))
+        try:
+            # Layered charts resolve the same categories once per mark, so the
+            # every-label-known case is the hot one; it runs at C speed.
+            return np.fromiter(
+                map(lookup.__getitem__, raw_labels), np.float64, count=len(raw_labels)
+            )
+        except KeyError:
+            pass
+        # `dict.fromkeys` dedupes at C speed preserving first appearance, so
+        # provisioning touches each distinct new label once.
+        new_labels = [label for label in dict.fromkeys(raw_labels) if label not in lookup]
+        start = len(labels)
+        lookup.update(zip(new_labels, range(start, start + len(new_labels)), strict=True))
+        labels.extend(new_labels)
+        return np.fromiter(map(lookup.__getitem__, raw_labels), np.float64, count=len(raw_labels))
+
+    def _axis_positions_with_labels(
+        self, values: Any, axis: str
+    ) -> tuple[np.ndarray, Optional[list[str]]]:
+        """Uncommitted positions plus the normalized labels (None for numeric
+        values), so validate-then-commit callers replay the commit as a label
+        merge instead of re-running the O(n) conversion."""
+        values = self._materialize_sequence(values)
+        if not self._is_category_like(values):
+            return self._as_1d_float(values, f"{axis} values"), None
+        raw_labels = self._category_axis_labels(values, axis)
+        return self._category_positions(raw_labels, list(self._axis_categories.get(axis, []))), (
+            raw_labels
+        )
+
+    def _commit_category_labels(self, raw_labels: list[str], axis: str) -> None:
+        labels = self._axis_categories.setdefault(axis, [])
+        # Insertion-ordered union: existing labels first, then new ones in
+        # first-appearance order — identical to the provisioning loop above.
+        merged = dict.fromkeys(labels)
+        merged.update(dict.fromkeys(raw_labels))
+        if len(merged) > len(labels):
+            labels[:] = merged
 
     def _commit_axis_positions(self, values: Any, axis: str) -> None:
-        if values is not None and self._is_category_like(values):
-            self._axis_positions(values, axis, commit=True)
+        if values is None:
+            return
+        values = self._materialize_sequence(values)
+        if self._is_category_like(values):
+            self._commit_category_labels(self._category_axis_labels(values, axis), axis)
 
     @staticmethod
     def _broadcast_base(base: Any, n: int, kind: str) -> np.ndarray:
@@ -590,6 +638,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
     def _heatmap_axis_positions(self, values: Any, n: int, axis: str) -> np.ndarray:
         if values is None:
             return np.arange(n, dtype=np.float64)
+        values = self._materialize_sequence(values)
         is_category = self._is_category_like(values)
         pos = self._axis_positions(values, axis, commit=False)
         if len(pos) != n:
