@@ -1,0 +1,16 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "jupyter",
+      "runtimeExecutable": ".venv/bin/jupyter",
+      "runtimeArgs": [
+        "lab",
+        "--no-browser",
+        "--port=8899",
+        "--IdentityProvider.token=fastcharts"
+      ],
+      "port": 8899
+    }
+  ]
+}
