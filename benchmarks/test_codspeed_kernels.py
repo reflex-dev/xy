@@ -232,16 +232,6 @@ def test_sample_mask(benchmark, data):
     assert mask.dtype == np.bool_
 
 
-def test_stratified_sample_mask(benchmark):
-    """ABI-v10 category-stratified sampler used by density overlays."""
-    n = 1_000_000
-    ids = np.arange(n, dtype=np.uint64)
-    groups = (np.arange(n, dtype=np.uint32) % 12).astype(np.uint32, copy=False)
-    mask = benchmark(k.stratified_sample_mask, ids, groups, 12, 17, 1.0 / 256.0, 2)
-    assert mask.dtype == np.bool_
-    assert mask.shape == (n,)
-
-
 def test_pyramid_build(benchmark, pyramid_data):
     """Cold Tier-3 index construction at the real activation threshold."""
     x, y = pyramid_data
@@ -654,3 +644,13 @@ def test_adaptive_drilldown_cycle(benchmark, drilldown_figure):
     """Adaptive scatter: density overview -> exact visible points -> density out."""
     result = benchmark(_adaptive_drilldown_cycle, drilldown_figure)
     assert result > DRILL_N
+
+
+def test_stratified_sample_mask(benchmark):
+    """ABI-v10 category-stratified sampler used by density overlays."""
+    n = 1_000_000
+    ids = np.arange(n, dtype=np.uint64)
+    groups = (np.arange(n, dtype=np.uint32) % 12).astype(np.uint32, copy=False)
+    mask = benchmark(k.stratified_sample_mask, ids, groups, 12, 17, 1.0 / 256.0, 2)
+    assert mask.dtype == np.bool_
+    assert mask.shape == (n,)
