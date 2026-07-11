@@ -184,6 +184,20 @@ class Figure(AnnotationsMixin, PayloadMixin):
             self.y_label = self.axis_options[axis_id]["label"]
         return self
 
+    def _set_axis_domain(self, axis_id: str, domain: tuple[float, float]) -> "Figure":
+        """Update only an axis domain, preserving every other configured option.
+
+        Facet domain sharing must not reset `type_`/`label`/`reverse`/`format`/
+        tick options the way a full `set_axis` replay from defaults would.
+        """
+        axis_id = self._axis_id(axis_id, "axis id")
+        opts = self.axis_options.setdefault(axis_id, {})
+        domain = self._finite_increasing_pair(domain, f"{axis_id} axis domain")
+        if opts.get("type") == "log" and domain[0] <= 0:
+            raise ValueError(f"{axis_id} log axis domain must be positive")
+        opts["domain"] = domain
+        return self
+
     def set_interaction(
         self,
         *,
@@ -276,9 +290,22 @@ class Figure(AnnotationsMixin, PayloadMixin):
     scatter = _marks.scatter
     histogram = _marks.histogram
     hist = _marks.hist
+    error_band = _marks.error_band
+    errorbar = _marks.errorbar
+    box = _marks.box
+    violin = _marks.violin
+    ecdf = _marks.ecdf
+    hexbin = _marks.hexbin
+    contour = _marks.contour
+    step = _marks.step
+    stairs = _marks.stairs
+    stem = _marks.stem
     bar = _marks.bar
     column = _marks.column
     heatmap = _marks.heatmap
+
+    def _append_segment_trace(self, *args: Any, **kwargs: Any) -> None:
+        _marks._append_segment_trace(self, *args, **kwargs)
 
     def _rect_mark_style(
         self,
@@ -919,7 +946,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             return []
         if axis == "y" and t.y_axis != axis_id:
             return []
-        if t.kind == "area" and t.base is not None:
+        if t.kind in {"area", "error_band"} and t.base is not None:
             return [t.x] if axis == "x" else [t.y, t.base]
         if t.x0 is not None and t.x1 is not None and t.y0 is not None and t.y1 is not None:
             return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1]
@@ -1158,6 +1185,25 @@ _marks.Figure = Figure
 
 # The bound mark methods report Figure-owned identity in tracebacks and docs
 # even though the function objects live in the declarative core.
-for _name in ("line", "area", "scatter", "histogram", "hist", "bar", "column", "heatmap"):
+for _name in (
+    "line",
+    "area",
+    "error_band",
+    "errorbar",
+    "scatter",
+    "histogram",
+    "hist",
+    "box",
+    "violin",
+    "ecdf",
+    "hexbin",
+    "contour",
+    "step",
+    "stairs",
+    "stem",
+    "bar",
+    "column",
+    "heatmap",
+):
     getattr(_marks, _name).__qualname__ = f"Figure.{_name}"
 del _name

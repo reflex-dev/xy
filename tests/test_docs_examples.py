@@ -86,11 +86,20 @@ def test_api_example_builds_payload(heading: str, source: str) -> None:
     result = namespace.get("__example_result__")
     assert result is not None, f"{heading} example should end with a chart expression"
     figure = result.figure() if hasattr(result, "figure") else result
-    assert hasattr(figure, "build_payload"), f"{heading} example did not produce a Figure"
-    spec, blob = figure.build_payload()
-    json.dumps(spec, allow_nan=False)
-    assert spec["traces"], f"{heading} example produced no traces"
-    assert isinstance(blob, bytes)
+    if hasattr(figure, "build_payload"):
+        spec, blob = figure.build_payload()
+        json.dumps(spec, allow_nan=False)
+        assert spec["traces"], f"{heading} example produced no traces"
+        assert isinstance(blob, bytes)
+    else:
+        assert hasattr(figure, "figures") and figure.figures, (
+            f"{heading} example did not produce a chart"
+        )
+        for panel in figure.figures:
+            spec, blob = panel.build_payload()
+            json.dumps(spec, allow_nan=False)
+            assert spec["traces"], f"{heading} example produced no traces"
+            assert isinstance(blob, bytes)
 
 
 @pytest.mark.parametrize(

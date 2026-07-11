@@ -46,6 +46,28 @@ def require_native_backend() -> None:
     )
 
 
+@pytest.fixture(scope="session", autouse=True)
+def warm_lazy_modules() -> None:
+    """Pull xy's lazily-imported submodules in before any measured region.
+
+    CodSpeed simulation measures each benchmark as a one-shot region, and CI
+    runs from a fresh checkout with no __pycache__. xy defers importing its
+    heavy submodules (marks, components, _payload, the export stack) until the
+    first figure build, so without this warmup the first figure-building
+    benchmark pays CPython source->bytecode compilation and module exec for
+    whatever those files have grown to — its number then tracks package source
+    size, not its own workload (a ~26% phantom regression on scatter_small when
+    the plot families landed).
+    """
+    x = np.array([0.0, 1.0, 2.0, 3.0])
+    y = np.array([0.0, 1.0, 0.0, 1.0])
+    fig = fc.chart(fc.scatter(x=x, y=y), fc.line(x=x, y=y)).figure()
+    fig.build_payload(N_BUCKETS)
+    fig.to_svg(width=64, height=48)
+    fig.to_png(engine="native", scale=1.0)
+    fig.to_html()
+
+
 @pytest.fixture(scope="module")
 def data() -> tuple[np.ndarray, np.ndarray]:
     rng = np.random.default_rng(42)
@@ -301,6 +323,35 @@ def _heatmap_payload(z: np.ndarray, x: np.ndarray, y: np.ndarray) -> int:
     return len(blob)
 
 
+def _statistical_payload(values: list[np.ndarray]) -> int:
+    fig = fc.chart(
+        fc.box(values=values, name="box"),
+        fc.violin(values=values, bins=64, name="violin"),
+    ).figure()
+    _spec, blob = fig.build_payload(N_BUCKETS)
+    return len(blob)
+
+
+def _hexbin_payload(x: np.ndarray, y: np.ndarray) -> int:
+    fig = fc.chart(fc.hexbin(x=x, y=y, gridsize=128)).figure()
+    _spec, blob = fig.build_payload(N_BUCKETS)
+    return len(blob)
+
+
+def _contour_payload(z: np.ndarray) -> int:
+    fig = fc.chart(fc.contour(z=z, levels=12, filled=True)).figure()
+    _spec, blob = fig.build_payload(N_BUCKETS)
+    return len(blob)
+
+
+def _errorbar_payload(x: np.ndarray, y: np.ndarray) -> int:
+    fig = fc.chart(fc.errorbar(x=x, y=y, yerr=1.0)).figure()
+    spec, blob = fig.build_payload(N_BUCKETS)
+    # The point of this bench is the segment-emission decimation branch.
+    assert spec["traces"][0]["tier"] == "decimated"
+    return len(blob)
+
+
 def _composed_layered_payload(data: dict[str, object]) -> int:
     chart = fc.chart(
         fc.bar(x="category", y="actual", data=data, name="actual", color="#f59e0b"),
@@ -497,6 +548,51 @@ def test_first_payload_heatmap_core_2d(benchmark, core_2d_data):
     assert isinstance(y, np.ndarray)
     payload_bytes = benchmark(_heatmap_payload, z, x, y)
     assert 0 < payload_bytes < z.nbytes
+
+
+def test_first_payload_statistical_core_2d(benchmark, medium_data):
+    """Distribution summaries reduce raw observations to compact geometry."""
+    _x, y = medium_data
+    values = [y, y + 0.75]
+    payload_bytes = benchmark(_statistical_payload, values)
+    assert payload_bytes > 0
+
+
+def test_first_payload_hexbin_core_2d(benchmark, medium_data):
+    """Hexbin scans source points through the native screen-sized bin kernel."""
+    x, y = medium_data
+    payload_bytes = benchmark(_hexbin_payload, x, y)
+    assert 0 < payload_bytes < x.nbytes + y.nbytes
+
+
+def test_first_payload_errorbar_large(benchmark, data):
+    """Large error bars ship per-point decimated segment groups, not 3N marks."""
+    x, y = data
+    payload_bytes = benchmark(_errorbar_payload, x, y)
+    assert 0 < payload_bytes < x.nbytes + y.nbytes
+
+
+def test_first_payload_contour_core_2d(benchmark, core_2d_data):
+    """Contour extraction is bounded by the regular input grid, not source rows."""
+    z = core_2d_data["heatmap_z"]
+    assert isinstance(z, np.ndarray)
+    payload_bytes = benchmark(_contour_payload, z)
+    assert payload_bytes > 0
+
+
+# Grouped with the other plot-family benchmarks (not next to bin_2d): the
+# pre-existing suite must keep its fixture materialization order — CodSpeed
+# measures one-shot regions, so pulling the module-scoped core_2d_data fixture
+# forward changes process state under the first figure build and breaks
+# baseline comparability for the untouched benchmarks.
+def test_marching_squares(benchmark, core_2d_data):
+    """Regular-grid isolines over a bounded contour workload."""
+    z = core_2d_data["heatmap_z"]
+    x = core_2d_data["heatmap_x"]
+    y = core_2d_data["heatmap_y"]
+    levels = np.linspace(float(z.min()), float(z.max()), 11, dtype=np.float64)[1:-1]
+    result = benchmark(k.marching_squares, z, x, y, levels)
+    assert len(result) == 5
 
 
 def test_native_png_export_scatter(benchmark, export_data):

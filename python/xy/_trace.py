@@ -16,7 +16,7 @@ from .config import DIRECT_SOFT_CEILING, SCATTER_DENSITY_THRESHOLD
 @dataclass
 class Trace:
     id: int
-    kind: str  # "line" | "scatter" | "area" | "histogram" | "bar" | "column" | "heatmap"
+    kind: str  # public and internal mark kind
     x: Column
     y: Column
     x_axis: str = "x"

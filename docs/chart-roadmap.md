@@ -20,7 +20,9 @@ analytics, science, finance, operations, and dashboards. Performance is the
 entry point, not the boundary of the product.
 
 The current implemented surface is **line**, **scatter**, **area**,
-**histogram**, **bar/column**, and **heatmap**. Scatter already covers direct
+**histogram**, **bar/column**, **heatmap**, **error bars/bands**,
+**box/violin/ECDF**, **hexbin/contour**, **step/stairs/stem**, and
+**faceted small multiples**. Scatter already covers direct
 points, color/size channels, GPU picking, selection, and Tier-2 density
 aggregation. Line and area cover direct and M4-decimated time series. Histogram
 and bar/column share the instanced rectangle renderer; heatmap ships a compact
@@ -99,24 +101,24 @@ not fall out of sight.
 | 5 | Histogram | count, probability, density, cumulative histogram | Implemented core | Python-side binning plus the shared rectangle renderer; `cumulative=True` (count CDF and, with `density=True`, empirical CDF) is implemented. Follow-up: viewport-aware re-binning for huge streamed distributions. |
 | 6 | Pie / donut | pie, donut, nested donut, variable-radius pie | Planned compatibility | Extremely common in dashboards even though performance differentiation is low. |
 | 7 | Heatmap / image / matrix | heatmap, image, annotated matrix, correlation matrix, cohort heatmap | Implemented core | `fc.heatmap(...)` renders matrix cells through a compact grid texture with continuous colormaps and categorical/numeric axes. Follow-ups: annotation and tiled huge-image paths. |
-| 8 | Box plot | box, grouped box, notched box, outlier points | Planned | Standard distribution summary across Plotly, Matplotlib, Seaborn, Altair. |
+| 8 | Box plot | box, grouped box, notched box, outlier points | Implemented core | Tukey quartiles, whiskers, median, deterministic outliers, numeric or categorical groups. |
 | 9 | Candlestick / OHLC | candlestick, OHLC bars, volume overlay, range selector | Prototyped (PR closed unmerged) | `fc.candlestick(...)`/`fc.ohlc(...)` + `fc.candlestick_chart(...)` on the closed `codex/finance-charting-surface` exploration branch: OHLC decimation, shared-y f32 frame, time axes, hover, and a volume pane. Critical finance surface; inherits LOD and time-axis work from core primitives. |
-| 10 | Error and interval charts | error bars, error bands, confidence intervals, line range, bar range, whisker, rule | Planned | Needed for science, experimentation, forecasting, and statistical dashboards. |
-| 11 | 2D density charts | 2D histogram, hexbin, density heatmap, KDE contours | Planned | Makes dense scatter honest at scale and exposes aggregation as a first-class chart type. |
-| 12 | Violin and distribution shapes | violin, split violin, KDE plot, density ridge | Planned | Common in data science; builds on density and filled polygons. |
-| 13 | Contour | contour, filled contour, isolines | Planned | Scientific/engineering staple; generalizes grids and color scales. |
+| 10 | Error and interval charts | error bars, error bands, confidence intervals, line range, bar range, whisker, rule | Implemented core | Instanced segment error bars and M4-reduced filled error bands. |
+| 11 | 2D density charts | 2D histogram, hexbin, density heatmap, KDE contours | Implemented core | Native-kernel occupied-bin hexbin plus bounded density payloads. |
+| 12 | Violin and distribution shapes | violin, split violin, KDE plot, density ridge | Implemented core | Bounded-resolution smoothed distribution bands through the rectangle renderer. |
+| 13 | Contour | contour, filled contour, isolines | Implemented core | Marching-squares isolines over regular grids, optionally layered on heatmap fill. |
 | 14 | Waterfall | waterfall, bridge chart | Planned | Business reporting and finance expectation; mostly categorical bars plus running baseline. |
 | 15 | Funnel | funnel, funnel area, conversion funnel | Planned | Product analytics and sales/ops dashboard expectation. |
 | 16 | Treemap | treemap, squarified treemap | Planned | Common BI hierarchy chart; requires layout and label polish. |
 | 17 | Sunburst / icicle | sunburst, icicle, radial hierarchy | Planned | Plotly/Highcharts/ECharts compatibility for hierarchical data. |
 | 18 | Radar / polar | radar, spider, polar area, radial bar | Planned | Common in Chart.js/Highcharts; needs polar axes and interaction semantics. |
 | 19 | Gauge / indicator | gauge, bullet, KPI indicator | Planned | Dashboard compatibility; mostly DOM/SVG/canvas chrome rather than large-data rendering. |
-| 20 | Small multiples | facet grid, repeat chart, trellis chart, pair grid | Planned | Essential for serious analytics and dashboards; depends on composition and shared contexts. |
+| 20 | Small multiples | facet grid, repeat chart, trellis chart, pair grid | Implemented core | `fc.facet_chart(...)` builds per-panel screen-bounded Figures with optional shared domains. |
 | 21 | Scatter matrix / pair plots | SPLOM, pairplot, corner plot | Planned | High-value exploratory data analysis; should reuse scatter kernels across many panels. |
 | 22 | Joint/distribution composites | joint plot, marginal histogram, marginal rug, scatter+hist combo | Planned | Common Seaborn/Plotly workflow; depends on clean chart composition. |
 | 23 | Regression diagnostics | trendline, regression line, residual plot, QQ plot, PP plot | Planned | Data-science compatibility and model-evaluation workflows. |
 | 24 | Categorical distributions | strip, swarm, beeswarm, boxen, rug | Planned | Seaborn-style stats breadth; requires jitter/packing and distribution summaries. |
-| 25 | Step/stairs/stem/lollipop | stairs, step area, stem, lollipop | Planned | Lightweight variants that reuse line, point, and rule primitives. |
+| 25 | Step/stairs/stem/lollipop | stairs, step area, stem, lollipop | Implemented core | Step/stairs remain compact line inputs; stems reuse instanced segments and points. |
 | 26 | Slope/bump/dumbbell | slopegraph, bump chart, dumbbell, connected dot plot | Planned | Popular editorial/business comparisons; composition of line + point + labels. |
 | 27 | Timeline/Gantt/event charts | event timeline, bar range, Gantt, milestone chart | Planned later | Useful for operations/product; more UI/axis polish than rendering complexity. |
 | 28 | Calendar charts | calendar heatmap, contribution graph, daily cohort grid | Planned later | Product analytics and ops compatibility; grid + date-axis specialization. |
@@ -142,20 +144,21 @@ not fall out of sight.
 | 3 | Area / filled line | Common extension of line charts in Plotly, Chart.js, Highcharts, Altair. | Implemented core: sorted x, M4 first payload, and filled WebGL segment strips. Follow-up: stacked area helper. | `fc.area_chart(fc.area(x, y))` |
 | 4 | Heatmap / image | Common in scientific and BI tools; Matplotlib, Plotly, Altair, Highcharts all surface it. | Implemented core: matrix-to-grid texture path with color channel reuse. Follow-up: image/raster tiling for huge grids. | `fc.heatmap_chart(fc.heatmap(z, x=None, y=None))` |
 
-P1 is now implemented at the core primitive level. The next implementation block
-should add statistical breadth on top of these primitives: box plots, error
-bars/bands, ECDF/cumulative histograms, and first-class 2D density chart types.
+P1 and the first statistical breadth block are now implemented at the core
+primitive level. The next implementation block can focus on compatibility
+depth: strip/swarm/boxen/rug distributions, regression diagnostics, richer
+2D-density hover/readout semantics, and scatter-matrix/joint-plot composition.
 
 ### P2 - Statistical and analytical breadth
 
 | Rank | Chart | Why it matters | Implementation shape |
 |---:|---|---|---|
-| 5 | Box plot | Standard distribution summary in Plotly, Matplotlib, Altair, and many dashboards. | Compute quartiles/outliers from canonical columns; draw compact geometry. |
-| 6 | Violin plot | Common in data science, especially alongside box plots. | Compute KDE or bounded density grid; draw mirrored filled shape. |
-| 7 | Error bars / bands | Popular for scientific charts and uncertainty displays. | Error bars as instanced line segments; bands as filled area around line. |
-| 8 | ECDF / cumulative histogram | Common distribution diagnostic and cheap to render. | Sort or approximate from histogram bins; line/stairs renderer. |
-| 9 | 2D histogram / hexbin | Popular for dense scatter analysis and present in Matplotlib/Plotly/Altair. | Generalize current density path; expose counts, log scaling, and hover readout. |
-| 10 | Contour / filled contour | Common scientific chart and Plotly/Matplotlib compatibility target. | Reuse regular-grid textures and add isoline extraction. |
+| 5 | Box plot | Standard distribution summary in Plotly, Matplotlib, Altair, and many dashboards. | Implemented: quartiles/outliers plus compact rectangle/segment geometry. |
+| 6 | Violin plot | Common in data science, especially alongside box plots. | Implemented: bounded smoothed density bands. |
+| 7 | Error bars / bands | Popular for scientific charts and uncertainty displays. | Implemented: instanced line segments and filled area bands. |
+| 8 | ECDF / cumulative histogram | Common distribution diagnostic and cheap to render. | Implemented: exact unique-value mode and native histogram approximation. |
+| 9 | 2D histogram / hexbin | Popular for dense scatter analysis and present in Matplotlib/Plotly/Altair. | Implemented hexbin; future work is richer hover/readout and 2D histogram aliases. |
+| 10 | Contour / filled contour | Common scientific chart and Plotly/Matplotlib compatibility target. | Implemented regular-grid marching-squares isolines and optional fill. |
 | 11 | Strip / swarm / boxen / rug | Seaborn-style categorical distribution charts. | Reuse points plus jitter/packing and compact summaries. |
 | 12 | Regression and diagnostics | Trendlines, residuals, QQ/PP, ROC/PR/lift/calibration. | Mostly composed line/scatter helpers plus optional stats kernels. |
 

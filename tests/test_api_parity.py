@@ -42,6 +42,16 @@ MARK_PAIRS = [
     ("bar", "bar"),
     ("column", "column"),
     ("heatmap", "heatmap"),
+    ("error_band", "error_band"),
+    ("errorbar", "errorbar"),
+    ("box", "box"),
+    ("violin", "violin"),
+    ("ecdf", "ecdf"),
+    ("hexbin", "hexbin"),
+    ("contour", "contour"),
+    ("step", "step"),
+    ("stairs", "stairs"),
+    ("stem", "stem"),
 ]
 
 # One inline-data Mark per applier kind, used to exercise real forwarding.
@@ -53,6 +63,16 @@ SAMPLE_MARKS = {
     "bar": lambda: fc.bar(x=["a", "b"], y=[1.0, 2.0]),
     "column": lambda: fc.column(x=["a", "b"], y=[1.0, 2.0]),
     "heatmap": lambda: fc.heatmap(z=[[1.0, 2.0], [3.0, 4.0]]),
+    "error_band": lambda: fc.error_band(x=[1.0, 2.0], lower=[2.0, 3.0], upper=[3.0, 4.0]),
+    "errorbar": lambda: fc.errorbar(x=[1.0, 2.0], y=[3.0, 4.0], yerr=[0.1, 0.2]),
+    "box": lambda: fc.box(values=[[1.0, 2.0], [2.0, 3.0]]),
+    "violin": lambda: fc.violin(values=[[1.0, 2.0], [2.0, 3.0]]),
+    "ecdf": lambda: fc.ecdf(values=[1.0, 2.0, 3.0]),
+    "hexbin": lambda: fc.hexbin(x=[1.0, 2.0], y=[3.0, 4.0]),
+    "contour": lambda: fc.contour(z=[[1.0, 2.0], [2.0, 3.0]]),
+    "step": lambda: fc.step(x=[1.0, 2.0], y=[3.0, 4.0]),
+    "stairs": lambda: fc.stairs(values=[1.0, 2.0], edges=[0.0, 1.0, 2.0]),
+    "stem": lambda: fc.stem(x=[1.0, 2.0], y=[3.0, 4.0]),
 }
 
 

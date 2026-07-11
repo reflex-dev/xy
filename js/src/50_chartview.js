@@ -925,6 +925,7 @@ class ChartView {
 
   get pointProg() { return this._prog("point", POINT_VS, POINT_FS); }
   get lineProg() { return this._prog("line", LINE_VS, LINE_FS); }
+  get segmentProg() { return this._prog("segment", SEGMENT_VS, SEGMENT_FS); }
   get areaProg() { return this._prog("area", AREA_VS, AREA_FS); }
   get rectProg() { return this._prog("rect", RECT_VS, RECT_FS); }
   get barProg() { return this._prog("bar", BAR_VS, RECT_FS); }
@@ -1046,7 +1047,7 @@ class ChartView {
   // no color borders in the mark color (matches the rect family).
   _pointMarkStyle(g, t) {
     const s = t.style || {};
-    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4 }[s.symbol] || 0;
+    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5 }[s.symbol] || 0;
     g.pointStrokeWidth = Number(s.stroke_width) || 0;
     const markOpaque = [g.color[0], g.color[1], g.color[2], 1];
     g.pointStroke = s.stroke
@@ -1256,6 +1257,37 @@ class ChartView {
     return fcSmoothResample(x, y, base || null, n, 32768);
   }
 
+  // Expand a step-styled polyline (style.step: "pre" | "mid" | "post") into
+  // its drawn corner vertices. Runs after smoothing/decimation so canonical
+  // inputs stay compact — both the initial build and every LOD tier swap must
+  // apply it before upload. Returns null when the trace isn't stepped.
+  _stepArrays(t, x, y, n) {
+    const where = t.style && t.style.step;
+    if (!where || n < 2) return null;
+    const perGap = where === "mid" ? 3 : 2;
+    const m = 1 + (n - 1) * perGap;
+    const sx = new Float32Array(m);
+    const sy = new Float32Array(m);
+    sx[0] = x[0];
+    sy[0] = y[0];
+    let j = 1;
+    for (let i = 1; i < n; i++) {
+      if (where === "pre") {
+        sx[j] = x[i - 1]; sy[j] = y[i]; j++;
+        sx[j] = x[i]; sy[j] = y[i]; j++;
+      } else if (where === "mid") {
+        const mid = (x[i - 1] + x[i]) * 0.5;
+        sx[j] = mid; sy[j] = y[i - 1]; j++;
+        sx[j] = mid; sy[j] = y[i]; j++;
+        sx[j] = x[i]; sy[j] = y[i]; j++;
+      } else {
+        sx[j] = x[i]; sy[j] = y[i - 1]; j++;
+        sx[j] = x[i]; sy[j] = y[i]; j++;
+      }
+    }
+    return { x: sx, y: sy, n: m };
+  }
+
   _buildLineMark(g, t, buffer) {
     const x = this._columnView(buffer, this.spec.columns[t.x]);
     const y = this._columnView(buffer, this.spec.columns[t.y]);
@@ -1264,13 +1296,41 @@ class ChartView {
     g.n = Math.min(x.length, y.length);
     g._cpu = { x, y, xMeta: g.xMeta, yMeta: g.yMeta };
     const sm = this._smoothArrays(t, x, y, null, g.n);
-    g.xBuf = this._upload(sm ? sm.x : x);
-    g.yBuf = this._upload(sm ? sm.y : y);
-    if (sm) g.n = sm.n;
+    const src = sm || { x, y, n: g.n };
+    const st = this._stepArrays(t, src.x, src.y, src.n);
+    const drawX = st ? st.x : src.x;
+    const drawY = st ? st.y : src.y;
+    g.xBuf = this._upload(drawX);
+    g.yBuf = this._upload(drawY);
+    g.n = st ? st.n : src.n;
     // Drawn (offset-encoded) vertices kept for the screen-space dash arc length.
-    g._dashX = sm ? sm.x : x;
-    g._dashY = sm ? sm.y : y;
+    g._dashX = drawX;
+    g._dashY = drawY;
     g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+  }
+
+  _buildSegmentMark(g, t, buffer) {
+    const x0 = this._columnView(buffer, this.spec.columns[t.x0]);
+    const x1 = this._columnView(buffer, this.spec.columns[t.x1]);
+    const y0 = this._columnView(buffer, this.spec.columns[t.y0]);
+    const y1 = this._columnView(buffer, this.spec.columns[t.y1]);
+    g.x0Meta = { ...this.spec.columns[t.x0] };
+    g.x1Meta = { ...this.spec.columns[t.x1] };
+    g.y0Meta = { ...this.spec.columns[t.y0] };
+    g.y1Meta = { ...this.spec.columns[t.y1] };
+    g.n = Math.min(x0.length, x1.length, y0.length, y1.length);
+    g.x0Buf = this._upload(x0);
+    g.x1Buf = this._upload(x1);
+    g.y0Buf = this._upload(y0);
+    g.y1Buf = this._upload(y1);
+    g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
+    g.colorMode = 0;
+    if (t.color && t.color.mode === "continuous") {
+      g.colorMode = 1;
+      g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+      g.lut = this._lut(t.color.colormap);
+    }
+    g._cpu = { x: x0, y: y1, xMeta: g.x0Meta, yMeta: g.y1Meta };
   }
 
   _buildAreaMark(g, t, buffer) {
@@ -1816,6 +1876,44 @@ class ChartView {
       }
     );
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n - 1);
+  }
+
+  _drawSegments(g, xm, ym) {
+    if (g.n < 1) return;
+    const gl = this.gl;
+    const prog = this.segmentProg;
+    gl.useProgram(prog);
+    const u = (n) => uniformOf(gl, prog, n);
+    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+    this._setAxisUniforms(prog, "u_x0", g.x0Meta, g.xAxis);
+    this._setAxisUniforms(prog, "u_x1", g.x1Meta, g.xAxis);
+    this._setAxisUniforms(prog, "u_y0", g.y0Meta, g.yAxis);
+    this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis);
+    gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
+    gl.uniform1f(u("u_width"), (g.trace.style.width ?? 1.5) * this.dpr);
+    const [r, gg, b, a] = g.color;
+    gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
+    gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+    if (g.colorMode === 1 && g.lut) {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, g.lut);
+      gl.uniform1i(u("u_lut"), 0);
+    }
+    this._bindVao(
+      g,
+      "segment",
+      [g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId, g.colorMode ? g.cBuf._fcId : 0],
+      () => {
+        this._vaoAttr(ATTR_SLOTS.ax0, g.x0Buf, 0, 1);
+        this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
+        this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
+        this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
+        if (g.colorMode) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+      }
+    );
+    if (!g.colorMode) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
   }
 
   // Dash setup for a line/area outline: recompute per-vertex cumulative

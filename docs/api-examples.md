@@ -49,6 +49,14 @@ document for a pixel-exact match to the live chart.
 | Normalized bars | `fc.bar_chart(fc.bar(..., mode="normalized"))` |
 | Horizontal bars | `fc.bar_chart(fc.bar(..., orientation="horizontal"))` |
 | Heatmap | `fc.heatmap_chart(fc.heatmap(...))` |
+| Error bars/bands | `fc.errorbar_chart(fc.errorbar(...))` and `fc.error_band_chart(fc.error_band(...))` |
+| Box | `fc.box_chart(fc.box(...))` |
+| Violin | `fc.violin_chart(fc.violin(...))` |
+| ECDF | `fc.ecdf_chart(fc.ecdf(...))` |
+| Hexbin | `fc.hexbin_chart(fc.hexbin(...))` |
+| Contour | `fc.contour_chart(fc.contour(...))` |
+| Step/stairs/stem | `fc.step_chart(fc.step(...))`, `fc.stairs_chart(fc.stairs(...))`, `fc.stem_chart(fc.stem(...))` |
+| Facets | `fc.facet_chart(fc.scatter(...), by="group", data=data)` |
 
 ## Axes And Scales
 
@@ -341,6 +349,65 @@ fc.heatmap_chart(
     title="Heatmap",
 )
 ```
+
+## Statistical, Density, And Facet Charts
+
+The statistical marks keep their source arrays in the canonical column store,
+then ship compact segment, rectangle, or occupied-bin geometry:
+
+```python
+import xy as fc
+
+x = [0, 1, 2, 3]
+lower = [0.8, 1.1, 1.4, 1.9]
+upper = [1.2, 1.8, 2.1, 2.8]
+y = [1.0, 1.4, 1.7, 2.3]
+stderr = [0.1, 0.15, 0.12, 0.2]
+control = [0.8, 1.0, 1.1, 1.3]
+treatment = [1.1, 1.4, 1.6, 1.9]
+
+chart = fc.chart(
+    fc.error_band(x, lower, upper, name="confidence"),
+    fc.errorbar(x, y, yerr=stderr, name="estimate"),
+    fc.box(values=[control, treatment], x=["control", "treatment"]),
+    fc.violin(values=[control, treatment], x=["control", "treatment"]),
+    fc.ecdf(values=control, bins=256),
+    fc.x_axis(label="group"),
+    fc.y_axis(label="value"),
+)
+chart
+```
+
+For dense point data, `hexbin` uses the native 2-D bin kernel and `contour`
+uses bounded regular-grid marching squares. `step`, `stairs`, and `stem`
+provide the common discrete-series variants without changing the line/segment
+transport model.
+
+Small multiples repeat a composition over a table column and share domains by
+default:
+
+```python
+import xy as fc
+
+data = {
+    "x": [0, 1, 2, 0, 1, 2],
+    "y": [1, 2, 3, 3, 2, 1],
+    "region": ["west", "west", "west", "east", "east", "east"],
+}
+
+grid = fc.facet_chart(
+    fc.scatter(x="x", y="y", density=None),
+    by="region",
+    data=data,
+    cols=3,
+    share_x=True,
+    share_y=True,
+)
+grid
+```
+
+Each panel retains the normal screen-bounded payload and can also be exported
+as SVG or a browser-free native PNG grid.
 
 ## Composition API
 

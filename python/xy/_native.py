@@ -22,7 +22,7 @@ from typing import Optional
 import numpy as np
 import numpy.typing as npt
 
-from .config import MAX_SCREEN_DIM
+from .config import MAX_CONTOUR_WORK, MAX_SCREEN_DIM
 
 ABI_VERSION = 12
 
@@ -110,6 +110,22 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_size_t,
         ctypes.c_void_p,
+    ]
+    lib.fc_marching_squares.restype = ctypes.c_size_t
+    lib.fc_marching_squares.argtypes = [
+        ctypes.c_void_p,  # z (rows * cols f64s)
+        ctypes.c_size_t,  # rows
+        ctypes.c_size_t,  # cols
+        ctypes.c_void_p,  # x_coords (cols f64s)
+        ctypes.c_void_p,  # y_coords (rows f64s)
+        ctypes.c_void_p,  # levels (n_levels f64s)
+        ctypes.c_size_t,  # n_levels
+        ctypes.c_void_p,  # x0 output
+        ctypes.c_void_p,  # x1 output
+        ctypes.c_void_p,  # y0 output
+        ctypes.c_void_p,  # y1 output
+        ctypes.c_void_p,  # level output
+        ctypes.c_size_t,  # output capacity in segments
     ]
     lib.fc_min_max.restype = ctypes.c_int32
     lib.fc_min_max.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.c_void_p]
@@ -449,6 +465,88 @@ def m4_indices(
     if written == _USIZE_MAX:
         raise ValueError("invalid m4 arguments")
     return out[:written].copy()
+
+
+def marching_squares(
+    z: npt.NDArray[np.float64],
+    x_coords: npt.NDArray[np.float64],
+    y_coords: npt.NDArray[np.float64],
+    levels: npt.NDArray[np.float64],
+) -> tuple[
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+]:
+    """Extract regular-grid contour segments with native marching squares."""
+    z = np.ascontiguousarray(z, dtype=np.float64)
+    x_coords = _as_f64(x_coords, "x_coords")
+    y_coords = _as_f64(y_coords, "y_coords")
+    levels = _as_f64(levels, "levels")
+    if z.ndim != 2 or min(z.shape) < 2:
+        raise ValueError(f"z must be a 2-D array with at least 2 rows/columns, got {z.shape}")
+    rows, cols = z.shape
+    if len(x_coords) != cols or len(y_coords) != rows:
+        raise ValueError("coordinate arrays must match the z grid dimensions")
+    if (
+        not np.isfinite(x_coords).all()
+        or not np.isfinite(y_coords).all()
+        or not np.isfinite(levels).all()
+    ):
+        raise ValueError("coordinates and levels must be finite")
+    if not np.all(np.diff(x_coords) > 0) or not np.all(np.diff(y_coords) > 0):
+        raise ValueError("coordinate arrays must be strictly increasing")
+    if len(levels) == 0:
+        empty = np.empty(0, dtype=np.float64)
+        return empty, empty.copy(), empty.copy(), empty.copy(), empty.copy()
+    work = (rows - 1) * (cols - 1) * len(levels)
+    if work > MAX_CONTOUR_WORK:
+        raise ValueError(
+            f"marching_squares grid x levels exceeds the bounded work budget ({MAX_CONTOUR_WORK:,})"
+        )
+    query = _lib.fc_marching_squares(
+        _ptr_f64(z),
+        rows,
+        cols,
+        _ptr_f64(x_coords),
+        _ptr_f64(y_coords),
+        _ptr_f64(levels),
+        len(levels),
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
+    if query == _USIZE_MAX:
+        raise ValueError("invalid marching_squares arguments")
+    x0 = np.empty(query, dtype=np.float64)
+    x1 = np.empty(query, dtype=np.float64)
+    y0 = np.empty(query, dtype=np.float64)
+    y1 = np.empty(query, dtype=np.float64)
+    level_out = np.empty(query, dtype=np.float64)
+    if query == 0:
+        return x0, x1, y0, y1, level_out
+    written = _lib.fc_marching_squares(
+        _ptr_f64(z),
+        rows,
+        cols,
+        _ptr_f64(x_coords),
+        _ptr_f64(y_coords),
+        _ptr_f64(levels),
+        len(levels),
+        _ptr_f64(x0),
+        _ptr_f64(x1),
+        _ptr_f64(y0),
+        _ptr_f64(y1),
+        _ptr_f64(level_out),
+        query,
+    )
+    if written == _USIZE_MAX or written != query:
+        raise RuntimeError("native marching_squares returned an inconsistent segment count")
+    return x0, x1, y0, y1, level_out
 
 
 def bin_2d(

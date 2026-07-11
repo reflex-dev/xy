@@ -14,10 +14,11 @@ reduces to a few GPU primitives on top of the shared infrastructure.
 | Primitive | Status | Charts it unlocks |
 |---|---|---|
 | Points | built (`scatter`) | scatter, bubble |
-| Lines | built (`line`) | line, spline, ECDF, error bands |
-| Rectangles | built (`histogram`; compact-bar variant for `bar`/`column`) | bar, histogram, candlestick/OHLC, waterfall, error bars |
+| Lines | built (`line`) | line, spline, step/stairs, ECDF, error-band outlines |
+| Segments | built (`errorbar`/`stem`/`contour`) | error bars, stems, box whiskers, contour isolines |
+| Rectangles | built (`histogram`; compact-bar variant for `bar`/`column`) | bar, histogram, box, violin, candlestick/OHLC, waterfall |
 | Filled polygons | built (`area`) | area fill, confidence bands, stacked area |
-| Grid texture | built (`density` tier, `heatmap`) | heatmap, image, 2D histogram, hexbin |
+| Grid texture | built (`density` tier, `heatmap`) | heatmap, image, 2D histogram, hexbin, filled contour |
 
 Establish the primitive once; the charts sharing it are mostly wiring.
 
@@ -28,7 +29,7 @@ by the string `K` on the wire (`trace.kind`).
 
 ### 1. Kernel — `python/xy/`
 
-- **`_figure.py`: `_emit_<K>(self, t, pw, xr, yr, px_width) -> dict`.** Dispatched
+- **`_payload.py`: `_emit_<K>(self, t, pw, xr, yr, px_width) -> dict`.** Dispatched
   by `_emit_trace` via `getattr(self, f"_emit_{t.kind}")` — no edit to the
   dispatcher. Returns the trace's spec entry and ships its columns through the
   `_PayloadWriter` (`pw.ship` for §4 offset-encoded geometry, `pw.ship_scalar`
@@ -109,25 +110,28 @@ usually wrong). Each has an explicit trigger:
 - **Legend** (`_buildLegend`): keyed on *channel modes* (density / categorical /
   continuous / named-series), not mark kinds — a colored bar inherits swatches
   for free. *Trigger: a mark needing a swatch that isn't channel-shaped.*
-- **Decimation** (`interaction.decimate_view`): line-only (`t.kind == "line"`).
-  Area uses line-style M4 on first payload today. *Trigger: the first interactive
-  view-updated non-line 1D mark (area, candlestick/OHLC)* — open the gate into a
-  per-kind decimator hook.
+- **Decimation** (`interaction.decimate_view`): line and area-like marks use the
+  shared M4 path on first payload; errorbar/stem segments reduce to a
+  pixel-derived cap at emit time. Contour is NOT pixel-bounded: its segment
+  count is bounded only by grid cells × levels, so a dense grid with many
+  levels ships proportionally many segments. *Trigger: the first interactive
+  view-updated non-line 1D mark
+  that needs a different reduction algebra (candlestick/OHLC, for example)* —
+  open the gate into a per-kind decimator hook.
 - **The drill "real marks"** render as points (`lod` calls `_drawPoints`).
   *Trigger: a drilling kind whose drilled marks aren't points* — route through
   `MARK_KINDS` at that call site.
-- **Trace shape & autorange**: `Trace(x, y)` is an xy pair and
-  `Figure._range()` reads exactly those columns. A multi-column mark (OHLC:
-  open/high/low/close; box: distribution stats) adds its extra columns to the
-  trace and — critically — must contribute its true extent to autorange
-  (candlestick y-range = min(low)..max(high), not close). *Trigger: first
-  multi-column mark* — add an optional per-kind range hook next to
-  `_emit_<kind>` and an `extra columns` convention on Trace; both additive.
-- **Categorical axis**: `x_axis.kind` now supports `category` for basic
-  bar/column charts: category positions ship as f64 codes, the axis spec carries
-  a `categories` label table, and the client ticks from that table. Future
-  grouped/stacked bars, box/violin, and mixed categorical charts should reuse
-  this axis path rather than inventing per-chart label rendering.
+- **Trace shape & autorange**: `Trace(x, y)` remains the conventional center/value
+  pair, while rectangle and segment marks carry explicit `x0/x1/y0/y1` columns.
+  `Figure._range_columns()` already includes those geometry extents, so error
+  bars, boxes, violins, contours, and other multi-column marks do not autorange
+  to their midpoint only. *Trigger: a future mark whose extent is not expressible
+  by these columns* — add an optional per-kind range hook next to
+  `_emit_<kind>` rather than teaching the render loop about the mark.
+- **Categorical axis**: `x_axis.kind` supports category positions for
+  bar/column, box/violin, and mixed categorical charts. Category positions ship
+  as f64 codes with a shared label table; new categorical marks should reuse
+  this path rather than inventing per-chart label rendering.
 - **View-request protocol**: the client enumerates tier needs per message type
   (`view` for decimated lines, `density_view` per density trace) and the
   widget's handler chain mirrors that. The kernel already knows every trace's
@@ -147,4 +151,5 @@ usually wrong). Each has an explicit trigger:
    `scripts/render_smoke_nonumpy.py` asserting it lights pixels.
 5. If aggregating: an aggregate kernel (native Rust core) and wire
    it through the `lod` framework rather than a bespoke path.
-6. Roadmap: move the kind from planned → implemented.
+6. Roadmap and contract docs: record the kind as implemented and note any
+   compatibility-depth follow-ups.

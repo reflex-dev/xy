@@ -82,6 +82,7 @@ def test_codspeed_suite_covers_native_core_hardening_workloads() -> None:
         "test_m4_indices_full",
         "test_m4_indices_zoom",
         "test_bin_2d",
+        "test_marching_squares",
         "test_bin_2d_indices",
         "test_min_max",
         "test_sample_mask",
@@ -100,6 +101,10 @@ def test_codspeed_suite_covers_native_core_hardening_workloads() -> None:
         "test_first_payload_area_core_2d",
         "test_first_payload_bar_core_2d",
         "test_first_payload_heatmap_core_2d",
+        "test_first_payload_statistical_core_2d",
+        "test_first_payload_hexbin_core_2d",
+        "test_first_payload_errorbar_large",
+        "test_first_payload_contour_core_2d",
         "test_first_payload_composed_layered_core_2d",
         "test_build_payload",
         "test_decimate_view",
@@ -192,6 +197,8 @@ def test_dashboard_benchmark_reports_eviction_and_scroll_telemetry() -> None:
     ):
         assert marker in bench
     assert "blank dashboard chart" not in bench
+    assert "slot.state.lost ||" not in bench
+    assert "slot.view._glLost || slot.view.gl.isContextLost()" in bench
 
     # webglcontextlost dispatches as a task, so the probe must yield before
     # leaving the "create" phase or creation-loop evictions get mislabeled

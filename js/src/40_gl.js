@@ -124,6 +124,11 @@ float fcMarkerSdf(vec2 d, int shape) {
     vec2 a = abs(d);
     return min(max(a.x - 0.17, a.y - 0.5), max(a.x - 0.5, a.y - 0.17));
   }
+  if (shape == 5) {                                                 // regular hexagon
+    const float k = 0.8660254;
+    vec2 p = abs(d);
+    return max(p.x - 0.5, p.y * 0.5 + p.x * k - 0.5);
+  }
   if (shape == 3) {                                                 // triangle (apex up)
     const float k = 1.7320508;
     float r = 0.62;
@@ -325,6 +330,48 @@ void main() {
   }
   if (alpha <= 0.001) discard;
   outColor = vec4(u_color.rgb * alpha, alpha);
+}`;
+
+// Segment marks (errorbar/stem/box whiskers/contour isolines): independent
+// endpoint pairs with per-column axis metas and an optional per-segment LUT
+// color. A separate program keeps the polyline path (LINE_VS/LINE_FS) free of
+// the extra meta uniforms and the sampler on its per-frame draw path.
+const SEGMENT_VS = `#version 300 es
+in float ax0; in float ay0; in float ax1; in float ay1; in float a_cval;
+uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
+uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
+uniform int u_x0mode; uniform int u_x1mode; uniform int u_y0mode; uniform int u_y1mode;
+out float v_off; out float v_cval;
+const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
+${AXIS_GLSL}
+void main() {
+  vec2 p0 = vec2(fcMap(ax0, u_xmap, u_x0meta, u_x0mode), fcMap(ay0, u_ymap, u_y0meta, u_y0mode));
+  vec2 p1 = vec2(fcMap(ax1, u_xmap, u_x1meta, u_x1mode), fcMap(ay1, u_ymap, u_y1meta, u_y1mode));
+  vec2 pix0 = (p0 * 0.5 + 0.5) * u_res;
+  vec2 pix1 = (p1 * 0.5 + 0.5) * u_res;
+  vec2 dir = pix1 - pix0;
+  float len = max(length(dir), 1e-6);
+  dir /= len;
+  vec2 n = vec2(-dir.y, dir.x);
+  vec2 c = corners[gl_VertexID];
+  float half_w = u_width * 0.5 + 0.5;
+  vec2 pos = mix(pix0, pix1, c.x) + dir * (c.x * 2.0 - 1.0) * 0.5 + n * c.y * half_w;
+  gl_Position = vec4(pos / u_res * 2.0 - 1.0, 0.0, 1.0);
+  v_off = c.y * half_w;
+  v_cval = a_cval;
+}`;
+
+const SEGMENT_FS = `#version 300 es
+precision highp float; precision highp int;
+uniform vec4 u_color; uniform float u_width; uniform int u_colorMode; uniform sampler2D u_lut;
+in float v_off; in float v_cval;
+out vec4 outColor;
+void main() {
+  float half_w = u_width * 0.5;
+  vec3 rgb = u_colorMode == 1 ? texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb : u_color.rgb;
+  float alpha = (1.0 - smoothstep(half_w - 0.5, half_w + 0.5, abs(v_off))) * u_color.a;
+  if (alpha <= 0.001) discard;
+  outColor = vec4(rgb * alpha, alpha);
 }`;
 
 // Mark-fill gradients (docs/styling.md#styling-the-marks): up to 8 stops,
