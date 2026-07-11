@@ -90,9 +90,9 @@ impl Canvas {
                 self.px[o + 2] = src[2] as u8;
             } else {
                 let inv = 255 - sa;
-                for k in 0..3 {
+                for (k, source) in src.iter().enumerate() {
                     self.px[o + k] =
-                        ((src[k] * sa + self.px[o + k] as u32 * inv + 127) / 255) as u8;
+                        ((*source * sa + self.px[o + k] as u32 * inv + 127) / 255) as u8;
                 }
             }
             return;
@@ -107,8 +107,8 @@ impl Canvas {
         let da = self.px[o + 3] as u32;
         let inv = 255 - sa;
         if da == 255 {
-            for k in 0..3 {
-                self.px[o + k] = ((src[k] * sa + self.px[o + k] as u32 * inv + 127) / 255) as u8;
+            for (k, source) in src.iter().enumerate() {
+                self.px[o + k] = ((*source * sa + self.px[o + k] as u32 * inv + 127) / 255) as u8;
             }
             return;
         }
@@ -116,8 +116,8 @@ impl Canvas {
         if out_a_num == 0 {
             return;
         }
-        for k in 0..3 {
-            let num = src[k] * sa * 255 + self.px[o + k] as u32 * da * inv;
+        for (k, source) in src.iter().enumerate() {
+            let num = *source * sa * 255 + self.px[o + k] as u32 * da * inv;
             self.px[o + k] = ((num + out_a_num / 2) / out_a_num) as u8;
         }
         self.px[o + 3] = ((out_a_num + 127) / 255) as u8;
@@ -721,10 +721,7 @@ fn rasterize(cmds: &[u8], w: usize, h: usize, opaque_white: bool) -> Option<Canv
     let mut cv = Canvas::new(w, h, opaque_white);
     let mut r = Reader { b: cmds, i: 0 };
     while r.i < cmds.len() {
-        let op = match r.u8() {
-            Some(o) => o,
-            None => return None,
-        };
+        let op = r.u8()?;
         let ok = (|| -> Option<()> {
             match op {
                 OP_CLIP => {
@@ -867,9 +864,7 @@ fn rasterize(cmds: &[u8], w: usize, h: usize, opaque_white: bool) -> Option<Canv
             }
             Some(())
         })();
-        if ok.is_none() {
-            return None;
-        }
+        ok?;
     }
     Some(cv)
 }
