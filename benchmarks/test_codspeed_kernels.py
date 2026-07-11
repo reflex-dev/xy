@@ -46,6 +46,28 @@ def require_native_backend() -> None:
     )
 
 
+@pytest.fixture(scope="session", autouse=True)
+def warm_lazy_modules() -> None:
+    """Pull xy's lazily-imported submodules in before any measured region.
+
+    CodSpeed simulation measures each benchmark as a one-shot region, and CI
+    runs from a fresh checkout with no __pycache__. xy defers importing its
+    heavy submodules (marks, components, _payload, the export stack) until the
+    first figure build, so without this warmup the first figure-building
+    benchmark pays CPython source->bytecode compilation and module exec for
+    whatever those files have grown to — its number then tracks package source
+    size, not its own workload (a ~26% phantom regression on scatter_small when
+    the plot families landed).
+    """
+    x = np.array([0.0, 1.0, 2.0, 3.0])
+    y = np.array([0.0, 1.0, 0.0, 1.0])
+    fig = fc.chart(fc.scatter(x=x, y=y), fc.line(x=x, y=y)).figure()
+    fig.build_payload(N_BUCKETS)
+    fig.to_svg(width=64, height=48)
+    fig.to_png(engine="native", scale=1.0)
+    fig.to_html()
+
+
 @pytest.fixture(scope="module")
 def data() -> tuple[np.ndarray, np.ndarray]:
     rng = np.random.default_rng(42)
