@@ -72,6 +72,38 @@ def test_step_stairs_and_stem_share_expected_wire_shapes() -> None:
     assert [trace["kind"] for trace in spec["traces"][2:]] == ["stem", "scatter"]
 
 
+def test_generic_segments_share_instanced_renderers() -> None:
+    fig = Figure().segments([0, 1], [0, 1], [1, 2], [1, 0], color="#336699")
+    spec, _ = fig.build_payload()
+    assert spec["traces"][0]["kind"] == "segments"
+    assert spec["traces"][0]["n_marks"] == 2
+    assert "<line" in fig.to_svg()
+    assert fig.to_png(engine="native").startswith(b"\x89PNG")
+
+
+def test_triangle_mesh_ships_per_triangle_color_and_renders_static_exports() -> None:
+    fig = Figure().triangle_mesh(
+        [0.0, 1.0],
+        [0.0, 0.0],
+        [1.0, 2.0],
+        [0.0, 0.0],
+        [0.5, 1.5],
+        [1.0, 1.0],
+        color=[0.0, 1.0],
+        stroke="#111827",
+        stroke_width=0.75,
+    )
+    spec, _ = fig.build_payload()
+    trace = spec["traces"][0]
+    assert trace["kind"] == "triangle_mesh"
+    assert trace["n_marks"] == 2
+    assert trace["color"]["mode"] == "continuous"
+    assert all(name in trace for name in ("x0", "y0", "x1", "y1", "x2", "y2"))
+    svg = fig.to_svg()
+    assert svg.count("<polygon") == 2
+    assert fig.to_png(engine="native").startswith(b"\x89PNG")
+
+
 def test_new_marks_reject_invalid_inputs_without_mutating_figure() -> None:
     fig = Figure().line([0, 1], [1, 2])
     with pytest.raises(ValueError, match="errorbar requires"):

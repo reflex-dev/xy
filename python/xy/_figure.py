@@ -300,6 +300,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
     step = _marks.step
     stairs = _marks.stairs
     stem = _marks.stem
+    segments = _marks.segments
+    triangle_mesh = _marks.triangle_mesh
     bar = _marks.bar
     column = _marks.column
     heatmap = _marks.heatmap
@@ -948,6 +950,14 @@ class Figure(AnnotationsMixin, PayloadMixin):
             return []
         if t.kind in {"area", "error_band"} and t.base is not None:
             return [t.x] if axis == "x" else [t.y, t.base]
+        if (
+            t.kind == "triangle_mesh"
+            and t.x0 is not None
+            and t.x1 is not None
+            and t.y0 is not None
+            and t.y1 is not None
+        ):
+            return [t.x0, t.x1, t.x] if axis == "x" else [t.y0, t.y1, t.y]
         if t.x0 is not None and t.x1 is not None and t.y0 is not None and t.y1 is not None:
             return [t.x0, t.x1] if axis == "x" else [t.y0, t.y1]
         return [t.x if axis == "x" else t.y]

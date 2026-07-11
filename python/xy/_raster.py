@@ -249,12 +249,14 @@ def render_raster(spec: dict[str, Any], blob: bytes, scale: float = 2.0) -> np.n
             _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot)
         elif kind in ("scatter", "hexbin"):
             _emit_scatter(cmd, t, blob, cols, sx, sy, style, color)
-        elif kind in {"errorbar", "stem", "box_whisker", "box_median", "contour"}:
+        elif kind in {"errorbar", "stem", "box_whisker", "box_median", "contour", "segments"}:
             _emit_segments(cmd, t, blob, cols, sx, sy, style, color)
         elif kind in ("bar", "column") and t.get("bar"):
             _emit_bars(cmd, t, blob, cols, sx, sy, style, color, plot)
         elif kind == "heatmap" and t.get("heatmap"):
             _emit_grid(cmd, "heatmap", t["heatmap"], blob, cols, sx, sy, style)
+        elif kind == "triangle_mesh":
+            _emit_triangle_mesh(cmd, t, blob, cols, sx, sy, style, color)
         elif all(k in t for k in ("x0", "x1", "y0", "y1")):
             _emit_rects(cmd, t, blob, cols, sx, sy, style, color, plot)
 
@@ -363,12 +365,55 @@ def _emit_segments(cmd, t, blob, cols, sx, sy, style, color):
     x1 = _column(blob, cols[t["x1"]])
     y0 = _column(blob, cols[t["y0"]])
     y1 = _column(blob, cols[t["y1"]])
-    c = _rgba(style.get("color"), color, float(style.get("opacity", 1.0)))
+    ch = t.get("color") or {}
+    opacity = float(style.get("opacity", 1.0))
+    if ch.get("mode") == "continuous":
+        rgb = _lut(ch.get("colormap", "viridis"), _column(blob, cols[ch["buf"]]))
+        colors = [tuple(int(v) for v in row) + (int(round(255 * opacity)),) for row in rgb]
+    elif ch.get("mode") == "categorical":
+        codes = _column(blob, cols[ch["buf"]]).astype(np.int64)
+        palette = ch.get("palette") or DEFAULT_PALETTE
+        colors = [_parse_color(palette[code % len(palette)], opacity) for code in codes]
+    else:
+        colors = [_rgba(style.get("color"), color, opacity)] * len(x0)
     width = float(style.get("width", 1.2))
     for i in range(len(x0)):
         cmd.stroke(
-            [(float(sx(x0[i])), float(sy(y0[i]))), (float(sx(x1[i])), float(sy(y1[i])))], width, c
+            [(float(sx(x0[i])), float(sy(y0[i]))), (float(sx(x1[i])), float(sy(y1[i])))],
+            width,
+            colors[i],
         )
+
+
+def _emit_triangle_mesh(cmd, t, blob, cols, sx, sy, style, color):
+    vertices = [_column(blob, cols[t[name]]) for name in ("x0", "y0", "x1", "y1", "x2", "y2")]
+    n = min(len(values) for values in vertices)
+    ch = t.get("color") or {}
+    op = float(style.get("opacity", 1.0))
+    fills = np.empty((n, 4), dtype=np.uint8)
+    fills[:, 3] = max(0, min(255, int(round(op * 255))))
+    if ch.get("mode") == "continuous":
+        fills[:, :3] = _lut(ch.get("colormap", "viridis"), _column(blob, cols[ch["buf"]])[:n])
+    elif ch.get("mode") == "categorical":
+        codes = _column(blob, cols[ch["buf"]])[:n].astype(np.int64)
+        palette = ch.get("palette") or DEFAULT_PALETTE
+        palette_rgb = np.array([_parse_color(entry)[:3] for entry in palette], dtype=np.uint8)
+        fills[:, :3] = palette_rgb[codes % len(palette_rgb)]
+    else:
+        fills[:, :3] = _parse_color(_css(ch.get("color"), color))[:3]
+
+    x0, y0, x1, y1, x2, y2 = vertices
+    sw = float(style.get("stroke_width", 0.0))
+    stroke = _rgba(style.get("stroke"), color) if sw > 0 else (0, 0, 0, 0)
+    for i in range(n):
+        triangle = [
+            (float(sx(x0[i])), float(sy(y0[i]))),
+            (float(sx(x1[i])), float(sy(y1[i]))),
+            (float(sx(x2[i])), float(sy(y2[i]))),
+        ]
+        cmd.fill(triangle, tuple(int(value) for value in fills[i]))
+        if sw > 0:
+            cmd.stroke(triangle, sw, stroke, closed=True)
 
 
 def _bar_geom(cmd, x, y, w, h, style, fill_cmd, stroke_c, sw, tip_top):

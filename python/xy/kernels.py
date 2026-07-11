@@ -32,25 +32,41 @@ CSS_LENGTH = _impl.CSS_LENGTH
 CSS_NUMBER = _impl.CSS_NUMBER
 
 css_check = _impl.css_check
+correlation = _impl.correlation
+delaunay_triangles = _impl.delaunay_triangles
 zone_maps = _impl.zone_maps
 encode_f32 = _impl.encode_f32
 m4_indices = _impl.m4_indices
 marching_squares = _impl.marching_squares
+marching_triangles = _impl.marching_triangles
 is_sorted = _impl.is_sorted
 min_max = _impl.min_max
 bin_2d = _impl.bin_2d
 bin_2d_indices = _impl.bin_2d_indices
 histogram_uniform = _impl.histogram_uniform
+histogram2d = _impl.histogram2d
+indexed_triangles = _impl.indexed_triangles
 normalize_f32 = _impl.normalize_f32
 range_indices = _impl.range_indices
 sample_mask = _impl.sample_mask
+sector_triangles = _impl.sector_triangles
+stacked_bounds = _impl.stacked_bounds
+streamlines = _impl.streamlines
+triangle_edges = _impl.triangle_edges
 local_log_density = _impl.local_log_density
 pyramid_build = _impl.pyramid_build
 pyramid_count = _impl.pyramid_count
 pyramid_compose = _impl.pyramid_compose
 pyramid_free = _impl.pyramid_free
+polygon_triangles = _impl.polygon_triangles
+quad_mesh_triangles = _impl.quad_mesh_triangles
 rasterize = _impl.rasterize
+rfft = _impl.rfft
+spectrogram = _impl.spectrogram
 stratified_sample_mask = _impl.stratified_sample_mask
+vector_segments = _impl.vector_segments
+welch_spectra = _impl.welch_spectra
+weighted_ecdf = _impl.weighted_ecdf
 
 __all__ = [
     "BACKEND",
@@ -60,22 +76,38 @@ __all__ = [
     "CSS_NUMBER",
     "bin_2d",
     "bin_2d_indices",
+    "correlation",
     "css_check",
+    "delaunay_triangles",
     "encode_f32",
+    "histogram2d",
     "histogram_uniform",
+    "indexed_triangles",
     "is_sorted",
     "local_log_density",
     "m4_indices",
     "marching_squares",
+    "marching_triangles",
     "min_max",
     "normalize_f32",
+    "polygon_triangles",
     "pyramid_build",
     "pyramid_compose",
     "pyramid_count",
     "pyramid_free",
+    "quad_mesh_triangles",
     "range_indices",
     "rasterize",
+    "rfft",
     "sample_mask",
+    "sector_triangles",
+    "spectrogram",
+    "stacked_bounds",
     "stratified_sample_mask",
+    "streamlines",
+    "triangle_edges",
+    "vector_segments",
+    "weighted_ecdf",
+    "welch_spectra",
     "zone_maps",
 ]

@@ -80,6 +80,123 @@ def _append_segment_trace(
         raise
 
 
+def segments(
+    self,
+    x0: Any,
+    y0: Any,
+    x1: Any,
+    y1: Any,
+    *,
+    name: Optional[str] = None,
+    color: Any = None,
+    colormap: str = channels.DEFAULT_COLORMAP,
+    domain: Optional[tuple[float, float]] = None,
+    width: float = 1.2,
+    opacity: float = 1.0,
+) -> "Figure":
+    """Add independent line segments through the shared instanced renderer."""
+    arrays = [self._as_1d_float(values, "segments color geometry") for values in (x0, y0, x1, y1)]
+    if len({len(values) for values in arrays}) != 1:
+        raise ValueError("segments coordinate columns must have equal length")
+    default = DEFAULT_PALETTE[len(self.traces) % len(DEFAULT_PALETTE)]
+    color_ch = channels.resolve_color(
+        color, len(arrays[0]), colormap=colormap, default_constant=default
+    )
+    if domain is not None:
+        if color_ch.mode != "continuous":
+            raise ValueError("segments domain requires a continuous numeric color array")
+        color_ch.domain = self._finite_increasing_pair(domain, "segments domain")
+    constant = color_ch.constant if color_ch.mode == "constant" else None
+    self._append_segment_trace(
+        "segments",
+        arrays[0],
+        arrays[2],
+        arrays[1],
+        arrays[3],
+        name=name,
+        color=constant,
+        opacity=opacity,
+        width=width,
+        role="segments",
+        color_ch=None if color_ch.mode == "constant" else color_ch,
+    )
+    return self
+
+
+def triangle_mesh(
+    self,
+    x0: Any,
+    y0: Any,
+    x1: Any,
+    y1: Any,
+    x2: Any,
+    y2: Any,
+    *,
+    color: Any = None,
+    colormap: str = channels.DEFAULT_COLORMAP,
+    domain: Optional[tuple[float, float]] = None,
+    name: Optional[str] = None,
+    opacity: float = 1.0,
+    stroke: Optional[str] = None,
+    stroke_width: float = 0.0,
+) -> "Figure":
+    """Add independently colored filled triangles as one instanced mesh."""
+    name = self._optional_text(name, "triangle_mesh name")
+    opacity = self._opacity(opacity, "triangle_mesh opacity")
+    stroke = self._optional_css_color(stroke, "triangle_mesh stroke")
+    stroke_width = self._nonnegative_scalar(stroke_width, "triangle_mesh stroke_width")
+    if stroke is not None and stroke_width == 0.0:
+        stroke_width = 1.0
+    arrays = [
+        self._as_1d_float(values, f"triangle_mesh {label}")
+        for label, values in (
+            ("x0", x0),
+            ("y0", y0),
+            ("x1", x1),
+            ("y1", y1),
+            ("x2", x2),
+            ("y2", y2),
+        )
+    ]
+    if len({len(values) for values in arrays}) != 1:
+        raise ValueError("triangle_mesh coordinate columns must have equal length")
+    n = len(arrays[0])
+    default_color = DEFAULT_PALETTE[len(self.traces) % len(DEFAULT_PALETTE)]
+    color_ch = channels.resolve_color(color, n, colormap=colormap, default_constant=default_color)
+    if domain is not None:
+        if color_ch.mode != "continuous":
+            raise ValueError("triangle_mesh domain requires a continuous numeric color array")
+        color_ch.domain = self._finite_increasing_pair(domain, "triangle_mesh domain")
+    checkpoint = self._checkpoint()
+    try:
+        x0c, y0c, x1c, y1c, x2c, y2c = [self.store.ingest(values) for values in arrays]
+        style: dict[str, Any] = {"opacity": opacity, "role": "triangle-mesh"}
+        if stroke is not None:
+            style["stroke"] = stroke
+        if stroke_width:
+            style["stroke_width"] = stroke_width
+        self.traces.append(
+            Trace(
+                id=len(self.traces),
+                kind="triangle_mesh",
+                x=x2c,
+                y=y2c,
+                x0=x0c,
+                x1=x1c,
+                y0=y0c,
+                y1=y1c,
+                name=name,
+                style=style,
+                color_ch=color_ch,
+                count=n,
+            )
+        )
+        return self
+    except Exception:
+        self._rollback(checkpoint)
+        raise
+
+
 def _error_extent(
     value: Any, n: int, center: np.ndarray, label: str
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -149,7 +266,7 @@ def _distribution_groups(
         and len(values)
         and all(not isinstance(v, str) and np.ndim(v) == 1 for v in values)
     ):
-        # Sequence-of-datasets shape (the matplotlib boxplot convention):
+        # Sequence-of-datasets shape used by column-oriented statistical APIs:
         # one group per item, ragged lengths allowed.
         groups = [self._as_1d_float(v, f"{kind} values") for v in values]
     else:
@@ -187,7 +304,7 @@ def _distribution_stats(group: np.ndarray) -> tuple[float, float, float, float, 
     iqr = q3 - q1
     lo_fence, hi_fence = q1 - 1.5 * iqr, q3 + 1.5 * iqr
     # Whiskers end at the most extreme observation inside the Tukey fence
-    # (the matplotlib/plotly convention), never at the bare fence value.
+    # at an observed point inside the fence, never at the bare fence value.
     # Both selections are non-empty: min <= q1 <= hi_fence and
     # lo_fence < q3 <= max.
     low = float(np.min(finite[finite >= lo_fence]))

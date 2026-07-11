@@ -49,6 +49,8 @@ HEAVY_IMPORTS = HEAVY_THIRD_PARTY_IMPORTS | HEAVY_XY_IMPORTS
 COMPONENT_REEXPORTS = {"CHART_DOM_SLOTS"}
 DECLARATIVE_MARK_EXPORTS = (
     "scatter",
+    "segments",
+    "triangle_mesh",
     "line",
     "area",
     "histogram",
@@ -82,6 +84,8 @@ DECLARATIVE_CHROME_EXPORTS = (
 DECLARATIVE_CHART_EXPORTS = (
     "chart",
     "scatter_chart",
+    "segments_chart",
+    "triangle_mesh_chart",
     "line_chart",
     "area_chart",
     "histogram_chart",

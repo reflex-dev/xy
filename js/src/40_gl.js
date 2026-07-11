@@ -21,7 +21,7 @@ function compile(gl, type, src) {
 // grid quad: a_corner). WebGL2 guarantees >= 16 attribs; the max used is 10.
 const ATTR_SLOTS = {
   ax: 0, ay: 1,
-  ax0: 0, ax1: 1, ay0: 2, ay1: 3, ab0: 4, ab1: 5,
+  ax0: 0, ax1: 1, ay0: 2, ay1: 3, ax2: 4, ay2: 5, ab0: 4, ab1: 5,
   a_pos: 0, a_v1: 1, a_v0: 2,
   a_corner: 0,
   a_cval: 6, a_sval: 7, a_sel: 8, a_dval: 9,
@@ -277,6 +277,7 @@ void main() {
 const LINE_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
+uniform int u_colorMode;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 in float a_len0; in float a_len1;
 out float v_off; out float v_dash;
@@ -339,6 +340,7 @@ void main() {
 const SEGMENT_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1; in float a_cval;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
+uniform int u_colorMode;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
 uniform int u_x0mode; uniform int u_x1mode; uniform int u_y0mode; uniform int u_y1mode;
 out float v_off; out float v_cval;
@@ -358,7 +360,7 @@ void main() {
   vec2 pos = mix(pix0, pix1, c.x) + dir * (c.x * 2.0 - 1.0) * 0.5 + n * c.y * half_w;
   gl_Position = vec4(pos / u_res * 2.0 - 1.0, 0.0, 1.0);
   v_off = c.y * half_w;
-  v_cval = a_cval;
+  v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
 }`;
 
 const SEGMENT_FS = `#version 300 es
@@ -368,10 +370,53 @@ in float v_off; in float v_cval;
 out vec4 outColor;
 void main() {
   float half_w = u_width * 0.5;
-  vec3 rgb = u_colorMode == 1 ? texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb : u_color.rgb;
+  vec3 rgb = u_colorMode != 0 ? texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb : u_color.rgb;
   float alpha = (1.0 - smoothstep(half_w - 0.5, half_w + 0.5, abs(v_off))) * u_color.a;
   if (alpha <= 0.001) discard;
   outColor = vec4(rgb * alpha, alpha);
+}`;
+
+// Filled triangle meshes: one instance per triangle, with optional scalar LUT
+// color and antialiased barycentric edge strokes.
+const MESH_VS = `#version 300 es
+in float ax0; in float ay0; in float ax1; in float ay1; in float ax2; in float ay2; in float a_cval;
+uniform vec2 u_xmap; uniform vec2 u_ymap;
+uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_x2meta;
+uniform vec2 u_y0meta; uniform vec2 u_y1meta; uniform vec2 u_y2meta;
+uniform int u_x0mode; uniform int u_x1mode; uniform int u_x2mode;
+uniform int u_y0mode; uniform int u_y1mode; uniform int u_y2mode;
+uniform int u_colorMode;
+out float v_cval; out vec3 v_bary;
+${AXIS_GLSL}
+void main() {
+  int vertex = gl_VertexID % 3;
+  float x = vertex == 0 ? ax0 : (vertex == 1 ? ax1 : ax2);
+  float y = vertex == 0 ? ay0 : (vertex == 1 ? ay1 : ay2);
+  vec2 xm = vertex == 0 ? u_x0meta : (vertex == 1 ? u_x1meta : u_x2meta);
+  vec2 ym = vertex == 0 ? u_y0meta : (vertex == 1 ? u_y1meta : u_y2meta);
+  int xmode = vertex == 0 ? u_x0mode : (vertex == 1 ? u_x1mode : u_x2mode);
+  int ymode = vertex == 0 ? u_y0mode : (vertex == 1 ? u_y1mode : u_y2mode);
+  gl_Position = vec4(fcMap(x, u_xmap, xm, xmode), fcMap(y, u_ymap, ym, ymode), 0.0, 1.0);
+  v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  v_bary = vertex == 0 ? vec3(1.,0.,0.) : (vertex == 1 ? vec3(0.,1.,0.) : vec3(0.,0.,1.));
+}`;
+
+const MESH_FS = `#version 300 es
+precision highp float; precision highp int;
+uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
+uniform vec4 u_stroke; uniform float u_strokeWidth;
+in float v_cval; in vec3 v_bary;
+out vec4 outColor;
+void main() {
+  vec3 rgb = u_colorMode == 0 ? u_color.rgb : texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb;
+  vec4 fill = vec4(rgb * u_opacity, u_opacity);
+  if (u_strokeWidth > 0.0) {
+    float edge = min(v_bary.x, min(v_bary.y, v_bary.z));
+    float coverage = smoothstep(0.0, max(fwidth(edge) * u_strokeWidth, 1e-5), edge);
+    outColor = mix(u_stroke, fill, coverage);
+  } else {
+    outColor = fill;
+  }
 }`;
 
 // Mark-fill gradients (docs/styling.md#styling-the-marks): up to 8 stops,

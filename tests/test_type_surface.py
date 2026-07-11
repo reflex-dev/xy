@@ -33,6 +33,8 @@ MARK_FACTORIES = (
     "step",
     "stairs",
     "stem",
+    "segments",
+    "triangle_mesh",
 )
 ANNOTATION_FACTORIES = (
     "arrow",
@@ -66,6 +68,8 @@ CHART_FACTORIES = (
     "step_chart",
     "stairs_chart",
     "stem_chart",
+    "segments_chart",
+    "triangle_mesh_chart",
 )
 CHROME_FACTORIES = (
     "legend",

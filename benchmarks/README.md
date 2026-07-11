@@ -33,6 +33,9 @@ These commands match the non-blocking GitHub Actions measurement lane:
   --ttfr --ttfr-max-n 1e5 --chromium "$CHROME" --json line.json
 .venv/bin/python benchmarks/bench_2d_charts.py --profile standard \
   --ttfr --chromium "$CHROME" --json core-2d.json
+.venv/bin/python benchmarks/bench_pyplot_vs_matplotlib.py \
+  --profile standard --reps 7 --warmups 1 \
+  --json pyplot-vs-matplotlib.json --out pyplot-vs-matplotlib.md
 .venv/bin/python benchmarks/bench_interaction.py --sizes 1e4,2.5e5 \
   --reps 24 --chromium "$CHROME" --json interaction.json
 .venv/bin/python benchmarks/bench_dashboard.py --chart-counts 10,20,50 \
@@ -81,6 +84,10 @@ JSON artifacts, retain failed/over-budget rows, and label the table
 
 - Static target rows (`binary-spec`, HTML, Agg PNG, Kaleido PNG) are not direct
   speedup comparisons.
+- `bench_pyplot_vs_matplotlib.py` is the exception by construction: both arms
+  use the same Matplotlib-style calls and emit validated, nonblank 1800×840
+  PNGs. Use its `total_median_ms` for chart-to-pixels comparisons; its build
+  stage is diagnostic because xy defers work until export.
 - Interactive TTFR is build + HTML serialization + chart-ready time.
 - Interaction browser rows are standalone client input-to-pixel-readback;
   backend LOD work is in CodSpeed and workflow rows.

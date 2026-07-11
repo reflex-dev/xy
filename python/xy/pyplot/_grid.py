@@ -2,7 +2,10 @@
 
 HTML: one self-contained document, panels in a CSS grid, each panel embedded
 as a sandboxed ``srcdoc`` iframe of its own standalone chart document (same
-zero-dependency offline story as `Chart.to_html`).
+zero-dependency offline story as `Chart.to_html`).  A page-level visibility
+governor unloads off-screen panel documents.  This matters in notebooks where
+many executed multi-panel cells would otherwise keep enough independent
+WebGL contexts alive for the browser to evict arbitrary visible canvases.
 
 PNG: each panel renders through the engine's native rasterizer to an RGBA
 array; NumPy pastes them onto one canvas and the engine's PNG encoder writes
@@ -24,8 +27,14 @@ def compose_html(charts: list[Any], nrows: int, ncols: int, suptitle: Optional[s
     panels = []
     for chart in charts:
         doc = chart.to_html()
+        figure = chart.figure()
+        width = max(120, int(figure.width))
+        height = max(120, int(figure.height))
         panels.append(
-            f'<iframe class="fc-panel" sandbox="allow-scripts" srcdoc="{_html.escape(doc, quote=True)}"></iframe>'
+            '<iframe class="fc-panel" data-fc-pyplot-panel '
+            'loading="lazy" sandbox="allow-scripts" '
+            f'style="width:{width}px;height:{height}px" '
+            f'srcdoc="{_html.escape(doc, quote=True)}"></iframe>'
         )
     title_html = f"<h2 class='fc-suptitle'>{_html.escape(suptitle)}</h2>" if suptitle else ""
     grid = "\n".join(panels)
@@ -36,8 +45,8 @@ def compose_html(charts: list[Any], nrows: int, ncols: int, suptitle: Optional[s
 <style>
   body {{ margin: 0; font-family: system-ui, sans-serif; background: #ffffff; }}
   .fc-suptitle {{ text-align: center; margin: 8px 0 0; font-size: 16px; color: #262626; }}
-  .fc-grid {{ display: grid; grid-template-columns: repeat({ncols}, 1fr); gap: 4px; padding: 4px; }}
-  .fc-panel {{ border: 0; width: 100%; aspect-ratio: auto; min-height: 240px; }}
+  .fc-grid {{ display: grid; grid-template-columns: repeat({ncols}, max-content); gap: 4px; padding: 4px; overflow-x: auto; }}
+  .fc-panel {{ border: 0; display: block; }}
 </style>
 </head>
 <body>
@@ -45,6 +54,61 @@ def compose_html(charts: list[Any], nrows: int, ncols: int, suptitle: Optional[s
 <div class="fc-grid">
 {grid}
 </div>
+<script>
+(() => {{
+  const key = "__xyPyplotPanelGovernorV1";
+  const blank = "<!doctype html><html><body style='margin:0;background:#fff'></body></html>";
+  let governor = window[key];
+  if (!governor) {{
+    const states = new WeakMap();
+    let sequence = 0;
+    const observer = new IntersectionObserver((entries) => {{
+      for (const entry of entries) {{
+        const frame = entry.target;
+        const state = states.get(frame);
+        if (!state) continue;
+        state.visible = entry.isIntersecting || entry.intersectionRatio > 0;
+        if (state.visible) {{
+          state.seen = ++sequence;
+          clearTimeout(state.releaseTimer);
+          state.releaseTimer = null;
+          if (state.dormant && frame.isConnected) {{
+            state.dormant = false;
+            frame.srcdoc = state.source;
+          }}
+          continue;
+        }}
+        clearTimeout(state.releaseTimer);
+        state.releaseTimer = setTimeout(() => {{
+          if (state.visible || state.dormant || !frame.isConnected) return;
+          state.dormant = true;
+          frame.srcdoc = blank;
+        }}, 120);
+      }}
+    }}, {{ rootMargin: "100% 0px 100% 0px" }});
+    governor = window[key] = {{
+      register(frame) {{
+        if (states.has(frame)) return;
+        states.set(frame, {{
+          source: frame.srcdoc,
+          visible: true,
+          dormant: false,
+          releaseTimer: null,
+          seen: ++sequence,
+        }});
+        observer.observe(frame);
+      }},
+    }};
+  }}
+  const script = document.currentScript;
+  const panelGrid = script && script.previousElementSibling;
+  if (panelGrid) {{
+    for (const frame of panelGrid.querySelectorAll("iframe[data-fc-pyplot-panel]")) {{
+      governor.register(frame);
+    }}
+  }}
+}})();
+</script>
 </body>
 </html>"""
 

@@ -107,6 +107,8 @@ __all__ = [
     "modebar",
     "scatter",
     "scatter_chart",
+    "segments",
+    "segments_chart",
     "stairs",
     "stairs_chart",
     "stem",
@@ -118,6 +120,8 @@ __all__ = [
     "threshold",
     "threshold_zone",
     "tooltip",
+    "triangle_mesh",
+    "triangle_mesh_chart",
     "violin",
     "violin_chart",
     "vline",
@@ -433,6 +437,90 @@ def errorbar(
             "width": width,
             "cap_size": cap_size,
             "opacity": opacity,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
+        },
+    )
+
+
+def segments(
+    x0: Union[str, Any] = None,
+    y0: Union[str, Any] = None,
+    x1: Union[str, Any] = None,
+    y1: Union[str, Any] = None,
+    *,
+    data: Any = None,
+    name: Optional[str] = None,
+    color: Any = None,
+    colormap: str = channels.DEFAULT_COLORMAP,
+    domain: Optional[tuple[float, float]] = None,
+    width: float = 1.2,
+    opacity: float = 1.0,
+    class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
+) -> Mark:
+    """Independent line segments rendered as one instanced mark."""
+    return Mark(
+        kind="segments",
+        x=x0,
+        y=y0,
+        data=data,
+        name=name,
+        class_name=class_name,
+        props={
+            "x1": x1,
+            "y1": y1,
+            "color": color,
+            "colormap": colormap,
+            "domain": domain,
+            "width": width,
+            "opacity": opacity,
+            "x_axis": x_axis,
+            "y_axis": y_axis,
+        },
+    )
+
+
+def triangle_mesh(
+    x0: Union[str, Any] = None,
+    y0: Union[str, Any] = None,
+    x1: Union[str, Any] = None,
+    y1: Union[str, Any] = None,
+    x2: Union[str, Any] = None,
+    y2: Union[str, Any] = None,
+    *,
+    data: Any = None,
+    color: Any = None,
+    colormap: str = channels.DEFAULT_COLORMAP,
+    domain: Optional[tuple[float, float]] = None,
+    name: Optional[str] = None,
+    opacity: float = 1.0,
+    stroke: Optional[str] = None,
+    stroke_width: float = 0.0,
+    class_name: Optional[str] = None,
+    x_axis: str = "x",
+    y_axis: str = "y",
+) -> Mark:
+    """Filled triangle mesh with constant or per-triangle color values."""
+    return Mark(
+        kind="triangle_mesh",
+        x=x0,
+        y=y0,
+        data=data,
+        name=name,
+        class_name=class_name,
+        props={
+            "x1": x1,
+            "y1": y1,
+            "x2": x2,
+            "y2": y2,
+            "color": color,
+            "colormap": colormap,
+            "domain": domain,
+            "opacity": opacity,
+            "stroke": stroke,
+            "stroke_width": stroke_width,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -2522,6 +2610,41 @@ def _apply_errorbar(fig: Figure, m: Mark, data: Any) -> None:
     )
 
 
+def _apply_segments(fig: Figure, m: Mark, data: Any) -> None:
+    color = m.props["color"]
+    fig.segments(
+        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x0"),
+        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y0"),
+        _resolve_axis_values(fig, data, m.props["x1"], "x", f"{m.kind}.x1"),
+        _resolve_axis_values(fig, data, m.props["y1"], "y", f"{m.kind}.y1"),
+        name=m.name,
+        color=_resolve_color(data, color, context=f"{m.kind}.color"),
+        colormap=m.props["colormap"],
+        domain=m.props["domain"],
+        width=m.props["width"],
+        opacity=m.props["opacity"],
+    )
+
+
+def _apply_triangle_mesh(fig: Figure, m: Mark, data: Any) -> None:
+    color = m.props["color"]
+    fig.triangle_mesh(
+        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x0"),
+        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y0"),
+        _resolve_axis_values(fig, data, m.props["x1"], "x", f"{m.kind}.x1"),
+        _resolve_axis_values(fig, data, m.props["y1"], "y", f"{m.kind}.y1"),
+        _resolve_axis_values(fig, data, m.props["x2"], "x", f"{m.kind}.x2"),
+        _resolve_axis_values(fig, data, m.props["y2"], "y", f"{m.kind}.y2"),
+        color=_resolve_color(data, color, context=f"{m.kind}.color"),
+        colormap=m.props["colormap"],
+        domain=m.props["domain"],
+        name=m.name,
+        opacity=m.props["opacity"],
+        stroke=m.props["stroke"],
+        stroke_width=m.props["stroke_width"],
+    )
+
+
 def _apply_step(fig: Figure, m: Mark, data: Any) -> None:
     fig.step(
         _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
@@ -2840,10 +2963,12 @@ _MARK_APPLIERS: dict[str, Callable[[Figure, Mark, Any], None]] = {
     "heatmap": _apply_heatmap,
     "histogram": _apply_histogram,
     "scatter": _apply_scatter,
+    "segments": _apply_segments,
     "line": _apply_line,
     "step": _apply_step,
     "stairs": _apply_stairs,
     "stem": _apply_stem,
+    "triangle_mesh": _apply_triangle_mesh,
     "violin": _apply_violin,
 }
 
@@ -2946,6 +3071,16 @@ def stairs_chart(*children: Component, **props: Any) -> Chart:
 def stem_chart(*children: Component, **props: Any) -> Chart:
     """A stem chart composing `stem` marks."""
     return Chart("stem_chart", children, **props)
+
+
+def segments_chart(*children: Component, **props: Any) -> Chart:
+    """A segment chart composing generic independent segment marks."""
+    return Chart("segments_chart", children, **props)
+
+
+def triangle_mesh_chart(*children: Component, **props: Any) -> Chart:
+    """A filled triangular mesh chart."""
+    return Chart("triangle_mesh_chart", children, **props)
 
 
 def facet_chart(

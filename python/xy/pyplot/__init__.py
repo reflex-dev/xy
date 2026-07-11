@@ -28,34 +28,91 @@ from ._translate import not_implemented
 __all__ = [
     "Axes",
     "Figure",
+    "acorr",
+    "angle_spectrum",
+    "annotate",
+    "arrow",
+    "axhline",
+    "axhspan",
+    "axline",
+    "axvline",
+    "axvspan",
     "bar",
+    "bar_label",
+    "barbs",
     "barh",
+    "boxplot",
+    "broken_barh",
+    "bxp",
+    "clabel",
     "close",
     "cm",
+    "cohere",
+    "colorbar",
+    "contour",
+    "contourf",
+    "csd",
+    "ecdf",
+    "errorbar",
+    "eventplot",
     "figure",
+    "fill",
     "fill_between",
+    "fill_betweenx",
     "gca",
     "gcf",
     "grid",
+    "grouped_bar",
+    "hexbin",
     "hist",
+    "hist2d",
+    "hlines",
     "imshow",
     "legend",
+    "loglog",
+    "magnitude_spectrum",
+    "matshow",
+    "pcolor",
+    "pcolorfast",
     "pcolormesh",
+    "phase_spectrum",
+    "pie",
+    "pie_label",
     "plot",
+    "psd",
+    "quiver",
+    "quiverkey",
     "rcParams",
     "savefig",
     "sca",
     "scatter",
+    "semilogx",
+    "semilogy",
     "show",
+    "specgram",
+    "spy",
+    "stackplot",
+    "stairs",
+    "stem",
     "step",
+    "streamplot",
     "style",
     "subplot",
     "subplots",
     "suptitle",
+    "table",
     "text",
     "tight_layout",
     "title",
+    "tricontour",
+    "tricontourf",
+    "tripcolor",
+    "triplot",
     "twinx",
+    "violin",
+    "violinplot",
+    "vlines",
+    "xcorr",
     "xlabel",
     "xlim",
     "xscale",
@@ -111,29 +168,73 @@ def _delegated(name: str):
 
 
 plot = _delegated("plot")
+acorr = _delegated("acorr")
+angle_spectrum = _delegated("angle_spectrum")
+cohere = _delegated("cohere")
+csd = _delegated("csd")
+magnitude_spectrum = _delegated("magnitude_spectrum")
+phase_spectrum = _delegated("phase_spectrum")
+psd = _delegated("psd")
+specgram = _delegated("specgram")
+xcorr = _delegated("xcorr")
+fill = _delegated("fill")
+arrow = _delegated("arrow")
+axline = _delegated("axline")
 scatter = _delegated("scatter")
 bar = _delegated("bar")
+bar_label = _delegated("bar_label")
+grouped_bar = _delegated("grouped_bar")
 barh = _delegated("barh")
 hist = _delegated("hist")
 fill_between = _delegated("fill_between")
+fill_betweenx = _delegated("fill_betweenx")
 imshow = _delegated("imshow")
+matshow = _delegated("matshow")
+pcolor = _delegated("pcolor")
+pcolorfast = _delegated("pcolorfast")
 pcolormesh = _delegated("pcolormesh")
 step = _delegated("step")
+stem = _delegated("stem")
+stairs = _delegated("stairs")
+ecdf = _delegated("ecdf")
+hist2d = _delegated("hist2d")
+hexbin = _delegated("hexbin")
+eventplot = _delegated("eventplot")
+stackplot = _delegated("stackplot")
 axhline = _delegated("axhline")
 axvline = _delegated("axvline")
 axhspan = _delegated("axhspan")
 axvspan = _delegated("axvspan")
 annotate = _delegated("annotate")
 text = _delegated("text")
+table = _delegated("table")
 legend = _delegated("legend")
 grid = _delegated("grid")
 pie = _delegated("pie")
+pie_label = _delegated("pie_label")
 boxplot = _delegated("boxplot")
+bxp = _delegated("bxp")
 violinplot = _delegated("violinplot")
+violin = _delegated("violin")
 errorbar = _delegated("errorbar")
 contour = _delegated("contour")
 contourf = _delegated("contourf")
+clabel = _delegated("clabel")
 quiver = _delegated("quiver")
+quiverkey = _delegated("quiverkey")
+barbs = _delegated("barbs")
+streamplot = _delegated("streamplot")
+semilogx = _delegated("semilogx")
+semilogy = _delegated("semilogy")
+loglog = _delegated("loglog")
+hlines = _delegated("hlines")
+vlines = _delegated("vlines")
+broken_barh = _delegated("broken_barh")
+spy = _delegated("spy")
+tripcolor = _delegated("tripcolor")
+triplot = _delegated("triplot")
+tricontour = _delegated("tricontour")
+tricontourf = _delegated("tricontourf")
 
 
 def title(label: str, **kwargs: Any) -> None:

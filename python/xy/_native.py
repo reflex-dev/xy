@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_CONTOUR_WORK, MAX_SCREEN_DIM
 
-ABI_VERSION = 12
+ABI_VERSION = 15
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.
@@ -110,6 +110,213 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_size_t,
         ctypes.c_void_p,
+    ]
+    lib.fc_stacked_bounds.restype = ctypes.c_int32
+    lib.fc_stacked_bounds.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.fc_histogram2d.restype = ctypes.c_int32
+    lib.fc_histogram2d.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+    ]
+    lib.fc_quad_mesh_triangles.restype = ctypes.c_size_t
+    lib.fc_quad_mesh_triangles.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.fc_sector_triangles.restype = ctypes.c_size_t
+    lib.fc_sector_triangles.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_int32,
+        ctypes.c_int32,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+    ]
+    lib.fc_rfft.restype = ctypes.c_int32
+    lib.fc_rfft.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.fc_welch_spectra.restype = ctypes.c_int32
+    lib.fc_welch_spectra.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.fc_spectrogram.restype = ctypes.c_int32
+    lib.fc_spectrogram.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.fc_correlation.restype = ctypes.c_int32
+    lib.fc_correlation.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_int32,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.fc_weighted_ecdf.restype = ctypes.c_size_t
+    lib.fc_weighted_ecdf.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.fc_indexed_triangles.restype = ctypes.c_size_t
+    lib.fc_indexed_triangles.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.fc_triangle_edges.restype = ctypes.c_size_t
+    lib.fc_triangle_edges.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.fc_delaunay_triangles.restype = ctypes.c_size_t
+    lib.fc_delaunay_triangles.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+    ]
+    lib.fc_polygon_triangles.restype = ctypes.c_size_t
+    lib.fc_polygon_triangles.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+    ]
+    lib.fc_marching_triangles.restype = ctypes.c_size_t
+    lib.fc_marching_triangles.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+    ]
+    lib.fc_vector_segments.restype = ctypes.c_size_t
+    lib.fc_vector_segments.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_uint32,
+        ctypes.c_double,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.fc_streamlines.restype = ctypes.c_size_t
+    lib.fc_streamlines.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_double,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
     ]
     lib.fc_marching_squares.restype = ctypes.c_size_t
     lib.fc_marching_squares.argtypes = [
@@ -434,6 +641,647 @@ def encode_f32(
     if ok != 1:
         raise RuntimeError("xy native encode_f32 failed (output undefined)")
     return out
+
+
+def stacked_bounds(
+    values: npt.NDArray[np.float64], baseline: str = "zero"
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    """Native stacked-series lower/upper bounds for area composition."""
+    modes = {"zero": 0, "sym": 1, "wiggle": 2, "weighted_wiggle": 3}
+    if baseline not in modes:
+        raise ValueError(f"baseline must be one of {tuple(modes)}, got {baseline!r}")
+    values = np.ascontiguousarray(values, dtype=np.float64)
+    if values.ndim != 2 or min(values.shape) == 0:
+        raise ValueError(f"values must be a non-empty 2-D array, got shape {values.shape}")
+    lower = np.empty_like(values)
+    upper = np.empty_like(values)
+    ok = _lib.fc_stacked_bounds(
+        values.ctypes.data,
+        values.shape[0],
+        values.shape[1],
+        modes[baseline],
+        lower.ctypes.data,
+        upper.ctypes.data,
+    )
+    if ok != 1:
+        raise RuntimeError("xy native stacked_bounds failed (output undefined)")
+    return lower, upper
+
+
+def histogram2d(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    x_edges: npt.NDArray[np.float64],
+    y_edges: npt.NDArray[np.float64],
+    weights: Optional[npt.NDArray[np.float64]] = None,
+) -> npt.NDArray[np.float64]:
+    """Native weighted 2-D histogram for arbitrary monotonic bin edges."""
+    x = _as_f64(x, "x")
+    y = _as_f64(y, "y")
+    x_edges = _as_f64(x_edges, "x_edges")
+    y_edges = _as_f64(y_edges, "y_edges")
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    if len(x_edges) < 2 or len(y_edges) < 2:
+        raise ValueError("x_edges and y_edges must each contain at least two values")
+    if weights is not None:
+        weights = _as_f64(weights, "weights")
+        if len(weights) != len(x):
+            raise ValueError("weights must have the same length as x and y")
+        weights_ptr = weights.ctypes.data
+    else:
+        weights_ptr = 0
+    out = np.empty((len(x_edges) - 1, len(y_edges) - 1), dtype=np.float64)
+    ok = _lib.fc_histogram2d(
+        x.ctypes.data if len(x) else 0,
+        y.ctypes.data if len(y) else 0,
+        weights_ptr,
+        len(x),
+        x_edges.ctypes.data,
+        len(x_edges),
+        y_edges.ctypes.data,
+        len(y_edges),
+        out.ctypes.data,
+    )
+    if ok != 1:
+        raise ValueError("invalid histogram2d arguments")
+    return out
+
+
+def quad_mesh_triangles(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    values: npt.NDArray[np.float64],
+) -> tuple[
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+]:
+    """Expand a rectilinear or curvilinear quad grid into finite triangles."""
+    values = np.ascontiguousarray(values, dtype=np.float64)
+    if values.ndim != 2 or min(values.shape, default=0) == 0:
+        raise ValueError(f"values must be a non-empty 2-D array, got shape {values.shape}")
+    rows, cols = values.shape
+    x_values = np.ascontiguousarray(x, dtype=np.float64)
+    y_values = np.ascontiguousarray(y, dtype=np.float64)
+    if x_values.ndim == y_values.ndim == 1:
+        if x_values.shape == (cols + 1,) and y_values.shape == (rows + 1,):
+            layout = 0
+        elif x_values.shape == (cols,) and y_values.shape == (rows,):
+            layout = 2
+        else:
+            raise ValueError(
+                "rectilinear coordinates must be cell centers or edges matching values.shape"
+            )
+    elif x_values.ndim == y_values.ndim == 2:
+        if x_values.shape == y_values.shape == (rows + 1, cols + 1):
+            layout = 1
+        elif x_values.shape == y_values.shape == (rows, cols):
+            layout = 3
+        else:
+            raise ValueError(
+                "curvilinear coordinate grids must both match the value centers or cell edges"
+            )
+    else:
+        raise ValueError("x and y must both be 1-D edge vectors or matching 2-D vertex grids")
+    x_flat = x_values.reshape(-1)
+    y_flat = y_values.reshape(-1)
+    capacity = rows * cols * 2
+    outputs = [np.empty(capacity, dtype=np.float64) for _ in range(7)]
+    written = _lib.fc_quad_mesh_triangles(
+        x_flat.ctypes.data,
+        len(x_flat),
+        y_flat.ctypes.data,
+        len(y_flat),
+        values.ctypes.data,
+        rows,
+        cols,
+        layout,
+        *(output.ctypes.data for output in outputs),
+    )
+    if written == _USIZE_MAX:
+        raise ValueError("invalid quad_mesh_triangles arguments")
+    return (
+        outputs[0][:written].copy(),
+        outputs[1][:written].copy(),
+        outputs[2][:written].copy(),
+        outputs[3][:written].copy(),
+        outputs[4][:written].copy(),
+        outputs[5][:written].copy(),
+        outputs[6][:written].copy(),
+    )
+
+
+def sector_triangles(
+    values: npt.NDArray[np.float64],
+    *,
+    explode: Optional[npt.NDArray[np.float64]] = None,
+    center: tuple[float, float] = (0.0, 0.0),
+    radius: float = 1.0,
+    inner_radius: float = 0.0,
+    start_degrees: float = 0.0,
+    counterclockwise: bool = True,
+    normalize: bool = True,
+) -> tuple[
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+]:
+    """Tessellate weighted circular or annular sectors in the native core."""
+    weights = _as_f64(values, "values")
+    if len(weights) == 0:
+        raise ValueError("values must not be empty")
+    offsets = None if explode is None else _as_f64(explode, "explode")
+    if offsets is not None and len(offsets) != len(weights):
+        raise ValueError("explode must have the same length as values")
+    center_x = _finite_float(center[0], "center[0]")
+    center_y = _finite_float(center[1], "center[1]")
+    radius = _finite_float(radius, "radius")
+    inner_radius = _finite_float(inner_radius, "inner_radius")
+    start_degrees = _finite_float(start_degrees, "start_degrees")
+    common = (
+        weights.ctypes.data,
+        len(weights),
+        offsets.ctypes.data if offsets is not None else 0,
+        center_x,
+        center_y,
+        radius,
+        inner_radius,
+        start_degrees,
+        int(bool(counterclockwise)),
+        int(bool(normalize)),
+    )
+    query = _lib.fc_sector_triangles(*common, 0, 0, 0, 0, 0, 0, 0, 0)
+    if query == _USIZE_MAX:
+        raise ValueError("invalid sector geometry")
+    outputs = [np.empty(query, dtype=np.float64) for _ in range(7)]
+    written = _lib.fc_sector_triangles(
+        *common,
+        *(output.ctypes.data for output in outputs),
+        query,
+    )
+    if written != query:
+        raise RuntimeError("native sector_triangles returned an inconsistent triangle count")
+    return tuple(outputs)  # type: ignore[return-value]
+
+
+def rfft(
+    data: npt.NDArray[np.float64], *, nfft: int = 256, sample_rate: float = 2.0
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    """Windowed real FFT as frequency, real, and imaginary columns."""
+    values = _as_f64(data, "data")
+    nfft = _bounded_positive_int(nfft, "nfft", max_value=65_536)
+    sample_rate = _finite_float(sample_rate, "sample_rate")
+    outputs = [np.empty(nfft // 2 + 1, dtype=np.float64) for _ in range(3)]
+    ok = _lib.fc_rfft(
+        values.ctypes.data if len(values) else 0,
+        len(values),
+        nfft,
+        sample_rate,
+        *(output.ctypes.data for output in outputs),
+    )
+    if ok != 1:
+        raise ValueError("invalid rfft arguments")
+    return outputs[0], outputs[1], outputs[2]
+
+
+def welch_spectra(
+    x: npt.NDArray[np.float64],
+    y: Optional[npt.NDArray[np.float64]] = None,
+    *,
+    nfft: int = 256,
+    noverlap: int = 0,
+    sample_rate: float = 2.0,
+) -> tuple[
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+]:
+    """Native Welch auto and optional complex cross spectra."""
+    x_values = _as_f64(x, "x")
+    y_values = None if y is None else _as_f64(y, "y")
+    if y_values is not None and len(y_values) != len(x_values):
+        raise ValueError("x and y must have equal length")
+    nfft = _bounded_positive_int(nfft, "nfft", max_value=65_536)
+    noverlap = operator.index(noverlap)
+    if noverlap < 0 or noverlap >= nfft:
+        raise ValueError("noverlap must be non-negative and less than nfft")
+    sample_rate = _finite_float(sample_rate, "sample_rate")
+    outputs = [np.empty(nfft // 2 + 1, dtype=np.float64) for _ in range(5)]
+    ok = _lib.fc_welch_spectra(
+        x_values.ctypes.data if len(x_values) else 0,
+        y_values.ctypes.data if y_values is not None else 0,
+        len(x_values),
+        nfft,
+        noverlap,
+        sample_rate,
+        *(output.ctypes.data for output in outputs),
+    )
+    if ok != 1:
+        raise ValueError("invalid Welch spectrum arguments")
+    return outputs[0], outputs[1], outputs[2], outputs[3], outputs[4]
+
+
+def spectrogram(
+    data: npt.NDArray[np.float64],
+    *,
+    nfft: int = 256,
+    noverlap: int = 128,
+    sample_rate: float = 2.0,
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    """Native time-major Welch spectrogram."""
+    values = _as_f64(data, "data")
+    nfft = _bounded_positive_int(nfft, "nfft", max_value=65_536)
+    noverlap = operator.index(noverlap)
+    if noverlap < 0 or noverlap >= nfft:
+        raise ValueError("noverlap must be non-negative and less than nfft")
+    sample_rate = _finite_float(sample_rate, "sample_rate")
+    segments = 1 if len(values) <= nfft else 1 + (len(values) - nfft) // (nfft - noverlap)
+    frequency = np.empty(nfft // 2 + 1, dtype=np.float64)
+    time = np.empty(segments, dtype=np.float64)
+    power = np.empty((segments, len(frequency)), dtype=np.float64)
+    ok = _lib.fc_spectrogram(
+        values.ctypes.data if len(values) else 0,
+        len(values),
+        nfft,
+        noverlap,
+        sample_rate,
+        frequency.ctypes.data,
+        time.ctypes.data,
+        power.ctypes.data,
+    )
+    if ok != 1:
+        raise ValueError("invalid spectrogram arguments")
+    return power, frequency, time
+
+
+def correlation(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    *,
+    max_lags: Optional[int] = None,
+    normalize: bool = True,
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    """Native direct lag correlation."""
+    x_values = _as_f64(x, "x")
+    y_values = _as_f64(y, "y")
+    if len(x_values) != len(y_values) or len(x_values) == 0:
+        raise ValueError("x and y must have equal non-zero length")
+    lag_count = len(x_values) - 1 if max_lags is None else operator.index(max_lags)
+    if lag_count < 0 or lag_count >= len(x_values):
+        raise ValueError("max_lags must be between 0 and len(x)-1")
+    lag = np.empty(2 * lag_count + 1, dtype=np.float64)
+    result = np.empty_like(lag)
+    ok = _lib.fc_correlation(
+        x_values.ctypes.data,
+        y_values.ctypes.data,
+        len(x_values),
+        lag_count,
+        int(bool(normalize)),
+        lag.ctypes.data,
+        result.ctypes.data,
+    )
+    if ok != 1:
+        raise ValueError("invalid correlation arguments")
+    return lag, result
+
+
+def weighted_ecdf(
+    values: npt.NDArray[np.float64], weights: npt.NDArray[np.float64]
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    """Native weighted sort, duplicate aggregation, and cumulative mass."""
+    value_array = _as_f64(values, "values")
+    weight_array = _as_f64(weights, "weights")
+    if len(value_array) != len(weight_array) or len(value_array) == 0:
+        raise ValueError("values and weights must have equal non-zero length")
+    output_values = np.empty(len(value_array), dtype=np.float64)
+    cumulative = np.empty(len(value_array), dtype=np.float64)
+    written = _lib.fc_weighted_ecdf(
+        value_array.ctypes.data,
+        weight_array.ctypes.data,
+        len(value_array),
+        output_values.ctypes.data,
+        cumulative.ctypes.data,
+    )
+    if written == _USIZE_MAX:
+        raise ValueError("weighted ECDF requires finite values and nonnegative positive mass")
+    return output_values[:written].copy(), cumulative[:written].copy()
+
+
+def _triangle_inputs(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    triangles: npt.NDArray[np.int64],
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.int64]]:
+    x_values = _as_f64(x, "x")
+    y_values = _as_f64(y, "y")
+    if len(x_values) != len(y_values):
+        raise ValueError("x and y must have equal length")
+    topology = np.ascontiguousarray(triangles, dtype=np.int64)
+    if topology.ndim != 2 or topology.shape[1:] != (3,):
+        raise ValueError(f"triangles must have shape (n, 3), got {topology.shape}")
+    if len(topology) == 0:
+        raise ValueError("triangles must contain at least one face")
+    return x_values, y_values, topology
+
+
+def indexed_triangles(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    triangles: npt.NDArray[np.int64],
+    values: Optional[npt.NDArray[np.float64]] = None,
+    *,
+    values_at: str = "auto",
+) -> tuple[
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+]:
+    """Expand indexed topology into finite renderer-ready triangles."""
+    x_values, y_values, topology = _triangle_inputs(x, y, triangles)
+    if values_at not in {"auto", "face", "vertex"}:
+        raise ValueError("values_at must be 'auto', 'face', or 'vertex'")
+    if values is None:
+        scalar = np.empty(0, dtype=np.float64)
+        mode = 0
+    else:
+        scalar = _as_f64(values, "values")
+        if values_at == "face" or (values_at == "auto" and len(scalar) == len(topology)):
+            mode = 1
+            expected = len(topology)
+        else:
+            mode = 2
+            expected = len(x_values)
+        if len(scalar) != expected:
+            raise ValueError(f"{values_at} values must have length {expected}, got {len(scalar)}")
+    outputs = [np.empty(len(topology), dtype=np.float64) for _ in range(7)]
+    written = _lib.fc_indexed_triangles(
+        x_values.ctypes.data,
+        y_values.ctypes.data,
+        len(x_values),
+        topology.ctypes.data,
+        len(topology),
+        scalar.ctypes.data if len(scalar) else 0,
+        len(scalar),
+        mode,
+        *(output.ctypes.data for output in outputs),
+    )
+    if written == _USIZE_MAX:
+        raise ValueError("invalid indexed triangle geometry")
+    return (
+        outputs[0][:written].copy(),
+        outputs[1][:written].copy(),
+        outputs[2][:written].copy(),
+        outputs[3][:written].copy(),
+        outputs[4][:written].copy(),
+        outputs[5][:written].copy(),
+        outputs[6][:written].copy(),
+    )
+
+
+def triangle_edges(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    triangles: npt.NDArray[np.int64],
+) -> tuple[
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+]:
+    """Return unique finite edges from indexed triangle topology."""
+    x_values, y_values, topology = _triangle_inputs(x, y, triangles)
+    capacity = len(topology) * 3
+    outputs = [np.empty(capacity, dtype=np.float64) for _ in range(4)]
+    written = _lib.fc_triangle_edges(
+        x_values.ctypes.data,
+        y_values.ctypes.data,
+        len(x_values),
+        topology.ctypes.data,
+        len(topology),
+        *(output.ctypes.data for output in outputs),
+    )
+    if written == _USIZE_MAX:
+        raise ValueError("invalid triangle edge geometry")
+    copied = [output[:written].copy() for output in outputs]
+    return copied[0], copied[1], copied[2], copied[3]
+
+
+def delaunay_triangles(
+    x: npt.NDArray[np.float64], y: npt.NDArray[np.float64]
+) -> npt.NDArray[np.int64]:
+    """Construct dependency-free native Delaunay topology for 2-D points."""
+    x_values = _as_f64(x, "x")
+    y_values = _as_f64(y, "y")
+    if len(x_values) != len(y_values) or len(x_values) < 3:
+        raise ValueError("x and y must have equal length of at least three")
+    # A planar triangulation has at most 2n-5 faces for n>=3.
+    capacity = max(1, 2 * len(x_values))
+    output = np.empty((capacity, 3), dtype=np.int64)
+    written = _lib.fc_delaunay_triangles(
+        x_values.ctypes.data,
+        y_values.ctypes.data,
+        len(x_values),
+        output.ctypes.data,
+        capacity,
+    )
+    if written == _USIZE_MAX:
+        raise ValueError("points must be finite, unique, and non-collinear")
+    return output[:written].copy()
+
+
+def polygon_triangles(
+    x: npt.NDArray[np.float64], y: npt.NDArray[np.float64]
+) -> npt.NDArray[np.int64]:
+    """Triangulate one finite simple polygon with native ear clipping."""
+    x_values = _as_f64(x, "x")
+    y_values = _as_f64(y, "y")
+    if len(x_values) != len(y_values) or len(x_values) < 3:
+        raise ValueError("polygon x and y must have equal length of at least three")
+    closed = x_values[0] == x_values[-1] and y_values[0] == y_values[-1]
+    capacity = len(x_values) - (3 if closed else 2)
+    output = np.empty((capacity, 3), dtype=np.int64)
+    written = _lib.fc_polygon_triangles(
+        x_values.ctypes.data,
+        y_values.ctypes.data,
+        len(x_values),
+        output.ctypes.data,
+        capacity,
+    )
+    if written == _USIZE_MAX:
+        raise ValueError("polygon must be finite, simple, and non-degenerate")
+    return output[:written].copy()
+
+
+def marching_triangles(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    z: npt.NDArray[np.float64],
+    triangles: npt.NDArray[np.int64],
+    levels: npt.NDArray[np.float64],
+) -> tuple[
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+]:
+    """Extract isoline segments from an indexed triangular scalar field."""
+    x_values, y_values, topology = _triangle_inputs(x, y, triangles)
+    z_values = _as_f64(z, "z")
+    level_values = _as_f64(levels, "levels")
+    if len(z_values) != len(x_values):
+        raise ValueError("z must have the same length as x and y")
+    if not np.isfinite(level_values).all():
+        raise ValueError("levels must be finite")
+    work = len(topology) * len(level_values)
+    if work > MAX_CONTOUR_WORK:
+        raise ValueError(
+            f"marching_triangles faces x levels exceeds the bounded work budget ({MAX_CONTOUR_WORK:,})"
+        )
+    common = (
+        x_values.ctypes.data,
+        y_values.ctypes.data,
+        z_values.ctypes.data,
+        len(x_values),
+        topology.ctypes.data,
+        len(topology),
+        level_values.ctypes.data if len(level_values) else 0,
+        len(level_values),
+    )
+    query = _lib.fc_marching_triangles(*common, 0, 0, 0, 0, 0, 0)
+    if query == _USIZE_MAX:
+        raise ValueError("invalid marching triangle geometry")
+    outputs = [np.empty(query, dtype=np.float64) for _ in range(5)]
+    if query == 0:
+        return outputs[0], outputs[1], outputs[2], outputs[3], outputs[4]
+    written = _lib.fc_marching_triangles(
+        *common,
+        *(output.ctypes.data for output in outputs),
+        query,
+    )
+    if written != query:
+        raise RuntimeError("native marching_triangles returned an inconsistent segment count")
+    return outputs[0], outputs[1], outputs[2], outputs[3], outputs[4]
+
+
+def vector_segments(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    u: npt.NDArray[np.float64],
+    v: npt.NDArray[np.float64],
+    *,
+    scale: float = 1.0,
+    pivot: str = "tail",
+    head_ratio: float = 0.22,
+) -> tuple[
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+]:
+    """Native vector shafts and arrowheads as four compact segment columns."""
+    pivots = {"tail": 0, "mid": 1, "middle": 1, "tip": 2}
+    if pivot not in pivots:
+        raise ValueError(f"pivot must be one of {tuple(pivots)}, got {pivot!r}")
+    scale = _finite_float(scale, "scale")
+    head_ratio = _finite_float(head_ratio, "head_ratio")
+    if scale <= 0.0 or not 0.0 <= head_ratio <= 1.0:
+        raise ValueError("scale must be positive and head_ratio must be between 0 and 1")
+    arrays = [_as_f64(values, name) for values, name in ((x, "x"), (y, "y"), (u, "u"), (v, "v"))]
+    if len({len(values) for values in arrays}) != 1:
+        raise ValueError("x, y, u, and v must have equal length")
+    capacity = len(arrays[0]) * 3
+    outputs = [np.empty(capacity, dtype=np.float64) for _ in range(4)]
+    if capacity == 0:
+        return outputs[0], outputs[1], outputs[2], outputs[3]
+    written = _lib.fc_vector_segments(
+        *(values.ctypes.data for values in arrays),
+        len(arrays[0]),
+        scale,
+        pivots[pivot],
+        head_ratio,
+        *(values.ctypes.data for values in outputs),
+    )
+    if written == _USIZE_MAX:
+        raise ValueError("invalid vector_segments arguments")
+    copied = [values[:written].copy() for values in outputs]
+    return copied[0], copied[1], copied[2], copied[3]
+
+
+def streamlines(
+    x_coords: npt.NDArray[np.float64],
+    y_coords: npt.NDArray[np.float64],
+    u: npt.NDArray[np.float64],
+    v: npt.NDArray[np.float64],
+    *,
+    density: float = 1.0,
+    max_steps: int = 2048,
+) -> tuple[
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+]:
+    """Native bounded streamline integration over a regular vector grid."""
+    x_coords = _as_f64(x_coords, "x_coords")
+    y_coords = _as_f64(y_coords, "y_coords")
+    u = np.ascontiguousarray(u, dtype=np.float64)
+    v = np.ascontiguousarray(v, dtype=np.float64)
+    expected = (len(y_coords), len(x_coords))
+    if u.shape != expected or v.shape != expected:
+        raise ValueError(f"u and v must both have shape {expected}")
+    density = _finite_float(density, "density")
+    max_steps = _bounded_positive_int(max_steps, "max_steps", max_value=100_000)
+    query = _lib.fc_streamlines(
+        x_coords.ctypes.data,
+        len(x_coords),
+        y_coords.ctypes.data,
+        len(y_coords),
+        u.ctypes.data,
+        v.ctypes.data,
+        density,
+        max_steps,
+        0,
+        0,
+        0,
+        0,
+        0,
+    )
+    if query == _USIZE_MAX:
+        raise ValueError("invalid streamlines arguments")
+    outputs = [np.empty(query, dtype=np.float64) for _ in range(4)]
+    if query == 0:
+        return outputs[0], outputs[1], outputs[2], outputs[3]
+    written = _lib.fc_streamlines(
+        x_coords.ctypes.data,
+        len(x_coords),
+        y_coords.ctypes.data,
+        len(y_coords),
+        u.ctypes.data,
+        v.ctypes.data,
+        density,
+        max_steps,
+        *(values.ctypes.data for values in outputs),
+        query,
+    )
+    if written != query:
+        raise RuntimeError("native streamlines returned an inconsistent segment count")
+    return outputs[0], outputs[1], outputs[2], outputs[3]
 
 
 def m4_indices(

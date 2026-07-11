@@ -15,13 +15,25 @@ plasma: [
 [13, 8, 135], [84, 2, 163], [139, 10, 165], [185, 50, 137], [219, 92, 104],
 [244, 136, 73], [254, 188, 43], [240, 249, 33], [240, 249, 33], [240, 249, 33],
 ],
+inferno: [
+[0, 0, 4], [31, 12, 72], [85, 15, 109], [136, 34, 106], [186, 54, 85],
+[227, 89, 51], [249, 140, 10], [249, 201, 50], [252, 255, 164], [252, 255, 164],
+],
 cividis: [
 [0, 32, 76], [0, 42, 102], [39, 63, 108], [72, 85, 115], [106, 109, 120],
 [143, 133, 118], [181, 159, 105], [223, 187, 82], [253, 217, 63], [255, 233, 69],
 ],
+gray: [
+[0, 0, 0], [28, 28, 28], [57, 57, 57], [85, 85, 85], [113, 113, 113],
+[142, 142, 142], [170, 170, 170], [198, 198, 198], [227, 227, 227], [255, 255, 255],
+],
 turbo: [
 [48, 18, 59], [70, 107, 227], [40, 187, 226], [61, 242, 148], [161, 253, 60],
 [232, 216, 33], [253, 149, 35], [225, 66, 13], [153, 15, 4], [122, 4, 3],
+],
+coolwarm: [
+[59, 76, 192], [87, 117, 211], [119, 154, 231], [157, 185, 243], [197, 209, 246],
+[221, 220, 220], [242, 196, 174], [237, 158, 130], [214, 96, 77], [180, 4, 38],
 ],
 };
 function buildLutData(name) {
@@ -332,7 +344,7 @@ return sh;
 }
 const ATTR_SLOTS = {
 ax: 0, ay: 1,
-ax0: 0, ax1: 1, ay0: 2, ay1: 3, ab0: 4, ab1: 5,
+ax0: 0, ax1: 1, ay0: 2, ay1: 3, ax2: 4, ay2: 5, ab0: 4, ab1: 5,
 a_pos: 0, a_v1: 1, a_v0: 2,
 a_corner: 0,
 a_cval: 6, a_sval: 7, a_sel: 8, a_dval: 9,
@@ -554,6 +566,7 @@ void main() {
 const LINE_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
+uniform int u_colorMode;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 in float a_len0; in float a_len1;
 out float v_off; out float v_dash;
@@ -610,6 +623,7 @@ void main() {
 const SEGMENT_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1; in float a_cval;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
+uniform int u_colorMode;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
 uniform int u_x0mode; uniform int u_x1mode; uniform int u_y0mode; uniform int u_y1mode;
 out float v_off; out float v_cval;
@@ -629,7 +643,7 @@ void main() {
   vec2 pos = mix(pix0, pix1, c.x) + dir * (c.x * 2.0 - 1.0) * 0.5 + n * c.y * half_w;
   gl_Position = vec4(pos / u_res * 2.0 - 1.0, 0.0, 1.0);
   v_off = c.y * half_w;
-  v_cval = a_cval;
+  v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
 }`;
 const SEGMENT_FS = `#version 300 es
 precision highp float; precision highp int;
@@ -638,10 +652,49 @@ in float v_off; in float v_cval;
 out vec4 outColor;
 void main() {
   float half_w = u_width * 0.5;
-  vec3 rgb = u_colorMode == 1 ? texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb : u_color.rgb;
+  vec3 rgb = u_colorMode != 0 ? texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb : u_color.rgb;
   float alpha = (1.0 - smoothstep(half_w - 0.5, half_w + 0.5, abs(v_off))) * u_color.a;
   if (alpha <= 0.001) discard;
   outColor = vec4(rgb * alpha, alpha);
+}`;
+const MESH_VS = `#version 300 es
+in float ax0; in float ay0; in float ax1; in float ay1; in float ax2; in float ay2; in float a_cval;
+uniform vec2 u_xmap; uniform vec2 u_ymap;
+uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_x2meta;
+uniform vec2 u_y0meta; uniform vec2 u_y1meta; uniform vec2 u_y2meta;
+uniform int u_x0mode; uniform int u_x1mode; uniform int u_x2mode;
+uniform int u_y0mode; uniform int u_y1mode; uniform int u_y2mode;
+uniform int u_colorMode;
+out float v_cval; out vec3 v_bary;
+${AXIS_GLSL}
+void main() {
+  int vertex = gl_VertexID % 3;
+  float x = vertex == 0 ? ax0 : (vertex == 1 ? ax1 : ax2);
+  float y = vertex == 0 ? ay0 : (vertex == 1 ? ay1 : ay2);
+  vec2 xm = vertex == 0 ? u_x0meta : (vertex == 1 ? u_x1meta : u_x2meta);
+  vec2 ym = vertex == 0 ? u_y0meta : (vertex == 1 ? u_y1meta : u_y2meta);
+  int xmode = vertex == 0 ? u_x0mode : (vertex == 1 ? u_x1mode : u_x2mode);
+  int ymode = vertex == 0 ? u_y0mode : (vertex == 1 ? u_y1mode : u_y2mode);
+  gl_Position = vec4(fcMap(x, u_xmap, xm, xmode), fcMap(y, u_ymap, ym, ymode), 0.0, 1.0);
+  v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  v_bary = vertex == 0 ? vec3(1.,0.,0.) : (vertex == 1 ? vec3(0.,1.,0.) : vec3(0.,0.,1.));
+}`;
+const MESH_FS = `#version 300 es
+precision highp float; precision highp int;
+uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
+uniform vec4 u_stroke; uniform float u_strokeWidth;
+in float v_cval; in vec3 v_bary;
+out vec4 outColor;
+void main() {
+  vec3 rgb = u_colorMode == 0 ? u_color.rgb : texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb;
+  vec4 fill = vec4(rgb * u_opacity, u_opacity);
+  if (u_strokeWidth > 0.0) {
+    float edge = min(v_bary.x, min(v_bary.y, v_bary.z));
+    float coverage = smoothstep(0.0, max(fwidth(edge) * u_strokeWidth, 1e-5), edge);
+    outColor = mix(u_stroke, fill, coverage);
+  } else {
+    outColor = fill;
+  }
 }`;
 const GRAD_GLSL = `
 uniform int u_gradMode; uniform int u_gradDir; uniform int u_gradCount;
@@ -2121,6 +2174,7 @@ return p;
 get pointProg() { return this._prog("point", POINT_VS, POINT_FS); }
 get lineProg() { return this._prog("line", LINE_VS, LINE_FS); }
 get segmentProg() { return this._prog("segment", SEGMENT_VS, SEGMENT_FS); }
+get meshProg() { return this._prog("mesh", MESH_VS, MESH_FS); }
 get areaProg() { return this._prog("area", AREA_VS, AREA_FS); }
 get rectProg() { return this._prog("rect", RECT_VS, RECT_FS); }
 get barProg() { return this._prog("bar", BAR_VS, RECT_FS); }
@@ -2473,8 +2527,34 @@ if (t.color && t.color.mode === "continuous") {
 g.colorMode = 1;
 g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
 g.lut = this._lut(t.color.colormap);
+} else if (t.color && t.color.mode === "categorical") {
+g.colorMode = 2;
+g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+g.lut = this._paletteLut(t.color.palette);
 }
 g._cpu = { x: x0, y: y1, xMeta: g.x0Meta, yMeta: g.y1Meta };
+}
+_buildMeshMark(g, t, buffer) {
+for (const name of ["x0", "x1", "x2", "y0", "y1", "y2"]) {
+const values = this._columnView(buffer, this.spec.columns[t[name]]);
+g[name + "Meta"] = { ...this.spec.columns[t[name]] };
+g[name + "Buf"] = this._upload(values);
+g.n = g.n === undefined ? values.length : Math.min(g.n, values.length);
+}
+g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
+g.colorMode = 0;
+if (t.color && t.color.mode === "continuous") {
+g.colorMode = 1;
+g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+g.lut = this._lut(t.color.colormap);
+} else if (t.color && t.color.mode === "categorical") {
+g.colorMode = 2;
+g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+g.lut = this._paletteLut(t.color.palette);
+}
+const style = t.style || {};
+g.meshStrokeWidth = Number(style.stroke_width) || 0;
+g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
 }
 _buildAreaMark(g, t, buffer) {
 const x = this._columnView(buffer, this.spec.columns[t.x]);
@@ -2971,7 +3051,7 @@ gl.uniform1f(u("u_width"), (g.trace.style.width ?? 1.5) * this.dpr);
 const [r, gg, b, a] = g.color;
 gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
 gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
-if (g.colorMode === 1 && g.lut) {
+if (g.colorMode && g.lut) {
 gl.activeTexture(gl.TEXTURE0);
 gl.bindTexture(gl.TEXTURE_2D, g.lut);
 gl.uniform1i(u("u_lut"), 0);
@@ -2990,6 +3070,38 @@ if (g.colorMode) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
 );
 if (!g.colorMode) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
 gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+}
+_drawMesh(g, xm, ym) {
+if (g.n < 1) return;
+const gl = this.gl;
+const prog = this.meshProg;
+gl.useProgram(prog);
+const u = (n) => uniformOf(gl, prog, n);
+gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+for (const name of ["x0", "x1", "x2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.xAxis);
+for (const name of ["y0", "y1", "y2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.yAxis);
+gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+gl.uniform1f(u("u_opacity"), g.trace.style.opacity ?? 1);
+gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], 1);
+const stroke = g.meshStroke || [0, 0, 0, 0];
+gl.uniform4f(u("u_stroke"), stroke[0] * stroke[3], stroke[1] * stroke[3], stroke[2] * stroke[3], stroke[3]);
+gl.uniform1f(u("u_strokeWidth"), g.meshStrokeWidth || 0);
+if (g.colorMode && g.lut) {
+gl.activeTexture(gl.TEXTURE0);
+gl.bindTexture(gl.TEXTURE_2D, g.lut);
+gl.uniform1i(u("u_lut"), 0);
+}
+const parts = ["x0", "x1", "x2", "y0", "y1", "y2"].map((name) => g[name + "Buf"]._fcId);
+parts.push(g.colorMode ? g.cBuf._fcId : 0);
+this._bindVao(g, "mesh", parts, () => {
+for (const name of ["x0", "x1", "x2", "y0", "y1", "y2"]) {
+this._vaoAttr(ATTR_SLOTS["a" + name], g[name + "Buf"], 0, 1);
+}
+if (g.colorMode) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+});
+if (!g.colorMode) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+gl.drawArraysInstanced(gl.TRIANGLES, 0, 3, g.n);
 }
 _lineDash(g) {
 const gl = this.gl;
@@ -5126,6 +5238,19 @@ g.lineColor = parseColor(view.root, g.trace.style.color, g.lineColor || g.color)
 g.grad = view._resolveMarkFill(g.trace.style, g.color);
 },
 };
+const MESH_MARK = {
+build: (view, g, t, buffer) => view._buildMeshMark(g, t, buffer),
+draw: (view, g) => {
+const [x0, x1] = view._axisRange(g.xAxis);
+const [y0, y1] = view._axisRange(g.yAxis);
+view._drawMesh(g, view._map(g.x0Meta, x0, x1, g.xAxis), view._map(g.y0Meta, y0, y1, g.yAxis));
+},
+refreshColor: (view, g) => {
+if (g.colorMode === 0 && g.trace.color) g.color = parseColor(view.root, g.trace.color.color, g.color);
+const style = g.trace.style || {};
+g.meshStroke = parseColor(view.root, style.stroke || "transparent", [0, 0, 0, 0]);
+},
+};
 const MARK_KINDS = {
 histogram: RECT_MARK,
 box: RECT_MARK,
@@ -5135,6 +5260,8 @@ stem: SEGMENT_MARK,
 box_whisker: SEGMENT_MARK,
 box_median: SEGMENT_MARK,
 contour: SEGMENT_MARK,
+segments: SEGMENT_MARK,
+triangle_mesh: MESH_MARK,
 error_band: AREA_MARK,
 hexbin: {
 build: (view, g, t, buffer) => view._buildScatterMark(g, t, buffer),

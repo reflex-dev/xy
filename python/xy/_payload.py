@@ -402,6 +402,47 @@ class PayloadMixin(_Host):
             entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar)
         return entry
 
+    def _emit_triangle_mesh(
+        self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
+    ) -> dict[str, Any]:
+        del xr, yr, px_width
+        if t.x0 is None or t.x1 is None or t.y0 is None or t.y1 is None:
+            raise ValueError("triangle_mesh trace missing geometry columns")
+        x0v, x1v, x2v = t.x0.values, t.x1.values, t.x.values
+        y0v, y1v, y2v = t.y0.values, t.y1.values, t.y.values
+        finite = (
+            np.isfinite(x0v)
+            & np.isfinite(x1v)
+            & np.isfinite(x2v)
+            & np.isfinite(y0v)
+            & np.isfinite(y1v)
+            & np.isfinite(y2v)
+        )
+        sel_arg = None if bool(np.all(finite)) else np.flatnonzero(finite)
+        if sel_arg is not None:
+            x0v, x1v, x2v = x0v[sel_arg], x1v[sel_arg], x2v[sel_arg]
+            y0v, y1v, y2v = y0v[sel_arg], y1v[sel_arg], y2v[sel_arg]
+        entry = {
+            "id": t.id,
+            "kind": t.kind,
+            "name": t.name,
+            "style": self._default_styled(t),
+            "tier": "direct",
+            "n_points": t.n_points,
+            "n_marks": int(len(x0v)),
+            "x_axis": t.x_axis,
+            "y_axis": t.y_axis,
+            "x0": pw.ship(x0v, t.x0),
+            "x1": pw.ship(x1v, t.x1),
+            "x2": pw.ship(x2v, t.x),
+            "y0": pw.ship(y0v, t.y0),
+            "y1": pw.ship(y1v, t.y1),
+            "y2": pw.ship(y2v, t.y),
+        }
+        if t.color_ch is not None:
+            entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar)
+        return entry
+
     def _emit_errorbar(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
     ) -> dict[str, Any]:

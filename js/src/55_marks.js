@@ -127,6 +127,20 @@ const AREA_MARK = {
   },
 };
 
+const MESH_MARK = {
+  build: (view, g, t, buffer) => view._buildMeshMark(g, t, buffer),
+  draw: (view, g) => {
+    const [x0, x1] = view._axisRange(g.xAxis);
+    const [y0, y1] = view._axisRange(g.yAxis);
+    view._drawMesh(g, view._map(g.x0Meta, x0, x1, g.xAxis), view._map(g.y0Meta, y0, y1, g.yAxis));
+  },
+  refreshColor: (view, g) => {
+    if (g.colorMode === 0 && g.trace.color) g.color = parseColor(view.root, g.trace.color.color, g.color);
+    const style = g.trace.style || {};
+    g.meshStroke = parseColor(view.root, style.stroke || "transparent", [0, 0, 0, 0]);
+  },
+};
+
 const MARK_KINDS = {
   histogram: RECT_MARK,
   box: RECT_MARK,
@@ -136,6 +150,8 @@ const MARK_KINDS = {
   box_whisker: SEGMENT_MARK,
   box_median: SEGMENT_MARK,
   contour: SEGMENT_MARK,
+  segments: SEGMENT_MARK,
+  triangle_mesh: MESH_MARK,
   error_band: AREA_MARK,
   hexbin: {
     build: (view, g, t, buffer) => view._buildScatterMark(g, t, buffer),

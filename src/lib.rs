@@ -50,7 +50,7 @@ fn ffi_guard<R>(sentinel: R, body: impl FnOnce() -> R) -> R {
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 12;
+pub const ABI_VERSION: u32 = 15;
 
 #[no_mangle]
 pub extern "C" fn fc_abi_version() -> u32 {
@@ -299,6 +299,839 @@ pub unsafe extern "C" fn fc_m4_indices(
     let out = std::slice::from_raw_parts_mut(out, out_len);
     out[..idx.len()].copy_from_slice(&idx);
     idx.len()
+}
+
+/// Native stacked-series layout. `values`, `out_lower`, and `out_upper` are
+/// row-major `rows * cols` f64 buffers. `baseline` uses the generic engine
+/// layout ids documented by `kernels::stacked_bounds_into`.
+///
+/// # Safety
+/// Every pointer must address `rows * cols` readable/writable f64 values.
+#[no_mangle]
+pub unsafe extern "C" fn fc_stacked_bounds(
+    values: *const f64,
+    rows: usize,
+    cols: usize,
+    baseline: u32,
+    out_lower: *mut f64,
+    out_upper: *mut f64,
+) -> i32 {
+    let Some(len) = rows.checked_mul(cols) else {
+        return 0;
+    };
+    if len == 0 || values.is_null() || out_lower.is_null() || out_upper.is_null() {
+        return 0;
+    }
+    let values = std::slice::from_raw_parts(values, len);
+    let lower = std::slice::from_raw_parts_mut(out_lower, len);
+    let upper = std::slice::from_raw_parts_mut(out_upper, len);
+    ffi_guard(0, || {
+        i32::from(kernels::stacked_bounds_into(
+            values, rows, cols, baseline, lower, upper,
+        ))
+    })
+}
+
+/// Weighted 2-D histogram with arbitrary edges. A null `weights` pointer means
+/// unit weights; all other buffers are caller-owned f64 arrays.
+///
+/// # Safety
+/// Input pointers address the lengths described by their adjacent arguments;
+/// `out` addresses `(x_edge_len - 1) * (y_edge_len - 1)` writable f64s.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fc_histogram2d(
+    x: *const f64,
+    y: *const f64,
+    weights: *const f64,
+    len: usize,
+    x_edges: *const f64,
+    x_edge_len: usize,
+    y_edges: *const f64,
+    y_edge_len: usize,
+    out: *mut f64,
+) -> i32 {
+    if x_edge_len < 2
+        || y_edge_len < 2
+        || (len > 0 && (x.is_null() || y.is_null()))
+        || x_edges.is_null()
+        || y_edges.is_null()
+        || out.is_null()
+    {
+        return 0;
+    }
+    let Some(out_len) = (x_edge_len - 1).checked_mul(y_edge_len - 1) else {
+        return 0;
+    };
+    let x = if len == 0 { &[][..] } else { std::slice::from_raw_parts(x, len) };
+    let y = if len == 0 { &[][..] } else { std::slice::from_raw_parts(y, len) };
+    let weights = if weights.is_null() {
+        None
+    } else {
+        Some(std::slice::from_raw_parts(weights, len))
+    };
+    let x_edges = std::slice::from_raw_parts(x_edges, x_edge_len);
+    let y_edges = std::slice::from_raw_parts(y_edges, y_edge_len);
+    let out = std::slice::from_raw_parts_mut(out, out_len);
+    ffi_guard(0, || {
+        i32::from(kernels::histogram2d_into(
+            x, y, weights, x_edges, y_edges, out,
+        ))
+    })
+}
+
+/// Expand a rectilinear or curvilinear quadrilateral grid into two triangles
+/// per finite cell. Returns the written triangle count or `usize::MAX` on
+/// invalid arguments.
+///
+/// # Safety
+/// `values` addresses `cell_rows * cell_cols` f64s. Coordinate lengths are
+/// explicit; each output addresses `2 * cell_rows * cell_cols` writable f64s.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fc_quad_mesh_triangles(
+    x: *const f64,
+    x_len: usize,
+    y: *const f64,
+    y_len: usize,
+    values: *const f64,
+    cell_rows: usize,
+    cell_cols: usize,
+    layout: u32,
+    out_x0: *mut f64,
+    out_y0: *mut f64,
+    out_x1: *mut f64,
+    out_y1: *mut f64,
+    out_x2: *mut f64,
+    out_y2: *mut f64,
+    out_values: *mut f64,
+) -> usize {
+    let Some(cell_count) = cell_rows.checked_mul(cell_cols) else {
+        return usize::MAX;
+    };
+    let Some(capacity) = cell_count.checked_mul(2) else {
+        return usize::MAX;
+    };
+    if cell_count == 0
+        || x.is_null()
+        || y.is_null()
+        || values.is_null()
+        || out_x0.is_null()
+        || out_y0.is_null()
+        || out_x1.is_null()
+        || out_y1.is_null()
+        || out_x2.is_null()
+        || out_y2.is_null()
+        || out_values.is_null()
+    {
+        return usize::MAX;
+    }
+    let x = std::slice::from_raw_parts(x, x_len);
+    let y = std::slice::from_raw_parts(y, y_len);
+    let values = std::slice::from_raw_parts(values, cell_count);
+    let x0 = std::slice::from_raw_parts_mut(out_x0, capacity);
+    let y0 = std::slice::from_raw_parts_mut(out_y0, capacity);
+    let x1 = std::slice::from_raw_parts_mut(out_x1, capacity);
+    let y1 = std::slice::from_raw_parts_mut(out_y1, capacity);
+    let x2 = std::slice::from_raw_parts_mut(out_x2, capacity);
+    let y2 = std::slice::from_raw_parts_mut(out_y2, capacity);
+    let scalar = std::slice::from_raw_parts_mut(out_values, capacity);
+    ffi_guard(usize::MAX, || {
+        kernels::quad_mesh_triangles_into(
+            x, y, values, cell_rows, cell_cols, layout, x0, y0, x1, y1, x2, y2, scalar,
+        )
+        .unwrap_or(usize::MAX)
+    })
+}
+
+/// Circular/annular sector tessellation. With `capacity == 0`, output pointers
+/// may be null and the required triangle count is returned.
+///
+/// # Safety
+/// Inputs address `len` values; non-null outputs address `capacity` f64s each.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fc_sector_triangles(
+    values: *const f64,
+    len: usize,
+    explode: *const f64,
+    center_x: f64,
+    center_y: f64,
+    radius: f64,
+    inner_radius: f64,
+    start_degrees: f64,
+    counterclockwise: i32,
+    normalize: i32,
+    out_x0: *mut f64,
+    out_y0: *mut f64,
+    out_x1: *mut f64,
+    out_y1: *mut f64,
+    out_x2: *mut f64,
+    out_y2: *mut f64,
+    out_sector: *mut f64,
+    capacity: usize,
+) -> usize {
+    if len == 0
+        || values.is_null()
+        || !matches!(counterclockwise, 0 | 1)
+        || !matches!(normalize, 0 | 1)
+        || (capacity > 0
+            && (out_x0.is_null()
+                || out_y0.is_null()
+                || out_x1.is_null()
+                || out_y1.is_null()
+                || out_x2.is_null()
+                || out_y2.is_null()
+                || out_sector.is_null()))
+    {
+        return usize::MAX;
+    }
+    let values = std::slice::from_raw_parts(values, len);
+    let explode = if explode.is_null() {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(explode, len)
+    };
+    ffi_guard(usize::MAX, || {
+        if capacity == 0 {
+            return kernels::sector_triangles_into(
+                values,
+                explode,
+                center_x,
+                center_y,
+                radius,
+                inner_radius,
+                start_degrees,
+                counterclockwise == 1,
+                normalize == 1,
+                &mut [],
+                &mut [],
+                &mut [],
+                &mut [],
+                &mut [],
+                &mut [],
+                &mut [],
+            )
+            .unwrap_or(usize::MAX);
+        }
+        let x0 = std::slice::from_raw_parts_mut(out_x0, capacity);
+        let y0 = std::slice::from_raw_parts_mut(out_y0, capacity);
+        let x1 = std::slice::from_raw_parts_mut(out_x1, capacity);
+        let y1 = std::slice::from_raw_parts_mut(out_y1, capacity);
+        let x2 = std::slice::from_raw_parts_mut(out_x2, capacity);
+        let y2 = std::slice::from_raw_parts_mut(out_y2, capacity);
+        let sector = std::slice::from_raw_parts_mut(out_sector, capacity);
+        kernels::sector_triangles_into(
+            values,
+            explode,
+            center_x,
+            center_y,
+            radius,
+            inner_radius,
+            start_degrees,
+            counterclockwise == 1,
+            normalize == 1,
+            x0,
+            y0,
+            x1,
+            y1,
+            x2,
+            y2,
+            sector,
+        )
+        .unwrap_or(usize::MAX)
+    })
+}
+
+/// Windowed real FFT, caller-owned nonnegative-frequency outputs.
+///
+/// # Safety
+/// `data` addresses `len` f64s and each output addresses `nfft / 2 + 1` f64s.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fc_rfft(
+    data: *const f64,
+    len: usize,
+    nfft: usize,
+    sample_rate: f64,
+    out_frequency: *mut f64,
+    out_real: *mut f64,
+    out_imag: *mut f64,
+) -> i32 {
+    if len == 0
+        || data.is_null()
+        || out_frequency.is_null()
+        || out_real.is_null()
+        || out_imag.is_null()
+    {
+        return 0;
+    }
+    let bins = nfft / 2 + 1;
+    let data = std::slice::from_raw_parts(data, len);
+    let frequency = std::slice::from_raw_parts_mut(out_frequency, bins);
+    let real = std::slice::from_raw_parts_mut(out_real, bins);
+    let imag = std::slice::from_raw_parts_mut(out_imag, bins);
+    ffi_guard(0, || i32::from(kernels::rfft_into(data, nfft, sample_rate, frequency, real, imag)))
+}
+
+/// Native Welch auto/cross spectra. Null `y` computes only the x autospectrum.
+///
+/// # Safety
+/// Non-null inputs address `len` f64s and all outputs address `nfft / 2 + 1` f64s.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fc_welch_spectra(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    nfft: usize,
+    noverlap: usize,
+    sample_rate: f64,
+    out_frequency: *mut f64,
+    out_pxx: *mut f64,
+    out_pyy: *mut f64,
+    out_pxy_real: *mut f64,
+    out_pxy_imag: *mut f64,
+) -> i32 {
+    if len == 0
+        || x.is_null()
+        || out_frequency.is_null()
+        || out_pxx.is_null()
+        || out_pyy.is_null()
+        || out_pxy_real.is_null()
+        || out_pxy_imag.is_null()
+    {
+        return 0;
+    }
+    let bins = nfft / 2 + 1;
+    let x = std::slice::from_raw_parts(x, len);
+    let y = if y.is_null() {
+        None
+    } else {
+        Some(std::slice::from_raw_parts(y, len))
+    };
+    let frequency = std::slice::from_raw_parts_mut(out_frequency, bins);
+    let pxx = std::slice::from_raw_parts_mut(out_pxx, bins);
+    let pyy = std::slice::from_raw_parts_mut(out_pyy, bins);
+    let pxy_real = std::slice::from_raw_parts_mut(out_pxy_real, bins);
+    let pxy_imag = std::slice::from_raw_parts_mut(out_pxy_imag, bins);
+    ffi_guard(0, || {
+        i32::from(kernels::welch_spectra_into(
+            x,
+            y,
+            nfft,
+            noverlap,
+            sample_rate,
+            frequency,
+            pxx,
+            pyy,
+            pxy_real,
+            pxy_imag,
+        ))
+    })
+}
+
+/// Time-major spectrogram power grid. Output sizes are derived from the
+/// caller's `nfft`, `noverlap`, and input length.
+///
+/// # Safety
+/// `data` addresses `len` f64s and outputs address the derived sizes.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fc_spectrogram(
+    data: *const f64,
+    len: usize,
+    nfft: usize,
+    noverlap: usize,
+    sample_rate: f64,
+    out_frequency: *mut f64,
+    out_time: *mut f64,
+    out_power: *mut f64,
+) -> i32 {
+    if len == 0
+        || data.is_null()
+        || nfft == 0
+        || noverlap >= nfft
+        || out_frequency.is_null()
+        || out_time.is_null()
+        || out_power.is_null()
+    {
+        return 0;
+    }
+    let bins = nfft / 2 + 1;
+    let segments = if len <= nfft {
+        1
+    } else {
+        1 + (len - nfft) / (nfft - noverlap)
+    };
+    let Some(power_len) = bins.checked_mul(segments) else {
+        return 0;
+    };
+    let data = std::slice::from_raw_parts(data, len);
+    let frequency = std::slice::from_raw_parts_mut(out_frequency, bins);
+    let time = std::slice::from_raw_parts_mut(out_time, segments);
+    let power = std::slice::from_raw_parts_mut(out_power, power_len);
+    ffi_guard(0, || {
+        i32::from(kernels::spectrogram_into(
+            data,
+            nfft,
+            noverlap,
+            sample_rate,
+            frequency,
+            time,
+            power,
+        ))
+    })
+}
+
+/// Lag correlation used by acorr/xcorr.
+///
+/// # Safety
+/// Inputs address `len` f64s; outputs address `2 * max_lag + 1` f64s.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fc_correlation(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    max_lag: usize,
+    normalize: i32,
+    out_lag: *mut f64,
+    out_correlation: *mut f64,
+) -> i32 {
+    if len == 0
+        || x.is_null()
+        || y.is_null()
+        || !matches!(normalize, 0 | 1)
+        || out_lag.is_null()
+        || out_correlation.is_null()
+    {
+        return 0;
+    }
+    let Some(output_len) = max_lag.checked_mul(2).and_then(|value| value.checked_add(1)) else {
+        return 0;
+    };
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    let lag = std::slice::from_raw_parts_mut(out_lag, output_len);
+    let correlation = std::slice::from_raw_parts_mut(out_correlation, output_len);
+    ffi_guard(0, || {
+        i32::from(kernels::correlation_into(
+            x,
+            y,
+            max_lag,
+            normalize == 1,
+            lag,
+            correlation,
+        ))
+    })
+}
+
+/// Weighted empirical CDF. Returns the number of coalesced values or
+/// `usize::MAX` when the inputs are invalid.
+///
+/// # Safety
+/// Inputs address `len` readable f64s and outputs address `len` writable f64s.
+#[no_mangle]
+pub unsafe extern "C" fn fc_weighted_ecdf(
+    values: *const f64,
+    weights: *const f64,
+    len: usize,
+    out_values: *mut f64,
+    out_cumulative: *mut f64,
+) -> usize {
+    if len == 0
+        || values.is_null()
+        || weights.is_null()
+        || out_values.is_null()
+        || out_cumulative.is_null()
+    {
+        return usize::MAX;
+    }
+    let values = std::slice::from_raw_parts(values, len);
+    let weights = std::slice::from_raw_parts(weights, len);
+    let output_values = std::slice::from_raw_parts_mut(out_values, len);
+    let cumulative = std::slice::from_raw_parts_mut(out_cumulative, len);
+    ffi_guard(usize::MAX, || {
+        kernels::weighted_ecdf_into(values, weights, output_values, cumulative)
+            .unwrap_or(usize::MAX)
+    })
+}
+
+/// Expand indexed topology into independent filled triangles.
+///
+/// # Safety
+/// All pointers address the element counts derived from adjacent length arguments.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fc_indexed_triangles(
+    x: *const f64,
+    y: *const f64,
+    vertex_count: usize,
+    triangles: *const i64,
+    face_count: usize,
+    values: *const f64,
+    value_len: usize,
+    value_mode: u32,
+    out_x0: *mut f64,
+    out_y0: *mut f64,
+    out_x1: *mut f64,
+    out_y1: *mut f64,
+    out_x2: *mut f64,
+    out_y2: *mut f64,
+    out_values: *mut f64,
+) -> usize {
+    let Some(index_count) = face_count.checked_mul(3) else {
+        return usize::MAX;
+    };
+    if x.is_null()
+        || y.is_null()
+        || triangles.is_null()
+        || (value_len > 0 && values.is_null())
+        || out_x0.is_null()
+        || out_y0.is_null()
+        || out_x1.is_null()
+        || out_y1.is_null()
+        || out_x2.is_null()
+        || out_y2.is_null()
+        || out_values.is_null()
+    {
+        return usize::MAX;
+    }
+    let x = std::slice::from_raw_parts(x, vertex_count);
+    let y = std::slice::from_raw_parts(y, vertex_count);
+    let triangles = std::slice::from_raw_parts(triangles, index_count);
+    let values = if value_len == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(values, value_len)
+    };
+    let x0 = std::slice::from_raw_parts_mut(out_x0, face_count);
+    let y0 = std::slice::from_raw_parts_mut(out_y0, face_count);
+    let x1 = std::slice::from_raw_parts_mut(out_x1, face_count);
+    let y1 = std::slice::from_raw_parts_mut(out_y1, face_count);
+    let x2 = std::slice::from_raw_parts_mut(out_x2, face_count);
+    let y2 = std::slice::from_raw_parts_mut(out_y2, face_count);
+    let scalar = std::slice::from_raw_parts_mut(out_values, face_count);
+    ffi_guard(usize::MAX, || {
+        kernels::indexed_triangles_into(
+            x, y, triangles, values, value_mode, x0, y0, x1, y1, x2, y2, scalar,
+        )
+        .unwrap_or(usize::MAX)
+    })
+}
+
+/// Emit unique line segments for indexed triangle edges.
+///
+/// # Safety
+/// Vertex inputs address `vertex_count`, topology addresses `face_count * 3`,
+/// and each output addresses that same topology length.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fc_triangle_edges(
+    x: *const f64,
+    y: *const f64,
+    vertex_count: usize,
+    triangles: *const i64,
+    face_count: usize,
+    out_x0: *mut f64,
+    out_x1: *mut f64,
+    out_y0: *mut f64,
+    out_y1: *mut f64,
+) -> usize {
+    let Some(capacity) = face_count.checked_mul(3) else {
+        return usize::MAX;
+    };
+    if x.is_null()
+        || y.is_null()
+        || triangles.is_null()
+        || out_x0.is_null()
+        || out_x1.is_null()
+        || out_y0.is_null()
+        || out_y1.is_null()
+    {
+        return usize::MAX;
+    }
+    let x = std::slice::from_raw_parts(x, vertex_count);
+    let y = std::slice::from_raw_parts(y, vertex_count);
+    let triangles = std::slice::from_raw_parts(triangles, capacity);
+    let x0 = std::slice::from_raw_parts_mut(out_x0, capacity);
+    let x1 = std::slice::from_raw_parts_mut(out_x1, capacity);
+    let y0 = std::slice::from_raw_parts_mut(out_y0, capacity);
+    let y1 = std::slice::from_raw_parts_mut(out_y1, capacity);
+    ffi_guard(usize::MAX, || {
+        kernels::triangle_edges_into(x, y, triangles, x0, x1, y0, y1).unwrap_or(usize::MAX)
+    })
+}
+
+/// Delaunay topology for finite unique 2-D points. `out` addresses
+/// `capacity * 3` writable i64 indices; returns the face count.
+///
+/// # Safety
+/// `x` and `y` address `len` f64s; `out` addresses `capacity * 3` i64s.
+#[no_mangle]
+pub unsafe extern "C" fn fc_delaunay_triangles(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    out: *mut i64,
+    capacity: usize,
+) -> usize {
+    if len < 3 || x.is_null() || y.is_null() || out.is_null() {
+        return usize::MAX;
+    }
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    ffi_guard(usize::MAX, || {
+        let Some(triangles) = kernels::delaunay_triangles(x, y) else {
+            return usize::MAX;
+        };
+        if triangles.len() > capacity {
+            return usize::MAX;
+        }
+        let Some(output_len) = capacity.checked_mul(3) else {
+            return usize::MAX;
+        };
+        let output = std::slice::from_raw_parts_mut(out, output_len);
+        for (index, triangle) in triangles.iter().enumerate() {
+            output[index * 3..index * 3 + 3].copy_from_slice(triangle);
+        }
+        triangles.len()
+    })
+}
+
+/// Ear-clipping topology for a finite simple polygon. `capacity` is the
+/// number of output faces, and `out` addresses `capacity * 3` i64 indices.
+///
+/// # Safety
+/// `x` and `y` address `len` f64s; `out` addresses `capacity * 3` i64s.
+#[no_mangle]
+pub unsafe extern "C" fn fc_polygon_triangles(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    out: *mut i64,
+    capacity: usize,
+) -> usize {
+    if len < 3 || x.is_null() || y.is_null() || out.is_null() {
+        return usize::MAX;
+    }
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    ffi_guard(usize::MAX, || {
+        let Some(triangles) = kernels::polygon_triangles(x, y) else {
+            return usize::MAX;
+        };
+        if triangles.len() > capacity {
+            return usize::MAX;
+        }
+        let Some(output_len) = capacity.checked_mul(3) else {
+            return usize::MAX;
+        };
+        let output = std::slice::from_raw_parts_mut(out, output_len);
+        for (index, triangle) in triangles.iter().enumerate() {
+            output[index * 3..index * 3 + 3].copy_from_slice(triangle);
+        }
+        triangles.len()
+    })
+}
+
+/// Indexed triangular isoline extraction. `capacity == 0` queries the segment
+/// count; otherwise all five outputs address `capacity` writable f64s.
+///
+/// # Safety
+/// Inputs and outputs address the element counts described by their length arguments.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fc_marching_triangles(
+    x: *const f64,
+    y: *const f64,
+    z: *const f64,
+    vertex_count: usize,
+    triangles: *const i64,
+    face_count: usize,
+    levels: *const f64,
+    level_count: usize,
+    out_x0: *mut f64,
+    out_x1: *mut f64,
+    out_y0: *mut f64,
+    out_y1: *mut f64,
+    out_levels: *mut f64,
+    capacity: usize,
+) -> usize {
+    let Some(index_count) = face_count.checked_mul(3) else {
+        return usize::MAX;
+    };
+    if x.is_null()
+        || y.is_null()
+        || z.is_null()
+        || triangles.is_null()
+        || (level_count > 0 && levels.is_null())
+        || (capacity > 0
+            && (out_x0.is_null()
+                || out_x1.is_null()
+                || out_y0.is_null()
+                || out_y1.is_null()
+                || out_levels.is_null()))
+    {
+        return usize::MAX;
+    }
+    let x = std::slice::from_raw_parts(x, vertex_count);
+    let y = std::slice::from_raw_parts(y, vertex_count);
+    let z = std::slice::from_raw_parts(z, vertex_count);
+    let triangles = std::slice::from_raw_parts(triangles, index_count);
+    let levels = if level_count == 0 {
+        &[][..]
+    } else {
+        std::slice::from_raw_parts(levels, level_count)
+    };
+    ffi_guard(usize::MAX, || {
+        if capacity == 0 {
+            return kernels::marching_triangles_into(
+                x,
+                y,
+                z,
+                triangles,
+                levels,
+                &mut [],
+                &mut [],
+                &mut [],
+                &mut [],
+                &mut [],
+            )
+            .unwrap_or(usize::MAX);
+        }
+        let x0 = std::slice::from_raw_parts_mut(out_x0, capacity);
+        let x1 = std::slice::from_raw_parts_mut(out_x1, capacity);
+        let y0 = std::slice::from_raw_parts_mut(out_y0, capacity);
+        let y1 = std::slice::from_raw_parts_mut(out_y1, capacity);
+        let out_levels = std::slice::from_raw_parts_mut(out_levels, capacity);
+        kernels::marching_triangles_into(
+            x, y, z, triangles, levels, x0, x1, y0, y1, out_levels,
+        )
+        .unwrap_or(usize::MAX)
+    })
+}
+
+/// Vector origins/components to instanced shaft + arrowhead segments.
+/// Returns the written segment count or `usize::MAX` on invalid arguments.
+///
+/// # Safety
+/// Inputs address `len` f64 values; outputs address `3 * len` writable f64s.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fc_vector_segments(
+    x: *const f64,
+    y: *const f64,
+    u: *const f64,
+    v: *const f64,
+    len: usize,
+    scale: f64,
+    pivot: u32,
+    head_ratio: f64,
+    out_x0: *mut f64,
+    out_x1: *mut f64,
+    out_y0: *mut f64,
+    out_y1: *mut f64,
+) -> usize {
+    let Some(capacity) = len.checked_mul(3) else {
+        return usize::MAX;
+    };
+    if len == 0 {
+        return 0;
+    }
+    if x.is_null()
+        || y.is_null()
+        || u.is_null()
+        || v.is_null()
+        || out_x0.is_null()
+        || out_x1.is_null()
+        || out_y0.is_null()
+        || out_y1.is_null()
+    {
+        return usize::MAX;
+    }
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    let u = std::slice::from_raw_parts(u, len);
+    let v = std::slice::from_raw_parts(v, len);
+    let x0 = std::slice::from_raw_parts_mut(out_x0, capacity);
+    let x1 = std::slice::from_raw_parts_mut(out_x1, capacity);
+    let y0 = std::slice::from_raw_parts_mut(out_y0, capacity);
+    let y1 = std::slice::from_raw_parts_mut(out_y1, capacity);
+    ffi_guard(usize::MAX, || {
+        kernels::vector_segments_into(
+            x, y, u, v, scale, pivot, head_ratio, x0, x1, y0, y1,
+        )
+        .unwrap_or(usize::MAX)
+    })
+}
+
+/// Regular-grid streamline integration. With `capacity == 0`, returns the
+/// required segment count without writing outputs; otherwise writes four
+/// parallel segment columns and returns the same count.
+///
+/// # Safety
+/// Coordinate/vector buffers and optional outputs have the dimensions given
+/// by `rows`, `cols`, and `capacity`.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fc_streamlines(
+    x_coords: *const f64,
+    cols: usize,
+    y_coords: *const f64,
+    rows: usize,
+    u: *const f64,
+    v: *const f64,
+    density: f64,
+    max_steps: usize,
+    out_x0: *mut f64,
+    out_x1: *mut f64,
+    out_y0: *mut f64,
+    out_y1: *mut f64,
+    capacity: usize,
+) -> usize {
+    let Some(len) = rows.checked_mul(cols) else {
+        return usize::MAX;
+    };
+    if rows < 2
+        || cols < 2
+        || x_coords.is_null()
+        || y_coords.is_null()
+        || u.is_null()
+        || v.is_null()
+        || (capacity > 0
+            && (out_x0.is_null() || out_x1.is_null() || out_y0.is_null() || out_y1.is_null()))
+    {
+        return usize::MAX;
+    }
+    let x_coords = std::slice::from_raw_parts(x_coords, cols);
+    let y_coords = std::slice::from_raw_parts(y_coords, rows);
+    let u = std::slice::from_raw_parts(u, len);
+    let v = std::slice::from_raw_parts(v, len);
+    ffi_guard(usize::MAX, || {
+        let Some(segments) = kernels::streamlines(x_coords, y_coords, u, v, density, max_steps)
+        else {
+            return usize::MAX;
+        };
+        if capacity == 0 {
+            return segments.len();
+        }
+        if capacity < segments.len() {
+            return usize::MAX;
+        }
+        let x0 = std::slice::from_raw_parts_mut(out_x0, capacity);
+        let x1 = std::slice::from_raw_parts_mut(out_x1, capacity);
+        let y0 = std::slice::from_raw_parts_mut(out_y0, capacity);
+        let y1 = std::slice::from_raw_parts_mut(out_y1, capacity);
+        for (index, &(sx0, sx1, sy0, sy1)) in segments.iter().enumerate() {
+            x0[index] = sx0;
+            x1[index] = sx1;
+            y0[index] = sy0;
+            y1[index] = sy1;
+        }
+        segments.len()
+    })
 }
 
 /// Marching-squares isoline extraction over a regular grid. The first call

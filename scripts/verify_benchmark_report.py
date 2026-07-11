@@ -21,6 +21,7 @@ KNOWN_KINDS = (
     "auto",
     "scatter-vs",
     "core-2d",
+    "pyplot-vs-matplotlib",
     "scatter-native",
     "kernel-native",
     "interaction-browser",
@@ -352,7 +353,7 @@ def _require_native_backend(report: dict[str, Any], kind: str, errors: list[str]
 
 def _detect_kind(report: dict[str, Any]) -> str:
     declared = report.get("kind")
-    if declared in {"interaction-browser", "dashboard-browser", "workflow-native"}:
+    if declared in KNOWN_KINDS[1:]:
         return str(declared)
     if "results" in report and "ceilings" in report:
         return "scatter-vs"
@@ -745,6 +746,251 @@ def _validate_core_2d_comparison(comparison: Any, path: str, errors: list[str]) 
     seaborn_status = comparison.get("seaborn_status")
     if seaborn_status is not None and not _status_kind(seaborn_status):
         errors.append(f"{path}.seaborn_status has unknown value {seaborn_status!r}")
+
+
+def _validate_pyplot_vs_matplotlib(report: dict[str, Any], errors: list[str]) -> None:
+    _require_native_backend(report, "pyplot-vs-matplotlib", errors)
+    _require_keys(
+        report,
+        {
+            "kind",
+            "benchmark_categories",
+            "tracked_categories",
+            "profile",
+            "reps",
+            "warmups",
+            "pixel_target",
+            "measurement_scope",
+            "rows",
+            "comparisons",
+            "target_xy_speedup_total",
+            "all_targets_met",
+            "geometric_mean_xy_speedup_total",
+        },
+        "report",
+        errors,
+    )
+    _validate_categories(report, errors)
+    _require_string_value(report.get("profile"), "report.profile", errors)
+    _require_positive_integer(report, "reps", "report", errors)
+    _require_nonnegative_integer(report, "warmups", "report", errors)
+    if report.get("measurement_scope") != "warmed-api-build-through-static-png":
+        errors.append("report.measurement_scope must be 'warmed-api-build-through-static-png'")
+    _require_positive_number(report, "geometric_mean_xy_speedup_total", "report", errors)
+    _require_positive_number(report, "target_xy_speedup_total", "report", errors)
+    if not isinstance(report.get("all_targets_met"), bool):
+        errors.append("report.all_targets_met must be a boolean")
+
+    pixel_target = report.get("pixel_target")
+    _require_keys(pixel_target, {"width", "height", "format"}, "pixel_target", errors)
+    if isinstance(pixel_target, dict):
+        _require_positive_integer(pixel_target, "width", "pixel_target", errors)
+        _require_positive_integer(pixel_target, "height", "pixel_target", errors)
+        if pixel_target.get("format") != "png":
+            errors.append("pixel_target.format must be 'png'")
+
+    rows = report.get("rows")
+    if not isinstance(rows, list) or not rows:
+        errors.append("rows must be a non-empty list")
+        rows = []
+    else:
+        _reject_duplicate_rows(
+            rows,
+            path="rows",
+            keys=("family", "case", "library"),
+            label="pyplot comparison row",
+            errors=errors,
+        )
+        for i, row in enumerate(rows):
+            _validate_pyplot_vs_matplotlib_row(
+                row,
+                f"rows[{i}]",
+                errors,
+                expected_reps=report.get("reps"),
+                pixel_target=pixel_target,
+            )
+
+    comparisons = report.get("comparisons")
+    if not isinstance(comparisons, list) or not comparisons:
+        errors.append("comparisons must be a non-empty list")
+        comparisons = []
+    else:
+        _reject_duplicate_rows(
+            comparisons,
+            path="comparisons",
+            keys=("family", "case"),
+            label="pyplot comparison",
+            errors=errors,
+        )
+        for i, comparison in enumerate(comparisons):
+            _validate_pyplot_vs_matplotlib_comparison(comparison, f"comparisons[{i}]", errors)
+
+    if comparisons:
+        expected_all_targets_met = all(
+            item.get("meets_target") is True for item in comparisons if isinstance(item, dict)
+        )
+        if report.get("all_targets_met") != expected_all_targets_met:
+            errors.append("report.all_targets_met must match comparisons[].meets_target")
+        target_speedup = report.get("target_xy_speedup_total")
+        for i, comparison in enumerate(comparisons):
+            if not isinstance(comparison, dict):
+                continue
+            if comparison.get("target_xy_speedup_total") != target_speedup:
+                errors.append(
+                    f"comparisons[{i}].target_xy_speedup_total must match "
+                    "report.target_xy_speedup_total"
+                )
+            speedup = comparison.get("xy_speedup_total")
+            if isinstance(speedup, (int, float)) and isinstance(target_speedup, (int, float)):
+                expected_meets_target = speedup >= target_speedup
+                if comparison.get("meets_target") != expected_meets_target:
+                    errors.append(
+                        f"comparisons[{i}].meets_target must match xy_speedup_total >= target"
+                    )
+
+    case_libraries: dict[tuple[Any, Any], set[Any]] = {}
+    for row in rows:
+        if isinstance(row, dict):
+            key = (row.get("family"), row.get("case"))
+            case_libraries.setdefault(key, set()).add(row.get("library"))
+    expected_libraries = {"xy.pyplot", "matplotlib"}
+    for key, libraries in case_libraries.items():
+        if libraries != expected_libraries:
+            errors.append(
+                f"rows for family={key[0]!r}, case={key[1]!r} must contain exactly "
+                f"{sorted(expected_libraries)}; got {sorted(str(value) for value in libraries)}"
+            )
+    comparison_cases = {
+        (item.get("family"), item.get("case")) for item in comparisons if isinstance(item, dict)
+    }
+    if comparison_cases != set(case_libraries):
+        errors.append("comparisons must cover exactly the family/case pairs present in rows")
+
+
+def _validate_pyplot_vs_matplotlib_row(
+    row: Any,
+    path: str,
+    errors: list[str],
+    *,
+    expected_reps: Any,
+    pixel_target: Any,
+) -> None:
+    _require_keys(
+        row,
+        {
+            "family",
+            "case",
+            "work_units",
+            "unit",
+            "library",
+            "status",
+            "render_target",
+            "mode",
+            "oracle_status",
+            "oracle_kind",
+            "png_width",
+            "png_height",
+            "lit_pixels",
+            "reps",
+            "samples",
+            "build_median_ms",
+            "render_median_ms",
+            "total_median_ms",
+            "total_p95_ms",
+            "output_bytes_median",
+        },
+        path,
+        errors,
+    )
+    if not isinstance(row, dict):
+        return
+    _require_string_value(row.get("family"), f"{path}.family", errors)
+    _require_string_value(row.get("case"), f"{path}.case", errors)
+    _require_string_value(row.get("unit"), f"{path}.unit", errors)
+    _require_positive_number(row, "work_units", path, errors)
+    if row.get("library") not in {"xy.pyplot", "matplotlib"}:
+        errors.append(f"{path}.library must be 'xy.pyplot' or 'matplotlib'")
+    if row.get("status") != "ok":
+        errors.append(f"{path}.status must be 'ok'")
+    if row.get("render_target") != "png":
+        errors.append(f"{path}.render_target must be 'png'")
+    expected_mode = "native-raster" if row.get("library") == "xy.pyplot" else "agg"
+    if row.get("mode") != expected_mode:
+        errors.append(f"{path}.mode must be {expected_mode!r}")
+    if row.get("oracle_status") != "pass":
+        errors.append(f"{path}.oracle_status must be 'pass'")
+    if row.get("oracle_kind") != "same-pixel-dimensions-and-nonblank":
+        errors.append(f"{path}.oracle_kind must be 'same-pixel-dimensions-and-nonblank'")
+    for key in (
+        "build_median_ms",
+        "render_median_ms",
+        "total_median_ms",
+        "total_p95_ms",
+        "output_bytes_median",
+    ):
+        _require_nonnegative_number(row, key, path, errors)
+    for key in ("png_width", "png_height", "lit_pixels", "reps"):
+        _require_positive_integer(row, key, path, errors)
+    if isinstance(expected_reps, int) and row.get("reps") != expected_reps:
+        errors.append(f"{path}.reps must match report.reps ({expected_reps})")
+    if isinstance(pixel_target, dict):
+        if row.get("png_width") != pixel_target.get("width"):
+            errors.append(f"{path}.png_width must match pixel_target.width")
+        if row.get("png_height") != pixel_target.get("height"):
+            errors.append(f"{path}.png_height must match pixel_target.height")
+    samples = row.get("samples")
+    if not isinstance(samples, list) or len(samples) != expected_reps:
+        errors.append(f"{path}.samples must contain exactly report.reps entries")
+        return
+    for i, sample in enumerate(samples):
+        sample_path = f"{path}.samples[{i}]"
+        _require_keys(
+            sample,
+            {"build_ms", "render_ms", "total_ms", "output_bytes"},
+            sample_path,
+            errors,
+        )
+        if isinstance(sample, dict):
+            for key in ("build_ms", "render_ms", "total_ms", "output_bytes"):
+                _require_nonnegative_number(sample, key, sample_path, errors)
+
+
+def _validate_pyplot_vs_matplotlib_comparison(
+    comparison: Any, path: str, errors: list[str]
+) -> None:
+    _require_keys(
+        comparison,
+        {
+            "family",
+            "case",
+            "work_units",
+            "unit",
+            "xy_speedup_total",
+            "target_xy_speedup_total",
+            "meets_target",
+            "xy_speedup_build",
+            "xy_speedup_render",
+            "png_size_ratio_matplotlib_over_xy",
+            "winner_total",
+        },
+        path,
+        errors,
+    )
+    if not isinstance(comparison, dict):
+        return
+    _require_positive_number(comparison, "work_units", path, errors)
+    for key in (
+        "xy_speedup_total",
+        "xy_speedup_build",
+        "xy_speedup_render",
+        "png_size_ratio_matplotlib_over_xy",
+        "target_xy_speedup_total",
+    ):
+        _require_positive_number(comparison, key, path, errors)
+    if not isinstance(comparison.get("meets_target"), bool):
+        errors.append(f"{path}.meets_target must be a boolean")
+    if comparison.get("winner_total") not in {"xy.pyplot", "matplotlib"}:
+        errors.append(f"{path}.winner_total must be 'xy.pyplot' or 'matplotlib'")
 
 
 def _validate_scatter_native(report: dict[str, Any], errors: list[str]) -> None:
@@ -1661,6 +1907,8 @@ def validate_report(path: Path, *, kind: str = "auto") -> list[str]:
         _validate_install_footprint(report, errors)
     elif selected == "core-2d":
         _validate_core_2d(report, errors)
+    elif selected == "pyplot-vs-matplotlib":
+        _validate_pyplot_vs_matplotlib(report, errors)
     elif selected == "scatter-native":
         _validate_scatter_native(report, errors)
     elif selected == "kernel-native":

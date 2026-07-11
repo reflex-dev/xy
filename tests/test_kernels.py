@@ -54,6 +54,186 @@ def test_encode_scale(impl):
     np.testing.assert_allclose(enc, [-1.0, 0.0, 1.0], rtol=1e-6)
 
 
+@pytest.mark.parametrize("baseline", ["zero", "sym", "wiggle", "weighted_wiggle"])
+def test_stacked_bounds_match_matplotlib_reference(impl, baseline):
+    values = np.array(
+        [[1.0, 2.0, 3.0, 4.0], [2.0, 1.0, 4.0, 2.0], [0.5, 3.0, 1.0, 2.0]],
+        dtype=np.float64,
+    )
+    stack = np.cumsum(values, axis=0)
+    if baseline == "zero":
+        first = np.zeros(values.shape[1])
+    elif baseline == "sym":
+        first = -np.sum(values, axis=0) * 0.5
+        stack += first
+    elif baseline == "wiggle":
+        m = values.shape[0]
+        first = (values * (m - 0.5 - np.arange(m)[:, None])).sum(axis=0) / -m
+        stack += first
+    else:
+        total = np.sum(values, axis=0)
+        inv_total = np.zeros_like(total)
+        inv_total[total > 0] = 1.0 / total[total > 0]
+        increase = np.hstack((values[:, :1], np.diff(values)))
+        below_size = total - stack + 0.5 * values
+        move_up = below_size * inv_total
+        move_up[:, 0] = 0.5
+        center = np.cumsum(((move_up - 0.5) * increase).sum(axis=0))
+        first = center - 0.5 * total
+        stack += first
+    expected_lower = np.vstack((first, stack[:-1]))
+    lower, upper = impl.stacked_bounds(values, baseline)
+    np.testing.assert_allclose(lower, expected_lower)
+    np.testing.assert_allclose(upper, stack)
+
+
+def test_histogram2d_arbitrary_edges_and_weights_match_numpy(impl):
+    rng = np.random.default_rng(22)
+    x = rng.normal(size=20_000)
+    y = x * 0.25 + rng.normal(size=20_000)
+    weights = rng.uniform(0.1, 2.0, size=20_000)
+    x_edges = np.array([-4.0, -1.5, -0.2, 0.1, 0.8, 4.0])
+    y_edges = np.array([-5.0, -2.0, -0.5, 0.7, 1.0, 5.0])
+    actual = impl.histogram2d(x, y, x_edges, y_edges, weights)
+    expected, _, _ = np.histogram2d(x, y, bins=(x_edges, y_edges), weights=weights)
+    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+
+
+def test_quad_mesh_triangles_support_rectilinear_and_warped_grids(impl):
+    values = np.array([[1.0, 2.0], [3.0, np.nan]])
+    rect = impl.quad_mesh_triangles(np.array([0.0, 1.0, 4.0]), np.array([0.0, 2.0, 5.0]), values)
+    assert all(len(column) == 6 for column in rect)
+    np.testing.assert_array_equal(rect[-1], [1.0, 1.0, 2.0, 2.0, 3.0, 3.0])
+    xx, yy = np.meshgrid([0.0, 1.0, 4.0], [0.0, 2.0, 5.0])
+    xx[1, 1] += 0.25
+    yy[1, 1] -= 0.5
+    warped = impl.quad_mesh_triangles(xx, yy, values)
+    assert all(len(column) == 6 for column in warped)
+    assert warped[2][0] == 1.0
+    assert warped[5][0] == 1.5
+
+
+def test_indexed_triangle_geometry_edges_and_contours(impl):
+    x = np.array([0.0, 1.0, 0.0, 1.0])
+    y = np.array([0.0, 0.0, 1.0, 1.0])
+    topology = np.array([[0, 1, 2], [1, 3, 2]], dtype=np.int64)
+    z = x + y
+    mesh = impl.indexed_triangles(x, y, topology, z, values_at="vertex")
+    assert all(len(column) == 2 for column in mesh)
+    np.testing.assert_allclose(mesh[-1], [2.0 / 3.0, 4.0 / 3.0])
+    edges = impl.triangle_edges(x, y, topology)
+    assert all(len(column) == 5 for column in edges)  # shared diagonal is unique
+    contours = impl.marching_triangles(x, y, z, topology, np.array([0.5, 1.5]))
+    assert all(len(column) == 2 for column in contours)
+    np.testing.assert_array_equal(contours[-1], [0.5, 1.5])
+
+
+def test_native_delaunay_topology_covers_unstructured_points(impl):
+    x = np.array([0.0, 1.0, 0.0, 1.0, 0.5])
+    y = np.array([0.0, 0.0, 1.0, 1.0, 0.5])
+    topology = impl.delaunay_triangles(x, y)
+    assert topology.shape == (4, 3)
+    assert set(topology.reshape(-1)) == set(range(5))
+    signed_area = (x[topology[:, 1]] - x[topology[:, 0]]) * (
+        y[topology[:, 2]] - y[topology[:, 0]]
+    ) - (y[topology[:, 1]] - y[topology[:, 0]]) * (x[topology[:, 2]] - x[topology[:, 0]])
+    assert np.all(signed_area > 0)
+
+
+def test_sector_triangles_tessellate_pie_and_donut_geometry(impl):
+    pie = impl.sector_triangles(np.array([1.0, 2.0, 3.0]))
+    assert all(len(column) == 60 for column in pie)
+    np.testing.assert_array_equal(np.unique(pie[-1]), [0.0, 1.0, 2.0])
+    donut = impl.sector_triangles(
+        np.array([1.0, 1.0]),
+        explode=np.array([0.0, 0.1]),
+        inner_radius=0.5,
+        start_degrees=90.0,
+        counterclockwise=False,
+    )
+    assert all(len(column) == 120 for column in donut)
+    radius = np.hypot(donut[0], donut[1])
+    assert np.isclose(radius.min(), 0.5)
+
+
+def test_polygon_triangulation_handles_concave_shapes(impl):
+    x = np.array([0.0, 2.0, 2.0, 1.0, 0.0])
+    y = np.array([0.0, 0.0, 2.0, 1.0, 2.0])
+    topology = impl.polygon_triangles(x, y)
+    assert topology.shape == (3, 3)
+    triangles = impl.indexed_triangles(x, y, topology)
+    area = (
+        np.abs(
+            (triangles[2] - triangles[0]) * (triangles[5] - triangles[1])
+            - (triangles[3] - triangles[1]) * (triangles[4] - triangles[0])
+        ).sum()
+        * 0.5
+    )
+    assert np.isclose(area, 3.0)
+
+
+def test_native_spectral_kernels_find_tone_and_correlation_peak(impl):
+    sample_rate = 1024.0
+    time = np.arange(2048) / sample_rate
+    values = np.sin(2 * np.pi * 64.0 * time)
+    frequency, real, imag = impl.rfft(values, nfft=256, sample_rate=sample_rate)
+    assert frequency[np.argmax(np.hypot(real, imag))] == 64.0
+    non_power_frequency, non_power_real, non_power_imag = impl.rfft(
+        values, nfft=300, sample_rate=sample_rate
+    )
+    assert np.isclose(
+        non_power_frequency[np.argmax(np.hypot(non_power_real, non_power_imag))],
+        64.0,
+        atol=sample_rate / 300,
+    )
+    frequency, pxx, _pyy, _cross_real, _cross_imag = impl.welch_spectra(
+        values, nfft=256, noverlap=128, sample_rate=sample_rate
+    )
+    assert frequency[np.argmax(pxx)] == 64.0
+    power, frequency, segment_time = impl.spectrogram(
+        values, nfft=256, noverlap=128, sample_rate=sample_rate
+    )
+    assert power.shape == (15, 129)
+    assert frequency[np.argmax(power[0])] == 64.0
+    assert np.all(np.diff(segment_time) > 0)
+    lag, correlation = impl.correlation(values, values, max_lags=12)
+    assert lag[np.argmax(correlation)] == 0.0
+    assert np.isclose(correlation.max(), 1.0)
+
+
+def test_vector_segments_emit_shaft_and_arrowheads_and_skip_invalid(impl):
+    x0, x1, y0, y1 = impl.vector_segments(
+        np.array([0.0, np.nan]),
+        np.array([0.0, 1.0]),
+        np.array([2.0, 1.0]),
+        np.array([0.0, 1.0]),
+    )
+    assert len(x0) == len(x1) == len(y0) == len(y1) == 3
+    np.testing.assert_allclose([x0[0], y0[0], x1[0], y1[0]], [0.0, 0.0, 2.0, 0.0])
+    np.testing.assert_allclose(x0[1:], 2.0)
+    np.testing.assert_allclose(y0[1:], 0.0)
+
+
+def test_weighted_ecdf_native_sort_aggregation(impl):
+    x, cumulative = impl.weighted_ecdf(
+        np.array([3.0, 1.0, 2.0, 2.0, np.nan]),
+        np.array([4.0, 1.0, 2.0, 3.0, 99.0]),
+    )
+    np.testing.assert_array_equal(x, [1.0, 2.0, 3.0])
+    np.testing.assert_allclose(cumulative, [0.1, 0.6, 1.0])
+
+
+def test_streamlines_integrate_regular_grid_in_native_core(impl):
+    x = np.linspace(-1.0, 1.0, 12)
+    y = np.linspace(-1.0, 1.0, 10)
+    xx, yy = np.meshgrid(x, y)
+    x0, x1, y0, y1 = impl.streamlines(x, y, -yy, xx, density=0.8, max_steps=200)
+    assert 0 < len(x0) == len(x1) == len(y0) == len(y1)
+    assert np.isfinite(np.concatenate((x0, x1, y0, y1))).all()
+    assert np.max(np.abs(x1)) <= 1.0
+    assert np.max(np.abs(y1)) <= 1.0
+
+
 # -- zone maps (§22) ---------------------------------------------------------
 
 

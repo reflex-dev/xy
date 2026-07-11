@@ -56,6 +56,8 @@ document for a pixel-exact match to the live chart.
 | Hexbin | `fc.hexbin_chart(fc.hexbin(...))` |
 | Contour | `fc.contour_chart(fc.contour(...))` |
 | Step/stairs/stem | `fc.step_chart(fc.step(...))`, `fc.stairs_chart(fc.stairs(...))`, `fc.stem_chart(fc.stem(...))` |
+| Independent segments | `fc.segments_chart(fc.segments(x0=..., y0=..., x1=..., y1=...))` |
+| Triangle mesh | `fc.triangle_mesh_chart(fc.triangle_mesh(...))` |
 | Facets | `fc.facet_chart(fc.scatter(...), by="group", data=data)` |
 
 ## Axes And Scales
