@@ -6,8 +6,8 @@ import struct
 import numpy as np
 import pytest
 
-import fastcharts as fc
-from fastcharts.facets import _facet_values, _subset_data
+import xy as fc
+from xy.facets import _facet_values, _subset_data
 
 
 def _table() -> dict[str, list]:

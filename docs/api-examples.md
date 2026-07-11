@@ -356,7 +356,7 @@ The statistical marks keep their source arrays in the canonical column store,
 then ship compact segment, rectangle, or occupied-bin geometry:
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 x = [0, 1, 2, 3]
 lower = [0.8, 1.1, 1.4, 1.9]
@@ -387,7 +387,7 @@ Small multiples repeat a composition over a table column and share domains by
 default:
 
 ```python
-import fastcharts as fc
+import xy as fc
 
 data = {
     "x": [0, 1, 2, 0, 1, 2],

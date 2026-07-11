@@ -2439,20 +2439,27 @@ def _looks_like_css(s: str) -> bool:
 
 def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
     size = m.props["size"]
-    fig.scatter(
-        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
-        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
-        name=m.name,
-        color=_resolve_color(data, m.props["color"], context=f"{m.kind}.color"),
-        size=_resolve(data, size, context=f"{m.kind}.size") if isinstance(size, str) else size,
-        colormap=m.props["colormap"],
-        size_range=m.props["size_range"],
-        opacity=m.props["opacity"],
-        density=m.props["density"],
-        symbol=m.props["symbol"],
-        stroke=m.props["stroke"],
-        stroke_width=m.props["stroke_width"],
-    )
+    checkpoint = fig._checkpoint()
+    try:
+        fig.scatter(
+            _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
+            _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
+            name=m.name,
+            color=_resolve_color(data, m.props["color"], context=f"{m.kind}.color"),
+            size=_resolve(data, size, context=f"{m.kind}.size") if isinstance(size, str) else size,
+            colormap=m.props["colormap"],
+            size_range=m.props["size_range"],
+            opacity=m.props["opacity"],
+            density=m.props["density"],
+            symbol=m.props["symbol"],
+            stroke=m.props["stroke"],
+            stroke_width=m.props["stroke_width"],
+        )
+    except Exception:
+        # Axis resolution happens before Figure.scatter's own transactional
+        # checkpoint; roll it back too if later channel validation fails.
+        fig._rollback(checkpoint)
+        raise
 
 
 def _apply_line(fig: Figure, m: Mark, data: Any) -> None:
