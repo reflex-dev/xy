@@ -76,56 +76,23 @@ impl Canvas {
     }
 
     #[inline]
-    fn blend_prepared(&mut self, x: usize, y: usize, rgb: [u8; 3], alpha: f32, cov: f32) {
-        self.blend_u8(x, y, [rgb[0], rgb[1], rgb[2], to_u8(alpha * cov)]);
+    fn blend_u8(&mut self, x: usize, y: usize, rgba: [u8; 4]) {
+        let o = (y * self.w + x) * self.channels();
+        blend_px(&mut self.px, o, self.opaque, rgba);
     }
 
-    #[inline]
-    fn blend_u8(&mut self, x: usize, y: usize, rgba: [u8; 4]) {
-        let sa = rgba[3] as u32;
-        if sa == 0 {
-            return;
+    /// Full-height window over the framebuffer. Painting through it is
+    /// bit-identical to painting the canvas directly.
+    fn surface(&mut self) -> Surface<'_> {
+        Surface {
+            w: self.w,
+            y0: 0,
+            y1: self.h,
+            channels: self.channels(),
+            opaque: self.opaque,
+            clip: self.clip,
+            px: &mut self.px,
         }
-        let src = [rgba[0] as u32, rgba[1] as u32, rgba[2] as u32];
-        let o = (y * self.w + x) * self.channels();
-        if self.opaque {
-            if sa == 255 {
-                self.px[o] = src[0] as u8;
-                self.px[o + 1] = src[1] as u8;
-                self.px[o + 2] = src[2] as u8;
-            } else {
-                let inv = 255 - sa;
-                for (k, source) in src.iter().enumerate() {
-                    self.px[o + k] =
-                        ((*source * sa + self.px[o + k] as u32 * inv + 127) / 255) as u8;
-                }
-            }
-            return;
-        }
-        if sa == 255 {
-            self.px[o] = src[0] as u8;
-            self.px[o + 1] = src[1] as u8;
-            self.px[o + 2] = src[2] as u8;
-            self.px[o + 3] = 255;
-            return;
-        }
-        let da = self.px[o + 3] as u32;
-        let inv = 255 - sa;
-        if da == 255 {
-            for (k, source) in src.iter().enumerate() {
-                self.px[o + k] = ((*source * sa + self.px[o + k] as u32 * inv + 127) / 255) as u8;
-            }
-            return;
-        }
-        let out_a_num = sa * 255 + da * inv;
-        if out_a_num == 0 {
-            return;
-        }
-        for (k, source) in src.iter().enumerate() {
-            let num = *source * sa * 255 + self.px[o + k] as u32 * da * inv;
-            self.px[o + k] = ((num + out_a_num / 2) / out_a_num) as u8;
-        }
-        self.px[o + 3] = ((out_a_num + 127) / 255) as u8;
     }
 
     /// Clip∩canvas pixel bbox for a float rect, as inclusive-exclusive ranges.
@@ -158,7 +125,118 @@ impl Canvas {
     }
 }
 
+/// Source-over into one pixel at byte offset `o` — the single blend
+/// implementation shared by the canvas and its row-band surfaces.
+#[inline]
+fn blend_px(px: &mut [u8], o: usize, opaque: bool, rgba: [u8; 4]) {
+    let sa = rgba[3] as u32;
+    if sa == 0 {
+        return;
+    }
+    let src = [rgba[0] as u32, rgba[1] as u32, rgba[2] as u32];
+    if opaque {
+        if sa == 255 {
+            px[o] = src[0] as u8;
+            px[o + 1] = src[1] as u8;
+            px[o + 2] = src[2] as u8;
+        } else {
+            let inv = 255 - sa;
+            for (k, source) in src.iter().enumerate() {
+                px[o + k] = ((*source * sa + px[o + k] as u32 * inv + 127) / 255) as u8;
+            }
+        }
+        return;
+    }
+    if sa == 255 {
+        px[o] = src[0] as u8;
+        px[o + 1] = src[1] as u8;
+        px[o + 2] = src[2] as u8;
+        px[o + 3] = 255;
+        return;
+    }
+    let da = px[o + 3] as u32;
+    let inv = 255 - sa;
+    if da == 255 {
+        for (k, source) in src.iter().enumerate() {
+            px[o + k] = ((*source * sa + px[o + k] as u32 * inv + 127) / 255) as u8;
+        }
+        return;
+    }
+    let out_a_num = sa * 255 + da * inv;
+    if out_a_num == 0 {
+        return;
+    }
+    for (k, source) in src.iter().enumerate() {
+        let num = *source * sa * 255 + px[o + k] as u32 * da * inv;
+        px[o + k] = ((num + out_a_num / 2) / out_a_num) as u8;
+    }
+    px[o + 3] = ((out_a_num + 127) / 255) as u8;
+}
+
+/// A horizontal row band of the framebuffer. The parallel batch painters give
+/// each worker one disjoint band, so the image needs no locks; a full-height
+/// band (`Canvas::surface`) reproduces plain canvas painting bit-for-bit —
+/// same blend math, same clip, same traversal order.
+struct Surface<'a> {
+    px: &'a mut [u8],
+    w: usize,
+    y0: usize, // absolute first row covered by `px`
+    y1: usize, // absolute exclusive end row
+    channels: usize,
+    opaque: bool,
+    clip: [f32; 4],
+}
+
+impl Surface<'_> {
+    #[inline]
+    fn blend(&mut self, x: usize, y: usize, rgba: [f32; 4], cov: f32) {
+        self.blend_u8(
+            x,
+            y,
+            [
+                to_u8(rgba[0]),
+                to_u8(rgba[1]),
+                to_u8(rgba[2]),
+                to_u8(rgba[3] * cov),
+            ],
+        );
+    }
+
+    #[inline]
+    fn blend_prepared(&mut self, x: usize, y: usize, rgb: [u8; 3], alpha: f32, cov: f32) {
+        self.blend_u8(x, y, [rgb[0], rgb[1], rgb[2], to_u8(alpha * cov)]);
+    }
+
+    #[inline]
+    fn blend_u8(&mut self, x: usize, y: usize, rgba: [u8; 4]) {
+        let o = ((y - self.y0) * self.w + x) * self.channels;
+        blend_px(self.px, o, self.opaque, rgba);
+    }
+
+    /// Clip∩canvas∩band pixel bbox — `Canvas::bbox` further clamped to the
+    /// band's row window (identical to it for a full-height band).
+    fn bbox(&self, x0: f32, y0: f32, x1: f32, y1: f32) -> (usize, usize, usize, usize) {
+        let cx0 = x0.max(self.clip[0]).max(0.0);
+        let cy0 = y0.max(self.clip[1]).max(self.y0 as f32);
+        let cx1 = x1.min(self.clip[2]).min(self.w as f32);
+        let cy1 = y1.min(self.clip[3]).min(self.y1 as f32);
+        if cx1 <= cx0 || cy1 <= cy0 {
+            return (0, 0, 0, 0);
+        }
+        (
+            cx0.floor() as usize,
+            cy0.floor() as usize,
+            (cx1.ceil() as usize).min(self.w),
+            (cy1.ceil() as usize).min(self.y1),
+        )
+    }
+}
+
 fn stroke_segment(cv: &mut Canvas, a: (f32, f32), b: (f32, f32), width: f32, rgba: [f32; 4]) {
+    stroke_segment_at(&mut cv.surface(), a, b, width, rgba);
+}
+
+fn stroke_segment_at(cv: &mut Surface, a: (f32, f32), b: (f32, f32), width: f32, rgba: [f32; 4]) {
     if width <= 0.0 {
         return;
     }
@@ -553,6 +631,20 @@ fn point_u8(
     sw: f32,
     stroke: [u8; 4],
 ) {
+    point_u8_at(&mut cv.surface(), cx, cy, r, sym, fill, sw, stroke);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn point_u8_at(
+    cv: &mut Surface,
+    cx: f32,
+    cy: f32,
+    r: f32,
+    sym: u8,
+    fill: [u8; 4],
+    sw: f32,
+    stroke: [u8; 4],
+) {
     // Batched scatter commands already carry RGBA8. Keep those colors in
     // their wire format instead of round-tripping every point through f32.
     let fill_rgb = [fill[0], fill[1], fill[2]];
@@ -746,6 +838,195 @@ impl<'a> Reader<'a> {
     }
 }
 
+// ---- batched-mark painting (serial or row-band parallel) --------------------
+
+#[inline]
+fn f32_at(b: &[u8], i: usize) -> f32 {
+    f32::from_le_bytes([b[4 * i], b[4 * i + 1], b[4 * i + 2], b[4 * i + 3]])
+}
+
+/// Fan a batched paint across row bands only when the estimated pixel work
+/// dwarfs thread spawn cost, and keep every band at least `MIN_BAND_ROWS`
+/// tall — the graduated-cap convention of the 2-D binning kernels: every
+/// worker re-decodes the whole mark list, so a band must amortize one full
+/// decode pass. Output is bit-identical at any fan-out: bands are disjoint
+/// row ranges and each pixel still receives the same blends in mark order.
+const RASTER_FANOUT_PX: f32 = 2_000_000.0;
+const MIN_BAND_ROWS: usize = 64;
+
+fn raster_fanout(est_px: f32, rows: usize) -> usize {
+    if est_px.is_nan() || est_px < RASTER_FANOUT_PX {
+        return 1;
+    }
+    let cores = std::thread::available_parallelism().map_or(1, |p| p.get().min(8));
+    cores.min(rows / MIN_BAND_ROWS).max(1)
+}
+
+/// Split the canvas into row bands, bucket item indices by their vertical
+/// extent (one decode pass, order-preserving), and let `threads` workers
+/// drain the band queue. Several bands per worker keep dense regions —
+/// where real data concentrates ink — from serializing on one thread.
+/// Bit-identity at any fan-out: bands are disjoint row ranges, buckets keep
+/// item order, so every pixel receives the same blends in the same order as
+/// the serial pass.
+fn paint_banded(
+    cv: &mut Canvas,
+    threads: usize,
+    n_items: usize,
+    y_extent: impl Fn(usize) -> Option<(f32, f32)>,
+    paint: impl Fn(&mut Surface, &[u32]) + Sync,
+) {
+    let (w, h, ch, opaque, clip) = (cv.w, cv.h, cv.channels(), cv.opaque, cv.clip);
+    let n_bands = (threads * 4).min(h.div_ceil(8)).max(1);
+    let band_rows = h.div_ceil(n_bands);
+    let n_bands = h.div_ceil(band_rows);
+    let mut buckets = vec![Vec::<u32>::new(); n_bands];
+    for i in 0..n_items {
+        if let Some((ylo, yhi)) = y_extent(i) {
+            if !(ylo.is_finite() && yhi.is_finite()) || yhi < 0.0 || ylo >= h as f32 {
+                continue;
+            }
+            let b0 = ylo.max(0.0) as usize / band_rows;
+            let b1 = (yhi.min(h as f32 - 1.0).max(0.0) as usize / band_rows).min(n_bands - 1);
+            for bucket in buckets.iter_mut().take(b1 + 1).skip(b0) {
+                bucket.push(i as u32);
+            }
+        }
+    }
+    let mut jobs = Vec::with_capacity(n_bands);
+    let mut rest = cv.px.as_mut_slice();
+    let mut y0 = 0;
+    for bucket in buckets {
+        let take = band_rows.min(h - y0);
+        let (band, tail) = rest.split_at_mut(take * w * ch);
+        rest = tail;
+        if !bucket.is_empty() {
+            jobs.push((y0, take, band, bucket));
+        }
+        y0 += take;
+    }
+    let queue = std::sync::Mutex::new(jobs.into_iter());
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| loop {
+                let job = queue.lock().map(|mut q| q.next()).unwrap_or(None);
+                let Some((y0, take, band, bucket)) = job else {
+                    break;
+                };
+                let mut sf = Surface {
+                    px: band,
+                    w,
+                    y0,
+                    y1: y0 + take,
+                    channels: ch,
+                    opaque,
+                    clip,
+                };
+                paint(&mut sf, &bucket);
+            });
+        }
+    });
+}
+
+/// One OP_POINTS batch: struct-of-arrays borrowed straight from the wire.
+struct PointsBatch<'a> {
+    n: usize,
+    sym: u8,
+    sw: f32,
+    stroke: [u8; 4],
+    xs: &'a [u8],
+    ys: &'a [u8],
+    rs: &'a [u8],
+    fills: &'a [u8],
+}
+
+fn paint_points(cv: &mut Canvas, batch: &PointsBatch, threads: usize) {
+    if threads <= 1 {
+        let indices: Vec<u32> = (0..batch.n as u32).collect();
+        paint_points_band(&mut cv.surface(), batch, &indices);
+        return;
+    }
+    paint_banded(
+        cv,
+        threads,
+        batch.n,
+        |i| {
+            let (cy, rr) = (f32_at(batch.ys, i), f32_at(batch.rs, i));
+            let ext = rr + batch.sw + 1.0;
+            Some((cy - ext, cy + ext))
+        },
+        |sf, indices| paint_points_band(sf, batch, indices),
+    );
+}
+
+fn paint_points_band(sf: &mut Surface, b: &PointsBatch, indices: &[u32]) {
+    for &i in indices {
+        let i = i as usize;
+        let (cx, cy, rr) = (f32_at(b.xs, i), f32_at(b.ys, i), f32_at(b.rs, i));
+        // NaN coordinates poison the whole framebuffer via NaN-vs-clip
+        // comparisons; skip them (the payload ships only finite marks, this
+        // is a backstop).
+        if !(cx.is_finite() && cy.is_finite() && rr.is_finite()) {
+            continue;
+        }
+        let fill = [
+            b.fills[4 * i],
+            b.fills[4 * i + 1],
+            b.fills[4 * i + 2],
+            b.fills[4 * i + 3],
+        ];
+        point_u8_at(sf, cx, cy, rr, b.sym, fill, b.sw, b.stroke);
+    }
+}
+
+/// One OP_SEGMENTS batch: struct-of-arrays borrowed straight from the wire.
+struct SegmentsBatch<'a> {
+    n: usize,
+    width: f32,
+    x0s: &'a [u8],
+    y0s: &'a [u8],
+    x1s: &'a [u8],
+    y1s: &'a [u8],
+    colors: &'a [u8],
+}
+
+fn paint_segments(cv: &mut Canvas, batch: &SegmentsBatch, threads: usize) {
+    if threads <= 1 {
+        let indices: Vec<u32> = (0..batch.n as u32).collect();
+        paint_segments_band(&mut cv.surface(), batch, &indices);
+        return;
+    }
+    paint_banded(
+        cv,
+        threads,
+        batch.n,
+        |i| {
+            let (ay, by) = (f32_at(batch.y0s, i), f32_at(batch.y1s, i));
+            let ext = batch.width * 0.5 + 1.0;
+            Some((ay.min(by) - ext, ay.max(by) + ext))
+        },
+        |sf, indices| paint_segments_band(sf, batch, indices),
+    );
+}
+
+fn paint_segments_band(sf: &mut Surface, sb: &SegmentsBatch, indices: &[u32]) {
+    for &i in indices {
+        let i = i as usize;
+        let a = (f32_at(sb.x0s, i), f32_at(sb.y0s, i));
+        let b = (f32_at(sb.x1s, i), f32_at(sb.y1s, i));
+        if !(a.0.is_finite() && a.1.is_finite() && b.0.is_finite() && b.1.is_finite()) {
+            continue;
+        }
+        let color = [
+            sb.colors[4 * i] as f32 / 255.0,
+            sb.colors[4 * i + 1] as f32 / 255.0,
+            sb.colors[4 * i + 2] as f32 / 255.0,
+            sb.colors[4 * i + 3] as f32 / 255.0,
+        ];
+        stroke_segment_at(sf, a, b, sb.width, color);
+    }
+}
+
 /// Parse and paint a display list, retaining the native byte framebuffer so a
 /// latency-oriented PNG export can feed it straight into the encoder.
 fn rasterize(cmds: &[u8], w: usize, h: usize, opaque_white: bool) -> Option<Canvas> {
@@ -843,26 +1124,25 @@ fn rasterize(cmds: &[u8], w: usize, h: usize, opaque_white: bool) -> Option<Canv
                     let ys = r.bytes(bytes4)?;
                     let rs = r.bytes(bytes4)?;
                     let fills = r.bytes(bytes4)?;
-                    let stroke = st.map(to_u8);
-                    let f32_at = |b: &[u8], i: usize| {
-                        f32::from_le_bytes([b[4 * i], b[4 * i + 1], b[4 * i + 2], b[4 * i + 3]])
+                    let batch = PointsBatch {
+                        n,
+                        sym,
+                        sw,
+                        stroke: st.map(to_u8),
+                        xs,
+                        ys,
+                        rs,
+                        fills,
                     };
+                    let mut est_px = 0.0f32;
                     for i in 0..n {
-                        let (cx, cy, rr) = (f32_at(xs, i), f32_at(ys, i), f32_at(rs, i));
-                        // NaN coordinates poison the whole framebuffer via
-                        // NaN-vs-clip comparisons; skip them (the payload
-                        // ships only finite marks, this is a backstop).
-                        if !(cx.is_finite() && cy.is_finite() && rr.is_finite()) {
-                            continue;
+                        let rr = f32_at(rs, i);
+                        if rr.is_finite() {
+                            let side = 2.0 * (rr + sw + 1.0);
+                            est_px += side * side;
                         }
-                        let fill = [
-                            fills[4 * i],
-                            fills[4 * i + 1],
-                            fills[4 * i + 2],
-                            fills[4 * i + 3],
-                        ];
-                        point_u8(&mut cv, cx, cy, rr, sym, fill, sw, stroke);
                     }
+                    paint_points(&mut cv, &batch, raster_fanout(est_px, h));
                 }
                 OP_SEGMENTS => {
                     let n = r.u32()? as usize;
@@ -873,27 +1153,26 @@ fn rasterize(cmds: &[u8], w: usize, h: usize, opaque_white: bool) -> Option<Canv
                     let x1 = r.bytes(bytes4)?;
                     let y1 = r.bytes(bytes4)?;
                     let colors = r.bytes(bytes4)?;
-                    let f32_at = |b: &[u8], i: usize| {
-                        f32::from_le_bytes([b[4 * i], b[4 * i + 1], b[4 * i + 2], b[4 * i + 3]])
+                    let batch = SegmentsBatch {
+                        n,
+                        width,
+                        x0s: x0,
+                        y0s: y0,
+                        x1s: x1,
+                        y1s: y1,
+                        colors,
                     };
+                    let mut est_px = 0.0f32;
                     for i in 0..n {
-                        let a = (f32_at(x0, i), f32_at(y0, i));
-                        let b = (f32_at(x1, i), f32_at(y1, i));
-                        if !(a.0.is_finite()
-                            && a.1.is_finite()
-                            && b.0.is_finite()
-                            && b.1.is_finite())
-                        {
-                            continue;
+                        let (dx, dy) = (
+                            f32_at(x1, i) - f32_at(x0, i),
+                            f32_at(y1, i) - f32_at(y0, i),
+                        );
+                        if dx.is_finite() && dy.is_finite() {
+                            est_px += (dx.abs().max(dy.abs()) + 2.0) * (width + 3.0);
                         }
-                        let color = [
-                            colors[4 * i] as f32 / 255.0,
-                            colors[4 * i + 1] as f32 / 255.0,
-                            colors[4 * i + 2] as f32 / 255.0,
-                            colors[4 * i + 3] as f32 / 255.0,
-                        ];
-                        stroke_segment(&mut cv, a, b, width, color);
                     }
+                    paint_segments(&mut cv, &batch, raster_fanout(est_px, h));
                 }
                 _ => return None,
             }
@@ -1092,6 +1371,82 @@ mod tests {
         cmd.extend(f32le(sw));
         cmd.extend(st);
         cmd
+    }
+
+    #[test]
+    fn banded_paint_matches_serial() {
+        // Row-band fan-out must paint bit-identically to the serial pass, on
+        // both canvas layouts, with a clip rect, and with an uneven last band.
+        let (w, h) = (97, 61);
+        let mut s = 0x2545f4914f6cdd1du64;
+        let mut rnd = move || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            (s >> 40) as f32 / 16777216.0
+        };
+        let n = 4000usize;
+        let (mut xs, mut ys, mut rs, mut fills) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for i in 0..n {
+            xs.extend(f32le(rnd() * (w as f32 + 8.0) - 4.0));
+            ys.extend(f32le(rnd() * (h as f32 + 8.0) - 4.0));
+            rs.extend(f32le(0.5 + rnd() * 3.0));
+            fills.extend([
+                (i * 37 % 256) as u8,
+                (i * 101 % 256) as u8,
+                (i * 197 % 256) as u8,
+                if i % 3 == 0 { 255 } else { 90 + (i % 100) as u8 },
+            ]);
+        }
+        // Non-finite backstop parity: x, y, and r NaNs must be skipped
+        // identically by the serial loop and the bucketing pass.
+        xs[0..4].copy_from_slice(&f32le(f32::NAN));
+        ys[4..8].copy_from_slice(&f32le(f32::NAN));
+        rs[8..12].copy_from_slice(&f32le(f32::NAN));
+        let batch = PointsBatch {
+            n,
+            sym: 0,
+            sw: 0.5,
+            stroke: [10, 10, 10, 255],
+            xs: &xs,
+            ys: &ys,
+            rs: &rs,
+            fills: &fills,
+        };
+        let (mut sx0, mut sy0, mut sx1, mut sy1, mut colors) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for i in 0..n {
+            sx0.extend(f32le(rnd() * w as f32));
+            sy0.extend(f32le(rnd() * h as f32));
+            sx1.extend(f32le(rnd() * w as f32));
+            sy1.extend(f32le(rnd() * h as f32));
+            colors.extend([(i * 53 % 256) as u8, 30, 200, 180]);
+        }
+        let seg_batch = SegmentsBatch {
+            n,
+            width: 1.5,
+            x0s: &sx0,
+            y0s: &sy0,
+            x1s: &sx1,
+            y1s: &sy1,
+            colors: &colors,
+        };
+        for opaque in [true, false] {
+            for threads in [3usize, 8] {
+                let mut serial = Canvas::new(w, h, opaque);
+                serial.clip = [2.0, 3.0, w as f32 - 4.0, h as f32 - 2.0];
+                let mut banded = Canvas::new(w, h, opaque);
+                banded.clip = serial.clip;
+                paint_points(&mut serial, &batch, 1);
+                paint_points(&mut banded, &batch, threads);
+                assert_eq!(serial.px, banded.px, "points opaque={opaque} threads={threads}");
+                let mut serial = Canvas::new(w, h, opaque);
+                let mut banded = Canvas::new(w, h, opaque);
+                paint_segments(&mut serial, &seg_batch, 1);
+                paint_segments(&mut banded, &seg_batch, threads);
+                assert_eq!(serial.px, banded.px, "segments opaque={opaque} threads={threads}");
+            }
+        }
     }
 
     #[test]
