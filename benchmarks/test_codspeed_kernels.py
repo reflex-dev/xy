@@ -46,6 +46,24 @@ def require_native_backend() -> None:
     )
 
 
+@pytest.fixture(scope="session", autouse=True)
+def warm_composition_surface() -> None:
+    """Import and exercise the composition path once, outside measured regions.
+
+    `xy`'s public surface is lazily imported (`__getattr__` in `__init__`), so
+    the first `fc.chart(...)` in the whole process compiles and executes
+    `xy.components` on the spot. CodSpeed simulation measures each benchmark
+    as a single one-shot region, which put that import inside whichever
+    payload benchmark ran first (`test_first_payload_scatter_small`) — its
+    baseline then moved whenever the library grew, not when the measured path
+    slowed down. Building one tiny figure here keeps import and first-call
+    warmup costs out of every measured region.
+    """
+    xy = np.array([0.0, 1.0, 2.0, 3.0])
+    fig = fc.chart(fc.scatter(x=xy, y=xy)).figure()
+    fig.build_payload(16)
+
+
 @pytest.fixture(scope="module")
 def data() -> tuple[np.ndarray, np.ndarray]:
     rng = np.random.default_rng(42)
