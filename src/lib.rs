@@ -1,9 +1,10 @@
 //! C ABI for the xy native core (design dossier §32: the native Rust core
 //! runs inside the Python process, operating zero-copy over NumPy/Arrow buffers).
 //!
-//! Deliberately dependency-free (std only): builds with no registry access, and
-//! the C ABI is independent of the CPython version — one cdylib per platform
+//! The C ABI is independent of the CPython version — one cdylib per platform
 //! covers all Pythons (§33's wheel-matrix goal, minus the ABI cross-product).
+//! Compute kernels remain self-contained; static export uses the focused Rust
+//! `png` crate so rasterization and compression stay fused.
 //!
 //! Phase 0 exposes stateless kernels over caller-owned buffers — the canonical
 //! column store stays on the Python side as NumPy arrays (CPU is the truth, GPU
@@ -50,7 +51,7 @@ fn ffi_guard<R>(sentinel: R, body: impl FnOnce() -> R) -> R {
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 15;
+pub const ABI_VERSION: u32 = 17;
 
 #[no_mangle]
 pub extern "C" fn fc_abi_version() -> u32 {
@@ -1311,6 +1312,75 @@ pub unsafe extern "C" fn fc_rasterize(
     };
     let out = std::slice::from_raw_parts_mut(out, out_len);
     ffi_guard(0, || raster::rasterize_into(cmds, w, h, out) as i32)
+}
+
+/// Fused native raster + fast PNG encoder. Returns the PNG byte count written
+/// to `out`, or `usize::MAX` when the command stream is malformed, dimensions
+/// overflow, or `out_capacity` is insufficient.
+///
+/// # Safety
+/// Pointer contracts match `fc_rasterize`; `out` must point to
+/// `out_capacity` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn fc_rasterize_png(
+    cmd: *const u8,
+    cmd_len: usize,
+    out: *mut u8,
+    out_capacity: usize,
+    w: usize,
+    h: usize,
+) -> usize {
+    if out.is_null() || out_capacity == 0 || w == 0 || h == 0 {
+        return usize::MAX;
+    }
+    let cmds = if cmd_len == 0 {
+        &[][..]
+    } else if cmd.is_null() {
+        return usize::MAX;
+    } else {
+        std::slice::from_raw_parts(cmd, cmd_len)
+    };
+    let out = std::slice::from_raw_parts_mut(out, out_capacity);
+    ffi_guard(usize::MAX, || {
+        raster::rasterize_png_into(cmds, w, h, out).unwrap_or(usize::MAX)
+    })
+}
+
+/// Native heatmap scalar-to-RGBA mapper used by the static raster path.
+/// Returns 1 on success and 0 on invalid dimensions or pointers.
+///
+/// # Safety
+/// `raw` contains `w*h` readable f64 values, `stops` contains
+/// `stop_count*3` readable bytes, and `out` contains `w*h*4` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn fc_heatmap_rgba(
+    raw: *const f64,
+    w: usize,
+    h: usize,
+    stops: *const u8,
+    stop_count: usize,
+    alpha: u8,
+    out: *mut u8,
+) -> i32 {
+    let Some(len) = w.checked_mul(h) else {
+        return 0;
+    };
+    if len == 0 || stop_count == 0 || raw.is_null() || stops.is_null() || out.is_null() {
+        return 0;
+    }
+    let Some(out_len) = len.checked_mul(4) else {
+        return 0;
+    };
+    let Some(stop_len) = stop_count.checked_mul(3) else {
+        return 0;
+    };
+    let raw = std::slice::from_raw_parts(raw, len);
+    let stop_bytes = std::slice::from_raw_parts(stops, stop_len);
+    let stops = std::slice::from_raw_parts(stop_bytes.as_ptr().cast::<[u8; 3]>(), stop_count);
+    let out = std::slice::from_raw_parts_mut(out, out_len);
+    ffi_guard(0, || {
+        kernels::heatmap_rgba_into(raw, w, h, stops, alpha, out) as i32
+    })
 }
 
 /// Fused density scan (§5 Tier 2): one pass writing BOTH the count grid

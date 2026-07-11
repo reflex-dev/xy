@@ -44,6 +44,7 @@ min_max = _impl.min_max
 bin_2d = _impl.bin_2d
 bin_2d_indices = _impl.bin_2d_indices
 histogram_uniform = _impl.histogram_uniform
+heatmap_rgba = _impl.heatmap_rgba
 histogram2d = _impl.histogram2d
 indexed_triangles = _impl.indexed_triangles
 normalize_f32 = _impl.normalize_f32
@@ -61,6 +62,7 @@ pyramid_free = _impl.pyramid_free
 polygon_triangles = _impl.polygon_triangles
 quad_mesh_triangles = _impl.quad_mesh_triangles
 rasterize = _impl.rasterize
+rasterize_png = _impl.rasterize_png
 rfft = _impl.rfft
 spectrogram = _impl.spectrogram
 stratified_sample_mask = _impl.stratified_sample_mask
@@ -80,6 +82,7 @@ __all__ = [
     "css_check",
     "delaunay_triangles",
     "encode_f32",
+    "heatmap_rgba",
     "histogram2d",
     "histogram_uniform",
     "indexed_triangles",
@@ -98,6 +101,7 @@ __all__ = [
     "quad_mesh_triangles",
     "range_indices",
     "rasterize",
+    "rasterize_png",
     "rfft",
     "sample_mask",
     "sector_triangles",

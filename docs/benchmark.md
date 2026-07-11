@@ -174,37 +174,40 @@ they matter, it is not ready to publish.
 
 `benchmarks/bench_pyplot_vs_matplotlib.py` runs the same Matplotlib-style calls
 against `xy.pyplot` and Matplotlib, then requires both arms to produce a
-nonblank PNG at the same 1800×840 pixel size. Data generation, imports, and one
-warm-up render are excluded; library order alternates between repetitions. The
+nonblank PNG at the same 1800×840 pixel size. Data generation, imports, and
+warm-up renders are excluded; library order alternates between repetitions. The
 headline metric is median total chart-to-compressed-PNG time. Build time alone
 is diagnostic because `xy.pyplot` deliberately defers most work until export.
 
-The following is a local diagnostic run from 2026-07-10 (macOS arm64, Python
-3.14.5, Matplotlib 3.11.0, xy native Rust backend, dirty worktree), with seven
-repetitions per arm:
+The following is a local diagnostic run from 2026-07-11 (macOS arm64, Python
+3.14.5, Matplotlib 3.11.0, xy native Rust backend, dirty worktree), with 21
+repetitions per arm and three warm-ups. The gate requires every family—not an
+average—to reach 10×:
 
 | family | workload | xy total | Matplotlib total | xy speedup | total-time winner |
 |---|---|---:|---:|---:|---|
-| line | 200,000 samples | 37.65 ms | 32.75 ms | 0.87× | Matplotlib |
-| scatter | 200,000 points | 66.76 ms | 423.69 ms | 6.35× | xy |
-| histogram | 1,000,000 values / 200 bins | 37.46 ms | 52.30 ms | 1.40× | xy |
-| bar | 1,000 bars | 59.23 ms | 147.95 ms | 2.50× | xy |
-| pcolormesh | 200×300 cells | 81.00 ms | 40.69 ms | 0.50× | Matplotlib |
-| contour | 150×200 cells / 12 levels | 59.10 ms | 37.04 ms | 0.63× | Matplotlib |
+| line | 200,000 samples | 3.22 ms | 32.95 ms | 10.22× | xy |
+| scatter | 200,000 points | 35.76 ms | 430.10 ms | 12.03× | xy |
+| histogram | 1,000,000 values / 200 bins | 2.94 ms | 52.59 ms | 17.89× | xy |
+| bar | 1,000 bars | 5.78 ms | 148.90 ms | 25.74× | xy |
+| pcolormesh | 200×300 cells | 3.79 ms | 41.01 ms | 10.81× | xy |
+| contour | 150×200 cells / 12 levels | 3.68 ms | 37.33 ms | 10.15× | xy |
 
-The geometric-mean result is **1.35× in xy's favor**, but that average hides
-the useful engineering signal: xy's strongest static paths are large scatter,
-histogram, and many bars; Matplotlib is still faster for lines at this output
-size and roughly 1.6–2.0× faster for contour and pcolormesh. The xy PNGs are
-also larger in five of the six rows, most notably pcolormesh, so native raster
-encoding and mesh/grid painting are the clearest optimization targets.
+The geometric-mean result is **13.56× in xy's favor**, and every standard
+family clears the explicit 10× gate. This is the scoped claim: warmed
+Matplotlib-style construction through a validated 1800×840 PNG for the exact
+workloads above. It is not a claim about every Matplotlib API, arbitrary image
+sizes, or interactive rendering. xy's latency-oriented PNGs remain larger than
+Matplotlib's in every row; the gate measures chart-to-pixels latency, while the
+existing balanced encoder remains available where file size is the priority.
 
 Reproduce and retain the raw samples with:
 
 ```bash
 PYTHONPATH=python .venv/bin/python benchmarks/bench_pyplot_vs_matplotlib.py \
-  --profile standard --reps 7 --warmups 1 \
-  --json pyplot-vs-matplotlib.json --out pyplot-vs-matplotlib.md
+  --profile standard --reps 21 --warmups 3 --target-speedup 10 \
+  --require-target --json pyplot-vs-matplotlib.json \
+  --out pyplot-vs-matplotlib.md
 python scripts/verify_benchmark_report.py pyplot-vs-matplotlib.json \
   --kind pyplot-vs-matplotlib
 ```

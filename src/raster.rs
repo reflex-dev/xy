@@ -1,4 +1,4 @@
-//! Dependency-free anti-aliased 2D rasterizer for the native PNG export path
+//! Anti-aliased 2D rasterizer for the native PNG export path
 //! (design dossier Phase 3). Python computes all chart geometry (reusing the SVG
 //! exporter's scales/ticks/colormaps) and hands over a flat *display list* — a
 //! tagged command stream — which this module paints into a straight-alpha RGBA8
@@ -8,10 +8,11 @@
 //! small, general set: coverage-based scanline **polygon fill** (flat + linear
 //! gradient), distance-based **stroke** and **point/symbol** rasterization (which
 //! gets round caps/joins and AA for free), **image blit** (density/heatmap
-//! rasters), and **text** blitted from the baked font atlas (`font.rs`). No
-//! external crates, no FreeType.
+//! rasters), and **text** blitted from the baked font atlas (`font.rs`). PNG
+//! compression uses `png`/fdeflate; text needs no FreeType.
 
 use crate::font;
+use std::io::Cursor;
 
 // ---- command opcodes (must match python/xy/_raster.py) --------------
 const OP_CLIP: u8 = 0;
@@ -22,6 +23,7 @@ const OP_POINT: u8 = 4;
 const OP_IMAGE: u8 = 5;
 const OP_TEXT: u8 = 6;
 const OP_POINTS: u8 = 7;
+const OP_SEGMENTS: u8 = 8;
 
 const SS: usize = 4; // vertical supersamples per scanline for polygon AA
 
@@ -34,31 +36,67 @@ struct Canvas {
     w: usize,
     h: usize,
     px: Vec<u8>,
+    opaque: bool,
     clip: [f32; 4], // x0, y0, x1, y1
 }
 
 impl Canvas {
-    fn new(w: usize, h: usize) -> Self {
+    fn new(w: usize, h: usize, opaque_white: bool) -> Self {
+        let channels = if opaque_white { 3 } else { 4 };
         Canvas {
             w,
             h,
-            px: vec![0; w * h * 4],
+            px: vec![if opaque_white { 255 } else { 0 }; w * h * channels],
+            opaque: opaque_white,
             clip: [0.0, 0.0, w as f32, h as f32],
         }
     }
 
     #[inline]
+    fn channels(&self) -> usize {
+        if self.opaque {
+            3
+        } else {
+            4
+        }
+    }
+
+    #[inline]
     fn blend(&mut self, x: usize, y: usize, rgba: [f32; 4], cov: f32) {
-        let sa = to_u8(rgba[3] * cov) as u32;
+        self.blend_u8(
+            x,
+            y,
+            [
+                to_u8(rgba[0]),
+                to_u8(rgba[1]),
+                to_u8(rgba[2]),
+                to_u8(rgba[3] * cov),
+            ],
+        );
+    }
+
+    #[inline]
+    fn blend_u8(&mut self, x: usize, y: usize, rgba: [u8; 4]) {
+        let sa = rgba[3] as u32;
         if sa == 0 {
             return;
         }
-        let src = [
-            to_u8(rgba[0]) as u32,
-            to_u8(rgba[1]) as u32,
-            to_u8(rgba[2]) as u32,
-        ];
-        let o = (y * self.w + x) * 4;
+        let src = [rgba[0] as u32, rgba[1] as u32, rgba[2] as u32];
+        let o = (y * self.w + x) * self.channels();
+        if self.opaque {
+            if sa == 255 {
+                self.px[o] = src[0] as u8;
+                self.px[o + 1] = src[1] as u8;
+                self.px[o + 2] = src[2] as u8;
+            } else {
+                let inv = 255 - sa;
+                for k in 0..3 {
+                    self.px[o + k] =
+                        ((src[k] * sa + self.px[o + k] as u32 * inv + 127) / 255) as u8;
+                }
+            }
+            return;
+        }
         if sa == 255 {
             self.px[o] = src[0] as u8;
             self.px[o + 1] = src[1] as u8;
@@ -104,7 +142,64 @@ impl Canvas {
 
     /// Export to straight-alpha RGBA8.
     fn to_rgba8(&self, out: &mut [u8]) {
-        out.copy_from_slice(&self.px);
+        if self.opaque {
+            for (rgb, rgba) in self.px.chunks_exact(3).zip(out.chunks_exact_mut(4)) {
+                rgba[..3].copy_from_slice(rgb);
+                rgba[3] = 255;
+            }
+        } else {
+            out.copy_from_slice(&self.px);
+        }
+    }
+}
+
+fn stroke_segment(cv: &mut Canvas, a: (f32, f32), b: (f32, f32), width: f32, rgba: [f32; 4]) {
+    if width <= 0.0 {
+        return;
+    }
+    let hw = width * 0.5;
+    let (bx0, by0, bx1, by1) = cv.bbox(
+        a.0.min(b.0) - hw - 1.0,
+        a.1.min(b.1) - hw - 1.0,
+        a.0.max(b.0) + hw + 1.0,
+        a.1.max(b.1) + hw + 1.0,
+    );
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    if dx.abs() >= dy.abs() && dx.abs() > 1e-6 {
+        for x in bx0..bx1 {
+            let t = ((x as f32 + 0.5 - a.0) / dx).clamp(0.0, 1.0);
+            let center = a.1 + t * dy;
+            let sy0 = ((center - hw - 1.0).floor() as usize).max(by0);
+            let sy1 = ((center + hw + 1.0).ceil() as usize).min(by1);
+            for y in sy0..sy1 {
+                let cov = seg_coverage((x as f32 + 0.5, y as f32 + 0.5), a, b, hw);
+                if cov > 0.0 {
+                    cv.blend(x, y, rgba, cov);
+                }
+            }
+        }
+    } else if dy.abs() > 1e-6 {
+        for y in by0..by1 {
+            let t = ((y as f32 + 0.5 - a.1) / dy).clamp(0.0, 1.0);
+            let center = a.0 + t * dx;
+            let sx0 = ((center - hw - 1.0).floor() as usize).max(bx0);
+            let sx1 = ((center + hw + 1.0).ceil() as usize).min(bx1);
+            for x in sx0..sx1 {
+                let cov = seg_coverage((x as f32 + 0.5, y as f32 + 0.5), a, b, hw);
+                if cov > 0.0 {
+                    cv.blend(x, y, rgba, cov);
+                }
+            }
+        }
+    } else {
+        for y in by0..by1 {
+            for x in bx0..bx1 {
+                let cov = seg_coverage((x as f32 + 0.5, y as f32 + 0.5), a, b, hw);
+                if cov > 0.0 {
+                    cv.blend(x, y, rgba, cov);
+                }
+            }
+        }
     }
 }
 
@@ -139,11 +234,17 @@ fn fill_rect(cv: &mut Canvas, pts: &[(f32, f32)], rgba: [f32; 4]) -> bool {
         && x1 >= bx1 as f32
         && y1 >= by1 as f32
     {
-        let c = [to_u8(rgba[0]), to_u8(rgba[1]), to_u8(rgba[2]), 255];
+        let rgba8 = [to_u8(rgba[0]), to_u8(rgba[1]), to_u8(rgba[2]), 255];
+        let channels = cv.channels();
+        let color = &rgba8[..channels];
         for y in by0..by1 {
-            let row = &mut cv.px[(y * cv.w + bx0) * 4..(y * cv.w + bx1) * 4];
-            for pixel in row.chunks_exact_mut(4) {
-                pixel.copy_from_slice(&c);
+            let row = &mut cv.px[(y * cv.w + bx0) * channels..(y * cv.w + bx1) * channels];
+            if color.iter().all(|channel| *channel == color[0]) {
+                row.fill(color[0]);
+            } else {
+                for pixel in row.chunks_exact_mut(channels) {
+                    pixel.copy_from_slice(color);
+                }
             }
         }
         return true;
@@ -240,7 +341,7 @@ fn fill_poly(cv: &mut Canvas, pts: &[(f32, f32)], mut color_at: impl FnMut(f32, 
 // ---- stroke (distance field, round caps/joins) ------------------------------
 
 #[inline]
-fn seg_dist(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
+fn seg_dist2(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
     let (px, py) = p;
     let (ax, ay) = a;
     let (bx, by) = b;
@@ -252,7 +353,21 @@ fn seg_dist(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
         (((px - ax) * dx + (py - ay) * dy) / len2).clamp(0.0, 1.0)
     };
     let (cx, cy) = (ax + t * dx, ay + t * dy);
-    ((px - cx).powi(2) + (py - cy).powi(2)).sqrt()
+    (px - cx).powi(2) + (py - cy).powi(2)
+}
+
+#[inline]
+fn seg_coverage(p: (f32, f32), a: (f32, f32), b: (f32, f32), hw: f32) -> f32 {
+    let distance2 = seg_dist2(p, a, b);
+    let outer = hw + 0.5;
+    if distance2 >= outer * outer {
+        return 0.0;
+    }
+    let inner = (hw - 0.5).max(0.0);
+    if distance2 <= inner * inner {
+        return 1.0;
+    }
+    outer - distance2.sqrt()
 }
 
 /// Rasterize on-segments into a scratch coverage buffer (max-combined so
@@ -266,6 +381,10 @@ fn stroke(
     dash: &[f32],
 ) {
     if pts.len() < 2 || width <= 0.0 {
+        return;
+    }
+    if pts.len() == 2 && !closed && dash.is_empty() {
+        stroke_segment(cv, pts[0], pts[1], width, rgba);
         return;
     }
     let hw = width * 0.5;
@@ -337,7 +456,7 @@ fn stroke(
         return;
     }
     let (sw, sh) = (bx1 - bx0, by1 - by0);
-    let mut scratch = vec![0.0f32; sw * sh];
+    let mut scratch = vec![0u8; sw * sh];
     for (a, b) in &segs {
         let sx0 = ((a.0.min(b.0) - hw - 1.0).floor() as usize).max(bx0);
         let sy0 = ((a.1.min(b.1) - hw - 1.0).floor() as usize).max(by0);
@@ -345,12 +464,12 @@ fn stroke(
         let sy1 = ((a.1.max(b.1) + hw + 1.0).ceil() as usize).min(by1);
         for y in sy0..sy1 {
             for x in sx0..sx1 {
-                let d = seg_dist((x as f32 + 0.5, y as f32 + 0.5), *a, *b);
-                let c = (hw + 0.5 - d).clamp(0.0, 1.0);
+                let c = seg_coverage((x as f32 + 0.5, y as f32 + 0.5), *a, *b, hw);
                 if c > 0.0 {
                     let s = &mut scratch[(y - by0) * sw + (x - bx0)];
-                    if c > *s {
-                        *s = c;
+                    let coverage = to_u8(c);
+                    if coverage > *s {
+                        *s = coverage;
                     }
                 }
             }
@@ -359,8 +478,8 @@ fn stroke(
     for y in by0..by1 {
         for x in bx0..bx1 {
             let c = scratch[(y - by0) * sw + (x - bx0)];
-            if c > 0.0 {
-                cv.blend(x, y, rgba, c);
+            if c > 0 {
+                cv.blend(x, y, rgba, c as f32 / 255.0);
             }
         }
     }
@@ -431,14 +550,43 @@ fn point(
     }
 }
 
-// ---- image blit (bilinear) --------------------------------------------------
+// ---- image blit -------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
-fn blit(cv: &mut Canvas, dx: f32, dy: f32, dw: f32, dh: f32, iw: usize, ih: usize, src: &[u8]) {
+fn blit(
+    cv: &mut Canvas,
+    dx: f32,
+    dy: f32,
+    dw: f32,
+    dh: f32,
+    iw: usize,
+    ih: usize,
+    src: &[u8],
+    nearest: bool,
+) {
     if iw == 0 || ih == 0 || dw <= 0.0 || dh <= 0.0 {
         return;
     }
     let (bx0, by0, bx1, by1) = cv.bbox(dx, dy, dx + dw, dy + dh);
+    if nearest {
+        let xmap: Vec<usize> = (bx0..bx1)
+            .map(|x| (((x as f32 + 0.5 - dx) / dw * iw as f32).floor() as usize).min(iw - 1))
+            .collect();
+        for y in by0..by1 {
+            let sy = (((y as f32 + 0.5 - dy) / dh * ih as f32).floor() as usize).min(ih - 1);
+            for (offset, &sx) in xmap.iter().enumerate() {
+                let source = (sy * iw + sx) * 4;
+                let color = [
+                    src[source],
+                    src[source + 1],
+                    src[source + 2],
+                    src[source + 3],
+                ];
+                cv.blend_u8(bx0 + offset, y, color);
+            }
+        }
+        return;
+    }
     let sample = |sx: usize, sy: usize, k: usize| src[(sy * iw + sx) * 4 + k] as f32 / 255.0;
     for y in by0..by1 {
         for x in bx0..bx1 {
@@ -564,18 +712,18 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// Parse and paint the display list into `out` (straight-alpha RGBA8,
-/// `w*h*4` bytes). Returns false on a malformed buffer or size mismatch.
-pub fn rasterize_into(cmds: &[u8], w: usize, h: usize, out: &mut [u8]) -> bool {
-    if w == 0 || h == 0 || out.len() != w * h * 4 {
-        return false;
+/// Parse and paint a display list, retaining the native byte framebuffer so a
+/// latency-oriented PNG export can feed it straight into the encoder.
+fn rasterize(cmds: &[u8], w: usize, h: usize, opaque_white: bool) -> Option<Canvas> {
+    if w == 0 || h == 0 {
+        return None;
     }
-    let mut cv = Canvas::new(w, h);
+    let mut cv = Canvas::new(w, h, opaque_white);
     let mut r = Reader { b: cmds, i: 0 };
     while r.i < cmds.len() {
         let op = match r.u8() {
             Some(o) => o,
-            None => return false,
+            None => return None,
         };
         let ok = (|| -> Option<()> {
             match op {
@@ -636,8 +784,9 @@ pub fn rasterize_into(cmds: &[u8], w: usize, h: usize, out: &mut [u8]) -> bool {
                 OP_IMAGE => {
                     let (dx, dy, dw, dh) = (r.f32()?, r.f32()?, r.f32()?, r.f32()?);
                     let (iw, ih) = (r.u32()? as usize, r.u32()? as usize);
+                    let nearest = r.u8()? != 0;
                     let src = r.bytes(iw.checked_mul(ih)?.checked_mul(4)?)?;
-                    blit(&mut cv, dx, dy, dw, dh, iw, ih, src);
+                    blit(&mut cv, dx, dy, dw, dh, iw, ih, src, nearest);
                 }
                 OP_TEXT => {
                     let (x, y) = (r.f32()?, r.f32()?);
@@ -683,16 +832,83 @@ pub fn rasterize_into(cmds: &[u8], w: usize, h: usize, out: &mut [u8]) -> bool {
                         point(&mut cv, cx, cy, rr, sym, fill, sw, st);
                     }
                 }
+                OP_SEGMENTS => {
+                    let n = r.u32()? as usize;
+                    let width = r.f32()?;
+                    let bytes4 = n.checked_mul(4)?;
+                    let x0 = r.bytes(bytes4)?;
+                    let y0 = r.bytes(bytes4)?;
+                    let x1 = r.bytes(bytes4)?;
+                    let y1 = r.bytes(bytes4)?;
+                    let colors = r.bytes(bytes4)?;
+                    let f32_at = |b: &[u8], i: usize| {
+                        f32::from_le_bytes([b[4 * i], b[4 * i + 1], b[4 * i + 2], b[4 * i + 3]])
+                    };
+                    for i in 0..n {
+                        let a = (f32_at(x0, i), f32_at(y0, i));
+                        let b = (f32_at(x1, i), f32_at(y1, i));
+                        if !(a.0.is_finite()
+                            && a.1.is_finite()
+                            && b.0.is_finite()
+                            && b.1.is_finite())
+                        {
+                            continue;
+                        }
+                        let color = [
+                            colors[4 * i] as f32 / 255.0,
+                            colors[4 * i + 1] as f32 / 255.0,
+                            colors[4 * i + 2] as f32 / 255.0,
+                            colors[4 * i + 3] as f32 / 255.0,
+                        ];
+                        stroke_segment(&mut cv, a, b, width, color);
+                    }
+                }
                 _ => return None,
             }
             Some(())
         })();
         if ok.is_none() {
-            return false;
+            return None;
         }
     }
+    Some(cv)
+}
+
+/// Parse and paint the display list into `out` (straight-alpha RGBA8,
+/// `w*h*4` bytes). Returns false on a malformed buffer or size mismatch.
+pub fn rasterize_into(cmds: &[u8], w: usize, h: usize, out: &mut [u8]) -> bool {
+    if out.len() != w.checked_mul(h).and_then(|n| n.checked_mul(4)).unwrap_or(0) {
+        return false;
+    }
+    let Some(cv) = rasterize(cmds, w, h, false) else {
+        return false;
+    };
     cv.to_rgba8(out);
     true
+}
+
+/// Fused low-latency raster + PNG path. `Fast` uses fdeflate's PNG-tuned
+/// compressor and the Up filter keeps chart backgrounds and horizontal runs
+/// compact without an adaptive-filter pass over every row.
+pub fn rasterize_png_into(cmds: &[u8], w: usize, h: usize, out: &mut [u8]) -> Option<usize> {
+    let (wu, hu) = (u32::try_from(w).ok()?, u32::try_from(h).ok()?);
+    let cv = rasterize(cmds, w, h, true)?;
+    let mut cursor = Cursor::new(out);
+    {
+        let mut encoder = png::Encoder::new(&mut cursor, wu, hu);
+        encoder.set_color(if cv.opaque {
+            png::ColorType::Rgb
+        } else {
+            png::ColorType::Rgba
+        });
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::Fast);
+        encoder.set_filter(png::Filter::Up);
+        let mut writer = encoder.write_header().ok()?;
+        writer.write_image_data(&cv.px).ok()?;
+        writer.finish().ok()?;
+    }
+    usize::try_from(cursor.position()).ok()
 }
 
 fn grad_color(stops: &[(f32, [f32; 4])], t: f32) -> [f32; 4] {

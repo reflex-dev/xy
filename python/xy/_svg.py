@@ -347,10 +347,16 @@ def _lut(colormap: str, t: np.ndarray) -> np.ndarray:
     client's 256-texel LUT interpolation."""
     stops = np.array(COLORMAP_STOPS.get(colormap) or COLORMAP_STOPS["viridis"], dtype=np.float64)
     pos = np.clip(t, 0.0, 1.0) * (len(stops) - 1)
-    lo = np.floor(pos).astype(int)
+    lo = np.floor(pos).astype(np.uint8)
     hi = np.minimum(lo + 1, len(stops) - 1)
-    f = (pos - lo)[:, None]
-    return np.round(stops[lo] * (1 - f) + stops[hi] * f).astype(np.uint8)
+    fraction = pos - lo
+    out = np.empty((len(pos), 3), dtype=np.uint8)
+    # Channel-wise interpolation is numerically identical to the broadcasted
+    # `(n, 3)` expression but avoids three multi-megabyte float temporaries.
+    for channel in range(3):
+        start = stops[lo, channel]
+        out[:, channel] = np.round(start + (stops[hi, channel] - start) * fraction).astype(np.uint8)
+    return out
 
 
 def _css(c: Any, fallback: str) -> str:

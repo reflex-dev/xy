@@ -1705,32 +1705,34 @@ where
     assert_eq!(x_coords.len(), cols);
     assert_eq!(y_coords.len(), rows);
     let mut count = 0usize;
-    for &level in levels {
-        for row in 0..rows - 1 {
-            for col in 0..cols - 1 {
-                let v00 = z[row * cols + col];
-                let v10 = z[row * cols + col + 1];
-                let v11 = z[(row + 1) * cols + col + 1];
-                let v01 = z[(row + 1) * cols + col];
-                if !(v00.is_finite() && v10.is_finite() && v11.is_finite() && v01.is_finite()) {
-                    continue;
-                }
+    let sorted_levels = levels.windows(2).all(|pair| pair[0] <= pair[1]);
+    for row in 0..rows - 1 {
+        for col in 0..cols - 1 {
+            let v00 = z[row * cols + col];
+            let v10 = z[row * cols + col + 1];
+            let v11 = z[(row + 1) * cols + col + 1];
+            let v01 = z[(row + 1) * cols + col];
+            if !(v00.is_finite() && v10.is_finite() && v11.is_finite() && v01.is_finite()) {
+                continue;
+            }
+            let local_min = v00.min(v10).min(v11).min(v01);
+            let local_max = v00.max(v10).max(v11).max(v01);
+            let corners = [
+                (x_coords[col], y_coords[row], v00),
+                (x_coords[col + 1], y_coords[row], v10),
+                (x_coords[col + 1], y_coords[row + 1], v11),
+                (x_coords[col], y_coords[row + 1], v01),
+            ];
+            let mut process_level = |level: f64| {
                 let mask = u8::from(v00 >= level)
                     | (u8::from(v10 >= level) << 1)
                     | (u8::from(v11 >= level) << 2)
                     | (u8::from(v01 >= level) << 3);
                 let pairs = contour_pairs(mask);
                 if pairs.is_empty() {
-                    continue;
+                    return;
                 }
-                let corners = [
-                    (x_coords[col], y_coords[row], v00),
-                    (x_coords[col + 1], y_coords[row], v10),
-                    (x_coords[col + 1], y_coords[row + 1], v11),
-                    (x_coords[col], y_coords[row + 1], v01),
-                ];
-                let mut points = [(0.0f64, 0.0f64); 4];
-                for edge in 0..4 {
+                let edge_point = |edge: usize| {
                     let (xa, ya, va) = corners[edge];
                     let (xb, yb, vb) = corners[(edge + 1) % 4];
                     let denom = vb - va;
@@ -1739,16 +1741,29 @@ where
                     } else {
                         ((level - va) / denom).clamp(0.0, 1.0)
                     };
-                    points[edge] = (
+                    (
                         xa + (xb - xa) * fraction,
                         ya + (yb - ya) * fraction,
-                    );
-                }
+                    )
+                };
                 for &(edge_a, edge_b) in pairs {
-                    let (x0, y0) = points[edge_a as usize];
-                    let (x1, y1) = points[edge_b as usize];
+                    let (x0, y0) = edge_point(edge_a as usize);
+                    let (x1, y1) = edge_point(edge_b as usize);
                     emit(x0, x1, y0, y1, level);
                     count += 1;
+                }
+            };
+            if sorted_levels {
+                let start = levels.partition_point(|level| *level < local_min);
+                let end = levels.partition_point(|level| *level <= local_max);
+                for &level in &levels[start..end] {
+                    process_level(level);
+                }
+            } else {
+                for &level in levels {
+                    if level >= local_min && level <= local_max {
+                        process_level(level);
+                    }
                 }
             }
         }
@@ -1792,6 +1807,48 @@ pub fn marching_squares_into(
         written += 1;
     });
     written
+}
+
+/// Map normalized heatmap scalars to a top-row-first RGBA8 image. This is the
+/// native counterpart of `_scene.grid_rgba`'s heatmap branch: the payload's
+/// reserved zero represents missing data, while finite values map through the
+/// same evenly spaced color stops with ties-to-even byte rounding.
+pub fn heatmap_rgba_into(
+    raw: &[f64],
+    w: usize,
+    h: usize,
+    stops: &[[u8; 3]],
+    alpha: u8,
+    out: &mut [u8],
+) -> bool {
+    if w == 0
+        || h == 0
+        || stops.is_empty()
+        || raw.len() != w.saturating_mul(h)
+        || out.len() != raw.len().saturating_mul(4)
+    {
+        return false;
+    }
+    let last = stops.len() - 1;
+    for row in 0..h {
+        let destination_row = h - 1 - row;
+        for col in 0..w {
+            let value = raw[row * w + col];
+            let t = ((value * 255.0 - 1.0) / 254.0).clamp(0.0, 1.0);
+            let position = t * last as f64;
+            let lo = position.floor() as usize;
+            let hi = (lo + 1).min(last);
+            let fraction = position - lo as f64;
+            let destination = (destination_row * w + col) * 4;
+            for channel in 0..3 {
+                let start = stops[lo][channel] as f64;
+                let value = start + (stops[hi][channel] as f64 - start) * fraction;
+                out[destination + channel] = value.round_ties_even().clamp(0.0, 255.0) as u8;
+            }
+            out[destination + 3] = if value <= 0.0 { 0 } else { alpha };
+        }
+    }
+    true
 }
 
 /// 2D density aggregation (§5 Tier 2): additively bin points into a `w × h`

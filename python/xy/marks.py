@@ -63,8 +63,12 @@ def _append_segment_trace(
             Trace(
                 id=len(self.traces),
                 kind=kind,
-                x=self.store.ingest((x0c.values + x1c.values) / 2.0),
-                y=self.store.ingest((y0c.values + y1c.values) / 2.0),
+                # Segment payloads and autorange use the explicit endpoint
+                # columns. Reuse x0/y0 for common row-count bookkeeping rather
+                # than allocating, scanning, and storing two unused midpoint
+                # columns for every contour/errorbar/stem trace.
+                x=x0c,
+                y=y0c,
                 x0=x0c,
                 x1=x1c,
                 y0=y0c,

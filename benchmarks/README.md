@@ -34,7 +34,8 @@ These commands match the non-blocking GitHub Actions measurement lane:
 .venv/bin/python benchmarks/bench_2d_charts.py --profile standard \
   --ttfr --chromium "$CHROME" --json core-2d.json
 .venv/bin/python benchmarks/bench_pyplot_vs_matplotlib.py \
-  --profile standard --reps 7 --warmups 1 \
+  --profile standard --reps 21 --warmups 3 --target-speedup 10 \
+  --require-target \
   --json pyplot-vs-matplotlib.json --out pyplot-vs-matplotlib.md
 .venv/bin/python benchmarks/bench_interaction.py --sizes 1e4,2.5e5 \
   --reps 24 --chromium "$CHROME" --json interaction.json

@@ -31,8 +31,9 @@ class Trace:
     grid: Optional[Column] = None
     grid_shape: Optional[tuple[int, int]] = None  # (rows, columns)
     count: Optional[int] = None
-    # Rect-like marks ship four geometry columns while still keeping x/y as the
-    # conventional center/value columns for common bookkeeping.
+    # Rect-like marks ship four geometry columns. `x`/`y` remain conventional
+    # center/value columns for bars; independent-segment traces may alias x0/y0
+    # because their endpoint columns drive payloads and autorange directly.
     x0: Optional[Column] = None
     x1: Optional[Column] = None
     y0: Optional[Column] = None

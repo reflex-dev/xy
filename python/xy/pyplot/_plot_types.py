@@ -2057,7 +2057,7 @@ class PlotTypeMixin:
             raise ValueError(f"invalid pcolormesh shading {shading!r}")
         check_unsupported(kwargs, "pcolormesh()")
         colormap = resolve_cmap(cmap) if cmap is not None else "viridis"
-        opacity = 0.95 if alpha is None else float(alpha)
+        opacity = 1.0 if alpha is None else float(alpha)
         domain = (float(vmin), float(vmax)) if vmin is not None and vmax is not None else None
         regular = None if x is None else _uniform_mesh_axes(x, y, z.shape)
         if x is None or (regular is not None and shading != "gouraud"):

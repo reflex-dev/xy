@@ -67,7 +67,8 @@ argminmax, tsdownsample-class speed) with the lean build as default.
 
 ### 3.1 What's already right (keep as law)
 
-- **C ABI + ctypes, no PyO3**: no per-CPython builds, no registry needed.
+- **C ABI + ctypes, no PyO3**: no per-CPython builds; consumers install the
+  compiled wheel without a Rust or crate-registry dependency.
 - **Caller-allocated buffers**: Python (NumPy) allocates outputs; Rust writes
   into them and returns counts. No cross-language ownership for array data.
 - **f64 in, f32 out** for geometry (offset-encoded, §16); u32 for indices.

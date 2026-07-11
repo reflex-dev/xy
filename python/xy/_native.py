@@ -1,7 +1,7 @@
 """ctypes binding to the native Rust core (design dossier §32).
 
-The core is a dependency-free C-ABI cdylib; every call here passes NumPy buffer
-pointers directly — zero copies across the Python/Rust boundary (§4: one
+The core is a C-ABI cdylib; every call here passes NumPy buffer pointers
+directly — zero copies across the Python/Rust boundary (§4: one
 physical copy of every value; §29: in-process transport is 0-copy).
 
 This module raises ImportError if the library is missing or ABI-mismatched;
@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_CONTOUR_WORK, MAX_SCREEN_DIM
 
-ABI_VERSION = 15
+ABI_VERSION = 17
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.
@@ -467,6 +467,25 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,  # out (w*h*4 RGBA8)
         ctypes.c_size_t,  # w
         ctypes.c_size_t,  # h
+    ]
+    lib.fc_rasterize_png.restype = ctypes.c_size_t
+    lib.fc_rasterize_png.argtypes = [
+        ctypes.c_void_p,  # cmd
+        ctypes.c_size_t,  # cmd_len
+        ctypes.c_void_p,  # out PNG bytes
+        ctypes.c_size_t,  # out_capacity
+        ctypes.c_size_t,  # w
+        ctypes.c_size_t,  # h
+    ]
+    lib.fc_heatmap_rgba.restype = ctypes.c_int32
+    lib.fc_heatmap_rgba.argtypes = [
+        ctypes.c_void_p,  # raw f64
+        ctypes.c_size_t,  # w
+        ctypes.c_size_t,  # h
+        ctypes.c_void_p,  # RGB stops
+        ctypes.c_size_t,  # stop_count
+        ctypes.c_uint8,  # alpha
+        ctypes.c_void_p,  # out RGBA8
     ]
     lib.fc_css_check.restype = ctypes.c_int32
     lib.fc_css_check.argtypes = [
@@ -1353,48 +1372,41 @@ def marching_squares(
         raise ValueError(
             f"marching_squares grid x levels exceeds the bounded work budget ({MAX_CONTOUR_WORK:,})"
         )
-    query = _lib.fc_marching_squares(
-        _ptr_f64(z),
-        rows,
-        cols,
-        _ptr_f64(x_coords),
-        _ptr_f64(y_coords),
-        _ptr_f64(levels),
-        len(levels),
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-    )
-    if query == _USIZE_MAX:
+    # Most smooth fields emit O(perimeter × levels) segments, far below the
+    # two-per-cell theoretical maximum. Start with that exact-output capacity
+    # and exploit the kernel's required-count return to retry only adversarial
+    # checkerboards. This removes the unconditional full count-only scan.
+    maximum = 2 * work
+    capacity = min(maximum, max(64, 2 * (rows + cols) * len(levels)))
+
+    def allocate(size: int) -> tuple[npt.NDArray[np.float64], ...]:
+        return tuple(np.empty(size, dtype=np.float64) for _ in range(5))
+
+    def extract(outputs: tuple[npt.NDArray[np.float64], ...]) -> int:
+        return int(
+            _lib.fc_marching_squares(
+                _ptr_f64(z),
+                rows,
+                cols,
+                _ptr_f64(x_coords),
+                _ptr_f64(y_coords),
+                _ptr_f64(levels),
+                len(levels),
+                *(_ptr_f64(output) for output in outputs),
+                len(outputs[0]),
+            )
+        )
+
+    outputs = allocate(capacity)
+    written = extract(outputs)
+    if written == _USIZE_MAX or written > maximum:
         raise ValueError("invalid marching_squares arguments")
-    x0 = np.empty(query, dtype=np.float64)
-    x1 = np.empty(query, dtype=np.float64)
-    y0 = np.empty(query, dtype=np.float64)
-    y1 = np.empty(query, dtype=np.float64)
-    level_out = np.empty(query, dtype=np.float64)
-    if query == 0:
-        return x0, x1, y0, y1, level_out
-    written = _lib.fc_marching_squares(
-        _ptr_f64(z),
-        rows,
-        cols,
-        _ptr_f64(x_coords),
-        _ptr_f64(y_coords),
-        _ptr_f64(levels),
-        len(levels),
-        _ptr_f64(x0),
-        _ptr_f64(x1),
-        _ptr_f64(y0),
-        _ptr_f64(y1),
-        _ptr_f64(level_out),
-        query,
-    )
-    if written == _USIZE_MAX or written != query:
-        raise RuntimeError("native marching_squares returned an inconsistent segment count")
-    return x0, x1, y0, y1, level_out
+    if written > capacity:
+        outputs = allocate(written)
+        repeated = extract(outputs)
+        if repeated != written:
+            raise RuntimeError("native marching_squares returned an inconsistent segment count")
+    return tuple(output[:written] for output in outputs)
 
 
 def bin_2d(
@@ -1792,6 +1804,55 @@ def rasterize(cmds: bytes, w: int, h: int) -> npt.NDArray[np.uint8]:
     ok = _lib.fc_rasterize(cmd_ptr, buf.size, _ptr_u8(out), w, h)
     if not ok:
         raise ValueError("native rasterizer rejected the command buffer")
+    return out
+
+
+def rasterize_png(cmds: bytes, w: int, h: int) -> bytes:
+    """Paint a display list and encode it as PNG wholly inside the Rust core."""
+    w = _positive_int(w, "raster width")
+    h = _positive_int(h, "raster height")
+    buf = np.frombuffer(cmds, dtype=np.uint8)
+    raw_len = operator.mul(operator.mul(w, h), 4)
+    capacity = raw_len + raw_len // 8 + 65_536
+    out = np.empty(capacity, dtype=np.uint8)
+    cmd_ptr = _ptr_u8(buf) if buf.size else None
+    written = _lib.fc_rasterize_png(cmd_ptr, buf.size, _ptr_u8(out), out.size, w, h)
+    if written == _USIZE_MAX or written > out.size:
+        raise ValueError("native raster-to-PNG encoder rejected the command buffer")
+    return out[:written].tobytes()
+
+
+def heatmap_rgba(
+    raw: npt.ArrayLike,
+    w: int,
+    h: int,
+    stops: npt.ArrayLike,
+    alpha: int,
+) -> npt.NDArray[np.uint8]:
+    """Map heatmap scalars to a vertically flipped ``(h, w, 4)`` RGBA image."""
+    w = _positive_int(w, "heatmap width")
+    h = _positive_int(h, "heatmap height")
+    values = np.ascontiguousarray(raw, dtype=np.float64).reshape(-1)
+    stop_array = np.ascontiguousarray(stops, dtype=np.uint8)
+    if values.size != w * h:
+        raise ValueError("heatmap scalar count must match width * height")
+    if stop_array.ndim != 2 or stop_array.shape[1] != 3 or stop_array.shape[0] < 1:
+        raise ValueError("heatmap stops must be a non-empty (n, 3) array")
+    alpha = operator.index(alpha)
+    if not 0 <= alpha <= 255:
+        raise ValueError("heatmap alpha must be in [0, 255]")
+    out = np.empty((h, w, 4), dtype=np.uint8)
+    ok = _lib.fc_heatmap_rgba(
+        _ptr_f64(values),
+        w,
+        h,
+        _ptr_u8(stop_array),
+        stop_array.shape[0],
+        alpha,
+        _ptr_u8(out),
+    )
+    if not ok:
+        raise ValueError("native heatmap colormap rejected the inputs")
     return out
 
 

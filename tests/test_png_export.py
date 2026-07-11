@@ -130,6 +130,34 @@ def test_png_encoder_uses_balanced_compression_level(monkeypatch) -> None:
     assert levels == [6, 6]
 
 
+def test_fast_native_png_is_valid_and_matches_dimensions() -> None:
+    fig = Figure(width=320, height=180).line([0.0, 1.0], [0.0, 1.0])
+    png = _raster.to_png(fig, scale=2, fast=True)
+
+    assert _ihdr(png) == (640, 360, 2)
+
+
+def test_fast_native_png_is_pixel_identical_to_balanced_export() -> None:
+    from io import BytesIO
+
+    from PIL import Image
+
+    x = np.linspace(-2.0, 2.0, 80)
+    xx, yy = np.meshgrid(x, x)
+    figures = [
+        Figure(width=360, height=220).line(x, np.sin(x * 3.0)),
+        Figure(width=360, height=220).heatmap(np.sin(xx) + np.cos(yy)),
+        Figure(width=360, height=220).contour(np.sin(xx * 1.7) + np.cos(yy * 2.1), levels=7),
+    ]
+
+    for figure in figures:
+        balanced = np.asarray(Image.open(BytesIO(_raster.to_png(figure, scale=1))).convert("RGBA"))
+        fast = np.asarray(
+            Image.open(BytesIO(_raster.to_png(figure, scale=1, fast=True))).convert("RGBA")
+        )
+        np.testing.assert_array_equal(fast, balanced)
+
+
 def test_native_and_svg_share_layout() -> None:
     # Both exporters compute the same plot rect / tick labels from one spec.
     from xy import _svg

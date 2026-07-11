@@ -826,3 +826,23 @@ def test_pyramid_matches_bin2d_and_conserves():
     finally:
         assert k.pyramid_free(h)
     assert not k.pyramid_free(h)
+
+
+def test_heatmap_rgba_maps_stops_and_flips_rows():
+    raw = np.array([[1.0 / 255.0, 128.0 / 255.0], [1.0, 0.0]], dtype=np.float64)
+    stops = np.array([[0, 10, 20], [100, 110, 120]], dtype=np.uint8)
+
+    rgba = k.heatmap_rgba(raw, 2, 2, stops, 200)
+
+    np.testing.assert_array_equal(
+        rgba,
+        np.array(
+            [
+                [[100, 110, 120, 200], [0, 10, 20, 0]],
+                [[0, 10, 20, 200], [50, 60, 70, 200]],
+            ],
+            dtype=np.uint8,
+        ),
+    )
+    with pytest.raises(ValueError, match="scalar count"):
+        k.heatmap_rgba(raw, 3, 2, stops, 200)

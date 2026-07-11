@@ -128,6 +128,25 @@ def load() -> ctypes.CDLL:
     ]
     lib.fc_rasterize.restype = ctypes.c_int32
     lib.fc_rasterize.argtypes = [U8P, ctypes.c_size_t, U8P, ctypes.c_size_t, ctypes.c_size_t]
+    lib.fc_rasterize_png.restype = ctypes.c_size_t
+    lib.fc_rasterize_png.argtypes = [
+        U8P,
+        ctypes.c_size_t,
+        U8P,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+    ]
+    lib.fc_heatmap_rgba.restype = ctypes.c_int32
+    lib.fc_heatmap_rgba.argtypes = [
+        F64P,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        U8P,
+        ctypes.c_size_t,
+        ctypes.c_uint8,
+        U8P,
+    ]
     lib.fc_local_log_density.restype = ctypes.c_int32
     lib.fc_local_log_density.argtypes = [
         F64P,
@@ -771,6 +790,32 @@ def main() -> None:
         "rasterize rejects a malformed command buffer",
     )
     ok(lib.fc_rasterize(null_u8, 0, null_u8, 2, 2) == 0, "rasterize refuses a null framebuffer")
+
+    png = array("B", [0]) * 1024
+    png_len = lib.fc_rasterize_png(null_u8, 0, _ptr(png, ctypes.c_uint8), len(png), 2, 2)
+    ok(
+        png_len < len(png) and bytes(png[:8]) == b"\x89PNG\r\n\x1a\n",
+        "fused raster-to-PNG emits a valid signature",
+    )
+
+    heat_values = array("d", [1.0 / 255.0, 128.0 / 255.0, 1.0, 0.0])
+    heat_stops = array("B", [0, 10, 20, 100, 110, 120])
+    heat_rgba = array("B", [0]) * 16
+    ok(
+        lib.fc_heatmap_rgba(
+            _ptr(heat_values, ctypes.c_double),
+            2,
+            2,
+            _ptr(heat_stops, ctypes.c_uint8),
+            2,
+            200,
+            _ptr(heat_rgba, ctypes.c_uint8),
+        )
+        == 1
+        and list(heat_rgba[:4]) == [100, 110, 120, 200]
+        and heat_rgba[7] == 0,
+        "native heatmap colormap maps, flips, and preserves missing alpha",
+    )
 
     print(f"ABI smoke: {checks} checks passed against {_lib_name()}")
 

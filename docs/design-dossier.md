@@ -861,8 +861,8 @@ deliver three separately-hard artifacts.** Plotly.py's real-world engineering
 complexity lives almost entirely here, not in rendering. Miss any piece and the user
 hits a source build requiring a Rust toolchain — an instant adoption cliff.
 
-1. **The native core as prebuilt wheels.** Built as a dependency-free Rust
-   **`cdylib` with a plain C ABI**, compiled by the Hatchling build hook and loaded
+1. **The native core as prebuilt wheels.** Built as a Rust **`cdylib` with a
+   plain C ABI** and a focused PNG-encoding dependency, compiled by the Hatchling build hook and loaded
    from Python with `ctypes`. There is no CPython extension ABI at all, so one
    `py3-none-<platform>` wheel covers every supported Python version on that platform
    without PyO3 or `abi3`. Wheel matrix in CI, release-blocking: manylinux

@@ -133,7 +133,12 @@ class Figure:
 
         single = self._single()
         if suffix in ("png",):
-            data = self._to_png() if single is None else single.to_png()
+            if single is None:
+                data = self._to_png()
+            else:
+                from xy import _raster
+
+                data = _raster.to_png(single.figure(), fast=True)
         elif suffix in ("svg",):
             if single is None:
                 raise not_implemented("savefig(<multi-panel>.svg)", "savefig('grid.html') or .png")
