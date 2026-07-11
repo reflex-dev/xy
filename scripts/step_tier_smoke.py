@@ -22,8 +22,8 @@ from pathlib import Path
 
 import numpy as np
 
-import fastcharts as fc
-from fastcharts.export import _bundled_js
+import xy as fc
+from xy.export import _bundled_js
 
 CHROMIUM_CANDIDATES = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -73,7 +73,7 @@ def build_page() -> str:
     return d;
   }}
   try {{
-    const view = fastcharts.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);
+    const view = xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);
     setTimeout(() => {{
       try {{
         const g = view.gpuTraces[0];

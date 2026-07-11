@@ -119,7 +119,7 @@ def _facet_values(data: Any, by: Any) -> tuple[np.ndarray, list[str]]:
 
 
 class FacetGrid:
-    """A rendered grid of independent fastcharts figures."""
+    """A rendered grid of independent xy figures."""
 
     def __init__(
         self,
@@ -182,11 +182,11 @@ class FacetGrid:
                 f'"b64":"{base64.b64encode(blob).decode("ascii")}"' + "}"
             )
         js = export._javascript_for_inline_script(export._bundled_js("standalone"))
-        title = export._html.escape(self.title or "fastcharts facets")
+        title = export._html.escape(self.title or "xy facets")
         # Grid title rendered once here; each panel's own chart title is its
         # facet label, so labels are not duplicated in a separate strip.
         heading = (
-            f'<div class="fastcharts-facet-title">{export._html.escape(self.title)}</div>'
+            f'<div class="xy-facet-title">{export._html.escape(self.title)}</div>'
             if self.title
             else ""
         )
@@ -197,20 +197,20 @@ class FacetGrid:
 <title>{title}</title>
 <style>
 html,body{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;background:#fff;}}
-.fastcharts-facet-title{{height:{self._TITLE_H}px;line-height:{self._TITLE_H}px;font:600 14px system-ui,sans-serif;margin:0;text-align:center;color:#1e293b;}}
-.fastcharts-facet-grid{{display:grid;grid-template-columns:repeat({self.cols}, minmax(0, 1fr));gap:{self.gap}px;}}
-.fastcharts-facet-panel{{min-width:0;}}
+.xy-facet-title{{height:{self._TITLE_H}px;line-height:{self._TITLE_H}px;font:600 14px system-ui,sans-serif;margin:0;text-align:center;color:#1e293b;}}
+.xy-facet-grid{{display:grid;grid-template-columns:repeat({self.cols}, minmax(0, 1fr));gap:{self.gap}px;}}
+.xy-facet-panel{{min-width:0;}}
 </style>
 {css}</head><body>
-{heading}<div class="fastcharts-facet-grid" id="fastcharts-facet-grid"></div>
+{heading}<div class="xy-facet-grid" id="xy-facet-grid"></div>
 <script>{js}</script>
 <script>
 const panels=[{",".join(panels)}];
-const grid=document.getElementById("fastcharts-facet-grid");
+const grid=document.getElementById("xy-facet-grid");
 for(const p of panels){{
-  const panel=document.createElement("div"); panel.className="fastcharts-facet-panel";
+  const panel=document.createElement("div"); panel.className="xy-facet-panel";
   const host=document.createElement("div"); host.id=p.id; panel.append(host); grid.appendChild(panel);
-  const bytes=Uint8Array.from(atob(p.b64),c=>c.charCodeAt(0)); fastcharts.renderStandalone(host,p.spec,bytes.buffer);
+  const bytes=Uint8Array.from(atob(p.b64),c=>c.charCodeAt(0)); xy.renderStandalone(host,p.spec,bytes.buffer);
 }}
 </script></body></html>"""
         if path is not None:
