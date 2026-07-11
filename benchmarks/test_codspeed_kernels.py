@@ -197,19 +197,6 @@ def test_bin_2d(benchmark, data):
     benchmark(k.bin_2d, x, y, 0.0, float(N), -6.0, 6.0, GRID_W, GRID_H)
 
 
-@pytest.mark.parametrize(
-    ("n", "w", "h"),
-    [(100_000, 512, 384), (1_000_000, 512, 384), (1_000_000, 2048, 2048)],
-)
-def test_bin_2d_thread_cap_scaling(benchmark, n, w, h):
-    """Exercise sparse, screen-sized, and cell-heavy fan-out regimes."""
-    rng = np.random.default_rng(101 + n + w + h)
-    x = rng.uniform(0.0, 100.0, n).astype(np.float64, copy=False)
-    y = rng.uniform(0.0, 100.0, n).astype(np.float64, copy=False)
-    grid = benchmark(k.bin_2d, x, y, 0.0, 100.0, 0.0, 100.0, w, h)
-    assert grid.shape == (h, w)
-
-
 def test_bin_2d_indices(benchmark, data):
     """Production first-density pass: grid plus visible indices in one scan."""
     x, y = data
@@ -654,3 +641,16 @@ def test_stratified_sample_mask(benchmark):
     mask = benchmark(k.stratified_sample_mask, ids, groups, 12, 17, 1.0 / 256.0, 2)
     assert mask.dtype == np.bool_
     assert mask.shape == (n,)
+
+
+@pytest.mark.parametrize(
+    ("n", "w", "h"),
+    [(100_000, 512, 384), (1_000_000, 512, 384), (1_000_000, 2048, 2048)],
+)
+def test_bin_2d_thread_cap_scaling(benchmark, n, w, h):
+    """Exercise sparse, screen-sized, and cell-heavy fan-out regimes."""
+    rng = np.random.default_rng(101 + n + w + h)
+    x = rng.uniform(0.0, 100.0, n).astype(np.float64, copy=False)
+    y = rng.uniform(0.0, 100.0, n).astype(np.float64, copy=False)
+    grid = benchmark(k.bin_2d, x, y, 0.0, 100.0, 0.0, 100.0, w, h)
+    assert grid.shape == (h, w)
