@@ -315,7 +315,7 @@ pub fn bin_2d(
     assert_eq!(x.len(), y.len());
     assert_eq!(out.len(), w * h);
     assert!(w > 0 && h > 0 && x1_gt_x0(x0, x1) && x1_gt_x0(y0, y1));
-    bin_2d_impl(x, y, x0, x1, y0, y1, w, h, par_threads(x.len()), out);
+    bin_2d_impl(x, y, x0, x1, y0, y1, w, h, bin_2d_threads(x.len(), w * h), out);
 }
 
 /// Row-scan kernels fan out across cores only past this size, where thread
@@ -329,6 +329,20 @@ fn par_threads(n: usize) -> usize {
     } else {
         1
     }
+}
+
+/// Grid-aware thread choice for the 2-D binning kernels. Going parallel makes
+/// every worker zero a private `w*h` u32 grid and adds a t-way merge that
+/// re-reads all `t*w*h` cells, so fan-out costs ≥ 2 memory ops per cell per
+/// thread while the scan it accelerates costs ~15–20 ops per point. A thread
+/// only pays for itself while its share of the scan outweighs one grid's
+/// traffic, so cap fan-out at the points-per-cell ratio: screen-sized grids
+/// keep the full row-scan fan-out, and once the grid has at least as many
+/// cells as there are points (the tile-pyramid base level, §5:
+/// `base_dim² ≈ 2n`) the kernel runs serial. Same counts for any cap — the
+/// integer-sum merge is thread-count invariant.
+fn bin_2d_threads(n: usize, cells: usize) -> usize {
+    (n / cells.max(1)).clamp(1, par_threads(n))
 }
 
 /// Count in-window points per cell into a u32 grid (saturating). Shared by the
@@ -398,7 +412,7 @@ pub(crate) fn bin_2d_counts(
     h: usize,
 ) -> Vec<u32> {
     let n = x.len();
-    let threads = par_threads(n);
+    let threads = bin_2d_threads(n, w * h);
     if threads <= 1 || n < threads {
         let mut grid = vec![0u32; w * h];
         bin_2d_count(x, y, x0, x1, y0, y1, w, h, &mut grid);
@@ -533,7 +547,8 @@ pub fn bin_2d_indices(
     assert_eq!(grid.len(), w * h);
     assert!(w > 0 && h > 0 && x1_gt_x0(lo_x, hi_x) && x1_gt_x0(lo_y, hi_y));
     assert!(idx.len() >= x.len());
-    bin_2d_indices_impl(x, y, lo_x, hi_x, lo_y, hi_y, w, h, par_threads(x.len()), grid, idx)
+    let threads = bin_2d_threads(x.len(), w * h);
+    bin_2d_indices_impl(x, y, lo_x, hi_x, lo_y, hi_y, w, h, threads, grid, idx)
 }
 
 /// Serial fused scan over one segment: local u32 grid counts + ascending
@@ -1549,6 +1564,22 @@ mod tests {
         let mut out = vec![0.0f32; 16]; // 4×4
         bin_2d(&x, &y, 0.0, 1.0, 0.0, 1.0, 4, 4, &mut out);
         assert_eq!(out.iter().sum::<f32>(), 2.0);
+    }
+
+    #[test]
+    fn bin_2d_threads_grid_aware() {
+        // Below the fan-out threshold: serial regardless of grid size.
+        assert_eq!(bin_2d_threads(PAR_THRESHOLD - 1, 4), 1);
+        // Past the threshold with a screen-sized grid the points-per-cell
+        // ratio exceeds the core cap: same fan-out as the 1-D row scans.
+        assert_eq!(bin_2d_threads(1 << 23, 512 * 384), par_threads(1 << 23));
+        // Ratio between 1 and the core cap: fan-out tracks points per cell
+        // (min against par_threads so the assert holds on any core count).
+        assert_eq!(bin_2d_threads(1 << 21, 1 << 20), 2.min(par_threads(1 << 21)));
+        // Grid at least as large as the point count (tile-pyramid base level
+        // shape): per-thread grids + merge dwarf the scan — stay serial.
+        assert_eq!(bin_2d_threads(1 << 20, 1 << 20), 1);
+        assert_eq!(bin_2d_threads(2_100_000, 2048 * 2048), 1);
     }
 
     #[test]
