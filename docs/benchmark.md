@@ -179,21 +179,27 @@ warm-up renders are excluded; library order alternates between repetitions. The
 headline metric is median total chart-to-compressed-PNG time. Build time alone
 is diagnostic because `xy.pyplot` deliberately defers most work until export.
 
+Every row also discloses the xy render tier (§28: tier decisions are never
+silent): `direct` paints every mark exactly as Matplotlib does, `decimated` is
+the M4-reduced line series, and `density` is a screen-bounded aggregate. The
+report verifier rejects an xy row that omits the tier.
+
 The following is a local diagnostic run from 2026-07-11 (macOS arm64, Python
 3.14.5, Matplotlib 3.11.0, xy native Rust backend, dirty worktree), with 21
-repetitions per arm and three warm-ups. The gate requires every family—not an
-average—to reach 10×:
+repetitions per arm and three warm-ups, after the row-band parallel
+rasterizer landed. The gate requires every family—not an average—to reach
+10×:
 
-| family | workload | xy total | Matplotlib total | xy speedup | total-time winner |
-|---|---|---:|---:|---:|---|
-| line | 200,000 samples | 3.26 ms | 32.71 ms | 10.03× | xy |
-| scatter | 200,000 points | 34.35 ms | 422.70 ms | 12.31× | xy |
-| histogram | 1,000,000 values / 200 bins | 2.85 ms | 50.94 ms | 17.86× | xy |
-| bar | 1,000 bars | 5.54 ms | 144.50 ms | 26.10× | xy |
-| pcolormesh | 200×300 cells | 3.57 ms | 39.56 ms | 11.07× | xy |
-| contour | 150×200 cells / 12 levels | 3.51 ms | 35.83 ms | 10.20× | xy |
+| family | workload | xy tier | xy total | Matplotlib total | xy speedup | total-time winner |
+|---|---|---|---:|---:|---:|---|
+| line | 200,000 samples | decimated | 3.11 ms | 32.53 ms | 10.45× | xy |
+| scatter | 200,000 points | direct | 11.06 ms | 420.6 ms | 38.04× | xy |
+| histogram | 1,000,000 values / 200 bins | direct | 2.90 ms | 52.50 ms | 18.13× | xy |
+| bar | 1,000 bars | direct | 5.72 ms | 147.9 ms | 25.84× | xy |
+| pcolormesh | 200×300 cells | direct | 3.52 ms | 40.71 ms | 11.55× | xy |
+| contour | 150×200 cells / 12 levels | direct | 3.64 ms | 36.43 ms | 10.02× | xy |
 
-The geometric-mean result is **13.66× in xy's favor**, and every standard
+The geometric-mean result is **16.68× in xy's favor**, and every standard
 family clears the explicit 10× gate. This is the scoped claim: warmed
 Matplotlib-style construction through a validated 1800×840 PNG for the exact
 workloads above. It is not a claim about every Matplotlib API, arbitrary image
@@ -201,13 +207,32 @@ sizes, or interactive rendering. xy's latency-oriented PNGs remain larger than
 Matplotlib's in every row; the gate measures chart-to-pixels latency, while the
 existing balanced encoder remains available where file size is the priority.
 
-The RGBA8 raster rewrite has one known native-API tradeoff outside that scoped
-comparison: a same-machine 100,000-point, default-style direct scatter at scale
-1 measured 22.6 ms on this branch versus 20.0 ms on `main` (about 13% slower),
-after hoisting color conversion out of the pixel loop. Density-tier scatter,
-lines, and the statistical families improve; CodSpeed continues to track the
-direct tier so this remaining regression stays visible rather than being folded
-into the cross-library average.
+The `huge` profile runs the same families at the sizes where static Matplotlib
+workflows actually stall (same machine, 11 repetitions, 2 warm-ups). Agg's
+cost scales with N; xy's disclosed tiers stay screen-bounded:
+
+| family | workload | xy tier | xy total | Matplotlib total | xy speedup |
+|---|---|---|---:|---:|---:|
+| line | 1,000,000 samples | decimated | 3.82 ms | 50.48 ms | 13.22× |
+| scatter | 1,000,000 points | density | 15.56 ms | 1,983.5 ms | **127.51×** |
+| histogram | 5,000,000 values / 200 bins | direct | 3.60 ms | 68.12 ms | 18.90× |
+| bar | 5,000 bars | direct | 18.01 ms | 654.5 ms | 36.35× |
+| pcolormesh | 400×600 cells | direct | 5.20 ms | 79.84 ms | 15.34× |
+| contour | 250×320 cells / 12 levels | direct | 4.45 ms | 38.33 ms | 8.62× |
+
+Geometric mean on the huge profile: **23.13×**; the scatter family — the
+workload the density tier exists for — crosses 100×. Contour is the honest
+straggler (8.62×): its marching work grows with the grid on both sides, and
+the 250×320 size is the largest that fits the contour kernel's bounded work
+budget. The huge-profile scatter row is a tier-disclosed comparison: xy
+rasterizes a screen-bounded density surface (the same output a user sees for
+1M points) while Matplotlib paints all 1M marks.
+
+The RGBA8 raster rewrite's one known native-API regression is now a win: the
+same-machine 100,000-point default-style direct scatter at scale 1 that
+measured ~13% slower than `main` before the row-band parallel rasterizer now
+measures 14.5–15.1 ms on this branch versus 19.9–20.1 ms on `main` (about 27%
+faster), byte-identical output. CodSpeed continues to track the direct tier.
 
 Reproduce and retain the raw samples with:
 
@@ -216,6 +241,9 @@ PYTHONPATH=python .venv/bin/python benchmarks/bench_pyplot_vs_matplotlib.py \
   --profile standard --reps 21 --warmups 3 --target-speedup 10 \
   --require-target --json pyplot-vs-matplotlib.json \
   --out pyplot-vs-matplotlib.md
+PYTHONPATH=python .venv/bin/python benchmarks/bench_pyplot_vs_matplotlib.py \
+  --profile huge --reps 11 --warmups 2 \
+  --json pyplot-vs-matplotlib-huge.json --out pyplot-vs-matplotlib-huge.md
 python scripts/verify_benchmark_report.py pyplot-vs-matplotlib.json \
   --kind pyplot-vs-matplotlib
 ```

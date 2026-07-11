@@ -23,6 +23,31 @@ def test_summary_uses_median_and_retains_tail_latency() -> None:
     }
 
 
+def test_profiles_include_huge_for_large_n_claims() -> None:
+    assert bench.PROFILE_NAMES == ("smoke", "standard", "huge")
+
+
+def test_comparison_carries_xy_render_tier() -> None:
+    case = SimpleNamespace(family="scatter", label="1M points", work_units=10**6, unit="points")
+    xy_row = {
+        "build_median_ms": 1.0,
+        "render_median_ms": 9.0,
+        "total_median_ms": 10.0,
+        "output_bytes_median": 200,
+        "render_tier": "density",
+    }
+    matplotlib_row = {
+        "build_median_ms": 2.0,
+        "render_median_ms": 18.0,
+        "total_median_ms": 20.0,
+        "output_bytes_median": 100,
+    }
+
+    comparison = bench._compare(case, xy_row, matplotlib_row, target_speedup=10.0)
+
+    assert comparison["xy_render_tier"] == "density"
+
+
 def test_comparison_defines_speedup_as_matplotlib_over_xy() -> None:
     case = SimpleNamespace(family="scatter", label="100 points", work_units=100, unit="points")
     xy_row = {

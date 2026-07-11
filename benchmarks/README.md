@@ -37,6 +37,12 @@ These commands match the non-blocking GitHub Actions measurement lane:
   --profile standard --reps 21 --warmups 3 --target-speedup 10 \
   --require-target \
   --json pyplot-vs-matplotlib.json --out pyplot-vs-matplotlib.md
+# `--profile huge` runs the same families at 1M+ points, where Matplotlib/Agg
+# scales with N and xy's disclosed tiers (see the report's `xy tier` column)
+# stay screen-bounded.
+.venv/bin/python benchmarks/bench_pyplot_vs_matplotlib.py \
+  --profile huge --reps 11 --warmups 2 \
+  --json pyplot-vs-matplotlib-huge.json --out pyplot-vs-matplotlib-huge.md
 .venv/bin/python benchmarks/bench_interaction.py --sizes 1e4,2.5e5 \
   --reps 24 --chromium "$CHROME" --json interaction.json
 .venv/bin/python benchmarks/bench_dashboard.py --chart-counts 10,20,50 \

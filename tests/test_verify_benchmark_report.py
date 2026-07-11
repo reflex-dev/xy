@@ -203,6 +203,7 @@ def _pyplot_vs_matplotlib_report() -> dict:
                 "total_median_ms": total_ms,
                 "total_p95_ms": total_ms,
                 "output_bytes_median": 1000,
+                **({"render_tier": "direct"} if library == "xy.pyplot" else {}),
             }
         )
     return {
@@ -1039,6 +1040,27 @@ def test_verify_benchmark_report_rejects_duplicate_core_2d_comparisons(
     errors = verify_benchmark_report.validate_report(path, kind="core-2d")
 
     assert any("duplicates core 2D comparison" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_missing_pyplot_render_tier(tmp_path: Path) -> None:
+    payload = _pyplot_vs_matplotlib_report()
+    for row in payload["rows"]:
+        row.pop("render_tier", None)
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(payload))
+    errors = verify_benchmark_report.validate_report(path, kind="pyplot-vs-matplotlib")
+    assert any("render_tier" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_unknown_pyplot_render_tier(tmp_path: Path) -> None:
+    payload = _pyplot_vs_matplotlib_report()
+    for row in payload["rows"]:
+        if row["library"] == "xy.pyplot":
+            row["render_tier"] = "subsampled"
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(payload))
+    errors = verify_benchmark_report.validate_report(path, kind="pyplot-vs-matplotlib")
+    assert any("render_tier" in error for error in errors)
 
 
 def test_verify_benchmark_report_rejects_incomplete_pyplot_library_pair(tmp_path: Path) -> None:

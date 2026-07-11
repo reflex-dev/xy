@@ -917,6 +917,14 @@ def _validate_pyplot_vs_matplotlib_row(
     expected_mode = "native-raster" if row.get("library") == "xy.pyplot" else "agg"
     if row.get("mode") != expected_mode:
         errors.append(f"{path}.mode must be {expected_mode!r}")
+    if row.get("library") == "xy.pyplot":
+        tier = row.get("render_tier")
+        parts = tier.split("+") if isinstance(tier, str) and tier else []
+        if not parts or any(part not in {"direct", "decimated", "density"} for part in parts):
+            errors.append(
+                f"{path}.render_tier must disclose the xy render tier(s) used "
+                "(direct/decimated/density, '+'-joined)"
+            )
     if row.get("oracle_status") != "pass":
         errors.append(f"{path}.oracle_status must be 'pass'")
     if row.get("oracle_kind") != "same-pixel-dimensions-and-nonblank":

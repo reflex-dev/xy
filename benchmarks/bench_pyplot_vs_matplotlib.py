@@ -54,7 +54,7 @@ BUILD_DPI = 100
 EXPORT_DPI = 200
 PNG_W = RENDER_W * EXPORT_DPI // BUILD_DPI
 PNG_H = RENDER_H * EXPORT_DPI // BUILD_DPI
-PROFILE_NAMES = ("smoke", "standard")
+PROFILE_NAMES = ("smoke", "standard", "huge")
 TRACKED_CATEGORY_IDS = ("small_data_startup", "core_2d_chart_breadth", "static_export")
 
 
@@ -133,6 +133,19 @@ def _matplotlib_render(fig: Any) -> bytes:
     return out.getvalue()
 
 
+def _xy_render_tier(fig: Any) -> str:
+    """Render tier(s) the xy figure used, disclosed per §28 (never silent):
+    `direct` paints every mark, `decimated` is the M4-reduced series, and
+    `density` rasterizes a screen-bounded aggregate. Matplotlib always paints
+    every mark, so the tier column is what keeps large-N rows honest."""
+    single = fig._single()
+    if single is None:
+        return "unknown"
+    spec, _blob = single.figure().build_payload(px_width=RENDER_W)
+    tiers = sorted({trace.get("tier", "unknown") for trace in spec.get("traces", [])})
+    return "+".join(tiers) if tiers else "unknown"
+
+
 def _sample(adapter: Adapter) -> tuple[dict[str, float | int], bytes]:
     gc.collect()
     fig = None
@@ -202,6 +215,19 @@ def make_cases(profile: str) -> tuple[list[Case], Any, Any]:
             "bars": 1_000,
             "mesh": (200, 300),
             "contour": (150, 200),
+        },
+        # Sizes where interactivity actually dies in Matplotlib: xy's
+        # screen-bounded tiers stay flat while Agg scales with N. The per-row
+        # tier column keeps the comparison honest (§28: no silent decimation).
+        "huge": {
+            "line": 1_000_000,
+            "scatter": 1_000_000,
+            "hist": 5_000_000,
+            "bars": 5_000,
+            "mesh": (400, 600),
+            # 250*320 cells * 12 levels stays inside the contour kernel's
+            # bounded work budget (1,000,000) — the guard is the product.
+            "contour": (250, 320),
         },
     }[profile]
     rng = np.random.default_rng(2026)
@@ -356,6 +382,7 @@ def _compare(
             matplotlib_row["output_bytes_median"] / xy_row["output_bytes_median"]
         ),
         "winner_total": "xy.pyplot" if total_speedup >= 1.0 else "matplotlib",
+        "xy_render_tier": xy_row.get("render_tier", "unknown"),
     }
 
 
@@ -395,6 +422,12 @@ def run(*, profile: str, reps: int, warmups: int, target_speedup: float = 10.0) 
                 samples[library].append(sample)
                 latest_png[library] = png
 
+        tier_fig = adapters["xy.pyplot"].build()
+        try:
+            xy_tier = _xy_render_tier(tier_fig)
+        finally:
+            adapters["xy.pyplot"].close(tier_fig)
+
         case_rows: dict[str, dict[str, Any]] = {}
         for library in ("xy.pyplot", "matplotlib"):
             summary = _summary(samples[library])
@@ -421,6 +454,8 @@ def run(*, profile: str, reps: int, warmups: int, target_speedup: float = 10.0) 
                 "samples": samples[library],
                 **summary,
             }
+            if library == "xy.pyplot":
+                row["render_tier"] = xy_tier
             rows.append(row)
             case_rows[library] = row
         comparisons.append(
@@ -479,18 +514,19 @@ def to_markdown(report: dict[str, Any]) -> str:
         f"`{report['warmups']}`; target: `{report['pixel_target']['width']} x "
         f"{report['pixel_target']['height']} PNG`.",
         "",
-        "| family | workload | xy total | Matplotlib total | xy total speedup | target | winner | xy PNG | Matplotlib PNG |",
-        "|---|---|---:|---:|---:|---:|---|---:|---:|",
+        "| family | workload | xy tier | xy total | Matplotlib total | xy total speedup | target | winner | xy PNG | Matplotlib PNG |",
+        "|---|---|---|---:|---:|---:|---:|---|---:|---:|",
     ]
     for comparison in report["comparisons"]:
         key = (comparison["family"], comparison["case"])
         xy_row = rows[(*key, "xy.pyplot")]
         mpl_row = rows[(*key, "matplotlib")]
         lines.append(
-            "| {family} | {case} | {xy_total} | {mpl_total} | {speedup} | {target} | {winner} | "
+            "| {family} | {case} | {tier} | {xy_total} | {mpl_total} | {speedup} | {target} | {winner} | "
             "{xy_bytes} | {mpl_bytes} |".format(
                 family=comparison["family"],
                 case=comparison["case"],
+                tier=comparison.get("xy_render_tier", "unknown"),
                 xy_total=_fmt_ms(xy_row["total_median_ms"]),
                 mpl_total=_fmt_ms(mpl_row["total_median_ms"]),
                 speedup=_fmt_ratio(comparison["xy_speedup_total"]),
@@ -511,6 +547,7 @@ def to_markdown(report: dict[str, Any]) -> str:
         "- Both libraries receive the same pre-generated arrays and Matplotlib-style calls.",
         "- Both outputs are validated as nonblank PNGs with identical pixel dimensions.",
         "- `total` is the comparable chart-to-compressed-pixels metric. `build` alone is not a headline metric because xy defers work until export.",
+        "- The `xy tier` column discloses every render-tier decision (`direct` paints all marks, `decimated` is the M4-reduced series, `density` is a screen-bounded aggregate) — aggregation is never silent. Matplotlib always paints every mark.",
         "- Imports, data generation, and warm-up renders are outside the timed samples; raw samples remain in the JSON report.",
         "- This measures static notebook/report output. Interactive WebGL zoom/pan is covered separately by `bench_interaction.py`; Matplotlib/Agg has no equivalent client-side interaction path.",
     ]
