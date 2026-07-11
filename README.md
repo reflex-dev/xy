@@ -20,10 +20,10 @@
   <a href="#architecture">Architecture</a>
 </p>
 
-![xy 10M-point benchmark snapshot](docs/assets/benchmark-snapshot.svg)
+![xy CodSpeed benchmark snapshot](docs/assets/benchmark-snapshot.svg)
 
 <p align="center">
-  <sub>Measured by the benchmark-refresh CI workflow on 2026-07-08. See <a href="#10m-point-native-benchmark">the full benchmark notes</a> for methodology and caveats.</sub>
+  <sub>Latest CodSpeed run on 2026-07-11, covering 36 native benchmarks. See <a href="#benchmark-snapshot">the full benchmark notes</a> for methodology and caveats.</sub>
 </p>
 
 **xy** is an experimental Python charting engine for very large,

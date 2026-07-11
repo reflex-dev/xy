@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="540" viewBox="0 0 1200 540" role="img" aria-labelledby="title desc">
-  <title id="title">xy 10M-point benchmark snapshot</title>
-  <desc id="desc">A benchmark summary showing xy rendering a 10M-point scatter workload in 169 milliseconds with 126 megabytes peak memory and an 832 kilobyte payload.</desc>
+  <title id="title">xy CodSpeed benchmark snapshot</title>
+  <desc id="desc">Latest CodSpeed run with 36 benchmarks: pyramid build 193.9 milliseconds, native PNG export 294.1 milliseconds, and density append with pyramid rebuild 384.6 milliseconds.</desc>
   <defs>
     <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
       <path d="M 48 0 L 0 0 0 48" fill="none" stroke="#E8E8EC" stroke-width="1"/>
@@ -30,8 +30,8 @@
   </g>
 
   <g font-family="Instrument Sans, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
-    <text x="96" y="122" fill="#1C2024" font-size="36" font-weight="650" letter-spacing="0">10M-point scatter benchmark</text>
-    <text x="96" y="154" fill="#60646C" font-size="17" font-weight="500" letter-spacing="0">Ubuntu CI, native Rust backend. Total time is build plus static render; lower is better.</text>
+    <text x="96" y="122" fill="#1C2024" font-size="36" font-weight="650" letter-spacing="0">CodSpeed benchmark snapshot</text>
+    <text x="96" y="154" fill="#60646C" font-size="17" font-weight="500" letter-spacing="0">Latest PR run, native Rust backend. 36 benchmarks; lower is better.</text>
 
     <g transform="translate(96 194)">
       <rect width="940" height="92" rx="12" fill="#FFFFFF" stroke="#E8E8EC"/>
@@ -40,52 +40,52 @@
 
       <g transform="translate(28 22)">
         <rect width="10" height="10" rx="3" fill="#6E56CF"/>
-        <text x="18" y="10" fill="#60646C" font-size="13" font-weight="650">Total</text>
-        <text x="0" y="52" fill="#1C2024" font-size="32" font-weight="700">169 ms</text>
+        <text x="18" y="10" fill="#60646C" font-size="13" font-weight="650">Benchmarks</text>
+        <text x="0" y="52" fill="#1C2024" font-size="32" font-weight="700">36 total</text>
       </g>
 
       <g transform="translate(341 22)">
         <rect width="10" height="10" rx="3" fill="#AA99EC"/>
-        <text x="18" y="10" fill="#60646C" font-size="13" font-weight="650">Peak memory</text>
-        <text x="0" y="52" fill="#1C2024" font-size="32" font-weight="700">126 MB</text>
+        <text x="18" y="10" fill="#60646C" font-size="13" font-weight="650">Pyramid build</text>
+        <text x="0" y="52" fill="#1C2024" font-size="32" font-weight="700">193.9 ms</text>
       </g>
 
       <g transform="translate(654 22)">
         <rect width="10" height="10" rx="3" fill="#EB8E90"/>
-        <text x="18" y="10" fill="#60646C" font-size="13" font-weight="650">Payload</text>
-        <text x="0" y="52" fill="#1C2024" font-size="32" font-weight="700">832 KB</text>
+        <text x="18" y="10" fill="#60646C" font-size="13" font-weight="650">Native PNG</text>
+        <text x="0" y="52" fill="#1C2024" font-size="32" font-weight="700">294.1 ms</text>
       </g>
     </g>
 
     <g transform="translate(96 316)">
-      <text x="0" y="0" fill="#1C2024" font-size="14" font-weight="650">Total time vs. common renderers, log scale</text>
+      <text x="0" y="0" fill="#1C2024" font-size="14" font-weight="650">Representative CodSpeed timings</text>
 
       <g transform="translate(0 24)">
-        <text x="0" y="18" fill="#1C2024" font-size="15" font-weight="650">xy</text>
+        <text x="0" y="18" fill="#1C2024" font-size="15" font-weight="650">Density rebuild</text>
         <rect x="142" y="4" width="760" height="18" rx="9" fill="#F0F0F3"/>
         <rect x="142" y="4" width="56" height="18" rx="9" fill="url(#primary)"/>
-        <text x="215" y="18" fill="#1C2024" font-size="15" font-weight="650">169 ms</text>
+        <text x="215" y="18" fill="#1C2024" font-size="15" font-weight="650">384.6 ms</text>
       </g>
 
       <g transform="translate(0 58)">
-        <text x="0" y="18" fill="#60646C" font-size="15" font-weight="500">matplotlib</text>
+        <text x="0" y="18" fill="#60646C" font-size="15" font-weight="500">Native PNG export</text>
         <rect x="142" y="4" width="760" height="18" rx="9" fill="#F0F0F3"/>
         <rect x="142" y="4" width="358" height="18" rx="9" fill="#D9D9E0"/>
-        <text x="517" y="18" fill="#60646C" font-size="15" font-weight="500">3,239 ms</text>
+        <text x="517" y="18" fill="#60646C" font-size="15" font-weight="500">294.1 ms</text>
       </g>
 
       <g transform="translate(0 92)">
-        <text x="0" y="18" fill="#60646C" font-size="15" font-weight="500">Seaborn</text>
+        <text x="0" y="18" fill="#60646C" font-size="15" font-weight="500">Pyramid build</text>
         <rect x="142" y="4" width="760" height="18" rx="9" fill="#F0F0F3"/>
         <rect x="142" y="4" width="465" height="18" rx="9" fill="#D9D9E0"/>
-        <text x="624" y="18" fill="#60646C" font-size="15" font-weight="500">7,918 ms</text>
+        <text x="624" y="18" fill="#60646C" font-size="15" font-weight="500">193.9 ms</text>
       </g>
 
       <g transform="translate(0 126)">
-        <text x="0" y="18" fill="#60646C" font-size="15" font-weight="500">Plotly Scattergl</text>
+        <text x="0" y="18" fill="#60646C" font-size="15" font-weight="500">Line append</text>
         <rect x="142" y="4" width="760" height="18" rx="9" fill="#F0F0F3"/>
         <rect x="142" y="4" width="760" height="18" rx="9" fill="#B9BBC6"/>
-        <text x="919" y="18" fill="#60646C" font-size="15" font-weight="500">54,064 ms</text>
+        <text x="919" y="18" fill="#60646C" font-size="15" font-weight="500">7.1 ms</text>
       </g>
     </g>
   </g>
