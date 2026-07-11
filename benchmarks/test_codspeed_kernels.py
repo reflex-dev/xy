@@ -33,6 +33,9 @@ HIST_N = 100_000
 AREA_N = 100_000
 BAR_N = 1_000
 HEATMAP_W, HEATMAP_H = 160, 120
+EXPORT_N = 100_000
+APPEND_N = 100_000
+APPEND_BATCH = 1_000
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -65,6 +68,23 @@ def medium_data() -> tuple[np.ndarray, np.ndarray]:
     x = np.arange(MEDIUM_N, dtype=np.float64)
     y = rng.normal(0.0, 1.0, MEDIUM_N)
     return x, y
+
+
+@pytest.fixture(scope="module")
+def export_data() -> tuple[np.ndarray, np.ndarray]:
+    rng = np.random.default_rng(23)
+    x = np.arange(EXPORT_N, dtype=np.float64)
+    y = (np.sin(x * 0.001) + rng.normal(0.0, 0.08, EXPORT_N)).astype(np.float64, copy=False)
+    return x, y
+
+
+@pytest.fixture(scope="module")
+def append_data() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    x = np.arange(APPEND_N, dtype=np.float64)
+    y = np.sin(x * 0.001)
+    tail_x = np.arange(APPEND_N, APPEND_N + APPEND_BATCH, dtype=np.float64)
+    tail_y = np.sin(tail_x * 0.001)
+    return x, y, tail_x, tail_y
 
 
 @pytest.fixture(scope="module")
@@ -335,6 +355,87 @@ def test_first_payload_scatter_medium(benchmark, medium_data):
     assert payload_bytes > 0
 
 
+def test_first_payload_scatter_categorical_color(benchmark, medium_data):
+    """Categorical palette factorization and code shipping for scatter."""
+    x, y = medium_data
+    categories = np.array([f"group-{i % 24:02d}" for i in range(len(x))])
+
+    def build():
+        fig = fc.chart(fc.scatter(x=x, y=y, color=categories)).figure()
+        return fig.build_payload(N_BUCKETS)
+
+    spec, blob = benchmark(build)
+    assert spec["traces"][0]["n_points"] == len(x)
+    assert blob
+
+
+def test_first_payload_scatter_continuous_channels(benchmark, medium_data):
+    """Continuous color and size channels through the direct payload path."""
+    x, y = medium_data
+    color = np.sin(x * 0.0007)
+    size = 4.0 + 3.0 * np.abs(np.cos(x * 0.0003))
+
+    def build():
+        fig = fc.chart(fc.scatter(x=x, y=y, color=color, size=size)).figure()
+        return fig.build_payload(N_BUCKETS)
+
+    spec, blob = benchmark(build)
+    assert spec["traces"][0]["n_points"] == len(x)
+    assert blob
+
+
+def test_first_payload_line_unsorted_x(benchmark, medium_data):
+    """Large line ingestion through the sort-and-reingest branch."""
+    x, y = medium_data
+    shuffled = np.random.default_rng(47).permutation(len(x))
+    unsorted_x = x[shuffled]
+    unsorted_y = y[shuffled]
+
+    def build():
+        fig = fc.chart(fc.line(x=unsorted_x, y=unsorted_y)).figure()
+        return fig.build_payload(N_BUCKETS)
+
+    spec, blob = benchmark(build)
+    assert spec["traces"][0]["n_points"] == len(x)
+    assert blob
+
+
+@pytest.mark.parametrize("kind", ["datetime64", "python_list"])
+def test_first_payload_ingest_flavors(benchmark, kind):
+    """Non-contiguous public input forms must retain their ingestion paths."""
+    n = 100_000
+    values = np.sin(np.arange(n, dtype=np.float64) * 0.001)
+    if kind == "datetime64":
+        x = np.datetime64("2026-01-01T00:00:00", "ms") + np.arange(n).astype("timedelta64[ms]")
+    else:
+        x = np.arange(n, dtype=np.float64).tolist()
+
+    def build():
+        fig = fc.chart(fc.line(x=x, y=values)).figure()
+        return fig.build_payload(N_BUCKETS)
+
+    spec, blob = benchmark(build)
+    assert spec["traces"][0]["n_points"] == n
+    assert blob
+
+
+def test_density_view_exact_pan(benchmark):
+    """Steady-state exact pan below the pyramid activation threshold."""
+    n = 200_000
+    rng = np.random.default_rng(53)
+    x = rng.uniform(0.0, 100.0, n).astype(np.float64, copy=False)
+    y = rng.uniform(-2.0, 2.0, n).astype(np.float64, copy=False)
+    fig = fc.chart(fc.scatter(x=x, y=y, density=True)).figure()
+    fig.density_view(0, 0.0, 100.0, -2.0, 2.0, GRID_W, GRID_H)
+
+    def pan():
+        return fig.density_view(0, 10.0, 90.0, -1.5, 1.5, GRID_W, GRID_H)
+
+    update, buffers = benchmark(pan)
+    assert update["traces"][0]["mode"] in {"density", "points"}
+    assert buffers
+
+
 def test_first_payload_line_large(benchmark, data):
     """Large line first payload, including M4 decimation and binary transport."""
     x, y = data
@@ -396,6 +497,66 @@ def test_first_payload_heatmap_core_2d(benchmark, core_2d_data):
     assert isinstance(y, np.ndarray)
     payload_bytes = benchmark(_heatmap_payload, z, x, y)
     assert 0 < payload_bytes < z.nbytes
+
+
+def test_native_png_export_scatter(benchmark, export_data):
+    """Native raster export after screen-bounded payload preparation."""
+    x, y = export_data
+    fig = fc.chart(fc.scatter(x=x, y=y)).figure()
+    png = benchmark(fig.to_png, engine="native", scale=1.0)
+    assert png.startswith(b"\x89PNG")
+
+
+def test_svg_export_line(benchmark, export_data):
+    """Static SVG export shares decimation but exercises XML serialization."""
+    x, y = export_data
+    fig = fc.chart(fc.line(x=x, y=y)).figure()
+    svg = benchmark(fig.to_svg, width=720, height=420)
+    assert svg.startswith("<svg")
+
+
+def test_html_export_line(benchmark, export_data):
+    """Standalone HTML export, including embedded spec and buffers."""
+    x, y = export_data
+    fig = fc.chart(fc.line(x=x, y=y)).figure()
+    html = benchmark(fig.to_html)
+    assert "<html" in html.lower()
+
+
+def test_stream_line_append(benchmark, append_data):
+    """Append refresh cost for a warmed 100k-row line chart."""
+    x, y, tail_x, tail_y = append_data
+    fig = fc.chart(fc.line(x=x, y=y)).figure()
+    fig.build_payload(N_BUCKETS)
+
+    def append_next():
+        # CodSpeed invokes the target repeatedly; advance the x origin so each
+        # iteration remains a valid continuation of the line.
+        start = float(fig.traces[0].n_points)
+        next_x = start + (tail_x - tail_x[0])
+        next_y = np.sin(next_x * 0.001)
+        return fig.append(0, next_x, next_y)
+
+    update, buffers = benchmark(append_next)
+    assert update["spec"]["traces"][0]["n_points"] >= APPEND_N + APPEND_BATCH
+    assert buffers
+
+
+def test_stream_density_append_then_rebuild(benchmark, pyramid_data):
+    """Append invalidation plus warm pyramid rebuild for dense scatter."""
+    x, y = pyramid_data
+    fig = fc.chart(fc.scatter(x=x, y=y, density=True)).figure()
+    fig.build_payload(N_BUCKETS)
+    tail_x = np.full(APPEND_BATCH, 50.0, dtype=np.float64)
+    tail_y = np.linspace(45.0, 55.0, APPEND_BATCH, dtype=np.float64)
+
+    def append_and_rebuild():
+        fig.append(0, tail_x, tail_y)
+        return fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+
+    update, buffers = benchmark(append_and_rebuild)
+    assert update["traces"][0]["mode"] == "density"
+    assert buffers
 
 
 def test_first_payload_composed_layered_core_2d(benchmark, core_2d_data):
@@ -470,3 +631,26 @@ def test_adaptive_drilldown_cycle(benchmark, drilldown_figure):
     """Adaptive scatter: density overview -> exact visible points -> density out."""
     result = benchmark(_adaptive_drilldown_cycle, drilldown_figure)
     assert result > DRILL_N
+
+
+def test_stratified_sample_mask(benchmark):
+    """ABI-v10 category-stratified sampler used by density overlays."""
+    n = 1_000_000
+    ids = np.arange(n, dtype=np.uint64)
+    groups = (np.arange(n, dtype=np.uint32) % 12).astype(np.uint32, copy=False)
+    mask = benchmark(k.stratified_sample_mask, ids, groups, 12, 17, 1.0 / 256.0, 2)
+    assert mask.dtype == np.bool_
+    assert mask.shape == (n,)
+
+
+@pytest.mark.parametrize(
+    ("n", "w", "h"),
+    [(100_000, 512, 384), (1_000_000, 512, 384), (1_000_000, 2048, 2048)],
+)
+def test_bin_2d_thread_cap_scaling(benchmark, n, w, h):
+    """Exercise sparse, screen-sized, and cell-heavy fan-out regimes."""
+    rng = np.random.default_rng(101 + n + w + h)
+    x = rng.uniform(0.0, 100.0, n).astype(np.float64, copy=False)
+    y = rng.uniform(0.0, 100.0, n).astype(np.float64, copy=False)
+    grid = benchmark(k.bin_2d, x, y, 0.0, 100.0, 0.0, 100.0, w, h)
+    assert grid.shape == (h, w)

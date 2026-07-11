@@ -1,6 +1,14 @@
+default_stages: [pre-commit]
+
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.8
     hooks:
       - id: ruff-check
+        args: ["."]
+        pass_filenames: false
+        stages: [pre-commit]
       - id: ruff-format
+        args: [--check, .]
+        pass_filenames: false
+        stages: [pre-commit]
