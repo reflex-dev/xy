@@ -234,6 +234,16 @@ def test_sample_mask(benchmark, data):
     assert mask.dtype == np.bool_
 
 
+def test_stratified_sample_mask(benchmark):
+    """ABI-v10 category-stratified sampler used by density overlays."""
+    n = 1_000_000
+    ids = np.arange(n, dtype=np.uint64)
+    groups = (np.arange(n, dtype=np.uint32) % 12).astype(np.uint32, copy=False)
+    mask = benchmark(k.stratified_sample_mask, ids, groups, 12, 17, 1.0 / 256.0, 2)
+    assert mask.dtype == np.bool_
+    assert mask.shape == (n,)
+
+
 def test_pyramid_build(benchmark, pyramid_data):
     """Cold Tier-3 index construction at the real activation threshold."""
     x, y = pyramid_data
@@ -368,6 +378,87 @@ def test_first_payload_scatter_medium(benchmark, medium_data):
     x, y = medium_data
     payload_bytes = benchmark(_scatter_payload, x, y)
     assert payload_bytes > 0
+
+
+def test_first_payload_scatter_categorical_color(benchmark, medium_data):
+    """Categorical palette factorization and code shipping for scatter."""
+    x, y = medium_data
+    categories = np.array([f"group-{i % 24:02d}" for i in range(len(x))])
+
+    def build():
+        fig = fc.chart(fc.scatter(x=x, y=y, color=categories)).figure()
+        return fig.build_payload(N_BUCKETS)
+
+    spec, blob = benchmark(build)
+    assert spec["traces"][0]["n_points"] == len(x)
+    assert blob
+
+
+def test_first_payload_scatter_continuous_channels(benchmark, medium_data):
+    """Continuous color and size channels through the direct payload path."""
+    x, y = medium_data
+    color = np.sin(x * 0.0007)
+    size = 4.0 + 3.0 * np.abs(np.cos(x * 0.0003))
+
+    def build():
+        fig = fc.chart(fc.scatter(x=x, y=y, color=color, size=size)).figure()
+        return fig.build_payload(N_BUCKETS)
+
+    spec, blob = benchmark(build)
+    assert spec["traces"][0]["n_points"] == len(x)
+    assert blob
+
+
+def test_first_payload_line_unsorted_x(benchmark, medium_data):
+    """Large line ingestion through the sort-and-reingest branch."""
+    x, y = medium_data
+    shuffled = np.random.default_rng(47).permutation(len(x))
+    unsorted_x = x[shuffled]
+    unsorted_y = y[shuffled]
+
+    def build():
+        fig = fc.chart(fc.line(x=unsorted_x, y=unsorted_y)).figure()
+        return fig.build_payload(N_BUCKETS)
+
+    spec, blob = benchmark(build)
+    assert spec["traces"][0]["n_points"] == len(x)
+    assert blob
+
+
+@pytest.mark.parametrize("kind", ["datetime64", "python_list"])
+def test_first_payload_ingest_flavors(benchmark, kind):
+    """Non-contiguous public input forms must retain their ingestion paths."""
+    n = 100_000
+    values = np.sin(np.arange(n, dtype=np.float64) * 0.001)
+    if kind == "datetime64":
+        x = np.datetime64("2026-01-01T00:00:00", "ms") + np.arange(n).astype("timedelta64[ms]")
+    else:
+        x = np.arange(n, dtype=np.float64).tolist()
+
+    def build():
+        fig = fc.chart(fc.line(x=x, y=values)).figure()
+        return fig.build_payload(N_BUCKETS)
+
+    spec, blob = benchmark(build)
+    assert spec["traces"][0]["n_points"] == n
+    assert blob
+
+
+def test_density_view_exact_pan(benchmark):
+    """Steady-state exact pan below the pyramid activation threshold."""
+    n = 200_000
+    rng = np.random.default_rng(53)
+    x = rng.uniform(0.0, 100.0, n).astype(np.float64, copy=False)
+    y = rng.uniform(-2.0, 2.0, n).astype(np.float64, copy=False)
+    fig = fc.chart(fc.scatter(x=x, y=y, density=True)).figure()
+    fig.density_view(0, 0.0, 100.0, -2.0, 2.0, GRID_W, GRID_H)
+
+    def pan():
+        return fig.density_view(0, 10.0, 90.0, -1.5, 1.5, GRID_W, GRID_H)
+
+    update, buffers = benchmark(pan)
+    assert update["traces"][0]["mode"] in {"density", "points"}
+    assert buffers
 
 
 def test_first_payload_line_large(benchmark, data):
