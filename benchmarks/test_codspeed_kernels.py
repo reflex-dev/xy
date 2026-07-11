@@ -74,9 +74,7 @@ def medium_data() -> tuple[np.ndarray, np.ndarray]:
 def export_data() -> tuple[np.ndarray, np.ndarray]:
     rng = np.random.default_rng(23)
     x = np.arange(EXPORT_N, dtype=np.float64)
-    y = (np.sin(x * 0.001) + rng.normal(0.0, 0.08, EXPORT_N)).astype(
-        np.float64, copy=False
-    )
+    y = (np.sin(x * 0.001) + rng.normal(0.0, 0.08, EXPORT_N)).astype(np.float64, copy=False)
     return x, y
 
 
