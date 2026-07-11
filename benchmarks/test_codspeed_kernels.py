@@ -197,16 +197,6 @@ def test_bin_2d(benchmark, data):
     benchmark(k.bin_2d, x, y, 0.0, float(N), -6.0, 6.0, GRID_W, GRID_H)
 
 
-def test_marching_squares(benchmark, core_2d_data):
-    """Regular-grid isolines over a bounded contour workload."""
-    z = core_2d_data["heatmap_z"]
-    x = core_2d_data["heatmap_x"]
-    y = core_2d_data["heatmap_y"]
-    levels = np.linspace(float(z.min()), float(z.max()), 11, dtype=np.float64)[1:-1]
-    result = benchmark(k.marching_squares, z, x, y, levels)
-    assert len(result) == 5
-
-
 def test_bin_2d_indices(benchmark, data):
     """Production first-density pass: grid plus visible indices in one scan."""
     x, y = data
@@ -566,6 +556,21 @@ def test_first_payload_contour_core_2d(benchmark, core_2d_data):
     assert isinstance(z, np.ndarray)
     payload_bytes = benchmark(_contour_payload, z)
     assert payload_bytes > 0
+
+
+# Grouped with the other plot-family benchmarks (not next to bin_2d): the
+# pre-existing suite must keep its fixture materialization order — CodSpeed
+# measures one-shot regions, so pulling the module-scoped core_2d_data fixture
+# forward changes process state under the first figure build and breaks
+# baseline comparability for the untouched benchmarks.
+def test_marching_squares(benchmark, core_2d_data):
+    """Regular-grid isolines over a bounded contour workload."""
+    z = core_2d_data["heatmap_z"]
+    x = core_2d_data["heatmap_x"]
+    y = core_2d_data["heatmap_y"]
+    levels = np.linspace(float(z.min()), float(z.max()), 11, dtype=np.float64)[1:-1]
+    result = benchmark(k.marching_squares, z, x, y, levels)
+    assert len(result) == 5
 
 
 def test_native_png_export_scatter(benchmark, export_data):
