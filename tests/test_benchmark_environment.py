@@ -197,6 +197,8 @@ def test_dashboard_benchmark_reports_eviction_and_scroll_telemetry() -> None:
     ):
         assert marker in bench
     assert "blank dashboard chart" not in bench
+    assert "slot.state.lost ||" not in bench
+    assert "slot.view._glLost || slot.view.gl.isContextLost()" in bench
 
     # webglcontextlost dispatches as a task, so the probe must yield before
     # leaving the "create" phase or creation-loop evictions get mislabeled

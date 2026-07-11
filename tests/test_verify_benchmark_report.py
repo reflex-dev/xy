@@ -715,6 +715,27 @@ def test_dashboard_report_accepts_governed_rows(tmp_path: Path) -> None:
     assert errors == []
 
 
+def test_dashboard_report_accepts_pending_release_event(tmp_path: Path) -> None:
+    payload = _dashboard_browser_report()
+    row = payload["rows"][1]
+    _set_dashboard_governed(row)
+    # A controlled release can be visible in the end-state before the browser
+    # queues its matching webglcontextlost event.
+    row["governed_context_lost_events"] = 0
+    row["context_lost_events"] = 0
+    row["context_restored_events"] = 0
+    row["context_lost_chart_ids"] = []
+    row["context_restored_chart_ids"] = []
+    row["context_events"] = []
+    payload["chart_count_ceiling"] = 50
+    payload["visible_stable_chart_ceiling"] = 50
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="dashboard-browser")
+
+    assert errors == []
+
+
 def test_dashboard_report_rejects_broken_ten_chart_smoke(tmp_path: Path) -> None:
     payload = _dashboard_browser_report()
     _set_dashboard_partial(payload["rows"][0], nonblank=8)

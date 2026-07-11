@@ -173,7 +173,10 @@ def _probe_js() -> str:
 
     function contextLost(slot) {
       if (!slot.view || !slot.view.gl) return true;
-      return slot.state.lost || slot.view._glLost || slot.view.gl.isContextLost();
+      // Use ChartView's live state rather than the probe's event flag. An
+      // evicted context can be rebuilt on a fresh canvas without dispatching
+      // a second browser event, so an event-only flag would stay stale.
+      return slot.view._glLost || slot.view.gl.isContextLost();
     }
     function nonblankPixels(slot) {
       if (contextLost(slot)) return 0;

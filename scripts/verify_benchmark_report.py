@@ -1435,8 +1435,14 @@ def _validate_dashboard_telemetry(row: dict[str, Any], path: str, errors: list[s
         errors.append(f"{path}.context_lost_chart_ids must match context_events")
     if ids["context_restored_chart_ids"] != set(restored_event_ids):
         errors.append(f"{path}.context_restored_chart_ids must match context_events")
-    if not ids["currently_lost_chart_ids"] <= ids["context_lost_chart_ids"]:
-        errors.append(f"{path}.currently_lost_chart_ids must be a subset of lost chart IDs")
+    known_lost_ids = (
+        ids["context_lost_chart_ids"] | ids["released_chart_ids"] | ids["evicted_chart_ids"]
+    )
+    if not ids["currently_lost_chart_ids"] <= known_lost_ids:
+        errors.append(
+            f"{path}.currently_lost_chart_ids must be a subset of context-lost, "
+            "released, or evicted chart IDs"
+        )
 
     governed_lost = row.get("governed_context_lost_events")
     if (
