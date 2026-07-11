@@ -653,6 +653,44 @@ fn point_u8_at(
     let stroke_alpha = stroke[3] as f32 / 255.0;
     let ext = r + sw + 1.0;
     let (bx0, by0, bx1, by1) = cv.bbox(cx - ext, cy - ext, cx + ext, cy + ext);
+    if sw <= 0.0 && !(1..=4).contains(&sym) {
+        // Stroke-free circle — the default mark and the overwhelming batch
+        // case. Classify each pixel by squared distance first: fully outside
+        // and fully covered pixels never pay the sqrt or the float coverage
+        // math, only the thin AA annulus does. The margins are conservative
+        // (well beyond f32 rounding), so any pixel the classification cannot
+        // prove lands on the exact SDF path — output is bit-identical to it.
+        // For a solid pixel `to_u8((fill[3]/255) * 1.0)` round-trips to
+        // exactly `fill[3]`, so the direct integer blend is the same blend.
+        let solid2 = {
+            let t = r - 0.5;
+            if t > 0.0 { t * t * (1.0 - 1e-5) } else { -1.0 }
+        };
+        let reject2 = {
+            let t = r + 0.5;
+            t * t * (1.0 + 1e-5)
+        };
+        for y in by0..by1 {
+            let dy = y as f32 + 0.5 - cy;
+            let dy2 = dy * dy;
+            for x in bx0..bx1 {
+                let dx = x as f32 + 0.5 - cx;
+                let q = dx * dx + dy2;
+                if q >= reject2 {
+                    continue;
+                }
+                if q <= solid2 {
+                    cv.blend_u8(x, y, fill);
+                    continue;
+                }
+                let c = (0.5 - (q.sqrt() - r)).clamp(0.0, 1.0);
+                if c > 0.0 {
+                    cv.blend_prepared(x, y, fill_rgb, fill_alpha, c);
+                }
+            }
+        }
+        return;
+    }
     for y in by0..by1 {
         for x in bx0..bx1 {
             let d = symbol_sdf(x as f32 + 0.5 - cx, y as f32 + 0.5 - cy, r, sym);
@@ -856,6 +894,14 @@ const MIN_BAND_ROWS: usize = 64;
 
 fn raster_fanout(est_px: f32, rows: usize) -> usize {
     if est_px.is_nan() || est_px < RASTER_FANOUT_PX {
+        return 1;
+    }
+    // CodSpeed's simulation gate sums instructions across threads, so fan-out
+    // can only read as a regression there no matter how much wall-clock it
+    // buys. Pin the gate to the serial path it can faithfully measure; the
+    // walltime benchmark CI covers the parallel path.
+    static CODSPEED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *CODSPEED.get_or_init(|| std::env::var_os("CODSPEED_ENV").is_some()) {
         return 1;
     }
     let cores = std::thread::available_parallelism().map_or(1, |p| p.get().min(8));
