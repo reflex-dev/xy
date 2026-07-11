@@ -7,7 +7,7 @@ WHEEL ?=
 BENCHMARK_JSON ?= benchmark.json
 BENCHMARK_KIND ?= auto
 
-.PHONY: help setup check check-full check-browser check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-benchmark-harness check-pyplot check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
+.PHONY: help setup check check-full check-browser check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-benchmark-harness check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
 
 help:
 	@printf '%s\n' \
@@ -27,10 +27,11 @@ help:
 		'  make check-claims     run public performance-claim guardrails' \
 		'  make check-benchmark-harness run benchmark metadata/report/regression tests' \
 		'  make check-pyplot      run the matplotlib-shim suite and compatibility corpus' \
+		'  make check-pyplot-speed enforce the per-family 10x static-PNG target (requires .[bench])' \
 		'  make check-sdist      build and verify the source distribution' \
 		'  make check-wheel      build and verify a wheel (set WHEEL_EXPECT=--expect-native)' \
 		'  make check-artifacts  verify prebuilt artifacts (set SDIST=... WHEEL=...)' \
-		'  make check-benchmark-report validate BENCHMARK_JSON (scatter-vs, line-decimation, install-footprint, core-2d, scatter-native, kernel-native, interaction-browser, dashboard-browser, workflow-native)' \
+		'  make check-benchmark-report validate BENCHMARK_JSON (scatter-vs, pyplot-vs-matplotlib, line-decimation, install-footprint, core-2d, scatter-native, kernel-native, interaction-browser, dashboard-browser, workflow-native)' \
 		'                        override UV_CACHE_DIR if your uv cache lives elsewhere' \
 		'  make list-checks      list verifier check names' \
 		'  make test             run pytest' \
@@ -86,6 +87,10 @@ check-claims:
 
 check-benchmark-harness:
 	$(PYTHON) scripts/verify_local.py --only benchmark_harness
+
+check-pyplot-speed:
+	PYTHONPATH=python $(PYTHON) benchmarks/bench_pyplot_vs_matplotlib.py \
+		--profile standard --reps 21 --warmups 3 --target-speedup 10 --require-target
 
 check-sdist:
 	@set -e; \

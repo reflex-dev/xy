@@ -36,6 +36,8 @@ HEATMAP_W, HEATMAP_H = 160, 120
 EXPORT_N = 100_000
 APPEND_N = 100_000
 APPEND_BATCH = 1_000
+STACK_ROWS = 8
+STACK_COLS = 100_000
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -175,6 +177,53 @@ def core_2d_data() -> dict[str, object]:
 
 
 @pytest.fixture(scope="module")
+def compatibility_kernel_data() -> dict[str, np.ndarray]:
+    rng = np.random.default_rng(101)
+    stacked = rng.uniform(0.0, 10.0, size=(STACK_ROWS, STACK_COLS))
+    x = rng.normal(size=N)
+    y = 0.4 * x + rng.normal(size=N)
+    weights = rng.uniform(0.1, 2.0, size=N)
+    x_edges = np.quantile(x, np.linspace(0.0, 1.0, 257))
+    y_edges = np.quantile(y, np.linspace(0.0, 1.0, 193))
+    stream_x = np.linspace(-2.0, 2.0, 128)
+    stream_y = np.linspace(-2.0, 2.0, 96)
+    stream_xx, stream_yy = np.meshgrid(stream_x, stream_y)
+    mesh_x, mesh_y = np.meshgrid(np.linspace(-3.0, 3.0, 321), np.linspace(-2.0, 2.0, 257))
+    mesh_x += 0.08 * np.sin(mesh_y * 2.0)
+    mesh_y += 0.05 * np.cos(mesh_x * 1.5)
+    mesh_z = np.sin(mesh_x[:-1, :-1]) * np.cos(mesh_y[:-1, :-1])
+    tri_x = rng.uniform(-1.0, 1.0, size=512)
+    tri_y = rng.uniform(-1.0, 1.0, size=512)
+    tri_topology = k.delaunay_triangles(tri_x, tri_y)
+    spectral_time = np.arange(65_536, dtype=np.float64) / 4096.0
+    spectral_x = np.sin(2.0 * np.pi * 127.0 * spectral_time) + 0.08 * rng.normal(
+        size=len(spectral_time)
+    )
+    spectral_y = np.sin(2.0 * np.pi * 127.0 * spectral_time + 0.35)
+    return {
+        "stacked": stacked,
+        "x": x,
+        "y": y,
+        "weights": weights,
+        "x_edges": x_edges,
+        "y_edges": y_edges,
+        "stream_x": stream_x,
+        "stream_y": stream_y,
+        "stream_u": -stream_yy,
+        "stream_v": stream_xx,
+        "mesh_x": mesh_x,
+        "mesh_y": mesh_y,
+        "mesh_z": mesh_z,
+        "tri_x": tri_x,
+        "tri_y": tri_y,
+        "tri_z": np.sin(tri_x * 4.0) + np.cos(tri_y * 3.0),
+        "tri_topology": tri_topology,
+        "spectral_x": spectral_x,
+        "spectral_y": spectral_y,
+    }
+
+
+@pytest.fixture(scope="module")
 def drilldown_figure() -> Figure:
     rng = np.random.default_rng(17)
     x = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
@@ -225,6 +274,139 @@ def test_bin_2d_indices(benchmark, data):
     grid, indices = benchmark(k.bin_2d_indices, x, y, 0.0, float(N), -6.0, 6.0, GRID_W, GRID_H)
     assert grid.size == GRID_W * GRID_H
     assert len(indices) == N
+
+
+def test_stacked_bounds_weighted_wiggle(benchmark, compatibility_kernel_data):
+    """Native stacked-area layout; no Python cumulative allocation."""
+    lower, upper = benchmark(
+        k.stacked_bounds, compatibility_kernel_data["stacked"], "weighted_wiggle"
+    )
+    assert lower.shape == upper.shape == (STACK_ROWS, STACK_COLS)
+
+
+def test_histogram2d_weighted_arbitrary_edges(benchmark, compatibility_kernel_data):
+    """Native irregular-bin weighted 2-D histogram compatibility path."""
+    grid = benchmark(
+        k.histogram2d,
+        compatibility_kernel_data["x"],
+        compatibility_kernel_data["y"],
+        compatibility_kernel_data["x_edges"],
+        compatibility_kernel_data["y_edges"],
+        compatibility_kernel_data["weights"],
+    )
+    assert grid.shape == (256, 192)
+
+
+def test_weighted_ecdf_native(benchmark, compatibility_kernel_data):
+    """Million-row weighted sort and aggregation never falls back to NumPy."""
+    values, cumulative = benchmark(
+        k.weighted_ecdf,
+        compatibility_kernel_data["x"],
+        compatibility_kernel_data["weights"],
+    )
+    assert len(values) == len(cumulative) == N
+    assert cumulative[-1] == pytest.approx(1.0)
+
+
+def test_quad_mesh_triangle_expansion(benchmark, compatibility_kernel_data):
+    """Native warped-quad expansion feeds the generic triangle renderer."""
+    triangles = benchmark(
+        k.quad_mesh_triangles,
+        compatibility_kernel_data["mesh_x"],
+        compatibility_kernel_data["mesh_y"],
+        compatibility_kernel_data["mesh_z"],
+    )
+    assert len(triangles[0]) == 2 * 256 * 320
+
+
+def test_delaunay_unstructured_topology(benchmark, compatibility_kernel_data):
+    """Native dependency-free topology construction for triangular plots."""
+    topology = benchmark(
+        k.delaunay_triangles,
+        compatibility_kernel_data["tri_x"],
+        compatibility_kernel_data["tri_y"],
+    )
+    assert len(topology) > 0
+
+
+def test_indexed_triangle_expansion(benchmark, compatibility_kernel_data):
+    """Indexed unstructured faces expand without Python advanced indexing."""
+    mesh = benchmark(
+        k.indexed_triangles,
+        compatibility_kernel_data["tri_x"],
+        compatibility_kernel_data["tri_y"],
+        compatibility_kernel_data["tri_topology"],
+        compatibility_kernel_data["tri_z"],
+        values_at="vertex",
+    )
+    assert len(mesh[0]) == len(compatibility_kernel_data["tri_topology"])
+
+
+def test_sector_triangle_tessellation(benchmark):
+    """Pie/donut sector geometry is tessellated in the native core."""
+    values = np.arange(1.0, 25.0)
+    mesh = benchmark(k.sector_triangles, values, inner_radius=0.55, start_degrees=90.0)
+    assert len(mesh[0]) > 0
+
+
+def test_streamlines_regular_grid(benchmark, compatibility_kernel_data):
+    """Bounded native streamline integration for scientific vector fields."""
+    segments = benchmark(
+        k.streamlines,
+        compatibility_kernel_data["stream_x"],
+        compatibility_kernel_data["stream_y"],
+        compatibility_kernel_data["stream_u"],
+        compatibility_kernel_data["stream_v"],
+        density=1.0,
+        max_steps=1024,
+    )
+    assert len(segments[0]) > 0
+
+
+def test_rfft_arbitrary_length_native(benchmark, compatibility_kernel_data):
+    """Bluestein FFT keeps non-power-of-two spectral work in Rust."""
+    result = benchmark(
+        k.rfft,
+        compatibility_kernel_data["spectral_x"][:60_000],
+        nfft=60_000,
+        sample_rate=4096.0,
+    )
+    assert len(result[0]) == 30_001
+
+
+def test_welch_spectra_native(benchmark, compatibility_kernel_data):
+    """Windowing, FFTs, and spectral accumulation execute in one native call."""
+    result = benchmark(
+        k.welch_spectra,
+        compatibility_kernel_data["spectral_x"],
+        compatibility_kernel_data["spectral_y"],
+        nfft=1024,
+        noverlap=512,
+        sample_rate=4096.0,
+    )
+    assert len(result[0]) == 513
+
+
+def test_spectrogram_native(benchmark, compatibility_kernel_data):
+    result = benchmark(
+        k.spectrogram,
+        compatibility_kernel_data["spectral_x"],
+        nfft=1024,
+        noverlap=768,
+        sample_rate=4096.0,
+    )
+    assert result[0].shape[1] == 513
+
+
+def test_correlation_native(benchmark, compatibility_kernel_data):
+    result = benchmark(
+        k.correlation,
+        compatibility_kernel_data["spectral_x"],
+        compatibility_kernel_data["spectral_y"],
+        max_lags=2048,
+        normalize=True,
+    )
+    assert len(result[0]) == 4097
 
 
 def test_min_max(benchmark, data):

@@ -136,6 +136,1458 @@ pub fn encode_f32_into(data: &[f64], offset: f64, scale: f64, out: &mut [f32]) {
     });
 }
 
+/// Compute lower/upper bounds for a stack of row-major series.
+///
+/// `baseline` is an engine-level layout mode: 0 = zero, 1 = symmetric,
+/// 2 = unweighted wiggle, 3 = weighted wiggle.  The two caller-owned output
+/// buffers have the same `(rows, cols)` row-major layout as `values`.
+/// Keeping this O(rows*cols) transform native avoids allocating a Python
+/// cumulative stack before the screen-bounded area marks are built.
+pub fn stacked_bounds_into(
+    values: &[f64],
+    rows: usize,
+    cols: usize,
+    baseline: u32,
+    lower: &mut [f64],
+    upper: &mut [f64],
+) -> bool {
+    let Some(len) = rows.checked_mul(cols) else {
+        return false;
+    };
+    if rows == 0
+        || cols == 0
+        || baseline > 3
+        || values.len() != len
+        || lower.len() != len
+        || upper.len() != len
+    {
+        return false;
+    }
+
+    let mut weighted_center = 0.0;
+    for col in 0..cols {
+        let mut total = 0.0;
+        for row in 0..rows {
+            total += values[row * cols + col];
+        }
+        let first = match baseline {
+            0 => 0.0,
+            1 => -0.5 * total,
+            2 => {
+                let m = rows as f64;
+                let weighted = (0..rows)
+                    .map(|row| values[row * cols + col] * (m - 0.5 - row as f64))
+                    .sum::<f64>();
+                -weighted / m
+            }
+            3 => {
+                let inv_total = if total > 0.0 { 1.0 / total } else { 0.0 };
+                let mut cumulative = 0.0;
+                let mut center_step = 0.0;
+                for row in 0..rows {
+                    let value = values[row * cols + col];
+                    cumulative += value;
+                    let below_size = total - cumulative + 0.5 * value;
+                    let move_up = if col == 0 {
+                        0.5
+                    } else {
+                        below_size * inv_total
+                    };
+                    let previous = if col == 0 {
+                        0.0
+                    } else {
+                        values[row * cols + col - 1]
+                    };
+                    center_step += (move_up - 0.5) * (value - previous);
+                }
+                weighted_center += center_step;
+                weighted_center - 0.5 * total
+            }
+            _ => unreachable!(),
+        };
+
+        let mut cursor = first;
+        for row in 0..rows {
+            let index = row * cols + col;
+            lower[index] = cursor;
+            cursor += values[index];
+            upper[index] = cursor;
+        }
+    }
+    true
+}
+
+fn histogram_edge_bin(value: f64, edges: &[f64]) -> Option<usize> {
+    if !value.is_finite() || value < edges[0] || value > edges[edges.len() - 1] {
+        return None;
+    }
+    if value == edges[edges.len() - 1] {
+        return Some(edges.len() - 2);
+    }
+    let upper = edges.partition_point(|edge| *edge <= value);
+    upper.checked_sub(1).filter(|index| *index + 1 < edges.len())
+}
+
+/// Weighted 2-D histogram over arbitrary monotonically increasing edges.
+///
+/// Output is x-major `(nx, ny)`, matching common statistical APIs. Non-finite
+/// coordinates and weights are skipped. The uniform-grid hot path continues
+/// to use `bin_2d`; this kernel covers the irregular-bin compatibility case
+/// without moving an O(points) scan back into Python.
+pub fn histogram2d_into(
+    x: &[f64],
+    y: &[f64],
+    weights: Option<&[f64]>,
+    x_edges: &[f64],
+    y_edges: &[f64],
+    out: &mut [f64],
+) -> bool {
+    if x.len() != y.len()
+        || weights.is_some_and(|values| values.len() != x.len())
+        || x_edges.len() < 2
+        || y_edges.len() < 2
+        || !x_edges.windows(2).all(|pair| pair[1] > pair[0])
+        || !y_edges.windows(2).all(|pair| pair[1] > pair[0])
+        || !x_edges.iter().all(|value| value.is_finite())
+        || !y_edges.iter().all(|value| value.is_finite())
+    {
+        return false;
+    }
+    let nx = x_edges.len() - 1;
+    let ny = y_edges.len() - 1;
+    if out.len() != nx.saturating_mul(ny) {
+        return false;
+    }
+    out.fill(0.0);
+    for index in 0..x.len() {
+        let Some(x_bin) = histogram_edge_bin(x[index], x_edges) else {
+            continue;
+        };
+        let Some(y_bin) = histogram_edge_bin(y[index], y_edges) else {
+            continue;
+        };
+        let weight = weights.map_or(1.0, |values| values[index]);
+        if weight.is_finite() {
+            out[x_bin * ny + y_bin] += weight;
+        }
+    }
+    true
+}
+
+/// Expand a rectilinear or curvilinear quadrilateral grid into independent
+/// filled triangles.
+///
+/// `values` is a row-major `(cell_rows, cell_cols)` scalar grid. Coordinates
+/// are either rectilinear edge vectors (`x.len() == cell_cols + 1`,
+/// `y.len() == cell_rows + 1`) or two flattened row-major vertex grids of
+/// shape `(cell_rows + 1, cell_cols + 1)`. Every finite cell emits two
+/// triangles and duplicates its scalar once, directly into caller-owned
+/// columns ready for the instanced mesh renderer. Cells with a non-finite
+/// value or vertex are omitted.
+#[allow(clippy::too_many_arguments)]
+pub fn quad_mesh_triangles_into(
+    x: &[f64],
+    y: &[f64],
+    values: &[f64],
+    cell_rows: usize,
+    cell_cols: usize,
+    layout: u32,
+    out_x0: &mut [f64],
+    out_y0: &mut [f64],
+    out_x1: &mut [f64],
+    out_y1: &mut [f64],
+    out_x2: &mut [f64],
+    out_y2: &mut [f64],
+    out_values: &mut [f64],
+) -> Option<usize> {
+    let cell_count = cell_rows.checked_mul(cell_cols)?;
+    let vertex_rows = cell_rows.checked_add(1)?;
+    let vertex_cols = cell_cols.checked_add(1)?;
+    let vertex_count = vertex_rows.checked_mul(vertex_cols)?;
+    let capacity = cell_count.checked_mul(2)?;
+    let valid_layout = match layout {
+        0 => x.len() == vertex_cols && y.len() == vertex_rows,
+        1 => x.len() == vertex_count && y.len() == vertex_count,
+        2 => x.len() == cell_cols && y.len() == cell_rows,
+        3 => x.len() == cell_count && y.len() == cell_count,
+        _ => false,
+    };
+    if cell_rows == 0
+        || cell_cols == 0
+        || values.len() != cell_count
+        || !valid_layout
+        || out_x0.len() < capacity
+        || out_y0.len() < capacity
+        || out_x1.len() < capacity
+        || out_y1.len() < capacity
+        || out_x2.len() < capacity
+        || out_y2.len() < capacity
+        || out_values.len() < capacity
+    {
+        return None;
+    }
+
+    let center_edge = |values: &[f64], edge: usize| -> f64 {
+        if values.len() == 1 {
+            return values[0] + edge as f64 - 0.5;
+        }
+        if edge == 0 {
+            1.5 * values[0] - 0.5 * values[1]
+        } else if edge == values.len() {
+            1.5 * values[values.len() - 1] - 0.5 * values[values.len() - 2]
+        } else {
+            0.5 * (values[edge - 1] + values[edge])
+        }
+    };
+    let edge_weights = |edge: usize, size: usize| -> ((usize, f64), (usize, f64)) {
+        if size == 1 {
+            ((0, 1.0), (0, 0.0))
+        } else if edge == 0 {
+            ((0, 1.5), (1, -0.5))
+        } else if edge == size {
+            ((size - 1, 1.5), (size - 2, -0.5))
+        } else {
+            ((edge - 1, 0.5), (edge, 0.5))
+        }
+    };
+    let centered_vertex = |values: &[f64], row: usize, col: usize| -> f64 {
+        let (rw0, rw1) = edge_weights(row, cell_rows);
+        let (cw0, cw1) = edge_weights(col, cell_cols);
+        let sample = |r: usize, c: usize| values[r * cell_cols + c];
+        rw0.1 * (cw0.1 * sample(rw0.0, cw0.0) + cw1.1 * sample(rw0.0, cw1.0))
+            + rw1.1 * (cw0.1 * sample(rw1.0, cw0.0) + cw1.1 * sample(rw1.0, cw1.0))
+    };
+    let single_row_vertex = |row: usize, col: usize| -> (f64, f64) {
+        if cell_cols == 1 {
+            return (x[0] + col as f64 - 0.5, y[0] + row as f64 - 0.5);
+        }
+        let center = (center_edge(x, col), center_edge(y, col));
+        let (a, b) = if col == 0 {
+            (0, 1)
+        } else if col == cell_cols {
+            (cell_cols - 2, cell_cols - 1)
+        } else {
+            (col - 1, col)
+        };
+        let (dx, dy) = (x[b] - x[a], y[b] - y[a]);
+        let length = (dx * dx + dy * dy).sqrt();
+        let normal = if length > 0.0 {
+            (-dy / length, dx / length)
+        } else {
+            (0.0, 1.0)
+        };
+        let half_width = if length > 0.0 { length * 0.5 } else { 0.5 };
+        let offset = if row == 0 { -half_width } else { half_width };
+        (center.0 + normal.0 * offset, center.1 + normal.1 * offset)
+    };
+    let single_col_vertex = |row: usize, col: usize| -> (f64, f64) {
+        let center = (center_edge(x, row), center_edge(y, row));
+        let (a, b) = if row == 0 {
+            (0, 1)
+        } else if row == cell_rows {
+            (cell_rows - 2, cell_rows - 1)
+        } else {
+            (row - 1, row)
+        };
+        let (dx, dy) = (x[b] - x[a], y[b] - y[a]);
+        let length = (dx * dx + dy * dy).sqrt();
+        let normal = if length > 0.0 {
+            (-dy / length, dx / length)
+        } else {
+            (1.0, 0.0)
+        };
+        let half_width = if length > 0.0 { length * 0.5 } else { 0.5 };
+        let offset = if col == 0 { -half_width } else { half_width };
+        (center.0 + normal.0 * offset, center.1 + normal.1 * offset)
+    };
+    let vertex = |row: usize, col: usize| -> (f64, f64) {
+        match layout {
+            0 => (x[col], y[row]),
+            1 => {
+                let index = row * vertex_cols + col;
+                (x[index], y[index])
+            }
+            2 => (center_edge(x, col), center_edge(y, row)),
+            3 if cell_rows == 1 => single_row_vertex(row, col),
+            3 if cell_cols == 1 => single_col_vertex(row, col),
+            3 => (centered_vertex(x, row, col), centered_vertex(y, row, col)),
+            _ => unreachable!(),
+        }
+    };
+    let mut written = 0;
+    for row in 0..cell_rows {
+        for col in 0..cell_cols {
+            let value = values[row * cell_cols + col];
+            let a = vertex(row, col);
+            let b = vertex(row, col + 1);
+            let c = vertex(row + 1, col + 1);
+            let d = vertex(row + 1, col);
+            if !value.is_finite()
+                || ![a.0, a.1, b.0, b.1, c.0, c.1, d.0, d.1]
+                    .iter()
+                    .all(|coordinate| coordinate.is_finite())
+            {
+                continue;
+            }
+            for (p0, p1, p2) in [(a, b, c), (a, c, d)] {
+                out_x0[written] = p0.0;
+                out_y0[written] = p0.1;
+                out_x1[written] = p1.0;
+                out_y1[written] = p1.1;
+                out_x2[written] = p2.0;
+                out_y2[written] = p2.1;
+                out_values[written] = value;
+                written += 1;
+            }
+        }
+    }
+    Some(written)
+}
+
+/// Tessellate weighted circular/annular sectors into independent triangles.
+/// Each output scalar is the source sector index, allowing an adapter to
+/// group faces without rebuilding geometry in Python. With empty outputs the
+/// function returns the required triangle count; otherwise all seven buffers
+/// must have at least that capacity.
+#[allow(clippy::too_many_arguments)]
+pub fn sector_triangles_into(
+    values: &[f64],
+    explode: &[f64],
+    center_x: f64,
+    center_y: f64,
+    radius: f64,
+    inner_radius: f64,
+    start_degrees: f64,
+    counterclockwise: bool,
+    normalize: bool,
+    out_x0: &mut [f64],
+    out_y0: &mut [f64],
+    out_x1: &mut [f64],
+    out_y1: &mut [f64],
+    out_x2: &mut [f64],
+    out_y2: &mut [f64],
+    out_sector: &mut [f64],
+) -> Option<usize> {
+    if values.is_empty()
+        || (!explode.is_empty() && explode.len() != values.len())
+        || !values.iter().all(|value| value.is_finite() && *value >= 0.0)
+        || !explode.iter().all(|value| value.is_finite() && *value >= 0.0)
+        || !center_x.is_finite()
+        || !center_y.is_finite()
+        || !radius.is_finite()
+        || radius <= 0.0
+        || !inner_radius.is_finite()
+        || inner_radius < 0.0
+        || inner_radius >= radius
+        || !start_degrees.is_finite()
+    {
+        return None;
+    }
+    let total = values.iter().sum::<f64>();
+    if total <= 0.0 || (!normalize && total > 1.0 + 1e-12) {
+        return None;
+    }
+    let denominator = if normalize { total } else { 1.0 };
+    let direction = if counterclockwise { 1.0 } else { -1.0 };
+    let mut required = 0usize;
+    for &value in values {
+        if value == 0.0 {
+            continue;
+        }
+        let sweep = std::f64::consts::TAU * value / denominator;
+        let steps = (sweep.abs() / (std::f64::consts::PI / 30.0)).ceil() as usize;
+        let per_step = if inner_radius > 0.0 { 2 } else { 1 };
+        required = required.checked_add(steps.max(1).checked_mul(per_step)?)?;
+    }
+    let query = out_x0.is_empty()
+        && out_y0.is_empty()
+        && out_x1.is_empty()
+        && out_y1.is_empty()
+        && out_x2.is_empty()
+        && out_y2.is_empty()
+        && out_sector.is_empty();
+    if !query
+        && [
+            out_x0.len(),
+            out_y0.len(),
+            out_x1.len(),
+            out_y1.len(),
+            out_x2.len(),
+            out_y2.len(),
+            out_sector.len(),
+        ]
+        .iter()
+        .any(|length| *length < required)
+    {
+        return None;
+    }
+    if query {
+        return Some(required);
+    }
+
+    let mut angle = start_degrees.to_radians();
+    let mut written = 0;
+    for (sector, &value) in values.iter().enumerate() {
+        let sweep = direction * std::f64::consts::TAU * value / denominator;
+        if value == 0.0 {
+            angle += sweep;
+            continue;
+        }
+        let steps = (sweep.abs() / (std::f64::consts::PI / 30.0)).ceil() as usize;
+        let steps = steps.max(1);
+        let mid = angle + sweep * 0.5;
+        let offset = explode.get(sector).copied().unwrap_or(0.0) * radius;
+        let cx = center_x + offset * mid.cos();
+        let cy = center_y + offset * mid.sin();
+        for step in 0..steps {
+            let a0 = angle + sweep * step as f64 / steps as f64;
+            let a1 = angle + sweep * (step + 1) as f64 / steps as f64;
+            let outer0 = (cx + radius * a0.cos(), cy + radius * a0.sin());
+            let outer1 = (cx + radius * a1.cos(), cy + radius * a1.sin());
+            let triangles = if inner_radius > 0.0 {
+                let inner0 = (cx + inner_radius * a0.cos(), cy + inner_radius * a0.sin());
+                let inner1 = (cx + inner_radius * a1.cos(), cy + inner_radius * a1.sin());
+                [(inner0, outer0, outer1), (inner0, outer1, inner1)]
+            } else {
+                [((cx, cy), outer0, outer1), ((cx, cy), (cx, cy), (cx, cy))]
+            };
+            let count = if inner_radius > 0.0 { 2 } else { 1 };
+            for &(p0, p1, p2) in &triangles[..count] {
+                out_x0[written] = p0.0;
+                out_y0[written] = p0.1;
+                out_x1[written] = p1.0;
+                out_y1[written] = p1.1;
+                out_x2[written] = p2.0;
+                out_y2[written] = p2.1;
+                out_sector[written] = sector as f64;
+                written += 1;
+            }
+        }
+        angle += sweep;
+    }
+    Some(written)
+}
+
+fn fft_in_place(real: &mut [f64], imag: &mut [f64]) {
+    let n = real.len();
+    debug_assert_eq!(n, imag.len());
+    if n <= 1 {
+        return;
+    }
+    if !n.is_power_of_two() {
+        // Bluestein's chirp-z transform reduces an arbitrary-size DFT to one
+        // power-of-two convolution, preserving O(n log n) for spectral APIs.
+        let Some(m) = n.checked_mul(2).and_then(|value| value.checked_sub(1)) else {
+            return;
+        };
+        let m = m.next_power_of_two();
+        let mut ar = vec![0.0; m];
+        let mut ai = vec![0.0; m];
+        let mut br = vec![0.0; m];
+        let mut bi = vec![0.0; m];
+        for index in 0..n {
+            let angle = std::f64::consts::PI * (index as f64 * index as f64) / n as f64;
+            let (sin, cos) = angle.sin_cos();
+            ar[index] = real[index] * cos + imag[index] * sin;
+            ai[index] = imag[index] * cos - real[index] * sin;
+            br[index] = cos;
+            bi[index] = sin;
+            if index > 0 {
+                br[m - index] = cos;
+                bi[m - index] = sin;
+            }
+        }
+        fft_in_place(&mut ar, &mut ai);
+        fft_in_place(&mut br, &mut bi);
+        for index in 0..m {
+            let product_real = ar[index] * br[index] - ai[index] * bi[index];
+            let product_imag = ar[index] * bi[index] + ai[index] * br[index];
+            ar[index] = product_real;
+            ai[index] = -product_imag;
+        }
+        fft_in_place(&mut ar, &mut ai);
+        for index in 0..n {
+            let conv_real = ar[index] / m as f64;
+            let conv_imag = -ai[index] / m as f64;
+            let angle = std::f64::consts::PI * (index as f64 * index as f64) / n as f64;
+            let (sin, cos) = angle.sin_cos();
+            real[index] = conv_real * cos + conv_imag * sin;
+            imag[index] = conv_imag * cos - conv_real * sin;
+        }
+        return;
+    }
+    let bits = n.trailing_zeros();
+    for index in 0..n {
+        let reversed = index.reverse_bits() >> (usize::BITS - bits);
+        if reversed > index {
+            real.swap(index, reversed);
+            imag.swap(index, reversed);
+        }
+    }
+    let mut size = 2;
+    while size <= n {
+        let half = size / 2;
+        let angle = -std::f64::consts::TAU / size as f64;
+        let (step_imag, step_real) = angle.sin_cos();
+        for start in (0..n).step_by(size) {
+            let (mut twiddle_real, mut twiddle_imag) = (1.0, 0.0);
+            for offset in 0..half {
+                let even = start + offset;
+                let odd = even + half;
+                let odd_real = real[odd] * twiddle_real - imag[odd] * twiddle_imag;
+                let odd_imag = real[odd] * twiddle_imag + imag[odd] * twiddle_real;
+                let even_real = real[even];
+                let even_imag = imag[even];
+                real[even] = even_real + odd_real;
+                imag[even] = even_imag + odd_imag;
+                real[odd] = even_real - odd_real;
+                imag[odd] = even_imag - odd_imag;
+                let next_real = twiddle_real * step_real - twiddle_imag * step_imag;
+                twiddle_imag = twiddle_real * step_imag + twiddle_imag * step_real;
+                twiddle_real = next_real;
+            }
+        }
+        size *= 2;
+    }
+}
+
+fn spectral_window(nfft: usize) -> Vec<f64> {
+    if nfft <= 1 {
+        return vec![1.0; nfft];
+    }
+    (0..nfft)
+        .map(|index| {
+            0.5 - 0.5 * (std::f64::consts::TAU * index as f64 / (nfft - 1) as f64).cos()
+        })
+        .collect()
+}
+
+fn windowed_fft(data: &[f64], start: usize, nfft: usize, window: &[f64]) -> (Vec<f64>, Vec<f64>) {
+    let available = data.len().saturating_sub(start).min(nfft);
+    let mean = if available == 0 {
+        0.0
+    } else {
+        data[start..start + available].iter().sum::<f64>() / available as f64
+    };
+    let mut real = vec![0.0; nfft];
+    let mut imag = vec![0.0; nfft];
+    for index in 0..available {
+        real[index] = (data[start + index] - mean) * window[index];
+    }
+    fft_in_place(&mut real, &mut imag);
+    (real, imag)
+}
+
+/// Windowed real FFT returning the nonnegative-frequency half spectrum.
+pub fn rfft_into(
+    data: &[f64],
+    nfft: usize,
+    sample_rate: f64,
+    out_frequency: &mut [f64],
+    out_real: &mut [f64],
+    out_imag: &mut [f64],
+) -> bool {
+    let bins = nfft / 2 + 1;
+    if data.is_empty()
+        || nfft == 0
+        || nfft > 65_536
+        || !sample_rate.is_finite()
+        || sample_rate <= 0.0
+        || !data.iter().all(|value| value.is_finite())
+        || out_frequency.len() != bins
+        || out_real.len() != bins
+        || out_imag.len() != bins
+    {
+        return false;
+    }
+    let window = spectral_window(nfft);
+    let (real, imag) = windowed_fft(data, 0, nfft, &window);
+    for index in 0..bins {
+        out_frequency[index] = index as f64 * sample_rate / nfft as f64;
+        out_real[index] = real[index];
+        out_imag[index] = imag[index];
+    }
+    true
+}
+
+fn spectral_segment_count(len: usize, nfft: usize, noverlap: usize) -> Option<usize> {
+    if nfft == 0 || noverlap >= nfft {
+        return None;
+    }
+    if len <= nfft {
+        Some(1)
+    } else {
+        Some(1 + (len - nfft) / (nfft - noverlap))
+    }
+}
+
+/// Welch auto/cross spectral estimate. A missing `y` computes only `pxx`;
+/// otherwise all auto and complex cross spectra are averaged natively.
+#[allow(clippy::too_many_arguments)]
+pub fn welch_spectra_into(
+    x: &[f64],
+    y: Option<&[f64]>,
+    nfft: usize,
+    noverlap: usize,
+    sample_rate: f64,
+    out_frequency: &mut [f64],
+    out_pxx: &mut [f64],
+    out_pyy: &mut [f64],
+    out_pxy_real: &mut [f64],
+    out_pxy_imag: &mut [f64],
+) -> bool {
+    let Some(segments) = spectral_segment_count(x.len(), nfft, noverlap) else {
+        return false;
+    };
+    let bins = nfft / 2 + 1;
+    if x.is_empty()
+        || nfft > 65_536
+        || !sample_rate.is_finite()
+        || sample_rate <= 0.0
+        || !x.iter().all(|value| value.is_finite())
+        || y.is_some_and(|values| {
+            values.len() != x.len() || !values.iter().all(|value| value.is_finite())
+        })
+        || [
+            out_frequency.len(),
+            out_pxx.len(),
+            out_pyy.len(),
+            out_pxy_real.len(),
+            out_pxy_imag.len(),
+        ]
+        .iter()
+        .any(|length| *length != bins)
+    {
+        return false;
+    }
+    out_pxx.fill(0.0);
+    out_pyy.fill(0.0);
+    out_pxy_real.fill(0.0);
+    out_pxy_imag.fill(0.0);
+    let window = spectral_window(nfft);
+    let window_power = window.iter().map(|value| value * value).sum::<f64>();
+    let stride = nfft - noverlap;
+    for segment in 0..segments {
+        let start = if x.len() <= nfft { 0 } else { segment * stride };
+        let (xr, xi) = windowed_fft(x, start, nfft, &window);
+        let y_fft = y.map(|values| windowed_fft(values, start, nfft, &window));
+        for bin in 0..bins {
+            out_pxx[bin] += xr[bin] * xr[bin] + xi[bin] * xi[bin];
+            if let Some((ref yr, ref yi)) = y_fft {
+                out_pyy[bin] += yr[bin] * yr[bin] + yi[bin] * yi[bin];
+                out_pxy_real[bin] += xr[bin] * yr[bin] + xi[bin] * yi[bin];
+                // Matplotlib/NumPy define Pxy as conj(X) * Y.  Reversing the
+                // operands flips every phase while leaving magnitudes intact,
+                // which makes the bug particularly easy to miss in PSD tests.
+                out_pxy_imag[bin] += xr[bin] * yi[bin] - xi[bin] * yr[bin];
+            }
+        }
+    }
+    let scale = sample_rate * window_power * segments as f64;
+    for bin in 0..bins {
+        let one_sided = if bin > 0 && !(nfft.is_multiple_of(2) && bin == nfft / 2) {
+            2.0
+        } else {
+            1.0
+        };
+        let factor = one_sided / scale;
+        out_frequency[bin] = bin as f64 * sample_rate / nfft as f64;
+        out_pxx[bin] *= factor;
+        out_pyy[bin] *= factor;
+        out_pxy_real[bin] *= factor;
+        out_pxy_imag[bin] *= factor;
+    }
+    true
+}
+
+/// Spectrogram matrix in time-major `(segments, bins)` layout.
+#[allow(clippy::too_many_arguments)]
+pub fn spectrogram_into(
+    data: &[f64],
+    nfft: usize,
+    noverlap: usize,
+    sample_rate: f64,
+    out_frequency: &mut [f64],
+    out_time: &mut [f64],
+    out_power: &mut [f64],
+) -> bool {
+    let Some(segments) = spectral_segment_count(data.len(), nfft, noverlap) else {
+        return false;
+    };
+    let bins = nfft / 2 + 1;
+    if data.is_empty()
+        || nfft > 65_536
+        || !sample_rate.is_finite()
+        || sample_rate <= 0.0
+        || !data.iter().all(|value| value.is_finite())
+        || out_frequency.len() != bins
+        || out_time.len() != segments
+        || out_power.len() != segments.saturating_mul(bins)
+    {
+        return false;
+    }
+    let window = spectral_window(nfft);
+    let window_power = window.iter().map(|value| value * value).sum::<f64>();
+    let stride = nfft - noverlap;
+    for (bin, frequency) in out_frequency.iter_mut().enumerate() {
+        *frequency = bin as f64 * sample_rate / nfft as f64;
+    }
+    for segment in 0..segments {
+        let start = if data.len() <= nfft { 0 } else { segment * stride };
+        let (real, imag) = windowed_fft(data, start, nfft, &window);
+        out_time[segment] = (start as f64 + nfft as f64 * 0.5) / sample_rate;
+        for bin in 0..bins {
+            let one_sided = if bin > 0 && !(nfft.is_multiple_of(2) && bin == nfft / 2) {
+                2.0
+            } else {
+                1.0
+            };
+            out_power[segment * bins + bin] =
+                (real[bin] * real[bin] + imag[bin] * imag[bin]) * one_sided
+                    / (sample_rate * window_power);
+        }
+    }
+    true
+}
+
+/// Direct lag correlation over `[-max_lag, max_lag]` with optional coefficient
+/// normalization. This stays native because the O(n*lags) multiply-reduction
+/// is the heavy part of `acorr`/`xcorr`.
+pub fn correlation_into(
+    x: &[f64],
+    y: &[f64],
+    max_lag: usize,
+    normalize: bool,
+    out_lag: &mut [f64],
+    out_correlation: &mut [f64],
+) -> bool {
+    let Some(output_len) = max_lag.checked_mul(2).and_then(|value| value.checked_add(1)) else {
+        return false;
+    };
+    if x.len() != y.len()
+        || x.is_empty()
+        || max_lag >= x.len()
+        || !x.iter().chain(y).all(|value| value.is_finite())
+        || out_lag.len() != output_len
+        || out_correlation.len() != output_len
+    {
+        return false;
+    }
+    let denominator = if normalize {
+        // xcorr/acorr use detrend_none by default.  Any requested detrending
+        // is applied by the pyplot adapter before entering this hot loop.
+        let xx = x.iter().map(|value| value * value).sum::<f64>();
+        let yy = y.iter().map(|value| value * value).sum::<f64>();
+        (xx * yy).sqrt()
+    } else {
+        1.0
+    };
+    for (output, lag) in (-(max_lag as isize)..=max_lag as isize).enumerate() {
+        let mut sum = 0.0;
+        if lag >= 0 {
+            let shift = lag as usize;
+            for index in 0..x.len() - shift {
+                sum += x[index + shift] * y[index];
+            }
+        } else {
+            let shift = (-lag) as usize;
+            for index in 0..x.len() - shift {
+                sum += x[index] * y[index + shift];
+            }
+        }
+        out_lag[output] = lag as f64;
+        out_correlation[output] = if denominator > 0.0 { sum / denominator } else { 0.0 };
+    }
+    true
+}
+
+/// Sort and aggregate a weighted empirical CDF into caller-owned columns.
+///
+/// Finite values with finite, non-negative weights participate. Equal values
+/// are coalesced and cumulative mass is normalized to one. Sorting and the
+/// O(n) aggregation stay native for large compatibility-layer distributions.
+pub fn weighted_ecdf_into(
+    values: &[f64],
+    weights: &[f64],
+    out_values: &mut [f64],
+    out_cumulative: &mut [f64],
+) -> Option<usize> {
+    if values.len() != weights.len()
+        || out_values.len() < values.len()
+        || out_cumulative.len() < values.len()
+    {
+        return None;
+    }
+    let mut pairs: Vec<(f64, f64)> = values
+        .iter()
+        .copied()
+        .zip(weights.iter().copied())
+        .filter(|(value, weight)| value.is_finite() && weight.is_finite() && *weight >= 0.0)
+        .collect();
+    if pairs.is_empty() {
+        return None;
+    }
+    pairs.sort_unstable_by(|left, right| left.0.total_cmp(&right.0));
+    let total: f64 = pairs.iter().map(|pair| pair.1).sum();
+    if !total.is_finite() || total <= 0.0 {
+        return None;
+    }
+    let mut written = 0usize;
+    let mut cumulative = 0.0;
+    for (value, weight) in pairs {
+        cumulative += weight;
+        if written > 0 && out_values[written - 1] == value {
+            out_cumulative[written - 1] = cumulative / total;
+        } else {
+            out_values[written] = value;
+            out_cumulative[written] = cumulative / total;
+            written += 1;
+        }
+    }
+    Some(written)
+}
+
+/// Expand indexed triangles into renderer-ready coordinate columns and one
+/// scalar per face. `value_mode` is 0 for a constant zero scalar, 1 for
+/// face values, and 2 for the mean of three vertex values. Invalid indices,
+/// non-finite vertices, and non-finite resolved scalars are compacted out.
+#[allow(clippy::too_many_arguments)]
+pub fn indexed_triangles_into(
+    x: &[f64],
+    y: &[f64],
+    triangles: &[i64],
+    values: &[f64],
+    value_mode: u32,
+    out_x0: &mut [f64],
+    out_y0: &mut [f64],
+    out_x1: &mut [f64],
+    out_y1: &mut [f64],
+    out_x2: &mut [f64],
+    out_y2: &mut [f64],
+    out_values: &mut [f64],
+) -> Option<usize> {
+    if x.len() != y.len() || !triangles.len().is_multiple_of(3) || value_mode > 2 {
+        return None;
+    }
+    let count = triangles.len() / 3;
+    if (value_mode == 1 && values.len() != count)
+        || (value_mode == 2 && values.len() != x.len())
+        || out_x0.len() < count
+        || out_y0.len() < count
+        || out_x1.len() < count
+        || out_y1.len() < count
+        || out_x2.len() < count
+        || out_y2.len() < count
+        || out_values.len() < count
+    {
+        return None;
+    }
+    let mut written = 0;
+    for face in 0..count {
+        let raw = &triangles[face * 3..face * 3 + 3];
+        if raw.iter().any(|index| *index < 0 || *index as usize >= x.len()) {
+            continue;
+        }
+        let index = [raw[0] as usize, raw[1] as usize, raw[2] as usize];
+        let coordinates = [
+            x[index[0]], y[index[0]], x[index[1]], y[index[1]], x[index[2]], y[index[2]],
+        ];
+        let scalar = match value_mode {
+            0 => 0.0,
+            1 => values[face],
+            2 => (values[index[0]] + values[index[1]] + values[index[2]]) / 3.0,
+            _ => unreachable!(),
+        };
+        if !coordinates.iter().all(|value| value.is_finite()) || !scalar.is_finite() {
+            continue;
+        }
+        out_x0[written] = coordinates[0];
+        out_y0[written] = coordinates[1];
+        out_x1[written] = coordinates[2];
+        out_y1[written] = coordinates[3];
+        out_x2[written] = coordinates[4];
+        out_y2[written] = coordinates[5];
+        out_values[written] = scalar;
+        written += 1;
+    }
+    Some(written)
+}
+
+/// Emit each topological triangle edge once as independent line segments.
+#[allow(clippy::too_many_arguments)]
+pub fn triangle_edges_into(
+    x: &[f64],
+    y: &[f64],
+    triangles: &[i64],
+    out_x0: &mut [f64],
+    out_x1: &mut [f64],
+    out_y0: &mut [f64],
+    out_y1: &mut [f64],
+) -> Option<usize> {
+    if x.len() != y.len() || !triangles.len().is_multiple_of(3) {
+        return None;
+    }
+    let capacity = triangles.len();
+    if out_x0.len() < capacity
+        || out_x1.len() < capacity
+        || out_y0.len() < capacity
+        || out_y1.len() < capacity
+    {
+        return None;
+    }
+    let mut seen = std::collections::HashSet::with_capacity(capacity);
+    let mut written = 0;
+    for face in triangles.chunks_exact(3) {
+        if face.iter().any(|index| *index < 0 || *index as usize >= x.len()) {
+            continue;
+        }
+        for pair in [(face[0], face[1]), (face[1], face[2]), (face[2], face[0])] {
+            let key = if pair.0 < pair.1 { pair } else { (pair.1, pair.0) };
+            if !seen.insert(key) {
+                continue;
+            }
+            let a = key.0 as usize;
+            let b = key.1 as usize;
+            if ![x[a], y[a], x[b], y[b]].iter().all(|value| value.is_finite()) {
+                continue;
+            }
+            out_x0[written] = x[a];
+            out_x1[written] = x[b];
+            out_y0[written] = y[a];
+            out_y1[written] = y[b];
+            written += 1;
+        }
+    }
+    Some(written)
+}
+
+fn orient2d(a: (f64, f64), b: (f64, f64), c: (f64, f64)) -> f64 {
+    (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)
+}
+
+fn circumcircle_contains(
+    a: (f64, f64),
+    b: (f64, f64),
+    c: (f64, f64),
+    p: (f64, f64),
+    epsilon: f64,
+) -> bool {
+    let ax = a.0 - p.0;
+    let ay = a.1 - p.1;
+    let bx = b.0 - p.0;
+    let by = b.1 - p.1;
+    let cx = c.0 - p.0;
+    let cy = c.1 - p.1;
+    let determinant = (ax * ax + ay * ay) * (bx * cy - cx * by)
+        - (bx * bx + by * by) * (ax * cy - cx * ay)
+        + (cx * cx + cy * cy) * (ax * by - bx * ay);
+    let orientation = orient2d(a, b, c);
+    (orientation > 0.0 && determinant > epsilon)
+        || (orientation < 0.0 && determinant < -epsilon)
+}
+
+/// Dependency-free Bowyer-Watson Delaunay triangulation for unstructured 2-D
+/// points. The algorithm is native because topology construction is the heavy
+/// path; callers receive compact int64 indices and keep renderer geometry
+/// expansion in the adjacent indexed-triangle kernel.
+const MAX_QUADRATIC_TRIANGULATION_WORK: usize = 100_000_000;
+
+pub fn delaunay_triangles(x: &[f64], y: &[f64]) -> Option<Vec<[i64; 3]>> {
+    if x.len() != y.len()
+        || x.len() < 3
+        || x.len().checked_mul(x.len())? > MAX_QUADRATIC_TRIANGULATION_WORK
+    {
+        return None;
+    }
+    let mut seen = std::collections::HashSet::with_capacity(x.len());
+    let mut points = Vec::with_capacity(x.len() + 3);
+    let mut source_indices = Vec::with_capacity(x.len());
+    for (source_index, (&xv, &yv)) in x.iter().zip(y).enumerate() {
+        if !xv.is_finite() || !yv.is_finite() {
+            return None;
+        }
+        if !seen.insert((xv.to_bits(), yv.to_bits())) {
+            continue;
+        }
+        points.push((xv, yv));
+        source_indices.push(source_index);
+    }
+    if points.len() < 3 {
+        return None;
+    }
+    let min_x = points.iter().map(|point| point.0).fold(f64::INFINITY, f64::min);
+    let max_x = points
+        .iter()
+        .map(|point| point.0)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let min_y = points.iter().map(|point| point.1).fold(f64::INFINITY, f64::min);
+    let max_y = points
+        .iter()
+        .map(|point| point.1)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let span = (max_x - min_x).max(max_y - min_y);
+    if span <= 0.0 || !span.is_finite() {
+        return None;
+    }
+    let mid = ((min_x + max_x) * 0.5, (min_y + max_y) * 0.5);
+    let super_start = points.len();
+    points.push((mid.0 - 32.0 * span, mid.1 - span));
+    points.push((mid.0, mid.1 + 32.0 * span));
+    points.push((mid.0 + 32.0 * span, mid.1 - span));
+    let mut triangles = vec![[super_start, super_start + 2, super_start + 1]];
+    let epsilon = span.powi(4) * 1e-14;
+
+    for point_index in 0..super_start {
+        let point = points[point_index];
+        let mut bad = vec![false; triangles.len()];
+        let mut boundary: std::collections::HashMap<(usize, usize), (usize, usize, u8)> =
+            std::collections::HashMap::new();
+        for (index, triangle) in triangles.iter().enumerate() {
+            if !circumcircle_contains(
+                points[triangle[0]],
+                points[triangle[1]],
+                points[triangle[2]],
+                point,
+                epsilon,
+            ) {
+                continue;
+            }
+            bad[index] = true;
+            for edge in [
+                (triangle[0], triangle[1]),
+                (triangle[1], triangle[2]),
+                (triangle[2], triangle[0]),
+            ] {
+                let key = if edge.0 < edge.1 { edge } else { (edge.1, edge.0) };
+                boundary
+                    .entry(key)
+                    .and_modify(|entry| entry.2 = entry.2.saturating_add(1))
+                    .or_insert((edge.0, edge.1, 1));
+            }
+        }
+        let mut kept = Vec::with_capacity(triangles.len() + boundary.len());
+        for (triangle, is_bad) in triangles.into_iter().zip(bad) {
+            if !is_bad {
+                kept.push(triangle);
+            }
+        }
+        for (_, (a, b, count)) in boundary {
+            if count != 1 {
+                continue;
+            }
+            let mut triangle = [a, b, point_index];
+            if orient2d(points[a], points[b], point) < 0.0 {
+                triangle.swap(0, 1);
+            }
+            if orient2d(points[triangle[0]], points[triangle[1]], point).abs() > epsilon.sqrt() {
+                kept.push(triangle);
+            }
+        }
+        triangles = kept;
+    }
+    let result = triangles
+        .into_iter()
+        .filter(|triangle| triangle.iter().all(|index| *index < super_start))
+        .map(|triangle| {
+            [
+                source_indices[triangle[0]] as i64,
+                source_indices[triangle[1]] as i64,
+                source_indices[triangle[2]] as i64,
+            ]
+        })
+        .collect::<Vec<_>>();
+    (!result.is_empty()).then_some(result)
+}
+
+fn point_in_triangle(
+    point: (f64, f64),
+    a: (f64, f64),
+    b: (f64, f64),
+    c: (f64, f64),
+    epsilon: f64,
+) -> bool {
+    orient2d(a, b, point) >= -epsilon
+        && orient2d(b, c, point) >= -epsilon
+        && orient2d(c, a, point) >= -epsilon
+}
+
+/// Ear-clipping triangulation for one simple polygon. Concave polygons are
+/// supported; self-intersections, duplicate internal vertices, and zero-area
+/// inputs fail loudly rather than producing corrupt renderer geometry.
+pub fn polygon_triangles(x: &[f64], y: &[f64]) -> Option<Vec<[i64; 3]>> {
+    if x.len() != y.len()
+        || x.len() < 3
+        || x.len().checked_mul(x.len())? > MAX_QUADRATIC_TRIANGULATION_WORK
+        || !x.iter().chain(y).all(|value| value.is_finite())
+    {
+        return None;
+    }
+    let count = if x.len() > 3 && x[0] == x[x.len() - 1] && y[0] == y[y.len() - 1] {
+        x.len() - 1
+    } else {
+        x.len()
+    };
+    if count < 3 {
+        return None;
+    }
+    let mut seen = std::collections::HashSet::with_capacity(count);
+    if !(0..count).all(|index| seen.insert((x[index].to_bits(), y[index].to_bits()))) {
+        return None;
+    }
+    let signed_area = (0..count)
+        .map(|index| {
+            let next = (index + 1) % count;
+            x[index] * y[next] - x[next] * y[index]
+        })
+        .sum::<f64>()
+        * 0.5;
+    if signed_area == 0.0 || !signed_area.is_finite() {
+        return None;
+    }
+    let mut remaining = (0..count).collect::<Vec<_>>();
+    if signed_area < 0.0 {
+        remaining.reverse();
+    }
+    let span_x = x[..count].iter().copied().fold(f64::NEG_INFINITY, f64::max)
+        - x[..count].iter().copied().fold(f64::INFINITY, f64::min);
+    let span_y = y[..count].iter().copied().fold(f64::NEG_INFINITY, f64::max)
+        - y[..count].iter().copied().fold(f64::INFINITY, f64::min);
+    let epsilon = span_x.max(span_y).powi(2) * 1e-14;
+    let point = |index: usize| (x[index], y[index]);
+    let mut result = Vec::with_capacity(count - 2);
+    while remaining.len() > 3 {
+        let mut ear = None;
+        for position in 0..remaining.len() {
+            let a = remaining[(position + remaining.len() - 1) % remaining.len()];
+            let b = remaining[position];
+            let c = remaining[(position + 1) % remaining.len()];
+            if orient2d(point(a), point(b), point(c)) <= epsilon {
+                continue;
+            }
+            let contains = remaining.iter().any(|&candidate| {
+                candidate != a
+                    && candidate != b
+                    && candidate != c
+                    && point_in_triangle(point(candidate), point(a), point(b), point(c), epsilon)
+            });
+            if !contains {
+                ear = Some((position, [a as i64, b as i64, c as i64]));
+                break;
+            }
+        }
+        let (position, triangle) = ear?;
+        result.push(triangle);
+        remaining.remove(position);
+    }
+    result.push([
+        remaining[0] as i64,
+        remaining[1] as i64,
+        remaining[2] as i64,
+    ]);
+    Some(result)
+}
+
+/// Extract contour segments from an indexed triangular scalar field.
+#[allow(clippy::too_many_arguments)]
+pub fn marching_triangles_into(
+    x: &[f64],
+    y: &[f64],
+    z: &[f64],
+    triangles: &[i64],
+    levels: &[f64],
+    out_x0: &mut [f64],
+    out_x1: &mut [f64],
+    out_y0: &mut [f64],
+    out_y1: &mut [f64],
+    out_levels: &mut [f64],
+) -> Option<usize> {
+    if x.len() != y.len()
+        || x.len() != z.len()
+        || !triangles.len().is_multiple_of(3)
+        || !levels.iter().all(|value| value.is_finite())
+    {
+        return None;
+    }
+    let query = out_x0.is_empty()
+        && out_x1.is_empty()
+        && out_y0.is_empty()
+        && out_y1.is_empty()
+        && out_levels.is_empty();
+    let mut written = 0;
+    for face in triangles.chunks_exact(3) {
+        if face.iter().any(|index| *index < 0 || *index as usize >= x.len()) {
+            continue;
+        }
+        let ids = [face[0] as usize, face[1] as usize, face[2] as usize];
+        if ids
+            .iter()
+            .any(|index| !x[*index].is_finite() || !y[*index].is_finite() || !z[*index].is_finite())
+        {
+            continue;
+        }
+        for &level in levels {
+            let mut points = [(0.0, 0.0); 3];
+            let mut count = 0;
+            for (a, b) in [(ids[0], ids[1]), (ids[1], ids[2]), (ids[2], ids[0])] {
+                let za = z[a] - level;
+                let zb = z[b] - level;
+                let point = if za == 0.0 {
+                    Some((x[a], y[a]))
+                } else if zb == 0.0 {
+                    Some((x[b], y[b]))
+                } else if (za < 0.0) != (zb < 0.0) {
+                    let t = za / (za - zb);
+                    Some((x[a] + t * (x[b] - x[a]), y[a] + t * (y[b] - y[a])))
+                } else {
+                    None
+                };
+                if let Some(point) = point {
+                    if !points[..count].contains(&point) {
+                        points[count] = point;
+                        count += 1;
+                    }
+                }
+            }
+            if count == 2 {
+                if !query
+                    && (written >= out_x0.len()
+                    || written >= out_x1.len()
+                    || written >= out_y0.len()
+                    || written >= out_y1.len()
+                    || written >= out_levels.len())
+                {
+                    return None;
+                }
+                if !query {
+                    out_x0[written] = points[0].0;
+                    out_y0[written] = points[0].1;
+                    out_x1[written] = points[1].0;
+                    out_y1[written] = points[1].1;
+                    out_levels[written] = level;
+                }
+                written += 1;
+            }
+        }
+    }
+    Some(written)
+}
+
+/// Convert vector origins/components into compact shaft + arrowhead segments.
+///
+/// `scale` follows vector-field convention: larger values shorten arrows.
+/// `pivot` is 0 tail, 1 midpoint, 2 tip. Invalid vectors are omitted so no
+/// non-finite coordinate can reach the renderer.
+#[allow(clippy::too_many_arguments)]
+pub fn vector_segments_into(
+    x: &[f64],
+    y: &[f64],
+    u: &[f64],
+    v: &[f64],
+    scale: f64,
+    pivot: u32,
+    head_ratio: f64,
+    out_x0: &mut [f64],
+    out_x1: &mut [f64],
+    out_y0: &mut [f64],
+    out_y1: &mut [f64],
+) -> Option<usize> {
+    if x.len() != y.len()
+        || x.len() != u.len()
+        || x.len() != v.len()
+        || !scale.is_finite()
+        || scale <= 0.0
+        || pivot > 2
+        || !head_ratio.is_finite()
+        || !(0.0..=1.0).contains(&head_ratio)
+    {
+        return None;
+    }
+    let required = x.len().checked_mul(3)?;
+    if out_x0.len() < required
+        || out_x1.len() < required
+        || out_y0.len() < required
+        || out_y1.len() < required
+    {
+        return None;
+    }
+    let mut written = 0;
+    let head_angle = 0.45_f64;
+    let (sin_a, cos_a) = head_angle.sin_cos();
+    for index in 0..x.len() {
+        if !x[index].is_finite()
+            || !y[index].is_finite()
+            || !u[index].is_finite()
+            || !v[index].is_finite()
+        {
+            continue;
+        }
+        let dx = u[index] / scale;
+        let dy = v[index] / scale;
+        let length = dx.hypot(dy);
+        if length == 0.0 {
+            continue;
+        }
+        let (tail_x, tail_y) = match pivot {
+            0 => (x[index], y[index]),
+            1 => (x[index] - 0.5 * dx, y[index] - 0.5 * dy),
+            2 => (x[index] - dx, y[index] - dy),
+            _ => unreachable!(),
+        };
+        let tip_x = tail_x + dx;
+        let tip_y = tail_y + dy;
+        out_x0[written] = tail_x;
+        out_y0[written] = tail_y;
+        out_x1[written] = tip_x;
+        out_y1[written] = tip_y;
+        written += 1;
+
+        let head = length * head_ratio;
+        let ux = dx / length;
+        let uy = dy / length;
+        for side in [-1.0, 1.0] {
+            let rx = ux * cos_a - side * uy * sin_a;
+            let ry = side * ux * sin_a + uy * cos_a;
+            out_x0[written] = tip_x;
+            out_y0[written] = tip_y;
+            out_x1[written] = tip_x - head * rx;
+            out_y1[written] = tip_y - head * ry;
+            written += 1;
+        }
+    }
+    Some(written)
+}
+
+fn sample_vector_grid(
+    x_coords: &[f64],
+    y_coords: &[f64],
+    u: &[f64],
+    v: &[f64],
+    x: f64,
+    y: f64,
+) -> Option<(f64, f64)> {
+    if x < x_coords[0]
+        || x > x_coords[x_coords.len() - 1]
+        || y < y_coords[0]
+        || y > y_coords[y_coords.len() - 1]
+    {
+        return None;
+    }
+    let col = x_coords
+        .partition_point(|value| *value <= x)
+        .saturating_sub(1)
+        .min(x_coords.len() - 2);
+    let row = y_coords
+        .partition_point(|value| *value <= y)
+        .saturating_sub(1)
+        .min(y_coords.len() - 2);
+    let tx = (x - x_coords[col]) / (x_coords[col + 1] - x_coords[col]);
+    let ty = (y - y_coords[row]) / (y_coords[row + 1] - y_coords[row]);
+    let cols = x_coords.len();
+    let interp = |values: &[f64]| {
+        let a = values[row * cols + col];
+        let b = values[row * cols + col + 1];
+        let c = values[(row + 1) * cols + col];
+        let d = values[(row + 1) * cols + col + 1];
+        (a * (1.0 - tx) + b * tx) * (1.0 - ty) + (c * (1.0 - tx) + d * tx) * ty
+    };
+    let sampled = (interp(u), interp(v));
+    (sampled.0.is_finite() && sampled.1.is_finite()).then_some(sampled)
+}
+
+/// Integrate screen-bounded streamlines over a regular vector grid.
+///
+/// The output is independent segments so it reuses the same transport and
+/// renderer as contours/error bars. Occupancy suppresses redundant paths;
+/// work is bounded by grid resolution, density, and `max_steps`, never by an
+/// unbounded adaptive integrator.
+#[allow(clippy::too_many_arguments)]
+pub fn streamlines(
+    x_coords: &[f64],
+    y_coords: &[f64],
+    u: &[f64],
+    v: &[f64],
+    density: f64,
+    max_steps: usize,
+) -> Option<Vec<(f64, f64, f64, f64)>> {
+    let rows = y_coords.len();
+    let cols = x_coords.len();
+    let len = rows.checked_mul(cols)?;
+    if rows < 2
+        || cols < 2
+        || u.len() != len
+        || v.len() != len
+        || !density.is_finite()
+        || density <= 0.0
+        || max_steps == 0
+        || !x_coords.windows(2).all(|pair| pair[1] > pair[0])
+        || !y_coords.windows(2).all(|pair| pair[1] > pair[0])
+        || !x_coords.iter().all(|value| value.is_finite())
+        || !y_coords.iter().all(|value| value.is_finite())
+    {
+        return None;
+    }
+    let min_dx = x_coords
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .fold(f64::INFINITY, f64::min);
+    let min_dy = y_coords
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .fold(f64::INFINITY, f64::min);
+    let step = 0.35 * min_dx.min(min_dy);
+    let seed_stride = (((rows.min(cols) as f64) / (12.0 * density)).floor() as usize).max(1);
+    let mut occupied = vec![false; len];
+    let mut out = Vec::new();
+    for seed_row in (0..rows).step_by(seed_stride) {
+        for seed_col in (0..cols).step_by(seed_stride) {
+            if occupied[seed_row * cols + seed_col] {
+                continue;
+            }
+            for direction in [-1.0, 1.0] {
+                let mut px = x_coords[seed_col];
+                let mut py = y_coords[seed_row];
+                for _ in 0..max_steps {
+                    let Some((su, sv)) = sample_vector_grid(x_coords, y_coords, u, v, px, py)
+                    else {
+                        break;
+                    };
+                    let speed = su.hypot(sv);
+                    if speed <= f64::EPSILON {
+                        break;
+                    }
+                    let nx = px + direction * step * su / speed;
+                    let ny = py + direction * step * sv / speed;
+                    if nx < x_coords[0]
+                        || nx > x_coords[cols - 1]
+                        || ny < y_coords[0]
+                        || ny > y_coords[rows - 1]
+                    {
+                        break;
+                    }
+                    let col = x_coords
+                        .partition_point(|value| *value <= nx)
+                        .saturating_sub(1)
+                        .min(cols - 1);
+                    let row = y_coords
+                        .partition_point(|value| *value <= ny)
+                        .saturating_sub(1)
+                        .min(rows - 1);
+                    let cell = row * cols + col;
+                    if occupied[cell] && !(row == seed_row && col == seed_col) {
+                        break;
+                    }
+                    occupied[cell] = true;
+                    out.push((px, nx, py, ny));
+                    px = nx;
+                    py = ny;
+                }
+            }
+            occupied[seed_row * cols + seed_col] = true;
+        }
+    }
+    Some(out)
+}
+
 /// M4 decimation (§5 Tier 1): for `n_buckets` uniform buckets over `[x0, x1)`,
 /// return the source indices of {first, min-y, max-y, last} per bucket, sorted
 /// ascending and deduplicated.
@@ -330,32 +1782,34 @@ where
     assert_eq!(x_coords.len(), cols);
     assert_eq!(y_coords.len(), rows);
     let mut count = 0usize;
-    for &level in levels {
-        for row in 0..rows - 1 {
-            for col in 0..cols - 1 {
-                let v00 = z[row * cols + col];
-                let v10 = z[row * cols + col + 1];
-                let v11 = z[(row + 1) * cols + col + 1];
-                let v01 = z[(row + 1) * cols + col];
-                if !(v00.is_finite() && v10.is_finite() && v11.is_finite() && v01.is_finite()) {
-                    continue;
-                }
+    let sorted_levels = levels.windows(2).all(|pair| pair[0] <= pair[1]);
+    for row in 0..rows - 1 {
+        for col in 0..cols - 1 {
+            let v00 = z[row * cols + col];
+            let v10 = z[row * cols + col + 1];
+            let v11 = z[(row + 1) * cols + col + 1];
+            let v01 = z[(row + 1) * cols + col];
+            if !(v00.is_finite() && v10.is_finite() && v11.is_finite() && v01.is_finite()) {
+                continue;
+            }
+            let local_min = v00.min(v10).min(v11).min(v01);
+            let local_max = v00.max(v10).max(v11).max(v01);
+            let corners = [
+                (x_coords[col], y_coords[row], v00),
+                (x_coords[col + 1], y_coords[row], v10),
+                (x_coords[col + 1], y_coords[row + 1], v11),
+                (x_coords[col], y_coords[row + 1], v01),
+            ];
+            let mut process_level = |level: f64| {
                 let mask = u8::from(v00 >= level)
                     | (u8::from(v10 >= level) << 1)
                     | (u8::from(v11 >= level) << 2)
                     | (u8::from(v01 >= level) << 3);
                 let pairs = contour_pairs(mask);
                 if pairs.is_empty() {
-                    continue;
+                    return;
                 }
-                let corners = [
-                    (x_coords[col], y_coords[row], v00),
-                    (x_coords[col + 1], y_coords[row], v10),
-                    (x_coords[col + 1], y_coords[row + 1], v11),
-                    (x_coords[col], y_coords[row + 1], v01),
-                ];
-                let mut points = [(0.0f64, 0.0f64); 4];
-                for edge in 0..4 {
+                let edge_point = |edge: usize| {
                     let (xa, ya, va) = corners[edge];
                     let (xb, yb, vb) = corners[(edge + 1) % 4];
                     let denom = vb - va;
@@ -364,16 +1818,29 @@ where
                     } else {
                         ((level - va) / denom).clamp(0.0, 1.0)
                     };
-                    points[edge] = (
+                    (
                         xa + (xb - xa) * fraction,
                         ya + (yb - ya) * fraction,
-                    );
-                }
+                    )
+                };
                 for &(edge_a, edge_b) in pairs {
-                    let (x0, y0) = points[edge_a as usize];
-                    let (x1, y1) = points[edge_b as usize];
+                    let (x0, y0) = edge_point(edge_a as usize);
+                    let (x1, y1) = edge_point(edge_b as usize);
                     emit(x0, x1, y0, y1, level);
                     count += 1;
+                }
+            };
+            if sorted_levels {
+                let start = levels.partition_point(|level| *level < local_min);
+                let end = levels.partition_point(|level| *level <= local_max);
+                for &level in &levels[start..end] {
+                    process_level(level);
+                }
+            } else {
+                for &level in levels {
+                    if level >= local_min && level <= local_max {
+                        process_level(level);
+                    }
                 }
             }
         }
@@ -417,6 +1884,48 @@ pub fn marching_squares_into(
         written += 1;
     });
     written
+}
+
+/// Map normalized heatmap scalars to a top-row-first RGBA8 image. This is the
+/// native counterpart of `_scene.grid_rgba`'s heatmap branch: the payload's
+/// reserved zero represents missing data, while finite values map through the
+/// same evenly spaced color stops with ties-to-even byte rounding.
+pub fn heatmap_rgba_into(
+    raw: &[f64],
+    w: usize,
+    h: usize,
+    stops: &[[u8; 3]],
+    alpha: u8,
+    out: &mut [u8],
+) -> bool {
+    if w == 0
+        || h == 0
+        || stops.is_empty()
+        || raw.len() != w.saturating_mul(h)
+        || out.len() != raw.len().saturating_mul(4)
+    {
+        return false;
+    }
+    let last = stops.len() - 1;
+    for row in 0..h {
+        let destination_row = h - 1 - row;
+        for col in 0..w {
+            let value = raw[row * w + col];
+            let t = ((value * 255.0 - 1.0) / 254.0).clamp(0.0, 1.0);
+            let position = t * last as f64;
+            let lo = position.floor() as usize;
+            let hi = (lo + 1).min(last);
+            let fraction = position - lo as f64;
+            let destination = (destination_row * w + col) * 4;
+            for channel in 0..3 {
+                let start = stops[lo][channel] as f64;
+                let value = start + (stops[hi][channel] as f64 - start) * fraction;
+                out[destination + channel] = value.round_ties_even().clamp(0.0, 255.0) as u8;
+            }
+            out[destination + 3] = if value <= 0.0 { 0 } else { alpha };
+        }
+    }
+    true
 }
 
 /// 2D density aggregation (§5 Tier 2): additively bin points into a `w × h`
@@ -1321,6 +2830,135 @@ fn min_max_impl(data: &[f64], threads: usize) -> Option<(f64, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stacked_bounds_zero_and_symmetric() {
+        let values = [1.0, 2.0, 3.0, 4.0, 10.0, 20.0];
+        let mut lower = [0.0; 6];
+        let mut upper = [0.0; 6];
+        assert!(stacked_bounds_into(
+            &values,
+            2,
+            3,
+            0,
+            &mut lower,
+            &mut upper
+        ));
+        assert_eq!(lower, [0.0, 0.0, 0.0, 1.0, 2.0, 3.0]);
+        assert_eq!(upper, [1.0, 2.0, 3.0, 5.0, 12.0, 23.0]);
+        assert!(stacked_bounds_into(
+            &values,
+            2,
+            3,
+            1,
+            &mut lower,
+            &mut upper
+        ));
+        assert_eq!(lower, [-2.5, -6.0, -11.5, -1.5, -4.0, -8.5]);
+        assert_eq!(upper, [-1.5, -4.0, -8.5, 2.5, 6.0, 11.5]);
+    }
+
+    #[test]
+    fn histogram2d_includes_right_edge_and_weights() {
+        let x = [0.0, 0.5, 1.0, 2.0, f64::NAN];
+        let y = [0.0, 0.5, 1.0, 2.0, 0.5];
+        let weights = [1.0, 2.0, 3.0, 4.0, 100.0];
+        let edges = [0.0, 1.0, 2.0];
+        let mut out = [0.0; 4];
+        assert!(histogram2d_into(
+            &x,
+            &y,
+            Some(&weights),
+            &edges,
+            &edges,
+            &mut out
+        ));
+        assert_eq!(out, [3.0, 0.0, 0.0, 7.0]);
+    }
+
+    #[test]
+    fn quad_mesh_expands_rectilinear_and_compacts_missing_cells() {
+        let x = [0.0, 1.0, 3.0];
+        let y = [10.0, 20.0];
+        let values = [2.0, f64::NAN];
+        let mut x0 = [0.0; 4];
+        let mut y0 = [0.0; 4];
+        let mut x1 = [0.0; 4];
+        let mut y1 = [0.0; 4];
+        let mut x2 = [0.0; 4];
+        let mut y2 = [0.0; 4];
+        let mut scalar = [0.0; 4];
+        let written = quad_mesh_triangles_into(
+            &x,
+            &y,
+            &values,
+            1,
+            2,
+            0,
+            &mut x0,
+            &mut y0,
+            &mut x1,
+            &mut y1,
+            &mut x2,
+            &mut y2,
+            &mut scalar,
+        );
+        assert_eq!(written, Some(2));
+        assert_eq!(&scalar[..2], &[2.0, 2.0]);
+        assert_eq!((x0[0], y0[0], x1[0], y1[0], x2[0], y2[0]), (0.0, 10.0, 1.0, 10.0, 1.0, 20.0));
+        assert_eq!((x0[1], y0[1], x1[1], y1[1], x2[1], y2[1]), (0.0, 10.0, 1.0, 20.0, 0.0, 20.0));
+    }
+
+    #[test]
+    fn vector_segments_compact_invalid_vectors() {
+        let x = [0.0, f64::NAN];
+        let y = [0.0, 1.0];
+        let u = [2.0, 1.0];
+        let v = [0.0, 1.0];
+        let mut x0 = [0.0; 6];
+        let mut x1 = [0.0; 6];
+        let mut y0 = [0.0; 6];
+        let mut y1 = [0.0; 6];
+        let written = vector_segments_into(
+            &x, &y, &u, &v, 1.0, 0, 0.2, &mut x0, &mut x1, &mut y0, &mut y1,
+        );
+        assert_eq!(written, Some(3));
+        assert_eq!((x0[0], y0[0], x1[0], y1[0]), (0.0, 0.0, 2.0, 0.0));
+    }
+
+    #[test]
+    fn weighted_ecdf_sorts_coalesces_and_normalizes() {
+        let values = [3.0, 1.0, 2.0, 2.0, f64::NAN];
+        let weights = [4.0, 1.0, 2.0, 3.0, 99.0];
+        let mut x = [0.0; 5];
+        let mut cumulative = [0.0; 5];
+        let written = weighted_ecdf_into(&values, &weights, &mut x, &mut cumulative);
+        assert_eq!(written, Some(3));
+        assert_eq!(&x[..3], &[1.0, 2.0, 3.0]);
+        assert_eq!(&cumulative[..3], &[0.1, 0.6, 1.0]);
+    }
+
+    #[test]
+    fn streamlines_stay_inside_regular_grid() {
+        let x = [-1.0, 0.0, 1.0];
+        let y = [-1.0, 0.0, 1.0];
+        let mut u = Vec::new();
+        let mut v = Vec::new();
+        for &yv in &y {
+            for &xv in &x {
+                u.push(-yv);
+                v.push(xv);
+            }
+        }
+        let lines = streamlines(&x, &y, &u, &v, 1.0, 100).expect("valid grid");
+        assert!(!lines.is_empty());
+        assert!(lines.iter().all(|&(x0, x1, y0, y1)| {
+            (-1.0..=1.0).contains(&x0)
+                && (-1.0..=1.0).contains(&x1)
+                && (-1.0..=1.0).contains(&y0)
+                && (-1.0..=1.0).contains(&y1)
+        }));
+    }
 
     #[test]
     fn marching_squares_extracts_ambiguous_cell_segments() {

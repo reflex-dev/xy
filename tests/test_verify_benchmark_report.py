@@ -159,6 +159,85 @@ def _core_2d_report() -> dict:
     }
 
 
+def _pyplot_vs_matplotlib_report() -> dict:
+    categories, tracked = _category_registry(
+        "small_data_startup", "core_2d_chart_breadth", "static_export"
+    )
+    rows = []
+    for library, mode, total_ms in (
+        ("xy.pyplot", "native-raster", 10.0),
+        ("matplotlib", "agg", 20.0),
+    ):
+        rows.append(
+            {
+                "family": "line",
+                "case": "20,000 samples",
+                "work_units": 20_000,
+                "unit": "samples",
+                "library": library,
+                "status": "ok",
+                "render_target": "png",
+                "mode": mode,
+                "oracle_status": "pass",
+                "oracle_kind": "same-pixel-dimensions-and-nonblank",
+                "png_width": 1800,
+                "png_height": 840,
+                "lit_pixels": 10_000,
+                "reps": 2,
+                "samples": [
+                    {
+                        "build_ms": 1.0,
+                        "render_ms": total_ms - 1.0,
+                        "total_ms": total_ms,
+                        "output_bytes": 1000,
+                    },
+                    {
+                        "build_ms": 1.1,
+                        "render_ms": total_ms - 1.1,
+                        "total_ms": total_ms,
+                        "output_bytes": 1000,
+                    },
+                ],
+                "build_median_ms": 1.05,
+                "render_median_ms": total_ms - 1.05,
+                "total_median_ms": total_ms,
+                "total_p95_ms": total_ms,
+                "output_bytes_median": 1000,
+                **({"render_tier": "direct"} if library == "xy.pyplot" else {}),
+            }
+        )
+    return {
+        **_base(),
+        "kind": "pyplot-vs-matplotlib",
+        "benchmark_categories": categories,
+        "tracked_categories": tracked,
+        "profile": "smoke",
+        "reps": 2,
+        "warmups": 1,
+        "pixel_target": {"width": 1800, "height": 840, "format": "png"},
+        "measurement_scope": "warmed-api-build-through-static-png",
+        "rows": rows,
+        "comparisons": [
+            {
+                "family": "line",
+                "case": "20,000 samples",
+                "work_units": 20_000,
+                "unit": "samples",
+                "xy_speedup_total": 2.0,
+                "target_xy_speedup_total": 10.0,
+                "meets_target": False,
+                "xy_speedup_build": 1.0,
+                "xy_speedup_render": 2.0,
+                "png_size_ratio_matplotlib_over_xy": 1.0,
+                "winner_total": "xy.pyplot",
+            }
+        ],
+        "target_xy_speedup_total": 10.0,
+        "all_targets_met": False,
+        "geometric_mean_xy_speedup_total": 2.0,
+    }
+
+
 def _scatter_native_report() -> dict:
     categories, tracked = _category_registry("medium_direct_scatter", "huge_scatter_overview")
     return {
@@ -614,6 +693,7 @@ def _workflow_native_report() -> dict:
     [
         (_scatter_vs_report(), "scatter-vs"),
         (_core_2d_report(), "core-2d"),
+        (_pyplot_vs_matplotlib_report(), "pyplot-vs-matplotlib"),
         (_scatter_native_report(), "scatter-native"),
         (_kernel_native_report(), "kernel-native"),
         (_interaction_browser_report(), "interaction-browser"),
@@ -960,6 +1040,47 @@ def test_verify_benchmark_report_rejects_duplicate_core_2d_comparisons(
     errors = verify_benchmark_report.validate_report(path, kind="core-2d")
 
     assert any("duplicates core 2D comparison" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_missing_pyplot_render_tier(tmp_path: Path) -> None:
+    payload = _pyplot_vs_matplotlib_report()
+    for row in payload["rows"]:
+        row.pop("render_tier", None)
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(payload))
+    errors = verify_benchmark_report.validate_report(path, kind="pyplot-vs-matplotlib")
+    assert any("render_tier" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_unknown_pyplot_render_tier(tmp_path: Path) -> None:
+    payload = _pyplot_vs_matplotlib_report()
+    for row in payload["rows"]:
+        if row["library"] == "xy.pyplot":
+            row["render_tier"] = "subsampled"
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(payload))
+    errors = verify_benchmark_report.validate_report(path, kind="pyplot-vs-matplotlib")
+    assert any("render_tier" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_incomplete_pyplot_library_pair(tmp_path: Path) -> None:
+    payload = _pyplot_vs_matplotlib_report()
+    payload["rows"] = [row for row in payload["rows"] if row["library"] == "xy.pyplot"]
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="pyplot-vs-matplotlib")
+
+    assert any("must contain exactly" in error and "matplotlib" in error for error in errors)
+
+
+def test_verify_benchmark_report_rejects_short_pyplot_sample_set(tmp_path: Path) -> None:
+    payload = _pyplot_vs_matplotlib_report()
+    payload["rows"][0]["samples"].pop()
+    path = _write_report(tmp_path, payload)
+
+    errors = verify_benchmark_report.validate_report(path, kind="pyplot-vs-matplotlib")
+
+    assert any("samples must contain exactly report.reps" in error for error in errors)
 
 
 def test_verify_benchmark_report_rejects_duplicate_scatter_native_rows(tmp_path: Path) -> None:

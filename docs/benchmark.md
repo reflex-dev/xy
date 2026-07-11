@@ -58,11 +58,11 @@ commit so CI artifacts are quick to inspect from logs.
 | `many_chart_dashboards` | Many-chart dashboards | tracked | Plotly-class apps often fail from total page weight and many live canvases, not one chart. | payload prep, navigation readiness, JS heap, redraw submission, scroll visibility, context loss/restore, stable chart-count ceiling | `benchmarks/bench_dashboard.py` | Measure the 10-50 chart scaling curve and expose LRU context eviction without discarding partial-row metrics. |
 | `interaction_smoothness` | Interaction smoothness | tracked | Users judge performance by pan/zoom/hover, not just export time. | pan/zoom FPS, wheel latency, hover latency, tooltip stability, selection latency, frame color delta | `benchmarks/bench_interaction.py` | Stay responsive during interaction, avoid blank/flickering frames, then refine view after interaction settles. |
 | `payload_export_size` | Payload/export size | tracked | Notebooks, static HTML, docs, and dashboards pay for every byte shipped. | standalone HTML bytes, binary payload bytes, bundle bytes | `bench_vs.py`, `bench_scatter_native.py`, `test_first_payload_density_large`, `test_memory_report_density_medium`, example app asset sizes | Keep data payloads binary and screen-bounded where possible; warn when exact export would be huge. |
-| `core_2d_chart_breadth` | Core 2D chart breadth | tracked | The library needs to stay fast beyond the scatter wedge: bars, histograms, areas, and heatmaps are everyday chart workloads. | payload-prep time, payload bytes, standalone HTML bytes, TTFR | `benchmarks/bench_2d_charts.py` smoke/standard profiles vs Plotly and Seaborn; `bench_interaction.py`; CodSpeed core-2D payload rows | Beat Plotly on user-visible first paint for common 2D charts while tracking Seaborn raster baselines where applicable. |
+| `core_2d_chart_breadth` | Core 2D chart breadth | tracked | The library needs to stay fast beyond the scatter wedge: bars, histograms, areas, and heatmaps are everyday chart workloads. | payload-prep time, payload bytes, standalone HTML bytes, TTFR | `benchmarks/bench_2d_charts.py` vs Plotly/Seaborn; `benchmarks/bench_pyplot_vs_matplotlib.py`; `bench_interaction.py`; CodSpeed core-2D rows | Beat Plotly on user-visible first paint for common 2D charts while tracking Matplotlib/Seaborn raster baselines where applicable. |
 | `input_ingestion` | Input ingestion | tracked | Real applications provide converted, strided, datetime, list, pandas, and Arrow inputs rather than only contiguous f64 arrays. | ingest latency, copies, peak Python memory | `benchmarks/bench_workflows.py` ingestion rows | Keep zero-copy inputs cheap and make unavoidable conversions visible. |
 | `streaming_updates` | Streaming updates | tracked | Monitoring and notebook workflows append repeatedly and can trigger payload refreshes or full pyramid rebuilds. | append latency, refresh bytes, post-append pyramid rebuild | `benchmarks/bench_workflows.py` streaming rows | Bound incremental update cost and expose rebuild stalls. |
 | `log_autorange` | Log autorange | tracked | Large positive/negative and non-finite series are common in monitoring and scientific charts, and log axes must avoid full-data rescans. | range latency, positive-domain correctness, peak Python memory | `benchmarks/bench_workflows.py` log autorange row; `tests/test_figure.py` | Compute correct positive log domains from zone statistics with cost proportional to chunks, not points. |
-| `static_export` | Static export | tracked | HTML, SVG, and PNG have distinct serialization and browser costs. | export latency, output bytes, peak Python memory | `benchmarks/bench_workflows.py` export rows | Track each target independently without mixing browser and payload work. |
+| `static_export` | Static export | tracked | HTML, SVG, and PNG have distinct serialization and browser costs. | export latency, output bytes, peak Python memory | `benchmarks/bench_workflows.py` export rows; `benchmarks/bench_pyplot_vs_matplotlib.py` matched PNG rows | Track each target independently without mixing browser and payload work. |
 
 Mode labels in benchmark output should stay explicit: `direct`, `decimated`,
 `density`, `sampled`, or `adaptive`. A 10M density result is a real large-data
@@ -169,6 +169,89 @@ Do not shorten those into broad slogans such as "xy is faster than
 Plotly" or "renders 10M points" without the row context. If a sentence does not
 name the chart type, workload, mode, backend, metric, and render target where
 they matter, it is not ready to publish.
+
+## `xy.pyplot` versus Matplotlib/Agg
+
+`benchmarks/bench_pyplot_vs_matplotlib.py` runs the same Matplotlib-style calls
+against `xy.pyplot` and Matplotlib, then requires both arms to produce a
+nonblank PNG at the same 1800×840 pixel size. Data generation, imports, and
+warm-up renders are excluded; library order alternates between repetitions. The
+headline metric is median total chart-to-compressed-PNG time. Build time alone
+is diagnostic because `xy.pyplot` deliberately defers most work until export.
+
+Every row also discloses the xy render tier (§28: tier decisions are never
+silent): `direct` paints every mark exactly as Matplotlib does, `decimated` is
+the M4-reduced line series, and `density` is a screen-bounded aggregate. The
+report verifier rejects an xy row that omits the tier.
+
+The following is a local diagnostic run from 2026-07-11 (macOS arm64, Python
+3.14.5, Matplotlib 3.11.0, xy native Rust backend, dirty worktree), with 21
+repetitions per arm and three warm-ups, after the row-band parallel
+rasterizer landed. The gate requires every family—not an average—to reach
+10×:
+
+| family | workload | xy tier | xy total | Matplotlib total | xy speedup | total-time winner |
+|---|---|---|---:|---:|---:|---|
+| line | 200,000 samples | decimated | 3.11 ms | 32.53 ms | 10.45× | xy |
+| scatter | 200,000 points | direct | 11.06 ms | 420.6 ms | 38.04× | xy |
+| histogram | 1,000,000 values / 200 bins | direct | 2.90 ms | 52.50 ms | 18.13× | xy |
+| bar | 1,000 bars | direct | 5.72 ms | 147.9 ms | 25.84× | xy |
+| pcolormesh | 200×300 cells | direct | 3.52 ms | 40.71 ms | 11.55× | xy |
+| contour | 150×200 cells / 12 levels | direct | 3.64 ms | 36.43 ms | 10.02× | xy |
+
+The geometric-mean result is **16.68× in xy's favor**, and every standard
+family clears the explicit 10× gate. This is the scoped claim: warmed
+Matplotlib-style construction through a validated 1800×840 PNG for the exact
+workloads above. It is not a claim about every Matplotlib API, arbitrary image
+sizes, or interactive rendering. xy's latency-oriented PNGs remain larger than
+Matplotlib's in every row; the gate measures chart-to-pixels latency, while the
+existing balanced encoder remains available where file size is the priority.
+
+The `huge` profile runs the same families at the sizes where static Matplotlib
+workflows actually stall (same machine, 11 repetitions, 2 warm-ups). Agg's
+cost scales with N; xy's disclosed tiers stay screen-bounded:
+
+| family | workload | xy tier | xy total | Matplotlib total | xy speedup |
+|---|---|---|---:|---:|---:|
+| line | 1,000,000 samples | decimated | 3.82 ms | 50.48 ms | 13.22× |
+| scatter | 1,000,000 points | density | 15.56 ms | 1,983.5 ms | **127.51×** |
+| histogram | 5,000,000 values / 200 bins | direct | 3.60 ms | 68.12 ms | 18.90× |
+| bar | 5,000 bars | direct | 18.01 ms | 654.5 ms | 36.35× |
+| pcolormesh | 400×600 cells | direct | 5.20 ms | 79.84 ms | 15.34× |
+| contour | 250×320 cells / 12 levels | direct | 4.45 ms | 38.33 ms | 8.62× |
+
+Geometric mean on the huge profile: **23.13×**; the scatter family — the
+workload the density tier exists for — crosses 100×. Contour is the honest
+straggler (8.62×): its marching work grows with the grid on both sides, and
+the 250×320 size is the largest that fits the contour kernel's bounded work
+budget. The huge-profile scatter row is a tier-disclosed comparison: xy
+rasterizes a screen-bounded density surface (the same output a user sees for
+1M points) while Matplotlib paints all 1M marks.
+
+The RGBA8 raster rewrite's one known native-API regression is now a win: the
+same-machine 100,000-point default-style direct scatter at scale 1 that
+measured ~13% slower than `main` before the row-band parallel rasterizer now
+measures 14.5–15.1 ms on this branch versus 19.9–20.1 ms on `main` (about 27%
+faster), byte-identical output. CodSpeed continues to track the direct tier.
+
+Reproduce and retain the raw samples with:
+
+```bash
+PYTHONPATH=python .venv/bin/python benchmarks/bench_pyplot_vs_matplotlib.py \
+  --profile standard --reps 21 --warmups 3 --target-speedup 10 \
+  --require-target --json pyplot-vs-matplotlib.json \
+  --out pyplot-vs-matplotlib.md
+PYTHONPATH=python .venv/bin/python benchmarks/bench_pyplot_vs_matplotlib.py \
+  --profile huge --reps 11 --warmups 2 \
+  --json pyplot-vs-matplotlib-huge.json --out pyplot-vs-matplotlib-huge.md
+python scripts/verify_benchmark_report.py pyplot-vs-matplotlib.json \
+  --kind pyplot-vs-matplotlib
+```
+
+This is a static notebook/report comparison. It does not imply equivalent
+interaction: xy's browser WebGL zoom/pan path is measured by
+`benchmarks/bench_interaction.py`, while Matplotlib/Agg produces a completed
+raster and has no comparable client-side interaction loop.
 
 ## Time to first render (data → pixels)
 

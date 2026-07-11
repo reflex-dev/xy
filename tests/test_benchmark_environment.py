@@ -223,6 +223,14 @@ def test_context_governor_reserves_pending_restores() -> None:
     assert reserve < restore
 
 
+def test_triangle_mesh_resource_cleanup_deletes_every_coordinate_buffer() -> None:
+    client = (ROOT / "js" / "src" / "50_chartview.js").read_text(encoding="utf-8")
+    cleanup = client[client.index("_destroyTraceResources(g, texSeen)") :]
+    cleanup = cleanup[: cleanup.index("_destroyGlResources()")]
+    for name in ("x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf"):
+        assert f'"{name}"' in cleanup
+
+
 def test_benchmark_categories_track_core_hardening_metrics() -> None:
     medium_scatter_metrics = CATEGORY_BY_ID["medium_direct_scatter"]["metrics"]
     interaction_metrics = CATEGORY_BY_ID["interaction_smoothness"]["metrics"]

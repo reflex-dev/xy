@@ -311,8 +311,8 @@ Density/heatmap tiers embed as compact rasters.
 `fig.to_png(path?, width=, height=, scale=)` defaults to `engine="native"`: the
 built-in **Rust rasterizer** paints that same decimated payload — no browser,
 millisecond export (a 10M-point line rasterizes in ~40 ms), and indexed-palette
-PNGs for small files. Text uses a baked bitmap font (the dependency-free core
-has no FreeType), so small labels are slightly less refined than a browser's.
+PNGs for small files. Text uses a baked bitmap font (the core has no FreeType),
+so small labels are slightly less refined than a browser's.
 For a pixel-exact match to the live WebGL chart, `engine="chromium"` screenshots
 the standalone HTML (needs a local Chrome/Chromium).
 

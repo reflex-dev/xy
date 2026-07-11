@@ -89,6 +89,7 @@ def _base_checks(
                 "pytest",
                 "-q",
                 "tests/test_benchmark_environment.py",
+                "tests/test_bench_pyplot_vs_matplotlib.py",
                 "tests/test_verify_benchmark_report.py",
                 "tests/test_check_regressions.py",
                 "tests/test_claim_guardrails.py",

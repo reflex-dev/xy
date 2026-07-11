@@ -24,7 +24,7 @@ _finite_scalar = _validate.finite_scalar
 
 # Named colormaps the client knows (LUTs live in the JS client, §36). Kept
 # small and CVD-safe by default.
-COLORMAPS = ("viridis", "magma", "plasma", "cividis", "turbo")
+COLORMAPS = ("viridis", "magma", "plasma", "inferno", "cividis", "gray", "turbo", "coolwarm")
 DEFAULT_COLORMAP = "viridis"
 
 # The client palette LUT is 256 texels; categories beyond this collide in the

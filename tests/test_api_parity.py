@@ -52,6 +52,8 @@ MARK_PAIRS = [
     ("step", "step"),
     ("stairs", "stairs"),
     ("stem", "stem"),
+    ("segments", "segments"),
+    ("triangle_mesh", "triangle_mesh"),
 ]
 
 # One inline-data Mark per applier kind, used to exercise real forwarding.
@@ -73,6 +75,10 @@ SAMPLE_MARKS = {
     "step": lambda: fc.step(x=[1.0, 2.0], y=[3.0, 4.0]),
     "stairs": lambda: fc.stairs(values=[1.0, 2.0], edges=[0.0, 1.0, 2.0]),
     "stem": lambda: fc.stem(x=[1.0, 2.0], y=[3.0, 4.0]),
+    "segments": lambda: fc.segments(x0=[0.0, 1.0], y0=[0.0, 1.0], x1=[1.0, 2.0], y1=[1.0, 0.0]),
+    "triangle_mesh": lambda: fc.triangle_mesh(
+        x0=[0.0], y0=[0.0], x1=[1.0], y1=[0.0], x2=[0.5], y2=[1.0]
+    ),
 }
 
 

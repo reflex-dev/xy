@@ -382,7 +382,7 @@ Parallel, non-chart-type tracks:
 
 - **Native PNG rasterizer** (perf) — **shipped** (dossier Phase 3).
   `Chart.to_png(engine="native")`, now the default, paints the decimated
-  payload with a dependency-free AA rasterizer in the Rust core (ABI v8,
+  payload with an AA rasterizer in the Rust core (introduced in ABI v8,
   `fc_rasterize`) — no browser, ~50× faster than the Chromium screenshot,
   indexed-palette PNGs, and a baked bitmap font for text. `engine="chromium"`
   stays for a pixel-exact WebGL screenshot.

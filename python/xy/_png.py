@@ -1,4 +1,4 @@
-"""Minimal dependency-free PNG encoders for static export.
+"""Minimal stdlib PNG encoders for size-oriented static export.
 
 Two encoders share one zlib-based chunk writer:
 
@@ -9,8 +9,8 @@ Two encoders share one zlib-based chunk writer:
   one byte per pixel instead of four shrinks native-PNG exports several-fold.
   Falls back to truecolor otherwise.
 
-Kept out of the Rust core deliberately: encoding is cheap next to rasterization
-and stays pure-Python/stdlib (no `png` crate needed).
+This balanced/indexed path stays pure Python/stdlib. The separate latency-first
+`xy.pyplot` path fuses rasterization with the Rust PNG encoder.
 """
 
 from __future__ import annotations

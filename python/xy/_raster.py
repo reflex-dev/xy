@@ -22,6 +22,7 @@ from ._svg import (
     _AXIS,
     _GRID,
     _TEXT,
+    COLORMAP_STOPS,
     DEFAULT_PALETTE,
     _column,
     _corner_radii,
@@ -35,7 +36,7 @@ from ._svg import (
 )
 
 # Opcodes — must match src/raster.rs.
-_CLIP, _FILL, _GRAD, _STROKE, _POINT, _IMAGE, _TEXT_OP, _POINTS = 0, 1, 2, 3, 4, 5, 6, 7
+_CLIP, _FILL, _GRAD, _STROKE, _POINT, _IMAGE, _TEXT_OP, _POINTS, _SEGMENTS = range(9)
 _SYMBOLS = {"circle": 0, "square": 1, "diamond": 2, "triangle": 3, "cross": 4}
 
 
@@ -127,9 +128,13 @@ class _Cmd:
             return
         self.buf.append(_STROKE)
         self._u32(len(pts))
-        for x, y in pts:
-            self._f(x)
-            self._f(y)
+        if isinstance(pts, np.ndarray):
+            scaled = np.asarray(pts, dtype=np.float64) * self.s
+            self.buf += scaled.astype("<f4").tobytes()
+        else:
+            for x, y in pts:
+                self._f(x)
+                self._f(y)
         self._f(width)
         self._rgba(color)
         self.buf.append(1 if closed else 0)
@@ -166,7 +171,19 @@ class _Cmd:
             self.buf += scaled.astype("<f4").tobytes()
         self.buf += np.ascontiguousarray(fills, dtype=np.uint8).tobytes()
 
-    def image(self, dx, dy, dw, dh, iw, ih, rgba_bytes) -> None:
+    def segments(self, x0, y0, x1, y1, width, colors) -> None:
+        n = len(x0)
+        if n == 0 or width <= 0:
+            return
+        self.buf.append(_SEGMENTS)
+        self._u32(n)
+        self._f(width)
+        for arr in (x0, y0, x1, y1):
+            scaled = np.asarray(arr, dtype=np.float64) * self.s
+            self.buf += scaled.astype("<f4").tobytes()
+        self.buf += np.ascontiguousarray(colors, dtype=np.uint8).tobytes()
+
+    def image(self, dx, dy, dw, dh, iw, ih, rgba_bytes, *, nearest=False) -> None:
         self.buf.append(_IMAGE)
         self._f(dx)
         self._f(dy)
@@ -174,6 +191,7 @@ class _Cmd:
         self._f(dh)
         self._u32(iw)
         self._u32(ih)
+        self.buf.append(1 if nearest else 0)
         self.buf += rgba_bytes
 
     def text(self, x, y, anchor, size, color, s) -> None:
@@ -209,7 +227,9 @@ def _grad_stops(fill_spec: dict, mark_color: str) -> list:
     return [(float(o), _parse_color(_css(c, mark_color))) for o, c in fill_spec.get("stops", [])]
 
 
-def render_raster(spec: dict[str, Any], blob: bytes, scale: float = 2.0) -> np.ndarray:
+def render_raster(
+    spec: dict[str, Any], blob: bytes, scale: float = 2.0, *, fast_png: bool = False
+) -> np.ndarray | bytes:
     """Paint `spec` into an ``(h, w, 4)`` RGBA8 image via the native rasterizer."""
     from . import kernels
 
@@ -220,8 +240,10 @@ def render_raster(spec: dict[str, Any], blob: bytes, scale: float = 2.0) -> np.n
     cols = spec["columns"]
     cmd = _Cmd(scale)
 
-    # White background (matches the Chromium screenshot on a default page).
-    cmd.fill(_rect_pts(0, 0, width, height), (255, 255, 255, 255))
+    # The fused PNG path initializes its native canvas white, avoiding a second
+    # full-frame memory pass. Raw RGBA callers still receive an explicit fill.
+    if not fast_png:
+        cmd.fill(_rect_pts(0, 0, width, height), (255, 255, 255, 255))
 
     xt, xlab, xstep = axis_ticks(xa, plot["w"], True)
     yt, ylab, ystep = axis_ticks(ya, plot["h"], False)
@@ -249,12 +271,14 @@ def render_raster(spec: dict[str, Any], blob: bytes, scale: float = 2.0) -> np.n
             _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot)
         elif kind in ("scatter", "hexbin"):
             _emit_scatter(cmd, t, blob, cols, sx, sy, style, color)
-        elif kind in {"errorbar", "stem", "box_whisker", "box_median", "contour"}:
+        elif kind in {"errorbar", "stem", "box_whisker", "box_median", "contour", "segments"}:
             _emit_segments(cmd, t, blob, cols, sx, sy, style, color)
         elif kind in ("bar", "column") and t.get("bar"):
             _emit_bars(cmd, t, blob, cols, sx, sy, style, color, plot)
         elif kind == "heatmap" and t.get("heatmap"):
             _emit_grid(cmd, "heatmap", t["heatmap"], blob, cols, sx, sy, style)
+        elif kind == "triangle_mesh":
+            _emit_triangle_mesh(cmd, t, blob, cols, sx, sy, style, color)
         elif all(k in t for k in ("x0", "x1", "y0", "y1")):
             _emit_rects(cmd, t, blob, cols, sx, sy, style, color, plot)
 
@@ -286,8 +310,9 @@ def render_raster(spec: dict[str, Any], blob: bytes, scale: float = 2.0) -> np.n
         _emit_legend(cmd, named, plot)
 
     w_px, h_px = max(1, round(width * scale)), max(1, round(height * scale))
-    img = kernels.rasterize(bytes(cmd.buf), w_px, h_px)
-    return img
+    if fast_png:
+        return kernels.rasterize_png(bytes(cmd.buf), w_px, h_px)
+    return kernels.rasterize(bytes(cmd.buf), w_px, h_px)
 
 
 def _emit_line(cmd, t, blob, cols, sx, sy, style, color):
@@ -296,7 +321,7 @@ def _emit_line(cmd, t, blob, cols, sx, sy, style, color):
         xv, yv = _step_arrays(xv, yv, style["step"])
     pts = _scene.curve_points(xv, yv, sx, sy, style.get("curve") == "smooth")
     c = _rgba(style.get("color"), color, float(style.get("opacity", 1.0)))
-    cmd.stroke(pts.tolist(), float(style.get("width", 1.5)), c, dash=style.get("dash"))
+    cmd.stroke(pts, float(style.get("width", 1.5)), c, dash=style.get("dash"))
 
 
 def _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot):
@@ -322,7 +347,7 @@ def _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot):
     lw = float(style.get("line_width", 1.2))
     if lw > 0:
         lop = float(style.get("line_opacity", 1.0))
-        cmd.stroke(top.tolist(), lw, _rgba(style.get("color"), color, lop), dash=style.get("dash"))
+        cmd.stroke(top, lw, _rgba(style.get("color"), color, lop), dash=style.get("dash"))
 
 
 def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
@@ -363,12 +388,52 @@ def _emit_segments(cmd, t, blob, cols, sx, sy, style, color):
     x1 = _column(blob, cols[t["x1"]])
     y0 = _column(blob, cols[t["y0"]])
     y1 = _column(blob, cols[t["y1"]])
-    c = _rgba(style.get("color"), color, float(style.get("opacity", 1.0)))
+    ch = t.get("color") or {}
+    opacity = float(style.get("opacity", 1.0))
+    colors = np.empty((len(x0), 4), dtype=np.uint8)
+    colors[:, 3] = max(0, min(255, int(round(255 * opacity))))
+    if ch.get("mode") == "continuous":
+        colors[:, :3] = _lut(ch.get("colormap", "viridis"), _column(blob, cols[ch["buf"]]))
+    elif ch.get("mode") == "categorical":
+        codes = _column(blob, cols[ch["buf"]]).astype(np.int64)
+        palette = ch.get("palette") or DEFAULT_PALETTE
+        palette_rgb = np.array([_parse_color(entry)[:3] for entry in palette], dtype=np.uint8)
+        colors[:, :3] = palette_rgb[codes % len(palette_rgb)]
+    else:
+        colors[:] = _rgba(style.get("color"), color, opacity)
     width = float(style.get("width", 1.2))
-    for i in range(len(x0)):
-        cmd.stroke(
-            [(float(sx(x0[i])), float(sy(y0[i]))), (float(sx(x1[i])), float(sy(y1[i])))], width, c
-        )
+    cmd.segments(sx(x0), sy(y0), sx(x1), sy(y1), width, colors)
+
+
+def _emit_triangle_mesh(cmd, t, blob, cols, sx, sy, style, color):
+    vertices = [_column(blob, cols[t[name]]) for name in ("x0", "y0", "x1", "y1", "x2", "y2")]
+    n = min(len(values) for values in vertices)
+    ch = t.get("color") or {}
+    op = float(style.get("opacity", 1.0))
+    fills = np.empty((n, 4), dtype=np.uint8)
+    fills[:, 3] = max(0, min(255, int(round(op * 255))))
+    if ch.get("mode") == "continuous":
+        fills[:, :3] = _lut(ch.get("colormap", "viridis"), _column(blob, cols[ch["buf"]])[:n])
+    elif ch.get("mode") == "categorical":
+        codes = _column(blob, cols[ch["buf"]])[:n].astype(np.int64)
+        palette = ch.get("palette") or DEFAULT_PALETTE
+        palette_rgb = np.array([_parse_color(entry)[:3] for entry in palette], dtype=np.uint8)
+        fills[:, :3] = palette_rgb[codes % len(palette_rgb)]
+    else:
+        fills[:, :3] = _parse_color(_css(ch.get("color"), color))[:3]
+
+    x0, y0, x1, y1, x2, y2 = vertices
+    sw = float(style.get("stroke_width", 0.0))
+    stroke = _rgba(style.get("stroke"), color) if sw > 0 else (0, 0, 0, 0)
+    for i in range(n):
+        triangle = [
+            (float(sx(x0[i])), float(sy(y0[i]))),
+            (float(sx(x1[i])), float(sy(y1[i]))),
+            (float(sx(x2[i])), float(sy(y2[i]))),
+        ]
+        cmd.fill(triangle, tuple(int(value) for value in fills[i]))
+        if sw > 0:
+            cmd.stroke(triangle, sw, stroke, closed=True)
 
 
 def _bar_geom(cmd, x, y, w, h, style, fill_cmd, stroke_c, sw, tip_top):
@@ -450,10 +515,23 @@ def _emit_rects(cmd, t, blob, cols, sx, sy, style, color, plot):
 
 
 def _emit_grid(cmd, kind, g, blob, cols, sx, sy, style):
-    rgba, xr, yr = _scene.grid_rgba(kind, g, blob, cols, style)
-    h, w = rgba.shape[0], rgba.shape[1]
+    if kind == "heatmap":
+        from . import kernels
+
+        w, h = int(g["w"]), int(g["h"])
+        raw = _column(blob, cols[g["buf"]])
+        stops = np.asarray(
+            COLORMAP_STOPS.get(g.get("colormap", "viridis")) or COLORMAP_STOPS["viridis"],
+            dtype=np.uint8,
+        )
+        alpha = int(255 * float(style.get("opacity", 0.95)))
+        rgba = kernels.heatmap_rgba(raw, w, h, stops, alpha)
+        xr, yr = g["x_range"], g["y_range"]
+    else:
+        rgba, xr, yr = _scene.grid_rgba(kind, g, blob, cols, style)
+        h, w = rgba.shape[0], rgba.shape[1]
     dx, dy, dw, dh = _scene.grid_dest_rect(xr, yr, sx, sy)
-    cmd.image(dx, dy, dw, dh, w, h, rgba.tobytes())
+    cmd.image(dx, dy, dw, dh, w, h, rgba.tobytes(), nearest=kind == "heatmap")
 
 
 def _emit_legend(cmd, named, plot):
@@ -481,6 +559,7 @@ def to_png(
     width: Optional[int] = None,
     height: Optional[int] = None,
     scale: float = 2.0,
+    fast: bool = False,
 ) -> bytes:
     """Render `fig` to PNG bytes with the native rasterizer (no browser)."""
     eff_w = (
@@ -493,8 +572,8 @@ def to_png(
         spec["width"] = int(width)
     if height is not None:
         spec["height"] = int(height)
-    img = render_raster(spec, blob, float(scale))
-    data = _png.encode(img)
+    rendered = render_raster(spec, blob, float(scale), fast_png=fast)
+    data = rendered if isinstance(rendered, bytes) else _png.encode(rendered)
     if path is not None:
         with open(path, "wb") as f:
             f.write(data)

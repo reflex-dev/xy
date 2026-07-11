@@ -16,9 +16,10 @@ import numpy as np
 
 import xy as fc
 
-from ._artists import BarContainer, Line2D, PathCollection
+from ._artists import Artist, BarContainer, Line2D, PathCollection, Text
 from ._colors import PROP_CYCLE, resolve_cmap, resolve_color
 from ._fmt import parse_fmt
+from ._plot_types import PlotTypeMixin
 from ._rc import rcParams
 from ._translate import (
     LINESTYLE_TO_DASH,
@@ -65,7 +66,7 @@ def _cached_axis(which: str, props: dict) -> Any:
     return made
 
 
-class Axes:
+class Axes(PlotTypeMixin):
     def __init__(self, figure: Any, *, y2_of: Optional["Axes"] = None) -> None:
         self.figure = figure
         self._entries: list[dict[str, Any]] = []
@@ -214,7 +215,10 @@ class Axes:
         else:
             entry_kwargs["color"] = np.asarray(c)  # value encoding
             entry_kwargs["colormap"] = resolve_cmap(cmap) if cmap else "viridis"
-        if edgecolors is not None:
+        no_edges = edgecolors is None or (
+            isinstance(edgecolors, str) and edgecolors.lower() == "none"
+        )
+        if not no_edges:
             entry_kwargs["stroke"] = resolve_color(edgecolors)
             entry_kwargs["stroke_width"] = float(linewidths or 1.0)
         entry = self._add("scatter", {"x": x, "y": y, "kwargs": entry_kwargs})
@@ -320,40 +324,80 @@ class Axes:
         origin = kwargs.pop("origin", "upper")
         aspect = kwargs.pop("aspect", None)
         kwargs.pop("interpolation", None)  # engine renders exact cells
-        kwargs.pop("extent", None)
+        extent = kwargs.pop("extent", None)
         del aspect
         check_unsupported(kwargs, "imshow()")
         grid = np.asarray(z, dtype=np.float64)
         if origin == "upper":
             grid = grid[::-1]  # engine rows are bottom-up (GL convention)
         entry_kwargs: dict[str, Any] = {"colormap": resolve_cmap(cmap) if cmap else "viridis"}
+        if extent is not None:
+            left, right, bottom, top = map(float, extent)
+            if not np.isfinite([left, right, bottom, top]).all() or left == right or bottom == top:
+                raise ValueError("imshow extent must contain finite, non-zero x and y spans")
+            rows, cols = grid.shape
+            if left > right:
+                left, right = right, left
+                grid = grid[:, ::-1]
+                self._axis_props("x")["reverse"] = True
+            if bottom > top:
+                bottom, top = top, bottom
+                grid = grid[::-1]
+                self._axis_props("y")["reverse"] = True
+            entry_kwargs["x"] = np.linspace(
+                left + (right - left) / (2 * cols),
+                right - (right - left) / (2 * cols),
+                cols,
+            )
+            entry_kwargs["y"] = np.linspace(
+                bottom + (top - bottom) / (2 * rows),
+                top - (top - bottom) / (2 * rows),
+                rows,
+            )
         if vmin is not None and vmax is not None:
             entry_kwargs["domain"] = (float(vmin), float(vmax))
         entry = self._add("heatmap", {"z": grid, "kwargs": entry_kwargs})
         return BarContainer(self, entry)
 
-    pcolormesh = imshow
-
     def step(self, x: Any, y: Any, *args: Any, **kwargs: Any) -> list[Line2D]:
-        kwargs.pop("where", None)  # step renders as a line either way (compat doc)
-        kwargs.setdefault("linestyle", "-")
-        return self.plot(x, y, *args, **kwargs)
+        where = kwargs.pop("where", "pre")
+        if args:
+            raise TypeError("step() accepts x, y and keyword arguments")
+        props = line_kwargs(kwargs)
+        props.setdefault("color", self._next_color())
+        linestyle = props.pop("linestyle", None)
+        if linestyle is not None:
+            dash = LINESTYLE_TO_DASH.get(linestyle)
+            if dash not in (None, "none"):
+                props["dash"] = dash
+        check_unsupported(kwargs, "step()")
+        entry = self._add(
+            "@mark",
+            {
+                "factory": "step",
+                "args": (x, y),
+                "x": x,
+                "y": y,
+                "kwargs": {"where": where, **props},
+            },
+        )
+        return [Line2D(self, entry)]
 
     # -- annotations -----------------------------------------------------------
 
-    def axhline(self, y: float = 0.0, **kwargs: Any) -> None:
-        self._annotation("hline", (y,), kwargs)
+    def axhline(self, y: float = 0.0, **kwargs: Any) -> Line2D:
+        return Line2D(self, self._annotation("hline", (y,), kwargs))
 
-    def axvline(self, x: float = 0.0, **kwargs: Any) -> None:
-        self._annotation("vline", (x,), kwargs)
+    def axvline(self, x: float = 0.0, **kwargs: Any) -> Line2D:
+        return Line2D(self, self._annotation("vline", (x,), kwargs))
 
-    def axhspan(self, ymin: float, ymax: float, **kwargs: Any) -> None:
-        self._annotation("y_band", (ymin, ymax), kwargs)
+    def axhspan(self, ymin: float, ymax: float, **kwargs: Any) -> Artist:
+        return Artist(self, self._annotation("y_band", (ymin, ymax), kwargs))
 
-    def axvspan(self, xmin: float, xmax: float, **kwargs: Any) -> None:
-        self._annotation("x_band", (xmin, xmax), kwargs)
+    def axvspan(self, xmin: float, xmax: float, **kwargs: Any) -> Artist:
+        return Artist(self, self._annotation("x_band", (xmin, xmax), kwargs))
 
-    def _annotation(self, kind: str, args: tuple, kwargs: dict[str, Any]) -> None:
+    def _annotation(self, kind: str, args: tuple, kwargs: dict[str, Any]) -> dict[str, Any]:
         color = kwargs.pop("color", kwargs.pop("c", kwargs.pop("facecolor", None)))
         alpha = kwargs.pop("alpha", None)
         lw = kwargs.pop("linewidth", kwargs.pop("lw", None))
@@ -369,23 +413,17 @@ class Axes:
             akw["width"] = float(lw)
         if label is not None:
             akw["text"] = str(label)
-        host = self._y2_of or self
-        host._entries.append({"kind": f"@{kind}", "args": args, "kwargs": akw, "y_axis": "y"})
-        host._invalidate()
+        return self._add(f"@{kind}", {"args": args, "kwargs": akw})
 
-    def text(self, x: Any, y: Any, s: str, **kwargs: Any) -> None:
+    def text(self, x: Any, y: Any, s: str, **kwargs: Any) -> Text:
         color = kwargs.pop("color", kwargs.pop("c", None))
         kwargs.pop("fontsize", None)
         kwargs.pop("ha", None), kwargs.pop("va", None)
         check_unsupported(kwargs, "text()")
         akw = {"color": resolve_color(color)} if color is not None else {}
-        host = self._y2_of or self
-        host._entries.append(
-            {"kind": "@text", "args": (x, y, str(s)), "kwargs": akw, "y_axis": "y"}
-        )
-        host._invalidate()
+        return Text(self, self._add("@text", {"args": (x, y, str(s)), "kwargs": akw}))
 
-    def annotate(self, text: str, xy: tuple, xytext: Optional[tuple] = None, **kwargs: Any) -> None:
+    def annotate(self, text: str, xy: tuple, xytext: Optional[tuple] = None, **kwargs: Any) -> Text:
         kwargs.pop("arrowprops", None)  # rendered as plain callout text
         kwargs.pop("fontsize", None)
         color = kwargs.pop("color", None)
@@ -400,11 +438,10 @@ class Axes:
             akw["dy"] = (
                 float(xytext[1] - xy[1]) if _is_number(xytext[1]) and _is_number(xy[1]) else -8.0
             )
-        host = self._y2_of or self
-        host._entries.append(
-            {"kind": "@text", "args": (xy[0], xy[1], str(text)), "kwargs": akw, "y_axis": "y"}
+        return Text(
+            self,
+            self._add("@text", {"args": (xy[0], xy[1], str(text)), "kwargs": akw}),
         )
-        host._invalidate()
 
     # -- axis config -----------------------------------------------------------
 
@@ -440,9 +477,11 @@ class Axes:
         self._set_scale("y", scale)
 
     def _set_scale(self, axis: str, scale: str) -> None:
+        if scale not in ("linear", "log", "symlog", "logit", "asinh"):
+            raise ValueError(f"unknown {axis} scale {scale!r}")
         if scale not in ("linear", "log"):
-            raise not_implemented(f"{axis}scale({scale!r})", "'linear' or 'log'")
-        self._axis_props(axis)["type_"] = None if scale == "linear" else "log"
+            raise not_implemented(f"set_{axis}scale({scale!r})")
+        self._axis_props(axis)["type_"] = "log" if scale == "log" else None
         self._invalidate()
 
     def invert_yaxis(self) -> None:
@@ -498,28 +537,6 @@ class Axes:
         key = "y2" if (axis == "y" and self._y2_of is not None) else axis
         return host._axis[key]
 
-    # -- unsupported (loud) ------------------------------------------------------
-
-    def pie(self, *a: Any, **k: Any) -> None:
-        raise not_implemented("pie()", "a bar() chart")
-
-    def boxplot(self, *a: Any, **k: Any) -> None:
-        raise not_implemented("boxplot()", "hist() per group")
-
-    def violinplot(self, *a: Any, **k: Any) -> None:
-        raise not_implemented("violinplot()", "hist() per group")
-
-    def errorbar(self, *a: Any, **k: Any) -> None:
-        raise not_implemented("errorbar()", "plot() plus fill_between() for the band")
-
-    def contour(self, *a: Any, **k: Any) -> None:
-        raise not_implemented("contour()", "imshow()")
-
-    contourf = contour
-
-    def quiver(self, *a: Any, **k: Any) -> None:
-        raise not_implemented("quiver()")
-
     # -- materialization -----------------------------------------------------------
 
     def _chart_children(self) -> list[Any]:
@@ -540,6 +557,8 @@ class Axes:
                 children.append(fc.histogram(values=e["values"], **kw, **axis_kw))
             elif kind == "heatmap":
                 children.append(fc.heatmap(z=e["z"], **kw, **axis_kw))
+            elif kind == "@mark":
+                children.append(getattr(fc, e["factory"])(*e["args"], **kw, **axis_kw))
             elif kind == "@hline":
                 children.append(fc.hline(*e["args"], **kw))
             elif kind == "@vline":

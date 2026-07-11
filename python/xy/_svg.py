@@ -65,6 +65,18 @@ COLORMAP_STOPS: dict[str, list[tuple[int, int, int]]] = {
         (240, 249, 33),
         (240, 249, 33),
     ],
+    "inferno": [
+        (0, 0, 4),
+        (31, 12, 72),
+        (85, 15, 109),
+        (136, 34, 106),
+        (186, 54, 85),
+        (227, 89, 51),
+        (249, 140, 10),
+        (249, 201, 50),
+        (252, 255, 164),
+        (252, 255, 164),
+    ],
     "cividis": [
         (0, 32, 76),
         (0, 42, 102),
@@ -77,6 +89,18 @@ COLORMAP_STOPS: dict[str, list[tuple[int, int, int]]] = {
         (253, 217, 63),
         (255, 233, 69),
     ],
+    "gray": [
+        (0, 0, 0),
+        (28, 28, 28),
+        (57, 57, 57),
+        (85, 85, 85),
+        (113, 113, 113),
+        (142, 142, 142),
+        (170, 170, 170),
+        (198, 198, 198),
+        (227, 227, 227),
+        (255, 255, 255),
+    ],
     "turbo": [
         (48, 18, 59),
         (70, 107, 227),
@@ -88,6 +112,18 @@ COLORMAP_STOPS: dict[str, list[tuple[int, int, int]]] = {
         (225, 66, 13),
         (153, 15, 4),
         (122, 4, 3),
+    ],
+    "coolwarm": [
+        (59, 76, 192),
+        (87, 117, 211),
+        (119, 154, 231),
+        (157, 185, 243),
+        (197, 209, 246),
+        (221, 220, 220),
+        (242, 196, 174),
+        (237, 158, 130),
+        (214, 96, 77),
+        (180, 4, 38),
     ],
 }
 
@@ -311,10 +347,16 @@ def _lut(colormap: str, t: np.ndarray) -> np.ndarray:
     client's 256-texel LUT interpolation."""
     stops = np.array(COLORMAP_STOPS.get(colormap) or COLORMAP_STOPS["viridis"], dtype=np.float64)
     pos = np.clip(t, 0.0, 1.0) * (len(stops) - 1)
-    lo = np.floor(pos).astype(int)
+    lo = np.floor(pos).astype(np.uint8)
     hi = np.minimum(lo + 1, len(stops) - 1)
-    f = (pos - lo)[:, None]
-    return np.round(stops[lo] * (1 - f) + stops[hi] * f).astype(np.uint8)
+    fraction = pos - lo
+    out = np.empty((len(pos), 3), dtype=np.uint8)
+    # Channel-wise interpolation is numerically identical to the broadcasted
+    # `(n, 3)` expression but avoids three multi-megabyte float temporaries.
+    for channel in range(3):
+        start = stops[lo, channel]
+        out[:, channel] = np.round(start + (stops[hi, channel] - start) * fraction).astype(np.uint8)
+    return out
 
 
 def _css(c: Any, fallback: str) -> str:
@@ -661,7 +703,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         elif kind in ("scatter", "hexbin"):
             marks.append(_scatter_marks(t, blob, cols, sx, sy, style, color))
 
-        elif kind in {"errorbar", "stem", "box_whisker", "box_median", "contour"}:
+        elif kind in {"errorbar", "stem", "box_whisker", "box_median", "contour", "segments"}:
             marks.append(_segment_marks(t, blob, cols, sx, sy, style, color))
 
         elif kind in ("bar", "column") and t.get("bar"):
@@ -669,6 +711,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
 
         elif kind == "heatmap" and t.get("heatmap"):
             marks.append(_heatmap_image(t["heatmap"], blob, cols, sx, sy, style))
+
+        elif kind == "triangle_mesh":
+            marks.append(_triangle_mesh_marks(t, blob, cols, sx, sy, style, color))
 
         elif all(k in t for k in ("x0", "x1", "y0", "y1")):  # histogram / rect family
             marks.append(_rect_marks(t, blob, cols, sx, sy, style, color, svg, plot))
@@ -734,13 +779,23 @@ def _segment_marks(
     y1 = _column(blob, cols[t["y1"]])
     width = float(style.get("width", 1.2))
     op = float(style.get("opacity", 1.0))
-    attrs = (
-        f'stroke="{escape(color)}" stroke-width="{_num(width)}" fill="none" '
-        f'stroke-linecap="round"' + (f' stroke-opacity="{_num(op)}"' if op < 1 else "")
+    channel = t.get("color") or {}
+    if channel.get("mode") == "continuous":
+        rgb = _lut(channel.get("colormap", "viridis"), _column(blob, cols[channel["buf"]]))
+        colors = [f"rgb({r},{g},{b})" for r, g, b in rgb]
+    elif channel.get("mode") == "categorical":
+        codes = _column(blob, cols[channel["buf"]]).astype(int)
+        palette = channel.get("palette") or DEFAULT_PALETTE
+        colors = [palette[code % len(palette)] for code in codes]
+    else:
+        colors = [color] * len(x0)
+    suffix = f'stroke-width="{_num(width)}" fill="none" stroke-linecap="round"' + (
+        f' stroke-opacity="{_num(op)}"' if op < 1 else ""
     )
     return "".join(
         f'<line x1="{_num(float(sx(x0[i])))}" y1="{_num(float(sy(y0[i])))}" '
-        f'x2="{_num(float(sx(x1[i])))}" y2="{_num(float(sy(y1[i])))}" {attrs}/>'
+        f'x2="{_num(float(sx(x1[i])))}" y2="{_num(float(sy(y1[i])))}" '
+        f'stroke="{escape(colors[i])}" {suffix}/>'
         for i in range(len(x0))
     )
 
@@ -793,6 +848,45 @@ def _scatter_marks(
             out.append(
                 builder(float(px[i]), float(py[i]), float(radii[i])) + f"{fill_attr}{stroke_attr}/>"
             )
+    out.append("</g>")
+    return "".join(out)
+
+
+def _triangle_mesh_marks(
+    t: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict, fallback: str
+) -> str:
+    vertices = [_column(blob, cols[t[name]]) for name in ("x0", "y0", "x1", "y1", "x2", "y2")]
+    n = min(len(values) for values in vertices)
+    color_ch = t.get("color") or {}
+    mode = color_ch.get("mode")
+    if mode == "continuous":
+        values = _column(blob, cols[color_ch["buf"]])[:n]
+        rgb = _lut(color_ch.get("colormap", "viridis"), values)
+        fills = [f"rgb({r},{g},{b})" for r, g, b in rgb]
+    elif mode == "categorical":
+        codes = _column(blob, cols[color_ch["buf"]])[:n].astype(int)
+        palette = color_ch.get("palette") or DEFAULT_PALETTE
+        fills = [palette[code % len(palette)] for code in codes]
+    else:
+        fills = [_css(color_ch.get("color"), fallback)] * n
+
+    opacity = float(style.get("opacity", 1.0))
+    stroke_width = float(style.get("stroke_width", 0.0))
+    stroke = _css(style.get("stroke"), fallback) if stroke_width else None
+    group_attr = f' fill-opacity="{_num(opacity)}"' if opacity < 1 else ""
+    stroke_attr = (
+        f' stroke="{escape(stroke)}" stroke-width="{_num(stroke_width)}"'
+        if stroke is not None
+        else ""
+    )
+    x0, y0, x1, y1, x2, y2 = vertices
+    out = [f"<g{group_attr}>"]
+    for i in range(n):
+        points = " ".join(
+            f"{_num(float(sx(x)))},{_num(float(sy(y)))}"
+            for x, y in ((x0[i], y0[i]), (x1[i], y1[i]), (x2[i], y2[i]))
+        )
+        out.append(f'<polygon points="{points}" fill="{escape(fills[i])}"{stroke_attr}/>')
     out.append("</g>")
     return "".join(out)
 

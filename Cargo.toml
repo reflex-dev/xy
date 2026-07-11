@@ -5,16 +5,16 @@ edition = "2021"
 description = "Native compute core for the xy engine: zone maps, offset-encoded f32, M4 decimation"
 license = "Apache-2.0"
 
-# Zero external dependencies, deliberately (design dossier §33): the core builds
-# with nothing but the Rust std library, so no registry access, no supply chain,
-# and a plain C ABI. One cdylib per platform covers every CPython version —
-# stronger than abi3 (no Python ABI at all). Python binds via ctypes with
-# zero-copy NumPy pointers.
+# The compute core remains exposed through a plain C ABI, so one cdylib per
+# platform covers every CPython version. Static chart export uses the focused
+# `png` crate's fdeflate fast path; compression belongs beside rasterization so
+# the hot path never round-trips a full framebuffer through Python.
 [lib]
 name = "xy_core"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+png = "0.18.1"
 
 [profile.release]
 lto = "thin"

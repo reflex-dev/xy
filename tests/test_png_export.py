@@ -6,6 +6,7 @@ the shared layout with the SVG exporter."""
 from __future__ import annotations
 
 import struct
+import zlib
 
 import numpy as np
 
@@ -19,6 +20,82 @@ def _ihdr(png: bytes) -> tuple[int, int, int]:
     w, h = struct.unpack(">II", png[16:24])
     color_type = png[25]
     return w, h, color_type
+
+
+def _decode_rgba(png: bytes) -> np.ndarray:
+    """Small stdlib PNG decoder for the exporter parity oracle."""
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    position = 8
+    width = height = color_type = None
+    palette = b""
+    transparency = b""
+    idat = bytearray()
+    while position + 8 <= len(png):
+        (length,) = struct.unpack(">I", png[position : position + 4])
+        kind = png[position + 4 : position + 8]
+        start = position + 8
+        chunk = png[start : start + length]
+        position = start + length + 4
+        if kind == b"IHDR":
+            width, height, depth, color_type, _compression, _filter, interlace = struct.unpack(
+                ">IIBBBBB", chunk
+            )
+            assert depth == 8 and interlace == 0
+        elif kind == b"PLTE":
+            palette = chunk
+        elif kind == b"tRNS":
+            transparency = chunk
+        elif kind == b"IDAT":
+            idat += chunk
+        elif kind == b"IEND":
+            break
+    assert width is not None and height is not None and color_type is not None
+    channels = {2: 3, 3: 1, 6: 4}[color_type]
+    row_length = width * channels
+    raw = zlib.decompress(bytes(idat))
+    previous = bytearray(row_length)
+    decoded = bytearray(width * height * 4)
+    source = destination = 0
+    for _ in range(height):
+        filter_kind = raw[source]
+        source += 1
+        row = bytearray(raw[source : source + row_length])
+        source += row_length
+        for index, value in enumerate(row):
+            left = row[index - channels] if index >= channels else 0
+            up = previous[index]
+            up_left = previous[index - channels] if index >= channels else 0
+            if filter_kind == 1:
+                row[index] = (value + left) & 0xFF
+            elif filter_kind == 2:
+                row[index] = (value + up) & 0xFF
+            elif filter_kind == 3:
+                row[index] = (value + ((left + up) >> 1)) & 0xFF
+            elif filter_kind == 4:
+                predictor = left + up - up_left
+                distances = (
+                    abs(predictor - left),
+                    abs(predictor - up),
+                    abs(predictor - up_left),
+                )
+                estimate = (left, up, up_left)[distances.index(min(distances))]
+                row[index] = (value + estimate) & 0xFF
+            else:
+                assert filter_kind == 0
+        for column in range(width):
+            if color_type == 6:
+                rgba = row[column * 4 : column * 4 + 4]
+            elif color_type == 2:
+                rgba = row[column * 3 : column * 3 + 3] + b"\xff"
+            else:
+                palette_index = row[column]
+                base = palette_index * 3
+                alpha = transparency[palette_index] if palette_index < len(transparency) else 255
+                rgba = palette[base : base + 3] + bytes((alpha,))
+            decoded[destination : destination + 4] = rgba
+            destination += 4
+        previous = row
+    return np.frombuffer(decoded, dtype=np.uint8).reshape(height, width, 4)
 
 
 def test_every_chart_kind_exports_valid_png() -> None:
@@ -128,6 +205,28 @@ def test_png_encoder_uses_balanced_compression_level(monkeypatch) -> None:
     _png.encode(many)
 
     assert levels == [6, 6]
+
+
+def test_fast_native_png_is_valid_and_matches_dimensions() -> None:
+    fig = Figure(width=320, height=180).line([0.0, 1.0], [0.0, 1.0])
+    png = _raster.to_png(fig, scale=2, fast=True)
+
+    assert _ihdr(png) == (640, 360, 2)
+
+
+def test_fast_native_png_is_pixel_identical_to_balanced_export() -> None:
+    x = np.linspace(-2.0, 2.0, 80)
+    xx, yy = np.meshgrid(x, x)
+    figures = [
+        Figure(width=360, height=220).line(x, np.sin(x * 3.0)),
+        Figure(width=360, height=220).heatmap(np.sin(xx) + np.cos(yy)),
+        Figure(width=360, height=220).contour(np.sin(xx * 1.7) + np.cos(yy * 2.1), levels=7),
+    ]
+
+    for figure in figures:
+        balanced = _decode_rgba(_raster.to_png(figure, scale=1))
+        fast = _decode_rgba(_raster.to_png(figure, scale=1, fast=True))
+        np.testing.assert_array_equal(fast, balanced)
 
 
 def test_native_and_svg_share_layout() -> None:
