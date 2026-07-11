@@ -2,10 +2,10 @@
 
 The *feel* is Reflex's (reflex.dev) Recharts components — a chart container with
 mark and axis children, snake_case keyword props, `data=` + column-name
-resolution, and `on_*` event props — but fastcharts does **not** import or depend
-on Reflex. It's the same ergonomics on top of the fastcharts engine (`Figure`):
+resolution, and `on_*` event props — but xy does **not** import or depend
+on Reflex. It's the same ergonomics on top of the xy engine (`Figure`):
 
-    import fastcharts as fc
+    import xy as fc
 
     fc.scatter_chart(
         fc.scatter(x="sepal_w", y="sepal_l", color="species", size="petal_l", data=df),
@@ -137,7 +137,7 @@ AxisTickLabelStrategy: TypeAlias = str
 
 
 class Component:
-    """Base for every fastcharts component (Reflex-style: props + children)."""
+    """Base for every xy component (Reflex-style: props + children)."""
 
 
 @dataclass
@@ -1528,6 +1528,16 @@ def _resolve_axis_values(fig: Figure, data: Any, key: Any, axis: str, context: s
     return values
 
 
+def _call_with_axis_rollback(fig: Figure, apply: Callable[[], Any]) -> Any:
+    """Keep category-axis provisioning atomic for direct applier callers."""
+    checkpoint = {axis: list(labels) for axis, labels in fig._axis_categories.items()}
+    try:
+        return apply()
+    except Exception:
+        fig._axis_categories = checkpoint
+        raise
+
+
 def _is_datetime_like(values: Any) -> bool:
     if hasattr(values, "to_numpy"):
         try:
@@ -1787,7 +1797,7 @@ class Chart(Component):
     def chrome_components(self) -> dict[str, Any]:
         """Opaque user chrome objects for adapters such as Reflex.
 
-        Core fastcharts does not import or serialize framework components. The
+        Core xy does not import or serialize framework components. The
         objects returned here are the exact Python objects passed to
         `fc.legend(...)` / `fc.tooltip(...)`, so an adapter can mount them while
         standalone HTML keeps using the built-in safe DOM fallback.
@@ -2439,49 +2449,58 @@ def _looks_like_css(s: str) -> bool:
 
 def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
     size = m.props["size"]
-    fig.scatter(
-        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
-        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
-        name=m.name,
-        color=_resolve_color(data, m.props["color"], context=f"{m.kind}.color"),
-        size=_resolve(data, size, context=f"{m.kind}.size") if isinstance(size, str) else size,
-        colormap=m.props["colormap"],
-        size_range=m.props["size_range"],
-        opacity=m.props["opacity"],
-        density=m.props["density"],
-        symbol=m.props["symbol"],
-        stroke=m.props["stroke"],
-        stroke_width=m.props["stroke_width"],
+    _call_with_axis_rollback(
+        fig,
+        lambda: fig.scatter(
+            _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
+            _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
+            name=m.name,
+            color=_resolve_color(data, m.props["color"], context=f"{m.kind}.color"),
+            size=_resolve(data, size, context=f"{m.kind}.size") if isinstance(size, str) else size,
+            colormap=m.props["colormap"],
+            size_range=m.props["size_range"],
+            opacity=m.props["opacity"],
+            density=m.props["density"],
+            symbol=m.props["symbol"],
+            stroke=m.props["stroke"],
+            stroke_width=m.props["stroke_width"],
+        ),
     )
 
 
 def _apply_line(fig: Figure, m: Mark, data: Any) -> None:
-    fig.line(
-        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
-        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
-        name=m.name,
-        color=m.props["color"],
-        width=m.props["width"],
-        opacity=m.props["opacity"],
-        curve=m.props["curve"],
-        dash=m.props["dash"],
+    _call_with_axis_rollback(
+        fig,
+        lambda: fig.line(
+            _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
+            _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
+            name=m.name,
+            color=m.props["color"],
+            width=m.props["width"],
+            opacity=m.props["opacity"],
+            curve=m.props["curve"],
+            dash=m.props["dash"],
+        ),
     )
 
 
 def _apply_area(fig: Figure, m: Mark, data: Any) -> None:
     base = m.props["base"]
-    fig.area(
-        _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
-        _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
-        base=_resolve(data, base, context=f"{m.kind}.base") if isinstance(base, str) else base,
-        name=m.name,
-        color=m.props["color"],
-        opacity=m.props["opacity"],
-        line_width=m.props["line_width"],
-        line_opacity=m.props["line_opacity"],
-        fill=m.props["fill"],
-        curve=m.props["curve"],
-        dash=m.props["dash"],
+    _call_with_axis_rollback(
+        fig,
+        lambda: fig.area(
+            _resolve_axis_values(fig, data, m.x, "x", f"{m.kind}.x"),
+            _resolve_axis_values(fig, data, m.y, "y", f"{m.kind}.y"),
+            base=_resolve(data, base, context=f"{m.kind}.base") if isinstance(base, str) else base,
+            name=m.name,
+            color=m.props["color"],
+            opacity=m.props["opacity"],
+            line_width=m.props["line_width"],
+            line_opacity=m.props["line_opacity"],
+            fill=m.props["fill"],
+            curve=m.props["curve"],
+            dash=m.props["dash"],
+        ),
     )
 
 

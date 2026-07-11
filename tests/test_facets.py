@@ -6,8 +6,8 @@ import struct
 import numpy as np
 import pytest
 
-import fastcharts as fc
-from fastcharts.facets import _facet_values, _subset_data
+import xy as fc
+from xy.facets import _facet_values, _subset_data
 
 
 def _table() -> dict[str, list]:
@@ -192,7 +192,7 @@ def test_facet_labels_and_grid_title_render_once() -> None:
     assert svg.count(">b<") == 1
     html = grid.to_html()
     # rendered once as the grid heading (the head <title> is document metadata)
-    assert html.count('fastcharts-facet-title">My grid<') == 1
+    assert html.count('xy-facet-title">My grid<') == 1
     assert html.count("My grid") == 2
     # panel titles are the facet labels, not "grid · label" composites
     assert [fig.title for fig in grid.figures] == ["a", "b"]

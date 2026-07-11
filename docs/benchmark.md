@@ -258,7 +258,7 @@ PYTHONPATH=python .venv/bin/python benchmarks/bench_vs.py \
 
 | Library | Render target | 10M total ¶ | Peak memory | Output bytes | Points/sec ¶ |
 |---|---|---:|---:|---:|---:|
-| fastcharts | binary payload (native) * | **169 ms** | **126 MB** | **832 KB** | **59,100,000** |
+| xy | binary payload (native) * | **169 ms** | **126 MB** | **832 KB** | **59,100,000** |
 | matplotlib | Agg PNG † | 3,239 ms | 553 MB | 42 KB | 3,090,000 |
 | seaborn | matplotlib PNG † | 7,918 ms | 1,088 MB | 32 KB | 1,260,000 |
 | Plotly `Scattergl` | Kaleido PNG † | 54,064 ms | 1,584 MB | 49 KB | 185,000 |
@@ -273,7 +273,7 @@ PYTHONPATH=python .venv/bin/python benchmarks/bench_vs.py \
 10M result is claimed for those rows. The 100k results above remain the latest
 measurements for that group.
 
-At 10M points, fastcharts prepares a fixed-size screen-bounded payload while
+At 10M points, xy prepares a fixed-size screen-bounded payload while
 the direct-rendering libraries retain work proportional to the input size. This
 is a scaling and memory comparison across different render targets, not a claim
 that a binary payload and a finished PNG are identical artifacts. The detailed
