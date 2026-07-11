@@ -357,6 +357,49 @@ pub fn quad_mesh_triangles_into(
         rw0.1 * (cw0.1 * sample(rw0.0, cw0.0) + cw1.1 * sample(rw0.0, cw1.0))
             + rw1.1 * (cw0.1 * sample(rw1.0, cw0.0) + cw1.1 * sample(rw1.0, cw1.0))
     };
+    let single_row_vertex = |row: usize, col: usize| -> (f64, f64) {
+        if cell_cols == 1 {
+            return (x[0] + col as f64 - 0.5, y[0] + row as f64 - 0.5);
+        }
+        let center = (center_edge(x, col), center_edge(y, col));
+        let (a, b) = if col == 0 {
+            (0, 1)
+        } else if col == cell_cols {
+            (cell_cols - 2, cell_cols - 1)
+        } else {
+            (col - 1, col)
+        };
+        let (dx, dy) = (x[b] - x[a], y[b] - y[a]);
+        let length = (dx * dx + dy * dy).sqrt();
+        let normal = if length > 0.0 {
+            (-dy / length, dx / length)
+        } else {
+            (0.0, 1.0)
+        };
+        let half_width = if length > 0.0 { length * 0.5 } else { 0.5 };
+        let offset = if row == 0 { -half_width } else { half_width };
+        (center.0 + normal.0 * offset, center.1 + normal.1 * offset)
+    };
+    let single_col_vertex = |row: usize, col: usize| -> (f64, f64) {
+        let center = (center_edge(x, row), center_edge(y, row));
+        let (a, b) = if row == 0 {
+            (0, 1)
+        } else if row == cell_rows {
+            (cell_rows - 2, cell_rows - 1)
+        } else {
+            (row - 1, row)
+        };
+        let (dx, dy) = (x[b] - x[a], y[b] - y[a]);
+        let length = (dx * dx + dy * dy).sqrt();
+        let normal = if length > 0.0 {
+            (-dy / length, dx / length)
+        } else {
+            (1.0, 0.0)
+        };
+        let half_width = if length > 0.0 { length * 0.5 } else { 0.5 };
+        let offset = if col == 0 { -half_width } else { half_width };
+        (center.0 + normal.0 * offset, center.1 + normal.1 * offset)
+    };
     let vertex = |row: usize, col: usize| -> (f64, f64) {
         match layout {
             0 => (x[col], y[row]),
@@ -365,6 +408,8 @@ pub fn quad_mesh_triangles_into(
                 (x[index], y[index])
             }
             2 => (center_edge(x, col), center_edge(y, row)),
+            3 if cell_rows == 1 => single_row_vertex(row, col),
+            3 if cell_cols == 1 => single_col_vertex(row, col),
             3 => (centered_vertex(x, row, col), centered_vertex(y, row, col)),
             _ => unreachable!(),
         }
@@ -731,7 +776,10 @@ pub fn welch_spectra_into(
             if let Some((ref yr, ref yi)) = y_fft {
                 out_pyy[bin] += yr[bin] * yr[bin] + yi[bin] * yi[bin];
                 out_pxy_real[bin] += xr[bin] * yr[bin] + xi[bin] * yi[bin];
-                out_pxy_imag[bin] += xi[bin] * yr[bin] - xr[bin] * yi[bin];
+                // Matplotlib/NumPy define Pxy as conj(X) * Y.  Reversing the
+                // operands flips every phase while leaving magnitudes intact,
+                // which makes the bug particularly easy to miss in PSD tests.
+                out_pxy_imag[bin] += xr[bin] * yi[bin] - xi[bin] * yr[bin];
             }
         }
     }
@@ -825,11 +873,11 @@ pub fn correlation_into(
     {
         return false;
     }
-    let x_mean = x.iter().sum::<f64>() / x.len() as f64;
-    let y_mean = y.iter().sum::<f64>() / y.len() as f64;
     let denominator = if normalize {
-        let xx = x.iter().map(|value| (value - x_mean).powi(2)).sum::<f64>();
-        let yy = y.iter().map(|value| (value - y_mean).powi(2)).sum::<f64>();
+        // xcorr/acorr use detrend_none by default.  Any requested detrending
+        // is applied by the pyplot adapter before entering this hot loop.
+        let xx = x.iter().map(|value| value * value).sum::<f64>();
+        let yy = y.iter().map(|value| value * value).sum::<f64>();
         (xx * yy).sqrt()
     } else {
         1.0
@@ -839,12 +887,12 @@ pub fn correlation_into(
         if lag >= 0 {
             let shift = lag as usize;
             for index in 0..x.len() - shift {
-                sum += (x[index] - x_mean) * (y[index + shift] - y_mean);
+                sum += x[index + shift] * y[index];
             }
         } else {
             let shift = (-lag) as usize;
             for index in 0..x.len() - shift {
-                sum += (x[index + shift] - x_mean) * (y[index] - y_mean);
+                sum += x[index] * y[index + shift];
             }
         }
         out_lag[output] = lag as f64;
@@ -1042,22 +1090,41 @@ fn circumcircle_contains(
 /// points. The algorithm is native because topology construction is the heavy
 /// path; callers receive compact int64 indices and keep renderer geometry
 /// expansion in the adjacent indexed-triangle kernel.
+const MAX_QUADRATIC_TRIANGULATION_WORK: usize = 100_000_000;
+
 pub fn delaunay_triangles(x: &[f64], y: &[f64]) -> Option<Vec<[i64; 3]>> {
-    if x.len() != y.len() || x.len() < 3 {
+    if x.len() != y.len()
+        || x.len() < 3
+        || x.len().checked_mul(x.len())? > MAX_QUADRATIC_TRIANGULATION_WORK
+    {
         return None;
     }
     let mut seen = std::collections::HashSet::with_capacity(x.len());
     let mut points = Vec::with_capacity(x.len() + 3);
-    for (&xv, &yv) in x.iter().zip(y) {
-        if !xv.is_finite() || !yv.is_finite() || !seen.insert((xv.to_bits(), yv.to_bits())) {
+    let mut source_indices = Vec::with_capacity(x.len());
+    for (source_index, (&xv, &yv)) in x.iter().zip(y).enumerate() {
+        if !xv.is_finite() || !yv.is_finite() {
             return None;
         }
+        if !seen.insert((xv.to_bits(), yv.to_bits())) {
+            continue;
+        }
         points.push((xv, yv));
+        source_indices.push(source_index);
     }
-    let min_x = x.iter().copied().fold(f64::INFINITY, f64::min);
-    let max_x = x.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    let min_y = y.iter().copied().fold(f64::INFINITY, f64::min);
-    let max_y = y.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    if points.len() < 3 {
+        return None;
+    }
+    let min_x = points.iter().map(|point| point.0).fold(f64::INFINITY, f64::min);
+    let max_x = points
+        .iter()
+        .map(|point| point.0)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let min_y = points.iter().map(|point| point.1).fold(f64::INFINITY, f64::min);
+    let max_y = points
+        .iter()
+        .map(|point| point.1)
+        .fold(f64::NEG_INFINITY, f64::max);
     let span = (max_x - min_x).max(max_y - min_y);
     if span <= 0.0 || !span.is_finite() {
         return None;
@@ -1121,7 +1188,13 @@ pub fn delaunay_triangles(x: &[f64], y: &[f64]) -> Option<Vec<[i64; 3]>> {
     let result = triangles
         .into_iter()
         .filter(|triangle| triangle.iter().all(|index| *index < super_start))
-        .map(|triangle| [triangle[0] as i64, triangle[1] as i64, triangle[2] as i64])
+        .map(|triangle| {
+            [
+                source_indices[triangle[0]] as i64,
+                source_indices[triangle[1]] as i64,
+                source_indices[triangle[2]] as i64,
+            ]
+        })
         .collect::<Vec<_>>();
     (!result.is_empty()).then_some(result)
 }
@@ -1142,7 +1215,11 @@ fn point_in_triangle(
 /// supported; self-intersections, duplicate internal vertices, and zero-area
 /// inputs fail loudly rather than producing corrupt renderer geometry.
 pub fn polygon_triangles(x: &[f64], y: &[f64]) -> Option<Vec<[i64; 3]>> {
-    if x.len() != y.len() || x.len() < 3 || !x.iter().chain(y).all(|value| value.is_finite()) {
+    if x.len() != y.len()
+        || x.len() < 3
+        || x.len().checked_mul(x.len())? > MAX_QUADRATIC_TRIANGULATION_WORK
+        || !x.iter().chain(y).all(|value| value.is_finite())
+    {
         return None;
     }
     let count = if x.len() > 3 && x[0] == x[x.len() - 1] && y[0] == y[y.len() - 1] {

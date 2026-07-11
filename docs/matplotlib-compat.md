@@ -39,7 +39,7 @@ claim to reproduce Matplotlib's renderer, transforms, or full Artist graph.
 | `xlabel` / `ylabel` / `title` / `suptitle` | suptitle not yet drawn in stitched multi-panel PNGs (warns) |
 | `legend()` | `loc`/`fontsize` accepted; placement is the chart's own |
 | `grid(True/False)` | toggles the grid via the theme |
-| `xlim` / `ylim`, axis scales, `invert_xaxis/yaxis` | linear/log are native; symlog/logit/asinh calls are accepted with linear geometry |
+| `xlim` / `ylim`, axis scales, `invert_xaxis/yaxis` | linear/log are native; symlog/logit/asinh fail loudly until their transforms are implemented |
 | `xticks(rotation=)` / `tick_params(labelrotation=)` | arbitrary tick *positions/labels* are approximated by count |
 | `twinx()` | second y-axis (right side) |
 | `fig, ax = plt.subplots()`; `plt.subplots(n, m, figsize=, dpi=, squeeze=)` | grid renders as a CSS-grid HTML document; PNG export stitches panels via the native rasterizer |

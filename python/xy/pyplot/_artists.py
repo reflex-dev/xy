@@ -46,17 +46,31 @@ class Artist:
 class Line2D(Artist):
     """Handle for plt.plot lines (and their marker overlays)."""
 
+    def _set_xy(self, index: int, value: Any) -> None:
+        if self._entry["kind"] == "@mark" and self._entry.get("factory") == "step":
+            args = list(self._entry["args"])
+            args[index] = value
+            self._entry["args"] = tuple(args)
+            self._entry["x" if index == 0 else "y"] = value
+            return
+        key = "x" if index == 0 else "y"
+        if key not in self._entry:
+            raise NotImplementedError(
+                f"set_{key}data is not supported for segment-backed Line2D handles"
+            )
+        self._entry[key] = value
+
     def set_data(self, x: Any, y: Any) -> None:
-        self._entry["x"] = x
-        self._entry["y"] = y
+        self._set_xy(0, x)
+        self._set_xy(1, y)
         self._touch()
 
     def set_xdata(self, x: Any) -> None:
-        self._entry["x"] = x
+        self._set_xy(0, x)
         self._touch()
 
     def set_ydata(self, y: Any) -> None:
-        self._entry["y"] = y
+        self._set_xy(1, y)
         self._touch()
 
     def get_xdata(self) -> Any:

@@ -32,7 +32,7 @@ from ._artists import (
 )
 from ._colors import PROP_CYCLE, resolve_cmap, resolve_color
 from ._fmt import parse_fmt
-from ._translate import LINESTYLE_TO_DASH, check_unsupported, line_kwargs
+from ._translate import LINESTYLE_TO_DASH, check_unsupported, line_kwargs, not_implemented
 
 
 def _from_data(value: Any, data: Any) -> Any:
@@ -150,6 +150,11 @@ def _triangulation_inputs(
         if triangles is None:
             from xy import kernels
 
+            if len(x) > 10_000:
+                raise ValueError(
+                    "automatic Delaunay triangulation is limited to 10,000 points; "
+                    "pass explicit triangles for larger inputs"
+                )
             topology = kernels.delaunay_triangles(x, y)
         else:
             topology = np.asarray(_from_data(triangles, data), dtype=np.int64)
@@ -338,7 +343,7 @@ class PlotTypeMixin:
             "bar",
             {
                 "x": np.full(len(ranges), ymin + height * 0.5),
-                "y": ranges[:, 0] + ranges[:, 1],
+                "y": ranges[:, 1],
                 "kwargs": entry_kwargs,
             },
         )
@@ -873,9 +878,15 @@ class PlotTypeMixin:
         data: Any = None,
         **kwargs: Any,
     ) -> tuple[np.ndarray, np.ndarray, Any, Any]:
-        del detrend
         xv = np.asarray(_from_data(x, data), dtype=np.float64)
         yv = np.asarray(_from_data(y, data), dtype=np.float64)
+        if detrend is not None:
+            if not callable(detrend):
+                raise TypeError("xcorr detrend must be callable or None")
+            xv = np.asarray(detrend(xv), dtype=np.float64)
+            yv = np.asarray(detrend(yv), dtype=np.float64)
+            if xv.shape != yv.shape or xv.ndim != 1:
+                raise ValueError("xcorr detrend must preserve the 1-D input shape")
         from xy import kernels
 
         lag, correlation = kernels.correlation(
@@ -1141,19 +1152,22 @@ class PlotTypeMixin:
         if vert is not None:
             orientation = "vertical" if vert else "horizontal"
         unsupported = {
-            "notch": notch,
+            "notch": True if notch else None,
             "whis": whis if whis not in (None, 1.5) else None,
             "bootstrap": bootstrap,
             "usermedians": usermedians,
             "conf_intervals": conf_intervals,
-            "meanline": meanline,
-            "showmeans": showmeans,
+            "meanline": True if meanline else None,
+            "showmeans": True if showmeans else None,
             "showcaps": False if showcaps is False else None,
             "showbox": False if showbox is False else None,
             "autorange": True if autorange else None,
             "capwidths": capwidths,
         }
-        del unsupported
+        check_unsupported(
+            {name: value for name, value in unsupported.items() if value is not None},
+            "boxplot()",
+        )
         values = _from_data(x, data)
         color = None
         for props in (boxprops, medianprops, whiskerprops, capprops, flierprops, meanprops):
@@ -1324,7 +1338,7 @@ class PlotTypeMixin:
             },
         )
         data_line: Optional[Line2D] = None
-        if fmt and fmt.lower() != "none":
+        if fmt.lower() != "none":
             line_kwargs_for_plot: dict[str, Any] = {}
             if "color" in base:
                 line_kwargs_for_plot["color"] = base["color"]
@@ -1362,8 +1376,23 @@ class PlotTypeMixin:
         data: Any = None,
         **kwargs: Any,
     ) -> PathCollection:
-        del linewidths, edgecolors, reduce_C_function
-        del C, norm, mincnt, marginals, colorizer, vmin, vmax
+        del linewidths, edgecolors
+        if C is not None:
+            raise not_implemented("hexbin(C=..., reduce_C_function=...)")
+        unsupported_options = {
+            "norm": norm,
+            "mincnt": mincnt,
+            "marginals": True if marginals else None,
+            "colorizer": colorizer,
+            "vmin": vmin,
+            "vmax": vmax,
+        }
+        check_unsupported(
+            {name: value for name, value in unsupported_options.items() if value is not None},
+            "hexbin()",
+        )
+        if reduce_C_function is not np.mean:
+            raise not_implemented("hexbin(reduce_C_function=...) without C")
         check_unsupported(kwargs, "hexbin()")
         x, y = _from_data(x, data), _from_data(y, data)
         if xscale != "linear":
@@ -1870,25 +1899,9 @@ class PlotTypeMixin:
                 x_spec = y_spec = bin_values
         xedges = make_edges(x_spec, xr, "x")
         yedges = make_edges(y_spec, yr, "y")
-        uniform_counts = (
-            wv is None
-            and isinstance(x_spec, (int, np.integer))
-            and isinstance(y_spec, (int, np.integer))
-        )
-        if uniform_counts:
-            flat = kernels.bin_2d(
-                xv,
-                yv,
-                xedges[0],
-                xedges[-1],
-                yedges[0],
-                yedges[-1],
-                len(xedges) - 1,
-                len(yedges) - 1,
-            )
-            h = np.asarray(flat, dtype=np.float64).T
-        else:
-            h = kernels.histogram2d(xv, yv, xedges, yedges, wv)
+        # Unlike the density binner, histogram bins include the top/right edge.
+        # Keep that Matplotlib/NumPy contract for uniform and irregular bins.
+        h = kernels.histogram2d(xv, yv, xedges, yedges, wv)
         if density:
             total = float(h.sum())
             if total:
@@ -1902,8 +1915,23 @@ class PlotTypeMixin:
         alpha = kwargs.pop("alpha", None)
         vmin = kwargs.pop("vmin", None)
         vmax = kwargs.pop("vmax", None)
-        kwargs.pop("norm", None)
+        norm = kwargs.pop("norm", None)
+        if norm is not None:
+            raise not_implemented("hist2d(norm=...)")
         check_unsupported(kwargs, "hist2d()")
+        x_uniform = np.allclose(np.diff(xedges), np.diff(xedges)[0])
+        y_uniform = np.allclose(np.diff(yedges), np.diff(yedges)[0])
+        if not (x_uniform and y_uniform):
+            image = self.pcolormesh(
+                xedges,
+                yedges,
+                h.T,
+                cmap=cmap,
+                alpha=alpha,
+                vmin=vmin,
+                vmax=vmax,
+            )
+            return h, xedges, yedges, image
         mark_kwargs: dict[str, Any] = {
             "x": (xedges[:-1] + xedges[1:]) * 0.5,
             "y": (yedges[:-1] + yedges[1:]) * 0.5,
@@ -1935,8 +1963,16 @@ class PlotTypeMixin:
         check_unsupported(kwargs, "eventplot()")
         del linestyles
         source = _from_data(positions, data)
-        arr = np.asarray(source, dtype=object)
-        groups = [source] if arr.ndim == 1 and all(np.isscalar(v) for v in source) else list(source)
+        try:
+            arr = np.asarray(source)
+        except ValueError:  # ragged event groups
+            arr = np.asarray(source, dtype=object)
+        if arr.ndim == 1 and (arr.dtype != object or len(arr) == 0 or np.isscalar(arr[0])):
+            groups = [arr]
+        elif arr.ndim == 2 and arr.dtype != object:
+            groups = list(arr)
+        else:
+            groups = list(source)
         offsets = _sequence_param(lineoffsets, len(groups), "lineoffsets")
         lengths = _sequence_param(linelengths, len(groups), "linelengths")
         widths = _sequence_param(
@@ -2125,7 +2161,7 @@ class PlotTypeMixin:
         del marker, markersize, aspect
         values = z.toarray() if hasattr(z, "toarray") else np.asarray(z)
         threshold = 0.0 if precision in (None, "present") else float(precision)
-        mask = np.abs(np.asarray(values, dtype=np.float64)) > threshold
+        mask = np.abs(np.asarray(values, dtype=np.float64)) <= threshold
         kwargs.setdefault("cmap", "gray")
         kwargs.setdefault("vmin", 0.0)
         kwargs.setdefault("vmax", 1.0)

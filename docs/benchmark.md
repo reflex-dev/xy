@@ -186,20 +186,28 @@ average—to reach 10×:
 
 | family | workload | xy total | Matplotlib total | xy speedup | total-time winner |
 |---|---|---:|---:|---:|---|
-| line | 200,000 samples | 3.22 ms | 32.95 ms | 10.22× | xy |
-| scatter | 200,000 points | 35.76 ms | 430.10 ms | 12.03× | xy |
-| histogram | 1,000,000 values / 200 bins | 2.94 ms | 52.59 ms | 17.89× | xy |
-| bar | 1,000 bars | 5.78 ms | 148.90 ms | 25.74× | xy |
-| pcolormesh | 200×300 cells | 3.79 ms | 41.01 ms | 10.81× | xy |
-| contour | 150×200 cells / 12 levels | 3.68 ms | 37.33 ms | 10.15× | xy |
+| line | 200,000 samples | 3.26 ms | 32.71 ms | 10.03× | xy |
+| scatter | 200,000 points | 34.35 ms | 422.70 ms | 12.31× | xy |
+| histogram | 1,000,000 values / 200 bins | 2.85 ms | 50.94 ms | 17.86× | xy |
+| bar | 1,000 bars | 5.54 ms | 144.50 ms | 26.10× | xy |
+| pcolormesh | 200×300 cells | 3.57 ms | 39.56 ms | 11.07× | xy |
+| contour | 150×200 cells / 12 levels | 3.51 ms | 35.83 ms | 10.20× | xy |
 
-The geometric-mean result is **13.56× in xy's favor**, and every standard
+The geometric-mean result is **13.66× in xy's favor**, and every standard
 family clears the explicit 10× gate. This is the scoped claim: warmed
 Matplotlib-style construction through a validated 1800×840 PNG for the exact
 workloads above. It is not a claim about every Matplotlib API, arbitrary image
 sizes, or interactive rendering. xy's latency-oriented PNGs remain larger than
 Matplotlib's in every row; the gate measures chart-to-pixels latency, while the
 existing balanced encoder remains available where file size is the priority.
+
+The RGBA8 raster rewrite has one known native-API tradeoff outside that scoped
+comparison: a same-machine 100,000-point, default-style direct scatter at scale
+1 measured 22.6 ms on this branch versus 20.0 ms on `main` (about 13% slower),
+after hoisting color conversion out of the pixel loop. Density-tier scatter,
+lines, and the statistical families improve; CodSpeed continues to track the
+direct tier so this remaining regression stays visible rather than being folded
+into the cross-library average.
 
 Reproduce and retain the raw samples with:
 

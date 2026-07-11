@@ -169,6 +169,16 @@ def test_hist2d_uses_native_uniform_binning_and_heatmap() -> None:
     assert _traces(ax)[0].kind == "heatmap"
 
 
+def test_hist2d_includes_max_edges_and_renders_nonuniform_cells() -> None:
+    _fig, ax = plt.subplots()
+    h, _xedges, _yedges, _image = ax.hist2d(
+        [0.0, 1.0], [0.0, 1.0], bins=2, range=((0.0, 1.0), (0.0, 1.0))
+    )
+    np.testing.assert_array_equal(h, [[1.0, 0.0], [0.0, 1.0]])
+    ax.hist2d([0.2, 2.0], [0.2, 3.0], bins=([0.0, 1.0, 4.0], [0.0, 2.0, 5.0]))
+    assert [trace.kind for trace in _traces(ax)] == ["heatmap", "triangle_mesh"]
+
+
 def test_hist2d_native_arbitrary_edges_weights_and_density() -> None:
     _fig, ax = plt.subplots()
     x = np.array([0.1, 0.2, 0.9, 1.5])
@@ -290,6 +300,8 @@ def test_additional_basic_and_array_families_map_to_existing_generic_marks() -> 
     assert ax._axis["y"]["type_"] == "log"
     kinds = [trace.kind for trace in _traces(ax)]
     assert kinds == ["line", "line", "line", "segments", "segments", "bar", "triangle_mesh"]
+    broken = _traces(ax)[5]
+    np.testing.assert_allclose(broken.x1.values - broken.x0.values, [2.0, 1.0])
 
 
 def test_matshow_pcolorfast_and_spy_delegate_to_native_grid_paths() -> None:
@@ -299,6 +311,16 @@ def test_matshow_pcolorfast_and_spy_delegate_to_native_grid_paths() -> None:
     ax.pcolorfast([0, 1, 2], [0, 1, 2], matrix[:2, :2])
     ax.spy(np.eye(4))
     assert [trace.kind for trace in _traces(ax)] == ["heatmap", "heatmap", "heatmap"]
+    np.testing.assert_array_equal(ax._entries[-1]["z"], (1.0 - np.eye(4))[::-1])
+
+
+def test_imshow_accepts_descending_extent_with_upper_origin() -> None:
+    _fig, ax = plt.subplots()
+    image = ax.imshow([[1.0, 2.0], [3.0, 4.0]], origin="upper", extent=(0, 2, 3, -1))
+    assert image is not None
+    assert ax._axis["y"]["reverse"] is True
+    trace = _traces(ax)[0]
+    assert trace.kind == "heatmap"
 
 
 def test_fill_arrow_and_axline_compile_to_native_mesh_and_segments() -> None:
@@ -362,6 +384,32 @@ def test_artist_set_ydata_rebuilds() -> None:
     second = ax._build_chart(640, 480)
     assert first is not second
     assert float(second.figure().traces[0].y.values[0]) == 9.0
+
+
+def test_step_artist_set_ydata_updates_materialized_mark() -> None:
+    _fig, ax = plt.subplots()
+    (line,) = ax.step([0, 1, 2], [1, 2, 3])
+    line.set_ydata([4, 5, 6])
+    np.testing.assert_array_equal(_traces(ax)[0].y.values, [4, 5, 6])
+
+
+def test_errorbar_default_format_draws_data_line_and_none_opts_out() -> None:
+    _fig, ax = plt.subplots()
+    default = ax.errorbar([0, 1], [1, 2], yerr=0.1)
+    hidden = ax.errorbar([0, 1], [2, 3], yerr=0.1, fmt="none")
+    assert default.lines[0] is not None
+    assert hidden.lines[0] is None
+    assert [trace.kind for trace in _traces(ax)] == ["errorbar", "line", "errorbar"]
+
+
+def test_unsupported_compatibility_options_fail_loudly() -> None:
+    _fig, ax = plt.subplots()
+    with pytest.raises(NotImplementedError, match="hexbin"):
+        ax.hexbin([0, 1], [0, 1], C=[2, 3])
+    with pytest.raises(TypeError, match="notch"):
+        ax.boxplot([[1, 2, 3]], notch=True)
+    with pytest.raises(NotImplementedError, match="symlog"):
+        ax.set_xscale("symlog")
 
 
 def test_artist_remove() -> None:

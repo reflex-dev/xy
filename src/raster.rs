@@ -76,6 +76,11 @@ impl Canvas {
     }
 
     #[inline]
+    fn blend_prepared(&mut self, x: usize, y: usize, rgb: [u8; 3], alpha: f32, cov: f32) {
+        self.blend_u8(x, y, [rgb[0], rgb[1], rgb[2], to_u8(alpha * cov)]);
+    }
+
+    #[inline]
     fn blend_u8(&mut self, x: usize, y: usize, rgba: [u8; 4]) {
         let sa = rgba[3] as u32;
         if sa == 0 {
@@ -525,6 +530,35 @@ fn point(
     sw: f32,
     stroke: [f32; 4],
 ) {
+    point_u8(
+        cv,
+        cx,
+        cy,
+        r,
+        sym,
+        fill.map(to_u8),
+        sw,
+        stroke.map(to_u8),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn point_u8(
+    cv: &mut Canvas,
+    cx: f32,
+    cy: f32,
+    r: f32,
+    sym: u8,
+    fill: [u8; 4],
+    sw: f32,
+    stroke: [u8; 4],
+) {
+    // Batched scatter commands already carry RGBA8. Keep those colors in
+    // their wire format instead of round-tripping every point through f32.
+    let fill_rgb = [fill[0], fill[1], fill[2]];
+    let stroke_rgb = [stroke[0], stroke[1], stroke[2]];
+    let fill_alpha = fill[3] as f32 / 255.0;
+    let stroke_alpha = stroke[3] as f32 / 255.0;
     let ext = r + sw + 1.0;
     let (bx0, by0, bx1, by1) = cv.bbox(cx - ext, cy - ext, cx + ext, cy + ext);
     for y in by0..by1 {
@@ -534,16 +568,16 @@ fn point(
                 let outer = (0.5 - (d - sw * 0.5)).clamp(0.0, 1.0);
                 let inner = (0.5 - (d + sw * 0.5)).clamp(0.0, 1.0);
                 if inner > 0.0 {
-                    cv.blend(x, y, fill, inner);
+                    cv.blend_prepared(x, y, fill_rgb, fill_alpha, inner);
                 }
                 let ring = outer - inner;
                 if ring > 0.0 {
-                    cv.blend(x, y, stroke, ring);
+                    cv.blend_prepared(x, y, stroke_rgb, stroke_alpha, ring);
                 }
             } else {
                 let c = (0.5 - d).clamp(0.0, 1.0);
                 if c > 0.0 {
-                    cv.blend(x, y, fill, c);
+                    cv.blend_prepared(x, y, fill_rgb, fill_alpha, c);
                 }
             }
         }
@@ -809,6 +843,7 @@ fn rasterize(cmds: &[u8], w: usize, h: usize, opaque_white: bool) -> Option<Canv
                     let ys = r.bytes(bytes4)?;
                     let rs = r.bytes(bytes4)?;
                     let fills = r.bytes(bytes4)?;
+                    let stroke = st.map(to_u8);
                     let f32_at = |b: &[u8], i: usize| {
                         f32::from_le_bytes([b[4 * i], b[4 * i + 1], b[4 * i + 2], b[4 * i + 3]])
                     };
@@ -821,12 +856,12 @@ fn rasterize(cmds: &[u8], w: usize, h: usize, opaque_white: bool) -> Option<Canv
                             continue;
                         }
                         let fill = [
-                            fills[4 * i] as f32 / 255.0,
-                            fills[4 * i + 1] as f32 / 255.0,
-                            fills[4 * i + 2] as f32 / 255.0,
-                            fills[4 * i + 3] as f32 / 255.0,
+                            fills[4 * i],
+                            fills[4 * i + 1],
+                            fills[4 * i + 2],
+                            fills[4 * i + 3],
                         ];
-                        point(&mut cv, cx, cy, rr, sym, fill, sw, st);
+                        point_u8(&mut cv, cx, cy, rr, sym, fill, sw, stroke);
                     }
                 }
                 OP_SEGMENTS => {

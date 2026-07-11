@@ -1108,6 +1108,11 @@ def delaunay_triangles(
     y_values = _as_f64(y, "y")
     if len(x_values) != len(y_values) or len(x_values) < 3:
         raise ValueError("x and y must have equal length of at least three")
+    if len(x_values) > 10_000:
+        raise ValueError(
+            "native quadratic Delaunay triangulation is limited to 10,000 points; "
+            "provide explicit topology for larger inputs"
+        )
     # A planar triangulation has at most 2n-5 faces for n>=3.
     capacity = max(1, 2 * len(x_values))
     output = np.empty((capacity, 3), dtype=np.int64)
@@ -1119,7 +1124,7 @@ def delaunay_triangles(
         capacity,
     )
     if written == _USIZE_MAX:
-        raise ValueError("points must be finite, unique, and non-collinear")
+        raise ValueError("points must include at least three finite, non-collinear locations")
     return output[:written].copy()
 
 
@@ -1131,6 +1136,8 @@ def polygon_triangles(
     y_values = _as_f64(y, "y")
     if len(x_values) != len(y_values) or len(x_values) < 3:
         raise ValueError("polygon x and y must have equal length of at least three")
+    if len(x_values) > 10_000:
+        raise ValueError("quadratic polygon triangulation is limited to 10,000 vertices")
     closed = x_values[0] == x_values[-1] and y_values[0] == y_values[-1]
     capacity = len(x_values) - (3 if closed else 2)
     output = np.empty((capacity, 3), dtype=np.int64)

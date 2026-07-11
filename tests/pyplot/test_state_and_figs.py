@@ -102,6 +102,7 @@ def test_grid_html_has_panels() -> None:
     assert "__xyPyplotPanelGovernorV1" in html
     assert "frame.srcdoc = blank" in html
     assert "frame.srcdoc = state.source" in html
+    assert "const root = panelGrid || document" in html
 
 
 def test_figsize_dpi_map_to_pixels() -> None:

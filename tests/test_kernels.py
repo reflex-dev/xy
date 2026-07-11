@@ -140,6 +140,25 @@ def test_native_delaunay_topology_covers_unstructured_points(impl):
     assert np.all(signed_area > 0)
 
 
+def test_native_delaunay_merges_duplicate_locations_and_bounds_quadratic_work(impl):
+    x = np.array([0.0, 1.0, 0.0, 1.0, 0.0])
+    y = np.array([0.0, 0.0, 1.0, 1.0, 0.0])
+    topology = impl.delaunay_triangles(x, y)
+    assert topology.shape == (2, 3)
+    with pytest.raises(ValueError, match="limited to 10,000"):
+        impl.delaunay_triangles(np.arange(10_001.0), np.arange(10_001.0))
+
+
+def test_curvilinear_single_row_quad_mesh_has_nonzero_area(impl):
+    x = np.array([[0.0, 1.0, 2.0]])
+    y = np.array([[0.0, 0.2, 0.0]])
+    mesh = impl.quad_mesh_triangles(x, y, np.array([[1.0, 2.0, 3.0]]))
+    area2 = np.abs(
+        (mesh[2] - mesh[0]) * (mesh[5] - mesh[1]) - (mesh[3] - mesh[1]) * (mesh[4] - mesh[0])
+    )
+    assert np.all(area2 > 0.0)
+
+
 def test_sector_triangles_tessellate_pie_and_donut_geometry(impl):
     pie = impl.sector_triangles(np.array([1.0, 2.0, 3.0]))
     assert all(len(column) == 60 for column in pie)
@@ -190,6 +209,11 @@ def test_native_spectral_kernels_find_tone_and_correlation_peak(impl):
         values, nfft=256, noverlap=128, sample_rate=sample_rate
     )
     assert frequency[np.argmax(pxx)] == 64.0
+    shifted = np.sin(2 * np.pi * 64.0 * time + 0.4)
+    frequency, _pxx, _pyy, _cross_real, cross_imag = impl.welch_spectra(
+        values, shifted, nfft=256, noverlap=128, sample_rate=sample_rate
+    )
+    assert cross_imag[np.flatnonzero(frequency == 64.0)[0]] > 0.0
     power, frequency, segment_time = impl.spectrogram(
         values, nfft=256, noverlap=128, sample_rate=sample_rate
     )
@@ -199,6 +223,13 @@ def test_native_spectral_kernels_find_tone_and_correlation_peak(impl):
     lag, correlation = impl.correlation(values, values, max_lags=12)
     assert lag[np.argmax(correlation)] == 0.0
     assert np.isclose(correlation.max(), 1.0)
+    delayed = np.roll(values, 5)
+    lag, correlation = impl.correlation(values, delayed, max_lags=12)
+    assert lag[np.argmax(correlation)] == -5.0
+    offset = np.array([10.0, 11.0, 12.0, 13.0])
+    lag, correlation = impl.correlation(offset, offset, max_lags=2)
+    expected = np.correlate(offset, offset, mode="full")[1:6] / np.dot(offset, offset)
+    np.testing.assert_allclose(correlation, expected)
 
 
 def test_vector_segments_emit_shaft_and_arrowheads_and_skip_invalid(impl):

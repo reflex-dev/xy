@@ -102,10 +102,12 @@ def compose_html(charts: list[Any], nrows: int, ncols: int, suptitle: Optional[s
   }}
   const script = document.currentScript;
   const panelGrid = script && script.previousElementSibling;
-  if (panelGrid) {{
-    for (const frame of panelGrid.querySelectorAll("iframe[data-fc-pyplot-panel]")) {{
-      governor.register(frame);
-    }}
+  // Classic Jupyter may evaluate this script after insertion, when
+  // document.currentScript is null.  Scanning the document is safe because
+  // register() is idempotent through its WeakMap.
+  const root = panelGrid || document;
+  for (const frame of root.querySelectorAll("iframe[data-fc-pyplot-panel]")) {{
+    governor.register(frame);
   }}
 }})();
 </script>

@@ -2890,7 +2890,7 @@ class ChartView {
     this._deleteVaos(g.drill);
     this._deleteBuffers(g, [
       "xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "baseBuf",
-      "x0Buf", "x1Buf", "y0Buf", "y1Buf",
+      "x0Buf", "x1Buf", "x2Buf", "y0Buf", "y1Buf", "y2Buf",
       "posBuf", "value1Buf", "value0Buf",
     ]);
     this._deleteBuffers(g.drill, ["xBuf", "yBuf", "cBuf", "sBuf", "selBuf", "dBuf"]);

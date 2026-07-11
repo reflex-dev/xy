@@ -27,6 +27,7 @@ from ._translate import (
     check_unsupported,
     line_kwargs,
     marker_size_to_scatter_size,
+    not_implemented,
 )
 
 # matplotlib's default look: white panel, no grid until grid(True).
@@ -332,7 +333,17 @@ class Axes(PlotTypeMixin):
         entry_kwargs: dict[str, Any] = {"colormap": resolve_cmap(cmap) if cmap else "viridis"}
         if extent is not None:
             left, right, bottom, top = map(float, extent)
+            if not np.isfinite([left, right, bottom, top]).all() or left == right or bottom == top:
+                raise ValueError("imshow extent must contain finite, non-zero x and y spans")
             rows, cols = grid.shape
+            if left > right:
+                left, right = right, left
+                grid = grid[:, ::-1]
+                self._axis_props("x")["reverse"] = True
+            if bottom > top:
+                bottom, top = top, bottom
+                grid = grid[::-1]
+                self._axis_props("y")["reverse"] = True
             entry_kwargs["x"] = np.linspace(
                 left + (right - left) / (2 * cols),
                 right - (right - left) / (2 * cols),
@@ -468,8 +479,8 @@ class Axes(PlotTypeMixin):
     def _set_scale(self, axis: str, scale: str) -> None:
         if scale not in ("linear", "log", "symlog", "logit", "asinh"):
             raise ValueError(f"unknown {axis} scale {scale!r}")
-        # The generic engine has linear/log transforms. Other Matplotlib
-        # transforms stay adapter-local and currently retain linear geometry.
+        if scale not in ("linear", "log"):
+            raise not_implemented(f"set_{axis}scale({scale!r})")
         self._axis_props(axis)["type_"] = "log" if scale == "log" else None
         self._invalidate()
 
