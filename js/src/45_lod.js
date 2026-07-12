@@ -415,7 +415,14 @@ function lodApplyDensityUpdate(view, g, upd, buffers) {
     tex: view._uploadGrid(grid, d.w, d.h, normMax),
     lut: g.density.lut,
   };
-  view._applyDensitySample(g, d.sample, buffers);
+  // Exact scans include a view-specific sample and replace the overlay.
+  // Pyramid responses intentionally omit one until tile-aware sampling lands;
+  // preserve the retained deterministic sample in that case so the hybrid
+  // overlay does not disappear after the first pan/zoom (#24). The draw path
+  // already clips it to its recorded window.
+  if (Object.prototype.hasOwnProperty.call(d, "sample")) {
+    view._applyDensitySample(g, d.sample, buffers);
+  }
   lodStartNormAnim(view, g, normMax, d.max);
   lodRememberDensity(view, g, g.density);
 }

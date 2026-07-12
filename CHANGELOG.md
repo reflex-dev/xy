@@ -51,6 +51,10 @@ in the README).
   assembly retains encoded arrays until the final blob join instead of copying
   every column through `tobytes()` first. Payload bytes and sampling decisions
   remain parity-tested and unchanged.
+- **Stable hybrid density overlays.** Pyramid-served pan/zoom updates now keep
+  the retained deterministic point sample when they omit a replacement,
+  instead of making the first-paint overlay disappear on interaction. Exact
+  scans still replace it with their view-specific sample.
 - **View-change callback windows** now reject non-finite bounds and normalize
   inverted ranges before callbacks receive them, matching selection and
   autorange window semantics.

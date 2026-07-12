@@ -267,8 +267,10 @@ and drill updates emit the same wire shape.
 
 - *Hybrid overlay* — exact-scan density views now render a density background
   plus a deterministic stratified sample of real points, with an explicit
-  "sampled n of N" badge. Remaining work: make pyramid-served density views
-  produce tile-aware sampled overlays without rescanning raw rows.
+  "sampled n of N" badge. Pyramid-served views retain and viewport-clip that
+  deterministic overlay instead of dropping it on the first interaction.
+  Remaining work: make pyramid-served density views produce tile-aware sampled
+  overlays without rescanning raw rows.
 - *Standalone (kernel-less) refinement* — **shipped.** A `to_html` export used
   to stretch the overview texture on zoom; it now re-bins the retained sample
   in a bundled Web Worker (off the main thread, `worker-src blob:` CSP),
