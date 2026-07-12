@@ -38,7 +38,7 @@ MAX_SCREEN_DIM = 4096
 # Contour extraction is native and output-bounded, but its work still scales
 # with grid cells × levels. Keep one request from allocating an unbounded
 # segment buffer before the browser can apply any screen-size limit.
-MAX_CONTOUR_WORK = 1_000_000
+MAX_CONTOUR_WORK = 4_000_000
 
 # Hysteresis on the drill boundary (§5 "tier transitions hysteresis-guarded"):
 # once drilled to points, stay until the visible count clearly exceeds the

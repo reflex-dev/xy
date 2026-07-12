@@ -21,19 +21,21 @@ import numpy as np
 
 from ._axes import Axes
 from ._mplfig import Figure, apply_sharing, make_axes_grid
-from ._rc import rcParams
+from ._rc import rc, rcParams
 from ._state import all_figures, close, figure, gca, gcf, sca
 from ._translate import not_implemented
 
 __all__ = [
     "Axes",
     "Figure",
+    "LogLocator",
     "acorr",
     "angle_spectrum",
     "annotate",
     "arrow",
     "axhline",
     "axhspan",
+    "axis",
     "axline",
     "axvline",
     "axvspan",
@@ -49,6 +51,7 @@ __all__ = [
     "cm",
     "cohere",
     "colorbar",
+    "colormaps",
     "contour",
     "contourf",
     "csd",
@@ -61,6 +64,7 @@ __all__ = [
     "fill_betweenx",
     "gca",
     "gcf",
+    "get_cmap",
     "grid",
     "grouped_bar",
     "hexbin",
@@ -82,6 +86,7 @@ __all__ = [
     "psd",
     "quiver",
     "quiverkey",
+    "rc",
     "rcParams",
     "savefig",
     "sca",
@@ -98,7 +103,9 @@ __all__ = [
     "streamplot",
     "style",
     "subplot",
+    "subplot_mosaic",
     "subplots",
+    "subplots_adjust",
     "suptitle",
     "table",
     "text",
@@ -138,16 +145,30 @@ def subplots(
     squeeze: bool = True,
     **kwargs: Any,
 ) -> tuple[Figure, Any]:
+    width_ratios = kwargs.pop("width_ratios", None)
+    height_ratios = kwargs.pop("height_ratios", None)
+    gridspec_kw = kwargs.pop("gridspec_kw", None) or {}
+    width_ratios = gridspec_kw.get("width_ratios", width_ratios)
+    height_ratios = gridspec_kw.get("height_ratios", height_ratios)
     fig = figure(figsize=figsize, dpi=dpi)
     if fig._axes and any(ax._entries for ax in fig._axes):
         fig = figure(None, figsize=figsize, dpi=dpi)  # fresh figure, mpl semantics
     axes = make_axes_grid(fig, nrows, ncols, squeeze=squeeze)
+    fig._width_ratios = None if width_ratios is None else tuple(map(float, width_ratios))
+    fig._height_ratios = None if height_ratios is None else tuple(map(float, height_ratios))
     apply_sharing(fig, sharex, sharey)
     return fig, axes
 
 
 def subplot(*args: Any, **kwargs: Any) -> Axes:
     return gcf().add_subplot(*args)
+
+
+def subplot_mosaic(mosaic: Any, **kwargs: Any) -> tuple[Figure, dict[Any, Axes]]:
+    figsize = kwargs.pop("figsize", None)
+    dpi = kwargs.pop("dpi", None)
+    fig = figure(None, figsize=figsize, dpi=dpi)
+    return fig, fig.subplot_mosaic(mosaic, **kwargs)
 
 
 def twinx() -> Axes:
@@ -210,6 +231,7 @@ text = _delegated("text")
 table = _delegated("table")
 legend = _delegated("legend")
 grid = _delegated("grid")
+axis = _delegated("axis")
 pie = _delegated("pie")
 pie_label = _delegated("pie_label")
 boxplot = _delegated("boxplot")
@@ -281,6 +303,21 @@ def tight_layout(**kwargs: Any) -> None:
     gcf().tight_layout(**kwargs)
 
 
+def subplots_adjust(**kwargs: Any) -> None:
+    gcf().subplots_adjust(**kwargs)
+
+
+class LogLocator:
+    pass
+
+
+def get_cmap(name: Any = None, lut: Any = None) -> Any:
+    from ._colors import Cmap
+
+    cmap = Cmap("viridis" if name is None else name)
+    return cmap if lut is None else cmap.resampled(int(lut))
+
+
 def colorbar(*args: Any, **kwargs: Any) -> None:
     gcf().colorbar(*args, **kwargs)
 
@@ -317,12 +354,49 @@ class _CmapNamespace:
     def __getattr__(self, name: str) -> Any:
         from ._colors import CMAPS
 
+        if name == "ScalarMappable":
+            return type("ScalarMappable", (), {"__init__": lambda self, **kwargs: None})
+
         if name.lower() in CMAPS:
             return name
         raise AttributeError(f"colormap {name!r} is not supported; see docs/matplotlib-compat.md")
 
 
 cm = _CmapNamespace()
+
+
+class _ColormapRegistry:
+    def __getitem__(self, name: str) -> Any:
+        from ._colors import Cmap
+
+        return Cmap(name)
+
+    def __iter__(self):
+        fallback = (
+                "viridis",
+                "plasma",
+                "inferno",
+                "magma",
+                "cividis",
+                "gray",
+                "turbo",
+                "coolwarm",
+                "RdBu",
+                "bwr",
+                "Blues",
+                "RdYlGn",
+                "rainbow",
+                "Spectral",
+            )
+        try:
+            _matplotlib = __import__("matplotlib")
+
+            return iter(tuple(_matplotlib.colormaps))
+        except (ImportError, AttributeError):
+            return iter(fallback)
+
+
+colormaps = _ColormapRegistry()
 
 
 class _StyleNamespace:

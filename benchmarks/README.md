@@ -13,7 +13,7 @@ uv venv .venv --python 3.12
 uv pip install -p .venv/bin/python -e ".[dev,codspeed]"
 uv pip install -p .venv/bin/python matplotlib seaborn plotly kaleido bokeh \
   altair datashader hvplot plotly-resampler psutil
-npm i --no-save playwright@1.48
+npm ci
 npx playwright install chromium
 CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
 ```

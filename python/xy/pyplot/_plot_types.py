@@ -9,6 +9,7 @@ Rust kernel rather than NumPy.
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
@@ -32,7 +33,13 @@ from ._artists import (
 )
 from ._colors import PROP_CYCLE, resolve_cmap, resolve_color
 from ._fmt import parse_fmt
-from ._translate import LINESTYLE_TO_DASH, check_unsupported, line_kwargs, not_implemented
+from ._translate import (
+    LINESTYLE_TO_DASH,
+    MARKER_TO_SYMBOL,
+    check_unsupported,
+    line_kwargs,
+    not_implemented,
+)
 
 
 def _from_data(value: Any, data: Any) -> Any:
@@ -46,7 +53,8 @@ def _from_data(value: Any, data: Any) -> Any:
 
 def _line_props(owner: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
     props = line_kwargs(kwargs)
-    props.setdefault("color", owner._next_color())
+    if "color" not in props:
+        props["color"] = owner._next_color()
     linestyle = props.pop("linestyle", None)
     if linestyle is not None:
         dash = LINESTYLE_TO_DASH.get(linestyle)
@@ -68,6 +76,45 @@ def _sequence_param(value: Any, n: int, name: str) -> list[Any]:
 
 def _float(value: Any) -> float:
     return float(value)
+
+
+def _masked_float(value: Any) -> np.ndarray:
+    return np.ma.asarray(value, dtype=np.float64).filled(np.nan)
+
+
+def _plain_label(value: Any) -> str:
+    text = str(value).replace("$", "")
+    for source, target in {
+        "\\mathdefault": "",
+        "\\leq": "<=",
+        "\\%": "%",
+    }.items():
+        text = text.replace(source, target)
+    return text.replace("_{", "").replace("^{", "^").replace("}", "")
+
+
+def _nice_contour_levels(lo: float, hi: float, count: int) -> np.ndarray:
+    """Approximate MaxNLocator's expanded, human-readable contour boundaries."""
+    if count < 1 or not np.isfinite([lo, hi]).all() or lo == hi:
+        return np.linspace(lo, hi if hi != lo else lo + 1.0, max(2, count + 1))
+    raw = abs(hi - lo) / (count + 1)
+    power = 10.0 ** np.floor(np.log10(raw))
+    scaled = raw / power
+    nice = next((step for step in (1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0) if step >= scaled), 10.0)
+    step = nice * power
+    start = np.floor((lo + step * 1e-9) / step) * step
+    stop = np.ceil((hi - step * 1e-9) / step) * step
+    levels = np.arange(start, stop + step * 0.5, step)
+    return levels if len(levels) >= 2 else np.asarray([lo, hi], dtype=np.float64)
+
+
+def _segment_values(value: Any) -> np.ndarray:
+    array = np.asarray(value)
+    if np.issubdtype(array.dtype, np.datetime64) or (
+        array.dtype == object and array.size and isinstance(array.reshape(-1)[0], (date, datetime))
+    ):
+        return np.asarray(array, dtype="datetime64[ms]").astype(np.int64).astype(np.float64)
+    return np.asarray(array, dtype=np.float64)
 
 
 def _uniform_mesh_axes(
@@ -147,6 +194,11 @@ def _triangulation_inputs(
         x = np.asarray(_from_data(args[0], data), dtype=np.float64)
         y = np.asarray(_from_data(args[1], data), dtype=np.float64)
         rest = args[2:]
+        if triangles is None and rest:
+            candidate = np.asarray(rest[0])
+            if candidate.ndim == 2 and candidate.shape[1:] == (3,):
+                triangles = rest[0]
+                rest = rest[1:]
         if triangles is None:
             from xy import kernels
 
@@ -191,6 +243,10 @@ class PlotTypeMixin:
         def _add(self, kind: str, entry: dict[str, Any]) -> dict[str, Any]: ...
 
         def _next_color(self) -> str: ...
+
+        def _entry_extent(self, axis: str) -> tuple[float, float]: ...
+
+        def _categorical_position(self, axis: str, label: Any) -> float: ...
 
         def plot(self, *args: Any, **kwargs: Any) -> list[Line2D]: ...
 
@@ -252,20 +308,30 @@ class PlotTypeMixin:
         label: Any = "",
         **kwargs: Any,
     ) -> PolyCollection:
-        width = kwargs.pop("linewidth", kwargs.pop("linewidths", 1.2))
+        width = kwargs.pop("linewidth", kwargs.pop("linewidths", kwargs.pop("lw", 1.2)))
         alpha = kwargs.pop("alpha", None)
         kwargs.pop("data", None)
+        transform = kwargs.pop("transform", None)
         check_unsupported(kwargs, "hlines()")
         yv, x0, x1 = np.broadcast_arrays(y, xmin, xmax)
+        yv, x0, x1 = (_segment_values(value) for value in (yv, x0, x1))
+        if transform == "yaxis transform":
+            lo, hi = self._entry_extent("x")
+            x0, x1 = lo + x0 * (hi - lo), lo + x1 * (hi - lo)
         if linestyles not in (None, "solid", "-"):
             pass  # generic segments are solid; geometry remains exact
+        chosen_color = colors
+        if chosen_color is not None and not isinstance(chosen_color, str) and len(chosen_color):
+            chosen_color = chosen_color[0]
         entry = self._add(
             "@mark",
             {
                 "factory": "segments",
                 "args": (x0.reshape(-1), yv.reshape(-1), x1.reshape(-1), yv.reshape(-1)),
                 "kwargs": {
-                    "color": resolve_color(colors) if colors is not None else self._next_color(),
+                    "color": resolve_color(chosen_color)
+                    if chosen_color is not None
+                    else self._next_color(),
                     "width": _float(np.asarray(width).reshape(-1)[0]),
                     "opacity": 1.0 if alpha is None else float(alpha),
                     "name": str(label) if label else None,
@@ -285,6 +351,7 @@ class PlotTypeMixin:
         **kwargs: Any,
     ) -> PolyCollection:
         xv, y0, y1 = np.broadcast_arrays(x, ymin, ymax)
+        xv, y0, y1 = (_segment_values(value) for value in (xv, y0, y1))
         return self._vlines_entry(xv, y0, y1, colors, linestyles, label, kwargs)
 
     def _vlines_entry(
@@ -297,9 +364,21 @@ class PlotTypeMixin:
         label: Any,
         kwargs: dict[str, Any],
     ) -> PolyCollection:
-        width = kwargs.pop("linewidth", kwargs.pop("linewidths", 1.2))
+        width = kwargs.pop("linewidth", kwargs.pop("linewidths", kwargs.pop("lw", 1.2)))
         alpha = kwargs.pop("alpha", None)
+        color = kwargs.pop("color", colors)
+        if (
+            color is not None
+            and not isinstance(color, str)
+            and len(color)
+            and not (len(color) in (3, 4) and all(np.isscalar(value) for value in color))
+        ):
+            color = color[0]
         kwargs.pop("data", None)
+        transform = kwargs.pop("transform", None)
+        if transform == "xaxis transform":
+            lo, hi = self._entry_extent("y")
+            y0, y1 = lo + y0 * (hi - lo), lo + y1 * (hi - lo)
         check_unsupported(kwargs, "vlines()")
         del linestyles
         entry = self._add(
@@ -308,7 +387,7 @@ class PlotTypeMixin:
                 "factory": "segments",
                 "args": (xv.reshape(-1), y0.reshape(-1), xv.reshape(-1), y1.reshape(-1)),
                 "kwargs": {
-                    "color": resolve_color(colors) if colors is not None else self._next_color(),
+                    "color": resolve_color(color) if color is not None else self._next_color(),
                     "width": _float(np.asarray(width).reshape(-1)[0]),
                     "opacity": 1.0 if alpha is None else float(alpha),
                     "name": str(label) if label else None,
@@ -321,12 +400,19 @@ class PlotTypeMixin:
         ranges = np.asarray(xranges, dtype=np.float64)
         if ranges.ndim != 2 or ranges.shape[1:] != (2,):
             raise ValueError("broken_barh xranges must have shape (n, 2)")
-        ymin, height = map(float, yrange)
+        raw_ymin, height = yrange
+        height = float(height)
+        ymin = (
+            self._categorical_position("y", raw_ymin) - height * 0.5
+            if isinstance(raw_ymin, str)
+            else float(raw_ymin)
+        )
         color = kwargs.pop("facecolors", kwargs.pop("facecolor", kwargs.pop("color", None)))
         alpha = kwargs.pop("alpha", None)
         label = kwargs.pop("label", None)
         edgecolor = kwargs.pop("edgecolors", kwargs.pop("edgecolor", None))
         linewidth = kwargs.pop("linewidth", kwargs.pop("linewidths", None))
+        kwargs.pop("align", None)
         check_unsupported(kwargs, "broken_barh()")
         entry_kwargs: dict[str, Any] = {
             "base": ranges[:, 0],
@@ -353,9 +439,9 @@ class PlotTypeMixin:
         self, y: Any, x1: Any, x2: Any = 0, where: Any = None, **kwargs: Any
     ) -> PolyCollection:
         yv, left, right = np.broadcast_arrays(
-            np.asarray(y, dtype=np.float64),
-            np.asarray(x1, dtype=np.float64),
-            np.asarray(x2, dtype=np.float64),
+            _masked_float(y),
+            _masked_float(x1),
+            _masked_float(x2),
         )
         if yv.ndim != 1 or len(yv) < 2:
             raise ValueError(
@@ -364,47 +450,69 @@ class PlotTypeMixin:
         color = kwargs.pop("color", kwargs.pop("facecolor", None))
         alpha = kwargs.pop("alpha", None)
         label = kwargs.pop("label", None)
-        edgecolor = kwargs.pop("edgecolor", None)
-        linewidth = kwargs.pop("linewidth", None)
+        kwargs.pop("edgecolor", None)
+        kwargs.pop("linewidth", None)
         kwargs.pop("interpolate", None)
         kwargs.pop("step", None)
         kwargs.pop("data", None)
         check_unsupported(kwargs, "fill_betweenx()")
-        vertices_x = np.column_stack((left, right))
-        vertices_y = np.column_stack((yv, yv))
-        cells = np.zeros((len(yv) - 1, 1), dtype=np.float64)
+        valid = np.isfinite(yv + left + right)
         if where is not None:
-            mask = np.asarray(where, dtype=bool)
+            mask = np.ma.asarray(where, dtype=bool).filled(False)
             if mask.shape != yv.shape:
                 raise ValueError("fill_betweenx where must match y")
-            cells[~(mask[:-1] & mask[1:]), 0] = np.nan
+            valid &= mask
         from xy import kernels
 
-        x0, y0, xa, ya, xb, yb, _ = kernels.quad_mesh_triangles(vertices_x, vertices_y, cells)
         mark_kwargs: dict[str, Any] = {
             "color": resolve_color(color) if color is not None else self._next_color(),
             "name": None if label is None else str(label),
-            "opacity": 0.35 if alpha is None else float(alpha),
+            "opacity": 1.0 if alpha is None else float(alpha),
         }
-        if edgecolor is not None:
-            mark_kwargs["stroke"] = resolve_color(edgecolor)
-            mark_kwargs["stroke_width"] = 1.0 if linewidth is None else float(linewidth)
-        entry = self._add(
-            "@mark",
-            {
-                "factory": "triangle_mesh",
-                "args": (x0, y0, xa, ya, xb, yb),
-                "kwargs": mark_kwargs,
-            },
-        )
-        return PolyCollection(self, entry)
+        # Triangle meshes cannot stroke only the polygon perimeter; stroking
+        # every tessellated triangle creates false internal striping. Keep the
+        # fill exact and omit that approximation until perimeter paths exist.
+        intervals = valid[:-1] & valid[1:]
+        starts = np.flatnonzero(intervals & np.r_[True, ~intervals[:-1]])
+        ends = np.flatnonzero(intervals & np.r_[~intervals[1:], True]) + 2
+        entries: list[dict[str, Any]] = []
+        for start, end in zip(starts, ends, strict=True):
+            vertices_x = np.column_stack((left[start:end], right[start:end]))
+            vertices_y = np.column_stack((yv[start:end], yv[start:end]))
+            cells = np.zeros((end - start - 1, 1), dtype=np.float64)
+            x0, y0, xa, ya, xb, yb, _ = kernels.quad_mesh_triangles(vertices_x, vertices_y, cells)
+            entries.append(
+                self._add(
+                    "@mark",
+                    {
+                        "factory": "triangle_mesh",
+                        "args": (x0, y0, xa, ya, xb, yb),
+                        "kwargs": {
+                            **mark_kwargs,
+                            "name": mark_kwargs.get("name") if not entries else None,
+                        },
+                    },
+                )
+            )
+        if not entries:
+            entries.append(
+                self._add(
+                    "@mark",
+                    {
+                        "factory": "triangle_mesh",
+                        "args": ([], [], [], [], [], []),
+                        "kwargs": {**mark_kwargs, "opacity": 0.0},
+                    },
+                )
+            )
+        return PolyCollection(self, entries[0])
 
     def fill(self, *args: Any, data: Any = None, **kwargs: Any) -> list[PolyCollection]:
         if len(args) < 2:
             raise TypeError("fill() requires x and y polygon coordinates")
         facecolor = kwargs.pop("color", kwargs.pop("facecolor", None))
-        edgecolor = kwargs.pop("edgecolor", None)
-        linewidth = kwargs.pop("linewidth", None)
+        edgecolor = kwargs.pop("edgecolor", kwargs.pop("ec", None))
+        linewidth = kwargs.pop("linewidth", kwargs.pop("lw", None))
         alpha = kwargs.pop("alpha", None)
         label = kwargs.pop("label", None)
         check_unsupported(kwargs, "fill()")
@@ -430,6 +538,10 @@ class PlotTypeMixin:
         for x_values, y_values, positional_color in groups:
             xv = np.asarray(x_values, dtype=np.float64)
             yv = np.asarray(y_values, dtype=np.float64)
+            finite = np.isfinite(xv) & np.isfinite(yv)
+            xv, yv = xv[finite], yv[finite]
+            if len(xv) > 2 and np.allclose((xv[0], yv[0]), (xv[-1], yv[-1])):
+                xv, yv = xv[:-1], yv[:-1]
             topology = kernels.polygon_triangles(xv, yv)
             x0, y0, x1, y1, x2, y2, _ = kernels.indexed_triangles(xv, yv, topology)
             chosen = facecolor
@@ -440,9 +552,6 @@ class PlotTypeMixin:
                 "name": None if label is None else str(label),
                 "opacity": 1.0 if alpha is None else float(alpha),
             }
-            if edgecolor is not None:
-                mark_kwargs["stroke"] = resolve_color(edgecolor)
-                mark_kwargs["stroke_width"] = 1.0 if linewidth is None else float(linewidth)
             entry = self._add(
                 "@mark",
                 {
@@ -451,6 +560,26 @@ class PlotTypeMixin:
                     "kwargs": mark_kwargs,
                 },
             )
+            if edgecolor is not None and len(xv) >= 2:
+                closed_x = np.concatenate((xv, xv[:1]))
+                closed_y = np.concatenate((yv, yv[:1]))
+                self._add(
+                    "@mark",
+                    {
+                        "factory": "segments",
+                        "args": (
+                            closed_x[:-1],
+                            closed_y[:-1],
+                            closed_x[1:],
+                            closed_y[1:],
+                        ),
+                        "kwargs": {
+                            "color": resolve_color(edgecolor),
+                            "width": 1.0 if linewidth is None else float(linewidth),
+                            "opacity": 1.0 if alpha is None else float(alpha),
+                        },
+                    },
+                )
             result.append(PolyCollection(self, entry))
         return result
 
@@ -502,6 +631,7 @@ class PlotTypeMixin:
             raise TypeError("axline() requires exactly one of xy2 or slope")
         if xy2 is None:
             xy2 = (float(xy1[0]) + 1.0, float(xy1[1]) + float(slope))
+        kwargs.pop("transform", None)
         props = _line_props(self, kwargs)
         check_unsupported(kwargs, "axline()")
         entry = self._add(
@@ -715,20 +845,35 @@ class PlotTypeMixin:
             else:
                 label = str(fmt) % (value if label_type == "center" else tops[index])
             coordinate = (
-                (bottoms[index] + tops[index]) * 0.5
-                if label_type == "center"
-                else tops[index] + np.sign(value or 1.0) * float(padding) * 0.01
+                (bottoms[index] + tops[index]) * 0.5 if label_type == "center" else tops[index]
             )
             x, y = (
                 (centers[index], coordinate)
                 if container.orientation == "vertical"
                 else (coordinate, centers[index])
             )
+            pixel_padding = float(padding) * (4.0 / 3.0)
+            if container.orientation == "vertical":
+                anchor = "middle"
+                dx = 0.0
+                dy = 4.0 if label_type == "center" else -(4.0 + pixel_padding)
+            elif label_type == "center":
+                anchor, dx, dy = "middle", 0.0, 4.0
+            else:
+                positive = value >= 0
+                anchor = "start" if positive else "end"
+                dx = (4.0 + pixel_padding) * (1.0 if positive else -1.0)
+                dy = 4.0
             entry = self._add(
                 "@text",
                 {
                     "args": (x, y, label),
-                    "kwargs": {"color": resolve_color(color)} if color is not None else {},
+                    "kwargs": {
+                        "color": resolve_color(color) if color is not None else None,
+                        "anchor": anchor,
+                        "dx": dx,
+                        "dy": dy,
+                    },
                 },
             )
             result.append(Text(self, entry))
@@ -992,6 +1137,7 @@ class PlotTypeMixin:
     ) -> StepPatch:
         values = _from_data(values, data)
         edges = _from_data(edges, data)
+        hatch = kwargs.pop("hatch", None)
         props = _line_props(self, kwargs)
         check_unsupported(kwargs, "stairs()")
         vals = np.asarray(values, dtype=np.float64)
@@ -1008,35 +1154,32 @@ class PlotTypeMixin:
             base_values = np.broadcast_to(
                 np.asarray(0.0 if baseline is None else baseline, dtype=np.float64), vals.shape
             )
-            left, right = edge_values[:-1], edge_values[1:]
-            if orientation == "vertical":
-                x0 = np.concatenate((left, left))
-                y0 = np.concatenate((base_values, base_values))
-                x1 = np.concatenate((right, right))
-                y1 = np.concatenate((base_values, vals))
-                x2 = np.concatenate((right, left))
-                y2 = np.concatenate((vals, vals))
-            else:
-                x0 = np.concatenate((base_values, base_values))
-                y0 = np.concatenate((left, left))
-                x1 = np.concatenate((base_values, vals))
-                y1 = np.concatenate((right, right))
-                x2 = np.concatenate((vals, vals))
-                y2 = np.concatenate((right, left))
-            entry = self._add(
-                "@mark",
-                {
-                    "factory": "triangle_mesh",
-                    "args": (x0, y0, x1, y1, x2, y2),
-                    "kwargs": {
-                        "color": props.get("color"),
-                        "opacity": props.get("opacity", 1.0),
-                        "name": props.get("name"),
+            entry = None
+            for index, (value, base_value, left, right) in enumerate(
+                zip(vals, base_values, edge_values[:-1], edge_values[1:], strict=True)
+            ):
+                item = self._add(
+                    "bar",
+                    {
+                        "x": [(left + right) * 0.5],
+                        "y": [value - base_value],
+                        "kwargs": {
+                            "color": props.get("color"),
+                            "width": float(right - left),
+                            "base": [base_value],
+                            "orientation": orientation,
+                            "opacity": props.get("opacity", 1.0),
+                            "name": props.get("name") if index == 0 else None,
+                        },
+                        "values": values,
+                        "edges": edges,
+                        "baseline": baseline,
                     },
-                    "values": values,
-                    "edges": edges,
-                },
-            )
+                )
+                entry = entry or item
+            assert entry is not None
+            if hatch:
+                self._stairs_hatch(vals, edge_values, base_values, orientation, props)
             return StepPatch(self, entry)
         if orientation == "horizontal":
             x0 = np.concatenate((vals, vals[:-1]))
@@ -1059,6 +1202,11 @@ class PlotTypeMixin:
                     "baseline": baseline,
                 },
             )
+            if hatch:
+                base_values = np.broadcast_to(
+                    np.asarray(0.0 if baseline is None else baseline, dtype=np.float64), vals.shape
+                )
+                self._stairs_hatch(vals, edge_values, base_values, orientation, props)
             return StepPatch(self, entry)
         entry = self._add(
             "@mark",
@@ -1071,6 +1219,51 @@ class PlotTypeMixin:
             },
         )
         return StepPatch(self, entry)
+
+    def _stairs_hatch(
+        self,
+        values: np.ndarray,
+        edges: np.ndarray,
+        bases: np.ndarray,
+        orientation: str,
+        props: dict[str, Any],
+    ) -> None:
+        """Approximate Matplotlib slash hatching with clipped bin-local strokes."""
+        x0: list[float] = []
+        y0: list[float] = []
+        x1: list[float] = []
+        y1: list[float] = []
+        for value, base, edge0, edge1 in zip(
+            values, bases, edges[:-1], edges[1:], strict=True
+        ):
+            if orientation == "vertical":
+                rx0, rx1 = edge0, edge1
+                ry0, ry1 = sorted((base, value))
+            else:
+                rx0, rx1 = sorted((base, value))
+                ry0, ry1 = edge0, edge1
+            for offset in np.linspace(-0.75, 0.75, 7):
+                u0, u1 = max(0.0, -offset), min(1.0, 1.0 - offset)
+                if u1 <= u0:
+                    continue
+                v0, v1 = u0 + offset, u1 + offset
+                x0.append(float(rx0 + u0 * (rx1 - rx0)))
+                y0.append(float(ry0 + v0 * (ry1 - ry0)))
+                x1.append(float(rx0 + u1 * (rx1 - rx0)))
+                y1.append(float(ry0 + v1 * (ry1 - ry0)))
+        self._add(
+            "@mark",
+            {
+                "factory": "segments",
+                "args": (x0, y0, x1, y1),
+                "kwargs": {
+                    "color": props.get("color"),
+                    "width": 0.8,
+                    "opacity": props.get("opacity", 1.0),
+                    "name": None,
+                },
+            },
+        )
 
     def ecdf(
         self,
@@ -1157,8 +1350,6 @@ class PlotTypeMixin:
             "bootstrap": bootstrap,
             "usermedians": usermedians,
             "conf_intervals": conf_intervals,
-            "meanline": True if meanline else None,
-            "showmeans": True if showmeans else None,
             "showcaps": False if showcaps is False else None,
             "showbox": False if showbox is False else None,
             "autorange": True if autorange else None,
@@ -1189,13 +1380,61 @@ class PlotTypeMixin:
             },
         )
         artist = Artist(self, entry)
+        mean_artists: list[Artist] = []
+        if showmeans:
+            raw = _from_data(x, data)
+            if isinstance(raw, (list, tuple)) and raw and all(np.ndim(v) == 1 for v in raw):
+                groups = [np.asarray(v, dtype=np.float64) for v in raw]
+            else:
+                arr = np.asarray(raw, dtype=np.float64)
+                groups = [arr[:, i] for i in range(arr.shape[1])] if arr.ndim == 2 else [arr]
+            centers = (
+                np.arange(len(groups), dtype=np.float64)
+                if positions is None
+                else np.asarray(positions, dtype=np.float64)
+            )
+            means = np.asarray([np.nanmean(group) for group in groups], dtype=np.float64)
+            mean_color = resolve_color((meanprops or {}).get("color", color or "#2ca02c"))
+            if meanline:
+                half = (_float(widths) if np.isscalar(widths) and widths is not None else 0.6) * 0.5
+                for center, mean in zip(centers, means, strict=True):
+                    if orientation == "vertical":
+                        args = ([center - half, center + half], [mean, mean])
+                    else:
+                        args = ([mean, mean], [center - half, center + half])
+                    line_entry = self._add(
+                        "line",
+                        {
+                            "x": args[0],
+                            "y": args[1],
+                            "kwargs": {"color": mean_color, "width": 1.5, "name": None},
+                        },
+                    )
+                    mean_artists.append(Line2D(self, line_entry))
+            else:
+                mx, my = (centers, means) if orientation == "vertical" else (means, centers)
+                mean_entry = self._add(
+                    "scatter",
+                    {
+                        "x": mx,
+                        "y": my,
+                        "kwargs": {
+                            "color": mean_color,
+                            "symbol": "diamond",
+                            "size": 6.0,
+                            "opacity": 1.0,
+                            "name": None,
+                        },
+                    },
+                )
+                mean_artists.append(Artist(self, mean_entry))
         return {
             "whiskers": [artist],
             "caps": [artist],
             "boxes": [artist],
             "medians": [artist],
             "fliers": [artist] if showfliers is not False else [],
-            "means": [],
+            "means": mean_artists,
         }
 
     def violinplot(
@@ -1423,12 +1662,20 @@ class PlotTypeMixin:
         return PathCollection(self, entry)
 
     def _contour(self, filled: bool, args: tuple[Any, ...], kwargs: dict[str, Any]) -> ContourSet:
-        if len(args) in (1, 2):
-            z = args[0]
+        if args and isinstance(args[0], ContourSet):
+            source = args[0]._entry
+            z = source["args"][0]
+            x = source["kwargs"].get("x")
+            y = source["kwargs"].get("y")
+            positional_levels = args[1] if len(args) > 1 else None
+            args = ()
+        elif len(args) in (1, 2):
+            z = _masked_float(args[0])
             x = y = None
             positional_levels = args[1] if len(args) == 2 else None
         elif len(args) in (3, 4):
             x, y, z = args[:3]
+            z = _masked_float(z)
             positional_levels = args[3] if len(args) == 4 else None
             za = np.asarray(z)
             xa, ya = np.asarray(x), np.asarray(y)
@@ -1443,7 +1690,7 @@ class PlotTypeMixin:
                         (xa.reshape(-1), ya.reshape(-1), za.reshape(-1)),
                         kwargs,
                     )
-        else:
+        elif args:
             raise TypeError("contour() expects Z, [levels] or X, Y, Z, [levels]")
         levels = kwargs.pop("levels", positional_levels if positional_levels is not None else 10)
         cmap = kwargs.pop("cmap", None)
@@ -1452,28 +1699,149 @@ class PlotTypeMixin:
         alpha = kwargs.pop("alpha", None)
         kwargs.pop("origin", None)
         kwargs.pop("extent", None)
+        norm = kwargs.pop("norm", None)
+        kwargs.pop("linestyles", None)
+        kwargs.pop("corner_mask", None)
+        extend = kwargs.pop("extend", None)
+        hatches = kwargs.pop("hatches", None)
+        locator = kwargs.pop("locator", None)
+        za = np.asarray(z, dtype=np.float64)
+        if np.isscalar(levels):
+            finite = za[np.isfinite(za)]
+            if locator is not None and "LogLocator" in type(locator).__name__:
+                positive = finite[finite > 0]
+                if not positive.size:
+                    raise ValueError("LogLocator contour data must contain positive values")
+                base = float(getattr(locator, "_base", 10.0))
+                low_power = int(np.floor(np.log(positive.min()) / np.log(base)))
+                high_power = int(np.ceil(np.log(positive.max()) / np.log(base)))
+                levels = base ** np.arange(low_power, high_power + 1, dtype=np.float64)
+            else:
+                levels = _nice_contour_levels(
+                    float(finite.min()), float(finite.max()), int(levels)
+                )
+        public_levels = np.asarray(levels, dtype=np.float64)
+        rendered_z = z
+        rendered_levels = public_levels
+        if norm is not None and callable(norm):
+            rendered_z = np.ma.asarray(norm(za), dtype=np.float64).filled(np.nan)
+            rendered_levels = np.asarray(norm(public_levels), dtype=np.float64)
+        elif locator is not None and "LogLocator" in type(locator).__name__:
+            rendered_z = np.where(za > 0, np.log10(za), np.nan)
+            rendered_levels = np.log10(public_levels)
         check_unsupported(kwargs, "contour()/contourf()")
         color = None
         if colors is not None:
             color = resolve_color(colors if isinstance(colors, str) else next(iter(colors)))
         width = _float(linewidths) if np.isscalar(linewidths) and linewidths is not None else 1.1
+        transparent_fill = filled and isinstance(colors, str) and colors.lower() == "none"
         entry = self._add(
             "@mark",
             {
                 "factory": "contour",
-                "args": (z,),
+                "args": (rendered_z,),
                 "kwargs": {
                     "x": x,
                     "y": y,
-                    "levels": levels,
+                    "levels": rendered_levels,
                     "filled": filled,
                     "colormap": resolve_cmap(cmap) if cmap is not None else "viridis",
                     "color": color,
                     "width": width,
-                    "opacity": 0.9 if alpha is None else float(alpha),
+                    "opacity": 0.0 if transparent_fill else (0.9 if alpha is None else float(alpha)),
                 },
+                "source_z": za,
+                "domain": (float(public_levels[0]), float(public_levels[-1])),
+                "hatches": list(hatches) if hatches is not None else None,
+                "extend": extend,
+                "levels": public_levels,
             },
         )
+        if filled and hatches:
+            patterns = list(hatches)
+            x_values = np.arange(za.shape[1], dtype=float) if x is None else np.asarray(x, dtype=float)
+            y_values = np.arange(za.shape[0], dtype=float) if y is None else np.asarray(y, dtype=float)
+            if x_values.ndim == y_values.ndim == 1:
+                if len(x_values) == za.shape[1] + 1:
+                    x_values = (x_values[:-1] + x_values[1:]) * 0.5
+                if len(y_values) == za.shape[0] + 1:
+                    y_values = (y_values[:-1] + y_values[1:]) * 0.5
+                sample_cols = np.unique(
+                    np.linspace(0, len(x_values) - 1, min(34, len(x_values))).astype(int)
+                )
+                sample_rows = np.unique(
+                    np.linspace(0, len(y_values) - 1, min(30, len(y_values))).astype(int)
+                )
+                dx = (
+                    float(np.ptp(x_values)) / max(1, len(sample_cols) - 1)
+                    if len(x_values) > 1
+                    else 1.0
+                )
+                dy = (
+                    float(np.ptp(y_values)) / max(1, len(sample_rows) - 1)
+                    if len(y_values) > 1
+                    else 1.0
+                )
+                hx0: list[float] = []
+                hy0: list[float] = []
+                hx1: list[float] = []
+                hy1: list[float] = []
+                for row in sample_rows:
+                    for col in sample_cols:
+                        if not np.isfinite(za[row, col]):
+                            continue
+                        band = int(np.searchsorted(levels, za[row, col], side="right") - 1)
+                        pattern = patterns[band % len(patterns)]
+                        if not pattern:
+                            continue
+                        text = str(pattern)
+                        cx, cy = float(x_values[col]), float(y_values[row])
+
+                        def stroke(angle: str, offset: float = 0.0) -> None:
+                            if angle == "horizontal":
+                                vx, vy, ox, oy = 0.38 * dx, 0.0, 0.0, offset * dy
+                            elif angle == "backslash":
+                                vx, vy, ox, oy = (
+                                    0.32 * dx,
+                                    -0.32 * dy,
+                                    offset * dx,
+                                    offset * dy,
+                                )
+                            else:
+                                vx, vy, ox, oy = (
+                                    0.32 * dx,
+                                    0.32 * dy,
+                                    -offset * dx,
+                                    offset * dy,
+                                )
+                            hx0.append(cx + ox - vx)
+                            hy0.append(cy + oy - vy)
+                            hx1.append(cx + ox + vx)
+                            hy1.append(cy + oy + vy)
+
+                        if "-" in text or "*" in text:
+                            stroke("horizontal")
+                        for char, angle in (("/", "slash"), ("\\", "backslash")):
+                            count = min(3, text.count(char))
+                            for index in range(count):
+                                stroke(angle, (index - (count - 1) / 2) * 0.16)
+                        if "." in text:
+                            # A tiny cross remains visible in both native raster
+                            # and browser renderers, unlike a zero-length segment.
+                            stroke("horizontal")
+                            stroke("slash")
+                        if "*" in text:
+                            stroke("slash")
+                            stroke("backslash")
+                if hx0:
+                    self._add(
+                        "@mark",
+                        {
+                            "factory": "segments",
+                            "args": (hx0, hy0, hx1, hy1),
+                            "kwargs": {"color": "#222222", "width": 0.9, "opacity": 0.95},
+                        },
+                    )
         return ContourSet(self, entry)
 
     def contour(self, *args: Any, data: Any = None, **kwargs: Any) -> ContourSet:
@@ -1505,7 +1873,41 @@ class PlotTypeMixin:
         if isinstance(manual, (list, tuple, np.ndarray)) and len(manual):
             locations = list(manual)
         else:
-            locations = [(0.5, 0.5)] * len(chosen)
+            source = CS._entry
+            grid = np.asarray(source["args"][0], dtype=np.float64)
+            x_values = source["kwargs"].get("x")
+            y_values = source["kwargs"].get("y")
+            x_values = (
+                np.arange(grid.shape[1], dtype=np.float64)
+                if x_values is None
+                else np.asarray(x_values, dtype=np.float64)
+            )
+            y_values = (
+                np.arange(grid.shape[0], dtype=np.float64)
+                if y_values is None
+                else np.asarray(y_values, dtype=np.float64)
+            )
+            try:
+                from xy import kernels
+
+                x0, x1, y0, y1, segment_levels = kernels.marching_squares(
+                    grid, x_values, y_values, chosen
+                )
+                locations = []
+                for index, level in enumerate(chosen):
+                    candidates = np.flatnonzero(np.isclose(segment_levels, level))
+                    if len(candidates):
+                        selected = candidates[(index * 37 + len(candidates) // 3) % len(candidates)]
+                        locations.append(
+                            (
+                                float((x0[selected] + x1[selected]) * 0.5),
+                                float((y0[selected] + y1[selected]) * 0.5),
+                            )
+                        )
+                    else:
+                        locations.append(None)
+            except (ValueError, RuntimeError):
+                locations = [(0.5, 0.5)] * len(chosen)
         color_values = [colors] * len(chosen) if isinstance(colors, str) else colors
         if color_values is None:
             color_values = [None] * len(chosen)
@@ -1514,6 +1916,8 @@ class PlotTypeMixin:
         result: list[Text] = []
         for index, level in enumerate(chosen):
             location = locations[index % len(locations)]
+            if location is None:
+                continue
             if callable(fmt):
                 label = str(fmt(level))
             elif isinstance(fmt, dict):
@@ -1522,6 +1926,7 @@ class PlotTypeMixin:
                 label = fmt % level
             else:
                 label = f"{level:g}"
+            label = _plain_label(label)
             color = color_values[index % len(color_values)]
             entry = self._add(
                 "@text",
@@ -2026,6 +2431,9 @@ class PlotTypeMixin:
         if not args:
             raise TypeError("stackplot() requires at least one y series")
         x = np.asarray(_from_data(x, data), dtype=np.float64)
+        if len(args) == 1 and not isinstance(args[0], np.ndarray):
+            candidate = list(args[0])
+            args = tuple(candidate) if candidate and np.ndim(candidate[0]) > 0 else args
         resolved = [_from_data(value, data) for value in args]
         values = np.vstack(resolved).astype(np.float64, copy=False)
         if values.ndim != 2 or values.shape[1] != len(x):
@@ -2071,11 +2479,11 @@ class PlotTypeMixin:
 
     def pcolormesh(self, *args: Any, **kwargs: Any) -> PolyCollection:
         if len(args) == 1:
-            z = np.asarray(args[0], dtype=np.float64)
+            z = _masked_float(args[0])
             x = y = None
         elif len(args) == 3:
             x, y, raw = args
-            z = np.asarray(raw, dtype=np.float64)
+            z = _masked_float(raw)
         else:
             raise TypeError("pcolormesh() expects C or X, Y, C")
         if z.ndim != 2:
@@ -2088,12 +2496,17 @@ class PlotTypeMixin:
         kwargs.pop("antialiased", None)
         edgecolors = kwargs.pop("edgecolors", kwargs.pop("edgecolor", None))
         linewidth = kwargs.pop("linewidth", kwargs.pop("linewidths", None))
-        kwargs.pop("norm", None)
+        norm = kwargs.pop("norm", None)
         if shading not in (None, "auto", "flat", "nearest", "gouraud"):
             raise ValueError(f"invalid pcolormesh shading {shading!r}")
         check_unsupported(kwargs, "pcolormesh()")
         colormap = resolve_cmap(cmap) if cmap is not None else "viridis"
         opacity = 1.0 if alpha is None else float(alpha)
+        norm_vmin, norm_vmax = getattr(norm, "vmin", None), getattr(norm, "vmax", None)
+        if vmin is None and norm_vmin is not None:
+            vmin = norm_vmin
+        if vmax is None and norm_vmax is not None:
+            vmax = norm_vmax
         domain = (float(vmin), float(vmax)) if vmin is not None and vmax is not None else None
         regular = None if x is None else _uniform_mesh_axes(x, y, z.shape)
         if x is None or (regular is not None and shading != "gouraud"):
@@ -2107,7 +2520,37 @@ class PlotTypeMixin:
             }
             if domain is not None:
                 mark_kwargs["domain"] = domain
-            entry = self._add("@mark", {"factory": "heatmap", "args": (z,), "kwargs": mark_kwargs})
+            rendered_z = z
+            if norm is not None and callable(norm):
+                mapped = np.ma.asarray(norm(z), dtype=np.float64)
+                cmap_callable = cmap if callable(cmap) else None
+                if cmap_callable is None:
+                    try:
+                        mpl_colormaps = __import__(
+                            "matplotlib", fromlist=["colormaps"]
+                        ).colormaps
+
+                        cmap_callable = mpl_colormaps.get_cmap(cmap or "viridis")
+                    except (ImportError, ValueError):
+                        from ._colors import Cmap
+
+                        cmap_callable = Cmap(cmap or "viridis")
+                rendered_z = np.asarray(cmap_callable(mapped), dtype=np.float64)
+                mask = np.ma.getmaskarray(mapped) | ~np.isfinite(z)
+                if rendered_z.shape[-1] == 3:
+                    rendered_z = np.dstack(
+                        (rendered_z, np.ones(z.shape, dtype=np.float64))
+                    )
+                rendered_z[..., 3] = np.where(mask, 0.0, rendered_z[..., 3])
+            entry = self._add(
+                "@mark",
+                {
+                    "factory": "heatmap",
+                    "args": (rendered_z,),
+                    "kwargs": mark_kwargs,
+                    "source_z": z,
+                },
+            )
             return PolyCollection(self, entry)
 
         from xy import kernels
@@ -2115,8 +2558,26 @@ class PlotTypeMixin:
         if y is None:
             raise ValueError("pcolormesh requires Y when X is provided")
         x0, y0, x1, y1, x2, y2, scalar = kernels.quad_mesh_triangles(x, y, z)
+        finite_triangles = np.isfinite(scalar)
+        if not np.all(finite_triangles):
+            x0, y0, x1, y1, x2, y2, scalar = (
+                values[finite_triangles]
+                for values in (x0, y0, x1, y1, x2, y2, scalar)
+            )
+        source_scalar = scalar
+        rendered_scalar = scalar
+        source_domain = domain
+        if norm is not None and callable(norm):
+            rendered_scalar = np.ma.asarray(norm(scalar), dtype=np.float64).filled(np.nan)
+            source_vmin = getattr(norm, "vmin", None)
+            source_vmax = getattr(norm, "vmax", None)
+            source_domain = (
+                float(np.nanmin(source_scalar) if source_vmin is None else source_vmin),
+                float(np.nanmax(source_scalar) if source_vmax is None else source_vmax),
+            )
+            domain = (0.0, 1.0)
         mark_kwargs: dict[str, Any] = {
-            "color": scalar,
+            "color": rendered_scalar,
             "colormap": colormap,
             "opacity": opacity,
         }
@@ -2134,6 +2595,8 @@ class PlotTypeMixin:
                 "factory": "triangle_mesh",
                 "args": (x0, y0, x1, y1, x2, y2),
                 "kwargs": mark_kwargs,
+                "source_z": source_scalar,
+                "domain": source_domain,
             },
         )
         return PolyCollection(self, entry)
@@ -2146,7 +2609,11 @@ class PlotTypeMixin:
 
     def matshow(self, z: Any, **kwargs: Any) -> Any:
         kwargs.setdefault("origin", "upper")
-        return self.imshow(z, **kwargs)
+        image = self.imshow(z, **kwargs)
+        self._axis_props("y")["reverse"] = True
+        self._axis_props("x")["side"] = "top"
+        self._invalidate()
+        return image
 
     def spy(
         self,
@@ -2158,15 +2625,34 @@ class PlotTypeMixin:
         origin: str = "upper",
         **kwargs: Any,
     ) -> Any:
-        del marker, markersize, aspect
+        del aspect
         values = z.toarray() if hasattr(z, "toarray") else np.asarray(z)
         threshold = 0.0 if precision in (None, "present") else float(precision)
-        mask = np.abs(np.asarray(values, dtype=np.float64)) <= threshold
-        kwargs.setdefault("cmap", "gray")
-        kwargs.setdefault("vmin", 0.0)
-        kwargs.setdefault("vmax", 1.0)
+        present = np.abs(np.asarray(values, dtype=np.float64)) > threshold
+        marker_mode = marker is not None or markersize is not None
+        color = np.array([31, 119, 180], dtype=np.uint8) if marker_mode else np.zeros(3, dtype=np.uint8)
+        if marker_mode:
+            scale = max(3, int(round(float(markersize or 5))))
+            image = np.full(
+                (present.shape[0] * scale, present.shape[1] * scale, 3),
+                255,
+                dtype=np.uint8,
+            )
+            for row, col in np.argwhere(present):
+                image[
+                    row * scale + 1 : (row + 1) * scale,
+                    col * scale + 1 : (col + 1) * scale,
+                ] = color
+        else:
+            image = np.full(present.shape + (3,), 255, dtype=np.uint8)
+            image[present] = color
         kwargs["origin"] = origin
-        return self.imshow(mask.astype(np.float64), **kwargs)
+        kwargs["extent"] = (-0.5, present.shape[1] - 0.5, -0.5, present.shape[0] - 0.5)
+        result = self.imshow(image, **kwargs)
+        self._axis_props("y")["reverse"] = True
+        self._axis_props("x")["side"] = "top"
+        self._invalidate()
+        return result
 
     def pie(
         self,
@@ -2591,9 +3077,11 @@ class PlotTypeMixin:
         fmt = rest[0] if rest else None
         if len(rest) > 1:
             raise TypeError("triplot() accepts at most one format string")
+        marker_size = float(kwargs.pop("markersize", kwargs.pop("ms", 6.0))) * (4.0 / 3.0)
         props = _line_props(self, kwargs)
+        marker = None
         if fmt is not None:
-            color_spec, linestyle, _marker = parse_fmt(str(fmt))
+            color_spec, linestyle, marker = parse_fmt(str(fmt))
             if color_spec is not None:
                 props["color"] = resolve_color(color_spec)
             if linestyle is not None:
@@ -2615,6 +3103,20 @@ class PlotTypeMixin:
                 },
             },
         )
+        if marker is not None:
+            self._add(
+                "scatter",
+                {
+                    "x": x,
+                    "y": y,
+                    "kwargs": {
+                        "color": props.get("color"),
+                        "size": marker_size,
+                        "opacity": props.get("opacity", 1.0),
+                        "symbol": MARKER_TO_SYMBOL.get(marker, "circle"),
+                    },
+                },
+            )
         return [Line2D(self, entry)]
 
     def _tricontour(
@@ -2641,9 +3143,12 @@ class PlotTypeMixin:
         kwargs.pop("norm", None)
         kwargs.pop("antialiased", None)
         kwargs.pop("extend", None)
+        hatches = kwargs.pop("hatches", None)
+        kwargs.pop("linestyles", None)
         check_unsupported(kwargs, "tricontour()/tricontourf()")
         colormap = resolve_cmap(cmap) if cmap is not None else "viridis"
-        opacity = 1.0 if alpha is None else float(alpha)
+        transparent_fill = filled and isinstance(colors, str) and colors.lower() == "none"
+        opacity = 0.0 if transparent_fill else (1.0 if alpha is None else float(alpha))
         domain_lo, domain_hi = float(levels[0]), float(levels[-1])
         if domain_lo == domain_hi:
             padding = abs(domain_lo) * 0.05 or 0.5
@@ -2676,6 +3181,45 @@ class PlotTypeMixin:
                     "levels": levels,
                 },
             )
+            if hatches:
+                patterns = list(hatches)
+                centers_x = np.mean(x[topology], axis=1)
+                centers_y = np.mean(y[topology], axis=1)
+                centers_z = np.nanmean(z[topology], axis=1)
+                sx = max(float(np.ptp(x)) / 70.0, np.finfo(float).eps)
+                sy = max(float(np.ptp(y)) / 70.0, np.finfo(float).eps)
+                hx0: list[float] = []
+                hy0: list[float] = []
+                hx1: list[float] = []
+                hy1: list[float] = []
+                for cx, cy, value in zip(centers_x, centers_y, centers_z, strict=True):
+                    band = int(np.searchsorted(levels, value, side="right") - 1)
+                    pattern = patterns[band % len(patterns)]
+                    if not pattern:
+                        continue
+                    text = str(pattern)
+
+                    def add(dx: float, dy: float) -> None:
+                        hx0.append(float(cx - dx))
+                        hy0.append(float(cy - dy))
+                        hx1.append(float(cx + dx))
+                        hy1.append(float(cy + dy))
+
+                    if "-" in text or "." in text or "*" in text:
+                        add(sx, 0.0)
+                    if "/" in text or "." in text or "*" in text:
+                        add(sx, sy)
+                    if "\\" in text or "*" in text:
+                        add(sx, -sy)
+                if hx0:
+                    self._add(
+                        "@mark",
+                        {
+                            "factory": "segments",
+                            "args": (hx0, hy0, hx1, hy1),
+                            "kwargs": {"color": "#222222", "width": 0.7},
+                        },
+                    )
         else:
             x0, x1, y0, y1, segment_levels = kernels.marching_triangles(x, y, z, topology, levels)
             width = _float(np.asarray(linewidths).reshape(-1)[0]) if linewidths is not None else 1.1
@@ -2710,8 +3254,8 @@ class PlotTypeMixin:
     ) -> PolyCollection:
         if len(args) == 2:
             raw_u, raw_v = args
-            u_grid = np.asarray(raw_u, dtype=np.float64)
-            v_grid = np.asarray(raw_v, dtype=np.float64)
+            u_grid = _masked_float(raw_u)
+            v_grid = _masked_float(raw_v)
             if u_grid.shape != v_grid.shape:
                 raise ValueError(f"{name} U and V must have matching shapes")
             if u_grid.ndim == 1:
@@ -2728,12 +3272,12 @@ class PlotTypeMixin:
         elif len(args) in (4, 5):
             raw_x, raw_y, raw_u, raw_v = args[:4]
             c = args[4] if len(args) == 5 else None
-            u_grid = np.asarray(raw_u, dtype=np.float64)
-            v_grid = np.asarray(raw_v, dtype=np.float64)
+            u_grid = _masked_float(raw_u)
+            v_grid = _masked_float(raw_v)
             if u_grid.shape != v_grid.shape:
                 raise ValueError(f"{name} U and V must have matching shapes")
-            x_grid = np.asarray(raw_x, dtype=np.float64)
-            y_grid = np.asarray(raw_y, dtype=np.float64)
+            x_grid = _masked_float(raw_x)
+            y_grid = _masked_float(raw_y)
             if x_grid.ndim == y_grid.ndim == 1 and u_grid.ndim == 2:
                 x_grid, y_grid = np.meshgrid(x_grid, y_grid)
             if x_grid.shape != u_grid.shape or y_grid.shape != u_grid.shape:
@@ -2758,6 +3302,7 @@ class PlotTypeMixin:
         cmap = kwargs.pop("cmap", None)
         kwargs.pop("norm", None)
         kwargs.pop("clim", None)
+        kwargs.pop("zorder", None)
         check_unsupported(kwargs, f"{name}()")
         if not isinstance(angles, str):
             directions = np.deg2rad(np.asarray(angles, dtype=np.float64).reshape(-1))
@@ -2771,15 +3316,59 @@ class PlotTypeMixin:
             raise ValueError(f"invalid {name} scale_units {scale_units!r}")
         from xy import kernels
 
-        x0, x1, y0, y1 = kernels.vector_segments(
-            x,
-            y,
-            u,
-            v,
-            scale=1.0 if scale is None else float(scale),
-            pivot=pivot,
-            head_ratio=0.28 if name == "barbs" else 0.22,
-        )
+        magnitudes = np.hypot(u, v)
+        if scale is None:
+            spacings: list[float] = []
+            for positions in (x, y):
+                unique = np.unique(positions[np.isfinite(positions)])
+                if len(unique) > 1:
+                    spacings.append(float(np.median(np.diff(unique))))
+            spacing = min(spacings) if spacings else 1.0
+            finite_magnitudes = magnitudes[np.isfinite(magnitudes) & (magnitudes > 0)]
+            typical = float(np.median(finite_magnitudes)) if len(finite_magnitudes) else 1.0
+            vector_scale = typical / max(0.75 * spacing, np.finfo(float).eps)
+        else:
+            vector_scale = float(scale)
+        color_repeats: Optional[np.ndarray] = None
+        if name == "barbs":
+            starts_x: list[float] = []
+            starts_y: list[float] = []
+            ends_x: list[float] = []
+            ends_y: list[float] = []
+            repeats: list[int] = []
+            for px, py, du, dv, magnitude in zip(x, y, u, v, magnitudes, strict=True):
+                if not np.isfinite(px + py + du + dv + magnitude) or magnitude <= 0:
+                    repeats.append(0)
+                    continue
+                dx, dy = du / magnitude, dv / magnitude
+                length = magnitude / vector_scale
+                tail_x, tail_y = px, py
+                tip_x, tip_y = px + dx * length, py + dy * length
+                starts_x.append(float(tail_x))
+                starts_y.append(float(tail_y))
+                ends_x.append(float(tip_x))
+                ends_y.append(float(tip_y))
+                count = max(2, min(6, int(round(magnitude / 10.0))))
+                for index in range(count):
+                    along = length * (0.08 + index * 0.13)
+                    bx, by = tip_x - dx * along, tip_y - dy * along
+                    starts_x.append(float(bx))
+                    starts_y.append(float(by))
+                    ends_x.append(float(bx - dx * length * 0.16 - dy * length * 0.28))
+                    ends_y.append(float(by - dy * length * 0.16 + dx * length * 0.28))
+                repeats.append(1 + count)
+            x0, y0, x1, y1 = map(np.asarray, (starts_x, starts_y, ends_x, ends_y))
+            color_repeats = np.asarray(repeats, dtype=np.int64)
+        else:
+            x0, x1, y0, y1 = kernels.vector_segments(
+                x,
+                y,
+                u,
+                v,
+                scale=vector_scale,
+                pivot=pivot,
+                head_ratio=0.22,
+            )
         segment_color: Any
         if color is not None and not isinstance(color, str):
             values = np.asarray(color).reshape(-1)
@@ -2787,7 +3376,11 @@ class PlotTypeMixin:
                 raise ValueError(f"{name} color values must match U and V")
             keep = np.isfinite(x) & np.isfinite(y) & np.isfinite(u) & np.isfinite(v)
             keep &= np.hypot(u, v) > 0
-            segment_color = np.repeat(values[keep], 3)
+            segment_color = (
+                np.repeat(values, color_repeats)
+                if color_repeats is not None
+                else np.repeat(values[keep], 3)
+            )
         else:
             segment_color = resolve_color(color) if color is not None else self._next_color()
         entry = self._add(
@@ -2798,9 +3391,10 @@ class PlotTypeMixin:
                 "kwargs": {
                     "color": segment_color,
                     "colormap": resolve_cmap(cmap) if cmap is not None else "viridis",
-                    "width": float(width),
+                    "width": max(1.0, float(width) * 200.0) if float(width) < 0.1 else float(width),
                     "opacity": 1.0 if alpha is None else float(alpha),
                 },
+                "vector_scale": vector_scale,
             },
         )
         return PolyCollection(self, entry)
@@ -2811,6 +3405,14 @@ class PlotTypeMixin:
 
     def barbs(self, *args: Any, data: Any = None, **kwargs: Any) -> PolyCollection:
         del data
+        kwargs.pop("length", None)
+        kwargs.pop("fill_empty", None)
+        kwargs.pop("rounding", None)
+        kwargs.pop("sizes", None)
+        kwargs.pop("barbcolor", None)
+        kwargs.pop("flagcolor", None)
+        kwargs.pop("barb_increments", None)
+        kwargs.pop("flip_barb", None)
         return self._vector_field(args, kwargs, "barbs")
 
     def quiverkey(
@@ -2823,7 +3425,7 @@ class PlotTypeMixin:
         **kwargs: Any,
     ) -> PolyCollection:
         angle = np.deg2rad(float(kwargs.pop("angle", 0.0)))
-        kwargs.pop("coordinates", None)
+        coordinates = kwargs.pop("coordinates", "axes")
         labelpos = kwargs.pop("labelpos", "N")
         labelsep = float(kwargs.pop("labelsep", 0.1))
         color = kwargs.pop("color", Q.get_color())
@@ -2833,11 +3435,19 @@ class PlotTypeMixin:
         check_unsupported(kwargs, "quiverkey()")
         from xy import kernels
 
+        if coordinates == "axes":
+            qx = np.concatenate((np.asarray(Q._entry["args"][0]), np.asarray(Q._entry["args"][2])))
+            qy = np.concatenate((np.asarray(Q._entry["args"][1]), np.asarray(Q._entry["args"][3])))
+            px = float(np.nanmin(qx) + float(X) * (np.nanmax(qx) - np.nanmin(qx)))
+            py = float(np.nanmin(qy) + float(Y) * (np.nanmax(qy) - np.nanmin(qy)))
+        else:
+            px, py = float(X), float(Y)
         x0, x1, y0, y1 = kernels.vector_segments(
-            np.asarray([float(X)], dtype=np.float64),
-            np.asarray([float(Y)], dtype=np.float64),
+            np.asarray([px], dtype=np.float64),
+            np.asarray([py], dtype=np.float64),
             np.asarray([float(U) * np.cos(angle)], dtype=np.float64),
             np.asarray([float(U) * np.sin(angle)], dtype=np.float64),
+            scale=float(Q._entry.get("vector_scale", 1.0)),
             head_ratio=0.22,
         )
         chosen = (
@@ -2865,7 +3475,7 @@ class PlotTypeMixin:
         self._add(
             "@text",
             {
-                "args": (float(X) + dx, float(Y) + dy, str(label)),
+                "args": (px + dx, py + dy, str(label)),
                 "kwargs": {"color": resolve_color(labelcolor)} if labelcolor is not None else {},
             },
         )
@@ -2891,53 +3501,235 @@ class PlotTypeMixin:
         maxlength: float = 4.0,
         integration_direction: str = "both",
         broken_streamlines: bool = True,
+        integration_max_step_scale: float = 1.0,
+        integration_max_error_scale: float = 1.0,
         *,
         num_arrows: int = 1,
         data: Any = None,
     ) -> StreamplotSet:
-        del norm, arrowsize, arrowstyle, minlength, transform, zorder, broken_streamlines
-        del start_points, integration_direction, num_arrows
+        del transform, zorder
         x_values = np.asarray(_from_data(x, data), dtype=np.float64)
         y_values = np.asarray(_from_data(y, data), dtype=np.float64)
-        u_values = np.asarray(_from_data(u, data), dtype=np.float64)
-        v_values = np.asarray(_from_data(v, data), dtype=np.float64)
+        u_values = _masked_float(_from_data(u, data))
+        v_values = _masked_float(_from_data(v, data))
         if u_values.shape != v_values.shape or u_values.ndim != 2:
             raise ValueError("streamplot U and V must be matching 2-D arrays")
         if x_values.ndim == y_values.ndim == 2:
             x_values, y_values = _regular_mesh_axes(x_values, y_values, u_values.shape)
         if x_values.ndim != 1 or y_values.ndim != 1:
             raise ValueError("streamplot X and Y must define a regular grid")
-        density_value = float(np.max(np.asarray(density, dtype=np.float64)))
-        width_value = (
-            1.2 if linewidth is None else float(np.nanmean(np.asarray(linewidth, dtype=np.float64)))
-        )
-        from xy import kernels
+        source_segments: list[np.ndarray] = []
+        mapped_color: Any = None
+        mapped_width: Any = None
+        arrow_count = 0
+        try:
+            # The compatibility layer can reuse Matplotlib's well-tested
+            # integrator without using its renderer.  This preserves explicit
+            # seeds, masks, adaptive controls, and per-segment scalar values;
+            # the resulting paths still render entirely through xy.
+            MatplotlibFigure = __import__(
+                "matplotlib.figure", fromlist=["Figure"]
+            ).Figure
 
-        max_steps = max(1, min(100_000, int(float(maxlength) * max(u_values.shape) * 8)))
-        x0, x1, y0, y1 = kernels.streamlines(
-            x_values,
-            y_values,
-            u_values,
-            v_values,
-            density=density_value,
-            max_steps=max_steps,
+            mpl_ax = MatplotlibFigure().subplots()
+            mpl_kwargs: dict[str, Any] = {
+                "density": density,
+                "linewidth": linewidth,
+                "color": color,
+                "cmap": cmap,
+                "norm": norm,
+                "arrowsize": arrowsize,
+                "arrowstyle": arrowstyle,
+                "minlength": minlength,
+                "start_points": start_points,
+                "maxlength": maxlength,
+                "integration_direction": integration_direction,
+                "broken_streamlines": broken_streamlines,
+                "integration_max_step_scale": integration_max_step_scale,
+                "integration_max_error_scale": integration_max_error_scale,
+                "num_arrows": num_arrows,
+            }
+            mpl_kwargs = {key: value for key, value in mpl_kwargs.items() if value is not None}
+            mpl_result = mpl_ax.streamplot(
+                x_values, y_values, u_values, v_values, **mpl_kwargs
+            )
+            source_segments = [
+                np.asarray(segment, dtype=np.float64)
+                for segment in mpl_result.lines.get_segments()
+                if len(segment) >= 2
+            ]
+            mapped_color = mpl_result.lines.get_array()
+            mapped_width = np.asarray(mpl_result.lines.get_linewidths(), dtype=np.float64)
+            arrow_count = len(mpl_result.arrows.get_paths())
+        except (ImportError, TypeError, ValueError):
+            from xy import kernels
+
+            density_value = float(np.max(np.asarray(density, dtype=np.float64)))
+            max_steps = max(
+                1, min(100_000, int(float(maxlength) * max(u_values.shape) * 8))
+            )
+            kx0, kx1, ky0, ky1 = kernels.streamlines(
+                x_values,
+                y_values,
+                u_values,
+                v_values,
+                density=density_value,
+                max_steps=max_steps,
+            )
+            source_segments = [
+                np.asarray([[sx, sy], [ex, ey]], dtype=np.float64)
+                for sx, ex, sy, ey in zip(kx0, kx1, ky0, ky1, strict=True)
+            ]
+            arrow_count = max(1, min(len(source_segments), int(30 * float(np.max(np.asarray(density))))))
+
+        x0_values: list[float] = []
+        y0_values: list[float] = []
+        x1_values: list[float] = []
+        y1_values: list[float] = []
+        repeats: list[int] = []
+        for segment in source_segments:
+            repeats.append(len(segment) - 1)
+            x0_values.extend(segment[:-1, 0])
+            y0_values.extend(segment[:-1, 1])
+            x1_values.extend(segment[1:, 0])
+            y1_values.extend(segment[1:, 1])
+        x0, y0, x1, y1 = map(
+            lambda values: np.asarray(values, dtype=np.float64),
+            (x0_values, y0_values, x1_values, y1_values),
         )
-        if color is not None and not isinstance(color, str):
+
+        if mapped_color is not None:
+            numeric_color = np.asarray(mapped_color, dtype=np.float64).reshape(-1)
+            chosen_color: Any = (
+                np.repeat(numeric_color, repeats)
+                if len(numeric_color) == len(repeats)
+                else np.resize(numeric_color, len(x0))
+            )
+        elif color is not None and not isinstance(color, str):
             numeric_color = np.asarray(color, dtype=np.float64)
-            chosen_color: Any = np.full(len(x0), float(np.nanmean(numeric_color)))
+            chosen_color = np.full(len(x0), float(np.nanmean(numeric_color)))
         else:
             chosen_color = resolve_color(color) if color is not None else self._next_color()
-        entry = self._add(
-            "@mark",
-            {
-                "factory": "segments",
-                "args": (x0, y0, x1, y1),
-                "kwargs": {
-                    "color": chosen_color,
-                    "colormap": resolve_cmap(cmap) if cmap is not None else "viridis",
-                    "width": width_value,
-                },
-            },
-        )
-        collection = PolyCollection(self, entry)
-        return StreamplotSet(collection, collection)
+        if mapped_width is not None and mapped_width.size > 1:
+            width_value: Any = (
+                np.repeat(mapped_width, repeats)
+                if len(mapped_width) == len(repeats)
+                else np.resize(mapped_width, len(x0))
+            )
+        else:
+            width_value = (
+                float(mapped_width[0])
+                if mapped_width is not None and mapped_width.size
+                else (
+                    1.2
+                    if linewidth is None
+                    else float(np.nanmean(np.asarray(linewidth, dtype=np.float64)))
+                )
+            )
+        colormap = resolve_cmap(cmap) if cmap is not None else "viridis"
+        color_domain = None
+        if color is not None and not isinstance(color, str):
+            original_color = np.asarray(color, dtype=np.float64)
+            original_color = original_color[np.isfinite(original_color)]
+            norm_lo, norm_hi = getattr(norm, "vmin", None), getattr(norm, "vmax", None)
+            if norm_lo is not None and norm_hi is not None:
+                color_domain = (float(norm_lo), float(norm_hi))
+            elif original_color.size and float(original_color.min()) != float(original_color.max()):
+                color_domain = (float(original_color.min()), float(original_color.max()))
+        elif not isinstance(chosen_color, str):
+            finite_color = np.asarray(chosen_color, dtype=np.float64)
+            finite_color = finite_color[np.isfinite(finite_color)]
+            if finite_color.size and float(finite_color.min()) != float(finite_color.max()):
+                color_domain = (float(finite_color.min()), float(finite_color.max()))
+
+        entries: list[dict[str, Any]] = []
+        if isinstance(width_value, np.ndarray) and len(width_value) == len(x0):
+            finite_width = width_value[np.isfinite(width_value)]
+            if finite_width.size:
+                edges = np.unique(np.quantile(finite_width, np.linspace(0.0, 1.0, 7)))
+                bins = np.clip(np.digitize(width_value, edges[1:-1]), 0, max(0, len(edges) - 2))
+                for bin_index in np.unique(bins):
+                    keep = bins == bin_index
+                    kwargs_for_bin: dict[str, Any] = {
+                        "color": (
+                            np.asarray(chosen_color)[keep]
+                            if not isinstance(chosen_color, str)
+                            else chosen_color
+                        ),
+                        "colormap": colormap,
+                        "width": float(np.nanmean(width_value[keep])),
+                    }
+                    if color_domain is not None and not isinstance(chosen_color, str):
+                        kwargs_for_bin["domain"] = color_domain
+                    entries.append(
+                        self._add(
+                            "@mark",
+                            {
+                                "factory": "segments",
+                                "args": (x0[keep], y0[keep], x1[keep], y1[keep]),
+                                "kwargs": kwargs_for_bin,
+                            },
+                        )
+                    )
+        if not entries:
+            entry_kwargs: dict[str, Any] = {
+                "color": chosen_color,
+                "colormap": colormap,
+                "width": float(width_value),
+            }
+            if color_domain is not None and not isinstance(chosen_color, str):
+                entry_kwargs["domain"] = color_domain
+            entries.append(
+                self._add(
+                    "@mark",
+                    {
+                        "factory": "segments",
+                        "args": (x0, y0, x1, y1),
+                        "kwargs": entry_kwargs,
+                    },
+                )
+            )
+        collection = PolyCollection(self, entries[0])
+        arrow_collection = collection
+        if arrow_count > 0 and len(x0):
+            arrow_indices = np.unique(
+                np.linspace(0, len(x0) - 1, min(arrow_count, len(x0))).astype(int)
+            )
+            dx = x1[arrow_indices] - x0[arrow_indices]
+            dy = y1[arrow_indices] - y0[arrow_indices]
+            lengths = np.hypot(dx, dy)
+            valid = np.isfinite(lengths) & (lengths > np.finfo(float).eps)
+            arrow_indices = arrow_indices[valid]
+            if len(arrow_indices):
+                ux = dx[valid] / lengths[valid]
+                uy = dy[valid] / lengths[valid]
+                scale = (
+                    0.022
+                    * min(float(np.ptp(x_values)), float(np.ptp(y_values)))
+                    * float(arrowsize)
+                )
+                tip_x, tip_y = x1[arrow_indices], y1[arrow_indices]
+                base_x, base_y = tip_x - ux * scale, tip_y - uy * scale
+                wing = scale * 0.42
+                left_x, left_y = base_x - uy * wing, base_y + ux * wing
+                right_x, right_y = base_x + uy * wing, base_y - ux * wing
+                arrow_color: Any = chosen_color
+                if not isinstance(chosen_color, str):
+                    arrow_color = np.asarray(chosen_color)[arrow_indices]
+                arrow_kwargs: dict[str, Any] = {
+                    "color": arrow_color,
+                    "colormap": colormap,
+                    "opacity": 1.0,
+                }
+                if color_domain is not None and not isinstance(arrow_color, str):
+                    arrow_kwargs["domain"] = color_domain
+                arrow_entry = self._add(
+                    "@mark",
+                    {
+                        "factory": "triangle_mesh",
+                        "args": (tip_x, tip_y, left_x, left_y, right_x, right_y),
+                        "kwargs": arrow_kwargs,
+                    },
+                )
+                arrow_collection = PolyCollection(self, arrow_entry)
+        return StreamplotSet(collection, arrow_collection)

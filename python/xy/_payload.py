@@ -129,6 +129,10 @@ class PayloadMixin(_Host):
             "backend": kernels.BACKEND,
             "show_legend": self.show_legend,
         }
+        if self.legend_options:
+            spec["legend"] = self.legend_options
+        if self.colorbar_options:
+            spec["colorbar"] = self.colorbar_options
         if self.show_modebar is False:
             spec["show_modebar"] = False
         if self.show_tooltip is False:
@@ -322,8 +326,33 @@ class PayloadMixin(_Host):
         if t.grid is None or t.grid_shape is None:
             raise ValueError("heatmap trace missing grid column")
         rows, cols = t.grid_shape
+        if t.rgba_grid is not None:
+            return {
+                "id": t.id,
+                "kind": "heatmap",
+                "name": t.name,
+                "style": dict(t.style),
+                "tier": "direct",
+                "n_points": t.n_points,
+                "n_marks": int(rows * cols),
+                "x_axis": t.x_axis,
+                "y_axis": t.y_axis,
+                "heatmap": {
+                    "rgba_bufs": [pw.ship_scalar(column.values) for column in t.rgba_grid],
+                    "w": int(cols),
+                    "h": int(rows),
+                    "x_range": list(t.style["x_range"]),
+                    "y_range": list(t.style["y_range"]),
+                },
+            }
         domain = tuple(t.style["domain"])
         norm = kernels.normalize_f32(t.grid.values, domain, nonfinite="nan")
+        # Byte zero is the renderer-wide missing-cell sentinel.  Encode every
+        # finite normalized value into bytes 1..255 so a legitimate domain
+        # minimum remains visible instead of becoming transparent.
+        norm = np.where(np.isfinite(norm), (norm * 254.0 + 1.0) / 255.0, 0.0).astype(
+            np.float32
+        )
         cmap = t.style.get("colormap", channels.DEFAULT_COLORMAP)
         return {
             "id": t.id,
@@ -627,8 +656,7 @@ class PayloadMixin(_Host):
         # (range_indices semantics) without re-reading the full columns twice.
         grid, sel = kernels.bin_2d_indices(t.x.values, t.y.values, xr[0], xr[1], yr[0], yr[1], w, h)
         visible = int(len(sel))
-        # numpy's .max() stub mis-resolves the overload for the kernel's f32 grid.
-        gmax = float(grid.max()) if grid.size else 0.0  # ty: ignore[invalid-argument-type]
+        gmax = float(grid.max()) if grid.size else 0.0
         # Honor the user's colormap for the density ramp even though the per-point
         # color *data* can't survive count-aggregation (needs the §5-F5 algebra).
         cmap = (

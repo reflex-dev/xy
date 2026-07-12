@@ -62,7 +62,7 @@ jobs:
       # reasons, not code. Playwright ships an unconfined build.
       - name: Install Chromium (Playwright)
         run: |
-          npm i --no-save playwright@1.48
+          npm ci
           npx playwright install --with-deps chromium
       - name: Headless render smoke (stdlib + Chromium)
         run: |
@@ -247,7 +247,7 @@ jobs:
           PY
       - name: Install Chromium (Playwright)
         run: |
-          npm i --no-save playwright@1.48
+          npm ci
           npx playwright install --with-deps chromium
       - name: Run cross-library benchmark group
         run: |
@@ -300,7 +300,7 @@ jobs:
       # Playwright Chromium for the time-to-first-render (browser paint) pass.
       - name: Install Chromium (Playwright)
         run: |
-          npm i --no-save playwright@1.48
+          npm ci
           npx playwright install --with-deps chromium
       - name: Line decimation vs plotly-resampler (methodology line_10M)
         run: |

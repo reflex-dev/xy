@@ -733,8 +733,9 @@ def test_heatmap_ships_compact_grid_and_continuous_color():
     assert spec["y_axis"]["kind"] == "category"
     assert spec["y_axis"]["categories"] == ["north", "south"]
     grid, _ = _payload_col(spec, blob, tr["heatmap"]["buf"])
-    np.testing.assert_allclose(grid[[0, 1, 3, 4, 5]], [0.0, 0.25, 0.5, 0.75, 1.0])
-    assert np.isnan(grid[2])
+    expected = (np.asarray([0.0, 0.25, 0.5, 0.75, 1.0]) * 254.0 + 1.0) / 255.0
+    np.testing.assert_allclose(grid[[0, 1, 3, 4, 5]], expected)
+    assert grid[2] == 0.0  # reserved missing-cell sentinel
 
 
 def test_heatmap_category_axis_normalizes_missing_and_bytes_labels():
@@ -770,7 +771,7 @@ def test_heatmap_constant_values_auto_expands_domain():
     tr = spec["traces"][0]
     assert tr["heatmap"]["domain"][0] < 7.0 < tr["heatmap"]["domain"][1]
     grid, _ = _payload_col(spec, blob, tr["heatmap"]["buf"])
-    np.testing.assert_allclose(grid, [0.5, 0.5, 0.5, 0.5])
+    np.testing.assert_allclose(grid, [128 / 255] * 4)
 
 
 def test_heatmap_validation_errors():

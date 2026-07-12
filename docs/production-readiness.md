@@ -235,8 +235,10 @@ make check-claims
 ```
 
 Browser smoke and package artifact verification need a built bundle, Chromium,
-and wheel/sdist outputs. They are required in CI and release workflows even if
-they are skipped locally.
+and wheel/sdist outputs. The interaction gate's real-wall-clock worker probe
+also uses the pinned development-only Playwright driver; install it once with
+`make setup-browser` (or `npm install`). These gates are required in CI and
+release workflows even if they are skipped locally.
 
 For browser checks, pass the local Chromium/Chrome binary explicitly:
 

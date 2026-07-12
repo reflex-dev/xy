@@ -1375,7 +1375,7 @@ def hexbin(
         raise ValueError("hexbin bins must be 'count' or 'log'")
     name = self._optional_text(name, "hexbin name")
     opacity = self._opacity(opacity, "hexbin opacity")
-    if colormap not in channels.COLORMAPS:
+    if not channels.is_colormap(colormap):
         raise ValueError(f"unknown colormap {colormap!r}; known: {channels.COLORMAPS}")
     # Canonicalize WITHOUT ingesting: only occupied bin centers ship, so the
     # raw points must not stay resident in the figure's column store.
@@ -1481,7 +1481,7 @@ def contour(
         raise ValueError(
             f"contour grid x levels exceeds the bounded work budget ({MAX_CONTOUR_WORK:,})"
         )
-    if colormap not in channels.COLORMAPS:
+    if not channels.is_colormap(colormap):
         raise ValueError(f"unknown colormap {colormap!r}; known: {channels.COLORMAPS}")
     name = self._optional_text(name, "contour name")
     color = self._optional_css_color(color, "contour color")
@@ -1631,18 +1631,31 @@ def heatmap(
     if hasattr(z, "to_numpy"):
         z = z.to_numpy()
     arr = np.asarray(z)
-    if arr.ndim != 2:
-        raise ValueError(f"heatmap z must be 2-D, got shape {arr.shape}")
-    zv = self._real_float_array(arr, "heatmap z")
-    rows, cols = zv.shape
+    truecolor = arr.ndim == 3 and arr.shape[-1] in (3, 4)
+    if not truecolor and arr.ndim != 2:
+        raise ValueError(f"heatmap z must be 2-D or RGB(A), got shape {arr.shape}")
+    if truecolor:
+        rgba = np.asarray(arr, dtype=np.float64)
+        if np.nanmax(rgba[..., :3]) > 1.0:
+            rgba[..., :3] /= 255.0
+        if rgba.shape[-1] == 3:
+            rgba = np.dstack((rgba, np.ones(rgba.shape[:2], dtype=np.float64)))
+        rgba = np.clip(rgba, 0.0, 1.0)
+        rows, cols = rgba.shape[:2]
+        zv = rgba[..., 0]
+    else:
+        zv = self._real_float_array(arr, "heatmap z")
+        rows, cols = zv.shape
     xpos = self._heatmap_axis_positions(x, cols, "x")
     ypos = self._heatmap_axis_positions(y, rows, "y")
     x_edges = self._cell_edges(xpos, "heatmap x")
     y_edges = self._cell_edges(ypos, "heatmap y")
     z_flat = zv.reshape(-1)
-    if colormap not in channels.COLORMAPS:
+    if not truecolor and not channels.is_colormap(colormap):
         raise ValueError(f"unknown colormap {colormap!r}; known: {channels.COLORMAPS}")
-    if domain is None:
+    if truecolor:
+        lo, hi = 0.0, 1.0
+    elif domain is None:
         lo, hi = self._auto_domain(kernels.min_max(z_flat))
     else:
         lo, hi = self._finite_increasing_pair(domain, "heatmap domain")
@@ -1657,6 +1670,11 @@ def heatmap(
                 x=self.store.ingest(np.array([x_edges[0], x_edges[-1]], dtype=np.float64)),
                 y=self.store.ingest(np.array([y_edges[0], y_edges[-1]], dtype=np.float64)),
                 grid=self.store.ingest(z_flat),
+                rgba_grid=(
+                    tuple(self.store.ingest(rgba[..., index].reshape(-1)) for index in range(4))
+                    if truecolor
+                    else None
+                ),
                 grid_shape=(rows, cols),
                 count=int(z_flat.size),
                 name=name,
@@ -1665,6 +1683,7 @@ def heatmap(
                     "role": "heatmap",
                     "colormap": colormap,
                     "domain": [lo, hi],
+                    "truecolor": truecolor,
                     "x_range": [float(x_edges[0]), float(x_edges[-1])],
                     "y_range": [float(y_edges[0]), float(y_edges[-1])],
                 },

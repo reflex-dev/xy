@@ -12,7 +12,7 @@ import base64
 from collections.abc import Mapping, Sequence
 from os import PathLike
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import numpy as np
 
@@ -269,7 +269,8 @@ for(const p of panels){{
             if scale <= 0 or not np.isfinite(scale):
                 raise ValueError("facet PNG scale must be finite and positive")
             panel_images = [
-                render_raster(*fig.build_payload(), scale=scale) for fig in self.figures
+                cast(np.ndarray, render_raster(*fig.build_payload(), scale=scale))
+                for fig in self.figures
             ]
             panel_h, panel_w = panel_images[0].shape[:2]
             width = int(round(self.width * scale))

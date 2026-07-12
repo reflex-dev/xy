@@ -263,10 +263,22 @@ class ChartView {
   _axisTicks(axisId, target) {
     const axis = this._axis(axisId);
     const [lo, hi] = this._axisRange(axisId);
+    if (Array.isArray(axis.tick_values)) {
+      const ticks = axis.tick_values.map(Number).filter((v) => Number.isFinite(v) && v >= lo && v <= hi);
+      return { ticks, labels: ticks, step: ticks.length > 1 ? Math.abs(ticks[1] - ticks[0]) : 1 };
+    }
     if (axis.kind === "time") return timeTicks(lo, hi, target);
     if (axis.kind === "category") return categoryTicks(lo, hi, axis.categories || [], target);
     if (axis.scale === "log") return logTicks(lo, hi, target);
     return linearTicks(lo, hi, target);
+  }
+
+  _axisTickText(axis, value, step) {
+    if (Array.isArray(axis.tick_values) && Array.isArray(axis.tick_labels)) {
+      const index = axis.tick_values.findIndex((candidate) => Number(candidate) === Number(value));
+      if (index >= 0 && index < axis.tick_labels.length) return String(axis.tick_labels[index]);
+    }
+    return fmtAxis(axis, value, step);
   }
 
   _axisTickTarget(axisId, fallback) {
@@ -747,6 +759,7 @@ class ChartView {
     root.appendChild(this.tooltip);
 
     this._buildLegend(root);
+    this._buildColorbar(root);
     this._buildReductionBadges(root);
   }
 
@@ -833,11 +846,24 @@ class ChartView {
     }
     if (!items.length) return;
     const lg = document.createElement("div");
+    const options = s.legend || {};
+    const loc = options.loc || "upper right";
+    const ncols = Math.max(1, Number(options.ncols) || 1);
     const rightInset = this.size.w - (this.plot.x + this.plot.w);
-    lg.style.cssText =
-      `position:absolute;top:${this.plot.y + 6}px;right:${rightInset + 6}px;` +
-      "display:flex;flex-direction:column;overflow:auto;" +
-      `max-height:${this.plot.h - 12}px;`;
+    const horizontal = ncols > 1;
+    const xPos = loc.includes("left")
+      ? `left:${this.plot.x + 6}px;`
+      : loc.includes("center")
+        ? `left:${this.plot.x + this.plot.w / 2}px;transform:translateX(-50%);`
+        : `right:${rightInset + 6}px;`;
+    const yPos = loc.includes("lower")
+      ? `bottom:${this.size.h - (this.plot.y + this.plot.h) + 6}px;`
+      : loc === "center" || loc.includes("center left") || loc.includes("center right")
+        ? `top:${this.plot.y + this.plot.h / 2}px;transform:${loc.includes("center") && !loc.includes("left") && !loc.includes("right") ? "translate(-50%,-50%)" : "translateY(-50%)"};`
+        : `top:${this.plot.y + 6}px;`;
+    lg.style.cssText = `position:absolute;${xPos}${yPos}` +
+      `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
+      "overflow:auto;" + `max-height:${this.plot.h - 12}px;`;
     this._applySlot(lg, "legend");
     for (const it of items) {
       const row = document.createElement("div");
@@ -849,7 +875,7 @@ class ChartView {
       sw.style.verticalAlign = "-1px";
       let bg = it.swatch;
       if (it.swatch === "gradient") {
-        const stops = COLORMAP_STOPS[it.cmap] || COLORMAP_STOPS.viridis;
+        const stops = colormapStops(it.cmap);
         bg = `linear-gradient(90deg,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
         sw.style.background = bg;
       } else {
@@ -862,6 +888,24 @@ class ChartView {
     }
     root.appendChild(lg);
     this._legend = lg; // _resize refreshes its max-height
+  }
+
+  _buildColorbar(root) {
+    const cb = this.spec.colorbar;
+    if (!cb) return;
+    const stops = colormapStops(cb.colormap || "viridis");
+    const box = document.createElement("div");
+    const horizontal = cb.orientation === "horizontal";
+    box.style.cssText = horizontal
+      ? `position:absolute;left:${this.plot.x}px;top:${this.plot.y + this.plot.h + 8}px;` +
+        `width:${this.plot.w}px;height:10px;` +
+        `background:linear-gradient(to right,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")});`
+      : `position:absolute;top:${this.plot.y}px;left:${this.plot.x + this.plot.w + 8}px;` +
+        `width:10px;height:${Math.max(24, this.plot.h)}px;` +
+        `background:linear-gradient(to top,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")});`;
+    const domain = cb.domain || [0, 1];
+    box.title = `${cb.label ? cb.label + ": " : ""}${domain[0]} – ${domain[1]}`;
+    root.appendChild(box);
   }
 
   _initGl(buffer) {
@@ -1454,17 +1498,39 @@ class ChartView {
 
   _buildHeatmapMark(g, t, buffer) {
     const h = t.heatmap;
-    const grid = this._columnView(buffer, this.spec.columns[h.buf]);
+    const truecolor = Array.isArray(h.rgba_bufs);
+    const grid = truecolor
+      ? h.rgba_bufs.map((index) => this._columnView(buffer, this.spec.columns[index]))
+      : this._columnView(buffer, this.spec.columns[h.buf]);
     g.heatmap = {
       w: h.w,
       h: h.h,
       xRange: h.x_range,
       yRange: h.y_range,
       colormap: h.colormap,
-      tex: this._uploadHeatmapGrid(grid, h.w, h.h),
-      lut: this._lut(h.colormap),
+      truecolor,
+      tex: truecolor ? this._uploadRgbaGrid(grid, h.w, h.h) : this._uploadHeatmapGrid(grid, h.w, h.h),
+      lut: truecolor ? null : this._lut(h.colormap),
     };
-    g._cpuHeatmap = { grid };
+    if (!truecolor) g._cpuHeatmap = { grid };
+  }
+
+  _uploadRgbaGrid(channels, w, h) {
+    const gl = this.gl;
+    const tex = gl.createTexture();
+    const data = new Uint8Array(w * h * 4);
+    for (let index = 0; index < w * h; index++) {
+      for (let channel = 0; channel < 4; channel++) {
+        data[index * 4 + channel] = Math.round(255 * Math.max(0, Math.min(1, channels[channel][index])));
+      }
+    }
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return tex;
   }
 
   _uploadGrid(f32, w, h, maxVal) {
@@ -1864,12 +1930,15 @@ class ChartView {
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     gl.uniform4f(u("u_gridRange"), h.xRange[0], h.xRange[1], h.yRange[0], h.yRange[1]);
     gl.uniform1f(u("u_opacity"), g.trace.style.opacity ?? 1.0);
+    gl.uniform1i(u("u_truecolor"), h.truecolor ? 1 : 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, h.tex);
     gl.uniform1i(u("u_grid"), 0);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, h.lut);
-    gl.uniform1i(u("u_lut"), 1);
+    if (!h.truecolor) {
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, h.lut);
+      gl.uniform1i(u("u_lut"), 1);
+    }
     gl.bindVertexArray(this.quadVao);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
@@ -2348,6 +2417,8 @@ class ChartView {
     const p = this.plot;
     const xAxis = this._axis("x");
     const yAxis = this._axis("y");
+    const hideX = this._axisTickLabelStrategy(xAxis) === "none";
+    const hideY = this._axisTickLabelStrategy(yAxis) === "none";
     const xt = this._axisTicks(
       "x",
       this._axisTickTarget("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80))),
@@ -2359,7 +2430,7 @@ class ChartView {
     ctx.strokeStyle = this._axisStylePaint(xAxis, "grid_color", this.theme.grid);
     ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xAxis, "grid_width", 1));
     ctx.beginPath();
-    for (const v of xt.ticks) {
+    for (const v of (hideX ? [] : xt.ticks)) {
       const px = this._dataPx("x", v);
       if (!Number.isFinite(px)) continue;
       const x = xEdge(px);
@@ -2371,7 +2442,7 @@ class ChartView {
     ctx.strokeStyle = this._axisStylePaint(yAxis, "grid_color", this.theme.grid);
     ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(yAxis, "grid_width", 1));
     ctx.beginPath();
-    for (const v of yt.ticks) {
+    for (const v of (hideY ? [] : yt.ticks)) {
       const py = this._dataPx("y", v);
       if (!Number.isFinite(py)) continue;
       const y = yEdge(py);
@@ -2396,12 +2467,16 @@ class ChartView {
           "pointer-events:none;";
         this.labels.appendChild(d);
       };
-      const yWidth = Math.max(1, Math.round(this._axisStyleNumber(yAxis, "axis_width", 1)));
-      const yAxisX = yAxis.side === "right" ? p.x + p.w - yWidth : p.x;
-      rule(yAxis, yAxisX, p.y, yWidth, p.h);
-      const xHeight = Math.max(1, Math.round(this._axisStyleNumber(xAxis, "axis_width", 1)));
-      const xTop = xAxis.side === "top" ? p.y : p.y + p.h - xHeight;
-      rule(xAxis, p.x, xTop, p.w, xHeight);
+      if (!hideY) {
+        const yWidth = Math.max(1, Math.round(this._axisStyleNumber(yAxis, "axis_width", 1)));
+        const yAxisX = yAxis.side === "right" ? p.x + p.w - yWidth : p.x;
+        rule(yAxis, yAxisX, p.y, yWidth, p.h);
+      }
+      if (!hideX) {
+        const xHeight = Math.max(1, Math.round(this._axisStyleNumber(xAxis, "axis_width", 1)));
+        const xTop = xAxis.side === "top" ? p.y : p.y + p.h - xHeight;
+        rule(xAxis, p.x, xTop, p.w, xHeight);
+      }
       for (const axis of Object.values(this.axes)) {
         if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
         const w = Math.max(1, Math.round(this._axisStyleNumber(axis, "axis_width", 1)));
@@ -2439,7 +2514,7 @@ class ChartView {
     for (const v of (xt.labels || xt.ticks)) {
       const px = this._dataPx("x", v);
       if (px < p.x - 1 || px > p.x + p.w + 1) continue;
-      const text = fmtAxis(xAxis, v, xt.step);
+      const text = this._axisTickText(xAxis, v, xt.step);
       xLabelCandidates.push({ pos: px, text });
     }
     for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
@@ -2457,7 +2532,7 @@ class ChartView {
     for (const v of (yt.labels || yt.ticks)) {
       const py = this._dataPx("y", v);
       if (py < p.y - 1 || py > p.y + p.h + 1) continue;
-      const text = fmtAxis(yAxis, v, yt.step);
+      const text = this._axisTickText(yAxis, v, yt.step);
       yLabelCandidates.push({ pos: py, text });
     }
     for (const item of this._layoutTickLabels(yAxis, "y", yLabelCandidates)) {
@@ -2474,7 +2549,7 @@ class ChartView {
       for (const v of (ticks.labels || ticks.ticks)) {
         const py = this._dataPx(axis.id, v);
         if (py < p.y - 1 || py > p.y + p.h + 1) continue;
-        const text = fmtAxis(axis, v, ticks.step);
+        const text = this._axisTickText(axis, v, ticks.step);
         labelCandidates.push({ pos: py, text });
       }
       for (const item of this._layoutTickLabels(axis, "y", labelCandidates)) {

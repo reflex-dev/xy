@@ -261,13 +261,21 @@ precision highp float;
 uniform sampler2D u_grid; uniform sampler2D u_lut;
 uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1
 uniform float u_opacity;
+uniform int u_truecolor;
 in vec2 v_data;
 out vec4 outColor;
 void main() {
   vec2 uv = vec2((v_data.x - u_gridRange.x) / (u_gridRange.y - u_gridRange.x),
                  (v_data.y - u_gridRange.z) / (u_gridRange.w - u_gridRange.z));
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
-  float raw = texture(u_grid, uv).r;
+  vec4 sampled = texture(u_grid, uv);
+  if (u_truecolor == 1) {
+    float alpha = sampled.a * u_opacity;
+    if (alpha <= 0.0) discard;
+    outColor = vec4(sampled.rgb * alpha, alpha);
+    return;
+  }
+  float raw = sampled.r;
   if (raw <= 0.0) discard;
   float t = clamp((raw * 255.0 - 1.0) / 254.0, 0.0, 1.0);
   vec3 rgb = texture(u_lut, vec2(t, 0.5)).rgb;

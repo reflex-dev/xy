@@ -54,14 +54,12 @@ class ZoneMaps:
     @cached_property
     def min(self) -> float:
         valid = self.mins[self.counts > 0]
-        # numpy's .min()/.max() stub mis-resolves the overload for the mask-indexed
-        # f64 view; the reduction is a finite scalar at runtime.
-        return float(valid.min()) if len(valid) else float("nan")  # ty: ignore[invalid-argument-type]
+        return float(valid.min()) if len(valid) else float("nan")
 
     @cached_property
     def max(self) -> float:
         valid = self.maxs[self.counts > 0]
-        return float(valid.max()) if len(valid) else float("nan")  # ty: ignore[invalid-argument-type]
+        return float(valid.max()) if len(valid) else float("nan")
 
     @cached_property
     def positive_min(self) -> float:

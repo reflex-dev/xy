@@ -1413,7 +1413,15 @@ def marching_squares(
         repeated = extract(outputs)
         if repeated != written:
             raise RuntimeError("native marching_squares returned an inconsistent segment count")
-    return tuple(output[:written] for output in outputs)
+    # Spell out the fixed arity so static checkers preserve the five-array
+    # return contract instead of widening the comprehension to tuple[T, ...].
+    return (
+        outputs[0][:written],
+        outputs[1][:written],
+        outputs[2][:written],
+        outputs[3][:written],
+        outputs[4][:written],
+    )
 
 
 def bin_2d(

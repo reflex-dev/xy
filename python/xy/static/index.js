@@ -34,9 +34,24 @@ coolwarm: [
 [59, 76, 192], [87, 117, 211], [119, 154, 231], [157, 185, 243], [197, 209, 246],
 [221, 220, 220], [242, 196, 174], [237, 158, 130], [214, 96, 77], [180, 4, 38],
 ],
+blues: [[247, 251, 255], [222, 235, 247], [198, 219, 239], [158, 202, 225], [107, 174, 214], [66, 146, 198], [33, 113, 181], [8, 81, 156], [8, 48, 107], [8, 48, 107]],
+rdylgn: [[165, 0, 38], [215, 48, 39], [244, 109, 67], [253, 174, 97], [254, 224, 139], [217, 239, 139], [166, 217, 106], [102, 189, 99], [26, 152, 80], [0, 104, 55]],
+rainbow: [[128, 0, 255], [57, 88, 255], [0, 180, 235], [0, 235, 176], [73, 255, 104], [176, 235, 38], [235, 180, 0], [255, 88, 0], [235, 0, 57], [255, 0, 0]],
+spectral: [[158, 1, 66], [213, 62, 79], [244, 109, 67], [253, 174, 97], [254, 224, 139], [230, 245, 152], [171, 221, 164], [102, 194, 165], [50, 136, 189], [94, 79, 162]],
+piyg: [[142, 1, 82], [197, 27, 125], [222, 119, 174], [241, 182, 218], [253, 224, 239], [247, 247, 247], [230, 245, 208], [184, 225, 134], [127, 188, 65], [77, 146, 33], [39, 100, 25]],
+purples: [[252, 251, 253], [239, 237, 245], [218, 218, 235], [188, 189, 220], [158, 154, 200], [128, 125, 186], [106, 81, 163], [84, 39, 143], [63, 0, 125]],
+pubu: [[255, 247, 251], [236, 231, 242], [208, 209, 230], [166, 189, 219], [116, 169, 207], [54, 144, 192], [5, 112, 176], [4, 90, 141], [2, 56, 88]],
+prgn: [[64, 0, 75], [118, 42, 131], [153, 112, 171], [194, 165, 207], [231, 212, 232], [247, 247, 247], [217, 240, 211], [166, 219, 160], [90, 174, 97], [27, 120, 55], [0, 68, 27]],
+binary: [[255, 255, 255], [0, 0, 0]],
 };
+function colormapStops(name) {
+const reversed = typeof name === "string" && name.endsWith("_r");
+const base = reversed ? name.slice(0, -2) : name;
+const stops = COLORMAP_STOPS[base] || COLORMAP_STOPS.viridis;
+return reversed ? [...stops].reverse() : stops;
+}
 function buildLutData(name) {
-const stops = COLORMAP_STOPS[name] || COLORMAP_STOPS.viridis;
+const stops = colormapStops(name);
 const N = 256;
 const data = new Uint8Array(N * 4);
 for (let i = 0; i < N; i++) {
@@ -550,13 +565,21 @@ precision highp float;
 uniform sampler2D u_grid; uniform sampler2D u_lut;
 uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1
 uniform float u_opacity;
+uniform int u_truecolor;
 in vec2 v_data;
 out vec4 outColor;
 void main() {
   vec2 uv = vec2((v_data.x - u_gridRange.x) / (u_gridRange.y - u_gridRange.x),
                  (v_data.y - u_gridRange.z) / (u_gridRange.w - u_gridRange.z));
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
-  float raw = texture(u_grid, uv).r;
+  vec4 sampled = texture(u_grid, uv);
+  if (u_truecolor == 1) {
+    float alpha = sampled.a * u_opacity;
+    if (alpha <= 0.0) discard;
+    outColor = vec4(sampled.rgb * alpha, alpha);
+    return;
+  }
+  float raw = sampled.r;
   if (raw <= 0.0) discard;
   float t = clamp((raw * 255.0 - 1.0) / 254.0, 0.0, 1.0);
   vec3 rgb = texture(u_lut, vec2(t, 0.5)).rgb;
@@ -1622,10 +1645,21 @@ return [Number(r[0]), Number(r[1])];
 _axisTicks(axisId, target) {
 const axis = this._axis(axisId);
 const [lo, hi] = this._axisRange(axisId);
+if (Array.isArray(axis.tick_values)) {
+const ticks = axis.tick_values.map(Number).filter((v) => Number.isFinite(v) && v >= lo && v <= hi);
+return { ticks, labels: ticks, step: ticks.length > 1 ? Math.abs(ticks[1] - ticks[0]) : 1 };
+}
 if (axis.kind === "time") return timeTicks(lo, hi, target);
 if (axis.kind === "category") return categoryTicks(lo, hi, axis.categories || [], target);
 if (axis.scale === "log") return logTicks(lo, hi, target);
 return linearTicks(lo, hi, target);
+}
+_axisTickText(axis, value, step) {
+if (Array.isArray(axis.tick_values) && Array.isArray(axis.tick_labels)) {
+const index = axis.tick_values.findIndex((candidate) => Number(candidate) === Number(value));
+if (index >= 0 && index < axis.tick_labels.length) return String(axis.tick_labels[index]);
+}
+return fmtAxis(axis, value, step);
 }
 _axisTickTarget(axisId, fallback) {
 const axis = this._axis(axisId);
@@ -2017,6 +2051,7 @@ this.tooltip.style.cssText =
 this._applySlot(this.tooltip, "tooltip");
 root.appendChild(this.tooltip);
 this._buildLegend(root);
+this._buildColorbar(root);
 this._buildReductionBadges(root);
 }
 _compactInt(value) {
@@ -2095,11 +2130,24 @@ items.push({ swatch: c, name: t.name });
 }
 if (!items.length) return;
 const lg = document.createElement("div");
+const options = s.legend || {};
+const loc = options.loc || "upper right";
+const ncols = Math.max(1, Number(options.ncols) || 1);
 const rightInset = this.size.w - (this.plot.x + this.plot.w);
-lg.style.cssText =
-`position:absolute;top:${this.plot.y + 6}px;right:${rightInset + 6}px;` +
-"display:flex;flex-direction:column;overflow:auto;" +
-`max-height:${this.plot.h - 12}px;`;
+const horizontal = ncols > 1;
+const xPos = loc.includes("left")
+? `left:${this.plot.x + 6}px;`
+: loc.includes("center")
+? `left:${this.plot.x + this.plot.w / 2}px;transform:translateX(-50%);`
+: `right:${rightInset + 6}px;`;
+const yPos = loc.includes("lower")
+? `bottom:${this.size.h - (this.plot.y + this.plot.h) + 6}px;`
+: loc === "center" || loc.includes("center left") || loc.includes("center right")
+? `top:${this.plot.y + this.plot.h / 2}px;transform:${loc.includes("center") && !loc.includes("left") && !loc.includes("right") ? "translate(-50%,-50%)" : "translateY(-50%)"};`
+: `top:${this.plot.y + 6}px;`;
+lg.style.cssText = `position:absolute;${xPos}${yPos}` +
+`display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
+"overflow:auto;" + `max-height:${this.plot.h - 12}px;`;
 this._applySlot(lg, "legend");
 for (const it of items) {
 const row = document.createElement("div");
@@ -2109,7 +2157,7 @@ sw.style.display = "inline-block";
 sw.style.verticalAlign = "-1px";
 let bg = it.swatch;
 if (it.swatch === "gradient") {
-const stops = COLORMAP_STOPS[it.cmap] || COLORMAP_STOPS.viridis;
+const stops = colormapStops(it.cmap);
 bg = `linear-gradient(90deg,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
 sw.style.background = bg;
 } else {
@@ -2122,6 +2170,23 @@ lg.appendChild(row);
 }
 root.appendChild(lg);
 this._legend = lg; 
+}
+_buildColorbar(root) {
+const cb = this.spec.colorbar;
+if (!cb) return;
+const stops = colormapStops(cb.colormap || "viridis");
+const box = document.createElement("div");
+const horizontal = cb.orientation === "horizontal";
+box.style.cssText = horizontal
+? `position:absolute;left:${this.plot.x}px;top:${this.plot.y + this.plot.h + 8}px;` +
+`width:${this.plot.w}px;height:10px;` +
+`background:linear-gradient(to right,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")});`
+: `position:absolute;top:${this.plot.y}px;left:${this.plot.x + this.plot.w + 8}px;` +
+`width:10px;height:${Math.max(24, this.plot.h)}px;` +
+`background:linear-gradient(to top,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")});`;
+const domain = cb.domain || [0, 1];
+box.title = `${cb.label ? cb.label + ": " : ""}${domain[0]} – ${domain[1]}`;
+root.appendChild(box);
 }
 _initGl(buffer) {
 const dpr = window.devicePixelRatio || 1;
@@ -2645,17 +2710,38 @@ this._rectMarkStyleGpu(g, t);
 }
 _buildHeatmapMark(g, t, buffer) {
 const h = t.heatmap;
-const grid = this._columnView(buffer, this.spec.columns[h.buf]);
+const truecolor = Array.isArray(h.rgba_bufs);
+const grid = truecolor
+? h.rgba_bufs.map((index) => this._columnView(buffer, this.spec.columns[index]))
+: this._columnView(buffer, this.spec.columns[h.buf]);
 g.heatmap = {
 w: h.w,
 h: h.h,
 xRange: h.x_range,
 yRange: h.y_range,
 colormap: h.colormap,
-tex: this._uploadHeatmapGrid(grid, h.w, h.h),
-lut: this._lut(h.colormap),
+truecolor,
+tex: truecolor ? this._uploadRgbaGrid(grid, h.w, h.h) : this._uploadHeatmapGrid(grid, h.w, h.h),
+lut: truecolor ? null : this._lut(h.colormap),
 };
-g._cpuHeatmap = { grid };
+if (!truecolor) g._cpuHeatmap = { grid };
+}
+_uploadRgbaGrid(channels, w, h) {
+const gl = this.gl;
+const tex = gl.createTexture();
+const data = new Uint8Array(w * h * 4);
+for (let index = 0; index < w * h; index++) {
+for (let channel = 0; channel < 4; channel++) {
+data[index * 4 + channel] = Math.round(255 * Math.max(0, Math.min(1, channels[channel][index])));
+}
+}
+gl.bindTexture(gl.TEXTURE_2D, tex);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+return tex;
 }
 _uploadGrid(f32, w, h, maxVal) {
 const gl = this.gl;
@@ -2993,12 +3079,15 @@ gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
 gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
 gl.uniform4f(u("u_gridRange"), h.xRange[0], h.xRange[1], h.yRange[0], h.yRange[1]);
 gl.uniform1f(u("u_opacity"), g.trace.style.opacity ?? 1.0);
+gl.uniform1i(u("u_truecolor"), h.truecolor ? 1 : 0);
 gl.activeTexture(gl.TEXTURE0);
 gl.bindTexture(gl.TEXTURE_2D, h.tex);
 gl.uniform1i(u("u_grid"), 0);
+if (!h.truecolor) {
 gl.activeTexture(gl.TEXTURE1);
 gl.bindTexture(gl.TEXTURE_2D, h.lut);
 gl.uniform1i(u("u_lut"), 1);
+}
 gl.bindVertexArray(this.quadVao);
 gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
@@ -3437,6 +3526,8 @@ this._lastLabelDraw = now;
 const p = this.plot;
 const xAxis = this._axis("x");
 const yAxis = this._axis("y");
+const hideX = this._axisTickLabelStrategy(xAxis) === "none";
+const hideY = this._axisTickLabelStrategy(yAxis) === "none";
 const xt = this._axisTicks(
 "x",
 this._axisTickTarget("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80))),
@@ -3447,7 +3538,7 @@ const yEdge = (py) => Math.min(p.y + p.h - 0.5, Math.max(p.y + 0.5, Math.round(p
 ctx.strokeStyle = this._axisStylePaint(xAxis, "grid_color", this.theme.grid);
 ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xAxis, "grid_width", 1));
 ctx.beginPath();
-for (const v of xt.ticks) {
+for (const v of (hideX ? [] : xt.ticks)) {
 const px = this._dataPx("x", v);
 if (!Number.isFinite(px)) continue;
 const x = xEdge(px);
@@ -3458,7 +3549,7 @@ ctx.stroke();
 ctx.strokeStyle = this._axisStylePaint(yAxis, "grid_color", this.theme.grid);
 ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(yAxis, "grid_width", 1));
 ctx.beginPath();
-for (const v of yt.ticks) {
+for (const v of (hideY ? [] : yt.ticks)) {
 const py = this._dataPx("y", v);
 if (!Number.isFinite(py)) continue;
 const y = yEdge(py);
@@ -3476,12 +3567,16 @@ d.style.cssText =
 "pointer-events:none;";
 this.labels.appendChild(d);
 };
+if (!hideY) {
 const yWidth = Math.max(1, Math.round(this._axisStyleNumber(yAxis, "axis_width", 1)));
 const yAxisX = yAxis.side === "right" ? p.x + p.w - yWidth : p.x;
 rule(yAxis, yAxisX, p.y, yWidth, p.h);
+}
+if (!hideX) {
 const xHeight = Math.max(1, Math.round(this._axisStyleNumber(xAxis, "axis_width", 1)));
 const xTop = xAxis.side === "top" ? p.y : p.y + p.h - xHeight;
 rule(xAxis, p.x, xTop, p.w, xHeight);
+}
 for (const axis of Object.values(this.axes)) {
 if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
 const w = Math.max(1, Math.round(this._axisStyleNumber(axis, "axis_width", 1)));
@@ -3515,7 +3610,7 @@ const xLabelCandidates = [];
 for (const v of (xt.labels || xt.ticks)) {
 const px = this._dataPx("x", v);
 if (px < p.x - 1 || px > p.x + p.w + 1) continue;
-const text = fmtAxis(xAxis, v, xt.step);
+const text = this._axisTickText(xAxis, v, xt.step);
 xLabelCandidates.push({ pos: px, text });
 }
 for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
@@ -3533,7 +3628,7 @@ const yLabelCandidates = [];
 for (const v of (yt.labels || yt.ticks)) {
 const py = this._dataPx("y", v);
 if (py < p.y - 1 || py > p.y + p.h + 1) continue;
-const text = fmtAxis(yAxis, v, yt.step);
+const text = this._axisTickText(yAxis, v, yt.step);
 yLabelCandidates.push({ pos: py, text });
 }
 for (const item of this._layoutTickLabels(yAxis, "y", yLabelCandidates)) {
@@ -3550,7 +3645,7 @@ const labelCandidates = [];
 for (const v of (ticks.labels || ticks.ticks)) {
 const py = this._dataPx(axis.id, v);
 if (py < p.y - 1 || py > p.y + p.h + 1) continue;
-const text = fmtAxis(axis, v, ticks.step);
+const text = this._axisTickText(axis, v, ticks.step);
 labelCandidates.push({ pos: py, text });
 }
 for (const item of this._layoutTickLabels(axis, "y", labelCandidates)) {
@@ -4042,8 +4137,11 @@ if (hi <= lo) continue;
 ctx.save();
 ctx.globalAlpha = this._styleNumber(style, "opacity", 0.14);
 ctx.fillStyle = this._annotationPaint(style, [0.39, 0.45, 0.55, 1]);
-if (vertical) ctx.fillRect(lo, p.y, hi - lo, p.h);
-else ctx.fillRect(p.x, lo, p.w, hi - lo);
+const start = Math.max(0, Math.min(1, Number(style.span_start) || 0));
+const rawEnd = style.span_end === undefined ? 1 : Number(style.span_end);
+const end = Math.max(start, Math.min(1, Number.isFinite(rawEnd) ? rawEnd : 1));
+if (vertical) ctx.fillRect(lo, p.y + (1 - end) * p.h, hi - lo, (end - start) * p.h);
+else ctx.fillRect(p.x + start * p.w, lo, (end - start) * p.w, hi - lo);
 ctx.restore();
 } else if (ann.kind === "rule") {
 const vertical = ann.axis === "x";
@@ -4057,12 +4155,15 @@ ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
 ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
 ctx.lineWidth = Math.max(0.5, this._styleNumber(style, "width", 1.5));
 ctx.beginPath();
+const start = Math.max(0, Math.min(1, Number(style.span_start) || 0));
+const rawEnd = style.span_end === undefined ? 1 : Number(style.span_end);
+const end = Math.max(start, Math.min(1, Number.isFinite(rawEnd) ? rawEnd : 1));
 if (vertical) {
-ctx.moveTo(crisp, p.y);
-ctx.lineTo(crisp, p.y + p.h);
+ctx.moveTo(crisp, p.y + (1 - end) * p.h);
+ctx.lineTo(crisp, p.y + (1 - start) * p.h);
 } else {
-ctx.moveTo(p.x, crisp);
-ctx.lineTo(p.x + p.w, crisp);
+ctx.moveTo(p.x + start * p.w, crisp);
+ctx.lineTo(p.x + end * p.w, crisp);
 }
 ctx.stroke();
 ctx.restore();
@@ -4105,8 +4206,22 @@ const style = ann && typeof ann.style === "object" ? ann.style : {};
 let px = null;
 let py = null;
 if (ann.kind === "text") {
+if (style.coordinate_space === "axes_fraction") {
+px = p.x + Number(ann.x) * p.w;
+py = p.y + (1 - Number(ann.y)) * p.h;
+} else if (style.coordinate_space === "figure_fraction") {
+px = Number(ann.x) * this.size.w;
+py = (1 - Number(ann.y)) * this.size.h;
+} else if (style.coordinate_space === "yaxis_transform") {
+px = p.x + Number(ann.x) * p.w;
+py = this._dataPxY(Number(ann.y));
+} else if (style.coordinate_space === "xaxis_transform") {
+px = this._dataPxX(Number(ann.x));
+py = p.y + (1 - Number(ann.y)) * p.h;
+} else {
 px = this._dataPxX(Number(ann.x));
 py = this._dataPxY(Number(ann.y));
+}
 } else if (ann.kind === "rule") {
 if (ann.axis === "x") {
 px = this._dataPxX(Number(ann.value));
@@ -4144,7 +4259,8 @@ const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
 const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0";
 d.style.cssText =
 `position:absolute;left:${px + dx}px;top:${py + dy}px;` +
-`transform:translate(${anchor},0);pointer-events:none;`;
+`transform:translate(${anchor},0);pointer-events:none;` +
+`white-space:pre-line;text-align:center;`;
 this._applySlot(d, "annotation_label");
 this._applyClass(d, ann.class_name);
 this._applyStyle(d, style);

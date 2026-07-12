@@ -57,7 +57,7 @@ jobs:
         # Python one, so resolve the binary via node.
         if: always()
         run: |
-          npm i --no-save playwright@1.48
+          npm ci
           npx playwright install --with-deps chromium
       - name: Core-2D comparison with headless-Chrome TTFR (core-2d table)
         if: always()

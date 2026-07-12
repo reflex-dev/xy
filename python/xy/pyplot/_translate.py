@@ -79,9 +79,17 @@ def line_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
         out["opacity"] = float(alpha)
     ls = kwargs.pop("linestyle", kwargs.pop("ls", None))
     if ls is not None:
-        if ls not in LINESTYLE_TO_DASH:
-            raise ValueError(f"unsupported linestyle: {ls!r}")
-        out["linestyle"] = ls
+        if isinstance(ls, tuple) and len(ls) == 2:
+            out["dash"] = list(ls[1])
+        else:
+            if ls not in LINESTYLE_TO_DASH:
+                raise ValueError(f"unsupported linestyle: {ls!r}")
+            out["linestyle"] = ls
+    dashes = kwargs.pop("dashes", None)
+    if dashes is not None:
+        out["dash"] = list(dashes)
+    kwargs.pop("gapcolor", None)
+    kwargs.pop("path_effects", None)
     label = kwargs.pop("label", None)
     if label is not None:
         out["name"] = str(label)
@@ -97,7 +105,7 @@ def marker_size_to_scatter_size(s: Any, default: float = 6.0) -> Any:
     if s is None:
         return default
     arr = np.asarray(s, dtype=np.float64)
-    out = np.sqrt(np.maximum(arr, 0.0))
+    out = np.sqrt(np.maximum(arr, 0.0)) * (4.0 / 3.0)
     if out.ndim == 0:
         return float(out)
     return out

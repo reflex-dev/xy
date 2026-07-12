@@ -440,8 +440,7 @@ def density_view(
             False,
             aggregate_reduction="pyramid-count",
         )
-    # numpy's .max() stub mis-resolves the overload for the kernel's f32 grid.
-    gmax = float(grid.max()) if grid.size else 0.0  # ty: ignore[invalid-argument-type]
+    gmax = float(grid.max()) if grid.size else 0.0
     writer = lod.BufferWriter()
     density_buf = writer.add_raw(_encode_log_u8(grid, gmax))
     sample = (
