@@ -347,10 +347,6 @@ class PayloadMixin(_Host):
             }
         domain = tuple(t.style["domain"])
         norm = kernels.normalize_f32(t.grid.values, domain, nonfinite="nan")
-        # Byte zero is the renderer-wide missing-cell sentinel.  Encode every
-        # finite normalized value into bytes 1..255 so a legitimate domain
-        # minimum remains visible instead of becoming transparent.
-        norm = np.where(np.isfinite(norm), (norm * 254.0 + 1.0) / 255.0, 0.0).astype(np.float32)
         cmap = t.style.get("colormap", channels.DEFAULT_COLORMAP)
         return {
             "id": t.id,

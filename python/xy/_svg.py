@@ -1245,11 +1245,10 @@ def _heatmap_image(hm: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, st
         rgba = rgba_array.reshape(h, w, 4)[::-1].tobytes()
         return _grid_image(w, h, rgba, hm["x_range"], hm["y_range"], sx, sy)
     raw = _column(blob, cols[hm["buf"]]).reshape(h, w)
-    # Mirrors HEATMAP_FS: byte 0 = missing, 1..255 -> [0,1].
-    t = np.clip((raw * 255.0 - 1.0) / 254.0, 0.0, 1.0)
+    t = np.clip(raw, 0.0, 1.0)
     rgb = _lut(hm.get("colormap", "viridis"), t.reshape(-1)).reshape(h, w, 3)
     alpha = np.full((h, w), int(255 * float(style.get("opacity", 0.95))), dtype=np.uint8)
-    alpha[raw <= 0] = 0
+    alpha[~np.isfinite(raw)] = 0
     rgba = np.dstack([rgb, alpha])[::-1].tobytes()
     return _grid_image(w, h, rgba, hm["x_range"], hm["y_range"], sx, sy)
 

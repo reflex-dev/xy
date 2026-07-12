@@ -91,10 +91,10 @@ def grid_rgba(kind: str, g: dict, blob: bytes, cols: list, style: dict) -> tuple
         alpha[tnorm <= 0] = 0
     else:  # heatmap
         raw = _column(blob, cols[g["buf"]]).reshape(h, w)
-        t = np.clip((raw * 255.0 - 1.0) / 254.0, 0.0, 1.0)
+        t = np.clip(raw, 0.0, 1.0)
         rgb = _lut(g.get("colormap", "viridis"), t.reshape(-1)).reshape(h, w, 3)
         alpha = np.full((h, w), int(255 * float(style.get("opacity", 0.95))), dtype=np.uint8)
-        alpha[raw <= 0] = 0
+        alpha[~np.isfinite(raw)] = 0
     rgba = np.dstack([rgb, alpha])[::-1]  # flip: row 0 is the top of the image
     return np.ascontiguousarray(rgba, dtype=np.uint8), g["x_range"], g["y_range"]
 

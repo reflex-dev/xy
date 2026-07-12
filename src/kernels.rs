@@ -1887,9 +1887,9 @@ pub fn marching_squares_into(
 }
 
 /// Map normalized heatmap scalars to a top-row-first RGBA8 image. This is the
-/// native counterpart of `_scene.grid_rgba`'s heatmap branch: the payload's
-/// reserved zero represents missing data, while finite values map through the
-/// same evenly spaced color stops with ties-to-even byte rounding.
+/// Native counterpart of `_scene.grid_rgba`'s heatmap branch: non-finite
+/// values are missing, while finite normalized values map through the same
+/// evenly spaced color stops with ties-to-even byte rounding.
 pub fn heatmap_rgba_into(
     raw: &[f64],
     w: usize,
@@ -1911,7 +1911,11 @@ pub fn heatmap_rgba_into(
         let destination_row = h - 1 - row;
         for col in 0..w {
             let value = raw[row * w + col];
-            let t = ((value * 255.0 - 1.0) / 254.0).clamp(0.0, 1.0);
+            let t = if value.is_finite() {
+                value.clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
             let position = t * last as f64;
             let lo = position.floor() as usize;
             let hi = (lo + 1).min(last);
@@ -1922,7 +1926,7 @@ pub fn heatmap_rgba_into(
                 let value = start + (stops[hi][channel] as f64 - start) * fraction;
                 out[destination + channel] = value.round_ties_even().clamp(0.0, 255.0) as u8;
             }
-            out[destination + 3] = if value <= 0.0 { 0 } else { alpha };
+            out[destination + 3] = if value.is_finite() { alpha } else { 0 };
         }
     }
     true

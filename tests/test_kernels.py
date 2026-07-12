@@ -860,7 +860,7 @@ def test_pyramid_matches_bin2d_and_conserves():
 
 
 def test_heatmap_rgba_maps_stops_and_flips_rows():
-    raw = np.array([[1.0 / 255.0, 128.0 / 255.0], [1.0, 0.0]], dtype=np.float64)
+    raw = np.array([[0.0, 0.5], [1.0, np.nan]], dtype=np.float64)
     stops = np.array([[0, 10, 20], [100, 110, 120]], dtype=np.uint8)
 
     rgba = k.heatmap_rgba(raw, 2, 2, stops, 200)
