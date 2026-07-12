@@ -8,6 +8,7 @@ dominant mutation idioms without reproducing matplotlib's artist graph.
 
 from __future__ import annotations
 
+from itertools import pairwise
 from typing import Any, Optional
 
 import numpy as np
@@ -188,7 +189,9 @@ class AxesImage(Artist):
         grid = np.asarray(self._entry["z"])
         rows, cols = grid.shape[:2]
         left, right, bottom, top = self.get_extent()
-        xs = np.linspace(left + (right - left) / (2 * cols), right - (right - left) / (2 * cols), cols)
+        xs = np.linspace(
+            left + (right - left) / (2 * cols), right - (right - left) / (2 * cols), cols
+        )
         ys = np.linspace(
             bottom + (top - bottom) / (2 * rows), top - (top - bottom) / (2 * rows), rows
         )
@@ -258,9 +261,7 @@ class AxesImage(Artist):
                 self._entry["kwargs"].get("colormap", "viridis"),
                 np.nan_to_num(normalized, nan=0.0).reshape(-1),
             ).reshape(warped.shape + (3,))
-            warped = np.dstack(
-                (rgb / 255.0, np.isfinite(warped).astype(np.float64))
-            )
+            warped = np.dstack((rgb / 255.0, np.isfinite(warped).astype(np.float64)))
         else:
             channels = grid.shape[-1]
             warped = np.zeros((out_rows, out_cols, max(4, channels)), dtype=float)
@@ -439,8 +440,7 @@ class ContourSet(Artist):
         formatter = kwargs.pop("str_format", str)
         levels = np.asarray(self.levels).reshape(-1)
         labels = [
-            f"{formatter(float(lo))} < x <= {formatter(float(hi))}"
-            for lo, hi in zip(levels[:-1], levels[1:], strict=True)
+            f"{formatter(float(lo))} < x <= {formatter(float(hi))}" for lo, hi in pairwise(levels)
         ]
         return [self] * len(labels), labels
 

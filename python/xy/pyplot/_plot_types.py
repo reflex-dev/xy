@@ -100,7 +100,10 @@ def _nice_contour_levels(lo: float, hi: float, count: int) -> np.ndarray:
     raw = abs(hi - lo) / (count + 1)
     power = 10.0 ** np.floor(np.log10(raw))
     scaled = raw / power
-    nice = next((step for step in (1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0) if step >= scaled), 10.0)
+    nice = next(
+        (step for step in (1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0) if step >= scaled),
+        10.0,
+    )
     step = nice * power
     start = np.floor((lo + step * 1e-9) / step) * step
     stop = np.ceil((hi - step * 1e-9) / step) * step
@@ -1233,9 +1236,7 @@ class PlotTypeMixin:
         y0: list[float] = []
         x1: list[float] = []
         y1: list[float] = []
-        for value, base, edge0, edge1 in zip(
-            values, bases, edges[:-1], edges[1:], strict=True
-        ):
+        for value, base, edge0, edge1 in zip(values, bases, edges[:-1], edges[1:], strict=True):
             if orientation == "vertical":
                 rx0, rx1 = edge0, edge1
                 ry0, ry1 = sorted((base, value))
@@ -1717,9 +1718,7 @@ class PlotTypeMixin:
                 high_power = int(np.ceil(np.log(positive.max()) / np.log(base)))
                 levels = base ** np.arange(low_power, high_power + 1, dtype=np.float64)
             else:
-                levels = _nice_contour_levels(
-                    float(finite.min()), float(finite.max()), int(levels)
-                )
+                levels = _nice_contour_levels(float(finite.min()), float(finite.max()), int(levels))
         public_levels = np.asarray(levels, dtype=np.float64)
         rendered_z = z
         rendered_levels = public_levels
@@ -1748,7 +1747,9 @@ class PlotTypeMixin:
                     "colormap": resolve_cmap(cmap) if cmap is not None else "viridis",
                     "color": color,
                     "width": width,
-                    "opacity": 0.0 if transparent_fill else (0.9 if alpha is None else float(alpha)),
+                    "opacity": 0.0
+                    if transparent_fill
+                    else (0.9 if alpha is None else float(alpha)),
                 },
                 "source_z": za,
                 "domain": (float(public_levels[0]), float(public_levels[-1])),
@@ -1759,8 +1760,12 @@ class PlotTypeMixin:
         )
         if filled and hatches:
             patterns = list(hatches)
-            x_values = np.arange(za.shape[1], dtype=float) if x is None else np.asarray(x, dtype=float)
-            y_values = np.arange(za.shape[0], dtype=float) if y is None else np.asarray(y, dtype=float)
+            x_values = (
+                np.arange(za.shape[1], dtype=float) if x is None else np.asarray(x, dtype=float)
+            )
+            y_values = (
+                np.arange(za.shape[0], dtype=float) if y is None else np.asarray(y, dtype=float)
+            )
             if x_values.ndim == y_values.ndim == 1:
                 if len(x_values) == za.shape[1] + 1:
                     x_values = (x_values[:-1] + x_values[1:]) * 0.5
@@ -1797,7 +1802,13 @@ class PlotTypeMixin:
                         text = str(pattern)
                         cx, cy = float(x_values[col]), float(y_values[row])
 
-                        def stroke(angle: str, offset: float = 0.0) -> None:
+                        def stroke(
+                            angle: str,
+                            offset: float = 0.0,
+                            *,
+                            _cx: float = cx,
+                            _cy: float = cy,
+                        ) -> None:
                             if angle == "horizontal":
                                 vx, vy, ox, oy = 0.38 * dx, 0.0, 0.0, offset * dy
                             elif angle == "backslash":
@@ -1814,10 +1825,10 @@ class PlotTypeMixin:
                                     -offset * dx,
                                     offset * dy,
                                 )
-                            hx0.append(cx + ox - vx)
-                            hy0.append(cy + oy - vy)
-                            hx1.append(cx + ox + vx)
-                            hy1.append(cy + oy + vy)
+                            hx0.append(_cx + ox - vx)
+                            hy0.append(_cy + oy - vy)
+                            hx1.append(_cx + ox + vx)
+                            hy1.append(_cy + oy + vy)
 
                         if "-" in text or "*" in text:
                             stroke("horizontal")
@@ -2526,9 +2537,7 @@ class PlotTypeMixin:
                 cmap_callable = cmap if callable(cmap) else None
                 if cmap_callable is None:
                     try:
-                        mpl_colormaps = __import__(
-                            "matplotlib", fromlist=["colormaps"]
-                        ).colormaps
+                        mpl_colormaps = __import__("matplotlib", fromlist=["colormaps"]).colormaps
 
                         cmap_callable = mpl_colormaps.get_cmap(cmap or "viridis")
                     except (ImportError, ValueError):
@@ -2538,9 +2547,7 @@ class PlotTypeMixin:
                 rendered_z = np.asarray(cmap_callable(mapped), dtype=np.float64)
                 mask = np.ma.getmaskarray(mapped) | ~np.isfinite(z)
                 if rendered_z.shape[-1] == 3:
-                    rendered_z = np.dstack(
-                        (rendered_z, np.ones(z.shape, dtype=np.float64))
-                    )
+                    rendered_z = np.dstack((rendered_z, np.ones(z.shape, dtype=np.float64)))
                 rendered_z[..., 3] = np.where(mask, 0.0, rendered_z[..., 3])
             entry = self._add(
                 "@mark",
@@ -2561,8 +2568,7 @@ class PlotTypeMixin:
         finite_triangles = np.isfinite(scalar)
         if not np.all(finite_triangles):
             x0, y0, x1, y1, x2, y2, scalar = (
-                values[finite_triangles]
-                for values in (x0, y0, x1, y1, x2, y2, scalar)
+                values[finite_triangles] for values in (x0, y0, x1, y1, x2, y2, scalar)
             )
         source_scalar = scalar
         rendered_scalar = scalar
@@ -2630,7 +2636,9 @@ class PlotTypeMixin:
         threshold = 0.0 if precision in (None, "present") else float(precision)
         present = np.abs(np.asarray(values, dtype=np.float64)) > threshold
         marker_mode = marker is not None or markersize is not None
-        color = np.array([31, 119, 180], dtype=np.uint8) if marker_mode else np.zeros(3, dtype=np.uint8)
+        color = (
+            np.array([31, 119, 180], dtype=np.uint8) if marker_mode else np.zeros(3, dtype=np.uint8)
+        )
         if marker_mode:
             scale = max(3, int(round(float(markersize or 5))))
             image = np.full(
@@ -3199,11 +3207,17 @@ class PlotTypeMixin:
                         continue
                     text = str(pattern)
 
-                    def add(dx: float, dy: float) -> None:
-                        hx0.append(float(cx - dx))
-                        hy0.append(float(cy - dy))
-                        hx1.append(float(cx + dx))
-                        hy1.append(float(cy + dy))
+                    def add(
+                        dx: float,
+                        dy: float,
+                        *,
+                        _cx: float = float(cx),
+                        _cy: float = float(cy),
+                    ) -> None:
+                        hx0.append(_cx - dx)
+                        hy0.append(_cy - dy)
+                        hx1.append(_cx + dx)
+                        hy1.append(_cy + dy)
 
                     if "-" in text or "." in text or "*" in text:
                         add(sx, 0.0)
@@ -3527,9 +3541,7 @@ class PlotTypeMixin:
             # integrator without using its renderer.  This preserves explicit
             # seeds, masks, adaptive controls, and per-segment scalar values;
             # the resulting paths still render entirely through xy.
-            MatplotlibFigure = __import__(
-                "matplotlib.figure", fromlist=["Figure"]
-            ).Figure
+            MatplotlibFigure = __import__("matplotlib.figure", fromlist=["Figure"]).Figure
 
             mpl_ax = MatplotlibFigure().subplots()
             mpl_kwargs: dict[str, Any] = {
@@ -3550,9 +3562,7 @@ class PlotTypeMixin:
                 "num_arrows": num_arrows,
             }
             mpl_kwargs = {key: value for key, value in mpl_kwargs.items() if value is not None}
-            mpl_result = mpl_ax.streamplot(
-                x_values, y_values, u_values, v_values, **mpl_kwargs
-            )
+            mpl_result = mpl_ax.streamplot(x_values, y_values, u_values, v_values, **mpl_kwargs)
             source_segments = [
                 np.asarray(segment, dtype=np.float64)
                 for segment in mpl_result.lines.get_segments()
@@ -3565,9 +3575,7 @@ class PlotTypeMixin:
             from xy import kernels
 
             density_value = float(np.max(np.asarray(density, dtype=np.float64)))
-            max_steps = max(
-                1, min(100_000, int(float(maxlength) * max(u_values.shape) * 8))
-            )
+            max_steps = max(1, min(100_000, int(float(maxlength) * max(u_values.shape) * 8)))
             kx0, kx1, ky0, ky1 = kernels.streamlines(
                 x_values,
                 y_values,
@@ -3580,7 +3588,9 @@ class PlotTypeMixin:
                 np.asarray([[sx, sy], [ex, ey]], dtype=np.float64)
                 for sx, ex, sy, ey in zip(kx0, kx1, ky0, ky1, strict=True)
             ]
-            arrow_count = max(1, min(len(source_segments), int(30 * float(np.max(np.asarray(density))))))
+            arrow_count = max(
+                1, min(len(source_segments), int(30 * float(np.max(np.asarray(density)))))
+            )
 
         x0_values: list[float] = []
         y0_values: list[float] = []
@@ -3704,9 +3714,7 @@ class PlotTypeMixin:
                 ux = dx[valid] / lengths[valid]
                 uy = dy[valid] / lengths[valid]
                 scale = (
-                    0.022
-                    * min(float(np.ptp(x_values)), float(np.ptp(y_values)))
-                    * float(arrowsize)
+                    0.022 * min(float(np.ptp(x_values)), float(np.ptp(y_values))) * float(arrowsize)
                 )
                 tip_x, tip_y = x1[arrow_indices], y1[arrow_indices]
                 base_x, base_y = tip_x - ux * scale, tip_y - uy * scale

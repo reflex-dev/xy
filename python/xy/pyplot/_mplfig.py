@@ -193,7 +193,12 @@ class Figure:
             axes._axis_props("x")["domain"] = (0.0, 1.0)
             axes._axis_props("y")["domain"] = (0.0, 1.0)
             axes._padding = [0.0, 0.0, 0.0, 0.0]
-        extent = (float(xo) / width, (float(xo) + cols) / width, float(yo) / height, (float(yo) + rows) / height)
+        extent = (
+            float(xo) / width,
+            (float(xo) + cols) / width,
+            float(yo) / height,
+            (float(yo) + rows) / height,
+        )
         result = axes.imshow(
             image,
             alpha=alpha,

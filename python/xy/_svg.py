@@ -977,7 +977,7 @@ def _annotation_svg(annotations, sx, sy, plot, width, height):
             y_text = ty + float(ann.get("dy", 0)) - (len(lines) - 1) * line_height / 2
             tspans = "".join(
                 f'<tspan x="{_num(x_text)}" y="{_num(y_text + index * line_height)}">'
-                f'{escape(line)}</tspan>'
+                f"{escape(line)}</tspan>"
                 for index, line in enumerate(lines)
             )
             labels.append(
@@ -1317,17 +1317,21 @@ def _colorbar(options: dict, plot: dict) -> str:
             else ""
         )
     )
-    tick_nodes = "".join(
-        f'<text x="{_num(x + width + 4)}" y="{_num(y + height * (1 - i / 4) + 4)}" '
-        f'fill="{_TEXT}">{domain[0] + (domain[1] - domain[0]) * i / 4:g}</text>'
-        for i in range(5)
-    ) if orientation != "horizontal" else ""
+    tick_nodes = (
+        "".join(
+            f'<text x="{_num(x + width + 4)}" y="{_num(y + height * (1 - i / 4) + 4)}" '
+            f'fill="{_TEXT}">{domain[0] + (domain[1] - domain[0]) * i / 4:g}</text>'
+            for i in range(5)
+        )
+        if orientation != "horizontal"
+        else ""
+    )
     return (
         f'<defs><linearGradient id="{gradient_id}" {gradient_attrs}>'
-        f'{stop_nodes}</linearGradient></defs>'
+        f"{stop_nodes}</linearGradient></defs>"
         f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(width)}" height="{_num(height)}" '
         f'fill="url(#{gradient_id})"/>'
-        f'{tick_nodes}{label_node}'
+        f"{tick_nodes}{label_node}"
     )
 
 

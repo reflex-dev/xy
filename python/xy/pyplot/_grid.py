@@ -186,7 +186,7 @@ def stitch_png(
         background = np.round(rgba * 255).astype(np.uint8)
         canvas = np.empty((canvas_size[1] * 2, canvas_size[0] * 2, 4), dtype=np.uint8)
         canvas[...] = background
-        for tile, (left, bottom, width, height) in zip(tiles, positions, strict=True):
+        for tile, (left, bottom, _width, height) in zip(tiles, positions, strict=True):
             x = round(left * canvas.shape[1])
             y = round((1.0 - bottom - height) * canvas.shape[0])
             dest_x0, dest_y0 = max(0, x), max(0, y)
@@ -236,9 +236,7 @@ def stitch_png(
 
         x0, x1 = int(canvas.shape[1] * 0.15), int(canvas.shape[1] * 0.85)
         y0 = title_h + sum(row_heights) + 12
-        gradient = _lut(
-            colorbar.get("colormap", "viridis"), np.linspace(0.0, 1.0, max(2, x1 - x0))
-        )
+        gradient = _lut(colorbar.get("colormap", "viridis"), np.linspace(0.0, 1.0, max(2, x1 - x0)))
         canvas[y0 : y0 + 16, x0:x1, :3] = gradient[None, :, :]
         canvas[y0 : y0 + 16, x0:x1, 3] = 255
     return _png.encode(canvas)

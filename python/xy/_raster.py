@@ -589,9 +589,9 @@ def _emit_grid(cmd, kind, g, blob, cols, sx, sy, style):
         if "rgba_bufs" in g:
             channels = [_column(blob, cols[index]) for index in g["rgba_bufs"]]
             rgba = np.clip(np.column_stack(channels) * 255.0, 0, 255).astype(np.uint8)
-            rgba[:, 3] = (
-                rgba[:, 3].astype(np.float64) * float(style.get("opacity", 1.0))
-            ).astype(np.uint8)
+            rgba[:, 3] = (rgba[:, 3].astype(np.float64) * float(style.get("opacity", 1.0))).astype(
+                np.uint8
+            )
             rgba = rgba.reshape(h, w, 4)[::-1]
         else:
             raw = _column(blob, cols[g["buf"]])

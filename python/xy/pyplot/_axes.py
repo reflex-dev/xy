@@ -45,6 +45,22 @@ _MPL_GRID_COLOR = "#b0b0b0"
 # core once, not once per figure (the perf guardrail in tests/pyplot counts
 # on this staying O(1) per process).
 _component_cache: dict[tuple, Any] = {}
+_identity_transform_class: Any = None
+_identity_transform_checked = False
+
+
+def _identity_transform() -> Any:
+    """Return Matplotlib's identity transform when available, without retrying imports."""
+    global _identity_transform_checked, _identity_transform_class
+    if not _identity_transform_checked:
+        try:
+            _identity_transform_class = __import__(
+                "matplotlib.transforms", fromlist=["IdentityTransform"]
+            ).IdentityTransform
+        except ImportError:
+            _identity_transform_class = False
+        _identity_transform_checked = True
+    return _identity_transform_class() if _identity_transform_class else "data"
 
 
 class _AxisProxy:
@@ -121,16 +137,10 @@ class Axes(PlotTypeMixin):
         self._chart: Any = None
         self._twin: Optional[Axes] = None
         self._y2_of = y2_of  # when set, our marks target axis id "y2" on the host
-        try:
-            IdentityTransform = __import__(
-                "matplotlib.transforms", fromlist=["IdentityTransform"]
-            ).IdentityTransform
-
-            self.transAxes = IdentityTransform()
-            self.transData = IdentityTransform()
-        except ImportError:
+        self.transAxes = _identity_transform()
+        self.transData = _identity_transform()
+        if self.transAxes == "data":
             self.transAxes = "axes fraction"
-            self.transData = "data"
         self.xaxis = _AxisProxy(self, "x")
         self.yaxis = _AxisProxy(self, "y")
         self.spines = _SpineProxy()
@@ -742,9 +752,7 @@ class Axes(PlotTypeMixin):
             cmap_callable = cmap if callable(cmap) else None
             if cmap_callable is None:
                 try:
-                    mpl_colormaps = __import__(
-                        "matplotlib", fromlist=["colormaps"]
-                    ).colormaps
+                    mpl_colormaps = __import__("matplotlib", fromlist=["colormaps"]).colormaps
 
                     cmap_callable = mpl_colormaps.get_cmap(cmap or rcParams["image.cmap"])
                 except (ImportError, ValueError):
@@ -794,7 +802,9 @@ class Axes(PlotTypeMixin):
                 "bad", (0.0, 0.0, 0.0, 0.0)
             )
             grid, truecolor = rgba, True
-        alpha_array = None if alpha is None or np.isscalar(alpha) else np.asarray(alpha, dtype=float)
+        alpha_array = (
+            None if alpha is None or np.isscalar(alpha) else np.asarray(alpha, dtype=float)
+        )
         if alpha_array is not None:
             if truecolor:
                 if grid.shape[-1] == 3:
@@ -1272,7 +1282,12 @@ class Axes(PlotTypeMixin):
                 {
                     "kind": "@mark",
                     "factory": "segments",
-                    "args": ([x0, x1, x1, x0], [y0, y0, y1, y1], [x1, x1, x0, x0], [y0, y1, y1, y0]),
+                    "args": (
+                        [x0, x1, x1, x0],
+                        [y0, y0, y1, y1],
+                        [x1, x1, x0, x0],
+                        [y0, y1, y1, y0],
+                    ),
                     "kwargs": {"color": "#000000", "width": 1.0},
                     "y_axis": "y",
                 }
@@ -1306,8 +1321,10 @@ class Axes(PlotTypeMixin):
                 transform = self.transAxes if bounds is not None else None
                 if bounds is None:
                     bounds = getattr(bbox, "bounds", None)
-                extent = None if bounds is None else (
-                    bounds[0], bounds[0] + bounds[2], bounds[1], bounds[1] + bounds[3]
+                extent = (
+                    None
+                    if bounds is None
+                    else (bounds[0], bounds[0] + bounds[2], bounds[1], bounds[1] + bounds[3])
                 )
                 if transform is self.transAxes:
                     self._axis_props("x").setdefault("domain", (0.0, 1.0))
@@ -1439,8 +1456,7 @@ class Axes(PlotTypeMixin):
                 x_right = np.clip(x_right, 0, len(x_values) - 1)
                 x_left = np.clip(x_right - 1, 0, len(x_values) - 1)
                 x_index = np.where(
-                    np.abs(target_x - x_values[x_left])
-                    <= np.abs(target_x - x_values[x_right]),
+                    np.abs(target_x - x_values[x_left]) <= np.abs(target_x - x_values[x_right]),
                     x_left,
                     x_right,
                 )
@@ -1448,18 +1464,18 @@ class Axes(PlotTypeMixin):
                 y_right = np.clip(y_right, 0, len(y_values) - 1)
                 y_left = np.clip(y_right - 1, 0, len(y_values) - 1)
                 y_index = np.where(
-                    np.abs(target_y - y_values[y_left])
-                    <= np.abs(target_y - y_values[y_right]),
+                    np.abs(target_y - y_values[y_left]) <= np.abs(target_y - y_values[y_right]),
                     y_left,
                     y_right,
                 )
                 data = data[np.ix_(y_index, x_index)]
             else:
-                horizontal = np.vstack(
-                    [np.interp(target_x, x_values, row) for row in data]
-                )
+                horizontal = np.vstack([np.interp(target_x, x_values, row) for row in data])
                 data = np.vstack(
-                    [np.interp(target_y, y_values, horizontal[:, col]) for col in range(horizontal.shape[1])]
+                    [
+                        np.interp(target_y, y_values, horizontal[:, col])
+                        for col in range(horizontal.shape[1])
+                    ]
                 ).T
         if hasattr(image, "to_rgba"):
             try:

@@ -373,21 +373,21 @@ class _ColormapRegistry:
 
     def __iter__(self):
         fallback = (
-                "viridis",
-                "plasma",
-                "inferno",
-                "magma",
-                "cividis",
-                "gray",
-                "turbo",
-                "coolwarm",
-                "RdBu",
-                "bwr",
-                "Blues",
-                "RdYlGn",
-                "rainbow",
-                "Spectral",
-            )
+            "viridis",
+            "plasma",
+            "inferno",
+            "magma",
+            "cividis",
+            "gray",
+            "turbo",
+            "coolwarm",
+            "RdBu",
+            "bwr",
+            "Blues",
+            "RdYlGn",
+            "rainbow",
+            "Spectral",
+        )
         try:
             _matplotlib = __import__("matplotlib")
 
