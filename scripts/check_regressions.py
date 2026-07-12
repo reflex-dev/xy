@@ -16,8 +16,8 @@ because they behave very differently in CI:
 The baseline stores only *measured values*; the gate policy lives here
 (classified by metric-id suffix) so re-blessing is a values-only diff.
 
-    # after a bench run wrote scatter.json / kernel.json:
-    python scripts/check_regressions.py --scatter scatter.json --kernel kernel.json
+    # after bench runs wrote scatter.json / kernel.json / transport.json:
+    python scripts/check_regressions.py --scatter scatter.json --kernel kernel.json --transport transport.json
     python scripts/check_regressions.py ... --update-baseline   # re-bless
     python scripts/check_regressions.py ... --emit-md out.md     # regenerate table
 """
@@ -45,7 +45,11 @@ def _report_rows(report: Any) -> list:
     return []
 
 
-def flatten(scatter: list | dict | None, kernel: dict | None) -> dict:
+def flatten(
+    scatter: list | dict | None,
+    kernel: dict | None,
+    transport: dict | None = None,
+) -> dict:
     """Both bench JSONs -> a flat {metric_id: value} map."""
     out: dict[str, object] = {}
     for r in _report_rows(scatter):
@@ -59,6 +63,27 @@ def flatten(scatter: list | dict | None, kernel: dict | None) -> dict:
             if k == "n" or not isinstance(v, (int, float)):
                 continue
             out[f"kernel.{k}.{n}"] = v
+    if isinstance(transport, dict):
+        for row in transport.get("envelopes", []):
+            if not isinstance(row, dict) or not isinstance(row.get("mode"), str):
+                continue
+            mode = row["mode"]
+            for key in ("wire_bytes", "gzip_bytes", "wire_to_payload_ratio"):
+                value = row.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    out[f"transport.{mode}.{key}"] = value
+        append = transport.get("append_diagnostics")
+        if isinstance(append, dict):
+            for key in (
+                "widget_binary_transmissions",
+                "widget_binary_bytes",
+                "single_trace_append_wire_bytes",
+                "two_trace_append_wire_bytes",
+                "extra_unaffected_trace_wire_bytes",
+            ):
+                value = append.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    out[f"transport.append.{key}"] = value
     return out
 
 
@@ -69,7 +94,12 @@ def policy(metric_id: str) -> tuple[str, str, float]:
     (throughput Mpt/s, elapsed ms) gate advisory with a 2x band."""
     if ".tier." in metric_id:
         return "equals", "hard", 0.0
-    if "wire_bytes" in metric_id:  # bytes and bytes_per_point: env-independent
+    if "transmissions" in metric_id:
+        return "max", "hard", 0.0
+    if "wire_bytes" in metric_id or "gzip_bytes" in metric_id or metric_id.endswith("_bytes"):
+        # Deterministic envelope and payload byte counts.
+        return "max", "hard", 0.02
+    if "wire_to_payload_ratio" in metric_id:
         return "max", "hard", 0.02
     if "_mpts_s." in metric_id:  # throughput: higher is better
         return "min", "advisory", 0.5
@@ -117,12 +147,14 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--scatter", default=None, help="bench_scatter_native.py --json output")
     ap.add_argument("--kernel", default=None, help="bench_native.py --json output")
+    ap.add_argument("--transport", default=None, help="bench_transport.py --json output")
     ap.add_argument("--update-baseline", action="store_true")
     ap.add_argument("--emit-md", default=None, help="write a current-metrics markdown table here")
     args = ap.parse_args()
 
     scatter = json.loads(Path(args.scatter).read_text()) if args.scatter else None
     kernel = json.loads(Path(args.kernel).read_text()) if args.kernel else None
+    transport = json.loads(Path(args.transport).read_text()) if args.transport else None
     if (
         isinstance(scatter, dict)
         and scatter.get("measurement_scope") != "production-figure-payload"
@@ -130,7 +162,12 @@ def main() -> None:
         raise SystemExit(
             "scatter regression input must use benchmarks/bench_scatter_native.py --production"
         )
-    current = flatten(scatter, kernel)
+    if (
+        isinstance(transport, dict)
+        and transport.get("measurement_scope") != "loopback-channel-transport-diagnostic"
+    ):
+        raise SystemExit("transport regression input must use benchmarks/bench_transport.py")
+    current = flatten(scatter, kernel, transport)
     if not current:
         raise SystemExit("no metrics: pass --scatter and/or --kernel")
 

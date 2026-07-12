@@ -71,6 +71,54 @@ def test_flatten_keeps_legacy_scatter_list_compatibility() -> None:
     }
 
 
+def test_flatten_accepts_transport_report() -> None:
+    transport = {
+        "envelopes": [
+            {
+                "mode": "aligned-binary-diagnostic",
+                "wire_bytes": 1024,
+                "gzip_bytes": 512,
+                "wire_to_payload_ratio": 1.01,
+                "encode_p50_ms": 0.1,
+            }
+        ],
+        "append_diagnostics": {
+            "widget_binary_transmissions": 2,
+            "widget_binary_bytes": 2048,
+            "single_trace_append_wire_bytes": 1024,
+            "two_trace_append_wire_bytes": 2048,
+            "extra_unaffected_trace_wire_bytes": 1024,
+        },
+    }
+
+    flat = check_regressions.flatten(None, None, transport)
+
+    assert flat == {
+        "transport.aligned-binary-diagnostic.wire_bytes": 1024,
+        "transport.aligned-binary-diagnostic.gzip_bytes": 512,
+        "transport.aligned-binary-diagnostic.wire_to_payload_ratio": 1.01,
+        "transport.append.widget_binary_transmissions": 2,
+        "transport.append.widget_binary_bytes": 2048,
+        "transport.append.single_trace_append_wire_bytes": 1024,
+        "transport.append.two_trace_append_wire_bytes": 2048,
+        "transport.append.extra_unaffected_trace_wire_bytes": 1024,
+    }
+
+
+def test_transport_bytes_and_transmissions_are_hard_max_gates() -> None:
+    assert check_regressions.policy("transport.raw.gzip_bytes") == ("max", "hard", 0.02)
+    assert check_regressions.policy("transport.append.widget_binary_bytes") == (
+        "max",
+        "hard",
+        0.02,
+    )
+    assert check_regressions.policy("transport.append.widget_binary_transmissions") == (
+        "max",
+        "hard",
+        0.0,
+    )
+
+
 def test_missing_baseline_metric_is_a_hard_failure(tmp_path: Path, monkeypatch) -> None:
     baseline = tmp_path / "baseline.json"
     baseline.write_text(

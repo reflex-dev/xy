@@ -86,10 +86,14 @@ jobs:
           .venv/bin/python benchmarks/bench_scatter_native.py \
             --sizes 1e5,1e6,1e7 --production --json scatter.json
           python3 scripts/bench_native.py --sizes 1e6,1e7 --json kernel.json
+          CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
+          .venv/bin/python benchmarks/bench_transport.py --n 1e6 --reps 15 \
+            --browser-reps 12 --chromium "$CHROME" --require-browser --json transport.json
           python3 scripts/verify_benchmark_report.py scatter.json --kind scatter-native
           python3 scripts/verify_benchmark_report.py kernel.json --kind kernel-native
+          python3 scripts/verify_benchmark_report.py transport.json --kind transport-loopback
           python3 scripts/check_regressions.py --scatter scatter.json --kernel kernel.json \
-            --emit-md docs/benchmark_metrics.md
+            --transport transport.json --emit-md docs/benchmark_metrics.md
 
       - name: Upload regression benchmark report
         if: always()
@@ -101,6 +105,7 @@ jobs:
             docs/benchmark_metrics.md
             scatter.json
             kernel.json
+            transport.json
 
       - name: Public API coherence
         run: .venv/bin/python scripts/check_public_api.py

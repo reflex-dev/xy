@@ -30,6 +30,7 @@ KNOWN_KINDS = (
     "workflow-native",
     "line-decimation",
     "install-footprint",
+    "transport-loopback",
 )
 ROW_STATUSES = ("ok", "unavailable", "skipped", "failed")
 COMPARISON_VERDICTS = {"pass", "watch", "fail", "no-plotly"}
@@ -1914,6 +1915,110 @@ def _validate_workflow_native(report: dict[str, Any], errors: list[str]) -> None
         errors.append(f"workflow report missing required ok scenarios: {missing}")
 
 
+def _validate_transport_loopback(report: dict[str, Any], errors: list[str]) -> None:
+    _require_native_backend(report, "transport-loopback", errors)
+    _require_keys(
+        report,
+        {
+            "kind",
+            "measurement_scope",
+            "frame_status",
+            "benchmark_categories",
+            "tracked_categories",
+            "configuration",
+            "envelopes",
+            "python_loopback",
+            "browser",
+            "append_diagnostics",
+        },
+        "report",
+        errors,
+    )
+    if report.get("measurement_scope") != "loopback-channel-transport-diagnostic":
+        errors.append("report.measurement_scope must be 'loopback-channel-transport-diagnostic'")
+    _require_string_value(report.get("frame_status"), "report.frame_status", errors)
+    _validate_categories(report, errors)
+
+    configuration = report.get("configuration")
+    _require_keys(configuration, {"n", "reps", "browser_reps"}, "configuration", errors)
+    if isinstance(configuration, dict):
+        for key in ("n", "reps", "browser_reps"):
+            _require_positive_integer(configuration, key, "configuration", errors)
+
+    expected_modes = {"aligned-binary-diagnostic", "base64-json-prototype"}
+    for collection_name, timing_keys in (
+        ("envelopes", ("encode_p50_ms", "encode_p95_ms")),
+        ("python_loopback", ("request_to_decode_p50_ms", "request_to_decode_p95_ms")),
+    ):
+        rows = report.get(collection_name)
+        if not isinstance(rows, list) or not rows:
+            errors.append(f"{collection_name} must be a non-empty list")
+            continue
+        modes = {row.get("mode") for row in rows if isinstance(row, dict)}
+        if modes != expected_modes:
+            errors.append(f"{collection_name} must contain exactly {sorted(expected_modes)}")
+        for index, row in enumerate(rows):
+            path = f"{collection_name}[{index}]"
+            if not isinstance(row, dict):
+                errors.append(f"{path} must be an object")
+                continue
+            for key in timing_keys:
+                _require_nonnegative_number(row, key, path, errors)
+            if collection_name == "envelopes":
+                for key in (
+                    "payload_bytes",
+                    "wire_bytes",
+                    "wire_to_payload_ratio",
+                    "gzip_bytes",
+                    "peak_python_bytes",
+                ):
+                    _require_positive_number(row, key, path, errors)
+                _require_nonnegative_integer(row, "payload_reencodes", path, errors)
+            else:
+                _require_positive_number(row, "response_bytes", path, errors)
+
+    browser = report.get("browser")
+    _require_keys(browser, {"status", "rows"}, "browser", errors)
+    if isinstance(browser, dict):
+        status = browser.get("status")
+        if status not in {"ok", "skipped(no chromium)"}:
+            errors.append("browser.status must be 'ok' or 'skipped(no chromium)'")
+        rows = browser.get("rows")
+        if not isinstance(rows, list):
+            errors.append("browser.rows must be a list")
+        elif status == "ok":
+            modes = {row.get("mode") for row in rows if isinstance(row, dict)}
+            if modes != expected_modes:
+                errors.append(f"browser.rows must contain exactly {sorted(expected_modes)}")
+            for index, row in enumerate(rows):
+                path = f"browser.rows[{index}]"
+                if not isinstance(row, dict):
+                    errors.append(f"{path} must be an object")
+                    continue
+                for key in (
+                    "response_bytes",
+                    "request_to_next_frame_p50_ms",
+                    "request_to_next_frame_p95_ms",
+                ):
+                    _require_positive_number(row, key, path, errors)
+                _require_optional_nonnegative_number(row, "js_heap_delta_p95_bytes", path, errors)
+
+    append = report.get("append_diagnostics")
+    append_keys = {
+        "fixture_points_per_trace",
+        "widget_messages",
+        "widget_binary_transmissions",
+        "widget_binary_bytes",
+        "single_trace_append_wire_bytes",
+        "two_trace_append_wire_bytes",
+        "extra_unaffected_trace_wire_bytes",
+    }
+    _require_keys(append, append_keys, "append_diagnostics", errors)
+    if isinstance(append, dict):
+        for key in append_keys:
+            _require_positive_integer(append, key, "append_diagnostics", errors)
+
+
 def _report_rows(report: dict[str, Any], kind: str) -> list[dict[str, Any]]:
     if kind in {"scatter-vs", "line-decimation"}:
         results = report.get("results")
@@ -1929,6 +2034,18 @@ def _report_rows(report: dict[str, Any], kind: str) -> list[dict[str, Any]]:
     if kind == "install-footprint":
         rows = report.get("results")
         return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    if kind == "transport-loopback":
+        browser = report.get("browser")
+        groups = [report.get("envelopes"), report.get("python_loopback")]
+        if isinstance(browser, dict):
+            groups.append(browser.get("rows"))
+        return [
+            row
+            for rows in groups
+            if isinstance(rows, list)
+            for row in rows
+            if isinstance(row, dict)
+        ]
     rows = report.get("rows")
     return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
 
@@ -2028,6 +2145,8 @@ def validate_report(path: Path, *, kind: str = "auto") -> list[str]:
         _validate_dashboard_browser(report, errors)
     elif selected == "workflow-native":
         _validate_workflow_native(report, errors)
+    elif selected == "transport-loopback":
+        _validate_transport_loopback(report, errors)
     else:
         errors.append(f"unknown benchmark report kind: {detected!r}")
     if kind != "auto" and detected != kind:
