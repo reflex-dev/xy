@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np
 
-from ._svg import _column, _lut, _monotone_tangents
+from ._svg import _column, _density_column, _lut, _monotone_tangents
 
 # Samples per smooth Bézier span when flattening to a polyline for the raster
 # filler. The curve is screen-bounded (M4-decimated), so this stays cheap and
@@ -81,7 +81,7 @@ def grid_rgba(kind: str, g: dict, blob: bytes, cols: list, style: dict) -> tuple
     `_svg._density_image`/`_heatmap_image`. Returns (rgba, x_range, y_range)."""
     w, h = int(g["w"]), int(g["h"])
     if kind == "density":
-        grid = _column(blob, cols[g["buf"]]).reshape(h, w)
+        grid = _density_column(blob, cols[g["buf"]], g).reshape(h, w)
         gmax = float(g.get("max") or 1.0) or 1.0
         tnorm = np.clip(grid / gmax, 0.0, 1.0)
         rgb = _lut(g.get("colormap", "viridis"), tnorm.reshape(-1)).reshape(h, w, 3)

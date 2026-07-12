@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_CONTOUR_WORK, MAX_SCREEN_DIM
 
-ABI_VERSION = 17
+ABI_VERSION = 31
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.
@@ -33,6 +33,7 @@ ABI_VERSION = 17
 # against 2**64-1 would never match on 32-bit targets and an error return
 # would be sliced as data.
 _USIZE_MAX = ctypes.c_size_t(-1).value
+_FACTORIZE_CAPACITY_EXCEEDED = _USIZE_MAX - 1
 
 
 def _lib_filename() -> str:
@@ -79,6 +80,51 @@ def _load() -> ctypes.CDLL:
             "wheel and package versions match."
         )
 
+    lib.fc_factorize_fixed.restype = ctypes.c_size_t
+    lib.fc_factorize_fixed.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.fc_factorize_fixed_u8.restype = ctypes.c_size_t
+    lib.fc_factorize_fixed_u8.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+    ]
+    lib.fc_factorize_fixed_u8_counts.restype = ctypes.c_size_t
+    lib.fc_factorize_fixed_u8_counts.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+    ]
+    lib.fc_factorize_unicode1_u8_counts.restype = ctypes.c_size_t
+    lib.fc_factorize_unicode1_u8_counts.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_int32,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+    ]
+    lib.fc_remap_u8.restype = ctypes.c_int32
+    lib.fc_remap_u8.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+    ]
+
     lib.fc_zone_maps.restype = ctypes.c_size_t
     lib.fc_zone_maps.argtypes = [
         ctypes.c_void_p,
@@ -90,6 +136,15 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
+    lib.fc_zone_maps_pair.restype = ctypes.c_size_t
+    lib.fc_zone_maps_pair.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
@@ -365,6 +420,44 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
+    lib.fc_bin_2d_sample_range.restype = ctypes.c_size_t
+    lib.fc_bin_2d_sample_range.argtypes = [
+        ctypes.c_void_p,  # x
+        ctypes.c_void_p,  # y
+        ctypes.c_size_t,  # len
+        ctypes.c_double,  # x0
+        ctypes.c_double,  # x1
+        ctypes.c_double,  # y0
+        ctypes.c_double,  # y1
+        ctypes.c_size_t,  # w
+        ctypes.c_size_t,  # h
+        ctypes.c_uint64,  # seed
+        ctypes.c_uint64,  # threshold
+        ctypes.c_void_p,  # grid
+        ctypes.c_void_p,  # sampled rows
+        ctypes.c_size_t,  # sampled-row capacity
+    ]
+    lib.fc_bin_2d_stratified_sample_range_u8_counted.restype = ctypes.c_size_t
+    lib.fc_bin_2d_stratified_sample_range_u8_counted.argtypes = [
+        ctypes.c_void_p,  # x
+        ctypes.c_void_p,  # y
+        ctypes.c_void_p,  # groups
+        ctypes.c_size_t,  # len
+        ctypes.c_void_p,  # counts
+        ctypes.c_size_t,  # n_groups
+        ctypes.c_double,  # x0
+        ctypes.c_double,  # x1
+        ctypes.c_double,  # y0
+        ctypes.c_double,  # y1
+        ctypes.c_size_t,  # w
+        ctypes.c_size_t,  # h
+        ctypes.c_uint64,  # seed
+        ctypes.c_double,  # fraction
+        ctypes.c_uint64,  # min_count
+        ctypes.c_void_p,  # grid
+        ctypes.c_void_p,  # sampled rows
+        ctypes.c_size_t,  # sampled-row capacity
+    ]
     lib.fc_histogram_uniform.restype = ctypes.c_size_t
     lib.fc_histogram_uniform.argtypes = [
         ctypes.c_void_p,
@@ -384,6 +477,15 @@ def _load() -> ctypes.CDLL:
         ctypes.c_int32,
         ctypes.c_void_p,
     ]
+    lib.fc_valid_indices_f64.restype = ctypes.c_size_t
+    lib.fc_valid_indices_f64.argtypes = [
+        ctypes.c_void_p,  # array of f64 pointers
+        ctypes.c_size_t,  # number of columns
+        ctypes.c_size_t,  # row count
+        ctypes.c_uint64,  # positive-column bit mask
+        ctypes.c_void_p,  # output row IDs
+        ctypes.c_size_t,  # output capacity
+    ]
     lib.fc_range_indices.restype = ctypes.c_size_t
     lib.fc_range_indices.argtypes = [
         ctypes.c_void_p,
@@ -402,6 +504,37 @@ def _load() -> ctypes.CDLL:
         ctypes.c_uint64,
         ctypes.c_uint64,
         ctypes.c_void_p,
+    ]
+    lib.fc_sample_range_indices.restype = ctypes.c_size_t
+    lib.fc_sample_range_indices.argtypes = [
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+    ]
+    lib.fc_stratified_sample_range_u8.restype = ctypes.c_size_t
+    lib.fc_stratified_sample_range_u8.argtypes = [
+        ctypes.c_void_p,  # groups
+        ctypes.c_size_t,  # len
+        ctypes.c_size_t,  # n_groups
+        ctypes.c_uint64,  # seed
+        ctypes.c_double,  # fraction
+        ctypes.c_uint64,  # min_count
+        ctypes.c_void_p,  # out
+        ctypes.c_size_t,  # capacity
+    ]
+    lib.fc_stratified_sample_range_u8_counted.restype = ctypes.c_size_t
+    lib.fc_stratified_sample_range_u8_counted.argtypes = [
+        ctypes.c_void_p,  # groups
+        ctypes.c_size_t,  # len
+        ctypes.c_void_p,  # counts
+        ctypes.c_size_t,  # n_groups
+        ctypes.c_uint64,  # seed
+        ctypes.c_double,  # fraction
+        ctypes.c_uint64,  # min_count
+        ctypes.c_void_p,  # out
+        ctypes.c_size_t,  # capacity
     ]
     lib.fc_stratified_sample_mask.restype = ctypes.c_int32
     lib.fc_stratified_sample_mask.argtypes = [
@@ -424,6 +557,13 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_double,
         ctypes.c_uint32,
+    ]
+    lib.fc_pyramid_append.restype = ctypes.c_int32
+    lib.fc_pyramid_append.argtypes = [
+        ctypes.c_uint64,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
     ]
     lib.fc_pyramid_count.restype = ctypes.c_int32
     lib.fc_pyramid_count.argtypes = [
@@ -477,6 +617,50 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,  # w
         ctypes.c_size_t,  # h
     ]
+    lib.fc_rasterize_data.restype = ctypes.c_int32
+    lib.fc_rasterize_data.argtypes = [
+        ctypes.c_void_p,  # cmd
+        ctypes.c_size_t,  # cmd_len
+        ctypes.c_void_p,  # external data arena
+        ctypes.c_size_t,  # data_len
+        ctypes.c_void_p,  # out (w*h*4 RGBA8)
+        ctypes.c_size_t,  # w
+        ctypes.c_size_t,  # h
+    ]
+    lib.fc_rasterize_png_data.restype = ctypes.c_size_t
+    lib.fc_rasterize_png_data.argtypes = [
+        ctypes.c_void_p,  # cmd
+        ctypes.c_size_t,  # cmd_len
+        ctypes.c_void_p,  # external data arena
+        ctypes.c_size_t,  # data_len
+        ctypes.c_void_p,  # out PNG bytes
+        ctypes.c_size_t,  # out_capacity
+        ctypes.c_size_t,  # w
+        ctypes.c_size_t,  # h
+    ]
+    lib.fc_rasterize_spans.restype = ctypes.c_int32
+    lib.fc_rasterize_spans.argtypes = [
+        ctypes.c_void_p,  # cmd
+        ctypes.c_size_t,  # cmd_len
+        ctypes.POINTER(ctypes.c_void_p),  # span pointers
+        ctypes.POINTER(ctypes.c_size_t),  # span lengths
+        ctypes.c_size_t,  # span count
+        ctypes.c_void_p,  # out (w*h*4 RGBA8)
+        ctypes.c_size_t,  # w
+        ctypes.c_size_t,  # h
+    ]
+    lib.fc_rasterize_png_spans.restype = ctypes.c_size_t
+    lib.fc_rasterize_png_spans.argtypes = [
+        ctypes.c_void_p,  # cmd
+        ctypes.c_size_t,  # cmd_len
+        ctypes.POINTER(ctypes.c_void_p),  # span pointers
+        ctypes.POINTER(ctypes.c_size_t),  # span lengths
+        ctypes.c_size_t,  # span count
+        ctypes.c_void_p,  # out PNG bytes
+        ctypes.c_size_t,  # out_capacity
+        ctypes.c_size_t,  # w
+        ctypes.c_size_t,  # h
+    ]
     lib.fc_heatmap_rgba.restype = ctypes.c_int32
     lib.fc_heatmap_rgba.argtypes = [
         ctypes.c_void_p,  # raw f64
@@ -486,6 +670,24 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,  # stop_count
         ctypes.c_uint8,  # alpha
         ctypes.c_void_p,  # out RGBA8
+    ]
+    lib.fc_density_rgba.restype = ctypes.c_int32
+    lib.fc_density_rgba.argtypes = [
+        ctypes.c_void_p,  # encoded log-u8
+        ctypes.c_size_t,  # w
+        ctypes.c_size_t,  # h
+        ctypes.c_double,  # original maximum
+        ctypes.c_void_p,  # RGB stops
+        ctypes.c_size_t,  # stop_count
+        ctypes.c_double,  # opacity
+        ctypes.c_void_p,  # out RGBA8
+    ]
+    lib.fc_density_log_u8.restype = ctypes.c_int32
+    lib.fc_density_log_u8.argtypes = [
+        ctypes.c_void_p,  # grid f32
+        ctypes.c_size_t,  # len
+        ctypes.c_void_p,  # out u8
+        ctypes.c_void_p,  # out max f64
     ]
     lib.fc_css_check.restype = ctypes.c_int32
     lib.fc_css_check.argtypes = [
@@ -521,6 +723,164 @@ def _ptr_u8(arr: npt.NDArray[np.uint8]) -> int:
     return arr.ctypes.data
 
 
+def _fixed_records(values: np.ndarray) -> tuple[np.ndarray, int]:
+    records = np.ascontiguousarray(values)
+    if records.ndim != 1 or records.dtype.hasobject:
+        raise ValueError("factorize_fixed values must be a non-object 1-D array")
+    width = int(records.dtype.itemsize)
+    if width <= 0:
+        raise ValueError("factorize_fixed values must have positive-width records")
+    return records, width
+
+
+def factorize_fixed(
+    values: np.ndarray,
+) -> tuple[npt.NDArray[np.uint32], npt.NDArray[np.uint32]]:
+    """First-seen codes and unique-row indices for fixed-width 1-D values.
+
+    The native kernel compares the complete memory record; label conversion
+    and lexical ordering remain with the channel policy layer.
+    """
+    records, width = _fixed_records(values)
+    n = len(records)
+    codes = np.empty(n, dtype=np.uint32)
+    unique_indices = np.empty(n, dtype=np.uint32)
+    if n == 0:
+        return codes, unique_indices
+    written = _lib.fc_factorize_fixed(
+        records.ctypes.data,
+        n,
+        width,
+        codes.ctypes.data,
+        unique_indices.ctypes.data,
+    )
+    if written == _USIZE_MAX or written > n:
+        raise ValueError("native factorize_fixed rejected the record array")
+    return codes, unique_indices[:written].copy()
+
+
+def factorize_fixed_u8(
+    values: np.ndarray, max_unique: int = 256
+) -> Optional[tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint32]]]:
+    """Compact fixed-record factorization, or ``None`` above `max_unique`."""
+    max_unique = _bounded_positive_int(max_unique, "max_unique", max_value=256)
+    records, width = _fixed_records(values)
+    n = len(records)
+    codes = np.empty(n, dtype=np.uint8)
+    unique_indices = np.empty(min(n, max_unique), dtype=np.uint32)
+    if n == 0:
+        return codes, unique_indices
+    written = _lib.fc_factorize_fixed_u8(
+        records.ctypes.data,
+        n,
+        width,
+        codes.ctypes.data,
+        unique_indices.ctypes.data,
+        len(unique_indices),
+    )
+    if written == _FACTORIZE_CAPACITY_EXCEEDED:
+        return None
+    if written == _USIZE_MAX or written > len(unique_indices):
+        raise ValueError("native factorize_fixed_u8 rejected the record array")
+    return codes, unique_indices[:written].copy()
+
+
+def factorize_fixed_u8_counts(
+    values: np.ndarray, max_unique: int = 256
+) -> Optional[
+    tuple[
+        npt.NDArray[np.uint8],
+        npt.NDArray[np.uint32],
+        npt.NDArray[np.uint64],
+    ]
+]:
+    """Compact factorization plus exact counts in first-seen code order."""
+    max_unique = _bounded_positive_int(max_unique, "max_unique", max_value=256)
+    records, width = _fixed_records(values)
+    n = len(records)
+    codes = np.empty(n, dtype=np.uint8)
+    capacity = min(n, max_unique)
+    unique_indices = np.empty(capacity, dtype=np.uint32)
+    counts = np.empty(capacity, dtype=np.uint64)
+    if n == 0:
+        return codes, unique_indices, counts
+    written = _lib.fc_factorize_fixed_u8_counts(
+        records.ctypes.data,
+        n,
+        width,
+        codes.ctypes.data,
+        unique_indices.ctypes.data,
+        counts.ctypes.data,
+        capacity,
+    )
+    if written == _FACTORIZE_CAPACITY_EXCEEDED:
+        return None
+    if written == _USIZE_MAX or written > capacity:
+        raise ValueError("native factorize_fixed_u8_counts rejected the record array")
+    return codes, unique_indices[:written].copy(), counts[:written].copy()
+
+
+def factorize_unicode1_u8_counts(
+    values: np.ndarray, max_unique: int = 256
+) -> Optional[
+    tuple[
+        npt.NDArray[np.uint8],
+        npt.NDArray[np.uint32],
+        npt.NDArray[np.uint64],
+    ]
+]:
+    """Direct-table factorization for one-codepoint NumPy Unicode arrays."""
+    max_unique = _bounded_positive_int(max_unique, "max_unique", max_value=256)
+    records = np.ascontiguousarray(values)
+    if records.ndim != 1 or records.dtype.kind != "U" or records.dtype.itemsize != 4:
+        raise ValueError("values must be a one-dimensional Unicode U1 array")
+    n = len(records)
+    codes = np.empty(n, dtype=np.uint8)
+    capacity = min(n, max_unique)
+    unique_indices = np.empty(capacity, dtype=np.uint32)
+    counts = np.empty(capacity, dtype=np.uint64)
+    if n == 0:
+        return codes, unique_indices, counts
+    native_order = "<" if sys.byteorder == "little" else ">"
+    swap_endian = records.dtype.byteorder not in ("=", "|", native_order)
+    written = _lib.fc_factorize_unicode1_u8_counts(
+        records.ctypes.data,
+        n,
+        int(swap_endian),
+        codes.ctypes.data,
+        unique_indices.ctypes.data,
+        counts.ctypes.data,
+        capacity,
+    )
+    if written == _FACTORIZE_CAPACITY_EXCEEDED:
+        return None
+    if written == _USIZE_MAX or written > capacity:
+        raise ValueError("native factorize_unicode1_u8_counts rejected the array")
+    return codes, unique_indices[:written].copy(), counts[:written].copy()
+
+
+def remap_u8(values: npt.NDArray[np.uint8], mapping: npt.NDArray[np.uint8]) -> None:
+    """Apply a compact categorical codebook permutation in place."""
+    values = np.asarray(values)
+    mapping = np.ascontiguousarray(mapping, dtype=np.uint8)
+    if values.dtype != np.uint8 or values.ndim != 1 or not values.flags.c_contiguous:
+        raise ValueError("remap_u8 values must be a contiguous uint8 1-D array")
+    if mapping.ndim != 1:
+        raise ValueError("remap_u8 mapping must be a 1-D array")
+    if len(values) == 0:
+        return
+    if len(mapping) == 0:
+        raise ValueError("remap_u8 mapping must be non-empty")
+    ok = _lib.fc_remap_u8(
+        values.ctypes.data,
+        len(values),
+        mapping.ctypes.data,
+        len(mapping),
+    )
+    if not ok:
+        raise ValueError("remap_u8 encountered a code outside the mapping")
+
+
 def _positive_int(value: int, label: str) -> int:
     if isinstance(value, (bool, np.bool_)):
         raise ValueError(f"{label} must be a positive integer")
@@ -538,6 +898,18 @@ def _bounded_positive_int(value: int, label: str, max_value: int = MAX_SCREEN_DI
     if out > max_value:
         raise ValueError(f"{label} must be <= {max_value}")
     return out
+
+
+def _bounded_nonnegative_int(value: int, label: str, max_value: int) -> int:
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(f"{label} must be a non-negative integer")
+    try:
+        out = operator.index(value)
+    except TypeError as e:
+        raise ValueError(f"{label} must be a non-negative integer") from e
+    if out < 0 or out > max_value:
+        raise ValueError(f"{label} must be between 0 and {max_value}")
+    return int(out)
 
 
 def _finite_float(value: float, label: str) -> float:
@@ -644,6 +1016,68 @@ def zone_maps(
     mins, maxs, sums, sum_sqs, positive_mins, positive_maxs = f64_rows
     counts, nulls = u64_rows
     return mins, maxs, counts, nulls, sums, sum_sqs, positive_mins, positive_maxs
+
+
+_ZONE_MAP_DTYPE = np.dtype(
+    [
+        ("min", np.float64),
+        ("max", np.float64),
+        ("positive_min", np.float64),
+        ("positive_max", np.float64),
+        ("count", np.uint64),
+        ("null_count", np.uint64),
+        ("sum", np.float64),
+        ("sum_sq", np.float64),
+    ],
+    align=True,
+)
+if _ZONE_MAP_DTYPE.itemsize != 64:  # pragma: no cover - platform ABI invariant
+    raise ImportError("xy native ZoneMap layout is not 64 bytes on this platform")
+
+
+def zone_maps_pair(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    chunk_size: int = 65_536,
+) -> tuple[tuple[np.ndarray, ...], tuple[np.ndarray, ...]]:
+    """Bit-identical zone maps for two equal-length columns in one call."""
+    chunk_size = _positive_int(chunk_size, "chunk_size")
+    x = _as_f64(x, "x")
+    y = _as_f64(y, "y")
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    n_chunks = max(1, -(-len(x) // chunk_size)) if len(x) else 0
+    x_records = np.empty(n_chunks, dtype=_ZONE_MAP_DTYPE)
+    y_records = np.empty(n_chunks, dtype=_ZONE_MAP_DTYPE)
+    if len(x):
+        written = _lib.fc_zone_maps_pair(
+            x.ctypes.data,
+            y.ctypes.data,
+            len(x),
+            chunk_size,
+            x_records.ctypes.data,
+            y_records.ctypes.data,
+        )
+        if written == _USIZE_MAX:
+            raise ValueError("invalid zone_maps_pair arguments")
+        if written != n_chunks:
+            raise RuntimeError(
+                f"xy native zone_maps_pair wrote {written} chunks, expected {n_chunks}"
+            )
+
+    def unpack(records: np.ndarray) -> tuple[np.ndarray, ...]:
+        return (
+            records["min"].copy(),
+            records["max"].copy(),
+            records["count"].copy(),
+            records["null_count"].copy(),
+            records["sum"].copy(),
+            records["sum_sq"].copy(),
+            records["positive_min"].copy(),
+            records["positive_max"].copy(),
+        )
+
+    return unpack(x_records), unpack(y_records)
 
 
 def encode_f32(
@@ -1386,8 +1820,22 @@ def marching_squares(
     maximum = 2 * work
     capacity = min(maximum, max(64, 2 * (rows + cols) * len(levels)))
 
-    def allocate(size: int) -> tuple[npt.NDArray[np.float64], ...]:
-        return tuple(np.empty(size, dtype=np.float64) for _ in range(5))
+    def allocate(
+        size: int,
+    ) -> tuple[
+        npt.NDArray[np.float64],
+        npt.NDArray[np.float64],
+        npt.NDArray[np.float64],
+        npt.NDArray[np.float64],
+        npt.NDArray[np.float64],
+    ]:
+        return (
+            np.empty(size, dtype=np.float64),
+            np.empty(size, dtype=np.float64),
+            np.empty(size, dtype=np.float64),
+            np.empty(size, dtype=np.float64),
+            np.empty(size, dtype=np.float64),
+        )
 
     def extract(outputs: tuple[npt.NDArray[np.float64], ...]) -> int:
         return int(
@@ -1413,7 +1861,13 @@ def marching_squares(
         repeated = extract(outputs)
         if repeated != written:
             raise RuntimeError("native marching_squares returned an inconsistent segment count")
-    return tuple(output[:written] for output in outputs)
+    return (
+        outputs[0][:written],
+        outputs[1][:written],
+        outputs[2][:written],
+        outputs[3][:written],
+        outputs[4][:written],
+    )
 
 
 def bin_2d(
@@ -1500,6 +1954,142 @@ def bin_2d_indices(
     return grid, idx[:written].copy()
 
 
+def bin_2d_sample_range(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+    w: int,
+    h: int,
+    seed: int,
+    threshold: int,
+    capacity_hint: int,
+) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.uint32]]:
+    """Return the exact density grid and implicit-row sample in one scan."""
+    w = _bounded_positive_int(w, "w")
+    h = _bounded_positive_int(h, "h")
+    x0, x1 = _finite_increasing(x0, x1, "x range")
+    y0, y1 = _finite_increasing(y0, y1, "y range")
+    x = _as_f64(x, "x")
+    y = _as_f64(y, "y")
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    seed = _bounded_nonnegative_int(seed, "seed", max_value=np.iinfo(np.uint64).max)
+    threshold = _bounded_nonnegative_int(threshold, "threshold", max_value=np.iinfo(np.uint64).max)
+    capacity = _bounded_nonnegative_int(capacity_hint, "capacity_hint", max_value=len(x))
+    grid = np.zeros((h, w), dtype=np.float32)
+    rows = np.empty(capacity, dtype=np.uint32)
+
+    def extract(output: npt.NDArray[np.uint32]) -> int:
+        return int(
+            _lib.fc_bin_2d_sample_range(
+                _ptr_f64(x),
+                _ptr_f64(y),
+                len(x),
+                x0,
+                x1,
+                y0,
+                y1,
+                w,
+                h,
+                ctypes.c_uint64(int(seed)),
+                ctypes.c_uint64(int(threshold)),
+                grid.ctypes.data,
+                output.ctypes.data if len(output) else None,
+                len(output),
+            )
+        )
+
+    written = extract(rows)
+    if written == _USIZE_MAX:
+        raise ValueError("invalid bin_2d_sample_range arguments")
+    if written > capacity:
+        rows = np.empty(written, dtype=np.uint32)
+        repeated = extract(rows)
+        if repeated != written:
+            raise RuntimeError("native bin_2d_sample_range returned an inconsistent count")
+    return grid, rows[:written]
+
+
+def bin_2d_stratified_sample_range_u8_counted(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    groups: npt.NDArray[np.uint8],
+    counts: npt.NDArray[np.uint64],
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+    w: int,
+    h: int,
+    seed: int,
+    fraction: float,
+    min_count: int,
+    capacity_hint: int,
+) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.uint32]]:
+    """Return the exact density grid and counted u8 stratified sample."""
+    w = _bounded_positive_int(w, "w")
+    h = _bounded_positive_int(h, "h")
+    x0, x1 = _finite_increasing(x0, x1, "x range")
+    y0, y1 = _finite_increasing(y0, y1, "y range")
+    x = _as_f64(x, "x")
+    y = _as_f64(y, "y")
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    groups = np.asarray(groups)
+    if groups.ndim != 1 or groups.dtype != np.uint8 or len(groups) != len(x):
+        raise ValueError("groups must be a one-dimensional uint8 array matching x and y")
+    groups = np.ascontiguousarray(groups)
+    counts = np.asarray(counts)
+    if counts.ndim != 1 or counts.dtype != np.uint64 or not 1 <= len(counts) <= 256:
+        raise ValueError("counts must be a one-dimensional uint64 array of length 1..256")
+    counts = np.ascontiguousarray(counts)
+    seed = _bounded_nonnegative_int(seed, "seed", max_value=np.iinfo(np.uint64).max)
+    fraction = _finite_float(fraction, "fraction")
+    if fraction <= 0.0:
+        raise ValueError("fraction must be > 0")
+    min_count = _bounded_nonnegative_int(min_count, "min_count", max_value=np.iinfo(np.uint64).max)
+    capacity = _bounded_nonnegative_int(capacity_hint, "capacity_hint", max_value=len(x))
+    grid = np.zeros((h, w), dtype=np.float32)
+    rows = np.empty(capacity, dtype=np.uint32)
+
+    def extract(output: npt.NDArray[np.uint32]) -> int:
+        return int(
+            _lib.fc_bin_2d_stratified_sample_range_u8_counted(
+                _ptr_f64(x),
+                _ptr_f64(y),
+                groups.ctypes.data if len(groups) else None,
+                len(x),
+                counts.ctypes.data,
+                len(counts),
+                x0,
+                x1,
+                y0,
+                y1,
+                w,
+                h,
+                ctypes.c_uint64(seed),
+                ctypes.c_double(fraction),
+                ctypes.c_uint64(min_count),
+                grid.ctypes.data,
+                output.ctypes.data if len(output) else None,
+                len(output),
+            )
+        )
+
+    written = extract(rows)
+    if written == _USIZE_MAX:
+        raise ValueError("invalid bin_2d_stratified_sample_range_u8_counted arguments or codes")
+    if written > capacity:
+        rows = np.empty(written, dtype=np.uint32)
+        repeated = extract(rows)
+        if repeated != written:
+            raise RuntimeError("native categorical bin/sample returned an inconsistent count")
+    return grid, rows[:written]
+
+
 def is_sorted(data: npt.NDArray[np.float64]) -> bool:
     """Non-decreasing check with NaN-poisoning (any NaN fails its pairs) —
     identical to ``np.all(np.diff(data) >= 0)`` without the two temporaries."""
@@ -1572,6 +2162,57 @@ def normalize_f32(
     return out
 
 
+def valid_indices_f64(
+    columns: tuple[npt.NDArray[np.float64], ...],
+    *,
+    positive_columns: tuple[int, ...] = (),
+) -> Optional[npt.NDArray[np.uint32]]:
+    """Rows finite across every column, or ``None`` when every row is valid.
+
+    ``positive_columns`` additionally requires ``> 0`` for those zero-based
+    column positions. The all-valid path is one allocation-free Rust scan;
+    only a filtered result allocates row IDs.
+    """
+    if not 1 <= len(columns) <= 64:
+        raise ValueError("columns must contain between 1 and 64 arrays")
+    arrays = tuple(_as_f64(column, f"columns[{index}]") for index, column in enumerate(columns))
+    size = len(arrays[0])
+    if any(len(array) != size for array in arrays[1:]):
+        raise ValueError("validity columns must have equal length")
+    positive_mask = 0
+    for column in positive_columns:
+        column = _bounded_nonnegative_int(column, "positive column", max_value=len(arrays) - 1)
+        positive_mask |= 1 << column
+    pointer_array_type = ctypes.c_void_p * len(arrays)
+    pointers = pointer_array_type(*(array.ctypes.data if size else None for array in arrays))
+
+    def invoke(output: npt.NDArray[np.uint32] | None) -> int:
+        return int(
+            _lib.fc_valid_indices_f64(
+                pointers,
+                len(arrays),
+                size,
+                ctypes.c_uint64(positive_mask),
+                output.ctypes.data if output is not None and len(output) else None,
+                len(output) if output is not None else 0,
+            )
+        )
+
+    written = invoke(None)
+    if written == _USIZE_MAX or written > size:
+        raise ValueError("invalid valid_indices_f64 arguments")
+    if written == size:
+        return None
+    # A source-sized scratch lets Rust workers fill disjoint row-aligned
+    # segments and compact in parallel. Shrink before returning so callers do
+    # not retain N-row storage for a small filtered result.
+    output = np.empty(size, dtype=np.uint32)
+    repeated = invoke(output)
+    if repeated != written:
+        raise RuntimeError("native valid_indices_f64 returned an inconsistent count")
+    return output[:written].copy()
+
+
 def range_indices(
     x: npt.NDArray[np.float64],
     y: npt.NDArray[np.float64],
@@ -1631,6 +2272,110 @@ def sample_mask(
         if ok != 1:
             raise RuntimeError("xy native sample_mask failed (output undefined)")
     return out.view(np.bool_)
+
+
+def sample_range_indices(
+    size: int,
+    seed: int,
+    threshold: int,
+    capacity_hint: int,
+) -> npt.NDArray[np.uint32]:
+    """Sample implicit ids ``0..size`` without an input array or mask."""
+    size = _bounded_nonnegative_int(size, "size", max_value=np.iinfo(np.uint32).max)
+    capacity = _bounded_nonnegative_int(capacity_hint, "capacity_hint", max_value=size)
+    out = np.empty(capacity, dtype=np.uint32)
+    written = _lib.fc_sample_range_indices(
+        size,
+        ctypes.c_uint64(int(seed)),
+        ctypes.c_uint64(int(threshold)),
+        out.ctypes.data if capacity else None,
+        capacity,
+    )
+    if written == _USIZE_MAX:
+        raise ValueError("invalid sample_range_indices arguments")
+    if written > capacity:
+        out = np.empty(written, dtype=np.uint32)
+        repeated = _lib.fc_sample_range_indices(
+            size,
+            ctypes.c_uint64(int(seed)),
+            ctypes.c_uint64(int(threshold)),
+            out.ctypes.data,
+            written,
+        )
+        if repeated != written:
+            raise RuntimeError("native sample_range_indices returned an inconsistent count")
+    return out[:written]
+
+
+def stratified_sample_range_u8(
+    groups: npt.NDArray[np.uint8],
+    n_groups: int,
+    seed: int,
+    fraction: float,
+    min_count: int,
+    capacity_hint: int,
+    counts: npt.NDArray[np.uint64] | None = None,
+) -> npt.NDArray[np.uint32]:
+    """Stratified sample of implicit ids ``0..len(groups)``.
+
+    This is equivalent to materializing the ids and a stratified keep mask,
+    but its temporary memory scales with the returned sample.
+    """
+    groups = np.asarray(groups)
+    if groups.ndim != 1 or groups.dtype != np.uint8:
+        raise ValueError("groups must be a one-dimensional uint8 array")
+    groups = np.ascontiguousarray(groups)
+    n_groups = _bounded_positive_int(n_groups, "n_groups", 256)
+    fraction = _finite_float(fraction, "fraction")
+    if fraction <= 0.0:
+        raise ValueError("fraction must be > 0")
+    min_count = _bounded_nonnegative_int(min_count, "min_count", np.iinfo(np.uint64).max)
+    capacity = _bounded_nonnegative_int(capacity_hint, "capacity_hint", len(groups))
+    if counts is not None:
+        counts = np.asarray(counts)
+        if counts.ndim != 1 or counts.dtype != np.uint64 or len(counts) != n_groups:
+            raise ValueError("counts must be a uint64 array with one value per group")
+        counts = np.ascontiguousarray(counts)
+
+    def invoke(out_pointer: int | None, out_capacity: int) -> int:
+        if counts is None:
+            return int(
+                _lib.fc_stratified_sample_range_u8(
+                    groups.ctypes.data if len(groups) else None,
+                    len(groups),
+                    n_groups,
+                    ctypes.c_uint64(int(seed)),
+                    ctypes.c_double(fraction),
+                    ctypes.c_uint64(min_count),
+                    out_pointer,
+                    out_capacity,
+                )
+            )
+        return int(
+            _lib.fc_stratified_sample_range_u8_counted(
+                groups.ctypes.data if len(groups) else None,
+                len(groups),
+                counts.ctypes.data,
+                n_groups,
+                ctypes.c_uint64(int(seed)),
+                ctypes.c_double(fraction),
+                ctypes.c_uint64(min_count),
+                out_pointer,
+                out_capacity,
+            )
+        )
+
+    out = np.empty(capacity, dtype=np.uint32)
+    written = invoke(out.ctypes.data if capacity else None, capacity)
+    if written == _USIZE_MAX:
+        detail = "counts or group code" if counts is not None else "arguments or group code"
+        raise ValueError(f"invalid stratified_sample_range_u8 {detail}")
+    if written > capacity:
+        out = np.empty(written, dtype=np.uint32)
+        repeated = invoke(out.ctypes.data, written)
+        if repeated != written:
+            raise RuntimeError("native stratified_sample_range_u8 returned an inconsistent count")
+    return out[:written]
 
 
 def stratified_sample_mask(
@@ -1712,6 +2457,33 @@ def pyramid_build(
             y1,
             base_dim,
         )
+    )
+
+
+def pyramid_append(
+    handle: int,
+    x: "npt.NDArray[np.float64]",
+    y: "npt.NDArray[np.float64]",
+) -> bool:
+    """Increment an existing count pyramid from a canonical append batch.
+
+    Returns ``False`` when the handle is stale/busy or a finite point expands
+    the pyramid domain; callers then invalidate it and lazily rebuild. A false
+    result never partially updates the native cache.
+    """
+    handle = _pyramid_handle(handle)
+    x = _as_f64(x, "x")
+    y = _as_f64(y, "y")
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    return (
+        _lib.fc_pyramid_append(
+            ctypes.c_uint64(handle),
+            _ptr_f64(x) if len(x) else None,
+            _ptr_f64(y) if len(y) else None,
+            len(x),
+        )
+        == 1
     )
 
 
@@ -1829,6 +2601,116 @@ def rasterize_png(cmds: bytes, w: int, h: int) -> bytes:
     return out[:written].tobytes()
 
 
+def rasterize_data(cmds: bytes, data: bytes, w: int, h: int) -> npt.NDArray[np.uint8]:
+    """Paint a display list that may reference a synchronous external arena."""
+    w = _positive_int(w, "raster width")
+    h = _positive_int(h, "raster height")
+    buf = np.frombuffer(cmds, dtype=np.uint8)
+    arena = np.frombuffer(data, dtype=np.uint8)
+    out = np.zeros((h, w, 4), dtype=np.uint8)
+    ok = _lib.fc_rasterize_data(
+        _ptr_u8(buf) if buf.size else None,
+        buf.size,
+        _ptr_u8(arena) if arena.size else None,
+        arena.size,
+        _ptr_u8(out),
+        w,
+        h,
+    )
+    if not ok:
+        raise ValueError("native rasterizer rejected the command buffer or external data")
+    return out
+
+
+def rasterize_png_data(cmds: bytes, data: bytes, w: int, h: int) -> bytes:
+    """Paint and encode a display list backed by a synchronous external arena."""
+    w = _positive_int(w, "raster width")
+    h = _positive_int(h, "raster height")
+    buf = np.frombuffer(cmds, dtype=np.uint8)
+    arena = np.frombuffer(data, dtype=np.uint8)
+    raw_len = operator.mul(operator.mul(w, h), 4)
+    capacity = raw_len + raw_len // 8 + 65_536
+    out = np.empty(capacity, dtype=np.uint8)
+    written = _lib.fc_rasterize_png_data(
+        _ptr_u8(buf) if buf.size else None,
+        buf.size,
+        _ptr_u8(arena) if arena.size else None,
+        arena.size,
+        _ptr_u8(out),
+        out.size,
+        w,
+        h,
+    )
+    if written == _USIZE_MAX or written > out.size:
+        raise ValueError(
+            "native raster-to-PNG encoder rejected the command buffer or external data"
+        )
+    return out[:written].tobytes()
+
+
+def _byte_span_arrays(spans):  # noqa: ANN001, ANN202 - private ctypes adapter
+    arenas: list[npt.NDArray[np.uint8]] = []
+    for span in spans:
+        if isinstance(span, np.ndarray):
+            contiguous = np.ascontiguousarray(span)
+            arena = contiguous.view(np.uint8).reshape(-1)
+        else:
+            arena = np.frombuffer(span, dtype=np.uint8)
+        arenas.append(arena)
+    pointer_type = ctypes.c_void_p * len(arenas)
+    length_type = ctypes.c_size_t * len(arenas)
+    pointers = pointer_type(*(arena.ctypes.data if arena.size else None for arena in arenas))
+    lengths = length_type(*(arena.size for arena in arenas))
+    return arenas, pointers, lengths
+
+
+def rasterize_spans(cmds: bytes, spans, w: int, h: int) -> npt.NDArray[np.uint8]:  # noqa: ANN001
+    """Paint a display list borrowing multiple call-scoped byte arenas."""
+    w = _positive_int(w, "raster width")
+    h = _positive_int(h, "raster height")
+    buf = np.frombuffer(cmds, dtype=np.uint8)
+    arenas, pointers, lengths = _byte_span_arrays(spans)
+    out = np.zeros((h, w, 4), dtype=np.uint8)
+    ok = _lib.fc_rasterize_spans(
+        _ptr_u8(buf) if buf.size else None,
+        buf.size,
+        pointers if arenas else None,
+        lengths if arenas else None,
+        len(arenas),
+        _ptr_u8(out),
+        w,
+        h,
+    )
+    if not ok:
+        raise ValueError("native rasterizer rejected the command buffer or borrowed spans")
+    return out
+
+
+def rasterize_png_spans(cmds: bytes, spans, w: int, h: int) -> bytes:  # noqa: ANN001
+    """Paint and encode a display list borrowing multiple byte arenas."""
+    w = _positive_int(w, "raster width")
+    h = _positive_int(h, "raster height")
+    buf = np.frombuffer(cmds, dtype=np.uint8)
+    arenas, pointers, lengths = _byte_span_arrays(spans)
+    raw_len = operator.mul(operator.mul(w, h), 4)
+    capacity = raw_len + raw_len // 8 + 65_536
+    out = np.empty(capacity, dtype=np.uint8)
+    written = _lib.fc_rasterize_png_spans(
+        _ptr_u8(buf) if buf.size else None,
+        buf.size,
+        pointers if arenas else None,
+        lengths if arenas else None,
+        len(arenas),
+        _ptr_u8(out),
+        out.size,
+        w,
+        h,
+    )
+    if written == _USIZE_MAX or written > out.size:
+        raise ValueError("native raster-to-PNG encoder rejected the command buffer or spans")
+    return out[:written].tobytes()
+
+
 def heatmap_rgba(
     raw: npt.ArrayLike,
     w: int,
@@ -1861,6 +2743,63 @@ def heatmap_rgba(
     if not ok:
         raise ValueError("native heatmap colormap rejected the inputs")
     return out
+
+
+def density_rgba(
+    encoded: npt.ArrayLike,
+    w: int,
+    h: int,
+    maximum: float,
+    stops: npt.ArrayLike,
+    opacity: float,
+) -> npt.NDArray[np.uint8]:
+    """Map a log-u8 density grid to a vertically flipped RGBA8 image."""
+    w = _positive_int(w, "density width")
+    h = _positive_int(h, "density height")
+    values = np.ascontiguousarray(encoded, dtype=np.uint8).reshape(-1)
+    stop_array = np.ascontiguousarray(stops, dtype=np.uint8)
+    maximum = _finite_float(maximum, "density maximum")
+    opacity = _finite_float(opacity, "density opacity")
+    if maximum < 0.0:
+        raise ValueError("density maximum must be >= 0")
+    if not 0.0 <= opacity <= 1.0:
+        raise ValueError("density opacity must be in [0, 1]")
+    if values.size != w * h:
+        raise ValueError("density scalar count must match width * height")
+    if stop_array.ndim != 2 or stop_array.shape[1] != 3 or stop_array.shape[0] < 1:
+        raise ValueError("density stops must be a non-empty (n, 3) array")
+    out = np.empty((h, w, 4), dtype=np.uint8)
+    ok = _lib.fc_density_rgba(
+        _ptr_u8(values),
+        w,
+        h,
+        maximum,
+        _ptr_u8(stop_array),
+        stop_array.shape[0],
+        opacity,
+        _ptr_u8(out),
+    )
+    if not ok:
+        raise ValueError("native density colormap rejected the inputs")
+    return out
+
+
+def density_log_u8(grid: npt.NDArray[np.float32]) -> tuple[npt.NDArray[np.uint8], float]:
+    """Log-encode a density grid for the client's one-byte R8 texture."""
+    values = np.ascontiguousarray(grid, dtype=np.float32)
+    if values.ndim not in (1, 2):
+        raise ValueError("density grid must be one- or two-dimensional")
+    out = np.empty(values.shape, dtype=np.uint8)
+    maximum = ctypes.c_double()
+    ok = _lib.fc_density_log_u8(
+        values.ctypes.data if values.size else None,
+        values.size,
+        out.ctypes.data if out.size else None,
+        ctypes.byref(maximum),
+    )
+    if ok != 1:
+        raise RuntimeError("xy native density_log_u8 failed")
+    return out, float(maximum.value)
 
 
 # fc_css_check kinds — keep in sync with `src/lib.rs`.

@@ -60,7 +60,7 @@ commit so CI artifacts are quick to inspect from logs.
 | `payload_export_size` | Payload/export size | tracked | Notebooks, static HTML, docs, and dashboards pay for every byte shipped. | standalone HTML bytes, binary payload bytes, bundle bytes | `bench_vs.py`, `bench_scatter_native.py`, `test_first_payload_density_large`, `test_memory_report_density_medium`, example app asset sizes | Keep data payloads binary and screen-bounded where possible; warn when exact export would be huge. |
 | `core_2d_chart_breadth` | Core 2D chart breadth | tracked | The library needs to stay fast beyond the scatter wedge: bars, histograms, areas, and heatmaps are everyday chart workloads. | payload-prep time, payload bytes, standalone HTML bytes, TTFR | `benchmarks/bench_2d_charts.py` vs Plotly/Seaborn; `benchmarks/bench_pyplot_vs_matplotlib.py`; `bench_interaction.py`; CodSpeed core-2D rows | Beat Plotly on user-visible first paint for common 2D charts while tracking Matplotlib/Seaborn raster baselines where applicable. |
 | `input_ingestion` | Input ingestion | tracked | Real applications provide converted, strided, datetime, list, pandas, and Arrow inputs rather than only contiguous f64 arrays. | ingest latency, copies, peak Python memory | `benchmarks/bench_workflows.py` ingestion rows | Keep zero-copy inputs cheap and make unavoidable conversions visible. |
-| `streaming_updates` | Streaming updates | tracked | Monitoring and notebook workflows append repeatedly and can trigger payload refreshes or full pyramid rebuilds. | append latency, refresh bytes, post-append pyramid rebuild | `benchmarks/bench_workflows.py` streaming rows | Bound incremental update cost and expose rebuild stalls. |
+| `streaming_updates` | Streaming updates | tracked | Monitoring and notebook workflows append repeatedly; stable-domain batches should update indexes incrementally while domain growth may rebuild. | append latency, refresh bytes, incremental pyramid update, domain-growth rebuild | `benchmarks/bench_workflows.py` streaming rows | Keep stable-domain appends proportional to the batch and expose unavoidable rebuild stalls. |
 | `log_autorange` | Log autorange | tracked | Large positive/negative and non-finite series are common in monitoring and scientific charts, and log axes must avoid full-data rescans. | range latency, positive-domain correctness, peak Python memory | `benchmarks/bench_workflows.py` log autorange row; `tests/test_figure.py` | Compute correct positive log domains from zone statistics with cost proportional to chunks, not points. |
 | `static_export` | Static export | tracked | HTML, SVG, and PNG have distinct serialization and browser costs. | export latency, output bytes, peak Python memory | `benchmarks/bench_workflows.py` export rows; `benchmarks/bench_pyplot_vs_matplotlib.py` matched PNG rows | Track each target independently without mixing browser and payload work. |
 
@@ -77,7 +77,9 @@ regress between commits. The suite asserts `xy.kernels.BACKEND ==
 
 - Rust kernels for f32 encoding, min/max, zone maps, M4 decimation, density
   binning with/without visible indices, deterministic sampling, histograms,
-  normalization, viewport scans, and cold/warm pyramid operations.
+  normalization, viewport scans, density log-u8 wire encoding, fused native
+  density-to-RGBA static colormapping, implicit-range sampling, and cold/warm
+  pyramid operations.
 - Small/medium/large first-payload prep rows:
   `test_first_payload_scatter_small`,
   `test_first_payload_scatter_medium`,
@@ -90,6 +92,10 @@ regress between commits. The suite asserts `xy.kernels.BACKEND ==
   `test_first_payload_heatmap_core_2d`, and
   `test_first_payload_composed_layered_core_2d` for the public
   `fc.chart(...)` layered API.
+- Native static export rows include exact and categorical scatter, stroked
+  triangle meshes, and heatmaps. The mesh row protects batched fill+stroke;
+  the heatmap row protects the direct external arena sampler rather than only
+  payload preparation.
 - Zoom refresh with `test_m4_indices_zoom` and `test_decimate_view`.
 - Memory/payload accounting with `test_memory_report_density_medium`.
 - The native adaptive drilldown cycle with
@@ -102,7 +108,8 @@ accounting instead of browser startup noise. Browser TTFR, payload bytes, peak
 RSS, and cross-library comparisons remain in the schema-verified JSON reports
 described below.
 
-The JSON verifier treats `scatter-native` and `kernel-native` reports as
+The JSON verifier treats `scatter-native`, `heatmap-native`, and
+`kernel-native` reports as
 native-only artifacts: if their environment metadata says
 `xy_backend` is anything other than `native`, verification fails. That
 keeps any non-native measurement from being mixed into native performance
@@ -147,8 +154,8 @@ navigation readiness, JS heap, redraw-submission p95, per-chart context loss and
 restore events (governed releases labeled separately from browser evictions),
 initial/scrolled nonblank IDs, per-visit scroll recovery latency, and the
 largest stable loss-free
-count. Partial rows retain their timing and memory metrics. `bench_workflows.py` covers ingestion, streaming/pyramid
-invalidation, and separate HTML/SVG/native-PNG/Chromium-PNG export rows. All three emit schema-versioned JSON with
+count. Partial rows retain their timing and memory metrics. `bench_workflows.py` covers ingestion, streaming/incremental-pyramid
+updates, and separate HTML/SVG/native-PNG/Chromium-PNG export rows. All three emit schema-versioned JSON with
 environment metadata and benchmark category IDs.
 
 ## Copyable claim taxonomy
@@ -161,7 +168,7 @@ document or from a verified JSON artifact.
 |---|---|---|
 | Payload/prep comparison | "In the native backend benchmark, histogram payload prep for 10k values / 200 bins was 17.3x faster than Plotly." | chart type, workload, backend, compared library, metric |
 | Browser first paint | "For the measured Chrome TTFR row, the 10k-value histogram first painted 5.0x faster than Plotly." | browser/render target, workload, chart type, TTFR included |
-| Large scatter overview | "The 10M scatter overview uses density mode with a 768 KB payload; it is not drawing 10M exact markers." | mode, point count, payload, exact-vs-aggregate wording |
+| Large scatter overview | "The 100M scatter overview uses density mode with a 258 KB wire payload; it is not drawing 100M exact markers." | mode, point count, payload, exact-vs-aggregate wording |
 | Line decimation | "The 10M line benchmark ships an M4-decimated ~60 KB payload while preserving the extrema oracle." | mode, point count, payload, correctness oracle |
 | Install/import footprint | "In the install-footprint benchmark, cold import was 6.4 ms for the measured distribution." | benchmark name, metric, measured distribution |
 
@@ -184,7 +191,7 @@ silent): `direct` paints every mark exactly as Matplotlib does, `decimated` is
 the M4-reduced line series, and `density` is a screen-bounded aggregate. The
 report verifier rejects an xy row that omits the tier.
 
-The following is a local diagnostic run from 2026-07-11 (macOS arm64, Python
+The following is a local diagnostic run from 2026-07-12 (macOS arm64, Python
 3.14.5, Matplotlib 3.11.0, xy native Rust backend, dirty worktree), with 21
 repetitions per arm and three warm-ups, after the row-band parallel
 rasterizer landed. The gate requires every family—not an average—to reach
@@ -192,14 +199,14 @@ rasterizer landed. The gate requires every family—not an average—to reach
 
 | family | workload | xy tier | xy total | Matplotlib total | xy speedup | total-time winner |
 |---|---|---|---:|---:|---:|---|
-| line | 200,000 samples | decimated | 3.11 ms | 32.53 ms | 10.45× | xy |
-| scatter | 200,000 points | direct | 11.06 ms | 420.6 ms | 38.04× | xy |
-| histogram | 1,000,000 values / 200 bins | direct | 2.90 ms | 52.50 ms | 18.13× | xy |
-| bar | 1,000 bars | direct | 5.72 ms | 147.9 ms | 25.84× | xy |
-| pcolormesh | 200×300 cells | direct | 3.52 ms | 40.71 ms | 11.55× | xy |
-| contour | 150×200 cells / 12 levels | direct | 3.64 ms | 36.43 ms | 10.02× | xy |
+| line | 200,000 samples | decimated | 2.68 ms | 31.57 ms | 11.80× | xy |
+| scatter | 200,000 points | direct | 7.40 ms | 420.6 ms | **56.83×** | xy |
+| histogram | 1,000,000 values / 200 bins | direct | 2.41 ms | 50.26 ms | 20.90× | xy |
+| bar | 1,000 bars | direct | 3.66 ms | 143.3 ms | 39.11× | xy |
+| pcolormesh | 200×300 cells | direct | 2.79 ms | 39.54 ms | 14.16× | xy |
+| contour | 150×200 cells / 12 levels | direct | 2.59 ms | 35.45 ms | 13.68× | xy |
 
-The geometric-mean result is **16.68× in xy's favor**, and every standard
+The geometric-mean result is **21.76× in xy's favor**, and every standard
 family clears the explicit 10× gate. This is the scoped claim: warmed
 Matplotlib-style construction through a validated 1800×840 PNG for the exact
 workloads above. It is not a claim about every Matplotlib API, arbitrary image
@@ -207,26 +214,180 @@ sizes, or interactive rendering. xy's latency-oriented PNGs remain larger than
 Matplotlib's in every row; the gate measures chart-to-pixels latency, while the
 existing balanced encoder remains available where file size is the priority.
 
+The direct-scatter refresh uses private ABI-v26 affine point commands for
+constant-style marks. It borrows the existing offset-encoded x/y payload,
+performs decode and projection in Rust, and retains the general point command
+for log axes and data-driven color or size. On the exact 200,000-point row its
+display list fell from **3,200,862 bytes to 998 bytes** (99.97% smaller), with
+byte-identical PNG output. An interleaved same-payload diagnostic measured
+12.18 ms versus 13.42 ms for the previous expanded command (1.10×); the full
+21-repetition gate above improved from the prior published 9.48 ms / 44.20×
+row to 7.40 ms / 56.83×. Command-level expanded-path parity, full static
+routing tests, non-finite handling, and malformed-span rejection protect the
+optimization.
+
+The companion affine-channel command borrows normalized color/size columns
+and resolves continuous LUT colors, categorical palettes, and radii in Rust.
+On 200,000 exact points it reduced the prior **3,200,690-byte** expanded
+display list to **852–898 bytes**, with byte-identical PNGs. Controlled
+same-payload medians improved by **1.18×** for continuous color
+(17.05→14.42 ms), **1.14×** for categorical color (16.17→14.17 ms), **1.08×**
+for continuous size (13.93→12.91 ms), and **1.16×** for combined color+size
+(16.64→14.32 ms). Constant style retains the smaller allocation-free command;
+log axes retain the fully general expanded path. Parity tests cover large
+offset domains, every channel combination, categorical palettes, symbols,
+strokes, opacity, malformed modes, and truncated spans.
+
+Categorical channels with at most 256 groups now keep their intrinsic u8
+representation from Python payload through WebGL and the borrowed Rust export
+command; larger category sets retain the prior f32 behavior and warning. For
+the same 200,000-point, seven-group affine scatter, this reduced the exact
+browser payload from **2,400,000 to 1,800,000 bytes** (**25% total**, and
+**75% for the color channel**) and the color vertex buffer from 800,000 to
+200,000 bytes. An interleaved 51-pair same-payload native-raster diagnostic was
+pixel-identical and measured **9.846→9.685 ms (1.02×)**; payload compilation
+measured **0.191 ms**. Protocol v3 rejects stale clients rather than allowing
+them to reinterpret the typed column. CodSpeed now hard-gates the categorical
+wire at 9 bytes/point and tracks categorical native PNG export separately.
+
+Fixed-width Unicode, bytes, and boolean color arrays now factorize in one
+native hash pass; Python canonicalizes and sorts only the compact unique-label
+set. A bounded, array-wide cardinality probe retains the direct label path for
+near-unique data, where hashing before materializing every display label would
+be redundant. Mixed object arrays keep the original defensive label loop,
+including missing values and heterogeneous objects. Category codes also remain compact
+in memory: u8 through 256 categories and u32 above it, instead of f64. On a
+1,000,000-row / 24-label Unicode scatter, factorization improved
+**158.06→11.55 ms (13.69×)** and the retained code array fell from **8.0 MB to
+1.0 MB**. Exact direct Figure→payload improved **160.65→12.97 ms (12.39×)**
+with the same 9,000,000-byte wire payload; forced-density Figure→payload
+improved **185.60→15.82 ms (11.73×)** with a 560,992-byte wire payload.
+CodSpeed separately tracks the million-row native factorizer and the complete
+categorical first-payload path. `Figure.memory_report()` now exposes derived
+`channel_bytes` and the combined `resident_array_bytes`, so the compact-code
+gain is visible rather than hidden outside canonical geometry accounting.
+
+The compact factorizer now uses a fixed 512-slot open-addressed codebook rather
+than a general allocating SipHash map; exact record equality still resolves
+every hash collision and first-seen codes remain unchanged. At 512k rows it
+probes a bounded prefix and encodes disjoint chunks in parallel. Labels first
+seen later are merged in canonical row order and trigger one deterministic
+retry; the common case remains one pass. Controlled 20,000,000-row medians
+improved **139.42→13.13 ms (10.62×)** for one-codepoint Unicode,
+**131.60→11.55 ms (11.39×)** for four-byte strings, and
+**235.70→16.73 ms (14.09×)** for four-codepoint Unicode. Boolean records use a
+perfect 256-entry direct table and improved **165.07→8.81 ms (18.73×)**.
+The same factorization pass now emits exact per-code u64 counts with effectively
+no timing change (**65.56 vs 65.93 ms** at 100M). Full-domain stratified
+sampling reuses them instead of recounting the entire code column, improving
+the 100M sampler **38.04→12.25 ms (3.10×)** with identical selected rows. The
+row-scan fan-out cap now uses all 18 workers on the reference machine; relative
+to the former eight-worker cap, 100M factorization improved **66.12→31.51 ms
+(2.10×)**, zone maps **17.86→8.50 ms (2.10×)**, binning **18.51→11.13 ms
+(1.66×)**, and the counted sampler **12.49→7.22 ms (1.73×)**. The 512k
+crossover remains favorable (**2.19→0.34 ms** for compact factorization).
+One-byte bool/byte records now use a parallel direct value→code table with the
+same late-value first-row merge, improving the 100M case **57.82→3.18 ms
+(18.21×)**. Records up to eight bytes use a cheaper exact-record hash while
+retaining full byte equality checks. The common NumPy U1 case bypasses hashing
+entirely through a bounded Unicode-scalar table, including swapped-endian
+arrays: 100M labels improved **30.00→4.14 ms (7.25×)** without regressing wider
+records. The direct table is 2.2 MB of transient scratch and is not retained.
+New, distinct x/y columns now compute their independent zone maps in one
+scoped Rust call. Every field is bit-identical to the two-call path, while the
+100M pair improved **17.00→12.64 ms (1.35×)**; existing/shared columns retain
+the original deduplication behavior.
+
+Full-domain density first paint now interleaves grid aggregation with the
+deterministic overlay sampler in one Rust traversal. Exact grid cells and
+selected row IDs are byte-for-byte equal to the former standalone calls,
+including compact-u8 rare-category floors. Controlled 100M medians improved
+**17.54→15.24 ms (1.15×)** for the uniform overlay and **16.86→15.82 ms
+(1.07×)** for 24-category counted stratification. Paired 1B Figure→payload A/B
+runs improved **262.0→246.6 ms** after warmup for the plain path and
+**331.0→324.9 ms** for the categorical path. The public plain 1B ceiling
+refresh completed in **256.2 ms**, plus **0.68 ms** for native PNG.
+
+Multi-column finite/log-validity selection is also native in ABI v31. Rectangle
+zone maps remove columns already proven finite; remaining f64 streams are
+checked together without NumPy boolean temporaries, returning `None` for the
+identity case so no row-index array is retained. Across six 10M-row triangle
+coordinate streams, all-valid detection improved **7.60→3.03 ms (2.50×)**.
+With 1% rejected rows, the parallel query/write path improved **12.41→8.09 ms
+(1.53×)** while returning the same ascending u32 indices.
+
+Full-domain compact categorical density sampling now consumes group codes
+directly in Rust with implicit row IDs. It returns ascending selected indices
+without materializing the former visible-index array, u64 ID conversion,
+category gather, or byte mask. On a controlled 100,000,000-row / 24-label run,
+the old and new paths produced identical density grids and the same 40,094
+sampled row IDs. Sampling improved **0.284→0.099 s (2.87×)**. Peak process RSS,
+with the same 1.6 GB x/y geometry, 400 MB fixed-width label input, and 100 MB
+retained codes, fell **3.943→2.146 GB (45.6%)**, with no swapping. With direct
+U1 factorization, count reuse, and full-core fan-out, complete production
+Figure→payload takes **0.037 s** (**0.017 s** ingest plus **0.020 s** payload),
+writes a **557,456-byte binary blob**, and
+reports the exact 100,000,000-row visible count. This is a density overview
+with a deterministic categorical overlay, not 100,000,000 exact markers.
+
+The schema-verified public benchmark now has `--categorical-groups`. Its 1B-row
+/ 24-label production run completed Figure→payload in **0.352 s**, shipped a
+**557,320-byte total wire payload** (555,240-byte blob plus spec), retained
+39,848 deterministic sample rows, and rendered the prebuilt payload to native
+PNG in **0.649 ms** (**0.352 s** source-to-PNG). Peak RSS was **24.04 GB** on
+the 64 GiB reference host; payload throughput was **2.84 billion source
+rows/s**, with no swap. A separate 2B-row high-water probe also completed with
+exact
+`visible=2,000,000,000`, a 556,340-byte blob, and no swap, but memory pressure
+raised Figure→payload to 11.69 s; 1B is therefore the practical categorical
+ceiling on this machine and 2B the verified capacity ceiling.
+
+Stroked triangle meshes now use one structure-of-arrays ABI-v26 command instead
+of emitting a fill command and a stroke command from Python for every face.
+On 50,000 independently colored triangles with 0.5 px borders, an interleaved
+21-pair command-build A/B improved **99.19→1.10 ms (89.87×)** and reduced the
+display list from **3,750,839 to 1,400,852 bytes (62.65%)**. An interleaved
+11-pair full native-raster A/B improved **116.99→16.15 ms (7.24×)**. Output was
+byte-identical to the expanded fill-then-stroke sequence. Native tests also
+cover translucent canvases, non-finite compatibility, malformed widths, and
+truncated commands; CodSpeed tracks a 163,840-face stroked scientific mesh.
+
+Long polyline strokes now use the rasterizer's disjoint row-band scheduler
+while preserving the stroke's single max-combined coverage surface. A
+controlled serial/parallel A/B of the exact 200,000-source-sample line command
+produced the same PNG SHA-256 and measured **1.025 ms → 0.770 ms (1.33×)**;
+the warmed full pyplot export measured **2.286 ms → 2.023 ms (1.13×)**. The
+100,000-estimated-pixel crossover left every tested smaller/flatter line on
+the serial path, while tested workloads above it improved 17–45%. Forced
+serial-versus-banded parity covers solid, dashed, closed, clipped,
+translucent, opaque/transparent, and multiple-width strokes. The independent
+21-repetition cross-library run remained around 2.7–2.8 ms under system noise,
+so the committed matched table above is intentionally not replaced by the
+controlled microbenchmark.
+
 The `huge` profile runs the same families at the sizes where static Matplotlib
 workflows actually stall (same machine, 11 repetitions, 2 warm-ups). Agg's
 cost scales with N; xy's disclosed tiers stay screen-bounded:
 
 | family | workload | xy tier | xy total | Matplotlib total | xy speedup |
 |---|---|---|---:|---:|---:|
-| line | 1,000,000 samples | decimated | 3.82 ms | 50.48 ms | 13.22× |
-| scatter | 1,000,000 points | density | 15.56 ms | 1,983.5 ms | **127.51×** |
-| histogram | 5,000,000 values / 200 bins | direct | 3.60 ms | 68.12 ms | 18.90× |
-| bar | 5,000 bars | direct | 18.01 ms | 654.5 ms | 36.35× |
-| pcolormesh | 400×600 cells | direct | 5.20 ms | 79.84 ms | 15.34× |
-| contour | 250×320 cells / 12 levels | direct | 4.45 ms | 38.33 ms | 8.62× |
+| line | 1,000,000 samples | decimated | 3.35 ms | 50.32 ms | 15.03× |
+| scatter | 1,000,000 points | density | 4.92 ms | 2,017.0 ms | **409.68×** |
+| histogram | 5,000,000 values / 200 bins | direct | 3.25 ms | 68.99 ms | 21.23× |
+| bar | 5,000 bars | direct | 8.97 ms | 656.8 ms | 73.22× |
+| pcolormesh | 400×600 cells | direct | 4.32 ms | 79.92 ms | 18.48× |
+| contour | 250×320 cells / 12 levels | direct | 3.19 ms | 38.15 ms | 11.95× |
 
-Geometric mean on the huge profile: **23.13×**; the scatter family — the
-workload the density tier exists for — crosses 100×. Contour is the honest
-straggler (8.62×): its marching work grows with the grid on both sides, and
-the 250×320 size is the largest that fits the contour kernel's bounded work
-budget. The huge-profile scatter row is a tier-disclosed comparison: xy
+Geometric mean on the huge profile: **35.82×**; the scatter family — the
+workload the density tier exists for — crosses 100×, and every family clears
+the 10× gate. The huge-profile scatter row is a tier-disclosed comparison: xy
 rasterizes a screen-bounded density surface (the same output a user sees for
-1M points) while Matplotlib paints all 1M marks.
+1M points) while Matplotlib paints all 1M marks. This refresh includes the
+compact native log-u8 density display opcode, 256-entry native color lookup,
+and parallel direct sampler used by static PNG export. The 1M-density command
+now borrows its existing payload arena and is **759 bytes** instead of an
+estimated 787,152-byte expanded RGBA command (99.9% smaller), with exact pixel
+parity and no ownership transfer.
 
 The RGBA8 raster rewrite's one known native-API regression is now a win: the
 same-machine 100,000-point default-style direct scatter at scale 1 that
@@ -446,21 +607,104 @@ alone; it is not the production transport payload:
 | points | tier | data prep | wire bytes | browser render |
 |---:|---|---:|---:|---:|
 | 100k | direct | <0.1 ms | 781 KB | 78.5 ms |
-| 1M | density | 1.0 ms | 768 KB | 72.2 ms |
-| 10M | density | 10.6 ms | 768 KB | not remeasured; same density payload shape as 1M |
+| 1M | density | 1.9 ms | 260 KB | not measured in this native-only refresh |
+| 10M | density | 10.2 ms | 258 KB | not measured in this native-only refresh |
+| 100M | density | 65.7 ms | 258 KB | not measured in this native-only refresh |
 
-CI regression gating now uses `--production`, which calls the real Figure
-payload compiler and includes compact spec metadata plus the sampled point
-overlay. The committed deterministic baseline is about 834–836 KB for 1M/10M,
-and the report carries a count-conservation oracle.
+CI regression gating uses `--production`, which calls the real Figure payload
+compiler and includes compact spec metadata plus the sampled point overlay.
+The density grid is log-encoded directly into the same one-byte R8 precision
+the client uploads, so its 512×384 transport is 192 KiB rather than 768 KiB.
+The full deterministic wire payload, including the exact sampled overlay, stays
+about 258–260 KiB from 1M through 100M. Exact visible counts remain explicit in
+the spec; the quantized grid is display-only.
+
+The opt-in high-memory ceiling probe extends that production contract to
+**1,000,000,000 points**. On the same 2026-07-12 macOS arm64 machine (64 GiB
+RAM), `--large-numpy-generator --production` measured Figure construction plus
+payload compilation at **256.2 ms** with a **258 KiB** wire payload, exact
+`visible=1,000,000,000`, 8,220 sampled rows, a valid occupied density grid, and
+no swap (**3.90 billion source rows/s**). Rendering that prebuilt payload
+through the compact native density opcode took **0.68 ms** (94,680 output
+bytes), for **256.9 ms** source-to-PNG.
+The two
+canonical f64 columns occupy 14.90 GiB; peak process RSS was 24.04 GB. Fixture
+generation is explicitly outside the timed region. The schema-verified command
+is shown in `benchmarks/README.md`; this is a density overview, not one billion
+individually drawn markers.
+
+### Native static heatmap scaling
+
+Static heatmaps now borrow their canonical f64 grid directly. A private ABI-v26
+multi-span call normalizes only nearest-sampled destination pixels through the
+same f32 rounding helper used by browser-payload compilation, then colormaps in
+Rust. It therefore owns no derived grid, performs no full-grid normalization,
+and allocates no RGBA expansion. Exact browser-payload and expanded-RGBA parity
+covers transparent and opaque canvases, downsampling, NaNs, clipped domains,
+alpha, colormap interpolation, multiple spans, and malformed references.
+
+A focused same-process 900×420 PNG diagnostic measured the following prebuilt
+payloads; each output was byte-identical to the previous expanded path:
+
+| source grid | previous PNG path | direct arena path | speedup | display command |
+|---:|---:|---:|---:|---:|
+| 600×400 (240k) | 2.08 ms | 1.51 ms | 1.38× | 895 B |
+| 1,000×1,000 (1M) | 4.72 ms | 1.60 ms | 2.95× | 897 B |
+| 2,000×2,000 (4M) | 15.91 ms | 1.36 ms | 11.66× | 783 B |
+
+Heatmap ingestion also avoids redundant statistics work: auto-domain grids
+reuse their required zone-map pass instead of running a separate min/max scan,
+while an explicitly supplied color domain defers zone maps until statistics,
+memory reporting, or append logic actually requests them. On the 1B-cell
+fixture this reduced Figure construction from 216.93 ms to 7.75 ms without
+changing later zone-map results.
+
+The schema-verified ceiling command in `benchmarks/README.md` then rendered a
+**32,768×32,768 (1,073,741,824-cell)** regular heatmap. Figure construction
+took **7.75 ms**, borrowed-span preparation **0.06 ms**, and the native 900×420
+PNG stage **2.91 ms**, for **10.71 ms source-to-PNG** and a 280,229-byte output.
+The exact canonical f64 matrix occupied 8.0 GiB; static export owned zero grid
+bytes, peak RSS was 8.0 GiB, and the process reported no swap. The 574 ms
+deterministic fixture construction was excluded.
+This proves local static-export scaling; a 4 GiB browser payload is not a claim
+of interactive viability, and tiled huge-image transport remains future work.
+
+The 64 GiB high-water command in the same runbook then reached
+**65,536×65,536 = 4,294,967,296 cells**, deliberately crossing the u32
+total-count boundary. Figure construction took **18.96 ms**, borrowed-span
+preparation **0.07 ms**, and native rendering **17.45 ms**, for **36.49 ms
+source-to-PNG** and a 280,701-byte output. The canonical source occupied
+32.0 GiB; static export again owned zero grid bytes, maximum resident memory
+was 25.3 GiB (32.0 GiB peak process footprint), and the system reported no
+swap. Its 3.77 s deterministic allocation fixture was excluded. This is the
+current tested local-static ceiling; browser delivery remains separately
+bounded by transport and ArrayBuffer limits.
+
+A focused same-process diagnostic on the same 2026-07-11 macOS arm64 worktree
+measured the 10M XY density binary spec at **10 ms / 258 KiB**, while Plotly
+`Scattergl` produced a direct-marker HTML payload in **920 ms / 259 MiB**.
+Those modes and retained information differ, so this is a scaling/payload
+comparison—not a same-render-target speedup claim.
 
 > The kernel microbench numbers above predate the kernel-parallelization pass:
-> `bin_2d`, `histogram`, `m4`, `zone_maps`, `range_indices`, `normalize` now fan
-> out across cores above 512k rows (bitwise-deterministic; see `src/kernels.rs`).
+> `bin_2d`, `histogram`, `m4`, `range_indices`, and `normalize` now fan out
+> across cores above 512k rows. Zone maps have no merge traffic and use an
+> earlier, chunk-aware crossover: two complete 65,536-row chunks, with workers
+> capped by the number of chunks. All paths are bitwise-deterministic; see
+> `src/kernels.rs`.
 > On a 4-core runner the 10M `bin_2d`/`histogram`/`m4` costs drop ~3–4× vs the
 > single-threaded figures here; CI regenerates the live numbers into
 > `benchmark_ci.md` each run. These committed rows stay as the conservative
 > single-threaded floor until refreshed from a CI artifact.
+
+A focused 200,000-row zone-map crossover diagnostic on 2026-07-12 measured
+**0.269 ms serial → 0.133 ms parallel (2.02×)**, with p95 improving from
+0.294 ms to 0.148 ms. The schema-verified stdlib C-ABI harness reported
+**1,314 Mrow/s** for the same size. In the matched pyplot line workload, the
+zone maps for its two canonical columns dominate `Chart → Figure` construction;
+that stage fell from approximately 0.61 ms to 0.35 ms. The full 1800×840 PNG
+remains raster/compression-bound at roughly 2.7 ms, so this is recorded as an
+ingest/first-payload win rather than overstated as an end-to-end speedup.
 
 ### Line / time-series decimation — vs plotly-resampler
 
@@ -535,11 +779,12 @@ fails. Re-bless the baseline from a CI run with
 
 ### Static image export
 
-`Figure.to_png()` renders the standalone HTML in headless Chromium and
-screenshots it — the raster matches the live WebGL chart, with no matplotlib/
-kaleido-class native dependency (Chromium discovered via env/PATH/Playwright
-cache). Verified by `scripts/png_export_smoke.py` (stdlib-only CI gate) and the
-`Figure.to_png` tests. HTML export (`to_html`) needs nothing extra.
+`Figure.to_png()` defaults to the browser-free native Rust rasterizer and its
+latency-oriented PNG encoder; `optimize=True` selects the slower, smaller-file
+path. `engine="chromium"` remains available when a pixel-exact match to the
+live WebGL chart is required (Chromium discovered via env/PATH/Playwright
+cache). Both modes are covered by the PNG tests; HTML export (`to_html`) needs
+nothing extra.
 
 ---
 
@@ -598,6 +843,9 @@ not draw — the design targets 100 M–1 B (dossier §2).
 
 ### xy (native core; "render" = build GPU payload)
 
+This is the retained 2026-07-08 cross-library run and predates log-u8 density
+transport; the current production refresh is reported above.
+
 | N | build | render | total | peak mem | payload | points/sec |
 |---|---|---|---|---|---|---|
 | 1,000 | 1 ms | 1 ms | 1 ms | 0 MB | 8 KB | 772,927 |
@@ -607,7 +855,7 @@ not draw — the design targets 100 M–1 B (dossier §2).
 | 3,000,000 | 11 ms | 20 ms | 31 ms | 2 MB | **768 KB** | 96,223,689 |
 | 10,000,000 | 35 ms | 51 ms | 86 ms | 2 MB | **768 KB** | 116,889,352 |
 
-The payload flips from 8 B/pt (direct) to a **constant 768 KB** at the density
+In this retained run, the payload flips from 8 B/pt (direct) to a **constant 768 KB** at the density
 threshold (200 k) — 0.08 B/pt at 10 M. This table's scope is xy'
 payload-build allocation only, which stays near 2 MB regardless of N; the
 cross-library **Headline** table above measures the full pipeline (build +
@@ -662,7 +910,8 @@ falls over. This is the path xy exists to replace.
 ## What the numbers show
 
 1. **xy is the only one flat in N on the output side.** Above the
-   density threshold its render payload (768–832 KB) and payload-build allocation
+   density threshold its current render payload (~258 KB; 768–832 KB in the
+   retained pre-quantization artifacts) and payload-build allocation
    (~2 MB) do not grow with point count; total time grows only with the linear
    ingest/bin pass. matplotlib grows ∝ N in time *and* memory; both Plotly paths
    grow ∝ N in memory and render time.

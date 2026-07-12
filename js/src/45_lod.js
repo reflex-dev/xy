@@ -242,8 +242,12 @@ function lodApplyDrill(view, g, upd, buffers) {
   if (upd.color && upd.color.buf !== undefined) {
     d.colorMode = upd.color.mode === "continuous" ? 1 : 2;
     if (!d.cBuf) d.cBuf = gl.createBuffer();
+    const colorValues = upd.color.dtype === "u8"
+      ? view._asU8(buffers[upd.color.buf])
+      : view._asF32(buffers[upd.color.buf]);
+    d.cBuf._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
     gl.bindBuffer(gl.ARRAY_BUFFER, d.cBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.color.buf]), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, colorValues, gl.STATIC_DRAW);
     d.lut = upd.color.mode === "continuous"
       ? view._lut(upd.color.colormap)
       : view._paletteLut(upd.color.palette);

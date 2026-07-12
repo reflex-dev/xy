@@ -412,6 +412,126 @@ def test_sample_rows_for_target_saturates_without_reordering_rows() -> None:
     np.testing.assert_array_equal(sampled, row_ids)
 
 
+def test_sample_row_range_for_target_matches_materialized_ids_across_chunks() -> None:
+    size = (1 << 20) + 137
+    row_ids = np.arange(size, dtype=np.uint32)
+
+    expected = lod.sample_rows_for_target(row_ids, 4096, level=2, growth=1.5, seed=23)
+    actual = lod.sample_row_range_for_target(size, 4096, level=2, growth=1.5, seed=23)
+
+    assert actual.dtype == np.uint32
+    np.testing.assert_array_equal(actual, expected)
+
+
+def test_sample_row_range_for_target_saturates_in_order() -> None:
+    np.testing.assert_array_equal(
+        lod.sample_row_range_for_target(5, 99, seed=4),
+        np.arange(5, dtype=np.uint32),
+    )
+
+
+def test_bin_2d_sample_row_range_matches_separate_operations() -> None:
+    rng = np.random.default_rng(77)
+    x = rng.uniform(-10.0, 10.0, (1 << 20) + 137)
+    y = rng.uniform(-10.0, 10.0, len(x))
+    args = (-10.0, 10.0, -10.0, 10.0, 64, 48)
+
+    grid, rows = lod.bin_2d_sample_row_range_for_target(
+        x, y, *args, 4096, level=2, growth=1.5, seed=23
+    )
+    from xy import kernels
+
+    np.testing.assert_array_equal(grid, kernels.bin_2d(x, y, *args))
+    np.testing.assert_array_equal(
+        rows,
+        lod.sample_row_range_for_target(len(x), 4096, level=2, growth=1.5, seed=23),
+    )
+
+
+def test_bin_2d_stratified_sample_row_range_matches_separate_operations() -> None:
+    rng = np.random.default_rng(78)
+    n = (1 << 20) + 137
+    x = rng.uniform(-10.0, 10.0, n)
+    y = rng.uniform(-10.0, 10.0, n)
+    groups = (np.arange(n, dtype=np.uint32) % 7).astype(np.uint8)
+    groups[::200_000] = 7
+    counts = np.bincount(groups, minlength=8).astype(np.uint64)
+    args = (-10.0, 10.0, -10.0, 10.0, 64, 48)
+
+    grid, rows = lod.bin_2d_stratified_sample_row_range_for_target(
+        x,
+        y,
+        groups,
+        8,
+        *args,
+        4096,
+        counts=counts,
+        level=2,
+        growth=1.5,
+        seed=23,
+        min_per_category=3,
+    )
+    from xy import kernels
+
+    np.testing.assert_array_equal(grid, kernels.bin_2d(x, y, *args))
+    np.testing.assert_array_equal(
+        rows,
+        lod.stratified_sample_row_range_for_target(
+            groups,
+            8,
+            4096,
+            counts=counts,
+            level=2,
+            growth=1.5,
+            seed=23,
+            min_per_category=3,
+        ),
+    )
+
+
+def test_stratified_sample_row_range_matches_materialized_ids_across_chunks() -> None:
+    size = (1 << 20) + 137
+    groups = np.zeros(size, dtype=np.uint8)
+    groups[::10] = 1
+    groups[::1000] = 2
+    groups[::100_000] = 3
+    row_ids = np.arange(size, dtype=np.uint32)
+
+    expected = lod.sample_rows_for_target(
+        row_ids,
+        4096,
+        categories=groups,
+        level=2,
+        growth=1.5,
+        seed=23,
+        min_per_category=3,
+    )
+    actual = lod.stratified_sample_row_range_for_target(
+        groups,
+        4,
+        4096,
+        level=2,
+        growth=1.5,
+        seed=23,
+        min_per_category=3,
+    )
+
+    assert actual.dtype == np.uint32
+    np.testing.assert_array_equal(actual, expected)
+
+
+def test_stratified_sample_row_range_saturates_and_validates() -> None:
+    groups = np.array([0, 1, 0, 1], dtype=np.uint8)
+    np.testing.assert_array_equal(
+        lod.stratified_sample_row_range_for_target(groups, 2, 99),
+        np.arange(4, dtype=np.uint32),
+    )
+    with pytest.raises(ValueError, match="uint8"):
+        lod.stratified_sample_row_range_for_target(groups.astype(np.uint32), 2, 2)
+    with pytest.raises(ValueError, match="below n_groups"):
+        lod.stratified_sample_row_range_for_target(groups, 1, 2)
+
+
 def test_sample_rows_for_target_preserves_rare_categories_stably() -> None:
     row_ids = np.arange(1_003, dtype=np.uint32)
     categories = np.array(["common"] * 1_000 + ["rare"] * 3)

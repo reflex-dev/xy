@@ -313,8 +313,22 @@ def _fmt_axis(axis: dict[str, Any], v: float, step: float) -> str:
 
 
 def _column(blob: bytes, meta: dict[str, Any]) -> np.ndarray:
-    raw = np.frombuffer(blob, dtype=np.float32, count=meta["len"], offset=meta["byte_offset"])
+    dtype = np.uint8 if meta.get("dtype") == "u8" else np.float32
+    raw = np.frombuffer(blob, dtype=dtype, count=meta["len"], offset=meta["byte_offset"])
     return raw.astype(np.float64) / (meta.get("scale") or 1.0) + meta.get("offset", 0.0)
+
+
+def _density_column(blob: bytes, meta: dict[str, Any], density: dict[str, Any]) -> np.ndarray:
+    """Decode either legacy f32 counts or the compact log-u8 density wire."""
+    if density.get("enc") != "log-u8":
+        return _column(blob, meta)
+    values = np.frombuffer(
+        blob, dtype=np.uint8, count=meta["len"], offset=meta["byte_offset"]
+    ).astype(np.float64)
+    maximum = float(density.get("max") or 0.0)
+    if maximum <= 0.0:
+        return np.zeros(len(values), dtype=np.float64)
+    return np.expm1((values / 255.0) * np.log1p(maximum))
 
 
 class _Scale:
@@ -323,7 +337,10 @@ class _Scale:
     def __init__(self, axis: dict[str, Any], px0: float, px1: float) -> None:
         self.kind = axis.get("kind", "linear")
         lo, hi = axis["range"]
-        self.log = self.kind == "log"
+        # ``kind`` describes the data domain (linear/time/category), while the
+        # public axis option is serialized separately as ``scale``. Accept the
+        # historical kind form too for old payloads.
+        self.log = axis.get("scale") == "log" or self.kind == "log"
         if self.log:
             lo, hi = np.log10(max(lo, 1e-300)), np.log10(max(hi, 1e-300))
         self.lo, self.hi = float(lo), float(hi)
@@ -585,7 +602,7 @@ def axis_ticks(
     target = max(3, int(length_px / 80)) if is_x else max(3, int(length_px / 45))
     kind = axis.get("kind")
     lo, hi = axis["range"]
-    if kind == "log":
+    if axis.get("scale") == "log" or kind == "log":
         return _log_ticks(lo, hi, target)
     if kind == "category":
         t = [float(v) for v in _category_ticks(lo, hi, len(axis.get("categories") or []), target)]
@@ -1007,7 +1024,7 @@ def _density_image(
     d: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict, svg: _Svg
 ) -> str:
     w, h = int(d["w"]), int(d["h"])
-    grid = _column(blob, cols[d["buf"]]).reshape(h, w)
+    grid = _density_column(blob, cols[d["buf"]], d).reshape(h, w)
     gmax = float(d.get("max") or 1.0) or 1.0
     tnorm = np.clip(grid / gmax, 0.0, 1.0)
     rgb = _lut(d.get("colormap", "viridis"), tnorm.reshape(-1)).reshape(h, w, 3)

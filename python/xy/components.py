@@ -1951,6 +1951,7 @@ class Chart(Component):
         height: Optional[int] = None,
         scale: float = 2.0,
         engine: str = "native",
+        optimize: bool = False,
         chromium: Optional[str] = None,
         sandbox: bool = True,
     ) -> bytes:
@@ -1960,6 +1961,7 @@ class Chart(Component):
             height=height,
             scale=scale,
             engine=engine,
+            optimize=optimize,
             chromium=chromium,
             sandbox=sandbox,
         )
@@ -2431,11 +2433,17 @@ class FacetChart(Component):
         *,
         scale: float = 2.0,
         engine: str = "native",
+        optimize: bool = False,
         chromium: Optional[str] = None,
         sandbox: bool = True,
     ) -> bytes:
         return self.figure().to_png(
-            path, scale=scale, engine=engine, chromium=chromium, sandbox=sandbox
+            path,
+            scale=scale,
+            engine=engine,
+            optimize=optimize,
+            chromium=chromium,
+            sandbox=sandbox,
         )
 
     def memory_report(self) -> dict[str, Any]:

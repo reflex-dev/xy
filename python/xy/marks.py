@@ -1642,21 +1642,30 @@ def heatmap(
     z_flat = zv.reshape(-1)
     if colormap not in channels.COLORMAPS:
         raise ValueError(f"unknown colormap {colormap!r}; known: {channels.COLORMAPS}")
-    if domain is None:
-        lo, hi = self._auto_domain(kernels.min_max(z_flat))
-    else:
-        lo, hi = self._finite_increasing_pair(domain, "heatmap domain")
+    explicit_domain = (
+        None if domain is None else self._finite_increasing_pair(domain, "heatmap domain")
+    )
     checkpoint = self._checkpoint()
     try:
         self._commit_axis_positions(x, "x")
         self._commit_axis_positions(y, "y")
+        grid = (
+            self.store.ingest(z_flat)
+            if explicit_domain is None
+            else self.store.ingest(z_flat, defer_zone_maps=True)
+        )
+        if explicit_domain is None:
+            bounds = (grid.min, grid.max)
+            lo, hi = self._auto_domain(bounds if np.isfinite(bounds).all() else None)
+        else:
+            lo, hi = explicit_domain
         self.traces.append(
             Trace(
                 id=len(self.traces),
                 kind="heatmap",
                 x=self.store.ingest(np.array([x_edges[0], x_edges[-1]], dtype=np.float64)),
                 y=self.store.ingest(np.array([y_edges[0], y_edges[-1]], dtype=np.float64)),
-                grid=self.store.ingest(z_flat),
+                grid=grid,
                 grid_shape=(rows, cols),
                 count=int(z_flat.size),
                 name=name,

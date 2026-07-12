@@ -180,6 +180,34 @@ void main() {
   outColor = px * (shapeCov * v_dim);
 }`;
 
+// Default constant circle: the dominant small/medium scatter path deserves a
+// shader that does only its visual contract. Rich color/size/selection/drill
+// and stroked/symbol markers keep POINT_VS/POINT_FS below. Keeping this
+// specialization separate avoids dynamic feature branches and texture state
+// on software GL while producing the same circle SDF and premultiplied color.
+const POINT_SIMPLE_VS = `#version 300 es
+in float ax; in float ay;
+uniform vec2 u_xmap; uniform vec2 u_ymap;
+uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
+uniform float u_size; uniform float u_dpr;
+${AXIS_GLSL}
+void main() {
+  gl_Position = vec4(fcMap(ax, u_xmap, u_xmeta, u_xmode), fcMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  gl_PointSize = u_size * u_dpr;
+}`;
+
+const POINT_SIMPLE_FS = `#version 300 es
+precision highp float;
+uniform vec4 u_color;
+out vec4 outColor;
+void main() {
+  float sd = length(gl_PointCoord - 0.5) - 0.5;
+  float aa = fwidth(sd) + 1e-4;
+  float coverage = clamp(0.5 - sd / aa, 0.0, 1.0);
+  if (coverage <= 0.001) discard;
+  outColor = vec4(u_color.rgb * u_color.a, u_color.a) * coverage;
+}`;
+
 // Picking: same geometry + size, outputs an encoded ID (24-bit vertex index +
 // 8-bit trace slot) so a single readPixels resolves which point is under the
 // cursor (§17). Rerun's R-channel-ID-texture idea, RGBA8 variant.

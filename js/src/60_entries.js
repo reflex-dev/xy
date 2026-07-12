@@ -25,12 +25,12 @@ function render({ model, el }) {
   return () => view.destroy();
 }
 
-/** Standalone (static HTML export — no kernel). Retains CPU f32 copies of
+/** Standalone (static HTML export — no kernel). Retains typed CPU views of
  * shipped channels so hover can read approximate values without a kernel (§37). */
 function renderStandalone(el, spec, arrayBuffer) {
   const buffer = bytesToArrayBuffer(arrayBuffer);
   const view = new ChartView(el, spec, buffer, null);
-  const column = (idx) => new Float32Array(buffer, spec.columns[idx].byte_offset, spec.columns[idx].len);
+  const column = (idx) => view._columnView(buffer, spec.columns[idx]);
   for (const g of view.gpuTraces) {
     if (markOf(g.trace.kind).retainCpu && g.tier !== "density") {
       g._cpu = {

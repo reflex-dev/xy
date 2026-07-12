@@ -39,7 +39,7 @@ def build_html() -> str:
     # two-point line, f32 offset-encoded (offset 0.5, scale 1) — no numpy.
     blob = struct.pack("<2f", -0.5, 0.5) + struct.pack("<2f", -0.5, 0.5)
     spec = {
-        "protocol": 2,
+        "protocol": 3,
         "width": W,
         "height": H,
         "title": "png-export-smoke",
