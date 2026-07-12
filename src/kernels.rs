@@ -3419,8 +3419,14 @@ fn sample_expected_capacity(size: usize, threshold: u64) -> usize {
 /// Deterministic sampling mask: `out[i] = splitmix64(ids[i], seed) <= threshold`.
 /// One fused pass — the NumPy expression allocates five full-width u64
 /// temporaries (~80 MB each at 10M rows) and dominated the density payload
-/// build; this reads ids once and writes the byte mask once.
-pub fn sample_mask(ids: &[u64], seed: u64, threshold: u64, out: &mut [u8]) {
+/// build; this reads ids once and writes the byte mask once. u32 ids widen
+/// in-register, avoiding a caller-side u64 selection copy.
+pub fn sample_mask<T: Copy + Sync + Into<u64>>(
+    ids: &[T],
+    seed: u64,
+    threshold: u64,
+    out: &mut [u8],
+) {
     assert_eq!(ids.len(), out.len());
     sample_mask_impl(ids, seed, threshold, par_threads(ids.len()), out)
 }
@@ -3833,10 +3839,16 @@ fn bin_2d_stratified_sample_range_u8_impl(
     complete_stratified_sample_range(groups, counts, seed, min_count, selected, &kept)
 }
 
-fn sample_mask_impl(ids: &[u64], seed: u64, threshold: u64, threads: usize, out: &mut [u8]) {
+fn sample_mask_impl<T: Copy + Sync + Into<u64>>(
+    ids: &[T],
+    seed: u64,
+    threshold: u64,
+    threads: usize,
+    out: &mut [u8],
+) {
     if threads <= 1 || ids.len() < 2 {
         for (o, &id) in out.iter_mut().zip(ids) {
-            *o = u8::from(splitmix64(id, seed) <= threshold);
+            *o = u8::from(splitmix64(id.into(), seed) <= threshold);
         }
         return;
     }
@@ -3845,7 +3857,7 @@ fn sample_mask_impl(ids: &[u64], seed: u64, threshold: u64, threads: usize, out:
         for (seg_ids, seg_out) in ids.chunks(per).zip(out.chunks_mut(per)) {
             s.spawn(move || {
                 for (o, &id) in seg_out.iter_mut().zip(seg_ids) {
-                    *o = u8::from(splitmix64(id, seed) <= threshold);
+                    *o = u8::from(splitmix64(id.into(), seed) <= threshold);
                 }
             });
         }
@@ -3879,8 +3891,8 @@ fn sample_threshold(fraction: f64) -> u64 {
 ///
 /// `groups[i]` must be `< n_groups`; returns false (output undefined) on an
 /// out-of-range code.
-pub fn stratified_sample_mask(
-    ids: &[u64],
+pub fn stratified_sample_mask<T: Copy + Sync + Into<u64>>(
+    ids: &[T],
     groups: &[u32],
     n_groups: usize,
     seed: u64,
@@ -3924,7 +3936,7 @@ pub fn stratified_sample_mask(
                 s.spawn(move || {
                     let mut kept = vec![0u64; n_groups];
                     for ((o, &id), &g) in seg_out.iter_mut().zip(seg_ids).zip(seg_groups) {
-                        let keep = splitmix64(id, seed) <= thresholds_ref[g as usize];
+                        let keep = splitmix64(id.into(), seed) <= thresholds_ref[g as usize];
                         *o = u8::from(keep);
                         kept[g as usize] += u64::from(keep);
                     }
@@ -3955,7 +3967,7 @@ pub fn stratified_sample_mask(
         let mut pools: Vec<Vec<(u64, usize)>> = vec![Vec::new(); n_groups];
         for (i, (&id, &g)) in ids.iter().zip(groups).enumerate() {
             if deficient[g as usize] {
-                pools[g as usize].push((splitmix64(id, seed), i));
+                pools[g as usize].push((splitmix64(id.into(), seed), i));
             }
         }
         for (g, pool) in pools.iter_mut().enumerate() {

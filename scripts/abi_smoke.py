@@ -210,6 +210,14 @@ def load() -> ctypes.CDLL:
         ctypes.c_uint64,
         ctypes.POINTER(ctypes.c_uint8),
     ]
+    lib.fc_sample_mask_u32.restype = ctypes.c_int32
+    lib.fc_sample_mask_u32.argtypes = [
+        U32P,
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.POINTER(ctypes.c_uint8),
+    ]
     lib.fc_sample_range_indices.restype = ctypes.c_size_t
     lib.fc_sample_range_indices.argtypes = [
         ctypes.c_size_t,
@@ -244,6 +252,17 @@ def load() -> ctypes.CDLL:
     lib.fc_stratified_sample_mask.restype = ctypes.c_int32
     lib.fc_stratified_sample_mask.argtypes = [
         U64P,
+        U32P,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+        ctypes.c_double,
+        ctypes.c_uint64,
+        ctypes.POINTER(ctypes.c_uint8),
+    ]
+    lib.fc_stratified_sample_mask_u32.restype = ctypes.c_int32
+    lib.fc_stratified_sample_mask_u32.argtypes = [
+        U32P,
         U32P,
         ctypes.c_size_t,
         ctypes.c_size_t,
@@ -798,6 +817,24 @@ def main() -> None:
         == 1,
         "sample_mask empty/null ok status",
     )
+    ids32 = array("I", [0, 1, 2, 3])
+    mask32 = array("B", [9, 9, 9, 9])
+    lib.fc_sample_mask_u32(
+        _ptr(ids32, ctypes.c_uint32),
+        1,
+        ctypes.c_uint64(0),
+        ctypes.c_uint64(0xE220A8397B1DCDAF),
+        _ptr(mask32, ctypes.c_uint8),
+    )
+    ok(mask32[0] == 1, "sample_mask_u32 matches the u64 reference vector")
+    lib.fc_sample_mask_u32(
+        _ptr(ids32, ctypes.c_uint32),
+        4,
+        ctypes.c_uint64(0),
+        ctypes.c_uint64(0),
+        _ptr(mask32, ctypes.c_uint8),
+    )
+    ok(list(mask32) == [0, 0, 0, 0], "sample_mask_u32 threshold=0 keeps none")
     sampled = array("I", [999]) * 4
     written = lib.fc_sample_range_indices(
         4,
@@ -934,6 +971,21 @@ def main() -> None:
     ok(
         status == 1 and sum(smask) == 2 and smask[3] == 1,
         "stratified_sample_mask floor pins one row per category",
+    )
+    smask32 = array("B", [9, 9, 9, 9])
+    status = lib.fc_stratified_sample_mask_u32(
+        _ptr(ids32, ctypes.c_uint32),
+        _ptr(sgroups, ctypes.c_uint32),
+        4,
+        2,
+        ctypes.c_uint64(0),
+        ctypes.c_double(1e-18),
+        ctypes.c_uint64(1),
+        _ptr(smask32, ctypes.c_uint8),
+    )
+    ok(
+        status == 1 and list(smask32) == list(smask),
+        "stratified_sample_mask_u32 matches u64 ids",
     )
     smask_bad = array("B", [7, 7, 7, 7])
     bad_groups = array("I", [0, 0, 0, 5])  # 5 >= n_groups
