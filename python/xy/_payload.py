@@ -788,9 +788,11 @@ class PayloadMixin(_Host):
         encoded_grid, gmax = kernels.density_log_u8(grid)
         # Honor the user's colormap for the density ramp even though the per-point
         # color *data* can't survive count-aggregation (needs the §5-F5 algebra).
+        # Constant channels carry it too — colormap= without color data means
+        # exactly this ramp. Categorical has no ramp, so it keeps the default.
         cmap = (
             t.color_ch.colormap
-            if (t.color_ch and t.color_ch.mode == "continuous")
+            if (t.color_ch and t.color_ch.mode in ("constant", "continuous"))
             else channels.DEFAULT_COLORMAP
         )
         color_dropped = bool(t.color_ch and t.color_ch.mode != "constant")

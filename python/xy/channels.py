@@ -354,21 +354,26 @@ def resolve_color(
     - a length-n array of numbers → continuous (normalized + colormap).
     - a length-n array of strings/categories → categorical (factorized + palette).
     """
+    if not is_colormap(colormap):
+        raise ValueError(f"unknown colormap {colormap!r}; known: {COLORMAPS}")
+
+    # Constant channels keep the colormap too: it still drives the density
+    # ramp when the trace aggregates (§5 Tier 2), and a typo'd name must
+    # error here rather than render a silently wrong ramp.
     if color is None:
-        return ColorChannel(mode="constant", constant=default_constant)
+        return ColorChannel(mode="constant", constant=default_constant, colormap=colormap)
     if isinstance(color, str):
         # Literal constant color: validated against the native CSS grammar so
         # a typo errors here instead of rendering a silently wrong mark.
-        return ColorChannel(mode="constant", constant=_validate.css_color(color, "color"))
+        return ColorChannel(
+            mode="constant", constant=_validate.css_color(color, "color"), colormap=colormap
+        )
 
     if hasattr(color, "to_numpy"):
         color = color.to_numpy()
     arr = np.asarray(color)
     if arr.ndim != 1 or len(arr) != n:
         raise ValueError(f"color array must be 1-D length {n}, got shape {arr.shape}")
-
-    if not is_colormap(colormap):
-        raise ValueError(f"unknown colormap {colormap!r}; known: {COLORMAPS}")
 
     if _is_categorical(arr):
         cats, codes, counts = _factorize_categories(arr)
