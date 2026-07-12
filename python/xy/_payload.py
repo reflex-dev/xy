@@ -42,7 +42,7 @@ class _PayloadWriter:
 
     def __init__(self, *, borrow_heatmaps: bool = False) -> None:
         self.columns: list[dict[str, Any]] = []
-        self._chunks: list[bytes] = []
+        self._chunks: list[bytes | np.ndarray] = []
         self._pos = 0
         self.borrow_heatmaps = borrow_heatmaps
         self.borrowed: list[np.ndarray] = []
@@ -68,11 +68,10 @@ class _PayloadWriter:
     def ship_u8(self, values: np.ndarray) -> int:
         """Raw byte column, padded so every later f32 column stays aligned."""
         enc = np.ascontiguousarray(values, dtype=np.uint8).reshape(-1)
-        raw = enc.tobytes()
         index = len(self.columns)
         self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), "dtype": "u8"})
-        self._chunks.append(raw)
-        self._pos += len(raw)
+        self._chunks.append(enc)
+        self._pos += enc.nbytes
         padding = (-self._pos) % 4
         if padding:
             self._chunks.append(bytes(padding))
@@ -102,14 +101,20 @@ class _PayloadWriter:
         return self._append(encoded.values, encoded.meta)
 
     def _append(self, enc: np.ndarray, meta: dict[str, Any]) -> int:
-        raw = enc.tobytes()
+        # Retain the encoded array until blob assembly so each column is copied
+        # once into the final bytes object, rather than once in `tobytes()` and
+        # again by `join`.
+        enc = np.ascontiguousarray(enc)
         self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), **meta})
-        self._chunks.append(raw)
-        self._pos += len(raw)
+        self._chunks.append(enc)
+        self._pos += enc.nbytes
         return len(self.columns) - 1
 
     def blob(self) -> bytes:
-        return b"".join(self._chunks)
+        return b"".join(
+            chunk if isinstance(chunk, bytes) else memoryview(chunk).cast("B")
+            for chunk in self._chunks
+        )
 
 
 class PayloadMixin(_Host):

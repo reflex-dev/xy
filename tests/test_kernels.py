@@ -837,6 +837,19 @@ def test_sample_mask_matches_numpy_hash_reference(impl):
         np.testing.assert_array_equal(got, ref)
 
 
+def test_sample_mask_u32_ids_match_widened_u64(impl):
+    from xy import lod
+
+    rng = np.random.default_rng(13)
+    ids32 = rng.integers(0, 2**32, size=100_000, dtype=np.uint64).astype(np.uint32)
+    for seed, fraction in [(0, 0.5), (7, 0.001), (2**40, 0.25)]:
+        threshold = int(lod._sample_threshold(fraction))
+        np.testing.assert_array_equal(
+            impl.sample_mask(ids32, seed, threshold),
+            impl.sample_mask(ids32.astype(np.uint64), seed, threshold),
+        )
+
+
 def test_density_log_u8_matches_wire_reference(impl):
     grid = np.array([0, 1, 2, 3, 9, 100, 10_000], dtype=np.float32)
     encoded, maximum = impl.density_log_u8(grid)
@@ -890,6 +903,18 @@ def test_stratified_sample_mask_matches_numpy_reference(impl):
         got = impl.stratified_sample_mask(ids, groups, 4, 9, fraction, min_count)
         assert got.dtype == np.bool_
         np.testing.assert_array_equal(got, reference(fraction, min_count))
+
+
+def test_stratified_sample_mask_u32_ids_match_widened_u64(impl):
+    rng = np.random.default_rng(17)
+    n = 50_000
+    ids32 = rng.permutation(n).astype(np.uint32)
+    groups = rng.choice(4, size=n, p=[0.9, 0.06, 0.039, 0.001]).astype(np.uint32)
+    for fraction, min_count in [(1 / 4096, 1), (1 / 64, 5), (0.5, 0)]:
+        np.testing.assert_array_equal(
+            impl.stratified_sample_mask(ids32, groups, 4, 9, fraction, min_count),
+            impl.stratified_sample_mask(ids32.astype(np.uint64), groups, 4, 9, fraction, min_count),
+        )
 
 
 def test_stratified_sample_mask_edges(impl):

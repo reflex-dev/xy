@@ -79,7 +79,7 @@ unsafe fn borrowed_byte_spans<'a>(
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 31;
+pub const ABI_VERSION: u32 = 32;
 const FACTORIZE_CAPACITY_EXCEEDED: usize = usize::MAX - 1;
 
 #[no_mangle]
@@ -2249,6 +2249,33 @@ pub unsafe extern "C" fn fc_sample_mask(
     })
 }
 
+/// `fc_sample_mask` over u32 row indices: each id widens to u64 in-register,
+/// bit-identical to widening the full array first without that allocation.
+///
+/// # Safety
+/// `ids` must point to `len` readable u32s; `out` to `len` writable u8s.
+#[no_mangle]
+pub unsafe extern "C" fn fc_sample_mask_u32(
+    ids: *const u32,
+    len: usize,
+    seed: u64,
+    threshold: u64,
+    out: *mut u8,
+) -> i32 {
+    if len == 0 {
+        return 1;
+    }
+    if ids.is_null() || out.is_null() {
+        return 0;
+    }
+    let ids = std::slice::from_raw_parts(ids, len);
+    let out = std::slice::from_raw_parts_mut(out, len);
+    ffi_guard(0, || {
+        kernels::sample_mask(ids, seed, threshold, out);
+        1
+    })
+}
+
 /// Deterministically sample implicit row ids `0..size`. Returns the required
 /// output length; values are written only when `capacity` is sufficient.
 /// `usize::MAX` reports an invalid size/pointer combination.
@@ -2393,6 +2420,45 @@ pub unsafe extern "C" fn fc_stratified_sample_range_u8_counted(
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn fc_stratified_sample_mask(
     ids: *const u64,
+    groups: *const u32,
+    len: usize,
+    n_groups: usize,
+    seed: u64,
+    fraction: f64,
+    min_count: u64,
+    out: *mut u8,
+) -> i32 {
+    if len == 0 {
+        return 1;
+    }
+    if ids.is_null()
+        || groups.is_null()
+        || out.is_null()
+        || n_groups == 0
+        || !fraction.is_finite()
+        || fraction <= 0.0
+    {
+        return 0;
+    }
+    let ids = std::slice::from_raw_parts(ids, len);
+    let groups = std::slice::from_raw_parts(groups, len);
+    let out = std::slice::from_raw_parts_mut(out, len);
+    ffi_guard(0, || {
+        kernels::stratified_sample_mask(ids, groups, n_groups, seed, fraction, min_count, out)
+            as i32
+    })
+}
+
+/// `fc_stratified_sample_mask` over u32 row indices, with the same in-register
+/// widening contract as [`fc_sample_mask_u32`].
+///
+/// # Safety
+/// `ids` and `groups` must point to `len` readable u32s; `out` to `len`
+/// writable u8s.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn fc_stratified_sample_mask_u32(
+    ids: *const u32,
     groups: *const u32,
     len: usize,
     n_groups: usize,

@@ -274,6 +274,7 @@ def _float_param(
 
 
 def _row_ids(row_ids: Any, label: str = "row_ids") -> np.ndarray:
+    """Validate unsigned row ids without widening native u32 selections."""
     ids = np.asarray(row_ids)
     if ids.ndim != 1:
         raise ValueError(f"{label} must be a one-dimensional integer array")
@@ -284,6 +285,8 @@ def _row_ids(row_ids: Any, label: str = "row_ids") -> np.ndarray:
             raise ValueError(f"{label} must not contain negative values")
         return ids.astype(np.uint64, copy=False)
     if ids.dtype.kind == "u":
+        if ids.dtype == np.uint32:
+            return ids
         return ids.astype(np.uint64, copy=False)
     raise ValueError(f"{label} must be a one-dimensional integer array")
 

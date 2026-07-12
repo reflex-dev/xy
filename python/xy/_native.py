@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_CONTOUR_WORK, MAX_SCREEN_DIM
 
-ABI_VERSION = 31
+ABI_VERSION = 32
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.
@@ -505,6 +505,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_uint64,
         ctypes.c_void_p,
     ]
+    lib.fc_sample_mask_u32.restype = ctypes.c_int32
+    lib.fc_sample_mask_u32.argtypes = list(lib.fc_sample_mask.argtypes)
     lib.fc_sample_range_indices.restype = ctypes.c_size_t
     lib.fc_sample_range_indices.argtypes = [
         ctypes.c_size_t,
@@ -547,6 +549,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_uint64,  # min_count
         ctypes.c_void_p,  # out
     ]
+    lib.fc_stratified_sample_mask_u32.restype = ctypes.c_int32
+    lib.fc_stratified_sample_mask_u32.argtypes = list(lib.fc_stratified_sample_mask.argtypes)
     lib.fc_pyramid_build.restype = ctypes.c_uint64
     lib.fc_pyramid_build.argtypes = [
         ctypes.c_void_p,
@@ -1951,7 +1955,10 @@ def bin_2d_indices(
     )
     if written == _USIZE_MAX:
         raise ValueError("invalid bin_2d_indices arguments")
-    return grid, idx[:written].copy()
+    # First paint autoranges to the data extent, so every finite row is
+    # usually in range: avoid duplicating the full selection when no slack
+    # needs trimming.
+    return grid, idx if written == len(idx) else idx[:written].copy()
 
 
 def bin_2d_sample_range(
@@ -2243,7 +2250,7 @@ def range_indices(
     )
     if written == _USIZE_MAX:
         raise ValueError("invalid range_indices arguments")
-    return out[:written].copy()
+    return out if written == len(out) else out[:written].copy()
 
 
 def sample_mask(
@@ -2255,14 +2262,21 @@ def sample_mask(
 
     Bit-identical to `lod.hash_row_ids(ids, seed=seed) <= threshold` (the
     NumPy reference, asserted by the parity test), fused into one native pass
-    with no full-width u64 temporaries.
+    with no full-width u64 temporaries. uint32 ids dispatch to an entry point
+    that widens each id in-register instead of copying the full selection.
     """
-    ids = np.ascontiguousarray(ids, dtype=np.uint64)
+    ids = np.asarray(ids)
+    if ids.dtype == np.uint32:
+        ids = np.ascontiguousarray(ids)
+        fn = _lib.fc_sample_mask_u32
+    else:
+        ids = np.ascontiguousarray(ids, dtype=np.uint64)
+        fn = _lib.fc_sample_mask
     if ids.ndim != 1:
         raise ValueError("ids must be a one-dimensional uint64 array")
     out = np.empty(len(ids), dtype=np.uint8)
     if len(ids):
-        ok = _lib.fc_sample_mask(
+        ok = fn(
             ids.ctypes.data,
             len(ids),
             ctypes.c_uint64(int(seed)),
@@ -2392,8 +2406,15 @@ def stratified_sample_mask(
     with a `min_count` lowest-hash floor per category. Bit-identical to the
     per-category NumPy reference in `xy.lod` (asserted by the parity
     test), fused into one native pass instead of O(n · n_groups) rescans.
+    uint32 ids dispatch to the in-register widening entry point.
     """
-    ids = np.ascontiguousarray(ids, dtype=np.uint64)
+    ids = np.asarray(ids)
+    if ids.dtype == np.uint32:
+        ids = np.ascontiguousarray(ids)
+        fn = _lib.fc_stratified_sample_mask_u32
+    else:
+        ids = np.ascontiguousarray(ids, dtype=np.uint64)
+        fn = _lib.fc_stratified_sample_mask
     groups = np.ascontiguousarray(groups, dtype=np.uint32)
     if ids.ndim != 1 or groups.ndim != 1:
         raise ValueError("ids and groups must be one-dimensional arrays")
@@ -2410,7 +2431,7 @@ def stratified_sample_mask(
         raise ValueError("min_count must be a non-negative integer")
     out = np.empty(len(ids), dtype=np.uint8)
     if len(ids):
-        ok = _lib.fc_stratified_sample_mask(
+        ok = fn(
             ids.ctypes.data,
             groups.ctypes.data,
             len(ids),

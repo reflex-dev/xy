@@ -45,6 +45,12 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **Payload copy elimination (native ABI v32).** Partial-view density sampling
+  now hashes native `u32` row selections without first widening the full array
+  to `u64`; exact-full index buffers avoid a trailing-slice copy; and payload
+  assembly retains encoded arrays until the final blob join instead of copying
+  every column through `tobytes()` first. Payload bytes and sampling decisions
+  remain parity-tested and unchanged.
 - **View-change callback windows** now reject non-finite bounds and normalize
   inverted ranges before callbacks receive them, matching selection and
   autorange window semantics.
