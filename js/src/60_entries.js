@@ -12,7 +12,12 @@ function bytesToArrayBuffer(b) {
 
 function render({ model, el }) {
   const spec = model.get("spec");
-  const buffer = bytesToArrayBuffer(model.get("buffers"));
+  // Split layout arrives as a list (one comm buffer per column); packed (the
+  // streaming-refresh resync state) as a single blob. Per-buffer slicing is
+  // also what guarantees Float32Array's 4-byte alignment — comm frames land
+  // at arbitrary offsets inside the message.
+  const raw = model.get("buffers");
+  const buffer = Array.isArray(raw) ? raw.map(bytesToArrayBuffer) : bytesToArrayBuffer(raw);
   const comm = {
     send: (msg) => model.send(msg),
     onMessage: (cb) => {

@@ -44,10 +44,13 @@ class FigureWidget(anywidget.AnyWidget):
 
     # Data-less spec (§9) — tiny JSON, sync'd as a trait.
     spec = traitlets.Dict().tag(sync=True)
-    # Encoded columns — one binary blob, transported as a raw buffer by the
-    # widget protocol (ipywidgets serializes Bytes traits as binary buffers,
-    # never JSON).
-    buffers = traitlets.Bytes().tag(sync=True)
+    # Encoded columns, transported as raw binary buffers by the widget
+    # protocol (never JSON). First paint ships the split layout — a list with
+    # one borrowed buffer per column, no join copy (§29); the streaming-append
+    # refresh path re-syncs a single packed blob. `Any` because the value is
+    # either that list of memoryviews or one `bytes`; ipywidgets extracts
+    # binary leaves from both shapes.
+    buffers = traitlets.Any().tag(sync=True)
 
     def __init__(
         self,
@@ -68,8 +71,8 @@ class FigureWidget(anywidget.AnyWidget):
             on_select=on_select,
             on_view_change=on_view_change,
         )
-        spec, blob = figure.build_payload()
-        super().__init__(spec=spec, buffers=blob, **kwargs)
+        spec, bufs = figure.build_payload_split()
+        super().__init__(spec=spec, buffers=bufs, **kwargs)
         self.on_msg(self._on_custom_msg)
 
     def append(self, trace_id: int, x: Any, y: Any, *, color: Any = None, size: Any = None) -> None:

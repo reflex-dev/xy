@@ -111,6 +111,14 @@ class ChartView {
       throw new Error("protocol mismatch");
     }
     this.spec = spec;
+    // Layout/transport mismatch must fail loudly here, not render columns
+    // read from wrong offsets (§28 — no silent wrongness).
+    if ((spec.buffer_layout === "split") !== Array.isArray(buffer)) {
+      el.textContent = "xy: payload layout mismatch (spec says " +
+        `${spec.buffer_layout || "packed"}, transport delivered ` +
+        `${Array.isArray(buffer) ? "a buffer list" : "one blob"}).`;
+      throw new Error("payload layout mismatch");
+    }
     this.interaction = spec.interaction || {};
     this.markStyle = spec.mark_style || {};
     this.axes = this._normalizeAxes(spec);
@@ -985,7 +993,7 @@ class ChartView {
 
     if (t.tier === "density") {
       const d = t.density;
-      const grid = new Float32Array(buffer, this.spec.columns[d.buf].byte_offset, d.w * d.h);
+      const grid = this._columnView(buffer, { ...this.spec.columns[d.buf], len: d.w * d.h });
       g.densityNormMax = d.max;
       g.density = {
         w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
@@ -1500,7 +1508,17 @@ class ChartView {
   // lifecycle live in 45_lod.js — chart-agnostic so future tiered kinds
   // (heatmap, histogram) reuse them instead of copy-pasting.
 
+  // First-paint column reader for both wire layouts (§29): packed (one blob,
+  // spec byte offsets) and split (one ArrayBuffer per column, `meta.buf`
+  // indexes the buffer list). Update-path messages don't come through here —
+  // they already carry per-message buffer lists (54_kernel.js).
   _columnView(buffer, meta) {
+    if (Array.isArray(buffer)) {
+      if (!Number.isInteger(meta.buf) || meta.buf < 0 || meta.buf >= buffer.length) {
+        throw new Error(`xy: split payload column has no valid buffer index (buf=${meta.buf})`);
+      }
+      return new Float32Array(buffer[meta.buf], meta.byte_offset, meta.len);
+    }
     return new Float32Array(buffer, meta.byte_offset, meta.len);
   }
 

@@ -744,6 +744,23 @@ try{{
     if (dv1.gpuTraces) for (const gg of dv1.gpuTraces) gg._densityNormAnim = null;
     if (dv2.gpuTraces) for (const gg of dv2.gpuTraces) gg._densityNormAnim = null;
     const pixdet = pixhash(dv1) === pixhash(dv2) ? 1 : 0;
+    // Split first-paint layout (§29): the same columns delivered as one
+    // ArrayBuffer each must render pixel-identical to the packed blob, and a
+    // spec/transport layout mismatch must throw, not draw from wrong offsets.
+    const sspec = JSON.parse(JSON.stringify(spec));
+    sspec.buffer_layout = "split";
+    const sbufs = sspec.columns.map((c, i) => {{
+      const ab = bytes.buffer.slice(c.byte_offset, c.byte_offset + c.len * 4);
+      c.buf = i; c.byte_offset = 0;
+      return ab;
+    }});
+    const vSplit = new xy.ChartView(mk(), sspec, sbufs, null);
+    vSplit._sampleRebinDisabled = true;
+    if (vSplit.gpuTraces) for (const gg of vSplit.gpuTraces) gg._densityNormAnim = null;
+    const splitPix = pixhash(vSplit) === pixhash(dv1) ? 1 : 0;
+    const splitMismatch = (throws(() => new xy.ChartView(mk(), sspec, bytes.buffer, null))
+      && throws(() => new xy.ChartView(mk(), JSON.parse(JSON.stringify(spec)), sbufs, null))) ? 1 : 0;
+    const splitbuf = (splitPix && splitMismatch) ? 1 : 0;
     // Streaming append (rust-engine §5): the affected trace rebuilds from the
     // fresh payload and the view follows the data — refit when at home, hold
     // when zoomed into history, slide when pinned to the live right edge.
@@ -864,7 +881,7 @@ try{{
     const gLn=vSm.gpuTraces[0], gAr=vSm.gpuTraces[1];
     const msmooth=(gLn.n===65 && gLn._cpu.x.length===5 && gAr.n===65 && gAr._cpu.base.length===5)?1:0;
     vSm.destroy();holderSm.remove();
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}}`;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -1074,6 +1091,7 @@ try{{
     stream = int(re.search(r"stream=(\d+)", title).group(1))
     malformed = int(re.search(r"malformed=(\d+)", title).group(1))
     pixdet = int(re.search(r"pixdet=(\d+)", title).group(1))
+    splitbuf = int(re.search(r"splitbuf=(\d+)", title).group(1))
     ctxloss = int(re.search(r"ctxloss=(\d+)", title).group(1))
     ctxcycles = int(re.search(r"ctxcycles=(\d+)", title).group(1))
     ctxquiet = int(re.search(r"ctxquiet=(\d+)", title).group(1))
@@ -1200,6 +1218,11 @@ try{{
         raise SystemExit("chart was not interactive and nonblank after context restoration")
     if pixdet != 1:
         raise SystemExit("pixel determinism failed (render path must be RNG/time-free)")
+    if splitbuf != 1:
+        raise SystemExit(
+            "split buffer layout failed (per-column buffers must render "
+            "pixel-identical to the packed blob, and layout mismatches must throw)"
+        )
     if qwire != 1:
         raise SystemExit("log-u8 density decode failed (quantized wire)")
     if stream != 1:

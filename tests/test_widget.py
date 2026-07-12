@@ -20,6 +20,25 @@ def _capturing_widget(fig: Figure, **kwargs):
     return widget, sent
 
 
+def test_widget_first_paint_is_split_layout_and_binary_synced():
+    # First paint ships the split layout: a list of borrowed per-column
+    # buffers, each of which ipywidgets extracts as a raw binary frame (§29 —
+    # never JSON, never base64) with no join copy on the Python side.
+    from ipywidgets.widgets.widget import _remove_buffers
+
+    fig = Figure().scatter(np.arange(64.0), np.arange(64.0), color=np.arange(64.0))
+    widget, _sent = _capturing_widget(fig)
+
+    assert widget.spec["buffer_layout"] == "split"
+    assert isinstance(widget.buffers, list)
+    assert len(widget.buffers) == len(widget.spec["columns"])
+    _state, paths, wire = _remove_buffers({"spec": widget.spec, "buffers": widget.buffers})
+    assert paths == [["buffers", i] for i in range(len(widget.buffers))]
+    assert all(isinstance(b, memoryview) for b in wire)  # zero-copy to the comm
+    spec_p, blob = fig.build_payload()
+    assert b"".join(bytes(b) for b in wire) == blob
+
+
 def test_widget_drops_malformed_view_messages():
     n = DECIMATION_THRESHOLD + 1
     fig = Figure().line(np.arange(n, dtype=np.float64), np.arange(n, dtype=np.float64))

@@ -1495,6 +1495,12 @@ el.textContent =
 throw new Error("protocol mismatch");
 }
 this.spec = spec;
+if ((spec.buffer_layout === "split") !== Array.isArray(buffer)) {
+el.textContent = "xy: payload layout mismatch (spec says " +
+`${spec.buffer_layout || "packed"}, transport delivered ` +
+`${Array.isArray(buffer) ? "a buffer list" : "one blob"}).`;
+throw new Error("payload layout mismatch");
+}
 this.interaction = spec.interaction || {};
 this.markStyle = spec.mark_style || {};
 this.axes = this._normalizeAxes(spec);
@@ -2227,7 +2233,7 @@ yAxis: typeof t.y_axis === "string" ? t.y_axis : "y",
 };
 if (t.tier === "density") {
 const d = t.density;
-const grid = new Float32Array(buffer, this.spec.columns[d.buf].byte_offset, d.w * d.h);
+const grid = this._columnView(buffer, { ...this.spec.columns[d.buf], len: d.w * d.h });
 g.densityNormMax = d.max;
 g.density = {
 w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
@@ -2686,6 +2692,12 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 return tex;
 }
 _columnView(buffer, meta) {
+if (Array.isArray(buffer)) {
+if (!Number.isInteger(meta.buf) || meta.buf < 0 || meta.buf >= buffer.length) {
+throw new Error(`xy: split payload column has no valid buffer index (buf=${meta.buf})`);
+}
+return new Float32Array(buffer[meta.buf], meta.byte_offset, meta.len);
+}
 return new Float32Array(buffer, meta.byte_offset, meta.len);
 }
 _upload(f32) {
@@ -5319,7 +5331,8 @@ throw new Error("unsupported buffer type");
 }
 function render({ model, el }) {
 const spec = model.get("spec");
-const buffer = bytesToArrayBuffer(model.get("buffers"));
+const raw = model.get("buffers");
+const buffer = Array.isArray(raw) ? raw.map(bytesToArrayBuffer) : bytesToArrayBuffer(raw);
 const comm = {
 send: (msg) => model.send(msg),
 onMessage: (cb) => {

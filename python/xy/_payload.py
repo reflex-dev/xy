@@ -40,10 +40,16 @@ class _PayloadWriter:
     re-implementing the encoding.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, split: bool = False) -> None:
+        # split=True: every column ships as its own wire buffer — spec entries
+        # carry `buf` (the buffer-list index) with byte_offset 0, and
+        # `buffers()` returns per-column views with no join copy. Packed mode
+        # keeps the single `blob()` with global byte offsets (standalone
+        # export, streaming-refresh reopen state).
         self.columns: list[dict[str, Any]] = []
         self._chunks: list[bytes] = []
         self._pos = 0
+        self._split = split
 
     def ship(self, values: np.ndarray, col: "Column") -> int:
         """Offset-encoded geometry column: `(v - offset) * scale` as f32
@@ -74,13 +80,22 @@ class _PayloadWriter:
 
     def _append(self, enc: np.ndarray, meta: dict[str, Any]) -> int:
         raw = enc.tobytes()
-        self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), **meta})
+        idx = len(self.columns)
+        if self._split:
+            self.columns.append({"buf": idx, "byte_offset": 0, "len": int(len(enc)), **meta})
+        else:
+            self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), **meta})
         self._chunks.append(raw)
         self._pos += len(raw)
-        return len(self.columns) - 1
+        return idx
 
     def blob(self) -> bytes:
         return b"".join(self._chunks)
+
+    def buffers(self) -> list[memoryview]:
+        """Per-column wire buffers (split mode): zero-copy views over the
+        encoded chunks, ready to ship as separate binary comm frames."""
+        return [memoryview(c).cast("B") for c in self._chunks]
 
 
 class PayloadMixin(_Host):
@@ -94,6 +109,25 @@ class PayloadMixin(_Host):
         reduction is recorded in the spec — no silent quality changes (§28).
         """
         pw = _PayloadWriter()
+        return self._payload_spec(pw, px_width), pw.blob()
+
+    def build_payload_split(self, px_width: int = 2048) -> tuple[dict[str, Any], list[memoryview]]:
+        """`build_payload` with per-column wire buffers instead of one blob.
+
+        Same emitters, same encoded bytes — but the columns ship as a list of
+        borrowed buffer views, skipping the join copy (the single largest
+        allocation of a direct-tier build). The spec says so explicitly:
+        `buffer_layout: "split"`, and each column entry carries `buf`, its
+        index into the buffer list (§29 — the comm protocol already carries
+        multi-buffer messages on the update path; this extends it to first
+        paint).
+        """
+        pw = _PayloadWriter(split=True)
+        spec = self._payload_spec(pw, px_width)
+        spec["buffer_layout"] = "split"
+        return spec, pw.buffers()
+
+    def _payload_spec(self, pw: "_PayloadWriter", px_width: int) -> dict[str, Any]:
         # `_range` is an O(traces x chunks) autorange scan and is invariant
         # while this build runs (emitters only touch shipped_sel/drill state),
         # so each axis pays for it once even when many traces share an axis.
@@ -149,7 +183,7 @@ class PayloadMixin(_Host):
         annotations = self._annotation_specs()
         if annotations:
             spec["annotations"] = annotations
-        return spec, pw.blob()
+        return spec
 
     def _emit_trace(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int

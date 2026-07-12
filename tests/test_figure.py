@@ -70,6 +70,51 @@ def test_spec_is_dataless_json():
     assert len(blob) == 2 * 1000 * 4  # two f32 columns
 
 
+def test_build_payload_split_matches_packed():
+    # Split layout (§29 multi-buffer first paint) is a transport repack, never
+    # a re-encode: same spec, same bytes, delivered one borrowed buffer per
+    # column instead of one joined blob.
+    rng = np.random.default_rng(5)
+    x = np.arange(5000, dtype=np.float64)
+    fig = Figure().scatter(x, rng.normal(size=5000), color=np.sin(x * 0.01), size=2 + x % 7)
+    fig.line(x, np.cos(x * 0.01))
+
+    spec_p, blob = fig.build_payload()
+    spec_s, bufs = fig.build_payload_split()
+
+    assert spec_s["buffer_layout"] == "split"
+    assert isinstance(bufs, list)
+    assert all(isinstance(b, memoryview) for b in bufs)
+    assert len(bufs) == len(spec_s["columns"])
+    assert b"".join(bytes(b) for b in bufs) == blob
+    for i, (col_p, col_s) in enumerate(zip(spec_p["columns"], spec_s["columns"], strict=True)):
+        assert col_s["buf"] == i
+        assert col_s["byte_offset"] == 0
+        assert bufs[i].nbytes == col_p["len"] * 4
+        drop_p = {k: v for k, v in col_p.items() if k != "byte_offset"}
+        drop_s = {k: v for k, v in col_s.items() if k not in ("buf", "byte_offset")}
+        assert drop_s == drop_p
+    strip_p = {k: v for k, v in spec_p.items() if k != "columns"}
+    strip_s = {k: v for k, v in spec_s.items() if k not in ("columns", "buffer_layout")}
+    assert strip_s == strip_p
+    assert json.dumps(spec_s)  # spec must stay data-less JSON either way (§9)
+
+
+def test_build_payload_split_density_tier():
+    # The density tier ships grid + sampled-overlay columns; the split repack
+    # must cover those column shapes too, byte-for-byte.
+    rng = np.random.default_rng(6)
+    fig = Figure().scatter(rng.normal(size=20_000), rng.normal(size=20_000), density=True)
+    spec_p, blob = fig.build_payload()
+    spec_s, bufs = fig.build_payload_split()
+    assert spec_p["traces"][0]["tier"] == "density"
+    assert b"".join(bytes(b) for b in bufs) == blob
+    sample = spec_s["traces"][0]["density"].get("sample")
+    if sample is not None:
+        assert sample["x"]["buf"] == sample["x"]["col"]
+        assert sample["x"]["byte_offset"] == 0
+
+
 def test_offset_encoding_roundtrip():
     x = 1.6e12 + np.arange(5000, dtype=np.float64)  # ms timestamps
     y = np.sin(np.arange(5000) * 0.01)
