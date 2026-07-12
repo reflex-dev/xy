@@ -2,7 +2,7 @@
 
 **Status:** design. Decides what lives in Rust vs Python and how the FFI seam
 evolves without rewrites. Grounded in the shipped engine: zero-crate cdylib
-(`src/lib.rs`, ABI v3, 10 exported symbols), ctypes binding (`_native.py`), and
+(`src/lib.rs`, ABI v31), ctypes binding (`_native.py`), and
 dispatch in `kernels.py`. The native core is required — `kernels.py` raises a
 clear ImportError when it can't load, with no pure-Python fallback.
 
@@ -24,7 +24,9 @@ clear ImportError when it can't load, with no pure-Python fallback.
 
 | Concern | Today | Verdict |
 |---|---|---|
-| zone maps, encode_f32, m4, bin_2d, min_max, histogram_uniform, normalize_f32, range_indices, local_log_density | Rust (ABI v3) | correct |
+| zone maps, encode_f32, m4, bin_2d, min_max, histogram_uniform, normalize_f32, range/validity indices, local_log_density | Rust (ABI v31) | correct — new equal-length x/y columns use a paired zone-map call with bit-identical per-column reductions; full-domain density first paint fuses binning with uniform or counted-u8 overlay sampling while retaining exact standalone outputs; mesh/rectangle validity scans consume only columns not already proven finite by zone metadata |
+| fixed-width string/bytes/bool factorization | Rust (ABI v31) | correct — compact palettes use a bounded L1-resident codebook with full-record collision checks and emit exact counts; U1 uses a direct Unicode-scalar table with endian support; ≥512k rows probe a prefix then encode disjoint chunks in parallel, merging late labels by canonical first-row order before any retry; Python sees only unique labels and retains display-label ordering policy |
+| static display-list raster, row-banded polyline/point/segment paint, batched fill+stroke triangle meshes, affine scatter projection plus typed color/size resolution, density/heatmap colormap and sampling | Rust (ABI v31) | correct — commands borrow f32/u8 payload or canonical spans synchronously; compact stratified sampling reuses factorization counts; batched/banded output is byte-identical |
 | ohlc_decimate (when finance returns) | was NumPy-in-kernels.py | acceptable stopgap **only** because candles decimate to ≤px buckets; promote to Rust with the pyramid work |
 | tier decisions, hysteresis, drill_seq, spec/emitters, channel resolution | Python | correct — keep |
 | visible-count mask for drill | NumPy expression in `lod.visible_mask` | promote: it's O(N) per zoom step at 100M — fold into `fc_range_indices` (already exists) so count+indices come from one pass |
@@ -32,13 +34,14 @@ clear ImportError when it can't load, with no pure-Python fallback.
 ### Target Rust ownership (matches the priority list)
 
 binning (1D/2D/channel-aware) ✅/plan · decimation (M4 ✅, OHLC plan) ·
-range filtering (`fc_range_indices` ✅) · grouping/category encoding (plan:
-`fc_factorize` — today NumPy `unique`, fine to N≈10M, promote when category
-charts hit interaction paths) · histogram stats ✅ · quantiles (plan:
+range filtering (`fc_range_indices` ✅) · implicit uniform and compact-u8
+stratified sampling (`fc_sample_range_indices` / `fc_stratified_sample_range_u8` ✅) · grouping/category encoding
+(`fc_factorize_fixed` ✅ for contiguous fixed-width values; defensive Python
+label canonicalization for mixed objects) · histogram stats ✅ · quantiles (plan:
 `fc_quantiles`, needed by box/violin) · box/violin stats (thin composition
 over quantiles — stats in Rust, assembly in Python) · multi-resolution tile
-generation (plan: `tiles.rs`, the LOD doc's pyramid) · streaming append
-(plan: `stream.rs`, §5 below).
+generation (`tiles.rs` ✅, including stable-domain incremental updates) ·
+Rust-owned streaming column buffers (plan: `stream.rs`, §5 below).
 
 ## 2. Module boundaries (crate layout)
 
@@ -48,9 +51,9 @@ src/
                 #   ABI_VERSION. No math. Every fn: null/len checks → slice
                 #   → call kernels::* → write out-params.
   kernels.rs    # pure safe Rust, today's 9 kernels. No unsafe, no I/O.
-  tiles.rs      # (plan) pyramid build/fetch. Owns tile memory; handles are
-                #   opaque u64 ids passed over the ABI (§3.3).
-  stream.rs     # (plan) append buffers + dirty-tile tracking.
+  tiles.rs      # pyramid build/compose/incremental append. Owns tile memory;
+                #   handles are opaque u64 ids passed over the ABI (§3.3).
+  stream.rs     # (plan) Rust-owned canonical append buffers.
   stats.rs      # (plan) quantiles/box/violin/factorize.
 ```
 
@@ -95,9 +98,14 @@ argminmax, tsdownsample-class speed) with the lean build as default.
   never panics across FFI: `lib.rs` wraps kernel calls in `catch_unwind` →
   error code (work item — today kernels are panic-free by construction, but
   the belt goes on with the next ABI bump).
-- **E5 — threading stays inside**: when kernels go parallel (pyramid build),
-  std::thread scoped inside the call; the ABI stays synchronous. Async/
-  incremental build = handle + `fc_pyramid_poll` (E3).
+- **E5 — threading stays inside**: parallel kernels use `std::thread::scope`
+  inside the call; the ABI stays synchronous. General row scans cross over at
+  512k values and scale to at most 18 workers. Zone maps cross earlier, at two
+  complete 65,536-row chunks, because chunks are independent and require no
+  merge; worker count is also capped by actual chunks. CodSpeed stays serial
+  because its simulator sums thread instructions rather than wall time.
+  Async/incremental build = handle +
+  `fc_pyramid_poll` (E3).
 
 ### 3.3 Opaque handles (for tiles/streams)
 

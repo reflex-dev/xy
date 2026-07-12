@@ -1,12 +1,13 @@
-"""Streaming append (rust-engine §5, Phase-0): columns grow in place with
-incremental zone maps; Figure.append re-emits a screen-bounded refresh; the
-tile pyramid and drill state invalidate so the next view decision is fresh."""
+"""Streaming append: columns and stable-domain tile pyramids update in place;
+Figure.append re-emits a screen-bounded refresh; domain growth invalidates the
+pyramid, and drill state always exits so the next view decision is fresh."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
+from xy import kernels
 from xy._figure import SCATTER_DENSITY_THRESHOLD, Figure
 from xy.columns import ZONE_CHUNK, ColumnStore
 
@@ -220,7 +221,7 @@ def test_append_density_trace_rebins_with_new_points():
     assert update["traces"][0]["visible"] == n + 1000
 
 
-def test_append_invalidates_pyramid_for_lazy_rebuild():
+def test_append_updates_pyramid_in_place_when_domain_is_stable():
     from xy.config import PYRAMID_MIN_POINTS
     from xy.interaction import _ensure_pyramid
 
@@ -231,9 +232,26 @@ def test_append_invalidates_pyramid_for_lazy_rebuild():
     assert _ensure_pyramid(t) is not None
     old_handle = t._pyr_handle
     fig.append(0, [50.0], [50.0])
-    assert t._pyr_handle is None  # freed; rebuilds lazily on next far-out view
-    assert _ensure_pyramid(t) is not None
-    assert t._pyr_handle != 0 and t._pyr_handle != old_handle
+    assert t._pyr_handle == old_handle
+    assert _ensure_pyramid(t) == old_handle
+    assert kernels.pyramid_count(old_handle, 0.0, 100.0, 0.0, 100.0) == n + 1
+
+
+def test_append_invalidates_pyramid_when_domain_grows():
+    from xy.config import PYRAMID_MIN_POINTS
+    from xy.interaction import _ensure_pyramid
+
+    n = max(PYRAMID_MIN_POINTS, SCATTER_DENSITY_THRESHOLD + 1)
+    rng = np.random.default_rng(32)
+    fig = Figure().scatter(rng.uniform(0, 100, n), rng.uniform(0, 100, n))
+    t = fig.traces[0]
+    old_handle = _ensure_pyramid(t)
+    assert old_handle is not None
+
+    fig.append(0, [200.0], [50.0])
+    assert t._pyr_handle is None
+    assert kernels.pyramid_count(old_handle, 0.0, 100.0, 0.0, 100.0) is None
+    assert _ensure_pyramid(t) not in (None, 0, old_handle)
 
 
 def test_pyramid_handle_freed_when_trace_is_garbage_collected():
@@ -259,7 +277,7 @@ def test_pyramid_handle_freed_when_trace_is_garbage_collected():
     assert not kernels.pyramid_free(handle)
 
 
-def test_explicit_pyramid_free_disarms_gc_finalizer():
+def test_incremental_pyramid_keeps_gc_finalizer_armed():
     import gc
 
     from xy import kernels
@@ -273,17 +291,13 @@ def test_explicit_pyramid_free_disarms_gc_finalizer():
     assert _ensure_pyramid(t) is not None
     old_handle = t._pyr_handle
 
-    # append frees eagerly (lazy rebuild); rebuild, then drop the figure —
-    # the rebuilt pyramid must be freed by GC, and the disarmed finalizer of
-    # the appended-over handle must not double-free a recycled slot.
+    # A stable-domain append retains both handle and finalizer; dropping the
+    # figure must still release that incrementally updated native cache once.
     fig.append(0, [50.0], [50.0])
-    assert t._pyr_handle is None
-    assert not kernels.pyramid_free(old_handle)  # already freed by append
-    assert _ensure_pyramid(t) is not None
-    new_handle = t._pyr_handle
+    assert t._pyr_handle == old_handle
     del fig, t
     gc.collect()
-    assert not kernels.pyramid_free(new_handle)
+    assert not kernels.pyramid_free(old_handle)
 
 
 def test_memory_report_itemizes_pyramid_bytes():

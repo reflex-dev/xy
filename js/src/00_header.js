@@ -22,4 +22,4 @@
 
 "use strict";
 
-const PROTOCOL = 2;
+const PROTOCOL = 3;

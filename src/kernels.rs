@@ -11,6 +11,681 @@
 //!   first/min/max/last — provably pixel-accurate for a rasterized line (Jugel et
 //!   al., VLDB 2014). NaN-aware: buckets never span invalid values silently (§19).
 
+use std::collections::{BinaryHeap, HashMap};
+
+const MAX_ROW_THREADS: usize = 18;
+
+/// Factor fixed-width records in first-seen order without materializing Python
+/// objects. `codes[i]` identifies `data[i * width..]`; `unique_indices` stores
+/// the first row for every emitted code. The caller may reorder the compact
+/// unique set afterward (categorical display labels sort lexically in Python).
+pub fn factorize_fixed_into(
+    data: &[u8],
+    width: usize,
+    codes: &mut [u32],
+    unique_indices: &mut [u32],
+) -> Option<usize> {
+    if data.len().checked_rem(width) != Some(0) {
+        return None;
+    }
+    let n = data.len() / width;
+    if codes.len() < n || unique_indices.len() < n || n > u32::MAX as usize {
+        return None;
+    }
+    // Keys borrow immutable rows from the call-scoped input arena. Avoiding a
+    // heap allocation per distinct label matters for high-cardinality data.
+    let mut groups: HashMap<&[u8], u32> = HashMap::new();
+    let mut unique_count = 0usize;
+    for (row_index, row) in data.chunks_exact(width).enumerate() {
+        let code = if let Some(&code) = groups.get(row) {
+            code
+        } else {
+            let code = u32::try_from(unique_count).ok()?;
+            groups.insert(row, code);
+            unique_indices[unique_count] = u32::try_from(row_index).ok()?;
+            unique_count += 1;
+            code
+        };
+        codes[row_index] = code;
+    }
+    Some(unique_count)
+}
+
+/// Compact variant for palette-sized categorical sets. Returns `None` when
+/// the unique-index capacity (at most 256 for u8 codes) is exceeded; callers
+/// can then retry the general u32 path without risking code wraparound.
+#[inline(always)]
+fn compact_record_hash(record: &[u8]) -> u64 {
+    #[inline(always)]
+    fn avalanche(mut value: u64) -> u64 {
+        value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        value ^ (value >> 31)
+    }
+
+    if record.len() <= 8 {
+        return compact_narrow_hash(compact_record_key(record), record.len());
+    }
+    let mut hash = (record.len() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    for chunk in record.chunks(8) {
+        let mut bytes = [0u8; 8];
+        bytes[..chunk.len()].copy_from_slice(chunk);
+        hash ^= avalanche(u64::from_ne_bytes(bytes));
+        hash = hash.rotate_left(27).wrapping_mul(0x3C79_AC49_2BA7_B653);
+    }
+    avalanche(hash)
+}
+
+#[inline(always)]
+fn compact_record_key(record: &[u8]) -> u64 {
+    let mut bytes = [0u8; 8];
+    bytes[..record.len()].copy_from_slice(record);
+    u64::from_ne_bytes(bytes)
+}
+
+#[inline(always)]
+fn compact_narrow_hash(key: u64, width: usize) -> u64 {
+    let mut value = key ^ (width as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    value ^= value >> 32;
+    value = value.wrapping_mul(0xD6E8_FEB8_6659_FD93);
+    value ^ (value >> 32)
+}
+
+#[derive(Clone)]
+struct CompactCodebook {
+    slots: [u16; 512],
+    hashes: [u64; 256],
+    first_indices: [u32; 256],
+    len: usize,
+}
+
+struct CompactFactorization {
+    codebook: CompactCodebook,
+    counts: [u64; 256],
+}
+
+impl CompactCodebook {
+    fn new() -> Self {
+        Self {
+            slots: [u16::MAX; 512],
+            hashes: [0; 256],
+            first_indices: [u32::MAX; 256],
+            len: 0,
+        }
+    }
+
+    #[inline(always)]
+    fn lookup(&self, data: &[u8], width: usize, record: &[u8], hash: u64) -> Option<u8> {
+        let mut slot = hash as usize & (self.slots.len() - 1);
+        loop {
+            let entry = self.slots[slot];
+            if entry == u16::MAX {
+                return None;
+            }
+            let code = entry as usize;
+            let first = self.first_indices[code] as usize;
+            if self.hashes[code] == hash && &data[first * width..(first + 1) * width] == record {
+                return Some(code as u8);
+            }
+            slot = (slot + 1) & (self.slots.len() - 1);
+        }
+    }
+
+    #[inline(always)]
+    fn find_or_insert(
+        &mut self,
+        data: &[u8],
+        width: usize,
+        row_index: usize,
+        record: &[u8],
+        capacity: usize,
+    ) -> Option<(u8, bool)> {
+        let hash = compact_record_hash(record);
+        let mut slot = hash as usize & (self.slots.len() - 1);
+        loop {
+            let entry = self.slots[slot];
+            if entry == u16::MAX {
+                if self.len >= capacity {
+                    return None;
+                }
+                let code = u8::try_from(self.len).ok()?;
+                self.slots[slot] = u16::from(code);
+                self.hashes[self.len] = hash;
+                self.first_indices[self.len] = u32::try_from(row_index).ok()?;
+                self.len += 1;
+                return Some((code, true));
+            }
+            let code = entry as usize;
+            let first = self.first_indices[code] as usize;
+            if self.hashes[code] == hash && &data[first * width..(first + 1) * width] == record {
+                return Some((code as u8, false));
+            }
+            slot = (slot + 1) & (self.slots.len() - 1);
+        }
+    }
+}
+
+fn factorize_fixed_u8_serial(
+    data: &[u8],
+    width: usize,
+    codes: &mut [u8],
+    capacity: usize,
+) -> Option<CompactFactorization> {
+    let mut codebook = CompactCodebook::new();
+    let mut counts = [0u64; 256];
+    for (row_index, record) in data.chunks_exact(width).enumerate() {
+        let code = codebook
+            .find_or_insert(data, width, row_index, record, capacity)?
+            .0;
+        codes[row_index] = code;
+        counts[code as usize] += 1;
+    }
+    Some(CompactFactorization { codebook, counts })
+}
+
+fn factorize_threads(n: usize) -> usize {
+    par_threads(n)
+}
+
+/// Probe a small prefix to establish the usual compact palette, then encode
+/// disjoint output chunks in parallel against that immutable codebook. If a
+/// late category exists, worker-local first-seen lists are merged in canonical
+/// row order and one final parallel encode applies the completed codebook.
+fn factorize_fixed_u8_parallel(
+    data: &[u8],
+    width: usize,
+    codes: &mut [u8],
+    capacity: usize,
+    threads: usize,
+) -> Option<CompactFactorization> {
+    const PROBE_ROWS: usize = 4096;
+    let n = codes.len();
+    let prefix = n.min(PROBE_ROWS);
+    let mut codebook = CompactCodebook::new();
+    let mut prefix_counts = [0u64; 256];
+    for (row_index, record) in data[..prefix * width].chunks_exact(width).enumerate() {
+        let code = codebook
+            .find_or_insert(data, width, row_index, record, capacity)?
+            .0;
+        codes[row_index] = code;
+        prefix_counts[code as usize] += 1;
+    }
+    if prefix == n {
+        return Some(CompactFactorization {
+            codebook,
+            counts: prefix_counts,
+        });
+    }
+
+    let base_len = codebook.len;
+    let remaining = n - prefix;
+    let rows_per = remaining.div_ceil(threads);
+    let data_per = rows_per * width;
+    let discoveries = std::thread::scope(|scope| -> Option<Vec<(Vec<u32>, [u64; 256])>> {
+        let handles: Vec<_> = data[prefix * width..]
+            .chunks(data_per)
+            .zip(codes[prefix..].chunks_mut(rows_per))
+            .enumerate()
+            .map(|(chunk_index, (data_chunk, code_chunk))| {
+                let mut local = codebook.clone();
+                scope.spawn(move || -> Option<(Vec<u32>, [u64; 256])> {
+                    let start = prefix + chunk_index * rows_per;
+                    let mut counts = [0u64; 256];
+                    for (offset, record) in data_chunk.chunks_exact(width).enumerate() {
+                        let code = local
+                            .find_or_insert(data, width, start + offset, record, capacity)?
+                            .0;
+                        code_chunk[offset] = code;
+                        counts[code as usize] += 1;
+                    }
+                    Some((local.first_indices[base_len..local.len].to_vec(), counts))
+                })
+            })
+            .collect();
+        let mut discovered = Vec::with_capacity(handles.len());
+        for handle in handles {
+            discovered.push(
+                handle
+                    .join()
+                    .expect("compact-factorization worker panicked")?,
+            );
+        }
+        Some(discovered)
+    })?;
+
+    for (chunk, _) in &discoveries {
+        for row_index in chunk {
+            let row_index = *row_index as usize;
+            let record = &data[row_index * width..(row_index + 1) * width];
+            codebook.find_or_insert(data, width, row_index, record, capacity)?;
+        }
+    }
+    if codebook.len == base_len {
+        let mut counts = prefix_counts;
+        for (_, part) in discoveries {
+            for (total, value) in counts.iter_mut().zip(part) {
+                *total += value;
+            }
+        }
+        return Some(CompactFactorization { codebook, counts });
+    }
+
+    // At least one category first appeared beyond the prefix. Worker-local
+    // provisional codes can differ, so overwrite every row from the merged
+    // first-seen codebook. This uncommon path still has bounded memory.
+    let rows_per = n.div_ceil(threads);
+    let data_per = rows_per * width;
+    let parts = std::thread::scope(|scope| -> Option<Vec<[u64; 256]>> {
+        let handles: Vec<_> = data
+            .chunks(data_per)
+            .zip(codes.chunks_mut(rows_per))
+            .map(|(data_chunk, code_chunk)| {
+                let codebook = &codebook;
+                scope.spawn(move || -> Option<[u64; 256]> {
+                    let mut counts = [0u64; 256];
+                    for (record, output) in data_chunk.chunks_exact(width).zip(code_chunk) {
+                        let hash = compact_record_hash(record);
+                        let code = codebook.lookup(data, width, record, hash)?;
+                        *output = code;
+                        counts[code as usize] += 1;
+                    }
+                    Some(counts)
+                })
+            })
+            .collect();
+        let mut parts = Vec::with_capacity(handles.len());
+        for handle in handles {
+            parts.push(
+                handle
+                    .join()
+                    .expect("compact-factorization retry worker panicked")?,
+            );
+        }
+        Some(parts)
+    })?;
+    let mut counts = [0u64; 256];
+    for part in parts {
+        for (total, value) in counts.iter_mut().zip(part) {
+            *total += value;
+        }
+    }
+    Some(CompactFactorization { codebook, counts })
+}
+
+/// Direct-value specialization for one-byte records. A bounded prefix usually
+/// establishes the complete value→code table; workers then encode disjoint
+/// spans and accumulate raw-value counts in one pass. Values first seen later
+/// are ordered by their global first row and trigger one cheap remap pass.
+fn factorize_byte_values_parallel(
+    data: &[u8],
+    codes: &mut [u8],
+    capacity: usize,
+    threads: usize,
+) -> Option<CompactFactorization> {
+    const PROBE_ROWS: usize = 4096;
+    let prefix = data.len().min(PROBE_ROWS);
+    let mut table = [u16::MAX; 256];
+    let mut codebook = CompactCodebook::new();
+    let mut raw_counts = [0u64; 256];
+    for (row, &value) in data[..prefix].iter().enumerate() {
+        let entry = &mut table[value as usize];
+        if *entry == u16::MAX {
+            if codebook.len >= capacity {
+                return None;
+            }
+            *entry = codebook.len as u16;
+            codebook.first_indices[codebook.len] = row as u32;
+            codebook.len += 1;
+        }
+        codes[row] = *entry as u8;
+        raw_counts[value as usize] += 1;
+    }
+    if prefix < data.len() {
+        let remaining = data.len() - prefix;
+        let per = remaining.div_ceil(threads);
+        let parts = std::thread::scope(|scope| {
+            let handles: Vec<_> = data[prefix..]
+                .chunks(per)
+                .zip(codes[prefix..].chunks_mut(per))
+                .enumerate()
+                .map(|(chunk_index, (values, outputs))| {
+                    let table = &table;
+                    scope.spawn(move || {
+                        let start = prefix + chunk_index * per;
+                        let mut counts = [0u64; 256];
+                        let mut first = [u32::MAX; 256];
+                        for (offset, (&value, output)) in values.iter().zip(outputs).enumerate() {
+                            let value_index = value as usize;
+                            counts[value_index] += 1;
+                            let entry = table[value_index];
+                            if entry == u16::MAX {
+                                first[value_index] =
+                                    first[value_index].min((start + offset) as u32);
+                                *output = 0;
+                            } else {
+                                *output = entry as u8;
+                            }
+                        }
+                        (counts, first)
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("byte-factorization worker panicked"))
+                .collect::<Vec<_>>()
+        });
+        let mut late_first = [u32::MAX; 256];
+        for (counts, first) in parts {
+            for value in 0..256 {
+                raw_counts[value] += counts[value];
+                late_first[value] = late_first[value].min(first[value]);
+            }
+        }
+        let mut late: Vec<(u32, usize)> = late_first
+            .iter()
+            .enumerate()
+            .filter_map(|(value, &row)| (row != u32::MAX).then_some((row, value)))
+            .collect();
+        late.sort_unstable();
+        for (row, value) in &late {
+            if codebook.len >= capacity {
+                return None;
+            }
+            table[*value] = codebook.len as u16;
+            codebook.first_indices[codebook.len] = *row;
+            codebook.len += 1;
+        }
+        if !late.is_empty() {
+            let per = data.len().div_ceil(threads);
+            std::thread::scope(|scope| {
+                for (values, outputs) in data.chunks(per).zip(codes.chunks_mut(per)) {
+                    let table = &table;
+                    scope.spawn(move || {
+                        for (&value, output) in values.iter().zip(outputs) {
+                            *output = table[value as usize] as u8;
+                        }
+                    });
+                }
+            });
+        }
+    }
+    let mut counts = [0u64; 256];
+    for (value, &count) in raw_counts.iter().enumerate() {
+        let code = table[value];
+        if code != u16::MAX {
+            counts[code as usize] = count;
+        }
+    }
+    Some(CompactFactorization { codebook, counts })
+}
+
+const UNICODE_CODEPOINT_DOMAIN: usize = 0x11_0000;
+
+struct UnicodeFactorPart {
+    counts: [u64; 256],
+    late: Vec<(u32, u32)>,
+}
+
+#[inline(always)]
+fn decode_codepoint(value: u32, swap_endian: bool) -> u32 {
+    if swap_endian {
+        value.swap_bytes()
+    } else {
+        value
+    }
+}
+
+/// Factor NumPy-style one-codepoint Unicode records through their bounded
+/// scalar domain instead of hashing four-byte records. `swap_endian` supports
+/// non-native NumPy dtypes without copying the source column.
+pub fn factorize_unicode1_u8_counts_into(
+    values: &[u32],
+    swap_endian: bool,
+    codes: &mut [u8],
+    unique_indices: &mut [u32],
+    counts: &mut [u64],
+) -> Option<usize> {
+    if values.len() > u32::MAX as usize
+        || codes.len() < values.len()
+        || unique_indices.len() > 256
+        || counts.len() < unique_indices.len()
+    {
+        return None;
+    }
+    if values.is_empty() {
+        return Some(0);
+    }
+    let capacity = unique_indices.len();
+    let mut table = vec![u16::MAX; UNICODE_CODEPOINT_DOMAIN];
+    let mut unique_count = 0usize;
+    let mut result_counts = [0u64; 256];
+    let threads = factorize_threads(values.len());
+    const PROBE_ROWS: usize = 4096;
+    let prefix = if threads > 1 {
+        values.len().min(PROBE_ROWS)
+    } else {
+        values.len()
+    };
+    for (row, &raw) in values[..prefix].iter().enumerate() {
+        let value = decode_codepoint(raw, swap_endian) as usize;
+        let entry = table.get_mut(value)?;
+        if *entry == u16::MAX {
+            if unique_count >= capacity {
+                return None;
+            }
+            *entry = unique_count as u16;
+            unique_indices[unique_count] = row as u32;
+            unique_count += 1;
+        }
+        let code = *entry as u8;
+        codes[row] = code;
+        result_counts[code as usize] += 1;
+    }
+    if prefix == values.len() {
+        counts[..unique_count].copy_from_slice(&result_counts[..unique_count]);
+        return Some(unique_count);
+    }
+
+    let remaining = values.len() - prefix;
+    let per = remaining.div_ceil(threads);
+    let parts = std::thread::scope(|scope| -> Option<Vec<UnicodeFactorPart>> {
+        let handles: Vec<_> = values[prefix..]
+            .chunks(per)
+            .zip(codes[prefix..].chunks_mut(per))
+            .enumerate()
+            .map(|(chunk_index, (value_chunk, code_chunk))| {
+                let table = &table;
+                scope.spawn(move || -> Option<UnicodeFactorPart> {
+                    let start = prefix + chunk_index * per;
+                    let mut local_counts = [0u64; 256];
+                    let mut late: HashMap<u32, u32> = HashMap::new();
+                    for (offset, (&raw, output)) in value_chunk.iter().zip(code_chunk).enumerate() {
+                        let value = decode_codepoint(raw, swap_endian);
+                        let entry = *table.get(value as usize)?;
+                        if entry == u16::MAX {
+                            late.entry(value).or_insert((start + offset) as u32);
+                            *output = 0;
+                        } else {
+                            let code = entry as u8;
+                            *output = code;
+                            local_counts[code as usize] += 1;
+                        }
+                    }
+                    let mut late: Vec<(u32, u32)> =
+                        late.into_iter().map(|(value, row)| (row, value)).collect();
+                    late.sort_unstable();
+                    Some(UnicodeFactorPart {
+                        counts: local_counts,
+                        late,
+                    })
+                })
+            })
+            .collect();
+        let mut parts = Vec::with_capacity(handles.len());
+        for handle in handles {
+            parts.push(
+                handle
+                    .join()
+                    .expect("unicode-factorization worker panicked")?,
+            );
+        }
+        Some(parts)
+    })?;
+
+    let prefix_unique_count = unique_count;
+    for part in &parts {
+        for &(row, value) in &part.late {
+            let entry = &mut table[value as usize];
+            if *entry != u16::MAX {
+                continue;
+            }
+            if unique_count >= capacity {
+                return None;
+            }
+            *entry = unique_count as u16;
+            unique_indices[unique_count] = row;
+            unique_count += 1;
+        }
+    }
+    if unique_count == prefix_unique_count {
+        for part in parts {
+            for (total, value) in result_counts.iter_mut().zip(part.counts) {
+                *total += value;
+            }
+        }
+    } else {
+        result_counts.fill(0);
+        let per = values.len().div_ceil(threads);
+        let parts = std::thread::scope(|scope| {
+            let handles: Vec<_> = values
+                .chunks(per)
+                .zip(codes.chunks_mut(per))
+                .map(|(value_chunk, code_chunk)| {
+                    let table = &table;
+                    scope.spawn(move || {
+                        let mut local_counts = [0u64; 256];
+                        for (&raw, output) in value_chunk.iter().zip(code_chunk) {
+                            let value = decode_codepoint(raw, swap_endian) as usize;
+                            let code = table[value] as u8;
+                            *output = code;
+                            local_counts[code as usize] += 1;
+                        }
+                        local_counts
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .expect("unicode-factorization retry worker panicked")
+                })
+                .collect::<Vec<_>>()
+        });
+        for part in parts {
+            for (total, value) in result_counts.iter_mut().zip(part) {
+                *total += value;
+            }
+        }
+    }
+    counts[..unique_count].copy_from_slice(&result_counts[..unique_count]);
+    Some(unique_count)
+}
+
+fn factorize_fixed_u8_impl(
+    data: &[u8],
+    width: usize,
+    codes: &mut [u8],
+    capacity: usize,
+) -> Option<CompactFactorization> {
+    if data.len().checked_rem(width) != Some(0) || capacity > 256 {
+        return None;
+    }
+    let n = data.len() / width;
+    if codes.len() < n || n > u32::MAX as usize {
+        return None;
+    }
+
+    let threads = factorize_threads(n);
+    // Single-byte records have a perfect direct codebook. This covers bool
+    // and byte-valued labels without hashing or collision checks.
+    if width == 1 {
+        if threads > 1 {
+            return factorize_byte_values_parallel(data, codes, capacity, threads);
+        }
+        let mut table = [u16::MAX; 256];
+        let mut codebook = CompactCodebook::new();
+        let mut counts = [0u64; 256];
+        for (row_index, &value) in data.iter().enumerate() {
+            let entry = &mut table[value as usize];
+            if *entry == u16::MAX {
+                if codebook.len >= capacity {
+                    return None;
+                }
+                *entry = codebook.len as u16;
+                codebook.first_indices[codebook.len] = u32::try_from(row_index).ok()?;
+                codebook.len += 1;
+            }
+            let code = *entry as u8;
+            codes[row_index] = code;
+            counts[code as usize] += 1;
+        }
+        return Some(CompactFactorization { codebook, counts });
+    }
+
+    // The fixed 512-slot codebook is bounded by the u8 palette contract and
+    // stays in L1. Full-record equality resolves every hash collision.
+    if threads > 1 {
+        factorize_fixed_u8_parallel(data, width, codes, capacity, threads)
+    } else {
+        factorize_fixed_u8_serial(data, width, codes, capacity)
+    }
+}
+
+pub fn factorize_fixed_u8_into(
+    data: &[u8],
+    width: usize,
+    codes: &mut [u8],
+    unique_indices: &mut [u32],
+) -> Option<usize> {
+    let factorized = factorize_fixed_u8_impl(data, width, codes, unique_indices.len())?;
+    let count = factorized.codebook.len;
+    unique_indices[..count].copy_from_slice(&factorized.codebook.first_indices[..count]);
+    Some(count)
+}
+
+/// Compact fixed-record factorization plus exact per-code counts from the same
+/// pass. Counts follow first-seen code order and are written through `count`.
+pub fn factorize_fixed_u8_counts_into(
+    data: &[u8],
+    width: usize,
+    codes: &mut [u8],
+    unique_indices: &mut [u32],
+    counts: &mut [u64],
+) -> Option<usize> {
+    if counts.len() < unique_indices.len() {
+        return None;
+    }
+    let factorized = factorize_fixed_u8_impl(data, width, codes, unique_indices.len())?;
+    let count = factorized.codebook.len;
+    unique_indices[..count].copy_from_slice(&factorized.codebook.first_indices[..count]);
+    counts[..count].copy_from_slice(&factorized.counts[..count]);
+    Some(count)
+}
+
+/// Apply a compact codebook permutation in place.
+pub fn remap_u8_inplace(values: &mut [u8], mapping: &[u8]) -> bool {
+    for value in values {
+        let Some(&mapped) = mapping.get(usize::from(*value)) else {
+            return false;
+        };
+        *value = mapped;
+    }
+    true
+}
+
 /// One-pass statistics for a chunk of a column (§22).
 ///
 /// Non-finite values (NaN and ±∞) count as nulls: neither is plottable, both
@@ -18,6 +693,7 @@
 /// poison min/max/sum for autorange. Treating them uniformly as invalid is what
 /// lets autorange, `null_count`, and the ship-time drop all agree. (Arrow
 /// validity bitmaps arrive later; non-finite-as-null is the Phase-0 contract.)
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ZoneMap {
     pub min: f64,
@@ -51,27 +727,114 @@ pub const DEFAULT_CHUNK: usize = 65_536;
 /// Compute zone maps over `data` in chunks of `chunk_size`.
 pub fn zone_maps(data: &[f64], chunk_size: usize) -> Vec<ZoneMap> {
     assert!(chunk_size > 0, "chunk_size must be positive");
-    zone_maps_impl(data, chunk_size, par_threads(data.len()))
+    zone_maps_impl(data, chunk_size, zone_map_threads(data.len(), chunk_size))
+}
+
+/// Zone-map chunks are fully independent and produce no merge traffic, so
+/// they amortize fan-out much earlier than general row-scan kernels. Bound the
+/// workers by actual chunks: spawning many threads for two chunks only adds
+/// scheduler noise. CodSpeed's instruction simulator sums work across threads
+/// rather than measuring wall time, so keep its gate on the representative
+/// serial instruction path and cover fan-out with wall-clock benchmarks.
+fn zone_map_threads(n: usize, chunk_size: usize) -> usize {
+    static CODSPEED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let codspeed = *CODSPEED.get_or_init(|| std::env::var_os("CODSPEED_ENV").is_some());
+    let cores = std::thread::available_parallelism().map_or(1, |p| p.get());
+    zone_map_threads_for(n, chunk_size, cores, codspeed)
+}
+
+fn zone_map_threads_for(n: usize, chunk_size: usize, cores: usize, codspeed: bool) -> usize {
+    let n_chunks = n.div_ceil(chunk_size);
+    // Require two complete chunks before paying spawn cost. Express this as
+    // division rather than `2 * chunk_size` so hostile ABI values cannot
+    // overflow usize before the guarded FFI call rejects/handles them.
+    if n / chunk_size < 2 || codspeed {
+        return 1;
+    }
+    cores.min(MAX_ROW_THREADS).min(n_chunks).max(1)
 }
 
 fn zone_map_one(chunk: &[f64]) -> ZoneMap {
     let mut zm = ZoneMap::empty();
     for &v in chunk {
-        if !v.is_finite() {
-            zm.null_count += 1;
-        } else {
-            zm.count += 1;
-            zm.min = zm.min.min(v);
-            zm.max = zm.max.max(v);
-            if v > 0.0 {
-                zm.positive_min = zm.positive_min.min(v);
-                zm.positive_max = zm.positive_max.max(v);
-            }
-            zm.sum += v;
-            zm.sum_sq += v * v;
-        }
+        zone_map_update(&mut zm, v);
     }
     zm
+}
+
+#[inline(always)]
+fn zone_map_update(zm: &mut ZoneMap, value: f64) {
+    if !value.is_finite() {
+        zm.null_count += 1;
+    } else {
+        zm.count += 1;
+        zm.min = zm.min.min(value);
+        zm.max = zm.max.max(value);
+        if value > 0.0 {
+            zm.positive_min = zm.positive_min.min(value);
+            zm.positive_max = zm.positive_max.max(value);
+        }
+        zm.sum += value;
+        zm.sum_sq += value * value;
+    }
+}
+
+fn zone_map_pair_one(x: &[f64], y: &[f64]) -> (ZoneMap, ZoneMap) {
+    debug_assert_eq!(x.len(), y.len());
+    let mut x_map = ZoneMap::empty();
+    let mut y_map = ZoneMap::empty();
+    for (&x_value, &y_value) in x.iter().zip(y) {
+        zone_map_update(&mut x_map, x_value);
+        zone_map_update(&mut y_map, y_value);
+    }
+    (x_map, y_map)
+}
+
+/// Compute two equal-length columns' independent zone maps in one scoped
+/// parallel call. Each column keeps its original row order within every chunk,
+/// so all floating reductions are bit-identical to separate [`zone_maps`]
+/// calls.
+pub fn zone_maps_pair(
+    x: &[f64],
+    y: &[f64],
+    chunk_size: usize,
+) -> Option<(Vec<ZoneMap>, Vec<ZoneMap>)> {
+    if x.len() != y.len() || chunk_size == 0 {
+        return None;
+    }
+    let n_chunks = x.len().div_ceil(chunk_size);
+    let threads = zone_map_threads(x.len(), chunk_size);
+    if threads <= 1 || n_chunks < 2 {
+        let (x_maps, y_maps): (Vec<_>, Vec<_>) = x
+            .chunks(chunk_size)
+            .zip(y.chunks(chunk_size))
+            .map(|(x_chunk, y_chunk)| zone_map_pair_one(x_chunk, y_chunk))
+            .unzip();
+        return Some((x_maps, y_maps));
+    }
+    let per = n_chunks.div_ceil(threads);
+    let parts = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..threads)
+            .map(|thread| {
+                let lo = (thread * per * chunk_size).min(x.len());
+                let hi = ((thread + 1) * per * chunk_size).min(x.len());
+                let x_segment = &x[lo..hi];
+                let y_segment = &y[lo..hi];
+                scope.spawn(move || {
+                    x_segment
+                        .chunks(chunk_size)
+                        .zip(y_segment.chunks(chunk_size))
+                        .map(|(x_chunk, y_chunk)| zone_map_pair_one(x_chunk, y_chunk))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("zone-map-pair worker panicked"))
+            .collect::<Vec<_>>()
+    });
+    Some(parts.into_iter().unzip())
 }
 
 /// Chunks are independent, so ingest fans out across cores by splitting at
@@ -225,7 +988,9 @@ fn histogram_edge_bin(value: f64, edges: &[f64]) -> Option<usize> {
         return Some(edges.len() - 2);
     }
     let upper = edges.partition_point(|edge| *edge <= value);
-    upper.checked_sub(1).filter(|index| *index + 1 < edges.len())
+    upper
+        .checked_sub(1)
+        .filter(|index| *index + 1 < edges.len())
 }
 
 /// Weighted 2-D histogram over arbitrary monotonically increasing edges.
@@ -470,8 +1235,12 @@ pub fn sector_triangles_into(
 ) -> Option<usize> {
     if values.is_empty()
         || (!explode.is_empty() && explode.len() != values.len())
-        || !values.iter().all(|value| value.is_finite() && *value >= 0.0)
-        || !explode.iter().all(|value| value.is_finite() && *value >= 0.0)
+        || !values
+            .iter()
+            .all(|value| value.is_finite() && *value >= 0.0)
+        || !explode
+            .iter()
+            .all(|value| value.is_finite() && *value >= 0.0)
         || !center_x.is_finite()
         || !center_y.is_finite()
         || !radius.is_finite()
@@ -656,9 +1425,7 @@ fn spectral_window(nfft: usize) -> Vec<f64> {
         return vec![1.0; nfft];
     }
     (0..nfft)
-        .map(|index| {
-            0.5 - 0.5 * (std::f64::consts::TAU * index as f64 / (nfft - 1) as f64).cos()
-        })
+        .map(|index| 0.5 - 0.5 * (std::f64::consts::TAU * index as f64 / (nfft - 1) as f64).cos())
         .collect()
 }
 
@@ -833,7 +1600,11 @@ pub fn spectrogram_into(
         *frequency = bin as f64 * sample_rate / nfft as f64;
     }
     for segment in 0..segments {
-        let start = if data.len() <= nfft { 0 } else { segment * stride };
+        let start = if data.len() <= nfft {
+            0
+        } else {
+            segment * stride
+        };
         let (real, imag) = windowed_fft(data, start, nfft, &window);
         out_time[segment] = (start as f64 + nfft as f64 * 0.5) / sample_rate;
         for bin in 0..bins {
@@ -842,9 +1613,9 @@ pub fn spectrogram_into(
             } else {
                 1.0
             };
-            out_power[segment * bins + bin] =
-                (real[bin] * real[bin] + imag[bin] * imag[bin]) * one_sided
-                    / (sample_rate * window_power);
+            out_power[segment * bins + bin] = (real[bin] * real[bin] + imag[bin] * imag[bin])
+                * one_sided
+                / (sample_rate * window_power);
         }
     }
     true
@@ -861,7 +1632,10 @@ pub fn correlation_into(
     out_lag: &mut [f64],
     out_correlation: &mut [f64],
 ) -> bool {
-    let Some(output_len) = max_lag.checked_mul(2).and_then(|value| value.checked_add(1)) else {
+    let Some(output_len) = max_lag
+        .checked_mul(2)
+        .and_then(|value| value.checked_add(1))
+    else {
         return false;
     };
     if x.len() != y.len()
@@ -896,7 +1670,11 @@ pub fn correlation_into(
             }
         }
         out_lag[output] = lag as f64;
-        out_correlation[output] = if denominator > 0.0 { sum / denominator } else { 0.0 };
+        out_correlation[output] = if denominator > 0.0 {
+            sum / denominator
+        } else {
+            0.0
+        };
     }
     true
 }
@@ -985,12 +1763,20 @@ pub fn indexed_triangles_into(
     let mut written = 0;
     for face in 0..count {
         let raw = &triangles[face * 3..face * 3 + 3];
-        if raw.iter().any(|index| *index < 0 || *index as usize >= x.len()) {
+        if raw
+            .iter()
+            .any(|index| *index < 0 || *index as usize >= x.len())
+        {
             continue;
         }
         let index = [raw[0] as usize, raw[1] as usize, raw[2] as usize];
         let coordinates = [
-            x[index[0]], y[index[0]], x[index[1]], y[index[1]], x[index[2]], y[index[2]],
+            x[index[0]],
+            y[index[0]],
+            x[index[1]],
+            y[index[1]],
+            x[index[2]],
+            y[index[2]],
         ];
         let scalar = match value_mode {
             0 => 0.0,
@@ -1038,17 +1824,27 @@ pub fn triangle_edges_into(
     let mut seen = std::collections::HashSet::with_capacity(capacity);
     let mut written = 0;
     for face in triangles.chunks_exact(3) {
-        if face.iter().any(|index| *index < 0 || *index as usize >= x.len()) {
+        if face
+            .iter()
+            .any(|index| *index < 0 || *index as usize >= x.len())
+        {
             continue;
         }
         for pair in [(face[0], face[1]), (face[1], face[2]), (face[2], face[0])] {
-            let key = if pair.0 < pair.1 { pair } else { (pair.1, pair.0) };
+            let key = if pair.0 < pair.1 {
+                pair
+            } else {
+                (pair.1, pair.0)
+            };
             if !seen.insert(key) {
                 continue;
             }
             let a = key.0 as usize;
             let b = key.1 as usize;
-            if ![x[a], y[a], x[b], y[b]].iter().all(|value| value.is_finite()) {
+            if ![x[a], y[a], x[b], y[b]]
+                .iter()
+                .all(|value| value.is_finite())
+            {
                 continue;
             }
             out_x0[written] = x[a];
@@ -1082,8 +1878,7 @@ fn circumcircle_contains(
         - (bx * bx + by * by) * (ax * cy - cx * ay)
         + (cx * cx + cy * cy) * (ax * by - bx * ay);
     let orientation = orient2d(a, b, c);
-    (orientation > 0.0 && determinant > epsilon)
-        || (orientation < 0.0 && determinant < -epsilon)
+    (orientation > 0.0 && determinant > epsilon) || (orientation < 0.0 && determinant < -epsilon)
 }
 
 /// Dependency-free Bowyer-Watson Delaunay triangulation for unstructured 2-D
@@ -1115,12 +1910,18 @@ pub fn delaunay_triangles(x: &[f64], y: &[f64]) -> Option<Vec<[i64; 3]>> {
     if points.len() < 3 {
         return None;
     }
-    let min_x = points.iter().map(|point| point.0).fold(f64::INFINITY, f64::min);
+    let min_x = points
+        .iter()
+        .map(|point| point.0)
+        .fold(f64::INFINITY, f64::min);
     let max_x = points
         .iter()
         .map(|point| point.0)
         .fold(f64::NEG_INFINITY, f64::max);
-    let min_y = points.iter().map(|point| point.1).fold(f64::INFINITY, f64::min);
+    let min_y = points
+        .iter()
+        .map(|point| point.1)
+        .fold(f64::INFINITY, f64::min);
     let max_y = points
         .iter()
         .map(|point| point.1)
@@ -1158,7 +1959,11 @@ pub fn delaunay_triangles(x: &[f64], y: &[f64]) -> Option<Vec<[i64; 3]>> {
                 (triangle[1], triangle[2]),
                 (triangle[2], triangle[0]),
             ] {
-                let key = if edge.0 < edge.1 { edge } else { (edge.1, edge.0) };
+                let key = if edge.0 < edge.1 {
+                    edge
+                } else {
+                    (edge.1, edge.0)
+                };
                 boundary
                     .entry(key)
                     .and_modify(|entry| entry.2 = entry.2.saturating_add(1))
@@ -1315,7 +2120,10 @@ pub fn marching_triangles_into(
         && out_levels.is_empty();
     let mut written = 0;
     for face in triangles.chunks_exact(3) {
-        if face.iter().any(|index| *index < 0 || *index as usize >= x.len()) {
+        if face
+            .iter()
+            .any(|index| *index < 0 || *index as usize >= x.len())
+        {
             continue;
         }
         let ids = [face[0] as usize, face[1] as usize, face[2] as usize];
@@ -1351,10 +2159,10 @@ pub fn marching_triangles_into(
             if count == 2 {
                 if !query
                     && (written >= out_x0.len()
-                    || written >= out_x1.len()
-                    || written >= out_y0.len()
-                    || written >= out_y1.len()
-                    || written >= out_levels.len())
+                        || written >= out_x1.len()
+                        || written >= out_y0.len()
+                        || written >= out_y1.len()
+                        || written >= out_levels.len())
                 {
                     return None;
                 }
@@ -1611,7 +2419,16 @@ pub fn m4_indices(x: &[f64], y: &[f64], x0: f64, x1: f64, n_buckets: usize) -> V
         return Vec::new();
     }
 
-    m4_indices_impl(x, y, x0, x1, n_buckets, start, end, par_threads(end - start))
+    m4_indices_impl(
+        x,
+        y,
+        x0,
+        x1,
+        n_buckets,
+        start,
+        end,
+        par_threads(end - start),
+    )
 }
 
 /// Emit one bucket's {first, min, max, last} rows, sorted and deduplicated.
@@ -1635,7 +2452,15 @@ pub(crate) fn m4_flush(first: u32, min_i: u32, max_i: u32, last: u32, out: &mut 
 /// SIMD restructure (precomputed bucket ids) measured *slower* (472 vs
 /// 915 Mpt/s at 1M) — the sequential bucket state machine dominates, and the
 /// extra block store/load pass outweighs vectorizing the cheap float math.
-fn m4_range(x: &[f64], y: &[f64], x0: f64, inv_bucket_w: f64, n_buckets: usize, lo: usize, hi: usize) -> Vec<u32> {
+fn m4_range(
+    x: &[f64],
+    y: &[f64],
+    x0: f64,
+    inv_bucket_w: f64,
+    n_buckets: usize,
+    lo: usize,
+    hi: usize,
+) -> Vec<u32> {
     let mut out: Vec<u32> = Vec::with_capacity((n_buckets * 4).min((hi - lo) * 4));
 
     // Per-bucket running state.
@@ -1818,10 +2643,7 @@ where
                     } else {
                         ((level - va) / denom).clamp(0.0, 1.0)
                     };
-                    (
-                        xa + (xb - xa) * fraction,
-                        ya + (yb - ya) * fraction,
-                    )
+                    (xa + (xb - xa) * fraction, ya + (yb - ya) * fraction)
                 };
                 for &(edge_a, edge_b) in pairs {
                     let (x0, y0) = edge_point(edge_a as usize);
@@ -1873,16 +2695,24 @@ pub fn marching_squares_into(
     assert_eq!(y1_out.len(), capacity);
     assert_eq!(level_out.len(), capacity);
     let mut written = 0usize;
-    marching_squares_scan(z, rows, cols, x_coords, y_coords, levels, |x0, x1, y0, y1, level| {
-        if written < capacity {
-            x0_out[written] = x0;
-            x1_out[written] = x1;
-            y0_out[written] = y0;
-            y1_out[written] = y1;
-            level_out[written] = level;
-        }
-        written += 1;
-    });
+    marching_squares_scan(
+        z,
+        rows,
+        cols,
+        x_coords,
+        y_coords,
+        levels,
+        |x0, x1, y0, y1, level| {
+            if written < capacity {
+                x0_out[written] = x0;
+                x1_out[written] = x1;
+                y0_out[written] = y0;
+                y1_out[written] = y1;
+                level_out[written] = level;
+            }
+            written += 1;
+        },
+    );
     written
 }
 
@@ -1906,26 +2736,126 @@ pub fn heatmap_rgba_into(
     {
         return false;
     }
-    let last = stops.len() - 1;
     for row in 0..h {
         let destination_row = h - 1 - row;
         for col in 0..w {
             let value = raw[row * w + col];
-            let t = ((value * 255.0 - 1.0) / 254.0).clamp(0.0, 1.0);
-            let position = t * last as f64;
-            let lo = position.floor() as usize;
-            let hi = (lo + 1).min(last);
-            let fraction = position - lo as f64;
             let destination = (destination_row * w + col) * 4;
-            for channel in 0..3 {
-                let start = stops[lo][channel] as f64;
-                let value = start + (stops[hi][channel] as f64 - start) * fraction;
-                out[destination + channel] = value.round_ties_even().clamp(0.0, 255.0) as u8;
-            }
-            out[destination + 3] = if value <= 0.0 { 0 } else { alpha };
+            out[destination..destination + 4].copy_from_slice(&heatmap_color(value, stops, alpha));
         }
     }
     true
+}
+
+/// Map one normalized heatmap scalar with the exact static-export semantics.
+/// Kept in one place so full-grid conversion and direct raster sampling cannot
+/// drift in rounding, missing-value, or alpha behavior.
+pub(crate) fn heatmap_color(value: f64, stops: &[[u8; 3]], alpha: u8) -> [u8; 4] {
+    debug_assert!(!stops.is_empty());
+    let t = ((value * 255.0 - 1.0) / 254.0).clamp(0.0, 1.0);
+    let mut color = colormap_color(t, stops, alpha);
+    if value <= 0.0 {
+        color[3] = 0;
+    }
+    color
+}
+
+/// Evenly spaced color-stop interpolation for a normalized scalar. Shared by
+/// heatmaps and borrowed per-mark color channels so ties-to-even byte rounding
+/// cannot drift between static chart families.
+pub(crate) fn colormap_color(value: f64, stops: &[[u8; 3]], alpha: u8) -> [u8; 4] {
+    debug_assert!(!stops.is_empty());
+    let last = stops.len() - 1;
+    let t = value.clamp(0.0, 1.0);
+    let position = t * last as f64;
+    let lo = position.floor() as usize;
+    let hi = (lo + 1).min(last);
+    let fraction = position - lo as f64;
+    let mut color = [0u8; 4];
+    for channel in 0..3 {
+        let start = stops[lo][channel] as f64;
+        let value = start + (stops[hi][channel] as f64 - start) * fraction;
+        color[channel] = value.round_ties_even().clamp(0.0, 255.0) as u8;
+    }
+    color[3] = alpha;
+    color
+}
+
+/// Map the compact log-u8 density wire directly to a top-row-first RGBA8
+/// image. This fuses log decode, colormap interpolation, alpha shaping, and
+/// vertical flip so static export never materializes three full-grid NumPy
+/// temporaries before entering the native rasterizer.
+pub fn density_rgba_into(
+    encoded: &[u8],
+    w: usize,
+    h: usize,
+    maximum: f64,
+    stops: &[[u8; 3]],
+    opacity: f64,
+    out: &mut [u8],
+) -> bool {
+    if w == 0
+        || h == 0
+        || encoded.len() != w.saturating_mul(h)
+        || out.len() != encoded.len().saturating_mul(4)
+    {
+        return false;
+    }
+    let Some(lut) = density_rgba_lut(maximum, stops, opacity) else {
+        return false;
+    };
+    for row in 0..h {
+        let destination_row = h - 1 - row;
+        for col in 0..w {
+            let code = encoded[row * w + col] as usize;
+            let destination = (destination_row * w + col) * 4;
+            out[destination..destination + 4].copy_from_slice(&lut[code]);
+        }
+    }
+    true
+}
+
+/// Precompute the exact log-u8 density colors once. The display-list
+/// rasterizer uses this table to sample compact density bytes directly,
+/// without expanding the full grid to a temporary RGBA image.
+pub(crate) fn density_rgba_lut(
+    maximum: f64,
+    stops: &[[u8; 3]],
+    opacity: f64,
+) -> Option<[[u8; 4]; 256]> {
+    if stops.is_empty()
+        || !maximum.is_finite()
+        || maximum < 0.0
+        || !opacity.is_finite()
+        || !(0.0..=1.0).contains(&opacity)
+    {
+        return None;
+    }
+    let last = stops.len() - 1;
+    let log_max = maximum.ln_1p();
+    let mut lut = [[0u8; 4]; 256];
+    for (code, color) in lut.iter_mut().enumerate() {
+        let t = if code == 0 || maximum <= 0.0 {
+            0.0
+        } else {
+            (((code as f64 / 255.0) * log_max).exp_m1() / maximum).clamp(0.0, 1.0)
+        };
+        let position = t * last as f64;
+        let lo = position.floor() as usize;
+        let hi = (lo + 1).min(last);
+        let fraction = position - lo as f64;
+        for channel in 0..3 {
+            let start = f64::from(stops[lo][channel]);
+            let value = start + (f64::from(stops[hi][channel]) - start) * fraction;
+            color[channel] = value.round_ties_even().clamp(0.0, 255.0) as u8;
+        }
+        color[3] = if code == 0 {
+            0
+        } else {
+            ((t * 1.35).clamp(0.0, 1.0) * 255.0 * opacity) as u8
+        };
+    }
+    Some(lut)
 }
 
 /// 2D density aggregation (§5 Tier 2): additively bin points into a `w × h`
@@ -1956,7 +2886,18 @@ pub fn bin_2d(
     assert_eq!(x.len(), y.len());
     assert_eq!(out.len(), w * h);
     assert!(w > 0 && h > 0 && x1_gt_x0(x0, x1) && x1_gt_x0(y0, y1));
-    bin_2d_impl(x, y, x0, x1, y0, y1, w, h, bin_2d_threads(x.len(), w * h), out);
+    bin_2d_impl(
+        x,
+        y,
+        x0,
+        x1,
+        y0,
+        y1,
+        w,
+        h,
+        bin_2d_threads(x.len(), w * h),
+        out,
+    );
 }
 
 /// Row-scan kernels fan out across cores only past this size, where thread
@@ -1965,8 +2906,17 @@ pub fn bin_2d(
 const PAR_THRESHOLD: usize = 1 << 19;
 
 fn par_threads(n: usize) -> usize {
+    static CODSPEED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *CODSPEED.get_or_init(|| std::env::var_os("CODSPEED_ENV").is_some()) {
+        return 1;
+    }
+    let cores = std::thread::available_parallelism().map_or(1, |p| p.get());
+    par_threads_for(n, cores)
+}
+
+fn par_threads_for(n: usize, cores: usize) -> usize {
     if n >= PAR_THRESHOLD {
-        std::thread::available_parallelism().map_or(1, |p| p.get().min(8))
+        cores.clamp(1, MAX_ROW_THREADS)
     } else {
         1
     }
@@ -2304,6 +3254,144 @@ fn bin_2d_indices_impl(
     write
 }
 
+/// Full-domain density first paint: build the grid and deterministically
+/// sample implicit row ids in one traversal. Unlike [`bin_2d_indices`], the
+/// sampled rows do not depend on the viewport predicate: callers use this
+/// only after proving every source row is visible. The two results are
+/// therefore exactly [`bin_2d`] and [`sample_range_indices`] for the same
+/// arguments, while interleaving the independent grid and SplitMix work lets
+/// the CPU overlap their latency.
+#[allow(clippy::too_many_arguments)]
+pub fn bin_2d_sample_range(
+    x: &[f64],
+    y: &[f64],
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    seed: u64,
+    threshold: u64,
+    out: &mut [f32],
+) -> Vec<u32> {
+    assert_eq!(x.len(), y.len());
+    assert!(x.len() <= u32::MAX as usize);
+    assert_eq!(out.len(), w * h);
+    assert!(w > 0 && h > 0 && x1_gt_x0(x0, x1) && x1_gt_x0(y0, y1));
+    let threads = bin_2d_threads(x.len(), w * h);
+    bin_2d_sample_range_impl(x, y, x0, x1, y0, y1, w, h, seed, threshold, threads, out)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bin_2d_sample_range_scan(
+    x: &[f64],
+    y: &[f64],
+    base: usize,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    seed: u64,
+    threshold: u64,
+    grid: &mut [u32],
+) -> Vec<u32> {
+    let sx = w as f64 / (x1 - x0);
+    let sy = h as f64 / (y1 - y0);
+    let mut selected = Vec::with_capacity(sample_expected_capacity(x.len(), threshold));
+    for i in 0..x.len() {
+        let row = base + i;
+        if splitmix64(row as u64, seed) <= threshold {
+            selected.push(row as u32);
+        }
+        let xv = x[i];
+        let yv = y[i];
+        if !xv.is_finite() || !yv.is_finite() || xv < x0 || xv >= x1 || yv < y0 || yv >= y1 {
+            continue;
+        }
+        let cx = (((xv - x0) * sx) as usize).min(w - 1);
+        let cy = (((yv - y0) * sy) as usize).min(h - 1);
+        grid[cy * w + cx] = grid[cy * w + cx].saturating_add(1);
+    }
+    selected
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bin_2d_sample_range_impl(
+    x: &[f64],
+    y: &[f64],
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    seed: u64,
+    threshold: u64,
+    threads: usize,
+    out: &mut [f32],
+) -> Vec<u32> {
+    let n = x.len();
+    if threads <= 1 || n < threads {
+        let mut grid = vec![0u32; w * h];
+        let selected =
+            bin_2d_sample_range_scan(x, y, 0, x0, x1, y0, y1, w, h, seed, threshold, &mut grid);
+        for (o, c) in out.iter_mut().zip(grid) {
+            *o = c as f32;
+        }
+        return selected;
+    }
+
+    let chunk = n.div_ceil(threads);
+    let parts: Vec<(Vec<u32>, Vec<u32>)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = x
+            .chunks(chunk)
+            .zip(y.chunks(chunk))
+            .enumerate()
+            .map(|(thread, (xs, ys))| {
+                let base = thread * chunk;
+                scope.spawn(move || {
+                    let mut grid = vec![0u32; w * h];
+                    let selected = bin_2d_sample_range_scan(
+                        xs, ys, base, x0, x1, y0, y1, w, h, seed, threshold, &mut grid,
+                    );
+                    (grid, selected)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("bin_2d_sample_range worker panicked"))
+            .collect()
+    });
+
+    let cell_chunk = (w * h).div_ceil(threads);
+    std::thread::scope(|scope| {
+        for (part_index, out_part) in out.chunks_mut(cell_chunk).enumerate() {
+            let base = part_index * cell_chunk;
+            let parts = &parts;
+            scope.spawn(move || {
+                for (offset, cell) in out_part.iter_mut().enumerate() {
+                    let count: u64 = parts
+                        .iter()
+                        .map(|(grid, _)| u64::from(grid[base + offset]))
+                        .sum();
+                    *cell = count as f32;
+                }
+            });
+        }
+    });
+
+    let selected_len = parts.iter().map(|(_, rows)| rows.len()).sum();
+    let mut selected = Vec::with_capacity(selected_len);
+    for (_, rows) in parts {
+        selected.extend(rows);
+    }
+    selected
+}
+
 const SPLITMIX_INCREMENT: u64 = 0x9E37_79B9_7F4A_7C15;
 const SPLITMIX_MUL_1: u64 = 0xBF58_476D_1CE4_E5B9;
 const SPLITMIX_MUL_2: u64 = 0x94D0_49BB_1331_11EB;
@@ -2319,6 +3407,15 @@ fn splitmix64(id: u64, seed: u64) -> u64 {
     z ^ (z >> 31)
 }
 
+fn sample_expected_capacity(size: usize, threshold: u64) -> usize {
+    let fraction = if threshold == u64::MAX {
+        1.0
+    } else {
+        threshold as f64 / u64::MAX as f64
+    };
+    ((size as f64 * fraction).ceil() as usize).saturating_add(16)
+}
+
 /// Deterministic sampling mask: `out[i] = splitmix64(ids[i], seed) <= threshold`.
 /// One fused pass — the NumPy expression allocates five full-width u64
 /// temporaries (~80 MB each at 10M rows) and dominated the density payload
@@ -2326,6 +3423,414 @@ fn splitmix64(id: u64, seed: u64) -> u64 {
 pub fn sample_mask(ids: &[u64], seed: u64, threshold: u64, out: &mut [u8]) {
     assert_eq!(ids.len(), out.len());
     sample_mask_impl(ids, seed, threshold, par_threads(ids.len()), out)
+}
+
+/// Deterministically sample implicit row ids `0..size` without materializing
+/// the input ids or a byte mask.  The returned indices are ascending and are
+/// bit-identical to filtering `arange(size)` with [`sample_mask`].
+///
+/// This is the common full-domain density-overlay path.  Its live memory is
+/// proportional to the selected rows rather than the source row count.
+pub fn sample_range_indices(size: usize, seed: u64, threshold: u64) -> Vec<u32> {
+    assert!(size <= u32::MAX as usize);
+    if size == 0 {
+        return Vec::new();
+    }
+    let threads = par_threads(size).min(size);
+    let per = size.div_ceil(threads);
+    let chunks: Vec<Vec<u32>> = std::thread::scope(|s| {
+        let handles: Vec<_> = (0..threads)
+            .filter_map(|thread| {
+                let start = thread * per;
+                let stop = (start + per).min(size);
+                (start < stop).then(|| {
+                    s.spawn(move || {
+                        let mut selected =
+                            Vec::with_capacity(sample_expected_capacity(stop - start, threshold));
+                        for id in start..stop {
+                            if splitmix64(id as u64, seed) <= threshold {
+                                selected.push(id as u32);
+                            }
+                        }
+                        selected
+                    })
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("sample-range worker panicked"))
+            .collect()
+    });
+    let total = chunks.iter().map(Vec::len).sum();
+    let mut selected = Vec::with_capacity(total);
+    for chunk in chunks {
+        selected.extend(chunk);
+    }
+    selected
+}
+
+/// Category-stratified sampling for implicit row ids `0..groups.len()`.
+///
+/// This is the full-domain categorical density-overlay path. It is equivalent
+/// to [`stratified_sample_mask`] followed by filtering the implicit ids, but
+/// never allocates an ids array or a source-sized byte mask. The result is
+/// ascending, so it can index canonical columns directly.
+///
+/// `groups[i]` must be `< n_groups`; returns `None` for an invalid code or
+/// empty group domain.
+pub fn stratified_sample_range_u8(
+    groups: &[u8],
+    n_groups: usize,
+    seed: u64,
+    fraction: f64,
+    min_count: u64,
+) -> Option<Vec<u32>> {
+    if n_groups == 0 || n_groups > 256 || groups.len() > u32::MAX as usize {
+        return None;
+    }
+    if groups.is_empty() {
+        return Some(Vec::new());
+    }
+
+    let mut counts = vec![0u64; n_groups];
+    for &group in groups {
+        *counts.get_mut(group as usize)? += 1;
+    }
+    stratified_sample_range_u8_counted(groups, &counts, seed, fraction, min_count)
+}
+
+/// As [`stratified_sample_range_u8`], reusing exact per-code counts produced
+/// during factorization. `counts` must cover every dense code and sum to the
+/// source length; malformed codes are still rejected during selection.
+pub fn stratified_sample_range_u8_counted(
+    groups: &[u8],
+    counts: &[u64],
+    seed: u64,
+    fraction: f64,
+    min_count: u64,
+) -> Option<Vec<u32>> {
+    if counts.is_empty()
+        || counts.len() > 256
+        || groups.len() > u32::MAX as usize
+        || counts
+            .iter()
+            .try_fold(0u64, |sum, &count| sum.checked_add(count))?
+            != groups.len() as u64
+    {
+        return None;
+    }
+    if groups.is_empty() {
+        return Some(Vec::new());
+    }
+    stratified_sample_range_u8_from_counts(groups, counts, seed, fraction, min_count)
+}
+
+fn stratified_sample_range_u8_from_counts(
+    groups: &[u8],
+    counts: &[u64],
+    seed: u64,
+    fraction: f64,
+    min_count: u64,
+) -> Option<Vec<u32>> {
+    let n_groups = counts.len();
+    let n = groups.len() as f64;
+    let thresholds: Vec<u64> = counts
+        .iter()
+        .map(|&count| sample_threshold(fraction * (n / count as f64).sqrt()))
+        .collect();
+
+    let threads = par_threads(groups.len());
+    let per = groups.len().div_ceil(threads);
+    let thresholds_ref = &thresholds;
+    let chunks = std::thread::scope(|scope| -> Option<Vec<(Vec<u32>, Vec<u64>)>> {
+        let handles: Vec<_> = groups
+            .chunks(per)
+            .enumerate()
+            .map(|(chunk_index, chunk)| {
+                scope.spawn(move || -> Option<(Vec<u32>, Vec<u64>)> {
+                    let start = chunk_index * per;
+                    let mut selected = Vec::new();
+                    let mut kept = vec![0u64; n_groups];
+                    for (offset, &group) in chunk.iter().enumerate() {
+                        let row = start + offset;
+                        let threshold = *thresholds_ref.get(group as usize)?;
+                        if splitmix64(row as u64, seed) <= threshold {
+                            selected.push(row as u32);
+                            kept[group as usize] += 1;
+                        }
+                    }
+                    Some((selected, kept))
+                })
+            })
+            .collect();
+        let mut chunks = Vec::with_capacity(handles.len());
+        for handle in handles {
+            chunks.push(handle.join().expect("stratified-range worker panicked")?);
+        }
+        Some(chunks)
+    })?;
+
+    let mut kept = vec![0u64; n_groups];
+    let selected_len = chunks.iter().map(|(rows, _)| rows.len()).sum();
+    let mut selected = Vec::with_capacity(selected_len);
+    for (rows, part_kept) in chunks {
+        selected.extend(rows);
+        for (total, part) in kept.iter_mut().zip(part_kept) {
+            *total += part;
+        }
+    }
+
+    complete_stratified_sample_range(groups, counts, seed, min_count, selected, &kept)
+}
+
+/// Apply the per-category minimum to threshold-selected rows. Shared by the
+/// standalone and bin-fused paths so rare-category behavior cannot drift.
+fn complete_stratified_sample_range(
+    groups: &[u8],
+    counts: &[u64],
+    seed: u64,
+    min_count: u64,
+    mut selected: Vec<u32>,
+    kept: &[u64],
+) -> Option<Vec<u32>> {
+    // The threshold survivors already include every hash below the cutoff.
+    // If a group misses its floor, merge in that group's globally lowest
+    // hashes. Bounded max-heaps retain only the required floor rows rather
+    // than materializing a pool for every source row.
+    let n_groups = counts.len();
+    let floors: Vec<usize> = counts
+        .iter()
+        .map(|&count| min_count.min(count) as usize)
+        .collect();
+    if floors
+        .iter()
+        .zip(kept)
+        .any(|(&floor, &count)| count < floor as u64)
+    {
+        let deficient: Vec<bool> = floors
+            .iter()
+            .zip(kept)
+            .map(|(&floor, &count)| count < floor as u64)
+            .collect();
+        let mut lowest: Vec<BinaryHeap<(u64, u32)>> =
+            (0..n_groups).map(|_| BinaryHeap::new()).collect();
+        for (row, &group) in groups.iter().enumerate() {
+            let group = group as usize;
+            if group >= n_groups {
+                return None;
+            }
+            if !deficient[group] {
+                continue;
+            }
+            let candidate = (splitmix64(row as u64, seed), row as u32);
+            let heap = &mut lowest[group];
+            if heap.len() < floors[group] {
+                heap.push(candidate);
+            } else if heap.peek().is_some_and(|largest| candidate < *largest) {
+                heap.pop();
+                heap.push(candidate);
+            }
+        }
+        for heap in lowest {
+            selected.extend(heap.into_iter().map(|(_, row)| row));
+        }
+        selected.sort_unstable();
+        selected.dedup();
+    }
+    Some(selected)
+}
+
+/// Full-domain categorical density first paint. The grid is identical to
+/// [`bin_2d`], while sampled rows are identical to
+/// [`stratified_sample_range_u8_counted`]. Interleaving the independent work
+/// avoids a second source-sized traversal and retains bounded sample scratch.
+#[allow(clippy::too_many_arguments)]
+pub fn bin_2d_stratified_sample_range_u8_counted(
+    x: &[f64],
+    y: &[f64],
+    groups: &[u8],
+    counts: &[u64],
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    seed: u64,
+    fraction: f64,
+    min_count: u64,
+    out: &mut [f32],
+) -> Option<Vec<u32>> {
+    assert_eq!(x.len(), y.len());
+    assert_eq!(x.len(), groups.len());
+    assert_eq!(out.len(), w * h);
+    assert!(w > 0 && h > 0 && x1_gt_x0(x0, x1) && x1_gt_x0(y0, y1));
+    if counts.is_empty()
+        || counts.len() > 256
+        || groups.len() > u32::MAX as usize
+        || counts
+            .iter()
+            .try_fold(0u64, |sum, &count| sum.checked_add(count))?
+            != groups.len() as u64
+    {
+        return None;
+    }
+    if groups.is_empty() {
+        out.fill(0.0);
+        return Some(Vec::new());
+    }
+    let thresholds: Vec<u64> = counts
+        .iter()
+        .map(|&count| sample_threshold(fraction * (groups.len() as f64 / count as f64).sqrt()))
+        .collect();
+    let threads = bin_2d_threads(x.len(), w * h);
+    bin_2d_stratified_sample_range_u8_impl(
+        x,
+        y,
+        groups,
+        counts,
+        &thresholds,
+        x0,
+        x1,
+        y0,
+        y1,
+        w,
+        h,
+        seed,
+        min_count,
+        threads,
+        out,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bin_2d_stratified_sample_range_u8_scan(
+    x: &[f64],
+    y: &[f64],
+    groups: &[u8],
+    thresholds: &[u64],
+    base: usize,
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    seed: u64,
+    grid: &mut [u32],
+) -> Option<(Vec<u32>, Vec<u64>)> {
+    let sx = w as f64 / (x1 - x0);
+    let sy = h as f64 / (y1 - y0);
+    let mut selected = Vec::new();
+    let mut kept = vec![0u64; thresholds.len()];
+    for i in 0..x.len() {
+        let row = base + i;
+        let group = groups[i] as usize;
+        let threshold = *thresholds.get(group)?;
+        if splitmix64(row as u64, seed) <= threshold {
+            selected.push(row as u32);
+            kept[group] += 1;
+        }
+        let xv = x[i];
+        let yv = y[i];
+        if !xv.is_finite() || !yv.is_finite() || xv < x0 || xv >= x1 || yv < y0 || yv >= y1 {
+            continue;
+        }
+        let cx = (((xv - x0) * sx) as usize).min(w - 1);
+        let cy = (((yv - y0) * sy) as usize).min(h - 1);
+        grid[cy * w + cx] = grid[cy * w + cx].saturating_add(1);
+    }
+    Some((selected, kept))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bin_2d_stratified_sample_range_u8_impl(
+    x: &[f64],
+    y: &[f64],
+    groups: &[u8],
+    counts: &[u64],
+    thresholds: &[u64],
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    w: usize,
+    h: usize,
+    seed: u64,
+    min_count: u64,
+    threads: usize,
+    out: &mut [f32],
+) -> Option<Vec<u32>> {
+    let n = x.len();
+    if threads <= 1 || n < threads {
+        let mut grid = vec![0u32; w * h];
+        let (selected, kept) = bin_2d_stratified_sample_range_u8_scan(
+            x, y, groups, thresholds, 0, x0, x1, y0, y1, w, h, seed, &mut grid,
+        )?;
+        for (cell, count) in out.iter_mut().zip(grid) {
+            *cell = count as f32;
+        }
+        return complete_stratified_sample_range(groups, counts, seed, min_count, selected, &kept);
+    }
+
+    let chunk = n.div_ceil(threads);
+    type Part = (Vec<u32>, Vec<u32>, Vec<u64>);
+    let parts = std::thread::scope(|scope| -> Option<Vec<Part>> {
+        let handles: Vec<_> = x
+            .chunks(chunk)
+            .zip(y.chunks(chunk))
+            .zip(groups.chunks(chunk))
+            .enumerate()
+            .map(|(thread, ((xs, ys), group_part))| {
+                let base = thread * chunk;
+                scope.spawn(move || -> Option<Part> {
+                    let mut grid = vec![0u32; w * h];
+                    let (selected, kept) = bin_2d_stratified_sample_range_u8_scan(
+                        xs, ys, group_part, thresholds, base, x0, x1, y0, y1, w, h, seed, &mut grid,
+                    )?;
+                    Some((grid, selected, kept))
+                })
+            })
+            .collect();
+        let mut parts = Vec::with_capacity(handles.len());
+        for handle in handles {
+            parts.push(
+                handle
+                    .join()
+                    .expect("bin_2d_stratified_sample_range worker panicked")?,
+            );
+        }
+        Some(parts)
+    })?;
+
+    let cell_chunk = (w * h).div_ceil(threads);
+    std::thread::scope(|scope| {
+        for (part_index, out_part) in out.chunks_mut(cell_chunk).enumerate() {
+            let base = part_index * cell_chunk;
+            let parts = &parts;
+            scope.spawn(move || {
+                for (offset, cell) in out_part.iter_mut().enumerate() {
+                    let count: u64 = parts
+                        .iter()
+                        .map(|(grid, _, _)| u64::from(grid[base + offset]))
+                        .sum();
+                    *cell = count as f32;
+                }
+            });
+        }
+    });
+
+    let selected_len = parts.iter().map(|(_, rows, _)| rows.len()).sum();
+    let mut selected = Vec::with_capacity(selected_len);
+    let mut kept = vec![0u64; counts.len()];
+    for (_, rows, part_kept) in parts {
+        selected.extend(rows);
+        for (total, part) in kept.iter_mut().zip(part_kept) {
+            *total += part;
+        }
+    }
+    complete_stratified_sample_range(groups, counts, seed, min_count, selected, &kept)
 }
 
 fn sample_mask_impl(ids: &[u64], seed: u64, threshold: u64, threads: usize, out: &mut [u8]) {
@@ -2403,7 +3908,11 @@ pub fn stratified_sample_mask(
 
     // Keep pass: parallel only when the per-thread kept-count vectors stay
     // small; a degenerate all-distinct grouping falls back to one thread.
-    let threads = if n_groups <= 1024 { par_threads(ids.len()) } else { 1 };
+    let threads = if n_groups <= 1024 {
+        par_threads(ids.len())
+    } else {
+        1
+    };
     let per = ids.len().div_ceil(threads);
     let thresholds_ref = &thresholds;
     let kept: Vec<u64> = std::thread::scope(|s| {
@@ -2425,7 +3934,10 @@ pub fn stratified_sample_mask(
             .collect();
         let mut kept = vec![0u64; n_groups];
         for h in handles {
-            for (t, p) in kept.iter_mut().zip(h.join().expect("keep-pass worker panicked")) {
+            for (t, p) in kept
+                .iter_mut()
+                .zip(h.join().expect("keep-pass worker panicked"))
+            {
                 *t += p;
             }
         }
@@ -2497,13 +4009,7 @@ fn histogram_count(data: &[f64], lo: f64, hi: f64, bins: &mut [u64]) -> u64 {
 /// Exact u64 counts merged then converted to f64 once — identical to the old
 /// sequential `f64 += 1.0` (integers are exact in f64 far past any real N)
 /// and bitwise deterministic for any thread count.
-fn histogram_uniform_impl(
-    data: &[f64],
-    lo: f64,
-    hi: f64,
-    threads: usize,
-    out: &mut [f64],
-) -> u64 {
+fn histogram_uniform_impl(data: &[f64], lo: f64, hi: f64, threads: usize, out: &mut [f64]) -> u64 {
     let n = data.len();
     if threads <= 1 || n < threads {
         let mut bins = vec![0u64; out.len()];
@@ -2547,13 +4053,8 @@ fn histogram_uniform_impl(
 pub fn normalize_f32_into(data: &[f64], lo: f64, hi: f64, nan_value: f32, out: &mut [f32]) {
     assert_eq!(data.len(), out.len());
     assert!(x1_gt_x0(lo, hi));
-    let span = hi - lo;
     let norm_one = move |dst: &mut f32, v: f64| {
-        if v.is_finite() {
-            *dst = (((v - lo) / span).clamp(0.0, 1.0)) as f32;
-        } else {
-            *dst = nan_value;
-        }
+        *dst = normalize_one_f32(v, lo, hi, nan_value);
     };
     let threads = par_threads(data.len());
     if threads <= 1 {
@@ -2573,6 +4074,158 @@ pub fn normalize_f32_into(data: &[f64], lo: f64, hi: f64, nan_value: f32, out: &
             });
         }
     });
+}
+
+/// Scalar form shared by bulk payload normalization and the rasterizer's
+/// borrowed-f64 heatmap sampler. Keeping the f32 rounding here is what makes
+/// the direct static path pixel-identical to the browser payload path.
+pub(crate) fn normalize_one_f32(value: f64, lo: f64, hi: f64, nan_value: f32) -> f32 {
+    if value.is_finite() {
+        (((value - lo) / (hi - lo)).clamp(0.0, 1.0)) as f32
+    } else {
+        nan_value
+    }
+}
+
+/// Count rows that satisfy a compact validity rule across parallel f64
+/// columns. Bit `j` in `positive_mask` upgrades column `j` from "finite" to
+/// "finite and > 0" (log-axis filtering). The common all-valid query performs
+/// one allocation-free, parallel pass and lets Python keep identity selection
+/// without building boolean temporaries or an N-entry index array.
+pub fn valid_row_count_f64(columns: &[&[f64]], positive_mask: u64) -> Option<usize> {
+    let first = *columns.first()?;
+    if columns.len() > 64
+        || first.len() > u32::MAX as usize
+        || columns.iter().any(|column| column.len() != first.len())
+    {
+        return None;
+    }
+    let len = first.len();
+    let threads = par_threads(len).min(len.max(1));
+    if threads <= 1 || len < threads {
+        return Some(valid_row_count_segment(columns, positive_mask, 0, len));
+    }
+    let chunk = len.div_ceil(threads);
+    Some(std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..threads)
+            .filter_map(|thread| {
+                let start = thread * chunk;
+                let stop = (start + chunk).min(len);
+                (start < stop).then(|| {
+                    scope
+                        .spawn(move || valid_row_count_segment(columns, positive_mask, start, stop))
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("valid-row worker panicked"))
+            .sum()
+    }))
+}
+
+#[inline(always)]
+fn valid_row_f64(columns: &[&[f64]], positive_mask: u64, row: usize) -> bool {
+    columns.iter().enumerate().all(|(column_index, column)| {
+        let value = column[row];
+        value.is_finite() && (positive_mask & (1u64 << column_index) == 0 || value > 0.0)
+    })
+}
+
+fn valid_row_count_segment(
+    columns: &[&[f64]],
+    positive_mask: u64,
+    start: usize,
+    stop: usize,
+) -> usize {
+    (start..stop)
+        .filter(|&row| valid_row_f64(columns, positive_mask, row))
+        .count()
+}
+
+/// Write ascending valid row IDs into caller storage. Callers query
+/// [`valid_row_count_f64`] first and provide that exact capacity; the uncommon
+/// filtered case deliberately uses a single serial write pass, avoiding a
+/// second source-sized temporary or retaining an oversized output allocation.
+pub fn valid_row_indices_f64(
+    columns: &[&[f64]],
+    positive_mask: u64,
+    out: &mut [u32],
+) -> Option<usize> {
+    let first = *columns.first()?;
+    if columns.len() > 64
+        || first.len() > u32::MAX as usize
+        || columns.iter().any(|column| column.len() != first.len())
+    {
+        return None;
+    }
+    let mut written = 0usize;
+    for row in 0..first.len() {
+        if valid_row_f64(columns, positive_mask, row) {
+            if written < out.len() {
+                out[written] = row as u32;
+            }
+            written += 1;
+        }
+    }
+    Some(written)
+}
+
+/// Parallel validity selection into an N-row scratch buffer. Workers write
+/// disjoint source-aligned segments, then compact them in row order exactly as
+/// [`range_indices_impl`] does. This is used only after the allocation-free
+/// count query found rejected rows; the Python wrapper shrinks the scratch to
+/// the exact retained length before returning it.
+pub fn valid_row_indices_parallel_f64(
+    columns: &[&[f64]],
+    positive_mask: u64,
+    out: &mut [u32],
+) -> Option<usize> {
+    let first = *columns.first()?;
+    let len = first.len();
+    if columns.len() > 64
+        || len > u32::MAX as usize
+        || out.len() < len
+        || columns.iter().any(|column| column.len() != len)
+    {
+        return None;
+    }
+    let threads = par_threads(len).min(len.max(1));
+    if threads <= 1 || len < threads {
+        return valid_row_indices_f64(columns, positive_mask, out);
+    }
+    let chunk = len.div_ceil(threads);
+    let counts: Vec<usize> = std::thread::scope(|scope| {
+        let handles: Vec<_> = out[..len]
+            .chunks_mut(chunk)
+            .enumerate()
+            .map(|(thread, output)| {
+                let start = thread * chunk;
+                let stop = (start + output.len()).min(len);
+                scope.spawn(move || {
+                    let mut written = 0usize;
+                    for row in start..stop {
+                        if valid_row_f64(columns, positive_mask, row) {
+                            output[written] = row as u32;
+                            written += 1;
+                        }
+                    }
+                    written
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("valid-row worker panicked"))
+            .collect()
+    });
+    let mut write = counts.first().copied().unwrap_or(0);
+    for (thread, &count) in counts.iter().enumerate().skip(1) {
+        let start = thread * chunk;
+        out.copy_within(start..start + count, write);
+        write += count;
+    }
+    Some(write)
 }
 
 /// Canonical row indices inside a rectangular window. Bounds are inclusive to
@@ -2765,6 +4418,28 @@ pub fn grid_max(grid: &[f32]) -> f32 {
     grid.iter().copied().fold(0.0f32, f32::max)
 }
 
+/// Log-encode a non-negative density grid for the client's R8 texture.
+/// Zeros remain exact and every occupied cell maps to at least one.
+pub fn density_log_u8_into(grid: &[f32], out: &mut [u8]) -> f64 {
+    assert_eq!(grid.len(), out.len());
+    let max = f64::from(grid_max(grid));
+    if max <= 0.0 {
+        out.fill(0);
+        return 0.0;
+    }
+    let denom = max.ln_1p();
+    for (&value, encoded) in grid.iter().zip(out.iter_mut()) {
+        let value = f64::from(value);
+        if value > 0.0 && value.is_finite() {
+            let quantized = (255.0 * value.ln_1p() / denom).round_ties_even();
+            *encoded = quantized.clamp(1.0, 255.0) as u8;
+        } else {
+            *encoded = 0;
+        }
+    }
+    max
+}
+
 /// Min/max over a slice, NaN-skipping — the autorange primitive when zone maps
 /// aren't available (they make this O(chunks), §22).
 pub fn min_max(data: &[f64]) -> Option<(f64, f64)> {
@@ -2832,27 +4507,265 @@ mod tests {
     use super::*;
 
     #[test]
+    fn factorize_fixed_preserves_first_seen_codes_and_full_record_identity() {
+        let rows = [b"ab\0", b"xy\0", b"ab\0", b"abx", b"xy\0"];
+        let data: Vec<u8> = rows.into_iter().flatten().copied().collect();
+        let mut codes = [u32::MAX; 5];
+        let mut unique = [u32::MAX; 5];
+        let count = factorize_fixed_into(&data, 3, &mut codes, &mut unique);
+        assert_eq!(count, Some(3));
+        assert_eq!(codes, [0, 1, 0, 2, 1]);
+        assert_eq!(&unique[..3], &[0, 1, 3]);
+
+        assert_eq!(
+            factorize_fixed_into(&data, 0, &mut codes, &mut unique),
+            None
+        );
+        assert_eq!(
+            factorize_fixed_into(&data[..14], 3, &mut codes, &mut unique),
+            None
+        );
+        assert_eq!(
+            factorize_fixed_into(&data, 3, &mut codes[..4], &mut unique),
+            None
+        );
+
+        let mut compact_codes = [u8::MAX; 5];
+        let mut compact_unique = [u32::MAX; 3];
+        assert_eq!(
+            factorize_fixed_u8_into(&data, 3, &mut compact_codes, &mut compact_unique),
+            Some(3)
+        );
+        assert_eq!(compact_codes, [0, 1, 0, 2, 1]);
+        let mut counted_codes = [u8::MAX; 5];
+        let mut counted_unique = [u32::MAX; 3];
+        let mut compact_counts = [u64::MAX; 3];
+        assert_eq!(
+            factorize_fixed_u8_counts_into(
+                &data,
+                3,
+                &mut counted_codes,
+                &mut counted_unique,
+                &mut compact_counts,
+            ),
+            Some(3)
+        );
+        assert_eq!(counted_codes, [0, 1, 0, 2, 1]);
+        assert_eq!(counted_unique, [0, 1, 3]);
+        assert_eq!(compact_counts, [2, 2, 1]);
+        assert!(remap_u8_inplace(&mut compact_codes, &[2, 0, 1]));
+        assert_eq!(compact_codes, [2, 0, 2, 1, 0]);
+        assert!(!remap_u8_inplace(&mut compact_codes, &[0, 1]));
+
+        let mut too_few_unique = [u32::MAX; 2];
+        assert_eq!(
+            factorize_fixed_u8_into(&data, 3, &mut compact_codes, &mut too_few_unique),
+            None
+        );
+    }
+
+    #[test]
+    fn factorize_fixed_u8_matches_general_across_record_widths() {
+        for width in [1usize, 2, 3, 4, 8, 9, 16, 31] {
+            let n_groups = if width == 1 { 200 } else { 256 };
+            let n = 20_003usize;
+            let mut data = Vec::with_capacity(n * width);
+            for row in 0..n {
+                let group = (row * 73 + 19) % n_groups;
+                for byte in 0..width {
+                    let value = if byte < 8 {
+                        ((group as u64).rotate_left((byte * 7) as u32) >> (byte * 8)) as u8
+                    } else {
+                        (group as u8).wrapping_mul(31).wrapping_add(byte as u8)
+                    };
+                    data.push(value);
+                }
+            }
+            let mut full_codes = vec![u32::MAX; n];
+            let mut full_unique = vec![u32::MAX; n];
+            let full_count =
+                factorize_fixed_into(&data, width, &mut full_codes, &mut full_unique).unwrap();
+            let mut compact_codes = vec![u8::MAX; n];
+            let mut compact_unique = vec![u32::MAX; 256];
+            let compact_count =
+                factorize_fixed_u8_into(&data, width, &mut compact_codes, &mut compact_unique)
+                    .unwrap();
+            assert_eq!(compact_count, full_count, "width={width}");
+            assert_eq!(
+                compact_codes
+                    .iter()
+                    .map(|&code| u32::from(code))
+                    .collect::<Vec<_>>(),
+                full_codes,
+                "width={width}",
+            );
+            assert_eq!(
+                &compact_unique[..compact_count],
+                &full_unique[..full_count],
+                "width={width}",
+            );
+        }
+    }
+
+    #[test]
+    fn factorize_fixed_u8_parallel_merges_late_categories_in_first_seen_order() {
+        let width = 4usize;
+        let n = 1_100_123usize;
+        let mut data = vec![0u8; n * width];
+        for row in 5000..n {
+            let group = match row {
+                5000..6000 => 3u32,
+                6000..7000 => 2,
+                7000 => 1,
+                _ => ((row * 17) % 4) as u32,
+            };
+            data[row * width..(row + 1) * width].copy_from_slice(&group.to_ne_bytes());
+        }
+        let mut full_codes = vec![u32::MAX; n];
+        let mut full_unique = vec![u32::MAX; n];
+        let full_count =
+            factorize_fixed_into(&data, width, &mut full_codes, &mut full_unique).unwrap();
+        let mut compact_codes = vec![u8::MAX; n];
+        let compact =
+            factorize_fixed_u8_parallel(&data, width, &mut compact_codes, 256, 4).unwrap();
+
+        assert_eq!(compact.codebook.len, full_count);
+        assert_eq!(
+            compact_codes
+                .iter()
+                .map(|&code| u32::from(code))
+                .collect::<Vec<_>>(),
+            full_codes,
+        );
+        assert_eq!(
+            &compact.codebook.first_indices[..compact.codebook.len],
+            &full_unique[..full_count],
+        );
+        assert_eq!(&compact.codebook.first_indices[..4], &[0, 5000, 6000, 7000]);
+        assert_eq!(compact.counts[..4].iter().sum::<u64>(), n as u64);
+
+        let mut insufficient_codes = vec![u8::MAX; n];
+        assert!(
+            factorize_fixed_u8_parallel(&data, width, &mut insufficient_codes, 3, 4,).is_none()
+        );
+    }
+
+    #[test]
+    fn factorize_byte_values_parallel_merges_late_values_and_counts() {
+        let n = 1_100_123usize;
+        let mut data = vec![0u8; n];
+        data[5000..6000].fill(3);
+        data[6000..7000].fill(2);
+        data[7000] = 1;
+        for (row, value) in data.iter_mut().enumerate().skip(7001) {
+            *value = ((row * 17) % 4) as u8;
+        }
+        let mut full_codes = vec![u32::MAX; n];
+        let mut full_unique = vec![u32::MAX; n];
+        let full_count = factorize_fixed_into(&data, 1, &mut full_codes, &mut full_unique).unwrap();
+        let mut compact_codes = vec![u8::MAX; n];
+        let compact = factorize_byte_values_parallel(&data, &mut compact_codes, 256, 4).unwrap();
+
+        assert_eq!(compact.codebook.len, full_count);
+        assert_eq!(
+            compact_codes
+                .iter()
+                .map(|&code| u32::from(code))
+                .collect::<Vec<_>>(),
+            full_codes,
+        );
+        assert_eq!(&compact.codebook.first_indices[..4], &[0, 5000, 6000, 7000]);
+        for code in 0..compact.codebook.len {
+            let expected = full_codes
+                .iter()
+                .filter(|&&value| value as usize == code)
+                .count() as u64;
+            assert_eq!(compact.counts[code], expected);
+        }
+
+        let mut insufficient_codes = vec![u8::MAX; n];
+        assert!(factorize_byte_values_parallel(&data, &mut insufficient_codes, 3, 4).is_none());
+    }
+
+    #[test]
+    fn factorize_unicode1_direct_table_preserves_endian_order_and_late_values() {
+        let values = ['β' as u32, 'a' as u32, 'β' as u32, 0, 'é' as u32];
+        let mut codes = [u8::MAX; 5];
+        let mut unique = [u32::MAX; 5];
+        let mut counts = [u64::MAX; 5];
+        assert_eq!(
+            factorize_unicode1_u8_counts_into(&values, false, &mut codes, &mut unique, &mut counts,),
+            Some(4),
+        );
+        assert_eq!(codes, [0, 1, 0, 2, 3]);
+        assert_eq!(&unique[..4], &[0, 1, 3, 4]);
+        assert_eq!(&counts[..4], &[2, 1, 1, 1]);
+
+        let swapped = values.map(u32::swap_bytes);
+        let mut swapped_codes = [u8::MAX; 5];
+        assert_eq!(
+            factorize_unicode1_u8_counts_into(
+                &swapped,
+                true,
+                &mut swapped_codes,
+                &mut unique,
+                &mut counts,
+            ),
+            Some(4),
+        );
+        assert_eq!(swapped_codes, codes);
+
+        let mut late = vec![0u32; 1_100_123];
+        late[5000..6000].fill('猫' as u32);
+        late[6000..7000].fill('β' as u32);
+        late[7000] = 'a' as u32;
+        for (row, value) in late.iter_mut().enumerate().skip(7001) {
+            *value = [0, '猫' as u32, 'β' as u32, 'a' as u32][row % 4];
+        }
+        let mut late_codes = vec![u8::MAX; late.len()];
+        let mut late_unique = [u32::MAX; 4];
+        let mut late_counts = [0u64; 4];
+        assert_eq!(
+            factorize_unicode1_u8_counts_into(
+                &late,
+                false,
+                &mut late_codes,
+                &mut late_unique,
+                &mut late_counts,
+            ),
+            Some(4),
+        );
+        assert_eq!(late_unique, [0, 5000, 6000, 7000]);
+        assert_eq!(late_counts.iter().sum::<u64>(), late.len() as u64);
+        assert_eq!(late_codes[5000], 1);
+        assert_eq!(late_codes[6000], 2);
+        assert_eq!(late_codes[7000], 3);
+
+        let invalid = [0x11_0000u32];
+        assert_eq!(
+            factorize_unicode1_u8_counts_into(
+                &invalid,
+                false,
+                &mut codes[..1],
+                &mut unique[..1],
+                &mut counts[..1],
+            ),
+            None,
+        );
+    }
+
+    #[test]
     fn stacked_bounds_zero_and_symmetric() {
         let values = [1.0, 2.0, 3.0, 4.0, 10.0, 20.0];
         let mut lower = [0.0; 6];
         let mut upper = [0.0; 6];
         assert!(stacked_bounds_into(
-            &values,
-            2,
-            3,
-            0,
-            &mut lower,
-            &mut upper
+            &values, 2, 3, 0, &mut lower, &mut upper
         ));
         assert_eq!(lower, [0.0, 0.0, 0.0, 1.0, 2.0, 3.0]);
         assert_eq!(upper, [1.0, 2.0, 3.0, 5.0, 12.0, 23.0]);
         assert!(stacked_bounds_into(
-            &values,
-            2,
-            3,
-            1,
-            &mut lower,
-            &mut upper
+            &values, 2, 3, 1, &mut lower, &mut upper
         ));
         assert_eq!(lower, [-2.5, -6.0, -11.5, -1.5, -4.0, -8.5]);
         assert_eq!(upper, [-1.5, -4.0, -8.5, 2.5, 6.0, 11.5]);
@@ -2905,8 +4818,14 @@ mod tests {
         );
         assert_eq!(written, Some(2));
         assert_eq!(&scalar[..2], &[2.0, 2.0]);
-        assert_eq!((x0[0], y0[0], x1[0], y1[0], x2[0], y2[0]), (0.0, 10.0, 1.0, 10.0, 1.0, 20.0));
-        assert_eq!((x0[1], y0[1], x1[1], y1[1], x2[1], y2[1]), (0.0, 10.0, 1.0, 20.0, 0.0, 20.0));
+        assert_eq!(
+            (x0[0], y0[0], x1[0], y1[0], x2[0], y2[0]),
+            (0.0, 10.0, 1.0, 10.0, 1.0, 20.0)
+        );
+        assert_eq!(
+            (x0[1], y0[1], x1[1], y1[1], x2[1], y2[1]),
+            (0.0, 10.0, 1.0, 20.0, 0.0, 20.0)
+        );
     }
 
     #[test]
@@ -3025,7 +4944,9 @@ mod tests {
         let mut y = Vec::with_capacity(n);
         let mut state = 42u64;
         let mut rnd = || {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (state >> 11) as f64 / (1u64 << 53) as f64 * 200.0 - 100.0
         };
         for i in 0..n {
@@ -3076,6 +4997,113 @@ mod tests {
     }
 
     #[test]
+    fn bin_2d_sample_range_matches_separate_kernels() {
+        let n = 1_200_123;
+        let mut x = Vec::with_capacity(n);
+        let mut y = Vec::with_capacity(n);
+        let mut state = 91u64;
+        for i in 0..n {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            x.push(if i % 997 == 0 {
+                f64::NAN
+            } else {
+                (state >> 11) as f64 / (1u64 << 53) as f64 * 200.0 - 100.0
+            });
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            y.push((state >> 11) as f64 / (1u64 << 53) as f64 * 200.0 - 100.0);
+        }
+        let (x0, x1, y0, y1, w, h) = (-95.0, 95.0, -80.0, 80.0, 128, 96);
+        let seed = 23;
+        let threshold = sample_threshold(0.0075);
+        let mut grid_ref = vec![0.0f32; w * h];
+        bin_2d(&x, &y, x0, x1, y0, y1, w, h, &mut grid_ref);
+        let sample_ref = sample_range_indices(n, seed, threshold);
+
+        for threads in [1, 4] {
+            let mut grid = vec![0.0f32; w * h];
+            let sample = bin_2d_sample_range_impl(
+                &x, &y, x0, x1, y0, y1, w, h, seed, threshold, threads, &mut grid,
+            );
+            assert_eq!(grid, grid_ref, "grid threads={threads}");
+            assert_eq!(sample, sample_ref, "sample threads={threads}");
+        }
+    }
+
+    #[test]
+    fn bin_2d_stratified_sample_range_matches_separate_kernels() {
+        let n = 1_200_123;
+        let x: Vec<f64> = (0..n).map(|row| row as f64 / n as f64).collect();
+        let y: Vec<f64> = (0..n).map(|row| ((row as f64) * 0.000_017).sin()).collect();
+        let mut groups = vec![0u8; n];
+        for (row, group) in groups.iter_mut().enumerate() {
+            *group = if row % 300_000 == 0 {
+                3
+            } else if row % 1_000 == 0 {
+                2
+            } else if row % 10 == 0 {
+                1
+            } else {
+                0
+            };
+        }
+        let mut counts = vec![0u64; 4];
+        for &group in &groups {
+            counts[group as usize] += 1;
+        }
+        let args = (0.0, 1.0, -1.0, 1.0, 128, 96);
+        let seed = 29;
+        let fraction = 0.000_01;
+        let min_count = 3;
+        let mut grid_ref = vec![0.0f32; args.4 * args.5];
+        bin_2d(
+            &x,
+            &y,
+            args.0,
+            args.1,
+            args.2,
+            args.3,
+            args.4,
+            args.5,
+            &mut grid_ref,
+        );
+        let selected_ref =
+            stratified_sample_range_u8_counted(&groups, &counts, seed, fraction, min_count)
+                .unwrap();
+
+        let thresholds: Vec<u64> = counts
+            .iter()
+            .map(|&count| sample_threshold(fraction * (n as f64 / count as f64).sqrt()))
+            .collect();
+        for threads in [1, 4] {
+            let mut grid = vec![0.0f32; args.4 * args.5];
+            let selected = bin_2d_stratified_sample_range_u8_impl(
+                &x,
+                &y,
+                &groups,
+                &counts,
+                &thresholds,
+                args.0,
+                args.1,
+                args.2,
+                args.3,
+                args.4,
+                args.5,
+                seed,
+                min_count,
+                threads,
+                &mut grid,
+            )
+            .unwrap();
+            assert_eq!(grid, grid_ref, "grid threads={threads}");
+            assert_eq!(selected, selected_ref, "sample threads={threads}");
+        }
+    }
+
+    #[test]
     fn splitmix64_known_vectors() {
         // Reference values from the Python side (lod.hash_row_ids), which the
         // parity test in tests/test_kernels.py also asserts — keep in sync.
@@ -3096,7 +5124,10 @@ mod tests {
         assert_eq!(serial, parallel);
         let kept: usize = serial.iter().map(|&b| b as usize).sum();
         // ~1/64 of rows expected; loose bounds guard against a broken hash
-        assert!(kept > ids.len() / 128 && kept < ids.len() / 32, "kept {kept}");
+        assert!(
+            kept > ids.len() / 128 && kept < ids.len() / 32,
+            "kept {kept}"
+        );
     }
 
     #[test]
@@ -3108,6 +5139,82 @@ mod tests {
         sample_mask(&ids, 0, 0, &mut out);
         // threshold 0 keeps only rows whose hash is exactly 0 — none here
         assert!(out.iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn sample_range_matches_materialized_mask() {
+        let size = 1_100_123;
+        let threshold = sample_threshold(0.0075);
+        let ids: Vec<u64> = (0..size as u64).collect();
+        let mut mask = vec![0u8; size];
+        sample_mask(&ids, 23, threshold, &mut mask);
+        let expected: Vec<u32> = mask
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &keep)| (keep != 0).then_some(index as u32))
+            .collect();
+        assert_eq!(sample_range_indices(size, 23, threshold), expected);
+    }
+
+    #[test]
+    fn valid_row_indices_filter_finite_and_positive_columns() {
+        let x = [1.0, 2.0, f64::NAN, 4.0, -5.0, 6.0];
+        let y = [1.0, f64::INFINITY, 3.0, -4.0, 5.0, 6.0];
+        let columns = [&x[..], &y[..]];
+        assert_eq!(valid_row_count_f64(&columns, 0), Some(4));
+        assert_eq!(valid_row_count_f64(&columns, 0b10), Some(3));
+        let mut out = [u32::MAX; 3];
+        assert_eq!(valid_row_indices_f64(&columns, 0b10, &mut out), Some(3));
+        assert_eq!(out, [0, 4, 5]);
+        let mut parallel = [u32::MAX; 6];
+        assert_eq!(
+            valid_row_indices_parallel_f64(&columns, 0b10, &mut parallel),
+            Some(3)
+        );
+        assert_eq!(&parallel[..3], &[0, 4, 5]);
+    }
+
+    #[test]
+    fn valid_row_indices_parallel_matches_serial() {
+        let n = PAR_THRESHOLD + 137;
+        let mut x: Vec<f64> = (0..n).map(|row| row as f64 - 10.0).collect();
+        let mut y: Vec<f64> = (0..n).map(|row| row as f64 + 1.0).collect();
+        for row in (0..n).step_by(997) {
+            x[row] = f64::NAN;
+        }
+        for row in (0..n).step_by(1013) {
+            y[row] = f64::INFINITY;
+        }
+        let columns = [&x[..], &y[..]];
+        let mut serial = vec![u32::MAX; n];
+        let mut parallel = vec![u32::MAX; n];
+        let serial_count = valid_row_indices_f64(&columns, 0b01, &mut serial).unwrap();
+        let parallel_count = valid_row_indices_parallel_f64(&columns, 0b01, &mut parallel).unwrap();
+        assert_eq!(parallel_count, serial_count);
+        assert_eq!(parallel[..parallel_count], serial[..serial_count]);
+    }
+
+    #[test]
+    fn density_log_u8_preserves_zero_and_max() {
+        let grid = [0.0f32, 1.0, 2.0, 10.0, 100.0];
+        let mut out = [0u8; 5];
+        assert_eq!(density_log_u8_into(&grid, &mut out), 100.0);
+        assert_eq!(out[0], 0);
+        assert!(out[1..].iter().all(|&value| value > 0));
+        assert_eq!(out[4], 255);
+    }
+
+    #[test]
+    fn density_rgba_maps_flips_and_preserves_empty_alpha() {
+        let encoded = [0u8, 255, 128, 1];
+        let stops = [[0u8, 10, 20], [100, 110, 120]];
+        let mut out = [0u8; 16];
+        assert!(density_rgba_into(
+            &encoded, 2, 2, 100.0, &stops, 0.85, &mut out
+        ));
+        assert!(out[3] > 0);
+        assert_eq!(out[11], 0);
+        assert_eq!(&out[12..16], &[100, 110, 120, 216]);
     }
 
     /// Direct port of the per-category NumPy loop this kernel replaced
@@ -3174,17 +5281,98 @@ mod tests {
     }
 
     #[test]
+    fn stratified_sample_range_u8_matches_materialized_mask() {
+        let len = 1_100_123usize;
+        let groups: Vec<u8> = (0..len)
+            .map(|row| match row % 10_000 {
+                0 => 3,
+                value if value < 11 => 2,
+                value if value < 1_011 => 1,
+                _ => 0,
+            })
+            .collect();
+        let ids: Vec<u64> = (0..len as u64).collect();
+        for (fraction, min_count) in [(1.0 / 65_536.0, 3), (1.0 / 512.0, 1), (0.4, 0)] {
+            let groups_u32: Vec<u32> = groups.iter().map(|&group| u32::from(group)).collect();
+            let mut mask = vec![0u8; len];
+            assert!(stratified_sample_mask(
+                &ids,
+                &groups_u32,
+                4,
+                29,
+                fraction,
+                min_count,
+                &mut mask,
+            ));
+            let expected: Vec<u32> = mask
+                .iter()
+                .enumerate()
+                .filter_map(|(row, &keep)| (keep != 0).then_some(row as u32))
+                .collect();
+            assert_eq!(
+                stratified_sample_range_u8(&groups, 4, 29, fraction, min_count),
+                Some(expected.clone()),
+                "fraction={fraction} min_count={min_count}",
+            );
+            let counts = [
+                groups.iter().filter(|&&group| group == 0).count() as u64,
+                groups.iter().filter(|&&group| group == 1).count() as u64,
+                groups.iter().filter(|&&group| group == 2).count() as u64,
+                groups.iter().filter(|&&group| group == 3).count() as u64,
+            ];
+            assert_eq!(
+                stratified_sample_range_u8_counted(&groups, &counts, 29, fraction, min_count,),
+                Some(expected),
+                "counted fraction={fraction} min_count={min_count}",
+            );
+        }
+    }
+
+    #[test]
+    fn stratified_sample_range_u8_validates_group_domain() {
+        assert_eq!(
+            stratified_sample_range_u8(&[], 3, 0, 0.5, 1),
+            Some(Vec::new())
+        );
+        assert_eq!(stratified_sample_range_u8(&[0, 2], 2, 0, 0.5, 1), None);
+        assert_eq!(stratified_sample_range_u8(&[0], 0, 0, 0.5, 1), None);
+        assert_eq!(stratified_sample_range_u8(&[0], 257, 0, 0.5, 1), None);
+        assert_eq!(
+            stratified_sample_range_u8_counted(&[0, 1], &[1, 0], 0, 0.5, 1),
+            None,
+        );
+    }
+
+    #[test]
     fn stratified_sample_mask_pins_rare_and_stays_monotonic() {
         let len = 8_104usize;
         let ids: Vec<u64> = (0..len as u64).collect();
         let groups: Vec<u32> = (0..len)
-            .map(|i| if i < 8_000 { 0 } else if i < 8_100 { 1 } else { 2 })
+            .map(|i| {
+                if i < 8_000 {
+                    0
+                } else if i < 8_100 {
+                    1
+                } else {
+                    2
+                }
+            })
             .collect();
         let mut lo = vec![0u8; len];
         let mut hi = vec![0u8; len];
         let base = 1.0 / 4096.0;
-        assert!(stratified_sample_mask(&ids, &groups, 3, 23, base, 1, &mut lo));
-        assert!(stratified_sample_mask(&ids, &groups, 3, 23, base * 32.0, 1, &mut hi));
+        assert!(stratified_sample_mask(
+            &ids, &groups, 3, 23, base, 1, &mut lo
+        ));
+        assert!(stratified_sample_mask(
+            &ids,
+            &groups,
+            3,
+            23,
+            base * 32.0,
+            1,
+            &mut hi
+        ));
         for g in 0..3u32 {
             let kept: u64 = lo
                 .iter()
@@ -3194,7 +5382,10 @@ mod tests {
                 .sum();
             assert!(kept >= 1, "group {g} lost its floor row");
         }
-        assert!(lo.iter().zip(&hi).all(|(&a, &b)| a <= b), "mask not monotonic");
+        assert!(
+            lo.iter().zip(&hi).all(|(&a, &b)| a <= b),
+            "mask not monotonic"
+        );
         let (nlo, nhi): (u64, u64) = (
             lo.iter().map(|&b| u64::from(b)).sum(),
             hi.iter().map(|&b| u64::from(b)).sum(),
@@ -3207,7 +5398,9 @@ mod tests {
         let ids = [1u64, 2, 3];
         let groups = [0u32, 5, 0]; // 5 >= n_groups
         let mut out = [0u8; 3];
-        assert!(!stratified_sample_mask(&ids, &groups, 2, 0, 0.5, 1, &mut out));
+        assert!(!stratified_sample_mask(
+            &ids, &groups, 2, 0, 0.5, 1, &mut out
+        ));
     }
 
     #[test]
@@ -3234,6 +5427,39 @@ mod tests {
         assert_eq!(zms[2].min, 8.0);
         assert_eq!(zms[2].max, 9.0);
         assert_eq!(zms[2].count, 2);
+    }
+
+    #[test]
+    fn zone_maps_pair_matches_separate_parallel_results() {
+        let n = 1_100_123usize;
+        let mut x: Vec<f64> = (0..n).map(|row| (row as f64 * 0.001).sin()).collect();
+        let mut y: Vec<f64> = (0..n).map(|row| (row as f64 * 0.003).cos()).collect();
+        x[997] = f64::NAN;
+        y[991] = f64::INFINITY;
+        let x_expected = zone_maps(&x, DEFAULT_CHUNK);
+        let y_expected = zone_maps(&y, DEFAULT_CHUNK);
+        let (x_actual, y_actual) = zone_maps_pair(&x, &y, DEFAULT_CHUNK).unwrap();
+        assert_eq!(x_actual, x_expected);
+        assert_eq!(y_actual, y_expected);
+        assert!(zone_maps_pair(&x, &y[..n - 1], DEFAULT_CHUNK).is_none());
+        assert!(zone_maps_pair(&x, &y, 0).is_none());
+    }
+
+    #[test]
+    fn zone_map_fanout_tracks_complete_chunks_and_codspeed() {
+        let chunk = 65_536;
+        assert_eq!(zone_map_threads_for(chunk, chunk, 18, false), 1);
+        assert_eq!(zone_map_threads_for(2 * chunk - 1, chunk, 18, false), 1);
+        assert_eq!(zone_map_threads_for(2 * chunk, chunk, 18, false), 2);
+        assert_eq!(zone_map_threads_for(200_000, chunk, 18, false), 4);
+        assert_eq!(zone_map_threads_for(10 * chunk, chunk, 18, false), 10);
+        assert_eq!(
+            zone_map_threads_for(100 * chunk, chunk, 64, false),
+            MAX_ROW_THREADS
+        );
+        assert_eq!(zone_map_threads_for(10 * chunk, chunk, 3, false), 3);
+        assert_eq!(zone_map_threads_for(10 * chunk, chunk, 1, false), 1);
+        assert_eq!(zone_map_threads_for(10 * chunk, chunk, 18, true), 1);
     }
 
     #[test]
@@ -3401,11 +5627,17 @@ mod tests {
         assert_eq!(bin_2d_threads(1 << 23, 512 * 384), par_threads(1 << 23));
         // Ratio between 1 and the core cap: fan-out tracks points per cell
         // (min against par_threads so the assert holds on any core count).
-        assert_eq!(bin_2d_threads(1 << 21, 1 << 20), 2.min(par_threads(1 << 21)));
+        assert_eq!(
+            bin_2d_threads(1 << 21, 1 << 20),
+            2.min(par_threads(1 << 21))
+        );
         // Grid at least as large as the point count (tile-pyramid base level
         // shape): per-thread grids + merge dwarf the scan — stay serial.
         assert_eq!(bin_2d_threads(1 << 20, 1 << 20), 1);
         assert_eq!(bin_2d_threads(2_100_000, 2048 * 2048), 1);
+        assert_eq!(par_threads_for(PAR_THRESHOLD - 1, 64), 1);
+        assert_eq!(par_threads_for(PAR_THRESHOLD, 64), MAX_ROW_THREADS);
+        assert_eq!(par_threads_for(PAR_THRESHOLD, 1), 1);
     }
 
     #[test]
@@ -3500,7 +5732,10 @@ mod fuzz {
             // per-chunk min/max are finite whenever the chunk has a finite value
             for m in &maps {
                 if m.count > 0 {
-                    assert!(m.min.is_finite() && m.max.is_finite() && m.min <= m.max, "it={it}");
+                    assert!(
+                        m.min.is_finite() && m.max.is_finite() && m.min <= m.max,
+                        "it={it}"
+                    );
                 }
             }
         }
@@ -3590,7 +5825,10 @@ mod fuzz {
             let n = (rng.next() % 300) as usize;
             let x = rng.hostile_vec(n, -10.0, 10.0);
             let y = rng.hostile_vec(n, -10.0, 10.0);
-            let (w, h) = (1 + (rng.next() % 16) as usize, 1 + (rng.next() % 12) as usize);
+            let (w, h) = (
+                1 + (rng.next() % 16) as usize,
+                1 + (rng.next() % 12) as usize,
+            );
             let (x0, x1, y0, y1) = (-5.0, 7.0, -6.0, 4.0);
             let mut grid = vec![0f32; w * h];
             bin_2d(&x, &y, x0, x1, y0, y1, w, h, &mut grid);
@@ -3611,7 +5849,10 @@ mod fuzz {
             let n = (rng.next() % 2000) as usize;
             let x = rng.hostile_vec(n, -10.0, 10.0);
             let y = rng.hostile_vec(n, -10.0, 10.0);
-            let (w, h) = (1 + (rng.next() % 16) as usize, 1 + (rng.next() % 12) as usize);
+            let (w, h) = (
+                1 + (rng.next() % 16) as usize,
+                1 + (rng.next() % 12) as usize,
+            );
             let (x0, x1, y0, y1) = (-5.0, 7.0, -6.0, 4.0);
             let mut serial = vec![0f32; w * h];
             bin_2d_impl(&x, &y, x0, x1, y0, y1, w, h, 1, &mut serial);
@@ -3639,7 +5880,10 @@ mod fuzz {
                 assert_eq!(ts, tp, "histogram total parity it={it} threads={threads}");
                 assert_eq!(hs, hp, "histogram bins parity it={it} threads={threads}");
                 let zm_par = zone_maps_impl(&x, 64, threads);
-                assert_eq!(zm_serial, zm_par, "zone_maps parity it={it} threads={threads}");
+                assert_eq!(
+                    zm_serial, zm_par,
+                    "zone_maps parity it={it} threads={threads}"
+                );
                 let m4_par =
                     m4_indices_impl(&mx, &y, -1.0, n as f64 + 1.0, buckets_m4, s0, s1, threads);
                 assert_eq!(m4_serial, m4_par, "m4 parity it={it} threads={threads}");
@@ -3651,7 +5895,10 @@ mod fuzz {
                 let mut ri_par = vec![0u32; n.max(1)];
                 let rn_par =
                     range_indices_impl(&x, &y, -5.0, 7.0, -6.0, 4.0, threads, &mut ri_par[..n]);
-                assert_eq!(rn_serial, rn_par, "range count parity it={it} threads={threads}");
+                assert_eq!(
+                    rn_serial, rn_par,
+                    "range count parity it={it} threads={threads}"
+                );
                 assert_eq!(
                     ri_serial[..rn_serial],
                     ri_par[..rn_par],
@@ -3723,7 +5970,10 @@ mod fuzz {
             assert_eq!(&out[..m], naive.as_slice(), "it={it}");
             // NaN/±inf can never satisfy the closed-range comparisons
             for &i in &out[..m] {
-                assert!(x[i as usize].is_finite() && y[i as usize].is_finite(), "it={it}");
+                assert!(
+                    x[i as usize].is_finite() && y[i as usize].is_finite(),
+                    "it={it}"
+                );
             }
         }
     }

@@ -213,22 +213,28 @@ WRAP_SCRIPT_TEMPLATE = r"""
     if (!loseExt) {
       throw new Error("WEBGL_lose_context extension unavailable");
     }
+    const lostCanvas = view.canvas;
     let lostSeen = false;
     let restoredSeen = false;
-    view.canvas.addEventListener("webglcontextlost", () => { lostSeen = true; }, { once: true });
-    view.canvas.addEventListener("webglcontextrestored", () => { restoredSeen = true; }, { once: true });
+    lostCanvas.addEventListener("webglcontextlost", () => { lostSeen = true; }, { once: true });
+    lostCanvas.addEventListener("webglcontextrestored", () => { restoredSeen = true; }, { once: true });
     loseExt.loseContext();
-    const lostOk = await waitFor(() => lostSeen && view._glLost === true, 1500);
+    const rebuilt = () =>
+      view.canvas !== lostCanvas && view._glLost === false && view.gl &&
+      !view.gl.isContextLost() && !view._destroyed;
+    const lostOk = await waitFor(() => lostSeen && (view._glLost === true || rebuilt()), 1500);
     if (!lostOk) {
-      throw new Error("webglcontextlost did not mark the view as lost");
+      throw new Error("webglcontextlost did not enter a loss or replacement recovery path");
     }
-    loseExt.restoreContext();
-    const restoredOk = await waitFor(
-      () => restoredSeen && view._glLost === false && view.gl && !view._destroyed,
-      3500,
-    );
-    if (!restoredOk) {
-      throw new Error("webglcontextrestored did not rebuild the view");
+    if (!rebuilt()) {
+      loseExt.restoreContext();
+      const restoredOk = await waitFor(
+        () => restoredSeen && view._glLost === false && view.gl && !view._destroyed,
+        3500,
+      );
+      if (!restoredOk) {
+        throw new Error("webglcontextrestored did not rebuild the view");
+      }
     }
     await tick();
     await tick();

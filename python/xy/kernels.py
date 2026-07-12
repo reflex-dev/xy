@@ -33,9 +33,16 @@ CSS_NUMBER = _impl.CSS_NUMBER
 
 css_check = _impl.css_check
 correlation = _impl.correlation
+density_rgba = _impl.density_rgba
+density_log_u8 = _impl.density_log_u8
 delaunay_triangles = _impl.delaunay_triangles
 zone_maps = _impl.zone_maps
+zone_maps_pair = _impl.zone_maps_pair
 encode_f32 = _impl.encode_f32
+factorize_fixed = _impl.factorize_fixed
+factorize_fixed_u8 = _impl.factorize_fixed_u8
+factorize_fixed_u8_counts = _impl.factorize_fixed_u8_counts
+factorize_unicode1_u8_counts = _impl.factorize_unicode1_u8_counts
 m4_indices = _impl.m4_indices
 marching_squares = _impl.marching_squares
 marching_triangles = _impl.marching_triangles
@@ -43,19 +50,26 @@ is_sorted = _impl.is_sorted
 min_max = _impl.min_max
 bin_2d = _impl.bin_2d
 bin_2d_indices = _impl.bin_2d_indices
+bin_2d_sample_range = _impl.bin_2d_sample_range
+bin_2d_stratified_sample_range_u8_counted = _impl.bin_2d_stratified_sample_range_u8_counted
 histogram_uniform = _impl.histogram_uniform
 heatmap_rgba = _impl.heatmap_rgba
 histogram2d = _impl.histogram2d
 indexed_triangles = _impl.indexed_triangles
 normalize_f32 = _impl.normalize_f32
+valid_indices_f64 = _impl.valid_indices_f64
+remap_u8 = _impl.remap_u8
 range_indices = _impl.range_indices
 sample_mask = _impl.sample_mask
+sample_range_indices = _impl.sample_range_indices
+stratified_sample_range_u8 = _impl.stratified_sample_range_u8
 sector_triangles = _impl.sector_triangles
 stacked_bounds = _impl.stacked_bounds
 streamlines = _impl.streamlines
 triangle_edges = _impl.triangle_edges
 local_log_density = _impl.local_log_density
 pyramid_build = _impl.pyramid_build
+pyramid_append = _impl.pyramid_append
 pyramid_count = _impl.pyramid_count
 pyramid_compose = _impl.pyramid_compose
 pyramid_free = _impl.pyramid_free
@@ -78,10 +92,18 @@ __all__ = [
     "CSS_NUMBER",
     "bin_2d",
     "bin_2d_indices",
+    "bin_2d_sample_range",
+    "bin_2d_stratified_sample_range_u8_counted",
     "correlation",
     "css_check",
     "delaunay_triangles",
+    "density_log_u8",
+    "density_rgba",
     "encode_f32",
+    "factorize_fixed",
+    "factorize_fixed_u8",
+    "factorize_fixed_u8_counts",
+    "factorize_unicode1_u8_counts",
     "heatmap_rgba",
     "histogram2d",
     "histogram_uniform",
@@ -94,6 +116,7 @@ __all__ = [
     "min_max",
     "normalize_f32",
     "polygon_triangles",
+    "pyramid_append",
     "pyramid_build",
     "pyramid_compose",
     "pyramid_count",
@@ -102,16 +125,21 @@ __all__ = [
     "range_indices",
     "rasterize",
     "rasterize_png",
+    "remap_u8",
     "rfft",
     "sample_mask",
+    "sample_range_indices",
     "sector_triangles",
     "spectrogram",
     "stacked_bounds",
     "stratified_sample_mask",
+    "stratified_sample_range_u8",
     "streamlines",
     "triangle_edges",
+    "valid_indices_f64",
     "vector_segments",
     "weighted_ecdf",
     "welch_spectra",
     "zone_maps",
+    "zone_maps_pair",
 ]

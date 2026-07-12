@@ -33,7 +33,8 @@ by the string `K` on the wire (`trace.kind`).
   by `_emit_trace` via `getattr(self, f"_emit_{t.kind}")` — no edit to the
   dispatcher. Returns the trace's spec entry and ships its columns through the
   `_PayloadWriter` (`pw.ship` for §4 offset-encoded geometry, `pw.ship_scalar`
-  for raw f32 channels/grids). Set `tier` explicitly (`direct` | `decimated` |
+  for raw f32 channels/grids, and `pw.ship_u8` for byte-precision values). Set
+  `tier` explicitly (`direct` | `decimated` |
   `density`) — every tier decision is recorded, never silent (§28).
 - **A builder on the internal `Figure`** (`marks.py`, e.g. `hist(...)`,
   `bar(...)`) that ingests columns

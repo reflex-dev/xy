@@ -2,7 +2,7 @@
 emitters and the Tier-2 density/sample specs, and the `_PayloadWriter` that
 owns the binary blob + column table. Split out of `_figure.py` as a mixin;
 `Figure` inherits `PayloadMixin`, so every `self.*` resolves through the
-concrete `Figure` via the MRO (§29: data moves as raw f32 buffers)."""
+concrete `Figure` via the MRO (§29: data moves as typed binary buffers)."""
 
 from __future__ import annotations
 
@@ -35,15 +35,17 @@ class _PayloadWriter:
 
     The single place that knows the wire encoding, so every chart type ships
     columns the same way (§29): `ship` for offset-encoded geometry (§4), and
-    `ship_scalar` for raw f32 channels/grids already in final units (color
-    codes, density counts, bin heights). Adding a chart means calling these, not
-    re-implementing the encoding.
+    `ship_scalar` for raw f32 channels/grids already in final units, and
+    `ship_u8` for byte-precision categorical/density values. Adding a chart
+    means calling these, not re-implementing the encoding.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, borrow_heatmaps: bool = False) -> None:
         self.columns: list[dict[str, Any]] = []
         self._chunks: list[bytes] = []
         self._pos = 0
+        self.borrow_heatmaps = borrow_heatmaps
+        self.borrowed: list[np.ndarray] = []
 
     def ship(self, values: np.ndarray, col: "Column") -> int:
         """Offset-encoded geometry column: `(v - offset) * scale` as f32
@@ -62,6 +64,33 @@ class _PayloadWriter:
         """Raw f32 column already in final units (no offset): channel/grid/heights."""
         enc = np.ascontiguousarray(values, dtype=np.float32)
         return self._append(enc, {})
+
+    def ship_u8(self, values: np.ndarray) -> int:
+        """Raw byte column, padded so every later f32 column stays aligned."""
+        enc = np.ascontiguousarray(values, dtype=np.uint8).reshape(-1)
+        raw = enc.tobytes()
+        index = len(self.columns)
+        self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), "dtype": "u8"})
+        self._chunks.append(raw)
+        self._pos += len(raw)
+        padding = (-self._pos) % 4
+        if padding:
+            self._chunks.append(bytes(padding))
+            self._pos += padding
+        return index
+
+    def borrow_f64(self, values: np.ndarray) -> int:
+        """Register canonical f64 storage as a synchronous raster-only span.
+
+        Span 0 is the owned payload blob; borrowed arrays start at 1. Nothing
+        about the public browser payload uses this representation.
+        """
+        arr = np.ascontiguousarray(values, dtype="<f8").reshape(-1)
+        span = len(self.borrowed) + 1
+        self.borrowed.append(arr)
+        index = len(self.columns)
+        self.columns.append({"span": span, "byte_offset": 0, "len": int(len(arr)), "dtype": "f64"})
+        return index
 
     def ship_values(self, values: np.ndarray, *, kind: str = "float") -> int:
         """Offset-encoded temporary geometry not backed by a canonical Column."""
@@ -84,7 +113,7 @@ class _PayloadWriter:
 
 
 class PayloadMixin(_Host):
-    def build_payload(self, px_width: int = 2048) -> tuple[dict[str, Any], bytes]:
+    def build_payload(self, px_width: Optional[int] = None) -> tuple[dict[str, Any], bytes]:
         """Encode every trace for first paint: (spec, binary buffer blob).
 
         Per-kind logic lives in `_emit_<kind>` methods dispatched here — adding a
@@ -93,7 +122,31 @@ class PayloadMixin(_Host):
         (§5 Tier 1); dense scatter ships a density grid (§5 Tier 2). Every
         reduction is recorded in the spec — no silent quality changes (§28).
         """
-        pw = _PayloadWriter()
+        spec, blob, _borrowed = self._build_payload(px_width, borrow_heatmaps=False)
+        return spec, blob
+
+    def _build_raster_payload(
+        self, px_width: Optional[int] = None
+    ) -> tuple[dict[str, Any], bytes, tuple[np.ndarray, ...]]:
+        """Private static-export payload with borrowed canonical heatmap spans."""
+        return self._build_payload(px_width, borrow_heatmaps=True)
+
+    def _build_payload(
+        self, px_width: Optional[int], *, borrow_heatmaps: bool
+    ) -> tuple[dict[str, Any], bytes, tuple[np.ndarray, ...]]:
+        if px_width is None:
+            # A concrete chart should pay for the pixels it can display, not
+            # the historical 2048px fluid-layout fallback. Responsive charts
+            # keep that headroom until the browser reports a real width; live
+            # resize/view requests then refine the decimation for the new size.
+            width = self.width
+            px_width = (
+                int(width)
+                if isinstance(width, (int, float)) and not isinstance(width, bool)
+                else 2048
+            )
+        px_width, _ = lod.screen_shape(px_width, 16)
+        pw = _PayloadWriter(borrow_heatmaps=borrow_heatmaps)
         # `_range` is an O(traces x chunks) autorange scan and is invariant
         # while this build runs (emitters only touch shipped_sel/drill state),
         # so each axis pays for it once even when many traces share an axis.
@@ -149,7 +202,7 @@ class PayloadMixin(_Host):
         annotations = self._annotation_specs()
         if annotations:
             spec["annotations"] = annotations
-        return spec, pw.blob()
+        return spec, pw.blob(), tuple(pw.borrowed)
 
     def _emit_trace(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int
@@ -284,7 +337,7 @@ class PayloadMixin(_Host):
                 sel = np.flatnonzero(visible) if sel is None else sel[visible]
                 xv, yv = xv[visible], yv[visible]
         entry = self._base_entry(t, pw, xv, yv, "direct", dict(t.style))
-        entry["color"], entry["size"] = self._ship_channels(t, sel, pw.ship_scalar)
+        entry["color"], entry["size"] = self._ship_channels(t, sel, pw.ship_scalar, pw.ship_u8)
         t.shipped_sel = sel  # pick/selection translation (§17)
         return entry
 
@@ -297,7 +350,7 @@ class PayloadMixin(_Host):
         if sel is not None:
             xv, yv = xv[sel], yv[sel]
         entry = self._base_entry(t, pw, xv, yv, "direct", self._default_styled(t))
-        entry["color"], entry["size"] = self._ship_channels(t, sel, pw.ship_scalar)
+        entry["color"], entry["size"] = self._ship_channels(t, sel, pw.ship_scalar, pw.ship_u8)
         return entry
 
     def _emit_histogram(
@@ -323,7 +376,13 @@ class PayloadMixin(_Host):
             raise ValueError("heatmap trace missing grid column")
         rows, cols = t.grid_shape
         domain = tuple(t.style["domain"])
-        norm = kernels.normalize_f32(t.grid.values, domain, nonfinite="nan")
+        if pw.borrow_heatmaps:
+            buffer_index = pw.borrow_f64(t.grid.values)
+            encoding = "canonical-f64"
+        else:
+            norm = kernels.normalize_f32(t.grid.values, domain, nonfinite="nan")
+            buffer_index = pw.ship_scalar(norm)
+            encoding = None
         cmap = t.style.get("colormap", channels.DEFAULT_COLORMAP)
         return {
             "id": t.id,
@@ -336,13 +395,14 @@ class PayloadMixin(_Host):
             "x_axis": t.x_axis,
             "y_axis": t.y_axis,
             "heatmap": {
-                "buf": pw.ship_scalar(norm),
+                "buf": buffer_index,
                 "w": int(cols),
                 "h": int(rows),
                 "x_range": list(t.style["x_range"]),
                 "y_range": list(t.style["y_range"]),
                 "colormap": cmap,
                 "domain": list(domain),
+                **({"enc": encoding} if encoding is not None else {}),
             },
             "color": {"mode": "continuous", "colormap": cmap, "domain": list(domain)},
         }
@@ -399,7 +459,7 @@ class PayloadMixin(_Host):
             "y1": pw.ship(y1v, t.y1),
         }
         if t.color_ch is not None:
-            entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar)
+            entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar, pw.ship_u8)
         return entry
 
     def _emit_triangle_mesh(
@@ -410,15 +470,16 @@ class PayloadMixin(_Host):
             raise ValueError("triangle_mesh trace missing geometry columns")
         x0v, x1v, x2v = t.x0.values, t.x1.values, t.x.values
         y0v, y1v, y2v = t.y0.values, t.y1.values, t.y.values
-        finite = (
-            np.isfinite(x0v)
-            & np.isfinite(x1v)
-            & np.isfinite(x2v)
-            & np.isfinite(y0v)
-            & np.isfinite(y1v)
-            & np.isfinite(y2v)
-        )
-        sel_arg = None if bool(np.all(finite)) else np.flatnonzero(finite)
+        geometry = (t.x0, t.x1, t.x, t.y0, t.y1, t.y)
+        values = (x0v, x1v, x2v, y0v, y1v, y2v)
+        candidates = [
+            array for column, array in zip(geometry, values, strict=True) if column.zone.null_count
+        ]
+        if t.color_ch is not None and t.color_ch.mode == "continuous":
+            if t.color_ch.values is None:
+                raise ValueError("triangle_mesh continuous color channel missing values")
+            candidates.append(t.color_ch.values)
+        sel_arg = kernels.valid_indices_f64(tuple(candidates)) if candidates else None
         if sel_arg is not None:
             x0v, x1v, x2v = x0v[sel_arg], x1v[sel_arg], x2v[sel_arg]
             y0v, y1v, y2v = y0v[sel_arg], y1v[sel_arg], y2v[sel_arg]
@@ -440,7 +501,7 @@ class PayloadMixin(_Host):
             "y2": pw.ship(y2v, t.y),
         }
         if t.color_ch is not None:
-            entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar)
+            entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar, pw.ship_u8)
         return entry
 
     def _emit_errorbar(
@@ -495,7 +556,7 @@ class PayloadMixin(_Host):
             "y1": pw.ship(y1v, t.y1),
         }
         if t.color_ch is not None:
-            entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar)
+            entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar, pw.ship_u8)
         return entry
 
     def _emit_bar_compact(
@@ -565,13 +626,13 @@ class PayloadMixin(_Host):
             "bar": bar_spec,
         }
         if t.color_ch is not None:
-            entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar)
+            entry["color"], _size = self._ship_channels(t, sel_arg, pw.ship_scalar, pw.ship_u8)
         return entry
 
-    def _ship_channels(self, t: Trace, sel, ship_scalar) -> tuple[Any, Any]:  # noqa: ANN001
+    def _ship_channels(self, t: Trace, sel, ship_scalar, ship_u8) -> tuple[Any, Any]:  # noqa: ANN001
         """Ship a trace's color/size channels (delegates to channels.py — the
         same wire shape serves the build path and drill-in view updates)."""
-        return channels.ship_channels(t, sel, ship_scalar, DEFAULT_PALETTE)
+        return channels.ship_channels(t, sel, ship_scalar, ship_u8, DEFAULT_PALETTE)
 
     def _density_sample_spec(
         self,
@@ -581,21 +642,24 @@ class PayloadMixin(_Host):
         xr: tuple[float, float],
         yr: tuple[float, float],
         pw: "_PayloadWriter",
+        *,
+        sample_sel: Optional[np.ndarray] = None,
     ) -> Optional[dict[str, Any]]:
         if visible <= 0:
             return None
-        categories = None
-        if t.color_ch and t.color_ch.mode == "categorical" and t.color_ch.codes is not None:
-            categories = t.color_ch.codes[sel]
-        sample_sel = lod.sample_rows_for_target(
-            sel,
-            DENSITY_SAMPLE_TARGET,
-            categories=categories,
-            seed=DENSITY_SAMPLE_SEED,
-        )
+        if sample_sel is None:
+            categories = None
+            if t.color_ch and t.color_ch.mode == "categorical" and t.color_ch.codes is not None:
+                categories = t.color_ch.codes[sel]
+            sample_sel = lod.sample_rows_for_target(
+                sel,
+                DENSITY_SAMPLE_TARGET,
+                categories=categories,
+                seed=DENSITY_SAMPLE_SEED,
+            )
         if len(sample_sel) == 0:
             return None
-        color_spec, size_spec = self._ship_channels(t, sample_sel, pw.ship_scalar)
+        color_spec, size_spec = self._ship_channels(t, sample_sel, pw.ship_scalar, pw.ship_u8)
         style = dict(t.style)
         try:
             style["opacity"] = min(float(style.get("opacity", 0.8)), 0.55)
@@ -621,14 +685,84 @@ class PayloadMixin(_Host):
 
     def _density_trace_spec(self, t: Trace, xr, yr, w, h, pw: "_PayloadWriter") -> dict[str, Any]:  # noqa: ANN001
         """Bin a scatter into a density grid and build its spec entry (§5 Tier 2).
-        The grid ships as one f32 buffer (h×w counts); the client colormaps it,
-        recomputing the normalization domain per view so brightness is stable (§F6)."""
-        # Fused single pass: grid (bin_2d semantics) + visible rows
-        # (range_indices semantics) without re-reading the full columns twice.
-        grid, sel = kernels.bin_2d_indices(t.x.values, t.y.values, xr[0], xr[1], yr[0], yr[1], w, h)
-        visible = int(len(sel))
-        # numpy's .max() stub mis-resolves the overload for the kernel's f32 grid.
-        gmax = float(grid.max()) if grid.size else 0.0  # ty: ignore[invalid-argument-type]
+        The grid ships in the client's one-byte log texture precision; exact
+        visible counts remain metadata, and the client recomputes the
+        normalization domain per view so brightness is stable (§F6)."""
+        # A clean full-domain trace has identity visible rows. Avoid allocating
+        # and then hashing an N-entry u32 index vector merely to retain the
+        # small sampled overlay; the implicit-range samplers apply the same
+        # SplitMix predicates with scratch proportional to the returned rows.
+        # Compact categorical codes can be scanned directly in Rust; wider
+        # codes retain the general visible-index path.
+        categorical = bool(t.color_ch and t.color_ch.mode == "categorical")
+        compact_categorical = bool(
+            categorical
+            and t.color_ch is not None
+            and t.color_ch.codes is not None
+            and t.color_ch.codes.dtype == np.uint8
+        )
+        full_identity = (
+            (not categorical or compact_categorical)
+            and not (t.x.zone.null_count or t.y.zone.null_count)
+            and t.x.min >= xr[0]
+            and t.x.max <= xr[1]
+            and t.y.min >= yr[0]
+            and t.y.max <= yr[1]
+        )
+        sample_sel = None
+        if full_identity:
+            visible = int(t.n_points)
+            sel = np.empty(0, dtype=np.uint32)
+            if compact_categorical:
+                assert t.color_ch is not None and t.color_ch.codes is not None
+                if t.color_ch.counts is not None:
+                    grid, sample_sel = lod.bin_2d_stratified_sample_row_range_for_target(
+                        t.x.values,
+                        t.y.values,
+                        t.color_ch.codes,
+                        len(t.color_ch.categories or ()),
+                        xr[0],
+                        xr[1],
+                        yr[0],
+                        yr[1],
+                        w,
+                        h,
+                        DENSITY_SAMPLE_TARGET,
+                        counts=t.color_ch.counts,
+                        seed=DENSITY_SAMPLE_SEED,
+                    )
+                else:
+                    # Defensive compatibility for traces assembled outside the
+                    # normal resolver; production factorization always emits
+                    # counts and takes the fused path.
+                    grid = kernels.bin_2d(t.x.values, t.y.values, xr[0], xr[1], yr[0], yr[1], w, h)
+                    sample_sel = lod.stratified_sample_row_range_for_target(
+                        t.color_ch.codes,
+                        len(t.color_ch.categories or ()),
+                        DENSITY_SAMPLE_TARGET,
+                        seed=DENSITY_SAMPLE_SEED,
+                    )
+            else:
+                grid, sample_sel = lod.bin_2d_sample_row_range_for_target(
+                    t.x.values,
+                    t.y.values,
+                    xr[0],
+                    xr[1],
+                    yr[0],
+                    yr[1],
+                    w,
+                    h,
+                    DENSITY_SAMPLE_TARGET,
+                    seed=DENSITY_SAMPLE_SEED,
+                )
+        else:
+            # Fused single pass: grid (bin_2d semantics) + visible rows
+            # (range_indices semantics) without re-reading full columns twice.
+            grid, sel = kernels.bin_2d_indices(
+                t.x.values, t.y.values, xr[0], xr[1], yr[0], yr[1], w, h
+            )
+            visible = int(len(sel))
+        encoded_grid, gmax = kernels.density_log_u8(grid)
         # Honor the user's colormap for the density ramp even though the per-point
         # color *data* can't survive count-aggregation (needs the §5-F5 algebra).
         cmap = (
@@ -640,16 +774,17 @@ class PayloadMixin(_Host):
         size_dropped = bool(t.size_ch and t.size_ch.mode != "constant")
         dropped = color_dropped or size_dropped
         density = {
-            "buf": pw.ship_scalar(grid.reshape(-1)),
+            "buf": pw.ship_u8(encoded_grid),
             "w": w,
             "h": h,
             "max": gmax,
+            "enc": "log-u8",
             "colormap": cmap,
             "x_range": list(xr),
             "y_range": list(yr),
             "channels_dropped": dropped,  # never silent (§28)
         }
-        sample = self._density_sample_spec(t, sel, visible, xr, yr, pw)
+        sample = self._density_sample_spec(t, sel, visible, xr, yr, pw, sample_sel=sample_sel)
         if sample is not None:
             density["sample"] = sample
         return {

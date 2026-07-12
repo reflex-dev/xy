@@ -404,9 +404,22 @@ function overviewData() {{
   const density = overviewTrace.density;
   const col = spec.columns[density.buf];
   if (!col) return null;
+  let values;
+  if (density.enc === "log-u8") {{
+    const encoded = new Uint8Array(initialBytes.buffer, col.byte_offset || 0, col.len);
+    values = new Float32Array(encoded.length);
+    const denom = Math.log1p(Math.max(0, density.max || 0));
+    if (denom > 0) {{
+      for (let i = 0; i < encoded.length; i++) {{
+        if (encoded[i] > 0) values[i] = Math.expm1((encoded[i] / 255) * denom);
+      }}
+    }}
+  }} else {{
+    values = new Float32Array(initialBytes.buffer, col.byte_offset || 0, col.len);
+  }}
   return {{
     density,
-    values: new Float32Array(initialBytes.buffer, col.byte_offset || 0, col.len),
+    values,
     width: density.w,
     height: density.h,
   }};
