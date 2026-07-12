@@ -58,6 +58,9 @@ These commands match the non-blocking GitHub Actions measurement lane:
   --json heatmap-4b.json
 .venv/bin/python benchmarks/bench_interaction.py --sizes 1e4,2.5e5 \
   --reps 24 --chromium "$CHROME" --json interaction.json
+.venv/bin/python benchmarks/bench_transport.py --n 1e6 --reps 15 \
+  --browser-reps 12 --chromium "$CHROME" --require-browser \
+  --json transport.json
 .venv/bin/python benchmarks/bench_dashboard.py --chart-counts 10,20,50 \
   --chromium "$CHROME" --json dashboard.json
 .venv/bin/python benchmarks/bench_workflows.py --profile standard --reps 5 \
@@ -68,6 +71,14 @@ These commands match the non-blocking GitHub Actions measurement lane:
 
 The browser helpers force SwiftShader themselves. Validate every artifact before
 publication with `scripts/verify_benchmark_report.py --kind ...`.
+
+`bench_transport.py` is a loopback transport diagnostic: both HTTP response
+formats dispatch through `channel.handle_message()`. Its aligned binary envelope
+is intentionally benchmark-only and has no compatibility promise. Browser rows
+measure request through decode and the next animation frame; they do not claim
+request-to-pixels or GPU-upload latency. The report also records current widget
+append retransmission and unaffected-trace bytes so later fixes have an explicit
+before/after baseline.
 
 The native CodSpeed suite is the reproducible backend/per-payload gate. Every
 module named `test_codspeed_*.py` is collected, so adding a dedicated CodSpeed

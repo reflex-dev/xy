@@ -725,6 +725,67 @@ def _workflow_native_report() -> dict:
     }
 
 
+def _transport_loopback_report() -> dict:
+    categories, tracked = _category_registry(
+        "payload_export_size", "streaming_updates", "interaction_smoothness"
+    )
+    modes = ("aligned-binary-diagnostic", "base64-json-prototype")
+    return {
+        **_base(),
+        "kind": "transport-loopback",
+        "measurement_scope": "loopback-channel-transport-diagnostic",
+        "frame_status": "benchmark-only; not a production protocol",
+        "benchmark_categories": categories,
+        "tracked_categories": tracked,
+        "configuration": {"n": 1_000_000, "reps": 3, "browser_reps": 2},
+        "envelopes": [
+            {
+                "mode": mode,
+                "payload_bytes": 1000,
+                "wire_bytes": 1100,
+                "wire_to_payload_ratio": 1.1,
+                "gzip_bytes": 900,
+                "encode_p50_ms": 0.1,
+                "encode_p95_ms": 0.2,
+                "peak_python_bytes": 2000,
+                "payload_reencodes": int(mode == "base64-json-prototype"),
+            }
+            for mode in modes
+        ],
+        "python_loopback": [
+            {
+                "mode": mode,
+                "response_bytes": 1100,
+                "request_to_decode_p50_ms": 1.0,
+                "request_to_decode_p95_ms": 2.0,
+            }
+            for mode in modes
+        ],
+        "browser": {
+            "status": "ok",
+            "rows": [
+                {
+                    "mode": mode,
+                    "response_bytes": 1100,
+                    "request_to_next_frame_p50_ms": 8.0,
+                    "request_to_next_frame_p95_ms": 9.0,
+                    "js_heap_delta_p95_bytes": 1000,
+                }
+                for mode in modes
+            ],
+        },
+        "append_diagnostics": {
+            "fixture_points_per_trace": 10_000,
+            "widget_messages": 3,
+            "widget_binary_transmissions": 2,
+            "widget_binary_bytes": 160_000,
+            "single_trace_append_wire_bytes": 80_000,
+            "two_trace_append_wire_bytes": 160_000,
+            "extra_unaffected_trace_wire_bytes": 80_000,
+        },
+    }
+
+
 @pytest.mark.parametrize(
     ("payload", "kind"),
     [
@@ -739,6 +800,7 @@ def _workflow_native_report() -> dict:
         (_workflow_native_report(), "workflow-native"),
         (_line_decimation_report(), "line-decimation"),
         (_install_footprint_report(), "install-footprint"),
+        (_transport_loopback_report(), "transport-loopback"),
     ],
 )
 def test_verify_benchmark_report_accepts_known_shapes(

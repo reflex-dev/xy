@@ -273,7 +273,7 @@ def test_ci_workflow_rejects_missing_regression_gate(tmp_path: Path) -> None:
     path.write_text(
         workflow.replace(
             "          python3 scripts/check_regressions.py --scatter scatter.json --kernel kernel.json \\\n"
-            "            --emit-md docs/benchmark_metrics.md\n",
+            "            --transport transport.json --emit-md docs/benchmark_metrics.md\n",
             "",
         ),
         encoding="utf-8",
@@ -282,6 +282,23 @@ def test_ci_workflow_rejects_missing_regression_gate(tmp_path: Path) -> None:
     errors = verify_ci_workflow.validate_workflow(path)
 
     assert any("test job" in error and "check_regressions" in error for error in errors)
+
+
+def test_ci_workflow_rejects_missing_transport_regression_probe(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "          .venv/bin/python benchmarks/bench_transport.py --n 1e6 --reps 15 \\\n"
+            '            --browser-reps 12 --chromium "$CHROME" --require-browser --json transport.json\n',
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_workflow(path)
+
+    assert any("test job" in error and "bench_transport" in error for error in errors)
 
 
 def test_ci_workflow_rejects_missing_kernel_benchmark_verification(tmp_path: Path) -> None:

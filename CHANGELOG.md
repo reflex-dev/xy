@@ -20,6 +20,16 @@ in the README).
   to the internal engine object.
 
 ### Added
+- **Loopback transport measurement gates.** `benchmarks/bench_transport.py`
+  now drives the transport-neutral `channel.handle_message()` dispatcher
+  through real HTTP and compares the current base64-in-JSON prototype with an
+  explicitly benchmark-only aligned binary envelope. Reports separate raw and
+  gzip bytes, Python encode/allocation and loopback p50/p95, Chromium
+  decode-to-next-frame latency and heap delta, plus the current duplicate
+  widget-append and unaffected-trace retransmission costs. Deterministic byte
+  metrics are hard regression gates; the refreshed density baseline reflects
+  the current screen-bounded ~264–266 KB payload instead of the stale ~854 KB
+  values.
 - `xy.pyplot`: a matplotlib-flavored shim over the composition
   API (`import xy.pyplot as plt`). Corpus-defined compatibility —
   see `docs/matplotlib-compat.md`; fully contained in

@@ -32,10 +32,21 @@
     "scatter.tier.1000000": "density",
     "scatter.tier.10000000": "density",
     "scatter.wire_bytes.100000": 800983,
-    "scatter.wire_bytes.1000000": 855778,
-    "scatter.wire_bytes.10000000": 853850,
+    "scatter.wire_bytes.1000000": 265982,
+    "scatter.wire_bytes.10000000": 264054,
     "scatter.wire_bytes_per_point.100000": 8.0098,
-    "scatter.wire_bytes_per_point.1000000": 0.8558,
-    "scatter.wire_bytes_per_point.10000000": 0.0854
+    "scatter.wire_bytes_per_point.1000000": 0.266,
+    "scatter.wire_bytes_per_point.10000000": 0.0264,
+    "transport.aligned-binary-diagnostic.gzip_bytes": 96255,
+    "transport.aligned-binary-diagnostic.wire_bytes": 130760,
+    "transport.aligned-binary-diagnostic.wire_to_payload_ratio": 1.0048567564244437,
+    "transport.append.extra_unaffected_trace_wire_bytes": 80430,
+    "transport.append.single_trace_append_wire_bytes": 80962,
+    "transport.append.two_trace_append_wire_bytes": 161392,
+    "transport.append.widget_binary_bytes": 160016,
+    "transport.append.widget_binary_transmissions": 2,
+    "transport.base64-json-prototype.gzip_bytes": 107055,
+    "transport.base64-json-prototype.wire_bytes": 174121,
+    "transport.base64-json-prototype.wire_to_payload_ratio": 1.3380748186401081
   }
 }

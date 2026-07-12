@@ -28,6 +28,7 @@ are published.
 | payload prep | wall time: canonical arrays → wire payload (spec+blob) | `perf_counter` around `build_payload`; competitors: their figure→HTML/JSON serialize |
 | wire size | bytes crossing to the client | `len(blob)+len(spec_json)`; competitors: HTML/JSON size |
 | browser TTFR | figure build + interactive HTML serialization + navigation → visible chart surface | shipped `_browser.py` chart-ready probe; page FCP is diagnostic only |
+| loopback transport | `channel.handle_message()` dispatch → HTTP envelope → client decode; raw/gzip bytes, Python allocation, p50/p95, browser heap, next frame | `benchmarks/bench_transport.py`; aligned binary arm is benchmark-only until the production codec lands |
 | interaction-ready | navigation → first successful synthetic wheel-zoom applied (view actually changes) | extend page probe: dispatch wheel, RAF-poll view/transform change |
 | pan/zoom latency | p50/p95/p99 of input→pixels for repeated gestures | dispatched DOM events + draw + WebGL readback in `bench_interaction.py`; standalone-client scope is explicit |
 | memory (kernel) | peak RSS delta + tracemalloc peak during prep | shipped psutil/tracemalloc pattern |
@@ -133,9 +134,10 @@ reported).
 
 1. Extend the shipped count-conservation and per-pixel line extrema oracles with
    channel-aggregation and cross-library pixel-dropout oracles.
-2. Add a real widget/comm round-trip interaction probe; current browser rows are
-   explicitly standalone client input-to-readback, while backend work is timed
-   in CodSpeed/workflow rows.
+2. Add the final widget/comm and Reflex request-to-pixels probes. The shipped
+   loopback transport diagnostic now covers `channel.handle_message()` through
+   real HTTP plus browser decode/next-frame, but deliberately excludes widget
+   comm internals, production framing, GPU upload, and visible-pixel readback.
 3. PyGWalker adapter and Plotly/Bokeh equivalents for the
    `dashboard_20` scenario.
 4. Reference-hardware runbook (`benchmarks/README`): exact pins + one-command
