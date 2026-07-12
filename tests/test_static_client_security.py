@@ -344,6 +344,7 @@ def test_client_refreshes_and_destroys_density_sample_overlays() -> None:
     )
     for path in lod_files:
         text = path.read_text(encoding="utf-8")
+        assert 'Object.prototype.hasOwnProperty.call(d, "sample")' in text
         assert "view._applyDensitySample(g, d.sample, buffers);" in text
 
 

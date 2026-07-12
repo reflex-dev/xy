@@ -1297,7 +1297,9 @@ grid,
 tex: view._uploadGrid(grid, d.w, d.h, normMax),
 lut: g.density.lut,
 };
+if (Object.prototype.hasOwnProperty.call(d, "sample")) {
 view._applyDensitySample(g, d.sample, buffers);
+}
 lodStartNormAnim(view, g, normMax, d.max);
 lodRememberDensity(view, g, g.density);
 }
