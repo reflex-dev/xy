@@ -97,6 +97,7 @@ def test_live_drilldown_assets_keep_local_density_fallback() -> None:
     required = [
         "REQUEST_TIMEOUT_MS",
         "overviewData",
+        'density.enc === "log-u8"',
         "localDensityUpdate",
         "isInitialOverviewRequest",
         "initialOverviewUpdate",

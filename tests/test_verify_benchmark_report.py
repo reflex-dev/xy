@@ -259,6 +259,43 @@ def _scatter_native_report() -> dict:
     }
 
 
+def _heatmap_native_report() -> dict:
+    categories, tracked = _category_registry(
+        "core_2d_chart_breadth", "static_export", "payload_export_size"
+    )
+    return {
+        **_base(),
+        "kind": "heatmap-native",
+        "measurement_scope": "production-heatmap-payload-and-native-png",
+        "benchmark_categories": categories,
+        "tracked_categories": tracked,
+        "rows": [
+            {
+                "side": 512,
+                "cells": 512 * 512,
+                "benchmark_categories": [
+                    "core_2d_chart_breadth",
+                    "static_export",
+                    "payload_export_size",
+                ],
+                "fixture_ms_excluded": 1.0,
+                "figure_construct_ms": 2.0,
+                "payload_ms": 3.0,
+                "native_png_ms": 1.0,
+                "source_to_native_png_ms": 6.0,
+                "canonical_bytes": 512 * 512 * 8,
+                "payload_bytes": 0,
+                "borrowed_bytes": 512 * 512 * 8,
+                "native_png_bytes": 4096,
+                "peak_rss_bytes": 16 * 1024 * 1024,
+                "reps": 7,
+                "oracle_status": "pass",
+                "measurement_scope": "production-heatmap-payload-and-native-png",
+            }
+        ],
+    }
+
+
 def _line_decimation_report() -> dict:
     categories, tracked = _category_registry("huge_line_time_series", "payload_export_size")
     row = {
@@ -646,7 +683,7 @@ def _workflow_native_report() -> dict:
         ("ingest_python_lists", "ingestion", "input_ingestion"),
         ("stream_line_append_1k", "streaming", "streaming_updates"),
         (
-            "stream_density_append_then_pyramid_rebuild",
+            "stream_density_append_1k_incremental_pyramid",
             "streaming",
             "streaming_updates",
         ),
@@ -695,6 +732,7 @@ def _workflow_native_report() -> dict:
         (_core_2d_report(), "core-2d"),
         (_pyplot_vs_matplotlib_report(), "pyplot-vs-matplotlib"),
         (_scatter_native_report(), "scatter-native"),
+        (_heatmap_native_report(), "heatmap-native"),
         (_kernel_native_report(), "kernel-native"),
         (_interaction_browser_report(), "interaction-browser"),
         (_dashboard_browser_report(), "dashboard-browser"),

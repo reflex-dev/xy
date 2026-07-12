@@ -24,6 +24,14 @@ const OP_IMAGE: u8 = 5;
 const OP_TEXT: u8 = 6;
 const OP_POINTS: u8 = 7;
 const OP_SEGMENTS: u8 = 8;
+const OP_RECTS: u8 = 9;
+const OP_TRIANGLES: u8 = 10;
+const OP_SMOOTH_STROKE: u8 = 11;
+const OP_DENSITY_IMAGE: u8 = 12;
+const OP_HEATMAP_IMAGE: u8 = 13;
+const OP_AFFINE_POINTS: u8 = 14;
+const OP_AFFINE_CHANNEL_POINTS: u8 = 15;
+const OP_STROKED_TRIANGLES: u8 = 16;
 
 const SS: usize = 4; // vertical supersamples per scanline for polygon AA
 
@@ -189,20 +197,6 @@ struct Surface<'a> {
 
 impl Surface<'_> {
     #[inline]
-    fn blend(&mut self, x: usize, y: usize, rgba: [f32; 4], cov: f32) {
-        self.blend_u8(
-            x,
-            y,
-            [
-                to_u8(rgba[0]),
-                to_u8(rgba[1]),
-                to_u8(rgba[2]),
-                to_u8(rgba[3] * cov),
-            ],
-        );
-    }
-
-    #[inline]
     fn blend_prepared(&mut self, x: usize, y: usize, rgb: [u8; 3], alpha: f32, cov: f32) {
         self.blend_u8(x, y, [rgb[0], rgb[1], rgb[2], to_u8(alpha * cov)]);
     }
@@ -237,10 +231,31 @@ fn stroke_segment(cv: &mut Canvas, a: (f32, f32), b: (f32, f32), width: f32, rgb
 }
 
 fn stroke_segment_at(cv: &mut Surface, a: (f32, f32), b: (f32, f32), width: f32, rgba: [f32; 4]) {
+    stroke_segment_u8_at(cv, a, b, width, rgba.map(to_u8));
+}
+
+fn stroke_segment_u8_at(cv: &mut Surface, a: (f32, f32), b: (f32, f32), width: f32, rgba: [u8; 4]) {
     if width <= 0.0 {
         return;
     }
     let hw = width * 0.5;
+    let outer = hw + 0.5;
+    let outer2 = outer * outer;
+    let inner = (hw - 0.5).max(0.0);
+    let inner2 = inner * inner;
+    let rgb = [rgba[0], rgba[1], rgba[2]];
+    let alpha = rgba[3] as f32 / 255.0;
+    let paint = |cv: &mut Surface, x: usize, y: usize, p: (f32, f32)| {
+        let distance2 = seg_dist2(p, a, b);
+        if distance2 >= outer2 {
+            return;
+        }
+        if distance2 <= inner2 {
+            cv.blend_u8(x, y, rgba);
+            return;
+        }
+        cv.blend_prepared(x, y, rgb, alpha, outer - distance2.sqrt());
+    };
     let (bx0, by0, bx1, by1) = cv.bbox(
         a.0.min(b.0) - hw - 1.0,
         a.1.min(b.1) - hw - 1.0,
@@ -255,10 +270,7 @@ fn stroke_segment_at(cv: &mut Surface, a: (f32, f32), b: (f32, f32), width: f32,
             let sy0 = ((center - hw - 1.0).floor() as usize).max(by0);
             let sy1 = ((center + hw + 1.0).ceil() as usize).min(by1);
             for y in sy0..sy1 {
-                let cov = seg_coverage((x as f32 + 0.5, y as f32 + 0.5), a, b, hw);
-                if cov > 0.0 {
-                    cv.blend(x, y, rgba, cov);
-                }
+                paint(cv, x, y, (x as f32 + 0.5, y as f32 + 0.5));
             }
         }
     } else if dy.abs() > 1e-6 {
@@ -268,19 +280,13 @@ fn stroke_segment_at(cv: &mut Surface, a: (f32, f32), b: (f32, f32), width: f32,
             let sx0 = ((center - hw - 1.0).floor() as usize).max(bx0);
             let sx1 = ((center + hw + 1.0).ceil() as usize).min(bx1);
             for x in sx0..sx1 {
-                let cov = seg_coverage((x as f32 + 0.5, y as f32 + 0.5), a, b, hw);
-                if cov > 0.0 {
-                    cv.blend(x, y, rgba, cov);
-                }
+                paint(cv, x, y, (x as f32 + 0.5, y as f32 + 0.5));
             }
         }
     } else {
         for y in by0..by1 {
             for x in bx0..bx1 {
-                let cov = seg_coverage((x as f32 + 0.5, y as f32 + 0.5), a, b, hw);
-                if cov > 0.0 {
-                    cv.blend(x, y, rgba, cov);
-                }
+                paint(cv, x, y, (x as f32 + 0.5, y as f32 + 0.5));
             }
         }
     }
@@ -423,6 +429,8 @@ fn fill_poly(cv: &mut Canvas, pts: &[(f32, f32)], mut color_at: impl FnMut(f32, 
 
 // ---- stroke (distance field, round caps/joins) ------------------------------
 
+type StrokeSegment = ((f32, f32), (f32, f32));
+
 #[inline]
 fn seg_dist2(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
     let (px, py) = p;
@@ -463,6 +471,18 @@ fn stroke(
     closed: bool,
     dash: &[f32],
 ) {
+    stroke_with_threads(cv, pts, width, rgba, closed, dash, None);
+}
+
+fn stroke_with_threads(
+    cv: &mut Canvas,
+    pts: &[(f32, f32)],
+    width: f32,
+    rgba: [f32; 4],
+    closed: bool,
+    dash: &[f32],
+    forced_threads: Option<usize>,
+) {
     if pts.len() < 2 || width <= 0.0 {
         return;
     }
@@ -471,11 +491,10 @@ fn stroke(
         return;
     }
     let hw = width * 0.5;
-    let mut segs: Vec<((f32, f32), (f32, f32))> = Vec::new();
+    let mut segs: Vec<StrokeSegment> = Vec::new();
     let n = pts.len();
     let last = if closed { n } else { n - 1 };
-    let raw: Vec<((f32, f32), (f32, f32))> =
-        (0..last).map(|i| (pts[i], pts[(i + 1) % n])).collect();
+    let raw: Vec<StrokeSegment> = (0..last).map(|i| (pts[i], pts[(i + 1) % n])).collect();
 
     if dash.is_empty() {
         segs = raw;
@@ -519,6 +538,31 @@ fn stroke(
         return;
     }
 
+    // Long polylines are one logical stroke, so OP_SEGMENTS cannot help them:
+    // joins must max-combine coverage and composite once. Row bands preserve
+    // that invariant because every pixel belongs to exactly one band, while
+    // segment indices remain in original order inside each bucket.
+    let ext = hw + 1.0;
+    let est_px = segs.iter().fold(0.0f32, |work, (a, b)| {
+        work + ((a.0 - b.0).abs() + 2.0 * ext) * ((a.1 - b.1).abs() + 2.0 * ext)
+    });
+    let threads = forced_threads
+        .unwrap_or_else(|| raster_fanout(est_px, STROKE_FANOUT_PX, cv.h))
+        .max(1);
+    if threads > 1 {
+        paint_banded(
+            cv,
+            threads,
+            segs.len(),
+            |i| {
+                let (a, b) = segs[i];
+                Some((a.1.min(b.1) - ext, a.1.max(b.1) + ext))
+            },
+            |surface, indices| stroke_segments_band(surface, &segs, indices, hw, rgba),
+        );
+        return;
+    }
+
     let mut xmin = f32::INFINITY;
     let mut ymin = f32::INFINITY;
     let mut xmax = f32::NEG_INFINITY;
@@ -540,6 +584,13 @@ fn stroke(
     }
     let (sw, sh) = (bx1 - bx0, by1 - by0);
     let mut scratch = vec![0u8; sw * sh];
+    // A polyline is normally a few pixels wide but its overall bounding box
+    // spans most of the plot. Scanning that entire box to composite a thin
+    // stroke makes export cost follow canvas area instead of painted pixels.
+    // Record each scratch pixel on its first non-zero coverage and visit only
+    // those pixels below. Later overlapping segments still max-combine into
+    // the same scratch byte, so joins and output bytes remain identical.
+    let mut touched = Vec::<usize>::with_capacity(segs.len().saturating_mul(8));
     for (a, b) in &segs {
         let sx0 = ((a.0.min(b.0) - hw - 1.0).floor() as usize).max(bx0);
         let sy0 = ((a.1.min(b.1) - hw - 1.0).floor() as usize).max(by0);
@@ -549,8 +600,12 @@ fn stroke(
             for x in sx0..sx1 {
                 let c = seg_coverage((x as f32 + 0.5, y as f32 + 0.5), *a, *b, hw);
                 if c > 0.0 {
-                    let s = &mut scratch[(y - by0) * sw + (x - bx0)];
+                    let index = (y - by0) * sw + (x - bx0);
+                    let s = &mut scratch[index];
                     let coverage = to_u8(c);
+                    if *s == 0 {
+                        touched.push(index);
+                    }
                     if coverage > *s {
                         *s = coverage;
                     }
@@ -558,13 +613,80 @@ fn stroke(
             }
         }
     }
-    for y in by0..by1 {
-        for x in bx0..bx1 {
-            let c = scratch[(y - by0) * sw + (x - bx0)];
-            if c > 0 {
-                cv.blend(x, y, rgba, c as f32 / 255.0);
+    for index in touched {
+        let c = scratch[index];
+        let (row, col) = (index / sw, index % sw);
+        cv.blend(bx0 + col, by0 + row, rgba, c as f32 / 255.0);
+    }
+}
+
+/// Paint one disjoint row band of a logical polyline. Coverage bytes are
+/// max-combined exactly like the serial whole-canvas path, then each touched
+/// pixel is blended once; splitting only changes ownership, never arithmetic.
+fn stroke_segments_band(
+    cv: &mut Surface,
+    segs: &[StrokeSegment],
+    indices: &[u32],
+    hw: f32,
+    rgba: [f32; 4],
+) {
+    let mut xmin = f32::INFINITY;
+    let mut ymin = f32::INFINITY;
+    let mut xmax = f32::NEG_INFINITY;
+    let mut ymax = f32::NEG_INFINITY;
+    for &index in indices {
+        let (a, b) = segs[index as usize];
+        xmin = xmin.min(a.0.min(b.0));
+        ymin = ymin.min(a.1.min(b.1));
+        xmax = xmax.max(a.0.max(b.0));
+        ymax = ymax.max(a.1.max(b.1));
+    }
+    let (bx0, by0, bx1, by1) = cv.bbox(
+        xmin - hw - 1.0,
+        ymin - hw - 1.0,
+        xmax + hw + 1.0,
+        ymax + hw + 1.0,
+    );
+    if bx1 <= bx0 || by1 <= by0 {
+        return;
+    }
+    let (sw, sh) = (bx1 - bx0, by1 - by0);
+    let mut scratch = vec![0u8; sw * sh];
+    let mut touched = Vec::<usize>::with_capacity(indices.len().saturating_mul(8));
+    for &index in indices {
+        let (a, b) = segs[index as usize];
+        let sx0 = ((a.0.min(b.0) - hw - 1.0).floor() as usize).max(bx0);
+        let sy0 = ((a.1.min(b.1) - hw - 1.0).floor() as usize).max(by0);
+        let sx1 = ((a.0.max(b.0) + hw + 1.0).ceil() as usize).min(bx1);
+        let sy1 = ((a.1.max(b.1) + hw + 1.0).ceil() as usize).min(by1);
+        for y in sy0..sy1 {
+            for x in sx0..sx1 {
+                let raw_coverage = seg_coverage((x as f32 + 0.5, y as f32 + 0.5), a, b, hw);
+                if raw_coverage <= 0.0 {
+                    continue;
+                }
+                let coverage = to_u8(raw_coverage);
+                let scratch_index = (y - by0) * sw + (x - bx0);
+                let slot = &mut scratch[scratch_index];
+                if *slot == 0 {
+                    touched.push(scratch_index);
+                }
+                if coverage > *slot {
+                    *slot = coverage;
+                }
             }
         }
+    }
+    let rgb = [to_u8(rgba[0]), to_u8(rgba[1]), to_u8(rgba[2])];
+    for index in touched {
+        let (row, col) = (index / sw, index % sw);
+        cv.blend_prepared(
+            bx0 + col,
+            by0 + row,
+            rgb,
+            rgba[3],
+            scratch[index] as f32 / 255.0,
+        );
     }
 }
 
@@ -608,16 +730,7 @@ fn point(
     sw: f32,
     stroke: [f32; 4],
 ) {
-    point_u8(
-        cv,
-        cx,
-        cy,
-        r,
-        sym,
-        fill.map(to_u8),
-        sw,
-        stroke.map(to_u8),
-    );
+    point_u8(cv, cx, cy, r, sym, fill.map(to_u8), sw, stroke.map(to_u8));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -664,7 +777,11 @@ fn point_u8_at(
         // exactly `fill[3]`, so the direct integer blend is the same blend.
         let solid2 = {
             let t = r - 0.5;
-            if t > 0.0 { t * t * (1.0 - 1e-5) } else { -1.0 }
+            if t > 0.0 {
+                t * t * (1.0 - 1e-5)
+            } else {
+                -1.0
+            }
         };
         let reject2 = {
             let t = r + 0.5;
@@ -728,6 +845,65 @@ fn blit(
     src: &[u8],
     nearest: bool,
 ) {
+    let pixels = dw.max(0.0) * dh.max(0.0);
+    let threads = raster_fanout(pixels, IMAGE_FANOUT_PX, cv.h);
+    blit_with_threads(cv, dx, dy, dw, dh, iw, ih, src, nearest, threads);
+}
+
+const IMAGE_FANOUT_PX: f32 = 250_000.0;
+
+/// Give each image worker a disjoint framebuffer row band. Unlike a mark
+/// batch, an image writes every destination pixel once, so no bucketing or
+/// ordering merge is needed and the parallel result is byte-identical.
+fn paint_image_bands(
+    cv: &mut Canvas,
+    y0: usize,
+    y1: usize,
+    threads: usize,
+    paint: impl Fn(&mut Surface) + Sync,
+) {
+    if y1 <= y0 {
+        return;
+    }
+    let threads = threads.min(y1 - y0).max(1);
+    let band_rows = (y1 - y0).div_ceil(threads);
+    let (w, ch, opaque, clip) = (cv.w, cv.channels(), cv.opaque, cv.clip);
+    let row_bytes = w * ch;
+    let active = &mut cv.px[y0 * row_bytes..y1 * row_bytes];
+    std::thread::scope(|scope| {
+        for (band_index, band) in active.chunks_mut(band_rows * row_bytes).enumerate() {
+            let first = y0 + band_index * band_rows;
+            let rows = band.len() / row_bytes;
+            let paint = &paint;
+            scope.spawn(move || {
+                let mut surface = Surface {
+                    px: band,
+                    w,
+                    y0: first,
+                    y1: first + rows,
+                    channels: ch,
+                    opaque,
+                    clip,
+                };
+                paint(&mut surface);
+            });
+        }
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn blit_with_threads(
+    cv: &mut Canvas,
+    dx: f32,
+    dy: f32,
+    dw: f32,
+    dh: f32,
+    iw: usize,
+    ih: usize,
+    src: &[u8],
+    nearest: bool,
+    threads: usize,
+) {
     if iw == 0 || ih == 0 || dw <= 0.0 || dh <= 0.0 {
         return;
     }
@@ -736,43 +912,159 @@ fn blit(
         let xmap: Vec<usize> = (bx0..bx1)
             .map(|x| (((x as f32 + 0.5 - dx) / dw * iw as f32).floor() as usize).min(iw - 1))
             .collect();
-        for y in by0..by1 {
-            let sy = (((y as f32 + 0.5 - dy) / dh * ih as f32).floor() as usize).min(ih - 1);
-            for (offset, &sx) in xmap.iter().enumerate() {
-                let source = (sy * iw + sx) * 4;
-                let color = [
-                    src[source],
-                    src[source + 1],
-                    src[source + 2],
-                    src[source + 3],
-                ];
-                cv.blend_u8(bx0 + offset, y, color);
+        paint_image_bands(cv, by0, by1, threads, |surface| {
+            for y in surface.y0..surface.y1 {
+                let sy = (((y as f32 + 0.5 - dy) / dh * ih as f32).floor() as usize).min(ih - 1);
+                for (offset, &sx) in xmap.iter().enumerate() {
+                    let source = (sy * iw + sx) * 4;
+                    let color = [
+                        src[source],
+                        src[source + 1],
+                        src[source + 2],
+                        src[source + 3],
+                    ];
+                    surface.blend_u8(bx0 + offset, y, color);
+                }
             }
-        }
+        });
         return;
     }
-    let sample = |sx: usize, sy: usize, k: usize| src[(sy * iw + sx) * 4 + k] as f32 / 255.0;
-    for y in by0..by1 {
-        for x in bx0..bx1 {
+    let xmap: Vec<(usize, usize, f32)> = (bx0..bx1)
+        .map(|x| {
             let u = ((x as f32 + 0.5 - dx) / dw * iw as f32 - 0.5).clamp(0.0, iw as f32 - 1.0);
+            let x0 = u.floor() as usize;
+            (x0, (x0 + 1).min(iw - 1), u - x0 as f32)
+        })
+        .collect();
+    let sample = |sx: usize, sy: usize, k: usize| src[(sy * iw + sx) * 4 + k] as f32 / 255.0;
+    paint_image_bands(cv, by0, by1, threads, |surface| {
+        for y in surface.y0..surface.y1 {
             let v = ((y as f32 + 0.5 - dy) / dh * ih as f32 - 0.5).clamp(0.0, ih as f32 - 1.0);
-            let (x0, y0) = (u.floor() as usize, v.floor() as usize);
-            let (x1, y1) = ((x0 + 1).min(iw - 1), (y0 + 1).min(ih - 1));
-            let (fx, fy) = (u - x0 as f32, v - y0 as f32);
-            let w00 = (1.0 - fx) * (1.0 - fy);
-            let w10 = fx * (1.0 - fy);
-            let w01 = (1.0 - fx) * fy;
-            let w11 = fx * fy;
-            let mut c = [0.0f32; 4];
-            for (k, ck) in c.iter_mut().enumerate() {
-                *ck = w00 * sample(x0, y0, k)
-                    + w10 * sample(x1, y0, k)
-                    + w01 * sample(x0, y1, k)
-                    + w11 * sample(x1, y1, k);
+            let y0 = v.floor() as usize;
+            let y1 = (y0 + 1).min(ih - 1);
+            let fy = v - y0 as f32;
+            for (offset, &(x0, x1, fx)) in xmap.iter().enumerate() {
+                let w00 = (1.0 - fx) * (1.0 - fy);
+                let w10 = fx * (1.0 - fy);
+                let w01 = (1.0 - fx) * fy;
+                let w11 = fx * fy;
+                let mut c = [0.0f32; 4];
+                for (k, ck) in c.iter_mut().enumerate() {
+                    *ck = w00 * sample(x0, y0, k)
+                        + w10 * sample(x1, y0, k)
+                        + w01 * sample(x0, y1, k)
+                        + w11 * sample(x1, y1, k);
+                }
+                surface.blend_u8(bx0 + offset, y, c.map(to_u8));
             }
-            cv.blend(x, y, c, 1.0);
         }
+    });
+}
+
+/// Bilinearly sample a bottom-row-first log-u8 density grid through its exact
+/// 256-entry RGBA lookup table. This is the same result as `density_rgba_into`
+/// followed by `blit`, but avoids the 4x expanded image and its copy.
+#[allow(clippy::too_many_arguments)]
+fn blit_density(
+    cv: &mut Canvas,
+    dx: f32,
+    dy: f32,
+    dw: f32,
+    dh: f32,
+    iw: usize,
+    ih: usize,
+    encoded: &[u8],
+    lut: &[[u8; 4]; 256],
+) {
+    if iw == 0 || ih == 0 || dw <= 0.0 || dh <= 0.0 {
+        return;
     }
+    let (bx0, by0, bx1, by1) = cv.bbox(dx, dy, dx + dw, dy + dh);
+    let xmap: Vec<(usize, usize, f32)> = (bx0..bx1)
+        .map(|x| {
+            let u = ((x as f32 + 0.5 - dx) / dw * iw as f32 - 0.5).clamp(0.0, iw as f32 - 1.0);
+            let x0 = u.floor() as usize;
+            (x0, (x0 + 1).min(iw - 1), u - x0 as f32)
+        })
+        .collect();
+    let sample = |sx: usize, sy: usize, channel: usize| {
+        let code = encoded[(ih - 1 - sy) * iw + sx] as usize;
+        lut[code][channel] as f32 / 255.0
+    };
+    let pixels = dw.max(0.0) * dh.max(0.0);
+    let threads = raster_fanout(pixels, IMAGE_FANOUT_PX, cv.h);
+    paint_image_bands(cv, by0, by1, threads, |surface| {
+        for y in surface.y0..surface.y1 {
+            let v = ((y as f32 + 0.5 - dy) / dh * ih as f32 - 0.5).clamp(0.0, ih as f32 - 1.0);
+            let y0 = v.floor() as usize;
+            let y1 = (y0 + 1).min(ih - 1);
+            let fy = v - y0 as f32;
+            for (offset, &(x0, x1, fx)) in xmap.iter().enumerate() {
+                let w00 = (1.0 - fx) * (1.0 - fy);
+                let w10 = fx * (1.0 - fy);
+                let w01 = (1.0 - fx) * fy;
+                let w11 = fx * fy;
+                let mut color = [0.0f32; 4];
+                for (channel, value) in color.iter_mut().enumerate() {
+                    *value = w00 * sample(x0, y0, channel)
+                        + w10 * sample(x1, y0, channel)
+                        + w01 * sample(x0, y1, channel)
+                        + w11 * sample(x1, y1, channel);
+                }
+                surface.blend_u8(bx0 + offset, y, color.map(to_u8));
+            }
+        }
+    });
+}
+
+/// Nearest-sample normalized f32 or canonical f64 heatmap values and color only
+/// destination pixels. Canonical values take the exact bulk-normalizer f32
+/// rounding path, so raster-only borrowing cannot change output pixels.
+#[allow(clippy::too_many_arguments)]
+fn blit_heatmap(
+    cv: &mut Canvas,
+    dx: f32,
+    dy: f32,
+    dw: f32,
+    dh: f32,
+    iw: usize,
+    ih: usize,
+    values: &[u8],
+    canonical: bool,
+    domain: [f64; 2],
+    stops: &[[u8; 3]],
+    alpha: u8,
+) {
+    if iw == 0 || ih == 0 || dw <= 0.0 || dh <= 0.0 || stops.is_empty() {
+        return;
+    }
+    let (bx0, by0, bx1, by1) = cv.bbox(dx, dy, dx + dw, dy + dh);
+    let xmap: Vec<usize> = (bx0..bx1)
+        .map(|x| (((x as f32 + 0.5 - dx) / dw * iw as f32).floor() as usize).min(iw - 1))
+        .collect();
+    let pixels = dw.max(0.0) * dh.max(0.0);
+    let threads = raster_fanout(pixels, IMAGE_FANOUT_PX, cv.h);
+    paint_image_bands(cv, by0, by1, threads, |surface| {
+        for y in surface.y0..surface.y1 {
+            let sy = (((y as f32 + 0.5 - dy) / dh * ih as f32).floor() as usize).min(ih - 1);
+            let source_row = ih - 1 - sy;
+            for (offset, &sx) in xmap.iter().enumerate() {
+                let index = source_row * iw + sx;
+                let value = if canonical {
+                    f64::from(crate::kernels::normalize_one_f32(
+                        f64_at(values, index),
+                        domain[0],
+                        domain[1],
+                        f32::NAN,
+                    ))
+                } else {
+                    f64::from(f32_at(values, index))
+                };
+                let color = crate::kernels::heatmap_color(value, stops, alpha);
+                surface.blend_u8(bx0 + offset, y, color);
+            }
+        }
+    });
 }
 
 // ---- text (baked glyph atlas) -----------------------------------------------
@@ -847,10 +1139,24 @@ impl<'a> Reader<'a> {
         self.i += 4;
         Some(u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
     }
+    fn u64(&mut self) -> Option<u64> {
+        let s = self.b.get(self.i..self.i + 8)?;
+        self.i += 8;
+        Some(u64::from_le_bytes([
+            s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7],
+        ]))
+    }
     fn f32(&mut self) -> Option<f32> {
         let s = self.b.get(self.i..self.i + 4)?;
         self.i += 4;
         Some(f32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+    }
+    fn f64(&mut self) -> Option<f64> {
+        let s = self.b.get(self.i..self.i + 8)?;
+        self.i += 8;
+        Some(f64::from_le_bytes([
+            s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7],
+        ]))
     }
     fn rgba(&mut self) -> Option<[f32; 4]> {
         let s = self.b.get(self.i..self.i + 4)?;
@@ -883,17 +1189,129 @@ fn f32_at(b: &[u8], i: usize) -> f32 {
     f32::from_le_bytes([b[4 * i], b[4 * i + 1], b[4 * i + 2], b[4 * i + 3]])
 }
 
+#[inline]
+fn f64_at(b: &[u8], i: usize) -> f64 {
+    let base = i * 8;
+    f64::from_le_bytes([
+        b[base],
+        b[base + 1],
+        b[base + 2],
+        b[base + 3],
+        b[base + 4],
+        b[base + 5],
+        b[base + 6],
+        b[base + 7],
+    ])
+}
+
+fn smooth_points(
+    xs: &[u8],
+    ys: &[u8],
+    n: usize,
+    x_scale: [f64; 4],
+    y_scale: [f64; 4],
+) -> Vec<(f32, f32)> {
+    let mut x = Vec::with_capacity(n);
+    let mut y = Vec::with_capacity(n);
+    for i in 0..n {
+        x.push(f64_at(xs, i));
+        y.push(f64_at(ys, i));
+    }
+    let mut d = vec![0.0f64; n - 1];
+    for i in 0..n - 1 {
+        let dx = x[i + 1] - x[i];
+        d[i] = if dx > 0.0 {
+            (y[i + 1] - y[i]) / dx
+        } else {
+            0.0
+        };
+    }
+    let mut m = vec![0.0f64; n];
+    m[0] = d[0];
+    m[n - 1] = d[n - 2];
+    for i in 1..n - 1 {
+        m[i] = if d[i - 1] * d[i] <= 0.0 {
+            0.0
+        } else {
+            (d[i - 1] + d[i]) * 0.5
+        };
+    }
+    for i in 0..n - 1 {
+        if d[i] == 0.0 {
+            m[i] = 0.0;
+            m[i + 1] = 0.0;
+            continue;
+        }
+        let (a, b) = (m[i] / d[i], m[i + 1] / d[i]);
+        let sum = a * a + b * b;
+        if sum > 9.0 {
+            let factor = 3.0 / sum.sqrt();
+            m[i] = factor * a * d[i];
+            m[i + 1] = factor * b * d[i];
+        }
+    }
+    let map = |value: f64, scale: [f64; 4]| -> f32 {
+        let span = if scale[1] == scale[0] {
+            1.0
+        } else {
+            scale[1] - scale[0]
+        };
+        (scale[2] + (value - scale[0]) / span * (scale[3] - scale[2])) as f32
+    };
+    let mut points = Vec::with_capacity((n - 1) * 16 + 1);
+    points.push((map(x[0], x_scale), map(y[0], y_scale)));
+    for i in 0..n - 1 {
+        let h = x[i + 1] - x[i];
+        if h <= 0.0 {
+            points.push((map(x[i + 1], x_scale), map(y[i + 1], y_scale)));
+            continue;
+        }
+        let p0 = (x[i], y[i]);
+        let p3 = (x[i + 1], y[i + 1]);
+        let c1 = (x[i] + h / 3.0, y[i] + m[i] * h / 3.0);
+        let c2 = (x[i + 1] - h / 3.0, y[i + 1] - m[i + 1] * h / 3.0);
+        for step in 1..16 {
+            let t = step as f64 / 16.0;
+            let u = 1.0 - t;
+            let bx = u.powi(3) * p0.0
+                + 3.0 * u.powi(2) * t * c1.0
+                + 3.0 * u * t.powi(2) * c2.0
+                + t.powi(3) * p3.0;
+            let by = u.powi(3) * p0.1
+                + 3.0 * u.powi(2) * t * c1.1
+                + 3.0 * u * t.powi(2) * c2.1
+                + t.powi(3) * p3.1;
+            points.push((map(bx, x_scale), map(by, y_scale)));
+        }
+        points.push((map(p3.0, x_scale), map(p3.1, y_scale)));
+    }
+    points
+}
+
+#[inline]
+fn rgba_at(b: &[u8], i: usize) -> [f32; 4] {
+    let base = i * 4;
+    [
+        b[base] as f32 / 255.0,
+        b[base + 1] as f32 / 255.0,
+        b[base + 2] as f32 / 255.0,
+        b[base + 3] as f32 / 255.0,
+    ]
+}
+
 /// Fan a batched paint across row bands only when the estimated pixel work
 /// dwarfs thread spawn cost, and keep every band at least `MIN_BAND_ROWS`
-/// tall — the graduated-cap convention of the 2-D binning kernels: every
-/// worker re-decodes the whole mark list, so a band must amortize one full
-/// decode pass. Output is bit-identical at any fan-out: bands are disjoint
-/// row ranges and each pixel still receives the same blends in mark order.
-const RASTER_FANOUT_PX: f32 = 2_000_000.0;
+/// tall. Segment batches cross over earlier than points: anti-aliased distance
+/// math dominates their compact wire decode, especially for thousands of
+/// short contour segments. Output is bit-identical at any fan-out: bands are
+/// disjoint and each pixel still receives blends in mark order.
+const POINTS_FANOUT_PX: f32 = 2_000_000.0;
+const SEGMENTS_FANOUT_PX: f32 = 100_000.0;
+const STROKE_FANOUT_PX: f32 = 100_000.0;
 const MIN_BAND_ROWS: usize = 64;
 
-fn raster_fanout(est_px: f32, rows: usize) -> usize {
-    if est_px.is_nan() || est_px < RASTER_FANOUT_PX {
+fn raster_fanout(est_px: f32, min_px: f32, rows: usize) -> usize {
+    if est_px.is_nan() || est_px < min_px {
         return 1;
     }
     // CodSpeed's simulation gate sums instructions across threads, so fan-out
@@ -904,7 +1322,7 @@ fn raster_fanout(est_px: f32, rows: usize) -> usize {
     if *CODSPEED.get_or_init(|| std::env::var_os("CODSPEED_ENV").is_some()) {
         return 1;
     }
-    let cores = std::thread::available_parallelism().map_or(1, |p| p.get().min(8));
+    let cores = std::thread::available_parallelism().map_or(1, |p| p.get().min(12));
     cores.min(rows / MIN_BAND_ROWS).max(1)
 }
 
@@ -1025,6 +1443,164 @@ fn paint_points_band(sf: &mut Surface, b: &PointsBatch, indices: &[u32]) {
     }
 }
 
+/// One zero-copy axis of OP_AFFINE_POINTS. Values stay in their payload's
+/// offset-encoded f32 representation until a mark is actually visited. The
+/// operation order mirrors Python's `_column` -> `_Scale` -> `_Cmd.points`
+/// path so switching commands cannot move a mark by an f32 rounding unit.
+struct AffineAxis<'a> {
+    values: &'a [u8],
+    decode_scale: f64,
+    decode_offset: f64,
+    map: [f64; 4], // domain lo/hi, logical px0/px1
+    output_scale: f64,
+}
+
+impl AffineAxis<'_> {
+    #[inline]
+    fn project(&self, i: usize) -> f32 {
+        let value = f64::from(f32_at(self.values, i)) / self.decode_scale + self.decode_offset;
+        let span = self.map[1] - self.map[0];
+        let span = if span == 0.0 { 1.0 } else { span };
+        let logical = self.map[2] + (value - self.map[0]) / span * (self.map[3] - self.map[2]);
+        (logical * self.output_scale) as f32
+    }
+}
+
+/// Constant-style points whose encoded x/y columns are borrowed from payload
+/// spans. This avoids decoded f64, radius, and RGBA arrays while retaining the
+/// exact same point painter and row-band parallelism.
+struct AffinePointsBatch<'a> {
+    n: usize,
+    sym: u8,
+    sw: f32,
+    stroke: [u8; 4],
+    radius: f32,
+    fill: [u8; 4],
+    x: AffineAxis<'a>,
+    y: AffineAxis<'a>,
+}
+
+fn paint_affine_points(cv: &mut Canvas, batch: &AffinePointsBatch, threads: usize) {
+    if threads <= 1 {
+        for i in 0..batch.n {
+            paint_affine_point(&mut cv.surface(), batch, i);
+        }
+        return;
+    }
+    // Row-band painting reads y once while bucketing and again in every band
+    // a mark overlaps. Project a compact f32 x/y scratch once for parallel
+    // batches; this is 8 bytes/mark versus the old Python path's decoded f64,
+    // projected f64/f32, radius, fill, and copied command arrays. Small serial
+    // batches remain allocation-free above.
+    let mut xs = Vec::with_capacity(batch.n);
+    let mut ys = Vec::with_capacity(batch.n);
+    for i in 0..batch.n {
+        xs.push(batch.x.project(i));
+        ys.push(batch.y.project(i));
+    }
+    let ext = batch.radius + batch.sw + 1.0;
+    paint_banded(
+        cv,
+        threads,
+        batch.n,
+        |i| {
+            let cy = ys[i];
+            Some((cy - ext, cy + ext))
+        },
+        |sf, indices| {
+            for &i in indices {
+                let i = i as usize;
+                let (cx, cy) = (xs[i], ys[i]);
+                if cx.is_finite() && cy.is_finite() {
+                    point_u8_at(
+                        sf,
+                        cx,
+                        cy,
+                        batch.radius,
+                        batch.sym,
+                        batch.fill,
+                        batch.sw,
+                        batch.stroke,
+                    );
+                }
+            }
+        },
+    );
+}
+
+#[inline]
+fn paint_affine_point(sf: &mut Surface, batch: &AffinePointsBatch, i: usize) {
+    let (cx, cy) = (batch.x.project(i), batch.y.project(i));
+    if !(cx.is_finite() && cy.is_finite()) {
+        return;
+    }
+    point_u8_at(
+        sf,
+        cx,
+        cy,
+        batch.radius,
+        batch.sym,
+        batch.fill,
+        batch.sw,
+        batch.stroke,
+    );
+}
+
+/// Screen-space scratch for borrowed affine points with data-driven styling.
+/// Python ships only encoded source columns and small LUTs; Rust resolves each
+/// radius/color once, then the existing point painter consumes compact arrays.
+struct StyledPointsBatch<'a> {
+    n: usize,
+    sym: u8,
+    sw: f32,
+    stroke: [u8; 4],
+    xs: &'a [f32],
+    ys: &'a [f32],
+    rs: &'a [f32],
+    fills: &'a [[u8; 4]],
+}
+
+fn paint_styled_points(cv: &mut Canvas, batch: &StyledPointsBatch, threads: usize) {
+    if threads <= 1 {
+        for i in 0..batch.n {
+            paint_styled_point(&mut cv.surface(), batch, i);
+        }
+        return;
+    }
+    paint_banded(
+        cv,
+        threads,
+        batch.n,
+        |i| {
+            let ext = batch.rs[i] + batch.sw + 1.0;
+            Some((batch.ys[i] - ext, batch.ys[i] + ext))
+        },
+        |surface, indices| {
+            for &i in indices {
+                paint_styled_point(surface, batch, i as usize);
+            }
+        },
+    );
+}
+
+#[inline]
+fn paint_styled_point(sf: &mut Surface, batch: &StyledPointsBatch, i: usize) {
+    let (cx, cy, radius) = (batch.xs[i], batch.ys[i], batch.rs[i]);
+    if !(cx.is_finite() && cy.is_finite() && radius.is_finite()) {
+        return;
+    }
+    point_u8_at(
+        sf,
+        cx,
+        cy,
+        radius,
+        batch.sym,
+        batch.fills[i],
+        batch.sw,
+        batch.stroke,
+    );
+}
+
 /// One OP_SEGMENTS batch: struct-of-arrays borrowed straight from the wire.
 struct SegmentsBatch<'a> {
     n: usize,
@@ -1064,18 +1640,42 @@ fn paint_segments_band(sf: &mut Surface, sb: &SegmentsBatch, indices: &[u32]) {
             continue;
         }
         let color = [
-            sb.colors[4 * i] as f32 / 255.0,
-            sb.colors[4 * i + 1] as f32 / 255.0,
-            sb.colors[4 * i + 2] as f32 / 255.0,
-            sb.colors[4 * i + 3] as f32 / 255.0,
+            sb.colors[4 * i],
+            sb.colors[4 * i + 1],
+            sb.colors[4 * i + 2],
+            sb.colors[4 * i + 3],
         ];
-        stroke_segment_at(sf, a, b, sb.width, color);
+        stroke_segment_u8_at(sf, a, b, sb.width, color);
     }
+}
+
+fn read_span<'a>(reader: &mut Reader<'_>, spans: &[&'a [u8]], byte_len: usize) -> Option<&'a [u8]> {
+    let span = reader.u32()? as usize;
+    let offset = usize::try_from(reader.u64()?).ok()?;
+    let arena = *spans.get(span)?;
+    arena.get(offset..offset.checked_add(byte_len)?)
+}
+
+fn read_affine_axis<'a>(
+    reader: &mut Reader<'_>,
+    spans: &[&'a [u8]],
+    byte_len: usize,
+) -> Option<(&'a [u8], f64, f64)> {
+    let values = read_span(reader, spans, byte_len)?;
+    let decode_scale = reader.f64()?;
+    let decode_offset = reader.f64()?;
+    Some((values, decode_scale, decode_offset))
 }
 
 /// Parse and paint a display list, retaining the native byte framebuffer so a
 /// latency-oriented PNG export can feed it straight into the encoder.
-fn rasterize(cmds: &[u8], w: usize, h: usize, opaque_white: bool) -> Option<Canvas> {
+fn rasterize_with_spans(
+    cmds: &[u8],
+    spans: &[&[u8]],
+    w: usize,
+    h: usize,
+    opaque_white: bool,
+) -> Option<Canvas> {
     if w == 0 || h == 0 {
         return None;
     }
@@ -1146,6 +1746,70 @@ fn rasterize(cmds: &[u8], w: usize, h: usize, opaque_white: bool) -> Option<Canv
                     let src = r.bytes(iw.checked_mul(ih)?.checked_mul(4)?)?;
                     blit(&mut cv, dx, dy, dw, dh, iw, ih, src, nearest);
                 }
+                OP_DENSITY_IMAGE => {
+                    let (dx, dy, dw, dh) = (r.f32()?, r.f32()?, r.f32()?, r.f32()?);
+                    let (iw, ih) = (r.u32()? as usize, r.u32()? as usize);
+                    let span = r.u32()? as usize;
+                    let byte_offset = usize::try_from(r.u64()?).ok()?;
+                    let (maximum, opacity) = (r.f64()?, r.f64()?);
+                    let stop_count = r.u32()? as usize;
+                    let stop_bytes = r.bytes(stop_count.checked_mul(3)?)?;
+                    let stops: Vec<[u8; 3]> = stop_bytes
+                        .chunks_exact(3)
+                        .map(|stop| [stop[0], stop[1], stop[2]])
+                        .collect();
+                    let encoded_len = iw.checked_mul(ih)?;
+                    let arena = *spans.get(span)?;
+                    let encoded = arena.get(byte_offset..byte_offset.checked_add(encoded_len)?)?;
+                    let lut = crate::kernels::density_rgba_lut(maximum, &stops, opacity)?;
+                    blit_density(&mut cv, dx, dy, dw, dh, iw, ih, encoded, &lut);
+                }
+                OP_HEATMAP_IMAGE => {
+                    let (dx, dy, dw, dh) = (r.f32()?, r.f32()?, r.f32()?, r.f32()?);
+                    let (iw, ih) = (r.u32()? as usize, r.u32()? as usize);
+                    let span = r.u32()? as usize;
+                    let byte_offset = usize::try_from(r.u64()?).ok()?;
+                    let encoding = r.u8()?;
+                    if encoding > 1 {
+                        return None;
+                    }
+                    let domain = [r.f64()?, r.f64()?];
+                    if encoding == 1
+                        && !(domain[0].is_finite()
+                            && domain[1].is_finite()
+                            && domain[1] > domain[0])
+                    {
+                        return None;
+                    }
+                    let alpha = r.u8()?;
+                    let stop_count = r.u32()? as usize;
+                    if stop_count == 0 {
+                        return None;
+                    }
+                    let stop_bytes = r.bytes(stop_count.checked_mul(3)?)?;
+                    let stops: Vec<[u8; 3]> = stop_bytes
+                        .chunks_exact(3)
+                        .map(|stop| [stop[0], stop[1], stop[2]])
+                        .collect();
+                    let width = if encoding == 1 { 8 } else { 4 };
+                    let value_bytes = iw.checked_mul(ih)?.checked_mul(width)?;
+                    let arena = *spans.get(span)?;
+                    let values = arena.get(byte_offset..byte_offset.checked_add(value_bytes)?)?;
+                    blit_heatmap(
+                        &mut cv,
+                        dx,
+                        dy,
+                        dw,
+                        dh,
+                        iw,
+                        ih,
+                        values,
+                        encoding == 1,
+                        domain,
+                        &stops,
+                        alpha,
+                    );
+                }
                 OP_TEXT => {
                     let (x, y) = (r.f32()?, r.f32()?);
                     let anchor = r.u8()?;
@@ -1188,7 +1852,222 @@ fn rasterize(cmds: &[u8], w: usize, h: usize, opaque_white: bool) -> Option<Canv
                             est_px += side * side;
                         }
                     }
-                    paint_points(&mut cv, &batch, raster_fanout(est_px, h));
+                    paint_points(&mut cv, &batch, raster_fanout(est_px, POINTS_FANOUT_PX, h));
+                }
+                OP_AFFINE_POINTS => {
+                    // Borrow offset-encoded x/y payload columns and fuse their
+                    // f64 decode + affine projection into native point paint.
+                    let n = r.u32()? as usize;
+                    let sym = r.u8()?;
+                    let sw = r.f32()?;
+                    let stroke = r.rgba()?.map(to_u8);
+                    let radius = r.f32()?;
+                    let fill = r.rgba()?.map(to_u8);
+                    if !(sw.is_finite() && radius.is_finite() && sw >= 0.0 && radius >= 0.0) {
+                        return None;
+                    }
+                    let bytes4 = n.checked_mul(4)?;
+                    let (xs, x_decode_scale, x_decode_offset) =
+                        read_affine_axis(&mut r, spans, bytes4)?;
+                    let (ys, y_decode_scale, y_decode_offset) =
+                        read_affine_axis(&mut r, spans, bytes4)?;
+                    let x_map = [r.f64()?, r.f64()?, r.f64()?, r.f64()?];
+                    let y_map = [r.f64()?, r.f64()?, r.f64()?, r.f64()?];
+                    let output_scale = r.f64()?;
+                    if !x_decode_scale.is_finite()
+                        || x_decode_scale == 0.0
+                        || !x_decode_offset.is_finite()
+                        || !y_decode_scale.is_finite()
+                        || y_decode_scale == 0.0
+                        || !y_decode_offset.is_finite()
+                        || !x_map.into_iter().all(f64::is_finite)
+                        || !y_map.into_iter().all(f64::is_finite)
+                        || !output_scale.is_finite()
+                    {
+                        return None;
+                    }
+                    let batch = AffinePointsBatch {
+                        n,
+                        sym,
+                        sw,
+                        stroke,
+                        radius,
+                        fill,
+                        x: AffineAxis {
+                            values: xs,
+                            decode_scale: x_decode_scale,
+                            decode_offset: x_decode_offset,
+                            map: x_map,
+                            output_scale,
+                        },
+                        y: AffineAxis {
+                            values: ys,
+                            decode_scale: y_decode_scale,
+                            decode_offset: y_decode_offset,
+                            map: y_map,
+                            output_scale,
+                        },
+                    };
+                    let side = 2.0 * (radius + sw + 1.0);
+                    let est_px = side * side * n as f32;
+                    paint_affine_points(
+                        &mut cv,
+                        &batch,
+                        raster_fanout(est_px, POINTS_FANOUT_PX, h),
+                    );
+                }
+                OP_AFFINE_CHANNEL_POINTS => {
+                    let n = r.u32()? as usize;
+                    let sym = r.u8()?;
+                    let sw = r.f32()?;
+                    let stroke = r.rgba()?.map(to_u8);
+                    if !(sw.is_finite() && sw >= 0.0) {
+                        return None;
+                    }
+                    let bytes4 = n.checked_mul(4)?;
+                    let (x_values, x_decode_scale, x_decode_offset) =
+                        read_affine_axis(&mut r, spans, bytes4)?;
+                    let (y_values, y_decode_scale, y_decode_offset) =
+                        read_affine_axis(&mut r, spans, bytes4)?;
+                    let x_map = [r.f64()?, r.f64()?, r.f64()?, r.f64()?];
+                    let y_map = [r.f64()?, r.f64()?, r.f64()?, r.f64()?];
+                    let output_scale = r.f64()?;
+                    if !x_decode_scale.is_finite()
+                        || x_decode_scale == 0.0
+                        || !x_decode_offset.is_finite()
+                        || !y_decode_scale.is_finite()
+                        || y_decode_scale == 0.0
+                        || !y_decode_offset.is_finite()
+                        || !x_map.into_iter().all(f64::is_finite)
+                        || !y_map.into_iter().all(f64::is_finite)
+                        || !output_scale.is_finite()
+                        || output_scale <= 0.0
+                    {
+                        return None;
+                    }
+                    let x_axis = AffineAxis {
+                        values: x_values,
+                        decode_scale: x_decode_scale,
+                        decode_offset: x_decode_offset,
+                        map: x_map,
+                        output_scale,
+                    };
+                    let y_axis = AffineAxis {
+                        values: y_values,
+                        decode_scale: y_decode_scale,
+                        decode_offset: y_decode_offset,
+                        map: y_map,
+                        output_scale,
+                    };
+
+                    let color_mode = r.u8()?;
+                    if color_mode > 2 {
+                        return None;
+                    }
+                    let constant_fill = r.rgba()?.map(to_u8);
+                    let mut color_values = &[][..];
+                    let mut color_encoding = 0u8;
+                    let mut palette = Vec::<[u8; 3]>::new();
+                    if color_mode != 0 {
+                        color_encoding = r.u8()?;
+                        if color_encoding > 1 || (color_mode == 1 && color_encoding != 0) {
+                            return None;
+                        }
+                        let color_bytes = if color_encoding == 1 { n } else { bytes4 };
+                        color_values = read_span(&mut r, spans, color_bytes)?;
+                        let count = r.u32()? as usize;
+                        if count == 0 {
+                            return None;
+                        }
+                        let bytes = r.bytes(count.checked_mul(3)?)?;
+                        palette = bytes
+                            .chunks_exact(3)
+                            .map(|entry| [entry[0], entry[1], entry[2]])
+                            .collect();
+                    }
+
+                    let size_mode = r.u8()?;
+                    if size_mode > 1 {
+                        return None;
+                    }
+                    let mut size_values = &[][..];
+                    let mut constant_radius = 0.0f32;
+                    let mut size_range = [0.0f64; 2];
+                    if size_mode == 1 {
+                        size_values = read_span(&mut r, spans, bytes4)?;
+                        size_range = [r.f64()?, r.f64()?];
+                        if !size_range.into_iter().all(f64::is_finite)
+                            || size_range[0] < 0.0
+                            || size_range[1] < 0.0
+                        {
+                            return None;
+                        }
+                    } else {
+                        constant_radius = r.f32()?;
+                        if !(constant_radius.is_finite() && constant_radius >= 0.0) {
+                            return None;
+                        }
+                    }
+
+                    let mut xs = Vec::with_capacity(n);
+                    let mut ys = Vec::with_capacity(n);
+                    let mut radii = Vec::with_capacity(n);
+                    let mut fills = Vec::with_capacity(n);
+                    let mut est_px = 0.0f32;
+                    for i in 0..n {
+                        xs.push(x_axis.project(i));
+                        ys.push(y_axis.project(i));
+                        let radius = if size_mode == 1 {
+                            let value = f64::from(f32_at(size_values, i)).clamp(0.0, 1.0);
+                            (((size_range[0] + (size_range[1] - size_range[0]) * value) / 2.0)
+                                * output_scale) as f32
+                        } else {
+                            constant_radius
+                        };
+                        radii.push(radius);
+                        let fill = match color_mode {
+                            1 => crate::kernels::colormap_color(
+                                f64::from(f32_at(color_values, i)),
+                                &palette,
+                                constant_fill[3],
+                            ),
+                            2 => {
+                                let index = if color_encoding == 1 {
+                                    usize::from(color_values[i]) % palette.len()
+                                } else {
+                                    let code = f32_at(color_values, i);
+                                    if code.is_finite() {
+                                        (code as i64).rem_euclid(palette.len() as i64) as usize
+                                    } else {
+                                        0
+                                    }
+                                };
+                                let rgb = palette[index];
+                                [rgb[0], rgb[1], rgb[2], constant_fill[3]]
+                            }
+                            _ => constant_fill,
+                        };
+                        fills.push(fill);
+                        if radius.is_finite() {
+                            let side = 2.0 * (radius + sw + 1.0);
+                            est_px += side * side;
+                        }
+                    }
+                    let batch = StyledPointsBatch {
+                        n,
+                        sym,
+                        sw,
+                        stroke,
+                        xs: &xs,
+                        ys: &ys,
+                        rs: &radii,
+                        fills: &fills,
+                    };
+                    paint_styled_points(
+                        &mut cv,
+                        &batch,
+                        raster_fanout(est_px, POINTS_FANOUT_PX, h),
+                    );
                 }
                 OP_SEGMENTS => {
                     let n = r.u32()? as usize;
@@ -1210,15 +2089,93 @@ fn rasterize(cmds: &[u8], w: usize, h: usize, opaque_white: bool) -> Option<Canv
                     };
                     let mut est_px = 0.0f32;
                     for i in 0..n {
-                        let (dx, dy) = (
-                            f32_at(x1, i) - f32_at(x0, i),
-                            f32_at(y1, i) - f32_at(y0, i),
-                        );
+                        let (dx, dy) =
+                            (f32_at(x1, i) - f32_at(x0, i), f32_at(y1, i) - f32_at(y0, i));
                         if dx.is_finite() && dy.is_finite() {
                             est_px += (dx.abs().max(dy.abs()) + 2.0) * (width + 3.0);
                         }
                     }
-                    paint_segments(&mut cv, &batch, raster_fanout(est_px, h));
+                    paint_segments(
+                        &mut cv,
+                        &batch,
+                        raster_fanout(est_px, SEGMENTS_FANOUT_PX, h),
+                    );
+                }
+                OP_RECTS => {
+                    let n = r.u32()? as usize;
+                    let bytes4 = n.checked_mul(4)?;
+                    let x0 = r.bytes(bytes4)?;
+                    let y0 = r.bytes(bytes4)?;
+                    let x1 = r.bytes(bytes4)?;
+                    let y1 = r.bytes(bytes4)?;
+                    let fills = r.bytes(bytes4)?;
+                    for i in 0..n {
+                        let (xa, ya, xb, yb) =
+                            (f32_at(x0, i), f32_at(y0, i), f32_at(x1, i), f32_at(y1, i));
+                        if !(xa.is_finite() && ya.is_finite() && xb.is_finite() && yb.is_finite()) {
+                            continue;
+                        }
+                        let pts = [(xa, ya), (xb, ya), (xb, yb), (xa, yb)];
+                        fill_rect(&mut cv, &pts, rgba_at(fills, i));
+                    }
+                }
+                OP_TRIANGLES | OP_STROKED_TRIANGLES => {
+                    let n = r.u32()? as usize;
+                    let (stroke_width, stroke_color) = if op == OP_STROKED_TRIANGLES {
+                        let width = r.f32()?;
+                        let color = r.rgba()?;
+                        if !(width.is_finite() && width > 0.0) {
+                            return None;
+                        }
+                        (width, color)
+                    } else {
+                        (0.0, [0.0; 4])
+                    };
+                    let bytes4 = n.checked_mul(4)?;
+                    let x0 = r.bytes(bytes4)?;
+                    let y0 = r.bytes(bytes4)?;
+                    let x1 = r.bytes(bytes4)?;
+                    let y1 = r.bytes(bytes4)?;
+                    let x2 = r.bytes(bytes4)?;
+                    let y2 = r.bytes(bytes4)?;
+                    let fills = r.bytes(bytes4)?;
+                    for i in 0..n {
+                        let pts = [
+                            (f32_at(x0, i), f32_at(y0, i)),
+                            (f32_at(x1, i), f32_at(y1, i)),
+                            (f32_at(x2, i), f32_at(y2, i)),
+                        ];
+                        if op == OP_TRIANGLES
+                            && !pts.iter().all(|&(x, y)| x.is_finite() && y.is_finite())
+                        {
+                            continue;
+                        }
+                        let color = rgba_at(fills, i);
+                        fill_poly(&mut cv, &pts, |_, _| color);
+                        if stroke_width > 0.0 {
+                            stroke(&mut cv, &pts, stroke_width, stroke_color, true, &[]);
+                        }
+                    }
+                }
+                OP_SMOOTH_STROKE => {
+                    let n = r.u32()? as usize;
+                    if n < 2 {
+                        return None;
+                    }
+                    let x_scale = [r.f64()?, r.f64()?, r.f64()?, r.f64()?];
+                    let y_scale = [r.f64()?, r.f64()?, r.f64()?, r.f64()?];
+                    let bytes8 = n.checked_mul(8)?;
+                    let xs = r.bytes(bytes8)?;
+                    let ys = r.bytes(bytes8)?;
+                    let width = r.f32()?;
+                    let color = r.rgba()?;
+                    let nd = r.u32()? as usize;
+                    let mut dash = Vec::with_capacity(nd);
+                    for _ in 0..nd {
+                        dash.push(r.f32()?);
+                    }
+                    let points = smooth_points(xs, ys, n, x_scale, y_scale);
+                    stroke(&mut cv, &points, width, color, false, &dash);
                 }
                 _ => return None,
             }
@@ -1232,10 +2189,27 @@ fn rasterize(cmds: &[u8], w: usize, h: usize, opaque_white: bool) -> Option<Canv
 /// Parse and paint the display list into `out` (straight-alpha RGBA8,
 /// `w*h*4` bytes). Returns false on a malformed buffer or size mismatch.
 pub fn rasterize_into(cmds: &[u8], w: usize, h: usize, out: &mut [u8]) -> bool {
+    rasterize_spans_into(cmds, &[], w, h, out)
+}
+
+/// Parse and paint a display list whose commands may reference `data` for the
+/// duration of this synchronous call.
+pub fn rasterize_data_into(cmds: &[u8], data: &[u8], w: usize, h: usize, out: &mut [u8]) -> bool {
+    rasterize_spans_into(cmds, &[data], w, h, out)
+}
+
+/// Parse and paint a display list backed by multiple synchronous arenas.
+pub fn rasterize_spans_into(
+    cmds: &[u8],
+    spans: &[&[u8]],
+    w: usize,
+    h: usize,
+    out: &mut [u8],
+) -> bool {
     if out.len() != w.checked_mul(h).and_then(|n| n.checked_mul(4)).unwrap_or(0) {
         return false;
     }
-    let Some(cv) = rasterize(cmds, w, h, false) else {
+    let Some(cv) = rasterize_with_spans(cmds, spans, w, h, false) else {
         return false;
     };
     cv.to_rgba8(out);
@@ -1246,8 +2220,30 @@ pub fn rasterize_into(cmds: &[u8], w: usize, h: usize, out: &mut [u8]) -> bool {
 /// compressor and the Up filter keeps chart backgrounds and horizontal runs
 /// compact without an adaptive-filter pass over every row.
 pub fn rasterize_png_into(cmds: &[u8], w: usize, h: usize, out: &mut [u8]) -> Option<usize> {
+    rasterize_png_spans_into(cmds, &[], w, h, out)
+}
+
+/// Fused PNG path with a synchronous external display-list data arena.
+pub fn rasterize_png_data_into(
+    cmds: &[u8],
+    data: &[u8],
+    w: usize,
+    h: usize,
+    out: &mut [u8],
+) -> Option<usize> {
+    rasterize_png_spans_into(cmds, &[data], w, h, out)
+}
+
+/// Fused PNG path backed by multiple synchronous display-list arenas.
+pub fn rasterize_png_spans_into(
+    cmds: &[u8],
+    spans: &[&[u8]],
+    w: usize,
+    h: usize,
+    out: &mut [u8],
+) -> Option<usize> {
     let (wu, hu) = (u32::try_from(w).ok()?, u32::try_from(h).ok()?);
-    let cv = rasterize(cmds, w, h, true)?;
+    let cv = rasterize_with_spans(cmds, spans, w, h, true)?;
     let mut cursor = Cursor::new(out);
     {
         let mut encoder = png::Encoder::new(&mut cursor, wu, hu);
@@ -1304,6 +2300,9 @@ mod tests {
     fn f32le(v: f32) -> [u8; 4] {
         v.to_le_bytes()
     }
+    fn f64le(v: f64) -> [u8; 8] {
+        v.to_le_bytes()
+    }
 
     #[test]
     fn fill_poly_paints_solid_interior() {
@@ -1357,6 +2356,43 @@ mod tests {
         assert!(rasterize_into(&cmd, 10, 10, &mut out));
         assert!(px(&out, 10, 5, 5)[3] > 200); // on the line
         assert_eq!(px(&out, 10, 5, 0)[3], 0); // far from it
+    }
+
+    #[test]
+    fn prepared_segment_path_matches_float_coverage_reference() {
+        let cases = [
+            ((-2.0, 6.25), (31.0, 6.25), 0.5, [17, 93, 211, 91]),
+            ((8.5, -3.0), (8.5, 24.0), 1.5, [230, 20, 70, 255]),
+            ((1.25, 2.75), (27.5, 19.25), 3.0, [40, 180, 90, 173]),
+            ((15.25, 9.75), (15.25, 9.75), 2.0, [90, 40, 200, 128]),
+        ];
+        for opaque in [false, true] {
+            let mut fast = Canvas::new(30, 22, opaque);
+            fast.clip = [2.0, 1.0, 28.0, 21.0];
+            let mut reference = Canvas::new(30, 22, opaque);
+            reference.clip = fast.clip;
+            for (a, b, width, color) in cases {
+                stroke_segment_u8_at(&mut fast.surface(), a, b, width, color);
+
+                let rgba = color.map(|channel| channel as f32 / 255.0);
+                let hw = width * 0.5;
+                let (x0, y0, x1, y1) = reference.bbox(
+                    a.0.min(b.0) - hw - 1.0,
+                    a.1.min(b.1) - hw - 1.0,
+                    a.0.max(b.0) + hw + 1.0,
+                    a.1.max(b.1) + hw + 1.0,
+                );
+                for y in y0..y1 {
+                    for x in x0..x1 {
+                        let coverage = seg_coverage((x as f32 + 0.5, y as f32 + 0.5), a, b, hw);
+                        if coverage > 0.0 {
+                            reference.blend(x, y, rgba, coverage);
+                        }
+                    }
+                }
+            }
+            assert_eq!(fast.px, reference.px, "opaque={opaque}");
+        }
     }
 
     #[test]
@@ -1441,7 +2477,11 @@ mod tests {
                 (i * 37 % 256) as u8,
                 (i * 101 % 256) as u8,
                 (i * 197 % 256) as u8,
-                if i % 3 == 0 { 255 } else { 90 + (i % 100) as u8 },
+                if i % 3 == 0 {
+                    255
+                } else {
+                    90 + (i % 100) as u8
+                },
             ]);
         }
         // Non-finite backstop parity: x, y, and r NaNs must be skipped
@@ -1485,14 +2525,329 @@ mod tests {
                 banded.clip = serial.clip;
                 paint_points(&mut serial, &batch, 1);
                 paint_points(&mut banded, &batch, threads);
-                assert_eq!(serial.px, banded.px, "points opaque={opaque} threads={threads}");
+                assert_eq!(
+                    serial.px, banded.px,
+                    "points opaque={opaque} threads={threads}"
+                );
                 let mut serial = Canvas::new(w, h, opaque);
                 let mut banded = Canvas::new(w, h, opaque);
                 paint_segments(&mut serial, &seg_batch, 1);
                 paint_segments(&mut banded, &seg_batch, threads);
-                assert_eq!(serial.px, banded.px, "segments opaque={opaque} threads={threads}");
+                assert_eq!(
+                    serial.px, banded.px,
+                    "segments opaque={opaque} threads={threads}"
+                );
             }
         }
+    }
+
+    #[test]
+    fn banded_polyline_stroke_matches_serial() {
+        let points: Vec<(f32, f32)> = (0..700)
+            .map(|i| {
+                let x = -3.0 + i as f32 * 0.145;
+                let y = 30.0 + (i as f32 * 0.19).sin() * 24.0 + (i as f32 * 0.037).cos() * 3.5;
+                (x, y)
+            })
+            .collect();
+        let rgba = [37.0 / 255.0, 99.0 / 255.0, 235.0 / 255.0, 0.61];
+        for opaque in [false, true] {
+            for (width, closed, dash) in [
+                (0.6, false, &[][..]),
+                (2.4, false, &[5.0, 2.0][..]),
+                (1.5, true, &[3.0, 1.0, 1.0, 1.0][..]),
+            ] {
+                let mut serial = Canvas::new(101, 63, opaque);
+                serial.clip = [2.0, 3.0, 98.0, 60.0];
+                let mut banded = Canvas::new(101, 63, opaque);
+                banded.clip = serial.clip;
+                stroke_with_threads(&mut serial, &points, width, rgba, closed, dash, Some(1));
+                stroke_with_threads(&mut banded, &points, width, rgba, closed, dash, Some(4));
+                assert_eq!(
+                    serial.px, banded.px,
+                    "opaque={opaque} width={width} closed={closed} dash={dash:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn banded_image_blit_matches_serial() {
+        let (iw, ih) = (37usize, 23usize);
+        let mut src = vec![0u8; iw * ih * 4];
+        for (i, pixel) in src.chunks_exact_mut(4).enumerate() {
+            pixel.copy_from_slice(&[
+                (i * 37 % 256) as u8,
+                (i * 101 % 256) as u8,
+                (i * 197 % 256) as u8,
+                (40 + i * 17 % 216) as u8,
+            ]);
+        }
+        for opaque in [true, false] {
+            for nearest in [true, false] {
+                for threads in [3usize, 8] {
+                    let mut serial = Canvas::new(97, 61, opaque);
+                    serial.clip = [3.0, 2.0, 93.0, 59.0];
+                    let mut banded = Canvas::new(97, 61, opaque);
+                    banded.clip = serial.clip;
+                    blit_with_threads(
+                        &mut serial,
+                        1.25,
+                        -0.75,
+                        94.5,
+                        62.0,
+                        iw,
+                        ih,
+                        &src,
+                        nearest,
+                        1,
+                    );
+                    blit_with_threads(
+                        &mut banded,
+                        1.25,
+                        -0.75,
+                        94.5,
+                        62.0,
+                        iw,
+                        ih,
+                        &src,
+                        nearest,
+                        threads,
+                    );
+                    assert_eq!(
+                        serial.px, banded.px,
+                        "opaque={opaque} nearest={nearest} threads={threads}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compact_density_image_matches_expanded_rgba() {
+        let (iw, ih) = (7usize, 5usize);
+        let encoded: Vec<u8> = (0..iw * ih)
+            .map(|index| ((index * 47 + index / 3 * 19) % 256) as u8)
+            .collect();
+        let stops = [[68, 1, 84], [59, 82, 139], [33, 145, 140], [253, 231, 37]];
+        let (maximum, opacity) = (10_000.0, 0.73);
+        let mut rgba = vec![0u8; iw * ih * 4];
+        assert!(crate::kernels::density_rgba_into(
+            &encoded, iw, ih, maximum, &stops, opacity, &mut rgba,
+        ));
+
+        let (dx, dy, dw, dh) = (1.25, -0.75, 31.5, 23.25);
+        let mut expanded = vec![OP_IMAGE];
+        for value in [dx, dy, dw, dh] {
+            expanded.extend(f32le(value));
+        }
+        expanded.extend(u32le(iw as u32));
+        expanded.extend(u32le(ih as u32));
+        expanded.push(0); // bilinear
+        expanded.extend_from_slice(&rgba);
+
+        let mut compact = vec![OP_DENSITY_IMAGE];
+        for value in [dx, dy, dw, dh] {
+            compact.extend(f32le(value));
+        }
+        compact.extend(u32le(iw as u32));
+        compact.extend(u32le(ih as u32));
+        compact.extend(u32le(0)); // external arena span
+        compact.extend(0u64.to_le_bytes()); // external arena offset
+        compact.extend(f64le(maximum));
+        compact.extend(f64le(opacity));
+        compact.extend(u32le(stops.len() as u32));
+        for stop in stops {
+            compact.extend(stop);
+        }
+
+        for opaque in [false, true] {
+            let got = rasterize_with_spans(&compact, &[&encoded], 34, 24, opaque)
+                .expect("compact density command");
+            let want = rasterize_with_spans(&expanded, &[], 34, 24, opaque)
+                .expect("expanded image command");
+            assert_eq!(got.px, want.px, "opaque={opaque}");
+        }
+
+        let mut out = vec![0u8; 34 * 24 * 4];
+        assert!(!rasterize_data_into(
+            &compact,
+            &encoded[..encoded.len() - 1],
+            34,
+            24,
+            &mut out,
+        ));
+    }
+
+    #[test]
+    fn direct_heatmap_image_matches_expanded_rgba() {
+        let (iw, ih) = (31usize, 17usize);
+        let values: Vec<f32> = (0..iw * ih)
+            .map(|index| match index % 37 {
+                0 => f32::NAN,
+                1 => 0.0,
+                _ => ((index * 47 + 13) % 256) as f32 / 255.0,
+            })
+            .collect();
+        let stops = [[68, 1, 84], [59, 82, 139], [33, 145, 140], [253, 231, 37]];
+        let alpha = 187u8;
+        let raw: Vec<f64> = values.iter().copied().map(f64::from).collect();
+        let mut rgba = vec![0u8; iw * ih * 4];
+        assert!(crate::kernels::heatmap_rgba_into(
+            &raw, iw, ih, &stops, alpha, &mut rgba,
+        ));
+
+        let (dx, dy, dw, dh) = (1.25, -0.75, 15.5, 10.25);
+        let mut expanded = vec![OP_IMAGE];
+        for value in [dx, dy, dw, dh] {
+            expanded.extend(f32le(value));
+        }
+        expanded.extend(u32le(iw as u32));
+        expanded.extend(u32le(ih as u32));
+        expanded.push(1); // nearest
+        expanded.extend_from_slice(&rgba);
+
+        let mut direct = vec![OP_HEATMAP_IMAGE];
+        for value in [dx, dy, dw, dh] {
+            direct.extend(f32le(value));
+        }
+        direct.extend(u32le(iw as u32));
+        direct.extend(u32le(ih as u32));
+        direct.extend(u32le(0)); // external arena span
+        direct.extend(0u64.to_le_bytes()); // external arena offset
+        direct.push(0); // normalized f32
+        direct.extend(f64le(0.0));
+        direct.extend(f64le(1.0));
+        direct.push(alpha);
+        direct.extend(u32le(stops.len() as u32));
+        for stop in stops {
+            direct.extend(stop);
+        }
+        let mut arena = Vec::with_capacity(values.len() * 4);
+        for value in values {
+            arena.extend(f32le(value));
+        }
+
+        for opaque in [false, true] {
+            let got = rasterize_with_spans(&direct, &[&arena], 18, 11, opaque)
+                .expect("direct heatmap command");
+            let want = rasterize_with_spans(&expanded, &[], 18, 11, opaque)
+                .expect("expanded image command");
+            assert_eq!(got.px, want.px, "opaque={opaque}");
+        }
+
+        let mut canonical = vec![OP_HEATMAP_IMAGE];
+        for value in [dx, dy, dw, dh] {
+            canonical.extend(f32le(value));
+        }
+        canonical.extend(u32le(iw as u32));
+        canonical.extend(u32le(ih as u32));
+        canonical.extend(u32le(1)); // second external arena span
+        canonical.extend(0u64.to_le_bytes());
+        canonical.push(1); // canonical f64
+        canonical.extend(f64le(0.0));
+        canonical.extend(f64le(1.0));
+        canonical.push(alpha);
+        canonical.extend(u32le(stops.len() as u32));
+        for stop in stops {
+            canonical.extend(stop);
+        }
+        let mut canonical_arena = Vec::with_capacity(raw.len() * 8);
+        for value in raw {
+            canonical_arena.extend(f64le(value));
+        }
+        for opaque in [false, true] {
+            let got =
+                rasterize_with_spans(&canonical, &[b"unused", &canonical_arena], 18, 11, opaque)
+                    .expect("canonical heatmap command");
+            let want = rasterize_with_spans(&expanded, &[], 18, 11, opaque)
+                .expect("expanded image command");
+            assert_eq!(got.px, want.px, "canonical opaque={opaque}");
+        }
+
+        let mut out = vec![0u8; 18 * 11 * 4];
+        assert!(!rasterize_data_into(
+            &direct,
+            &arena[..arena.len() - 1],
+            18,
+            11,
+            &mut out,
+        ));
+    }
+
+    #[test]
+    fn stroked_triangles_match_expanded_commands_and_validate_wire() {
+        let triangles = [
+            (
+                [3.0f32, 13.0, 7.0],
+                [3.0f32, 4.0, 12.0],
+                [211u8, 40, 61, 173],
+            ),
+            (
+                [12.0f32, 21.0, 18.0],
+                [10.0f32, 15.0, 22.0],
+                [30u8, 144, 255, 211],
+            ),
+            (
+                [5.0f32, 16.0, f32::NAN],
+                [20.0f32, 25.0, 27.0],
+                [90u8, 210, 80, 255],
+            ),
+        ];
+        let width = 1.25f32;
+        let stroke_color = [9u8, 17, 31, 229];
+        let mut batch = vec![OP_STROKED_TRIANGLES];
+        batch.extend(u32le(triangles.len() as u32));
+        batch.extend(f32le(width));
+        batch.extend(stroke_color);
+        for coordinate in 0..6 {
+            for (xs, ys, _) in triangles {
+                let value = if coordinate % 2 == 0 {
+                    xs[coordinate / 2]
+                } else {
+                    ys[coordinate / 2]
+                };
+                batch.extend(f32le(value));
+            }
+        }
+        for (_, _, fill) in triangles {
+            batch.extend(fill);
+        }
+
+        let mut expanded = Vec::new();
+        for (xs, ys, fill) in triangles {
+            expanded.push(OP_FILL_POLY);
+            expanded.extend(u32le(3));
+            for i in 0..3 {
+                expanded.extend(f32le(xs[i]));
+                expanded.extend(f32le(ys[i]));
+            }
+            expanded.extend(fill);
+            expanded.push(OP_STROKE);
+            expanded.extend(u32le(3));
+            for i in 0..3 {
+                expanded.extend(f32le(xs[i]));
+                expanded.extend(f32le(ys[i]));
+            }
+            expanded.extend(f32le(width));
+            expanded.extend(stroke_color);
+            expanded.push(1); // closed
+            expanded.extend(u32le(0)); // no dash
+        }
+
+        for opaque in [false, true] {
+            let got = rasterize_with_spans(&batch, &[], 28, 30, opaque)
+                .expect("batched stroked triangles");
+            let want = rasterize_with_spans(&expanded, &[], 28, 30, opaque)
+                .expect("expanded stroked triangles");
+            assert_eq!(got.px, want.px, "opaque={opaque}");
+        }
+
+        let mut out = vec![0u8; 28 * 30 * 4];
+        let mut bad_width = batch.clone();
+        bad_width[5..9].copy_from_slice(&f32le(0.0));
+        assert!(!rasterize_into(&bad_width, 28, 30, &mut out));
+        assert!(!rasterize_into(&batch[..batch.len() - 1], 28, 30, &mut out));
     }
 
     #[test]
@@ -1533,6 +2888,273 @@ mod tests {
             assert!(rasterize_into(&singles, 20, 20, &mut want));
             assert_eq!(got, want, "sym={sym} sw={sw}");
         }
+    }
+
+    #[test]
+    fn affine_points_match_expanded_batch_and_reject_bad_spans() {
+        // Exercise nontrivial payload decode scales/offsets, two arenas with
+        // nonzero byte offsets, inverted y pixels, render scaling, stroke,
+        // transparency, and the non-finite backstop.
+        let encoded_x = [-2.25f32, -0.5, 0.75, 2.0, f32::NAN];
+        let encoded_y = [1.5f32, -1.0, 0.25, 2.25, 0.0];
+        let x_decode = (0.25f64, 1_000.0f64);
+        let y_decode = (2.0f64, -40.0f64);
+        let x_map = [990.0f64, 1_010.0, 2.25, 37.5];
+        let y_map = [-42.0f64, -38.0, 25.0, 1.5];
+        let output_scale = 1.75f64;
+        let (sym, sw, radius) = (3u8, 1.3125f32, 3.5f32);
+        let (fill, stroke) = ([27u8, 119, 231, 143], [8u8, 9, 10, 211]);
+
+        let mut x_arena = b"xpad".to_vec();
+        let mut y_arena = b"ypad----".to_vec();
+        for value in encoded_x {
+            x_arena.extend(f32le(value));
+        }
+        for value in encoded_y {
+            y_arena.extend(f32le(value));
+        }
+
+        let mut direct = vec![OP_AFFINE_POINTS];
+        direct.extend(u32le(encoded_x.len() as u32));
+        direct.push(sym);
+        direct.extend(f32le(sw));
+        direct.extend(stroke);
+        direct.extend(f32le(radius));
+        direct.extend(fill);
+        direct.extend(u32le(0));
+        direct.extend(4u64.to_le_bytes());
+        direct.extend(f64le(x_decode.0));
+        direct.extend(f64le(x_decode.1));
+        direct.extend(u32le(1));
+        direct.extend(8u64.to_le_bytes());
+        direct.extend(f64le(y_decode.0));
+        direct.extend(f64le(y_decode.1));
+        for value in x_map.into_iter().chain(y_map) {
+            direct.extend(f64le(value));
+        }
+        direct.extend(f64le(output_scale));
+
+        let project = |encoded: f32, decode: (f64, f64), map: [f64; 4]| {
+            let value = f64::from(encoded) / decode.0 + decode.1;
+            let span = map[1] - map[0];
+            let span = if span == 0.0 { 1.0 } else { span };
+            ((map[2] + (value - map[0]) / span * (map[3] - map[2])) * output_scale) as f32
+        };
+        let xs: Vec<f32> = encoded_x
+            .iter()
+            .map(|&value| project(value, x_decode, x_map))
+            .collect();
+        let ys: Vec<f32> = encoded_y
+            .iter()
+            .map(|&value| project(value, y_decode, y_map))
+            .collect();
+        let mut expanded = vec![OP_POINTS];
+        expanded.extend(u32le(encoded_x.len() as u32));
+        expanded.push(sym);
+        expanded.extend(f32le(sw));
+        expanded.extend(stroke);
+        for values in [&xs, &ys] {
+            for &value in values {
+                expanded.extend(f32le(value));
+            }
+        }
+        for _ in encoded_x {
+            expanded.extend(f32le(radius));
+        }
+        for _ in encoded_x {
+            expanded.extend(fill);
+        }
+
+        for opaque in [false, true] {
+            let got = rasterize_with_spans(&direct, &[&x_arena, &y_arena], 72, 52, opaque)
+                .expect("borrowed affine points");
+            let want =
+                rasterize_with_spans(&expanded, &[], 72, 52, opaque).expect("expanded points");
+            assert_eq!(got.px, want.px, "opaque={opaque}");
+        }
+
+        let mut out = vec![0u8; 72 * 52 * 4];
+        assert!(!rasterize_spans_into(
+            &direct,
+            &[&x_arena[..x_arena.len() - 1], &y_arena],
+            72,
+            52,
+            &mut out,
+        ));
+    }
+
+    #[test]
+    fn affine_channel_points_match_expanded_batch_and_validate_wire() {
+        let x_values = [0.0f32, 0.5, 1.0];
+        let y_values = [-1.0f32, 0.25, 1.0];
+        let colors = [0.0f32, 0.5, 1.0];
+        let sizes = [0.0f32, 0.4, 1.0];
+        let mut arena = Vec::new();
+        for values in [&x_values, &y_values, &colors, &sizes] {
+            for &value in values {
+                arena.extend(f32le(value));
+            }
+        }
+        let x_map = [0.0f64, 1.0, 2.0, 30.0];
+        let y_map = [-1.0f64, 1.0, 20.0, 2.0];
+        let output_scale = 1.5f64;
+        let (sym, sw, stroke, alpha) = (2u8, 0.75f32, [7u8, 8, 9, 211], 163u8);
+        let stops = [[68u8, 1, 84], [33, 145, 140], [253, 231, 37]];
+
+        let mut direct = vec![OP_AFFINE_CHANNEL_POINTS];
+        direct.extend(u32le(3));
+        direct.push(sym);
+        direct.extend(f32le(sw));
+        direct.extend(stroke);
+        for offset in [0u64, 12] {
+            direct.extend(u32le(0));
+            direct.extend(offset.to_le_bytes());
+            direct.extend(f64le(1.0));
+            direct.extend(f64le(0.0));
+        }
+        for value in x_map.into_iter().chain(y_map) {
+            direct.extend(f64le(value));
+        }
+        direct.extend(f64le(output_scale));
+        direct.push(1); // continuous color
+        direct.extend([0, 0, 0, alpha]);
+        direct.push(0); // f32 color encoding
+        direct.extend(u32le(0));
+        direct.extend(24u64.to_le_bytes());
+        direct.extend(u32le(stops.len() as u32));
+        for stop in stops {
+            direct.extend(stop);
+        }
+        direct.push(1); // continuous size
+        direct.extend(u32le(0));
+        direct.extend(36u64.to_le_bytes());
+        direct.extend(f64le(2.0));
+        direct.extend(f64le(8.0));
+
+        let project = |value: f32, map: [f64; 4]| {
+            ((map[2] + (f64::from(value) - map[0]) / (map[1] - map[0]) * (map[3] - map[2]))
+                * output_scale) as f32
+        };
+        let xs: Vec<f32> = x_values
+            .iter()
+            .map(|&value| project(value, x_map))
+            .collect();
+        let ys: Vec<f32> = y_values
+            .iter()
+            .map(|&value| project(value, y_map))
+            .collect();
+        let radii: Vec<f32> = sizes
+            .iter()
+            .map(|&value| ((2.0 + 6.0 * f64::from(value)) / 2.0 * output_scale) as f32)
+            .collect();
+        let fills: Vec<[u8; 4]> = colors
+            .iter()
+            .map(|&value| crate::kernels::colormap_color(f64::from(value), &stops, alpha))
+            .collect();
+        let mut expanded = vec![OP_POINTS];
+        expanded.extend(u32le(3));
+        expanded.push(sym);
+        expanded.extend(f32le(sw));
+        expanded.extend(stroke);
+        for values in [&xs, &ys, &radii] {
+            for &value in values {
+                expanded.extend(f32le(value));
+            }
+        }
+        for fill in &fills {
+            expanded.extend(fill);
+        }
+
+        for opaque in [false, true] {
+            let got = rasterize_with_spans(&direct, &[&arena], 48, 36, opaque)
+                .expect("borrowed affine channel points");
+            let want = rasterize_with_spans(&expanded, &[], 48, 36, opaque)
+                .expect("expanded styled points");
+            assert_eq!(got.px, want.px, "opaque={opaque}");
+        }
+
+        let mut out = vec![0u8; 48 * 36 * 4];
+        assert!(!rasterize_spans_into(
+            &direct,
+            &[&arena[..arena.len() - 1]],
+            48,
+            36,
+            &mut out,
+        ));
+
+        // Categorical codes use the same affine command but borrow a compact
+        // byte span.  Exact equality with an expanded point batch proves the
+        // private typed wire does not change palette selection.
+        let code_offset = arena.len() as u64;
+        arena.extend([0u8, 1, 2]);
+        let mut categorical = vec![OP_AFFINE_CHANNEL_POINTS];
+        categorical.extend(u32le(3));
+        categorical.push(sym);
+        categorical.extend(f32le(sw));
+        categorical.extend(stroke);
+        for offset in [0u64, 12] {
+            categorical.extend(u32le(0));
+            categorical.extend(offset.to_le_bytes());
+            categorical.extend(f64le(1.0));
+            categorical.extend(f64le(0.0));
+        }
+        for value in x_map.into_iter().chain(y_map) {
+            categorical.extend(f64le(value));
+        }
+        categorical.extend(f64le(output_scale));
+        categorical.push(2); // categorical color
+        categorical.extend([0, 0, 0, alpha]);
+        categorical.push(1); // u8 color encoding
+        categorical.extend(u32le(0));
+        categorical.extend(code_offset.to_le_bytes());
+        categorical.extend(u32le(stops.len() as u32));
+        for stop in stops {
+            categorical.extend(stop);
+        }
+        let constant_radius = 2.5f32;
+        categorical.push(0); // constant size
+        categorical.extend(f32le(constant_radius));
+
+        let mut expanded_categories = vec![OP_POINTS];
+        expanded_categories.extend(u32le(3));
+        expanded_categories.push(sym);
+        expanded_categories.extend(f32le(sw));
+        expanded_categories.extend(stroke);
+        for values in [&xs, &ys] {
+            for &value in values {
+                expanded_categories.extend(f32le(value));
+            }
+        }
+        for _ in 0..3 {
+            expanded_categories.extend(f32le(constant_radius));
+        }
+        for rgb in stops {
+            expanded_categories.extend([rgb[0], rgb[1], rgb[2], alpha]);
+        }
+        let got = rasterize_with_spans(&categorical, &[&arena], 48, 36, false)
+            .expect("borrowed u8 categorical points");
+        let want = rasterize_with_spans(&expanded_categories, &[], 48, 36, false)
+            .expect("expanded categorical points");
+        assert_eq!(got.px, want.px);
+
+        let mut bad_encoding = categorical;
+        bad_encoding[147] = 2;
+        assert!(!rasterize_spans_into(
+            &bad_encoding,
+            &[&arena],
+            48,
+            36,
+            &mut out,
+        ));
+        let mut bad_mode = direct;
+        bad_mode[142] = 3;
+        assert!(!rasterize_spans_into(
+            &bad_mode,
+            &[&arena],
+            48,
+            36,
+            &mut out,
+        ));
     }
 
     #[test]

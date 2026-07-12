@@ -463,17 +463,25 @@ def make_xy(x, y):
         if mode == "density":
             density = trace["density"]
             column = spec["columns"][density["buf"]]
+            expected = int(trace["visible"])
+            if expected != len(x):
+                raise AssertionError(f"xy visible-count oracle failed: {expected} != {len(x)}")
+            dtype = np.uint8 if density.get("enc") == "log-u8" else np.float32
             grid = np.frombuffer(
                 blob,
-                dtype=np.float32,
+                dtype=dtype,
                 count=column["len"],
                 offset=column["byte_offset"],
             )
-            actual = int(round(float(grid.sum())))
-            expected = int(trace["visible"])
-            if actual != expected:
-                raise AssertionError(f"xy count oracle failed: {actual} != {expected}")
-            oracle_kind = "count-conservation"
+            if density.get("enc") == "log-u8":
+                if not np.any(grid) or int(grid.max()) != 255:
+                    raise AssertionError("xy quantized density oracle lost occupancy or maximum")
+                oracle_kind = "visible-count+quantized-density"
+            else:
+                actual = int(round(float(grid.sum())))
+                if actual != expected:
+                    raise AssertionError(f"xy count oracle failed: {actual} != {expected}")
+                oracle_kind = "count-conservation"
             aggregate_width = int(density["w"])
             aggregate_height = int(density["h"])
         else:

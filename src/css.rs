@@ -357,7 +357,11 @@ fn hex_color(digits: &str) -> Result<[f32; 4], CssErr> {
     if !matches!(n, 3 | 4 | 6 | 8) || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(CssErr::BadHex);
     }
-    let nib = |b: u8| -> u32 { (digits.as_bytes()[b as usize] as char).to_digit(16).unwrap() };
+    let nib = |b: u8| -> u32 {
+        (digits.as_bytes()[b as usize] as char)
+            .to_digit(16)
+            .unwrap()
+    };
     let (r, g, b, a) = if n <= 4 {
         let a = if n == 4 { nib(3) * 17 } else { 255 };
         (nib(0) * 17, nib(1) * 17, nib(2) * 17, a)
@@ -420,8 +424,16 @@ fn hsl_args(args: &str) -> Result<[f32; 4], CssErr> {
     if !h.is_finite() {
         return Err(CssErr::BadNumber);
     }
-    let s = channel(toks[1].strip_suffix('%').ok_or(CssErr::BadUnit)?, 100.0, 100.0)? / 100.0;
-    let l = channel(toks[2].strip_suffix('%').ok_or(CssErr::BadUnit)?, 100.0, 100.0)? / 100.0;
+    let s = channel(
+        toks[1].strip_suffix('%').ok_or(CssErr::BadUnit)?,
+        100.0,
+        100.0,
+    )? / 100.0;
+    let l = channel(
+        toks[2].strip_suffix('%').ok_or(CssErr::BadUnit)?,
+        100.0,
+        100.0,
+    )? / 100.0;
     let a = if toks.len() == 4 {
         channel(toks[3], 1.0, 1.0)?
     } else {
@@ -546,9 +558,7 @@ pub fn check_length_token(raw: &str) -> Result<Checked, CssErr> {
     }
     let unit_start = lower
         .char_indices()
-        .find(|&(i, c)| {
-            !(c.is_ascii_digit() || c == '.' || ((c == '+' || c == '-') && i == 0))
-        })
+        .find(|&(i, c)| !(c.is_ascii_digit() || c == '.' || ((c == '+' || c == '-') && i == 0)))
         .map(|(i, _)| i)
         .unwrap_or(lower.len());
     let (num, unit) = lower.split_at(unit_start);
@@ -758,10 +768,7 @@ mod tests {
             Ok(Checked::Passthrough)
         );
         // ...but closed grammars stay strict, and injection never passes.
-        assert_eq!(
-            check_declaration("color", "#3b82zz"),
-            Err(CssErr::BadHex)
-        );
+        assert_eq!(check_declaration("color", "#3b82zz"), Err(CssErr::BadHex));
         assert_eq!(
             check_declaration("font-size", "big"),
             Err(CssErr::BadNumber)

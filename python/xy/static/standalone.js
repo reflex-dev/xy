@@ -1,7 +1,7 @@
 (() => {
 
 "use strict";
-const PROTOCOL = 2;
+const PROTOCOL = 3;
 const COLORMAP_STOPS = {
 viridis: [
 [68, 1, 84], [72, 40, 120], [62, 74, 137], [49, 104, 142], [38, 130, 142],
@@ -144,7 +144,7 @@ const FC_CHROME_CSS = `
 function ensureChromeStylesheet(node) {
 let root = node && node.getRootNode ? node.getRootNode() : document;
 const isShadow = typeof ShadowRoot !== "undefined" && root instanceof ShadowRoot;
-if (!isShadow && !(root instanceof Document)) root = document; 
+if (!isShadow && !(root instanceof Document)) root = document;
 const scope = isShadow ? root : (root.head || document.head || root.documentElement);
 if (!scope || !scope.querySelector) return;
 if (scope.querySelector("style[data-xy-chrome]")) return;
@@ -372,7 +372,7 @@ const fsh = compile(gl, gl.FRAGMENT_SHADER, fs);
 gl.attachShader(p, vsh);
 gl.attachShader(p, fsh);
 for (const [name, slot] of Object.entries(ATTR_SLOTS)) {
-gl.bindAttribLocation(p, slot, name); 
+gl.bindAttribLocation(p, slot, name);
 }
 gl.linkProgram(p);
 const ok = gl.getProgramParameter(p, gl.LINK_STATUS);
@@ -501,6 +501,27 @@ void main() {
     px = mix(u_ptStroke, px, innerCov);                // ring = stroke, inside = fill
   }
   outColor = px * (shapeCov * v_dim);
+}`;
+const POINT_SIMPLE_VS = `#version 300 es
+in float ax; in float ay;
+uniform vec2 u_xmap; uniform vec2 u_ymap;
+uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
+uniform float u_size; uniform float u_dpr;
+${AXIS_GLSL}
+void main() {
+  gl_Position = vec4(fcMap(ax, u_xmap, u_xmeta, u_xmode), fcMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  gl_PointSize = u_size * u_dpr;
+}`;
+const POINT_SIMPLE_FS = `#version 300 es
+precision highp float;
+uniform vec4 u_color;
+out vec4 outColor;
+void main() {
+  float sd = length(gl_PointCoord - 0.5) - 0.5;
+  float aa = fwidth(sd) + 1e-4;
+  float coverage = clamp(0.5 - sd / aa, 0.0, 1.0);
+  if (coverage <= 0.001) discard;
+  outColor = vec4(u_color.rgb * u_color.a, u_color.a) * coverage;
 }`;
 const PICK_VS = `#version 300 es
 in float ax; in float ay; in float a_sval;
@@ -915,10 +936,10 @@ return m;
 function fcSmoothResample(x, y, extra, n, maxOut) {
 if (n < 3) return null;
 const sub = Math.max(1, Math.min(16, Math.floor(maxOut / n)));
-if (sub <= 1) return null; 
+if (sub <= 1) return null;
 for (let i = 0; i < n; i++) {
 if (!Number.isFinite(x[i]) || !Number.isFinite(y[i])) return null;
-if (i > 0 && x[i] < x[i - 1]) return null; 
+if (i > 0 && x[i] < x[i - 1]) return null;
 if (extra && !Number.isFinite(extra[i])) return null;
 }
 const my = fcMonotoneTangents(x, y, n);
@@ -1127,7 +1148,7 @@ view.gl.deleteTexture(old.tex);
 }
 function lodApplyDrill(view, g, upd, buffers) {
 const gl = view.gl;
-const fresh = !g.drill; 
+const fresh = !g.drill;
 let d = g.drill;
 if (!d) {
 d = g.drill = { trace: g.trace, xBuf: gl.createBuffer(), yBuf: gl.createBuffer() };
@@ -1143,8 +1164,8 @@ d.yMeta = { offset: upd.y.offset, scale: upd.y.scale };
 d.win = { x0: upd.x_range[0], x1: upd.x_range[1], y0: upd.y_range[0], y1: upd.y_range[1] };
 d.n = Math.min(upd.x.len, upd.y.len);
 d.visible = upd.visible ?? d.n;
-d.seq = upd.drill_seq; 
-d.selActive = false; 
+d.seq = upd.drill_seq;
+d.selActive = false;
 view._hoverId = -1;
 view._lastRow = null;
 d.colorMode = 0;
@@ -1152,8 +1173,12 @@ d.color = parseColor(view.root, upd.color && upd.color.color, [0.3, 0.47, 0.66, 
 if (upd.color && upd.color.buf !== undefined) {
 d.colorMode = upd.color.mode === "continuous" ? 1 : 2;
 if (!d.cBuf) d.cBuf = gl.createBuffer();
+const colorValues = upd.color.dtype === "u8"
+? view._asU8(buffers[upd.color.buf])
+: view._asF32(buffers[upd.color.buf]);
+d.cBuf._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
 gl.bindBuffer(gl.ARRAY_BUFFER, d.cBuf);
-gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.color.buf]), gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, colorValues, gl.STATIC_DRAW);
 d.lut = upd.color.mode === "continuous"
 ? view._lut(upd.color.colormap)
 : view._paletteLut(upd.color.palette);
@@ -1175,7 +1200,7 @@ gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.density_val.buf]), gl.STA
 d.dlut = view._lut(upd.density_colormap || "viridis");
 const first = d.lodBlend === undefined;
 d.lodBlend = Math.min(1, upd.lod_blend ?? 0);
-if (first) d.lodBlendShown = d.lodBlend; 
+if (first) d.lodBlendShown = d.lodBlend;
 } else {
 d.lodBlend = 0;
 }
@@ -1198,7 +1223,7 @@ function lodDropDrill(view, g) {
 const d = g.drill;
 if (!d) return;
 const gl = view.gl;
-view._deleteVaos(d); 
+view._deleteVaos(d);
 for (const b of [d.xBuf, d.yBuf, d.cBuf, d.sBuf, d.selBuf, d.dBuf]) if (b) gl.deleteBuffer(b);
 g.drill = null;
 g._drillFadeStart = null;
@@ -1207,7 +1232,7 @@ g._drillWasInside = false;
 g._drillShownAlpha = null;
 g._drillDying = false;
 g._drillDiedInsideWin = false;
-view._hoverId = -1; 
+view._hoverId = -1;
 view._lastRow = null;
 }
 function lodMarkDrillDying(view, g) {
@@ -1248,7 +1273,7 @@ g._drillFadeStart =
 alpha >= 1 ? null : view._now() - LOD_ENTRY_FADE_MS * lodFadeInvert(alpha);
 }
 function lodBeginDrillExitContinuous(view, g) {
-if (g._drillExitFadeStart != null) return; 
+if (g._drillExitFadeStart != null) return;
 const alpha = lodDrillShownAlpha(view, g);
 g._drillShownAlpha = alpha;
 g._drillFadeStart = null;
@@ -1378,7 +1403,7 @@ view._map(d.yMeta, y0, y1, d.yAxis),
 );
 view.draw();
 } else {
-if (g._drillDying) lodDropDrill(view, g); 
+if (g._drillDying) lodDropDrill(view, g);
 else if (exitingDrill) g._drillWasInside = false;
 lodDrawDensityWithFade(view, g, density);
 view._drawDensitySample(g, x0, x1, y0, y1);
@@ -1427,10 +1452,10 @@ const url = URL.createObjectURL(
 new Blob([FC_REBIN_WORKER_SRC], { type: "application/javascript" })
 );
 const worker = new Worker(url);
-worker._fcUrl = url; 
+worker._fcUrl = url;
 return worker;
 } catch (e) {
-return null; 
+return null;
 }
 }
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
@@ -1502,7 +1527,7 @@ requester._ctxPendingReservation = false;
 function fcInitiallyVisible(el) {
 if (typeof window === "undefined" || !el.getBoundingClientRect) return true;
 const rect = el.getBoundingClientRect();
-if (!rect.width && !rect.height) return false; 
+if (!rect.width && !rect.height) return false;
 const vh = window.innerHeight || 0;
 const vw = window.innerWidth || 0;
 return (
@@ -1540,11 +1565,11 @@ this._hoverId = -1;
 this._hoverTarget = null;
 this._viewEventRaf = null;
 this._linkedSource = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-this.dragMode = "pan"; 
+this.dragMode = "pan";
 this.fluid = spec.width === "100%";
 this.fluidH = spec.height === "100%";
 const rect = this.fluid || this.fluidH ? el.getBoundingClientRect() : null;
-const cw = this.fluid ? Math.round(rect.width) || 640 : spec.width; 
+const cw = this.fluid ? Math.round(rect.width) || 640 : spec.width;
 const ch = this.fluidH ? Math.round(rect.height) || 420 : spec.height;
 this.size = { w: Math.max(120, cw), h: Math.max(120, ch) };
 this._layout();
@@ -1566,7 +1591,7 @@ this.root.dataset.fcContextState = "ready";
 this._initContextLossRecovery();
 this._armContextVisibilityWatch();
 this._initInteraction();
-this._buildModebar(this.root); 
+this._buildModebar(this.root);
 if ((this.fluid || this.fluidH) && typeof ResizeObserver !== "undefined") {
 this._ro = new ResizeObserver((entries) => {
 const r = entries[entries.length - 1].contentRect;
@@ -1845,7 +1870,7 @@ this._dprMq?.removeEventListener?.("change", this._onDprChange);
 const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
 this._onDprChange = () => {
 if (this._destroyed) return;
-this._resize(this.size.w, this.size.h); 
+this._resize(this.size.w, this.size.h);
 this._armDprWatch();
 };
 mq.addEventListener?.("change", this._onDprChange, { once: true });
@@ -1916,7 +1941,7 @@ const ext = this.gl.getExtension("WEBGL_lose_context");
 if (!ext) return false;
 this._ctxReleasedExt = ext;
 this._ctxReleases += 1;
-this._glLost = true; 
+this._glLost = true;
 this.canvas.dataset.fcCtx = "released";
 if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
@@ -1931,7 +1956,7 @@ const ext = this._ctxReleasedExt;
 this._ctxReleasedExt = null;
 try {
 FC_CONTEXT_GOVERNOR.reserve(this);
-ext.restoreContext(); 
+ext.restoreContext();
 return;
 } catch (_err) {
 FC_CONTEXT_GOVERNOR.cancel(this);
@@ -1959,14 +1984,14 @@ this._initGl(this._payload);
 } catch (_err) {
 this._glLost = true;
 this.canvas.dataset.fcCtx = "lost";
-return; 
+return;
 }
 this._scheduleViewRequest(this.view, { delay: 0 });
 this.draw();
 }
 _armContextVisibilityWatch() {
 if (typeof IntersectionObserver === "undefined") {
-this._ctxVisible = true; 
+this._ctxVisible = true;
 return;
 }
 this._ctxIo = new IntersectionObserver(
@@ -2019,7 +2044,7 @@ root.className = "xy";
 root.style.cssText =
 `position:relative;width:${this.fluid ? "100%" : this.size.w + "px"};` +
 `height:${this.fluidH ? "100%" : this.size.h + "px"};` +
-(this.fluidH ? "min-height:120px;" : "") + 
+(this.fluidH ? "min-height:120px;" : "") +
 "font:12px system-ui,sans-serif;user-select:none;";
 this._applySlot(root, "root");
 el.appendChild(root);
@@ -2094,7 +2119,7 @@ this._badges.hidden = items.length === 0;
 for (const item of items) {
 const badge = document.createElement("div");
 badge.textContent = item;
-this._applySlot(badge, "badge_item"); 
+this._applySlot(badge, "badge_item");
 this._badges.appendChild(badge);
 }
 this._positionReductionBadges();
@@ -2170,7 +2195,7 @@ row.appendChild(document.createTextNode(it.name));
 lg.appendChild(row);
 }
 root.appendChild(lg);
-this._legend = lg; 
+this._legend = lg;
 }
 _buildColorbar(root) {
 const cb = this.spec.colorbar;
@@ -2213,7 +2238,7 @@ this.canvas.dataset.fcCtx = "live";
 gl.enable(gl.BLEND);
 gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 this._progCache = new Map();
-this._glPrograms = this._progCache; 
+this._glPrograms = this._progCache;
 this.quad = gl.createBuffer();
 this.quad._fcId = ++this._bufSeq;
 gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
@@ -2237,6 +2262,7 @@ this._progCache.set(key, p);
 return p;
 }
 get pointProg() { return this._prog("point", POINT_VS, POINT_FS); }
+get pointSimpleProg() { return this._prog("point-simple", POINT_SIMPLE_VS, POINT_SIMPLE_FS); }
 get lineProg() { return this._prog("line", LINE_VS, LINE_FS); }
 get segmentProg() { return this._prog("segment", SEGMENT_VS, SEGMENT_FS); }
 get meshProg() { return this._prog("mesh", MESH_VS, MESH_FS); }
@@ -2292,7 +2318,10 @@ yAxis: typeof t.y_axis === "string" ? t.y_axis : "y",
 };
 if (t.tier === "density") {
 const d = t.density;
-const grid = new Float32Array(buffer, this.spec.columns[d.buf].byte_offset, d.w * d.h);
+const meta = this.spec.columns[d.buf];
+const grid = d.enc === "log-u8"
+? lodDecodeLogU8(new Uint8Array(buffer, meta.byte_offset, meta.len), d.max)
+: new Float32Array(buffer, meta.byte_offset, d.w * d.h);
 g.densityNormMax = d.max;
 g.density = {
 w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
@@ -2440,8 +2469,12 @@ gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.y.buf]), gl.STATIC_DRA
 if (sample.color && sample.color.buf !== undefined) {
 s.colorMode = sample.color.mode === "continuous" ? 1 : 2;
 s.cBuf = gl.createBuffer();
+const colorValues = sample.color.dtype === "u8"
+? this._asU8(buffers[sample.color.buf])
+: this._asF32(buffers[sample.color.buf]);
+s.cBuf._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
 gl.bindBuffer(gl.ARRAY_BUFFER, s.cBuf);
-gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.color.buf]), gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, colorValues, gl.STATIC_DRAW);
 s.lut = sample.color.mode === "continuous"
 ? this._lut(sample.color.colormap)
 : this._paletteLut(sample.color.palette);
@@ -2772,14 +2805,16 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 return tex;
 }
 _columnView(buffer, meta) {
+if (meta.dtype === "u8") return new Uint8Array(buffer, meta.byte_offset, meta.len);
 return new Float32Array(buffer, meta.byte_offset, meta.len);
 }
-_upload(f32) {
+_upload(view) {
 const gl = this.gl;
 const buf = gl.createBuffer();
 buf._fcId = ++this._bufSeq;
+buf._fcType = view instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
 gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-gl.bufferData(gl.ARRAY_BUFFER, f32, gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, view, gl.STATIC_DRAW);
 return buf;
 }
 _bindVao(g, key, parts, setup) {
@@ -2808,7 +2843,7 @@ _vaoAttr(slot, buf, byteOffset, divisor, size = 1) {
 const gl = this.gl;
 gl.bindBuffer(gl.ARRAY_BUFFER, buf);
 gl.enableVertexAttribArray(slot);
-gl.vertexAttribPointer(slot, size, gl.FLOAT, false, 0, byteOffset);
+gl.vertexAttribPointer(slot, size, buf._fcType || gl.FLOAT, false, 0, byteOffset);
 gl.vertexAttribDivisor(slot, divisor);
 }
 _initPickTarget() {
@@ -2906,6 +2941,14 @@ _now() {
 return performance.now();
 }
 _drawPoints(g, xm, ym, opacityScale = 1) {
+const simple =
+g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
+(g.symbol || 0) === 0 && (g.pointStrokeWidth || 0) <= 0 &&
+Math.max(g.lodBlendShown ?? 0, g.lodBlend ?? 0) <= 0.001;
+if (simple) {
+this._drawSimplePoints(g, xm, ym, opacityScale);
+return;
+}
 const gl = this.gl;
 const prog = this.pointProg;
 gl.useProgram(prog);
@@ -2963,7 +3006,7 @@ if (blendOn) {
 gl.activeTexture(gl.TEXTURE1);
 gl.bindTexture(gl.TEXTURE_2D, g.dlut);
 }
-gl.uniform1i(u("u_dlut"), 1); 
+gl.uniform1i(u("u_dlut"), 1);
 this._bindVao(
 g,
 "points",
@@ -2987,6 +3030,30 @@ if (!colorOn) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
 if (!sizeOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sval, 0.5);
 if (!selOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sel, 1.0);
 if (!blendOn) gl.vertexAttrib1f(ATTR_SLOTS.a_dval, 0);
+gl.drawArrays(gl.POINTS, 0, g.n);
+}
+_drawSimplePoints(g, xm, ym, opacityScale = 1) {
+const gl = this.gl;
+const prog = this.pointSimpleProg;
+gl.useProgram(prog);
+const u = (n) => uniformOf(gl, prog, n);
+gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
+this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+gl.uniform1f(u("u_dpr"), this.dpr);
+gl.uniform1f(u("u_size"), g.size);
+const [r, gg, b] = g.color;
+gl.uniform4f(u("u_color"), r, gg, b, (g.trace.style.opacity ?? 0.8) * opacityScale);
+this._bindVao(
+g,
+"points-simple",
+[g.xBuf._fcId, g.yBuf._fcId],
+() => {
+this._vaoAttr(ATTR_SLOTS.ax, g.xBuf, 0, 0);
+this._vaoAttr(ATTR_SLOTS.ay, g.yBuf, 0, 0);
+}
+);
 gl.drawArrays(gl.POINTS, 0, g.n);
 }
 _drawHoverState() {
@@ -3444,7 +3511,7 @@ const explicitAngle = this._axisTickLabelAngle(axis);
 const baseAngle = explicitAngle === null ? 0 : explicitAngle;
 const withBase = labels.map((label) => ({ ...label, angle: baseAngle, row: 0 }));
 let strategy = this._axisTickLabelStrategy(axis);
-if (strategy === "none") return []; 
+if (strategy === "none") return [];
 if (strategy === "auto") {
 if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap)) return withBase;
 if (dim === "x" && axis.kind === "category" && labels.length <= 16) strategy = "rotate";
@@ -3691,7 +3758,7 @@ activeStart(g._drillExitFadeStart) ||
 _renderPick() {
 const gl = this.gl;
 if (this._pickW !== this.canvas.width || this._pickH !== this.canvas.height) {
-this._allocPickTex(); 
+this._allocPickTex();
 }
 gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
 gl.viewport(0, 0, this.canvas.width, this.canvas.height);
@@ -3708,7 +3775,7 @@ for (const g of this.gpuTraces) {
 const pg = g.tier === "density"
 ? (g.drill && !g._drillDying && this._viewInside(g.drill.win) ? g.drill : null)
 : (markOf(g.trace.kind).pointPick ? g : null);
-if (!pg || !pg.n) { g.pickSlot = -1; continue; } 
+if (!pg || !pg.n) { g.pickSlot = -1; continue; }
 const [px0, px1] = this._axisRange(pg.xAxis || g.xAxis);
 const [py0, py1] = this._axisRange(pg.yAxis || g.yAxis);
 const xm = this._map(pg.xMeta, px0, px1, pg.xAxis || g.xAxis);
@@ -3746,7 +3813,7 @@ if (!this._pickable) return null;
 if (this._pickDirty) this._renderPick();
 const gl = this.gl;
 const px = Math.round(cssX * this.dpr);
-const py = Math.round((this.plot.h - cssY) * this.dpr); 
+const py = Math.round((this.plot.h - cssY) * this.dpr);
 if (px < 0 || py < 0 || px >= this.canvas.width || py >= this.canvas.height) return null;
 const buf = new Uint8Array(4);
 gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
@@ -3920,6 +3987,10 @@ if (b.byteOffset % 4 === 0) {
 return new Float32Array(b.buffer, b.byteOffset, Math.floor(b.byteLength / 4));
 }
 return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+}
+_asU8(b) {
+if (b instanceof ArrayBuffer) return new Uint8Array(b);
+return new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
 }
 _asU32(b) {
 if (b instanceof ArrayBuffer) return new Uint32Array(b);
@@ -4676,7 +4747,7 @@ this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
 if (this.comm) {
 this.comm.send({ type: "select", x0, x1, y0, y1 });
 } else {
-this._selectLocal(x0, x1, y0, y1); 
+this._selectLocal(x0, x1, y0, y1);
 }
 },
 _selectLocal(x0, x1, y0, y1) {
@@ -4788,7 +4859,7 @@ this._emitViewChange(opts.source || "view", { broadcast: opts.broadcast });
 return;
 }
 clearTimeout(this._viewTimer);
-this.seq += 1; 
+this.seq += 1;
 const request = opts.request !== false;
 const requestDelay = opts.requestDelay ?? Math.min(55, Math.max(24, duration * 0.35));
 const requestMaxWait = opts.requestMaxWait ?? 130;
@@ -5036,7 +5107,7 @@ if (this._sampleRebinDisabled) return;
 if (!this._rebinWorker) {
 this._rebinWorker = fcCreateRebinWorker();
 if (!this._rebinWorker) {
-this._sampleRebinDisabled = true; 
+this._sampleRebinDisabled = true;
 return;
 }
 this._rebinWorker.onmessage = (e) => this._onRebinResult(e.data);
@@ -5084,7 +5155,7 @@ g.prevDensity = g.density;
 g._densityFadeStart = this._now();
 g.densityNormMax = density.normMax || density.max;
 g.density = density;
-g._sampleRebinned = !!rebinned; 
+g._sampleRebinned = !!rebinned;
 lodRememberDensity(this, g, g.density);
 this._refreshReductionBadges();
 this.draw();
@@ -5451,7 +5522,7 @@ return () => view.destroy();
 function renderStandalone(el, spec, arrayBuffer) {
 const buffer = bytesToArrayBuffer(arrayBuffer);
 const view = new ChartView(el, spec, buffer, null);
-const column = (idx) => new Float32Array(buffer, spec.columns[idx].byte_offset, spec.columns[idx].len);
+const column = (idx) => view._columnView(buffer, spec.columns[idx]);
 for (const g of view.gpuTraces) {
 if (markOf(g.trace.kind).retainCpu && g.tier !== "density") {
 g._cpu = {

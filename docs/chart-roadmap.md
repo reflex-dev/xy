@@ -100,7 +100,7 @@ not fall out of sight.
 | 4 | Area | filled line, stacked area, streamgraph, ridgeline-lite area bands | Implemented core | `fc.area(...)` ships a filled area with scalar/array baseline and optional line overlay. Follow-ups: stacked area helpers and streamgraph offsets. |
 | 5 | Histogram | count, probability, density, cumulative histogram | Implemented core | Python-side binning plus the shared rectangle renderer; `cumulative=True` (count CDF and, with `density=True`, empirical CDF) is implemented. Follow-up: viewport-aware re-binning for huge streamed distributions. |
 | 6 | Pie / donut | pie, donut, nested donut, variable-radius pie | Planned compatibility | Extremely common in dashboards even though performance differentiation is low. |
-| 7 | Heatmap / image / matrix | heatmap, image, annotated matrix, correlation matrix, cohort heatmap | Implemented core | `fc.heatmap(...)` renders matrix cells through a compact grid texture with continuous colormaps and categorical/numeric axes. Follow-ups: annotation and tiled huge-image paths. |
+| 7 | Heatmap / image / matrix | heatmap, image, annotated matrix, correlation matrix, cohort heatmap | Implemented core | `fc.heatmap(...)` renders matrix cells through a compact grid texture with continuous colormaps and categorical/numeric axes. Native static export borrows canonical f64 spans and normalizes only sampled pixels in Rust, verified through 4.29B cells without a derived grid or RGBA expansion. Follow-ups: annotation and tiled huge-image browser transport. |
 | 8 | Box plot | box, grouped box, notched box, outlier points | Implemented core | Tukey quartiles, whiskers, median, deterministic outliers, numeric or categorical groups. |
 | 9 | Candlestick / OHLC | candlestick, OHLC bars, volume overlay, range selector | Prototyped (PR closed unmerged) | `fc.candlestick(...)`/`fc.ohlc(...)` + `fc.candlestick_chart(...)` on the closed `codex/finance-charting-surface` exploration branch: OHLC decimation, shared-y f32 frame, time axes, hover, and a volume pane. Critical finance surface; inherits LOD and time-axis work from core primitives. |
 | 10 | Error and interval charts | error bars, error bands, confidence intervals, line range, bar range, whisker, rule | Implemented core | Instanced segment error bars and M4-reduced filled error bands. |
@@ -384,8 +384,9 @@ Parallel, non-chart-type tracks:
   `Chart.to_png(engine="native")`, now the default, paints the decimated
   payload with an AA rasterizer in the Rust core (introduced in ABI v8,
   `fc_rasterize`) — no browser, ~50× faster than the Chromium screenshot,
-  indexed-palette PNGs, and a baked bitmap font for text. `engine="chromium"`
-  stays for a pixel-exact WebGL screenshot.
+  fast truecolor PNGs, and a baked bitmap font for text. `optimize=True`
+  retains the slower indexed-palette path for smaller files;
+  `engine="chromium"` stays for a pixel-exact WebGL screenshot.
 - **Reflex-first reactive API**: the one deliberately-deferred product
   requirement — a reactive/data-key-driven surface so charts bind to Reflex
   state without manual payload rebuilds. Now the main remaining non-breadth track.

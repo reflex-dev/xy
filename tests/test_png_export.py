@@ -133,15 +133,27 @@ def test_dimension_override_and_fluid() -> None:
 
 
 def test_flat_chart_is_indexed_gradient_chart_is_truecolor() -> None:
-    # A tiny flat-color chart stays within 256 colors → indexed (color type 3).
+    # optimize=True retains the size-oriented palette selection path.
     flat = Figure(width=200, height=120).bar(["a", "b"], [1.0, 2.0], color="#2563eb")
-    assert _ihdr(flat.to_png(scale=1))[2] == 3
+    assert _ihdr(flat.to_png(scale=1, optimize=True))[2] == 3
     # A gradient + AA area blows past 256 colors → truecolor (color type 6).
     x = np.linspace(0.0, 6.0, 40)
     grad = Figure(width=400, height=200).area(
         x, np.abs(np.sin(x)) + 0.2, fill="linear-gradient(#1e40af, #93c5fd)"
     )
-    assert _ihdr(grad.to_png(scale=1))[2] == 6
+    assert _ihdr(grad.to_png(scale=1, optimize=True))[2] == 6
+
+
+def test_public_native_png_defaults_fast_and_optimize_preserves_pixels() -> None:
+    fig = Figure(width=320, height=180).line(
+        np.linspace(0.0, 8.0, 200), np.sin(np.linspace(0.0, 8.0, 200))
+    )
+
+    fast = fig.to_png(scale=1)
+    optimized = fig.to_png(scale=1, optimize=True)
+
+    assert _ihdr(fast)[2] == 2
+    np.testing.assert_array_equal(_decode_rgba(fast), _decode_rgba(optimized))
 
 
 def test_png_is_screen_bounded_for_large_lines() -> None:
@@ -240,3 +252,312 @@ def test_native_and_svg_share_layout() -> None:
     assert plot["w"] > 0 and plot["h"] > 0
     xt, _lab, _step = _svg.axis_ticks(spec["x_axis"], plot["w"], True)
     assert len(xt) >= 2  # shared tick math produces ticks both engines label
+
+
+def test_native_smooth_stroke_matches_reference_polyline() -> None:
+    from xy import _scene, _svg, kernels
+
+    x = np.array([0.0, 0.7, 0.7, 2.0, 2.8, 4.0])
+    y = np.array([1.0, 3.0, 2.0, 2.5, -1.0, 1.0])
+    sx = _svg._Scale({"range": [0.0, 4.0], "kind": "linear"}, 20, 580)
+    sy = _svg._Scale({"range": [-1.0, 3.0], "kind": "linear"}, 280, 20)
+    color = (30, 90, 210, 177)
+    reference = _raster._Cmd(1)
+    reference.clip(0, 0, 600, 300)
+    reference.stroke(_scene.curve_points(x, y, sx, sy, True), 2.25, color, dash=[4.0, 2.0])
+    native = _raster._Cmd(1)
+    native.clip(0, 0, 600, 300)
+    native.smooth_stroke(x, y, sx, sy, 2.25, color, dash=[4.0, 2.0])
+
+    np.testing.assert_array_equal(
+        kernels.rasterize(bytes(native.buf), 600, 300),
+        kernels.rasterize(bytes(reference.buf), 600, 300),
+    )
+
+
+def test_native_shape_batches_match_individual_commands() -> None:
+    from xy import kernels
+
+    x0 = np.array([10.25, 45.0, 80.75])
+    y0 = np.array([12.5, 30.25, 8.0])
+    x1 = np.array([35.5, 72.75, 110.0])
+    y1 = np.array([55.0, 70.5, 44.25])
+    colors = np.array([[220, 40, 30, 255], [20, 160, 90, 177], [30, 80, 220, 96]], np.uint8)
+    reference = _raster._Cmd(1)
+    batch = _raster._Cmd(1)
+    for i in range(len(x0)):
+        reference.fill(
+            [(x0[i], y0[i]), (x1[i], y0[i]), (x1[i], y1[i]), (x0[i], y1[i])],
+            tuple(int(value) for value in colors[i]),
+        )
+    batch.rects(x0, y0, x1, y1, colors)
+    np.testing.assert_array_equal(
+        kernels.rasterize(bytes(batch.buf), 128, 80),
+        kernels.rasterize(bytes(reference.buf), 128, 80),
+    )
+    tx0, ty0 = x0, y0
+    tx1, ty1 = x1, y0 + 4.0
+    tx2, ty2 = (x0 + x1) / 2.0, y1
+    reference = _raster._Cmd(1)
+    batch = _raster._Cmd(1)
+    for i in range(len(tx0)):
+        reference.fill(
+            [(tx0[i], ty0[i]), (tx1[i], ty1[i]), (tx2[i], ty2[i])],
+            tuple(int(value) for value in colors[i]),
+        )
+    batch.triangles(tx0, ty0, tx1, ty1, tx2, ty2, colors)
+    np.testing.assert_array_equal(
+        kernels.rasterize(bytes(batch.buf), 128, 80),
+        kernels.rasterize(bytes(reference.buf), 128, 80),
+    )
+
+
+def test_borrowed_affine_points_match_expanded_batch() -> None:
+    from xy import _native, _svg, kernels
+
+    encoded_x = np.tile(np.array([-2.25, -0.5, 0.75, 2.0, np.nan], dtype="<f4"), 8)
+    encoded_y = np.tile(np.array([1.5, -1.0, 0.25, 2.25, 0.0], dtype="<f4"), 8)
+    x_meta = {"span": 0, "byte_offset": 4, "len": len(encoded_x), "scale": 0.25, "offset": 1000.0}
+    y_meta = {"span": 1, "byte_offset": 8, "len": len(encoded_y), "scale": 2.0, "offset": -40.0}
+    sx = _svg._Scale({"range": [990.0, 1010.0], "kind": "linear"}, 2.25, 37.5)
+    sy = _svg._Scale({"range": [-42.0, -38.0], "kind": "linear"}, 25.0, 1.5)
+    scale = 1.75
+    radius, fill, symbol = 2.0, (27, 119, 231, 143), 3
+    stroke_width, stroke = 0.75, (8, 9, 10, 211)
+    spans = (b"xpad" + encoded_x.tobytes(), b"ypad----" + encoded_y.tobytes())
+
+    direct = _raster._Cmd(scale)
+    direct.affine_points(x_meta, y_meta, sx, sy, radius, fill, symbol, stroke_width, stroke)
+    xv = encoded_x.astype(np.float64) / x_meta["scale"] + x_meta["offset"]
+    yv = encoded_y.astype(np.float64) / y_meta["scale"] + y_meta["offset"]
+    expanded = _raster._Cmd(scale)
+    expanded.points(
+        sx(xv),
+        sy(yv),
+        np.full(len(xv), radius),
+        np.tile(np.asarray(fill, np.uint8), (len(xv), 1)),
+        symbol,
+        stroke_width,
+        stroke,
+    )
+
+    assert len(direct.buf) < len(expanded.buf)
+    np.testing.assert_array_equal(
+        _native.rasterize_spans(bytes(direct.buf), spans, 72, 52),
+        kernels.rasterize(bytes(expanded.buf), 72, 52),
+    )
+
+
+def test_static_scatter_affine_fast_path_keeps_general_fallbacks(monkeypatch) -> None:
+    constant_calls = 0
+    channel_calls = 0
+    affine_points = _raster._Cmd.affine_points
+    affine_channel_points = _raster._Cmd.affine_channel_points
+
+    def recording_affine_points(self, *args, **kwargs):
+        nonlocal constant_calls
+        constant_calls += 1
+        return affine_points(self, *args, **kwargs)
+
+    def recording_affine_channel_points(self, *args, **kwargs):
+        nonlocal channel_calls
+        channel_calls += 1
+        return affine_channel_points(self, *args, **kwargs)
+
+    monkeypatch.setattr(_raster._Cmd, "affine_points", recording_affine_points)
+    monkeypatch.setattr(_raster._Cmd, "affine_channel_points", recording_affine_channel_points)
+    x = np.linspace(1.0, 10.0, 31)
+    constant = Figure(width=240, height=140).scatter(x, np.sin(x), color="#2563eb", size=7)
+    assert _raster.render_raster(*constant.build_payload(), scale=1).shape == (140, 240, 4)
+    assert (constant_calls, channel_calls) == (1, 0)
+
+    colored = Figure(width=240, height=140).scatter(x, np.sin(x), color=x)
+    assert _raster.render_raster(*colored.build_payload(), scale=1).shape == (140, 240, 4)
+    assert (constant_calls, channel_calls) == (1, 1)
+
+    sized = Figure(width=240, height=140).scatter(x, np.sin(x), size=x)
+    assert _raster.render_raster(*sized.build_payload(), scale=1).shape == (140, 240, 4)
+    assert (constant_calls, channel_calls) == (1, 2)
+
+    log_axis = Figure(width=240, height=140).scatter(x, np.sin(x), color=x)
+    log_axis.set_axis("x", type_="log")
+    assert _raster.render_raster(*log_axis.build_payload(), scale=1).shape == (140, 240, 4)
+    assert (constant_calls, channel_calls) == (1, 2)
+
+
+def test_affine_static_scatter_full_render_matches_expanded(monkeypatch) -> None:
+    from xy import _svg
+
+    rng = np.random.default_rng(2026)
+    x = 1e12 + rng.normal(scale=3.0, size=2_000)
+    y = rng.normal(size=2_000)
+    color_values = np.linspace(-1.0, 1.0, len(x))
+    size_values = np.sin(np.linspace(0.0, 12.0, len(x)))
+    categories = np.asarray([f"group-{index % 7}" for index in range(len(x))])
+    figures = [
+        Figure(width=360, height=220).scatter(
+            x,
+            y,
+            color="#7c3aed",
+            size=6,
+            opacity=0.65,
+            symbol="diamond",
+            stroke="#111827",
+            stroke_width=0.5,
+        ),
+        Figure(width=360, height=220).scatter(x, y, color=color_values, colormap="plasma"),
+        Figure(width=360, height=220).scatter(x, y, color=categories),
+        Figure(width=360, height=220).scatter(
+            x, y, color="#2563eb", size=size_values, size_range=(2, 8)
+        ),
+        Figure(width=360, height=220).scatter(
+            x, y, color=color_values, size=size_values, size_range=(2, 8)
+        ),
+    ]
+    payloads = [figure.build_payload() for figure in figures]
+    direct = [_raster.render_raster(spec, blob, scale=2) for spec, blob in payloads]
+    monkeypatch.setattr(_svg._Scale, "affine", property(lambda _self: False))
+    expanded = [_raster.render_raster(spec, blob, scale=2) for spec, blob in payloads]
+    for direct_image, expanded_image in zip(direct, expanded, strict=True):
+        np.testing.assert_array_equal(direct_image, expanded_image)
+
+
+def test_stroked_triangle_mesh_batch_matches_expanded_commands(monkeypatch) -> None:
+    rng = np.random.default_rng(741)
+    n = 257
+    x0 = rng.uniform(-2.0, 2.0, n)
+    y0 = rng.uniform(-1.0, 1.0, n)
+    x1 = x0 + rng.uniform(0.05, 0.3, n)
+    y1 = y0 + rng.uniform(-0.15, 0.15, n)
+    x2 = x0 + rng.uniform(-0.15, 0.15, n)
+    y2 = y0 + rng.uniform(0.05, 0.3, n)
+    figure = Figure(width=360, height=220).triangle_mesh(
+        x0,
+        y0,
+        x1,
+        y1,
+        x2,
+        y2,
+        color=np.linspace(-1.0, 1.0, n),
+        colormap="plasma",
+        opacity=0.73,
+        stroke="#111827",
+        stroke_width=0.75,
+    )
+    payload = figure.build_payload()
+    direct = _raster.render_raster(*payload, scale=2)
+
+    def expanded_triangles(self, x0, y0, x1, y1, x2, y2, fills, sw=0.0, stroke=None):
+        for i in range(len(x0)):
+            triangle = [(x0[i], y0[i]), (x1[i], y1[i]), (x2[i], y2[i])]
+            self.fill(triangle, tuple(int(value) for value in fills[i]))
+            if sw > 0:
+                self.stroke(triangle, sw, stroke, closed=True)
+
+    monkeypatch.setattr(_raster._Cmd, "triangles", expanded_triangles)
+    expanded = _raster.render_raster(*payload, scale=2)
+    np.testing.assert_array_equal(direct, expanded)
+
+
+def test_static_log_scale_reads_serialized_scale_field() -> None:
+    from xy import _svg
+
+    axis = {"kind": "linear", "scale": "log", "range": [1.0, 1_000.0]}
+    scale = _svg._Scale(axis, 0.0, 300.0)
+    np.testing.assert_allclose(scale(np.array([1.0, 10.0, 100.0, 1_000.0])), [0, 100, 200, 300])
+    ticks, labels, _step = _svg.axis_ticks(axis, 300, True)
+    assert {1.0, 10.0, 100.0, 1_000.0}.issubset(ticks)
+    assert {1.0, 100.0}.issubset(labels)
+
+
+def test_compact_density_command_matches_expanded_image() -> None:
+    from xy import _native, kernels
+
+    w, h = 31, 17
+    encoded = ((np.arange(w * h, dtype=np.uint16) * 47 + 13) % 256).astype(np.uint8)
+    stops = np.array([[68, 1, 84], [59, 82, 139], [33, 145, 140], [253, 231, 37]], np.uint8)
+    maximum, opacity = 10_000.0, 0.73
+    rgba = kernels.density_rgba(encoded, w, h, maximum, stops, opacity)
+
+    compact = _raster._Cmd(1)
+    compact.density_image(1.25, -0.75, 79.5, 45.25, w, h, 0, maximum, stops, opacity)
+    expanded = _raster._Cmd(1)
+    expanded.image(1.25, -0.75, 79.5, 45.25, w, h, rgba.tobytes())
+
+    assert len(compact.buf) < len(expanded.buf) / 2
+    np.testing.assert_array_equal(
+        _native.rasterize_data(bytes(compact.buf), encoded.tobytes(), 82, 47),
+        kernels.rasterize(bytes(expanded.buf), 82, 47),
+    )
+
+
+def test_direct_heatmap_command_matches_expanded_image() -> None:
+    from xy import _native, kernels
+
+    w, h = 31, 17
+    values = ((np.arange(w * h, dtype=np.uint16) * 47 + 13) % 256).astype(np.float32) / 255
+    values[::37] = np.nan
+    values[1::37] = 0
+    stops = np.array([[68, 1, 84], [59, 82, 139], [33, 145, 140], [253, 231, 37]], np.uint8)
+    alpha = 187
+    rgba = kernels.heatmap_rgba(values, w, h, stops, alpha)
+
+    direct = _raster._Cmd(1)
+    direct.heatmap_image(1.25, -0.75, 15.5, 10.25, w, h, 0, stops, alpha)
+    expanded = _raster._Cmd(1)
+    expanded.image(1.25, -0.75, 15.5, 10.25, w, h, rgba.tobytes(), nearest=True)
+
+    np.testing.assert_array_equal(
+        _native.rasterize_data(bytes(direct.buf), values.astype("<f4").tobytes(), 18, 11),
+        kernels.rasterize(bytes(expanded.buf), 18, 11),
+    )
+
+
+def test_raster_payload_borrows_canonical_heatmap_with_exact_pixels() -> None:
+    values = np.linspace(-3.0, 7.0, 31 * 17, dtype=np.float64).reshape(17, 31)
+    values[2, 5] = np.nan
+    figure = Figure(width=320, height=180).heatmap(values, domain=(-2.0, 6.0), opacity=0.73)
+
+    browser_spec, browser_blob = figure.build_payload()
+    raster_spec, raster_blob, borrowed = figure._build_raster_payload()
+    browser_grid = browser_spec["traces"][0]["heatmap"]
+    raster_grid = raster_spec["traces"][0]["heatmap"]
+    raster_meta = raster_spec["columns"][raster_grid["buf"]]
+
+    assert "enc" not in browser_grid
+    assert len(browser_blob) == values.size * 4
+    assert raster_grid["enc"] == "canonical-f64"
+    assert raster_meta == {
+        "span": 1,
+        "byte_offset": 0,
+        "len": values.size,
+        "dtype": "f64",
+    }
+    assert raster_blob == b""
+    assert len(borrowed) == 1
+    assert np.shares_memory(borrowed[0], figure.traces[0].grid.values)
+
+    expanded = _raster.render_raster(browser_spec, browser_blob, scale=1)
+    direct = _raster.render_raster(
+        raster_spec,
+        raster_blob,
+        scale=1,
+        borrowed=borrowed,
+    )
+    np.testing.assert_array_equal(direct, expanded)
+
+
+def test_public_native_heatmap_png_skips_browser_normalization(monkeypatch) -> None:
+    from xy import _payload
+
+    figure = Figure(width=180, height=120).heatmap(
+        np.arange(20_000, dtype=np.float64).reshape(100, 200),
+        domain=(0.0, 19_999.0),
+    )
+
+    def fail_normalization(*_args, **_kwargs):
+        raise AssertionError("native static heatmap should borrow canonical values")
+
+    monkeypatch.setattr(_payload.kernels, "normalize_f32", fail_normalization)
+    png = figure.to_png(scale=1)
+    assert _ihdr(png)[:2] == (180, 120)

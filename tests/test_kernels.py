@@ -288,6 +288,24 @@ def test_zone_maps_stats(impl):
     assert np.isclose(positive_maxs[counts > 0].max(), positive.max())
 
 
+def test_zone_maps_pair_is_bit_identical_to_separate_columns(impl):
+    rng = np.random.default_rng(17)
+    x = rng.normal(size=1_100_123)
+    y = rng.normal(size=1_100_123)
+    x[::997] = np.nan
+    y[::991] = np.inf
+    separate = (impl.zone_maps(x), impl.zone_maps(y))
+    paired = impl.zone_maps_pair(x, y)
+    for got_column, expected_column in zip(paired, separate, strict=True):
+        for got, expected in zip(got_column, expected_column, strict=True):
+            np.testing.assert_array_equal(got, expected)
+
+    empty = impl.zone_maps_pair(x[:0], y[:0])
+    assert all(len(field) == 0 for column in empty for field in column)
+    with pytest.raises(ValueError, match="equal length"):
+        impl.zone_maps_pair(x, y[:-1])
+
+
 def test_zone_maps_autorange_matches_full_scan(impl):
     rng = np.random.default_rng(11)
     data = rng.uniform(-1e6, 1e6, 100_001)
@@ -483,6 +501,54 @@ def test_marching_squares_skips_nonfinite_cells_and_empty_levels(impl):
 # -- chart-prep kernels -------------------------------------------------------
 
 
+def test_factorize_fixed_returns_first_seen_codes_and_validates_shape(impl):
+    values = np.array(["beta", "alpha", "beta", "gamma", "alpha"], dtype="U5")
+    codes, unique = impl.factorize_fixed(values)
+    np.testing.assert_array_equal(codes, [0, 1, 0, 2, 1])
+    np.testing.assert_array_equal(unique, [0, 1, 3])
+    compact = impl.factorize_fixed_u8(values)
+    assert compact is not None
+    compact_codes, compact_unique = compact
+    np.testing.assert_array_equal(compact_codes, codes)
+    np.testing.assert_array_equal(compact_unique, unique)
+    counted = impl.factorize_fixed_u8_counts(values)
+    assert counted is not None
+    counted_codes, counted_unique, counts = counted
+    np.testing.assert_array_equal(counted_codes, codes)
+    np.testing.assert_array_equal(counted_unique, unique)
+    np.testing.assert_array_equal(counts, [2, 2, 1])
+    assert impl.factorize_fixed_u8(np.asarray([f"v{i}" for i in range(257)])) is None
+    assert impl.factorize_fixed_u8_counts(np.asarray([f"v{i}" for i in range(257)])) is None
+
+    impl.remap_u8(compact_codes, np.array([2, 0, 1], dtype=np.uint8))
+    np.testing.assert_array_equal(compact_codes, [2, 0, 2, 1, 0])
+    impl.remap_u8(np.empty(0, dtype=np.uint8), np.empty(0, dtype=np.uint8))
+    with pytest.raises(ValueError, match="non-object 1-D"):
+        impl.factorize_fixed(values.astype(object))
+    with pytest.raises(ValueError, match="non-object 1-D"):
+        impl.factorize_fixed(values.reshape(1, -1))
+    with pytest.raises(ValueError, match="outside the mapping"):
+        impl.remap_u8(np.array([2], dtype=np.uint8), np.array([0, 1], dtype=np.uint8))
+
+
+def test_factorize_unicode1_direct_table_matches_fixed_records_and_endian(impl):
+    values = np.array(["β", "a", "β", "", "é"], dtype="U1")
+    expected = impl.factorize_fixed_u8_counts(values)
+    actual = impl.factorize_unicode1_u8_counts(values)
+    assert expected is not None and actual is not None
+    for got, want in zip(actual, expected, strict=True):
+        np.testing.assert_array_equal(got, want)
+
+    nonnative = values.astype(values.dtype.newbyteorder("S"))
+    swapped = impl.factorize_unicode1_u8_counts(nonnative)
+    assert swapped is not None
+    for got, want in zip(swapped, expected, strict=True):
+        np.testing.assert_array_equal(got, want)
+
+    with pytest.raises(ValueError, match="Unicode U1"):
+        impl.factorize_unicode1_u8_counts(values.astype("U2"))
+
+
 def test_histogram_uniform_matches_numpy_counts(impl):
     x = np.array([0.0, 0.2, 0.9, 1.0, 1.1, np.nan, np.inf])
     counts, edges = impl.histogram_uniform(x, 0.0, 1.0, 4)
@@ -652,6 +718,19 @@ def test_range_indices(impl):
     np.testing.assert_array_equal(idx, [1, 2])
 
 
+def test_valid_indices_f64_all_valid_filtered_and_positive(impl):
+    x = np.array([1.0, 2.0, np.nan, 4.0, -5.0, 6.0])
+    y = np.array([1.0, np.inf, 3.0, -4.0, 5.0, 6.0])
+    np.testing.assert_array_equal(impl.valid_indices_f64((x, y)), [0, 3, 4, 5])
+    np.testing.assert_array_equal(impl.valid_indices_f64((x, y), positive_columns=(1,)), [0, 4, 5])
+    assert impl.valid_indices_f64((np.arange(10.0), np.arange(10.0))) is None
+    assert impl.valid_indices_f64((np.array([]), np.array([]))) is None
+    with pytest.raises(ValueError, match="equal length"):
+        impl.valid_indices_f64((np.arange(2.0), np.arange(3.0)))
+    with pytest.raises(ValueError, match="positive column"):
+        impl.valid_indices_f64((x, y), positive_columns=(2,))
+
+
 def test_bin_2d_indices_matches_separate_kernels(impl):
     rng = np.random.default_rng(5)
     x = rng.uniform(-100, 100, 50_000)
@@ -686,6 +765,63 @@ def test_bin_2d_indices_empty_and_validation(impl):
         impl.bin_2d_indices(np.array([1.0]), np.array([1.0]), 1.0, 0.0, 0.0, 1.0, 2, 2)
 
 
+def test_bin_2d_sample_range_matches_separate_kernels_and_retries(impl):
+    from xy import lod
+
+    rng = np.random.default_rng(17)
+    x = rng.uniform(-100.0, 100.0, 100_123)
+    y = rng.uniform(-100.0, 100.0, 100_123)
+    x[::997] = np.nan
+    args = (-95.0, 95.0, -80.0, 80.0, 64, 48)
+    seed = 23
+    threshold = int(lod._sample_threshold(0.0075))
+
+    grid, rows = impl.bin_2d_sample_range(x, y, *args, seed, threshold, 1)
+    np.testing.assert_array_equal(grid, impl.bin_2d(x, y, *args))
+    np.testing.assert_array_equal(
+        rows,
+        impl.sample_range_indices(len(x), seed, threshold, 2_000),
+    )
+
+
+def test_bin_2d_sample_range_empty_and_validation(impl):
+    grid, rows = impl.bin_2d_sample_range(
+        np.array([]), np.array([]), 0.0, 1.0, 0.0, 1.0, 2, 2, 0, 0, 0
+    )
+    assert grid.shape == (2, 2) and float(grid.sum()) == 0.0 and rows.shape == (0,)
+    with pytest.raises(ValueError, match="equal length"):
+        impl.bin_2d_sample_range(np.array([1.0]), np.array([]), 0.0, 1.0, 0.0, 1.0, 2, 2, 0, 0, 0)
+    with pytest.raises(ValueError, match="threshold"):
+        impl.bin_2d_sample_range(
+            np.array([1.0]), np.array([1.0]), 0.0, 2.0, 0.0, 2.0, 2, 2, 0, -1, 0
+        )
+
+
+def test_bin_2d_counted_stratified_sample_matches_separate_kernels(impl):
+    rng = np.random.default_rng(117)
+    n = 100_123
+    x = rng.uniform(-100.0, 100.0, n)
+    y = rng.uniform(-100.0, 100.0, n)
+    groups = (np.arange(n, dtype=np.uint32) % 7).astype(np.uint8)
+    groups[::25_000] = 7
+    counts = np.bincount(groups, minlength=8).astype(np.uint64)
+    args = (-95.0, 95.0, -80.0, 80.0, 64, 48)
+
+    grid, rows = impl.bin_2d_stratified_sample_range_u8_counted(
+        x, y, groups, counts, *args, 31, 0.0001, 3, 1
+    )
+    np.testing.assert_array_equal(grid, impl.bin_2d(x, y, *args))
+    np.testing.assert_array_equal(
+        rows,
+        impl.stratified_sample_range_u8(groups, 8, 31, 0.0001, 3, 1, counts=counts),
+    )
+
+    with pytest.raises(ValueError, match="arguments or codes"):
+        impl.bin_2d_stratified_sample_range_u8_counted(
+            x, y, groups, counts + 1, *args, 31, 0.0001, 3, 1
+        )
+
+
 def test_sample_mask_matches_numpy_hash_reference(impl):
     # lod.hash_row_ids is the pure-NumPy SplitMix64 reference; the fused native
     # mask must be bit-identical to hashing + thresholding through it.
@@ -699,6 +835,20 @@ def test_sample_mask_matches_numpy_hash_reference(impl):
         got = impl.sample_mask(ids, seed, int(threshold))
         assert got.dtype == np.bool_
         np.testing.assert_array_equal(got, ref)
+
+
+def test_density_log_u8_matches_wire_reference(impl):
+    grid = np.array([0, 1, 2, 3, 9, 100, 10_000], dtype=np.float32)
+    encoded, maximum = impl.density_log_u8(grid)
+    expected = np.round(255.0 * np.log1p(grid.astype(np.float64)) / np.log1p(10_000.0)).astype(
+        np.uint8
+    )
+    expected[(grid > 0) & (expected == 0)] = 1
+    assert maximum == 10_000.0
+    np.testing.assert_array_equal(encoded, expected)
+    zeros, maximum = impl.density_log_u8(np.zeros((2, 3), dtype=np.float32))
+    assert maximum == 0.0
+    np.testing.assert_array_equal(zeros, 0)
 
 
 def test_sample_mask_edges(impl):
@@ -759,6 +909,46 @@ def test_stratified_sample_mask_edges(impl):
     bad[7] = 9
     with pytest.raises(ValueError, match="n_groups"):
         impl.stratified_sample_mask(ids, bad, 4, 0, 0.5, 1)
+
+
+def test_stratified_sample_range_u8_matches_materialized_mask(impl):
+    n = (1 << 20) + 137
+    ids = np.arange(n, dtype=np.uint64)
+    groups = np.zeros(n, dtype=np.uint8)
+    groups[::10] = 1
+    groups[::1000] = 2
+    groups[::100_000] = 3
+    fraction = 1.0 / 4096.0
+    mask = impl.stratified_sample_mask(ids, groups.astype(np.uint32), 4, 31, fraction, 3)
+    expected = np.flatnonzero(mask).astype(np.uint32)
+
+    # Deliberately tiny to exercise the exact-count retry contract.
+    actual = impl.stratified_sample_range_u8(groups, 4, 31, fraction, 3, 1)
+    counts = np.bincount(groups, minlength=4).astype(np.uint64)
+    counted = impl.stratified_sample_range_u8(groups, 4, 31, fraction, 3, 1, counts=counts)
+
+    assert actual.dtype == np.uint32
+    np.testing.assert_array_equal(actual, expected)
+    np.testing.assert_array_equal(counted, expected)
+
+
+def test_stratified_sample_range_u8_validation(impl):
+    groups = np.arange(8, dtype=np.uint8) % 2
+    assert impl.stratified_sample_range_u8(groups[:0], 2, 0, 0.5, 1, 0).shape == (0,)
+    with pytest.raises(ValueError, match="uint8"):
+        impl.stratified_sample_range_u8(groups.astype(np.uint32), 2, 0, 0.5, 1, 8)
+    with pytest.raises(ValueError, match="n_groups"):
+        impl.stratified_sample_range_u8(groups, 257, 0, 0.5, 1, 8)
+    with pytest.raises(ValueError, match="fraction"):
+        impl.stratified_sample_range_u8(groups, 2, 0, 0.0, 1, 8)
+    bad = groups.copy()
+    bad[3] = 2
+    with pytest.raises(ValueError, match="group code"):
+        impl.stratified_sample_range_u8(bad, 2, 0, 0.5, 1, 8)
+    with pytest.raises(ValueError, match="counts"):
+        impl.stratified_sample_range_u8(
+            groups, 2, 0, 0.5, 1, 8, counts=np.array([7, 0], dtype=np.uint64)
+        )
 
 
 def test_local_log_density_shape_and_range(impl):
@@ -828,6 +1018,10 @@ def test_pyramid_wrappers_reject_invalid_public_arguments(impl):
             impl.pyramid_compose(handle, 0.0, 8.0, 0.0, 8.0, True, 4)
         assert impl.pyramid_count(0, 0.0, 8.0, 0.0, 8.0) is None
         assert impl.pyramid_compose(0, 0.0, 8.0, 0.0, 8.0, 4, 4) is None
+        with pytest.raises(ValueError, match="equal length"):
+            impl.pyramid_append(handle, x, short)
+        with pytest.raises(ValueError, match="pyramid handle"):
+            impl.pyramid_append(True, x, x)
     finally:
         assert impl.pyramid_free(handle)
     with pytest.raises(ValueError, match="pyramid handle"):
@@ -859,6 +1053,38 @@ def test_pyramid_matches_bin2d_and_conserves():
     assert not k.pyramid_free(h)
 
 
+def test_pyramid_append_matches_rebuild_and_is_atomic_on_domain_growth():
+    rng = np.random.default_rng(8)
+    x = rng.uniform(0, 100, 5000)
+    y = rng.uniform(0, 100, 5000)
+    tail_x = np.array([10.0, 10.0, 50.0, 99.0, np.nan])
+    tail_y = np.array([20.0, 20.0, 50.0, 1.0, 10.0])
+    incremental = k.pyramid_build(x, y, 0.0, 100.0, 0.0, 100.0, 64)
+    rebuilt = k.pyramid_build(
+        np.concatenate([x, tail_x]),
+        np.concatenate([y, tail_y]),
+        0.0,
+        100.0,
+        0.0,
+        100.0,
+        64,
+    )
+    assert incremental and rebuilt
+    try:
+        assert k.pyramid_append(incremental, tail_x, tail_y)
+        inc_grid, _ = k.pyramid_compose(incremental, 0.0, 100.0, 0.0, 100.0, 64, 64)
+        rebuilt_grid, _ = k.pyramid_compose(rebuilt, 0.0, 100.0, 0.0, 100.0, 64, 64)
+        np.testing.assert_array_equal(inc_grid, rebuilt_grid)
+
+        before = inc_grid.copy()
+        assert not k.pyramid_append(incremental, [50.0, 100.0], [50.0, 50.0])
+        after, _ = k.pyramid_compose(incremental, 0.0, 100.0, 0.0, 100.0, 64, 64)
+        np.testing.assert_array_equal(after, before)
+    finally:
+        assert k.pyramid_free(incremental)
+        assert k.pyramid_free(rebuilt)
+
+
 def test_heatmap_rgba_maps_stops_and_flips_rows():
     raw = np.array([[0.0, 0.5], [1.0, np.nan]], dtype=np.float64)
     stops = np.array([[0, 10, 20], [100, 110, 120]], dtype=np.uint8)
@@ -869,11 +1095,54 @@ def test_heatmap_rgba_maps_stops_and_flips_rows():
         rgba,
         np.array(
             [
-                [[100, 110, 120, 200], [0, 10, 20, 0]],
-                [[0, 10, 20, 200], [50, 60, 70, 200]],
+                [[100, 110, 120, 200], [0, 0, 0, 200]],
+                [[0, 10, 20, 0], [50, 60, 70, 200]],
             ],
             dtype=np.uint8,
         ),
     )
     with pytest.raises(ValueError, match="scalar count"):
         k.heatmap_rgba(raw, 3, 2, stops, 200)
+
+
+@pytest.mark.parametrize("maximum", [0.0, 1.0, 13.0, 10_000.0, 1.0e12])
+@pytest.mark.parametrize("opacity", [0.0, 0.37, 0.85, 1.0])
+def test_density_rgba_matches_vectorized_static_export(maximum, opacity):
+    encoded = np.arange(256, dtype=np.uint8).reshape(16, 16)
+    stops = np.array(
+        [[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]],
+        dtype=np.uint8,
+    )
+    values = encoded.astype(np.float64)
+    if maximum > 0.0:
+        values = np.expm1((values / 255.0) * np.log1p(maximum))
+        t = np.clip(values / maximum, 0.0, 1.0)
+    else:
+        t = np.zeros_like(values)
+    position = t * (len(stops) - 1)
+    lo = np.floor(position).astype(np.uint8)
+    hi = np.minimum(lo + 1, len(stops) - 1)
+    fraction = position - lo
+    rgb = np.empty((*encoded.shape, 3), dtype=np.uint8)
+    stops_f64 = stops.astype(np.float64)
+    for channel in range(3):
+        start = stops_f64[lo, channel]
+        rgb[..., channel] = np.round(start + (stops_f64[hi, channel] - start) * fraction).astype(
+            np.uint8
+        )
+    alpha = (np.clip(t * 1.35, 0.0, 1.0) * 255.0 * opacity).astype(np.uint8)
+    alpha[encoded == 0] = 0
+    expected = np.dstack([rgb, alpha])[::-1]
+
+    actual = k.density_rgba(encoded, 16, 16, maximum, stops, opacity)
+    np.testing.assert_array_equal(actual, expected)
+
+
+def test_density_rgba_validates_shape_and_domain():
+    stops = np.array([[0, 0, 0], [255, 255, 255]], dtype=np.uint8)
+    with pytest.raises(ValueError, match="count"):
+        k.density_rgba(np.zeros(3, dtype=np.uint8), 2, 2, 1.0, stops, 1.0)
+    with pytest.raises(ValueError, match="maximum"):
+        k.density_rgba(np.zeros(4, dtype=np.uint8), 2, 2, -1.0, stops, 1.0)
+    with pytest.raises(ValueError, match="opacity"):
+        k.density_rgba(np.zeros(4, dtype=np.uint8), 2, 2, 1.0, stops, 1.1)

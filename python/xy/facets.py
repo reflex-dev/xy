@@ -12,12 +12,13 @@ import base64
 from collections.abc import Mapping, Sequence
 from os import PathLike
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, Optional
 
 import numpy as np
 
 from . import channels, export
 from ._png import encode as encode_png
+from ._png import png_truecolor
 from ._raster import render_raster
 
 
@@ -252,9 +253,11 @@ for(const p of panels){{
         *,
         scale: float = 2.0,
         engine: str = "native",
+        optimize: bool = False,
         chromium: Optional[str] = None,
         sandbox: bool = True,
     ) -> bytes:
+        optimize = export._bool_option(optimize, "facet PNG optimize")
         if engine == "chromium":
             data = export.html_to_png(
                 self.to_html(),
@@ -268,10 +271,13 @@ for(const p of panels){{
         elif engine == "native":
             if scale <= 0 or not np.isfinite(scale):
                 raise ValueError("facet PNG scale must be finite and positive")
-            panel_images = [
-                cast(np.ndarray, render_raster(*fig.build_payload(), scale=scale))
-                for fig in self.figures
-            ]
+            panel_images: list[np.ndarray] = []
+            for fig in self.figures:
+                spec, blob, borrowed = fig._build_raster_payload()
+                image = render_raster(spec, blob, scale=scale, borrowed=borrowed)
+                if isinstance(image, bytes):
+                    raise RuntimeError("facet rasterizer unexpectedly returned encoded PNG bytes")
+                panel_images.append(image)
             panel_h, panel_w = panel_images[0].shape[:2]
             width = int(round(self.width * scale))
             # No grid title strip: the native rasterizer has no text path, so
@@ -285,7 +291,16 @@ for(const p of panels){{
                 h, w = min(panel_h, height - y), min(panel_w, width - x)
                 if h > 0 and w > 0:
                     canvas[y : y + h, x : x + w] = image[:h, :w]
-            data = encode_png(canvas)
+            data = (
+                encode_png(canvas)
+                if optimize
+                else png_truecolor(
+                    width,
+                    height,
+                    np.ascontiguousarray(canvas).tobytes(),
+                    compression_level=1,
+                )
+            )
         else:
             raise ValueError("facet PNG engine must be 'native' or 'chromium'")
         if path is not None:

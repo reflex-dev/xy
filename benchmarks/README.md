@@ -43,6 +43,19 @@ These commands match the non-blocking GitHub Actions measurement lane:
 .venv/bin/python benchmarks/bench_pyplot_vs_matplotlib.py \
   --profile huge --reps 11 --warmups 2 \
   --json pyplot-vs-matplotlib-huge.json --out pyplot-vs-matplotlib-huge.md
+# Opt-in high-memory production ceiling; fixture construction is untimed.
+.venv/bin/python benchmarks/bench_scatter_native.py --sizes 1e9 --production \
+  --large-numpy-generator --native-png --json scatter-1b.json
+# Same production ceiling with 24 compact categorical groups.
+.venv/bin/python benchmarks/bench_scatter_native.py --sizes 1e9 --production \
+  --large-numpy-generator --categorical-groups 24 --native-png \
+  --json scatter-categorical-1b.json
+# Opt-in native static-heatmap ceiling; a 32768 side is 1,073,741,824 cells.
+.venv/bin/python benchmarks/bench_heatmap_native.py --sides 32768 --reps 1 \
+  --json heatmap-1b.json
+# 64 GiB high-water probe; crosses the u32 total-count boundary.
+.venv/bin/python benchmarks/bench_heatmap_native.py --sides 65536 --reps 1 \
+  --json heatmap-4b.json
 .venv/bin/python benchmarks/bench_interaction.py --sizes 1e4,2.5e5 \
   --reps 24 --chromium "$CHROME" --json interaction.json
 .venv/bin/python benchmarks/bench_dashboard.py --chart-counts 10,20,50 \
@@ -72,6 +85,12 @@ cross-library, and fresh-install workloads remain in the benchmark-refresh
 workflow because they need a real browser, separate processes/virtual
 environments, or wall-clock timing. They are still measured in CI, but are not
 reported as CodSpeed simulation benchmarks.
+
+The suite includes the million-row fixed-width categorical factorizer and the
+allocation-bounded implicit-row stratified sampler as standalone kernel rows,
+alongside the complete categorical first-payload row. Together they distinguish
+native encoding/sampling regressions from payload-policy or transport
+regressions.
 
 ## Reference Hardware
 

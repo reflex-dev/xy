@@ -29,7 +29,10 @@
 //! Non-x86_64 (e.g. aarch64) needs nothing here: NEON is part of the aarch64
 //! baseline, so the scalar kernels already autovectorize at full width there.
 
-#![allow(dead_code, reason = "SIMD kernels are staged behind parity tests before hot-path wiring")]
+#![allow(
+    dead_code,
+    reason = "SIMD kernels are staged behind parity tests before hot-path wiring"
+)]
 
 /// Lane-block size for the two-phase scans: phase 1 computes per-point cell
 /// indices / masks branch-free into a stack block (vectorizes), phase 2 does
@@ -155,7 +158,19 @@ unsafe fn bin_2d_count_avx2(
     let mut i = 0;
     while i < x.len() {
         let len = (x.len() - i).min(BLOCK);
-        cell_block(&x[i..i + len], &y[i..i + len], x0, x1, y0, y1, sx, sy, w, h, &mut cells);
+        cell_block(
+            &x[i..i + len],
+            &y[i..i + len],
+            x0,
+            x1,
+            y0,
+            y1,
+            sx,
+            sy,
+            w,
+            h,
+            &mut cells,
+        );
         for &c in &cells[..len] {
             if c != SKIP {
                 let cell = &mut grid[c as usize];
@@ -167,7 +182,10 @@ unsafe fn bin_2d_count_avx2(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[expect(clippy::too_many_arguments, reason = "window + output, same as range_scan")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "window + output, same as range_scan"
+)]
 #[target_feature(enable = "avx2")]
 unsafe fn range_scan_avx2(
     x: &[f64],
@@ -184,7 +202,15 @@ unsafe fn range_scan_avx2(
     let mut i = 0;
     while i < x.len() {
         let len = (x.len() - i).min(BLOCK);
-        range_mask_block(&x[i..i + len], &y[i..i + len], lo_x, hi_x, lo_y, hi_y, &mut mask);
+        range_mask_block(
+            &x[i..i + len],
+            &y[i..i + len],
+            lo_x,
+            hi_x,
+            lo_y,
+            hi_y,
+            &mut mask,
+        );
         for (l, &m) in mask[..len].iter().enumerate() {
             if m {
                 out[n] = base + (i + l) as u32;
@@ -199,7 +225,10 @@ unsafe fn range_scan_avx2(
 /// Local-density gather: same cell math as bin_2d, but phase 2 reads the
 /// (already log-normalized) grid value back per point instead of scattering.
 #[cfg(target_arch = "x86_64")]
-#[expect(clippy::too_many_arguments, reason = "window + grid, same as local_log_density")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "window + grid, same as local_log_density"
+)]
 #[target_feature(enable = "avx2")]
 unsafe fn density_gather_avx2(
     x: &[f64],
@@ -279,7 +308,10 @@ pub(crate) fn try_bin_2d_count(
     false
 }
 
-#[expect(clippy::too_many_arguments, reason = "window + output, same as range_scan")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "window + output, same as range_scan"
+)]
 pub(crate) fn try_range_scan(
     x: &[f64],
     y: &[f64],
@@ -299,7 +331,10 @@ pub(crate) fn try_range_scan(
     None
 }
 
-#[expect(clippy::too_many_arguments, reason = "window + grid, same as local_log_density")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "window + grid, same as local_log_density"
+)]
 pub(crate) fn try_density_gather(
     x: &[f64],
     y: &[f64],
@@ -375,7 +410,10 @@ mod tests {
             let x = rng.hostile_vec(n, -10.0, 10.0);
             let y = rng.hostile_vec(n, -10.0, 10.0);
             let (x0, x1, y0, y1) = (-5.0, 7.0, -6.0, 4.0);
-            let (w, h) = (1 + (rng.next() % 16) as usize, 1 + (rng.next() % 12) as usize);
+            let (w, h) = (
+                1 + (rng.next() % 16) as usize,
+                1 + (rng.next() % 12) as usize,
+            );
 
             // min_max
             let simd_mm = try_min_max(&x).expect("avx2 on");
@@ -400,7 +438,9 @@ mod tests {
             let mut os = vec![0f32; n];
             kernels::density_gather_scalar(&x, &y, x0, x1, y0, y1, w, h, &grid, &mut os);
             let mut ov = vec![0f32; n];
-            assert!(try_density_gather(&x, &y, x0, x1, y0, y1, w, h, &grid, &mut ov));
+            assert!(try_density_gather(
+                &x, &y, x0, x1, y0, y1, w, h, &grid, &mut ov
+            ));
             let bits = |v: &[f32]| v.iter().map(|f| f.to_bits()).collect::<Vec<u32>>();
             assert_eq!(bits(&os), bits(&ov), "gather it={it}");
         }

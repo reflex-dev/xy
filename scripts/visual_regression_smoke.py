@@ -302,6 +302,7 @@ def _screenshot_page(chromium: str, page: Path, *, width: int, height: int) -> b
                 "--use-angle=swiftshader",
                 "--enable-unsafe-swiftshader",
                 "--hide-scrollbars",
+                "--force-device-scale-factor=1",
                 f"--window-size={width},{height}",
                 "--virtual-time-budget=7000",
                 f"--screenshot={out}",

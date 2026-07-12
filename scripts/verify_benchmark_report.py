@@ -23,6 +23,7 @@ KNOWN_KINDS = (
     "core-2d",
     "pyplot-vs-matplotlib",
     "scatter-native",
+    "heatmap-native",
     "kernel-native",
     "interaction-browser",
     "dashboard-browser",
@@ -69,7 +70,7 @@ WORKFLOW_REQUIRED_SCENARIOS = {
     "ingest_datetime64_axis",
     "ingest_python_lists",
     "stream_line_append_1k",
-    "stream_density_append_then_pyramid_rebuild",
+    "stream_density_append_1k_incremental_pyramid",
     "log_line_autorange",
     "export_html_decimated_line",
     "export_svg_decimated_line",
@@ -1066,6 +1067,104 @@ def _validate_scatter_native(report: dict[str, Any], errors: list[str]) -> None:
                     )
 
 
+def _validate_heatmap_native(report: dict[str, Any], errors: list[str]) -> None:
+    _require_native_backend(report, "heatmap-native", errors)
+    _require_keys(
+        report,
+        {"kind", "measurement_scope", "benchmark_categories", "tracked_categories", "rows"},
+        "report",
+        errors,
+    )
+    if report.get("kind") != "heatmap-native":
+        errors.append("report.kind must be 'heatmap-native'")
+    scope = "production-heatmap-payload-and-native-png"
+    if report.get("measurement_scope") != scope:
+        errors.append(f"report.measurement_scope must be {scope!r}")
+    category_ids = _validate_categories(report, errors)
+    rows = report.get("rows")
+    if not isinstance(rows, list) or not rows:
+        errors.append("rows must be a non-empty list")
+        return
+    _reject_duplicate_rows(
+        rows,
+        path="rows",
+        keys=("side",),
+        label="heatmap native row",
+        errors=errors,
+    )
+    for index, row in enumerate(rows):
+        path = f"rows[{index}]"
+        _require_keys(
+            row,
+            {
+                "side",
+                "cells",
+                "benchmark_categories",
+                "fixture_ms_excluded",
+                "figure_construct_ms",
+                "payload_ms",
+                "native_png_ms",
+                "source_to_native_png_ms",
+                "canonical_bytes",
+                "payload_bytes",
+                "borrowed_bytes",
+                "native_png_bytes",
+                "peak_rss_bytes",
+                "reps",
+                "oracle_status",
+                "measurement_scope",
+            },
+            path,
+            errors,
+        )
+        if not isinstance(row, dict):
+            continue
+        for key in (
+            "side",
+            "cells",
+            "canonical_bytes",
+            "borrowed_bytes",
+            "native_png_bytes",
+            "peak_rss_bytes",
+            "reps",
+        ):
+            _require_positive_integer(row, key, path, errors)
+        _require_nonnegative_integer(row, "payload_bytes", path, errors)
+        for key in (
+            "fixture_ms_excluded",
+            "figure_construct_ms",
+            "payload_ms",
+            "native_png_ms",
+            "source_to_native_png_ms",
+        ):
+            _require_nonnegative_number(row, key, path, errors)
+        side = row.get("side")
+        cells = row.get("cells")
+        if isinstance(side, int) and not isinstance(side, bool) and cells != side * side:
+            errors.append(f"{path}.cells must equal side * side")
+        if isinstance(cells, int) and not isinstance(cells, bool):
+            if row.get("canonical_bytes") != cells * 8:
+                errors.append(f"{path}.canonical_bytes must equal cells * 8")
+            if row.get("payload_bytes") != 0:
+                errors.append(f"{path}.payload_bytes must be zero for borrowed static grids")
+            if row.get("borrowed_bytes") != cells * 8:
+                errors.append(f"{path}.borrowed_bytes must equal cells * 8")
+        if row.get("oracle_status") != "pass":
+            errors.append(f"{path}.oracle_status must be 'pass'")
+        if row.get("measurement_scope") != scope:
+            errors.append(f"{path}.measurement_scope must match report.measurement_scope")
+        categories = row.get("benchmark_categories")
+        if not isinstance(categories, list) or not categories:
+            errors.append(f"{path}.benchmark_categories must be a non-empty list")
+        elif category_ids:
+            for category_id in categories:
+                if category_id not in category_ids:
+                    errors.append(
+                        f"{path}.benchmark_categories id {category_id!r} "
+                        "is not in benchmark_categories"
+                    )
+
+
 def _validate_kernel_native(report: dict[str, Any], errors: list[str]) -> None:
     _require_native_backend(report, "kernel-native", errors)
     _require_keys(report, {"benchmark_categories", "tracked_categories", "rows"}, "report", errors)
@@ -1919,6 +2018,8 @@ def validate_report(path: Path, *, kind: str = "auto") -> list[str]:
         _validate_pyplot_vs_matplotlib(report, errors)
     elif selected == "scatter-native":
         _validate_scatter_native(report, errors)
+    elif selected == "heatmap-native":
+        _validate_heatmap_native(report, errors)
     elif selected == "kernel-native":
         _validate_kernel_native(report, errors)
     elif selected == "interaction-browser":

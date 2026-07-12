@@ -53,7 +53,8 @@ in [`docs/design-dossier.md`](docs/design-dossier.md).
 - **Native compute, Python ergonomics.** Rust kernels handle binning,
   decimation, and encoding while the public API stays notebook-friendly.
 - **Binary payloads, not JSON number soup.** Chart specs stay small and data
-  moves as raw f32 buffers the browser can hand to the GPU.
+  moves as GPU-ready typed buffers: f32 geometry/continuous channels and
+  lossless u8 categorical codes.
 - **Exact data stays in Python.** `ColumnStore` keeps canonical f64 values so
   hover, selection, and drilldown can return original rows.
 - **One engine, many surfaces.** Render in Jupyter, VS Code, Colab, Marimo,
@@ -75,7 +76,7 @@ flowchart LR
     API["Python API<br/>fc.chart() composition"]
     STORE["ColumnStore<br/>exact f64 source of truth"]
     KERNELS["Native Rust kernels<br/>binning, M4 decimation, encode"]
-    PAYLOAD["Payload builder<br/>tiny JSON spec + raw f32 buffers"]
+    PAYLOAD["Payload builder<br/>tiny JSON spec + typed binary buffers"]
     CLIENT["WebGL2 client<br/>GPU marks + DOM chrome"]
     LOD["LOD loop<br/>pan, zoom, hover, select"]
 
@@ -92,9 +93,9 @@ The three ideas that make this fast:
 
 1. **Keep the truth in Python.** Your full-precision data never leaves the
    `ColumnStore`, so hover and selection always return exact original values.
-2. **Ship bytes, not text.** Data travels as raw f32 buffers, so a number costs
-   4 bytes instead of a dozen characters, and the browser skips parsing
-   entirely. Only lightweight settings ride along as JSON.
+2. **Ship bytes, not text.** Geometry and continuous values travel as raw f32;
+   categorical palette codes use one byte when there are at most 256 groups.
+   The browser skips number parsing entirely; only settings ride along as JSON.
 3. **Draw the screen, not the dataset.** Zoomed out, a huge scatter becomes a
    fixed-size density grid; zoom in and the level-of-detail loop swaps in the
    real points for just the region you're looking at.
@@ -341,8 +342,9 @@ before entering inline JSON or `<title>`, and non-finite JSON metadata is
 rejected instead of emitted as browser-dependent JavaScript.
 
 `Chart.to_png()` defaults to `engine="native"`: the built-in Rust rasterizer
-paints the same decimated payload with no browser — millisecond export, small
-indexed PNGs, and it works anywhere the wheel imports (no Chrome needed). Pass
+paints the same decimated payload with no browser — millisecond export, and it
+works anywhere the wheel imports (no Chrome needed). Pass `optimize=True` for
+the slower size-optimized indexed PNG path. Pass
 `engine="chromium"` for a pixel-exact screenshot of the standalone HTML in local
 Chromium (`to_png(..., engine="chromium")` needs a local Chrome/Chromium
 executable); the browser sandbox is on by default — use `sandbox=False` only for
@@ -528,6 +530,17 @@ Run the xy kernel/payload benchmarks:
 uv run python benchmarks/bench.py --sizes 1e5,1e6,1e7
 uv run python benchmarks/bench_native.py --sizes 1e5,1e6,1e7
 python benchmarks/bench_scatter_native.py --sizes 1e5,1e6,1e7 --production
+# High-memory ceiling probe; fixture construction remains outside timing:
+python benchmarks/bench_scatter_native.py --sizes 1e9 --production \
+  --large-numpy-generator --native-png --json scatter-1b.json
+python benchmarks/bench_scatter_native.py --sizes 1e9 --production \
+  --large-numpy-generator --categorical-groups 24 --native-png \
+  --json scatter-categorical-1b.json
+python benchmarks/bench_heatmap_native.py --sides 32768 --reps 1 \
+  --json heatmap-1b.json
+# 64 GiB high-water probe: 65,536² = 4,294,967,296 cells.
+python benchmarks/bench_heatmap_native.py --sides 65536 --reps 1 \
+  --json heatmap-4b.json
 python benchmarks/bench_scatter_native.py --sizes 1e5,1e6 --render
 PYTHONPATH=python uv run python benchmarks/bench_2d_charts.py --profile smoke --ttfr
 PYTHONPATH=python uv run python benchmarks/bench_interaction.py --sizes 1e4,2.5e5 --json interaction.json
@@ -541,8 +554,9 @@ rows so pan/zoom/hover/brush budgets are not scatter-only. The report verifier
 fails if any of those required interaction rows disappear.
 
 `bench_workflows.py` covers contiguous/converted/strided/datetime/list/Arrow
-ingestion, line append, density append followed by a real 2M+ pyramid rebuild,
-and a 1M-point log autorange workload containing negative and non-finite values.
+ingestion, line append, a stable-domain density append that incrementally
+updates a real 2M+ native pyramid, and a 1M-point log autorange workload
+containing negative and non-finite values.
 It also covers HTML/SVG/native-PNG/Chromium-PNG export. The dashboard benchmark attempts 10, 20, and 50 charts,
 records per-chart context loss/restoration, initial and scrolled visibility, JS
 heap, and redraw submission pacing, then reports the largest loss-free nonblank
@@ -566,12 +580,46 @@ full tables and fairness notes.
 | Plotly `Scattergl` | Kaleido PNG | 54,064 ms | 1,584 MB | +382 MB | 49 KB |
 | Plotly `Scatter` | SVG/Kaleido | over budget above 1M | 184 MB at 1M | — | 109 KB at 1M |
 
+That cross-library table is the retained 2026-07-08 artifact. A 2026-07-12
+native production refresh after fused full-domain binning/sampling measured XY at
+**5.4 ms / 258 KB for 10M** and **28.0 ms / 258 KB for 100M**. The large rows
+are screen-bounded density overviews, not exact-marker draws.
+
+An opt-in 64 GiB ceiling run additionally verified a **1B-point** production
+density overview in **256.2 ms / 258 KB**, followed by a **0.68 ms** native PNG
+render through the compact density opcode (**256.9 ms source-to-PNG**;
+`visible` remains exactly 1B; 14.90 GiB
+canonical f64 input, 24.04 GB peak RSS, no swap). An earlier same-host
+24-label categorical overview completed source-to-PNG in
+**352.2 ms** with a **544 KiB**
+wire payload. Fixture generation is
+excluded, and this is explicitly not a billion individual markers.
+
+A separate schema-verified native static-heatmap ceiling reached
+**32,768×32,768 = 1,073,741,824 cells**: **10.71 ms source-to-PNG**, including
+7.75 ms Figure construction, 0.06 ms borrowed-span preparation, and a
+**2.91 ms** native 900×420 PNG stage. Static export owns no grid payload: it
+borrows the exact 8.0 GiB canonical f64 matrix for the synchronous Rust call,
+peaks at 8.0 GiB RSS with no swap, and excludes its 574 ms deterministic
+fixture construction. This is a local
+screen-sized static export; shipping a 4 GiB interactive browser payload is
+not the recommended huge-heatmap architecture.
+
+The 64 GiB high-water run pushed the same path through
+**65,536×65,536 = 4,294,967,296 cells**, crossing the 32-bit total-count
+boundary: **36.49 ms source-to-PNG**, including 18.96 ms Figure construction,
+0.07 ms span preparation, and 17.45 ms native rendering. It borrowed the
+32.0 GiB canonical matrix with zero owned grid payload, reached 25.3 GiB
+maximum resident memory / 32.0 GiB peak footprint, and reported no swap.
+The 3.77 s deterministic allocation fixture was excluded.
+
 These rows intentionally name different targets: XY binary preparation
 versus Agg/Kaleido PNG production. They demonstrate scaling, payload, and memory
 behavior, not a same-render-target "x times faster" claim. Ingest is zero-copy
 for well-formed f64 arrays (the canonical store holds a reference, not a
 duplicate), so the 126 MB peak is transient working buffers. What lasts is
-screen-bounded: a fixed 832 KB density payload and ~10 MB of resident growth,
+screen-bounded; the current density wire is about 258 KB, while that retained
+artifact measured ~10 MB of resident growth,
 versus +223–695 MB for the raster libraries. (The payload-only native benchmark in
 [`docs/benchmark.md`](docs/benchmark.md) reports the payload-build allocation
 in isolation, where it stays near 2 MB regardless of N.)
@@ -662,7 +710,7 @@ flowchart LR
         VIEW --> DECIDE --> REFINE
     end
 
-    EXPORTS -- "spec JSON + raw f32 buffers<br/>no JSON number arrays" --> CLIENT
+    EXPORTS -- "spec JSON + typed buffers<br/>no JSON number arrays" --> CLIENT
     PICK -- "hover/select rows" --> CLIENT
     PICK -- "debounced view state" --> VIEW
     REFINE -- "new screen-bounded payload" --> PAYLOAD
@@ -670,7 +718,7 @@ flowchart LR
 
 Important properties:
 
-- Wire format is memory format: raw f32 buffers, not JSON arrays.
+- Wire format is memory format: GPU-ready f32/u8 buffers, not JSON arrays.
 - Canonical data stays f64 in Python so hover/select can return exact rows.
 - Builder validation uses rollback checkpoints so failed public calls do not
   partially mutate the chart's internal figure or column store.

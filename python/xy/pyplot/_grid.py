@@ -17,7 +17,7 @@ modules); everything else goes through `xy`' public surface.
 from __future__ import annotations
 
 import html as _html
-from typing import Any, Optional, cast
+from typing import Any, Optional
 
 import numpy as np
 
@@ -173,8 +173,10 @@ def stitch_png(
     tiles: list[np.ndarray] = []
     for chart in charts:
         fig = chart.figure()
-        spec, blob = fig.build_payload(px_width=max(256, int(fig.width)))
-        img = cast(np.ndarray, _raster.render_raster(spec, blob, scale))
+        spec, blob, borrowed = fig._build_raster_payload(px_width=max(256, int(fig.width)))
+        img = _raster.render_raster(spec, blob, scale, borrowed=borrowed)
+        if isinstance(img, bytes):
+            raise RuntimeError("pyplot grid rasterizer unexpectedly returned encoded PNG bytes")
         tiles.append(img)
     if not tiles:
         raise ValueError("figure has no axes to save")

@@ -1536,6 +1536,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         height=None,
         scale=2.0,
         engine="native",
+        optimize=False,
         chromium=None,
         sandbox=True,
     ):
@@ -1547,6 +1548,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
                 "height": height,
                 "scale": scale,
                 "engine": engine,
+                "optimize": optimize,
                 "chromium": chromium,
                 "sandbox": sandbox,
             }
@@ -1561,6 +1563,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         height=200,
         scale=1.5,
         engine="chromium",
+        optimize=True,
         chromium="/chrome",
         sandbox=False,
     )
@@ -1573,6 +1576,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         "height": 200,
         "scale": 1.5,
         "engine": "chromium",
+        "optimize": True,
         "chromium": "/chrome",
         "sandbox": False,
     }

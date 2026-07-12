@@ -127,7 +127,7 @@ reported).
 8. `install_import`: lower-bound distribution size plus opt-in fresh-venv total
    site-packages, transitive distribution count, install time, and cold import.
 9. `public_workflows`: `benchmarks/bench_workflows.py` tracks ingestion shapes,
-   streaming refresh/pyramid rebuild, and HTML/SVG/native-PNG/Chromium-PNG export independently.
+   streaming refresh/incremental pyramid update, and HTML/SVG/native-PNG/Chromium-PNG export independently.
 
 ## 6. Remaining implementation plan
 

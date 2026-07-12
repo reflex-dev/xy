@@ -111,11 +111,11 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
     {
         "id": "streaming_updates",
         "name": "Streaming updates",
-        "why": "Monitoring and notebook workflows append data repeatedly and can trigger payload refreshes or pyramid rebuilds.",
-        "metrics": "append latency, refresh bytes, post-append pyramid rebuild latency",
+        "why": "Monitoring and notebook workflows append data repeatedly; stable domains should not trigger full-index rebuilds.",
+        "metrics": "append latency, refresh bytes, incremental pyramid update latency, domain-growth rebuild latency",
         "harness": "benchmarks/bench_workflows.py streaming rows",
         "status": "tracked",
-        "goal": "Bound incremental update cost and expose full-index rebuilds before they become interaction stalls.",
+        "goal": "Keep stable-domain appends proportional to the batch and expose unavoidable domain-growth rebuilds.",
     },
     {
         "id": "log_autorange",

@@ -968,6 +968,7 @@ class ChartView {
   }
 
   get pointProg() { return this._prog("point", POINT_VS, POINT_FS); }
+  get pointSimpleProg() { return this._prog("point-simple", POINT_SIMPLE_VS, POINT_SIMPLE_FS); }
   get lineProg() { return this._prog("line", LINE_VS, LINE_FS); }
   get segmentProg() { return this._prog("segment", SEGMENT_VS, SEGMENT_FS); }
   get meshProg() { return this._prog("mesh", MESH_VS, MESH_FS); }
@@ -1029,7 +1030,10 @@ class ChartView {
 
     if (t.tier === "density") {
       const d = t.density;
-      const grid = new Float32Array(buffer, this.spec.columns[d.buf].byte_offset, d.w * d.h);
+      const meta = this.spec.columns[d.buf];
+      const grid = d.enc === "log-u8"
+        ? lodDecodeLogU8(new Uint8Array(buffer, meta.byte_offset, meta.len), d.max)
+        : new Float32Array(buffer, meta.byte_offset, d.w * d.h);
       g.densityNormMax = d.max;
       g.density = {
         w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
@@ -1192,8 +1196,12 @@ class ChartView {
     if (sample.color && sample.color.buf !== undefined) {
       s.colorMode = sample.color.mode === "continuous" ? 1 : 2;
       s.cBuf = gl.createBuffer();
+      const colorValues = sample.color.dtype === "u8"
+        ? this._asU8(buffers[sample.color.buf])
+        : this._asF32(buffers[sample.color.buf]);
+      s.cBuf._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
       gl.bindBuffer(gl.ARRAY_BUFFER, s.cBuf);
-      gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.color.buf]), gl.STATIC_DRAW);
+      gl.bufferData(gl.ARRAY_BUFFER, colorValues, gl.STATIC_DRAW);
       s.lut = sample.color.mode === "continuous"
         ? this._lut(sample.color.colormap)
         : this._paletteLut(sample.color.palette);
@@ -1567,17 +1575,19 @@ class ChartView {
   // (heatmap, histogram) reuse them instead of copy-pasting.
 
   _columnView(buffer, meta) {
+    if (meta.dtype === "u8") return new Uint8Array(buffer, meta.byte_offset, meta.len);
     return new Float32Array(buffer, meta.byte_offset, meta.len);
   }
 
-  _upload(f32) {
+  _upload(view) {
     const gl = this.gl;
     const buf = gl.createBuffer();
     // Identity tag for VAO config signatures: a replaced buffer (data update,
     // drill swap) gets a new id, so any VAO built over the old one rebuilds.
     buf._fcId = ++this._bufSeq;
+    buf._fcType = view instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, f32, gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, view, gl.STATIC_DRAW);
     return buf;
   }
 
@@ -1622,7 +1632,7 @@ class ChartView {
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.enableVertexAttribArray(slot);
-    gl.vertexAttribPointer(slot, size, gl.FLOAT, false, 0, byteOffset);
+    gl.vertexAttribPointer(slot, size, buf._fcType || gl.FLOAT, false, 0, byteOffset);
     gl.vertexAttribDivisor(slot, divisor);
   }
 
@@ -1742,6 +1752,14 @@ class ChartView {
 
 
   _drawPoints(g, xm, ym, opacityScale = 1) {
+    const simple =
+      g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
+      (g.symbol || 0) === 0 && (g.pointStrokeWidth || 0) <= 0 &&
+      Math.max(g.lodBlendShown ?? 0, g.lodBlend ?? 0) <= 0.001;
+    if (simple) {
+      this._drawSimplePoints(g, xm, ym, opacityScale);
+      return;
+    }
     const gl = this.gl;
     const prog = this.pointProg;
     gl.useProgram(prog);
@@ -1832,6 +1850,31 @@ class ChartView {
     if (!sizeOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sval, 0.5);
     if (!selOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sel, 1.0);
     if (!blendOn) gl.vertexAttrib1f(ATTR_SLOTS.a_dval, 0);
+    gl.drawArrays(gl.POINTS, 0, g.n);
+  }
+
+  _drawSimplePoints(g, xm, ym, opacityScale = 1) {
+    const gl = this.gl;
+    const prog = this.pointSimpleProg;
+    gl.useProgram(prog);
+    const u = (n) => uniformOf(gl, prog, n);
+    gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+    gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+    this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
+    this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+    gl.uniform1f(u("u_dpr"), this.dpr);
+    gl.uniform1f(u("u_size"), g.size);
+    const [r, gg, b] = g.color;
+    gl.uniform4f(u("u_color"), r, gg, b, (g.trace.style.opacity ?? 0.8) * opacityScale);
+    this._bindVao(
+      g,
+      "points-simple",
+      [g.xBuf._fcId, g.yBuf._fcId],
+      () => {
+        this._vaoAttr(ATTR_SLOTS.ax, g.xBuf, 0, 0);
+        this._vaoAttr(ATTR_SLOTS.ay, g.yBuf, 0, 0);
+      }
+    );
     gl.drawArrays(gl.POINTS, 0, g.n);
   }
 
@@ -2883,6 +2926,11 @@ class ChartView {
       return new Float32Array(b.buffer, b.byteOffset, Math.floor(b.byteLength / 4));
     }
     return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+  }
+
+  _asU8(b) {
+    if (b instanceof ArrayBuffer) return new Uint8Array(b);
+    return new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
   }
 
   _asU32(b) {

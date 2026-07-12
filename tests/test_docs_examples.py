@@ -335,7 +335,7 @@ def test_readme_architecture_diagram_covers_major_boundaries() -> None:
         "Adaptive large-data loop",
         "direct, decimated",
         "density, adaptive",
-        "spec JSON + raw f32 buffers",
+        "spec JSON + typed buffers",
         "no JSON number arrays",
         "new screen-bounded payload",
     ]
@@ -371,7 +371,7 @@ def test_benchmark_docs_include_copyable_claim_taxonomy() -> None:
         "Line decimation",
         "Install/import footprint",
         "chart type, workload, mode, backend, metric, and render target",
-        "it is not drawing 10M exact markers",
+        "it is not drawing 100M exact markers",
     ]
     for marker in required:
         assert marker in text

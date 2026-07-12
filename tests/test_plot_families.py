@@ -104,6 +104,23 @@ def test_triangle_mesh_ships_per_triangle_color_and_renders_static_exports() -> 
     assert fig.to_png(engine="native").startswith(b"\x89PNG")
 
 
+def test_triangle_mesh_filters_nonfinite_geometry_and_color_rows() -> None:
+    fig = Figure().triangle_mesh(
+        [0.0, np.nan, 2.0],
+        [0.0, 0.0, 0.0],
+        [1.0, 2.0, 3.0],
+        [0.0, 0.0, 0.0],
+        [0.5, 1.5, 2.5],
+        [1.0, 1.0, 1.0],
+        color=[0.0, 1.0, np.nan],
+    )
+    spec, _ = fig.build_payload()
+    trace = spec["traces"][0]
+    assert trace["n_points"] == 3
+    assert trace["n_marks"] == 1
+    assert spec["columns"][trace["color"]["buf"]]["len"] == 1
+
+
 def test_new_marks_reject_invalid_inputs_without_mutating_figure() -> None:
     fig = Figure().line([0, 1], [1, 2])
     with pytest.raises(ValueError, match="errorbar requires"):

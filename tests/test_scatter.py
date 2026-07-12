@@ -16,8 +16,10 @@ from xy.config import DENSITY_SAMPLE_TARGET, MAX_SCREEN_DIM
 from xy.interaction import _decode_log_u8
 
 
-def _col(spec, blob, ref, dtype=np.float32):
+def _col(spec, blob, ref, dtype=None):
     m = spec["columns"][ref]
+    if dtype is None:
+        dtype = np.uint8 if m.get("dtype") == "u8" else np.float32
     return np.frombuffer(blob, dtype=dtype, count=m["len"], offset=m["byte_offset"])
 
 
@@ -25,6 +27,11 @@ def _decoded_col(spec, blob, ref):
     meta = spec["columns"][ref]
     values = _col(spec, blob, ref).astype(np.float64)
     return values / meta.get("scale", 1.0) + meta.get("offset", 0.0)
+
+
+def _density_col(spec, blob, density):
+    raw = _col(spec, blob, density["buf"], dtype=np.uint8)
+    return _decode_log_u8(raw.tobytes(), density["max"])
 
 
 # -- channel resolution ------------------------------------------------------
@@ -50,6 +57,7 @@ def test_color_categorical():
     c = ch.resolve_color(cats, 5, default_constant="#000")
     assert c.mode == "categorical"
     assert c.categories == ["a", "b", "c"]  # sorted unique
+    assert c.codes is not None and c.codes.dtype == np.uint8
     # codes index the sorted categories
     np.testing.assert_array_equal(c.codes, [1, 0, 1, 2, 0])
 
@@ -59,7 +67,75 @@ def test_color_categorical_handles_missing_and_mixed_objects():
     c = ch.resolve_color(cats, 5, default_constant="#000")
     assert c.mode == "categorical"
     assert c.categories == ["(missing)", "1", "a", "b"]
+    assert c.codes is not None and c.codes.dtype == np.uint8
     np.testing.assert_array_equal(c.codes, [3, 0, 2, 0, 1])
+
+
+@pytest.mark.parametrize(
+    ("values", "categories", "codes"),
+    [
+        (np.array(["β", "a", "β", "", "é"]), ["", "a", "é", "β"], [3, 1, 3, 0, 2]),
+        (
+            np.array([b"\xff", b"a", b"\xfe", b"\xff"], dtype="S1"),
+            ["a", "�"],
+            [1, 0, 1, 1],
+        ),
+        (np.array([True, False, True]), ["False", "True"], [1, 0, 1]),
+        (np.array([], dtype="U4"), [], []),
+    ],
+)
+def test_fixed_width_categories_match_canonical_display_labels(values, categories, codes):
+    channel = ch.resolve_color(values, len(values), default_constant="#000")
+    assert channel.mode == "categorical"
+    assert channel.categories == categories
+    np.testing.assert_array_equal(channel.codes, codes)
+    assert channel.counts is not None and channel.counts.dtype == np.uint64
+    np.testing.assert_array_equal(
+        channel.counts,
+        np.bincount(np.asarray(codes, dtype=np.uint8), minlength=len(categories)),
+    )
+
+
+def test_non_native_unicode_categories_use_fixed_record_factorization() -> None:
+    values = np.array(["z", "猫", "z", "a"], dtype=">U2")
+    channel = ch.resolve_color(values, len(values), default_constant="#000")
+    assert channel.categories == ["a", "z", "猫"]
+    np.testing.assert_array_equal(channel.codes, [1, 2, 1, 0])
+
+
+def test_non_native_unicode_u1_categories_use_direct_codepoint_factorization() -> None:
+    native = np.array(["z", "猫", "z", "a"], dtype="U1")
+    values = native.astype(native.dtype.newbyteorder("S"))
+    channel = ch.resolve_color(values, len(values), default_constant="#000")
+    assert channel.categories == ["a", "z", "猫"]
+    np.testing.assert_array_equal(channel.codes, [1, 2, 1, 0])
+    np.testing.assert_array_equal(channel.counts, [1, 2, 1])
+
+
+def test_categorical_code_width_changes_without_wrapping_at_palette_boundary() -> None:
+    labels_256 = np.asarray([f"category-{i:03d}" for i in range(256)])
+    channel_256 = ch.resolve_color(labels_256, len(labels_256), default_constant="#000")
+    assert channel_256.codes is not None and channel_256.codes.dtype == np.uint8
+    assert int(channel_256.codes.max()) == 255
+
+    labels_257 = np.asarray([f"category-{i:03d}" for i in range(257)])
+    with pytest.warns(RuntimeWarning, match="categories"):
+        channel_257 = ch.resolve_color(labels_257, len(labels_257), default_constant="#000")
+    assert channel_257.codes is not None and channel_257.codes.dtype == np.uint32
+    assert int(channel_257.codes.max()) == 256
+
+
+def test_high_cardinality_fixed_labels_avoid_redundant_native_hash(monkeypatch) -> None:
+    labels = np.asarray([f"category-{i:04d}" for i in range(600)])
+
+    def unexpected_native(_values):
+        raise AssertionError("high-cardinality probe should retain the direct label path")
+
+    monkeypatch.setattr(ch.kernels, "factorize_fixed", unexpected_native)
+    with pytest.warns(RuntimeWarning, match="categories"):
+        channel = ch.resolve_color(labels, len(labels), default_constant="#000")
+    assert channel.codes is not None and channel.codes.dtype == np.uint32
+    assert len(channel.categories or []) == len(labels)
 
 
 def test_numeric_object_color_with_missing_is_continuous():
@@ -169,7 +245,10 @@ def test_categorical_color_palette():
     assert tr["color"]["mode"] == "categorical"
     assert tr["color"]["categories"] == ["blue", "green", "red"]
     assert len(tr["color"]["palette"]) == 3
+    assert tr["color"]["dtype"] == "u8"
+    assert spec["columns"][tr["color"]["buf"]]["dtype"] == "u8"
     codes = _col(spec, blob, tr["color"]["buf"])
+    assert codes.dtype == np.uint8
     assert set(np.round(codes).astype(int)) == {0, 1, 2}
 
 
@@ -288,13 +367,15 @@ def test_large_scatter_uses_density():
     tr = spec["traces"][0]
     assert tr["tier"] == "density"
     w, h = DENSITY_GRID
-    grid = _col(spec, blob, tr["density"]["buf"])
+    assert tr["density"]["enc"] == "log-u8"
+    grid = _density_col(spec, blob, tr["density"])
     assert len(grid) == w * h
-    # total count conserved for in-range points
+    # Exact conservation rides the explicit visible count; the texture is the
+    # same log-u8 quantization used by live view updates.
     xr, yr = tr["density"]["x_range"], tr["density"]["y_range"]
     inrange = np.sum((x >= xr[0]) & (x < xr[1]) & (y >= yr[0]) & (y < yr[1]))
-    assert grid.sum() == pytest.approx(inrange)
-    assert tr["density"]["max"] == grid.max()
+    assert tr["visible"] == inrange
+    assert tr["density"]["max"] == pytest.approx(grid.max())
 
 
 def test_density_payload_includes_deterministic_sample_overlay():
@@ -333,6 +414,108 @@ def test_density_payload_includes_deterministic_sample_overlay():
     )
 
 
+def test_full_view_density_fusion_is_payload_byte_exact(monkeypatch):
+    from xy import kernels, lod
+
+    n = SCATTER_DENSITY_THRESHOLD + 12_345
+    rng = np.random.default_rng(2031)
+    x = rng.normal(size=n)
+    y = 0.6 * x + rng.normal(size=n)
+    optimized = Figure().scatter(x, y, density=True).build_payload()
+
+    def separate(xv, yv, x0, x1, y0, y1, width, height, target, **kwargs):
+        return (
+            kernels.bin_2d(xv, yv, x0, x1, y0, y1, width, height),
+            lod.sample_row_range_for_target(len(xv), target, **kwargs),
+        )
+
+    monkeypatch.setattr(lod, "bin_2d_sample_row_range_for_target", separate)
+    reference = Figure().scatter(x, y, density=True).build_payload()
+    assert optimized == reference
+
+
+def test_full_view_categorical_density_fusion_is_payload_byte_exact(monkeypatch):
+    from xy import kernels, lod
+
+    n = SCATTER_DENSITY_THRESHOLD + 12_345
+    rng = np.random.default_rng(2032)
+    x = rng.normal(size=n)
+    y = 0.6 * x + rng.normal(size=n)
+    labels = np.asarray(list("abcdefgh"))[(np.arange(n, dtype=np.uint32) % 8)]
+    optimized = Figure().scatter(x, y, color=labels, density=True).build_payload()
+
+    def separate(xv, yv, groups, n_groups, x0, x1, y0, y1, width, height, target, **kwargs):
+        return (
+            kernels.bin_2d(xv, yv, x0, x1, y0, y1, width, height),
+            lod.stratified_sample_row_range_for_target(groups, n_groups, target, **kwargs),
+        )
+
+    monkeypatch.setattr(lod, "bin_2d_stratified_sample_row_range_for_target", separate)
+    reference = Figure().scatter(x, y, color=labels, density=True).build_payload()
+    assert optimized == reference
+
+
+def test_full_domain_density_avoids_materialized_visible_indices(monkeypatch):
+    n = SCATTER_DENSITY_THRESHOLD + 1
+    x = np.linspace(-1.0, 1.0, n)
+    y = np.sin(x)
+
+    def unexpected_fused_scan(*_args, **_kwargs):
+        raise AssertionError("clean full-domain density should use implicit identity rows")
+
+    monkeypatch.setattr("xy._payload.kernels.bin_2d_indices", unexpected_fused_scan)
+    spec, _blob = Figure().scatter(x, y, density=True).build_payload()
+
+    trace = spec["traces"][0]
+    assert trace["visible"] == n
+    assert 0 < trace["density"]["sample"]["n"] <= int(DENSITY_SAMPLE_TARGET * 1.2)
+
+
+def test_full_domain_categorical_density_uses_implicit_stratified_rows(monkeypatch):
+    n = SCATTER_DENSITY_THRESHOLD + 50_000
+    x = np.linspace(-1.0, 1.0, n)
+    y = np.sin(x)
+    color = np.full(n, "common", dtype="U6")
+    color[17] = "rare"
+    color[n // 3] = "tail"
+
+    def unexpected_source_sized_path(*_args, **_kwargs):
+        raise AssertionError("full-domain compact categories should use implicit rows")
+
+    monkeypatch.setattr("xy._payload.kernels.bin_2d_indices", unexpected_source_sized_path)
+    monkeypatch.setattr("xy._payload.lod.sample_rows_for_target", unexpected_source_sized_path)
+    spec, blob = Figure().scatter(x, y, color=color, density=True).build_payload()
+
+    trace = spec["traces"][0]
+    sample = trace["density"]["sample"]
+    color_spec = sample["color"]
+    sampled_codes = _col(spec, blob, color_spec["buf"])
+    assert trace["visible"] == n
+    assert color_spec["dtype"] == "u8"
+    assert int(color_spec["categories"].index("rare")) in set(sampled_codes.astype(int))
+
+
+def test_implicit_categorical_density_payload_is_byte_identical_to_general_path():
+    n = SCATTER_DENSITY_THRESHOLD + 10_000
+    x = np.linspace(-2.0, 2.0, n)
+    y = np.cos(x * 17.0)
+    color = np.array(list("abcdefghijklmnopqrstuvwx"))[np.arange(n) % 24]
+    fig = Figure().scatter(x, y, color=color, density=True)
+    channel = fig.traces[0].color_ch
+    assert channel is not None and channel.codes is not None
+    compact_codes = channel.codes
+
+    compact_spec, compact_blob = fig.build_payload()
+    # Wider codes intentionally select the established source-sized path. The
+    # wire remains u8 because the palette still fits, making full payload
+    # equality a strict semantic oracle for the new implicit sampler.
+    channel.codes = compact_codes.astype(np.uint32)
+    general_spec, general_blob = fig.build_payload()
+
+    assert compact_spec == general_spec
+    assert compact_blob == general_blob
+
+
 def test_density_sample_overlay_preserves_rare_categories():
     n = SCATTER_DENSITY_THRESHOLD + 50_000
     rng = np.random.default_rng(31)
@@ -348,8 +531,25 @@ def test_density_sample_overlay_preserves_rare_categories():
     codes = _col(spec, blob, color_spec["buf"])
 
     assert color_spec["mode"] == "categorical"
+    assert color_spec["dtype"] == "u8" and codes.dtype == np.uint8
     assert "rare" in color_spec["categories"]
     assert int(color_spec["categories"].index("rare")) in set(codes.astype(int))
+
+
+def test_categorical_drill_update_ships_u8_codes() -> None:
+    n = SCATTER_DENSITY_THRESHOLD + 10_000
+    x = np.linspace(0.0, 100.0, n)
+    color = np.asarray([f"group-{i % 7}" for i in range(n)])
+    fig = Figure().scatter(x, x, color=color, density=True)
+
+    update, buffers = fig.density_view(0, 0.0, 5.0, 0.0, 5.0, 640, 400)
+    trace = update["traces"][0]
+    color_spec = trace["color"]
+    assert trace["mode"] == "points"
+    assert color_spec["mode"] == "categorical" and color_spec["dtype"] == "u8"
+    codes = np.frombuffer(buffers[color_spec["buf"]], dtype=np.uint8)
+    assert len(codes) == trace["visible"]
+    assert set(codes.tolist()) == set(range(7))
 
 
 def test_small_scatter_stays_direct():
