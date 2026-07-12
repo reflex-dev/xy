@@ -27,10 +27,10 @@ from ._svg import (
     _column,
     _corner_radii,
     _css,
-    _fmt_axis,
     _lut,
     _Scale,
     _step_arrays,
+    _tick_text,
     axis_ticks,
     layout,
 )
@@ -496,7 +496,8 @@ def render_raster(
 
     xt, xlab, xstep = axis_ticks(xa, plot["w"], True)
     yt, ylab, ystep = axis_ticks(ya, plot["h"], False)
-    grid = _parse_color(_GRID)
+    dom_style = (spec.get("dom") or {}).get("style") or {}
+    grid = _parse_color(_css(dom_style.get("--chart-grid"), _GRID))
     px0, py0 = plot["x"], plot["y"]
     px1, py1 = plot["x"] + plot["w"], plot["y"] + plot["h"]
 
@@ -531,21 +532,27 @@ def render_raster(
         elif all(k in t for k in ("x0", "x1", "y0", "y1")):
             _emit_rects(cmd, t, blob, cols, sx, sy, style, color, plot)
 
+    _emit_annotations(cmd, spec.get("annotations") or [], sx, sy, plot, width, height)
+
     # Chrome (unclipped): baselines, labels, title, legend.
     cmd.clip(0, 0, width, height)
     axis_c = _parse_color(_AXIS)
-    cmd.stroke([(px0, py0), (px0, py1)], 1.0, axis_c)
-    cmd.stroke([(px0, py1), (px1, py1)], 1.0, axis_c)
-
-    text_c = _parse_color(_TEXT)
     hide_x = xa.get("tick_label_strategy") == "none"
     hide_y = ya.get("tick_label_strategy") == "none"
+    if not hide_y:
+        cmd.stroke([(px0, py0), (px0, py1)], 1.0, axis_c)
+    if not hide_x:
+        x_axis_y = py0 if xa.get("side") == "top" else py1
+        cmd.stroke([(px0, x_axis_y), (px1, x_axis_y)], 1.0, axis_c)
+
+    text_c = _parse_color(_TEXT)
     if not hide_x:
         for v in xlab:
-            cmd.text(float(sx(v)), py1 + 15, 1, 11, text_c, _fmt_axis(xa, v, xstep))
+            label_y = py0 - 7 if xa.get("side") == "top" else py1 + 15
+            cmd.text(float(sx(v)), label_y, 1, 11, text_c, _tick_text(xa, v, xstep))
     if not hide_y:
         for v in ylab:
-            cmd.text(px0 - 8, float(sy(v)) + 4, 2, 11, text_c, _fmt_axis(ya, v, ystep))
+            cmd.text(px0 - 8, float(sy(v)) + 4, 2, 11, text_c, _tick_text(ya, v, ystep))
     if spec.get("title"):
         cmd.text(width / 2, plot["y"] - (10 if compact else 12), 1, 14, text_c, str(spec["title"]))
     if xa.get("label") and not hide_x:
@@ -556,7 +563,9 @@ def render_raster(
 
     named = [t for t in spec["traces"] if t.get("name")]
     if spec.get("show_legend", True) and named:
-        _emit_legend(cmd, named, plot)
+        _emit_legend(cmd, named, plot, spec.get("legend") or {})
+    if spec.get("colorbar"):
+        _emit_colorbar(cmd, spec["colorbar"], plot)
 
     w_px, h_px = max(1, round(width * scale)), max(1, round(height * scale))
     from . import _native
@@ -578,6 +587,65 @@ def _emit_line(cmd, t, blob, cols, sx, sy, style, color):
     else:
         pts = _scene.curve_points(xv, yv, sx, sy, False)
         cmd.stroke(pts, width, c, dash=style.get("dash"))
+
+
+def _annotation_point(ann, style, sx, sy, plot, width, height):
+    space = style.get("coordinate_space")
+    x, y = float(ann.get("x", 0.0)), float(ann.get("y", 0.0))
+    if space == "axes_fraction":
+        return plot["x"] + x * plot["w"], plot["y"] + (1.0 - y) * plot["h"]
+    if space == "figure_fraction":
+        return x * width, (1.0 - y) * height
+    if space == "yaxis_transform":
+        return plot["x"] + x * plot["w"], float(sy(y))
+    if space == "xaxis_transform":
+        return float(sx(x)), plot["y"] + (1.0 - y) * plot["h"]
+    return float(sx(x)), float(sy(y))
+
+
+def _emit_annotations(cmd, annotations, sx, sy, plot, width, height):
+    px0, py0 = plot["x"], plot["y"]
+    for ann in annotations:
+        style = ann.get("style") or {}
+        color = _rgba(style.get("color"), "#667085", float(style.get("opacity", 1.0)))
+        start = max(0.0, min(1.0, float(style.get("span_start", 0.0))))
+        end = max(start, min(1.0, float(style.get("span_end", 1.0))))
+        if ann.get("kind") == "rule":
+            if ann.get("axis") == "x":
+                pos = float(sx(float(ann["value"])))
+                points = [(pos, py0 + (1 - end) * plot["h"]), (pos, py0 + (1 - start) * plot["h"])]
+            else:
+                pos = float(sy(float(ann["value"])))
+                points = [(px0 + start * plot["w"], pos), (px0 + end * plot["w"], pos)]
+            cmd.stroke(points, float(style.get("width", 1.5)), color)
+        elif ann.get("kind") == "band":
+            a, b = float(ann["start"]), float(ann["end"])
+            if ann.get("axis") == "x":
+                x0, x1 = sorted((float(sx(a)), float(sx(b))))
+                y0, y1 = py0 + (1 - end) * plot["h"], py0 + (1 - start) * plot["h"]
+            else:
+                y0, y1 = sorted((float(sy(a)), float(sy(b))))
+                x0, x1 = px0 + start * plot["w"], px0 + end * plot["w"]
+            cmd.fill(
+                _rect_pts(x0, y0, x1, y1),
+                _rgba(style.get("color"), "#64748b", float(style.get("opacity", 0.14))),
+            )
+        if ann.get("kind") == "text" and ann.get("text"):
+            x, y = _annotation_point(ann, style, sx, sy, plot, width, height)
+            anchor = {"start": 0, "middle": 1, "end": 2}.get(ann.get("anchor"), 0)
+            font_size = float(style.get("font_size", 11))
+            lines = str(ann["text"]).splitlines() or [""]
+            line_height = font_size * 1.2
+            first_y = y - (len(lines) - 1) * line_height / 2
+            for index, line in enumerate(lines):
+                cmd.text(
+                    x + float(ann.get("dx", 0.0)),
+                    first_y + index * line_height + float(ann.get("dy", 0.0)),
+                    anchor,
+                    font_size,
+                    _rgba(style.get("color"), _TEXT),
+                    line,
+                )
 
 
 def _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot):
@@ -847,6 +915,17 @@ def _emit_rects(cmd, t, blob, cols, sx, sy, style, color, plot):
 def _emit_grid(cmd, kind, g, blob, cols, sx, sy, style):
     if kind == "heatmap":
         w, h = int(g["w"]), int(g["h"])
+        if "rgba_bufs" in g:
+            channels = [_column(blob, cols[index]) for index in g["rgba_bufs"]]
+            rgba = np.clip(np.column_stack(channels) * 255.0, 0, 255).astype(np.uint8)
+            rgba[:, 3] = (rgba[:, 3].astype(np.float64) * float(style.get("opacity", 1.0))).astype(
+                np.uint8
+            )
+            rgba = rgba.reshape(h, w, 4)[::-1]
+            xr, yr = g["x_range"], g["y_range"]
+            dx, dy, dw, dh = _scene.grid_dest_rect(xr, yr, sx, sy)
+            cmd.image(dx, dy, dw, dh, w, h, rgba.tobytes(), nearest=True)
+            return
         meta = cols[g["buf"]]
         stops = np.asarray(
             COLORMAP_STOPS.get(g.get("colormap", "viridis")) or COLORMAP_STOPS["viridis"],
@@ -901,12 +980,15 @@ def _emit_grid(cmd, kind, g, blob, cols, sx, sy, style):
     cmd.image(dx, dy, dw, dh, w, h, rgba.tobytes(), nearest=kind == "heatmap")
 
 
-def _emit_legend(cmd, named, plot):
+def _emit_legend(cmd, named, plot, options):
     pad, swatch, line_h = 8, 10, 16
-    box_w = max(len(str(t["name"])) for t in named) * 6.2 + swatch + 3 * pad
-    box_h = len(named) * line_h + pad
-    x = plot["x"] + plot["w"] - box_w - 6
-    y = plot["y"] + 6
+    ncols = min(len(named), max(1, int(options.get("ncols", 1))))
+    nrows = (len(named) + ncols - 1) // ncols
+    cell_w = max(len(str(t["name"])) for t in named) * 6.2 + swatch + 2 * pad
+    box_w, box_h = ncols * cell_w + pad, nrows * line_h + pad
+    loc = options.get("loc") or "upper right"
+    x = plot["x"] + 6 if "left" in loc else plot["x"] + plot["w"] - box_w - 6
+    y = plot["y"] + plot["h"] - box_h - 6 if "lower" in loc else plot["y"] + 6
     cmd.fill(_rect_pts(x, y, x + box_w, y + box_h), (128, 128, 128, 20))
     for i, t in enumerate(named):
         style = t.get("style") or {}
@@ -914,9 +996,64 @@ def _emit_legend(cmd, named, plot):
             style.get("color") or (t.get("color") or {}).get("color"),
             DEFAULT_PALETTE[i % len(DEFAULT_PALETTE)],
         )
-        ry = y + pad / 2 + i * line_h
-        cmd.fill(_rect_pts(x + pad, ry + 2, x + pad + swatch, ry + 2 + swatch), c)
-        cmd.text(x + pad + swatch + 5, ry + swatch, 0, 11, _parse_color(_TEXT), str(t["name"]))
+        col, row = i % ncols, i // ncols
+        rx, ry = x + col * cell_w, y + pad / 2 + row * line_h
+        cmd.fill(_rect_pts(rx + pad, ry + 2, rx + pad + swatch, ry + 2 + swatch), c)
+        cmd.text(rx + pad + swatch + 5, ry + swatch, 0, 11, _parse_color(_TEXT), str(t["name"]))
+
+
+def _emit_colorbar(cmd, options, plot):
+    from ._svg import _lut
+
+    orientation = options.get("orientation", "vertical")
+    if orientation == "horizontal":
+        x, y, width, height = plot["x"], plot["y"] + plot["h"] + 10, plot["w"], 8
+    else:
+        x, y, width, height = plot["x"] + plot["w"] + 10, plot["y"], 8, plot["h"]
+    colors = _lut(options.get("colormap", "viridis"), np.linspace(0.0, 1.0, 64))
+    for index, color in enumerate(colors):
+        if orientation == "horizontal":
+            x0, x1 = x + width * index / 64, x + width * (index + 1) / 64
+            cmd.fill(_rect_pts(x0, y, x1 + 0.5, y + height), (*map(int, color), 255))
+        else:
+            y0 = y + height * (63 - index) / 64
+            y1 = y + height * (64 - index) / 64
+            cmd.fill(_rect_pts(x, y0, x + width, y1 + 0.5), (*map(int, color), 255))
+    domain = options.get("domain", [0.0, 1.0])
+    if orientation == "horizontal":
+        cmd.text(x, y + height + 13, 0, 10, _parse_color(_TEXT), f"{domain[0]:g}")
+        cmd.text(x + width, y + height + 13, 2, 10, _parse_color(_TEXT), f"{domain[1]:g}")
+        if options.get("label"):
+            cmd.text(
+                x + width / 2,
+                y + height + 26,
+                1,
+                10,
+                _parse_color(_TEXT),
+                str(options["label"]),
+            )
+    else:
+        for index in range(5):
+            value = domain[0] + (domain[1] - domain[0]) * index / 4
+            cmd.text(
+                x + width + 4,
+                y + height * (1 - index / 4) + 4,
+                0,
+                10,
+                _parse_color(_TEXT),
+                f"{value:g}",
+            )
+        # The native text primitive does not rotate; a compact label above the
+        # bar remains legible and, crucially, stays inside the export canvas.
+        if options.get("label"):
+            cmd.text(
+                x,
+                y - 5,
+                0,
+                10,
+                _parse_color(_TEXT),
+                str(options["label"]),
+            )
 
 
 def to_png(

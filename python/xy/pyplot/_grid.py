@@ -17,7 +17,6 @@ modules); everything else goes through `xy`' public surface.
 from __future__ import annotations
 
 import html as _html
-import warnings
 from typing import Any, Optional
 
 import numpy as np
@@ -115,15 +114,61 @@ def compose_html(charts: list[Any], nrows: int, ncols: int, suptitle: Optional[s
 </html>"""
 
 
-def stitch_png(charts: list[Any], nrows: int, ncols: int, suptitle: Optional[str]) -> bytes:
+def compose_svg(charts: list[Any], nrows: int, ncols: int, suptitle: Optional[str]) -> str:
+    """Compose subplot SVGs with isolated ids into one portable SVG document."""
+    from xy import _svg
+
+    figures = [chart.figure() for chart in charts]
+    if not figures:
+        raise ValueError("figure has no axes to save")
+    col_widths = [
+        max(int(figures[index].width) for index in range(col, len(figures), ncols))
+        for col in range(ncols)
+    ]
+    row_heights = [
+        max(
+            int(figures[index].height)
+            for index in range(row * ncols, min((row + 1) * ncols, len(figures)))
+        )
+        for row in range(nrows)
+    ]
+    title_h = 28 if suptitle else 0
+    body: list[str] = []
+    for index, figure in enumerate(figures):
+        svg = _svg.to_svg(figure, id_prefix=f"xy-panel-{index}-")
+        inner = svg[svg.find(">") + 1 : svg.rfind("</svg>")]
+        row, col = divmod(index, ncols)
+        body.append(
+            f'<svg x="{sum(col_widths[:col])}" y="{title_h + sum(row_heights[:row])}" '
+            f'width="{int(figure.width)}" height="{int(figure.height)}" '
+            f'viewBox="0 0 {int(figure.width)} {int(figure.height)}">{inner}</svg>'
+        )
+    title = (
+        f'<text x="{sum(col_widths) / 2:g}" y="19" text-anchor="middle" '
+        f'font-family="system-ui,sans-serif" font-size="16">{_html.escape(suptitle)}</text>'
+        if suptitle
+        else ""
+    )
+    width, height = sum(col_widths), title_h + sum(row_heights)
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}">{title}{"".join(body)}</svg>'
+    )
+
+
+def stitch_png(
+    charts: list[Any],
+    nrows: int,
+    ncols: int,
+    suptitle: Optional[str],
+    colorbar: Optional[dict[str, Any]] = None,
+    *,
+    positions: Optional[list[tuple[float, float, float, float]]] = None,
+    canvas_size: Optional[tuple[int, int]] = None,
+    facecolor: str = "white",
+) -> bytes:
     from xy import _png, _raster  # sanctioned escape hatch (see module doc)
 
-    if suptitle:
-        warnings.warn(
-            "suptitle is not drawn in stitched multi-panel PNGs yet; "
-            "use savefig('...html') to keep it",
-            stacklevel=3,
-        )
     scale = 2.0
     tiles: list[np.ndarray] = []
     for chart in charts:
@@ -136,12 +181,64 @@ def stitch_png(charts: list[Any], nrows: int, ncols: int, suptitle: Optional[str
     if not tiles:
         raise ValueError("figure has no axes to save")
 
-    tile_h = max(t.shape[0] for t in tiles)
-    tile_w = max(t.shape[1] for t in tiles)
-    canvas = np.full((tile_h * nrows, tile_w * ncols, 4), 255, dtype=np.uint8)
+    if positions is not None and canvas_size is not None:
+        to_rgba = __import__("matplotlib.colors", fromlist=["to_rgba"]).to_rgba
+
+        rgba = np.asarray(to_rgba(facecolor), dtype=np.float64)
+        background = np.round(rgba * 255).astype(np.uint8)
+        canvas = np.empty((canvas_size[1] * 2, canvas_size[0] * 2, 4), dtype=np.uint8)
+        canvas[...] = background
+        for tile, (left, bottom, _width, height) in zip(tiles, positions, strict=True):
+            x = round(left * canvas.shape[1])
+            y = round((1.0 - bottom - height) * canvas.shape[0])
+            dest_x0, dest_y0 = max(0, x), max(0, y)
+            src_x0, src_y0 = max(0, -x), max(0, -y)
+            dest_x1 = min(canvas.shape[1], x + tile.shape[1])
+            dest_y1 = min(canvas.shape[0], y + tile.shape[0])
+            if dest_x1 > dest_x0 and dest_y1 > dest_y0:
+                canvas[dest_y0:dest_y1, dest_x0:dest_x1] = tile[
+                    src_y0 : src_y0 + dest_y1 - dest_y0,
+                    src_x0 : src_x0 + dest_x1 - dest_x0,
+                ]
+        return _png.encode(canvas)
+
+    col_widths = [
+        max(tiles[index].shape[1] for index in range(col, len(tiles), ncols))
+        for col in range(ncols)
+    ]
+    row_heights = [
+        max(
+            tiles[index].shape[0]
+            for index in range(row * ncols, min((row + 1) * ncols, len(tiles)))
+        )
+        for row in range(nrows)
+    ]
+    title_h = 48 if suptitle else 0
+    colorbar_h = 52 if colorbar else 0
+    canvas = np.full(
+        (title_h + sum(row_heights) + colorbar_h, sum(col_widths), 4), 255, dtype=np.uint8
+    )
     for i, tile in enumerate(tiles):
         r, c = divmod(i, ncols)
-        canvas[r * tile_h : r * tile_h + tile.shape[0], c * tile_w : c * tile_w + tile.shape[1]] = (
-            tile
-        )
+        y = title_h + sum(row_heights[:r])
+        x = sum(col_widths[:c])
+        canvas[y : y + tile.shape[0], x : x + tile.shape[1]] = tile
+    if suptitle:
+        from xy import kernels
+
+        cmd = _raster._Cmd(scale)
+        cmd.text(canvas.shape[1] / (2 * scale), 17, 1, 14, (38, 38, 38, 255), suptitle)
+        overlay = kernels.rasterize(bytes(cmd.buf), canvas.shape[1], title_h)
+        alpha = overlay[:, :, 3:4].astype(np.float64) / 255.0
+        canvas[:title_h, :, :3] = np.round(
+            overlay[:, :, :3] * alpha + canvas[:title_h, :, :3] * (1.0 - alpha)
+        ).astype(np.uint8)
+    if colorbar:
+        from xy._svg import _lut
+
+        x0, x1 = int(canvas.shape[1] * 0.15), int(canvas.shape[1] * 0.85)
+        y0 = title_h + sum(row_heights) + 12
+        gradient = _lut(colorbar.get("colormap", "viridis"), np.linspace(0.0, 1.0, max(2, x1 - x0)))
+        canvas[y0 : y0 + 16, x0:x1, :3] = gradient[None, :, :]
+        canvas[y0 : y0 + 16, x0:x1, 3] = 255
     return _png.encode(canvas)

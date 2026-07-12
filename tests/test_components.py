@@ -1192,6 +1192,15 @@ def test_legend_off():
     assert spec["show_legend"] is False
 
 
+def test_legend_location_and_columns_are_serialized():
+    chart = fc.scatter_chart(
+        fc.scatter(x=np.arange(3.0), y=np.arange(3.0), name="s"),
+        fc.legend(loc="upper left", ncols=2),
+    )
+    spec, _ = chart.figure().build_payload()
+    assert spec["legend"] == {"loc": "upper left", "ncols": 2}
+
+
 def test_component_axis_and_legend_validate_public_props_without_caching_failure():
     with pytest.raises(ValueError, match="axis type_"):
         fc.x_axis(type_="logg")

@@ -25,7 +25,12 @@ def figure(
         num = max(_figures) + 1 if _figures else 1
     key = num if isinstance(num, int) else hash(num)
     if key not in _figures:
-        _figures[key] = Figure(key, figsize=figsize, dpi=dpi)
+        _figures[key] = Figure(
+            key,
+            figsize=figsize,
+            dpi=dpi,
+            facecolor=kwargs.get("facecolor"),
+        )
     elif figsize is not None or dpi is not None:
         fig = _figures[key]
         fig._figsize = figsize or fig._figsize
@@ -71,4 +76,39 @@ def close(target: Any = None) -> None:
 
 
 def all_figures() -> list[Figure]:
-    return list(_figures.values())
+    figures = list(_figures.values())
+    if figures:
+        return figures
+    # A few official gallery helpers (notably JoinStyle.demo/CapStyle.demo)
+    # construct Matplotlib artists internally even after the pyplot import is
+    # swapped.  When Matplotlib is already loaded, adapt those line/text-only
+    # figures at this boundary so the strict gallery script still exports via xy.
+    import sys
+
+    mpl = sys.modules.get("matplotlib.pyplot")
+    if mpl is None:
+        return figures
+    adapted: list[Figure] = []
+    for number in mpl.get_fignums():
+        source = mpl.figure(number)
+        target = Figure(-int(number), figsize=tuple(source.get_size_inches()), dpi=source.dpi)
+        target._ensure_grid(1, max(1, len(source.axes)))
+        for index, source_axes in enumerate(source.axes):
+            axes = target._axes_at(index)
+            for line in source_axes.lines:
+                marker = line.get_marker()
+                axes.plot(
+                    line.get_xdata(),
+                    line.get_ydata(),
+                    color=line.get_color(),
+                    linewidth=line.get_linewidth(),
+                    **({"marker": marker} if marker not in {None, "None", "none", ""} else {}),
+                )
+            for item in source_axes.texts:
+                x, y = item.get_position()
+                axes.text(x, y, item.get_text(), color=item.get_color())
+            axes.set_xlim(source_axes.get_xlim())
+            axes.set_ylim(source_axes.get_ylim())
+            axes.set_title(source_axes.get_title())
+        adapted.append(target)
+    return adapted

@@ -1086,7 +1086,7 @@ def test_pyramid_append_matches_rebuild_and_is_atomic_on_domain_growth():
 
 
 def test_heatmap_rgba_maps_stops_and_flips_rows():
-    raw = np.array([[1.0 / 255.0, 128.0 / 255.0], [1.0, 0.0]], dtype=np.float64)
+    raw = np.array([[0.0, 0.5], [1.0, np.nan]], dtype=np.float64)
     stops = np.array([[0, 10, 20], [100, 110, 120]], dtype=np.uint8)
 
     rgba = k.heatmap_rgba(raw, 2, 2, stops, 200)
@@ -1095,8 +1095,8 @@ def test_heatmap_rgba_maps_stops_and_flips_rows():
         rgba,
         np.array(
             [
-                [[100, 110, 120, 200], [0, 10, 20, 0]],
-                [[0, 10, 20, 200], [50, 60, 70, 200]],
+                [[100, 110, 120, 200], [0, 0, 0, 200]],
+                [[0, 10, 20, 0], [50, 60, 70, 200]],
             ],
             dtype=np.uint8,
         ),

@@ -125,6 +125,103 @@ COLORMAP_STOPS: dict[str, list[tuple[int, int, int]]] = {
         (214, 96, 77),
         (180, 4, 38),
     ],
+    "blues": [
+        (247, 251, 255),
+        (222, 235, 247),
+        (198, 219, 239),
+        (158, 202, 225),
+        (107, 174, 214),
+        (66, 146, 198),
+        (33, 113, 181),
+        (8, 81, 156),
+        (8, 48, 107),
+        (8, 48, 107),
+    ],
+    "rdylgn": [
+        (165, 0, 38),
+        (215, 48, 39),
+        (244, 109, 67),
+        (253, 174, 97),
+        (254, 224, 139),
+        (217, 239, 139),
+        (166, 217, 106),
+        (102, 189, 99),
+        (26, 152, 80),
+        (0, 104, 55),
+    ],
+    "rainbow": [
+        (128, 0, 255),
+        (57, 88, 255),
+        (0, 180, 235),
+        (0, 235, 176),
+        (73, 255, 104),
+        (176, 235, 38),
+        (235, 180, 0),
+        (255, 88, 0),
+        (235, 0, 57),
+        (255, 0, 0),
+    ],
+    "spectral": [
+        (158, 1, 66),
+        (213, 62, 79),
+        (244, 109, 67),
+        (253, 174, 97),
+        (254, 224, 139),
+        (230, 245, 152),
+        (171, 221, 164),
+        (102, 194, 165),
+        (50, 136, 189),
+        (94, 79, 162),
+    ],
+    "piyg": [
+        (142, 1, 82),
+        (197, 27, 125),
+        (222, 119, 174),
+        (241, 182, 218),
+        (253, 224, 239),
+        (247, 247, 247),
+        (230, 245, 208),
+        (184, 225, 134),
+        (127, 188, 65),
+        (77, 146, 33),
+        (39, 100, 25),
+    ],
+    "purples": [
+        (252, 251, 253),
+        (239, 237, 245),
+        (218, 218, 235),
+        (188, 189, 220),
+        (158, 154, 200),
+        (128, 125, 186),
+        (106, 81, 163),
+        (84, 39, 143),
+        (63, 0, 125),
+    ],
+    "pubu": [
+        (255, 247, 251),
+        (236, 231, 242),
+        (208, 209, 230),
+        (166, 189, 219),
+        (116, 169, 207),
+        (54, 144, 192),
+        (5, 112, 176),
+        (4, 90, 141),
+        (2, 56, 88),
+    ],
+    "prgn": [
+        (64, 0, 75),
+        (118, 42, 131),
+        (153, 112, 171),
+        (194, 165, 207),
+        (231, 212, 232),
+        (247, 247, 247),
+        (217, 240, 211),
+        (166, 219, 160),
+        (90, 174, 97),
+        (27, 120, 55),
+        (0, 68, 27),
+    ],
+    "binary": [(255, 255, 255), (0, 0, 0)],
 }
 
 # Light-theme chrome colors (the client derives these from currentColor).
@@ -307,6 +404,16 @@ def _fmt_axis(axis: dict[str, Any], v: float, step: float) -> str:
     return _fmt_linear(v, step)
 
 
+def _tick_text(axis: dict[str, Any], value: float, step: float) -> str:
+    values = axis.get("tick_values")
+    labels = axis.get("tick_labels")
+    if values is not None and labels is not None:
+        for index, candidate in enumerate(values):
+            if float(candidate) == value and index < len(labels):
+                return str(labels[index])
+    return _fmt_axis(axis, value, step)
+
+
 # ---------------------------------------------------------------------------
 # Payload decode + scales
 # ---------------------------------------------------------------------------
@@ -359,10 +466,17 @@ class _Scale:
         return not self.log
 
 
+def _colormap_stops(colormap: str) -> list[tuple[int, int, int]]:
+    reversed_map = colormap.endswith("_r")
+    base = colormap[:-2] if reversed_map else colormap
+    stops = COLORMAP_STOPS.get(base) or COLORMAP_STOPS["viridis"]
+    return list(reversed(stops)) if reversed_map else stops
+
+
 def _lut(colormap: str, t: np.ndarray) -> np.ndarray:
     """Vectorized colormap sample: t in [0,1] -> (n,3) uint8, matching the
     client's 256-texel LUT interpolation."""
-    stops = np.array(COLORMAP_STOPS.get(colormap) or COLORMAP_STOPS["viridis"], dtype=np.float64)
+    stops = np.array(_colormap_stops(colormap), dtype=np.float64)
     pos = np.clip(t, 0.0, 1.0) * (len(stops) - 1)
     lo = np.floor(pos).astype(np.uint8)
     hi = np.minimum(lo + 1, len(stops) - 1)
@@ -585,6 +699,14 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         bottom = 36 if compact else 42
     if spec.get("title"):
         top += 26 if compact else 30
+    colorbar = spec.get("colorbar") or {}
+    if colorbar.get("orientation") == "horizontal":
+        bottom += 30
+    elif colorbar:
+        # Leave room for the gradient, numeric tick labels and an optional
+        # Matplotlib-style colorbar label.  The previous 48 px allowance put
+        # all text beyond the export canvas.
+        right += 92
     plot = {
         "x": left,
         "y": top,
@@ -599,6 +721,11 @@ def axis_ticks(
 ) -> tuple[list[float], list[float], float]:
     """(ticks, labeled ticks, step) for an axis at a given pixel length — shared
     tick density so SVG and PNG label the same values."""
+    if axis.get("tick_values") is not None:
+        lo, hi = axis["range"]
+        ticks = [float(v) for v in axis["tick_values"] if lo <= float(v) <= hi]
+        step = abs(ticks[1] - ticks[0]) if len(ticks) > 1 else 1.0
+        return ticks, ticks, step
     target = max(3, int(length_px / 80)) if is_x else max(3, int(length_px / 45))
     kind = axis.get("kind")
     lo, hi = axis["range"]
@@ -628,33 +755,40 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     # -- grid + tick labels + baselines ------------------------------------
     xt, xlab, xstep = ticks_for(xa, plot["w"])
     yt, ylab, ystep = ticks_for(ya, plot["h"])
+    dom_style = (spec.get("dom") or {}).get("style") or {}
+    grid_color = escape(_css(dom_style.get("--chart-grid"), _GRID))
     grid: list[str] = []
     labels: list[str] = []
     hide_x = xa.get("tick_label_strategy") == "none"
     hide_y = ya.get("tick_label_strategy") == "none"
     for v in xt:
+        if hide_x:
+            break
         px = float(sx(v))
         grid.append(
             f'<line x1="{_num(px)}" y1="{_num(plot["y"])}" x2="{_num(px)}" '
-            f'y2="{_num(plot["y"] + plot["h"])}" stroke="{_GRID}"/>'
+            f'y2="{_num(plot["y"] + plot["h"])}" stroke="{grid_color}"/>'
         )
     for v in yt:
+        if hide_y:
+            break
         py = float(sy(v))
         grid.append(
             f'<line x1="{_num(plot["x"])}" y1="{_num(py)}" x2="{_num(plot["x"] + plot["w"])}" '
-            f'y2="{_num(py)}" stroke="{_GRID}"/>'
+            f'y2="{_num(py)}" stroke="{grid_color}"/>'
         )
     if not hide_x:
         for v in xlab:
+            tick_y = plot["y"] - 7 if xa.get("side") == "top" else plot["y"] + plot["h"] + 16
             labels.append(
-                f'<text x="{_num(float(sx(v)))}" y="{_num(plot["y"] + plot["h"] + 16)}" '
-                f'text-anchor="middle">{escape(_fmt_axis(xa, v, xstep))}</text>'
+                f'<text x="{_num(float(sx(v)))}" y="{_num(tick_y)}" '
+                f'text-anchor="middle">{escape(_tick_text(xa, v, xstep))}</text>'
             )
     if not hide_y:
         for v in ylab:
             labels.append(
                 f'<text x="{_num(plot["x"] - 8)}" y="{_num(float(sy(v)) + 4)}" '
-                f'text-anchor="end">{escape(_fmt_axis(ya, v, ystep))}</text>'
+                f'text-anchor="end">{escape(_tick_text(ya, v, ystep))}</text>'
             )
 
     # -- marks --------------------------------------------------------------
@@ -758,15 +892,30 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         )
     named = [t for t in spec["traces"] if t.get("name")]
     if spec.get("show_legend", True) and named:
-        chrome.append(_legend(named, plot))
+        chrome.append(_legend(named, plot, spec.get("legend") or {}))
+    if spec.get("colorbar"):
+        chrome.append(_colorbar(spec["colorbar"], plot))
+
+    annotation_marks, annotation_labels = _annotation_svg(
+        spec.get("annotations") or [], sx, sy, plot, width, height
+    )
+    marks.extend(annotation_marks)
+    labels.extend(annotation_labels)
 
     # baselines above the marks, matching the client's overlay rules
-    baselines = (
-        f'<line x1="{_num(plot["x"])}" y1="{_num(plot["y"])}" x2="{_num(plot["x"])}" '
-        f'y2="{_num(plot["y"] + plot["h"])}" stroke="{_AXIS}"/>'
-        f'<line x1="{_num(plot["x"])}" y1="{_num(plot["y"] + plot["h"])}" '
-        f'x2="{_num(plot["x"] + plot["w"])}" y2="{_num(plot["y"] + plot["h"])}" stroke="{_AXIS}"/>'
-    )
+    baselines = ""
+    if not hide_y:
+        baselines += (
+            f'<line x1="{_num(plot["x"])}" y1="{_num(plot["y"])}" x2="{_num(plot["x"])}" '
+            f'y2="{_num(plot["y"] + plot["h"])}" stroke="{_AXIS}"/>'
+        )
+    if not hide_x:
+        x_axis_y = plot["y"] if xa.get("side") == "top" else plot["y"] + plot["h"]
+        baselines += (
+            f'<line x1="{_num(plot["x"])}" y1="{_num(x_axis_y)}" '
+            f'x2="{_num(plot["x"] + plot["w"])}" y2="{_num(x_axis_y)}" '
+            f'stroke="{_AXIS}"/>'
+        )
 
     clip_id = svg.uid("clip")
     svg.defs.append(
@@ -785,6 +934,74 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         f"{''.join(chrome)}"
         f"</svg>"
     )
+
+
+def _annotation_svg(annotations, sx, sy, plot, width, height):
+    marks: list[str] = []
+    labels: list[str] = []
+    px0, py0 = plot["x"], plot["y"]
+    for ann in annotations:
+        style = ann.get("style") or {}
+        color = escape(_css(style.get("color"), "#667085"))
+        opacity = float(style.get("opacity", 1.0))
+        start = max(0.0, min(1.0, float(style.get("span_start", 0.0))))
+        end = max(start, min(1.0, float(style.get("span_end", 1.0))))
+        kind = ann.get("kind")
+        if kind == "rule":
+            if ann.get("axis") == "x":
+                pos = float(sx(float(ann["value"])))
+                coords = (pos, py0 + (1 - end) * plot["h"], pos, py0 + (1 - start) * plot["h"])
+            else:
+                pos = float(sy(float(ann["value"])))
+                coords = (px0 + start * plot["w"], pos, px0 + end * plot["w"], pos)
+            marks.append(
+                f'<line x1="{_num(coords[0])}" y1="{_num(coords[1])}" '
+                f'x2="{_num(coords[2])}" y2="{_num(coords[3])}" stroke="{color}" '
+                f'stroke-width="{_num(float(style.get("width", 1.5)))}" stroke-opacity="{_num(opacity)}"/>'
+            )
+        elif kind == "band":
+            a, b = float(ann["start"]), float(ann["end"])
+            if ann.get("axis") == "x":
+                x0, x1 = sorted((float(sx(a)), float(sx(b))))
+                y0, y1 = py0 + (1 - end) * plot["h"], py0 + (1 - start) * plot["h"]
+            else:
+                y0, y1 = sorted((float(sy(a)), float(sy(b))))
+                x0, x1 = px0 + start * plot["w"], px0 + end * plot["w"]
+            marks.append(
+                f'<rect x="{_num(x0)}" y="{_num(y0)}" width="{_num(x1 - x0)}" '
+                f'height="{_num(y1 - y0)}" fill="{color}" fill-opacity="{_num(float(style.get("opacity", 0.14)))}"/>'
+            )
+        if kind == "text" and ann.get("text"):
+            x, y = float(ann.get("x", 0.0)), float(ann.get("y", 0.0))
+            space = style.get("coordinate_space")
+            if space == "axes_fraction":
+                tx, ty = px0 + x * plot["w"], py0 + (1 - y) * plot["h"]
+            elif space == "figure_fraction":
+                tx, ty = x * width, (1 - y) * height
+            elif space == "yaxis_transform":
+                tx, ty = px0 + x * plot["w"], float(sy(y))
+            elif space == "xaxis_transform":
+                tx, ty = float(sx(x)), py0 + (1 - y) * plot["h"]
+            else:
+                tx, ty = float(sx(x)), float(sy(y))
+            anchor = {"start": "start", "middle": "middle", "end": "end"}.get(
+                ann.get("anchor"), "start"
+            )
+            font_size = float(style.get("font_size", 11))
+            lines = str(ann["text"]).splitlines() or [""]
+            line_height = font_size * 1.2
+            x_text = tx + float(ann.get("dx", 0))
+            y_text = ty + float(ann.get("dy", 0)) - (len(lines) - 1) * line_height / 2
+            tspans = "".join(
+                f'<tspan x="{_num(x_text)}" y="{_num(y_text + index * line_height)}">'
+                f"{escape(line)}</tspan>"
+                for index, line in enumerate(lines)
+            )
+            labels.append(
+                f'<text text-anchor="{anchor}" font-size="{_num(font_size)}" '
+                f'fill="{color}">{tspans}</text>'
+            )
+    return marks, labels
 
 
 def _segment_marks(
@@ -1036,23 +1253,33 @@ def _density_image(
 
 def _heatmap_image(hm: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict) -> str:
     w, h = int(hm["w"]), int(hm["h"])
+    if "rgba_bufs" in hm:
+        channels = [_column(blob, cols[index]) for index in hm["rgba_bufs"]]
+        rgba_array = np.clip(np.column_stack(channels) * 255.0, 0, 255).astype(np.uint8)
+        rgba_array[:, 3] = (
+            rgba_array[:, 3].astype(np.float64) * float(style.get("opacity", 1.0))
+        ).astype(np.uint8)
+        rgba = rgba_array.reshape(h, w, 4)[::-1].tobytes()
+        return _grid_image(w, h, rgba, hm["x_range"], hm["y_range"], sx, sy)
     raw = _column(blob, cols[hm["buf"]]).reshape(h, w)
-    # Mirrors HEATMAP_FS: byte 0 = missing, 1..255 -> [0,1].
-    t = np.clip((raw * 255.0 - 1.0) / 254.0, 0.0, 1.0)
+    t = np.clip(raw, 0.0, 1.0)
     rgb = _lut(hm.get("colormap", "viridis"), t.reshape(-1)).reshape(h, w, 3)
     alpha = np.full((h, w), int(255 * float(style.get("opacity", 0.95))), dtype=np.uint8)
-    alpha[raw <= 0] = 0
+    alpha[~np.isfinite(raw)] = 0
     rgba = np.dstack([rgb, alpha])[::-1].tobytes()
     return _grid_image(w, h, rgba, hm["x_range"], hm["y_range"], sx, sy)
 
 
-def _legend(named: list[dict], plot: dict) -> str:
+def _legend(named: list[dict], plot: dict, options: dict) -> str:
     rows = []
     pad, swatch, line_h = 8, 10, 16
-    box_w = max(len(str(t["name"])) for t in named) * 6.2 + swatch + 3 * pad
-    box_h = len(named) * line_h + pad
-    x = plot["x"] + plot["w"] - box_w - 6
-    y = plot["y"] + 6
+    ncols = min(len(named), max(1, int(options.get("ncols", 1))))
+    nrows = (len(named) + ncols - 1) // ncols
+    cell_w = max(len(str(t["name"])) for t in named) * 6.2 + swatch + 2 * pad
+    box_w, box_h = ncols * cell_w + pad, nrows * line_h + pad
+    loc = options.get("loc") or "upper right"
+    x = plot["x"] + 6 if "left" in loc else plot["x"] + plot["w"] - box_w - 6
+    y = plot["y"] + plot["h"] - box_h - 6 if "lower" in loc else plot["y"] + 6
     rows.append(
         f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(box_w)}" height="{_num(box_h)}" '
         f'rx="4" fill="rgba(128,128,128,0.08)"/>'
@@ -1063,16 +1290,65 @@ def _legend(named: list[dict], plot: dict) -> str:
             style.get("color") or (t.get("color") or {}).get("color"),
             DEFAULT_PALETTE[i % len(DEFAULT_PALETTE)],
         )
-        ry = y + pad / 2 + i * line_h
+        col, row = i % ncols, i // ncols
+        rx, ry = x + col * cell_w, y + pad / 2 + row * line_h
         rows.append(
-            f'<rect x="{_num(x + pad)}" y="{_num(ry + 2)}" width="{swatch}" height="{swatch}" '
+            f'<rect x="{_num(rx + pad)}" y="{_num(ry + 2)}" width="{swatch}" height="{swatch}" '
             f'rx="2" fill="{escape(color)}"/>'
         )
         rows.append(
-            f'<text x="{_num(x + pad + swatch + 5)}" y="{_num(ry + swatch)}" '
+            f'<text x="{_num(rx + pad + swatch + 5)}" y="{_num(ry + swatch)}" '
             f'fill="{_TEXT}">{escape(str(t["name"]))}</text>'
         )
     return "".join(rows)
+
+
+def _colorbar(options: dict, plot: dict) -> str:
+    cmap = str(options.get("colormap", "viridis"))
+    gradient_id = f"xy-colorbar-{sum(map(ord, cmap))}"
+    stops = _colormap_stops(cmap)
+    stop_nodes = "".join(
+        f'<stop offset="{100 * index / max(1, len(stops) - 1):.2f}%" '
+        f'stop-color="rgb({r},{g},{b})"/>'
+        for index, (r, g, b) in enumerate(stops)
+    )
+    orientation = options.get("orientation", "vertical")
+    domain = options.get("domain", [0.0, 1.0])
+    if orientation == "horizontal":
+        x, y, width, height = plot["x"], plot["y"] + plot["h"] + 10, plot["w"], 8
+        gradient_attrs = 'x1="0" y1="0" x2="100%" y2="0"'
+    else:
+        x, y, width, height = plot["x"] + plot["w"] + 10, plot["y"], 8, plot["h"]
+        gradient_attrs = 'x1="0" y1="100%" x2="0" y2="0"'
+    label = str(options.get("label") or "")
+    label_node = (
+        f'<text x="{_num(x + width + 38)}" y="{_num(y + height / 2)}" '
+        f'text-anchor="middle" transform="rotate(-90 {_num(x + width + 38)} '
+        f'{_num(y + height / 2)})" fill="{_TEXT}">{escape(label)}</text>'
+        if label and orientation != "horizontal"
+        else (
+            f'<text x="{_num(x + width / 2)}" y="{_num(y + height + 22)}" '
+            f'text-anchor="middle" fill="{_TEXT}">{escape(label)}</text>'
+            if label
+            else ""
+        )
+    )
+    tick_nodes = (
+        "".join(
+            f'<text x="{_num(x + width + 4)}" y="{_num(y + height * (1 - i / 4) + 4)}" '
+            f'fill="{_TEXT}">{domain[0] + (domain[1] - domain[0]) * i / 4:g}</text>'
+            for i in range(5)
+        )
+        if orientation != "horizontal"
+        else ""
+    )
+    return (
+        f'<defs><linearGradient id="{gradient_id}" {gradient_attrs}>'
+        f"{stop_nodes}</linearGradient></defs>"
+        f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(width)}" height="{_num(height)}" '
+        f'fill="url(#{gradient_id})"/>'
+        f"{tick_nodes}{label_node}"
+    )
 
 
 def to_svg(

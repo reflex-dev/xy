@@ -2717,9 +2717,9 @@ pub fn marching_squares_into(
 }
 
 /// Map normalized heatmap scalars to a top-row-first RGBA8 image. This is the
-/// native counterpart of `_scene.grid_rgba`'s heatmap branch: the payload's
-/// reserved zero represents missing data, while finite values map through the
-/// same evenly spaced color stops with ties-to-even byte rounding.
+/// Native counterpart of `_scene.grid_rgba`'s heatmap branch: non-finite
+/// values are missing, while finite normalized values map through the same
+/// evenly spaced color stops with ties-to-even byte rounding.
 pub fn heatmap_rgba_into(
     raw: &[f64],
     w: usize,

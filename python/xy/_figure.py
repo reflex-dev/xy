@@ -104,6 +104,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
         self.store = ColumnStore()
         self.traces: list[Trace] = []
         self.show_legend = True
+        self.legend_options: dict[str, Any] = {}
+        self.colorbar_options: Optional[dict[str, Any]] = None
         self.show_modebar = True
         self.show_tooltip = True
         self.class_name: Optional[str] = None
@@ -132,6 +134,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
         reverse: bool = False,
         format: Optional[str] = None,
         tick_count: Optional[int] = None,
+        tick_values: Optional[Any] = None,
+        tick_labels: Optional[Any] = None,
         tick_label_angle: Optional[float] = None,
         tick_label_strategy: Optional[str] = None,
         tick_label_min_gap: Optional[float] = None,
@@ -152,6 +156,14 @@ class Figure(AnnotationsMixin, PayloadMixin):
             raise ValueError("x axis side must be 'top' or 'bottom'")
         elif axis_dim == "y" and side not in {"left", "right"}:
             raise ValueError("y axis side must be 'left' or 'right'")
+        values = (
+            None
+            if tick_values is None
+            else [self._finite_scalar(value, f"{axis_id} tick value") for value in tick_values]
+        )
+        labels = None if tick_labels is None else [str(value) for value in tick_labels]
+        if labels is not None and (values is None or len(labels) != len(values)):
+            raise ValueError(f"{axis_id} tick_labels must match tick_values")
         self.axis_options[axis_id] = {
             "label": self._optional_text(label, f"{axis_id} axis label"),
             "label_position": self._axis_label_position(
@@ -166,6 +178,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             "reverse": self._bool_param(reverse, f"{axis_id} axis reverse"),
             "format": self._optional_text(format, f"{axis_id} axis format"),
             "tick_count": self._optional_positive_int(tick_count, f"{axis_id} axis tick_count"),
+            "tick_values": values,
+            "tick_labels": labels,
             "tick_label_angle": self._optional_finite_scalar(
                 tick_label_angle, f"{axis_id} axis tick_label_angle"
             ),
@@ -921,6 +935,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
             spec["label_angle"] = label_angle
         if tick_count is not None:
             spec["tick_count"] = tick_count
+        if opts.get("tick_values") is not None:
+            spec["tick_values"] = list(opts["tick_values"])
+        if opts.get("tick_labels") is not None:
+            spec["tick_labels"] = list(opts["tick_labels"])
         if tick_label_angle is not None:
             spec["tick_label_angle"] = tick_label_angle
         if tick_label_strategy is not None:

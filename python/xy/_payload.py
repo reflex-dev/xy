@@ -182,6 +182,10 @@ class PayloadMixin(_Host):
             "backend": kernels.BACKEND,
             "show_legend": self.show_legend,
         }
+        if self.legend_options:
+            spec["legend"] = self.legend_options
+        if self.colorbar_options:
+            spec["colorbar"] = self.colorbar_options
         if self.show_modebar is False:
             spec["show_modebar"] = False
         if self.show_tooltip is False:
@@ -375,6 +379,25 @@ class PayloadMixin(_Host):
         if t.grid is None or t.grid_shape is None:
             raise ValueError("heatmap trace missing grid column")
         rows, cols = t.grid_shape
+        if t.rgba_grid is not None:
+            return {
+                "id": t.id,
+                "kind": "heatmap",
+                "name": t.name,
+                "style": dict(t.style),
+                "tier": "direct",
+                "n_points": t.n_points,
+                "n_marks": int(rows * cols),
+                "x_axis": t.x_axis,
+                "y_axis": t.y_axis,
+                "heatmap": {
+                    "rgba_bufs": [pw.ship_scalar(column.values) for column in t.rgba_grid],
+                    "w": int(cols),
+                    "h": int(rows),
+                    "x_range": list(t.style["x_range"]),
+                    "y_range": list(t.style["y_range"]),
+                },
+            }
         domain = tuple(t.style["domain"])
         if pw.borrow_heatmaps:
             buffer_index = pw.borrow_f64(t.grid.values)

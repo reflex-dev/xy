@@ -24,7 +24,32 @@ _finite_scalar = _validate.finite_scalar
 
 # Named colormaps the client knows (LUTs live in the JS client, §36). Kept
 # small and CVD-safe by default.
-COLORMAPS = ("viridis", "magma", "plasma", "inferno", "cividis", "gray", "turbo", "coolwarm")
+COLORMAPS = (
+    "viridis",
+    "magma",
+    "plasma",
+    "inferno",
+    "cividis",
+    "gray",
+    "turbo",
+    "coolwarm",
+    "blues",
+    "rdylgn",
+    "rainbow",
+    "spectral",
+    "piyg",
+    "purples",
+    "pubu",
+    "prgn",
+    "binary",
+)
+
+
+def is_colormap(name: str) -> bool:
+    """Return whether *name* is a supported colormap, including ``_r`` variants."""
+    return name in COLORMAPS or (name.endswith("_r") and name[:-2] in COLORMAPS)
+
+
 DEFAULT_COLORMAP = "viridis"
 
 # The client palette LUT is 256 texels; categories beyond this collide in the
@@ -342,7 +367,7 @@ def resolve_color(
     if arr.ndim != 1 or len(arr) != n:
         raise ValueError(f"color array must be 1-D length {n}, got shape {arr.shape}")
 
-    if colormap not in COLORMAPS:
+    if not is_colormap(colormap):
         raise ValueError(f"unknown colormap {colormap!r}; known: {COLORMAPS}")
 
     if _is_categorical(arr):

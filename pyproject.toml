@@ -79,6 +79,18 @@ include = [
     "SECURITY.md",
     "CONTRIBUTING.md",
 ]
+exclude = [
+    "/.*-venv/**",
+    "/.venv/**",
+    "/venv/**",
+    "/.tox/**",
+    "/.nox/**",
+    "/.pytest_cache/**",
+    "/.ruff_cache/**",
+    "/node_modules/**",
+    "/target/**",
+    "/dist/**",
+]
 
 [tool.ruff]
 line-length = 100

@@ -31,6 +31,8 @@ class FigureHost(Protocol):
     padding: Any
     tooltip: Optional[dict[str, Any]]
     show_legend: bool
+    legend_options: dict[str, Any]
+    colorbar_options: Optional[dict[str, Any]]
     show_modebar: bool
     show_tooltip: bool
 

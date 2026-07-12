@@ -800,7 +800,7 @@ def test_heatmap_constant_values_auto_expands_domain():
     tr = spec["traces"][0]
     assert tr["heatmap"]["domain"][0] < 7.0 < tr["heatmap"]["domain"][1]
     grid, _ = _payload_col(spec, blob, tr["heatmap"]["buf"])
-    np.testing.assert_allclose(grid, [0.5, 0.5, 0.5, 0.5])
+    np.testing.assert_allclose(grid, [0.5] * 4)
 
 
 def test_heatmap_reuses_or_defers_grid_zone_scan(monkeypatch):

@@ -311,7 +311,7 @@ def test_matshow_pcolorfast_and_spy_delegate_to_native_grid_paths() -> None:
     ax.pcolorfast([0, 1, 2], [0, 1, 2], matrix[:2, :2])
     ax.spy(np.eye(4))
     assert [trace.kind for trace in _traces(ax)] == ["heatmap", "heatmap", "heatmap"]
-    np.testing.assert_array_equal(ax._entries[-1]["z"], (1.0 - np.eye(4))[::-1])
+    np.testing.assert_array_equal(ax._entries[-1]["z"][..., 0], (1.0 - np.eye(4))[::-1])
 
 
 def test_imshow_accepts_descending_extent_with_upper_origin() -> None:
@@ -364,16 +364,18 @@ def test_quiver_and_barbs_use_native_vector_segments() -> None:
     assert all(len(trace.x0.values) == 6 for trace in traces)
 
 
-def test_streamplot_integrates_in_native_core() -> None:
+def test_streamplot_translates_lines_and_arrowheads_to_xy_marks() -> None:
     _fig, ax = plt.subplots()
     x = np.linspace(-1.0, 1.0, 10)
     y = np.linspace(-1.0, 1.0, 8)
     xx, yy = np.meshgrid(x, y)
     result = ax.streamplot(x, y, -yy, xx, density=0.8)
-    assert result.lines is result.arrows
-    trace = _traces(ax)[0]
-    assert trace.kind == "segments"
-    assert len(trace.x0.values) > 0
+    assert result.lines is not result.arrows
+    traces = _traces(ax)
+    assert traces[0].kind == "segments"
+    assert len(traces[0].x0.values) > 0
+    assert traces[-1].kind == "triangle_mesh"
+    assert len(traces[-1].x0.values) > 0
 
 
 def test_artist_set_ydata_rebuilds() -> None:

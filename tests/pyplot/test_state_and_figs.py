@@ -57,6 +57,14 @@ def test_subplots_return_shapes() -> None:
     assert axes.shape == (3,)
     _f, axes = plt.subplots(2, 2)
     assert axes.shape == (2, 2)
+
+
+def test_subplots_activates_last_axes_for_implicit_pyplot_calls() -> None:
+    fig, axes = plt.subplots(3, 1)
+    plt.stairs([1, 2, 1])
+    assert plt.gca() is axes[-1]
+    assert axes[-1]._entries
+    assert all(not ax._entries for ax in fig.axes[:-1])
     _f, axes = plt.subplots(2, 2, squeeze=False)
     assert axes.shape == (2, 2)
 

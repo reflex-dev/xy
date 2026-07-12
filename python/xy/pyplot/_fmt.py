@@ -18,6 +18,8 @@ _COLOR_LETTERS = set("bgrcmykw")
 
 def parse_fmt(fmt: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """Return (color, linestyle, marker); raises on unparseable input."""
+    if len(fmt) > 1 and fmt.lower() in {"grey", "gray", "black", "white"}:
+        return fmt, None, None
     color: Optional[str] = None
     linestyle: Optional[str] = None
     marker: Optional[str] = None

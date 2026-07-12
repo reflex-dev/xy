@@ -1,0 +1,8 @@
+{
+  "name": "xy-dev-tools",
+  "private": true,
+  "description": "Development-only browser test dependencies for xy",
+  "devDependencies": {
+    "playwright": "1.61.1"
+  }
+}
