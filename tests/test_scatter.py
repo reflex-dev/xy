@@ -38,10 +38,12 @@ def _density_col(spec, blob, density):
 
 
 def test_color_constant():
-    c = ch.resolve_color("#ff0000", 10, default_constant="#000")
+    c = ch.resolve_color("#ff0000", 10, colormap="magma_r", default_constant="#000")
     assert c.mode == "constant" and c.constant == "#ff0000"
-    c2 = ch.resolve_color(None, 10, default_constant="#123456")
+    assert c.colormap == "magma_r"
+    c2 = ch.resolve_color(None, 10, colormap="plasma", default_constant="#123456")
     assert c2.mode == "constant" and c2.constant == "#123456"
+    assert c2.colormap == "plasma"
 
 
 def test_color_continuous():
@@ -161,6 +163,10 @@ def test_color_bad_length():
 def test_color_unknown_colormap():
     with pytest.raises(ValueError, match="colormap"):
         ch.resolve_color(np.arange(10.0), 10, colormap="nope", default_constant="#000")
+    with pytest.raises(ValueError, match="colormap"):
+        ch.resolve_color(None, 10, colormap="nope", default_constant="#000")
+    with pytest.raises(ValueError, match="colormap"):
+        ch.resolve_color("#ff0000", 10, colormap="nope", default_constant="#000")
 
 
 def test_size_modes():
@@ -564,6 +570,12 @@ def test_force_density():
     assert fig.traces[0].use_density()
     spec, _ = fig.build_payload()
     assert spec["traces"][0]["tier"] == "density"
+
+
+def test_density_without_color_data_honors_colormap():
+    fig = Figure().scatter(np.arange(100.0), np.arange(100.0), density=True, colormap="magma_r")
+    spec, _ = fig.build_payload()
+    assert spec["traces"][0]["density"]["colormap"] == "magma_r"
 
 
 def test_density_view_rebins():
