@@ -20,7 +20,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-_TICK_LABEL_STRATEGIES = frozenset({"auto", "hide", "rotate", "stagger", "none"})
+_TICK_LABEL_STRATEGIES = frozenset({"auto", "hide", "rotate", "stagger", "none", "off"})
 _LABEL_POSITIONS = frozenset(
     {"start", "center", "end", "inside_start", "inside_center", "inside_end"}
 )
@@ -274,7 +274,9 @@ def curve(value: Any, label: str) -> str:
     return value
 
 
-_POINT_SYMBOLS = frozenset({"circle", "square", "diamond", "triangle", "cross"})
+_POINT_SYMBOLS = frozenset(
+    {"circle", "square", "diamond", "triangle", "cross", "hexagon", "pentagon", "star"}
+)
 
 
 def point_symbol(value: Any, label: str) -> str:

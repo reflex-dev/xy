@@ -2023,7 +2023,7 @@ def test_scatter_symbol_and_stroke_emit_to_spec() -> None:
     assert style2["stroke_width"] == 1.0
 
     with pytest.raises(ValueError, match="scatter symbol"):
-        Figure().scatter([0.0], [0.0], symbol="star")
+        Figure().scatter([0.0], [0.0], symbol="octagon")
     with pytest.raises(ValueError, match="scatter stroke_width"):
         Figure().scatter([0.0], [0.0], stroke_width=-1)
 

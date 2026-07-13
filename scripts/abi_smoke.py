@@ -1445,7 +1445,9 @@ def main() -> None:
         "multi-span raster-to-PNG emits a valid signature",
     )
 
-    heat_values = array("d", [1.0 / 255.0, 128.0 / 255.0, 1.0, 0.0])
+    # NaN marks a missing cell; a real 0.0 now paints the colormap floor
+    # (matplotlib semantics — see the visual-parity changelog entry).
+    heat_values = array("d", [1.0 / 255.0, 128.0 / 255.0, 1.0, float("nan")])
     heat_stops = array("B", [0, 10, 20, 100, 110, 120])
     heat_rgba = array("B", [0]) * 16
     ok(

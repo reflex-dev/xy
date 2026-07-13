@@ -805,6 +805,7 @@ def contour(
     color: Optional[str] = None,
     width: float = 1.1,
     opacity: float = 0.9,
+    dash_negative: bool = False,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -825,6 +826,7 @@ def contour(
             "color": color,
             "width": width,
             "opacity": opacity,
+            "dash_negative": dash_negative,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -1891,6 +1893,10 @@ class Chart(Component):
             node = legends[-1]
             _apply_chrome_node(fig, "legend", node.class_name, node.style)
             fig.legend_options = {"loc": node.loc, "ncols": node.ncols}
+            if node.style:
+                # Carry the frame/frameon styling into the static-export spec so
+                # the raster/SVG legend can honor frameon=False (transparent bg).
+                fig.legend_options["style"] = dict(node.style)
         if legend_shows and not legend_shows[-1]:
             fig.show_legend = False
         if modebars:
@@ -2808,6 +2814,7 @@ def _apply_contour(fig: Figure, m: Mark, data: Any) -> None:
         color=m.props["color"],
         width=m.props["width"],
         opacity=m.props["opacity"],
+        dash_negative=m.props.get("dash_negative", False),
     )
 
 

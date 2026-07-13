@@ -23,6 +23,7 @@ import xy as fc
 from ._artists import Artist, AxesImage, BarContainer, Line2D, PathCollection, PolyCollection, Text
 from ._colors import PROP_CYCLE, resolve_cmap, resolve_color
 from ._fmt import parse_fmt
+from ._mathtext import mathtext_to_unicode
 from ._plot_types import PlotTypeMixin
 from ._rc import rcParams
 from ._ticker import AutoLocator, NullLocator, ScalarFormatter, as_formatter
@@ -759,63 +760,178 @@ class Axes(PlotTypeMixin):
         check_unsupported(kwargs, "plot()")
 
         handles: list[Line2D] = []
-        for x, y, fmt in _iter_plot_groups(args):
-            x, y = np.atleast_1d(x), np.atleast_1d(y)
-            x, y = _convert_timedelta_axis(x), _convert_timedelta_axis(y)
-            if transform is not None:
-                x, y = self._transform_points(x, y, transform)
-            if x.ndim == 2 or y.ndim == 2:
-                if x.ndim == 1:
-                    x = np.broadcast_to(x[:, None], np.asarray(y).shape)
-                if y.ndim == 1:
-                    y = np.broadcast_to(y[:, None], np.asarray(x).shape)
-                if x.shape != y.shape:
-                    raise ValueError("2-D plot x and y must have matching shapes")
-                separators = np.full((1, x.shape[1]), np.nan)
-                x = np.concatenate((x, separators)).T.reshape(-1)
-                y = np.concatenate((y, separators)).T.reshape(-1)
-            if np.ma.isMaskedArray(x):
-                x = np.ma.asarray(x).filled(np.nan)
-            if np.ma.isMaskedArray(y):
-                y = np.ma.asarray(y).filled(np.nan)
-            per = dict(base)
-            this_marker = marker
-            if fmt:
-                fcolor, fstyle, fmarker = parse_fmt(fmt)
-                if fcolor is not None and "color" not in per:
-                    per["color"] = resolve_color(fcolor)
-                if fstyle is not None and "linestyle" not in per:
-                    per["linestyle"] = fstyle
-                if fmarker is not None and this_marker is None:
-                    this_marker = fmarker
-                # fmt with a marker and no linestyle means markers only.
-                if fmarker is not None and fstyle is None:
-                    per.setdefault("linestyle", "none")
-            if "color" not in per:
-                per["color"] = self._next_color()
-            ls = per.pop("linestyle", "-")
-            dash = per.pop("dash", None)
-            if dash is None:
-                dash = LINESTYLE_TO_DASH.get(ls, None) if isinstance(ls, str) else None
+        for gx, gy, fmt in _iter_plot_groups(args):
+            gx, gy = np.atleast_1d(gx), np.atleast_1d(gy)
+            gx, gy = _convert_timedelta_axis(gx), _convert_timedelta_axis(gy)
+            # A 2-D operand draws one line per column; each column advances the
+            # property cycle so column N gets color C{N}, matching matplotlib.
+            for x, y in _plot_series_columns(gx, gy):
+                handles.append(
+                    self._plot_series(
+                        x,
+                        y,
+                        fmt,
+                        base,
+                        marker,
+                        markersize,
+                        markerfacecolor,
+                        markeredgecolor,
+                        markeredgewidth,
+                        markevery,
+                        drawstyle,
+                        transform,
+                    )
+                )
+        return handles
 
-            entry_kwargs = {
-                "color": per.get("color"),
-                "width": per.get("width", rcParams["lines.linewidth"]),
-                "opacity": per.get("opacity", 1.0),
-                "name": per.get("name"),
-            }
-            if dash == "none":
+    def _plot_series(
+        self,
+        x: Any,
+        y: Any,
+        fmt: Optional[str],
+        base: dict[str, Any],
+        marker: Any,
+        markersize: Any,
+        markerfacecolor: Any,
+        markeredgecolor: Any,
+        markeredgewidth: Any,
+        markevery: Any,
+        drawstyle: Any,
+        transform: Any,
+    ) -> "Line2D":
+        if transform is not None:
+            x, y = self._transform_points(x, y, transform)
+        if np.ma.isMaskedArray(x):
+            x = np.ma.asarray(x).filled(np.nan)
+        if np.ma.isMaskedArray(y):
+            y = np.ma.asarray(y).filled(np.nan)
+        per = dict(base)
+        this_marker = marker
+        if fmt:
+            fcolor, fstyle, fmarker = parse_fmt(fmt)
+            if fcolor is not None and "color" not in per:
+                per["color"] = resolve_color(fcolor)
+            if fstyle is not None and "linestyle" not in per:
+                per["linestyle"] = fstyle
+            if fmarker is not None and this_marker is None:
+                this_marker = fmarker
+            # fmt with a marker and no linestyle means markers only.
+            if fmarker is not None and fstyle is None:
+                per.setdefault("linestyle", "none")
+        if "color" not in per:
+            per["color"] = self._next_color()
+        ls = per.pop("linestyle", "-")
+        dash = per.pop("dash", None)
+        if dash is None:
+            dash = LINESTYLE_TO_DASH.get(ls, None) if isinstance(ls, str) else None
+
+        entry_kwargs = {
+            "color": per.get("color"),
+            "width": per.get("width", rcParams["lines.linewidth"]),
+            "opacity": per.get("opacity", 1.0),
+            "name": per.get("name"),
+        }
+        if dash == "none":
+            entry = self._add(
+                "scatter",
+                {
+                    "x": x,
+                    "y": y,
+                    "kwargs": {
+                        **{k: v for k, v in entry_kwargs.items() if k != "width"},
+                        "symbol": _marker_symbol(this_marker or "o"),
+                        "size": float(
+                            rcParams["lines.markersize"] if markersize is None else markersize
+                        ),
+                        **(
+                            {"color": resolve_color(markerfacecolor)}
+                            if markerfacecolor not in (None, "auto")
+                            else {}
+                        ),
+                        **(
+                            {
+                                "stroke": resolve_color(markeredgecolor),
+                                "stroke_width": float(
+                                    1.0 if markeredgewidth is None else markeredgewidth
+                                ),
+                            }
+                            if markeredgecolor not in (None, "auto", "none")
+                            else {}
+                        ),
+                    },
+                },
+            )
+        else:
+            if dash is not None:
+                entry_kwargs["dash"] = dash
+            numeric_x = np.asarray(x)
+            try:
+                finite_pairs = np.isfinite(np.asarray(x, dtype=np.float64)) & np.isfinite(
+                    np.asarray(y, dtype=np.float64)
+                )
+            except (TypeError, ValueError):
+                finite_pairs = np.ones(len(x), dtype=bool)
+            has_gaps = not bool(np.all(finite_pairs))
+            preserve_path = (
+                numeric_x.ndim == 1
+                and len(numeric_x) > 1
+                and np.issubdtype(numeric_x.dtype, np.number)
+                and np.any(np.diff(numeric_x.astype(np.float64)) < 0)
+            )
+            if preserve_path or has_gaps:
+                xv, yv = np.asarray(x), np.asarray(y)
+                keep = finite_pairs[:-1] & finite_pairs[1:]
+                segment_kwargs = {
+                    key: value
+                    for key, value in entry_kwargs.items()
+                    if key in {"color", "width", "opacity", "name"}
+                }
                 entry = self._add(
-                    "scatter",
+                    "@mark",
                     {
+                        "factory": "segments",
+                        "args": (xv[:-1][keep], yv[:-1][keep], xv[1:][keep], yv[1:][keep]),
+                        "x": x,
+                        "y": y,
+                        "kwargs": segment_kwargs,
+                    },
+                )
+            elif drawstyle and str(drawstyle).startswith("steps-"):
+                entry = self._add(
+                    "@mark",
+                    {
+                        "factory": "step",
+                        "args": (x, y),
                         "x": x,
                         "y": y,
                         "kwargs": {
-                            **{k: v for k, v in entry_kwargs.items() if k != "width"},
-                            "symbol": _marker_symbol(this_marker or "o"),
+                            "where": str(drawstyle).removeprefix("steps-"),
+                            **entry_kwargs,
+                        },
+                    },
+                )
+            else:
+                entry = self._add("line", {"x": x, "y": y, "kwargs": entry_kwargs})
+            if this_marker is not None:
+                # line + markers: overlay a scatter with the same series color
+                marker_x, marker_y = _marked_values(x, y, markevery)
+                overlay = self._add(
+                    "scatter",
+                    {
+                        "x": marker_x,
+                        "y": marker_y,
+                        "kwargs": {
+                            "color": entry_kwargs["color"],
+                            "opacity": entry_kwargs["opacity"],
+                            "symbol": _marker_symbol(this_marker),
+                            # Matplotlib marker sizes are points while the
+                            # engine consumes CSS-pixel diameters.  At the
+                            # default 96 dpi, 6 pt is 8 px.
                             "size": float(
                                 rcParams["lines.markersize"] if markersize is None else markersize
-                            ),
+                            )
+                            * (4.0 / 3.0),
+                            "name": None,
                             **(
                                 {"color": resolve_color(markerfacecolor)}
                                 if markerfacecolor not in (None, "auto")
@@ -834,102 +950,13 @@ class Axes(PlotTypeMixin):
                         },
                     },
                 )
-            else:
-                if dash is not None:
-                    entry_kwargs["dash"] = dash
-                numeric_x = np.asarray(x)
-                try:
-                    finite_pairs = np.isfinite(np.asarray(x, dtype=np.float64)) & np.isfinite(
-                        np.asarray(y, dtype=np.float64)
-                    )
-                except (TypeError, ValueError):
-                    finite_pairs = np.ones(len(x), dtype=bool)
-                has_gaps = not bool(np.all(finite_pairs))
-                preserve_path = (
-                    numeric_x.ndim == 1
-                    and len(numeric_x) > 1
-                    and np.issubdtype(numeric_x.dtype, np.number)
-                    and np.any(np.diff(numeric_x.astype(np.float64)) < 0)
-                )
-                if preserve_path or has_gaps:
-                    xv, yv = np.asarray(x), np.asarray(y)
-                    keep = finite_pairs[:-1] & finite_pairs[1:]
-                    segment_kwargs = {
-                        key: value
-                        for key, value in entry_kwargs.items()
-                        if key in {"color", "width", "opacity", "name"}
-                    }
-                    entry = self._add(
-                        "@mark",
-                        {
-                            "factory": "segments",
-                            "args": (xv[:-1][keep], yv[:-1][keep], xv[1:][keep], yv[1:][keep]),
-                            "x": x,
-                            "y": y,
-                            "kwargs": segment_kwargs,
-                        },
-                    )
-                elif drawstyle and str(drawstyle).startswith("steps-"):
-                    entry = self._add(
-                        "@mark",
-                        {
-                            "factory": "step",
-                            "args": (x, y),
-                            "x": x,
-                            "y": y,
-                            "kwargs": {
-                                "where": str(drawstyle).removeprefix("steps-"),
-                                **entry_kwargs,
-                            },
-                        },
-                    )
-                else:
-                    entry = self._add("line", {"x": x, "y": y, "kwargs": entry_kwargs})
-                if this_marker is not None:
-                    # line + markers: overlay a scatter with the same series color
-                    marker_x, marker_y = _marked_values(x, y, markevery)
-                    self._add(
-                        "scatter",
-                        {
-                            "x": marker_x,
-                            "y": marker_y,
-                            "kwargs": {
-                                "color": entry_kwargs["color"],
-                                "opacity": entry_kwargs["opacity"],
-                                "symbol": _marker_symbol(this_marker),
-                                # Matplotlib marker sizes are points while the
-                                # engine consumes CSS-pixel diameters.  At the
-                                # default 96 dpi, 6 pt is 8 px.
-                                "size": float(
-                                    rcParams["lines.markersize"]
-                                    if markersize is None
-                                    else markersize
-                                )
-                                * (4.0 / 3.0),
-                                "name": None,
-                                **(
-                                    {"color": resolve_color(markerfacecolor)}
-                                    if markerfacecolor not in (None, "auto")
-                                    else {}
-                                ),
-                                **(
-                                    {
-                                        "stroke": resolve_color(markeredgecolor),
-                                        "stroke_width": float(
-                                            1.0 if markeredgewidth is None else markeredgewidth
-                                        ),
-                                    }
-                                    if markeredgecolor not in (None, "auto", "none")
-                                    else {}
-                                ),
-                            },
-                        },
-                    )
-            handle = Line2D(self, entry)
-            if transform is not None:
-                handle._transform = transform
-            handles.append(handle)
-        return handles
+                # The overlay marks the same Line2D; it must not claim its own
+                # legend slot when labels are assigned positionally.
+                overlay["_legend_skip"] = True
+        handle = Line2D(self, entry)
+        if transform is not None:
+            handle._transform = transform
+        return handle
 
     def scatter(
         self, x: Any, y: Any, s: Any = None, c: Any = None, **kwargs: Any
@@ -1001,12 +1028,22 @@ class Axes(PlotTypeMixin):
                     s = np.asarray(s)[finite_color]
             x, y, c = xv, yv, cv
 
+        size_px = marker_size_to_scatter_size(s, default=8.0)
         entry_kwargs: dict[str, Any] = {
-            "size": marker_size_to_scatter_size(s, default=8.0),
+            "size": size_px,
             "opacity": float(alpha) if alpha is not None else 0.8,
             "name": str(label) if label is not None else None,
             "symbol": _marker_symbol(marker) if marker else "circle",
         }
+        if isinstance(size_px, np.ndarray) and size_px.size:
+            # matplotlib s= is absolute (points²); pin the engine's size range
+            # to the converted pixel values so normalization is the identity
+            # instead of compressing everything into the default 2-18 px band.
+            finite_sizes = size_px[np.isfinite(size_px)]
+            if finite_sizes.size:
+                lo_px, hi_px = float(finite_sizes.min()), float(finite_sizes.max())
+                if hi_px > lo_px:
+                    entry_kwargs["size_range"] = (lo_px, hi_px)
         if c is None:
             entry_kwargs["color"] = self._next_color()
         elif isinstance(c, str) or (
@@ -1041,6 +1078,10 @@ class Axes(PlotTypeMixin):
         entry = self._add("scatter", {"x": x, "y": y, "kwargs": entry_kwargs})
         if source_color is not None:
             entry["source_array"] = source_color
+        if "colormap" in entry_kwargs:
+            levels = _discrete_levels(cmap)
+            if levels is not None:
+                entry["discrete_levels"] = levels
         artist = PathCollection(self, entry)
         if transform is not None:
             artist._transform = transform
@@ -1234,7 +1275,13 @@ class Axes(PlotTypeMixin):
         containers: list[BarContainer] = []
         base = np.zeros(len(edges) - 1, dtype=np.float64)
         centers = (edges[:-1] + edges[1:]) * 0.5
-        width = float(np.min(np.diff(edges))) * (1.0 if stacked else 0.8 / len(datasets))
+        # matplotlib's bin filling: a single (or stacked) series spans the full
+        # bin so adjacent bars touch; only multiple side-by-side series shrink
+        # to 0.8 of the bin, split evenly.  The shim previously applied the 0.8
+        # factor to single-series hists too, leaving visible gaps.
+        binwidth = float(np.min(np.diff(edges)))
+        rel_width = 1.0 if (stacked or len(datasets) == 1) else 0.8
+        width = binwidth * rel_width / (1 if stacked else len(datasets))
         for index, values in enumerate(counts):
             positions = centers if stacked else centers + (index - (len(datasets) - 1) / 2) * width
             current_base = base.copy() if stacked else np.zeros_like(values)
@@ -1515,6 +1562,21 @@ class Axes(PlotTypeMixin):
         if clim is not None:
             vmin, vmax = clim
         has_extremes = any(hasattr(cmap, f"_{key}") for key in ("bad", "under", "over"))
+        # A resampled colormap (plt.get_cmap(name, N)) with no *customized*
+        # extremes must render N flat bands through the ordinary heatmap path so
+        # a later plt.clim() still applies; only genuine set_under/over/bad
+        # customization needs the Python-baked truecolor branch below.
+        imshow_levels = _discrete_levels(cmap) if not truecolor and norm is None else None
+        if imshow_levels is not None and has_extremes:
+            default_extremes = (
+                getattr(cmap, "_under", None) is None
+                and getattr(cmap, "_over", None) is None
+                and getattr(cmap, "_bad", "transparent") in ("transparent", None)
+            )
+            if default_extremes:
+                has_extremes = False
+            else:
+                imshow_levels = None
         if not truecolor and norm is not None and callable(norm) and not has_extremes:
             mapped = np.ma.asarray(norm(grid), dtype=np.float64)
             cmap_callable = cmap if callable(cmap) else None
@@ -1683,6 +1745,8 @@ class Axes(PlotTypeMixin):
                 "extent": bounds,
             },
         )
+        if imshow_levels is not None:
+            entry["discrete_levels"] = imshow_levels
         image = AxesImage(self, entry)
         if clip_path is not None:
             image.set_clip_path(clip_path)
@@ -1807,7 +1871,7 @@ class Axes(PlotTypeMixin):
             style["coordinate_space"] = "figure_fraction"
         if style:
             akw["style"] = style
-        return Text(self, self._add("@text", {"args": (x, y, str(s)), "kwargs": akw}))
+        return Text(self, self._add("@text", {"args": (x, y, _plain_text(s)), "kwargs": akw}))
 
     def annotate(self, text: str, xy: tuple, xytext: Optional[tuple] = None, **kwargs: Any) -> Text:
         arrowprops = kwargs.pop("arrowprops", None)
@@ -1833,19 +1897,16 @@ class Axes(PlotTypeMixin):
             akw["anchor"] = {"left": "start", "center": "middle", "right": "end"}.get(
                 str(ha), "start"
             )
+        text_xy = xy
         if xytext is not None:
             if textcoords in {"offset points", "offset pixels"}:
                 scale = 4.0 / 3.0 if textcoords == "offset points" else 1.0
                 akw["dx"], akw["dy"] = float(xytext[0]) * scale, -float(xytext[1]) * scale
+            elif all(_is_number(v) for v in (*xytext, *xy)):
+                # matplotlib places the text AT xytext (data coordinates).
+                text_xy = (float(xytext[0]), float(xytext[1]))
             else:
-                akw["dx"] = (
-                    float(xytext[0] - xy[0]) if _is_number(xytext[0]) and _is_number(xy[0]) else 8.0
-                )
-                akw["dy"] = (
-                    float(xytext[1] - xy[1])
-                    if _is_number(xytext[1]) and _is_number(xy[1])
-                    else -8.0
-                )
+                akw["dx"], akw["dy"] = 8.0, -8.0
         style: dict[str, Any] = {}
         if xycoords is self.transAxes or xycoords == "axes fraction":
             style["coordinate_space"] = "axes_fraction"
@@ -1867,9 +1928,58 @@ class Axes(PlotTypeMixin):
             style["rotation"] = 90.0 if rotation == "vertical" else float(rotation)
         if style:
             akw["style"] = style
+        if arrowprops is not None and text_xy != xy:
+            if style.get("coordinate_space"):
+                raise not_implemented(
+                    "annotate(arrowprops=) outside data coordinates",
+                    "data-coordinate annotations",
+                )
+            if not all(_is_number(v) for v in (*text_xy, *xy)):
+                raise not_implemented(
+                    "annotate(arrowprops=) with non-numeric coordinates",
+                    "numeric data coordinates",
+                )
+            # Straight arrow from the text toward the point; arrowstyle and
+            # connectionstyle curves are approximated by this straight shaft.
+            shrink = float(arrowprops.get("shrink", 0.0))
+            sx0, sy0 = float(text_xy[0]), float(text_xy[1])
+            ex0, ey0 = float(xy[0]), float(xy[1])
+            if shrink:
+                dx_a, dy_a = ex0 - sx0, ey0 - sy0
+                sx0, sy0 = sx0 + shrink * dx_a, sy0 + shrink * dy_a
+                ex0, ey0 = ex0 - shrink * dx_a, ey0 - shrink * dy_a
+            fancy = "arrowstyle" not in arrowprops
+            arrow_color = resolve_color(
+                arrowprops.get("color")
+                or arrowprops.get("facecolor")
+                or arrowprops.get("edgecolor")
+                or "black"
+            )
+            self._add(
+                "@arrow",
+                {
+                    "args": (sx0, sy0, ex0, ey0),
+                    "kwargs": {
+                        "color": arrow_color,
+                        "width": float(
+                            arrowprops.get(
+                                "width",
+                                arrowprops.get(
+                                    "lw", arrowprops.get("linewidth", 3.0 if fancy else 1.5)
+                                ),
+                            )
+                        ),
+                        "style": {
+                            "head_size": float(arrowprops.get("headwidth", 12.0 if fancy else 8.0))
+                        },
+                    },
+                },
+            )
         return Text(
             self,
-            self._add("@text", {"args": (xy[0], xy[1], str(text)), "kwargs": akw}),
+            self._add(
+                "@text", {"args": (text_xy[0], text_xy[1], _plain_text(text)), "kwargs": akw}
+            ),
         )
 
     # -- axis config -----------------------------------------------------------
@@ -1934,7 +2044,7 @@ class Axes(PlotTypeMixin):
             else:
                 # matplotlib: xticklabels=[] hides labels but keeps the ticks.
                 props.pop("tick_labels", None)
-                props["tick_label_strategy"] = "none"
+                props["tick_label_strategy"] = "off"
         self._invalidate()
         return self
 
@@ -2807,7 +2917,7 @@ class Axes(PlotTypeMixin):
                     raise ValueError("tick_params() direction must be 'in', 'out', or 'inout'")
                 style["tick_direction"] = direction
             if label_visible is not None:
-                props["tick_label_strategy"] = None if label_visible else "none"
+                props["tick_label_strategy"] = None if label_visible else "off"
         self._invalidate()
 
     def set_xticks(
@@ -2831,7 +2941,7 @@ class Axes(PlotTypeMixin):
                 else:
                     props.pop("tick_labels", None)
         if labels is not None:
-            props["tick_labels"] = [str(value) for value in labels]
+            props["tick_labels"] = [_plain_text(value) for value in labels]
             if len(props["tick_labels"]) != len(props.get("tick_values", [])):
                 raise ValueError("labels must have the same length as ticks")
             # matplotlib: explicit labels install a FixedFormatter, displacing
@@ -2863,7 +2973,7 @@ class Axes(PlotTypeMixin):
                 else:
                     props.pop("tick_labels", None)
         if labels is not None:
-            props["tick_labels"] = [str(value) for value in labels]
+            props["tick_labels"] = [_plain_text(value) for value in labels]
             if len(props["tick_labels"]) != len(props.get("tick_values", [])):
                 raise ValueError("labels must have the same length as ticks")
             key = "y2" if self._y2_of is not None else "y"
@@ -2963,22 +3073,19 @@ class Axes(PlotTypeMixin):
     def legend(self, *args: Any, **kwargs: Any) -> None:
         host = self._y2_of or self
         if len(args) >= 2:
-            _handles, labels = args[:2]
-            for label in labels:
-                host._add(
-                    "scatter",
-                    {
-                        "x": [np.nan],
-                        "y": [np.nan],
-                        "kwargs": {
-                            "color": "#333333",
-                            "size": 8.0,
-                            "opacity": 1.0,
-                            "name": _plain_text(label),
-                            "symbol": "square",
-                        },
-                    },
-                )
+            # legend(handles, labels): relabel the artists the caller passed.
+            handles, labels = args[0], args[1]
+            for handle, label in zip(handles, labels, strict=False):
+                entry = getattr(handle, "_entry", None)
+                if entry is not None:
+                    entry.setdefault("kwargs", {})["name"] = _plain_text(label)
+        elif len(args) == 1:
+            # legend(labels): assign labels positionally to the plotted artists,
+            # skipping marker overlays that share their line's legend slot.
+            labels = args[0]
+            eligible = [entry for entry in host._entries if not entry.get("_legend_skip")]
+            for entry, label in zip(eligible, labels, strict=False):
+                entry.setdefault("kwargs", {})["name"] = _plain_text(label)
         host._legend = True
         loc = kwargs.pop("loc", rcParams["legend.loc"])
         ncols = kwargs.pop("ncols", kwargs.pop("ncol", 1))
@@ -3114,10 +3221,14 @@ class Axes(PlotTypeMixin):
         """Resolve a user locator/formatter into concrete tick props (in place)."""
         locator = self._tickers.get((key, "major_locator"))
         formatter = self._tickers.get((key, "major_formatter"))
-        if locator is None and formatter is None:
+        is_log = (
+            props.get("type_") == "log" or (self._scale_specs.get(key) or {}).get("name") == "log"
+        )
+        if locator is None and formatter is None and not is_log:
             return
         spec = self._scale_specs.get(key) or {"name": "linear"}
         lo, hi = self._ticker_view(key, props)
+        auto_log = False
         if locator is not None:
             ticks = np.asarray(locator.tick_values(lo, hi), dtype=float).reshape(-1)
             pad = (hi - lo) * 1e-9
@@ -3129,13 +3240,18 @@ class Axes(PlotTypeMixin):
         else:
             from ._ticker import LogLocator
 
-            auto = LogLocator() if props.get("type_") == "log" else AutoLocator()
+            auto = LogLocator() if is_log else AutoLocator()
             ticks = np.asarray(auto.tick_values(lo, hi), dtype=float).reshape(-1)
+            auto_log = is_log
         props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
         if formatter is not None:
             props["tick_labels"] = [
-                formatter(float(value), position) for position, value in enumerate(ticks)
+                _plain_text(formatter(float(value), position))
+                for position, value in enumerate(ticks)
             ]
+        elif auto_log:
+            # matplotlib's LogFormatter look: decades label as 10^k.
+            props["tick_labels"] = [_pow10_label(value) for value in ticks]
         elif spec.get("name") != "linear":
             props["tick_labels"] = [f"{value:g}" for value in ticks]
         else:
@@ -3153,11 +3269,27 @@ class Axes(PlotTypeMixin):
             kind = e["kind"]
             axis_kw = {"y_axis": e["y_axis"]} if e["y_axis"] != "y" else {}
             kw = e.get("kwargs", {})
+            name = kw.get("name")
+            if isinstance(name, str) and "$" in name:  # legend text carries mathtext
+                kw["name"] = _plain_text(name)
             if kind == "line":
                 children.append(fc.line(x=e["x"], y=e["y"], **kw, **axis_kw))
             elif kind == "scatter":
                 kw = dict(kw)
                 domain = kw.pop("domain", None)  # vmin/vmax → the color channel window
+                levels = e.get("discrete_levels")
+                if levels is not None and "colormap" in kw and not isinstance(kw.get("color"), str):
+                    color_vals = np.asarray(kw.get("color"), dtype=np.float64)
+                    dom = domain
+                    if dom is None:
+                        finite = color_vals[np.isfinite(color_vals)]
+                        dom = (
+                            (float(finite.min()), float(finite.max()))
+                            if finite.size
+                            else (0.0, 1.0)
+                        )
+                    kw["color"] = _quantize_to_levels(color_vals, dom, int(levels))
+                    domain = dom
                 if domain is not None:
                     kw["color_domain"] = (float(domain[0]), float(domain[1]))
                 children.append(fc.scatter(x=e["x"], y=e["y"], **kw, **axis_kw))
@@ -3168,11 +3300,29 @@ class Axes(PlotTypeMixin):
             elif kind == "histogram":
                 children.append(fc.histogram(values=e["values"], **kw, **axis_kw))
             elif kind == "heatmap":
-                children.append(fc.heatmap(z=e["z"], **kw, **axis_kw))
+                z = e["z"]
+                levels = e.get("discrete_levels")
+                if levels is not None:
+                    zarr = np.asarray(z, dtype=np.float64)
+                    if zarr.ndim == 2:
+                        kw = dict(kw)
+                        dom = kw.get("domain")
+                        if dom is None:
+                            finite = zarr[np.isfinite(zarr)]
+                            dom = (
+                                (float(finite.min()), float(finite.max()))
+                                if finite.size
+                                else (0.0, 1.0)
+                            )
+                        z = _quantize_to_levels(zarr, dom, int(levels))
+                        kw["domain"] = (float(dom[0]), float(dom[1]))
+                children.append(fc.heatmap(z=z, **kw, **axis_kw))
             elif kind == "@mark":
                 children.append(getattr(fc, e["factory"])(*e["args"], **kw, **axis_kw))
             elif kind == "@hline":
                 children.append(fc.hline(*e["args"], **kw))
+            elif kind == "@arrow":
+                children.append(fc.arrow(*e["args"], **kw))
             elif kind == "@vline":
                 children.append(fc.vline(*e["args"], **kw))
             elif kind == "@x_band":
@@ -3271,8 +3421,60 @@ class Axes(PlotTypeMixin):
             styles=self._chrome_styles,
         )
         if self._colorbar is not None:
-            self._chart.figure().colorbar_options = dict(self._colorbar)
+            figure = self._chart.figure()
+            options = dict(self._colorbar)
+            if options.pop("_autoscale", False):
+                derived = _colorbar_figure_domain(figure)
+                if derived is not None:
+                    options["domain"] = [derived[0], derived[1]]
+            figure.colorbar_options = options
         return self._chart
+
+
+def _discrete_levels(cmap: Any) -> Optional[int]:
+    """Number of quantization bands for a resampled colormap (``get_cmap(n, N)``).
+
+    Matplotlib's builtin continuous colormaps carry ``N == 256``; a smaller N
+    (e.g. ``plt.get_cmap('viridis', 6)``) requests N flat bands. Returns that
+    count only when it is a genuine down-sampling, else None (stay continuous).
+    """
+    n = getattr(cmap, "N", None)
+    if isinstance(n, (int, np.integer)) and 1 <= int(n) < 256:
+        return int(n)
+    return None
+
+
+def _quantize_to_levels(values: Any, domain: tuple[float, float], levels: int) -> np.ndarray:
+    """Snap values to the representative value of their band, so a later
+    linear colormap lookup over ``domain`` reproduces matplotlib's N discrete
+    bands. NaN is preserved (missing cells stay transparent)."""
+    v = np.asarray(values, dtype=np.float64)
+    lo, hi = float(domain[0]), float(domain[1])
+    span = (hi - lo) or 1.0
+    u = np.clip((v - lo) / span, 0.0, 1.0)
+    if levels <= 1:
+        q = np.zeros_like(u)
+    else:
+        q = np.minimum(np.floor(u * levels), levels - 1) / (levels - 1)
+    return lo + q * span
+
+
+def _colorbar_figure_domain(figure: Any) -> Optional[tuple[float, float]]:
+    """Value domain of the last color-mapped trace on a compiled figure.
+
+    Used to back a colorbar whose mappable computes its domain inside the mark
+    (e.g. hexbin counts), where it is not knowable when ``colorbar()`` runs.
+    """
+    for trace in reversed(getattr(figure, "traces", []) or []):
+        style = getattr(trace, "style", None) or {}
+        if style.get("role") == "heatmap" and style.get("domain") is not None:
+            lo, hi = style["domain"]
+            return (float(lo), float(hi))
+        color_ch = getattr(trace, "color_ch", None)
+        if color_ch is not None and color_ch.mode == "continuous" and color_ch.domain:
+            lo, hi = color_ch.domain
+            return (float(lo), float(hi))
+    return None
 
 
 def _is_number(v: Any) -> bool:
@@ -3425,8 +3627,26 @@ def _marker_symbol(marker: Any) -> str:
         return "circle"
 
 
+_SUPERSCRIPT_DIGITS = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
+
+
+def _pow10_label(value: float) -> str:
+    """Matplotlib's log-decade label: 10 with a unicode superscript exponent."""
+    exponent = np.log10(value) if value > 0 else np.nan
+    if not np.isfinite(exponent) or abs(exponent - round(exponent)) > 1e-9:
+        return f"{value:g}"
+    return "10" + str(round(float(exponent))).translate(_SUPERSCRIPT_DIGITS)
+
+
 def _plain_text(value: Any) -> str:
-    text = str(value).replace("$", "")
+    text = str(value)
+    converted = mathtext_to_unicode(text)
+    if converted != text:
+        return converted
+    if "$" not in text and "\\" not in text:
+        return text
+    # ASCII fallback for TeX outside the unicode subset — approximate, never raw.
+    text = text.replace("$", "")
     replacements = {
         "\\Delta": "Delta",
         "\\mu": "mu",
@@ -3492,6 +3712,24 @@ def _step_values(x: np.ndarray, y: np.ndarray, where: str) -> tuple[np.ndarray, 
         mids = (x[:-1] + x[1:]) * 0.5
         return np.concatenate(([x[0]], np.repeat(mids, 2), [x[-1]])), np.repeat(y, 2)
     raise ValueError("step must be 'pre', 'post', or 'mid'")
+
+
+def _plot_series_columns(x: Any, y: Any) -> list[tuple[Any, Any]]:
+    """Split a plot() operand pair into per-column 1-D series.
+
+    matplotlib draws one line per column of a 2-D operand (broadcasting a 1-D
+    partner), and each column consumes the next entry of the property cycle.
+    A purely 1-D pair yields a single series unchanged.
+    """
+    if np.ndim(x) < 2 and np.ndim(y) < 2:
+        return [(x, y)]
+    if np.ndim(x) == 1:
+        x = np.broadcast_to(np.asarray(x)[:, None], np.shape(y))
+    if np.ndim(y) == 1:
+        y = np.broadcast_to(np.asarray(y)[:, None], np.shape(x))
+    if x.shape != y.shape:
+        raise ValueError("2-D plot x and y must have matching shapes")
+    return [(x[:, i], y[:, i]) for i in range(x.shape[1])]
 
 
 def _iter_plot_groups(args: tuple) -> list[tuple[Any, Any, Optional[str]]]:

@@ -124,10 +124,32 @@ float fcMarkerSdf(vec2 d, int shape) {
     vec2 a = abs(d);
     return min(max(a.x - 0.17, a.y - 0.5), max(a.x - 0.5, a.y - 0.17));
   }
-  if (shape == 5) {                                                 // regular hexagon
-    const float k = 0.8660254;
-    vec2 p = abs(d);
-    return max(p.x - 0.5, p.y * 0.5 + p.x * k - 0.5);
+  if (shape == 5) {                                                 // regular hexagon (pointy top)
+    const vec3 k = vec3(-0.866025404, 0.5, 0.577350269);
+    vec2 p = abs(vec2(d.y, d.x));
+    p -= 2.0 * min(dot(k.xy, p), 0.0) * k.xy;
+    p -= vec2(clamp(p.x, -k.z * 0.5, k.z * 0.5), 0.5);
+    return length(p) * sign(p.y);
+  }
+  if (shape == 6) {                                                 // regular pentagon (apex up)
+    const vec3 k = vec3(0.809016994, 0.587785252, 0.726542528);
+    vec2 p = vec2(abs(d.x), -d.y);
+    p -= 2.0 * min(dot(vec2(-k.x, k.y), p), 0.0) * vec2(-k.x, k.y);
+    p -= 2.0 * min(dot(vec2( k.x, k.y), p), 0.0) * vec2( k.x, k.y);
+    p -= vec2(clamp(p.x, -k.z * 0.5, k.z * 0.5), 0.5);
+    return length(p) * sign(p.y);
+  }
+  if (shape == 7) {                                                 // five-pointed star (apex up)
+    const float rf = 0.45;
+    const vec2 k1 = vec2(0.809016994, -0.587785252);
+    const vec2 k2 = vec2(-k1.x, k1.y);
+    vec2 p = vec2(abs(d.x), -d.y);
+    p -= 2.0 * max(dot(k1, p), 0.0) * k1;
+    p -= 2.0 * max(dot(k2, p), 0.0) * k2;
+    p = vec2(abs(p.x), p.y - 0.5);
+    vec2 ba = rf * vec2(-k1.y, k1.x) - vec2(0.0, 1.0);
+    float h = clamp(dot(p, ba) / dot(ba, ba), 0.0, 0.5);
+    return length(p - ba * h) * sign(p.y * ba.x - p.x * ba.y);
   }
   if (shape == 3) {                                                 // triangle (apex up)
     const float k = 1.7320508;

@@ -1096,7 +1096,7 @@ class ChartView {
   // no color borders in the mark color (matches the rect family).
   _pointMarkStyle(g, t) {
     const s = t.style || {};
-    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5 }[s.symbol] || 0;
+    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7 }[s.symbol] || 0;
     g.pointStrokeWidth = Number(s.stroke_width) || 0;
     const markOpaque = [g.color[0], g.color[1], g.color[2], 1];
     g.pointStroke = s.stroke
@@ -2292,7 +2292,7 @@ class ChartView {
       ? axis.tick_label_strategy
       : this._axisStyleValue(axis, "tick_label_strategy");
     const value = String(raw || "auto").replace(/-/g, "_");
-    return ["auto", "hide", "rotate", "stagger", "none"].includes(value) ? value : "auto";
+    return ["auto", "hide", "rotate", "stagger", "none", "off"].includes(value) ? value : "auto";
   }
 
   _axisTickLabelAngle(axis) {
@@ -2363,6 +2363,7 @@ class ChartView {
     const withBase = labels.map((label) => ({ ...label, angle: baseAngle, row: 0 }));
     let strategy = this._axisTickLabelStrategy(axis);
     if (strategy === "none") return []; // hide every tick label (sparklines)
+    if (strategy === "off") return []; // labels only; grid/baselines stay (mpl shared axes)
     if (strategy === "auto") {
       if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap)) return withBase;
       if (dim === "x" && axis.kind === "category" && labels.length <= 16) strategy = "rotate";

@@ -715,6 +715,47 @@ fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
             let (ax, ay) = (px.abs(), py.abs());
             (ax - 0.34 * r).max(ay - r).min((ax - r).max(ay - 0.34 * r))
         }
+        5 => {
+            // regular hexagon, pointy top (IQ SDF, x/y swapped for a top vertex)
+            let (k0, k1, k2) = (-0.866_025_4_f32, 0.5_f32, 0.577_350_3_f32);
+            let mut p = (py.abs(), px.abs());
+            let m = (k0 * p.0 + k1 * p.1).min(0.0);
+            p = (p.0 - 2.0 * m * k0, p.1 - 2.0 * m * k1);
+            p = (p.0 - p.0.clamp(-k2 * r, k2 * r), p.1 - r);
+            (p.0 * p.0 + p.1 * p.1).sqrt() * p.1.signum()
+        }
+        6 => {
+            // regular pentagon, apex up (IQ SDF)
+            let (k0, k1, k2) = (0.809_017_f32, 0.587_785_25_f32, 0.726_542_5_f32);
+            let mut p = (px.abs(), -py); // flip y so the apex points up
+            let d1 = (-k0) * p.0 + k1 * p.1;
+            let m1 = d1.min(0.0);
+            p = (p.0 - 2.0 * m1 * (-k0), p.1 - 2.0 * m1 * k1);
+            let d2 = k0 * p.0 + k1 * p.1;
+            let m2 = d2.min(0.0);
+            p = (p.0 - 2.0 * m2 * k0, p.1 - 2.0 * m2 * k1);
+            p = (p.0 - p.0.clamp(-r * k2, r * k2), p.1 - r);
+            (p.0 * p.0 + p.1 * p.1).sqrt() * p.1.signum()
+        }
+        7 => {
+            // five-pointed star, apex up (IQ SDF)
+            let rf = 0.45_f32;
+            let (k1x, k1y) = (0.809_017_f32, -0.587_785_25_f32);
+            let (k2x, k2y) = (-k1x, k1y);
+            let mut p = (px.abs(), -py); // flip y so a point faces up
+            let d1 = k1x * p.0 + k1y * p.1;
+            let m1 = d1.max(0.0);
+            p = (p.0 - 2.0 * m1 * k1x, p.1 - 2.0 * m1 * k1y);
+            let d2 = k2x * p.0 + k2y * p.1;
+            let m2 = d2.max(0.0);
+            p = (p.0 - 2.0 * m2 * k2x, p.1 - 2.0 * m2 * k2y);
+            p = (p.0.abs(), p.1 - r);
+            let ba = (rf * -k1y - 0.0, rf * k1x - 1.0);
+            let h = (p.0 * ba.0 + p.1 * ba.1) / (ba.0 * ba.0 + ba.1 * ba.1);
+            let h = h.clamp(0.0, r);
+            let q = (p.0 - ba.0 * h, p.1 - ba.1 * h);
+            (q.0 * q.0 + q.1 * q.1).sqrt() * (p.1 * ba.0 - p.0 * ba.1).signum()
+        }
         _ => (px * px + py * py).sqrt() - r, // circle
     }
 }
@@ -766,7 +807,7 @@ fn point_u8_at(
     let stroke_alpha = stroke[3] as f32 / 255.0;
     let ext = r + sw + 1.0;
     let (bx0, by0, bx1, by1) = cv.bbox(cx - ext, cy - ext, cx + ext, cy + ext);
-    if sw <= 0.0 && !(1..=4).contains(&sym) {
+    if sw <= 0.0 && sym == 0 {
         // Stroke-free circle — the default mark and the overwhelming batch
         // case. Classify each pixel by squared distance first: fully outside
         // and fully covered pixels never pay the sqrt or the float coverage
@@ -1069,55 +1110,111 @@ fn blit_heatmap(
 
 // ---- text (baked glyph atlas) -----------------------------------------------
 
+/// Atlas row for a char: the contiguous ASCII block, then the sorted extras.
+fn glyph_index(ch: char) -> Option<usize> {
+    let code = ch as u32;
+    if (font::FIRST as u32..=font::LAST as u32).contains(&code) {
+        return Some((code - font::FIRST as u32) as usize);
+    }
+    let ascii = (font::LAST - font::FIRST + 1) as usize;
+    font::EXTRA_CODEPOINTS
+        .binary_search(&code)
+        .ok()
+        .map(|i| ascii + i)
+}
+
+/// High bit of the anchor byte requests 90°-CCW text (bottom-up y-axis titles).
+pub const TEXT_ROTATED: u8 = 0x80;
+
 fn text(cv: &mut Canvas, x: f32, y: f32, anchor: u8, size: f32, rgba: [f32; 4], s: &[u8]) {
+    let rotated = anchor & TEXT_ROTATED != 0;
+    let anchor = anchor & !TEXT_ROTATED;
     let scale = size / font::BASE_PX as f32;
+    let text = String::from_utf8_lossy(s);
     // Total advance for anchoring.
     let mut adv = 0.0f32;
-    for &b in s {
-        if (font::FIRST..=font::LAST).contains(&b) {
-            adv += font::GLYPHS[(b - font::FIRST) as usize].0 as f32;
+    for ch in text.chars() {
+        if let Some(i) = glyph_index(ch) {
+            adv += font::GLYPHS[i].0 as f32;
         }
     }
-    let mut penx = match anchor {
-        1 => x - adv * scale * 0.5,
-        2 => x - adv * scale,
-        _ => x,
+    // The pen walks +x for horizontal text, -y (upward) when rotated.
+    let (mut penx, mut peny) = if rotated {
+        (
+            x,
+            match anchor {
+                1 => y + adv * scale * 0.5,
+                2 => y + adv * scale,
+                _ => y,
+            },
+        )
+    } else {
+        (
+            match anchor {
+                1 => x - adv * scale * 0.5,
+                2 => x - adv * scale,
+                _ => x,
+            },
+            y,
+        )
     };
-    for &b in s {
-        if !(font::FIRST..=font::LAST).contains(&b) {
+    for ch in text.chars() {
+        let Some(i) = glyph_index(ch) else {
             continue;
-        }
-        let (advance, gw, gh, left, top, off, len) = font::GLYPHS[(b - font::FIRST) as usize];
+        };
+        let (advance, gw, gh, left, top, off, len) = font::GLYPHS[i];
         if gw > 0 && gh > 0 {
             let cov = &font::COVERAGE[off as usize..(off + len) as usize];
-            let gx = penx + left as f32 * scale;
-            let gy = y + top as f32 * scale;
-            let (dw, dh) = (gw as f32 * scale, gh as f32 * scale);
-            let (bx0, by0, bx1, by1) = cv.bbox(gx, gy, gx + dw, gy + dh);
-            for py in by0..by1 {
-                for px in bx0..bx1 {
-                    let u =
-                        ((px as f32 + 0.5 - gx) / dw * gw as f32 - 0.5).clamp(0.0, gw as f32 - 1.0);
-                    let vv =
-                        ((py as f32 + 0.5 - gy) / dh * gh as f32 - 0.5).clamp(0.0, gh as f32 - 1.0);
-                    let (x0, y0c) = (u.floor() as usize, vv.floor() as usize);
-                    let (x1, y1c) = (
-                        (x0 + 1).min(gw as usize - 1),
-                        (y0c + 1).min(gh as usize - 1),
-                    );
-                    let (fx, fy) = (u - x0 as f32, vv - y0c as f32);
-                    let sample = |sx: usize, sy: usize| cov[sy * gw as usize + sx] as f32 / 255.0;
-                    let c = sample(x0, y0c) * (1.0 - fx) * (1.0 - fy)
-                        + sample(x1, y0c) * fx * (1.0 - fy)
-                        + sample(x0, y1c) * (1.0 - fx) * fy
-                        + sample(x1, y1c) * fx * fy;
-                    if c > 0.0 {
-                        cv.blend(px, py, rgba, c);
+            let sample = |sx: usize, sy: usize| cov[sy * gw as usize + sx] as f32 / 255.0;
+            let bilinear = |u: f32, vv: f32| {
+                let u = u.clamp(0.0, gw as f32 - 1.0);
+                let vv = vv.clamp(0.0, gh as f32 - 1.0);
+                let (x0, y0c) = (u.floor() as usize, vv.floor() as usize);
+                let (x1, y1c) = ((x0 + 1).min(gw as usize - 1), (y0c + 1).min(gh as usize - 1));
+                let (fx, fy) = (u - x0 as f32, vv - y0c as f32);
+                sample(x0, y0c) * (1.0 - fx) * (1.0 - fy)
+                    + sample(x1, y0c) * fx * (1.0 - fy)
+                    + sample(x0, y1c) * (1.0 - fx) * fy
+                    + sample(x1, y1c) * fx * fy
+            };
+            if rotated {
+                // CCW: glyph +u (right) points up (-y), +v (down) points +x.
+                let gx = penx + top as f32 * scale;
+                let gy = peny - (left + gw) as f32 * scale;
+                let (dw, dh) = (gh as f32 * scale, gw as f32 * scale);
+                let (bx0, by0, bx1, by1) = cv.bbox(gx, gy, gx + dw, gy + dh);
+                for py in by0..by1 {
+                    for px in bx0..bx1 {
+                        let u = (gy + dh - (py as f32 + 0.5)) / dh * gw as f32 - 0.5;
+                        let vv = (px as f32 + 0.5 - gx) / dw * gh as f32 - 0.5;
+                        let c = bilinear(u, vv);
+                        if c > 0.0 {
+                            cv.blend(px, py, rgba, c);
+                        }
+                    }
+                }
+            } else {
+                let gx = penx + left as f32 * scale;
+                let gy = y + top as f32 * scale;
+                let (dw, dh) = (gw as f32 * scale, gh as f32 * scale);
+                let (bx0, by0, bx1, by1) = cv.bbox(gx, gy, gx + dw, gy + dh);
+                for py in by0..by1 {
+                    for px in bx0..bx1 {
+                        let u = (px as f32 + 0.5 - gx) / dw * gw as f32 - 0.5;
+                        let vv = (py as f32 + 0.5 - gy) / dh * gh as f32 - 0.5;
+                        let c = bilinear(u, vv);
+                        if c > 0.0 {
+                            cv.blend(px, py, rgba, c);
+                        }
                     }
                 }
             }
         }
-        penx += advance as f32 * scale;
+        if rotated {
+            peny -= advance as f32 * scale;
+        } else {
+            penx += advance as f32 * scale;
+        }
     }
 }
 

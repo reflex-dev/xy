@@ -42,6 +42,7 @@ COLORMAPS = (
     "pubu",
     "prgn",
     "rdgy",
+    "rdbu",
     "jet",
     "binary",
 )

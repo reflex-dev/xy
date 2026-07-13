@@ -111,5 +111,112 @@ passing cells.
   scale returns to linear; explicit `set_*ticks` under a nonlinear scale
   label the original data values.
 
+### Visual-parity audit — 2026-07-14 (PDSH ch4, image-level)
+
+The cell pass-rate benchmark (154/171 running) measures *execution*, not
+*appearance*. This audit rendered every PDSH cell to PNG under both engines
+with per-cell seeded RNG (identical data), and visually graded every image
+pair (matplotlib 3.11 reference). Result over the 105 comparable non-3-D
+pairs: **38 match (36%), 24 minor divergences (23%), 39 major (37%),
+4 missing** — running is far ahead of looking right. The majors cluster
+into a dozen root causes, recorded here as known defects until fixed:
+
+1. `legend(['a', 'b'], loc=...)` — an explicit label list renders no legend
+   at all (7 cells in the stylesheets notebook alone).
+2. `plot(x, y_2d)` does not advance the color cycle; every column draws in
+   the first cycle color.
+3. Count-based mappables (`hist2d`, `hexbin`, KDE rasters) label their
+   colorbar 0–1 instead of the count domain, colorbar tick labels print raw
+   floats (`6.01004e-07`) instead of nice steps, and zero-count bins render
+   empty where Matplotlib paints the 0-color field.
+4. `imshow(..., cmap='RdBu')` + `clim` can leave the raster on the default
+   colormap while the attached colorbar correctly shows RdBu — image and
+   legend disagree. Discrete colormaps (`get_cmap(name, N)`-style) render
+   as continuous gradients.
+5. Contours: no dashed-negative convention, auto level count runs 2–3× 
+   Matplotlib's, `contourf` bands smooth into gradients.
+6. **Mixed-engine measurement artifact (out of scope):** when seaborn —
+   which draws through real Matplotlib — owns the current figure,
+   module-level `plt.hist`/`axvline`/`axhline` draw onto xy's own figure,
+   so three seaborn-notebook cells count as passing while their plt-drawn
+   content lands elsewhere. This can only occur in a mixed environment:
+   xy replaces Matplotlib, and without Matplotlib installed seaborn fails
+   loudly at import. No runtime fallback onto Matplotlib will be added;
+   the benchmark's seaborn column is soft evidence only.
+7. `annotate` draws no arrow and ignores the `xytext` offset.
+8. A free-form `plt.axes([x, y, w, h])` inset next to a default axes
+   renders as an equal side-by-side panel even in PNG (contradicting the
+   documented free-form-rect exactness); the 04.08 `GridSpec` span pattern
+   and `sharex`/`sharey` inner tick-label suppression are also lost.
+9. Mathtext (`$...$`) is never rendered; tick/axis labels show the raw
+   source text.
+10. `MultipleLocator(π/2)` tick labels round to integers; log axes lack
+    `10^k` labels and draw gridlines at minor-tick positions.
+11. Silent fallbacks: `'p'` pentagon markers render as squares, hexbin as
+    sparse dots, `errorbar(fmt='.k')` bars stay the default blue, and
+    bubble-chart `alpha` is dropped.
+
+Systematic (graded minor, one deliberate decision pending): open L-frame
+instead of Matplotlib's boxed axes, gapped histogram bars, horizontal
+top-left y-label instead of rotated, coarser default tick density with
+trailing zeros dropped, legend swatches that do not reflect line/marker
+style, `frameon=False` ignored.
+
+Method and per-cell ledger: dual-engine PNG dump with ordinal-paired
+filenames, 14 independent image-comparison passes, every root cause
+re-verified by direct image inspection before recording.
+
+### Visual-parity fix rounds — 2026-07-14 (Matplotlib 3.11.0 reference)
+
+Closed the bulk of the audit above, verified by re-rendering every notebook
+and re-grading each image pair. Across the 12 comparable notebooks (84
+graded pairs), majors fell **33 → 8** and exact matches rose 25 → 34, with
+the audit's biggest single offenders (stylesheet legends, color cycle,
+colorbar domains) fully cleared.
+
+- Legends: explicit label lists (`legend(['a','b'], loc=...)`) render;
+  entries show line samples (color + dash) or the real marker glyph instead
+  of colored squares; `frameon=False` removes the box; handles+labels form
+  relabels without phantom traces.
+- Color: `plot(x, y_2d)` advances the prop cycle per column. Every colormap
+  stop table is now sampled exactly from Matplotlib 3.11 (plasma/inferno/
+  magma/rainbow/turbo/cividis/coolwarm had drifted up to 128 channel levels;
+  plasma's padded tail merged discrete bands), and `RdBu` is the true
+  ColorBrewer table instead of a coolwarm alias. Count-based mappables
+  (hist2d/hexbin) label colorbars with real count domains; colorbar ticks
+  use nice steps; hist2d zero-count bins paint the colormap floor
+  (NaN stays transparent — the ABI smoke expectation moved with it).
+  imshow honors reversed/`_r` colormaps and post-hoc `clim`. Discrete
+  N-level colormaps quantize both marks and colorbar into N bands.
+- Contours: dashed-negative convention for single-color contours,
+  Matplotlib's auto level count, piecewise-constant `contourf` bands.
+- Markers: real pentagon/hexagon/star SDFs in the native rasterizer +
+  SVG/GL equivalents; fmt-string markers keep their shape and fill.
+- Errorbars: `fmt`/`color=` reach markers and bars independently of
+  `ecolor` (a first-round regression caught by the re-grade and fixed).
+- Layout: free-form axes rects survive next to default axes in PNG (insets
+  render in place); `subplots(sharex=/sharey=)` accepts 'all'/'col'/'row',
+  unions domains per group, and hides inner tick labels via the new
+  `tick_label_strategy="off"` (labels only — grid, baselines and axis
+  titles stay; `"none"` keeps its silence-everything sparkline meaning).
+- Text: tick labels keep locator-step precision (`MultipleLocator(π/2)` →
+  1.57/3.14…); log axes label decades as 10ᵏ and grid majors only; a
+  bounded TeX-subset → unicode converter (`_mathtext.py`) feeds every shim
+  text path (labels, titles, ticks, legends, colorbar labels, annotations);
+  the native rasterizer's baked atlas gained greek/super-subscript/math
+  glyphs with a UTF-8 text wire (ABI 32 → 33) and rotated y-axis titles.
+- Annotate: `xytext` places the text (data coords) and `arrowprops` draws a
+  real arrow (straight shaft + filled head, `shrink` honored) in PNG/SVG;
+  curved connectionstyles are approximated by the straight shaft.
+- scatter `s=` keeps Matplotlib's absolute area semantics (size arrays no
+  longer compress into the engine's relative 2–18 px band).
+
+Remaining visual boundaries after this round (all loud or documented):
+marker-variety fidelity for triangle/x variants, contour inline-label
+placement density, hexbin's true tessellation, `subplots_adjust` spacing
+(currently ignored — to be made loud or honored), `hist(orientation=
+'horizontal')`, tick-density/trailing-zero formatting vs Matplotlib's
+defaults, legend loc='best' avoidance, and the boxed-axes frame default.
+
 Future entries must identify the Matplotlib release/revision, inventory
 additions or removals, and any compatibility-level changes.

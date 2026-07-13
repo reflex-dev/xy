@@ -2752,12 +2752,14 @@ pub fn heatmap_rgba_into(
 /// drift in rounding, missing-value, or alpha behavior.
 pub(crate) fn heatmap_color(value: f64, stops: &[[u8; 3]], alpha: u8) -> [u8; 4] {
     debug_assert!(!stops.is_empty());
-    let t = ((value * 255.0 - 1.0) / 254.0).clamp(0.0, 1.0);
-    let mut color = colormap_color(t, stops, alpha);
-    if value <= 0.0 {
-        color[3] = 0;
+    // Only genuinely missing cells (NaN, e.g. masked/cmin-clipped bins) are
+    // transparent. A real in-domain value of 0 must paint the colormap's floor
+    // color, matching Matplotlib's hist2d/imshow which fill the whole extent.
+    if value.is_nan() {
+        return [0, 0, 0, 0];
     }
-    color
+    let t = ((value * 255.0 - 1.0) / 254.0).clamp(0.0, 1.0);
+    colormap_color(t, stops, alpha)
 }
 
 /// Evenly spaced color-stop interpolation for a normalized scalar. Shared by

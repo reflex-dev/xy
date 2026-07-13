@@ -56,7 +56,11 @@ def test_pyplot_legend_location_and_columns_reach_render_spec() -> None:
     ax.bar([0, 1], [10, 20], label="values")
     ax.legend(loc="upper left", ncols=3)
     spec, _ = ax._build_chart(640, 480).figure().build_payload()
-    assert spec["legend"] == {"loc": "upper left", "ncols": 3}
+    assert spec["legend"]["loc"] == "upper left"
+    assert spec["legend"]["ncols"] == 3
+    # Frame styling now rides along so the static-export legend can honor
+    # frameon/facecolor/edgecolor (previously only the DOM legend saw it).
+    assert "style" in spec["legend"]
 
 
 def test_filled_stairs_use_seamless_bins_and_hatches_are_not_dropped() -> None:

@@ -22,7 +22,7 @@ import numpy as np
 
 from ._axes import Axes
 from ._colors import LinearSegmentedColormap, ListedColormap
-from ._mplfig import Figure, GridSpec, apply_sharing, make_axes_grid
+from ._mplfig import Figure, GridSpec
 from ._rc import _PropCycle, rc, rc_context, rcdefaults, rcParams
 from ._state import all_figures, close, figlabels, fignum_exists, fignums, figure, gca, gcf, sca
 from ._ticker import (
@@ -218,18 +218,22 @@ def subplots(
     height_ratios = kwargs.pop("height_ratios", None)
     gridspec_kw = kwargs.pop("gridspec_kw", None) or {}
     subplot_kw = kwargs.pop("subplot_kw", None) or {}
-    width_ratios = gridspec_kw.get("width_ratios", width_ratios)
-    height_ratios = gridspec_kw.get("height_ratios", height_ratios)
     fig = figure(figsize=figsize, dpi=dpi)
     if fig._axes and any(ax._entries for ax in fig._axes):
         fig = figure(None, figsize=figsize, dpi=dpi)  # fresh figure, mpl semantics
-    axes = make_axes_grid(fig, nrows, ncols, squeeze=squeeze)
+    axes = fig.subplots(
+        nrows,
+        ncols,
+        sharex=sharex,
+        sharey=sharey,
+        squeeze=squeeze,
+        width_ratios=width_ratios,
+        height_ratios=height_ratios,
+        gridspec_kw=gridspec_kw,
+    )
     if subplot_kw:
         for ax in np.atleast_1d(np.asarray(axes, dtype=object)).ravel():
             ax.set(**subplot_kw)
-    fig._width_ratios = None if width_ratios is None else tuple(map(float, width_ratios))
-    fig._height_ratios = None if height_ratios is None else tuple(map(float, height_ratios))
-    apply_sharing(fig, sharex, sharey)
     return fig, axes
 
 

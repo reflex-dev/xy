@@ -63,8 +63,12 @@ def test_annotate_preserves_arrow_bbox_alignment_rotation_and_font_style():
     assert kwargs["arrowprops"] == {"arrowstyle": "->", "color": "red"}
     assert kwargs["bbox"] == {"boxstyle": "round", "facecolor": "white"}
     assert kwargs["anchor"] == "end"
-    assert kwargs["dx"] == 4.0
-    assert kwargs["dy"] == 4.0
+    # matplotlib semantics: the text sits AT xytext (data coords), and the
+    # arrowprops materialize an @arrow entry pointing back at xy.
+    assert note._entry["args"][:2] == (5.0, 6.0)
+    arrow = next(e for e in ax._entries if e["kind"] == "@arrow")
+    assert arrow["args"] == (5.0, 6.0, 1.0, 2.0)
+    assert arrow["kwargs"]["color"] == "red"
     assert kwargs["style"] == {
         "font_size": 9.0,
         "vertical_align": "bottom",

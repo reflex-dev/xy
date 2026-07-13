@@ -12,14 +12,26 @@ DejaVuSans.ttf, both in the `bench`/dev extra). Commit the regenerated
 `src/font.rs`.
 """
 
+# ruff: noqa: RUF001 — the EXTRA glyph list is deliberately unicode.
 from __future__ import annotations
 
 from pathlib import Path
 
 from PIL import Image, ImageFont
 
-# Printable ASCII. Axis labels/titles/legends stay within this set.
+# Printable ASCII. Axis labels/titles/legends mostly stay within this set.
 FIRST, LAST = 0x20, 0x7E
+# Extra codepoints for the pyplot shim's TeX-subset → unicode conversion
+# (greek, super/subscripts, math operators) plus typography mpl emits (−, µ).
+EXTRA = sorted(
+    set(
+        "αβγδεζηθικλμνξοπρστυφχψω"
+        "ΓΔΘΛΞΠΣΥΦΨΩ"
+        "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ"
+        "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₕᵢₖₗₘₙₒₚᵣₛₜᵤᵥₓ"
+        "×·±∓≤≥≠≈∞√°→←∂∇∫∝∈−–—‘’“”…µ"
+    )
+)
 PX = 16  # render size; runtime scales this coverage bitmap to the requested size.
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "src" / "font.rs"
@@ -38,7 +50,8 @@ def main() -> None:
     cell_h = ascent + descent
 
     glyphs = []  # (advance, w, h, left, top_from_baseline, coverage bytes)
-    for code in range(FIRST, LAST + 1):
+    codepoints = [*range(FIRST, LAST + 1), *(ord(ch) for ch in EXTRA)]
+    for code in codepoints:
         ch = chr(code)
         # Advance width (horizontal pen movement).
         advance = round(face.getlength(ch))
@@ -81,6 +94,11 @@ def _emit(cell_h: int, ascent: int, blob: bytearray, records: list) -> None:
         f"pub const BASE_PX: i32 = {PX};",
         f"pub const CELL_H: i32 = {cell_h};",
         f"pub const ASCENT: i32 = {ascent};",
+        "",
+        "/// Codepoints of the non-ASCII glyphs, sorted; GLYPHS row = 95 + index.",
+        f"pub static EXTRA_CODEPOINTS: [u32; {len(EXTRA)}] = [",
+        "    " + ", ".join(str(ord(ch)) for ch in EXTRA) + ",",
+        "];",
         "",
         "/// Per-glyph metrics at BASE_PX: (advance, w, h, left, top, cov_off, cov_len).",
         "/// `top` is the pixel offset of the glyph's top edge below the baseline",

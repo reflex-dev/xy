@@ -29,210 +29,123 @@ from .config import DEFAULT_PALETTE
 
 # Mirrors js/src/10_colormaps.js COLORMAP_STOPS (§36) — test-guarded.
 COLORMAP_STOPS: dict[str, list[tuple[int, int, int]]] = {
+    "binary": [(255, 255, 255), (0, 0, 0)],
+    "gray": [
+        (0, 0, 0),
+        (25, 25, 25),
+        (51, 51, 51),
+        (76, 76, 76),
+        (102, 102, 102),
+        (128, 128, 128),
+        (153, 153, 153),
+        (179, 179, 179),
+        (204, 204, 204),
+        (230, 230, 230),
+        (255, 255, 255),
+    ],
     "viridis": [
         (68, 1, 84),
-        (72, 40, 120),
-        (62, 74, 137),
-        (49, 104, 142),
-        (38, 130, 142),
-        (31, 158, 137),
-        (53, 183, 121),
-        (110, 206, 88),
-        (181, 222, 43),
+        (72, 36, 117),
+        (65, 68, 135),
+        (53, 95, 141),
+        (42, 120, 142),
+        (33, 145, 140),
+        (34, 168, 132),
+        (68, 191, 112),
+        (122, 209, 81),
+        (189, 223, 38),
         (253, 231, 37),
-    ],
-    "magma": [
-        (0, 0, 4),
-        (28, 16, 68),
-        (79, 18, 123),
-        (129, 37, 129),
-        (181, 54, 122),
-        (229, 80, 100),
-        (251, 135, 97),
-        (254, 194, 135),
-        (252, 253, 191),
-        (252, 253, 191),
     ],
     "plasma": [
         (13, 8, 135),
-        (84, 2, 163),
-        (139, 10, 165),
-        (185, 50, 137),
-        (219, 92, 104),
-        (244, 136, 73),
-        (254, 188, 43),
-        (240, 249, 33),
-        (240, 249, 33),
+        (65, 4, 157),
+        (106, 0, 168),
+        (143, 13, 164),
+        (177, 42, 144),
+        (204, 71, 120),
+        (225, 100, 98),
+        (242, 132, 75),
+        (252, 166, 54),
+        (252, 206, 37),
         (240, 249, 33),
     ],
     "inferno": [
         (0, 0, 4),
-        (31, 12, 72),
-        (85, 15, 109),
-        (136, 34, 106),
-        (186, 54, 85),
-        (227, 89, 51),
-        (249, 140, 10),
-        (249, 201, 50),
+        (22, 11, 57),
+        (66, 10, 104),
+        (106, 23, 110),
+        (147, 38, 103),
+        (188, 55, 84),
+        (221, 81, 58),
+        (243, 120, 25),
+        (252, 165, 10),
+        (246, 215, 70),
         (252, 255, 164),
-        (252, 255, 164),
+    ],
+    "magma": [
+        (0, 0, 4),
+        (20, 14, 54),
+        (59, 15, 112),
+        (100, 26, 128),
+        (140, 41, 129),
+        (183, 55, 121),
+        (222, 73, 104),
+        (247, 112, 92),
+        (254, 159, 109),
+        (254, 207, 146),
+        (252, 253, 191),
     ],
     "cividis": [
-        (0, 32, 76),
-        (0, 42, 102),
-        (39, 63, 108),
-        (72, 85, 115),
-        (106, 109, 120),
-        (143, 133, 118),
-        (181, 159, 105),
-        (223, 187, 82),
-        (253, 217, 63),
-        (255, 233, 69),
-    ],
-    "gray": [
-        (0, 0, 0),
-        (28, 28, 28),
-        (57, 57, 57),
-        (85, 85, 85),
-        (113, 113, 113),
-        (142, 142, 142),
-        (170, 170, 170),
-        (198, 198, 198),
-        (227, 227, 227),
-        (255, 255, 255),
-    ],
-    "turbo": [
-        (48, 18, 59),
-        (70, 107, 227),
-        (40, 187, 226),
-        (61, 242, 148),
-        (161, 253, 60),
-        (232, 216, 33),
-        (253, 149, 35),
-        (225, 66, 13),
-        (153, 15, 4),
-        (122, 4, 3),
+        (0, 34, 78),
+        (8, 51, 112),
+        (53, 69, 108),
+        (79, 87, 108),
+        (102, 105, 112),
+        (125, 124, 120),
+        (148, 142, 119),
+        (174, 163, 113),
+        (200, 184, 102),
+        (229, 207, 82),
+        (254, 232, 56),
     ],
     "coolwarm": [
         (59, 76, 192),
-        (87, 117, 211),
-        (119, 154, 231),
-        (157, 185, 243),
-        (197, 209, 246),
+        (89, 119, 227),
+        (123, 159, 249),
+        (158, 190, 255),
+        (192, 212, 245),
         (221, 220, 220),
-        (242, 196, 174),
-        (237, 158, 130),
-        (214, 96, 77),
+        (242, 203, 183),
+        (247, 172, 142),
+        (238, 132, 104),
+        (214, 82, 68),
         (180, 4, 38),
     ],
-    "blues": [
-        (247, 251, 255),
-        (222, 235, 247),
-        (198, 219, 239),
-        (158, 202, 225),
-        (107, 174, 214),
-        (66, 146, 198),
-        (33, 113, 181),
-        (8, 81, 156),
-        (8, 48, 107),
-        (8, 48, 107),
-    ],
-    "rdylgn": [
-        (165, 0, 38),
-        (215, 48, 39),
-        (244, 109, 67),
-        (253, 174, 97),
-        (254, 224, 139),
-        (217, 239, 139),
-        (166, 217, 106),
-        (102, 189, 99),
-        (26, 152, 80),
-        (0, 104, 55),
+    "turbo": [
+        (48, 18, 59),
+        (69, 89, 203),
+        (62, 155, 254),
+        (25, 213, 205),
+        (70, 248, 132),
+        (164, 252, 60),
+        (225, 221, 55),
+        (254, 164, 49),
+        (240, 91, 18),
+        (195, 37, 3),
+        (122, 4, 3),
     ],
     "rainbow": [
         (128, 0, 255),
-        (57, 88, 255),
-        (0, 180, 235),
-        (0, 235, 176),
-        (73, 255, 104),
-        (176, 235, 38),
-        (235, 180, 0),
-        (255, 88, 0),
-        (235, 0, 57),
+        (78, 77, 252),
+        (25, 150, 243),
+        (24, 205, 228),
+        (77, 243, 206),
+        (128, 255, 180),
+        (178, 243, 150),
+        (230, 205, 115),
+        (255, 150, 79),
+        (255, 77, 39),
         (255, 0, 0),
-    ],
-    "spectral": [
-        (158, 1, 66),
-        (213, 62, 79),
-        (244, 109, 67),
-        (253, 174, 97),
-        (254, 224, 139),
-        (230, 245, 152),
-        (171, 221, 164),
-        (102, 194, 165),
-        (50, 136, 189),
-        (94, 79, 162),
-    ],
-    "piyg": [
-        (142, 1, 82),
-        (197, 27, 125),
-        (222, 119, 174),
-        (241, 182, 218),
-        (253, 224, 239),
-        (247, 247, 247),
-        (230, 245, 208),
-        (184, 225, 134),
-        (127, 188, 65),
-        (77, 146, 33),
-        (39, 100, 25),
-    ],
-    "purples": [
-        (252, 251, 253),
-        (239, 237, 245),
-        (218, 218, 235),
-        (188, 189, 220),
-        (158, 154, 200),
-        (128, 125, 186),
-        (106, 81, 163),
-        (84, 39, 143),
-        (63, 0, 125),
-    ],
-    "pubu": [
-        (255, 247, 251),
-        (236, 231, 242),
-        (208, 209, 230),
-        (166, 189, 219),
-        (116, 169, 207),
-        (54, 144, 192),
-        (5, 112, 176),
-        (4, 90, 141),
-        (2, 56, 88),
-    ],
-    "prgn": [
-        (64, 0, 75),
-        (118, 42, 131),
-        (153, 112, 171),
-        (194, 165, 207),
-        (231, 212, 232),
-        (247, 247, 247),
-        (217, 240, 211),
-        (166, 219, 160),
-        (90, 174, 97),
-        (27, 120, 55),
-        (0, 68, 27),
-    ],
-    "rdgy": [
-        (103, 0, 31),
-        (177, 24, 43),
-        (214, 96, 77),
-        (243, 164, 129),
-        (253, 219, 199),
-        (254, 254, 254),
-        (224, 224, 224),
-        (185, 185, 185),
-        (135, 135, 135),
-        (76, 76, 76),
-        (26, 26, 26),
     ],
     "jet": [
         (0, 0, 128),
@@ -247,7 +160,123 @@ COLORMAP_STOPS: dict[str, list[tuple[int, int, int]]] = {
         (241, 8, 0),
         (128, 0, 0),
     ],
-    "binary": [(255, 255, 255), (0, 0, 0)],
+    "rdgy": [
+        (103, 0, 31),
+        (177, 24, 43),
+        (214, 96, 77),
+        (243, 164, 129),
+        (253, 219, 199),
+        (254, 254, 254),
+        (224, 224, 224),
+        (185, 185, 185),
+        (135, 135, 135),
+        (76, 76, 76),
+        (26, 26, 26),
+    ],
+    "rdbu": [
+        (103, 0, 31),
+        (177, 24, 43),
+        (214, 96, 77),
+        (243, 164, 129),
+        (253, 219, 199),
+        (246, 247, 247),
+        (209, 229, 240),
+        (144, 196, 221),
+        (67, 147, 195),
+        (32, 101, 171),
+        (5, 48, 97),
+    ],
+    "blues": [
+        (247, 251, 255),
+        (227, 238, 249),
+        (208, 225, 242),
+        (183, 212, 234),
+        (148, 196, 223),
+        (106, 174, 214),
+        (74, 152, 201),
+        (46, 126, 188),
+        (23, 100, 171),
+        (8, 74, 145),
+        (8, 48, 107),
+    ],
+    "purples": [
+        (252, 251, 253),
+        (242, 240, 247),
+        (226, 226, 239),
+        (206, 207, 229),
+        (182, 182, 216),
+        (158, 154, 200),
+        (134, 131, 189),
+        (114, 98, 172),
+        (97, 64, 155),
+        (79, 31, 139),
+        (63, 0, 125),
+    ],
+    "pubu": [
+        (255, 247, 251),
+        (240, 234, 244),
+        (219, 218, 235),
+        (192, 201, 226),
+        (156, 185, 217),
+        (115, 169, 207),
+        (66, 149, 195),
+        (24, 124, 182),
+        (5, 103, 162),
+        (4, 83, 130),
+        (2, 56, 88),
+    ],
+    "piyg": [
+        (142, 1, 82),
+        (196, 26, 124),
+        (222, 119, 174),
+        (241, 181, 217),
+        (253, 224, 239),
+        (247, 247, 246),
+        (230, 245, 208),
+        (183, 224, 133),
+        (127, 188, 65),
+        (76, 145, 33),
+        (39, 100, 25),
+    ],
+    "prgn": [
+        (64, 0, 75),
+        (117, 41, 130),
+        (153, 112, 171),
+        (193, 164, 206),
+        (231, 212, 232),
+        (246, 247, 246),
+        (217, 240, 211),
+        (165, 218, 159),
+        (90, 174, 97),
+        (26, 119, 54),
+        (0, 68, 27),
+    ],
+    "rdylgn": [
+        (165, 0, 38),
+        (214, 47, 39),
+        (244, 109, 67),
+        (253, 173, 96),
+        (254, 224, 139),
+        (254, 255, 190),
+        (217, 239, 139),
+        (165, 216, 106),
+        (102, 189, 99),
+        (25, 151, 80),
+        (0, 104, 55),
+    ],
+    "spectral": [
+        (158, 1, 66),
+        (212, 61, 79),
+        (244, 109, 67),
+        (253, 173, 96),
+        (254, 224, 139),
+        (255, 255, 190),
+        (230, 245, 152),
+        (170, 220, 164),
+        (102, 194, 165),
+        (51, 135, 188),
+        (94, 79, 162),
+    ],
 }
 
 # Light-theme chrome colors (the client derives these from currentColor).
@@ -413,6 +442,10 @@ def _fmt_linear(v: float, step: float) -> str:
     if av >= 1e6 or av < 1e-4:
         return f"{v:.1e}".replace("e+0", "e").replace("e-0", "e-").replace("e+", "e")
     dec = max(0, -int(np.floor(np.log10(step))) + (1 if step < 1 else 0))
+    # A non-nice step (pi/2, 0.3333…) needs enough decimals to keep adjacent
+    # ticks distinct; widen until the step itself round-trips at that precision.
+    while dec < 8 and abs(round(step, dec) - step) > step / 1000.0:
+        dec += 1
     s = f"{v:.{min(dec, 8)}f}"
     if "." in s:
         s = s.rstrip("0").rstrip(".")
@@ -690,7 +723,29 @@ _SYMBOL_BUILDERS = {
         f"H {_num(cx - 0.34 * r)} V {_num(cy + 0.34 * r)} H {_num(cx - r)} V {_num(cy - 0.34 * r)} "
         f'H {_num(cx - 0.34 * r)} Z"'
     ),
+    "pentagon": lambda cx, cy, r: _regular_polygon_path(cx, cy, r, 5, -90.0),
+    "hexagon": lambda cx, cy, r: _regular_polygon_path(cx, cy, r, 6, -90.0),
+    "star": lambda cx, cy, r: _star_path(cx, cy, r, 5, 0.45, -90.0),
 }
+
+
+def _regular_polygon_path(cx: float, cy: float, r: float, n: int, start_deg: float) -> str:
+    pts = []
+    for i in range(n):
+        theta = np.radians(start_deg + i * 360.0 / n)
+        pts.append((cx + r * np.cos(theta), cy + r * np.sin(theta)))
+    d = "M " + " L ".join(f"{_num(px)} {_num(py)}" for px, py in pts)
+    return f'<path d="{d} Z"'
+
+
+def _star_path(cx: float, cy: float, r: float, points: int, inner: float, start_deg: float) -> str:
+    pts = []
+    for i in range(points * 2):
+        radius = r if i % 2 == 0 else r * inner
+        theta = np.radians(start_deg + i * 180.0 / points)
+        pts.append((cx + radius * np.cos(theta), cy + radius * np.sin(theta)))
+    d = "M " + " L ".join(f"{_num(px)} {_num(py)}" for px, py in pts)
+    return f'<path d="{d} Z"'
 
 
 def _dash_attr(style: dict[str, Any]) -> str:
@@ -787,8 +842,12 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     grid_color = escape(_css(dom_style.get("--chart-grid"), _GRID))
     grid: list[str] = []
     labels: list[str] = []
+    # "none" silences the whole axis chrome (sparklines); "off" hides only the
+    # label text and keeps grid, baselines and the axis title (mpl shared axes).
     hide_x = xa.get("tick_label_strategy") == "none"
     hide_y = ya.get("tick_label_strategy") == "none"
+    hide_x_labels = hide_x or xa.get("tick_label_strategy") == "off"
+    hide_y_labels = hide_y or ya.get("tick_label_strategy") == "off"
     for v in xt:
         if hide_x:
             break
@@ -805,14 +864,14 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             f'<line x1="{_num(plot["x"])}" y1="{_num(py)}" x2="{_num(plot["x"] + plot["w"])}" '
             f'y2="{_num(py)}" stroke="{grid_color}"/>'
         )
-    if not hide_x:
+    if not hide_x_labels:
         for v in xlab:
             tick_y = plot["y"] - 7 if xa.get("side") == "top" else plot["y"] + plot["h"] + 16
             labels.append(
                 f'<text x="{_num(float(sx(v)))}" y="{_num(tick_y)}" '
                 f'text-anchor="middle">{escape(_tick_text(xa, v, xstep))}</text>'
             )
-    if not hide_y:
+    if not hide_y_labels:
         for v in ylab:
             labels.append(
                 f'<text x="{_num(plot["x"] - 8)}" y="{_num(float(sy(v)) + 4)}" '
@@ -1000,6 +1059,33 @@ def _annotation_svg(annotations, sx, sy, plot, width, height):
                 f'<rect x="{_num(x0)}" y="{_num(y0)}" width="{_num(x1 - x0)}" '
                 f'height="{_num(y1 - y0)}" fill="{color}" fill-opacity="{_num(float(style.get("opacity", 0.14)))}"/>'
             )
+        elif kind == "arrow":
+            x0, y0 = float(sx(float(ann["x0"]))), float(sy(float(ann["y0"])))
+            x1, y1 = float(sx(float(ann["x1"]))), float(sy(float(ann["y1"])))
+            if all(np.isfinite(v) for v in (x0, y0, x1, y1)):
+                angle = np.arctan2(y1 - y0, x1 - x0)
+                head = max(7.0, float(style.get("head_size", 8.0)))
+                wings = (
+                    (
+                        x1 - head * float(np.cos(angle - np.pi / 6)),
+                        y1 - head * float(np.sin(angle - np.pi / 6)),
+                    ),
+                    (
+                        x1 - head * float(np.cos(angle + np.pi / 6)),
+                        y1 - head * float(np.sin(angle + np.pi / 6)),
+                    ),
+                )
+                marks.append(
+                    f'<line x1="{_num(x0)}" y1="{_num(y0)}" x2="{_num(x1)}" y2="{_num(y1)}" '
+                    f'stroke="{color}" stroke-width="{_num(max(0.5, float(style.get("width", 1.5))))}" '
+                    f'stroke-opacity="{_num(opacity)}"{_dash_attr(style)}/>'
+                )
+                marks.append(
+                    f'<polygon points="{_num(x1)},{_num(y1)} '
+                    f"{_num(wings[0][0])},{_num(wings[0][1])} "
+                    f'{_num(wings[1][0])},{_num(wings[1][1])}" '
+                    f'fill="{color}" fill-opacity="{_num(opacity)}"/>'
+                )
         if kind == "text" and ann.get("text"):
             x, y = float(ann.get("x", 0.0)), float(ann.get("y", 0.0))
             space = style.get("coordinate_space")
@@ -1054,8 +1140,10 @@ def _segment_marks(
         colors = [palette[code % len(palette)] for code in codes]
     else:
         colors = [color] * len(x0)
-    suffix = f'stroke-width="{_num(width)}" fill="none" stroke-linecap="round"' + (
-        f' stroke-opacity="{_num(op)}"' if op < 1 else ""
+    suffix = (
+        f'stroke-width="{_num(width)}" fill="none" stroke-linecap="round"'
+        + (f' stroke-opacity="{_num(op)}"' if op < 1 else "")
+        + _dash_attr(style)
     )
     return "".join(
         f'<line x1="{_num(float(sx(x0[i])))}" y1="{_num(float(sy(y0[i])))}" '
@@ -1301,20 +1389,27 @@ def _heatmap_image(hm: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, st
     return _grid_image(w, h, rgba, hm["x_range"], hm["y_range"], sx, sy)
 
 
+# Trace kinds whose legend entry is a short line sample rather than a marker
+# glyph or filled patch (mirrors _raster._LEGEND_LINE_KINDS).
+_LEGEND_LINE_KINDS = frozenset({"line", "segments", "step", "stairs", "errorbar"})
+
+
 def _legend(named: list[dict], plot: dict, options: dict) -> str:
     rows = []
-    pad, swatch, line_h = 8, 10, 16
+    pad, handle, gap, line_h = 8, 20, 5, 16
     ncols = min(len(named), max(1, int(options.get("ncols", 1))))
     nrows = (len(named) + ncols - 1) // ncols
-    cell_w = max(len(str(t["name"])) for t in named) * 6.2 + swatch + 2 * pad
+    cell_w = max(len(str(t["name"])) for t in named) * 6.2 + handle + gap + 2 * pad
     box_w, box_h = ncols * cell_w + pad, nrows * line_h + pad
     loc = options.get("loc") or "upper right"
     x = plot["x"] + 6 if "left" in loc else plot["x"] + plot["w"] - box_w - 6
     y = plot["y"] + plot["h"] - box_h - 6 if "lower" in loc else plot["y"] + 6
-    rows.append(
-        f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(box_w)}" height="{_num(box_h)}" '
-        f'rx="4" fill="rgba(128,128,128,0.08)"/>'
-    )
+    style_opts = options.get("style") or {}
+    if style_opts.get("background") != "transparent":
+        rows.append(
+            f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(box_w)}" height="{_num(box_h)}" '
+            f'rx="4" fill="rgba(128,128,128,0.08)"/>'
+        )
     for i, t in enumerate(named):
         style = t.get("style") or {}
         color = _css(
@@ -1323,12 +1418,39 @@ def _legend(named: list[dict], plot: dict, options: dict) -> str:
         )
         col, row = i % ncols, i // ncols
         rx, ry = x + col * cell_w, y + pad / 2 + row * line_h
+        hx0, hx1, cy = rx + pad, rx + pad + handle, ry + 7
+        kind = t.get("kind")
+        if kind == "scatter":
+            symbol = style.get("symbol", "circle")
+            builder = _SYMBOL_BUILDERS.get(symbol)
+            stroke_w = float(style.get("stroke_width", 0.0))
+            stroke = _css(style.get("stroke"), color) if stroke_w else None
+            stroke_attr = (
+                f' stroke="{escape(stroke)}" stroke-width="{_num(stroke_w)}"' if stroke else ""
+            )
+            cxm = (hx0 + hx1) / 2
+            if builder is None:
+                rows.append(
+                    f'<circle cx="{_num(cxm)}" cy="{_num(cy)}" r="4" '
+                    f'fill="{escape(color)}"{stroke_attr}/>'
+                )
+            else:
+                rows.append(
+                    builder(float(cxm), float(cy), 4.0) + f' fill="{escape(color)}"{stroke_attr}/>'
+                )
+        elif kind in _LEGEND_LINE_KINDS:
+            rows.append(
+                f'<line x1="{_num(hx0)}" y1="{_num(cy)}" x2="{_num(hx1)}" y2="{_num(cy)}" '
+                f'stroke="{escape(color)}" stroke-width="{_num(float(style.get("width", 1.5)))}"'
+                f"{_dash_attr(style)}/>"
+            )
+        else:
+            rows.append(
+                f'<rect x="{_num(hx0)}" y="{_num(cy - 4)}" width="{handle}" height="8" '
+                f'rx="2" fill="{escape(color)}"/>'
+            )
         rows.append(
-            f'<rect x="{_num(rx + pad)}" y="{_num(ry + 2)}" width="{swatch}" height="{swatch}" '
-            f'rx="2" fill="{escape(color)}"/>'
-        )
-        rows.append(
-            f'<text x="{_num(rx + pad + swatch + 5)}" y="{_num(ry + swatch)}" '
+            f'<text x="{_num(hx1 + gap)}" y="{_num(ry + 11)}" '
             f'fill="{_TEXT}">{escape(str(t["name"]))}</text>'
         )
     return "".join(rows)
@@ -1370,7 +1492,7 @@ def _colorbar(options: dict, plot: dict) -> str:
     tick_positions = (
         [float(value) for value in ticks if lo <= float(value) <= hi]
         if ticks is not None
-        else [lo + span * i / 4 for i in range(5)]
+        else (_linear_ticks(lo, hi)[0] or [lo, hi])
     )
     tick_nodes = (
         "".join(
@@ -1385,7 +1507,6 @@ def _colorbar(options: dict, plot: dict) -> str:
             f'y="{_num(y + height + 12)}" text-anchor="middle" '
             f'fill="{_TEXT}">{value:g}</text>'
             for value in tick_positions
-            if ticks is not None
         )
     )
     extend = options.get("extend")
@@ -1412,10 +1533,47 @@ def _colorbar(options: dict, plot: dict) -> str:
     return (
         f'<defs><linearGradient id="{gradient_id}" {gradient_attrs}>'
         f"{stop_nodes}</linearGradient></defs>"
-        f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(width)}" height="{_num(height)}" '
-        f'fill="url(#{gradient_id})"/>'
+        f"{_colorbar_body(options, x, y, width, height, orientation, gradient_id)}"
         f"{extend_nodes}{tick_nodes}{label_node}"
     )
+
+
+def _colorbar_body(
+    options: dict,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    orientation: str,
+    gradient_id: str,
+) -> str:
+    """Colorbar bar fill: a smooth gradient, or N solid bands for a discrete
+    (resampled) colormap so it reads like Matplotlib's segmented colorbar."""
+    levels = options.get("levels")
+    if not levels or int(levels) < 1:
+        return (
+            f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(width)}" '
+            f'height="{_num(height)}" fill="url(#{gradient_id})"/>'
+        )
+    n = int(levels)
+    cmap = str(options.get("colormap", "viridis"))
+    positions = np.linspace(0.0, 1.0, n) if n > 1 else np.array([0.0])
+    colors = _lut(cmap, positions)
+    rects = []
+    for index, (r, g, b) in enumerate(colors):
+        if orientation == "horizontal":
+            bx0 = x + width * index / n
+            rects.append(
+                f'<rect x="{_num(bx0)}" y="{_num(y)}" width="{_num(width / n + 0.5)}" '
+                f'height="{_num(height)}" fill="rgb({int(r)},{int(g)},{int(b)})"/>'
+            )
+        else:
+            by0 = y + height * (n - 1 - index) / n
+            rects.append(
+                f'<rect x="{_num(x)}" y="{_num(by0)}" width="{_num(width)}" '
+                f'height="{_num(height / n + 0.5)}" fill="rgb({int(r)},{int(g)},{int(b)})"/>'
+            )
+    return "".join(rects)
 
 
 def to_svg(

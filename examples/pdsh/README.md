@@ -50,6 +50,32 @@ a 2-D axes, so only this notebook's 2-D cells pass.
 ² Soft evidence: seaborn draws through real matplotlib internally, so
 only the cells calling `plt` directly exercise the shim.
 
+## Visual parity (the honest asterisk on the scorecard)
+
+A cell "passing" means it *ran* and exported a non-empty PNG — not that
+the PNG looks like Matplotlib's. A 2026-07-14 image-level audit rendered
+every cell under both engines with per-cell seeded RNG (identical data)
+and graded every comparable non-3-D image pair against matplotlib 3.11.
+The first pass found **39 major divergences** across 105 pairs (legend
+label-lists rendering nothing, `plot(x, y_2d)` not cycling colors,
+colorbar count-domain defects, drifted colormap tables, contour
+conventions, missing annotate arrows, mathtext, layout gaps). After the
+fix rounds the same measurement over the 12 comparable notebooks (84
+graded pairs) stands at **34 match / 38 minor / 8 major** — majors down
+from 33 on those notebooks, with the stylesheet-legend, color-cycle,
+colorbar-domain, and colormap-fidelity classes fully cleared. The audit
+findings, fixes, and remaining boundaries are recorded in
+[docs/matplotlib-compat-changelog.md](../../docs/matplotlib-compat-changelog.md).
+
+One caveat inflates the scorecard above: with seaborn (which draws
+through real matplotlib) holding the current figure, module-level
+`plt.hist`/`axvline`/`axhline` draw onto xy's own figure — three 04.14
+cells count as passing while their plt-drawn content lands elsewhere.
+This is a mixed-engine measurement artifact, not an xy code path: xy
+replaces matplotlib, and without matplotlib installed seaborn fails
+loudly at import, so 04.14 stays soft evidence only (no runtime
+fallback onto matplotlib will ever be added).
+
 ## Remaining failures
 
 All 17 are one of: 3-D projection cells (10, loud rejections by

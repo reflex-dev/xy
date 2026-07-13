@@ -404,7 +404,7 @@ def test_add_subplot_xticklabels_empty_hides_labels():
     fig = plt.figure()
     grid = plt.GridSpec(2, 2)
     ax = fig.add_subplot(grid[0, 0], xticklabels=[])
-    assert ax._axis["x"]["tick_label_strategy"] == "none"
+    assert ax._axis["x"]["tick_label_strategy"] == "off"  # labels hidden, ticks kept
 
 
 # -- pandas period interop ---------------------------------------------------------

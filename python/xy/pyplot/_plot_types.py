@@ -1993,9 +1993,24 @@ class PlotTypeMixin:
         xerr = _limit_error(xerr, xlolims, xuplims, len(np.asarray(x)))
         base = line_kwargs(kwargs)
         check_unsupported(kwargs, "errorbar()")
-        color = (
-            resolve_color(ecolor) if ecolor is not None else base.get("color", self._next_color())
-        )
+        # When ecolor is omitted, the bars inherit the resolved data-series
+        # color, exactly as matplotlib does: an explicit color kwarg wins, then
+        # a color from the fmt string (e.g. ".k"), then the property cycle.
+        fmt_color = parse_fmt(fmt)[0] if fmt and fmt.lower() != "none" else None
+        # The marker/line color resolves independently of ecolor: an explicit
+        # ecolor recolors only the bars (fmt='o', color='black',
+        # ecolor='lightgray' keeps black markers).
+        line_color: Optional[str] = None
+        if "color" in base:
+            line_color = base["color"]
+        elif fmt_color is not None:
+            line_color = resolve_color(fmt_color)
+        if ecolor is not None:
+            color = resolve_color(ecolor)
+        else:
+            if line_color is None:
+                line_color = self._next_color()
+            color = line_color
         entry = self._add(
             "@mark",
             {
@@ -2015,8 +2030,12 @@ class PlotTypeMixin:
         data_line: Optional[Line2D] = None
         if fmt.lower() != "none":
             line_kwargs_for_plot: dict[str, Any] = {}
-            if "color" in base:
-                line_kwargs_for_plot["color"] = base["color"]
+            # Pass the already-resolved series color so plot() renders the data
+            # line/markers in the same color as the bars without re-advancing
+            # the property cycle (fmt still supplies the color when line_color
+            # is None, e.g. when ecolor was given explicitly).
+            if line_color is not None:
+                line_kwargs_for_plot["color"] = line_color
             if "width" in base:
                 line_kwargs_for_plot["linewidth"] = base["width"]
             if "opacity" in base:
@@ -2129,7 +2148,10 @@ class PlotTypeMixin:
                     )
         elif args:
             raise TypeError("contour() expects Z, [levels] or X, Y, Z, [levels]")
-        levels = kwargs.pop("levels", positional_levels if positional_levels is not None else 10)
+        # Matplotlib's auto-level path is MaxNLocator(N+1) with N=7; matching
+        # that default count keeps xy's contour density in step (it previously
+        # defaulted to 10, ~1.5x too many isolines).
+        levels = kwargs.pop("levels", positional_levels if positional_levels is not None else 7)
         cmap = kwargs.pop("cmap", None)
         colors = kwargs.pop("colors", None)
         linewidths = kwargs.pop("linewidths", None)
@@ -2195,6 +2217,9 @@ class PlotTypeMixin:
                     "opacity": 0.0
                     if transparent_fill
                     else (0.9 if alpha is None else float(alpha)),
+                    # Matplotlib dashes negative-level lines for a single-color
+                    # contour; a colormapped contour keeps every level solid.
+                    "dash_negative": color is not None,
                 },
                 "source_z": za,
                 "domain": (float(public_levels[0]), float(public_levels[-1])),
@@ -2880,7 +2905,7 @@ class PlotTypeMixin:
             mark_kwargs["domain"] = (float(vmin), float(vmax))
         entry = self._add(
             "@mark",
-            {"factory": "heatmap", "args": (h.T,), "kwargs": mark_kwargs},
+            {"factory": "heatmap", "args": (h.T,), "kwargs": mark_kwargs, "source_z": h.T},
         )
         return h, xedges, yedges, PolyCollection(self, entry)
 

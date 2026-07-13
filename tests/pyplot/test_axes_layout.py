@@ -90,7 +90,7 @@ def test_tick_params_records_supported_style_and_rejects_unknown() -> None:
 
     x_axis = _axis_child(ax, "x")
     assert x_axis.tick_label_angle == 45.0
-    assert x_axis.tick_label_strategy == "none"
+    assert x_axis.tick_label_strategy == "off"  # labels hidden, ticks/baselines kept
     assert x_axis.style == {
         "tick_color": "#d62728",
         "tick_label_color": "#d62728",

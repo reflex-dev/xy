@@ -15,7 +15,7 @@ from typing import Any, Optional
 import numpy as np
 
 from ._artists import Text
-from ._axes import Axes
+from ._axes import Axes, _plain_text
 from ._rc import rc_figsize_px
 from ._transforms import CoordinateTransform
 from ._translate import check_unsupported, not_implemented
@@ -166,9 +166,19 @@ class Figure:
         axes = make_axes_grid(self, int(nrows), int(ncols), squeeze=squeeze)
         self._width_ratios = None if width_ratios is None else tuple(map(float, width_ratios))
         self._height_ratios = None if height_ratios is None else tuple(map(float, height_ratios))
-        apply_sharing(self, bool(sharex), bool(sharey))
+        apply_sharing(self, _share_mode(sharex, "sharex"), _share_mode(sharey, "sharey"))
+        self._hide_inner_tick_labels(int(nrows), int(ncols))
         self._invalidate()
         return axes
+
+    def _hide_inner_tick_labels(self, nrows: int, ncols: int) -> None:
+        """Matplotlib's shared-axes rule: only edge panels keep tick labels."""
+        for index, ax in enumerate(self._axes):
+            row, col = index // ncols, index % ncols
+            if self._sharex in ("all", "col") and row < nrows - 1:
+                ax._axis_props("x")["tick_label_strategy"] = "off"
+            if self._sharey in ("all", "row") and col > 0:
+                ax._axis_props("y")["tick_label_strategy"] = "off"
 
     def add_gridspec(self, nrows: int = 1, ncols: int = 1, **kwargs: Any) -> "_GridSpec":
         """Return a lightweight GridSpec facade backed by the current grid.
@@ -272,7 +282,7 @@ class Figure:
         va = kwargs.pop("va", kwargs.pop("verticalalignment", "top"))
         if kwargs:
             raise TypeError(f"suptitle() got unsupported keyword argument {next(iter(kwargs))!r}")
-        self._suptitle = str(title)
+        self._suptitle = _plain_text(title)
         self._suptitle_style = {
             "size": float(size),
             "weight": str(weight),
@@ -437,9 +447,17 @@ class Figure:
                 if explicit_domain is not None
                 else ([float(finite.min()), float(finite.max())] if finite.size else [0.0, 1.0])
             ),
-            "label": str(kwargs.pop("label", "")),
+            "label": _plain_text(kwargs.pop("label", "")),
             "orientation": str(kwargs.pop("orientation", "vertical")),
         }
+        # When the mappable's value domain is not knowable at colorbar() time
+        # (e.g. hexbin counts are binned inside the mark), defer to the compiled
+        # figure's color domain at render time instead of the 0..1 placeholder.
+        if explicit_domain is None and not finite.size:
+            options["_autoscale"] = True
+        levels = entry.get("discrete_levels")
+        if levels is not None:
+            options["levels"] = int(levels)
         ticks = kwargs.pop("ticks", None)
         if ticks is not None:
             options["ticks"] = [float(value) for value in np.asarray(ticks).reshape(-1)]
@@ -468,7 +486,7 @@ class Figure:
 
             def set_label(self, label: str, **kwargs: Any) -> None:
                 del kwargs
-                self._options["label"] = str(label)
+                self._options["label"] = _plain_text(label)
                 self.ax._invalidate()
 
             def set_ticks(self, ticks: Any, labels: Any = None, **kwargs: Any) -> None:
@@ -534,10 +552,23 @@ class Figure:
         w, h = rc_figsize_px(self._figsize, self._dpi)
         return max(120, w // self._ncols), max(120, h // self._nrows)
 
+    def _effective_rects(self) -> Optional[list[tuple[float, float, float, float]]]:
+        """Per-axes figure rects when any axes is free-form, else None.
+
+        Matplotlib places a rect-less axes at the SubplotParams default, so a
+        default axes mixed with an inset keeps its full-size position instead
+        of dragging every axes back onto the uniform grid.
+        """
+        rects = [ax._figure_rect for ax in self._axes]
+        if not self._axes or not any(rect is not None for rect in rects):
+            return None
+        default = (0.125, 0.11, 0.775, 0.77)
+        return [rect if rect is not None else default for rect in rects]
+
     def _charts(self) -> list[Any]:
         total_w, total_h = rc_figsize_px(self._figsize, self._dpi)
-        rects = [rect for ax in self._axes if (rect := ax._figure_rect) is not None]
-        if self._axes and len(rects) == len(self._axes):
+        rects = self._effective_rects()
+        if rects is not None:
             charts = []
             for ax, rect in zip(self._axes, rects, strict=True):
                 plot_w = max(1, round(total_w * rect[2]))
@@ -567,15 +598,34 @@ class Figure:
                 if not shared:
                     continue
                 linked.append(dim)
-                ranges = [
-                    figure.x_range() if dim == "x" else figure.y_range() for figure in figures
-                ]
-                domain = (min(min(pair) for pair in ranges), max(max(pair) for pair in ranges))
-                for figure in figures:
-                    figure._set_axis_domain(dim, domain)
+                for group in self._share_groups(shared, len(figures)):
+                    members = [figures[i] for i in group]
+                    ranges = [
+                        figure.x_range() if dim == "x" else figure.y_range() for figure in members
+                    ]
+                    domain = (
+                        min(min(pair) for pair in ranges),
+                        max(max(pair) for pair in ranges),
+                    )
+                    for figure in members:
+                        figure._set_axis_domain(dim, domain)
             for figure in figures:
                 figure.set_interaction(link_group=self._link_group, link_axes=tuple(linked))
         return charts
+
+    def _share_groups(self, mode: Any, count: int) -> list[list[int]]:
+        """Panel-index groups whose data domains union under a share mode."""
+        if mode == "col":
+            return [
+                [r * self._ncols + c for r in range(self._nrows) if r * self._ncols + c < count]
+                for c in range(self._ncols)
+            ]
+        if mode == "row":
+            return [
+                [r * self._ncols + c for c in range(self._ncols) if r * self._ncols + c < count]
+                for r in range(self._nrows)
+            ]
+        return [list(range(count))]
 
     def _single(self) -> Optional[Any]:
         charts = self._charts()
@@ -699,7 +749,7 @@ class Figure:
         from ._grid import stitch_png
 
         canvas_size = rc_figsize_px(self._figsize, self._dpi)
-        rects = [rect for ax in self._axes if (rect := ax._figure_rect) is not None]
+        rects = self._effective_rects()
         positions = (
             [
                 (
@@ -714,7 +764,7 @@ class Figure:
                 )
                 for rect in rects
             ]
-            if self._axes and len(rects) == len(self._axes)
+            if rects is not None
             else None
         )
 
@@ -928,7 +978,18 @@ def make_axes_grid(fig: Figure, nrows: int, ncols: int, squeeze: bool = True) ->
     return axes
 
 
-def apply_sharing(fig: Figure, sharex: bool, sharey: bool) -> None:
+def _share_mode(value: Any, label: str) -> Any:
+    """Normalize matplotlib's sharex/sharey values to False | 'all' | 'row' | 'col'."""
+    if value is None or value is False or value == "none":
+        return False
+    if value is True or value == "all":
+        return "all"
+    if value in ("row", "col"):
+        return value
+    raise ValueError(f"{label} must be one of True, False, 'all', 'none', 'row', 'col'")
+
+
+def apply_sharing(fig: Figure, sharex: Any, sharey: Any) -> None:
     """Share static domains and live pan/zoom ranges across subplot panels."""
-    fig._sharex = bool(sharex)
-    fig._sharey = bool(sharey)
+    fig._sharex = _share_mode(sharex, "sharex")
+    fig._sharey = _share_mode(sharey, "sharey")

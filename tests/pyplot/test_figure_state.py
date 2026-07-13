@@ -106,8 +106,8 @@ def test_figure_subplots_sharing_ratios_and_squeeze() -> None:
     assert axes.shape == (2, 2)
     assert fig.axes == list(axes.ravel())
     assert fig.gca() is axes[-1, -1]
-    assert fig._sharex is True
-    assert fig._sharey is True
+    assert fig._sharex == "all"
+    assert fig._sharey == "all"
     assert fig._width_ratios == (2.0, 1.0)
     assert fig._height_ratios == (1.0, 3.0)
 

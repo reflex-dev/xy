@@ -1116,12 +1116,15 @@ def test_heatmap_rgba_maps_stops_and_flips_rows():
 
     rgba = k.heatmap_rgba(raw, 2, 2, stops, 200)
 
+    # Only genuinely missing (NaN) cells are transparent; a real in-domain 0
+    # paints the colormap's floor color opaquely (Matplotlib hist2d/imshow fill
+    # the whole extent — empty bins are the 0-color, not holes).
     np.testing.assert_array_equal(
         rgba,
         np.array(
             [
-                [[100, 110, 120, 200], [0, 0, 0, 200]],
-                [[0, 10, 20, 0], [50, 60, 70, 200]],
+                [[100, 110, 120, 200], [0, 0, 0, 0]],
+                [[0, 10, 20, 200], [50, 60, 70, 200]],
             ],
             dtype=np.uint8,
         ),
