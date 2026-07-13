@@ -182,7 +182,7 @@ Object.assign(ChartView.prototype, {
     const spec = msg.spec;
     const blobRaw = buffers && buffers[0];
     if (!spec || !blobRaw || !spec.traces) return;
-    const blob = bytesToArrayBuffer(blobRaw);
+    const blob = bytesToSpan(blobRaw);
     // Follow policy, decided against the OLD home view before it moves:
     // - at home (never zoomed, or axes reset): the chart follows its data —
     //   refit both axes to the new domain, the live-dashboard default.

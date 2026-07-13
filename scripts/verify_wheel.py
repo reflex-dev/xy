@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_FILES = {
     "xy/__init__.py",
     "xy/_native.py",
+    "xy/_framing.py",
     "xy/channels.py",
     "xy/channel.py",
     "xy/columns.py",
@@ -334,12 +335,12 @@ def verify_wheel(path: Path, *, expect_native: Optional[bool]) -> None:
         _require_static_bundle(
             "xy/static/index.js",
             zf.read("xy/static/index.js"),
-            {"export { render", "function render(", "class ChartView"},
+            {"export { render", "function render(", "function decodeFrame(", "class ChartView"},
         )
         _require_static_bundle(
             "xy/static/standalone.js",
             zf.read("xy/static/standalone.js"),
-            {"window.xy", "function renderStandalone(", "class ChartView"},
+            {"window.xy", "function renderStandalone(", "function decodeFrame(", "class ChartView"},
         )
 
     forbidden = sorted(

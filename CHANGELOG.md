@@ -20,10 +20,22 @@ in the README).
   to the internal engine object.
 
 ### Added
+- **Production binary HTTP frame v1.** `xy.channel` now exposes a
+  framework-free, little-endian `XYBF` codec with separate transport
+  versioning, strict JSON metadata, 8-byte-aligned buffers, zero padding,
+  explicit total length, configurable resource caps, scatter/gather encoding,
+  and zero-copy Python decode views. The shipped ESM/IIFE client exports the
+  matching `decodeFrame()` and rejects unsupported, oversized, truncated,
+  misaligned, or otherwise malformed frames. Renderer payload handling now
+  preserves aligned `(ArrayBuffer, byteOffset, byteLength)` spans instead of
+  slicing normal anywidget/HTTP views before GPU upload, with a one-copy
+  compatibility fallback for legacy unaligned views. CodSpeed tracks frame encode,
+  scatter/gather construction, zero-copy decode, and base64 comparator rows;
+  the loopback Chromium harness retains the real HTTP/browser measurements.
 - **Loopback transport measurement gates.** `benchmarks/bench_transport.py`
-  now drives the transport-neutral `channel.handle_message()` dispatcher
-  through real HTTP and compares the current base64-in-JSON prototype with an
-  explicitly benchmark-only aligned binary envelope. Reports separate raw and
+  drives the transport-neutral `channel.handle_message()` dispatcher through
+  real HTTP and compares the current base64-in-JSON prototype with the
+  production versioned binary frame. Reports separate raw and
   gzip bytes, Python encode/allocation and loopback p50/p95, Chromium
   decode-to-next-frame latency and heap delta, plus the current duplicate
   widget-append and unaffected-trace retransmission costs. Deterministic byte

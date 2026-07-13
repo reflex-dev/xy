@@ -222,7 +222,7 @@ const body = compact(src.slice(0, cut));
 // but import/export syntax — the body is export-free by construction.
 new Function(body);
 const exportTail = markerLineEnd < 0 ? "" : src.slice(markerLineEnd + 1);
-const iife = `(() => {\n${body}\nwindow.xy = { render, renderStandalone, ChartView, MARK_KINDS, markOf };\n})();\n`;
+const iife = `(() => {\n${body}\nwindow.xy = { render, renderStandalone, decodeFrame, ChartView, MARK_KINDS, markOf };\n})();\n`;
 new Function(iife);
 
 const outputs = [

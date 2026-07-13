@@ -246,8 +246,14 @@ def main() -> None:
 <script>
 const spec={json.dumps(spec)};
 const bytes=Uint8Array.from(atob("{base64.b64encode(blob).decode()}"),c=>c.charCodeAt(0));
+// Exercise the legacy anywidget compatibility path: an oddly-offset view must
+// copy only its own span once, then render identically. Production XYBF HTTP
+// frames are 8-byte aligned and stay zero-copy.
+const unalignedOwner=new Uint8Array(bytes.byteLength+1);
+unalignedOwner.set(bytes,1);
+const unalignedBytes=unalignedOwner.subarray(1);
 try{{
-  const v=xy.renderStandalone(document.getElementById("chart"),spec,bytes.buffer);
+  const v=xy.renderStandalone(document.getElementById("chart"),spec,unalignedBytes);
   v._sampleRebinDisabled = true; // probes below hand-feed kernel msgs
   setTimeout(()=>{{try{{
     v._drawNow();

@@ -73,14 +73,14 @@ The browser helpers force SwiftShader themselves. Validate every artifact before
 publication with `scripts/verify_benchmark_report.py --kind ...`.
 
 `bench_transport.py` is a loopback transport diagnostic: both HTTP response
-formats dispatch through `channel.handle_message()`. Its aligned binary envelope
-is intentionally benchmark-only and has no compatibility promise. Browser rows
+formats dispatch through `channel.handle_message()`. Its binary arm uses xy's
+production versioned frame and the shipped JavaScript decoder. Browser rows
 measure request through decode and the next animation frame; they do not claim
 request-to-pixels or GPU-upload latency. The report also records current widget
 append retransmission and unaffected-trace bytes so later fixes have an explicit
 before/after baseline.
 
-The native CodSpeed suite is the reproducible backend/per-payload gate. Every
+The CodSpeed suite is the reproducible backend/per-payload gate. Every
 module named `test_codspeed_*.py` is collected, so adding a dedicated CodSpeed
 test module automatically adds its benchmarks to the CI run:
 
@@ -90,8 +90,9 @@ uv run --extra dev --extra codspeed python -m pytest \
   benchmarks/test_codspeed_*.py --codspeed
 ```
 
-It requires the native Rust backend. The GitHub Actions workflow runs the same
-suite in CodSpeed simulation mode. The browser interaction, dashboard,
+The kernel/payload module requires the native Rust backend; the transport codec
+module is dependency-free Python but runs in the same job. The GitHub Actions
+workflow runs the suite in CodSpeed simulation mode. The browser interaction, dashboard,
 cross-library, and fresh-install workloads remain in the benchmark-refresh
 workflow because they need a real browser, separate processes/virtual
 environments, or wall-clock timing. They are still measured in CI, but are not
@@ -102,6 +103,12 @@ allocation-bounded implicit-row stratified sampler as standalone kernel rows,
 alongside the complete categorical first-payload row. Together they distinguish
 native encoding/sampling regressions from payload-policy or transport
 regressions.
+
+`test_codspeed_transport.py` separately tracks production frame encode,
+scatter/gather part construction, and zero-copy decode at representative density
+and direct-payload sizes, with base64 JSON encode/decode comparator rows. The
+loopback/browser harness remains authoritative for HTTP, compression, JS heap,
+and request-to-next-frame measurements.
 
 ## Reference Hardware
 

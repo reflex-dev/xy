@@ -1,10 +1,7 @@
 """Loopback transport benchmark for the transport-neutral channel dispatcher.
 
 This harness measures the current Reflex prototype shape (base64 buffers inside
-JSON) against a benchmark-only aligned binary envelope.  The binary envelope is
-deliberately *not* a production codec: it exists to establish byte, CPU, memory,
-and browser request-to-next-frame baselines before the versioned public framing
-contract is implemented.
+JSON) against xy's production versioned binary frame.
 
 Both HTTP endpoints call :func:`xy.channel.handle_message`; only their response
 encoding differs.  The optional Chromium probe fetches and decodes both formats
@@ -22,7 +19,6 @@ import http.client
 import json
 import math
 import os
-import struct
 import subprocess
 import sys
 import tempfile
@@ -41,79 +37,10 @@ from _browser import chromium_gl_flags, find_chromium  # noqa: E402
 from categories import BENCHMARK_CATEGORIES, categories_for  # noqa: E402
 from environment import SCHEMA_VERSION, collect_environment_metadata  # noqa: E402
 from xy._figure import Figure  # noqa: E402
-from xy.channel import Reply, handle_message  # noqa: E402
+from xy.channel import Reply, decode_frame, encode_frame, handle_message  # noqa: E402
 from xy.widget import FigureWidget  # noqa: E402
 
-_MAGIC = b"XYBM"  # xy benchmark message -- not the future production protocol
-_VERSION = 1
-_HEADER = struct.Struct("<4sBBHII")
-_U64 = struct.Struct("<Q")
-_ALIGNMENT = 8
 _CATEGORY_IDS = ("payload_export_size", "streaming_updates", "interaction_smoothness")
-
-
-def _align(value: int) -> int:
-    return (value + (_ALIGNMENT - 1)) & ~(_ALIGNMENT - 1)
-
-
-def encode_diagnostic_frame(message: dict[str, Any], buffers: Sequence[bytes]) -> bytes:
-    """Encode the benchmark-only aligned binary envelope.
-
-    Every buffer payload begins on an eight-byte boundary.  This layout is a
-    diagnostic control, not the production framing proposal: it intentionally
-    has no public compatibility promise.
-    """
-
-    metadata = json.dumps(message, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    parts: list[bytes] = [
-        _HEADER.pack(_MAGIC, _VERSION, 0, 0, len(metadata), len(buffers)),
-        metadata,
-    ]
-    prefix_size = _HEADER.size + len(metadata)
-    parts.append(b"\x00" * (_align(prefix_size) - prefix_size))
-    position = _align(prefix_size)
-    for buffer in buffers:
-        payload = bytes(buffer)
-        parts.extend((_U64.pack(len(payload)), payload))
-        position += _U64.size + len(payload)
-        padding = _align(position) - position
-        parts.append(b"\x00" * padding)
-        position += padding
-    return b"".join(parts)
-
-
-def decode_diagnostic_frame(body: bytes) -> tuple[dict[str, Any], list[memoryview], list[int]]:
-    """Decode the benchmark envelope and expose zero-copy buffer views/offsets."""
-
-    view = memoryview(body)
-    if len(view) < _HEADER.size:
-        raise ValueError("truncated diagnostic frame header")
-    magic, version, flags, reserved, metadata_len, buffer_count = _HEADER.unpack_from(view)
-    if magic != _MAGIC or version != _VERSION or flags != 0 or reserved != 0:
-        raise ValueError("unsupported diagnostic frame")
-    metadata_end = _HEADER.size + metadata_len
-    if metadata_end > len(view):
-        raise ValueError("truncated diagnostic frame metadata")
-    message = json.loads(bytes(view[_HEADER.size : metadata_end]))
-    if not isinstance(message, dict):
-        raise ValueError("diagnostic frame metadata must be an object")
-    position = _align(metadata_end)
-    buffers: list[memoryview] = []
-    offsets: list[int] = []
-    for _ in range(buffer_count):
-        if position + _U64.size > len(view):
-            raise ValueError("truncated diagnostic frame buffer length")
-        (length,) = _U64.unpack_from(view, position)
-        position += _U64.size
-        end = position + length
-        if end > len(view):
-            raise ValueError("truncated diagnostic frame buffer")
-        offsets.append(position)
-        buffers.append(view[position:end])
-        position = _align(end)
-    if position != len(view):
-        raise ValueError("diagnostic frame has trailing bytes")
-    return message, buffers, offsets
 
 
 def encode_base64_json(message: dict[str, Any], buffers: Sequence[bytes]) -> bytes:
@@ -166,7 +93,7 @@ def measure_envelopes(reply: Reply, reps: int) -> list[dict[str, Any]]:
     payload_bytes = sum(len(buffer) for buffer in buffers)
     rows = []
     for mode, encoder, payload_reencodes in (
-        ("aligned-binary-diagnostic", encode_diagnostic_frame, 0),
+        ("binary-frame-v1", encode_frame, 0),
         ("base64-json-prototype", encode_base64_json, 1),
     ):
 
@@ -292,6 +219,10 @@ class _TransportHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:  # noqa: N802
+        if self.path == "/xy.js":
+            client = Path(__file__).resolve().parents[1] / "python" / "xy" / "static" / "index.js"
+            self._write(200, "text/javascript; charset=utf-8", client.read_bytes())
+            return
         if self.path != "/":
             self._write(404, "text/plain", b"not found")
             return
@@ -311,7 +242,7 @@ class _TransportHandler(BaseHTTPRequestHandler):
             assert isinstance(server, _TransportServer)
             reply = dispatch(server.fig, message)
             if self.path == "/raw":
-                body = encode_diagnostic_frame(reply[0], reply[1] or [])
+                body = encode_frame(reply[0], reply[1] or [])
                 content_type = "application/octet-stream"
             else:
                 body = encode_base64_json(reply[0], reply[1] or [])
@@ -342,7 +273,7 @@ def measure_python_loopback(
 ) -> list[dict[str, Any]]:
     request_body = json.dumps(message, separators=(",", ":")).encode("utf-8")
     rows = []
-    for mode, path in (("aligned-binary-diagnostic", "/raw"), ("base64-json-prototype", "/base64")):
+    for mode, path in (("binary-frame-v1", "/raw"), ("base64-json-prototype", "/base64")):
         connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=30)
         samples: list[float] = []
         response_sizes: list[int] = []
@@ -360,7 +291,7 @@ def measure_python_loopback(
                 if response.status != 200:
                     raise RuntimeError(f"loopback {path} returned HTTP {response.status}")
                 if path == "/raw":
-                    decode_diagnostic_frame(body)
+                    decode_frame(body)
                 else:
                     decode_base64_json(body)
                 elapsed = (time.perf_counter_ns() - start) / 1e6
@@ -384,32 +315,13 @@ def _browser_page(message: dict[str, Any], reps: int) -> str:
     message_json = json.dumps(message, separators=(",", ":"))
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>TRANSPORT_PENDING</title></head>
-<body><pre id="result"></pre><script>
+<body><pre id="result"></pre><script type="module">
+import {{ decodeFrame }} from "/xy.js";
 const MESSAGE = {message_json};
 const REPS = {reps};
-const align8 = (n) => (n + 7) & ~7;
 function percentile(values, q) {{
   const sorted = values.slice().sort((a, b) => a - b);
   return sorted[Math.max(0, Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1))];
-}}
-function decodeRaw(buffer) {{
-  const view = new DataView(buffer);
-  if (view.byteLength < 16 || view.getUint32(0, true) !== 0x4d425958 || view.getUint8(4) !== 1)
-    throw new Error('bad diagnostic frame');
-  const metadataLength = view.getUint32(8, true);
-  const count = view.getUint32(12, true);
-  const metadata = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 16, metadataLength)));
-  let position = align8(16 + metadataLength);
-  const buffers = [];
-  for (let i = 0; i < count; i++) {{
-    const length = Number(view.getBigUint64(position, true));
-    position += 8;
-    if (position % 8) throw new Error('unaligned diagnostic buffer');
-    buffers.push(new Uint8Array(buffer, position, length));
-    position = align8(position + length);
-  }}
-  if (position !== buffer.byteLength) throw new Error('trailing diagnostic bytes');
-  return {{metadata, buffers}};
 }}
 async function decodeBase64(response) {{
   const payload = await response.json();
@@ -419,7 +331,7 @@ async function decodeBase64(response) {{
     for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
     return out;
   }});
-  return {{metadata: payload.message, buffers}};
+  return {{message: payload.message, buffers}};
 }}
 async function runMode(mode, path) {{
   const samples = [];
@@ -433,9 +345,9 @@ async function runMode(mode, path) {{
     }});
     if (!response.ok) throw new Error('HTTP ' + response.status);
     const contentLength = Number(response.headers.get('Content-Length') || 0);
-    const decoded = mode === 'aligned-binary-diagnostic'
-      ? decodeRaw(await response.arrayBuffer()) : await decodeBase64(response);
-    if (!decoded.metadata || !decoded.buffers.length) throw new Error('empty decoded reply');
+    const decoded = mode === 'binary-frame-v1'
+      ? decodeFrame(await response.arrayBuffer()) : await decodeBase64(response);
+    if (!decoded.message || !decoded.buffers.length) throw new Error('empty decoded reply');
     await new Promise((resolve) => requestAnimationFrame(resolve));
     const elapsed = performance.now() - start;
     const heapAfter = performance.memory ? performance.memory.usedJSHeapSize : null;
@@ -455,7 +367,7 @@ async function runMode(mode, path) {{
 (async () => {{
   try {{
     const rows = [];
-    rows.push(await runMode('aligned-binary-diagnostic', '/raw'));
+    rows.push(await runMode('binary-frame-v1', '/raw'));
     rows.push(await runMode('base64-json-prototype', '/base64'));
     document.getElementById('result').textContent = JSON.stringify({{status: 'ok', rows}});
     document.title = 'TRANSPORT_DONE';
@@ -557,7 +469,7 @@ def run_benchmark(
         "schema_version": SCHEMA_VERSION,
         "kind": "transport-loopback",
         "measurement_scope": "loopback-channel-transport-diagnostic",
-        "frame_status": "benchmark-only; not a production protocol",
+        "frame_status": "production xy binary frame v1",
         "environment": collect_environment_metadata(
             chromium=find_chromium(chromium),
             xy_backend="native",

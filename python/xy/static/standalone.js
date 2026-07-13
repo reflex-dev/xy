@@ -2,6 +2,135 @@
 
 "use strict";
 const PROTOCOL = 3;
+const XY_FRAME_MAGIC = [0x58, 0x59, 0x42, 0x46];
+const XY_FRAME_VERSION = 1;
+const XY_FRAME_HEADER_SIZE = 24;
+const XY_FRAME_ALIGNMENT = 8;
+const XY_FRAME_DEFAULT_LIMITS = Object.freeze({
+maxFrameBytes: 512 * 1024 * 1024,
+maxMetadataBytes: 8 * 1024 * 1024,
+maxBuffers: 4096,
+maxBufferBytes: 256 * 1024 * 1024,
+});
+function fcByteSpan(value, label = "buffer") {
+if (value instanceof ArrayBuffer) return new Uint8Array(value);
+if (ArrayBuffer.isView(value)) {
+return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+}
+throw new TypeError(`${label} must be an ArrayBuffer or ArrayBuffer view`);
+}
+function fcFrameLimit(limits, name) {
+const fallback = XY_FRAME_DEFAULT_LIMITS[name];
+const value = limits && limits[name] != null ? limits[name] : fallback;
+if (!Number.isSafeInteger(value) || value <= 0) {
+throw new RangeError(`${name} must be a positive safe integer`);
+}
+return value;
+}
+function fcAlign8(value) {
+return Math.ceil(value / XY_FRAME_ALIGNMENT) * XY_FRAME_ALIGNMENT;
+}
+function fcFrameU64(view, offset, label) {
+const value = view.getBigUint64(offset, true);
+if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+throw new RangeError(`${label} exceeds JavaScript's safe integer range`);
+}
+return Number(value);
+}
+function fcRequireZeroPadding(bytes, start, end, label) {
+if (end > bytes.byteLength) throw new RangeError(`truncated ${label} padding`);
+for (let i = start; i < end; i++) {
+if (bytes[i] !== 0) throw new RangeError(`non-zero ${label} padding`);
+}
+}
+
+function decodeFrame(body, limits = null) {
+const bytes = fcByteSpan(body, "frame body");
+const maxFrameBytes = fcFrameLimit(limits, "maxFrameBytes");
+const maxMetadataBytes = fcFrameLimit(limits, "maxMetadataBytes");
+const maxBuffers = fcFrameLimit(limits, "maxBuffers");
+const maxBufferBytes = fcFrameLimit(limits, "maxBufferBytes");
+if (maxMetadataBytes > maxFrameBytes) {
+throw new RangeError("maxMetadataBytes cannot exceed maxFrameBytes");
+}
+if (maxBufferBytes > maxFrameBytes) {
+throw new RangeError("maxBufferBytes cannot exceed maxFrameBytes");
+}
+if (bytes.byteOffset % XY_FRAME_ALIGNMENT !== 0) {
+throw new RangeError("frame body must start on an 8-byte boundary");
+}
+if (bytes.byteLength > maxFrameBytes) {
+throw new RangeError(`frame length ${bytes.byteLength} exceeds limit ${maxFrameBytes}`);
+}
+if (bytes.byteLength < XY_FRAME_HEADER_SIZE) throw new RangeError("truncated frame header");
+const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+for (let i = 0; i < XY_FRAME_MAGIC.length; i++) {
+if (view.getUint8(i) !== XY_FRAME_MAGIC[i]) throw new RangeError("invalid frame magic");
+}
+const version = view.getUint8(4);
+if (version !== XY_FRAME_VERSION) throw new RangeError(`unsupported frame version ${version}`);
+const flags = view.getUint8(5);
+if (flags !== 0) throw new RangeError(`unsupported frame flags 0x${flags.toString(16)}`);
+const headerSize = view.getUint16(6, true);
+if (headerSize !== XY_FRAME_HEADER_SIZE) {
+throw new RangeError(`unsupported frame header size ${headerSize}`);
+}
+const metadataLength = view.getUint32(8, true);
+const bufferCount = view.getUint32(12, true);
+const totalLength = fcFrameU64(view, 16, "declared frame length");
+if (totalLength !== bytes.byteLength) {
+throw new RangeError(
+`declared frame length ${totalLength} does not match body length ${bytes.byteLength}`
+);
+}
+if (metadataLength > maxMetadataBytes) {
+throw new RangeError(`metadata length ${metadataLength} exceeds limit ${maxMetadataBytes}`);
+}
+if (bufferCount > maxBuffers) {
+throw new RangeError(`buffer count ${bufferCount} exceeds limit ${maxBuffers}`);
+}
+const metadataEnd = XY_FRAME_HEADER_SIZE + metadataLength;
+if (metadataEnd > bytes.byteLength) throw new RangeError("truncated frame metadata");
+let message;
+try {
+const metadataBytes = new Uint8Array(
+bytes.buffer,
+bytes.byteOffset + XY_FRAME_HEADER_SIZE,
+metadataLength
+);
+message = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(metadataBytes));
+} catch (error) {
+throw new RangeError(`invalid frame metadata JSON: ${error}`);
+}
+if (!message || Array.isArray(message) || typeof message !== "object") {
+throw new RangeError("frame metadata must decode to an object");
+}
+let position = fcAlign8(metadataEnd);
+fcRequireZeroPadding(bytes, metadataEnd, position, "metadata");
+const buffers = [];
+for (let i = 0; i < bufferCount; i++) {
+if (position + 8 > bytes.byteLength) throw new RangeError(`truncated buffer ${i} length`);
+const bufferLength = fcFrameU64(view, position, `buffer ${i} length`);
+position += 8;
+if (bufferLength > maxBufferBytes) {
+throw new RangeError(`buffer ${i} length ${bufferLength} exceeds limit ${maxBufferBytes}`);
+}
+const end = position + bufferLength;
+if (end > bytes.byteLength) throw new RangeError(`truncated buffer ${i}`);
+const absoluteOffset = bytes.byteOffset + position;
+if (absoluteOffset % XY_FRAME_ALIGNMENT !== 0) {
+throw new RangeError(`buffer ${i} is not 8-byte aligned`);
+}
+buffers.push(new Uint8Array(bytes.buffer, absoluteOffset, bufferLength));
+const paddedEnd = fcAlign8(end);
+fcRequireZeroPadding(bytes, end, paddedEnd, `buffer ${i}`);
+position = paddedEnd;
+}
+if (position !== bytes.byteLength) {
+throw new RangeError(`frame has ${bytes.byteLength - position} trailing bytes`);
+}
+return { message, buffers, version: XY_FRAME_VERSION, byteLength: bytes.byteLength };
+}
 const COLORMAP_STOPS = {
 viridis: [
 [68, 1, 84], [72, 40, 120], [62, 74, 137], [49, 104, 142], [38, 130, 142],
@@ -2814,9 +2943,20 @@ split
 : "xy: spec column carries a wire-buffer index but the transport delivered one blob",
 );
 }
-const src = split ? buffer[meta.buf] : buffer;
-if (meta.dtype === "u8") return new Uint8Array(src, meta.byte_offset, meta.len);
-return new Float32Array(src, meta.byte_offset, meta.len);
+const span = fcByteSpan(split ? buffer[meta.buf] : buffer, "chart payload");
+const relativeOffset = Number(meta.byte_offset);
+const length = Number(meta.len);
+if (!Number.isSafeInteger(relativeOffset) || relativeOffset < 0 ||
+!Number.isSafeInteger(length) || length < 0) {
+throw new RangeError("column offset/length must be non-negative safe integers");
+}
+const bytesPerElement = meta.dtype === "u8" ? 1 : 4;
+const absoluteOffset = span.byteOffset + relativeOffset;
+const end = relativeOffset + length * bytesPerElement;
+if (end > span.byteLength) throw new RangeError("column extends past chart payload");
+if (absoluteOffset % bytesPerElement !== 0) throw new RangeError("column is misaligned");
+if (meta.dtype === "u8") return new Uint8Array(span.buffer, absoluteOffset, length);
+return new Float32Array(span.buffer, absoluteOffset, length);
 }
 _upload(view) {
 const gl = this.gl;
@@ -5174,7 +5314,7 @@ _applyAppend(msg, buffers) {
 const spec = msg.spec;
 const blobRaw = buffers && buffers[0];
 if (!spec || !blobRaw || !spec.traces) return;
-const blob = bytesToArrayBuffer(blobRaw);
+const blob = bytesToSpan(blobRaw);
 const spanEps = (lo, hi) => Math.max(Math.abs(hi - lo), 1e-300) * 1e-9;
 const ex = spanEps(this.view0.x0, this.view0.x1);
 const ey = spanEps(this.view0.y0, this.view0.y1);
@@ -5507,12 +5647,9 @@ area: AREA_MARK,
 function markOf(kind) {
 return MARK_KINDS[kind] || MARK_KINDS.scatter;
 }
-function bytesToArrayBuffer(b) {
-if (b instanceof ArrayBuffer) return b;
-if (b instanceof DataView || ArrayBuffer.isView(b)) {
-return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
-}
-throw new Error("unsupported buffer type");
+function bytesToSpan(b) {
+const span = fcByteSpan(b, "chart payload");
+return span.byteOffset % 4 === 0 ? span : new Uint8Array(span);
 }
 
 function payloadBuffers(spec, raw) {
@@ -5520,12 +5657,12 @@ if (spec.buffer_layout === "split") {
 if (!Array.isArray(raw)) {
 throw new Error("xy: spec says buffer_layout=split but the transport delivered one buffer");
 }
-return raw.map(bytesToArrayBuffer);
+return raw.map(bytesToSpan);
 }
 if (Array.isArray(raw)) {
 throw new Error("xy: transport delivered a buffer list but the spec is not split-layout");
 }
-return bytesToArrayBuffer(raw);
+return bytesToSpan(raw);
 }
 function render({ model, el }) {
 const spec = model.get("spec");
@@ -5543,7 +5680,7 @@ return () => view.destroy();
 }
 
 function renderStandalone(el, spec, arrayBuffer) {
-const buffer = bytesToArrayBuffer(arrayBuffer);
+const buffer = bytesToSpan(arrayBuffer);
 const view = new ChartView(el, spec, buffer, null);
 const column = (idx) => view._columnView(buffer, spec.columns[idx]);
 for (const g of view.gpuTraces) {
@@ -5565,5 +5702,5 @@ g._cpu.size = column(g.trace.size.buf);
 return view;
 }
 
-window.xy = { render, renderStandalone, ChartView, MARK_KINDS, markOf };
+window.xy = { render, renderStandalone, decodeFrame, ChartView, MARK_KINDS, markOf };
 })();

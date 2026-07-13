@@ -86,7 +86,7 @@ BENCHMARK_CATEGORIES: tuple[dict[str, str], ...] = (
         "name": "Payload/export size",
         "why": "Notebooks, static HTML, docs, and dashboards pay for every byte shipped.",
         "metrics": "standalone HTML bytes, binary payload bytes, bundle bytes",
-        "harness": "benchmarks/bench_vs.py, benchmarks/bench_scatter_native.py, benchmarks/bench_transport.py, benchmarks/test_codspeed_kernels.py::test_first_payload_density_large, benchmarks/test_codspeed_kernels.py::test_memory_report_density_medium, example app asset sizes",
+        "harness": "benchmarks/bench_vs.py, benchmarks/bench_scatter_native.py, benchmarks/bench_transport.py, benchmarks/test_codspeed_transport.py, benchmarks/test_codspeed_kernels.py::test_first_payload_density_large, benchmarks/test_codspeed_kernels.py::test_memory_report_density_medium, example app asset sizes",
         "status": "tracked",
         "goal": "Keep data payloads binary and screen-bounded where possible; warn when exact export would be huge.",
     },

@@ -103,9 +103,7 @@ REQUIRED_RUNTIME_DOM_SLOTS = (
     "tooltip",
 )
 
-BUNDLE_END = (
-    "window.xy = { render, renderStandalone, ChartView, MARK_KINDS, markOf };\n})();\n</script>"
-)
+BUNDLE_END = "window.xy = { render, renderStandalone, decodeFrame, ChartView, MARK_KINDS, markOf };\n})();\n</script>"
 
 WRAP_SCRIPT_TEMPLATE = r"""
 <script>
