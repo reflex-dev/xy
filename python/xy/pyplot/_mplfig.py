@@ -17,6 +17,7 @@ import numpy as np
 from ._artists import Text
 from ._axes import Axes
 from ._rc import rc_figsize_px
+from ._transforms import CoordinateTransform
 from ._translate import not_implemented
 
 
@@ -41,7 +42,7 @@ class Figure:
         self._axes: list[Axes] = []
         self._current_ax: Optional[Axes] = None
         self._html_cache: Optional[str] = None
-        self.transFigure = "figure fraction"
+        self.transFigure = CoordinateTransform("figure_fraction")
         self._sharex = False
         self._sharey = False
         self._link_group = f"xy-pyplot-{uuid.uuid4().hex[:8]}"
@@ -50,6 +51,7 @@ class Figure:
         self._height_ratios: Optional[tuple[float, ...]] = None
         self._layout_options: dict[str, Any] = {}
         self._subplot_adjust: dict[str, float] = {}
+        self._label = ""
 
     # -- layout --------------------------------------------------------------
 
@@ -203,7 +205,21 @@ class Figure:
     # -- chrome ---------------------------------------------------------------
 
     def suptitle(self, title: str, **kwargs: Any) -> None:
-        for key in ("fontsize", "size", "fontweight", "weight", "fontfamily", "family", "color", "x", "y", "ha", "horizontalalignment", "va", "verticalalignment"):
+        for key in (
+            "fontsize",
+            "size",
+            "fontweight",
+            "weight",
+            "fontfamily",
+            "family",
+            "color",
+            "x",
+            "y",
+            "ha",
+            "horizontalalignment",
+            "va",
+            "verticalalignment",
+        ):
             kwargs.pop(key, None)
         if kwargs:
             raise TypeError(f"suptitle() got unsupported keyword argument {next(iter(kwargs))!r}")
@@ -254,15 +270,25 @@ class Figure:
         w_pad = kwargs.pop("w_pad", None)
         rect = kwargs.pop("rect", None)
         if kwargs:
-            raise TypeError(f"tight_layout() got unsupported keyword argument {next(iter(kwargs))!r}")
-        self._layout_options = {"engine": "tight", "pad": pad, "h_pad": h_pad, "w_pad": w_pad, "rect": rect}
+            raise TypeError(
+                f"tight_layout() got unsupported keyword argument {next(iter(kwargs))!r}"
+            )
+        self._layout_options = {
+            "engine": "tight",
+            "pad": pad,
+            "h_pad": h_pad,
+            "w_pad": w_pad,
+            "rect": rect,
+        }
         self._invalidate()
 
     def subplots_adjust(self, **kwargs: Any) -> None:
         allowed = {"left", "right", "top", "bottom", "wspace", "hspace"}
         unsupported = set(kwargs) - allowed
         if unsupported:
-            raise TypeError(f"subplots_adjust() got unsupported keyword argument {sorted(unsupported)[0]!r}")
+            raise TypeError(
+                f"subplots_adjust() got unsupported keyword argument {sorted(unsupported)[0]!r}"
+            )
         for key, value in kwargs.items():
             if value is not None:
                 self._subplot_adjust[key] = float(value)
@@ -272,7 +298,9 @@ class Figure:
         rotation = float(kwargs.pop("rotation", 30))
         ha = kwargs.pop("ha", "right")
         if kwargs:
-            raise TypeError(f"autofmt_xdate() got unsupported keyword argument {next(iter(kwargs))!r}")
+            raise TypeError(
+                f"autofmt_xdate() got unsupported keyword argument {next(iter(kwargs))!r}"
+            )
         for ax in self._axes:
             props = ax._axis_props("x")
             props["tick_label_angle"] = rotation
@@ -426,11 +454,12 @@ class Figure:
 
     def _charts(self) -> list[Any]:
         total_w, total_h = rc_figsize_px(self._figsize, self._dpi)
-        if self._axes and all(ax._figure_rect is not None for ax in self._axes):
+        rects = [rect for ax in self._axes if (rect := ax._figure_rect) is not None]
+        if self._axes and len(rects) == len(self._axes):
             charts = []
-            for ax in self._axes:
-                plot_w = max(1, round(total_w * ax._figure_rect[2]))
-                plot_h = max(1, round(total_h * ax._figure_rect[3]))
+            for ax, rect in zip(self._axes, rects, strict=True):
+                plot_w = max(1, round(total_w * rect[2]))
+                plot_h = max(1, round(total_h * rect[3]))
                 # Absolute axes rectangles describe the plot box.  Export
                 # chrome lives outside that rectangle in the surrounding
                 # figure buffer, matching Matplotlib add_axes semantics.
@@ -481,38 +510,59 @@ class Figure:
     def savefig(
         self, fname: Any, dpi: Any = None, format: Optional[str] = None, **kwargs: Any
     ) -> None:
-        kwargs.pop("bbox_inches", None)  # label-aware layout already trims
-        kwargs.pop("transparent", None)
-        kwargs.pop("facecolor", None)
         path = Path(fname) if isinstance(fname, (str, PathLike)) else None
-        suffix = (format or (path.suffix.lstrip(".") if path is not None else "png")).lower()
-        if dpi is not None and self._dpi is None:
+        if path is None and format is None:
+            raise ValueError("savefig() requires format= for file-like output")
+        if path is not None and format is None and not path.suffix:
+            format = "png"  # matplotlib's savefig.format default
+            path = path.with_suffix(".png")
+        suffix = (format or (path.suffix.lstrip(".") if path is not None else "")).lower()
+        unsupported = {
+            key
+            for key, value in kwargs.items()
+            if value is not None and not (key == "transparent" and value is False)
+        }
+        if unsupported:
+            option = sorted(unsupported)[0]
+            raise not_implemented(
+                f"savefig({option}=...)",
+                "dpi and format; compose backgrounds/layout explicitly for other options",
+            )
+
+        old_dpi = self._dpi
+        if dpi is not None:
             self._dpi = float(dpi)
             for ax in self._axes:
                 ax._chart = None
             self._invalidate()
+        try:
+            single = self._single()
+            if suffix == "png":
+                if single is None:
+                    data = self._to_png()
+                else:
+                    from xy import _raster
 
-        single = self._single()
-        if suffix in ("png",):
-            if single is None:
-                data = self._to_png()
+                    data = _raster.to_png(single.figure(), fast=True)
+            elif suffix == "svg":
+                if single is None:
+                    from ._grid import compose_svg
+
+                    data = compose_svg(
+                        self._charts(), self._nrows, self._ncols, self._suptitle
+                    ).encode()
+                else:
+                    data = single.to_svg().encode()
+            elif suffix == "html":
+                data = self._to_html().encode()
             else:
-                from xy import _raster
-
-                data = _raster.to_png(single.figure(), fast=True)
-        elif suffix in ("svg",):
-            if single is None:
-                from ._grid import compose_svg
-
-                data = compose_svg(
-                    self._charts(), self._nrows, self._ncols, self._suptitle
-                ).encode()
-            else:
-                data = single.to_svg().encode()
-        elif suffix in ("html",):
-            data = self._to_html().encode()
-        else:
-            raise not_implemented(f"savefig(format={suffix!r})", "png, svg, or html")
+                raise not_implemented(f"savefig(format={suffix!r})", "png, svg, or html")
+        finally:
+            if dpi is not None:
+                self._dpi = old_dpi
+                for ax in self._axes:
+                    ax._chart = None
+                self._invalidate()
 
         if path is not None:
             path.write_bytes(data)
@@ -523,25 +573,22 @@ class Figure:
         from ._grid import stitch_png
 
         canvas_size = rc_figsize_px(self._figsize, self._dpi)
+        rects = [rect for ax in self._axes if (rect := ax._figure_rect) is not None]
         positions = (
             [
                 (
-                    ax._figure_rect[0]
-                    - (46 if round(canvas_size[0] * ax._figure_rect[2]) + 54 < 520 else 62)
-                    / canvas_size[0],
-                    ax._figure_rect[1]
-                    - (36 if round(canvas_size[0] * ax._figure_rect[2]) + 54 < 520 else 42)
-                    / canvas_size[1],
-                    ax._figure_rect[2]
-                    + (54 if round(canvas_size[0] * ax._figure_rect[2]) + 54 < 520 else 76)
-                    / canvas_size[0],
-                    ax._figure_rect[3]
-                    + (42 if round(canvas_size[0] * ax._figure_rect[2]) + 54 < 520 else 52)
-                    / canvas_size[1],
+                    rect[0]
+                    - (46 if round(canvas_size[0] * rect[2]) + 54 < 520 else 62) / canvas_size[0],
+                    rect[1]
+                    - (36 if round(canvas_size[0] * rect[2]) + 54 < 520 else 42) / canvas_size[1],
+                    rect[2]
+                    + (54 if round(canvas_size[0] * rect[2]) + 54 < 520 else 76) / canvas_size[0],
+                    rect[3]
+                    + (42 if round(canvas_size[0] * rect[2]) + 54 < 520 else 52) / canvas_size[1],
                 )
-                for ax in self._axes
+                for rect in rects
             ]
-            if self._axes and all(ax._figure_rect is not None for ax in self._axes)
+            if self._axes and len(rects) == len(self._axes)
             else None
         )
 

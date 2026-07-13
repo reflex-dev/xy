@@ -121,4 +121,3 @@ def test_set_anchor_accepts_mpl_anchor_codes_and_rejects_unknown() -> None:
 
     with pytest.raises(ValueError, match="unsupported anchor"):
         ax.set_anchor("baseline")
-

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -423,74 +426,9 @@ def test_artist_remove() -> None:
 
 
 def test_official_matplotlib_311_2d_plotting_surface_is_complete() -> None:
-    names = [
-        "plot",
-        "errorbar",
-        "scatter",
-        "step",
-        "loglog",
-        "semilogx",
-        "semilogy",
-        "fill_between",
-        "fill_betweenx",
-        "bar",
-        "barh",
-        "bar_label",
-        "grouped_bar",
-        "stem",
-        "eventplot",
-        "pie",
-        "pie_label",
-        "stackplot",
-        "broken_barh",
-        "vlines",
-        "hlines",
-        "fill",
-        "axhline",
-        "axhspan",
-        "axvline",
-        "axvspan",
-        "axline",
-        "acorr",
-        "angle_spectrum",
-        "cohere",
-        "csd",
-        "magnitude_spectrum",
-        "phase_spectrum",
-        "psd",
-        "specgram",
-        "xcorr",
-        "ecdf",
-        "boxplot",
-        "violinplot",
-        "bxp",
-        "violin",
-        "hexbin",
-        "hist",
-        "hist2d",
-        "stairs",
-        "clabel",
-        "contour",
-        "contourf",
-        "imshow",
-        "matshow",
-        "pcolor",
-        "pcolorfast",
-        "pcolormesh",
-        "spy",
-        "tripcolor",
-        "triplot",
-        "tricontour",
-        "tricontourf",
-        "annotate",
-        "text",
-        "table",
-        "arrow",
-        "barbs",
-        "quiver",
-        "quiverkey",
-        "streamplot",
-    ]
+    snapshot = json.loads((Path(__file__).with_name("matplotlib_311_plotting.json")).read_text())
+    names = [name for family in snapshot["families"].values() for name in family]
+    assert len(names) == 66
     assert not [name for name in names if not hasattr(plt.Axes, name)]
     assert not [name for name in names if not hasattr(plt, name)]
 

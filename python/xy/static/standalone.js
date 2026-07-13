@@ -4172,6 +4172,8 @@ ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
 ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
 ctx.fillStyle = ctx.strokeStyle;
 ctx.lineWidth = Math.max(0.5, this._styleNumber(style, "width", 1.5));
+ctx.setLineDash(Array.isArray(style.dash) ? style.dash :
+(typeof style.dash === "string" ? style.dash.split(",").map(Number) : []));
 ctx.beginPath();
 ctx.moveTo(x0, y0);
 ctx.lineTo(x1, y1);
@@ -4228,6 +4230,8 @@ ctx.save();
 ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
 ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
 ctx.lineWidth = Math.max(0.5, this._styleNumber(style, "width", 1.5));
+ctx.setLineDash(Array.isArray(style.dash) ? style.dash :
+(typeof style.dash === "string" ? style.dash.split(",").map(Number) : []));
 ctx.beginPath();
 const start = Math.max(0, Math.min(1, Number(style.span_start) || 0));
 const rawEnd = style.span_end === undefined ? 1 : Number(style.span_end);

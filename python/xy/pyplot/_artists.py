@@ -14,18 +14,28 @@ from typing import Any, Optional
 import numpy as np
 
 from ._colors import resolve_color
+from ._transforms import Bbox, IdentityTransform
 
 
 class Artist:
     def __init__(self, axes: Any, entry: dict[str, Any]) -> None:
         self._axes = axes
         self._entry = entry  # the mutable spec dict the Axes rendered from
+        self._visible = True
+        self._visible_opacity = float(entry.get("kwargs", {}).get("opacity", 1.0))
+        self._zorder = float(entry.get("_zorder", 0.0))
+        self._clip_on = bool(entry.get("kwargs", {}).get("clip_on", True))
+        self._transform: Any = axes.transData if axes is not None else IdentityTransform()
+        self._rasterized = False
+        if axes is not None:
+            axes._register_artist(self)
 
     def _touch(self) -> None:
         self._axes._invalidate()
 
     def remove(self) -> None:
         self._axes._remove_entry(self._entry)
+        self._axes._unregister_artist(self)
 
     def set_label(self, label: str) -> None:
         self._entry["kwargs"]["name"] = str(label)
@@ -35,8 +45,84 @@ class Artist:
         return self._entry["kwargs"].get("name")
 
     def set_alpha(self, alpha: float) -> None:
-        self._entry["kwargs"]["opacity"] = float(alpha)
+        self._visible_opacity = float(alpha)
+        if self._visible:
+            self._entry["kwargs"]["opacity"] = float(alpha)
         self._touch()
+
+    def get_alpha(self) -> Any:
+        if not self._visible:
+            return self._visible_opacity
+        return self._entry["kwargs"].get("opacity")
+
+    def set_visible(self, visible: bool) -> None:
+        visible = bool(visible)
+        if visible == self._visible:
+            return
+        if not visible:
+            self._visible_opacity = float(self._entry["kwargs"].get("opacity", 1.0))
+        self._visible = visible
+        self._entry["kwargs"]["opacity"] = self._visible_opacity if visible else 0.0
+        self._touch()
+
+    def get_visible(self) -> bool:
+        return self._visible
+
+    def set_zorder(self, level: float) -> None:
+        self._zorder = float(level)
+        self._entry["_zorder"] = self._zorder
+        host = self._axes._y2_of or self._axes
+        host._entries.sort(key=lambda item: float(item.get("_zorder", 0.0)))
+        self._touch()
+
+    def get_zorder(self) -> float:
+        return self._zorder
+
+    def set_clip_on(self, enabled: bool) -> None:
+        if not enabled:
+            raise NotImplementedError(
+                f"{type(self).__name__} unclipped rendering is not supported by xy.pyplot"
+            )
+        self._clip_on = bool(enabled)
+        self._touch()
+
+    def get_clip_on(self) -> bool:
+        return self._clip_on
+
+    def set_clip_path(self, path: Any) -> None:
+        raise NotImplementedError(
+            f"{type(self).__name__} clip paths are not supported; image clip paths are supported"
+        )
+
+    def get_clip_path(self) -> Any:
+        return self._entry.get("clip_path")
+
+    def set_transform(self, transform: Any) -> None:
+        if not hasattr(transform, "transform"):
+            raise TypeError("transform must provide a transform(xy) method")
+        matrix = getattr(transform, "get_matrix", lambda: None)()
+        coordinate_space = getattr(transform, "coordinate_space", "data")
+        if coordinate_space != "data" or matrix is None or not np.allclose(matrix, np.eye(3)):
+            raise NotImplementedError(
+                f"{type(self).__name__} supports only the identity data transform; "
+                "transformed images are supported by AxesImage"
+            )
+        self._transform = transform
+        self._touch()
+
+    def get_transform(self) -> Any:
+        return self._transform
+
+    def set_rasterized(self, rasterized: bool) -> None:
+        if rasterized:
+            raise NotImplementedError(
+                f"{type(self).__name__} selective rasterization is not supported by xy.pyplot; "
+                "PNG export rasterizes everything already"
+            )
+        self._rasterized = bool(rasterized)
+
+    def get_rasterized(self) -> bool:
+        return self._rasterized
 
     def set_color(self, color: Any) -> None:
         self._entry["kwargs"]["color"] = resolve_color(color)
@@ -110,9 +196,7 @@ class Line2D(Artist):
     def _segment_args_from_xy(x: Any, y: Any) -> tuple[Any, Any, Any, Any]:
         xv, yv = np.asarray(x), np.asarray(y)
         try:
-            finite_pairs = np.isfinite(xv.astype(np.float64)) & np.isfinite(
-                yv.astype(np.float64)
-            )
+            finite_pairs = np.isfinite(xv.astype(np.float64)) & np.isfinite(yv.astype(np.float64))
         except (TypeError, ValueError):
             finite_pairs = np.ones(len(xv), dtype=bool)
         keep = finite_pairs[:-1] & finite_pairs[1:]
@@ -301,6 +385,7 @@ class AxesImage(Artist):
         self._touch()
 
     def set_transform(self, transform: Any) -> None:
+        self._transform = transform
         self._entry["transform"] = transform
         if not hasattr(transform, "transform") or not hasattr(transform, "inverted"):
             self._touch()
@@ -382,6 +467,11 @@ class BarContainer(Artist):
         self.datavalues = entry.get("y")
         self.orientation = entry.get("kwargs", {}).get("orientation", "vertical")
         self.errorbar = None
+        axes._register_container(self)
+
+    def remove(self) -> None:
+        super().remove()
+        self._axes._unregister_container(self)
 
     @property
     def position_centers(self) -> Any:
@@ -420,12 +510,14 @@ class StemContainer:
         self.markerline = artist
         self.stemlines = artist
         self.baseline = artist
+        artist._axes._register_container(self)
 
     def __iter__(self):
         return iter((self.markerline, self.stemlines, self.baseline))
 
     def remove(self) -> None:
         self.stemlines.remove()
+        self.stemlines._axes._unregister_container(self)
 
 
 class ErrorbarContainer:
@@ -436,12 +528,14 @@ class ErrorbarContainer:
         self.has_xerr = artist._entry["kwargs"].get("xerr") is not None
         self.has_yerr = artist._entry["kwargs"].get("yerr") is not None
         self._artist = artist
+        artist._axes._register_container(self)
 
     def __iter__(self):
         return iter(self.lines)
 
     def remove(self) -> None:
         self._artist.remove()
+        self._artist._axes._unregister_container(self)
 
 
 class ContourSet(Artist):
@@ -597,6 +691,9 @@ class Table:
     def __init__(self, artists: list[Artist], cells: dict[tuple[int, int], "Text"]) -> None:
         self._artists = artists
         self._cells = cells
+        if artists:
+            self._axes = artists[0]._axes
+            self._axes._register_artist(self)
 
     def get_celld(self) -> dict[tuple[int, int], "Text"]:
         return dict(self._cells)
@@ -604,6 +701,8 @@ class Table:
     def remove(self) -> None:
         for artist in self._artists:
             artist.remove()
+        if hasattr(self, "_axes"):
+            self._axes._unregister_artist(self)
 
 
 class Text(Artist):
@@ -619,8 +718,6 @@ class Text(Artist):
 
     def get_window_extent(self, renderer: Any = None) -> Any:
         del renderer
-        Bbox = __import__("matplotlib.transforms", fromlist=["Bbox"]).Bbox
-
         x, y, text = self._entry["args"]
         width = max(0.05, len(str(text)) * 0.018)
         return Bbox.from_bounds(float(x) - width / 2, float(y) - 0.04, width, 0.08)

@@ -85,6 +85,9 @@ class Cmap:
     def __init__(self, name: str) -> None:
         self.name = resolve_cmap(name)
         self.N = 256
+        self._bad: object = "transparent"
+        self._under: object | None = None
+        self._over: object | None = None
 
     def resampled(self, lutsize: int) -> "Cmap":
         result = Cmap(self.name)
@@ -96,32 +99,93 @@ class Cmap:
         result.N = self.N
         for key in ("bad", "under", "over"):
             if key in kwargs:
-                setattr(result, f"_{key}", kwargs[key])
+                getattr(result, f"set_{key}")(kwargs[key])
         return result
 
     def set_bad(self, color: object = "transparent", alpha: object = None) -> None:
-        self._bad = (color, alpha)
+        self._bad = color if alpha is None else (color, alpha)
 
     def set_under(self, color: object = "transparent", alpha: object = None) -> None:
-        self._under = (color, alpha)
+        self._under = color if alpha is None else (color, alpha)
 
     def set_over(self, color: object = "transparent", alpha: object = None) -> None:
-        self._over = (color, alpha)
+        self._over = color if alpha is None else (color, alpha)
 
     def __call__(self, values: object) -> object:
         from xy._svg import _lut
 
+        source = np.asarray(values)
         array = np.asarray(values, dtype=np.float64)
         normalized = array
-        if np.issubdtype(array.dtype, np.integer) or (
-            np.isfinite(array).any() and np.nanmax(np.abs(array)) > 1.0
-        ):
+        if np.issubdtype(source.dtype, np.integer):
             normalized = array / max(1, self.N - 1)
-        flat = _lut(self.name, normalized.reshape(-1)) / 255.0
+        flat_values = normalized.reshape(-1)
+        flat = _lut(self.name, np.clip(np.nan_to_num(flat_values, nan=0.0), 0.0, 1.0)) / 255.0
         rgba = np.column_stack((flat, np.ones(len(flat), dtype=np.float64))).reshape(
             array.shape + (4,)
         )
+        flat_rgba = rgba.reshape(-1, 4)
+        for mask, extreme in (
+            (np.isnan(flat_values), self._bad),
+            (flat_values < 0.0, self._under),
+            (flat_values > 1.0, self._over),
+        ):
+            if extreme is not None and np.any(mask):
+                flat_rgba[mask] = _rgba_floats(extreme)
         return tuple(rgba.tolist()) if array.ndim == 0 else rgba
+
+
+def _rgba_floats(value: object) -> tuple[float, float, float, float]:
+    """Resolve the bounded color forms used by colormap extremes."""
+    alpha: object = None
+    color = value
+    if isinstance(value, (tuple, list)) and _is_color_alpha_pair(value):
+        color, alpha = value[0], value[1]
+    resolved = resolve_color(color)
+    if resolved is None or resolved == "transparent":
+        result = (0.0, 0.0, 0.0, 0.0)
+    elif resolved.startswith("#") and len(resolved) in (7, 9):
+        channels = [
+            int(resolved[index : index + 2], 16) / 255.0 for index in range(1, len(resolved), 2)
+        ]
+        result = (channels[0], channels[1], channels[2], channels[3] if len(channels) == 4 else 1.0)
+    elif resolved.startswith("rgb("):
+        channels = [float(part) for part in resolved[4:-1].split(",")]
+        result = (channels[0] / 255.0, channels[1] / 255.0, channels[2] / 255.0, 1.0)
+    elif resolved.startswith("rgba("):
+        channels = [float(part) for part in resolved[5:-1].split(",")]
+        result = (channels[0] / 255.0, channels[1] / 255.0, channels[2] / 255.0, channels[3])
+    else:
+        named = {
+            "black": (0.0, 0.0, 0.0, 1.0),
+            "white": (1.0, 1.0, 1.0, 1.0),
+            "red": (1.0, 0.0, 0.0, 1.0),
+            "green": (0.0, 0.5, 0.0, 1.0),
+            "blue": (0.0, 0.0, 1.0, 1.0),
+            "yellow": (1.0, 1.0, 0.0, 1.0),
+            "cyan": (0.0, 1.0, 1.0, 1.0),
+            "magenta": (1.0, 0.0, 1.0, 1.0),
+        }
+        if resolved.lower() not in named:
+            raise ValueError(
+                f"colormap extremes require a CSS hex/rgb or basic named color, got {color!r}"
+            )
+        result = named[resolved.lower()]
+    if isinstance(alpha, (int, float)):
+        result = (result[0], result[1], result[2], float(alpha))
+    return result
+
+
+def _is_color_alpha_pair(value: object) -> bool:
+    """(color, alpha) where color is a str or RGB(A) sequence — never a bare 2-tuple."""
+    if not (isinstance(value, (tuple, list)) and len(value) == 2):
+        return False
+    color, alpha = value
+    if alpha is not None and not isinstance(alpha, (int, float)):
+        return False
+    return isinstance(color, str) or (
+        isinstance(color, (tuple, list, np.ndarray)) and len(color) in (3, 4)
+    )
 
 
 def resolve_color(value: object) -> Optional[str]:

@@ -671,6 +671,8 @@ def _dash_attr(style: dict[str, Any]) -> str:
     dash = style.get("dash")
     if not dash:
         return ""
+    if isinstance(dash, str):
+        dash = dash.split(",")
     return f' stroke-dasharray="{",".join(_num(float(v)) for v in dash)}"'
 
 
@@ -957,7 +959,8 @@ def _annotation_svg(annotations, sx, sy, plot, width, height):
             marks.append(
                 f'<line x1="{_num(coords[0])}" y1="{_num(coords[1])}" '
                 f'x2="{_num(coords[2])}" y2="{_num(coords[3])}" stroke="{color}" '
-                f'stroke-width="{_num(float(style.get("width", 1.5)))}" stroke-opacity="{_num(opacity)}"/>'
+                f'stroke-width="{_num(float(style.get("width", 1.5)))}" stroke-opacity="{_num(opacity)}"'
+                f"{_dash_attr(style)}/>"
             )
         elif kind == "band":
             a, b = float(ann["start"]), float(ann["end"])
@@ -997,9 +1000,11 @@ def _annotation_svg(annotations, sx, sy, plot, width, height):
                 f"{escape(line)}</tspan>"
                 for index, line in enumerate(lines)
             )
+            text_opacity = float(style.get("opacity", 1.0))
             labels.append(
                 f'<text text-anchor="{anchor}" font-size="{_num(font_size)}" '
-                f'fill="{color}">{tspans}</text>'
+                + (f'fill-opacity="{_num(text_opacity)}" ' if text_opacity < 1 else "")
+                + f'fill="{color}">{tspans}</text>'
             )
     return marks, labels
 

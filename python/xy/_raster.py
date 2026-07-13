@@ -617,7 +617,16 @@ def _emit_annotations(cmd, annotations, sx, sy, plot, width, height):
             else:
                 pos = float(sy(float(ann["value"])))
                 points = [(px0 + start * plot["w"], pos), (px0 + end * plot["w"], pos)]
-            cmd.stroke(points, float(style.get("width", 1.5)), color)
+            cmd.stroke(
+                points,
+                float(style.get("width", 1.5)),
+                color,
+                dash=(
+                    [float(value) for value in style["dash"].split(",")]
+                    if isinstance(style.get("dash"), str)
+                    else style.get("dash")
+                ),
+            )
         elif ann.get("kind") == "band":
             a, b = float(ann["start"]), float(ann["end"])
             if ann.get("axis") == "x":
@@ -643,7 +652,7 @@ def _emit_annotations(cmd, annotations, sx, sy, plot, width, height):
                     first_y + index * line_height + float(ann.get("dy", 0.0)),
                     anchor,
                     font_size,
-                    _rgba(style.get("color"), _TEXT),
+                    _rgba(style.get("color"), _TEXT, float(style.get("opacity", 1.0))),
                     line,
                 )
 

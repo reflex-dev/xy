@@ -21,6 +21,7 @@ DEFAULT_CODSPEED_WORKFLOW = ROOT / ".github" / "workflows" / "codspeed.yml"
 DEFAULT_RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 DEFAULT_WORKFLOW = DEFAULT_CI_WORKFLOW
 REQUIRED_CI_JOBS = {
+    "matplotlib_reference",
     "test",
     "python_floor",
     "benchmark_vs",
@@ -118,6 +119,20 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     missing_jobs = sorted(REQUIRED_CI_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"CI workflow missing required jobs: {missing_jobs}")
+
+    _require_job_contains(
+        errors,
+        jobs,
+        "matplotlib_reference",
+        "CI",
+        "pinned Matplotlib compatibility gates",
+        "bde111fb4e",
+        "scripts/sync_matplotlib_compat.py --check --upstream ignore/matplotlib",
+        "tests/pyplot/test_launch_compat.py",
+        "tests/pyplot/test_reference_corpus.py",
+        "tests/pyplot/test_reference_semantics.py",
+        "MPLBACKEND: Agg",
+    )
 
     _require_job_contains(
         errors,

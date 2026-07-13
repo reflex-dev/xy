@@ -82,3 +82,29 @@ def test_shim_never_imports_real_matplotlib_statically() -> None:
                 assert not any(a.name.split(".")[0] == "matplotlib" for a in node.names), path
             if isinstance(node, ast.ImportFrom):
                 assert (node.module or "").split(".")[0] != "matplotlib", path
+
+
+def test_complete_supported_corpus_runs_when_matplotlib_imports_fail() -> None:
+    """Every advertised plotting method remains usable in dependency-free installs."""
+    corpus = Path(__file__).with_name("corpus")
+    _run_fresh(
+        f"""
+        import builtins
+        import pathlib
+        import runpy
+
+        real_import = builtins.__import__
+        def blocked_import(name, *args, **kwargs):
+            if name == "matplotlib" or name.startswith("matplotlib."):
+                raise ImportError("matplotlib intentionally unavailable")
+            return real_import(name, *args, **kwargs)
+        builtins.__import__ = blocked_import
+
+        import xy.pyplot as plt
+        for path in sorted(pathlib.Path({str(corpus)!r}).glob("[0-9][0-9]_*.py")):
+            runpy.run_path(path, run_name="__main__")
+            for figure in tuple(__import__("xy.pyplot._state", fromlist=["all_figures"]).all_figures()):
+                assert figure._repr_html_().startswith("<!doctype html>")
+            plt.close("all")
+        """
+    )

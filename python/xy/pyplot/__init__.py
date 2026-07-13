@@ -246,7 +246,14 @@ def twiny() -> Axes:
     return gca().twiny()
 
 
-def subplot2grid(shape: tuple[int, int], loc: tuple[int, int], rowspan: int = 1, colspan: int = 1, fig: Optional[Figure] = None, **kwargs: Any) -> Axes:
+def subplot2grid(
+    shape: tuple[int, int],
+    loc: tuple[int, int],
+    rowspan: int = 1,
+    colspan: int = 1,
+    fig: Optional[Figure] = None,
+    **kwargs: Any,
+) -> Axes:
     if rowspan != 1 or colspan != 1:
         raise not_implemented("subplot2grid(rowspan/colspan)", "single-cell subplot2grid specs")
     target = fig or gcf()
@@ -278,7 +285,11 @@ def setp(obj: Any, *args: Any, **kwargs: Any) -> None:
 
 def getp(obj: Any, property: Optional[str] = None) -> Any:
     if property is None:
-        return {name[4:]: method() for name, method in ((n, getattr(obj, n)) for n in dir(obj) if n.startswith("get_")) if callable(method)}
+        return {
+            name[4:]: method()
+            for name, method in ((n, getattr(obj, n)) for n in dir(obj) if n.startswith("get_"))
+            if callable(method)
+        }
     getter = getattr(obj, f"get_{property}", None)
     if getter is None:
         raise AttributeError(f"object has no get_{property}()")
@@ -329,7 +340,9 @@ def imsave(fname: Any, arr: Any, **kwargs: Any) -> None:
         raise TypeError(f"imsave() got unsupported keyword argument {next(iter(kwargs))!r}")
     path = str(fname)
     if format_name in {"jpg", "jpeg"} or path.lower().endswith((".jpg", ".jpeg")):
-        raise not_implemented("imsave(JPEG)", "PNG output; JPEG remains outside the dependency-free shim")
+        raise not_implemented(
+            "imsave(JPEG)", "PNG output; JPEG remains outside the dependency-free shim"
+        )
     image = np.asarray(arr)
     if image.dtype != np.uint8:
         finite = image.astype(float)
@@ -359,9 +372,13 @@ def imsave(fname: Any, arr: Any, **kwargs: Any) -> None:
 def imread(fname: Any, **kwargs: Any) -> np.ndarray:
     if kwargs:
         raise TypeError(f"imread() got unsupported keyword argument {next(iter(kwargs))!r}")
-    data = fname.read() if hasattr(fname, "read") else __import__("pathlib").Path(fname).read_bytes()
+    data = (
+        fname.read() if hasattr(fname, "read") else __import__("pathlib").Path(fname).read_bytes()
+    )
     if data[:2] == b"\xff\xd8":
-        raise not_implemented("imread(JPEG)", "PNG input; JPEG remains outside the dependency-free shim")
+        raise not_implemented(
+            "imread(JPEG)", "PNG input; JPEG remains outside the dependency-free shim"
+        )
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         raise ValueError("imread() only supports PNG files in the dependency-free shim")
     import struct
@@ -378,7 +395,9 @@ def imread(fname: Any, **kwargs: Any) -> np.ndarray:
         chunk = data[position + 8 : position + 8 + length]
         position += 12 + length
         if kind == b"IHDR":
-            width, height, depth, color_type, _compression, _filter, interlace = struct.unpack(">IIBBBBB", chunk)
+            width, height, depth, color_type, _compression, _filter, interlace = struct.unpack(
+                ">IIBBBBB", chunk
+            )
             if depth != 8 or interlace != 0:
                 raise ValueError("imread() supports only 8-bit non-interlaced PNG files")
         elif kind == b"PLTE":
@@ -677,14 +696,31 @@ class _StyleNamespace:
     available = ("default", "xy")
 
     @staticmethod
-    def use(name: Union[str, list[str]]) -> None:
+    def use(name: Union[str, dict[str, Any], list[Union[str, dict[str, Any]]]]) -> None:
+        if isinstance(name, list):
+            for item in name:
+                _StyleNamespace.use(item)
+            return
+        if isinstance(name, dict):
+            unknown = sorted(set(name) - set(rcParams))
+            if unknown:
+                raise not_implemented(
+                    f"style.use() rcParam {unknown[0]!r}", "the documented rcParams subset"
+                )
+            rcParams.update(name)
+            return
         if name not in ("default", "xy"):
-            raise not_implemented(f"style.use({name!r})", "'default' or 'xy'")
+            raise not_implemented(f"style.use({name!r})", "'default', 'xy', or an rcParams dict")
         from . import _axes
 
         if name == "xy":
             _axes._MPL_THEME_TOKENS.clear()  # engine-native look
-        # 'default' keeps the matplotlib-flavored theme
+        else:
+            rcdefaults()
+            _axes._MPL_THEME_TOKENS.update(
+                plot_background="#ffffff", axis_color="#000000", text_color="#262626"
+            )
+        _axes._component_cache.clear()
 
 
 style = _StyleNamespace()
