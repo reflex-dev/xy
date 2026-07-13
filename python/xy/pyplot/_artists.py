@@ -45,32 +45,114 @@ class Artist:
     def get_color(self) -> Any:
         return self._entry["kwargs"].get("color")
 
+    def _marker_entries(self) -> list[dict[str, Any]]:
+        """Return marker specs controlled by this matplotlib-style handle.
+
+        ``plot(..., marker=...)`` is represented internally as a line entry
+        followed by a scatter overlay.  Matplotlib exposes one ``Line2D`` for
+        both, so visible marker mutations need to follow that adjacent overlay.
+        Marker-only plots are already backed directly by a scatter entry.
+        """
+
+        if self._entry.get("kind") == "scatter":
+            return [self._entry]
+
+        entries = getattr(self._axes, "_entries", [])
+        try:
+            index = next(i for i, entry in enumerate(entries) if entry is self._entry)
+        except StopIteration:
+            return []
+        if index + 1 >= len(entries):
+            return []
+
+        candidate = entries[index + 1]
+        if candidate.get("kind") != "scatter":
+            return []
+        kwargs = candidate.get("kwargs", {})
+        if "symbol" not in kwargs:
+            return []
+        return [candidate]
+
     def set_markerfacecolor(self, color: Any) -> None:
-        del color
+        for entry in self._marker_entries():
+            entry["kwargs"]["color"] = resolve_color(color)
+        self._touch()
+
+    set_mfc = set_markerfacecolor
 
     def set_markeredgecolor(self, color: Any) -> None:
-        del color
+        for entry in self._marker_entries():
+            if isinstance(color, str) and color.lower() == "none":
+                entry["kwargs"].pop("stroke", None)
+                entry["kwargs"].pop("stroke_width", None)
+            else:
+                entry["kwargs"]["stroke"] = resolve_color(color)
+                entry["kwargs"].setdefault("stroke_width", 1.0)
+        self._touch()
+
+    set_mec = set_markeredgecolor
 
     def set_markersize(self, size: Any) -> None:
-        del size
+        # Matplotlib specifies Line2D marker size in points; xy's scatter mark
+        # consumes CSS-pixel diameters.  96 dpi maps one point to 4/3 pixels.
+        diameter = float(size) * (4.0 / 3.0)
+        for entry in self._marker_entries():
+            entry["kwargs"]["size"] = diameter
+        self._touch()
+
+    set_ms = set_markersize
 
 
 class Line2D(Artist):
     """Handle for plt.plot lines (and their marker overlays)."""
 
+    @staticmethod
+    def _segment_args_from_xy(x: Any, y: Any) -> tuple[Any, Any, Any, Any]:
+        xv, yv = np.asarray(x), np.asarray(y)
+        try:
+            finite_pairs = np.isfinite(xv.astype(np.float64)) & np.isfinite(
+                yv.astype(np.float64)
+            )
+        except (TypeError, ValueError):
+            finite_pairs = np.ones(len(xv), dtype=bool)
+        keep = finite_pairs[:-1] & finite_pairs[1:]
+        return xv[:-1][keep], yv[:-1][keep], xv[1:][keep], yv[1:][keep]
+
+    @staticmethod
+    def _same_data(left: Any, right: Any) -> bool:
+        try:
+            return bool(np.array_equal(np.asarray(left), np.asarray(right), equal_nan=True))
+        except TypeError:
+            return bool(
+                np.array_equal(np.asarray(left, dtype=object), np.asarray(right, dtype=object))
+            )
+
+    def _sync_marker_data(self, key: str, old_value: Any, value: Any) -> None:
+        for entry in self._marker_entries():
+            if key not in entry:
+                continue
+            if self._same_data(entry[key], old_value):
+                entry[key] = value
+
     def _set_xy(self, index: int, value: Any) -> None:
+        key = "x" if index == 0 else "y"
         if self._entry["kind"] == "@mark" and self._entry.get("factory") == "step":
+            old_value = self._entry.get(key)
             args = list(self._entry["args"])
             args[index] = value
             self._entry["args"] = tuple(args)
-            self._entry["x" if index == 0 else "y"] = value
+            self._entry[key] = value
+            self._sync_marker_data(key, old_value, value)
             return
-        key = "x" if index == 0 else "y"
         if key not in self._entry:
             raise NotImplementedError(
-                f"set_{key}data is not supported for segment-backed Line2D handles"
+                f"set_{key}data is not supported for Line2D handles without retained data"
             )
+        old_value = self._entry[key]
         self._entry[key] = value
+        if self._entry["kind"] == "@mark" and self._entry.get("factory") == "segments":
+            self._entry["args"] = self._segment_args_from_xy(self._entry["x"], self._entry["y"])
+        self._sync_marker_data(key, old_value, value)
 
     def set_data(self, x: Any, y: Any) -> None:
         self._set_xy(0, x)
@@ -102,12 +184,13 @@ class Line2D(Artist):
         self._touch()
 
     def set_dash_capstyle(self, style: Any) -> None:
-        del style
+        raise NotImplementedError("xy.pyplot does not support dash cap style mutation")
 
-    set_solid_capstyle = set_dash_capstyle
+    def set_solid_capstyle(self, style: Any) -> None:
+        raise NotImplementedError("xy.pyplot does not support solid cap style mutation")
 
     def set_gapcolor(self, color: Any) -> None:
-        del color
+        raise NotImplementedError("xy.pyplot does not support gapcolor mutation")
 
 
 class PathCollection(Artist):

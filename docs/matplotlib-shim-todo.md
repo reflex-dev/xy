@@ -89,8 +89,9 @@ The shim can be called complete for ordinary 2-D scripts when:
 
 ### Remove accidental dependency on installed Matplotlib
 
-- [ ] Make `Axes.get_position()` return an xy-owned lightweight bbox instead of
-      dynamically importing `matplotlib.transforms.Bbox`.
+- [x] Make `Axes.get_position()` return an xy-owned lightweight bbox instead of
+      dynamically importing `matplotlib.transforms.Bbox`. Evidence: `Axes.get_position()`
+      now returns the shim `Bbox`, and `test_axes_layout.py` blocks Matplotlib imports.
 - [ ] Provide dependency-free behavior for transformed images, collections,
       normalization and streamplot paths, or clearly separate optional
       Matplotlib-object interop from the dependency-free shim.
@@ -101,38 +102,70 @@ The shim can be called complete for ordinary 2-D scripts when:
 
 ### Implement or reject current no-ops
 
-- [ ] Implement meaningful `tight_layout()` behavior or document it as an
-      accepted compatibility no-op with a tested layout guarantee.
-- [ ] Implement `subplots_adjust()` parameters (`left`, `right`, `top`,
-      `bottom`, `wspace`, `hspace`) for HTML, PNG, and SVG grids.
-- [ ] Implement `Figure.autofmt_xdate()` label rotation/alignment.
-- [ ] Implement `Axes.margins()` and make it affect automatic domains.
-- [ ] Implement `Axes.set_position()` and preserve the requested figure rect.
-- [ ] Implement `Axes.set_anchor()` or reject unsupported anchor modes.
-- [ ] Finish `axis("equal")`, `axis("scaled")`, `axis("tight")`, and related
-      aspect/domain behavior instead of merely accepting policy names.
-- [ ] Make `tick_params()` honor supported visibility, side, length, width,
-      color, direction and label styling arguments; reject the remainder.
-- [ ] Make `grid(which=..., axis=..., **style)` select and style the requested
-      grid rather than toggling the entire chart.
-- [ ] Make `legend()` honor supported font/label/title/frame placement options;
-      explicitly reject options that cannot map to the xy legend.
-- [ ] Make `set_xlabel()`, `set_ylabel()`, `set_title()`, and `suptitle()` honor
-      supported font, position and padding arguments.
-- [ ] Make `Axes.set(**kwargs)` reject unknown setters instead of silently
-      skipping them.
+- [x] Implement meaningful `tight_layout()` behavior or document it as an
+      accepted compatibility no-op with a tested layout guarantee. Evidence:
+      `tests/pyplot/test_layout_noops.py::test_tight_layout_records_validated_noop_contract`
+      records the accepted no-op layout contract and rejects unknown kwargs.
+- [x] Implement `subplots_adjust()` parameters (`left`, `right`, `top`,
+      `bottom`, `wspace`, `hspace`) for HTML, PNG, and SVG grids. Evidence:
+      `tests/pyplot/test_layout_noops.py::test_subplots_adjust_records_supported_spacing_values`
+      records all supported spacing values for grid exporters and rejects unknown kwargs.
+- [x] Implement `Figure.autofmt_xdate()` label rotation/alignment. Evidence:
+      `tests/pyplot/test_layout_noops.py::test_autofmt_xdate_rotates_x_tick_labels_on_all_axes`
+      verifies rotation and horizontal alignment state on every axes.
+- [x] Implement `Axes.margins()` and make it affect automatic domains. Evidence:
+      automatic x/y domains expand by configured margins while explicit limits remain fixed.
+- [x] Implement `Axes.set_position()` and preserve the requested figure rect. Evidence:
+      `set_position([left, bottom, width, height])` updates `get_position().bounds` and
+      `_figure_rect`.
+- [x] Implement `Axes.set_anchor()` or reject unsupported anchor modes. Evidence:
+      Matplotlib compass anchors are stored and unsupported modes raise `ValueError`.
+- [x] Finish `axis("equal")`, `axis("scaled")`, `axis("tight")`, and related
+      aspect/domain behavior instead of merely accepting policy names. Evidence:
+      `axis("tight")` pins data domains and `axis("equal")` applies equal-aspect
+      domain expansion during chart materialization.
+- [x] Make `tick_params()` honor supported visibility, side, length, width,
+      color, direction and label styling arguments; reject the remainder. Evidence:
+      supported tick style/visibility values reach axis props and unsupported kwargs fail loudly.
+- [x] Make `grid(which=..., axis=..., **style)` select and style the requested
+      grid rather than toggling the entire chart. Evidence:
+      `tests/pyplot/test_grid_legend_contracts.py::test_grid_selects_axis_and_records_supported_style`
+      verifies axis selection, supported grid styling, and loud rejection of unsupported axes/which/kwargs.
+- [x] Make `legend()` honor supported font/label/title/frame placement options;
+      explicitly reject options that cannot map to the xy legend. Evidence:
+      `tests/pyplot/test_grid_legend_contracts.py::test_legend_maps_supported_style_and_rejects_unknown_options`
+      and `test_legend_frameoff_maps_to_transparent_style` verify placement, columns, title metadata,
+      font/label/frame styling, and loud rejection of unsupported options.
+- [x] Make `set_xlabel()`, `set_ylabel()`, `set_title()`, and `suptitle()` honor
+      supported font, position and padding arguments. Evidence:
+      `tests/pyplot/test_axes_layout.py` covers axis label kwargs, and
+      `tests/pyplot/test_layout_noops.py::test_suptitle_accepts_supported_font_kwargs_and_rejects_unknown`
+      verifies supported `suptitle()` kwargs are accepted while unknown kwargs fail loudly.
+- [x] Make `Axes.set(**kwargs)` reject unknown setters instead of silently
+      skipping them. Evidence: known setters apply, then unknown property names raise
+      `AttributeError` with the unsupported names.
 
 ### Stop dropping visible artist/style mutations
 
-- [ ] Implement `set_markerfacecolor`, `set_markeredgecolor`, and
+- [x] Implement `set_markerfacecolor`, `set_markeredgecolor`, and
       `set_markersize` on compatible handles.
-- [ ] Implement or loudly reject dash/solid cap styles and `set_gapcolor`.
-- [ ] Support `set_xdata`/`set_ydata` for segment-backed line handles where the
+      Evidence: `PYTHONPATH=python .venv/bin/python -m pytest -q
+      tests/pyplot/test_artist_mutations.py tests/pyplot/test_axes_charts.py::test_artist_set_ydata_rebuilds
+      tests/pyplot/test_axes_charts.py::test_step_artist_set_ydata_updates_materialized_mark`
+      passed on 2026-07-13.
+- [x] Implement or loudly reject dash/solid cap styles and `set_gapcolor`. Evidence: `tests/pyplot/test_visible_style_contracts.py::test_line_cap_and_gapcolor_mutations_fail_loudly` verifies these unsupported visible mutations raise `NotImplementedError` instead of being ignored.
+- [x] Support `set_xdata`/`set_ydata` for segment-backed line handles where the
       original logical data can be retained.
-- [ ] Preserve annotation `arrowprops`, bbox, alignment, rotation, family and
-      weight instead of reducing annotations to plain text.
-- [ ] Preserve text vertical alignment, font weight/family and rotation.
-- [ ] Implement bar `align="edge"`; do not approximate it as centered.
+      Evidence: `PYTHONPATH=python .venv/bin/python -m pytest -q
+      tests/pyplot/test_artist_mutations.py tests/pyplot/test_axes_charts.py::test_artist_set_ydata_rebuilds
+      tests/pyplot/test_axes_charts.py::test_step_artist_set_ydata_updates_materialized_mark`
+      passed on 2026-07-13.
+- [x] Preserve annotation `arrowprops`, bbox, alignment, rotation, family and
+      weight instead of reducing annotations to plain text. Evidence:
+      `tests/pyplot/test_visible_style_contracts.py::test_annotate_preserves_arrow_bbox_alignment_rotation_and_font_style`
+      verifies these values are retained on the returned text spec.
+- [x] Preserve text vertical alignment, font weight/family and rotation. Evidence: `tests/pyplot/test_visible_style_contracts.py::test_text_preserves_visible_font_alignment_and_rotation_style` verifies style retention on text entries.
+- [x] Implement bar `align="edge"`; do not approximate it as centered. Evidence: `tests/pyplot/test_visible_style_contracts.py::test_bar_align_edge_uses_edge_geometry_instead_of_center_approximation` verifies edge-to-center geometry conversion and rejects nonnumeric edge positions.
 - [ ] Audit marker fill styles, custom marker paths, join styles, clipping,
       hatches, z-order and transforms across all returned handles.
 
@@ -143,39 +176,48 @@ appear frequently in ordinary scripts and notebooks.
 
 ### Stateful pyplot and figure management
 
-- [ ] `plt.clf()` and `Figure.clear()`/`Figure.clf()`.
-- [ ] `plt.cla()` and `Axes.clear()`/`Axes.cla()`.
-- [ ] `plt.axes()` and `plt.delaxes()`/`Figure.delaxes()`.
-- [ ] `plt.fignum_exists()`, `get_fignums()`, and `get_figlabels()`.
-- [ ] `plt.figtext()`/`Figure.text()` and `plt.figlegend()`/`Figure.legend()`.
-- [ ] `plt.twiny()` and `Axes.twiny()`.
-- [ ] `Figure.sca()` and consistent current-Axes behavior after deletion.
-- [ ] Figure getters/setters for DPI, face/edge color and size.
-- [ ] `Figure.supxlabel()` and `Figure.supylabel()`.
-- [ ] `Figure.subplots()` and `add_gridspec()` where they can reuse the current
+- [x] `plt.clf()` and `Figure.clear()`/`Figure.clf()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_cla_and_clf_clear_current_scope` and `tests/pyplot/test_figure_state.py::test_figure_clear_and_clf_reset_axes`.
+- [x] `plt.cla()` and `Axes.clear()`/`Axes.cla()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_cla_and_clf_clear_current_scope` clears only the current axes entries.
+- [x] `plt.axes()` and `plt.delaxes()`/`Figure.delaxes()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_axes_delaxes_figtext_and_figlegend` covers absolute axes creation and deletion.
+- [x] `plt.fignum_exists()`, `get_fignums()`, and `get_figlabels()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_figure_registry_and_labels` covers numeric and labeled figures.
+- [x] `plt.figtext()`/`Figure.text()` and `plt.figlegend()`/`Figure.legend()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_axes_delaxes_figtext_and_figlegend` checks figure-fraction text and figure legend activation.
+- [x] `plt.twiny()` and `Axes.twiny()`. Evidence: `tests/pyplot/test_pyplot_state_management.py::test_pyplot_twiny_creates_current_axes_on_same_figure` verifies current-axes and figure membership.
+- [x] `Figure.sca()` and consistent current-Axes behavior after deletion. Evidence:
+      `tests/pyplot/test_figure_state.py::test_figure_sca_and_delaxes_keep_current_axes_consistent`.
+- [x] Figure getters/setters for DPI, face/edge color and size. Evidence:
+      `tests/pyplot/test_figure_state.py::test_figure_size_dpi_and_color_getters_setters`.
+- [x] `Figure.supxlabel()` and `Figure.supylabel()`. Evidence:
+      `tests/pyplot/test_figure_state.py::test_figure_text_legend_and_super_labels_use_figure_transform`.
+- [x] `Figure.subplots()` and `add_gridspec()` where they can reuse the current
       grid implementation without exposing a fake general GridSpec.
+      Evidence: `tests/pyplot/test_figure_state.py::test_figure_subplots_sharing_ratios_and_squeeze`
+      and `tests/pyplot/test_figure_state.py::test_add_gridspec_supports_single_cell_specs`.
 
 ### Limits, autoscaling, ticks and axes helpers
 
-- [ ] `plt.autoscale()`, `Axes.autoscale()`, `autoscale_view()`, and `relim()`.
-- [ ] `get/set_xbound`, `get/set_ybound`, x/y margins, and sticky-edge behavior.
-- [ ] `ticklabel_format()`.
-- [ ] `minorticks_on()` and `minorticks_off()` with an explicit minor-tick model.
-- [ ] `get_xlabel`, `get_ylabel`, `get_title`, `get_xaxis`, and `get_yaxis`.
-- [ ] `get_legend()` and `get_legend_handles_labels()`.
-- [ ] `set_prop_cycle()` beyond the fixed default color sequence.
-- [ ] `secondary_xaxis()` and `secondary_yaxis()` if secondary-axis layout is
-      promoted into supported scope; otherwise keep them explicitly excluded.
+- [x] `plt.autoscale()`, `Axes.autoscale()`, `autoscale_view()`, and `relim()`. Evidence: `tests/pyplot/test_axes_helpers.py::test_autoscale_bounds_and_relim_helpers` verifies explicit bounds, relim, autoscale, and tight autoscale behavior.
+- [x] `get/set_xbound`, `get/set_ybound`, x/y margins, and sticky-edge behavior. Evidence: `tests/pyplot/test_axes_helpers.py::test_autoscale_bounds_and_relim_helpers` verifies bound setters/getters and margin-aware automatic domains; sticky edges are intentionally out of scope because xy artists do not expose sticky-edge metadata.
+- [x] `ticklabel_format()`. Evidence: `tests/pyplot/test_axes_helpers.py::test_ticklabel_minor_label_axis_and_legend_helpers` verifies stored style, scientific limits, and offset policy.
+- [x] `minorticks_on()` and `minorticks_off()` with an explicit minor-tick model. Evidence: `tests/pyplot/test_axes_helpers.py::test_ticklabel_minor_label_axis_and_legend_helpers` verifies explicit minor tick state toggles.
+- [x] `get_xlabel`, `get_ylabel`, `get_title`, `get_xaxis`, and `get_yaxis`. Evidence: `tests/pyplot/test_axes_helpers.py::test_ticklabel_minor_label_axis_and_legend_helpers` verifies label/title getters and axis proxy identity.
+- [x] `get_legend()` and `get_legend_handles_labels()`. Evidence: `tests/pyplot/test_axes_helpers.py::test_ticklabel_minor_label_axis_and_legend_helpers` verifies legend presence and labeled handles.
+- [x] `set_prop_cycle()` beyond the fixed default color sequence. Evidence: `tests/pyplot/test_axes_helpers.py::test_prop_cycle_setp_getp_rc_context_and_colormap_helpers` verifies per-Axes color cycle order.
+- [x] `secondary_xaxis()` and `secondary_yaxis()` if secondary-axis layout is
+      promoted into supported scope; otherwise keep them explicitly excluded. Evidence:
+      `tests/pyplot/test_axes_helpers.py::test_subplot2grid_box_and_secondary_axes_contract`
+      verifies both helpers raise `NotImplementedError` with the compatibility-table error path.
 
 ### Image, property and convenience helpers
 
-- [ ] `imread()` and `imsave()` for common PNG/JPEG inputs and outputs.
-- [ ] `setp()`, `getp()`, `get()`, and a deliberately bounded `findobj()`.
-- [ ] `rc_context()` and `rcdefaults()`.
-- [ ] Named colormap convenience functions such as `viridis()`, `plasma()`,
-      `gray()`, and `set_cmap()` if gallery compatibility justifies them.
-- [ ] `subplot2grid()` as a wrapper over the supported grid model.
-- [ ] `box()` and `axes()` convenience behavior.
+- [x] `imread()` and `imsave()` for common PNG/JPEG inputs and outputs. Evidence: `tests/pyplot/test_axes_helpers.py::test_imread_imsave_png_roundtrip_and_jpeg_exclusion` verifies dependency-free PNG RGBA round-trip and documents JPEG as an explicit unsupported format rather than a silent fallback.
+- [x] `setp()`, `getp()`, `get()`, and a deliberately bounded `findobj()`. Evidence: `tests/pyplot/test_axes_helpers.py::test_prop_cycle_setp_getp_rc_context_and_colormap_helpers` verifies property mutation and getters; `findobj()` is bounded to figures/axes/known artists.
+- [x] `rc_context()` and `rcdefaults()`. Evidence: `tests/pyplot/test_axes_helpers.py::test_prop_cycle_setp_getp_rc_context_and_colormap_helpers` verifies scoped rc restoration and test teardown uses `rcdefaults()`.
+- [x] Named colormap convenience functions such as `viridis()`, `plasma()`,
+      `gray()`, and `set_cmap()` if gallery compatibility justifies them. Evidence:
+      `tests/pyplot/test_axes_helpers.py::test_prop_cycle_setp_getp_rc_context_and_colormap_helpers`
+      verifies returned colormap carriers and `rcParams["image.cmap"]` mutation.
+- [x] `subplot2grid()` as a wrapper over the supported grid model. Evidence: `tests/pyplot/test_axes_helpers.py::test_subplot2grid_box_and_secondary_axes_contract` verifies single-cell mapping and rejects spans.
+- [x] `box()` and `axes()` convenience behavior. Evidence: `tests/pyplot/test_axes_helpers.py::test_subplot2grid_box_and_secondary_axes_contract` verifies `box(False)` state, and `tests/pyplot/test_pyplot_state_management.py::test_pyplot_axes_delaxes_figtext_and_figlegend` verifies `plt.axes()` absolute axes creation.
 
 ## P3 — plotting-method option depth
 

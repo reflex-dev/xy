@@ -49,6 +49,54 @@ _identity_transform_class: Any = None
 _identity_transform_checked = False
 
 
+class Bbox:
+    """Small dependency-free subset of ``matplotlib.transforms.Bbox``.
+
+    Matplotlib exposes Axes positions as figure-fraction bounding boxes.  The
+    shim only needs the value semantics used by layout-oriented scripts and
+    tests, so this lightweight object intentionally carries bounds without
+    importing Matplotlib.
+    """
+
+    def __init__(self, bounds: tuple[float, float, float, float]) -> None:
+        self._bounds = tuple(float(value) for value in bounds)
+
+    @classmethod
+    def from_bounds(cls, x0: float, y0: float, width: float, height: float) -> "Bbox":
+        return cls((x0, y0, width, height))
+
+    @property
+    def bounds(self) -> tuple[float, float, float, float]:
+        return self._bounds
+
+    @property
+    def x0(self) -> float:
+        return self._bounds[0]
+
+    @property
+    def y0(self) -> float:
+        return self._bounds[1]
+
+    @property
+    def width(self) -> float:
+        return self._bounds[2]
+
+    @property
+    def height(self) -> float:
+        return self._bounds[3]
+
+    @property
+    def x1(self) -> float:
+        return self.x0 + self.width
+
+    @property
+    def y1(self) -> float:
+        return self.y0 + self.height
+
+    def frozen(self) -> "Bbox":
+        return Bbox(self._bounds)
+
+
 def _identity_transform() -> Any:
     """Return Matplotlib's identity transform when available, without retrying imports."""
     global _identity_transform_checked, _identity_transform_class
@@ -132,8 +180,16 @@ class Axes(PlotTypeMixin):
         self._figure_rect: Optional[tuple[float, float, float, float]] = None
         self._absolute_plot_ratio: Optional[float] = None
         self._padding: Optional[list[float]] = None
+        self._xmargin = 0.0
+        self._ymargin = 0.0
+        self._explicit_domains: set[str] = set()
         self._grid = bool(rcParams["axes.grid"])
+        self._grid_color = _MPL_GRID_COLOR
+        self._grid_axis = "both"
+        self._grid_style: dict[str, Any] = {}
+        self._anchor: Optional[str] = None
         self._cycle = 0
+        self._prop_cycle: Optional[list[str]] = None
         self._chart: Any = None
         self._twin: Optional[Axes] = None
         self._y2_of = y2_of  # when set, our marks target axis id "y2" on the host
@@ -161,7 +217,8 @@ class Axes(PlotTypeMixin):
 
     def _next_color(self) -> str:
         host = self._y2_of or self
-        color = PROP_CYCLE[host._cycle % len(PROP_CYCLE)]
+        cycle = getattr(host, "_prop_cycle", None) or PROP_CYCLE
+        color = cycle[host._cycle % len(cycle)]
         host._cycle += 1
         return color
 
@@ -189,6 +246,35 @@ class Axes(PlotTypeMixin):
         host._entries.append(entry)
         host._invalidate()
         return entry
+
+
+    def clear(self) -> None:
+        self._entries.clear()
+        self._axis = {"x": {}, "y": {}, "y2": {}}
+        self._title = None
+        self._legend = False
+        self._legend_options = {}
+        self._colorbar = None
+        self._aspect_equal = False
+        self._aspect_bounds = None
+        self._insets = []
+        self._insets_materialized = False
+        self._absolute_plot_ratio = None
+        self._padding = None
+        self._grid = bool(rcParams["axes.grid"])
+        self._grid_color = _MPL_GRID_COLOR
+        self._grid_axis = "both"
+        self._grid_style = {}
+        self._cycle = 0
+        self._prop_cycle = None
+        self._chart = None
+        self._twin = None
+        self.xaxis = _AxisProxy(self, "x")
+        self.yaxis = _AxisProxy(self, "y")
+        self.spines = _SpineProxy()
+        self._invalidate()
+
+    cla = clear
 
     # -- plotting ------------------------------------------------------------
 
@@ -446,7 +532,14 @@ class Axes(PlotTypeMixin):
         error_kw = kwargs.pop("error_kw", {}) or {}
         capsize = kwargs.pop("capsize", error_kw.pop("capsize", None))
         kwargs.pop("ecolor", error_kw.pop("ecolor", None))
-        kwargs.pop("align", None)  # engine centers; 'edge' approximated as center
+        align = kwargs.pop("align", "center")
+        if align not in {"center", "edge"}:
+            raise ValueError("bar()/barh() align must be 'center' or 'edge'")
+        if align == "edge":
+            try:
+                cats = np.asarray(cats, dtype=np.float64) + float(thickness) / 2.0
+            except (TypeError, ValueError):
+                raise ValueError("bar align='edge' requires numeric positions") from None
         check_unsupported(kwargs, "bar()/barh()")
         colors = None
         scalar_channels = False
@@ -996,11 +1089,11 @@ class Axes(PlotTypeMixin):
         color = kwargs.pop("color", kwargs.pop("c", None))
         fontsize = kwargs.pop("fontsize", kwargs.pop("size", None))
         ha = kwargs.pop("ha", kwargs.pop("horizontalalignment", None))
-        kwargs.pop("va", kwargs.pop("verticalalignment", None))
+        va = kwargs.pop("va", kwargs.pop("verticalalignment", None))
         transform = kwargs.pop("transform", None)
-        kwargs.pop("fontweight", kwargs.pop("weight", None))
-        kwargs.pop("fontfamily", kwargs.pop("family", None))
-        kwargs.pop("rotation", None)
+        fontweight = kwargs.pop("fontweight", kwargs.pop("weight", None))
+        fontfamily = kwargs.pop("fontfamily", kwargs.pop("family", None))
+        rotation = kwargs.pop("rotation", None)
         check_unsupported(kwargs, "text()")
         akw = {"color": resolve_color(color)} if color is not None else {}
         if ha is not None:
@@ -1010,6 +1103,14 @@ class Axes(PlotTypeMixin):
         style: dict[str, Any] = {}
         if fontsize is not None:
             style["font_size"] = float(fontsize)
+        if va is not None:
+            style["vertical_align"] = str(va)
+        if fontweight is not None:
+            style["font_weight"] = str(fontweight)
+        if fontfamily is not None:
+            style["font_family"] = str(fontfamily)
+        if rotation is not None:
+            style["rotation"] = 90.0 if rotation == "vertical" else float(rotation)
         if transform is self.transAxes or transform == "axes fraction":
             style["coordinate_space"] = "axes_fraction"
         elif transform in {getattr(self.figure, "transFigure", None), "figure fraction"}:
@@ -1019,20 +1120,27 @@ class Axes(PlotTypeMixin):
         return Text(self, self._add("@text", {"args": (x, y, str(s)), "kwargs": akw}))
 
     def annotate(self, text: str, xy: tuple, xytext: Optional[tuple] = None, **kwargs: Any) -> Text:
-        kwargs.pop("arrowprops", None)  # rendered as plain callout text
+        arrowprops = kwargs.pop("arrowprops", None)
         fontsize = kwargs.pop("fontsize", None)
         color = kwargs.pop("color", None)
         xycoords = kwargs.pop("xycoords", "data")
         textcoords = kwargs.pop("textcoords", None)
-        kwargs.pop("ha", kwargs.pop("horizontalalignment", None))
-        kwargs.pop("va", kwargs.pop("verticalalignment", None))
-        kwargs.pop("family", kwargs.pop("fontfamily", None))
-        kwargs.pop("weight", kwargs.pop("fontweight", None))
-        kwargs.pop("bbox", None)
+        ha = kwargs.pop("ha", kwargs.pop("horizontalalignment", None))
+        va = kwargs.pop("va", kwargs.pop("verticalalignment", None))
+        family = kwargs.pop("family", kwargs.pop("fontfamily", None))
+        weight = kwargs.pop("weight", kwargs.pop("fontweight", None))
+        rotation = kwargs.pop("rotation", None)
+        bbox = kwargs.pop("bbox", None)
         check_unsupported(kwargs, "annotate()")
         akw: dict[str, Any] = {}
         if color is not None:
             akw["color"] = resolve_color(color)
+        if arrowprops is not None:
+            akw["arrowprops"] = dict(arrowprops)
+        if bbox is not None:
+            akw["bbox"] = dict(bbox)
+        if ha is not None:
+            akw["anchor"] = {"left": "start", "center": "middle", "right": "end"}.get(str(ha), "start")
         if xytext is not None:
             if textcoords in {"offset points", "offset pixels"}:
                 scale = 4.0 / 3.0 if textcoords == "offset points" else 1.0
@@ -1057,6 +1165,14 @@ class Axes(PlotTypeMixin):
             style["coordinate_space"] = "figure_fraction"
         if fontsize is not None:
             style["font_size"] = float(fontsize)
+        if va is not None:
+            style["vertical_align"] = str(va)
+        if weight is not None:
+            style["font_weight"] = str(weight)
+        if family is not None:
+            style["font_family"] = str(family)
+        if rotation is not None:
+            style["rotation"] = 90.0 if rotation == "vertical" else float(rotation)
         if style:
             akw["style"] = style
         return Text(
@@ -1067,14 +1183,19 @@ class Axes(PlotTypeMixin):
     # -- axis config -----------------------------------------------------------
 
     def set_xlabel(self, label: str, **kwargs: Any) -> None:
-        self._axis_props("x")["label"] = _plain_text(label)
+        props = self._axis_props("x")
+        props["label"] = _plain_text(label)
+        _apply_axis_label_kwargs(props, kwargs, "set_xlabel()")
         self._invalidate()
 
     def set_ylabel(self, label: str, **kwargs: Any) -> None:
-        self._axis_props("y")["label"] = _plain_text(label)
+        props = self._axis_props("y")
+        props["label"] = _plain_text(label)
+        _apply_axis_label_kwargs(props, kwargs, "set_ylabel()")
         self._invalidate()
 
     def set_title(self, title: str, **kwargs: Any) -> None:
+        _consume_text_kwargs(kwargs, "set_title()")
         host = self._y2_of or self
         host._title = _plain_text(title)
         host._invalidate()
@@ -1090,14 +1211,22 @@ class Axes(PlotTypeMixin):
             "yscale": self.set_yscale,
             "xticks": self.set_xticks,
             "yticks": self.set_yticks,
+            "position": self.set_position,
+            "anchor": self.set_anchor,
+            "aspect": self.set_aspect,
         }
         xticklabels = kwargs.pop("xticklabels", None)
         yticklabels = kwargs.pop("yticklabels", None)
+        unknown: list[str] = []
         for name, value in kwargs.items():
             setter = aliases.get(name)
             if setter is None:
+                unknown.append(name)
                 continue
             setter(value)
+        if unknown:
+            names = ", ".join(sorted(unknown))
+            raise AttributeError(f"Axes.set() got unsupported property name(s): {names}")
         if xticklabels is not None:
             self._axis_props("x")["tick_labels"] = [str(value) for value in xticklabels]
         if yticklabels is not None:
@@ -1113,10 +1242,11 @@ class Axes(PlotTypeMixin):
         start, end = float(lo if left is None else left), float(hi if right is None else right)
         self._axis_props("x")["domain"] = tuple(sorted((start, end)))
         self._axis_props("x")["reverse"] = start > end
+        self._explicit_domains.add("x")
         self._invalidate()
 
     def get_xlim(self) -> tuple[float, float]:
-        lo, hi = self._axis_props("x").get("domain", self._entry_extent("x"))
+        lo, hi = self._axis_props("x").get("domain", self._auto_domain("x"))
         return (hi, lo) if self._axis_props("x").get("reverse") else (lo, hi)
 
     def set_ylim(self, bottom: Any = None, top: Any = None) -> None:
@@ -1127,19 +1257,20 @@ class Axes(PlotTypeMixin):
         start, end = float(lo if bottom is None else bottom), float(hi if top is None else top)
         self._axis_props("y")["domain"] = tuple(sorted((start, end)))
         self._axis_props("y")["reverse"] = start > end
+        self._explicit_domains.add("y")
         self._invalidate()
 
     def get_ylim(self) -> tuple[float, float]:
-        lo, hi = self._axis_props("y").get("domain", self._entry_extent("y"))
+        lo, hi = self._axis_props("y").get("domain", self._auto_domain("y"))
         return (hi, lo) if self._axis_props("y").get("reverse") else (lo, hi)
 
-    def get_position(self) -> Any:
-        Bbox = __import__("matplotlib.transforms", fromlist=["Bbox"]).Bbox
-
-        return Bbox.from_bounds(0.125, 0.11, 0.775, 0.77)
+    def get_position(self, original: bool = False) -> Bbox:
+        del original
+        return Bbox.from_bounds(*(self._figure_rect or (0.125, 0.11, 0.775, 0.77)))
 
     def set_position(self, position: Any) -> None:
-        del position
+        self._figure_rect = _parse_bounds(position, "set_position()")
+        self._invalidate()
 
     def _entry_extent(self, axis: str) -> tuple[float, float]:
         values: list[np.ndarray] = []
@@ -1169,6 +1300,15 @@ class Axes(PlotTypeMixin):
         lo, hi = float(np.min(finite)), float(np.max(finite))
         return (lo, hi if hi > lo else lo + 1.0)
 
+    def _auto_domain(self, axis: str) -> tuple[float, float]:
+        lo, hi = self._entry_extent(axis)
+        margin = self._xmargin if axis == "x" else self._ymargin
+        if margin == 0.0:
+            return lo, hi
+        span = hi - lo
+        pad = span * margin if span > 0 else abs(lo) * margin or margin
+        return lo - pad, hi + pad
+
     def axis(self, arg: Any = None, **kwargs: Any) -> tuple[float, float, float, float]:
         del kwargs
         if isinstance(arg, (tuple, list)) and len(arg) == 4:
@@ -1176,17 +1316,216 @@ class Axes(PlotTypeMixin):
             self.set_ylim(arg[2], arg[3])
         elif arg == "off":
             self.set_axis_off()
-        # 'equal', 'scaled', 'tight', and 'off' are accepted layout policies.
-        x0, x1 = self._axis_props("x").get("domain", self._entry_extent("x"))
-        y0, y1 = self._axis_props("y").get("domain", self._entry_extent("y"))
+        elif arg == "on":
+            self.xaxis.set_visible(True)
+            self.yaxis.set_visible(True)
+        elif arg in ("equal", "scaled"):
+            self._set_aspect_equal_from_current()
+        elif arg == "tight":
+            self._set_tight_domains()
+        elif arg == "auto":
+            self._aspect_equal = False
+            self._aspect_bounds = None
+            self._invalidate()
+        elif arg is not None:
+            raise ValueError(f"unsupported axis() argument {arg!r}")
+        x0, x1 = self.get_xlim()
+        y0, y1 = self.get_ylim()
         return float(x0), float(x1), float(y0), float(y1)
 
     def set_aspect(self, aspect: Any, **kwargs: Any) -> None:
         del kwargs
         self._aspect_equal = aspect in ("equal", 1, 1.0)
+        if self._aspect_equal:
+            self._set_aspect_equal_from_current()
+        else:
+            self._aspect_bounds = None
+            self._invalidate()
 
     def margins(self, *args: Any, **kwargs: Any) -> None:
+        tight = kwargs.pop("tight", None)
+        del tight
+        x = kwargs.pop("x", None)
+        y = kwargs.pop("y", None)
+        if kwargs:
+            raise TypeError(f"margins() got unsupported keyword argument {next(iter(kwargs))!r}")
+        if len(args) > 2:
+            raise TypeError("margins() takes at most two positional arguments")
+        if len(args) == 1:
+            x = y = args[0]
+        elif len(args) == 2:
+            x, y = args
+        if x is None and y is None:
+            return
+        if x is not None:
+            self._xmargin = _validate_margin(x, "x")
+            if "x" not in self._explicit_domains:
+                self._axis_props("x").pop("domain", None)
+        if y is not None:
+            self._ymargin = _validate_margin(y, "y")
+            if "y" not in self._explicit_domains:
+                self._axis_props("y").pop("domain", None)
+        self._invalidate()
+
+
+    def relim(self, visible_only: bool = False) -> None:
+        del visible_only
+        for axis in ("x", "y"):
+            if axis not in self._explicit_domains:
+                self._axis_props(axis).pop("domain", None)
+        self._invalidate()
+
+    def autoscale(
+        self, enable: bool = True, axis: str = "both", tight: Optional[bool] = None
+    ) -> None:
+        if axis not in {"both", "x", "y"}:
+            raise ValueError("autoscale() axis must be 'both', 'x', or 'y'")
+        axes = ("x", "y") if axis == "both" else (axis,)
+        for item in axes:
+            if enable:
+                self._explicit_domains.discard(item)
+                if tight:
+                    self._axis_props(item)["domain"] = self._entry_extent(item)
+                    self._explicit_domains.add(item)
+                else:
+                    self._axis_props(item).pop("domain", None)
+            else:
+                self._axis_props(item)["domain"] = self._auto_domain(item)
+                self._explicit_domains.add(item)
+        self._invalidate()
+
+    def autoscale_view(
+        self, tight: Optional[bool] = None, scalex: bool = True, scaley: bool = True
+    ) -> None:
+        if scalex:
+            self.autoscale(True, axis="x", tight=tight)
+        if scaley:
+            self.autoscale(True, axis="y", tight=tight)
+
+    def get_xbound(self) -> tuple[float, float]:
+        return self.get_xlim()
+
+    def set_xbound(self, lower: Any = None, upper: Any = None) -> None:
+        if isinstance(lower, (tuple, list)):
+            lower, upper = lower
+        current = self.get_xlim()
+        self.set_xlim(current[0] if lower is None else lower, current[1] if upper is None else upper)
+
+    def get_ybound(self) -> tuple[float, float]:
+        return self.get_ylim()
+
+    def set_ybound(self, lower: Any = None, upper: Any = None) -> None:
+        if isinstance(lower, (tuple, list)):
+            lower, upper = lower
+        current = self.get_ylim()
+        self.set_ylim(current[0] if lower is None else lower, current[1] if upper is None else upper)
+
+    def ticklabel_format(self, **kwargs: Any) -> None:
+        axis = kwargs.pop("axis", "both")
+        style = kwargs.pop("style", None)
+        scilimits = kwargs.pop("scilimits", None)
+        use_offset = kwargs.pop("useOffset", kwargs.pop("useoffset", None))
+        kwargs.pop("useLocale", None)
+        kwargs.pop("useMathText", None)
+        if kwargs:
+            raise TypeError(f"ticklabel_format() got unsupported keyword argument {next(iter(kwargs))!r}")
+        if axis not in {"both", "x", "y"}:
+            raise ValueError("ticklabel_format() axis must be 'both', 'x', or 'y'")
+        if style not in {None, "plain", "sci", "scientific"}:
+            raise ValueError("ticklabel_format() style must be 'plain' or 'sci'")
+        for item in ("x", "y") if axis == "both" else (axis,):
+            props = self._axis_props(item)
+            props["tick_label_format"] = {
+                "style": "sci" if style == "scientific" else style,
+                "scilimits": None if scilimits is None else tuple(scilimits),
+                "use_offset": use_offset,
+            }
+        self._invalidate()
+
+    def minorticks_on(self) -> None:
+        self._axis_props("x")["minor_ticks"] = True
+        self._axis_props("y")["minor_ticks"] = True
+        self._invalidate()
+
+    def minorticks_off(self) -> None:
+        self._axis_props("x")["minor_ticks"] = False
+        self._axis_props("y")["minor_ticks"] = False
+        self._invalidate()
+
+    def get_xlabel(self) -> str:
+        return str(self._axis_props("x").get("label", ""))
+
+    def get_ylabel(self) -> str:
+        return str(self._axis_props("y").get("label", ""))
+
+    def get_title(self) -> str:
+        return "" if self._title is None else str(self._title)
+
+    def get_xaxis(self) -> _AxisProxy:
+        return self.xaxis
+
+    def get_yaxis(self) -> _AxisProxy:
+        return self.yaxis
+
+    def get_legend(self) -> Any:
+        return self if (self._y2_of or self)._legend else None
+
+    def get_legend_handles_labels(self) -> tuple[list[Artist], list[str]]:
+        handles: list[Artist] = []
+        labels: list[str] = []
+        for entry in (self._y2_of or self)._entries:
+            label = entry.get("kwargs", {}).get("name")
+            if label and not str(label).startswith("_"):
+                handles.append(Artist(self, entry))
+                labels.append(str(label))
+        return handles, labels
+
+    def set_prop_cycle(self, *args: Any, **kwargs: Any) -> None:
+        if args and kwargs:
+            raise TypeError("set_prop_cycle() accepts positional or keyword form, not both")
+        colors = None
+        if len(args) == 1:
+            cycle = args[0]
+            if hasattr(cycle, "by_key"):
+                colors = cycle.by_key().get("color")
+            elif isinstance(cycle, dict):
+                colors = cycle.get("color")
+        elif len(args) == 2 and args[0] == "color":
+            colors = args[1]
+        elif len(args) > 0:
+            raise NotImplementedError("xy.pyplot set_prop_cycle() only supports color cycles")
+        elif kwargs:
+            unsupported = set(kwargs) - {"color"}
+            if unsupported:
+                raise NotImplementedError("xy.pyplot set_prop_cycle() only supports color cycles")
+            colors = kwargs.get("color")
+        if colors is None:
+            self._prop_cycle = None
+        else:
+            self._prop_cycle = [resolve_color(color) for color in colors]
+        self._cycle = 0
+        self._invalidate()
+
+    def secondary_xaxis(self, *args: Any, **kwargs: Any) -> Any:
         del args, kwargs
+        raise not_implemented("secondary_xaxis()", "secondary axes are outside xy.pyplot's supported layout scope")
+
+    def secondary_yaxis(self, *args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        raise not_implemented("secondary_yaxis()", "secondary axes are outside xy.pyplot's supported layout scope")
+
+    def _set_tight_domains(self) -> None:
+        self._axis_props("x")["domain"] = self._entry_extent("x")
+        self._axis_props("y")["domain"] = self._entry_extent("y")
+        self._explicit_domains.update({"x", "y"})
+        self._invalidate()
+
+    def _set_aspect_equal_from_current(self) -> None:
+        x0, x1 = self._axis_props("x").get("domain", self._auto_domain("x"))
+        y0, y1 = self._axis_props("y").get("domain", self._auto_domain("y"))
+        self._aspect_equal = True
+        self._aspect_bounds = (float(x0), float(x1), float(y0), float(y1))
+        self._invalidate()
 
     def set_axis_off(self) -> None:
         self.xaxis.set_visible(False)
@@ -1517,10 +1856,39 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def tick_params(self, axis: str = "both", **kwargs: Any) -> None:
+        if axis not in {"both", "x", "y"}:
+            raise ValueError("tick_params() axis must be 'both', 'x', or 'y'")
         rotation = kwargs.pop("labelrotation", kwargs.pop("rotation", None))
-        if rotation is not None:
-            for ax in ("x", "y") if axis == "both" else (axis,):
-                self._axis_props(ax)["tick_label_angle"] = float(rotation)
+        colors = kwargs.pop("colors", None)
+        color = kwargs.pop("color", colors)
+        labelcolor = kwargs.pop("labelcolor", colors)
+        length = kwargs.pop("length", None)
+        width = kwargs.pop("width", None)
+        direction = kwargs.pop("direction", None)
+        label_visible = _tick_label_visibility(kwargs)
+        if kwargs:
+            raise TypeError(
+                f"tick_params() got unsupported keyword argument {next(iter(kwargs))!r}"
+            )
+        for ax in ("x", "y") if axis == "both" else (axis,):
+            props = self._axis_props(ax)
+            if rotation is not None:
+                props["tick_label_angle"] = float(rotation)
+            style = props.setdefault("style", {})
+            if color is not None:
+                style["tick_color"] = resolve_color(color)
+            if labelcolor is not None:
+                style["tick_label_color"] = resolve_color(labelcolor)
+            if length is not None:
+                style["tick_length"] = float(length)
+            if width is not None:
+                style["tick_width"] = float(width)
+            if direction is not None:
+                if direction not in {"in", "out", "inout"}:
+                    raise ValueError("tick_params() direction must be 'in', 'out', or 'inout'")
+                style["tick_direction"] = direction
+            if label_visible is not None:
+                props["tick_label_strategy"] = None if label_visible else "none"
         self._invalidate()
 
     def set_xticks(
@@ -1558,7 +1926,15 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def set_anchor(self, anchor: Any) -> None:
-        del anchor
+        if anchor is False:
+            self._anchor = None
+            self._invalidate()
+            return
+        normalized = str(anchor).upper()
+        if normalized not in {"C", "SW", "S", "SE", "E", "NE", "N", "NW", "W"}:
+            raise ValueError(f"unsupported anchor mode {anchor!r}")
+        self._anchor = normalized
+        self._invalidate()
 
     def locator_params(self, axis: str = "both", nbins: Any = None, **kwargs: Any) -> None:
         del kwargs
@@ -1592,6 +1968,16 @@ class Axes(PlotTypeMixin):
             self._twin = Axes(self.figure, y2_of=self)
         return self._twin
 
+    def twiny(self) -> "Axes":
+        if self.figure is None:
+            raise ValueError("twiny() requires an Axes attached to a Figure")
+        twin = Axes(self.figure)
+        twin._axis["y"] = self._axis_props("y")
+        self.figure._axes.append(twin)
+        self.figure._current_ax = twin
+        self.figure._invalidate()
+        return twin
+
     def legend(self, *args: Any, **kwargs: Any) -> None:
         host = self._y2_of or self
         if len(args) >= 2:
@@ -1614,12 +2000,75 @@ class Axes(PlotTypeMixin):
         host._legend = True
         loc = kwargs.pop("loc", None)
         ncols = kwargs.pop("ncols", kwargs.pop("ncol", 1))
-        host._legend_options = {"loc": loc, "ncols": max(1, int(ncols))}
+        title = kwargs.pop("title", None)
+        fontsize = kwargs.pop("fontsize", kwargs.pop("prop", None))
+        labelcolor = kwargs.pop("labelcolor", None)
+        frameon = kwargs.pop("frameon", None)
+        facecolor = kwargs.pop("facecolor", None)
+        edgecolor = kwargs.pop("edgecolor", None)
+        kwargs.pop("title_fontsize", None)
+        kwargs.pop("borderpad", None)
+        kwargs.pop("labelspacing", None)
+        kwargs.pop("handlelength", None)
+        kwargs.pop("handletextpad", None)
+        unsupported = set(kwargs)
+        if unsupported:
+            raise TypeError(f"legend() got unsupported keyword argument {sorted(unsupported)[0]!r}")
+        style: dict[str, Any] = {}
+        if isinstance(fontsize, (int, float)):
+            style["fontSize"] = f"{float(fontsize):g}px"
+        if labelcolor is not None:
+            style["color"] = resolve_color(labelcolor)
+        if frameon is False:
+            style["background"] = "transparent"
+            style["borderColor"] = "transparent"
+        if facecolor is not None:
+            style["background"] = resolve_color(facecolor)
+        if edgecolor is not None:
+            style["borderColor"] = resolve_color(edgecolor)
+            style["borderStyle"] = "solid"
+        options: dict[str, Any] = {"loc": loc, "ncols": max(1, int(ncols))}
+        if title is not None:
+            options["class_name"] = f"legend-title:{_plain_text(title)}"
+        if style:
+            options["style"] = style
+        host._legend_options = options
         host._invalidate()
 
     def grid(self, visible: Any = True, **kwargs: Any) -> None:
         host = self._y2_of or self
+        which = kwargs.pop("which", "major")
+        axis = kwargs.pop("axis", "both")
+        if which not in {"major", "both"}:
+            raise ValueError("grid() only supports major grid lines")
+        if axis not in {"both", "x", "y"}:
+            raise ValueError("grid() axis must be 'both', 'x', or 'y'")
+        color = kwargs.pop("color", kwargs.pop("c", None))
+        linestyle = kwargs.pop("linestyle", kwargs.pop("ls", None))
+        linewidth = kwargs.pop("linewidth", kwargs.pop("lw", None))
+        alpha = kwargs.pop("alpha", None)
+        if kwargs:
+            raise TypeError(f"grid() got unsupported keyword argument {next(iter(kwargs))!r}")
         host._grid = bool(visible) if visible is not None else not host._grid
+        host._grid_axis = axis
+        style = host._grid_style = {}
+        if color is not None:
+            host._grid_color = resolve_color(color)
+        if linewidth is not None:
+            style["grid_width"] = float(linewidth)
+        if linestyle is not None:
+            style["grid_dash"] = LINESTYLE_TO_DASH.get(linestyle, linestyle)
+        if alpha is not None:
+            style["grid_opacity"] = float(alpha)
+        grid_color = host._grid_color if host._grid else "transparent"
+        for item in ("x", "y"):
+            props = host._axis_props(item)
+            axis_style = props.setdefault("style", {})
+            if axis in {"both", item}:
+                axis_style["grid_color"] = grid_color
+                axis_style.update(style)
+            else:
+                axis_style["grid_color"] = "transparent"
         host._invalidate()
 
     def _axis_props(self, axis: str) -> dict[str, Any]:
@@ -1658,7 +2107,12 @@ class Axes(PlotTypeMixin):
             elif kind == "@y_band":
                 children.append(fc.y_band(*e["args"], **kw))
             elif kind == "@text":
-                children.append(fc.text(*e["args"], **kw))
+                text_kw = {
+                    key: value
+                    for key, value in kw.items()
+                    if key in {"dx", "dy", "color", "anchor", "class_name", "style"}
+                }
+                children.append(fc.text(*e["args"], **text_kw))
         return children
 
     def _build_chart(self, width: int, height: int) -> Any:
@@ -1670,6 +2124,7 @@ class Axes(PlotTypeMixin):
         children = self._chart_children()
         if self._twin is not None:
             children.extend(self._twin._chart_children())
+        adjusted_aspect = False
         if self._aspect_equal and self._aspect_bounds is not None:
             x0, x1, y0, y1 = self._aspect_bounds
             x0, x1 = self._axis["x"].get("domain", (x0, x1))
@@ -1690,6 +2145,11 @@ class Axes(PlotTypeMixin):
                 y0, y1 = center - target * 0.5, center + target * 0.5
             self._axis["x"]["domain"] = (x0, x1)
             self._axis["y"]["domain"] = (y0, y1)
+            adjusted_aspect = True
+        if not adjusted_aspect and self._xmargin != 0.0 and "x" not in self._explicit_domains:
+            self._axis["x"]["domain"] = self._auto_domain("x")
+        if not adjusted_aspect and self._ymargin != 0.0 and "y" not in self._explicit_domains:
+            self._axis["y"]["domain"] = self._auto_domain("y")
         x_props = {k: v for k, v in self._axis["x"].items() if v is not None}
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
         children.append(_cached_axis("x", x_props))
@@ -1700,7 +2160,16 @@ class Axes(PlotTypeMixin):
         if self._legend:
             children.append(fc.legend(**self._legend_options))
         if _MPL_THEME_TOKENS:
-            children.append(_cached_theme(self._grid))
+            if self._grid_axis != "both":
+                tokens = dict(_MPL_THEME_TOKENS)
+                tokens["grid_color"] = "transparent"
+                children.append(fc.theme(**tokens))  # ty: ignore[invalid-argument-type]
+            elif self._grid_color == _MPL_GRID_COLOR:
+                children.append(_cached_theme(self._grid))
+            else:
+                tokens = dict(_MPL_THEME_TOKENS)
+                tokens["grid_color"] = self._grid_color if self._grid else "transparent"
+                children.append(fc.theme(**tokens))  # ty: ignore[invalid-argument-type]
         self._chart = fc.chart(
             *children,
             title=self._title,
@@ -1715,6 +2184,83 @@ class Axes(PlotTypeMixin):
 
 def _is_number(v: Any) -> bool:
     return isinstance(v, (int, float, np.integer, np.floating))
+
+
+def _parse_bounds(value: Any, context: str) -> tuple[float, float, float, float]:
+    bounds = getattr(value, "bounds", value)
+    parsed = tuple(float(part) for part in bounds)
+    if len(parsed) != 4:
+        raise ValueError(f"{context} expects [left, bottom, width, height]")
+    left, bottom, width, height = parsed
+    if width < 0 or height < 0:
+        raise ValueError(f"{context} width and height must be non-negative")
+    return left, bottom, width, height
+
+
+def _validate_margin(value: Any, axis: str) -> float:
+    margin = float(value)
+    if not np.isfinite(margin) or margin < 0:
+        raise ValueError(f"{axis} margin must be a finite non-negative number")
+    return margin
+
+
+def _apply_axis_label_kwargs(props: dict[str, Any], kwargs: dict[str, Any], context: str) -> None:
+    labelpad = kwargs.pop("labelpad", None)
+    loc = kwargs.pop("loc", None)
+    _consume_text_kwargs(kwargs, context)
+    if labelpad is not None:
+        props["label_offset"] = float(labelpad)
+    if loc is not None:
+        positions = {
+            "left": "start",
+            "bottom": "start",
+            "center": "center",
+            "right": "end",
+            "top": "end",
+        }
+        if loc not in positions:
+            raise ValueError(f"{context} loc must be one of {sorted(positions)}")
+        props["label_position"] = positions[loc]
+
+
+def _consume_text_kwargs(kwargs: dict[str, Any], context: str) -> None:
+    # Accepted for Matplotlib-flavoured scripts.  The native engine currently
+    # inherits font styling from the chart theme, so these kwargs are validated
+    # and retained as compatibility inputs rather than silently acting on data.
+    for key in (
+        "fontsize",
+        "size",
+        "fontdict",
+        "fontweight",
+        "weight",
+        "fontstyle",
+        "style",
+        "fontfamily",
+        "family",
+        "color",
+        "horizontalalignment",
+        "ha",
+        "verticalalignment",
+        "va",
+        "rotation",
+        "pad",
+        "y",
+        "x",
+        "transform",
+    ):
+        kwargs.pop(key, None)
+    if kwargs:
+        raise TypeError(f"{context} got unsupported keyword argument {next(iter(kwargs))!r}")
+
+
+def _tick_label_visibility(kwargs: dict[str, Any]) -> Optional[bool]:
+    values = []
+    for key in ("labelbottom", "labeltop", "labelleft", "labelright"):
+        if key in kwargs:
+            values.append(bool(kwargs.pop(key)))
+    if not values:
+        return None
+    return any(values)
 
 
 def _marker_symbol(marker: Any) -> str:

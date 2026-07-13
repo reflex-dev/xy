@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 import numpy as np
 
+from ._artists import Text
 from ._axes import Axes
 from ._rc import rc_figsize_px
 from ._translate import not_implemented
@@ -31,7 +32,10 @@ class Figure:
         self._figsize = figsize
         self._dpi = dpi
         self._facecolor = facecolor or "white"
+        self._edgecolor = "white"
         self._suptitle: Optional[str] = None
+        self._supxlabel: Optional[str] = None
+        self._supylabel: Optional[str] = None
         self._nrows = 1
         self._ncols = 1
         self._axes: list[Axes] = []
@@ -44,6 +48,8 @@ class Figure:
         self._shared_colorbar: Optional[dict[str, Any]] = None
         self._width_ratios: Optional[tuple[float, ...]] = None
         self._height_ratios: Optional[tuple[float, ...]] = None
+        self._layout_options: dict[str, Any] = {}
+        self._subplot_adjust: dict[str, float] = {}
 
     # -- layout --------------------------------------------------------------
 
@@ -51,6 +57,12 @@ class Figure:
         self._html_cache = None
 
     def add_subplot(self, *args: Any) -> Axes:
+        if len(args) == 1 and isinstance(args[0], _SubplotSpec):
+            spec = args[0]
+            self._ensure_grid(spec.nrows, spec.ncols)
+            ax = self._axes_at(spec.index)
+            self._current_ax = ax
+            return ax
         if args and args != (1, 1, 1) and args != (111,):
             nrows, ncols, index = _parse_subplot_args(args)
             self._ensure_grid(nrows, ncols)
@@ -76,6 +88,54 @@ class Figure:
         self._nrows, self._ncols = 1, len(self._axes)
         self._current_ax = ax
         return ax
+
+    def subplots(
+        self,
+        nrows: int = 1,
+        ncols: int = 1,
+        *,
+        sharex: bool = False,
+        sharey: bool = False,
+        squeeze: bool = True,
+        width_ratios: Any = None,
+        height_ratios: Any = None,
+        gridspec_kw: Optional[dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Create a subplot grid on this figure and return its Axes array.
+
+        This mirrors the axes-returning half of ``matplotlib.figure.Figure.subplots``.
+        Figure creation and pyplot registration belong to the state module.
+        """
+        del kwargs
+        gridspec_kw = gridspec_kw or {}
+        width_ratios = gridspec_kw.get("width_ratios", width_ratios)
+        height_ratios = gridspec_kw.get("height_ratios", height_ratios)
+        axes = make_axes_grid(self, int(nrows), int(ncols), squeeze=squeeze)
+        self._width_ratios = None if width_ratios is None else tuple(map(float, width_ratios))
+        self._height_ratios = None if height_ratios is None else tuple(map(float, height_ratios))
+        apply_sharing(self, bool(sharex), bool(sharey))
+        self._invalidate()
+        return axes
+
+    def add_gridspec(self, nrows: int = 1, ncols: int = 1, **kwargs: Any) -> "_GridSpec":
+        """Return a lightweight GridSpec facade backed by the current grid.
+
+        The shim supports row-major single-cell specs such as ``fig.add_subplot(gs[0, 1])``.
+        General spanning layout is intentionally not exposed as a fake GridSpec.
+        """
+        width_ratios = kwargs.pop("width_ratios", kwargs.pop("widths", None))
+        height_ratios = kwargs.pop("height_ratios", kwargs.pop("heights", None))
+        if kwargs:
+            raise not_implemented(
+                f"add_gridspec({', '.join(sorted(kwargs))})",
+                "nrows, ncols, width_ratios, and height_ratios",
+            )
+        self._ensure_grid(int(nrows), int(ncols))
+        self._width_ratios = None if width_ratios is None else tuple(map(float, width_ratios))
+        self._height_ratios = None if height_ratios is None else tuple(map(float, height_ratios))
+        self._invalidate()
+        return _GridSpec(self, int(nrows), int(ncols))
 
     def _ensure_grid(self, nrows: int, ncols: int) -> None:
         if (
@@ -103,26 +163,163 @@ class Figure:
             return self._current_ax
         return self._axes_at(0)
 
+    def sca(self, ax: Axes) -> Axes:
+        if ax not in self._axes:
+            raise ValueError("Axes must belong to this figure")
+        self._current_ax = ax
+        return ax
+
+    def delaxes(self, ax: Axes) -> None:
+        if ax not in self._axes:
+            raise ValueError("Axes must belong to this figure")
+        index = self._axes.index(ax)
+        self._axes.remove(ax)
+        ax.figure = None
+        if self._current_ax is ax:
+            self._current_ax = self._axes[min(index, len(self._axes) - 1)] if self._axes else None
+        if not self._axes:
+            self._nrows, self._ncols = 1, 1
+        self._invalidate()
+
+    def clear(self, keep_observers: bool = False) -> None:
+        del keep_observers
+        for ax in self._axes:
+            ax.figure = None
+        self._axes = []
+        self._current_ax = None
+        self._nrows, self._ncols = 1, 1
+        self._suptitle = None
+        self._supxlabel = None
+        self._supylabel = None
+        self._shared_colorbar = None
+        self._width_ratios = None
+        self._height_ratios = None
+        self._layout_options = {}
+        self._subplot_adjust = {}
+        self._invalidate()
+
+    clf = clear
+
     # -- chrome ---------------------------------------------------------------
 
     def suptitle(self, title: str, **kwargs: Any) -> None:
+        for key in ("fontsize", "size", "fontweight", "weight", "fontfamily", "family", "color", "x", "y", "ha", "horizontalalignment", "va", "verticalalignment"):
+            kwargs.pop(key, None)
+        if kwargs:
+            raise TypeError(f"suptitle() got unsupported keyword argument {next(iter(kwargs))!r}")
         self._suptitle = str(title)
         self._invalidate()
 
+    def supxlabel(self, label: str, **kwargs: Any) -> Text:
+        self._supxlabel = str(label)
+        return self.text(0.5, 0.01, label, ha=kwargs.pop("ha", "center"), **kwargs)
+
+    def supylabel(self, label: str, **kwargs: Any) -> Text:
+        self._supylabel = str(label)
+        return self.text(
+            0.01,
+            0.5,
+            label,
+            va=kwargs.pop("va", "center"),
+            rotation=kwargs.pop("rotation", "vertical"),
+            **kwargs,
+        )
+
+    def text(
+        self,
+        x: Any,
+        y: Any,
+        s: str,
+        fontdict: Optional[dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Text:
+        return self.gca().text(x, y, s, fontdict=fontdict, transform=self.transFigure, **kwargs)
+
+    def legend(self, *args: Any, **kwargs: Any) -> None:
+        axes = self.axes or [self.gca()]
+        labels = args[1] if len(args) >= 2 else kwargs.get("labels")
+        if labels is not None:
+            axes[0].legend(args[0] if args else [], labels, **kwargs)
+            return None
+        for ax in axes:
+            if any(entry.get("kwargs", {}).get("name") for entry in ax._entries):
+                ax.legend(*args, **kwargs)
+        if not any(ax._legend for ax in axes):
+            axes[0].legend(*args, **kwargs)
+        return None
+
     def tight_layout(self, **kwargs: Any) -> None:
-        pass  # engine layout is label-aware already
+        pad = kwargs.pop("pad", None)
+        h_pad = kwargs.pop("h_pad", None)
+        w_pad = kwargs.pop("w_pad", None)
+        rect = kwargs.pop("rect", None)
+        if kwargs:
+            raise TypeError(f"tight_layout() got unsupported keyword argument {next(iter(kwargs))!r}")
+        self._layout_options = {"engine": "tight", "pad": pad, "h_pad": h_pad, "w_pad": w_pad, "rect": rect}
+        self._invalidate()
 
     def subplots_adjust(self, **kwargs: Any) -> None:
-        pass
+        allowed = {"left", "right", "top", "bottom", "wspace", "hspace"}
+        unsupported = set(kwargs) - allowed
+        if unsupported:
+            raise TypeError(f"subplots_adjust() got unsupported keyword argument {sorted(unsupported)[0]!r}")
+        for key, value in kwargs.items():
+            if value is not None:
+                self._subplot_adjust[key] = float(value)
+        self._invalidate()
 
     def autofmt_xdate(self, **kwargs: Any) -> None:
-        del kwargs
+        rotation = float(kwargs.pop("rotation", 30))
+        ha = kwargs.pop("ha", "right")
+        if kwargs:
+            raise TypeError(f"autofmt_xdate() got unsupported keyword argument {next(iter(kwargs))!r}")
+        for ax in self._axes:
+            props = ax._axis_props("x")
+            props["tick_label_angle"] = rotation
+            props.setdefault("style", {})["tick_label_anchor"] = str(ha)
+        self._invalidate()
 
     def set_size_inches(self, w: Any, h: Any = None) -> None:
         if h is None:
             w, h = w[0], w[1]  # tuple form
         self._figsize = (float(w), float(h))
         self._invalidate()
+
+    def get_size_inches(self) -> np.ndarray:
+        w, h = rc_figsize_px(self._figsize, self._dpi)
+        dpi = self.get_dpi()
+        return np.asarray((w / dpi, h / dpi), dtype=float)
+
+    def set_dpi(self, value: Any) -> None:
+        self._dpi = float(value)
+        for ax in self._axes:
+            ax._chart = None
+        self._invalidate()
+
+    def get_dpi(self) -> float:
+        return float(self._dpi if self._dpi is not None else 100.0)
+
+    @property
+    def dpi(self) -> float:
+        return self.get_dpi()
+
+    @dpi.setter
+    def dpi(self, value: Any) -> None:
+        self.set_dpi(value)
+
+    def set_facecolor(self, color: Any) -> None:
+        self._facecolor = str(color)
+        self._invalidate()
+
+    def get_facecolor(self) -> str:
+        return self._facecolor
+
+    def set_edgecolor(self, color: Any) -> None:
+        self._edgecolor = str(color)
+        self._invalidate()
+
+    def get_edgecolor(self) -> str:
+        return self._edgecolor
 
     def colorbar(self, mappable: Any = None, *args: Any, **kwargs: Any) -> Any:
         del args
@@ -382,6 +579,31 @@ class Figure:
         with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False) as f:
             f.write(self._to_html())
         webbrowser.open(f"file://{f.name}")
+
+
+class _SubplotSpec:
+    def __init__(self, nrows: int, ncols: int, index: int) -> None:
+        self.nrows = nrows
+        self.ncols = ncols
+        self.index = index
+
+
+class _GridSpec:
+    def __init__(self, figure: Figure, nrows: int, ncols: int) -> None:
+        self.figure = figure
+        self.nrows = nrows
+        self.ncols = ncols
+
+    def __getitem__(self, key: Any) -> _SubplotSpec:
+        if not isinstance(key, tuple):
+            row, col = divmod(int(key), self.ncols)
+        elif len(key) == 2 and all(isinstance(item, int) for item in key):
+            row, col = int(key[0]), int(key[1])
+        else:
+            raise not_implemented("GridSpec slicing", "single-cell row/column indexes")
+        if not (0 <= row < self.nrows and 0 <= col < self.ncols):
+            raise IndexError("GridSpec index out of range")
+        return _SubplotSpec(self.nrows, self.ncols, row * self.ncols + col)
 
 
 def _parse_subplot_args(args: tuple) -> tuple[int, int, int]:

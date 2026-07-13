@@ -3,6 +3,7 @@ tune exotic rcParams keep running, and the warning names the compat table."""
 
 from __future__ import annotations
 
+import contextlib
 import warnings
 from typing import Any
 
@@ -66,3 +67,19 @@ def rc_figsize_px(figsize: Any = None, dpi: Any = None) -> tuple[int, int]:
     w_in, h_in = figsize if figsize is not None else rcParams["figure.figsize"]
     d = float(dpi if dpi is not None else rcParams["figure.dpi"])
     return max(1, round(w_in * d)), max(1, round(h_in * d))
+
+
+def rcdefaults() -> None:
+    rcParams.reset()
+
+
+@contextlib.contextmanager
+def rc_context(rc: dict[str, Any] | None = None):
+    old = dict(rcParams)
+    try:
+        if rc:
+            rcParams.update(rc)
+        yield
+    finally:
+        rcParams.clear()
+        rcParams.update(old)
