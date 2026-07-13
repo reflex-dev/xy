@@ -729,12 +729,12 @@ def _transport_loopback_report() -> dict:
     categories, tracked = _category_registry(
         "payload_export_size", "streaming_updates", "interaction_smoothness"
     )
-    modes = ("aligned-binary-diagnostic", "base64-json-prototype")
+    modes = ("binary-frame-v1", "base64-json-prototype")
     return {
         **_base(),
         "kind": "transport-loopback",
         "measurement_scope": "loopback-channel-transport-diagnostic",
-        "frame_status": "benchmark-only; not a production protocol",
+        "frame_status": "production xy binary frame v1",
         "benchmark_categories": categories,
         "tracked_categories": tracked,
         "configuration": {"n": 1_000_000, "reps": 3, "browser_reps": 2},

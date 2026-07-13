@@ -69,6 +69,7 @@ REQUIRED_FILES = {
     "js/src/55_marks.js",
     "js/src/60_entries.js",
     "python/xy/__init__.py",
+    "python/xy/_framing.py",
     "python/xy/_native.py",
     "python/xy/channels.py",
     "python/xy/columns.py",
@@ -310,13 +311,13 @@ def verify_sdist(path: str) -> None:
         path,
         root,
         "python/xy/static/index.js",
-        {"export { render", "function render(", "class ChartView"},
+        {"export { render", "function render(", "function decodeFrame(", "class ChartView"},
     )
     _require_file_contains(
         path,
         root,
         "python/xy/static/standalone.js",
-        {"window.xy", "function renderStandalone(", "class ChartView"},
+        {"window.xy", "function renderStandalone(", "function decodeFrame(", "class ChartView"},
     )
     _require_file_contains(
         path,

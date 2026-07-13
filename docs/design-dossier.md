@@ -10,7 +10,7 @@ the performance estimates, and the full audit trail. Python-only binding.*
 Plotly's cost scales with **how much data you have**; this engine's cost scales with
 **how many pixels are on screen**. That inversion is bought by four changes, each of
 which removes a different one of Plotly's ceilings: **GPU instanced rendering** (not one
-SVG node per point), **Apache Arrow binary transport** (not JSON parsing), a **native
+SVG node per point), **typed binary transport** (not JSON parsing), a **native
 Rust core in the Python process** (not main-thread compute), and — the real unlock — a
 **multi-tier level-of-detail system** that never draws or ships more primitives than the
 screen can show. One Rust core runs natively inside the Python kernel doing all heavy
@@ -141,7 +141,7 @@ If a milestone doesn't move one of these numbers, it's not in scope for that mil
 │  - build a DATA-LESS spec  {traces, layout}                     │
 │  - hand off data as Apache Arrow columns (zero-copy from pandas)│
 └───────────────┬───────────────────────────────────────────────┘
-                │  spec (tiny JSON)  +  Arrow buffers (binary)
+                │  spec (small JSON) + typed column buffers (binary)
                 ▼
 ┌───────────────────────────────────────────────────────────────┐
 │  CORE  (Rust → compiled to WASM for browser, native for export) │
@@ -175,14 +175,15 @@ The two requirements live primarily in the **data pipeline (§4–§6)**. The re
   zero copies; classic NumPy-backed pandas costs **one** conversion copy at ingest
   (numeric NumPy → Arrow can often alias; object/string dtypes cannot). Crossing a
   process boundary (kernel → browser, server → client) is never zero-copy for anyone —
-  the achievable bound is **one binary transfer with no re-encoding**: Arrow IPC bytes
-  written once, moved as binary websocket/comm frames (never base64/JSON), landing as
+  the achievable bound is **one binary transfer with no re-encoding**: the compact
+  GPU-ready blob written once, moved as binary HTTP/websocket/comm frames (never
+  base64/JSON on live paths), landing as
   a JS `ArrayBuffer` used in place. The claim we actually make: **minimum possible
   copies per boundary, and zero *format transformations* end-to-end** — the bytes that
   leave pandas are byte-layout-identical to the bytes the GPU upload reads. Per-path
   copy budgets are specified in the Transport Matrix (§29).
 - **Column store is the single source of truth.** A trace's `x`/`y`/`color` are
-  *references* (column id + offset + length) into immutable Arrow buffers. The
+  *references* (column id + offset + length) into immutable canonical buffers. The
   calc/LOD stages produce *derived* buffers only when they must (e.g. a decimated
   view), never a defensive clone of the raw data. Contrast Plotly's `data` +
   `_fullData` + `calcdata` triplication.
@@ -775,17 +776,17 @@ user's data structure**, and whether any step re-encodes.
 | **Pure JS app, same page** | typed arrays → transferable to worker | **0** / 0 (transfer = move) | none | SAB where isolated (§8) |
 | **Python (Polars / Arrow-pandas), native render** | in-process Arrow | **0** / 0 | none | — |
 | **Python (NumPy-pandas), native render** | NumPy → Arrow | **0–1** / 1 (numeric can alias; strings copy) | dictionary-encode strings once | conversion cost reported at ingest |
-| **Jupyter kernel → browser** | Arrow IPC over **binary** comm/websocket frames | **2** / 3 (serialize into IPC buffer; socket transit; JS ArrayBuffer landing) | **never** — bytes are layout-identical end-to-end; base64/JSON is forbidden, and a comm layer that forces base64 shows up as a counted extra copy + 33% size penalty, loudly warned | old frontends without binary comms: chunked base64 with the warning; still no JSON numbers |
-| **Server app (Dash-style / Reflex)** | Arrow IPC over websocket, diff frames after first load | 2 / 3 (as above); updates ship **only appended/changed columns** | never | HTTP range requests into Parquet/Arrow files for Tier-3 paging |
-| **Static HTML export (interactive)** | Arrow bytes embedded in the file | 1 (decode from file) | base85-in-HTML if needed (stated 25% size tax) | size warning above threshold; offer aggregate-only embed (ship pyramid, not points) |
+| **Jupyter kernel → browser** | xy's GPU-ready column blob over **binary** anywidget comm frames | **2** / 3 (payload assembly; socket transit; JS ArrayBuffer landing) | **never** — the compact f32/u8 blob lands as typed views; base64/JSON is forbidden on the live path | old frontends without binary comms: explicit unsupported/error rather than silently changing the performance contract |
+| **Server app (Dash-style / Reflex)** | versioned `XYBF` frame over binary HTTP/WebSocket; strict JSON metadata + aligned raw buffers | 1–2 / 2–3 depending on server scatter/gather support; JS decode returns spans into `Response.arrayBuffer()` | never | control requests stay small JSON; SSE carries invalidations only; HTTP range requests into Parquet/Arrow files remain a Tier-3 option |
+| **Static HTML export (interactive)** | xy blob base64-embedded in the one-file artifact | 1 decode + stated 33% text expansion | base64, because HTML is a text container | size warning above threshold; offer aggregate-only embed (ship pyramid, not points) |
 | **Native static export** | in-process | 0 | none | — |
 
-Design consequences: (a) the wire format **is** the memory format — Arrow IPC with no
-transformation means the copies that do happen are `memcpy`-shaped, never
-parse-shaped; (b) every binding reports its actual copy count at ingest in debug mode,
-so "zero-copy" regressions are observable rather than folklore; (c) the Jupyter path
-is the *worst* supported path and it is still: no text encoding of numbers, no DOM
-payload, no main-thread parse.
+Design consequences: (a) the numerical wire payload **is** the browser upload format —
+offset f32/u8 columns with no per-value transformation, while `XYBF` only supplies a
+bounded/versioned envelope; (b) the copies that do happen are `memcpy`-shaped, never
+number-parse-shaped; (c) every binding reports its actual copy count at ingest in debug
+mode, so "zero-copy" regressions are observable rather than folklore; (d) the Jupyter
+live path still has no text encoding of numbers, DOM payload, or main-thread data parse.
 
 ## 30. Compatibility subset — v1 is a list, not an aspiration
 
@@ -1097,7 +1098,7 @@ pyramid level and viewport-neighbor tiles, budget-capped, so the common zoom/pan
 stays in the 0-byte rows above. Rapid interaction events **coalesce** (only the
 latest viewport wins); every request carries an ID and is **cancelable**, so a
 superseded tile request dies on the kernel side instead of clogging the wire.
-Responses are batched Arrow IPC frames (Perspective's lesson — never per-cell
+Responses are batched typed-binary frames (Perspective's lesson — never per-cell
 messages), uncompressed on the hot path to preserve zero-copy, lz4 optional for
 cold/remote Tier-3 tiles only.
 

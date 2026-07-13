@@ -56,15 +56,17 @@ INDEX_JS = (
     "class ChartView {}\n"
     "function render() {}\n"
     "function renderStandalone() {}\n"
+    "function decodeFrame() {}\n"
     "const padding = '" + ("x" * 1000) + "';\n"
-    "export { render, renderStandalone, ChartView };\n"
+    "export { render, renderStandalone, decodeFrame, ChartView };\n"
 )
 STANDALONE_JS = (
     "class ChartView {}\n"
     "function render() {}\n"
     "function renderStandalone() {}\n"
+    "function decodeFrame() {}\n"
     "const padding = '" + ("x" * 1000) + "';\n"
-    "window.xy = { render, renderStandalone, ChartView };\n"
+    "window.xy = { render, renderStandalone, decodeFrame, ChartView };\n"
 )
 DEFAULT_METADATA = "\n".join(
     [

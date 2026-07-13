@@ -1576,7 +1576,7 @@ class ChartView {
   _columnView(buffer, meta) {
     // Packed layout: one blob, columns addressed by global byte_offset.
     // Split layout (§29 first paint): `buffer` is a list of per-column
-    // ArrayBuffers and the column entry carries `buf`, its list index. A
+    // buffers and the column entry carries `buf`, its list index. A
     // disagreement between spec and transport is a bug — fail loudly rather
     // than render from misaligned bytes.
     const split = Array.isArray(buffer);
@@ -1587,9 +1587,20 @@ class ChartView {
           : "xy: spec column carries a wire-buffer index but the transport delivered one blob",
       );
     }
-    const src = split ? buffer[meta.buf] : buffer;
-    if (meta.dtype === "u8") return new Uint8Array(src, meta.byte_offset, meta.len);
-    return new Float32Array(src, meta.byte_offset, meta.len);
+    const span = fcByteSpan(split ? buffer[meta.buf] : buffer, "chart payload");
+    const relativeOffset = Number(meta.byte_offset);
+    const length = Number(meta.len);
+    if (!Number.isSafeInteger(relativeOffset) || relativeOffset < 0 ||
+        !Number.isSafeInteger(length) || length < 0) {
+      throw new RangeError("column offset/length must be non-negative safe integers");
+    }
+    const bytesPerElement = meta.dtype === "u8" ? 1 : 4;
+    const absoluteOffset = span.byteOffset + relativeOffset;
+    const end = relativeOffset + length * bytesPerElement;
+    if (end > span.byteLength) throw new RangeError("column extends past chart payload");
+    if (absoluteOffset % bytesPerElement !== 0) throw new RangeError("column is misaligned");
+    if (meta.dtype === "u8") return new Uint8Array(span.buffer, absoluteOffset, length);
+    return new Float32Array(span.buffer, absoluteOffset, length);
   }
 
   _upload(view) {

@@ -2,29 +2,29 @@
 // Entry points
 // ---------------------------------------------------------------------------
 
-function bytesToArrayBuffer(b) {
-  if (b instanceof ArrayBuffer) return b;
-  if (b instanceof DataView || ArrayBuffer.isView(b)) {
-    return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
-  }
-  throw new Error("unsupported buffer type");
+function bytesToSpan(b) {
+  const span = fcByteSpan(b, "chart payload");
+  // anywidget/third-party callers may hand us an oddly-offset DataView. Keep
+  // the normal aligned path zero-copy; preserve compatibility with one narrow
+  // view-sized copy only when f32 columns could not be constructed in place.
+  return span.byteOffset % 4 === 0 ? span : new Uint8Array(span);
 }
 
 /** First-paint buffers in the shape the spec declares (§29): packed is one
- * blob; split is one ArrayBuffer per column — slicing each incoming frame
- * separately also guarantees Float32Array alignment. A spec/transport
+ * blob; split is one span per column. Aligned views stay zero-copy; only a
+ * legacy unaligned view pays a narrow view-sized copy. A spec/transport
  * disagreement is a bug, never a fallback. */
 function payloadBuffers(spec, raw) {
   if (spec.buffer_layout === "split") {
     if (!Array.isArray(raw)) {
       throw new Error("xy: spec says buffer_layout=split but the transport delivered one buffer");
     }
-    return raw.map(bytesToArrayBuffer);
+    return raw.map(bytesToSpan);
   }
   if (Array.isArray(raw)) {
     throw new Error("xy: transport delivered a buffer list but the spec is not split-layout");
   }
-  return bytesToArrayBuffer(raw);
+  return bytesToSpan(raw);
 }
 
 function render({ model, el }) {
@@ -45,7 +45,7 @@ function render({ model, el }) {
 /** Standalone (static HTML export — no kernel). Retains typed CPU views of
  * shipped channels so hover can read approximate values without a kernel (§37). */
 function renderStandalone(el, spec, arrayBuffer) {
-  const buffer = bytesToArrayBuffer(arrayBuffer);
+  const buffer = bytesToSpan(arrayBuffer);
   const view = new ChartView(el, spec, buffer, null);
   const column = (idx) => view._columnView(buffer, spec.columns[idx]);
   for (const g of view.gpuTraces) {
@@ -72,5 +72,5 @@ function renderStandalone(el, spec, arrayBuffer) {
 // whole line — build.mjs splits on it and rejects any trailing text so this
 // description can never leak into the ESM bundle as bare code.
 // ---- exports ----
-export { render, renderStandalone, ChartView, MARK_KINDS, markOf };
-export default { render };
+export { render, renderStandalone, decodeFrame, ChartView, MARK_KINDS, markOf };
+export default { render, decodeFrame };

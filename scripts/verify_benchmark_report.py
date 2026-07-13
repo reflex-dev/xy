@@ -1945,7 +1945,7 @@ def _validate_transport_loopback(report: dict[str, Any], errors: list[str]) -> N
         for key in ("n", "reps", "browser_reps"):
             _require_positive_integer(configuration, key, "configuration", errors)
 
-    expected_modes = {"aligned-binary-diagnostic", "base64-json-prototype"}
+    expected_modes = {"binary-frame-v1", "base64-json-prototype"}
     for collection_name, timing_keys in (
         ("envelopes", ("encode_p50_ms", "encode_p95_ms")),
         ("python_loopback", ("request_to_decode_p50_ms", "request_to_decode_p95_ms")),

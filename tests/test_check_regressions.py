@@ -75,7 +75,7 @@ def test_flatten_accepts_transport_report() -> None:
     transport = {
         "envelopes": [
             {
-                "mode": "aligned-binary-diagnostic",
+                "mode": "binary-frame-v1",
                 "wire_bytes": 1024,
                 "gzip_bytes": 512,
                 "wire_to_payload_ratio": 1.01,
@@ -94,9 +94,9 @@ def test_flatten_accepts_transport_report() -> None:
     flat = check_regressions.flatten(None, None, transport)
 
     assert flat == {
-        "transport.aligned-binary-diagnostic.wire_bytes": 1024,
-        "transport.aligned-binary-diagnostic.gzip_bytes": 512,
-        "transport.aligned-binary-diagnostic.wire_to_payload_ratio": 1.01,
+        "transport.binary-frame-v1.wire_bytes": 1024,
+        "transport.binary-frame-v1.gzip_bytes": 512,
+        "transport.binary-frame-v1.wire_to_payload_ratio": 1.01,
         "transport.append.widget_binary_transmissions": 2,
         "transport.append.widget_binary_bytes": 2048,
         "transport.append.single_trace_append_wire_bytes": 1024,

@@ -36,13 +36,44 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
 from ._figure import Selection
+from ._framing import (
+    DEFAULT_FRAME_LIMITS,
+    FRAME_ALIGNMENT,
+    FRAME_HEADER_SIZE,
+    FRAME_MAGIC,
+    FRAME_VERSION,
+    DecodedFrame,
+    FrameDecodeError,
+    FrameEncodeError,
+    FrameError,
+    FrameLimits,
+    decode_frame,
+    encode_frame,
+    encode_frame_parts,
+)
 from .interaction import _integer_id
 from .lod import normalize_window
 
 if TYPE_CHECKING:
     from ._figure import Figure
 
-__all__ = ["ChannelCallbacks", "handle_message"]
+__all__ = [
+    "DEFAULT_FRAME_LIMITS",
+    "FRAME_ALIGNMENT",
+    "FRAME_HEADER_SIZE",
+    "FRAME_MAGIC",
+    "FRAME_VERSION",
+    "ChannelCallbacks",
+    "DecodedFrame",
+    "FrameDecodeError",
+    "FrameEncodeError",
+    "FrameError",
+    "FrameLimits",
+    "decode_frame",
+    "encode_frame",
+    "encode_frame_parts",
+    "handle_message",
+]
 
 # (reply message, buffers to ship beside it — None when the reply has none).
 Reply = tuple[dict[str, Any], Optional[list[bytes]]]

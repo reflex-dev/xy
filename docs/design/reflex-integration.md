@@ -74,13 +74,44 @@ the Reflex endpoint another. Third copies are how protocols drift.
 One binary response format shared by payload fetch and message replies:
 
 ```
-[u32 spec_len][spec JSON utf-8][u32 n_buffers][u32 len_0][buf_0]…
+offset  type     field
+0       char[4]  magic = "XYBF"
+4       u8       frame_version = 1
+5       u8       flags = 0
+6       u16      header_size = 24
+8       u32      metadata_length
+12      u32      buffer_count
+16      u64      total_frame_length
+24      bytes    strict UTF-8 JSON metadata object
+        padding  zeroes to the next 8-byte boundary
+repeat buffer_count times:
+        u64      buffer_length
+        bytes    buffer (starts at an 8-byte boundary)
+        padding  zeroes to the next 8-byte boundary
 ```
 
-Little-endian, `application/octet-stream`. The client already consumes
-`(message, buffers[])`; a ~15-line JS decoder replaces the prototype's
-base64 path. No JSON numbers for data, no 33% inflation, no giant-string
-JSON parse on the main thread.
+Little-endian, `application/octet-stream`. Transport-frame versioning is
+separate from the renderer protocol in the spec: either layer can evolve and
+fail loudly without coupling the two. Version 1 has no flags; unknown
+versions, flags, header sizes, non-zero padding, length mismatches, invalid
+UTF-8/JSON, truncation, and trailing bytes all fail closed.
+
+The default decoder caps one frame at 512 MiB, metadata at 8 MiB, 4096 buffers,
+and one buffer at 256 MiB. Adapters should normally set smaller
+application-specific limits and **must reject an oversized `Content-Length`
+before reading the request body**. HTTP `Content-Encoding` owns gzip/Brotli;
+compression is not duplicated in the frame flags.
+
+Python exposes `encode_frame_parts()` (scatter/gather segments; input buffers
+are not copied), `encode_frame()` (one final owned-body assembly), and
+`decode_frame()` (buffer `memoryview`s into the received body) from
+`xy.channel`. The shipped ESM/IIFE client exports `decodeFrame()`, which returns
+aligned `Uint8Array` spans into `Response.arrayBuffer()`. `ChartView` accepts
+those spans directly, including a non-zero aligned payload base offset, rather
+than slicing the frame. Legacy unaligned anywidget views retain a one-copy
+compatibility fallback. The existing `(message, buffers[])` client contract stays
+unchanged: no JSON numbers for data, no base64 inflation, and no giant-string
+parse on the main thread.
 
 ## 4. What lands in the Reflex adapter package
 
@@ -134,14 +165,15 @@ available):
 ```
 GET  /_xy/{token}/payload          → framed spec+blob   (ETag: version)
 POST /_xy/{token}/msg              → handle_message()   (framed reply)
-GET  /_xy/{token}/events           → SSE stream of append/version pushes
+GET  /_xy/{token}/events           → SSE stream of version/invalidation notices
 ```
 
 `payload` is cacheable by version — a re-render after an unrelated state
-change costs a 304, not a reship. `events` is how `Figure.append` from a
-`rx.background` task reaches the client without polling; the pushed message
-is the same `append` message the notebook widget sends, applied by the same
-client code (rebuild affected traces + follow policy).
+change costs a 304, not a reship. `events` is a text-only invalidation plane:
+a version notice makes the client fetch the binary append/snapshot from a data
+route. Never base64-wrap an append to force it through SSE. If pushed binary
+becomes necessary, use a WebSocket; the `comm` abstraction and frame/message
+contracts do not change.
 
 ### 4.3 The component
 
@@ -183,10 +215,10 @@ bundle the wheel ships — one renderer for notebooks, static export, and Reflex
   token prop change or an SSE version ping makes the component refetch.
   Cost: one screen-bounded payload.
 - **Streaming**: `rfc.append(token, x=..., y=...)` from a background task →
-  `Figure.append` → the `append` message broadcast on `/events`. The client
-  applies it with the existing follow policy (refit at home, slide when
-  pinned to the live edge, hold when inspecting history). This is the
-  "live 100M-point dashboard in pure Python" demo, minus the iframe.
+  `Figure.append` → version invalidation on `/events` → binary fetch of the
+  append/snapshot. The client applies it with the existing follow policy
+  (refit at home, slide when pinned to the live edge, hold when inspecting
+  history). A later WebSocket may combine invalidation and binary delivery.
 
 ## 5. Latency budget (why this matches the notebook path)
 
@@ -340,5 +372,6 @@ What this example is designed to prove, line by line:
    acceptance test.
 3. The `rfc.chart` component + semantic event forwarding; demo app switches
    from iframes to components.
-4. SSE push + `rfc.append`; wire the streaming demo.
+4. SSE invalidation + binary append fetch (or WebSocket binary push) for
+   `rfc.append`; wire the streaming demo without base64.
 5. Multi-worker story (document first, figure-server later).
