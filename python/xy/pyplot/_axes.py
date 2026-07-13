@@ -73,7 +73,7 @@ class _AxisProxy:
         # deterministic native tick generator when no exact tick values exist.
 
     def set_minor_locator(self, locator: Any) -> None:
-        del locator
+        del locator  # compat-noop: minor ticks are outside the native axis contract
 
 
 class _SpineProxy:
@@ -589,18 +589,23 @@ class Axes(PlotTypeMixin):
         x, y = xv, yv
         if s is not None and not np.isscalar(s):
             s = np.asarray(s).reshape(-1)
-        cv = None if c is None or isinstance(c, str) else np.asarray(c).reshape(-1)
+        source_color = None
+        cv = None if c is None or isinstance(c, str) else np.ma.asarray(c).reshape(-1)
         if (
             cv is not None
             and cv.ndim == 1
             and len(cv) == len(xv)
             and np.issubdtype(cv.dtype, np.number)
         ):
-            finite_color = np.isfinite(cv.astype(np.float64, copy=False))
+            source_color = cv.copy()
+            numeric_color = np.ma.asarray(cv, dtype=np.float64)
+            finite_color = np.isfinite(numeric_color.filled(np.nan)) & ~np.ma.getmaskarray(
+                numeric_color
+            )
             if plotnonfinite:
-                cv = np.where(finite_color, cv, 0.0)
+                cv = np.where(finite_color, numeric_color.filled(0.0), 0.0)
             else:
-                xv, yv, cv = xv[finite_color], yv[finite_color], cv[finite_color]
+                xv, yv, cv = xv[finite_color], yv[finite_color], numeric_color.data[finite_color]
                 if s is not None and not np.isscalar(s):
                     s = np.asarray(s)[finite_color]
             x, y, c = xv, yv, cv
@@ -641,6 +646,8 @@ class Axes(PlotTypeMixin):
             entry_kwargs["stroke"] = resolve_color(edgecolors)
             entry_kwargs["stroke_width"] = float(1.0 if linewidths is None else linewidths)
         entry = self._add("scatter", {"x": x, "y": y, "kwargs": entry_kwargs})
+        if source_color is not None:
+            entry["source_array"] = source_color
         return PathCollection(self, entry)
 
     def bar(
@@ -909,8 +916,6 @@ class Axes(PlotTypeMixin):
         step = kwargs.pop("step", None)
         transform = kwargs.pop("transform", None)
         interpolate = kwargs.pop("interpolate", False)
-        if interpolate:
-            raise not_implemented("fill_between(interpolate=True)")
         if step not in (None, "pre", "post", "mid"):
             raise ValueError("fill_between step must be 'pre', 'post', 'mid', or None")
         if transform not in (None, "xaxis transform"):
@@ -945,6 +950,30 @@ class Axes(PlotTypeMixin):
         entries: list[dict[str, Any]] = []
         for start, end in zip(starts, ends, strict=True):
             sx, su, sl = xv[start:end], upper[start:end], lower[start:end]
+            if interpolate:
+                # Extend a selected region to the linear intersection of y1
+                # and y2 at each where-boundary, matching Matplotlib's useful
+                # behavior for threshold fills.
+                if start > 0:
+                    d0 = upper[start - 1] - lower[start - 1]
+                    d1 = upper[start] - lower[start]
+                    if np.isfinite(d0 + d1) and d0 != d1:
+                        t = float(np.clip(-d0 / (d1 - d0), 0.0, 1.0))
+                        cross_x = xv[start - 1] + t * (xv[start] - xv[start - 1])
+                        cross_y = upper[start - 1] + t * (upper[start] - upper[start - 1])
+                        sx = np.r_[cross_x, sx]
+                        su = np.r_[cross_y, su]
+                        sl = np.r_[cross_y, sl]
+                if end < len(xv):
+                    d0 = upper[end - 1] - lower[end - 1]
+                    d1 = upper[end] - lower[end]
+                    if np.isfinite(d0 + d1) and d0 != d1:
+                        t = float(np.clip(-d0 / (d1 - d0), 0.0, 1.0))
+                        cross_x = xv[end - 1] + t * (xv[end] - xv[end - 1])
+                        cross_y = upper[end - 1] + t * (upper[end] - upper[end - 1])
+                        sx = np.r_[sx, cross_x]
+                        su = np.r_[su, cross_y]
+                        sl = np.r_[sl, cross_y]
             if step is not None:
                 sx, su = _step_values(sx, su, step)
                 _sx, sl = _step_values(xv[start:end], sl, step)
@@ -1484,7 +1513,7 @@ class Axes(PlotTypeMixin):
         return (hi, lo) if self._axis_props("y").get("reverse") else (lo, hi)
 
     def get_position(self, original: bool = False) -> Bbox:
-        del original
+        del original  # compat-noop: shim axes have no active/original position split
         return Bbox.from_bounds(*(self._figure_rect or (0.125, 0.11, 0.775, 0.77)))
 
     def set_position(self, position: Any) -> None:
@@ -1510,6 +1539,14 @@ class Axes(PlotTypeMixin):
                 for index in indexes:
                     array = np.asarray(entry["args"][index], dtype=np.float64).reshape(-1)
                     values.append(array[np.isfinite(array)])
+                if factory == "contour":
+                    z = np.asarray(entry["args"][0])
+                    coordinates = entry.get("kwargs", {}).get(key)
+                    if coordinates is None and z.ndim >= 2:
+                        coordinates = np.arange(z.shape[1 if axis == "x" else 0], dtype=float)
+                    if coordinates is not None:
+                        array = np.asarray(coordinates, dtype=np.float64).reshape(-1)
+                        values.append(array[np.isfinite(array)])
             elif entry.get("kind") == "heatmap" and entry.get("extent") is not None:
                 bounds = entry["extent"]
                 values.append(np.asarray(bounds[:2] if axis == "x" else bounds[2:], dtype=float))
@@ -1587,7 +1624,7 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def relim(self, visible_only: bool = False) -> None:
-        del visible_only
+        del visible_only  # compat-noop: invisible entries retain the same data extent
         for axis in ("x", "y"):
             if axis not in self._explicit_domains:
                 self._axis_props(axis).pop("domain", None)
@@ -1647,8 +1684,12 @@ class Axes(PlotTypeMixin):
         style = kwargs.pop("style", None)
         scilimits = kwargs.pop("scilimits", None)
         use_offset = kwargs.pop("useOffset", kwargs.pop("useoffset", None))
-        kwargs.pop("useLocale", None)
-        kwargs.pop("useMathText", None)
+        use_locale = kwargs.pop("useLocale", None)
+        use_math_text = kwargs.pop("useMathText", None)
+        if use_locale not in (None, False):
+            raise not_implemented("ticklabel_format(useLocale=True)")
+        if use_math_text not in (None, False):
+            raise not_implemented("ticklabel_format(useMathText=True)")
         if kwargs:
             raise TypeError(
                 f"ticklabel_format() got unsupported keyword argument {next(iter(kwargs))!r}"
@@ -2337,11 +2378,24 @@ class Axes(PlotTypeMixin):
         frameon = kwargs.pop("frameon", rcParams["legend.frameon"])
         facecolor = kwargs.pop("facecolor", rcParams["legend.facecolor"])
         edgecolor = kwargs.pop("edgecolor", rcParams["legend.edgecolor"])
-        kwargs.pop("title_fontsize", None)
-        kwargs.pop("borderpad", None)
-        kwargs.pop("labelspacing", None)
-        kwargs.pop("handlelength", None)
-        kwargs.pop("handletextpad", None)
+        # These affect legend geometry which the current component does not
+        # expose.  Reject them instead of accepting and silently discarding.
+        layout_options = {
+            key: kwargs.pop(key)
+            for key in (
+                "title_fontsize",
+                "borderpad",
+                "labelspacing",
+                "handlelength",
+                "handletextpad",
+            )
+            if key in kwargs
+        }
+        if layout_options:
+            raise not_implemented(
+                f"legend({sorted(layout_options)[0]}=...)",
+                "loc, ncols, title, fontsize, colors, and frame styling",
+            )
         unsupported = set(kwargs)
         if unsupported:
             raise TypeError(f"legend() got unsupported keyword argument {sorted(unsupported)[0]!r}")

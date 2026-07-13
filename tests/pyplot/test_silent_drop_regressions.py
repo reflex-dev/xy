@@ -1,13 +1,67 @@
 """Regressions from the adversarial completion review: values that previously
 crashed, were silently dropped, or bypassed validation must now behave."""
 
+import ast
 import warnings
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 import xy.pyplot as plt
 from xy.pyplot._colors import Cmap
+
+
+def test_public_adapters_cannot_discard_parameters_without_an_explicit_marker():
+    """Mechanical guard against newly accepted-and-dropped kwargs.
+
+    A deliberate compatibility no-op must carry an inline ``compat-noop:``
+    explanation. Bare ``kwargs.pop`` calls and deleting named public method
+    parameters otherwise fail automatically; no hand-maintained keyword list
+    is involved.
+    """
+    root = Path(__file__).resolve().parents[2] / "python" / "xy" / "pyplot"
+    violations = []
+    for path in root.glob("*.py"):
+        source = path.read_text()
+        lines = source.splitlines()
+        tree = ast.parse(source, filename=str(path))
+        for function in (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and not node.name.startswith("_")
+        ):
+            parameters = {
+                arg.arg
+                for arg in (
+                    *function.args.posonlyargs,
+                    *function.args.args,
+                    *function.args.kwonlyargs,
+                )
+            }
+            for node in ast.walk(function):
+                if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+                    marked = "compat-noop:" in lines[node.lineno - 1]
+                    call = node.value
+                    if (
+                        isinstance(call.func, ast.Attribute)
+                        and call.func.attr == "pop"
+                        and isinstance(call.func.value, ast.Name)
+                        and call.func.value.id in {"kwargs", "options"}
+                        and not marked
+                    ):
+                        violations.append(
+                            f"{path.name}:{node.lineno} bare {call.func.value.id}.pop"
+                        )
+                if isinstance(node, ast.Delete):
+                    marked = "compat-noop:" in lines[node.lineno - 1]
+                    discarded = {
+                        target.id for target in node.targets if isinstance(target, ast.Name)
+                    } & parameters
+                    if discarded and not marked:
+                        violations.append(f"{path.name}:{node.lineno} deletes {sorted(discarded)}")
+    assert not violations, "unexplained accepted-and-dropped options:\n" + "\n".join(violations)
 
 
 def teardown_function():

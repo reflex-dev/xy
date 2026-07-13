@@ -32,8 +32,6 @@ def test_plot_marker_styles_and_markevery_reach_marker_entry() -> None:
         (lambda ax: ax.plot([0, 1], [1, 2], scalex=False), "scalex"),
         (lambda ax: ax.plot([0, 1], [1, 2], fillstyle="left"), "fillstyle"),
         (lambda ax: ax.plot([0, 1], [1, 2], solid_capstyle="round"), "capstyle"),
-        (lambda ax: ax.hlines([1], [0], [2], linestyles="dashed"), "linestyles"),
-        (lambda ax: ax.fill_between([0, 1], [0, 1], interpolate=True), "interpolate"),
         (lambda ax: ax.fill_betweenx([0, 1], [0, 1], step="pre"), "step"),
         (lambda ax: ax.arrow(0, 0, 1, 1, shape="left"), "head shape"),
         (lambda ax: ax.errorbar([0], [1], yerr=0.2, barsabove=True), "barsabove"),
@@ -60,6 +58,26 @@ def test_rule_linestyle_is_retained_as_dash_geometry() -> None:
     _fig, ax = plt.subplots()
     ax.axvline(1, linestyle="--")
     assert ax._entries[0]["kwargs"]["style"]["dash"] == "6.0,4.0"
+
+
+def test_hlines_and_vlines_emit_dash_geometry() -> None:
+    _fig, ax = plt.subplots()
+    horizontal = ax.hlines([1], [0], [2], linestyles="dashed")
+    vertical = ax.vlines([1], [0], [2], linestyles="dotted")
+    assert len(horizontal._entry["args"][0]) > 1
+    assert len(vertical._entry["args"][0]) > 1
+
+
+def test_fill_between_interpolate_extends_to_curve_crossing() -> None:
+    _fig, ax = plt.subplots()
+    collection = ax.fill_between(
+        [0, 1, 2, 3],
+        [-1, 1, 1, -1],
+        0,
+        where=[False, True, True, False],
+        interpolate=True,
+    )
+    np.testing.assert_allclose(collection._entry["x"], [0.5, 1.0, 2.0, 2.5])
 
 
 def test_log_wrappers_accept_only_the_native_log_contract() -> None:

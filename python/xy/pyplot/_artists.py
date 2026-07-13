@@ -280,6 +280,12 @@ class Line2D(Artist):
 class PathCollection(Artist):
     """Handle for plt.scatter marks."""
 
+    def get_array(self) -> Any:
+        return self._entry.get("source_array", self._entry.get("kwargs", {}).get("color"))
+
+    def get_offsets(self) -> Any:
+        return np.column_stack((self._entry.get("x", []), self._entry.get("y", [])))
+
     def set_offsets(self, xy: Any) -> None:
         import numpy as np
 
@@ -717,7 +723,7 @@ class Text(Artist):
         return str(self._entry["args"][2])
 
     def get_window_extent(self, renderer: Any = None) -> Any:
-        del renderer
+        del renderer  # compat-noop: shim text extents are renderer-independent
         x, y, text = self._entry["args"]
         width = max(0.05, len(str(text)) * 0.018)
         return Bbox.from_bounds(float(x) - width / 2, float(y) - 0.04, width, 0.08)

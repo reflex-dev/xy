@@ -230,4 +230,4 @@ def resolve_cmap(name: object) -> str:
         return CMAPS[key]
     if key.endswith("_r") and key[:-2] in CMAPS:
         return f"{CMAPS[key[:-2]]}_r"
-    return "viridis"
+    raise ValueError(f"unsupported colormap: {text!r}")

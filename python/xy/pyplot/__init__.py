@@ -335,7 +335,7 @@ def gray() -> Any:
 
 def imsave(fname: Any, arr: Any, **kwargs: Any) -> None:
     format_name = str(kwargs.pop("format", "")).lower()
-    kwargs.pop("cmap", None)
+    cmap = kwargs.pop("cmap", None)
     if kwargs:
         raise TypeError(f"imsave() got unsupported keyword argument {next(iter(kwargs))!r}")
     path = str(fname)
@@ -351,8 +351,12 @@ def imsave(fname: Any, arr: Any, **kwargs: Any) -> None:
         else:
             image = np.clip(finite, 0, 255).astype(np.uint8)
     if image.ndim == 2:
-        image = np.repeat(image[:, :, None], 4, axis=2)
-        image[:, :, 3] = 255
+        from ._colors import Cmap
+
+        scalar = image.astype(np.float64)
+        lo, hi = float(np.nanmin(scalar)), float(np.nanmax(scalar))
+        normalized = (scalar - lo) / (hi - lo) if hi > lo else np.zeros_like(scalar)
+        image = np.round(Cmap(cmap or "viridis")(normalized) * 255.0).astype(np.uint8)
     elif image.ndim == 3 and image.shape[2] == 3:
         alpha = np.full((*image.shape[:2], 1), 255, dtype=np.uint8)
         image = np.concatenate((image, alpha), axis=2)

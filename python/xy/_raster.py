@@ -489,14 +489,27 @@ def render_raster(
     cols = spec["columns"]
     cmd = _Cmd(scale)
 
+    dom_style = (spec.get("dom") or {}).get("style") or {}
+
     # The fused PNG path initializes its native canvas white, avoiding a second
     # full-frame memory pass. Raw RGBA callers still receive an explicit fill.
     if not fast_png:
-        cmd.fill(_rect_pts(0, 0, width, height), (255, 255, 255, 255))
+        cmd.fill(
+            _rect_pts(0, 0, width, height),
+            _parse_color(spec.get("canvas_background", "#ffffff")),
+        )
+
+    # Static exports honor the same axes background token as HTML/SVG.  This
+    # is deliberately a plot-rect fill rather than a canvas fill: the latter
+    # is the Figure patch and is composed by pyplot's grid exporter.
+    plot_background = _parse_color(_css(dom_style.get("--chart-bg"), "#ffffff"))
+    cmd.fill(
+        _rect_pts(plot["x"], plot["y"], plot["x"] + plot["w"], plot["y"] + plot["h"]),
+        plot_background,
+    )
 
     xt, xlab, xstep = axis_ticks(xa, plot["w"], True)
     yt, ylab, ystep = axis_ticks(ya, plot["h"], False)
-    dom_style = (spec.get("dom") or {}).get("style") or {}
     grid = _parse_color(_css(dom_style.get("--chart-grid"), _GRID))
     px0, py0 = plot["x"], plot["y"]
     px1, py1 = plot["x"] + plot["w"], plot["y"] + plot["h"]

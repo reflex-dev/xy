@@ -505,7 +505,8 @@ class PlotTypeMixin:
     ) -> PolyCollection:
         width = kwargs.pop("linewidth", kwargs.pop("linewidths", kwargs.pop("lw", 1.2)))
         alpha = kwargs.pop("alpha", None)
-        kwargs.pop("data", None)
+        data = kwargs.pop("data", None)
+        y, xmin, xmax = (_from_data(value, data) for value in (y, xmin, xmax))
         transform = kwargs.pop("transform", None)
         check_unsupported(kwargs, "hlines()")
         yv, x0, x1 = np.broadcast_arrays(y, xmin, xmax)
@@ -513,10 +514,12 @@ class PlotTypeMixin:
         if transform == "yaxis transform":
             lo, hi = self._entry_extent("x")
             x0, x1 = lo + x0 * (hi - lo), lo + x1 * (hi - lo)
-        if linestyles not in (None, "solid", "-"):
-            raise not_implemented("hlines(linestyles=...)")
+        dash_pattern = _dash_segment_pattern("hlines", linestyles)
         if transform not in (None, "yaxis transform"):
             raise not_implemented("hlines(transform=...)")
+        sx0, sy0, sx1, sy1 = x0.reshape(-1), yv.reshape(-1), x1.reshape(-1), yv.reshape(-1)
+        if dash_pattern is not None:
+            sx0, sy0, sx1, sy1 = _dashed_segments(sx0, sy0, sx1, sy1, dash_pattern)
         chosen_color = colors
         if chosen_color is not None and not isinstance(chosen_color, str) and len(chosen_color):
             chosen_color = chosen_color[0]
@@ -524,7 +527,7 @@ class PlotTypeMixin:
             "@mark",
             {
                 "factory": "segments",
-                "args": (x0.reshape(-1), yv.reshape(-1), x1.reshape(-1), yv.reshape(-1)),
+                "args": (sx0, sy0, sx1, sy1),
                 "kwargs": {
                     "color": resolve_color(chosen_color)
                     if chosen_color is not None
@@ -547,6 +550,8 @@ class PlotTypeMixin:
         label: Any = "",
         **kwargs: Any,
     ) -> PolyCollection:
+        data = kwargs.pop("data", None)
+        x, ymin, ymax = (_from_data(value, data) for value in (x, ymin, ymax))
         xv, y0, y1 = np.broadcast_arrays(x, ymin, ymax)
         xv, y0, y1 = (_segment_values(value) for value in (xv, y0, y1))
         return self._vlines_entry(xv, y0, y1, colors, linestyles, label, kwargs)
@@ -571,21 +576,22 @@ class PlotTypeMixin:
             and not (len(color) in (3, 4) and all(np.isscalar(value) for value in color))
         ):
             color = color[0]
-        kwargs.pop("data", None)
         transform = kwargs.pop("transform", None)
-        if linestyles not in (None, "solid", "-"):
-            raise not_implemented("vlines(linestyles=...)")
+        dash_pattern = _dash_segment_pattern("vlines", linestyles)
         if transform not in (None, "xaxis transform"):
             raise not_implemented("vlines(transform=...)")
         if transform == "xaxis transform":
             lo, hi = self._entry_extent("y")
             y0, y1 = lo + y0 * (hi - lo), lo + y1 * (hi - lo)
         check_unsupported(kwargs, "vlines()")
+        sx0, sy0, sx1, sy1 = xv.reshape(-1), y0.reshape(-1), xv.reshape(-1), y1.reshape(-1)
+        if dash_pattern is not None:
+            sx0, sy0, sx1, sy1 = _dashed_segments(sx0, sy0, sx1, sy1, dash_pattern)
         entry = self._add(
             "@mark",
             {
                 "factory": "segments",
-                "args": (xv.reshape(-1), y0.reshape(-1), xv.reshape(-1), y1.reshape(-1)),
+                "args": (sx0, sy0, sx1, sy1),
                 "kwargs": {
                     "color": resolve_color(color) if color is not None else self._next_color(),
                     "width": _float(np.asarray(width).reshape(-1)[0]),
@@ -612,7 +618,9 @@ class PlotTypeMixin:
         label = kwargs.pop("label", None)
         edgecolor = kwargs.pop("edgecolors", kwargs.pop("edgecolor", None))
         linewidth = kwargs.pop("linewidth", kwargs.pop("linewidths", None))
-        kwargs.pop("align", None)
+        align = kwargs.pop("align", "center")
+        if align != "center":
+            raise not_implemented(f"broken_barh(align={align!r})")
         check_unsupported(kwargs, "broken_barh()")
         entry_kwargs: dict[str, Any] = {
             "base": ranges[:, 0],
@@ -655,7 +663,12 @@ class PlotTypeMixin:
         interpolate = kwargs.pop("interpolate", False)
         step = kwargs.pop("step", None)
         transform = kwargs.pop("transform", None)
-        kwargs.pop("data", None)
+        data = kwargs.pop("data", None)
+        if data is not None:
+            y, x1, x2 = (_from_data(value, data) for value in (y, x1, x2))
+            yv, left, right = np.broadcast_arrays(
+                _masked_float(y), _masked_float(x1), _masked_float(x2)
+            )
         if edgecolor is not None or linewidth is not None:
             raise not_implemented("fill_betweenx(edge rendering)")
         if interpolate:
@@ -1729,8 +1742,6 @@ class PlotTypeMixin:
         if vert is not None:
             orientation = "vertical" if vert else "horizontal"
         unsupported = {
-            "showextrema": False if not showextrema else None,
-            "linecolor": linecolor,
             "bw_method": bw_method,
             "side": side if side != "both" else None,
         }
@@ -1762,6 +1773,26 @@ class PlotTypeMixin:
             else [np.asarray(group, dtype=np.float64) for group in values]
         )
         centers = np.arange(1, len(groups) + 1) if positions is None else np.asarray(positions)
+        extrema_color = linecolor if linecolor is not None else "#222222"
+        if showextrema:
+            minima = np.asarray([np.nanmin(group) for group in groups])
+            maxima = np.asarray([np.nanmax(group) for group in groups])
+            if orientation == "vertical":
+                result["cbars"] = self.vlines(centers, minima, maxima, colors=extrema_color)
+                result["cmins"] = self.hlines(
+                    minima, centers - widths * 0.2, centers + widths * 0.2, colors=extrema_color
+                )
+                result["cmaxes"] = self.hlines(
+                    maxima, centers - widths * 0.2, centers + widths * 0.2, colors=extrema_color
+                )
+            else:
+                result["cbars"] = self.hlines(centers, minima, maxima, colors=extrema_color)
+                result["cmins"] = self.vlines(
+                    minima, centers - widths * 0.2, centers + widths * 0.2, colors=extrema_color
+                )
+                result["cmaxes"] = self.vlines(
+                    maxima, centers - widths * 0.2, centers + widths * 0.2, colors=extrema_color
+                )
         if showmeans:
             means = [float(np.nanmean(group)) for group in groups]
             result["cmeans"] = (
@@ -1908,7 +1939,10 @@ class PlotTypeMixin:
         data: Any = None,
         **kwargs: Any,
     ) -> PathCollection:
-        del linewidths, edgecolors
+        if linewidths is not None:
+            raise not_implemented("hexbin(linewidths=...)")
+        if edgecolors not in (None, "face"):
+            raise not_implemented("hexbin(edgecolors=...)")
         if C is not None:
             raise not_implemented("hexbin(C=..., reduce_C_function=...)")
         unsupported_options = {
@@ -2157,12 +2191,10 @@ class PlotTypeMixin:
         return ContourSet(self, entry)
 
     def contour(self, *args: Any, data: Any = None, **kwargs: Any) -> ContourSet:
-        del data
-        return self._contour(False, args, kwargs)
+        return self._contour(False, tuple(_from_data(value, data) for value in args), kwargs)
 
     def contourf(self, *args: Any, data: Any = None, **kwargs: Any) -> ContourSet:
-        del data
-        return self._contour(True, args, kwargs)
+        return self._contour(True, tuple(_from_data(value, data) for value in args), kwargs)
 
     def clabel(
         self,
@@ -2180,7 +2212,14 @@ class PlotTypeMixin:
         zorder: Any = None,
     ) -> list[Text]:
         """Label contour levels without exposing contour semantics to core."""
-        del fontsize, inline, inline_spacing, use_clabeltext, rightside_up, zorder
+        del (
+            fontsize,
+            inline,
+            inline_spacing,
+            use_clabeltext,
+            rightside_up,
+            zorder,
+        )  # compat-noop: deterministic shim contour-label placement and styling
         chosen = np.asarray(CS.levels if levels is None else levels, dtype=np.float64).reshape(-1)
         if isinstance(manual, (list, tuple, np.ndarray)) and len(manual):
             locations = list(manual)
@@ -2277,7 +2316,8 @@ class PlotTypeMixin:
         label: Any = None,
     ) -> dict[str, list[Artist]]:
         """Draw exact precomputed box geometry with generic segment/scatter marks."""
-        del patch_artist, shownotches, manage_ticks, zorder
+        if patch_artist or shownotches or not manage_ticks or zorder is not None:
+            raise not_implemented("bxp(patch_artist/shownotches/manage_ticks/zorder)")
         stats = list(bxpstats)
         count = len(stats)
         if vert is not None:
@@ -2787,8 +2827,12 @@ class PlotTypeMixin:
             color_values = [raw_colors[i % len(raw_colors)] for i in range(values.shape[0])]
         alpha = kwargs.pop("alpha", None)
         linewidth = kwargs.pop("linewidth", kwargs.pop("lw", None))
-        kwargs.pop("edgecolor", None)
-        kwargs.pop("facecolor", None)
+        edgecolor = kwargs.pop("edgecolor", None)
+        facecolor = kwargs.pop("facecolor", None)
+        if edgecolor is not None:
+            raise not_implemented("stackplot(edgecolor=...)")
+        if facecolor is not None:
+            color_values = [facecolor] * values.shape[0]
         check_unsupported(kwargs, "stackplot()")
         result: list[PolyCollection] = []
         for row in range(values.shape[0]):
@@ -3737,11 +3781,12 @@ class PlotTypeMixin:
         return PolyCollection(self, entry)
 
     def quiver(self, *args: Any, data: Any = None, **kwargs: Any) -> PolyCollection:
-        del data
-        return self._vector_field(args, kwargs, "quiver")
+        return self._vector_field(
+            tuple(_from_data(value, data) for value in args), kwargs, "quiver"
+        )
 
     def barbs(self, *args: Any, data: Any = None, **kwargs: Any) -> PolyCollection:
-        del data
+        args = tuple(_from_data(value, data) for value in args)
         _reject_non_default("barbs", "length", kwargs.pop("length", None), 7.0)
         _reject_non_default("barbs", "fill_empty", kwargs.pop("fill_empty", None), False)
         _reject_non_default("barbs", "rounding", kwargs.pop("rounding", None), True)

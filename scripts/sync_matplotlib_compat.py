@@ -55,12 +55,55 @@ def _upstream_inventory(checkout: Path) -> tuple[dict[str, list[str]], str, str]
     return families, revision, describe
 
 
+def _root_name(node: ast.AST) -> str | None:
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _axes_receivers(tree: ast.AST) -> set[str]:
+    """Find names that are demonstrably populated with Axes objects."""
+    names = {"ax", "axes"}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = node.value
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute):
+                if value.func.attr in {
+                    "subplot",
+                    "gca",
+                    "axes",
+                    "add_subplot",
+                    "add_axes",
+                    "inset_axes",
+                    "twinx",
+                    "twiny",
+                }:
+                    for target in targets:
+                        if isinstance(target, ast.Name):
+                            names.add(target.id)
+                if value.func.attr == "subplots":
+                    for target in targets:
+                        if isinstance(target, (ast.Tuple, ast.List)) and len(target.elts) >= 2:
+                            axes_target = target.elts[1]
+                            if isinstance(axes_target, ast.Name):
+                                names.add(axes_target.id)
+        elif isinstance(node, ast.For) and isinstance(node.target, ast.Name):
+            if _root_name(node.iter) in names:
+                names.add(node.target.id)
+    return names
+
+
 def _corpus_calls() -> dict[str, list[str]]:
     calls: dict[str, list[str]] = {}
     for path in sorted(CORPUS.glob("[0-9][0-9]_*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        axes_names = _axes_receivers(tree)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                receiver = _root_name(node.func.value)
+                if receiver != "plt" and receiver not in axes_names:
+                    continue
                 names = calls.setdefault(node.func.attr, [])
                 if path.name not in names:
                     names.append(path.name)

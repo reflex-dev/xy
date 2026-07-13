@@ -21,6 +21,30 @@ from ._transforms import CoordinateTransform
 from ._translate import not_implemented
 
 
+def _png_with_metadata(data: bytes, metadata: dict[Any, Any]) -> bytes:
+    """Insert standards-compliant PNG text chunks before IEND."""
+    from xy import _png
+
+    chunks = []
+    for raw_key, raw_value in metadata.items():
+        key = str(raw_key)
+        value = str(raw_value)
+        if not key or len(key.encode("latin-1", "strict")) > 79 or "\x00" in key:
+            raise ValueError("PNG metadata keys must be 1-79 Latin-1 characters")
+        try:
+            payload = key.encode("latin-1") + b"\0" + value.encode("latin-1")
+            chunks.append(_png._chunk(b"tEXt", payload))
+        except UnicodeEncodeError:
+            # iTXt: keyword, compression flag/method, language, translated
+            # keyword, then UTF-8 text.
+            payload = key.encode("latin-1") + b"\0\0\0\0\0" + value.encode("utf-8")
+            chunks.append(_png._chunk(b"iTXt", payload))
+    marker = data.rfind(b"\x00\x00\x00\x00IEND")
+    if marker < 0:
+        raise ValueError("invalid PNG output")
+    return data[:marker] + b"".join(chunks) + data[marker:]
+
+
 class Figure:
     def __init__(
         self,
@@ -35,6 +59,7 @@ class Figure:
         self._facecolor = facecolor or "white"
         self._edgecolor = "white"
         self._suptitle: Optional[str] = None
+        self._suptitle_style: dict[str, Any] = {}
         self._supxlabel: Optional[str] = None
         self._supylabel: Optional[str] = None
         self._nrows = 1
@@ -184,7 +209,7 @@ class Figure:
         self._invalidate()
 
     def clear(self, keep_observers: bool = False) -> None:
-        del keep_observers
+        del keep_observers  # compat-noop: the shim has no observer registry
         for ax in self._axes:
             ax.figure = None
         self._axes = []
@@ -205,25 +230,27 @@ class Figure:
     # -- chrome ---------------------------------------------------------------
 
     def suptitle(self, title: str, **kwargs: Any) -> None:
-        for key in (
-            "fontsize",
-            "size",
-            "fontweight",
-            "weight",
-            "fontfamily",
-            "family",
-            "color",
-            "x",
-            "y",
-            "ha",
-            "horizontalalignment",
-            "va",
-            "verticalalignment",
-        ):
-            kwargs.pop(key, None)
+        size = kwargs.pop("fontsize", kwargs.pop("size", 16.0))
+        weight = kwargs.pop("fontweight", kwargs.pop("weight", "normal"))
+        family = kwargs.pop("fontfamily", kwargs.pop("family", "system-ui, sans-serif"))
+        color = kwargs.pop("color", "#262626")
+        x = kwargs.pop("x", 0.5)
+        y = kwargs.pop("y", 0.98)
+        ha = kwargs.pop("ha", kwargs.pop("horizontalalignment", "center"))
+        va = kwargs.pop("va", kwargs.pop("verticalalignment", "top"))
         if kwargs:
             raise TypeError(f"suptitle() got unsupported keyword argument {next(iter(kwargs))!r}")
         self._suptitle = str(title)
+        self._suptitle_style = {
+            "size": float(size),
+            "weight": str(weight),
+            "family": str(family),
+            "color": str(color),
+            "x": float(x),
+            "y": float(y),
+            "ha": str(ha),
+            "va": str(va),
+        }
         self._invalidate()
 
     def supxlabel(self, label: str, **kwargs: Any) -> Text:
@@ -517,11 +544,16 @@ class Figure:
             format = "png"  # matplotlib's savefig.format default
             path = path.with_suffix(".png")
         suffix = (format or (path.suffix.lstrip(".") if path is not None else "")).lower()
-        unsupported = {
-            key
-            for key, value in kwargs.items()
-            if value is not None and not (key == "transparent" and value is False)
-        }
+        transparent = bool(kwargs.pop("transparent", False))
+        metadata = kwargs.pop("metadata", None)
+        facecolor = kwargs.pop("facecolor", None)
+        bbox_inches = kwargs.pop("bbox_inches", None)
+        pad_inches = float(kwargs.pop("pad_inches", 0.1))
+        if bbox_inches not in (None, "tight"):
+            raise not_implemented("savefig(bbox_inches=Bbox)", "bbox_inches='tight'")
+        if metadata is not None and not isinstance(metadata, dict):
+            raise TypeError("savefig metadata must be a mapping")
+        unsupported = {key for key, value in kwargs.items() if value is not None}
         if unsupported:
             option = sorted(unsupported)[0]
             raise not_implemented(
@@ -530,46 +562,72 @@ class Figure:
             )
 
         old_dpi = self._dpi
+        old_facecolor = self._facecolor
+        old_backgrounds = [ax._theme_tokens["plot_background"] for ax in self._axes]
         if dpi is not None:
             self._dpi = float(dpi)
             for ax in self._axes:
                 ax._chart = None
             self._invalidate()
-        try:
-            single = self._single()
-            if suffix == "png":
-                if single is None:
-                    data = self._to_png()
-                else:
-                    from xy import _raster
+        if facecolor is not None:
+            from ._colors import resolve_color
 
-                    data = _raster.to_png(single.figure(), fast=True)
+            self._facecolor = resolve_color(facecolor) or "none"
+        if transparent:
+            self._facecolor = "none"
+            for ax in self._axes:
+                ax._theme_tokens["plot_background"] = "none"
+                ax._chart = None
+            self._invalidate()
+        try:
+            if suffix == "png":
+                data = self._to_png(
+                    bbox_tight=bbox_inches == "tight",
+                    pad_inches=pad_inches,
+                )
+                if metadata:
+                    data = _png_with_metadata(data, metadata)
             elif suffix == "svg":
+                single = self._single()
                 if single is None:
                     from ._grid import compose_svg
 
                     data = compose_svg(
-                        self._charts(), self._nrows, self._ncols, self._suptitle
+                        self._charts(),
+                        self._nrows,
+                        self._ncols,
+                        self._suptitle,
+                        self._suptitle_style,
                     ).encode()
                 else:
                     data = single.to_svg().encode()
+                if metadata:
+                    import html
+
+                    description = html.escape("; ".join(f"{k}: {v}" for k, v in metadata.items()))
+                    start = data.find(b">") + 1
+                    data = (
+                        data[:start] + f"<metadata>{description}</metadata>".encode() + data[start:]
+                    )
             elif suffix == "html":
+                single = self._single()
                 data = self._to_html().encode()
             else:
                 raise not_implemented(f"savefig(format={suffix!r})", "png, svg, or html")
         finally:
-            if dpi is not None:
-                self._dpi = old_dpi
-                for ax in self._axes:
-                    ax._chart = None
-                self._invalidate()
+            self._dpi = old_dpi
+            self._facecolor = old_facecolor
+            for ax, background in zip(self._axes, old_backgrounds, strict=True):
+                ax._theme_tokens["plot_background"] = background
+                ax._chart = None
+            self._invalidate()
 
         if path is not None:
             path.write_bytes(data)
         else:
             fname.write(data)  # file-like
 
-    def _to_png(self) -> bytes:
+    def _to_png(self, *, bbox_tight: bool = False, pad_inches: float = 0.1) -> bytes:
         from ._grid import stitch_png
 
         canvas_size = rc_figsize_px(self._figsize, self._dpi)
@@ -598,9 +656,12 @@ class Figure:
             self._ncols,
             self._suptitle,
             self._shared_colorbar,
+            suptitle_style=self._suptitle_style,
             positions=positions,
             canvas_size=canvas_size if positions is not None else None,
             facecolor=self._facecolor,
+            bbox_tight=bbox_tight,
+            pad_pixels=max(0, round(pad_inches * float(self._dpi or 100.0) * 2.0)),
         )
 
     def _to_html(self) -> str:
@@ -612,7 +673,11 @@ class Figure:
                 from ._grid import compose_html
 
                 self._html_cache = compose_html(
-                    self._charts(), self._nrows, self._ncols, self._suptitle
+                    self._charts(),
+                    self._nrows,
+                    self._ncols,
+                    self._suptitle,
+                    self._suptitle_style,
                 )
         return self._html_cache
 

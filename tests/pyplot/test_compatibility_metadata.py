@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import ast
 import json
 import subprocess
 import sys
 from pathlib import Path
 
 import numpy as np
+from scripts.sync_matplotlib_compat import _corpus_calls
 
 import xy.pyplot as plt
 
@@ -28,15 +28,20 @@ def test_compatibility_metadata_covers_the_reviewed_snapshot() -> None:
 def test_every_supported_plotting_method_has_direct_corpus_coverage() -> None:
     snapshot = _load("matplotlib_311_plotting.json")
     expected = {method for methods in snapshot["families"].values() for method in methods}
-    covered: set[str] = set()
-    for path in (HERE / "corpus").glob("[0-9][0-9]_*.py"):
-        tree = ast.parse(path.read_text(), filename=str(path))
-        covered.update(
-            node.func.attr
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-        )
+    covered = set(_corpus_calls())
     assert expected <= covered, f"missing direct corpus calls: {sorted(expected - covered)}"
+
+
+def test_corpus_coverage_ignores_calls_on_unrelated_receivers(tmp_path, monkeypatch) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "01_false_credit.py").write_text(
+        "import xy.pyplot as plt\nthing.fill([1, 2])\nfig, ax = plt.subplots()\nax.plot([1])\n"
+    )
+    monkeypatch.setattr("scripts.sync_matplotlib_compat.CORPUS", corpus)
+    calls = _corpus_calls()
+    assert "plot" in calls
+    assert "fill" not in calls
 
 
 def test_generated_compatibility_documentation_is_fresh() -> None:

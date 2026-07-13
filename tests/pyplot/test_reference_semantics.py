@@ -105,6 +105,68 @@ def test_reference_image_extent_dimensions_origin_and_normalization_domain() -> 
     assert (xyax.get_ylim()[0] > xyax.get_ylim()[1]) == mplax.yaxis_inverted()
 
 
+def test_reference_contour_levels_and_triangle_topology() -> None:
+    grid = np.arange(16.0).reshape(4, 4)
+    _xyfig, xyax = xyplt.subplots()
+    _mplfig, mplax = mplplt.subplots()
+    xy_contour = xyax.contour(grid, levels=[3.0, 7.0, 11.0])
+    mpl_contour = mplax.contour(grid, levels=[3.0, 7.0, 11.0])
+    np.testing.assert_allclose(xy_contour.levels, mpl_contour.levels)
+
+    x = np.array([0.0, 1.0, 0.0, 1.0])
+    y = np.array([0.0, 0.0, 1.0, 1.0])
+    triangles = np.array([[0, 1, 2], [1, 3, 2]])
+    values = np.array([0.0, 1.0, 2.0, 3.0])
+    xy_tri = xyax.tripcolor(x, y, values, triangles=triangles)
+    mpl_tri = mplax.tripcolor(x, y, triangles, values)
+    assert len(xy_tri._entry["args"][0]) == len(mpl_tri.get_paths())
+    np.testing.assert_allclose(xyax.get_xlim(), mplax.get_xlim(), atol=0.06)
+    np.testing.assert_allclose(xyax.get_ylim(), mplax.get_ylim(), atol=0.06)
+
+
+def test_reference_vector_directions_scatter_masks_and_removable_handles() -> None:
+    x = np.array([0.0, 1.0, 2.0])
+    y = np.array([1.0, 2.0, 3.0])
+    u = np.array([1.0, 0.0, -1.0])
+    v = np.array([0.0, 1.0, 0.0])
+    _xyfig, xyax = xyplt.subplots()
+    _mplfig, mplax = mplplt.subplots()
+    xy_quiver = xyax.quiver(x, y, u, v, scale=1)
+    mpl_quiver = mplax.quiver(x, y, u, v, scale=1)
+    np.testing.assert_allclose(mpl_quiver.X, x)
+    np.testing.assert_allclose(mpl_quiver.Y, y)
+    shafts = np.arange(0, len(xy_quiver._entry["args"][0]), 3)
+    dx = xy_quiver._entry["args"][2][shafts] - xy_quiver._entry["args"][0][shafts]
+    dy = xy_quiver._entry["args"][3][shafts] - xy_quiver._entry["args"][1][shafts]
+    np.testing.assert_allclose(np.arctan2(dy, dx), np.arctan2(v, u))
+
+    colors = np.ma.array([0.0, 1.0, 2.0], mask=[False, True, False])
+    xy_scatter = xyax.scatter(x, y, c=colors, s=[4.0, 9.0, 16.0])
+    mpl_scatter = mplax.scatter(x, y, c=colors, s=[4.0, 9.0, 16.0])
+    np.testing.assert_array_equal(
+        np.ma.getmaskarray(xy_scatter.get_array()), np.ma.getmaskarray(mpl_scatter.get_array())
+    )
+    before_xy, before_mpl = len(xyax.collections), len(mplax.collections)
+    xy_scatter.remove()
+    mpl_scatter.remove()
+    assert len(xyax.collections) == before_xy - 1
+    assert len(mplax.collections) == before_mpl - 1
+
+
+def test_reference_truecolor_rgba_is_preserved() -> None:
+    rgba = np.array(
+        [
+            [[1.0, 0.0, 0.0, 0.25], [0.0, 1.0, 0.0, 0.5]],
+            [[0.0, 0.0, 1.0, 0.75], [1.0, 1.0, 1.0, 1.0]],
+        ]
+    )
+    _xyfig, xyax = xyplt.subplots()
+    _mplfig, mplax = mplplt.subplots()
+    xy_image = xyax.imshow(rgba, interpolation="nearest")
+    mpl_image = mplax.imshow(rgba, interpolation="nearest")
+    np.testing.assert_allclose(xy_image.get_array(), mpl_image.get_array())
+
+
 def _png_pixels(data: bytes) -> np.ndarray:
     pixels = np.asarray(xyplt.imread(BytesIO(data)), dtype=np.float64)
     if pixels.max(initial=0.0) > 1.0:
@@ -127,6 +189,23 @@ def _dilate(mask: np.ndarray, radius: int = 5) -> np.ndarray:
     for dy in range(2 * radius + 1):
         for dx in range(2 * radius + 1):
             result |= padded[dy : dy + mask.shape[0], dx : dx + mask.shape[1]]
+    return result
+
+
+def _normalize_mask(mask: np.ndarray, size: int = 256) -> np.ndarray:
+    """Crop renderer margins and fit geometry into an aspect-preserving box."""
+    ys, xs = np.nonzero(mask)
+    if not len(xs):
+        return np.zeros((size, size), dtype=bool)
+    crop = mask[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]
+    scale = size / max(crop.shape)
+    height = max(1, round(crop.shape[0] * scale))
+    width = max(1, round(crop.shape[1] * scale))
+    yi = np.linspace(0, crop.shape[0] - 1, height).astype(int)
+    xi = np.linspace(0, crop.shape[1] - 1, width).astype(int)
+    result = np.zeros((size, size), dtype=bool)
+    y0, x0 = (size - height) // 2, (size - width) // 2
+    result[y0 : y0 + height, x0 : x0 + width] = crop[np.ix_(yi, xi)]
     return result
 
 
@@ -156,12 +235,28 @@ def test_reference_pngs_have_tolerant_perceptual_and_geometry_agreement(family: 
     xypixels, mplpixels = _png_pixels(xybytes), _png_pixels(reference.getvalue())
     assert xypixels.shape == mplpixels.shape == (480, 640, 4)
     xymask, mplmask = _foreground_mask(xypixels), _foreground_mask(mplpixels)
-    overlap = np.count_nonzero(_dilate(xymask) & _dilate(mplmask))
-    union = np.count_nonzero(_dilate(xymask) | _dilate(mplmask))
-    assert overlap / max(1, union) > 0.08
+    normalized_xy = _dilate(_normalize_mask(xymask))
+    normalized_mpl = _dilate(_normalize_mask(mplmask))
+    overlap = np.count_nonzero(normalized_xy & normalized_mpl)
+    union = np.count_nonzero(normalized_xy | normalized_mpl)
+    minimum_iou = {"line": 0.20, "bar": 0.70, "image": 0.55}[family]
+    assert overlap / max(1, union) > minimum_iou
     xy_fraction = np.mean(xymask)
     mpl_fraction = np.mean(mplmask)
-    assert 0.1 < xy_fraction / mpl_fraction < 10.0
+    assert 0.5 < xy_fraction / mpl_fraction < 2.0
     xy_luma = np.mean(xypixels[..., :3], axis=-1)[xymask].mean()
     mpl_luma = np.mean(mplpixels[..., :3], axis=-1)[mplmask].mean()
-    assert abs(xy_luma - mpl_luma) < 0.45
+    assert abs(xy_luma - mpl_luma) < 0.20
+
+
+def test_perceptual_oracle_rejects_blank_and_wrong_geometry() -> None:
+    reference = np.zeros((100, 100), dtype=bool)
+    reference[20:80, 45:55] = True
+    blank = np.zeros_like(reference)
+    wrong = np.zeros_like(reference)
+    wrong[45:55, 20:80] = True
+    for candidate in (blank, wrong):
+        left = _dilate(_normalize_mask(candidate))
+        right = _dilate(_normalize_mask(reference))
+        iou = np.count_nonzero(left & right) / max(1, np.count_nonzero(left | right))
+        assert iou < 0.20

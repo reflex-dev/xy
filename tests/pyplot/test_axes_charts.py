@@ -147,7 +147,7 @@ def test_existing_core_plot_families_are_exposed_by_adapter() -> None:
     ax.contour(np.arange(16, dtype=float).reshape(4, 4), levels=3)
     ax.contourf(np.arange(16, dtype=float).reshape(4, 4), levels=3)
     assert set(box) == {"whiskers", "caps", "boxes", "medians", "fliers", "means"}
-    assert set(violin) == {"bodies"}
+    assert set(violin) == {"bodies", "cbars", "cmins", "cmaxes"}
     kinds = [trace.kind for trace in _traces(ax)]
     assert "stem" in kinds
     assert "box" in kinds

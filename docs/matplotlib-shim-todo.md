@@ -49,35 +49,34 @@ it does not promote the explicit exclusions below into supported scope.
 Executable evidence is maintained in the files below. Stated precisely, so the
 evidence is not oversold:
 
-- `tests/pyplot/test_reference_corpus.py` runs all corpus scripts through both
-  engines in isolated subprocesses and asserts crash-free execution; it does
-  not compare the two engines' outputs, and it runs only where the pinned
-  3.11-dev reference surface is installed (the dedicated CI job).
+- `tests/pyplot/test_reference_corpus.py` runs all 54 corpus scripts through
+  both engines in isolated subprocesses. Each engine must emit a nonblank PNG;
+  normalized ink density and rendered bounding-box geometry are compared.
+  The dedicated CI job installs the released `matplotlib==3.11.0` wheel.
 - `test_reference_semantics.py` compares xy against Matplotlib for line
   data/colors/color-cycle, bar geometry, histogram counts/edges (including
   density/cumulative/stacked/weights), image extent/origin/clim, and axis
-  domains. Contours, triangulations, vector fields, scatter arrays, and masks
-  have no cross-engine oracle yet; their tests assert xy-internal state only.
+  domains, contour levels, triangular topology, vector direction, masked
+  scatter arrays, RGBA images, and removable collection handles.
 - The PNG comparisons in the same file are coarse structural smoke checks
-  (dilated-mask IoU, ink-area ratio, mean-luma bands at deliberately wide
-  tolerances); they catch blank or grossly wrong renders, not styling or
-  data-level differences.
-- `tests/pyplot/test_compatibility_metadata.py` pins five known-material
-  keywords listed in `compatibility.json` (three observed via the recorded
-  entry spec, two via output-level state); it is a regression pin, not a
-  general detector of accepted-and-discarded keywords. Corpus "coverage" is
-  AST name-presence, not behavioral assertion.
+  (aspect-preserving normalized-mask IoU, a 2x ink-area band, and a 0.20 luma
+  band), plus negative controls proving blank and wrong geometry fail.
+- `test_silent_drop_regressions.py` mechanically scans every public adapter:
+  bare option pops and deleted signature parameters fail unless an explicit
+  `compat-noop:` rationale is attached. Corpus coverage only credits calls on
+  proven pyplot/Axes receivers, so unrelated `anything.fill()` calls cannot
+  satisfy the inventory.
 - `test_p3_option_contracts.py`, `test_silent_drop_regressions.py`,
   `test_artist_transform_contracts.py`, `test_rc_chrome_contracts.py`, and
   `test_rc_color_export_contracts.py` cover implemented-or-rejected option
   depth and the dependency-free Artist/transform, rc/style/color, and export
-  boundaries. rc chrome assertions stop at chart state; PNG/SVG export does
-  not consume chrome rcParams (see `docs/matplotlib-compat.md`).
+  boundaries. PNG now consumes the axes background token; subplot PNG/SVG/HTML
+  composition consumes figure backgrounds and styled suptitles.
 - `.github/workflows/ci.yml` for the pinned Matplotlib job, and
   `scripts/sync_matplotlib_compat.py` for snapshot/matrix freshness.
 
-Final local verification (2026-07-13, after the post-review corrections):
-`434 passed` in `tests/pyplot` and `1610 passed` across the full suite, with
+Final local verification (2026-07-13, after the evidence/export pass):
+`386 passed` in `tests/pyplot` and `1562 passed` across the full suite, with
 Matplotlib 3.11.0 installed so the dual-engine reference slice executed rather
 than skipping. Ruff check/format, `ty check` (two pre-existing diagnostics in
 `xy/columns.py`, zero in the shim), workflow verification, snapshot/matrix
@@ -557,3 +556,65 @@ contourf imshow matshow pcolor pcolorfast pcolormesh spy tripcolor triplot
 tricontour tricontourf annotate text table arrow barbs quiver quiverkey
 streamplot
 ```
+
+
+
+
+
+
+
+
+
+
+=========================================================
+
+
+Post-review findings (kept as the input record; resolved items are marked)
+
+
+Still weak: the evidence layer (documented honestly now, but not built)
+
+These were the "MISLEADING" P0 findings — we fixed the claims, not the machinery:
+
+- [resolved] All 54 dual-engine corpus cases now emit and compare PNG artifact geometry and ink density.
+- [resolved] Cross-engine semantic oracles now cover contours, triangulations, vector directions, scatter masks, RGBA behavior, and removable handles.
+- [resolved] PNG thresholds are substantially tighter and include negative controls that prove blank/wrong geometry fails.
+- [resolved] A mechanical public-adapter scan rejects unexplained accepted-and-dropped options.
+- [partial] Corpus coverage now proves pyplot/Axes receivers. Executable family-level claims in `compatibility.json` remain future work.
+- [resolved] Reference CI uses the released `matplotlib==3.11.0` wheel and reference tests accept the released surface.
+
+Partial: rejected loudly rather than implemented
+
+The "implement or rejen, so these are nowhonest — but functionally they're missing features, and some are very common calls that now raise where they used to (sort of) work:
+
+- [resolved] `savefig(bbox_inches="tight")`, `transparent=`, `metadata=`, and `facecolor=` are implemented for PNG (metadata also reaches SVG).
+- [partial] `hlines`/`vlines` linestyles, `fill_between` interpolation/steps, and violin extrema are implemented. Boxplot notches/bootstrap/user medians/confidence intervals, violin bandwidth/side, hexbin reducers, non-FFT spectral options, plot cap/join styles, non-native scales, and secondary axes remain explicit unsupported boundaries.
+- Rough P3 ratio after our pass: the silent-discard third is gone, but the surface is still roughther thanimplementation.
+
+Accepted approximations (documented, still divergent from matplotlib)
+
+- Barbs render an inveO 50/10/5 barbgeometry.
+- Streamplot's fixed-srent paths thanmatplotlib's adaptive one; density tuples reduce to their max.
+- imshow's 15 smoothinear upsample, andtruecolor RGB(A) input isn't resampled at all.
+- annotate(arrowprops=rorbar limit flags drop the caret arrows.
+- stem/eventplot/triplot dashes are data-space geometry — they scale with zoom instead of staying screen-space patterns.
+- Exception-type diversesTypeError/NotImplementedError where matplotlib accepts the value.
+
+Bypassed / known-inconsistent, not addressed
+
+- Chrome rcParams are HTML-only. axes.facecolor, fonts, tick/legend styling, single-chart figure.facecolor are ignored by PNG and SVG export (hardcoded chrome in _osed in the compat doc, but implementing exporter theming is real deferred work.
+- The transform graph is inert beyond images. Affine2D works only on
+AxesImage; transAxes/ttations. Lines,patches, and collections reject every non-identity transform, so the P4 "coordinate systems across exporters" checkbox is satisfied only for the text family.
+- legend() still silently pops title_fontsize, borderpad, labelspacing,
+handlelength, handlete-discarded pattern weeliminated elsewhere; nobody's audit flagged it, I noticed it while fixing
+the prop crash and lefly, but by the repo'sown policy it should reject or be documented).
+- resolve_cmap silentlnknown colormap names,while _rgba_floats rejects unknown color names loudly — inconsistent boundary, pre-existing.
+- ax.patches contains es live in containers,unlike matplotlib.
+- get_xticks() on category/time axes falls through to linear ticks over the numeric domain — usable but not matplotlib's locators; tick density also ignores figure size (fixed target count).
+Bottom line
+
+The evidence, common export options, exporter background chrome, legend
+discard boundary, line-collection dashes, interpolated fills, and violin
+extrema are now implemented. The remaining items above are still explicit
+approximations or loud unsupported boundaries; they are not claimed as full
+Matplotlib parity.

@@ -60,7 +60,7 @@ def test_colormap_extremes_alpha_and_reversal_are_preserved() -> None:
     np.testing.assert_allclose(forward, reverse)
 
 
-def test_savefig_file_objects_require_format_and_reject_discarded_options() -> None:
+def test_savefig_file_objects_support_common_export_options() -> None:
     fig, ax = plt.subplots(figsize=(4, 3), dpi=80)
     ax.plot([0, 1], [0, 1])
     with pytest.raises(ValueError, match="requires format"):
@@ -68,9 +68,27 @@ def test_savefig_file_objects_require_format_and_reject_discarded_options() -> N
     output = io.BytesIO()
     fig.savefig(output, format="png")
     assert output.getvalue().startswith(b"\x89PNG\r\n\x1a\n")
-    for option in ({"transparent": True}, {"metadata": {"Author": "xy"}}, {"bbox_inches": "tight"}):
-        with pytest.raises(NotImplementedError, match="savefig"):
-            fig.savefig(io.BytesIO(), format="png", **option)
+    transparent = io.BytesIO()
+    fig.savefig(transparent, format="png", transparent=True)
+    transparent.seek(0)
+    assert np.asarray(plt.imread(transparent))[0, 0, 3] == 0
+
+    metadata = io.BytesIO()
+    fig.savefig(metadata, format="png", metadata={"Author": "xy", "Title": "chart"})
+    assert b"Author\x00xy" in metadata.getvalue()
+
+    regular = io.BytesIO()
+    tight = io.BytesIO()
+    fig.savefig(regular, format="png")
+    fig.savefig(tight, format="png", bbox_inches="tight", pad_inches=0)
+    regular_size = struct.unpack(">II", regular.getvalue()[16:24])
+    tight_size = struct.unpack(">II", tight.getvalue()[16:24])
+    assert tight_size[0] <= regular_size[0] and tight_size[1] <= regular_size[1]
+
+    colored = io.BytesIO()
+    fig.savefig(colored, format="png", facecolor="#123456")
+    colored.seek(0)
+    np.testing.assert_array_equal(np.asarray(plt.imread(colored))[0, 0, :3], [18, 52, 86])
     for unsupported_format in ("jpeg", "webp", "pdf"):
         with pytest.raises(NotImplementedError, match=unsupported_format):
             fig.savefig(io.BytesIO(), format=unsupported_format)
