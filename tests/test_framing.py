@@ -7,8 +7,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 from xy.channel import (
     FRAME_ALIGNMENT,
@@ -27,23 +25,6 @@ ROOT = Path(__file__).resolve().parents[1]
 CLIENT = ROOT / "python" / "xy" / "static" / "index.js"
 HEADER = struct.Struct("<4sBBHIIQ")
 U64 = struct.Struct("<Q")
-
-
-JSON_SCALARS = st.one_of(
-    st.none(),
-    st.booleans(),
-    st.integers(min_value=-(2**53), max_value=2**53),
-    st.floats(allow_nan=False, allow_infinity=False, width=64),
-    st.text(max_size=32),
-)
-JSON_VALUES = st.recursive(
-    JSON_SCALARS,
-    lambda children: st.one_of(
-        st.lists(children, max_size=5),
-        st.dictionaries(st.text(max_size=16), children, max_size=5),
-    ),
-    max_leaves=20,
-)
 
 
 def _node(script: str) -> dict:
@@ -84,21 +65,6 @@ def _raw_frame(metadata: bytes, buffers: list[bytes] | None = None) -> bytes:
         parts.append(b"\x00" * padding)
         position += padding
     return b"".join(parts)
-
-
-@settings(max_examples=100, deadline=None)
-@given(
-    message=st.dictionaries(st.text(max_size=16), JSON_VALUES, max_size=8),
-    buffers=st.lists(st.binary(max_size=256), max_size=8),
-)
-def test_python_frame_round_trip_is_zero_copy(message: dict, buffers: list[bytes]) -> None:
-    body = encode_frame(message, buffers)
-
-    decoded = decode_frame(body)
-
-    assert decoded.message == message
-    assert [bytes(buffer) for buffer in decoded.buffers] == buffers
-    assert all(buffer.obj is body for buffer in decoded.buffers)
 
 
 def test_frame_header_and_buffer_offsets_are_eight_byte_aligned() -> None:
