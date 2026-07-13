@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, Optional, Union
 
 from ._mplfig import Figure
+from ._rc import rcParams
 
 _figures: dict[int, Figure] = {}
 _current: Optional[int] = None
@@ -29,8 +30,9 @@ def figure(
             key,
             figsize=figsize,
             dpi=dpi,
-            facecolor=kwargs.get("facecolor"),
+            facecolor=kwargs.get("facecolor", rcParams["figure.facecolor"]),
         )
+        _figures[key]._label = "" if isinstance(num, int) else str(num)
     elif figsize is not None or dpi is not None:
         fig = _figures[key]
         fig._figsize = figsize or fig._figsize
@@ -73,6 +75,23 @@ def close(target: Any = None) -> None:
     _figures.pop(key, None)
     if _current == key:
         _current = max(_figures) if _figures else None
+
+
+def fignums() -> list[int]:
+    return sorted(key for key in _figures if isinstance(key, int))
+
+
+def fignum_exists(num: Union[int, str]) -> bool:
+    key = num if isinstance(num, int) else hash(num)
+    return key in _figures
+
+
+def figlabels() -> list[str]:
+    return [
+        getattr(_figures[key], "_label", "")
+        for key in sorted(_figures)
+        if getattr(_figures[key], "_label", "")
+    ]
 
 
 def all_figures() -> list[Figure]:

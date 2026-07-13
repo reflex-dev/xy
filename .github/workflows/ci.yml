@@ -14,6 +14,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  matplotlib_reference:
+    name: Matplotlib 3.11 reference compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+      - name: Install xy and released reference wheel
+        run: |
+          uv venv .venv
+          uv pip install -p .venv/bin/python -e ".[dev]"
+          uv pip install -p .venv/bin/python "matplotlib==3.11.0"
+      - name: Verify released reference and reviewed snapshot
+        run: |
+          .venv/bin/python -c "import matplotlib; assert matplotlib.__version__ == '3.11.0'"
+          .venv/bin/python scripts/sync_matplotlib_compat.py --check
+      - name: Run optional-interoperability and dual-engine corpus tests
+        env:
+          MPLBACKEND: Agg
+        run: |
+          .venv/bin/pytest -q tests/pyplot/test_launch_compat.py
+          .venv/bin/pytest -q tests/pyplot/test_reference_corpus.py
+          .venv/bin/pytest -q tests/pyplot/test_reference_semantics.py
+
   test:
     name: Test (Rust + Python + JS)
     runs-on: ubuntu-latest

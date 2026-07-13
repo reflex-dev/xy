@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -144,7 +147,7 @@ def test_existing_core_plot_families_are_exposed_by_adapter() -> None:
     ax.contour(np.arange(16, dtype=float).reshape(4, 4), levels=3)
     ax.contourf(np.arange(16, dtype=float).reshape(4, 4), levels=3)
     assert set(box) == {"whiskers", "caps", "boxes", "medians", "fliers", "means"}
-    assert set(violin) == {"bodies"}
+    assert set(violin) == {"bodies", "cbars", "cmins", "cmaxes"}
     kinds = [trace.kind for trace in _traces(ax)]
     assert "stem" in kinds
     assert "box" in kinds
@@ -406,12 +409,12 @@ def test_errorbar_default_format_draws_data_line_and_none_opts_out() -> None:
 
 def test_unsupported_compatibility_options_fail_loudly() -> None:
     _fig, ax = plt.subplots()
-    with pytest.raises(NotImplementedError, match="hexbin"):
-        ax.hexbin([0, 1], [0, 1], C=[2, 3])
-    with pytest.raises(TypeError, match="notch"):
-        ax.boxplot([[1, 2, 3]], notch=True)
-    with pytest.raises(NotImplementedError, match="symlog"):
-        ax.set_xscale("symlog")
+    collection = ax.hexbin([0, 0.1], [0, 0.1], C=[2, 3], reduce_C_function=np.max)
+    assert collection._entry["kwargs"]["C"] == [2, 3]
+    result = ax.boxplot([[1, 2, 3]], notch=True, conf_intervals=[[1.5, 2.5]])
+    assert result["boxes"]
+    ax.set_xscale("symlog")
+    assert ax._scale_specs["x"]["name"] == "symlog"
 
 
 def test_artist_remove() -> None:
@@ -423,74 +426,9 @@ def test_artist_remove() -> None:
 
 
 def test_official_matplotlib_311_2d_plotting_surface_is_complete() -> None:
-    names = [
-        "plot",
-        "errorbar",
-        "scatter",
-        "step",
-        "loglog",
-        "semilogx",
-        "semilogy",
-        "fill_between",
-        "fill_betweenx",
-        "bar",
-        "barh",
-        "bar_label",
-        "grouped_bar",
-        "stem",
-        "eventplot",
-        "pie",
-        "pie_label",
-        "stackplot",
-        "broken_barh",
-        "vlines",
-        "hlines",
-        "fill",
-        "axhline",
-        "axhspan",
-        "axvline",
-        "axvspan",
-        "axline",
-        "acorr",
-        "angle_spectrum",
-        "cohere",
-        "csd",
-        "magnitude_spectrum",
-        "phase_spectrum",
-        "psd",
-        "specgram",
-        "xcorr",
-        "ecdf",
-        "boxplot",
-        "violinplot",
-        "bxp",
-        "violin",
-        "hexbin",
-        "hist",
-        "hist2d",
-        "stairs",
-        "clabel",
-        "contour",
-        "contourf",
-        "imshow",
-        "matshow",
-        "pcolor",
-        "pcolorfast",
-        "pcolormesh",
-        "spy",
-        "tripcolor",
-        "triplot",
-        "tricontour",
-        "tricontourf",
-        "annotate",
-        "text",
-        "table",
-        "arrow",
-        "barbs",
-        "quiver",
-        "quiverkey",
-        "streamplot",
-    ]
+    snapshot = json.loads((Path(__file__).with_name("matplotlib_311_plotting.json")).read_text())
+    names = [name for family in snapshot["families"].values() for name in family]
+    assert len(names) == 66
     assert not [name for name in names if not hasattr(plt.Axes, name)]
     assert not [name for name in names if not hasattr(plt, name)]
 

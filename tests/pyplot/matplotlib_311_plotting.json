@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "upstream": {
+    "repository": "https://github.com/matplotlib/matplotlib",
+    "revision": "bde111fb4e",
+    "describe": "v3.11.0-348-gbde111fb4e",
+    "source": "doc/api/axes_api.rst"
+  },
+  "scope": "Axes Plotting section, excluding layout helpers outside xy's 2-D chart-method target",
+  "excluded": [
+    "indicate_inset",
+    "indicate_inset_zoom",
+    "inset_axes",
+    "secondary_xaxis",
+    "secondary_yaxis"
+  ],
+  "families": {
+    "Basic": ["plot", "errorbar", "scatter", "step", "loglog", "semilogx", "semilogy", "fill_between", "fill_betweenx", "bar", "barh", "bar_label", "grouped_bar", "stem", "eventplot", "pie", "pie_label", "stackplot", "broken_barh", "vlines", "hlines", "fill"],
+    "Spans": ["axhline", "axhspan", "axvline", "axvspan", "axline"],
+    "Spectral": ["acorr", "angle_spectrum", "cohere", "csd", "magnitude_spectrum", "phase_spectrum", "psd", "specgram", "xcorr"],
+    "Statistics": ["ecdf", "boxplot", "violinplot", "bxp", "violin"],
+    "Binned": ["hexbin", "hist", "hist2d", "stairs"],
+    "Contours": ["clabel", "contour", "contourf"],
+    "2D arrays": ["imshow", "matshow", "pcolor", "pcolorfast", "pcolormesh", "spy"],
+    "Unstructured triangles": ["tripcolor", "triplot", "tricontour", "tricontourf"],
+    "Text and annotations": ["annotate", "text", "table", "arrow"],
+    "Vector fields": ["barbs", "quiver", "quiverkey", "streamplot"]
+  }
+}

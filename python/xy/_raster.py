@@ -489,14 +489,27 @@ def render_raster(
     cols = spec["columns"]
     cmd = _Cmd(scale)
 
+    dom_style = (spec.get("dom") or {}).get("style") or {}
+
     # The fused PNG path initializes its native canvas white, avoiding a second
     # full-frame memory pass. Raw RGBA callers still receive an explicit fill.
     if not fast_png:
-        cmd.fill(_rect_pts(0, 0, width, height), (255, 255, 255, 255))
+        cmd.fill(
+            _rect_pts(0, 0, width, height),
+            _parse_color(spec.get("canvas_background", "#ffffff")),
+        )
+
+    # Static exports honor the same axes background token as HTML/SVG.  This
+    # is deliberately a plot-rect fill rather than a canvas fill: the latter
+    # is the Figure patch and is composed by pyplot's grid exporter.
+    plot_background = _parse_color(_css(dom_style.get("--chart-bg"), "#ffffff"))
+    cmd.fill(
+        _rect_pts(plot["x"], plot["y"], plot["x"] + plot["w"], plot["y"] + plot["h"]),
+        plot_background,
+    )
 
     xt, xlab, xstep = axis_ticks(xa, plot["w"], True)
     yt, ylab, ystep = axis_ticks(ya, plot["h"], False)
-    dom_style = (spec.get("dom") or {}).get("style") or {}
     grid = _parse_color(_css(dom_style.get("--chart-grid"), _GRID))
     px0, py0 = plot["x"], plot["y"]
     px1, py1 = plot["x"] + plot["w"], plot["y"] + plot["h"]
@@ -617,7 +630,16 @@ def _emit_annotations(cmd, annotations, sx, sy, plot, width, height):
             else:
                 pos = float(sy(float(ann["value"])))
                 points = [(px0 + start * plot["w"], pos), (px0 + end * plot["w"], pos)]
-            cmd.stroke(points, float(style.get("width", 1.5)), color)
+            cmd.stroke(
+                points,
+                float(style.get("width", 1.5)),
+                color,
+                dash=(
+                    [float(value) for value in style["dash"].split(",")]
+                    if isinstance(style.get("dash"), str)
+                    else style.get("dash")
+                ),
+            )
         elif ann.get("kind") == "band":
             a, b = float(ann["start"]), float(ann["end"])
             if ann.get("axis") == "x":
@@ -643,7 +665,7 @@ def _emit_annotations(cmd, annotations, sx, sy, plot, width, height):
                     first_y + index * line_height + float(ann.get("dy", 0.0)),
                     anchor,
                     font_size,
-                    _rgba(style.get("color"), _TEXT),
+                    _rgba(style.get("color"), _TEXT, float(style.get("opacity", 1.0))),
                     line,
                 )
 
@@ -1020,9 +1042,40 @@ def _emit_colorbar(cmd, options, plot):
             y1 = y + height * (64 - index) / 64
             cmd.fill(_rect_pts(x, y0, x + width, y1 + 0.5), (*map(int, color), 255))
     domain = options.get("domain", [0.0, 1.0])
+    lo, hi = float(domain[0]), float(domain[1])
+    span = (hi - lo) or 1.0
+    ticks = options.get("ticks")
+    extend = options.get("extend")
+    if extend in ("max", "both"):
+        color = (*map(int, colors[-1]), 255)
+        if orientation == "horizontal":
+            pts = [(x + width, y), (x + width, y + height), (x + width + 9, y + height / 2)]
+        else:
+            pts = [(x, y), (x + width, y), (x + width / 2, y - 9)]
+        cmd.fill(pts, color)
+    if extend in ("min", "both"):
+        color = (*map(int, colors[0]), 255)
+        if orientation == "horizontal":
+            pts = [(x, y), (x, y + height), (x - 9, y + height / 2)]
+        else:
+            pts = [(x, y + height), (x + width, y + height), (x + width / 2, y + height + 9)]
+        cmd.fill(pts, color)
     if orientation == "horizontal":
-        cmd.text(x, y + height + 13, 0, 10, _parse_color(_TEXT), f"{domain[0]:g}")
-        cmd.text(x + width, y + height + 13, 2, 10, _parse_color(_TEXT), f"{domain[1]:g}")
+        if ticks is not None:
+            for value in ticks:
+                value = float(value)
+                if lo <= value <= hi:
+                    cmd.text(
+                        x + width * (value - lo) / span,
+                        y + height + 13,
+                        1,
+                        10,
+                        _parse_color(_TEXT),
+                        f"{value:g}",
+                    )
+        else:
+            cmd.text(x, y + height + 13, 0, 10, _parse_color(_TEXT), f"{domain[0]:g}")
+            cmd.text(x + width, y + height + 13, 2, 10, _parse_color(_TEXT), f"{domain[1]:g}")
         if options.get("label"):
             cmd.text(
                 x + width / 2,
@@ -1033,11 +1086,15 @@ def _emit_colorbar(cmd, options, plot):
                 str(options["label"]),
             )
     else:
-        for index in range(5):
-            value = domain[0] + (domain[1] - domain[0]) * index / 4
+        tick_positions = (
+            [float(value) for value in ticks if lo <= float(value) <= hi]
+            if ticks is not None
+            else [lo + span * index / 4 for index in range(5)]
+        )
+        for value in tick_positions:
             cmd.text(
                 x + width + 4,
-                y + height * (1 - index / 4) + 4,
+                y + height * (1 - (value - lo) / span) + 4,
                 0,
                 10,
                 _parse_color(_TEXT),

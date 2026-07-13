@@ -29,6 +29,17 @@ def test_ci_workflow_accepts_current_gates() -> None:
     assert verify_ci_workflow.validate_ci_workflow() == []
 
 
+def test_reference_gate_commands_must_be_in_the_named_step(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    command = "          .venv/bin/pytest -q tests/pyplot/test_reference_semantics.py\n"
+    # Leaving the old verifier's needle elsewhere in the job must not satisfy
+    # the structural step-local check.
+    path = tmp_path / "ci.yml"
+    path.write_text(workflow.replace(command, "") + f"\n# {command.strip()}\n", encoding="utf-8")
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+    assert any("reference test commands" in error for error in errors)
+
+
 def test_codspeed_workflow_accepts_current_gates() -> None:
     assert verify_ci_workflow.validate_codspeed_workflow() == []
 

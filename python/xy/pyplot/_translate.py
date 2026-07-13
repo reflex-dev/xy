@@ -88,8 +88,12 @@ def line_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
     dashes = kwargs.pop("dashes", None)
     if dashes is not None:
         out["dash"] = list(dashes)
-    kwargs.pop("gapcolor", None)
-    kwargs.pop("path_effects", None)
+    gapcolor = kwargs.pop("gapcolor", None)
+    if gapcolor is not None:
+        raise not_implemented("Line2D gapcolor")
+    path_effects = kwargs.pop("path_effects", None)
+    if path_effects:
+        raise not_implemented("Line2D path_effects")
     label = kwargs.pop("label", None)
     if label is not None:
         out["name"] = str(label)

@@ -122,6 +122,11 @@ ignore = [
     "RUF100", # unused noqa (kept for editors running broader rule sets)
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Third-party example code (PDSH notebooks): kept faithful to upstream, so
+# upstream's import placement and naming style is not ours to lint.
+"examples/pdsh/*.ipynb" = ["E402", "E731", "E741", "F401", "I001", "UP030", "UP032", "B007"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["fastcharts", "xy"]
 

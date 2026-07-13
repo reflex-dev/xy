@@ -43,6 +43,8 @@ piyg: [[142, 1, 82], [197, 27, 125], [222, 119, 174], [241, 182, 218], [253, 224
 purples: [[252, 251, 253], [239, 237, 245], [218, 218, 235], [188, 189, 220], [158, 154, 200], [128, 125, 186], [106, 81, 163], [84, 39, 143], [63, 0, 125]],
 pubu: [[255, 247, 251], [236, 231, 242], [208, 209, 230], [166, 189, 219], [116, 169, 207], [54, 144, 192], [5, 112, 176], [4, 90, 141], [2, 56, 88]],
 prgn: [[64, 0, 75], [118, 42, 131], [153, 112, 171], [194, 165, 207], [231, 212, 232], [247, 247, 247], [217, 240, 211], [166, 219, 160], [90, 174, 97], [27, 120, 55], [0, 68, 27]],
+rdgy: [[103, 0, 31], [177, 24, 43], [214, 96, 77], [243, 164, 129], [253, 219, 199], [254, 254, 254], [224, 224, 224], [185, 185, 185], [135, 135, 135], [76, 76, 76], [26, 26, 26]],
+jet: [[0, 0, 128], [0, 0, 241], [0, 76, 255], [0, 176, 255], [41, 255, 206], [125, 255, 122], [206, 255, 41], [255, 196, 0], [255, 104, 0], [241, 8, 0], [128, 0, 0]],
 binary: [[255, 255, 255], [0, 0, 0]],
 };
 function colormapStops(name) {
@@ -4172,6 +4174,8 @@ ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
 ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
 ctx.fillStyle = ctx.strokeStyle;
 ctx.lineWidth = Math.max(0.5, this._styleNumber(style, "width", 1.5));
+ctx.setLineDash(Array.isArray(style.dash) ? style.dash :
+(typeof style.dash === "string" ? style.dash.split(",").map(Number) : []));
 ctx.beginPath();
 ctx.moveTo(x0, y0);
 ctx.lineTo(x1, y1);
@@ -4228,6 +4232,8 @@ ctx.save();
 ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
 ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
 ctx.lineWidth = Math.max(0.5, this._styleNumber(style, "width", 1.5));
+ctx.setLineDash(Array.isArray(style.dash) ? style.dash :
+(typeof style.dash === "string" ? style.dash.split(",").map(Number) : []));
 ctx.beginPath();
 const start = Math.max(0, Math.min(1, Number(style.span_start) || 0));
 const rawEnd = style.span_end === undefined ? 1 : Number(style.span_end);

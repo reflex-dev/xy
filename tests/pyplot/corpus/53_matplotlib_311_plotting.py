@@ -25,7 +25,16 @@ stats = [
 axes[1, 0].bxp(stats)
 coords = np.linspace(-2, 2, 40)
 axes[1, 0].violin(
-    [{"coords": coords, "vals": np.exp(-(coords**2)), "min": -2, "max": 2}],
+    [
+        {
+            "coords": coords,
+            "vals": np.exp(-(coords**2)),
+            "mean": 0,
+            "median": 0,
+            "min": -2,
+            "max": 2,
+        }
+    ],
     positions=[3],
 )
 

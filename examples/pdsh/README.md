@@ -1,0 +1,65 @@
+# Python Data Science Handbook, chapter 4 — on `xy.pyplot`
+
+These notebooks are the matplotlib chapter of Jake VanderPlas's
+[Python Data Science Handbook](https://github.com/jakevdp/PythonDataScienceHandbook),
+with one systematic change: `import matplotlib.pyplot as plt` became
+`import xy.pyplot as plt`. They exist to answer, on popular real-world
+code, "can I just change the import?"
+
+Only the MIT-licensed code cells are included (the book's prose is
+CC-BY-NC-ND and is omitted; section headings are kept for navigation).
+Besides the import swap, the code carries the same modernizations the
+originals need to run on current matplotlib anyway: `seaborn-*` style
+names (removed in matplotlib 3.6), `cm.get_cmap` (removed in 3.9), and
+pandas `Series.view` (removed in pandas 2).
+
+## Scorecard
+
+Measured 2026-07-13, after the gap-closing pass this experiment
+motivated (tick locators/formatters, `style.context`, `GridSpec`,
+`clim`, `cycler`, diverging colormaps, colorbar handles). The
+matplotlib column is the identical code with the original import, on
+matplotlib 3.11 — it passes everything, so the xy column is pure shim
+signal. A "cell ok" also implies a non-empty `savefig` PNG export.
+
+| Notebook | matplotlib 3.11 | xy.pyplot |
+|---|---:|---:|
+| 04.00 Introduction | 8/8 | 8/8 |
+| 04.01 Simple Line Plots | 15/15 | 15/15 |
+| 04.02 Simple Scatter Plots | 8/8 | 8/8 |
+| 04.03 Errorbars | 5/5 | 5/5 |
+| 04.04 Density and Contour Plots | 8/8 | 8/8 |
+| 04.05 Histograms and Binnings | 10/10 | 10/10 |
+| 04.06 Customizing Legends | 11/11 | 8/11 |
+| 04.07 Customizing Colorbars | 13/13 | 13/13 |
+| 04.08 Multiple Subplots | 10/10 | 10/10 |
+| 04.09 Text and Annotation | 9/9 | 6/9 |
+| 04.10 Customizing Ticks | 11/11 | 11/11 |
+| 04.11 Settings and Stylesheets | 15/15 | 15/15 |
+| 04.12 Three-Dimensional Plotting¹ | 17/17 | 7/17 |
+| 04.14 Visualization with Seaborn² | 31/31 | 30/31 |
+| **Total** | **171/171** | **154/171 (90%)** |
+
+Excluding the out-of-scope 3D notebook: 147/154 (95%). The first
+measurement, before the gap-closing pass, was 121/171 (71%).
+
+¹ 3D projections are outside xy's 2-D chart-method compatibility target
+(see [docs/matplotlib-compat.md](../../docs/matplotlib-compat.md));
+`plt.axes(projection='3d')` fails loudly rather than silently returning
+a 2-D axes, so only this notebook's 2-D cells pass.
+² Soft evidence: seaborn draws through real matplotlib internally, so
+only the cells calling `plt` directly exercise the shim.
+
+## Remaining failures
+
+All 17 are one of: 3-D projection cells (10, loud rejections by
+design), legend layout options `borderpad`/`labelspacing` and the
+`Legend` class (3, documented loud rejections), pandas
+`Series.plot(ax=ax)` datetime interop (3, a real gap — a dtype error
+inside the pandas plotting path), and `axhline(marker=)` via seaborn
+(1, loud rejection).
+
+Data files under `data/` come from the handbook's repository
+(`births.csv`, `california_cities.csv`) and
+[jakevdp/marathon-data](https://github.com/jakevdp/marathon-data)
+(`marathon-data.csv`).
