@@ -20,6 +20,37 @@ def _capturing_widget(fig: Figure, **kwargs):
     return widget, sent
 
 
+def test_widget_first_paint_ships_split_buffers_zero_copy():
+    # First paint uses the split layout (§29): one binary comm frame per
+    # column, each a borrowed memoryview over the writer's encoded chunk —
+    # the joined blob (and its payload-sized copy) never exists.
+    fig = Figure().scatter(np.arange(100.0), np.arange(100.0))
+    widget, _sent = _capturing_widget(fig)
+
+    assert widget.spec["buffer_layout"] == "split"
+    assert isinstance(widget.buffers, list)
+    assert len(widget.buffers) == len(widget.spec["columns"])
+    for view in widget.buffers:
+        assert isinstance(view, memoryview)
+        assert isinstance(view.obj, np.ndarray)  # borrowed, not copied
+
+    spec, blob = fig.build_payload()
+    assert b"".join(bytes(b) for b in widget.buffers) == blob
+
+
+def test_widget_append_resyncs_packed_reopen_state():
+    # Streaming append refreshes the synced traits with the packed layout
+    # (spec without buffer_layout + one blob) — reopen state must stay
+    # self-consistent with whichever layout the spec declares.
+    fig = Figure().scatter(np.arange(10.0), np.arange(10.0))
+    widget, sent = _capturing_widget(fig)
+    widget.append(fig.traces[0].id, np.arange(10.0, 15.0), np.arange(10.0, 15.0))
+
+    assert "buffer_layout" not in widget.spec
+    assert isinstance(widget.buffers, bytes)
+    assert len(sent) == 1
+
+
 def test_widget_drops_malformed_view_messages():
     n = DECIMATION_THRESHOLD + 1
     fig = Figure().line(np.arange(n, dtype=np.float64), np.arange(n, dtype=np.float64))

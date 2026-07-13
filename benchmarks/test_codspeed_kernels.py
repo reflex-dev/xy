@@ -65,6 +65,7 @@ def warm_lazy_modules() -> None:
     y = np.array([0.0, 1.0, 0.0, 1.0])
     fig = fc.chart(fc.scatter(x=x, y=y), fc.line(x=x, y=y)).figure()
     fig.build_payload(N_BUCKETS)
+    fig.build_payload_split(N_BUCKETS)
     fig.to_svg(width=64, height=48)
     fig.to_png(engine="native", scale=1.0)
     fig.to_html()
@@ -580,16 +581,22 @@ def test_range_indices(benchmark, data):
     benchmark(k.range_indices, x, y, N * 0.45, N * 0.55, -2.0, 2.0)
 
 
+# The first-payload helpers measure the production widget first paint, which
+# ships the split buffer layout (§29): per-column borrowed buffers, no join
+# copy. Repointing them from build_payload created a one-time step improvement
+# in these series; the packed layout stays tracked by test_build_payload and
+# the export benchmarks (to_png/to_svg/to_html), which are its remaining
+# production consumers.
 def _scatter_payload(x: np.ndarray, y: np.ndarray, *, density: bool | None = None) -> int:
     fig = fc.chart(fc.scatter(x=x, y=y, density=density)).figure()
-    _spec, blob = fig.build_payload(N_BUCKETS)
-    return len(blob)
+    _spec, buffers = fig.build_payload_split(N_BUCKETS)
+    return sum(b.nbytes for b in buffers)
 
 
 def _line_payload(x: np.ndarray, y: np.ndarray) -> int:
     fig = fc.chart(fc.line(x=x, y=y)).figure()
-    _spec, blob = fig.build_payload(N_BUCKETS)
-    return len(blob)
+    _spec, buffers = fig.build_payload_split(N_BUCKETS)
+    return sum(b.nbytes for b in buffers)
 
 
 def _density_memory_report(x: np.ndarray, y: np.ndarray) -> dict[str, object]:
@@ -599,26 +606,26 @@ def _density_memory_report(x: np.ndarray, y: np.ndarray) -> dict[str, object]:
 
 def _histogram_payload(values: np.ndarray) -> int:
     fig = fc.chart(fc.histogram(values, bins=200)).figure()
-    _spec, blob = fig.build_payload(N_BUCKETS)
-    return len(blob)
+    _spec, buffers = fig.build_payload_split(N_BUCKETS)
+    return sum(b.nbytes for b in buffers)
 
 
 def _area_payload(x: np.ndarray, y: np.ndarray) -> int:
     fig = fc.chart(fc.area(x, y)).figure()
-    _spec, blob = fig.build_payload(N_BUCKETS)
-    return len(blob)
+    _spec, buffers = fig.build_payload_split(N_BUCKETS)
+    return sum(b.nbytes for b in buffers)
 
 
 def _bar_payload(categories: list[str], values: np.ndarray) -> int:
     fig = fc.chart(fc.bar(categories, values)).figure()
-    _spec, blob = fig.build_payload(N_BUCKETS)
-    return len(blob)
+    _spec, buffers = fig.build_payload_split(N_BUCKETS)
+    return sum(b.nbytes for b in buffers)
 
 
 def _heatmap_payload(z: np.ndarray, x: np.ndarray, y: np.ndarray) -> int:
     fig = fc.chart(fc.heatmap(z, x=x, y=y)).figure()
-    _spec, blob = fig.build_payload(N_BUCKETS)
-    return len(blob)
+    _spec, buffers = fig.build_payload_split(N_BUCKETS)
+    return sum(b.nbytes for b in buffers)
 
 
 def _statistical_payload(values: list[np.ndarray]) -> int:
@@ -626,28 +633,28 @@ def _statistical_payload(values: list[np.ndarray]) -> int:
         fc.box(values=values, name="box"),
         fc.violin(values=values, bins=64, name="violin"),
     ).figure()
-    _spec, blob = fig.build_payload(N_BUCKETS)
-    return len(blob)
+    _spec, buffers = fig.build_payload_split(N_BUCKETS)
+    return sum(b.nbytes for b in buffers)
 
 
 def _hexbin_payload(x: np.ndarray, y: np.ndarray) -> int:
     fig = fc.chart(fc.hexbin(x=x, y=y, gridsize=128)).figure()
-    _spec, blob = fig.build_payload(N_BUCKETS)
-    return len(blob)
+    _spec, buffers = fig.build_payload_split(N_BUCKETS)
+    return sum(b.nbytes for b in buffers)
 
 
 def _contour_payload(z: np.ndarray) -> int:
     fig = fc.chart(fc.contour(z=z, levels=12, filled=True)).figure()
-    _spec, blob = fig.build_payload(N_BUCKETS)
-    return len(blob)
+    _spec, buffers = fig.build_payload_split(N_BUCKETS)
+    return sum(b.nbytes for b in buffers)
 
 
 def _errorbar_payload(x: np.ndarray, y: np.ndarray) -> int:
     fig = fc.chart(fc.errorbar(x=x, y=y, yerr=1.0)).figure()
-    spec, blob = fig.build_payload(N_BUCKETS)
+    spec, buffers = fig.build_payload_split(N_BUCKETS)
     # The point of this bench is the segment-emission decimation branch.
     assert spec["traces"][0]["tier"] == "decimated"
-    return len(blob)
+    return sum(b.nbytes for b in buffers)
 
 
 def _composed_layered_payload(data: dict[str, object]) -> int:
@@ -672,8 +679,8 @@ def _composed_layered_payload(data: dict[str, object]) -> int:
         class_names={"legend": "fc-legend", "tooltip": "fc-tooltip"},
         style={"--fc-accent": "#2563eb"},
     )
-    _spec, blob = chart.figure().build_payload(N_BUCKETS)
-    return len(blob)
+    _spec, buffers = chart.figure().build_payload_split(N_BUCKETS)
+    return sum(b.nbytes for b in buffers)
 
 
 def _composed_layered_memory_report(data: dict[str, object]) -> dict[str, object]:
@@ -711,9 +718,9 @@ def test_first_payload_scatter_categorical_color(benchmark, medium_data):
 
     def build():
         fig = fc.chart(fc.scatter(x=x, y=y, color=categories)).figure()
-        return fig.build_payload(N_BUCKETS)
+        return fig.build_payload_split(N_BUCKETS)
 
-    spec, blob = benchmark(build)
+    spec, buffers = benchmark(build)
     trace = spec["traces"][0]
     color = trace["color"]
     color_meta = spec["columns"][color["buf"]]
@@ -721,7 +728,7 @@ def test_first_payload_scatter_categorical_color(benchmark, medium_data):
     assert color["dtype"] == "u8" and color_meta["dtype"] == "u8"
     # Two f32 geometry columns plus one byte code: the compact categorical
     # transport is a hard benchmark invariant, not merely an implementation detail.
-    assert len(blob) == 9 * len(x)
+    assert sum(b.nbytes for b in buffers) == 9 * len(x)
 
 
 def test_first_payload_scatter_continuous_channels(benchmark, medium_data):
@@ -732,11 +739,11 @@ def test_first_payload_scatter_continuous_channels(benchmark, medium_data):
 
     def build():
         fig = fc.chart(fc.scatter(x=x, y=y, color=color, size=size)).figure()
-        return fig.build_payload(N_BUCKETS)
+        return fig.build_payload_split(N_BUCKETS)
 
-    spec, blob = benchmark(build)
+    spec, buffers = benchmark(build)
     assert spec["traces"][0]["n_points"] == len(x)
-    assert blob
+    assert sum(b.nbytes for b in buffers) == 4 * len(x) * 4
 
 
 def test_first_payload_line_unsorted_x(benchmark, medium_data):
@@ -748,11 +755,11 @@ def test_first_payload_line_unsorted_x(benchmark, medium_data):
 
     def build():
         fig = fc.chart(fc.line(x=unsorted_x, y=unsorted_y)).figure()
-        return fig.build_payload(N_BUCKETS)
+        return fig.build_payload_split(N_BUCKETS)
 
-    spec, blob = benchmark(build)
+    spec, buffers = benchmark(build)
     assert spec["traces"][0]["n_points"] == len(x)
-    assert blob
+    assert buffers
 
 
 @pytest.mark.parametrize("kind", ["datetime64", "python_list"])
@@ -767,11 +774,11 @@ def test_first_payload_ingest_flavors(benchmark, kind):
 
     def build():
         fig = fc.chart(fc.line(x=x, y=values)).figure()
-        return fig.build_payload(N_BUCKETS)
+        return fig.build_payload_split(N_BUCKETS)
 
-    spec, blob = benchmark(build)
+    spec, buffers = benchmark(build)
     assert spec["traces"][0]["n_points"] == n
-    assert blob
+    assert buffers
 
 
 def test_density_view_exact_pan(benchmark):

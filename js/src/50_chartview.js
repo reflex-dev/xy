@@ -1031,9 +1031,8 @@ class ChartView {
     if (t.tier === "density") {
       const d = t.density;
       const meta = this.spec.columns[d.buf];
-      const grid = d.enc === "log-u8"
-        ? lodDecodeLogU8(new Uint8Array(buffer, meta.byte_offset, meta.len), d.max)
-        : new Float32Array(buffer, meta.byte_offset, d.w * d.h);
+      const raw = this._columnView(buffer, meta);
+      const grid = d.enc === "log-u8" ? lodDecodeLogU8(raw, d.max) : raw;
       g.densityNormMax = d.max;
       g.density = {
         w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
@@ -1575,8 +1574,22 @@ class ChartView {
   // (heatmap, histogram) reuse them instead of copy-pasting.
 
   _columnView(buffer, meta) {
-    if (meta.dtype === "u8") return new Uint8Array(buffer, meta.byte_offset, meta.len);
-    return new Float32Array(buffer, meta.byte_offset, meta.len);
+    // Packed layout: one blob, columns addressed by global byte_offset.
+    // Split layout (§29 first paint): `buffer` is a list of per-column
+    // ArrayBuffers and the column entry carries `buf`, its list index. A
+    // disagreement between spec and transport is a bug — fail loudly rather
+    // than render from misaligned bytes.
+    const split = Array.isArray(buffer);
+    if (split !== Number.isInteger(meta.buf)) {
+      throw new Error(
+        split
+          ? "xy: transport delivered a buffer list but the spec column has no wire-buffer index"
+          : "xy: spec column carries a wire-buffer index but the transport delivered one blob",
+      );
+    }
+    const src = split ? buffer[meta.buf] : buffer;
+    if (meta.dtype === "u8") return new Uint8Array(src, meta.byte_offset, meta.len);
+    return new Float32Array(src, meta.byte_offset, meta.len);
   }
 
   _upload(view) {
