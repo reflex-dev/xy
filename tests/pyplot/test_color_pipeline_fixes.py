@@ -7,6 +7,8 @@ clamped imshow colormaps, discrete (resampled) colormaps, and the contour
 auto-level count / dashed-negative / filled-band conventions.
 """
 
+from __future__ import annotations
+
 import io
 
 import numpy as np
