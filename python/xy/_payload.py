@@ -40,10 +40,16 @@ class _PayloadWriter:
     means calling these, not re-implementing the encoding.
     """
 
-    def __init__(self, *, borrow_heatmaps: bool = False) -> None:
+    def __init__(self, *, split: bool = False, borrow_heatmaps: bool = False) -> None:
+        # split=True: every column ships as its own wire buffer — spec entries
+        # carry `buf` (the wire-buffer index) with byte_offset 0, and
+        # `buffers()` returns per-column views with no join copy. Packed mode
+        # keeps the single `blob()` with global byte offsets (standalone
+        # export, streaming-refresh reopen state).
         self.columns: list[dict[str, Any]] = []
         self._chunks: list[bytes | np.ndarray] = []
         self._pos = 0
+        self._split = split
         self.borrow_heatmaps = borrow_heatmaps
         self.borrowed: list[np.ndarray] = []
 
@@ -69,6 +75,18 @@ class _PayloadWriter:
         """Raw byte column, padded so every later f32 column stays aligned."""
         enc = np.ascontiguousarray(values, dtype=np.uint8).reshape(-1)
         index = len(self.columns)
+        if self._split:
+            # One buffer per column: fold the alignment padding into the u8
+            # buffer itself (spec `len` still counts only real values), so the
+            # split layout stays a byte-identical repack of the packed blob.
+            padding = (-len(enc)) % 4
+            padded = np.concatenate([enc, np.zeros(padding, np.uint8)]) if padding else enc
+            self.columns.append(
+                {"buf": len(self._chunks), "byte_offset": 0, "len": int(len(enc)), "dtype": "u8"}
+            )
+            self._chunks.append(padded)
+            self._pos += padded.nbytes
+            return index
         self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), "dtype": "u8"})
         self._chunks.append(enc)
         self._pos += enc.nbytes
@@ -103,18 +121,31 @@ class _PayloadWriter:
     def _append(self, enc: np.ndarray, meta: dict[str, Any]) -> int:
         # Retain the encoded array until blob assembly so each column is copied
         # once into the final bytes object, rather than once in `tobytes()` and
-        # again by `join`.
+        # again by `join` — and split mode ships these views with no copy at all.
         enc = np.ascontiguousarray(enc)
-        self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), **meta})
+        idx = len(self.columns)
+        if self._split:
+            # `buf` indexes the wire buffer list (== `_chunks`), which can
+            # drift from the column table (`borrow_f64` columns own no chunk).
+            self.columns.append(
+                {"buf": len(self._chunks), "byte_offset": 0, "len": int(len(enc)), **meta}
+            )
+        else:
+            self.columns.append({"byte_offset": self._pos, "len": int(len(enc)), **meta})
         self._chunks.append(enc)
         self._pos += enc.nbytes
-        return len(self.columns) - 1
+        return idx
 
     def blob(self) -> bytes:
         return b"".join(
             chunk if isinstance(chunk, bytes) else memoryview(chunk).cast("B")
             for chunk in self._chunks
         )
+
+    def buffers(self) -> list[memoryview]:
+        """Per-column wire buffers (split mode): zero-copy views over the
+        encoded chunks, ready to ship as separate binary comm frames."""
+        return [memoryview(c).cast("B") for c in self._chunks]
 
 
 class PayloadMixin(_Host):
@@ -127,18 +158,37 @@ class PayloadMixin(_Host):
         (§5 Tier 1); dense scatter ships a density grid (§5 Tier 2). Every
         reduction is recorded in the spec — no silent quality changes (§28).
         """
-        spec, blob, _borrowed = self._build_payload(px_width, borrow_heatmaps=False)
-        return spec, blob
+        pw = _PayloadWriter()
+        spec = self._payload_spec(pw, self._resolve_px_width(px_width))
+        return spec, pw.blob()
+
+    def build_payload_split(
+        self, px_width: Optional[int] = None
+    ) -> tuple[dict[str, Any], list[memoryview]]:
+        """`build_payload` with per-column wire buffers instead of one blob.
+
+        Same emitters, same encoded bytes — but the columns ship as a list of
+        borrowed buffer views, skipping the join copy (the single largest
+        allocation of a direct-tier build). The spec says so explicitly:
+        `buffer_layout: "split"`, and each column entry carries `buf`, its
+        index into the buffer list (§29 — the comm protocol already carries
+        multi-buffer messages on the update path; this extends it to first
+        paint).
+        """
+        pw = _PayloadWriter(split=True)
+        spec = self._payload_spec(pw, self._resolve_px_width(px_width))
+        spec["buffer_layout"] = "split"
+        return spec, pw.buffers()
 
     def _build_raster_payload(
         self, px_width: Optional[int] = None
     ) -> tuple[dict[str, Any], bytes, tuple[np.ndarray, ...]]:
         """Private static-export payload with borrowed canonical heatmap spans."""
-        return self._build_payload(px_width, borrow_heatmaps=True)
+        pw = _PayloadWriter(borrow_heatmaps=True)
+        spec = self._payload_spec(pw, self._resolve_px_width(px_width))
+        return spec, pw.blob(), tuple(pw.borrowed)
 
-    def _build_payload(
-        self, px_width: Optional[int], *, borrow_heatmaps: bool
-    ) -> tuple[dict[str, Any], bytes, tuple[np.ndarray, ...]]:
+    def _resolve_px_width(self, px_width: Optional[int]) -> int:
         if px_width is None:
             # A concrete chart should pay for the pixels it can display, not
             # the historical 2048px fluid-layout fallback. Responsive charts
@@ -151,7 +201,9 @@ class PayloadMixin(_Host):
                 else 2048
             )
         px_width, _ = lod.screen_shape(px_width, 16)
-        pw = _PayloadWriter(borrow_heatmaps=borrow_heatmaps)
+        return px_width
+
+    def _payload_spec(self, pw: "_PayloadWriter", px_width: int) -> dict[str, Any]:
         # `_range` is an O(traces x chunks) autorange scan and is invariant
         # while this build runs (emitters only touch shipped_sel/drill state),
         # so each axis pays for it once even when many traces share an axis.
@@ -211,7 +263,7 @@ class PayloadMixin(_Host):
         annotations = self._annotation_specs()
         if annotations:
             spec["annotations"] = annotations
-        return spec, pw.blob(), tuple(pw.borrowed)
+        return spec
 
     def _emit_trace(
         self, t: Trace, pw: "_PayloadWriter", xr: tuple, yr: tuple, px_width: int

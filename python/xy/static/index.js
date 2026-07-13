@@ -2320,9 +2320,8 @@ yAxis: typeof t.y_axis === "string" ? t.y_axis : "y",
 if (t.tier === "density") {
 const d = t.density;
 const meta = this.spec.columns[d.buf];
-const grid = d.enc === "log-u8"
-? lodDecodeLogU8(new Uint8Array(buffer, meta.byte_offset, meta.len), d.max)
-: new Float32Array(buffer, meta.byte_offset, d.w * d.h);
+const raw = this._columnView(buffer, meta);
+const grid = d.enc === "log-u8" ? lodDecodeLogU8(raw, d.max) : raw;
 g.densityNormMax = d.max;
 g.density = {
 w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
@@ -2806,8 +2805,17 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 return tex;
 }
 _columnView(buffer, meta) {
-if (meta.dtype === "u8") return new Uint8Array(buffer, meta.byte_offset, meta.len);
-return new Float32Array(buffer, meta.byte_offset, meta.len);
+const split = Array.isArray(buffer);
+if (split !== Number.isInteger(meta.buf)) {
+throw new Error(
+split
+? "xy: transport delivered a buffer list but the spec column has no wire-buffer index"
+: "xy: spec column carries a wire-buffer index but the transport delivered one blob",
+);
+}
+const src = split ? buffer[meta.buf] : buffer;
+if (meta.dtype === "u8") return new Uint8Array(src, meta.byte_offset, meta.len);
+return new Float32Array(src, meta.byte_offset, meta.len);
 }
 _upload(view) {
 const gl = this.gl;
@@ -5505,9 +5513,22 @@ return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
 }
 throw new Error("unsupported buffer type");
 }
+
+function payloadBuffers(spec, raw) {
+if (spec.buffer_layout === "split") {
+if (!Array.isArray(raw)) {
+throw new Error("xy: spec says buffer_layout=split but the transport delivered one buffer");
+}
+return raw.map(bytesToArrayBuffer);
+}
+if (Array.isArray(raw)) {
+throw new Error("xy: transport delivered a buffer list but the spec is not split-layout");
+}
+return bytesToArrayBuffer(raw);
+}
 function render({ model, el }) {
 const spec = model.get("spec");
-const buffer = bytesToArrayBuffer(model.get("buffers"));
+const buffer = payloadBuffers(spec, model.get("buffers"));
 const comm = {
 send: (msg) => model.send(msg),
 onMessage: (cb) => {

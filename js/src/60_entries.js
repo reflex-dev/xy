@@ -10,9 +10,26 @@ function bytesToArrayBuffer(b) {
   throw new Error("unsupported buffer type");
 }
 
+/** First-paint buffers in the shape the spec declares (§29): packed is one
+ * blob; split is one ArrayBuffer per column — slicing each incoming frame
+ * separately also guarantees Float32Array alignment. A spec/transport
+ * disagreement is a bug, never a fallback. */
+function payloadBuffers(spec, raw) {
+  if (spec.buffer_layout === "split") {
+    if (!Array.isArray(raw)) {
+      throw new Error("xy: spec says buffer_layout=split but the transport delivered one buffer");
+    }
+    return raw.map(bytesToArrayBuffer);
+  }
+  if (Array.isArray(raw)) {
+    throw new Error("xy: transport delivered a buffer list but the spec is not split-layout");
+  }
+  return bytesToArrayBuffer(raw);
+}
+
 function render({ model, el }) {
   const spec = model.get("spec");
-  const buffer = bytesToArrayBuffer(model.get("buffers"));
+  const buffer = payloadBuffers(spec, model.get("buffers"));
   const comm = {
     send: (msg) => model.send(msg),
     onMessage: (cb) => {
