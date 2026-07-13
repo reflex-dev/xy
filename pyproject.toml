@@ -30,12 +30,11 @@ dev = [
     # tests importorskip it, so it lives in dev where CI exercises them.
     "pyarrow>=15",
 ]
-# Cross-library comparison charts (scripts/bench_vs.py three-way benchmark,
-# notebook side-by-sides). Kept out of `dev` so the main test/CI install stays
-# lean; opt in with `uv pip install -e ".[bench]"`.
+# Plotly comparison charts. Matplotlib is deliberately not a project extra:
+# benchmark jobs that compare against it install it explicitly as an external
+# baseline, while every xy install remains independent of Matplotlib.
 bench = [
     "plotly>=5",
-    "matplotlib>=3",
 ]
 # CodSpeed's pytest plugin is intentionally separate from the normal dev
 # environment: it is useful for performance runs, but is not needed for unit

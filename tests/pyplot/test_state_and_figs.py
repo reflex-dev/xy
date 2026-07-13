@@ -99,6 +99,14 @@ def test_grid_savefig_png_stitches(tmp_path: Path) -> None:
     assert target.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 
+def test_add_axes_png_uses_native_facecolor_parser() -> None:
+    fig = plt.figure(facecolor="rgba(12,34,56,0.5)")
+    ax = fig.add_axes([0.1, 0.1, 0.8, 0.8])
+    ax.plot([0, 1], [1, 2])
+
+    assert fig._to_png().startswith(b"\x89PNG\r\n\x1a\n")
+
+
 def test_grid_html_has_panels() -> None:
     _fig, axes = plt.subplots(2, 2, figsize=(8, 6))
     for i, ax in enumerate(axes.ravel()):
