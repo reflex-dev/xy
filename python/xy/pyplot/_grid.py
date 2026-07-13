@@ -182,10 +182,7 @@ def stitch_png(
         raise ValueError("figure has no axes to save")
 
     if positions is not None and canvas_size is not None:
-        to_rgba = __import__("matplotlib.colors", fromlist=["to_rgba"]).to_rgba
-
-        rgba = np.asarray(to_rgba(facecolor), dtype=np.float64)
-        background = np.round(rgba * 255).astype(np.uint8)
+        background = np.asarray(_raster._parse_color(facecolor), dtype=np.uint8)
         canvas = np.empty((canvas_size[1] * 2, canvas_size[0] * 2, 4), dtype=np.uint8)
         canvas[...] = background
         for tile, (left, bottom, _width, height) in zip(tiles, positions, strict=True):
