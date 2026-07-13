@@ -1,12 +1,12 @@
 """Scatter data channels: color and size (§36c — data-driven styling is
 spec-level, resolved on the GPU, never CSS).
 
-Transport principle (§2/§29): a per-point channel ships as **one f32 per point**
-plus a small lookup table in the spec — a normalized scalar the GPU maps through
-a colormap LUT (continuous) or a palette index (categorical), or a size range.
-Never per-point RGBA (4×) when a scalar + LUT does. So a colored, sized scatter
-is ~16 bytes/point on the wire (x, y, color-scalar, size-scalar), matching the
-§2 "typical scatter ≤ 24 B/pt" budget with headroom.
+Transport principle (§2/§29): a per-point channel ships as one compact scalar
+plus a small lookup table in the spec — f32 for normalized continuous values,
+or u8 for categorical palette indices when the client LUT can represent every
+category. Never per-point RGBA (4×) when a scalar + LUT does. So a categorical,
+sized scatter is ~13 bytes/point on the wire (x, y, color-code, size-scalar),
+matching the §2 "typical scatter ≤ 24 B/pt" budget with headroom.
 """
 
 from __future__ import annotations
@@ -24,12 +24,39 @@ _finite_scalar = _validate.finite_scalar
 
 # Named colormaps the client knows (LUTs live in the JS client, §36). Kept
 # small and CVD-safe by default.
-COLORMAPS = ("viridis", "magma", "plasma", "inferno", "cividis", "gray", "turbo", "coolwarm")
+COLORMAPS = (
+    "viridis",
+    "magma",
+    "plasma",
+    "inferno",
+    "cividis",
+    "gray",
+    "turbo",
+    "coolwarm",
+    "blues",
+    "rdylgn",
+    "rainbow",
+    "spectral",
+    "piyg",
+    "purples",
+    "pubu",
+    "prgn",
+    "binary",
+)
+
+
+def is_colormap(name: str) -> bool:
+    """Return whether *name* is a supported colormap, including ``_r`` variants."""
+    return name in COLORMAPS or (name.endswith("_r") and name[:-2] in COLORMAPS)
+
+
 DEFAULT_COLORMAP = "viridis"
 
 # The client palette LUT is 256 texels; categories beyond this collide in the
 # shader, so we warn (channels.resolve_color).
 MAX_CATEGORIES = 256
+_FACTORIZE_PROBE_ROWS = 4096
+_FACTORIZE_NATIVE_MAX_PROBE_CATEGORIES = 512
 
 
 @dataclass
@@ -45,8 +72,11 @@ class ColorChannel:
     domain: Optional[tuple[float, float]] = None
     colormap: str = DEFAULT_COLORMAP
     # categorical: integer code per point + the category labels + palette.
-    codes: Optional[npt.NDArray[np.float64]] = None
+    codes: Optional[npt.NDArray[np.uint8] | npt.NDArray[np.uint32]] = None
     categories: Optional[list[str]] = None
+    # Exact dense-code counts, fused into native compact factorization. They
+    # let full-domain stratified sampling skip a source-sized recount.
+    counts: Optional[npt.NDArray[np.uint64]] = None
     # Append-only backing storage for streaming continuous channels. Kept out
     # of the wire/spec surface; values remains the exact-length view.
     _buffer: Optional[npt.NDArray[np.float64]] = field(
@@ -124,20 +154,89 @@ def category_label(value: Any) -> str:
     return str(value)
 
 
-def _factorize_categories(arr: np.ndarray) -> tuple[list[str], npt.NDArray[np.float64]]:
+def _category_code_dtype(category_count: int) -> type[np.uint8] | type[np.uint32]:
+    return np.uint8 if category_count <= MAX_CATEGORIES else np.uint32
+
+
+def _use_native_fixed_factorizer(arr: np.ndarray) -> bool:
+    """Choose the O(N) hash path when a bounded global probe is low-cardinality.
+
+    With nearly every label unique, Python must still materialize and sort the
+    complete display-label set; hashing those records first is redundant work.
+    Sampling across the full array avoids that regression while keeping the
+    decision independent of N.
+    """
+    n = len(arr)
+    if n <= _FACTORIZE_PROBE_ROWS:
+        probe = arr
+    else:
+        rows = np.linspace(0, n - 1, _FACTORIZE_PROBE_ROWS, dtype=np.intp)
+        probe = arr[rows]
+    return len(np.unique(probe)) <= _FACTORIZE_NATIVE_MAX_PROBE_CATEGORIES
+
+
+def _factorize_categories(
+    arr: np.ndarray,
+) -> tuple[
+    list[str],
+    npt.NDArray[np.uint8] | npt.NDArray[np.uint32],
+    Optional[npt.NDArray[np.uint64]],
+]:
     """Factorize categorical data without relying on object sorting.
 
     `np.unique(..., return_inverse=True)` sorts the raw Python objects; mixed
     object arrays (`"a"`, `None`, `1`) raise in NumPy because those values are
     not mutually orderable. Chart labels are strings on the client anyway, so
     canonicalize to display labels first, sort those labels for deterministic
-    palettes, and then map each row back to its code.
+    palettes, and then map each row back to its code. Fixed-width NumPy
+    strings/bytes/bools can identify equal records in Rust without creating N
+    Python objects; only their compact unique set crosses the label-policy path.
     """
+    if arr.dtype.kind in ("U", "S", "b") and _use_native_fixed_factorizer(arr):
+        compact = (
+            kernels.factorize_unicode1_u8_counts(arr, MAX_CATEGORIES)
+            if arr.dtype.kind == "U" and arr.dtype.itemsize == 4
+            else kernels.factorize_fixed_u8_counts(arr, MAX_CATEGORIES)
+        )
+        if compact is not None:
+            raw_codes, unique_indices, raw_counts = compact
+            unique_labels = [category_label(value) for value in arr[unique_indices]]
+            categories = sorted(set(unique_labels))
+            index = {label: i for i, label in enumerate(categories)}
+            remap = np.fromiter(
+                (index[label] for label in unique_labels),
+                dtype=np.uint8,
+                count=len(unique_labels),
+            )
+            identity = np.arange(len(remap), dtype=np.uint8)
+            if not np.array_equal(remap, identity):
+                kernels.remap_u8(raw_codes, remap)
+            counts = np.zeros(len(categories), dtype=np.uint64)
+            for label, count in zip(unique_labels, raw_counts, strict=True):
+                counts[index[label]] += count
+            return categories, raw_codes, counts
+
+        raw_codes, unique_indices = kernels.factorize_fixed(arr)
+        unique_labels = [category_label(value) for value in arr[unique_indices]]
+        categories = sorted(set(unique_labels))
+        index = {label: i for i, label in enumerate(categories)}
+        dtype = _category_code_dtype(len(categories))
+        remap = np.fromiter(
+            (index[label] for label in unique_labels),
+            dtype=dtype,
+            count=len(unique_labels),
+        )
+        return categories, remap[raw_codes], None
+
     labels = [category_label(v) for v in arr.astype(object)]
     categories = sorted(set(labels))
     index = {label: i for i, label in enumerate(categories)}
-    codes = np.fromiter((index[label] for label in labels), dtype=np.float64, count=len(labels))
-    return categories, codes
+    codes = np.fromiter(
+        (index[label] for label in labels),
+        dtype=_category_code_dtype(len(categories)),
+        count=len(labels),
+    )
+    return categories, codes, None
 
 
 def _object_array_is_real_numeric(arr: np.ndarray) -> bool:
@@ -255,12 +354,20 @@ def resolve_color(
     - a length-n array of numbers → continuous (normalized + colormap).
     - a length-n array of strings/categories → categorical (factorized + palette).
     """
+    if not is_colormap(colormap):
+        raise ValueError(f"unknown colormap {colormap!r}; known: {COLORMAPS}")
+
+    # Constant channels keep the colormap too: it still drives the density
+    # ramp when the trace aggregates (§5 Tier 2), and a typo'd name must
+    # error here rather than render a silently wrong ramp.
     if color is None:
-        return ColorChannel(mode="constant", constant=default_constant)
+        return ColorChannel(mode="constant", constant=default_constant, colormap=colormap)
     if isinstance(color, str):
         # Literal constant color: validated against the native CSS grammar so
         # a typo errors here instead of rendering a silently wrong mark.
-        return ColorChannel(mode="constant", constant=_validate.css_color(color, "color"))
+        return ColorChannel(
+            mode="constant", constant=_validate.css_color(color, "color"), colormap=colormap
+        )
 
     if hasattr(color, "to_numpy"):
         color = color.to_numpy()
@@ -268,11 +375,8 @@ def resolve_color(
     if arr.ndim != 1 or len(arr) != n:
         raise ValueError(f"color array must be 1-D length {n}, got shape {arr.shape}")
 
-    if colormap not in COLORMAPS:
-        raise ValueError(f"unknown colormap {colormap!r}; known: {COLORMAPS}")
-
     if _is_categorical(arr):
-        cats, codes = _factorize_categories(arr)
+        cats, codes, counts = _factorize_categories(arr)
         if len(cats) > MAX_CATEGORIES:
             import warnings
 
@@ -290,6 +394,7 @@ def resolve_color(
             mode="categorical",
             codes=codes,
             categories=cats,
+            counts=counts,
         )
 
     vals = _as_real_array(arr, "color array")
@@ -328,7 +433,13 @@ def normalize_to_unit(values: npt.NDArray[np.float64], domain: tuple[float, floa
     return kernels.normalize_f32(values, domain, nonfinite="zero")
 
 
-def ship_channels(trace: Any, sel: Any, ship_scalar: Any, palette: list[str]) -> tuple[Any, Any]:
+def ship_channels(
+    trace: Any,
+    sel: Any,
+    ship_scalar: Any,
+    ship_u8: Any,
+    palette: list[str],
+) -> tuple[Any, Any]:
     """Ship a trace's color and size channels in the standard wire shape
     (§29/§36c): per-point channels carry a `buf` index into the blob; constant
     channels ship spec-only. Used by the build path and by drill-in view
@@ -353,7 +464,15 @@ def ship_channels(trace: Any, sel: Any, ship_scalar: Any, palette: list[str]) ->
         if code_values is None or categories is None:
             raise ValueError("categorical color channel missing codes or categories")
         codes = code_values if sel is None else code_values[sel]
-        color_spec["buf"] = ship_scalar(codes)
+        # The palette texture has exactly 256 entries.  When every category is
+        # representable, codes are lossless bytes: 75% less channel traffic
+        # and GPU storage than f32.  Keep the legacy f32 path above that limit
+        # so existing >256-category collision behavior is unchanged.
+        if len(categories) <= MAX_CATEGORIES:
+            color_spec["buf"] = ship_u8(codes)
+            color_spec["dtype"] = "u8"
+        else:
+            color_spec["buf"] = ship_scalar(codes)
         color_spec["palette"] = [palette[i % len(palette)] for i in range(len(categories))]
 
     sc = trace.size_ch or SizeChannel(mode="constant")

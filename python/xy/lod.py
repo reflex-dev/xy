@@ -10,7 +10,7 @@ mechanics every tiered chart repeats:
 - §16 window-centered offset encoding for shipped geometry,
 - the screen-derived aggregation grid shape,
 - per-point local log-density (the drill handoff's LUT coordinate),
-- wire-buffer packing (raw f32, §29).
+- wire-buffer packing (typed f32/u8 scalars, §29).
 
 `interaction.density_view` wires these together for scatter; a future
 heatmap/histogram tier reuses them with a different aggregate kernel — the
@@ -19,6 +19,7 @@ per-chart-kind rules live in the LOD/Tiling Contract (§28).
 
 from __future__ import annotations
 
+import math
 import numbers
 from dataclasses import dataclass
 from typing import Any, cast
@@ -273,6 +274,7 @@ def _float_param(
 
 
 def _row_ids(row_ids: Any, label: str = "row_ids") -> np.ndarray:
+    """Validate unsigned row ids without widening native u32 selections."""
     ids = np.asarray(row_ids)
     if ids.ndim != 1:
         raise ValueError(f"{label} must be a one-dimensional integer array")
@@ -283,6 +285,8 @@ def _row_ids(row_ids: Any, label: str = "row_ids") -> np.ndarray:
             raise ValueError(f"{label} must not contain negative values")
         return ids.astype(np.uint64, copy=False)
     if ids.dtype.kind == "u":
+        if ids.dtype == np.uint32:
+            return ids
         return ids.astype(np.uint64, copy=False)
     raise ValueError(f"{label} must be a one-dimensional integer array")
 
@@ -458,6 +462,248 @@ def sample_rows_for_target(
     return raw_ids[mask]
 
 
+def sample_row_range_for_target(
+    size: object,
+    target: object,
+    *,
+    level: int = 0,
+    growth: float = 2.0,
+    seed: int = 0,
+) -> np.ndarray:
+    """Sample implicit row ids ``range(size)`` without materializing them all.
+
+    A full-view density trace commonly has identity row ids. Building an
+    ``arange(size)`` plus its u64 hash input and byte mask makes transient
+    memory scale with the dataset just to retain a screen-bounded overlay.
+    Chunking the same native SplitMix64 predicate keeps peak scratch bounded
+    while returning exactly the rows :func:`sample_rows_for_target` would.
+    """
+    size_i = _integer_param(size, "sample range size", max_value=(1 << 32) - 1)
+    target_i = _integer_param(target, "sample target", min_value=1)
+    if size_i == 0:
+        return np.empty(0, dtype=np.uint32)
+    base_fraction = min(1.0, target_i / size_i)
+    fraction = _sample_fraction(level, base_fraction, growth)
+    if fraction >= 1.0:
+        return np.arange(size_i, dtype=np.uint32)
+    seed_i = _integer_param(seed, "sample seed", max_value=_UINT64_MAX_INT)
+    threshold = int(_sample_threshold(fraction))
+    # A two-times expectation leaves overwhelming headroom for the Bernoulli
+    # count while keeping the ABI allocation bounded. The native wrapper
+    # retries with the exact required count in the vanishingly rare overflow.
+    capacity = min(size_i, max(64, target_i * 2))
+    return kernels.sample_range_indices(size_i, seed_i, threshold, capacity)
+
+
+def bin_2d_sample_row_range_for_target(
+    x: Any,
+    y: Any,
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+    width: object,
+    height: object,
+    target: object,
+    *,
+    level: int = 0,
+    growth: float = 2.0,
+    seed: int = 0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Bin a full-domain view and sample its implicit rows in one scan.
+
+    The caller must have established that every row is visible. Both outputs
+    remain exactly equivalent to :func:`kernels.bin_2d` followed by
+    :func:`sample_row_range_for_target`; this helper only selects the fused
+    native execution path.
+    """
+    size_i = _integer_param(len(x), "sample range size", max_value=(1 << 32) - 1)
+    target_i = _integer_param(target, "sample target", min_value=1)
+    width_i = _integer_param(width, "density width", min_value=1, max_value=MAX_SCREEN_DIM)
+    height_i = _integer_param(height, "density height", min_value=1, max_value=MAX_SCREEN_DIM)
+    base_fraction = min(1.0, target_i / size_i) if size_i else 1.0
+    fraction = _sample_fraction(level, base_fraction, growth)
+    if fraction >= 1.0:
+        return (
+            kernels.bin_2d(x, y, x0, x1, y0, y1, width_i, height_i),
+            np.arange(size_i, dtype=np.uint32),
+        )
+    seed_i = _integer_param(seed, "sample seed", max_value=_UINT64_MAX_INT)
+    threshold = int(_sample_threshold(fraction))
+    capacity = min(size_i, max(64, target_i * 2))
+    return kernels.bin_2d_sample_range(
+        x,
+        y,
+        x0,
+        x1,
+        y0,
+        y1,
+        width_i,
+        height_i,
+        seed_i,
+        threshold,
+        capacity,
+    )
+
+
+def stratified_sample_row_range_for_target(
+    groups: Any,
+    n_groups: object,
+    target: object,
+    *,
+    counts: Any | None = None,
+    level: int = 0,
+    growth: float = 2.0,
+    seed: int = 0,
+    min_per_category: int = 1,
+) -> np.ndarray:
+    """Category-aware sample of implicit row ids without source-sized scratch.
+
+    This is exactly the compact-u8, full-domain equivalent of
+    :func:`sample_rows_for_target` with ``categories=groups``. It avoids an
+    ``arange``, its u64 conversion, the category gather, and the keep mask;
+    live scratch instead scales with the screen-bounded returned sample.
+    """
+    codes, group_counts, n_groups_i, fraction, seed_i, min_count, capacity = (
+        _stratified_sample_range_plan(
+            groups,
+            n_groups,
+            target,
+            counts=counts,
+            level=level,
+            growth=growth,
+            seed=seed,
+            min_per_category=min_per_category,
+        )
+    )
+    if len(codes) == 0:
+        return np.empty(0, dtype=np.uint32)
+    if fraction >= 1.0:
+        return np.arange(len(codes), dtype=np.uint32)
+    return kernels.stratified_sample_range_u8(
+        codes,
+        n_groups_i,
+        seed_i,
+        fraction,
+        min_count,
+        capacity,
+        counts=group_counts,
+    )
+
+
+def _stratified_sample_range_plan(
+    groups: Any,
+    n_groups: object,
+    target: object,
+    *,
+    counts: Any | None,
+    level: int,
+    growth: float,
+    seed: int,
+    min_per_category: int,
+) -> tuple[np.ndarray, np.ndarray | None, int, float, int, int, int]:
+    """Validate categorical sampling policy and size its bounded output."""
+    codes = np.asarray(groups)
+    if codes.ndim != 1 or codes.dtype != np.uint8:
+        raise ValueError("groups must be a one-dimensional uint8 array")
+    n_groups_i = _integer_param(n_groups, "sample n_groups", min_value=1, max_value=256)
+    target_i = _integer_param(target, "sample target", min_value=1)
+    min_count = _integer_param(min_per_category, "sample min_per_category")
+    if len(codes) == 0:
+        return codes, None, n_groups_i, 1.0, 0, min_count, 0
+    if int(codes.max()) >= n_groups_i:
+        raise ValueError("groups must contain codes below n_groups")
+    group_counts = None
+    if counts is not None:
+        group_counts = np.asarray(counts)
+        if (
+            group_counts.ndim != 1
+            or group_counts.dtype != np.uint64
+            or len(group_counts) != n_groups_i
+            or int(group_counts.sum(dtype=np.uint64)) != len(codes)
+        ):
+            raise ValueError("counts must be exact uint64 counts for every group")
+    base_fraction = min(1.0, target_i / len(codes))
+    fraction = _sample_fraction(
+        level,
+        base_fraction,
+        growth,
+        label="stratified sample",
+    )
+    if fraction >= 1.0:
+        return codes, group_counts, n_groups_i, fraction, 0, min_count, len(codes)
+    seed_i = _integer_param(seed, "sample seed", max_value=_UINT64_MAX_INT)
+    # Cauchy-Schwarz bounds the expected threshold survivors by
+    # `fraction * n * sqrt(k)`. Two-times that bound plus every category's
+    # floor keeps retries vanishingly rare while remaining screen-bounded.
+    expectation_bound = fraction * len(codes) * math.sqrt(n_groups_i)
+    floor_bound = min_count * n_groups_i
+    capacity = min(
+        len(codes),
+        max(64, math.ceil(expectation_bound * 2.0), floor_bound),
+    )
+    return codes, group_counts, n_groups_i, fraction, seed_i, min_count, capacity
+
+
+def bin_2d_stratified_sample_row_range_for_target(
+    x: Any,
+    y: Any,
+    groups: Any,
+    n_groups: object,
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+    width: object,
+    height: object,
+    target: object,
+    *,
+    counts: Any,
+    level: int = 0,
+    growth: float = 2.0,
+    seed: int = 0,
+    min_per_category: int = 1,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Bin a full-domain view and build its exact categorical overlay."""
+    width_i = _integer_param(width, "density width", min_value=1, max_value=MAX_SCREEN_DIM)
+    height_i = _integer_param(height, "density height", min_value=1, max_value=MAX_SCREEN_DIM)
+    codes, group_counts, _, fraction, seed_i, min_count, capacity = _stratified_sample_range_plan(
+        groups,
+        n_groups,
+        target,
+        counts=counts,
+        level=level,
+        growth=growth,
+        seed=seed,
+        min_per_category=min_per_category,
+    )
+    if len(x) != len(codes):
+        raise ValueError("groups must match the x and y row count")
+    if fraction >= 1.0:
+        return (
+            kernels.bin_2d(x, y, x0, x1, y0, y1, width_i, height_i),
+            np.arange(len(codes), dtype=np.uint32),
+        )
+    if group_counts is None:
+        raise ValueError("counts are required for fused categorical sampling")
+    return kernels.bin_2d_stratified_sample_range_u8_counted(
+        x,
+        y,
+        codes,
+        group_counts,
+        x0,
+        x1,
+        y0,
+        y1,
+        width_i,
+        height_i,
+        seed_i,
+        fraction,
+        min_count,
+        capacity,
+    )
+
+
 def enter_drill(trace: Any, sel: np.ndarray) -> int:
     """Adopt `sel` as the trace's shipped subset. Picks/selections translate
     through it (§17), and the version bump invalidates in-flight replies built
@@ -479,7 +725,7 @@ def exit_drill(trace: Any) -> None:
 
 
 class BufferWriter:
-    """Accumulates a view-update's binary buffers (raw f32 on the wire, §29).
+    """Accumulates a view-update's binary buffers (typed scalars, §29).
     The update spec references entries by index — the same shape every tiered
     chart's incremental updates use."""
 
@@ -488,6 +734,10 @@ class BufferWriter:
 
     def add_f32(self, arr: np.ndarray) -> int:
         self.buffers.append(np.ascontiguousarray(arr, dtype=np.float32).tobytes())
+        return len(self.buffers) - 1
+
+    def add_u8(self, arr: np.ndarray) -> int:
+        self.buffers.append(np.ascontiguousarray(arr, dtype=np.uint8).reshape(-1).tobytes())
         return len(self.buffers) - 1
 
     def add_raw(self, raw: bytes) -> int:

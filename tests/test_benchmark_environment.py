@@ -140,6 +140,16 @@ def test_native_benchmark_reports_can_resolve_source_backend_metadata() -> None:
         assert 'xy_backend="native"' in source
 
 
+def test_scatter_native_exposes_reproducible_categorical_ceiling() -> None:
+    source = (ROOT / "benchmarks" / "bench_scatter_native.py").read_text(encoding="utf-8")
+    runbook = (ROOT / "benchmarks" / "README.md").read_text(encoding="utf-8")
+    assert "def gen_numpy_categories" in source
+    assert "def _warm_production_path" in source
+    assert '"--categorical-groups"' in source
+    assert '"categorical_groups"' in source
+    assert "--categorical-groups 24" in runbook
+
+
 def test_interaction_browser_gates_cover_scatter_and_core_chart_families() -> None:
     smoke = (ROOT / "scripts" / "interaction_stress_smoke.py").read_text(encoding="utf-8")
     bench = (ROOT / "benchmarks" / "bench_interaction.py").read_text(encoding="utf-8")

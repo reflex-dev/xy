@@ -180,6 +180,8 @@ class Axis(Component):
     reverse: bool = False
     format: Optional[str] = None
     tick_count: Optional[int] = None
+    tick_values: Optional[list[float]] = None
+    tick_labels: Optional[list[str]] = None
     tick_label_angle: Optional[float] = None
     tick_label_strategy: Optional[AxisTickLabelStrategy] = None
     tick_label_min_gap: Optional[float] = None
@@ -190,6 +192,8 @@ class Axis(Component):
 @dataclass
 class Legend(Component):
     show: bool = True
+    loc: Optional[str] = None
+    ncols: int = 1
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
     render: Any = None
@@ -1359,6 +1363,8 @@ def x_axis(
     reverse: bool = False,
     format: Optional[str] = None,
     tick_count: Optional[int] = None,
+    tick_values: Optional[Any] = None,
+    tick_labels: Optional[Any] = None,
     tick_label_angle: Optional[float] = None,
     tick_label_strategy: Optional[AxisTickLabelStrategy] = None,
     tick_label_min_gap: Optional[float] = None,
@@ -1366,6 +1372,10 @@ def x_axis(
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Axis:
     _validate_axis_type(type_)
+    values = None if tick_values is None else [float(v) for v in tick_values]
+    labels = None if tick_labels is None else [str(v) for v in tick_labels]
+    if labels is not None and (values is None or len(labels) != len(values)):
+        raise ValueError("x_axis tick_labels must match tick_values")
     return Axis(
         which="x",
         id=_axis_id(id, "x_axis id"),
@@ -1378,6 +1388,8 @@ def x_axis(
         reverse=_strict_bool(reverse, "x_axis reverse"),
         format=_optional_string(format, "x_axis format"),
         tick_count=_optional_positive_int(tick_count, "x_axis tick_count"),
+        tick_values=values,
+        tick_labels=labels,
         tick_label_angle=_optional_finite_number(tick_label_angle, "x_axis tick_label_angle"),
         tick_label_strategy=_axis_tick_label_strategy(
             tick_label_strategy, "x_axis tick_label_strategy"
@@ -1402,6 +1414,8 @@ def y_axis(
     reverse: bool = False,
     format: Optional[str] = None,
     tick_count: Optional[int] = None,
+    tick_values: Optional[Any] = None,
+    tick_labels: Optional[Any] = None,
     tick_label_angle: Optional[float] = None,
     tick_label_strategy: Optional[AxisTickLabelStrategy] = None,
     tick_label_min_gap: Optional[float] = None,
@@ -1409,6 +1423,10 @@ def y_axis(
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Axis:
     _validate_axis_type(type_)
+    values = None if tick_values is None else [float(v) for v in tick_values]
+    labels = None if tick_labels is None else [str(v) for v in tick_labels]
+    if labels is not None and (values is None or len(labels) != len(values)):
+        raise ValueError("y_axis tick_labels must match tick_values")
     return Axis(
         which="y",
         id=_axis_id(id, "y_axis id"),
@@ -1421,6 +1439,8 @@ def y_axis(
         reverse=_strict_bool(reverse, "y_axis reverse"),
         format=_optional_string(format, "y_axis format"),
         tick_count=_optional_positive_int(tick_count, "y_axis tick_count"),
+        tick_values=values,
+        tick_labels=labels,
         tick_label_angle=_optional_finite_number(tick_label_angle, "y_axis tick_label_angle"),
         tick_label_strategy=_axis_tick_label_strategy(
             tick_label_strategy, "y_axis tick_label_strategy"
@@ -1436,6 +1456,8 @@ def y_axis(
 def legend(
     *children: Any,
     show: bool = True,
+    loc: Optional[str] = None,
+    ncols: int = 1,
     render: Any = None,
     class_name: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
@@ -1443,6 +1465,8 @@ def legend(
     show, render = _chrome_render_args(children, show, render, "legend")
     return Legend(
         show=_strict_bool(show, "legend show"),
+        loc=_optional_string(loc, "legend loc"),
+        ncols=_optional_positive_int(ncols, "legend ncols") or 1,
         class_name=_optional_string(class_name, "legend class_name"),
         style=_style_dict(style, "legend style"),
         render=render,
@@ -1762,6 +1786,8 @@ class Chart(Component):
                 reverse=axis.reverse,
                 format=axis.format,
                 tick_count=axis.tick_count,
+                tick_values=axis.tick_values,
+                tick_labels=axis.tick_labels,
                 tick_label_angle=axis.tick_label_angle,
                 tick_label_strategy=axis.tick_label_strategy,
                 tick_label_min_gap=axis.tick_label_min_gap,
@@ -1854,7 +1880,9 @@ class Chart(Component):
         fig._annotation_specs()
 
         if legends:
-            _apply_chrome_node(fig, "legend", legends[-1].class_name, legends[-1].style)
+            node = legends[-1]
+            _apply_chrome_node(fig, "legend", node.class_name, node.style)
+            fig.legend_options = {"loc": node.loc, "ncols": node.ncols}
         if legend_shows and not legend_shows[-1]:
             fig.show_legend = False
         if modebars:
@@ -1951,6 +1979,7 @@ class Chart(Component):
         height: Optional[int] = None,
         scale: float = 2.0,
         engine: str = "native",
+        optimize: bool = False,
         chromium: Optional[str] = None,
         sandbox: bool = True,
     ) -> bytes:
@@ -1960,6 +1989,7 @@ class Chart(Component):
             height=height,
             scale=scale,
             engine=engine,
+            optimize=optimize,
             chromium=chromium,
             sandbox=sandbox,
         )
@@ -2431,11 +2461,17 @@ class FacetChart(Component):
         *,
         scale: float = 2.0,
         engine: str = "native",
+        optimize: bool = False,
         chromium: Optional[str] = None,
         sandbox: bool = True,
     ) -> bytes:
         return self.figure().to_png(
-            path, scale=scale, engine=engine, chromium=chromium, sandbox=sandbox
+            path,
+            scale=scale,
+            engine=engine,
+            optimize=optimize,
+            chromium=chromium,
+            sandbox=sandbox,
         )
 
     def memory_report(self) -> dict[str, Any]:

@@ -8,6 +8,14 @@ from typing import Any
 
 from ._translate import COMPAT_URL
 
+
+class _PropCycle:
+    def by_key(self) -> dict[str, list[str]]:
+        from ._colors import PROP_CYCLE
+
+        return {"color": list(PROP_CYCLE)}
+
+
 _DEFAULTS: dict[str, Any] = {
     "figure.figsize": (6.4, 4.8),  # inches, matplotlib default
     "figure.dpi": 100.0,
@@ -17,6 +25,9 @@ _DEFAULTS: dict[str, Any] = {
     "axes.grid": False,
     "axes.titlesize": "large",
     "legend.loc": "best",
+    "text.usetex": False,
+    "image.cmap": "viridis",
+    "axes.prop_cycle": _PropCycle(),
 }
 
 _warned: set[str] = set()
@@ -41,6 +52,13 @@ class RcParams(dict):
 
 rcParams = RcParams()
 rcParams.update(_DEFAULTS)
+
+
+def rc(group: str, **kwargs: Any) -> None:
+    """Set the supported ``group.key`` rcParams used by gallery-style scripts."""
+    aliases = {"lw": "linewidth", "ms": "markersize"}
+    for key, value in kwargs.items():
+        rcParams[f"{group}.{aliases.get(key, key)}"] = value
 
 
 def rc_figsize_px(figsize: Any = None, dpi: Any = None) -> tuple[int, int]:

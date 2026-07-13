@@ -242,8 +242,12 @@ function lodApplyDrill(view, g, upd, buffers) {
   if (upd.color && upd.color.buf !== undefined) {
     d.colorMode = upd.color.mode === "continuous" ? 1 : 2;
     if (!d.cBuf) d.cBuf = gl.createBuffer();
+    const colorValues = upd.color.dtype === "u8"
+      ? view._asU8(buffers[upd.color.buf])
+      : view._asF32(buffers[upd.color.buf]);
+    d.cBuf._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
     gl.bindBuffer(gl.ARRAY_BUFFER, d.cBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.color.buf]), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, colorValues, gl.STATIC_DRAW);
     d.lut = upd.color.mode === "continuous"
       ? view._lut(upd.color.colormap)
       : view._paletteLut(upd.color.palette);
@@ -411,7 +415,14 @@ function lodApplyDensityUpdate(view, g, upd, buffers) {
     tex: view._uploadGrid(grid, d.w, d.h, normMax),
     lut: g.density.lut,
   };
-  view._applyDensitySample(g, d.sample, buffers);
+  // Exact scans include a view-specific sample and replace the overlay.
+  // Pyramid responses intentionally omit one until tile-aware sampling lands;
+  // preserve the retained deterministic sample in that case so the hybrid
+  // overlay does not disappear after the first pan/zoom (#24). The draw path
+  // already clips it to its recorded window.
+  if (Object.prototype.hasOwnProperty.call(d, "sample")) {
+    view._applyDensitySample(g, d.sample, buffers);
+  }
   lodStartNormAnim(view, g, normMax, d.max);
   lodRememberDensity(view, g, g.density);
 }

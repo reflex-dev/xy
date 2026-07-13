@@ -210,7 +210,7 @@ def build_payload():
         },
     ]
     spec = {
-        "protocol": 2,
+        "protocol": 3,
         "width": 800,
         "height": 400,
         "title": "nonumpy smoke",
@@ -674,7 +674,7 @@ try{{
       return hcols.length-1;
     }}
     const histSpec={{
-      protocol:2,width:220,height:170,title:"",
+      protocol:3,width:220,height:170,title:"",
       x_axis:{{kind:"linear",label:"",range:[-1,2]}},
       y_axis:{{kind:"linear",label:"",range:[0,8]}},
       traces:[{{id:0,kind:"histogram",name:"hist",style:{{color:"#3b82f6",opacity:1,role:"histogram"}},
@@ -772,7 +772,7 @@ try{{
         so+=vals.length; return scols.length-1;}};
       const xs=[],ys=[];for(let i=0;i<n;i++){{xs.push(i);ys.push(i%5);}}
       ys[n-1]=yTop;
-      return {{spec:{{protocol:2,width:220,height:170,title:"",show_legend:false,show_modebar:false,
+      return {{spec:{{protocol:3,width:220,height:170,title:"",show_legend:false,show_modebar:false,
         x_axis:{{kind:"linear",label:"",range:[0,n-1]}},
         y_axis:{{kind:"linear",label:"",range:[0,yTop]}},
         traces:[{{id:0,kind:"scatter",name:"s",tier:"direct",n_points:n,n_marks:n,
@@ -812,7 +812,7 @@ try{{
       msCols.push({{byte_offset:msOff*4,len:vals.length,offset:0,scale:1,kind:"float"}});
       msOff+=vals.length; return msCols.length-1;}};
     const msFill={{space:"mark",dir:"down",stops:[[0,"rgba(37,99,235,1)"],[1,"rgba(37,99,235,0)"]]}};
-    const msSpec={{protocol:2,width:200,height:160,title:"",backend:"none",
+    const msSpec={{protocol:3,width:200,height:160,title:"",backend:"none",
       show_legend:false,show_modebar:false,
       x_axis:{{kind:"linear",label:"",range:[0,4]}},
       y_axis:{{kind:"linear",label:"",range:[0,8]}},
@@ -863,7 +863,7 @@ try{{
     const smcol=(vals)=>{{new Float32Array(smBuf,smOff*4,vals.length).set(vals);
       smCols.push({{byte_offset:smOff*4,len:vals.length,offset:0,scale:1,kind:"float"}});
       smOff+=vals.length; return smCols.length-1;}};
-    const smSpec={{protocol:2,width:200,height:160,title:"",backend:"none",
+    const smSpec={{protocol:3,width:200,height:160,title:"",backend:"none",
       show_legend:false,show_modebar:false,
       x_axis:{{kind:"linear",label:"",range:[0,4]}},
       y_axis:{{kind:"linear",label:"",range:[0,8]}},

@@ -307,16 +307,12 @@ def pyramid_report_bytes(fig) -> int:
     return sum(_pyramid_resident_bytes() for t in fig.traces if getattr(t, "_pyr_handle", 0))
 
 
-def _encode_log_u8(grid: np.ndarray, gmax: float) -> bytes:
+def _encode_log_u8(grid: np.ndarray) -> tuple[bytes, float]:
     """Density grid -> log-encoded u8 wire bytes (client decodes via expm1).
     Zero cells stay zero; any nonzero cell maps to at least 1 so the "lit if
     occupied" texture contract survives quantization."""
-    arr = np.asarray(grid, dtype=np.float64).ravel()
-    if gmax <= 0.0:
-        return bytes(arr.size)
-    enc = np.round(255.0 * np.log1p(arr) / np.log1p(gmax)).astype(np.uint8)
-    enc[(arr > 0) & (enc == 0)] = 1
-    return enc.tobytes()
+    enc, maximum = kernels.density_log_u8(np.asarray(grid, dtype=np.float32))
+    return enc.tobytes(), maximum
 
 
 def _decode_log_u8(buf: bytes, gmax: float) -> np.ndarray:
@@ -356,7 +352,7 @@ def _density_sample_update(
         return None
     xs, ys = t.x.values[sample_sel], t.y.values[sample_sel]
     x_ref, y_ref = lod.add_window_xy(writer, xs, ys, lo_x, hi_x, lo_y, hi_y)
-    color_spec, size_spec = fig._ship_channels(t, sample_sel, writer.add_f32)
+    color_spec, size_spec = fig._ship_channels(t, sample_sel, writer.add_f32, writer.add_u8)
     style = dict(t.style)
     try:
         style["opacity"] = min(float(style.get("opacity", 0.8)), 0.55)
@@ -440,10 +436,9 @@ def density_view(
             False,
             aggregate_reduction="pyramid-count",
         )
-    # numpy's .max() stub mis-resolves the overload for the kernel's f32 grid.
-    gmax = float(grid.max()) if grid.size else 0.0  # ty: ignore[invalid-argument-type]
     writer = lod.BufferWriter()
-    density_buf = writer.add_raw(_encode_log_u8(grid, gmax))
+    density_wire, gmax = _encode_log_u8(grid)
+    density_buf = writer.add_raw(density_wire)
     sample = (
         _density_sample_update(fig, t, sel, visible, lo_x, hi_x, lo_y, hi_y, writer)
         if binning == "exact"
@@ -506,7 +501,7 @@ def _drill_points(
     x_ref, y_ref = lod.add_window_xy(writer, xs, ys, lo_x, hi_x, lo_y, hi_y)
     buffers = writer.buffers
 
-    color_spec, size_spec = fig._ship_channels(t, sel, writer.add_f32)
+    color_spec, size_spec = fig._ship_channels(t, sel, writer.add_f32, writer.add_u8)
 
     # Local log-density per drilled point, binned at the same screen-derived
     # grid shape density would use, so the two representations line up.
@@ -578,11 +573,11 @@ def append_data(
     - columns shared with another trace are rejected (a partial append would
       desync that trace's lengths).
 
-    Cache effects: the trace's tile pyramid is freed for lazy rebuild (the §5
-    dirty-tile incremental rebuild is the known follow-up; a >2M-point stream
-    pays a full pyramid rebuild on its next far-out view for now — recorded
-    here, not hidden) and any active drill exits so the next view decision is
-    made against the new data.
+    Cache effects: an existing scatter tile pyramid is incremented natively in
+    O(appended rows · levels) when the new finite points stay inside its domain.
+    Domain growth, a stale handle, or a concurrent reader invalidates it for a
+    safe lazy rebuild. Any active drill exits so the next view decision is made
+    against the new data.
     """
     t = _trace(fig, trace_id)
     if t.kind not in {"scatter", "line"}:
@@ -658,7 +653,14 @@ def append_data(
     if size_tail is not None:
         channels.append_continuous(t.size_ch, size_tail, "size")
 
-    _free_pyramid(t)  # lazily rebuilt; n grew so "not applicable" may flip
+    pyramid = getattr(t, "_pyr_handle", None)
+    if t.kind == "scatter" and pyramid:
+        if not kernels.pyramid_append(pyramid, ax, ay):
+            _free_pyramid(t)
+    elif pyramid == 0 and len(t.x) >= PYRAMID_MIN_POINTS:
+        # The trace crossed the lazy-index threshold after an earlier
+        # "not applicable" result; let the next wide view build it.
+        t._pyr_handle = None
     lod.exit_drill(t)
 
     spec, blob = fig.build_payload()

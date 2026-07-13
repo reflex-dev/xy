@@ -104,6 +104,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
         self.store = ColumnStore()
         self.traces: list[Trace] = []
         self.show_legend = True
+        self.legend_options: dict[str, Any] = {}
+        self.colorbar_options: Optional[dict[str, Any]] = None
         self.show_modebar = True
         self.show_tooltip = True
         self.class_name: Optional[str] = None
@@ -132,6 +134,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
         reverse: bool = False,
         format: Optional[str] = None,
         tick_count: Optional[int] = None,
+        tick_values: Optional[Any] = None,
+        tick_labels: Optional[Any] = None,
         tick_label_angle: Optional[float] = None,
         tick_label_strategy: Optional[str] = None,
         tick_label_min_gap: Optional[float] = None,
@@ -152,6 +156,14 @@ class Figure(AnnotationsMixin, PayloadMixin):
             raise ValueError("x axis side must be 'top' or 'bottom'")
         elif axis_dim == "y" and side not in {"left", "right"}:
             raise ValueError("y axis side must be 'left' or 'right'")
+        values = (
+            None
+            if tick_values is None
+            else [self._finite_scalar(value, f"{axis_id} tick value") for value in tick_values]
+        )
+        labels = None if tick_labels is None else [str(value) for value in tick_labels]
+        if labels is not None and (values is None or len(labels) != len(values)):
+            raise ValueError(f"{axis_id} tick_labels must match tick_values")
         self.axis_options[axis_id] = {
             "label": self._optional_text(label, f"{axis_id} axis label"),
             "label_position": self._axis_label_position(
@@ -166,6 +178,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             "reverse": self._bool_param(reverse, f"{axis_id} axis reverse"),
             "format": self._optional_text(format, f"{axis_id} axis format"),
             "tick_count": self._optional_positive_int(tick_count, f"{axis_id} axis tick_count"),
+            "tick_values": values,
+            "tick_labels": labels,
             "tick_label_angle": self._optional_finite_scalar(
                 tick_label_angle, f"{axis_id} axis tick_label_angle"
             ),
@@ -256,12 +270,12 @@ class Figure(AnnotationsMixin, PayloadMixin):
         contract every xy chart shares (line/scatter/area/bar/…)."""
         checkpoint = self.store.checkpoint()
         try:
-            xc = self.store.ingest(x)
-            yc = self.store.ingest(y)
-            if len(xc) != len(yc):
-                raise ValueError(
-                    f"{kind} x and y must have equal length, got {len(xc)} and {len(yc)}"
-                )
+            try:
+                xc, yc = self.store.ingest_pair(x, y)
+            except ValueError as error:
+                if str(error).startswith("x and y must have equal length"):
+                    raise ValueError(f"{kind} {error}") from error
+                raise
             return xc, yc
         except Exception:
             self.store.rollback(checkpoint)
@@ -921,6 +935,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
             spec["label_angle"] = label_angle
         if tick_count is not None:
             spec["tick_count"] = tick_count
+        if opts.get("tick_values") is not None:
+            spec["tick_values"] = list(opts["tick_values"])
+        if opts.get("tick_labels") is not None:
+            spec["tick_labels"] = list(opts["tick_labels"])
         if tick_label_angle is not None:
             spec["tick_label_angle"] = tick_label_angle
         if tick_label_strategy is not None:
@@ -1019,19 +1037,31 @@ class Figure(AnnotationsMixin, PayloadMixin):
         y1v: np.ndarray,
     ) -> Optional[np.ndarray]:
         """Rows that can safely become rectangle vertices, or None for all rows."""
-        finite = np.isfinite(x0v) & np.isfinite(x1v) & np.isfinite(y0v) & np.isfinite(y1v)
+        geometry = (t.x0, t.x1, t.y0, t.y1)
+        if any(column is None for column in geometry):
+            raise ValueError(f"{t.kind} trace missing rectangle columns")
+        # Zone maps already prove most generated rectangles fully finite. Scan
+        # only columns that can actually reject a row; the native query keeps
+        # this allocation-free when all candidates remain valid.
+        candidates = [
+            values
+            for column, values in zip(geometry, (x0v, x1v, y0v, y1v), strict=True)
+            if column is not None and column.zone.null_count
+        ]
         if t.color_ch and t.color_ch.mode == "continuous":
             values = t.color_ch.values
             if values is None:
                 raise ValueError(f"{t.kind} continuous color channel missing values")
-            finite &= np.isfinite(values)
+            candidates.append(values)
         elif t.color_ch and t.color_ch.mode == "categorical":
             codes = t.color_ch.codes
             if codes is None:
                 raise ValueError(f"{t.kind} categorical color channel missing codes")
-            finite &= np.isfinite(codes)
-        sel = np.flatnonzero(finite)
-        return sel if len(sel) != len(x0v) else None
+            # Resolved categorical codes are u8/u32 and therefore always
+            # finite; no source-sized pass is needed for them.
+        if not candidates:
+            return None
+        return kernels.valid_indices_f64(tuple(candidates))
 
     # -- channel & density helpers -------------------------------------------
 
@@ -1145,12 +1175,14 @@ class Figure(AnnotationsMixin, PayloadMixin):
         height: Optional[int] = None,
         scale: float = 2.0,
         engine: str = "native",
+        optimize: bool = False,
         chromium: Optional[str] = None,
         sandbox: bool = True,
     ) -> bytes:
         """Static PNG (export.py). `engine="native"` (default) paints the
         decimated payload with the built-in Rust rasterizer — no browser,
-        millisecond export, small indexed PNGs. `engine="chromium"` screenshots
+        millisecond export. `optimize=True` uses the slower size-oriented
+        indexed encoder. `engine="chromium"` screenshots
         the standalone HTML for a pixel-exact match to the live WebGL chart
         (needs a Chromium/Chrome binary; see export.find_chromium)."""
         return export.to_png(
@@ -1160,6 +1192,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             height=height,
             scale=scale,
             engine=engine,
+            optimize=optimize,
             chromium=chromium,
             sandbox=sandbox,
         )
@@ -1170,10 +1203,41 @@ class Figure(AnnotationsMixin, PayloadMixin):
 
         spec, blob = self.build_payload()
         report = self.store.memory_report()
+        channel_arrays: list[np.ndarray] = []
+        store_arrays = [column.values for column in self.store.columns]
+        seen_channels: set[tuple[int, int]] = set()
+        for trace in self.traces:
+            for channel in (trace.color_ch, trace.size_ch):
+                if channel is None:
+                    continue
+                values = (
+                    getattr(channel, "codes", None)
+                    if channel.mode == "categorical"
+                    else channel.values
+                )
+                if values is None:
+                    continue
+                capacity = getattr(channel, "_buffer", None)
+                arrays = [capacity if capacity is not None else values]
+                counts = getattr(channel, "counts", None)
+                if counts is not None:
+                    arrays.append(counts)
+                for array in arrays:
+                    key = (int(array.__array_interface__["data"][0]), int(array.nbytes))
+                    if key in seen_channels or any(
+                        np.shares_memory(array, item) for item in store_arrays
+                    ):
+                        continue
+                    seen_channels.add(key)
+                    channel_arrays.append(array)
+        report["channel_bytes"] = int(sum(array.nbytes for array in channel_arrays))
         report["transport_bytes_first_paint"] = len(blob)
         n_total = sum(t.n_points for t in self.traces) or 1
         report["transport_bytes_per_point"] = len(blob) / n_total
         report["pyramid_bytes"] = interaction.pyramid_report_bytes(self)
+        report["resident_array_bytes"] = (
+            report["canonical_bytes"] + report["channel_bytes"] + report["pyramid_bytes"]
+        )
         report["backend"] = kernels.BACKEND
         return report
 

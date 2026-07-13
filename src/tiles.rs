@@ -36,11 +36,20 @@ pub struct Pyramid {
 /// exact path must run (and at drill-scale windows it does anyway).
 const MAX_UPSAMPLE: usize = 2;
 
-pub fn build(x: &[f64], y: &[f64], x0: f64, x1: f64, y0: f64, y1: f64, base_dim: usize) -> Option<Pyramid> {
+pub fn build(
+    x: &[f64],
+    y: &[f64],
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    base_dim: usize,
+) -> Option<Pyramid> {
     if x.len() != y.len() || base_dim < 2 || !base_dim.is_power_of_two() {
         return None;
     }
-    if !(x0.is_finite() && x1.is_finite() && y0.is_finite() && y1.is_finite() && x1 > x0 && y1 > y0) {
+    if !(x0.is_finite() && x1.is_finite() && y0.is_finite() && y1.is_finite() && x1 > x0 && y1 > y0)
+    {
         return None;
     }
     let grid = kernels::bin_2d_counts(x, y, x0, x1, y0, y1, base_dim, base_dim);
@@ -56,7 +65,51 @@ pub fn build(x: &[f64], y: &[f64], x0: f64, x1: f64, y0: f64, y1: f64, base_dim:
         levels.push(lvl);
         dims.push(dim);
     }
-    Some(Pyramid { levels, dims, x0, x1, y0, y1 })
+    Some(Pyramid {
+        levels,
+        dims,
+        x0,
+        x1,
+        y0,
+        y1,
+    })
+}
+
+/// Add a batch to an existing pyramid without rescanning its canonical prefix.
+///
+/// Every finite pair must remain inside the pyramid's original half-open
+/// domain.  The caller rebuilds when an append expands that domain; validating
+/// the complete batch before the first write keeps a rejected update atomic.
+/// Non-finite pairs are ignored exactly like [`kernels::bin_2d_counts`].
+pub fn append(p: &mut Pyramid, x: &[f64], y: &[f64]) -> bool {
+    if x.len() != y.len() {
+        return false;
+    }
+    for (&xv, &yv) in x.iter().zip(y) {
+        if (xv.is_finite() && yv.is_finite())
+            && (xv < p.x0 || xv >= p.x1 || yv < p.y0 || yv >= p.y1)
+        {
+            return false;
+        }
+    }
+
+    let base_dim = p.dims[0];
+    let sx = base_dim as f64 / (p.x1 - p.x0);
+    let sy = base_dim as f64 / (p.y1 - p.y0);
+    for (&xv, &yv) in x.iter().zip(y) {
+        if !xv.is_finite() || !yv.is_finite() {
+            continue;
+        }
+        let mut cx = (((xv - p.x0) * sx) as usize).min(base_dim - 1);
+        let mut cy = (((yv - p.y0) * sy) as usize).min(base_dim - 1);
+        for (level, &dim) in p.levels.iter_mut().zip(&p.dims) {
+            let cell = &mut level[cy * dim + cx];
+            *cell = cell.saturating_add(1);
+            cx >>= 1;
+            cy >>= 1;
+        }
+    }
+    true
 }
 
 /// 4→1 exact reduction of one square level: each output cell is the u64 sum
@@ -225,6 +278,16 @@ pub fn reg_with<R>(h: u64, f: impl FnOnce(&Pyramid) -> R) -> Option<R> {
     p.map(|p| f(&p))
 }
 
+/// Mutate a registered pyramid when no compose/count currently holds a cloned
+/// `Arc`.  A concurrent reader makes this return `None`; the caller can safely
+/// fall back to invalidation + lazy rebuild without adding a lock to every
+/// steady-state interaction read.
+pub fn reg_append(h: u64, x: &[f64], y: &[f64]) -> Option<bool> {
+    let mut g = registry().lock().expect("pyramid registry poisoned");
+    let p = Arc::get_mut(g.1.get_mut(&h)?)?;
+    Some(append(p, x, y))
+}
+
 pub fn reg_remove(h: u64) -> bool {
     let mut g = registry().lock().expect("pyramid registry poisoned");
     g.1.remove(&h).is_some()
@@ -268,6 +331,29 @@ mod tests {
     }
 
     #[test]
+    fn append_matches_a_full_rebuild_and_rejects_domain_growth_atomically() {
+        let (x, y) = cross(5000);
+        let tail_x = vec![10.0, 10.0, 50.0, 99.99, f64::NAN];
+        let tail_y = vec![20.0, 20.0, 50.0, 0.01, 10.0];
+        let mut incremental = build(&x, &y, 0.0, 100.0, 0.0, 100.0, 64).unwrap();
+        assert!(append(&mut incremental, &tail_x, &tail_y));
+
+        let mut all_x = x.clone();
+        let mut all_y = y.clone();
+        all_x.extend_from_slice(&tail_x);
+        all_y.extend_from_slice(&tail_y);
+        let rebuilt = build(&all_x, &all_y, 0.0, 100.0, 0.0, 100.0, 64).unwrap();
+        assert_eq!(incremental.levels, rebuilt.levels);
+
+        let before = incremental.levels.clone();
+        assert!(!append(&mut incremental, &[50.0, 100.0], &[50.0, 50.0]));
+        assert_eq!(
+            incremental.levels, before,
+            "rejected append must not partially mutate"
+        );
+    }
+
+    #[test]
     fn compose_full_window_matches_bin2d_exactly() {
         let (x, y) = cross(4000);
         let dim = 64;
@@ -277,7 +363,10 @@ mod tests {
         assert_eq!(level, 0);
         let mut direct = vec![0.0f32; dim * dim];
         kernels::bin_2d(&x, &y, 0.0, 100.0, 0.0, 100.0, dim, dim, &mut direct);
-        assert_eq!(composed, direct, "full-window compose is the exact base grid");
+        assert_eq!(
+            composed, direct,
+            "full-window compose is the exact base grid"
+        );
     }
 
     #[test]
@@ -306,8 +395,14 @@ mod tests {
         // count() reads level 0; compose may use a coarser level whose edge
         // cells differ slightly — whole-cell approximation, small at the rim.
         let c0 = count(&p, 10.0, 60.0, 20.0, 70.0);
-        assert!((total - c0).abs() <= c0 * 0.02, "conservation within edge band: {total} vs {c0}");
-        assert!(lvl > 0, "16x16 render over half the domain uses a coarser level");
+        assert!(
+            (total - c0).abs() <= c0 * 0.02,
+            "conservation within edge band: {total} vs {c0}"
+        );
+        assert!(
+            lvl > 0,
+            "16x16 render over half the domain uses a coarser level"
+        );
         // deeper than level 0 can resolve at 2x upsample -> refused
         let mut tiny = vec![0.0f32; 512 * 512];
         assert!(compose(&p, 50.0, 51.0, 50.0, 51.0, 512, 512, &mut tiny).is_none());
@@ -376,6 +471,9 @@ mod tests {
         assert!(h > 0);
         let total = reg_with(h, |p| count(p, 0.0, 100.0, 0.0, 100.0)).unwrap();
         assert_eq!(total, 100.0);
+        assert_eq!(reg_append(h, &[50.0], &[50.0]), Some(true));
+        let total = reg_with(h, |p| count(p, 0.0, 100.0, 0.0, 100.0)).unwrap();
+        assert_eq!(total, 101.0);
         assert!(reg_remove(h));
         assert!(!reg_remove(h), "double free is an error, not UB");
         assert!(reg_with(h, |_| ()).is_none(), "stale handle is refused");

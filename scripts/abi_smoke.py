@@ -35,6 +35,19 @@ def _expected_abi_version() -> int:
 ABI_VERSION = _expected_abi_version()
 
 
+class CZoneMap(ctypes.Structure):
+    _fields_ = [
+        ("min", ctypes.c_double),
+        ("max", ctypes.c_double),
+        ("positive_min", ctypes.c_double),
+        ("positive_max", ctypes.c_double),
+        ("count", ctypes.c_uint64),
+        ("null_count", ctypes.c_uint64),
+        ("sum", ctypes.c_double),
+        ("sum_sq", ctypes.c_double),
+    ]
+
+
 def _lib_name() -> str:
     if sys.platform == "win32":
         return "xy_core.dll"
@@ -60,6 +73,39 @@ def load() -> ctypes.CDLL:
 
     lib.fc_abi_version.restype = ctypes.c_uint32
     lib.fc_abi_version.argtypes = []
+    lib.fc_factorize_fixed.restype = ctypes.c_size_t
+    lib.fc_factorize_fixed.argtypes = [U8P, ctypes.c_size_t, ctypes.c_size_t, U32P, U32P]
+    lib.fc_factorize_fixed_u8.restype = ctypes.c_size_t
+    lib.fc_factorize_fixed_u8.argtypes = [
+        U8P,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        U8P,
+        U32P,
+        ctypes.c_size_t,
+    ]
+    lib.fc_factorize_fixed_u8_counts.restype = ctypes.c_size_t
+    lib.fc_factorize_fixed_u8_counts.argtypes = [
+        U8P,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        U8P,
+        U32P,
+        U64P,
+        ctypes.c_size_t,
+    ]
+    lib.fc_factorize_unicode1_u8_counts.restype = ctypes.c_size_t
+    lib.fc_factorize_unicode1_u8_counts.argtypes = [
+        U32P,
+        ctypes.c_size_t,
+        ctypes.c_int32,
+        U8P,
+        U32P,
+        U64P,
+        ctypes.c_size_t,
+    ]
+    lib.fc_remap_u8.restype = ctypes.c_int32
+    lib.fc_remap_u8.argtypes = [U8P, ctypes.c_size_t, U8P, ctypes.c_size_t]
     lib.fc_encode_f32.restype = ctypes.c_int32
     lib.fc_encode_f32.argtypes = [F64P, ctypes.c_size_t, ctypes.c_double, ctypes.c_double, F32P]
     lib.fc_m4_indices.restype = ctypes.c_size_t
@@ -83,6 +129,15 @@ def load() -> ctypes.CDLL:
         F64P,
         F64P,
     ]
+    lib.fc_zone_maps_pair.restype = ctypes.c_size_t
+    lib.fc_zone_maps_pair.argtypes = [
+        F64P,
+        F64P,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.POINTER(CZoneMap),
+        ctypes.POINTER(CZoneMap),
+    ]
     lib.fc_min_max.restype = ctypes.c_int32
     lib.fc_min_max.argtypes = [F64P, ctypes.c_size_t, F64P, F64P]
     lib.fc_is_sorted.restype = ctypes.c_int32
@@ -93,6 +148,44 @@ def load() -> ctypes.CDLL:
     lib.fc_bin_2d.argtypes = [F64P, F64P, Z, D, D, D, D, Z, Z, F32P]
     lib.fc_bin_2d_indices.restype = ctypes.c_size_t
     lib.fc_bin_2d_indices.argtypes = [F64P, F64P, Z, D, D, D, D, Z, Z, F32P, U32P]
+    lib.fc_bin_2d_sample_range.restype = ctypes.c_size_t
+    lib.fc_bin_2d_sample_range.argtypes = [
+        F64P,
+        F64P,
+        Z,
+        D,
+        D,
+        D,
+        D,
+        Z,
+        Z,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        F32P,
+        U32P,
+        Z,
+    ]
+    lib.fc_bin_2d_stratified_sample_range_u8_counted.restype = ctypes.c_size_t
+    lib.fc_bin_2d_stratified_sample_range_u8_counted.argtypes = [
+        F64P,
+        F64P,
+        ctypes.POINTER(ctypes.c_uint8),
+        Z,
+        U64P,
+        Z,
+        D,
+        D,
+        D,
+        D,
+        Z,
+        Z,
+        ctypes.c_uint64,
+        D,
+        ctypes.c_uint64,
+        F32P,
+        U32P,
+        Z,
+    ]
     lib.fc_histogram_uniform.restype = ctypes.c_size_t
     lib.fc_histogram_uniform.argtypes = [
         F64P,
@@ -105,6 +198,8 @@ def load() -> ctypes.CDLL:
     ]
     lib.fc_normalize_f32.restype = ctypes.c_int32
     lib.fc_normalize_f32.argtypes = [F64P, ctypes.c_size_t, D, D, ctypes.c_int32, F32P]
+    lib.fc_valid_indices_f64.restype = ctypes.c_size_t
+    lib.fc_valid_indices_f64.argtypes = [ctypes.POINTER(F64P), Z, Z, ctypes.c_uint64, U32P, Z]
     lib.fc_range_indices.restype = ctypes.c_size_t
     lib.fc_range_indices.argtypes = [F64P, F64P, ctypes.c_size_t, D, D, D, D, U32P]
     lib.fc_sample_mask.restype = ctypes.c_int32
@@ -115,9 +210,59 @@ def load() -> ctypes.CDLL:
         ctypes.c_uint64,
         ctypes.POINTER(ctypes.c_uint8),
     ]
+    lib.fc_sample_mask_u32.restype = ctypes.c_int32
+    lib.fc_sample_mask_u32.argtypes = [
+        U32P,
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        ctypes.POINTER(ctypes.c_uint8),
+    ]
+    lib.fc_sample_range_indices.restype = ctypes.c_size_t
+    lib.fc_sample_range_indices.argtypes = [
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+        ctypes.c_uint64,
+        U32P,
+        ctypes.c_size_t,
+    ]
+    lib.fc_stratified_sample_range_u8.restype = ctypes.c_size_t
+    lib.fc_stratified_sample_range_u8.argtypes = [
+        U8P,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+        ctypes.c_double,
+        ctypes.c_uint64,
+        U32P,
+        ctypes.c_size_t,
+    ]
+    lib.fc_stratified_sample_range_u8_counted.restype = ctypes.c_size_t
+    lib.fc_stratified_sample_range_u8_counted.argtypes = [
+        U8P,
+        ctypes.c_size_t,
+        U64P,
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+        ctypes.c_double,
+        ctypes.c_uint64,
+        U32P,
+        ctypes.c_size_t,
+    ]
     lib.fc_stratified_sample_mask.restype = ctypes.c_int32
     lib.fc_stratified_sample_mask.argtypes = [
         U64P,
+        U32P,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_uint64,
+        ctypes.c_double,
+        ctypes.c_uint64,
+        ctypes.POINTER(ctypes.c_uint8),
+    ]
+    lib.fc_stratified_sample_mask_u32.restype = ctypes.c_int32
+    lib.fc_stratified_sample_mask_u32.argtypes = [
+        U32P,
         U32P,
         ctypes.c_size_t,
         ctypes.c_size_t,
@@ -137,6 +282,50 @@ def load() -> ctypes.CDLL:
         ctypes.c_size_t,
         ctypes.c_size_t,
     ]
+    lib.fc_rasterize_data.restype = ctypes.c_int32
+    lib.fc_rasterize_data.argtypes = [
+        U8P,
+        ctypes.c_size_t,
+        U8P,
+        ctypes.c_size_t,
+        U8P,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+    ]
+    lib.fc_rasterize_png_data.restype = ctypes.c_size_t
+    lib.fc_rasterize_png_data.argtypes = [
+        U8P,
+        ctypes.c_size_t,
+        U8P,
+        ctypes.c_size_t,
+        U8P,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+    ]
+    lib.fc_rasterize_spans.restype = ctypes.c_int32
+    lib.fc_rasterize_spans.argtypes = [
+        U8P,
+        ctypes.c_size_t,
+        ctypes.POINTER(U8P),
+        ctypes.POINTER(ctypes.c_size_t),
+        ctypes.c_size_t,
+        U8P,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+    ]
+    lib.fc_rasterize_png_spans.restype = ctypes.c_size_t
+    lib.fc_rasterize_png_spans.argtypes = [
+        U8P,
+        ctypes.c_size_t,
+        ctypes.POINTER(U8P),
+        ctypes.POINTER(ctypes.c_size_t),
+        ctypes.c_size_t,
+        U8P,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+    ]
     lib.fc_heatmap_rgba.restype = ctypes.c_int32
     lib.fc_heatmap_rgba.argtypes = [
         F64P,
@@ -147,6 +336,19 @@ def load() -> ctypes.CDLL:
         ctypes.c_uint8,
         U8P,
     ]
+    lib.fc_density_rgba.restype = ctypes.c_int32
+    lib.fc_density_rgba.argtypes = [
+        U8P,
+        ctypes.c_size_t,
+        ctypes.c_size_t,
+        ctypes.c_double,
+        U8P,
+        ctypes.c_size_t,
+        ctypes.c_double,
+        U8P,
+    ]
+    lib.fc_density_log_u8.restype = ctypes.c_int32
+    lib.fc_density_log_u8.argtypes = [F32P, ctypes.c_size_t, U8P, F64P]
     lib.fc_local_log_density.restype = ctypes.c_int32
     lib.fc_local_log_density.argtypes = [
         F64P,
@@ -172,6 +374,7 @@ def main() -> None:
     lib = load()
     checks = 0
     size_max = ctypes.c_size_t(-1).value
+    factorize_capacity_exceeded = size_max - 1
     F64P = ctypes.POINTER(ctypes.c_double)
     F32P = ctypes.POINTER(ctypes.c_float)
     U64P = ctypes.POINTER(ctypes.c_uint64)
@@ -181,6 +384,7 @@ def main() -> None:
     null_f32 = F32P()
     null_u64 = U64P()
     null_u32 = U32P()
+    null_u8 = U8P()
 
     def ok(cond: bool, msg: str) -> None:
         nonlocal checks
@@ -189,6 +393,127 @@ def main() -> None:
         checks += 1
 
     ok(lib.fc_abi_version() == ABI_VERSION, "abi version")
+    ok(ctypes.sizeof(CZoneMap) == 64, "ZoneMap repr(C) size")
+
+    ok(
+        lib.fc_factorize_fixed(null_u8, 0, 0, null_u32, null_u32) == 0,
+        "factorize_fixed empty/null returns zero",
+    )
+    ok(
+        lib.fc_factorize_fixed(null_u8, 1, 3, null_u32, null_u32) == size_max,
+        "factorize_fixed non-empty/null sentinel",
+    )
+    records = array("B", b"ab\0xy\0ab\0abxxy\0")
+    factor_codes = array("I", [99] * 5)
+    factor_unique = array("I", [99] * 5)
+    factor_count = lib.fc_factorize_fixed(
+        _ptr(records, ctypes.c_uint8),
+        5,
+        3,
+        _ptr(factor_codes, ctypes.c_uint32),
+        _ptr(factor_unique, ctypes.c_uint32),
+    )
+    ok(factor_count == 3, "factorize_fixed unique count")
+    ok(
+        list(factor_codes) == [0, 1, 0, 2, 1] and list(factor_unique[:3]) == [0, 1, 3],
+        "factorize_fixed codes and first rows",
+    )
+    compact_codes = array("B", [99] * 5)
+    compact_unique = array("I", [99] * 3)
+    compact_count = lib.fc_factorize_fixed_u8(
+        _ptr(records, ctypes.c_uint8),
+        5,
+        3,
+        _ptr(compact_codes, ctypes.c_uint8),
+        _ptr(compact_unique, ctypes.c_uint32),
+        3,
+    )
+    ok(compact_count == 3, "factorize_fixed_u8 unique count")
+    ok(
+        list(compact_codes) == [0, 1, 0, 2, 1] and list(compact_unique) == [0, 1, 3],
+        "factorize_fixed_u8 compact codes",
+    )
+    compact_counts = array("Q", [99] * 3)
+    compact_count = lib.fc_factorize_fixed_u8_counts(
+        _ptr(records, ctypes.c_uint8),
+        5,
+        3,
+        _ptr(compact_codes, ctypes.c_uint8),
+        _ptr(compact_unique, ctypes.c_uint32),
+        _ptr(compact_counts, ctypes.c_uint64),
+        3,
+    )
+    ok(
+        compact_count == 3 and list(compact_counts) == [2, 2, 1],
+        "factorize_fixed_u8_counts exact counts",
+    )
+    unicode_records = array("I", [ord("β"), ord("a"), ord("β"), 0, ord("é")])
+    unicode_codes = array("B", [99] * 5)
+    unicode_unique = array("I", [99] * 5)
+    unicode_counts = array("Q", [99] * 5)
+    unicode_count = lib.fc_factorize_unicode1_u8_counts(
+        _ptr(unicode_records, ctypes.c_uint32),
+        5,
+        0,
+        _ptr(unicode_codes, ctypes.c_uint8),
+        _ptr(unicode_unique, ctypes.c_uint32),
+        _ptr(unicode_counts, ctypes.c_uint64),
+        5,
+    )
+    ok(
+        unicode_count == 4
+        and list(unicode_codes) == [0, 1, 0, 2, 3]
+        and list(unicode_unique[:4]) == [0, 1, 3, 4]
+        and list(unicode_counts[:4]) == [2, 1, 1, 1],
+        "factorize_unicode1_u8_counts direct codepoints",
+    )
+    swapped_unicode = array(
+        "I",
+        [
+            int.from_bytes(
+                value.to_bytes(4, sys.byteorder), "big" if sys.byteorder == "little" else "little"
+            )
+            for value in unicode_records
+        ],
+    )
+    swapped_count = lib.fc_factorize_unicode1_u8_counts(
+        _ptr(swapped_unicode, ctypes.c_uint32),
+        5,
+        1,
+        _ptr(unicode_codes, ctypes.c_uint8),
+        _ptr(unicode_unique, ctypes.c_uint32),
+        _ptr(unicode_counts, ctypes.c_uint64),
+        5,
+    )
+    ok(
+        swapped_count == 4 and list(unicode_codes) == [0, 1, 0, 2, 3],
+        "factorize_unicode1_u8_counts swapped endian",
+    )
+    small_unique = array("I", [99] * 2)
+    ok(
+        lib.fc_factorize_fixed_u8(
+            _ptr(records, ctypes.c_uint8),
+            5,
+            3,
+            _ptr(compact_codes, ctypes.c_uint8),
+            _ptr(small_unique, ctypes.c_uint32),
+            2,
+        )
+        == factorize_capacity_exceeded,
+        "factorize_fixed_u8 capacity sentinel",
+    )
+    remap = array("B", [2, 0, 1])
+    ok(
+        lib.fc_remap_u8(
+            _ptr(compact_codes, ctypes.c_uint8),
+            len(compact_codes),
+            _ptr(remap, ctypes.c_uint8),
+            len(remap),
+        )
+        == 1
+        and list(compact_codes) == [2, 0, 2, 1, 0],
+        "remap_u8 in-place codebook",
+    )
 
     # Boundary guardrails: empty inputs may carry null pointers; invalid
     # non-empty null inputs must return sentinels/flags rather than crash.
@@ -347,6 +672,100 @@ def main() -> None:
         == size_max,
         "bin_2d_indices non-empty/null sentinel",
     )
+    # Full-view fused grid + implicit-id sample. A zero-capacity query still
+    # writes the exact grid and reports the required row count; retrying with
+    # that capacity returns the same ascending sample as the standalone ABI.
+    sample_grid = array("f", [9.0]) * 4
+    required = lib.fc_bin_2d_sample_range(
+        _ptr(bx, ctypes.c_double),
+        _ptr(by, ctypes.c_double),
+        2,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        2,
+        2,
+        0,
+        ctypes.c_uint64(2**64 - 1),
+        _ptr(sample_grid, ctypes.c_float),
+        null_u32,
+        0,
+    )
+    ok(required == 2 and sum(sample_grid) == 1.0, "bin_2d_sample_range query")
+    sample_rows = array("I", [7, 7])
+    repeated = lib.fc_bin_2d_sample_range(
+        _ptr(bx, ctypes.c_double),
+        _ptr(by, ctypes.c_double),
+        2,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        2,
+        2,
+        0,
+        ctypes.c_uint64(2**64 - 1),
+        _ptr(sample_grid, ctypes.c_float),
+        _ptr(sample_rows, ctypes.c_uint32),
+        2,
+    )
+    ok(repeated == required and list(sample_rows) == [0, 1], "bin_2d_sample_range retry")
+    sample_groups = array("B", [0, 1])
+    sample_counts = array("Q", [1, 1])
+    categorical_rows = array("I", [7, 7])
+    categorical_written = lib.fc_bin_2d_stratified_sample_range_u8_counted(
+        _ptr(bx, ctypes.c_double),
+        _ptr(by, ctypes.c_double),
+        _ptr(sample_groups, ctypes.c_uint8),
+        2,
+        _ptr(sample_counts, ctypes.c_uint64),
+        2,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        2,
+        2,
+        0,
+        1.0,
+        1,
+        _ptr(sample_grid, ctypes.c_float),
+        _ptr(categorical_rows, ctypes.c_uint32),
+        2,
+    )
+    ok(
+        categorical_written == 2 and list(categorical_rows) == [0, 1],
+        "bin_2d categorical counted sample",
+    )
+    valid_columns = (F64P * 2)(
+        _ptr(bx, ctypes.c_double),
+        _ptr(by, ctypes.c_double),
+    )
+    ok(
+        lib.fc_valid_indices_f64(valid_columns, 2, 2, 0b11, null_u32, 0) == 2,
+        "valid_indices_f64 all-valid query",
+    )
+    validity_x = array("d", [1.0, float("nan"), -1.0])
+    validity_y = array("d", [1.0, 2.0, 3.0])
+    filtered_columns = (F64P * 2)(
+        _ptr(validity_x, ctypes.c_double),
+        _ptr(validity_y, ctypes.c_double),
+    )
+    filtered_rows = array("I", [7, 7, 7])
+    ok(
+        lib.fc_valid_indices_f64(
+            filtered_columns,
+            2,
+            3,
+            0b01,
+            _ptr(filtered_rows, ctypes.c_uint32),
+            3,
+        )
+        == 1
+        and filtered_rows[0] == 0,
+        "valid_indices_f64 filtered write",
+    )
     # sample_mask: SplitMix64(id + seed) <= threshold, one byte per row.
     ids = array("Q", [0, 1, 2, 3])
     mask = array("B", [9, 9, 9, 9])
@@ -398,6 +817,130 @@ def main() -> None:
         == 1,
         "sample_mask empty/null ok status",
     )
+    ids32 = array("I", [0, 1, 2, 3])
+    mask32 = array("B", [9, 9, 9, 9])
+    lib.fc_sample_mask_u32(
+        _ptr(ids32, ctypes.c_uint32),
+        1,
+        ctypes.c_uint64(0),
+        ctypes.c_uint64(0xE220A8397B1DCDAF),
+        _ptr(mask32, ctypes.c_uint8),
+    )
+    ok(mask32[0] == 1, "sample_mask_u32 matches the u64 reference vector")
+    lib.fc_sample_mask_u32(
+        _ptr(ids32, ctypes.c_uint32),
+        4,
+        ctypes.c_uint64(0),
+        ctypes.c_uint64(0),
+        _ptr(mask32, ctypes.c_uint8),
+    )
+    ok(list(mask32) == [0, 0, 0, 0], "sample_mask_u32 threshold=0 keeps none")
+    sampled = array("I", [999]) * 4
+    written = lib.fc_sample_range_indices(
+        4,
+        ctypes.c_uint64(0),
+        ctypes.c_uint64(2**64 - 1),
+        _ptr(sampled, ctypes.c_uint32),
+        len(sampled),
+    )
+    ok(written == 4 and list(sampled) == [0, 1, 2, 3], "sample_range_indices implicit parity")
+    ok(
+        lib.fc_sample_range_indices(0, ctypes.c_uint64(0), ctypes.c_uint64(1), null_u32, 0) == 0,
+        "sample_range_indices empty/null returns zero",
+    )
+    # Compact full-domain categorical sampler: implicit ids + u8 groups.
+    range_groups = array("B", [0, 0, 0, 1])
+    stratified_rows = array("I", [999]) * 4
+    written = lib.fc_stratified_sample_range_u8(
+        _ptr(range_groups, ctypes.c_uint8),
+        4,
+        2,
+        ctypes.c_uint64(0),
+        ctypes.c_double(1.0),
+        ctypes.c_uint64(1),
+        _ptr(stratified_rows, ctypes.c_uint32),
+        len(stratified_rows),
+    )
+    ok(
+        written == 4 and list(stratified_rows) == [0, 1, 2, 3],
+        "stratified_sample_range_u8 implicit parity",
+    )
+    range_counts = array("Q", [3, 1])
+    written = lib.fc_stratified_sample_range_u8_counted(
+        _ptr(range_groups, ctypes.c_uint8),
+        4,
+        _ptr(range_counts, ctypes.c_uint64),
+        2,
+        ctypes.c_uint64(0),
+        ctypes.c_double(1.0),
+        ctypes.c_uint64(1),
+        _ptr(stratified_rows, ctypes.c_uint32),
+        len(stratified_rows),
+    )
+    ok(
+        written == 4 and list(stratified_rows) == [0, 1, 2, 3],
+        "stratified_sample_range_u8_counted parity",
+    )
+    bad_range_counts = array("Q", [2, 1])
+    ok(
+        lib.fc_stratified_sample_range_u8_counted(
+            _ptr(range_groups, ctypes.c_uint8),
+            4,
+            _ptr(bad_range_counts, ctypes.c_uint64),
+            2,
+            ctypes.c_uint64(0),
+            ctypes.c_double(0.5),
+            ctypes.c_uint64(1),
+            _ptr(stratified_rows, ctypes.c_uint32),
+            len(stratified_rows),
+        )
+        == ctypes.c_size_t(-1).value,
+        "stratified_sample_range_u8_counted rejects inconsistent counts",
+    )
+    too_small = array("I", [777])
+    written = lib.fc_stratified_sample_range_u8(
+        _ptr(range_groups, ctypes.c_uint8),
+        4,
+        2,
+        ctypes.c_uint64(0),
+        ctypes.c_double(1.0),
+        ctypes.c_uint64(1),
+        _ptr(too_small, ctypes.c_uint32),
+        1,
+    )
+    ok(
+        written == 4 and too_small[0] == 777,
+        "stratified_sample_range_u8 reports capacity without partial write",
+    )
+    bad_range_groups = array("B", [0, 2])
+    ok(
+        lib.fc_stratified_sample_range_u8(
+            _ptr(bad_range_groups, ctypes.c_uint8),
+            2,
+            2,
+            ctypes.c_uint64(0),
+            ctypes.c_double(0.5),
+            ctypes.c_uint64(1),
+            _ptr(stratified_rows, ctypes.c_uint32),
+            len(stratified_rows),
+        )
+        == ctypes.c_size_t(-1).value,
+        "stratified_sample_range_u8 rejects out-of-range group codes",
+    )
+    ok(
+        lib.fc_stratified_sample_range_u8(
+            ctypes.POINTER(ctypes.c_uint8)(),
+            0,
+            1,
+            ctypes.c_uint64(0),
+            ctypes.c_double(0.5),
+            ctypes.c_uint64(1),
+            null_u32,
+            0,
+        )
+        == 0,
+        "stratified_sample_range_u8 empty/null returns zero",
+    )
     # stratified_sample_mask: per-category thresholds + lowest-hash floor.
     sgroups = array("I", [0, 0, 0, 1])
     smask = array("B", [9, 9, 9, 9])
@@ -428,6 +971,21 @@ def main() -> None:
     ok(
         status == 1 and sum(smask) == 2 and smask[3] == 1,
         "stratified_sample_mask floor pins one row per category",
+    )
+    smask32 = array("B", [9, 9, 9, 9])
+    status = lib.fc_stratified_sample_mask_u32(
+        _ptr(ids32, ctypes.c_uint32),
+        _ptr(sgroups, ctypes.c_uint32),
+        4,
+        2,
+        ctypes.c_uint64(0),
+        ctypes.c_double(1e-18),
+        ctypes.c_uint64(1),
+        _ptr(smask32, ctypes.c_uint8),
+    )
+    ok(
+        status == 1 and list(smask32) == list(smask),
+        "stratified_sample_mask_u32 matches u64 ids",
     )
     smask_bad = array("B", [7, 7, 7, 7])
     bad_groups = array("I", [0, 0, 0, 5])  # 5 >= n_groups
@@ -566,6 +1124,29 @@ def main() -> None:
     ok(cnt[0] == 9 and nul[0] == 1, "zone_maps counts NaN as null")
     ok(zm[0][0] == 0.0 and zm[1][0] == 9.0, "zone_maps min/max skip NaN")
     ok(zm[4][0] == 1.0 and zm[5][0] == 9.0, "zone_maps positive min/max")
+    pair_y = array("d", [float(9 - i) for i in range(10)])
+    pair_x_out = (CZoneMap * 1)()
+    pair_y_out = (CZoneMap * 1)()
+    wrote = lib.fc_zone_maps_pair(
+        _ptr(data, ctypes.c_double),
+        _ptr(pair_y, ctypes.c_double),
+        10,
+        65536,
+        pair_x_out,
+        pair_y_out,
+    )
+    ok(wrote == 1, "zone_maps_pair chunk count")
+    ok(
+        pair_x_out[0].min == 0.0
+        and pair_x_out[0].max == 9.0
+        and pair_x_out[0].count == 9
+        and pair_x_out[0].null_count == 1,
+        "zone_maps_pair x parity",
+    )
+    ok(
+        pair_y_out[0].min == 0.0 and pair_y_out[0].max == 9.0 and pair_y_out[0].count == 10,
+        "zone_maps_pair y statistics",
+    )
 
     # inf must be treated as null too (§19 hardening): min/max stay finite.
     idata = array("d", [1.0, float("inf"), float("-inf"), 3.0])
@@ -726,6 +1307,13 @@ def main() -> None:
         ctypes.c_double,
         ctypes.c_uint32,
     ]
+    lib.fc_pyramid_append.restype = ctypes.c_int32
+    lib.fc_pyramid_append.argtypes = [
+        ctypes.c_uint64,
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.c_size_t,
+    ]
     lib.fc_pyramid_count.restype = ctypes.c_int32
     lib.fc_pyramid_count.argtypes = [
         ctypes.c_uint64,
@@ -758,12 +1346,41 @@ def main() -> None:
         "pyramid count ok",
     )
     ok(cnt.value == float(n_p), "pyramid count is exact on the full window")
+    append_x = array("d", [1.5, 6.5])
+    append_y = array("d", [1.5, 6.5])
+    ok(
+        lib.fc_pyramid_append(
+            ctypes.c_uint64(handle),
+            _ptr(append_x, ctypes.c_double),
+            _ptr(append_y, ctypes.c_double),
+            len(append_x),
+        )
+        == 1,
+        "pyramid append updates a stable domain",
+    )
+    ok(
+        lib.fc_pyramid_count(ctypes.c_uint64(handle), 0.0, 8.0, 0.0, 8.0, ctypes.byref(cnt)) == 1
+        and cnt.value == float(n_p + len(append_x)),
+        "pyramid append conserves the new total",
+    )
+    outside_x = array("d", [8.0])
+    outside_y = array("d", [4.0])
+    ok(
+        lib.fc_pyramid_append(
+            ctypes.c_uint64(handle),
+            _ptr(outside_x, ctypes.c_double),
+            _ptr(outside_y, ctypes.c_double),
+            1,
+        )
+        == 0,
+        "pyramid append rejects domain growth",
+    )
     grid_p = array("f", bytes(4 * 8 * 8))
     lvl = lib.fc_pyramid_compose(
         ctypes.c_uint64(handle), 0.0, 8.0, 0.0, 8.0, 8, 8, _ptr(grid_p, ctypes.c_float)
     )
     ok(lvl == 0, "full-window compose uses level 0")
-    ok(sum(grid_p) == float(n_p), "compose conserves the count")
+    ok(sum(grid_p) == float(n_p + len(append_x)), "compose conserves the appended count")
     tiny = array("f", bytes(4 * 64 * 64))
     ok(
         lib.fc_pyramid_compose(
@@ -797,6 +1414,36 @@ def main() -> None:
         png_len < len(png) and bytes(png[:8]) == b"\x89PNG\r\n\x1a\n",
         "fused raster-to-PNG emits a valid signature",
     )
+    ok(
+        lib.fc_rasterize_data(null_u8, 0, null_u8, 0, _ptr(fb, ctypes.c_uint8), 2, 2) == 1,
+        "external-arena rasterizer accepts an empty arena",
+    )
+    ok(
+        lib.fc_rasterize_data(null_u8, 0, null_u8, 1, _ptr(fb, ctypes.c_uint8), 2, 2) == 0,
+        "external-arena rasterizer rejects a non-empty null arena",
+    )
+    png_len = lib.fc_rasterize_png_data(
+        null_u8, 0, null_u8, 0, _ptr(png, ctypes.c_uint8), len(png), 2, 2
+    )
+    ok(
+        png_len < len(png) and bytes(png[:8]) == b"\x89PNG\r\n\x1a\n",
+        "external-arena raster-to-PNG emits a valid signature",
+    )
+    ok(
+        lib.fc_rasterize_spans(null_u8, 0, None, None, 0, _ptr(fb, ctypes.c_uint8), 2, 2) == 1,
+        "multi-span rasterizer accepts zero spans",
+    )
+    ok(
+        lib.fc_rasterize_spans(null_u8, 0, None, None, 1, _ptr(fb, ctypes.c_uint8), 2, 2) == 0,
+        "multi-span rasterizer rejects missing descriptor arrays",
+    )
+    png_len = lib.fc_rasterize_png_spans(
+        null_u8, 0, None, None, 0, _ptr(png, ctypes.c_uint8), len(png), 2, 2
+    )
+    ok(
+        png_len < len(png) and bytes(png[:8]) == b"\x89PNG\r\n\x1a\n",
+        "multi-span raster-to-PNG emits a valid signature",
+    )
 
     heat_values = array("d", [1.0 / 255.0, 128.0 / 255.0, 1.0, 0.0])
     heat_stops = array("B", [0, 10, 20, 100, 110, 120])
@@ -815,6 +1462,41 @@ def main() -> None:
         and list(heat_rgba[:4]) == [100, 110, 120, 200]
         and heat_rgba[7] == 0,
         "native heatmap colormap maps, flips, and preserves missing alpha",
+    )
+    density_codes = array("B", [0, 255, 128, 1])
+    density_rgba = array("B", [0]) * 16
+    ok(
+        lib.fc_density_rgba(
+            _ptr(density_codes, ctypes.c_uint8),
+            2,
+            2,
+            100.0,
+            _ptr(heat_stops, ctypes.c_uint8),
+            2,
+            0.85,
+            _ptr(density_rgba, ctypes.c_uint8),
+        )
+        == 1
+        and density_rgba[3] > 0
+        and density_rgba[11] == 0
+        and density_rgba[12:16] == array("B", [100, 110, 120, 216]),
+        "native density colormap maps, flips, and preserves empty alpha",
+    )
+    density = array("f", [0.0, 1.0, 10.0, 100.0])
+    encoded = array("B", [0]) * len(density)
+    density_max = ctypes.c_double(-1.0)
+    ok(
+        lib.fc_density_log_u8(
+            _ptr(density, ctypes.c_float),
+            len(density),
+            _ptr(encoded, ctypes.c_uint8),
+            ctypes.byref(density_max),
+        )
+        == 1
+        and density_max.value == 100.0
+        and encoded[0] == 0
+        and encoded[-1] == 255,
+        "density log-u8 encoding preserves zero and maximum",
     )
 
     print(f"ABI smoke: {checks} checks passed against {_lib_name()}")

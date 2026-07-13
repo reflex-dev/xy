@@ -133,6 +133,10 @@ function compact(source) {
       continue;
     }
     if (c === "\n") {
+      // Removing a trailing line comment can leave the separating space that
+      // preceded it. Do not ship that whitespace into every standalone HTML
+      // artifact (and keep generated files clean under `git diff --check`).
+      while (out.endsWith(" ") || out.endsWith("\t")) out = out.slice(0, -1);
       if (!atLineStart) emit("\n"); // collapse blank lines
       i++;
       continue;

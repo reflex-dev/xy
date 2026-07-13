@@ -8,7 +8,7 @@ recorded in the shipped spec, never silent (§28).
 from __future__ import annotations
 
 # Wire protocol version: the client refuses a mismatched spec loudly (§33).
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 
 # Line traces longer than this ship M4-decimated (Tier 1, §5); the canonical
 # column stays kernel-side for re-decimation on zoom (§28: recompute for the
@@ -38,7 +38,7 @@ MAX_SCREEN_DIM = 4096
 # Contour extraction is native and output-bounded, but its work still scales
 # with grid cells × levels. Keep one request from allocating an unbounded
 # segment buffer before the browser can apply any screen-size limit.
-MAX_CONTOUR_WORK = 1_000_000
+MAX_CONTOUR_WORK = 4_000_000
 
 # Hysteresis on the drill boundary (§5 "tier transitions hysteresis-guarded"):
 # once drilled to points, stay until the visible count clearly exceeds the

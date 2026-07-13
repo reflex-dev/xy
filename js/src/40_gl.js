@@ -180,6 +180,34 @@ void main() {
   outColor = px * (shapeCov * v_dim);
 }`;
 
+// Default constant circle: the dominant small/medium scatter path deserves a
+// shader that does only its visual contract. Rich color/size/selection/drill
+// and stroked/symbol markers keep POINT_VS/POINT_FS below. Keeping this
+// specialization separate avoids dynamic feature branches and texture state
+// on software GL while producing the same circle SDF and premultiplied color.
+const POINT_SIMPLE_VS = `#version 300 es
+in float ax; in float ay;
+uniform vec2 u_xmap; uniform vec2 u_ymap;
+uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
+uniform float u_size; uniform float u_dpr;
+${AXIS_GLSL}
+void main() {
+  gl_Position = vec4(fcMap(ax, u_xmap, u_xmeta, u_xmode), fcMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  gl_PointSize = u_size * u_dpr;
+}`;
+
+const POINT_SIMPLE_FS = `#version 300 es
+precision highp float;
+uniform vec4 u_color;
+out vec4 outColor;
+void main() {
+  float sd = length(gl_PointCoord - 0.5) - 0.5;
+  float aa = fwidth(sd) + 1e-4;
+  float coverage = clamp(0.5 - sd / aa, 0.0, 1.0);
+  if (coverage <= 0.001) discard;
+  outColor = vec4(u_color.rgb * u_color.a, u_color.a) * coverage;
+}`;
+
 // Picking: same geometry + size, outputs an encoded ID (24-bit vertex index +
 // 8-bit trace slot) so a single readPixels resolves which point is under the
 // cursor (§17). Rerun's R-channel-ID-texture idea, RGBA8 variant.
@@ -261,13 +289,21 @@ precision highp float;
 uniform sampler2D u_grid; uniform sampler2D u_lut;
 uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1
 uniform float u_opacity;
+uniform int u_truecolor;
 in vec2 v_data;
 out vec4 outColor;
 void main() {
   vec2 uv = vec2((v_data.x - u_gridRange.x) / (u_gridRange.y - u_gridRange.x),
                  (v_data.y - u_gridRange.z) / (u_gridRange.w - u_gridRange.z));
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
-  float raw = texture(u_grid, uv).r;
+  vec4 sampled = texture(u_grid, uv);
+  if (u_truecolor == 1) {
+    float alpha = sampled.a * u_opacity;
+    if (alpha <= 0.0) discard;
+    outColor = vec4(sampled.rgb * alpha, alpha);
+    return;
+  }
+  float raw = sampled.r;
   if (raw <= 0.0) discard;
   float t = clamp((raw * 255.0 - 1.0) / 254.0, 0.0, 1.0);
   vec3 rgb = texture(u_lut, vec2(t, 0.5)).rgb;

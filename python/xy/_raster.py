@@ -27,16 +27,34 @@ from ._svg import (
     _column,
     _corner_radii,
     _css,
-    _fmt_axis,
     _lut,
     _Scale,
     _step_arrays,
+    _tick_text,
     axis_ticks,
     layout,
 )
 
 # Opcodes — must match src/raster.rs.
-_CLIP, _FILL, _GRAD, _STROKE, _POINT, _IMAGE, _TEXT_OP, _POINTS, _SEGMENTS = range(9)
+(
+    _CLIP,
+    _FILL,
+    _GRAD,
+    _STROKE,
+    _POINT,
+    _IMAGE,
+    _TEXT_OP,
+    _POINTS,
+    _SEGMENTS,
+    _RECTS,
+    _TRIANGLES,
+    _SMOOTH_STROKE,
+    _DENSITY_IMAGE,
+    _HEATMAP_IMAGE,
+    _AFFINE_POINTS,
+    _AFFINE_CHANNEL_POINTS,
+    _STROKED_TRIANGLES,
+) = range(17)
 _SYMBOLS = {"circle": 0, "square": 1, "diamond": 2, "triangle": 3, "cross": 4}
 
 
@@ -83,8 +101,14 @@ class _Cmd:
     def _raw_f(self, v: float) -> None:
         self.buf += struct.pack("<f", v)
 
+    def _raw_d(self, v: float) -> None:
+        self.buf += struct.pack("<d", v)
+
     def _u32(self, v: int) -> None:
         self.buf += struct.pack("<I", v)
+
+    def _u64(self, v: int) -> None:
+        self.buf += struct.pack("<Q", v)
 
     def _rgba(self, c: tuple[int, int, int, int]) -> None:
         self.buf += bytes(c)
@@ -171,6 +195,122 @@ class _Cmd:
             self.buf += scaled.astype("<f4").tobytes()
         self.buf += np.ascontiguousarray(fills, dtype=np.uint8).tobytes()
 
+    def affine_points(self, x_meta, y_meta, sx, sy, radius, fill, symbol, sw, stroke) -> None:
+        """Borrow offset-encoded f32 x/y columns and project them in Rust.
+
+        This private static-export command is the zero-copy counterpart of
+        :meth:`points` for constant-style marks on affine axes.  The native
+        reader repeats the exact f64 decode/project/f32 conversion order used
+        by ``_column`` + ``_Scale`` + ``points``; the general command remains
+        the fallback for log axes and data-driven color/size channels.
+        """
+        n = int(x_meta["len"])
+        if n == 0:
+            return
+        if int(y_meta["len"]) != n:
+            raise ValueError("scatter x/y payload columns must have equal lengths")
+        self.buf.append(_AFFINE_POINTS)
+        self._u32(n)
+        self.buf.append(symbol)
+        self._f(sw)
+        self._rgba(stroke)
+        self._f(radius)
+        self._rgba(fill)
+        for meta in (x_meta, y_meta):
+            self._u32(int(meta.get("span", 0)))
+            self._u64(int(meta["byte_offset"]))
+            self._raw_d(float(meta.get("scale") or 1.0))
+            self._raw_d(float(meta.get("offset", 0.0)))
+        for axis in (sx, sy):
+            for value in (axis.lo, axis.hi, axis.px0, axis.px1):
+                self._raw_d(float(value))
+        self._raw_d(float(self.s))
+
+    def affine_channel_points(
+        self,
+        x_meta,
+        y_meta,
+        sx,
+        sy,
+        color_channel,
+        size_channel,
+        fill,
+        symbol,
+        sw,
+        stroke,
+        columns,
+    ) -> None:
+        """Borrow affine geometry plus data-driven color/size channels.
+
+        Rust materializes only compact screen-space scratch arrays for the
+        synchronous paint. Log axes and unsupported channel modes stay on the
+        expanded ``points`` command, preserving one general fallback.
+        """
+        n = int(x_meta["len"])
+        if n == 0:
+            return
+        if int(y_meta["len"]) != n:
+            raise ValueError("scatter x/y payload columns must have equal lengths")
+
+        self.buf.append(_AFFINE_CHANNEL_POINTS)
+        self._u32(n)
+        self.buf.append(symbol)
+        self._f(sw)
+        self._rgba(stroke)
+        for meta in (x_meta, y_meta):
+            self._u32(int(meta.get("span", 0)))
+            self._u64(int(meta["byte_offset"]))
+            self._raw_d(float(meta.get("scale") or 1.0))
+            self._raw_d(float(meta.get("offset", 0.0)))
+        for axis in (sx, sy):
+            for value in (axis.lo, axis.hi, axis.px0, axis.px1):
+                self._raw_d(float(value))
+        self._raw_d(float(self.s))
+
+        color_mode = color_channel.get("mode")
+        encoded_color_mode = {"continuous": 1, "categorical": 2}.get(color_mode, 0)
+        self.buf.append(encoded_color_mode)
+        self._rgba(fill)
+        if encoded_color_mode:
+            meta = columns[color_channel["buf"]]
+            if int(meta["len"]) != n:
+                raise ValueError("scatter color payload must match geometry length")
+            # Private display-list tag: categorical browser payloads may now
+            # borrow lossless u8 codes, while continuous and >256-category
+            # channels retain f32.  Rust consumes either without expansion.
+            color_encoding = 1 if meta.get("dtype") == "u8" else 0
+            if encoded_color_mode == 1 and color_encoding != 0:
+                raise ValueError("continuous scatter color payload must be f32")
+            self.buf.append(color_encoding)
+            self._u32(int(meta.get("span", 0)))
+            self._u64(int(meta["byte_offset"]))
+            if encoded_color_mode == 1:
+                entries = (
+                    COLORMAP_STOPS.get(color_channel.get("colormap", "viridis"))
+                    or COLORMAP_STOPS["viridis"]
+                )
+            else:
+                entries = [
+                    _parse_color(entry)[:3]
+                    for entry in color_channel.get("palette") or DEFAULT_PALETTE
+                ]
+            self._u32(len(entries))
+            self.buf += np.ascontiguousarray(entries, dtype=np.uint8).reshape(-1).tobytes()
+
+        size_mode = size_channel.get("mode")
+        self.buf.append(1 if size_mode == "continuous" else 0)
+        if size_mode == "continuous":
+            meta = columns[size_channel["buf"]]
+            if int(meta["len"]) != n:
+                raise ValueError("scatter size payload must match geometry length")
+            self._u32(int(meta.get("span", 0)))
+            self._u64(int(meta["byte_offset"]))
+            r0, r1 = size_channel.get("range_px", [2, 18])
+            self._raw_d(float(r0))
+            self._raw_d(float(r1))
+        else:
+            self._f(float(size_channel.get("size", 4.0)) / 2)
+
     def segments(self, x0, y0, x1, y1, width, colors) -> None:
         n = len(x0)
         if n == 0 or width <= 0:
@@ -183,6 +323,59 @@ class _Cmd:
             self.buf += scaled.astype("<f4").tobytes()
         self.buf += np.ascontiguousarray(colors, dtype=np.uint8).tobytes()
 
+    def rects(self, x0, y0, x1, y1, fills) -> None:
+        n = len(x0)
+        if n == 0:
+            return
+        self.buf.append(_RECTS)
+        self._u32(n)
+        for arr in (x0, y0, x1, y1):
+            scaled = np.asarray(arr, dtype=np.float64) * self.s
+            self.buf += scaled.astype("<f4").tobytes()
+        self.buf += np.ascontiguousarray(fills, dtype=np.uint8).tobytes()
+
+    def triangles(self, x0, y0, x1, y1, x2, y2, fills, sw=0.0, stroke=None) -> None:
+        n = len(x0)
+        if n == 0:
+            return
+        stroked = sw > 0
+        self.buf.append(_STROKED_TRIANGLES if stroked else _TRIANGLES)
+        self._u32(n)
+        if stroked:
+            self._f(sw)
+            self._rgba(stroke or (0, 0, 0, 0))
+        for arr in (x0, y0, x1, y1, x2, y2):
+            scaled = np.asarray(arr, dtype=np.float64) * self.s
+            self.buf += scaled.astype("<f4").tobytes()
+        self.buf += np.ascontiguousarray(fills, dtype=np.uint8).tobytes()
+
+    def smooth_stroke(self, xv, yv, sx, sy, width, color, dash=None) -> None:
+        """Native monotone-Hermite flattening + stroke for affine axes."""
+        n = len(xv)
+        if n < 2 or width <= 0:
+            return
+        self.buf.append(_SMOOTH_STROKE)
+        self._u32(n)
+        for value in (
+            sx.lo,
+            sx.hi,
+            sx.px0 * self.s,
+            sx.px1 * self.s,
+            sy.lo,
+            sy.hi,
+            sy.px0 * self.s,
+            sy.px1 * self.s,
+        ):
+            self.buf += struct.pack("<d", value)
+        self.buf += np.ascontiguousarray(xv, dtype="<f8").tobytes()
+        self.buf += np.ascontiguousarray(yv, dtype="<f8").tobytes()
+        self._f(width)
+        self._rgba(color)
+        dash = dash or []
+        self._u32(len(dash))
+        for value in dash:
+            self._f(value)
+
     def image(self, dx, dy, dw, dh, iw, ih, rgba_bytes, *, nearest=False) -> None:
         self.buf.append(_IMAGE)
         self._f(dx)
@@ -193,6 +386,59 @@ class _Cmd:
         self._u32(ih)
         self.buf.append(1 if nearest else 0)
         self.buf += rgba_bytes
+
+    def density_image(
+        self, dx, dy, dw, dh, iw, ih, byte_offset, maximum, stops, opacity, *, span=0
+    ) -> None:
+        """Reference a compact log-u8 density grid in the payload data arena."""
+        self.buf.append(_DENSITY_IMAGE)
+        self._f(dx)
+        self._f(dy)
+        self._f(dw)
+        self._f(dh)
+        self._u32(iw)
+        self._u32(ih)
+        self._u32(span)
+        self._u64(byte_offset)
+        self._raw_d(maximum)
+        self._raw_d(opacity)
+        stops = np.ascontiguousarray(stops, dtype=np.uint8).reshape(-1, 3)
+        self._u32(len(stops))
+        self.buf += stops.tobytes()
+
+    def heatmap_image(
+        self,
+        dx,
+        dy,
+        dw,
+        dh,
+        iw,
+        ih,
+        byte_offset,
+        stops,
+        alpha,
+        *,
+        span=0,
+        canonical=False,
+        domain=(0.0, 1.0),
+    ) -> None:
+        """Reference normalized f32 heatmap values in the payload data arena."""
+        self.buf.append(_HEATMAP_IMAGE)
+        self._f(dx)
+        self._f(dy)
+        self._f(dw)
+        self._f(dh)
+        self._u32(iw)
+        self._u32(ih)
+        self._u32(span)
+        self._u64(byte_offset)
+        self.buf.append(1 if canonical else 0)
+        self._raw_d(domain[0])
+        self._raw_d(domain[1])
+        self.buf.append(alpha)
+        stops = np.ascontiguousarray(stops, dtype=np.uint8).reshape(-1, 3)
+        self._u32(len(stops))
+        self.buf += stops.tobytes()
 
     def text(self, x, y, anchor, size, color, s) -> None:
         data = str(s).encode("ascii", "replace")
@@ -228,11 +474,14 @@ def _grad_stops(fill_spec: dict, mark_color: str) -> list:
 
 
 def render_raster(
-    spec: dict[str, Any], blob: bytes, scale: float = 2.0, *, fast_png: bool = False
+    spec: dict[str, Any],
+    blob: bytes,
+    scale: float = 2.0,
+    *,
+    fast_png: bool = False,
+    borrowed: tuple[np.ndarray, ...] = (),
 ) -> np.ndarray | bytes:
     """Paint `spec` into an ``(h, w, 4)`` RGBA8 image via the native rasterizer."""
-    from . import kernels
-
     width, height, compact, plot = layout(spec)
     xa, ya = spec["x_axis"], spec["y_axis"]
     sx = _Scale(xa, plot["x"], plot["x"] + plot["w"])
@@ -247,7 +496,8 @@ def render_raster(
 
     xt, xlab, xstep = axis_ticks(xa, plot["w"], True)
     yt, ylab, ystep = axis_ticks(ya, plot["h"], False)
-    grid = _parse_color(_GRID)
+    dom_style = (spec.get("dom") or {}).get("style") or {}
+    grid = _parse_color(_css(dom_style.get("--chart-grid"), _GRID))
     px0, py0 = plot["x"], plot["y"]
     px1, py1 = plot["x"] + plot["w"], plot["y"] + plot["h"]
 
@@ -282,21 +532,27 @@ def render_raster(
         elif all(k in t for k in ("x0", "x1", "y0", "y1")):
             _emit_rects(cmd, t, blob, cols, sx, sy, style, color, plot)
 
+    _emit_annotations(cmd, spec.get("annotations") or [], sx, sy, plot, width, height)
+
     # Chrome (unclipped): baselines, labels, title, legend.
     cmd.clip(0, 0, width, height)
     axis_c = _parse_color(_AXIS)
-    cmd.stroke([(px0, py0), (px0, py1)], 1.0, axis_c)
-    cmd.stroke([(px0, py1), (px1, py1)], 1.0, axis_c)
-
-    text_c = _parse_color(_TEXT)
     hide_x = xa.get("tick_label_strategy") == "none"
     hide_y = ya.get("tick_label_strategy") == "none"
+    if not hide_y:
+        cmd.stroke([(px0, py0), (px0, py1)], 1.0, axis_c)
+    if not hide_x:
+        x_axis_y = py0 if xa.get("side") == "top" else py1
+        cmd.stroke([(px0, x_axis_y), (px1, x_axis_y)], 1.0, axis_c)
+
+    text_c = _parse_color(_TEXT)
     if not hide_x:
         for v in xlab:
-            cmd.text(float(sx(v)), py1 + 15, 1, 11, text_c, _fmt_axis(xa, v, xstep))
+            label_y = py0 - 7 if xa.get("side") == "top" else py1 + 15
+            cmd.text(float(sx(v)), label_y, 1, 11, text_c, _tick_text(xa, v, xstep))
     if not hide_y:
         for v in ylab:
-            cmd.text(px0 - 8, float(sy(v)) + 4, 2, 11, text_c, _fmt_axis(ya, v, ystep))
+            cmd.text(px0 - 8, float(sy(v)) + 4, 2, 11, text_c, _tick_text(ya, v, ystep))
     if spec.get("title"):
         cmd.text(width / 2, plot["y"] - (10 if compact else 12), 1, 14, text_c, str(spec["title"]))
     if xa.get("label") and not hide_x:
@@ -307,21 +563,89 @@ def render_raster(
 
     named = [t for t in spec["traces"] if t.get("name")]
     if spec.get("show_legend", True) and named:
-        _emit_legend(cmd, named, plot)
+        _emit_legend(cmd, named, plot, spec.get("legend") or {})
+    if spec.get("colorbar"):
+        _emit_colorbar(cmd, spec["colorbar"], plot)
 
     w_px, h_px = max(1, round(width * scale)), max(1, round(height * scale))
+    from . import _native
+
+    spans = (blob, *borrowed)
     if fast_png:
-        return kernels.rasterize_png(bytes(cmd.buf), w_px, h_px)
-    return kernels.rasterize(bytes(cmd.buf), w_px, h_px)
+        return _native.rasterize_png_spans(bytes(cmd.buf), spans, w_px, h_px)
+    return _native.rasterize_spans(bytes(cmd.buf), spans, w_px, h_px)
 
 
 def _emit_line(cmd, t, blob, cols, sx, sy, style, color):
     xv, yv = _column(blob, cols[t["x"]]), _column(blob, cols[t["y"]])
     if style.get("step"):
         xv, yv = _step_arrays(xv, yv, style["step"])
-    pts = _scene.curve_points(xv, yv, sx, sy, style.get("curve") == "smooth")
     c = _rgba(style.get("color"), color, float(style.get("opacity", 1.0)))
-    cmd.stroke(pts, float(style.get("width", 1.5)), c, dash=style.get("dash"))
+    width = float(style.get("width", 1.5))
+    if style.get("curve") == "smooth" and len(xv) >= 3 and sx.affine and sy.affine:
+        cmd.smooth_stroke(xv, yv, sx, sy, width, c, dash=style.get("dash"))
+    else:
+        pts = _scene.curve_points(xv, yv, sx, sy, False)
+        cmd.stroke(pts, width, c, dash=style.get("dash"))
+
+
+def _annotation_point(ann, style, sx, sy, plot, width, height):
+    space = style.get("coordinate_space")
+    x, y = float(ann.get("x", 0.0)), float(ann.get("y", 0.0))
+    if space == "axes_fraction":
+        return plot["x"] + x * plot["w"], plot["y"] + (1.0 - y) * plot["h"]
+    if space == "figure_fraction":
+        return x * width, (1.0 - y) * height
+    if space == "yaxis_transform":
+        return plot["x"] + x * plot["w"], float(sy(y))
+    if space == "xaxis_transform":
+        return float(sx(x)), plot["y"] + (1.0 - y) * plot["h"]
+    return float(sx(x)), float(sy(y))
+
+
+def _emit_annotations(cmd, annotations, sx, sy, plot, width, height):
+    px0, py0 = plot["x"], plot["y"]
+    for ann in annotations:
+        style = ann.get("style") or {}
+        color = _rgba(style.get("color"), "#667085", float(style.get("opacity", 1.0)))
+        start = max(0.0, min(1.0, float(style.get("span_start", 0.0))))
+        end = max(start, min(1.0, float(style.get("span_end", 1.0))))
+        if ann.get("kind") == "rule":
+            if ann.get("axis") == "x":
+                pos = float(sx(float(ann["value"])))
+                points = [(pos, py0 + (1 - end) * plot["h"]), (pos, py0 + (1 - start) * plot["h"])]
+            else:
+                pos = float(sy(float(ann["value"])))
+                points = [(px0 + start * plot["w"], pos), (px0 + end * plot["w"], pos)]
+            cmd.stroke(points, float(style.get("width", 1.5)), color)
+        elif ann.get("kind") == "band":
+            a, b = float(ann["start"]), float(ann["end"])
+            if ann.get("axis") == "x":
+                x0, x1 = sorted((float(sx(a)), float(sx(b))))
+                y0, y1 = py0 + (1 - end) * plot["h"], py0 + (1 - start) * plot["h"]
+            else:
+                y0, y1 = sorted((float(sy(a)), float(sy(b))))
+                x0, x1 = px0 + start * plot["w"], px0 + end * plot["w"]
+            cmd.fill(
+                _rect_pts(x0, y0, x1, y1),
+                _rgba(style.get("color"), "#64748b", float(style.get("opacity", 0.14))),
+            )
+        if ann.get("kind") == "text" and ann.get("text"):
+            x, y = _annotation_point(ann, style, sx, sy, plot, width, height)
+            anchor = {"start": 0, "middle": 1, "end": 2}.get(ann.get("anchor"), 0)
+            font_size = float(style.get("font_size", 11))
+            lines = str(ann["text"]).splitlines() or [""]
+            line_height = font_size * 1.2
+            first_y = y - (len(lines) - 1) * line_height / 2
+            for index, line in enumerate(lines):
+                cmd.text(
+                    x + float(ann.get("dx", 0.0)),
+                    first_y + index * line_height + float(ann.get("dy", 0.0)),
+                    anchor,
+                    font_size,
+                    _rgba(style.get("color"), _TEXT),
+                    line,
+                )
 
 
 def _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot):
@@ -351,11 +675,57 @@ def _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot):
 
 
 def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
+    ch = t.get("color") or {}
+    size_ch = t.get("size") or {}
+    op = float(style.get("opacity", 0.8))
+    sw = float(style.get("stroke_width", 0.0))
+    sym = _SYMBOLS.get(style.get("symbol", "circle"), 0)
+    stroke = _rgba(style.get("stroke"), color) if sw > 0 else (0, 0, 0, 0)
+
+    color_mode = ch.get("mode")
+    size_mode = size_ch.get("mode")
+    if (
+        sx.affine
+        and sy.affine
+        and (color_mode in {"continuous", "categorical"} or size_mode == "continuous")
+    ):
+        alpha = max(0, min(255, int(round(op * 255))))
+        rgb = _parse_color(_css(ch.get("color"), color))[:3]
+        cmd.affine_channel_points(
+            cols[t["x"]],
+            cols[t["y"]],
+            sx,
+            sy,
+            ch,
+            size_ch,
+            (rgb[0], rgb[1], rgb[2], alpha),
+            sym,
+            sw,
+            stroke,
+            cols,
+        )
+        return
+
+    # The dominant static-scatter case needs neither materialized f64 decoded
+    # columns nor projected/radius/RGBA arrays.  Rust borrows the two payload
+    # spans and applies the same affine math while painting.  Keep the existing
+    # command as the full-fidelity fallback for log axes and channel styling.
+    if (
+        sx.affine
+        and sy.affine
+        and ch.get("mode") not in {"continuous", "categorical"}
+        and size_ch.get("mode") != "continuous"
+    ):
+        alpha = max(0, min(255, int(round(op * 255))))
+        rgb = _parse_color(_css(ch.get("color"), color))[:3]
+        fill = (rgb[0], rgb[1], rgb[2], alpha)
+        radius = float(size_ch.get("size", 4.0)) / 2
+        cmd.affine_points(cols[t["x"]], cols[t["y"]], sx, sy, radius, fill, sym, sw, stroke)
+        return
+
     xv, yv = _column(blob, cols[t["x"]]), _column(blob, cols[t["y"]])
     px, py = sx(xv), sy(yv)
     n = len(xv)
-    ch = t.get("color") or {}
-    op = float(style.get("opacity", 0.8))
     fills = np.empty((n, 4), dtype=np.uint8)
     fills[:, 3] = max(0, min(255, int(round(op * 255))))
     if ch.get("mode") == "continuous":
@@ -369,7 +739,6 @@ def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
     else:
         fills[:, :3] = _parse_color(_css(ch.get("color"), color))[:3]
 
-    size_ch = t.get("size") or {}
     if size_ch.get("mode") == "continuous":
         sv = _column(blob, cols[size_ch["buf"]])
         r0, r1 = size_ch.get("range_px", [2, 18])
@@ -377,9 +746,6 @@ def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
     else:
         radii = np.full(n, float(size_ch.get("size", 4.0)) / 2)
 
-    sw = float(style.get("stroke_width", 0.0))
-    sym = _SYMBOLS.get(style.get("symbol", "circle"), 0)
-    stroke = _rgba(style.get("stroke"), color) if sw > 0 else (0, 0, 0, 0)
     cmd.points(px, py, radii, fills, sym, sw, stroke)
 
 
@@ -425,15 +791,17 @@ def _emit_triangle_mesh(cmd, t, blob, cols, sx, sy, style, color):
     x0, y0, x1, y1, x2, y2 = vertices
     sw = float(style.get("stroke_width", 0.0))
     stroke = _rgba(style.get("stroke"), color) if sw > 0 else (0, 0, 0, 0)
-    for i in range(n):
-        triangle = [
-            (float(sx(x0[i])), float(sy(y0[i]))),
-            (float(sx(x1[i])), float(sy(y1[i]))),
-            (float(sx(x2[i])), float(sy(y2[i]))),
-        ]
-        cmd.fill(triangle, tuple(int(value) for value in fills[i]))
-        if sw > 0:
-            cmd.stroke(triangle, sw, stroke, closed=True)
+    cmd.triangles(
+        sx(x0[:n]),
+        sy(y0[:n]),
+        sx(x1[:n]),
+        sy(y1[:n]),
+        sx(x2[:n]),
+        sy(y2[:n]),
+        fills,
+        sw,
+        stroke,
+    )
 
 
 def _bar_geom(cmd, x, y, w, h, style, fill_cmd, stroke_c, sw, tip_top):
@@ -487,6 +855,21 @@ def _emit_bars(cmd, t, blob, cols, sx, sy, style, color, plot):
     )
     horizontal = b.get("orientation") == "horizontal"
     half = float(b["width"]) / 2
+    r_tip, r_base = _corner_radii(style)
+    sw = float(style.get("stroke_width", 0.0))
+    if not isinstance(style.get("fill"), dict) and not (r_tip or r_base or sw > 0):
+        if horizontal:
+            xa, xb = sx(np.minimum(v0, v1)), sx(np.maximum(v0, v1))
+            ya, yb = sy(pos + half), sy(pos - half)
+        else:
+            xa, xb = sx(pos - half), sx(pos + half)
+            ya, yb = sy(np.maximum(v0, v1)), sy(np.minimum(v0, v1))
+        x0, x1 = np.minimum(xa, xb), np.maximum(xa, xb)
+        y0, y1 = np.minimum(ya, yb), np.maximum(ya, yb)
+        fill = _rgba(style.get("color"), color, float(style.get("opacity", 0.85)))
+        fills = np.tile(np.asarray(fill, dtype=np.uint8), (len(pos), 1))
+        cmd.rects(x0, y0, x1, y1, fills)
+        return
     fill_cmd, stroke_c, sw = _fill_maker(cmd, style, color, plot)
     for i in range(len(pos)):
         if horizontal:
@@ -504,6 +887,21 @@ def _emit_bars(cmd, t, blob, cols, sx, sy, style, color, plot):
 def _emit_rects(cmd, t, blob, cols, sx, sy, style, color, plot):
     x0v, x1v = _column(blob, cols[t["x0"]]), _column(blob, cols[t["x1"]])
     y0v, y1v = _column(blob, cols[t["y0"]]), _column(blob, cols[t["y1"]])
+    r_tip, r_base = _corner_radii(style)
+    sw = float(style.get("stroke_width", 0.0))
+    if not isinstance(style.get("fill"), dict) and not (r_tip or r_base or sw > 0):
+        xa, xb = sx(x0v), sx(x1v)
+        ya, yb = sy(y0v), sy(y1v)
+        fill = _rgba(style.get("color"), color, float(style.get("opacity", 0.85)))
+        fills = np.tile(np.asarray(fill, dtype=np.uint8), (len(x0v), 1))
+        cmd.rects(
+            np.minimum(xa, xb),
+            np.minimum(ya, yb),
+            np.maximum(xa, xb),
+            np.maximum(ya, yb),
+            fills,
+        )
+        return
     fill_cmd, stroke_c, sw = _fill_maker(cmd, style, color, plot)
     for i in range(len(x0v)):
         xa_, xb = float(sx(x0v[i])), float(sx(x1v[i]))
@@ -516,17 +914,65 @@ def _emit_rects(cmd, t, blob, cols, sx, sy, style, color, plot):
 
 def _emit_grid(cmd, kind, g, blob, cols, sx, sy, style):
     if kind == "heatmap":
-        from . import kernels
-
         w, h = int(g["w"]), int(g["h"])
-        raw = _column(blob, cols[g["buf"]])
+        if "rgba_bufs" in g:
+            channels = [_column(blob, cols[index]) for index in g["rgba_bufs"]]
+            rgba = np.clip(np.column_stack(channels) * 255.0, 0, 255).astype(np.uint8)
+            rgba[:, 3] = (rgba[:, 3].astype(np.float64) * float(style.get("opacity", 1.0))).astype(
+                np.uint8
+            )
+            rgba = rgba.reshape(h, w, 4)[::-1]
+            xr, yr = g["x_range"], g["y_range"]
+            dx, dy, dw, dh = _scene.grid_dest_rect(xr, yr, sx, sy)
+            cmd.image(dx, dy, dw, dh, w, h, rgba.tobytes(), nearest=True)
+            return
+        meta = cols[g["buf"]]
         stops = np.asarray(
             COLORMAP_STOPS.get(g.get("colormap", "viridis")) or COLORMAP_STOPS["viridis"],
             dtype=np.uint8,
         )
         alpha = int(255 * float(style.get("opacity", 0.95)))
-        rgba = kernels.heatmap_rgba(raw, w, h, stops, alpha)
         xr, yr = g["x_range"], g["y_range"]
+        dx, dy, dw, dh = _scene.grid_dest_rect(xr, yr, sx, sy)
+        canonical = g.get("enc") == "canonical-f64"
+        cmd.heatmap_image(
+            dx,
+            dy,
+            dw,
+            dh,
+            w,
+            h,
+            meta["byte_offset"],
+            stops,
+            alpha,
+            span=int(meta.get("span", 0)),
+            canonical=canonical,
+            domain=tuple(g["domain"]) if canonical else (0.0, 1.0),
+        )
+        return
+    elif g.get("enc") == "log-u8":
+        w, h = int(g["w"]), int(g["h"])
+        meta = cols[g["buf"]]
+        stops = np.asarray(
+            COLORMAP_STOPS.get(g.get("colormap", "viridis")) or COLORMAP_STOPS["viridis"],
+            dtype=np.uint8,
+        )
+        xr, yr = g["x_range"], g["y_range"]
+        dx, dy, dw, dh = _scene.grid_dest_rect(xr, yr, sx, sy)
+        cmd.density_image(
+            dx,
+            dy,
+            dw,
+            dh,
+            w,
+            h,
+            meta["byte_offset"],
+            float(g.get("max") or 0.0),
+            stops,
+            float(style.get("opacity", 0.85)),
+            span=int(meta.get("span", 0)),
+        )
+        return
     else:
         rgba, xr, yr = _scene.grid_rgba(kind, g, blob, cols, style)
         h, w = rgba.shape[0], rgba.shape[1]
@@ -534,12 +980,15 @@ def _emit_grid(cmd, kind, g, blob, cols, sx, sy, style):
     cmd.image(dx, dy, dw, dh, w, h, rgba.tobytes(), nearest=kind == "heatmap")
 
 
-def _emit_legend(cmd, named, plot):
+def _emit_legend(cmd, named, plot, options):
     pad, swatch, line_h = 8, 10, 16
-    box_w = max(len(str(t["name"])) for t in named) * 6.2 + swatch + 3 * pad
-    box_h = len(named) * line_h + pad
-    x = plot["x"] + plot["w"] - box_w - 6
-    y = plot["y"] + 6
+    ncols = min(len(named), max(1, int(options.get("ncols", 1))))
+    nrows = (len(named) + ncols - 1) // ncols
+    cell_w = max(len(str(t["name"])) for t in named) * 6.2 + swatch + 2 * pad
+    box_w, box_h = ncols * cell_w + pad, nrows * line_h + pad
+    loc = options.get("loc") or "upper right"
+    x = plot["x"] + 6 if "left" in loc else plot["x"] + plot["w"] - box_w - 6
+    y = plot["y"] + plot["h"] - box_h - 6 if "lower" in loc else plot["y"] + 6
     cmd.fill(_rect_pts(x, y, x + box_w, y + box_h), (128, 128, 128, 20))
     for i, t in enumerate(named):
         style = t.get("style") or {}
@@ -547,9 +996,64 @@ def _emit_legend(cmd, named, plot):
             style.get("color") or (t.get("color") or {}).get("color"),
             DEFAULT_PALETTE[i % len(DEFAULT_PALETTE)],
         )
-        ry = y + pad / 2 + i * line_h
-        cmd.fill(_rect_pts(x + pad, ry + 2, x + pad + swatch, ry + 2 + swatch), c)
-        cmd.text(x + pad + swatch + 5, ry + swatch, 0, 11, _parse_color(_TEXT), str(t["name"]))
+        col, row = i % ncols, i // ncols
+        rx, ry = x + col * cell_w, y + pad / 2 + row * line_h
+        cmd.fill(_rect_pts(rx + pad, ry + 2, rx + pad + swatch, ry + 2 + swatch), c)
+        cmd.text(rx + pad + swatch + 5, ry + swatch, 0, 11, _parse_color(_TEXT), str(t["name"]))
+
+
+def _emit_colorbar(cmd, options, plot):
+    from ._svg import _lut
+
+    orientation = options.get("orientation", "vertical")
+    if orientation == "horizontal":
+        x, y, width, height = plot["x"], plot["y"] + plot["h"] + 10, plot["w"], 8
+    else:
+        x, y, width, height = plot["x"] + plot["w"] + 10, plot["y"], 8, plot["h"]
+    colors = _lut(options.get("colormap", "viridis"), np.linspace(0.0, 1.0, 64))
+    for index, color in enumerate(colors):
+        if orientation == "horizontal":
+            x0, x1 = x + width * index / 64, x + width * (index + 1) / 64
+            cmd.fill(_rect_pts(x0, y, x1 + 0.5, y + height), (*map(int, color), 255))
+        else:
+            y0 = y + height * (63 - index) / 64
+            y1 = y + height * (64 - index) / 64
+            cmd.fill(_rect_pts(x, y0, x + width, y1 + 0.5), (*map(int, color), 255))
+    domain = options.get("domain", [0.0, 1.0])
+    if orientation == "horizontal":
+        cmd.text(x, y + height + 13, 0, 10, _parse_color(_TEXT), f"{domain[0]:g}")
+        cmd.text(x + width, y + height + 13, 2, 10, _parse_color(_TEXT), f"{domain[1]:g}")
+        if options.get("label"):
+            cmd.text(
+                x + width / 2,
+                y + height + 26,
+                1,
+                10,
+                _parse_color(_TEXT),
+                str(options["label"]),
+            )
+    else:
+        for index in range(5):
+            value = domain[0] + (domain[1] - domain[0]) * index / 4
+            cmd.text(
+                x + width + 4,
+                y + height * (1 - index / 4) + 4,
+                0,
+                10,
+                _parse_color(_TEXT),
+                f"{value:g}",
+            )
+        # The native text primitive does not rotate; a compact label above the
+        # bar remains legible and, crucially, stays inside the export canvas.
+        if options.get("label"):
+            cmd.text(
+                x,
+                y - 5,
+                0,
+                10,
+                _parse_color(_TEXT),
+                str(options["label"]),
+            )
 
 
 def to_png(
@@ -567,12 +1071,12 @@ def to_png(
         if width is not None
         else (fig.width if isinstance(fig.width, (int, float)) else 900)
     )
-    spec, blob = fig.build_payload(px_width=max(256, int(eff_w)))
+    spec, blob, borrowed = fig._build_raster_payload(px_width=max(256, int(eff_w)))
     if width is not None:
         spec["width"] = int(width)
     if height is not None:
         spec["height"] = int(height)
-    rendered = render_raster(spec, blob, float(scale), fast_png=fast)
+    rendered = render_raster(spec, blob, float(scale), fast_png=fast, borrowed=borrowed)
     data = rendered if isinstance(rendered, bytes) else _png.encode(rendered)
     if path is not None:
         with open(path, "wb") as f:

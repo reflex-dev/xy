@@ -29,6 +29,7 @@ class Trace:
     # Grid-like marks (heatmap/image) ship one scalar grid plus metadata instead
     # of four rectangle columns per cell.
     grid: Optional[Column] = None
+    rgba_grid: Optional[tuple[Column, Column, Column, Column]] = None
     grid_shape: Optional[tuple[int, int]] = None  # (rows, columns)
     count: Optional[int] = None
     # Rect-like marks ship four geometry columns. `x`/`y` remain conventional

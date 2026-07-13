@@ -244,9 +244,41 @@ def test_zone_maps(benchmark, data):
     benchmark(k.zone_maps, x)
 
 
+def test_zone_maps_pair(benchmark, data):
+    """Paired canonical coordinate statistics used by every new xy trace."""
+    x, y = data
+    x_maps, y_maps = benchmark(k.zone_maps_pair, x, y)
+    assert int(x_maps[2].sum()) == len(x)
+    assert int(y_maps[2].sum()) == len(y)
+
+
 def test_encode_f32(benchmark, data):
     _, y = data
     benchmark(k.encode_f32, y, 0.0, 1.0)
+
+
+def test_factorize_fixed_categorical(benchmark):
+    """Production compact factorizer emits codes, uniques, and counts."""
+    labels = np.asarray([f"group-{i:02d}" for i in range(24)])
+    values = np.resize(labels, N)
+    result = benchmark(k.factorize_fixed_u8_counts, values)
+    assert result is not None
+    codes, unique, counts = result
+    assert len(codes) == N and len(unique) == len(labels)
+    np.testing.assert_array_equal(codes[:48], np.tile(np.arange(24, dtype=np.uint8), 2))
+    assert int(counts.sum()) == N
+
+
+def test_factorize_unicode1_categorical(benchmark):
+    """Direct codepoint table for the common one-character label path."""
+    labels = np.asarray(list("abcdefghijklmnopqrstuvwx"))
+    values = np.resize(labels, N)
+    result = benchmark(k.factorize_unicode1_u8_counts, values)
+    assert result is not None
+    codes, unique, counts = result
+    assert len(codes) == N and len(unique) == len(labels)
+    np.testing.assert_array_equal(codes[:48], np.tile(np.arange(24, dtype=np.uint8), 2))
+    assert int(counts.sum()) == N
 
 
 def test_m4_indices_full(benchmark, data):
@@ -274,6 +306,54 @@ def test_bin_2d_indices(benchmark, data):
     grid, indices = benchmark(k.bin_2d_indices, x, y, 0.0, float(N), -6.0, 6.0, GRID_W, GRID_H)
     assert grid.size == GRID_W * GRID_H
     assert len(indices) == N
+
+
+def test_bin_2d_sample_implicit_range(benchmark, data):
+    """Full-view density grid plus deterministic overlay in one traversal."""
+    x, y = data
+    threshold = int((8192 / N) * np.iinfo(np.uint64).max)
+    grid, selected = benchmark(
+        k.bin_2d_sample_range,
+        x,
+        y,
+        0.0,
+        float(N),
+        -6.0,
+        6.0,
+        GRID_W,
+        GRID_H,
+        0,
+        threshold,
+        16_384,
+    )
+    assert grid.size == GRID_W * GRID_H
+    assert 7_000 < len(selected) < 10_000
+
+
+def test_bin_2d_counted_stratified_sample(benchmark, data):
+    """Full-view density grid plus exact compact categorical overlay."""
+    x, y = data
+    groups = (np.arange(N, dtype=np.uint32) % 24).astype(np.uint8)
+    counts = np.bincount(groups, minlength=24).astype(np.uint64)
+    grid, selected = benchmark(
+        k.bin_2d_stratified_sample_range_u8_counted,
+        x,
+        y,
+        groups,
+        counts,
+        0.0,
+        float(N),
+        -6.0,
+        6.0,
+        GRID_W,
+        GRID_H,
+        0,
+        8192 / N,
+        1,
+        100_000,
+    )
+    assert grid.size == GRID_W * GRID_H
+    assert 30_000 < len(selected) < 50_000
 
 
 def test_stacked_bounds_weighted_wiggle(benchmark, compatibility_kernel_data):
@@ -415,12 +495,48 @@ def test_min_max(benchmark, data):
     assert benchmark(k.min_max, y) is not None
 
 
+def test_valid_mesh_rows_all_finite(benchmark, data):
+    """Allocation-free validity query across six triangle coordinate streams."""
+    x, y = data
+    columns = (x, y, x + 0.5, y + 0.5, x - 0.5, y - 0.5)
+    assert benchmark(k.valid_indices_f64, columns) is None
+
+
 def test_sample_mask(benchmark, data):
     """Deterministic density-overlay sampling over stable row ids."""
     x, _ = data
     row_ids = np.arange(len(x), dtype=np.uint64)
     mask = benchmark(k.sample_mask, row_ids, 0, np.iinfo(np.uint64).max // 100)
     assert mask.dtype == np.bool_
+
+
+def test_sample_implicit_range(benchmark):
+    """Full-domain overlay sampling without an N-sized id array or mask."""
+    size = 10_000_000
+    threshold = int((8192 / size) * np.iinfo(np.uint64).max)
+    selected = benchmark(k.sample_range_indices, size, 0, threshold, 16_384)
+    assert selected.dtype == np.uint32
+    assert 7_000 < len(selected) < 10_000
+
+
+def test_density_log_u8(benchmark):
+    """Final density-grid wire encoding into the client's R8 precision."""
+    rng = np.random.default_rng(19)
+    grid = rng.integers(0, 10_000, size=(GRID_H, GRID_W)).astype(np.float32)
+    encoded, maximum = benchmark(k.density_log_u8, grid)
+    assert encoded.dtype == np.uint8 and encoded.shape == grid.shape
+    assert maximum == float(grid.max())
+
+
+def test_density_rgba(benchmark):
+    """Static density texture decode + colormap + alpha + row flip."""
+    encoded = np.arange(256, dtype=np.uint8).repeat((GRID_W * GRID_H) // 256)
+    stops = np.array(
+        [[68, 1, 84], [59, 82, 139], [33, 145, 140], [94, 201, 98], [253, 231, 37]],
+        dtype=np.uint8,
+    )
+    rgba = benchmark(k.density_rgba, encoded, GRID_W, GRID_H, 10_000.0, stops, 0.85)
+    assert rgba.shape == (GRID_H, GRID_W, 4)
 
 
 def test_pyramid_build(benchmark, pyramid_data):
@@ -598,8 +714,14 @@ def test_first_payload_scatter_categorical_color(benchmark, medium_data):
         return fig.build_payload(N_BUCKETS)
 
     spec, blob = benchmark(build)
-    assert spec["traces"][0]["n_points"] == len(x)
-    assert blob
+    trace = spec["traces"][0]
+    color = trace["color"]
+    color_meta = spec["columns"][color["buf"]]
+    assert trace["n_points"] == len(x)
+    assert color["dtype"] == "u8" and color_meta["dtype"] == "u8"
+    # Two f32 geometry columns plus one byte code: the compact categorical
+    # transport is a hard benchmark invariant, not merely an implementation detail.
+    assert len(blob) == 9 * len(x)
 
 
 def test_first_payload_scatter_continuous_channels(benchmark, medium_data):
@@ -785,6 +907,49 @@ def test_native_png_export_scatter(benchmark, export_data):
     assert png.startswith(b"\x89PNG")
 
 
+def test_native_png_export_categorical_scatter(benchmark, export_data):
+    """Borrowed u8 palette codes stay on the affine Rust export path."""
+    x, y = export_data
+    categories = np.asarray([f"group-{i % 24:02d}" for i in range(len(x))])
+    fig = fc.chart(fc.scatter(x=x, y=y, color=categories)).figure()
+    png = benchmark(fig.to_png, engine="native", scale=1.0)
+    assert png.startswith(b"\x89PNG")
+
+
+def test_native_png_export_stroked_triangle_mesh(benchmark, compatibility_kernel_data):
+    """Stroked scientific meshes stay in one batched Rust display command."""
+    mesh = k.quad_mesh_triangles(
+        compatibility_kernel_data["mesh_x"],
+        compatibility_kernel_data["mesh_y"],
+        compatibility_kernel_data["mesh_z"],
+    )
+    fig = fc.chart(
+        fc.triangle_mesh(
+            x0=mesh[0],
+            y0=mesh[1],
+            x1=mesh[2],
+            y1=mesh[3],
+            x2=mesh[4],
+            y2=mesh[5],
+            color=mesh[6],
+            stroke="#111827",
+            stroke_width=0.5,
+        )
+    ).figure()
+    png = benchmark(fig.to_png, engine="native", scale=1.0)
+    assert png.startswith(b"\x89PNG")
+
+
+def test_native_png_export_heatmap(benchmark, core_2d_data):
+    """Native heatmap export must stay screen-bounded after payload preparation."""
+    z = core_2d_data["heatmap_z"]
+    x = core_2d_data["heatmap_x"]
+    y = core_2d_data["heatmap_y"]
+    fig = fc.chart(fc.heatmap(z, x=x, y=y)).figure()
+    png = benchmark(fig.to_png, engine="native", scale=1.0)
+    assert png.startswith(b"\x89PNG")
+
+
 def test_svg_export_line(benchmark, export_data):
     """Static SVG export shares decimation but exercises XML serialization."""
     x, y = export_data
@@ -820,19 +985,23 @@ def test_stream_line_append(benchmark, append_data):
     assert buffers
 
 
-def test_stream_density_append_then_rebuild(benchmark, pyramid_data):
-    """Append invalidation plus warm pyramid rebuild for dense scatter."""
+def test_stream_density_append_incremental_pyramid(benchmark, pyramid_data):
+    """Stable-domain density append with an in-place native pyramid update."""
     x, y = pyramid_data
     fig = fc.chart(fc.scatter(x=x, y=y, density=True)).figure()
     fig.build_payload(N_BUCKETS)
+    warm, _ = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
+    assert str(warm["traces"][0]["binning"]).startswith("pyramid-L")
+    handle = fig.traces[0]._pyr_handle
     tail_x = np.full(APPEND_BATCH, 50.0, dtype=np.float64)
     tail_y = np.linspace(45.0, 55.0, APPEND_BATCH, dtype=np.float64)
 
-    def append_and_rebuild():
+    def append_incremental():
         fig.append(0, tail_x, tail_y)
+        assert fig.traces[0]._pyr_handle == handle
         return fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
 
-    update, buffers = benchmark(append_and_rebuild)
+    update, buffers = benchmark(append_incremental)
     assert update["traces"][0]["mode"] == "density"
     assert buffers
 
@@ -912,13 +1081,32 @@ def test_adaptive_drilldown_cycle(benchmark, drilldown_figure):
 
 
 def test_stratified_sample_mask(benchmark):
-    """ABI-v10 category-stratified sampler used by density overlays."""
+    """Materialized-id category-stratified sampler used by viewport subsets."""
     n = 1_000_000
     ids = np.arange(n, dtype=np.uint64)
     groups = (np.arange(n, dtype=np.uint32) % 12).astype(np.uint32, copy=False)
     mask = benchmark(k.stratified_sample_mask, ids, groups, 12, 17, 1.0 / 256.0, 2)
     assert mask.dtype == np.bool_
     assert mask.shape == (n,)
+
+
+def test_stratified_sample_range_u8(benchmark):
+    """Allocation-bounded full-domain categorical density sampler."""
+    n = 1_000_000
+    groups = (np.arange(n, dtype=np.uint32) % 12).astype(np.uint8)
+    counts = np.bincount(groups, minlength=12).astype(np.uint64)
+    rows = benchmark(
+        k.stratified_sample_range_u8,
+        groups,
+        12,
+        17,
+        8192.0 / n,
+        1,
+        100_000,
+        counts,
+    )
+    assert rows.dtype == np.uint32
+    assert 0 < len(rows) < 100_000
 
 
 @pytest.mark.parametrize(

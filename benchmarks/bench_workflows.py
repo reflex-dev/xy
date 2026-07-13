@@ -226,8 +226,11 @@ def _streaming_rows(base_n: int, reps: int) -> list[dict[str, Any]]:
         assert _ensure_pyramid(fig.traces[0]) is not None
         return fig
 
-    def append_and_rebuild(fig: Figure) -> tuple[dict[str, Any], list[bytes]]:
+    def append_and_update(fig: Figure) -> tuple[dict[str, Any], list[bytes]]:
+        old_handle = fig.traces[0]._pyr_handle
         fig.append(0, append_x, append_y)
+        if fig.traces[0]._pyr_handle != old_handle:
+            raise AssertionError("stable-domain append replaced the native pyramid")
         update, buffers = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, 512, 384)
         trace = update["traces"][0]
         if not str(trace.get("binning", "")).startswith("pyramid-L"):
@@ -240,14 +243,14 @@ def _streaming_rows(base_n: int, reps: int) -> list[dict[str, Any]]:
 
     rows.append(
         _measure(
-            scenario="stream_density_append_then_pyramid_rebuild",
+            scenario="stream_density_append_1k_incremental_pyramid",
             family="streaming",
             n=pyramid_n,
             setup=density_setup,
-            operation=append_and_rebuild,
+            operation=append_and_update,
             reps=max(1, min(reps, 3)),
             category_ids=("streaming_updates", "huge_scatter_overview"),
-            scope="append-invalidate-and-rebuild-pyramid",
+            scope="append-incremental-pyramid-and-refresh",
             oracle=lambda _fig, result: _require_oracle(
                 result[0]["traces"][0]["mode"] == "density",
                 "density append did not remain density",

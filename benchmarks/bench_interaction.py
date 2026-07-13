@@ -734,6 +734,21 @@ def run_worker_probe(*, chromium: str | None = None) -> dict[str, Any]:
     exe = find_chromium(chromium)
     if not exe:
         return {"status": "skipped(no chromium)"}
+    try:
+        dependency = subprocess.run(
+            ["node", "-e", "require.resolve('playwright')"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except FileNotFoundError:
+        return {"status": "failed(Node.js is required; run make setup-browser)"}
+    except subprocess.TimeoutExpired:
+        return {"status": "failed(Playwright preflight timed out; run make setup-browser)"}
+    if dependency.returncode != 0:
+        return {
+            "status": "failed(Playwright is not installed; run make setup-browser or npm install)"
+        }
     node_script = r"""
 const { chromium } = require("playwright");
 (async () => {
@@ -775,7 +790,7 @@ const { chromium } = require("playwright");
                 timeout=WORKER_PROBE_TIMEOUT_S,
             )
         except FileNotFoundError:
-            return {"status": "skipped(no node)"}
+            return {"status": "failed(Node.js is required; run make setup-browser)"}
         except subprocess.TimeoutExpired:
             return {"status": "failed(timeout)"}
     if completed.returncode != 0:

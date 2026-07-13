@@ -100,7 +100,7 @@ not fall out of sight.
 | 4 | Area | filled line, stacked area, streamgraph, ridgeline-lite area bands | Implemented core | `fc.area(...)` ships a filled area with scalar/array baseline and optional line overlay. Follow-ups: stacked area helpers and streamgraph offsets. |
 | 5 | Histogram | count, probability, density, cumulative histogram | Implemented core | Python-side binning plus the shared rectangle renderer; `cumulative=True` (count CDF and, with `density=True`, empirical CDF) is implemented. Follow-up: viewport-aware re-binning for huge streamed distributions. |
 | 6 | Pie / donut | pie, donut, nested donut, variable-radius pie | Planned compatibility | Extremely common in dashboards even though performance differentiation is low. |
-| 7 | Heatmap / image / matrix | heatmap, image, annotated matrix, correlation matrix, cohort heatmap | Implemented core | `fc.heatmap(...)` renders matrix cells through a compact grid texture with continuous colormaps and categorical/numeric axes. Follow-ups: annotation and tiled huge-image paths. |
+| 7 | Heatmap / image / matrix | heatmap, image, annotated matrix, correlation matrix, cohort heatmap | Implemented core | `fc.heatmap(...)` renders matrix cells through a compact grid texture with continuous colormaps and categorical/numeric axes. Native static export borrows canonical f64 spans and normalizes only sampled pixels in Rust, verified through 4.29B cells without a derived grid or RGBA expansion. Follow-ups: annotation and tiled huge-image browser transport. |
 | 8 | Box plot | box, grouped box, notched box, outlier points | Implemented core | Tukey quartiles, whiskers, median, deterministic outliers, numeric or categorical groups. |
 | 9 | Candlestick / OHLC | candlestick, OHLC bars, volume overlay, range selector | Prototyped (PR closed unmerged) | `fc.candlestick(...)`/`fc.ohlc(...)` + `fc.candlestick_chart(...)` on the closed `codex/finance-charting-surface` exploration branch: OHLC decimation, shared-y f32 frame, time axes, hover, and a volume pane. Critical finance surface; inherits LOD and time-axis work from core primitives. |
 | 10 | Error and interval charts | error bars, error bands, confidence intervals, line range, bar range, whisker, rule | Implemented core | Instanced segment error bars and M4-reduced filled error bands. |
@@ -267,8 +267,10 @@ and drill updates emit the same wire shape.
 
 - *Hybrid overlay* — exact-scan density views now render a density background
   plus a deterministic stratified sample of real points, with an explicit
-  "sampled n of N" badge. Remaining work: make pyramid-served density views
-  produce tile-aware sampled overlays without rescanning raw rows.
+  "sampled n of N" badge. Pyramid-served views retain and viewport-clip that
+  deterministic overlay instead of dropping it on the first interaction.
+  Remaining work: make pyramid-served density views produce tile-aware sampled
+  overlays without rescanning raw rows.
 - *Standalone (kernel-less) refinement* — **shipped.** A `to_html` export used
   to stretch the overview texture on zoom; it now re-bins the retained sample
   in a bundled Web Worker (off the main thread, `worker-src blob:` CSP),
@@ -350,33 +352,26 @@ interaction-latency comparison, not assumed.
 
 ## Recommended Sequence
 
-The first breadth milestone — **histogram, bar/column, area, heatmap** — is
-**done** (core primitives + styling). Candlestick/OHLC + finance overlays are
-**prototyped on the closed finance exploration PR** and need a fresh landing. That clears the rectangle-,
-polygon-, and grid-texture foundations, so the next block is statistical
-breadth on top of them, then the two "completeness" charts users ask for first.
+The first breadth milestone — **histogram, bar/column, area, heatmap** — and
+the first statistical block — **box, violin, ECDF, error bars/bands, hexbin,
+contour, steps/stairs/stems, and facets** — are done. The engine and packaging
+gates are ready for the first alpha; the next sequence is therefore product
+integration and compatibility depth, not re-implementing shipped primitives.
 
-1. **Box + violin** — the highest-value missing statistical charts.
-   - Compute quartiles/outliers (box) and a bounded KDE/density grid (violin)
-     from canonical f64 columns kernel-side; ship tiny geometry (a few verts
-     per group), not raw points.
-   - Grouped/categorical axis reuse; exact hover summary (q1/median/q3/whiskers).
-
-2. **Error bars / bands** — needed for science, forecasting, experiment dashboards.
-   - Error bars as instanced line segments; bands as a filled area around a line
-     (reuse the area polygon path). Pairs naturally with a confidence-interval
-     helper on line/scatter.
-
-3. **2D density / hexbin** — makes dense scatter honest as a *named* chart.
-   - Generalize the existing Tier-2 density path: expose counts, log color
-     scaling, and hover readout as `fc.hexbin(...)` / `density_heatmap`.
-
-4. **Pie / donut** — low performance differentiation but a top dashboard ask;
-   implement for completeness (arc geometry + label placement).
-
-5. **Re-land the finance surface** (fresh PR from the closed exploration
-   branch, rebased onto current primitives), then extend rank-35 breadth
-   (depth chart, Heikin-Ashi, Renko) on the `FinanceLayer` system.
+1. **Ship and stabilize the `0.1.x` alpha.** Keep correctness, interaction,
+   packaging, and benchmark gates green while real users exercise the public
+   composition and `xy.pyplot` surfaces.
+2. **Reflex-first reactive API.** Bind charts to Reflex state/data keys through
+   the transport-neutral channel dispatcher without manual payload rebuilds or
+   a hard Reflex dependency in core `xy`.
+3. **Statistical compatibility depth.** Add strip/swarm/boxen/rug,
+   regression/diagnostic helpers, richer density hover/readout, and
+   scatter-matrix/joint-plot composition on the shipped primitives.
+4. **Pie / donut.** Low performance differentiation but a top dashboard ask;
+   implement for completeness with bounded arc geometry and label placement.
+5. **Re-land the finance surface.** Open a fresh PR from the closed exploration
+   branch, rebased onto current composition/LOD primitives, then extend the
+   `FinanceLayer` system with depth charts, Heikin-Ashi, and Renko.
 
 Parallel, non-chart-type tracks:
 
@@ -384,11 +379,11 @@ Parallel, non-chart-type tracks:
   `Chart.to_png(engine="native")`, now the default, paints the decimated
   payload with an AA rasterizer in the Rust core (introduced in ABI v8,
   `fc_rasterize`) — no browser, ~50× faster than the Chromium screenshot,
-  indexed-palette PNGs, and a baked bitmap font for text. `engine="chromium"`
-  stays for a pixel-exact WebGL screenshot.
-- **Reflex-first reactive API**: the one deliberately-deferred product
-  requirement — a reactive/data-key-driven surface so charts bind to Reflex
-  state without manual payload rebuilds. Now the main remaining non-breadth track.
+  fast truecolor PNGs, and a baked bitmap font for text. `optimize=True`
+  retains the slower indexed-palette path for smaller files;
+  `engine="chromium"` stays for a pixel-exact WebGL screenshot.
+- **Reflex-first reactive API** — now the primary post-alpha product track, as
+  described in step 2 above.
 
 ## Near-Term API Sketch
 
@@ -400,13 +395,13 @@ fc.histogram_chart(fc.hist(values, bins=512, density=False, cumulative=False))
 fc.bar_chart(fc.bar(categories, values, mode="grouped", orientation="vertical"))
 fc.area_chart(fc.area(x, y, base=0.0))     # + fill=linear-gradient, curve, dash
 fc.heatmap_chart(fc.heatmap(z, x=None, y=None, colormap="viridis"))
-fc.candlestick_chart(fc.candlestick(x, open, high, low, close))  # prototyped (closed finance PR)
-
-# next
 fc.box_chart(fc.box(values, group=None))
 fc.violin_chart(fc.violin(values, group=None, bandwidth="auto"))
 fc.chart(fc.errorbar(x, y, yerr=..., xerr=...))
 fc.chart(fc.hexbin(x, y, gridsize=50, color_scale="log"))
+fc.candlestick_chart(fc.candlestick(x, open, high, low, close))  # prototyped (closed finance PR)
+
+# next
 fc.pie_chart(fc.pie(values, labels=..., donut=0.0))
 ```
 
@@ -415,10 +410,9 @@ New chart kinds land as composition marks plus a family container
 
 ## Decision Summary
 
-The rectangle / polygon / grid-texture foundations and full mark styling are
-in place, and finance (candlestick + indicators) is prototyped on a closed
-exploration PR awaiting a fresh landing. The next regular
-2D work is **statistical breadth** — box, violin, error bars/bands, hexbin —
-followed by **pie/donut** for dashboard completeness. In parallel, the **native
-PNG rasterizer** (perf) and the **Reflex-first reactive API** (the last deferred
-product requirement) are the two non-chart-type tracks.
+The rectangle/polygon/grid-texture foundations, statistical breadth block,
+full mark styling, and native PNG rasterizer are in place. The next product
+track is the **Reflex-first reactive API**, followed by statistical
+compatibility depth and **pie/donut** completeness. Finance (candlestick plus
+indicators) remains prototyped on a closed exploration branch awaiting a fresh
+landing.

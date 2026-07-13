@@ -101,8 +101,11 @@ Object.assign(ChartView.prototype, {
         ctx.save();
         ctx.globalAlpha = this._styleNumber(style, "opacity", 0.14);
         ctx.fillStyle = this._annotationPaint(style, [0.39, 0.45, 0.55, 1]);
-        if (vertical) ctx.fillRect(lo, p.y, hi - lo, p.h);
-        else ctx.fillRect(p.x, lo, p.w, hi - lo);
+        const start = Math.max(0, Math.min(1, Number(style.span_start) || 0));
+        const rawEnd = style.span_end === undefined ? 1 : Number(style.span_end);
+        const end = Math.max(start, Math.min(1, Number.isFinite(rawEnd) ? rawEnd : 1));
+        if (vertical) ctx.fillRect(lo, p.y + (1 - end) * p.h, hi - lo, (end - start) * p.h);
+        else ctx.fillRect(p.x + start * p.w, lo, (end - start) * p.w, hi - lo);
         ctx.restore();
       } else if (ann.kind === "rule") {
         const vertical = ann.axis === "x";
@@ -116,12 +119,15 @@ Object.assign(ChartView.prototype, {
         ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
         ctx.lineWidth = Math.max(0.5, this._styleNumber(style, "width", 1.5));
         ctx.beginPath();
+        const start = Math.max(0, Math.min(1, Number(style.span_start) || 0));
+        const rawEnd = style.span_end === undefined ? 1 : Number(style.span_end);
+        const end = Math.max(start, Math.min(1, Number.isFinite(rawEnd) ? rawEnd : 1));
         if (vertical) {
-          ctx.moveTo(crisp, p.y);
-          ctx.lineTo(crisp, p.y + p.h);
+          ctx.moveTo(crisp, p.y + (1 - end) * p.h);
+          ctx.lineTo(crisp, p.y + (1 - start) * p.h);
         } else {
-          ctx.moveTo(p.x, crisp);
-          ctx.lineTo(p.x + p.w, crisp);
+          ctx.moveTo(p.x + start * p.w, crisp);
+          ctx.lineTo(p.x + end * p.w, crisp);
         }
         ctx.stroke();
         ctx.restore();
@@ -165,8 +171,22 @@ Object.assign(ChartView.prototype, {
       let px = null;
       let py = null;
       if (ann.kind === "text") {
-        px = this._dataPxX(Number(ann.x));
-        py = this._dataPxY(Number(ann.y));
+        if (style.coordinate_space === "axes_fraction") {
+          px = p.x + Number(ann.x) * p.w;
+          py = p.y + (1 - Number(ann.y)) * p.h;
+        } else if (style.coordinate_space === "figure_fraction") {
+          px = Number(ann.x) * this.size.w;
+          py = (1 - Number(ann.y)) * this.size.h;
+        } else if (style.coordinate_space === "yaxis_transform") {
+          px = p.x + Number(ann.x) * p.w;
+          py = this._dataPxY(Number(ann.y));
+        } else if (style.coordinate_space === "xaxis_transform") {
+          px = this._dataPxX(Number(ann.x));
+          py = p.y + (1 - Number(ann.y)) * p.h;
+        } else {
+          px = this._dataPxX(Number(ann.x));
+          py = this._dataPxY(Number(ann.y));
+        }
       } else if (ann.kind === "rule") {
         if (ann.axis === "x") {
           px = this._dataPxX(Number(ann.value));
@@ -206,7 +226,8 @@ Object.assign(ChartView.prototype, {
       // color live in the defeatable :where() stylesheet so utility classes win.
       d.style.cssText =
         `position:absolute;left:${px + dx}px;top:${py + dy}px;` +
-        `transform:translate(${anchor},0);pointer-events:none;`;
+        `transform:translate(${anchor},0);pointer-events:none;` +
+        `white-space:pre-line;text-align:center;`;
       this._applySlot(d, "annotation_label");
       this._applyClass(d, ann.class_name);
       this._applyStyle(d, style);

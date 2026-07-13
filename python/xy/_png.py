@@ -30,7 +30,9 @@ _SIG = b"\x89PNG\r\n\x1a\n"
 _COMPRESSION_LEVEL = 6
 
 
-def png_truecolor(w: int, h: int, rgba: bytes) -> bytes:
+def png_truecolor(
+    w: int, h: int, rgba: bytes, *, compression_level: int = _COMPRESSION_LEVEL
+) -> bytes:
     """RGBA8 PNG (color type 6). `rgba` is row-major `w*h*4` bytes, top row first."""
     ihdr = struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)
     stride = w * 4
@@ -38,7 +40,7 @@ def png_truecolor(w: int, h: int, rgba: bytes) -> bytes:
     return (
         _SIG
         + _chunk(b"IHDR", ihdr)
-        + _chunk(b"IDAT", zlib.compress(raw, _COMPRESSION_LEVEL))
+        + _chunk(b"IDAT", zlib.compress(raw, compression_level))
         + _chunk(b"IEND", b"")
     )
 

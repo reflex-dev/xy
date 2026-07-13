@@ -20,6 +20,16 @@ in the README).
   to the internal engine object.
 
 ### Added
+- **Loopback transport measurement gates.** `benchmarks/bench_transport.py`
+  now drives the transport-neutral `channel.handle_message()` dispatcher
+  through real HTTP and compares the current base64-in-JSON prototype with an
+  explicitly benchmark-only aligned binary envelope. Reports separate raw and
+  gzip bytes, Python encode/allocation and loopback p50/p95, Chromium
+  decode-to-next-frame latency and heap delta, plus the current duplicate
+  widget-append and unaffected-trace retransmission costs. Deterministic byte
+  metrics are hard regression gates; the refreshed density baseline reflects
+  the current screen-bounded ~264–266 KB payload instead of the stale ~854 KB
+  values.
 - `xy.pyplot`: a matplotlib-flavored shim over the composition
   API (`import xy.pyplot as plt`). Corpus-defined compatibility —
   see `docs/matplotlib-compat.md`; fully contained in
@@ -45,6 +55,16 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **Payload copy elimination (native ABI v32).** Partial-view density sampling
+  now hashes native `u32` row selections without first widening the full array
+  to `u64`; exact-full index buffers avoid a trailing-slice copy; and payload
+  assembly retains encoded arrays until the final blob join instead of copying
+  every column through `tobytes()` first. Payload bytes and sampling decisions
+  remain parity-tested and unchanged.
+- **Stable hybrid density overlays.** Pyramid-served pan/zoom updates now keep
+  the retained deterministic point sample when they omit a replacement,
+  instead of making the first-paint overlay disappear on interaction. Exact
+  scans still replace it with their view-specific sample.
 - **View-change callback windows** now reject non-finite bounds and normalize
   inverted ranges before callbacks receive them, matching selection and
   autorange window semantics.

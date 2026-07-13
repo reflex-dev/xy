@@ -30,12 +30,15 @@ import json
 import math
 import re
 import shutil
+import statistics
+import string
 import subprocess
 import sys
 import tempfile
 import time
 from array import array
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "python" / "xy" / "static"
@@ -56,6 +59,7 @@ SCATTER_NATIVE_CATEGORY_IDS = (
     "huge_scatter_overview",
     "payload_export_size",
 )
+_PRODUCTION_WARMED = False
 
 
 def _ptr(a: array, ct):
@@ -79,6 +83,49 @@ def gen(n: int) -> tuple[array, array]:
     return x, y
 
 
+def gen_numpy_large(n: int) -> tuple[Any, Any]:
+    """Fast opt-in fixture for 100M–1B production stress runs.
+
+    The default harness stays stdlib-only. This mode deliberately requires
+    NumPy because spending minutes in a Python scalar fixture would obscure
+    the production payload measurement; fixture generation remains outside
+    the timed region either way.
+    """
+    import numpy as np
+
+    rng = np.random.default_rng(2026)
+    x = np.empty(n, dtype=np.float64)
+    y = np.empty(n, dtype=np.float64)
+    rng.standard_normal(out=x)
+    rng.standard_normal(out=y)
+    y *= 0.55
+    y += 0.65 * x
+    return x, y
+
+
+def gen_numpy_categories(n: int, groups: int) -> Any:
+    """Compact one-codepoint Unicode labels for categorical ceiling probes."""
+    import numpy as np
+
+    alphabet = string.ascii_letters + string.digits
+    if groups < 2 or groups > len(alphabet):
+        raise ValueError(f"categorical groups must be between 2 and {len(alphabet)}")
+    codes = np.arange(n, dtype=np.uint8)
+    codes %= groups
+    return np.asarray(list(alphabet[:groups]))[codes]
+
+
+def _warm_production_path(fc: Any, np: Any) -> None:
+    """Exclude lazy module import/bytecode work from large-row timing."""
+    global _PRODUCTION_WARMED
+    if _PRODUCTION_WARMED:
+        return
+    tiny = np.array([0.0, 1.0, 2.0, 3.0])
+    fig = fc.scatter_chart(fc.scatter(x=tiny, y=tiny), width=64, height=48).figure()
+    fig.build_payload()
+    _PRODUCTION_WARMED = True
+
+
 def bench_prep(lib, n: int, x: array, y: array) -> dict:
     D, F = ctypes.c_double, ctypes.c_float
     density = n > DENSITY_THRESHOLD
@@ -87,7 +134,11 @@ def bench_prep(lib, n: int, x: array, y: array) -> dict:
         if density
         else ("medium_direct_scatter", "payload_export_size")
     )
-    reps = 3 if n <= 2_000_000 else 1
+    # Reusing the already-generated source columns makes repeats cheap and
+    # exposes scheduler noise on the highly parallel 10M–100M path. Keep the
+    # high-memory >100M ceiling probes single-shot so their residency contract
+    # remains straightforward.
+    reps = 3 if n <= 100_000_000 else 1
     best = float("inf")
     if density:
         grid = array("f", bytes(4 * GRID_W * GRID_H))
@@ -120,18 +171,33 @@ def bench_prep(lib, n: int, x: array, y: array) -> dict:
     }
 
 
-def bench_production(n: int, x: array, y: array) -> dict:
+def bench_production(
+    n: int,
+    x: Any,
+    y: Any,
+    *,
+    color: Any | None = None,
+    native_png: bool = False,
+) -> dict:
     """Time the real Figure -> spec/blob path and assert its reduction contract."""
     import numpy as np
 
     import xy as fc
 
-    reps = 3 if n <= 2_000_000 else 1
+    _warm_production_path(fc, np)
+
+    # Source generation is outside this region, so repeat through 100M to
+    # suppress parallel-scheduler noise without multiplying ceiling-run RAM.
+    reps = 3 if n <= 100_000_000 else 1
     best = float("inf")
     result = None
     for _ in range(reps):
         t0 = time.perf_counter()
-        fig = fc.scatter_chart(fc.scatter(x=x, y=y), width=RENDER_W, height=RENDER_H).figure()
+        fig = fc.scatter_chart(
+            fc.scatter(x=x, y=y, color=color),
+            width=RENDER_W,
+            height=RENDER_H,
+        ).figure()
         spec, blob = fig.build_payload()
         best = min(best, time.perf_counter() - t0)
         result = (spec, blob)
@@ -143,18 +209,34 @@ def bench_production(n: int, x: array, y: array) -> dict:
     if tier == "density":
         density = trace["density"]
         column = spec["columns"][density["buf"]]
-        grid = np.frombuffer(
-            blob,
-            dtype=np.float32,
-            count=column["len"],
-            offset=column["byte_offset"],
-        )
-        actual = int(round(float(grid.sum())))
-        expected = int(trace["visible"])
-        if actual != expected:
-            raise AssertionError(f"density count oracle failed: {actual} != {expected}")
+        if density.get("enc") == "log-u8":
+            grid = np.frombuffer(
+                blob,
+                dtype=np.uint8,
+                count=column["len"],
+                offset=column["byte_offset"],
+            )
+            if int(trace["visible"]) > 0 and (not np.any(grid) or int(grid.max()) != 255):
+                raise AssertionError("quantized density grid lost occupancy or maximum")
+        else:
+            grid = np.frombuffer(
+                blob,
+                dtype=np.float32,
+                count=column["len"],
+                offset=column["byte_offset"],
+            )
+            actual = int(round(float(grid.sum())))
+            if actual != int(trace["visible"]):
+                raise AssertionError(f"density count oracle failed: {actual} != {trace['visible']}")
+        # The production benchmark data is finite and the initial autorange
+        # contains it all, so exact conservation remains independently known
+        # even though the display texture is intentionally quantized.
+        if int(trace["visible"]) != n:
+            raise AssertionError(f"density visible-count oracle failed: {trace['visible']} != {n}")
         sample = density.get("sample") or {}
         sample_points = int(sample.get("n", 0))
+        if color is not None and (sample.get("color") or {}).get("mode") != "categorical":
+            raise AssertionError("categorical density sample lost its color channel")
     elif trace.get("n_marks") != n:
         raise AssertionError(f"direct row-count oracle failed: {trace.get('n_marks')} != {n}")
 
@@ -165,7 +247,7 @@ def bench_production(n: int, x: array, y: array) -> dict:
         if tier == "density"
         else ("medium_direct_scatter", "payload_export_size")
     )
-    return {
+    row = {
         "n": n,
         "tier": tier,
         "benchmark_categories": [category["id"] for category in categories_for(category_ids)],
@@ -178,7 +260,24 @@ def bench_production(n: int, x: array, y: array) -> dict:
         "pts_per_s": n / best if best else None,
         "oracle_status": "pass",
         "measurement_scope": "production-figure-payload",
+        "categorical_groups": 0 if color is None else len(np.unique(color[: min(n, 4096)])),
     }
+    if native_png:
+        from xy import _raster
+
+        samples = []
+        png = b""
+        for _ in range(11):
+            t0 = time.perf_counter()
+            rendered = _raster.render_raster(spec, blob, 1.0, fast_png=True)
+            samples.append((time.perf_counter() - t0) * 1e3)
+            png = rendered if isinstance(rendered, bytes) else b""
+        if not png.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise AssertionError("native density render did not produce a PNG")
+        row["native_png_ms"] = statistics.median(samples)
+        row["source_to_native_png_ms"] = row["data_prep_ms"] + row["native_png_ms"]
+        row["native_png_bytes"] = len(png)
+    return row
 
 
 def find_chromium() -> str:
@@ -258,7 +357,7 @@ def bench_render(n: int, x: array, y: array) -> dict:
         cols[trace["y"]].update({"offset": 0.0, "scale": 1.0, "kind": "float"})
 
     spec = {
-        "protocol": 2,
+        "protocol": 3,
         "width": RENDER_W,
         "height": RENDER_H,
         "title": None,
@@ -319,26 +418,62 @@ def main() -> None:
         action="store_true",
         help="time the installed xy Figure payload path instead of the C-ABI kernel shape",
     )
+    ap.add_argument(
+        "--large-numpy-generator",
+        action="store_true",
+        help="use a fast NumPy fixture for opt-in 100M-1B production stress runs",
+    )
+    ap.add_argument(
+        "--categorical-groups",
+        type=int,
+        default=0,
+        help="add compact Unicode categories to a production ceiling run (2-62 groups)",
+    )
+    ap.add_argument(
+        "--native-png",
+        action="store_true",
+        help="also time payload-to-PNG rendering through the native rasterizer",
+    )
     ap.add_argument("--json", default=None)
     args = ap.parse_args()
     if args.production and args.render:
         ap.error("--production and --render are separate scopes; run them as separate reports")
+    if args.large_numpy_generator and not args.production:
+        ap.error("--large-numpy-generator requires --production")
+    if args.categorical_groups and not args.production:
+        ap.error("--categorical-groups requires --production")
+    if args.categorical_groups and not 2 <= args.categorical_groups <= 62:
+        ap.error("--categorical-groups must be between 2 and 62")
+    if args.native_png and not args.production:
+        ap.error("--native-png requires --production")
     sizes = [int(float(s)) for s in args.sizes.split(",")]
     lib = load()
 
     rows = []
     scope = "production Figure payload" if args.production else "native kernel shape"
+    if args.categorical_groups:
+        scope += f" with {args.categorical_groups} categories"
     print(f"xy scatter — {scope}, SwiftShader render. threshold={DENSITY_THRESHOLD:,}")
     hdr = "| N | tier | data prep | wire bytes | B/pt"
     sep = "|---|---|---|---|---"
     if args.render:
         hdr += " | render (chromium)"
         sep += "|---"
+    if args.native_png:
+        hdr += " | native PNG"
+        sep += "|---"
     print(hdr + " |")
     print(sep + " |")
     for n in sizes:
-        x, y = gen(n)
-        r = bench_production(n, x, y) if args.production else bench_prep(lib, n, x, y)
+        x, y = gen_numpy_large(n) if args.large_numpy_generator else gen(n)
+        color = (
+            gen_numpy_categories(n, args.categorical_groups) if args.categorical_groups else None
+        )
+        r = (
+            bench_production(n, x, y, color=color, native_png=args.native_png)
+            if args.production
+            else bench_prep(lib, n, x, y)
+        )
         if args.render:
             r.update(bench_render(n, x, y))
         rows.append(r)
@@ -349,8 +484,10 @@ def main() -> None:
         if args.render:
             rm = r.get("render_ms")
             line += f" | {rm:.1f} ms" if rm else f" | {r.get('note', '—')}"
+        if args.native_png:
+            line += f" | {r['native_png_ms']:.1f} ms"
         print(line + " |")
-        del x, y
+        del x, y, color
     if args.json:
         chromium = find_chromium() if args.render else None
         report = {
@@ -358,6 +495,8 @@ def main() -> None:
             "measurement_scope": (
                 "production-figure-payload" if args.production else "native-kernel-shape"
             ),
+            "data_generator": "numpy-large" if args.large_numpy_generator else "stdlib-array",
+            "categorical_groups": args.categorical_groups,
             "environment": collect_environment_metadata(
                 chromium=chromium or None,
                 xy_backend="native",

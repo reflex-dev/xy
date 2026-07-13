@@ -204,6 +204,32 @@ def test_long_line_ships_decimated():
     assert np.isclose(ye.astype(np.float64).max() + ym["offset"], 99.0, atol=1e-3)
 
 
+def test_first_payload_decimation_follows_concrete_figure_width() -> None:
+    n = 100_000
+    x = np.arange(n, dtype=np.float64)
+    y = np.sin(x * 0.01)
+    figure = Figure(width=320, height=200).line(x, y)
+
+    initial, _ = figure.build_payload()
+    explicit_wide, _ = figure.build_payload(px_width=2048)
+
+    assert initial["traces"][0]["tier"] == "decimated"
+    assert initial["traces"][0]["n_marks"] <= 4 * 320
+    assert explicit_wide["traces"][0]["n_marks"] > initial["traces"][0]["n_marks"]
+
+
+def test_fluid_first_payload_retains_wide_fallback() -> None:
+    n = 100_000
+    x = np.arange(n, dtype=np.float64)
+    y = np.cos(x * 0.01)
+
+    fluid, _ = Figure(width="100%", height=200).line(x, y).build_payload()
+    narrow, _ = Figure(width=320, height=200).line(x, y).build_payload()
+
+    assert fluid["traces"][0]["n_marks"] > narrow["traces"][0]["n_marks"]
+    assert fluid["traces"][0]["n_marks"] <= 4 * 2048
+
+
 def test_long_line_with_no_finite_points_ships_empty_buffers():
     n = DECIMATION_THRESHOLD + 1
     fig = Figure().line(np.arange(n, dtype=np.float64), np.full(n, np.nan, dtype=np.float64))
@@ -441,7 +467,9 @@ def test_sorted_line_late_ingest_failure_preserves_existing_figure_state(monkeyp
 
     def flaky_ingest(values):
         calls["count"] += 1
-        if calls["count"] == 3:
+        # x/y now ingest through the paired kernel; this first scalar ingest is
+        # the later sorted-column replacement that must still roll back.
+        if calls["count"] == 1:
             raise ValueError("synthetic sorted line ingest failure")
         return original(values)
 
@@ -463,7 +491,9 @@ def test_area_late_base_ingest_failure_preserves_existing_figure_state(monkeypat
 
     def flaky_ingest(values):
         calls["count"] += 1
-        if calls["count"] == 3:
+        # x/y now ingest as a pair; the base remains the later independent
+        # column whose failure exercises the enclosing transaction.
+        if calls["count"] == 1:
             raise ValueError("synthetic area base ingest failure")
         return original(values)
 
@@ -815,7 +845,35 @@ def test_heatmap_constant_values_auto_expands_domain():
     tr = spec["traces"][0]
     assert tr["heatmap"]["domain"][0] < 7.0 < tr["heatmap"]["domain"][1]
     grid, _ = _payload_col(spec, blob, tr["heatmap"]["buf"])
-    np.testing.assert_allclose(grid, [0.5, 0.5, 0.5, 0.5])
+    np.testing.assert_allclose(grid, [0.5] * 4)
+
+
+def test_heatmap_reuses_or_defers_grid_zone_scan(monkeypatch):
+    from xy import kernels
+
+    values = np.arange(600, dtype=np.float64).reshape(20, 30)
+    values[0, 0] = np.nan
+    calls: list[int] = []
+    real_zone_maps = kernels.zone_maps
+
+    def recording_zone_maps(data):
+        calls.append(len(data))
+        return real_zone_maps(data)
+
+    monkeypatch.setattr(kernels, "zone_maps", recording_zone_maps)
+
+    explicit = Figure().heatmap(values, domain=(0.0, 599.0))
+    explicit.build_payload()
+    assert 600 not in calls
+    report = explicit.memory_report()
+    assert calls.count(600) == 1
+    assert report["canonical_bytes"] >= values.nbytes
+    assert explicit.traces[0].grid.zone.null_count == 1
+
+    calls.clear()
+    automatic = Figure().heatmap(values)
+    assert calls.count(600) == 1
+    assert automatic.traces[0].style["domain"] == [1.0, 599.0]
 
 
 def test_heatmap_validation_errors():
@@ -1347,6 +1405,40 @@ def test_column_store_dedup():
     assert len(fig.store) == 3
 
 
+def test_new_xy_columns_use_paired_zone_maps_and_preserve_dedup(monkeypatch):
+    from xy import kernels
+
+    real_pair = kernels.zone_maps_pair
+    calls: list[int] = []
+
+    def recording_pair(x, y):
+        calls.append(len(x))
+        return real_pair(x, y)
+
+    monkeypatch.setattr(kernels, "zone_maps_pair", recording_pair)
+    x = np.arange(100_000.0)
+    y1 = np.sin(x)
+    y2 = np.cos(x)
+    fig = Figure().line(x, y1).line(x, y2)
+    assert calls == [len(x)]
+    assert len(fig.store) == 3
+    np.testing.assert_array_equal(fig.traces[0].x.zone.mins, kernels.zone_maps(x)[0])
+
+
+def test_failed_xy_length_check_runs_before_zone_maps(monkeypatch):
+    from xy import kernels
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("unequal columns must fail before statistics")
+
+    monkeypatch.setattr(kernels, "zone_maps", unexpected)
+    monkeypatch.setattr(kernels, "zone_maps_pair", unexpected)
+    fig = Figure()
+    with pytest.raises(ValueError, match="line x and y must have equal length"):
+        fig.line(np.arange(10.0), np.arange(9.0))
+    assert len(fig.store) == 0
+
+
 def test_column_store_does_not_alias_offset_views():
     edges = np.array([0.0, 1.0, 2.0, 3.0])
     fig = Figure()
@@ -1569,6 +1661,27 @@ def test_memory_report_accounts_for_bytes():
     assert report["canonical_bytes"] == 2 * n * 8
     # Direct scatter transport: 8 bytes/point (x,y f32) — the §2 target's payload.
     assert report["transport_bytes_per_point"] == pytest.approx(8.0)
+
+
+def test_memory_report_counts_compact_categorical_channel_storage() -> None:
+    n = 100_000
+    x = np.arange(n, dtype=np.float64)
+    categories = np.resize(np.asarray(["alpha", "beta", "gamma"]), n)
+    fig = Figure().scatter(x, x + 1, color=categories)
+    report = fig.memory_report()
+    assert fig.traces[0].color_ch.codes.dtype == np.uint8
+    assert report["canonical_bytes"] == 2 * n * 8
+    assert report["channel_bytes"] == n + 3 * np.dtype(np.uint64).itemsize
+    assert report["resident_array_bytes"] == 2 * n * 8 + n + 3 * np.dtype(np.uint64).itemsize
+
+
+def test_memory_report_does_not_double_count_shared_channel_array() -> None:
+    values = np.arange(1000.0)
+    fig = Figure().scatter(values, values, color=values, size=values)
+    report = fig.memory_report()
+    assert report["canonical_bytes"] == values.nbytes
+    assert report["channel_bytes"] == 0
+    assert report["resident_array_bytes"] == values.nbytes
 
 
 def test_histogram_memory_report_uses_source_count_not_bin_count():

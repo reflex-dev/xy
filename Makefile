@@ -7,13 +7,14 @@ WHEEL ?=
 BENCHMARK_JSON ?= benchmark.json
 BENCHMARK_KIND ?= auto
 
-.PHONY: help setup check check-full check-browser check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-benchmark-harness check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
+.PHONY: help setup setup-browser check check-full check-browser check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-benchmark-harness check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
 
 help:
 	@printf '%s\n' \
 		'xy developer shortcuts' \
 		'' \
 		'  make setup            create .venv and install .[dev]' \
+		'  make setup-browser    install the pinned Playwright browser-test driver' \
 		'  make check            run the fast local verification gate' \
 		'  make check-full       run JS, Rust, and ABI gates too' \
 		'  make check-browser    run browser smokes (set CHROMIUM=/path/to/chrome)' \
@@ -31,7 +32,7 @@ help:
 		'  make check-sdist      build and verify the source distribution' \
 		'  make check-wheel      build and verify a wheel (set WHEEL_EXPECT=--expect-native)' \
 		'  make check-artifacts  verify prebuilt artifacts (set SDIST=... WHEEL=...)' \
-		'  make check-benchmark-report validate BENCHMARK_JSON (scatter-vs, pyplot-vs-matplotlib, line-decimation, install-footprint, core-2d, scatter-native, kernel-native, interaction-browser, dashboard-browser, workflow-native)' \
+		'  make check-benchmark-report validate BENCHMARK_JSON (scatter-vs, pyplot-vs-matplotlib, line-decimation, install-footprint, core-2d, scatter-native, heatmap-native, kernel-native, interaction-browser, dashboard-browser, workflow-native)' \
 		'                        override UV_CACHE_DIR if your uv cache lives elsewhere' \
 		'  make list-checks      list verifier check names' \
 		'  make test             run pytest' \
@@ -45,6 +46,9 @@ setup:
 	uv venv
 	uv pip install -e ".[dev]"
 
+setup-browser:
+	npm install
+
 check:
 	$(PYTHON) scripts/verify_local.py --quick
 
@@ -56,6 +60,10 @@ check-browser:
 		echo 'Set CHROMIUM=/path/to/chrome for browser smoke checks.' >&2; \
 		exit 2; \
 	fi
+	@node -e "require.resolve('playwright')" >/dev/null 2>&1 || { \
+		echo 'Playwright is required for the standalone worker probe. Run: make setup-browser' >&2; \
+		exit 2; \
+	}
 	$(PYTHON) scripts/verify_local.py --browser --chromium "$(CHROMIUM)"
 
 check-docs:

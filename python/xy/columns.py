@@ -8,8 +8,10 @@ Phase 0 contract:
 - pyarrow Arrays / ChunkedArrays ingest **zero-copy** when null-free and
   primitive (see `_arrow_to_numpy`); nulls/chunking pay counted copies.
   i64-nanosecond end-to-end fidelity (§16) is still a later milestone.
-- Zone maps (§22) are computed once at ingest — one pass, reused for autorange,
-  offset selection, and (later) Tier-3 pruning.
+- Zone maps (§22) are computed once and reused for autorange, offset selection,
+  and (later) Tier-3 pruning. Explicit-domain heatmap grids defer that scan
+  until a statistics consumer actually asks for it; their render path already
+  has all policy inputs and never needs the maps.
 - Ingest copy count is recorded, not hidden (§29: copies are counted, reported,
   never folklore).
 """
@@ -54,14 +56,12 @@ class ZoneMaps:
     @cached_property
     def min(self) -> float:
         valid = self.mins[self.counts > 0]
-        # numpy's .min()/.max() stub mis-resolves the overload for the mask-indexed
-        # f64 view; the reduction is a finite scalar at runtime.
-        return float(valid.min()) if len(valid) else float("nan")  # ty: ignore[invalid-argument-type]
+        return float(valid.min()) if len(valid) else float("nan")
 
     @cached_property
     def max(self) -> float:
         valid = self.maxs[self.counts > 0]
-        return float(valid.max()) if len(valid) else float("nan")  # ty: ignore[invalid-argument-type]
+        return float(valid.max()) if len(valid) else float("nan")
 
     @cached_property
     def positive_min(self) -> float:
@@ -89,11 +89,18 @@ class Column:
     id: int
     values: npt.NDArray[np.float64]  # contiguous f64, the single source of truth
     kind: str  # "float" | "time_ms"
-    zone: ZoneMaps
+    _zone: ZoneMaps | None
     ingest_copies: int  # copies paid at ingest (§29 accounting)
 
     def __len__(self) -> int:
         return len(self.values)
+
+    @property
+    def zone(self) -> ZoneMaps:
+        """Materialize deferred statistics at most once."""
+        if self._zone is None:
+            self._zone = ZoneMaps(*kernels.zone_maps(self.values))
+        return self._zone
 
     @property
     def min(self) -> float:
@@ -150,7 +157,7 @@ class Column:
         k = n_old // ZONE_CHUNK
         tail = ZoneMaps(*kernels.zone_maps(self.values[k * ZONE_CHUNK :]))
         z = self.zone
-        self.zone = ZoneMaps(
+        self._zone = ZoneMaps(
             mins=np.concatenate([z.mins[:k], tail.mins]),
             maxs=np.concatenate([z.maxs[:k], tail.maxs]),
             counts=np.concatenate([z.counts[:k], tail.counts]),
@@ -191,19 +198,112 @@ class ColumnStore:
         del self._columns[length:]
         self._by_key = dict(by_key)
 
-    def ingest(self, data: Any) -> Column:
-        arr, kind, copies = _canonicalize(data)
+    @staticmethod
+    def _array_key(arr: np.ndarray) -> tuple[int, int, int]:
         base = arr.base if arr.base is not None else arr
-        data_ptr = int(arr.__array_interface__["data"][0])
-        key = (id(base), data_ptr, arr.nbytes)
+        return (id(base), int(arr.__array_interface__["data"][0]), arr.nbytes)
+
+    def _lookup(self, arr: np.ndarray, key: tuple[int, int, int]) -> Column | None:
         hit = self._by_key.get(key)
         if hit is not None and np.shares_memory(self._columns[hit].values, arr):
             return self._columns[hit]
-        zone = ZoneMaps(*kernels.zone_maps(arr))
-        col = Column(id=len(self._columns), values=arr, kind=kind, zone=zone, ingest_copies=copies)
+        return None
+
+    def _append_canonical(
+        self,
+        arr: npt.NDArray[np.float64],
+        kind: str,
+        copies: int,
+        key: tuple[int, int, int],
+        zone: ZoneMaps | None,
+    ) -> Column:
+        col = Column(
+            id=len(self._columns),
+            values=arr,
+            kind=kind,
+            _zone=zone,
+            ingest_copies=copies,
+        )
         self._columns.append(col)
         self._by_key[key] = col.id
         return col
+
+    def _ingest_canonical(
+        self,
+        arr: npt.NDArray[np.float64],
+        kind: str,
+        copies: int,
+        *,
+        defer_zone_maps: bool,
+    ) -> Column:
+        key = self._array_key(arr)
+        col = self._lookup(arr, key)
+        if col is not None:
+            if not defer_zone_maps:
+                _ = col.zone
+            return col
+        zone = None if defer_zone_maps else ZoneMaps(*kernels.zone_maps(arr))
+        return self._append_canonical(arr, kind, copies, key, zone)
+
+    def ingest(self, data: Any, *, defer_zone_maps: bool = False) -> Column:
+        arr, kind, copies = _canonicalize(data)
+        return self._ingest_canonical(
+            arr,
+            kind,
+            copies,
+            defer_zone_maps=defer_zone_maps,
+        )
+
+    def ingest_pair(self, x: Any, y: Any) -> tuple[Column, Column]:
+        """Ingest equal-length x/y columns with one paired statistics call.
+
+        The fused path applies only when both canonical arrays are new and
+        distinct. Existing/shared columns retain the ordinary deduplication
+        behavior, including deferred-zone materialization.
+        """
+        x_arr, x_kind, x_copies = _canonicalize(x)
+        y_arr, y_kind, y_copies = _canonicalize(y)
+        if len(x_arr) != len(y_arr):
+            raise ValueError(f"x and y must have equal length, got {len(x_arr)} and {len(y_arr)}")
+        x_key = self._array_key(x_arr)
+        y_key = self._array_key(y_arr)
+        x_hit = self._lookup(x_arr, x_key)
+        y_hit = self._lookup(y_arr, y_key)
+        if (
+            x_hit is not None
+            or y_hit is not None
+            or (x_key == y_key and np.shares_memory(x_arr, y_arr))
+        ):
+            return (
+                self._ingest_canonical(
+                    x_arr,
+                    x_kind,
+                    x_copies,
+                    defer_zone_maps=False,
+                ),
+                self._ingest_canonical(
+                    y_arr,
+                    y_kind,
+                    y_copies,
+                    defer_zone_maps=False,
+                ),
+            )
+        x_zone_raw, y_zone_raw = kernels.zone_maps_pair(x_arr, y_arr)
+        x_col = self._append_canonical(
+            x_arr,
+            x_kind,
+            x_copies,
+            x_key,
+            ZoneMaps(*x_zone_raw),
+        )
+        y_col = self._append_canonical(
+            y_arr,
+            y_kind,
+            y_copies,
+            y_key,
+            ZoneMaps(*y_zone_raw),
+        )
+        return x_col, y_col
 
     def memory_report(self) -> dict[str, Any]:
         """Canonical bytes per column (§27: if a number isn't in the report, it

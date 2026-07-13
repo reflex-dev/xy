@@ -57,6 +57,14 @@ def test_subplots_return_shapes() -> None:
     assert axes.shape == (3,)
     _f, axes = plt.subplots(2, 2)
     assert axes.shape == (2, 2)
+
+
+def test_subplots_activates_last_axes_for_implicit_pyplot_calls() -> None:
+    fig, axes = plt.subplots(3, 1)
+    plt.stairs([1, 2, 1])
+    assert plt.gca() is axes[-1]
+    assert axes[-1]._entries
+    assert all(not ax._entries for ax in fig.axes[:-1])
     _f, axes = plt.subplots(2, 2, squeeze=False)
     assert axes.shape == (2, 2)
 
@@ -89,6 +97,14 @@ def test_grid_savefig_png_stitches(tmp_path: Path) -> None:
     target = tmp_path / "grid.png"
     plt.savefig(target)
     assert target.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_add_axes_png_uses_native_facecolor_parser() -> None:
+    fig = plt.figure(facecolor="rgba(12,34,56,0.5)")
+    ax = fig.add_axes([0.1, 0.1, 0.8, 0.8])
+    ax.plot([0, 1], [1, 2])
+
+    assert fig._to_png().startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_grid_html_has_panels() -> None:

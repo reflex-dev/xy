@@ -20,9 +20,16 @@ def _payload(fig):
     return spec, blob
 
 
-def _col(spec, blob, ref, dtype=np.float32):
+def _col(spec, blob, ref, dtype=None):
     m = spec["columns"][ref]
+    if dtype is None:
+        dtype = np.uint8 if m.get("dtype") == "u8" else np.float32
     return np.frombuffer(blob, dtype=dtype, count=m["len"], offset=m["byte_offset"])
+
+
+def _density_col(spec, blob, density):
+    raw = _col(spec, blob, density["buf"], dtype=np.uint8)
+    return _decode_log_u8(raw.tobytes(), density["max"])
 
 
 # --------------------------------------------------------------------------
@@ -115,7 +122,15 @@ def test_categorical_single_category():
 def test_too_many_categories_warns():
     cats = np.array([f"c{i}" for i in range(300)])
     with pytest.warns(RuntimeWarning, match="categories"):
-        Figure().scatter(np.arange(300.0), np.arange(300.0), color=cats)
+        fig = Figure().scatter(np.arange(300.0), np.arange(300.0), color=cats)
+    spec, blob = fig.build_payload()
+    color = spec["traces"][0]["color"]
+    meta = spec["columns"][color["buf"]]
+    assert fig.traces[0].color_ch.codes.dtype == np.uint32
+    assert "dtype" not in color and "dtype" not in meta
+    codes = _col(spec, blob, color["buf"])
+    assert codes.dtype == np.float32
+    assert set(codes.astype(int)) == set(range(300))
 
 
 def test_categorical_bool_array():
@@ -287,7 +302,9 @@ def test_force_density_on_small():
     fig = Figure().scatter(np.arange(100.0), np.arange(100.0), density=True)
     spec, blob = _payload(fig)
     assert spec["traces"][0]["tier"] == "density"
-    grid = _col(spec, blob, spec["traces"][0]["density"]["buf"])
+    density = spec["traces"][0]["density"]
+    assert density["enc"] == "log-u8"
+    grid = _density_col(spec, blob, density)
     assert grid.sum() > 0
 
 
