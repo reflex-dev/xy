@@ -156,6 +156,21 @@ def resolve_color(value: object) -> Optional[str]:
     return f"rgb({level},{level},{level})"
 
 
+def to_rgba(value: object, alpha: object = None) -> tuple[float, float, float, float]:
+    """Convert the shim's color vocabulary to normalized RGBA without Matplotlib."""
+    if isinstance(value, tuple) and len(value) == 2 and isinstance(value[0], str):
+        value, stored_alpha = value
+        if alpha is None:
+            alpha = stored_alpha
+    from xy._raster import _parse_color
+
+    css = resolve_color(value)
+    rgba = np.asarray(_parse_color(css or "transparent"), dtype=np.float64) / 255.0
+    if alpha is not None:
+        rgba[3] = np.asarray(alpha, dtype=np.float64).item()
+    return (float(rgba[0]), float(rgba[1]), float(rgba[2]), float(rgba[3]))
+
+
 def resolve_cmap(name: object) -> str:
     """A matplotlib cmap (name or object) → engine colormap name."""
     text = getattr(name, "name", name)

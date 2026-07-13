@@ -73,7 +73,7 @@ def test_shim_import_stays_light() -> None:
     )
 
 
-def test_shim_never_imports_real_matplotlib_statically() -> None:
+def test_shim_contains_no_real_matplotlib_imports() -> None:
     shim = PACKAGE / "pyplot"
     for path in shim.rglob("*.py"):
         tree = ast.parse(path.read_text(), filename=str(path))
@@ -82,3 +82,43 @@ def test_shim_never_imports_real_matplotlib_statically() -> None:
                 assert not any(a.name.split(".")[0] == "matplotlib" for a in node.names), path
             if isinstance(node, ast.ImportFrom):
                 assert (node.module or "").split(".")[0] != "matplotlib", path
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "__import__"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                assert node.args[0].value.split(".")[0] != "matplotlib", path
+
+
+def test_runtime_paths_never_import_real_matplotlib() -> None:
+    _run_fresh(
+        """
+        import sys
+        import numpy as np
+
+        class RejectMatplotlib:
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname.split(".")[0] == "matplotlib":
+                    raise AssertionError(f"xy attempted to import {fullname}")
+                return None
+
+        sys.meta_path.insert(0, RejectMatplotlib())
+
+        import xy.pyplot as plt
+
+        fig = plt.figure(facecolor="rgba(12,34,56,0.5)")
+        ax = fig.add_axes([0.1, 0.1, 0.8, 0.8])
+        cmap = plt.get_cmap("viridis").with_extremes(
+            under="yellow", over="limegreen", bad="transparent"
+        )
+        ax.imshow(np.array([[-2.0, 0.0, 2.0, np.nan]]), cmap=cmap, vmin=-1.0, vmax=1.0)
+        assert ax.get_position().bounds == (0.125, 0.11, 0.775, 0.77)
+        extent = ax.text(0.5, 0.5, "label").get_window_extent()
+        assert extent.width > 0 and extent.height > 0
+        assert fig._to_png().startswith(b"\\x89PNG\\r\\n\\x1a\\n")
+        assert not any(name.split(".")[0] == "matplotlib" for name in sys.modules)
+        """
+    )

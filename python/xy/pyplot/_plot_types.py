@@ -31,7 +31,7 @@ from ._artists import (
     Text,
     Wedge,
 )
-from ._colors import PROP_CYCLE, resolve_cmap, resolve_color
+from ._colors import PROP_CYCLE, Cmap, resolve_cmap, resolve_color
 from ._fmt import parse_fmt
 from ._translate import (
     LINESTYLE_TO_DASH,
@@ -2536,14 +2536,7 @@ class PlotTypeMixin:
                 mapped = np.ma.asarray(norm(z), dtype=np.float64)
                 cmap_callable = cmap if callable(cmap) else None
                 if cmap_callable is None:
-                    try:
-                        mpl_colormaps = __import__("matplotlib", fromlist=["colormaps"]).colormaps
-
-                        cmap_callable = mpl_colormaps.get_cmap(cmap or "viridis")
-                    except (ImportError, ValueError):
-                        from ._colors import Cmap
-
-                        cmap_callable = Cmap(cmap or "viridis")
+                    cmap_callable = Cmap(cmap or "viridis")
                 rendered_z = np.asarray(cmap_callable(mapped), dtype=np.float64)
                 mask = np.ma.getmaskarray(mapped) | ~np.isfinite(z)
                 if rendered_z.shape[-1] == 3:
@@ -3536,61 +3529,25 @@ class PlotTypeMixin:
         mapped_color: Any = None
         mapped_width: Any = None
         arrow_count = 0
-        try:
-            # The compatibility layer can reuse Matplotlib's well-tested
-            # integrator without using its renderer.  This preserves explicit
-            # seeds, masks, adaptive controls, and per-segment scalar values;
-            # the resulting paths still render entirely through xy.
-            MatplotlibFigure = __import__("matplotlib.figure", fromlist=["Figure"]).Figure
+        from xy import kernels
 
-            mpl_ax = MatplotlibFigure().subplots()
-            mpl_kwargs: dict[str, Any] = {
-                "density": density,
-                "linewidth": linewidth,
-                "color": color,
-                "cmap": cmap,
-                "norm": norm,
-                "arrowsize": arrowsize,
-                "arrowstyle": arrowstyle,
-                "minlength": minlength,
-                "start_points": start_points,
-                "maxlength": maxlength,
-                "integration_direction": integration_direction,
-                "broken_streamlines": broken_streamlines,
-                "integration_max_step_scale": integration_max_step_scale,
-                "integration_max_error_scale": integration_max_error_scale,
-                "num_arrows": num_arrows,
-            }
-            mpl_kwargs = {key: value for key, value in mpl_kwargs.items() if value is not None}
-            mpl_result = mpl_ax.streamplot(x_values, y_values, u_values, v_values, **mpl_kwargs)
-            source_segments = [
-                np.asarray(segment, dtype=np.float64)
-                for segment in mpl_result.lines.get_segments()
-                if len(segment) >= 2
-            ]
-            mapped_color = mpl_result.lines.get_array()
-            mapped_width = np.asarray(mpl_result.lines.get_linewidths(), dtype=np.float64)
-            arrow_count = len(mpl_result.arrows.get_paths())
-        except (ImportError, TypeError, ValueError):
-            from xy import kernels
-
-            density_value = float(np.max(np.asarray(density, dtype=np.float64)))
-            max_steps = max(1, min(100_000, int(float(maxlength) * max(u_values.shape) * 8)))
-            kx0, kx1, ky0, ky1 = kernels.streamlines(
-                x_values,
-                y_values,
-                u_values,
-                v_values,
-                density=density_value,
-                max_steps=max_steps,
-            )
-            source_segments = [
-                np.asarray([[sx, sy], [ex, ey]], dtype=np.float64)
-                for sx, ex, sy, ey in zip(kx0, kx1, ky0, ky1, strict=True)
-            ]
-            arrow_count = max(
-                1, min(len(source_segments), int(30 * float(np.max(np.asarray(density)))))
-            )
+        density_value = float(np.max(np.asarray(density, dtype=np.float64)))
+        max_steps = max(1, min(100_000, int(float(maxlength) * max(u_values.shape) * 8)))
+        kx0, kx1, ky0, ky1 = kernels.streamlines(
+            x_values,
+            y_values,
+            u_values,
+            v_values,
+            density=density_value,
+            max_steps=max_steps,
+        )
+        source_segments = [
+            np.asarray([[sx, sy], [ex, ey]], dtype=np.float64)
+            for sx, ex, sy, ey in zip(kx0, kx1, ky0, ky1, strict=True)
+        ]
+        arrow_count = max(
+            1, min(len(source_segments), int(30 * float(np.max(np.asarray(density)))))
+        )
 
         x0_values: list[float] = []
         y0_values: list[float] = []

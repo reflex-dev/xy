@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from importlib.util import find_spec
 from io import BytesIO
 
 import numpy as np
@@ -248,17 +247,10 @@ def test_streamplot_preserves_explicit_seeds_scalar_colors_and_widths() -> None:
         cmap="viridis",
     )
     entries = [entry for entry in ax._entries if entry.get("factory") == "segments"]
-    has_matplotlib = find_spec("matplotlib") is not None
-    if has_matplotlib:
-        assert len(entries) > 1  # optional integrator retains varying widths
-    else:
-        assert entries  # dependency-free fallback still renders streamlines
+    assert entries
     assert all(len(entry["args"][0]) > 0 for entry in entries)
     assert all(entry["kwargs"].get("domain") == (-1.0, 1.0) for entry in entries)
-    if has_matplotlib:
-        assert any(np.ptp(np.asarray(entry["kwargs"]["color"])) > 0 for entry in entries)
-    else:
-        assert all("color" in entry["kwargs"] for entry in entries)
+    assert all("color" in entry["kwargs"] for entry in entries)
 
 
 def test_log_locator_contours_and_labels_use_real_contour_geometry() -> None:
