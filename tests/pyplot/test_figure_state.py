@@ -123,5 +123,8 @@ def test_add_gridspec_supports_single_cell_specs() -> None:
     assert fig._width_ratios == (1.0, 2.0)
     assert fig.gca() is ax
 
+    span = gs[0:2, 0]
+    assert span.rows == (0, 2)
+    assert span.cols == (0, 1)
     with pytest.raises(NotImplementedError):
-        _ = gs[0:2, 0]
+        _ = gs[0:2:2, 0]  # step slicing stays out of the span contract

@@ -38,8 +38,11 @@ def test_style_use_supports_bounded_dicts_and_ordered_lists() -> None:
     assert plt.rcParams["lines.linewidth"] == 4.0
     with pytest.raises(NotImplementedError, match=r"unknown\.style\.key"):
         plt.style.use({"unknown.style.key": 1})
+    plt.style.use("ggplot")  # stock sheets apply their bounded rcParams subset
+    assert plt.rcParams["axes.facecolor"] == "#E5E5E5"
     with pytest.raises(NotImplementedError, match="rcParams dict"):
-        plt.style.use("ggplot")
+        plt.style.use("Solarize_Light2")
+    plt.rcdefaults()
 
 
 def test_figure_facecolor_rcparam_affects_new_figures() -> None:

@@ -18,7 +18,7 @@ from ._artists import Text
 from ._axes import Axes
 from ._rc import rc_figsize_px
 from ._transforms import CoordinateTransform
-from ._translate import not_implemented
+from ._translate import check_unsupported, not_implemented
 
 
 def _png_with_metadata(data: bytes, metadata: dict[Any, Any]) -> bytes:
@@ -81,43 +81,64 @@ class Figure:
         self._layout_options: dict[str, Any] = {}
         self._subplot_adjust: dict[str, float] = {}
         self._label = ""
+        self._gci: Any = None  # last color-mapped artist, for plt.colorbar()/clim()
 
     # -- layout --------------------------------------------------------------
 
     def _invalidate(self) -> None:
         self._html_cache = None
 
-    def add_subplot(self, *args: Any) -> Axes:
+    @property
+    def canvas(self) -> "_FigureCanvas":
+        return _FigureCanvas(self)
+
+    def add_subplot(self, *args: Any, **kwargs: Any) -> Axes:
         if len(args) == 1 and isinstance(args[0], _SubplotSpec):
             spec = args[0]
-            self._ensure_grid(spec.nrows, spec.ncols)
-            ax = self._axes_at(spec.index)
-            self._current_ax = ax
-            return ax
-        if args and args != (1, 1, 1) and args != (111,):
+            if spec.is_single and not spec.gridspec.has_custom_geometry:
+                self._ensure_grid(spec.nrows, spec.ncols)
+                ax = self._axes_at(spec.index)
+            else:
+                # Spans and custom spacing become explicit figure rectangles.
+                ax = self.add_axes(spec.gridspec.cell_rect(spec.rows, spec.cols))
+        elif args and args != (1, 1, 1) and args != (111,):
             nrows, ncols, index = _parse_subplot_args(args)
-            self._ensure_grid(nrows, ncols)
-            ax = self._axes_at(index - 1)
+            if any(a._figure_rect is not None for a in self._axes):
+                # matplotlib mixes numbered subplots into figures that already
+                # hold free-form axes; keep the figure free-form via the cell
+                # rectangle (and return the existing axes for a repeat spec).
+                row, col = divmod(index - 1, ncols)
+                rect = _GridSpec(self, nrows, ncols).cell_rect((row, row + 1), (col, col + 1))
+                existing = next((a for a in self._axes if a._figure_rect == rect), None)
+                ax = existing if existing is not None else self.add_axes(rect)
+            else:
+                self._ensure_grid(nrows, ncols)
+                ax = self._axes_at(index - 1)
         else:
             self._ensure_grid(1, 1)
             ax = self._axes_at(0)
         self._current_ax = ax  # matplotlib: add_subplot activates the axes
+        sharex = kwargs.pop("sharex", None)
+        sharey = kwargs.pop("sharey", None)
+        if sharex is not None:
+            ax._axis["x"] = sharex._axis_props("x")  # static share, as in twiny()
+        if sharey is not None:
+            ax._axis["y"] = sharey._axis_props("y")
+        if kwargs:
+            ax.set(**kwargs)
         return ax
 
     def add_axes(self, rect: Any, **kwargs: Any) -> Axes:
-        del kwargs
         parsed = tuple(float(value) for value in rect)
         if len(parsed) != 4 or any(value < 0 for value in parsed[2:]):
             raise ValueError("add_axes rect must be [left, bottom, width, height]")
-        if not self._axes:
-            ax = Axes(self)
-            self._axes.append(ax)
-        else:
-            ax = Axes(self)
-            self._axes.append(ax)
+        ax = Axes(self)
+        self._axes.append(ax)
         ax._figure_rect = parsed
         self._nrows, self._ncols = 1, len(self._axes)
         self._current_ax = ax
+        if kwargs:
+            ax.set(**kwargs)
         return ax
 
     def subplots(
@@ -166,7 +187,13 @@ class Figure:
         self._width_ratios = None if width_ratios is None else tuple(map(float, width_ratios))
         self._height_ratios = None if height_ratios is None else tuple(map(float, height_ratios))
         self._invalidate()
-        return _GridSpec(self, int(nrows), int(ncols))
+        return _GridSpec(
+            self,
+            int(nrows),
+            int(ncols),
+            width_ratios=self._width_ratios,
+            height_ratios=self._height_ratios,
+        )
 
     def _ensure_grid(self, nrows: int, ncols: int) -> None:
         if (
@@ -223,6 +250,7 @@ class Figure:
         self._supxlabel = None
         self._supylabel = None
         self._shared_colorbar = None
+        self._gci = None
         self._width_ratios = None
         self._height_ratios = None
         self._layout_options = {}
@@ -380,9 +408,12 @@ class Figure:
     def get_edgecolor(self) -> str:
         return self._edgecolor
 
-    def colorbar(self, mappable: Any = None, *args: Any, **kwargs: Any) -> Any:
-        del args
-        axes_arg = kwargs.pop("ax", None)
+    def colorbar(self, mappable: Any = None, cax: Any = None, ax: Any = None, **kwargs: Any) -> Any:
+        if cax is not None:
+            raise not_implemented("colorbar(cax=...)", "the automatic colorbar placement")
+        if mappable is None:
+            mappable = self._gci
+        axes_arg = ax
         axes = getattr(mappable, "_axes", None) or self.gca()
         entry = getattr(mappable, "_entry", {})
         props = entry.get("kwargs", {})
@@ -409,11 +440,22 @@ class Figure:
             "label": str(kwargs.pop("label", "")),
             "orientation": str(kwargs.pop("orientation", "vertical")),
         }
+        ticks = kwargs.pop("ticks", None)
+        if ticks is not None:
+            options["ticks"] = [float(value) for value in np.asarray(ticks).reshape(-1)]
+        extend = kwargs.pop("extend", None)
+        if extend is not None:
+            if extend not in ("neither", "min", "max", "both"):
+                raise ValueError("colorbar() extend must be 'neither', 'min', 'max', or 'both'")
+            if extend != "neither":
+                options["extend"] = str(extend)
+        check_unsupported(kwargs, "colorbar()")
         if isinstance(axes_arg, (list, tuple, np.ndarray)):
             self._shared_colorbar = options
             self._invalidate()
         else:
             axes._colorbar = options
+            axes._colorbar_source = entry if entry else None
             axes._invalidate()
 
         class _Colorbar:
@@ -427,6 +469,15 @@ class Figure:
             def set_label(self, label: str, **kwargs: Any) -> None:
                 del kwargs
                 self._options["label"] = str(label)
+                self.ax._invalidate()
+
+            def set_ticks(self, ticks: Any, labels: Any = None, **kwargs: Any) -> None:
+                if labels is not None:
+                    raise not_implemented(
+                        "Colorbar.set_ticks(labels=...)", "numeric tick positions"
+                    )
+                check_unsupported(kwargs, "Colorbar.set_ticks()")
+                self._options["ticks"] = [float(value) for value in np.asarray(ticks).reshape(-1)]
                 self.ax._invalidate()
 
         return _Colorbar(axes, options)
@@ -710,29 +761,144 @@ class Figure:
         webbrowser.open(f"file://{f.name}")
 
 
+class _FigureCanvas:
+    """The mpl canvas surface scripts poke: filetypes and draw triggers."""
+
+    def __init__(self, figure: Figure) -> None:
+        self.figure = figure
+
+    def get_supported_filetypes(self) -> dict[str, str]:
+        return {
+            "png": "Portable Network Graphics",
+            "svg": "Scalable Vector Graphics",
+            "html": "xy interactive HTML",
+        }
+
+    def draw(self) -> None:
+        self.figure._invalidate()  # the next export re-renders from scratch
+
+    draw_idle = draw
+
+
 class _SubplotSpec:
-    def __init__(self, nrows: int, ncols: int, index: int) -> None:
-        self.nrows = nrows
-        self.ncols = ncols
-        self.index = index
+    def __init__(self, gridspec: "_GridSpec", rows: tuple[int, int], cols: tuple[int, int]) -> None:
+        self.gridspec = gridspec
+        self.rows = rows
+        self.cols = cols
+        self.nrows = gridspec.nrows
+        self.ncols = gridspec.ncols
+
+    @property
+    def is_single(self) -> bool:
+        return self.rows[1] - self.rows[0] == 1 and self.cols[1] - self.cols[0] == 1
+
+    @property
+    def index(self) -> int:
+        return self.rows[0] * self.ncols + self.cols[0]
+
+
+# matplotlib's SubplotParams defaults — the frame every gridspec rect lives in.
+_SUBPLOT_PARAMS = {"left": 0.125, "right": 0.9, "bottom": 0.11, "top": 0.88}
+_SUBPLOT_SPACING = 0.2  # figure.subplot.wspace/hspace default
 
 
 class _GridSpec:
-    def __init__(self, figure: Figure, nrows: int, ncols: int) -> None:
+    """Grid geometry for subplot specs.
+
+    Single cells on default geometry map onto the figure's uniform subplot
+    grid; spans and custom spacing resolve to explicit figure rectangles
+    (the add_axes path), which every exporter already positions.
+    """
+
+    def __init__(self, figure: Optional[Figure], nrows: int, ncols: int, **kwargs: Any) -> None:
         self.figure = figure
-        self.nrows = nrows
-        self.ncols = ncols
+        self.nrows = int(nrows)
+        self.ncols = int(ncols)
+        if self.nrows < 1 or self.ncols < 1:
+            raise ValueError("GridSpec must have at least one row and one column")
+        geometry_keys = ("left", "bottom", "right", "top", "wspace", "hspace")
+        self._geometry = {key: kwargs.pop(key, None) for key in geometry_keys}
+        width_ratios = kwargs.pop("width_ratios", None)
+        height_ratios = kwargs.pop("height_ratios", None)
+        check_unsupported(kwargs, "GridSpec()")
+        self._width_ratios = None if width_ratios is None else tuple(map(float, width_ratios))
+        self._height_ratios = None if height_ratios is None else tuple(map(float, height_ratios))
+        if self._width_ratios is not None and len(self._width_ratios) != self.ncols:
+            raise ValueError("width_ratios must match the number of columns")
+        if self._height_ratios is not None and len(self._height_ratios) != self.nrows:
+            raise ValueError("height_ratios must match the number of rows")
+
+    @property
+    def has_custom_geometry(self) -> bool:
+        return any(value is not None for value in self._geometry.values())
+
+    @staticmethod
+    def _span(key: Any, count: int) -> tuple[int, int]:
+        if isinstance(key, slice):
+            if key.step not in (None, 1):
+                raise not_implemented("GridSpec slicing with a step", "contiguous spans")
+            start, stop, _ = key.indices(count)
+            if stop <= start:
+                raise IndexError("GridSpec slice selects no cells")
+            return start, stop
+        index = int(key)
+        if index < 0:
+            index += count
+        if not 0 <= index < count:
+            raise IndexError("GridSpec index out of range")
+        return index, index + 1
 
     def __getitem__(self, key: Any) -> _SubplotSpec:
-        if not isinstance(key, tuple):
-            row, col = divmod(int(key), self.ncols)
-        elif len(key) == 2 and all(isinstance(item, int) for item in key):
-            row, col = int(key[0]), int(key[1])
-        else:
-            raise not_implemented("GridSpec slicing", "single-cell row/column indexes")
-        if not (0 <= row < self.nrows and 0 <= col < self.ncols):
-            raise IndexError("GridSpec index out of range")
-        return _SubplotSpec(self.nrows, self.ncols, row * self.ncols + col)
+        if isinstance(key, tuple):
+            if len(key) != 2:
+                raise IndexError("GridSpec indexes are [row, col]")
+            rows = self._span(key[0], self.nrows)
+            cols = self._span(key[1], self.ncols)
+            return _SubplotSpec(self, rows, cols)
+        # Flat row-major indexing; a flat slice spans the bounding box of its
+        # first and last cell, matching matplotlib's SubplotSpec corners.
+        total = self.nrows * self.ncols
+        first, stop = self._span(key, total)
+        last = stop - 1
+        r0, c0 = divmod(first, self.ncols)
+        r1, c1 = divmod(last, self.ncols)
+        return _SubplotSpec(self, (min(r0, r1), max(r0, r1) + 1), (min(c0, c1), max(c0, c1) + 1))
+
+    def cell_rect(self, rows: tuple[int, int], cols: tuple[int, int]) -> tuple[float, ...]:
+        """[left, bottom, width, height] figure fractions for a cell span."""
+        frame = {
+            key: (self._geometry[key] if self._geometry[key] is not None else default)
+            for key, default in _SUBPLOT_PARAMS.items()
+        }
+        wspace = self._geometry["wspace"]
+        hspace = self._geometry["hspace"]
+        wspace = _SUBPLOT_SPACING if wspace is None else float(wspace)
+        hspace = _SUBPLOT_SPACING if hspace is None else float(hspace)
+        span_w = float(frame["right"]) - float(frame["left"])
+        span_h = float(frame["top"]) - float(frame["bottom"])
+        # wspace/hspace are fractions of the *average* cell size (matplotlib).
+        avail_w = span_w / (1.0 + wspace * (self.ncols - 1) / self.ncols)
+        avail_h = span_h / (1.0 + hspace * (self.nrows - 1) / self.nrows)
+        gap_w = (span_w - avail_w) / (self.ncols - 1) if self.ncols > 1 else 0.0
+        gap_h = (span_h - avail_h) / (self.nrows - 1) if self.nrows > 1 else 0.0
+        wratios = self._width_ratios or (1.0,) * self.ncols
+        hratios = self._height_ratios or (1.0,) * self.nrows
+        widths = [avail_w * ratio / sum(wratios) for ratio in wratios]
+        heights = [avail_h * ratio / sum(hratios) for ratio in hratios]
+        c0, c1 = cols
+        r0, r1 = rows
+        x0 = float(frame["left"]) + sum(widths[:c0]) + c0 * gap_w
+        width = sum(widths[c0:c1]) + (c1 - c0 - 1) * gap_w
+        y_top = float(frame["top"]) - (sum(heights[:r0]) + r0 * gap_h)
+        height = sum(heights[r0:r1]) + (r1 - r0 - 1) * gap_h
+        return (x0, y_top - height, width, height)
+
+
+class GridSpec(_GridSpec):
+    """plt.GridSpec: figure-optional grid geometry with span support."""
+
+    def __init__(self, nrows: int, ncols: int, figure: Optional[Figure] = None, **kwargs: Any):
+        super().__init__(figure, nrows, ncols, **kwargs)
 
 
 def _parse_subplot_args(args: tuple) -> tuple[int, int, int]:

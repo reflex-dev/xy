@@ -17,6 +17,36 @@ from ._colors import resolve_color
 from ._transforms import Bbox, IdentityTransform
 
 
+def _set_entry_clim(artist: "Artist", vmin: Any = None, vmax: Any = None) -> None:
+    """Set a mappable entry's color domain, autoscaling any side left as None."""
+    if vmax is None and isinstance(vmin, (tuple, list)):
+        vmin, vmax = vmin
+    entry = artist._entry
+    if vmin is None or vmax is None:
+        kwargs = entry.get("kwargs", {})
+        values = entry.get("source_z", kwargs.get("color", entry.get("z")))
+        try:
+            numeric = np.asarray(values, dtype=np.float64)
+            finite = numeric[np.isfinite(numeric)]
+        except (TypeError, ValueError):
+            finite = np.asarray([], dtype=np.float64)
+        fallback = (
+            float(finite.min()) if finite.size else 0.0,
+            float(finite.max()) if finite.size else 1.0,
+        )
+        current = entry.get("kwargs", {}).get("domain", fallback)
+        vmin = current[0] if vmin is None else vmin
+        vmax = current[1] if vmax is None else vmax
+    domain = (float(vmin), float(vmax))
+    entry["kwargs"]["domain"] = domain
+    axes = artist._axes
+    # A live colorbar derived from this mappable tracks the new limits, as in
+    # matplotlib where the colorbar shares the mappable's norm.
+    if getattr(axes, "_colorbar_source", None) is entry and axes._colorbar is not None:
+        axes._colorbar["domain"] = [domain[0], domain[1]]
+    artist._touch()
+
+
 class Artist:
     def __init__(self, axes: Any, entry: dict[str, Any]) -> None:
         self._axes = axes
@@ -288,10 +318,12 @@ class Line2D(Artist):
         self._set_xy(1, y)
         self._touch()
 
-    def get_xdata(self) -> Any:
+    def get_xdata(self, orig: bool = True) -> Any:
+        del orig  # compat-noop: one canonical data array, no unit-converted copy
         return self._entry["x"]
 
-    def get_ydata(self) -> Any:
+    def get_ydata(self, orig: bool = True) -> Any:
+        del orig  # compat-noop: one canonical data array, no unit-converted copy
         return self._entry["y"]
 
     def set_linewidth(self, w: float) -> None:
@@ -350,6 +382,12 @@ class PathCollection(Artist):
         from . import _colors
 
         return _colors.Cmap(self._entry["kwargs"].get("colormap", "viridis"))
+
+    def set_clim(self, vmin: Any = None, vmax: Any = None) -> None:
+        _set_entry_clim(self, vmin, vmax)
+
+    def get_cmap(self) -> Any:
+        return self.cmap
 
 
 class AxesImage(Artist):
@@ -488,10 +526,7 @@ class AxesImage(Artist):
         self._touch()
 
     def set_clim(self, vmin: Any = None, vmax: Any = None) -> None:
-        if vmax is None and isinstance(vmin, (tuple, list)):
-            vmin, vmax = vmin
-        self._entry["kwargs"]["domain"] = (float(vmin), float(vmax))
-        self._touch()
+        _set_entry_clim(self, vmin, vmax)
 
     def norm(self, value: Any) -> Any:
         import numpy as np
@@ -667,6 +702,9 @@ class ContourSet(Artist):
 
 class PolyCollection(Artist):
     """Generic collection handle used by adapter-composed chart families."""
+
+    def set_clim(self, vmin: Any = None, vmax: Any = None) -> None:
+        _set_entry_clim(self, vmin, vmax)
 
 
 class Wedge(PolyCollection):

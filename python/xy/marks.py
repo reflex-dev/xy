@@ -910,6 +910,7 @@ def scatter(
     size: Any = 4.0,
     opacity: float = 0.8,
     colormap: str = channels.DEFAULT_COLORMAP,
+    color_domain: Optional[tuple[float, float]] = None,
     size_range: tuple[float, float] = (2.0, 18.0),
     density: Optional[bool] = None,
     symbol: str = "circle",
@@ -939,7 +940,7 @@ def scatter(
         n = len(xc)
         default_color = DEFAULT_PALETTE[len(self.traces) % len(DEFAULT_PALETTE)]
         color_ch = channels.resolve_color(
-            color, n, colormap=colormap, default_constant=default_color
+            color, n, colormap=colormap, default_constant=default_color, domain=color_domain
         )
         size_ch = channels.resolve_size(size, n, range_px=size_range)
 

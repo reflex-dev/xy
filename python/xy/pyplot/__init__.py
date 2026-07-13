@@ -15,20 +15,52 @@ and the loud `NotImplementedError` list.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any, Optional, Union
 
 import numpy as np
 
 from ._axes import Axes
-from ._mplfig import Figure, apply_sharing, make_axes_grid
-from ._rc import rc, rc_context, rcdefaults, rcParams
+from ._colors import LinearSegmentedColormap, ListedColormap
+from ._mplfig import Figure, GridSpec, apply_sharing, make_axes_grid
+from ._rc import _PropCycle, rc, rc_context, rcdefaults, rcParams
 from ._state import all_figures, close, figlabels, fignum_exists, fignums, figure, gca, gcf, sca
+from ._ticker import (
+    AutoLocator,
+    FixedFormatter,
+    FixedLocator,
+    FormatStrFormatter,
+    FuncFormatter,
+    LinearLocator,
+    LogLocator,
+    MaxNLocator,
+    MultipleLocator,
+    NullFormatter,
+    NullLocator,
+    ScalarFormatter,
+    StrMethodFormatter,
+)
 from ._translate import not_implemented
 
 __all__ = [
+    "AutoLocator",
     "Axes",
     "Figure",
+    "FixedFormatter",
+    "FixedLocator",
+    "FormatStrFormatter",
+    "FuncFormatter",
+    "GridSpec",
+    "LinearLocator",
+    "LinearSegmentedColormap",
+    "ListedColormap",
     "LogLocator",
+    "MaxNLocator",
+    "MultipleLocator",
+    "NullFormatter",
+    "NullLocator",
+    "ScalarFormatter",
+    "StrMethodFormatter",
     "acorr",
     "angle_spectrum",
     "annotate",
@@ -53,6 +85,7 @@ __all__ = [
     "cla",
     "clabel",
     "clf",
+    "clim",
     "close",
     "cm",
     "cohere",
@@ -61,6 +94,7 @@ __all__ = [
     "contour",
     "contourf",
     "csd",
+    "cycler",
     "delaxes",
     "ecdf",
     "errorbar",
@@ -75,6 +109,7 @@ __all__ = [
     "findobj",
     "gca",
     "gcf",
+    "gci",
     "get",
     "get_cmap",
     "get_figlabels",
@@ -117,6 +152,7 @@ __all__ = [
     "savefig",
     "sca",
     "scatter",
+    "sci",
     "semilogx",
     "semilogy",
     "set_cmap",
@@ -181,12 +217,16 @@ def subplots(
     width_ratios = kwargs.pop("width_ratios", None)
     height_ratios = kwargs.pop("height_ratios", None)
     gridspec_kw = kwargs.pop("gridspec_kw", None) or {}
+    subplot_kw = kwargs.pop("subplot_kw", None) or {}
     width_ratios = gridspec_kw.get("width_ratios", width_ratios)
     height_ratios = gridspec_kw.get("height_ratios", height_ratios)
     fig = figure(figsize=figsize, dpi=dpi)
     if fig._axes and any(ax._entries for ax in fig._axes):
         fig = figure(None, figsize=figsize, dpi=dpi)  # fresh figure, mpl semantics
     axes = make_axes_grid(fig, nrows, ncols, squeeze=squeeze)
+    if subplot_kw:
+        for ax in np.atleast_1d(np.asarray(axes, dtype=object)).ravel():
+            ax.set(**subplot_kw)
     fig._width_ratios = None if width_ratios is None else tuple(map(float, width_ratios))
     fig._height_ratios = None if height_ratios is None else tuple(map(float, height_ratios))
     apply_sharing(fig, sharex, sharey)
@@ -194,7 +234,7 @@ def subplots(
 
 
 def subplot(*args: Any, **kwargs: Any) -> Axes:
-    return gcf().add_subplot(*args)
+    return gcf().add_subplot(*args, **kwargs)
 
 
 def subplot_mosaic(mosaic: Any, **kwargs: Any) -> tuple[Figure, dict[Any, Axes]]:
@@ -206,7 +246,10 @@ def subplot_mosaic(mosaic: Any, **kwargs: Any) -> tuple[Figure, dict[Any, Axes]]
 
 def axes(arg: Any = None, **kwargs: Any) -> Axes:
     if arg is None:
-        return gcf().add_subplot(111)
+        ax = gcf().add_subplot(111)
+        if kwargs:
+            ax.set(**kwargs)
+        return ax
     return gcf().add_axes(arg, **kwargs)
 
 
@@ -486,6 +529,23 @@ def _delegated(name: str):
     return call
 
 
+def _delegated_mappable(name: str):
+    """Like _delegated, but records the result as the figure's current
+    mappable so colorbar()/clim() find it, matching pyplot's sci() calls."""
+
+    def call(*args: Any, **kwargs: Any) -> Any:
+        result = getattr(gca(), name)(*args, **kwargs)
+        candidate = result[-1] if isinstance(result, tuple) else result
+        if hasattr(candidate, "_entry"):
+            gcf()._gci = candidate
+        return result
+
+    call.__name__ = name
+    call.__qualname__ = name
+    call.__doc__ = f"pyplot {name}(): applies to the current axes (see Axes.{name})."
+    return call
+
+
 plot = _delegated("plot")
 acorr = _delegated("acorr")
 angle_spectrum = _delegated("angle_spectrum")
@@ -499,7 +559,7 @@ xcorr = _delegated("xcorr")
 fill = _delegated("fill")
 arrow = _delegated("arrow")
 axline = _delegated("axline")
-scatter = _delegated("scatter")
+scatter = _delegated_mappable("scatter")
 bar = _delegated("bar")
 bar_label = _delegated("bar_label")
 grouped_bar = _delegated("grouped_bar")
@@ -507,17 +567,17 @@ barh = _delegated("barh")
 hist = _delegated("hist")
 fill_between = _delegated("fill_between")
 fill_betweenx = _delegated("fill_betweenx")
-imshow = _delegated("imshow")
-matshow = _delegated("matshow")
-pcolor = _delegated("pcolor")
-pcolorfast = _delegated("pcolorfast")
-pcolormesh = _delegated("pcolormesh")
+imshow = _delegated_mappable("imshow")
+matshow = _delegated_mappable("matshow")
+pcolor = _delegated_mappable("pcolor")
+pcolorfast = _delegated_mappable("pcolorfast")
+pcolormesh = _delegated_mappable("pcolormesh")
 step = _delegated("step")
 stem = _delegated("stem")
 stairs = _delegated("stairs")
 ecdf = _delegated("ecdf")
-hist2d = _delegated("hist2d")
-hexbin = _delegated("hexbin")
+hist2d = _delegated_mappable("hist2d")
+hexbin = _delegated_mappable("hexbin")
 eventplot = _delegated("eventplot")
 stackplot = _delegated("stackplot")
 axhline = _delegated("axhline")
@@ -537,8 +597,8 @@ bxp = _delegated("bxp")
 violinplot = _delegated("violinplot")
 violin = _delegated("violin")
 errorbar = _delegated("errorbar")
-contour = _delegated("contour")
-contourf = _delegated("contourf")
+contour = _delegated_mappable("contour")
+contourf = _delegated_mappable("contourf")
 clabel = _delegated("clabel")
 quiver = _delegated("quiver")
 quiverkey = _delegated("quiverkey")
@@ -551,7 +611,7 @@ hlines = _delegated("hlines")
 vlines = _delegated("vlines")
 broken_barh = _delegated("broken_barh")
 spy = _delegated("spy")
-tripcolor = _delegated("tripcolor")
+tripcolor = _delegated_mappable("tripcolor")
 triplot = _delegated("triplot")
 tricontour = _delegated("tricontour")
 tricontourf = _delegated("tricontourf")
@@ -615,10 +675,6 @@ def subplots_adjust(**kwargs: Any) -> None:
     gcf().subplots_adjust(**kwargs)
 
 
-class LogLocator:
-    pass
-
-
 def get_cmap(name: Any = None, lut: Any = None) -> Any:
     from ._colors import Cmap
 
@@ -626,8 +682,26 @@ def get_cmap(name: Any = None, lut: Any = None) -> Any:
     return cmap if lut is None else cmap.resampled(int(lut))
 
 
-def colorbar(*args: Any, **kwargs: Any) -> None:
-    gcf().colorbar(*args, **kwargs)
+def colorbar(*args: Any, **kwargs: Any) -> Any:
+    return gcf().colorbar(*args, **kwargs)
+
+
+def gci() -> Any:
+    """The current color-mapped artist (image/collection), or None."""
+    return gcf()._gci
+
+
+def sci(mappable: Any) -> None:
+    gcf()._gci = mappable
+
+
+def clim(vmin: Any = None, vmax: Any = None) -> None:
+    image = gci()
+    if image is None:
+        raise RuntimeError(
+            "clim() requires an image or collection; plot one first (e.g. imshow/scatter)"
+        )
+    image.set_clim(vmin, vmax)
 
 
 # -- output ---------------------------------------------------------------------
@@ -658,6 +732,11 @@ def show(*args: Any, **kwargs: Any) -> None:
 
 class _CmapNamespace:
     """plt.cm.viridis and friends: name carriers the shim resolves by name."""
+
+    @staticmethod
+    def get_cmap(name: Any = None, lut: Any = None) -> Any:
+        # matplotlib removed cm.get_cmap in 3.9; older scripts still call it.
+        return get_cmap(name, lut)
 
     def __getattr__(self, name: str) -> Any:
         from ._colors import CMAPS
@@ -690,7 +769,9 @@ class _ColormapRegistry:
             "turbo",
             "coolwarm",
             "RdBu",
+            "RdGy",
             "bwr",
+            "jet",
             "Blues",
             "RdYlGn",
             "rainbow",
@@ -707,8 +788,118 @@ class _ColormapRegistry:
 colormaps = _ColormapRegistry()
 
 
+# The stock stylesheets scripts reach for, reduced to the rcParams subset the
+# shim renders (values match matplotlib 3.11's style library; gray shorthands
+# are pre-resolved to hex so exporters never see them).
+_NAMED_STYLES: dict[str, dict[str, Any]] = {
+    "fivethirtyeight": {
+        "figure.facecolor": "#f0f0f0",
+        "axes.facecolor": "#f0f0f0",
+        "axes.edgecolor": "#f0f0f0",
+        "axes.grid": True,
+        "grid.color": "#cbcbcb",
+        "lines.linewidth": 4.0,
+        "font.size": 14.0,
+        "axes.prop_cycle": _PropCycle(
+            ["#008fd5", "#fc4f30", "#e5ae38", "#6d904f", "#8b8b8b", "#810f7c"]
+        ),
+    },
+    "ggplot": {
+        "figure.facecolor": "white",
+        "axes.facecolor": "#E5E5E5",
+        "axes.edgecolor": "white",
+        "axes.labelcolor": "#555555",
+        "axes.grid": True,
+        "grid.color": "white",
+        "xtick.color": "#555555",
+        "ytick.color": "#555555",
+        "font.size": 10.0,
+        "axes.prop_cycle": _PropCycle(
+            ["#E24A33", "#348ABD", "#988ED5", "#777777", "#FBC15E", "#8EBA42", "#FFB5B8"]
+        ),
+    },
+    "bmh": {
+        "axes.facecolor": "#eeeeee",
+        "axes.edgecolor": "#bcbcbc",
+        "axes.grid": True,
+        "grid.color": "#b2b2b2",
+        "lines.linewidth": 2.0,
+        "axes.prop_cycle": _PropCycle(
+            [
+                "#348ABD",
+                "#A60628",
+                "#7A68A6",
+                "#467821",
+                "#D55E00",
+                "#CC79A7",
+                "#56B4E9",
+                "#009E73",
+                "#F0E442",
+                "#0072B2",
+            ]
+        ),
+    },
+    "dark_background": {
+        "figure.facecolor": "black",
+        "axes.facecolor": "black",
+        "axes.edgecolor": "white",
+        "axes.labelcolor": "white",
+        "grid.color": "white",
+        "xtick.color": "white",
+        "ytick.color": "white",
+        "axes.prop_cycle": _PropCycle(
+            [
+                "#8dd3c7",
+                "#feffb3",
+                "#bfbbd9",
+                "#fa8174",
+                "#81b1d2",
+                "#fdb462",
+                "#b3de69",
+                "#bc82bd",
+                "#ccebc4",
+                "#ffed6f",
+            ]
+        ),
+    },
+    "grayscale": {
+        "figure.facecolor": "#bfbfbf",
+        "axes.facecolor": "white",
+        "axes.edgecolor": "black",
+        "axes.labelcolor": "black",
+        "grid.color": "black",
+        "xtick.color": "black",
+        "ytick.color": "black",
+        "axes.prop_cycle": _PropCycle(["#000000", "#666666", "#999999", "#b3b3b3"]),
+    },
+    "seaborn-v0_8-white": {
+        "figure.facecolor": "white",
+        "axes.facecolor": "white",
+        "axes.edgecolor": "#262626",
+        "axes.labelcolor": "#262626",
+        "axes.grid": False,
+        "grid.color": "#cccccc",
+        "xtick.color": "#262626",
+        "ytick.color": "#262626",
+        "legend.frameon": False,
+    },
+    "seaborn-v0_8-whitegrid": {
+        "figure.facecolor": "white",
+        "axes.facecolor": "white",
+        "axes.edgecolor": "#cccccc",
+        "axes.labelcolor": "#262626",
+        "axes.grid": True,
+        "grid.color": "#cccccc",
+        "xtick.color": "#262626",
+        "ytick.color": "#262626",
+        "legend.frameon": False,
+    },
+}
+_NAMED_STYLES["seaborn-whitegrid"] = _NAMED_STYLES["seaborn-v0_8-whitegrid"]
+
+
 class _StyleNamespace:
-    available = ("default", "xy")
+    available = ("default", "xy", *sorted(_NAMED_STYLES))
 
     @staticmethod
     def use(name: Union[str, dict[str, Any], list[Union[str, dict[str, Any]]]]) -> None:
@@ -724,10 +915,17 @@ class _StyleNamespace:
                 )
             rcParams.update(name)
             return
-        if name not in ("default", "xy"):
-            raise not_implemented(f"style.use({name!r})", "'default', 'xy', or an rcParams dict")
         from . import _axes
 
+        if name in _NAMED_STYLES:
+            # matplotlib sheets are additive patches over the current params.
+            rcParams.update(_NAMED_STYLES[name])
+            _axes._component_cache.clear()
+            return
+        if name not in ("default", "xy"):
+            raise not_implemented(
+                f"style.use({name!r})", f"one of {_StyleNamespace.available} or an rcParams dict"
+            )
         if name == "xy":
             _axes._MPL_THEME_TOKENS.clear()  # engine-native look
         else:
@@ -737,8 +935,38 @@ class _StyleNamespace:
             )
         _axes._component_cache.clear()
 
+    @staticmethod
+    @contextlib.contextmanager
+    def context(name: Union[str, dict[str, Any], list[Union[str, dict[str, Any]]]]):
+        from . import _axes
+
+        snapshot = dict(rcParams)
+        tokens = dict(_axes._MPL_THEME_TOKENS)
+        try:
+            _StyleNamespace.use(name)
+            yield
+        finally:
+            rcParams.clear()
+            rcParams.update(snapshot)
+            _axes._MPL_THEME_TOKENS.clear()
+            _axes._MPL_THEME_TOKENS.update(tokens)
+            _axes._component_cache.clear()
+
 
 style = _StyleNamespace()
+
+
+def cycler(*args: Any, **kwargs: Any) -> Any:
+    """matplotlib.cycler reduced to the color cycle the engine consumes."""
+    if len(args) == 2 and not kwargs:
+        key, values = args
+    elif not args and len(kwargs) == 1:
+        key, values = next(iter(kwargs.items()))
+    else:
+        raise not_implemented("cycler() with multiple keys", "a single color cycle")
+    if key != "color":
+        raise not_implemented(f"cycler({key!r})", "a 'color' cycle")
+    return _PropCycle(list(values))
 
 
 def np_asarray_passthrough(x: Any) -> Any:  # pragma: no cover - numpy re-export shim

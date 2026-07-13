@@ -8,6 +8,7 @@ validates CSS colors natively.
 
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 import numpy as np
@@ -75,6 +76,8 @@ CMAPS = {
     "purples": "purples",
     "pubu": "pubu",
     "prgn": "prgn",
+    "rdgy": "rdgy",
+    "jet": "jet",
     "binary": "binary",
 }
 
@@ -132,6 +135,92 @@ class Cmap:
         ):
             if extreme is not None and np.any(mask):
                 flat_rgba[mask] = _rgba_floats(extreme)
+        return tuple(rgba.tolist()) if array.ndim == 0 else rgba
+
+
+def _user_color_table(colors: object) -> np.ndarray:
+    """(M, 3|4) rows of 0-1 floats (or resolvable color strings) → (M, 4) RGBA."""
+    if isinstance(colors, (list, tuple)) and colors and all(isinstance(c, str) for c in colors):
+        rows = []
+        for spec in colors:
+            resolved = resolve_color(spec) or ""
+            if not re.fullmatch(r"#[0-9a-fA-F]{6}", resolved):
+                raise ValueError(
+                    f"unsupported colormap color {spec!r}; use hex strings or 0-1 RGB(A) rows"
+                )
+            rows.append([int(resolved[i : i + 2], 16) / 255.0 for i in (1, 3, 5)] + [1.0])
+        return np.asarray(rows, dtype=np.float64)
+    table = np.asarray(colors, dtype=np.float64)
+    if table.ndim != 2 or table.shape[1] not in (3, 4) or not len(table):
+        raise ValueError("colormap colors must be an (N, 3) or (N, 4) array of 0-1 floats")
+    if table.shape[1] == 3:
+        table = np.column_stack((table, np.ones(len(table), dtype=np.float64)))
+    return np.clip(table, 0.0, 1.0)
+
+
+class ListedColormap:
+    """matplotlib.colors.ListedColormap: a user-supplied discrete color table.
+
+    The engine renders *named* colormaps only, so user-built colormaps serve
+    the Python-side idiom — ``cmap(np.arange(cmap.N))`` — whose RGBA output
+    feeds image/scatter calls directly. Passing one as ``cmap=`` still fails
+    loudly in ``resolve_cmap`` (there is no engine table to render).
+    """
+
+    def __init__(self, colors: object, name: str = "listed", N: int | None = None) -> None:
+        table = _user_color_table(colors)
+        if N is not None:
+            count = max(1, int(N))
+            table = np.tile(table, (-(-count // len(table)), 1))[:count]
+        self.colors = table
+        self.name = str(name)
+        self.N = len(table)
+
+    def __call__(self, values: object) -> object:
+        array = np.asarray(values)
+        if np.issubdtype(array.dtype, np.integer):
+            index = np.clip(array, 0, self.N - 1)
+        else:
+            scaled = np.clip(np.nan_to_num(np.asarray(array, np.float64), nan=0.0), 0.0, 1.0)
+            index = np.minimum((scaled * self.N).astype(int), self.N - 1)
+        rgba = self.colors[index]
+        return tuple(rgba.tolist()) if array.ndim == 0 else rgba
+
+
+class LinearSegmentedColormap:
+    """matplotlib's from_list surface: anchors interpolated Python-side.
+
+    Same engine boundary as ListedColormap — callable for RGBA tables, not
+    renderable by name.
+    """
+
+    def __init__(self, name: str, anchors: np.ndarray, N: int = 256) -> None:
+        self.name = str(name)
+        self._anchors = anchors
+        self.N = max(1, int(N))
+
+    @classmethod
+    def from_list(
+        cls, name: str, colors: object, N: int = 256, **kwargs: object
+    ) -> "LinearSegmentedColormap":
+        if kwargs:
+            raise TypeError(f"from_list() got unsupported keyword argument {next(iter(kwargs))!r}")
+        return cls(name, _user_color_table(colors), N)
+
+    def resampled(self, lutsize: int) -> "LinearSegmentedColormap":
+        return LinearSegmentedColormap(self.name, self._anchors, lutsize)
+
+    def __call__(self, values: object) -> object:
+        array = np.asarray(values)
+        normalized = np.asarray(array, dtype=np.float64)
+        if np.issubdtype(array.dtype, np.integer):
+            normalized = normalized / max(1, self.N - 1)
+        clipped = np.clip(np.nan_to_num(normalized, nan=0.0), 0.0, 1.0)
+        position = clipped * (len(self._anchors) - 1)
+        low = np.floor(position).astype(int)
+        high = np.minimum(low + 1, len(self._anchors) - 1)
+        t = (position - low)[..., None]
+        rgba = self._anchors[low] * (1.0 - t) + self._anchors[high] * t
         return tuple(rgba.tolist()) if array.ndim == 0 else rgba
 
 

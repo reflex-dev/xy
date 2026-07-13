@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+
 import pytest
 
 import xy.pyplot as plt
@@ -83,6 +85,14 @@ def test_spine_and_invalid_cycle_boundaries_fail_loudly() -> None:
         plt.rcParams["axes.prop_cycle"] = object()
 
     _fig, ax = plt.subplots()
-    with pytest.raises(NotImplementedError, match="cannot hide the left spine"):
-        ax.spines["left"].set_visible(False)
+    ax.plot([0, 1], [0, 1])
     ax.spines[["top", "right"]].set_visible(False)
+    # Hiding only one of left/bottom is inexpressible and fails at build time;
+    # hiding both renders with transparent axis lines.
+    ax.spines["left"].set_visible(False)
+    with pytest.raises(NotImplementedError, match="hiding only the left spine"):
+        _fig.savefig(io.BytesIO(), format="png")
+    ax.spines["bottom"].set_visible(False)
+    buffer = io.BytesIO()
+    _fig.savefig(buffer, format="png")
+    assert buffer.getvalue()[:4] == b"\x89PNG"

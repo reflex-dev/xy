@@ -29,6 +29,7 @@ _DEFAULTS: dict[str, Any] = {
     "font.size": 10.0,
     "font.family": ["sans-serif"],
     "axes.grid": False,
+    "grid.color": "#b0b0b0",
     "axes.facecolor": "white",
     "axes.edgecolor": "black",
     "axes.labelcolor": "black",

@@ -221,6 +221,32 @@ COLORMAP_STOPS: dict[str, list[tuple[int, int, int]]] = {
         (27, 120, 55),
         (0, 68, 27),
     ],
+    "rdgy": [
+        (103, 0, 31),
+        (177, 24, 43),
+        (214, 96, 77),
+        (243, 164, 129),
+        (253, 219, 199),
+        (254, 254, 254),
+        (224, 224, 224),
+        (185, 185, 185),
+        (135, 135, 135),
+        (76, 76, 76),
+        (26, 26, 26),
+    ],
+    "jet": [
+        (0, 0, 128),
+        (0, 0, 241),
+        (0, 76, 255),
+        (0, 176, 255),
+        (41, 255, 206),
+        (125, 255, 122),
+        (206, 255, 41),
+        (255, 196, 0),
+        (255, 104, 0),
+        (241, 8, 0),
+        (128, 0, 0),
+    ],
     "binary": [(255, 255, 255), (0, 0, 0)],
 }
 
@@ -1338,21 +1364,57 @@ def _colorbar(options: dict, plot: dict) -> str:
             else ""
         )
     )
+    lo, hi = float(domain[0]), float(domain[1])
+    span = (hi - lo) or 1.0
+    ticks = options.get("ticks")
+    tick_positions = (
+        [float(value) for value in ticks if lo <= float(value) <= hi]
+        if ticks is not None
+        else [lo + span * i / 4 for i in range(5)]
+    )
     tick_nodes = (
         "".join(
-            f'<text x="{_num(x + width + 4)}" y="{_num(y + height * (1 - i / 4) + 4)}" '
-            f'fill="{_TEXT}">{domain[0] + (domain[1] - domain[0]) * i / 4:g}</text>'
-            for i in range(5)
+            f'<text x="{_num(x + width + 4)}" '
+            f'y="{_num(y + height * (1 - (value - lo) / span) + 4)}" '
+            f'fill="{_TEXT}">{value:g}</text>'
+            for value in tick_positions
         )
         if orientation != "horizontal"
-        else ""
+        else "".join(
+            f'<text x="{_num(x + width * (value - lo) / span)}" '
+            f'y="{_num(y + height + 12)}" text-anchor="middle" '
+            f'fill="{_TEXT}">{value:g}</text>'
+            for value in tick_positions
+            if ticks is not None
+        )
     )
+    extend = options.get("extend")
+    extend_nodes = ""
+    if extend in ("max", "both"):
+        r, g, b = stops[-1]
+        points = (
+            f"{_num(x)},{_num(y)} {_num(x + width)},{_num(y)} {_num(x + width / 2)},{_num(y - 9)}"
+            if orientation != "horizontal"
+            else f"{_num(x + width)},{_num(y)} {_num(x + width)},{_num(y + height)} "
+            f"{_num(x + width + 9)},{_num(y + height / 2)}"
+        )
+        extend_nodes += f'<polygon points="{points}" fill="rgb({r},{g},{b})"/>'
+    if extend in ("min", "both"):
+        r, g, b = stops[0]
+        points = (
+            f"{_num(x)},{_num(y + height)} {_num(x + width)},{_num(y + height)} "
+            f"{_num(x + width / 2)},{_num(y + height + 9)}"
+            if orientation != "horizontal"
+            else f"{_num(x)},{_num(y)} {_num(x)},{_num(y + height)} "
+            f"{_num(x - 9)},{_num(y + height / 2)}"
+        )
+        extend_nodes += f'<polygon points="{points}" fill="rgb({r},{g},{b})"/>'
     return (
         f'<defs><linearGradient id="{gradient_id}" {gradient_attrs}>'
         f"{stop_nodes}</linearGradient></defs>"
         f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(width)}" height="{_num(height)}" '
         f'fill="url(#{gradient_id})"/>'
-        f"{tick_nodes}{label_node}"
+        f"{extend_nodes}{tick_nodes}{label_node}"
     )
 
 

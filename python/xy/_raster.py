@@ -1042,9 +1042,40 @@ def _emit_colorbar(cmd, options, plot):
             y1 = y + height * (64 - index) / 64
             cmd.fill(_rect_pts(x, y0, x + width, y1 + 0.5), (*map(int, color), 255))
     domain = options.get("domain", [0.0, 1.0])
+    lo, hi = float(domain[0]), float(domain[1])
+    span = (hi - lo) or 1.0
+    ticks = options.get("ticks")
+    extend = options.get("extend")
+    if extend in ("max", "both"):
+        color = (*map(int, colors[-1]), 255)
+        if orientation == "horizontal":
+            pts = [(x + width, y), (x + width, y + height), (x + width + 9, y + height / 2)]
+        else:
+            pts = [(x, y), (x + width, y), (x + width / 2, y - 9)]
+        cmd.fill(pts, color)
+    if extend in ("min", "both"):
+        color = (*map(int, colors[0]), 255)
+        if orientation == "horizontal":
+            pts = [(x, y), (x, y + height), (x - 9, y + height / 2)]
+        else:
+            pts = [(x, y + height), (x + width, y + height), (x + width / 2, y + height + 9)]
+        cmd.fill(pts, color)
     if orientation == "horizontal":
-        cmd.text(x, y + height + 13, 0, 10, _parse_color(_TEXT), f"{domain[0]:g}")
-        cmd.text(x + width, y + height + 13, 2, 10, _parse_color(_TEXT), f"{domain[1]:g}")
+        if ticks is not None:
+            for value in ticks:
+                value = float(value)
+                if lo <= value <= hi:
+                    cmd.text(
+                        x + width * (value - lo) / span,
+                        y + height + 13,
+                        1,
+                        10,
+                        _parse_color(_TEXT),
+                        f"{value:g}",
+                    )
+        else:
+            cmd.text(x, y + height + 13, 0, 10, _parse_color(_TEXT), f"{domain[0]:g}")
+            cmd.text(x + width, y + height + 13, 2, 10, _parse_color(_TEXT), f"{domain[1]:g}")
         if options.get("label"):
             cmd.text(
                 x + width / 2,
@@ -1055,11 +1086,15 @@ def _emit_colorbar(cmd, options, plot):
                 str(options["label"]),
             )
     else:
-        for index in range(5):
-            value = domain[0] + (domain[1] - domain[0]) * index / 4
+        tick_positions = (
+            [float(value) for value in ticks if lo <= float(value) <= hi]
+            if ticks is not None
+            else [lo + span * index / 4 for index in range(5)]
+        )
+        for value in tick_positions:
             cmd.text(
                 x + width + 4,
-                y + height * (1 - index / 4) + 4,
+                y + height * (1 - (value - lo) / span) + 4,
                 0,
                 10,
                 _parse_color(_TEXT),
