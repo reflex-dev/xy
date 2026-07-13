@@ -372,28 +372,24 @@ class _ColormapRegistry:
         return Cmap(name)
 
     def __iter__(self):
-        fallback = (
-            "viridis",
-            "plasma",
-            "inferno",
-            "magma",
-            "cividis",
-            "gray",
-            "turbo",
-            "coolwarm",
-            "RdBu",
-            "bwr",
-            "Blues",
-            "RdYlGn",
-            "rainbow",
-            "Spectral",
+        return iter(
+            (
+                "viridis",
+                "plasma",
+                "inferno",
+                "magma",
+                "cividis",
+                "gray",
+                "turbo",
+                "coolwarm",
+                "RdBu",
+                "bwr",
+                "Blues",
+                "RdYlGn",
+                "rainbow",
+                "Spectral",
+            )
         )
-        try:
-            _matplotlib = __import__("matplotlib")
-
-            return iter(tuple(_matplotlib.colormaps))
-        except (ImportError, AttributeError):
-            return iter(fallback)
 
 
 colormaps = _ColormapRegistry()

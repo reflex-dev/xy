@@ -8,12 +8,39 @@ dominant mutation idioms without reproducing matplotlib's artist graph.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from itertools import pairwise
 from typing import Any, Optional
 
 import numpy as np
 
 from ._colors import resolve_color
+
+
+@dataclass(frozen=True)
+class Bbox:
+    """Dependency-free subset of ``matplotlib.transforms.Bbox`` used by the shim."""
+
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+
+    @classmethod
+    def from_bounds(cls, x0: float, y0: float, width: float, height: float) -> "Bbox":
+        return cls(float(x0), float(y0), float(x0 + width), float(y0 + height))
+
+    @property
+    def width(self) -> float:
+        return self.x1 - self.x0
+
+    @property
+    def height(self) -> float:
+        return self.y1 - self.y0
+
+    @property
+    def bounds(self) -> tuple[float, float, float, float]:
+        return (self.x0, self.y0, self.width, self.height)
 
 
 class Artist:
@@ -536,8 +563,6 @@ class Text(Artist):
 
     def get_window_extent(self, renderer: Any = None) -> Any:
         del renderer
-        Bbox = __import__("matplotlib.transforms", fromlist=["Bbox"]).Bbox
-
         x, y, text = self._entry["args"]
         width = max(0.05, len(str(text)) * 0.018)
         return Bbox.from_bounds(float(x) - width / 2, float(y) - 0.04, width, 0.08)

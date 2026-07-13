@@ -18,8 +18,17 @@ import numpy as np
 
 import xy as fc
 
-from ._artists import Artist, AxesImage, BarContainer, Line2D, PathCollection, PolyCollection, Text
-from ._colors import PROP_CYCLE, resolve_cmap, resolve_color
+from ._artists import (
+    Artist,
+    AxesImage,
+    BarContainer,
+    Bbox,
+    Line2D,
+    PathCollection,
+    PolyCollection,
+    Text,
+)
+from ._colors import PROP_CYCLE, Cmap, resolve_cmap, resolve_color, to_rgba
 from ._fmt import parse_fmt
 from ._plot_types import PlotTypeMixin
 from ._rc import rcParams
@@ -45,22 +54,6 @@ _MPL_GRID_COLOR = "#b0b0b0"
 # core once, not once per figure (the perf guardrail in tests/pyplot counts
 # on this staying O(1) per process).
 _component_cache: dict[tuple, Any] = {}
-_identity_transform_class: Any = None
-_identity_transform_checked = False
-
-
-def _identity_transform() -> Any:
-    """Return Matplotlib's identity transform when available, without retrying imports."""
-    global _identity_transform_checked, _identity_transform_class
-    if not _identity_transform_checked:
-        try:
-            _identity_transform_class = __import__(
-                "matplotlib.transforms", fromlist=["IdentityTransform"]
-            ).IdentityTransform
-        except ImportError:
-            _identity_transform_class = False
-        _identity_transform_checked = True
-    return _identity_transform_class() if _identity_transform_class else "data"
 
 
 class _AxisProxy:
@@ -137,10 +130,8 @@ class Axes(PlotTypeMixin):
         self._chart: Any = None
         self._twin: Optional[Axes] = None
         self._y2_of = y2_of  # when set, our marks target axis id "y2" on the host
-        self.transAxes = _identity_transform()
-        self.transData = _identity_transform()
-        if self.transAxes == "data":
-            self.transAxes = "axes fraction"
+        self.transAxes = "axes fraction"
+        self.transData = "data"
         self.xaxis = _AxisProxy(self, "x")
         self.yaxis = _AxisProxy(self, "y")
         self.spines = _SpineProxy()
@@ -751,14 +742,7 @@ class Axes(PlotTypeMixin):
             mapped = np.ma.asarray(norm(grid), dtype=np.float64)
             cmap_callable = cmap if callable(cmap) else None
             if cmap_callable is None:
-                try:
-                    mpl_colormaps = __import__("matplotlib", fromlist=["colormaps"]).colormaps
-
-                    cmap_callable = mpl_colormaps.get_cmap(cmap or rcParams["image.cmap"])
-                except (ImportError, ValueError):
-                    from ._colors import Cmap
-
-                    cmap_callable = Cmap(cmap or rcParams["image.cmap"])
+                cmap_callable = Cmap(cmap or rcParams["image.cmap"])
             rgba = np.asarray(cmap_callable(mapped), dtype=np.float64)
             mask = np.ma.getmaskarray(mapped) | ~np.isfinite(grid)
             if rgba.shape[-1] == 3:
@@ -766,8 +750,6 @@ class Axes(PlotTypeMixin):
             rgba[..., 3] = np.where(mask, 0.0, rgba[..., 3])
             grid, truecolor = rgba, True
         if not truecolor and has_extremes:
-            to_rgba = __import__("matplotlib.colors", fromlist=["to_rgba"]).to_rgba
-
             from xy._svg import _lut
 
             finite = grid[np.isfinite(grid)]
@@ -1134,8 +1116,6 @@ class Axes(PlotTypeMixin):
         return (hi, lo) if self._axis_props("y").get("reverse") else (lo, hi)
 
     def get_position(self) -> Any:
-        Bbox = __import__("matplotlib.transforms", fromlist=["Bbox"]).Bbox
-
         return Bbox.from_bounds(0.125, 0.11, 0.775, 0.77)
 
     def set_position(self, position: Any) -> None:
