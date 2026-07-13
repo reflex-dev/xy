@@ -217,3 +217,162 @@ def test_cmap_extremes_accept_tuple_colors_in_call_and_imshow_paths():
     grid = np.array([[0.0, 1.0], [np.nan, 0.5]])
     image = ax.imshow(grid, cmap=cmap.with_extremes(bad=(0.0, 0.0, 1.0)))
     assert image is not None
+
+
+def test_set_cmap_validates_and_feeds_default_colormaps():
+    with pytest.raises(ValueError, match="unsupported colormap"):
+        plt.set_cmap("notacmap")
+    plt.set_cmap("magma")
+    _, ax = plt.subplots()
+    ax.imshow(np.arange(9.0).reshape(3, 3))
+    assert ax._entries[-1]["kwargs"]["colormap"] == "magma"
+    ax.scatter([1, 2, 3], [1, 2, 3], c=[0.1, 0.5, 0.9])
+    assert ax._entries[-1]["kwargs"]["colormap"] == "magma"
+
+
+def test_imsave_normalizes_before_quantizing():
+    import io
+
+    data = np.linspace(1000.0, 2000.0, 64).reshape(8, 8)
+    buffer = io.BytesIO()
+    plt.imsave(buffer, data, cmap="viridis")
+    buffer.seek(0)
+    pixels = plt.imread(buffer)
+    # quantize-then-normalize collapsed this ramp to one uniform color
+    assert len(np.unique(pixels.reshape(-1, pixels.shape[-1]), axis=0)) > 30
+
+
+def test_scatter_drops_rows_masked_in_x_y_or_s():
+    _, ax = plt.subplots()
+    x = np.ma.masked_array([1.0, 2.0, 3.0, 4.0], mask=[False, True, False, False])
+    y = np.ma.masked_array([1.0, 2.0, 3.0, 4.0], mask=[False, False, True, False])
+    ax.scatter(x, y)
+    assert len(np.asarray(ax._entries[-1]["x"])) == 2
+    sizes = np.ma.masked_array([10.0, 20.0, 30.0], mask=[False, True, False])
+    ax.scatter([1, 2, 3], [1, 2, 3], s=sizes)
+    assert len(np.asarray(ax._entries[-1]["x"])) == 2
+
+
+def test_fill_between_interpolate_draws_single_point_regions():
+    x = np.array([0.0, 1.0, 2.0])
+    y1 = np.array([-3.0, 1.0, -1.0])
+    _, ax = plt.subplots()
+    ax.fill_between(x, y1, 0.0, where=y1 > 0, interpolate=True)
+    visible = [
+        entry for entry in ax._entries if not np.all(np.isnan(np.asarray(entry["y"], dtype=float)))
+    ]
+    assert len(visible) == 1
+    # matplotlib's wedge for this input crosses zero at x=0.75 and x=1.5
+    np.testing.assert_allclose(sorted(np.asarray(visible[0]["x"], dtype=float)), [0.75, 1.0, 1.5])
+
+
+def test_fill_betweenx_data_keys_resolve():
+    _, ax = plt.subplots()
+    ax.fill_betweenx("a", "b", data={"a": [0.0, 1.0, 2.0], "b": [1.0, 2.0, 3.0]})
+    assert len(ax._entries) == 1
+
+
+def test_savefig_svg_and_html_honor_facecolor_and_single_chart_suptitle():
+    import io
+
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 1])
+    fig.suptitle("SoloTitle")
+    svg = io.BytesIO()
+    fig.savefig(svg, format="svg", facecolor="red")
+    assert b"SoloTitle" in svg.getvalue()
+    assert b'<rect width="100%" height="100%" fill="red"/>' in svg.getvalue()
+    html_out = io.BytesIO()
+    fig.savefig(html_out, format="html", facecolor="red")
+    assert b"background-color:red" in html_out.getvalue()
+    with pytest.raises(NotImplementedError):
+        fig.savefig(io.BytesIO(), format="html", metadata={"Title": "x"})
+    with pytest.raises(ValueError, match="Latin-1"):
+        fig.savefig(io.BytesIO(), format="png", metadata={"键": "v"})
+
+
+def test_boxplot_component_styles_and_sym_are_honored_or_rejected():
+    _, ax = plt.subplots()
+    with pytest.raises(NotImplementedError, match="linestyle"):
+        ax.boxplot([[1.0, 2.0, 3.0, 4.0]], medianprops={"linestyle": "--"})
+    # empty sym suppresses fliers like matplotlib
+    data = [[1.0, 2.0, 3.0, 4.0, 50.0]]
+    result = ax.boxplot(data, sym="")
+    assert result["fliers"] == []
+    # a fmt sym styles the fliers instead of vanishing
+    result = ax.boxplot(data, sym="r+")
+    assert result["fliers"]
+    flier_kwargs = result["fliers"][0]._entry["kwargs"]
+    assert flier_kwargs["color"] != result["boxes"][0]._entry["kwargs"].get("color")
+    # flierprops face color reaches the drawn dots
+    result = ax.boxplot(data, flierprops={"markerfacecolor": "#00ff00"}, notch=True)
+    assert result["fliers"][0]._entry["kwargs"]["color"] == "#00ff00"
+
+
+def test_boxplot_usermedians_keep_data_derived_notches():
+    values = np.asarray([1.0, 2.0, 2.5, 3.0, 4.0])
+    _, ax = plt.subplots()
+    result = ax.boxplot([values], notch=True, usermedians=[10.0])
+    outline = result["boxes"][0]._entry["args"]
+    ys = np.concatenate([np.asarray(outline[1]), np.asarray(outline[3])])
+    q1, med, q3 = np.percentile(values, [25, 50, 75])
+    delta = 1.57 * (q3 - q1) / np.sqrt(len(values))
+    assert np.isclose(ys, med - delta).any() and np.isclose(ys, med + delta).any()
+    assert not np.isclose(ys, 10.0 - delta).any()
+
+
+def test_violinplot_constant_data_draws_without_crashing():
+    _, ax = plt.subplots()
+    result = ax.violinplot([[3.0, 3.0]], bw_method="scott")
+    assert len(result["bodies"]) == 1
+
+
+def test_secondary_axis_set_ticks_rejects_unknown_options():
+    _, ax = plt.subplots()
+    ax.plot([0.0, 1.0], [0.0, 1.0])
+    secondary = ax.secondary_xaxis("top")
+    with pytest.raises(TypeError):
+        secondary.set_ticks([0.0, 0.5], minor=True)
+
+
+def test_logit_scale_masks_domain_edges_instead_of_inf():
+    _, ax = plt.subplots()
+    ax.plot([0.0, 1.0, 2.0], [0.0, 0.5, 1.0])
+    ax.set_yscale("logit")
+    values = np.asarray(ax._entries[0]["y"], dtype=float)
+    assert not np.isinf(values).any()
+    lo, hi = ax.get_ylim()
+    assert np.isfinite([lo, hi]).all()
+
+
+def test_nonlinear_scale_ticks_follow_new_data():
+    _, ax = plt.subplots()
+    ax.plot([0.0, 1.0], [-1.0, 1.0])
+    ax.set_yscale("symlog")
+    ax.plot([0.0, 1.0], [-1000.0, 1000.0])
+    ticks = ax.get_yticks()
+    assert ticks.min() <= -100.0 and ticks.max() >= 100.0
+    # explicit ticks win and stay labeled in data units
+    ax.set_yticks([-100.0, 0.0, 100.0])
+    assert ax._axis_props("y")["tick_labels"] == ["-100", "0", "100"]
+    # returning to linear drops the generated ticks
+    other = plt.figure().add_subplot(111)
+    other.plot([0.0, 1.0], [-1000.0, 1000.0])
+    other.set_yscale("symlog")
+    other.set_yscale("linear")
+    assert "tick_values" not in other._axis_props("y")
+
+
+def test_data_artists_reject_fraction_space_transforms():
+    _, ax = plt.subplots()
+    with pytest.raises(NotImplementedError, match="transAxes"):
+        ax.plot([0.25, 0.75], [0.5, 0.5], transform=ax.transAxes)
+
+
+def test_set_transform_rejects_singular_matrices_immediately():
+    from xy.pyplot._transforms import Affine2D
+
+    _, ax = plt.subplots()
+    (line,) = ax.plot([0.0, 1.0], [0.0, 1.0])
+    with pytest.raises(ValueError, match="invertible"):
+        line.set_transform(Affine2D(np.zeros((3, 3))))

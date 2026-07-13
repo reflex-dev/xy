@@ -100,13 +100,50 @@ class Artist:
     def set_transform(self, transform: Any) -> None:
         if not hasattr(transform, "transform"):
             raise TypeError("transform must provide a transform(xy) method")
-        matrix = getattr(transform, "get_matrix", lambda: None)()
         coordinate_space = getattr(transform, "coordinate_space", "data")
-        if coordinate_space != "data" or matrix is None or not np.allclose(matrix, np.eye(3)):
+        if coordinate_space != "data" or not hasattr(self._transform, "inverted"):
             raise NotImplementedError(
-                f"{type(self).__name__} supports only the identity data transform; "
-                "transformed images are supported by AxesImage"
+                f"{type(self).__name__} requires an invertible data-coordinate transform"
             )
+        if hasattr(transform, "inverted"):
+            try:
+                transform.inverted()  # a singular matrix must fail this call,
+            except np.linalg.LinAlgError as error:  # not the next set_transform
+                raise ValueError("set_transform() requires an invertible transform") from error
+        old_inverse = self._transform.inverted()
+
+        def convert(x: Any, y: Any) -> tuple[np.ndarray, np.ndarray]:
+            xa, ya = np.broadcast_arrays(x, y)
+            points = np.column_stack((xa.ravel(), ya.ravel()))
+            made = np.asarray(transform.transform(old_inverse.transform(points)), dtype=float)
+            return made[:, 0].reshape(xa.shape), made[:, 1].reshape(ya.shape)
+
+        if "x" in self._entry and "y" in self._entry:
+            self._entry["x"], self._entry["y"] = convert(self._entry["x"], self._entry["y"])
+        elif self._entry.get("kind") == "@mark":
+            factory = self._entry.get("factory")
+            pairs = {
+                "segments": ((0, 1), (2, 3)),
+                "triangle_mesh": ((0, 1), (2, 3), (4, 5)),
+                "step": ((0, 1),),
+                "stem": ((0, 1),),
+                "errorbar": ((0, 1),),
+            }.get(factory)
+            if pairs is None:
+                raise NotImplementedError(
+                    f"{type(self).__name__} transform is not supported for {factory!r} geometry"
+                )
+            args = list(self._entry["args"])
+            for x_index, y_index in pairs:
+                args[x_index], args[y_index] = convert(args[x_index], args[y_index])
+            self._entry["args"] = tuple(args)
+        else:
+            raise NotImplementedError(
+                f"{type(self).__name__} transform is not supported for this geometry"
+            )
+        for marker_entry in self._marker_entries():
+            if marker_entry is not self._entry:
+                marker_entry["x"], marker_entry["y"] = convert(marker_entry["x"], marker_entry["y"])
         self._transform = transform
         self._touch()
 

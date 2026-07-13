@@ -436,6 +436,10 @@ class PlotTypeMixin:
 
         def _categorical_position(self, axis: str, label: Any) -> float: ...
 
+        def _transform_points(
+            self, x: Any, y: Any, transform: Any
+        ) -> tuple[np.ndarray, np.ndarray]: ...
+
         def plot(self, *args: Any, **kwargs: Any) -> list[Line2D]: ...
 
         def bar(self, *args: Any, **kwargs: Any) -> BarContainer: ...
@@ -515,9 +519,10 @@ class PlotTypeMixin:
             lo, hi = self._entry_extent("x")
             x0, x1 = lo + x0 * (hi - lo), lo + x1 * (hi - lo)
         dash_pattern = _dash_segment_pattern("hlines", linestyles)
-        if transform not in (None, "yaxis transform"):
-            raise not_implemented("hlines(transform=...)")
         sx0, sy0, sx1, sy1 = x0.reshape(-1), yv.reshape(-1), x1.reshape(-1), yv.reshape(-1)
+        if transform not in (None, "yaxis transform"):
+            sx0, sy0 = self._transform_points(sx0, sy0, transform)
+            sx1, sy1 = self._transform_points(sx1, sy1, transform)
         if dash_pattern is not None:
             sx0, sy0, sx1, sy1 = _dashed_segments(sx0, sy0, sx1, sy1, dash_pattern)
         chosen_color = colors
@@ -578,13 +583,14 @@ class PlotTypeMixin:
             color = color[0]
         transform = kwargs.pop("transform", None)
         dash_pattern = _dash_segment_pattern("vlines", linestyles)
-        if transform not in (None, "xaxis transform"):
-            raise not_implemented("vlines(transform=...)")
         if transform == "xaxis transform":
             lo, hi = self._entry_extent("y")
             y0, y1 = lo + y0 * (hi - lo), lo + y1 * (hi - lo)
         check_unsupported(kwargs, "vlines()")
         sx0, sy0, sx1, sy1 = xv.reshape(-1), y0.reshape(-1), xv.reshape(-1), y1.reshape(-1)
+        if transform not in (None, "xaxis transform"):
+            sx0, sy0 = self._transform_points(sx0, sy0, transform)
+            sx1, sy1 = self._transform_points(sx1, sy1, transform)
         if dash_pattern is not None:
             sx0, sy0, sx1, sy1 = _dashed_segments(sx0, sy0, sx1, sy1, dash_pattern)
         entry = self._add(
@@ -646,6 +652,10 @@ class PlotTypeMixin:
     def fill_betweenx(
         self, y: Any, x1: Any, x2: Any = 0, where: Any = None, **kwargs: Any
     ) -> PolyCollection:
+        data = kwargs.pop("data", None)
+        if data is not None:
+            # resolve string keys before any float coercion sees them
+            y, x1, x2 = (_from_data(value, data) for value in (y, x1, x2))
         yv, left, right = np.broadcast_arrays(
             _masked_float(y),
             _masked_float(x1),
@@ -663,12 +673,6 @@ class PlotTypeMixin:
         interpolate = kwargs.pop("interpolate", False)
         step = kwargs.pop("step", None)
         transform = kwargs.pop("transform", None)
-        data = kwargs.pop("data", None)
-        if data is not None:
-            y, x1, x2 = (_from_data(value, data) for value in (y, x1, x2))
-            yv, left, right = np.broadcast_arrays(
-                _masked_float(y), _masked_float(x1), _masked_float(x2)
-            )
         if edgecolor is not None or linewidth is not None:
             raise not_implemented("fill_betweenx(edge rendering)")
         if interpolate:
@@ -818,8 +822,6 @@ class PlotTypeMixin:
         transform = kwargs.pop("transform", None)
         if length_includes_head or shape != "full" or overhang != 0 or head_starts_at_zero:
             raise not_implemented("arrow(head shape/overhang options)")
-        if transform is not None:
-            raise not_implemented("arrow(transform=...)")
         check_unsupported(kwargs, "arrow()")
         ratio = 0.22
         if head_length is not None:
@@ -837,6 +839,9 @@ class PlotTypeMixin:
             np.array([dy]),
             head_ratio=ratio,
         )
+        if transform is not None:
+            x0, y0 = self._transform_points(x0, y0, transform)
+            x1, y1 = self._transform_points(x1, y1, transform)
         entry = self._add(
             "@mark",
             {
@@ -860,7 +865,8 @@ class PlotTypeMixin:
             xy2 = (float(xy1[0]) + 1.0, float(xy1[1]) + float(slope))
         transform = kwargs.pop("transform", None)
         if transform is not None:
-            raise not_implemented("axline(transform=...)")
+            tx, ty = self._transform_points([xy1[0], xy2[0]], [xy1[1], xy2[1]], transform)
+            xy1, xy2 = (float(tx[0]), float(ty[0])), (float(tx[1]), float(ty[1]))
         props = _line_props(self, kwargs)
         check_unsupported(kwargs, "axline()")
         entry = self._add(
@@ -1616,109 +1622,166 @@ class PlotTypeMixin:
     ) -> dict[str, list[Artist]]:
         if vert is not None:
             orientation = "vertical" if vert else "horizontal"
-        unsupported = {
-            "notch": True if notch else None,
-            "whis": whis if whis not in (None, 1.5) else None,
-            "bootstrap": bootstrap,
-            "usermedians": usermedians,
-            "conf_intervals": conf_intervals,
-            "showcaps": False if showcaps is False else None,
-            "showbox": False if showbox is False else None,
-            "autorange": True if autorange else None,
-            "capwidths": capwidths,
-            "sym": sym,
-            "patch_artist": True if patch_artist else None,
-            "manage_ticks": False if not manage_ticks else None,
-            "zorder": zorder,
-            "tick_labels": tick_labels,
-        }
-        check_unsupported(
-            {name: value for name, value in unsupported.items() if value is not None},
-            "boxplot()",
-        )
         values = _from_data(x, data)
-        color = None
-        for props in (boxprops, medianprops, whiskerprops, capprops, flierprops, meanprops):
-            if props and color is None:
-                color = props.get("color", props.get("facecolor"))
-            if props:
-                unknown = set(props) - {"color", "facecolor"}
-                if unknown:
-                    raise not_implemented(
-                        f"boxplot component properties: {', '.join(sorted(unknown))}"
+        advanced = any(
+            (
+                bool(notch),
+                whis not in (None, 1.5),
+                bootstrap is not None,
+                usermedians is not None,
+                conf_intervals is not None,
+                bool(showmeans),
+                showcaps is False,
+                showbox is False,
+                sym is not None,
+                autorange,
+                capwidths is not None,
+                bool(patch_artist),
+                not manage_ticks,
+                zorder is not None,
+                tick_labels is not None,
+                any(
+                    item is not None
+                    for item in (
+                        boxprops,
+                        flierprops,
+                        medianprops,
+                        meanprops,
+                        capprops,
+                        whiskerprops,
                     )
-        entry = self._add(
-            "@mark",
-            {
-                "factory": "box",
-                "args": (values,),
-                "kwargs": {
-                    "x": positions,
-                    "name": str(label) if label is not None else None,
-                    "color": resolve_color(color) if color is not None else self._next_color(),
-                    "width": _float(widths) if np.isscalar(widths) and widths is not None else 0.6,
-                    "orientation": orientation,
-                    "show_outliers": True if showfliers is None else bool(showfliers),
-                },
-            },
-        )
-        artist = Artist(self, entry)
-        mean_artists: list[Artist] = []
-        if showmeans:
-            raw = _from_data(x, data)
-            if isinstance(raw, (list, tuple)) and raw and all(np.ndim(v) == 1 for v in raw):
-                groups = [np.asarray(v, dtype=np.float64) for v in raw]
-            else:
-                arr = np.asarray(raw, dtype=np.float64)
-                groups = [arr[:, i] for i in range(arr.shape[1])] if arr.ndim == 2 else [arr]
-            centers = (
-                np.arange(len(groups), dtype=np.float64)
-                if positions is None
-                else np.asarray(positions, dtype=np.float64)
+                ),
             )
-            means = np.asarray([np.nanmean(group) for group in groups], dtype=np.float64)
-            mean_color = resolve_color((meanprops or {}).get("color", color or "#2ca02c"))
-            if meanline:
-                half = (_float(widths) if np.isscalar(widths) and widths is not None else 0.6) * 0.5
-                for center, mean in zip(centers, means, strict=True):
-                    if orientation == "vertical":
-                        args = ([center - half, center + half], [mean, mean])
-                    else:
-                        args = ([mean, mean], [center - half, center + half])
-                    line_entry = self._add(
-                        "line",
-                        {
-                            "x": args[0],
-                            "y": args[1],
-                            "kwargs": {"color": mean_color, "width": 1.5, "name": None},
-                        },
-                    )
-                    mean_artists.append(Line2D(self, line_entry))
-            else:
-                mx, my = (centers, means) if orientation == "vertical" else (means, centers)
-                mean_entry = self._add(
-                    "scatter",
-                    {
-                        "x": mx,
-                        "y": my,
-                        "kwargs": {
-                            "color": mean_color,
-                            "symbol": "diamond",
-                            "size": 6.0,
-                            "opacity": 1.0,
-                            "name": None,
-                        },
+        )
+        if not advanced:
+            color = self._next_color()
+            entry = self._add(
+                "@mark",
+                {
+                    "factory": "box",
+                    "args": (values,),
+                    "kwargs": {
+                        "x": positions,
+                        "name": str(label) if label is not None else None,
+                        "color": color,
+                        "width": _float(widths)
+                        if np.isscalar(widths) and widths is not None
+                        else 0.6,
+                        "orientation": orientation,
+                        "show_outliers": True if showfliers is None else bool(showfliers),
                     },
-                )
-                mean_artists.append(Artist(self, mean_entry))
-        return {
-            "whiskers": [artist],
-            "caps": [artist],
-            "boxes": [artist],
-            "medians": [artist],
-            "fliers": [artist] if showfliers is not False else [],
-            "means": mean_artists,
-        }
+                },
+            )
+            artist = Artist(self, entry)
+            return {
+                "whiskers": [artist],
+                "caps": [artist],
+                "boxes": [artist],
+                "medians": [artist],
+                "fliers": [artist] if showfliers is not False else [],
+                "means": [],
+            }
+        if isinstance(values, (list, tuple)) and values and all(np.ndim(v) == 1 for v in values):
+            groups = [np.asarray(v, dtype=np.float64) for v in values]
+        else:
+            arr = np.asarray(values, dtype=np.float64)
+            groups = [arr[:, i] for i in range(arr.shape[1])] if arr.ndim == 2 else [arr]
+        groups = [group[np.isfinite(group)] for group in groups]
+        if any(len(group) == 0 for group in groups):
+            raise ValueError("boxplot groups must each contain a finite value")
+        count = len(groups)
+        medians_override = [None] * count if usermedians is None else list(usermedians)
+        intervals_override = [None] * count if conf_intervals is None else list(conf_intervals)
+        if len(medians_override) != count or len(intervals_override) != count:
+            raise ValueError("usermedians/conf_intervals must match the number of boxes")
+        whisker = 1.5 if whis is None else whis
+        stats: list[dict[str, Any]] = []
+        for index, group in enumerate(groups):
+            q1, med, q3 = np.percentile(group, [25, 50, 75])
+            data_median = med  # usermedians replaces the drawn median only;
+            median_override = medians_override[index]  # CIs stay data-derived
+            if median_override is not None:
+                med = _float(median_override)
+            effective_whis = (0.0, 100.0) if autorange and q1 == q3 else whisker
+            if np.isscalar(effective_whis):
+                iqr = q3 - q1
+                whisker_factor = _float(effective_whis)
+                lower_bound = q1 - whisker_factor * iqr
+                upper_bound = q3 + whisker_factor * iqr
+            else:
+                percentile_whis = np.asarray(effective_whis, dtype=np.float64).reshape(-1)
+                if percentile_whis.size != 2:
+                    raise ValueError("whis must be a scalar or a two-percentile sequence")
+                lower_bound, upper_bound = np.percentile(group, percentile_whis)
+            below = group[group >= lower_bound]
+            above = group[group <= upper_bound]
+            whislo = float(np.min(below)) if len(below) else float(q1)
+            whishi = float(np.max(above)) if len(above) else float(q3)
+            fliers = group[(group < whislo) | (group > whishi)]
+            interval = intervals_override[index]
+            if interval is not None:
+                cilo, cihi = map(float, interval)
+            elif bootstrap is not None:
+                samples = int(bootstrap)
+                if samples <= 0:
+                    raise ValueError("bootstrap must be a positive integer")
+                indices = np.random.randint(0, len(group), size=(samples, len(group)))
+                cilo, cihi = np.percentile(np.median(group[indices], axis=1), [2.5, 97.5])
+            else:
+                delta = 1.57 * (q3 - q1) / np.sqrt(len(group))
+                cilo, cihi = data_median - delta, data_median + delta
+            stats.append(
+                {
+                    "q1": float(q1),
+                    "med": float(med),
+                    "q3": float(q3),
+                    "whislo": whislo,
+                    "whishi": whishi,
+                    "fliers": fliers,
+                    "mean": float(np.mean(group)),
+                    "cilo": float(cilo),
+                    "cihi": float(cihi),
+                }
+            )
+        if sym == "":
+            showfliers = False  # matplotlib: an empty sym string suppresses fliers
+        elif sym is not None:
+            sym_color, _sym_line, sym_marker = parse_fmt(str(sym))
+            overrides: dict[str, Any] = {}
+            if sym_marker is not None:
+                overrides["marker"] = sym_marker
+            if sym_color is not None:
+                overrides["color"] = sym_color
+            flierprops = {**(flierprops or {}), **overrides}
+        result = self.bxp(
+            stats,
+            positions=positions,
+            widths=widths,
+            orientation=orientation,
+            patch_artist=bool(patch_artist),
+            shownotches=bool(notch),
+            showmeans=bool(showmeans),
+            showcaps=True if showcaps is None else bool(showcaps),
+            showbox=True if showbox is None else bool(showbox),
+            showfliers=True if showfliers is None else bool(showfliers),
+            boxprops=boxprops,
+            whiskerprops=whiskerprops,
+            flierprops=flierprops,
+            medianprops=medianprops,
+            capprops=capprops,
+            meanprops=meanprops,
+            meanline=bool(meanline),
+            manage_ticks=manage_ticks,
+            zorder=zorder,
+            capwidths=capwidths,
+            label=label,
+        )
+        if tick_labels is not None:
+            centers = np.arange(1, count + 1) if positions is None else positions
+            (self.set_xticks if orientation == "vertical" else self.set_yticks)(
+                centers, tick_labels
+            )
+        return result
 
     def violinplot(
         self,
@@ -1741,86 +1804,135 @@ class PlotTypeMixin:
     ) -> dict[str, Any]:
         if vert is not None:
             orientation = "vertical" if vert else "horizontal"
-        unsupported = {
-            "bw_method": bw_method,
-            "side": side if side != "both" else None,
-        }
-        check_unsupported(
-            {name: value for name, value in unsupported.items() if value is not None},
-            "violinplot()",
-        )
         values = _from_data(dataset, data)
-        entry = self._add(
-            "@mark",
-            {
-                "factory": "violin",
-                "args": (values,),
-                "kwargs": {
-                    "x": positions,
-                    "color": resolve_color(facecolor)
-                    if facecolor is not None
-                    else self._next_color(),
-                    "width": float(widths),
-                    "bins": max(4, min(1024, int(points))),
-                    "orientation": orientation,
+        if (
+            isinstance(values, (list, tuple))
+            and values
+            and all(np.ndim(value) == 1 for value in values)
+        ):
+            groups = [np.asarray(group, dtype=np.float64) for group in values]
+        else:
+            array = np.asarray(values, dtype=np.float64)
+            groups = (
+                [array]
+                if array.ndim == 1
+                else [np.asarray(array[:, index]) for index in range(array.shape[1])]
+            )
+        if bw_method is None and side == "both" and quantiles is None:
+            entry = self._add(
+                "@mark",
+                {
+                    "factory": "violin",
+                    "args": (values,),
+                    "kwargs": {
+                        "x": positions,
+                        "color": resolve_color(facecolor)
+                        if facecolor is not None
+                        else self._next_color(),
+                        "width": float(widths),
+                        "bins": max(4, min(1024, int(points))),
+                        "orientation": orientation,
+                    },
                 },
-            },
-        )
-        result: dict[str, Any] = {"bodies": [Artist(self, entry)]}
-        groups = (
-            [np.asarray(values, dtype=np.float64)]
-            if np.asarray(values).ndim == 1
-            else [np.asarray(group, dtype=np.float64) for group in values]
-        )
-        centers = np.arange(1, len(groups) + 1) if positions is None else np.asarray(positions)
-        extrema_color = linecolor if linecolor is not None else "#222222"
-        if showextrema:
+            )
+            result: dict[str, Any] = {"bodies": [Artist(self, entry)]}
+            centers = np.arange(1, len(groups) + 1) if positions is None else np.asarray(positions)
+            extrema_color = linecolor if linecolor is not None else "#222222"
             minima = np.asarray([np.nanmin(group) for group in groups])
             maxima = np.asarray([np.nanmax(group) for group in groups])
-            if orientation == "vertical":
-                result["cbars"] = self.vlines(centers, minima, maxima, colors=extrema_color)
-                result["cmins"] = self.hlines(
-                    minima, centers - widths * 0.2, centers + widths * 0.2, colors=extrema_color
+            if showextrema:
+                if orientation == "vertical":
+                    result["cbars"] = self.vlines(centers, minima, maxima, colors=extrema_color)
+                    result["cmins"] = self.hlines(
+                        minima, centers - widths * 0.2, centers + widths * 0.2, colors=extrema_color
+                    )
+                    result["cmaxes"] = self.hlines(
+                        maxima, centers - widths * 0.2, centers + widths * 0.2, colors=extrema_color
+                    )
+                else:
+                    result["cbars"] = self.hlines(centers, minima, maxima, colors=extrema_color)
+                    result["cmins"] = self.vlines(
+                        minima, centers - widths * 0.2, centers + widths * 0.2, colors=extrema_color
+                    )
+                    result["cmaxes"] = self.vlines(
+                        maxima, centers - widths * 0.2, centers + widths * 0.2, colors=extrema_color
+                    )
+            if showmeans:
+                made = np.asarray([np.nanmean(group) for group in groups])
+                result["cmeans"] = (
+                    self.hlines(made, centers - widths * 0.2, centers + widths * 0.2)
+                    if orientation == "vertical"
+                    else self.vlines(made, centers - widths * 0.2, centers + widths * 0.2)
                 )
-                result["cmaxes"] = self.hlines(
-                    maxima, centers - widths * 0.2, centers + widths * 0.2, colors=extrema_color
+            if showmedians:
+                made = np.asarray([np.nanmedian(group) for group in groups])
+                result["cmedians"] = (
+                    self.hlines(made, centers - widths * 0.2, centers + widths * 0.2)
+                    if orientation == "vertical"
+                    else self.vlines(made, centers - widths * 0.2, centers + widths * 0.2)
                 )
+            return result
+        if points < 2:
+            raise ValueError("violinplot points must be at least 2")
+        vpstats: list[dict[str, Any]] = []
+        for group in groups:
+            group = group[np.isfinite(group)]
+            if len(group) == 0:
+                raise ValueError("violinplot groups must each contain a finite value")
+            coords = np.linspace(float(np.min(group)), float(np.max(group)), int(points))
+            std = float(np.std(group, ddof=1)) if len(group) > 1 else 0.0
+            if callable(bw_method):
+
+                class _KDECarrier:
+                    dataset = group[None, :]
+                    n, d = len(group), 1
+
+                    def scotts_factor(self) -> float:
+                        return self.n ** (-1 / 5)
+
+                    def silverman_factor(self) -> float:
+                        return (self.n * 3 / 4) ** (-1 / 5)
+
+                factor = float(bw_method(_KDECarrier()))
+            elif bw_method in (None, "scott"):
+                factor = len(group) ** (-1 / 5)
+            elif bw_method == "silverman":
+                factor = (len(group) * 3 / 4) ** (-1 / 5)
+            elif np.isscalar(bw_method):
+                factor = _float(bw_method)
             else:
-                result["cbars"] = self.hlines(centers, minima, maxima, colors=extrema_color)
-                result["cmins"] = self.vlines(
-                    minima, centers - widths * 0.2, centers + widths * 0.2, colors=extrema_color
-                )
-                result["cmaxes"] = self.vlines(
-                    maxima, centers - widths * 0.2, centers + widths * 0.2, colors=extrema_color
-                )
-        if showmeans:
-            means = [float(np.nanmean(group)) for group in groups]
-            result["cmeans"] = (
-                self.hlines(means, centers - widths * 0.2, centers + widths * 0.2)
-                if orientation == "vertical"
-                else self.vlines(means, centers - widths * 0.2, centers + widths * 0.2)
+                raise ValueError("bw_method must be 'scott', 'silverman', a scalar, or callable")
+            bandwidth = max(std * factor, np.finfo(float).eps)
+            delta = (coords[:, None] - group[None, :]) / bandwidth
+            density = np.mean(np.exp(-0.5 * delta * delta), axis=1) / (
+                bandwidth * np.sqrt(2 * np.pi)
             )
-        if showmedians:
-            medians = [float(np.nanmedian(group)) for group in groups]
-            result["cmedians"] = (
-                self.hlines(medians, centers - widths * 0.2, centers + widths * 0.2)
-                if orientation == "vertical"
-                else self.vlines(medians, centers - widths * 0.2, centers + widths * 0.2)
-            )
+            item: dict[str, Any] = {
+                "coords": coords,
+                "vals": density,
+                "mean": float(np.mean(group)),
+                "median": float(np.median(group)),
+                "min": float(np.min(group)),
+                "max": float(np.max(group)),
+            }
+            vpstats.append(item)
         if quantiles is not None:
-            quantile_values: list[float] = []
-            quantile_positions: list[float] = []
-            for center, group, requested in zip(centers, groups, quantiles, strict=True):
-                made = np.quantile(group[np.isfinite(group)], requested)
-                quantile_values.extend(np.asarray(made).reshape(-1))
-                quantile_positions.extend([float(center)] * np.asarray(made).size)
-            qv, qp = np.asarray(quantile_values), np.asarray(quantile_positions)
-            result["cquantiles"] = (
-                self.hlines(qv, qp - widths * 0.2, qp + widths * 0.2)
-                if orientation == "vertical"
-                else self.vlines(qv, qp - widths * 0.2, qp + widths * 0.2)
-            )
-        return result
+            if len(quantiles) != len(groups):
+                raise ValueError("quantiles must contain one sequence per violin")
+            for item, group, requested in zip(vpstats, groups, quantiles, strict=True):
+                item["quantiles"] = np.quantile(group[np.isfinite(group)], requested)
+        return self.violin(
+            vpstats,
+            positions=positions,
+            orientation=orientation,
+            widths=widths,
+            showmeans=showmeans,
+            showextrema=showextrema,
+            showmedians=showmedians,
+            side=side,
+            facecolor=facecolor,
+            linecolor=linecolor,
+        )
 
     def errorbar(
         self,
@@ -1943,11 +2055,8 @@ class PlotTypeMixin:
             raise not_implemented("hexbin(linewidths=...)")
         if edgecolors not in (None, "face"):
             raise not_implemented("hexbin(edgecolors=...)")
-        if C is not None:
-            raise not_implemented("hexbin(C=..., reduce_C_function=...)")
         unsupported_options = {
             "norm": norm,
-            "mincnt": mincnt,
             "marginals": True if marginals else None,
             "colorizer": colorizer,
             "vmin": vmin,
@@ -1957,8 +2066,6 @@ class PlotTypeMixin:
             {name: value for name, value in unsupported_options.items() if value is not None},
             "hexbin()",
         )
-        if reduce_C_function is not np.mean:
-            raise not_implemented("hexbin(reduce_C_function=...) without C")
         check_unsupported(kwargs, "hexbin()")
         x, y = _from_data(x, data), _from_data(y, data)
         if xscale != "linear":
@@ -1981,6 +2088,9 @@ class PlotTypeMixin:
                     "gridsize": gridsize,
                     "range": data_range,
                     "bins": mode,
+                    "C": None if C is None else _from_data(C, data),
+                    "reduce_C_function": reduce_C_function,
+                    "mincnt": mincnt,
                     "colormap": resolve_cmap(cmap) if cmap is not None else "viridis",
                     "opacity": 0.9 if alpha is None else float(alpha),
                 },
@@ -2316,8 +2426,8 @@ class PlotTypeMixin:
         label: Any = None,
     ) -> dict[str, list[Artist]]:
         """Draw exact precomputed box geometry with generic segment/scatter marks."""
-        if patch_artist or shownotches or not manage_ticks or zorder is not None:
-            raise not_implemented("bxp(patch_artist/shownotches/manage_ticks/zorder)")
+        if patch_artist:
+            raise not_implemented("bxp(patch_artist=True)")
         stats = list(bxpstats)
         count = len(stats)
         if vert is not None:
@@ -2344,7 +2454,11 @@ class PlotTypeMixin:
             color = source.pop("color", source.pop("edgecolor", fallback))
             width = source.pop("linewidth", source.pop("lw", 1.2))
             alpha = source.pop("alpha", 1.0)
-            source.pop("linestyle", source.pop("ls", None))
+            linestyle = source.pop("linestyle", source.pop("ls", None))
+            if linestyle not in (None, "-", "solid"):
+                raise not_implemented(
+                    "bxp component linestyle", "solid component lines with color/width/alpha"
+                )
             check_unsupported(source, "bxp component properties")
             return {
                 "color": resolve_color(color) if color is not None else fallback,
@@ -2386,14 +2500,33 @@ class PlotTypeMixin:
             med = float(item["med"])
             low, high = float(item["whislo"]), float(item["whishi"])
             if orientation == "vertical":
-                box_segments.extend(
-                    [
-                        (center - half, q1, center + half, q1),
-                        (center + half, q1, center + half, q3),
-                        (center + half, q3, center - half, q3),
-                        (center - half, q3, center - half, q1),
-                    ]
-                )
+                if shownotches:
+                    cilo = float(item.get("cilo", med))
+                    cihi = float(item.get("cihi", med))
+                    notch_half = half * 0.5
+                    box_segments.extend(
+                        [
+                            (center - half, q1, center + half, q1),
+                            (center + half, q1, center + half, cilo),
+                            (center + half, cilo, center + notch_half, med),
+                            (center + notch_half, med, center + half, cihi),
+                            (center + half, cihi, center + half, q3),
+                            (center + half, q3, center - half, q3),
+                            (center - half, q3, center - half, cihi),
+                            (center - half, cihi, center - notch_half, med),
+                            (center - notch_half, med, center - half, cilo),
+                            (center - half, cilo, center - half, q1),
+                        ]
+                    )
+                else:
+                    box_segments.extend(
+                        [
+                            (center - half, q1, center + half, q1),
+                            (center + half, q1, center + half, q3),
+                            (center + half, q3, center - half, q3),
+                            (center - half, q3, center - half, q1),
+                        ]
+                    )
                 median_segments.append((center - half, med, center + half, med))
                 whisker_segments.extend([(center, low, center, q1), (center, q3, center, high)])
                 cap_segments.extend(
@@ -2412,14 +2545,33 @@ class PlotTypeMixin:
                         else (center, mean, center, mean)
                     )
             else:
-                box_segments.extend(
-                    [
-                        (q1, center - half, q1, center + half),
-                        (q1, center + half, q3, center + half),
-                        (q3, center + half, q3, center - half),
-                        (q3, center - half, q1, center - half),
-                    ]
-                )
+                if shownotches:
+                    cilo = float(item.get("cilo", med))
+                    cihi = float(item.get("cihi", med))
+                    notch_half = half * 0.5
+                    box_segments.extend(
+                        [
+                            (q1, center - half, q1, center + half),
+                            (q1, center + half, cilo, center + half),
+                            (cilo, center + half, med, center + notch_half),
+                            (med, center + notch_half, cihi, center + half),
+                            (cihi, center + half, q3, center + half),
+                            (q3, center + half, q3, center - half),
+                            (q3, center - half, cihi, center - half),
+                            (cihi, center - half, med, center - notch_half),
+                            (med, center - notch_half, cilo, center - half),
+                            (cilo, center - half, q1, center - half),
+                        ]
+                    )
+                else:
+                    box_segments.extend(
+                        [
+                            (q1, center - half, q1, center + half),
+                            (q1, center + half, q3, center + half),
+                            (q3, center + half, q3, center - half),
+                            (q3, center - half, q1, center - half),
+                        ]
+                    )
                 median_segments.append((med, center - half, med, center + half))
                 whisker_segments.extend([(low, center, q1, center), (q3, center, high, center)])
                 cap_segments.extend(
@@ -2450,8 +2602,13 @@ class PlotTypeMixin:
             color = source.pop("color", default_color)
             marker = source.pop("marker", "o")
             size = source.pop("markersize", source.pop("ms", 5.0))
-            source.pop("markerfacecolor", None)
-            source.pop("markeredgecolor", None)
+            # single-color flier dots: face color wins, else the edge color
+            facecolor = source.pop("markerfacecolor", source.pop("mfc", None))
+            edgecolor = source.pop("markeredgecolor", source.pop("mec", None))
+            if facecolor is not None:
+                color = facecolor
+            elif edgecolor is not None:
+                color = edgecolor
             check_unsupported(source, "bxp(flierprops=)")
             entry = self._add(
                 "scatter",
@@ -2461,13 +2618,19 @@ class PlotTypeMixin:
                     "kwargs": {
                         "color": resolve_color(color),
                         "size": float(size),
-                        "symbol": "circle" if marker == "o" else "square",
+                        "symbol": MARKER_TO_SYMBOL.get(marker or "o", "circle"),
                     },
                 },
             )
             result["fliers"] = [Artist(self, entry)]
         if label is not None and result["medians"]:
             result["medians"][0].set_label(str(label))
+        if zorder is not None:
+            for artists in result.values():
+                for artist in artists:
+                    artist.set_zorder(float(zorder))
+        if manage_ticks:
+            (self.set_xticks if orientation == "vertical" else self.set_yticks)(pos)
         return result
 
     def violin(
@@ -2530,16 +2693,34 @@ class PlotTypeMixin:
             else:
                 polygon_x = np.concatenate((coords, coords[::-1]))
                 polygon_y = np.concatenate((low, high[::-1]))
-            topology = kernels.polygon_triangles(polygon_x, polygon_y)
-            x0, y0, x1, y1, x2, y2, _ = kernels.indexed_triangles(polygon_x, polygon_y, topology)
-            entry = self._add(
-                "@mark",
-                {
-                    "factory": "triangle_mesh",
-                    "args": (x0, y0, x1, y1, x2, y2),
-                    "kwargs": {"color": body_color, "opacity": 0.8},
-                },
-            )
+            if float(np.ptp(coords)) == 0.0 or peak == 0:
+                # constant data: matplotlib draws a zero-area body; emit an
+                # invisible placeholder instead of a degenerate mesh
+                entry = self._add(
+                    "area",
+                    {
+                        "x": [center, center],
+                        "y": [np.nan, np.nan],
+                        "kwargs": {
+                            "base": [np.nan, np.nan],
+                            "color": body_color,
+                            "opacity": 0.0,
+                        },
+                    },
+                )
+            else:
+                topology = kernels.polygon_triangles(polygon_x, polygon_y)
+                x0, y0, x1, y1, x2, y2, _ = kernels.indexed_triangles(
+                    polygon_x, polygon_y, topology
+                )
+                entry = self._add(
+                    "@mark",
+                    {
+                        "factory": "triangle_mesh",
+                        "args": (x0, y0, x1, y1, x2, y2),
+                        "kwargs": {"color": body_color, "opacity": 0.8},
+                    },
+                )
             bodies.append(Artist(self, entry))
             half = width_values[index] * 0.25
 

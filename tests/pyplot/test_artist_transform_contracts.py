@@ -48,8 +48,9 @@ def test_artist_common_properties_apply_or_fail_loudly() -> None:
     assert ax._entries[0] is high._entry
     low.set_transform(IdentityTransform())
     assert isinstance(low.get_transform(), IdentityTransform)
-    with pytest.raises(NotImplementedError, match="transformed images"):
-        low.set_transform(Affine2D().translate(1, 2))
+    low.set_transform(Affine2D().translate(1, 2))
+    np.testing.assert_allclose(low.get_xdata(), [1, 2])
+    np.testing.assert_allclose(low.get_ydata(), [2, 3])
     with pytest.raises(NotImplementedError, match="unclipped"):
         low.set_clip_on(False)
     with pytest.raises(NotImplementedError, match="clip paths"):

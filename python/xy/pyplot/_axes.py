@@ -11,6 +11,7 @@ test in tests/pyplot/.
 from __future__ import annotations
 
 import copy
+from contextlib import suppress
 from datetime import timedelta
 from itertools import pairwise
 from typing import Any, Optional
@@ -53,6 +54,87 @@ def _identity_transform() -> Any:
     return IdentityTransform()
 
 
+def _scale_values(values: Any, spec: Optional[dict[str, Any]], *, inverse: bool = False) -> Any:
+    """Apply a dependency-free matplotlib-style nonlinear scale."""
+    if not spec or spec["name"] == "linear":
+        return values
+    source = np.asarray(values, dtype=np.float64)
+    name = spec["name"]
+    if name == "symlog":
+        threshold = spec["linthresh"]
+        scale = spec["linscale"]
+        base = spec["base"]
+        adjusted = scale / (1.0 - base**-1)
+        if inverse:
+            absolute = np.abs(source)
+            result = np.where(
+                absolute <= threshold * adjusted,
+                absolute / adjusted,
+                threshold * np.power(base, absolute / threshold - adjusted),
+            )
+            return np.sign(source) * result
+        absolute = np.abs(source)
+        result = absolute * adjusted
+        outside = absolute > threshold
+        result = np.asarray(result)
+        result[outside] = threshold * (
+            adjusted + np.log(absolute[outside] / threshold) / np.log(base)
+        )
+        return np.sign(source) * result
+    if name == "logit":
+        if inverse:
+            return 1.0 / (1.0 + np.exp(-source))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            result = np.log(source / (1.0 - source))
+        # values at/outside (0, 1) are masked like matplotlib, never ±inf
+        return np.where((source > 0.0) & (source < 1.0), result, np.nan)
+    if name == "asinh":
+        width = spec["linear_width"]
+        return width * np.sinh(source / width) if inverse else width * np.arcsinh(source / width)
+    return values
+
+
+def _transform_entry_axis(entry: dict[str, Any], axis: str, old: Any, new: Any) -> None:
+    def convert(values: Any) -> Any:
+        return _scale_values(_scale_values(values, old, inverse=True), new)
+
+    key = axis
+    if key in entry:
+        with suppress(TypeError, ValueError):
+            entry[key] = convert(entry[key])
+    if entry.get("kind") != "@mark":
+        return
+    factory = entry.get("factory")
+    indexes = {
+        "segments": (0, 2) if axis == "x" else (1, 3),
+        "triangle_mesh": (0, 2, 4) if axis == "x" else (1, 3, 5),
+        "step": (0,) if axis == "x" else (1,),
+        "stem": (0,) if axis == "x" else (1,),
+        "errorbar": (0,) if axis == "x" else (1,),
+        "hexbin": (0,) if axis == "x" else (1,),
+    }.get(factory, ())
+    args = list(entry.get("args", ()))
+    for index in indexes:
+        args[index] = convert(args[index])
+    entry["args"] = tuple(args)
+
+
+def _nonlinear_ticks(domain: tuple[float, float], spec: dict[str, Any]) -> np.ndarray:
+    lo, hi = map(float, _scale_values(np.asarray(domain), spec, inverse=True))
+    if spec["name"] == "logit":
+        candidates = np.asarray([0.001, 0.01, 0.1, 0.5, 0.9, 0.99, 0.999])
+        return candidates[(candidates >= lo) & (candidates <= hi)]
+    if spec["name"] == "symlog":
+        threshold, base = spec["linthresh"], spec["base"]
+        largest = max(abs(lo), abs(hi), threshold)
+        powers = threshold * base ** np.arange(
+            0, max(1, int(np.ceil(np.log(largest / threshold) / np.log(base)))) + 1
+        )
+        candidates = np.unique(np.concatenate((-powers[::-1], [0.0], powers)))
+        return candidates[(candidates >= lo) & (candidates <= hi)]
+    return np.linspace(lo, hi, 6)
+
+
 class _AxisProxy:
     def __init__(self, axes: "Axes", axis: str) -> None:
         self.axes, self.axis = axes, axis
@@ -74,6 +156,102 @@ class _AxisProxy:
 
     def set_minor_locator(self, locator: Any) -> None:
         del locator  # compat-noop: minor ticks are outside the native axis contract
+
+
+class SecondaryAxis:
+    """A linked, tick-only secondary axis sharing its parent's plot rectangle."""
+
+    def __init__(self, parent: "Axes", axis: str, location: Any, functions: Any) -> None:
+        self._parent, self._axis = parent, axis
+        if isinstance(location, str):
+            allowed = {"top", "bottom"} if axis == "x" else {"left", "right"}
+            if location not in allowed:
+                raise ValueError(f"secondary {axis} axis location must be one of {sorted(allowed)}")
+            self._side, self._location = location, None
+        else:
+            value = float(location)
+            if not np.isfinite(value):
+                raise ValueError("secondary axis location must be finite")
+            raise NotImplementedError(
+                "xy.pyplot secondary axes currently support named edge locations only"
+            )
+        if functions is None:
+            self._forward = self._inverse = lambda values: np.asarray(values, dtype=float)
+        elif isinstance(functions, (tuple, list)) and len(functions) == 2:
+            self._forward, self._inverse = functions
+            if not callable(self._forward) or not callable(self._inverse):
+                raise TypeError("secondary axis functions must be callable")
+        elif hasattr(functions, "transform") and hasattr(functions, "inverted"):
+            self._forward = functions.transform
+            self._inverse = functions.inverted().transform
+        else:
+            raise TypeError("functions must be a (forward, inverse) pair or invertible transform")
+        self._label = ""
+        self._ticks: Optional[np.ndarray] = None
+        self._tick_labels: Optional[list[str]] = None
+
+    def set_xlabel(self, label: Any, **kwargs: Any) -> "SecondaryAxis":
+        if self._axis != "x":
+            raise AttributeError("secondary y axes use set_ylabel()")
+        if kwargs:
+            raise TypeError(f"set_xlabel() got unsupported keyword argument {next(iter(kwargs))!r}")
+        self._label = str(label)
+        self._parent._invalidate()
+        return self
+
+    def set_ylabel(self, label: Any, **kwargs: Any) -> "SecondaryAxis":
+        if self._axis != "y":
+            raise AttributeError("secondary x axes use set_xlabel()")
+        if kwargs:
+            raise TypeError(f"set_ylabel() got unsupported keyword argument {next(iter(kwargs))!r}")
+        self._label = str(label)
+        self._parent._invalidate()
+        return self
+
+    def set_ticks(self, ticks: Any, labels: Any = None, **kwargs: Any) -> None:
+        check_unsupported(kwargs, "secondary-axis set_ticks()")
+        self._ticks = np.asarray(ticks, dtype=float)
+        self._tick_labels = None
+        if labels is not None:
+            self._tick_labels = [str(label) for label in labels]
+            if len(self._tick_labels) != len(self._ticks):
+                raise ValueError("secondary-axis labels must match ticks")
+        self._parent._invalidate()
+
+    def set_functions(self, functions: Any) -> None:
+        replacement = SecondaryAxis(self._parent, self._axis, self._side, functions)
+        self._forward, self._inverse = replacement._forward, replacement._inverse
+        self._parent._invalidate()
+
+    def remove(self) -> None:
+        self._parent._secondary_axes.remove(self)
+        self._parent._invalidate()
+
+    def _component(self, index: int) -> Any:
+        props = self._parent._axis_props(self._axis)
+        domain = np.asarray(props.get("domain", self._parent._auto_domain(self._axis)), dtype=float)
+        primary_spec = self._parent._scale_specs[self._axis]
+        primary_values = _scale_values(
+            np.linspace(domain[0], domain[1], 6), primary_spec, inverse=True
+        )
+        secondary_values = np.asarray(
+            self._ticks if self._ticks is not None else self._forward(primary_values), dtype=float
+        )
+        positions = np.asarray(self._inverse(secondary_values), dtype=float)
+        positions = np.asarray(_scale_values(positions, primary_spec), dtype=float)
+        if positions.shape != secondary_values.shape or not np.all(np.isfinite(positions)):
+            raise ValueError("secondary axis functions must return matching finite values")
+        labels = self._tick_labels or [f"{value:g}" for value in secondary_values]
+        factory = fc.x_axis if self._axis == "x" else fc.y_axis
+        axis_domain = (float(domain[0]), float(domain[1]))
+        return factory(
+            id=f"{self._axis}s{index}",
+            side=self._side,
+            domain=axis_domain,
+            tick_values=positions,
+            tick_labels=labels,
+            label=self._label or None,
+        )
 
 
 class _SpineProxy:
@@ -140,6 +318,13 @@ class Axes(PlotTypeMixin):
         self._xmargin = 0.0
         self._ymargin = 0.0
         self._explicit_domains: set[str] = set()
+        self._secondary_axes: list[SecondaryAxis] = []
+        self._scale_specs: dict[str, dict[str, Any]] = {
+            "x": {"name": "linear"},
+            "y": {"name": "linear"},
+            "y2": {"name": "linear"},
+        }
+        self._auto_scale_axis_ticks: set[str] = set()
         self._grid = bool(rcParams["axes.grid"])
         self._grid_color = _MPL_GRID_COLOR
         self._grid_axis = "both"
@@ -313,6 +498,26 @@ class Axes(PlotTypeMixin):
             props["tick_count"] = len(values)
         return float(values[labels.index(text)])
 
+    def _transform_points(self, x: Any, y: Any, transform: Any) -> tuple[np.ndarray, np.ndarray]:
+        x_values, y_values = np.broadcast_arrays(x, y)
+        if transform in (None, self.transData):
+            return np.asarray(x_values), np.asarray(y_values)
+        if not hasattr(transform, "transform"):
+            raise TypeError("transform must provide a transform(xy) method")
+        points = np.asarray(
+            transform.transform(np.column_stack((x_values.ravel(), y_values.ravel()))), dtype=float
+        )
+        if points.shape != (x_values.size, 2):
+            raise ValueError("transform must return one x/y pair per input point")
+        if getattr(transform, "coordinate_space", "data") in {"axes_fraction", "figure_fraction"}:
+            # baking fractions into data coordinates goes silently stale on
+            # the next limit change; only text/annotations track these spaces
+            raise not_implemented(
+                "data artists with transform=transAxes/transFigure",
+                "affine data transforms composed with ax.transData",
+            )
+        return points[:, 0].reshape(x_values.shape), points[:, 1].reshape(y_values.shape)
+
     def _add(self, kind: str, entry: dict[str, Any]) -> dict[str, Any]:
         entry["kind"] = kind
         entry["y_axis"] = "y2" if self._y2_of is not None else "y"
@@ -323,7 +528,29 @@ class Axes(PlotTypeMixin):
             for key in [k for k, v in kw.items() if v is None]:
                 del kw[key]
         host = self._y2_of or self
+        nonlinear_axes = []
+        for axis in ("x", "y"):
+            key = "y2" if axis == "y" and self._y2_of is not None else axis
+            spec = host._scale_specs[key]
+            if spec["name"] != "linear":
+                _transform_entry_axis(entry, axis, {"name": "linear"}, spec)
+                nonlinear_axes.append((axis, spec))
         host._entries.append(entry)
+        for axis, spec in nonlinear_axes:
+            # scale-generated ticks were derived from the extent at
+            # set_*scale time; new data must refresh them (user-set ticks
+            # clear the marker and are left alone)
+            key = "y2" if axis == "y" and self._y2_of is not None else axis
+            if key in host._auto_scale_axis_ticks and spec["name"] in {
+                "symlog",
+                "logit",
+                "asinh",
+            }:
+                props = self._axis_props(axis)
+                ticks = _nonlinear_ticks(self._entry_extent(axis), spec)
+                props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
+                props["tick_labels"] = [f"{tick:g}" for tick in ticks]
+                props["tick_count"] = max(1, len(ticks))
         host._invalidate()
         return entry
 
@@ -332,6 +559,13 @@ class Axes(PlotTypeMixin):
         self._owned_artists.clear()
         self._containers.clear()
         self._axis = {"x": {}, "y": {}, "y2": {}}
+        self._secondary_axes.clear()
+        self._scale_specs = {
+            "x": {"name": "linear"},
+            "y": {"name": "linear"},
+            "y2": {"name": "linear"},
+        }
+        self._auto_scale_axis_ticks = set()
         self._title = None
         self._legend = False
         self._legend_options = {}
@@ -389,8 +623,8 @@ class Axes(PlotTypeMixin):
         markevery = kwargs.pop("markevery", None)
         drawstyle = kwargs.pop("drawstyle", None)
         transform = kwargs.pop("transform", None)
-        if transform not in (None, self.transData):
-            raise not_implemented("plot(transform=...)")
+        if transform is not None and not hasattr(transform, "transform"):
+            raise TypeError("plot transform must provide transform(xy)")
         if drawstyle not in (None, "default", "steps-pre", "steps-mid", "steps-post"):
             raise ValueError(f"unsupported drawstyle: {drawstyle!r}")
         check_unsupported(kwargs, "plot()")
@@ -399,9 +633,8 @@ class Axes(PlotTypeMixin):
         for x, y, fmt in _iter_plot_groups(args):
             x, y = np.atleast_1d(x), np.atleast_1d(y)
             x, y = _convert_timedelta_axis(x), _convert_timedelta_axis(y)
-            if transform is not None and hasattr(transform, "transform"):
-                points = np.asarray(transform.transform(np.column_stack((x, y))))
-                x, y = points[:, 0], points[:, 1]
+            if transform is not None:
+                x, y = self._transform_points(x, y, transform)
             if x.ndim == 2 or y.ndim == 2:
                 if x.ndim == 1:
                     x = np.broadcast_to(x[:, None], np.asarray(y).shape)
@@ -563,7 +796,10 @@ class Axes(PlotTypeMixin):
                             },
                         },
                     )
-            handles.append(Line2D(self, entry))
+            handle = Line2D(self, entry)
+            if transform is not None:
+                handle._transform = transform
+            handles.append(handle)
         return handles
 
     def scatter(
@@ -575,6 +811,7 @@ class Axes(PlotTypeMixin):
         alpha = kwargs.pop("alpha", None)
         label = kwargs.pop("label", None)
         marker = kwargs.pop("marker", None)
+        transform = kwargs.pop("transform", None)
         edgecolors = kwargs.pop("edgecolors", kwargs.pop("edgecolor", None))
         linewidths = kwargs.pop("linewidths", kwargs.pop("linewidth", None))
         plotnonfinite = bool(kwargs.pop("plotnonfinite", False))
@@ -584,11 +821,36 @@ class Axes(PlotTypeMixin):
             raise not_implemented("scatter(norm=...)")
         check_unsupported(kwargs, "scatter()")
 
-        xv = np.asarray(x).reshape(-1)
-        yv = np.asarray(y).reshape(-1)
+        xv = np.ma.asarray(x).reshape(-1)
+        yv = np.ma.asarray(y).reshape(-1)
+        s_arr = None if s is None or np.isscalar(s) else np.ma.asarray(s).reshape(-1)
+        dropped = np.ma.getmaskarray(xv) | np.ma.getmaskarray(yv)
+        if s_arr is not None and len(s_arr) == len(dropped):
+            dropped = dropped | np.ma.getmaskarray(s_arr)
+        if dropped.any():
+            # matplotlib never draws rows masked in x, y, or s
+            keep = ~dropped
+            xv, yv = xv[keep], yv[keep]
+            if s_arr is not None and len(s_arr) == len(dropped):
+                s_arr = s_arr[keep]
+            if (
+                c is not None
+                and not isinstance(c, str)
+                and not (
+                    isinstance(c, (tuple, list))
+                    and len(c) in (3, 4)
+                    and not hasattr(c[0], "__len__")
+                )
+            ):
+                c_rows = np.ma.asarray(c)
+                if c_rows.ndim >= 1 and c_rows.shape[0] == len(dropped):
+                    c = c_rows[keep]
+        xv, yv = np.asarray(xv), np.asarray(yv)
+        if s_arr is not None:
+            s = np.asarray(s_arr)
         x, y = xv, yv
-        if s is not None and not np.isscalar(s):
-            s = np.asarray(s).reshape(-1)
+        if transform is not None:
+            x, y = self._transform_points(x, y, transform)
         source_color = None
         cv = None if c is None or isinstance(c, str) else np.ma.asarray(c).reshape(-1)
         if (
@@ -627,7 +889,9 @@ class Axes(PlotTypeMixin):
                 entry_kwargs["color"] = np.asarray(c)  # data array, not a color
         else:
             entry_kwargs["color"] = np.asarray(c)  # value encoding
-            entry_kwargs["colormap"] = resolve_cmap(cmap) if cmap else "viridis"
+            entry_kwargs["colormap"] = resolve_cmap(
+                cmap if cmap is not None else rcParams["image.cmap"]
+            )
             if vmin is not None or vmax is not None:
                 # one-sided limits autoscale the other side, like matplotlib
                 values = np.asarray(c, dtype=np.float64)
@@ -648,7 +912,10 @@ class Axes(PlotTypeMixin):
         entry = self._add("scatter", {"x": x, "y": y, "kwargs": entry_kwargs})
         if source_color is not None:
             entry["source_array"] = source_color
-        return PathCollection(self, entry)
+        artist = PathCollection(self, entry)
+        if transform is not None:
+            artist._transform = transform
+        return artist
 
     def bar(
         self, x: Any, height: Any, width: float = 0.8, bottom: Any = None, **kwargs: Any
@@ -992,6 +1259,51 @@ class Axes(PlotTypeMixin):
                     },
                 )
             )
+        if interpolate:
+            # A single selected point between deselected neighbors spans no
+            # interval, but matplotlib still draws its interpolated wedge.
+            covered = np.zeros(len(xv), dtype=bool)
+            for start, end in zip(starts, ends, strict=True):
+                covered[start:end] = True
+            finite_pt = np.isfinite(xv + upper + lower)
+            for i in np.flatnonzero(mask & ~covered & finite_pt):
+                sx = [float(xv[i])]
+                su = [float(upper[i])]
+                sl = [float(lower[i])]
+                for j, prepend in ((i - 1, True), (i + 1, False)):
+                    if 0 <= j < len(xv) and finite_pt[j]:
+                        d0 = upper[j] - lower[j]
+                        d1 = upper[i] - lower[i]
+                        if d0 != d1:
+                            t = float(np.clip(-d0 / (d1 - d0), 0.0, 1.0))
+                            cross_x = float(xv[j] + t * (xv[i] - xv[j]))
+                            cross_y = float(upper[j] + t * (upper[i] - upper[j]))
+                            if prepend:
+                                sx.insert(0, cross_x)
+                                su.insert(0, cross_y)
+                                sl.insert(0, cross_y)
+                            else:
+                                sx.append(cross_x)
+                                su.append(cross_y)
+                                sl.append(cross_y)
+                if len(sx) >= 2:
+                    entries.append(
+                        self._add(
+                            "area",
+                            {
+                                "x": np.asarray(sx),
+                                "y": np.asarray(su),
+                                "kwargs": {
+                                    "base": np.asarray(sl),
+                                    "color": resolved_color,
+                                    "opacity": float(alpha) if alpha is not None else 1.0,
+                                    "name": str(label)
+                                    if label is not None and not entries
+                                    else None,
+                                },
+                            },
+                        )
+                    )
         if not entries:
             entries.append(
                 self._add(
@@ -1146,7 +1458,10 @@ class Axes(PlotTypeMixin):
                 lo = float(vmin) if vmin is not None else float(finite.min())
                 hi = float(vmax) if vmax is not None else float(finite.max())
                 normalized = np.clip((grid - lo) / ((hi - lo) or 1.0), 0.0, 1.0)
-                rgb = _lut(resolve_cmap(cmap) if cmap else "viridis", normalized.reshape(-1))
+                rgb = _lut(
+                    resolve_cmap(cmap if cmap is not None else rcParams["image.cmap"]),
+                    normalized.reshape(-1),
+                )
                 grid = np.dstack((rgb.reshape(grid.shape + (3,)) / 255.0, alpha_array))
                 truecolor = True
         if (
@@ -1185,7 +1500,7 @@ class Axes(PlotTypeMixin):
         if grid.shape[1] == 1:
             grid = np.repeat(grid, 2, axis=1)
         entry_kwargs: dict[str, Any] = {
-            "colormap": resolve_cmap(cmap) if cmap else "viridis",
+            "colormap": resolve_cmap(cmap if cmap is not None else rcParams["image.cmap"]),
             "opacity": 1.0,
         }
         if alpha is not None and np.isscalar(alpha):
@@ -1487,14 +1802,24 @@ class Axes(PlotTypeMixin):
             left, right = left
         current = self._axis_props("x").get("domain")
         lo, hi = current if current is not None else self._entry_extent("x")
-        start, end = float(lo if left is None else left), float(hi if right is None else right)
-        self._axis_props("x")["domain"] = tuple(sorted((start, end)))
+        spec = (self._y2_of or self)._scale_specs["x"]
+        current_original = _scale_values(np.asarray((lo, hi)), spec, inverse=True)
+        start = float(current_original[0] if left is None else left)
+        end = float(current_original[1] if right is None else right)
+        transformed = _scale_values(np.asarray((start, end)), spec)
+        self._axis_props("x")["domain"] = tuple(sorted(map(float, transformed)))
         self._axis_props("x")["reverse"] = start > end
         self._explicit_domains.add("x")
         self._invalidate()
 
     def get_xlim(self) -> tuple[float, float]:
         lo, hi = self._axis_props("x").get("domain", self._auto_domain("x"))
+        lo, hi = map(
+            float,
+            _scale_values(
+                np.asarray((lo, hi)), (self._y2_of or self)._scale_specs["x"], inverse=True
+            ),
+        )
         return (hi, lo) if self._axis_props("x").get("reverse") else (lo, hi)
 
     def set_ylim(self, bottom: Any = None, top: Any = None) -> None:
@@ -1502,14 +1827,26 @@ class Axes(PlotTypeMixin):
             bottom, top = bottom
         current = self._axis_props("y").get("domain")
         lo, hi = current if current is not None else self._entry_extent("y")
-        start, end = float(lo if bottom is None else bottom), float(hi if top is None else top)
-        self._axis_props("y")["domain"] = tuple(sorted((start, end)))
+        key = "y2" if self._y2_of is not None else "y"
+        spec = (self._y2_of or self)._scale_specs[key]
+        current_original = _scale_values(np.asarray((lo, hi)), spec, inverse=True)
+        start = float(current_original[0] if bottom is None else bottom)
+        end = float(current_original[1] if top is None else top)
+        transformed = _scale_values(np.asarray((start, end)), spec)
+        self._axis_props("y")["domain"] = tuple(sorted(map(float, transformed)))
         self._axis_props("y")["reverse"] = start > end
         self._explicit_domains.add("y")
         self._invalidate()
 
     def get_ylim(self) -> tuple[float, float]:
         lo, hi = self._axis_props("y").get("domain", self._auto_domain("y"))
+        key = "y2" if self._y2_of is not None else "y"
+        lo, hi = map(
+            float,
+            _scale_values(
+                np.asarray((lo, hi)), (self._y2_of or self)._scale_specs[key], inverse=True
+            ),
+        )
         return (hi, lo) if self._axis_props("y").get("reverse") else (lo, hi)
 
     def get_position(self, original: bool = False) -> Bbox:
@@ -1773,17 +2110,25 @@ class Axes(PlotTypeMixin):
         self._cycle = 0
         self._invalidate()
 
-    def secondary_xaxis(self, *args: Any, **kwargs: Any) -> Any:
-        del args, kwargs
-        raise not_implemented(
-            "secondary_xaxis()", "secondary axes are outside xy.pyplot's supported layout scope"
-        )
+    def secondary_xaxis(
+        self, location: Any = "top", functions: Any = None, *, transform: Any = None
+    ) -> SecondaryAxis:
+        if transform is not None:
+            raise not_implemented("secondary_xaxis(transform=...)")
+        made = SecondaryAxis(self, "x", location, functions)
+        self._secondary_axes.append(made)
+        self._invalidate()
+        return made
 
-    def secondary_yaxis(self, *args: Any, **kwargs: Any) -> Any:
-        del args, kwargs
-        raise not_implemented(
-            "secondary_yaxis()", "secondary axes are outside xy.pyplot's supported layout scope"
-        )
+    def secondary_yaxis(
+        self, location: Any = "right", functions: Any = None, *, transform: Any = None
+    ) -> SecondaryAxis:
+        if transform is not None:
+            raise not_implemented("secondary_yaxis(transform=...)")
+        made = SecondaryAxis(self, "y", location, functions)
+        self._secondary_axes.append(made)
+        self._invalidate()
+        return made
 
     def _set_tight_domains(self) -> None:
         self._axis_props("x")["domain"] = self._entry_extent("x")
@@ -2163,8 +2508,9 @@ class Axes(PlotTypeMixin):
         kwargs = {} if kwargs is None else dict(kwargs)
         if scale not in ("linear", "log", "symlog", "logit", "asinh"):
             raise ValueError(f"unknown {axis} scale {scale!r}")
-        if scale not in ("linear", "log"):
-            raise not_implemented(f"set_{axis}scale({scale!r})")
+        host = self._y2_of or self
+        key = "y2" if axis == "y" and self._y2_of is not None else axis
+        old = host._scale_specs[key]
         if scale == "linear" and kwargs:
             check_unsupported(kwargs, f"set_{axis}scale('linear')")
         if scale == "log":
@@ -2178,6 +2524,59 @@ class Axes(PlotTypeMixin):
                 raise not_implemented(f"set_{axis}scale('log', subs=...)")
             if nonpositive != "clip":
                 raise not_implemented(f"set_{axis}scale('log', nonpositive={nonpositive!r})")
+        new: dict[str, Any]
+        if scale == "symlog":
+            new = {
+                "name": scale,
+                "base": float(kwargs.pop("base", 10.0)),
+                "linthresh": float(kwargs.pop("linthresh", 2.0)),
+                "linscale": float(kwargs.pop("linscale", 1.0)),
+            }
+        elif scale == "asinh":
+            new = {"name": scale, "linear_width": float(kwargs.pop("linear_width", 1.0))}
+        else:
+            new = {"name": scale}
+        check_unsupported(kwargs, f"set_{axis}scale({scale!r})")
+        if scale == "symlog" and (
+            new["base"] <= 1 or new["linthresh"] <= 0 or new["linscale"] <= 0
+        ):
+            raise ValueError(f"set_{axis}scale({scale!r}) parameters must be positive")
+        if scale == "asinh" and new["linear_width"] <= 0:
+            raise ValueError(f"set_{axis}scale({scale!r}) parameters must be positive")
+        for entry in host._entries:
+            if axis == "y" and entry.get("y_axis", "y") != key:
+                continue
+            _transform_entry_axis(entry, axis, old, new)
+        props = self._axis_props(axis)
+        if "domain" in props:
+            props["domain"] = tuple(
+                map(float, _scale_values(_scale_values(props["domain"], old, inverse=True), new))
+            )
+        if key in host._auto_scale_axis_ticks:
+            # ticks generated for the previous scale, not user-set:
+            # regenerate for the new scale instead of converting them
+            props.pop("tick_values", None)
+            props.pop("tick_labels", None)
+            props.pop("tick_count", None)
+            host._auto_scale_axis_ticks.discard(key)
+        if "tick_values" in props:
+            labels = props.get("tick_labels") or [
+                f"{v:g}" for v in _scale_values(props["tick_values"], old, inverse=True)
+            ]
+            props["tick_values"] = list(
+                map(
+                    float,
+                    _scale_values(_scale_values(props["tick_values"], old, inverse=True), new),
+                )
+            )
+            props["tick_labels"] = labels
+        elif scale in {"symlog", "logit", "asinh"}:
+            ticks = _nonlinear_ticks(self._entry_extent(axis), new)
+            props["tick_values"] = list(map(float, _scale_values(ticks, new)))
+            props["tick_labels"] = [f"{tick:g}" for tick in ticks]
+            props["tick_count"] = max(1, len(ticks))
+            host._auto_scale_axis_ticks.add(key)
+        host._scale_specs[key] = new
         self._axis_props(axis)["type_"] = "log" if scale == "log" else None
         self._invalidate()
 
@@ -2234,8 +2633,18 @@ class Axes(PlotTypeMixin):
             return
         props = self._axis_props("x")
         if ticks is not None:
-            props["tick_values"] = [float(value) for value in ticks]
+            spec = (self._y2_of or self)._scale_specs["x"]
+            (self._y2_of or self)._auto_scale_axis_ticks.discard("x")
+            props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
             props["tick_count"] = max(1, len(props["tick_values"]))
+            if labels is None:
+                if spec and spec.get("name") != "linear":
+                    # exporters see transformed positions; label the originals
+                    props["tick_labels"] = [
+                        f"{tick:g}" for tick in np.asarray(ticks, dtype=float).reshape(-1)
+                    ]
+                else:
+                    props.pop("tick_labels", None)
         if labels is not None:
             props["tick_labels"] = [str(value) for value in labels]
             if len(props["tick_labels"]) != len(props.get("tick_values", [])):
@@ -2251,8 +2660,19 @@ class Axes(PlotTypeMixin):
             return
         props = self._axis_props("y")
         if ticks is not None:
-            props["tick_values"] = [float(value) for value in ticks]
+            key = "y2" if self._y2_of is not None else "y"
+            spec = (self._y2_of or self)._scale_specs[key]
+            (self._y2_of or self)._auto_scale_axis_ticks.discard(key)
+            props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
             props["tick_count"] = max(1, len(props["tick_values"]))
+            if labels is None:
+                if spec and spec.get("name") != "linear":
+                    # exporters see transformed positions; label the originals
+                    props["tick_labels"] = [
+                        f"{tick:g}" for tick in np.asarray(ticks, dtype=float).reshape(-1)
+                    ]
+                else:
+                    props.pop("tick_labels", None)
         if labels is not None:
             props["tick_labels"] = [str(value) for value in labels]
             if len(props["tick_labels"]) != len(props.get("tick_values", [])):
@@ -2272,7 +2692,13 @@ class Axes(PlotTypeMixin):
         if minor:
             return np.asarray(props.get("minor_tick_values", []), dtype=float)
         if "tick_values" in props:
-            return np.asarray(props["tick_values"], dtype=float)
+            key = "y2" if axis == "y" and self._y2_of is not None else axis
+            return np.asarray(
+                _scale_values(
+                    props["tick_values"], (self._y2_of or self)._scale_specs[key], inverse=True
+                ),
+                dtype=float,
+            )
         # Auto-ticked axes report the same nice locations the exporters draw.
         from xy._svg import _linear_ticks, _log_ticks
 
@@ -2547,6 +2973,8 @@ class Axes(PlotTypeMixin):
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
         children.append(_cached_axis("x", x_props))
         children.append(_cached_axis("y", y_props))
+        for index, secondary in enumerate(self._secondary_axes, 1):
+            children.append(secondary._component(index))
         if self._twin is not None:
             y2_props = {k: v for k, v in self._axis["y2"].items() if v is not None}
             children.append(fc.y_axis(id="y2", side="right", **y2_props))

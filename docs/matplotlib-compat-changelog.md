@@ -42,5 +42,28 @@ which covers user-visible releases across the whole package.
   errorbar limit carets, data-space dashes) and the HTML-only scope of
   chrome rcParams.
 
+### Second review pass — 2026-07-13
+
+- Silent divergences converted to correct behavior: scatter drops rows masked
+  in x/y/s (not just c); `fill_between(interpolate=True)` draws single-point
+  `where` regions; `imsave` colormaps original values instead of a
+  pre-quantized uint8 copy; `set_cmap` validates names and feeds
+  imshow/scatter defaults; boxplot `sym` is honored (empty string suppresses
+  fliers) and flierprops colors reach the drawn dots; usermedians no longer
+  shift notch CIs; hexbin `mincnt` filtering and `C` aggregation use the same
+  bin membership.
+- Silent discards converted to loud rejections: bxp component linestyles,
+  secondary-axis `set_ticks` extras, axes/figure-fraction transforms on data
+  artists, `savefig(format='html', metadata=)`; singular transforms fail at
+  `set_transform` time with ValueError.
+- Export: SVG/HTML honor `savefig(facecolor=)` (background rect / styled
+  container); single-chart SVG includes the suptitle; composed-SVG suptitle
+  `y` maps as a figure fraction; non-Latin-1 PNG metadata keys raise
+  ValueError.
+- Scales: logit masks values at/outside (0, 1) instead of emitting ±inf;
+  scale-generated ticks refresh as data arrives and are dropped when the
+  scale returns to linear; explicit `set_*ticks` under a nonlinear scale
+  label the original data values.
+
 Future entries must identify the Matplotlib release/revision, inventory
 additions or removals, and any compatibility-level changes.

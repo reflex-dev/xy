@@ -566,55 +566,104 @@ streamplot
 
 
 
-=========================================================
+---
 
+## Post-review status (rewritten 2026-07-13; the earlier pasted record was
+## corrupted and internally stale — this section is the authoritative one)
 
-Post-review findings (kept as the input record; resolved items are marked)
+### Evidence layer — built, with known limits
 
+- All 54 dual-engine corpus cases render PNGs in both engines and compare ink
+  fraction (0.2–5.0x) and foreground-bbox aspect (0.5–2.0x). This catches
+  blank/absent renders but is deliberately renderer-tolerant: wrong data and
+  an empty axes still pass. Real per-script perceptual comparison remains
+  future work.
+- Cross-engine semantic oracles: triangulation topology, masked scatter `c`
+  arrays, removable handles, and RGBA passthrough genuinely compare against
+  Matplotlib (they fail against the pre-fix shim). The contour oracle only
+  echoes explicitly passed levels — xy's *auto* contour levels demonstrably
+  diverge from Matplotlib's and are untested. The vector oracle checks shaft
+  angles against input math, not against Matplotlib; magnitudes are untested.
+- PNG thresholds: per-family IoU floors (line 0.20 / bar 0.70 / image 0.55),
+  ink band 0.5–2.0x, luma 0.20. Wrong-data and wrong-family renders now fail;
+  margins are thin (a correct image scores ~0.567 vs the 0.55 floor). The
+  negative control is tied to the live `MINIMUM_IOU` values, so loosening
+  them below a wrong-geometry score fails the control.
+- Discard detector: mechanically scans public shim adapters for bare
+  `kwargs.pop`/`del` statements without a `compat-noop:` marker. It does NOT
+  catch a named parameter that is accepted and never read, or an
+  assigned-then-unused pop; the `compat-noop:` escape hatch is free text.
+- Corpus coverage credits calls only on receivers traced to
+  `subplots`/`gca`/... — but the names `ax`/`axes` are trusted
+  unconditionally, so it is a naming heuristic, not type resolution.
+- Reference CI installs the released `matplotlib==3.11.0` wheel and asserts
+  the version; all reference tests run (0 skipped) locally and in CI. The
+  former snapshot↔upstream-checkout comparison no longer runs anywhere: the
+  `v3.11.0-348-gbde111fb4e` pin recorded in the snapshot is informational
+  only. `verify_ci_workflow.py` is step-local but still substring-based
+  within a step (an `echo`-prefixed or commented-out command inside the right
+  step still passes).
 
-Still weak: the evidence layer (documented honestly now, but not built)
+### Export options
 
-These were the "MISLEADING" P0 findings — we fixed the claims, not the machinery:
+- `savefig` PNG: `bbox_inches="tight"` (true content-bbox crop; `pad_inches`
+  can only re-expand up to the original canvas), `transparent=`, `facecolor=`
+  (pixel-verified), `metadata=` (tEXt/iTXt; non-Latin-1 keys raise
+  ValueError).
+- SVG: metadata as a flattened `<metadata>` text node (not RDF); non-white
+  backgrounds emitted as a full-bleed `<rect>`; suptitles reach both grid and
+  single-chart documents, `y` maps as a figure fraction.
+- HTML: non-white backgrounds wrap the document in a styled container;
+  `metadata=` is rejected loudly.
+- Suptitle styling is per-backend best-effort: PNG honors size/color/x but
+  ignores weight/family/y/ha; HTML honors size/weight/family/color but
+  ignores x/y/ha. Accepted as a documented approximation.
 
-- [resolved] All 54 dual-engine corpus cases now emit and compare PNG artifact geometry and ink density.
-- [resolved] Cross-engine semantic oracles now cover contours, triangulations, vector directions, scatter masks, RGBA behavior, and removable handles.
-- [resolved] PNG thresholds are substantially tighter and include negative controls that prove blank/wrong geometry fails.
-- [resolved] A mechanical public-adapter scan rejects unexplained accepted-and-dropped options.
-- [partial] Corpus coverage now proves pyplot/Axes receivers. Executable family-level claims in `compatibility.json` remain future work.
-- [resolved] Reference CI uses the released `matplotlib==3.11.0` wheel and reference tests accept the released surface.
+### Implemented in the follow-up passes
 
-Partial: rejected loudly rather than implemented
+- hlines/vlines dash geometry (data-space; dash tuples and per-line style
+  arrays reject loudly), fill_between interpolation including single-point
+  `where` regions, violin extrema, masked scatter rows (x/y/s/c), `imsave`
+  colormapping (normalizes original values; cmap ignored for RGB(A) input
+  like Matplotlib), `data=` routes for hlines/vlines/fill_betweenx/contour*/
+  quiver/barbs (plot/scatter/hist/bar still reject `data=`), unknown colormap
+  names raise ValueError at every entry point including `set_cmap` (which now
+  also feeds imshow/scatter defaults via `rcParams["image.cmap"]`), legend
+  layout options (borderpad/labelspacing/handlelength/handletextpad/
+  title_fontsize) raise NotImplementedError instead of vanishing.
+- Newer tranche (validation in progress, see matrix/compat doc): boxplot
+  notch/bootstrap/user statistics, violin bandwidths/quantiles/sides, hexbin
+  `C`/reducers/`mincnt`, symlog/logit/asinh scales, secondary axes, affine
+  data transforms for point/segment artists.
 
-The "implement or rejen, so these are nowhonest — but functionally they're missing features, and some are very common calls that now raise where they used to (sort of) work:
+### Accepted approximations (documented, still divergent)
 
-- [resolved] `savefig(bbox_inches="tight")`, `transparent=`, `metadata=`, and `facecolor=` are implemented for PNG (metadata also reaches SVG).
-- [partial] `hlines`/`vlines` linestyles, `fill_between` interpolation/steps, and violin extrema are implemented. Boxplot notches/bootstrap/user medians/confidence intervals, violin bandwidth/side, hexbin reducers, non-FFT spectral options, plot cap/join styles, non-native scales, and secondary axes remain explicit unsupported boundaries.
-- Rough P3 ratio after our pass: the silent-discard third is gone, but the surface is still roughther thanimplementation.
+- Barbs glyph is a bounded tick count, not WMO 50/10/5 geometry.
+- Streamplot uses a fixed-step integrator; paths differ from Matplotlib's
+  adaptive one; density tuples reduce to their max.
+- imshow smoothing-mode names collapse to one bilinear upsample; truecolor
+  RGB(A) is unresampled.
+- `annotate(arrowprops=)` reduces to callout text; errorbar limit flags drop
+  caret arrows.
+- stem/eventplot/triplot/hlines/vlines dashes are data-space geometry (they
+  scale with zoom).
+- Exception types diverge by design: TypeError/NotImplementedError where
+  Matplotlib accepts the value.
 
-Accepted approximations (documented, still divergent from matplotlib)
+### Known-inconsistent, still open
 
-- Barbs render an inveO 50/10/5 barbgeometry.
-- Streamplot's fixed-srent paths thanmatplotlib's adaptive one; density tuples reduce to their max.
-- imshow's 15 smoothinear upsample, andtruecolor RGB(A) input isn't resampled at all.
-- annotate(arrowprops=rorbar limit flags drop the caret arrows.
-- stem/eventplot/triplot dashes are data-space geometry — they scale with zoom instead of staying screen-space patterns.
-- Exception-type diversesTypeError/NotImplementedError where matplotlib accepts the value.
+- Exporter chrome beyond backgrounds (fonts, tick/legend styling) stays fixed
+  in single-chart PNG/SVG regardless of rcParams.
+- `ax.set_facecolor()` does not exist; axes background is rc-at-creation.
+- `ax.patches` holds only pie wedges; bar rects live in containers.
+- `get_xticks()` on category/time axes falls back to linear ticks; tick
+  density ignores figure size.
+- Family-level claims in `compatibility.json` have no executable backing.
 
-Bypassed / known-inconsistent, not addressed
+### Bottom line
 
-- Chrome rcParams are HTML-only. axes.facecolor, fonts, tick/legend styling, single-chart figure.facecolor are ignored by PNG and SVG export (hardcoded chrome in _osed in the compat doc, but implementing exporter theming is real deferred work.
-- The transform graph is inert beyond images. Affine2D works only on
-AxesImage; transAxes/ttations. Lines,patches, and collections reject every non-identity transform, so the P4 "coordinate systems across exporters" checkbox is satisfied only for the text family.
-- legend() still silently pops title_fontsize, borderpad, labelspacing,
-handlelength, handlete-discarded pattern weeliminated elsewhere; nobody's audit flagged it, I noticed it while fixing
-the prop crash and lefly, but by the repo'sown policy it should reject or be documented).
-- resolve_cmap silentlnknown colormap names,while _rgba_floats rejects unknown color names loudly — inconsistent boundary, pre-existing.
-- ax.patches contains es live in containers,unlike matplotlib.
-- get_xticks() on category/time axes falls through to linear ticks over the numeric domain — usable but not matplotlib's locators; tick density also ignores figure size (fixed target count).
-Bottom line
-
-The evidence, common export options, exporter background chrome, legend
-discard boundary, line-collection dashes, interpolated fills, and violin
-extrema are now implemented. The remaining items above are still explicit
-approximations or loud unsupported boundaries; they are not claimed as full
-Matplotlib parity.
+Evidence machinery, common export options, exporter backgrounds, the legend
+discard boundary, dash geometry, interpolated fills, violin extrema, and the
+colormap validation boundary are implemented and regression-tested. Items
+listed above as approximations or open inconsistencies are exactly that —
+none of this is claimed as full Matplotlib parity.

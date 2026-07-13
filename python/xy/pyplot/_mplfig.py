@@ -29,7 +29,11 @@ def _png_with_metadata(data: bytes, metadata: dict[Any, Any]) -> bytes:
     for raw_key, raw_value in metadata.items():
         key = str(raw_key)
         value = str(raw_value)
-        if not key or len(key.encode("latin-1", "strict")) > 79 or "\x00" in key:
+        try:
+            encoded_key = key.encode("latin-1", "strict")
+        except UnicodeEncodeError:
+            encoded_key = b""
+        if not encoded_key or len(encoded_key) > 79 or "\x00" in key:
             raise ValueError("PNG metadata keys must be 1-79 Latin-1 characters")
         try:
             payload = key.encode("latin-1") + b"\0" + value.encode("latin-1")
@@ -589,7 +593,7 @@ class Figure:
                     data = _png_with_metadata(data, metadata)
             elif suffix == "svg":
                 single = self._single()
-                if single is None:
+                if single is None or self._suptitle is not None:
                     from ._grid import compose_svg
 
                     data = compose_svg(
@@ -601,6 +605,13 @@ class Figure:
                     ).encode()
                 else:
                     data = single.to_svg().encode()
+                if self._facecolor not in ("none", "white"):
+                    import html
+
+                    fill = html.escape(self._facecolor, quote=True)
+                    start = data.find(b">") + 1
+                    rect = f'<rect width="100%" height="100%" fill="{fill}"/>'.encode()
+                    data = data[:start] + rect + data[start:]
                 if metadata:
                     import html
 
@@ -610,8 +621,14 @@ class Figure:
                         data[:start] + f"<metadata>{description}</metadata>".encode() + data[start:]
                     )
             elif suffix == "html":
-                single = self._single()
+                if metadata:
+                    raise not_implemented("savefig(format='html', metadata=...)", "PNG or SVG")
                 data = self._to_html().encode()
+                if self._facecolor not in ("none", "white"):
+                    import html
+
+                    fill = html.escape(self._facecolor, quote=True)
+                    data = f'<div style="background-color:{fill}">'.encode() + data + b"</div>"
             else:
                 raise not_implemented(f"savefig(format={suffix!r})", "png, svg, or html")
         finally:

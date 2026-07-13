@@ -409,12 +409,12 @@ def test_errorbar_default_format_draws_data_line_and_none_opts_out() -> None:
 
 def test_unsupported_compatibility_options_fail_loudly() -> None:
     _fig, ax = plt.subplots()
-    with pytest.raises(NotImplementedError, match="hexbin"):
-        ax.hexbin([0, 1], [0, 1], C=[2, 3])
-    with pytest.raises(TypeError, match="notch"):
-        ax.boxplot([[1, 2, 3]], notch=True)
-    with pytest.raises(NotImplementedError, match="symlog"):
-        ax.set_xscale("symlog")
+    collection = ax.hexbin([0, 0.1], [0, 0.1], C=[2, 3], reduce_C_function=np.max)
+    assert collection._entry["kwargs"]["C"] == [2, 3]
+    result = ax.boxplot([[1, 2, 3]], notch=True, conf_intervals=[[1.5, 2.5]])
+    assert result["boxes"]
+    ax.set_xscale("symlog")
+    assert ax._scale_specs["x"]["name"] == "symlog"
 
 
 def test_artist_remove() -> None:

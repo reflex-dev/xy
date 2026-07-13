@@ -169,13 +169,16 @@ def compose_svg(
     anchor = {"left": "start", "center": "middle", "right": "end"}.get(
         str(style.get("ha", "center")), "middle"
     )
+    width, height = sum(col_widths), title_h + sum(row_heights)
+    size = float(style.get("size", 16))
+    # y is a figure fraction measured from the bottom, like matplotlib.
+    baseline = min(height - 2.0, (1.0 - float(style.get("y", 0.98))) * height + 0.75 * size)
     title = (
-        f'<text x="{sum(col_widths) * float(style.get("x", 0.5)):g}" y="{28 * (1 - float(style.get("y", 0.98))) + 19:g}" text-anchor="{anchor}" '
-        f'font-family="{_html.escape(str(style.get("family", "system-ui,sans-serif")))}" font-size="{float(style.get("size", 16)):g}" font-weight="{_html.escape(str(style.get("weight", "normal")))}" fill="{_html.escape(str(style.get("color", "#262626")))}">{_html.escape(suptitle)}</text>'
+        f'<text x="{width * float(style.get("x", 0.5)):g}" y="{baseline:g}" text-anchor="{anchor}" '
+        f'font-family="{_html.escape(str(style.get("family", "system-ui,sans-serif")))}" font-size="{size:g}" font-weight="{_html.escape(str(style.get("weight", "normal")))}" fill="{_html.escape(str(style.get("color", "#262626")))}">{_html.escape(suptitle)}</text>'
         if suptitle
         else ""
     )
-    width, height = sum(col_widths), title_h + sum(row_heights)
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
         f'viewBox="0 0 {width} {height}">{title}{"".join(body)}</svg>'

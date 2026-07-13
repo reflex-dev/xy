@@ -83,7 +83,8 @@ def test_savefig_file_objects_support_common_export_options() -> None:
     fig.savefig(tight, format="png", bbox_inches="tight", pad_inches=0)
     regular_size = struct.unpack(">II", regular.getvalue()[16:24])
     tight_size = struct.unpack(">II", tight.getvalue()[16:24])
-    assert tight_size[0] <= regular_size[0] and tight_size[1] <= regular_size[1]
+    # a strict shrink on both axes: equality would mean tight-crop is a no-op
+    assert tight_size[0] < regular_size[0] and tight_size[1] < regular_size[1]
 
     colored = io.BytesIO()
     fig.savefig(colored, format="png", facecolor="#123456")

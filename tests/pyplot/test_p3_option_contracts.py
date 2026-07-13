@@ -35,7 +35,6 @@ def test_plot_marker_styles_and_markevery_reach_marker_entry() -> None:
         (lambda ax: ax.fill_betweenx([0, 1], [0, 1], step="pre"), "step"),
         (lambda ax: ax.arrow(0, 0, 1, 1, shape="left"), "head shape"),
         (lambda ax: ax.errorbar([0], [1], yerr=0.2, barsabove=True), "barsabove"),
-        (lambda ax: ax.violinplot([[1, 2]], side="low"), "side"),
         (lambda ax: ax.imshow([[1]], interpolation_stage="rgba"), "interpolation_stage"),
         (lambda ax: ax.psd([1, 2, 3], window=np.ones(3)), "window"),
     ],
@@ -92,8 +91,8 @@ def test_log_wrappers_accept_only_the_native_log_contract() -> None:
     with pytest.raises(NotImplementedError, match="nonpositive"):
         ax.set_xscale("log", nonpositive="mask")
     for scale in ("symlog", "logit", "asinh"):
-        with pytest.raises(NotImplementedError, match=scale):
-            ax.set_xscale(scale)
+        ax.set_xscale(scale)
+        assert ax._scale_specs["x"]["name"] == scale
 
 
 def test_datetime_timedelta_and_categories_have_bounded_native_conversions() -> None:

@@ -1347,6 +1347,9 @@ def hexbin(
     gridsize: int | tuple[int, int] = 64,
     range: Optional[tuple[tuple[float, float], tuple[float, float]]] = None,
     bins: str = "count",
+    C: Any = None,
+    reduce_C_function: Any = np.mean,
+    mincnt: Optional[int] = None,
     name: Optional[str] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     opacity: float = 0.9,
@@ -1386,10 +1389,18 @@ def hexbin(
             f"hexbin x and y must have equal length, got {len(x_all)} and {len(y_all)}"
         )
     n_points = len(x_all)
+    c_all = None
+    if C is not None:
+        c_all, _c_kind, _c_copies = columns._canonicalize(C)
+        if len(c_all) != len(x_all):
+            raise ValueError("hexbin C must have the same length as x and y")
     finite = np.isfinite(x_all) & np.isfinite(y_all)
+    if c_all is not None:
+        finite &= np.isfinite(c_all)
     if not np.any(finite):
         raise ValueError("hexbin x and y must contain at least one finite pair")
     xv, yv = x_all[finite], y_all[finite]
+    cv = None if c_all is None else c_all[finite]
     if range is None:
         xr = self._auto_domain(kernels.min_max(xv))
         yr = self._auto_domain(kernels.min_max(yv))
@@ -1398,15 +1409,38 @@ def hexbin(
             raise ValueError("hexbin range must be ((x0, x1), (y0, y1))")
         xr = self._finite_increasing_pair(range[0], "hexbin x range")
         yr = self._finite_increasing_pair(range[1], "hexbin y range")
-    grid = kernels.bin_2d(xv, yv, xr[0], xr[1], yr[0], yr[1], w, h)
-    rows, cols = np.nonzero(grid.reshape(h, w) > 0)
-    counts = grid.reshape(h, w)[rows, cols]
+    threshold = 1 if mincnt is None else int(mincnt)
+    if threshold < 0:
+        raise ValueError("hexbin mincnt must be nonnegative")
+    if cv is None:
+        grid = kernels.bin_2d(xv, yv, xr[0], xr[1], yr[0], yr[1], w, h)
+        grid2d = grid.reshape(h, w)
+        rows, cols = np.nonzero(grid2d >= threshold)
+    else:
+        # count with the same clip membership the reducer uses below, so
+        # mincnt filtering and aggregation always agree on bin contents
+        x_index = np.clip(((xv - xr[0]) / (xr[1] - xr[0]) * w).astype(int), 0, w - 1)
+        y_index = np.clip(((yv - yr[0]) / (yr[1] - yr[0]) * h).astype(int), 0, h - 1)
+        grid2d = np.zeros((h, w), dtype=np.float64)
+        np.add.at(grid2d, (y_index, x_index), 1.0)
+        rows, cols = np.nonzero(grid2d >= max(1, threshold))
+    counts = grid2d[rows, cols]
     if len(counts) == 0:
         raise ValueError("hexbin range contains no finite points")
     dx, dy = (xr[1] - xr[0]) / w, (yr[1] - yr[0]) / h
     centers_x = xr[0] + (cols + 0.5 + 0.5 * (rows & 1)) * dx
     centers_y = yr[0] + (rows + 0.5) * dy
-    metric = np.log1p(counts) if bins == "log" else counts
+    if cv is None:
+        metric = np.log1p(counts) if bins == "log" else counts
+    else:
+        reduced: list[float] = []
+        for row, col in zip(rows, cols, strict=True):
+            values = cv[(x_index == col) & (y_index == row)]
+            made = np.asarray(reduce_C_function(values))
+            if made.ndim != 0 or not np.isfinite(made):
+                raise ValueError("hexbin reduce_C_function must return one finite scalar per bin")
+            reduced.append(float(made))
+        metric = np.asarray(reduced, dtype=np.float64)
     color_ch = channels.resolve_color(
         metric, len(metric), colormap=colormap, default_constant=DEFAULT_PALETTE[0]
     )

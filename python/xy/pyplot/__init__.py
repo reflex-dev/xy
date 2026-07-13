@@ -315,7 +315,11 @@ def findobj(obj: Any = None, match: Any = None) -> list[Any]:
 
 
 def set_cmap(cmap: Any) -> None:
-    rcParams["image.cmap"] = str(getattr(cmap, "name", cmap))
+    from ._colors import resolve_cmap
+
+    name = str(getattr(cmap, "name", cmap))
+    resolve_cmap(name)  # unknown names must fail here, not at render time
+    rcParams["image.cmap"] = name
 
 
 def viridis() -> Any:
@@ -344,24 +348,31 @@ def imsave(fname: Any, arr: Any, **kwargs: Any) -> None:
             "imsave(JPEG)", "PNG output; JPEG remains outside the dependency-free shim"
         )
     image = np.asarray(arr)
-    if image.dtype != np.uint8:
-        finite = image.astype(float)
-        if finite.size and np.nanmax(finite) <= 1.0 and np.nanmin(finite) >= 0.0:
-            image = np.clip(finite * 255.0, 0, 255).astype(np.uint8)
-        else:
-            image = np.clip(finite, 0, 255).astype(np.uint8)
     if image.ndim == 2:
         from ._colors import Cmap
 
+        # Colormap the original values: quantizing to uint8 first would
+        # collapse any range outside [0, 255] to a handful of colors.
         scalar = image.astype(np.float64)
-        lo, hi = float(np.nanmin(scalar)), float(np.nanmax(scalar))
+        finite = scalar[np.isfinite(scalar)]
+        lo = float(finite.min()) if finite.size else 0.0
+        hi = float(finite.max()) if finite.size else 1.0
         normalized = (scalar - lo) / (hi - lo) if hi > lo else np.zeros_like(scalar)
-        image = np.round(Cmap(cmap or "viridis")(normalized) * 255.0).astype(np.uint8)
-    elif image.ndim == 3 and image.shape[2] == 3:
-        alpha = np.full((*image.shape[:2], 1), 255, dtype=np.uint8)
-        image = np.concatenate((image, alpha), axis=2)
-    elif image.ndim != 3 or image.shape[2] != 4:
-        raise ValueError("imsave() expects a 2-D grayscale, RGB, or RGBA array")
+        rgba = Cmap(cmap if cmap is not None else rcParams["image.cmap"])(normalized)
+        image = np.round(np.asarray(rgba, dtype=np.float64) * 255.0).astype(np.uint8)
+    else:
+        # cmap is ignored for RGB(A) input, matching matplotlib.
+        if image.dtype != np.uint8:
+            finite = image.astype(float)
+            if finite.size and np.nanmax(finite) <= 1.0 and np.nanmin(finite) >= 0.0:
+                image = np.clip(finite * 255.0, 0, 255).astype(np.uint8)
+            else:
+                image = np.clip(finite, 0, 255).astype(np.uint8)
+        if image.ndim == 3 and image.shape[2] == 3:
+            alpha = np.full((*image.shape[:2], 1), 255, dtype=np.uint8)
+            image = np.concatenate((image, alpha), axis=2)
+        elif image.ndim != 3 or image.shape[2] != 4:
+            raise ValueError("imsave() expects a 2-D grayscale, RGB, or RGBA array")
     from xy._png import encode
 
     data = encode(np.ascontiguousarray(image, dtype=np.uint8))

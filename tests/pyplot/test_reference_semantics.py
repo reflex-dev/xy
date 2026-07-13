@@ -183,6 +183,11 @@ def _foreground_mask(pixels: np.ndarray) -> np.ndarray:
     return (distance > 0.08) & (alpha > 0.1)
 
 
+# Per-family floors for the cross-engine mask IoU; the negative control below
+# asserts a wrong-geometry render scores under every one of these.
+MINIMUM_IOU = {"line": 0.20, "bar": 0.70, "image": 0.55}
+
+
 def _dilate(mask: np.ndarray, radius: int = 5) -> np.ndarray:
     padded = np.pad(mask, radius)
     result = np.zeros_like(mask)
@@ -239,8 +244,7 @@ def test_reference_pngs_have_tolerant_perceptual_and_geometry_agreement(family: 
     normalized_mpl = _dilate(_normalize_mask(mplmask))
     overlap = np.count_nonzero(normalized_xy & normalized_mpl)
     union = np.count_nonzero(normalized_xy | normalized_mpl)
-    minimum_iou = {"line": 0.20, "bar": 0.70, "image": 0.55}[family]
-    assert overlap / max(1, union) > minimum_iou
+    assert overlap / max(1, union) > MINIMUM_IOU[family]
     xy_fraction = np.mean(xymask)
     mpl_fraction = np.mean(mplmask)
     assert 0.5 < xy_fraction / mpl_fraction < 2.0
@@ -259,4 +263,6 @@ def test_perceptual_oracle_rejects_blank_and_wrong_geometry() -> None:
         left = _dilate(_normalize_mask(candidate))
         right = _dilate(_normalize_mask(reference))
         iou = np.count_nonzero(left & right) / max(1, np.count_nonzero(left | right))
-        assert iou < 0.20
+        # tied to the live thresholds: loosening MINIMUM_IOU below the score a
+        # wrong-geometry render can reach must fail here, not pass silently
+        assert iou < min(MINIMUM_IOU.values())

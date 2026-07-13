@@ -21,8 +21,10 @@ claim to reproduce Matplotlib's renderer, transforms, or full Artist graph.
 The generated [method-by-method compatibility matrix](matplotlib-compat-matrix.md)
 is sourced from that snapshot, executable corpus calls, and
 [`compatibility.json`](../tests/pyplot/compatibility.json). CI fails if the
-snapshot differs from the pinned Matplotlib checkout or if the generated matrix
-is stale.
+generated matrix is stale, installs the released `matplotlib==3.11.0` wheel,
+and asserts every snapshot method exists on its `Axes`. The dev revision
+recorded in the snapshot is informational: CI no longer compares the snapshot
+against an upstream Matplotlib checkout.
 
 The dual-engine runner executes every corpus case in a fresh process. Its
 reference harness only normalizes renderer-specific HTML export and xy's
@@ -48,12 +50,12 @@ dependency-free `triangles=` shorthand into Matplotlib's equivalent
 
 | matplotlib | notes |
 |---|---|
-| `plt.plot` / `ax.plot` | format strings (`'r--o'`), multiple series per call, implicit x, `label=`, `lw=`, `ls=`, `alpha=`, marker face/edge styling and `markevery`; unsupported transforms, partial fill styles, and cap/join policies fail loudly |
+| `plt.plot` / `ax.plot` | format strings (`'r--o'`), multiple series per call, implicit x, `label=`, `lw=`, `ls=`, `alpha=`, marker face/edge styling, `markevery`, and dependency-free affine *data* transforms (`Affine2D + ax.transData`); axes/figure-fraction transforms on data artists, partial fill styles, and cap/join policies fail loudly |
 | `scatter(x, y, s=, c=, cmap=, vmin=, vmax=, alpha=, marker=, edgecolors=, plotnonfinite=)` | `s` (pt², area) maps to pixel diameter; array `c` becomes a color encoding and explicit paired color bounds are retained; custom norms/marker paths fail loudly |
 | `bar`, `barh`, `grouped_bar`, `bar_label` | string categories, stacking bases, Matplotlib 3.11 grouped-bar containers and labels |
 | `hist(bins=, range=, density=, cumulative=, weights=, orientation=, stacked=)` | Returns computed counts/edges and supports bar/step histogram families |
-| `hist2d`, `hexbin`, `ecdf` | 2D uniform binning uses the native Rust kernel; ECDF/hexbin use the corresponding core marks |
-| `boxplot`, `violinplot`, `bxp`, `violin`, `errorbar` | Raw samples use bounded core distribution marks; precomputed statistics use exact generic mesh/segment geometry |
+| `hist2d`, `hexbin`, `ecdf` | 2D uniform binning uses the native Rust kernel; hexbin supports `C`, arbitrary scalar reducers, and `mincnt` without retaining source points. Hexbin aggregates over a rectangular grid with staggered display centers — a visual approximation of Matplotlib's true hexagonal binning, so per-bin values differ from Matplotlib's |
+| `boxplot`, `violinplot`, `bxp`, `violin`, `errorbar` | Boxplots support notches, bootstrap/user confidence intervals, median overrides (drawn median only; notch CIs stay data-derived like Matplotlib), percentile/custom whiskers, cap widths, `sym`, and component colors/widths/alpha — dashed component linestyles fail loudly. Violins support Scott/Silverman/scalar/callable Gaussian-KDE bandwidths, quantiles, and low/high sides; the default (bw_method omitted) uses the native histogram violin mark, whose shape differs from the explicit KDE path |
 | `fill_between(x, y1, y2, where=, step=)` / `fill_betweenx` | Masks are split into finite contiguous polygons; step geometry is expanded exactly |
 | `stackplot` | All four baselines are computed by the native stacked-bounds kernel |
 | `imshow` / `pcolormesh` (`cmap=`, `vmin=`/`vmax=`, `origin=`) | `imshow` defaults to `rcParams['image.origin']`; nearest stays cell-exact and Matplotlib's smoothing mode names all collapse to the shim's single bounded gradient upsampling (a visual approximation, not per-mode kernels) and apply to scalar data only — RGB(A) truecolor arrays render unresampled — while unsupported stages/transforms fail loudly. Uniform meshes retain the texture fast path; nonuniform and curvilinear grids use native quad-to-triangle expansion |
@@ -66,10 +68,10 @@ dependency-free `triangles=` shorthand into Matplotlib's equivalent
 | `xlabel` / `ylabel` / `title` / `suptitle` | Suptitles are retained in HTML and multi-panel PNG/SVG |
 | `legend()` | `loc`/`fontsize` accepted; placement is the chart's own |
 | `grid(True/False)` | toggles the grid via the theme |
-| `xlim` / `ylim`, axis scales, `invert_xaxis/yaxis` | linear/log are native; symlog/logit/asinh fail loudly until their transforms are implemented |
+| `xlim` / `ylim`, axis scales, `invert_xaxis/yaxis` | linear/log are native; symlog/logit/asinh use dependency-free monotone data transforms with inverse limit/tick semantics. Tick locations come from xy's own generators (refreshed as data arrives), not Matplotlib's locators; artist `get_data()` reflects the transformed space; logit masks values at/outside (0, 1) |
 | datetime, timedelta, and string coordinates | datetime inputs use the engine's automatic date ticks, timedeltas are bounded to elapsed seconds, and common strings use categorical ticks; the general Matplotlib units registry is intentionally out of scope |
 | `xticks(positions, labels, rotation=)` / `tick_params(labelrotation=)` | Exact positions and strings render in browser, PNG, and SVG |
-| `twinx()` | second y-axis (right side) |
+| `twinx()`, `secondary_xaxis()`, `secondary_yaxis()` | second data axes and linked tick-only secondary axes with callable forward/inverse conversions. Secondary-axis ticks are evenly spaced conversions of the primary domain (not Matplotlib's secondary-unit locators) and currently reach the interactive HTML client only — PNG/SVG export does not draw them yet |
 | `fig, ax = plt.subplots()`; `plt.subplots(n, m, figsize=, dpi=, squeeze=, sharex=, sharey=)` | Grid renders as CSS-grid HTML and stitched PNG/SVG; shared axes use common domains and live linked pan/zoom |
 | `fig.add_subplot(2, 2, 1)` / `add_subplot(221)` | |
 | `gca` / `gcf` / `sca` / `figure(num)` / `close(...)` | matplotlib's implicit-state semantics |
@@ -83,11 +85,11 @@ dependency-free `triangles=` shorthand into Matplotlib's equivalent
 
 ## Outside 2-D chart-method compatibility
 
-Polar/3D projections, `FuncAnimation`, secondary-axis layout, arbitrary
-third-party Artist graphs, general transform composition, and blitting are not
-part of this 2-D chart-method target. Bounded shim-owned `Axes` Artist views,
-children, containers, removal, identity/affine transforms, and coordinate
-spaces are supported.
+Polar/3D projections, `FuncAnimation`, arbitrary third-party Artist graphs,
+non-affine transform graphs, and blitting are not part of this 2-D chart-method
+target. Bounded shim-owned `Axes` Artist views, children, containers, removal,
+affine data transforms, coordinate spaces, and linked secondary axes are
+supported.
 
 Unknown keyword arguments on supported calls raise `TypeError` naming the
 offending keyword. Known material options that the native marks cannot honor

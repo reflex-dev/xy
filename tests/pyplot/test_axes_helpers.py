@@ -85,10 +85,13 @@ def test_subplot2grid_box_and_secondary_axes_contract():
 
     with pytest.raises(NotImplementedError):
         plt.subplot2grid((2, 2), (0, 0), colspan=2)
-    with pytest.raises(NotImplementedError):
-        ax.secondary_xaxis("top")
-    with pytest.raises(NotImplementedError):
-        ax.secondary_yaxis("right")
+    secondary_x = ax.secondary_xaxis("top", functions=(lambda x: x * 2, lambda x: x / 2))
+    secondary_y = ax.secondary_yaxis("right")
+    secondary_x.set_xlabel("double")
+    secondary_y.set_ylabel("copy")
+    built = ax._build_chart(640, 480).figure()
+    assert built.axis_options["xs1"]["side"] == "top"
+    assert built.axis_options["ys2"]["side"] == "right"
 
 
 def test_imread_imsave_png_roundtrip_and_jpeg_exclusion(tmp_path):
