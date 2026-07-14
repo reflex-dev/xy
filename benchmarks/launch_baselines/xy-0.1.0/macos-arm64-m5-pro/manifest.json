@@ -1,0 +1,48 @@
+{
+  "baseline": "xy-0.1.0-launch-scatter",
+  "status": "canonical-launch-baseline",
+  "date": "2026-07-13",
+  "sizes": [10000, 100000, 1000000, 10000000, 1000000000],
+  "viewport": [900, 420],
+  "successful_repetitions": 3,
+  "aggregation": "arithmetic mean with sample standard deviation",
+  "limits": {"seconds_per_phase": 180, "gib_per_process_tree": 36},
+  "contracts": {
+    "static_cpu": "validated PNG; default public APIs; CPU render paths",
+    "interactive_default": "validated first browser render; hardware WebGL or WebAgg default",
+    "interactive_cpu_fallback": "validated first browser render; forced ANGLE SwiftShader"
+  },
+  "xy_mean_seconds": {
+    "static_cpu": {
+      "10000": 0.0084579307,
+      "100000": 0.0107519163,
+      "1000000": 0.0114094723,
+      "10000000": 0.0232265553,
+      "1000000000": 1.1451762220
+    },
+    "interactive_default": {
+      "10000": 0.1533260557,
+      "100000": 0.1741518613,
+      "1000000": 0.1688038333,
+      "10000000": 0.1796795000,
+      "1000000000": 1.2529825140
+    },
+    "interactive_cpu_fallback": {
+      "10000": 0.9580176807,
+      "100000": 0.9752209310,
+      "1000000": 0.9677954307,
+      "10000000": 0.9919930833,
+      "1000000000": 2.0877246663
+    }
+  },
+  "raw_results": {
+    "default": "default-results.json",
+    "cpu_fallback": "cpu-fallback-results.json"
+  },
+  "reproduction": {
+    "environment": "environment.json",
+    "uv_project": "pyproject.toml",
+    "uv_lock": "uv.lock"
+  },
+  "comparison_rule": "Preserve contracts and environment metadata; do not overwrite this launch baseline."
+}

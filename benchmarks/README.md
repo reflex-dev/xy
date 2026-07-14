@@ -21,6 +21,46 @@ CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
 Run from a clean worktree. Keep the generated JSON files together; every report
 contains package versions, executable versions, backend, commit, and dirty state.
 
+## Core Launch Scatter Benchmarks
+
+The launch suite tracks three fixed scatter contracts across 10k, 100k, 1M,
+10M, and 1B points: CPU static PNG, default interactive first render, and
+interactive CPU fallback through SwiftShader. Each successful cell is the mean
+of three complete cold-process runs; interactive samples also use a fresh
+browser. Terminal 1B failures are attempted once and are not averaged.
+
+Reproduce the 0.1.0 launch environment with its exact dependency versions:
+
+```bash
+BASELINE=benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro
+uv sync --project "$BASELINE" --frozen --python 3.14.5
+```
+
+Run these commands from the repository revision containing the baseline. The
+same directory contains `environment.json` with the exact source commit, Python,
+Rust, Cargo, Node, Chrome, OS, and hardware versions used for the recorded run.
+
+```bash
+# Static CPU + default interactive paths.
+uv run --project "$BASELINE" --frozen python benchmarks/bench_launch_scatter.py \
+  --sizes 10000,100000,1000000,10000000,1000000000 \
+  --repetitions 3 --timeout 180 --memory-gib 36 \
+  --chrome "$CHROME" \
+  --out launch-scatter-default.json
+
+# Interactive browser CPU fallback.
+uv run --project "$BASELINE" --frozen python benchmarks/bench_launch_scatter.py \
+  --sizes 10000,100000,1000000,10000000,1000000000 \
+  --repetitions 3 --timeout 180 --memory-gib 36 \
+  --interactive-only --software --chrome "$CHROME" \
+  --out launch-scatter-cpu-fallback.json
+```
+
+The immutable 0.1.0 launch baseline, report, and raw results live under
+`benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/`. Add a new
+version/environment directory for later launches; never overwrite an earlier
+launch baseline or mix hardware and SwiftShader rows.
+
 ## CI Software GL
 
 These commands match the non-blocking GitHub Actions measurement lane:

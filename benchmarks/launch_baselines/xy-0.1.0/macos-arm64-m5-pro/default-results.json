@@ -1,0 +1,2021 @@
+{
+  "generated_at_utc": "2026-07-14T00:54:24.017389Z",
+  "repetitions_requested": 3,
+  "aggregation": "arithmetic mean of successful fresh-process runs",
+  "sizes": [
+    10000,
+    100000,
+    1000000,
+    10000000,
+    1000000000
+  ],
+  "software_browser": false,
+  "static": [
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 10000,
+          "mode": "direct",
+          "source_bytes": 80000,
+          "source_rss_bytes": 43401216,
+          "render_ms": 8.656666999740992,
+          "png_bytes": 234745,
+          "nonblank_pixels": 77705,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 52609024,
+          "wall_ms": 127.12987499980954
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 10000,
+          "mode": "direct",
+          "source_bytes": 80000,
+          "source_rss_bytes": 43368448,
+          "render_ms": 8.422584000072675,
+          "png_bytes": 234745,
+          "nonblank_pixels": 77705,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 51396608,
+          "wall_ms": 126.47433299935074
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 10000,
+          "mode": "direct",
+          "source_bytes": 80000,
+          "source_rss_bytes": 43450368,
+          "render_ms": 8.294540999486344,
+          "png_bytes": 234745,
+          "nonblank_pixels": 77705,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 51625984,
+          "wall_ms": 126.95499999972526
+        }
+      ],
+      "mean_ms": 8.457930666433336,
+      "median_ms": 8.422584000072675,
+      "stdev_ms": 0.18363237767947205,
+      "min_ms": 8.294540999486344,
+      "max_ms": 8.656666999740992,
+      "library": "xy",
+      "n": 10000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 10000,
+          "mode": "scattergl",
+          "source_bytes": 80000,
+          "source_rss_bytes": 56803328,
+          "render_ms": 1879.2594160004228,
+          "png_bytes": 69429,
+          "nonblank_pixels": 207017,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 1517649920,
+          "wall_ms": 2049.0278340002988
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 10000,
+          "mode": "scattergl",
+          "source_bytes": 80000,
+          "source_rss_bytes": 56606720,
+          "render_ms": 1874.834499998542,
+          "png_bytes": 69429,
+          "nonblank_pixels": 207017,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 1538588672,
+          "wall_ms": 2048.5350000017206
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 10000,
+          "mode": "scattergl",
+          "source_bytes": 80000,
+          "source_rss_bytes": 56786944,
+          "render_ms": 1894.8271249973914,
+          "png_bytes": 69429,
+          "nonblank_pixels": 207017,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 1484505088,
+          "wall_ms": 2100.971457999549
+        }
+      ],
+      "mean_ms": 1882.9736803321186,
+      "median_ms": 1879.2594160004228,
+      "stdev_ms": 10.50109914391991,
+      "min_ms": 1874.834499998542,
+      "max_ms": 1894.8271249973914,
+      "library": "plotly",
+      "n": 10000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "matplotlib",
+          "n": 10000,
+          "mode": "static-agg",
+          "source_bytes": 80000,
+          "source_rss_bytes": 74285056,
+          "render_ms": 23.534583000582643,
+          "png_bytes": 29381,
+          "nonblank_pixels": 79681,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 84295680,
+          "wall_ms": 247.44345799990697
+        },
+        {
+          "status": "ok",
+          "library": "matplotlib",
+          "n": 10000,
+          "mode": "static-agg",
+          "source_bytes": 80000,
+          "source_rss_bytes": 74301440,
+          "render_ms": 23.390499998640735,
+          "png_bytes": 29381,
+          "nonblank_pixels": 79681,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 85000192,
+          "wall_ms": 248.30799999836017
+        },
+        {
+          "status": "ok",
+          "library": "matplotlib",
+          "n": 10000,
+          "mode": "static-agg",
+          "source_bytes": 80000,
+          "source_rss_bytes": 74235904,
+          "render_ms": 23.26162499957718,
+          "png_bytes": 29381,
+          "nonblank_pixels": 79681,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 85065728,
+          "wall_ms": 252.72520900034579
+        }
+      ],
+      "mean_ms": 23.39556933293352,
+      "median_ms": 23.390499998640735,
+      "stdev_ms": 0.13654959242287626,
+      "min_ms": 23.26162499957718,
+      "max_ms": 23.534583000582643,
+      "library": "matplotlib",
+      "n": 10000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 100000,
+          "mode": "direct",
+          "source_bytes": 800000,
+          "source_rss_bytes": 43859968,
+          "render_ms": 11.188707998371683,
+          "png_bytes": 203708,
+          "nonblank_pixels": 111251,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 54870016,
+          "wall_ms": 127.24075000005541
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 100000,
+          "mode": "direct",
+          "source_bytes": 800000,
+          "source_rss_bytes": 43794432,
+          "render_ms": 10.626833001879277,
+          "png_bytes": 203708,
+          "nonblank_pixels": 111251,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 54984704,
+          "wall_ms": 127.85341699782293
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 100000,
+          "mode": "direct",
+          "source_bytes": 800000,
+          "source_rss_bytes": 43728896,
+          "render_ms": 10.440207999636186,
+          "png_bytes": 203708,
+          "nonblank_pixels": 111251,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 53870592,
+          "wall_ms": 123.24729100146214
+        }
+      ],
+      "mean_ms": 10.751916333295716,
+      "median_ms": 10.626833001879277,
+      "stdev_ms": 0.38961191187569666,
+      "min_ms": 10.440207999636186,
+      "max_ms": 11.188707998371683,
+      "library": "xy",
+      "n": 100000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 100000,
+          "mode": "scattergl",
+          "source_bytes": 800000,
+          "source_rss_bytes": 56492032,
+          "render_ms": 1944.3040410005779,
+          "png_bytes": 64131,
+          "nonblank_pixels": 207673,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 1561903104,
+          "wall_ms": 2112.935125001968
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 100000,
+          "mode": "scattergl",
+          "source_bytes": 800000,
+          "source_rss_bytes": 56836096,
+          "render_ms": 1958.07429100023,
+          "png_bytes": 64131,
+          "nonblank_pixels": 207673,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 1584185344,
+          "wall_ms": 2158.1625000035274
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 100000,
+          "mode": "scattergl",
+          "source_bytes": 800000,
+          "source_rss_bytes": 56590336,
+          "render_ms": 1946.5262500016252,
+          "png_bytes": 64131,
+          "nonblank_pixels": 207673,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 1555906560,
+          "wall_ms": 2175.0295420024486
+        }
+      ],
+      "mean_ms": 1949.6348606674776,
+      "median_ms": 1946.5262500016252,
+      "stdev_ms": 7.39273572279701,
+      "min_ms": 1944.3040410005779,
+      "max_ms": 1958.07429100023,
+      "library": "plotly",
+      "n": 100000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "matplotlib",
+          "n": 100000,
+          "mode": "static-agg",
+          "source_bytes": 800000,
+          "source_rss_bytes": 74465280,
+          "render_ms": 47.81720800019684,
+          "png_bytes": 27421,
+          "nonblank_pixels": 99990,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 82788352,
+          "wall_ms": 314.44174999705865
+        },
+        {
+          "status": "ok",
+          "library": "matplotlib",
+          "n": 100000,
+          "mode": "static-agg",
+          "source_bytes": 800000,
+          "source_rss_bytes": 74399744,
+          "render_ms": 47.27804099820787,
+          "png_bytes": 27421,
+          "nonblank_pixels": 99990,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 82771968,
+          "wall_ms": 251.2580420006998
+        },
+        {
+          "status": "ok",
+          "library": "matplotlib",
+          "n": 100000,
+          "mode": "static-agg",
+          "source_bytes": 800000,
+          "source_rss_bytes": 74448896,
+          "render_ms": 47.31416600043303,
+          "png_bytes": 27421,
+          "nonblank_pixels": 99990,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 84541440,
+          "wall_ms": 251.99912499738275
+        }
+      ],
+      "mean_ms": 47.469804999612585,
+      "median_ms": 47.31416600043303,
+      "stdev_ms": 0.3014015387446664,
+      "min_ms": 47.27804099820787,
+      "max_ms": 47.81720800019684,
+      "library": "matplotlib",
+      "n": 100000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 1000000,
+          "mode": "density",
+          "source_bytes": 8000000,
+          "source_rss_bytes": 51494912,
+          "render_ms": 12.926542000059271,
+          "png_bytes": 193695,
+          "nonblank_pixels": 91381,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 71991296,
+          "wall_ms": 127.30162499792641
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 1000000,
+          "mode": "density",
+          "source_bytes": 8000000,
+          "source_rss_bytes": 51527680,
+          "render_ms": 10.659749998012558,
+          "png_bytes": 193695,
+          "nonblank_pixels": 91381,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 75759616,
+          "wall_ms": 126.70708299992839
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 1000000,
+          "mode": "density",
+          "source_bytes": 8000000,
+          "source_rss_bytes": 51478528,
+          "render_ms": 10.642124998412328,
+          "png_bytes": 193695,
+          "nonblank_pixels": 91381,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 75988992,
+          "wall_ms": 127.53258399970946
+        }
+      ],
+      "mean_ms": 11.409472332161386,
+      "median_ms": 10.659749998012558,
+      "stdev_ms": 1.3138504264544644,
+      "min_ms": 10.642124998412328,
+      "max_ms": 12.926542000059271,
+      "library": "xy",
+      "n": 1000000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 1000000,
+          "mode": "scattergl",
+          "source_bytes": 8000000,
+          "source_rss_bytes": 64847872,
+          "render_ms": 2654.076750000968,
+          "png_bytes": 50232,
+          "nonblank_pixels": 207166,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 1979662336,
+          "wall_ms": 2881.604291000258
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 1000000,
+          "mode": "scattergl",
+          "source_bytes": 8000000,
+          "source_rss_bytes": 64520192,
+          "render_ms": 2649.6663329999137,
+          "png_bytes": 50232,
+          "nonblank_pixels": 207166,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 1896366080,
+          "wall_ms": 2862.52120899735
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 1000000,
+          "mode": "scattergl",
+          "source_bytes": 8000000,
+          "source_rss_bytes": 64487424,
+          "render_ms": 2643.3400419991813,
+          "png_bytes": 50232,
+          "nonblank_pixels": 207166,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 1919483904,
+          "wall_ms": 2862.0049999990442
+        }
+      ],
+      "mean_ms": 2649.0277083333544,
+      "median_ms": 2649.6663329999137,
+      "stdev_ms": 5.3967680863143235,
+      "min_ms": 2643.3400419991813,
+      "max_ms": 2654.076750000968,
+      "library": "plotly",
+      "n": 1000000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "matplotlib",
+          "n": 1000000,
+          "mode": "static-agg",
+          "source_bytes": 8000000,
+          "source_rss_bytes": 82280448,
+          "render_ms": 293.9492080004129,
+          "png_bytes": 23447,
+          "nonblank_pixels": 104373,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 156598272,
+          "wall_ms": 503.1228329971782
+        },
+        {
+          "status": "ok",
+          "library": "matplotlib",
+          "n": 1000000,
+          "mode": "static-agg",
+          "source_bytes": 8000000,
+          "source_rss_bytes": 82345984,
+          "render_ms": 294.99500000019907,
+          "png_bytes": 23447,
+          "nonblank_pixels": 104373,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 156663808,
+          "wall_ms": 558.5103749981499
+        },
+        {
+          "status": "ok",
+          "library": "matplotlib",
+          "n": 1000000,
+          "mode": "static-agg",
+          "source_bytes": 8000000,
+          "source_rss_bytes": 82362368,
+          "render_ms": 294.9005839982419,
+          "png_bytes": 23447,
+          "nonblank_pixels": 104373,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 159678464,
+          "wall_ms": 555.4124579975905
+        }
+      ],
+      "mean_ms": 294.61493066628464,
+      "median_ms": 294.9005839982419,
+      "stdev_ms": 0.5784622686467212,
+      "min_ms": 293.9492080004129,
+      "max_ms": 294.99500000019907,
+      "library": "matplotlib",
+      "n": 1000000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 10000000,
+          "mode": "density",
+          "source_bytes": 80000000,
+          "source_rss_bytes": 123404288,
+          "render_ms": 25.903875000949483,
+          "png_bytes": 124848,
+          "nonblank_pixels": 73043,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 300007424,
+          "wall_ms": 191.5240830021503
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 10000000,
+          "mode": "density",
+          "source_bytes": 80000000,
+          "source_rss_bytes": 123502592,
+          "render_ms": 21.60208300119848,
+          "png_bytes": 124848,
+          "nonblank_pixels": 73043,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 305020928,
+          "wall_ms": 187.77837500238093
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 10000000,
+          "mode": "density",
+          "source_bytes": 80000000,
+          "source_rss_bytes": 123256832,
+          "render_ms": 22.17370799917262,
+          "png_bytes": 124848,
+          "nonblank_pixels": 73043,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 305070080,
+          "wall_ms": 186.0567080002511
+        }
+      ],
+      "mean_ms": 23.22655533377353,
+      "median_ms": 22.17370799917262,
+      "stdev_ms": 2.3361761994255934,
+      "min_ms": 21.60208300119848,
+      "max_ms": 25.903875000949483,
+      "library": "xy",
+      "n": 10000000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 10000000,
+          "mode": "scattergl",
+          "source_bytes": 80000000,
+          "source_rss_bytes": 136839168,
+          "render_ms": 9576.69816699854,
+          "png_bytes": 44250,
+          "nonblank_pixels": 207132,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 6100860928,
+          "wall_ms": 9856.657582997286
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 10000000,
+          "mode": "scattergl",
+          "source_bytes": 80000000,
+          "source_rss_bytes": 136462336,
+          "render_ms": 9594.064416000037,
+          "png_bytes": 44250,
+          "nonblank_pixels": 207132,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 6084689920,
+          "wall_ms": 9866.355333000683
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 10000000,
+          "mode": "scattergl",
+          "source_bytes": 80000000,
+          "source_rss_bytes": 136708096,
+          "render_ms": 9579.298332999315,
+          "png_bytes": 44250,
+          "nonblank_pixels": 207132,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 6081101824,
+          "wall_ms": 9807.642874999146
+        }
+      ],
+      "mean_ms": 9583.353638665963,
+      "median_ms": 9579.298332999315,
+      "stdev_ms": 9.36647100742708,
+      "min_ms": 9576.69816699854,
+      "max_ms": 9594.064416000037,
+      "library": "plotly",
+      "n": 10000000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "matplotlib",
+          "n": 10000000,
+          "mode": "static-agg",
+          "source_bytes": 80000000,
+          "source_rss_bytes": 154419200,
+          "render_ms": 2786.6159999975935,
+          "png_bytes": 19889,
+          "nonblank_pixels": 101884,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 895139840,
+          "wall_ms": 3062.731875001191
+        },
+        {
+          "status": "ok",
+          "library": "matplotlib",
+          "n": 10000000,
+          "mode": "static-agg",
+          "source_bytes": 80000000,
+          "source_rss_bytes": 154320896,
+          "render_ms": 2789.046583999152,
+          "png_bytes": 19889,
+          "nonblank_pixels": 101884,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 894992384,
+          "wall_ms": 3062.460082997859
+        },
+        {
+          "status": "ok",
+          "library": "matplotlib",
+          "n": 10000000,
+          "mode": "static-agg",
+          "source_bytes": 80000000,
+          "source_rss_bytes": 154320896,
+          "render_ms": 2776.921749999019,
+          "png_bytes": 19889,
+          "nonblank_pixels": 101884,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 895074304,
+          "wall_ms": 3061.715625000943
+        }
+      ],
+      "mean_ms": 2784.194777998588,
+      "median_ms": 2786.6159999975935,
+      "stdev_ms": 6.414798271110747,
+      "min_ms": 2776.921749999019,
+      "max_ms": 2789.046583999152,
+      "library": "matplotlib",
+      "n": 10000000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 1000000000,
+          "mode": "density",
+          "source_bytes": 8000000000,
+          "source_rss_bytes": 8043282432,
+          "render_ms": 1105.7829580022371,
+          "png_bytes": 98384,
+          "nonblank_pixels": 61762,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 24067424256,
+          "wall_ms": 6478.338540997356
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 1000000000,
+          "mode": "density",
+          "source_bytes": 8000000000,
+          "source_rss_bytes": 8043544576,
+          "render_ms": 1183.4671659999003,
+          "png_bytes": 98384,
+          "nonblank_pixels": 61762,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 24067702784,
+          "wall_ms": 6596.161624998786
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 1000000000,
+          "mode": "density",
+          "source_bytes": 8000000000,
+          "source_rss_bytes": 8043446272,
+          "render_ms": 1146.2785419971624,
+          "png_bytes": 98384,
+          "nonblank_pixels": 61762,
+          "width": 900,
+          "height": 420,
+          "peak_rss_bytes": 24066260992,
+          "wall_ms": 6608.517500000744
+        }
+      ],
+      "mean_ms": 1145.1762219997665,
+      "median_ms": 1146.2785419971624,
+      "stdev_ms": 38.853833467092315,
+      "min_ms": 1105.7829580022371,
+      "max_ms": 1183.4671659999003,
+      "library": "xy",
+      "n": 1000000000
+    },
+    {
+      "attempted_runs": 1,
+      "successful_runs": 0,
+      "statuses": [
+        "failed(exit=1)"
+      ],
+      "samples": [
+        {
+          "status": "failed(exit=1)",
+          "library": "plotly",
+          "n": 1000000000,
+          "peak_rss_bytes": 37686034432,
+          "wall_ms": 118756.51862499944,
+          "stdout_tail": "",
+          "stderr_tail": "ython-3.14.5-macos-aarch64-none/lib/python3.14/asyncio/runners.py\", line 127, in run\n    return self._loop.run_until_complete(task)\n           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^\n  File \"/Users/alek/.local/share/uv/python/cpython-3.14.5-macos-aarch64-none/lib/python3.14/asyncio/base_events.py\", line 719, in run_until_complete\n    return future.result()\n           ~~~~~~~~~~~~~^^\n  File \"/Users/alek/Documents/Codex/2026-07-13/https-plotly-com-python-performance-2/.venv/lib/python3.14/site-packages/kaleido/__init__.py\", line 104, in calc_fig\n    return await k.calc_fig(\n           ^^^^^^^^^^^^^^^^^\n    ...<3 lines>...\n    )\n    ^\n  File \"/Users/alek/Documents/Codex/2026-07-13/https-plotly-com-python-performance-2/.venv/lib/python3.14/site-packages/kaleido/kaleido.py\", line 618, in calc_fig\n    return await self.write_fig_from_object(  # type: ignore[reportCallIssue]\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ...<4 lines>...\n    )\n    ^\n  File \"/Users/alek/Documents/Codex/2026-07-13/https-plotly-com-python-performance-2/.venv/lib/python3.14/site-packages/kaleido/kaleido.py\", line 493, in write_fig_from_object\n    res = await asyncio.gather(*tasks, return_exceptions=not cancel_on_error)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/alek/Documents/Codex/2026-07-13/https-plotly-com-python-performance-2/.venv/lib/python3.14/site-packages/kaleido/kaleido.py\", line 358, in _render_task\n    img_bytes = await asyncio.wait_for(\n                ^^^^^^^^^^^^^^^^^^^^^^^\n    ...<7 lines>...\n    )\n    ^\n  File \"/Users/alek/.local/share/uv/python/cpython-3.14.5-macos-aarch64-none/lib/python3.14/asyncio/tasks.py\", line 487, in wait_for\n    async with timeouts.timeout(timeout):\n               ~~~~~~~~~~~~~~~~^^^^^^^^^\n  File \"/Users/alek/.local/share/uv/python/cpython-3.14.5-macos-aarch64-none/lib/python3.14/asyncio/timeouts.py\", line 114, in __aexit__\n    raise TimeoutError from exc_val\nTimeoutError\n"
+        }
+      ],
+      "library": "plotly",
+      "n": 1000000000
+    },
+    {
+      "attempted_runs": 1,
+      "successful_runs": 0,
+      "statuses": [
+        "memory_limit"
+      ],
+      "samples": [
+        {
+          "status": "memory_limit",
+          "library": "matplotlib",
+          "n": 1000000000,
+          "peak_rss_bytes": 38784696320,
+          "wall_ms": 7986.817666998832,
+          "stderr_tail": ""
+        }
+      ],
+      "library": "matplotlib",
+      "n": 1000000000
+    }
+  ],
+  "interactive": [
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 10000,
+          "source_bytes": 80000,
+          "source_rss_bytes": 48513024,
+          "python_render_ms": 2.801208996970672,
+          "output_bytes": 319408,
+          "mode": "direct",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 45088768,
+          "wall_ms": 123.49787499988452,
+          "browser_probe": {
+            "ready_ms": 158.60000000149012,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 14080,
+            "js_heap_bytes": 2331064,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1045086208,
+            "browser_wall_ms": 477.81987500275136
+          },
+          "end_to_end_ttfr_ms": 161.4012089984608,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 10000,
+          "source_bytes": 80000,
+          "source_rss_bytes": 48611328,
+          "python_render_ms": 1.4826250007899944,
+          "output_bytes": 319408,
+          "mode": "direct",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 50675712,
+          "wall_ms": 122.96712500028661,
+          "browser_probe": {
+            "ready_ms": 151.39999999850988,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 14080,
+            "js_heap_bytes": 2334400,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1044168704,
+            "browser_wall_ms": 392.7578330003598
+          },
+          "end_to_end_ttfr_ms": 152.88262499929988,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 10000,
+          "source_bytes": 80000,
+          "source_rss_bytes": 48627712,
+          "python_render_ms": 1.4943329988454934,
+          "output_bytes": 319408,
+          "mode": "direct",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 50692096,
+          "wall_ms": 123.11741699886625,
+          "browser_probe": {
+            "ready_ms": 144.19999999925494,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 14080,
+            "js_heap_bytes": 4094780,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1044512768,
+            "browser_wall_ms": 387.738666999212
+          },
+          "end_to_end_ttfr_ms": 145.69433299810044,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        }
+      ],
+      "mean_ms": 153.32605566528704,
+      "median_ms": 152.88262499929988,
+      "stdev_ms": 7.862821471286714,
+      "min_ms": 145.69433299810044,
+      "max_ms": 161.4012089984608,
+      "library": "xy",
+      "n": 10000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 10000,
+          "source_bytes": 80000,
+          "source_rss_bytes": 59473920,
+          "python_render_ms": 193.67116699868347,
+          "output_bytes": 4995805,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 183812096,
+          "wall_ms": 366.7695830008597,
+          "browser_probe": {
+            "ready_ms": 377.3999999985099,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 15707,
+            "js_heap_bytes": 24888200,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1144815616,
+            "browser_wall_ms": 617.6632919996337
+          },
+          "end_to_end_ttfr_ms": 571.0711669971934,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 10000,
+          "source_bytes": 80000,
+          "source_rss_bytes": 59342848,
+          "python_render_ms": 129.24724999902537,
+          "output_bytes": 4995805,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 183648256,
+          "wall_ms": 306.7668329968001,
+          "browser_probe": {
+            "ready_ms": 382.5999999977648,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 15707,
+            "js_heap_bytes": 24726576,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1151336448,
+            "browser_wall_ms": 624.531166999077
+          },
+          "end_to_end_ttfr_ms": 511.8472499967902,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 10000,
+          "source_bytes": 80000,
+          "source_rss_bytes": 59392000,
+          "python_render_ms": 129.5711669990851,
+          "output_bytes": 4995805,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 183681024,
+          "wall_ms": 307.1282919991063,
+          "browser_probe": {
+            "ready_ms": 379.19999999925494,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 15707,
+            "js_heap_bytes": 19742520,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1140817920,
+            "browser_wall_ms": 614.7821670019766
+          },
+          "end_to_end_ttfr_ms": 508.77116699834005,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        }
+      ],
+      "mean_ms": 530.5631946641079,
+      "median_ms": 511.8472499967902,
+      "stdev_ms": 35.114632826741236,
+      "min_ms": 508.77116699834005,
+      "max_ms": 571.0711669971934,
+      "library": "plotly",
+      "n": 10000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "n": 10000,
+          "source_bytes": 80000,
+          "source_rss_bytes": 78807040,
+          "build_ms": 39.27145899797324,
+          "mode": "interactive-webagg",
+          "offset_count": 10000,
+          "ready_ms": 190.20000000298023,
+          "nonblank_samples": 836,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 2333399,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 93536256,
+          "browser_peak_rss_bytes": 1039876096,
+          "browser_wall_ms": 402.32187500078,
+          "end_to_end_ttfr_ms": 229.47145900095347
+        },
+        {
+          "n": 10000,
+          "source_bytes": 80000,
+          "source_rss_bytes": 78708736,
+          "build_ms": 22.140290999232093,
+          "mode": "interactive-webagg",
+          "offset_count": 10000,
+          "ready_ms": 181,
+          "nonblank_samples": 836,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 2333003,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 93650944,
+          "browser_peak_rss_bytes": 1038024704,
+          "browser_wall_ms": 398.9083330016001,
+          "end_to_end_ttfr_ms": 203.1402909992321
+        },
+        {
+          "n": 10000,
+          "source_bytes": 80000,
+          "source_rss_bytes": 78807040,
+          "build_ms": 21.845292001671623,
+          "mode": "interactive-webagg",
+          "offset_count": 10000,
+          "ready_ms": 174,
+          "nonblank_samples": 836,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 2333573,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 93650944,
+          "browser_peak_rss_bytes": 1035763712,
+          "browser_wall_ms": 391.34062499942956,
+          "end_to_end_ttfr_ms": 195.84529200167162
+        }
+      ],
+      "mean_ms": 209.48568066728572,
+      "median_ms": 203.1402909992321,
+      "stdev_ms": 17.688350807677896,
+      "min_ms": 195.84529200167162,
+      "max_ms": 229.47145900095347,
+      "library": "matplotlib",
+      "n": 10000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 100000,
+          "source_bytes": 800000,
+          "source_rss_bytes": 48922624,
+          "python_render_ms": 4.446334001841024,
+          "output_bytes": 1279413,
+          "mode": "direct",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 53313536,
+          "wall_ms": 123.2745410015923,
+          "browser_probe": {
+            "ready_ms": 173,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16350,
+            "js_heap_bytes": 19655094,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1073283072,
+            "browser_wall_ms": 404.0185419980844
+          },
+          "end_to_end_ttfr_ms": 177.44633400184102,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 100000,
+          "source_bytes": 800000,
+          "source_rss_bytes": 48955392,
+          "python_render_ms": 4.156833998422371,
+          "output_bytes": 1279413,
+          "mode": "direct",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 56590336,
+          "wall_ms": 123.22008300179732,
+          "browser_probe": {
+            "ready_ms": 168.20000000298023,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16350,
+            "js_heap_bytes": 19651870,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1071185920,
+            "browser_wall_ms": 399.8182909999741
+          },
+          "end_to_end_ttfr_ms": 172.3568340014026,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 100000,
+          "source_bytes": 800000,
+          "source_rss_bytes": 48889856,
+          "python_render_ms": 4.152416000579251,
+          "output_bytes": 1279413,
+          "mode": "direct",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 53264384,
+          "wall_ms": 122.930624998844,
+          "browser_probe": {
+            "ready_ms": 168.5,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16350,
+            "js_heap_bytes": 19652034,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1071022080,
+            "browser_wall_ms": 393.62379199883435
+          },
+          "end_to_end_ttfr_ms": 172.65241600057925,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        }
+      ],
+      "mean_ms": 174.15186133460762,
+      "median_ms": 172.65241600057925,
+      "stdev_ms": 2.856922259341382,
+      "min_ms": 172.3568340014026,
+      "max_ms": 177.44633400184102,
+      "library": "xy",
+      "n": 100000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 100000,
+          "source_bytes": 800000,
+          "source_rss_bytes": 59179008,
+          "python_render_ms": 132.78812499993364,
+          "output_bytes": 6208625,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 196870144,
+          "wall_ms": 302.79575000167824,
+          "browser_probe": {
+            "ready_ms": 406.8999999985099,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 31774202,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1184382976,
+            "browser_wall_ms": 644.1752500031726
+          },
+          "end_to_end_ttfr_ms": 539.6881249984435,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 100000,
+          "source_bytes": 800000,
+          "source_rss_bytes": 59375616,
+          "python_render_ms": 132.23266600107308,
+          "output_bytes": 6208625,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 196935680,
+          "wall_ms": 304.90724999981467,
+          "browser_probe": {
+            "ready_ms": 404.9000000022352,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 41259142,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1185660928,
+            "browser_wall_ms": 635.6561249995138
+          },
+          "end_to_end_ttfr_ms": 537.1326660033083,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 100000,
+          "source_bytes": 800000,
+          "source_rss_bytes": 59359232,
+          "python_render_ms": 131.2810419985908,
+          "output_bytes": 6208625,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 197066752,
+          "wall_ms": 302.70479200044065,
+          "browser_probe": {
+            "ready_ms": 402.29999999701977,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 40029434,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1186693120,
+            "browser_wall_ms": 642.1812910011795
+          },
+          "end_to_end_ttfr_ms": 533.5810419956106,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        }
+      ],
+      "mean_ms": 536.8006109991207,
+      "median_ms": 537.1326660033083,
+      "stdev_ms": 3.0670525093690912,
+      "min_ms": 533.5810419956106,
+      "max_ms": 539.6881249984435,
+      "library": "plotly",
+      "n": 100000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "n": 100000,
+          "source_bytes": 800000,
+          "source_rss_bytes": 79118336,
+          "build_ms": 22.814166997704888,
+          "mode": "interactive-webagg",
+          "offset_count": 100000,
+          "ready_ms": 215.80000000074506,
+          "nonblank_samples": 1071,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 3864339,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 97353728,
+          "browser_peak_rss_bytes": 1042104320,
+          "browser_wall_ms": 433.0329160002293,
+          "end_to_end_ttfr_ms": 238.61416699844995
+        },
+        {
+          "n": 100000,
+          "source_bytes": 800000,
+          "source_rss_bytes": 78888960,
+          "build_ms": 23.04879200164578,
+          "mode": "interactive-webagg",
+          "offset_count": 100000,
+          "ready_ms": 215.69999999925494,
+          "nonblank_samples": 1071,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 5386653,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 97370112,
+          "browser_peak_rss_bytes": 1108377600,
+          "browser_wall_ms": 434.07762499919045,
+          "end_to_end_ttfr_ms": 238.74879200090072
+        },
+        {
+          "n": 100000,
+          "source_bytes": 800000,
+          "source_rss_bytes": 78790656,
+          "build_ms": 23.14433300125529,
+          "mode": "interactive-webagg",
+          "offset_count": 100000,
+          "ready_ms": 214.29999999701977,
+          "nonblank_samples": 1071,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 3864953,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 97239040,
+          "browser_peak_rss_bytes": 1041940480,
+          "browser_wall_ms": 430.88245800026925,
+          "end_to_end_ttfr_ms": 237.44433299827506
+        }
+      ],
+      "mean_ms": 238.26909733254192,
+      "median_ms": 238.61416699844995,
+      "stdev_ms": 0.717431619131885,
+      "min_ms": 237.44433299827506,
+      "max_ms": 238.74879200090072,
+      "library": "matplotlib",
+      "n": 100000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 1000000,
+          "source_bytes": 8000000,
+          "source_rss_bytes": 56688640,
+          "python_render_ms": 7.518332997278776,
+          "output_bytes": 565850,
+          "mode": "density",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 50511872,
+          "wall_ms": 123.64545799937332,
+          "browser_probe": {
+            "ready_ms": 158.79999999701977,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 10294462,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1062813696,
+            "browser_wall_ms": 397.75612499943236
+          },
+          "end_to_end_ttfr_ms": 166.31833299429854,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 1000000,
+          "source_bytes": 8000000,
+          "source_rss_bytes": 56639488,
+          "python_render_ms": 8.331249999173451,
+          "output_bytes": 565850,
+          "mode": "density",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 53133312,
+          "wall_ms": 122.99716699999408,
+          "browser_probe": {
+            "ready_ms": 153.89999999850988,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 10220950,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1062535168,
+            "browser_wall_ms": 398.1907499983208
+          },
+          "end_to_end_ttfr_ms": 162.23124999768334,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 1000000,
+          "source_bytes": 8000000,
+          "source_rss_bytes": 56623104,
+          "python_render_ms": 4.361916999187088,
+          "output_bytes": 565850,
+          "mode": "density",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 52363264,
+          "wall_ms": 122.76395799926831,
+          "browser_probe": {
+            "ready_ms": 173.5,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 10220014,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1064173568,
+            "browser_wall_ms": 411.55787500247243
+          },
+          "end_to_end_ttfr_ms": 177.8619169991871,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        }
+      ],
+      "mean_ms": 168.80383333038966,
+      "median_ms": 166.31833299429854,
+      "stdev_ms": 8.106338363805593,
+      "min_ms": 162.23124999768334,
+      "max_ms": 177.8619169991871,
+      "library": "xy",
+      "n": 1000000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 1000000,
+          "source_bytes": 8000000,
+          "source_rss_bytes": 67502080,
+          "python_render_ms": 162.8582080011256,
+          "output_bytes": 18339740,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 343031808,
+          "wall_ms": 362.2008749989618,
+          "browser_probe": {
+            "ready_ms": 621.5,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 253551668,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1475526656,
+            "browser_wall_ms": 869.6112500001618
+          },
+          "end_to_end_ttfr_ms": 784.3582080011256,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 1000000,
+          "source_bytes": 8000000,
+          "source_rss_bytes": 67518464,
+          "python_render_ms": 163.19079199820408,
+          "output_bytes": 18339740,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 332513280,
+          "wall_ms": 365.2450840017991,
+          "browser_probe": {
+            "ready_ms": 625.8000000007451,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 253661204,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1480409088,
+            "browser_wall_ms": 874.4352080029785
+          },
+          "end_to_end_ttfr_ms": 788.9907919989491,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 1000000,
+          "source_bytes": 8000000,
+          "source_rss_bytes": 67567616,
+          "python_render_ms": 161.47649999766145,
+          "output_bytes": 18339740,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 326270976,
+          "wall_ms": 368.0640409984335,
+          "browser_probe": {
+            "ready_ms": 621.8999999985099,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 253564004,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1475477504,
+            "browser_wall_ms": 865.0687920016935
+          },
+          "end_to_end_ttfr_ms": 783.3764999961713,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        }
+      ],
+      "mean_ms": 785.5751666654154,
+      "median_ms": 784.3582080011256,
+      "stdev_ms": 2.9984679364729114,
+      "min_ms": 783.3764999961713,
+      "max_ms": 788.9907919989491,
+      "library": "plotly",
+      "n": 1000000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "n": 1000000,
+          "source_bytes": 8000000,
+          "source_rss_bytes": 87097344,
+          "build_ms": 35.3637920015899,
+          "mode": "interactive-webagg",
+          "offset_count": 1000000,
+          "ready_ms": 436.30000000074506,
+          "nonblank_samples": 1114,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 13003112,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 168591360,
+          "browser_peak_rss_bytes": 1098088448,
+          "browser_wall_ms": 653.2657079987985,
+          "end_to_end_ttfr_ms": 471.66379200233496
+        },
+        {
+          "n": 1000000,
+          "source_bytes": 8000000,
+          "source_rss_bytes": 86736896,
+          "build_ms": 35.52033400046639,
+          "mode": "interactive-webagg",
+          "offset_count": 1000000,
+          "ready_ms": 441.5,
+          "nonblank_samples": 1114,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 13003304,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 168427520,
+          "browser_peak_rss_bytes": 1057030144,
+          "browser_wall_ms": 656.9679160020314,
+          "end_to_end_ttfr_ms": 477.0203340004664
+        },
+        {
+          "n": 1000000,
+          "source_bytes": 8000000,
+          "source_rss_bytes": 86966272,
+          "build_ms": 35.97691700269934,
+          "mode": "interactive-webagg",
+          "offset_count": 1000000,
+          "ready_ms": 446,
+          "nonblank_samples": 1114,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 13002972,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 168509440,
+          "browser_peak_rss_bytes": 1057357824,
+          "browser_wall_ms": 669.4997499980673,
+          "end_to_end_ttfr_ms": 481.97691700269934
+        }
+      ],
+      "mean_ms": 476.8870143351669,
+      "median_ms": 477.0203340004664,
+      "stdev_ms": 5.157854924108653,
+      "min_ms": 471.66379200233496,
+      "max_ms": 481.97691700269934,
+      "library": "matplotlib",
+      "n": 1000000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 10000000,
+          "source_bytes": 80000000,
+          "source_rss_bytes": 128745472,
+          "python_render_ms": 20.168625000223983,
+          "output_bytes": 563272,
+          "mode": "density",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 289292288,
+          "wall_ms": 184.5309999989695,
+          "browser_probe": {
+            "ready_ms": 160.30000000074506,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 10160065,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1061027840,
+            "browser_wall_ms": 399.34870800061617
+          },
+          "end_to_end_ttfr_ms": 180.46862500096904,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 10000000,
+          "source_bytes": 80000000,
+          "source_rss_bytes": 128598016,
+          "python_render_ms": 17.49737499994808,
+          "output_bytes": 563272,
+          "mode": "density",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 305233920,
+          "wall_ms": 184.41483399874414,
+          "browser_probe": {
+            "ready_ms": 161.69999999925494,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 10079657,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1060618240,
+            "browser_wall_ms": 403.48762500070734
+          },
+          "end_to_end_ttfr_ms": 179.19737499920302,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 10000000,
+          "source_bytes": 80000000,
+          "source_rss_bytes": 128647168,
+          "python_render_ms": 16.272500000923174,
+          "output_bytes": 563272,
+          "mode": "density",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 300564480,
+          "wall_ms": 183.72720800107345,
+          "browser_probe": {
+            "ready_ms": 163.09999999776483,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 10257665,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1060470784,
+            "browser_wall_ms": 401.94516699921223
+          },
+          "end_to_end_ttfr_ms": 179.372499998688,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        }
+      ],
+      "mean_ms": 179.67949999962002,
+      "median_ms": 179.372499998688,
+      "stdev_ms": 0.6889890363254865,
+      "min_ms": 179.19737499920302,
+      "max_ms": 180.46862500096904,
+      "library": "xy",
+      "n": 10000000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 10000000,
+          "source_bytes": 80000000,
+          "source_rss_bytes": 139411456,
+          "python_render_ms": 469.7204170006444,
+          "output_bytes": 139649110,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 1952858112,
+          "wall_ms": 735.5152080017433,
+          "browser_probe": {
+            "ready_ms": 3351.5,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 2513408096,
+            "status": "ok",
+            "browser_peak_rss_bytes": 4069146624,
+            "browser_wall_ms": 3598.8602500001434
+          },
+          "end_to_end_ttfr_ms": 3821.2204170006444,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 10000000,
+          "source_bytes": 80000000,
+          "source_rss_bytes": 139542528,
+          "python_render_ms": 473.8989170000423,
+          "output_bytes": 139649110,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 1953087488,
+          "wall_ms": 728.8401249970775,
+          "browser_probe": {
+            "ready_ms": 3090.39999999851,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 2513352168,
+            "status": "ok",
+            "browser_peak_rss_bytes": 4074242048,
+            "browser_wall_ms": 3602.58929200063
+          },
+          "end_to_end_ttfr_ms": 3564.298916998552,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        },
+        {
+          "status": "ok",
+          "library": "plotly",
+          "n": 10000000,
+          "source_bytes": 80000000,
+          "source_rss_bytes": 139804672,
+          "python_render_ms": 469.5934999981546,
+          "output_bytes": 139649110,
+          "mode": "scattergl",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 1953955840,
+          "wall_ms": 736.2254590007069,
+          "browser_probe": {
+            "ready_ms": 3075.099999997765,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 2513378484,
+            "status": "ok",
+            "browser_peak_rss_bytes": 4071227392,
+            "browser_wall_ms": 3593.5917919996427
+          },
+          "end_to_end_ttfr_ms": 3544.6934999959194,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        }
+      ],
+      "mean_ms": 3643.404277998372,
+      "median_ms": 3564.298916998552,
+      "stdev_ms": 154.30498229551233,
+      "min_ms": 3544.6934999959194,
+      "max_ms": 3821.2204170006444,
+      "library": "plotly",
+      "n": 10000000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "n": 10000000,
+          "source_bytes": 80000000,
+          "source_rss_bytes": 158908416,
+          "build_ms": 161.50441599893384,
+          "mode": "interactive-webagg",
+          "offset_count": 10000000,
+          "ready_ms": 2845.199999999255,
+          "nonblank_samples": 1096,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 20489583,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 903790592,
+          "browser_peak_rss_bytes": 1364885504,
+          "browser_wall_ms": 3066.9202089993632,
+          "end_to_end_ttfr_ms": 3006.704415998189
+        },
+        {
+          "n": 10000000,
+          "source_bytes": 80000000,
+          "source_rss_bytes": 158810112,
+          "build_ms": 161.23116699964157,
+          "mode": "interactive-webagg",
+          "offset_count": 10000000,
+          "ready_ms": 2819,
+          "nonblank_samples": 1096,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 20489251,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 903315456,
+          "browser_peak_rss_bytes": 1462484992,
+          "browser_wall_ms": 3034.1017920000013,
+          "end_to_end_ttfr_ms": 2980.2311669996416
+        },
+        {
+          "n": 10000000,
+          "source_bytes": 80000000,
+          "source_rss_bytes": 158892032,
+          "build_ms": 162.0712090007146,
+          "mode": "interactive-webagg",
+          "offset_count": 10000000,
+          "ready_ms": 2859.699999999255,
+          "nonblank_samples": 1096,
+          "canvas_width": 900,
+          "canvas_height": 420,
+          "js_heap_bytes": 22012331,
+          "status": "ok",
+          "library": "matplotlib-webagg",
+          "python_peak_rss_bytes": 903610368,
+          "browser_peak_rss_bytes": 1465696256,
+          "browser_wall_ms": 3080.4121250002936,
+          "end_to_end_ttfr_ms": 3021.7712089999695
+        }
+      ],
+      "mean_ms": 3002.902263999267,
+      "median_ms": 3006.704415998189,
+      "stdev_ms": 21.02940898395467,
+      "min_ms": 2980.2311669996416,
+      "max_ms": 3021.7712089999695,
+      "library": "matplotlib",
+      "n": 10000000
+    },
+    {
+      "attempted_runs": 3,
+      "successful_runs": 3,
+      "statuses": [
+        "ok",
+        "ok",
+        "ok"
+      ],
+      "samples": [
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 1000000000,
+          "source_bytes": 8000000000,
+          "source_rss_bytes": 8048623616,
+          "python_render_ms": 1082.5429579999764,
+          "output_bytes": 563260,
+          "mode": "density",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 24067784704,
+          "wall_ms": 6364.553291001357,
+          "browser_probe": {
+            "ready_ms": 172.5,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 10171135,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1063895040,
+            "browser_wall_ms": 417.49049999998533
+          },
+          "end_to_end_ttfr_ms": 1255.0429579999764,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 1000000000,
+          "source_bytes": 8000000000,
+          "source_rss_bytes": 8048721920,
+          "python_render_ms": 1093.0083749990445,
+          "output_bytes": 563260,
+          "mode": "density",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 24068849664,
+          "wall_ms": 6369.1922500001965,
+          "browser_probe": {
+            "ready_ms": 159.09999999776483,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 10362207,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1061240832,
+            "browser_wall_ms": 401.0505000005651
+          },
+          "end_to_end_ttfr_ms": 1252.1083749968093,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        },
+        {
+          "status": "ok",
+          "library": "xy",
+          "n": 1000000000,
+          "source_bytes": 8000000000,
+          "source_rss_bytes": 8048640000,
+          "python_render_ms": 1085.6962090001616,
+          "output_bytes": 563260,
+          "mode": "density",
+          "nonblank_pixels": null,
+          "python_peak_rss_bytes": 24067637248,
+          "wall_ms": 6416.8776250007795,
+          "browser_probe": {
+            "ready_ms": 166.10000000149012,
+            "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)",
+            "nonblank_pixels": 16384,
+            "js_heap_bytes": 10201863,
+            "status": "ok",
+            "browser_peak_rss_bytes": 1060700160,
+            "browser_wall_ms": 405.4742499974964
+          },
+          "end_to_end_ttfr_ms": 1251.7962090016517,
+          "browser_renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro, Unspecified Version)"
+        }
+      ],
+      "mean_ms": 1252.9825139994791,
+      "median_ms": 1252.1083749968093,
+      "stdev_ms": 1.791210208636033,
+      "min_ms": 1251.7962090016517,
+      "max_ms": 1255.0429579999764,
+      "library": "xy",
+      "n": 1000000000
+    },
+    {
+      "attempted_runs": 1,
+      "successful_runs": 0,
+      "statuses": [
+        "memory_limit"
+      ],
+      "samples": [
+        {
+          "status": "memory_limit",
+          "library": "plotly",
+          "n": 1000000000,
+          "wall_ms": 7252.927458001068,
+          "python_peak_rss_bytes": 39535738880,
+          "stderr_tail": ""
+        }
+      ],
+      "library": "plotly",
+      "n": 1000000000
+    },
+    {
+      "attempted_runs": 1,
+      "successful_runs": 0,
+      "statuses": [
+        "memory_limit"
+      ],
+      "samples": [
+        {
+          "status": "memory_limit",
+          "n": 1000000000,
+          "python_peak_rss_bytes": 39058112512,
+          "phase": "figure-build"
+        }
+      ],
+      "library": "matplotlib",
+      "n": 1000000000
+    }
+  ]
+}
