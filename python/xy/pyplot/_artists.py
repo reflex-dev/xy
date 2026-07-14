@@ -245,7 +245,7 @@ class Artist:
                 )
             else:
                 if "stroke_width" not in entry["kwargs"]:
-                    width = float(rcParams["lines.markeredgewidth"]) * (4.0 / 3.0)
+                    width = float(rcParams["lines.markeredgewidth"]) * self._axes._point_scale()
                     entry["kwargs"]["stroke_width"] = width
                     entry["kwargs"]["size"] = float(entry["kwargs"].get("size", 0.0)) + width
                 entry["kwargs"]["stroke"] = resolve_color(color)
@@ -255,10 +255,10 @@ class Artist:
 
     def set_markersize(self, size: Any) -> None:
         # Matplotlib specifies Line2D marker size in points; xy's scatter mark
-        # consumes CSS-pixel diameters.  96 dpi maps one point to 4/3 pixels.
+        # consumes output-pixel diameters at the owning figure's DPI.
         for entry in self._marker_entries():
             stroke_width = float(entry["kwargs"].get("stroke_width", 0.0))
-            entry["kwargs"]["size"] = float(size) * (4.0 / 3.0) + stroke_width
+            entry["kwargs"]["size"] = float(size) * self._axes._point_scale() + stroke_width
         self._touch()
 
     set_ms = set_markersize

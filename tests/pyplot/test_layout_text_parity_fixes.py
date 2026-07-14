@@ -243,8 +243,11 @@ def test_scatter_size_arrays_keep_absolute_scale() -> None:
     ax.scatter([0, 1], [0, 1], s=sizes)
     entry = ax._entries[-1]
     lo, hi = entry["kwargs"]["size_range"]
-    edge = 4 / 3
-    np.testing.assert_allclose((lo, hi), (np.sqrt(36) * 4 / 3 + edge, np.sqrt(900) * 4 / 3 + edge))
+    point_px = 100 / 72
+    np.testing.assert_allclose(
+        (lo, hi),
+        (np.sqrt(36) * point_px + point_px, np.sqrt(900) * point_px + point_px),
+    )
 
 
 def test_colorbar_label_converts_mathtext() -> None:

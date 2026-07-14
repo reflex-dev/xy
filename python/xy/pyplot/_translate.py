@@ -100,7 +100,9 @@ def line_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def marker_size_to_scatter_size(s: Any, default: float = 6.0) -> Any:
+def marker_size_to_scatter_size(
+    s: Any, default: float = 6.0, *, point_scale: float = 4.0 / 3.0
+) -> Any:
     """matplotlib sizes are areas in points²; the engine takes diameters in px.
 
     36 pt² (mpl default) ≈ 6 px diameter keeps default charts visually aligned.
@@ -109,7 +111,7 @@ def marker_size_to_scatter_size(s: Any, default: float = 6.0) -> Any:
     if s is None:
         return default
     arr = np.asarray(s, dtype=np.float64)
-    out = np.sqrt(np.maximum(arr, 0.0)) * (4.0 / 3.0)
+    out = np.sqrt(np.maximum(arr, 0.0)) * float(point_scale)
     if out.ndim == 0:
         return float(out)
     return out

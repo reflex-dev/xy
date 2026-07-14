@@ -70,8 +70,8 @@ def test_default_circle_scatter_matches_matplotlib_size_edge_and_opacity() -> No
     collection = ax.scatter([0], [0], marker="o")
     kwargs = collection._entry["kwargs"]
     assert kwargs["opacity"] == 1.0
-    assert kwargs["size"] == pytest.approx(28 / 3)
-    assert kwargs["stroke_width"] == pytest.approx(4 / 3)
+    assert kwargs["size"] == pytest.approx(6 * 100 / 72 + 1 * 100 / 72)
+    assert kwargs["stroke_width"] == pytest.approx(1 * 100 / 72)
 
 
 def test_colormapped_scatter_default_edges_use_each_points_face_color() -> None:
@@ -98,7 +98,7 @@ def test_fill_between_uses_a_faint_full_perimeter_not_an_opaque_lower_line() -> 
     ax.fill_between([0, 1, 2], [-1, 0, -1], [1, 2, 1], color="gray", alpha=0.2)
     trace = _traces(ax)[0]
     assert trace.style["stroke_perimeter"] is True
-    assert trace.style["line_width"] == pytest.approx(4 / 3)
+    assert trace.style["line_width"] == pytest.approx(100 / 72)
     assert trace.style["line_opacity"] == pytest.approx(0.2)
 
 

@@ -50,7 +50,7 @@ def test_legend_maps_supported_style_and_rejects_unknown_options():
     assert ax._legend_options["ncols"] == 2
     assert ax._legend_options["title"] == "Legend"
     assert ax._legend_options["style"] == {
-        "fontSize": "17.3333px",
+        "fontSize": "18.0556px",
         "color": "green",
         "background": "white",
         "borderColor": "black",

@@ -168,9 +168,9 @@ def test_matplotlib_marker_sizes_are_converted_from_points_to_css_pixels() -> No
     ax.plot([0, 1], [0, 1], "o-")
     ax.scatter([0], [0])
     scatters = [entry for entry in ax._entries if entry["kind"] == "scatter"]
-    # 6 pt marker path plus the centered 1 pt marker edge, both in CSS px.
-    assert scatters[0]["kwargs"]["size"] == pytest.approx(28 / 3)
-    assert scatters[1]["kwargs"]["size"] == pytest.approx(28 / 3)
+    # 6 pt marker path plus the centered 1 pt marker edge at figure DPI.
+    assert scatters[0]["kwargs"]["size"] == pytest.approx(7 * 100 / 72)
+    assert scatters[1]["kwargs"]["size"] == pytest.approx(7 * 100 / 72)
 
 
 def test_explicit_line_color_does_not_advance_default_cycle() -> None:

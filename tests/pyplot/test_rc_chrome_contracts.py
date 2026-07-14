@@ -45,10 +45,10 @@ def test_rc_axes_font_label_tick_and_cycle_values_reach_chart_state() -> None:
     assert built.style["--chart-bg"] == "#102030"
     assert built.style["--chart-axis"] == "red"
     assert built.style["font-family"] == "serif"
-    assert built.style["font-size"] == "16px"
-    assert built.chrome_styles["title"]["font-size"] == "24px"
-    assert built.chrome_styles["axis_title"] == {"font-size": "18.6667px", "color": "blue"}
-    assert built.chrome_styles["tick_label"]["font-size"] == "12px"
+    assert built.style["font-size"] == "16.6667px"
+    assert built.chrome_styles["title"]["font-size"] == "25px"
+    assert built.chrome_styles["axis_title"] == {"font-size": "19.4444px", "color": "blue"}
+    assert built.chrome_styles["tick_label"]["font-size"] == "12.5px"
     assert built.axis_options["x"]["style"]["tick_color"] == "green"
 
 
@@ -67,11 +67,22 @@ def test_legend_rc_defaults_reach_legend_component() -> None:
         ax.legend()
     assert ax._legend_options["loc"] == "upper right"
     assert ax._legend_options["style"] == {
-        "fontSize": "17.3333px",
+        "fontSize": "18.0556px",
         "background": "yellow",
         "borderColor": "blue",
         "borderStyle": "solid",
     }
+
+
+def test_rc_fonts_and_axis_strokes_scale_with_figure_dpi() -> None:
+    fig = plt.figure(dpi=144)
+    ax = fig.add_subplot()
+    built = ax._build_chart(640, 480).figure()
+
+    assert built.style["font-size"] == "20px"
+    assert built.chrome_styles["tick_label"]["font-size"] == "20px"
+    assert built.axis_options["x"]["style"]["axis_width"] == pytest.approx(1.6)
+    assert built.axis_options["x"]["style"]["tick_length"] == pytest.approx(7.0)
 
 
 def test_spine_controls_and_invalid_cycle_boundaries() -> None:

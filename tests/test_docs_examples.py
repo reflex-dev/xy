@@ -126,7 +126,11 @@ def test_readme_python_example_runs(
     if not hasattr(result, "figure") and not hasattr(result, "build_payload"):
         # pyplot-shim figures display like notebooks display them.
         html = result._repr_html_()
-        assert html.startswith("<!doctype html>"), f"{heading} README example produced no chart"
+        assert html.startswith('<iframe class="xy-notebook-frame"'), (
+            f"{heading} README example produced no chart"
+        )
+        assert 'sandbox="allow-scripts"' in html
+        assert "&lt;!doctype html&gt;" in html
         assert "xy.renderStandalone" in html
         return
     figure = result.figure() if hasattr(result, "figure") else result

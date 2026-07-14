@@ -462,8 +462,9 @@ class Axes(PlotTypeMixin):
         self.xaxis = _AxisProxy(self, "x")
         self.yaxis = _AxisProxy(self, "y")
         self.spines = _SpineProxy(self)
+        dpi = float(self.figure._dpi if self.figure._dpi is not None else rcParams["figure.dpi"])
         for axis in ("x", "y"):
-            style = _rc_axis_style(axis)
+            style = _rc_axis_style(axis, dpi)
             if style:
                 self._axis[axis]["style"] = style
 
@@ -471,6 +472,7 @@ class Axes(PlotTypeMixin):
 
     def _load_rc_chrome(self) -> None:
         """Snapshot the rcParams-derived color cycle, theme, and chrome styles."""
+        dpi = float(self.figure._dpi if self.figure._dpi is not None else rcParams["figure.dpi"])
         cycle = rcParams["axes.prop_cycle"].by_key().get("color", [])
         self._prop_cycle = [
             resolved for color in cycle if (resolved := resolve_color(color)) is not None
@@ -491,20 +493,20 @@ class Axes(PlotTypeMixin):
             family = "DejaVu Sans, sans-serif"
         self._theme_style = {
             "font-family": family,
-            "font-size": f"{_font_size(rcParams['font.size'], rcParams['font.size']):g}px",
+            "font-size": f"{_font_size(rcParams['font.size'], rcParams['font.size'], dpi):g}px",
         }
         title_color = self._theme_tokens["text_color"]
         self._chrome_styles = {
             "title": {
-                "font-size": f"{_font_size(rcParams['axes.titlesize'], rcParams['font.size']):g}px",
+                "font-size": f"{_font_size(rcParams['axes.titlesize'], rcParams['font.size'], dpi):g}px",
                 "color": title_color,
             },
             "axis_title": {
-                "font-size": f"{_font_size(rcParams['axes.labelsize'], rcParams['font.size']):g}px",
+                "font-size": f"{_font_size(rcParams['axes.labelsize'], rcParams['font.size'], dpi):g}px",
                 "color": resolve_color(rcParams["axes.labelcolor"]),
             },
             "tick_label": {
-                "font-size": f"{_font_size(rcParams['xtick.labelsize'], rcParams['font.size']):g}px",
+                "font-size": f"{_font_size(rcParams['xtick.labelsize'], rcParams['font.size'], dpi):g}px",
                 "color": resolve_color(
                     rcParams["xtick.color"]
                     if rcParams["xtick.labelcolor"] == "inherit"
@@ -523,6 +525,11 @@ class Axes(PlotTypeMixin):
         host._chart = None
         if host.figure is not None:
             host.figure._invalidate()
+
+    def _point_scale(self) -> float:
+        """Convert Matplotlib points to this figure's output pixels."""
+        dpi = float(self.figure._dpi if self.figure._dpi is not None else rcParams["figure.dpi"])
+        return dpi / 72.0
 
     def _remove_entry(self, entry: dict[str, Any]) -> None:
         host = self._y2_of or self
@@ -839,14 +846,14 @@ class Axes(PlotTypeMixin):
         )
         marker_edge_px = (
             float(rcParams["lines.markeredgewidth"] if markeredgewidth is None else markeredgewidth)
-            * (4.0 / 3.0)
+            * self._point_scale()
             if marker_edge_visible
             else 0.0
         )
         # Matplotlib's point marker is a half-size circle, while the pixel
         # marker is a snapped one-pixel rectangle independent of markersize.
         # Keep those semantics instead of treating every marker as a circle.
-        marker_path_px = marker_size_pt * (4.0 / 3.0)
+        marker_path_px = marker_size_pt * self._point_scale()
         if this_marker == ".":
             marker_path_px *= 0.5
         elif this_marker == ",":
@@ -1041,7 +1048,11 @@ class Axes(PlotTypeMixin):
             x, y, c = xv, yv, cv
 
         symbol = _marker_symbol(marker) if marker else "circle"
-        marker_path_px = marker_size_to_scatter_size(s, default=8.0)
+        marker_path_px = marker_size_to_scatter_size(
+            s,
+            default=6.0 * self._point_scale(),
+            point_scale=self._point_scale(),
+        )
         if symbol == "point":
             marker_path_px = np.asarray(marker_path_px) * 0.5
             if np.ndim(marker_path_px) == 0:
@@ -1059,7 +1070,7 @@ class Axes(PlotTypeMixin):
             0.0
             if no_edges
             else float(rcParams["patch.linewidth"] if linewidths is None else linewidths)
-            * (4.0 / 3.0)
+            * self._point_scale()
         )
         size_px = np.asarray(marker_path_px) + edge_width_px
         if np.ndim(size_px) == 0:
@@ -1363,6 +1374,9 @@ class Axes(PlotTypeMixin):
                 # matplotlib fills the step polygon down to the baseline; the
                 # area mark takes the pre-expanded step vertices verbatim.
                 tops = values + current_base
+                no_edge = edgecolor is None or (
+                    isinstance(edgecolor, str) and edgecolor.lower() == "none"
+                )
                 entry = self._add(
                     "@mark",
                     {
@@ -1371,6 +1385,14 @@ class Axes(PlotTypeMixin):
                         "kwargs": {
                             "base": np.repeat(current_base, 2),
                             "color": resolved_color,
+                            "line_color": None if no_edge else resolve_color(edgecolor),
+                            "line_width": (
+                                0.0
+                                if no_edge
+                                else float(rcParams["patch.linewidth"]) * self._point_scale()
+                            ),
+                            "line_opacity": 1.0 if alpha is None else float(alpha),
+                            "stroke_perimeter": not no_edge,
                             "name": None if labels[index] is None else str(labels[index]),
                             "opacity": 1.0 if alpha is None else float(alpha),
                         },
@@ -1498,7 +1520,7 @@ class Axes(PlotTypeMixin):
                             "base": sl,
                             "color": resolved_color,
                             "opacity": float(alpha) if alpha is not None else 1.0,
-                            "line_width": float(rcParams["patch.linewidth"]) * (4.0 / 3.0),
+                            "line_width": float(rcParams["patch.linewidth"]) * self._point_scale(),
                             "line_opacity": float(alpha) if alpha is not None else 1.0,
                             "stroke_perimeter": True,
                             "name": str(label) if label is not None and not entries else None,
@@ -1544,7 +1566,8 @@ class Axes(PlotTypeMixin):
                                     "base": np.asarray(sl),
                                     "color": resolved_color,
                                     "opacity": float(alpha) if alpha is not None else 1.0,
-                                    "line_width": float(rcParams["patch.linewidth"]) * (4.0 / 3.0),
+                                    "line_width": float(rcParams["patch.linewidth"])
+                                    * self._point_scale(),
                                     "line_opacity": float(alpha) if alpha is not None else 1.0,
                                     "stroke_perimeter": True,
                                     "name": str(label)
@@ -1979,7 +2002,7 @@ class Axes(PlotTypeMixin):
         text_xy = xy
         if xytext is not None:
             if textcoords in {"offset points", "offset pixels"}:
-                scale = 4.0 / 3.0 if textcoords == "offset points" else 1.0
+                scale = self._point_scale() if textcoords == "offset points" else 1.0
                 akw["dx"], akw["dy"] = float(xytext[0]) * scale, -float(xytext[1]) * scale
             elif all(_is_number(v) for v in (*xytext, *xy)):
                 # matplotlib places the text AT xytext (data coordinates).
@@ -3089,9 +3112,9 @@ class Axes(PlotTypeMixin):
             if labelcolor is not None:
                 style["tick_label_color"] = resolve_color(labelcolor)
             if length is not None:
-                style["tick_length"] = float(length) * (4.0 / 3.0)
+                style["tick_length"] = float(length) * self._point_scale()
             if width is not None:
-                style["tick_width"] = float(width) * (4.0 / 3.0)
+                style["tick_width"] = float(width) * self._point_scale()
             if direction is not None:
                 if direction not in {"in", "out", "inout"}:
                     raise ValueError("tick_params() direction must be 'in', 'out', or 'inout'")
@@ -3321,7 +3344,9 @@ class Axes(PlotTypeMixin):
             raise TypeError(f"legend() got unsupported keyword argument {sorted(unsupported)[0]!r}")
         style: dict[str, Any] = {}
         if fontsize is not None:
-            style["fontSize"] = f"{_font_size(fontsize, rcParams['font.size']):g}px"
+            style["fontSize"] = (
+                f"{_font_size(fontsize, rcParams['font.size'], self._point_scale() * 72.0):g}px"
+            )
         if labelcolor is not None:
             style["color"] = resolve_color(labelcolor)
         if frameon is False:
@@ -3477,7 +3502,9 @@ class Axes(PlotTypeMixin):
                 kw["name"] = _plain_text(name)
             if kind == "line":
                 kw = dict(kw)
-                kw["width"] = float(kw.get("width", rcParams["lines.linewidth"])) * (4.0 / 3.0)
+                kw["width"] = (
+                    float(kw.get("width", rcParams["lines.linewidth"])) * self._point_scale()
+                )
                 children.append(fc.line(x=e["x"], y=e["y"], **kw, **axis_kw))
             elif kind == "scatter":
                 kw = dict(kw)
@@ -3545,8 +3572,8 @@ class Axes(PlotTypeMixin):
                 }
                 if "font_size" in (text_kw.get("style") or {}):
                     text_kw["style"] = dict(text_kw["style"])
-                    text_kw["style"]["font_size"] = float(text_kw["style"]["font_size"]) * (
-                        4.0 / 3.0
+                    text_kw["style"]["font_size"] = (
+                        float(text_kw["style"]["font_size"]) * self._point_scale()
                     )
                 if opacity is not None and float(opacity) < 1.0:
                     text_kw["style"] = {**(text_kw.get("style") or {}), "opacity": float(opacity)}
@@ -3825,18 +3852,19 @@ def _font_size_points(value: Any, base: Any) -> float:
     return result
 
 
-def _font_size(value: Any, base: Any) -> float:
-    return _font_size_points(value, base) * (4.0 / 3.0)
+def _font_size(value: Any, base: Any, dpi: float = 96.0) -> float:
+    return _font_size_points(value, base) * float(dpi) / 72.0
 
 
-def _rc_axis_style(axis: str) -> dict[str, Any]:
+def _rc_axis_style(axis: str, dpi: float = 96.0) -> dict[str, Any]:
     prefix = "xtick" if axis == "x" else "ytick"
+    point_scale = float(dpi) / 72.0
     tick_color = rcParams[f"{prefix}.color"]
     label_color = rcParams[f"{prefix}.labelcolor"]
     result: dict[str, Any] = {}
-    result["axis_width"] = float(rcParams["axes.linewidth"]) * (4.0 / 3.0)
-    result["tick_length"] = float(rcParams[f"{prefix}.major.size"]) * (4.0 / 3.0)
-    result["tick_width"] = float(rcParams[f"{prefix}.major.width"]) * (4.0 / 3.0)
+    result["axis_width"] = float(rcParams["axes.linewidth"]) * point_scale
+    result["tick_length"] = float(rcParams[f"{prefix}.major.size"]) * point_scale
+    result["tick_width"] = float(rcParams[f"{prefix}.major.width"]) * point_scale
     if tick_color != "black":
         result["tick_color"] = resolve_color(tick_color)
     if label_color != "inherit" or tick_color != "black":
@@ -3845,12 +3873,12 @@ def _rc_axis_style(axis: str) -> dict[str, Any]:
         )
     if rcParams[f"{prefix}.labelsize"] != "medium":
         result["tick_label_size"] = _font_size(
-            rcParams[f"{prefix}.labelsize"], rcParams["font.size"]
+            rcParams[f"{prefix}.labelsize"], rcParams["font.size"], dpi
         )
     if rcParams["axes.labelcolor"] != "black":
         result["label_color"] = resolve_color(rcParams["axes.labelcolor"])
     if rcParams["axes.labelsize"] != "medium":
-        result["label_size"] = _font_size(rcParams["axes.labelsize"], rcParams["font.size"])
+        result["label_size"] = _font_size(rcParams["axes.labelsize"], rcParams["font.size"], dpi)
     return result
 
 

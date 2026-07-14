@@ -969,7 +969,7 @@ class ChartView {
     const domain = cb.domain || [0, 1];
     const lo = Number(domain[0]), hi = Number(domain[1]);
     const span = hi - lo || 1;
-    const tickResult = linearTicks(lo, hi, 6);
+    const tickResult = linearTicks(lo, hi, 8);
     const tickValues = Array.isArray(cb.ticks) ? cb.ticks : tickResult.ticks;
     const tickStep = tickResult.step;
     for (const raw of tickValues) {
@@ -988,7 +988,7 @@ class ChartView {
       label.textContent = String(cb.label);
       label.style.cssText = horizontal
         ? `position:absolute;left:50%;top:${COLORBAR_THICKNESS + 18}px;transform:translateX(-50%);white-space:nowrap;`
-        : `position:absolute;left:${COLORBAR_THICKNESS + 40}px;top:50%;transform:translateY(-50%) rotate(-90deg);white-space:nowrap;`;
+        : `position:absolute;left:${COLORBAR_THICKNESS + 40}px;top:50%;writing-mode:vertical-rl;transform:translateY(-50%) rotate(180deg);white-space:nowrap;`;
       box.appendChild(label);
     }
     box.title = `${cb.label ? cb.label + ": " : ""}${domain[0]} – ${domain[1]}`;
@@ -1530,7 +1530,7 @@ class ChartView {
     g._dashX = sm ? sm.x : x;
     g._dashY = sm ? sm.y : y;
     g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
-    g.lineColor = parseColor(this.root, t.style && t.style.color, g.color);
+    g.lineColor = parseColor(this.root, t.style && (t.style.line_color || t.style.color), g.color);
     g.grad = this._resolveMarkFill(t.style, g.color);
   }
 

@@ -66,6 +66,18 @@ def test_hist2d_colorbar_domain_reflects_counts_not_unit_interval():
     assert hi > 1.0  # regression: used to clamp to the 0..1 placeholder
 
 
+def test_vertical_colorbar_label_does_not_expand_notebook_scroll_width():
+    fig, _ax = plt.subplots()
+    plt.hist2d(*np.random.default_rng(0).normal(size=(2, 200)), bins=10)
+    colorbar = plt.colorbar()
+    colorbar.set_label("counts in bin")
+
+    html = fig._repr_html_()
+    assert "top:50%;writing-mode:vertical-rl" in html
+    assert "top:50%;transform:translateY(-50%) rotate(-90deg)" not in html
+    assert "&quot;width&quot;:558" in html
+
+
 def test_hexbin_colorbar_domain_autoscales_to_counts_at_build():
     np.random.seed(4)
     x, y = np.random.randn(3000), np.random.randn(3000)
@@ -91,6 +103,13 @@ def test_default_colorbar_ticks_are_round_numbers():
     # nice-tick locator (0, 10, 20, ...), not the raw min/max endpoints only.
     assert ">10<" in svg
     assert ">20<" in svg
+
+
+def test_default_colorbar_ticks_are_dense_for_small_decimal_domains():
+    image = plt.imshow([[0.0, 0.15], [0.05, 0.1]], vmin=0.0, vmax=0.15)
+    plt.colorbar(image)
+    svg = _svg()
+    assert all(f">{value:.2f}<" in svg for value in (0.02, 0.04, 0.06, 0.08, 0.12, 0.14))
 
 
 def test_explicit_colorbar_ticks_still_honored():

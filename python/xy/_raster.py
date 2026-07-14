@@ -752,9 +752,10 @@ def _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot):
     lw = float(style.get("line_width", 1.2))
     if lw > 0:
         lop = float(style.get("line_opacity", 1.0))
-        cmd.stroke(top, lw, _rgba(style.get("color"), color, lop), dash=style.get("dash"))
+        line_color = _rgba(style.get("line_color"), style.get("color") or color, lop)
+        cmd.stroke(top, lw, line_color, dash=style.get("dash"))
         if style.get("stroke_perimeter"):
-            cmd.stroke(base, lw, _rgba(style.get("color"), color, lop), dash=style.get("dash"))
+            cmd.stroke(base, lw, line_color, dash=style.get("dash"))
 
 
 def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
@@ -1190,7 +1191,7 @@ def _emit_colorbar(cmd, options, plot):
         h_positions = (
             [float(value) for value in ticks if lo <= float(value) <= hi]
             if ticks is not None
-            else (_linear_ticks(lo, hi)[0] or [lo, hi])
+            else (_linear_ticks(lo, hi, 8)[0] or [lo, hi])
         )
         for value in h_positions:
             cmd.text(
@@ -1214,7 +1215,7 @@ def _emit_colorbar(cmd, options, plot):
         tick_positions = (
             [float(value) for value in ticks if lo <= float(value) <= hi]
             if ticks is not None
-            else (_linear_ticks(lo, hi)[0] or [lo, hi])
+            else (_linear_ticks(lo, hi, 8)[0] or [lo, hi])
         )
         for value in tick_positions:
             cmd.text(

@@ -74,7 +74,7 @@ def test_legend_prop_dict_maps_size_and_rejects_other_font_properties():
     ax.plot([0, 1], [0, 1], label="a")
 
     ax.legend(prop={"size": 8})
-    assert ax._legend_options["style"]["fontSize"] == "10.6667px"
+    assert ax._legend_options["style"]["fontSize"] == "11.1111px"
 
     with pytest.raises(NotImplementedError):
         ax.legend(prop={"family": "serif"})
@@ -141,6 +141,39 @@ def test_hist_stepfilled_produces_filled_step_geometry():
     np.testing.assert_allclose(tops, np.repeat(counts, 2))
 
 
+def test_hist_stepfilled_respects_edgecolor():
+    _, ax = plt.subplots()
+    ax.hist([0, 1, 1, 2], bins=3, histtype="stepfilled", color="steelblue")
+    assert ax._entries[-1]["kwargs"]["line_width"] == 0.0
+
+    _, ax = plt.subplots()
+    ax.hist(
+        [0, 1, 1, 2],
+        bins=3,
+        histtype="stepfilled",
+        color="steelblue",
+        edgecolor="none",
+    )
+    assert ax._entries[-1]["kwargs"]["line_width"] == 0.0
+
+    _, ax = plt.subplots()
+    ax.hist(
+        [0, 1, 1, 2],
+        bins=3,
+        histtype="stepfilled",
+        color="steelblue",
+        edgecolor="red",
+        alpha=0.5,
+    )
+    kwargs = ax._entries[-1]["kwargs"]
+    assert kwargs["line_color"] == "red"
+    assert kwargs["line_width"] == pytest.approx(
+        float(plt.rcParams["patch.linewidth"]) * ax._point_scale()
+    )
+    assert kwargs["line_opacity"] == 0.5
+    assert kwargs["stroke_perimeter"] is True
+
+
 def test_scatter_one_sided_vmin_vmax_autoscale_the_other_side():
     _, ax = plt.subplots()
     low = ax.scatter([0, 1, 2], [0, 1, 2], c=[1.0, 5.0, 9.0], vmin=2.0)
@@ -155,7 +188,7 @@ def test_clear_reapplies_current_rc_chrome_not_just_prop_cycle():
         _, ax = plt.subplots()
         ax.cla()
         assert ax._theme_tokens["plot_background"] == "#102030"
-        assert ax._theme_style["font-size"] == "26.6667px"
+        assert ax._theme_style["font-size"] == "27.7778px"
 
 
 def test_auto_ticks_report_exporter_locations_instead_of_empty():

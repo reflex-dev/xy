@@ -501,6 +501,7 @@ def area(
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.35,
+    line_color: Optional[str] = None,
     line_width: float = 1.2,
     line_opacity: float = 1.0,
     stroke_perimeter: bool = False,
@@ -519,6 +520,7 @@ def area(
     name = self._optional_text(name, "area name")
     color = self._optional_css_color(color, "area color")
     opacity = self._opacity(opacity, "area opacity")
+    line_color = self._optional_css_color(line_color, "area line_color")
     line_width = self._nonnegative_scalar(line_width, "area line_width")
     line_opacity = self._opacity(line_opacity, "area line_opacity")
     stroke_perimeter = _validate.optional_bool(stroke_perimeter, "area stroke_perimeter")
@@ -547,6 +549,8 @@ def area(
             "line_opacity": line_opacity,
             "stroke_perimeter": stroke_perimeter,
         }
+        if line_color is not None:
+            style["line_color"] = line_color
         if fill_spec is not None:
             style["fill"] = fill_spec
         if curve != "linear":

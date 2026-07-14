@@ -134,7 +134,7 @@ const AREA_MARK = {
   },
   refreshColor: (view, g) => {
     g.color = parseColor(view.root, g.trace.style.color, g.color);
-    g.lineColor = parseColor(view.root, g.trace.style.color, g.lineColor || g.color);
+    g.lineColor = parseColor(view.root, g.trace.style.line_color || g.trace.style.color, g.lineColor || g.color);
     g.grad = view._resolveMarkFill(g.trace.style, g.color);
   },
 };

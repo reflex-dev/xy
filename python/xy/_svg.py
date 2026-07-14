@@ -955,9 +955,10 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             lw = float(style.get("line_width", 1.2))
             if lw > 0:
                 lop = float(style.get("line_opacity", 1.0))
+                line_color = style.get("line_color") or color
                 outline_path = joined if style.get("stroke_perimeter") else top_path
                 marks.append(
-                    f'<path d="{outline_path}" stroke="{escape(color)}" stroke-width="{_num(lw)}" '
+                    f'<path d="{outline_path}" stroke="{escape(line_color)}" stroke-width="{_num(lw)}" '
                     f'fill="none" stroke-linejoin="round"'
                     + (f' stroke-opacity="{_num(lop)}"' if lop < 1 else "")
                     + _dash_attr(style)
@@ -1567,7 +1568,7 @@ def _colorbar(options: dict, plot: dict) -> str:
     tick_positions = (
         [float(value) for value in ticks if lo <= float(value) <= hi]
         if ticks is not None
-        else (_linear_ticks(lo, hi)[0] or [lo, hi])
+        else (_linear_ticks(lo, hi, 8)[0] or [lo, hi])
     )
     tick_nodes = (
         "".join(

@@ -32,7 +32,7 @@ def test_line2d_marker_style_setters_mutate_marker_overlay() -> None:
     assert [trace.kind for trace in traces] == ["line", "scatter"]
     assert traces[1].color_ch.constant == "#d62728"
     assert traces[1].style["stroke"] == "#000000"
-    assert traces[1].size_ch.constant == pytest.approx(40.0 / 3.0)
+    assert traces[1].size_ch.constant == pytest.approx(10.0 * 100.0 / 72.0)
 
 
 def test_marker_only_plot_handle_supports_marker_style_setters() -> None:
@@ -47,7 +47,7 @@ def test_marker_only_plot_handle_supports_marker_style_setters() -> None:
     assert trace.kind == "scatter"
     assert trace.color_ch.constant == "#2ca02c"
     assert "stroke" not in trace.style
-    assert trace.size_ch.constant == 8.0
+    assert trace.size_ch.constant == pytest.approx(6 * 100 / 72)
 
 
 def test_plot_marker_diameters_convert_points_to_pixels_in_every_path() -> None:
@@ -59,7 +59,9 @@ def test_plot_marker_diameters_convert_points_to_pixels_in_every_path() -> None:
     traces = ax._build_chart(640, 480).figure().traces
     marker_sizes = [trace.size_ch.constant for trace in traces if trace.kind == "scatter"]
 
-    assert marker_sizes == pytest.approx([28.0 / 3.0, 28.0 / 3.0, 40.0 / 3.0])
+    assert marker_sizes == pytest.approx(
+        [7.0 * 100.0 / 72.0, 7.0 * 100.0 / 72.0, 10.0 * 100.0 / 72.0]
+    )
 
 
 def test_segment_backed_line2d_set_ydata_rebuilds_retained_logical_data() -> None:
