@@ -20,6 +20,20 @@ from ._rc import rc_figsize_px
 from ._transforms import CoordinateTransform
 from ._translate import check_unsupported, not_implemented
 
+# Below this panel edge the fixed compact chrome (46px left / 36px bottom)
+# stops fitting and would consume the data area, so it scales with the panel
+# instead — matplotlib margins are figure fractions and shrink the same way.
+_DENSE_PANEL_EDGE = 240
+
+
+def _dense_panel_padding(width: int, height: int) -> Optional[list[float]]:
+    """[top, right, bottom, left] for grid panels too small for fixed margins."""
+    scale_w = min(1.0, width / _DENSE_PANEL_EDGE)
+    scale_h = min(1.0, height / _DENSE_PANEL_EDGE)
+    if scale_w >= 1.0 and scale_h >= 1.0:
+        return None
+    return [6.0 * scale_h, 8.0 * scale_w, 36.0 * scale_h, 46.0 * scale_w]
+
 
 def _png_with_metadata(data: bytes, metadata: dict[Any, Any]) -> bytes:
     """Insert standards-compliant PNG text chunks before IEND."""
@@ -570,7 +584,7 @@ class Figure:
 
     def _panel_px(self) -> tuple[int, int]:
         w, h = rc_figsize_px(self._figsize, self._dpi)
-        return max(120, w // self._ncols), max(120, h // self._nrows)
+        return max(40, w // self._ncols), max(40, h // self._nrows)
 
     def _effective_rects(self) -> Optional[list[tuple[float, float, float, float]]]:
         """Per-axes figure rects when any axes is free-form, else None.
@@ -605,12 +619,21 @@ class Figure:
         height_ratios = self._height_ratios or (1.0,) * self._nrows
         if len(width_ratios) != self._ncols or len(height_ratios) != self._nrows:
             raise ValueError("subplot width/height ratios must match the grid dimensions")
-        widths = [max(120, round(total_w * value / sum(width_ratios))) for value in width_ratios]
-        heights = [max(120, round(total_h * value / sum(height_ratios))) for value in height_ratios]
-        charts = [
-            ax._build_chart(widths[index % self._ncols], heights[index // self._ncols])
-            for index, ax in enumerate(self._axes)
-        ]
+        widths = [max(40, round(total_w * value / sum(width_ratios))) for value in width_ratios]
+        heights = [max(40, round(total_h * value / sum(height_ratios))) for value in height_ratios]
+        charts = []
+        for index, ax in enumerate(self._axes):
+            width = widths[index % self._ncols]
+            height = heights[index // self._ncols]
+            padding = _dense_panel_padding(width, height) if ax._padding is None else None
+            if padding is None:
+                charts.append(ax._build_chart(width, height))
+                continue
+            try:
+                ax._padding = padding
+                charts.append(ax._build_chart(width, height))
+            finally:
+                ax._padding = None
         if charts and (self._sharex or self._sharey):
             figures = [chart.figure() for chart in charts]
             linked: list[str] = []
@@ -870,7 +893,32 @@ class Figure:
                 ax._chart = old_chart
                 ax._padding = old_padding
             return doc, tight_width, tight_height
-        return self._to_html(), width, height
+        doc = self._to_html()
+        charts = self._charts()
+        if not charts:
+            return doc, width, height
+        # The composed document is a gapless CSS grid of exact-size panels
+        # (plus an optional suptitle line); size the hosting iframe to that
+        # content, not the nominal figsize — panel rounding and the 40px
+        # panel floor can make them differ, and a mismatched iframe clips
+        # the grid behind scrollbars.
+        figures = [chart.figure() for chart in charts]
+        ncols = max(1, self._ncols)
+        col_widths = [
+            max(int(figures[index].width) for index in range(col, len(figures), ncols))
+            for col in range(min(ncols, len(figures)))
+        ]
+        row_heights = [
+            max(
+                int(figures[index].height)
+                for index in range(row * ncols, min((row + 1) * ncols, len(figures)))
+            )
+            for row in range((len(figures) + ncols - 1) // ncols)
+        ]
+        title_h = 0
+        if self._suptitle is not None:
+            title_h = 10 + round(float(self._suptitle_style.get("size", 16.0)) * 1.4)
+        return doc, sum(col_widths), title_h + sum(row_heights)
 
     def _repr_html_(self) -> str:
         from xy import export

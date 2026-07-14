@@ -308,6 +308,18 @@ Object.assign(ChartView.prototype, {
       this._setView(this.view0, { animate: true });
     });
     root.appendChild(bar);
+    // A bar wider than the chart overflows the root (absolutely positioned
+    // children ignore the root box) and hands embedded documents phantom
+    // scrollbars — the failure mode of dense pyplot subplot grids. Suppress
+    // the controls when the chart can't host them; wheel zoom and drag pan
+    // still work without the bar. 140px = five 26px buttons + box chrome,
+    // the fallback when the bar is measured while hidden (offsetWidth 0).
+    const barWidth = bar.offsetWidth || 140;
+    if (this.plot.x + 4 + barWidth + 4 > this.size.w || this.plot.h < 48) {
+      bar.remove();
+      this._modebar = null;
+      this._modeBtns = {};
+    }
     this._setDragMode(this.dragMode);
   },
 

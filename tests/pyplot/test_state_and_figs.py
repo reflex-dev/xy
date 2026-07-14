@@ -121,6 +121,51 @@ def test_grid_html_has_panels() -> None:
     assert "const root = panelGrid || document" in html
 
 
+def test_grid_live_panels_never_scroll() -> None:
+    _fig, axes = plt.subplots(2, 2, figsize=(8, 6))
+    for i, ax in enumerate(axes.ravel()):
+        ax.plot([0, 1], [i, i + 1])
+    html = plt.gcf()._to_html()
+    # A panel document is a fixed-size chart; any overflow is chrome bleed and
+    # must clip, not sprout per-panel scrollbars across the grid.
+    assert html.count('scrolling="no"') == 4
+
+
+def test_dense_subplot_grid_tiles_the_figure_with_static_panels() -> None:
+    fig, axes = plt.subplots(8, 8, figsize=(6, 6))
+    image = np.arange(64.0).reshape(8, 8)
+    for ax in axes.ravel():
+        ax.imshow(image, cmap="binary")
+        ax.set(xticks=[], yticks=[])
+
+    doc, width, height = fig._to_notebook_html()
+
+    # Panels divide the 600x600 figure exactly (no 120px panel floor) and the
+    # hosting iframe matches the grid, so nothing clips or scrolls.
+    assert (width, height) == (600, 600)
+    assert doc.count("width:75px;height:75px") == 64
+    # 64 live WebGL panels would bust the browser's page-wide context cap and
+    # blank most of the grid; dense grids ship native-raster tiles instead,
+    # with the fallback recorded on the element.
+    assert doc.count("data:image/png;base64,") == 64
+    assert doc.count('data-fc-pyplot-static="context-budget"') == 64
+    assert "data-fc-pyplot-panel" not in doc
+
+
+def test_dense_grid_panels_scale_their_chrome_padding() -> None:
+    fig, axes = plt.subplots(8, 8, figsize=(6, 6))
+    for ax in axes.ravel():
+        ax.plot([0, 1], [0, 1])
+
+    spec, _ = fig._charts()[0].figure().build_payload()
+
+    assert spec["width"] == 75
+    # The fixed compact chrome (46px left / 36px bottom) would consume a 75px
+    # panel; dense panels scale it with the cell instead.
+    top, right, bottom, left = spec["padding"]
+    assert left < 20 and bottom < 15 and top < 5 and right < 5
+
+
 def test_notebook_repr_isolates_standalone_document_styles() -> None:
     fig, ax = plt.subplots(figsize=(6.4, 4.8), dpi=100)
     ax.plot([0, 1], [1, 2])

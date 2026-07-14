@@ -1772,7 +1772,10 @@ this.fluidH = spec.height === "100%";
 const rect = this.fluid || this.fluidH ? el.getBoundingClientRect() : null;
 const cw = this.fluid ? Math.round(rect.width) || 640 : spec.width;
 const ch = this.fluidH ? Math.round(rect.height) || 420 : spec.height;
-this.size = { w: Math.max(120, cw), h: Math.max(120, ch) };
+this.size = {
+w: Math.max(this.fluid ? 120 : 40, cw),
+h: Math.max(this.fluidH ? 120 : 40, ch),
+};
 this._layout();
 this._buildDom(el);
 this.theme = readTheme(this.root);
@@ -5271,6 +5274,12 @@ this._clearSelection();
 this._setView(this.view0, { animate: true });
 });
 root.appendChild(bar);
+const barWidth = bar.offsetWidth || 140;
+if (this.plot.x + 4 + barWidth + 4 > this.size.w || this.plot.h < 48) {
+bar.remove();
+this._modebar = null;
+this._modeBtns = {};
+}
 this._setDragMode(this.dragMode);
 },
 _setDragMode(mode) {

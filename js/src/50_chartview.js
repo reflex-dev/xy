@@ -145,7 +145,13 @@ class ChartView {
     const rect = this.fluid || this.fluidH ? el.getBoundingClientRect() : null;
     const cw = this.fluid ? Math.round(rect.width) || 640 : spec.width; // 0 = hidden; RO corrects
     const ch = this.fluidH ? Math.round(rect.height) || 420 : spec.height;
-    this.size = { w: Math.max(120, cw), h: Math.max(120, ch) };
+    // Fluid axes keep the 120px floor (a collapsed container is a layout
+    // accident); explicit numeric sizes are honored down to 40px so dense
+    // embeddings (pyplot subplot grids) can tile small panels exactly.
+    this.size = {
+      w: Math.max(this.fluid ? 120 : 40, cw),
+      h: Math.max(this.fluidH ? 120 : 40, ch),
+    };
     this._layout();
 
     this._buildDom(el);

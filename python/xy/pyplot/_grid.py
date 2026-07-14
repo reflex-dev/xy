@@ -1,11 +1,15 @@
 """Multi-panel composition — the shim-owned replacement for an engine grid.
 
-HTML: one self-contained document, panels in a CSS grid, each panel embedded
-as a sandboxed ``srcdoc`` iframe of its own standalone chart document (same
-zero-dependency offline story as `Chart.to_html`).  A page-level visibility
-governor unloads off-screen panel documents.  This matters in notebooks where
-many executed multi-panel cells would otherwise keep enough independent
-WebGL contexts alive for the browser to evict arbitrary visible canvases.
+HTML: one self-contained document, panels in a gapless CSS grid sized to the
+figure.  Grids within the live-panel budget embed each panel as a sandboxed
+``srcdoc`` iframe of its own standalone chart document (same zero-dependency
+offline story as `Chart.to_html`), with a page-level visibility governor that
+unloads off-screen panel documents.  This matters in notebooks where many
+executed multi-panel cells would otherwise keep enough independent WebGL
+contexts alive for the browser to evict arbitrary visible canvases.  Denser
+grids (think ``subplots(8, 8)`` small multiples) exceed the browser's
+page-wide context cap even when fully visible, so they embed native-raster
+``<img>`` tiles instead — every panel paints, matplotlib-style.
 
 PNG: each panel renders through the engine's native rasterizer to an RGBA
 array; NumPy pastes them onto one canvas and the engine's PNG encoder writes
@@ -16,10 +20,33 @@ modules); everything else goes through `xy`' public surface.
 
 from __future__ import annotations
 
+import base64
 import html as _html
 from typing import Any, Optional
 
 import numpy as np
+
+# Each live panel is its own sandboxed document holding one WebGL context, and
+# browsers cap live contexts *per page* (~16 in Chrome) with LRU eviction — the
+# in-chart context governor can only shepherd its own document, and the parent
+# visibility governor only unloads off-screen panels, so a fully visible dense
+# grid busts the cap outright and permanently blanks its earliest panels.
+# Grids past this budget ship native-raster tiles instead: every panel paints,
+# and the document stays a few KB per panel rather than a JS bundle per panel.
+_LIVE_PANEL_BUDGET = 12
+
+
+def _panel_tile_png(chart: Any, facecolor: str = "white") -> bytes:
+    """One panel through the engine's native rasterizer, at 2x for hidpi."""
+    from xy import _png, _raster  # sanctioned escape hatch (see module doc)
+
+    fig = chart.figure()
+    spec, blob, borrowed = fig._build_raster_payload(px_width=max(256, int(fig.width)))
+    spec["canvas_background"] = facecolor
+    img = _raster.render_raster(spec, blob, 2.0, borrowed=borrowed)
+    if isinstance(img, bytes):
+        raise RuntimeError("pyplot grid rasterizer unexpectedly returned encoded PNG bytes")
+    return _png.encode(img)
 
 
 def compose_html(
@@ -29,15 +56,28 @@ def compose_html(
     suptitle: Optional[str],
     suptitle_style: Optional[dict[str, Any]] = None,
 ) -> str:
+    live = len(charts) <= _LIVE_PANEL_BUDGET
     panels = []
     for chart in charts:
-        doc = chart.to_html()
         figure = chart.figure()
-        width = max(120, int(figure.width))
-        height = max(120, int(figure.height))
+        width = max(40, int(figure.width))
+        height = max(40, int(figure.height))
+        if not live:
+            tile = base64.b64encode(_panel_tile_png(chart)).decode("ascii")
+            # The static fallback is recorded on the element (§28: no silent
+            # tier decisions) so a reader can see why a panel is not live.
+            panels.append(
+                '<img class="fc-panel" data-fc-pyplot-static="context-budget" '
+                f'style="width:{width}px;height:{height}px" alt="subplot panel" '
+                f'src="data:image/png;base64,{tile}">'
+            )
+            continue
+        doc = chart.to_html()
+        # scrolling="no": a panel document is a fixed-size chart — any
+        # overflow is chrome bleed, and a grid of phantom scrollbars is noise.
         panels.append(
             '<iframe class="fc-panel" data-fc-pyplot-panel '
-            'loading="lazy" sandbox="allow-scripts" '
+            'loading="lazy" sandbox="allow-scripts" scrolling="no" '
             f'style="width:{width}px;height:{height}px" '
             f'srcdoc="{_html.escape(doc, quote=True)}"></iframe>'
         )
@@ -53,6 +93,67 @@ def compose_html(
         else ""
     )
     grid = "\n".join(panels)
+    governor_script = (
+        ""
+        if not live
+        else """<script>
+(() => {
+  const key = "__xyPyplotPanelGovernorV1";
+  const blank = "<!doctype html><html><body style='margin:0;background:#fff'></body></html>";
+  let governor = window[key];
+  if (!governor) {
+    const states = new WeakMap();
+    let sequence = 0;
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        const frame = entry.target;
+        const state = states.get(frame);
+        if (!state) continue;
+        state.visible = entry.isIntersecting || entry.intersectionRatio > 0;
+        if (state.visible) {
+          state.seen = ++sequence;
+          clearTimeout(state.releaseTimer);
+          state.releaseTimer = null;
+          if (state.dormant && frame.isConnected) {
+            state.dormant = false;
+            frame.srcdoc = state.source;
+          }
+          continue;
+        }
+        clearTimeout(state.releaseTimer);
+        state.releaseTimer = setTimeout(() => {
+          if (state.visible || state.dormant || !frame.isConnected) return;
+          state.dormant = true;
+          frame.srcdoc = blank;
+        }, 120);
+      }
+    }, { rootMargin: "100% 0px 100% 0px" });
+    governor = window[key] = {
+      register(frame) {
+        if (states.has(frame)) return;
+        states.set(frame, {
+          source: frame.srcdoc,
+          visible: true,
+          dormant: false,
+          releaseTimer: null,
+          seen: ++sequence,
+        });
+        observer.observe(frame);
+      },
+    };
+  }
+  const script = document.currentScript;
+  const panelGrid = script && script.previousElementSibling;
+  // Classic Jupyter may evaluate this script after insertion, when
+  // document.currentScript is null.  Scanning the document is safe because
+  // register() is idempotent through its WeakMap.
+  const root = panelGrid || document;
+  for (const frame of root.querySelectorAll("iframe[data-fc-pyplot-panel]")) {
+    governor.register(frame);
+  }
+})();
+</script>"""
+    )
     return f"""<!doctype html>
 <html>
 <head>
@@ -60,7 +161,13 @@ def compose_html(
 <style>
   body {{ margin: 0; font-family: system-ui, sans-serif; background: #ffffff; }}
   .fc-suptitle {{ text-align: center; margin: 8px 0 0; font-size: 16px; color: #262626; }}
-  .fc-grid {{ display: grid; grid-template-columns: repeat({ncols}, max-content); gap: 4px; padding: 4px; overflow-x: auto; }}
+  /* Gapless like a matplotlib figure: panel spacing comes from each panel's
+     own margins, so the grid footprint equals the figure size.  No overflow
+     property: a scroll container at exact fit makes Chrome materialize both
+     scrollbars (max-content tracks vs scrollbar-gutter circularity), which
+     shaves the grid and clips the last column.  Narrow hosts fall back to
+     document-level scrolling, which has no such quirk. */
+  .fc-grid {{ display: grid; grid-template-columns: repeat({ncols}, max-content); width: max-content; }}
   .fc-panel {{ border: 0; display: block; }}
 </style>
 </head>
@@ -69,63 +176,7 @@ def compose_html(
 <div class="fc-grid">
 {grid}
 </div>
-<script>
-(() => {{
-  const key = "__xyPyplotPanelGovernorV1";
-  const blank = "<!doctype html><html><body style='margin:0;background:#fff'></body></html>";
-  let governor = window[key];
-  if (!governor) {{
-    const states = new WeakMap();
-    let sequence = 0;
-    const observer = new IntersectionObserver((entries) => {{
-      for (const entry of entries) {{
-        const frame = entry.target;
-        const state = states.get(frame);
-        if (!state) continue;
-        state.visible = entry.isIntersecting || entry.intersectionRatio > 0;
-        if (state.visible) {{
-          state.seen = ++sequence;
-          clearTimeout(state.releaseTimer);
-          state.releaseTimer = null;
-          if (state.dormant && frame.isConnected) {{
-            state.dormant = false;
-            frame.srcdoc = state.source;
-          }}
-          continue;
-        }}
-        clearTimeout(state.releaseTimer);
-        state.releaseTimer = setTimeout(() => {{
-          if (state.visible || state.dormant || !frame.isConnected) return;
-          state.dormant = true;
-          frame.srcdoc = blank;
-        }}, 120);
-      }}
-    }}, {{ rootMargin: "100% 0px 100% 0px" }});
-    governor = window[key] = {{
-      register(frame) {{
-        if (states.has(frame)) return;
-        states.set(frame, {{
-          source: frame.srcdoc,
-          visible: true,
-          dormant: false,
-          releaseTimer: null,
-          seen: ++sequence,
-        }});
-        observer.observe(frame);
-      }},
-    }};
-  }}
-  const script = document.currentScript;
-  const panelGrid = script && script.previousElementSibling;
-  // Classic Jupyter may evaluate this script after insertion, when
-  // document.currentScript is null.  Scanning the document is safe because
-  // register() is idempotent through its WeakMap.
-  const root = panelGrid || document;
-  for (const frame of root.querySelectorAll("iframe[data-fc-pyplot-panel]")) {{
-    governor.register(frame);
-  }}
-}})();
-</script>
+{governor_script}
 </body>
 </html>"""
 
