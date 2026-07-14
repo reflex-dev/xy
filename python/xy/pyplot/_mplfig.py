@@ -840,7 +840,27 @@ class Figure:
             old_chart, old_padding = ax._chart, ax._padding
             try:
                 ax._chart = None
-                ax._padding = [dpi * 0.15, dpi * 0.20, dpi * 0.34, dpi * 0.41]
+                notebook_padding = [dpi * 0.15, dpi * 0.20, dpi * 0.34, dpi * 0.41]
+                if ax._aspect_equal and ax._aspect_bounds is not None:
+                    # Once adjustable='box' makes an image square, Matplotlib's
+                    # inline bbox crops away the old wide axes allocation. Match
+                    # that post-layout footprint instead of retaining ~54 px of
+                    # outer whitespace around the default square imshow.
+                    notebook_padding[3] = dpi * 0.29
+                    x0, x1, y0, y1 = ax._aspect_bounds
+                    data_ratio = abs(x1 - x0) / max(abs(y1 - y0), np.finfo(float).eps)
+                    plot_height = tight_height - notebook_padding[0] - notebook_padding[2]
+                    colorbar_room = 0.0
+                    if ax._colorbar is not None and ax._colorbar.get("orientation") != "horizontal":
+                        colorbar_room = 86.0 + (18.0 if ax._colorbar.get("label") else 0.0)
+                    aspect_width = (
+                        notebook_padding[3]
+                        + plot_height * data_ratio
+                        + notebook_padding[1]
+                        + colorbar_room
+                    )
+                    tight_width = max(120, min(tight_width, round(aspect_width)))
+                ax._padding = notebook_padding
                 doc = ax._build_chart(tight_width, tight_height).to_html()
             finally:
                 ax._chart = old_chart

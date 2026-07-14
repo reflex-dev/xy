@@ -3613,25 +3613,43 @@ class Axes(PlotTypeMixin):
         children = self._chart_children()
         if self._twin is not None:
             children.extend(self._twin._chart_children())
+        chart_padding = None if self._padding is None else list(self._padding)
         adjusted_aspect = False
         if self._aspect_equal and self._aspect_bounds is not None:
             x0, x1, y0, y1 = self._aspect_bounds
             x0, x1 = self._axis["x"].get("domain", (x0, x1))
             y0, y1 = self._axis["y"].get("domain", (y0, y1))
-            data_ratio = (x1 - x0) / max(y1 - y0, np.finfo(float).eps)
-            panel_ratio = (
-                self._absolute_plot_ratio
-                if self._absolute_plot_ratio is not None
-                else max(1.0, width - 80) / max(1.0, height - 60)
-            )
-            if data_ratio < panel_ratio:
-                target = (y1 - y0) * panel_ratio
-                center = (x0 + x1) * 0.5
-                x0, x1 = center - target * 0.5, center + target * 0.5
-            elif data_ratio > panel_ratio:
-                target = (x1 - x0) / panel_ratio
-                center = (y0 + y1) * 0.5
-                y0, y1 = center - target * 0.5, center + target * 0.5
+            # Matplotlib's default adjustable='box' preserves image limits and
+            # changes the axes rectangle to maintain equal data-unit scaling.
+            # Expanding a domain instead leaves blank space before an explicit
+            # extent (for example, tick 0 appears inside rather than at its edge).
+            compact = width < 520
+            if chart_padding is None:
+                top, right, bottom, left = (
+                    (6.0, 8.0, 36.0, 46.0) if compact else (10.0, 14.0, 42.0, 62.0)
+                )
+            else:
+                top, right, bottom, left = map(float, chart_padding)
+            layout_top = top + ((26.0 if compact else 30.0) if self._title else 0.0)
+            layout_right = right
+            layout_bottom = bottom
+            if self._colorbar is not None:
+                if self._colorbar.get("orientation") == "horizontal":
+                    layout_bottom += 38.0 + (16.0 if self._colorbar.get("label") else 0.0)
+                else:
+                    layout_right += 86.0 + (18.0 if self._colorbar.get("label") else 0.0)
+            plot_width = max(40.0, width - left - layout_right)
+            plot_height = max(40.0, height - layout_top - layout_bottom)
+            data_ratio = abs(x1 - x0) / max(abs(y1 - y0), np.finfo(float).eps)
+            if plot_width / plot_height > data_ratio:
+                extra = plot_width - plot_height * data_ratio
+                left += extra * 0.5
+                right += extra * 0.5
+            else:
+                extra = plot_height - plot_width / data_ratio
+                top += extra * 0.5
+                bottom += extra * 0.5
+            chart_padding = [top, right, bottom, left]
             self._axis["x"]["domain"] = (x0, x1)
             self._axis["y"]["domain"] = (y0, y1)
             adjusted_aspect = True
@@ -3678,7 +3696,7 @@ class Axes(PlotTypeMixin):
             title=self._title,
             width=width,
             height=height,
-            padding=self._padding,
+            padding=chart_padding,
             styles=self._chrome_styles,
         )
         core_figure = self._chart.figure()

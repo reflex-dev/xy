@@ -1146,7 +1146,7 @@ def _emit_colorbar(cmd, options, plot):
     if orientation == "horizontal":
         x, y, width, height = plot["x"], plot["y"] + plot["h"] + 10, plot["w"], 18
     else:
-        x, y, width, height = plot["x"] + plot["w"] + 10, plot["y"], 18, plot["h"]
+        x, y, width, height = plot["x"] + plot["w"] + 24, plot["y"], 18, plot["h"]
     # A discrete (resampled) colormap paints N solid bands; otherwise a smooth
     # 64-step gradient approximates the continuous ramp.
     levels = options.get("levels")

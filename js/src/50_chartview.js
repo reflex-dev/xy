@@ -4,6 +4,7 @@
 
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
 const COLORBAR_THICKNESS = 18;
+const COLORBAR_GAP = 24;
 const UNITLESS_STYLE_PROPS = new Set([
   "animation-iteration-count",
   "aspect-ratio",
@@ -205,7 +206,7 @@ class ChartView {
     const colorbar = this.spec.colorbar;
     const verticalColorbar = colorbar && colorbar.orientation !== "horizontal";
     const horizontalColorbar = colorbar && colorbar.orientation === "horizontal";
-    const colorbarRightRoom = verticalColorbar ? 66 + (colorbar.label ? 18 : 0) : 0;
+    const colorbarRightRoom = verticalColorbar ? 86 + (colorbar.label ? 18 : 0) : 0;
     const colorbarBottomRoom = horizontalColorbar ? 38 + (colorbar.label ? 16 : 0) : 0;
     const marginRight = (pad ? pad[1] : compact ? 8 : MARGIN.r) + colorbarRightRoom;
     const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
@@ -1000,7 +1001,7 @@ class ChartView {
   _positionColorbar() {
     if (!this._colorbar) return;
     const horizontal = this._colorbarHorizontal;
-    this._colorbar.style.left = (horizontal ? this.plot.x : this.plot.x + this.plot.w + 8) + "px";
+    this._colorbar.style.left = (horizontal ? this.plot.x : this.plot.x + this.plot.w + COLORBAR_GAP) + "px";
     this._colorbar.style.top = (horizontal ? this.plot.y + this.plot.h + 8 : this.plot.y) + "px";
     this._colorbar.style.width = (horizontal ? this.plot.w : 66) + "px";
     this._colorbar.style.height = (horizontal ? 50 : Math.max(24, this.plot.h)) + "px";

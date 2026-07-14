@@ -812,12 +812,9 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         top += 26 if compact else 30
     colorbar = spec.get("colorbar") or {}
     if colorbar.get("orientation") == "horizontal":
-        bottom += 30
+        bottom += 38 + (16 if colorbar.get("label") else 0)
     elif colorbar:
-        # Leave room for the gradient, numeric tick labels and an optional
-        # Matplotlib-style colorbar label.  The previous 48 px allowance put
-        # all text beyond the export canvas.
-        right += 92
+        right += 86 + (18 if colorbar.get("label") else 0)
     plot = {
         "x": left,
         "y": top,
@@ -1549,7 +1546,7 @@ def _colorbar(options: dict, plot: dict) -> str:
         x, y, width, height = plot["x"], plot["y"] + plot["h"] + 10, plot["w"], 18
         gradient_attrs = 'x1="0" y1="0" x2="100%" y2="0"'
     else:
-        x, y, width, height = plot["x"] + plot["w"] + 10, plot["y"], 18, plot["h"]
+        x, y, width, height = plot["x"] + plot["w"] + 24, plot["y"], 18, plot["h"]
         gradient_attrs = 'x1="0" y1="100%" x2="0" y2="0"'
     label = str(options.get("label") or "")
     label_node = (

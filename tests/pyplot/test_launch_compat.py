@@ -11,7 +11,7 @@ from xy._svg import COLORMAP_STOPS, _lut
 
 
 def test_hist_weights_horizontal_and_stacked_return_matplotlib_geometry() -> None:
-    _fig, ax = plt.subplots()
+    fig, ax = plt.subplots()
     values = [np.arange(5), np.arange(5) + 1]
     weights = [np.ones(5), np.arange(1, 6)]
     counts, edges, containers = ax.hist(
@@ -327,6 +327,26 @@ def test_imshow_interpolation_upsamples_gradients_but_nearest_keeps_cells() -> N
     spec, _blob = core.build_payload()
     assert spec["dom"]["style"]["--chart-grid"] == "transparent"
     assert 'stroke="transparent"' in core.to_svg()
+
+
+def test_imshow_equal_aspect_preserves_explicit_extent_at_plot_edges() -> None:
+    fig, ax = plt.subplots()
+    ax.imshow(
+        np.zeros((40, 50)),
+        extent=[0, 5, 0, 5],
+        origin="lower",
+        interpolation="gaussian",
+    )
+    plt.colorbar()
+    _doc, width, height = fig._to_notebook_html()
+    assert (width, height) == (504, 418)
+    core = ax._build_chart(width, height).figure()
+    spec, _blob = core.build_payload()
+    assert spec["x_axis"]["range"] == pytest.approx([0.0, 5.0])
+    assert spec["y_axis"]["range"] == pytest.approx([0.0, 5.0])
+    top, right, bottom, left = spec["padding"]
+    # Equal x/y spans produce a square plot box after colorbar room is removed.
+    assert width - left - right - 86 == pytest.approx(height - top - bottom)
 
 
 def test_shared_subplots_link_live_views_and_grid_exports_keep_suptitle() -> None:
