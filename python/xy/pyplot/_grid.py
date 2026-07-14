@@ -22,7 +22,13 @@ from typing import Any, Optional
 import numpy as np
 
 
-def compose_html(charts: list[Any], nrows: int, ncols: int, suptitle: Optional[str]) -> str:
+def compose_html(
+    charts: list[Any],
+    nrows: int,
+    ncols: int,
+    suptitle: Optional[str],
+    suptitle_style: Optional[dict[str, Any]] = None,
+) -> str:
     panels = []
     for chart in charts:
         doc = chart.to_html()
@@ -35,7 +41,17 @@ def compose_html(charts: list[Any], nrows: int, ncols: int, suptitle: Optional[s
             f'style="width:{width}px;height:{height}px" '
             f'srcdoc="{_html.escape(doc, quote=True)}"></iframe>'
         )
-    title_html = f"<h2 class='fc-suptitle'>{_html.escape(suptitle)}</h2>" if suptitle else ""
+    style = suptitle_style or {}
+    title_css = (
+        f"font-size:{float(style.get('size', 16)):g}px;font-weight:{_html.escape(str(style.get('weight', 'normal')))};"
+        f"font-family:{_html.escape(str(style.get('family', 'system-ui, sans-serif')))};"
+        f"color:{_html.escape(str(style.get('color', '#262626')))}"
+    )
+    title_html = (
+        f"<h2 class='fc-suptitle' style='{title_css}'>{_html.escape(suptitle)}</h2>"
+        if suptitle
+        else ""
+    )
     grid = "\n".join(panels)
     return f"""<!doctype html>
 <html>
@@ -114,7 +130,13 @@ def compose_html(charts: list[Any], nrows: int, ncols: int, suptitle: Optional[s
 </html>"""
 
 
-def compose_svg(charts: list[Any], nrows: int, ncols: int, suptitle: Optional[str]) -> str:
+def compose_svg(
+    charts: list[Any],
+    nrows: int,
+    ncols: int,
+    suptitle: Optional[str],
+    suptitle_style: Optional[dict[str, Any]] = None,
+) -> str:
     """Compose subplot SVGs with isolated ids into one portable SVG document."""
     from xy import _svg
 
@@ -143,13 +165,20 @@ def compose_svg(charts: list[Any], nrows: int, ncols: int, suptitle: Optional[st
             f'width="{int(figure.width)}" height="{int(figure.height)}" '
             f'viewBox="0 0 {int(figure.width)} {int(figure.height)}">{inner}</svg>'
         )
+    style = suptitle_style or {}
+    anchor = {"left": "start", "center": "middle", "right": "end"}.get(
+        str(style.get("ha", "center")), "middle"
+    )
+    width, height = sum(col_widths), title_h + sum(row_heights)
+    size = float(style.get("size", 16))
+    # y is a figure fraction measured from the bottom, like matplotlib.
+    baseline = min(height - 2.0, (1.0 - float(style.get("y", 0.98))) * height + 0.75 * size)
     title = (
-        f'<text x="{sum(col_widths) / 2:g}" y="19" text-anchor="middle" '
-        f'font-family="system-ui,sans-serif" font-size="16">{_html.escape(suptitle)}</text>'
+        f'<text x="{width * float(style.get("x", 0.5)):g}" y="{baseline:g}" text-anchor="{anchor}" '
+        f'font-family="{_html.escape(str(style.get("family", "system-ui,sans-serif")))}" font-size="{size:g}" font-weight="{_html.escape(str(style.get("weight", "normal")))}" fill="{_html.escape(str(style.get("color", "#262626")))}">{_html.escape(suptitle)}</text>'
         if suptitle
         else ""
     )
-    width, height = sum(col_widths), title_h + sum(row_heights)
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
         f'viewBox="0 0 {width} {height}">{title}{"".join(body)}</svg>'
@@ -163,9 +192,12 @@ def stitch_png(
     suptitle: Optional[str],
     colorbar: Optional[dict[str, Any]] = None,
     *,
+    suptitle_style: Optional[dict[str, Any]] = None,
     positions: Optional[list[tuple[float, float, float, float]]] = None,
     canvas_size: Optional[tuple[int, int]] = None,
     facecolor: str = "white",
+    bbox_tight: bool = False,
+    pad_pixels: int = 0,
 ) -> bytes:
     from xy import _png, _raster  # sanctioned escape hatch (see module doc)
 
@@ -174,6 +206,7 @@ def stitch_png(
     for chart in charts:
         fig = chart.figure()
         spec, blob, borrowed = fig._build_raster_payload(px_width=max(256, int(fig.width)))
+        spec["canvas_background"] = facecolor
         img = _raster.render_raster(spec, blob, scale, borrowed=borrowed)
         if isinstance(img, bytes):
             raise RuntimeError("pyplot grid rasterizer unexpectedly returned encoded PNG bytes")
@@ -212,9 +245,9 @@ def stitch_png(
     ]
     title_h = 48 if suptitle else 0
     colorbar_h = 52 if colorbar else 0
-    canvas = np.full(
-        (title_h + sum(row_heights) + colorbar_h, sum(col_widths), 4), 255, dtype=np.uint8
-    )
+    background = np.asarray(_raster._parse_color(facecolor), dtype=np.uint8)
+    canvas = np.empty((title_h + sum(row_heights) + colorbar_h, sum(col_widths), 4), dtype=np.uint8)
+    canvas[...] = background
     for i, tile in enumerate(tiles):
         r, c = divmod(i, ncols)
         y = title_h + sum(row_heights[:r])
@@ -224,7 +257,15 @@ def stitch_png(
         from xy import kernels
 
         cmd = _raster._Cmd(scale)
-        cmd.text(canvas.shape[1] / (2 * scale), 17, 1, 14, (38, 38, 38, 255), suptitle)
+        style = suptitle_style or {}
+        cmd.text(
+            canvas.shape[1] * float(style.get("x", 0.5)) / scale,
+            17,
+            1,
+            float(style.get("size", 14)),
+            _raster._parse_color(str(style.get("color", "#262626"))),
+            suptitle,
+        )
         overlay = kernels.rasterize(bytes(cmd.buf), canvas.shape[1], title_h)
         alpha = overlay[:, :, 3:4].astype(np.float64) / 255.0
         canvas[:title_h, :, :3] = np.round(
@@ -238,4 +279,16 @@ def stitch_png(
         gradient = _lut(colorbar.get("colormap", "viridis"), np.linspace(0.0, 1.0, max(2, x1 - x0)))
         canvas[y0 : y0 + 16, x0:x1, :3] = gradient[None, :, :]
         canvas[y0 : y0 + 16, x0:x1, 3] = 255
+    if bbox_tight:
+        # Crop the figure-colored margin, retaining a Matplotlib-like pad.  Do
+        # this on the composed RGBA buffer so it works for subplot grids and
+        # absolute axes without asking each renderer for a separate bbox.
+        delta = np.any(canvas != background, axis=2)
+        ys, xs = np.nonzero(delta)
+        if len(xs):
+            x0 = max(0, int(xs.min()) - pad_pixels)
+            x1 = min(canvas.shape[1], int(xs.max()) + pad_pixels + 1)
+            y0 = max(0, int(ys.min()) - pad_pixels)
+            y1 = min(canvas.shape[0], int(ys.max()) + pad_pixels + 1)
+            canvas = canvas[y0:y1, x0:x1]
     return _png.encode(canvas)

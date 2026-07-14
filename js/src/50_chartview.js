@@ -3,6 +3,8 @@
 // ---------------------------------------------------------------------------
 
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
+const COLORBAR_THICKNESS = 18;
+const COLORBAR_GAP = 24;
 const UNITLESS_STYLE_PROPS = new Set([
   "animation-iteration-count",
   "aspect-ratio",
@@ -201,9 +203,14 @@ class ChartView {
     // label-aware defaults — zero padding gives an edge-to-edge sparkline.
     const pad = Array.isArray(this.spec.padding) ? this.spec.padding : null;
     const marginLeft = pad ? pad[3] : compact ? 46 : MARGIN.l;
-    const marginRight = pad ? pad[1] : compact ? 8 : MARGIN.r;
+    const colorbar = this.spec.colorbar;
+    const verticalColorbar = colorbar && colorbar.orientation !== "horizontal";
+    const horizontalColorbar = colorbar && colorbar.orientation === "horizontal";
+    const colorbarRightRoom = verticalColorbar ? 86 + (colorbar.label ? 18 : 0) : 0;
+    const colorbarBottomRoom = horizontalColorbar ? 38 + (colorbar.label ? 16 : 0) : 0;
+    const marginRight = (pad ? pad[1] : compact ? 8 : MARGIN.r) + colorbarRightRoom;
     const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
-    const marginBottom = pad ? pad[2] : compact ? 36 : MARGIN.b;
+    const marginBottom = (pad ? pad[2] : compact ? 36 : MARGIN.b) + colorbarBottomRoom;
     const topAxisRoom = this._axis("x").side === "top" ? (compact ? 26 : 32) : 0;
     const top = marginTop + (this.spec.title ? (compact ? 26 : 30) : 0) + topAxisRoom;
     const extraRightAxes = Object.values(this.axes || {}).filter((axis) =>
@@ -716,6 +723,7 @@ class ChartView {
       this._legend.style.maxHeight = p.h - 12 + "px";
     }
     this._positionReductionBadges();
+    this._positionColorbar();
     this._pickDirty = true;
     this.draw();
     this._scheduleViewRequest();
@@ -850,12 +858,12 @@ class ChartView {
         items.push({ swatch: "gradient", cmap: t.density.colormap, name: t.name || "density" });
       } else if (t.color && t.color.mode === "categorical") {
         t.color.categories.forEach((cat, i) =>
-          items.push({ swatch: t.color.palette[i], name: cat }));
+          items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {} }));
       } else if (t.color && t.color.mode === "continuous") {
         items.push({ swatch: "gradient", cmap: t.color.colormap, name: t.name || "value" });
       } else if (t.name) {
         const c = (t.color && t.color.color) || (t.style && t.style.color);
-        items.push({ swatch: c, name: t.name });
+        items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {} });
       }
     }
     if (!items.length) return;
@@ -879,6 +887,13 @@ class ChartView {
       `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
       "overflow:auto;" + `max-height:${this.plot.h - 12}px;`;
     this._applySlot(lg, "legend");
+    if (options.title) {
+      const title = document.createElement("div");
+      title.textContent = String(options.title);
+      title.style.fontWeight = "600";
+      title.style.gridColumn = `1 / span ${horizontal ? ncols : 1}`;
+      lg.appendChild(title);
+    }
     for (const it of items) {
       const row = document.createElement("div");
       this._applySlot(row, "legend_item");
@@ -892,6 +907,37 @@ class ChartView {
         const stops = colormapStops(it.cmap);
         bg = `linear-gradient(90deg,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
         sw.style.background = bg;
+      } else if (it.symbol) {
+        const ns = "http://www.w3.org/2000/svg";
+        const svg = document.createElementNS(ns, "svg");
+        svg.setAttribute("viewBox", "0 0 18 14");
+        svg.setAttribute("width", "18");
+        svg.setAttribute("height", "14");
+        const path = document.createElementNS(ns, "path");
+        const paths = {
+          square: "M4.5 2.5h9v9h-9z", diamond: "M9 2l5 5-5 5-5-5z",
+          thin_diamond: "M9 2l3 5-3 5-3-5z",
+          triangle: "M9 2l-5 10h10z", triangle_down: "M9 12L4 2h10z",
+          triangle_left: "M4 7L14 2v10z", triangle_right: "M14 7L4 2v10z",
+          plus_line: "M9 2v10M4 7h10", x_line: "M5 3l8 8M13 3l-8 8",
+          cross: "M7.5 2h3v3.5H14v3h-3.5V12h-3V8.5H4v-3h3.5z",
+          x: "M5.5 2L9 5.5 12.5 2 14 3.5 10.5 7 14 10.5 12.5 12 9 8.5 5.5 12 4 10.5 7.5 7 4 3.5z",
+          pentagon: "M9 2.5L13.28 5.61 11.65 10.64H6.35L4.72 5.61z",
+          hexagon: "M9 2L13.3 4.5v5L9 12l-4.3-2.5v-5z",
+          star: "M9 2l1.5 3.1 3.5.5-2.5 2.5.6 3.5L9 10l-3.1 1.6.6-3.5L4 5.6l3.5-.5z"
+        };
+        const color = safeCssPaint(this.root, bg);
+        if (it.symbol === "circle" || it.symbol === "point" || it.symbol === "pixel") {
+          if (it.symbol === "pixel") path.setAttribute("d", "M8.5 6.5h1v1h-1z");
+          else path.setAttribute("d", `M9 ${it.symbol === "point" ? 4.75 : 2.5}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 ${it.symbol === "point" ? 4.5 : 9}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 -${it.symbol === "point" ? 4.5 : 9}`);
+        } else path.setAttribute("d", paths[it.symbol] || paths.square);
+        path.setAttribute("fill", it.symbol.endsWith("_line") ? "none" : color);
+        path.setAttribute("stroke", color);
+        path.setAttribute("stroke-width", String(it.style?.stroke_width || 1));
+        svg.appendChild(path);
+        sw.appendChild(svg);
+        sw.style.width = "18px";
+        sw.style.height = "14px";
       } else {
         sw.style.background = safeCssPaint(this.root, bg);
       }
@@ -907,19 +953,72 @@ class ChartView {
   _buildColorbar(root) {
     const cb = this.spec.colorbar;
     if (!cb) return;
-    const stops = colormapStops(cb.colormap || "viridis");
     const box = document.createElement("div");
     const horizontal = cb.orientation === "horizontal";
-    box.style.cssText = horizontal
-      ? `position:absolute;left:${this.plot.x}px;top:${this.plot.y + this.plot.h + 8}px;` +
-        `width:${this.plot.w}px;height:10px;` +
-        `background:linear-gradient(to right,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")});`
-      : `position:absolute;top:${this.plot.y}px;left:${this.plot.x + this.plot.w + 8}px;` +
-        `width:10px;height:${Math.max(24, this.plot.h)}px;` +
-        `background:linear-gradient(to top,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")});`;
+    box.style.cssText = "position:absolute;pointer-events:none;z-index:4;";
+    this._applySlot(box, "colorbar");
+
+    const bar = document.createElement("div");
+    const levels = Math.max(0, Number(cb.levels) || 0);
+    let gradient;
+    if (levels > 0) {
+      const lut = buildLutData(cb.colormap || "viridis");
+      const bands = [];
+      for (let index = 0; index < levels; index++) {
+        const sample = Math.min(255, Math.round(255 * (index + 0.5) / levels));
+        const color = `rgb(${lut[sample * 4]},${lut[sample * 4 + 1]},${lut[sample * 4 + 2]})`;
+        bands.push(`${color} ${100 * index / levels}% ${100 * (index + 1) / levels}%`);
+      }
+      gradient = `linear-gradient(to ${horizontal ? "right" : "top"},${bands.join(",")})`;
+    } else {
+      const stops = colormapStops(cb.colormap || "viridis");
+      gradient = `linear-gradient(to ${horizontal ? "right" : "top"},${stops.map((c) =>
+        `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
+    }
+    bar.style.cssText = horizontal
+      ? `position:absolute;inset:0 0 auto 0;height:${COLORBAR_THICKNESS}px;background:${gradient};border:1px solid currentColor;box-sizing:border-box;`
+      : `position:absolute;inset:0 auto 0 0;width:${COLORBAR_THICKNESS}px;background:${gradient};border:1px solid currentColor;box-sizing:border-box;`;
+    box.appendChild(bar);
+
     const domain = cb.domain || [0, 1];
+    const lo = Number(domain[0]), hi = Number(domain[1]);
+    const span = hi - lo || 1;
+    const tickResult = linearTicks(lo, hi, 8);
+    const tickValues = Array.isArray(cb.ticks) ? cb.ticks : tickResult.ticks;
+    const tickStep = tickResult.step;
+    for (const raw of tickValues) {
+      const value = Number(raw);
+      if (!Number.isFinite(value) || value < Math.min(lo, hi) || value > Math.max(lo, hi)) continue;
+      const tick = document.createElement("span");
+      tick.textContent = fmtLinear(value, tickStep);
+      const fraction = (value - lo) / span;
+      tick.style.cssText = horizontal
+        ? `position:absolute;left:${100 * fraction}%;top:${COLORBAR_THICKNESS + 2}px;transform:translateX(-50%);white-space:nowrap;`
+        : `position:absolute;left:${COLORBAR_THICKNESS + 5}px;top:${100 * (1 - fraction)}%;transform:translateY(-50%);white-space:nowrap;`;
+      box.appendChild(tick);
+    }
+    if (cb.label) {
+      const label = document.createElement("span");
+      label.textContent = String(cb.label);
+      label.style.cssText = horizontal
+        ? `position:absolute;left:50%;top:${COLORBAR_THICKNESS + 18}px;transform:translateX(-50%);white-space:nowrap;`
+        : `position:absolute;left:${COLORBAR_THICKNESS + 40}px;top:50%;writing-mode:vertical-rl;transform:translateY(-50%) rotate(180deg);white-space:nowrap;`;
+      box.appendChild(label);
+    }
     box.title = `${cb.label ? cb.label + ": " : ""}${domain[0]} – ${domain[1]}`;
     root.appendChild(box);
+    this._colorbar = box;
+    this._colorbarHorizontal = horizontal;
+    this._positionColorbar();
+  }
+
+  _positionColorbar() {
+    if (!this._colorbar) return;
+    const horizontal = this._colorbarHorizontal;
+    this._colorbar.style.left = (horizontal ? this.plot.x : this.plot.x + this.plot.w + COLORBAR_GAP) + "px";
+    this._colorbar.style.top = (horizontal ? this.plot.y + this.plot.h + 8 : this.plot.y) + "px";
+    this._colorbar.style.width = (horizontal ? this.plot.w : 66) + "px";
+    this._colorbar.style.height = (horizontal ? 50 : Math.max(24, this.plot.h)) + "px";
   }
 
   _initGl(buffer) {
@@ -1105,16 +1204,16 @@ class ChartView {
     this._pointMarkStyle(g, t);
   }
 
-  // Point symbol + stroke (scatter). symbol -> shader enum; a stroke width with
-  // no color borders in the mark color (matches the rect family).
+  // Point symbol + stroke (scatter). An omitted stroke color means "face":
+  // use each point's resolved LUT/palette color, never a generic trace color.
   _pointMarkStyle(g, t) {
     const s = t.style || {};
-    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5 }[s.symbol] || 0;
+    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16 }[s.symbol] || 0;
     g.pointStrokeWidth = Number(s.stroke_width) || 0;
-    const markOpaque = [g.color[0], g.color[1], g.color[2], 1];
+    g.pointStrokeFace = !s.stroke;
     g.pointStroke = s.stroke
-      ? parseColor(this.root, s.stroke, markOpaque)
-      : g.pointStrokeWidth > 0 ? markOpaque : null;
+      ? parseColor(this.root, s.stroke, [g.color[0], g.color[1], g.color[2], 1])
+      : null;
   }
 
   _sampleTraceSpec(parentTrace, sample) {
@@ -1389,6 +1488,7 @@ class ChartView {
     g.x1Buf = this._upload(x1);
     g.y0Buf = this._upload(y0);
     g.y1Buf = this._upload(y1);
+    g._segmentCpu = { x0, x1, y0, y1 };
     g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
     g.colorMode = 0;
     if (t.color && t.color.mode === "continuous") {
@@ -1443,7 +1543,7 @@ class ChartView {
     g._dashX = sm ? sm.x : x;
     g._dashY = sm ? sm.y : y;
     g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
-    g.lineColor = parseColor(this.root, t.style && t.style.color, g.color);
+    g.lineColor = parseColor(this.root, t.style && (t.style.line_color || t.style.color), g.color);
     g.grad = this._resolveMarkFill(t.style, g.color);
   }
 
@@ -1823,7 +1923,8 @@ class ChartView {
     gl.uniform1i(u("u_sizeMode"), g.sizeMode);
     gl.uniform2f(u("u_sizeRange"), g.sizeRange[0], g.sizeRange[1]);
     gl.uniform1i(u("u_colorMode"), g.colorMode);
-    gl.uniform1f(u("u_opacity"), (g.trace.style.opacity ?? 0.8) * opacityScale);
+    const markOpacity = (g.trace.style.opacity ?? 0.8) * opacityScale;
+    gl.uniform1f(u("u_opacity"), markOpacity);
     gl.uniform1f(u("u_selectedOpacity"), this._markStateNumber("selected", "opacity", 1));
     gl.uniform1f(u("u_unselectedOpacity"), this._markStateNumber("unselected", "opacity", 0.12));
     // Optional selected/unselected recolor (§34): .a=1 tints, .a=0 keeps native.
@@ -1837,9 +1938,11 @@ class ChartView {
     gl.uniform4f(u("u_color"), r, gg, b, 1);
     gl.uniform1i(u("u_symbol"), g.symbol || 0);
     const sc = g.pointStroke;
-    gl.uniform1f(u("u_ptStrokeWidth"), sc ? (g.pointStrokeWidth || 0) * this.dpr : 0);
-    gl.uniform4f(u("u_ptStroke"), sc ? sc[0] * sc[3] : 0, sc ? sc[1] * sc[3] : 0,
-      sc ? sc[2] * sc[3] : 0, sc ? sc[3] : 0);
+    const strokeAlpha = sc ? sc[3] * markOpacity : 0;
+    gl.uniform1f(u("u_ptStrokeWidth"), (g.pointStrokeWidth || 0) * this.dpr);
+    gl.uniform1i(u("u_ptStrokeFace"), g.pointStrokeFace ? 1 : 0);
+    gl.uniform4f(u("u_ptStroke"), sc ? sc[0] * strokeAlpha : 0, sc ? sc[1] * strokeAlpha : 0,
+      sc ? sc[2] * strokeAlpha : 0, strokeAlpha);
 
     gl.uniform1i(u("u_selActive"), g.selActive ? 1 : 0);
     const colorOn = g.colorMode !== 0 && g.cBuf;
@@ -2085,6 +2188,7 @@ class ChartView {
     const [r, gg, b, a] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+    const dashed = this._segmentDash(g, prog);
     if (g.colorMode && g.lut) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -2093,17 +2197,97 @@ class ChartView {
     this._bindVao(
       g,
       "segment",
-      [g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId, g.colorMode ? g.cBuf._fcId : 0],
+      [g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId,
+        g.colorMode ? g.cBuf._fcId : 0,
+        dashed ? g._segmentDashOffsetBuf._fcId : 0,
+        dashed ? g._segmentDashDirBuf._fcId : 0],
       () => {
         this._vaoAttr(ATTR_SLOTS.ax0, g.x0Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
         if (g.colorMode) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+        if (dashed) {
+          this._vaoAttr(ATTR_SLOTS.a_dash0, g._segmentDashOffsetBuf, 0, 1);
+          this._vaoAttr(ATTR_SLOTS.a_dashDir, g._segmentDashDirBuf, 0, 1);
+        }
       }
     );
     if (!g.colorMode) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+  }
+
+  _segmentDash(g, prog) {
+    const gl = this.gl;
+    const u = (n) => uniformOf(gl, prog, n);
+    const dash = g.trace.style && g.trace.style.dash;
+    const cpu = g._segmentCpu;
+    if (!dash || !dash.length || !cpu) {
+      gl.uniform1i(u("u_dashCount"), 0);
+      return false;
+    }
+    const n = g.n;
+    const offsets = g._segmentDashOffsets?.length === n
+      ? g._segmentDashOffsets : (g._segmentDashOffsets = new Float32Array(n));
+    const directions = g._segmentDashDirections?.length === n
+      ? g._segmentDashDirections : (g._segmentDashDirections = new Float32Array(n));
+    const k0 = new Array(n), k1 = new Array(n), lengths = new Float32Array(n);
+    const adjacency = new Map();
+    const add = (key, index) => {
+      const edges = adjacency.get(key);
+      if (edges) edges.push(index); else adjacency.set(key, [index]);
+    };
+    const key = (x, y) => `${Math.round(x * 1000)},${Math.round(y * 1000)}`;
+    const dpr = this.dpr;
+    for (let i = 0; i < n; i++) {
+      const x0 = this._dataPx(g.xAxis, this._decodeValue(cpu.x0, g.x0Meta, i));
+      const x1 = this._dataPx(g.xAxis, this._decodeValue(cpu.x1, g.x1Meta, i));
+      const y0 = this._dataPx(g.yAxis, this._decodeValue(cpu.y0, g.y0Meta, i));
+      const y1 = this._dataPx(g.yAxis, this._decodeValue(cpu.y1, g.y1Meta, i));
+      k0[i] = key(x0, y0); k1[i] = key(x1, y1);
+      lengths[i] = Math.hypot(x1 - x0, y1 - y0) * dpr;
+      add(k0[i], i); add(k1[i], i);
+    }
+    const visited = new Uint8Array(n);
+    const walk = (start) => {
+      let current = start, accumulated = 0;
+      while (true) {
+        const edge = (adjacency.get(current) || []).find((index) => !visited[index]);
+        if (edge === undefined) break;
+        visited[edge] = 1;
+        if (k0[edge] === current) {
+          offsets[edge] = accumulated;
+          directions[edge] = 1;
+          current = k1[edge];
+        } else {
+          offsets[edge] = accumulated + lengths[edge];
+          directions[edge] = -1;
+          current = k0[edge];
+        }
+        accumulated += lengths[edge];
+      }
+    };
+    for (const [node, edges] of adjacency) if (edges.length === 1) walk(node);
+    for (let i = 0; i < n; i++) if (!visited[i]) walk(k0[i]);
+    const upload = (buffer, values) => {
+      if (!buffer) return this._upload(values);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, values, gl.DYNAMIC_DRAW);
+      return buffer;
+    };
+    g._segmentDashOffsetBuf = upload(g._segmentDashOffsetBuf, offsets);
+    g._segmentDashDirBuf = upload(g._segmentDashDirBuf, directions);
+    const pattern = new Float32Array(8);
+    const count = Math.min(dash.length, 8);
+    let period = 0;
+    for (let i = 0; i < count; i++) {
+      pattern[i] = Number(dash[i]) * dpr;
+      period += pattern[i];
+    }
+    gl.uniform1i(u("u_dashCount"), count);
+    gl.uniform1fv(u("u_dashArr"), pattern);
+    gl.uniform1f(u("u_dashPeriod"), Math.max(period, 1e-3));
+    return true;
   }
 
   _drawMesh(g, xm, ym) {
@@ -2342,7 +2526,7 @@ class ChartView {
       ? axis.tick_label_strategy
       : this._axisStyleValue(axis, "tick_label_strategy");
     const value = String(raw || "auto").replace(/-/g, "_");
-    return ["auto", "hide", "rotate", "stagger", "none"].includes(value) ? value : "auto";
+    return ["auto", "hide", "rotate", "stagger", "none", "off"].includes(value) ? value : "auto";
   }
 
   _axisTickLabelAngle(axis) {
@@ -2413,6 +2597,7 @@ class ChartView {
     const withBase = labels.map((label) => ({ ...label, angle: baseAngle, row: 0 }));
     let strategy = this._axisTickLabelStrategy(axis);
     if (strategy === "none") return []; // hide every tick label (sparklines)
+    if (strategy === "off") return []; // labels only; grid/baselines stay (mpl shared axes)
     if (strategy === "auto") {
       if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap)) return withBase;
       if (dim === "x" && axis.kind === "category" && labels.length <= 16) strategy = "rotate";
@@ -2560,21 +2745,55 @@ class ChartView {
           "pointer-events:none;";
         this.labels.appendChild(d);
       };
+      const frameSides = Array.isArray(s.frame_sides)
+        ? s.frame_sides
+        : [xAxis.side || "bottom", yAxis.side || "left"];
       if (!hideY) {
-        const yWidth = Math.max(1, Math.round(this._axisStyleNumber(yAxis, "axis_width", 1)));
-        const yAxisX = yAxis.side === "right" ? p.x + p.w - yWidth : p.x;
-        rule(yAxis, yAxisX, p.y, yWidth, p.h);
+        const yWidth = Math.max(1, this._axisStyleNumber(yAxis, "axis_width", 1));
+        if (frameSides.includes("left")) rule(yAxis, p.x, p.y, yWidth, p.h);
+        if (frameSides.includes("right")) rule(yAxis, p.x + p.w - yWidth, p.y, yWidth, p.h);
       }
       if (!hideX) {
-        const xHeight = Math.max(1, Math.round(this._axisStyleNumber(xAxis, "axis_width", 1)));
-        const xTop = xAxis.side === "top" ? p.y : p.y + p.h - xHeight;
-        rule(xAxis, p.x, xTop, p.w, xHeight);
+        const xHeight = Math.max(1, this._axisStyleNumber(xAxis, "axis_width", 1));
+        if (frameSides.includes("top")) rule(xAxis, p.x, p.y, p.w, xHeight);
+        if (frameSides.includes("bottom")) rule(xAxis, p.x, p.y + p.h - xHeight, p.w, xHeight);
       }
       for (const axis of Object.values(this.axes)) {
         if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
-        const w = Math.max(1, Math.round(this._axisStyleNumber(axis, "axis_width", 1)));
+        const w = Math.max(1, this._axisStyleNumber(axis, "axis_width", 1));
         const x = axis.side === "left" ? p.x : p.x + p.w - w;
         rule(axis, x, p.y, w, p.h);
+      }
+
+      const tickParts = (axis) => {
+        const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
+        const width = Math.max(0.5, this._axisStyleNumber(axis, "tick_width", 1));
+        const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
+        if (direction === "in") return { inward: length, outward: 0, width };
+        if (direction === "inout") return { inward: length / 2, outward: length / 2, width };
+        return { inward: 0, outward: length, width };
+      };
+      if (!hideX) {
+        const tick = tickParts(xAxis);
+        const side = xAxis.side || "bottom";
+        const edge = side === "top" ? p.y : p.y + p.h;
+        for (const value of xt.ticks) {
+          const x = this._dataPx("x", value);
+          if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
+          const top = side === "top" ? edge - tick.outward : edge - tick.inward;
+          rule(xAxis, x - tick.width / 2, top, tick.width, tick.inward + tick.outward);
+        }
+      }
+      if (!hideY) {
+        const tick = tickParts(yAxis);
+        const side = yAxis.side || "left";
+        const edge = side === "right" ? p.x + p.w : p.x;
+        for (const value of yt.ticks) {
+          const y = this._dataPx("y", value);
+          if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
+          const left = side === "right" ? edge - tick.inward : edge - tick.outward;
+          rule(yAxis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width);
+        }
       }
     }
 

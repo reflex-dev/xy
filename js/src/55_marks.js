@@ -118,11 +118,23 @@ const AREA_MARK = {
     view._drawArea(g, xm, ym, view._map(g.baseMeta, y0, y1, g.yAxis));
     if ((g.trace.style.line_width ?? 0) > 0) {
       view._drawLine(g, xm, ym, g.lineColor, g.trace.style.line_width, g.trace.style.line_opacity ?? 1);
+      if (g.trace.style.stroke_perimeter) {
+        // fill_between is a closed polygon. Draw its second boundary too;
+        // the generic area mark intentionally outlines only the value curve.
+        const yBuf = g.yBuf, yMeta = g.yMeta, dashY = g._dashY;
+        g.yBuf = g.baseBuf;
+        g.yMeta = g.baseMeta;
+        g._dashY = g._cpu.base;
+        view._drawLine(g, xm, ym, g.lineColor, g.trace.style.line_width, g.trace.style.line_opacity ?? 1);
+        g.yBuf = yBuf;
+        g.yMeta = yMeta;
+        g._dashY = dashY;
+      }
     }
   },
   refreshColor: (view, g) => {
     g.color = parseColor(view.root, g.trace.style.color, g.color);
-    g.lineColor = parseColor(view.root, g.trace.style.color, g.lineColor || g.color);
+    g.lineColor = parseColor(view.root, g.trace.style.line_color || g.trace.style.color, g.lineColor || g.color);
     g.grad = view._resolveMarkFill(g.trace.style, g.color);
   },
 };
@@ -154,13 +166,17 @@ const MARK_KINDS = {
   triangle_mesh: MESH_MARK,
   error_band: AREA_MARK,
   hexbin: {
-    build: (view, g, t, buffer) => view._buildScatterMark(g, t, buffer),
+    build: (view, g, t, buffer) => view._buildMeshMark(g, t, buffer),
     draw: (view, g) => {
       const [x0, x1] = view._axisRange(g.xAxis);
       const [y0, y1] = view._axisRange(g.yAxis);
-      view._drawPoints(g, view._map(g.xMeta, x0, x1, g.xAxis), view._map(g.yMeta, y0, y1, g.yAxis));
+      view._drawMesh(g, view._map(g.x0Meta, x0, x1, g.xAxis), view._map(g.y0Meta, y0, y1, g.yAxis));
     },
-    refreshColor: (view, g) => view._pointMarkStyle(g, g.trace),
+    refreshColor: (view, g) => {
+      if (g.colorMode === 0 && g.trace.color) g.color = parseColor(view.root, g.trace.color.color, g.color);
+      const style = g.trace.style || {};
+      g.meshStroke = parseColor(view.root, style.stroke || "transparent", [0, 0, 0, 0]);
+    },
   },
   bar: BAR_MARK,
   column: BAR_MARK,

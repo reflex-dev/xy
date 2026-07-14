@@ -111,7 +111,7 @@ def test_grid_html_has_panels() -> None:
     _fig, axes = plt.subplots(2, 2, figsize=(8, 6))
     for i, ax in enumerate(axes.ravel()):
         ax.plot([0, 1], [i, i + 1])
-    html = plt.gcf()._repr_html_()
+    html = plt.gcf()._to_html()
     assert html.count('class="fc-panel"') == 4
     assert html.count('style="width:400px;height:300px"') == 4
     assert html.count('loading="lazy"') == 4
@@ -119,6 +119,21 @@ def test_grid_html_has_panels() -> None:
     assert "frame.srcdoc = blank" in html
     assert "frame.srcdoc = state.source" in html
     assert "const root = panelGrid || document" in html
+
+
+def test_notebook_repr_isolates_standalone_document_styles() -> None:
+    fig, ax = plt.subplots(figsize=(6.4, 4.8), dpi=100)
+    ax.plot([0, 1], [1, 2])
+
+    html = fig._repr_html_()
+
+    assert html.startswith('<iframe class="xy-notebook-frame"')
+    assert 'sandbox="allow-scripts"' in html
+    assert 'width="558" height="418"' in html
+    assert "margin-left:8px" in html
+    assert "<style>" not in html
+    assert "&lt;style&gt;" in html
+    assert "&lt;!doctype html&gt;" in html
 
 
 def test_figsize_dpi_map_to_pixels() -> None:

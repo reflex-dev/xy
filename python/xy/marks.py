@@ -39,6 +39,7 @@ def _append_segment_trace(
     role: str,
     color_ch: Any = None,
     count: Optional[int] = None,
+    dash: Any = None,
 ) -> None:
     """Append a compact instanced line-segment trace.
 
@@ -74,7 +75,13 @@ def _append_segment_trace(
                 y0=y0c,
                 y1=y1c,
                 name=name,
-                style={"color": color, "opacity": opacity, "width": width, "role": role},
+                style={
+                    "color": color,
+                    "opacity": opacity,
+                    "width": width,
+                    "role": role,
+                    **({"dash": dash} if dash else {}),
+                },
                 color_ch=color_ch,
                 count=count,
             )
@@ -494,8 +501,10 @@ def area(
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.35,
+    line_color: Optional[str] = None,
     line_width: float = 1.2,
     line_opacity: float = 1.0,
+    stroke_perimeter: bool = False,
     fill: Any = None,
     curve: str = "linear",
     dash: Any = None,
@@ -511,8 +520,10 @@ def area(
     name = self._optional_text(name, "area name")
     color = self._optional_css_color(color, "area color")
     opacity = self._opacity(opacity, "area opacity")
+    line_color = self._optional_css_color(line_color, "area line_color")
     line_width = self._nonnegative_scalar(line_width, "area line_width")
     line_opacity = self._opacity(line_opacity, "area line_opacity")
+    stroke_perimeter = _validate.optional_bool(stroke_perimeter, "area stroke_perimeter")
     fill_spec = _validate.mark_fill(fill, "area fill")
     curve = _validate.curve(curve, "area curve")
     dash_spec = _validate.dash(dash, "area dash")
@@ -536,7 +547,10 @@ def area(
             "opacity": opacity,
             "line_width": line_width,
             "line_opacity": line_opacity,
+            "stroke_perimeter": stroke_perimeter,
         }
+        if line_color is not None:
+            style["line_color"] = line_color
         if fill_spec is not None:
             style["fill"] = fill_spec
         if curve != "linear":
@@ -910,6 +924,7 @@ def scatter(
     size: Any = 4.0,
     opacity: float = 0.8,
     colormap: str = channels.DEFAULT_COLORMAP,
+    color_domain: Optional[tuple[float, float]] = None,
     size_range: tuple[float, float] = (2.0, 18.0),
     density: Optional[bool] = None,
     symbol: str = "circle",
@@ -939,7 +954,7 @@ def scatter(
         n = len(xc)
         default_color = DEFAULT_PALETTE[len(self.traces) % len(DEFAULT_PALETTE)]
         color_ch = channels.resolve_color(
-            color, n, colormap=colormap, default_constant=default_color
+            color, n, colormap=colormap, default_constant=default_color, domain=color_domain
         )
         size_ch = channels.resolve_size(size, n, range_px=size_range)
 
@@ -1347,6 +1362,9 @@ def hexbin(
     gridsize: int | tuple[int, int] = 64,
     range: Optional[tuple[tuple[float, float], tuple[float, float]]] = None,
     bins: str = "count",
+    C: Any = None,
+    reduce_C_function: Any = np.mean,
+    mincnt: Optional[int] = None,
     name: Optional[str] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     opacity: float = 0.9,
@@ -1357,7 +1375,8 @@ def hexbin(
     shipped as centers plus one scalar count/color channel.
     """
     if isinstance(gridsize, (int, np.integer)) and not isinstance(gridsize, (bool, np.bool_)):
-        w = h = int(gridsize)
+        w = int(gridsize)
+        h = max(2, int(w / np.sqrt(3.0)))
     elif isinstance(gridsize, (tuple, list)) and len(gridsize) == 2:
         if any(
             isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer))
@@ -1386,10 +1405,18 @@ def hexbin(
             f"hexbin x and y must have equal length, got {len(x_all)} and {len(y_all)}"
         )
     n_points = len(x_all)
+    c_all = None
+    if C is not None:
+        c_all, _c_kind, _c_copies = columns._canonicalize(C)
+        if len(c_all) != len(x_all):
+            raise ValueError("hexbin C must have the same length as x and y")
     finite = np.isfinite(x_all) & np.isfinite(y_all)
+    if c_all is not None:
+        finite &= np.isfinite(c_all)
     if not np.any(finite):
         raise ValueError("hexbin x and y must contain at least one finite pair")
     xv, yv = x_all[finite], y_all[finite]
+    cv = None if c_all is None else c_all[finite]
     if range is None:
         xr = self._auto_domain(kernels.min_max(xv))
         yr = self._auto_domain(kernels.min_max(yv))
@@ -1398,15 +1425,54 @@ def hexbin(
             raise ValueError("hexbin range must be ((x0, x1), (y0, y1))")
         xr = self._finite_increasing_pair(range[0], "hexbin x range")
         yr = self._finite_increasing_pair(range[1], "hexbin y range")
-    grid = kernels.bin_2d(xv, yv, xr[0], xr[1], yr[0], yr[1], w, h)
-    rows, cols = np.nonzero(grid.reshape(h, w) > 0)
-    counts = grid.reshape(h, w)[rows, cols]
+    # Matplotlib displays zero-count cells when C is absent and mincnt is not
+    # specified, producing the full rectangular honeycomb. Reducer hexbins
+    # cannot reduce an empty group and therefore default to one observation.
+    threshold = (0 if cv is None else 1) if mincnt is None else int(mincnt)
+    if threshold < 0:
+        raise ValueError("hexbin mincnt must be nonnegative")
+    # Matplotlib's hex lattice is the union of an integer grid and a half-cell
+    # offset grid. Assign each point to the nearer center in the hex metric;
+    # rectangular binning plus staggered display centers leaves overlaps and
+    # gaps and, more importantly, puts values in the wrong cells.
+    fx = (xv - xr[0]) * w / (xr[1] - xr[0])
+    fy = (yv - yr[0]) * h / (yr[1] - yr[0])
+    ix1 = np.rint(fx).astype(np.int64)
+    iy1 = np.rint(fy).astype(np.int64)
+    ix2 = np.floor(fx).astype(np.int64)
+    iy2 = np.floor(fy).astype(np.int64)
+    use_first = (fx - ix1) ** 2 + 3.0 * (fy - iy1) ** 2 < (
+        (fx - ix2 - 0.5) ** 2 + 3.0 * (fy - iy2 - 0.5) ** 2
+    )
+    valid_first = use_first & (ix1 >= 0) & (ix1 <= w) & (iy1 >= 0) & (iy1 <= h)
+    valid_second = ~use_first & (ix2 >= 0) & (ix2 < w) & (iy2 >= 0) & (iy2 < h)
+    if not np.any(valid_first | valid_second):
+        raise ValueError("hexbin range contains no finite points")
+    flat1 = iy1 * (w + 1) + ix1
+    flat2 = iy2 * w + ix2
+    count1 = np.bincount(flat1[valid_first], minlength=(w + 1) * (h + 1)).astype(float)
+    count2 = np.bincount(flat2[valid_second], minlength=w * h).astype(float)
+    keep1 = np.flatnonzero(count1 >= threshold)
+    keep2 = np.flatnonzero(count2 >= threshold)
+    counts = np.concatenate((count1[keep1], count2[keep2]))
     if len(counts) == 0:
         raise ValueError("hexbin range contains no finite points")
     dx, dy = (xr[1] - xr[0]) / w, (yr[1] - yr[0]) / h
-    centers_x = xr[0] + (cols + 0.5 + 0.5 * (rows & 1)) * dx
-    centers_y = yr[0] + (rows + 0.5) * dy
-    metric = np.log1p(counts) if bins == "log" else counts
+    centers_x = np.concatenate((xr[0] + (keep1 % (w + 1)) * dx, xr[0] + (keep2 % w + 0.5) * dx))
+    centers_y = np.concatenate((yr[0] + (keep1 // (w + 1)) * dy, yr[0] + (keep2 // w + 0.5) * dy))
+    if cv is None:
+        metric = np.log1p(counts) if bins == "log" else counts
+    else:
+        reduced: list[float] = []
+        memberships = [cv[valid_first & (flat1 == flat)] for flat in keep1] + [
+            cv[valid_second & (flat2 == flat)] for flat in keep2
+        ]
+        for values in memberships:
+            made = np.asarray(reduce_C_function(values))
+            if made.ndim != 0 or not np.isfinite(made):
+                raise ValueError("hexbin reduce_C_function must return one finite scalar per bin")
+            reduced.append(float(made))
+        metric = np.asarray(reduced, dtype=np.float64)
     color_ch = channels.resolve_color(
         metric, len(metric), colormap=colormap, default_constant=DEFAULT_PALETTE[0]
     )
@@ -1422,7 +1488,8 @@ def hexbin(
                 style={
                     "color": DEFAULT_PALETTE[len(self.traces) % len(DEFAULT_PALETTE)],
                     "opacity": opacity,
-                    "symbol": "hexagon",
+                    "hex_dx": dx,
+                    "hex_dy": dy,
                 },
                 color_ch=color_ch,
                 size_ch=channels.SizeChannel(mode="constant", constant=8.0),
@@ -1433,6 +1500,48 @@ def hexbin(
     except Exception:
         self._rollback(checkpoint)
         raise
+
+
+def _interpolate_contourf_grid(
+    arr: np.ndarray, xpos: np.ndarray, ypos: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Bilinearly densify a contour field before assigning discrete bands."""
+    rows, cols = arr.shape
+
+    def sample_count(size: int) -> int:
+        # Eight samples per source interval removes visible cell stair-steps for
+        # common scientific grids. The 512 target keeps the shipped grid bounded;
+        # inputs already larger than that are never downsampled.
+        return min((size - 1) * 8 + 1, max(size, 512))
+
+    out_rows, out_cols = sample_count(rows), sample_count(cols)
+    if (out_rows, out_cols) == (rows, cols):
+        return arr, xpos, ypos
+
+    row_at = np.linspace(0.0, rows - 1, out_rows)
+    col_at = np.linspace(0.0, cols - 1, out_cols)
+    row0 = np.floor(row_at).astype(np.intp)
+    col0 = np.floor(col_at).astype(np.intp)
+    row1 = np.minimum(row0 + 1, rows - 1)
+    col1 = np.minimum(col0 + 1, cols - 1)
+    row_weight = (row_at - row0)[:, None]
+    col_weight = (col_at - col0)[None, :]
+
+    z00 = arr[row0[:, None], col0[None, :]]
+    z10 = arr[row0[:, None], col1[None, :]]
+    z01 = arr[row1[:, None], col0[None, :]]
+    z11 = arr[row1[:, None], col1[None, :]]
+    valid = np.isfinite(z00) & np.isfinite(z10) & np.isfinite(z01) & np.isfinite(z11)
+    interpolated = (
+        z00 * (1.0 - row_weight) * (1.0 - col_weight)
+        + z10 * (1.0 - row_weight) * col_weight
+        + z01 * row_weight * (1.0 - col_weight)
+        + z11 * row_weight * col_weight
+    )
+    interpolated[~valid] = np.nan
+    dense_x = np.interp(col_at, np.arange(cols), xpos)
+    dense_y = np.interp(row_at, np.arange(rows), ypos)
+    return interpolated, dense_x, dense_y
 
 
 def contour(
@@ -1448,8 +1557,14 @@ def contour(
     color: Optional[str] = None,
     width: float = 1.1,
     opacity: float = 0.9,
+    dash_negative: bool = False,
 ) -> "Figure":
-    """Add regular-grid contour isolines, optionally over a filled heatmap."""
+    """Add regular-grid contour isolines, optionally over a filled heatmap.
+
+    `dash_negative` renders negative-level isolines dashed for a single-color
+    contour (Matplotlib's monochrome convention); it is ignored when a colormap
+    drives per-level color.
+    """
     arr = self._as_float_array(z, "contour z")
     if arr.ndim != 2 or min(arr.shape) < 2:
         raise ValueError(
@@ -1492,7 +1607,30 @@ def contour(
     checkpoint = self._checkpoint()
     try:
         if filled:
-            self.heatmap(arr, x=x, y=y, name=None, colormap=colormap, opacity=min(opacity, 0.7))
+            # Matplotlib's contourf paints piecewise-constant bands *between*
+            # consecutive levels, not a smooth ramp. Interpolate the scalar
+            # field before snapping samples to band midpoints so boundaries
+            # cross between source points instead of following square cells.
+            # Values outside the level range stay unpainted (extend='neither').
+            edges = np.asarray(level_values, dtype=np.float64)
+            if len(edges) >= 2 and edges[0] < edges[-1]:
+                dense, dense_x, dense_y = _interpolate_contourf_grid(arr, xpos, ypos)
+                band = np.searchsorted(edges, dense, side="right") - 1
+                mids = (edges[:-1] + edges[1:]) * 0.5
+                banded = np.full(dense.shape, np.nan, dtype=np.float64)
+                inside = np.isfinite(dense) & (band >= 0) & (band < len(edges) - 1)
+                banded[inside] = mids[np.clip(band, 0, len(edges) - 2)][inside]
+                self.heatmap(
+                    banded,
+                    x=dense_x,
+                    y=dense_y,
+                    name=None,
+                    colormap=colormap,
+                    domain=(float(edges[0]), float(edges[-1])),
+                    opacity=min(opacity, 0.9),
+                )
+            else:
+                self.heatmap(arr, x=x, y=y, name=None, colormap=colormap, opacity=min(opacity, 0.7))
         x0, x1, y0, y1, level_values = _contour_segments(arr, xpos, ypos, level_values)
         if len(x0) == 0:
             raise ValueError("contour levels do not intersect the finite grid")
@@ -1504,19 +1642,34 @@ def contour(
             if color is None
             else None
         )
-        self._append_segment_trace(
-            "contour",
-            x0,
-            x1,
-            y0,
-            y1,
-            name=name,
-            color=color,
-            opacity=opacity,
-            width=width,
-            role="contour",
-            color_ch=color_ch,
-        )
+        # contourf paints bands without outlining their boundaries. Users can
+        # explicitly overlay contour() when isolines are desired.
+        if not filled:
+            # Matplotlib dashes negative isolines for a single-color contour. Split
+            # the segment set by level sign so the negative group ships dashed; a
+            # colormapped contour keeps every level solid.
+            lv = np.asarray(level_values)
+            if dash_negative and color is not None and np.any(lv < 0) and np.any(lv >= 0):
+                # Matplotlib's dashed preset is scaled by the contour linewidth:
+                # 3.7 on / 1.6 off times the rendered width.
+                groups = ((lv >= 0, None), (lv < 0, [3.7 * width, 1.6 * width]))
+            else:
+                groups = ((np.ones(len(lv), dtype=bool), None),)
+            for mask, dash in groups:
+                self._append_segment_trace(
+                    "contour",
+                    x0[mask],
+                    x1[mask],
+                    y0[mask],
+                    y1[mask],
+                    name=name if dash is None else None,
+                    color=color,
+                    opacity=opacity,
+                    width=width,
+                    role="contour",
+                    color_ch=color_ch,
+                    dash=dash,
+                )
     except Exception:
         self._rollback(checkpoint)
         raise

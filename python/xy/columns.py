@@ -56,22 +56,22 @@ class ZoneMaps:
     @cached_property
     def min(self) -> float:
         valid = self.mins[self.counts > 0]
-        return float(valid.min()) if len(valid) else float("nan")
+        return min(valid.tolist()) if len(valid) else float("nan")
 
     @cached_property
     def max(self) -> float:
         valid = self.maxs[self.counts > 0]
-        return float(valid.max()) if len(valid) else float("nan")
+        return max(valid.tolist()) if len(valid) else float("nan")
 
     @cached_property
     def positive_min(self) -> float:
         valid = self.positive_mins[np.isfinite(self.positive_mins)]
-        return float(valid.min()) if len(valid) else float("nan")
+        return min(valid.tolist()) if len(valid) else float("nan")
 
     @cached_property
     def positive_max(self) -> float:
         valid = self.positive_maxs[np.isfinite(self.positive_maxs)]
-        return float(valid.max()) if len(valid) else float("nan")
+        return max(valid.tolist()) if len(valid) else float("nan")
 
     @cached_property
     def count(self) -> int:

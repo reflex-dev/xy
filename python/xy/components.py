@@ -194,6 +194,7 @@ class Legend(Component):
     show: bool = True
     loc: Optional[str] = None
     ncols: int = 1
+    title: Optional[str] = None
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
     render: Any = None
@@ -257,6 +258,7 @@ def scatter(
     size: Union[str, float, Any] = 4.0,
     name: Optional[str] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
+    color_domain: Optional[tuple[float, float]] = None,
     size_range: tuple[float, float] = (2.0, 18.0),
     opacity: float = 0.8,
     density: Optional[bool] = None,
@@ -282,6 +284,7 @@ def scatter(
             "color": color,
             "size": size,
             "colormap": colormap,
+            "color_domain": color_domain,
             "size_range": size_range,
             "opacity": opacity,
             "density": density,
@@ -339,8 +342,10 @@ def area(
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.35,
+    line_color: Optional[str] = None,
     line_width: float = 1.2,
     line_opacity: float = 1.0,
+    stroke_perimeter: bool = False,
     fill: Any = None,
     curve: str = "linear",
     dash: Any = None,
@@ -362,8 +367,10 @@ def area(
             "base": base,
             "color": color,
             "opacity": opacity,
+            "line_color": line_color,
             "line_width": line_width,
             "line_opacity": line_opacity,
+            "stroke_perimeter": stroke_perimeter,
             "fill": fill,
             "curve": curve,
             "dash": dash,
@@ -757,6 +764,9 @@ def hexbin(
     gridsize: int | tuple[int, int] = 64,
     range: Optional[tuple[tuple[float, float], tuple[float, float]]] = None,
     bins: str = "count",
+    C: Any = None,
+    reduce_C_function: Any = np.mean,
+    mincnt: Optional[int] = None,
     name: Optional[str] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     opacity: float = 0.9,
@@ -776,6 +786,9 @@ def hexbin(
             "gridsize": gridsize,
             "range": range,
             "bins": bins,
+            "C": C,
+            "reduce_C_function": reduce_C_function,
+            "mincnt": mincnt,
             "colormap": colormap,
             "opacity": opacity,
             "x_axis": x_axis,
@@ -797,6 +810,7 @@ def contour(
     color: Optional[str] = None,
     width: float = 1.1,
     opacity: float = 0.9,
+    dash_negative: bool = False,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -817,6 +831,7 @@ def contour(
             "color": color,
             "width": width,
             "opacity": opacity,
+            "dash_negative": dash_negative,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -1458,6 +1473,7 @@ def legend(
     show: bool = True,
     loc: Optional[str] = None,
     ncols: int = 1,
+    title: Optional[str] = None,
     render: Any = None,
     class_name: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
@@ -1467,6 +1483,7 @@ def legend(
         show=_strict_bool(show, "legend show"),
         loc=_optional_string(loc, "legend loc"),
         ncols=_optional_positive_int(ncols, "legend ncols") or 1,
+        title=_optional_string(title, "legend title"),
         class_name=_optional_string(class_name, "legend class_name"),
         style=_style_dict(style, "legend style"),
         render=render,
@@ -1883,6 +1900,12 @@ class Chart(Component):
             node = legends[-1]
             _apply_chrome_node(fig, "legend", node.class_name, node.style)
             fig.legend_options = {"loc": node.loc, "ncols": node.ncols}
+            if node.title is not None:
+                fig.legend_options["title"] = node.title
+            if node.style:
+                # Carry the frame/frameon styling into the static-export spec so
+                # the raster/SVG legend can honor frameon=False (transparent bg).
+                fig.legend_options["style"] = dict(node.style)
         if legend_shows and not legend_shows[-1]:
             fig.show_legend = False
         if modebars:
@@ -2576,6 +2599,7 @@ def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
             color=_resolve_color(data, m.props["color"], context=f"{m.kind}.color"),
             size=_resolve(data, size, context=f"{m.kind}.size") if isinstance(size, str) else size,
             colormap=m.props["colormap"],
+            color_domain=m.props.get("color_domain"),
             size_range=m.props["size_range"],
             opacity=m.props["opacity"],
             density=m.props["density"],
@@ -2612,8 +2636,10 @@ def _apply_area(fig: Figure, m: Mark, data: Any) -> None:
         name=m.name,
         color=m.props["color"],
         opacity=m.props["opacity"],
+        line_color=m.props["line_color"],
         line_width=m.props["line_width"],
         line_opacity=m.props["line_opacity"],
+        stroke_perimeter=m.props["stroke_perimeter"],
         fill=m.props["fill"],
         curve=m.props["curve"],
         dash=m.props["dash"],
@@ -2780,6 +2806,11 @@ def _apply_hexbin(fig: Figure, m: Mark, data: Any) -> None:
         gridsize=m.props["gridsize"],
         range=m.props["range"],
         bins=m.props["bins"],
+        C=_resolve(data, m.props["C"], context=f"{m.kind}.C")
+        if isinstance(m.props["C"], str)
+        else m.props["C"],
+        reduce_C_function=m.props["reduce_C_function"],
+        mincnt=m.props["mincnt"],
         name=m.name,
         colormap=m.props["colormap"],
         opacity=m.props["opacity"],
@@ -2798,6 +2829,7 @@ def _apply_contour(fig: Figure, m: Mark, data: Any) -> None:
         color=m.props["color"],
         width=m.props["width"],
         opacity=m.props["opacity"],
+        dash_negative=m.props.get("dash_negative", False),
     )
 
 

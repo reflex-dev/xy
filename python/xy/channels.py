@@ -41,6 +41,9 @@ COLORMAPS = (
     "purples",
     "pubu",
     "prgn",
+    "rdgy",
+    "rdbu",
+    "jet",
     "binary",
 )
 
@@ -347,15 +350,24 @@ def resolve_color(
     *,
     colormap: str = DEFAULT_COLORMAP,
     default_constant: str,
+    domain: Optional[tuple[float, float]] = None,
 ) -> ColorChannel:
     """Interpret the `color=` argument.
 
     - `None` / a CSS color string → constant.
     - a length-n array of numbers → continuous (normalized + colormap).
     - a length-n array of strings/categories → categorical (factorized + palette).
+
+    `domain` pins the continuous normalization window (matplotlib's
+    vmin/vmax); values outside clip to the colormap ends.
     """
     if not is_colormap(colormap):
         raise ValueError(f"unknown colormap {colormap!r}; known: {COLORMAPS}")
+    if domain is not None:
+        lo, hi = float(domain[0]), float(domain[1])
+        if not (np.isfinite(lo) and np.isfinite(hi)) or hi <= lo:
+            raise ValueError(f"color domain must be finite (lo, hi) with lo < hi, got {domain!r}")
+        domain = (lo, hi)
 
     # Constant channels keep the colormap too: it still drives the density
     # ramp when the trace aggregates (§5 Tier 2), and a typo'd name must
@@ -399,7 +411,10 @@ def resolve_color(
 
     vals = _as_real_array(arr, "color array")
     return ColorChannel(
-        mode="continuous", values=vals, domain=_continuous_domain(vals), colormap=colormap
+        mode="continuous",
+        values=vals,
+        domain=domain if domain is not None else _continuous_domain(vals),
+        colormap=colormap,
     )
 
 

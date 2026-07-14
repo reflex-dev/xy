@@ -30,13 +30,14 @@ XFAILS: dict[str, str] = {}
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 HTML_MAGIC = "<!doctype html>"
+NOTEBOOK_HTML_MAGIC = '<iframe class="xy-notebook-frame"'
 
 
 def _assert_open_figures_render() -> None:
     """Every figure the snippet left open must materialize real HTML."""
     for fig in all_figures():
         html = fig._repr_html_()
-        assert html.startswith(HTML_MAGIC), (
+        assert html.startswith(NOTEBOOK_HTML_MAGIC), (
             f"figure {fig.number} produced non-HTML output: {html[:60]!r}"
         )
 

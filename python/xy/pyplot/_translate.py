@@ -30,29 +30,29 @@ LINESTYLE_TO_DASH = {
 }
 
 MARKER_TO_SYMBOL = {
-    ".": "circle",
-    ",": "circle",
+    ".": "point",
+    ",": "pixel",
     "o": "circle",
-    "v": "triangle",
+    "v": "triangle_down",
     "^": "triangle",
-    "<": "triangle",
-    ">": "triangle",
-    "1": "triangle",
+    "<": "triangle_left",
+    ">": "triangle_right",
+    "1": "triangle_down",
     "2": "triangle",
-    "3": "triangle",
-    "4": "triangle",
+    "3": "triangle_left",
+    "4": "triangle_right",
     "8": "circle",
     "s": "square",
-    "p": "square",
+    "p": "pentagon",
     "P": "cross",
-    "*": "diamond",
-    "h": "circle",
-    "H": "circle",
-    "+": "cross",
-    "x": "cross",
-    "X": "cross",
+    "*": "star",
+    "h": "hexagon",
+    "H": "hexagon",
+    "+": "plus_line",
+    "x": "x_line",
+    "X": "x",
     "D": "diamond",
-    "d": "diamond",
+    "d": "thin_diamond",
     "|": "cross",
     "_": "cross",
 }
@@ -88,15 +88,21 @@ def line_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
     dashes = kwargs.pop("dashes", None)
     if dashes is not None:
         out["dash"] = list(dashes)
-    kwargs.pop("gapcolor", None)
-    kwargs.pop("path_effects", None)
+    gapcolor = kwargs.pop("gapcolor", None)
+    if gapcolor is not None:
+        raise not_implemented("Line2D gapcolor")
+    path_effects = kwargs.pop("path_effects", None)
+    if path_effects:
+        raise not_implemented("Line2D path_effects")
     label = kwargs.pop("label", None)
     if label is not None:
         out["name"] = str(label)
     return out
 
 
-def marker_size_to_scatter_size(s: Any, default: float = 6.0) -> Any:
+def marker_size_to_scatter_size(
+    s: Any, default: float = 6.0, *, point_scale: float = 4.0 / 3.0
+) -> Any:
     """matplotlib sizes are areas in points²; the engine takes diameters in px.
 
     36 pt² (mpl default) ≈ 6 px diameter keeps default charts visually aligned.
@@ -105,7 +111,7 @@ def marker_size_to_scatter_size(s: Any, default: float = 6.0) -> Any:
     if s is None:
         return default
     arr = np.asarray(s, dtype=np.float64)
-    out = np.sqrt(np.maximum(arr, 0.0)) * (4.0 / 3.0)
+    out = np.sqrt(np.maximum(arr, 0.0)) * float(point_scale)
     if out.ndim == 0:
         return float(out)
     return out

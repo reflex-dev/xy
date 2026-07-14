@@ -105,6 +105,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         self.traces: list[Trace] = []
         self.show_legend = True
         self.legend_options: dict[str, Any] = {}
+        # None keeps the declarative engine's two-axis baseline convention;
+        # pyplot sets an explicit Matplotlib-style spine list.
+        self.frame_sides: Optional[list[str]] = None
         self.colorbar_options: Optional[dict[str, Any]] = None
         self.show_modebar = True
         self.show_tooltip = True
@@ -1149,8 +1152,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
         return self.to_html(path, custom_css=custom_css)
 
     def _repr_html_(self) -> str:
-        """Notebook HTML repr fallback using the standalone export path."""
-        return self.to_html()
+        """Notebook HTML repr isolated from the host document's styles."""
+        return export.notebook_iframe(self.to_html(), width=self.width, height=self.height)
 
     def to_svg(
         self,

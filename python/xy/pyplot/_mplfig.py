@@ -14,9 +14,39 @@ from typing import Any, Optional
 
 import numpy as np
 
-from ._axes import Axes
+from ._artists import Text
+from ._axes import Axes, _plain_text
 from ._rc import rc_figsize_px
-from ._translate import not_implemented
+from ._transforms import CoordinateTransform
+from ._translate import check_unsupported, not_implemented
+
+
+def _png_with_metadata(data: bytes, metadata: dict[Any, Any]) -> bytes:
+    """Insert standards-compliant PNG text chunks before IEND."""
+    from xy import _png
+
+    chunks = []
+    for raw_key, raw_value in metadata.items():
+        key = str(raw_key)
+        value = str(raw_value)
+        try:
+            encoded_key = key.encode("latin-1", "strict")
+        except UnicodeEncodeError:
+            encoded_key = b""
+        if not encoded_key or len(encoded_key) > 79 or "\x00" in key:
+            raise ValueError("PNG metadata keys must be 1-79 Latin-1 characters")
+        try:
+            payload = key.encode("latin-1") + b"\0" + value.encode("latin-1")
+            chunks.append(_png._chunk(b"tEXt", payload))
+        except UnicodeEncodeError:
+            # iTXt: keyword, compression flag/method, language, translated
+            # keyword, then UTF-8 text.
+            payload = key.encode("latin-1") + b"\0\0\0\0\0" + value.encode("utf-8")
+            chunks.append(_png._chunk(b"iTXt", payload))
+    marker = data.rfind(b"\x00\x00\x00\x00IEND")
+    if marker < 0:
+        raise ValueError("invalid PNG output")
+    return data[:marker] + b"".join(chunks) + data[marker:]
 
 
 class Figure:
@@ -31,51 +61,149 @@ class Figure:
         self._figsize = figsize
         self._dpi = dpi
         self._facecolor = facecolor or "white"
+        self._edgecolor = "white"
         self._suptitle: Optional[str] = None
+        self._suptitle_style: dict[str, Any] = {}
+        self._supxlabel: Optional[str] = None
+        self._supylabel: Optional[str] = None
         self._nrows = 1
         self._ncols = 1
         self._axes: list[Axes] = []
         self._current_ax: Optional[Axes] = None
         self._html_cache: Optional[str] = None
-        self.transFigure = "figure fraction"
+        self.transFigure = CoordinateTransform("figure_fraction")
         self._sharex = False
         self._sharey = False
         self._link_group = f"xy-pyplot-{uuid.uuid4().hex[:8]}"
         self._shared_colorbar: Optional[dict[str, Any]] = None
         self._width_ratios: Optional[tuple[float, ...]] = None
         self._height_ratios: Optional[tuple[float, ...]] = None
+        self._layout_options: dict[str, Any] = {}
+        self._subplot_adjust: dict[str, float] = {}
+        self._label = ""
+        self._gci: Any = None  # last color-mapped artist, for plt.colorbar()/clim()
 
     # -- layout --------------------------------------------------------------
 
     def _invalidate(self) -> None:
         self._html_cache = None
 
-    def add_subplot(self, *args: Any) -> Axes:
-        if args and args != (1, 1, 1) and args != (111,):
+    @property
+    def canvas(self) -> "_FigureCanvas":
+        return _FigureCanvas(self)
+
+    def add_subplot(self, *args: Any, **kwargs: Any) -> Axes:
+        if len(args) == 1 and isinstance(args[0], _SubplotSpec):
+            spec = args[0]
+            if spec.is_single and not spec.gridspec.has_custom_geometry:
+                self._ensure_grid(spec.nrows, spec.ncols)
+                ax = self._axes_at(spec.index)
+            else:
+                # Spans and custom spacing become explicit figure rectangles.
+                ax = self.add_axes(spec.gridspec.cell_rect(spec.rows, spec.cols))
+        elif args and args != (1, 1, 1) and args != (111,):
             nrows, ncols, index = _parse_subplot_args(args)
-            self._ensure_grid(nrows, ncols)
-            ax = self._axes_at(index - 1)
+            if any(a._figure_rect is not None for a in self._axes):
+                # matplotlib mixes numbered subplots into figures that already
+                # hold free-form axes; keep the figure free-form via the cell
+                # rectangle (and return the existing axes for a repeat spec).
+                row, col = divmod(index - 1, ncols)
+                rect = _GridSpec(self, nrows, ncols).cell_rect((row, row + 1), (col, col + 1))
+                existing = next((a for a in self._axes if a._figure_rect == rect), None)
+                ax = existing if existing is not None else self.add_axes(rect)
+            else:
+                self._ensure_grid(nrows, ncols)
+                ax = self._axes_at(index - 1)
         else:
             self._ensure_grid(1, 1)
             ax = self._axes_at(0)
         self._current_ax = ax  # matplotlib: add_subplot activates the axes
+        sharex = kwargs.pop("sharex", None)
+        sharey = kwargs.pop("sharey", None)
+        if sharex is not None:
+            ax._axis["x"] = sharex._axis_props("x")  # static share, as in twiny()
+        if sharey is not None:
+            ax._axis["y"] = sharey._axis_props("y")
+        if kwargs:
+            ax.set(**kwargs)
         return ax
 
     def add_axes(self, rect: Any, **kwargs: Any) -> Axes:
-        del kwargs
         parsed = tuple(float(value) for value in rect)
         if len(parsed) != 4 or any(value < 0 for value in parsed[2:]):
             raise ValueError("add_axes rect must be [left, bottom, width, height]")
-        if not self._axes:
-            ax = Axes(self)
-            self._axes.append(ax)
-        else:
-            ax = Axes(self)
-            self._axes.append(ax)
+        ax = Axes(self)
+        self._axes.append(ax)
         ax._figure_rect = parsed
         self._nrows, self._ncols = 1, len(self._axes)
         self._current_ax = ax
+        if kwargs:
+            ax.set(**kwargs)
         return ax
+
+    def subplots(
+        self,
+        nrows: int = 1,
+        ncols: int = 1,
+        *,
+        sharex: bool = False,
+        sharey: bool = False,
+        squeeze: bool = True,
+        width_ratios: Any = None,
+        height_ratios: Any = None,
+        gridspec_kw: Optional[dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Create a subplot grid on this figure and return its Axes array.
+
+        This mirrors the axes-returning half of ``matplotlib.figure.Figure.subplots``.
+        Figure creation and pyplot registration belong to the state module.
+        """
+        del kwargs
+        gridspec_kw = gridspec_kw or {}
+        width_ratios = gridspec_kw.get("width_ratios", width_ratios)
+        height_ratios = gridspec_kw.get("height_ratios", height_ratios)
+        axes = make_axes_grid(self, int(nrows), int(ncols), squeeze=squeeze)
+        self._width_ratios = None if width_ratios is None else tuple(map(float, width_ratios))
+        self._height_ratios = None if height_ratios is None else tuple(map(float, height_ratios))
+        apply_sharing(self, _share_mode(sharex, "sharex"), _share_mode(sharey, "sharey"))
+        self._hide_inner_tick_labels(int(nrows), int(ncols))
+        self._invalidate()
+        return axes
+
+    def _hide_inner_tick_labels(self, nrows: int, ncols: int) -> None:
+        """Matplotlib's shared-axes rule: only edge panels keep tick labels."""
+        for index, ax in enumerate(self._axes):
+            row, col = index // ncols, index % ncols
+            if self._sharex in ("all", "col") and row < nrows - 1:
+                ax._axis_props("x")["tick_label_strategy"] = "off"
+            if self._sharey in ("all", "row") and col > 0:
+                ax._axis_props("y")["tick_label_strategy"] = "off"
+
+    def add_gridspec(self, nrows: int = 1, ncols: int = 1, **kwargs: Any) -> "_GridSpec":
+        """Return a lightweight GridSpec facade backed by the current grid.
+
+        The shim supports row-major single-cell specs such as ``fig.add_subplot(gs[0, 1])``.
+        General spanning layout is intentionally not exposed as a fake GridSpec.
+        """
+        width_ratios = kwargs.pop("width_ratios", kwargs.pop("widths", None))
+        height_ratios = kwargs.pop("height_ratios", kwargs.pop("heights", None))
+        if kwargs:
+            raise not_implemented(
+                f"add_gridspec({', '.join(sorted(kwargs))})",
+                "nrows, ncols, width_ratios, and height_ratios",
+            )
+        self._ensure_grid(int(nrows), int(ncols))
+        self._width_ratios = None if width_ratios is None else tuple(map(float, width_ratios))
+        self._height_ratios = None if height_ratios is None else tuple(map(float, height_ratios))
+        self._invalidate()
+        return _GridSpec(
+            self,
+            int(nrows),
+            int(ncols),
+            width_ratios=self._width_ratios,
+            height_ratios=self._height_ratios,
+        )
 
     def _ensure_grid(self, nrows: int, ncols: int) -> None:
         if (
@@ -103,20 +231,152 @@ class Figure:
             return self._current_ax
         return self._axes_at(0)
 
+    def sca(self, ax: Axes) -> Axes:
+        if ax not in self._axes:
+            raise ValueError("Axes must belong to this figure")
+        self._current_ax = ax
+        return ax
+
+    def delaxes(self, ax: Axes) -> None:
+        if ax not in self._axes:
+            raise ValueError("Axes must belong to this figure")
+        index = self._axes.index(ax)
+        self._axes.remove(ax)
+        ax.figure = None
+        if self._current_ax is ax:
+            self._current_ax = self._axes[min(index, len(self._axes) - 1)] if self._axes else None
+        if not self._axes:
+            self._nrows, self._ncols = 1, 1
+        self._invalidate()
+
+    def clear(self, keep_observers: bool = False) -> None:
+        del keep_observers  # compat-noop: the shim has no observer registry
+        for ax in self._axes:
+            ax.figure = None
+        self._axes = []
+        self._current_ax = None
+        self._nrows, self._ncols = 1, 1
+        self._suptitle = None
+        self._supxlabel = None
+        self._supylabel = None
+        self._shared_colorbar = None
+        self._gci = None
+        self._width_ratios = None
+        self._height_ratios = None
+        self._layout_options = {}
+        self._subplot_adjust = {}
+        self._invalidate()
+
+    clf = clear
+
     # -- chrome ---------------------------------------------------------------
 
     def suptitle(self, title: str, **kwargs: Any) -> None:
-        self._suptitle = str(title)
+        size = kwargs.pop("fontsize", kwargs.pop("size", 16.0))
+        weight = kwargs.pop("fontweight", kwargs.pop("weight", "normal"))
+        family = kwargs.pop("fontfamily", kwargs.pop("family", "system-ui, sans-serif"))
+        color = kwargs.pop("color", "#262626")
+        x = kwargs.pop("x", 0.5)
+        y = kwargs.pop("y", 0.98)
+        ha = kwargs.pop("ha", kwargs.pop("horizontalalignment", "center"))
+        va = kwargs.pop("va", kwargs.pop("verticalalignment", "top"))
+        if kwargs:
+            raise TypeError(f"suptitle() got unsupported keyword argument {next(iter(kwargs))!r}")
+        self._suptitle = _plain_text(title)
+        self._suptitle_style = {
+            "size": float(size),
+            "weight": str(weight),
+            "family": str(family),
+            "color": str(color),
+            "x": float(x),
+            "y": float(y),
+            "ha": str(ha),
+            "va": str(va),
+        }
         self._invalidate()
 
+    def supxlabel(self, label: str, **kwargs: Any) -> Text:
+        self._supxlabel = str(label)
+        return self.text(0.5, 0.01, label, ha=kwargs.pop("ha", "center"), **kwargs)
+
+    def supylabel(self, label: str, **kwargs: Any) -> Text:
+        self._supylabel = str(label)
+        return self.text(
+            0.01,
+            0.5,
+            label,
+            va=kwargs.pop("va", "center"),
+            rotation=kwargs.pop("rotation", "vertical"),
+            **kwargs,
+        )
+
+    def text(
+        self,
+        x: Any,
+        y: Any,
+        s: str,
+        fontdict: Optional[dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Text:
+        return self.gca().text(x, y, s, fontdict=fontdict, transform=self.transFigure, **kwargs)
+
+    def legend(self, *args: Any, **kwargs: Any) -> None:
+        axes = self.axes or [self.gca()]
+        labels = args[1] if len(args) >= 2 else kwargs.get("labels")
+        if labels is not None:
+            axes[0].legend(args[0] if args else [], labels, **kwargs)
+            return None
+        for ax in axes:
+            if any(entry.get("kwargs", {}).get("name") for entry in ax._entries):
+                ax.legend(*args, **kwargs)
+        if not any(ax._legend for ax in axes):
+            axes[0].legend(*args, **kwargs)
+        return None
+
     def tight_layout(self, **kwargs: Any) -> None:
-        pass  # engine layout is label-aware already
+        pad = kwargs.pop("pad", None)
+        h_pad = kwargs.pop("h_pad", None)
+        w_pad = kwargs.pop("w_pad", None)
+        rect = kwargs.pop("rect", None)
+        if kwargs:
+            raise TypeError(
+                f"tight_layout() got unsupported keyword argument {next(iter(kwargs))!r}"
+            )
+        self._layout_options = {
+            "engine": "tight",
+            "pad": pad,
+            "h_pad": h_pad,
+            "w_pad": w_pad,
+            "rect": rect,
+        }
+        self._invalidate()
 
     def subplots_adjust(self, **kwargs: Any) -> None:
-        pass
+        allowed = {"left", "right", "top", "bottom", "wspace", "hspace"}
+        unsupported = set(kwargs) - allowed
+        if unsupported:
+            raise TypeError(
+                f"subplots_adjust() got unsupported keyword argument {sorted(unsupported)[0]!r}"
+            )
+        material = {key: value for key, value in kwargs.items() if value is not None}
+        if material:
+            raise NotImplementedError(
+                "xy.pyplot does not implement Figure.subplots_adjust(); subplot frame and "
+                "spacing values cannot be represented by the current multi-panel renderer"
+            )
 
     def autofmt_xdate(self, **kwargs: Any) -> None:
-        del kwargs
+        rotation = float(kwargs.pop("rotation", 30))
+        ha = kwargs.pop("ha", "right")
+        if kwargs:
+            raise TypeError(
+                f"autofmt_xdate() got unsupported keyword argument {next(iter(kwargs))!r}"
+            )
+        for ax in self._axes:
+            props = ax._axis_props("x")
+            props["tick_label_angle"] = rotation
+            props.setdefault("style", {})["tick_label_anchor"] = str(ha)
+        self._invalidate()
 
     def set_size_inches(self, w: Any, h: Any = None) -> None:
         if h is None:
@@ -124,9 +384,48 @@ class Figure:
         self._figsize = (float(w), float(h))
         self._invalidate()
 
-    def colorbar(self, mappable: Any = None, *args: Any, **kwargs: Any) -> Any:
-        del args
-        axes_arg = kwargs.pop("ax", None)
+    def get_size_inches(self) -> np.ndarray:
+        w, h = rc_figsize_px(self._figsize, self._dpi)
+        dpi = self.get_dpi()
+        return np.asarray((w / dpi, h / dpi), dtype=float)
+
+    def set_dpi(self, value: Any) -> None:
+        self._dpi = float(value)
+        for ax in self._axes:
+            ax._chart = None
+        self._invalidate()
+
+    def get_dpi(self) -> float:
+        return float(self._dpi if self._dpi is not None else 100.0)
+
+    @property
+    def dpi(self) -> float:
+        return self.get_dpi()
+
+    @dpi.setter
+    def dpi(self, value: Any) -> None:
+        self.set_dpi(value)
+
+    def set_facecolor(self, color: Any) -> None:
+        self._facecolor = str(color)
+        self._invalidate()
+
+    def get_facecolor(self) -> str:
+        return self._facecolor
+
+    def set_edgecolor(self, color: Any) -> None:
+        self._edgecolor = str(color)
+        self._invalidate()
+
+    def get_edgecolor(self) -> str:
+        return self._edgecolor
+
+    def colorbar(self, mappable: Any = None, cax: Any = None, ax: Any = None, **kwargs: Any) -> Any:
+        if cax is not None:
+            raise not_implemented("colorbar(cax=...)", "the automatic colorbar placement")
+        if mappable is None:
+            mappable = self._gci
+        axes_arg = ax
         axes = getattr(mappable, "_axes", None) or self.gca()
         entry = getattr(mappable, "_entry", {})
         props = entry.get("kwargs", {})
@@ -150,14 +449,51 @@ class Figure:
                 if explicit_domain is not None
                 else ([float(finite.min()), float(finite.max())] if finite.size else [0.0, 1.0])
             ),
-            "label": str(kwargs.pop("label", "")),
+            "label": _plain_text(kwargs.pop("label", "")),
             "orientation": str(kwargs.pop("orientation", "vertical")),
         }
+        # When the mappable's value domain is not knowable at colorbar() time
+        # (e.g. hexbin counts are binned inside the mark), defer to the compiled
+        # figure's color domain at render time instead of the 0..1 placeholder.
+        if explicit_domain is None and not finite.size:
+            options["_autoscale"] = True
+        levels = entry.get("discrete_levels")
+        if levels is not None:
+            options["levels"] = int(levels)
+            boundaries = entry.get("discrete_boundaries")
+            if boundaries is not None:
+                boundary_values = np.asarray(boundaries, dtype=np.float64).reshape(-1)
+                options["boundaries"] = [float(value) for value in boundary_values]
+        ticks = kwargs.pop("ticks", None)
+        if ticks is not None:
+            options["ticks"] = [float(value) for value in np.asarray(ticks).reshape(-1)]
+        elif levels is not None and entry.get("discrete_boundaries") is not None:
+            # Matplotlib uses a FixedLocator capped at roughly ten bins for a
+            # contour colorbar. Match its offset selection so zero (or the
+            # boundary closest to it) remains among the visible labels.
+            locations = np.asarray(entry["discrete_boundaries"], dtype=np.float64).reshape(-1)
+            step = max(1, int(np.ceil(len(locations) / 10)))
+            candidates = [locations[offset::step] for offset in range(step)]
+            selected = min(candidates, key=lambda values: np.min(np.abs(values)))
+            zero_tolerance = (
+                np.finfo(np.float64).eps * max(1.0, float(np.max(np.abs(locations)))) * 8
+            )
+            options["ticks"] = [
+                0.0 if abs(float(value)) <= zero_tolerance else float(value) for value in selected
+            ]
+        extend = kwargs.pop("extend", None)
+        if extend is not None:
+            if extend not in ("neither", "min", "max", "both"):
+                raise ValueError("colorbar() extend must be 'neither', 'min', 'max', or 'both'")
+            if extend != "neither":
+                options["extend"] = str(extend)
+        check_unsupported(kwargs, "colorbar()")
         if isinstance(axes_arg, (list, tuple, np.ndarray)):
             self._shared_colorbar = options
             self._invalidate()
         else:
             axes._colorbar = options
+            axes._colorbar_source = entry if entry else None
             axes._invalidate()
 
         class _Colorbar:
@@ -170,7 +506,16 @@ class Figure:
 
             def set_label(self, label: str, **kwargs: Any) -> None:
                 del kwargs
-                self._options["label"] = str(label)
+                self._options["label"] = _plain_text(label)
+                self.ax._invalidate()
+
+            def set_ticks(self, ticks: Any, labels: Any = None, **kwargs: Any) -> None:
+                if labels is not None:
+                    raise not_implemented(
+                        "Colorbar.set_ticks(labels=...)", "numeric tick positions"
+                    )
+                check_unsupported(kwargs, "Colorbar.set_ticks()")
+                self._options["ticks"] = [float(value) for value in np.asarray(ticks).reshape(-1)]
                 self.ax._invalidate()
 
         return _Colorbar(axes, options)
@@ -227,13 +572,27 @@ class Figure:
         w, h = rc_figsize_px(self._figsize, self._dpi)
         return max(120, w // self._ncols), max(120, h // self._nrows)
 
+    def _effective_rects(self) -> Optional[list[tuple[float, float, float, float]]]:
+        """Per-axes figure rects when any axes is free-form, else None.
+
+        Matplotlib places a rect-less axes at the SubplotParams default, so a
+        default axes mixed with an inset keeps its full-size position instead
+        of dragging every axes back onto the uniform grid.
+        """
+        rects = [ax._figure_rect for ax in self._axes]
+        if not self._axes or not any(rect is not None for rect in rects):
+            return None
+        default = (0.125, 0.11, 0.775, 0.77)
+        return [rect if rect is not None else default for rect in rects]
+
     def _charts(self) -> list[Any]:
         total_w, total_h = rc_figsize_px(self._figsize, self._dpi)
-        if self._axes and all(ax._figure_rect is not None for ax in self._axes):
+        rects = self._effective_rects()
+        if rects is not None:
             charts = []
-            for ax in self._axes:
-                plot_w = max(1, round(total_w * ax._figure_rect[2]))
-                plot_h = max(1, round(total_h * ax._figure_rect[3]))
+            for ax, rect in zip(self._axes, rects, strict=True):
+                plot_w = max(1, round(total_w * rect[2]))
+                plot_h = max(1, round(total_h * rect[3]))
                 # Absolute axes rectangles describe the plot box.  Export
                 # chrome lives outside that rectangle in the surrounding
                 # figure buffer, matching Matplotlib add_axes semantics.
@@ -259,15 +618,34 @@ class Figure:
                 if not shared:
                     continue
                 linked.append(dim)
-                ranges = [
-                    figure.x_range() if dim == "x" else figure.y_range() for figure in figures
-                ]
-                domain = (min(min(pair) for pair in ranges), max(max(pair) for pair in ranges))
-                for figure in figures:
-                    figure._set_axis_domain(dim, domain)
+                for group in self._share_groups(shared, len(figures)):
+                    members = [figures[i] for i in group]
+                    ranges = [
+                        figure.x_range() if dim == "x" else figure.y_range() for figure in members
+                    ]
+                    domain = (
+                        min(min(pair) for pair in ranges),
+                        max(max(pair) for pair in ranges),
+                    )
+                    for figure in members:
+                        figure._set_axis_domain(dim, domain)
             for figure in figures:
                 figure.set_interaction(link_group=self._link_group, link_axes=tuple(linked))
         return charts
+
+    def _share_groups(self, mode: Any, count: int) -> list[list[int]]:
+        """Panel-index groups whose data domains union under a share mode."""
+        if mode == "col":
+            return [
+                [r * self._ncols + c for r in range(self._nrows) if r * self._ncols + c < count]
+                for c in range(self._ncols)
+            ]
+        if mode == "row":
+            return [
+                [r * self._ncols + c for c in range(self._ncols) if r * self._ncols + c < count]
+                for r in range(self._nrows)
+            ]
+        return [list(range(count))]
 
     def _single(self) -> Optional[Any]:
         charts = self._charts()
@@ -284,67 +662,129 @@ class Figure:
     def savefig(
         self, fname: Any, dpi: Any = None, format: Optional[str] = None, **kwargs: Any
     ) -> None:
-        kwargs.pop("bbox_inches", None)  # label-aware layout already trims
-        kwargs.pop("transparent", None)
-        kwargs.pop("facecolor", None)
         path = Path(fname) if isinstance(fname, (str, PathLike)) else None
-        suffix = (format or (path.suffix.lstrip(".") if path is not None else "png")).lower()
-        if dpi is not None and self._dpi is None:
+        if path is None and format is None:
+            raise ValueError("savefig() requires format= for file-like output")
+        if path is not None and format is None and not path.suffix:
+            format = "png"  # matplotlib's savefig.format default
+            path = path.with_suffix(".png")
+        suffix = (format or (path.suffix.lstrip(".") if path is not None else "")).lower()
+        transparent = bool(kwargs.pop("transparent", False))
+        metadata = kwargs.pop("metadata", None)
+        facecolor = kwargs.pop("facecolor", None)
+        bbox_inches = kwargs.pop("bbox_inches", None)
+        pad_inches = float(kwargs.pop("pad_inches", 0.1))
+        if bbox_inches not in (None, "tight"):
+            raise not_implemented("savefig(bbox_inches=Bbox)", "bbox_inches='tight'")
+        if metadata is not None and not isinstance(metadata, dict):
+            raise TypeError("savefig metadata must be a mapping")
+        unsupported = {key for key, value in kwargs.items() if value is not None}
+        if unsupported:
+            option = sorted(unsupported)[0]
+            raise not_implemented(
+                f"savefig({option}=...)",
+                "dpi and format; compose backgrounds/layout explicitly for other options",
+            )
+
+        old_dpi = self._dpi
+        old_facecolor = self._facecolor
+        old_backgrounds = [ax._theme_tokens["plot_background"] for ax in self._axes]
+        if dpi is not None:
             self._dpi = float(dpi)
             for ax in self._axes:
                 ax._chart = None
             self._invalidate()
+        if facecolor is not None:
+            from ._colors import resolve_color
 
-        single = self._single()
-        if suffix in ("png",):
-            if single is None:
-                data = self._to_png()
+            self._facecolor = resolve_color(facecolor) or "none"
+        if transparent:
+            self._facecolor = "none"
+            for ax in self._axes:
+                ax._theme_tokens["plot_background"] = "none"
+                ax._chart = None
+            self._invalidate()
+        try:
+            if suffix == "png":
+                data = self._to_png(
+                    bbox_tight=bbox_inches == "tight",
+                    pad_inches=pad_inches,
+                )
+                if metadata:
+                    data = _png_with_metadata(data, metadata)
+            elif suffix == "svg":
+                single = self._single()
+                if single is None or self._suptitle is not None:
+                    from ._grid import compose_svg
+
+                    data = compose_svg(
+                        self._charts(),
+                        self._nrows,
+                        self._ncols,
+                        self._suptitle,
+                        self._suptitle_style,
+                    ).encode()
+                else:
+                    data = single.to_svg().encode()
+                if self._facecolor not in ("none", "white"):
+                    import html
+
+                    fill = html.escape(self._facecolor, quote=True)
+                    start = data.find(b">") + 1
+                    rect = f'<rect width="100%" height="100%" fill="{fill}"/>'.encode()
+                    data = data[:start] + rect + data[start:]
+                if metadata:
+                    import html
+
+                    description = html.escape("; ".join(f"{k}: {v}" for k, v in metadata.items()))
+                    start = data.find(b">") + 1
+                    data = (
+                        data[:start] + f"<metadata>{description}</metadata>".encode() + data[start:]
+                    )
+            elif suffix == "html":
+                if metadata:
+                    raise not_implemented("savefig(format='html', metadata=...)", "PNG or SVG")
+                data = self._to_html().encode()
+                if self._facecolor not in ("none", "white"):
+                    import html
+
+                    fill = html.escape(self._facecolor, quote=True)
+                    data = f'<div style="background-color:{fill}">'.encode() + data + b"</div>"
             else:
-                from xy import _raster
-
-                data = _raster.to_png(single.figure(), fast=True)
-        elif suffix in ("svg",):
-            if single is None:
-                from ._grid import compose_svg
-
-                data = compose_svg(
-                    self._charts(), self._nrows, self._ncols, self._suptitle
-                ).encode()
-            else:
-                data = single.to_svg().encode()
-        elif suffix in ("html",):
-            data = self._to_html().encode()
-        else:
-            raise not_implemented(f"savefig(format={suffix!r})", "png, svg, or html")
+                raise not_implemented(f"savefig(format={suffix!r})", "png, svg, or html")
+        finally:
+            self._dpi = old_dpi
+            self._facecolor = old_facecolor
+            for ax, background in zip(self._axes, old_backgrounds, strict=True):
+                ax._theme_tokens["plot_background"] = background
+                ax._chart = None
+            self._invalidate()
 
         if path is not None:
             path.write_bytes(data)
         else:
             fname.write(data)  # file-like
 
-    def _to_png(self) -> bytes:
+    def _to_png(self, *, bbox_tight: bool = False, pad_inches: float = 0.1) -> bytes:
         from ._grid import stitch_png
 
         canvas_size = rc_figsize_px(self._figsize, self._dpi)
+        rects = self._effective_rects()
         positions = (
             [
                 (
-                    ax._figure_rect[0]
-                    - (46 if round(canvas_size[0] * ax._figure_rect[2]) + 54 < 520 else 62)
-                    / canvas_size[0],
-                    ax._figure_rect[1]
-                    - (36 if round(canvas_size[0] * ax._figure_rect[2]) + 54 < 520 else 42)
-                    / canvas_size[1],
-                    ax._figure_rect[2]
-                    + (54 if round(canvas_size[0] * ax._figure_rect[2]) + 54 < 520 else 76)
-                    / canvas_size[0],
-                    ax._figure_rect[3]
-                    + (42 if round(canvas_size[0] * ax._figure_rect[2]) + 54 < 520 else 52)
-                    / canvas_size[1],
+                    rect[0]
+                    - (46 if round(canvas_size[0] * rect[2]) + 54 < 520 else 62) / canvas_size[0],
+                    rect[1]
+                    - (36 if round(canvas_size[0] * rect[2]) + 54 < 520 else 42) / canvas_size[1],
+                    rect[2]
+                    + (54 if round(canvas_size[0] * rect[2]) + 54 < 520 else 76) / canvas_size[0],
+                    rect[3]
+                    + (42 if round(canvas_size[0] * rect[2]) + 54 < 520 else 52) / canvas_size[1],
                 )
-                for ax in self._axes
+                for rect in rects
             ]
-            if self._axes and all(ax._figure_rect is not None for ax in self._axes)
+            if rects is not None
             else None
         )
 
@@ -354,9 +794,12 @@ class Figure:
             self._ncols,
             self._suptitle,
             self._shared_colorbar,
+            suptitle_style=self._suptitle_style,
             positions=positions,
             canvas_size=canvas_size if positions is not None else None,
             facecolor=self._facecolor,
+            bbox_tight=bbox_tight,
+            pad_pixels=max(0, round(pad_inches * float(self._dpi or 100.0) * 2.0)),
         )
 
     def _to_html(self) -> str:
@@ -368,12 +811,72 @@ class Figure:
                 from ._grid import compose_html
 
                 self._html_cache = compose_html(
-                    self._charts(), self._nrows, self._ncols, self._suptitle
+                    self._charts(),
+                    self._nrows,
+                    self._ncols,
+                    self._suptitle,
+                    self._suptitle_style,
                 )
         return self._html_cache
 
+    def _to_notebook_html(self) -> tuple[str, int, int]:
+        """Notebook-only tight layout matching Matplotlib's inline backend."""
+        width, height = rc_figsize_px(self._figsize, self._dpi)
+        dpi = float(self._dpi if self._dpi is not None else 100.0)
+        if (
+            self._nrows == self._ncols == 1
+            and len(self._axes) == 1
+            and self._axes[0]._figure_rect is None
+            and self._suptitle is None
+        ):
+            # Matplotlib's inline backend displays figures with
+            # bbox_inches="tight" and pad_inches=.1.  For the ordinary default
+            # axes this retains the 0.775×0.77 plot box and its label ink while
+            # trimming the unused figure canvas.  Build directly at that tight
+            # footprint so fonts/strokes remain unscaled and interactive.
+            tight_width = max(120, round(width * 0.775 + dpi * 0.62))
+            tight_height = max(120, round(height * 0.77 + dpi * 0.48))
+            ax = self._axes[0]
+            old_chart, old_padding = ax._chart, ax._padding
+            try:
+                ax._chart = None
+                notebook_padding = [dpi * 0.15, dpi * 0.20, dpi * 0.34, dpi * 0.41]
+                if (
+                    ax._aspect_equal
+                    and ax._aspect_adjustable == "box"
+                    and ax._aspect_bounds is not None
+                ):
+                    # Once adjustable='box' makes an image square, Matplotlib's
+                    # inline bbox crops away the old wide axes allocation. Match
+                    # that post-layout footprint instead of retaining ~54 px of
+                    # outer whitespace around the default square imshow.
+                    notebook_padding[3] = dpi * 0.29
+                    x0, x1, y0, y1 = ax._aspect_bounds
+                    data_ratio = abs(x1 - x0) / max(abs(y1 - y0), np.finfo(float).eps)
+                    plot_height = tight_height - notebook_padding[0] - notebook_padding[2]
+                    colorbar_room = 0.0
+                    if ax._colorbar is not None and ax._colorbar.get("orientation") != "horizontal":
+                        colorbar_room = 86.0 + (18.0 if ax._colorbar.get("label") else 0.0)
+                    aspect_width = (
+                        notebook_padding[3]
+                        + plot_height * data_ratio
+                        + notebook_padding[1]
+                        + colorbar_room
+                    )
+                    tight_width = max(120, min(tight_width, round(aspect_width)))
+                ax._padding = notebook_padding
+                doc = ax._build_chart(tight_width, tight_height).to_html()
+            finally:
+                ax._chart = old_chart
+                ax._padding = old_padding
+            return doc, tight_width, tight_height
+        return self._to_html(), width, height
+
     def _repr_html_(self) -> str:
-        return self._to_html()
+        from xy import export
+
+        doc, width, height = self._to_notebook_html()
+        return export.notebook_iframe(doc, width=width, height=height)
 
     def show(self, *args: Any, **kwargs: Any) -> None:
         import tempfile
@@ -382,6 +885,146 @@ class Figure:
         with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False) as f:
             f.write(self._to_html())
         webbrowser.open(f"file://{f.name}")
+
+
+class _FigureCanvas:
+    """The mpl canvas surface scripts poke: filetypes and draw triggers."""
+
+    def __init__(self, figure: Figure) -> None:
+        self.figure = figure
+
+    def get_supported_filetypes(self) -> dict[str, str]:
+        return {
+            "png": "Portable Network Graphics",
+            "svg": "Scalable Vector Graphics",
+            "html": "xy interactive HTML",
+        }
+
+    def draw(self) -> None:
+        self.figure._invalidate()  # the next export re-renders from scratch
+
+    draw_idle = draw
+
+
+class _SubplotSpec:
+    def __init__(self, gridspec: "_GridSpec", rows: tuple[int, int], cols: tuple[int, int]) -> None:
+        self.gridspec = gridspec
+        self.rows = rows
+        self.cols = cols
+        self.nrows = gridspec.nrows
+        self.ncols = gridspec.ncols
+
+    @property
+    def is_single(self) -> bool:
+        return self.rows[1] - self.rows[0] == 1 and self.cols[1] - self.cols[0] == 1
+
+    @property
+    def index(self) -> int:
+        return self.rows[0] * self.ncols + self.cols[0]
+
+
+# matplotlib's SubplotParams defaults — the frame every gridspec rect lives in.
+_SUBPLOT_PARAMS = {"left": 0.125, "right": 0.9, "bottom": 0.11, "top": 0.88}
+_SUBPLOT_SPACING = 0.2  # figure.subplot.wspace/hspace default
+
+
+class _GridSpec:
+    """Grid geometry for subplot specs.
+
+    Single cells on default geometry map onto the figure's uniform subplot
+    grid; spans and custom spacing resolve to explicit figure rectangles
+    (the add_axes path), which every exporter already positions.
+    """
+
+    def __init__(self, figure: Optional[Figure], nrows: int, ncols: int, **kwargs: Any) -> None:
+        self.figure = figure
+        self.nrows = int(nrows)
+        self.ncols = int(ncols)
+        if self.nrows < 1 or self.ncols < 1:
+            raise ValueError("GridSpec must have at least one row and one column")
+        geometry_keys = ("left", "bottom", "right", "top", "wspace", "hspace")
+        self._geometry = {key: kwargs.pop(key, None) for key in geometry_keys}
+        width_ratios = kwargs.pop("width_ratios", None)
+        height_ratios = kwargs.pop("height_ratios", None)
+        check_unsupported(kwargs, "GridSpec()")
+        self._width_ratios = None if width_ratios is None else tuple(map(float, width_ratios))
+        self._height_ratios = None if height_ratios is None else tuple(map(float, height_ratios))
+        if self._width_ratios is not None and len(self._width_ratios) != self.ncols:
+            raise ValueError("width_ratios must match the number of columns")
+        if self._height_ratios is not None and len(self._height_ratios) != self.nrows:
+            raise ValueError("height_ratios must match the number of rows")
+
+    @property
+    def has_custom_geometry(self) -> bool:
+        return any(value is not None for value in self._geometry.values())
+
+    @staticmethod
+    def _span(key: Any, count: int) -> tuple[int, int]:
+        if isinstance(key, slice):
+            if key.step not in (None, 1):
+                raise not_implemented("GridSpec slicing with a step", "contiguous spans")
+            start, stop, _ = key.indices(count)
+            if stop <= start:
+                raise IndexError("GridSpec slice selects no cells")
+            return start, stop
+        index = int(key)
+        if index < 0:
+            index += count
+        if not 0 <= index < count:
+            raise IndexError("GridSpec index out of range")
+        return index, index + 1
+
+    def __getitem__(self, key: Any) -> _SubplotSpec:
+        if isinstance(key, tuple):
+            if len(key) != 2:
+                raise IndexError("GridSpec indexes are [row, col]")
+            rows = self._span(key[0], self.nrows)
+            cols = self._span(key[1], self.ncols)
+            return _SubplotSpec(self, rows, cols)
+        # Flat row-major indexing; a flat slice spans the bounding box of its
+        # first and last cell, matching matplotlib's SubplotSpec corners.
+        total = self.nrows * self.ncols
+        first, stop = self._span(key, total)
+        last = stop - 1
+        r0, c0 = divmod(first, self.ncols)
+        r1, c1 = divmod(last, self.ncols)
+        return _SubplotSpec(self, (min(r0, r1), max(r0, r1) + 1), (min(c0, c1), max(c0, c1) + 1))
+
+    def cell_rect(self, rows: tuple[int, int], cols: tuple[int, int]) -> tuple[float, ...]:
+        """[left, bottom, width, height] figure fractions for a cell span."""
+        frame = {
+            key: (self._geometry[key] if self._geometry[key] is not None else default)
+            for key, default in _SUBPLOT_PARAMS.items()
+        }
+        wspace = self._geometry["wspace"]
+        hspace = self._geometry["hspace"]
+        wspace = _SUBPLOT_SPACING if wspace is None else float(wspace)
+        hspace = _SUBPLOT_SPACING if hspace is None else float(hspace)
+        span_w = float(frame["right"]) - float(frame["left"])
+        span_h = float(frame["top"]) - float(frame["bottom"])
+        # wspace/hspace are fractions of the *average* cell size (matplotlib).
+        avail_w = span_w / (1.0 + wspace * (self.ncols - 1) / self.ncols)
+        avail_h = span_h / (1.0 + hspace * (self.nrows - 1) / self.nrows)
+        gap_w = (span_w - avail_w) / (self.ncols - 1) if self.ncols > 1 else 0.0
+        gap_h = (span_h - avail_h) / (self.nrows - 1) if self.nrows > 1 else 0.0
+        wratios = self._width_ratios or (1.0,) * self.ncols
+        hratios = self._height_ratios or (1.0,) * self.nrows
+        widths = [avail_w * ratio / sum(wratios) for ratio in wratios]
+        heights = [avail_h * ratio / sum(hratios) for ratio in hratios]
+        c0, c1 = cols
+        r0, r1 = rows
+        x0 = float(frame["left"]) + sum(widths[:c0]) + c0 * gap_w
+        width = sum(widths[c0:c1]) + (c1 - c0 - 1) * gap_w
+        y_top = float(frame["top"]) - (sum(heights[:r0]) + r0 * gap_h)
+        height = sum(heights[r0:r1]) + (r1 - r0 - 1) * gap_h
+        return (x0, y_top - height, width, height)
+
+
+class GridSpec(_GridSpec):
+    """plt.GridSpec: figure-optional grid geometry with span support."""
+
+    def __init__(self, nrows: int, ncols: int, figure: Optional[Figure] = None, **kwargs: Any):
+        super().__init__(figure, nrows, ncols, **kwargs)
 
 
 def _parse_subplot_args(args: tuple) -> tuple[int, int, int]:
@@ -411,7 +1054,18 @@ def make_axes_grid(fig: Figure, nrows: int, ncols: int, squeeze: bool = True) ->
     return axes
 
 
-def apply_sharing(fig: Figure, sharex: bool, sharey: bool) -> None:
+def _share_mode(value: Any, label: str) -> Any:
+    """Normalize matplotlib's sharex/sharey values to False | 'all' | 'row' | 'col'."""
+    if value is None or value is False or value == "none":
+        return False
+    if value is True or value == "all":
+        return "all"
+    if value in ("row", "col"):
+        return value
+    raise ValueError(f"{label} must be one of True, False, 'all', 'none', 'row', 'col'")
+
+
+def apply_sharing(fig: Figure, sharex: Any, sharey: Any) -> None:
     """Share static domains and live pan/zoom ranges across subplot panels."""
-    fig._sharex = bool(sharex)
-    fig._sharey = bool(sharey)
+    fig._sharex = _share_mode(sharex, "sharex")
+    fig._sharey = _share_mode(sharey, "sharey")

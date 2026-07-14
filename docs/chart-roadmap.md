@@ -21,8 +21,10 @@ entry point, not the boundary of the product.
 
 The current implemented surface is **line**, **scatter**, **area**,
 **histogram**, **bar/column**, **heatmap**, **error bars/bands**,
-**box/violin/ECDF**, **hexbin/contour**, **step/stairs/stem**, and
-**faceted small multiples**. Scatter already covers direct
+**box/violin/ECDF**, **hexbin/contour**, **step/stairs/stem**, **pie/donut**,
+**scientific vector fields**, **irregular triangular meshes**, and **faceted
+small multiples**. The last three families are exposed through the
+Matplotlib-flavoured shim over shared xy primitives. Scatter already covers direct
 points, color/size channels, GPU picking, selection, and Tier-2 density
 aggregation. Line and area cover direct and M4-decimated time series. Histogram
 and bar/column share the instanced rectangle renderer; heatmap ships a compact
@@ -99,7 +101,7 @@ not fall out of sight.
 | 3 | Bar / column | vertical bar, horizontal bar, grouped, stacked, normalized stacked, diverging bar | Implemented core | `fc.bar(...)` / `fc.column(...)` ship categorical/numeric vertical and horizontal bars, grouped bars, stacked bars, and normalized stacked bars (`mode="normalized"`) through the shared rectangle renderer. Follow-up: labels. |
 | 4 | Area | filled line, stacked area, streamgraph, ridgeline-lite area bands | Implemented core | `fc.area(...)` ships a filled area with scalar/array baseline and optional line overlay. Follow-ups: stacked area helpers and streamgraph offsets. |
 | 5 | Histogram | count, probability, density, cumulative histogram | Implemented core | Python-side binning plus the shared rectangle renderer; `cumulative=True` (count CDF and, with `density=True`, empirical CDF) is implemented. Follow-up: viewport-aware re-binning for huge streamed distributions. |
-| 6 | Pie / donut | pie, donut, nested donut, variable-radius pie | Planned compatibility | Extremely common in dashboards even though performance differentiation is low. |
+| 6 | Pie / donut | pie, donut, nested donut, variable-radius pie | Implemented in `xy.pyplot` | Native pie/donut tessellation with Matplotlib-style containers and labels; richer nested/variable-radius composition remains future depth. |
 | 7 | Heatmap / image / matrix | heatmap, image, annotated matrix, correlation matrix, cohort heatmap | Implemented core | `fc.heatmap(...)` renders matrix cells through a compact grid texture with continuous colormaps and categorical/numeric axes. Native static export borrows canonical f64 spans and normalizes only sampled pixels in Rust, verified through 4.29B cells without a derived grid or RGBA expansion. Follow-ups: annotation and tiled huge-image browser transport. |
 | 8 | Box plot | box, grouped box, notched box, outlier points | Implemented core | Tukey quartiles, whiskers, median, deterministic outliers, numeric or categorical groups. |
 | 9 | Candlestick / OHLC | candlestick, OHLC bars, volume overlay, range selector | Prototyped (PR closed unmerged) | `fc.candlestick(...)`/`fc.ohlc(...)` + `fc.candlestick_chart(...)` on the closed `codex/finance-charting-surface` exploration branch: OHLC decimation, shared-y f32 frame, time axes, hover, and a volume pane. Critical finance surface; inherits LOD and time-axis work from core primitives. |
@@ -125,8 +127,8 @@ not fall out of sight.
 | 29 | Parallel coordinate/category | parallel coordinates, parallel categories, alluvial-lite | Planned later | Present in Plotly/ECharts; useful for high-dimensional EDA. |
 | 30 | Sankey / alluvial | Sankey, alluvial, dependency wheel | Planned later | Important flow chart, but requires layout and interaction work. |
 | 31 | Network/tree/org | network graph, force graph, tree, dendrogram, org chart, arc diagram | Planned later | Valuable but layout-heavy; should follow core 2D marks. |
-| 32 | Scientific vector fields | quiver, barbs, streamplot, wind rose | Planned later | Science/engineering breadth; needs arrows, vector fields, and polar variants. |
-| 33 | Irregular grid science | pcolormesh, tricontour, tripcolor, triangular mesh | Planned later | Matplotlib/science compatibility; separate data model from regular heatmaps. |
+| 32 | Scientific vector fields | quiver, barbs, streamplot, wind rose | Implemented in `xy.pyplot` | Quiver, barbs, and bounded streamlines feed shared instanced segments; wind rose remains tied to future polar axes. |
+| 33 | Irregular grid science | pcolormesh, tricontour, tripcolor, triangular mesh | Implemented in `xy.pyplot` | Curvilinear quads and explicit/native triangulations route through indexed meshes and marching-triangle kernels. |
 | 34 | Specialist coordinate systems | ternary, Smith chart, carpet plot, polar scatter/line/bar | Planned later | Plotly/science compatibility; axis systems are the main work. |
 | 35 | Finance advanced | VWAP, moving averages, Bollinger bands, RSI, MACD, depth chart, order book heatmap, market profile, Renko, Heikin-Ashi, Kagi, point-and-figure | Prototyped (PR closed unmerged) | The closed `codex/finance-charting-surface` exploration branch has a `FinanceChart`/`FinanceLayer` system with volume bars, SMA, VWAP, Bollinger bands, RSI, and MACD as overlay/pane layers plus drawings. Remaining: depth/order-book, market profile, Renko/Heikin-Ashi/Kagi/P&F. |
 | 36 | Maps and geo | choropleth, tile choropleth, point map, bubble map, density map, route map, filled-area map | Deferred 2D domain | 2D, but requires projection/tile/geography stack; do after core chart breadth. |
@@ -167,7 +169,7 @@ depth: strip/swarm/boxen/rug distributions, regression diagnostics, richer
 | Rank | Chart | Why it matters | Caveat |
 |---:|---|---|---|
 | 13 | Composed / mixed charts | Overlay line, scatter, bars, bands, candlesticks, and secondary axes cleanly. | API and spec work comes before many chart families. |
-| 14 | Pie / donut | Very popular in basic chart libraries and user expectations. | Low xy differentiation; implement for completeness, not performance. |
+| 14 | Pie / donut | Very popular in basic chart libraries and user expectations. | Implemented through `xy.pyplot`; future work is composition and styling depth. |
 | 15 | Candlestick / OHLC | Important for finance users and appears in Plotly/Highcharts stock tooling. | **Prototyped (PR closed unmerged):** candlestick/OHLC marks with date axes, gaps, and hover format on the closed finance exploration branch. Remaining polish: range selectors. |
 | 16 | Finance overlays | Volume bars, VWAP, moving averages, Bollinger bands, depth/order-book heatmap, market profile, Renko, Heikin-Ashi, Kagi, point-and-figure. | **Prototyped (PR closed unmerged):** volume pane, SMA, VWAP, Bollinger, RSI, MACD as `FinanceLayer`s reusing composed charts + time axes. Remaining: depth/order-book, market profile, Renko/Heikin-Ashi/Kagi/P&F. |
 | 17 | Waterfall | Common in business reporting and Plotly/Highcharts. | Mostly categorical bars plus running baseline. |
@@ -192,8 +194,8 @@ depth: strip/swarm/boxen/rug distributions, regression diagnostics, richer
 |---:|---|---|---|
 | 27 | Radar / polar / radial bar | Common in Chart.js/Highcharts and dashboards. | Needs polar axes and interaction semantics. |
 | 28 | Ternary / Smith / carpet | Plotly/scientific compatibility. | New coordinate systems, not new mark primitives. |
-| 29 | Quiver / barbs / streamplot / wind rose | Scientific and engineering vector fields. | Needs arrows, vector sampling, and polar support. |
-| 30 | Pcolormesh / tricontour / tripcolor | Matplotlib-style irregular grid science. | Separate mesh data model from regular heatmaps. |
+| 29 | Quiver / barbs / streamplot / wind rose | Scientific and engineering vector fields. | Quiver, barbs, and streamplot are implemented through `xy.pyplot`; wind rose awaits polar support. |
+| 30 | Pcolormesh / tricontour / tripcolor | Matplotlib-style irregular grid science. | Implemented through `xy.pyplot` with native quad/triangle geometry. |
 | 31 | Waffle / mosaic / Mekko / variwide | Business/category compatibility. | Mostly rectangle layout algorithms. |
 | 32 | Packed bubble / Venn / Euler | Compatibility and presentation charts. | Layout algorithms and label placement dominate. |
 | 33 | Pictorial bar / item chart / image markers / text marks | ECharts/Highcharts compatibility polish. | Symbol systems and asset handling. |

@@ -21,6 +21,7 @@ DEFAULT_CODSPEED_WORKFLOW = ROOT / ".github" / "workflows" / "codspeed.yml"
 DEFAULT_RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 DEFAULT_WORKFLOW = DEFAULT_CI_WORKFLOW
 REQUIRED_CI_JOBS = {
+    "matplotlib_reference",
     "test",
     "python_floor",
     "benchmark_vs",
@@ -56,6 +57,36 @@ def _job_blocks(text: str) -> dict[str, str]:
 
 def _missing_needles(block: str, needles: tuple[str, ...]) -> list[str]:
     return [needle for needle in needles if needle not in block]
+
+
+def _named_step_blocks(job_text: str) -> dict[str, str]:
+    """Return step-local blocks; comments elsewhere cannot satisfy a gate."""
+    lines = job_text.splitlines()
+    blocks: dict[str, list[str]] = {}
+    current: Optional[str] = None
+    for line in lines:
+        match = re.match(r"^      - name:\s*(.+?)\s*$", line)
+        if match:
+            current = match.group(1)
+            blocks[current] = [line]
+            continue
+        if re.match(r"^      - ", line):
+            current = None
+        elif current is not None:
+            blocks[current].append(line)
+    return {name: "\n".join(lines) for name, lines in blocks.items()}
+
+
+def _require_step_contains(
+    errors: list[str], job_text: str, step: str, description: str, *needles: str
+) -> None:
+    block = _named_step_blocks(job_text).get(step)
+    if block is None:
+        errors.append(f"missing required CI step {step!r}")
+        return
+    missing = _missing_needles(block, needles)
+    if missing:
+        errors.append(f"CI step {step!r} missing {description}: {missing}")
 
 
 def _require_job_contains(
@@ -118,6 +149,46 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
     missing_jobs = sorted(REQUIRED_CI_JOBS - set(jobs))
     if missing_jobs:
         errors.append(f"CI workflow missing required jobs: {missing_jobs}")
+
+    _require_job_contains(
+        errors,
+        jobs,
+        "matplotlib_reference",
+        "CI",
+        "released Matplotlib compatibility gates",
+        "matplotlib==3.11.0",
+        "matplotlib.__version__ == '3.11.0'",
+        "scripts/sync_matplotlib_compat.py --check",
+        "tests/pyplot/test_launch_compat.py",
+        "tests/pyplot/test_reference_corpus.py",
+        "tests/pyplot/test_reference_semantics.py",
+        "MPLBACKEND: Agg",
+    )
+    reference = jobs.get("matplotlib_reference", "")
+    _require_step_contains(
+        errors,
+        reference,
+        "Install xy and released reference wheel",
+        "released reference installation",
+        'uv pip install -p .venv/bin/python "matplotlib==3.11.0"',
+    )
+    _require_step_contains(
+        errors,
+        reference,
+        "Verify released reference and reviewed snapshot",
+        "version and snapshot checks",
+        "matplotlib.__version__ == '3.11.0'",
+        "scripts/sync_matplotlib_compat.py --check",
+    )
+    _require_step_contains(
+        errors,
+        reference,
+        "Run optional-interoperability and dual-engine corpus tests",
+        "reference test commands",
+        ".venv/bin/pytest -q tests/pyplot/test_launch_compat.py",
+        ".venv/bin/pytest -q tests/pyplot/test_reference_corpus.py",
+        ".venv/bin/pytest -q tests/pyplot/test_reference_semantics.py",
+    )
 
     _require_job_contains(
         errors,

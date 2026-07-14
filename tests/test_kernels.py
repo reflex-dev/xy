@@ -488,6 +488,22 @@ def test_marching_squares_extracts_segments(impl):
     np.testing.assert_allclose(emitted_levels, [0.5, 0.5])
 
 
+def test_marching_squares_resolves_asymmetric_saddles(impl):
+    x0, x1, y0, y1, emitted_levels = impl.marching_squares(
+        np.array([[3.0, 0.0], [0.0, 1.0]]),
+        np.array([0.0, 1.0]),
+        np.array([0.0, 1.0]),
+        np.array([0.5]),
+    )
+    # The high-valued diagonal dominates, so the contour must join the bottom
+    # crossing to the right crossing and the top crossing to the left one.
+    np.testing.assert_allclose(x0, [5.0 / 6.0, 0.5])
+    np.testing.assert_allclose(x1, [1.0, 0.0])
+    np.testing.assert_allclose(y0, [0.0, 1.0])
+    np.testing.assert_allclose(y1, [0.5, 5.0 / 6.0])
+    np.testing.assert_allclose(emitted_levels, [0.5, 0.5])
+
+
 def test_marching_squares_skips_nonfinite_cells_and_empty_levels(impl):
     z = np.array([[np.nan, 1.0], [1.0, 0.0]])
     result = impl.marching_squares(z, np.array([0.0, 1.0]), np.array([0.0, 1.0]), np.array([0.5]))
@@ -1116,12 +1132,15 @@ def test_heatmap_rgba_maps_stops_and_flips_rows():
 
     rgba = k.heatmap_rgba(raw, 2, 2, stops, 200)
 
+    # Only genuinely missing (NaN) cells are transparent; a real in-domain 0
+    # paints the colormap's floor color opaquely (Matplotlib hist2d/imshow fill
+    # the whole extent — empty bins are the 0-color, not holes).
     np.testing.assert_array_equal(
         rgba,
         np.array(
             [
-                [[100, 110, 120, 200], [0, 0, 0, 200]],
-                [[0, 10, 20, 0], [50, 60, 70, 200]],
+                [[100, 110, 120, 200], [0, 0, 0, 0]],
+                [[0, 10, 20, 200], [50, 60, 70, 200]],
             ],
             dtype=np.uint8,
         ),

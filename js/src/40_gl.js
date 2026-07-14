@@ -26,6 +26,7 @@ const ATTR_SLOTS = {
   a_corner: 0,
   a_cval: 6, a_sval: 7, a_sel: 8, a_dval: 9,
   a_len0: 10, a_len1: 11,
+  a_dash0: 10, a_dashDir: 11,
 };
 
 function makeProgram(gl, vs, fs) {
@@ -117,6 +118,39 @@ void main() {
 // <0 inside, 0 at the boundary. Symbols match the annotation markers plus
 // triangle. With u_symbol=0 and no stroke this reduces to the old circle.
 const MARKER_SDF_GLSL = `
+float fcSegmentDistance(vec2 p, vec2 a, vec2 b) {
+  vec2 e = b - a;
+  return length(p - a - e * clamp(dot(p - a, e) / dot(e, e), 0.0, 1.0));
+}
+float fcTriangleDistance(vec2 p, vec2 a, vec2 b, vec2 c) {
+  float dist = min(fcSegmentDistance(p, a, b),
+                   min(fcSegmentDistance(p, b, c), fcSegmentDistance(p, c, a)));
+  float c0 = (b.x-a.x)*(p.y-a.y) - (b.y-a.y)*(p.x-a.x);
+  float c1 = (c.x-b.x)*(p.y-b.y) - (c.y-b.y)*(p.x-b.x);
+  float c2 = (a.x-c.x)*(p.y-c.y) - (a.y-c.y)*(p.x-c.x);
+  bool inside = (c0 >= 0.0 && c1 >= 0.0 && c2 >= 0.0) ||
+                (c0 <= 0.0 && c1 <= 0.0 && c2 <= 0.0);
+  return inside ? -dist : dist;
+}
+float fcPentagonDistance(vec2 p) {
+  // Path.unit_regular_polygon(5), then Matplotlib's 0.5 marker transform.
+  vec2 a = vec2(0.0, -0.5);
+  vec2 b = vec2(-0.475528258, -0.154508497);
+  vec2 c = vec2(-0.293892626, 0.404508497);
+  vec2 d = vec2(0.293892626, 0.404508497);
+  vec2 e = vec2(0.475528258, -0.154508497);
+  float dist = min(min(fcSegmentDistance(p, a, b), fcSegmentDistance(p, b, c)),
+                   min(min(fcSegmentDistance(p, c, d), fcSegmentDistance(p, d, e)),
+                       fcSegmentDistance(p, e, a)));
+  float c0 = (b.x-a.x)*(p.y-a.y) - (b.y-a.y)*(p.x-a.x);
+  float c1 = (c.x-b.x)*(p.y-b.y) - (c.y-b.y)*(p.x-b.x);
+  float c2 = (d.x-c.x)*(p.y-c.y) - (d.y-c.y)*(p.x-c.x);
+  float c3 = (e.x-d.x)*(p.y-d.y) - (e.y-d.y)*(p.x-d.x);
+  float c4 = (a.x-e.x)*(p.y-e.y) - (a.y-e.y)*(p.x-e.x);
+  bool inside = (c0 >= 0.0 && c1 >= 0.0 && c2 >= 0.0 && c3 >= 0.0 && c4 >= 0.0) ||
+                (c0 <= 0.0 && c1 <= 0.0 && c2 <= 0.0 && c3 <= 0.0 && c4 <= 0.0);
+  return inside ? -dist : dist;
+}
 float fcMarkerSdf(vec2 d, int shape) {
   if (shape == 1) return max(abs(d.x), abs(d.y)) - 0.5;              // square
   if (shape == 2) return (abs(d.x) + abs(d.y)) - 0.5;               // diamond
@@ -124,21 +158,40 @@ float fcMarkerSdf(vec2 d, int shape) {
     vec2 a = abs(d);
     return min(max(a.x - 0.17, a.y - 0.5), max(a.x - 0.5, a.y - 0.17));
   }
-  if (shape == 5) {                                                 // regular hexagon
-    const float k = 0.8660254;
-    vec2 p = abs(d);
-    return max(p.x - 0.5, p.y * 0.5 + p.x * k - 0.5);
+  if (shape == 5) {                                                 // regular hexagon (pointy top)
+    const vec3 k = vec3(-0.866025404, 0.5, 0.577350269);
+    vec2 p = abs(vec2(d.y, d.x));
+    p -= 2.0 * min(dot(k.xy, p), 0.0) * k.xy;
+    p -= vec2(clamp(p.x, -k.z * 0.5, k.z * 0.5), 0.5);
+    return length(p) * sign(p.y);
   }
-  if (shape == 3) {                                                 // triangle (apex up)
-    const float k = 1.7320508;
-    float r = 0.62;
-    vec2 p = vec2(d.x, -d.y);   // flip so the apex points up
-    p.x = abs(p.x) - r;
-    p.y = p.y + r / k;
-    if (p.x + k * p.y > 0.0) p = vec2(p.x - k * p.y, -k * p.x - p.y) / 2.0;
-    p.x -= clamp(p.x, -2.0 * r, 0.0);
-    return -length(p) * sign(p.y);
+  if (shape == 6) return fcPentagonDistance(d);                      // exact regular pentagon
+  if (shape == 7) {                                                 // five-pointed star (apex up)
+    const float rf = 0.45;
+    const vec2 k1 = vec2(0.809016994, -0.587785252);
+    const vec2 k2 = vec2(-k1.x, k1.y);
+    vec2 p = vec2(abs(d.x), -d.y);
+    p -= 2.0 * max(dot(k1, p), 0.0) * k1;
+    p -= 2.0 * max(dot(k2, p), 0.0) * k2;
+    p = vec2(abs(p.x), p.y - 0.5);
+    vec2 ba = rf * vec2(-k1.y, k1.x) - vec2(0.0, 1.0);
+    float h = clamp(dot(p, ba) / dot(ba, ba), 0.0, 0.5);
+    return length(p - ba * h) * sign(p.y * ba.x - p.x * ba.y);
   }
+  if (shape == 3 || shape == 8 || shape == 9 || shape == 10) {     // Matplotlib triangle path
+    vec2 q = d;
+    if (shape == 8) q = -d;
+    if (shape == 9) q = vec2(d.y, -d.x);
+    if (shape == 10) q = vec2(-d.y, d.x);
+    return fcTriangleDistance(q, vec2(0.0, -0.5), vec2(-0.5, 0.5), vec2(0.5, 0.5));
+  }
+  if (shape == 11) {                                                // diagonal x
+    vec2 q = vec2(d.x + d.y, d.y - d.x) * 0.707106781;
+    vec2 a = abs(q);
+    return min(max(a.x - 0.17, a.y - 0.5), max(a.x - 0.5, a.y - 0.17));
+  }
+  if (shape == 13) return max(abs(d.x), abs(d.y)) - 0.5;            // snapped pixel
+  if (shape == 14) return (abs(d.x) / 0.6 + abs(d.y)) - 0.5;        // thin diamond
   return length(d) - 0.5;                                           // circle
 }`;
 
@@ -146,14 +199,23 @@ const POINT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
 uniform sampler2D u_dlut; uniform float u_dblend;
-uniform int u_symbol; uniform vec4 u_ptStroke; uniform float u_ptStrokeWidth;
+uniform int u_symbol; uniform vec4 u_ptStroke; uniform float u_ptStrokeWidth; uniform int u_ptStrokeFace;
 uniform int u_selActive; uniform vec4 u_selColor; uniform vec4 u_unselColor;
 in float v_lutCoord; in float v_dim; in float v_dval; in float v_ptSize; in float v_sel;
 out vec4 outColor;
 ${MARKER_SDF_GLSL}
 void main() {
   vec2 d = gl_PointCoord - 0.5;
-  float sd = fcMarkerSdf(d, u_symbol);
+  float sd;
+  bool lineMarker = u_symbol == 15 || u_symbol == 16;
+  if (lineMarker) {
+    vec2 q = u_symbol == 16 ? vec2(d.x + d.y, d.y - d.x) * 0.707106781 : d;
+    float halfWidth = max(u_ptStrokeWidth, 1.0) / (2.0 * max(v_ptSize, 1.0));
+    vec2 a = abs(q);
+    sd = min(max(a.x - 0.5, a.y - halfWidth), max(a.y - 0.5, a.x - halfWidth));
+  } else {
+    sd = fcMarkerSdf(d, u_symbol);
+  }
   float aa = fwidth(sd) + 1e-4;
   float shapeCov = clamp(0.5 - sd / aa, 0.0, 1.0);
   if (shapeCov <= 0.001) discard;
@@ -172,10 +234,23 @@ void main() {
   }
   float fillAlpha = u_opacity;
   vec4 px = vec4(rgb * fillAlpha, fillAlpha);   // premultiplied fill
+  vec4 strokePx = u_ptStrokeFace == 1 ? px : u_ptStroke;
+  if (lineMarker) {
+    outColor = strokePx * (shapeCov * v_dim);
+    return;
+  }
   if (u_ptStrokeWidth > 0.0) {
     float sw = u_ptStrokeWidth / max(v_ptSize, 1.0);   // px -> gl_PointCoord units
+    // The supplied point size includes the edge.  Recover Matplotlib's path
+    // boundary half a stroke inside it, then source-over the centered stroke.
+    float pathCov = clamp(0.5 - (sd + sw * 0.5) / aa, 0.0, 1.0);
     float innerCov = clamp(0.5 - (sd + sw) / aa, 0.0, 1.0);
-    px = mix(u_ptStroke, px, innerCov);                // ring = stroke, inside = fill
+    float strokeCov = max(shapeCov - innerCov, 0.0);
+    vec4 fillLayer = px * pathCov;
+    vec4 strokeLayer = strokePx * strokeCov;
+    px = strokeLayer + fillLayer * (1.0 - strokeLayer.a);
+    outColor = px * v_dim;
+    return;
   }
   outColor = px * (shapeCov * v_dim);
 }`;
@@ -383,11 +458,12 @@ void main() {
 // the extra meta uniforms and the sampler on its per-frame draw path.
 const SEGMENT_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1; in float a_cval;
+in float a_dash0; in float a_dashDir;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
 uniform int u_colorMode;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
 uniform int u_x0mode; uniform int u_x1mode; uniform int u_y0mode; uniform int u_y1mode;
-out float v_off; out float v_cval;
+out float v_off; out float v_cval; out float v_dash;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -405,17 +481,31 @@ void main() {
   gl_Position = vec4(pos / u_res * 2.0 - 1.0, 0.0, 1.0);
   v_off = c.y * half_w;
   v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  v_dash = a_dash0 + c.x * len * a_dashDir;
 }`;
 
 const SEGMENT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform float u_width; uniform int u_colorMode; uniform sampler2D u_lut;
-in float v_off; in float v_cval;
+uniform int u_dashCount; uniform float u_dashArr[8]; uniform float u_dashPeriod;
+in float v_off; in float v_cval; in float v_dash;
 out vec4 outColor;
 void main() {
   float half_w = u_width * 0.5;
   vec3 rgb = u_colorMode != 0 ? texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb : u_color.rgb;
   float alpha = (1.0 - smoothstep(half_w - 0.5, half_w + 0.5, abs(v_off))) * u_color.a;
+  if (u_dashCount > 0) {
+    float m = mod(v_dash, u_dashPeriod);
+    float acc = 0.0;
+    float on = 0.0;
+    for (int i = 0; i < 8; i++) {
+      if (i >= u_dashCount) break;
+      float next = acc + u_dashArr[i];
+      if (m < next) { on = (i % 2 == 0) ? 1.0 : 0.0; break; }
+      acc = next;
+    }
+    alpha *= on;
+  }
   if (alpha <= 0.001) discard;
   outColor = vec4(rgb * alpha, alpha);
 }`;

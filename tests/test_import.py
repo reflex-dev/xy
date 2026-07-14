@@ -290,7 +290,7 @@ def test_declarative_html_exports_do_not_load_widget_stack() -> None:
         assert "declarative lazy boundary" in repr_html
         assert html.startswith("<!doctype html>")
         assert alias.startswith("<!doctype html>")
-        assert repr_html.startswith("<!doctype html>")
+        assert repr_html.startswith('<iframe class="xy-notebook-frame"')
         assert "xy.widget" not in sys.modules
         assert "anywidget" not in sys.modules
         assert "traitlets" not in sys.modules

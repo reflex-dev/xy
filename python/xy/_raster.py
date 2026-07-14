@@ -22,8 +22,8 @@ from ._svg import (
     _AXIS,
     _GRID,
     _TEXT,
-    COLORMAP_STOPS,
     DEFAULT_PALETTE,
+    _colormap_stops,
     _column,
     _corner_radii,
     _css,
@@ -55,7 +55,25 @@ from ._svg import (
     _AFFINE_CHANNEL_POINTS,
     _STROKED_TRIANGLES,
 ) = range(17)
-_SYMBOLS = {"circle": 0, "square": 1, "diamond": 2, "triangle": 3, "cross": 4}
+_SYMBOLS = {
+    "circle": 0,
+    "square": 1,
+    "diamond": 2,
+    "triangle": 3,
+    "cross": 4,
+    "hexagon": 5,
+    "pentagon": 6,
+    "star": 7,
+    "triangle_down": 8,
+    "triangle_left": 9,
+    "triangle_right": 10,
+    "x": 11,
+    "point": 12,
+    "pixel": 13,
+    "thin_diamond": 14,
+    "plus_line": 15,
+    "x_line": 16,
+}
 
 
 def _parse_color(css: str, opacity: float = 1.0) -> tuple[int, int, int, int]:
@@ -285,10 +303,7 @@ class _Cmd:
             self._u32(int(meta.get("span", 0)))
             self._u64(int(meta["byte_offset"]))
             if encoded_color_mode == 1:
-                entries = (
-                    COLORMAP_STOPS.get(color_channel.get("colormap", "viridis"))
-                    or COLORMAP_STOPS["viridis"]
-                )
+                entries = _colormap_stops(color_channel.get("colormap", "viridis"))
             else:
                 entries = [
                     _parse_color(entry)[:3]
@@ -441,7 +456,7 @@ class _Cmd:
         self.buf += stops.tobytes()
 
     def text(self, x, y, anchor, size, color, s) -> None:
-        data = str(s).encode("ascii", "replace")
+        data = str(s).encode("utf-8")
         self.buf.append(_TEXT_OP)
         self._f(x)
         self._f(y)
@@ -489,14 +504,27 @@ def render_raster(
     cols = spec["columns"]
     cmd = _Cmd(scale)
 
+    dom_style = (spec.get("dom") or {}).get("style") or {}
+
     # The fused PNG path initializes its native canvas white, avoiding a second
     # full-frame memory pass. Raw RGBA callers still receive an explicit fill.
     if not fast_png:
-        cmd.fill(_rect_pts(0, 0, width, height), (255, 255, 255, 255))
+        cmd.fill(
+            _rect_pts(0, 0, width, height),
+            _parse_color(spec.get("canvas_background", "#ffffff")),
+        )
+
+    # Static exports honor the same axes background token as HTML/SVG.  This
+    # is deliberately a plot-rect fill rather than a canvas fill: the latter
+    # is the Figure patch and is composed by pyplot's grid exporter.
+    plot_background = _parse_color(_css(dom_style.get("--chart-bg"), "#ffffff"))
+    cmd.fill(
+        _rect_pts(plot["x"], plot["y"], plot["x"] + plot["w"], plot["y"] + plot["h"]),
+        plot_background,
+    )
 
     xt, xlab, xstep = axis_ticks(xa, plot["w"], True)
     yt, ylab, ystep = axis_ticks(ya, plot["h"], False)
-    dom_style = (spec.get("dom") or {}).get("style") or {}
     grid = _parse_color(_css(dom_style.get("--chart-grid"), _GRID))
     px0, py0 = plot["x"], plot["y"]
     px1, py1 = plot["x"] + plot["w"], plot["y"] + plot["h"]
@@ -519,8 +547,10 @@ def render_raster(
             _emit_line(cmd, t, blob, cols, sx, sy, style, color)
         elif kind in ("area", "error_band"):
             _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot)
-        elif kind in ("scatter", "hexbin"):
+        elif kind == "scatter":
             _emit_scatter(cmd, t, blob, cols, sx, sy, style, color)
+        elif kind == "hexbin":
+            _emit_triangle_mesh(cmd, t, blob, cols, sx, sy, style, color)
         elif kind in {"errorbar", "stem", "box_whisker", "box_median", "contour", "segments"}:
             _emit_segments(cmd, t, blob, cols, sx, sy, style, color)
         elif kind in ("bar", "column") and t.get("bar"):
@@ -537,20 +567,32 @@ def render_raster(
     # Chrome (unclipped): baselines, labels, title, legend.
     cmd.clip(0, 0, width, height)
     axis_c = _parse_color(_AXIS)
+    # "none" silences the whole axis chrome (sparklines); "off" hides only the
+    # label text and keeps baselines and the axis title (mpl shared axes).
     hide_x = xa.get("tick_label_strategy") == "none"
     hide_y = ya.get("tick_label_strategy") == "none"
+    hide_x_labels = hide_x or xa.get("tick_label_strategy") == "off"
+    hide_y_labels = hide_y or ya.get("tick_label_strategy") == "off"
+    frame_sides = spec.get("frame_sides")
+    if frame_sides is None:
+        frame_sides = [xa.get("side", "bottom"), ya.get("side", "left")]
     if not hide_y:
-        cmd.stroke([(px0, py0), (px0, py1)], 1.0, axis_c)
+        if "left" in frame_sides:
+            cmd.stroke([(px0, py0), (px0, py1)], 1.0, axis_c)
+        if "right" in frame_sides:
+            cmd.stroke([(px1, py0), (px1, py1)], 1.0, axis_c)
     if not hide_x:
-        x_axis_y = py0 if xa.get("side") == "top" else py1
-        cmd.stroke([(px0, x_axis_y), (px1, x_axis_y)], 1.0, axis_c)
+        if "top" in frame_sides:
+            cmd.stroke([(px0, py0), (px1, py0)], 1.0, axis_c)
+        if "bottom" in frame_sides:
+            cmd.stroke([(px0, py1), (px1, py1)], 1.0, axis_c)
 
     text_c = _parse_color(_TEXT)
-    if not hide_x:
+    if not hide_x_labels:
         for v in xlab:
             label_y = py0 - 7 if xa.get("side") == "top" else py1 + 15
             cmd.text(float(sx(v)), label_y, 1, 11, text_c, _tick_text(xa, v, xstep))
-    if not hide_y:
+    if not hide_y_labels:
         for v in ylab:
             cmd.text(px0 - 8, float(sy(v)) + 4, 2, 11, text_c, _tick_text(ya, v, ystep))
     if spec.get("title"):
@@ -558,8 +600,8 @@ def render_raster(
     if xa.get("label") and not hide_x:
         cmd.text(px0 + plot["w"] / 2, py1 + 33, 1, 12, text_c, str(xa["label"]))
     if ya.get("label") and not hide_y:
-        # No text rotation in the raster; place the y-label at top-left instead.
-        cmd.text(6, plot["y"] - 4, 0, 12, text_c, str(ya["label"]))
+        # Rotated 90° CCW alongside the axis, matching the SVG export.
+        cmd.text(14, plot["y"] + plot["h"] / 2, 1 | 0x80, 12, text_c, str(ya["label"]))
 
     named = [t for t in spec["traces"] if t.get("name")]
     if spec.get("show_legend", True) and named:
@@ -617,7 +659,16 @@ def _emit_annotations(cmd, annotations, sx, sy, plot, width, height):
             else:
                 pos = float(sy(float(ann["value"])))
                 points = [(px0 + start * plot["w"], pos), (px0 + end * plot["w"], pos)]
-            cmd.stroke(points, float(style.get("width", 1.5)), color)
+            cmd.stroke(
+                points,
+                float(style.get("width", 1.5)),
+                color,
+                dash=(
+                    [float(value) for value in style["dash"].split(",")]
+                    if isinstance(style.get("dash"), str)
+                    else style.get("dash")
+                ),
+            )
         elif ann.get("kind") == "band":
             a, b = float(ann["start"]), float(ann["end"])
             if ann.get("axis") == "x":
@@ -630,6 +681,36 @@ def _emit_annotations(cmd, annotations, sx, sy, plot, width, height):
                 _rect_pts(x0, y0, x1, y1),
                 _rgba(style.get("color"), "#64748b", float(style.get("opacity", 0.14))),
             )
+        elif ann.get("kind") == "arrow":
+            x0, y0 = float(sx(float(ann["x0"]))), float(sy(float(ann["y0"])))
+            x1, y1 = float(sx(float(ann["x1"]))), float(sy(float(ann["y1"])))
+            if all(np.isfinite(v) for v in (x0, y0, x1, y1)):
+                angle = np.arctan2(y1 - y0, x1 - x0)
+                head = max(7.0, float(style.get("head_size", 8.0)))
+                cmd.stroke(
+                    [(x0, y0), (x1, y1)],
+                    max(0.5, float(style.get("width", 1.5))),
+                    color,
+                    dash=(
+                        [float(value) for value in style["dash"].split(",")]
+                        if isinstance(style.get("dash"), str)
+                        else style.get("dash")
+                    ),
+                )
+                cmd.fill(
+                    [
+                        (x1, y1),
+                        (
+                            x1 - head * float(np.cos(angle - np.pi / 6)),
+                            y1 - head * float(np.sin(angle - np.pi / 6)),
+                        ),
+                        (
+                            x1 - head * float(np.cos(angle + np.pi / 6)),
+                            y1 - head * float(np.sin(angle + np.pi / 6)),
+                        ),
+                    ],
+                    color,
+                )
         if ann.get("kind") == "text" and ann.get("text"):
             x, y = _annotation_point(ann, style, sx, sy, plot, width, height)
             anchor = {"start": 0, "middle": 1, "end": 2}.get(ann.get("anchor"), 0)
@@ -643,7 +724,7 @@ def _emit_annotations(cmd, annotations, sx, sy, plot, width, height):
                     first_y + index * line_height + float(ann.get("dy", 0.0)),
                     anchor,
                     font_size,
-                    _rgba(style.get("color"), _TEXT),
+                    _rgba(style.get("color"), _TEXT, float(style.get("opacity", 1.0))),
                     line,
                 )
 
@@ -671,7 +752,10 @@ def _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot):
     lw = float(style.get("line_width", 1.2))
     if lw > 0:
         lop = float(style.get("line_opacity", 1.0))
-        cmd.stroke(top, lw, _rgba(style.get("color"), color, lop), dash=style.get("dash"))
+        line_color = _rgba(style.get("line_color"), style.get("color") or color, lop)
+        cmd.stroke(top, lw, line_color, dash=style.get("dash"))
+        if style.get("stroke_perimeter"):
+            cmd.stroke(base, lw, line_color, dash=style.get("dash"))
 
 
 def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
@@ -680,7 +764,10 @@ def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
     op = float(style.get("opacity", 0.8))
     sw = float(style.get("stroke_width", 0.0))
     sym = _SYMBOLS.get(style.get("symbol", "circle"), 0)
-    stroke = _rgba(style.get("stroke"), color) if sw > 0 else (0, 0, 0, 0)
+    # Transparent is the private wire sentinel for edgecolors="face".  The
+    # native point painter replaces it with each point's resolved RGBA fill.
+    stroke_value = style.get("stroke")
+    stroke = _rgba(stroke_value, color, op) if sw > 0 and stroke_value is not None else (0, 0, 0, 0)
 
     color_mode = ch.get("mode")
     size_mode = size_ch.get("mode")
@@ -768,6 +855,22 @@ def _emit_segments(cmd, t, blob, cols, sx, sy, style, color):
     else:
         colors[:] = _rgba(style.get("color"), color, opacity)
     width = float(style.get("width", 1.2))
+    dash = style.get("dash")
+    if dash:
+        # The batched segments primitive cannot dash; fall back to one dashed
+        # stroke per segment (contour negative-level convention, few segments).
+        dash_pattern = (
+            [float(value) for value in dash.split(",")] if isinstance(dash, str) else list(dash)
+        )
+        px0, py0, px1, py1 = sx(x0), sy(y0), sx(x1), sy(y1)
+        for index in range(len(x0)):
+            cmd.stroke(
+                [(float(px0[index]), float(py0[index])), (float(px1[index]), float(py1[index]))],
+                width,
+                tuple(int(v) for v in colors[index]),
+                dash=dash_pattern,
+            )
+        return
     cmd.segments(sx(x0), sy(y0), sx(x1), sy(y1), width, colors)
 
 
@@ -927,10 +1030,7 @@ def _emit_grid(cmd, kind, g, blob, cols, sx, sy, style):
             cmd.image(dx, dy, dw, dh, w, h, rgba.tobytes(), nearest=True)
             return
         meta = cols[g["buf"]]
-        stops = np.asarray(
-            COLORMAP_STOPS.get(g.get("colormap", "viridis")) or COLORMAP_STOPS["viridis"],
-            dtype=np.uint8,
-        )
+        stops = np.asarray(_colormap_stops(g.get("colormap", "viridis")), dtype=np.uint8)
         alpha = int(255 * float(style.get("opacity", 0.95)))
         xr, yr = g["x_range"], g["y_range"]
         dx, dy, dw, dh = _scene.grid_dest_rect(xr, yr, sx, sy)
@@ -953,10 +1053,7 @@ def _emit_grid(cmd, kind, g, blob, cols, sx, sy, style):
     elif g.get("enc") == "log-u8":
         w, h = int(g["w"]), int(g["h"])
         meta = cols[g["buf"]]
-        stops = np.asarray(
-            COLORMAP_STOPS.get(g.get("colormap", "viridis")) or COLORMAP_STOPS["viridis"],
-            dtype=np.uint8,
-        )
+        stops = np.asarray(_colormap_stops(g.get("colormap", "viridis")), dtype=np.uint8)
         xr, yr = g["x_range"], g["y_range"]
         dx, dy, dw, dh = _scene.grid_dest_rect(xr, yr, sx, sy)
         cmd.density_image(
@@ -980,49 +1077,131 @@ def _emit_grid(cmd, kind, g, blob, cols, sx, sy, style):
     cmd.image(dx, dy, dw, dh, w, h, rgba.tobytes(), nearest=kind == "heatmap")
 
 
+# Trace kinds whose legend entry is a short line sample (with dash) rather
+# than a marker glyph or a filled patch.
+_LEGEND_LINE_KINDS = frozenset({"line", "segments", "step", "stairs", "errorbar"})
+
+
 def _emit_legend(cmd, named, plot, options):
-    pad, swatch, line_h = 8, 10, 16
+    style_opts = options.get("style") or {}
+    pad, handle, gap, line_h = 8.0, 20, 5, 16.0
+    if str(style_opts.get("padding", "")).endswith("em"):
+        pad = 11.0 * float(str(style_opts["padding"])[:-2])
+    if str(style_opts.get("rowGap", "")).endswith("em"):
+        line_h = 11.0 * (1.0 + float(str(style_opts["rowGap"])[:-2]))
     ncols = min(len(named), max(1, int(options.get("ncols", 1))))
     nrows = (len(named) + ncols - 1) // ncols
-    cell_w = max(len(str(t["name"])) for t in named) * 6.2 + swatch + 2 * pad
-    box_w, box_h = ncols * cell_w + pad, nrows * line_h + pad
+    title = options.get("title")
+    title_h = 16 if title else 0
+    cell_w = max(len(str(t["name"])) for t in named) * 6.2 + handle + gap + 2 * pad
+    box_w, box_h = ncols * cell_w + pad, nrows * line_h + pad + title_h
     loc = options.get("loc") or "upper right"
     x = plot["x"] + 6 if "left" in loc else plot["x"] + plot["w"] - box_w - 6
     y = plot["y"] + plot["h"] - box_h - 6 if "lower" in loc else plot["y"] + 6
-    cmd.fill(_rect_pts(x, y, x + box_w, y + box_h), (128, 128, 128, 20))
+    # frameon=False (background transparent) drops the box entirely (§ mpl parity).
+    if style_opts.get("background") != "transparent":
+        if style_opts.get("boxShadow"):
+            cmd.fill(_rect_pts(x + 2, y + 2, x + box_w + 2, y + box_h + 2), (0, 0, 0, 55))
+        alpha = float(style_opts.get("--xy-legend-frame-alpha", 0.08))
+        background = style_opts.get("background")
+        frame = (
+            _rgba(background, "#808080", alpha)
+            if background
+            else (128, 128, 128, round(255 * alpha))
+        )
+        cmd.fill(_rect_pts(x, y, x + box_w, y + box_h), frame)
+    if title:
+        cmd.text(x + pad, y + pad / 2 + 11, 0, 11, _parse_color(_TEXT), str(title))
     for i, t in enumerate(named):
         style = t.get("style") or {}
-        c = _rgba(
+        color_str = _css(
             style.get("color") or (t.get("color") or {}).get("color"),
             DEFAULT_PALETTE[i % len(DEFAULT_PALETTE)],
         )
+        c = _parse_color(color_str)
         col, row = i % ncols, i // ncols
-        rx, ry = x + col * cell_w, y + pad / 2 + row * line_h
-        cmd.fill(_rect_pts(rx + pad, ry + 2, rx + pad + swatch, ry + 2 + swatch), c)
-        cmd.text(rx + pad + swatch + 5, ry + swatch, 0, 11, _parse_color(_TEXT), str(t["name"]))
+        rx, ry = x + col * cell_w, y + pad / 2 + title_h + row * line_h
+        hx0, hx1, cy = rx + pad, rx + pad + handle, ry + 7
+        kind = t.get("kind")
+        if kind == "scatter":
+            sym = _SYMBOLS.get(style.get("symbol", "circle"), 0)
+            sw = float(style.get("stroke_width", 0.0))
+            stroke = _rgba(style.get("stroke"), color_str) if sw > 0 else (0, 0, 0, 0)
+            cmd.point((hx0 + hx1) / 2, cy, 4.0, sym, c, sw, stroke)
+        elif kind in _LEGEND_LINE_KINDS:
+            cmd.stroke(
+                [(hx0, cy), (hx1, cy)],
+                float(style.get("width", 1.5)),
+                c,
+                dash=style.get("dash"),
+            )
+        else:
+            cmd.fill(_rect_pts(hx0, cy - 4, hx1, cy + 4), c)
+        cmd.text(hx1 + gap, ry + 11, 0, 11, _parse_color(_TEXT), str(t["name"]))
 
 
 def _emit_colorbar(cmd, options, plot):
-    from ._svg import _lut
+    from ._svg import _linear_ticks, _lut
 
     orientation = options.get("orientation", "vertical")
     if orientation == "horizontal":
-        x, y, width, height = plot["x"], plot["y"] + plot["h"] + 10, plot["w"], 8
+        x, y, width, height = plot["x"], plot["y"] + plot["h"] + 10, plot["w"], 18
     else:
-        x, y, width, height = plot["x"] + plot["w"] + 10, plot["y"], 8, plot["h"]
-    colors = _lut(options.get("colormap", "viridis"), np.linspace(0.0, 1.0, 64))
+        x, y, width, height = plot["x"] + plot["w"] + 24, plot["y"], 18, plot["h"]
+    # A discrete (resampled) colormap paints N solid bands; otherwise a smooth
+    # 64-step gradient approximates the continuous ramp.
+    levels = options.get("levels")
+    if levels and int(levels) >= 1:
+        n_seg = int(levels)
+        colors = _lut(
+            options.get("colormap", "viridis"),
+            (np.arange(n_seg, dtype=np.float64) + 0.5) / n_seg,
+        )
+    else:
+        n_seg = 64
+        colors = _lut(options.get("colormap", "viridis"), np.linspace(0.0, 1.0, n_seg))
     for index, color in enumerate(colors):
         if orientation == "horizontal":
-            x0, x1 = x + width * index / 64, x + width * (index + 1) / 64
+            x0, x1 = x + width * index / n_seg, x + width * (index + 1) / n_seg
             cmd.fill(_rect_pts(x0, y, x1 + 0.5, y + height), (*map(int, color), 255))
         else:
-            y0 = y + height * (63 - index) / 64
-            y1 = y + height * (64 - index) / 64
+            y0 = y + height * (n_seg - 1 - index) / n_seg
+            y1 = y + height * (n_seg - index) / n_seg
             cmd.fill(_rect_pts(x, y0, x + width, y1 + 0.5), (*map(int, color), 255))
     domain = options.get("domain", [0.0, 1.0])
+    lo, hi = float(domain[0]), float(domain[1])
+    span = (hi - lo) or 1.0
+    ticks = options.get("ticks")
+    extend = options.get("extend")
+    if extend in ("max", "both"):
+        color = (*map(int, colors[-1]), 255)
+        if orientation == "horizontal":
+            pts = [(x + width, y), (x + width, y + height), (x + width + 9, y + height / 2)]
+        else:
+            pts = [(x, y), (x + width, y), (x + width / 2, y - 9)]
+        cmd.fill(pts, color)
+    if extend in ("min", "both"):
+        color = (*map(int, colors[0]), 255)
+        if orientation == "horizontal":
+            pts = [(x, y), (x, y + height), (x - 9, y + height / 2)]
+        else:
+            pts = [(x, y + height), (x + width, y + height), (x + width / 2, y + height + 9)]
+        cmd.fill(pts, color)
     if orientation == "horizontal":
-        cmd.text(x, y + height + 13, 0, 10, _parse_color(_TEXT), f"{domain[0]:g}")
-        cmd.text(x + width, y + height + 13, 2, 10, _parse_color(_TEXT), f"{domain[1]:g}")
+        h_positions = (
+            [float(value) for value in ticks if lo <= float(value) <= hi]
+            if ticks is not None
+            else (_linear_ticks(lo, hi, 8)[0] or [lo, hi])
+        )
+        for value in h_positions:
+            cmd.text(
+                x + width * (value - lo) / span,
+                y + height + 13,
+                1,
+                10,
+                _parse_color(_TEXT),
+                f"{value:g}",
+            )
         if options.get("label"):
             cmd.text(
                 x + width / 2,
@@ -1033,11 +1212,15 @@ def _emit_colorbar(cmd, options, plot):
                 str(options["label"]),
             )
     else:
-        for index in range(5):
-            value = domain[0] + (domain[1] - domain[0]) * index / 4
+        tick_positions = (
+            [float(value) for value in ticks if lo <= float(value) <= hi]
+            if ticks is not None
+            else (_linear_ticks(lo, hi, 8)[0] or [lo, hi])
+        )
+        for value in tick_positions:
             cmd.text(
                 x + width + 4,
-                y + height * (1 - index / 4) + 4,
+                y + height * (1 - (value - lo) / span) + 4,
                 0,
                 10,
                 _parse_color(_TEXT),

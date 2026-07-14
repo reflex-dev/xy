@@ -131,47 +131,26 @@ throw new RangeError(`frame has ${bytes.byteLength - position} trailing bytes`);
 return { message, buffers, version: XY_FRAME_VERSION, byteLength: bytes.byteLength };
 }
 const COLORMAP_STOPS = {
-viridis: [
-[68, 1, 84], [72, 40, 120], [62, 74, 137], [49, 104, 142], [38, 130, 142],
-[31, 158, 137], [53, 183, 121], [110, 206, 88], [181, 222, 43], [253, 231, 37],
-],
-magma: [
-[0, 0, 4], [28, 16, 68], [79, 18, 123], [129, 37, 129], [181, 54, 122],
-[229, 80, 100], [251, 135, 97], [254, 194, 135], [252, 253, 191], [252, 253, 191],
-],
-plasma: [
-[13, 8, 135], [84, 2, 163], [139, 10, 165], [185, 50, 137], [219, 92, 104],
-[244, 136, 73], [254, 188, 43], [240, 249, 33], [240, 249, 33], [240, 249, 33],
-],
-inferno: [
-[0, 0, 4], [31, 12, 72], [85, 15, 109], [136, 34, 106], [186, 54, 85],
-[227, 89, 51], [249, 140, 10], [249, 201, 50], [252, 255, 164], [252, 255, 164],
-],
-cividis: [
-[0, 32, 76], [0, 42, 102], [39, 63, 108], [72, 85, 115], [106, 109, 120],
-[143, 133, 118], [181, 159, 105], [223, 187, 82], [253, 217, 63], [255, 233, 69],
-],
-gray: [
-[0, 0, 0], [28, 28, 28], [57, 57, 57], [85, 85, 85], [113, 113, 113],
-[142, 142, 142], [170, 170, 170], [198, 198, 198], [227, 227, 227], [255, 255, 255],
-],
-turbo: [
-[48, 18, 59], [70, 107, 227], [40, 187, 226], [61, 242, 148], [161, 253, 60],
-[232, 216, 33], [253, 149, 35], [225, 66, 13], [153, 15, 4], [122, 4, 3],
-],
-coolwarm: [
-[59, 76, 192], [87, 117, 211], [119, 154, 231], [157, 185, 243], [197, 209, 246],
-[221, 220, 220], [242, 196, 174], [237, 158, 130], [214, 96, 77], [180, 4, 38],
-],
-blues: [[247, 251, 255], [222, 235, 247], [198, 219, 239], [158, 202, 225], [107, 174, 214], [66, 146, 198], [33, 113, 181], [8, 81, 156], [8, 48, 107], [8, 48, 107]],
-rdylgn: [[165, 0, 38], [215, 48, 39], [244, 109, 67], [253, 174, 97], [254, 224, 139], [217, 239, 139], [166, 217, 106], [102, 189, 99], [26, 152, 80], [0, 104, 55]],
-rainbow: [[128, 0, 255], [57, 88, 255], [0, 180, 235], [0, 235, 176], [73, 255, 104], [176, 235, 38], [235, 180, 0], [255, 88, 0], [235, 0, 57], [255, 0, 0]],
-spectral: [[158, 1, 66], [213, 62, 79], [244, 109, 67], [253, 174, 97], [254, 224, 139], [230, 245, 152], [171, 221, 164], [102, 194, 165], [50, 136, 189], [94, 79, 162]],
-piyg: [[142, 1, 82], [197, 27, 125], [222, 119, 174], [241, 182, 218], [253, 224, 239], [247, 247, 247], [230, 245, 208], [184, 225, 134], [127, 188, 65], [77, 146, 33], [39, 100, 25]],
-purples: [[252, 251, 253], [239, 237, 245], [218, 218, 235], [188, 189, 220], [158, 154, 200], [128, 125, 186], [106, 81, 163], [84, 39, 143], [63, 0, 125]],
-pubu: [[255, 247, 251], [236, 231, 242], [208, 209, 230], [166, 189, 219], [116, 169, 207], [54, 144, 192], [5, 112, 176], [4, 90, 141], [2, 56, 88]],
-prgn: [[64, 0, 75], [118, 42, 131], [153, 112, 171], [194, 165, 207], [231, 212, 232], [247, 247, 247], [217, 240, 211], [166, 219, 160], [90, 174, 97], [27, 120, 55], [0, 68, 27]],
 binary: [[255, 255, 255], [0, 0, 0]],
+gray: [[0, 0, 0], [25, 25, 25], [51, 51, 51], [76, 76, 76], [102, 102, 102], [128, 128, 128], [153, 153, 153], [179, 179, 179], [204, 204, 204], [230, 230, 230], [255, 255, 255]],
+viridis: [[68, 1, 84], [72, 36, 117], [65, 68, 135], [53, 95, 141], [42, 120, 142], [33, 145, 140], [34, 168, 132], [68, 191, 112], [122, 209, 81], [189, 223, 38], [253, 231, 37]],
+plasma: [[13, 8, 135], [65, 4, 157], [106, 0, 168], [143, 13, 164], [177, 42, 144], [204, 71, 120], [225, 100, 98], [242, 132, 75], [252, 166, 54], [252, 206, 37], [240, 249, 33]],
+inferno: [[0, 0, 4], [22, 11, 57], [66, 10, 104], [106, 23, 110], [147, 38, 103], [188, 55, 84], [221, 81, 58], [243, 120, 25], [252, 165, 10], [246, 215, 70], [252, 255, 164]],
+magma: [[0, 0, 4], [20, 14, 54], [59, 15, 112], [100, 26, 128], [140, 41, 129], [183, 55, 121], [222, 73, 104], [247, 112, 92], [254, 159, 109], [254, 207, 146], [252, 253, 191]],
+cividis: [[0, 34, 78], [8, 51, 112], [53, 69, 108], [79, 87, 108], [102, 105, 112], [125, 124, 120], [148, 142, 119], [174, 163, 113], [200, 184, 102], [229, 207, 82], [254, 232, 56]],
+coolwarm: [[59, 76, 192], [89, 119, 227], [123, 159, 249], [158, 190, 255], [192, 212, 245], [221, 220, 220], [242, 203, 183], [247, 172, 142], [238, 132, 104], [214, 82, 68], [180, 4, 38]],
+turbo: [[48, 18, 59], [69, 89, 203], [62, 155, 254], [25, 213, 205], [70, 248, 132], [164, 252, 60], [225, 221, 55], [254, 164, 49], [240, 91, 18], [195, 37, 3], [122, 4, 3]],
+rainbow: [[128, 0, 255], [78, 77, 252], [25, 150, 243], [24, 205, 228], [77, 243, 206], [128, 255, 180], [178, 243, 150], [230, 205, 115], [255, 150, 79], [255, 77, 39], [255, 0, 0]],
+jet: [[0, 0, 128], [0, 0, 241], [0, 76, 255], [0, 176, 255], [41, 255, 206], [125, 255, 122], [206, 255, 41], [255, 196, 0], [255, 104, 0], [241, 8, 0], [128, 0, 0]],
+rdgy: [[103, 0, 31], [177, 24, 43], [214, 96, 77], [243, 164, 129], [253, 219, 199], [254, 254, 254], [224, 224, 224], [185, 185, 185], [135, 135, 135], [76, 76, 76], [26, 26, 26]],
+rdbu: [[103, 0, 31], [177, 24, 43], [214, 96, 77], [243, 164, 129], [253, 219, 199], [246, 247, 247], [209, 229, 240], [144, 196, 221], [67, 147, 195], [32, 101, 171], [5, 48, 97]],
+blues: [[247, 251, 255], [227, 238, 249], [208, 225, 242], [183, 212, 234], [148, 196, 223], [106, 174, 214], [74, 152, 201], [46, 126, 188], [23, 100, 171], [8, 74, 145], [8, 48, 107]],
+purples: [[252, 251, 253], [242, 240, 247], [226, 226, 239], [206, 207, 229], [182, 182, 216], [158, 154, 200], [134, 131, 189], [114, 98, 172], [97, 64, 155], [79, 31, 139], [63, 0, 125]],
+pubu: [[255, 247, 251], [240, 234, 244], [219, 218, 235], [192, 201, 226], [156, 185, 217], [115, 169, 207], [66, 149, 195], [24, 124, 182], [5, 103, 162], [4, 83, 130], [2, 56, 88]],
+piyg: [[142, 1, 82], [196, 26, 124], [222, 119, 174], [241, 181, 217], [253, 224, 239], [247, 247, 246], [230, 245, 208], [183, 224, 133], [127, 188, 65], [76, 145, 33], [39, 100, 25]],
+prgn: [[64, 0, 75], [117, 41, 130], [153, 112, 171], [193, 164, 206], [231, 212, 232], [246, 247, 246], [217, 240, 211], [165, 218, 159], [90, 174, 97], [26, 119, 54], [0, 68, 27]],
+rdylgn: [[165, 0, 38], [214, 47, 39], [244, 109, 67], [253, 173, 96], [254, 224, 139], [254, 255, 190], [217, 239, 139], [165, 216, 106], [102, 189, 99], [25, 151, 80], [0, 104, 55]],
+spectral: [[158, 1, 66], [212, 61, 79], [244, 109, 67], [253, 173, 96], [254, 224, 139], [255, 255, 190], [230, 245, 152], [170, 220, 164], [102, 194, 165], [51, 135, 188], [94, 79, 162]],
 };
 function colormapStops(name) {
 const reversed = typeof name === "string" && name.endsWith("_r");
@@ -293,7 +272,7 @@ function niceStep(rough) {
 rough = Math.abs(rough);
 if (!Number.isFinite(rough) || rough <= 0) return 1;
 const mag = Math.pow(10, Math.floor(Math.log10(rough)));
-for (const m of [1, 2, 5, 10]) {
+for (const m of [1, 2, 2.5, 5, 10]) {
 if (rough <= m * mag * (1 + 1e-12)) return m * mag;
 }
 return 10 * mag;
@@ -406,13 +385,11 @@ if (step >= MS.s) return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pa
 return `${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}.${pad(d.getUTCMilliseconds(), 3)}`;
 }
 function fmtLinear(v, step) {
-if (v === 0) return "0";
 const av = Math.abs(v);
-if (av >= 1e6 || av < 1e-4) return v.toExponential(1).replace("e+", "e");
-const dec = Math.max(0, -Math.floor(Math.log10(step)) + (step < 1 ? 1 : 0));
-let s = v.toFixed(Math.min(dec, 8));
-if (s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
-return s;
+if (av >= 1e6 || (av !== 0 && av < 1e-4)) return v.toExponential(1).replace("e+", "e");
+let dec = step ? Math.max(0, Math.ceil(-Math.log10(Math.abs(step)))) : 0;
+while (dec < 8 && Math.abs(Number(step.toFixed(dec)) - step) > Math.abs(step) / 1000) dec++;
+return v.toFixed(Math.min(dec, 8));
 }
 function fmtCategory(v, categories) {
 const i = Math.round(v);
@@ -493,6 +470,7 @@ a_pos: 0, a_v1: 1, a_v0: 2,
 a_corner: 0,
 a_cval: 6, a_sval: 7, a_sel: 8, a_dval: 9,
 a_len0: 10, a_len1: 11,
+a_dash0: 10, a_dashDir: 11,
 };
 function makeProgram(gl, vs, fs) {
 const p = gl.createProgram();
@@ -570,6 +548,39 @@ void main() {
   v_dim = u_selActive == 1 ? mix(u_unselectedOpacity, u_selectedOpacity, step(0.5, a_sel)) : 1.0;
 }`;
 const MARKER_SDF_GLSL = `
+float fcSegmentDistance(vec2 p, vec2 a, vec2 b) {
+  vec2 e = b - a;
+  return length(p - a - e * clamp(dot(p - a, e) / dot(e, e), 0.0, 1.0));
+}
+float fcTriangleDistance(vec2 p, vec2 a, vec2 b, vec2 c) {
+  float dist = min(fcSegmentDistance(p, a, b),
+                   min(fcSegmentDistance(p, b, c), fcSegmentDistance(p, c, a)));
+  float c0 = (b.x-a.x)*(p.y-a.y) - (b.y-a.y)*(p.x-a.x);
+  float c1 = (c.x-b.x)*(p.y-b.y) - (c.y-b.y)*(p.x-b.x);
+  float c2 = (a.x-c.x)*(p.y-c.y) - (a.y-c.y)*(p.x-c.x);
+  bool inside = (c0 >= 0.0 && c1 >= 0.0 && c2 >= 0.0) ||
+                (c0 <= 0.0 && c1 <= 0.0 && c2 <= 0.0);
+  return inside ? -dist : dist;
+}
+float fcPentagonDistance(vec2 p) {
+  // Path.unit_regular_polygon(5), then Matplotlib's 0.5 marker transform.
+  vec2 a = vec2(0.0, -0.5);
+  vec2 b = vec2(-0.475528258, -0.154508497);
+  vec2 c = vec2(-0.293892626, 0.404508497);
+  vec2 d = vec2(0.293892626, 0.404508497);
+  vec2 e = vec2(0.475528258, -0.154508497);
+  float dist = min(min(fcSegmentDistance(p, a, b), fcSegmentDistance(p, b, c)),
+                   min(min(fcSegmentDistance(p, c, d), fcSegmentDistance(p, d, e)),
+                       fcSegmentDistance(p, e, a)));
+  float c0 = (b.x-a.x)*(p.y-a.y) - (b.y-a.y)*(p.x-a.x);
+  float c1 = (c.x-b.x)*(p.y-b.y) - (c.y-b.y)*(p.x-b.x);
+  float c2 = (d.x-c.x)*(p.y-c.y) - (d.y-c.y)*(p.x-c.x);
+  float c3 = (e.x-d.x)*(p.y-d.y) - (e.y-d.y)*(p.x-d.x);
+  float c4 = (a.x-e.x)*(p.y-e.y) - (a.y-e.y)*(p.x-e.x);
+  bool inside = (c0 >= 0.0 && c1 >= 0.0 && c2 >= 0.0 && c3 >= 0.0 && c4 >= 0.0) ||
+                (c0 <= 0.0 && c1 <= 0.0 && c2 <= 0.0 && c3 <= 0.0 && c4 <= 0.0);
+  return inside ? -dist : dist;
+}
 float fcMarkerSdf(vec2 d, int shape) {
   if (shape == 1) return max(abs(d.x), abs(d.y)) - 0.5;              // square
   if (shape == 2) return (abs(d.x) + abs(d.y)) - 0.5;               // diamond
@@ -577,35 +588,63 @@ float fcMarkerSdf(vec2 d, int shape) {
     vec2 a = abs(d);
     return min(max(a.x - 0.17, a.y - 0.5), max(a.x - 0.5, a.y - 0.17));
   }
-  if (shape == 5) {                                                 // regular hexagon
-    const float k = 0.8660254;
-    vec2 p = abs(d);
-    return max(p.x - 0.5, p.y * 0.5 + p.x * k - 0.5);
+  if (shape == 5) {                                                 // regular hexagon (pointy top)
+    const vec3 k = vec3(-0.866025404, 0.5, 0.577350269);
+    vec2 p = abs(vec2(d.y, d.x));
+    p -= 2.0 * min(dot(k.xy, p), 0.0) * k.xy;
+    p -= vec2(clamp(p.x, -k.z * 0.5, k.z * 0.5), 0.5);
+    return length(p) * sign(p.y);
   }
-  if (shape == 3) {                                                 // triangle (apex up)
-    const float k = 1.7320508;
-    float r = 0.62;
-    vec2 p = vec2(d.x, -d.y);   // flip so the apex points up
-    p.x = abs(p.x) - r;
-    p.y = p.y + r / k;
-    if (p.x + k * p.y > 0.0) p = vec2(p.x - k * p.y, -k * p.x - p.y) / 2.0;
-    p.x -= clamp(p.x, -2.0 * r, 0.0);
-    return -length(p) * sign(p.y);
+  if (shape == 6) return fcPentagonDistance(d);                      // exact regular pentagon
+  if (shape == 7) {                                                 // five-pointed star (apex up)
+    const float rf = 0.45;
+    const vec2 k1 = vec2(0.809016994, -0.587785252);
+    const vec2 k2 = vec2(-k1.x, k1.y);
+    vec2 p = vec2(abs(d.x), -d.y);
+    p -= 2.0 * max(dot(k1, p), 0.0) * k1;
+    p -= 2.0 * max(dot(k2, p), 0.0) * k2;
+    p = vec2(abs(p.x), p.y - 0.5);
+    vec2 ba = rf * vec2(-k1.y, k1.x) - vec2(0.0, 1.0);
+    float h = clamp(dot(p, ba) / dot(ba, ba), 0.0, 0.5);
+    return length(p - ba * h) * sign(p.y * ba.x - p.x * ba.y);
   }
+  if (shape == 3 || shape == 8 || shape == 9 || shape == 10) {     // Matplotlib triangle path
+    vec2 q = d;
+    if (shape == 8) q = -d;
+    if (shape == 9) q = vec2(d.y, -d.x);
+    if (shape == 10) q = vec2(-d.y, d.x);
+    return fcTriangleDistance(q, vec2(0.0, -0.5), vec2(-0.5, 0.5), vec2(0.5, 0.5));
+  }
+  if (shape == 11) {                                                // diagonal x
+    vec2 q = vec2(d.x + d.y, d.y - d.x) * 0.707106781;
+    vec2 a = abs(q);
+    return min(max(a.x - 0.17, a.y - 0.5), max(a.x - 0.5, a.y - 0.17));
+  }
+  if (shape == 13) return max(abs(d.x), abs(d.y)) - 0.5;            // snapped pixel
+  if (shape == 14) return (abs(d.x) / 0.6 + abs(d.y)) - 0.5;        // thin diamond
   return length(d) - 0.5;                                           // circle
 }`;
 const POINT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
 uniform sampler2D u_dlut; uniform float u_dblend;
-uniform int u_symbol; uniform vec4 u_ptStroke; uniform float u_ptStrokeWidth;
+uniform int u_symbol; uniform vec4 u_ptStroke; uniform float u_ptStrokeWidth; uniform int u_ptStrokeFace;
 uniform int u_selActive; uniform vec4 u_selColor; uniform vec4 u_unselColor;
 in float v_lutCoord; in float v_dim; in float v_dval; in float v_ptSize; in float v_sel;
 out vec4 outColor;
 ${MARKER_SDF_GLSL}
 void main() {
   vec2 d = gl_PointCoord - 0.5;
-  float sd = fcMarkerSdf(d, u_symbol);
+  float sd;
+  bool lineMarker = u_symbol == 15 || u_symbol == 16;
+  if (lineMarker) {
+    vec2 q = u_symbol == 16 ? vec2(d.x + d.y, d.y - d.x) * 0.707106781 : d;
+    float halfWidth = max(u_ptStrokeWidth, 1.0) / (2.0 * max(v_ptSize, 1.0));
+    vec2 a = abs(q);
+    sd = min(max(a.x - 0.5, a.y - halfWidth), max(a.y - 0.5, a.x - halfWidth));
+  } else {
+    sd = fcMarkerSdf(d, u_symbol);
+  }
   float aa = fwidth(sd) + 1e-4;
   float shapeCov = clamp(0.5 - sd / aa, 0.0, 1.0);
   if (shapeCov <= 0.001) discard;
@@ -624,10 +663,23 @@ void main() {
   }
   float fillAlpha = u_opacity;
   vec4 px = vec4(rgb * fillAlpha, fillAlpha);   // premultiplied fill
+  vec4 strokePx = u_ptStrokeFace == 1 ? px : u_ptStroke;
+  if (lineMarker) {
+    outColor = strokePx * (shapeCov * v_dim);
+    return;
+  }
   if (u_ptStrokeWidth > 0.0) {
     float sw = u_ptStrokeWidth / max(v_ptSize, 1.0);   // px -> gl_PointCoord units
+    // The supplied point size includes the edge.  Recover Matplotlib's path
+    // boundary half a stroke inside it, then source-over the centered stroke.
+    float pathCov = clamp(0.5 - (sd + sw * 0.5) / aa, 0.0, 1.0);
     float innerCov = clamp(0.5 - (sd + sw) / aa, 0.0, 1.0);
-    px = mix(u_ptStroke, px, innerCov);                // ring = stroke, inside = fill
+    float strokeCov = max(shapeCov - innerCov, 0.0);
+    vec4 fillLayer = px * pathCov;
+    vec4 strokeLayer = strokePx * strokeCov;
+    px = strokeLayer + fillLayer * (1.0 - strokeLayer.a);
+    outColor = px * v_dim;
+    return;
   }
   outColor = px * (shapeCov * v_dim);
 }`;
@@ -795,11 +847,12 @@ void main() {
 }`;
 const SEGMENT_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1; in float a_cval;
+in float a_dash0; in float a_dashDir;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
 uniform int u_colorMode;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
 uniform int u_x0mode; uniform int u_x1mode; uniform int u_y0mode; uniform int u_y1mode;
-out float v_off; out float v_cval;
+out float v_off; out float v_cval; out float v_dash;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -817,16 +870,30 @@ void main() {
   gl_Position = vec4(pos / u_res * 2.0 - 1.0, 0.0, 1.0);
   v_off = c.y * half_w;
   v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  v_dash = a_dash0 + c.x * len * a_dashDir;
 }`;
 const SEGMENT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform float u_width; uniform int u_colorMode; uniform sampler2D u_lut;
-in float v_off; in float v_cval;
+uniform int u_dashCount; uniform float u_dashArr[8]; uniform float u_dashPeriod;
+in float v_off; in float v_cval; in float v_dash;
 out vec4 outColor;
 void main() {
   float half_w = u_width * 0.5;
   vec3 rgb = u_colorMode != 0 ? texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb : u_color.rgb;
   float alpha = (1.0 - smoothstep(half_w - 0.5, half_w + 0.5, abs(v_off))) * u_color.a;
+  if (u_dashCount > 0) {
+    float m = mod(v_dash, u_dashPeriod);
+    float acc = 0.0;
+    float on = 0.0;
+    for (int i = 0; i < 8; i++) {
+      if (i >= u_dashCount) break;
+      float next = acc + u_dashArr[i];
+      if (m < next) { on = (i % 2 == 0) ? 1.0 : 0.0; break; }
+      acc = next;
+    }
+    alpha *= on;
+  }
   if (alpha <= 0.001) discard;
   outColor = vec4(rgb * alpha, alpha);
 }`;
@@ -1590,6 +1657,8 @@ return null;
 }
 }
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
+const COLORBAR_THICKNESS = 18;
+const COLORBAR_GAP = 24;
 const UNITLESS_STYLE_PROPS = new Set([
 "animation-iteration-count",
 "aspect-ratio",
@@ -1748,9 +1817,14 @@ _layout() {
 const compact = this.size.w < 520;
 const pad = Array.isArray(this.spec.padding) ? this.spec.padding : null;
 const marginLeft = pad ? pad[3] : compact ? 46 : MARGIN.l;
-const marginRight = pad ? pad[1] : compact ? 8 : MARGIN.r;
+const colorbar = this.spec.colorbar;
+const verticalColorbar = colorbar && colorbar.orientation !== "horizontal";
+const horizontalColorbar = colorbar && colorbar.orientation === "horizontal";
+const colorbarRightRoom = verticalColorbar ? 86 + (colorbar.label ? 18 : 0) : 0;
+const colorbarBottomRoom = horizontalColorbar ? 38 + (colorbar.label ? 16 : 0) : 0;
+const marginRight = (pad ? pad[1] : compact ? 8 : MARGIN.r) + colorbarRightRoom;
 const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
-const marginBottom = pad ? pad[2] : compact ? 36 : MARGIN.b;
+const marginBottom = (pad ? pad[2] : compact ? 36 : MARGIN.b) + colorbarBottomRoom;
 const topAxisRoom = this._axis("x").side === "top" ? (compact ? 26 : 32) : 0;
 const top = marginTop + (this.spec.title ? (compact ? 26 : 30) : 0) + topAxisRoom;
 const extraRightAxes = Object.values(this.axes || {}).filter((axis) =>
@@ -2163,6 +2237,7 @@ if (this._legend && this._slotStyleValue("legend", "max-height") == null) {
 this._legend.style.maxHeight = p.h - 12 + "px";
 }
 this._positionReductionBadges();
+this._positionColorbar();
 this._pickDirty = true;
 this.draw();
 this._scheduleViewRequest();
@@ -2276,12 +2351,12 @@ if (t.tier === "density") {
 items.push({ swatch: "gradient", cmap: t.density.colormap, name: t.name || "density" });
 } else if (t.color && t.color.mode === "categorical") {
 t.color.categories.forEach((cat, i) =>
-items.push({ swatch: t.color.palette[i], name: cat }));
+items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {} }));
 } else if (t.color && t.color.mode === "continuous") {
 items.push({ swatch: "gradient", cmap: t.color.colormap, name: t.name || "value" });
 } else if (t.name) {
 const c = (t.color && t.color.color) || (t.style && t.style.color);
-items.push({ swatch: c, name: t.name });
+items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {} });
 }
 }
 if (!items.length) return;
@@ -2305,6 +2380,13 @@ lg.style.cssText = `position:absolute;${xPos}${yPos}` +
 `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
 "overflow:auto;" + `max-height:${this.plot.h - 12}px;`;
 this._applySlot(lg, "legend");
+if (options.title) {
+const title = document.createElement("div");
+title.textContent = String(options.title);
+title.style.fontWeight = "600";
+title.style.gridColumn = `1 / span ${horizontal ? ncols : 1}`;
+lg.appendChild(title);
+}
 for (const it of items) {
 const row = document.createElement("div");
 this._applySlot(row, "legend_item");
@@ -2316,6 +2398,37 @@ if (it.swatch === "gradient") {
 const stops = colormapStops(it.cmap);
 bg = `linear-gradient(90deg,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
 sw.style.background = bg;
+} else if (it.symbol) {
+const ns = "http://www.w3.org/2000/svg";
+const svg = document.createElementNS(ns, "svg");
+svg.setAttribute("viewBox", "0 0 18 14");
+svg.setAttribute("width", "18");
+svg.setAttribute("height", "14");
+const path = document.createElementNS(ns, "path");
+const paths = {
+square: "M4.5 2.5h9v9h-9z", diamond: "M9 2l5 5-5 5-5-5z",
+thin_diamond: "M9 2l3 5-3 5-3-5z",
+triangle: "M9 2l-5 10h10z", triangle_down: "M9 12L4 2h10z",
+triangle_left: "M4 7L14 2v10z", triangle_right: "M14 7L4 2v10z",
+plus_line: "M9 2v10M4 7h10", x_line: "M5 3l8 8M13 3l-8 8",
+cross: "M7.5 2h3v3.5H14v3h-3.5V12h-3V8.5H4v-3h3.5z",
+x: "M5.5 2L9 5.5 12.5 2 14 3.5 10.5 7 14 10.5 12.5 12 9 8.5 5.5 12 4 10.5 7.5 7 4 3.5z",
+pentagon: "M9 2.5L13.28 5.61 11.65 10.64H6.35L4.72 5.61z",
+hexagon: "M9 2L13.3 4.5v5L9 12l-4.3-2.5v-5z",
+star: "M9 2l1.5 3.1 3.5.5-2.5 2.5.6 3.5L9 10l-3.1 1.6.6-3.5L4 5.6l3.5-.5z"
+};
+const color = safeCssPaint(this.root, bg);
+if (it.symbol === "circle" || it.symbol === "point" || it.symbol === "pixel") {
+if (it.symbol === "pixel") path.setAttribute("d", "M8.5 6.5h1v1h-1z");
+else path.setAttribute("d", `M9 ${it.symbol === "point" ? 4.75 : 2.5}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 ${it.symbol === "point" ? 4.5 : 9}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 -${it.symbol === "point" ? 4.5 : 9}`);
+} else path.setAttribute("d", paths[it.symbol] || paths.square);
+path.setAttribute("fill", it.symbol.endsWith("_line") ? "none" : color);
+path.setAttribute("stroke", color);
+path.setAttribute("stroke-width", String(it.style?.stroke_width || 1));
+svg.appendChild(path);
+sw.appendChild(svg);
+sw.style.width = "18px";
+sw.style.height = "14px";
 } else {
 sw.style.background = safeCssPaint(this.root, bg);
 }
@@ -2330,19 +2443,69 @@ this._legend = lg;
 _buildColorbar(root) {
 const cb = this.spec.colorbar;
 if (!cb) return;
-const stops = colormapStops(cb.colormap || "viridis");
 const box = document.createElement("div");
 const horizontal = cb.orientation === "horizontal";
-box.style.cssText = horizontal
-? `position:absolute;left:${this.plot.x}px;top:${this.plot.y + this.plot.h + 8}px;` +
-`width:${this.plot.w}px;height:10px;` +
-`background:linear-gradient(to right,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")});`
-: `position:absolute;top:${this.plot.y}px;left:${this.plot.x + this.plot.w + 8}px;` +
-`width:10px;height:${Math.max(24, this.plot.h)}px;` +
-`background:linear-gradient(to top,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")});`;
+box.style.cssText = "position:absolute;pointer-events:none;z-index:4;";
+this._applySlot(box, "colorbar");
+const bar = document.createElement("div");
+const levels = Math.max(0, Number(cb.levels) || 0);
+let gradient;
+if (levels > 0) {
+const lut = buildLutData(cb.colormap || "viridis");
+const bands = [];
+for (let index = 0; index < levels; index++) {
+const sample = Math.min(255, Math.round(255 * (index + 0.5) / levels));
+const color = `rgb(${lut[sample * 4]},${lut[sample * 4 + 1]},${lut[sample * 4 + 2]})`;
+bands.push(`${color} ${100 * index / levels}% ${100 * (index + 1) / levels}%`);
+}
+gradient = `linear-gradient(to ${horizontal ? "right" : "top"},${bands.join(",")})`;
+} else {
+const stops = colormapStops(cb.colormap || "viridis");
+gradient = `linear-gradient(to ${horizontal ? "right" : "top"},${stops.map((c) =>
+`rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
+}
+bar.style.cssText = horizontal
+? `position:absolute;inset:0 0 auto 0;height:${COLORBAR_THICKNESS}px;background:${gradient};border:1px solid currentColor;box-sizing:border-box;`
+: `position:absolute;inset:0 auto 0 0;width:${COLORBAR_THICKNESS}px;background:${gradient};border:1px solid currentColor;box-sizing:border-box;`;
+box.appendChild(bar);
 const domain = cb.domain || [0, 1];
+const lo = Number(domain[0]), hi = Number(domain[1]);
+const span = hi - lo || 1;
+const tickResult = linearTicks(lo, hi, 8);
+const tickValues = Array.isArray(cb.ticks) ? cb.ticks : tickResult.ticks;
+const tickStep = tickResult.step;
+for (const raw of tickValues) {
+const value = Number(raw);
+if (!Number.isFinite(value) || value < Math.min(lo, hi) || value > Math.max(lo, hi)) continue;
+const tick = document.createElement("span");
+tick.textContent = fmtLinear(value, tickStep);
+const fraction = (value - lo) / span;
+tick.style.cssText = horizontal
+? `position:absolute;left:${100 * fraction}%;top:${COLORBAR_THICKNESS + 2}px;transform:translateX(-50%);white-space:nowrap;`
+: `position:absolute;left:${COLORBAR_THICKNESS + 5}px;top:${100 * (1 - fraction)}%;transform:translateY(-50%);white-space:nowrap;`;
+box.appendChild(tick);
+}
+if (cb.label) {
+const label = document.createElement("span");
+label.textContent = String(cb.label);
+label.style.cssText = horizontal
+? `position:absolute;left:50%;top:${COLORBAR_THICKNESS + 18}px;transform:translateX(-50%);white-space:nowrap;`
+: `position:absolute;left:${COLORBAR_THICKNESS + 40}px;top:50%;writing-mode:vertical-rl;transform:translateY(-50%) rotate(180deg);white-space:nowrap;`;
+box.appendChild(label);
+}
 box.title = `${cb.label ? cb.label + ": " : ""}${domain[0]} – ${domain[1]}`;
 root.appendChild(box);
+this._colorbar = box;
+this._colorbarHorizontal = horizontal;
+this._positionColorbar();
+}
+_positionColorbar() {
+if (!this._colorbar) return;
+const horizontal = this._colorbarHorizontal;
+this._colorbar.style.left = (horizontal ? this.plot.x : this.plot.x + this.plot.w + COLORBAR_GAP) + "px";
+this._colorbar.style.top = (horizontal ? this.plot.y + this.plot.h + 8 : this.plot.y) + "px";
+this._colorbar.style.width = (horizontal ? this.plot.w : 66) + "px";
+this._colorbar.style.height = (horizontal ? 50 : Math.max(24, this.plot.h)) + "px";
 }
 _initGl(buffer) {
 const dpr = window.devicePixelRatio || 1;
@@ -2502,12 +2665,12 @@ this._pointMarkStyle(g, t);
 }
 _pointMarkStyle(g, t) {
 const s = t.style || {};
-g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5 }[s.symbol] || 0;
+g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16 }[s.symbol] || 0;
 g.pointStrokeWidth = Number(s.stroke_width) || 0;
-const markOpaque = [g.color[0], g.color[1], g.color[2], 1];
+g.pointStrokeFace = !s.stroke;
 g.pointStroke = s.stroke
-? parseColor(this.root, s.stroke, markOpaque)
-: g.pointStrokeWidth > 0 ? markOpaque : null;
+? parseColor(this.root, s.stroke, [g.color[0], g.color[1], g.color[2], 1])
+: null;
 }
 _sampleTraceSpec(parentTrace, sample) {
 return {
@@ -2748,6 +2911,7 @@ g.x0Buf = this._upload(x0);
 g.x1Buf = this._upload(x1);
 g.y0Buf = this._upload(y0);
 g.y1Buf = this._upload(y1);
+g._segmentCpu = { x0, x1, y0, y1 };
 g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
 g.colorMode = 0;
 if (t.color && t.color.mode === "continuous") {
@@ -2800,7 +2964,7 @@ if (sm) g.n = sm.n;
 g._dashX = sm ? sm.x : x;
 g._dashY = sm ? sm.y : y;
 g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
-g.lineColor = parseColor(this.root, t.style && t.style.color, g.color);
+g.lineColor = parseColor(this.root, t.style && (t.style.line_color || t.style.color), g.color);
 g.grad = this._resolveMarkFill(t.style, g.color);
 }
 _buildRectMark(g, t, buffer) {
@@ -3116,7 +3280,8 @@ gl.uniform1f(u("u_size"), g.size);
 gl.uniform1i(u("u_sizeMode"), g.sizeMode);
 gl.uniform2f(u("u_sizeRange"), g.sizeRange[0], g.sizeRange[1]);
 gl.uniform1i(u("u_colorMode"), g.colorMode);
-gl.uniform1f(u("u_opacity"), (g.trace.style.opacity ?? 0.8) * opacityScale);
+const markOpacity = (g.trace.style.opacity ?? 0.8) * opacityScale;
+gl.uniform1f(u("u_opacity"), markOpacity);
 gl.uniform1f(u("u_selectedOpacity"), this._markStateNumber("selected", "opacity", 1));
 gl.uniform1f(u("u_unselectedOpacity"), this._markStateNumber("unselected", "opacity", 0.12));
 const stateColor = (loc, expr) => {
@@ -3129,9 +3294,11 @@ const [r, gg, b] = g.color;
 gl.uniform4f(u("u_color"), r, gg, b, 1);
 gl.uniform1i(u("u_symbol"), g.symbol || 0);
 const sc = g.pointStroke;
-gl.uniform1f(u("u_ptStrokeWidth"), sc ? (g.pointStrokeWidth || 0) * this.dpr : 0);
-gl.uniform4f(u("u_ptStroke"), sc ? sc[0] * sc[3] : 0, sc ? sc[1] * sc[3] : 0,
-sc ? sc[2] * sc[3] : 0, sc ? sc[3] : 0);
+const strokeAlpha = sc ? sc[3] * markOpacity : 0;
+gl.uniform1f(u("u_ptStrokeWidth"), (g.pointStrokeWidth || 0) * this.dpr);
+gl.uniform1i(u("u_ptStrokeFace"), g.pointStrokeFace ? 1 : 0);
+gl.uniform4f(u("u_ptStroke"), sc ? sc[0] * strokeAlpha : 0, sc ? sc[1] * strokeAlpha : 0,
+sc ? sc[2] * strokeAlpha : 0, strokeAlpha);
 gl.uniform1i(u("u_selActive"), g.selActive ? 1 : 0);
 const colorOn = g.colorMode !== 0 && g.cBuf;
 const sizeOn = g.sizeMode === 1 && g.sBuf;
@@ -3361,6 +3528,7 @@ gl.uniform1f(u("u_width"), (g.trace.style.width ?? 1.5) * this.dpr);
 const [r, gg, b, a] = g.color;
 gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
 gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+const dashed = this._segmentDash(g, prog);
 if (g.colorMode && g.lut) {
 gl.activeTexture(gl.TEXTURE0);
 gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -3369,17 +3537,96 @@ gl.uniform1i(u("u_lut"), 0);
 this._bindVao(
 g,
 "segment",
-[g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId, g.colorMode ? g.cBuf._fcId : 0],
+[g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId,
+g.colorMode ? g.cBuf._fcId : 0,
+dashed ? g._segmentDashOffsetBuf._fcId : 0,
+dashed ? g._segmentDashDirBuf._fcId : 0],
 () => {
 this._vaoAttr(ATTR_SLOTS.ax0, g.x0Buf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
 this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
 if (g.colorMode) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+if (dashed) {
+this._vaoAttr(ATTR_SLOTS.a_dash0, g._segmentDashOffsetBuf, 0, 1);
+this._vaoAttr(ATTR_SLOTS.a_dashDir, g._segmentDashDirBuf, 0, 1);
+}
 }
 );
 if (!g.colorMode) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
 gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+}
+_segmentDash(g, prog) {
+const gl = this.gl;
+const u = (n) => uniformOf(gl, prog, n);
+const dash = g.trace.style && g.trace.style.dash;
+const cpu = g._segmentCpu;
+if (!dash || !dash.length || !cpu) {
+gl.uniform1i(u("u_dashCount"), 0);
+return false;
+}
+const n = g.n;
+const offsets = g._segmentDashOffsets?.length === n
+? g._segmentDashOffsets : (g._segmentDashOffsets = new Float32Array(n));
+const directions = g._segmentDashDirections?.length === n
+? g._segmentDashDirections : (g._segmentDashDirections = new Float32Array(n));
+const k0 = new Array(n), k1 = new Array(n), lengths = new Float32Array(n);
+const adjacency = new Map();
+const add = (key, index) => {
+const edges = adjacency.get(key);
+if (edges) edges.push(index); else adjacency.set(key, [index]);
+};
+const key = (x, y) => `${Math.round(x * 1000)},${Math.round(y * 1000)}`;
+const dpr = this.dpr;
+for (let i = 0; i < n; i++) {
+const x0 = this._dataPx(g.xAxis, this._decodeValue(cpu.x0, g.x0Meta, i));
+const x1 = this._dataPx(g.xAxis, this._decodeValue(cpu.x1, g.x1Meta, i));
+const y0 = this._dataPx(g.yAxis, this._decodeValue(cpu.y0, g.y0Meta, i));
+const y1 = this._dataPx(g.yAxis, this._decodeValue(cpu.y1, g.y1Meta, i));
+k0[i] = key(x0, y0); k1[i] = key(x1, y1);
+lengths[i] = Math.hypot(x1 - x0, y1 - y0) * dpr;
+add(k0[i], i); add(k1[i], i);
+}
+const visited = new Uint8Array(n);
+const walk = (start) => {
+let current = start, accumulated = 0;
+while (true) {
+const edge = (adjacency.get(current) || []).find((index) => !visited[index]);
+if (edge === undefined) break;
+visited[edge] = 1;
+if (k0[edge] === current) {
+offsets[edge] = accumulated;
+directions[edge] = 1;
+current = k1[edge];
+} else {
+offsets[edge] = accumulated + lengths[edge];
+directions[edge] = -1;
+current = k0[edge];
+}
+accumulated += lengths[edge];
+}
+};
+for (const [node, edges] of adjacency) if (edges.length === 1) walk(node);
+for (let i = 0; i < n; i++) if (!visited[i]) walk(k0[i]);
+const upload = (buffer, values) => {
+if (!buffer) return this._upload(values);
+gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+gl.bufferData(gl.ARRAY_BUFFER, values, gl.DYNAMIC_DRAW);
+return buffer;
+};
+g._segmentDashOffsetBuf = upload(g._segmentDashOffsetBuf, offsets);
+g._segmentDashDirBuf = upload(g._segmentDashDirBuf, directions);
+const pattern = new Float32Array(8);
+const count = Math.min(dash.length, 8);
+let period = 0;
+for (let i = 0; i < count; i++) {
+pattern[i] = Number(dash[i]) * dpr;
+period += pattern[i];
+}
+gl.uniform1i(u("u_dashCount"), count);
+gl.uniform1fv(u("u_dashArr"), pattern);
+gl.uniform1f(u("u_dashPeriod"), Math.max(period, 1e-3));
+return true;
 }
 _drawMesh(g, xm, ym) {
 if (g.n < 1) return;
@@ -3602,7 +3849,7 @@ const raw = axis && axis.tick_label_strategy !== undefined
 ? axis.tick_label_strategy
 : this._axisStyleValue(axis, "tick_label_strategy");
 const value = String(raw || "auto").replace(/-/g, "_");
-return ["auto", "hide", "rotate", "stagger", "none"].includes(value) ? value : "auto";
+return ["auto", "hide", "rotate", "stagger", "none", "off"].includes(value) ? value : "auto";
 }
 _axisTickLabelAngle(axis) {
 const raw = axis && axis.tick_label_angle !== undefined
@@ -3666,6 +3913,7 @@ const baseAngle = explicitAngle === null ? 0 : explicitAngle;
 const withBase = labels.map((label) => ({ ...label, angle: baseAngle, row: 0 }));
 let strategy = this._axisTickLabelStrategy(axis);
 if (strategy === "none") return [];
+if (strategy === "off") return [];
 if (strategy === "auto") {
 if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap)) return withBase;
 if (dim === "x" && axis.kind === "category" && labels.length <= 16) strategy = "rotate";
@@ -3789,21 +4037,54 @@ d.style.cssText =
 "pointer-events:none;";
 this.labels.appendChild(d);
 };
+const frameSides = Array.isArray(s.frame_sides)
+? s.frame_sides
+: [xAxis.side || "bottom", yAxis.side || "left"];
 if (!hideY) {
-const yWidth = Math.max(1, Math.round(this._axisStyleNumber(yAxis, "axis_width", 1)));
-const yAxisX = yAxis.side === "right" ? p.x + p.w - yWidth : p.x;
-rule(yAxis, yAxisX, p.y, yWidth, p.h);
+const yWidth = Math.max(1, this._axisStyleNumber(yAxis, "axis_width", 1));
+if (frameSides.includes("left")) rule(yAxis, p.x, p.y, yWidth, p.h);
+if (frameSides.includes("right")) rule(yAxis, p.x + p.w - yWidth, p.y, yWidth, p.h);
 }
 if (!hideX) {
-const xHeight = Math.max(1, Math.round(this._axisStyleNumber(xAxis, "axis_width", 1)));
-const xTop = xAxis.side === "top" ? p.y : p.y + p.h - xHeight;
-rule(xAxis, p.x, xTop, p.w, xHeight);
+const xHeight = Math.max(1, this._axisStyleNumber(xAxis, "axis_width", 1));
+if (frameSides.includes("top")) rule(xAxis, p.x, p.y, p.w, xHeight);
+if (frameSides.includes("bottom")) rule(xAxis, p.x, p.y + p.h - xHeight, p.w, xHeight);
 }
 for (const axis of Object.values(this.axes)) {
 if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
-const w = Math.max(1, Math.round(this._axisStyleNumber(axis, "axis_width", 1)));
+const w = Math.max(1, this._axisStyleNumber(axis, "axis_width", 1));
 const x = axis.side === "left" ? p.x : p.x + p.w - w;
 rule(axis, x, p.y, w, p.h);
+}
+const tickParts = (axis) => {
+const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
+const width = Math.max(0.5, this._axisStyleNumber(axis, "tick_width", 1));
+const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
+if (direction === "in") return { inward: length, outward: 0, width };
+if (direction === "inout") return { inward: length / 2, outward: length / 2, width };
+return { inward: 0, outward: length, width };
+};
+if (!hideX) {
+const tick = tickParts(xAxis);
+const side = xAxis.side || "bottom";
+const edge = side === "top" ? p.y : p.y + p.h;
+for (const value of xt.ticks) {
+const x = this._dataPx("x", value);
+if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
+const top = side === "top" ? edge - tick.outward : edge - tick.inward;
+rule(xAxis, x - tick.width / 2, top, tick.width, tick.inward + tick.outward);
+}
+}
+if (!hideY) {
+const tick = tickParts(yAxis);
+const side = yAxis.side || "left";
+const edge = side === "right" ? p.x + p.w : p.x;
+for (const value of yt.ticks) {
+const y = this._dataPx("y", value);
+if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
+const left = side === "right" ? edge - tick.inward : edge - tick.outward;
+rule(yAxis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width);
+}
 }
 }
 const label = (text, css, axis, kind = "tick", extraStyle = null) => {
@@ -4333,6 +4614,8 @@ ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
 ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
 ctx.fillStyle = ctx.strokeStyle;
 ctx.lineWidth = Math.max(0.5, this._styleNumber(style, "width", 1.5));
+ctx.setLineDash(Array.isArray(style.dash) ? style.dash :
+(typeof style.dash === "string" ? style.dash.split(",").map(Number) : []));
 ctx.beginPath();
 ctx.moveTo(x0, y0);
 ctx.lineTo(x1, y1);
@@ -4389,6 +4672,8 @@ ctx.save();
 ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
 ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
 ctx.lineWidth = Math.max(0.5, this._styleNumber(style, "width", 1.5));
+ctx.setLineDash(Array.isArray(style.dash) ? style.dash :
+(typeof style.dash === "string" ? style.dash.split(",").map(Number) : []));
 ctx.beginPath();
 const start = Math.max(0, Math.min(1, Number(style.span_start) || 0));
 const rawEnd = style.span_end === undefined ? 1 : Number(style.span_end);
@@ -5574,11 +5859,21 @@ const ym = view._map(g.yMeta, y0, y1, g.yAxis);
 view._drawArea(g, xm, ym, view._map(g.baseMeta, y0, y1, g.yAxis));
 if ((g.trace.style.line_width ?? 0) > 0) {
 view._drawLine(g, xm, ym, g.lineColor, g.trace.style.line_width, g.trace.style.line_opacity ?? 1);
+if (g.trace.style.stroke_perimeter) {
+const yBuf = g.yBuf, yMeta = g.yMeta, dashY = g._dashY;
+g.yBuf = g.baseBuf;
+g.yMeta = g.baseMeta;
+g._dashY = g._cpu.base;
+view._drawLine(g, xm, ym, g.lineColor, g.trace.style.line_width, g.trace.style.line_opacity ?? 1);
+g.yBuf = yBuf;
+g.yMeta = yMeta;
+g._dashY = dashY;
+}
 }
 },
 refreshColor: (view, g) => {
 g.color = parseColor(view.root, g.trace.style.color, g.color);
-g.lineColor = parseColor(view.root, g.trace.style.color, g.lineColor || g.color);
+g.lineColor = parseColor(view.root, g.trace.style.line_color || g.trace.style.color, g.lineColor || g.color);
 g.grad = view._resolveMarkFill(g.trace.style, g.color);
 },
 };
@@ -5608,13 +5903,17 @@ segments: SEGMENT_MARK,
 triangle_mesh: MESH_MARK,
 error_band: AREA_MARK,
 hexbin: {
-build: (view, g, t, buffer) => view._buildScatterMark(g, t, buffer),
+build: (view, g, t, buffer) => view._buildMeshMark(g, t, buffer),
 draw: (view, g) => {
 const [x0, x1] = view._axisRange(g.xAxis);
 const [y0, y1] = view._axisRange(g.yAxis);
-view._drawPoints(g, view._map(g.xMeta, x0, x1, g.xAxis), view._map(g.yMeta, y0, y1, g.yAxis));
+view._drawMesh(g, view._map(g.x0Meta, x0, x1, g.xAxis), view._map(g.y0Meta, y0, y1, g.yAxis));
 },
-refreshColor: (view, g) => view._pointMarkStyle(g, g.trace),
+refreshColor: (view, g) => {
+if (g.colorMode === 0 && g.trace.color) g.color = parseColor(view.root, g.trace.color.color, g.color);
+const style = g.trace.style || {};
+g.meshStroke = parseColor(view.root, style.stroke || "transparent", [0, 0, 0, 0]);
+},
 },
 bar: BAR_MARK,
 column: BAR_MARK,

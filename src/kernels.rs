@@ -2584,6 +2584,29 @@ fn contour_pairs(mask: u8) -> &'static [(u8, u8)] {
     }
 }
 
+/// Resolve the two diagonally ambiguous marching-squares cases with the
+/// bilinear asymptotic decider.  A fixed lookup table tears or joins contours
+/// incorrectly whenever the opposite-corner magnitudes are unequal; this is
+/// the same determinant-based choice used by contour engines such as
+/// Matplotlib's contourpy backend.
+fn ambiguous_contour_pairs(
+    mask: u8,
+    v00: f64,
+    v10: f64,
+    v11: f64,
+    v01: f64,
+    level: f64,
+) -> &'static [(u8, u8)] {
+    const A: &[(u8, u8)] = &[(0, 1), (2, 3)];
+    const B: &[(u8, u8)] = &[(3, 0), (1, 2)];
+    let determinant = (v00 - level) * (v11 - level) - (v10 - level) * (v01 - level);
+    if determinant > 0.0 || (determinant == 0.0 && mask == 10) {
+        A
+    } else {
+        B
+    }
+}
+
 /// Scan a regular grid with marching squares and emit flat isoline segments.
 ///
 /// The cell/level traversal and ambiguous-cell table intentionally mirror the
@@ -2630,7 +2653,11 @@ where
                     | (u8::from(v10 >= level) << 1)
                     | (u8::from(v11 >= level) << 2)
                     | (u8::from(v01 >= level) << 3);
-                let pairs = contour_pairs(mask);
+                let pairs = if mask == 5 || mask == 10 {
+                    ambiguous_contour_pairs(mask, v00, v10, v11, v01, level)
+                } else {
+                    contour_pairs(mask)
+                };
                 if pairs.is_empty() {
                     return;
                 }
@@ -2752,12 +2779,14 @@ pub fn heatmap_rgba_into(
 /// drift in rounding, missing-value, or alpha behavior.
 pub(crate) fn heatmap_color(value: f64, stops: &[[u8; 3]], alpha: u8) -> [u8; 4] {
     debug_assert!(!stops.is_empty());
-    let t = ((value * 255.0 - 1.0) / 254.0).clamp(0.0, 1.0);
-    let mut color = colormap_color(t, stops, alpha);
-    if value <= 0.0 {
-        color[3] = 0;
+    // Only genuinely missing cells (NaN, e.g. masked/cmin-clipped bins) are
+    // transparent. A real in-domain value of 0 must paint the colormap's floor
+    // color, matching Matplotlib's hist2d/imshow which fill the whole extent.
+    if value.is_nan() {
+        return [0, 0, 0, 0];
     }
-    color
+    let t = ((value * 255.0 - 1.0) / 254.0).clamp(0.0, 1.0);
+    colormap_color(t, stops, alpha)
 }
 
 /// Evenly spaced color-stop interpolation for a normalized scalar. Shared by
@@ -4921,6 +4950,51 @@ mod tests {
         assert_eq!(y0, [0.0, 1.0]);
         assert_eq!(y1, [0.5, 0.5]);
         assert_eq!(emitted_levels, [0.5, 0.5]);
+    }
+
+    #[test]
+    fn marching_squares_uses_asymptotic_decider_for_ambiguous_cells() {
+        let x = [0.0, 1.0];
+        let y = [0.0, 1.0];
+        let levels = [0.5];
+
+        let extract = |z: &[f64; 4]| {
+            let mut x0 = [0.0; 2];
+            let mut x1 = [0.0; 2];
+            let mut y0 = [0.0; 2];
+            let mut y1 = [0.0; 2];
+            let mut emitted_levels = [0.0; 2];
+            let written = marching_squares_into(
+                z,
+                2,
+                2,
+                &x,
+                &y,
+                &levels,
+                &mut x0,
+                &mut x1,
+                &mut y0,
+                &mut y1,
+                &mut emitted_levels,
+            );
+            assert_eq!(written, 2);
+            (x0, x1, y0, y1)
+        };
+
+        // Positive diagonal dominates: join bottom-right and top-left.
+        let (x0, x1, y0, y1) = extract(&[3.0, 0.0, 0.0, 1.0]);
+        assert_eq!(x0, [5.0 / 6.0, 0.5]);
+        assert_eq!(x1, [1.0, 0.0]);
+        assert_eq!(y0, [0.0, 1.0]);
+        assert_eq!(y1, [0.5, 5.0 / 6.0]);
+
+        // Negative diagonal dominates in the complementary mask: join
+        // bottom-left and top-right.
+        let (x0, x1, y0, y1) = extract(&[0.0, 3.0, 1.0, 0.0]);
+        assert_eq!(x0, [0.0, 1.0]);
+        assert_eq!(x1, [1.0 / 6.0, 0.5]);
+        assert_eq!(y0, [0.5, 5.0 / 6.0]);
+        assert_eq!(y1, [0.0, 1.0]);
     }
 
     #[test]

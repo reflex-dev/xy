@@ -11,7 +11,7 @@ from xy._svg import COLORMAP_STOPS, _lut
 
 
 def test_hist_weights_horizontal_and_stacked_return_matplotlib_geometry() -> None:
-    _fig, ax = plt.subplots()
+    fig, ax = plt.subplots()
     values = [np.arange(5), np.arange(5) + 1]
     weights = [np.ones(5), np.arange(1, 6)]
     counts, edges, containers = ax.hist(
@@ -56,7 +56,22 @@ def test_pyplot_legend_location_and_columns_reach_render_spec() -> None:
     ax.bar([0, 1], [10, 20], label="values")
     ax.legend(loc="upper left", ncols=3)
     spec, _ = ax._build_chart(640, 480).figure().build_payload()
-    assert spec["legend"] == {"loc": "upper left", "ncols": 3}
+    assert spec["legend"]["loc"] == "upper left"
+    assert spec["legend"]["ncols"] == 3
+    # Frame styling now rides along so the static-export legend can honor
+    # frameon/facecolor/edgecolor (previously only the DOM legend saw it).
+    assert "style" in spec["legend"]
+
+
+def test_legend_best_avoids_the_busy_corner_and_default_axes_are_boxed() -> None:
+    _fig, ax = plt.subplots()
+    ax.scatter(np.linspace(0.72, 0.98, 100), np.linspace(0.7, 0.98, 100), label="busy")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.legend()
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert spec["legend"]["loc"] in {"upper left", "lower left", "lower right"}
+    assert spec["frame_sides"] == ["left", "bottom", "top", "right"]
 
 
 def test_filled_stairs_use_seamless_bins_and_hatches_are_not_dropped() -> None:
@@ -153,8 +168,9 @@ def test_matplotlib_marker_sizes_are_converted_from_points_to_css_pixels() -> No
     ax.plot([0, 1], [0, 1], "o-")
     ax.scatter([0], [0])
     scatters = [entry for entry in ax._entries if entry["kind"] == "scatter"]
-    assert scatters[0]["kwargs"]["size"] == 8.0
-    assert scatters[1]["kwargs"]["size"] == 8.0
+    # 6 pt marker path plus the centered 1 pt marker edge at figure DPI.
+    assert scatters[0]["kwargs"]["size"] == pytest.approx(7 * 100 / 72)
+    assert scatters[1]["kwargs"]["size"] == pytest.approx(7 * 100 / 72)
 
 
 def test_explicit_line_color_does_not_advance_default_cycle() -> None:
@@ -305,12 +321,32 @@ def test_imshow_interpolation_upsamples_gradients_but_nearest_keeps_cells() -> N
     _fig, ax = plt.subplots()
     ax.imshow([[0.0, 1.0], [1.0, 0.0]], interpolation="bicubic")
     ax.imshow([[0.0, 1.0], [1.0, 0.0]], interpolation="nearest")
-    assert np.asarray(ax._entries[0]["z"]).shape == (128, 128)
+    assert np.asarray(ax._entries[0]["z"]).shape == (512, 512)
     assert np.asarray(ax._entries[1]["z"]).shape == (2, 2)
     core = ax._build_chart(640, 480).figure()
     spec, _blob = core.build_payload()
     assert spec["dom"]["style"]["--chart-grid"] == "transparent"
     assert 'stroke="transparent"' in core.to_svg()
+
+
+def test_imshow_equal_aspect_preserves_explicit_extent_at_plot_edges() -> None:
+    fig, ax = plt.subplots()
+    ax.imshow(
+        np.zeros((40, 50)),
+        extent=[0, 5, 0, 5],
+        origin="lower",
+        interpolation="gaussian",
+    )
+    plt.colorbar()
+    _doc, width, height = fig._to_notebook_html()
+    assert (width, height) == (504, 418)
+    core = ax._build_chart(width, height).figure()
+    spec, _blob = core.build_payload()
+    assert spec["x_axis"]["range"] == pytest.approx([0.0, 5.0])
+    assert spec["y_axis"]["range"] == pytest.approx([0.0, 5.0])
+    top, right, bottom, left = spec["padding"]
+    # Equal x/y spans produce a square plot box after colorbar room is removed.
+    assert width - left - right - 86 == pytest.approx(height - top - bottom)
 
 
 def test_shared_subplots_link_live_views_and_grid_exports_keep_suptitle() -> None:

@@ -275,6 +275,44 @@ html,body{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;
     return doc
 
 
+_NOTEBOOK_DIMENSION_RE = _re.compile(r"^[0-9]+(?:\.[0-9]+)?(?:px|%|vw|vh|rem|em)?$")
+
+
+def _notebook_dimension(value: object, fallback: int) -> tuple[str, bool]:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{max(1, int(value))}px", True
+    text = str(value).strip()
+    if _NOTEBOOK_DIMENSION_RE.fullmatch(text):
+        if text.replace(".", "", 1).isdigit():
+            return f"{max(1, int(float(text)))}px", True
+        return text, text.endswith("px")
+    return f"{fallback}px", True
+
+
+def notebook_iframe(doc: str, *, width: object, height: object) -> str:
+    """Embed a standalone document without leaking its CSS into a notebook.
+
+    Rich HTML display payloads are fragments, even when their value happens to
+    contain ``<html>``/``<body>`` tags.  Consequently a notebook frontend may
+    apply the standalone document's global selectors to the notebook itself.
+    ``srcdoc`` gives the export a real document boundary while preserving the
+    self-contained, offline display path.
+    """
+    width_css, fixed_width = _notebook_dimension(width, 900)
+    height_css, _ = _notebook_dimension(height, 420)
+    width_attr = width_css.removesuffix("px")
+    height_attr = height_css.removesuffix("px")
+    source = _html.escape(doc, quote=True)
+    width_style = f"width:100%;max-width:{width_css}" if fixed_width else f"width:{width_css}"
+    return (
+        '<iframe class="xy-notebook-frame" sandbox="allow-scripts" '
+        f'width="{width_attr}" height="{height_attr}" '
+        f'style="display:block;{width_style};height:{height_css};margin-left:8px;'
+        'border:0;background:transparent" '
+        f'srcdoc="{source}"></iframe>'
+    )
+
+
 def find_chromium(explicit: Optional[str] = None) -> Optional[str]:
     """Locate a headless-capable Chromium/Chrome, or None."""
     for cand in (explicit, os.environ.get(_CHROMIUM_ENV)):

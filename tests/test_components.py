@@ -773,7 +773,7 @@ def test_declarative_chart_keeps_notebook_export_and_framework_chrome_contract(
     alias_path = tmp_path / "chart-alias.html"
     assert chart.html(alias_path) == alias_path.read_text(encoding="utf-8")
     repr_html = chart._repr_html_()
-    assert repr_html.startswith("<!doctype html>")
+    assert repr_html.startswith('<iframe class="xy-notebook-frame"')
     assert "FakeReflexComponent" not in repr_html
     assert "Custom Reflex legend + tooltip" in repr_html
 
