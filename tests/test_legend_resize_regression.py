@@ -34,10 +34,9 @@ from xy.export import find_chromium  # noqa: E402
 
 # Capture the standalone render call's return value so the probe can drive the
 # view directly (the same swap the visual-regression smoke uses).
-_RENDER_CALL = 'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
-_CAPTURE_CALL = (
-    "window.__fcProbeView = xy.renderStandalone("
-    'document.getElementById("chart"), spec, bytes.buffer);'
+_RENDER_CALLS = (
+    'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);',
+    'xy.renderStandalone(document.getElementById("chart"), spec, buf);',
 )
 
 # Async probe: wait for the legend, record its computed max-height, force a
@@ -153,8 +152,12 @@ def test_snake_case_legend_max_height_survives_resize() -> None:
     )
 
     document = fig.to_html()
-    assert _RENDER_CALL in document, "to_html render call shape changed; update the probe swap"
-    document = document.replace(_RENDER_CALL, _CAPTURE_CALL, 1)
+    render_call = next((call for call in _RENDER_CALLS if call in document), None)
+    assert render_call is not None, "to_html render call shape changed; update the probe swap"
+    capture_call = render_call.replace(
+        "xy.renderStandalone(", "window.__fcProbeView = xy.renderStandalone(", 1
+    )
+    document = document.replace(render_call, capture_call, 1)
     document = document.replace("</body>", _PROBE + "\n</body>", 1)
 
     with tempfile.TemporaryDirectory() as td:
