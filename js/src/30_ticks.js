@@ -6,7 +6,7 @@ function niceStep(rough) {
   rough = Math.abs(rough);
   if (!Number.isFinite(rough) || rough <= 0) return 1;
   const mag = Math.pow(10, Math.floor(Math.log10(rough)));
-  for (const m of [1, 2, 5, 10]) {
+  for (const m of [1, 2, 2.5, 5, 10]) {
     if (rough <= m * mag * (1 + 1e-12)) return m * mag;
   }
   return 10 * mag;
@@ -127,13 +127,11 @@ function fmtTime(ms, step) {
 }
 
 function fmtLinear(v, step) {
-  if (v === 0) return "0";
   const av = Math.abs(v);
-  if (av >= 1e6 || av < 1e-4) return v.toExponential(1).replace("e+", "e");
-  const dec = Math.max(0, -Math.floor(Math.log10(step)) + (step < 1 ? 1 : 0));
-  let s = v.toFixed(Math.min(dec, 8));
-  if (s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
-  return s;
+  if (av >= 1e6 || (av !== 0 && av < 1e-4)) return v.toExponential(1).replace("e+", "e");
+  let dec = step ? Math.max(0, Math.ceil(-Math.log10(Math.abs(step)))) : 0;
+  while (dec < 8 && Math.abs(Number(step.toFixed(dec)) - step) > Math.abs(step) / 1000) dec++;
+  return v.toFixed(Math.min(dec, 8));
 }
 
 function fmtCategory(v, categories) {

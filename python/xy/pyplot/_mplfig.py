@@ -358,10 +358,12 @@ class Figure:
             raise TypeError(
                 f"subplots_adjust() got unsupported keyword argument {sorted(unsupported)[0]!r}"
             )
-        for key, value in kwargs.items():
-            if value is not None:
-                self._subplot_adjust[key] = float(value)
-        self._invalidate()
+        material = {key: value for key, value in kwargs.items() if value is not None}
+        if material:
+            raise NotImplementedError(
+                "xy.pyplot does not implement Figure.subplots_adjust(); subplot frame and "
+                "spacing values cannot be represented by the current multi-panel renderer"
+            )
 
     def autofmt_xdate(self, **kwargs: Any) -> None:
         rotation = float(kwargs.pop("rotation", 30))

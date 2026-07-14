@@ -142,7 +142,7 @@ function niceStep(rough) {
 rough = Math.abs(rough);
 if (!Number.isFinite(rough) || rough <= 0) return 1;
 const mag = Math.pow(10, Math.floor(Math.log10(rough)));
-for (const m of [1, 2, 5, 10]) {
+for (const m of [1, 2, 2.5, 5, 10]) {
 if (rough <= m * mag * (1 + 1e-12)) return m * mag;
 }
 return 10 * mag;
@@ -255,13 +255,11 @@ if (step >= MS.s) return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pa
 return `${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}.${pad(d.getUTCMilliseconds(), 3)}`;
 }
 function fmtLinear(v, step) {
-if (v === 0) return "0";
 const av = Math.abs(v);
-if (av >= 1e6 || av < 1e-4) return v.toExponential(1).replace("e+", "e");
-const dec = Math.max(0, -Math.floor(Math.log10(step)) + (step < 1 ? 1 : 0));
-let s = v.toFixed(Math.min(dec, 8));
-if (s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
-return s;
+if (av >= 1e6 || (av !== 0 && av < 1e-4)) return v.toExponential(1).replace("e+", "e");
+let dec = step ? Math.max(0, Math.ceil(-Math.log10(Math.abs(step)))) : 0;
+while (dec < 8 && Math.abs(Number(step.toFixed(dec)) - step) > Math.abs(step) / 1000) dec++;
+return v.toFixed(Math.min(dec, 8));
 }
 function fmtCategory(v, categories) {
 const i = Math.round(v);
@@ -453,15 +451,24 @@ float fcMarkerSdf(vec2 d, int shape) {
     float h = clamp(dot(p, ba) / dot(ba, ba), 0.0, 0.5);
     return length(p - ba * h) * sign(p.y * ba.x - p.x * ba.y);
   }
-  if (shape == 3) {                                                 // triangle (apex up)
+  if (shape == 3 || shape == 8 || shape == 9 || shape == 10) {     // directional triangle
     const float k = 1.7320508;
     float r = 0.62;
-    vec2 p = vec2(d.x, -d.y);   // flip so the apex points up
+    vec2 q = d;
+    if (shape == 8) q = -d;
+    if (shape == 9) q = vec2(d.y, -d.x);
+    if (shape == 10) q = vec2(-d.y, d.x);
+    vec2 p = vec2(q.x, -q.y);   // flip so the canonical apex points up
     p.x = abs(p.x) - r;
     p.y = p.y + r / k;
     if (p.x + k * p.y > 0.0) p = vec2(p.x - k * p.y, -k * p.x - p.y) / 2.0;
     p.x -= clamp(p.x, -2.0 * r, 0.0);
     return -length(p) * sign(p.y);
+  }
+  if (shape == 11) {                                                // diagonal x
+    vec2 q = vec2(d.x + d.y, d.y - d.x) * 0.707106781;
+    vec2 a = abs(q);
+    return min(max(a.x - 0.17, a.y - 0.5), max(a.x - 0.5, a.y - 0.17));
   }
   return length(d) - 0.5;                                           // circle
 }`;
@@ -2177,6 +2184,13 @@ lg.style.cssText = `position:absolute;${xPos}${yPos}` +
 `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
 "overflow:auto;" + `max-height:${this.plot.h - 12}px;`;
 this._applySlot(lg, "legend");
+if (options.title) {
+const title = document.createElement("div");
+title.textContent = String(options.title);
+title.style.fontWeight = "600";
+title.style.gridColumn = `1 / span ${horizontal ? ncols : 1}`;
+lg.appendChild(title);
+}
 for (const it of items) {
 const row = document.createElement("div");
 this._applySlot(row, "legend_item");
@@ -2375,7 +2389,7 @@ this._pointMarkStyle(g, t);
 }
 _pointMarkStyle(g, t) {
 const s = t.style || {};
-g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7 }[s.symbol] || 0;
+g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11 }[s.symbol] || 0;
 g.pointStrokeWidth = Number(s.stroke_width) || 0;
 const markOpaque = [g.color[0], g.color[1], g.color[2], 1];
 g.pointStroke = s.stroke
@@ -3638,15 +3652,18 @@ d.style.cssText =
 "pointer-events:none;";
 this.labels.appendChild(d);
 };
+const frameSides = Array.isArray(s.frame_sides)
+? s.frame_sides
+: [xAxis.side || "bottom", yAxis.side || "left"];
 if (!hideY) {
 const yWidth = Math.max(1, Math.round(this._axisStyleNumber(yAxis, "axis_width", 1)));
-const yAxisX = yAxis.side === "right" ? p.x + p.w - yWidth : p.x;
-rule(yAxis, yAxisX, p.y, yWidth, p.h);
+if (frameSides.includes("left")) rule(yAxis, p.x, p.y, yWidth, p.h);
+if (frameSides.includes("right")) rule(yAxis, p.x + p.w - yWidth, p.y, yWidth, p.h);
 }
 if (!hideX) {
 const xHeight = Math.max(1, Math.round(this._axisStyleNumber(xAxis, "axis_width", 1)));
-const xTop = xAxis.side === "top" ? p.y : p.y + p.h - xHeight;
-rule(xAxis, p.x, xTop, p.w, xHeight);
+if (frameSides.includes("top")) rule(xAxis, p.x, p.y, p.w, xHeight);
+if (frameSides.includes("bottom")) rule(xAxis, p.x, p.y + p.h - xHeight, p.w, xHeight);
 }
 for (const axis of Object.values(this.axes)) {
 if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
@@ -5458,13 +5475,17 @@ segments: SEGMENT_MARK,
 triangle_mesh: MESH_MARK,
 error_band: AREA_MARK,
 hexbin: {
-build: (view, g, t, buffer) => view._buildScatterMark(g, t, buffer),
+build: (view, g, t, buffer) => view._buildMeshMark(g, t, buffer),
 draw: (view, g) => {
 const [x0, x1] = view._axisRange(g.xAxis);
 const [y0, y1] = view._axisRange(g.yAxis);
-view._drawPoints(g, view._map(g.xMeta, x0, x1, g.xAxis), view._map(g.yMeta, y0, y1, g.yAxis));
+view._drawMesh(g, view._map(g.x0Meta, x0, x1, g.xAxis), view._map(g.y0Meta, y0, y1, g.yAxis));
 },
-refreshColor: (view, g) => view._pointMarkStyle(g, g.trace),
+refreshColor: (view, g) => {
+if (g.colorMode === 0 && g.trace.color) g.color = parseColor(view.root, g.trace.color.color, g.color);
+const style = g.trace.style || {};
+g.meshStroke = parseColor(view.root, style.stroke || "transparent", [0, 0, 0, 0]);
+},
 },
 bar: BAR_MARK,
 column: BAR_MARK,

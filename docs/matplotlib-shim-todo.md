@@ -629,8 +629,9 @@ streamplot
   quiver/barbs (plot/scatter/hist/bar still reject `data=`), unknown colormap
   names raise ValueError at every entry point including `set_cmap` (which now
   also feeds imshow/scatter defaults via `rcParams["image.cmap"]`), legend
-  layout options (borderpad/labelspacing/handlelength/handletextpad/
-  title_fontsize) raise NotImplementedError instead of vanishing.
+  layout options `borderpad`/`labelspacing` now map to renderer spacing;
+  handlelength/handletextpad/title_fontsize still raise NotImplementedError
+  instead of vanishing.
 - Newer tranche (validation in progress, see matrix/compat doc): boxplot
   notch/bootstrap/user statistics, violin bandwidths/quantiles/sides, hexbin
   `C`/reducers/`mincnt`, symlog/logit/asinh scales, secondary axes, affine

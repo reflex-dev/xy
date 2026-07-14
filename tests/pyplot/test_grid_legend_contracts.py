@@ -48,7 +48,7 @@ def test_legend_maps_supported_style_and_rejects_unknown_options():
     assert ax._legend is True
     assert ax._legend_options["loc"] == "upper right"
     assert ax._legend_options["ncols"] == 2
-    assert ax._legend_options["class_name"] == "legend-title:Legend"
+    assert ax._legend_options["title"] == "Legend"
     assert ax._legend_options["style"] == {
         "fontSize": "13px",
         "color": "green",
@@ -57,8 +57,12 @@ def test_legend_maps_supported_style_and_rejects_unknown_options():
         "borderStyle": "solid",
     }
 
-    with pytest.raises(TypeError):
-        ax.legend(shadow=True)
+    ax.legend(shadow=True, fancybox=True, framealpha=0.8, borderpad=1, labelspacing=0.7)
+    style = ax._legend_options["style"]
+    assert style["boxShadow"]
+    assert style["borderRadius"] == "4px"
+    assert style["padding"] == "1em"
+    assert style["rowGap"] == "0.7em"
 
 
 def test_legend_frameoff_maps_to_transparent_style():

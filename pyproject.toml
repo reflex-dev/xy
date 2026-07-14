@@ -122,10 +122,20 @@ ignore = [
     "RUF100", # unused noqa (kept for editors running broader rule sets)
 ]
 
+[tool.ruff.format]
+# The dual-engine PDSH notebooks mirror each cell verbatim across the two
+# plotting aliases (mpl_plt/xy_plt). The aliases differ in length, so a line
+# near the width limit wraps in one copy and not the other — the formatter and
+# sync_dual_engine_notebooks.py --check can never both pass. The sync script
+# owns these files' layout.
+exclude = ["examples/pdsh/*.ipynb"]
+
 [tool.ruff.lint.per-file-ignores]
 # Third-party example code (PDSH notebooks): kept faithful to upstream, so
-# upstream's import placement and naming style is not ours to lint.
-"examples/pdsh/*.ipynb" = ["E402", "E731", "E741", "F401", "I001", "UP030", "UP032", "B007"]
+# upstream's import placement and naming style is not ours to lint. F811: the
+# dual-engine layout mirrors every cell (matplotlib then xy), so imports and
+# helper defs repeat by design.
+"examples/pdsh/*.ipynb" = ["E402", "E731", "E741", "F401", "F811", "I001", "UP030", "UP032", "B007"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["fastcharts", "xy"]

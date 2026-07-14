@@ -502,7 +502,8 @@ def test_clabel_table_and_quiverkey_complete_annotation_families() -> None:
     )
     quiver = ax.quiver([0, 1], [0, 1], [1, 1], [1, 0], [0.2, 0.8], cmap="plasma")
     key = ax.quiverkey(quiver, 0.5, 0.5, 1.0, "1 m/s")
-    assert [label.get_text() for label in contour_labels] == ["L=4", "L=8"]
+    assert {label.get_text() for label in contour_labels} == {"L=4", "L=8"}
+    assert len(contour_labels) > 2
     assert len(table.get_celld()) == 9
     assert key is not None
     assert {trace.kind for trace in _traces(ax)} >= {"contour", "triangle_mesh", "segments"}

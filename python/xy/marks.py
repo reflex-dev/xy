@@ -1368,7 +1368,8 @@ def hexbin(
     shipped as centers plus one scalar count/color channel.
     """
     if isinstance(gridsize, (int, np.integer)) and not isinstance(gridsize, (bool, np.bool_)):
-        w = h = int(gridsize)
+        w = int(gridsize)
+        h = max(2, int(w / np.sqrt(3.0)))
     elif isinstance(gridsize, (tuple, list)) and len(gridsize) == 2:
         if any(
             isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer))
@@ -1417,33 +1418,49 @@ def hexbin(
             raise ValueError("hexbin range must be ((x0, x1), (y0, y1))")
         xr = self._finite_increasing_pair(range[0], "hexbin x range")
         yr = self._finite_increasing_pair(range[1], "hexbin y range")
-    threshold = 1 if mincnt is None else int(mincnt)
+    # Matplotlib displays zero-count cells when C is absent and mincnt is not
+    # specified, producing the full rectangular honeycomb. Reducer hexbins
+    # cannot reduce an empty group and therefore default to one observation.
+    threshold = (0 if cv is None else 1) if mincnt is None else int(mincnt)
     if threshold < 0:
         raise ValueError("hexbin mincnt must be nonnegative")
-    if cv is None:
-        grid = kernels.bin_2d(xv, yv, xr[0], xr[1], yr[0], yr[1], w, h)
-        grid2d = grid.reshape(h, w)
-        rows, cols = np.nonzero(grid2d >= threshold)
-    else:
-        # count with the same clip membership the reducer uses below, so
-        # mincnt filtering and aggregation always agree on bin contents
-        x_index = np.clip(((xv - xr[0]) / (xr[1] - xr[0]) * w).astype(int), 0, w - 1)
-        y_index = np.clip(((yv - yr[0]) / (yr[1] - yr[0]) * h).astype(int), 0, h - 1)
-        grid2d = np.zeros((h, w), dtype=np.float64)
-        np.add.at(grid2d, (y_index, x_index), 1.0)
-        rows, cols = np.nonzero(grid2d >= max(1, threshold))
-    counts = grid2d[rows, cols]
+    # Matplotlib's hex lattice is the union of an integer grid and a half-cell
+    # offset grid. Assign each point to the nearer center in the hex metric;
+    # rectangular binning plus staggered display centers leaves overlaps and
+    # gaps and, more importantly, puts values in the wrong cells.
+    fx = (xv - xr[0]) * w / (xr[1] - xr[0])
+    fy = (yv - yr[0]) * h / (yr[1] - yr[0])
+    ix1 = np.rint(fx).astype(np.int64)
+    iy1 = np.rint(fy).astype(np.int64)
+    ix2 = np.floor(fx).astype(np.int64)
+    iy2 = np.floor(fy).astype(np.int64)
+    use_first = (fx - ix1) ** 2 + 3.0 * (fy - iy1) ** 2 < (
+        (fx - ix2 - 0.5) ** 2 + 3.0 * (fy - iy2 - 0.5) ** 2
+    )
+    valid_first = use_first & (ix1 >= 0) & (ix1 <= w) & (iy1 >= 0) & (iy1 <= h)
+    valid_second = ~use_first & (ix2 >= 0) & (ix2 < w) & (iy2 >= 0) & (iy2 < h)
+    if not np.any(valid_first | valid_second):
+        raise ValueError("hexbin range contains no finite points")
+    flat1 = iy1 * (w + 1) + ix1
+    flat2 = iy2 * w + ix2
+    count1 = np.bincount(flat1[valid_first], minlength=(w + 1) * (h + 1)).astype(float)
+    count2 = np.bincount(flat2[valid_second], minlength=w * h).astype(float)
+    keep1 = np.flatnonzero(count1 >= threshold)
+    keep2 = np.flatnonzero(count2 >= threshold)
+    counts = np.concatenate((count1[keep1], count2[keep2]))
     if len(counts) == 0:
         raise ValueError("hexbin range contains no finite points")
     dx, dy = (xr[1] - xr[0]) / w, (yr[1] - yr[0]) / h
-    centers_x = xr[0] + (cols + 0.5 + 0.5 * (rows & 1)) * dx
-    centers_y = yr[0] + (rows + 0.5) * dy
+    centers_x = np.concatenate((xr[0] + (keep1 % (w + 1)) * dx, xr[0] + (keep2 % w + 0.5) * dx))
+    centers_y = np.concatenate((yr[0] + (keep1 // (w + 1)) * dy, yr[0] + (keep2 // w + 0.5) * dy))
     if cv is None:
         metric = np.log1p(counts) if bins == "log" else counts
     else:
         reduced: list[float] = []
-        for row, col in zip(rows, cols, strict=True):
-            values = cv[(x_index == col) & (y_index == row)]
+        memberships = [cv[valid_first & (flat1 == flat)] for flat in keep1] + [
+            cv[valid_second & (flat2 == flat)] for flat in keep2
+        ]
+        for values in memberships:
             made = np.asarray(reduce_C_function(values))
             if made.ndim != 0 or not np.isfinite(made):
                 raise ValueError("hexbin reduce_C_function must return one finite scalar per bin")
@@ -1464,7 +1481,8 @@ def hexbin(
                 style={
                     "color": DEFAULT_PALETTE[len(self.traces) % len(DEFAULT_PALETTE)],
                     "opacity": opacity,
-                    "symbol": "hexagon",
+                    "hex_dx": dx,
+                    "hex_dy": dy,
                 },
                 color_ch=color_ch,
                 size_ch=channels.SizeChannel(mode="constant", constant=8.0),

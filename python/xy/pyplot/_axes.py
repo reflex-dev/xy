@@ -387,14 +387,8 @@ class _SpineProxy:
     def set_visible(self, visible: bool) -> None:
         for name in self.names:
             if bool(visible):
-                if name in {"top", "right"}:
-                    raise NotImplementedError(
-                        f"xy.pyplot cannot show the {name} spine independently"
-                    )
                 self.axes._hidden_spines.discard(name)
-            elif name in {"left", "bottom"}:
-                # Hiding is deferred: both gone → transparent axis lines; one
-                # gone is inexpressible and fails loudly at build time.
+            else:
                 self.axes._hidden_spines.add(name)
         self.axes._invalidate()
 
@@ -514,6 +508,11 @@ class Axes(PlotTypeMixin):
                     else rcParams["xtick.labelcolor"]
                 ),
             },
+        }
+        self._hidden_spines = {
+            side
+            for side in ("left", "bottom", "top", "right")
+            if not bool(rcParams[f"axes.spines.{side}"])
         }
 
     def _invalidate(self) -> None:
@@ -1285,7 +1284,48 @@ class Axes(PlotTypeMixin):
         for index, values in enumerate(counts):
             positions = centers if stacked else centers + (index - (len(datasets) - 1) / 2) * width
             current_base = base.copy() if stacked else np.zeros_like(values)
-            if histtype == "stepfilled":
+            resolved_color = (
+                resolve_color(colors[index]) if colors[index] is not None else self._next_color()
+            )
+            if orientation == "horizontal" and histtype == "stepfilled":
+                # The core area primitive fills along y. Horizontal filled
+                # steps are equivalently represented by touching horizontal
+                # bars, preserving the exact bins/counts without rotating a
+                # rasterized approximation.
+                entry = self._add(
+                    "bar",
+                    {
+                        "x": positions,
+                        "y": values,
+                        "kwargs": {
+                            "base": current_base,
+                            "width": width,
+                            "orientation": "horizontal",
+                            "color": resolved_color,
+                            "opacity": 1.0 if alpha is None else float(alpha),
+                            "name": None if labels[index] is None else str(labels[index]),
+                            "stroke": resolve_color(edgecolor) if edgecolor is not None else None,
+                        },
+                    },
+                )
+            elif orientation == "horizontal" and histtype.startswith("step"):
+                step_values = values + current_base
+                path_x = np.repeat(step_values, 2)
+                path_y = np.repeat(edges, 2)[1:-1]
+                entry = self._add(
+                    "@mark",
+                    {
+                        "factory": "segments",
+                        "args": (path_x[:-1], path_y[:-1], path_x[1:], path_y[1:]),
+                        "kwargs": {
+                            "color": resolved_color,
+                            "width": 1.2,
+                            "name": None if labels[index] is None else str(labels[index]),
+                            "opacity": 1.0 if alpha is None else float(alpha),
+                        },
+                    },
+                )
+            elif histtype == "stepfilled":
                 # matplotlib fills the step polygon down to the baseline; the
                 # area mark takes the pre-expanded step vertices verbatim.
                 tops = values + current_base
@@ -1296,9 +1336,7 @@ class Axes(PlotTypeMixin):
                         "args": (np.repeat(edges, 2)[1:-1], np.repeat(tops, 2)),
                         "kwargs": {
                             "base": np.repeat(current_base, 2),
-                            "color": resolve_color(colors[index])
-                            if colors[index] is not None
-                            else self._next_color(),
+                            "color": resolved_color,
                             "name": None if labels[index] is None else str(labels[index]),
                             "opacity": 1.0 if alpha is None else float(alpha),
                         },
@@ -1312,9 +1350,7 @@ class Axes(PlotTypeMixin):
                         "factory": "stairs",
                         "args": (step_values, edges),
                         "kwargs": {
-                            "color": resolve_color(colors[index])
-                            if colors[index] is not None
-                            else self._next_color(),
+                            "color": resolved_color,
                             "name": None if labels[index] is None else str(labels[index]),
                             "opacity": 1.0 if alpha is None else float(alpha),
                         },
@@ -1330,9 +1366,7 @@ class Axes(PlotTypeMixin):
                             "base": current_base,
                             "width": width,
                             "orientation": orientation,
-                            "color": resolve_color(colors[index])
-                            if colors[index] is not None
-                            else self._next_color(),
+                            "color": resolved_color,
                             "opacity": 1.0 if alpha is None else float(alpha),
                             "name": None if labels[index] is None else str(labels[index]),
                             "stroke": resolve_color(edgecolor) if edgecolor is not None else None,
@@ -3109,14 +3143,18 @@ class Axes(PlotTypeMixin):
         frameon = kwargs.pop("frameon", rcParams["legend.frameon"])
         facecolor = kwargs.pop("facecolor", rcParams["legend.facecolor"])
         edgecolor = kwargs.pop("edgecolor", rcParams["legend.edgecolor"])
-        # These affect legend geometry which the current component does not
-        # expose.  Reject them instead of accepting and silently discarding.
+        framealpha = kwargs.pop("framealpha", None)
+        fancybox = kwargs.pop("fancybox", False)
+        shadow = kwargs.pop("shadow", False)
+        borderpad = kwargs.pop("borderpad", None)
+        labelspacing = kwargs.pop("labelspacing", None)
+        # Remaining handle/title geometry is not expressible yet and stays
+        # loud; the frame and row-layout options above map directly to CSS and
+        # the static exporters.
         layout_options = {
             key: kwargs.pop(key)
             for key in (
                 "title_fontsize",
-                "borderpad",
-                "labelspacing",
                 "handlelength",
                 "handletextpad",
             )
@@ -3151,9 +3189,28 @@ class Axes(PlotTypeMixin):
             if edgecolor is not None:
                 style["borderColor"] = resolve_color(edgecolor)
                 style["borderStyle"] = "solid"
+        if framealpha is not None:
+            alpha_value = float(framealpha)
+            if not 0.0 <= alpha_value <= 1.0:
+                raise ValueError("legend framealpha must be between 0 and 1")
+            style["--xy-legend-frame-alpha"] = alpha_value
+        if bool(fancybox):
+            style["borderRadius"] = "4px"
+        if bool(shadow):
+            style["boxShadow"] = "2px 2px 4px rgba(0,0,0,0.3)"
+        if borderpad is not None:
+            padding = float(borderpad)
+            if padding < 0:
+                raise ValueError("legend borderpad must be non-negative")
+            style["padding"] = f"{padding:g}em"
+        if labelspacing is not None:
+            spacing = float(labelspacing)
+            if spacing < 0:
+                raise ValueError("legend labelspacing must be non-negative")
+            style["rowGap"] = f"{spacing:g}em"
         options: dict[str, Any] = {"loc": loc, "ncols": max(1, int(ncols))}
         if title is not None:
-            options["class_name"] = f"legend-title:{_plain_text(title)}"
+            options["title"] = _plain_text(title)
         if style:
             options["style"] = style
         host._legend_options = options
@@ -3343,6 +3400,62 @@ class Axes(PlotTypeMixin):
                 children.append(fc.text(*e["args"], **text_kw))
         return children
 
+    def _best_legend_loc(self) -> str:
+        """Choose the least occupied corner using bounded data-space samples.
+
+        Matplotlib tests artist extents against several candidate boxes. The
+        shim has no Artist layout graph, but its canonical entry arrays are
+        enough to make the same useful decision without renderer-specific
+        guesses: count sampled marks in each corner and preserve Matplotlib's
+        candidate order for ties.
+        """
+        try:
+            xlo, xhi = sorted(map(float, self._axis["x"].get("domain", self._auto_domain("x"))))
+            ylo, yhi = sorted(map(float, self._axis["y"].get("domain", self._auto_domain("y"))))
+        except (TypeError, ValueError):
+            return "upper right"
+        if xhi <= xlo or yhi <= ylo:
+            return "upper right"
+        scores = {name: 0.0 for name in ("upper right", "upper left", "lower left", "lower right")}
+        for entry in self._entries:
+            x_values, y_values = entry.get("x"), entry.get("y")
+            if x_values is None or y_values is None:
+                args: Any = entry.get("args")
+                if args is not None and len(args) >= 2:
+                    x_values, y_values = args[0], args[1]
+            if x_values is None or y_values is None:
+                continue
+            try:
+                xv, yv = np.broadcast_arrays(
+                    np.asarray(x_values, dtype=np.float64),
+                    np.asarray(y_values, dtype=np.float64),
+                )
+            except (TypeError, ValueError):
+                continue
+            xv, yv = xv.reshape(-1), yv.reshape(-1)
+            finite = np.flatnonzero(np.isfinite(xv) & np.isfinite(yv))
+            if len(finite) > 512:
+                finite = finite[np.linspace(0, len(finite) - 1, 512, dtype=np.intp)]
+            if not len(finite):
+                continue
+            xn = np.clip((xv[finite] - xlo) / (xhi - xlo), 0.0, 1.0)
+            yn = np.clip((yv[finite] - ylo) / (yhi - ylo), 0.0, 1.0)
+            if self._axis["x"].get("reverse"):
+                xn = 1.0 - xn
+            if self._axis["y"].get("reverse"):
+                yn = 1.0 - yn
+            # Smooth corner weights notice line crossings near a candidate box
+            # without letting a long series dominate solely by row count.
+            weights = {
+                "upper right": xn * yn,
+                "upper left": (1.0 - xn) * yn,
+                "lower left": (1.0 - xn) * (1.0 - yn),
+                "lower right": xn * (1.0 - yn),
+            }
+            for name, values in weights.items():
+                scores[name] += float(np.mean(values**4))
+        return min(scores, key=scores.__getitem__)
+
     def _build_chart(self, width: int, height: int) -> Any:
         if self._y2_of is not None:
             return self._y2_of._build_chart(width, height)
@@ -3391,16 +3504,11 @@ class Axes(PlotTypeMixin):
             self._apply_tickers("y2", y2_props)
             children.append(fc.y_axis(id="y2", side="right", **y2_props))
         if self._legend:
-            children.append(fc.legend(**self._legend_options))
-        hidden = self._hidden_spines & {"left", "bottom"}
+            legend_options = dict(self._legend_options)
+            if legend_options.get("loc") in (None, "best"):
+                legend_options["loc"] = self._best_legend_loc()
+            children.append(fc.legend(**legend_options))
         theme_tokens = self._theme_tokens
-        if hidden == {"left", "bottom"}:
-            theme_tokens = dict(theme_tokens)
-            theme_tokens["axis_color"] = "transparent"
-        elif hidden:
-            raise not_implemented(
-                f"hiding only the {next(iter(hidden))} spine", "hiding both left and bottom"
-            )
         if _MPL_THEME_TOKENS:
             if self._grid_axis != "both":
                 tokens = dict(theme_tokens)
@@ -3420,8 +3528,12 @@ class Axes(PlotTypeMixin):
             padding=self._padding,
             styles=self._chrome_styles,
         )
+        core_figure = self._chart.figure()
+        core_figure.frame_sides = [
+            side for side in ("left", "bottom", "top", "right") if side not in self._hidden_spines
+        ]
         if self._colorbar is not None:
-            figure = self._chart.figure()
+            figure = core_figure
             options = dict(self._colorbar)
             if options.pop("_autoscale", False):
                 derived = _colorbar_figure_domain(figure)

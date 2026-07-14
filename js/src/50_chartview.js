@@ -865,6 +865,13 @@ class ChartView {
       `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
       "overflow:auto;" + `max-height:${this.plot.h - 12}px;`;
     this._applySlot(lg, "legend");
+    if (options.title) {
+      const title = document.createElement("div");
+      title.textContent = String(options.title);
+      title.style.fontWeight = "600";
+      title.style.gridColumn = `1 / span ${horizontal ? ncols : 1}`;
+      lg.appendChild(title);
+    }
     for (const it of items) {
       const row = document.createElement("div");
       this._applySlot(row, "legend_item");
@@ -1096,7 +1103,7 @@ class ChartView {
   // no color borders in the mark color (matches the rect family).
   _pointMarkStyle(g, t) {
     const s = t.style || {};
-    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7 }[s.symbol] || 0;
+    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11 }[s.symbol] || 0;
     g.pointStrokeWidth = Number(s.stroke_width) || 0;
     const markOpaque = [g.color[0], g.color[1], g.color[2], 1];
     g.pointStroke = s.stroke
@@ -2511,15 +2518,18 @@ class ChartView {
           "pointer-events:none;";
         this.labels.appendChild(d);
       };
+      const frameSides = Array.isArray(s.frame_sides)
+        ? s.frame_sides
+        : [xAxis.side || "bottom", yAxis.side || "left"];
       if (!hideY) {
         const yWidth = Math.max(1, Math.round(this._axisStyleNumber(yAxis, "axis_width", 1)));
-        const yAxisX = yAxis.side === "right" ? p.x + p.w - yWidth : p.x;
-        rule(yAxis, yAxisX, p.y, yWidth, p.h);
+        if (frameSides.includes("left")) rule(yAxis, p.x, p.y, yWidth, p.h);
+        if (frameSides.includes("right")) rule(yAxis, p.x + p.w - yWidth, p.y, yWidth, p.h);
       }
       if (!hideX) {
         const xHeight = Math.max(1, Math.round(this._axisStyleNumber(xAxis, "axis_width", 1)));
-        const xTop = xAxis.side === "top" ? p.y : p.y + p.h - xHeight;
-        rule(xAxis, p.x, xTop, p.w, xHeight);
+        if (frameSides.includes("top")) rule(xAxis, p.x, p.y, p.w, xHeight);
+        if (frameSides.includes("bottom")) rule(xAxis, p.x, p.y + p.h - xHeight, p.w, xHeight);
       }
       for (const axis of Object.values(this.axes)) {
         if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;

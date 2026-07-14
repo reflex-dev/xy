@@ -211,12 +211,36 @@ colorbar domains) fully cleared.
 - scatter `s=` keeps Matplotlib's absolute area semantics (size arrays no
   longer compress into the engine's relative 2–18 px band).
 
-Remaining visual boundaries after this round (all loud or documented):
-marker-variety fidelity for triangle/x variants, contour inline-label
-placement density, hexbin's true tessellation, `subplots_adjust` spacing
-(currently ignored — to be made loud or honored), `hist(orientation=
-'horizontal')`, tick-density/trailing-zero formatting vs Matplotlib's
-defaults, legend loc='best' avoidance, and the boxed-axes frame default.
+### Visual-fidelity follow-up — 2026-07-14
+
+- Directional triangle markers and diagonal `x` now have distinct SVG,
+  native-raster, and WebGL glyphs rather than collapsing into up-triangle and
+  plus.
+- `clabel` places a bounded set of separated labels along every contour level
+  instead of one label per level.
+- Hexbin now uses the two offset center grids and nearest-center hex metric,
+  emits complete zero-count lattices by default, and renders each occupied
+  cell as six data-space triangles. Bin membership and visible tessellation
+  now agree across browser, PNG, and SVG.
+- Horizontal bar/step/stepfilled histograms put counts on x; the filled form
+  uses touching horizontal bins rather than a vertical area primitive.
+- `borderpad`, `labelspacing`, `fancybox`, `framealpha`, `shadow`, and legend
+  titles reach browser and static renderers, clearing the two loud PDSH
+  legend-style cells.
+- `subplots_adjust` now raises `NotImplementedError` when given material
+  values; use `GridSpec` for supported spacing. This removes the last known
+  silent Matplotlib-shim option discard.
+- Direct Matplotlib 3.11/xy PNG comparisons of the six affected PDSH cells
+  verified usable marker, contour, lattice, legend, and horizontal-histogram
+  output.
+- The final systematic minors are now closed: automatic ticks include the 2.5
+  nice step and keep a shared fixed precision, `loc='best'` chooses the least
+  occupied corner from bounded data samples, and pyplot transports an explicit
+  four-sided frame with independently controllable spines to browser, PNG, and
+  SVG. A follow-up Matplotlib 3.11 comparison verified all three together.
+- The non-gating `ty` diagnostics on zone-map min/max folds were removed by
+  using typed list reductions; the complete shippable Python package now type
+  checks cleanly.
 
 Future entries must identify the Matplotlib release/revision, inventory
 additions or removals, and any compatibility-level changes.

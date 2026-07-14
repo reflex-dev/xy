@@ -38,8 +38,8 @@ _DEFAULTS: dict[str, Any] = {
     "axes.titlecolor": "auto",
     "axes.spines.left": True,
     "axes.spines.bottom": True,
-    "axes.spines.top": False,
-    "axes.spines.right": False,
+    "axes.spines.top": True,
+    "axes.spines.right": True,
     "xtick.color": "black",
     "ytick.color": "black",
     "xtick.labelcolor": "inherit",
@@ -70,14 +70,8 @@ class RcParams(dict):
                 f"xy.pyplot ignores rcParams[{key!r}] — see {COMPAT_URL}",
                 stacklevel=2,
             )
-        if key in {"axes.spines.left", "axes.spines.bottom"} and value is not True:
-            raise NotImplementedError(
-                f"xy.pyplot cannot hide {key.removeprefix('axes.spines.')} spines independently"
-            )
-        if key in {"axes.spines.top", "axes.spines.right"} and value is not False:
-            raise NotImplementedError(
-                f"xy.pyplot does not render {key.removeprefix('axes.spines.')} spines"
-            )
+        if key.startswith("axes.spines.") and not isinstance(value, bool):
+            raise ValueError(f"{key} must be boolean")
         if key == "axes.prop_cycle":
             by_key = getattr(value, "by_key", None)
             colors = by_key().get("color") if by_key is not None else None

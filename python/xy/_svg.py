@@ -297,7 +297,7 @@ def _nice_step(rough: float) -> float:
     if not np.isfinite(rough) or rough <= 0:
         return 1.0
     mag = 10.0 ** np.floor(np.log10(rough))
-    for m in (1, 2, 5, 10):
+    for m in (1, 2, 2.5, 5, 10):
         if rough <= m * mag * (1 + 1e-12):
             return m * mag
     return 10 * mag
@@ -436,20 +436,18 @@ def _fmt_time(ms: float, step: float) -> str:
 
 
 def _fmt_linear(v: float, step: float) -> str:
-    if v == 0:
-        return "0"
     av = abs(v)
-    if av >= 1e6 or av < 1e-4:
+    if av >= 1e6 or (av != 0 and av < 1e-4):
         return f"{v:.1e}".replace("e+0", "e").replace("e-0", "e-").replace("e+", "e")
-    dec = max(0, -int(np.floor(np.log10(step))) + (1 if step < 1 else 0))
+    dec = max(0, int(np.ceil(-np.log10(abs(step))))) if step else 0
     # A non-nice step (pi/2, 0.3333…) needs enough decimals to keep adjacent
     # ticks distinct; widen until the step itself round-trips at that precision.
-    while dec < 8 and abs(round(step, dec) - step) > step / 1000.0:
+    while dec < 8 and abs(round(step, dec) - step) > abs(step) / 1000.0:
         dec += 1
-    s = f"{v:.{min(dec, 8)}f}"
-    if "." in s:
-        s = s.rstrip("0").rstrip(".")
-    return s
+    # ScalarFormatter uses one precision for the whole tick set. Retaining
+    # those zeros (0.00 beside ±0.25) makes magnitude and spacing legible and
+    # matches Matplotlib's default formatter.
+    return f"{v:.{min(dec, 8)}f}"
 
 
 def _fmt_axis(axis: dict[str, Any], v: float, step: float) -> str:
@@ -717,11 +715,28 @@ _SYMBOL_BUILDERS = {
     "triangle": lambda cx, cy, r: (
         f'<path d="M {_num(cx)} {_num(cy - r)} L {_num(cx + 0.9 * r)} {_num(cy + 0.62 * r)} L {_num(cx - 0.9 * r)} {_num(cy + 0.62 * r)} Z"'
     ),
+    "triangle_down": lambda cx, cy, r: (
+        f'<path d="M {_num(cx)} {_num(cy + r)} L {_num(cx + 0.9 * r)} {_num(cy - 0.62 * r)} L {_num(cx - 0.9 * r)} {_num(cy - 0.62 * r)} Z"'
+    ),
+    "triangle_left": lambda cx, cy, r: (
+        f'<path d="M {_num(cx - r)} {_num(cy)} L {_num(cx + 0.62 * r)} {_num(cy - 0.9 * r)} L {_num(cx + 0.62 * r)} {_num(cy + 0.9 * r)} Z"'
+    ),
+    "triangle_right": lambda cx, cy, r: (
+        f'<path d="M {_num(cx + r)} {_num(cy)} L {_num(cx - 0.62 * r)} {_num(cy - 0.9 * r)} L {_num(cx - 0.62 * r)} {_num(cy + 0.9 * r)} Z"'
+    ),
     "cross": lambda cx, cy, r: (
         f'<path d="M {_num(cx - 0.34 * r)} {_num(cy - r)} H {_num(cx + 0.34 * r)} V {_num(cy - 0.34 * r)} '
         f"H {_num(cx + r)} V {_num(cy + 0.34 * r)} H {_num(cx + 0.34 * r)} V {_num(cy + r)} "
         f"H {_num(cx - 0.34 * r)} V {_num(cy + 0.34 * r)} H {_num(cx - r)} V {_num(cy - 0.34 * r)} "
         f'H {_num(cx - 0.34 * r)} Z"'
+    ),
+    "x": lambda cx, cy, r: (
+        f'<path d="M {_num(cx - 0.72 * r)} {_num(cy - r)} L {_num(cx)} {_num(cy - 0.28 * r)} '
+        f"L {_num(cx + 0.72 * r)} {_num(cy - r)} L {_num(cx + r)} {_num(cy - 0.72 * r)} "
+        f"L {_num(cx + 0.28 * r)} {_num(cy)} L {_num(cx + r)} {_num(cy + 0.72 * r)} "
+        f"L {_num(cx + 0.72 * r)} {_num(cy + r)} L {_num(cx)} {_num(cy + 0.28 * r)} "
+        f"L {_num(cx - 0.72 * r)} {_num(cy + r)} L {_num(cx - r)} {_num(cy + 0.72 * r)} "
+        f'L {_num(cx - 0.28 * r)} {_num(cy)} L {_num(cx - r)} {_num(cy - 0.72 * r)} Z"'
     ),
     "pentagon": lambda cx, cy, r: _regular_polygon_path(cx, cy, r, 5, -90.0),
     "hexagon": lambda cx, cy, r: _regular_polygon_path(cx, cy, r, 6, -90.0),
@@ -938,8 +953,11 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                     + "/>"
                 )
 
-        elif kind in ("scatter", "hexbin"):
+        elif kind == "scatter":
             marks.append(_scatter_marks(t, blob, cols, sx, sy, style, color))
+
+        elif kind == "hexbin":
+            marks.append(_triangle_mesh_marks(t, blob, cols, sx, sy, style, color))
 
         elif kind in {"errorbar", "stem", "box_whisker", "box_median", "contour", "segments"}:
             marks.append(_segment_marks(t, blob, cols, sx, sy, style, color))
@@ -991,18 +1009,24 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
 
     # baselines above the marks, matching the client's overlay rules
     baselines = ""
+    frame_sides = spec.get("frame_sides")
+    if frame_sides is None:
+        frame_sides = [xa.get("side", "bottom"), ya.get("side", "left")]
     if not hide_y:
-        baselines += (
-            f'<line x1="{_num(plot["x"])}" y1="{_num(plot["y"])}" x2="{_num(plot["x"])}" '
-            f'y2="{_num(plot["y"] + plot["h"])}" stroke="{_AXIS}"/>'
-        )
+        for side, x in (("left", plot["x"]), ("right", plot["x"] + plot["w"])):
+            if side in frame_sides:
+                baselines += (
+                    f'<line x1="{_num(x)}" y1="{_num(plot["y"])}" x2="{_num(x)}" '
+                    f'y2="{_num(plot["y"] + plot["h"])}" stroke="{_AXIS}"/>'
+                )
     if not hide_x:
-        x_axis_y = plot["y"] if xa.get("side") == "top" else plot["y"] + plot["h"]
-        baselines += (
-            f'<line x1="{_num(plot["x"])}" y1="{_num(x_axis_y)}" '
-            f'x2="{_num(plot["x"] + plot["w"])}" y2="{_num(x_axis_y)}" '
-            f'stroke="{_AXIS}"/>'
-        )
+        for side, y in (("top", plot["y"]), ("bottom", plot["y"] + plot["h"])):
+            if side in frame_sides:
+                baselines += (
+                    f'<line x1="{_num(plot["x"])}" y1="{_num(y)}" '
+                    f'x2="{_num(plot["x"] + plot["w"])}" y2="{_num(y)}" '
+                    f'stroke="{_AXIS}"/>'
+                )
 
     clip_id = svg.uid("clip")
     svg.defs.append(
@@ -1396,19 +1420,43 @@ _LEGEND_LINE_KINDS = frozenset({"line", "segments", "step", "stairs", "errorbar"
 
 def _legend(named: list[dict], plot: dict, options: dict) -> str:
     rows = []
-    pad, handle, gap, line_h = 8, 20, 5, 16
+    style_opts = options.get("style") or {}
+    pad, handle, gap, line_h = 8.0, 20, 5, 16.0
+    if str(style_opts.get("padding", "")).endswith("em"):
+        pad = 11.0 * float(str(style_opts["padding"])[:-2])
+    if str(style_opts.get("rowGap", "")).endswith("em"):
+        line_h = 11.0 * (1.0 + float(str(style_opts["rowGap"])[:-2]))
     ncols = min(len(named), max(1, int(options.get("ncols", 1))))
     nrows = (len(named) + ncols - 1) // ncols
+    title = options.get("title")
+    title_h = 16 if title else 0
     cell_w = max(len(str(t["name"])) for t in named) * 6.2 + handle + gap + 2 * pad
-    box_w, box_h = ncols * cell_w + pad, nrows * line_h + pad
+    box_w, box_h = ncols * cell_w + pad, nrows * line_h + pad + title_h
     loc = options.get("loc") or "upper right"
     x = plot["x"] + 6 if "left" in loc else plot["x"] + plot["w"] - box_w - 6
     y = plot["y"] + plot["h"] - box_h - 6 if "lower" in loc else plot["y"] + 6
-    style_opts = options.get("style") or {}
     if style_opts.get("background") != "transparent":
+        if style_opts.get("boxShadow"):
+            rows.append(
+                f'<rect x="{_num(x + 2)}" y="{_num(y + 2)}" width="{_num(box_w)}" '
+                f'height="{_num(box_h)}" rx="4" fill="black" fill-opacity="0.22"/>'
+            )
+        alpha = float(style_opts.get("--xy-legend-frame-alpha", 0.08))
+        radius = "4" if style_opts.get("borderRadius") else "0"
+        background_value = style_opts.get("background")
+        if background_value is None and alpha == 0.08:
+            fill_attrs = 'fill="rgba(128,128,128,0.08)"'
+        else:
+            background = _css(background_value, "#808080")
+            fill_attrs = f'fill="{escape(background)}" fill-opacity="{_num(alpha)}"'
         rows.append(
             f'<rect x="{_num(x)}" y="{_num(y)}" width="{_num(box_w)}" height="{_num(box_h)}" '
-            f'rx="4" fill="rgba(128,128,128,0.08)"/>'
+            f'rx="{radius}" {fill_attrs}/>'
+        )
+    if title:
+        rows.append(
+            f'<text x="{_num(x + pad)}" y="{_num(y + pad / 2 + 11)}" '
+            f'font-weight="600" fill="{_TEXT}">{escape(str(title))}</text>'
         )
     for i, t in enumerate(named):
         style = t.get("style") or {}
@@ -1417,7 +1465,7 @@ def _legend(named: list[dict], plot: dict, options: dict) -> str:
             DEFAULT_PALETTE[i % len(DEFAULT_PALETTE)],
         )
         col, row = i % ncols, i // ncols
-        rx, ry = x + col * cell_w, y + pad / 2 + row * line_h
+        rx, ry = x + col * cell_w, y + pad / 2 + title_h + row * line_h
         hx0, hx1, cy = rx + pad, rx + pad + handle, ry + 7
         kind = t.get("kind")
         if kind == "scatter":

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import io
-
 import pytest
 
 import xy.pyplot as plt
@@ -76,23 +74,14 @@ def test_legend_rc_defaults_reach_legend_component() -> None:
     }
 
 
-def test_spine_and_invalid_cycle_boundaries_fail_loudly() -> None:
-    with pytest.raises(NotImplementedError, match="cannot hide left"):
-        plt.rcParams["axes.spines.left"] = False
-    with pytest.raises(NotImplementedError, match="does not render top"):
-        plt.rcParams["axes.spines.top"] = True
+def test_spine_controls_and_invalid_cycle_boundaries() -> None:
+    plt.rcParams["axes.spines.left"] = False
+    plt.rcParams["axes.spines.top"] = True
     with pytest.raises(ValueError, match="non-empty color cycle"):
         plt.rcParams["axes.prop_cycle"] = object()
 
     _fig, ax = plt.subplots()
     ax.plot([0, 1], [0, 1])
     ax.spines[["top", "right"]].set_visible(False)
-    # Hiding only one of left/bottom is inexpressible and fails at build time;
-    # hiding both renders with transparent axis lines.
-    ax.spines["left"].set_visible(False)
-    with pytest.raises(NotImplementedError, match="hiding only the left spine"):
-        _fig.savefig(io.BytesIO(), format="png")
-    ax.spines["bottom"].set_visible(False)
-    buffer = io.BytesIO()
-    _fig.savefig(buffer, format="png")
-    assert buffer.getvalue()[:4] == b"\x89PNG"
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert spec["frame_sides"] == ["bottom"]

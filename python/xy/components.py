@@ -194,6 +194,7 @@ class Legend(Component):
     show: bool = True
     loc: Optional[str] = None
     ncols: int = 1
+    title: Optional[str] = None
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
     render: Any = None
@@ -1468,6 +1469,7 @@ def legend(
     show: bool = True,
     loc: Optional[str] = None,
     ncols: int = 1,
+    title: Optional[str] = None,
     render: Any = None,
     class_name: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
@@ -1477,6 +1479,7 @@ def legend(
         show=_strict_bool(show, "legend show"),
         loc=_optional_string(loc, "legend loc"),
         ncols=_optional_positive_int(ncols, "legend ncols") or 1,
+        title=_optional_string(title, "legend title"),
         class_name=_optional_string(class_name, "legend class_name"),
         style=_style_dict(style, "legend style"),
         render=render,
@@ -1893,6 +1896,8 @@ class Chart(Component):
             node = legends[-1]
             _apply_chrome_node(fig, "legend", node.class_name, node.style)
             fig.legend_options = {"loc": node.loc, "ncols": node.ncols}
+            if node.title is not None:
+                fig.legend_options["title"] = node.title
             if node.style:
                 # Carry the frame/frameon styling into the static-export spec so
                 # the raster/SVG legend can honor frameon=False (transparent bg).

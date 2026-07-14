@@ -151,15 +151,24 @@ float fcMarkerSdf(vec2 d, int shape) {
     float h = clamp(dot(p, ba) / dot(ba, ba), 0.0, 0.5);
     return length(p - ba * h) * sign(p.y * ba.x - p.x * ba.y);
   }
-  if (shape == 3) {                                                 // triangle (apex up)
+  if (shape == 3 || shape == 8 || shape == 9 || shape == 10) {     // directional triangle
     const float k = 1.7320508;
     float r = 0.62;
-    vec2 p = vec2(d.x, -d.y);   // flip so the apex points up
+    vec2 q = d;
+    if (shape == 8) q = -d;
+    if (shape == 9) q = vec2(d.y, -d.x);
+    if (shape == 10) q = vec2(-d.y, d.x);
+    vec2 p = vec2(q.x, -q.y);   // flip so the canonical apex points up
     p.x = abs(p.x) - r;
     p.y = p.y + r / k;
     if (p.x + k * p.y > 0.0) p = vec2(p.x - k * p.y, -k * p.x - p.y) / 2.0;
     p.x -= clamp(p.x, -2.0 * r, 0.0);
     return -length(p) * sign(p.y);
+  }
+  if (shape == 11) {                                                // diagonal x
+    vec2 q = vec2(d.x + d.y, d.y - d.x) * 0.707106781;
+    vec2 a = abs(q);
+    return min(max(a.x - 0.17, a.y - 0.5), max(a.x - 0.5, a.y - 0.17));
   }
   return length(d) - 0.5;                                           // circle
 }`;

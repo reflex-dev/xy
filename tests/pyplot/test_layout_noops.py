@@ -22,18 +22,10 @@ def test_tight_layout_records_validated_noop_contract():
         fig.tight_layout(foo=1)
 
 
-def test_subplots_adjust_records_supported_spacing_values():
+def test_subplots_adjust_rejects_spacing_it_cannot_render():
     fig, _ = plt.subplots(2, 2)
-    fig.subplots_adjust(left=0.1, right=0.9, top=0.8, bottom=0.2, wspace=0.3, hspace=0.4)
-
-    assert fig._subplot_adjust == {
-        "left": 0.1,
-        "right": 0.9,
-        "top": 0.8,
-        "bottom": 0.2,
-        "wspace": 0.3,
-        "hspace": 0.4,
-    }
+    with pytest.raises(NotImplementedError, match="subplots_adjust"):
+        fig.subplots_adjust(left=0.1, wspace=0.3)
     with pytest.raises(TypeError):
         fig.subplots_adjust(foo=1)
 

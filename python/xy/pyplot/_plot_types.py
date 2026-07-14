@@ -2357,7 +2357,10 @@ class PlotTypeMixin:
         )  # compat-noop: deterministic shim contour-label placement and styling
         chosen = np.asarray(CS.levels if levels is None else levels, dtype=np.float64).reshape(-1)
         if isinstance(manual, (list, tuple, np.ndarray)) and len(manual):
-            locations = list(manual)
+            label_specs = [
+                (index, level, tuple(manual[index % len(manual)]))
+                for index, level in enumerate(chosen)
+            ]
         else:
             source = CS._entry
             grid = np.asarray(source["args"][0], dtype=np.float64)
@@ -2379,31 +2382,40 @@ class PlotTypeMixin:
                 x0, x1, y0, y1, segment_levels = kernels.marching_squares(
                     grid, x_values, y_values, chosen
                 )
-                locations = []
+                label_specs = []
+                x_span = max(float(np.ptp(x_values)), np.finfo(float).eps)
+                y_span = max(float(np.ptp(y_values)), np.finfo(float).eps)
                 for index, level in enumerate(chosen):
                     candidates = np.flatnonzero(np.isclose(segment_levels, level))
                     if len(candidates):
-                        selected = candidates[(index * 37 + len(candidates) // 3) % len(candidates)]
-                        locations.append(
-                            (
+                        target = min(6, max(3, int(np.ceil(len(candidates) / 18))))
+                        probes = np.linspace(0, len(candidates) - 1, target, dtype=int)
+                        accepted: list[tuple[float, float]] = []
+                        for probe in probes:
+                            selected = candidates[(probe + index * 7) % len(candidates)]
+                            location = (
                                 float((x0[selected] + x1[selected]) * 0.5),
                                 float((y0[selected] + y1[selected]) * 0.5),
                             )
-                        )
-                    else:
-                        locations.append(None)
+                            if all(
+                                np.hypot(
+                                    (location[0] - prior[0]) / x_span,
+                                    (location[1] - prior[1]) / y_span,
+                                )
+                                >= 0.12
+                                for prior in accepted
+                            ):
+                                accepted.append(location)
+                        label_specs.extend((index, level, location) for location in accepted)
             except (ValueError, RuntimeError):
-                locations = [(0.5, 0.5)] * len(chosen)
+                label_specs = [(index, level, (0.5, 0.5)) for index, level in enumerate(chosen)]
         color_values = [colors] * len(chosen) if isinstance(colors, str) else colors
         if color_values is None:
             color_values = [None] * len(chosen)
         elif not isinstance(color_values, list):
             color_values = list(color_values)
         result: list[Text] = []
-        for index, level in enumerate(chosen):
-            location = locations[index % len(locations)]
-            if location is None:
-                continue
+        for index, level, location in label_specs:
             if callable(fmt):
                 label = str(fmt(level))
             elif isinstance(fmt, dict):

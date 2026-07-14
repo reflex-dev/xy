@@ -126,6 +126,15 @@ def test_multiple_locator_labels_keep_step_precision() -> None:
     assert ">2</text>" not in svg.split('text-anchor="middle"')[1][:400]
 
 
+def test_default_ticks_use_matplotlib_density_and_uniform_decimal_padding() -> None:
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [-1, 1])
+    ax.set_ylim(-1, 1)
+    svg = _svg(fig)
+    for label in ("-1.00", "-0.75", "0.00", "0.75", "1.00"):
+        assert f">{label}<" in svg
+
+
 def test_log_axes_label_decades_and_grid_majors_only() -> None:
     fig, ax = plt.subplots()
     x = np.linspace(1, 2000, 100)

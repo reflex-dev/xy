@@ -731,6 +731,27 @@ def show(*args: Any, **kwargs: Any) -> None:
         fig.show()
 
 
+def _flush_inline_figures() -> None:
+    """Display pyplot figures at the end of an IPython cell, like `%matplotlib inline`."""
+    if fignums():
+        show()
+
+
+def _install_ipython_display_hook() -> None:
+    """Install one optional end-of-cell flush hook on the active IPython shell."""
+    import sys  # noqa: PLC0415
+
+    ipython = sys.modules.get("IPython")
+    if ipython is None:
+        return
+    shell = ipython.get_ipython()
+    events = getattr(shell, "events", None)
+    if events is None or getattr(shell, "_xy_pyplot_inline_hook", None) is not None:
+        return
+    events.register("post_execute", _flush_inline_figures)
+    shell._xy_pyplot_inline_hook = _flush_inline_figures
+
+
 # -- namespaces scripts poke at ---------------------------------------------------
 
 
@@ -975,3 +996,6 @@ def cycler(*args: Any, **kwargs: Any) -> Any:
 
 def np_asarray_passthrough(x: Any) -> Any:  # pragma: no cover - numpy re-export shim
     return np.asarray(x)
+
+
+_install_ipython_display_hook()

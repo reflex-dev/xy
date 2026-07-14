@@ -1,3 +1,7 @@
+import sys
+from types import ModuleType, SimpleNamespace
+from unittest.mock import Mock
+
 import xy.pyplot as plt
 
 
@@ -51,3 +55,22 @@ def test_pyplot_twiny_creates_current_axes_on_same_figure():
     assert plt.gca() is twin
     assert twin in fig.axes
     assert twin is not ax
+
+
+def test_pyplot_installs_one_ipython_end_of_cell_display_hook(monkeypatch):
+    callbacks = []
+    events = SimpleNamespace(register=lambda event, callback: callbacks.append((event, callback)))
+    shell = SimpleNamespace(events=events)
+    ipython = ModuleType("IPython")
+    ipython.get_ipython = lambda: shell
+    monkeypatch.setitem(sys.modules, "IPython", ipython)
+
+    plt._install_ipython_display_hook()
+    plt._install_ipython_display_hook()
+
+    assert callbacks == [("post_execute", plt._flush_inline_figures)]
+    plt.figure()
+    show = Mock()
+    monkeypatch.setattr(plt, "show", show)
+    callbacks[0][1]()
+    show.assert_called_once_with()

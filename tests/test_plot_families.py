@@ -58,7 +58,10 @@ def test_hexbin_is_screen_bounded_and_contour_emits_isolines() -> None:
         Figure().contour(np.arange(64, dtype=float).reshape(8, 8), levels=5).build_payload()
     )
     assert hex_spec["traces"][0]["kind"] == "hexbin"
-    assert hex_spec["traces"][0]["n_marks"] <= 32 * 32
+    ny = int(32 / np.sqrt(3.0))
+    assert hex_spec["traces"][0]["n_marks"] <= (32 + 1) * (ny + 1) + 32 * ny
+    assert all(key in hex_spec["traces"][0] for key in ("x0", "y0", "x1", "y1", "x2", "y2"))
+    assert "x" not in hex_spec["traces"][0]
     assert contour_spec["traces"][0]["kind"] == "contour"
     assert contour_spec["traces"][0]["n_marks"] > 0
 
@@ -266,7 +269,8 @@ def test_hexbin_does_not_retain_raw_points_in_the_store() -> None:
     fig = Figure().hexbin(rng.normal(size=n), rng.normal(size=n), gridsize=32)
     total_elements = sum(len(col) for col in fig.store.columns)
     # Only occupied bin centers may be resident, never the raw points.
-    assert total_elements <= 2 * 32 * 32
+    ny = int(32 / np.sqrt(3.0))
+    assert total_elements <= 2 * ((32 + 1) * (ny + 1) + 32 * ny)
     assert fig.traces[0].count == n
     failing = Figure()
     with pytest.raises(ValueError, match="no finite points"):

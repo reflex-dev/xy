@@ -697,11 +697,17 @@ fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
     match sym {
         1 => px.abs().max(py.abs()) - r, // square
         2 => (px.abs() + py.abs()) - r,  // diamond
-        3 => {
+        3 | 8 | 9 | 10 => {
             // equilateral triangle, apex up (IQ SDF), matching the GL shader
             let k = 1.732_050_8_f32;
             let rr = r * 1.24;
-            let mut p = (px, -py);
+            let d = match sym {
+                8 => (-px, -py), // down
+                9 => (py, -px),  // left
+                10 => (-py, px), // right
+                _ => (px, py),
+            };
+            let mut p = (d.0, -d.1);
             p.0 = p.0.abs() - rr;
             p.1 += rr / k;
             if p.0 + k * p.1 > 0.0 {
@@ -713,6 +719,13 @@ fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
         4 => {
             // plus / cross
             let (ax, ay) = (px.abs(), py.abs());
+            (ax - 0.34 * r).max(ay - r).min((ax - r).max(ay - 0.34 * r))
+        }
+        11 => {
+            // diagonal cross (matplotlib's x/X), distinct from the plus glyph
+            let qx = (px + py) * std::f32::consts::FRAC_1_SQRT_2;
+            let qy = (py - px) * std::f32::consts::FRAC_1_SQRT_2;
+            let (ax, ay) = (qx.abs(), qy.abs());
             (ax - 0.34 * r).max(ay - r).min((ax - r).max(ay - 0.34 * r))
         }
         5 => {

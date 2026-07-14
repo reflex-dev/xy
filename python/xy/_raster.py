@@ -64,6 +64,10 @@ _SYMBOLS = {
     "hexagon": 5,
     "pentagon": 6,
     "star": 7,
+    "triangle_down": 8,
+    "triangle_left": 9,
+    "triangle_right": 10,
+    "x": 11,
 }
 
 
@@ -538,8 +542,10 @@ def render_raster(
             _emit_line(cmd, t, blob, cols, sx, sy, style, color)
         elif kind in ("area", "error_band"):
             _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot)
-        elif kind in ("scatter", "hexbin"):
+        elif kind == "scatter":
             _emit_scatter(cmd, t, blob, cols, sx, sy, style, color)
+        elif kind == "hexbin":
+            _emit_triangle_mesh(cmd, t, blob, cols, sx, sy, style, color)
         elif kind in {"errorbar", "stem", "box_whisker", "box_median", "contour", "segments"}:
             _emit_segments(cmd, t, blob, cols, sx, sy, style, color)
         elif kind in ("bar", "column") and t.get("bar"):
@@ -562,11 +568,19 @@ def render_raster(
     hide_y = ya.get("tick_label_strategy") == "none"
     hide_x_labels = hide_x or xa.get("tick_label_strategy") == "off"
     hide_y_labels = hide_y or ya.get("tick_label_strategy") == "off"
+    frame_sides = spec.get("frame_sides")
+    if frame_sides is None:
+        frame_sides = [xa.get("side", "bottom"), ya.get("side", "left")]
     if not hide_y:
-        cmd.stroke([(px0, py0), (px0, py1)], 1.0, axis_c)
+        if "left" in frame_sides:
+            cmd.stroke([(px0, py0), (px0, py1)], 1.0, axis_c)
+        if "right" in frame_sides:
+            cmd.stroke([(px1, py0), (px1, py1)], 1.0, axis_c)
     if not hide_x:
-        x_axis_y = py0 if xa.get("side") == "top" else py1
-        cmd.stroke([(px0, x_axis_y), (px1, x_axis_y)], 1.0, axis_c)
+        if "top" in frame_sides:
+            cmd.stroke([(px0, py0), (px1, py0)], 1.0, axis_c)
+        if "bottom" in frame_sides:
+            cmd.stroke([(px0, py1), (px1, py1)], 1.0, axis_c)
 
     text_c = _parse_color(_TEXT)
     if not hide_x_labels:
@@ -1058,18 +1072,35 @@ _LEGEND_LINE_KINDS = frozenset({"line", "segments", "step", "stairs", "errorbar"
 
 
 def _emit_legend(cmd, named, plot, options):
-    pad, handle, gap, line_h = 8, 20, 5, 16
+    style_opts = options.get("style") or {}
+    pad, handle, gap, line_h = 8.0, 20, 5, 16.0
+    if str(style_opts.get("padding", "")).endswith("em"):
+        pad = 11.0 * float(str(style_opts["padding"])[:-2])
+    if str(style_opts.get("rowGap", "")).endswith("em"):
+        line_h = 11.0 * (1.0 + float(str(style_opts["rowGap"])[:-2]))
     ncols = min(len(named), max(1, int(options.get("ncols", 1))))
     nrows = (len(named) + ncols - 1) // ncols
+    title = options.get("title")
+    title_h = 16 if title else 0
     cell_w = max(len(str(t["name"])) for t in named) * 6.2 + handle + gap + 2 * pad
-    box_w, box_h = ncols * cell_w + pad, nrows * line_h + pad
+    box_w, box_h = ncols * cell_w + pad, nrows * line_h + pad + title_h
     loc = options.get("loc") or "upper right"
     x = plot["x"] + 6 if "left" in loc else plot["x"] + plot["w"] - box_w - 6
     y = plot["y"] + plot["h"] - box_h - 6 if "lower" in loc else plot["y"] + 6
     # frameon=False (background transparent) drops the box entirely (§ mpl parity).
-    style_opts = options.get("style") or {}
     if style_opts.get("background") != "transparent":
-        cmd.fill(_rect_pts(x, y, x + box_w, y + box_h), (128, 128, 128, 20))
+        if style_opts.get("boxShadow"):
+            cmd.fill(_rect_pts(x + 2, y + 2, x + box_w + 2, y + box_h + 2), (0, 0, 0, 55))
+        alpha = float(style_opts.get("--xy-legend-frame-alpha", 0.08))
+        background = style_opts.get("background")
+        frame = (
+            _rgba(background, "#808080", alpha)
+            if background
+            else (128, 128, 128, round(255 * alpha))
+        )
+        cmd.fill(_rect_pts(x, y, x + box_w, y + box_h), frame)
+    if title:
+        cmd.text(x + pad, y + pad / 2 + 11, 0, 11, _parse_color(_TEXT), str(title))
     for i, t in enumerate(named):
         style = t.get("style") or {}
         color_str = _css(
@@ -1078,7 +1109,7 @@ def _emit_legend(cmd, named, plot, options):
         )
         c = _parse_color(color_str)
         col, row = i % ncols, i // ncols
-        rx, ry = x + col * cell_w, y + pad / 2 + row * line_h
+        rx, ry = x + col * cell_w, y + pad / 2 + title_h + row * line_h
         hx0, hx1, cy = rx + pad, rx + pad + handle, ry + 7
         kind = t.get("kind")
         if kind == "scatter":

@@ -275,7 +275,20 @@ def curve(value: Any, label: str) -> str:
 
 
 _POINT_SYMBOLS = frozenset(
-    {"circle", "square", "diamond", "triangle", "cross", "hexagon", "pentagon", "star"}
+    {
+        "circle",
+        "square",
+        "diamond",
+        "triangle",
+        "triangle_down",
+        "triangle_left",
+        "triangle_right",
+        "cross",
+        "x",
+        "hexagon",
+        "pentagon",
+        "star",
+    }
 )
 
 

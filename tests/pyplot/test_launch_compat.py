@@ -63,6 +63,17 @@ def test_pyplot_legend_location_and_columns_reach_render_spec() -> None:
     assert "style" in spec["legend"]
 
 
+def test_legend_best_avoids_the_busy_corner_and_default_axes_are_boxed() -> None:
+    _fig, ax = plt.subplots()
+    ax.scatter(np.linspace(0.72, 0.98, 100), np.linspace(0.7, 0.98, 100), label="busy")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.legend()
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert spec["legend"]["loc"] in {"upper left", "lower left", "lower right"}
+    assert spec["frame_sides"] == ["left", "bottom", "top", "right"]
+
+
 def test_filled_stairs_use_seamless_bins_and_hatches_are_not_dropped() -> None:
     _fig, ax = plt.subplots()
     ax.stairs([1, 2], [0, 1, 2], fill=True)

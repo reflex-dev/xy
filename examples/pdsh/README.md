@@ -6,6 +6,31 @@ with one systematic change: `import matplotlib.pyplot as plt` became
 `import xy.pyplot as plt`. They exist to answer, on popular real-world
 code, "can I just change the import?"
 
+## Run the comparison in one notebook
+
+Every checked-in notebook contains both runs in the same file. Each Matplotlib
+code cell is immediately followed by the matching `xy.pyplot` code cell, so the
+two outputs appear together instead of in separate sections or notebooks. The
+paired cells use distinct plotting aliases and are labeled in their first line.
+`xy.pyplot` provides the Jupyter end-of-cell figure flush itself, so the example
+cells do not need display workarounds.
+
+Open any original notebook, choose **Restart Kernel and Run All Cells**, and
+compare each adjacent output pair in place. For example:
+
+```bash
+cd examples/pdsh
+jupyter lab pdsh_04_02_simple_scatter_plots.ipynb
+```
+
+The notebooks remain beside `data/`, so their existing relative data paths work
+for both sections. There are no separate Matplotlib-reference notebooks. After
+editing an xy example, regenerate its mirrored reference section with:
+
+```bash
+.venv/bin/python examples/pdsh/sync_dual_engine_notebooks.py
+```
+
 Only the MIT-licensed code cells are included (the book's prose is
 CC-BY-NC-ND and is omitted; section headings are kept for navigation).
 Besides the import swap, the code carries the same modernizations the
@@ -30,11 +55,11 @@ signal. A "cell ok" also implies a non-empty `savefig` PNG export.
 | 04.03 Errorbars | 5/5 | 5/5 |
 | 04.04 Density and Contour Plots | 8/8 | 8/8 |
 | 04.05 Histograms and Binnings | 10/10 | 10/10 |
-| 04.06 Customizing Legends | 11/11 | 8/11 |
+| 04.06 Customizing Legends | 11/11 | 10/11 |
 | 04.07 Customizing Colorbars | 13/13 | 13/13 |
-| 04.08 Multiple Subplots | 10/10 | 10/10 |
+| 04.08 Multiple Subplots | 10/10 | 9/10 |
 | 04.09 Text and Annotation | 9/9 | 6/9 |
-| 04.10 Customizing Ticks | 11/11 | 11/11 |
+| 04.10 Customizing Ticks | 11/11 | 10/11 |
 | 04.11 Settings and Stylesheets | 15/15 | 15/15 |
 | 04.12 Three-Dimensional Plotting¹ | 17/17 | 7/17 |
 | 04.14 Visualization with Seaborn² | 31/31 | 30/31 |
@@ -79,11 +104,21 @@ fallback onto matplotlib will ever be added).
 ## Remaining failures
 
 All 17 are one of: 3-D projection cells (10, loud rejections by
-design), legend layout options `borderpad`/`labelspacing` and the
-`Legend` class (3, documented loud rejections), pandas
+design), the second-legend `Legend` class (1, a documented loud rejection),
+`subplots_adjust` calls whose values the renderer cannot honor (2, now loud
+rather than silently discarded), pandas
 `Series.plot(ax=ax)` datetime interop (3, a real gap — a dtype error
 inside the pandas plotting path), and `axhline(marker=)` via seaborn
 (1, loud rejection).
+
+The 2026-07-14 fidelity follow-up also compared the affected PDSH cells
+directly against Matplotlib 3.11: directional markers and `x`/`+` remain
+distinct, contour labels repeat along levels, hexbins form a complete true
+lattice, horizontal filled histograms use the correct value axis, and both
+formerly rejected legend-style cells render. The final follow-up adds the 2.5
+automatic tick step with uniform decimal padding, occupancy-based
+`loc='best'`, and Matplotlib's four-sided boxed-axes default across browser and
+static exporters.
 
 Data files under `data/` come from the handbook's repository
 (`births.csv`, `california_cities.csv`) and

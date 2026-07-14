@@ -298,12 +298,13 @@ def test_spines_values_hide_all_renders_transparent_axis():
     _png()
 
 
-def test_hiding_a_single_left_spine_fails_at_build():
+def test_hiding_a_single_left_spine_is_renderable():
     fig, ax = plt.subplots()
     ax.plot([0, 1], [0, 1])
     ax.spines["left"].set_visible(False)
-    with pytest.raises(NotImplementedError):
-        _png()
+    _png()
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert "left" not in spec["frame_sides"]
 
 
 def test_tick_label_handles_recolor_axis_labels():

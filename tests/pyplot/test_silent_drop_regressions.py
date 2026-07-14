@@ -181,10 +181,10 @@ def test_savefig_without_extension_defaults_to_png(tmp_path):
 
 
 def test_rc_update_paths_enforce_the_same_validation_as_setitem():
-    with pytest.raises(NotImplementedError), plt.rc_context({"axes.spines.left": False}):
-        pass
-    with pytest.raises(NotImplementedError):
-        plt.style.use({"axes.spines.top": True})
+    with plt.rc_context({"axes.spines.left": False, "axes.spines.top": True}):
+        assert plt.rcParams["axes.spines.left"] is False
+    with pytest.raises(ValueError, match="boolean"):
+        plt.style.use({"axes.spines.top": "yes"})
 
     plt.style.use({"font.size": "14"})
     assert plt.rcParams["font.size"] == 14.0

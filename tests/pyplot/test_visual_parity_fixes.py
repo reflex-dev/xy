@@ -211,6 +211,23 @@ def test_hist_single_series_bars_span_full_bin_width():
     _png(fig)
 
 
+@pytest.mark.parametrize("histtype", ["bar", "step", "stepfilled"])
+def test_horizontal_histogram_geometry_uses_counts_on_x(histtype):
+    _fig, ax = plt.subplots()
+    counts, edges, _ = ax.hist(
+        [0, 0, 1, 2, 2, 2], bins=3, orientation="horizontal", histtype=histtype
+    )
+    entry = ax._entries[-1]
+    if histtype == "step":
+        assert entry["factory"] == "segments"
+        assert max(entry["args"][0]) == pytest.approx(max(counts))
+    else:
+        assert entry["kind"] == "bar"
+        assert entry["kwargs"]["orientation"] == "horizontal"
+        np.testing.assert_allclose(entry["x"], (edges[:-1] + edges[1:]) * 0.5)
+        np.testing.assert_allclose(entry["y"], counts)
+
+
 def test_hist_multiple_series_stay_side_by_side():
     rng = np.random.default_rng(2)
     fig, ax = plt.subplots()
