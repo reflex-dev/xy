@@ -19,5 +19,6 @@
     "architecture": "arm64"
   },
   "operating_system": "macOS 26.5.2",
-  "python_requirements": "requirements.txt"
+  "uv_project": "pyproject.toml",
+  "uv_lock": "uv.lock"
 }

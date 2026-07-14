@@ -41,7 +41,8 @@
   },
   "reproduction": {
     "environment": "environment.json",
-    "python_requirements": "requirements.txt"
+    "uv_project": "pyproject.toml",
+    "uv_lock": "uv.lock"
   },
   "comparison_rule": "Preserve contracts and environment metadata; do not overwrite this launch baseline."
 }

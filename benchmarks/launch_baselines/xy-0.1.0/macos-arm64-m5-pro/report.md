@@ -238,18 +238,17 @@ The defensible headline is not “`xy` draws 1B markers.” It is:
 ## Reproduce
 
 ```bash
-uv venv .venv --python 3.14.5
-uv pip install --python .venv/bin/python -e . \
-  -r benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/requirements.txt
+BASELINE=benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro
+uv sync --project "$BASELINE" --frozen --python 3.14.5
 
 # Repeated static + default interactive benchmarks
-.venv/bin/python benchmarks/bench_launch_scatter.py \
+uv run --project "$BASELINE" --frozen python benchmarks/bench_launch_scatter.py \
   --sizes 10000,100000,1000000,10000000,1000000000 \
   --repetitions 3 --timeout 180 --memory-gib 36 \
   --out launch-scatter-default.json
 
 # Repeated interactive CPU/software fallback
-.venv/bin/python benchmarks/bench_launch_scatter.py \
+uv run --project "$BASELINE" --frozen python benchmarks/bench_launch_scatter.py \
   --sizes 10000,100000,1000000,10000000,1000000000 \
   --repetitions 3 --timeout 180 --memory-gib 36 \
   --interactive-only --software \
