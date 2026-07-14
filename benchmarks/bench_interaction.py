@@ -209,7 +209,7 @@ def _probe_js(reps: int) -> str:
     const payload = FC_CHARTS[0];
     const el = document.createElement("div");
     document.getElementById("root").appendChild(el);
-    const view = xy.renderStandalone(el, payload.spec, fcBytesFromB64(payload.b64));
+    const view = xy.renderStandalone(el, payload.spec, fcBytesFromPayload(payload));
     // Under --virtual-time-budget an outstanding Web Worker round-trip pauses
     // virtual time forever: the first density zoom schedules the standalone
     // sample-rebin worker and the page deadlocks until the wall-clock timeout
@@ -671,7 +671,7 @@ def _worker_probe_js() -> str:
     const payload = FC_CHARTS[0];
     const el = document.createElement("div");
     document.getElementById("root").appendChild(el);
-    const view = xy.renderStandalone(el, payload.spec, fcBytesFromB64(payload.b64));
+    const view = xy.renderStandalone(el, payload.spec, fcBytesFromPayload(payload));
     const g = view.gpuTraces[0];
     if (!g || !g.sampleOverlay || !g.sampleOverlay._cpu) {
       fcReport("FC_WORKER", {status: "failed(no retained sample)"});

@@ -8,7 +8,6 @@ headless Chromium.
 
 from __future__ import annotations
 
-import base64
 import html as html_lib
 import json
 import re
@@ -18,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from _browser import chromium_gl_flags, find_chromium
+from xy import export as _xy_export
 
 
 def json_bytes(obj: Any) -> int:
@@ -37,10 +37,13 @@ def _standalone_js() -> str:
 
 
 def chart_payload(id: str, spec: dict[str, Any], blob: bytes) -> dict[str, Any]:
+    # Chunked base64 (same §29 fallback as the product export): no single JS
+    # string near the V8 length cliff, so probe pages scale to 25M+ points.
     return {
         "id": id,
         "spec": spec,
-        "b64": base64.b64encode(blob).decode("ascii"),
+        "chunks": _xy_export._base64_chunks(blob),
+        "n": len(blob),
     }
 
 
@@ -67,11 +70,9 @@ def page_for_charts(
 <script>{_standalone_js()}</script>
 <script>
 const FC_CHARTS = {payloads};
-function fcBytesFromB64(b64) {{
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes.buffer;
+{_xy_export._DECODE_B64_JS}
+function fcBytesFromPayload(payload) {{
+  return xyDecodeB64(payload.chunks, payload.n);
 }}
 function fcReport(marker, payload) {{
   document.title = marker + " " + JSON.stringify(payload);
