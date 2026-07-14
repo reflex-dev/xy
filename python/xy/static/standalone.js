@@ -2345,8 +2345,8 @@ this._refreshReductionBadges();
 }
 _buildLegend(root) {
 const s = this.spec;
-if (s.show_legend === false) return;
 const items = [];
+if (s.show_legend !== false) {
 for (const t of s.traces) {
 if (t.tier === "density") {
 items.push({ swatch: "gradient", cmap: t.density.colormap, name: t.name || "density" });
@@ -2362,6 +2362,7 @@ items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.s
 }
 }
 if (items.length) this._legendBox(root, items, s.legend || {}, true);
+}
 for (const extra of s.extra_legends || []) {
 const mapped = (extra.items || []).map((it) => ({
 swatch: it.style && it.style.color,

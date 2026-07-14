@@ -133,6 +133,17 @@ def test_client_respects_user_legend_max_height_style() -> None:
         )
 
 
+def test_extra_legends_are_not_suppressed_with_the_primary_legend() -> None:
+    """`show_legend=False` controls trace-derived chrome, not explicit artists."""
+    for path, text in CLIENT_FILES:
+        assert "if (s.show_legend !== false) {" in text, (
+            f"{path} no longer gates only the primary legend"
+        )
+        assert "if (s.show_legend === false) return;" not in text, (
+            f"{path} returns before rendering explicit extra legends"
+        )
+
+
 def test_client_numeric_styles_default_to_pixels_for_lengths() -> None:
     """Numeric component styles should behave like common Python/React style APIs."""
     required_style_helpers = (

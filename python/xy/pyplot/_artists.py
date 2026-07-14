@@ -846,7 +846,15 @@ def _legend_item_from_entry(
     opacity = kw.get("opacity")
     if opacity is not None:
         style["opacity"] = float(opacity)
-    dash = kw.get("dash")
+    # Rule annotations keep renderer-specific geometry inside ``style`` while
+    # ordinary line/step entries keep it at the top level. Accept both shapes
+    # so explicit Legend handles preserve the plotted dash.
+    dash = kw.get("dash", (kw.get("style") or {}).get("dash"))
+    if isinstance(dash, str) and "," in dash:
+        try:
+            dash = [float(value.strip()) for value in dash.split(",")]
+        except ValueError:
+            dash = None
     if isinstance(dash, str) and dash not in ("", "none", "solid"):
         from .. import _validate
 
@@ -885,6 +893,10 @@ class Legend:
         items: list[dict[str, Any]] = []
         for handle, label in zip(handles, labels, strict=False):
             entry = getattr(handle, "_entry", None)
+            if entry is None:
+                # ErrorbarContainer exposes the bars through its private
+                # compatibility artist rather than inheriting Artist itself.
+                entry = getattr(getattr(handle, "_artist", None), "_entry", None)
             if entry is None:
                 continue
             items.append(_legend_item_from_entry(entry, label, scale))

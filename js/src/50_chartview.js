@@ -851,25 +851,26 @@ class ChartView {
 
   _buildLegend(root) {
     const s = this.spec;
-    if (s.show_legend === false) return;
     const items = [];
-    for (const t of s.traces) {
-      if (t.tier === "density") {
-        items.push({ swatch: "gradient", cmap: t.density.colormap, name: t.name || "density" });
-      } else if (t.color && t.color.mode === "categorical") {
-        t.color.categories.forEach((cat, i) =>
-          items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {} }));
-      } else if (t.color && t.color.mode === "continuous") {
-        items.push({ swatch: "gradient", cmap: t.color.colormap, name: t.name || "value" });
-      } else if (t.name) {
-        const c = (t.color && t.color.color) || (t.style && t.style.color);
-        // Line-family kinds get a short line sample (honoring the dash), the
-        // same handle the raster/SVG exporters draw — not a filled swatch.
-        const line = ["line", "segments", "step", "stairs", "errorbar"].includes(t.kind);
-        items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {} });
+    if (s.show_legend !== false) {
+      for (const t of s.traces) {
+        if (t.tier === "density") {
+          items.push({ swatch: "gradient", cmap: t.density.colormap, name: t.name || "density" });
+        } else if (t.color && t.color.mode === "categorical") {
+          t.color.categories.forEach((cat, i) =>
+            items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {} }));
+        } else if (t.color && t.color.mode === "continuous") {
+          items.push({ swatch: "gradient", cmap: t.color.colormap, name: t.name || "value" });
+        } else if (t.name) {
+          const c = (t.color && t.color.color) || (t.style && t.style.color);
+          // Line-family kinds get a short line sample (honoring the dash), the
+          // same handle the raster/SVG exporters draw — not a filled swatch.
+          const line = ["line", "segments", "step", "stairs", "errorbar"].includes(t.kind);
+          items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {} });
+        }
       }
+      if (items.length) this._legendBox(root, items, s.legend || {}, true);
     }
-    if (items.length) this._legendBox(root, items, s.legend || {}, true);
     // Manually added Legend artists ship explicit items + their own loc, so a
     // second legend (e.g. one per line group) renders as its own box.
     for (const extra of s.extra_legends || []) {
