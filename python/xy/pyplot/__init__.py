@@ -20,6 +20,7 @@ from typing import Any, Optional, Union
 
 import numpy as np
 
+from ._artists import Legend
 from ._axes import Axes
 from ._colors import LinearSegmentedColormap, ListedColormap
 from ._mplfig import Figure, GridSpec
@@ -51,6 +52,7 @@ __all__ = [
     "FormatStrFormatter",
     "FuncFormatter",
     "GridSpec",
+    "Legend",
     "LinearLocator",
     "LinearSegmentedColormap",
     "ListedColormap",

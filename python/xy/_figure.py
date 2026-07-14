@@ -105,6 +105,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
         self.traces: list[Trace] = []
         self.show_legend = True
         self.legend_options: dict[str, Any] = {}
+        # Additional legend boxes (each with its own explicit items + loc),
+        # e.g. the pyplot shim's manually added Legend artists. Empty for the
+        # ordinary single-legend case.
+        self.extra_legends: list[dict[str, Any]] = []
         # None keeps the declarative engine's two-axis baseline convention;
         # pyplot sets an explicit Matplotlib-style spine list.
         self.frame_sides: Optional[list[str]] = None
