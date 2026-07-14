@@ -242,5 +242,23 @@ colorbar domains) fully cleared.
   using typed list reductions; the complete shippable Python package now type
   checks cleanly.
 
+### Free-form layout parity — 2026-07-14 (Matplotlib 3.11.0 reference)
+
+- HTML output now places free-form panels absolutely at their figure
+  rectangles on a fixed-size canvas, matching the PNG compositor: `add_axes`
+  rects stack and overlap exactly as in Matplotlib (an inset `plt.axes([...])`
+  draws on top of a default axes instead of rendering as a side-by-side grid
+  panel), with document order providing Matplotlib's draw order. SVG export
+  gained the same absolute-placement path.
+- `Figure.subplots_adjust(left=, right=, top=, bottom=, wspace=, hspace=)` is
+  now implemented instead of raising `NotImplementedError` (which superseded
+  the earlier silent discard): the values update the figure's SubplotParams
+  frame, subplot grids resolve to per-cell figure rectangles through the
+  GridSpec geometry (wspace/hspace as fractions of the average cell size, like
+  Matplotlib), and all three exporters position panels at those rectangles.
+  Out-of-order frames (`left >= right`, `bottom >= top`) raise `ValueError`
+  as in Matplotlib. This clears the two loud PDSH `subplots_adjust` cells
+  (04.08 2×3 labeled grid, 04.10 5×5 zero-gap faces).
+
 Future entries must identify the Matplotlib release/revision, inventory
 additions or removals, and any compatibility-level changes.

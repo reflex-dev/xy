@@ -57,16 +57,21 @@ signal. A "cell ok" also implies a non-empty `savefig` PNG export.
 | 04.05 Histograms and Binnings | 10/10 | 10/10 |
 | 04.06 Customizing Legends | 11/11 | 10/11 |
 | 04.07 Customizing Colorbars | 13/13 | 13/13 |
-| 04.08 Multiple Subplots | 10/10 | 9/10 |
+| 04.08 Multiple Subplots | 10/10 | 10/10 |
 | 04.09 Text and Annotation | 9/9 | 6/9 |
-| 04.10 Customizing Ticks | 11/11 | 10/11 |
+| 04.10 Customizing Ticks | 11/11 | 11/11 |
 | 04.11 Settings and Stylesheets | 15/15 | 15/15 |
 | 04.12 Three-Dimensional Plotting¹ | 17/17 | 7/17 |
 | 04.14 Visualization with Seaborn² | 31/31 | 30/31 |
-| **Total** | **171/171** | **154/171 (90%)** |
+| **Total** | **171/171** | **156/171 (91%)** |
 
-Excluding the out-of-scope 3D notebook: 147/154 (95%). The first
-measurement, before the gap-closing pass, was 121/171 (71%).
+Excluding the out-of-scope 3D notebook: 149/154 (97%). The first
+measurement, before the gap-closing pass, was 121/171 (71%). The 04.08
+and 04.10 rows reflect the 2026-07-14 `subplots_adjust` implementation:
+both formerly rejected cells re-ran and exported (04.10's re-run used
+identically shaped stand-in images because the measurement sandbox
+cannot download the Olivetti faces; the previously recorded failure was
+the `subplots_adjust` rejection itself, raised before any drawing).
 
 ¹ 3D projections are outside xy's 2-D chart-method compatibility target
 (see [docs/matplotlib-compat.md](../../docs/matplotlib-compat.md));
@@ -103,13 +108,12 @@ fallback onto matplotlib will ever be added).
 
 ## Remaining failures
 
-All 17 are one of: 3-D projection cells (10, loud rejections by
+All 15 are one of: 3-D projection cells (10, loud rejections by
 design), the second-legend `Legend` class (1, a documented loud rejection),
-`subplots_adjust` calls whose values the renderer cannot honor (2, now loud
-rather than silently discarded), pandas
-`Series.plot(ax=ax)` datetime interop (3, a real gap — a dtype error
+pandas `Series.plot(ax=ax)` datetime interop (3, a real gap — a dtype error
 inside the pandas plotting path), and `axhline(marker=)` via seaborn
-(1, loud rejection).
+(1, loud rejection). The two `subplots_adjust` cells counted here until
+2026-07-14 pass now that the shim implements the SubplotParams frame.
 
 The 2026-07-14 fidelity follow-up also compared the affected PDSH cells
 directly against Matplotlib 3.11: directional markers and `x`/`+` remain
