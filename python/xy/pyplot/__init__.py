@@ -724,7 +724,7 @@ def show(*args: Any, **kwargs: Any) -> None:
         from IPython.display import HTML, display  # noqa: PLC0415
 
         for fig in all_figures():
-            display(HTML(fig._to_html()))
+            display(HTML(fig._repr_html_()))
         close("all")
         return
     for fig in all_figures():

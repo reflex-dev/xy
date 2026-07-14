@@ -74,3 +74,23 @@ def test_pyplot_installs_one_ipython_end_of_cell_display_hook(monkeypatch):
     monkeypatch.setattr(plt, "show", show)
     callbacks[0][1]()
     show.assert_called_once_with()
+
+
+def test_pyplot_show_displays_isolated_notebook_repr(monkeypatch):
+    shell = object()
+    ipython = ModuleType("IPython")
+    ipython.get_ipython = lambda: shell
+    display_module = ModuleType("IPython.display")
+    displayed = []
+    display_module.HTML = lambda value: value
+    display_module.display = displayed.append
+    monkeypatch.setitem(sys.modules, "IPython", ipython)
+    monkeypatch.setitem(sys.modules, "IPython.display", display_module)
+
+    plt.plot([0, 1], [1, 2])
+    plt.show()
+
+    assert len(displayed) == 1
+    assert displayed[0].startswith('<iframe class="xy-notebook-frame"')
+    assert "<style>" not in displayed[0]
+    assert "&lt;style&gt;" in displayed[0]

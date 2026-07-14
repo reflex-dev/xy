@@ -1152,8 +1152,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
         return self.to_html(path, custom_css=custom_css)
 
     def _repr_html_(self) -> str:
-        """Notebook HTML repr fallback using the standalone export path."""
-        return self.to_html()
+        """Notebook HTML repr isolated from the host document's styles."""
+        return export.notebook_iframe(self.to_html(), width=self.width, height=self.height)
 
     def to_svg(
         self,

@@ -5,6 +5,7 @@ buffers (§19), memory report honesty (§27)."""
 from __future__ import annotations
 
 import datetime as dt
+import html as _html
 import json
 import warnings
 from pathlib import Path
@@ -1197,7 +1198,7 @@ def test_figure_dom_slots_are_validated_before_export():
     assert spec["dom"]["styles"] == {"tooltip": {"background": "#111827"}}
 
 
-def test_figure_html_alias_and_repr_use_standalone_export_path(tmp_path: Path):
+def test_figure_html_alias_and_repr_isolate_standalone_export(tmp_path: Path):
     target = tmp_path / "chart-alias.html"
     fig = Figure(title="notebook html").line([0.0, 1.0], [1.0, 2.0])
 
@@ -1206,9 +1207,14 @@ def test_figure_html_alias_and_repr_use_standalone_export_path(tmp_path: Path):
 
     assert target.read_text(encoding="utf-8") == html
     assert html.startswith("<!doctype html>")
-    assert repr_html.startswith("<!doctype html>")
+    assert repr_html.startswith('<iframe class="xy-notebook-frame"')
+    assert 'sandbox="allow-scripts"' in repr_html
+    assert 'width="900" height="420"' in repr_html
+    assert "<style>" not in repr_html
+    assert "&lt;style&gt;" in repr_html
+    assert "html,body{" in _html.unescape(repr_html)
     assert "notebook html" in repr_html
-    decoded = json.loads(_inline_spec_literal(repr_html))
+    decoded = json.loads(_inline_spec_literal(_html.unescape(repr_html)))
     assert decoded["title"] == "notebook html"
     assert decoded["traces"][0]["kind"] == "line"
 

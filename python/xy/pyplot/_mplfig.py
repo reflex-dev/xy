@@ -802,7 +802,10 @@ class Figure:
         return self._html_cache
 
     def _repr_html_(self) -> str:
-        return self._to_html()
+        from xy import export
+
+        width, height = rc_figsize_px(self._figsize, self._dpi)
+        return export.notebook_iframe(self._to_html(), width=width, height=height)
 
     def show(self, *args: Any, **kwargs: Any) -> None:
         import tempfile

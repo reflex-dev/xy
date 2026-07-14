@@ -29,7 +29,7 @@ CORPUS = sorted(CORPUS_DIR.glob("[0-9][0-9]_*.py"))
 XFAILS: dict[str, str] = {}
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
-HTML_MAGIC = "<!doctype html>"
+HTML_MAGIC = '<iframe class="xy-notebook-frame"'
 
 
 def _assert_open_figures_render() -> None:

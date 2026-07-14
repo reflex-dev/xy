@@ -104,7 +104,7 @@ def test_complete_supported_corpus_runs_when_matplotlib_imports_fail() -> None:
         for path in sorted(pathlib.Path({str(corpus)!r}).glob("[0-9][0-9]_*.py")):
             runpy.run_path(path, run_name="__main__")
             for figure in tuple(__import__("xy.pyplot._state", fromlist=["all_figures"]).all_figures()):
-                assert figure._repr_html_().startswith("<!doctype html>")
+                assert figure._repr_html_().startswith('<iframe class="xy-notebook-frame"')
             plt.close("all")
         """
     )
