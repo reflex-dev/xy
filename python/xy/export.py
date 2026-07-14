@@ -238,10 +238,13 @@ def to_html(
     # One <script> block PER chunk: a script element's source is itself a V8
     # string, so folding every chunk into one block would rebuild the very
     # ~512 MB single-string ceiling the chunking removed. Per-block sources
-    # stay at ~64 MB regardless of payload size. Chunk text is pure base64 —
-    # no `</script`/escaping hazard.
+    # stay at ~64 MB regardless of payload size. Chunk text is standard base64
+    # (`[A-Za-z0-9+/=]`) — it can hold no `"`, `\`, newline, or `<`, so it is a
+    # valid JS string literal verbatim and can never close the <script>. Quote
+    # it directly rather than via `json.dumps`, whose full-string escape scan
+    # dominated small-chart export cost.
     chunk_scripts = "\n".join(
-        f"<script>__xyChunks.push({json.dumps(c)});</script>" for c in _base64_chunks(blob)
+        f'<script>__xyChunks.push("{c}");</script>' for c in _base64_chunks(blob)
     )
     doc = f"""<!doctype html>
 <html>
