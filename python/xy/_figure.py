@@ -13,7 +13,7 @@ from typing import Any, Optional, TypeAlias
 
 import numpy as np
 
-from . import _annotations, _validate, channels, columns, export, interaction, kernels
+from . import _annotations, _validate, channels, columns, export, interaction, kernels, styles
 from . import marks as _marks
 from ._annotations import AnnotationsMixin
 from ._payload import PayloadMixin
@@ -193,7 +193,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             if tick_label_min_gap is None
             else self._nonnegative_scalar(tick_label_min_gap, f"{axis_id} axis tick_label_min_gap"),
             "side": side,
-            "style": self._optional_state_style(style, f"{axis_id} axis style"),
+            "style": styles.compile_axis_style(style, f"{axis_id} axis style"),
         }
         if axis_id == "x":
             self.x_label = self.axis_options[axis_id]["label"]
@@ -961,7 +961,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             spec["domain"] = list(opts["domain"])
         if opts.get("format") is not None:
             spec["format"] = opts["format"]
-        style = self._optional_state_style(opts.get("style"), f"{axis_id} axis style")
+        style = styles.compile_axis_style(opts.get("style"), f"{axis_id} axis style")
         if style:
             spec["style"] = style
         if kind == "category":

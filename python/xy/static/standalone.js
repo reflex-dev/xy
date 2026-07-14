@@ -3872,6 +3872,13 @@ _axisStyleValue(axis, key) {
 const style = axis && typeof axis.style === "object" ? axis.style : null;
 return style && Object.prototype.hasOwnProperty.call(style, key) ? style[key] : undefined;
 }
+_axisGridDash(axis) {
+const value = String(this._axisStyleValue(axis, "grid_dash") || "solid");
+if (value === "dashed") return [6, 4];
+if (value === "dotted") return [1, 3];
+if (value === "dashdot") return [6, 3, 1, 3];
+return [];
+}
 _axisTickLabelStrategy(axis) {
 const raw = axis && axis.tick_label_strategy !== undefined
 ? axis.tick_label_strategy
@@ -3934,7 +3941,10 @@ return labels.slice(0, 1);
 }
 _layoutTickLabels(axis, dim, labels) {
 if (labels.length <= 1) return labels.map((label) => ({ ...label, angle: 0, row: 0 }));
-const fontSize = Math.max(8, this._axisStyleNumber(axis, "tick_size", 11));
+const fontSize = Math.max(
+8,
+this._axisStyleNumber(axis, "tick_label_size", this._axisStyleNumber(axis, "tick_size", 11)),
+);
 const minGap = this._axisTickLabelMinGap(axis, dim);
 const explicitAngle = this._axisTickLabelAngle(axis);
 const baseAngle = explicitAngle === null ? 0 : explicitAngle;
@@ -4035,6 +4045,8 @@ const xEdge = (px) => Math.min(p.x + p.w - 0.5, Math.max(p.x + 0.5, Math.round(p
 const yEdge = (py) => Math.min(p.y + p.h - 0.5, Math.max(p.y + 0.5, Math.round(py) + 0.5));
 ctx.strokeStyle = this._axisStylePaint(xAxis, "grid_color", this.theme.grid);
 ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xAxis, "grid_width", 1));
+ctx.globalAlpha = this._axisStyleNumber(xAxis, "grid_opacity", 1);
+ctx.setLineDash(this._axisGridDash(xAxis));
 ctx.beginPath();
 for (const v of (hideX ? [] : xt.ticks)) {
 const px = this._dataPx("x", v);
@@ -4046,6 +4058,8 @@ ctx.lineTo(x, p.y + p.h);
 ctx.stroke();
 ctx.strokeStyle = this._axisStylePaint(yAxis, "grid_color", this.theme.grid);
 ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(yAxis, "grid_width", 1));
+ctx.globalAlpha = this._axisStyleNumber(yAxis, "grid_opacity", 1);
+ctx.setLineDash(this._axisGridDash(yAxis));
 ctx.beginPath();
 for (const v of (hideY ? [] : yt.ticks)) {
 const py = this._dataPx("y", v);
@@ -4055,13 +4069,15 @@ ctx.moveTo(p.x, y);
 ctx.lineTo(p.x + p.w, y);
 }
 ctx.stroke();
+ctx.globalAlpha = 1;
+ctx.setLineDash([]);
 this._drawAnnotationShapes(ctx);
 if (updateLabels) {
-const rule = (styleAxis, left, top, w, h) => {
+const rule = (styleAxis, left, top, w, h, colorKey = "axis_color") => {
 const d = document.createElement("div");
 d.style.cssText =
 `position:absolute;left:${left}px;top:${top}px;width:${w}px;height:${h}px;` +
-`background:${this._axisStylePaint(styleAxis, "axis_color", this.theme.axis)};` +
+`background:${this._axisStylePaint(styleAxis, colorKey, this.theme.axis)};` +
 "pointer-events:none;";
 this.labels.appendChild(d);
 };
@@ -4100,7 +4116,7 @@ for (const value of xt.ticks) {
 const x = this._dataPx("x", value);
 if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
 const top = side === "top" ? edge - tick.outward : edge - tick.inward;
-rule(xAxis, x - tick.width / 2, top, tick.width, tick.inward + tick.outward);
+rule(xAxis, x - tick.width / 2, top, tick.width, tick.inward + tick.outward, "tick_color");
 }
 }
 if (!hideY) {
@@ -4111,7 +4127,7 @@ for (const value of yt.ticks) {
 const y = this._dataPx("y", value);
 if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
 const left = side === "right" ? edge - tick.inward : edge - tick.outward;
-rule(yAxis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width);
+rule(yAxis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width, "tick_color");
 }
 }
 }
@@ -4122,8 +4138,14 @@ d.textContent = text;
 d.dataset.fcLabelKind = kind;
 d.dataset.fcAxis = axis && axis.id !== undefined ? String(axis.id) : "";
 d.dataset.fcAxisSide = axis && axis.side ? String(axis.side) : "";
-const colorKey = kind === "label" ? "label_color" : "tick_color";
-const sizeKey = kind === "label" ? "label_size" : "tick_size";
+const colorKey = kind === "label"
+? "label_color"
+: (this._axisStyleValue(axis, "tick_label_color") !== undefined
+? "tick_label_color" : "tick_color");
+const sizeKey = kind === "label"
+? "label_size"
+: (this._axisStyleValue(axis, "tick_label_size") !== undefined
+? "tick_label_size" : "tick_size");
 let color = "";
 if (this._axisStyleValue(axis, colorKey) !== undefined) {
 color = `color:${this._axisStylePaint(axis, colorKey, this.theme.label)};`;
@@ -4145,7 +4167,12 @@ const text = this._axisTickText(xAxis, v, xt.step);
 xLabelCandidates.push({ pos: px, text });
 }
 for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
-const rowOffset = Number(item.row || 0) * (Math.max(8, this._axisStyleNumber(xAxis, "tick_size", 11)) + 4);
+const tickLabelSize = this._axisStyleNumber(
+xAxis,
+"tick_label_size",
+this._axisStyleNumber(xAxis, "tick_size", 11),
+);
+const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
 const top = xAxis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
 const transform = `translateX(-50%) rotate(${Number(item.angle || 0)}deg)`;
 const origin = xAxis.side === "top" ? "bottom center" : "top center";

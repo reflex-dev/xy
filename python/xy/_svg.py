@@ -298,6 +298,13 @@ _GRID = "rgba(32,32,32,0.14)"
 _AXIS = "rgba(32,32,32,0.55)"
 _FONT = "system-ui, -apple-system, 'Segoe UI', sans-serif"
 _MS = {"s": 1e3, "m": 6e4, "h": 36e5, "d": 864e5}
+_STATIC_COLOR_FALLBACK = (0.3, 0.47, 0.66, 1.0)
+_AXIS_GRID_DASHES = {
+    "solid": None,
+    "dashed": [6.0, 4.0],
+    "dotted": [1.0, 3.0],
+    "dashdot": [6.0, 3.0, 1.0, 3.0],
+}
 
 
 # ---------------------------------------------------------------------------
@@ -566,7 +573,7 @@ def _paint_rgba8(css: Any) -> tuple[int, int, int, int]:
 
     _status, rgba = kernels.css_check(kernels.CSS_COLOR, str(css))
     if rgba is None:
-        rgba = (100.0 / 255.0, 100.0 / 255.0, 100.0 / 255.0, 1.0)
+        rgba = _STATIC_COLOR_FALLBACK
     red, green, blue, alpha = rgba
     return (
         int(round(red * 255)),
@@ -679,6 +686,14 @@ def _resolve_static_css_vars(spec: dict[str, Any]) -> dict[str, Any]:
 
 def _num(v: float) -> str:
     return f"{v:.2f}".rstrip("0").rstrip(".")
+
+
+def _axis_grid_attrs(style: dict[str, Any]) -> str:
+    opacity = float(style.get("grid_opacity", 1.0))
+    dash = _AXIS_GRID_DASHES.get(str(style.get("grid_dash", "solid")))
+    return (f' stroke-opacity="{_num(opacity)}"' if opacity < 1 else "") + (
+        f' stroke-dasharray="{",".join(_num(value) for value in dash)}"' if dash else ""
+    )
 
 
 # Embedded heatmap/density rasters use the shared truecolor PNG encoder.
@@ -1006,7 +1021,8 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             f'<line x1="{_num(px)}" y1="{_num(plot["y"])}" x2="{_num(px)}" '
             f'y2="{_num(plot["y"] + plot["h"])}" '
             f'stroke="{escape(_css(xstyle.get("grid_color"), default_grid))}" '
-            f'stroke-width="{_num(float(xstyle.get("grid_width", 1)))}"/>'
+            f'stroke-width="{_num(float(xstyle.get("grid_width", 1)))}"'
+            f"{_axis_grid_attrs(xstyle)}/>"
         )
     for v in yt:
         if hide_y:
@@ -1015,15 +1031,16 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         grid.append(
             f'<line x1="{_num(plot["x"])}" y1="{_num(py)}" x2="{_num(plot["x"] + plot["w"])}" '
             f'y2="{_num(py)}" stroke="{escape(_css(ystyle.get("grid_color"), default_grid))}" '
-            f'stroke-width="{_num(float(ystyle.get("grid_width", 1)))}"/>'
+            f'stroke-width="{_num(float(ystyle.get("grid_width", 1)))}"'
+            f"{_axis_grid_attrs(ystyle)}/>"
         )
     if not hide_x_labels:
         for v in xlab:
             tick_y = plot["y"] - 7 if xa.get("side") == "top" else plot["y"] + plot["h"] + 16
             labels.append(
                 f'<text x="{_num(float(sx(v)))}" y="{_num(tick_y)}" '
-                f'fill="{escape(_css(xstyle.get("tick_color"), default_text))}" '
-                f'font-size="{_num(float(xstyle.get("tick_size", 11)))}" '
+                f'fill="{escape(_css(xstyle.get("tick_label_color", xstyle.get("tick_color")), default_text))}" '
+                f'font-size="{_num(float(xstyle.get("tick_label_size", xstyle.get("tick_size", 11))))}" '
                 f'text-anchor="middle"'
                 + (
                     f' transform="rotate({_num(float(xa["tick_label_angle"]))} '
@@ -1037,8 +1054,8 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         for v in ylab:
             labels.append(
                 f'<text x="{_num(plot["x"] - 8)}" y="{_num(float(sy(v)) + 4)}" '
-                f'fill="{escape(_css(ystyle.get("tick_color"), default_text))}" '
-                f'font-size="{_num(float(ystyle.get("tick_size", 11)))}" '
+                f'fill="{escape(_css(ystyle.get("tick_label_color", ystyle.get("tick_color")), default_text))}" '
+                f'font-size="{_num(float(ystyle.get("tick_label_size", ystyle.get("tick_size", 11))))}" '
                 f'text-anchor="end"'
                 + (
                     f' transform="rotate({_num(float(ya["tick_label_angle"]))} '
@@ -1213,7 +1230,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             )
             baselines += (
                 f'<line x1="{_num(x)}" y1="{_num(y1)}" x2="{_num(x)}" y2="{_num(y2)}" '
-                f'stroke="{escape(_css(xstyle.get("axis_color"), default_axis))}" '
+                f'stroke="{escape(_css(xstyle.get("tick_color"), default_axis))}" '
                 f'stroke-width="{_num(tick_width)}"/>'
             )
     if not hide_y:
@@ -1229,7 +1246,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             )
             baselines += (
                 f'<line x1="{_num(x1)}" y1="{_num(y)}" x2="{_num(x2)}" y2="{_num(y)}" '
-                f'stroke="{escape(_css(ystyle.get("axis_color"), default_axis))}" '
+                f'stroke="{escape(_css(ystyle.get("tick_color"), default_axis))}" '
                 f'stroke-width="{_num(tick_width)}"/>'
             )
 

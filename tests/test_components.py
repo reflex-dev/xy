@@ -658,10 +658,28 @@ def test_legend_and_tooltip_accept_opaque_framework_components_without_serializi
     assert spec["tooltip"] == {"fields": ["x", "y"]}
     assert spec["dom"]["class_names"]["tooltip"] == "tooltip-node"
     assert "FakeReflexComponent" not in json.dumps(spec)
-
     html = chart.to_html()
     assert "FakeReflexComponent" not in html
     assert "show_tooltip" in html
+
+
+def test_colorbar_show_false_clears_generated_colorbar_options(monkeypatch):
+    original = components_module._MARK_APPLIERS["line"]
+
+    def apply_with_colorbar(fig, mark, data):
+        original(fig, mark, data)
+        fig.colorbar_options = {"domain": [0.0, 1.0], "colormap": "viridis"}
+
+    monkeypatch.setitem(components_module._MARK_APPLIERS, "line", apply_with_colorbar)
+    chart = fc.chart(
+        fc.line(x=[0.0, 1.0], y=[1.0, 2.0]),
+        fc.colorbar(show=False),
+    )
+
+    figure = chart.figure()
+    spec, _ = figure.build_payload()
+    assert figure.colorbar_options is None
+    assert "colorbar" not in spec
 
 
 def test_declarative_chart_keeps_notebook_export_and_framework_chrome_contract(

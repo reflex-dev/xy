@@ -20,7 +20,9 @@ import numpy as np
 from . import _png, _scene
 from ._svg import (
     _AXIS,
+    _AXIS_GRID_DASHES,
     _GRID,
+    _STATIC_COLOR_FALLBACK,
     _TEXT,
     DEFAULT_PALETTE,
     _colormap_stops,
@@ -83,8 +85,8 @@ def _parse_color(css: str, opacity: float = 1.0) -> tuple[int, int, int, int]:
     colors can never drift from the API contract. `none` renders transparent
     (the SVG idiom); browser-only forms that survive `_css`'s fallback (an
     `oklch()` a DOM would resolve) and — defensively — anything unparseable
-    fall back to a mid gray so a static export never renders an invisible
-    mark."""
+    use the same blue-gray fallback as the browser renderer so a static export
+    never renders an invisible or target-dependent mark."""
     from . import kernels
 
     s = str(css).strip()
@@ -92,7 +94,7 @@ def _parse_color(css: str, opacity: float = 1.0) -> tuple[int, int, int, int]:
         return (0, 0, 0, 0)
     _status, rgba = kernels.css_check(kernels.CSS_COLOR, s)
     if rgba is None:
-        rgba = (100.0 / 255.0, 100.0 / 255.0, 100.0 / 255.0, 1.0)
+        rgba = _STATIC_COLOR_FALLBACK
     r, g, b, a = rgba
     return (
         int(round(r * 255)),
@@ -553,14 +555,22 @@ def render_raster(
         cmd.stroke(
             [(gx, py0), (gx, py1)],
             float(xstyle.get("grid_width", 1)),
-            _parse_color(_css(xstyle.get("grid_color"), default_grid)),
+            _parse_color(
+                _css(xstyle.get("grid_color"), default_grid),
+                float(xstyle.get("grid_opacity", 1.0)),
+            ),
+            dash=_AXIS_GRID_DASHES.get(str(xstyle.get("grid_dash", "solid"))),
         )
     for v in [] if hide_y else yt:
         gy = float(sy(v))
         cmd.stroke(
             [(px0, gy), (px1, gy)],
             float(ystyle.get("grid_width", 1)),
-            _parse_color(_css(ystyle.get("grid_color"), default_grid)),
+            _parse_color(
+                _css(ystyle.get("grid_color"), default_grid),
+                float(ystyle.get("grid_opacity", 1.0)),
+            ),
+            dash=_AXIS_GRID_DASHES.get(str(ystyle.get("grid_dash", "solid"))),
         )
 
     for palette_i, t in enumerate(spec["traces"]):
@@ -647,7 +657,7 @@ def render_raster(
             cmd.stroke(
                 [(x, y0), (x, y1)],
                 float(xstyle.get("tick_width", 1)),
-                _parse_color(_css(xstyle.get("axis_color"), default_axis)),
+                _parse_color(_css(xstyle.get("tick_color"), default_axis)),
             )
     if not hide_y:
         inward, outward = tick_span(ystyle)
@@ -663,30 +673,34 @@ def render_raster(
             cmd.stroke(
                 [(x0, y), (x1, y)],
                 float(ystyle.get("tick_width", 1)),
-                _parse_color(_css(ystyle.get("axis_color"), default_axis)),
+                _parse_color(_css(ystyle.get("tick_color"), default_axis)),
             )
 
     text_c = _parse_color(default_text)
     if not hide_x_labels:
-        x_tick_c = _parse_color(_css(xstyle.get("tick_color"), default_text))
+        x_tick_c = _parse_color(
+            _css(xstyle.get("tick_label_color", xstyle.get("tick_color")), default_text)
+        )
         for v in xlab:
             label_y = py0 - 7 if xa.get("side") == "top" else py1 + 15
             cmd.text(
                 float(sx(v)),
                 label_y,
                 1,
-                float(xstyle.get("tick_size", 11)),
+                float(xstyle.get("tick_label_size", xstyle.get("tick_size", 11))),
                 x_tick_c,
                 _tick_text(xa, v, xstep),
             )
     if not hide_y_labels:
-        y_tick_c = _parse_color(_css(ystyle.get("tick_color"), default_text))
+        y_tick_c = _parse_color(
+            _css(ystyle.get("tick_label_color", ystyle.get("tick_color")), default_text)
+        )
         for v in ylab:
             cmd.text(
                 px0 - 8,
                 float(sy(v)) + 4,
                 2,
-                float(ystyle.get("tick_size", 11)),
+                float(ystyle.get("tick_label_size", ystyle.get("tick_size", 11))),
                 y_tick_c,
                 _tick_text(ya, v, ystep),
             )

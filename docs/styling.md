@@ -98,6 +98,42 @@ integration resolves them into concrete `style`, `styles`, `class_name`, and
 `class_names` values and updates the renderer. CSS variables are the preferred
 bridge for design tokens and theme changes.
 
+### Axis paint and geometry
+
+`fc.x_axis(style={...})` and `fc.y_axis(style={...})` accept a strict,
+cross-renderer axis vocabulary. Unknown keys and invalid values raise when the
+axis component is created, before the chart or an export is rendered. Keys may
+use Python snake_case or CSS kebab-case; pixel geometry accepts a finite number
+or a CSS `px` value such as `"3px"`.
+
+| Axis style key | Value |
+| --- | --- |
+| `grid_color`, `axis_color`, `tick_color`, `tick_label_color`, `label_color` | CSS color |
+| `grid_width`, `axis_width`, `tick_width` | Non-negative pixel length |
+| `grid_dash` | `"solid"`, `"dashed"`, `"dotted"`, or `"dashdot"` |
+| `grid_opacity` | Number from `0` to `1` |
+| `tick_length` | Non-negative pixel length |
+| `tick_size` / `tick_label_size`, `label_size` | Positive pixel font size |
+| `tick_direction` | `"in"`, `"out"`, or `"inout"` |
+
+```python
+fc.x_axis(
+    label="time",
+    style={
+        "grid-color": "rgb(148 163 184 / 25%)",
+        "grid-width": "1px",
+        "grid-dash": "dashed",
+        "grid-opacity": 0.7,
+        "axis-color": "var(--axis)",
+        "tick-length": "6px",
+        "tick-direction": "out",
+        "tick-color": "currentColor",
+        "tick-label-color": "currentColor",
+        "label-size": "13px",
+    },
+)
+```
+
 ## Slot reference
 
 Every element below is rendered with `data-fc-slot="<slot>"`, so
@@ -281,6 +317,11 @@ stays proportional), and the antialiased corner/stroke coverage. `area` also has
 **including alpha** — `rgba(37,99,235,.5)`, `#2563eb80`, `oklch(... / 40%)` — and
 because the channels are separate, a translucent fill with a solid border is
 `style={"fill-opacity": 0.3, "stroke-opacity": 1}`.
+
+Whole-mark opacity applies to an area's outline as well as its fill. Therefore
+the default area `opacity=0.35` produces a `0.35`-alpha outline. For a faint
+fill with an opaque outline, keep whole-mark opacity at `1` and set
+`style={"fill-opacity": 0.35, "stroke-opacity": 1}`.
 
 ### Scatter markers — `symbol`, `stroke`, `stroke_width`
 

@@ -1457,7 +1457,7 @@ def x_axis(
             tick_label_min_gap, "x_axis tick_label_min_gap"
         ),
         side=_axis_side(side, "x"),
-        style=_style_dict(style, "x_axis style"),
+        style=styles.compile_axis_style(style, "x_axis style"),
     )
 
 
@@ -1508,7 +1508,7 @@ def y_axis(
             tick_label_min_gap, "y_axis tick_label_min_gap"
         ),
         side=_axis_side(side, "y"),
-        style=_style_dict(style, "y_axis style"),
+        style=styles.compile_axis_style(style, "y_axis style"),
     )
 
 

@@ -37,6 +37,15 @@ _FILL_KINDS = frozenset({"box", "violin"})
 _MESH_KINDS = frozenset({"triangle_mesh"})
 _DENSITY_KINDS = frozenset({"heatmap", "hexbin"})
 
+_AXIS_COLOR_PROPERTIES = frozenset(
+    {"grid_color", "axis_color", "tick_color", "tick_label_color", "label_color"}
+)
+_AXIS_LENGTH_PROPERTIES = frozenset({"grid_width", "axis_width", "tick_length", "tick_width"})
+_AXIS_SIZE_PROPERTIES = frozenset({"tick_size", "tick_label_size", "label_size"})
+_AXIS_COMPAT_PROPERTIES = frozenset({"grid_dash", "grid_opacity"})
+_AXIS_DASH_STYLES = frozenset({"solid", "dashed", "dotted", "dashdot"})
+_AXIS_DIRECTIONS = frozenset({"in", "out", "inout"})
+
 _MARK_KINDS = tuple(
     sorted(
         _LINE_KINDS
@@ -257,6 +266,54 @@ def compile_mark_style(
     return out
 
 
+def compile_axis_style(
+    value: StyleMapping | None, label: str = "axis style"
+) -> dict[str, StyleValue]:
+    """Validate renderer-backed axis appearance and normalize it to wire keys.
+
+    Axis chrome is partly canvas-painted and partly DOM, so it has a strict
+    cross-renderer vocabulary just like marks. Pixel lengths accept numbers or
+    CSS ``px`` strings and are serialized as finite numbers for every renderer.
+    The more explicit ``tick_label_*`` keys are retained for the pyplot adapter
+    and can differ from the tick-mark paint.
+    """
+    style = normalize_css_style(value, label)
+    supported = (
+        _AXIS_COLOR_PROPERTIES
+        | _AXIS_LENGTH_PROPERTIES
+        | _AXIS_SIZE_PROPERTIES
+        | _AXIS_COMPAT_PROPERTIES
+        | {"tick_direction"}
+    )
+    out: dict[str, StyleValue] = {}
+    sources: dict[str, str] = {}
+    for css_prop, raw in style.items():
+        prop = css_prop.replace("-", "_")
+        if prop not in supported:
+            expected = ", ".join(sorted(supported))
+            raise ValueError(f"{label} has unsupported property {css_prop!r}; supports: {expected}")
+        if prop in _AXIS_COLOR_PROPERTIES:
+            parsed: StyleValue = _paint(raw, f"{label}[{css_prop!r}]")
+        elif prop in _AXIS_LENGTH_PROPERTIES:
+            parsed = _px(raw, f"{label}[{css_prop!r}]")
+        elif prop in _AXIS_SIZE_PROPERTIES:
+            parsed = _px(raw, f"{label}[{css_prop!r}]", positive=True)
+        elif prop == "grid_opacity":
+            parsed = _opacity(raw, f"{label}[{css_prop!r}]")
+        elif prop == "grid_dash":
+            if not isinstance(raw, str) or raw not in _AXIS_DASH_STYLES:
+                raise ValueError(
+                    f"{label}[{css_prop!r}] must be one of {sorted(_AXIS_DASH_STYLES)}"
+                )
+            parsed = raw
+        else:
+            if not isinstance(raw, str) or raw not in _AXIS_DIRECTIONS:
+                raise ValueError(f"{label}[{css_prop!r}] must be one of {sorted(_AXIS_DIRECTIONS)}")
+            parsed = raw
+        _set(out, prop, parsed, css_prop, sources)
+    return out
+
+
 def _opacity_channels(compiled: Mapping[str, Any]) -> dict[str, float]:
     """Return renderer-only fill/stroke alpha channels from compiled CSS."""
     return {
@@ -267,6 +324,7 @@ def _opacity_channels(compiled: Mapping[str, Any]) -> dict[str, float]:
 __all__ = [
     "StyleMapping",
     "StyleValue",
+    "compile_axis_style",
     "compile_mark_style",
     "normalize_css_style",
 ]

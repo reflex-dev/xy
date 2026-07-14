@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import xy as fc
-from xy import _raster
+from xy import _raster, _svg
 from xy._figure import Figure
 from xy.styles import compile_mark_style, normalize_css_style
 
@@ -167,11 +167,14 @@ def test_axis_style_reaches_svg_and_native_renderers() -> None:
             style={
                 "grid_color": "#ff0000",
                 "grid_width": 3,
+                "grid_dash": "dashed",
+                "grid_opacity": 0.6,
                 "axis_color": "#0000ff",
                 "axis_width": 2,
                 "tick_length": 6,
                 "tick_width": 2,
                 "tick_color": "#00aa00",
+                "tick_label_color": "#cc5500",
                 "tick_size": 13,
                 "label_color": "#aa00aa",
                 "label_size": 15,
@@ -180,11 +183,60 @@ def test_axis_style_reaches_svg_and_native_renderers() -> None:
     ).figure()
 
     svg = fig.to_svg()
-    assert 'stroke="#ff0000" stroke-width="3"' in svg
+    assert 'stroke="#ff0000" stroke-width="3" stroke-opacity="0.6" stroke-dasharray="6,4"' in svg
     assert 'stroke="#0000ff" stroke-width="2"' in svg
-    assert 'fill="#00aa00" font-size="13" text-anchor="middle"' in svg
+    assert 'stroke="#00aa00" stroke-width="2"' in svg
+    assert 'fill="#cc5500" font-size="13" text-anchor="middle"' in svg
     assert 'font-size="15" font-weight="500" fill="#aa00aa"' in svg
     assert _raster.render_raster(*fig.build_payload(), scale=1).shape[-1] == 4
+
+
+def test_axis_style_is_normalized_and_rejected_before_render() -> None:
+    axis = fc.x_axis(
+        style={
+            "grid-width": "3px",
+            "tick_label_size": "13px",
+            "tick-direction": "inout",
+            "label-color": "rebeccapurple",
+        }
+    )
+    assert axis.style == {
+        "grid_width": 3.0,
+        "tick_label_size": 13.0,
+        "tick_direction": "inout",
+        "label_color": "rebeccapurple",
+    }
+
+    with pytest.raises(ValueError, match=r"unsupported property 'box-shadow'"):
+        fc.x_axis(style={"box-shadow": "0 0 2px red"})
+    with pytest.raises(ValueError, match=r"finite CSS px length"):
+        fc.x_axis(style={"grid_width": "3em"})
+    with pytest.raises(ValueError, match=r"not a recognized CSS color"):
+        fc.y_axis(style={"tick_color": "definitely-not-a-color"})
+    with pytest.raises(ValueError, match=r"must be one of"):
+        fc.y_axis(style={"tick_direction": "sideways"})
+
+
+def test_area_outline_obeys_whole_mark_and_stroke_opacity() -> None:
+    default = fc.chart(fc.area(x=[0.0, 1.0], y=[1.0, 2.0])).figure().to_svg()
+    assert 'stroke-opacity="0.35"' in default
+
+    styled = fc.chart(
+        fc.area(
+            x=[0.0, 1.0],
+            y=[1.0, 2.0],
+            opacity=0.4,
+            line_opacity=0.5,
+            style={"stroke-opacity": 0.5},
+        )
+    ).figure()
+    assert 'stroke-opacity="0.1"' in styled.to_svg()
+
+
+def test_static_invalid_paint_fallback_matches_browser_renderer() -> None:
+    expected = (76, 120, 168, 255)
+    assert _svg._paint_rgba8("var(--unresolved)") == expected
+    assert _raster._parse_color("var(--unresolved)") == expected
 
 
 def test_mark_style_rejects_unrenderable_css_before_mutating_figure() -> None:
