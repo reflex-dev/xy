@@ -1,0 +1,6 @@
+# Copyrighted source clip and the generated page that embeds derived frames.
+# Regenerate with build.py.
+*.mp4
+*.webm
+*.mkv
+bad_apple.html
