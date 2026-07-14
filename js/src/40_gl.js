@@ -26,6 +26,7 @@ const ATTR_SLOTS = {
   a_corner: 0,
   a_cval: 6, a_sval: 7, a_sel: 8, a_dval: 9,
   a_len0: 10, a_len1: 11,
+  a_dash0: 10, a_dashDir: 11,
 };
 
 function makeProgram(gl, vs, fs) {
@@ -449,11 +450,12 @@ void main() {
 // the extra meta uniforms and the sampler on its per-frame draw path.
 const SEGMENT_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1; in float a_cval;
+in float a_dash0; in float a_dashDir;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
 uniform int u_colorMode;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
 uniform int u_x0mode; uniform int u_x1mode; uniform int u_y0mode; uniform int u_y1mode;
-out float v_off; out float v_cval;
+out float v_off; out float v_cval; out float v_dash;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -471,17 +473,31 @@ void main() {
   gl_Position = vec4(pos / u_res * 2.0 - 1.0, 0.0, 1.0);
   v_off = c.y * half_w;
   v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
+  v_dash = a_dash0 + c.x * len * a_dashDir;
 }`;
 
 const SEGMENT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform float u_width; uniform int u_colorMode; uniform sampler2D u_lut;
-in float v_off; in float v_cval;
+uniform int u_dashCount; uniform float u_dashArr[8]; uniform float u_dashPeriod;
+in float v_off; in float v_cval; in float v_dash;
 out vec4 outColor;
 void main() {
   float half_w = u_width * 0.5;
   vec3 rgb = u_colorMode != 0 ? texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb : u_color.rgb;
   float alpha = (1.0 - smoothstep(half_w - 0.5, half_w + 0.5, abs(v_off))) * u_color.a;
+  if (u_dashCount > 0) {
+    float m = mod(v_dash, u_dashPeriod);
+    float acc = 0.0;
+    float on = 0.0;
+    for (int i = 0; i < 8; i++) {
+      if (i >= u_dashCount) break;
+      float next = acc + u_dashArr[i];
+      if (m < next) { on = (i % 2 == 0) ? 1.0 : 0.0; break; }
+      acc = next;
+    }
+    alpha *= on;
+  }
   if (alpha <= 0.001) discard;
   outColor = vec4(rgb * alpha, alpha);
 }`;

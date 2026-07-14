@@ -196,7 +196,9 @@ def test_monochrome_contour_dashes_negative_levels():
     contours = [t for t in _compiled_traces() if t.kind == "contour"]
     assert len(contours) == 2
     dashes = sorted(str(t.style.get("dash")) for t in contours)
-    assert dashes == ["6,4", "None"]  # negatives dashed, non-negatives solid
+    assert dashes == ["None", "[7.4, 3.2]"]  # negatives dashed, non-negatives solid
+    assert all(t.style["width"] == pytest.approx(2.0) for t in contours)
+    assert all(t.style["opacity"] == pytest.approx(1.0) for t in contours)
 
 
 def test_colormapped_contour_stays_solid():
@@ -209,9 +211,21 @@ def test_colormapped_contour_stays_solid():
 
 def test_contourf_fills_discrete_bands_not_a_smooth_gradient():
     xx, yy, zz = _wiggle()
-    plt.contourf(xx, yy, zz, 20, cmap="RdGy")
-    heatmap = next(t for t in _compiled_traces() if t.kind == "heatmap")
+    contour_set = plt.contourf(xx, yy, zz, 20, cmap="RdGy")
+    plt.colorbar()
+    traces = _compiled_traces()
+    heatmap = next(t for t in traces if t.kind == "heatmap")
     finite = heatmap.grid.values[np.isfinite(heatmap.grid.values)]
+    assert heatmap.grid_shape[0] > zz.shape[0]
+    assert heatmap.grid_shape[1] > zz.shape[1]
     # Piecewise-constant bands: far fewer distinct fill values than grid cells.
     assert np.unique(finite).size <= 21
     assert np.unique(finite).size < finite.size
+    assert not any(t.kind == "contour" for t in traces)
+    colorbar = _blob("colorbar_options")
+    assert colorbar["levels"] == len(contour_set.levels) - 1
+    assert colorbar["boundaries"] == pytest.approx(contour_set.levels)
+    expected_ticks = contour_set.levels[1::3].copy()
+    expected_ticks[np.abs(expected_ticks) < 1e-12] = 0.0
+    assert colorbar["ticks"] == pytest.approx(expected_ticks)
+    assert 0.0 in colorbar["ticks"]

@@ -39,7 +39,7 @@ def _append_segment_trace(
     role: str,
     color_ch: Any = None,
     count: Optional[int] = None,
-    dash: Optional[str] = None,
+    dash: Any = None,
 ) -> None:
     """Append a compact instanced line-segment trace.
 
@@ -1498,6 +1498,48 @@ def hexbin(
         raise
 
 
+def _interpolate_contourf_grid(
+    arr: np.ndarray, xpos: np.ndarray, ypos: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Bilinearly densify a contour field before assigning discrete bands."""
+    rows, cols = arr.shape
+
+    def sample_count(size: int) -> int:
+        # Eight samples per source interval removes visible cell stair-steps for
+        # common scientific grids. The 512 target keeps the shipped grid bounded;
+        # inputs already larger than that are never downsampled.
+        return min((size - 1) * 8 + 1, max(size, 512))
+
+    out_rows, out_cols = sample_count(rows), sample_count(cols)
+    if (out_rows, out_cols) == (rows, cols):
+        return arr, xpos, ypos
+
+    row_at = np.linspace(0.0, rows - 1, out_rows)
+    col_at = np.linspace(0.0, cols - 1, out_cols)
+    row0 = np.floor(row_at).astype(np.intp)
+    col0 = np.floor(col_at).astype(np.intp)
+    row1 = np.minimum(row0 + 1, rows - 1)
+    col1 = np.minimum(col0 + 1, cols - 1)
+    row_weight = (row_at - row0)[:, None]
+    col_weight = (col_at - col0)[None, :]
+
+    z00 = arr[row0[:, None], col0[None, :]]
+    z10 = arr[row0[:, None], col1[None, :]]
+    z01 = arr[row1[:, None], col0[None, :]]
+    z11 = arr[row1[:, None], col1[None, :]]
+    valid = np.isfinite(z00) & np.isfinite(z10) & np.isfinite(z01) & np.isfinite(z11)
+    interpolated = (
+        z00 * (1.0 - row_weight) * (1.0 - col_weight)
+        + z10 * (1.0 - row_weight) * col_weight
+        + z01 * row_weight * (1.0 - col_weight)
+        + z11 * row_weight * col_weight
+    )
+    interpolated[~valid] = np.nan
+    dense_x = np.interp(col_at, np.arange(cols), xpos)
+    dense_y = np.interp(row_at, np.arange(rows), ypos)
+    return interpolated, dense_x, dense_y
+
+
 def contour(
     self,
     z: Any,
@@ -1562,20 +1604,22 @@ def contour(
     try:
         if filled:
             # Matplotlib's contourf paints piecewise-constant bands *between*
-            # consecutive levels, not a smooth ramp. Snap each cell to its
-            # band's midpoint so the heatmap renders flat bands; cells outside
-            # [levels[0], levels[-1]] stay unpainted (extend='neither').
+            # consecutive levels, not a smooth ramp. Interpolate the scalar
+            # field before snapping samples to band midpoints so boundaries
+            # cross between source points instead of following square cells.
+            # Values outside the level range stay unpainted (extend='neither').
             edges = np.asarray(level_values, dtype=np.float64)
             if len(edges) >= 2 and edges[0] < edges[-1]:
-                band = np.searchsorted(edges, arr, side="right") - 1
+                dense, dense_x, dense_y = _interpolate_contourf_grid(arr, xpos, ypos)
+                band = np.searchsorted(edges, dense, side="right") - 1
                 mids = (edges[:-1] + edges[1:]) * 0.5
-                banded = np.full(arr.shape, np.nan, dtype=np.float64)
-                inside = np.isfinite(arr) & (band >= 0) & (band < len(edges) - 1)
+                banded = np.full(dense.shape, np.nan, dtype=np.float64)
+                inside = np.isfinite(dense) & (band >= 0) & (band < len(edges) - 1)
                 banded[inside] = mids[np.clip(band, 0, len(edges) - 2)][inside]
                 self.heatmap(
                     banded,
-                    x=x,
-                    y=y,
+                    x=dense_x,
+                    y=dense_y,
                     name=None,
                     colormap=colormap,
                     domain=(float(edges[0]), float(edges[-1])),
@@ -1594,29 +1638,34 @@ def contour(
             if color is None
             else None
         )
-        # Matplotlib dashes negative isolines for a single-color contour. Split
-        # the segment set by level sign so the negative group ships dashed; a
-        # colormapped contour keeps every level solid.
-        lv = np.asarray(level_values)
-        if dash_negative and color is not None and np.any(lv < 0) and np.any(lv >= 0):
-            groups = ((lv >= 0, None), (lv < 0, "6,4"))
-        else:
-            groups = ((np.ones(len(lv), dtype=bool), None),)
-        for mask, dash in groups:
-            self._append_segment_trace(
-                "contour",
-                x0[mask],
-                x1[mask],
-                y0[mask],
-                y1[mask],
-                name=name if dash is None else None,
-                color=color,
-                opacity=opacity,
-                width=width,
-                role="contour",
-                color_ch=color_ch,
-                dash=dash,
-            )
+        # contourf paints bands without outlining their boundaries. Users can
+        # explicitly overlay contour() when isolines are desired.
+        if not filled:
+            # Matplotlib dashes negative isolines for a single-color contour. Split
+            # the segment set by level sign so the negative group ships dashed; a
+            # colormapped contour keeps every level solid.
+            lv = np.asarray(level_values)
+            if dash_negative and color is not None and np.any(lv < 0) and np.any(lv >= 0):
+                # Matplotlib's dashed preset is scaled by the contour linewidth:
+                # 3.7 on / 1.6 off times the rendered width.
+                groups = ((lv >= 0, None), (lv < 0, [3.7 * width, 1.6 * width]))
+            else:
+                groups = ((np.ones(len(lv), dtype=bool), None),)
+            for mask, dash in groups:
+                self._append_segment_trace(
+                    "contour",
+                    x0[mask],
+                    x1[mask],
+                    y0[mask],
+                    y1[mask],
+                    name=name if dash is None else None,
+                    color=color,
+                    opacity=opacity,
+                    width=width,
+                    role="contour",
+                    color_ch=color_ch,
+                    dash=dash,
+                )
     except Exception:
         self._rollback(checkpoint)
         raise

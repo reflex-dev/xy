@@ -460,9 +460,27 @@ class Figure:
         levels = entry.get("discrete_levels")
         if levels is not None:
             options["levels"] = int(levels)
+            boundaries = entry.get("discrete_boundaries")
+            if boundaries is not None:
+                boundary_values = np.asarray(boundaries, dtype=np.float64).reshape(-1)
+                options["boundaries"] = [float(value) for value in boundary_values]
         ticks = kwargs.pop("ticks", None)
         if ticks is not None:
             options["ticks"] = [float(value) for value in np.asarray(ticks).reshape(-1)]
+        elif levels is not None and entry.get("discrete_boundaries") is not None:
+            # Matplotlib uses a FixedLocator capped at roughly ten bins for a
+            # contour colorbar. Match its offset selection so zero (or the
+            # boundary closest to it) remains among the visible labels.
+            locations = np.asarray(entry["discrete_boundaries"], dtype=np.float64).reshape(-1)
+            step = max(1, int(np.ceil(len(locations) / 10)))
+            candidates = [locations[offset::step] for offset in range(step)]
+            selected = min(candidates, key=lambda values: np.min(np.abs(values)))
+            zero_tolerance = (
+                np.finfo(np.float64).eps * max(1.0, float(np.max(np.abs(locations)))) * 8
+            )
+            options["ticks"] = [
+                0.0 if abs(float(value)) <= zero_tolerance else float(value) for value in selected
+            ]
         extend = kwargs.pop("extend", None)
         if extend is not None:
             if extend not in ("neither", "min", "max", "both"):

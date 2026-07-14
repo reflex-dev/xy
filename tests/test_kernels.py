@@ -488,6 +488,22 @@ def test_marching_squares_extracts_segments(impl):
     np.testing.assert_allclose(emitted_levels, [0.5, 0.5])
 
 
+def test_marching_squares_resolves_asymmetric_saddles(impl):
+    x0, x1, y0, y1, emitted_levels = impl.marching_squares(
+        np.array([[3.0, 0.0], [0.0, 1.0]]),
+        np.array([0.0, 1.0]),
+        np.array([0.0, 1.0]),
+        np.array([0.5]),
+    )
+    # The high-valued diagonal dominates, so the contour must join the bottom
+    # crossing to the right crossing and the top crossing to the left one.
+    np.testing.assert_allclose(x0, [5.0 / 6.0, 0.5])
+    np.testing.assert_allclose(x1, [1.0, 0.0])
+    np.testing.assert_allclose(y0, [0.0, 1.0])
+    np.testing.assert_allclose(y1, [0.5, 5.0 / 6.0])
+    np.testing.assert_allclose(emitted_levels, [0.5, 0.5])
+
+
 def test_marching_squares_skips_nonfinite_cells_and_empty_levels(impl):
     z = np.array([[np.nan, 1.0], [1.0, 0.0]])
     result = impl.marching_squares(z, np.array([0.0, 1.0]), np.array([0.0, 1.0]), np.array([0.5]))

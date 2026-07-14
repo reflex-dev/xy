@@ -1546,10 +1546,10 @@ def _colorbar(options: dict, plot: dict) -> str:
     orientation = options.get("orientation", "vertical")
     domain = options.get("domain", [0.0, 1.0])
     if orientation == "horizontal":
-        x, y, width, height = plot["x"], plot["y"] + plot["h"] + 10, plot["w"], 8
+        x, y, width, height = plot["x"], plot["y"] + plot["h"] + 10, plot["w"], 18
         gradient_attrs = 'x1="0" y1="0" x2="100%" y2="0"'
     else:
-        x, y, width, height = plot["x"] + plot["w"] + 10, plot["y"], 8, plot["h"]
+        x, y, width, height = plot["x"] + plot["w"] + 10, plot["y"], 18, plot["h"]
         gradient_attrs = 'x1="0" y1="100%" x2="0" y2="0"'
     label = str(options.get("label") or "")
     label_node = (
@@ -1635,7 +1635,7 @@ def _colorbar_body(
         )
     n = int(levels)
     cmap = str(options.get("colormap", "viridis"))
-    positions = np.linspace(0.0, 1.0, n) if n > 1 else np.array([0.0])
+    positions = (np.arange(n, dtype=np.float64) + 0.5) / n
     colors = _lut(cmap, positions)
     rects = []
     for index, (r, g, b) in enumerate(colors):

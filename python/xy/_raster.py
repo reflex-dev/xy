@@ -1144,9 +1144,9 @@ def _emit_colorbar(cmd, options, plot):
 
     orientation = options.get("orientation", "vertical")
     if orientation == "horizontal":
-        x, y, width, height = plot["x"], plot["y"] + plot["h"] + 10, plot["w"], 8
+        x, y, width, height = plot["x"], plot["y"] + plot["h"] + 10, plot["w"], 18
     else:
-        x, y, width, height = plot["x"] + plot["w"] + 10, plot["y"], 8, plot["h"]
+        x, y, width, height = plot["x"] + plot["w"] + 10, plot["y"], 18, plot["h"]
     # A discrete (resampled) colormap paints N solid bands; otherwise a smooth
     # 64-step gradient approximates the continuous ramp.
     levels = options.get("levels")
@@ -1154,7 +1154,7 @@ def _emit_colorbar(cmd, options, plot):
         n_seg = int(levels)
         colors = _lut(
             options.get("colormap", "viridis"),
-            np.linspace(0.0, 1.0, n_seg) if n_seg > 1 else np.array([0.0]),
+            (np.arange(n_seg, dtype=np.float64) + 0.5) / n_seg,
         )
     else:
         n_seg = 64

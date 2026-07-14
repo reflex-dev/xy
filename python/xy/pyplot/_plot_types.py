@@ -33,6 +33,7 @@ from ._artists import (
 )
 from ._colors import PROP_CYCLE, resolve_cmap, resolve_color
 from ._fmt import parse_fmt
+from ._rc import rcParams
 from ._translate import (
     LINESTYLE_TO_DASH,
     MARKER_TO_SYMBOL,
@@ -2199,7 +2200,14 @@ class PlotTypeMixin:
         color = None
         if colors is not None:
             color = resolve_color(colors if isinstance(colors, str) else next(iter(colors)))
-        width = _float(linewidths) if np.isscalar(linewidths) and linewidths is not None else 1.1
+        # Matplotlib contour linewidths are points.  The browser renderer uses
+        # CSS pixels, so the 1.5 pt default becomes 2 px at 96 dpi.
+        width_pt = (
+            _float(linewidths)
+            if np.isscalar(linewidths) and linewidths is not None
+            else float(rcParams["lines.linewidth"])
+        )
+        width = width_pt * (4.0 / 3.0)
         transparent_fill = filled and isinstance(colors, str) and colors.lower() == "none"
         entry = self._add(
             "@mark",
@@ -2216,7 +2224,7 @@ class PlotTypeMixin:
                     "width": width,
                     "opacity": 0.0
                     if transparent_fill
-                    else (0.9 if alpha is None else float(alpha)),
+                    else (1.0 if alpha is None else float(alpha)),
                     # Matplotlib dashes negative-level lines for a single-color
                     # contour; a colormapped contour keeps every level solid.
                     "dash_negative": color is not None,
@@ -2228,6 +2236,12 @@ class PlotTypeMixin:
                 "levels": public_levels,
             },
         )
+        if filled:
+            # A filled contour owns one solid color band between each adjacent
+            # level. Preserve both the count and exact boundaries for colorbar
+            # renderers instead of degrading it to a continuous gradient.
+            entry["discrete_levels"] = max(1, len(public_levels) - 1)
+            entry["discrete_boundaries"] = public_levels
         if filled and hatches:
             patterns = list(hatches)
             x_values = (

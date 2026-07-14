@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
+const COLORBAR_THICKNESS = 18;
 const UNITLESS_STYLE_PROPS = new Set([
   "animation-iteration-count",
   "aspect-ratio",
@@ -201,9 +202,14 @@ class ChartView {
     // label-aware defaults — zero padding gives an edge-to-edge sparkline.
     const pad = Array.isArray(this.spec.padding) ? this.spec.padding : null;
     const marginLeft = pad ? pad[3] : compact ? 46 : MARGIN.l;
-    const marginRight = pad ? pad[1] : compact ? 8 : MARGIN.r;
+    const colorbar = this.spec.colorbar;
+    const verticalColorbar = colorbar && colorbar.orientation !== "horizontal";
+    const horizontalColorbar = colorbar && colorbar.orientation === "horizontal";
+    const colorbarRightRoom = verticalColorbar ? 66 + (colorbar.label ? 18 : 0) : 0;
+    const colorbarBottomRoom = horizontalColorbar ? 38 + (colorbar.label ? 16 : 0) : 0;
+    const marginRight = (pad ? pad[1] : compact ? 8 : MARGIN.r) + colorbarRightRoom;
     const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
-    const marginBottom = pad ? pad[2] : compact ? 36 : MARGIN.b;
+    const marginBottom = (pad ? pad[2] : compact ? 36 : MARGIN.b) + colorbarBottomRoom;
     const topAxisRoom = this._axis("x").side === "top" ? (compact ? 26 : 32) : 0;
     const top = marginTop + (this.spec.title ? (compact ? 26 : 30) : 0) + topAxisRoom;
     const extraRightAxes = Object.values(this.axes || {}).filter((axis) =>
@@ -702,6 +708,7 @@ class ChartView {
       this._legend.style.maxHeight = p.h - 12 + "px";
     }
     this._positionReductionBadges();
+    this._positionColorbar();
     this._pickDirty = true;
     this.draw();
     this._scheduleViewRequest();
@@ -931,19 +938,72 @@ class ChartView {
   _buildColorbar(root) {
     const cb = this.spec.colorbar;
     if (!cb) return;
-    const stops = colormapStops(cb.colormap || "viridis");
     const box = document.createElement("div");
     const horizontal = cb.orientation === "horizontal";
-    box.style.cssText = horizontal
-      ? `position:absolute;left:${this.plot.x}px;top:${this.plot.y + this.plot.h + 8}px;` +
-        `width:${this.plot.w}px;height:10px;` +
-        `background:linear-gradient(to right,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")});`
-      : `position:absolute;top:${this.plot.y}px;left:${this.plot.x + this.plot.w + 8}px;` +
-        `width:10px;height:${Math.max(24, this.plot.h)}px;` +
-        `background:linear-gradient(to top,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")});`;
+    box.style.cssText = "position:absolute;pointer-events:none;z-index:4;";
+    this._applySlot(box, "colorbar");
+
+    const bar = document.createElement("div");
+    const levels = Math.max(0, Number(cb.levels) || 0);
+    let gradient;
+    if (levels > 0) {
+      const lut = buildLutData(cb.colormap || "viridis");
+      const bands = [];
+      for (let index = 0; index < levels; index++) {
+        const sample = Math.min(255, Math.round(255 * (index + 0.5) / levels));
+        const color = `rgb(${lut[sample * 4]},${lut[sample * 4 + 1]},${lut[sample * 4 + 2]})`;
+        bands.push(`${color} ${100 * index / levels}% ${100 * (index + 1) / levels}%`);
+      }
+      gradient = `linear-gradient(to ${horizontal ? "right" : "top"},${bands.join(",")})`;
+    } else {
+      const stops = colormapStops(cb.colormap || "viridis");
+      gradient = `linear-gradient(to ${horizontal ? "right" : "top"},${stops.map((c) =>
+        `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
+    }
+    bar.style.cssText = horizontal
+      ? `position:absolute;inset:0 0 auto 0;height:${COLORBAR_THICKNESS}px;background:${gradient};border:1px solid currentColor;box-sizing:border-box;`
+      : `position:absolute;inset:0 auto 0 0;width:${COLORBAR_THICKNESS}px;background:${gradient};border:1px solid currentColor;box-sizing:border-box;`;
+    box.appendChild(bar);
+
     const domain = cb.domain || [0, 1];
+    const lo = Number(domain[0]), hi = Number(domain[1]);
+    const span = hi - lo || 1;
+    const tickResult = linearTicks(lo, hi, 6);
+    const tickValues = Array.isArray(cb.ticks) ? cb.ticks : tickResult.ticks;
+    const tickStep = tickResult.step;
+    for (const raw of tickValues) {
+      const value = Number(raw);
+      if (!Number.isFinite(value) || value < Math.min(lo, hi) || value > Math.max(lo, hi)) continue;
+      const tick = document.createElement("span");
+      tick.textContent = fmtLinear(value, tickStep);
+      const fraction = (value - lo) / span;
+      tick.style.cssText = horizontal
+        ? `position:absolute;left:${100 * fraction}%;top:${COLORBAR_THICKNESS + 2}px;transform:translateX(-50%);white-space:nowrap;`
+        : `position:absolute;left:${COLORBAR_THICKNESS + 5}px;top:${100 * (1 - fraction)}%;transform:translateY(-50%);white-space:nowrap;`;
+      box.appendChild(tick);
+    }
+    if (cb.label) {
+      const label = document.createElement("span");
+      label.textContent = String(cb.label);
+      label.style.cssText = horizontal
+        ? `position:absolute;left:50%;top:${COLORBAR_THICKNESS + 18}px;transform:translateX(-50%);white-space:nowrap;`
+        : `position:absolute;left:${COLORBAR_THICKNESS + 40}px;top:50%;transform:translateY(-50%) rotate(-90deg);white-space:nowrap;`;
+      box.appendChild(label);
+    }
     box.title = `${cb.label ? cb.label + ": " : ""}${domain[0]} – ${domain[1]}`;
     root.appendChild(box);
+    this._colorbar = box;
+    this._colorbarHorizontal = horizontal;
+    this._positionColorbar();
+  }
+
+  _positionColorbar() {
+    if (!this._colorbar) return;
+    const horizontal = this._colorbarHorizontal;
+    this._colorbar.style.left = (horizontal ? this.plot.x : this.plot.x + this.plot.w + 8) + "px";
+    this._colorbar.style.top = (horizontal ? this.plot.y + this.plot.h + 8 : this.plot.y) + "px";
+    this._colorbar.style.width = (horizontal ? this.plot.w : 66) + "px";
+    this._colorbar.style.height = (horizontal ? 50 : Math.max(24, this.plot.h)) + "px";
   }
 
   _initGl(buffer) {
@@ -1414,6 +1474,7 @@ class ChartView {
     g.x1Buf = this._upload(x1);
     g.y0Buf = this._upload(y0);
     g.y1Buf = this._upload(y1);
+    g._segmentCpu = { x0, x1, y0, y1 };
     g.color = parseColor(this.root, t.style && t.style.color, [0.3, 0.47, 0.66, 1]);
     g.colorMode = 0;
     if (t.color && t.color.mode === "continuous") {
@@ -2076,6 +2137,7 @@ class ChartView {
     const [r, gg, b, a] = g.color;
     gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
+    const dashed = this._segmentDash(g, prog);
     if (g.colorMode && g.lut) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -2084,17 +2146,97 @@ class ChartView {
     this._bindVao(
       g,
       "segment",
-      [g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId, g.colorMode ? g.cBuf._fcId : 0],
+      [g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId,
+        g.colorMode ? g.cBuf._fcId : 0,
+        dashed ? g._segmentDashOffsetBuf._fcId : 0,
+        dashed ? g._segmentDashDirBuf._fcId : 0],
       () => {
         this._vaoAttr(ATTR_SLOTS.ax0, g.x0Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
         if (g.colorMode) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+        if (dashed) {
+          this._vaoAttr(ATTR_SLOTS.a_dash0, g._segmentDashOffsetBuf, 0, 1);
+          this._vaoAttr(ATTR_SLOTS.a_dashDir, g._segmentDashDirBuf, 0, 1);
+        }
       }
     );
     if (!g.colorMode) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
+  }
+
+  _segmentDash(g, prog) {
+    const gl = this.gl;
+    const u = (n) => uniformOf(gl, prog, n);
+    const dash = g.trace.style && g.trace.style.dash;
+    const cpu = g._segmentCpu;
+    if (!dash || !dash.length || !cpu) {
+      gl.uniform1i(u("u_dashCount"), 0);
+      return false;
+    }
+    const n = g.n;
+    const offsets = g._segmentDashOffsets?.length === n
+      ? g._segmentDashOffsets : (g._segmentDashOffsets = new Float32Array(n));
+    const directions = g._segmentDashDirections?.length === n
+      ? g._segmentDashDirections : (g._segmentDashDirections = new Float32Array(n));
+    const k0 = new Array(n), k1 = new Array(n), lengths = new Float32Array(n);
+    const adjacency = new Map();
+    const add = (key, index) => {
+      const edges = adjacency.get(key);
+      if (edges) edges.push(index); else adjacency.set(key, [index]);
+    };
+    const key = (x, y) => `${Math.round(x * 1000)},${Math.round(y * 1000)}`;
+    const dpr = this.dpr;
+    for (let i = 0; i < n; i++) {
+      const x0 = this._dataPx(g.xAxis, this._decodeValue(cpu.x0, g.x0Meta, i));
+      const x1 = this._dataPx(g.xAxis, this._decodeValue(cpu.x1, g.x1Meta, i));
+      const y0 = this._dataPx(g.yAxis, this._decodeValue(cpu.y0, g.y0Meta, i));
+      const y1 = this._dataPx(g.yAxis, this._decodeValue(cpu.y1, g.y1Meta, i));
+      k0[i] = key(x0, y0); k1[i] = key(x1, y1);
+      lengths[i] = Math.hypot(x1 - x0, y1 - y0) * dpr;
+      add(k0[i], i); add(k1[i], i);
+    }
+    const visited = new Uint8Array(n);
+    const walk = (start) => {
+      let current = start, accumulated = 0;
+      while (true) {
+        const edge = (adjacency.get(current) || []).find((index) => !visited[index]);
+        if (edge === undefined) break;
+        visited[edge] = 1;
+        if (k0[edge] === current) {
+          offsets[edge] = accumulated;
+          directions[edge] = 1;
+          current = k1[edge];
+        } else {
+          offsets[edge] = accumulated + lengths[edge];
+          directions[edge] = -1;
+          current = k0[edge];
+        }
+        accumulated += lengths[edge];
+      }
+    };
+    for (const [node, edges] of adjacency) if (edges.length === 1) walk(node);
+    for (let i = 0; i < n; i++) if (!visited[i]) walk(k0[i]);
+    const upload = (buffer, values) => {
+      if (!buffer) return this._upload(values);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.bufferData(gl.ARRAY_BUFFER, values, gl.DYNAMIC_DRAW);
+      return buffer;
+    };
+    g._segmentDashOffsetBuf = upload(g._segmentDashOffsetBuf, offsets);
+    g._segmentDashDirBuf = upload(g._segmentDashDirBuf, directions);
+    const pattern = new Float32Array(8);
+    const count = Math.min(dash.length, 8);
+    let period = 0;
+    for (let i = 0; i < count; i++) {
+      pattern[i] = Number(dash[i]) * dpr;
+      period += pattern[i];
+    }
+    gl.uniform1i(u("u_dashCount"), count);
+    gl.uniform1fv(u("u_dashArr"), pattern);
+    gl.uniform1f(u("u_dashPeriod"), Math.max(period, 1e-3));
+    return true;
   }
 
   _drawMesh(g, xm, ym) {

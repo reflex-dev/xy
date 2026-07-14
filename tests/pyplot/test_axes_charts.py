@@ -192,7 +192,7 @@ def test_existing_core_plot_families_are_exposed_by_adapter() -> None:
     assert "violin" in kinds
     assert "errorbar" in kinds
     assert "hexbin" in kinds
-    assert kinds.count("contour") == 2
+    assert kinds.count("contour") == 1
 
 
 def test_hist2d_uses_native_uniform_binning_and_heatmap() -> None:
