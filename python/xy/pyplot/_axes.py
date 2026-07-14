@@ -1734,7 +1734,12 @@ class Axes(PlotTypeMixin):
             and interpolation not in (None, "none", "nearest")
             and min(grid.shape) >= 2
         ):
-            grid = _upsample_grid(grid, max(128, grid.shape[1]), max(128, grid.shape[0]))
+            # The notebook's ordinary image box is ~369 px per side. A 128²
+            # intermediate left each interpolated sample covering about 3×3
+            # display pixels because heatmaps intentionally use nearest texture
+            # sampling. Keep a bounded 512² surface so non-nearest imshow output
+            # is at least display-resolution while nearest retains source cells.
+            grid = _upsample_grid(grid, max(512, grid.shape[1]), max(512, grid.shape[0]))
         if transform == self.transAxes and extent is not None:
             xlo, xhi = self._axis_props("x").get("domain", self._entry_extent("x"))
             ylo, yhi = self._axis_props("y").get("domain", self._entry_extent("y"))

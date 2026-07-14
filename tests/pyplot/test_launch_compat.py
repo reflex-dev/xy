@@ -321,7 +321,7 @@ def test_imshow_interpolation_upsamples_gradients_but_nearest_keeps_cells() -> N
     _fig, ax = plt.subplots()
     ax.imshow([[0.0, 1.0], [1.0, 0.0]], interpolation="bicubic")
     ax.imshow([[0.0, 1.0], [1.0, 0.0]], interpolation="nearest")
-    assert np.asarray(ax._entries[0]["z"]).shape == (128, 128)
+    assert np.asarray(ax._entries[0]["z"]).shape == (512, 512)
     assert np.asarray(ax._entries[1]["z"]).shape == (2, 2)
     core = ax._build_chart(640, 480).figure()
     spec, _blob = core.build_payload()
