@@ -124,7 +124,8 @@ Set them on `.xy` or any ancestor:
 | `--chart-legend-bg` | Legend background | `rgba(128,128,128,.08)` |
 | `--chart-badge-bg` / `--chart-badge-text` | Reduction badges | `rgba(255,255,255,.82)` / `#0f172a` |
 | `--chart-modebar-bg` / `--chart-modebar-active` | Modebar / active button | `rgba(255,255,255,.78)` / `rgba(128,128,128,.22)` |
-| `--chart-selection` / `--chart-selection-fill` | Selection rectangle | `rgba(90,140,240,.9)` / `…,.15)` |
+| `--chart-selection` / `--chart-selection-fill` | Box-select rectangle | `rgba(90,140,240,.9)` / `…,.15)` |
+| `--chart-zoom-selection` / `--chart-zoom-selection-fill` | Box-zoom drag rectangle | `rgba(120,120,120,.9)` / `…,.12)` |
 | `--chart-crosshair` | Crosshair lines | `rgba(15,23,42,.42)` |
 | `--chart-annotation-text` | Annotation label color | falls back to `--chart-text` |
 | `--chart-cursor` / `--chart-cursor-pan` | Plot cursor (box-zoom / pan) | `crosshair` / `grab` |
