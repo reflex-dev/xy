@@ -29,6 +29,18 @@ interactive CPU fallback through SwiftShader. Each successful cell is the mean
 of three complete cold-process runs; interactive samples also use a fresh
 browser. Terminal 1B failures are attempted once and are not averaged.
 
+Reproduce the 0.1.0 launch environment with its exact dependency versions:
+
+```bash
+uv venv .venv --python 3.14.5
+uv pip install --python .venv/bin/python -e . \
+  -r benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/requirements.txt
+```
+
+Run these commands from the repository revision containing the baseline. The
+same directory contains `environment.json` with the exact source commit, Python,
+Rust, Cargo, Node, Chrome, OS, and hardware versions used for the recorded run.
+
 ```bash
 # Static CPU + default interactive paths.
 .venv/bin/python benchmarks/bench_launch_scatter.py \

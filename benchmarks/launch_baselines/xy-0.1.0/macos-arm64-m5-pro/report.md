@@ -238,9 +238,9 @@ The defensible headline is not “`xy` draws 1B markers.” It is:
 ## Reproduce
 
 ```bash
-uv venv .venv --python 3.14
-uv pip install --python .venv/bin/python \
-  -e '.[bench]' matplotlib pandas kaleido tornado psutil websocket-client
+uv venv .venv --python 3.14.5
+uv pip install --python .venv/bin/python -e . \
+  -r benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/requirements.txt
 
 # Repeated static + default interactive benchmarks
 .venv/bin/python benchmarks/bench_launch_scatter.py \

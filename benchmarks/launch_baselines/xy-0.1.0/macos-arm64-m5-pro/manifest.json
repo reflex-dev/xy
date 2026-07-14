@@ -39,5 +39,9 @@
     "default": "default-results.json",
     "cpu_fallback": "cpu-fallback-results.json"
   },
+  "reproduction": {
+    "environment": "environment.json",
+    "python_requirements": "requirements.txt"
+  },
   "comparison_rule": "Preserve contracts and environment metadata; do not overwrite this launch baseline."
 }
