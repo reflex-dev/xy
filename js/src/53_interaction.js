@@ -191,13 +191,12 @@ Object.assign(ChartView.prototype, {
     const px = this.plot.x, py = this.plot.y;
     const x2 = Math.min(x + w, px + this.plot.w), y2 = Math.min(y + h, py + this.plot.h);
     const cx = Math.max(x, px), cy = Math.max(y, py);
-    if (band.mode === "zoom") {
-      this.selRect.style.border = "1px solid var(--chart-zoom-selection, rgba(120,120,120,.9))";
-      this.selRect.style.background = "var(--chart-zoom-selection-fill, rgba(120,120,120,.12))";
-    } else {
-      this.selRect.style.border = "1px solid var(--chart-selection, rgba(90,140,240,.9))";
-      this.selRect.style.background = "var(--chart-selection-fill, rgba(90,140,240,.15))";
-    }
+    // Band paint (border/background) is a defeatable :where() default keyed on
+    // data-fc-band, NOT pinned inline — otherwise a `class_names={"selection":…}`
+    // utility (or `styles[selection]`) would lose to the inline style, breaking
+    // the "your styles always win" contract for this one slot. Only the mode
+    // discriminator and structural position/size stay inline (matches §36).
+    this.selRect.dataset.fcBand = band.mode === "zoom" ? "zoom" : "select";
     this.selRect.style.display = "block";
     this.selRect.style.left = cx + "px";
     this.selRect.style.top = cy + "px";

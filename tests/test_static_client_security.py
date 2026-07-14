@@ -127,6 +127,11 @@ def test_client_numeric_styles_default_to_pixels_for_lengths() -> None:
     required_style_helpers = (
         "const UNITLESS_STYLE_PROPS = new Set([",
         'if (key.startsWith("--")) return key;',
+        # snake_case (the Python API form, e.g. `font_size`) must normalize to
+        # the CSS property name, not reach setProperty("font_size", …) verbatim
+        # (a silent no-op in the browser). The underscore pass runs before the
+        # unitless check so `line_height`/`z_index` are recognized as unitless.
+        'key.replace(/_/g, "-").replace(/[A-Z]/g,',
         'if (property.startsWith("--") || UNITLESS_STYLE_PROPS.has(property)) return String(value);',
         "return `${value}px`;",
     )
@@ -134,6 +139,25 @@ def test_client_numeric_styles_default_to_pixels_for_lengths() -> None:
     for path, text in CLIENT_FILES:
         for helper in required_style_helpers:
             assert helper in text, f"{path} no longer normalizes numeric component styles"
+
+
+def test_client_selection_band_paint_is_a_defeatable_stylesheet_default() -> None:
+    """The box-select/zoom band must paint via the zero-specificity :where()
+    stylesheet (keyed on data-fc-band), never inline — otherwise a
+    `class_names={"selection": …}` utility or `styles[selection]` would lose to
+    the inline style, the one slot that breaks the "your styles always win"
+    contract (§36)."""
+    for path, text in CLIENT_FILES:
+        assert "this.selRect.dataset.fcBand =" in text, (
+            f"{path} no longer drives the selection band via a data attribute"
+        )
+        assert "selRect.style.border" not in text and "selRect.style.background" not in text, (
+            f"{path} pins selection band paint inline; it must be a stylesheet default"
+        )
+    for path, text in THEME_FILES:
+        assert '[data-fc-slot="selection"][data-fc-band="zoom"]){' in text, (
+            f"{path} is missing the defeatable zoom-band :where() default"
+        )
 
 
 def test_client_applies_every_public_dom_slot() -> None:

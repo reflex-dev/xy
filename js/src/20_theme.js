@@ -86,6 +86,7 @@ const FC_CHROME_CSS = `
 :where(.xy [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-axis,currentColor);cursor:pointer}
 :where(.xy [data-fc-slot="modebar_button"].fc-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
 :where(.xy [data-fc-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
+:where(.xy [data-fc-slot="selection"][data-fc-band="zoom"]){border-color:var(--chart-zoom-selection,rgba(120,120,120,.9));background:var(--chart-zoom-selection-fill,rgba(120,120,120,.12))}
 :where(.xy [data-fc-slot="crosshair_x"],.xy [data-fc-slot="crosshair_y"]){background:var(--chart-crosshair,rgba(15,23,42,.42))}
 :where(.xy [data-fc-slot="tick_label"]){color:var(--chart-text,inherit)}
 :where(.xy [data-fc-slot="axis_title"]){color:var(--chart-text,inherit);font-size:12px}

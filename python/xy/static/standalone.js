@@ -263,6 +263,7 @@ const FC_CHROME_CSS = `
 :where(.xy [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-axis,currentColor);cursor:pointer}
 :where(.xy [data-fc-slot="modebar_button"].fc-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
 :where(.xy [data-fc-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
+:where(.xy [data-fc-slot="selection"][data-fc-band="zoom"]){border-color:var(--chart-zoom-selection,rgba(120,120,120,.9));background:var(--chart-zoom-selection-fill,rgba(120,120,120,.12))}
 :where(.xy [data-fc-slot="crosshair_x"],.xy [data-fc-slot="crosshair_y"]){background:var(--chart-crosshair,rgba(15,23,42,.42))}
 :where(.xy [data-fc-slot="tick_label"]){color:var(--chart-text,inherit)}
 :where(.xy [data-fc-slot="axis_title"]){color:var(--chart-text,inherit);font-size:12px}
@@ -1919,7 +1920,7 @@ try { el.classList.add(token); } catch (_) {   }
 }
 _stylePropertyName(key) {
 if (key.startsWith("--")) return key;
-return key.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`);
+return key.replace(/_/g, "-").replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`);
 }
 _stylePropertyValue(property, value) {
 if (typeof value !== "number") return String(value);
@@ -4875,13 +4876,7 @@ const h = Math.abs(e.clientY - band.sy);
 const px = this.plot.x, py = this.plot.y;
 const x2 = Math.min(x + w, px + this.plot.w), y2 = Math.min(y + h, py + this.plot.h);
 const cx = Math.max(x, px), cy = Math.max(y, py);
-if (band.mode === "zoom") {
-this.selRect.style.border = "1px solid var(--chart-zoom-selection, rgba(120,120,120,.9))";
-this.selRect.style.background = "var(--chart-zoom-selection-fill, rgba(120,120,120,.12))";
-} else {
-this.selRect.style.border = "1px solid var(--chart-selection, rgba(90,140,240,.9))";
-this.selRect.style.background = "var(--chart-selection-fill, rgba(90,140,240,.15))";
-}
+this.selRect.dataset.fcBand = band.mode === "zoom" ? "zoom" : "select";
 this.selRect.style.display = "block";
 this.selRect.style.left = cx + "px";
 this.selRect.style.top = cy + "px";

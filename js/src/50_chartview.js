@@ -392,7 +392,14 @@ class ChartView {
 
   _stylePropertyName(key) {
     if (key.startsWith("--")) return key;
-    return key.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`);
+    // Accept snake_case (the Python API form, e.g. `font_size`), camelCase
+    // (React-style `fontSize`), and kebab-case interchangeably, normalizing all
+    // to the CSS property name. The underscore pass is load-bearing: Python
+    // kebab-normalizes keys only for its grammar check and ships the raw key in
+    // the spec, so without it a validated `font_size` reached
+    // setProperty("font_size", …) and the browser silently dropped it. It also
+    // lets the unitless-property check below see the real (kebab) name.
+    return key.replace(/_/g, "-").replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`);
   }
 
   _stylePropertyValue(property, value) {
