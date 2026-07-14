@@ -151,12 +151,11 @@ def _supported_mark_style_properties(kind: str) -> tuple[str, ...]:
         raise ValueError(f"unknown mark kind {kind!r}; expected one of {_MARK_KINDS}")
     props = {"opacity"}
     if kind in _LINE_KINDS:
-        props |= {"color", "stroke", "stroke-width", "stroke-opacity", "stroke-dasharray"}
+        props |= {"stroke", "stroke-width", "stroke-opacity", "stroke-dasharray"}
     elif kind in _SIMPLE_STROKE_KINDS:
-        props |= {"color", "stroke", "stroke-width", "stroke-opacity"}
+        props |= {"stroke", "stroke-width", "stroke-opacity"}
     elif kind in _AREA_KINDS:
         props |= {
-            "color",
             "fill",
             "fill-opacity",
             "stroke",
@@ -168,7 +167,6 @@ def _supported_mark_style_properties(kind: str) -> tuple[str, ...]:
             props.discard("stroke-dasharray")
     elif kind in _POINT_KINDS:
         props |= {
-            "color",
             "fill",
             "fill-opacity",
             "stroke",
@@ -177,7 +175,6 @@ def _supported_mark_style_properties(kind: str) -> tuple[str, ...]:
         }
     elif kind in _RECT_KINDS:
         props |= {
-            "color",
             "fill",
             "fill-opacity",
             "stroke",
@@ -186,10 +183,9 @@ def _supported_mark_style_properties(kind: str) -> tuple[str, ...]:
             "border-radius",
         }
     elif kind in _FILL_KINDS:
-        props |= {"color", "fill", "fill-opacity"}
+        props |= {"fill", "fill-opacity"}
     elif kind in _MESH_KINDS:
         props |= {
-            "color",
             "fill",
             "fill-opacity",
             "stroke",
@@ -237,7 +233,7 @@ def compile_mark_style(
                 prop,
                 seen,
             )
-        elif prop in {"fill", "color"}:
+        elif prop == "fill":
             target, paint = _fill(raw, f"{label}[{prop!r}]")
             if target == "fill" and kind not in _AREA_KINDS | _RECT_KINDS:
                 raise ValueError(f"{label}[{prop!r}] gradients are not supported by {kind}")

@@ -1893,6 +1893,33 @@ def test_to_png_string_engine_is_deprecated_alias(monkeypatch):
     assert seen["sandbox"] is True
 
 
+def test_to_png_chromium_threads_custom_css_into_standalone_html(monkeypatch):
+    from xy import export
+
+    seen = {}
+
+    def fake_html_to_png(html, _width, _height, **_kwargs):
+        seen["html"] = html
+        return b"\x89PNG\r\n\x1a\ncss"
+
+    monkeypatch.setattr(export, "html_to_png", fake_html_to_png)
+    fig = Figure(width=200, height=150).line([0.0, 1.0], [1.0, 2.0])
+    css = '[data-fc-slot="title"] { color: rebeccapurple; }'
+
+    data = fig.to_png(engine=export.Engine.chromium, custom_css=css)
+
+    assert data.endswith(b"css")
+    assert f"<style>{css}</style>" in seen["html"]
+
+
+def test_to_png_native_rejects_browser_only_custom_css():
+    from xy import export
+
+    fig = Figure(width=200, height=150).line([0.0, 1.0], [1.0, 2.0])
+    with pytest.raises(ValueError, match=r"custom_css requires engine=Engine.chromium"):
+        fig.to_png(engine=export.Engine.default, custom_css=".xy { color: red; }")
+
+
 def test_to_png_rejects_bad_export_geometry_before_browser_lookup(monkeypatch):
     from xy import export
 

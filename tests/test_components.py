@@ -1539,6 +1539,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         scale=2.0,
         engine=fc.Engine.default,
         optimize=False,
+        custom_css=None,
         sandbox=True,
         gl="software",
     ):
@@ -1551,6 +1552,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
                 "scale": scale,
                 "engine": engine,
                 "optimize": optimize,
+                "custom_css": custom_css,
                 "sandbox": sandbox,
                 "gl": gl,
             }
@@ -1566,6 +1568,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         scale=1.5,
         engine=fc.Engine.chromium,
         optimize=True,
+        custom_css=".chart { color: rebeccapurple; }",
         sandbox=False,
         gl="hardware",
     )
@@ -1579,6 +1582,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         "scale": 1.5,
         "engine": fc.Engine.chromium,
         "optimize": True,
+        "custom_css": ".chart { color: rebeccapurple; }",
         "sandbox": False,
         "gl": "hardware",
     }

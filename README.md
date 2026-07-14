@@ -350,7 +350,9 @@ supported browser. XY automatically finds
 Chrome, Chromium, Edge, or `chrome-headless-shell`; set `XY_BROWSER` to an
 executable path to select one explicitly. The browser sandbox is on by default —
 use `sandbox=False` only for trusted HTML in CI/container environments where a
-sandboxed browser cannot launch. Legacy string engine values remain deprecated
+sandboxed browser cannot launch. Browser export also accepts `custom_css="..."`
+for author CSS that should be present in the captured document; the native engine
+rejects that browser-only option. Legacy string engine values remain deprecated
 compatibility aliases.
 
 ## Example Apps

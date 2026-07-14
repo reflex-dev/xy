@@ -219,6 +219,18 @@ def test_facet_png_dimensions_and_default_scale() -> None:
     assert grid.grid_height == 200  # one row: no gaps, no title strip
 
 
+def test_facet_chart_png_forwards_current_export_options() -> None:
+    chart = fc.facet_chart(
+        fc.line(x="x", y="y"),
+        by="g",
+        data=_table(),
+        width=320,
+        height=180,
+    )
+
+    assert chart.to_png(scale=1.0, gl="software").startswith(b"\x89PNG")
+
+
 # -- shared categorical axes --------------------------------------------------
 
 

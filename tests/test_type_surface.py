@@ -409,10 +409,11 @@ def test_chart_and_figure_png_export_types_stay_in_sync() -> None:
     assert chart_hints["return"] is bytes
     assert chart_hints == figure_hints
 
-    for key in ("path", "width", "height"):
+    for key in ("path", "width", "height", "custom_css"):
         args = get_args(chart_hints[key])
         assert type(None) in args, key
     assert str in get_args(chart_hints["path"])
+    assert str in get_args(chart_hints["custom_css"])
     assert chart_hints["scale"] is float
     assert chart_hints["engine"] is Engine
     assert chart_hints["sandbox"] is bool

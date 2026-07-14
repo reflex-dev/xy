@@ -511,6 +511,7 @@ def write_images(
     *,
     scale: float = 2.0,
     engine: Engine = Engine.default,
+    custom_css: Optional[str] = None,
     sandbox: bool = True,
     gl: str = "software",
 ) -> list[bytes]:
@@ -525,7 +526,8 @@ def write_images(
     native rasterizer.
 
     Figures with fluid ("100%") sizes fall back to the same explicit export
-    dimensions as `to_png`."""
+    dimensions as `to_png`. `custom_css` is available only with Chromium,
+    where it is injected into every standalone document."""
     if len(figs) != len(paths):
         raise ValueError(f"write_images got {len(figs)} figures but {len(paths)} paths")
     scale = _positive_finite_float(scale, "PNG scale")
@@ -533,10 +535,13 @@ def write_images(
     gl = _gl_option(gl)
     resolved_engine = _png_engine(engine)
     if resolved_engine == "native":
+        if custom_css is not None:
+            raise ValueError("custom_css requires engine=Engine.chromium")
         return [
             to_png(fig, path, scale=scale, engine=Engine.default)
             for fig, path in zip(figs, paths, strict=True)
         ]
+    _custom_css_block(custom_css)
     exe = find_browser()
     if exe is None:
         raise RuntimeError(
@@ -552,7 +557,7 @@ def write_images(
             h = _positive_pixel_count(
                 fig.height if isinstance(fig.height, int) else 500, "PNG height"
             )
-            data = session.render_png(to_html(fig), w, h, scale=scale)
+            data = session.render_png(to_html(fig, custom_css=custom_css), w, h, scale=scale)
             with open(path, "wb") as f:
                 f.write(data)
             out.append(data)
@@ -568,6 +573,7 @@ def to_png(
     scale: float = 2.0,
     engine: Engine = Engine.default,
     optimize: bool = False,
+    custom_css: Optional[str] = None,
     sandbox: bool = True,
     gl: str = "software",
 ) -> bytes:
@@ -580,8 +586,9 @@ def to_png(
     browser and screenshots it, so CSS, fonts, and WebGL use that browser's
     implementation. It automatically discovers Chrome, Chromium, Edge, or
     `chrome-headless-shell` via `XY_BROWSER`, PATH, and common install locations,
-    and honors `sandbox`/`gl` (see `html_to_png`). Former string engine values
-    remain deprecated aliases.
+    and honors `sandbox`/`gl` (see `html_to_png`). `custom_css` injects an
+    author stylesheet into that browser document and is rejected by the native
+    engine. Former string engine values remain deprecated aliases.
     Fluid ("100%") sizes fall back to an explicit export size since a raster
     needs concrete dims."""
     w = _positive_pixel_count(
@@ -597,11 +604,13 @@ def to_png(
     sandbox = _bool_option(sandbox, "PNG sandbox")
     resolved_engine = _png_engine(engine)
     if resolved_engine == "native":
+        if custom_css is not None:
+            raise ValueError("custom_css requires engine=Engine.chromium")
         from . import _raster
 
         data = _raster.to_png(fig, None, width=w, height=h, scale=scale, fast=not optimize)
     else:
-        doc = to_html(fig)
+        doc = to_html(fig, custom_css=custom_css)
         data = html_to_png(
             doc,
             w,

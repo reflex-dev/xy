@@ -50,7 +50,8 @@ chart.show()                 # notebook / IPython display
 html = chart.to_html()       # standalone HTML
 chart.to_html("chart.html")  # shareable file
 chart._repr_html_()          # standalone HTML repr fallback
-chart.to_png("chart.png")    # optional Chromium screenshot
+chart.to_png("chart.png")    # fast browser-free native PNG
+chart.to_png("browser.png", engine=fc.Engine.chromium)  # browser CSS/WebGL fidelity
 ```
 
 The tree is not a Reflex tree. It is a pure XY Python object graph that
@@ -207,7 +208,7 @@ chart.to_html()      # standalone string
 chart.to_html(path)  # write standalone file
 chart.html()         # alias for to_html()
 chart._repr_html_()  # notebook/static HTML repr fallback
-chart.to_png(path)   # screenshot standalone HTML
+chart.to_png(path)   # native PNG by default; Engine.chromium is the browser tier
 chart.memory_report()
 ```
 
@@ -456,7 +457,7 @@ The component tree compiles once and can target multiple renderers.
 | Notebook widget | `show()` / `widget()` | Python callbacks available |
 | Notebook/static HTML repr | `_repr_html_()` | Self-contained fallback that reuses standalone export |
 | Standalone HTML | `to_html()` / optional `html()` alias | Self-contained, no Python callbacks |
-| Static PNG | `to_png()` | Screenshots same standalone render |
+| Static PNG | `to_png()` | Fast native default; optional Chromium standalone screenshot |
 | Future Reflex | external adapter package | Uses the smallest supported Reflex surface; core does not import Reflex |
 | Future server app | generic payload/message routes | Same wire protocol |
 
@@ -565,7 +566,7 @@ chart = fc.chart(
 
 chart.show()                       # notebook / IPython
 chart.to_html("clusters.html")     # standalone shareable file
-chart.to_png("clusters.png")       # optional local Chromium screenshot
+chart.to_png("clusters.png")       # fast browser-free native PNG
 ```
 
 The same object compiles to the internal `_figure.Figure`, so engine

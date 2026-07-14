@@ -81,6 +81,27 @@ def test_css_style_wins_over_legacy_appearance_aliases() -> None:
     assert fig.traces[0].style == {"color": "red", "width": 2.0, "opacity": 0.4}
 
 
+def test_css_color_is_not_an_alias_for_mark_paint() -> None:
+    with pytest.raises(ValueError, match=r"unsupported CSS property.*color"):
+        fc.chart(
+            fc.line(
+                x=[0.0, 1.0],
+                y=[1.0, 2.0],
+                style={"color": "red", "stroke": "currentColor"},
+            )
+        ).figure()
+
+    fig = fc.chart(
+        fc.line(
+            x=[0.0, 1.0],
+            y=[1.0, 2.0],
+            color="red",
+            style={"stroke": "blue"},
+        )
+    ).figure()
+    assert fig.traces[0].style["color"] == "blue"
+
+
 def test_scatter_and_rect_css_use_fill_stroke_and_border_radius() -> None:
     chart = fc.chart(
         fc.scatter(
@@ -184,6 +205,23 @@ def test_css_variables_remain_reflex_owned_dom_values() -> None:
 
     assert spec["dom"]["style"]["--accent"] == "oklch(0.7 0.2 250)"
     assert spec["traces"][0]["style"]["color"] == "var(--accent)"
+
+
+def test_static_renderers_resolve_complete_chart_color_tokens() -> None:
+    fig = fc.chart(
+        fc.line(x=[0.0, 1.0], y=[1.0, 2.0], style={"stroke": "var(--accent)"}),
+        fc.line(x=[0.0, 1.0], y=[2.0, 1.0], style={"stroke": "var(--missing, #0ea5e9)"}),
+        style={"--accent": "var(--brand)", "--brand": "#7c3aed"},
+    ).figure()
+
+    spec, blob = fig.build_payload()
+    svg = fig.to_svg()
+    assert 'stroke="#7c3aed"' in svg
+    assert 'stroke="#0ea5e9"' in svg
+    assert spec["traces"][0]["style"]["color"] == "var(--accent)"
+
+    image = _raster.render_raster(spec, blob, scale=1)
+    assert np.any(np.all(image == np.array([124, 58, 237, 255], dtype=np.uint8), axis=2))
 
 
 def test_scatter_css_fill_survives_density_lod() -> None:

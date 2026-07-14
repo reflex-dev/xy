@@ -10,13 +10,15 @@ Layout, tick math, colormaps, and mark styling mirror the JS client
 (`30_ticks.js`, `10_colormaps.js`, `50_chartview.js`); tests assert the
 ported tables stay in sync with the JS parts. Known static-export
 approximations, documented in docs/styling.md: area mark-space gradients use
-the area's bounding box (SVG has no per-column gradient), and `var(--x)`
-colors fall back to the mark color (no DOM to resolve against).
+the area's bounding box (SVG has no per-column gradient); complete chart color
+tokens resolve statically, while nested browser-only expressions remain
+browser-dependent in SVG and use the native PNG fallback.
 """
 
 from __future__ import annotations
 
 import base64
+import re
 from datetime import UTC, datetime
 from os import PathLike
 from typing import Any, Optional
@@ -575,12 +577,104 @@ def _paint_rgba8(css: Any) -> tuple[int, int, int, int]:
 
 
 def _css(c: Any, fallback: str) -> str:
-    """Static color resolution: currentColor -> the mark color; var() can't
-    resolve without a DOM, so it falls back to the mark color too."""
+    """Resolve static colors after chart-level tokens have been expanded."""
     s = str(c or "").strip()
-    if not s or s.lower() == "currentcolor" or s.startswith("var("):
+    if not s or s.lower() == "currentcolor" or s.lower().startswith("var("):
         return fallback
     return s
+
+
+_CSS_VAR_RE = re.compile(
+    r"^var\(\s*(--[A-Za-z_][A-Za-z0-9_-]*)\s*(?:,\s*(.+))?\)$",
+    re.DOTALL | re.IGNORECASE,
+)
+_STATIC_PAINT_KEYS = frozenset(
+    {
+        "axis_color",
+        "background",
+        "canvas_background",
+        "color",
+        "fill",
+        "grid_color",
+        "label_color",
+        "line_color",
+        "stroke",
+        "stroke_color",
+        "tick_color",
+    }
+)
+
+
+def _resolve_css_var(value: Any, variables: dict[str, Any], seen: tuple[str, ...] = ()) -> Any:
+    """Resolve a complete ``var(--token[, fallback])`` static paint value."""
+    if not isinstance(value, str):
+        return value
+    match = _CSS_VAR_RE.fullmatch(value.strip())
+    if match is None:
+        return value
+    name, fallback = match.groups()
+    if name in seen:
+        return fallback.strip() if fallback is not None else value
+    replacement = variables.get(name, fallback)
+    if replacement is None:
+        return value
+    if isinstance(replacement, str):
+        replacement = replacement.strip()
+    return _resolve_css_var(replacement, variables, (*seen, name))
+
+
+def _resolve_static_css_vars(spec: dict[str, Any]) -> dict[str, Any]:
+    """Resolve chart-level color tokens with a copy-on-write spec traversal.
+
+    This deliberately handles complete color-token references only. Browser
+    expressions containing variables, such as ``color-mix(...)``, retain the
+    documented native fallback instead of approximating the browser CSS engine.
+    """
+    dom_style = (spec.get("dom") or {}).get("style") or {}
+    variables = {key: value for key, value in dom_style.items() if key.startswith("--")}
+
+    def resolve_stops(value: Any) -> Any:
+        if not isinstance(value, list):
+            return value
+        changed = False
+        out: list[Any] = []
+        for stop in value:
+            if isinstance(stop, (list, tuple)) and len(stop) >= 2:
+                paint = _resolve_css_var(stop[1], variables)
+                if paint != stop[1]:
+                    changed = True
+                    copied = list(stop)
+                    copied[1] = paint
+                    out.append(copied if isinstance(stop, list) else tuple(copied))
+                    continue
+            out.append(stop)
+        return out if changed else value
+
+    def rewrite(value: Any) -> Any:
+        if isinstance(value, dict):
+            changed = False
+            out: dict[Any, Any] = {}
+            for key, item in value.items():
+                if key == "stops":
+                    resolved = resolve_stops(item)
+                elif isinstance(item, str) and (
+                    key in _STATIC_PAINT_KEYS
+                    or (isinstance(key, str) and (key.startswith("--") or key.endswith("_color")))
+                ):
+                    resolved = _resolve_css_var(item, variables)
+                else:
+                    resolved = rewrite(item)
+                changed = changed or resolved is not item
+                out[key] = resolved
+            return out if changed else value
+        if isinstance(value, list):
+            out = [rewrite(item) for item in value]
+            return (
+                out if any(new is not old for new, old in zip(out, value, strict=True)) else value
+            )
+        return value
+
+    return rewrite(spec)
 
 
 def _num(v: float) -> str:
@@ -877,6 +971,7 @@ def axis_ticks(
 
 
 def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str:
+    spec = _resolve_static_css_vars(spec)
     width, height, compact, plot = layout(spec)
     xa, ya = spec["x_axis"], spec["y_axis"]
     sx = _Scale(xa, plot["x"], plot["x"] + plot["w"])

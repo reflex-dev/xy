@@ -2046,6 +2046,7 @@ class Chart(Component):
         scale: float = 2.0,
         engine: export.Engine = export.Engine.default,
         optimize: bool = False,
+        custom_css: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
     ) -> bytes:
@@ -2056,6 +2057,7 @@ class Chart(Component):
             scale=scale,
             engine=engine,
             optimize=optimize,
+            custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
         )
@@ -2533,6 +2535,7 @@ class FacetChart(Component):
         scale: float = 2.0,
         engine: export.Engine = export.Engine.default,
         optimize: bool = False,
+        custom_css: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
     ) -> bytes:
@@ -2541,6 +2544,7 @@ class FacetChart(Component):
             scale=scale,
             engine=engine,
             optimize=optimize,
+            custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
         )

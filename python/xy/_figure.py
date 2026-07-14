@@ -1184,6 +1184,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         scale: float = 2.0,
         engine: export.Engine = export.Engine.default,
         optimize: bool = False,
+        custom_css: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
     ) -> bytes:
@@ -1194,7 +1195,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
         HTML with an automatically discovered installed browser for browser
         CSS/WebGL fidelity (see export.find_browser); `gl` selects its WebGL
         backend — "software" (default, deterministic SwiftShader) or
-        "hardware" (real GPU)."""
+        "hardware" (real GPU). `custom_css` is Chromium-only and injects an
+        author stylesheet into the captured document."""
         return export.to_png(
             self,
             path,
@@ -1203,6 +1205,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             scale=scale,
             engine=engine,
             optimize=optimize,
+            custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
         )

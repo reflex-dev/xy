@@ -74,17 +74,21 @@ fc.bar(
 
 | Mark family | Supported CSS properties |
 | --- | --- |
-| line, step, stairs, ECDF | `color`, `stroke`, `stroke-width`, `stroke-opacity`, `stroke-dasharray`, `opacity` |
-| area, error band | `color`, `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity`; area also supports `stroke-dasharray` |
-| scatter | `color`, `fill`, `fill-opacity`, `stroke`, `stroke-width`, `opacity` |
-| histogram, bar, column | `color`, `fill`, `fill-opacity`, `stroke`, `stroke-width`, `border-radius`, `opacity` |
-| segments, error bars, contour, stem | `color`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
-| box, violin | `color`, `fill`, `fill-opacity`, `opacity` |
-| triangle mesh | `color`, `fill`, `fill-opacity`, `stroke`, `stroke-width`, `opacity` |
+| line, step, stairs, ECDF | `stroke`, `stroke-width`, `stroke-opacity`, `stroke-dasharray`, `opacity` |
+| area, error band | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity`; area also supports `stroke-dasharray` |
+| scatter | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
+| histogram, bar, column | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `border-radius`, `opacity` |
+| segments, error bars, contour, stem | `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
+| box, violin | `fill`, `fill-opacity`, `opacity` |
+| triangle mesh | `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
 | heatmap, hexbin | `fill-opacity`, `opacity` |
 
 Legacy appearance arguments such as `color=`, `width=`, and `opacity=` remain
 supported; a CSS `style` declaration is the final override when both are set.
+Within `style`, use the standard paint property for the geometry: `stroke` for
+line-like marks and `fill` for filled marks. `color` is not a paint alias there;
+this avoids ambiguous combinations such as `color` plus `stroke` and keeps the
+same declarations meaningful in SVG, WebGL, and native PNG output.
 
 ### Reflex integration boundary
 
@@ -370,11 +374,17 @@ so small labels are slightly less refined than a browser's.
 For browser CSS, font, and WebGL fidelity, `engine=fc.Engine.chromium`
 screenshots the standalone HTML with an installed Chrome, Chromium, Edge, or
 `chrome-headless-shell`. Set `XY_BROWSER` to an executable path to override
-automatic discovery. Legacy string engine values remain deprecated aliases.
+automatic discovery. Pass `custom_css="..."` to inject an author stylesheet
+into the captured standalone document. Since native export has no browser
+cascade, it rejects `custom_css`. Legacy string engine values remain deprecated
+aliases.
 
 Both static engines carry the full mark styling surface — gradients, dashes,
 symbols, rounded/stroked bars, smooth curves — with the same two documented
 approximations: an area's mark-space gradient uses the area's bounding box (no
-per-column gradient), and `var(--x)` colors fall back to the mark color (no DOM
-to resolve them against). SVG renders smooth curves as exact cubic Béziers; the
-native raster flattens them to a fine polyline.
+per-column gradient), and nested browser-only color expressions remain
+browser-dependent in SVG and use the native rasterizer's static fallback in
+PNG. Complete paint references such as `var(--accent)` resolve against custom
+properties in the chart's own `style`, including nested token aliases and
+`var()` fallbacks. SVG renders smooth curves as exact cubic Béziers; the native
+raster flattens them to a fine polyline.

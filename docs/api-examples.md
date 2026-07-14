@@ -34,7 +34,9 @@ to a browser-free native rasterizer (`Engine.default`).
 `to_png(..., engine=Engine.chromium)` uses an
 installed Chrome, Chromium, Edge, or `chrome-headless-shell` executable because
 it screenshots the same standalone HTML document for browser CSS/WebGL fidelity.
-Automatic discovery can be overridden with `XY_BROWSER`.
+Automatic discovery can be overridden with `XY_BROWSER`. Pass `custom_css=` to
+that engine when the screenshot also needs author CSS; native PNG intentionally
+rejects browser-only stylesheets.
 
 ## Chart Family Quick Reference
 

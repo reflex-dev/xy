@@ -28,6 +28,7 @@ from ._svg import (
     _corner_radii,
     _css,
     _lut,
+    _resolve_static_css_vars,
     _Scale,
     _step_arrays,
     _tick_text,
@@ -505,6 +506,7 @@ def render_raster(
     borrowed: tuple[np.ndarray, ...] = (),
 ) -> np.ndarray | bytes:
     """Paint `spec` into an ``(h, w, 4)`` RGBA8 image via the native rasterizer."""
+    spec = _resolve_static_css_vars(spec)
     width, height, compact, plot = layout(spec)
     xa, ya = spec["x_axis"], spec["y_axis"]
     sx = _Scale(xa, plot["x"], plot["x"] + plot["w"])

@@ -40,6 +40,12 @@ def test_write_images_rejects_bad_engine_and_gl(tmp_path):
         export.write_images([_fig(1)], [tmp_path / "x.png"], engine="webgpu")
     with pytest.raises(ValueError, match="gl"):
         export.write_images([_fig(1)], [tmp_path / "x.png"], gl="metal")
+    with pytest.raises(ValueError, match=r"custom_css requires engine=Engine.chromium"):
+        export.write_images(
+            [_fig(1)],
+            [tmp_path / "x.png"],
+            custom_css=".xy { color: red; }",
+        )
 
 
 def test_write_images_chromium_engine_is_deprecated_alias(tmp_path, monkeypatch):
@@ -53,3 +59,39 @@ def test_write_images_chromium_engine_is_deprecated_alias(tmp_path, monkeypatch)
             [tmp_path / "x.png"],
             engine="chromium",
         )
+
+
+def test_write_images_chromium_threads_custom_css(tmp_path, monkeypatch):
+    from xy import _chromium
+
+    seen = []
+
+    class FakeSession:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def render_png(self, html, _width, _height, *, scale):
+            seen.append((html, scale))
+            return b"\x89PNG\r\n\x1a\nbatch"
+
+    monkeypatch.setattr(export, "find_browser", lambda explicit=None: "/fake/chrome")
+    monkeypatch.setattr(_chromium, "ChromiumSession", FakeSession)
+    css = '[data-fc-slot="title"] { color: rebeccapurple; }'
+    path = tmp_path / "x.png"
+
+    result = export.write_images(
+        [_fig(1)],
+        [path],
+        engine=export.Engine.chromium,
+        custom_css=css,
+    )
+
+    assert result == [path.read_bytes()]
+    assert f"<style>{css}</style>" in seen[0][0]
+    assert seen[0][1] == 2.0
