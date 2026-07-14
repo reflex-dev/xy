@@ -180,7 +180,8 @@ def test_scatter_alpha_applied_with_colormap_encoding():
     entry = [e for e in ax._entries if e["kind"] == "scatter"][-1]
     assert entry["kwargs"]["opacity"] == pytest.approx(0.3)
     svg = _svg(fig)
-    assert 'fill-opacity="0.3"' in svg
+    # Face and edge each receive collection alpha so their overlap darkens.
+    assert '<g fill-opacity="0.3" stroke-opacity="0.3">' in svg
     _png(fig)
 
 

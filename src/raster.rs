@@ -865,7 +865,7 @@ fn point_u8_at(
     let stroke_rgb = [stroke[0], stroke[1], stroke[2]];
     let fill_alpha = fill[3] as f32 / 255.0;
     let stroke_alpha = stroke[3] as f32 / 255.0;
-    let ext = r + sw + 1.0;
+    let ext = r + 1.0;
     let (bx0, by0, bx1, by1) = cv.bbox(cx - ext, cy - ext, cx + ext, cy + ext);
     if sw <= 0.0 && sym == 0 {
         // Stroke-free circle — the default mark and the overwhelming batch
@@ -913,10 +913,11 @@ fn point_u8_at(
         for x in bx0..bx1 {
             let d = symbol_sdf(x as f32 + 0.5 - cx, y as f32 + 0.5 - cy, r, sym);
             if sw > 0.0 {
-                let outer = (0.5 - (d - sw * 0.5)).clamp(0.0, 1.0);
-                let inner = (0.5 - (d + sw * 0.5)).clamp(0.0, 1.0);
-                if inner > 0.0 {
-                    cv.blend_prepared(x, y, fill_rgb, fill_alpha, inner);
+                let outer = (0.5 - d).clamp(0.0, 1.0);
+                let path = (0.5 - (d + sw * 0.5)).clamp(0.0, 1.0);
+                let inner = (0.5 - (d + sw)).clamp(0.0, 1.0);
+                if path > 0.0 {
+                    cv.blend_prepared(x, y, fill_rgb, fill_alpha, path);
                 }
                 let ring = outer - inner;
                 if ring > 0.0 {
@@ -1550,6 +1551,13 @@ fn paint_banded(
 }
 
 /// One OP_POINTS batch: struct-of-arrays borrowed straight from the wire.
+#[inline]
+fn resolved_point_stroke(fill: [u8; 4], stroke: [u8; 4]) -> [u8; 4] {
+    // A transparent wire stroke is the internal edgecolors="face" marker.
+    // Resolve it after channel colors so every point gets its own RGBA edge.
+    if stroke[3] == 0 { fill } else { stroke }
+}
+
 struct PointsBatch<'a> {
     n: usize,
     sym: u8,
@@ -1596,7 +1604,16 @@ fn paint_points_band(sf: &mut Surface, b: &PointsBatch, indices: &[u32]) {
             b.fills[4 * i + 2],
             b.fills[4 * i + 3],
         ];
-        point_u8_at(sf, cx, cy, rr, b.sym, fill, b.sw, b.stroke);
+        point_u8_at(
+            sf,
+            cx,
+            cy,
+            rr,
+            b.sym,
+            fill,
+            b.sw,
+            resolved_point_stroke(fill, b.stroke),
+        );
     }
 }
 
@@ -1677,7 +1694,7 @@ fn paint_affine_points(cv: &mut Canvas, batch: &AffinePointsBatch, threads: usiz
                         batch.sym,
                         batch.fill,
                         batch.sw,
-                        batch.stroke,
+                        resolved_point_stroke(batch.fill, batch.stroke),
                     );
                 }
             }
@@ -1699,7 +1716,7 @@ fn paint_affine_point(sf: &mut Surface, batch: &AffinePointsBatch, i: usize) {
         batch.sym,
         batch.fill,
         batch.sw,
-        batch.stroke,
+        resolved_point_stroke(batch.fill, batch.stroke),
     );
 }
 
@@ -1754,7 +1771,7 @@ fn paint_styled_point(sf: &mut Surface, batch: &StyledPointsBatch, i: usize) {
         batch.sym,
         batch.fills[i],
         batch.sw,
-        batch.stroke,
+        resolved_point_stroke(batch.fills[i], batch.stroke),
     );
 }
 

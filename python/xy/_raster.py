@@ -761,7 +761,10 @@ def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
     op = float(style.get("opacity", 0.8))
     sw = float(style.get("stroke_width", 0.0))
     sym = _SYMBOLS.get(style.get("symbol", "circle"), 0)
-    stroke = _rgba(style.get("stroke"), color) if sw > 0 else (0, 0, 0, 0)
+    # Transparent is the private wire sentinel for edgecolors="face".  The
+    # native point painter replaces it with each point's resolved RGBA fill.
+    stroke_value = style.get("stroke")
+    stroke = _rgba(stroke_value, color, op) if sw > 0 and stroke_value is not None else (0, 0, 0, 0)
 
     color_mode = ch.get("mode")
     size_mode = size_ch.get("mode")

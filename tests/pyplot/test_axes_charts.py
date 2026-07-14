@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from pathlib import Path
 
 import numpy as np
@@ -62,6 +63,34 @@ def test_scatter_edgecolors_none_renders_without_a_stroke() -> None:
     trace = _traces(ax)[0]
     assert "stroke" not in trace.style
     assert fig._to_png().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_default_circle_scatter_matches_matplotlib_size_edge_and_opacity() -> None:
+    _fig, ax = plt.subplots()
+    collection = ax.scatter([0], [0], marker="o")
+    kwargs = collection._entry["kwargs"]
+    assert kwargs["opacity"] == 1.0
+    assert kwargs["size"] == pytest.approx(28 / 3)
+    assert kwargs["stroke_width"] == pytest.approx(4 / 3)
+
+
+def test_colormapped_scatter_default_edges_use_each_points_face_color() -> None:
+    fig, ax = plt.subplots()
+    ax.scatter([0, 1], [0, 1], c=[0.0, 1.0], cmap="viridis", alpha=0.4)
+    output = BytesIO()
+    fig.savefig(output, format="svg")
+    svg = output.getvalue().decode()
+    assert '<g fill-opacity="0.4" stroke-opacity="0.4">' in svg
+    # The two LUT endpoints must each border themselves; no generic blue edge.
+    assert 'fill="rgb(68,1,84)" stroke="rgb(68,1,84)"' in svg
+    assert 'fill="rgb(253,231,37)" stroke="rgb(253,231,37)"' in svg
+
+
+def test_colormapped_scatter_does_not_create_an_implicit_legend() -> None:
+    _fig, ax = plt.subplots()
+    ax.scatter([0, 1], [0, 1], c=[0.0, 1.0])
+    payload, _ = ax._build_chart(640, 480).figure().build_payload()
+    assert payload["show_legend"] is False
 
 
 def test_bar_categories_and_bottom() -> None:

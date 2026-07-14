@@ -498,7 +498,7 @@ const POINT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
 uniform sampler2D u_dlut; uniform float u_dblend;
-uniform int u_symbol; uniform vec4 u_ptStroke; uniform float u_ptStrokeWidth;
+uniform int u_symbol; uniform vec4 u_ptStroke; uniform float u_ptStrokeWidth; uniform int u_ptStrokeFace;
 uniform int u_selActive; uniform vec4 u_selColor; uniform vec4 u_unselColor;
 in float v_lutCoord; in float v_dim; in float v_dval; in float v_ptSize; in float v_sel;
 out vec4 outColor;
@@ -533,10 +533,23 @@ void main() {
   }
   float fillAlpha = u_opacity;
   vec4 px = vec4(rgb * fillAlpha, fillAlpha);   // premultiplied fill
-  if (u_ptStrokeWidth > 0.0 && !lineMarker) {
+  vec4 strokePx = u_ptStrokeFace == 1 ? px : u_ptStroke;
+  if (lineMarker) {
+    outColor = strokePx * (shapeCov * v_dim);
+    return;
+  }
+  if (u_ptStrokeWidth > 0.0) {
     float sw = u_ptStrokeWidth / max(v_ptSize, 1.0);   // px -> gl_PointCoord units
+    // The supplied point size includes the edge.  Recover Matplotlib's path
+    // boundary half a stroke inside it, then source-over the centered stroke.
+    float pathCov = clamp(0.5 - (sd + sw * 0.5) / aa, 0.0, 1.0);
     float innerCov = clamp(0.5 - (sd + sw) / aa, 0.0, 1.0);
-    px = mix(u_ptStroke, px, innerCov);                // ring = stroke, inside = fill
+    float strokeCov = max(shapeCov - innerCov, 0.0);
+    vec4 fillLayer = px * pathCov;
+    vec4 strokeLayer = strokePx * strokeCov;
+    px = strokeLayer + fillLayer * (1.0 - strokeLayer.a);
+    outColor = px * v_dim;
+    return;
   }
   outColor = px * (shapeCov * v_dim);
 }`;
@@ -2453,10 +2466,10 @@ _pointMarkStyle(g, t) {
 const s = t.style || {};
 g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16 }[s.symbol] || 0;
 g.pointStrokeWidth = Number(s.stroke_width) || 0;
-const markOpaque = [g.color[0], g.color[1], g.color[2], 1];
+g.pointStrokeFace = !s.stroke;
 g.pointStroke = s.stroke
-? parseColor(this.root, s.stroke, markOpaque)
-: g.pointStrokeWidth > 0 ? markOpaque : null;
+? parseColor(this.root, s.stroke, [g.color[0], g.color[1], g.color[2], 1])
+: null;
 }
 _sampleTraceSpec(parentTrace, sample) {
 return {
@@ -3040,7 +3053,8 @@ gl.uniform1f(u("u_size"), g.size);
 gl.uniform1i(u("u_sizeMode"), g.sizeMode);
 gl.uniform2f(u("u_sizeRange"), g.sizeRange[0], g.sizeRange[1]);
 gl.uniform1i(u("u_colorMode"), g.colorMode);
-gl.uniform1f(u("u_opacity"), (g.trace.style.opacity ?? 0.8) * opacityScale);
+const markOpacity = (g.trace.style.opacity ?? 0.8) * opacityScale;
+gl.uniform1f(u("u_opacity"), markOpacity);
 gl.uniform1f(u("u_selectedOpacity"), this._markStateNumber("selected", "opacity", 1));
 gl.uniform1f(u("u_unselectedOpacity"), this._markStateNumber("unselected", "opacity", 0.12));
 const stateColor = (loc, expr) => {
@@ -3053,9 +3067,11 @@ const [r, gg, b] = g.color;
 gl.uniform4f(u("u_color"), r, gg, b, 1);
 gl.uniform1i(u("u_symbol"), g.symbol || 0);
 const sc = g.pointStroke;
-gl.uniform1f(u("u_ptStrokeWidth"), sc ? (g.pointStrokeWidth || 0) * this.dpr : 0);
-gl.uniform4f(u("u_ptStroke"), sc ? sc[0] * sc[3] : 0, sc ? sc[1] * sc[3] : 0,
-sc ? sc[2] * sc[3] : 0, sc ? sc[3] : 0);
+const strokeAlpha = sc ? sc[3] * markOpacity : 0;
+gl.uniform1f(u("u_ptStrokeWidth"), (g.pointStrokeWidth || 0) * this.dpr);
+gl.uniform1i(u("u_ptStrokeFace"), g.pointStrokeFace ? 1 : 0);
+gl.uniform4f(u("u_ptStroke"), sc ? sc[0] * strokeAlpha : 0, sc ? sc[1] * strokeAlpha : 0,
+sc ? sc[2] * strokeAlpha : 0, strokeAlpha);
 gl.uniform1i(u("u_selActive"), g.selActive ? 1 : 0);
 const colorOn = g.colorMode !== 0 && g.cBuf;
 const sizeOn = g.sizeMode === 1 && g.sBuf;

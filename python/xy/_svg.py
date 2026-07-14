@@ -1224,26 +1224,32 @@ def _scatter_marks(
     line_symbol = style.get("symbol") in {"plus_line", "x_line"}
     if line_symbol and stroke_w <= 0:
         stroke_w = 1.0
-    stroke = (
-        _css(style.get("stroke"), fills[0] if fills else fallback)
-        if stroke_w or line_symbol
-        else None
-    )
-    stroke_attr = f' stroke="{escape(stroke)}" stroke-width="{_num(stroke_w)}"' if stroke else ""
+    explicit_stroke = style.get("stroke")
+    stroke = _css(explicit_stroke, fallback) if explicit_stroke is not None else None
     symbol = style.get("symbol", "circle")
     builder = _SYMBOL_BUILDERS.get(symbol)
 
-    out = [f'<g fill-opacity="{_num(op)}">' if op < 1 else "<g>"]
+    # Collection alpha applies to faces and edges.  A missing explicit stroke
+    # means edgecolors="face", so resolve the edge separately for every mark.
+    out = [f'<g fill-opacity="{_num(op)}" stroke-opacity="{_num(op)}">'] if op < 1 else ["<g>"]
     for i in range(n):
         fill_attr = f' fill="{escape(fills[i])}"'
+        point_stroke = stroke or (fills[i] if stroke_w or line_symbol else None)
+        stroke_attr = (
+            f' stroke="{escape(point_stroke)}" stroke-width="{_num(stroke_w)}"'
+            if point_stroke
+            else ""
+        )
+        # `size` includes the edge; SVG strokes are centered on the path.
+        marker_radius = max(0.0, float(radii[i]) - stroke_w / 2)
         if builder is None:
             out.append(
-                f'<circle cx="{_num(px[i])}" cy="{_num(py[i])}" r="{_num(radii[i])}"'
+                f'<circle cx="{_num(px[i])}" cy="{_num(py[i])}" r="{_num(marker_radius)}"'
                 f"{fill_attr}{stroke_attr}/>"
             )
         else:
             out.append(
-                builder(float(px[i]), float(py[i]), float(radii[i])) + f"{fill_attr}{stroke_attr}/>"
+                builder(float(px[i]), float(py[i]), marker_radius) + f"{fill_attr}{stroke_attr}/>"
             )
     out.append("</g>")
     return "".join(out)

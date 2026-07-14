@@ -198,7 +198,7 @@ const POINT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
 uniform sampler2D u_dlut; uniform float u_dblend;
-uniform int u_symbol; uniform vec4 u_ptStroke; uniform float u_ptStrokeWidth;
+uniform int u_symbol; uniform vec4 u_ptStroke; uniform float u_ptStrokeWidth; uniform int u_ptStrokeFace;
 uniform int u_selActive; uniform vec4 u_selColor; uniform vec4 u_unselColor;
 in float v_lutCoord; in float v_dim; in float v_dval; in float v_ptSize; in float v_sel;
 out vec4 outColor;
@@ -233,10 +233,23 @@ void main() {
   }
   float fillAlpha = u_opacity;
   vec4 px = vec4(rgb * fillAlpha, fillAlpha);   // premultiplied fill
-  if (u_ptStrokeWidth > 0.0 && !lineMarker) {
+  vec4 strokePx = u_ptStrokeFace == 1 ? px : u_ptStroke;
+  if (lineMarker) {
+    outColor = strokePx * (shapeCov * v_dim);
+    return;
+  }
+  if (u_ptStrokeWidth > 0.0) {
     float sw = u_ptStrokeWidth / max(v_ptSize, 1.0);   // px -> gl_PointCoord units
+    // The supplied point size includes the edge.  Recover Matplotlib's path
+    // boundary half a stroke inside it, then source-over the centered stroke.
+    float pathCov = clamp(0.5 - (sd + sw * 0.5) / aa, 0.0, 1.0);
     float innerCov = clamp(0.5 - (sd + sw) / aa, 0.0, 1.0);
-    px = mix(u_ptStroke, px, innerCov);                // ring = stroke, inside = fill
+    float strokeCov = max(shapeCov - innerCov, 0.0);
+    vec4 fillLayer = px * pathCov;
+    vec4 strokeLayer = strokePx * strokeCov;
+    px = strokeLayer + fillLayer * (1.0 - strokeLayer.a);
+    outColor = px * v_dim;
+    return;
   }
   outColor = px * (shapeCov * v_dim);
 }`;

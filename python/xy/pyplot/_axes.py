@@ -1040,12 +1040,35 @@ class Axes(PlotTypeMixin):
                     s = np.asarray(s)[finite_color]
             x, y, c = xv, yv, cv
 
-        size_px = marker_size_to_scatter_size(s, default=8.0)
+        symbol = _marker_symbol(marker) if marker else "circle"
+        marker_path_px = marker_size_to_scatter_size(s, default=8.0)
+        if symbol == "point":
+            marker_path_px = np.asarray(marker_path_px) * 0.5
+            if np.ndim(marker_path_px) == 0:
+                marker_path_px = float(marker_path_px)
+        elif symbol == "pixel":
+            marker_path_px = (
+                np.ones_like(marker_path_px, dtype=np.float64)
+                if isinstance(marker_path_px, np.ndarray)
+                else 1.0
+            )
+
+        edge_setting = rcParams["scatter.edgecolors"] if edgecolors is None else edgecolors
+        no_edges = isinstance(edge_setting, str) and edge_setting.lower() == "none"
+        edge_width_px = (
+            0.0
+            if no_edges
+            else float(rcParams["patch.linewidth"] if linewidths is None else linewidths)
+            * (4.0 / 3.0)
+        )
+        size_px = np.asarray(marker_path_px) + edge_width_px
+        if np.ndim(size_px) == 0:
+            size_px = float(size_px)
         entry_kwargs: dict[str, Any] = {
             "size": size_px,
-            "opacity": float(alpha) if alpha is not None else 0.8,
+            "opacity": float(alpha) if alpha is not None else 1.0,
             "name": str(label) if label is not None else None,
-            "symbol": _marker_symbol(marker) if marker else "circle",
+            "symbol": symbol,
         }
         if isinstance(size_px, np.ndarray) and size_px.size:
             # matplotlib s= is absolute (points²); pin the engine's size range
@@ -1081,12 +1104,10 @@ class Axes(PlotTypeMixin):
                     float(vmax) if vmax is not None else float(finite.max()) if finite.size else 1.0
                 )
                 entry_kwargs["domain"] = (lo, hi)
-        no_edges = edgecolors is None or (
-            isinstance(edgecolors, str) and edgecolors.lower() == "none"
-        )
         if not no_edges:
-            entry_kwargs["stroke"] = resolve_color(edgecolors)
-            entry_kwargs["stroke_width"] = float(1.0 if linewidths is None else linewidths)
+            if not (isinstance(edge_setting, str) and edge_setting.lower() == "face"):
+                entry_kwargs["stroke"] = resolve_color(edge_setting)
+            entry_kwargs["stroke_width"] = edge_width_px
         entry = self._add("scatter", {"x": x, "y": y, "kwargs": entry_kwargs})
         if source_color is not None:
             entry["source_array"] = source_color
@@ -3630,6 +3651,10 @@ class Axes(PlotTypeMixin):
             if legend_options.get("loc") in (None, "best"):
                 legend_options["loc"] = self._best_legend_loc()
             children.append(fc.legend(**legend_options))
+        elif not any(entry.get("kwargs", {}).get("name") for entry in self._entries):
+            # Core XY can auto-create a continuous-color "value" legend.
+            # An unlabeled Matplotlib collection must not acquire one.
+            children.append(fc.legend(show=False))
         theme_tokens = self._theme_tokens
         if _MPL_THEME_TOKENS:
             if self._grid_axis != "both":
