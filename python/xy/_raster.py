@@ -68,6 +68,11 @@ _SYMBOLS = {
     "triangle_left": 9,
     "triangle_right": 10,
     "x": 11,
+    "point": 12,
+    "pixel": 13,
+    "thin_diamond": 14,
+    "plus_line": 15,
+    "x_line": 16,
 }
 
 

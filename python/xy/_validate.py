@@ -288,6 +288,11 @@ _POINT_SYMBOLS = frozenset(
         "hexagon",
         "pentagon",
         "star",
+        "point",
+        "pixel",
+        "thin_diamond",
+        "plus_line",
+        "x_line",
     }
 )
 

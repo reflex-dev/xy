@@ -836,12 +836,12 @@ class ChartView {
         items.push({ swatch: "gradient", cmap: t.density.colormap, name: t.name || "density" });
       } else if (t.color && t.color.mode === "categorical") {
         t.color.categories.forEach((cat, i) =>
-          items.push({ swatch: t.color.palette[i], name: cat }));
+          items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {} }));
       } else if (t.color && t.color.mode === "continuous") {
         items.push({ swatch: "gradient", cmap: t.color.colormap, name: t.name || "value" });
       } else if (t.name) {
         const c = (t.color && t.color.color) || (t.style && t.style.color);
-        items.push({ swatch: c, name: t.name });
+        items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {} });
       }
     }
     if (!items.length) return;
@@ -885,6 +885,37 @@ class ChartView {
         const stops = colormapStops(it.cmap);
         bg = `linear-gradient(90deg,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
         sw.style.background = bg;
+      } else if (it.symbol) {
+        const ns = "http://www.w3.org/2000/svg";
+        const svg = document.createElementNS(ns, "svg");
+        svg.setAttribute("viewBox", "0 0 18 14");
+        svg.setAttribute("width", "18");
+        svg.setAttribute("height", "14");
+        const path = document.createElementNS(ns, "path");
+        const paths = {
+          square: "M4.5 2.5h9v9h-9z", diamond: "M9 2l5 5-5 5-5-5z",
+          thin_diamond: "M9 2l3 5-3 5-3-5z",
+          triangle: "M9 2l-5 10h10z", triangle_down: "M9 12L4 2h10z",
+          triangle_left: "M4 7L14 2v10z", triangle_right: "M14 7L4 2v10z",
+          plus_line: "M9 2v10M4 7h10", x_line: "M5 3l8 8M13 3l-8 8",
+          cross: "M7.5 2h3v3.5H14v3h-3.5V12h-3V8.5H4v-3h3.5z",
+          x: "M5.5 2L9 5.5 12.5 2 14 3.5 10.5 7 14 10.5 12.5 12 9 8.5 5.5 12 4 10.5 7.5 7 4 3.5z",
+          pentagon: "M9 2L13.8 5.5 12 11H6L4.2 5.5z",
+          hexagon: "M9 2L13.3 4.5v5L9 12l-4.3-2.5v-5z",
+          star: "M9 2l1.5 3.1 3.5.5-2.5 2.5.6 3.5L9 10l-3.1 1.6.6-3.5L4 5.6l3.5-.5z"
+        };
+        const color = safeCssPaint(this.root, bg);
+        if (it.symbol === "circle" || it.symbol === "point" || it.symbol === "pixel") {
+          if (it.symbol === "pixel") path.setAttribute("d", "M8.5 6.5h1v1h-1z");
+          else path.setAttribute("d", `M9 ${it.symbol === "point" ? 4.75 : 2.5}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 ${it.symbol === "point" ? 4.5 : 9}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 -${it.symbol === "point" ? 4.5 : 9}`);
+        } else path.setAttribute("d", paths[it.symbol] || paths.square);
+        path.setAttribute("fill", it.symbol.endsWith("_line") ? "none" : color);
+        path.setAttribute("stroke", color);
+        path.setAttribute("stroke-width", String(it.style?.stroke_width || 1));
+        svg.appendChild(path);
+        sw.appendChild(svg);
+        sw.style.width = "18px";
+        sw.style.height = "14px";
       } else {
         sw.style.background = safeCssPaint(this.root, bg);
       }
@@ -1103,7 +1134,7 @@ class ChartView {
   // no color borders in the mark color (matches the rect family).
   _pointMarkStyle(g, t) {
     const s = t.style || {};
-    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11 }[s.symbol] || 0;
+    g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16 }[s.symbol] || 0;
     g.pointStrokeWidth = Number(s.stroke_width) || 0;
     const markOpaque = [g.color[0], g.color[1], g.color[2], 1];
     g.pointStroke = s.stroke

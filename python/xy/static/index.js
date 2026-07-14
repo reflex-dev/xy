@@ -417,6 +417,20 @@ void main() {
   v_dim = u_selActive == 1 ? mix(u_unselectedOpacity, u_selectedOpacity, step(0.5, a_sel)) : 1.0;
 }`;
 const MARKER_SDF_GLSL = `
+float fcSegmentDistance(vec2 p, vec2 a, vec2 b) {
+  vec2 e = b - a;
+  return length(p - a - e * clamp(dot(p - a, e) / dot(e, e), 0.0, 1.0));
+}
+float fcTriangleDistance(vec2 p, vec2 a, vec2 b, vec2 c) {
+  float dist = min(fcSegmentDistance(p, a, b),
+                   min(fcSegmentDistance(p, b, c), fcSegmentDistance(p, c, a)));
+  float c0 = (b.x-a.x)*(p.y-a.y) - (b.y-a.y)*(p.x-a.x);
+  float c1 = (c.x-b.x)*(p.y-b.y) - (c.y-b.y)*(p.x-b.x);
+  float c2 = (a.x-c.x)*(p.y-c.y) - (a.y-c.y)*(p.x-c.x);
+  bool inside = (c0 >= 0.0 && c1 >= 0.0 && c2 >= 0.0) ||
+                (c0 <= 0.0 && c1 <= 0.0 && c2 <= 0.0);
+  return inside ? -dist : dist;
+}
 float fcMarkerSdf(vec2 d, int shape) {
   if (shape == 1) return max(abs(d.x), abs(d.y)) - 0.5;              // square
   if (shape == 2) return (abs(d.x) + abs(d.y)) - 0.5;               // diamond
@@ -451,25 +465,20 @@ float fcMarkerSdf(vec2 d, int shape) {
     float h = clamp(dot(p, ba) / dot(ba, ba), 0.0, 0.5);
     return length(p - ba * h) * sign(p.y * ba.x - p.x * ba.y);
   }
-  if (shape == 3 || shape == 8 || shape == 9 || shape == 10) {     // directional triangle
-    const float k = 1.7320508;
-    float r = 0.62;
+  if (shape == 3 || shape == 8 || shape == 9 || shape == 10) {     // Matplotlib triangle path
     vec2 q = d;
     if (shape == 8) q = -d;
     if (shape == 9) q = vec2(d.y, -d.x);
     if (shape == 10) q = vec2(-d.y, d.x);
-    vec2 p = vec2(q.x, -q.y);   // flip so the canonical apex points up
-    p.x = abs(p.x) - r;
-    p.y = p.y + r / k;
-    if (p.x + k * p.y > 0.0) p = vec2(p.x - k * p.y, -k * p.x - p.y) / 2.0;
-    p.x -= clamp(p.x, -2.0 * r, 0.0);
-    return -length(p) * sign(p.y);
+    return fcTriangleDistance(q, vec2(0.0, -0.5), vec2(-0.5, 0.5), vec2(0.5, 0.5));
   }
   if (shape == 11) {                                                // diagonal x
     vec2 q = vec2(d.x + d.y, d.y - d.x) * 0.707106781;
     vec2 a = abs(q);
     return min(max(a.x - 0.17, a.y - 0.5), max(a.x - 0.5, a.y - 0.17));
   }
+  if (shape == 13) return max(abs(d.x), abs(d.y)) - 0.5;            // snapped pixel
+  if (shape == 14) return (abs(d.x) / 0.6 + abs(d.y)) - 0.5;        // thin diamond
   return length(d) - 0.5;                                           // circle
 }`;
 const POINT_FS = `#version 300 es
@@ -483,7 +492,16 @@ out vec4 outColor;
 ${MARKER_SDF_GLSL}
 void main() {
   vec2 d = gl_PointCoord - 0.5;
-  float sd = fcMarkerSdf(d, u_symbol);
+  float sd;
+  bool lineMarker = u_symbol == 15 || u_symbol == 16;
+  if (lineMarker) {
+    vec2 q = u_symbol == 16 ? vec2(d.x + d.y, d.y - d.x) * 0.707106781 : d;
+    float halfWidth = max(u_ptStrokeWidth, 1.0) / (2.0 * max(v_ptSize, 1.0));
+    vec2 a = abs(q);
+    sd = min(max(a.x - 0.5, a.y - halfWidth), max(a.y - 0.5, a.x - halfWidth));
+  } else {
+    sd = fcMarkerSdf(d, u_symbol);
+  }
   float aa = fwidth(sd) + 1e-4;
   float shapeCov = clamp(0.5 - sd / aa, 0.0, 1.0);
   if (shapeCov <= 0.001) discard;
@@ -502,7 +520,7 @@ void main() {
   }
   float fillAlpha = u_opacity;
   vec4 px = vec4(rgb * fillAlpha, fillAlpha);   // premultiplied fill
-  if (u_ptStrokeWidth > 0.0) {
+  if (u_ptStrokeWidth > 0.0 && !lineMarker) {
     float sw = u_ptStrokeWidth / max(v_ptSize, 1.0);   // px -> gl_PointCoord units
     float innerCov = clamp(0.5 - (sd + sw) / aa, 0.0, 1.0);
     px = mix(u_ptStroke, px, innerCov);                // ring = stroke, inside = fill
@@ -2155,12 +2173,12 @@ if (t.tier === "density") {
 items.push({ swatch: "gradient", cmap: t.density.colormap, name: t.name || "density" });
 } else if (t.color && t.color.mode === "categorical") {
 t.color.categories.forEach((cat, i) =>
-items.push({ swatch: t.color.palette[i], name: cat }));
+items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {} }));
 } else if (t.color && t.color.mode === "continuous") {
 items.push({ swatch: "gradient", cmap: t.color.colormap, name: t.name || "value" });
 } else if (t.name) {
 const c = (t.color && t.color.color) || (t.style && t.style.color);
-items.push({ swatch: c, name: t.name });
+items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {} });
 }
 }
 if (!items.length) return;
@@ -2202,6 +2220,37 @@ if (it.swatch === "gradient") {
 const stops = colormapStops(it.cmap);
 bg = `linear-gradient(90deg,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
 sw.style.background = bg;
+} else if (it.symbol) {
+const ns = "http://www.w3.org/2000/svg";
+const svg = document.createElementNS(ns, "svg");
+svg.setAttribute("viewBox", "0 0 18 14");
+svg.setAttribute("width", "18");
+svg.setAttribute("height", "14");
+const path = document.createElementNS(ns, "path");
+const paths = {
+square: "M4.5 2.5h9v9h-9z", diamond: "M9 2l5 5-5 5-5-5z",
+thin_diamond: "M9 2l3 5-3 5-3-5z",
+triangle: "M9 2l-5 10h10z", triangle_down: "M9 12L4 2h10z",
+triangle_left: "M4 7L14 2v10z", triangle_right: "M14 7L4 2v10z",
+plus_line: "M9 2v10M4 7h10", x_line: "M5 3l8 8M13 3l-8 8",
+cross: "M7.5 2h3v3.5H14v3h-3.5V12h-3V8.5H4v-3h3.5z",
+x: "M5.5 2L9 5.5 12.5 2 14 3.5 10.5 7 14 10.5 12.5 12 9 8.5 5.5 12 4 10.5 7.5 7 4 3.5z",
+pentagon: "M9 2L13.8 5.5 12 11H6L4.2 5.5z",
+hexagon: "M9 2L13.3 4.5v5L9 12l-4.3-2.5v-5z",
+star: "M9 2l1.5 3.1 3.5.5-2.5 2.5.6 3.5L9 10l-3.1 1.6.6-3.5L4 5.6l3.5-.5z"
+};
+const color = safeCssPaint(this.root, bg);
+if (it.symbol === "circle" || it.symbol === "point" || it.symbol === "pixel") {
+if (it.symbol === "pixel") path.setAttribute("d", "M8.5 6.5h1v1h-1z");
+else path.setAttribute("d", `M9 ${it.symbol === "point" ? 4.75 : 2.5}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 ${it.symbol === "point" ? 4.5 : 9}a${it.symbol === "point" ? 2.25 : 4.5} ${it.symbol === "point" ? 2.25 : 4.5} 0 1 0 0 -${it.symbol === "point" ? 4.5 : 9}`);
+} else path.setAttribute("d", paths[it.symbol] || paths.square);
+path.setAttribute("fill", it.symbol.endsWith("_line") ? "none" : color);
+path.setAttribute("stroke", color);
+path.setAttribute("stroke-width", String(it.style?.stroke_width || 1));
+svg.appendChild(path);
+sw.appendChild(svg);
+sw.style.width = "18px";
+sw.style.height = "14px";
 } else {
 sw.style.background = safeCssPaint(this.root, bg);
 }
@@ -2389,7 +2438,7 @@ this._pointMarkStyle(g, t);
 }
 _pointMarkStyle(g, t) {
 const s = t.style || {};
-g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11 }[s.symbol] || 0;
+g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16 }[s.symbol] || 0;
 g.pointStrokeWidth = Number(s.stroke_width) || 0;
 const markOpaque = [g.color[0], g.color[1], g.color[2], 1];
 g.pointStroke = s.stroke

@@ -706,23 +706,29 @@ def _step_arrays(xv: np.ndarray, yv: np.ndarray, where: str) -> tuple[np.ndarray
 
 
 _SYMBOL_BUILDERS = {
+    "pixel": lambda cx, cy, r: (
+        f'<rect x="{_num(cx - r)}" y="{_num(cy - r)}" width="{_num(2 * r)}" height="{_num(2 * r)}"'
+    ),
     "square": lambda cx, cy, r: (
         f'<rect x="{_num(cx - r)}" y="{_num(cy - r)}" width="{_num(2 * r)}" height="{_num(2 * r)}"'
     ),
     "diamond": lambda cx, cy, r: (
         f'<path d="M {_num(cx)} {_num(cy - r)} L {_num(cx + r)} {_num(cy)} L {_num(cx)} {_num(cy + r)} L {_num(cx - r)} {_num(cy)} Z"'
     ),
+    "thin_diamond": lambda cx, cy, r: (
+        f'<path d="M {_num(cx)} {_num(cy - r)} L {_num(cx + 0.6 * r)} {_num(cy)} L {_num(cx)} {_num(cy + r)} L {_num(cx - 0.6 * r)} {_num(cy)} Z"'
+    ),
     "triangle": lambda cx, cy, r: (
-        f'<path d="M {_num(cx)} {_num(cy - r)} L {_num(cx + 0.9 * r)} {_num(cy + 0.62 * r)} L {_num(cx - 0.9 * r)} {_num(cy + 0.62 * r)} Z"'
+        f'<path d="M {_num(cx)} {_num(cy - r)} L {_num(cx + r)} {_num(cy + r)} L {_num(cx - r)} {_num(cy + r)} Z"'
     ),
     "triangle_down": lambda cx, cy, r: (
-        f'<path d="M {_num(cx)} {_num(cy + r)} L {_num(cx + 0.9 * r)} {_num(cy - 0.62 * r)} L {_num(cx - 0.9 * r)} {_num(cy - 0.62 * r)} Z"'
+        f'<path d="M {_num(cx)} {_num(cy + r)} L {_num(cx + r)} {_num(cy - r)} L {_num(cx - r)} {_num(cy - r)} Z"'
     ),
     "triangle_left": lambda cx, cy, r: (
-        f'<path d="M {_num(cx - r)} {_num(cy)} L {_num(cx + 0.62 * r)} {_num(cy - 0.9 * r)} L {_num(cx + 0.62 * r)} {_num(cy + 0.9 * r)} Z"'
+        f'<path d="M {_num(cx - r)} {_num(cy)} L {_num(cx + r)} {_num(cy - r)} L {_num(cx + r)} {_num(cy + r)} Z"'
     ),
     "triangle_right": lambda cx, cy, r: (
-        f'<path d="M {_num(cx + r)} {_num(cy)} L {_num(cx - 0.62 * r)} {_num(cy - 0.9 * r)} L {_num(cx - 0.62 * r)} {_num(cy + 0.9 * r)} Z"'
+        f'<path d="M {_num(cx + r)} {_num(cy)} L {_num(cx - r)} {_num(cy - r)} L {_num(cx - r)} {_num(cy + r)} Z"'
     ),
     "cross": lambda cx, cy, r: (
         f'<path d="M {_num(cx - 0.34 * r)} {_num(cy - r)} H {_num(cx + 0.34 * r)} V {_num(cy - 0.34 * r)} '
@@ -737,6 +743,13 @@ _SYMBOL_BUILDERS = {
         f"L {_num(cx + 0.72 * r)} {_num(cy + r)} L {_num(cx)} {_num(cy + 0.28 * r)} "
         f"L {_num(cx - 0.72 * r)} {_num(cy + r)} L {_num(cx - r)} {_num(cy + 0.72 * r)} "
         f'L {_num(cx - 0.28 * r)} {_num(cy)} L {_num(cx - r)} {_num(cy - 0.72 * r)} Z"'
+    ),
+    "plus_line": lambda cx, cy, r: (
+        f'<path d="M {_num(cx - r)} {_num(cy)} H {_num(cx + r)} M {_num(cx)} {_num(cy - r)} V {_num(cy + r)}" fill="none"'
+    ),
+    "x_line": lambda cx, cy, r: (
+        f'<path d="M {_num(cx - 0.707 * r)} {_num(cy - 0.707 * r)} L {_num(cx + 0.707 * r)} {_num(cy + 0.707 * r)} '
+        f'M {_num(cx + 0.707 * r)} {_num(cy - 0.707 * r)} L {_num(cx - 0.707 * r)} {_num(cy + 0.707 * r)}" fill="none"'
     ),
     "pentagon": lambda cx, cy, r: _regular_polygon_path(cx, cy, r, 5, -90.0),
     "hexagon": lambda cx, cy, r: _regular_polygon_path(cx, cy, r, 6, -90.0),
@@ -1208,7 +1221,14 @@ def _scatter_marks(
 
     op = float(style.get("opacity", 0.8))
     stroke_w = float(style.get("stroke_width", 0.0))
-    stroke = _css(style.get("stroke"), fills[0] if fills else fallback) if stroke_w else None
+    line_symbol = style.get("symbol") in {"plus_line", "x_line"}
+    if line_symbol and stroke_w <= 0:
+        stroke_w = 1.0
+    stroke = (
+        _css(style.get("stroke"), fills[0] if fills else fallback)
+        if stroke_w or line_symbol
+        else None
+    )
     stroke_attr = f' stroke="{escape(stroke)}" stroke-width="{_num(stroke_w)}"' if stroke else ""
     symbol = style.get("symbol", "circle")
     builder = _SYMBOL_BUILDERS.get(symbol)
@@ -1472,7 +1492,10 @@ def _legend(named: list[dict], plot: dict, options: dict) -> str:
             symbol = style.get("symbol", "circle")
             builder = _SYMBOL_BUILDERS.get(symbol)
             stroke_w = float(style.get("stroke_width", 0.0))
-            stroke = _css(style.get("stroke"), color) if stroke_w else None
+            line_symbol = symbol in {"plus_line", "x_line"}
+            if line_symbol and stroke_w <= 0:
+                stroke_w = 1.0
+            stroke = _css(style.get("stroke"), color) if stroke_w or line_symbol else None
             stroke_attr = (
                 f' stroke="{escape(stroke)}" stroke-width="{_num(stroke_w)}"' if stroke else ""
             )

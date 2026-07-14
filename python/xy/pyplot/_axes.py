@@ -843,7 +843,17 @@ class Axes(PlotTypeMixin):
             if marker_edge_visible
             else 0.0
         )
-        marker_size_px = marker_size_pt * (4.0 / 3.0) + marker_edge_px
+        # Matplotlib's point marker is a half-size circle, while the pixel
+        # marker is a snapped one-pixel rectangle independent of markersize.
+        # Keep those semantics instead of treating every marker as a circle.
+        marker_path_px = marker_size_pt * (4.0 / 3.0)
+        if this_marker == ".":
+            marker_path_px *= 0.5
+        elif this_marker == ",":
+            marker_path_px = 1.0
+            marker_edge_px = 0.0
+            marker_edge_visible = False
+        marker_size_px = marker_path_px + marker_edge_px
         marker_edge_style = (
             {
                 "stroke": (

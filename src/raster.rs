@@ -693,28 +693,45 @@ fn stroke_segments_band(
 // ---- point / symbol (signed distance field) ---------------------------------
 
 #[inline]
+fn segment_distance(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
+    let e = (b.0 - a.0, b.1 - a.1);
+    let v = (p.0 - a.0, p.1 - a.1);
+    let h = ((v.0 * e.0 + v.1 * e.1) / (e.0 * e.0 + e.1 * e.1)).clamp(0.0, 1.0);
+    ((v.0 - e.0 * h).powi(2) + (v.1 - e.1 * h).powi(2)).sqrt()
+}
+
+#[inline]
+fn triangle_sdf(p: (f32, f32), a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> f32 {
+    let cross = |u: (f32, f32), v: (f32, f32), q: (f32, f32)| {
+        (v.0 - u.0) * (q.1 - u.1) - (v.1 - u.1) * (q.0 - u.0)
+    };
+    let (c0, c1, c2) = (cross(a, b, p), cross(b, c, p), cross(c, a, p));
+    let inside = (c0 >= 0.0 && c1 >= 0.0 && c2 >= 0.0) || (c0 <= 0.0 && c1 <= 0.0 && c2 <= 0.0);
+    let d = segment_distance(p, a, b)
+        .min(segment_distance(p, b, c))
+        .min(segment_distance(p, c, a));
+    if inside {
+        -d
+    } else {
+        d
+    }
+}
+
+#[inline]
 fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
     match sym {
         1 => px.abs().max(py.abs()) - r, // square
         2 => (px.abs() + py.abs()) - r,  // diamond
         3 | 8 | 9 | 10 => {
-            // equilateral triangle, apex up (IQ SDF), matching the GL shader
-            let k = 1.732_050_8_f32;
-            let rr = r * 1.24;
+            // Matplotlib's normalized triangle: apex at one edge and a
+            // full-width base at the opposite edge.
             let d = match sym {
                 8 => (-px, -py), // down
                 9 => (py, -px),  // left
                 10 => (-py, px), // right
                 _ => (px, py),
             };
-            let mut p = (d.0, -d.1);
-            p.0 = p.0.abs() - rr;
-            p.1 += rr / k;
-            if p.0 + k * p.1 > 0.0 {
-                p = ((p.0 - k * p.1) / 2.0, (-k * p.0 - p.1) / 2.0);
-            }
-            p.0 -= p.0.clamp(-2.0 * rr, 0.0);
-            -(p.0 * p.0 + p.1 * p.1).sqrt() * p.1.signum()
+            triangle_sdf(d, (0.0, -r), (-r, r), (r, r))
         }
         4 => {
             // plus / cross
@@ -727,6 +744,20 @@ fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
             let qy = (py - px) * std::f32::consts::FRAC_1_SQRT_2;
             let (ax, ay) = (qx.abs(), qy.abs());
             (ax - 0.34 * r).max(ay - r).min((ax - r).max(ay - 0.34 * r))
+        }
+        13 => px.abs().max(py.abs()) - r,      // snapped pixel
+        14 => (px.abs() / 0.6 + py.abs()) - r, // thin diamond
+        15 => {
+            // Unfilled plus: its width comes from markeredgewidth below.
+            let (ax, ay) = (px.abs(), py.abs());
+            (ax - r).max(ay).min((ay - r).max(ax))
+        }
+        16 => {
+            // Unfilled x: rotate the same two line segments by 45 degrees.
+            let qx = (px + py) * std::f32::consts::FRAC_1_SQRT_2;
+            let qy = (py - px) * std::f32::consts::FRAC_1_SQRT_2;
+            let (ax, ay) = (qx.abs(), qy.abs());
+            (ax - r).max(ay).min((ay - r).max(ax))
         }
         5 => {
             // regular hexagon, pointy top (IQ SDF, x/y swapped for a top vertex)

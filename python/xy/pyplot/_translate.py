@@ -30,8 +30,8 @@ LINESTYLE_TO_DASH = {
 }
 
 MARKER_TO_SYMBOL = {
-    ".": "circle",
-    ",": "circle",
+    ".": "point",
+    ",": "pixel",
     "o": "circle",
     "v": "triangle_down",
     "^": "triangle",
@@ -48,11 +48,11 @@ MARKER_TO_SYMBOL = {
     "*": "star",
     "h": "hexagon",
     "H": "hexagon",
-    "+": "cross",
-    "x": "x",
+    "+": "plus_line",
+    "x": "x_line",
     "X": "x",
     "D": "diamond",
-    "d": "diamond",
+    "d": "thin_diamond",
     "|": "cross",
     "_": "cross",
 }

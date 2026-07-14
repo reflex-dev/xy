@@ -117,6 +117,20 @@ void main() {
 // <0 inside, 0 at the boundary. Symbols match the annotation markers plus
 // triangle. With u_symbol=0 and no stroke this reduces to the old circle.
 const MARKER_SDF_GLSL = `
+float fcSegmentDistance(vec2 p, vec2 a, vec2 b) {
+  vec2 e = b - a;
+  return length(p - a - e * clamp(dot(p - a, e) / dot(e, e), 0.0, 1.0));
+}
+float fcTriangleDistance(vec2 p, vec2 a, vec2 b, vec2 c) {
+  float dist = min(fcSegmentDistance(p, a, b),
+                   min(fcSegmentDistance(p, b, c), fcSegmentDistance(p, c, a)));
+  float c0 = (b.x-a.x)*(p.y-a.y) - (b.y-a.y)*(p.x-a.x);
+  float c1 = (c.x-b.x)*(p.y-b.y) - (c.y-b.y)*(p.x-b.x);
+  float c2 = (a.x-c.x)*(p.y-c.y) - (a.y-c.y)*(p.x-c.x);
+  bool inside = (c0 >= 0.0 && c1 >= 0.0 && c2 >= 0.0) ||
+                (c0 <= 0.0 && c1 <= 0.0 && c2 <= 0.0);
+  return inside ? -dist : dist;
+}
 float fcMarkerSdf(vec2 d, int shape) {
   if (shape == 1) return max(abs(d.x), abs(d.y)) - 0.5;              // square
   if (shape == 2) return (abs(d.x) + abs(d.y)) - 0.5;               // diamond
@@ -151,25 +165,20 @@ float fcMarkerSdf(vec2 d, int shape) {
     float h = clamp(dot(p, ba) / dot(ba, ba), 0.0, 0.5);
     return length(p - ba * h) * sign(p.y * ba.x - p.x * ba.y);
   }
-  if (shape == 3 || shape == 8 || shape == 9 || shape == 10) {     // directional triangle
-    const float k = 1.7320508;
-    float r = 0.62;
+  if (shape == 3 || shape == 8 || shape == 9 || shape == 10) {     // Matplotlib triangle path
     vec2 q = d;
     if (shape == 8) q = -d;
     if (shape == 9) q = vec2(d.y, -d.x);
     if (shape == 10) q = vec2(-d.y, d.x);
-    vec2 p = vec2(q.x, -q.y);   // flip so the canonical apex points up
-    p.x = abs(p.x) - r;
-    p.y = p.y + r / k;
-    if (p.x + k * p.y > 0.0) p = vec2(p.x - k * p.y, -k * p.x - p.y) / 2.0;
-    p.x -= clamp(p.x, -2.0 * r, 0.0);
-    return -length(p) * sign(p.y);
+    return fcTriangleDistance(q, vec2(0.0, -0.5), vec2(-0.5, 0.5), vec2(0.5, 0.5));
   }
   if (shape == 11) {                                                // diagonal x
     vec2 q = vec2(d.x + d.y, d.y - d.x) * 0.707106781;
     vec2 a = abs(q);
     return min(max(a.x - 0.17, a.y - 0.5), max(a.x - 0.5, a.y - 0.17));
   }
+  if (shape == 13) return max(abs(d.x), abs(d.y)) - 0.5;            // snapped pixel
+  if (shape == 14) return (abs(d.x) / 0.6 + abs(d.y)) - 0.5;        // thin diamond
   return length(d) - 0.5;                                           // circle
 }`;
 
@@ -184,7 +193,16 @@ out vec4 outColor;
 ${MARKER_SDF_GLSL}
 void main() {
   vec2 d = gl_PointCoord - 0.5;
-  float sd = fcMarkerSdf(d, u_symbol);
+  float sd;
+  bool lineMarker = u_symbol == 15 || u_symbol == 16;
+  if (lineMarker) {
+    vec2 q = u_symbol == 16 ? vec2(d.x + d.y, d.y - d.x) * 0.707106781 : d;
+    float halfWidth = max(u_ptStrokeWidth, 1.0) / (2.0 * max(v_ptSize, 1.0));
+    vec2 a = abs(q);
+    sd = min(max(a.x - 0.5, a.y - halfWidth), max(a.y - 0.5, a.x - halfWidth));
+  } else {
+    sd = fcMarkerSdf(d, u_symbol);
+  }
   float aa = fwidth(sd) + 1e-4;
   float shapeCov = clamp(0.5 - sd / aa, 0.0, 1.0);
   if (shapeCov <= 0.001) discard;
@@ -203,7 +221,7 @@ void main() {
   }
   float fillAlpha = u_opacity;
   vec4 px = vec4(rgb * fillAlpha, fillAlpha);   // premultiplied fill
-  if (u_ptStrokeWidth > 0.0) {
+  if (u_ptStrokeWidth > 0.0 && !lineMarker) {
     float sw = u_ptStrokeWidth / max(v_ptSize, 1.0);   // px -> gl_PointCoord units
     float innerCov = clamp(0.5 - (sd + sw) / aa, 0.0, 1.0);
     px = mix(u_ptStroke, px, innerCov);                // ring = stroke, inside = fill

@@ -149,7 +149,16 @@ def test_pentagon_marker_reaches_render_without_square_fallback():
 def test_new_symbols_are_valid_scatter_symbols():
     from xy import _validate
 
-    for symbol in ("pentagon", "hexagon", "star"):
+    for symbol in (
+        "pentagon",
+        "hexagon",
+        "star",
+        "point",
+        "pixel",
+        "thin_diamond",
+        "plus_line",
+        "x_line",
+    ):
         assert _validate.point_symbol(symbol, "symbol") == symbol
 
 
