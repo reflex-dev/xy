@@ -145,7 +145,7 @@ def _probe_js() -> str:
       cell.dataset.chartId = payload.id;
       root.appendChild(cell);
       try {
-        const view = xy.renderStandalone(cell, payload.spec, fcBytesFromB64(payload.b64));
+        const view = xy.renderStandalone(cell, payload.spec, fcBytesFromPayload(payload));
         const state = {lost: false};
         view.canvas.addEventListener("webglcontextlost", () => {
           state.lost = true;

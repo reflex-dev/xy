@@ -1178,13 +1178,16 @@ class Figure(AnnotationsMixin, PayloadMixin):
         optimize: bool = False,
         chromium: Optional[str] = None,
         sandbox: bool = True,
+        gl: str = "software",
     ) -> bytes:
         """Static PNG (export.py). `engine="native"` (default) paints the
         decimated payload with the built-in Rust rasterizer — no browser,
         millisecond export. `optimize=True` uses the slower size-oriented
         indexed encoder. `engine="chromium"` screenshots
         the standalone HTML for a pixel-exact match to the live WebGL chart
-        (needs a Chromium/Chrome binary; see export.find_chromium)."""
+        (needs a Chromium/Chrome binary; see export.find_chromium); `gl`
+        selects its WebGL backend — "software" (default, deterministic
+        SwiftShader) or "hardware" (real GPU)."""
         return export.to_png(
             self,
             path,
@@ -1195,6 +1198,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             optimize=optimize,
             chromium=chromium,
             sandbox=sandbox,
+            gl=gl,
         )
 
     def memory_report(self) -> dict[str, Any]:

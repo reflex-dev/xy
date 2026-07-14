@@ -1729,9 +1729,18 @@ class ChartView {
     gl.uniform1i(u(`${prefix}mode`), this._axisMode(axisId));
   }
 
-  draw() {
+  // `keepPick` marks a frame whose ONLY trigger is hover-highlight state: the
+  // highlight lives in the color pass, so the pick framebuffer's geometry/view
+  // snapshot stays valid and the frame must not invalidate it. Coalescing is
+  // conservative: if any caller of a pending frame needs invalidation, the
+  // frame invalidates (§17 — steady hover must not re-render N-point picks).
+  draw(keepPick = false) {
     if (this._destroyed || this._glLost || !this.gl) return;
-    if (this._raf) return;
+    if (this._raf) {
+      this._rafKeepPick = this._rafKeepPick && keepPick;
+      return;
+    }
+    this._rafKeepPick = keepPick;
     this._raf = requestAnimationFrame(() => {
       this._raf = null;
       if (this._destroyed) return;
@@ -1762,7 +1771,10 @@ class ChartView {
       markOf(g.trace.kind).draw(this, g, x0, x1, y0, y1);
     }
     this._drawHoverState();
-    this._pickDirty = true;
+    // Hover-only frames leave the pick snapshot valid (see draw()); direct
+    // _drawNow() callers never set the flag, so they invalidate as before.
+    if (!this._rafKeepPick) this._pickDirty = true;
+    this._rafKeepPick = false;
     this._drawChrome();
   }
 
@@ -2677,14 +2689,22 @@ class ChartView {
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
     gl.uniform1f(u("u_dpr"), this.dpr);
-    let slot = 0;
+    // Global pick-id space: trace ranges are [pickBase, pickBase + n), bases
+    // start at 1 so the all-zero clear stays the background sentinel.
+    let base = 1;
     for (const g of this.gpuTraces) {
       // Density traces pick only while drilled to points (§5); the drill
-      // sibling carries the buffers, the host g keeps the slot → trace id.
+      // sibling carries the buffers, the host g keeps the range → trace id.
       const pg = g.tier === "density"
         ? (g.drill && !g._drillDying && this._viewInside(g.drill.win) ? g.drill : null)
         : (markOf(g.trace.kind).pointPick ? g : null);
-      if (!pg || !pg.n) { g.pickSlot = -1; continue; } // stale slots must not alias
+      if (!pg || !pg.n || base + pg.n > 0x7fffffff) {
+        // Stale ranges must not alias; the 2^31-1 guard degrades gracefully
+        // (trace unpickable) if the global id space is ever exhausted.
+        g.pickBase = -1;
+        g.pickCount = 0;
+        continue;
+      }
       const [px0, px1] = this._axisRange(pg.xAxis || g.xAxis);
       const [py0, py1] = this._axisRange(pg.yAxis || g.yAxis);
       const xm = this._map(pg.xMeta, px0, px1, pg.xAxis || g.xAxis);
@@ -2696,8 +2716,9 @@ class ChartView {
       gl.uniform1f(u("u_size"), pg.size);
       gl.uniform1i(u("u_sizeMode"), pg.sizeMode);
       gl.uniform2f(u("u_sizeRange"), pg.sizeRange[0], pg.sizeRange[1]);
-      gl.uniform1i(u("u_slot"), slot);
-      g.pickSlot = slot;
+      gl.uniform1i(u("u_pick_base"), base);
+      g.pickBase = base;
+      g.pickCount = pg.n;
       const sizeOn = pg.sizeMode === 1 && pg.sBuf;
       this._bindVao(
         pg,
@@ -2711,7 +2732,7 @@ class ChartView {
       );
       if (!sizeOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sval, 0.5);
       gl.drawArrays(gl.POINTS, 0, pg.n);
-      slot++;
+      base += pg.n;
     }
     gl.enable(gl.BLEND);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -2729,12 +2750,14 @@ class ChartView {
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
     gl.readPixels(px, py, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    if (buf[3] === 0) return null;
-    const slot = buf[3] - 1;
-    const index = buf[0] | (buf[1] << 8) | (buf[2] << 16);
-    const g = this.gpuTraces.find((t) => t.pickSlot === slot && markOf(t.trace.kind).pointPick);
+    // Reassemble the global 32-bit id; zero is the background sentinel.
+    const id = buf[0] + buf[1] * 0x100 + buf[2] * 0x10000 + buf[3] * 0x1000000;
+    if (id === 0) return null;
+    const g = this.gpuTraces.find(
+      (t) => t.pickBase > 0 && id >= t.pickBase && id < t.pickBase + t.pickCount
+    );
     if (!g) return null;
-    return { trace: g.trace.id, index, g };
+    return { trace: g.trace.id, index: id - g.pickBase, g };
   }
 
   _decodeValue(values, meta, index) {
@@ -2902,6 +2925,15 @@ class ChartView {
 
 
 
+  // Repaint the visible canvas without invalidating the pick framebuffer —
+  // the hover-highlight caller's entry point (mechanics in draw()). Without
+  // this, every hover-target change re-rendered all N points into the pick
+  // buffer on the next pointermove — the dominant steady-hover cost at large
+  // N (§17).
+  _drawKeepPick() {
+    this.draw(true);
+  }
+
   _hover(e) {
     if (this._transitionActive()) {
       const hadHover = this._hoverId !== -1;
@@ -2920,7 +2952,7 @@ class ChartView {
       this._hoverId = -1;
       this._hoverTarget = null;
       this.tooltip.style.display = "none";
-      if (hadHover) this.draw();
+      if (hadHover) this._drawKeepPick();
       return;
     }
     const id = hit.trace * 1e9 + hit.index;
@@ -2932,7 +2964,7 @@ class ChartView {
     this._hoverId = id;
     this._hoverTarget = hit;
     this._showTooltip(hit, e.clientX, e.clientY);
-    this.draw();
+    this._drawKeepPick();
   }
 
 

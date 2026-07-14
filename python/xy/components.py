@@ -1982,6 +1982,7 @@ class Chart(Component):
         optimize: bool = False,
         chromium: Optional[str] = None,
         sandbox: bool = True,
+        gl: str = "software",
     ) -> bytes:
         return self.figure().to_png(
             path,
@@ -1992,6 +1993,7 @@ class Chart(Component):
             optimize=optimize,
             chromium=chromium,
             sandbox=sandbox,
+            gl=gl,
         )
 
     def memory_report(self) -> dict[str, Any]:
@@ -2464,6 +2466,7 @@ class FacetChart(Component):
         optimize: bool = False,
         chromium: Optional[str] = None,
         sandbox: bool = True,
+        gl: str = "software",
     ) -> bytes:
         return self.figure().to_png(
             path,
@@ -2472,6 +2475,7 @@ class FacetChart(Component):
             optimize=optimize,
             chromium=chromium,
             sandbox=sandbox,
+            gl=gl,
         )
 
     def memory_report(self) -> dict[str, Any]:

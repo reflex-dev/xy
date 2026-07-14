@@ -667,18 +667,18 @@ void main() {
 }`;
 const PICK_FS = `#version 300 es
 precision highp float; precision highp int;
-uniform int u_slot;
+uniform int u_pick_base;
 flat in int v_id;
 out vec4 outColor;
 void main() {
   vec2 d = gl_PointCoord - 0.5;
   if (length(d) > 0.5) discard;
-  int id = v_id;
+  int id = u_pick_base + v_id;
   outColor = vec4(
     float(id & 255) / 255.0,
     float((id >> 8) & 255) / 255.0,
     float((id >> 16) & 255) / 255.0,
-    float(u_slot + 1) / 255.0
+    float((id >> 24) & 255) / 255.0
   );
 }`;
 const GRID_VS = `#version 300 es
@@ -3055,9 +3055,13 @@ const u = (n) => uniformOf(gl, prog, n);
 gl.uniform2f(u(`${prefix}meta`), meta && Number.isFinite(meta.offset) ? meta.offset : 0, meta && meta.scale ? meta.scale : 1);
 gl.uniform1i(u(`${prefix}mode`), this._axisMode(axisId));
 }
-draw() {
+draw(keepPick = false) {
 if (this._destroyed || this._glLost || !this.gl) return;
-if (this._raf) return;
+if (this._raf) {
+this._rafKeepPick = this._rafKeepPick && keepPick;
+return;
+}
+this._rafKeepPick = keepPick;
 this._raf = requestAnimationFrame(() => {
 this._raf = null;
 if (this._destroyed) return;
@@ -3084,7 +3088,8 @@ continue;
 markOf(g.trace.kind).draw(this, g, x0, x1, y0, y1);
 }
 this._drawHoverState();
-this._pickDirty = true;
+if (!this._rafKeepPick) this._pickDirty = true;
+this._rafKeepPick = false;
 this._drawChrome();
 }
 _now() {
@@ -3920,12 +3925,16 @@ const prog = this.pickProg;
 gl.useProgram(prog);
 const u = (n) => uniformOf(gl, prog, n);
 gl.uniform1f(u("u_dpr"), this.dpr);
-let slot = 0;
+let base = 1;
 for (const g of this.gpuTraces) {
 const pg = g.tier === "density"
 ? (g.drill && !g._drillDying && this._viewInside(g.drill.win) ? g.drill : null)
 : (markOf(g.trace.kind).pointPick ? g : null);
-if (!pg || !pg.n) { g.pickSlot = -1; continue; }
+if (!pg || !pg.n || base + pg.n > 0x7fffffff) {
+g.pickBase = -1;
+g.pickCount = 0;
+continue;
+}
 const [px0, px1] = this._axisRange(pg.xAxis || g.xAxis);
 const [py0, py1] = this._axisRange(pg.yAxis || g.yAxis);
 const xm = this._map(pg.xMeta, px0, px1, pg.xAxis || g.xAxis);
@@ -3937,8 +3946,9 @@ this._setAxisUniforms(prog, "u_y", pg.yMeta, pg.yAxis || g.yAxis);
 gl.uniform1f(u("u_size"), pg.size);
 gl.uniform1i(u("u_sizeMode"), pg.sizeMode);
 gl.uniform2f(u("u_sizeRange"), pg.sizeRange[0], pg.sizeRange[1]);
-gl.uniform1i(u("u_slot"), slot);
-g.pickSlot = slot;
+gl.uniform1i(u("u_pick_base"), base);
+g.pickBase = base;
+g.pickCount = pg.n;
 const sizeOn = pg.sizeMode === 1 && pg.sBuf;
 this._bindVao(
 pg,
@@ -3952,7 +3962,7 @@ if (sizeOn) this._vaoAttr(ATTR_SLOTS.a_sval, pg.sBuf, 0, 0);
 );
 if (!sizeOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sval, 0.5);
 gl.drawArrays(gl.POINTS, 0, pg.n);
-slot++;
+base += pg.n;
 }
 gl.enable(gl.BLEND);
 gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -3969,12 +3979,13 @@ const buf = new Uint8Array(4);
 gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
 gl.readPixels(px, py, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
 gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-if (buf[3] === 0) return null;
-const slot = buf[3] - 1;
-const index = buf[0] | (buf[1] << 8) | (buf[2] << 16);
-const g = this.gpuTraces.find((t) => t.pickSlot === slot && markOf(t.trace.kind).pointPick);
+const id = buf[0] + buf[1] * 0x100 + buf[2] * 0x10000 + buf[3] * 0x1000000;
+if (id === 0) return null;
+const g = this.gpuTraces.find(
+(t) => t.pickBase > 0 && id >= t.pickBase && id < t.pickBase + t.pickCount
+);
 if (!g) return null;
-return { trace: g.trace.id, index, g };
+return { trace: g.trace.id, index: id - g.pickBase, g };
 }
 _decodeValue(values, meta, index) {
 if (!values || !meta || index < 0 || index >= values.length) return NaN;
@@ -4099,6 +4110,9 @@ const col = Math.min(h.w - 1, Math.max(0, Math.floor(((dataX - x0) / (x1 - x0)) 
 const row = Math.min(h.h - 1, Math.max(0, Math.floor(((dataY - y0) / (y1 - y0)) * h.h)));
 return { trace: g.trace.id, index: row * h.w + col, g, heatmap: { row, col }, synthetic: true };
 }
+_drawKeepPick() {
+this.draw(true);
+}
 _hover(e) {
 if (this._transitionActive()) {
 const hadHover = this._hoverId !== -1;
@@ -4117,7 +4131,7 @@ const hadHover = this._hoverId !== -1;
 this._hoverId = -1;
 this._hoverTarget = null;
 this.tooltip.style.display = "none";
-if (hadHover) this.draw();
+if (hadHover) this._drawKeepPick();
 return;
 }
 const id = hit.trace * 1e9 + hit.index;
@@ -4129,7 +4143,7 @@ return;
 this._hoverId = id;
 this._hoverTarget = hit;
 this._showTooltip(hit, e.clientX, e.clientY);
-this.draw();
+this._drawKeepPick();
 }
 _asF32(b) {
 if (b instanceof ArrayBuffer) return new Float32Array(b);
@@ -4795,7 +4809,7 @@ this._hideCrosshair();
 if (this._interactionFlag("hover")) {
 this._dispatchChartEvent("leave", { view: this._eventView("leave") });
 }
-if (hadHover) this.draw();
+if (hadHover) this._drawKeepPick();
 });
 this._listen(c, "click", (e) => this._click(e));
 this._listen(c, "wheel", (e) => {

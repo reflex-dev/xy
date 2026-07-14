@@ -63,7 +63,7 @@ class LeakyCallback:
 
 def _inline_spec_literal(html: str) -> str:
     body = html.split("<body>", 1)[1]
-    return body.rsplit("const spec = ", 1)[1].split(";\n  const b64", 1)[0]
+    return body.rsplit("const spec = ", 1)[1].split(";\n  const buf", 1)[0]
 
 
 def test_factories_return_components():
@@ -1539,6 +1539,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         optimize=False,
         chromium=None,
         sandbox=True,
+        gl="software",
     ):
         seen.update(
             {
@@ -1551,6 +1552,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
                 "optimize": optimize,
                 "chromium": chromium,
                 "sandbox": sandbox,
+                "gl": gl,
             }
         )
         return b"PNG"
@@ -1566,6 +1568,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         optimize=True,
         chromium="/chrome",
         sandbox=False,
+        gl="hardware",
     )
 
     assert data == b"PNG"
@@ -1579,6 +1582,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         "optimize": True,
         "chromium": "/chrome",
         "sandbox": False,
+        "gl": "hardware",
     }
 
 
