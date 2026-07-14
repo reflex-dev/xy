@@ -36,7 +36,7 @@ from xy.export import find_chromium  # noqa: E402
 # view directly (the same swap the visual-regression smoke uses).
 _RENDER_CALL = 'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
 _CAPTURE_CALL = (
-    'window.__fcProbeView = xy.renderStandalone('
+    "window.__fcProbeView = xy.renderStandalone("
     'document.getElementById("chart"), spec, bytes.buffer);'
 )
 
