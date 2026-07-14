@@ -92,7 +92,7 @@ def build_payload():
             }
         )
     spec = {
-        "protocol": 2,
+        "protocol": 3,
         "width": 900,
         "height": 420,
         "title": None,
@@ -130,7 +130,7 @@ def build_payload():
     xs[BIG_PICK_INDEX] = 0.75
     ys[BIG_PICK_INDEX] = 0.75
     spec2 = {
-        "protocol": 2,
+        "protocol": 3,
         "width": 900,
         "height": 420,
         "title": None,

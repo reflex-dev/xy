@@ -13,7 +13,136 @@ html,body{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;b
 <script>(() => {
 
 "use strict";
-const PROTOCOL = 2;
+const PROTOCOL = 3;
+const XY_FRAME_MAGIC = [0x58, 0x59, 0x42, 0x46];
+const XY_FRAME_VERSION = 1;
+const XY_FRAME_HEADER_SIZE = 24;
+const XY_FRAME_ALIGNMENT = 8;
+const XY_FRAME_DEFAULT_LIMITS = Object.freeze({
+maxFrameBytes: 512 * 1024 * 1024,
+maxMetadataBytes: 8 * 1024 * 1024,
+maxBuffers: 4096,
+maxBufferBytes: 256 * 1024 * 1024,
+});
+function fcByteSpan(value, label = "buffer") {
+if (value instanceof ArrayBuffer) return new Uint8Array(value);
+if (ArrayBuffer.isView(value)) {
+return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+}
+throw new TypeError(`${label} must be an ArrayBuffer or ArrayBuffer view`);
+}
+function fcFrameLimit(limits, name) {
+const fallback = XY_FRAME_DEFAULT_LIMITS[name];
+const value = limits && limits[name] != null ? limits[name] : fallback;
+if (!Number.isSafeInteger(value) || value <= 0) {
+throw new RangeError(`${name} must be a positive safe integer`);
+}
+return value;
+}
+function fcAlign8(value) {
+return Math.ceil(value / XY_FRAME_ALIGNMENT) * XY_FRAME_ALIGNMENT;
+}
+function fcFrameU64(view, offset, label) {
+const value = view.getBigUint64(offset, true);
+if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+throw new RangeError(`${label} exceeds JavaScript's safe integer range`);
+}
+return Number(value);
+}
+function fcRequireZeroPadding(bytes, start, end, label) {
+if (end > bytes.byteLength) throw new RangeError(`truncated ${label} padding`);
+for (let i = start; i < end; i++) {
+if (bytes[i] !== 0) throw new RangeError(`non-zero ${label} padding`);
+}
+}
+
+function decodeFrame(body, limits = null) {
+const bytes = fcByteSpan(body, "frame body");
+const maxFrameBytes = fcFrameLimit(limits, "maxFrameBytes");
+const maxMetadataBytes = fcFrameLimit(limits, "maxMetadataBytes");
+const maxBuffers = fcFrameLimit(limits, "maxBuffers");
+const maxBufferBytes = fcFrameLimit(limits, "maxBufferBytes");
+if (maxMetadataBytes > maxFrameBytes) {
+throw new RangeError("maxMetadataBytes cannot exceed maxFrameBytes");
+}
+if (maxBufferBytes > maxFrameBytes) {
+throw new RangeError("maxBufferBytes cannot exceed maxFrameBytes");
+}
+if (bytes.byteOffset % XY_FRAME_ALIGNMENT !== 0) {
+throw new RangeError("frame body must start on an 8-byte boundary");
+}
+if (bytes.byteLength > maxFrameBytes) {
+throw new RangeError(`frame length ${bytes.byteLength} exceeds limit ${maxFrameBytes}`);
+}
+if (bytes.byteLength < XY_FRAME_HEADER_SIZE) throw new RangeError("truncated frame header");
+const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+for (let i = 0; i < XY_FRAME_MAGIC.length; i++) {
+if (view.getUint8(i) !== XY_FRAME_MAGIC[i]) throw new RangeError("invalid frame magic");
+}
+const version = view.getUint8(4);
+if (version !== XY_FRAME_VERSION) throw new RangeError(`unsupported frame version ${version}`);
+const flags = view.getUint8(5);
+if (flags !== 0) throw new RangeError(`unsupported frame flags 0x${flags.toString(16)}`);
+const headerSize = view.getUint16(6, true);
+if (headerSize !== XY_FRAME_HEADER_SIZE) {
+throw new RangeError(`unsupported frame header size ${headerSize}`);
+}
+const metadataLength = view.getUint32(8, true);
+const bufferCount = view.getUint32(12, true);
+const totalLength = fcFrameU64(view, 16, "declared frame length");
+if (totalLength !== bytes.byteLength) {
+throw new RangeError(
+`declared frame length ${totalLength} does not match body length ${bytes.byteLength}`
+);
+}
+if (metadataLength > maxMetadataBytes) {
+throw new RangeError(`metadata length ${metadataLength} exceeds limit ${maxMetadataBytes}`);
+}
+if (bufferCount > maxBuffers) {
+throw new RangeError(`buffer count ${bufferCount} exceeds limit ${maxBuffers}`);
+}
+const metadataEnd = XY_FRAME_HEADER_SIZE + metadataLength;
+if (metadataEnd > bytes.byteLength) throw new RangeError("truncated frame metadata");
+let message;
+try {
+const metadataBytes = new Uint8Array(
+bytes.buffer,
+bytes.byteOffset + XY_FRAME_HEADER_SIZE,
+metadataLength
+);
+message = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(metadataBytes));
+} catch (error) {
+throw new RangeError(`invalid frame metadata JSON: ${error}`);
+}
+if (!message || Array.isArray(message) || typeof message !== "object") {
+throw new RangeError("frame metadata must decode to an object");
+}
+let position = fcAlign8(metadataEnd);
+fcRequireZeroPadding(bytes, metadataEnd, position, "metadata");
+const buffers = [];
+for (let i = 0; i < bufferCount; i++) {
+if (position + 8 > bytes.byteLength) throw new RangeError(`truncated buffer ${i} length`);
+const bufferLength = fcFrameU64(view, position, `buffer ${i} length`);
+position += 8;
+if (bufferLength > maxBufferBytes) {
+throw new RangeError(`buffer ${i} length ${bufferLength} exceeds limit ${maxBufferBytes}`);
+}
+const end = position + bufferLength;
+if (end > bytes.byteLength) throw new RangeError(`truncated buffer ${i}`);
+const absoluteOffset = bytes.byteOffset + position;
+if (absoluteOffset % XY_FRAME_ALIGNMENT !== 0) {
+throw new RangeError(`buffer ${i} is not 8-byte aligned`);
+}
+buffers.push(new Uint8Array(bytes.buffer, absoluteOffset, bufferLength));
+const paddedEnd = fcAlign8(end);
+fcRequireZeroPadding(bytes, end, paddedEnd, `buffer ${i}`);
+position = paddedEnd;
+}
+if (position !== bytes.byteLength) {
+throw new RangeError(`frame has ${bytes.byteLength - position} trailing bytes`);
+}
+return { message, buffers, version: XY_FRAME_VERSION, byteLength: bytes.byteLength };
+}
 const COLORMAP_STOPS = {
 viridis: [
 [68, 1, 84], [72, 40, 120], [62, 74, 137], [49, 104, 142], [38, 130, 142],
@@ -47,9 +176,24 @@ coolwarm: [
 [59, 76, 192], [87, 117, 211], [119, 154, 231], [157, 185, 243], [197, 209, 246],
 [221, 220, 220], [242, 196, 174], [237, 158, 130], [214, 96, 77], [180, 4, 38],
 ],
+blues: [[247, 251, 255], [222, 235, 247], [198, 219, 239], [158, 202, 225], [107, 174, 214], [66, 146, 198], [33, 113, 181], [8, 81, 156], [8, 48, 107], [8, 48, 107]],
+rdylgn: [[165, 0, 38], [215, 48, 39], [244, 109, 67], [253, 174, 97], [254, 224, 139], [217, 239, 139], [166, 217, 106], [102, 189, 99], [26, 152, 80], [0, 104, 55]],
+rainbow: [[128, 0, 255], [57, 88, 255], [0, 180, 235], [0, 235, 176], [73, 255, 104], [176, 235, 38], [235, 180, 0], [255, 88, 0], [235, 0, 57], [255, 0, 0]],
+spectral: [[158, 1, 66], [213, 62, 79], [244, 109, 67], [253, 174, 97], [254, 224, 139], [230, 245, 152], [171, 221, 164], [102, 194, 165], [50, 136, 189], [94, 79, 162]],
+piyg: [[142, 1, 82], [197, 27, 125], [222, 119, 174], [241, 182, 218], [253, 224, 239], [247, 247, 247], [230, 245, 208], [184, 225, 134], [127, 188, 65], [77, 146, 33], [39, 100, 25]],
+purples: [[252, 251, 253], [239, 237, 245], [218, 218, 235], [188, 189, 220], [158, 154, 200], [128, 125, 186], [106, 81, 163], [84, 39, 143], [63, 0, 125]],
+pubu: [[255, 247, 251], [236, 231, 242], [208, 209, 230], [166, 189, 219], [116, 169, 207], [54, 144, 192], [5, 112, 176], [4, 90, 141], [2, 56, 88]],
+prgn: [[64, 0, 75], [118, 42, 131], [153, 112, 171], [194, 165, 207], [231, 212, 232], [247, 247, 247], [217, 240, 211], [166, 219, 160], [90, 174, 97], [27, 120, 55], [0, 68, 27]],
+binary: [[255, 255, 255], [0, 0, 0]],
 };
+function colormapStops(name) {
+const reversed = typeof name === "string" && name.endsWith("_r");
+const base = reversed ? name.slice(0, -2) : name;
+const stops = COLORMAP_STOPS[base] || COLORMAP_STOPS.viridis;
+return reversed ? [...stops].reverse() : stops;
+}
 function buildLutData(name) {
-const stops = COLORMAP_STOPS[name] || COLORMAP_STOPS.viridis;
+const stops = colormapStops(name);
 const N = 256;
 const data = new Uint8Array(N * 4);
 for (let i = 0; i < N; i++) {
@@ -141,7 +285,7 @@ const FC_CHROME_CSS = `
 function ensureChromeStylesheet(node) {
 let root = node && node.getRootNode ? node.getRootNode() : document;
 const isShadow = typeof ShadowRoot !== "undefined" && root instanceof ShadowRoot;
-if (!isShadow && !(root instanceof Document)) root = document; 
+if (!isShadow && !(root instanceof Document)) root = document;
 const scope = isShadow ? root : (root.head || document.head || root.documentElement);
 if (!scope || !scope.querySelector) return;
 if (scope.querySelector("style[data-xy-chrome]")) return;
@@ -369,7 +513,7 @@ const fsh = compile(gl, gl.FRAGMENT_SHADER, fs);
 gl.attachShader(p, vsh);
 gl.attachShader(p, fsh);
 for (const [name, slot] of Object.entries(ATTR_SLOTS)) {
-gl.bindAttribLocation(p, slot, name); 
+gl.bindAttribLocation(p, slot, name);
 }
 gl.linkProgram(p);
 const ok = gl.getProgramParameter(p, gl.LINK_STATUS);
@@ -499,6 +643,27 @@ void main() {
   }
   outColor = px * (shapeCov * v_dim);
 }`;
+const POINT_SIMPLE_VS = `#version 300 es
+in float ax; in float ay;
+uniform vec2 u_xmap; uniform vec2 u_ymap;
+uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
+uniform float u_size; uniform float u_dpr;
+${AXIS_GLSL}
+void main() {
+  gl_Position = vec4(fcMap(ax, u_xmap, u_xmeta, u_xmode), fcMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  gl_PointSize = u_size * u_dpr;
+}`;
+const POINT_SIMPLE_FS = `#version 300 es
+precision highp float;
+uniform vec4 u_color;
+out vec4 outColor;
+void main() {
+  float sd = length(gl_PointCoord - 0.5) - 0.5;
+  float aa = fwidth(sd) + 1e-4;
+  float coverage = clamp(0.5 - sd / aa, 0.0, 1.0);
+  if (coverage <= 0.001) discard;
+  outColor = vec4(u_color.rgb * u_color.a, u_color.a) * coverage;
+}`;
 const PICK_VS = `#version 300 es
 in float ax; in float ay; in float a_sval;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
@@ -563,13 +728,21 @@ precision highp float;
 uniform sampler2D u_grid; uniform sampler2D u_lut;
 uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1
 uniform float u_opacity;
+uniform int u_truecolor;
 in vec2 v_data;
 out vec4 outColor;
 void main() {
   vec2 uv = vec2((v_data.x - u_gridRange.x) / (u_gridRange.y - u_gridRange.x),
                  (v_data.y - u_gridRange.z) / (u_gridRange.w - u_gridRange.z));
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
-  float raw = texture(u_grid, uv).r;
+  vec4 sampled = texture(u_grid, uv);
+  if (u_truecolor == 1) {
+    float alpha = sampled.a * u_opacity;
+    if (alpha <= 0.0) discard;
+    outColor = vec4(sampled.rgb * alpha, alpha);
+    return;
+  }
+  float raw = sampled.r;
   if (raw <= 0.0) discard;
   float t = clamp((raw * 255.0 - 1.0) / 254.0, 0.0, 1.0);
   vec3 rgb = texture(u_lut, vec2(t, 0.5)).rgb;
@@ -904,10 +1077,10 @@ return m;
 function fcSmoothResample(x, y, extra, n, maxOut) {
 if (n < 3) return null;
 const sub = Math.max(1, Math.min(16, Math.floor(maxOut / n)));
-if (sub <= 1) return null; 
+if (sub <= 1) return null;
 for (let i = 0; i < n; i++) {
 if (!Number.isFinite(x[i]) || !Number.isFinite(y[i])) return null;
-if (i > 0 && x[i] < x[i - 1]) return null; 
+if (i > 0 && x[i] < x[i - 1]) return null;
 if (extra && !Number.isFinite(extra[i])) return null;
 }
 const my = fcMonotoneTangents(x, y, n);
@@ -1116,7 +1289,7 @@ view.gl.deleteTexture(old.tex);
 }
 function lodApplyDrill(view, g, upd, buffers) {
 const gl = view.gl;
-const fresh = !g.drill; 
+const fresh = !g.drill;
 let d = g.drill;
 if (!d) {
 d = g.drill = { trace: g.trace, xBuf: gl.createBuffer(), yBuf: gl.createBuffer() };
@@ -1132,8 +1305,8 @@ d.yMeta = { offset: upd.y.offset, scale: upd.y.scale };
 d.win = { x0: upd.x_range[0], x1: upd.x_range[1], y0: upd.y_range[0], y1: upd.y_range[1] };
 d.n = Math.min(upd.x.len, upd.y.len);
 d.visible = upd.visible ?? d.n;
-d.seq = upd.drill_seq; 
-d.selActive = false; 
+d.seq = upd.drill_seq;
+d.selActive = false;
 view._hoverId = -1;
 view._lastRow = null;
 d.colorMode = 0;
@@ -1141,8 +1314,12 @@ d.color = parseColor(view.root, upd.color && upd.color.color, [0.3, 0.47, 0.66, 
 if (upd.color && upd.color.buf !== undefined) {
 d.colorMode = upd.color.mode === "continuous" ? 1 : 2;
 if (!d.cBuf) d.cBuf = gl.createBuffer();
+const colorValues = upd.color.dtype === "u8"
+? view._asU8(buffers[upd.color.buf])
+: view._asF32(buffers[upd.color.buf]);
+d.cBuf._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
 gl.bindBuffer(gl.ARRAY_BUFFER, d.cBuf);
-gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.color.buf]), gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, colorValues, gl.STATIC_DRAW);
 d.lut = upd.color.mode === "continuous"
 ? view._lut(upd.color.colormap)
 : view._paletteLut(upd.color.palette);
@@ -1164,7 +1341,7 @@ gl.bufferData(gl.ARRAY_BUFFER, view._asF32(buffers[upd.density_val.buf]), gl.STA
 d.dlut = view._lut(upd.density_colormap || "viridis");
 const first = d.lodBlend === undefined;
 d.lodBlend = Math.min(1, upd.lod_blend ?? 0);
-if (first) d.lodBlendShown = d.lodBlend; 
+if (first) d.lodBlendShown = d.lodBlend;
 } else {
 d.lodBlend = 0;
 }
@@ -1187,7 +1364,7 @@ function lodDropDrill(view, g) {
 const d = g.drill;
 if (!d) return;
 const gl = view.gl;
-view._deleteVaos(d); 
+view._deleteVaos(d);
 for (const b of [d.xBuf, d.yBuf, d.cBuf, d.sBuf, d.selBuf, d.dBuf]) if (b) gl.deleteBuffer(b);
 g.drill = null;
 g._drillFadeStart = null;
@@ -1196,7 +1373,7 @@ g._drillWasInside = false;
 g._drillShownAlpha = null;
 g._drillDying = false;
 g._drillDiedInsideWin = false;
-view._hoverId = -1; 
+view._hoverId = -1;
 view._lastRow = null;
 }
 function lodMarkDrillDying(view, g) {
@@ -1237,7 +1414,7 @@ g._drillFadeStart =
 alpha >= 1 ? null : view._now() - LOD_ENTRY_FADE_MS * lodFadeInvert(alpha);
 }
 function lodBeginDrillExitContinuous(view, g) {
-if (g._drillExitFadeStart != null) return; 
+if (g._drillExitFadeStart != null) return;
 const alpha = lodDrillShownAlpha(view, g);
 g._drillShownAlpha = alpha;
 g._drillFadeStart = null;
@@ -1261,7 +1438,9 @@ grid,
 tex: view._uploadGrid(grid, d.w, d.h, normMax),
 lut: g.density.lut,
 };
+if (Object.prototype.hasOwnProperty.call(d, "sample")) {
 view._applyDensitySample(g, d.sample, buffers);
+}
 lodStartNormAnim(view, g, normMax, d.max);
 lodRememberDensity(view, g, g.density);
 }
@@ -1367,7 +1546,7 @@ view._map(d.yMeta, y0, y1, d.yAxis),
 );
 view.draw();
 } else {
-if (g._drillDying) lodDropDrill(view, g); 
+if (g._drillDying) lodDropDrill(view, g);
 else if (exitingDrill) g._drillWasInside = false;
 lodDrawDensityWithFade(view, g, density);
 view._drawDensitySample(g, x0, x1, y0, y1);
@@ -1416,10 +1595,10 @@ const url = URL.createObjectURL(
 new Blob([FC_REBIN_WORKER_SRC], { type: "application/javascript" })
 );
 const worker = new Worker(url);
-worker._fcUrl = url; 
+worker._fcUrl = url;
 return worker;
 } catch (e) {
-return null; 
+return null;
 }
 }
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
@@ -1491,7 +1670,7 @@ requester._ctxPendingReservation = false;
 function fcInitiallyVisible(el) {
 if (typeof window === "undefined" || !el.getBoundingClientRect) return true;
 const rect = el.getBoundingClientRect();
-if (!rect.width && !rect.height) return false; 
+if (!rect.width && !rect.height) return false;
 const vh = window.innerHeight || 0;
 const vw = window.innerWidth || 0;
 return (
@@ -1529,11 +1708,11 @@ this._hoverId = -1;
 this._hoverTarget = null;
 this._viewEventRaf = null;
 this._linkedSource = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-this.dragMode = "pan"; 
+this.dragMode = "pan";
 this.fluid = spec.width === "100%";
 this.fluidH = spec.height === "100%";
 const rect = this.fluid || this.fluidH ? el.getBoundingClientRect() : null;
-const cw = this.fluid ? Math.round(rect.width) || 640 : spec.width; 
+const cw = this.fluid ? Math.round(rect.width) || 640 : spec.width;
 const ch = this.fluidH ? Math.round(rect.height) || 420 : spec.height;
 this.size = { w: Math.max(120, cw), h: Math.max(120, ch) };
 this._layout();
@@ -1555,7 +1734,7 @@ this.root.dataset.fcContextState = "ready";
 this._initContextLossRecovery();
 this._armContextVisibilityWatch();
 this._initInteraction();
-this._buildModebar(this.root); 
+this._buildModebar(this.root);
 if ((this.fluid || this.fluidH) && typeof ResizeObserver !== "undefined") {
 this._ro = new ResizeObserver((entries) => {
 const r = entries[entries.length - 1].contentRect;
@@ -1635,10 +1814,21 @@ return [Number(r[0]), Number(r[1])];
 _axisTicks(axisId, target) {
 const axis = this._axis(axisId);
 const [lo, hi] = this._axisRange(axisId);
+if (Array.isArray(axis.tick_values)) {
+const ticks = axis.tick_values.map(Number).filter((v) => Number.isFinite(v) && v >= lo && v <= hi);
+return { ticks, labels: ticks, step: ticks.length > 1 ? Math.abs(ticks[1] - ticks[0]) : 1 };
+}
 if (axis.kind === "time") return timeTicks(lo, hi, target);
 if (axis.kind === "category") return categoryTicks(lo, hi, axis.categories || [], target);
 if (axis.scale === "log") return logTicks(lo, hi, target);
 return linearTicks(lo, hi, target);
+}
+_axisTickText(axis, value, step) {
+if (Array.isArray(axis.tick_values) && Array.isArray(axis.tick_labels)) {
+const index = axis.tick_values.findIndex((candidate) => Number(candidate) === Number(value));
+if (index >= 0 && index < axis.tick_labels.length) return String(axis.tick_labels[index]);
+}
+return fmtAxis(axis, value, step);
 }
 _axisTickTarget(axisId, fallback) {
 const axis = this._axis(axisId);
@@ -1823,7 +2013,7 @@ this._dprMq?.removeEventListener?.("change", this._onDprChange);
 const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
 this._onDprChange = () => {
 if (this._destroyed) return;
-this._resize(this.size.w, this.size.h); 
+this._resize(this.size.w, this.size.h);
 this._armDprWatch();
 };
 mq.addEventListener?.("change", this._onDprChange, { once: true });
@@ -1894,7 +2084,7 @@ const ext = this.gl.getExtension("WEBGL_lose_context");
 if (!ext) return false;
 this._ctxReleasedExt = ext;
 this._ctxReleases += 1;
-this._glLost = true; 
+this._glLost = true;
 this.canvas.dataset.fcCtx = "released";
 if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
@@ -1909,7 +2099,7 @@ const ext = this._ctxReleasedExt;
 this._ctxReleasedExt = null;
 try {
 FC_CONTEXT_GOVERNOR.reserve(this);
-ext.restoreContext(); 
+ext.restoreContext();
 return;
 } catch (_err) {
 FC_CONTEXT_GOVERNOR.cancel(this);
@@ -1937,14 +2127,14 @@ this._initGl(this._payload);
 } catch (_err) {
 this._glLost = true;
 this.canvas.dataset.fcCtx = "lost";
-return; 
+return;
 }
 this._scheduleViewRequest(this.view, { delay: 0 });
 this.draw();
 }
 _armContextVisibilityWatch() {
 if (typeof IntersectionObserver === "undefined") {
-this._ctxVisible = true; 
+this._ctxVisible = true;
 return;
 }
 this._ctxIo = new IntersectionObserver(
@@ -1997,7 +2187,7 @@ root.className = "xy";
 root.style.cssText =
 `position:relative;width:${this.fluid ? "100%" : this.size.w + "px"};` +
 `height:${this.fluidH ? "100%" : this.size.h + "px"};` +
-(this.fluidH ? "min-height:120px;" : "") + 
+(this.fluidH ? "min-height:120px;" : "") +
 "font:12px system-ui,sans-serif;user-select:none;";
 this._applySlot(root, "root");
 el.appendChild(root);
@@ -2030,6 +2220,7 @@ this.tooltip.style.cssText =
 this._applySlot(this.tooltip, "tooltip");
 root.appendChild(this.tooltip);
 this._buildLegend(root);
+this._buildColorbar(root);
 this._buildReductionBadges(root);
 }
 _compactInt(value) {
@@ -2071,7 +2262,7 @@ this._badges.hidden = items.length === 0;
 for (const item of items) {
 const badge = document.createElement("div");
 badge.textContent = item;
-this._applySlot(badge, "badge_item"); 
+this._applySlot(badge, "badge_item");
 this._badges.appendChild(badge);
 }
 this._positionReductionBadges();
@@ -2108,11 +2299,24 @@ items.push({ swatch: c, name: t.name });
 }
 if (!items.length) return;
 const lg = document.createElement("div");
+const options = s.legend || {};
+const loc = options.loc || "upper right";
+const ncols = Math.max(1, Number(options.ncols) || 1);
 const rightInset = this.size.w - (this.plot.x + this.plot.w);
-lg.style.cssText =
-`position:absolute;top:${this.plot.y + 6}px;right:${rightInset + 6}px;` +
-"display:flex;flex-direction:column;overflow:auto;" +
-`max-height:${this.plot.h - 12}px;`;
+const horizontal = ncols > 1;
+const xPos = loc.includes("left")
+? `left:${this.plot.x + 6}px;`
+: loc.includes("center")
+? `left:${this.plot.x + this.plot.w / 2}px;transform:translateX(-50%);`
+: `right:${rightInset + 6}px;`;
+const yPos = loc.includes("lower")
+? `bottom:${this.size.h - (this.plot.y + this.plot.h) + 6}px;`
+: loc === "center" || loc.includes("center left") || loc.includes("center right")
+? `top:${this.plot.y + this.plot.h / 2}px;transform:${loc.includes("center") && !loc.includes("left") && !loc.includes("right") ? "translate(-50%,-50%)" : "translateY(-50%)"};`
+: `top:${this.plot.y + 6}px;`;
+lg.style.cssText = `position:absolute;${xPos}${yPos}` +
+`display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
+"overflow:auto;" + `max-height:${this.plot.h - 12}px;`;
 this._applySlot(lg, "legend");
 for (const it of items) {
 const row = document.createElement("div");
@@ -2122,7 +2326,7 @@ sw.style.display = "inline-block";
 sw.style.verticalAlign = "-1px";
 let bg = it.swatch;
 if (it.swatch === "gradient") {
-const stops = COLORMAP_STOPS[it.cmap] || COLORMAP_STOPS.viridis;
+const stops = colormapStops(it.cmap);
 bg = `linear-gradient(90deg,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
 sw.style.background = bg;
 } else {
@@ -2134,7 +2338,24 @@ row.appendChild(document.createTextNode(it.name));
 lg.appendChild(row);
 }
 root.appendChild(lg);
-this._legend = lg; 
+this._legend = lg;
+}
+_buildColorbar(root) {
+const cb = this.spec.colorbar;
+if (!cb) return;
+const stops = colormapStops(cb.colormap || "viridis");
+const box = document.createElement("div");
+const horizontal = cb.orientation === "horizontal";
+box.style.cssText = horizontal
+? `position:absolute;left:${this.plot.x}px;top:${this.plot.y + this.plot.h + 8}px;` +
+`width:${this.plot.w}px;height:10px;` +
+`background:linear-gradient(to right,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")});`
+: `position:absolute;top:${this.plot.y}px;left:${this.plot.x + this.plot.w + 8}px;` +
+`width:10px;height:${Math.max(24, this.plot.h)}px;` +
+`background:linear-gradient(to top,${stops.map((c) => `rgb(${c[0]},${c[1]},${c[2]})`).join(",")});`;
+const domain = cb.domain || [0, 1];
+box.title = `${cb.label ? cb.label + ": " : ""}${domain[0]} – ${domain[1]}`;
+root.appendChild(box);
 }
 _initGl(buffer) {
 const dpr = window.devicePixelRatio || 1;
@@ -2160,7 +2381,7 @@ this.canvas.dataset.fcCtx = "live";
 gl.enable(gl.BLEND);
 gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 this._progCache = new Map();
-this._glPrograms = this._progCache; 
+this._glPrograms = this._progCache;
 this.quad = gl.createBuffer();
 this.quad._fcId = ++this._bufSeq;
 gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
@@ -2184,6 +2405,7 @@ this._progCache.set(key, p);
 return p;
 }
 get pointProg() { return this._prog("point", POINT_VS, POINT_FS); }
+get pointSimpleProg() { return this._prog("point-simple", POINT_SIMPLE_VS, POINT_SIMPLE_FS); }
 get lineProg() { return this._prog("line", LINE_VS, LINE_FS); }
 get segmentProg() { return this._prog("segment", SEGMENT_VS, SEGMENT_FS); }
 get meshProg() { return this._prog("mesh", MESH_VS, MESH_FS); }
@@ -2239,7 +2461,9 @@ yAxis: typeof t.y_axis === "string" ? t.y_axis : "y",
 };
 if (t.tier === "density") {
 const d = t.density;
-const grid = new Float32Array(buffer, this.spec.columns[d.buf].byte_offset, d.w * d.h);
+const meta = this.spec.columns[d.buf];
+const raw = this._columnView(buffer, meta);
+const grid = d.enc === "log-u8" ? lodDecodeLogU8(raw, d.max) : raw;
 g.densityNormMax = d.max;
 g.density = {
 w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
@@ -2387,8 +2611,12 @@ gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.y.buf]), gl.STATIC_DRA
 if (sample.color && sample.color.buf !== undefined) {
 s.colorMode = sample.color.mode === "continuous" ? 1 : 2;
 s.cBuf = gl.createBuffer();
+const colorValues = sample.color.dtype === "u8"
+? this._asU8(buffers[sample.color.buf])
+: this._asF32(buffers[sample.color.buf]);
+s.cBuf._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
 gl.bindBuffer(gl.ARRAY_BUFFER, s.cBuf);
-gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.color.buf]), gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, colorValues, gl.STATIC_DRAW);
 s.lut = sample.color.mode === "continuous"
 ? this._lut(sample.color.colormap)
 : this._paletteLut(sample.color.palette);
@@ -2658,17 +2886,38 @@ this._rectMarkStyleGpu(g, t);
 }
 _buildHeatmapMark(g, t, buffer) {
 const h = t.heatmap;
-const grid = this._columnView(buffer, this.spec.columns[h.buf]);
+const truecolor = Array.isArray(h.rgba_bufs);
+const grid = truecolor
+? h.rgba_bufs.map((index) => this._columnView(buffer, this.spec.columns[index]))
+: this._columnView(buffer, this.spec.columns[h.buf]);
 g.heatmap = {
 w: h.w,
 h: h.h,
 xRange: h.x_range,
 yRange: h.y_range,
 colormap: h.colormap,
-tex: this._uploadHeatmapGrid(grid, h.w, h.h),
-lut: this._lut(h.colormap),
+truecolor,
+tex: truecolor ? this._uploadRgbaGrid(grid, h.w, h.h) : this._uploadHeatmapGrid(grid, h.w, h.h),
+lut: truecolor ? null : this._lut(h.colormap),
 };
-g._cpuHeatmap = { grid };
+if (!truecolor) g._cpuHeatmap = { grid };
+}
+_uploadRgbaGrid(channels, w, h) {
+const gl = this.gl;
+const tex = gl.createTexture();
+const data = new Uint8Array(w * h * 4);
+for (let index = 0; index < w * h; index++) {
+for (let channel = 0; channel < 4; channel++) {
+data[index * 4 + channel] = Math.round(255 * Math.max(0, Math.min(1, channels[channel][index])));
+}
+}
+gl.bindTexture(gl.TEXTURE_2D, tex);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+return tex;
 }
 _uploadGrid(f32, w, h, maxVal) {
 const gl = this.gl;
@@ -2698,14 +2947,36 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 return tex;
 }
 _columnView(buffer, meta) {
-return new Float32Array(buffer, meta.byte_offset, meta.len);
+const split = Array.isArray(buffer);
+if (split !== Number.isInteger(meta.buf)) {
+throw new Error(
+split
+? "xy: transport delivered a buffer list but the spec column has no wire-buffer index"
+: "xy: spec column carries a wire-buffer index but the transport delivered one blob",
+);
 }
-_upload(f32) {
+const span = fcByteSpan(split ? buffer[meta.buf] : buffer, "chart payload");
+const relativeOffset = Number(meta.byte_offset);
+const length = Number(meta.len);
+if (!Number.isSafeInteger(relativeOffset) || relativeOffset < 0 ||
+!Number.isSafeInteger(length) || length < 0) {
+throw new RangeError("column offset/length must be non-negative safe integers");
+}
+const bytesPerElement = meta.dtype === "u8" ? 1 : 4;
+const absoluteOffset = span.byteOffset + relativeOffset;
+const end = relativeOffset + length * bytesPerElement;
+if (end > span.byteLength) throw new RangeError("column extends past chart payload");
+if (absoluteOffset % bytesPerElement !== 0) throw new RangeError("column is misaligned");
+if (meta.dtype === "u8") return new Uint8Array(span.buffer, absoluteOffset, length);
+return new Float32Array(span.buffer, absoluteOffset, length);
+}
+_upload(view) {
 const gl = this.gl;
 const buf = gl.createBuffer();
 buf._fcId = ++this._bufSeq;
+buf._fcType = view instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
 gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-gl.bufferData(gl.ARRAY_BUFFER, f32, gl.STATIC_DRAW);
+gl.bufferData(gl.ARRAY_BUFFER, view, gl.STATIC_DRAW);
 return buf;
 }
 _bindVao(g, key, parts, setup) {
@@ -2734,7 +3005,7 @@ _vaoAttr(slot, buf, byteOffset, divisor, size = 1) {
 const gl = this.gl;
 gl.bindBuffer(gl.ARRAY_BUFFER, buf);
 gl.enableVertexAttribArray(slot);
-gl.vertexAttribPointer(slot, size, gl.FLOAT, false, 0, byteOffset);
+gl.vertexAttribPointer(slot, size, buf._fcType || gl.FLOAT, false, 0, byteOffset);
 gl.vertexAttribDivisor(slot, divisor);
 }
 _initPickTarget() {
@@ -2837,6 +3108,14 @@ _now() {
 return performance.now();
 }
 _drawPoints(g, xm, ym, opacityScale = 1) {
+const simple =
+g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
+(g.symbol || 0) === 0 && (g.pointStrokeWidth || 0) <= 0 &&
+Math.max(g.lodBlendShown ?? 0, g.lodBlend ?? 0) <= 0.001;
+if (simple) {
+this._drawSimplePoints(g, xm, ym, opacityScale);
+return;
+}
 const gl = this.gl;
 const prog = this.pointProg;
 gl.useProgram(prog);
@@ -2894,7 +3173,7 @@ if (blendOn) {
 gl.activeTexture(gl.TEXTURE1);
 gl.bindTexture(gl.TEXTURE_2D, g.dlut);
 }
-gl.uniform1i(u("u_dlut"), 1); 
+gl.uniform1i(u("u_dlut"), 1);
 this._bindVao(
 g,
 "points",
@@ -2918,6 +3197,30 @@ if (!colorOn) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
 if (!sizeOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sval, 0.5);
 if (!selOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sel, 1.0);
 if (!blendOn) gl.vertexAttrib1f(ATTR_SLOTS.a_dval, 0);
+gl.drawArrays(gl.POINTS, 0, g.n);
+}
+_drawSimplePoints(g, xm, ym, opacityScale = 1) {
+const gl = this.gl;
+const prog = this.pointSimpleProg;
+gl.useProgram(prog);
+const u = (n) => uniformOf(gl, prog, n);
+gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
+gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
+this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
+this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
+gl.uniform1f(u("u_dpr"), this.dpr);
+gl.uniform1f(u("u_size"), g.size);
+const [r, gg, b] = g.color;
+gl.uniform4f(u("u_color"), r, gg, b, (g.trace.style.opacity ?? 0.8) * opacityScale);
+this._bindVao(
+g,
+"points-simple",
+[g.xBuf._fcId, g.yBuf._fcId],
+() => {
+this._vaoAttr(ATTR_SLOTS.ax, g.xBuf, 0, 0);
+this._vaoAttr(ATTR_SLOTS.ay, g.yBuf, 0, 0);
+}
+);
 gl.drawArrays(gl.POINTS, 0, g.n);
 }
 _drawHoverState() {
@@ -3011,12 +3314,15 @@ gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
 gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
 gl.uniform4f(u("u_gridRange"), h.xRange[0], h.xRange[1], h.yRange[0], h.yRange[1]);
 gl.uniform1f(u("u_opacity"), g.trace.style.opacity ?? 1.0);
+gl.uniform1i(u("u_truecolor"), h.truecolor ? 1 : 0);
 gl.activeTexture(gl.TEXTURE0);
 gl.bindTexture(gl.TEXTURE_2D, h.tex);
 gl.uniform1i(u("u_grid"), 0);
+if (!h.truecolor) {
 gl.activeTexture(gl.TEXTURE1);
 gl.bindTexture(gl.TEXTURE_2D, h.lut);
 gl.uniform1i(u("u_lut"), 1);
+}
 gl.bindVertexArray(this.quadVao);
 gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
@@ -3372,7 +3678,7 @@ const explicitAngle = this._axisTickLabelAngle(axis);
 const baseAngle = explicitAngle === null ? 0 : explicitAngle;
 const withBase = labels.map((label) => ({ ...label, angle: baseAngle, row: 0 }));
 let strategy = this._axisTickLabelStrategy(axis);
-if (strategy === "none") return []; 
+if (strategy === "none") return [];
 if (strategy === "auto") {
 if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap)) return withBase;
 if (dim === "x" && axis.kind === "category" && labels.length <= 16) strategy = "rotate";
@@ -3455,6 +3761,8 @@ this._lastLabelDraw = now;
 const p = this.plot;
 const xAxis = this._axis("x");
 const yAxis = this._axis("y");
+const hideX = this._axisTickLabelStrategy(xAxis) === "none";
+const hideY = this._axisTickLabelStrategy(yAxis) === "none";
 const xt = this._axisTicks(
 "x",
 this._axisTickTarget("x", Math.max(3, p.w / (xAxis.kind === "time" ? 90 : 80))),
@@ -3465,7 +3773,7 @@ const yEdge = (py) => Math.min(p.y + p.h - 0.5, Math.max(p.y + 0.5, Math.round(p
 ctx.strokeStyle = this._axisStylePaint(xAxis, "grid_color", this.theme.grid);
 ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xAxis, "grid_width", 1));
 ctx.beginPath();
-for (const v of xt.ticks) {
+for (const v of (hideX ? [] : xt.ticks)) {
 const px = this._dataPx("x", v);
 if (!Number.isFinite(px)) continue;
 const x = xEdge(px);
@@ -3476,7 +3784,7 @@ ctx.stroke();
 ctx.strokeStyle = this._axisStylePaint(yAxis, "grid_color", this.theme.grid);
 ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(yAxis, "grid_width", 1));
 ctx.beginPath();
-for (const v of yt.ticks) {
+for (const v of (hideY ? [] : yt.ticks)) {
 const py = this._dataPx("y", v);
 if (!Number.isFinite(py)) continue;
 const y = yEdge(py);
@@ -3494,12 +3802,16 @@ d.style.cssText =
 "pointer-events:none;";
 this.labels.appendChild(d);
 };
+if (!hideY) {
 const yWidth = Math.max(1, Math.round(this._axisStyleNumber(yAxis, "axis_width", 1)));
 const yAxisX = yAxis.side === "right" ? p.x + p.w - yWidth : p.x;
 rule(yAxis, yAxisX, p.y, yWidth, p.h);
+}
+if (!hideX) {
 const xHeight = Math.max(1, Math.round(this._axisStyleNumber(xAxis, "axis_width", 1)));
 const xTop = xAxis.side === "top" ? p.y : p.y + p.h - xHeight;
 rule(xAxis, p.x, xTop, p.w, xHeight);
+}
 for (const axis of Object.values(this.axes)) {
 if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
 const w = Math.max(1, Math.round(this._axisStyleNumber(axis, "axis_width", 1)));
@@ -3533,7 +3845,7 @@ const xLabelCandidates = [];
 for (const v of (xt.labels || xt.ticks)) {
 const px = this._dataPx("x", v);
 if (px < p.x - 1 || px > p.x + p.w + 1) continue;
-const text = fmtAxis(xAxis, v, xt.step);
+const text = this._axisTickText(xAxis, v, xt.step);
 xLabelCandidates.push({ pos: px, text });
 }
 for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
@@ -3551,7 +3863,7 @@ const yLabelCandidates = [];
 for (const v of (yt.labels || yt.ticks)) {
 const py = this._dataPx("y", v);
 if (py < p.y - 1 || py > p.y + p.h + 1) continue;
-const text = fmtAxis(yAxis, v, yt.step);
+const text = this._axisTickText(yAxis, v, yt.step);
 yLabelCandidates.push({ pos: py, text });
 }
 for (const item of this._layoutTickLabels(yAxis, "y", yLabelCandidates)) {
@@ -3568,7 +3880,7 @@ const labelCandidates = [];
 for (const v of (ticks.labels || ticks.ticks)) {
 const py = this._dataPx(axis.id, v);
 if (py < p.y - 1 || py > p.y + p.h + 1) continue;
-const text = fmtAxis(axis, v, ticks.step);
+const text = this._axisTickText(axis, v, ticks.step);
 labelCandidates.push({ pos: py, text });
 }
 for (const item of this._layoutTickLabels(axis, "y", labelCandidates)) {
@@ -3613,7 +3925,7 @@ activeStart(g._drillExitFadeStart) ||
 _renderPick() {
 const gl = this.gl;
 if (this._pickW !== this.canvas.width || this._pickH !== this.canvas.height) {
-this._allocPickTex(); 
+this._allocPickTex();
 }
 gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
 gl.viewport(0, 0, this.canvas.width, this.canvas.height);
@@ -3673,7 +3985,7 @@ if (!this._pickable) return null;
 if (this._pickDirty) this._renderPick();
 const gl = this.gl;
 const px = Math.round(cssX * this.dpr);
-const py = Math.round((this.plot.h - cssY) * this.dpr); 
+const py = Math.round((this.plot.h - cssY) * this.dpr);
 if (px < 0 || py < 0 || px >= this.canvas.width || py >= this.canvas.height) return null;
 const buf = new Uint8Array(4);
 gl.bindFramebuffer(gl.FRAMEBUFFER, this.pickFbo);
@@ -3851,6 +4163,10 @@ if (b.byteOffset % 4 === 0) {
 return new Float32Array(b.buffer, b.byteOffset, Math.floor(b.byteLength / 4));
 }
 return new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+}
+_asU8(b) {
+if (b instanceof ArrayBuffer) return new Uint8Array(b);
+return new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
 }
 _asU32(b) {
 if (b instanceof ArrayBuffer) return new Uint32Array(b);
@@ -4069,8 +4385,11 @@ if (hi <= lo) continue;
 ctx.save();
 ctx.globalAlpha = this._styleNumber(style, "opacity", 0.14);
 ctx.fillStyle = this._annotationPaint(style, [0.39, 0.45, 0.55, 1]);
-if (vertical) ctx.fillRect(lo, p.y, hi - lo, p.h);
-else ctx.fillRect(p.x, lo, p.w, hi - lo);
+const start = Math.max(0, Math.min(1, Number(style.span_start) || 0));
+const rawEnd = style.span_end === undefined ? 1 : Number(style.span_end);
+const end = Math.max(start, Math.min(1, Number.isFinite(rawEnd) ? rawEnd : 1));
+if (vertical) ctx.fillRect(lo, p.y + (1 - end) * p.h, hi - lo, (end - start) * p.h);
+else ctx.fillRect(p.x + start * p.w, lo, (end - start) * p.w, hi - lo);
 ctx.restore();
 } else if (ann.kind === "rule") {
 const vertical = ann.axis === "x";
@@ -4084,12 +4403,15 @@ ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
 ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
 ctx.lineWidth = Math.max(0.5, this._styleNumber(style, "width", 1.5));
 ctx.beginPath();
+const start = Math.max(0, Math.min(1, Number(style.span_start) || 0));
+const rawEnd = style.span_end === undefined ? 1 : Number(style.span_end);
+const end = Math.max(start, Math.min(1, Number.isFinite(rawEnd) ? rawEnd : 1));
 if (vertical) {
-ctx.moveTo(crisp, p.y);
-ctx.lineTo(crisp, p.y + p.h);
+ctx.moveTo(crisp, p.y + (1 - end) * p.h);
+ctx.lineTo(crisp, p.y + (1 - start) * p.h);
 } else {
-ctx.moveTo(p.x, crisp);
-ctx.lineTo(p.x + p.w, crisp);
+ctx.moveTo(p.x + start * p.w, crisp);
+ctx.lineTo(p.x + end * p.w, crisp);
 }
 ctx.stroke();
 ctx.restore();
@@ -4132,8 +4454,22 @@ const style = ann && typeof ann.style === "object" ? ann.style : {};
 let px = null;
 let py = null;
 if (ann.kind === "text") {
+if (style.coordinate_space === "axes_fraction") {
+px = p.x + Number(ann.x) * p.w;
+py = p.y + (1 - Number(ann.y)) * p.h;
+} else if (style.coordinate_space === "figure_fraction") {
+px = Number(ann.x) * this.size.w;
+py = (1 - Number(ann.y)) * this.size.h;
+} else if (style.coordinate_space === "yaxis_transform") {
+px = p.x + Number(ann.x) * p.w;
+py = this._dataPxY(Number(ann.y));
+} else if (style.coordinate_space === "xaxis_transform") {
+px = this._dataPxX(Number(ann.x));
+py = p.y + (1 - Number(ann.y)) * p.h;
+} else {
 px = this._dataPxX(Number(ann.x));
 py = this._dataPxY(Number(ann.y));
+}
 } else if (ann.kind === "rule") {
 if (ann.axis === "x") {
 px = this._dataPxX(Number(ann.value));
@@ -4171,7 +4507,8 @@ const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
 const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0";
 d.style.cssText =
 `position:absolute;left:${px + dx}px;top:${py + dy}px;` +
-`transform:translate(${anchor},0);pointer-events:none;`;
+`transform:translate(${anchor},0);pointer-events:none;` +
+`white-space:pre-line;text-align:center;`;
 this._applySlot(d, "annotation_label");
 this._applyClass(d, ann.class_name);
 this._applyStyle(d, style);
@@ -4586,7 +4923,7 @@ this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
 if (this.comm) {
 this.comm.send({ type: "select", x0, x1, y0, y1 });
 } else {
-this._selectLocal(x0, x1, y0, y1); 
+this._selectLocal(x0, x1, y0, y1);
 }
 },
 _selectLocal(x0, x1, y0, y1) {
@@ -4698,7 +5035,7 @@ this._emitViewChange(opts.source || "view", { broadcast: opts.broadcast });
 return;
 }
 clearTimeout(this._viewTimer);
-this.seq += 1; 
+this.seq += 1;
 const request = opts.request !== false;
 const requestDelay = opts.requestDelay ?? Math.min(55, Math.max(24, duration * 0.35));
 const requestMaxWait = opts.requestMaxWait ?? 130;
@@ -4946,7 +5283,7 @@ if (this._sampleRebinDisabled) return;
 if (!this._rebinWorker) {
 this._rebinWorker = fcCreateRebinWorker();
 if (!this._rebinWorker) {
-this._sampleRebinDisabled = true; 
+this._sampleRebinDisabled = true;
 return;
 }
 this._rebinWorker.onmessage = (e) => this._onRebinResult(e.data);
@@ -4994,7 +5331,7 @@ g.prevDensity = g.density;
 g._densityFadeStart = this._now();
 g.densityNormMax = density.normMax || density.max;
 g.density = density;
-g._sampleRebinned = !!rebinned; 
+g._sampleRebinned = !!rebinned;
 lodRememberDensity(this, g, g.density);
 this._refreshReductionBadges();
 this.draw();
@@ -5003,7 +5340,7 @@ _applyAppend(msg, buffers) {
 const spec = msg.spec;
 const blobRaw = buffers && buffers[0];
 if (!spec || !blobRaw || !spec.traces) return;
-const blob = bytesToArrayBuffer(blobRaw);
+const blob = bytesToSpan(blobRaw);
 const spanEps = (lo, hi) => Math.max(Math.abs(hi - lo), 1e-300) * 1e-9;
 const ex = spanEps(this.view0.x0, this.view0.x1);
 const ey = spanEps(this.view0.y0, this.view0.y1);
@@ -5336,16 +5673,26 @@ area: AREA_MARK,
 function markOf(kind) {
 return MARK_KINDS[kind] || MARK_KINDS.scatter;
 }
-function bytesToArrayBuffer(b) {
-if (b instanceof ArrayBuffer) return b;
-if (b instanceof DataView || ArrayBuffer.isView(b)) {
-return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
+function bytesToSpan(b) {
+const span = fcByteSpan(b, "chart payload");
+return span.byteOffset % 4 === 0 ? span : new Uint8Array(span);
 }
-throw new Error("unsupported buffer type");
+
+function payloadBuffers(spec, raw) {
+if (spec.buffer_layout === "split") {
+if (!Array.isArray(raw)) {
+throw new Error("xy: spec says buffer_layout=split but the transport delivered one buffer");
+}
+return raw.map(bytesToSpan);
+}
+if (Array.isArray(raw)) {
+throw new Error("xy: transport delivered a buffer list but the spec is not split-layout");
+}
+return bytesToSpan(raw);
 }
 function render({ model, el }) {
 const spec = model.get("spec");
-const buffer = bytesToArrayBuffer(model.get("buffers"));
+const buffer = payloadBuffers(spec, model.get("buffers"));
 const comm = {
 send: (msg) => model.send(msg),
 onMessage: (cb) => {
@@ -5359,9 +5706,9 @@ return () => view.destroy();
 }
 
 function renderStandalone(el, spec, arrayBuffer) {
-const buffer = bytesToArrayBuffer(arrayBuffer);
+const buffer = bytesToSpan(arrayBuffer);
 const view = new ChartView(el, spec, buffer, null);
-const column = (idx) => new Float32Array(buffer, spec.columns[idx].byte_offset, spec.columns[idx].len);
+const column = (idx) => view._columnView(buffer, spec.columns[idx]);
 for (const g of view.gpuTraces) {
 if (markOf(g.trace.kind).retainCpu && g.tier !== "density") {
 g._cpu = {
@@ -5381,15 +5728,15 @@ g._cpu.size = column(g.trace.size.buf);
 return view;
 }
 
-window.xy = { render, renderStandalone, ChartView, MARK_KINDS, markOf };
+window.xy = { render, renderStandalone, decodeFrame, ChartView, MARK_KINDS, markOf };
 })();
 </script>
 <script>var __xyChunks = [];</script>
-<script>__xyChunks.push("CtcjPM3MzD24HgW+rkdhPs3MTL17FC4+rkdhvo/CdT3NzEy9CtejPSlcD77NzEw+7FG4vZqZGT7NzEy+j8L1PAAAAAAAAAAAAACAPwAAAAAAAABAAACAPwAAAEAAAIA/");</script>
+<script>__xyChunks.push("CtcjPM3MzD24HgW+rkdhPs3MTL17FC4+rkdhvo/CdT3NzEy9CtejPSlcD77NzEw+7FG4vZqZGT7NzEy+j8L1PAAAAQACAQIB");</script>
 <script>
   function xyDecodeB64(chunks, total) {const bytes = new Uint8Array(total); let off = 0;const native = typeof bytes.setFromBase64 === "function";for (let i = 0; i < chunks.length; i++) {const s = chunks[i];if (native) { off += bytes.subarray(off).setFromBase64(s).written; }else { const bin = atob(s), n = bin.length;for (let j = 0; j < n; j++) bytes[off + j] = bin.charCodeAt(j); off += n; }} return bytes.buffer; }
-  const spec = {"protocol":2,"width":"100%","height":430,"title":"Custom Reflex legend + tooltip","x_axis":{"id":"x","kind":"linear","label":"activation","range":[0.4768,0.9432],"side":"bottom"},"y_axis":{"id":"y","kind":"linear","label":"retention","range":[0.448,0.872],"side":"left"},"axes":{"x":{"id":"x","kind":"linear","label":"activation","range":[0.4768,0.9432],"side":"bottom"},"y":{"id":"y","kind":"linear","label":"retention","range":[0.448,0.872],"side":"left"}},"traces":[{"id":0,"kind":"scatter","name":"accounts","style":{"opacity":0.88},"tier":"direct","n_points":8,"n_marks":8,"x":0,"y":1,"x_axis":"x","y_axis":"y","color":{"mode":"categorical","categories":["Enterprise","Growth","Self serve"],"buf":2,"palette":["#4c78a8","#f58518","#54a24b"]},"size":{"mode":"constant","size":18.0}}],"columns":[{"byte_offset":0,"len":8,"offset":0.71,"scale":1.0,"kind":"float"},{"byte_offset":32,"len":8,"offset":0.66,"scale":1.0,"kind":"float"},{"byte_offset":64,"len":8}],"backend":"native","show_legend":false,"show_tooltip":false,"tooltip":{"fields":["activation","retention","segment"],"title":"{segment}","format":{"activation":".2f","retention":".2f"},"aliases":{"activation":"x","retention":"y","segment":"color_category"},"sources":{"activation":[{"trace":0,"channel":"x"}],"retention":[{"trace":0,"channel":"y"}],"segment":[{"trace":0,"channel":"color_category"}]}}};
-  const buf = xyDecodeB64(__xyChunks, 96);
+  const spec = {"protocol":3,"width":"100%","height":430,"title":"Custom Reflex legend + tooltip","x_axis":{"id":"x","kind":"linear","label":"activation","range":[0.4768,0.9432],"side":"bottom"},"y_axis":{"id":"y","kind":"linear","label":"retention","range":[0.448,0.872],"side":"left"},"axes":{"x":{"id":"x","kind":"linear","label":"activation","range":[0.4768,0.9432],"side":"bottom"},"y":{"id":"y","kind":"linear","label":"retention","range":[0.448,0.872],"side":"left"}},"traces":[{"id":0,"kind":"scatter","name":"accounts","style":{"opacity":0.88},"tier":"direct","n_points":8,"n_marks":8,"x":0,"y":1,"x_axis":"x","y_axis":"y","color":{"mode":"categorical","categories":["Enterprise","Growth","Self serve"],"buf":2,"dtype":"u8","palette":["#4c78a8","#f58518","#54a24b"]},"size":{"mode":"constant","size":18.0}}],"columns":[{"byte_offset":0,"len":8,"offset":0.71,"scale":1.0,"kind":"float"},{"byte_offset":32,"len":8,"offset":0.66,"scale":1.0,"kind":"float"},{"byte_offset":64,"len":8,"dtype":"u8"}],"backend":"native","show_legend":false,"legend":{"loc":null,"ncols":1},"show_tooltip":false,"tooltip":{"fields":["activation","retention","segment"],"title":"{segment}","format":{"activation":".2f","retention":".2f"},"aliases":{"activation":"x","retention":"y","segment":"color_category"},"sources":{"activation":[{"trace":0,"channel":"x"}],"retention":[{"trace":0,"channel":"y"}],"segment":[{"trace":0,"channel":"color_category"}]}}};
+  const buf = xyDecodeB64(__xyChunks, 72);
   __xyChunks.length = 0;
   window.__xyCustomChromeView = xy.renderStandalone(document.getElementById("chart"), spec, buf);
 </script>
