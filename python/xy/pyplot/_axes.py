@@ -1498,6 +1498,9 @@ class Axes(PlotTypeMixin):
                             "base": sl,
                             "color": resolved_color,
                             "opacity": float(alpha) if alpha is not None else 1.0,
+                            "line_width": float(rcParams["patch.linewidth"]) * (4.0 / 3.0),
+                            "line_opacity": float(alpha) if alpha is not None else 1.0,
+                            "stroke_perimeter": True,
                             "name": str(label) if label is not None and not entries else None,
                         },
                     },
@@ -1541,6 +1544,9 @@ class Axes(PlotTypeMixin):
                                     "base": np.asarray(sl),
                                     "color": resolved_color,
                                     "opacity": float(alpha) if alpha is not None else 1.0,
+                                    "line_width": float(rcParams["patch.linewidth"]) * (4.0 / 3.0),
+                                    "line_opacity": float(alpha) if alpha is not None else 1.0,
+                                    "stroke_perimeter": True,
                                     "name": str(label)
                                     if label is not None and not entries
                                     else None,

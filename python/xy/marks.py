@@ -503,6 +503,7 @@ def area(
     opacity: float = 0.35,
     line_width: float = 1.2,
     line_opacity: float = 1.0,
+    stroke_perimeter: bool = False,
     fill: Any = None,
     curve: str = "linear",
     dash: Any = None,
@@ -520,6 +521,7 @@ def area(
     opacity = self._opacity(opacity, "area opacity")
     line_width = self._nonnegative_scalar(line_width, "area line_width")
     line_opacity = self._opacity(line_opacity, "area line_opacity")
+    stroke_perimeter = _validate.optional_bool(stroke_perimeter, "area stroke_perimeter")
     fill_spec = _validate.mark_fill(fill, "area fill")
     curve = _validate.curve(curve, "area curve")
     dash_spec = _validate.dash(dash, "area dash")
@@ -543,6 +545,7 @@ def area(
             "opacity": opacity,
             "line_width": line_width,
             "line_opacity": line_opacity,
+            "stroke_perimeter": stroke_perimeter,
         }
         if fill_spec is not None:
             style["fill"] = fill_spec

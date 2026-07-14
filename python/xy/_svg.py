@@ -958,8 +958,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             lw = float(style.get("line_width", 1.2))
             if lw > 0:
                 lop = float(style.get("line_opacity", 1.0))
+                outline_path = joined if style.get("stroke_perimeter") else top_path
                 marks.append(
-                    f'<path d="{top_path}" stroke="{escape(color)}" stroke-width="{_num(lw)}" '
+                    f'<path d="{outline_path}" stroke="{escape(color)}" stroke-width="{_num(lw)}" '
                     f'fill="none" stroke-linejoin="round"'
                     + (f' stroke-opacity="{_num(lop)}"' if lop < 1 else "")
                     + _dash_attr(style)

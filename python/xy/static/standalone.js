@@ -5549,6 +5549,16 @@ const ym = view._map(g.yMeta, y0, y1, g.yAxis);
 view._drawArea(g, xm, ym, view._map(g.baseMeta, y0, y1, g.yAxis));
 if ((g.trace.style.line_width ?? 0) > 0) {
 view._drawLine(g, xm, ym, g.lineColor, g.trace.style.line_width, g.trace.style.line_opacity ?? 1);
+if (g.trace.style.stroke_perimeter) {
+const yBuf = g.yBuf, yMeta = g.yMeta, dashY = g._dashY;
+g.yBuf = g.baseBuf;
+g.yMeta = g.baseMeta;
+g._dashY = g._cpu.base;
+view._drawLine(g, xm, ym, g.lineColor, g.trace.style.line_width, g.trace.style.line_opacity ?? 1);
+g.yBuf = yBuf;
+g.yMeta = yMeta;
+g._dashY = dashY;
+}
 }
 },
 refreshColor: (view, g) => {

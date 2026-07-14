@@ -753,6 +753,8 @@ def _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot):
     if lw > 0:
         lop = float(style.get("line_opacity", 1.0))
         cmd.stroke(top, lw, _rgba(style.get("color"), color, lop), dash=style.get("dash"))
+        if style.get("stroke_perimeter"):
+            cmd.stroke(base, lw, _rgba(style.get("color"), color, lop), dash=style.get("dash"))
 
 
 def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):

@@ -93,6 +93,15 @@ def test_colormapped_scatter_does_not_create_an_implicit_legend() -> None:
     assert payload["show_legend"] is False
 
 
+def test_fill_between_uses_a_faint_full_perimeter_not_an_opaque_lower_line() -> None:
+    _fig, ax = plt.subplots()
+    ax.fill_between([0, 1, 2], [-1, 0, -1], [1, 2, 1], color="gray", alpha=0.2)
+    trace = _traces(ax)[0]
+    assert trace.style["stroke_perimeter"] is True
+    assert trace.style["line_width"] == pytest.approx(4 / 3)
+    assert trace.style["line_opacity"] == pytest.approx(0.2)
+
+
 def test_bar_categories_and_bottom() -> None:
     _fig, ax = plt.subplots()
     ax.bar(["a", "b"], [1, 2], bottom=[1, 1], label="one")
