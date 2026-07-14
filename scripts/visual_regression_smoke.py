@@ -412,12 +412,9 @@ def _assert_no_tick_label_overlaps_from_document(
     document: str,
     chromium: str,
 ) -> None:
-    standalone_render_call = (
-        'xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);'
-    )
+    standalone_render_call = 'xy.renderStandalone(document.getElementById("chart"), spec, buf);'
     standalone_capture_call = (
-        "window.__fcProbeView = xy.renderStandalone("
-        'document.getElementById("chart"), spec, bytes.buffer);'
+        'window.__fcProbeView = xy.renderStandalone(document.getElementById("chart"), spec, buf);'
     )
     live_render_call = "const view = new xy.ChartView("
     live_capture_call = "const view = window.__fcProbeView = new xy.ChartView("

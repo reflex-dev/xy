@@ -1017,7 +1017,7 @@ def test_to_html_escapes_user_strings():
     html = fig.to_html()
     body = html.split("<body>", 1)[1]
     assert "</script><img" not in body  # broken-out tag never appears verbatim
-    spec_literal = body.rsplit("const spec = ", 1)[1].split(";\n  const b64", 1)[0]
+    spec_literal = body.rsplit("const spec = ", 1)[1].split(";\n  const buf", 1)[0]
     assert "<" not in spec_literal
     assert ">" not in spec_literal
     assert "&" not in spec_literal

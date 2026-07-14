@@ -24,6 +24,15 @@ if TYPE_CHECKING:
 # Warn above this payload size; base64 carries a stated ~33% tax (§29).
 EMBED_WARN_BYTES = 64 * 2**20
 
+# The standalone export has no binary comm channel, so §29's "chunked base64"
+# fallback applies. The blob is split into 3-byte-aligned slices (except the
+# last), so each chunk's base64 has no interior padding and decodes
+# independently into a contiguous region of one preallocated buffer — the bytes
+# are identical to the source blob, and no single JS string ever approaches
+# V8's ~512 MB length cliff (the failure mode that caps a single embedded
+# string). 48 MiB is divisible by 3, keeping the alignment invariant trivially.
+_B64_CHUNK_BYTES = 48 * 2**20
+
 # Static PNG export shells out to a headless Chromium (the same engine that
 # renders the chart interactively) — no Python browser dependency, no
 # kaleido-class native package. Discovery order: explicit env var, then PATH,
@@ -119,6 +128,40 @@ def _javascript_for_inline_script(source: str) -> str:
     return source.replace("</", "<\\/")
 
 
+def _base64_chunks(blob: bytes) -> list[str]:
+    """Base64 the payload as 3-byte-aligned chunks (see `_B64_CHUNK_BYTES`).
+
+    Every chunk but the last encodes a multiple of 3 bytes, so its base64 has no
+    interior `=` padding and decodes to an exact byte length — letting the client
+    reassemble one contiguous buffer without tracking base64 boundaries. A
+    memoryview avoids copying the (potentially huge) blob per slice."""
+    if not blob:
+        return []
+    view = memoryview(blob)
+    step = _B64_CHUNK_BYTES
+    return [base64.b64encode(view[i : i + step]).decode("ascii") for i in range(0, len(view), step)]
+
+
+# Inline decoder for the chunked base64 payload. Prefers the native Uint8Array
+# base64 decoder (baseline across browsers since 2025) and falls back to a tight
+# `atob` + `charCodeAt` loop into a preallocated array — far cheaper than
+# `Uint8Array.from(atob(s), c => c.charCodeAt(0))`, whose per-element mapper
+# dominates decode time at millions of points. Returns one ArrayBuffer whose
+# bytes match the source blob exactly, so `spec.columns[i].byte_offset` stays
+# valid end-to-end.
+_DECODE_B64_JS = (
+    "function xyDecodeB64(chunks, total) {"
+    "const bytes = new Uint8Array(total); let off = 0;"
+    'const native = typeof bytes.setFromBase64 === "function";'
+    "for (let i = 0; i < chunks.length; i++) {"
+    "const s = chunks[i];"
+    "if (native) { off += bytes.subarray(off).setFromBase64(s).written; }"
+    "else { const bin = atob(s), n = bin.length;"
+    "for (let j = 0; j < n; j++) bytes[off + j] = bin.charCodeAt(j); off += n; }"
+    "} return bytes.buffer; }"
+)
+
+
 def _atomic_write_text(path: str | PathLike[str], text: str) -> None:
     """Write text through a same-directory temp file, then replace atomically."""
     target = Path(path)
@@ -192,6 +235,14 @@ def to_html(
     spec_js = _json_for_inline_script(spec)
     client_js = _javascript_for_inline_script(_bundled_js("standalone"))
     title_html = _html.escape(fig.title or "xy")
+    # One <script> block PER chunk: a script element's source is itself a V8
+    # string, so folding every chunk into one block would rebuild the very
+    # ~512 MB single-string ceiling the chunking removed. Per-block sources
+    # stay at ~64 MB regardless of payload size. Chunk text is pure base64 —
+    # no `</script`/escaping hazard.
+    chunk_scripts = "\n".join(
+        f"<script>__xyChunks.push({json.dumps(c)});</script>" for c in _base64_chunks(blob)
+    )
     doc = f"""<!doctype html>
 <html>
 <head><meta charset="utf-8">
@@ -205,11 +256,14 @@ html,body{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;
 <body>
 <div id="chart"></div>
 <script>{client_js}</script>
+<script>var __xyChunks = [];</script>
+{chunk_scripts}
 <script>
+  {_DECODE_B64_JS}
   const spec = {spec_js};
-  const b64 = "{base64.b64encode(blob).decode("ascii")}";
-  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-  xy.renderStandalone(document.getElementById("chart"), spec, bytes.buffer);
+  const buf = xyDecodeB64(__xyChunks, {len(blob)});
+  __xyChunks.length = 0;
+  xy.renderStandalone(document.getElementById("chart"), spec, buf);
 </script>
 </body>
 </html>"""
@@ -233,6 +287,12 @@ def find_chromium(explicit: Optional[str] = None) -> Optional[str]:
     return None
 
 
+def _gl_option(value: object) -> str:
+    if value not in ("software", "hardware"):
+        raise ValueError(f"PNG gl must be 'software' or 'hardware', got {value!r}")
+    return cast(str, value)
+
+
 def html_to_png(
     html: str,
     width: int,
@@ -243,16 +303,23 @@ def html_to_png(
     timeout_s: float = 120.0,
     chromium: Optional[str] = None,
     sandbox: bool = True,
+    gl: str = "software",
 ) -> bytes:
     """Rasterize a standalone chart HTML string to PNG bytes via headless
     Chromium `--screenshot`. Pure mechanism (no Figure), so it is testable
-    without numpy. `scale` is the device-pixel ratio (2 = retina-crisp)."""
+    without numpy. `scale` is the device-pixel ratio (2 = retina-crisp).
+
+    `gl` picks the WebGL backend: "software" (default) pins SwiftShader for
+    deterministic pixels on any machine (including GPU-less CI); "hardware"
+    lets Chromium use the real GPU — much faster on large direct-mode payloads,
+    at the cost of driver-dependent rasterization."""
     width = _positive_pixel_count(width, "PNG width")
     height = _positive_pixel_count(height, "PNG height")
     scale = _positive_finite_float(scale, "PNG scale")
     time_budget_ms = _positive_pixel_count(time_budget_ms, "PNG time_budget_ms")
     timeout_s = _positive_finite_float(timeout_s, "PNG timeout_s")
     sandbox = _bool_option(sandbox, "PNG sandbox")
+    gl = _gl_option(gl)
     exe = find_chromium(chromium)
     if exe is None:
         raise RuntimeError(
@@ -265,13 +332,15 @@ def html_to_png(
         page = Path(td) / "chart.html"
         page.write_text(html, encoding="utf-8")
         shot = Path(td) / "out.png"
+        gl_flags = (
+            ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] if gl == "software" else []
+        )
         args = [
             exe,
             "--headless=new",
             "--disable-dev-shm-usage",
             "--hide-scrollbars",
-            "--use-angle=swiftshader",
-            "--enable-unsafe-swiftshader",
+            *gl_flags,
             f"--force-device-scale-factor={scale}",
             f"--window-size={int(width)},{int(height)}",
             f"--virtual-time-budget={int(time_budget_ms)}",
@@ -310,9 +379,65 @@ def html_to_png(
     return data
 
 
+def write_images(
+    figs: "list[Figure]",
+    paths: list[str | PathLike[str]],
+    *,
+    scale: float = 2.0,
+    engine: str = "chromium",
+    chromium: Optional[str] = None,
+    sandbox: bool = True,
+    gl: str = "software",
+) -> list[bytes]:
+    """Export many figures to PNGs through ONE browser session.
+
+    `html_to_png` launches a fresh Chromium per image, so a loop over figures
+    pays ~1-2 s of browser startup each time — the classic batch-export trap.
+    This keeps a single headless Chromium alive (CDP; `_chromium.py`) and
+    renders every figure as a tab navigation + screenshot, amortizing startup
+    across the list. `engine="native"` is also accepted for symmetry and simply
+    loops the (already millisecond-fast, browser-free) native rasterizer.
+
+    Figures with fluid ("100%") sizes fall back to the same explicit export
+    dimensions as `to_png`."""
+    if len(figs) != len(paths):
+        raise ValueError(f"write_images got {len(figs)} figures but {len(paths)} paths")
+    scale = _positive_finite_float(scale, "PNG scale")
+    sandbox = _bool_option(sandbox, "PNG sandbox")
+    gl = _gl_option(gl)
+    if engine not in ("native", "chromium"):
+        raise ValueError(f"PNG engine must be 'native' or 'chromium', got {engine!r}")
+    if engine == "native":
+        return [
+            to_png(fig, path, scale=scale, engine="native")
+            for fig, path in zip(figs, paths, strict=True)
+        ]
+    exe = find_chromium(chromium)
+    if exe is None:
+        raise RuntimeError(
+            "batch PNG export needs a Chromium/Chrome binary and none was found. "
+            f"Set ${_CHROMIUM_ENV} to its path, put `chromium` on PATH, or install "
+            "one (e.g. `playwright install chromium`)."
+        )
+    from ._chromium import ChromiumSession
+
+    out: list[bytes] = []
+    with ChromiumSession(exe, gl=gl, sandbox=sandbox) as session:
+        for fig, path in zip(figs, paths, strict=True):
+            w = _positive_pixel_count(fig.width if isinstance(fig.width, int) else 800, "PNG width")
+            h = _positive_pixel_count(
+                fig.height if isinstance(fig.height, int) else 500, "PNG height"
+            )
+            data = session.render_png(to_html(fig), w, h, scale=scale)
+            with open(path, "wb") as f:
+                f.write(data)
+            out.append(data)
+    return out
+
+
 def to_png(
     fig: "Figure",
-    path: Optional[str] = None,
+    path: Optional[str | PathLike[str]] = None,
     *,
     width: Optional[int] = None,
     height: Optional[int] = None,
@@ -321,6 +446,7 @@ def to_png(
     optimize: bool = False,
     chromium: Optional[str] = None,
     sandbox: bool = True,
+    gl: str = "software",
 ) -> bytes:
     """Rasterize `fig` to a PNG (bytes, optionally saved).
 
@@ -329,8 +455,9 @@ def to_png(
     ``optimize=True`` to trade latency for the smaller indexed/deflate output.
     `engine="chromium"` renders the standalone HTML in headless Chromium and
     screenshots it, so the pixels match the interactive WebGL chart exactly
-    (needs a Chromium binary; honors `chromium`/`sandbox`). Fluid ("100%") sizes
-    fall back to an explicit export size since a raster needs concrete dims."""
+    (needs a Chromium binary; honors `chromium`/`sandbox`/`gl` — see
+    `html_to_png`). Fluid ("100%") sizes fall back to an explicit export size
+    since a raster needs concrete dims."""
     w = _positive_pixel_count(
         width if width is not None else (fig.width if isinstance(fig.width, int) else 800),
         "PNG width",
@@ -350,7 +477,7 @@ def to_png(
         data = _raster.to_png(fig, None, width=w, height=h, scale=scale, fast=not optimize)
     else:
         doc = to_html(fig)
-        data = html_to_png(doc, w, h, scale=scale, chromium=chromium, sandbox=sandbox)
+        data = html_to_png(doc, w, h, scale=scale, chromium=chromium, sandbox=sandbox, gl=gl)
     if path is not None:
         with open(path, "wb") as f:
             f.write(data)

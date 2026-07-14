@@ -8,7 +8,6 @@ owns grid layout and shared-domain coordination.
 
 from __future__ import annotations
 
-import base64
 from collections.abc import Mapping, Sequence
 from os import PathLike
 from pathlib import Path
@@ -180,7 +179,8 @@ class FacetGrid:
             panels.append(
                 "{" + f'"id":"fc-facet-{i}",'
                 f'"spec":{export._json_for_inline_script(spec)},'
-                f'"b64":"{base64.b64encode(blob).decode("ascii")}"' + "}"
+                f'"chunks":{export._json_for_inline_script(export._base64_chunks(blob))},'
+                f'"n":{len(blob)}' + "}"
             )
         js = export._javascript_for_inline_script(export._bundled_js("standalone"))
         title = export._html.escape(self.title or "xy facets")
@@ -206,12 +206,13 @@ html,body{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;
 {heading}<div class="xy-facet-grid" id="xy-facet-grid"></div>
 <script>{js}</script>
 <script>
+{export._DECODE_B64_JS}
 const panels=[{",".join(panels)}];
 const grid=document.getElementById("xy-facet-grid");
 for(const p of panels){{
   const panel=document.createElement("div"); panel.className="xy-facet-panel";
   const host=document.createElement("div"); host.id=p.id; panel.append(host); grid.appendChild(panel);
-  const bytes=Uint8Array.from(atob(p.b64),c=>c.charCodeAt(0)); xy.renderStandalone(host,p.spec,bytes.buffer);
+  const buf=xyDecodeB64(p.chunks,p.n); xy.renderStandalone(host,p.spec,buf);
 }}
 </script></body></html>"""
         if path is not None:

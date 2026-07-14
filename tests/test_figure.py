@@ -57,7 +57,7 @@ class _AppendThenRaiseList(list):
 
 def _inline_spec_literal(html: str) -> str:
     body = html.split("<body>", 1)[1]
-    return body.rsplit("const spec = ", 1)[1].split(";\n  const b64", 1)[0]
+    return body.rsplit("const spec = ", 1)[1].split(";\n  const buf", 1)[0]
 
 
 def test_spec_is_dataless_json():
@@ -1120,7 +1120,8 @@ def test_to_html_escapes_closing_script_inside_bundled_client(monkeypatch):
     html = Figure().line([0.0, 1.0], [1.0, 2.0]).to_html()
     body = html.split("<body>", 1)[1]
 
-    assert body.count("</script>") == 2
+    # client + chunk-array init + one base64 chunk (small payload) + main.
+    assert body.count("</script>") == 4
     assert "</script><img" not in body
     assert "<\\/script><img src=x onerror=alert(1)>" in body
 
