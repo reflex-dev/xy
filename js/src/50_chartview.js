@@ -438,7 +438,16 @@ class ChartView {
     const styles = this.spec.dom?.styles;
     const style = styles && typeof styles === "object" ? styles[slot] : null;
     if (!style || typeof style !== "object" || Array.isArray(style)) return null;
-    if (Object.prototype.hasOwnProperty.call(style, property)) return style[property];
+    // Match on the canonical CSS property name so a snake_case key (`max_height`,
+    // the Python API form), camelCase, and kebab all resolve. _applyStyle already
+    // normalizes the author's key onto the element, so this guard must too —
+    // otherwise the responsive max-height cap in _resize re-applies over an
+    // explicit styles[legend] value on resize (browser-verified: 50px → plot
+    // height). hasOwnProperty on the raw key alone missed the snake_case form.
+    const want = this._stylePropertyName(property);
+    for (const key of Object.keys(style)) {
+      if (this._stylePropertyName(key) === want) return style[key];
+    }
     return null;
   }
 
@@ -701,11 +710,9 @@ class ChartView {
     this.chrome.style.height = this.size.h + "px";
     this.chrome.width = this.size.w * this.dpr;
     this.chrome.height = this.size.h * this.dpr;
-    if (
-      this._legend &&
-      this._slotStyleValue("legend", "max-height") == null &&
-      this._slotStyleValue("legend", "maxHeight") == null
-    ) {
+    if (this._legend && this._slotStyleValue("legend", "max-height") == null) {
+      // _slotStyleValue canonicalizes keys, so this one check honors snake_case
+      // / camelCase / kebab author styles alike (no separate maxHeight probe).
       this._legend.style.maxHeight = p.h - 12 + "px";
     }
     this._positionReductionBadges();

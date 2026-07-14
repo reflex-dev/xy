@@ -111,15 +111,26 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
 
 
 def test_client_respects_user_legend_max_height_style() -> None:
-    """The responsive legend cap must not overwrite explicit component styles."""
+    """The responsive legend cap must not overwrite explicit component styles.
+
+    _slotStyleValue canonicalizes the stored key, so a single canonical-name
+    guard honors snake_case (`max_height`, the Python API form), camelCase, and
+    kebab alike. A raw-key-only lookup let the snake_case form slip past the
+    guard, so the auto-cap clobbered it on resize (browser-verified 50px → plot
+    height)."""
     required_guards = (
         'this._slotStyleValue("legend", "max-height") == null',
-        'this._slotStyleValue("legend", "maxHeight") == null',
+        # the canonical-name match inside _slotStyleValue is what makes the guard
+        # snake_case-aware — its removal would reintroduce the resize regression.
+        "if (this._stylePropertyName(key) === want) return style[key];",
     )
 
     for path, text in CLIENT_FILES:
         for guard in required_guards:
             assert guard in text, f"{path} no longer preserves explicit legend max-height"
+        assert 'this._slotStyleValue("legend", "maxHeight")' not in text, (
+            f"{path} still uses the old raw-key double guard; _slotStyleValue now normalizes"
+        )
 
 
 def test_client_numeric_styles_default_to_pixels_for_lengths() -> None:

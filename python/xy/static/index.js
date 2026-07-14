@@ -1954,7 +1954,10 @@ _slotStyleValue(slot, property) {
 const styles = this.spec.dom?.styles;
 const style = styles && typeof styles === "object" ? styles[slot] : null;
 if (!style || typeof style !== "object" || Array.isArray(style)) return null;
-if (Object.prototype.hasOwnProperty.call(style, property)) return style[property];
+const want = this._stylePropertyName(property);
+for (const key of Object.keys(style)) {
+if (this._stylePropertyName(key) === want) return style[key];
+}
 return null;
 }
 _syncContainerSize() {
@@ -2156,11 +2159,7 @@ this.chrome.style.width = this.size.w + "px";
 this.chrome.style.height = this.size.h + "px";
 this.chrome.width = this.size.w * this.dpr;
 this.chrome.height = this.size.h * this.dpr;
-if (
-this._legend &&
-this._slotStyleValue("legend", "max-height") == null &&
-this._slotStyleValue("legend", "maxHeight") == null
-) {
+if (this._legend && this._slotStyleValue("legend", "max-height") == null) {
 this._legend.style.maxHeight = p.h - 12 + "px";
 }
 this._positionReductionBadges();
