@@ -818,3 +818,80 @@ class StreamplotSet:
     def __init__(self, lines: PolyCollection, arrows: PolyCollection) -> None:
         self.lines = lines
         self.arrows = arrows
+
+
+def _legend_item_from_entry(
+    entry: dict[str, Any], label: Any, point_scale: float
+) -> dict[str, Any]:
+    """Freeze a plotted entry into a standalone legend swatch descriptor.
+
+    The primary legend derives its swatches from trace names inside the render
+    client; a manually built :class:`Legend` instead ships explicit items so it
+    can show a *subset* of the handles under different labels. The item shape
+    (``kind`` + ``style`` with color/width/dash/symbol) matches what every
+    renderer already draws for a named trace, so line dashes and marker glyphs
+    render identically.
+    """
+    kind = str(entry.get("kind", "line"))
+    if kind.startswith("@"):  # generic marks (errorbar, vlines, …) → a line sample
+        kind = "line"
+    kw = entry.get("kwargs", {})
+    style: dict[str, Any] = {}
+    color = kw.get("color")
+    if isinstance(color, str):
+        style["color"] = color
+    width = kw.get("width")
+    if width is not None:
+        style["width"] = float(width) * point_scale
+    opacity = kw.get("opacity")
+    if opacity is not None:
+        style["opacity"] = float(opacity)
+    dash = kw.get("dash")
+    if isinstance(dash, str) and dash not in ("", "none", "solid"):
+        from .. import _validate
+
+        try:
+            resolved = _validate.dash(dash, "legend dash")
+        except (ValueError, TypeError):
+            resolved = None
+        if resolved:
+            style["dash"] = resolved
+    elif isinstance(dash, (list, tuple)):
+        style["dash"] = [float(v) for v in dash]
+    if kind == "scatter":
+        symbol = kw.get("symbol")
+        if symbol:
+            style["symbol"] = symbol
+        for key in ("stroke", "stroke_width"):
+            if kw.get(key) is not None:
+                style[key] = kw[key]
+    return {"name": str(label), "kind": kind, "style": style}
+
+
+class Legend:
+    """A standalone legend artist, as ``matplotlib.legend.Legend``.
+
+    Construct it with the parent axes plus explicit handles/labels, then attach
+    it via ``ax.add_artist(leg)`` to render a *second* legend (e.g. one legend
+    per group of lines) alongside the axes' own ``ax.legend()``.
+    """
+
+    def __init__(self, parent: Any, handles: Any, labels: Any, loc: Any = "best", **kwargs: Any):
+        self._parent = parent
+        options_kwargs = dict(kwargs)
+        options_kwargs.setdefault("loc", loc)
+        self._options = parent._compose_legend_options(options_kwargs)
+        scale = parent._point_scale()
+        items: list[dict[str, Any]] = []
+        for handle, label in zip(handles, labels, strict=False):
+            entry = getattr(handle, "_entry", None)
+            if entry is None:
+                continue
+            items.append(_legend_item_from_entry(entry, label, scale))
+        self._items = items
+
+    def spec(self) -> dict[str, Any]:
+        """The option dict plus explicit items, ready for the render payload."""
+        options = dict(self._options)
+        options["items"] = self._items
+        return options

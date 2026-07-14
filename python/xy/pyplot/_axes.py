@@ -20,7 +20,16 @@ import numpy as np
 
 import xy as fc
 
-from ._artists import Artist, AxesImage, BarContainer, Line2D, PathCollection, PolyCollection, Text
+from ._artists import (
+    Artist,
+    AxesImage,
+    BarContainer,
+    Legend,
+    Line2D,
+    PathCollection,
+    PolyCollection,
+    Text,
+)
 from ._colors import PROP_CYCLE, resolve_cmap, resolve_color
 from ._fmt import parse_fmt
 from ._mathtext import mathtext_to_unicode
@@ -31,6 +40,7 @@ from ._transforms import Bbox, CoordinateTransform, IdentityTransform
 from ._translate import (
     LINESTYLE_TO_DASH,
     MARKER_TO_SYMBOL,
+    MPL_DASH_PATTERN,
     check_unsupported,
     line_kwargs,
     marker_size_to_scatter_size,
@@ -424,6 +434,7 @@ class Axes(PlotTypeMixin):
         self._title: Optional[str] = None
         self._legend = False
         self._legend_options: dict[str, Any] = {}
+        self._extra_legends: list[Any] = []
         self._colorbar: Optional[dict[str, Any]] = None
         self._colorbar_source: Optional[dict[str, Any]] = None  # entry the colorbar reads
         self._aspect_equal = False
@@ -531,6 +542,19 @@ class Axes(PlotTypeMixin):
         """Convert Matplotlib points to this figure's output pixels."""
         dpi = float(self.figure._dpi if self.figure._dpi is not None else rcParams["figure.dpi"])
         return dpi / 72.0
+
+    def _mpl_dash(self, dash: Any, linewidth: Any) -> Any:
+        """Scale a named dash pattern the way Matplotlib does, or pass through.
+
+        Named patterns ("dashed"/"dotted"/"dashdot") become an on/off pixel
+        list scaled by the line width and figure DPI, matching Matplotlib's
+        ``scale_dashes`` plus point sizing. ``None``, the ``"none"`` sentinel,
+        and explicit numeric sequences are returned unchanged.
+        """
+        if not isinstance(dash, str) or dash not in MPL_DASH_PATTERN:
+            return dash
+        scale = float(linewidth) * self._point_scale()
+        return [round(value * scale, 4) for value in MPL_DASH_PATTERN[dash]]
 
     def _remove_entry(self, entry: dict[str, Any]) -> None:
         host = self._y2_of or self
@@ -708,6 +732,7 @@ class Axes(PlotTypeMixin):
         self._title = None
         self._legend = False
         self._legend_options = {}
+        self._extra_legends = []
         self._colorbar = None
         self._colorbar_source = None
         self._aspect_equal = False
@@ -835,6 +860,7 @@ class Axes(PlotTypeMixin):
         dash = per.pop("dash", None)
         if dash is None:
             dash = LINESTYLE_TO_DASH.get(ls, None) if isinstance(ls, str) else None
+        dash = self._mpl_dash(dash, per.get("width", rcParams["lines.linewidth"]))
 
         entry_kwargs = {
             "color": per.get("color"),
@@ -1866,7 +1892,9 @@ class Axes(PlotTypeMixin):
         if linestyle is not None:
             dash = LINESTYLE_TO_DASH.get(linestyle)
             if dash not in (None, "none"):
-                props["dash"] = dash
+                props["dash"] = self._mpl_dash(
+                    dash, props.get("width", rcParams["lines.linewidth"])
+                )
         check_unsupported(kwargs, "step()")
         entry = self._add(
             "@mark",
@@ -1931,12 +1959,8 @@ class Axes(PlotTypeMixin):
             akw["style"] = {"span_start": span_start, "span_end": span_end}
         dash = LINESTYLE_TO_DASH.get(linestyle)
         if dash not in (None, "none"):
-            patterns = {
-                "dashed": [6.0, 4.0],
-                "dotted": [1.5, 3.0],
-                "dashdot": [6.0, 3.0, 1.5, 3.0],
-            }
-            akw.setdefault("style", {})["dash"] = ",".join(map(str, patterns[dash]))
+            scaled = self._mpl_dash(dash, akw.get("width", rcParams["lines.linewidth"]))
+            akw.setdefault("style", {})["dash"] = ",".join(map(str, scaled))
         return self._add(f"@{kind}", {"args": args, "kwargs": akw})
 
     def text(
@@ -2779,6 +2803,12 @@ class Axes(PlotTypeMixin):
         del kwargs
 
     def add_artist(self, artist: Any) -> Any:
+        if isinstance(artist, Legend):
+            host = self._y2_of or self
+            artist._parent = host
+            host._extra_legends.append(artist)
+            host._invalidate()
+            return artist
         if hasattr(artist, "get_array"):
             data = artist.get_array()
             cmap_obj = getattr(artist, "get_cmap", lambda: None)()
@@ -3311,6 +3341,15 @@ class Axes(PlotTypeMixin):
             for entry, label in zip(eligible, labels, strict=False):
                 entry.setdefault("kwargs", {})["name"] = _plain_text(label)
         host._legend = True
+        host._legend_options = self._compose_legend_options(kwargs)
+        host._invalidate()
+
+    def _compose_legend_options(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """Translate legend() keyword styling into the engine's option dict.
+
+        Shared by ``Axes.legend`` and the standalone ``Legend`` artist so a
+        second, manually added legend honors the same loc/frame/font keywords.
+        """
         loc = kwargs.pop("loc", rcParams["legend.loc"])
         ncols = kwargs.pop("ncols", kwargs.pop("ncol", 1))
         title = kwargs.pop("title", None)
@@ -3405,8 +3444,7 @@ class Axes(PlotTypeMixin):
             options["title"] = _plain_text(title)
         if style:
             options["style"] = style
-        host._legend_options = options
-        host._invalidate()
+        return options
 
     def grid(self, visible: Any = True, **kwargs: Any) -> None:
         host = self._y2_of or self
@@ -3601,23 +3639,69 @@ class Axes(PlotTypeMixin):
                 children.append(fc.text(*e["args"], **text_kw))
         return children
 
-    def _best_legend_loc(self) -> str:
+    def _best_legend_loc(
+        self,
+        x_domain: Optional[tuple[float, float]] = None,
+        y_domain: Optional[tuple[float, float]] = None,
+    ) -> str:
         """Choose the least occupied corner using bounded data-space samples.
 
-        Matplotlib tests artist extents against several candidate boxes. The
-        shim has no Artist layout graph, but its canonical entry arrays are
-        enough to make the same useful decision without renderer-specific
-        guesses: count sampled marks in each corner and preserve Matplotlib's
-        candidate order for ties.
+        Matplotlib tests artist extents against several candidate boxes and
+        keeps the first candidate (upper right) on ties. The shim has no Artist
+        layout graph, but its canonical entry arrays are enough to make the
+        same decision: for each corner, count sampled marks that fall inside a
+        legend-box-sized region there — not the whole quadrant, so a curve
+        crossing the middle no longer taints every corner. The domains passed
+        in are the *displayed* limits (after equal-aspect expansion), which is
+        what decides whether the data actually reaches a corner.
         """
         try:
-            xlo, xhi = sorted(map(float, self._axis["x"].get("domain", self._auto_domain("x"))))
-            ylo, yhi = sorted(map(float, self._axis["y"].get("domain", self._auto_domain("y"))))
+            xlo, xhi = sorted(
+                map(float, x_domain or self._axis["x"].get("domain") or self._auto_domain("x"))
+            )
+            ylo, yhi = sorted(
+                map(float, y_domain or self._axis["y"].get("domain") or self._auto_domain("y"))
+            )
         except (TypeError, ValueError):
             return "upper right"
         if xhi <= xlo or yhi <= ylo:
             return "upper right"
-        scores = {name: 0.0 for name in ("upper right", "upper left", "lower left", "lower right")}
+        # Fractional footprint of the legend box, grown by row count and the
+        # longest label so a crowded legend guards a larger corner region.
+        labels = [
+            str(entry.get("kwargs", {}).get("name", ""))
+            for entry in self._entries
+            if entry.get("kwargs", {}).get("name")
+        ]
+        rows = max(1, len(labels))
+        max_len = max((len(text) for text in labels), default=4)
+        box_h = min(0.6, 0.10 + 0.07 * rows)
+        box_w = min(0.6, 0.12 + 0.03 * max_len)
+        # Every Matplotlib candidate box, in Matplotlib's own preference order
+        # (corners, then the mid-edges, then dead center) so min() keeps the
+        # first on ties. Each tuple is (name, x_lo, x_hi, y_lo, y_hi) in the
+        # normalized [0, 1] plot box with y pointing up. Including the centered
+        # edges is what lets a full-amplitude oscillation park the legend on the
+        # sparse zero-crossing band, exactly like Matplotlib. ('right' is code 5
+        # in Matplotlib and aliases 'center right'; keeping the single canonical
+        # name here preserves the tie order without a redundant candidate.)
+        cx_lo, cx_hi = 0.5 - box_w / 2.0, 0.5 + box_w / 2.0
+        cy_lo, cy_hi = 0.5 - box_h / 2.0, 0.5 + box_h / 2.0
+        candidates = (
+            ("upper right", 1.0 - box_w, 1.0, 1.0 - box_h, 1.0),
+            ("upper left", 0.0, box_w, 1.0 - box_h, 1.0),
+            ("lower left", 0.0, box_w, 0.0, box_h),
+            ("lower right", 1.0 - box_w, 1.0, 0.0, box_h),
+            ("center right", 1.0 - box_w, 1.0, cy_lo, cy_hi),
+            ("center left", 0.0, box_w, cy_lo, cy_hi),
+            ("lower center", cx_lo, cx_hi, 0.0, box_h),
+            ("upper center", cx_lo, cx_hi, 1.0 - box_h, 1.0),
+            ("center", cx_lo, cx_hi, cy_lo, cy_hi),
+        )
+        scores = {name: 0.0 for name, *_ in candidates}
+        entries_used = 0
+        x_reverse = bool(self._axis["x"].get("reverse"))
+        y_reverse = bool(self._axis["y"].get("reverse"))
         for entry in self._entries:
             x_values, y_values = entry.get("x"), entry.get("y")
             if x_values is None or y_values is None:
@@ -3641,21 +3725,31 @@ class Axes(PlotTypeMixin):
                 continue
             xn = np.clip((xv[finite] - xlo) / (xhi - xlo), 0.0, 1.0)
             yn = np.clip((yv[finite] - ylo) / (yhi - ylo), 0.0, 1.0)
-            if self._axis["x"].get("reverse"):
+            if x_reverse:
                 xn = 1.0 - xn
-            if self._axis["y"].get("reverse"):
+            if y_reverse:
                 yn = 1.0 - yn
-            # Smooth corner weights notice line crossings near a candidate box
-            # without letting a long series dominate solely by row count.
-            weights = {
-                "upper right": xn * yn,
-                "upper left": (1.0 - xn) * yn,
-                "lower left": (1.0 - xn) * (1.0 - yn),
-                "lower right": xn * (1.0 - yn),
-            }
-            for name, values in weights.items():
-                scores[name] += float(np.mean(values**4))
-        return min(scores, key=scores.__getitem__)
+            n = float(len(finite))
+            entries_used += 1
+            for name, xl, xh, yl, yh in candidates:
+                inside = (xn >= xl) & (xn <= xh) & (yn >= yl) & (yn <= yh)
+                scores[name] += float(np.count_nonzero(inside)) / n
+        if not entries_used:
+            return "upper right"
+        # Normalize to a mean occupancy in [0, 1] so the tolerance below is
+        # independent of series count. Matplotlib's integer badness makes
+        # near-equal boxes exact ties broken by candidate order; our continuous
+        # metric would otherwise let a sub-percent sampling difference override
+        # that order (e.g. picking "center left" over "center right" on a
+        # symmetric oscillation). Treat boxes within a small band as tied and
+        # keep the first — which is Matplotlib's preference.
+        for name in scores:
+            scores[name] /= entries_used
+        best = min(scores.values())
+        for name in scores:
+            if scores[name] <= best + 0.02:
+                return name
+        return "upper right"
 
     def _build_chart(self, width: int, height: int) -> Any:
         if self._y2_of is not None:
@@ -3745,7 +3839,9 @@ class Axes(PlotTypeMixin):
         if self._legend:
             legend_options = dict(self._legend_options)
             if legend_options.get("loc") in (None, "best"):
-                legend_options["loc"] = self._best_legend_loc()
+                legend_options["loc"] = self._best_legend_loc(
+                    x_props.get("domain"), y_props.get("domain")
+                )
             children.append(fc.legend(**legend_options))
         elif not any(entry.get("kwargs", {}).get("name") for entry in self._entries):
             # Core XY can auto-create a continuous-color "value" legend.
@@ -3783,6 +3879,16 @@ class Axes(PlotTypeMixin):
                 if derived is not None:
                     options["domain"] = [derived[0], derived[1]]
             figure.colorbar_options = options
+        if self._extra_legends:
+            extras = []
+            for leg in self._extra_legends:
+                spec = leg.spec()
+                if spec.get("loc") in (None, "best"):
+                    spec["loc"] = self._best_legend_loc(
+                        x_props.get("domain"), y_props.get("domain")
+                    )
+                extras.append(spec)
+            core_figure.extra_legends = extras
         return self._chart
 
     def _apply_auto_tick_density(

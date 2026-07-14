@@ -863,27 +863,49 @@ class ChartView {
         items.push({ swatch: "gradient", cmap: t.color.colormap, name: t.name || "value" });
       } else if (t.name) {
         const c = (t.color && t.color.color) || (t.style && t.style.color);
-        items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {} });
+        // Line-family kinds get a short line sample (honoring the dash), the
+        // same handle the raster/SVG exporters draw — not a filled swatch.
+        const line = ["line", "segments", "step", "stairs", "errorbar"].includes(t.kind);
+        items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {} });
       }
     }
-    if (!items.length) return;
+    if (items.length) this._legendBox(root, items, s.legend || {}, true);
+    // Manually added Legend artists ship explicit items + their own loc, so a
+    // second legend (e.g. one per line group) renders as its own box.
+    for (const extra of s.extra_legends || []) {
+      const mapped = (extra.items || []).map((it) => ({
+        swatch: it.style && it.style.color,
+        name: it.name,
+        symbol: it.kind === "scatter" ? (it.style?.symbol || "circle") : null,
+        line: ["line", "segments", "step", "stairs", "errorbar"].includes(it.kind),
+        style: it.style || {},
+      }));
+      if (mapped.length) this._legendBox(root, mapped, extra, false);
+    }
+  }
+
+  _legendBox(root, items, options, isPrimary) {
     const lg = document.createElement("div");
-    const options = s.legend || {};
     const loc = options.loc || "upper right";
     const ncols = Math.max(1, Number(options.ncols) || 1);
     const rightInset = this.size.w - (this.plot.x + this.plot.w);
     const horizontal = ncols > 1;
-    const xPos = loc.includes("left")
-      ? `left:${this.plot.x + 6}px;`
-      : loc.includes("center")
-        ? `left:${this.plot.x + this.plot.w / 2}px;transform:translateX(-50%);`
-        : `right:${rightInset + 6}px;`;
-    const yPos = loc.includes("lower")
-      ? `bottom:${this.size.h - (this.plot.y + this.plot.h) + 6}px;`
-      : loc === "center" || loc.includes("center left") || loc.includes("center right")
-        ? `top:${this.plot.y + this.plot.h / 2}px;transform:${loc.includes("center") && !loc.includes("left") && !loc.includes("right") ? "translate(-50%,-50%)" : "translateY(-50%)"};`
-        : `top:${this.plot.y + 6}px;`;
-    lg.style.cssText = `position:absolute;${xPos}${yPos}` +
+    // Parse the loc into independent horizontal/vertical anchors. "center" is
+    // the fallback on each axis, so "center right" reads as right-edge +
+    // vertical-center and "upper center" as top + horizontal-center. Both
+    // translate offsets go into ONE transform (two `transform:` declarations
+    // would clobber each other, dropping the horizontal recenter on "center").
+    const h = loc.includes("left") ? "left" : loc.includes("right") ? "right" : "center";
+    const v = loc.includes("upper") ? "upper" : loc.includes("lower") ? "lower" : "center";
+    let xPos, yPos, tx = "0", ty = "0";
+    if (h === "left") xPos = `left:${this.plot.x + 6}px;`;
+    else if (h === "right") xPos = `right:${rightInset + 6}px;`;
+    else { xPos = `left:${this.plot.x + this.plot.w / 2}px;`; tx = "-50%"; }
+    if (v === "upper") yPos = `top:${this.plot.y + 6}px;`;
+    else if (v === "lower") yPos = `bottom:${this.size.h - (this.plot.y + this.plot.h) + 6}px;`;
+    else { yPos = `top:${this.plot.y + this.plot.h / 2}px;`; ty = "-50%"; }
+    const transform = tx === "0" && ty === "0" ? "" : `transform:translate(${tx},${ty});`;
+    lg.style.cssText = `position:absolute;${xPos}${yPos}${transform}` +
       `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
       "overflow:auto;" + `max-height:${this.plot.h - 12}px;`;
     this._applySlot(lg, "legend");
@@ -938,6 +960,24 @@ class ChartView {
         sw.appendChild(svg);
         sw.style.width = "18px";
         sw.style.height = "14px";
+      } else if (it.line) {
+        const ns = "http://www.w3.org/2000/svg";
+        const svg = document.createElementNS(ns, "svg");
+        svg.setAttribute("viewBox", "0 0 22 12");
+        svg.setAttribute("width", "22");
+        svg.setAttribute("height", "12");
+        const ln = document.createElementNS(ns, "line");
+        ln.setAttribute("x1", "1");
+        ln.setAttribute("y1", "6");
+        ln.setAttribute("x2", "21");
+        ln.setAttribute("y2", "6");
+        ln.setAttribute("stroke", safeCssPaint(this.root, bg));
+        ln.setAttribute("stroke-width", String(it.style?.width || 1.5));
+        if (it.style?.dash && it.style.dash.length) ln.setAttribute("stroke-dasharray", it.style.dash.join(" "));
+        svg.appendChild(ln);
+        sw.appendChild(svg);
+        sw.style.width = "22px";
+        sw.style.height = "12px";
       } else {
         sw.style.background = safeCssPaint(this.root, bg);
       }
@@ -947,7 +987,8 @@ class ChartView {
       lg.appendChild(row);
     }
     root.appendChild(lg);
-    this._legend = lg; // _resize refreshes its max-height
+    if (isPrimary) this._legend = lg; // _resize refreshes its max-height
+    return lg;
   }
 
   _buildColorbar(root) {
