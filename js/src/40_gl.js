@@ -208,9 +208,17 @@ void main() {
   outColor = vec4(u_color.rgb * u_color.a, u_color.a) * coverage;
 }`;
 
-// Picking: same geometry + size, outputs an encoded ID (24-bit vertex index +
-// 8-bit trace slot) so a single readPixels resolves which point is under the
-// cursor (§17). Rerun's R-channel-ID-texture idea, RGBA8 variant.
+// Picking: same geometry + size, outputs an encoded ID so a single readPixels
+// resolves which point is under the cursor (§17). Rerun's R-channel-ID-texture
+// idea, RGBA8 variant. The ID is GLOBAL across pick-drawn traces: each trace
+// draw sets `u_pick_base` to 1 + the points drawn before it, and the fragment
+// writes the full 32-bit `base + gl_VertexID` across RGBA; all-zero RGBA is
+// the background sentinel (bases start at 1), and `_pickAt` maps the value
+// back to (trace, index) by range lookup. The earlier 24-bit-index +
+// 8-bit-slot split aliased trace slot 255 onto 254 (the +1 sentinel shift
+// saturated the u8 alpha channel) and wrapped point indices above 2^24; one
+// global id space has neither limit — capacity is 2^31-1 total pickable
+// points (GLSL highp int is signed), far beyond what GPU memory admits.
 const PICK_VS = `#version 300 es
 in float ax; in float ay; in float a_sval;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
@@ -227,18 +235,18 @@ void main() {
 
 const PICK_FS = `#version 300 es
 precision highp float; precision highp int;
-uniform int u_slot;
+uniform int u_pick_base;
 flat in int v_id;
 out vec4 outColor;
 void main() {
   vec2 d = gl_PointCoord - 0.5;
   if (length(d) > 0.5) discard;
-  int id = v_id;
+  int id = u_pick_base + v_id;
   outColor = vec4(
     float(id & 255) / 255.0,
     float((id >> 8) & 255) / 255.0,
     float((id >> 16) & 255) / 255.0,
-    float(u_slot + 1) / 255.0
+    float((id >> 24) & 255) / 255.0
   );
 }`;
 

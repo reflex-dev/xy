@@ -104,7 +104,8 @@ Object.assign(ChartView.prototype, {
       if (this._interactionFlag("hover")) {
         this._dispatchChartEvent("leave", { view: this._eventView("leave") });
       }
-      if (hadHover) this.draw();
+      // Highlight-clear only — the pick snapshot stays valid (§17).
+      if (hadHover) this._drawKeepPick();
     });
     this._listen(c, "click", (e) => this._click(e));
 
