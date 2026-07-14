@@ -166,6 +166,55 @@ def test_dense_grid_panels_scale_their_chrome_padding() -> None:
     assert left < 20 and bottom < 15 and top < 5 and right < 5
 
 
+def test_imshow_only_axes_drops_the_modebar_buttons() -> None:
+    _fig, ax = plt.subplots()
+    ax.imshow(np.arange(16.0).reshape(4, 4), cmap="binary")
+
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+
+    # Matplotlib shows images as plain pictures; the button overlay would sit
+    # on the pixels themselves. Wheel zoom / drag pan stay live client-side.
+    assert spec["show_modebar"] is False
+
+
+def test_matshow_routes_through_the_image_modebar_rule() -> None:
+    _fig, ax = plt.subplots()
+    ax.matshow(np.arange(16.0).reshape(4, 4))
+
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+
+    assert spec["show_modebar"] is False
+
+
+def test_text_overlay_does_not_make_an_image_a_chart() -> None:
+    _fig, ax = plt.subplots()
+    ax.imshow(np.arange(16.0).reshape(4, 4), cmap="binary")
+    ax.text(1.0, 1.0, "label")
+
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+
+    assert spec["show_modebar"] is False
+
+
+def test_image_with_chart_overlay_keeps_the_modebar() -> None:
+    _fig, ax = plt.subplots()
+    ax.imshow(np.arange(16.0).reshape(4, 4), cmap="binary")
+    ax.plot([0, 3], [0, 3])
+
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+
+    assert "show_modebar" not in spec  # default: buttons shown
+
+
+def test_pcolormesh_is_a_chart_and_keeps_the_modebar() -> None:
+    _fig, ax = plt.subplots()
+    ax.pcolormesh(np.arange(16.0).reshape(4, 4))
+
+    spec, _ = ax._build_chart(640, 480).figure().build_payload()
+
+    assert "show_modebar" not in spec
+
+
 def test_notebook_repr_isolates_standalone_document_styles() -> None:
     fig, ax = plt.subplots(figsize=(6.4, 4.8), dpi=100)
     ax.plot([0, 1], [1, 2])

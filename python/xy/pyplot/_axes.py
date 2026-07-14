@@ -1849,6 +1849,10 @@ class Axes(PlotTypeMixin):
                 "extent": bounds,
             },
         )
+        # Mark the entry as a picture (imshow and its delegates: matshow, spy,
+        # figimage) rather than a chart-like fill (pcolormesh/hist2d). An
+        # image-only axes drops the modebar buttons at build time.
+        entry["image"] = True
         if imshow_levels is not None:
             entry["discrete_levels"] = imshow_levels
         image = AxesImage(self, entry)
@@ -3751,6 +3755,17 @@ class Axes(PlotTypeMixin):
             # Core XY can auto-create a continuous-color "value" legend.
             # An unlabeled Matplotlib collection must not acquire one.
             children.append(fc.legend(show=False))
+        # Matplotlib shows images as plain pictures, and the modebar buttons
+        # would float over the pixels themselves (an image fills the whole
+        # plot box, unlike a line chart's mostly-empty plot area). Image-only
+        # axes drop the button overlay; wheel zoom, drag pan, and the hover
+        # readout stay live. Text overlays don't make an image a chart.
+        material_entries = list(self._entries)
+        if self._twin is not None:
+            material_entries += list(self._twin._entries)
+        material_entries = [entry for entry in material_entries if entry["kind"] != "@text"]
+        if material_entries and all(entry.get("image") for entry in material_entries):
+            children.append(fc.modebar(show=False))
         theme_tokens = self._theme_tokens
         if _MPL_THEME_TOKENS:
             if self._grid_axis != "both":
