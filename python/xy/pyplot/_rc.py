@@ -26,6 +26,7 @@ _DEFAULTS: dict[str, Any] = {
     "figure.facecolor": "white",
     "lines.linewidth": 1.5,
     "lines.markersize": 6.0,
+    "lines.markeredgewidth": 1.0,
     "font.size": 10.0,
     "font.family": ["sans-serif"],
     "axes.grid": False,
@@ -36,6 +37,9 @@ _DEFAULTS: dict[str, Any] = {
     "axes.labelsize": "medium",
     "axes.titlesize": "large",
     "axes.titlecolor": "auto",
+    "axes.linewidth": 0.8,
+    "axes.xmargin": 0.05,
+    "axes.ymargin": 0.05,
     "axes.spines.left": True,
     "axes.spines.bottom": True,
     "axes.spines.top": True,
@@ -46,6 +50,10 @@ _DEFAULTS: dict[str, Any] = {
     "ytick.labelcolor": "inherit",
     "xtick.labelsize": "medium",
     "ytick.labelsize": "medium",
+    "xtick.major.size": 3.5,
+    "ytick.major.size": 3.5,
+    "xtick.major.width": 0.8,
+    "ytick.major.width": 0.8,
     "legend.loc": "best",
     "legend.fontsize": "medium",
     "legend.facecolor": "inherit",
@@ -81,6 +89,19 @@ class RcParams(dict):
             value = float(value)
             if value <= 0:
                 raise ValueError(f"{key} must be positive")
+        if key in {
+            "axes.xmargin",
+            "axes.ymargin",
+            "axes.linewidth",
+            "lines.markeredgewidth",
+            "xtick.major.size",
+            "ytick.major.size",
+            "xtick.major.width",
+            "ytick.major.width",
+        }:
+            value = float(value)
+            if value < 0:
+                raise ValueError(f"{key} must be non-negative")
         if isinstance(value, list):
             value = list(value)  # never share list defaults; rcdefaults() must stay pristine
         super().__setitem__(key, value)

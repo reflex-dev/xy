@@ -62,17 +62,96 @@ def test_axis_tight_sets_data_domains_and_equal_expands_to_panel_ratio() -> None
     _fig, ax = plt.subplots()
     ax.plot([0.0, 2.0], [0.0, 1.0])
 
-    assert ax.axis("tight") == (0.0, 2.0, 0.0, 1.0)
-    assert ax._axis["x"]["domain"] == (0.0, 2.0)
-    assert ax._axis["y"]["domain"] == (0.0, 1.0)
+    assert ax.axis("tight") == pytest.approx((-0.1, 2.1, -0.05, 1.05))
+    assert ax._axis["x"]["domain"] == pytest.approx((-0.1, 2.1))
+    assert ax._axis["y"]["domain"] == pytest.approx((-0.05, 1.05))
 
     ax.axis("equal")
     x_axis = _axis_child(ax, "x")
     y_axis = _axis_child(ax, "y")
 
-    assert x_axis.domain == (0.0, 2.0)
-    assert y_axis.domain[0] < 0.0
-    assert y_axis.domain[1] > 1.0
+    assert x_axis.domain == pytest.approx((-0.1, 2.1))
+    assert y_axis.domain[0] < -0.05
+    assert y_axis.domain[1] > 1.05
+
+
+def test_axis_tight_honors_configured_margins() -> None:
+    _fig, ax = plt.subplots()
+    ax.plot([0.0, 10.0], [-1.0, 1.0])
+    ax.margins(x=0.1, y=0.25)
+
+    assert ax.axis("tight") == pytest.approx((-1.0, 11.0, -1.5, 1.5))
+
+
+@pytest.mark.parametrize("mode", ["auto", "equal", "scaled", "image"])
+def test_axis_autoscale_and_aspect_modes_start_from_padded_limits(mode: str) -> None:
+    _fig, ax = plt.subplots()
+    ax.plot([0.0, 2.0], [0.0, 1.0])
+
+    assert ax.axis(mode) == pytest.approx((-0.1, 2.1, -0.05, 1.05))
+    assert ax._aspect_equal is (mode != "auto")
+
+
+def test_axis_square_matches_matplotlib_limit_contract() -> None:
+    _fig, ax = plt.subplots()
+    ax.plot([0.0, 2.0], [0.0, 1.0])
+
+    assert ax.axis("square") == pytest.approx((-0.1, 2.1, -0.05, 2.15))
+    assert ax._aspect_equal
+    assert ax._absolute_plot_ratio == 1.0
+    assert ax.get_position().bounds == pytest.approx((0.22375, 0.11, 0.5775, 0.77))
+
+
+@pytest.mark.parametrize("mode", ["scaled", "image"])
+def test_axis_adjustable_box_modes_match_matplotlib_position(mode: str) -> None:
+    fig, ax = plt.subplots(figsize=(6.4, 4.8), dpi=100)
+    ax.plot([0.0, 2.0], [0.0, 1.0])
+
+    ax.axis(mode)
+    ax._build_chart(*fig._panel_px())
+
+    assert ax.get_xlim() == pytest.approx((-0.1, 2.1))
+    assert ax.get_ylim() == pytest.approx((-0.05, 1.05))
+    assert ax.get_position().bounds == pytest.approx((0.125, 0.2366666667, 0.775, 0.5166666667))
+
+
+def test_axis_boolean_case_insensitive_and_keyword_forms() -> None:
+    _fig, ax = plt.subplots()
+    ax.plot([0.0, 2.0], [0.0, 1.0])
+
+    ax.axis(False)
+    assert ax._axis_props("x")["tick_label_strategy"] == "none"
+    ax.axis("ON")
+    assert ax._axis_props("x")["tick_label_strategy"] is None
+    assert ax.axis(xmin=-3.0, ymax=4.0) == pytest.approx((-3.0, 2.1, -0.05, 4.0))
+
+    with pytest.raises(TypeError, match="unexpected keyword"):
+        ax.axis(zmin=0.0)
+    with pytest.raises(TypeError, match="xmin, xmax, ymin, ymax"):
+        ax.axis([0.0, 1.0])
+
+
+def test_default_auto_tick_density_matches_matplotlib_tick_space() -> None:
+    fig, ax = plt.subplots(figsize=(6.4, 4.8), dpi=100)
+    ax.plot([0.0, 10.0], [-1.0, 1.0])
+
+    chart = ax._build_chart(558, 418)
+    axes = {child.which: child for child in chart.children if hasattr(child, "which")}
+
+    assert axes["x"].tick_count == 9
+    assert axes["y"].tick_count == 9
+
+
+def test_auto_tick_density_reduces_for_shorter_axes() -> None:
+    fig, ax = plt.subplots(figsize=(4.0, 3.0), dpi=100)
+    ax.plot([0.0, 10.0], [-1.0, 1.0])
+    ax._padding = [14.0, 19.0, 34.0, 43.0]
+
+    chart = ax._build_chart(372, 279)
+    axes = {child.which: child for child in chart.children if hasattr(child, "which")}
+
+    assert axes["x"].tick_count == 7
+    assert axes["y"].tick_count == 8
 
 
 def test_tick_params_records_supported_style_and_rejects_unknown() -> None:
@@ -92,10 +171,11 @@ def test_tick_params_records_supported_style_and_rejects_unknown() -> None:
     assert x_axis.tick_label_angle == 45.0
     assert x_axis.tick_label_strategy == "off"  # labels hidden, ticks/baselines kept
     assert x_axis.style == {
+        "axis_width": pytest.approx(0.8 * 4.0 / 3.0),
         "tick_color": "#d62728",
         "tick_label_color": "#d62728",
-        "tick_length": 7.0,
-        "tick_width": 2.0,
+        "tick_length": pytest.approx(7.0 * 4.0 / 3.0),
+        "tick_width": pytest.approx(2.0 * 4.0 / 3.0),
         "tick_direction": "in",
     }
 

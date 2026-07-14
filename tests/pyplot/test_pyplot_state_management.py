@@ -91,6 +91,7 @@ def test_pyplot_show_displays_isolated_notebook_repr(monkeypatch):
     plt.show()
 
     assert len(displayed) == 1
-    assert displayed[0].startswith('<iframe class="xy-notebook-frame"')
-    assert "<style>" not in displayed[0]
-    assert "&lt;style&gt;" in displayed[0]
+    html = displayed[0]._repr_html_()
+    assert html.startswith('<iframe class="xy-notebook-frame"')
+    assert "<style>" not in html
+    assert "&lt;style&gt;" in html

@@ -250,7 +250,7 @@ def notebook_iframe(doc: str, *, width: object, height: object) -> str:
     return (
         '<iframe class="xy-notebook-frame" sandbox="allow-scripts" '
         f'width="{width_attr}" height="{height_attr}" '
-        f'style="display:block;{width_style};height:{height_css};'
+        f'style="display:block;{width_style};height:{height_css};margin-left:8px;'
         'border:0;background:transparent" '
         f'srcdoc="{source}"></iframe>'
     )

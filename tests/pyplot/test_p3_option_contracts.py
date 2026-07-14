@@ -23,7 +23,8 @@ def test_plot_marker_styles_and_markevery_reach_marker_entry() -> None:
     np.testing.assert_array_equal(marker["x"], [0, 2])
     assert marker["kwargs"]["color"] == "red"
     assert marker["kwargs"]["stroke"] == "blue"
-    assert marker["kwargs"]["stroke_width"] == 3
+    assert marker["kwargs"]["stroke_width"] == 4
+    assert marker["kwargs"]["size"] == pytest.approx(12)
 
 
 @pytest.mark.parametrize(

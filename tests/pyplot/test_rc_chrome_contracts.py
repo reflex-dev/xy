@@ -45,10 +45,10 @@ def test_rc_axes_font_label_tick_and_cycle_values_reach_chart_state() -> None:
     assert built.style["--chart-bg"] == "#102030"
     assert built.style["--chart-axis"] == "red"
     assert built.style["font-family"] == "serif"
-    assert built.style["font-size"] == "12px"
-    assert built.chrome_styles["title"]["font-size"] == "18px"
-    assert built.chrome_styles["axis_title"] == {"font-size": "14px", "color": "blue"}
-    assert built.chrome_styles["tick_label"]["font-size"] == "9px"
+    assert built.style["font-size"] == "16px"
+    assert built.chrome_styles["title"]["font-size"] == "24px"
+    assert built.chrome_styles["axis_title"] == {"font-size": "18.6667px", "color": "blue"}
+    assert built.chrome_styles["tick_label"]["font-size"] == "12px"
     assert built.axis_options["x"]["style"]["tick_color"] == "green"
 
 
@@ -67,7 +67,7 @@ def test_legend_rc_defaults_reach_legend_component() -> None:
         ax.legend()
     assert ax._legend_options["loc"] == "upper right"
     assert ax._legend_options["style"] == {
-        "fontSize": "13px",
+        "fontSize": "17.3333px",
         "background": "yellow",
         "borderColor": "blue",
         "borderStyle": "solid",

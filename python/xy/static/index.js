@@ -3656,20 +3656,50 @@ const frameSides = Array.isArray(s.frame_sides)
 ? s.frame_sides
 : [xAxis.side || "bottom", yAxis.side || "left"];
 if (!hideY) {
-const yWidth = Math.max(1, Math.round(this._axisStyleNumber(yAxis, "axis_width", 1)));
+const yWidth = Math.max(1, this._axisStyleNumber(yAxis, "axis_width", 1));
 if (frameSides.includes("left")) rule(yAxis, p.x, p.y, yWidth, p.h);
 if (frameSides.includes("right")) rule(yAxis, p.x + p.w - yWidth, p.y, yWidth, p.h);
 }
 if (!hideX) {
-const xHeight = Math.max(1, Math.round(this._axisStyleNumber(xAxis, "axis_width", 1)));
+const xHeight = Math.max(1, this._axisStyleNumber(xAxis, "axis_width", 1));
 if (frameSides.includes("top")) rule(xAxis, p.x, p.y, p.w, xHeight);
 if (frameSides.includes("bottom")) rule(xAxis, p.x, p.y + p.h - xHeight, p.w, xHeight);
 }
 for (const axis of Object.values(this.axes)) {
 if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
-const w = Math.max(1, Math.round(this._axisStyleNumber(axis, "axis_width", 1)));
+const w = Math.max(1, this._axisStyleNumber(axis, "axis_width", 1));
 const x = axis.side === "left" ? p.x : p.x + p.w - w;
 rule(axis, x, p.y, w, p.h);
+}
+const tickParts = (axis) => {
+const length = Math.max(0, this._axisStyleNumber(axis, "tick_length", 0));
+const width = Math.max(0.5, this._axisStyleNumber(axis, "tick_width", 1));
+const direction = String(this._axisStyleValue(axis, "tick_direction") || "out");
+if (direction === "in") return { inward: length, outward: 0, width };
+if (direction === "inout") return { inward: length / 2, outward: length / 2, width };
+return { inward: 0, outward: length, width };
+};
+if (!hideX) {
+const tick = tickParts(xAxis);
+const side = xAxis.side || "bottom";
+const edge = side === "top" ? p.y : p.y + p.h;
+for (const value of xt.ticks) {
+const x = this._dataPx("x", value);
+if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
+const top = side === "top" ? edge - tick.outward : edge - tick.inward;
+rule(xAxis, x - tick.width / 2, top, tick.width, tick.inward + tick.outward);
+}
+}
+if (!hideY) {
+const tick = tickParts(yAxis);
+const side = yAxis.side || "left";
+const edge = side === "right" ? p.x + p.w : p.x;
+for (const value of yt.ticks) {
+const y = this._dataPx("y", value);
+if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
+const left = side === "right" ? edge - tick.inward : edge - tick.outward;
+rule(yAxis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width);
+}
 }
 }
 const label = (text, css, axis, kind = "tick", extraStyle = null) => {

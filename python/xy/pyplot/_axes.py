@@ -435,6 +435,7 @@ class Axes(PlotTypeMixin):
         self._padding: Optional[list[float]] = None
         self._xmargin = 0.0
         self._ymargin = 0.0
+        self._margin_overrides: set[str] = set()
         self._explicit_domains: set[str] = set()
         self._secondary_axes: list[SecondaryAxis] = []
         self._scale_specs: dict[str, dict[str, Any]] = {
@@ -486,9 +487,11 @@ class Axes(PlotTypeMixin):
         }
         family = rcParams["font.family"]
         family = family if isinstance(family, str) else ", ".join(map(str, family))
+        if family == "sans-serif":
+            family = "DejaVu Sans, sans-serif"
         self._theme_style = {
             "font-family": family,
-            "font-size": f"{float(rcParams['font.size']):g}px",
+            "font-size": f"{_font_size(rcParams['font.size'], rcParams['font.size']):g}px",
         }
         title_color = self._theme_tokens["text_color"]
         self._chrome_styles = {
@@ -830,6 +833,29 @@ class Axes(PlotTypeMixin):
             "opacity": per.get("opacity", 1.0),
             "name": per.get("name"),
         }
+        marker_size_pt = float(rcParams["lines.markersize"] if markersize is None else markersize)
+        marker_edge_visible = not (
+            isinstance(markeredgecolor, str) and markeredgecolor.lower() == "none"
+        )
+        marker_edge_px = (
+            float(rcParams["lines.markeredgewidth"] if markeredgewidth is None else markeredgewidth)
+            * (4.0 / 3.0)
+            if marker_edge_visible
+            else 0.0
+        )
+        marker_size_px = marker_size_pt * (4.0 / 3.0) + marker_edge_px
+        marker_edge_style = (
+            {
+                "stroke": (
+                    entry_kwargs["color"]
+                    if markeredgecolor in (None, "auto")
+                    else resolve_color(markeredgecolor)
+                ),
+                "stroke_width": marker_edge_px,
+            }
+            if marker_edge_visible
+            else {}
+        )
         if dash == "none":
             entry = self._add(
                 "scatter",
@@ -839,22 +865,11 @@ class Axes(PlotTypeMixin):
                     "kwargs": {
                         **{k: v for k, v in entry_kwargs.items() if k != "width"},
                         "symbol": _marker_symbol(this_marker or "o"),
-                        "size": float(
-                            rcParams["lines.markersize"] if markersize is None else markersize
-                        ),
+                        "size": marker_size_px,
+                        **marker_edge_style,
                         **(
                             {"color": resolve_color(markerfacecolor)}
                             if markerfacecolor not in (None, "auto")
-                            else {}
-                        ),
-                        **(
-                            {
-                                "stroke": resolve_color(markeredgecolor),
-                                "stroke_width": float(
-                                    1.0 if markeredgewidth is None else markeredgewidth
-                                ),
-                            }
-                            if markeredgecolor not in (None, "auto", "none")
                             else {}
                         ),
                     },
@@ -926,24 +941,12 @@ class Axes(PlotTypeMixin):
                             # Matplotlib marker sizes are points while the
                             # engine consumes CSS-pixel diameters.  At the
                             # default 96 dpi, 6 pt is 8 px.
-                            "size": float(
-                                rcParams["lines.markersize"] if markersize is None else markersize
-                            )
-                            * (4.0 / 3.0),
+                            "size": marker_size_px,
                             "name": None,
+                            **marker_edge_style,
                             **(
                                 {"color": resolve_color(markerfacecolor)}
                                 if markerfacecolor not in (None, "auto")
-                                else {}
-                            ),
-                            **(
-                                {
-                                    "stroke": resolve_color(markeredgecolor),
-                                    "stroke_width": float(
-                                        1.0 if markeredgewidth is None else markeredgewidth
-                                    ),
-                                }
-                                if markeredgecolor not in (None, "auto", "none")
                                 else {}
                             ),
                         },
@@ -2188,25 +2191,70 @@ class Axes(PlotTypeMixin):
         return lo - pad, hi + pad
 
     def axis(self, arg: Any = None, **kwargs: Any) -> tuple[float, float, float, float]:
-        del kwargs
-        if isinstance(arg, (tuple, list)) and len(arg) == 4:
+        kwargs.pop("emit", None)  # compat-noop: callback emission is not exposed
+        if isinstance(arg, bool):
+            arg = "on" if arg else "off"
+        if isinstance(arg, str):
+            arg = arg.lower()
+
+        if isinstance(arg, (tuple, list)):
+            if len(arg) != 4:
+                raise TypeError("the first argument to axis() must be [xmin, xmax, ymin, ymax]")
             self.set_xlim(arg[0], arg[1])
             self.set_ylim(arg[2], arg[3])
         elif arg == "off":
+            self._materialize_axis_view_domains()
             self.set_axis_off()
         elif arg == "on":
+            self._materialize_axis_view_domains()
             self.xaxis.set_visible(True)
             self.yaxis.set_visible(True)
-        elif arg in ("equal", "scaled"):
-            self._set_aspect_equal_from_current()
-        elif arg == "tight":
-            self._set_tight_domains()
-        elif arg == "auto":
+        elif arg in {"auto", "equal", "scaled", "image", "square"}:
+            # All five Matplotlib modes begin with autoscale_view(tight=False),
+            # whose limits include the configured x/y margins.
             self._aspect_equal = False
             self._aspect_bounds = None
-            self._invalidate()
+            self._set_tight_domains()
+            if arg in {"equal", "scaled", "image", "square"}:
+                self._set_aspect_equal_from_current()
+            if arg in {"scaled", "image"}:
+                x0, x1 = self.get_xlim()
+                y0, y1 = self.get_ylim()
+                self._set_box_aspect_ratio(abs(x1 - x0) / max(abs(y1 - y0), 1e-12))
+            if arg == "square":
+                x0, x1 = self.get_xlim()
+                y0, y1 = self.get_ylim()
+                edge = max(abs(x1 - x0), abs(y1 - y0))
+                self.set_xlim(x0, x0 + edge)
+                self.set_ylim(y0, y0 + edge)
+                self._aspect_bounds = (x0, x0 + edge, y0, y0 + edge)
+                self._set_box_aspect_ratio(1.0)
+        elif arg == "tight":
+            self._aspect_equal = False
+            self._aspect_bounds = None
+            self._set_tight_domains()
         elif arg is not None:
             raise ValueError(f"unsupported axis() argument {arg!r}")
+
+        if arg is None:
+            self._materialize_axis_view_domains()
+            limits = {}
+            for axis_name in ("x", "y"):
+                lower = kwargs.pop(f"{axis_name}min", None)
+                upper = kwargs.pop(f"{axis_name}max", None)
+                if lower is not None or upper is not None:
+                    limits[axis_name] = (lower, upper)
+            if "x" in limits:
+                x0, x1 = self.get_xlim()
+                lower, upper = limits["x"]
+                self.set_xlim(x0 if lower is None else lower, x1 if upper is None else upper)
+            if "y" in limits:
+                y0, y1 = self.get_ylim()
+                lower, upper = limits["y"]
+                self.set_ylim(y0 if lower is None else lower, y1 if upper is None else upper)
+
+        if kwargs:
+            raise TypeError(f"axis() got an unexpected keyword argument {next(iter(kwargs))!r}")
         x0, x1 = self.get_xlim()
         y0, y1 = self.get_ylim()
         return float(x0), float(x1), float(y0), float(y1)
@@ -2237,10 +2285,12 @@ class Axes(PlotTypeMixin):
             return
         if x is not None:
             self._xmargin = _validate_margin(x, "x")
+            self._margin_overrides.add("x")
             if "x" not in self._explicit_domains:
                 self._axis_props("x").pop("domain", None)
         if y is not None:
             self._ymargin = _validate_margin(y, "y")
+            self._margin_overrides.add("y")
             if "y" not in self._explicit_domains:
                 self._axis_props("y").pop("domain", None)
         self._invalidate()
@@ -2459,16 +2509,70 @@ class Axes(PlotTypeMixin):
         return made
 
     def _set_tight_domains(self) -> None:
-        self._axis_props("x")["domain"] = self._entry_extent("x")
-        self._axis_props("y")["domain"] = self._entry_extent("y")
+        # Matplotlib's axis("tight") disables further autoscaling after an
+        # autoscale_view(tight=True), but that view still includes the current
+        # axes.xmargin/axes.ymargin (5% by default).  "Tight" suppresses tick
+        # locator expansion; it does not mean raw data extrema.
+        for axis in ("x", "y"):
+            margin = (
+                (self._xmargin if axis == "x" else self._ymargin)
+                if axis in self._margin_overrides
+                else float(rcParams[f"axes.{axis}margin"])
+            )
+            lo, hi = self._entry_extent(axis)
+            span = hi - lo
+            pad = span * margin if span > 0 else abs(lo) * margin or margin
+            self._axis_props(axis)["domain"] = (lo - pad, hi + pad)
         self._explicit_domains.update({"x", "y"})
         self._invalidate()
+
+    def _materialize_axis_view_domains(self) -> None:
+        """Expose Matplotlib-like auto limits for axis query/decorative forms."""
+        if not self._entries:
+            return
+        changed = False
+        for axis in ("x", "y"):
+            if "domain" in self._axis_props(axis):
+                continue
+            margin = (
+                (self._xmargin if axis == "x" else self._ymargin)
+                if axis in self._margin_overrides
+                else float(rcParams[f"axes.{axis}margin"])
+            )
+            lo, hi = self._entry_extent(axis)
+            pad = (hi - lo) * margin
+            self._axis_props(axis)["domain"] = (lo - pad, hi + pad)
+            changed = True
+        if changed:
+            self._invalidate()
 
     def _set_aspect_equal_from_current(self) -> None:
         x0, x1 = self._axis_props("x").get("domain", self._auto_domain("x"))
         y0, y1 = self._axis_props("y").get("domain", self._auto_domain("y"))
         self._aspect_equal = True
         self._aspect_bounds = (float(x0), float(x1), float(y0), float(y1))
+        self._invalidate()
+
+    def _set_box_aspect_ratio(self, ratio: float) -> None:
+        """Center a Matplotlib-style adjustable box for one ordinary axes."""
+        if self.figure is None or len(self.figure.axes) != 1:
+            # Multi-panel box placement belongs to the grid compositor.  Keep
+            # equal-unit domain rendering there rather than turning one subplot
+            # into a free-form figure rectangle that overlaps its neighbors.
+            return
+        figure_width, figure_height = self.figure._panel_px()
+        x0, y0, width, height = self.get_position().bounds
+        current = (width * figure_width) / max(height * figure_height, 1e-12)
+        if current > ratio:
+            new_width = height * figure_height * ratio / figure_width
+            x0 += (width - new_width) * 0.5
+            width = new_width
+        elif current < ratio:
+            new_height = width * figure_width / ratio / figure_height
+            y0 += (height - new_height) * 0.5
+            height = new_height
+        self._figure_rect = (x0, y0, width, height)
+        self._absolute_plot_ratio = ratio
         self._invalidate()
 
     def set_axis_off(self) -> None:
@@ -2943,9 +3047,9 @@ class Axes(PlotTypeMixin):
             if labelcolor is not None:
                 style["tick_label_color"] = resolve_color(labelcolor)
             if length is not None:
-                style["tick_length"] = float(length)
+                style["tick_length"] = float(length) * (4.0 / 3.0)
             if width is not None:
-                style["tick_width"] = float(width)
+                style["tick_width"] = float(width) * (4.0 / 3.0)
             if direction is not None:
                 if direction not in {"in", "out", "inout"}:
                     raise ValueError("tick_params() direction must be 'in', 'out', or 'inout'")
@@ -3330,6 +3434,8 @@ class Axes(PlotTypeMixin):
             if isinstance(name, str) and "$" in name:  # legend text carries mathtext
                 kw["name"] = _plain_text(name)
             if kind == "line":
+                kw = dict(kw)
+                kw["width"] = float(kw.get("width", rcParams["lines.linewidth"])) * (4.0 / 3.0)
                 children.append(fc.line(x=e["x"], y=e["y"], **kw, **axis_kw))
             elif kind == "scatter":
                 kw = dict(kw)
@@ -3395,6 +3501,11 @@ class Axes(PlotTypeMixin):
                     for key, value in kw.items()
                     if key in {"dx", "dy", "color", "anchor", "class_name", "style"}
                 }
+                if "font_size" in (text_kw.get("style") or {}):
+                    text_kw["style"] = dict(text_kw["style"])
+                    text_kw["style"]["font_size"] = float(text_kw["style"]["font_size"]) * (
+                        4.0 / 3.0
+                    )
                 if opacity is not None and float(opacity) < 1.0:
                     text_kw["style"] = {**(text_kw.get("style") or {}), "opacity": float(opacity)}
                 children.append(fc.text(*e["args"], **text_kw))
@@ -3473,7 +3584,7 @@ class Axes(PlotTypeMixin):
             data_ratio = (x1 - x0) / max(y1 - y0, np.finfo(float).eps)
             panel_ratio = (
                 self._absolute_plot_ratio
-                if self._figure_rect is not None and self._absolute_plot_ratio is not None
+                if self._absolute_plot_ratio is not None
                 else max(1.0, width - 80) / max(1.0, height - 60)
             )
             if data_ratio < panel_ratio:
@@ -3495,6 +3606,7 @@ class Axes(PlotTypeMixin):
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
         self._apply_tickers("x", x_props)
         self._apply_tickers("y", y_props)
+        self._apply_auto_tick_density(x_props, y_props, width, height)
         children.append(_cached_axis("x", x_props))
         children.append(_cached_axis("y", y_props))
         for index, secondary in enumerate(self._secondary_axes, 1):
@@ -3541,6 +3653,42 @@ class Axes(PlotTypeMixin):
                     options["domain"] = [derived[0], derived[1]]
             figure.colorbar_options = options
         return self._chart
+
+    def _apply_auto_tick_density(
+        self,
+        x_props: dict[str, Any],
+        y_props: dict[str, Any],
+        width: int,
+        height: int,
+    ) -> None:
+        """Match Matplotlib AutoLocator's axes-size tick-space heuristic."""
+        compact = width < 520
+        if self._padding is None:
+            left, right = (46.0, 8.0) if compact else (62.0, 14.0)
+            top, bottom = (6.0, 36.0) if compact else (10.0, 42.0)
+        else:
+            top, right, bottom, left = map(float, self._padding)
+        if self._title:
+            top += 26.0 if compact else 30.0
+        if x_props.get("side") == "top":
+            top += 26.0 if compact else 32.0
+        plot_width = max(40.0, float(width) - left - right)
+        plot_height = max(40.0, float(height) - top - bottom)
+        dpi = float(self.figure._dpi if self.figure._dpi is not None else rcParams["figure.dpi"])
+        base = float(rcParams["font.size"])
+        x_font = _font_size_points(rcParams["xtick.labelsize"], base)
+        y_font = _font_size_points(rcParams["ytick.labelsize"], base)
+        counts = {
+            "x": max(1, min(9, int(np.floor(plot_width * 72.0 / dpi / (x_font * 3.0))))),
+            "y": max(1, min(9, int(np.floor(plot_height * 72.0 / dpi / (y_font * 2.0))))),
+        }
+        for axis, props in (("x", x_props), ("y", y_props)):
+            if (
+                "tick_count" not in props
+                and "tick_values" not in props
+                and (axis, "major_locator") not in self._tickers
+            ):
+                props["tick_count"] = counts[axis]
 
 
 def _discrete_levels(cmap: Any) -> Optional[int]:
@@ -3593,7 +3741,7 @@ def _is_number(v: Any) -> bool:
     return isinstance(v, (int, float, np.integer, np.floating))
 
 
-def _font_size(value: Any, base: Any) -> float:
+def _font_size_points(value: Any, base: Any) -> float:
     relative = {
         "xx-small": 0.6,
         "x-small": 0.75,
@@ -3613,11 +3761,18 @@ def _font_size(value: Any, base: Any) -> float:
     return result
 
 
+def _font_size(value: Any, base: Any) -> float:
+    return _font_size_points(value, base) * (4.0 / 3.0)
+
+
 def _rc_axis_style(axis: str) -> dict[str, Any]:
     prefix = "xtick" if axis == "x" else "ytick"
     tick_color = rcParams[f"{prefix}.color"]
     label_color = rcParams[f"{prefix}.labelcolor"]
     result: dict[str, Any] = {}
+    result["axis_width"] = float(rcParams["axes.linewidth"]) * (4.0 / 3.0)
+    result["tick_length"] = float(rcParams[f"{prefix}.major.size"]) * (4.0 / 3.0)
+    result["tick_width"] = float(rcParams[f"{prefix}.major.width"]) * (4.0 / 3.0)
     if tick_color != "black":
         result["tick_color"] = resolve_color(tick_color)
     if label_color != "inherit" or tick_color != "black":

@@ -801,11 +801,40 @@ class Figure:
                 )
         return self._html_cache
 
+    def _to_notebook_html(self) -> tuple[str, int, int]:
+        """Notebook-only tight layout matching Matplotlib's inline backend."""
+        width, height = rc_figsize_px(self._figsize, self._dpi)
+        dpi = float(self._dpi if self._dpi is not None else 100.0)
+        if (
+            self._nrows == self._ncols == 1
+            and len(self._axes) == 1
+            and self._axes[0]._figure_rect is None
+            and self._suptitle is None
+        ):
+            # Matplotlib's inline backend displays figures with
+            # bbox_inches="tight" and pad_inches=.1.  For the ordinary default
+            # axes this retains the 0.775×0.77 plot box and its label ink while
+            # trimming the unused figure canvas.  Build directly at that tight
+            # footprint so fonts/strokes remain unscaled and interactive.
+            tight_width = max(120, round(width * 0.775 + dpi * 0.62))
+            tight_height = max(120, round(height * 0.77 + dpi * 0.48))
+            ax = self._axes[0]
+            old_chart, old_padding = ax._chart, ax._padding
+            try:
+                ax._chart = None
+                ax._padding = [dpi * 0.15, dpi * 0.20, dpi * 0.34, dpi * 0.41]
+                doc = ax._build_chart(tight_width, tight_height).to_html()
+            finally:
+                ax._chart = old_chart
+                ax._padding = old_padding
+            return doc, tight_width, tight_height
+        return self._to_html(), width, height
+
     def _repr_html_(self) -> str:
         from xy import export
 
-        width, height = rc_figsize_px(self._figsize, self._dpi)
-        return export.notebook_iframe(self._to_html(), width=width, height=height)
+        doc, width, height = self._to_notebook_html()
+        return export.notebook_iframe(doc, width=width, height=height)
 
     def show(self, *args: Any, **kwargs: Any) -> None:
         import tempfile

@@ -721,10 +721,10 @@ def show(*args: Any, **kwargs: Any) -> None:
     ipython = sys.modules.get("IPython")
     shell = ipython.get_ipython() if ipython is not None else None
     if shell is not None:
-        from IPython.display import HTML, display  # noqa: PLC0415
+        from IPython.display import display  # noqa: PLC0415
 
         for fig in all_figures():
-            display(HTML(fig._repr_html_()))
+            display(fig)
         close("all")
         return
     for fig in all_figures():

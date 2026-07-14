@@ -14,6 +14,7 @@ from typing import Any, Optional
 import numpy as np
 
 from ._colors import resolve_color
+from ._rc import rcParams
 from ._transforms import Bbox, IdentityTransform
 
 
@@ -236,11 +237,18 @@ class Artist:
     def set_markeredgecolor(self, color: Any) -> None:
         for entry in self._marker_entries():
             if isinstance(color, str) and color.lower() == "none":
+                old_width = float(entry["kwargs"].get("stroke_width", 0.0))
                 entry["kwargs"].pop("stroke", None)
                 entry["kwargs"].pop("stroke_width", None)
+                entry["kwargs"]["size"] = max(
+                    0.0, float(entry["kwargs"].get("size", 0.0)) - old_width
+                )
             else:
+                if "stroke_width" not in entry["kwargs"]:
+                    width = float(rcParams["lines.markeredgewidth"]) * (4.0 / 3.0)
+                    entry["kwargs"]["stroke_width"] = width
+                    entry["kwargs"]["size"] = float(entry["kwargs"].get("size", 0.0)) + width
                 entry["kwargs"]["stroke"] = resolve_color(color)
-                entry["kwargs"].setdefault("stroke_width", 1.0)
         self._touch()
 
     set_mec = set_markeredgecolor
@@ -248,9 +256,9 @@ class Artist:
     def set_markersize(self, size: Any) -> None:
         # Matplotlib specifies Line2D marker size in points; xy's scatter mark
         # consumes CSS-pixel diameters.  96 dpi maps one point to 4/3 pixels.
-        diameter = float(size) * (4.0 / 3.0)
         for entry in self._marker_entries():
-            entry["kwargs"]["size"] = diameter
+            stroke_width = float(entry["kwargs"].get("stroke_width", 0.0))
+            entry["kwargs"]["size"] = float(size) * (4.0 / 3.0) + stroke_width
         self._touch()
 
     set_ms = set_markersize

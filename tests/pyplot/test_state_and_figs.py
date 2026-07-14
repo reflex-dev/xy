@@ -129,7 +129,8 @@ def test_notebook_repr_isolates_standalone_document_styles() -> None:
 
     assert html.startswith('<iframe class="xy-notebook-frame"')
     assert 'sandbox="allow-scripts"' in html
-    assert 'width="640" height="480"' in html
+    assert 'width="558" height="418"' in html
+    assert "margin-left:8px" in html
     assert "<style>" not in html
     assert "&lt;style&gt;" in html
     assert "&lt;!doctype html&gt;" in html

@@ -74,7 +74,7 @@ def test_legend_prop_dict_maps_size_and_rejects_other_font_properties():
     ax.plot([0, 1], [0, 1], label="a")
 
     ax.legend(prop={"size": 8})
-    assert ax._legend_options["style"]["fontSize"] == "8px"
+    assert ax._legend_options["style"]["fontSize"] == "10.6667px"
 
     with pytest.raises(NotImplementedError):
         ax.legend(prop={"family": "serif"})
@@ -155,7 +155,7 @@ def test_clear_reapplies_current_rc_chrome_not_just_prop_cycle():
         _, ax = plt.subplots()
         ax.cla()
         assert ax._theme_tokens["plot_background"] == "#102030"
-        assert ax._theme_style["font-size"] == "20px"
+        assert ax._theme_style["font-size"] == "26.6667px"
 
 
 def test_auto_ticks_report_exporter_locations_instead_of_empty():
