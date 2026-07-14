@@ -841,7 +841,11 @@ class Figure:
             try:
                 ax._chart = None
                 notebook_padding = [dpi * 0.15, dpi * 0.20, dpi * 0.34, dpi * 0.41]
-                if ax._aspect_equal and ax._aspect_bounds is not None:
+                if (
+                    ax._aspect_equal
+                    and ax._aspect_adjustable == "box"
+                    and ax._aspect_bounds is not None
+                ):
                     # Once adjustable='box' makes an image square, Matplotlib's
                     # inline bbox crops away the old wide axes allocation. Match
                     # that post-layout footprint instead of retaining ~54 px of

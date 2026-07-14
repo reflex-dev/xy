@@ -427,6 +427,7 @@ class Axes(PlotTypeMixin):
         self._colorbar: Optional[dict[str, Any]] = None
         self._colorbar_source: Optional[dict[str, Any]] = None  # entry the colorbar reads
         self._aspect_equal = False
+        self._aspect_adjustable = "box"
         self._aspect_bounds: Optional[tuple[float, float, float, float]] = None
         self._insets: list[tuple["Axes", tuple[float, float, float, float]]] = []
         self._insets_materialized = False
@@ -710,6 +711,7 @@ class Axes(PlotTypeMixin):
         self._colorbar = None
         self._colorbar_source = None
         self._aspect_equal = False
+        self._aspect_adjustable = "box"
         self._aspect_bounds = None
         self._insets = []
         self._insets_materialized = False
@@ -2278,10 +2280,16 @@ class Axes(PlotTypeMixin):
             # All five Matplotlib modes begin with autoscale_view(tight=False),
             # whose limits include the configured x/y margins.
             self._aspect_equal = False
+            self._aspect_adjustable = "box"
             self._aspect_bounds = None
             self._set_tight_domains()
             if arg in {"equal", "scaled", "image", "square"}:
                 self._set_aspect_equal_from_current()
+            if arg == "equal":
+                # Matplotlib spells axis("equal") as
+                # set_aspect("equal", adjustable="datalim"): retain the axes
+                # rectangle and expand a data limit at draw time.
+                self._aspect_adjustable = "datalim"
             if arg in {"scaled", "image"}:
                 x0, x1 = self.get_xlim()
                 y0, y1 = self.get_ylim()
@@ -2296,6 +2304,7 @@ class Axes(PlotTypeMixin):
                 self._set_box_aspect_ratio(1.0)
         elif arg == "tight":
             self._aspect_equal = False
+            self._aspect_adjustable = "box"
             self._aspect_bounds = None
             self._set_tight_domains()
         elif arg is not None:
@@ -2325,7 +2334,19 @@ class Axes(PlotTypeMixin):
         return float(x0), float(x1), float(y0), float(y1)
 
     def set_aspect(self, aspect: Any, **kwargs: Any) -> None:
-        del kwargs
+        adjustable = kwargs.pop("adjustable", None)
+        # anchor/share are accepted compatibility hints; the shim has no
+        # independent Artist layout graph on which to apply them.
+        kwargs.pop("anchor", None)  # compat-noop: axes anchoring has no separate layout graph
+        kwargs.pop("share", None)  # compat-noop: aspect sharing is resolved by shared axis state
+        if kwargs:
+            raise TypeError(
+                f"set_aspect() got an unexpected keyword argument {next(iter(kwargs))!r}"
+            )
+        if adjustable is not None:
+            if adjustable not in {"box", "datalim"}:
+                raise ValueError("adjustable must be 'box' or 'datalim'")
+            self._aspect_adjustable = adjustable
         self._aspect_equal = aspect in ("equal", 1, 1.0)
         if self._aspect_equal:
             self._set_aspect_equal_from_current()
@@ -3647,14 +3668,11 @@ class Axes(PlotTypeMixin):
             children.extend(self._twin._chart_children())
         chart_padding = None if self._padding is None else list(self._padding)
         adjusted_aspect = False
+        aspect_domains: Optional[tuple[tuple[float, float], tuple[float, float]]] = None
         if self._aspect_equal and self._aspect_bounds is not None:
             x0, x1, y0, y1 = self._aspect_bounds
             x0, x1 = self._axis["x"].get("domain", (x0, x1))
             y0, y1 = self._axis["y"].get("domain", (y0, y1))
-            # Matplotlib's default adjustable='box' preserves image limits and
-            # changes the axes rectangle to maintain equal data-unit scaling.
-            # Expanding a domain instead leaves blank space before an explicit
-            # extent (for example, tick 0 appears inside rather than at its edge).
             compact = width < 520
             if chart_padding is None:
                 top, right, bottom, left = (
@@ -3673,17 +3691,37 @@ class Axes(PlotTypeMixin):
             plot_width = max(40.0, width - left - layout_right)
             plot_height = max(40.0, height - layout_top - layout_bottom)
             data_ratio = abs(x1 - x0) / max(abs(y1 - y0), np.finfo(float).eps)
-            if plot_width / plot_height > data_ratio:
-                extra = plot_width - plot_height * data_ratio
-                left += extra * 0.5
-                right += extra * 0.5
+            plot_ratio = plot_width / plot_height
+            if self._aspect_adjustable == "datalim":
+                # axis("equal") keeps the normal axes rectangle. Expand the
+                # narrower data dimension around its existing center so one
+                # x unit and one y unit occupy the same number of pixels.
+                if plot_ratio > data_ratio:
+                    center = (x0 + x1) * 0.5
+                    half_span = abs(y1 - y0) * plot_ratio * 0.5
+                    x0, x1 = center - half_span, center + half_span
+                else:
+                    center = (y0 + y1) * 0.5
+                    half_span = abs(x1 - x0) / plot_ratio * 0.5
+                    y0, y1 = center - half_span, center + half_span
+                aspect_domains = ((x0, x1), (y0, y1))
             else:
-                extra = plot_height - plot_width / data_ratio
-                top += extra * 0.5
-                bottom += extra * 0.5
-            chart_padding = [top, right, bottom, left]
-            self._axis["x"]["domain"] = (x0, x1)
-            self._axis["y"]["domain"] = (y0, y1)
+                # adjustable='box' preserves image limits and changes the axes
+                # rectangle to maintain equal data-unit scaling.
+                if plot_ratio > data_ratio:
+                    extra = plot_width - plot_height * data_ratio
+                    left += extra * 0.5
+                    right += extra * 0.5
+                else:
+                    extra = plot_height - plot_width / data_ratio
+                    top += extra * 0.5
+                    bottom += extra * 0.5
+                chart_padding = [top, right, bottom, left]
+                # Image-like entries carry their extent outside the ordinary
+                # axis property dictionaries. Materialize it so the renderer's
+                # generic range padding cannot move explicit image edges.
+                self._axis["x"]["domain"] = (x0, x1)
+                self._axis["y"]["domain"] = (y0, y1)
             adjusted_aspect = True
         if not adjusted_aspect and self._xmargin != 0.0 and "x" not in self._explicit_domains:
             self._axis["x"]["domain"] = self._auto_domain("x")
@@ -3691,6 +3729,8 @@ class Axes(PlotTypeMixin):
             self._axis["y"]["domain"] = self._auto_domain("y")
         x_props = {k: v for k, v in self._axis["x"].items() if v is not None}
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
+        if aspect_domains is not None:
+            x_props["domain"], y_props["domain"] = aspect_domains
         self._apply_tickers("x", x_props)
         self._apply_tickers("y", y_props)
         self._apply_auto_tick_density(x_props, y_props, width, height)

@@ -71,8 +71,10 @@ def test_axis_tight_sets_data_domains_and_equal_expands_to_panel_ratio() -> None
     y_axis = _axis_child(ax, "y")
 
     assert x_axis.domain == pytest.approx((-0.1, 2.1))
-    # adjustable='box' preserves the data limits and changes the panel box.
-    assert y_axis.domain == pytest.approx((-0.05, 1.05))
+    # axis("equal") uses adjustable='datalim': preserve the ordinary panel
+    # rectangle and expand y until x/y data units have the same pixel scale.
+    assert y_axis.domain == pytest.approx((-0.3347517730, 1.3347517730))
+    assert ax.get_position().bounds == pytest.approx((0.125, 0.11, 0.775, 0.77))
 
 
 def test_axis_tight_honors_configured_margins() -> None:
