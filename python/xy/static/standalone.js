@@ -236,6 +236,9 @@ const FC_CHROME_CSS = `
 :where(.xy [data-fc-slot="tooltip"]){background:var(--chart-tooltip-bg,rgba(20,24,33,.92));color:var(--chart-tooltip-text,#fff);padding:5px 8px;border-radius:4px;font-size:11px;line-height:1.35;box-shadow:0 2px 8px rgba(0,0,0,.3)}
 :where(.xy [data-fc-slot="legend"]){gap:2px;font-size:11px;background:var(--chart-legend-bg,rgba(128,128,128,.08));border-radius:4px;padding:4px 8px;color:var(--chart-text,inherit)}
 :where(.xy [data-fc-slot="legend_swatch"]){width:12px;height:10px;border-radius:2px;margin-right:5px}
+:where(.xy [data-fc-slot="colorbar"]){color:var(--chart-text,inherit);font-size:10px}
+:where(.xy [data-fc-slot="colorbar_bar"]){background:var(--xy-colorbar-gradient);border:1px solid currentColor;box-sizing:border-box}
+:where(.xy [data-fc-slot="colorbar_title"]){font-weight:500}
 :where(.xy [data-fc-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
 :where(.xy [data-fc-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
 :where(.xy [data-fc-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
@@ -750,7 +753,7 @@ const DENSITY_FS = `#version 300 es
 precision highp float;
 uniform sampler2D u_grid; uniform sampler2D u_lut;
 uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1
-uniform float u_opacity;
+uniform float u_opacity; uniform vec4 u_color; uniform int u_constantColor;
 in vec2 v_data;
 out vec4 outColor;
 void main() {
@@ -759,8 +762,11 @@ void main() {
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
   float t = texture(u_grid, uv).r;
   if (t <= 0.0) discard;
-  vec3 rgb = texture(u_lut, vec2(clamp(t, 0.0, 1.0), 0.5)).rgb;
-  float alpha = u_opacity * clamp(t * 1.35, 0.0, 1.0);
+  vec4 paint = u_constantColor == 1
+    ? u_color
+    : texture(u_lut, vec2(clamp(t, 0.0, 1.0), 0.5));
+  vec3 rgb = paint.rgb;
+  float alpha = u_opacity * paint.a * clamp(t * 1.35, 0.0, 1.0);
   if (alpha <= 0.01) discard;
   outColor = vec4(rgb * alpha, alpha);
 }`;
@@ -1489,6 +1495,7 @@ g.prevDensity = g.density;
 g._densityFadeStart = view._now();
 g.density = {
 w: d.w, h: d.h, max: d.max, normMax, colormap: d.colormap || g.density.colormap,
+color: d.color ? parseColor(view.root, d.color, [0.3, 0.47, 0.66, 1]) : g.density.color,
 xRange: d.x_range, yRange: d.y_range,
 grid,
 tex: view._uploadGrid(grid, d.w, d.h, normMax),
@@ -2466,8 +2473,10 @@ gradient = `linear-gradient(to ${horizontal ? "right" : "top"},${stops.map((c) =
 `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
 }
 bar.style.cssText = horizontal
-? `position:absolute;inset:0 0 auto 0;height:${COLORBAR_THICKNESS}px;background:${gradient};border:1px solid currentColor;box-sizing:border-box;`
-: `position:absolute;inset:0 auto 0 0;width:${COLORBAR_THICKNESS}px;background:${gradient};border:1px solid currentColor;box-sizing:border-box;`;
+? `position:absolute;inset:0 0 auto 0;height:${COLORBAR_THICKNESS}px;`
+: `position:absolute;inset:0 auto 0 0;width:${COLORBAR_THICKNESS}px;`;
+bar.style.setProperty("--xy-colorbar-gradient", gradient);
+this._applySlot(bar, "colorbar_bar");
 box.appendChild(bar);
 const domain = cb.domain || [0, 1];
 const lo = Number(domain[0]), hi = Number(domain[1]);
@@ -2484,6 +2493,7 @@ const fraction = (value - lo) / span;
 tick.style.cssText = horizontal
 ? `position:absolute;left:${100 * fraction}%;top:${COLORBAR_THICKNESS + 2}px;transform:translateX(-50%);white-space:nowrap;`
 : `position:absolute;left:${COLORBAR_THICKNESS + 5}px;top:${100 * (1 - fraction)}%;transform:translateY(-50%);white-space:nowrap;`;
+this._applySlot(tick, "colorbar_tick");
 box.appendChild(tick);
 }
 if (cb.label) {
@@ -2492,6 +2502,7 @@ label.textContent = String(cb.label);
 label.style.cssText = horizontal
 ? `position:absolute;left:50%;top:${COLORBAR_THICKNESS + 18}px;transform:translateX(-50%);white-space:nowrap;`
 : `position:absolute;left:${COLORBAR_THICKNESS + 40}px;top:50%;writing-mode:vertical-rl;transform:translateY(-50%) rotate(180deg);white-space:nowrap;`;
+this._applySlot(label, "colorbar_title");
 box.appendChild(label);
 }
 box.title = `${cb.label ? cb.label + ": " : ""}${domain[0]} – ${domain[1]}`;
@@ -2618,6 +2629,7 @@ const grid = d.enc === "log-u8" ? lodDecodeLogU8(raw, d.max) : raw;
 g.densityNormMax = d.max;
 g.density = {
 w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
+color: d.color ? parseColor(this.root, d.color, [0.3, 0.47, 0.66, 1]) : null,
 xRange: d.x_range, yRange: d.y_range,
 grid: lodCopyGrid(grid),
 tex: this._uploadGrid(grid, d.w, d.h, d.max),
@@ -2827,6 +2839,12 @@ gl.uniform1i(u("u_gradCount"), grad.count);
 gl.uniform1fv(u("u_gradPos"), grad.pos);
 gl.uniform4fv(u("u_gradColor"), grad.colors);
 }
+_fillOpacity(style, fallback = 1) {
+return Number(style.opacity ?? fallback) * Number(style.fill_opacity ?? 1);
+}
+_strokeOpacity(style, fallback = 1) {
+return Number(style.opacity ?? fallback) * Number(style.stroke_opacity ?? 1);
+}
 _setRectStyleUniforms(prog, g) {
 const gl = this.gl;
 const u = (n) => uniformOf(gl, prog, n);
@@ -2835,7 +2853,8 @@ const cr = g.cornerRadius || [0, 0];
 gl.uniform2f(u("u_radius"), cr[0] * this.dpr, cr[1] * this.dpr);
 gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
 const sc = g.strokeColor || [0, 0, 0, 0];
-gl.uniform4f(u("u_stroke"), sc[0] * sc[3], sc[1] * sc[3], sc[2] * sc[3], sc[3]);
+const sa = sc[3] * this._strokeOpacity(g.trace.style || {});
+gl.uniform4f(u("u_stroke"), sc[0] * sa, sc[1] * sa, sc[2] * sa, sa);
 this._setGradientUniforms(prog, g.grad);
 }
 _rectMarkStyleGpu(g, t) {
@@ -3281,7 +3300,7 @@ gl.uniform1f(u("u_size"), g.size);
 gl.uniform1i(u("u_sizeMode"), g.sizeMode);
 gl.uniform2f(u("u_sizeRange"), g.sizeRange[0], g.sizeRange[1]);
 gl.uniform1i(u("u_colorMode"), g.colorMode);
-const markOpacity = (g.trace.style.opacity ?? 0.8) * opacityScale;
+const markOpacity = this._fillOpacity(g.trace.style, 0.8) * opacityScale;
 gl.uniform1f(u("u_opacity"), markOpacity);
 gl.uniform1f(u("u_selectedOpacity"), this._markStateNumber("selected", "opacity", 1));
 gl.uniform1f(u("u_unselectedOpacity"), this._markStateNumber("unselected", "opacity", 0.12));
@@ -3295,7 +3314,9 @@ const [r, gg, b] = g.color;
 gl.uniform4f(u("u_color"), r, gg, b, 1);
 gl.uniform1i(u("u_symbol"), g.symbol || 0);
 const sc = g.pointStroke;
-const strokeAlpha = sc ? sc[3] * markOpacity : 0;
+const strokeAlpha = sc
+? sc[3] * this._strokeOpacity(g.trace.style, 0.8) * opacityScale
+: 0;
 gl.uniform1f(u("u_ptStrokeWidth"), (g.pointStrokeWidth || 0) * this.dpr);
 gl.uniform1i(u("u_ptStrokeFace"), g.pointStrokeFace ? 1 : 0);
 gl.uniform4f(u("u_ptStroke"), sc ? sc[0] * strokeAlpha : 0, sc ? sc[1] * strokeAlpha : 0,
@@ -3366,7 +3387,7 @@ this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
 gl.uniform1f(u("u_dpr"), this.dpr);
 gl.uniform1f(u("u_size"), g.size);
 const [r, gg, b] = g.color;
-gl.uniform4f(u("u_color"), r, gg, b, (g.trace.style.opacity ?? 0.8) * opacityScale);
+gl.uniform4f(u("u_color"), r, gg, b, this._fillOpacity(g.trace.style, 0.8) * opacityScale);
 this._bindVao(
 g,
 "points-simple",
@@ -3444,7 +3465,10 @@ gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
 gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
 const d = density || g.density;
 gl.uniform4f(u("u_gridRange"), d.xRange[0], d.xRange[1], d.yRange[0], d.yRange[1]);
-gl.uniform1f(u("u_opacity"), (g.trace.style.opacity ?? 1.0) * opacityScale);
+gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * opacityScale);
+const constant = d.color;
+gl.uniform1i(u("u_constantColor"), constant ? 1 : 0);
+gl.uniform4f(u("u_color"), ...(constant || [1, 1, 1, 1]));
 gl.activeTexture(gl.TEXTURE0);
 gl.bindTexture(gl.TEXTURE_2D, d.tex);
 gl.uniform1i(u("u_grid"), 0);
@@ -3468,7 +3492,7 @@ gl.uniform4f(u("u_view"), vx0 ?? x0, vx1 ?? x1, vy0 ?? y0, vy1 ?? y1);
 gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
 gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
 gl.uniform4f(u("u_gridRange"), h.xRange[0], h.xRange[1], h.yRange[0], h.yRange[1]);
-gl.uniform1f(u("u_opacity"), g.trace.style.opacity ?? 1.0);
+gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
 gl.uniform1i(u("u_truecolor"), h.truecolor ? 1 : 0);
 gl.activeTexture(gl.TEXTURE0);
 gl.bindTexture(gl.TEXTURE_2D, h.tex);
@@ -3493,7 +3517,8 @@ this._setAxisUniforms(this.lineProg, "u_y", g.yMeta, g.yAxis);
 gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
 gl.uniform1f(u("u_width"), (width ?? g.trace.style.width ?? 1.5) * this.dpr);
 const [r, gg, b, a] = color || g.color;
-gl.uniform4f(u("u_color"), r, gg, b, a * (opacity ?? g.trace.style.opacity ?? 1));
+const strokeOpacity = this._strokeOpacity(g.trace.style) * (opacity ?? 1);
+gl.uniform4f(u("u_color"), r, gg, b, a * strokeOpacity);
 const dashed = this._lineDash(g);
 this._bindVao(
 g,
@@ -3527,7 +3552,7 @@ this._setAxisUniforms(prog, "u_y1", g.y1Meta, g.yAxis);
 gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
 gl.uniform1f(u("u_width"), (g.trace.style.width ?? 1.5) * this.dpr);
 const [r, gg, b, a] = g.color;
-gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
+gl.uniform4f(u("u_color"), r, gg, b, a * this._strokeOpacity(g.trace.style));
 gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
 const dashed = this._segmentDash(g, prog);
 if (g.colorMode && g.lut) {
@@ -3640,10 +3665,12 @@ gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
 for (const name of ["x0", "x1", "x2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.xAxis);
 for (const name of ["y0", "y1", "y2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.yAxis);
 gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
-gl.uniform1f(u("u_opacity"), g.trace.style.opacity ?? 1);
+gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
 gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], 1);
 const stroke = g.meshStroke || [0, 0, 0, 0];
-gl.uniform4f(u("u_stroke"), stroke[0] * stroke[3], stroke[1] * stroke[3], stroke[2] * stroke[3], stroke[3]);
+const strokeAlpha = stroke[3] * this._strokeOpacity(g.trace.style);
+gl.uniform4f(u("u_stroke"), stroke[0] * strokeAlpha, stroke[1] * strokeAlpha,
+stroke[2] * strokeAlpha, strokeAlpha);
 gl.uniform1f(u("u_strokeWidth"), g.meshStrokeWidth || 0);
 if (g.colorMode && g.lut) {
 gl.activeTexture(gl.TEXTURE0);
@@ -3717,7 +3744,7 @@ this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
 this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
 this._setAxisUniforms(prog, "u_b", g.baseMeta, g.yAxis);
 const [r, gg, b, a] = g.color;
-gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 0.35));
+gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.35));
 gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
 this._setGradientUniforms(prog, g.grad);
 this._bindVao(g, "area", [g.xBuf._fcId, g.yBuf._fcId, g.baseBuf._fcId], () => {
@@ -3748,7 +3775,7 @@ gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
 gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
 gl.uniform4f(u("u_edgePad"), edgePad[0], edgePad[1], edgePad[2], edgePad[3]);
 const [r, gg, b, a] = g.color;
-gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
+gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style));
 gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
 this._setRectStyleUniforms(prog, g);
 const colorOn = g.colorMode && g.cBuf;
@@ -3794,7 +3821,7 @@ gl.uniform1i(u("u_v0Mode"), g.value0Mode);
 gl.uniform1f(u("u_v0Const"), v0Const ?? 0);
 gl.uniform1f(u("u_v0EdgePad"), v0EdgePad);
 const [r, gg, b, a] = g.color;
-gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
+gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style));
 gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
 this._setRectStyleUniforms(prog, g);
 const v0On = g.value0Mode === 1 && g.value0Buf;

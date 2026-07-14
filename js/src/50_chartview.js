@@ -976,8 +976,10 @@ class ChartView {
         `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
     }
     bar.style.cssText = horizontal
-      ? `position:absolute;inset:0 0 auto 0;height:${COLORBAR_THICKNESS}px;background:${gradient};border:1px solid currentColor;box-sizing:border-box;`
-      : `position:absolute;inset:0 auto 0 0;width:${COLORBAR_THICKNESS}px;background:${gradient};border:1px solid currentColor;box-sizing:border-box;`;
+      ? `position:absolute;inset:0 0 auto 0;height:${COLORBAR_THICKNESS}px;`
+      : `position:absolute;inset:0 auto 0 0;width:${COLORBAR_THICKNESS}px;`;
+    bar.style.setProperty("--xy-colorbar-gradient", gradient);
+    this._applySlot(bar, "colorbar_bar");
     box.appendChild(bar);
 
     const domain = cb.domain || [0, 1];
@@ -995,6 +997,7 @@ class ChartView {
       tick.style.cssText = horizontal
         ? `position:absolute;left:${100 * fraction}%;top:${COLORBAR_THICKNESS + 2}px;transform:translateX(-50%);white-space:nowrap;`
         : `position:absolute;left:${COLORBAR_THICKNESS + 5}px;top:${100 * (1 - fraction)}%;transform:translateY(-50%);white-space:nowrap;`;
+      this._applySlot(tick, "colorbar_tick");
       box.appendChild(tick);
     }
     if (cb.label) {
@@ -1003,6 +1006,7 @@ class ChartView {
       label.style.cssText = horizontal
         ? `position:absolute;left:50%;top:${COLORBAR_THICKNESS + 18}px;transform:translateX(-50%);white-space:nowrap;`
         : `position:absolute;left:${COLORBAR_THICKNESS + 40}px;top:50%;writing-mode:vertical-rl;transform:translateY(-50%) rotate(180deg);white-space:nowrap;`;
+      this._applySlot(label, "colorbar_title");
       box.appendChild(label);
     }
     box.title = `${cb.label ? cb.label + ": " : ""}${domain[0]} – ${domain[1]}`;
@@ -1149,6 +1153,7 @@ class ChartView {
       g.densityNormMax = d.max;
       g.density = {
         w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
+        color: d.color ? parseColor(this.root, d.color, [0.3, 0.47, 0.66, 1]) : null,
         xRange: d.x_range, yRange: d.y_range,
         grid: lodCopyGrid(grid),
         tex: this._uploadGrid(grid, d.w, d.h, d.max),
@@ -1383,6 +1388,14 @@ class ChartView {
     gl.uniform4fv(u("u_gradColor"), grad.colors);
   }
 
+  _fillOpacity(style, fallback = 1) {
+    return Number(style.opacity ?? fallback) * Number(style.fill_opacity ?? 1);
+  }
+
+  _strokeOpacity(style, fallback = 1) {
+    return Number(style.opacity ?? fallback) * Number(style.stroke_opacity ?? 1);
+  }
+
   // Rect-family styling uniforms (rounded corners, stroke, gradient). Radius
   // and stroke width are CSS px -> device px; the stroke color ships
   // premultiplied to match the shader's blend space.
@@ -1394,7 +1407,8 @@ class ChartView {
     gl.uniform2f(u("u_radius"), cr[0] * this.dpr, cr[1] * this.dpr);
     gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
     const sc = g.strokeColor || [0, 0, 0, 0];
-    gl.uniform4f(u("u_stroke"), sc[0] * sc[3], sc[1] * sc[3], sc[2] * sc[3], sc[3]);
+    const sa = sc[3] * this._strokeOpacity(g.trace.style || {});
+    gl.uniform4f(u("u_stroke"), sc[0] * sa, sc[1] * sa, sc[2] * sa, sa);
     this._setGradientUniforms(prog, g.grad);
   }
 
@@ -1923,7 +1937,7 @@ class ChartView {
     gl.uniform1i(u("u_sizeMode"), g.sizeMode);
     gl.uniform2f(u("u_sizeRange"), g.sizeRange[0], g.sizeRange[1]);
     gl.uniform1i(u("u_colorMode"), g.colorMode);
-    const markOpacity = (g.trace.style.opacity ?? 0.8) * opacityScale;
+    const markOpacity = this._fillOpacity(g.trace.style, 0.8) * opacityScale;
     gl.uniform1f(u("u_opacity"), markOpacity);
     gl.uniform1f(u("u_selectedOpacity"), this._markStateNumber("selected", "opacity", 1));
     gl.uniform1f(u("u_unselectedOpacity"), this._markStateNumber("unselected", "opacity", 0.12));
@@ -1938,7 +1952,9 @@ class ChartView {
     gl.uniform4f(u("u_color"), r, gg, b, 1);
     gl.uniform1i(u("u_symbol"), g.symbol || 0);
     const sc = g.pointStroke;
-    const strokeAlpha = sc ? sc[3] * markOpacity : 0;
+    const strokeAlpha = sc
+      ? sc[3] * this._strokeOpacity(g.trace.style, 0.8) * opacityScale
+      : 0;
     gl.uniform1f(u("u_ptStrokeWidth"), (g.pointStrokeWidth || 0) * this.dpr);
     gl.uniform1i(u("u_ptStrokeFace"), g.pointStrokeFace ? 1 : 0);
     gl.uniform4f(u("u_ptStroke"), sc ? sc[0] * strokeAlpha : 0, sc ? sc[1] * strokeAlpha : 0,
@@ -2018,7 +2034,7 @@ class ChartView {
     gl.uniform1f(u("u_dpr"), this.dpr);
     gl.uniform1f(u("u_size"), g.size);
     const [r, gg, b] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, (g.trace.style.opacity ?? 0.8) * opacityScale);
+    gl.uniform4f(u("u_color"), r, gg, b, this._fillOpacity(g.trace.style, 0.8) * opacityScale);
     this._bindVao(
       g,
       "points-simple",
@@ -2100,7 +2116,10 @@ class ChartView {
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     const d = density || g.density;
     gl.uniform4f(u("u_gridRange"), d.xRange[0], d.xRange[1], d.yRange[0], d.yRange[1]);
-    gl.uniform1f(u("u_opacity"), (g.trace.style.opacity ?? 1.0) * opacityScale);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * opacityScale);
+    const constant = d.color;
+    gl.uniform1i(u("u_constantColor"), constant ? 1 : 0);
+    gl.uniform4f(u("u_color"), ...(constant || [1, 1, 1, 1]));
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, d.tex);
     gl.uniform1i(u("u_grid"), 0);
@@ -2125,7 +2144,7 @@ class ChartView {
     gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     gl.uniform4f(u("u_gridRange"), h.xRange[0], h.xRange[1], h.yRange[0], h.yRange[1]);
-    gl.uniform1f(u("u_opacity"), g.trace.style.opacity ?? 1.0);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
     gl.uniform1i(u("u_truecolor"), h.truecolor ? 1 : 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, h.tex);
@@ -2151,7 +2170,8 @@ class ChartView {
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     gl.uniform1f(u("u_width"), (width ?? g.trace.style.width ?? 1.5) * this.dpr);
     const [r, gg, b, a] = color || g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * (opacity ?? g.trace.style.opacity ?? 1));
+    const strokeOpacity = this._strokeOpacity(g.trace.style) * (opacity ?? 1);
+    gl.uniform4f(u("u_color"), r, gg, b, a * strokeOpacity);
     const dashed = this._lineDash(g);
     this._bindVao(
       g,
@@ -2186,7 +2206,7 @@ class ChartView {
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     gl.uniform1f(u("u_width"), (g.trace.style.width ?? 1.5) * this.dpr);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
+    gl.uniform4f(u("u_color"), r, gg, b, a * this._strokeOpacity(g.trace.style));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     const dashed = this._segmentDash(g, prog);
     if (g.colorMode && g.lut) {
@@ -2301,10 +2321,12 @@ class ChartView {
     for (const name of ["x0", "x1", "x2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.xAxis);
     for (const name of ["y0", "y1", "y2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.yAxis);
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
-    gl.uniform1f(u("u_opacity"), g.trace.style.opacity ?? 1);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
     gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], 1);
     const stroke = g.meshStroke || [0, 0, 0, 0];
-    gl.uniform4f(u("u_stroke"), stroke[0] * stroke[3], stroke[1] * stroke[3], stroke[2] * stroke[3], stroke[3]);
+    const strokeAlpha = stroke[3] * this._strokeOpacity(g.trace.style);
+    gl.uniform4f(u("u_stroke"), stroke[0] * strokeAlpha, stroke[1] * strokeAlpha,
+      stroke[2] * strokeAlpha, strokeAlpha);
     gl.uniform1f(u("u_strokeWidth"), g.meshStrokeWidth || 0);
     if (g.colorMode && g.lut) {
       gl.activeTexture(gl.TEXTURE0);
@@ -2384,7 +2406,7 @@ class ChartView {
     this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
     this._setAxisUniforms(prog, "u_b", g.baseMeta, g.yAxis);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 0.35));
+    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.35));
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     this._setGradientUniforms(prog, g.grad);
     this._bindVao(g, "area", [g.xBuf._fcId, g.yBuf._fcId, g.baseBuf._fcId], () => {
@@ -2416,7 +2438,7 @@ class ChartView {
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     gl.uniform4f(u("u_edgePad"), edgePad[0], edgePad[1], edgePad[2], edgePad[3]);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
+    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     this._setRectStyleUniforms(prog, g);
     const colorOn = g.colorMode && g.cBuf;
@@ -2463,7 +2485,7 @@ class ChartView {
     gl.uniform1f(u("u_v0Const"), v0Const ?? 0);
     gl.uniform1f(u("u_v0EdgePad"), v0EdgePad);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
+    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     this._setRectStyleUniforms(prog, g);
     const v0On = g.value0Mode === 1 && g.value0Buf;

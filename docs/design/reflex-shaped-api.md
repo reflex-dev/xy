@@ -1,6 +1,6 @@
 # Reflex-Shaped API Without A Reflex Dependency
 
-**Status:** design proposal.
+**Status:** implemented core contract; adapter boundary clarified.
 
 Goal: make XY feel like a Reflex component tree: declarative,
 children-first, styleable with normal CSS/Tailwind, and easy to wrap in Reflex
@@ -74,6 +74,22 @@ flowchart LR
   TREE --> RX
 ```
 
+### Reflex owns application behavior
+
+XY is a renderer, not a second reactive framework. A Reflex integration owns:
+
+- `Var` expressions and computed state;
+- conditional values and conditional styles;
+- click, hover, selection, and other event handlers;
+- component composition, responsive application layout, and lifecycle;
+- application themes, design tokens, and reusable style systems.
+
+XY accepts the concrete values, CSS declarations, classes, data buffers, and
+callbacks supplied by that integration. It emits render output and event
+payloads. XY must not add parallel `field()`, `condition()`, selection-state,
+event-action, layout, or template DSLs; doing so would create two competing
+sources of state and composition semantics.
+
 ## 2. Design Principles
 
 - **No framework dependency in `xy`.** The package may be easy to wrap
@@ -95,10 +111,10 @@ flowchart LR
   `fc.line(...)`, ...) resolves to the single mark implementation in
   `marks.py`, so mark names, channel names, defaults, and validation rules
   cannot fork.
-- **CSS styles chrome, spec styles marks.** DOM chrome like title, tooltip,
-  legend, modebar, and wrapper can be styled with classes and CSS variables.
-  WebGL marks are pixels, so their color/opacity/width still come from mark
-  props that may resolve CSS color tokens.
+- **CSS vocabulary styles chrome and marks.** DOM chrome receives the normal
+  browser cascade. WebGL/native/SVG marks accept a smaller documented CSS
+  appearance subset which XY compiles to renderer values. Marks remain pixels,
+  not selector-addressable DOM nodes.
 - **Data never lives in framework state.** Component props describe bindings and
   styling. Large canonical arrays stay in XY column storage and ship as
   binary buffers.
@@ -159,17 +175,25 @@ fc.scatter(
     data=df,
     name="requests",
     class_name="fc-mark-latency",
-    color_scale="viridis",
+    style={"fill": "var(--accent)", "stroke-width": "1px"},
 )
 ```
 
 Important distinction: `class_name` on a mark is metadata for generated DOM
 readouts and adapters. It cannot directly style already-rastered WebGL pixels.
-Mark colors can still use CSS-resolved values:
+Mark appearance uses the cross-renderer CSS subset:
 
 ```python
-fc.line(x="t", y="p95", data=df, color="var(--chart-critical)", width=2)
+fc.line(
+    x="t",
+    y="p95",
+    data=df,
+    style={"stroke": "var(--chart-critical)", "stroke-width": "2px"},
+)
 ```
+
+The older appearance keywords remain compatibility aliases. When both are
+provided, `style` wins so an adapter has one predictable final override layer.
 
 ### 3.3 Readout Methods
 
@@ -258,6 +282,10 @@ DOM chrome slots:
 | `legend` | Legend container |
 | `legend_item` | Legend row |
 | `legend_swatch` | Legend color swatch |
+| `colorbar` | Colorbar container |
+| `colorbar_bar` | Colorbar gradient/bands |
+| `colorbar_tick` | Colorbar tick label |
+| `colorbar_title` | Colorbar title |
 | `tooltip` | Tooltip container |
 | `modebar` | Modebar container |
 | `modebar_button` | Modebar button |
@@ -365,10 +393,11 @@ chart = fc.chart(
     fc.scatter(x="x", y="y", color="segment", data=df),
     fc.legend(rx.vstack(...), show=False),
     fc.tooltip(rx.box(...), show=False, fields=["x", "y", "segment"]),
+    fc.colorbar(rx.vstack(...), show=False),
 )
 
 chart.chrome_components()
-# {"legend": <rx.vstack ...>, "tooltip": <rx.box ...>}
+# {"legend": <rx.vstack ...>, "tooltip": <rx.box ...>, "colorbar": <rx.vstack ...>}
 ```
 
 The render objects are not serialized into standalone HTML. `show=False`
@@ -656,6 +685,7 @@ Now part of the core alpha contract:
 
 - Neutral `fc.chart(...)`.
 - `fc.tooltip(...)`, `fc.modebar(...)`, `fc.theme(...)`.
+- `fc.colorbar(...)` with the same CSS-slot and opaque adapter-render contract.
 - `class_name`, `class_names`, and `style` props.
 
 Can add:

@@ -67,7 +67,7 @@ def warm_lazy_modules() -> None:
     fig.build_payload(N_BUCKETS)
     fig.build_payload_split(N_BUCKETS)
     fig.to_svg(width=64, height=48)
-    fig.to_png(engine="native", scale=1.0)
+    fig.to_png(engine=fc.Engine.default, scale=1.0)
     fig.to_html()
 
 
@@ -910,7 +910,7 @@ def test_native_png_export_scatter(benchmark, export_data):
     """Native raster export after screen-bounded payload preparation."""
     x, y = export_data
     fig = fc.chart(fc.scatter(x=x, y=y)).figure()
-    png = benchmark(fig.to_png, engine="native", scale=1.0)
+    png = benchmark(fig.to_png, engine=fc.Engine.default, scale=1.0)
     assert png.startswith(b"\x89PNG")
 
 
@@ -919,7 +919,7 @@ def test_native_png_export_categorical_scatter(benchmark, export_data):
     x, y = export_data
     categories = np.asarray([f"group-{i % 24:02d}" for i in range(len(x))])
     fig = fc.chart(fc.scatter(x=x, y=y, color=categories)).figure()
-    png = benchmark(fig.to_png, engine="native", scale=1.0)
+    png = benchmark(fig.to_png, engine=fc.Engine.default, scale=1.0)
     assert png.startswith(b"\x89PNG")
 
 
@@ -943,7 +943,7 @@ def test_native_png_export_stroked_triangle_mesh(benchmark, compatibility_kernel
             stroke_width=0.5,
         )
     ).figure()
-    png = benchmark(fig.to_png, engine="native", scale=1.0)
+    png = benchmark(fig.to_png, engine=fc.Engine.default, scale=1.0)
     assert png.startswith(b"\x89PNG")
 
 
@@ -953,7 +953,7 @@ def test_native_png_export_heatmap(benchmark, core_2d_data):
     x = core_2d_data["heatmap_x"]
     y = core_2d_data["heatmap_y"]
     fig = fc.chart(fc.heatmap(z, x=x, y=y)).figure()
-    png = benchmark(fig.to_png, engine="native", scale=1.0)
+    png = benchmark(fig.to_png, engine=fc.Engine.default, scale=1.0)
     assert png.startswith(b"\x89PNG")
 
 

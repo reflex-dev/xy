@@ -905,7 +905,7 @@ def main() -> None:
         return
     for name, factory in CASES:
         chart = factory()
-        png = chart.to_png(width=W, height=H, scale=SCALE, chromium=chromium)
+        png = chart.to_png(width=W, height=H, scale=SCALE)
         stats = _assert_visual(name, png)
         _assert_no_tick_label_overlaps(name, chart, chromium)
         print(

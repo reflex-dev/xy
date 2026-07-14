@@ -8,12 +8,13 @@ This guide is the single reference for the styling contract. For the API shapes
 see [reflex-shaped-api.md](design/reflex-shaped-api.md); for the render internals
 see [renderer-architecture.md](design/renderer-architecture.md).
 
-## The four ways to style
+## The five ways to style
 
 | Mechanism | Scope | Where |
 | --- | --- | --- |
 | `class_names={slot: "..."}` | Add classes to a chrome slot (great for Tailwind) | `fc.chart(...)` |
 | `styles={slot: {...}}` | Inline CSS on a chrome slot | `fc.chart(...)` |
+| `style={...}` | Cross-renderer CSS appearance subset for a rendered mark | `fc.line(...)`, `fc.scatter(...)`, … |
 | `class_name=` / `style=` | A single annotation (per-call) | `.vline(...)`, `.text(...)`, … |
 | `custom_css="..."` | A raw author stylesheet in the exported document | `to_html(fig, custom_css=...)` |
 
@@ -21,7 +22,11 @@ see [renderer-architecture.md](design/renderer-architecture.md).
 import xy as fc
 
 chart = fc.chart(
-    fc.scatter(x=xs, y=ys),
+    fc.scatter(
+        x=xs,
+        y=ys,
+        style={"fill": "var(--accent)", "stroke": "currentColor", "stroke-width": "1px"},
+    ),
     class_names={
         "tooltip": "rounded-lg bg-slate-900/90 text-white shadow-xl",
         "legend": "text-xs font-medium",
@@ -35,6 +40,59 @@ chart = fc.chart(
 style APIs: a bare number on a length property becomes `px` (`{"font_size": 18}`
 → `font-size:18px`), custom properties (`--x`) and unitless properties pass
 through untouched.
+
+## Rendered marks: standard CSS vocabulary
+
+WebGL and native-raster marks are not DOM elements, so XY compiles a deliberate
+CSS subset instead of pretending every browser property can work. Property
+names are canonical CSS kebab-case; snake_case aliases remain accepted for
+Python compatibility. Unsupported properties raise before the figure mutates.
+
+```python
+fc.line(
+    x=x,
+    y=y,
+    style={
+        "stroke": "var(--accent)",
+        "stroke-width": "2px",
+        "stroke-opacity": 0.85,
+        "stroke-dasharray": "6px 3px",
+    },
+)
+
+fc.bar(
+    x=category,
+    y=value,
+    style={
+        "fill": "linear-gradient(to top, #2563eb, #93c5fd)",
+        "stroke": "#1e3a8a",
+        "stroke-width": "1px",
+        "border-radius": "4px",
+    },
+)
+```
+
+| Mark family | Supported CSS properties |
+| --- | --- |
+| line, step, stairs, ECDF | `color`, `stroke`, `stroke-width`, `stroke-opacity`, `stroke-dasharray`, `opacity` |
+| area, error band | `color`, `fill`, `fill-opacity`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity`; area also supports `stroke-dasharray` |
+| scatter | `color`, `fill`, `fill-opacity`, `stroke`, `stroke-width`, `opacity` |
+| histogram, bar, column | `color`, `fill`, `fill-opacity`, `stroke`, `stroke-width`, `border-radius`, `opacity` |
+| segments, error bars, contour, stem | `color`, `stroke`, `stroke-width`, `stroke-opacity`, `opacity` |
+| box, violin | `color`, `fill`, `fill-opacity`, `opacity` |
+| triangle mesh | `color`, `fill`, `fill-opacity`, `stroke`, `stroke-width`, `opacity` |
+| heatmap, hexbin | `fill-opacity`, `opacity` |
+
+Legacy appearance arguments such as `color=`, `width=`, and `opacity=` remain
+supported; a CSS `style` declaration is the final override when both are set.
+
+### Reflex integration boundary
+
+Reflex owns reactive `Var` values, conditions, application state, event
+handlers, layouts, and themes. XY does not duplicate those facilities. The
+integration resolves them into concrete `style`, `styles`, `class_name`, and
+`class_names` values and updates the renderer. CSS variables are the preferred
+bridge for design tokens and theme changes.
 
 ## Slot reference
 
@@ -53,6 +111,10 @@ raises before it reaches the client.
 | `legend` | Legend container |
 | `legend_item` | One legend row |
 | `legend_swatch` | Legend color swatch |
+| `colorbar` | Colorbar container |
+| `colorbar_bar` | Colorbar gradient/bands |
+| `colorbar_tick` | Colorbar tick label |
+| `colorbar_title` | Colorbar title |
 | `tooltip` | Hover tooltip |
 | `modebar` | Mode/tool bar container |
 | `modebar_button` | One mode/tool button (`.fc-active` when engaged) |
@@ -205,13 +267,16 @@ is below the baseline).
 
 ### Opacity
 
-Every mark takes `opacity` (0–1) for its fill/body; it composes with everything
+Every mark takes standard CSS `opacity` (0–1) for the whole mark. Standard SVG
+CSS `fill-opacity` and `stroke-opacity` independently multiply the fill and
+stroke channels. Effective alpha is therefore paint alpha × channel opacity ×
+whole-mark opacity. These compose with everything
 — a solid color, a gradient fill (each stop is scaled, so a fade-to-transparent
 stays proportional), and the antialiased corner/stroke coverage. `area` also has
 `line_opacity` for its outline. For finer control, any color is a full CSS color
 **including alpha** — `rgba(37,99,235,.5)`, `#2563eb80`, `oklch(... / 40%)` — and
-because the stroke keeps its own color's alpha, a translucent fill with a solid
-border is just `bar(opacity=0.3, stroke="#2563eb", stroke_width=2)`.
+because the channels are separate, a translucent fill with a solid border is
+`style={"fill-opacity": 0.3, "stroke-opacity": 1}`.
 
 ### Scatter markers — `symbol`, `stroke`, `stroke_width`
 
@@ -220,26 +285,12 @@ border is just `bar(opacity=0.3, stroke="#2563eb", stroke_width=2)`.
 border, e.g. `scatter(x, y, symbol="triangle", stroke="#fff", stroke_width=2)`.
 Each is an antialiased SDF in the point shader, so shapes stay crisp at any size
 and the border is a true ring (a stroke width with no color borders in the mark
-color). Symbols compose with the color/size channels and the selected/unselected
-mark states.
+color). Symbols compose with the color/size channels.
 
-### Interaction states — `mark_style` / `set_mark_style(...)`
-
-Restyle marks by interaction state — `hover`, `selected`, `unselected` — each a
-style dict of `color` / `opacity` (and `size` for hover). Selecting a region
-recolors and dims in one pass on the GPU:
-
-```python
-fig.set_mark_style(
-    hover={"color": "#0f172a", "size": 10},   # the point under the cursor
-    selected={"color": "#f97316"},            # points inside the selection
-    unselected={"opacity": 0.15},             # everything else fades back
-)
-```
-
-`color` accepts any CSS color; a state that sets no `color` keeps the mark's
-native color (so `unselected={"opacity": 0.15}` is the classic dim-the-rest
-selection affordance).
+Interaction state belongs to the host framework. In Reflex, use Reflex state,
+event handlers, conditions, and ordinary CSS classes/styles; XY only emits the
+events and renders the resulting props. The component API deliberately does not
+define a parallel hover/selected/unselected styling language.
 
 ### Smooth curves — `curve="smooth"` on `line`, `area`
 
@@ -260,8 +311,7 @@ dense and smoothing is invisible by construction.
 | `scatter` | ✅ + color/size channels | — | `symbol` (circle/square/diamond/triangle/cross) | ✅ `stroke`/`stroke_width` | — | — | ✅ + size channel |
 | `heatmap` | colormap + `domain` | colormap is the gradient | — | — | — | — | cell-driven |
 
-State styling (`mark_style`: hover / selected / unselected opacity & color)
-composes with all of the above. On the roadmap, in likely order: per-mark drop
+On the roadmap, in likely order: per-mark drop
 shadows, gradient angles beyond the four axis directions, and stroke gradients.
 
 ### Dashes — `dash` on `line`, `area`
@@ -286,9 +336,11 @@ with, so what validates is exactly what renders:
 - **Browser-resolved forms pass through.** `var(--accent)`, `oklch(…)`,
   `color-mix(…)`, and `calc(…)` are shape-checked (known function, balanced)
   and left for the client's probe element to resolve.
-- **Unknown properties are allowed** — your CSS is authority — but every
+- **Unknown DOM properties are allowed** — your CSS is authority — but every
   value must be declaration-safe: `;`, `{`, `}`, `</`, control characters,
   and unbalanced quotes/parentheses are rejected on every styling surface.
+- **Canvas/WebGL mark properties use a strict CSS subset.** Unsupported mark
+  declarations raise instead of silently disappearing in one renderer.
 - **A string `color=` is a constant iff it parses as a CSS color**; any other
   string is a `data=` column name. The full named-color table counts, so
   `color="rebeccapurple"` is a color, and a color-shaped typo reports its
@@ -309,13 +361,16 @@ Python, no browser, no extra dependencies. Because decimation runs first, the
 file is **screen-bounded**: a 10M-point line exports in ~4 ms as a ~58 KB SVG.
 Density/heatmap tiers embed as compact rasters.
 
-`fig.to_png(path?, width=, height=, scale=)` defaults to `engine="native"`: the
+`fig.to_png(path?, width=, height=, scale=)` defaults to
+`engine=fc.Engine.default`: the
 built-in **Rust rasterizer** paints that same decimated payload — no browser and
 millisecond export. Pass `optimize=True` to trade latency for indexed-palette
 PNG compression and smaller files. Text uses a baked bitmap font (the core has no FreeType),
 so small labels are slightly less refined than a browser's.
-For a pixel-exact match to the live WebGL chart, `engine="chromium"` screenshots
-the standalone HTML (needs a local Chrome/Chromium).
+For browser CSS, font, and WebGL fidelity, `engine=fc.Engine.chromium`
+screenshots the standalone HTML with an installed Chrome, Chromium, Edge, or
+`chrome-headless-shell`. Set `XY_BROWSER` to an executable path to override
+automatic discovery. Legacy string engine values remain deprecated aliases.
 
 Both static engines carry the full mark styling surface — gradients, dashes,
 symbols, rounded/stroked bars, smooth curves — with the same two documented

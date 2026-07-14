@@ -253,23 +253,22 @@ for(const p of panels){{
         path: Optional[str | PathLike[str]] = None,
         *,
         scale: float = 2.0,
-        engine: str = "native",
+        engine: export.Engine = export.Engine.default,
         optimize: bool = False,
-        chromium: Optional[str] = None,
         sandbox: bool = True,
     ) -> bytes:
         optimize = export._bool_option(optimize, "facet PNG optimize")
-        if engine == "chromium":
+        resolved_engine = export._png_engine(engine, "facet PNG")
+        if resolved_engine == "browser":
             data = export.html_to_png(
                 self.to_html(),
                 self.width,
                 # Match the actual HTML height: panels + gaps + title strip.
                 self.grid_height + self._title_height,
                 scale=scale,
-                chromium=chromium,
                 sandbox=sandbox,
             )
-        elif engine == "native":
+        elif resolved_engine == "native":
             if scale <= 0 or not np.isfinite(scale):
                 raise ValueError("facet PNG scale must be finite and positive")
             panel_images: list[np.ndarray] = []
@@ -302,8 +301,8 @@ for(const p of panels){{
                     compression_level=1,
                 )
             )
-        else:
-            raise ValueError("facet PNG engine must be 'native' or 'chromium'")
+        else:  # `_png_engine` returns only these two internal values.
+            raise AssertionError(f"unreachable PNG engine {resolved_engine!r}")
         if path is not None:
             Path(path).write_bytes(data)
         return data

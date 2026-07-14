@@ -40,7 +40,7 @@ variants, and faceted small multiples. It includes direct rendering,
 M4 line/area decimation, Tier-2 scatter density, adaptive scatter drilldown,
 hover, box select/zoom, standalone HTML export, and static export (`to_svg` and
 a browser-free native `to_png` — both millisecond and screen-bounded; `to_png`
-also offers a pixel-exact `engine="chromium"` mode).
+also offers installed-browser fidelity with `engine=fc.Engine.chromium`).
 Styling is first-class: every DOM chrome element is a CSS/Tailwind-addressable
 slot, and marks take gradient fills, rounded/stroked bars, smooth curves, and
 opacity. See [`docs/styling.md`](docs/styling.md) and the full design dossier
@@ -341,14 +341,17 @@ axis labels, trace names, legends, series names, and categories are escaped
 before entering inline JSON or `<title>`, and non-finite JSON metadata is
 rejected instead of emitted as browser-dependent JavaScript.
 
-`Chart.to_png()` defaults to `engine="native"`: the built-in Rust rasterizer
-paints the same decimated payload with no browser — millisecond export, and it
-works anywhere the wheel imports (no Chrome needed). Pass `optimize=True` for
-the slower size-optimized indexed PNG path. Pass
-`engine="chromium"` for a pixel-exact screenshot of the standalone HTML in local
-Chromium (`to_png(..., engine="chromium")` needs a local Chrome/Chromium
-executable); the browser sandbox is on by default — use `sandbox=False` only for
-trusted HTML in CI/container environments where sandboxed Chromium cannot launch.
+`Chart.to_png()` defaults to `engine=fc.Engine.default`: the built-in Rust
+rasterizer paints the same decimated payload with no browser — millisecond
+export, and it works anywhere the wheel imports (no Chrome needed). Pass
+`optimize=True` for the slower size-optimized indexed PNG path. Pass
+`engine=fc.Engine.chromium` to screenshot the standalone HTML with an installed
+supported browser. XY automatically finds
+Chrome, Chromium, Edge, or `chrome-headless-shell`; set `XY_BROWSER` to an
+executable path to select one explicitly. The browser sandbox is on by default —
+use `sandbox=False` only for trusted HTML in CI/container environments where a
+sandboxed browser cannot launch. Legacy string engine values remain deprecated
+compatibility aliases.
 
 ## Example Apps
 

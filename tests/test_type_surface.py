@@ -11,6 +11,7 @@ import pytest
 import xy as fc
 import xy._figure as figure_module
 import xy.components as components
+from xy.export import Engine
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -74,9 +75,9 @@ CHART_FACTORIES = (
 CHROME_FACTORIES = (
     "legend",
     "tooltip",
+    "colorbar",
     "modebar",
     "theme",
-    "mark_style",
     "interaction_config",
 )
 CHART_READOUTS = (
@@ -158,7 +159,7 @@ def test_component_types_are_lazy_public_root_exports() -> None:
         "Component",
         "FacetChart",
         "Mark",
-        "MarkStyle",
+        "Colorbar",
         "Annotation",
         "Axis",
         "Interaction",
@@ -167,6 +168,12 @@ def test_component_types_are_lazy_public_root_exports() -> None:
     ):
         assert name in fc.__all__
         assert getattr(fc, name) is getattr(components, name)
+
+
+def test_export_engine_is_lazy_public_enum() -> None:
+    assert "Engine" in fc.__all__
+    assert fc.Engine is Engine
+    assert tuple(Engine) == (Engine.default, Engine.chromium)
 
 
 def test_chart_dom_slots_are_public_styling_contract() -> None:
@@ -179,6 +186,10 @@ def test_chart_dom_slots_are_public_styling_contract() -> None:
         "legend",
         "legend_item",
         "legend_swatch",
+        "colorbar",
+        "colorbar_bar",
+        "colorbar_tick",
+        "colorbar_title",
         "tooltip",
         "modebar",
         "modebar_button",
@@ -271,9 +282,9 @@ def test_public_component_factories_have_typed_signatures() -> None:
         "y_axis": components.Axis,
         "legend": components.Legend,
         "tooltip": components.Tooltip,
+        "colorbar": components.Colorbar,
         "modebar": components.Modebar,
         "theme": components.Theme,
-        "mark_style": components.MarkStyle,
         "interaction_config": components.Interaction,
         **{name: components.Chart for name in CHART_FACTORIES},
         "facet_chart": components.FacetChart,
@@ -398,11 +409,12 @@ def test_chart_and_figure_png_export_types_stay_in_sync() -> None:
     assert chart_hints["return"] is bytes
     assert chart_hints == figure_hints
 
-    for key in ("path", "width", "height", "chromium"):
+    for key in ("path", "width", "height"):
         args = get_args(chart_hints[key])
         assert type(None) in args, key
     assert str in get_args(chart_hints["path"])
     assert chart_hints["scale"] is float
+    assert chart_hints["engine"] is Engine
     assert chart_hints["sandbox"] is bool
 
 

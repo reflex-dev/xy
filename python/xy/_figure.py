@@ -255,7 +255,12 @@ class Figure(AnnotationsMixin, PayloadMixin):
         selected: Optional[dict[str, Any]] = None,
         unselected: Optional[dict[str, Any]] = None,
     ) -> "Figure":
-        """Configure mark hover/selection state styling."""
+        """Configure legacy standalone hover/selection styling.
+
+        This low-level compatibility hook is intentionally not exposed by the
+        declarative component API. Reflex integrations should derive ordinary
+        mark props/styles from Reflex state instead of maintaining XY state.
+        """
         for state, value in (
             ("hover", hover),
             ("selected", selected),
@@ -1177,20 +1182,19 @@ class Figure(AnnotationsMixin, PayloadMixin):
         width: Optional[int] = None,
         height: Optional[int] = None,
         scale: float = 2.0,
-        engine: str = "native",
+        engine: export.Engine = export.Engine.default,
         optimize: bool = False,
-        chromium: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
     ) -> bytes:
-        """Static PNG (export.py). `engine="native"` (default) paints the
+        """Static PNG (export.py). `engine=Engine.default` paints the
         decimated payload with the built-in Rust rasterizer — no browser,
         millisecond export. `optimize=True` uses the slower size-oriented
-        indexed encoder. `engine="chromium"` screenshots
-        the standalone HTML for a pixel-exact match to the live WebGL chart
-        (needs a Chromium/Chrome binary; see export.find_chromium); `gl`
-        selects its WebGL backend — "software" (default, deterministic
-        SwiftShader) or "hardware" (real GPU)."""
+        indexed encoder. `engine=Engine.chromium` screenshots the standalone
+        HTML with an automatically discovered installed browser for browser
+        CSS/WebGL fidelity (see export.find_browser); `gl` selects its WebGL
+        backend — "software" (default, deterministic SwiftShader) or
+        "hardware" (real GPU)."""
         return export.to_png(
             self,
             path,
@@ -1199,7 +1203,6 @@ class Figure(AnnotationsMixin, PayloadMixin):
             scale=scale,
             engine=engine,
             optimize=optimize,
-            chromium=chromium,
             sandbox=sandbox,
             gl=gl,
         )

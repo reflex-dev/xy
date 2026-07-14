@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
-from . import _validate, channels, columns, kernels
+from . import _validate, channels, columns, kernels, styles
 from ._trace import Trace
 from .config import DEFAULT_PALETTE, DIRECT_SOFT_CEILING, MAX_CONTOUR_WORK
 
@@ -40,6 +40,7 @@ def _append_segment_trace(
     color_ch: Any = None,
     count: Optional[int] = None,
     dash: Any = None,
+    extra_style: Optional[dict[str, Any]] = None,
 ) -> None:
     """Append a compact instanced line-segment trace.
 
@@ -81,6 +82,7 @@ def _append_segment_trace(
                     "width": width,
                     "role": role,
                     **({"dash": dash} if dash else {}),
+                    **(extra_style or {}),
                 },
                 color_ch=color_ch,
                 count=count,
@@ -104,8 +106,13 @@ def segments(
     domain: Optional[tuple[float, float]] = None,
     width: float = 1.2,
     opacity: float = 1.0,
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add independent line segments through the shared instanced renderer."""
+    css = styles.compile_mark_style("segments", style)
+    color = css.get("color", color)
+    width = css.get("width", width)
+    opacity = css.get("opacity", opacity)
     arrays = [self._as_1d_float(values, "segments color geometry") for values in (x0, y0, x1, y1)]
     if len({len(values) for values in arrays}) != 1:
         raise ValueError("segments coordinate columns must have equal length")
@@ -130,6 +137,7 @@ def segments(
         width=width,
         role="segments",
         color_ch=None if color_ch.mode == "constant" else color_ch,
+        extra_style=styles._opacity_channels(css),
     )
     return self
 
@@ -150,8 +158,14 @@ def triangle_mesh(
     opacity: float = 1.0,
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add independently colored filled triangles as one instanced mesh."""
+    css = styles.compile_mark_style("triangle_mesh", style)
+    color = css.get("color", color)
+    opacity = css.get("opacity", opacity)
+    stroke = css.get("stroke", stroke)
+    stroke_width = css.get("stroke_width", stroke_width)
     name = self._optional_text(name, "triangle_mesh name")
     opacity = self._opacity(opacity, "triangle_mesh opacity")
     stroke = self._optional_css_color(stroke, "triangle_mesh stroke")
@@ -182,6 +196,7 @@ def triangle_mesh(
     try:
         x0c, y0c, x1c, y1c, x2c, y2c = [self.store.ingest(values) for values in arrays]
         style: dict[str, Any] = {"opacity": opacity, "role": "triangle-mesh"}
+        style.update(styles._opacity_channels(css))
         if stroke is not None:
             style["stroke"] = stroke
         if stroke_width:
@@ -350,11 +365,13 @@ def _bar_like(
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
     fill: Any = None,
+    style_extra: Optional[dict[str, Any]] = None,
 ) -> "Figure":
     name = self._optional_text(name, f"{kind} name")
     width = self._positive_scalar(width, f"{kind} width")
     opacity = self._opacity(opacity, f"{kind} opacity")
     mark_style = self._rect_mark_style(kind, corner_radius, stroke, stroke_width, fill)
+    mark_style.update(style_extra or {})
     if mode not in {"grouped", "stacked", "normalized"}:
         raise ValueError(f"{kind} mode must be 'grouped', 'stacked', or 'normalized'")
     if orientation not in {"vertical", "horizontal"}:
@@ -452,7 +469,13 @@ def line(
     opacity: float = 1.0,
     curve: str = "linear",
     dash: Any = None,
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
+    css = styles.compile_mark_style("line", style)
+    color = css.get("color", color)
+    width = css.get("width", width)
+    opacity = css.get("opacity", opacity)
+    dash = css.get("dash", dash)
     name = self._optional_text(name, "line name")
     color = self._optional_css_color(color, "line color")
     width = self._positive_scalar(width, "line width")
@@ -472,6 +495,7 @@ def line(
             xc = self.store.ingest(xc.values[order])
             yc = self.store.ingest(yc.values[order])
         style: dict[str, Any] = {"color": color, "width": width, "opacity": opacity}
+        style.update(styles._opacity_channels(css))
         if curve != "linear":
             style["curve"] = curve
         if dash_spec is not None:
@@ -508,6 +532,7 @@ def area(
     fill: Any = None,
     curve: str = "linear",
     dash: Any = None,
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add a filled area trace between `y` and `base`.
 
@@ -517,13 +542,21 @@ def area(
     `curve="smooth"` renders a monotone cubic through the points; `dash`
     dashes the outline.
     """
+    css = styles.compile_mark_style("area", style)
+    color = css.get("color", color)
+    opacity = css.get("opacity", opacity)
+    line_color = css.get("line_color", line_color)
+    line_width = css.get("line_width", line_width)
+    line_opacity = css.get("line_opacity", line_opacity)
+    fill = css.get("fill", fill)
+    dash = css.get("dash", dash)
     name = self._optional_text(name, "area name")
     color = self._optional_css_color(color, "area color")
     opacity = self._opacity(opacity, "area opacity")
     line_color = self._optional_css_color(line_color, "area line_color")
     line_width = self._nonnegative_scalar(line_width, "area line_width")
     line_opacity = self._opacity(line_opacity, "area line_opacity")
-    stroke_perimeter = _validate.optional_bool(stroke_perimeter, "area stroke_perimeter")
+    stroke_perimeter = _validate.bool_param(stroke_perimeter, "area stroke_perimeter")
     fill_spec = _validate.mark_fill(fill, "area fill")
     curve = _validate.curve(curve, "area curve")
     dash_spec = _validate.dash(dash, "area dash")
@@ -549,6 +582,7 @@ def area(
             "line_opacity": line_opacity,
             "stroke_perimeter": stroke_perimeter,
         }
+        style.update(styles._opacity_channels(css))
         if line_color is not None:
             style["line_color"] = line_color
         if fill_spec is not None:
@@ -586,12 +620,19 @@ def error_band(
     line_width: float = 0.0,
     line_opacity: float = 0.0,
     fill: Any = None,
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add an uncertainty/confidence band between ``lower`` and ``upper``.
 
     The band is one filled strip, not one rectangle per observation. It uses
     the same M4 reduction and WebGL area path as a large area series.
     """
+    css = styles.compile_mark_style("error_band", style)
+    color = css.get("color", color)
+    opacity = css.get("opacity", opacity)
+    line_width = css.get("line_width", line_width)
+    line_opacity = css.get("line_opacity", line_opacity)
+    fill = css.get("fill", fill)
     name = self._optional_text(name, "error_band name")
     color = self._optional_css_color(color, "error_band color")
     opacity = self._opacity(opacity, "error_band opacity")
@@ -616,6 +657,7 @@ def error_band(
             "line_opacity": line_opacity,
             "role": "error-band",
         }
+        style.update(styles._opacity_channels(css))
         if fill_spec is not None:
             style["fill"] = fill_spec
         self.traces.append(
@@ -659,6 +701,7 @@ def errorbar(
     width: float = 1.2,
     cap_size: Optional[float] = None,
     opacity: float = 1.0,
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add vertical and/or horizontal error bars as instanced segments.
 
@@ -669,6 +712,10 @@ def errorbar(
     spacing of the distinct positions along that axis (0.4 when fewer than
     two are distinct); ``cap_size=0`` omits the caps entirely.
     """
+    css = styles.compile_mark_style("errorbar", style)
+    color = css.get("color", color)
+    width = css.get("width", width)
+    opacity = css.get("opacity", opacity)
     if yerr is None and xerr is None:
         raise ValueError("errorbar requires yerr, xerr, or both")
     name = self._optional_text(name, "errorbar name")
@@ -708,6 +755,7 @@ def errorbar(
                 width=width,
                 role="y-errorbar",
                 count=n,
+                extra_style=styles._opacity_channels(css),
             )
             emitted = True
         if xerr is not None:
@@ -732,6 +780,7 @@ def errorbar(
                 width=width,
                 role="x-errorbar",
                 count=n,
+                extra_style=styles._opacity_channels(css),
             )
         return self
     except Exception:
@@ -750,12 +799,23 @@ def step(
     width: float = 1.5,
     opacity: float = 1.0,
     dash: Any = None,
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add a step line without expanding the canonical input columns."""
     if where not in {"pre", "post", "mid"}:
         raise ValueError("step where must be 'pre', 'post', or 'mid'")
-    self.line(x, y, name=name, color=color, width=width, opacity=opacity, dash=dash)
+    css = styles.compile_mark_style("step", style)
+    self.line(
+        x,
+        y,
+        name=name,
+        color=css.get("color", color),
+        width=css.get("width", width),
+        opacity=css.get("opacity", opacity),
+        dash=css.get("dash", dash),
+    )
     self.traces[-1].style["step"] = where
+    self.traces[-1].style.update(styles._opacity_channels(css))
     return self
 
 
@@ -770,6 +830,7 @@ def stairs(
     width: float = 1.5,
     opacity: float = 1.0,
     dash: Any = None,
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add a Matplotlib-style precomputed stairs series.
 
@@ -805,6 +866,7 @@ def stairs(
         width=width,
         opacity=opacity,
         dash=dash,
+        style=style,
     )
 
 
@@ -818,6 +880,7 @@ def ecdf(
     width: float = 1.5,
     opacity: float = 1.0,
     dash: Any = None,
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add an empirical cumulative distribution function.
 
@@ -846,14 +909,30 @@ def ecdf(
         sx = np.concatenate(([edges[0]], edges[1:][keep]))
         sy = np.concatenate(([0.0], np.cumsum(counts)[keep] / len(vals)))
         return self.step(
-            sx, sy, where="post", name=name, color=color, width=width, opacity=opacity, dash=dash
+            sx,
+            sy,
+            where="post",
+            name=name,
+            color=color,
+            width=width,
+            opacity=opacity,
+            dash=dash,
+            style=style,
         )
     unique, counts = np.unique(vals, return_counts=True)
     cdf = np.cumsum(counts, dtype=np.float64) / len(vals)
     sx = np.concatenate(([unique[0]], unique))
     sy = np.concatenate(([0.0], cdf))
     return self.step(
-        sx, sy, where="post", name=name, color=color, width=width, opacity=opacity, dash=dash
+        sx,
+        sy,
+        where="post",
+        name=name,
+        color=color,
+        width=width,
+        opacity=opacity,
+        dash=dash,
+        style=style,
     )
 
 
@@ -870,8 +949,13 @@ def stem(
     marker: bool = True,
     marker_size: float = 5.0,
     symbol: str = "circle",
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add vertical stem segments and optional point markers."""
+    css = styles.compile_mark_style("stem", style)
+    color = css.get("color", color)
+    width = css.get("width", width)
+    opacity = css.get("opacity", opacity)
     name = self._optional_text(name, "stem name")
     color = self._optional_css_color(color, "stem color")
     if color is None:
@@ -896,6 +980,7 @@ def stem(
             width=width,
             role="stem",
             count=len(xc),
+            extra_style=styles._opacity_channels(css),
         )
         if marker:
             self.scatter(
@@ -930,6 +1015,7 @@ def scatter(
     symbol: str = "circle",
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add a scatter trace.
 
@@ -940,6 +1026,11 @@ def scatter(
     `stroke_width` draw a point border. Large scatters auto-switch to a
     Tier-2 density surface (§5); pass `density=True/False` to force it.
     """
+    css = styles.compile_mark_style("scatter", style)
+    color = css.get("color", color)
+    opacity = css.get("opacity", opacity)
+    stroke = css.get("stroke", stroke)
+    stroke_width = css.get("stroke_width", stroke_width)
     name = self._optional_text(name, "scatter name")
     opacity = self._opacity(opacity, "scatter opacity")
     density = self._optional_bool(density, "scatter density")
@@ -959,6 +1050,7 @@ def scatter(
         size_ch = channels.resolve_size(size, n, range_px=size_range)
 
         point_style: dict[str, Any] = {"opacity": opacity}
+        point_style.update(styles._opacity_channels(css))
         if symbol != "circle":
             point_style["symbol"] = symbol
         if stroke is not None:
@@ -1031,6 +1123,7 @@ def histogram(
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
     fill: Any = None,
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add a 1D histogram backed by the shared rectangle primitive.
 
@@ -1038,9 +1131,17 @@ def histogram(
     count mode the last bin equals the number of in-range values; combined
     with `density=True` it becomes the empirical CDF (last bin ~1.0).
     """
+    css = styles.compile_mark_style("histogram", style)
+    color = css.get("color", color)
+    opacity = css.get("opacity", opacity)
+    corner_radius = css.get("corner_radius", corner_radius)
+    stroke = css.get("stroke", stroke)
+    stroke_width = css.get("stroke_width", stroke_width)
+    fill = css.get("fill", fill)
     name = self._optional_text(name, "histogram name")
     opacity = self._opacity(opacity, "histogram opacity")
     mark_style = self._rect_mark_style("histogram", corner_radius, stroke, stroke_width, fill)
+    mark_style.update(styles._opacity_channels(css))
     density = self._bool_param(density, "histogram density")
     cumulative = self._bool_param(cumulative, "histogram cumulative")
     vals = self._as_1d_float(values, "histogram values")
@@ -1103,6 +1204,7 @@ def hist(
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
     fill: Any = None,
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Short alias for `histogram(...)`, matching common Python chart APIs."""
     return self.histogram(
@@ -1118,6 +1220,7 @@ def hist(
         stroke=stroke,
         stroke_width=stroke_width,
         fill=fill,
+        style=style,
     )
 
 
@@ -1134,8 +1237,12 @@ def box(
     orientation: str = "vertical",
     show_outliers: bool = True,
     outlier_size: float = 4.0,
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add grouped Tukey box plots from 1-D or column-oriented 2-D values."""
+    css = styles.compile_mark_style("box", style)
+    color = css.get("color", color)
+    opacity = css.get("opacity", opacity)
     if orientation not in {"vertical", "horizontal"}:
         raise ValueError("box orientation must be 'vertical' or 'horizontal'")
     name = self._optional_text(name, "box name")
@@ -1221,7 +1328,11 @@ def box(
             color=color,
             opacity=opacity,
             role="box",
-            extra_style={"stroke_width": 1.0, "box_orientation": orientation},
+            extra_style={
+                "stroke_width": 1.0,
+                "box_orientation": orientation,
+                **styles._opacity_channels(css),
+            },
         )
         self._append_segment_trace(
             "box_median",
@@ -1277,6 +1388,7 @@ def violin(
     bins: int = 64,
     opacity: float = 0.55,
     orientation: str = "vertical",
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add bounded-resolution violin distributions.
 
@@ -1285,6 +1397,9 @@ def violin(
     through the shared instanced rectangle path, so input cardinality does not
     become DOM/GPU object cardinality.
     """
+    css = styles.compile_mark_style("violin", style)
+    color = css.get("color", color)
+    opacity = css.get("opacity", opacity)
     if orientation not in {"vertical", "horizontal"}:
         raise ValueError("violin orientation must be 'vertical' or 'horizontal'")
     if (
@@ -1347,6 +1462,7 @@ def violin(
             color=color,
             opacity=opacity,
             role="violin",
+            extra_style=styles._opacity_channels(css),
         )
     except Exception:
         self._rollback(checkpoint)
@@ -1368,12 +1484,15 @@ def hexbin(
     name: Optional[str] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     opacity: float = 0.9,
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add a screen-bounded hexagonal density plot.
 
     Binning is performed by the native 2-D kernel. Only occupied bins are
     shipped as centers plus one scalar count/color channel.
     """
+    css = styles.compile_mark_style("hexbin", style)
+    opacity = css.get("opacity", opacity)
     if isinstance(gridsize, (int, np.integer)) and not isinstance(gridsize, (bool, np.bool_)):
         w = int(gridsize)
         h = max(2, int(w / np.sqrt(3.0)))
@@ -1490,6 +1609,7 @@ def hexbin(
                     "opacity": opacity,
                     "hex_dx": dx,
                     "hex_dy": dy,
+                    **styles._opacity_channels(css),
                 },
                 color_ch=color_ch,
                 size_ch=channels.SizeChannel(mode="constant", constant=8.0),
@@ -1558,6 +1678,7 @@ def contour(
     width: float = 1.1,
     opacity: float = 0.9,
     dash_negative: bool = False,
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add regular-grid contour isolines, optionally over a filled heatmap.
 
@@ -1565,6 +1686,10 @@ def contour(
     contour (Matplotlib's monochrome convention); it is ignored when a colormap
     drives per-level color.
     """
+    css = styles.compile_mark_style("contour", style)
+    color = css.get("color", color)
+    width = css.get("width", width)
+    opacity = css.get("opacity", opacity)
     arr = self._as_float_array(z, "contour z")
     if arr.ndim != 2 or min(arr.shape) < 2:
         raise ValueError(
@@ -1669,6 +1794,7 @@ def contour(
                     role="contour",
                     color_ch=color_ch,
                     dash=dash,
+                    extra_style=styles._opacity_channels(css),
                 )
     except Exception:
         self._rollback(checkpoint)
@@ -1694,6 +1820,7 @@ def bar(
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
     fill: Any = None,
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add vertical bars. 2D y values render grouped, stacked, or
     normalized (per-category fractions summing to 1) series.
@@ -1701,6 +1828,13 @@ def bar(
     `corner_radius`/`stroke`/`stroke_width` are the CSS border analogues
     rendered into the mark; `fill` accepts a CSS `linear-gradient(...)`
     (docs/styling.md#styling-the-marks)."""
+    css = styles.compile_mark_style("bar", style)
+    color = css.get("color", color)
+    opacity = css.get("opacity", opacity)
+    corner_radius = css.get("corner_radius", corner_radius)
+    stroke = css.get("stroke", stroke)
+    stroke_width = css.get("stroke_width", stroke_width)
+    fill = css.get("fill", fill)
     return _bar_like(
         self,
         "bar",
@@ -1719,6 +1853,7 @@ def bar(
         stroke=stroke,
         stroke_width=stroke_width,
         fill=fill,
+        style_extra=styles._opacity_channels(css),
     )
 
 
@@ -1740,8 +1875,16 @@ def column(
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
     fill: Any = None,
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Alias for vertical column charts; shares the bar/rect renderer."""
+    css = styles.compile_mark_style("column", style)
+    color = css.get("color", color)
+    opacity = css.get("opacity", opacity)
+    corner_radius = css.get("corner_radius", corner_radius)
+    stroke = css.get("stroke", stroke)
+    stroke_width = css.get("stroke_width", stroke_width)
+    fill = css.get("fill", fill)
     return _bar_like(
         self,
         "column",
@@ -1760,6 +1903,7 @@ def column(
         stroke=stroke,
         stroke_width=stroke_width,
         fill=fill,
+        style_extra=styles._opacity_channels(css),
     )
 
 
@@ -1773,12 +1917,15 @@ def heatmap(
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     opacity: float = 0.95,
+    style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add a rectangular heatmap from a 2D value matrix.
 
     `z` is shaped `(rows, columns)`. Optional `x` and `y` arrays name the
     column/row centers; string/object arrays become categorical axes.
     """
+    css = styles.compile_mark_style("heatmap", style)
+    opacity = css.get("opacity", opacity)
     name = self._optional_text(name, "heatmap name")
     opacity = self._opacity(opacity, "heatmap opacity")
     if hasattr(z, "to_numpy"):
@@ -1850,6 +1997,7 @@ def heatmap(
                     "truecolor": truecolor,
                     "x_range": [float(x_edges[0]), float(x_edges[-1])],
                     "y_range": [float(y_edges[0]), float(y_edges[-1])],
+                    **styles._opacity_channels(css),
                 },
             )
         )

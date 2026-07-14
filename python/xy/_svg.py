@@ -27,6 +27,17 @@ import numpy as np
 from . import _png
 from .config import DEFAULT_PALETTE
 
+
+def _fill_opacity(style: dict[str, Any], default: float = 1.0) -> float:
+    """CSS whole-mark opacity multiplied by the fill-only channel."""
+    return float(style.get("opacity", default)) * float(style.get("fill_opacity", 1.0))
+
+
+def _stroke_opacity(style: dict[str, Any], default: float = 1.0) -> float:
+    """CSS whole-mark opacity multiplied by the stroke-only channel."""
+    return float(style.get("opacity", default)) * float(style.get("stroke_opacity", 1.0))
+
+
 # Mirrors js/src/10_colormaps.js COLORMAP_STOPS (§36) — test-guarded.
 COLORMAP_STOPS: dict[str, list[tuple[int, int, int]]] = {
     "binary": [(255, 255, 255), (0, 0, 0)],
@@ -547,6 +558,22 @@ def _lut(colormap: str, t: np.ndarray) -> np.ndarray:
     return out
 
 
+def _paint_rgba8(css: Any) -> tuple[int, int, int, int]:
+    """Resolve a validated CSS paint for static density images."""
+    from . import kernels
+
+    _status, rgba = kernels.css_check(kernels.CSS_COLOR, str(css))
+    if rgba is None:
+        rgba = (100.0 / 255.0, 100.0 / 255.0, 100.0 / 255.0, 1.0)
+    red, green, blue, alpha = rgba
+    return (
+        int(round(red * 255)),
+        int(round(green * 255)),
+        int(round(blue * 255)),
+        int(round(alpha * 255)),
+    )
+
+
 def _css(c: Any, fallback: str) -> str:
     """Static color resolution: currentColor -> the mark color; var() can't
     resolve without a DOM, so it falls back to the mark color too."""
@@ -864,7 +891,10 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     xt, xlab, xstep = ticks_for(xa, plot["w"])
     yt, ylab, ystep = ticks_for(ya, plot["h"])
     dom_style = (spec.get("dom") or {}).get("style") or {}
-    grid_color = escape(_css(dom_style.get("--chart-grid"), _GRID))
+    xstyle, ystyle = xa.get("style") or {}, ya.get("style") or {}
+    default_grid = _css(dom_style.get("--chart-grid"), _GRID)
+    default_axis = _css(dom_style.get("--chart-axis"), _AXIS)
+    default_text = _css(dom_style.get("--chart-text"), _TEXT)
     grid: list[str] = []
     labels: list[str] = []
     # "none" silences the whole axis chrome (sparklines); "off" hides only the
@@ -879,7 +909,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         px = float(sx(v))
         grid.append(
             f'<line x1="{_num(px)}" y1="{_num(plot["y"])}" x2="{_num(px)}" '
-            f'y2="{_num(plot["y"] + plot["h"])}" stroke="{grid_color}"/>'
+            f'y2="{_num(plot["y"] + plot["h"])}" '
+            f'stroke="{escape(_css(xstyle.get("grid_color"), default_grid))}" '
+            f'stroke-width="{_num(float(xstyle.get("grid_width", 1)))}"/>'
         )
     for v in yt:
         if hide_y:
@@ -887,20 +919,39 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         py = float(sy(v))
         grid.append(
             f'<line x1="{_num(plot["x"])}" y1="{_num(py)}" x2="{_num(plot["x"] + plot["w"])}" '
-            f'y2="{_num(py)}" stroke="{grid_color}"/>'
+            f'y2="{_num(py)}" stroke="{escape(_css(ystyle.get("grid_color"), default_grid))}" '
+            f'stroke-width="{_num(float(ystyle.get("grid_width", 1)))}"/>'
         )
     if not hide_x_labels:
         for v in xlab:
             tick_y = plot["y"] - 7 if xa.get("side") == "top" else plot["y"] + plot["h"] + 16
             labels.append(
                 f'<text x="{_num(float(sx(v)))}" y="{_num(tick_y)}" '
-                f'text-anchor="middle">{escape(_tick_text(xa, v, xstep))}</text>'
+                f'fill="{escape(_css(xstyle.get("tick_color"), default_text))}" '
+                f'font-size="{_num(float(xstyle.get("tick_size", 11)))}" '
+                f'text-anchor="middle"'
+                + (
+                    f' transform="rotate({_num(float(xa["tick_label_angle"]))} '
+                    f'{_num(float(sx(v)))} {_num(tick_y)})"'
+                    if xa.get("tick_label_angle") is not None
+                    else ""
+                )
+                + f">{escape(_tick_text(xa, v, xstep))}</text>"
             )
     if not hide_y_labels:
         for v in ylab:
             labels.append(
                 f'<text x="{_num(plot["x"] - 8)}" y="{_num(float(sy(v)) + 4)}" '
-                f'text-anchor="end">{escape(_tick_text(ya, v, ystep))}</text>'
+                f'fill="{escape(_css(ystyle.get("tick_color"), default_text))}" '
+                f'font-size="{_num(float(ystyle.get("tick_size", 11)))}" '
+                f'text-anchor="end"'
+                + (
+                    f' transform="rotate({_num(float(ya["tick_label_angle"]))} '
+                    f'{_num(plot["x"] - 8)} {_num(float(sy(v)) + 4)})"'
+                    if ya.get("tick_label_angle") is not None
+                    else ""
+                )
+                + f">{escape(_tick_text(ya, v, ystep))}</text>"
             )
 
     # -- marks --------------------------------------------------------------
@@ -909,7 +960,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
 
     def line_attrs(style: dict[str, Any], color: str) -> str:
         w = float(style.get("width", 1.5))
-        op = float(style.get("opacity", 1.0))
+        op = _stroke_opacity(style)
         return (
             f'stroke="{escape(color)}" stroke-width="{_num(w)}" fill="none" '
             f'stroke-linejoin="round" stroke-linecap="round"'
@@ -949,12 +1000,12 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 if isinstance(fill_spec, dict)
                 else escape(color)
             )
-            op = float(style.get("opacity", 0.35))
+            op = _fill_opacity(style, 0.35)
             joined = f"{top_path} L {base_path[2:]} Z"  # strip the M of the return path
             marks.append(f'<path d="{joined}" fill="{fill}" fill-opacity="{_num(op)}"/>')
             lw = float(style.get("line_width", 1.2))
             if lw > 0:
-                lop = float(style.get("line_opacity", 1.0))
+                lop = _stroke_opacity(style, 0.35) * float(style.get("line_opacity", 1.0))
                 line_color = style.get("line_color") or color
                 outline_path = joined if style.get("stroke_perimeter") else top_path
                 marks.append(
@@ -992,19 +1043,21 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         chrome.append(
             f'<text x="{_num(width / 2)}" y="{_num(plot["y"] - (10 if compact else 12))}" '
             f'text-anchor="middle" font-size="14" font-weight="600" '
-            f'fill="{_TEXT}">{escape(str(spec["title"]))}</text>'
+            f'fill="{escape(default_text)}">{escape(str(spec["title"]))}</text>'
         )
     if xa.get("label") and not hide_x:
         chrome.append(
             f'<text x="{_num(plot["x"] + plot["w"] / 2)}" y="{_num(plot["y"] + plot["h"] + 34)}" '
-            f'text-anchor="middle" font-size="12" font-weight="500" '
-            f'fill="{_TEXT}">{escape(str(xa["label"]))}</text>'
+            f'text-anchor="middle" font-size="{_num(float(xstyle.get("label_size", 12)))}" '
+            f'font-weight="500" fill="{escape(_css(xstyle.get("label_color"), default_text))}">'
+            f"{escape(str(xa['label']))}</text>"
         )
     if ya.get("label") and not hide_y:
         cx, cy = 14, plot["y"] + plot["h"] / 2
         chrome.append(
-            f'<text x="{_num(cx)}" y="{_num(cy)}" text-anchor="middle" font-size="12" '
-            f'font-weight="500" fill="{_TEXT}" '
+            f'<text x="{_num(cx)}" y="{_num(cy)}" text-anchor="middle" '
+            f'font-size="{_num(float(ystyle.get("label_size", 12)))}" '
+            f'font-weight="500" fill="{escape(_css(ystyle.get("label_color"), default_text))}" '
             f'transform="rotate(-90 {_num(cx)} {_num(cy)})">{escape(str(ya["label"]))}</text>'
         )
     named = [t for t in spec["traces"] if t.get("name")]
@@ -1029,7 +1082,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             if side in frame_sides:
                 baselines += (
                     f'<line x1="{_num(x)}" y1="{_num(plot["y"])}" x2="{_num(x)}" '
-                    f'y2="{_num(plot["y"] + plot["h"])}" stroke="{_AXIS}"/>'
+                    f'y2="{_num(plot["y"] + plot["h"])}" '
+                    f'stroke="{escape(_css(ystyle.get("axis_color"), default_axis))}" '
+                    f'stroke-width="{_num(float(ystyle.get("axis_width", 1)))}"/>'
                 )
     if not hide_x:
         for side, y in (("top", plot["y"]), ("bottom", plot["y"] + plot["h"])):
@@ -1037,8 +1092,51 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 baselines += (
                     f'<line x1="{_num(plot["x"])}" y1="{_num(y)}" '
                     f'x2="{_num(plot["x"] + plot["w"])}" y2="{_num(y)}" '
-                    f'stroke="{_AXIS}"/>'
+                    f'stroke="{escape(_css(xstyle.get("axis_color"), default_axis))}" '
+                    f'stroke-width="{_num(float(xstyle.get("axis_width", 1)))}"/>'
                 )
+
+    def tick_span(style: dict[str, Any]) -> tuple[float, float, float]:
+        length = max(0.0, float(style.get("tick_length", 0)))
+        direction = str(style.get("tick_direction", "out"))
+        if direction == "in":
+            return length, 0.0, float(style.get("tick_width", 1))
+        if direction == "inout":
+            return length / 2, length / 2, float(style.get("tick_width", 1))
+        return 0.0, length, float(style.get("tick_width", 1))
+
+    if not hide_x:
+        inward, outward, tick_width = tick_span(xstyle)
+        side = xa.get("side", "bottom")
+        edge = plot["y"] if side == "top" else plot["y"] + plot["h"]
+        for value in xt:
+            x = float(sx(value))
+            y1, y2 = (
+                (edge - outward, edge + inward)
+                if side == "top"
+                else (edge - inward, edge + outward)
+            )
+            baselines += (
+                f'<line x1="{_num(x)}" y1="{_num(y1)}" x2="{_num(x)}" y2="{_num(y2)}" '
+                f'stroke="{escape(_css(xstyle.get("axis_color"), default_axis))}" '
+                f'stroke-width="{_num(tick_width)}"/>'
+            )
+    if not hide_y:
+        inward, outward, tick_width = tick_span(ystyle)
+        side = ya.get("side", "left")
+        edge = plot["x"] + plot["w"] if side == "right" else plot["x"]
+        for value in yt:
+            y = float(sy(value))
+            x1, x2 = (
+                (edge - inward, edge + outward)
+                if side == "right"
+                else (edge - outward, edge + inward)
+            )
+            baselines += (
+                f'<line x1="{_num(x1)}" y1="{_num(y)}" x2="{_num(x2)}" y2="{_num(y)}" '
+                f'stroke="{escape(_css(ystyle.get("axis_color"), default_axis))}" '
+                f'stroke-width="{_num(tick_width)}"/>'
+            )
 
     clip_id = svg.uid("clip")
     svg.defs.append(
@@ -1053,7 +1151,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         f"<g>{''.join(grid)}</g>"
         f'<g clip-path="url(#{clip_id})">{"".join(marks)}</g>'
         f"{baselines}"
-        f'<g fill="{_TEXT}">{"".join(labels)}</g>'
+        f'<g fill="{escape(default_text)}">{"".join(labels)}</g>'
         f"{''.join(chrome)}"
         f"</svg>"
     )
@@ -1165,7 +1263,7 @@ def _segment_marks(
     y0 = _column(blob, cols[t["y0"]])
     y1 = _column(blob, cols[t["y1"]])
     width = float(style.get("width", 1.2))
-    op = float(style.get("opacity", 1.0))
+    op = _stroke_opacity(style)
     channel = t.get("color") or {}
     if channel.get("mode") == "continuous":
         rgb = _lut(channel.get("colormap", "viridis"), _column(blob, cols[channel["buf"]]))
@@ -1218,7 +1316,8 @@ def _scatter_marks(
     else:
         radii = np.full(n, float(size_ch.get("size", 4.0)) / 2)
 
-    op = float(style.get("opacity", 0.8))
+    fill_op = _fill_opacity(style, 0.8)
+    stroke_op = _stroke_opacity(style, 0.8)
     stroke_w = float(style.get("stroke_width", 0.0))
     line_symbol = style.get("symbol") in {"plus_line", "x_line"}
     if line_symbol and stroke_w <= 0:
@@ -1230,7 +1329,12 @@ def _scatter_marks(
 
     # Collection alpha applies to faces and edges.  A missing explicit stroke
     # means edgecolors="face", so resolve the edge separately for every mark.
-    out = [f'<g fill-opacity="{_num(op)}" stroke-opacity="{_num(op)}">'] if op < 1 else ["<g>"]
+    attrs = ""
+    if fill_op < 1:
+        attrs += f' fill-opacity="{_num(fill_op)}"'
+    if stroke_op < 1:
+        attrs += f' stroke-opacity="{_num(stroke_op)}"'
+    out = [f"<g{attrs}>"]
     for i in range(n):
         fill_attr = f' fill="{escape(fills[i])}"'
         point_stroke = stroke or (fills[i] if stroke_w or line_symbol else None)
@@ -1272,12 +1376,14 @@ def _triangle_mesh_marks(
     else:
         fills = [_css(color_ch.get("color"), fallback)] * n
 
-    opacity = float(style.get("opacity", 1.0))
+    fill_op = _fill_opacity(style)
+    stroke_op = _stroke_opacity(style)
     stroke_width = float(style.get("stroke_width", 0.0))
     stroke = _css(style.get("stroke"), fallback) if stroke_width else None
-    group_attr = f' fill-opacity="{_num(opacity)}"' if opacity < 1 else ""
+    group_attr = f' fill-opacity="{_num(fill_op)}"' if fill_op < 1 else ""
     stroke_attr = (
         f' stroke="{escape(stroke)}" stroke-width="{_num(stroke_width)}"'
+        + (f' stroke-opacity="{_num(stroke_op)}"' if stroke_op < 1 else "")
         if stroke is not None
         else ""
     )
@@ -1296,12 +1402,15 @@ def _triangle_mesh_marks(
 def _bar_fill(style: dict, color: str, svg: _Svg, plot: dict) -> tuple[str, str]:
     fill_spec = style.get("fill")
     fill = svg.gradient(fill_spec, color, plot) if isinstance(fill_spec, dict) else escape(color)
-    op = float(style.get("opacity", 0.85))
+    fill_op = _fill_opacity(style, 0.85)
+    stroke_op = _stroke_opacity(style, 0.85)
     stroke_w = float(style.get("stroke_width", 0.0))
     stroke = _css(style.get("stroke"), color) if stroke_w else None
-    extra = f' fill-opacity="{_num(op)}"' if op < 1 else ""
+    extra = f' fill-opacity="{_num(fill_op)}"' if fill_op < 1 else ""
     if stroke:
         extra += f' stroke="{escape(stroke)}" stroke-width="{_num(stroke_w)}"'
+        if stroke_op < 1:
+            extra += f' stroke-opacity="{_num(stroke_op)}"'
     return fill, extra
 
 
@@ -1412,8 +1521,17 @@ def _density_image(
     grid = _density_column(blob, cols[d["buf"]], d).reshape(h, w)
     gmax = float(d.get("max") or 1.0) or 1.0
     tnorm = np.clip(grid / gmax, 0.0, 1.0)
-    rgb = _lut(d.get("colormap", "viridis"), tnorm.reshape(-1)).reshape(h, w, 3)
-    alpha = (np.clip(tnorm * 1.35, 0, 1) * 255 * float(style.get("opacity", 0.85))).astype(np.uint8)
+    paint_alpha = 1.0
+    if d.get("color") is not None:
+        red, green, blue, alpha8 = _paint_rgba8(d["color"])
+        rgb = np.empty((h, w, 3), dtype=np.uint8)
+        rgb[:] = (red, green, blue)
+        paint_alpha = alpha8 / 255.0
+    else:
+        rgb = _lut(d.get("colormap", "viridis"), tnorm.reshape(-1)).reshape(h, w, 3)
+    alpha = (np.clip(tnorm * 1.35, 0, 1) * 255 * _fill_opacity(style, 0.85) * paint_alpha).astype(
+        np.uint8
+    )
     alpha[tnorm <= 0] = 0
     rgba = np.dstack([rgb, alpha])[::-1].tobytes()  # flip: PNG rows are top-first
     return _grid_image(w, h, rgba, d["x_range"], d["y_range"], sx, sy)
@@ -1424,15 +1542,15 @@ def _heatmap_image(hm: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, st
     if "rgba_bufs" in hm:
         channels = [_column(blob, cols[index]) for index in hm["rgba_bufs"]]
         rgba_array = np.clip(np.column_stack(channels) * 255.0, 0, 255).astype(np.uint8)
-        rgba_array[:, 3] = (
-            rgba_array[:, 3].astype(np.float64) * float(style.get("opacity", 1.0))
-        ).astype(np.uint8)
+        rgba_array[:, 3] = (rgba_array[:, 3].astype(np.float64) * _fill_opacity(style)).astype(
+            np.uint8
+        )
         rgba = rgba_array.reshape(h, w, 4)[::-1].tobytes()
         return _grid_image(w, h, rgba, hm["x_range"], hm["y_range"], sx, sy)
     raw = _column(blob, cols[hm["buf"]]).reshape(h, w)
     t = np.clip(raw, 0.0, 1.0)
     rgb = _lut(hm.get("colormap", "viridis"), t.reshape(-1)).reshape(h, w, 3)
-    alpha = np.full((h, w), int(255 * float(style.get("opacity", 0.95))), dtype=np.uint8)
+    alpha = np.full((h, w), int(255 * _fill_opacity(style, 0.95)), dtype=np.uint8)
     alpha[~np.isfinite(raw)] = 0
     rgba = np.dstack([rgb, alpha])[::-1].tobytes()
     return _grid_image(w, h, rgba, hm["x_range"], hm["y_range"], sx, sy)

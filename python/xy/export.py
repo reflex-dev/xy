@@ -13,13 +13,28 @@ import re as _re
 import shutil
 import subprocess
 import tempfile
+import warnings
 from contextlib import suppress
+from enum import StrEnum
 from os import PathLike
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, SupportsFloat, SupportsIndex, cast
 
 if TYPE_CHECKING:
     from ._figure import Figure
+
+
+class Engine(StrEnum):
+    """PNG export engine.
+
+    ``default`` is XY's fast, deterministic native renderer. ``chromium``
+    renders the standalone chart with an automatically discovered installed
+    Chromium-family browser for browser CSS/WebGL fidelity.
+    """
+
+    default = "default"
+    chromium = "chromium"
+
 
 # Warn above this payload size; base64 carries a stated ~33% tax (§29).
 EMBED_WARN_BYTES = 64 * 2**20
@@ -33,16 +48,31 @@ EMBED_WARN_BYTES = 64 * 2**20
 # string). 48 MiB is divisible by 3, keeping the alignment invariant trivially.
 _B64_CHUNK_BYTES = 48 * 2**20
 
-# Static PNG export shells out to a headless Chromium (the same engine that
-# renders the chart interactively) — no Python browser dependency, no
-# kaleido-class native package. Discovery order: explicit env var, then PATH,
-# then common local/CI browser installs.
+# Browser-fidelity PNG export shells out to an installed, headless-capable
+# browser — no Python browser dependency and no bundled browser runtime.  The
+# first adapter is the Chromium family (Chrome, Chromium, Edge, and the smaller
+# headless shell), all of which share the command line + CDP surface used here.
+# The public enum deliberately selects the fidelity tier rather than exposing
+# executable paths; discovery remains an implementation detail.
+_BROWSER_ENV = "XY_BROWSER"
 _CHROMIUM_ENV = "XY_CHROMIUM"
-_CHROMIUM_NAMES = ("chromium", "chromium-browser", "chrome", "google-chrome")
-_CHROMIUM_FALLBACKS = (
+_BROWSER_NAMES = (
+    "chrome-headless-shell",
+    "chromium",
+    "chromium-browser",
+    "chrome",
+    "google-chrome",
+    "google-chrome-stable",
+    "microsoft-edge",
+    "microsoft-edge-stable",
+    "msedge",
+)
+_BROWSER_FALLBACKS = (
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
     "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/Applications/Microsoft Edge Beta.app/Contents/MacOS/Microsoft Edge Beta",
     "/opt/pw-browsers/chromium",
 )
 _STATIC = Path(__file__).parent / "static"
@@ -313,19 +343,73 @@ def notebook_iframe(doc: str, *, width: object, height: object) -> str:
     )
 
 
-def find_chromium(explicit: Optional[str] = None) -> Optional[str]:
-    """Locate a headless-capable Chromium/Chrome, or None."""
-    for cand in (explicit, os.environ.get(_CHROMIUM_ENV)):
-        if cand and Path(cand).exists():
-            return cand
-    for name in _CHROMIUM_NAMES:
+def _installed_browser(candidate: object) -> Optional[str]:
+    if not isinstance(candidate, str) or not candidate.strip():
+        return None
+    text = os.path.expandvars(os.path.expanduser(candidate.strip()))
+    if Path(text).exists():
+        return text
+    return shutil.which(text)
+
+
+def find_browser(explicit: Optional[str] = None) -> Optional[str]:
+    """Locate a supported installed browser executable, or return ``None``.
+
+    ``None`` and ``"auto"`` search ``XY_BROWSER``, the legacy
+    ``XY_CHROMIUM`` variable, ``PATH``, and common application locations.
+    Any other value is treated as an explicit path or executable name and is
+    not silently replaced with a different installed browser when missing.
+    """
+    if explicit not in (None, "auto"):
+        return _installed_browser(explicit)
+    for env_name in (_BROWSER_ENV, _CHROMIUM_ENV):
+        configured = os.environ.get(env_name)
+        if configured:
+            return _installed_browser(configured)
+    for name in _BROWSER_NAMES:
         found = shutil.which(name)
         if found:
             return found
-    for cand in _CHROMIUM_FALLBACKS:
+    fallbacks = list(_BROWSER_FALLBACKS)
+    for root_name in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        root = os.environ.get(root_name)
+        if not root:
+            continue
+        fallbacks.extend(
+            (
+                str(Path(root) / "Google/Chrome/Application/chrome.exe"),
+                str(Path(root) / "Microsoft/Edge/Application/msedge.exe"),
+            )
+        )
+    for cand in fallbacks:
         if Path(cand).exists():
             return cand
     return None
+
+
+def find_chromium(explicit: Optional[str] = None) -> Optional[str]:
+    """Compatibility alias for :func:`find_browser`."""
+    return find_browser(explicit)
+
+
+def _png_engine(engine: object, label: str = "PNG") -> str:
+    if isinstance(engine, Engine):
+        return "native" if engine is Engine.default else "browser"
+    if engine == "native":
+        warnings.warn(
+            'engine="native" is deprecated; use engine=Engine.default instead',
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return "native"
+    if engine in ("chromium", "browser"):
+        warnings.warn(
+            "string export engines are deprecated; use engine=Engine.chromium instead",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return "browser"
+    raise ValueError(f"{label} engine must be Engine.default or Engine.chromium, got {engine!r}")
 
 
 def _gl_option(value: object) -> str:
@@ -342,13 +426,15 @@ def html_to_png(
     scale: float = 2.0,
     time_budget_ms: int = 4000,
     timeout_s: float = 120.0,
-    chromium: Optional[str] = None,
     sandbox: bool = True,
     gl: str = "software",
 ) -> bytes:
-    """Rasterize a standalone chart HTML string to PNG bytes via headless
-    Chromium `--screenshot`. Pure mechanism (no Figure), so it is testable
-    without numpy. `scale` is the device-pixel ratio (2 = retina-crisp).
+    """Rasterize standalone chart HTML to PNG with an installed headless browser.
+
+    The current adapter supports the Chromium family
+    (Chrome, Chromium, Edge, and chrome-headless-shell). Pure mechanism (no
+    Figure), so it is testable without numpy. `scale` is the device-pixel
+    ratio (2 = retina-crisp).
 
     `gl` picks the WebGL backend: "software" (default) pins SwiftShader for
     deterministic pixels on any machine (including GPU-less CI); "hardware"
@@ -361,13 +447,12 @@ def html_to_png(
     timeout_s = _positive_finite_float(timeout_s, "PNG timeout_s")
     sandbox = _bool_option(sandbox, "PNG sandbox")
     gl = _gl_option(gl)
-    exe = find_chromium(chromium)
+    exe = find_browser()
     if exe is None:
         raise RuntimeError(
-            "static PNG export needs a Chromium/Chrome binary and none was found. "
-            f"Set ${_CHROMIUM_ENV} to its path, put `chromium` on PATH, or install "
-            "one (e.g. `playwright install chromium`). HTML export (to_html) needs "
-            "nothing extra."
+            "browser PNG export needs a supported Chrome/Chromium/Edge executable "
+            f"and none was found. Set ${_BROWSER_ENV} to its executable path "
+            "or install a supported browser. HTML export (to_html) needs nothing extra."
         )
     with tempfile.TemporaryDirectory() as td:
         page = Path(td) / "chart.html"
@@ -425,19 +510,19 @@ def write_images(
     paths: list[str | PathLike[str]],
     *,
     scale: float = 2.0,
-    engine: str = "chromium",
-    chromium: Optional[str] = None,
+    engine: Engine = Engine.default,
     sandbox: bool = True,
     gl: str = "software",
 ) -> list[bytes]:
     """Export many figures to PNGs through ONE browser session.
 
-    `html_to_png` launches a fresh Chromium per image, so a loop over figures
+    `html_to_png` launches a fresh browser per image, so a loop over figures
     pays ~1-2 s of browser startup each time — the classic batch-export trap.
-    This keeps a single headless Chromium alive (CDP; `_chromium.py`) and
-    renders every figure as a tab navigation + screenshot, amortizing startup
-    across the list. `engine="native"` is also accepted for symmetry and simply
-    loops the (already millisecond-fast, browser-free) native rasterizer.
+    `engine=Engine.chromium` keeps one installed Chromium-family browser alive
+    (CDP; `_chromium.py`) and renders every figure as a tab navigation +
+    screenshot, amortizing startup across the list. The default
+    `engine=Engine.default` simply loops the millisecond-fast, browser-free
+    native rasterizer.
 
     Figures with fluid ("100%") sizes fall back to the same explicit export
     dimensions as `to_png`."""
@@ -446,19 +531,17 @@ def write_images(
     scale = _positive_finite_float(scale, "PNG scale")
     sandbox = _bool_option(sandbox, "PNG sandbox")
     gl = _gl_option(gl)
-    if engine not in ("native", "chromium"):
-        raise ValueError(f"PNG engine must be 'native' or 'chromium', got {engine!r}")
-    if engine == "native":
+    resolved_engine = _png_engine(engine)
+    if resolved_engine == "native":
         return [
-            to_png(fig, path, scale=scale, engine="native")
+            to_png(fig, path, scale=scale, engine=Engine.default)
             for fig, path in zip(figs, paths, strict=True)
         ]
-    exe = find_chromium(chromium)
+    exe = find_browser()
     if exe is None:
         raise RuntimeError(
-            "batch PNG export needs a Chromium/Chrome binary and none was found. "
-            f"Set ${_CHROMIUM_ENV} to its path, put `chromium` on PATH, or install "
-            "one (e.g. `playwright install chromium`)."
+            "batch browser PNG export needs a supported Chrome/Chromium/Edge "
+            f"executable and none was found. Set ${_BROWSER_ENV} to select one."
         )
     from ._chromium import ChromiumSession
 
@@ -483,22 +566,24 @@ def to_png(
     width: Optional[int] = None,
     height: Optional[int] = None,
     scale: float = 2.0,
-    engine: str = "native",
+    engine: Engine = Engine.default,
     optimize: bool = False,
-    chromium: Optional[str] = None,
     sandbox: bool = True,
     gl: str = "software",
 ) -> bytes:
     """Rasterize `fig` to a PNG (bytes, optionally saved).
 
-    `engine="native"` (default) paints the decimated payload with the built-in
+    `engine=Engine.default` paints the decimated payload with the built-in
     Rust rasterizer — no browser and millisecond export. Pass
     ``optimize=True`` to trade latency for the smaller indexed/deflate output.
-    `engine="chromium"` renders the standalone HTML in headless Chromium and
-    screenshots it, so the pixels match the interactive WebGL chart exactly
-    (needs a Chromium binary; honors `chromium`/`sandbox`/`gl` — see
-    `html_to_png`). Fluid ("100%") sizes fall back to an explicit export size
-    since a raster needs concrete dims."""
+    `engine=Engine.chromium` renders the standalone HTML in an installed
+    browser and screenshots it, so CSS, fonts, and WebGL use that browser's
+    implementation. It automatically discovers Chrome, Chromium, Edge, or
+    `chrome-headless-shell` via `XY_BROWSER`, PATH, and common install locations,
+    and honors `sandbox`/`gl` (see `html_to_png`). Former string engine values
+    remain deprecated aliases.
+    Fluid ("100%") sizes fall back to an explicit export size since a raster
+    needs concrete dims."""
     w = _positive_pixel_count(
         width if width is not None else (fig.width if isinstance(fig.width, int) else 800),
         "PNG width",
@@ -510,15 +595,21 @@ def to_png(
     scale = _positive_finite_float(scale, "PNG scale")
     optimize = _bool_option(optimize, "PNG optimize")
     sandbox = _bool_option(sandbox, "PNG sandbox")
-    if engine not in ("native", "chromium"):
-        raise ValueError(f"PNG engine must be 'native' or 'chromium', got {engine!r}")
-    if engine == "native":
+    resolved_engine = _png_engine(engine)
+    if resolved_engine == "native":
         from . import _raster
 
         data = _raster.to_png(fig, None, width=w, height=h, scale=scale, fast=not optimize)
     else:
         doc = to_html(fig)
-        data = html_to_png(doc, w, h, scale=scale, chromium=chromium, sandbox=sandbox, gl=gl)
+        data = html_to_png(
+            doc,
+            w,
+            h,
+            scale=scale,
+            sandbox=sandbox,
+            gl=gl,
+        )
     if path is not None:
         with open(path, "wb") as f:
             f.write(data)
