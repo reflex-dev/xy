@@ -718,6 +718,34 @@ fn triangle_sdf(p: (f32, f32), a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> f
 }
 
 #[inline]
+fn pentagon_sdf(p: (f32, f32), r: f32) -> f32 {
+    // Matplotlib Path.unit_regular_polygon(5), scaled to the marker radius.
+    let vertices = [
+        (0.0, -r),
+        (-0.951_056_54 * r, -0.309_017 * r),
+        (-0.587_785_24 * r, 0.809_017 * r),
+        (0.587_785_24 * r, 0.809_017 * r),
+        (0.951_056_54 * r, -0.309_017 * r),
+    ];
+    let mut distance = f32::INFINITY;
+    let mut has_positive = false;
+    let mut has_negative = false;
+    for index in 0..5 {
+        let a = vertices[index];
+        let b = vertices[(index + 1) % 5];
+        distance = distance.min(segment_distance(p, a, b));
+        let cross = (b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0);
+        has_positive |= cross > 0.0;
+        has_negative |= cross < 0.0;
+    }
+    if has_positive && has_negative {
+        distance
+    } else {
+        -distance
+    }
+}
+
+#[inline]
 fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
     match sym {
         1 => px.abs().max(py.abs()) - r, // square
@@ -768,19 +796,7 @@ fn symbol_sdf(px: f32, py: f32, r: f32, sym: u8) -> f32 {
             p = (p.0 - p.0.clamp(-k2 * r, k2 * r), p.1 - r);
             (p.0 * p.0 + p.1 * p.1).sqrt() * p.1.signum()
         }
-        6 => {
-            // regular pentagon, apex up (IQ SDF)
-            let (k0, k1, k2) = (0.809_017_f32, 0.587_785_25_f32, 0.726_542_5_f32);
-            let mut p = (px.abs(), -py); // flip y so the apex points up
-            let d1 = (-k0) * p.0 + k1 * p.1;
-            let m1 = d1.min(0.0);
-            p = (p.0 - 2.0 * m1 * (-k0), p.1 - 2.0 * m1 * k1);
-            let d2 = k0 * p.0 + k1 * p.1;
-            let m2 = d2.min(0.0);
-            p = (p.0 - 2.0 * m2 * k0, p.1 - 2.0 * m2 * k1);
-            p = (p.0 - p.0.clamp(-r * k2, r * k2), p.1 - r);
-            (p.0 * p.0 + p.1 * p.1).sqrt() * p.1.signum()
-        }
+        6 => pentagon_sdf((px, py), r),
         7 => {
             // five-pointed star, apex up (IQ SDF)
             let rf = 0.45_f32;

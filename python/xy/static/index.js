@@ -431,6 +431,25 @@ float fcTriangleDistance(vec2 p, vec2 a, vec2 b, vec2 c) {
                 (c0 <= 0.0 && c1 <= 0.0 && c2 <= 0.0);
   return inside ? -dist : dist;
 }
+float fcPentagonDistance(vec2 p) {
+  // Path.unit_regular_polygon(5), then Matplotlib's 0.5 marker transform.
+  vec2 a = vec2(0.0, -0.5);
+  vec2 b = vec2(-0.475528258, -0.154508497);
+  vec2 c = vec2(-0.293892626, 0.404508497);
+  vec2 d = vec2(0.293892626, 0.404508497);
+  vec2 e = vec2(0.475528258, -0.154508497);
+  float dist = min(min(fcSegmentDistance(p, a, b), fcSegmentDistance(p, b, c)),
+                   min(min(fcSegmentDistance(p, c, d), fcSegmentDistance(p, d, e)),
+                       fcSegmentDistance(p, e, a)));
+  float c0 = (b.x-a.x)*(p.y-a.y) - (b.y-a.y)*(p.x-a.x);
+  float c1 = (c.x-b.x)*(p.y-b.y) - (c.y-b.y)*(p.x-b.x);
+  float c2 = (d.x-c.x)*(p.y-c.y) - (d.y-c.y)*(p.x-c.x);
+  float c3 = (e.x-d.x)*(p.y-d.y) - (e.y-d.y)*(p.x-d.x);
+  float c4 = (a.x-e.x)*(p.y-e.y) - (a.y-e.y)*(p.x-e.x);
+  bool inside = (c0 >= 0.0 && c1 >= 0.0 && c2 >= 0.0 && c3 >= 0.0 && c4 >= 0.0) ||
+                (c0 <= 0.0 && c1 <= 0.0 && c2 <= 0.0 && c3 <= 0.0 && c4 <= 0.0);
+  return inside ? -dist : dist;
+}
 float fcMarkerSdf(vec2 d, int shape) {
   if (shape == 1) return max(abs(d.x), abs(d.y)) - 0.5;              // square
   if (shape == 2) return (abs(d.x) + abs(d.y)) - 0.5;               // diamond
@@ -445,14 +464,7 @@ float fcMarkerSdf(vec2 d, int shape) {
     p -= vec2(clamp(p.x, -k.z * 0.5, k.z * 0.5), 0.5);
     return length(p) * sign(p.y);
   }
-  if (shape == 6) {                                                 // regular pentagon (apex up)
-    const vec3 k = vec3(0.809016994, 0.587785252, 0.726542528);
-    vec2 p = vec2(abs(d.x), -d.y);
-    p -= 2.0 * min(dot(vec2(-k.x, k.y), p), 0.0) * vec2(-k.x, k.y);
-    p -= 2.0 * min(dot(vec2( k.x, k.y), p), 0.0) * vec2( k.x, k.y);
-    p -= vec2(clamp(p.x, -k.z * 0.5, k.z * 0.5), 0.5);
-    return length(p) * sign(p.y);
-  }
+  if (shape == 6) return fcPentagonDistance(d);                      // exact regular pentagon
   if (shape == 7) {                                                 // five-pointed star (apex up)
     const float rf = 0.45;
     const vec2 k1 = vec2(0.809016994, -0.587785252);
@@ -2235,7 +2247,7 @@ triangle_left: "M4 7L14 2v10z", triangle_right: "M14 7L4 2v10z",
 plus_line: "M9 2v10M4 7h10", x_line: "M5 3l8 8M13 3l-8 8",
 cross: "M7.5 2h3v3.5H14v3h-3.5V12h-3V8.5H4v-3h3.5z",
 x: "M5.5 2L9 5.5 12.5 2 14 3.5 10.5 7 14 10.5 12.5 12 9 8.5 5.5 12 4 10.5 7.5 7 4 3.5z",
-pentagon: "M9 2L13.8 5.5 12 11H6L4.2 5.5z",
+pentagon: "M9 2.5L13.28 5.61 11.65 10.64H6.35L4.72 5.61z",
 hexagon: "M9 2L13.3 4.5v5L9 12l-4.3-2.5v-5z",
 star: "M9 2l1.5 3.1 3.5.5-2.5 2.5.6 3.5L9 10l-3.1 1.6.6-3.5L4 5.6l3.5-.5z"
 };
