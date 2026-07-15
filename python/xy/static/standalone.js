@@ -3349,9 +3349,7 @@ const gl = this.gl;
 const { x0, x1, y0, y1 } = this.view;
 gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-const bg = this.theme.bg;
-if (bg) gl.clearColor(bg[0] * bg[3], bg[1] * bg[3], bg[2] * bg[3], bg[3]);
-else gl.clearColor(0, 0, 0, 0);
+gl.clearColor(0, 0, 0, 0);
 gl.clear(gl.COLOR_BUFFER_BIT);
 for (const g of this.gpuTraces) {
 if (g.tier === "density") {
@@ -4130,6 +4128,10 @@ this.labels.textContent = "";
 this._lastLabelDraw = now;
 }
 const p = this.plot;
+if (this.theme.bg) {
+ctx.fillStyle = cssColor(this.theme.bg);
+ctx.fillRect(p.x, p.y, p.w, p.h);
+}
 const xAxis = this._axis("x");
 const yAxis = this._axis("y");
 const hideX = this._axisTickLabelStrategy(xAxis) === "none";
