@@ -3558,8 +3558,24 @@ class Axes(PlotTypeMixin):
 
     def _apply_tickers(self, key: str, props: dict[str, Any]) -> None:
         """Resolve a user locator/formatter into concrete tick props (in place)."""
+        from ._ticker import NullFormatter
+
         locator = self._tickers.get((key, "major_locator"))
         formatter = self._tickers.get((key, "major_formatter"))
+        minor_locator = self._tickers.get((key, "minor_locator"))
+        minor_formatter = self._tickers.get((key, "minor_formatter"))
+        # The engine draws a single tick set. When a script blanks the major
+        # labels and puts the text on located minors (matplotlib's centered
+        # date-label idiom: major NullFormatter + labeled minor locator), the
+        # minor pair is the one carrying information — promote it.
+        if (
+            isinstance(formatter, NullFormatter)
+            and minor_locator is not None
+            and hasattr(minor_locator, "tick_values")
+            and minor_formatter is not None
+            and not isinstance(minor_formatter, NullFormatter)
+        ):
+            locator, formatter = minor_locator, minor_formatter
         is_log = (
             props.get("type_") == "log" or (self._scale_specs.get(key) or {}).get("name") == "log"
         )

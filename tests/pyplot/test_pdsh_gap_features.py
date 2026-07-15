@@ -448,6 +448,30 @@ def test_get_xdata_orig_false_is_ms_since_epoch():
     assert np.asarray(line.get_ydata(orig=False)).dtype == np.float64
 
 
+def test_month_locator_ticks_month_starts_in_ms():
+    locator = plt.dates.MonthLocator()
+    ticks = locator.tick_values(_ms("2012-01-15"), _ms("2012-04-20"))
+    assert list(ticks) == [_ms("2012-02-01"), _ms("2012-03-01"), _ms("2012-04-01")]
+    mid = plt.dates.MonthLocator(bymonthday=15).tick_values(_ms("2012-01-01"), _ms("2012-03-01"))
+    assert list(mid) == [_ms("2012-01-15"), _ms("2012-02-15")]
+
+
+def test_date_formatter_formats_ms_values():
+    assert plt.dates.DateFormatter("%b %d")(_ms("2012-11-25")) == "Nov 25"
+
+
+def test_labeled_minor_ticker_pair_is_promoted_when_majors_are_blank():
+    fig, ax = plt.subplots()
+    x = np.arange("2012-01-01", "2012-07-01", dtype="datetime64[D]")
+    ax.plot(x, np.linspace(0.0, 1.0, len(x)))
+    ax.xaxis.set_major_locator(plt.dates.MonthLocator())
+    ax.xaxis.set_minor_locator(plt.dates.MonthLocator(bymonthday=15))
+    ax.xaxis.set_major_formatter(plt.NullFormatter())
+    ax.xaxis.set_minor_formatter(plt.dates.DateFormatter("%b"))
+    svg = _svg()
+    assert "Feb" in svg and "May" in svg
+
+
 def test_pandas_period_ordinal_tickers_are_ignored():
     pd = pytest.importorskip("pandas")
     converter = pytest.importorskip("pandas.plotting._matplotlib.converter")

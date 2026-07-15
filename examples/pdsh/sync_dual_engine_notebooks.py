@@ -12,6 +12,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 SHARED_ID = "xy-pdsh-dual-engine-intro"
 IMPORT_REPLACEMENTS = {
+    # xy.pyplot serves as both `plt` and `mpl` (it carries the `dates` module
+    # etc.); the reference engine needs the real top-level package for `mpl`.
+    # Ordered before the generic rule so it wins for the `mpl` alias.
+    "import xy.pyplot as mpl\n": "import matplotlib as mpl\n",
     "import xy.pyplot as ": "import matplotlib.pyplot as ",
     "from xy.pyplot import LinearSegmentedColormap": (
         "from matplotlib.colors import LinearSegmentedColormap"
