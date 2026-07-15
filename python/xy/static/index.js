@@ -4765,6 +4765,8 @@ const FC_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
 "angle_b",
 "gap_start",
 "gap_end",
+"start_offset",
+"label_clear",
 "dash",
 "span_start",
 "span_end",
@@ -4774,8 +4776,26 @@ const FC_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
 "stroke_width",
 "coordinate_space",
 ]);
+function fcLabelClearExit(style, tangent) {
+if (typeof style.label_clear !== "string") return 0;
+const parts = style.label_clear.split(",").map(Number);
+if (parts.length !== 4 || parts.some((p) => !Number.isFinite(p) || p < 0)) return 0;
+const [left, right, up, down] = parts;
+const [tx, ty] = tangent;
+const exitX = tx > 1e-9 ? right / tx : tx < -1e-9 ? left / -tx : Infinity;
+const exitY = ty > 1e-9 ? down / ty : ty < -1e-9 ? up / -ty : Infinity;
+const exit = Math.min(exitX, exitY);
+return Number.isFinite(exit) ? exit : 0;
+}
 function fcArrowGeometry(x0, y0, x1, y1, style) {
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+if (typeof style.start_offset === "string") {
+const offset = style.start_offset.split(",").map(Number);
+if (offset.length === 2 && offset.every(Number.isFinite)) {
+x0 += offset[0];
+y0 += offset[1];
+}
+}
 const angleA = num(style.angle_a);
 const angleB = num(style.angle_b);
 const curve = num(style.curve);
@@ -4802,7 +4822,7 @@ return [(qx - px) / d, (qy - py) / d];
 };
 const t0 = cx === null ? toward(x0, y0, x1, y1) : toward(x0, y0, cx, cy);
 const t1 = cx === null ? toward(x1, y1, x0, y0) : toward(x1, y1, cx, cy);
-const gapStart = Math.max(0, num(style.gap_start) || 0);
+const gapStart = Math.max(0, num(style.gap_start) || 0, fcLabelClearExit(style, t0));
 const gapEnd = Math.max(0, num(style.gap_end) || 0);
 const span = Math.hypot(x1 - x0, y1 - y0);
 const trim = gapStart + gapEnd < span * 0.9;
@@ -5117,13 +5137,16 @@ const d = document.createElement("div");
 d.textContent = text;
 const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
 const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
-const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0";
+const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0px";
 const rot = Number.isFinite(Number(style.rotation))
 ? ((Number(style.rotation) % 360) + 360) % 360
 : 0;
 const va = String(style.vertical_align || "");
 const vAnchor =
-va === "center" || va === "middle" ? "-50%" : va === "bottom" ? "-100%" : "0";
+va === "center" || va === "middle" ? "-50%"
+: va === "bottom" ? "-100%"
+: va === "top" ? "0px"
+: "calc(-100% + 0.35em)";
 let transform = `translate(${anchor},${vAnchor})`;
 if (rot === 90 || rot === 270) {
 const cw = rot === 270;
@@ -5154,6 +5177,20 @@ if (style && (style.label_color || style.color)) {
 d.style.color = this._annotationLabelPaint(style, this.theme.label);
 }
 this.labels.appendChild(d);
+const cs = getComputedStyle(d);
+const edge = (pad, border) => (parseFloat(pad) || 0) + (parseFloat(border) || 0);
+const padL = edge(cs.paddingLeft, cs.borderLeftWidth);
+const padR = edge(cs.paddingRight, cs.borderRightWidth);
+const padT = edge(cs.paddingTop, cs.borderTopWidth);
+const padB = edge(cs.paddingBottom, cs.borderBottomWidth);
+if ((padL || padR || padT || padB) && rot !== 90 && rot !== 270) {
+const hShift = anchor === "-100%" ? padR : anchor === "-50%" ? 0 : -padL;
+const vShift =
+vAnchor === "-50%" ? 0 : vAnchor === "0px" ? -padT : padB;
+d.style.transform =
+`${rot ? `rotate(${-rot}deg) ` : ""}` +
+`translate(calc(${anchor} + ${hShift}px), calc(${vAnchor} + ${vShift}px))`;
+}
 }
 },
 });
