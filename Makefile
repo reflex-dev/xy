@@ -7,7 +7,7 @@ WHEEL ?=
 BENCHMARK_JSON ?= benchmark.json
 BENCHMARK_KIND ?= auto
 
-.PHONY: help setup setup-browser check check-full check-browser check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-benchmark-harness check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
+.PHONY: help setup setup-browser check check-full check-browser check-docs check-docs-site check-examples check-security check-errors check-api check-import check-ci check-claims check-benchmark-harness check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
 
 help:
 	@printf '%s\n' \
@@ -19,6 +19,7 @@ help:
 		'  make check-full       run JS, Rust, and ABI gates too' \
 		'  make check-browser    run browser smokes (set CHROMIUM=/path/to/chrome)' \
 		'  make check-docs       run docs examples and public claim guardrails' \
+		'  make check-docs-site  lint, test, and export the Reflex docs site' \
 		'  make check-examples   run README/API examples and Reflex asset registry checks' \
 		'  make check-security   run standalone HTML safety and client text-sink checks' \
 		'  make check-errors     run public error, LOD, and mutation-safety tests' \
@@ -68,6 +69,13 @@ check-browser:
 
 check-docs:
 	$(PYTHON) scripts/verify_local.py --only examples,claim_guardrails
+
+check-docs-site:
+	cd docs/app && uv sync --locked
+	cd docs/app && uv run ruff check .
+	cd docs/app && uv run ruff format --check .
+	cd docs/app && uv run pytest -q
+	cd docs/app && uv run reflex export --frontend-only --no-zip
 
 check-examples:
 	$(PYTHON) scripts/verify_local.py --only examples

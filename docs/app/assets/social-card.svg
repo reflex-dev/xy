@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
+  <defs>
+    <radialGradient id="g" cx="50%" cy="0" r="80%">
+      <stop offset="0" stop-color="#4c1d95"/>
+      <stop offset="0.62" stop-color="#17151a"/>
+      <stop offset="1" stop-color="#0c0b0e"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#g)"/>
+  <g fill="none" stroke="#a78bfa" stroke-opacity=".16">
+    <path d="M0 120h1200M0 240h1200M0 360h1200M0 480h1200"/>
+    <path d="M200 0v630M400 0v630M600 0v630M800 0v630M1000 0v630"/>
+  </g>
+  <text x="110" y="285" fill="#fff" font-family="Inter,Arial,sans-serif" font-size="150" font-weight="700" letter-spacing="-16">x<tspan fill="#a78bfa">y</tspan></text>
+  <rect x="282" y="166" width="2" height="125" fill="#625b69"/>
+  <text x="330" y="258" fill="#d9d2df" font-family="Inter,Arial,sans-serif" font-size="66" font-weight="500">Documentation</text>
+  <text x="112" y="390" fill="#b8b0bd" font-family="Inter,Arial,sans-serif" font-size="32">Interactive Python charts whose cost follows the screen.</text>
+</svg>
