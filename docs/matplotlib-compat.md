@@ -64,7 +64,7 @@ dependency-free `triangles=` shorthand into Matplotlib's equivalent
 | `quiver`, `barbs`, `streamplot` | Native vector endpoint/arrowhead and bounded streamline kernels feeding one instanced segment mark. Barbs are a visual approximation: magnitude maps to a bounded tick count, not WMO 50/10/5 increments. Streamplot always uses the shim's own bounded fixed-step integrator (identical output with or without Matplotlib installed, but paths approximate Matplotlib's adaptive ones); `start_points`, `integration_direction`, array widths/colors and `num_arrows` are honored, and remaining non-default integration options fail loudly |
 | `tripcolor`, `triplot`, `tricontour`, `tricontourf` | Explicit topology or native dependency-free Delaunay triangulation; indexed geometry and isolines stay in Rust |
 | `pie` / `pie_label` | Native pie/donut tessellation and the Matplotlib 3.11 `PieContainer` (`values`, `fracs`, grouped text labels) |
-| `axhline` / `axvline` / `axhspan` / `axvspan`, `text`, `annotate`, `table` | Fractional span bounds plus data/axes/figure text coordinates are supported; `arrowprops` is approximated as callout text |
+| `axhline` / `axvline` / `axhspan` / `axvspan`, `text`, `annotate`, `table` | Fractional span bounds plus data/axes/figure text coordinates are supported. `annotate(arrowprops=)` draws real arrows in every output: offset-point text becomes an engine callout (arrow pinned from label to point across zoom), data-coordinate text an arrow annotation; date-string coordinates convert on datetime axes. Arrowstyles map to head/tail shapes (`->` open V, `-|>` filled, `\|-\|`/brackets bar caps, `fancy`/`simple`/`wedge` filled tapered shafts sized by the text's mutation scale) and `connectionstyle` arc3/angle3/angle become quadratic curves (corner rounding approximated); `alpha` dims the arrow only. `bbox=` becomes label box styles (fill/edge/round corners/`pad`) on the HTML label; static exporters keep the plain label |
 | `xlabel` / `ylabel` / `title` / `suptitle` | Suptitles are retained in HTML and multi-panel PNG/SVG |
 | `legend()` | `loc`, columns, title/font size/colors, frame styling, `borderpad`, `labelspacing`, `fancybox`, `framealpha`, and `shadow` are retained across browser and static output. `loc='best'` chooses the least occupied corner from bounded samples of the current data |
 | `grid(True/False)` | toggles the grid via the theme |
@@ -101,7 +101,9 @@ Unknown keyword arguments on supported calls raise `TypeError` naming the
 offending keyword. Known material options that the native marks cannot honor
 raise `NotImplementedError`, with these documented exceptions that are accepted
 as visual approximations rather than rejected: the barbs glyph and imshow
-smoothing collapse above, `annotate(arrowprops=...)` reduced to callout text,
+smoothing collapse above, `annotate(arrowprops=...)` connection curves and
+fancy/wedge outlines drawn as quadratic-curve tapered fills rather than
+Matplotlib's exact patch paths, `bbox=` boxes drawn only by the HTML label,
 and errorbar limit flags rendered as one-sided bars without Matplotlib's caret
 arrows.
 

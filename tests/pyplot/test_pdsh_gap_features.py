@@ -543,6 +543,115 @@ def _annotation_specs(ax):
     return ax._build_chart(640, 480).figure()._annotation_specs()
 
 
+def test_offset_point_annotate_with_arrowprops_becomes_a_callout():
+    fig, ax = plt.subplots()
+    ax.plot([0.0, 10.0], [0.0, 10.0])
+    ax.annotate(
+        "peak",
+        xy=(5, 5),
+        xytext=(30, 30),
+        textcoords="offset points",
+        arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=-0.2"),
+    )
+    (callout,) = [a for a in _annotation_specs(ax) if a["kind"] == "callout"]
+    assert callout["text"] == "peak"
+    assert callout["style"]["head_style"] == "v"  # "->" is an open stroke head
+    assert callout["style"]["curve"] == pytest.approx(-0.2)  # arc3 rad
+    assert callout["style"]["gap_start"] > 0  # clears the text patch
+    # Offset points go up; pixel offsets go down.
+    assert callout["dx"] > 0 and callout["dy"] < 0
+
+
+def test_arrowstyle_shapes_map_to_engine_arrow_styles():
+    fig, ax = plt.subplots()
+    ax.plot([0.0, 10.0], [0.0, 10.0])
+    ax.annotate(
+        "", xy=(1, 1), xytext=(2, 2), arrowprops={"arrowstyle": "|-|,widthA=0.2,widthB=0.2"}
+    )
+    ax.annotate("w", xy=(3, 3), xytext=(4, 4), arrowprops=dict(arrowstyle="wedge,tail_width=0.5"))
+    ax.annotate(
+        "f",
+        xy=(5, 5),
+        xytext=(6, 6),
+        arrowprops=dict(
+            arrowstyle="fancy", fc="0.6", ec="none", connectionstyle="angle3,angleA=0,angleB=-90"
+        ),
+    )
+    bar, wedge, fancy = [a for a in _annotation_specs(ax) if a["kind"] == "arrow"]
+    assert bar["style"]["head_style"] == "bar" and bar["style"]["tail_style"] == "bar"
+    assert wedge["style"]["head_style"] == "none"  # the wedge tip IS the pointer
+    assert wedge["style"]["shaft_width_start"] > wedge["style"]["shaft_width_end"]
+    assert fancy["style"]["shaft_width_end"] > fancy["style"]["shaft_width_start"]
+    assert fancy["style"]["angle_a"] == 0.0 and fancy["style"]["angle_b"] == -90.0
+    assert fancy["style"]["color"] == "rgb(153,153,153)"  # fc="0.6" shorthand
+
+
+def test_annotate_date_string_endpoints_draw_a_data_space_arrow():
+    fig, ax = plt.subplots()
+    x = np.arange("2012-08-01", "2012-10-01", dtype="datetime64[D]")
+    ax.plot(x, np.linspace(4000.0, 5000.0, len(x)))
+    ax.annotate(
+        "",
+        xy=("2012-9-1", 4850),
+        xytext=("2012-9-7", 4850),
+        xycoords="data",
+        textcoords="data",
+        arrowprops={"arrowstyle": "|-|,widthA=0.2,widthB=0.2"},
+    )
+    (arrow,) = [a for a in _annotation_specs(ax) if a["kind"] == "arrow"]
+    assert arrow["x0"] == pytest.approx(_ms("2012-09-07"))
+    assert arrow["x1"] == pytest.approx(_ms("2012-09-01"))
+    assert arrow["y0"] == arrow["y1"] == 4850.0
+
+
+def test_annotate_bbox_becomes_label_box_styles():
+    fig, ax = plt.subplots()
+    ax.plot([0.0, 1.0], [0.0, 1.0])
+    ax.annotate(
+        "Thanksgiving",
+        xy=(0.5, 0.5),
+        xytext=(-40, -30),
+        textcoords="offset points",
+        bbox=dict(boxstyle="round4,pad=.5", fc="0.9"),
+        arrowprops=dict(arrowstyle="->"),
+    )
+    (callout,) = [a for a in _annotation_specs(ax) if a["kind"] == "callout"]
+    style = callout["style"]
+    assert style["background"] == "rgb(230,230,230)"  # fc="0.9" gray shorthand
+    assert style["border"].endswith("black") and style["border_radius"] == 8.0
+    assert style["padding"].startswith("6.94")  # pad=.5 of the 13.9px font
+
+
+def test_annotate_arrowprops_alpha_dims_only_the_arrow():
+    fig, ax = plt.subplots()
+    ax.plot([0.0, 1.0], [0.0, 1.0])
+    ax.annotate(
+        "Christmas",
+        xy=(0.9, 0.1),
+        xytext=(-30, 0),
+        textcoords="offset points",
+        arrowprops=dict(arrowstyle="wedge,tail_width=0.5", alpha=0.1),
+    )
+    (callout,) = [a for a in _annotation_specs(ax) if a["kind"] == "callout"]
+    assert callout["style"]["color"] == "rgba(0,0,0,0.1)"
+    assert callout["style"]["label_color"] == "black"  # the text stays opaque
+
+
+def test_callout_arrows_reach_static_exports():
+    fig, ax = plt.subplots()
+    ax.plot([0.0, 10.0], [0.0, 10.0])
+    ax.annotate(
+        "peak",
+        xy=(5, 5),
+        xytext=(30, 30),
+        textcoords="offset points",
+        arrowprops=dict(arrowstyle="->"),
+    )
+    svg = _svg()
+    assert "peak" in svg and "<polyline" in svg  # shaft + open V head
+    _png(fig)
+
+
 def test_default_rc_font_sizes_are_explicit_everywhere():
     fig, ax = plt.subplots()
     ax.plot([0.0, 1.0], [0.0, 1.0])

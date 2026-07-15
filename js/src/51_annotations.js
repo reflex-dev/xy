@@ -3,6 +3,136 @@
 // shape fills, and collision-nudged labels. Split out of 50_chartview.js;
 // augments the prototype so `this.*` is unchanged.
 
+// Annotation style keys consumed by the canvas shape (shaft/head/marker
+// geometry and paint) — never forwarded to the DOM label as CSS.
+const FC_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
+  "color",
+  "label_color",
+  "width",
+  "head_size",
+  "head_style",
+  "tail_style",
+  "shaft_width_start",
+  "shaft_width_end",
+  "curve",
+  "angle_a",
+  "angle_b",
+  "gap_start",
+  "gap_end",
+  "dash",
+  "span_start",
+  "span_end",
+  "size",
+  "symbol",
+  "stroke_color",
+  "stroke_width",
+  "coordinate_space",
+]);
+
+// Arrow path geometry shared by every arrow/callout draw (mirrored by the
+// static exporters in python/xy/_arrowgeom.py — keep the two in sync):
+// an optional quadratic control point from `curve` (matplotlib arc3 rad,
+// bulge as a fraction of chord length) or `angle_a`/`angle_b` (matplotlib
+// angle3/angle departure/arrival angles in degrees, y-up screen space —
+// control point at the ray intersection), then `gap_start`/`gap_end` px
+// trims along the path tangents (label/point clearance).
+function fcArrowGeometry(x0, y0, x1, y1, style) {
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+  const angleA = num(style.angle_a);
+  const angleB = num(style.angle_b);
+  const curve = num(style.curve);
+  let cx = null;
+  let cy = null;
+  if (angleA !== null && angleB !== null) {
+    const a = (-angleA * Math.PI) / 180; // spec angles are y-up; canvas is y-down
+    const b = (-angleB * Math.PI) / 180;
+    const denom = Math.cos(a) * Math.sin(b) - Math.sin(a) * Math.cos(b);
+    if (Math.abs(denom) > 1e-6) {
+      const t = ((x1 - x0) * Math.sin(b) - (y1 - y0) * Math.cos(b)) / denom;
+      cx = x0 + t * Math.cos(a);
+      cy = y0 + t * Math.sin(a);
+    }
+  } else if (curve) {
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    // arc3 rad > 0 bulges to the chord's left in matplotlib's y-up plane.
+    cx = (x0 + x1) / 2 + curve * dy;
+    cy = (y0 + y1) / 2 - curve * dx;
+  }
+  const toward = (px, py, qx, qy) => {
+    const d = Math.hypot(qx - px, qy - py) || 1;
+    return [(qx - px) / d, (qy - py) / d];
+  };
+  const t0 = cx === null ? toward(x0, y0, x1, y1) : toward(x0, y0, cx, cy);
+  const t1 = cx === null ? toward(x1, y1, x0, y0) : toward(x1, y1, cx, cy);
+  const gapStart = Math.max(0, num(style.gap_start) || 0);
+  const gapEnd = Math.max(0, num(style.gap_end) || 0);
+  const span = Math.hypot(x1 - x0, y1 - y0);
+  const trim = gapStart + gapEnd < span * 0.9;
+  const p0 = trim ? [x0 + gapStart * t0[0], y0 + gapStart * t0[1]] : [x0, y0];
+  const p1 = trim ? [x1 + gapEnd * t1[0], y1 + gapEnd * t1[1]] : [x1, y1];
+  // Tangent INTO each endpoint (head/tail orientation).
+  const dir1 = cx === null ? toward(p0[0], p0[1], p1[0], p1[1]) : toward(cx, cy, p1[0], p1[1]);
+  const dir0 = cx === null ? toward(p1[0], p1[1], p0[0], p0[1]) : toward(cx, cy, p0[0], p0[1]);
+  return { p0, p1, control: cx === null ? null : [cx, cy], dir0, dir1 };
+}
+
+// The shaft as a point list (quadratic Bézier sampled when curved).
+function fcArrowShaftPoints(geom, samples = 24) {
+  const [x0, y0] = geom.p0;
+  const [x1, y1] = geom.p1;
+  if (!geom.control) return [[x0, y0], [x1, y1]];
+  const [cx, cy] = geom.control;
+  const points = [];
+  for (let i = 0; i <= samples; i++) {
+    const t = i / samples;
+    const u = 1 - t;
+    points.push([u * u * x0 + 2 * u * t * cx + t * t * x1, u * u * y0 + 2 * u * t * cy + t * t * y1]);
+  }
+  return points;
+}
+
+// The polyline with `trim` px of arclength removed from its end (a tapered
+// shaft ends at the head BASE — a full-length shaft would swallow the head).
+function fcTrimPolylineEnd(points, trim) {
+  if (!(trim > 0) || points.length < 2) return points;
+  const out = points.slice();
+  let remaining = trim;
+  while (out.length >= 2) {
+    const [ax, ay] = out[out.length - 2];
+    const [bx, by] = out[out.length - 1];
+    const seg = Math.hypot(bx - ax, by - ay);
+    if (seg > remaining) {
+      const t = 1 - remaining / seg;
+      out[out.length - 1] = [ax + t * (bx - ax), ay + t * (by - ay)];
+      return out;
+    }
+    remaining -= seg;
+    out.pop();
+  }
+  return out;
+}
+
+// The shaft as a filled polygon whose width interpolates from w0 to w1
+// (matplotlib's fancy/simple/wedge arrowstyles are filled tapered shafts).
+function fcTaperPolygon(points, w0, w1) {
+  const left = [];
+  const right = [];
+  const count = points.length;
+  for (let i = 0; i < count; i++) {
+    const [px, py] = points[i];
+    const [ax, ay] = points[Math.max(0, i - 1)];
+    const [bx, by] = points[Math.min(count - 1, i + 1)];
+    const d = Math.hypot(bx - ax, by - ay) || 1;
+    const nx = -(by - ay) / d;
+    const ny = (bx - ax) / d;
+    const half = (w0 + (w1 - w0) * (i / Math.max(1, count - 1))) / 2;
+    left.push([px + half * nx, py + half * ny]);
+    right.push([px - half * nx, py - half * ny]);
+  }
+  return left.concat(right.reverse());
+}
+
 Object.assign(ChartView.prototype, {
   _annotationPaint(style, fallback) {
     return safeCssPaint(this.root, style && style.color, fallback);
@@ -54,8 +184,7 @@ Object.assign(ChartView.prototype, {
 
   _drawArrowLine(ctx, x0, y0, x1, y1, style) {
     if (![x0, y0, x1, y1].every(Number.isFinite)) return;
-    const angle = Math.atan2(y1 - y0, x1 - x0);
-    const head = Math.max(7, this._styleNumber(style, "head_size", 8));
+    const geom = fcArrowGeometry(x0, y0, x1, y1, style);
     ctx.save();
     ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
     ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
@@ -63,23 +192,69 @@ Object.assign(ChartView.prototype, {
     ctx.lineWidth = Math.max(0.5, this._styleNumber(style, "width", 1.5));
     ctx.setLineDash(Array.isArray(style.dash) ? style.dash :
       (typeof style.dash === "string" ? style.dash.split(",").map(Number) : []));
+    const w0 = Number(style.shaft_width_start);
+    const w1 = Number(style.shaft_width_end);
+    const headStyle = style.head_style || "triangle";
+    const head = Math.max(4, this._styleNumber(style, "head_size", 8));
+    if (Number.isFinite(w0) || Number.isFinite(w1)) {
+      let points = fcArrowShaftPoints(geom);
+      if (headStyle === "triangle") {
+        points = fcTrimPolylineEnd(points, head * Math.cos(Math.PI / 6));
+      }
+      const polygon = fcTaperPolygon(
+        points,
+        Number.isFinite(w0) ? w0 : 1,
+        Number.isFinite(w1) ? w1 : 1
+      );
+      ctx.beginPath();
+      ctx.moveTo(polygon[0][0], polygon[0][1]);
+      for (let i = 1; i < polygon.length; i++) ctx.lineTo(polygon[i][0], polygon[i][1]);
+      ctx.closePath();
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(geom.p0[0], geom.p0[1]);
+      if (geom.control) ctx.quadraticCurveTo(geom.control[0], geom.control[1], geom.p1[0], geom.p1[1]);
+      else ctx.lineTo(geom.p1[0], geom.p1[1]);
+      ctx.stroke();
+    }
+    this._drawArrowEnd(ctx, geom.p1, geom.dir1, headStyle, head);
+    this._drawArrowEnd(ctx, geom.p0, geom.dir0, style.tail_style || "none", head);
+    ctx.restore();
+  },
+
+  // One arrow endpoint decoration. dir is the unit tangent INTO the point;
+  // styles mirror matplotlib arrowstyles: "triangle" (filled, "-|>"/fancy),
+  // "v" (open stroke, "->"), "bar" ("|-|" caps), "none".
+  _drawArrowEnd(ctx, point, dir, endStyle, head) {
+    if (endStyle === "none") return;
+    const [px, py] = point;
+    const angle = Math.atan2(dir[1], dir[0]);
     ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.lineTo(x1, y1);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(
-      x1 - head * Math.cos(angle - Math.PI / 6),
-      y1 - head * Math.sin(angle - Math.PI / 6)
-    );
-    ctx.lineTo(
-      x1 - head * Math.cos(angle + Math.PI / 6),
-      y1 - head * Math.sin(angle + Math.PI / 6)
-    );
+    if (endStyle === "bar") {
+      ctx.moveTo(px - (head / 2) * Math.sin(angle), py + (head / 2) * Math.cos(angle));
+      ctx.lineTo(px + (head / 2) * Math.sin(angle), py - (head / 2) * Math.cos(angle));
+      ctx.stroke();
+      return;
+    }
+    const wing = (side) => [
+      px - head * Math.cos(angle - side * Math.PI / 6),
+      py - head * Math.sin(angle - side * Math.PI / 6),
+    ];
+    const [ax, ay] = wing(1);
+    const [bx, by] = wing(-1);
+    if (endStyle === "v") {
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(px, py);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+      return;
+    }
+    ctx.moveTo(px, py);
+    ctx.lineTo(ax, ay);
+    ctx.lineTo(bx, by);
     ctx.closePath();
     ctx.fill();
-    ctx.restore();
   },
 
   _drawAnnotationShapes(ctx) {
@@ -226,15 +401,30 @@ Object.assign(ChartView.prototype, {
       const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
       const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
       const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0";
+      // matplotlib's va: the anchor y is the text center/bottom, not its top.
+      const va = style.vertical_align;
+      const vAnchor =
+        va === "center" || va === "middle" ? "-50%" : va === "bottom" ? "-100%" : "0";
       // Structural inline only (position telegraphs the anchor); font + default
       // color live in the defeatable :where() stylesheet so utility classes win.
+      // width:max-content: shrink-to-fit for an absolutely positioned label is
+      // capped by the distance to the containing block's edge, so an end/middle
+      // anchored label near the right edge would wrap word-per-word BEFORE the
+      // translate(-100%) shift moves it back inside.
       d.style.cssText =
         `position:absolute;left:${px + dx}px;top:${py + dy}px;` +
-        `transform:translate(${anchor},0);pointer-events:none;` +
-        `white-space:pre-line;text-align:center;`;
+        `transform:translate(${anchor},${vAnchor});pointer-events:none;` +
+        `white-space:pre-line;text-align:center;width:max-content;`;
       this._applySlot(d, "annotation_label");
       this._applyClass(d, ann.class_name);
-      this._applyStyle(d, style);
+      // Shape-geometry/paint keys style the canvas shape, not the label DOM —
+      // e.g. an arrow's shaft `width` must not become CSS width on the label.
+      const labelStyle = {};
+      for (const [key, value] of Object.entries(style)) {
+        if (FC_ANNOTATION_SHAPE_STYLE_KEYS.has(key)) continue;
+        labelStyle[key] = value;
+      }
+      this._applyStyle(d, labelStyle);
       // Only pin color inline when the annotation asked for one — otherwise the
       // stylesheet's --chart-annotation-text default stays overridable by CSS.
       if (style && (style.label_color || style.color)) {

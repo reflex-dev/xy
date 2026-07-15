@@ -2094,11 +2094,14 @@ class Axes(PlotTypeMixin):
             if textcoords in {"offset points", "offset pixels"}:
                 scale = self._point_scale() if textcoords == "offset points" else 1.0
                 akw["dx"], akw["dy"] = float(xytext[0]) * scale, -float(xytext[1]) * scale
-            elif all(_is_number(v) for v in (*xytext, *xy)):
-                # matplotlib places the text AT xytext (data coordinates).
-                text_xy = (float(xytext[0]), float(xytext[1]))
             else:
-                akw["dx"], akw["dy"] = 8.0, -8.0
+                converted = self._data_coordinates(xytext)
+                if converted is not None:
+                    # matplotlib places the text AT xytext (data coordinates);
+                    # date strings convert like matplotlib's unit registry.
+                    text_xy = converted
+                else:
+                    akw["dx"], akw["dy"] = 8.0, -8.0
         style: dict[str, Any] = {}
         if xycoords is self.transAxes or xycoords == "axes fraction":
             style["coordinate_space"] = "axes_fraction"
@@ -2126,7 +2129,9 @@ class Axes(PlotTypeMixin):
                     "annotate(arrowprops=) outside data coordinates",
                     "data-coordinate annotations",
                 )
-            if not all(_is_number(v) for v in (*text_xy, *xy)):
+            start = self._data_coordinates(text_xy)
+            end = self._data_coordinates(xy)
+            if start is None or end is None:
                 raise not_implemented(
                     "annotate(arrowprops=) with non-numeric coordinates",
                     "numeric data coordinates",
@@ -2134,18 +2139,18 @@ class Axes(PlotTypeMixin):
             # Straight arrow from the text toward the point; arrowstyle and
             # connectionstyle curves are approximated by this straight shaft.
             shrink = float(arrowprops.get("shrink", 0.0))
-            sx0, sy0 = float(text_xy[0]), float(text_xy[1])
-            ex0, ey0 = float(xy[0]), float(xy[1])
+            (sx0, sy0), (ex0, ey0) = start, end
             if shrink:
                 dx_a, dy_a = ex0 - sx0, ey0 - sy0
                 sx0, sy0 = sx0 + shrink * dx_a, sy0 + shrink * dy_a
                 ex0, ey0 = ex0 - shrink * dx_a, ey0 - shrink * dy_a
-            fancy = "arrowstyle" not in arrowprops
-            arrow_color = resolve_color(
-                arrowprops.get("color")
-                or arrowprops.get("facecolor")
-                or arrowprops.get("edgecolor")
-                or "black"
+            arrow_color, arrow_width, arrow_style = _arrow_visuals(
+                arrowprops,
+                mutation_scale=_font_size_points(
+                    fontsize if fontsize is not None else rcParams["font.size"],
+                    rcParams["font.size"],
+                )
+                * self._point_scale(),
             )
             self._add(
                 "@arrow",
@@ -2153,17 +2158,8 @@ class Axes(PlotTypeMixin):
                     "args": (sx0, sy0, ex0, ey0),
                     "kwargs": {
                         "color": arrow_color,
-                        "width": float(
-                            arrowprops.get(
-                                "width",
-                                arrowprops.get(
-                                    "lw", arrowprops.get("linewidth", 3.0 if fancy else 1.5)
-                                ),
-                            )
-                        ),
-                        "style": {
-                            "head_size": float(arrowprops.get("headwidth", 12.0 if fancy else 8.0))
-                        },
+                        "width": arrow_width,
+                        "style": arrow_style,
                     },
                 },
             )
@@ -2305,6 +2301,29 @@ class Axes(PlotTypeMixin):
 
         key = "x" if axis == "x" else "y"
         return any(key in entry and _is_datetime_like(entry[key]) for entry in self._entries)
+
+    def _data_coordinate(self, value: Any, axis: str) -> Optional[float]:
+        """A data-space coordinate as the engine's float — numbers directly,
+        datetime-likes (and, on a datetime axis, matplotlib's registry-parsed
+        date strings) as ms since epoch. None means not coordinate-like."""
+        if _is_number(value):
+            return float(value)
+        if isinstance(value, str):
+            value = _parse_date_text(value) if self._axis_holds_datetimes(axis) else None
+            if value is None:
+                return None
+        try:
+            converted = np.asarray(
+                unit_converted_values(np.asarray([value])), dtype=np.float64
+            ).reshape(-1)
+        except (TypeError, ValueError):
+            return None
+        return float(converted[0]) if converted.size and np.isfinite(converted[0]) else None
+
+    def _data_coordinates(self, xy: tuple) -> Optional[tuple[float, float]]:
+        x = self._data_coordinate(xy[0], "x")
+        y = self._data_coordinate(xy[1], "y")
+        return None if x is None or y is None else (x, y)
 
     def _entry_extent(self, axis: str) -> tuple[float, float]:
         values: list[np.ndarray] = []
@@ -3718,6 +3737,15 @@ class Axes(PlotTypeMixin):
                         "font_size": _font_size_points(rcParams["font.size"], rcParams["font.size"])
                         * self._point_scale(),
                     }
+                if kw.get("bbox"):
+                    # matplotlib's text bbox patch, as label box styles.
+                    text_kw["style"] = {
+                        **_bbox_label_style(
+                            kw["bbox"],
+                            font_size=float((text_kw.get("style") or {}).get("font_size", 11.0)),
+                        ),
+                        **(text_kw.get("style") or {}),
+                    }
                 # matplotlib's pandas-registered converter parses date strings
                 # placed on a date axis; categorical axes keep their strings.
                 x, y = e["args"][0], e["args"][1]
@@ -3725,7 +3753,46 @@ class Axes(PlotTypeMixin):
                     x = _parse_date_text(x) or x
                 if isinstance(y, str) and self._axis_holds_datetimes("y"):
                     y = _parse_date_text(y) or y
-                children.append(fc.text(x, y, *e["args"][2:], **text_kw))
+                arrowprops = kw.get("arrowprops")
+                value = str(e["args"][2]) if len(e["args"]) > 2 else ""
+                if arrowprops and value and text_kw.get("dx") is not None:
+                    # Offset-placed annotate(arrowprops=): matplotlib pins the
+                    # arrow from the text to the data point across zoom — the
+                    # engine's callout annotation is exactly that object.
+                    font_size = float((text_kw.get("style") or {}).get("font_size", 11.0))
+                    arrow_color, arrow_width, arrow_style = _arrow_visuals(
+                        arrowprops, mutation_scale=font_size
+                    )
+                    style: dict[str, Any] = {**(text_kw.get("style") or {}), **arrow_style}
+                    # matplotlib starts the arrow at the text patch edge
+                    # (shrinkA/B default 2 pt); approximate the patch with a
+                    # radial clearance around the label anchor.
+                    style.setdefault("gap_start", font_size * 0.5 + 2.0)
+                    style.setdefault("gap_end", 3.0)
+                    # The callout color prop paints the arrow; pin the label's
+                    # own color so it doesn't inherit the arrow's.
+                    style.setdefault(
+                        "label_color",
+                        text_kw.get("color")
+                        or resolve_color(rcParams.get("text.color", "black"))
+                        or "black",
+                    )
+                    children.append(
+                        fc.callout(
+                            x,
+                            y,
+                            value,
+                            dx=float(text_kw["dx"]),
+                            dy=float(text_kw.get("dy", 0.0)),
+                            color=arrow_color,
+                            width=arrow_width,
+                            anchor=text_kw.get("anchor", "start"),
+                            class_name=text_kw.get("class_name"),
+                            style=style,
+                        )
+                    )
+                else:
+                    children.append(fc.text(x, y, *e["args"][2:], **text_kw))
         return children
 
     def _best_legend_loc(self) -> str:
@@ -3999,6 +4066,163 @@ def _colorbar_figure_domain(figure: Any) -> Optional[tuple[float, float]]:
 
 def _is_number(v: Any) -> bool:
     return isinstance(v, (int, float, np.integer, np.floating))
+
+
+# matplotlib arrowstyle name → (tail, head) endpoint shapes, in the shim's
+# text→point drawing direction (A = tail at the text, B = head at the point).
+_ARROWSTYLE_ENDS = {
+    "-": ("none", "none"),
+    "->": ("none", "v"),
+    "<-": ("v", "none"),
+    "<->": ("v", "v"),
+    "-|>": ("none", "triangle"),
+    "<|-": ("triangle", "none"),
+    "<|-|>": ("triangle", "triangle"),
+    "|-|": ("bar", "bar"),
+    "]-[": ("bar", "bar"),
+    "]-": ("bar", "none"),
+    "-[": ("none", "bar"),
+    "simple": ("none", "triangle"),
+    "fancy": ("none", "triangle"),
+    "wedge": ("none", "triangle"),
+}
+
+
+def _parse_style_options(spec: str) -> dict[str, float]:
+    options: dict[str, float] = {}
+    for part in spec.split(",")[1:]:
+        key, _, value = part.partition("=")
+        try:
+            options[key.strip()] = float(value)
+        except ValueError:
+            continue
+    return options
+
+
+def _connection_curve(connectionstyle: Any) -> dict[str, float]:
+    """matplotlib ``connectionstyle`` → quadratic-curve style keys (see
+    ``_arrowgeom.py``): arc3's rad becomes ``curve``; angle3/angle become the
+    ``angle_a``/``angle_b`` departure/arrival angles (corner rounding is
+    approximated by the quadratic)."""
+    if not isinstance(connectionstyle, str):
+        return {}
+    name = connectionstyle.split(",")[0].strip()
+    options = _parse_style_options(connectionstyle)
+    if name == "arc3":
+        rad = options.get("rad", 0.0)
+        return {"curve": rad} if rad else {}
+    if name in ("angle3", "angle"):
+        return {"angle_a": options.get("angleA", 90.0), "angle_b": options.get("angleB", 0.0)}
+    return {}
+
+
+def _arrow_visuals(
+    arrowprops: dict[str, Any], mutation_scale: float = 14.0
+) -> tuple[Optional[str], float, dict[str, Any]]:
+    """Color, shaft width, and shape style keys for matplotlib ``arrowprops``.
+
+    Head/tail shapes, filled tapered shafts (fancy/simple/wedge), and
+    connectionstyle curves map onto the engine's arrow style vocabulary;
+    ``mutation_scale`` mirrors matplotlib's (the annotation text size, px).
+    What has no equivalent (corner rounding) is approximated, never dropped."""
+    arrowstyle = arrowprops.get("arrowstyle")
+    fancy = arrowstyle is None  # matplotlib's YAArrow-style thick default
+    color = resolve_color(
+        arrowprops.get("color")
+        or arrowprops.get("facecolor")
+        or arrowprops.get("fc")
+        or arrowprops.get("edgecolor")
+        or arrowprops.get("ec")
+        or "black"
+    )
+    alpha = arrowprops.get("alpha")
+    if color is not None and alpha is not None:
+        from ._colors import _rgba_floats
+
+        try:  # alpha dims only the arrow, so bake it into the color itself
+            r, g, b, a = _rgba_floats(color)
+        except ValueError:
+            pass  # exotic CSS name: keep the color, lose alpha
+        else:
+            color = (
+                f"rgba({round(r * 255)},{round(g * 255)},{round(b * 255)},{float(alpha) * a:.3g})"
+            )
+    width = float(
+        arrowprops.get(
+            "width", arrowprops.get("lw", arrowprops.get("linewidth", 3.0 if fancy else 1.5))
+        )
+    )
+    style: dict[str, Any] = {}
+    if fancy:
+        style["head_size"] = float(arrowprops.get("headwidth", 12.0))
+    else:
+        name = str(arrowstyle).split(",")[0].strip()
+        tail, head = _ARROWSTYLE_ENDS.get(name, ("none", "triangle"))
+        options = _parse_style_options(str(arrowstyle))
+        scale = float(mutation_scale)
+        if name in ("fancy", "simple", "wedge"):
+            # Filled tapered shafts, matplotlib's mutation-scale-sized fills.
+            if name == "wedge":
+                style["shaft_width_start"] = options.get("tail_width", 0.3) * scale
+                style["shaft_width_end"] = 1.0
+                style["gap_end"] = 0.0  # the wedge tip IS the pointer
+                head = "none"
+            else:
+                style["shaft_width_start"] = 2.0 if name == "fancy" else 1.5
+                style["shaft_width_end"] = options.get("tail_width", 0.4) * scale
+                style["head_size"] = options.get("head_width", 0.4) * scale * 2.2
+        if head != "triangle":
+            style["head_style"] = head
+        if tail != "none":
+            style["tail_style"] = tail
+        if "bar" in (head, tail):
+            # widthA/widthB are fractions of the mutation scale (~text size).
+            bar = options.get("widthA", options.get("widthB", 0.4))
+            style["head_size"] = max(4.0, bar * 20.0)
+        elif "head_size" not in style:
+            style["head_size"] = float(arrowprops.get("headwidth", 8.0))
+    style.update(_connection_curve(arrowprops.get("connectionstyle")))
+    return color, width, style
+
+
+def _bbox_label_style(bbox: dict[str, Any], font_size: float = 11.0) -> dict[str, Any]:
+    """matplotlib text ``bbox`` patch → annotation-label box styles.
+
+    A CSS approximation drawn by the render client's DOM label; the static
+    exporters keep the plain label (recorded in docs/matplotlib-compat.md).
+    """
+    style: dict[str, Any] = {}
+    face = bbox.get("fc", bbox.get("facecolor", "C0"))
+    alpha = bbox.get("alpha")
+    if face is not None and face != "none":
+        resolved = resolve_color(face)
+        if resolved is not None:
+            if alpha is not None:
+                from ._colors import _rgba_floats
+
+                try:
+                    r, g, b, a = _rgba_floats(resolved)
+                except ValueError:  # exotic CSS name: keep the fill, lose alpha
+                    style["background"] = resolved
+                else:
+                    style["background"] = (
+                        f"rgba({round(r * 255)},{round(g * 255)},{round(b * 255)},"
+                        f"{float(alpha) * a:.3g})"
+                    )
+            else:
+                style["background"] = resolved
+    edge = bbox.get("ec", bbox.get("edgecolor", "black"))
+    if edge is not None and edge != "none":
+        line_width = float(bbox.get("lw", bbox.get("linewidth", 1.0)))
+        style["border"] = f"{line_width:g}px solid {resolve_color(edge)}"
+    boxstyle = str(bbox.get("boxstyle", "square"))
+    name = boxstyle.split(",")[0].strip()
+    if "round" in name:
+        style["border_radius"] = 8.0 if name == "round4" else 5.0
+    # matplotlib pads the patch pad×fontsize around the text.
+    pad = max(0.0, _parse_style_options(boxstyle).get("pad", 0.3)) * float(font_size)
+    style["padding"] = f"{pad:.3g}px {pad * 1.3:.3g}px"
+    return style
 
 
 def _font_size_points(value: Any, base: Any) -> float:
