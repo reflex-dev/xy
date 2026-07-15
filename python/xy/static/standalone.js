@@ -5743,6 +5743,7 @@ bar.dataset.fcCollapsed = "false";
 let setZoomMenuOpen = () => {};
 let setSelectMenuOpen = () => {};
 let setExportMenuOpen = () => {};
+let updateCollapseItem = () => {};
 const setVisible = (visible) => {
 const show = visible || this._modebarDragging || bar.contains(document.activeElement);
 bar.style.opacity = show ? "1" : "0";
@@ -5761,10 +5762,13 @@ if (!root.matches(":hover")) setVisible(false);
 });
 const grip = document.createElement("button");
 grip.type = "button";
-grip.title = "Double-click to collapse; drag to move";
-grip.setAttribute("aria-label", "Collapse toolbar");
-grip.setAttribute("aria-expanded", "true");
+grip.title = "Click for toolbar options; drag to move; double-click to collapse";
+grip.setAttribute("aria-label", "Toolbar options");
+grip.setAttribute("aria-haspopup", "menu");
+grip.setAttribute("aria-expanded", "false");
 grip.dataset.fcModebarDragHandle = "";
+grip.dataset.fcModebarExport = "";
+grip.dataset.fcModebarExportTrigger = "";
 grip.innerHTML = this._icon("drag");
 grip.style.cssText =
 "display:flex;align-items:center;justify-content:center;pointer-events:auto;touch-action:none;";
@@ -5774,6 +5778,7 @@ const DOUBLE_CLICK_MS = 500;
 const DRAG_THRESHOLD_PX = 6;
 let modebarDrag = null;
 let lastGripDown = 0;
+let suppressGripClickUntil = 0;
 const setCollapsed = (collapsed) => {
 this._modebarCollapsed = collapsed;
 bar.dataset.fcCollapsed = String(collapsed);
@@ -5782,17 +5787,16 @@ setZoomMenuOpen(false);
 setSelectMenuOpen(false);
 setExportMenuOpen(false);
 }
-for (const button of bar.querySelectorAll("button")) {
+for (const button of bar.querySelectorAll(":scope > button")) {
 if (button !== grip) {
 button.hidden = collapsed;
 button.style.display = collapsed ? "none" : "flex";
 }
 }
 grip.title = collapsed
-? "Double-click to expand; drag to move"
-: "Double-click to collapse; drag to move";
-grip.setAttribute("aria-label", collapsed ? "Expand toolbar" : "Collapse toolbar");
-grip.setAttribute("aria-expanded", String(!collapsed));
+? "Click for toolbar options; drag to move; double-click to expand"
+: "Click for toolbar options; drag to move; double-click to collapse";
+updateCollapseItem();
 this._fitModebar();
 };
 const toggleModebar = () => setCollapsed(!this._modebarCollapsed);
@@ -5812,7 +5816,10 @@ dy: e.clientY - barRect.top,
 moved: false,
 };
 setVisible(true);
-if (doubleClick) toggleModebar();
+if (doubleClick) {
+suppressGripClickUntil = performance.now() + 100;
+toggleModebar();
+}
 });
 this._listen(grip, "pointermove", (e) => {
 if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
@@ -5844,20 +5851,22 @@ bar.style.transition = "opacity .15s";
 setVisible(root.matches(":hover"));
 if (moved || cancelled) {
 lastGripDown = 0;
+suppressGripClickUntil = performance.now() + 100;
 }
 };
 this._listen(grip, "pointerup", endModebarDrag);
 this._listen(grip, "pointercancel", endModebarDrag);
-this._listen(grip, "click", (e) => e.stopPropagation());
+this._listen(grip, "click", (e) => {
+e.stopPropagation();
+if (performance.now() <= suppressGripClickUntil) {
+suppressGripClickUntil = 0;
+return;
+}
+setExportMenuOpen(!this._exportMenuOpen);
+});
 this._listen(grip, "dblclick", (e) => {
 e.preventDefault();
 e.stopPropagation();
-});
-this._listen(grip, "keydown", (e) => {
-if (e.repeat || (e.key !== "Enter" && e.key !== " ")) return;
-e.preventDefault();
-e.stopPropagation();
-toggleModebar();
 });
 const mk = (name, title, onClick, toggles) => {
 const b = document.createElement("button");
@@ -5910,14 +5919,6 @@ selectIndicator.innerHTML = this._icon("chevrondown");
 selectTrigger.appendChild(selectIndicator);
 this._selectMenuButton = selectTrigger;
 }
-const exportTrigger = mk("more", "Export options", () => {
-setExportMenuOpen(!this._exportMenuOpen);
-});
-exportTrigger.dataset.fcModebarExport = "";
-exportTrigger.dataset.fcModebarExportTrigger = "";
-exportTrigger.setAttribute("aria-label", "Export options");
-exportTrigger.setAttribute("aria-haspopup", "menu");
-exportTrigger.setAttribute("aria-expanded", "false");
 const zoomMenu = document.createElement("div");
 zoomMenu.dataset.fcModebarMenu = "";
 zoomMenu.setAttribute("role", "menu");
@@ -6015,17 +6016,18 @@ const exportMenu = document.createElement("div");
 exportMenu.dataset.fcModebarMenu = "";
 exportMenu.dataset.fcModebarExportMenu = "";
 exportMenu.setAttribute("role", "menu");
-exportMenu.setAttribute("aria-label", "Export options");
+exportMenu.setAttribute("aria-label", "Toolbar options");
 exportMenu.style.cssText =
 "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
 bar.appendChild(exportMenu);
 const exportMenuItems = [];
-const mkExportItem = (name, label, onClick) => {
+const mkExportItem = (name, label, onClick, separator = false) => {
 const button = document.createElement("button");
 button.type = "button";
 button.tabIndex = -1;
 button.dataset.fcModebarMenuItem = name;
 button.dataset.fcModebarExportItem = name;
+if (separator) button.dataset.fcSeparator = "";
 button.setAttribute("role", "menuitem");
 button.style.cssText = "display:flex;align-items:center;pointer-events:auto;";
 this._applySlot(button, "modebar_button");
@@ -6046,7 +6048,18 @@ exportMenu.appendChild(button);
 exportMenuItems.push(button);
 return button;
 };
-mkExportItem("png", "Export PNG", () => this._exportPng());
+const collapseItem = mkExportItem("collapse", "Collapse Toolbar", toggleModebar);
+collapseItem.dataset.fcModebarCollapseItem = "";
+updateCollapseItem = () => {
+const collapsed = this._modebarCollapsed;
+const icon = collapseItem.querySelector("[data-fc-modebar-menu-icon]");
+const label = icon?.nextElementSibling;
+if (icon) icon.innerHTML = this._icon(collapsed ? "expand" : "collapse");
+if (label) label.textContent = collapsed ? "Expand Toolbar" : "Collapse Toolbar";
+collapseItem.dataset.fcModebarExportItem = collapsed ? "expand" : "collapse";
+};
+updateCollapseItem();
+mkExportItem("png", "Export PNG", () => this._exportPng(), true);
 mkExportItem("svg", "Export SVG", () => this._exportSvg());
 mkExportItem("csv", "Export CSV", () => this._exportCsv());
 setZoomMenuOpen = (open, restoreFocus = false) => {
@@ -6115,16 +6128,16 @@ selectMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`
 selectMenu.style.visibility = "visible";
 };
 setExportMenuOpen = (open, restoreFocus = false) => {
-const show = Boolean(open) && !this._modebarCollapsed;
+const show = Boolean(open);
 if (show) {
 setZoomMenuOpen(false);
 setSelectMenuOpen(false);
 }
 this._exportMenuOpen = show;
-exportTrigger.setAttribute("aria-expanded", String(show));
+grip.setAttribute("aria-expanded", String(show));
 if (!show) {
 exportMenu.style.display = "none";
-if (restoreFocus) exportTrigger.focus();
+if (restoreFocus) grip.focus();
 return;
 }
 exportMenu.style.display = "flex";
@@ -6140,7 +6153,7 @@ const preferredTop = barRect.bottom + 6 + exportMenu.offsetHeight <= rootRect.bo
 : above;
 const maxLeft = root.clientWidth - rootLeft - exportMenu.offsetWidth;
 const maxTop = root.clientHeight - rootTop - exportMenu.offsetHeight;
-exportMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, exportTrigger.offsetLeft))}px`;
+exportMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, grip.offsetLeft))}px`;
 exportMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
 exportMenu.style.visibility = "visible";
 };
@@ -6204,7 +6217,7 @@ next = (current - 1 + selectMenuItems.length) % selectMenuItems.length;
 selectMenuItems[next].focus();
 });
 }
-this._listen(exportTrigger, "keydown", (e) => {
+this._listen(grip, "keydown", (e) => {
 if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
 e.preventDefault();
 e.stopPropagation();
@@ -6614,10 +6627,10 @@ return svg('<rect x="5" y="3" width="10" height="14" rx="1" stroke-dasharray="2.
 '<path d="M10 6 V14 M10 6 L8 8 M10 6 L12 8 M10 14 L8 12 M10 14 L12 12"/>');
 case "chevrondown":
 return svg('<path d="M6 8 L10 12 L14 8"/>');
-case "more":
-return svg('<circle cx="5" cy="10" r="1" fill="currentColor" stroke="none"/>' +
-'<circle cx="10" cy="10" r="1" fill="currentColor" stroke="none"/>' +
-'<circle cx="15" cy="10" r="1" fill="currentColor" stroke="none"/>');
+case "collapse":
+return svg('<path d="M4 5 H16 M4 15 H16 M7 8 L10 11 L13 8"/>');
+case "expand":
+return svg('<path d="M4 5 H16 M4 15 H16 M7 12 L10 9 L13 12"/>');
 case "png":
 return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
 '<path d="M7 13 L9 10.5 L11 12 L13.5 9 V15 H7 Z"/>');

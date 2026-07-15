@@ -291,25 +291,28 @@ try{{
         clientX:gr.left+gr.width/2,clientY:gr.top+gr.height/2,bubbles:true}};
       grip.dispatchEvent(new PointerEvent("pointerdown", init));
       grip.dispatchEvent(new PointerEvent("pointerup", init));
+      grip.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
     }};
     tapGrip(65); tapGrip(66);
-    const expectedCollapsedButtons = Math.max(0, btns - 1);
+    const expectedCollapsedButtons = Math.max(0, bar.querySelectorAll(":scope > button").length - 1);
     const collapsedButtons = bar ? bar.querySelectorAll("button[hidden]").length : 0;
     const collapsedDisplays = bar
       ? [...bar.querySelectorAll("button[hidden]")].filter((button) => button.style.display === "none").length
       : 0;
-    const collapsedGrip = grip && !grip.hidden && grip.getAttribute("aria-expanded") === "false";
+    const collapsedGrip = grip && !grip.hidden && bar.dataset.fcCollapsed === "true"
+      && grip.getAttribute("aria-expanded") === "false";
     tapGrip(67); tapGrip(68);
     const expandedButtons = bar ? bar.querySelectorAll("button[hidden]").length : -1;
-    if (grip) grip.dispatchEvent(new KeyboardEvent("keydown", {{key:"Enter",bubbles:true}}));
-    const keyboardCollapsed = grip && grip.getAttribute("aria-expanded") === "false"
+    const collapseItem = bar && bar.querySelector("[data-fc-modebar-collapse-item]");
+    if (collapseItem) collapseItem.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
+    const menuCollapsed = grip && bar.dataset.fcCollapsed === "true"
       && bar.querySelectorAll("button[hidden]").length === expectedCollapsedButtons;
-    if (grip) grip.dispatchEvent(new KeyboardEvent("keydown", {{key:"Enter",bubbles:true}}));
-    const keyboardExpanded = grip && grip.getAttribute("aria-expanded") === "true"
+    if (collapseItem) collapseItem.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
+    const menuExpanded = grip && bar.dataset.fcCollapsed === "false"
       && bar.querySelectorAll("button[hidden]").length === 0;
     const modebarCollapse = collapsedButtons === expectedCollapsedButtons
       && collapsedDisplays === expectedCollapsedButtons
-      && collapsedGrip && expandedButtons === 0 && keyboardCollapsed && keyboardExpanded ? 1 : 0;
+      && collapsedGrip && expandedButtons === 0 && menuCollapsed && menuExpanded ? 1 : 0;
     const zoomTrigger = bar && bar.querySelector("[data-fc-modebar-menu-trigger]");
     const zoomMenu = bar && bar.querySelector("[data-fc-modebar-menu]");
     const selectButton = bar && bar.querySelector("[data-fc-modebar-select]");
@@ -342,6 +345,7 @@ try{{
         clientX:gr.left+gr.width/2+80,clientY:gr.top+gr.height/2+40,bubbles:true}}));
       grip.dispatchEvent(new PointerEvent("pointerup", {{pointerId:71,pointerType:"mouse",button:0,
         clientX:gr.left+gr.width/2+80,clientY:gr.top+gr.height/2+40,bubbles:true}}));
+      grip.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
     }}
     const modebarDrag = grip && parseFloat(bar.style.left) > barLeft0 + 20
       && bar.querySelectorAll("button[hidden]").length === 0 ? 1 : 0;
