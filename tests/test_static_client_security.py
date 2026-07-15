@@ -116,7 +116,26 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
             'selectIndicator.innerHTML = this._icon("chevrondown");',
             "icon.innerHTML = this._icon(name);",
             "icon.innerHTML = this._icon(name);",
+            "icon.innerHTML = this._icon(name);",
+            'if (icon) icon.innerHTML = this._icon(dark ? "sun" : "moon");',
         ]
+
+
+def test_modebar_exports_are_local_and_exclude_interaction_chrome() -> None:
+    """Browser exports stay self-contained and never serialize the toolbar itself."""
+    required = (
+        'exportMenu.dataset.fcModebarExportMenu = "";',
+        'new Blob([svg], { type: "image/svg+xml;charset=utf-8" })',
+        'new Blob([this._exportCsvText()], { type: "text/csv;charset=utf-8" })',
+        "link.download = filename;",
+        "const content = new XMLSerializer().serializeToString(clone);",
+        '[data-fc-slot="modebar"],[data-fc-slot="tooltip"]',
+        'const columns = ["trace", "name", "kind", "index", "x", "y"',
+        "this.root.dataset.fcColorMode = this._colorMode;",
+    )
+    for path, text in CLIENT_FILES:
+        for snippet in required:
+            assert snippet in text, f"{path} missing toolbar export contract {snippet!r}"
 
 
 def test_client_respects_user_legend_max_height_style() -> None:

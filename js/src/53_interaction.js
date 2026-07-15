@@ -398,6 +398,7 @@ Object.assign(ChartView.prototype, {
     bar.dataset.fcCollapsed = "false";
     let setZoomMenuOpen = () => {};
     let setSelectMenuOpen = () => {};
+    let setExportMenuOpen = () => {};
 
     const setVisible = (visible) => {
       const show = visible || this._modebarDragging || bar.contains(document.activeElement);
@@ -409,6 +410,7 @@ Object.assign(ChartView.prototype, {
       setVisible(false);
       setZoomMenuOpen(false);
       setSelectMenuOpen(false);
+      setExportMenuOpen(false);
     });
     this._listen(bar, "focusin", () => setVisible(true));
     this._listen(bar, "focusout", () => {
@@ -440,6 +442,7 @@ Object.assign(ChartView.prototype, {
       if (collapsed) {
         setZoomMenuOpen(false);
         setSelectMenuOpen(false);
+        setExportMenuOpen(false);
       }
       for (const button of bar.querySelectorAll("button")) {
         if (button !== grip) {
@@ -485,6 +488,7 @@ Object.assign(ChartView.prototype, {
         bar.style.transition = "none";
         setZoomMenuOpen(false);
         setSelectMenuOpen(false);
+        setExportMenuOpen(false);
         try { grip.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
       }
       const rootRect = root.getBoundingClientRect();
@@ -572,6 +576,14 @@ Object.assign(ChartView.prototype, {
       selectTrigger.appendChild(selectIndicator);
       this._selectMenuButton = selectTrigger;
     }
+    const exportTrigger = mk("more", "Export options", () => {
+      setExportMenuOpen(!this._exportMenuOpen);
+    });
+    exportTrigger.dataset.fcModebarExport = "";
+    exportTrigger.dataset.fcModebarExportTrigger = "";
+    exportTrigger.setAttribute("aria-label", "Export options");
+    exportTrigger.setAttribute("aria-haspopup", "menu");
+    exportTrigger.setAttribute("aria-expanded", "false");
 
     const zoomMenu = document.createElement("div");
     zoomMenu.dataset.fcModebarMenu = "";
@@ -669,9 +681,59 @@ Object.assign(ChartView.prototype, {
       mkSelectItem("selecty", "Y Range", "Y", "select-y");
     }
 
+    const exportMenu = document.createElement("div");
+    exportMenu.dataset.fcModebarMenu = "";
+    exportMenu.dataset.fcModebarExportMenu = "";
+    exportMenu.setAttribute("role", "menu");
+    exportMenu.setAttribute("aria-label", "Export options");
+    exportMenu.style.cssText =
+      "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
+    bar.appendChild(exportMenu);
+    const exportMenuItems = [];
+    const mkExportItem = (name, label, onClick, separator = false) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.tabIndex = -1;
+      button.dataset.fcModebarMenuItem = name;
+      button.dataset.fcModebarExportItem = name;
+      if (separator) button.dataset.fcSeparator = "";
+      button.setAttribute("role", "menuitem");
+      button.style.cssText = "display:flex;align-items:center;pointer-events:auto;";
+      this._applySlot(button, "modebar_button");
+      const icon = document.createElement("span");
+      icon.dataset.fcModebarMenuIcon = "";
+      icon.innerHTML = this._icon(name);
+      button.appendChild(icon);
+      const text = document.createElement("span");
+      text.textContent = label;
+      button.appendChild(text);
+      this._listen(button, "pointerdown", (e) => e.stopPropagation());
+      this._listen(button, "click", (e) => {
+        e.stopPropagation();
+        setExportMenuOpen(false, true);
+        Promise.resolve(onClick()).catch((error) => console.error(`xy: ${label} failed`, error));
+      });
+      exportMenu.appendChild(button);
+      exportMenuItems.push(button);
+      return button;
+    };
+    const themeItem = mkExportItem("moon", "Dark Mode", () => this._toggleColorMode());
+    themeItem.dataset.fcModebarThemeToggle = "";
+    themeItem.setAttribute("role", "menuitemcheckbox");
+    themeItem.setAttribute("aria-checked", "false");
+    this._themeMenuItem = themeItem;
+    this._colorMode = "light";
+    this._updateColorModeItem();
+    mkExportItem("png", "Export PNG", () => this._exportPng(), true);
+    mkExportItem("svg", "Export SVG", () => this._exportSvg());
+    mkExportItem("csv", "Export CSV", () => this._exportCsv());
+
     setZoomMenuOpen = (open, restoreFocus = false) => {
       const show = Boolean(open) && !this._modebarCollapsed;
-      if (show) setSelectMenuOpen(false);
+      if (show) {
+        setSelectMenuOpen(false);
+        setExportMenuOpen(false);
+      }
       this._zoomMenuOpen = show;
       zoomTrigger.setAttribute("aria-expanded", String(show));
       if (!show) {
@@ -701,7 +763,10 @@ Object.assign(ChartView.prototype, {
     setSelectMenuOpen = (open, restoreFocus = false) => {
       if (!selectTrigger) return;
       const show = Boolean(open) && !this._modebarCollapsed;
-      if (show) setZoomMenuOpen(false);
+      if (show) {
+        setZoomMenuOpen(false);
+        setExportMenuOpen(false);
+      }
       this._selectMenuOpen = show;
       selectTrigger.setAttribute("aria-expanded", String(show));
       if (!show) {
@@ -728,13 +793,45 @@ Object.assign(ChartView.prototype, {
       selectMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
       selectMenu.style.visibility = "visible";
     };
+    setExportMenuOpen = (open, restoreFocus = false) => {
+      const show = Boolean(open) && !this._modebarCollapsed;
+      if (show) {
+        setZoomMenuOpen(false);
+        setSelectMenuOpen(false);
+      }
+      this._exportMenuOpen = show;
+      exportTrigger.setAttribute("aria-expanded", String(show));
+      if (!show) {
+        exportMenu.style.display = "none";
+        if (restoreFocus) exportTrigger.focus();
+        return;
+      }
+      exportMenu.style.display = "flex";
+      exportMenu.style.visibility = "hidden";
+      const rootRect = root.getBoundingClientRect();
+      const barRect = bar.getBoundingClientRect();
+      const rootLeft = barRect.left - rootRect.left;
+      const rootTop = barRect.top - rootRect.top;
+      const below = bar.offsetHeight + 6;
+      const above = -exportMenu.offsetHeight - 6;
+      const preferredTop = barRect.bottom + 6 + exportMenu.offsetHeight <= rootRect.bottom
+        ? below
+        : above;
+      const maxLeft = root.clientWidth - rootLeft - exportMenu.offsetWidth;
+      const maxTop = root.clientHeight - rootTop - exportMenu.offsetHeight;
+      exportMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, exportTrigger.offsetLeft))}px`;
+      exportMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
+      exportMenu.style.visibility = "visible";
+    };
     this._closeModebarMenu = () => {
       setZoomMenuOpen(false);
       setSelectMenuOpen(false);
+      setExportMenuOpen(false);
     };
     this._listen(document, "pointerdown", (e) => {
       if (this._zoomMenuOpen && !bar.contains(e.target)) setZoomMenuOpen(false);
       if (this._selectMenuOpen && !bar.contains(e.target)) setSelectMenuOpen(false);
+      if (this._exportMenuOpen && !bar.contains(e.target)) setExportMenuOpen(false);
     });
     this._listen(zoomTrigger, "keydown", (e) => {
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
@@ -786,6 +883,31 @@ Object.assign(ChartView.prototype, {
         selectMenuItems[next].focus();
       });
     }
+    this._listen(exportTrigger, "keydown", (e) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      e.preventDefault();
+      e.stopPropagation();
+      setExportMenuOpen(true);
+      const index = e.key === "ArrowDown" ? 0 : exportMenuItems.length - 1;
+      exportMenuItems[index].focus();
+    });
+    this._listen(exportMenu, "keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setExportMenuOpen(false, true);
+        return;
+      }
+      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+      e.preventDefault();
+      const current = exportMenuItems.indexOf(document.activeElement);
+      let next = e.key === "Home" ? 0 : e.key === "End" ? exportMenuItems.length - 1 : current;
+      if (e.key === "ArrowDown") next = (current + 1) % exportMenuItems.length;
+      if (e.key === "ArrowUp") {
+        next = (current - 1 + exportMenuItems.length) % exportMenuItems.length;
+      }
+      exportMenuItems[next].focus();
+    });
     root.appendChild(bar);
     this._fitModebar();
     // The pointer may already be over a chart that mounted beneath it, in
@@ -1013,6 +1135,221 @@ Object.assign(ChartView.prototype, {
     this._setView({ x0, x1, y0, y1 }, { animate });
   },
 
+  _updateColorModeItem() {
+    if (!this._themeMenuItem) return;
+    const dark = this._colorMode === "dark";
+    const icon = this._themeMenuItem.querySelector("[data-fc-modebar-menu-icon]");
+    const label = icon?.nextElementSibling;
+    if (icon) icon.innerHTML = this._icon(dark ? "sun" : "moon");
+    if (label) label.textContent = dark ? "Light Mode" : "Dark Mode";
+    this._themeMenuItem.dataset.fcModebarExportItem = dark ? "light" : "dark";
+    this._themeMenuItem.setAttribute("aria-checked", String(dark));
+  },
+
+  _setColorMode(mode) {
+    const dark = mode === "dark";
+    this._colorMode = dark ? "dark" : "light";
+    this.root.dataset.fcColorMode = this._colorMode;
+    const colors = dark ? {
+      color: "#e5e7eb",
+      background: "#0b1220",
+      "--chart-bg": "#111827",
+      "--chart-grid": "rgba(226,232,240,.14)",
+      "--chart-axis": "#94a3b8",
+      "--chart-text": "#e5e7eb",
+      "--chart-legend-bg": "rgba(30,41,59,.84)",
+      "--chart-modebar-bg": "rgba(15,23,42,.94)",
+      "--chart-modebar-active": "rgba(148,163,184,.24)",
+      "--chart-tooltip-bg": "rgba(2,6,23,.96)",
+      "--chart-tooltip-text": "#f8fafc",
+      "--chart-badge-bg": "rgba(30,41,59,.9)",
+      "--chart-badge-text": "#e2e8f0",
+    } : {
+      color: "#1f2937",
+      background: "#ffffff",
+      "--chart-bg": "#ffffff",
+      "--chart-grid": "rgba(15,23,42,.12)",
+      "--chart-axis": "#64748b",
+      "--chart-text": "#1f2937",
+      "--chart-legend-bg": "rgba(241,245,249,.88)",
+      "--chart-modebar-bg": "rgba(255,255,255,.94)",
+      "--chart-modebar-active": "rgba(100,116,139,.18)",
+      "--chart-tooltip-bg": "rgba(20,24,33,.94)",
+      "--chart-tooltip-text": "#ffffff",
+      "--chart-badge-bg": "rgba(255,255,255,.9)",
+      "--chart-badge-text": "#0f172a",
+    };
+    for (const [name, value] of Object.entries(colors)) {
+      if (name === "color" || name === "background") this.root.style[name] = value;
+      else this.root.style.setProperty(name, value);
+    }
+    this._updateColorModeItem();
+    this.refreshTheme();
+  },
+
+  _toggleColorMode() {
+    this._setColorMode(this._colorMode === "dark" ? "light" : "dark");
+  },
+
+  _exportFilename(extension) {
+    const title = String(this.spec.title || "xy-chart")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "xy-chart";
+    return `${title}.${extension}`;
+  },
+
+  _downloadExport(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  },
+
+  _exportSvgMarkup() {
+    this._drawNow?.();
+    this.gl?.finish?.();
+    const width = this.size.w;
+    const height = this.size.h;
+    const clone = this.root.cloneNode(true);
+    clone.style.width = `${width}px`;
+    clone.style.height = `${height}px`;
+    clone.style.margin = "0";
+    clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+
+    const sourceCanvases = [...this.root.querySelectorAll("canvas")];
+    const clonedCanvases = [...clone.querySelectorAll("canvas")];
+    for (let i = 0; i < clonedCanvases.length; i++) {
+      const source = sourceCanvases[i];
+      const target = clonedCanvases[i];
+      if (!source || !target) continue;
+      const image = document.createElement("img");
+      image.setAttribute("src", source.toDataURL("image/png"));
+      image.setAttribute("alt", "");
+      image.setAttribute("style", target.getAttribute("style") || "");
+      image.setAttribute("width", String(source.clientWidth || source.width));
+      image.setAttribute("height", String(source.clientHeight || source.height));
+      for (const attr of target.attributes) {
+        if (attr.name.startsWith("data-")) image.setAttribute(attr.name, attr.value);
+      }
+      target.replaceWith(image);
+    }
+
+    clone.querySelectorAll(
+      '[data-fc-slot="modebar"],[data-fc-slot="tooltip"],' +
+      '[data-fc-slot="selection"],[data-fc-selection-lasso],' +
+      '[data-fc-slot="crosshair_x"],[data-fc-slot="crosshair_y"]'
+    ).forEach((node) => node.remove());
+    const stylesheet = document.createElement("style");
+    stylesheet.textContent = FC_CHROME_CSS;
+    clone.prepend(stylesheet);
+    const content = new XMLSerializer().serializeToString(clone);
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" ` +
+      `viewBox="0 0 ${width} ${height}"><foreignObject width="100%" height="100%">` +
+      `${content}</foreignObject></svg>`;
+  },
+
+  _exportSvg() {
+    const svg = this._exportSvgMarkup();
+    this._downloadExport(
+      new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
+      this._exportFilename("svg")
+    );
+  },
+
+  _exportPng() {
+    const svg = this._exportSvgMarkup();
+    const sourceUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    const image = new Image();
+    return new Promise((resolve, reject) => {
+      image.onload = () => {
+        const scale = Math.max(1, window.devicePixelRatio || 1);
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(this.size.w * scale);
+        canvas.height = Math.round(this.size.h * scale);
+        const ctx = canvas.getContext("2d");
+        ctx.scale(scale, scale);
+        ctx.drawImage(image, 0, 0, this.size.w, this.size.h);
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            reject(new Error("PNG encoding returned no data"));
+            return;
+          }
+          this._downloadExport(blob, this._exportFilename("png"));
+          resolve();
+        }, "image/png");
+      };
+      image.onerror = () => {
+        reject(new Error("chart SVG could not be rasterized"));
+      };
+      image.src = sourceUrl;
+    });
+  },
+
+  _exportCsvText() {
+    const columns = ["trace", "name", "kind", "index", "x", "y", "x0", "x1", "y0", "y1", "value"];
+    const rows = [columns];
+    const clean = (value) => Number.isFinite(value) ? value : "";
+    for (const g of this.gpuTraces || []) {
+      const trace = g.trace || {};
+      const prefix = [trace.id ?? "", trace.name ?? "", trace.kind ?? ""];
+      if (g._cpuRect) {
+        const r = g._cpuRect;
+        const n = Math.min(r.x0.length, r.x1.length, r.y0.length, r.y1.length);
+        for (let i = 0; i < n; i++) {
+          rows.push([...prefix, i, "", "",
+            clean(this._decodeValue(r.x0, r.x0Meta, i)),
+            clean(this._decodeValue(r.x1, r.x1Meta, i)),
+            clean(this._decodeValue(r.y0, r.y0Meta, i)),
+            clean(this._decodeValue(r.y1, r.y1Meta, i)), ""]);
+        }
+        continue;
+      }
+      if (g.heatmap && g._cpuHeatmap) {
+        const h = g.heatmap;
+        for (let i = 0; i < g._cpuHeatmap.grid.length; i++) {
+          const row = Math.floor(i / h.w);
+          const col = i % h.w;
+          const x = h.xRange[0] + (col + 0.5) * ((h.xRange[1] - h.xRange[0]) / h.w);
+          const y = h.yRange[0] + (row + 0.5) * ((h.yRange[1] - h.yRange[0]) / h.h);
+          const value = this._denormalizeUnit(g._cpuHeatmap.grid[i], trace.color?.domain);
+          rows.push([...prefix, i, clean(x), clean(y), "", "", "", "", clean(value)]);
+        }
+        continue;
+      }
+      const cpu = g._cpu;
+      if (!cpu?.x || !cpu?.y) continue;
+      const n = Math.min(cpu.x.length, cpu.y.length, g.n || Infinity);
+      for (let i = 0; i < n; i++) {
+        rows.push([...prefix, i,
+          clean(this._decodeValue(cpu.x, cpu.xMeta || g.xMeta, i)),
+          clean(this._decodeValue(cpu.y, cpu.yMeta || g.yMeta, i)),
+          "", "", "", "", ""]);
+      }
+    }
+    const quote = (value) => {
+      const text = String(value ?? "");
+      const escaped = text.split('"').join('""');
+      return text.includes(",") || text.includes('"') || text.includes("\r") || text.includes("\n")
+        ? `"${escaped}"`
+        : text;
+    };
+    return rows.map((row) => row.map(quote).join(",")).join("\r\n") + "\r\n";
+  },
+
+  _exportCsv() {
+    this._downloadExport(
+      new Blob([this._exportCsvText()], { type: "text/csv;charset=utf-8" }),
+      this._exportFilename("csv")
+    );
+  },
+
   _icon(name) {
     // Inline stroke SVGs (currentColor) — no external assets (§33 no supply chain).
     const svg = (body) =>
@@ -1051,6 +1388,25 @@ Object.assign(ChartView.prototype, {
           '<path d="M10 6 V14 M10 6 L8 8 M10 6 L12 8 M10 14 L8 12 M10 14 L12 12"/>');
       case "chevrondown":
         return svg('<path d="M6 8 L10 12 L14 8"/>');
+      case "more":
+        return svg('<circle cx="5" cy="10" r="1" fill="currentColor" stroke="none"/>' +
+          '<circle cx="10" cy="10" r="1" fill="currentColor" stroke="none"/>' +
+          '<circle cx="15" cy="10" r="1" fill="currentColor" stroke="none"/>');
+      case "moon":
+        return svg('<path d="M14.8 13.8 A6.5 6.5 0 0 1 6.2 5.2 A6.5 6.5 0 1 0 14.8 13.8 Z"/>');
+      case "sun":
+        return svg('<circle cx="10" cy="10" r="3"/><path d="M10 2 V4 M10 16 V18 ' +
+          'M2 10 H4 M16 10 H18 M4.3 4.3 L5.7 5.7 M14.3 14.3 L15.7 15.7 ' +
+          'M15.7 4.3 L14.3 5.7 M5.7 14.3 L4.3 15.7"/>');
+      case "png":
+        return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+          '<path d="M7 13 L9 10.5 L11 12 L13.5 9 V15 H7 Z"/>');
+      case "svg":
+        return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+          '<path d="M7 13 L9 9 L11 14 L13.5 10"/>');
+      case "csv":
+        return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+          '<path d="M7 9 H13 M7 12 H13 M7 15 H13 M9 8 V16"/>');
       case "reset":
         return svg('<path d="M4 10 a6 6 0 1 1 1.8 4.3"/><path d="M4 6 V10 H8"/>');
       case "drag":

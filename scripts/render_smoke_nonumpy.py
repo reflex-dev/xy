@@ -314,6 +314,8 @@ try{{
     const zoomMenu = bar && bar.querySelector("[data-fc-modebar-menu]");
     const selectButton = bar && bar.querySelector("[data-fc-modebar-select]");
     const selectMenu = bar && bar.querySelector("[data-fc-modebar-select-menu]");
+    const exportButton = bar && bar.querySelector("[data-fc-modebar-export]");
+    const exportMenu = bar && bar.querySelector("[data-fc-modebar-export-menu]");
     const zoomPercent = zoomTrigger && zoomTrigger.querySelector("[data-fc-modebar-zoom-percent]");
     const zoomIndicator = zoomTrigger && zoomTrigger.querySelector("[data-fc-modebar-menu-indicator] svg");
     const zoomTriggerInitial = zoomPercent && zoomPercent.textContent === "100%" && zoomIndicator;
@@ -357,6 +359,27 @@ try{{
     const modebarSelect = selectMenuOpened && v.dragMode === "select-lasso"
       && selectButton.classList.contains("fc-active")
       && lassoItem.classList.contains("fc-active") && selectMenu.style.display === "none" ? 1 : 0;
+    if (exportButton) exportButton.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
+    const exportItems = exportMenu
+      ? [...exportMenu.querySelectorAll("[data-fc-modebar-export-item]")]
+        .map((item) => item.dataset.fcModebarExportItem)
+      : [];
+    const themeItem = exportMenu && exportMenu.querySelector("[data-fc-modebar-theme-toggle]");
+    const exportOpened = exportMenu && exportMenu.style.display === "flex"
+      && exportButton.getAttribute("aria-expanded") === "true"
+      && ["png", "svg", "csv"].every((format) => exportItems.includes(format));
+    if (themeItem) themeItem.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
+    const modebarTheme = v.root.dataset.fcColorMode === "dark"
+      && getComputedStyle(v.root).getPropertyValue("--chart-bg").trim() === "#111827"
+      && themeItem.textContent.includes("Light Mode")
+      && themeItem.getAttribute("aria-checked") === "true" ? 1 : 0;
+    v._toggleColorMode();
+    if (exportButton) exportButton.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
+    if (exportMenu) exportMenu.dispatchEvent(new KeyboardEvent("keydown", {{key:"Escape",bubbles:true}}));
+    const modebarExport = exportOpened && typeof v._exportCsvText === "function"
+      && typeof v._exportSvgMarkup === "function" && typeof v._exportPng === "function"
+      && exportMenu.style.display === "none"
+      && exportButton.getAttribute("aria-expanded") === "false" ? 1 : 0;
     v._setDragMode("pan");
     const spanX = () => v.view.x1 - v.view.x0;
     const s0 = spanX();
@@ -1000,7 +1023,7 @@ try{{
     const gLn=vSm.gpuTraces[0], gAr=vSm.gpuTraces[1];
     const msmooth=(gLn.n===65 && gLn._cpu.x.length===5 && gAr.n===65 && gAr._cpu.base.length===5)?1:0;
     vSm.destroy();holderSm.remove();
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHidden}} modebarHover=${{modebarHover}} modebarCollapse=${{modebarCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHidden}} modebarHover=${{modebarHover}} modebarCollapse=${{modebarCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} modebarExport=${{modebarExport}} modebarTheme=${{modebarTheme}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -1175,6 +1198,8 @@ try{{
     modebar_menu = int(re.search(r"modebarMenu=(\d+)", title).group(1))
     modebar_drag = int(re.search(r"modebarDrag=(\d+)", title).group(1))
     modebar_select = int(re.search(r"modebarSelect=(\d+)", title).group(1))
+    modebar_export = int(re.search(r"modebarExport=(\d+)", title).group(1))
+    modebar_theme = int(re.search(r"modebarTheme=(\d+)", title).group(1))
     zin = int(re.search(r"zin=(\d+)", title).group(1))
     smooth = int(re.search(r"smooth=(\d+)", title).group(1))
     label_throttle = int(re.search(r"labelThrottle=(\d+)", title).group(1))
@@ -1238,9 +1263,9 @@ try{{
     print(
         f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}, pick hits: {pick}, "
         f"row-decoded: {rowok}, select all/sub: {sel_all}/{sel_some}, mask active: {active}, "
-        f"modebar btns: {btns}, hidden/hover/collapse/menu/drag/select: "
+        f"modebar btns: {btns}, hidden/hover/collapse/menu/drag/select/export/theme: "
         f"{modebar_hidden}/{modebar_hover}/{modebar_collapse}/{modebar_menu}/"
-        f"{modebar_drag}/{modebar_select}, "
+        f"{modebar_drag}/{modebar_select}/{modebar_export}/{modebar_theme}, "
         f"zoom-in: {zin}, box-zoom: {box}, zoom-mode: {zmode}, "
         f"fluid: {fluid}, resize grew: {grew}, pick realloc: {pick2}, "
         f"destroyed: {destroyed}, unsub: {unsub}"
@@ -1261,7 +1286,7 @@ try{{
         raise SystemExit(f"sub-range selection implausible: {sel_some} of {sel_all}")
     if active != 1:
         raise SystemExit("selection mask did not activate")
-    if btns < 12:
+    if btns < 17:
         raise SystemExit(f"modebar missing buttons: {btns}")
     if modebar_hidden != 1 or modebar_hover != 1:
         raise SystemExit("modebar did not hide at rest and show on chart hover")
@@ -1273,6 +1298,10 @@ try{{
         raise SystemExit("modebar drag handle did not move the toolbar")
     if modebar_select != 1:
         raise SystemExit("modebar select button did not activate selection mode")
+    if modebar_export != 1:
+        raise SystemExit("modebar export menu did not produce PNG/SVG/CSV actions")
+    if modebar_theme != 1:
+        raise SystemExit("modebar light/dark toggle did not refresh chart theme tokens")
     if zin != 1:
         raise SystemExit("modebar zoom-in did not shrink the view span")
     if smooth != 1:
