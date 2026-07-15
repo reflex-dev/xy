@@ -174,6 +174,39 @@ def test_select_fires_brush_before_select_and_returns_selection_reply():
     assert buffers is not None and len(buffers) == len(msg["traces"])
 
 
+def test_lasso_select_returns_only_points_inside_polygon():
+    fig = Figure().scatter(
+        np.array([0.0, 1.0, 2.0, 1.0, 4.0]),
+        np.array([0.0, 0.5, 0.0, 2.0, 4.0]),
+    )
+    brush_calls = []
+    select_calls = []
+    polygon = [[-0.5, -0.5], [2.5, -0.5], [1.0, 1.5]]
+
+    reply = handle(
+        fig,
+        {"type": "select_polygon", "points": polygon},
+        on_brush=brush_calls.append,
+        on_select=select_calls.append,
+    )
+
+    assert brush_calls == [{"polygon": polygon}]
+    np.testing.assert_array_equal(select_calls[0].index, [0, 1, 2])
+    assert reply is not None
+    msg, buffers = reply
+    assert msg["type"] == "selection" and msg["total"] == 3
+    np.testing.assert_array_equal(np.frombuffer(buffers[0], dtype=np.uint32), [0, 1, 2])
+
+
+@pytest.mark.parametrize(
+    "points",
+    [None, [], [[0, 0], [1, 1]], [[0, 0], [1, 0], [float("nan"), 1]], [[0, 0, 2]]],
+)
+def test_malformed_lasso_selection_is_dropped(points):
+    fig = Figure().scatter(np.arange(3.0), np.arange(3.0))
+    assert handle(fig, {"type": "select_polygon", "points": points}) is None
+
+
 def test_select_wire_mask_is_shipped_space_selection_is_canonical():
     x = np.array([0.0, np.nan, 2.0, 3.0, 4.0])
     y = np.array([0.0, 1.0, 2.0, np.nan, 4.0])

@@ -35,6 +35,13 @@ in the README).
   to the internal engine object.
 
 ### Added
+- **Compact chart toolbar and editable lasso selection.** The client toolbar
+  appears on chart hover or keyboard focus, can be dragged within the chart,
+  groups zoom and selection modes into accessible menus, and exports PNG, SVG,
+  or resident data as CSV. Completed lasso selections expose up to 16 adaptive
+  RDP handles for range adjustment, and client SVG/PNG export snapshots the
+  chart's computed theme tokens and typography so host light/dark themes carry
+  into downloaded images.
 - `xy.pyplot.FacetGrid`: a seaborn-shaped row/column facet grid running
   entirely on the shim (seaborn's `map` contract: subset → activate panel →
   call the pyplot function), with shared domains, edge-only axis labels,

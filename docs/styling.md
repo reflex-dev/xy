@@ -232,6 +232,15 @@ Set them on `.xy` or any ancestor:
 | `--chart-annotation-text` | Annotation label color | falls back to `--chart-text` |
 | `--chart-cursor` / `--chart-cursor-pan` | Plot cursor (box-zoom / pan) | `crosshair` / `grab` |
 
+The compact toolbar appears while the chart is hovered or one of its controls
+has keyboard focus. Drag its grip to move it within the chart. Zoom and
+selection modes are grouped into menus; completed lasso selections expose up
+to 16 adaptively simplified handles that can be dragged to refine the selected
+range. The grip's menu exports PNG, SVG, or the chart's resident data as CSV.
+Client PNG and SVG export snapshot the chart's computed `--chart-*` tokens,
+text color, and font styles so themes inherited from a host application are
+preserved in the downloaded image.
+
 ## Standalone HTML
 
 `to_html(fig, custom_css=...)` inlines the same client and your stylesheet into a

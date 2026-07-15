@@ -44,6 +44,8 @@ def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
         ':where(.xy [data-fc-slot="legend_swatch"]){',
         ':where(.xy [data-fc-slot="modebar"]){',
         ':where(.xy [data-fc-slot="modebar_button"]){',
+        ":where(.xy [data-fc-modebar-menu]){",
+        ":where(.xy [data-fc-modebar-menu-item]){",
         ':where(.xy [data-fc-slot="modebar_button"].fc-active){',
         ':where(.xy [data-fc-slot="selection"]){',
         ':where(.xy [data-fc-slot="badge_item"]){',
@@ -107,7 +109,31 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
             assert sink not in text, f"{path} must not use HTML sink {sink}"
 
         inner_html_lines = [line.strip() for line in text.splitlines() if ".innerHTML" in line]
-        assert inner_html_lines == ["b.innerHTML = this._icon(name);"]
+        assert inner_html_lines == [
+            'grip.innerHTML = this._icon("drag");',
+            "b.innerHTML = this._icon(name);",
+            'zoomIndicator.innerHTML = this._icon("chevrondown");',
+            'selectIndicator.innerHTML = this._icon("chevrondown");',
+            "icon.innerHTML = this._icon(name);",
+            "icon.innerHTML = this._icon(name);",
+            "icon.innerHTML = this._icon(name);",
+        ]
+
+
+def test_modebar_exports_are_local_and_exclude_interaction_chrome() -> None:
+    """Browser exports stay self-contained and never serialize the toolbar itself."""
+    required = (
+        'exportMenu.dataset.fcModebarExportMenu = "";',
+        'new Blob([svg], { type: "image/svg+xml;charset=utf-8" })',
+        'new Blob([this._exportCsvText()], { type: "text/csv;charset=utf-8" })',
+        "link.download = filename;",
+        "const content = new XMLSerializer().serializeToString(clone);",
+        '[data-fc-slot="modebar"],[data-fc-slot="tooltip"]',
+        'const columns = ["trace", "name", "kind", "index", "x", "y"',
+    )
+    for path, text in CLIENT_FILES:
+        for snippet in required:
+            assert snippet in text, f"{path} missing toolbar export contract {snippet!r}"
 
 
 def test_client_respects_user_legend_max_height_style() -> None:
