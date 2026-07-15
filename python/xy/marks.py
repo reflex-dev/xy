@@ -471,6 +471,10 @@ def line(
     dash: Any = None,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
+    """Add a line series (M4-decimated above the threshold, §5 Tier 1).
+
+    ``curve="smooth"`` renders a monotone cubic; ``dash`` dashes the line.
+    """
     css = styles.compile_mark_style("line", style)
     color = css.get("color", color)
     width = css.get("width", width)

@@ -55,30 +55,36 @@ class ZoneMaps:
 
     @cached_property
     def min(self) -> float:
+        """Column-wide minimum over non-empty zones (NaN when all-null)."""
         valid = self.mins[self.counts > 0]
         return min(valid.tolist()) if len(valid) else float("nan")
 
     @cached_property
     def max(self) -> float:
+        """Column-wide maximum over non-empty zones (NaN when all-null)."""
         valid = self.maxs[self.counts > 0]
         return max(valid.tolist()) if len(valid) else float("nan")
 
     @cached_property
     def positive_min(self) -> float:
+        """Smallest strictly-positive value (for log-scale domains)."""
         valid = self.positive_mins[np.isfinite(self.positive_mins)]
         return min(valid.tolist()) if len(valid) else float("nan")
 
     @cached_property
     def positive_max(self) -> float:
+        """Largest strictly-positive value (for log-scale domains)."""
         valid = self.positive_maxs[np.isfinite(self.positive_maxs)]
         return max(valid.tolist()) if len(valid) else float("nan")
 
     @cached_property
     def count(self) -> int:
+        """Total finite-value count across zones."""
         return int(self.counts.sum())
 
     @cached_property
     def null_count(self) -> int:
+        """Total NaN/null count across zones."""
         return int(self.null_counts.sum())
 
 
@@ -104,10 +110,12 @@ class Column:
 
     @property
     def min(self) -> float:
+        """Column minimum, materializing zone maps on first use."""
         return self.zone.min
 
     @property
     def max(self) -> float:
+        """Column maximum, materializing zone maps on first use."""
         return self.zone.max
 
     def suggest_offset(self) -> float:
@@ -186,6 +194,7 @@ class ColumnStore:
 
     @property
     def columns(self) -> list[Column]:
+        """All ingested columns, in id order."""
         return self._columns
 
     def checkpoint(self) -> ColumnStoreCheckpoint:
@@ -246,6 +255,11 @@ class ColumnStore:
         return self._append_canonical(arr, kind, copies, key, zone)
 
     def ingest(self, data: Any, *, defer_zone_maps: bool = False) -> Column:
+        """Canonicalize ``data`` to an f64 `Column`, deduplicating repeats.
+
+        ``defer_zone_maps=True`` postpones the statistics fold until first
+        use (streaming builders re-fold anyway).
+        """
         arr, kind, copies = _canonicalize(data)
         return self._ingest_canonical(
             arr,
