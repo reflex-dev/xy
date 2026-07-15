@@ -567,7 +567,6 @@ Object.assign(ChartView.prototype, {
     this._zoomMenuLabel = zoomPercent;
     zoomTrigger.setAttribute("aria-haspopup", "menu");
     zoomTrigger.setAttribute("aria-expanded", "false");
-    mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
     const canSelect = this._pickable
       && this._interactionFlag("brush", true)
       && this._interactionFlag("select", true);
@@ -587,6 +586,7 @@ Object.assign(ChartView.prototype, {
       selectTrigger.appendChild(selectIndicator);
       this._selectMenuButton = selectTrigger;
     }
+    mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
     const zoomMenu = document.createElement("div");
     zoomMenu.dataset.fcModebarMenu = "";
     zoomMenu.setAttribute("role", "menu");

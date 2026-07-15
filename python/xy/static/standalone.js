@@ -5899,7 +5899,6 @@ zoomTrigger.appendChild(zoomIndicator);
 this._zoomMenuLabel = zoomPercent;
 zoomTrigger.setAttribute("aria-haspopup", "menu");
 zoomTrigger.setAttribute("aria-expanded", "false");
-mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
 const canSelect = this._pickable
 && this._interactionFlag("brush", true)
 && this._interactionFlag("select", true);
@@ -5919,6 +5918,7 @@ selectIndicator.innerHTML = this._icon("chevrondown");
 selectTrigger.appendChild(selectIndicator);
 this._selectMenuButton = selectTrigger;
 }
+mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
 const zoomMenu = document.createElement("div");
 zoomMenu.dataset.fcModebarMenu = "";
 zoomMenu.setAttribute("role", "menu");
