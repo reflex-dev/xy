@@ -55,6 +55,47 @@ def test_inset_rect_survives_next_to_a_default_axes() -> None:
     assert out.getvalue()[:4] == b"\x89PNG"
 
 
+def test_free_form_axes_render_at_their_rects_in_html() -> None:
+    ax1 = plt.axes()
+    ax2 = plt.axes([0.65, 0.65, 0.2, 0.2])
+    ax1.plot([0, 1], [0, 1])
+    ax2.plot([0, 1], [1, 0])
+    html = plt.gcf()._to_html()
+    placements = re.findall(r'style="position:absolute;left:(-?\d+)px;top:(-?\d+)px', html)
+    assert [(int(x), int(y)) for x, y in placements] == [(18, 48), (370, 66)]
+    # a fixed-size canvas replaces the side-by-side CSS grid
+    assert "position: relative; width: 640px; height: 480px" in html
+    assert "display: grid" not in html
+
+
+def test_add_axes_rects_stack_vertically_in_html() -> None:
+    fig = plt.figure()
+    ax1 = fig.add_axes([0.1, 0.5, 0.8, 0.4], xticklabels=[], ylim=(-1.2, 1.2))
+    ax2 = fig.add_axes([0.1, 0.1, 0.8, 0.4], ylim=(-1.2, 1.2))
+    x = np.linspace(0, 10)
+    ax1.plot(np.sin(x))
+    ax2.plot(np.cos(x))
+    placements = re.findall(
+        r'style="position:absolute;left:(-?\d+)px;top:(-?\d+)px', fig._to_html()
+    )
+    assert len(placements) == 2
+    (x1, y1), (x2, y2) = [(int(x), int(y)) for x, y in placements]
+    assert x1 == x2  # shared left edge
+    assert y1 < y2  # the rect with the larger bottom renders as the upper panel
+
+
+def test_subplots_adjust_positions_grid_panels_in_every_exporter() -> None:
+    fig = plt.figure()
+    fig.subplots_adjust(hspace=0.4, wspace=0.4)
+    for i in range(1, 7):
+        ax = fig.add_subplot(2, 3, i)
+        ax.text(0.5, 0.5, str((2, 3, i)), fontsize=18, ha="center")
+    html = fig._to_html()
+    assert len(re.findall(r'style="position:absolute;left:', html)) == 6
+    assert _png_pixels(fig).shape[:2] == (960, 1280)  # the full 640x480 canvas at 2x
+    assert _svg(fig).count("<svg x=") == 6
+
+
 def test_shared_axes_hide_inner_tick_labels_only() -> None:
     fig, ax = plt.subplots(2, 3, sharex="col", sharey="row")
     strategies = [

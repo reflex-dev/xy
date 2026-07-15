@@ -16,7 +16,7 @@ import numpy as np
 
 from ._artists import Text
 from ._axes import Axes, _plain_text
-from ._rc import rc_figsize_px
+from ._rc import rc_figsize_px, rcParams
 from ._transforms import CoordinateTransform
 from ._translate import check_unsupported, not_implemented
 
@@ -56,10 +56,12 @@ class Figure:
         figsize: Optional[tuple[float, float]] = None,
         dpi: Optional[float] = None,
         facecolor: Optional[str] = None,
+        toolbar: Optional[bool] = None,
     ) -> None:
         self.number = num
         self._figsize = figsize
         self._dpi = dpi
+        self._toolbar = toolbar  # None -> rcParams["toolbar"] decides
         self._facecolor = facecolor or "white"
         self._edgecolor = "white"
         self._suptitle: Optional[str] = None
@@ -82,6 +84,17 @@ class Figure:
         self._subplot_adjust: dict[str, float] = {}
         self._label = ""
         self._gci: Any = None  # last color-mapped artist, for plt.colorbar()/clim()
+
+    def _show_toolbar(self) -> bool:
+        """Whether panels render the interactive modebar controls.
+
+        The figure kwarg wins; otherwise rcParams["toolbar"] decides, and the
+        shim default is "none" — Matplotlib's inline backend shows no toolbar,
+        so notebook output stays control-free unless explicitly enabled.
+        """
+        if self._toolbar is not None:
+            return bool(self._toolbar)
+        return str(rcParams.get("toolbar", "none")).lower() != "none"
 
     # -- layout --------------------------------------------------------------
 
@@ -226,6 +239,9 @@ class Figure:
     def axes(self) -> list[Axes]:
         return list(self._axes)
 
+    def get_axes(self) -> list[Axes]:
+        return self.axes
+
     def gca(self) -> Axes:
         if self._current_ax is not None and self._current_ax in self._axes:
             return self._current_ax
@@ -351,19 +367,40 @@ class Figure:
         }
         self._invalidate()
 
-    def subplots_adjust(self, **kwargs: Any) -> None:
-        allowed = {"left", "right", "top", "bottom", "wspace", "hspace"}
-        unsupported = set(kwargs) - allowed
-        if unsupported:
-            raise TypeError(
-                f"subplots_adjust() got unsupported keyword argument {sorted(unsupported)[0]!r}"
-            )
-        material = {key: value for key, value in kwargs.items() if value is not None}
-        if material:
-            raise NotImplementedError(
-                "xy.pyplot does not implement Figure.subplots_adjust(); subplot frame and "
-                "spacing values cannot be represented by the current multi-panel renderer"
-            )
+    def subplots_adjust(
+        self,
+        left: Any = None,
+        bottom: Any = None,
+        right: Any = None,
+        top: Any = None,
+        wspace: Any = None,
+        hspace: Any = None,
+    ) -> None:
+        """Move the SubplotParams frame; panels re-render at their new rects."""
+        updates = {
+            "left": left,
+            "bottom": bottom,
+            "right": right,
+            "top": top,
+            "wspace": wspace,
+            "hspace": hspace,
+        }
+        material = {key: float(value) for key, value in updates.items() if value is not None}
+        merged = {
+            **_SUBPLOT_PARAMS,
+            "wspace": _SUBPLOT_SPACING,
+            "hspace": _SUBPLOT_SPACING,
+            **self._subplot_adjust,
+            **material,
+        }
+        if merged["left"] >= merged["right"]:
+            raise ValueError("left cannot be >= right")
+        if merged["bottom"] >= merged["top"]:
+            raise ValueError("bottom cannot be >= top")
+        self._subplot_adjust.update(material)
+        for ax in self._axes:
+            ax._invalidate()
+        self._invalidate()
 
     def autofmt_xdate(self, **kwargs: Any) -> None:
         rotation = float(kwargs.pop("rotation", 30))
@@ -573,17 +610,63 @@ class Figure:
         return max(120, w // self._ncols), max(120, h // self._nrows)
 
     def _effective_rects(self) -> Optional[list[tuple[float, float, float, float]]]:
-        """Per-axes figure rects when any axes is free-form, else None.
+        """Per-axes figure rects when the figure needs free-form placement, else None.
 
+        A figure is free-form when any axes carries an explicit rect (the
+        add_axes path), when subplots_adjust() moved the SubplotParams frame,
+        or when it holds more than one panel: multi-panel grids place every
+        plot box at its matplotlib gridspec rectangle so the whole figure
+        occupies exactly figsize — the CSS-grid composition floored panels at
+        120 px, blowing a 6-inch 8x8 grid up to ~1000 px of scrollbars.
         Matplotlib places a rect-less axes at the SubplotParams default, so a
         default axes mixed with an inset keeps its full-size position instead
         of dragging every axes back onto the uniform grid.
         """
-        rects = [ax._figure_rect for ax in self._axes]
-        if not self._axes or not any(rect is not None for rect in rects):
+        if not self._axes:
             return None
-        default = (0.125, 0.11, 0.775, 0.77)
-        return [rect if rect is not None else default for rect in rects]
+        rects = [ax._figure_rect for ax in self._axes]
+        if any(rect is not None for rect in rects):
+            default = (
+                _GridSpec(self, 1, 1, **self._subplot_adjust).cell_rect((0, 1), (0, 1))
+                if self._subplot_adjust
+                else (0.125, 0.11, 0.775, 0.77)
+            )
+            return [rect if rect is not None else default for rect in rects]
+        if not self._subplot_adjust and len(self._axes) <= 1:
+            return None
+        # A uniform grid (adjusted or default SubplotParams): every panel
+        # resolves to its gridspec cell rectangle under the frame and spacing.
+        grid = _GridSpec(
+            self,
+            self._nrows,
+            self._ncols,
+            width_ratios=self._width_ratios,
+            height_ratios=self._height_ratios,
+            **self._subplot_adjust,
+        )
+        return [
+            grid.cell_rect(
+                (index // self._ncols, index // self._ncols + 1),
+                (index % self._ncols, index % self._ncols + 1),
+            )
+            for index in range(len(self._axes))
+        ]
+
+    def _grid_cell_sizes(self) -> tuple[list[int], list[int]]:
+        """Per-column widths and per-row heights of the CSS-grid panel layout.
+
+        Cells floor at 120 px (the render client's minimum chart size), so a
+        dense grid can legitimately exceed the nominal figure size — callers
+        sizing the outer document must use these, not `figsize`.
+        """
+        total_w, total_h = rc_figsize_px(self._figsize, self._dpi)
+        width_ratios = self._width_ratios or (1.0,) * self._ncols
+        height_ratios = self._height_ratios or (1.0,) * self._nrows
+        if len(width_ratios) != self._ncols or len(height_ratios) != self._nrows:
+            raise ValueError("subplot width/height ratios must match the grid dimensions")
+        widths = [max(120, round(total_w * value / sum(width_ratios))) for value in width_ratios]
+        heights = [max(120, round(total_h * value / sum(height_ratios))) for value in height_ratios]
+        return widths, heights
 
     def _charts(self) -> list[Any]:
         total_w, total_h = rc_figsize_px(self._figsize, self._dpi)
@@ -600,17 +683,12 @@ class Figure:
                 margin_w, margin_h = (54, 42) if compact else (76, 52)
                 ax._absolute_plot_ratio = plot_w / plot_h
                 charts.append(ax._build_chart(plot_w + margin_w, plot_h + margin_h))
-            return charts
-        width_ratios = self._width_ratios or (1.0,) * self._ncols
-        height_ratios = self._height_ratios or (1.0,) * self._nrows
-        if len(width_ratios) != self._ncols or len(height_ratios) != self._nrows:
-            raise ValueError("subplot width/height ratios must match the grid dimensions")
-        widths = [max(120, round(total_w * value / sum(width_ratios))) for value in width_ratios]
-        heights = [max(120, round(total_h * value / sum(height_ratios))) for value in height_ratios]
-        charts = [
-            ax._build_chart(widths[index % self._ncols], heights[index // self._ncols])
-            for index, ax in enumerate(self._axes)
-        ]
+        else:
+            widths, heights = self._grid_cell_sizes()
+            charts = [
+                ax._build_chart(widths[index % self._ncols], heights[index // self._ncols])
+                for index, ax in enumerate(self._axes)
+            ]
         if charts and (self._sharex or self._sharey):
             figures = [chart.figure() for chart in charts]
             linked: list[str] = []
@@ -620,8 +698,12 @@ class Figure:
                 linked.append(dim)
                 for group in self._share_groups(shared, len(figures)):
                     members = [figures[i] for i in group]
+                    # matplotlib shared limits autoscale over the group's data;
+                    # dataless panels follow the group instead of contributing
+                    # their (0, 1) default view to the union.
+                    sources = [figure for figure in members if figure.traces] or members
                     ranges = [
-                        figure.x_range() if dim == "x" else figure.y_range() for figure in members
+                        figure.x_range() if dim == "x" else figure.y_range() for figure in sources
                     ]
                     domain = (
                         min(min(pair) for pair in ranges),
@@ -653,9 +735,36 @@ class Figure:
             self._nrows == self._ncols == 1
             and len(charts) == 1
             and self._axes[0]._figure_rect is None
+            and not self._subplot_adjust
         ):
             return charts[0]
         return None
+
+    def _panel_positions(
+        self,
+        rects: list[tuple[float, float, float, float]],
+        canvas_size: tuple[int, int],
+    ) -> list[tuple[float, float, float, float]]:
+        """Expand plot-box rects into whole-panel rects including chart chrome.
+
+        Free-form panels are built at plot size plus fixed chrome margins
+        (`_charts`); exporters place the enlarged panel so its plot box lands
+        exactly on the requested figure rectangle.
+        """
+        positions = []
+        for rect in rects:
+            compact = round(canvas_size[0] * rect[2]) + 54 < 520
+            left, bottom = (46, 36) if compact else (62, 42)
+            width, height = (54, 42) if compact else (76, 52)
+            positions.append(
+                (
+                    rect[0] - left / canvas_size[0],
+                    rect[1] - bottom / canvas_size[1],
+                    rect[2] + width / canvas_size[0],
+                    rect[3] + height / canvas_size[1],
+                )
+            )
+        return positions
 
     # -- output -----------------------------------------------------------------
 
@@ -717,12 +826,18 @@ class Figure:
                 if single is None or self._suptitle is not None:
                     from ._grid import compose_svg
 
+                    canvas_size = rc_figsize_px(self._figsize, self._dpi)
+                    rects = self._effective_rects()
                     data = compose_svg(
                         self._charts(),
                         self._nrows,
                         self._ncols,
                         self._suptitle,
                         self._suptitle_style,
+                        positions=(
+                            None if rects is None else self._panel_positions(rects, canvas_size)
+                        ),
+                        canvas_size=None if rects is None else canvas_size,
                     ).encode()
                 else:
                     data = single.to_svg().encode()
@@ -744,12 +859,7 @@ class Figure:
             elif suffix == "html":
                 if metadata:
                     raise not_implemented("savefig(format='html', metadata=...)", "PNG or SVG")
-                data = self._to_html().encode()
-                if self._facecolor not in ("none", "white"):
-                    import html
-
-                    fill = html.escape(self._facecolor, quote=True)
-                    data = f'<div style="background-color:{fill}">'.encode() + data + b"</div>"
+                data = self._facecolor_wrapped(self._to_html()).encode()
             else:
                 raise not_implemented(f"savefig(format={suffix!r})", "png, svg, or html")
         finally:
@@ -770,23 +880,7 @@ class Figure:
 
         canvas_size = rc_figsize_px(self._figsize, self._dpi)
         rects = self._effective_rects()
-        positions = (
-            [
-                (
-                    rect[0]
-                    - (46 if round(canvas_size[0] * rect[2]) + 54 < 520 else 62) / canvas_size[0],
-                    rect[1]
-                    - (36 if round(canvas_size[0] * rect[2]) + 54 < 520 else 42) / canvas_size[1],
-                    rect[2]
-                    + (54 if round(canvas_size[0] * rect[2]) + 54 < 520 else 76) / canvas_size[0],
-                    rect[3]
-                    + (42 if round(canvas_size[0] * rect[2]) + 54 < 520 else 52) / canvas_size[1],
-                )
-                for rect in rects
-            ]
-            if rects is not None
-            else None
-        )
+        positions = None if rects is None else self._panel_positions(rects, canvas_size)
 
         return stitch_png(
             self._charts(),
@@ -810,12 +904,18 @@ class Figure:
             else:
                 from ._grid import compose_html
 
+                canvas_size = rc_figsize_px(self._figsize, self._dpi)
+                rects = self._effective_rects()
                 self._html_cache = compose_html(
                     self._charts(),
                     self._nrows,
                     self._ncols,
                     self._suptitle,
                     self._suptitle_style,
+                    positions=(
+                        None if rects is None else self._panel_positions(rects, canvas_size)
+                    ),
+                    canvas_size=None if rects is None else canvas_size,
                 )
         return self._html_cache
 
@@ -827,6 +927,7 @@ class Figure:
             self._nrows == self._ncols == 1
             and len(self._axes) == 1
             and self._axes[0]._figure_rect is None
+            and not self._subplot_adjust
             and self._suptitle is None
         ):
             # Matplotlib's inline backend displays figures with
@@ -870,20 +971,54 @@ class Figure:
                 ax._chart = old_chart
                 ax._padding = old_padding
             return doc, tight_width, tight_height
-        return self._to_html(), width, height
+        doc = self._to_html()
+        single = self._single()
+        if single is not None and self._suptitle is None:
+            figure = single.figure()
+            return doc, int(figure.width), int(figure.height)
+        if self._effective_rects() is None and self._axes:
+            # CSS-grid panel layout: cells floor at 120 px, so the composed
+            # document can be larger than figsize. Size the notebook iframe to
+            # the real grid content (cells + 4 px gaps + 4 px padding) so a
+            # dense subplot grid displays whole instead of behind scrollbars.
+            widths, heights = self._grid_cell_sizes()
+            cols_used = min(len(self._axes), self._ncols)
+            rows_used = -(-len(self._axes) // self._ncols)
+            content_w = sum(widths[:cols_used]) + 4 * (self._ncols - 1) + 8
+            content_h = sum(heights[:rows_used]) + 4 * (rows_used - 1) + 8
+            if self._suptitle:
+                size = float((self._suptitle_style or {}).get("size", 16))
+                content_h += round(size * 1.4) + 8  # h2 line box + top margin
+            return doc, content_w, content_h
+        return doc, width, height
+
+    def _facecolor_wrapped(self, doc: str) -> str:
+        """The figure facecolor behind an HTML document — matplotlib's figure
+        patch around the (separately painted, `--chart-bg`) axes plot box."""
+        if self._facecolor in ("none", "white"):
+            return doc
+        import html
+
+        fill = html.escape(self._facecolor, quote=True)
+        head_end = doc.find("</head>")
+        if head_end != -1:
+            # Same element specificity as the document's body{background:#fff}
+            # rule; later in the head, so it wins.
+            return doc[:head_end] + f"<style>body{{background:{fill}}}</style>" + doc[head_end:]
+        return f'<div style="background-color:{fill}">{doc}</div>'
 
     def _repr_html_(self) -> str:
         from xy import export
 
         doc, width, height = self._to_notebook_html()
-        return export.notebook_iframe(doc, width=width, height=height)
+        return export.notebook_iframe(self._facecolor_wrapped(doc), width=width, height=height)
 
     def show(self, *args: Any, **kwargs: Any) -> None:
         import tempfile
         import webbrowser
 
         with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False) as f:
-            f.write(self._to_html())
+            f.write(self._facecolor_wrapped(self._to_html()))
         webbrowser.open(f"file://{f.name}")
 
 
@@ -990,7 +1125,9 @@ class _GridSpec:
         r1, c1 = divmod(last, self.ncols)
         return _SubplotSpec(self, (min(r0, r1), max(r0, r1) + 1), (min(c0, c1), max(c0, c1) + 1))
 
-    def cell_rect(self, rows: tuple[int, int], cols: tuple[int, int]) -> tuple[float, ...]:
+    def cell_rect(
+        self, rows: tuple[int, int], cols: tuple[int, int]
+    ) -> tuple[float, float, float, float]:
         """[left, bottom, width, height] figure fractions for a cell span."""
         frame = {
             key: (self._geometry[key] if self._geometry[key] is not None else default)

@@ -19,6 +19,18 @@ from ._rc import rcParams
 from ._transforms import Bbox, IdentityTransform
 
 
+def unit_converted_values(values: Any) -> Any:
+    """Datetime-like values in the engine's converted unit — f64 ms since
+    epoch (columns.py); every other dtype is already its own converted form."""
+    from xy.columns import _datetime_to_float_ms, _is_datetime_object_array
+
+    array = np.asanyarray(values)
+    if np.issubdtype(array.dtype, np.datetime64) or _is_datetime_object_array(array.reshape(-1)):
+        converted, _ = _datetime_to_float_ms(array, 0)
+        return converted
+    return values
+
+
 def _set_entry_clim(artist: "Artist", vmin: Any = None, vmax: Any = None) -> None:
     """Set a mappable entry's color domain, autoscaling any side left as None."""
     if vmax is None and isinstance(vmin, (tuple, list)):
@@ -328,12 +340,13 @@ class Line2D(Artist):
         self._touch()
 
     def get_xdata(self, orig: bool = True) -> Any:
-        del orig  # compat-noop: one canonical data array, no unit-converted copy
-        return self._entry["x"]
+        # orig=False asks for matplotlib's unit-converted floats.
+        data = self._entry["x"]
+        return data if orig else unit_converted_values(data)
 
     def get_ydata(self, orig: bool = True) -> Any:
-        del orig  # compat-noop: one canonical data array, no unit-converted copy
-        return self._entry["y"]
+        data = self._entry["y"]
+        return data if orig else unit_converted_values(data)
 
     def set_linewidth(self, w: float) -> None:
         self._entry["kwargs"]["width"] = float(w)

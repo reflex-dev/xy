@@ -20,6 +20,7 @@ from typing import Any, Optional, Union
 
 import numpy as np
 
+from . import dates
 from ._artists import Legend
 from ._axes import Axes
 from ._colors import LinearSegmentedColormap, ListedColormap
@@ -97,6 +98,7 @@ __all__ = [
     "contourf",
     "csd",
     "cycler",
+    "dates",
     "delaxes",
     "ecdf",
     "errorbar",
@@ -220,9 +222,12 @@ def subplots(
     height_ratios = kwargs.pop("height_ratios", None)
     gridspec_kw = kwargs.pop("gridspec_kw", None) or {}
     subplot_kw = kwargs.pop("subplot_kw", None) or {}
-    fig = figure(figsize=figsize, dpi=dpi)
+    toolbar = kwargs.pop("toolbar", None)
+    # Remaining kwargs are matplotlib's **fig_kw, forwarded to figure().
+    fig = figure(figsize=figsize, dpi=dpi, toolbar=toolbar, **kwargs)
     if fig._axes and any(ax._entries for ax in fig._axes):
-        fig = figure(None, figsize=figsize, dpi=dpi)  # fresh figure, mpl semantics
+        # fresh figure, mpl semantics
+        fig = figure(None, figsize=figsize, dpi=dpi, toolbar=toolbar, **kwargs)
     axes = fig.subplots(
         nrows,
         ncols,

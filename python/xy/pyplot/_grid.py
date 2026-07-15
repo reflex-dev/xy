@@ -1,11 +1,13 @@
 """Multi-panel composition — the shim-owned replacement for an engine grid.
 
-HTML: one self-contained document, panels in a CSS grid, each panel embedded
-as a sandboxed ``srcdoc`` iframe of its own standalone chart document (same
-zero-dependency offline story as `Chart.to_html`).  A page-level visibility
-governor unloads off-screen panel documents.  This matters in notebooks where
-many executed multi-panel cells would otherwise keep enough independent
-WebGL contexts alive for the browser to evict arbitrary visible canvases.
+HTML: one self-contained document (same zero-dependency offline story as
+`Chart.to_html`): the render client ships once and every panel hydrates into
+a host div, so all panels share the page-level WebGL context governor. A
+panel-per-iframe composition put each panel in its own document with its own
+governor, and a dense subplot grid exceeded the browser's per-page context
+cap — only the first ~dozen panels ever rendered. The shared governor
+snapshots and releases over-budget panels instead; pointer entry revives
+them.
 
 PNG: each panel renders through the engine's native rasterizer to an RGBA
 array; NumPy pastes them onto one canvas and the engine's PNG encoder writes
@@ -28,18 +30,45 @@ def compose_html(
     ncols: int,
     suptitle: Optional[str],
     suptitle_style: Optional[dict[str, Any]] = None,
+    *,
+    positions: Optional[list[tuple[float, float, float, float]]] = None,
+    canvas_size: Optional[tuple[int, int]] = None,
 ) -> str:
+    """Compose panel documents into one page.
+
+    Default: a CSS grid of panels. With ``positions`` (whole-panel
+    [left, bottom, width, height] figure fractions, bottom-origin like
+    matplotlib) and ``canvas_size`` px, panels are absolutely placed on a
+    fixed-size canvas instead — the add_axes/subplots_adjust layout path.
+    Document order stacks later axes above earlier ones, as matplotlib draws.
+    """
+    from xy import export
+
+    absolute = positions is not None and canvas_size is not None
     panels = []
-    for chart in charts:
-        doc = chart.to_html()
+    payloads = []
+    for index, chart in enumerate(charts):
         figure = chart.figure()
-        width = max(120, int(figure.width))
-        height = max(120, int(figure.height))
+        spec, blob = figure.build_payload()
+        # Exact chart size: absolute placement relies on the panel's plot box
+        # landing on its matplotlib rect, so a dense grid's sub-120px panels
+        # must not be inflated here (the client honors small explicit sizes).
+        width = int(figure.width)
+        height = int(figure.height)
+        placement = ""
+        if absolute:
+            left, bottom, _width, panel_height = positions[index]
+            x = round(left * canvas_size[0])
+            y = round((1.0 - bottom - panel_height) * canvas_size[1])
+            placement = f"position:absolute;left:{x}px;top:{y}px;"
         panels.append(
-            '<iframe class="fc-panel" data-fc-pyplot-panel '
-            'loading="lazy" sandbox="allow-scripts" '
-            f'style="width:{width}px;height:{height}px" '
-            f'srcdoc="{_html.escape(doc, quote=True)}"></iframe>'
+            '<div class="fc-panel" data-fc-pyplot-panel '
+            f'style="{placement}width:{width}px;height:{height}px"></div>'
+        )
+        payloads.append(
+            "{" + f'"spec":{export._json_for_inline_script(spec)},'
+            f'"chunks":{export._json_for_inline_script(export._base64_chunks(blob))},'
+            f'"n":{len(blob)}' + "}"
         )
     style = suptitle_style or {}
     title_css = (
@@ -47,21 +76,46 @@ def compose_html(
         f"font-family:{_html.escape(str(style.get('family', 'system-ui, sans-serif')))};"
         f"color:{_html.escape(str(style.get('color', '#262626')))}"
     )
-    title_html = (
-        f"<h2 class='fc-suptitle' style='{title_css}'>{_html.escape(suptitle)}</h2>"
-        if suptitle
-        else ""
-    )
-    grid = "\n".join(panels)
+    if not suptitle:
+        title_html = ""
+    elif absolute:
+        # The suptitle anchors at figure-fraction (x, y) on the canvas itself.
+        shift = {"left": "0%", "center": "-50%", "right": "-100%"}.get(
+            str(style.get("ha", "center")), "-50%"
+        )
+        title_html = (
+            "<div class='fc-suptitle' style='position:absolute;"
+            f"left:{float(style.get('x', 0.5)) * 100:g}%;"
+            f"top:{(1.0 - float(style.get('y', 0.98))) * 100:g}%;"
+            f"transform:translate({shift},0);margin:0;{title_css}'>"
+            f"{_html.escape(suptitle)}</div>"
+        )
+    else:
+        title_html = f"<h2 class='fc-suptitle' style='{title_css}'>{_html.escape(suptitle)}</h2>"
+    if absolute:
+        grid_css = (
+            f".fc-grid {{ position: relative; width: {canvas_size[0]}px; "
+            f"height: {canvas_size[1]}px; overflow: hidden; }}"
+        )
+        grid = "\n".join(panels) + ("\n" + title_html if title_html else "")
+        title_html = ""
+    else:
+        grid_css = (
+            f".fc-grid {{ display: grid; grid-template-columns: repeat({ncols}, max-content); "
+            "gap: 4px; padding: 4px; overflow-x: auto; }}"
+        )
+        grid = "\n".join(panels)
+    client_js = export._javascript_for_inline_script(export._bundled_js("standalone"))
     return f"""<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="{export._STANDALONE_CSP}">
 <style>
   body {{ margin: 0; font-family: system-ui, sans-serif; background: #ffffff; }}
   .fc-suptitle {{ text-align: center; margin: 8px 0 0; font-size: 16px; color: #262626; }}
-  .fc-grid {{ display: grid; grid-template-columns: repeat({ncols}, max-content); gap: 4px; padding: 4px; overflow-x: auto; }}
-  .fc-panel {{ border: 0; display: block; }}
+  {grid_css}
+  .fc-panel {{ position: relative; }}
 </style>
 </head>
 <body>
@@ -69,62 +123,14 @@ def compose_html(
 <div class="fc-grid">
 {grid}
 </div>
+<script>{client_js}</script>
 <script>
-(() => {{
-  const key = "__xyPyplotPanelGovernorV1";
-  const blank = "<!doctype html><html><body style='margin:0;background:#fff'></body></html>";
-  let governor = window[key];
-  if (!governor) {{
-    const states = new WeakMap();
-    let sequence = 0;
-    const observer = new IntersectionObserver((entries) => {{
-      for (const entry of entries) {{
-        const frame = entry.target;
-        const state = states.get(frame);
-        if (!state) continue;
-        state.visible = entry.isIntersecting || entry.intersectionRatio > 0;
-        if (state.visible) {{
-          state.seen = ++sequence;
-          clearTimeout(state.releaseTimer);
-          state.releaseTimer = null;
-          if (state.dormant && frame.isConnected) {{
-            state.dormant = false;
-            frame.srcdoc = state.source;
-          }}
-          continue;
-        }}
-        clearTimeout(state.releaseTimer);
-        state.releaseTimer = setTimeout(() => {{
-          if (state.visible || state.dormant || !frame.isConnected) return;
-          state.dormant = true;
-          frame.srcdoc = blank;
-        }}, 120);
-      }}
-    }}, {{ rootMargin: "100% 0px 100% 0px" }});
-    governor = window[key] = {{
-      register(frame) {{
-        if (states.has(frame)) return;
-        states.set(frame, {{
-          source: frame.srcdoc,
-          visible: true,
-          dormant: false,
-          releaseTimer: null,
-          seen: ++sequence,
-        }});
-        observer.observe(frame);
-      }},
-    }};
-  }}
-  const script = document.currentScript;
-  const panelGrid = script && script.previousElementSibling;
-  // Classic Jupyter may evaluate this script after insertion, when
-  // document.currentScript is null.  Scanning the document is safe because
-  // register() is idempotent through its WeakMap.
-  const root = panelGrid || document;
-  for (const frame of root.querySelectorAll("iframe[data-fc-pyplot-panel]")) {{
-    governor.register(frame);
-  }}
-}})();
+{export._DECODE_B64_JS}
+const panels = [{",".join(payloads)}];
+const hosts = document.querySelectorAll("[data-fc-pyplot-panel]");
+panels.forEach((p, i) => {{
+  xy.renderStandalone(hosts[i], p.spec, xyDecodeB64(p.chunks, p.n));
+}});
 </script>
 </body>
 </html>"""
@@ -136,32 +142,55 @@ def compose_svg(
     ncols: int,
     suptitle: Optional[str],
     suptitle_style: Optional[dict[str, Any]] = None,
+    *,
+    positions: Optional[list[tuple[float, float, float, float]]] = None,
+    canvas_size: Optional[tuple[int, int]] = None,
 ) -> str:
-    """Compose subplot SVGs with isolated ids into one portable SVG document."""
+    """Compose subplot SVGs with isolated ids into one portable SVG document.
+
+    Panels tile a uniform grid by default; with ``positions`` (whole-panel
+    figure fractions, bottom-origin) and ``canvas_size`` px they are placed
+    absolutely on a fixed canvas — the add_axes/subplots_adjust layout path.
+    """
     from xy import _svg
 
     figures = [chart.figure() for chart in charts]
     if not figures:
         raise ValueError("figure has no axes to save")
-    col_widths = [
-        max(int(figures[index].width) for index in range(col, len(figures), ncols))
-        for col in range(ncols)
-    ]
-    row_heights = [
-        max(
-            int(figures[index].height)
-            for index in range(row * ncols, min((row + 1) * ncols, len(figures)))
-        )
-        for row in range(nrows)
-    ]
-    title_h = 28 if suptitle else 0
+    if positions is not None and canvas_size is not None:
+        title_h = 0
+        offsets = [
+            (
+                round(position[0] * canvas_size[0]),
+                round((1.0 - position[1] - position[3]) * canvas_size[1]),
+            )
+            for position in positions
+        ]
+        total_size: tuple[int, int] = (int(canvas_size[0]), int(canvas_size[1]))
+    else:
+        col_widths = [
+            max(int(figures[index].width) for index in range(col, len(figures), ncols))
+            for col in range(ncols)
+        ]
+        row_heights = [
+            max(
+                int(figures[index].height)
+                for index in range(row * ncols, min((row + 1) * ncols, len(figures)))
+            )
+            for row in range(nrows)
+        ]
+        title_h = 28 if suptitle else 0
+        offsets = []
+        for index in range(len(figures)):
+            row, col = divmod(index, ncols)
+            offsets.append((sum(col_widths[:col]), title_h + sum(row_heights[:row])))
+        total_size = (sum(col_widths), title_h + sum(row_heights))
     body: list[str] = []
     for index, figure in enumerate(figures):
         svg = _svg.to_svg(figure, id_prefix=f"xy-panel-{index}-")
         inner = svg[svg.find(">") + 1 : svg.rfind("</svg>")]
-        row, col = divmod(index, ncols)
         body.append(
-            f'<svg x="{sum(col_widths[:col])}" y="{title_h + sum(row_heights[:row])}" '
+            f'<svg x="{offsets[index][0]}" y="{offsets[index][1]}" '
             f'width="{int(figure.width)}" height="{int(figure.height)}" '
             f'viewBox="0 0 {int(figure.width)} {int(figure.height)}">{inner}</svg>'
         )
@@ -169,7 +198,7 @@ def compose_svg(
     anchor = {"left": "start", "center": "middle", "right": "end"}.get(
         str(style.get("ha", "center")), "middle"
     )
-    width, height = sum(col_widths), title_h + sum(row_heights)
+    width, height = total_size
     size = float(style.get("size", 16))
     # y is a figure fraction measured from the bottom, like matplotlib.
     baseline = min(height - 2.0, (1.0 - float(style.get("y", 0.98))) * height + 0.75 * size)

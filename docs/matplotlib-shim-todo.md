@@ -163,7 +163,10 @@ The shim can be called complete for ordinary 2-D scripts when:
 - [x] Implement `subplots_adjust()` parameters (`left`, `right`, `top`,
       `bottom`, `wspace`, `hspace`) for HTML, PNG, and SVG grids. Evidence:
       `tests/pyplot/test_layout_noops.py::test_subplots_adjust_records_supported_spacing_values`
-      records all supported spacing values for grid exporters and rejects unknown kwargs.
+      verifies the adjusted SubplotParams frame resolves to per-cell figure
+      rectangles (and rejects unknown kwargs and out-of-order frames);
+      `tests/pyplot/test_layout_text_parity_fixes.py::test_subplots_adjust_positions_grid_panels_in_every_exporter`
+      verifies HTML/PNG/SVG all position the adjusted panels.
 - [x] Implement `Figure.autofmt_xdate()` label rotation/alignment. Evidence:
       `tests/pyplot/test_layout_noops.py::test_autofmt_xdate_rotates_x_tick_labels_on_all_axes`
       verifies rotation and horizontal alignment state on every axes.

@@ -1723,6 +1723,14 @@ for (const view of candidates) {
 if (over <= 0) break;
 if (view._releaseContext()) over -= 1;
 }
+if (over <= 0) return;
+const visible = live
+.filter((view) => view._ctxVisible)
+.sort((a, b) => (a._ctxSeenSeq || 0) - (b._ctxSeenSeq || 0));
+for (const view of visible) {
+if (over <= 0) break;
+if (view._releaseContext()) over -= 1;
+}
 },
 acquired(requester) {
 requester._ctxPendingReservation = false;
@@ -1778,7 +1786,10 @@ this.fluidH = spec.height === "100%";
 const rect = this.fluid || this.fluidH ? el.getBoundingClientRect() : null;
 const cw = this.fluid ? Math.round(rect.width) || 640 : spec.width;
 const ch = this.fluidH ? Math.round(rect.height) || 420 : spec.height;
-this.size = { w: Math.max(120, cw), h: Math.max(120, ch) };
+this.size = {
+w: Math.max(this.fluid ? 120 : 48, cw),
+h: Math.max(this.fluidH ? 120 : 48, ch),
+};
 this._layout();
 this._buildDom(el);
 this.theme = readTheme(this.root);
@@ -2144,6 +2155,7 @@ this._contextRecoveryError = null;
 this.root.dataset.fcContextState = "ready";
 this._scheduleViewRequest(this.view, { delay: 0 });
 this.draw();
+this._dropContextSnapshot();
 this._dispatchChartEvent("context_restored", {
 loss_count: this._contextLossCount,
 restore_count: this._contextRestoreCount,
@@ -2154,6 +2166,7 @@ _releaseContext() {
 if (this._destroyed || !this.gl || this._glLost || this.gl.isContextLost()) return false;
 const ext = this.gl.getExtension("WEBGL_lose_context");
 if (!ext) return false;
+this._snapshotBeforeRelease();
 this._ctxReleasedExt = ext;
 this._ctxReleases += 1;
 this._glLost = true;
@@ -2162,6 +2175,33 @@ if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
 ext.loseContext();
 return true;
+}
+_snapshotBeforeRelease() {
+try {
+if (this._raf) cancelAnimationFrame(this._raf);
+this._raf = null;
+this._rafKeepPick = true;
+this._drawNow();
+let snap = this._ctxSnapshot;
+if (!snap) {
+snap = this._ctxSnapshot = document.createElement("canvas");
+snap.dataset.fcCtxSnapshot = "";
+}
+snap.width = this.canvas.width;
+snap.height = this.canvas.height;
+snap.style.cssText = this.canvas.style.cssText;
+snap.style.pointerEvents = "none";
+snap.getContext("2d").drawImage(this.canvas, 0, 0);
+this.canvas.before(snap);
+this.canvas.style.visibility = "hidden";
+} catch (_err) {
+this._dropContextSnapshot();
+}
+}
+_dropContextSnapshot() {
+this.canvas.style.visibility = "";
+if (this._ctxSnapshot) this._ctxSnapshot.remove();
+this._ctxSnapshot = null;
 }
 _recoverContext() {
 if (this._destroyed || !this._glLost) return;
@@ -2203,8 +2243,12 @@ return;
 }
 this._scheduleViewRequest(this.view, { delay: 0 });
 this.draw();
+this._dropContextSnapshot();
 }
 _armContextVisibilityWatch() {
+this._listen(this.root, "pointerenter", () => {
+if (this._glLost && !this._destroyed) this._recoverContext();
+});
 if (typeof IntersectionObserver === "undefined") {
 this._ctxVisible = true;
 return;
@@ -2245,6 +2289,7 @@ for (const lg of this._legends) lg.style.maxHeight = p.h - 12 + "px";
 }
 this._positionReductionBadges();
 this._positionColorbar();
+this._fitModebar();
 this._pickDirty = true;
 this.draw();
 this._scheduleViewRequest();
@@ -3336,9 +3381,7 @@ const gl = this.gl;
 const { x0, x1, y0, y1 } = this.view;
 gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-const bg = this.theme.bg;
-if (bg) gl.clearColor(bg[0] * bg[3], bg[1] * bg[3], bg[2] * bg[3], bg[3]);
-else gl.clearColor(0, 0, 0, 0);
+gl.clearColor(0, 0, 0, 0);
 gl.clear(gl.COLOR_BUFFER_BIT);
 for (const g of this.gpuTraces) {
 if (g.tier === "density") {
@@ -3570,7 +3613,13 @@ const [vy0, vy1] = this._axisRange(g.yAxis);
 gl.uniform4f(u("u_view"), vx0 ?? x0, vx1 ?? x1, vy0 ?? y0, vy1 ?? y1);
 gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
 gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
-gl.uniform4f(u("u_gridRange"), h.xRange[0], h.xRange[1], h.yRange[0], h.yRange[1]);
+const xrev = (vx0 ?? x0) > (vx1 ?? x1);
+const yrev = (vy0 ?? y0) > (vy1 ?? y1);
+gl.uniform4f(
+u("u_gridRange"),
+h.xRange[xrev ? 1 : 0], h.xRange[xrev ? 0 : 1],
+h.yRange[yrev ? 1 : 0], h.yRange[yrev ? 0 : 1],
+);
 gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
 gl.uniform1i(u("u_truecolor"), h.truecolor ? 1 : 0);
 gl.activeTexture(gl.TEXTURE0);
@@ -4111,6 +4160,10 @@ this.labels.textContent = "";
 this._lastLabelDraw = now;
 }
 const p = this.plot;
+if (this.theme.bg) {
+ctx.fillStyle = cssColor(this.theme.bg);
+ctx.fillRect(p.x, p.y, p.w, p.h);
+}
 const xAxis = this._axis("x");
 const yAxis = this._axis("y");
 const hideX = this._axisTickLabelStrategy(xAxis) === "none";
@@ -4520,8 +4573,12 @@ if (!h || !g._cpuHeatmap) return null;
 const [x0, x1] = h.xRange;
 const [y0, y1] = h.yRange;
 if (dataX < x0 || dataX > x1 || dataY < y0 || dataY > y1) return null;
-const col = Math.min(h.w - 1, Math.max(0, Math.floor(((dataX - x0) / (x1 - x0)) * h.w)));
-const row = Math.min(h.h - 1, Math.max(0, Math.floor(((dataY - y0) / (y1 - y0)) * h.h)));
+const [ax0, ax1] = this._axisRange(g.xAxis) ?? [this.view.x0, this.view.x1];
+const [ay0, ay1] = this._axisRange(g.yAxis) ?? [this.view.y0, this.view.y1];
+const fx = ((ax0 ?? this.view.x0) > (ax1 ?? this.view.x1)) ? (x1 - dataX) : (dataX - x0);
+const fy = ((ay0 ?? this.view.y0) > (ay1 ?? this.view.y1)) ? (y1 - dataY) : (dataY - y0);
+const col = Math.min(h.w - 1, Math.max(0, Math.floor((fx / (x1 - x0)) * h.w)));
+const row = Math.min(h.h - 1, Math.max(0, Math.floor((fy / (y1 - y0)) * h.h)));
 return { trace: g.trace.id, index: row * h.w + col, g, heatmap: { row, col }, synthetic: true };
 }
 _drawKeepPick() {
@@ -4694,6 +4751,115 @@ this._glPrograms = this._progCache;
 this.gpuTraces = [];
 }
 }
+const FC_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
+"color",
+"label_color",
+"width",
+"head_size",
+"head_style",
+"tail_style",
+"shaft_width_start",
+"shaft_width_end",
+"curve",
+"angle_a",
+"angle_b",
+"gap_start",
+"gap_end",
+"dash",
+"span_start",
+"span_end",
+"size",
+"symbol",
+"stroke_color",
+"stroke_width",
+"coordinate_space",
+]);
+function fcArrowGeometry(x0, y0, x1, y1, style) {
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+const angleA = num(style.angle_a);
+const angleB = num(style.angle_b);
+const curve = num(style.curve);
+let cx = null;
+let cy = null;
+if (angleA !== null && angleB !== null) {
+const a = (-angleA * Math.PI) / 180;
+const b = (-angleB * Math.PI) / 180;
+const denom = Math.cos(a) * Math.sin(b) - Math.sin(a) * Math.cos(b);
+if (Math.abs(denom) > 1e-6) {
+const t = ((x1 - x0) * Math.sin(b) - (y1 - y0) * Math.cos(b)) / denom;
+cx = x0 + t * Math.cos(a);
+cy = y0 + t * Math.sin(a);
+}
+} else if (curve) {
+const dx = x1 - x0;
+const dy = y1 - y0;
+cx = (x0 + x1) / 2 + curve * dy;
+cy = (y0 + y1) / 2 - curve * dx;
+}
+const toward = (px, py, qx, qy) => {
+const d = Math.hypot(qx - px, qy - py) || 1;
+return [(qx - px) / d, (qy - py) / d];
+};
+const t0 = cx === null ? toward(x0, y0, x1, y1) : toward(x0, y0, cx, cy);
+const t1 = cx === null ? toward(x1, y1, x0, y0) : toward(x1, y1, cx, cy);
+const gapStart = Math.max(0, num(style.gap_start) || 0);
+const gapEnd = Math.max(0, num(style.gap_end) || 0);
+const span = Math.hypot(x1 - x0, y1 - y0);
+const trim = gapStart + gapEnd < span * 0.9;
+const p0 = trim ? [x0 + gapStart * t0[0], y0 + gapStart * t0[1]] : [x0, y0];
+const p1 = trim ? [x1 + gapEnd * t1[0], y1 + gapEnd * t1[1]] : [x1, y1];
+const dir1 = cx === null ? toward(p0[0], p0[1], p1[0], p1[1]) : toward(cx, cy, p1[0], p1[1]);
+const dir0 = cx === null ? toward(p1[0], p1[1], p0[0], p0[1]) : toward(cx, cy, p0[0], p0[1]);
+return { p0, p1, control: cx === null ? null : [cx, cy], dir0, dir1 };
+}
+function fcArrowShaftPoints(geom, samples = 24) {
+const [x0, y0] = geom.p0;
+const [x1, y1] = geom.p1;
+if (!geom.control) return [[x0, y0], [x1, y1]];
+const [cx, cy] = geom.control;
+const points = [];
+for (let i = 0; i <= samples; i++) {
+const t = i / samples;
+const u = 1 - t;
+points.push([u * u * x0 + 2 * u * t * cx + t * t * x1, u * u * y0 + 2 * u * t * cy + t * t * y1]);
+}
+return points;
+}
+function fcTrimPolylineEnd(points, trim) {
+if (!(trim > 0) || points.length < 2) return points;
+const out = points.slice();
+let remaining = trim;
+while (out.length >= 2) {
+const [ax, ay] = out[out.length - 2];
+const [bx, by] = out[out.length - 1];
+const seg = Math.hypot(bx - ax, by - ay);
+if (seg > remaining) {
+const t = 1 - remaining / seg;
+out[out.length - 1] = [ax + t * (bx - ax), ay + t * (by - ay)];
+return out;
+}
+remaining -= seg;
+out.pop();
+}
+return out;
+}
+function fcTaperPolygon(points, w0, w1) {
+const left = [];
+const right = [];
+const count = points.length;
+for (let i = 0; i < count; i++) {
+const [px, py] = points[i];
+const [ax, ay] = points[Math.max(0, i - 1)];
+const [bx, by] = points[Math.min(count - 1, i + 1)];
+const d = Math.hypot(bx - ax, by - ay) || 1;
+const nx = -(by - ay) / d;
+const ny = (bx - ax) / d;
+const half = (w0 + (w1 - w0) * (i / Math.max(1, count - 1))) / 2;
+left.push([px + half * nx, py + half * ny]);
+right.push([px - half * nx, py - half * ny]);
+}
+return left.concat(right.reverse());
+}
 Object.assign(ChartView.prototype, {
 _annotationPaint(style, fallback) {
 return safeCssPaint(this.root, style && style.color, fallback);
@@ -4741,8 +4907,7 @@ ctx.restore();
 },
 _drawArrowLine(ctx, x0, y0, x1, y1, style) {
 if (![x0, y0, x1, y1].every(Number.isFinite)) return;
-const angle = Math.atan2(y1 - y0, x1 - x0);
-const head = Math.max(7, this._styleNumber(style, "head_size", 8));
+const geom = fcArrowGeometry(x0, y0, x1, y1, style);
 ctx.save();
 ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
 ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
@@ -4750,23 +4915,65 @@ ctx.fillStyle = ctx.strokeStyle;
 ctx.lineWidth = Math.max(0.5, this._styleNumber(style, "width", 1.5));
 ctx.setLineDash(Array.isArray(style.dash) ? style.dash :
 (typeof style.dash === "string" ? style.dash.split(",").map(Number) : []));
-ctx.beginPath();
-ctx.moveTo(x0, y0);
-ctx.lineTo(x1, y1);
-ctx.stroke();
-ctx.beginPath();
-ctx.moveTo(x1, y1);
-ctx.lineTo(
-x1 - head * Math.cos(angle - Math.PI / 6),
-y1 - head * Math.sin(angle - Math.PI / 6)
+const w0 = Number(style.shaft_width_start);
+const w1 = Number(style.shaft_width_end);
+const headStyle = style.head_style || "triangle";
+const head = Math.max(4, this._styleNumber(style, "head_size", 8));
+if (Number.isFinite(w0) || Number.isFinite(w1)) {
+let points = fcArrowShaftPoints(geom);
+if (headStyle === "triangle") {
+points = fcTrimPolylineEnd(points, head * Math.cos(Math.PI / 6));
+}
+const polygon = fcTaperPolygon(
+points,
+Number.isFinite(w0) ? w0 : 1,
+Number.isFinite(w1) ? w1 : 1
 );
-ctx.lineTo(
-x1 - head * Math.cos(angle + Math.PI / 6),
-y1 - head * Math.sin(angle + Math.PI / 6)
-);
+ctx.beginPath();
+ctx.moveTo(polygon[0][0], polygon[0][1]);
+for (let i = 1; i < polygon.length; i++) ctx.lineTo(polygon[i][0], polygon[i][1]);
 ctx.closePath();
 ctx.fill();
+} else {
+ctx.beginPath();
+ctx.moveTo(geom.p0[0], geom.p0[1]);
+if (geom.control) ctx.quadraticCurveTo(geom.control[0], geom.control[1], geom.p1[0], geom.p1[1]);
+else ctx.lineTo(geom.p1[0], geom.p1[1]);
+ctx.stroke();
+}
+this._drawArrowEnd(ctx, geom.p1, geom.dir1, headStyle, head);
+this._drawArrowEnd(ctx, geom.p0, geom.dir0, style.tail_style || "none", head);
 ctx.restore();
+},
+_drawArrowEnd(ctx, point, dir, endStyle, head) {
+if (endStyle === "none") return;
+const [px, py] = point;
+const angle = Math.atan2(dir[1], dir[0]);
+ctx.beginPath();
+if (endStyle === "bar") {
+ctx.moveTo(px - (head / 2) * Math.sin(angle), py + (head / 2) * Math.cos(angle));
+ctx.lineTo(px + (head / 2) * Math.sin(angle), py - (head / 2) * Math.cos(angle));
+ctx.stroke();
+return;
+}
+const wing = (side) => [
+px - head * Math.cos(angle - side * Math.PI / 6),
+py - head * Math.sin(angle - side * Math.PI / 6),
+];
+const [ax, ay] = wing(1);
+const [bx, by] = wing(-1);
+if (endStyle === "v") {
+ctx.moveTo(ax, ay);
+ctx.lineTo(px, py);
+ctx.lineTo(bx, by);
+ctx.stroke();
+return;
+}
+ctx.moveTo(px, py);
+ctx.lineTo(ax, ay);
+ctx.lineTo(bx, by);
+ctx.closePath();
+ctx.fill();
 },
 _drawAnnotationShapes(ctx) {
 const annotations = Array.isArray(this.spec.annotations) ? this.spec.annotations : [];
@@ -4911,13 +5118,21 @@ d.textContent = text;
 const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
 const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
 const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0";
+const va = style.vertical_align;
+const vAnchor =
+va === "center" || va === "middle" ? "-50%" : va === "bottom" ? "-100%" : "0";
 d.style.cssText =
 `position:absolute;left:${px + dx}px;top:${py + dy}px;` +
-`transform:translate(${anchor},0);pointer-events:none;` +
-`white-space:pre-line;text-align:center;`;
+`transform:translate(${anchor},${vAnchor});pointer-events:none;` +
+`white-space:pre-line;text-align:center;width:max-content;`;
 this._applySlot(d, "annotation_label");
 this._applyClass(d, ann.class_name);
-this._applyStyle(d, style);
+const labelStyle = {};
+for (const [key, value] of Object.entries(style)) {
+if (FC_ANNOTATION_SHAPE_STYLE_KEYS.has(key)) continue;
+labelStyle[key] = value;
+}
+this._applyStyle(d, labelStyle);
 if (style && (style.label_color || style.color)) {
 d.style.color = this._annotationLabelPaint(style, this.theme.label);
 }
@@ -5404,7 +5619,18 @@ this._clearSelection();
 this._setView(this.view0, { animate: true });
 });
 root.appendChild(bar);
+this._fitModebar();
 this._setDragMode(this.dragMode);
+},
+_fitModebar() {
+const bar = this._modebar;
+if (!bar) return;
+bar.style.top = `${this.plot.y + 4}px`;
+bar.style.left = `${this.plot.x + 4}px`;
+bar.style.display = "flex";
+const fits =
+bar.offsetWidth + 8 <= this.plot.w && bar.offsetHeight + 8 <= this.plot.h;
+if (!fits) bar.style.display = "none";
 },
 _setDragMode(mode) {
 this.dragMode = mode;

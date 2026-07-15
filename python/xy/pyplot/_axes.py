@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import copy
 from contextlib import suppress
-from datetime import timedelta
+from datetime import datetime, timedelta
 from itertools import pairwise
 from typing import Any, Optional
 
@@ -29,6 +29,7 @@ from ._artists import (
     PathCollection,
     PolyCollection,
     Text,
+    unit_converted_values,
 )
 from ._colors import PROP_CYCLE, resolve_cmap, resolve_color
 from ._fmt import parse_fmt
@@ -234,7 +235,17 @@ class _AxisProxy:
         if "major_formatter" in kwargs:
             self.set_major_formatter(kwargs.pop("major_formatter"))
 
+    @staticmethod
+    def _is_units_registry_ticker(ticker: Any) -> bool:
+        # pandas' date locators/formatters (TimeSeries_DateLocator & co.) speak
+        # matplotlib's unit-registry coordinates (period/date ordinals), which
+        # never exist here: the engine's time axis is native ms-since-epoch and
+        # ticks itself. Treat them as compat-noops so the native ticks render.
+        return (type(ticker).__module__ or "").startswith("pandas.plotting")
+
     def set_major_locator(self, locator: Any) -> None:
+        if self._is_units_registry_ticker(locator):
+            return
         if not hasattr(locator, "tick_values"):
             raise TypeError("set_major_locator() requires a Locator with tick_values()")
         host, key = self._ticker_slot()
@@ -251,6 +262,8 @@ class _AxisProxy:
         return host._tickers.get((key, "major_locator")) or AutoLocator()
 
     def set_major_formatter(self, formatter: Any) -> None:
+        if self._is_units_registry_ticker(formatter):
+            return
         host, key = self._ticker_slot()
         host._tickers[(key, "major_formatter")] = as_formatter(formatter, "set_major_formatter()")
         self.axes._invalidate()
@@ -279,6 +292,12 @@ class _AxisProxy:
 
     def tick_left(self) -> None:
         pass  # exact no-op: the engine only draws left y ticks
+
+    def get_majorticklabels(self) -> list["_TickLabel"]:
+        return self.axes._tick_label_handles(self.axis)
+
+    def get_minorticklabels(self) -> list["_TickLabel"]:
+        return []  # minor ticks are outside the native axis contract
 
     def get_minor_formatter(self) -> Any:
         from ._ticker import NullFormatter
@@ -470,6 +489,14 @@ def _cached_theme(grid: bool, tokens: dict[str, Any], style: dict[str, Any]) -> 
         applied = dict(tokens)
         applied["grid_color"] = _MPL_GRID_COLOR if grid else "transparent"
         made = _component_cache[key] = fc.theme(style=style, **applied)
+    return made
+
+
+def _cached_modebar(show: bool) -> Any:
+    key = ("modebar", show)
+    made = _component_cache.get(key)
+    if made is None:
+        made = _component_cache[key] = fc.modebar(show=show)
     return made
 
 
@@ -2056,7 +2083,7 @@ class Axes(PlotTypeMixin):
 
     def annotate(self, text: str, xy: tuple, xytext: Optional[tuple] = None, **kwargs: Any) -> Text:
         arrowprops = kwargs.pop("arrowprops", None)
-        fontsize = kwargs.pop("fontsize", None)
+        fontsize = kwargs.pop("fontsize", kwargs.pop("size", None))
         color = kwargs.pop("color", None)
         xycoords = kwargs.pop("xycoords", "data")
         textcoords = kwargs.pop("textcoords", None)
@@ -2083,11 +2110,14 @@ class Axes(PlotTypeMixin):
             if textcoords in {"offset points", "offset pixels"}:
                 scale = self._point_scale() if textcoords == "offset points" else 1.0
                 akw["dx"], akw["dy"] = float(xytext[0]) * scale, -float(xytext[1]) * scale
-            elif all(_is_number(v) for v in (*xytext, *xy)):
-                # matplotlib places the text AT xytext (data coordinates).
-                text_xy = (float(xytext[0]), float(xytext[1]))
             else:
-                akw["dx"], akw["dy"] = 8.0, -8.0
+                converted = self._data_coordinates(xytext)
+                if converted is not None:
+                    # matplotlib places the text AT xytext (data coordinates);
+                    # date strings convert like matplotlib's unit registry.
+                    text_xy = converted
+                else:
+                    akw["dx"], akw["dy"] = 8.0, -8.0
         style: dict[str, Any] = {}
         if xycoords is self.transAxes or xycoords == "axes fraction":
             style["coordinate_space"] = "axes_fraction"
@@ -2115,7 +2145,9 @@ class Axes(PlotTypeMixin):
                     "annotate(arrowprops=) outside data coordinates",
                     "data-coordinate annotations",
                 )
-            if not all(_is_number(v) for v in (*text_xy, *xy)):
+            start = self._data_coordinates(text_xy)
+            end = self._data_coordinates(xy)
+            if start is None or end is None:
                 raise not_implemented(
                     "annotate(arrowprops=) with non-numeric coordinates",
                     "numeric data coordinates",
@@ -2123,18 +2155,18 @@ class Axes(PlotTypeMixin):
             # Straight arrow from the text toward the point; arrowstyle and
             # connectionstyle curves are approximated by this straight shaft.
             shrink = float(arrowprops.get("shrink", 0.0))
-            sx0, sy0 = float(text_xy[0]), float(text_xy[1])
-            ex0, ey0 = float(xy[0]), float(xy[1])
+            (sx0, sy0), (ex0, ey0) = start, end
             if shrink:
                 dx_a, dy_a = ex0 - sx0, ey0 - sy0
                 sx0, sy0 = sx0 + shrink * dx_a, sy0 + shrink * dy_a
                 ex0, ey0 = ex0 - shrink * dx_a, ey0 - shrink * dy_a
-            fancy = "arrowstyle" not in arrowprops
-            arrow_color = resolve_color(
-                arrowprops.get("color")
-                or arrowprops.get("facecolor")
-                or arrowprops.get("edgecolor")
-                or "black"
+            arrow_color, arrow_width, arrow_style = _arrow_visuals(
+                arrowprops,
+                mutation_scale=_font_size_points(
+                    fontsize if fontsize is not None else rcParams["font.size"],
+                    rcParams["font.size"],
+                )
+                * self._point_scale(),
             )
             self._add(
                 "@arrow",
@@ -2142,17 +2174,8 @@ class Axes(PlotTypeMixin):
                     "args": (sx0, sy0, ex0, ey0),
                     "kwargs": {
                         "color": arrow_color,
-                        "width": float(
-                            arrowprops.get(
-                                "width",
-                                arrowprops.get(
-                                    "lw", arrowprops.get("linewidth", 3.0 if fancy else 1.5)
-                                ),
-                            )
-                        ),
-                        "style": {
-                            "head_size": float(arrowprops.get("headwidth", 12.0 if fancy else 8.0))
-                        },
+                        "width": arrow_width,
+                        "style": arrow_style,
                     },
                 },
             )
@@ -2289,13 +2312,45 @@ class Axes(PlotTypeMixin):
         self._figure_rect = _parse_bounds(position, "set_position()")
         self._invalidate()
 
-    def _entry_extent(self, axis: str) -> tuple[float, float]:
+    def _axis_holds_datetimes(self, axis: str) -> bool:
+        from xy.components import _is_datetime_like
+
+        key = "x" if axis == "x" else "y"
+        return any(key in entry and _is_datetime_like(entry[key]) for entry in self._entries)
+
+    def _data_coordinate(self, value: Any, axis: str) -> Optional[float]:
+        """A data-space coordinate as the engine's float — numbers directly,
+        datetime-likes (and, on a datetime axis, matplotlib's registry-parsed
+        date strings) as ms since epoch. None means not coordinate-like."""
+        if _is_number(value):
+            return float(value)
+        if isinstance(value, str):
+            value = _parse_date_text(value) if self._axis_holds_datetimes(axis) else None
+            if value is None:
+                return None
+        try:
+            converted = np.asarray(
+                unit_converted_values(np.asarray([value])), dtype=np.float64
+            ).reshape(-1)
+        except (TypeError, ValueError):
+            return None
+        return float(converted[0]) if converted.size and np.isfinite(converted[0]) else None
+
+    def _data_coordinates(self, xy: tuple) -> Optional[tuple[float, float]]:
+        x = self._data_coordinate(xy[0], "x")
+        y = self._data_coordinate(xy[1], "y")
+        return None if x is None or y is None else (x, y)
+
+    def _entry_values(self, axis: str) -> np.ndarray:
+        """Every finite data coordinate the entries contribute to *axis* autoscale."""
         values: list[np.ndarray] = []
         for entry in self._entries:
             key = "x" if axis == "x" else "y"
             if key in entry:
                 try:
-                    array = np.asarray(entry[key], dtype=np.float64).reshape(-1)
+                    array = np.asarray(unit_converted_values(entry[key]), dtype=np.float64).reshape(
+                        -1
+                    )
                 except (TypeError, ValueError):
                     continue
                 values.append(array[np.isfinite(array)])
@@ -2319,7 +2374,10 @@ class Axes(PlotTypeMixin):
             elif entry.get("kind") == "heatmap" and entry.get("extent") is not None:
                 bounds = entry["extent"]
                 values.append(np.asarray(bounds[:2] if axis == "x" else bounds[2:], dtype=float))
-        finite = np.concatenate(values) if values else np.array([], dtype=np.float64)
+        return np.concatenate(values) if values else np.array([], dtype=np.float64)
+
+    def _entry_extent(self, axis: str) -> tuple[float, float]:
+        finite = self._entry_values(axis)
         if len(finite) == 0:
             return (0.0, 1.0)
         lo, hi = float(np.min(finite)), float(np.max(finite))
@@ -3557,10 +3615,28 @@ class Axes(PlotTypeMixin):
             lo, hi = sorted(map(float, _scale_values(np.asarray([lo, hi]), spec, inverse=True)))
         return lo, hi
 
-    def _apply_tickers(self, key: str, props: dict[str, Any]) -> None:
+    def _apply_tickers(
+        self, key: str, props: dict[str, Any], nbins_hint: Optional[int] = None
+    ) -> None:
         """Resolve a user locator/formatter into concrete tick props (in place)."""
+        from ._ticker import NullFormatter
+
         locator = self._tickers.get((key, "major_locator"))
         formatter = self._tickers.get((key, "major_formatter"))
+        minor_locator = self._tickers.get((key, "minor_locator"))
+        minor_formatter = self._tickers.get((key, "minor_formatter"))
+        # The engine draws a single tick set. When a script blanks the major
+        # labels and puts the text on located minors (matplotlib's centered
+        # date-label idiom: major NullFormatter + labeled minor locator), the
+        # minor pair is the one carrying information — promote it.
+        if (
+            isinstance(formatter, NullFormatter)
+            and minor_locator is not None
+            and hasattr(minor_locator, "tick_values")
+            and minor_formatter is not None
+            and not isinstance(minor_formatter, NullFormatter)
+        ):
+            locator, formatter = minor_locator, minor_formatter
         is_log = (
             props.get("type_") == "log" or (self._scale_specs.get(key) or {}).get("name") == "log"
         )
@@ -3570,6 +3646,7 @@ class Axes(PlotTypeMixin):
         lo, hi = self._ticker_view(key, props)
         auto_log = False
         if locator is not None:
+            locator._nbins_hint = nbins_hint
             ticks = np.asarray(locator.tick_values(lo, hi), dtype=float).reshape(-1)
             pad = (hi - lo) * 1e-9
             ticks = ticks[(ticks >= lo - pad) & (ticks <= hi + pad)]
@@ -3581,7 +3658,11 @@ class Axes(PlotTypeMixin):
             from ._ticker import LogLocator
 
             auto = LogLocator() if is_log else AutoLocator()
+            auto._nbins_hint = nbins_hint
             ticks = np.asarray(auto.tick_values(lo, hi), dtype=float).reshape(-1)
+            if not is_log:
+                pad = (hi - lo) * 1e-9
+                ticks = ticks[(ticks >= lo - pad) & (ticks <= hi + pad)]
             auto_log = is_log
         props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
         if formatter is not None:
@@ -3689,7 +3770,70 @@ class Axes(PlotTypeMixin):
                     )
                 if opacity is not None and float(opacity) < 1.0:
                     text_kw["style"] = {**(text_kw.get("style") or {}), "opacity": float(opacity)}
-                children.append(fc.text(*e["args"], **text_kw))
+                if "font_size" not in (text_kw.get("style") or {}):
+                    # matplotlib text defaults to font.size (10 pt → 13.9 px at
+                    # dpi 100); without this the client's 11 px slot default wins.
+                    text_kw["style"] = {
+                        **(text_kw.get("style") or {}),
+                        "font_size": _font_size_points(rcParams["font.size"], rcParams["font.size"])
+                        * self._point_scale(),
+                    }
+                if kw.get("bbox"):
+                    # matplotlib's text bbox patch, as label box styles.
+                    text_kw["style"] = {
+                        **_bbox_label_style(
+                            kw["bbox"],
+                            font_size=float((text_kw.get("style") or {}).get("font_size", 11.0)),
+                        ),
+                        **(text_kw.get("style") or {}),
+                    }
+                # matplotlib's pandas-registered converter parses date strings
+                # placed on a date axis; categorical axes keep their strings.
+                x, y = e["args"][0], e["args"][1]
+                if isinstance(x, str) and self._axis_holds_datetimes("x"):
+                    x = _parse_date_text(x) or x
+                if isinstance(y, str) and self._axis_holds_datetimes("y"):
+                    y = _parse_date_text(y) or y
+                arrowprops = kw.get("arrowprops")
+                value = str(e["args"][2]) if len(e["args"]) > 2 else ""
+                if arrowprops and value and text_kw.get("dx") is not None:
+                    # Offset-placed annotate(arrowprops=): matplotlib pins the
+                    # arrow from the text to the data point across zoom — the
+                    # engine's callout annotation is exactly that object.
+                    font_size = float((text_kw.get("style") or {}).get("font_size", 11.0))
+                    arrow_color, arrow_width, arrow_style = _arrow_visuals(
+                        arrowprops, mutation_scale=font_size
+                    )
+                    style: dict[str, Any] = {**(text_kw.get("style") or {}), **arrow_style}
+                    # matplotlib starts the arrow at the text patch edge
+                    # (shrinkA/B default 2 pt); approximate the patch with a
+                    # radial clearance around the label anchor.
+                    style.setdefault("gap_start", font_size * 0.5 + 2.0)
+                    style.setdefault("gap_end", 3.0)
+                    # The callout color prop paints the arrow; pin the label's
+                    # own color so it doesn't inherit the arrow's.
+                    style.setdefault(
+                        "label_color",
+                        text_kw.get("color")
+                        or resolve_color(rcParams.get("text.color", "black"))
+                        or "black",
+                    )
+                    children.append(
+                        fc.callout(
+                            x,
+                            y,
+                            value,
+                            dx=float(text_kw["dx"]),
+                            dy=float(text_kw.get("dy", 0.0)),
+                            color=arrow_color,
+                            width=arrow_width,
+                            anchor=text_kw.get("anchor", "start"),
+                            class_name=text_kw.get("class_name"),
+                            style=style,
+                        )
+                    )
+                else:
+                    children.append(fc.text(x, y, *e["args"][2:], **text_kw))
         return children
 
     def _best_legend_loc(
@@ -3871,20 +4015,32 @@ class Axes(PlotTypeMixin):
             self._axis["x"]["domain"] = self._auto_domain("x")
         if not adjusted_aspect and self._ymargin != 0.0 and "y" not in self._explicit_domains:
             self._axis["y"]["domain"] = self._auto_domain("y")
+        # A dataless matplotlib axis views exactly (0, 1) — margins never apply.
+        # Pin it so the engine's autorange padding cannot widen the empty view
+        # (padding turns the 0.5 midpoint tick into a bare 0/1 pair).
+        for axis in ("x", "y"):
+            if (
+                not adjusted_aspect
+                and axis not in self._explicit_domains
+                and self._axis[axis].get("domain") is None
+                and len(self._entry_values(axis)) == 0
+            ):
+                self._axis[axis]["domain"] = (0.0, 1.0)
         x_props = {k: v for k, v in self._axis["x"].items() if v is not None}
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
         if aspect_domains is not None:
             x_props["domain"], y_props["domain"] = aspect_domains
-        self._apply_tickers("x", x_props)
-        self._apply_tickers("y", y_props)
-        self._apply_auto_tick_density(x_props, y_props, width, height)
+        auto_tick_counts = self._auto_tick_counts(x_props, width, height)
+        self._apply_tickers("x", x_props, auto_tick_counts["x"])
+        self._apply_tickers("y", y_props, auto_tick_counts["y"])
+        self._apply_auto_tick_density(x_props, y_props, auto_tick_counts)
         children.append(_cached_axis("x", x_props))
         children.append(_cached_axis("y", y_props))
         for index, secondary in enumerate(self._secondary_axes, 1):
             children.append(secondary._component(index))
         if self._twin is not None:
             y2_props = {k: v for k, v in self._axis["y2"].items() if v is not None}
-            self._apply_tickers("y2", y2_props)
+            self._apply_tickers("y2", y2_props, auto_tick_counts["y"])
             children.append(fc.y_axis(id="y2", side="right", **y2_props))
         if self._legend:
             legend_options = dict(self._legend_options)
@@ -3897,6 +4053,8 @@ class Axes(PlotTypeMixin):
             # Core XY can auto-create a continuous-color "value" legend.
             # An unlabeled Matplotlib collection must not acquire one.
             children.append(fc.legend(show=False))
+        if not self.figure._show_toolbar():
+            children.append(_cached_modebar(False))
         theme_tokens = self._theme_tokens
         if _MPL_THEME_TOKENS:
             if self._grid_axis != "both":
@@ -3941,14 +4099,14 @@ class Axes(PlotTypeMixin):
             core_figure.extra_legends = extras
         return self._chart
 
-    def _apply_auto_tick_density(
+    def _auto_tick_counts(
         self,
         x_props: dict[str, Any],
-        y_props: dict[str, Any],
         width: int,
         height: int,
-    ) -> None:
-        """Match Matplotlib AutoLocator's axes-size tick-space heuristic."""
+    ) -> dict[str, int]:
+        """Matplotlib's ``Axis.get_tick_space()`` per axis: how many tick
+        intervals fit the estimated plot rect at the tick-label font size."""
         compact = width < 520
         if self._padding is None:
             left, right = (46.0, 8.0) if compact else (62.0, 14.0)
@@ -3965,10 +4123,18 @@ class Axes(PlotTypeMixin):
         base = float(rcParams["font.size"])
         x_font = _font_size_points(rcParams["xtick.labelsize"], base)
         y_font = _font_size_points(rcParams["ytick.labelsize"], base)
-        counts = {
+        return {
             "x": max(1, min(9, int(np.floor(plot_width * 72.0 / dpi / (x_font * 3.0))))),
             "y": max(1, min(9, int(np.floor(plot_height * 72.0 / dpi / (y_font * 2.0))))),
         }
+
+    def _apply_auto_tick_density(
+        self,
+        x_props: dict[str, Any],
+        y_props: dict[str, Any],
+        counts: dict[str, int],
+    ) -> None:
+        """Match Matplotlib AutoLocator's axes-size tick-space heuristic."""
         for axis, props in (("x", x_props), ("y", y_props)):
             if (
                 "tick_count" not in props
@@ -4028,6 +4194,163 @@ def _is_number(v: Any) -> bool:
     return isinstance(v, (int, float, np.integer, np.floating))
 
 
+# matplotlib arrowstyle name → (tail, head) endpoint shapes, in the shim's
+# text→point drawing direction (A = tail at the text, B = head at the point).
+_ARROWSTYLE_ENDS = {
+    "-": ("none", "none"),
+    "->": ("none", "v"),
+    "<-": ("v", "none"),
+    "<->": ("v", "v"),
+    "-|>": ("none", "triangle"),
+    "<|-": ("triangle", "none"),
+    "<|-|>": ("triangle", "triangle"),
+    "|-|": ("bar", "bar"),
+    "]-[": ("bar", "bar"),
+    "]-": ("bar", "none"),
+    "-[": ("none", "bar"),
+    "simple": ("none", "triangle"),
+    "fancy": ("none", "triangle"),
+    "wedge": ("none", "triangle"),
+}
+
+
+def _parse_style_options(spec: str) -> dict[str, float]:
+    options: dict[str, float] = {}
+    for part in spec.split(",")[1:]:
+        key, _, value = part.partition("=")
+        try:
+            options[key.strip()] = float(value)
+        except ValueError:
+            continue
+    return options
+
+
+def _connection_curve(connectionstyle: Any) -> dict[str, float]:
+    """matplotlib ``connectionstyle`` → quadratic-curve style keys (see
+    ``_arrowgeom.py``): arc3's rad becomes ``curve``; angle3/angle become the
+    ``angle_a``/``angle_b`` departure/arrival angles (corner rounding is
+    approximated by the quadratic)."""
+    if not isinstance(connectionstyle, str):
+        return {}
+    name = connectionstyle.split(",")[0].strip()
+    options = _parse_style_options(connectionstyle)
+    if name == "arc3":
+        rad = options.get("rad", 0.0)
+        return {"curve": rad} if rad else {}
+    if name in ("angle3", "angle"):
+        return {"angle_a": options.get("angleA", 90.0), "angle_b": options.get("angleB", 0.0)}
+    return {}
+
+
+def _arrow_visuals(
+    arrowprops: dict[str, Any], mutation_scale: float = 14.0
+) -> tuple[Optional[str], float, dict[str, Any]]:
+    """Color, shaft width, and shape style keys for matplotlib ``arrowprops``.
+
+    Head/tail shapes, filled tapered shafts (fancy/simple/wedge), and
+    connectionstyle curves map onto the engine's arrow style vocabulary;
+    ``mutation_scale`` mirrors matplotlib's (the annotation text size, px).
+    What has no equivalent (corner rounding) is approximated, never dropped."""
+    arrowstyle = arrowprops.get("arrowstyle")
+    fancy = arrowstyle is None  # matplotlib's YAArrow-style thick default
+    color = resolve_color(
+        arrowprops.get("color")
+        or arrowprops.get("facecolor")
+        or arrowprops.get("fc")
+        or arrowprops.get("edgecolor")
+        or arrowprops.get("ec")
+        or "black"
+    )
+    alpha = arrowprops.get("alpha")
+    if color is not None and alpha is not None:
+        from ._colors import _rgba_floats
+
+        try:  # alpha dims only the arrow, so bake it into the color itself
+            r, g, b, a = _rgba_floats(color)
+        except ValueError:
+            pass  # exotic CSS name: keep the color, lose alpha
+        else:
+            color = (
+                f"rgba({round(r * 255)},{round(g * 255)},{round(b * 255)},{float(alpha) * a:.3g})"
+            )
+    width = float(
+        arrowprops.get(
+            "width", arrowprops.get("lw", arrowprops.get("linewidth", 3.0 if fancy else 1.5))
+        )
+    )
+    style: dict[str, Any] = {}
+    if fancy:
+        style["head_size"] = float(arrowprops.get("headwidth", 12.0))
+    else:
+        name = str(arrowstyle).split(",")[0].strip()
+        tail, head = _ARROWSTYLE_ENDS.get(name, ("none", "triangle"))
+        options = _parse_style_options(str(arrowstyle))
+        scale = float(mutation_scale)
+        if name in ("fancy", "simple", "wedge"):
+            # Filled tapered shafts, matplotlib's mutation-scale-sized fills.
+            if name == "wedge":
+                style["shaft_width_start"] = options.get("tail_width", 0.3) * scale
+                style["shaft_width_end"] = 1.0
+                style["gap_end"] = 0.0  # the wedge tip IS the pointer
+                head = "none"
+            else:
+                style["shaft_width_start"] = 2.0 if name == "fancy" else 1.5
+                style["shaft_width_end"] = options.get("tail_width", 0.4) * scale
+                style["head_size"] = options.get("head_width", 0.4) * scale * 2.2
+        if head != "triangle":
+            style["head_style"] = head
+        if tail != "none":
+            style["tail_style"] = tail
+        if "bar" in (head, tail):
+            # widthA/widthB are fractions of the mutation scale (~text size).
+            bar = options.get("widthA", options.get("widthB", 0.4))
+            style["head_size"] = max(4.0, bar * 20.0)
+        elif "head_size" not in style:
+            style["head_size"] = float(arrowprops.get("headwidth", 8.0))
+    style.update(_connection_curve(arrowprops.get("connectionstyle")))
+    return color, width, style
+
+
+def _bbox_label_style(bbox: dict[str, Any], font_size: float = 11.0) -> dict[str, Any]:
+    """matplotlib text ``bbox`` patch → annotation-label box styles.
+
+    A CSS approximation drawn by the render client's DOM label; the static
+    exporters keep the plain label (recorded in docs/matplotlib-compat.md).
+    """
+    style: dict[str, Any] = {}
+    face = bbox.get("fc", bbox.get("facecolor", "C0"))
+    alpha = bbox.get("alpha")
+    if face is not None and face != "none":
+        resolved = resolve_color(face)
+        if resolved is not None:
+            if alpha is not None:
+                from ._colors import _rgba_floats
+
+                try:
+                    r, g, b, a = _rgba_floats(resolved)
+                except ValueError:  # exotic CSS name: keep the fill, lose alpha
+                    style["background"] = resolved
+                else:
+                    style["background"] = (
+                        f"rgba({round(r * 255)},{round(g * 255)},{round(b * 255)},"
+                        f"{float(alpha) * a:.3g})"
+                    )
+            else:
+                style["background"] = resolved
+    edge = bbox.get("ec", bbox.get("edgecolor", "black"))
+    if edge is not None and edge != "none":
+        line_width = float(bbox.get("lw", bbox.get("linewidth", 1.0)))
+        style["border"] = f"{line_width:g}px solid {resolve_color(edge)}"
+    boxstyle = str(bbox.get("boxstyle", "square"))
+    name = boxstyle.split(",")[0].strip()
+    if "round" in name:
+        style["border_radius"] = 8.0 if name == "round4" else 5.0
+    # matplotlib pads the patch pad×fontsize around the text.
+    pad = max(0.0, _parse_style_options(boxstyle).get("pad", 0.3)) * float(font_size)
+    style["padding"] = f"{pad:.3g}px {pad * 1.3:.3g}px"
+    return style
+
+
 def _font_size_points(value: Any, base: Any) -> float:
     relative = {
         "xx-small": 0.6,
@@ -4067,14 +4390,15 @@ def _rc_axis_style(axis: str, dpi: float = 96.0) -> dict[str, Any]:
         result["tick_label_color"] = resolve_color(
             tick_color if label_color == "inherit" else label_color
         )
-    if rcParams[f"{prefix}.labelsize"] != "medium":
-        result["tick_label_size"] = _font_size(
-            rcParams[f"{prefix}.labelsize"], rcParams["font.size"], dpi
-        )
+    # Always explicit: the render client and static exporters otherwise fall
+    # back to their own 11 px default, not matplotlib's font.size-derived
+    # medium (10 pt → 13.9 px at dpi 100).
+    result["tick_label_size"] = _font_size(
+        rcParams[f"{prefix}.labelsize"], rcParams["font.size"], dpi
+    )
     if rcParams["axes.labelcolor"] != "black":
         result["label_color"] = resolve_color(rcParams["axes.labelcolor"])
-    if rcParams["axes.labelsize"] != "medium":
-        result["label_size"] = _font_size(rcParams["axes.labelsize"], rcParams["font.size"], dpi)
+    result["label_size"] = _font_size(rcParams["axes.labelsize"], rcParams["font.size"], dpi)
     return result
 
 
@@ -4087,6 +4411,26 @@ def _parse_bounds(value: Any, context: str) -> tuple[float, float, float, float]
     if width < 0 or height < 0:
         raise ValueError(f"{context} width and height must be non-negative")
     return left, bottom, width, height
+
+
+_DATE_TEXT_FORMATS = (
+    "%Y-%m-%d",
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d %H:%M",
+)
+
+
+def _parse_date_text(value: str) -> Optional[np.datetime64]:
+    """A date string in the dateutil shapes gallery scripts use, or None.
+
+    strptime's %m/%d accept unpadded fields, so '2012-1-1' parses too."""
+    for fmt in _DATE_TEXT_FORMATS:
+        try:
+            return np.datetime64(datetime.strptime(value, fmt))
+        except ValueError:
+            continue
+    return None
 
 
 def _convert_timedelta_axis(values: np.ndarray) -> np.ndarray:
