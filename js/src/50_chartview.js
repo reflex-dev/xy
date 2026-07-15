@@ -822,7 +822,12 @@ class ChartView {
     // Canvas pixels need a parallel semantic surface (§20). Keep the region
     // separate from the plot-area image role so the real toolbar descendants
     // remain exposed to assistive technology.
-    const a11yId = `xy-a11y-${++FC_A11Y_ID}`;
+    let a11yId;
+    do {
+      a11yId = `xy-a11y-${++FC_A11Y_ID}`;
+    } while (
+      document.getElementById(`${a11yId}-summary`) || document.getElementById(`${a11yId}-live`)
+    );
     root.setAttribute("role", "region");
     root.setAttribute("aria-label", s.title ? `Chart: ${s.title}` : "Interactive chart");
     this.a11ySummary = document.createElement("div");
@@ -907,7 +912,7 @@ class ChartView {
     if (!this.a11ySummary || !this.canvas) return;
     this.a11ySummary.textContent = this._a11ySummaryText();
     const instruction = this._pickable
-      ? " Use Left and Right Arrow keys to explore data points; Home and End jump to the first and last point."
+      ? " Use Arrow keys to explore data points in series data order; Home and End jump to the first and last point; Escape closes the readout."
       : "";
     this.canvas.setAttribute("aria-label", `Plot area.${instruction}`);
   }
@@ -3471,10 +3476,15 @@ class ChartView {
   }
 
   _hover(e) {
+    // Pointer exploration supersedes any positional prefix retained for
+    // keyboard readouts and their asynchronous exact-value replies.
+    this._a11yKeyboardReadout = null;
     if (this._transitionActive()) {
       const hadHover = this._hoverId !== -1;
       this._hoverId = -1;
       this._hoverTarget = null;
+      this._lastHoverXY = null;
+      this._pickSeq = (this._pickSeq || 0) + 1;
       this.tooltip.style.display = "none";
       if (hadHover) this.draw();
       return;
@@ -3487,6 +3497,8 @@ class ChartView {
       const hadHover = this._hoverId !== -1;
       this._hoverId = -1;
       this._hoverTarget = null;
+      this._lastHoverXY = null;
+      this._pickSeq = (this._pickSeq || 0) + 1;
       this.tooltip.style.display = "none";
       if (hadHover) this._drawKeepPick();
       return;

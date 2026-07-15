@@ -31,6 +31,7 @@ def test_chart_exposes_parallel_semantic_layer() -> None:
         'this.a11yLive.setAttribute("aria-live", "polite")',
         'this.tooltip.setAttribute("aria-hidden", "true")',
         "this.a11ySummary.textContent = this._a11ySummaryText()",
+        "document.getElementById(`${a11yId}-summary`)",
     )
     for label, text in CLIENTS:
         for snippet in required:
@@ -43,11 +44,26 @@ def test_keyboard_navigation_reuses_hover_and_tooltip_pipeline() -> None:
         "const hit = { trace: g.trace.id, index: offset, g }",
         "this._showTooltip(hit, clientX, clientY)",
         "this._drawKeepPick()",
-        "Point ${flat + 1} of ${total}.",
+        "Point ${prefix.flat + 1} of ${prefix.total}.",
+        "if (this._transitionActive()) return;",
+        'this.a11yLive.textContent = "Readout closed."',
+        'this._dispatchChartEvent("leave"',
     )
     for label, text in CLIENTS:
         for snippet in required:
             assert snippet in text, f"{label} keyboard path drifted from hover pipeline"
+
+
+def test_keyboard_exact_replies_preserve_position_and_stale_replies_are_ignored() -> None:
+    required = (
+        "options.announce !== false",
+        "announce: !this._a11yKeyboardReadout",
+        "msg.seq !== this._pickSeq",
+        "this._a11yKeyboardReadout = { flat, total }",
+    )
+    for label, text in CLIENTS:
+        for snippet in required:
+            assert snippet in text, f"{label} exact keyboard readout contract drifted"
 
 
 def test_toolbar_names_and_reports_toggle_state() -> None:
@@ -75,3 +91,5 @@ def test_cross_browser_probe_covers_all_engines_and_honest_metrics() -> None:
     assert "signatureMae" in probe
     assert "maxLayoutDelta" in probe
     assert "Browser text glyphs are" in probe
+    assert "s.pressed.length !== 1" in probe
+    assert 's.pressed.join() !== "Pan"' not in probe

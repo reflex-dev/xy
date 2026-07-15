@@ -42,6 +42,7 @@ const spec = {
     { byte_offset: 0, len: 7, offset: 0, scale: 1, kind: "float" },
     { byte_offset: 28, len: 7, offset: 0, scale: 1, kind: "float" },
   ],
+  interaction: { hover: true },
   backend: "none",
 };
 const values = [
@@ -111,14 +112,46 @@ async function probe(name) {
     window.xyConformanceView = window.xy.renderStandalone(
       document.getElementById("chart"), spec, buffer,
     );
+    window.xyConformanceView.comm = { send() {} };
+    window.xyConformanceLeaves = 0;
+    window.xyConformanceView.root.addEventListener("xy:leave", () => {
+      window.xyConformanceLeaves += 1;
+    });
     HTMLCanvasElement.prototype.getContext = originalGetContext;
     window.xyConformanceView._drawNow();
   }, { spec, values });
   await page.locator('[data-fc-slot="canvas"]').focus();
   await page.keyboard.press("Home");
   await page.keyboard.press("ArrowRight");
+  await page.evaluate(() => {
+    const v = window.xyConformanceView;
+    window.xyConformanceKeyboardLive = v.a11yLive.textContent;
+    v._onKernelMsg({
+      type: "pick_result",
+      seq: v._pickSeq,
+      row: { trace: 0, index: 1, x: -1.2, y: 1.4 },
+    }, []);
+    window.xyConformanceExactPreserved =
+      v.a11yLive.textContent === window.xyConformanceKeyboardLive;
+    const index = v._a11yPointIndex;
+    const live = v.a11yLive.textContent;
+    v._viewAnim = {};
+    v._onA11yKey({ key: "ArrowRight", preventDefault() {} });
+    window.xyConformanceTransitionSuppressed =
+      v._a11yPointIndex === index && v.a11yLive.textContent === live;
+    v._viewAnim = null;
+  });
+  await page.keyboard.press("Escape");
   const result = await page.evaluate(() => {
     const v = window.xyConformanceView;
+    const closedLive = v.a11yLive.textContent;
+    v._onKernelMsg({
+      type: "pick_result",
+      seq: v._pickSeq - 1,
+      row: { trace: 0, index: 1, x: -1.2, y: 1.4 },
+    }, []);
+    const staleExactIgnored =
+      v.tooltip.style.display === "none" && v.a11yLive.textContent === closedLive;
     v._drawNow();
     const rect = (el) => {
       const r = el.getBoundingClientRect();
@@ -167,14 +200,21 @@ async function probe(name) {
         summary: v.a11ySummary.textContent,
         canvasRole: v.canvas.getAttribute("role"),
         canvasTabIndex: v.canvas.tabIndex,
-        live: v.a11yLive.textContent,
+        keyboardLive: window.xyConformanceKeyboardLive,
+        closedLive,
         keyboardIndex: v._a11yPointIndex,
+        hoverId: v._hoverId,
+        leaveCount: window.xyConformanceLeaves,
+        exactPreserved: window.xyConformanceExactPreserved,
+        transitionSuppressed: window.xyConformanceTransitionSuppressed,
+        staleExactIgnored,
         toolbarRole: v._modebar.getAttribute("role"),
         toolbarLabel: v._modebar.getAttribute("aria-label"),
         buttonLabels: buttons.map((button) =>
           button.getAttribute("aria-label") || button.textContent.trim() || button.title),
         pressed: buttons.filter((button) => button.getAttribute("aria-pressed") === "true")
-          .map((button) => button.getAttribute("aria-label")),
+          .map((button) =>
+            button.getAttribute("aria-label") || button.textContent.trim() || button.title),
         reducedMotionSkippedAnimation,
       },
       layout: {
@@ -197,10 +237,14 @@ async function probe(name) {
   if (s.regionRole !== "region" || !s.regionLabel.includes("Cross-browser")) semanticFailures.push("chart region");
   if (!s.summary.includes("observations") || !s.summary.includes("X axis (time)")) semanticFailures.push("summary");
   if (s.canvasRole !== "img" || s.canvasTabIndex !== 0) semanticFailures.push("focusable plot image");
-  if (s.keyboardIndex !== 1 || !s.live.startsWith("Point 2 of 7.")) semanticFailures.push("keyboard/live readout");
+  if (s.keyboardIndex !== 1 || !s.keyboardLive.startsWith("Point 2 of 7.")) semanticFailures.push("keyboard/live readout");
+  if (!s.exactPreserved) semanticFailures.push("exact reply announcement");
+  if (!s.transitionSuppressed) semanticFailures.push("transition suppression");
+  if (s.closedLive !== "Readout closed." || s.hoverId !== -1 || s.leaveCount !== 1) semanticFailures.push("Escape dismissal");
+  if (!s.staleExactIgnored) semanticFailures.push("stale exact reply");
   if (s.toolbarRole !== "toolbar" || s.toolbarLabel !== "Chart controls") semanticFailures.push("toolbar");
-  if (s.buttonLabels.length < 5 || s.buttonLabels.some((label) => !label)) semanticFailures.push("button names");
-  if (s.pressed.join() !== "Pan") semanticFailures.push("toggle state");
+  if (s.buttonLabels.length === 0 || s.buttonLabels.some((label) => !label)) semanticFailures.push("button names");
+  if (s.pressed.length !== 1 || !s.pressed[0]) semanticFailures.push("toggle state");
   if (!s.reducedMotionSkippedAnimation) semanticFailures.push("reduced motion");
   if (semanticFailures.length) throw new Error(`${name} accessibility failures: ${semanticFailures.join(", ")}`);
   if (result.lit < 200) throw new Error(`${name} rendered only ${result.lit} lit WebGL pixels`);

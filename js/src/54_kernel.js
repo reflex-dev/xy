@@ -305,10 +305,16 @@ Object.assign(ChartView.prototype, {
     } else if (msg.type === "append") {
       this._applyAppend(msg, buffers);
     } else if (msg.type === "pick_result") {
+      if (msg.seq !== undefined && msg.seq !== this._pickSeq) return;
       if (!msg.row) { this.tooltip.style.display = "none"; return; }
       this._lastRow = msg.row;
       const xy = this._lastHoverXY;
-      if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY);
+      // Exact values replace the visible approximate tooltip. A keyboard
+      // readout already announced its position and approximate values, so do
+      // not clobber that prefix or produce a second announcement per keypress.
+      if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY, {
+        announce: !this._a11yKeyboardReadout,
+      });
       if (this._interactionFlag("hover")) {
         this._dispatchChartEvent("hover", {
           row: msg.row,

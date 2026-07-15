@@ -99,6 +99,9 @@ Object.assign(ChartView.prototype, {
       const hadHover = this._hoverId !== -1;
       this._hoverId = -1;
       this._hoverTarget = null;
+      this._lastHoverXY = null;
+      this._a11yKeyboardReadout = null;
+      this._pickSeq = (this._pickSeq || 0) + 1;
       this.tooltip.style.display = "none";
       this._hideCrosshair();
       if (this._interactionFlag("hover")) {
@@ -137,16 +140,34 @@ Object.assign(ChartView.prototype, {
       return;
     }
     if (e.key === "Escape") {
+      e.preventDefault();
+      const hadHover = this._hoverId !== -1;
       this.tooltip.style.display = "none";
       this._hoverId = -1;
       this._hoverTarget = null;
-      this._drawKeepPick();
+      this._lastHoverXY = null;
+      this._a11yKeyboardReadout = null;
+      // Invalidate an exact-value reply already in flight so dismissal cannot
+      // reopen the tooltip. Keep _a11yPointIndex: refocusing resumes at the
+      // dismissed point, and every later traversal clamps it to current data.
+      this._pickSeq = (this._pickSeq || 0) + 1;
+      if (this.a11yLive) this.a11yLive.textContent = "Readout closed.";
+      if (hadHover && this._interactionFlag("hover")) {
+        this._dispatchChartEvent("leave", { view: this._eventView("leave") });
+      }
+      if (hadHover) this._drawKeepPick();
       return;
     }
+    e.preventDefault();
+    // Match pointer hover: never expose a readout against an in-between view,
+    // density handoff, or animated tier frame.
+    if (this._transitionActive()) return;
     const groups = this._a11yPointGroups();
     const total = groups.reduce((sum, g) => sum + Math.min(g._cpu.x.length, g._cpu.y.length), 0);
     if (!total) return;
-    e.preventDefault();
+    // Traversal intentionally follows trace/series data order, not visual x
+    // order: sorting would change source-row identity and make streamed appends
+    // reorder the user's position under focus.
     let flat = Number.isInteger(this._a11yPointIndex) ? this._a11yPointIndex : -1;
     if (e.key === "Home") flat = 0;
     else if (e.key === "End") flat = total - 1;
@@ -161,7 +182,6 @@ Object.assign(ChartView.prototype, {
       offset -= n;
     }
     const hit = { trace: g.trace.id, index: offset, g };
-    const row = this._localRow(hit);
     // Use the encoded numeric coordinates for positioning; _localRow may have
     // already converted categorical coordinates into display strings.
     const xValue = this._decodeValue(g._cpu.x, g._cpu.xMeta || g.xMeta, offset);
@@ -174,12 +194,9 @@ Object.assign(ChartView.prototype, {
     this._hoverId = hit.trace * 1e9 + hit.index;
     this._hoverTarget = hit;
     this._lastHoverXY = { clientX, clientY };
+    this._a11yKeyboardReadout = { flat, total };
     this._showTooltip(hit, clientX, clientY);
     this._drawKeepPick();
-    if (this.a11yLive) {
-      const detail = this._tooltipLines(row).join(", ");
-      this.a11yLive.textContent = `Point ${flat + 1} of ${total}. ${detail}`;
-    }
   },
 
   _updateCrosshair(e) {
@@ -342,7 +359,9 @@ Object.assign(ChartView.prototype, {
       if (!bar.contains(document.activeElement)) bar.style.opacity = ".72";
     });
     this._listen(bar, "focusin", () => { bar.style.opacity = "1"; });
-    this._listen(bar, "focusout", () => { bar.style.opacity = ".72"; });
+    this._listen(bar, "focusout", (e) => {
+      if (!bar.contains(e.relatedTarget) && !root.matches(":hover")) bar.style.opacity = ".72";
+    });
     this._modebar = bar;
     this._modeBtns = {};
 

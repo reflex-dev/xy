@@ -2316,7 +2316,12 @@ this._applySlot(root, "root");
 el.appendChild(root);
 this.root = root;
 ensureChromeStylesheet(root);
-const a11yId = `xy-a11y-${++FC_A11Y_ID}`;
+let a11yId;
+do {
+a11yId = `xy-a11y-${++FC_A11Y_ID}`;
+} while (
+document.getElementById(`${a11yId}-summary`) || document.getElementById(`${a11yId}-live`)
+);
 root.setAttribute("role", "region");
 root.setAttribute("aria-label", s.title ? `Chart: ${s.title}` : "Interactive chart");
 this.a11ySummary = document.createElement("div");
@@ -2388,7 +2393,7 @@ _initA11y() {
 if (!this.a11ySummary || !this.canvas) return;
 this.a11ySummary.textContent = this._a11ySummaryText();
 const instruction = this._pickable
-? " Use Left and Right Arrow keys to explore data points; Home and End jump to the first and last point."
+? " Use Arrow keys to explore data points in series data order; Home and End jump to the first and last point; Escape closes the readout."
 : "";
 this.canvas.setAttribute("aria-label", `Plot area.${instruction}`);
 }
@@ -4640,10 +4645,13 @@ _drawKeepPick() {
 this.draw(true);
 }
 _hover(e) {
+this._a11yKeyboardReadout = null;
 if (this._transitionActive()) {
 const hadHover = this._hoverId !== -1;
 this._hoverId = -1;
 this._hoverTarget = null;
+this._lastHoverXY = null;
+this._pickSeq = (this._pickSeq || 0) + 1;
 this.tooltip.style.display = "none";
 if (hadHover) this.draw();
 return;
@@ -4656,6 +4664,8 @@ if (!hit) {
 const hadHover = this._hoverId !== -1;
 this._hoverId = -1;
 this._hoverTarget = null;
+this._lastHoverXY = null;
+this._pickSeq = (this._pickSeq || 0) + 1;
 this.tooltip.style.display = "none";
 if (hadHover) this._drawKeepPick();
 return;
@@ -5438,7 +5448,7 @@ lines.push(`${field}: ${this._formatTooltipValue(value, kind, formats[field])}`)
 }
 return lines.length ? lines : this._defaultTooltipLines(row);
 },
-_renderTooltip(row, clientX, clientY) {
+_renderTooltip(row, clientX, clientY, options = {}) {
 if (!row || this.spec.show_tooltip === false) {
 this.tooltip.style.display = "none";
 return;
@@ -5452,8 +5462,12 @@ lines.forEach((ln, i) => {
 if (i) this.tooltip.appendChild(document.createElement("br"));
 this.tooltip.appendChild(document.createTextNode(ln));
 });
-if (this.a11yLive) {
-const announcement = lines.join(", ");
+if (this.a11yLive && options.announce !== false) {
+const prefix = this._a11yKeyboardReadout;
+const detail = lines.join(", ");
+const announcement = prefix
+? `Point ${prefix.flat + 1} of ${prefix.total}. ${detail}`
+: detail;
 if (this.a11yLive.textContent !== announcement) this.a11yLive.textContent = announcement;
 }
 this.tooltip.style.display = "block";
@@ -5550,6 +5564,9 @@ this._listen(c, "pointerleave", () => {
 const hadHover = this._hoverId !== -1;
 this._hoverId = -1;
 this._hoverTarget = null;
+this._lastHoverXY = null;
+this._a11yKeyboardReadout = null;
+this._pickSeq = (this._pickSeq || 0) + 1;
 this.tooltip.style.display = "none";
 this._hideCrosshair();
 if (this._interactionFlag("hover")) {
@@ -5583,16 +5600,26 @@ if (direction === undefined && e.key !== "Home" && e.key !== "End" && e.key !== 
 return;
 }
 if (e.key === "Escape") {
+e.preventDefault();
+const hadHover = this._hoverId !== -1;
 this.tooltip.style.display = "none";
 this._hoverId = -1;
 this._hoverTarget = null;
-this._drawKeepPick();
+this._lastHoverXY = null;
+this._a11yKeyboardReadout = null;
+this._pickSeq = (this._pickSeq || 0) + 1;
+if (this.a11yLive) this.a11yLive.textContent = "Readout closed.";
+if (hadHover && this._interactionFlag("hover")) {
+this._dispatchChartEvent("leave", { view: this._eventView("leave") });
+}
+if (hadHover) this._drawKeepPick();
 return;
 }
+e.preventDefault();
+if (this._transitionActive()) return;
 const groups = this._a11yPointGroups();
 const total = groups.reduce((sum, g) => sum + Math.min(g._cpu.x.length, g._cpu.y.length), 0);
 if (!total) return;
-e.preventDefault();
 let flat = Number.isInteger(this._a11yPointIndex) ? this._a11yPointIndex : -1;
 if (e.key === "Home") flat = 0;
 else if (e.key === "End") flat = total - 1;
@@ -5607,7 +5634,6 @@ if (offset < n) { g = candidate; break; }
 offset -= n;
 }
 const hit = { trace: g.trace.id, index: offset, g };
-const row = this._localRow(hit);
 const xValue = this._decodeValue(g._cpu.x, g._cpu.xMeta || g.xMeta, offset);
 const yValue = this._decodeValue(g._cpu.y, g._cpu.yMeta || g.yMeta, offset);
 const x = this._dataPx(g.xAxis || "x", xValue) - this.plot.x;
@@ -5618,12 +5644,9 @@ const clientY = rect.top + Math.max(0, Math.min(rect.height, y));
 this._hoverId = hit.trace * 1e9 + hit.index;
 this._hoverTarget = hit;
 this._lastHoverXY = { clientX, clientY };
+this._a11yKeyboardReadout = { flat, total };
 this._showTooltip(hit, clientX, clientY);
 this._drawKeepPick();
-if (this.a11yLive) {
-const detail = this._tooltipLines(row).join(", ");
-this.a11yLive.textContent = `Point ${flat + 1} of ${total}. ${detail}`;
-}
 },
 _updateCrosshair(e) {
 if (!this.crosshairX || !this.crosshairY) return;
@@ -5766,7 +5789,9 @@ this._listen(root, "pointerleave", () => {
 if (!bar.contains(document.activeElement)) bar.style.opacity = ".72";
 });
 this._listen(bar, "focusin", () => { bar.style.opacity = "1"; });
-this._listen(bar, "focusout", () => { bar.style.opacity = ".72"; });
+this._listen(bar, "focusout", (e) => {
+if (!bar.contains(e.relatedTarget) && !root.matches(":hover")) bar.style.opacity = ".72";
+});
 this._modebar = bar;
 this._modeBtns = {};
 const mk = (name, title, onClick, toggles) => {
@@ -6247,10 +6272,13 @@ this.draw();
 } else if (msg.type === "append") {
 this._applyAppend(msg, buffers);
 } else if (msg.type === "pick_result") {
+if (msg.seq !== undefined && msg.seq !== this._pickSeq) return;
 if (!msg.row) { this.tooltip.style.display = "none"; return; }
 this._lastRow = msg.row;
 const xy = this._lastHoverXY;
-if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY);
+if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY, {
+announce: !this._a11yKeyboardReadout,
+});
 if (this._interactionFlag("hover")) {
 this._dispatchChartEvent("hover", {
 row: msg.row,

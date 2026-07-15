@@ -291,6 +291,26 @@ def test_ci_workflow_rejects_missing_cross_browser_conformance(tmp_path: Path) -
     assert any("browser_conformance" in error and "conformance gate" in error for error in errors)
 
 
+def test_ci_workflow_rejects_missing_playwright_browser_cache(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(
+            "      - name: Cache Playwright browsers\n"
+            "        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3\n"
+            "        with:\n"
+            "          path: ~/.cache/ms-playwright\n"
+            "          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("browser_conformance" in error and "actions/cache" in error for error in errors)
+
+
 def test_ci_workflow_rejects_missing_regression_gate(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
