@@ -215,7 +215,13 @@ jobs:
       - name: Verify committed JS bundles are fresh
         run: node js/build.mjs --check
       - name: Run accessibility and cross-browser conformance
-        run: node scripts/browser_conformance.mjs
+        # Headless Firefox on GitHub's Linux runners exposes no WebGL2. Use the
+        # virtual display installed by Playwright so every engine still runs
+        # the real WebGL rendering and perceptual assertions.
+        env:
+          MOZ_WEBRENDER: "1"
+          XY_CONFORMANCE_HEADFUL: "1"
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node scripts/browser_conformance.mjs
 
   python_floor:
     name: Python 3.11 floor

@@ -13,6 +13,7 @@ import { chromium, firefox, webkit } from "playwright";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BUNDLE = join(ROOT, "python", "xy", "static", "standalone.js");
 const ENGINES = { chromium, firefox, webkit };
+const headless = process.env.XY_CONFORMANCE_HEADFUL !== "1";
 const selected = process.argv.find((arg) => arg.startsWith("--browsers="))?.split("=", 2)[1]
   ?.split(",").filter(Boolean) || Object.keys(ENGINES);
 for (const name of selected) {
@@ -80,7 +81,16 @@ function signatureMae(base, candidate) {
 async function probe(name) {
   let browser;
   try {
-    browser = await ENGINES[name].launch({ headless: true });
+    const launchOptions = { headless };
+    if (name === "firefox") {
+      // Firefox's Linux software-rendering blocklist can otherwise disable
+      // WebGL in virtual displays even when Mesa is available.
+      launchOptions.firefoxUserPrefs = {
+        "webgl.disabled": false,
+        "webgl.force-enabled": true,
+      };
+    }
+    browser = await ENGINES[name].launch(launchOptions);
   } catch (error) {
     throw new Error(`${name} could not launch; run npx playwright install chromium firefox webkit\n${error}`);
   }
@@ -96,6 +106,18 @@ async function probe(name) {
     if (message.type() === "error") errors.push(message.text());
   });
   await page.setContent("<!doctype html><meta charset=utf-8><body><div id=chart></div></body>");
+  const hasWebGl2 = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    const gl = canvas.getContext("webgl2");
+    gl?.getExtension("WEBGL_lose_context")?.loseContext();
+    return Boolean(gl);
+  });
+  if (!hasWebGl2) {
+    await context.close();
+    await browser.close();
+    const mode = headless ? "headless" : "headful";
+    throw new Error(`${name}: WebGL2 unavailable in ${mode} mode`);
+  }
   await page.addScriptTag({ path: BUNDLE });
   await page.evaluate(({ spec, values }) => {
     // The shipped client correctly uses the faster discardable default

@@ -282,7 +282,11 @@ def test_ci_workflow_rejects_missing_cross_browser_conformance(tmp_path: Path) -
     text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
     path.write_text(
-        text.replace("        run: node scripts/browser_conformance.mjs\n", ""),
+        text.replace(
+            '        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" '
+            "node scripts/browser_conformance.mjs\n",
+            "",
+        ),
         encoding="utf-8",
     )
 
