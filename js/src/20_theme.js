@@ -87,9 +87,9 @@ const FC_CHROME_CSS = `
 :where(.xy [data-fc-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
 :where(.xy [data-fc-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
 :where(.xy [data-fc-slot="modebar_button"]){width:24px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-text,currentColor);cursor:pointer}
-:where(.xy [data-fc-modebar-drag-handle]){position:relative;width:22px;margin-right:2px;cursor:move}
-:where(.xy [data-fc-modebar-drag-handle])::after{content:"";position:absolute;top:4px;right:-1px;bottom:4px;width:1px;background:rgba(128,128,128,.28);pointer-events:none}
-:where(.xy [data-fc-modebar-menu-trigger]){width:auto;min-width:52px;gap:1px;padding:0 4px;font-size:11px;font-variant-numeric:tabular-nums}
+:where(.xy [data-fc-modebar-drag-handle]){position:relative;width:22px;margin-right:4px;cursor:move}
+:where(.xy [data-fc-modebar-drag-handle])::after{content:"";position:absolute;top:4px;right:-3px;bottom:4px;width:1px;background:rgba(128,128,128,.28);pointer-events:none}
+:where(.xy [data-fc-modebar-menu-trigger]){width:auto;min-width:48px;gap:1px;padding:0 4px;font-size:11px;font-variant-numeric:tabular-nums}
 :where(.xy [data-fc-modebar-select-trigger]){width:auto;min-width:30px;gap:0;padding:0 2px}
 :where(.xy [data-fc-modebar-menu-indicator]){display:flex;transition:transform .15s}
 :where(.xy [data-fc-modebar-menu-indicator] svg){width:11px;height:11px}
