@@ -1,4 +1,4 @@
-"""Reusable components for the xy documentation shell."""
+"""XY documentation shell ported from the Reflex Docs component structure."""
 
 from __future__ import annotations
 
@@ -16,40 +16,40 @@ from .navigation import (
 )
 
 GITHUB_URL = "https://github.com/reflex-dev/xy"
-SEARCH_SCRIPT = """
-if (!window.xyDocsSearchBound) {
-  window.xyDocsSearchBound = true;
-  document.addEventListener('input', (event) => {
-    if (!event.target.matches('[data-doc-search-input]')) return;
-    const query = event.target.value.toLowerCase().trim();
-    const results = document.querySelectorAll('[data-doc-search]');
-    let visible = 0;
-    results.forEach((result) => {
-      const matches = !query || result.dataset.docSearch.includes(query);
-      result.hidden = !matches;
-      if (matches) visible += 1;
-    });
-    const empty = document.querySelector('[data-search-empty]');
-    if (empty) empty.hidden = visible !== 0;
-  });
+
+SCROLLABLE_SIDEBAR = """
+function scrollToActiveSidebarLink() {
+  const sidebarContainer = document.getElementById('sidebar-container');
+  if (!sidebarContainer) return;
+  const currentPath = window.location.pathname.replace(/\\/+$/, '') + '/';
+  const activeLink =
+    sidebarContainer.querySelector(`a[href="${currentPath}"]`) ||
+    sidebarContainer.querySelector(`a[href="${currentPath.slice(0, -1)}"]`);
+  if (!activeLink) return;
+  const scrollableParent =
+    activeLink.closest('[class*="overflow-y-scroll"]') || sidebarContainer;
+  const linkRect = activeLink.getBoundingClientRect();
+  const containerRect = scrollableParent.getBoundingClientRect();
+  const scrollTop =
+    scrollableParent.scrollTop +
+    (linkRect.top - containerRect.top) -
+    containerRect.height / 2 +
+    linkRect.height / 2;
+  scrollableParent.scrollTo({top: scrollTop, behavior: 'instant'});
 }
+setTimeout(scrollToActiveSidebarLink, 100);
+window.addEventListener('popstate', () => setTimeout(scrollToActiveSidebarLink, 100));
+document.addEventListener('click', (event) => {
+  const link = event.target.closest('#sidebar-container a[href]');
+  if (link && !link.getAttribute('href')?.startsWith('http')) {
+    setTimeout(scrollToActiveSidebarLink, 200);
+  }
+});
 """
 
 
-def icon_button(icon: str, label: str, **props) -> rx.Component:
-    """Render a consistently styled icon-only button."""
-    class_name = props.pop("class_name", "icon-button")
-    return rx.el.button(
-        rx.icon(icon, size=18),
-        type="button",
-        aria_label=label,
-        class_name=class_name,
-        **props,
-    )
-
-
-def github_icon(size: int = 18) -> rx.Component:
-    """Render the GitHub mark without relying on a removed Lucide brand icon."""
+def github_icon(size: int = 16) -> rx.Component:
+    """Render the GitHub mark."""
     return rx.el.svg(
         rx.el.path(
             d=(
@@ -72,133 +72,345 @@ def github_icon(size: int = 18) -> rx.Component:
     )
 
 
-def wordmark() -> rx.Component:
-    """Render the xy Docs wordmark."""
+def announcement_banner() -> rx.Component:
+    """Use the same fixed announcement-bar geometry as Reflex Docs."""
+    return rx.el.div(
+        rx.el.div(
+            rx.el.a(
+                rx.el.div(
+                    rx.el.img(
+                        src=("https://web.reflex-assets.dev/common/light/squares_banner.svg"),
+                        alt="",
+                        class_name=("pointer-events-none absolute -left-[16rem] max-lg:hidden"),
+                    ),
+                    rx.el.div(
+                        rx.el.span(
+                            "New",
+                            class_name=(
+                                "items-center font-[525] px-2.5 h-7 rounded-lg "
+                                "text-sm text-white z-[1] max-lg:hidden lg:inline-flex "
+                                "border border-white/16"
+                            ),
+                        ),
+                        rx.el.span(
+                            "XY documentation is now built with Reflex",
+                            class_name=("text-white font-[525] text-sm text-nowrap inline-block"),
+                        ),
+                        rx.el.span(
+                            class_name=(
+                                "w-px h-7 bg-gradient-to-b from-transparent "
+                                "via-white/24 to-transparent max-lg:hidden"
+                            ),
+                        ),
+                        rx.el.span(
+                            "View source",
+                            rx.icon("arrow-right", size=15),
+                            class_name=(
+                                "max-lg:hidden text-white hover:text-primary-10 "
+                                "flex items-center gap-1 text-sm font-[525]"
+                            ),
+                        ),
+                        class_name="flex flex-row items-center md:gap-4 gap-2",
+                    ),
+                    rx.el.img(
+                        src=("https://web.reflex-assets.dev/common/light/squares_banner.svg"),
+                        alt="",
+                        class_name=("pointer-events-none absolute -right-[16rem] max-lg:hidden"),
+                    ),
+                    class_name="flex flex-row items-center relative",
+                ),
+                href=GITHUB_URL,
+                target="_blank",
+                rel="noopener noreferrer",
+                class_name=("flex justify-start md:justify-center md:col-start-2 max-w-[73rem]"),
+            ),
+            rx.el.button(
+                rx.icon("x", size=16),
+                aria_label="Close banner",
+                type="button",
+                class_name=(
+                    "cursor-pointer hover:text-white/80 transition-colors text-white "
+                    "z-10 size-10 flex items-center justify-center shrink-0 "
+                    "md:col-start-3 justify-self-end ml-auto"
+                ),
+            ),
+            class_name=(
+                "px-5 lg:px-0 w-screen min-h-[2rem] lg:h-10 flex md:grid "
+                "md:grid-cols-[1fr_auto_1fr] items-center bg-secondary-12 "
+                "dark:bg-[#6550B9] gap-4 overflow-hidden relative lg:py-0 py-2 "
+                "max-w-full group"
+            ),
+        ),
+    )
+
+
+def logo() -> rx.Component:
+    """Render an XY-specific wordmark inside the Reflex navbar slot."""
     return rx.el.a(
         rx.el.span(
-            rx.el.span("x", class_name="wordmark-x"),
-            rx.el.span("y", class_name="wordmark-y"),
-            class_name="wordmark-symbol",
+            "XY",
+            class_name=(
+                "font-mono text-[1.25rem] leading-none font-bold tracking-[-0.08em] "
+                "text-secondary-12"
+            ),
         ),
-        rx.el.span(class_name="wordmark-rule"),
-        rx.el.span("Docs", class_name="wordmark-docs"),
+        rx.el.span(
+            "DOCS",
+            class_name=(
+                "font-mono text-[1.05rem] leading-none font-bold tracking-[-0.04em] text-primary-10"
+            ),
+        ),
         href="/",
-        class_name="wordmark",
-        aria_label="xy documentation home",
+        class_name=("flex flex-row gap-2.5 items-center shrink-0 mr-10 no-underline w-36"),
+        aria_label="XY documentation home",
     )
 
 
 def search_dialog() -> rx.Component:
-    """Render the searchable documentation command dialog."""
+    """Render documentation search in the same navbar position as Reflex Docs."""
 
     def result(page: DocPage) -> rx.Component:
         return rx.dialog.close(
             rx.el.a(
-                rx.el.span(page.title, class_name="search-result-title"),
-                rx.el.span(page.description, class_name="search-result-description"),
+                rx.el.span(page.title, class_name="text-sm font-[525] text-secondary-12"),
+                rx.el.span(
+                    page.description,
+                    class_name="text-xs text-secondary-10 line-clamp-1",
+                ),
                 href=page.route,
-                class_name="search-result",
-                custom_attrs={"data-doc-search": f"{page.title} {page.description}".casefold()},
+                class_name=(
+                    "flex flex-col gap-0.5 rounded-md px-3 py-2 no-underline hover:bg-secondary-3"
+                ),
             )
         )
 
-    return rx.fragment(
-        rx.script(SEARCH_SCRIPT),
-        rx.dialog.root(
-            rx.dialog.trigger(
-                rx.el.button(
-                    rx.icon("search", size=16),
-                    rx.el.span("Search docs", class_name="search-label"),
-                    rx.el.kbd("⌘ K"),
-                    type="button",
-                    class_name="search-trigger",
-                )
-            ),
-            rx.dialog.content(
-                rx.dialog.title("Search xy docs", class_name="search-title"),
-                rx.el.div(
-                    rx.icon("search", size=18),
-                    rx.el.input(
-                        placeholder="Search guides, APIs, and architecture…",
-                        auto_focus=True,
-                        class_name="search-input",
-                        custom_attrs={"data-doc-search-input": ""},
-                    ),
-                    class_name="search-input-wrap",
+    return rx.dialog.root(
+        rx.dialog.trigger(
+            rx.el.button(
+                rx.icon("search", size=17),
+                type="button",
+                aria_label="Search documentation",
+                class_name=(
+                    "size-9 flex items-center justify-center rounded-lg border border-secondary-5 "
+                    "bg-secondary-1 text-secondary-11 shadow-small hover:bg-secondary-3 "
+                    "hover:text-secondary-12 transition-colors cursor-pointer"
                 ),
-                rx.el.div(
-                    *[result(page) for page in PAGES],
-                    rx.el.p(
-                        "No documentation matched that search.",
-                        class_name="search-empty",
-                        hidden=True,
-                        custom_attrs={"data-search-empty": ""},
+            )
+        ),
+        rx.dialog.content(
+            rx.el.div(
+                rx.icon("search", size=18),
+                rx.el.input(
+                    placeholder="Search XY docs",
+                    class_name=(
+                        "w-full bg-transparent outline-none text-sm text-secondary-12 "
+                        "placeholder:text-secondary-9"
                     ),
-                    class_name="search-results",
                 ),
-                rx.dialog.close(icon_button("x", "Close search", class_name="dialog-close")),
-                class_name="search-dialog",
+                class_name=("flex items-center gap-2 border-b border-secondary-4 px-4 py-3"),
             ),
+            rx.el.div(
+                *[result(page) for page in PAGES],
+                class_name="flex max-h-[60vh] flex-col gap-1 overflow-y-auto p-2",
+            ),
+            class_name=(
+                "p-0 overflow-hidden border border-secondary-5 bg-secondary-1 "
+                "rounded-xl shadow-xl max-w-[36rem]"
+            ),
+        ),
+    )
+
+
+def navbar_link(label: str, href: str, active: bool) -> rx.Component:
+    """Render one Reflex navbar menu item."""
+    active_class = (
+        "shadow-[inset_0_-1px_0_0_var(--primary-10)] text-primary-10"
+        if active
+        else "text-secondary-12"
+    )
+    return rx.el.a(
+        label,
+        href=href,
+        class_name=(
+            "md:flex hidden h-full items-center justify-center px-3 text-sm font-[525] "
+            f"no-underline hover:text-primary-10 transition-colors {active_class}"
         ),
     )
 
 
 def navbar(page: DocPage) -> rx.Component:
-    """Render the fixed top navigation."""
-    api_active = page.source == "api-examples.md"
-    benchmark_active = page.source in {"benchmark.md", "benchmark_metrics.md"}
-    docs_active = not api_active and not benchmark_active
-    return rx.el.header(
-        rx.el.div(
-            wordmark(),
-            rx.el.nav(
-                rx.el.a(
-                    "Documentation",
-                    href="/",
-                    class_name="top-nav-link active" if docs_active else "top-nav-link",
-                ),
-                rx.el.a(
-                    "API examples",
-                    href="/api-examples/",
-                    class_name="top-nav-link active" if api_active else "top-nav-link",
-                ),
-                rx.el.a(
-                    "Benchmarks",
-                    href="/benchmark/",
-                    class_name="top-nav-link active" if benchmark_active else "top-nav-link",
-                ),
-                class_name="top-nav-links",
-                aria_label="Primary navigation",
-            ),
+    """Port the Reflex Docs fixed navbar, substituting XY routes and branding."""
+    area = area_for_page(page)
+    return rx.el.div(
+        announcement_banner(),
+        rx.el.header(
             rx.el.div(
-                search_dialog(),
-                rx.el.a(
-                    github_icon(19),
-                    rx.el.span("GitHub", class_name="github-label"),
-                    href=GITHUB_URL,
-                    target="_blank",
-                    rel="noopener noreferrer",
-                    aria_label="View xy on GitHub",
-                    class_name="github-link",
+                logo(),
+                rx.el.nav(
+                    rx.el.div(
+                        navbar_link("Overview", "/", page.route == "/"),
+                        navbar_link("Guides", "/styling/", area.title == "Learn"),
+                        navbar_link(
+                            "Architecture",
+                            "/design-dossier/",
+                            area.title == "Architecture",
+                        ),
+                        navbar_link(
+                            "Benchmarks",
+                            "/benchmark/",
+                            area.title == "Performance",
+                        ),
+                        class_name="flex flex-row items-center gap-2 m-0 h-full",
+                    ),
+                    rx.el.div(
+                        rx.el.a(
+                            github_icon(),
+                            "XY",
+                            href=GITHUB_URL,
+                            target="_blank",
+                            rel="noopener noreferrer",
+                            class_name=(
+                                "md:flex hidden items-center justify-center gap-2 h-9 "
+                                "w-[66px] rounded-lg "
+                                "text-sm font-[525] text-secondary-12 no-underline "
+                                "hover:bg-secondary-3"
+                            ),
+                        ),
+                        search_dialog(),
+                        rx.el.a(
+                            "Get Started",
+                            href="/",
+                            class_name=(
+                                "xl:flex hidden h-9 w-[102px] items-center justify-center "
+                                "rounded-lg bg-primary-9 text-sm font-[525] text-white "
+                                "no-underline hover:bg-primary-10 transition-colors"
+                            ),
+                        ),
+                        rx.el.div(mobile_navigation(page), class_name="lg:hidden flex"),
+                        class_name="flex flex-row lg:gap-4 gap-2 h-full items-center",
+                    ),
+                    class_name=(
+                        "relative flex w-full items-center h-full justify-between gap-6 "
+                        "mx-auto flex-row"
+                    ),
+                    aria_label="Primary navigation",
                 ),
-                rx.color_mode.button(class_name="color-mode-button"),
-                rx.el.div(mobile_navigation(page), class_name="mobile-nav"),
-                class_name="navbar-actions",
+                class_name=(
+                    "relative flex w-full items-center h-full justify-between gap-6 "
+                    "mx-auto flex-row max-w-[108rem]"
+                ),
             ),
-            class_name="navbar-inner",
+            class_name=(
+                "w-full max-full h-[4.5rem] mx-auto flex flex-row items-center "
+                "3xl:px-16 px-6 backdrop-blur-[16px] "
+                "shadow-[0_-2px_2px_1px_rgba(0,0,0,0.02),0_1px_1px_0_rgba(0,0,0,0.08),"
+                "0_4px_8px_0_rgba(0,0,0,0.03),0_0_0_1px_#FFF_inset] dark:shadow-none "
+                "dark:border-b dark:border-secondary-4 bg-gradient-to-b "
+                "from-secondary-2 to-secondary-1"
+            ),
         ),
-        class_name="navbar",
+        class_name="flex flex-col w-full top-0 z-[9999] fixed self-center",
     )
 
 
-def sidebar_link(page: DocPage, current_page: DocPage, *, close: bool = False) -> rx.Component:
-    """Render one left-navigation link."""
+def sidebar_leaf(page: DocPage, current_page: DocPage, *, mobile: bool) -> rx.Component:
+    """Port the active and inactive Reflex Docs leaf markup."""
+    active = page == current_page
     link = rx.el.a(
-        page.title,
+        (
+            rx.el.div(
+                class_name=(
+                    "absolute left-0 top-1/2 -translate-y-1/2 w-full h-8 rounded-lg "
+                    "bg-secondary-3 z-[-1]"
+                )
+            )
+            if active
+            else rx.fragment()
+        ),
+        rx.el.div(
+            (
+                rx.el.div(
+                    class_name=(
+                        "absolute left-0 -top-1 -bottom-1 w-px bg-primary-10 pointer-events-none"
+                    )
+                )
+                if active
+                else rx.fragment()
+            ),
+            rx.el.p(
+                page.title,
+                class_name=(
+                    "m-0 text-sm text-primary-10 font-[525] transition-color pl-4"
+                    if active
+                    else (
+                        "m-0 text-sm text-secondary-11 hover:text-secondary-12 "
+                        "transition-color w-full font-[525]"
+                    )
+                ),
+            ),
+            class_name=(
+                "relative ml-[3rem] max-w-[14rem] h-8 flex items-center"
+                if active
+                else "relative pl-4 h-8 flex items-center"
+            ),
+        ),
         href=page.route,
-        class_name="sidebar-link active" if page == current_page else "sidebar-link",
+        class_name=("block w-full relative" if active else "block w-full ml-[3rem] no-underline"),
     )
-    return rx.drawer.close(link) if close else link
+    return rx.drawer.close(link) if mobile else link
+
+
+def sidebar_group(
+    section: NavSection,
+    current_page: DocPage,
+    *,
+    mobile: bool,
+) -> rx.Component:
+    """Render a collapsible Reflex Docs sidebar group."""
+    is_open = current_page in section.pages
+    return rx.el.li(
+        rx.el.details(
+            rx.el.summary(
+                rx.icon(section.icon, size=16, class_name="mr-4"),
+                rx.el.p(section.title, class_name="m-0 text-sm font-[525]"),
+                rx.el.span(class_name="flex-grow"),
+                rx.icon(
+                    "chevron-down",
+                    size=16,
+                    class_name=("size-4 group-open/details:rotate-180 transition-transform"),
+                ),
+                class_name=(
+                    "!px-0 m-0 flex items-center justify-start !ml-[2.5rem] "
+                    "!bg-transparent !py-1 !pr-0 w-[calc(100%-2.5rem)] "
+                    "!text-secondary-11 hover:!text-secondary-12 transition-color "
+                    "group xl:max-w-[14rem] cursor-pointer list-none "
+                    "[&::-webkit-details-marker]:hidden [&::marker]:hidden"
+                ),
+            ),
+            rx.el.ul(
+                rx.el.li(
+                    class_name=(
+                        "m-0 p-0 absolute left-[3rem] top-0 bottom-0 w-px "
+                        "bg-secondary-4 z-[-1] pointer-events-none !rounded-none list-none"
+                    )
+                ),
+                *[
+                    rx.el.li(
+                        sidebar_leaf(page, current_page, mobile=mobile),
+                        class_name=("m-0 p-0 !overflow-visible w-full relative list-none"),
+                    )
+                    for page in section.pages
+                ],
+                class_name=(
+                    "!my-1 p-0 flex flex-col items-start gap-1 list-none "
+                    "!bg-transparent !rounded-none !shadow-none relative"
+                ),
+            ),
+            open=is_open,
+            class_name="group/details m-0 p-0 w-full !bg-transparent border-none",
+        ),
+        class_name="m-0 p-0 border-none w-full !bg-transparent list-none",
+    )
 
 
 SECTION_EYEBROWS = {
@@ -216,93 +428,136 @@ def sidebar_section(
     *,
     mobile: bool,
 ) -> rx.Component:
-    """Render one Reflex-style collapsible sidebar section."""
-    is_open = current_page in section.pages
+    """Render the uppercase section title and its groups."""
     return rx.el.li(
         rx.el.a(
-            SECTION_EYEBROWS[section.title],
+            rx.el.h2(
+                SECTION_EYEBROWS[section.title],
+                class_name=(
+                    "m-0 font-mono text-secondary-12 hover:text-primary-10 "
+                    "dark:hover:text-primary-9 uppercase text-[0.8125rem] "
+                    "leading-6 font-medium"
+                ),
+            ),
             href=section.pages[0].route,
-            class_name="sidebar-section-title",
+            class_name=("h-8 mb-2 flex items-center justify-start ml-[2.5rem] no-underline"),
         ),
-        rx.el.details(
-            rx.el.summary(
-                rx.icon(section.icon, size=16),
-                rx.el.span(section.title),
-                rx.el.span(class_name="sidebar-summary-spacer"),
-                rx.icon("chevron-down", size=15, class_name="sidebar-chevron"),
-                class_name="sidebar-summary",
+        rx.el.ul(
+            sidebar_group(section, current_page, mobile=mobile),
+            class_name=(
+                "m-0 ml-0 p-0 pl-0 w-full !bg-transparent !shadow-none "
+                "rounded-[0px] flex flex-col list-none gap-0 relative"
             ),
-            rx.el.ul(
-                rx.el.li(class_name="sidebar-guide"),
-                *[
-                    rx.el.li(
-                        sidebar_link(page, current_page, close=mobile),
-                        class_name="sidebar-leaf",
+        ),
+        class_name="m-0 p-0 flex flex-col items-start ml-0 w-full list-none",
+    )
+
+
+def sidebar_category(area, current_page: DocPage) -> rx.Component:
+    """Render a top-level category entry using Reflex Docs markup."""
+    active = area == area_for_page(current_page)
+    return rx.el.li(
+        rx.el.a(
+            (
+                rx.el.div(
+                    class_name=(
+                        "absolute left-0 top-1/2 -translate-y-1/2 w-full h-8 "
+                        "rounded-lg bg-secondary-3 z-[-1]"
                     )
-                    for page in section.pages
-                ],
-                class_name="sidebar-children",
+                )
+                if active
+                else rx.fragment()
             ),
-            open=is_open,
-            class_name="sidebar-details",
+            rx.el.div(
+                rx.icon(area.icon, size=16),
+                rx.el.h3(area.title, class_name="m-0 w-full font-[525]"),
+                class_name=(
+                    "cursor-pointer flex flex-row justify-start items-center gap-2.5 "
+                    "ml-[3rem] text-sm h-8 "
+                    + (
+                        "text-primary-10 hover:text-primary-10"
+                        if active
+                        else "text-secondary-11 hover:text-secondary-12"
+                    )
+                ),
+            ),
+            href=area.sections[0].pages[0].route,
+            class_name="block w-full relative no-underline",
+            aria_label=f"Navigate to {area.title}",
         ),
-        class_name="sidebar-group",
+        class_name="m-0 p-0 w-full relative list-none",
     )
 
 
 def sidebar(current_page: DocPage, *, mobile: bool = False) -> rx.Component:
-    """Render the same two-tier sidebar structure used by Reflex Docs."""
+    """Render the Reflex Docs sidebar structure with XY navigation data."""
     current_area = area_for_page(current_page)
-    return rx.el.nav(
+    content = rx.el.div(
         rx.el.ul(
-            *[
-                rx.el.li(
-                    rx.el.a(
-                        rx.icon(area.icon, size=16),
-                        rx.el.h3(area.title),
-                        href=area.sections[0].pages[0].route,
-                        class_name=(
-                            "sidebar-area active" if area == current_area else "sidebar-area"
-                        ),
-                        aria_label=f"Navigate to {area.title}",
-                    ),
-                    class_name="sidebar-area-item",
-                )
-                for area in AREAS
-            ],
-            class_name="sidebar-areas",
+            *[sidebar_category(area, current_page) for area in AREAS],
+            class_name="flex flex-col items-start gap-2 w-full list-none m-0 p-0",
         ),
         rx.el.ul(
             *[
                 sidebar_section(section, current_page, mobile=mobile)
                 for section in current_area.sections
             ],
-            class_name="sidebar-groups",
+            class_name=("m-0 p-0 flex flex-col items-start gap-8 w-full list-none list-style-none"),
         ),
+        class_name=(
+            "flex flex-col pb-24 gap-8 items-start h-full pt-8 pr-4 scroll-p-4 "
+            "overflow-y-scroll overflow-x-hidden hidden-scrollbar w-full 3xl:pl-0 pl-6"
+        ),
+    )
+    return rx.el.nav(
+        content,
+        on_mount=rx.call_script(SCROLLABLE_SIDEBAR),
+        id="sidebar-container",
+        class_name="flex justify-end w-full h-full",
         aria_label="Documentation navigation",
-        class_name="mobile-sidebar" if mobile else "sidebar",
-        id="docs-sidebar",
     )
 
 
 def mobile_navigation(page: DocPage) -> rx.Component:
-    """Render the sidebar as a bottom drawer on small screens."""
+    """Render the Reflex-style mobile sidebar drawer."""
     return rx.drawer.root(
-        rx.drawer.trigger(icon_button("menu", "Open documentation navigation")),
+        rx.drawer.trigger(
+            rx.el.button(
+                rx.icon("menu", size=18),
+                type="button",
+                aria_label="Open documentation navigation",
+                class_name=(
+                    "size-9 flex items-center justify-center rounded-lg border "
+                    "border-secondary-5 bg-secondary-1 text-secondary-11"
+                ),
+            )
+        ),
         rx.drawer.portal(
-            rx.drawer.overlay(class_name="drawer-overlay"),
+            rx.drawer.overlay(class_name="fixed inset-0 bg-black/40 z-[10000]"),
             rx.drawer.content(
-                rx.el.div(class_name="drawer-handle"),
                 rx.el.div(
                     rx.el.div(
-                        rx.el.span("xy documentation", class_name="drawer-title"),
-                        rx.drawer.close(icon_button("x", "Close navigation")),
-                        class_name="drawer-header",
+                        rx.el.span("XY Docs", class_name="font-semibold text-secondary-12"),
+                        rx.drawer.close(
+                            rx.el.button(
+                                rx.icon("x", size=18),
+                                type="button",
+                                aria_label="Close navigation",
+                                class_name="size-9 flex items-center justify-center",
+                            )
+                        ),
+                        class_name=(
+                            "h-14 flex items-center justify-between px-5 border-b "
+                            "border-secondary-4"
+                        ),
                     ),
-                    sidebar(page, mobile=True),
-                    class_name="drawer-body",
+                    rx.el.div(
+                        sidebar(page, mobile=True),
+                        class_name="h-[calc(85vh-3.5rem)]",
+                    ),
+                    class_name="h-full bg-secondary-1",
                 ),
-                class_name="mobile-drawer",
+                class_name="fixed inset-x-0 bottom-0 h-[85vh] rounded-t-xl z-[10001]",
             ),
         ),
         direction="bottom",
@@ -310,84 +565,201 @@ def mobile_navigation(page: DocPage) -> rx.Component:
 
 
 def breadcrumbs(page: DocPage) -> rx.Component:
-    """Render compact page breadcrumbs."""
+    """Render the Reflex Docs breadcrumb row."""
     section = next(section for section in SECTIONS if page in section.pages)
-    return rx.el.nav(
-        rx.el.a("Docs", href="/"),
-        rx.icon("chevron-right", size=14),
-        rx.el.span(section.title),
-        rx.icon("chevron-right", size=14),
-        rx.el.span(page.title, class_name="breadcrumb-current"),
-        class_name="breadcrumbs",
+    return rx.el.div(
+        rx.el.div(
+            rx.el.a(
+                section.title,
+                href=section.pages[0].route,
+                class_name=(
+                    "min-h-8 flex items-center text-sm font-[525] text-secondary-12 "
+                    "hover:text-primary-10 no-underline"
+                ),
+            ),
+            rx.icon("chevron-right", size=16, class_name="text-secondary-11"),
+            rx.el.a(
+                page.title,
+                href=page.route,
+                class_name=(
+                    "min-h-8 flex items-center text-sm font-[525] text-secondary-11 "
+                    "truncate no-underline"
+                ),
+            ),
+            class_name="flex flex-row items-center gap-4 overflow-hidden",
+        ),
+        rx.el.div(
+            rx.el.a(
+                rx.icon("copy", size=16),
+                href=f"{GITHUB_URL}/blob/main/docs/{page.source}",
+                target="_blank",
+                rel="noopener noreferrer",
+                aria_label="View Markdown source",
+                class_name=(
+                    "flex items-center justify-center px-2.5 h-8 border "
+                    "border-secondary-5 border-r-0 rounded-l-md text-secondary-11 "
+                    "hover:text-secondary-12 hover:bg-secondary-3"
+                ),
+            ),
+            rx.el.button(
+                rx.icon("chevron-down", size=14),
+                type="button",
+                aria_label="Copy page options",
+                class_name=(
+                    "flex items-center justify-center px-1.5 h-8 border "
+                    "border-secondary-5 rounded-r-md text-secondary-11 "
+                    "hover:text-secondary-12 hover:bg-secondary-3 cursor-pointer"
+                ),
+            ),
+            class_name="hidden lg:flex flex-row items-center shrink-0",
+        ),
+        class_name=(
+            "relative z-10 flex flex-row justify-between items-center gap-4 "
+            "border-secondary-4 mt-[139px] lg:p-0 border-b lg:border-none "
+            "w-full max-lg:py-2"
+        ),
         aria_label="Breadcrumbs",
     )
 
 
 def page_toc(page: DocPage, headings: tuple[Heading, ...]) -> rx.Component:
-    """Render a page-aware right-hand table of contents."""
+    """Render the Reflex Docs right-hand table of contents."""
     visible = tuple(heading for heading in headings if heading.level in (2, 3))
-    return rx.el.aside(
-        rx.el.h2("On this page"),
-        rx.el.nav(
-            *[
-                rx.el.a(
-                    heading.title,
-                    href=f"#{heading.slug}",
-                    class_name=("toc-link toc-link-nested" if heading.level == 3 else "toc-link"),
-                )
-                for heading in visible
-            ],
-            aria_label="On this page",
+    return rx.el.nav(
+        rx.el.div(
+            rx.el.p(
+                rx.icon("align-left", size=14, class_name="text-secondary-12"),
+                "On This Page",
+                class_name=(
+                    "text-sm h-8 flex items-center gap-1.5 justify-start "
+                    "font-[525] text-secondary-12"
+                ),
+            ),
+            rx.el.ul(
+                *[
+                    rx.el.li(
+                        rx.el.a(
+                            heading.title,
+                            href=f"{page.route}#{heading.slug}",
+                            class_name=(
+                                "text-sm font-[525] text-secondary-11 py-1 "
+                                "hover:text-secondary-12 transition-colors line-clamp-2 "
+                                + ("pl-8" if heading.level == 3 else "pl-4")
+                            ),
+                        )
+                    )
+                    for heading in visible
+                ],
+                id="toc-navigation",
+                class_name=(
+                    "flex flex-col gap-y-1 list-none "
+                    "shadow-[1.5px_0_0_0_var(--secondary-4)_inset] "
+                    "max-h-[60vh] overflow-y-auto scroll-mask-y-10 "
+                    "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden m-0 p-0"
+                ),
+            ),
+            rx.el.a(
+                rx.icon("pencil", size=15),
+                "Edit this page",
+                href=f"{GITHUB_URL}/edit/main/docs/{page.source}",
+                target="_blank",
+                rel="noopener noreferrer",
+                class_name=(
+                    "mt-2 pl-0 text-sm font-[525] text-secondary-11 "
+                    "hover:text-secondary-12 flex items-center gap-2 no-underline"
+                ),
+            ),
+            class_name="flex flex-col justify-start gap-y-4 overflow-y-auto sticky top-4",
         ),
-        rx.el.a(
-            github_icon(15),
-            "Edit this page",
-            href=f"{GITHUB_URL}/edit/main/docs/{page.source}",
-            target="_blank",
-            rel="noopener noreferrer",
-            class_name="edit-link",
-        ),
-        class_name="toc",
+        class_name="w-full h-full mt-[146px]",
+        aria_label="On this page",
     )
 
 
 def pager(page: DocPage) -> rx.Component:
-    """Render previous and next page links."""
+    """Render previous/next links with the Reflex Docs spacing and typography."""
     previous, following = adjacent_pages(page)
 
-    def pager_link(target: DocPage, direction: str) -> rx.Component:
-        is_previous = direction == "Previous"
-        return rx.el.a(
-            rx.icon("arrow-left" if is_previous else "arrow-right", size=17),
-            rx.el.span(
-                rx.el.small(direction),
-                rx.el.strong(target.title),
-                class_name="pager-copy",
+    def item(target: DocPage, direction: str) -> rx.Component:
+        previous_item = direction == "Back"
+        return rx.el.div(
+            rx.el.a(
+                (rx.icon("arrow-left", size=16) if previous_item else rx.fragment()),
+                direction,
+                (rx.icon("arrow-right", size=16) if not previous_item else rx.fragment()),
+                href=target.route,
+                class_name=(
+                    "py-0.5 rounded-lg font-small text-secondary-9 "
+                    "hover:!text-secondary-11 transition-color flex items-center gap-2 "
+                    "no-underline"
+                ),
             ),
-            href=target.route,
-            class_name="pager-link previous" if is_previous else "pager-link next",
+            rx.el.p(
+                target.title,
+                class_name="font-smbold text-secondary-12 m-0",
+            ),
+            class_name=(
+                "flex flex-col justify-start gap-1 items-end"
+                if not previous_item
+                else "flex flex-col justify-start gap-1"
+            ),
         )
 
     return rx.el.nav(
-        pager_link(previous, "Previous") if previous else rx.el.span(),
-        pager_link(following, "Next") if following else rx.el.span(),
-        class_name="pager",
+        item(previous, "Back") if previous else rx.fragment(),
+        rx.el.span(class_name="flex-grow"),
+        item(following, "Next") if following else rx.fragment(),
+        class_name="flex flex-row gap-2 mt-8 lg:mt-10 mb-6 lg:mb-12",
         aria_label="Previous and next pages",
     )
 
 
-def footer() -> rx.Component:
-    """Render the compact documentation footer."""
+def footer(page: DocPage) -> rx.Component:
+    """Render a compact footer using the Reflex Docs borders and type scale."""
     return rx.el.footer(
-        rx.el.span("xy is open source under Apache-2.0."),
         rx.el.div(
-            rx.el.a("GitHub", href=GITHUB_URL, target="_blank"),
-            rx.el.a(
-                "Issues",
-                href=f"{GITHUB_URL}/issues",
-                target="_blank",
+            rx.el.p(
+                "Did you find this useful?",
+                class_name="font-small text-secondary-11 m-0",
             ),
-            class_name="footer-links",
+            rx.el.div(
+                rx.el.a(
+                    "Raise an issue",
+                    href=f"{GITHUB_URL}/issues/new",
+                    target="_blank",
+                    class_name=(
+                        "px-3 py-1 rounded-full border border-secondary-5 "
+                        "font-small text-secondary-9 hover:text-secondary-11 no-underline"
+                    ),
+                ),
+                rx.el.a(
+                    "Edit this page",
+                    href=f"{GITHUB_URL}/edit/main/docs/{page.source}",
+                    target="_blank",
+                    class_name=(
+                        "px-3 py-1 rounded-full border border-secondary-5 "
+                        "font-small text-secondary-9 hover:text-secondary-11 no-underline"
+                    ),
+                ),
+                class_name="flex flex-row items-center gap-2",
+            ),
+            class_name=(
+                "flex flex-row justify-between items-center border-secondary-4 border-y py-8 w-full"
+            ),
         ),
-        class_name="docs-footer",
+        rx.el.div(
+            rx.el.span(
+                "XY is open source under Apache-2.0.",
+                class_name="font-small text-secondary-9",
+            ),
+            rx.el.a(
+                github_icon(),
+                "GitHub",
+                href=GITHUB_URL,
+                target="_blank",
+                class_name=("font-small text-secondary-11 flex items-center gap-2 no-underline"),
+            ),
+            class_name="flex flex-row items-center justify-between py-8",
+        ),
+        class_name="flex flex-col w-full",
     )

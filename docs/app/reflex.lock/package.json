@@ -26,6 +26,8 @@
     "shiki": "3.3.0",
     "socket.io-client": "4.8.3",
     "sonner": "2.0.7",
+    "tailwindcss-animated": "2.0.0",
+    "tailwindcss-scroll-mask": "0.0.3",
     "universal-cookie": "7.2.2",
     "vaul": "1.1.2"
   },
@@ -33,9 +35,12 @@
     "@emotion/react": "11.14.0",
     "@react-router/dev": "7.15.0",
     "@react-router/fs-routes": "7.15.0",
+    "@tailwindcss/postcss": "4.3.0",
+    "@tailwindcss/typography": "0.5.19",
     "autoprefixer": "10.5.0",
     "postcss": "8.5.14",
     "postcss-import": "16.1.1",
+    "tailwindcss": "4.3.0",
     "vite": "8.0.16"
   },
   "overrides": {

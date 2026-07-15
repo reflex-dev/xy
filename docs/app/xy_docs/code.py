@@ -14,7 +14,7 @@ def _plain_code_block(code: rx.Var[str], language: rx.Var[str]) -> rx.Component:
             class_name="code-block",
             can_copy=True,
         ),
-        class_name="reflex-code-block",
+        class_name="relative mb-4",
     )
 
 
@@ -22,5 +22,5 @@ def code_block_markdown(*children, **props) -> rx.Component:
     """Adapt Reflex Docs' Shiki block to the Markdown component map."""
     return _plain_code_block(
         code=children[0],
-        language=props.get("language", "text"),
+        language=props.get("language", "plain"),
     )
