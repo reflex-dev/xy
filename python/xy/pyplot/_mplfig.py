@@ -239,6 +239,9 @@ class Figure:
     def axes(self) -> list[Axes]:
         return list(self._axes)
 
+    def get_axes(self) -> list[Axes]:
+        return self.axes
+
     def gca(self) -> Axes:
         if self._current_ax is not None and self._current_ax in self._axes:
             return self._current_ax

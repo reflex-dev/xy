@@ -20,7 +20,16 @@ import numpy as np
 
 import xy as fc
 
-from ._artists import Artist, AxesImage, BarContainer, Line2D, PathCollection, PolyCollection, Text
+from ._artists import (
+    Artist,
+    AxesImage,
+    BarContainer,
+    Line2D,
+    PathCollection,
+    PolyCollection,
+    Text,
+    unit_converted_values,
+)
 from ._colors import PROP_CYCLE, resolve_cmap, resolve_color
 from ._fmt import parse_fmt
 from ._mathtext import mathtext_to_unicode
@@ -224,7 +233,17 @@ class _AxisProxy:
         if "major_formatter" in kwargs:
             self.set_major_formatter(kwargs.pop("major_formatter"))
 
+    @staticmethod
+    def _is_units_registry_ticker(ticker: Any) -> bool:
+        # pandas' date locators/formatters (TimeSeries_DateLocator & co.) speak
+        # matplotlib's unit-registry coordinates (period/date ordinals), which
+        # never exist here: the engine's time axis is native ms-since-epoch and
+        # ticks itself. Treat them as compat-noops so the native ticks render.
+        return (type(ticker).__module__ or "").startswith("pandas.plotting")
+
     def set_major_locator(self, locator: Any) -> None:
+        if self._is_units_registry_ticker(locator):
+            return
         if not hasattr(locator, "tick_values"):
             raise TypeError("set_major_locator() requires a Locator with tick_values()")
         host, key = self._ticker_slot()
@@ -241,6 +260,8 @@ class _AxisProxy:
         return host._tickers.get((key, "major_locator")) or AutoLocator()
 
     def set_major_formatter(self, formatter: Any) -> None:
+        if self._is_units_registry_ticker(formatter):
+            return
         host, key = self._ticker_slot()
         host._tickers[(key, "major_formatter")] = as_formatter(formatter, "set_major_formatter()")
         self.axes._invalidate()
@@ -269,6 +290,12 @@ class _AxisProxy:
 
     def tick_left(self) -> None:
         pass  # exact no-op: the engine only draws left y ticks
+
+    def get_majorticklabels(self) -> list["_TickLabel"]:
+        return self.axes._tick_label_handles(self.axis)
+
+    def get_minorticklabels(self) -> list["_TickLabel"]:
+        return []  # minor ticks are outside the native axis contract
 
     def get_minor_formatter(self) -> Any:
         from ._ticker import NullFormatter
@@ -2279,7 +2306,9 @@ class Axes(PlotTypeMixin):
             key = "x" if axis == "x" else "y"
             if key in entry:
                 try:
-                    array = np.asarray(entry[key], dtype=np.float64).reshape(-1)
+                    array = np.asarray(unit_converted_values(entry[key]), dtype=np.float64).reshape(
+                        -1
+                    )
                 except (TypeError, ValueError):
                     continue
                 values.append(array[np.isfinite(array)])

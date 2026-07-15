@@ -417,3 +417,62 @@ def test_period_values_plot_as_timestamps():
     (line,) = ax.plot(pd.period_range("2012-01", periods=5, freq="M"), np.arange(5))
     assert np.issubdtype(np.asarray(line.get_xdata()).dtype, np.datetime64)
     _png()
+
+
+# -- pandas dynamic timeseries + xy.pyplot.dates (PDSH 04.09) ----------------
+
+
+def _ms(stamp: str) -> float:
+    return float(np.datetime64(stamp, "ms").astype(np.int64))
+
+
+def test_pandas_datetime_series_plot_completes():
+    pd = pytest.importorskip("pandas")
+    index = pd.date_range("2012-01-01", periods=120, freq="D")
+    series = pd.Series(np.linspace(4000.0, 5000.0, 120), index=index)
+    fig, ax = plt.subplots()
+    series.plot(ax=ax)  # pandas' ts path: get_xdata(orig=False) + set_xlim
+    lo, hi = ax.get_xlim()
+    assert lo == _ms("2012-01-01") and hi == _ms("2012-04-29")
+    _png()
+
+
+def test_get_xdata_orig_false_is_ms_since_epoch():
+    fig, ax = plt.subplots()
+    x = np.asarray(["2012-01-01", "NaT", "2012-01-03"], dtype="datetime64[ns]")
+    (line,) = ax.plot(x, [1.0, 2.0, 3.0])
+    assert np.issubdtype(np.asarray(line.get_xdata()).dtype, np.datetime64)
+    converted = np.asarray(line.get_xdata(orig=False))
+    assert converted.dtype == np.float64
+    assert converted[0] == _ms("2012-01-01") and np.isnan(converted[1])
+    assert np.asarray(line.get_ydata(orig=False)).dtype == np.float64
+
+
+def test_pandas_period_ordinal_tickers_are_ignored():
+    pd = pytest.importorskip("pandas")
+    converter = pytest.importorskip("pandas.plotting._matplotlib.converter")
+    index = pd.date_range("2012-01-01", periods=30, freq="D")
+    fig, ax = plt.subplots()
+    ax.plot(index.values, np.arange(30.0))
+    ax.xaxis.set_major_locator(
+        converter.TimeSeries_DateLocator(index.to_period("D").freq, plot_obj=None)
+    )
+    ax.xaxis.set_major_formatter(
+        converter.TimeSeries_DateFormatter(index.to_period("D").freq, plot_obj=None)
+    )
+    assert isinstance(ax.xaxis.get_major_locator(), plt.AutoLocator)
+    assert isinstance(ax.xaxis.get_major_formatter(), plt.ScalarFormatter)
+    _png()
+
+
+def test_axis_proxy_majorticklabel_handles():
+    fig, ax = plt.subplots()
+    ax.plot([0.0, 4.0], [0.0, 4.0])
+    labels = ax.xaxis.get_majorticklabels()
+    assert labels and all(hasattr(label, "set_rotation") for label in labels)
+    assert ax.xaxis.get_minorticklabels() == []
+
+
+def test_figure_get_axes_matches_axes_property():
+    fig, axes = plt.subplots(2, 2)
+    assert fig.get_axes() == list(axes.ravel())
