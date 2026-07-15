@@ -244,6 +244,11 @@ const FC_CHROME_CSS = `
 :where(.xy [data-fc-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
 :where(.xy [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-axis,currentColor);cursor:pointer}
 :where(.xy [data-fc-modebar-drag-handle]){cursor:move}
+:where(.xy [data-fc-modebar-menu]){min-width:148px;gap:1px;padding:4px;background:var(--chart-modebar-bg,rgba(255,255,255,.94));border:1px solid rgba(128,128,128,.22);border-radius:7px;box-shadow:0 5px 18px rgba(15,23,42,.18);backdrop-filter:blur(8px)}
+:where(.xy [data-fc-modebar-menu-item]){width:100%;height:28px;justify-content:space-between;padding:0 9px;border-radius:4px;text-align:left;white-space:nowrap}
+:where(.xy [data-fc-modebar-menu-item]:hover,.xy [data-fc-modebar-menu-item]:focus-visible){background:var(--chart-modebar-active,rgba(128,128,128,.18));outline:none}
+:where(.xy [data-fc-modebar-menu-item][data-fc-separator]){margin-top:3px;border-top:1px solid rgba(128,128,128,.2);border-radius:0 0 4px 4px}
+:where(.xy [data-fc-modebar-menu-shortcut]){margin-left:20px;color:var(--chart-axis,currentColor);font-size:10px;opacity:.72}
 :where(.xy [data-fc-slot="modebar_button"].fc-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
 :where(.xy [data-fc-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
 :where(.xy [data-fc-slot="selection"][data-fc-band="zoom"]){border-color:var(--chart-zoom-selection,rgba(120,120,120,.9));background:var(--chart-zoom-selection-fill,rgba(120,120,120,.12))}
@@ -5609,13 +5614,17 @@ this._modeBtns = {};
 this._modebarCollapsed = false;
 this._modebarMoved = false;
 bar.dataset.fcCollapsed = "false";
+let setZoomMenuOpen = () => {};
 const setVisible = (visible) => {
 const show = visible || this._modebarDragging || bar.contains(document.activeElement);
 bar.style.opacity = show ? "1" : "0";
 bar.style.pointerEvents = show ? "auto" : "none";
 };
 this._listen(root, "pointerenter", () => setVisible(true));
-this._listen(root, "pointerleave", () => setVisible(false));
+this._listen(root, "pointerleave", () => {
+setVisible(false);
+setZoomMenuOpen(false);
+});
 this._listen(bar, "focusin", () => setVisible(true));
 this._listen(bar, "focusout", () => {
 if (!root.matches(":hover")) setVisible(false);
@@ -5638,6 +5647,7 @@ let lastGripDown = 0;
 const setCollapsed = (collapsed) => {
 this._modebarCollapsed = collapsed;
 bar.dataset.fcCollapsed = String(collapsed);
+if (collapsed) setZoomMenuOpen(false);
 for (const button of bar.querySelectorAll("button")) {
 if (button !== grip) {
 button.hidden = collapsed;
@@ -5680,6 +5690,7 @@ lastGripDown = 0;
 this._modebarDragging = true;
 this._modebarMoved = true;
 bar.style.transition = "none";
+setZoomMenuOpen(false);
 try { grip.setPointerCapture(e.pointerId); } catch (_err) {   }
 }
 const rootRect = root.getBoundingClientRect();
@@ -5726,13 +5737,110 @@ bar.appendChild(b);
 if (toggles) this._modeBtns[toggles] = b;
 return b;
 };
-mk("zoomin", "Zoom in", () => this._zoomBy(0.5, true));
-mk("zoomout", "Zoom out", () => this._zoomBy(2, true));
+const zoomTrigger = mk("zoommenu", "Zoom controls", () => {
+setZoomMenuOpen(!this._zoomMenuOpen);
+});
+this._zoomMenuButton = zoomTrigger;
+zoomTrigger.dataset.fcModebarMenuTrigger = "";
+zoomTrigger.setAttribute("aria-haspopup", "menu");
+zoomTrigger.setAttribute("aria-expanded", "false");
 mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
-mk("zoom", "Box zoom", () => this._setDragMode("zoom"), "zoom");
-mk("reset", "Reset view", () => {
+const zoomMenu = document.createElement("div");
+zoomMenu.dataset.fcModebarMenu = "";
+zoomMenu.setAttribute("role", "menu");
+zoomMenu.setAttribute("aria-label", "Zoom controls");
+zoomMenu.style.cssText =
+"position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
+bar.appendChild(zoomMenu);
+const zoomMenuItems = [];
+const mkZoomItem = (name, label, shortcut, onClick, toggles, separator = false) => {
+const button = document.createElement("button");
+button.type = "button";
+button.tabIndex = -1;
+button.dataset.fcModebarMenuItem = name;
+if (separator) button.dataset.fcSeparator = "";
+button.setAttribute("role", "menuitem");
+button.style.cssText =
+"display:flex;align-items:center;pointer-events:auto;";
+this._applySlot(button, "modebar_button");
+const text = document.createElement("span");
+text.textContent = label;
+button.appendChild(text);
+const hint = document.createElement("span");
+hint.dataset.fcModebarMenuShortcut = "";
+hint.textContent = shortcut;
+button.appendChild(hint);
+this._listen(button, "pointerdown", (e) => e.stopPropagation());
+this._listen(button, "click", (e) => {
+e.stopPropagation();
+setZoomMenuOpen(false, true);
+onClick();
+});
+zoomMenu.appendChild(button);
+zoomMenuItems.push(button);
+if (toggles) this._modeBtns[toggles] = button;
+return button;
+};
+const resetView = () => {
 this._clearSelection();
 this._setView(this.view0, { animate: true });
+};
+mkZoomItem("zoomin", "Zoom In", "+", () => this._zoomBy(0.5, true));
+mkZoomItem("zoomout", "Zoom Out", "−", () => this._zoomBy(2, true));
+mkZoomItem("zoom", "Box Zoom", "B", () => this._setDragMode("zoom"), "zoom");
+mkZoomItem("reset", "Reset View", "0", resetView, null, true);
+setZoomMenuOpen = (open, restoreFocus = false) => {
+const show = Boolean(open) && !this._modebarCollapsed;
+this._zoomMenuOpen = show;
+zoomTrigger.setAttribute("aria-expanded", String(show));
+if (!show) {
+zoomMenu.style.display = "none";
+if (restoreFocus) zoomTrigger.focus();
+return;
+}
+zoomMenu.style.display = "flex";
+zoomMenu.style.visibility = "hidden";
+const rootRect = root.getBoundingClientRect();
+const barRect = bar.getBoundingClientRect();
+const rootLeft = barRect.left - rootRect.left;
+const rootTop = barRect.top - rootRect.top;
+const below = bar.offsetHeight + 6;
+const above = -zoomMenu.offsetHeight - 6;
+const preferredTop = barRect.bottom + 6 + zoomMenu.offsetHeight <= rootRect.bottom
+? below
+: above;
+const maxLeft = root.clientWidth - rootLeft - zoomMenu.offsetWidth;
+const maxTop = root.clientHeight - rootTop - zoomMenu.offsetHeight;
+zoomMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, zoomTrigger.offsetLeft))}px`;
+zoomMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
+zoomMenu.style.visibility = "visible";
+};
+this._closeModebarMenu = () => setZoomMenuOpen(false);
+this._listen(document, "pointerdown", (e) => {
+if (this._zoomMenuOpen && !bar.contains(e.target)) setZoomMenuOpen(false);
+});
+this._listen(zoomTrigger, "keydown", (e) => {
+if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+e.preventDefault();
+e.stopPropagation();
+setZoomMenuOpen(true);
+const index = e.key === "ArrowDown" ? 0 : zoomMenuItems.length - 1;
+zoomMenuItems[index].focus();
+});
+this._listen(zoomMenu, "keydown", (e) => {
+if (e.key === "Escape") {
+e.preventDefault();
+e.stopPropagation();
+setZoomMenuOpen(false, true);
+return;
+}
+if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+e.preventDefault();
+const current = zoomMenuItems.indexOf(document.activeElement);
+let next = e.key === "Home" ? 0 : e.key === "End" ? zoomMenuItems.length - 1 : current;
+if (e.key === "ArrowDown") next = (current + 1) % zoomMenuItems.length;
+if (e.key === "ArrowUp") next = (current - 1 + zoomMenuItems.length) % zoomMenuItems.length;
+zoomMenuItems[next].focus();
 });
 root.appendChild(bar);
 this._fitModebar();
@@ -5742,6 +5850,7 @@ this._setDragMode(this.dragMode);
 _fitModebar() {
 const bar = this._modebar;
 if (!bar) return;
+this._closeModebarMenu?.();
 if (!this._modebarMoved) {
 bar.style.top = `${this.plot.y + 4}px`;
 bar.style.left = `${this.plot.x + 4}px`;
@@ -5761,6 +5870,7 @@ if (this.canvas) this.canvas.dataset.fcDragmode = mode;
 for (const [name, btn] of Object.entries(this._modeBtns || {})) {
 btn.classList.toggle("fc-active", name === mode);
 }
+this._zoomMenuButton?.classList.toggle("fc-active", mode === "zoom");
 },
 _prefersReducedMotion() {
 return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
@@ -5925,6 +6035,9 @@ return svg('<path d="M10 3 V17 M3 10 H17"/><path d="M10 3 L8 5 M10 3 L12 5"/>' +
 case "zoom":
 return svg('<rect x="3.5" y="3.5" width="13" height="13" rx="1" ' +
 'stroke-dasharray="3 2"/>');
+case "zoommenu":
+return svg('<circle cx="8" cy="8" r="4.5"/><path d="M11.5 11.5 L15 15"/>' +
+'<path d="M16 7 L18 9 L16 11"/>');
 case "reset":
 return svg('<path d="M4 10 a6 6 0 1 1 1.8 4.3"/><path d="M4 6 V10 H8"/>');
 case "drag":

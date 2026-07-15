@@ -293,6 +293,7 @@ try{{
       grip.dispatchEvent(new PointerEvent("pointerup", init));
     }};
     tapGrip(65); tapGrip(66);
+    const expectedCollapsedButtons = Math.max(0, btns - 1);
     const collapsedButtons = bar ? bar.querySelectorAll("button[hidden]").length : 0;
     const collapsedDisplays = bar
       ? [...bar.querySelectorAll("button[hidden]")].filter((button) => button.style.display === "none").length
@@ -302,12 +303,22 @@ try{{
     const expandedButtons = bar ? bar.querySelectorAll("button[hidden]").length : -1;
     if (grip) grip.dispatchEvent(new KeyboardEvent("keydown", {{key:"Enter",bubbles:true}}));
     const keyboardCollapsed = grip && grip.getAttribute("aria-expanded") === "false"
-      && bar.querySelectorAll("button[hidden]").length === 5;
+      && bar.querySelectorAll("button[hidden]").length === expectedCollapsedButtons;
     if (grip) grip.dispatchEvent(new KeyboardEvent("keydown", {{key:"Enter",bubbles:true}}));
     const keyboardExpanded = grip && grip.getAttribute("aria-expanded") === "true"
       && bar.querySelectorAll("button[hidden]").length === 0;
-    const modebarCollapse = collapsedButtons === 5 && collapsedDisplays === 5
+    const modebarCollapse = collapsedButtons === expectedCollapsedButtons
+      && collapsedDisplays === expectedCollapsedButtons
       && collapsedGrip && expandedButtons === 0 && keyboardCollapsed && keyboardExpanded ? 1 : 0;
+    const zoomTrigger = bar && bar.querySelector("[data-fc-modebar-menu-trigger]");
+    const zoomMenu = bar && bar.querySelector("[data-fc-modebar-menu]");
+    if (zoomTrigger) zoomTrigger.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
+    const menuOpened = zoomMenu && zoomMenu.style.display === "flex"
+      && zoomTrigger.getAttribute("aria-expanded") === "true"
+      && zoomMenu.querySelectorAll("[data-fc-modebar-menu-item]").length === 4;
+    if (zoomMenu) zoomMenu.dispatchEvent(new KeyboardEvent("keydown", {{key:"Escape",bubbles:true}}));
+    const modebarMenu = menuOpened && zoomMenu.style.display === "none"
+      && zoomTrigger.getAttribute("aria-expanded") === "false" ? 1 : 0;
     const barLeft0 = bar ? parseFloat(bar.style.left) : 0;
     if (grip) {{
       const gr = grip.getBoundingClientRect();
@@ -961,7 +972,7 @@ try{{
     const gLn=vSm.gpuTraces[0], gAr=vSm.gpuTraces[1];
     const msmooth=(gLn.n===65 && gLn._cpu.x.length===5 && gAr.n===65 && gAr._cpu.base.length===5)?1:0;
     vSm.destroy();holderSm.remove();
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHidden}} modebarHover=${{modebarHover}} modebarCollapse=${{modebarCollapse}} modebarDrag=${{modebarDrag}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHidden}} modebarHover=${{modebarHover}} modebarCollapse=${{modebarCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -1133,6 +1144,7 @@ try{{
     modebar_hidden = int(re.search(r"modebarHidden=(\d+)", title).group(1))
     modebar_hover = int(re.search(r"modebarHover=(\d+)", title).group(1))
     modebar_collapse = int(re.search(r"modebarCollapse=(\d+)", title).group(1))
+    modebar_menu = int(re.search(r"modebarMenu=(\d+)", title).group(1))
     modebar_drag = int(re.search(r"modebarDrag=(\d+)", title).group(1))
     zin = int(re.search(r"zin=(\d+)", title).group(1))
     smooth = int(re.search(r"smooth=(\d+)", title).group(1))
@@ -1197,8 +1209,8 @@ try{{
     print(
         f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}, pick hits: {pick}, "
         f"row-decoded: {rowok}, select all/sub: {sel_all}/{sel_some}, mask active: {active}, "
-        f"modebar btns: {btns}, hidden/hover/collapse/drag: "
-        f"{modebar_hidden}/{modebar_hover}/{modebar_collapse}/{modebar_drag}, "
+        f"modebar btns: {btns}, hidden/hover/collapse/menu/drag: "
+        f"{modebar_hidden}/{modebar_hover}/{modebar_collapse}/{modebar_menu}/{modebar_drag}, "
         f"zoom-in: {zin}, box-zoom: {box}, zoom-mode: {zmode}, "
         f"fluid: {fluid}, resize grew: {grew}, pick realloc: {pick2}, "
         f"destroyed: {destroyed}, unsub: {unsub}"
@@ -1219,12 +1231,14 @@ try{{
         raise SystemExit(f"sub-range selection implausible: {sel_some} of {sel_all}")
     if active != 1:
         raise SystemExit("selection mask did not activate")
-    if btns < 5:
+    if btns < 7:
         raise SystemExit(f"modebar missing buttons: {btns}")
     if modebar_hidden != 1 or modebar_hover != 1:
         raise SystemExit("modebar did not hide at rest and show on chart hover")
     if modebar_collapse != 1:
         raise SystemExit("modebar grip did not collapse and expand the toolbar")
+    if modebar_menu != 1:
+        raise SystemExit("modebar zoom dropdown did not open and close")
     if modebar_drag != 1:
         raise SystemExit("modebar drag handle did not move the toolbar")
     if zin != 1:

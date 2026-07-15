@@ -44,6 +44,8 @@ def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
         ':where(.xy [data-fc-slot="legend_swatch"]){',
         ':where(.xy [data-fc-slot="modebar"]){',
         ':where(.xy [data-fc-slot="modebar_button"]){',
+        ":where(.xy [data-fc-modebar-menu]){",
+        ":where(.xy [data-fc-modebar-menu-item]){",
         ':where(.xy [data-fc-slot="modebar_button"].fc-active){',
         ':where(.xy [data-fc-slot="selection"]){',
         ':where(.xy [data-fc-slot="badge_item"]){',
