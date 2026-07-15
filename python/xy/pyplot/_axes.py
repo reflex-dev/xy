@@ -1262,7 +1262,16 @@ class Axes(PlotTypeMixin):
         kwargs: dict[str, Any],
     ) -> BarContainer:
         cat_array = np.asarray(cats)
-        if cat_array.dtype.kind in {"U", "S", "O"} and all(
+        if cat_array.dtype.kind == "U":
+            # _plain_text only rewrites labels containing TeX markers; a
+            # vectorized scan skips the per-label Python loop for the common
+            # plain-string case (O(categories) per build otherwise).
+            flat = cat_array.reshape(-1)
+            if (np.char.find(flat, "$") >= 0).any() or (np.char.find(flat, "\\") >= 0).any():
+                cats = np.asarray([_plain_text(value) for value in flat]).reshape(cat_array.shape)
+            else:
+                cats = cat_array
+        elif cat_array.dtype.kind in {"S", "O"} and all(
             isinstance(value, str) for value in cat_array.reshape(-1)
         ):
             cats = np.asarray([_plain_text(value) for value in cat_array.reshape(-1)]).reshape(
@@ -1404,15 +1413,37 @@ class Axes(PlotTypeMixin):
         if histtype not in {"bar", "barstacked", "step", "stepfilled"}:
             raise ValueError(f"unsupported histtype {histtype!r}")
 
-        raw = np.asarray(x, dtype=object)
-        if raw.ndim == 1 and (len(raw) == 0 or np.isscalar(raw[0])):
+        if isinstance(x, np.ndarray) and x.ndim == 1 and x.dtype.kind in "fiub":
+            # The common numeric-array call must not round-trip through an
+            # object array: boxing every element just to sniff the input shape
+            # is an O(n) cost per build (tests/pyplot/test_perf_guardrail.py).
             datasets = [np.asarray(x, dtype=np.float64)]
-        elif isinstance(x, np.ndarray) and x.ndim == 2:
-            datasets = [np.asarray(x[:, i], dtype=np.float64) for i in range(x.shape[1])]
         else:
-            datasets = [np.asarray(values, dtype=np.float64) for values in x]
-        all_finite = np.concatenate([values[np.isfinite(values)] for values in datasets])
-        edges = np.histogram_bin_edges(all_finite, bins=bins, range=range)
+            raw = np.asarray(x, dtype=object)
+            if raw.ndim == 1 and (len(raw) == 0 or np.isscalar(raw[0])):
+                datasets = [np.asarray(x, dtype=np.float64)]
+            elif isinstance(x, np.ndarray) and x.ndim == 2:
+                datasets = [np.asarray(x[:, i], dtype=np.float64) for i in range(x.shape[1])]
+            else:
+                datasets = [np.asarray(values, dtype=np.float64) for values in x]
+        if isinstance(bins, (int, np.integer)) and not isinstance(bins, bool):
+            # Fixed bin count: the edges depend only on the finite data range,
+            # so a native NaN-skipping min/max scan replaces the filtered
+            # concatenated copy. numpy applies its own defaults/expansion to
+            # the range exactly as it would to data-derived outer edges.
+            from xy import kernels
+
+            if range is None:
+                spans = [span for span in map(kernels.min_max, datasets) if span is not None]
+                data_range = (
+                    (min(lo for lo, _ in spans), max(hi for _, hi in spans)) if spans else None
+                )
+            else:
+                data_range = range
+            edges = np.histogram_bin_edges(np.empty(0), bins=bins, range=data_range)
+        else:
+            all_finite = np.concatenate([values[np.isfinite(values)] for values in datasets])
+            edges = np.histogram_bin_edges(all_finite, bins=bins, range=range)
         if weights is None:
             weight_sets = [None] * len(datasets)
         elif len(datasets) == 1:
@@ -3983,6 +4014,12 @@ class Axes(PlotTypeMixin):
             except (TypeError, ValueError):
                 continue
             xv, yv = xv.reshape(-1), yv.reshape(-1)
+            if len(xv) > 4096:
+                # Stride down before the finite scan: occupancy scoring is
+                # already sampled, so the full-array isfinite pass was pure
+                # O(n) per-build cost on large legended series.
+                strided = np.linspace(0, len(xv) - 1, 4096, dtype=np.intp)
+                xv, yv = xv[strided], yv[strided]
             finite = np.flatnonzero(np.isfinite(xv) & np.isfinite(yv))
             if len(finite) > 512:
                 finite = finite[np.linspace(0, len(finite) - 1, 512, dtype=np.intp)]

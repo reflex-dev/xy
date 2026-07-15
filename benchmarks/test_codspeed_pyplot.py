@@ -358,10 +358,15 @@ def test_build_styled_panel_pyplot(benchmark, panel_data):
 
 
 def test_png_export_line_raw(benchmark, export_data):
-    """Native PNG export of a warm 100k line figure through the raw API."""
+    """Native PNG export of a warm 100k line figure through the raw API.
+
+    scale=2.0 matches savefig's fixed 2x supersampling so both arms emit the
+    same 1280x960 pixel canvas — a smaller raw canvas would overstate the
+    shim's gap.
+    """
     x, y = export_data
     fig = fc.chart(fc.line(x=x, y=y), width=WIDTH, height=HEIGHT).figure()
-    png = benchmark(fig.to_png, engine=fc.Engine.default, scale=1.0)
+    png = benchmark(fig.to_png, engine=fc.Engine.default, scale=2.0)
     assert png.startswith(b"\x89PNG")
 
 

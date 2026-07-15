@@ -99,6 +99,30 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **`savefig` single-panel PNG export now uses the fused Rust encoder.** A
+  one-axes figure with no suptitle/colorbar/tight-bbox and the default white
+  facecolor is exactly one native render, so `stitch_png` returns the
+  rasterizer's own PNG (the latency-first `Figure.to_png` default) instead of
+  round-tripping RGBA through the Python size-oriented encoder — pixel-
+  identical output, ~10x faster (119.8ms → 11.7ms on a 100k-point savefig;
+  1.2x the raw `to_png` at the same 1280x960 output). Multi-panel and
+  tight-bbox exports keep the composed path but now probe a stride sample
+  before the full-image palette attempt, skipping a doomed O(n log n) unique
+  scan on antialiased charts.
+- **`ax.hist` no longer boxes numeric input or copies it to find bin edges.**
+  The input-shape sniff skipped its object-dtype round trip for 1-D numeric
+  arrays, and fixed-count bins derive their range from the native NaN-skipping
+  min/max scan instead of a finite-filtered concatenated copy. Counts still
+  come from `np.histogram` against the identical edges — the kernel-based
+  shortcut was rejected because it disagrees with numpy by ±1 on values
+  exactly at interior bin edges. ~2.3x faster shim histogram builds.
+- **`ax.bar`/`ax.barh` label sanitization is vectorized.** Plain string
+  category arrays are scanned for TeX markers with one vectorized pass
+  instead of a per-label Python loop through the mathtext converter.
+- **Legend `loc="best"` scoring subsamples before its finite scan** instead
+  of running `isfinite` over every point of every legended series — the
+  scoring was already sample-based; the full-array pass was pure O(n)
+  per-build cost.
 - **`xy.pyplot` no longer pays an O(n) dataless-axis scan on every build.**
   The empty-view pin in `_build_chart` materialized and finite-filtered every
   entry's full data for both axes just to ask "is this axis empty?", adding a
