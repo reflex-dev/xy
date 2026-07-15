@@ -218,9 +218,11 @@ def subplots(
     height_ratios = kwargs.pop("height_ratios", None)
     gridspec_kw = kwargs.pop("gridspec_kw", None) or {}
     subplot_kw = kwargs.pop("subplot_kw", None) or {}
-    fig = figure(figsize=figsize, dpi=dpi)
+    toolbar = kwargs.pop("toolbar", None)
+    fig = figure(figsize=figsize, dpi=dpi, toolbar=toolbar)
     if fig._axes and any(ax._entries for ax in fig._axes):
-        fig = figure(None, figsize=figsize, dpi=dpi)  # fresh figure, mpl semantics
+        # fresh figure, mpl semantics
+        fig = figure(None, figsize=figsize, dpi=dpi, toolbar=toolbar)
     axes = fig.subplots(
         nrows,
         ncols,

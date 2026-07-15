@@ -463,6 +463,14 @@ def _cached_theme(grid: bool, tokens: dict[str, Any], style: dict[str, Any]) -> 
     return made
 
 
+def _cached_modebar(show: bool) -> Any:
+    key = ("modebar", show)
+    made = _component_cache.get(key)
+    if made is None:
+        made = _component_cache[key] = fc.modebar(show=show)
+    return made
+
+
 def _cached_axis(which: str, props: dict) -> Any:
     if props:
         factory = fc.x_axis if which == "x" else fc.y_axis
@@ -3804,6 +3812,8 @@ class Axes(PlotTypeMixin):
             # Core XY can auto-create a continuous-color "value" legend.
             # An unlabeled Matplotlib collection must not acquire one.
             children.append(fc.legend(show=False))
+        if not self.figure._show_toolbar():
+            children.append(_cached_modebar(False))
         theme_tokens = self._theme_tokens
         if _MPL_THEME_TOKENS:
             if self._grid_axis != "both":

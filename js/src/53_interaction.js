@@ -308,7 +308,23 @@ Object.assign(ChartView.prototype, {
       this._setView(this.view0, { animate: true });
     });
     root.appendChild(bar);
+    this._fitModebar();
     this._setDragMode(this.dragMode);
+  },
+
+  // The modebar is unusable chrome once the plot box can't contain it — in a
+  // dense subplot grid the overflowing buttons alone grew scrollbars on every
+  // panel. Hidden is a fit state, not removal: a fluid resize re-checks and
+  // can bring the bar back. Wheel/drag zoom and pan keep working without it.
+  _fitModebar() {
+    const bar = this._modebar;
+    if (!bar) return;
+    bar.style.top = `${this.plot.y + 4}px`;
+    bar.style.left = `${this.plot.x + 4}px`;
+    bar.style.display = "flex"; // measurable before the verdict
+    const fits =
+      bar.offsetWidth + 8 <= this.plot.w && bar.offsetHeight + 8 <= this.plot.h;
+    if (!fits) bar.style.display = "none";
   },
 
   _setDragMode(mode) {

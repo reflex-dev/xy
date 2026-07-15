@@ -1723,6 +1723,14 @@ for (const view of candidates) {
 if (over <= 0) break;
 if (view._releaseContext()) over -= 1;
 }
+if (over <= 0) return;
+const visible = live
+.filter((view) => view._ctxVisible)
+.sort((a, b) => (a._ctxSeenSeq || 0) - (b._ctxSeenSeq || 0));
+for (const view of visible) {
+if (over <= 0) break;
+if (view._releaseContext()) over -= 1;
+}
 },
 acquired(requester) {
 requester._ctxPendingReservation = false;
@@ -1778,7 +1786,10 @@ this.fluidH = spec.height === "100%";
 const rect = this.fluid || this.fluidH ? el.getBoundingClientRect() : null;
 const cw = this.fluid ? Math.round(rect.width) || 640 : spec.width;
 const ch = this.fluidH ? Math.round(rect.height) || 420 : spec.height;
-this.size = { w: Math.max(120, cw), h: Math.max(120, ch) };
+this.size = {
+w: Math.max(this.fluid ? 120 : 48, cw),
+h: Math.max(this.fluidH ? 120 : 48, ch),
+};
 this._layout();
 this._buildDom(el);
 this.theme = readTheme(this.root);
@@ -2144,6 +2155,7 @@ this._contextRecoveryError = null;
 this.root.dataset.fcContextState = "ready";
 this._scheduleViewRequest(this.view, { delay: 0 });
 this.draw();
+this._dropContextSnapshot();
 this._dispatchChartEvent("context_restored", {
 loss_count: this._contextLossCount,
 restore_count: this._contextRestoreCount,
@@ -2154,6 +2166,7 @@ _releaseContext() {
 if (this._destroyed || !this.gl || this._glLost || this.gl.isContextLost()) return false;
 const ext = this.gl.getExtension("WEBGL_lose_context");
 if (!ext) return false;
+this._snapshotBeforeRelease();
 this._ctxReleasedExt = ext;
 this._ctxReleases += 1;
 this._glLost = true;
@@ -2162,6 +2175,33 @@ if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
 ext.loseContext();
 return true;
+}
+_snapshotBeforeRelease() {
+try {
+if (this._raf) cancelAnimationFrame(this._raf);
+this._raf = null;
+this._rafKeepPick = true;
+this._drawNow();
+let snap = this._ctxSnapshot;
+if (!snap) {
+snap = this._ctxSnapshot = document.createElement("canvas");
+snap.dataset.fcCtxSnapshot = "";
+}
+snap.width = this.canvas.width;
+snap.height = this.canvas.height;
+snap.style.cssText = this.canvas.style.cssText;
+snap.style.pointerEvents = "none";
+snap.getContext("2d").drawImage(this.canvas, 0, 0);
+this.canvas.before(snap);
+this.canvas.style.visibility = "hidden";
+} catch (_err) {
+this._dropContextSnapshot();
+}
+}
+_dropContextSnapshot() {
+this.canvas.style.visibility = "";
+if (this._ctxSnapshot) this._ctxSnapshot.remove();
+this._ctxSnapshot = null;
 }
 _recoverContext() {
 if (this._destroyed || !this._glLost) return;
@@ -2203,8 +2243,12 @@ return;
 }
 this._scheduleViewRequest(this.view, { delay: 0 });
 this.draw();
+this._dropContextSnapshot();
 }
 _armContextVisibilityWatch() {
+this._listen(this.root, "pointerenter", () => {
+if (this._glLost && !this._destroyed) this._recoverContext();
+});
 if (typeof IntersectionObserver === "undefined") {
 this._ctxVisible = true;
 return;
@@ -2245,6 +2289,7 @@ this._legend.style.maxHeight = p.h - 12 + "px";
 }
 this._positionReductionBadges();
 this._positionColorbar();
+this._fitModebar();
 this._pickDirty = true;
 this.draw();
 this._scheduleViewRequest();
@@ -3537,7 +3582,13 @@ const [vy0, vy1] = this._axisRange(g.yAxis);
 gl.uniform4f(u("u_view"), vx0 ?? x0, vx1 ?? x1, vy0 ?? y0, vy1 ?? y1);
 gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
 gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
-gl.uniform4f(u("u_gridRange"), h.xRange[0], h.xRange[1], h.yRange[0], h.yRange[1]);
+const xrev = (vx0 ?? x0) > (vx1 ?? x1);
+const yrev = (vy0 ?? y0) > (vy1 ?? y1);
+gl.uniform4f(
+u("u_gridRange"),
+h.xRange[xrev ? 1 : 0], h.xRange[xrev ? 0 : 1],
+h.yRange[yrev ? 1 : 0], h.yRange[yrev ? 0 : 1],
+);
 gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
 gl.uniform1i(u("u_truecolor"), h.truecolor ? 1 : 0);
 gl.activeTexture(gl.TEXTURE0);
@@ -4487,8 +4538,12 @@ if (!h || !g._cpuHeatmap) return null;
 const [x0, x1] = h.xRange;
 const [y0, y1] = h.yRange;
 if (dataX < x0 || dataX > x1 || dataY < y0 || dataY > y1) return null;
-const col = Math.min(h.w - 1, Math.max(0, Math.floor(((dataX - x0) / (x1 - x0)) * h.w)));
-const row = Math.min(h.h - 1, Math.max(0, Math.floor(((dataY - y0) / (y1 - y0)) * h.h)));
+const [ax0, ax1] = this._axisRange(g.xAxis) ?? [this.view.x0, this.view.x1];
+const [ay0, ay1] = this._axisRange(g.yAxis) ?? [this.view.y0, this.view.y1];
+const fx = ((ax0 ?? this.view.x0) > (ax1 ?? this.view.x1)) ? (x1 - dataX) : (dataX - x0);
+const fy = ((ay0 ?? this.view.y0) > (ay1 ?? this.view.y1)) ? (y1 - dataY) : (dataY - y0);
+const col = Math.min(h.w - 1, Math.max(0, Math.floor((fx / (x1 - x0)) * h.w)));
+const row = Math.min(h.h - 1, Math.max(0, Math.floor((fy / (y1 - y0)) * h.h)));
 return { trace: g.trace.id, index: row * h.w + col, g, heatmap: { row, col }, synthetic: true };
 }
 _drawKeepPick() {
@@ -5371,7 +5426,18 @@ this._clearSelection();
 this._setView(this.view0, { animate: true });
 });
 root.appendChild(bar);
+this._fitModebar();
 this._setDragMode(this.dragMode);
+},
+_fitModebar() {
+const bar = this._modebar;
+if (!bar) return;
+bar.style.top = `${this.plot.y + 4}px`;
+bar.style.left = `${this.plot.x + 4}px`;
+bar.style.display = "flex";
+const fits =
+bar.offsetWidth + 8 <= this.plot.w && bar.offsetHeight + 8 <= this.plot.h;
+if (!fits) bar.style.display = "none";
 },
 _setDragMode(mode) {
 this.dragMode = mode;

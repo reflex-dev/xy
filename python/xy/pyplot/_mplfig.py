@@ -16,7 +16,7 @@ import numpy as np
 
 from ._artists import Text
 from ._axes import Axes, _plain_text
-from ._rc import rc_figsize_px
+from ._rc import rc_figsize_px, rcParams
 from ._transforms import CoordinateTransform
 from ._translate import check_unsupported, not_implemented
 
@@ -56,10 +56,12 @@ class Figure:
         figsize: Optional[tuple[float, float]] = None,
         dpi: Optional[float] = None,
         facecolor: Optional[str] = None,
+        toolbar: Optional[bool] = None,
     ) -> None:
         self.number = num
         self._figsize = figsize
         self._dpi = dpi
+        self._toolbar = toolbar  # None -> rcParams["toolbar"] decides
         self._facecolor = facecolor or "white"
         self._edgecolor = "white"
         self._suptitle: Optional[str] = None
@@ -82,6 +84,17 @@ class Figure:
         self._subplot_adjust: dict[str, float] = {}
         self._label = ""
         self._gci: Any = None  # last color-mapped artist, for plt.colorbar()/clim()
+
+    def _show_toolbar(self) -> bool:
+        """Whether panels render the interactive modebar controls.
+
+        The figure kwarg wins; otherwise rcParams["toolbar"] decides, and the
+        shim default is "none" — Matplotlib's inline backend shows no toolbar,
+        so notebook output stays control-free unless explicitly enabled.
+        """
+        if self._toolbar is not None:
+            return bool(self._toolbar)
+        return str(rcParams.get("toolbar", "none")).lower() != "none"
 
     # -- layout --------------------------------------------------------------
 
@@ -597,7 +610,11 @@ class Figure:
         """Per-axes figure rects when the figure needs free-form placement, else None.
 
         A figure is free-form when any axes carries an explicit rect (the
-        add_axes path) or when subplots_adjust() moved the SubplotParams frame.
+        add_axes path), when subplots_adjust() moved the SubplotParams frame,
+        or when it holds more than one panel: multi-panel grids place every
+        plot box at its matplotlib gridspec rectangle so the whole figure
+        occupies exactly figsize — the CSS-grid composition floored panels at
+        120 px, blowing a 6-inch 8x8 grid up to ~1000 px of scrollbars.
         Matplotlib places a rect-less axes at the SubplotParams default, so a
         default axes mixed with an inset keeps its full-size position instead
         of dragging every axes back onto the uniform grid.
@@ -612,10 +629,10 @@ class Figure:
                 else (0.125, 0.11, 0.775, 0.77)
             )
             return [rect if rect is not None else default for rect in rects]
-        if not self._subplot_adjust:
+        if not self._subplot_adjust and len(self._axes) <= 1:
             return None
-        # subplots_adjust() on a uniform grid: every panel resolves to its
-        # gridspec cell rectangle under the adjusted frame and spacing.
+        # A uniform grid (adjusted or default SubplotParams): every panel
+        # resolves to its gridspec cell rectangle under the frame and spacing.
         grid = _GridSpec(
             self,
             self._nrows,
@@ -631,6 +648,22 @@ class Figure:
             )
             for index in range(len(self._axes))
         ]
+
+    def _grid_cell_sizes(self) -> tuple[list[int], list[int]]:
+        """Per-column widths and per-row heights of the CSS-grid panel layout.
+
+        Cells floor at 120 px (the render client's minimum chart size), so a
+        dense grid can legitimately exceed the nominal figure size — callers
+        sizing the outer document must use these, not `figsize`.
+        """
+        total_w, total_h = rc_figsize_px(self._figsize, self._dpi)
+        width_ratios = self._width_ratios or (1.0,) * self._ncols
+        height_ratios = self._height_ratios or (1.0,) * self._nrows
+        if len(width_ratios) != self._ncols or len(height_ratios) != self._nrows:
+            raise ValueError("subplot width/height ratios must match the grid dimensions")
+        widths = [max(120, round(total_w * value / sum(width_ratios))) for value in width_ratios]
+        heights = [max(120, round(total_h * value / sum(height_ratios))) for value in height_ratios]
+        return widths, heights
 
     def _charts(self) -> list[Any]:
         total_w, total_h = rc_figsize_px(self._figsize, self._dpi)
@@ -648,16 +681,7 @@ class Figure:
                 ax._absolute_plot_ratio = plot_w / plot_h
                 charts.append(ax._build_chart(plot_w + margin_w, plot_h + margin_h))
         else:
-            width_ratios = self._width_ratios or (1.0,) * self._ncols
-            height_ratios = self._height_ratios or (1.0,) * self._nrows
-            if len(width_ratios) != self._ncols or len(height_ratios) != self._nrows:
-                raise ValueError("subplot width/height ratios must match the grid dimensions")
-            widths = [
-                max(120, round(total_w * value / sum(width_ratios))) for value in width_ratios
-            ]
-            heights = [
-                max(120, round(total_h * value / sum(height_ratios))) for value in height_ratios
-            ]
+            widths, heights = self._grid_cell_sizes()
             charts = [
                 ax._build_chart(widths[index % self._ncols], heights[index // self._ncols])
                 for index, ax in enumerate(self._axes)
@@ -945,7 +969,26 @@ class Figure:
                 ax._chart = old_chart
                 ax._padding = old_padding
             return doc, tight_width, tight_height
-        return self._to_html(), width, height
+        doc = self._to_html()
+        single = self._single()
+        if single is not None and self._suptitle is None:
+            figure = single.figure()
+            return doc, int(figure.width), int(figure.height)
+        if self._effective_rects() is None and self._axes:
+            # CSS-grid panel layout: cells floor at 120 px, so the composed
+            # document can be larger than figsize. Size the notebook iframe to
+            # the real grid content (cells + 4 px gaps + 4 px padding) so a
+            # dense subplot grid displays whole instead of behind scrollbars.
+            widths, heights = self._grid_cell_sizes()
+            cols_used = min(len(self._axes), self._ncols)
+            rows_used = -(-len(self._axes) // self._ncols)
+            content_w = sum(widths[:cols_used]) + 4 * (self._ncols - 1) + 8
+            content_h = sum(heights[:rows_used]) + 4 * (rows_used - 1) + 8
+            if self._suptitle:
+                size = float((self._suptitle_style or {}).get("size", 16))
+                content_h += round(size * 1.4) + 8  # h2 line box + top margin
+            return doc, content_w, content_h
+        return doc, width, height
 
     def _repr_html_(self) -> str:
         from xy import export

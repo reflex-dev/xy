@@ -113,12 +113,15 @@ def test_grid_html_has_panels() -> None:
         ax.plot([0, 1], [i, i + 1])
     html = plt.gcf()._to_html()
     assert html.count('class="fc-panel"') == 4
-    assert html.count('style="width:400px;height:300px"') == 4
-    assert html.count('loading="lazy"') == 4
-    assert "__xyPyplotPanelGovernorV1" in html
-    assert "frame.srcdoc = blank" in html
-    assert "frame.srcdoc = state.source" in html
-    assert "const root = panelGrid || document" in html
+    # Multi-panel grids are absolutely placed on a figsize canvas at their
+    # matplotlib gridspec rects.
+    assert html.count("position:absolute") >= 4
+    # One document, one client: every panel hydrates through the same WebGL
+    # context governor (panel-per-iframe rendered only the first ~12 panels).
+    assert html.count("xy.renderStandalone(") == 1  # single hydrate loop
+    assert '"spec":' in html and '"chunks":' in html
+    assert "<iframe" not in html
+    assert "Content-Security-Policy" in html
 
 
 def test_notebook_repr_isolates_standalone_document_styles() -> None:

@@ -22,6 +22,7 @@ def figure(
     **kwargs: Any,
 ) -> Figure:
     global _current
+    toolbar = kwargs.pop("toolbar", None)
     if num is None:
         num = max(_figures) + 1 if _figures else 1
     key = num if isinstance(num, int) else hash(num)
@@ -31,12 +32,14 @@ def figure(
             figsize=figsize,
             dpi=dpi,
             facecolor=kwargs.get("facecolor", rcParams["figure.facecolor"]),
+            toolbar=toolbar,
         )
         _figures[key]._label = "" if isinstance(num, int) else str(num)
-    elif figsize is not None or dpi is not None:
+    elif figsize is not None or dpi is not None or toolbar is not None:
         fig = _figures[key]
         fig._figsize = figsize or fig._figsize
         fig._dpi = dpi or fig._dpi
+        fig._toolbar = toolbar if toolbar is not None else fig._toolbar
         fig._invalidate()
     _current = key
     return _figures[key]

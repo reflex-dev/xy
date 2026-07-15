@@ -1,11 +1,13 @@
 """Multi-panel composition — the shim-owned replacement for an engine grid.
 
-HTML: one self-contained document, panels in a CSS grid, each panel embedded
-as a sandboxed ``srcdoc`` iframe of its own standalone chart document (same
-zero-dependency offline story as `Chart.to_html`).  A page-level visibility
-governor unloads off-screen panel documents.  This matters in notebooks where
-many executed multi-panel cells would otherwise keep enough independent
-WebGL contexts alive for the browser to evict arbitrary visible canvases.
+HTML: one self-contained document (same zero-dependency offline story as
+`Chart.to_html`): the render client ships once and every panel hydrates into
+a host div, so all panels share the page-level WebGL context governor. A
+panel-per-iframe composition put each panel in its own document with its own
+governor, and a dense subplot grid exceeded the browser's per-page context
+cap — only the first ~dozen panels ever rendered. The shared governor
+snapshots and releases over-budget panels instead; pointer entry revives
+them.
 
 PNG: each panel renders through the engine's native rasterizer to an RGBA
 array; NumPy pastes them onto one canvas and the engine's PNG encoder writes
@@ -40,13 +42,19 @@ def compose_html(
     fixed-size canvas instead — the add_axes/subplots_adjust layout path.
     Document order stacks later axes above earlier ones, as matplotlib draws.
     """
+    from xy import export
+
     absolute = positions is not None and canvas_size is not None
     panels = []
+    payloads = []
     for index, chart in enumerate(charts):
-        doc = chart.to_html()
         figure = chart.figure()
-        width = max(120, int(figure.width))
-        height = max(120, int(figure.height))
+        spec, blob = figure.build_payload()
+        # Exact chart size: absolute placement relies on the panel's plot box
+        # landing on its matplotlib rect, so a dense grid's sub-120px panels
+        # must not be inflated here (the client honors small explicit sizes).
+        width = int(figure.width)
+        height = int(figure.height)
         placement = ""
         if absolute:
             left, bottom, _width, panel_height = positions[index]
@@ -54,10 +62,13 @@ def compose_html(
             y = round((1.0 - bottom - panel_height) * canvas_size[1])
             placement = f"position:absolute;left:{x}px;top:{y}px;"
         panels.append(
-            '<iframe class="fc-panel" data-fc-pyplot-panel '
-            'loading="lazy" sandbox="allow-scripts" '
-            f'style="{placement}width:{width}px;height:{height}px" '
-            f'srcdoc="{_html.escape(doc, quote=True)}"></iframe>'
+            '<div class="fc-panel" data-fc-pyplot-panel '
+            f'style="{placement}width:{width}px;height:{height}px"></div>'
+        )
+        payloads.append(
+            "{" + f'"spec":{export._json_for_inline_script(spec)},'
+            f'"chunks":{export._json_for_inline_script(export._base64_chunks(blob))},'
+            f'"n":{len(blob)}' + "}"
         )
     style = suptitle_style or {}
     title_css = (
@@ -94,15 +105,17 @@ def compose_html(
             "gap: 4px; padding: 4px; overflow-x: auto; }}"
         )
         grid = "\n".join(panels)
+    client_js = export._javascript_for_inline_script(export._bundled_js("standalone"))
     return f"""<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="{export._STANDALONE_CSP}">
 <style>
   body {{ margin: 0; font-family: system-ui, sans-serif; background: #ffffff; }}
   .fc-suptitle {{ text-align: center; margin: 8px 0 0; font-size: 16px; color: #262626; }}
   {grid_css}
-  .fc-panel {{ border: 0; display: block; }}
+  .fc-panel {{ position: relative; }}
 </style>
 </head>
 <body>
@@ -110,62 +123,14 @@ def compose_html(
 <div class="fc-grid">
 {grid}
 </div>
+<script>{client_js}</script>
 <script>
-(() => {{
-  const key = "__xyPyplotPanelGovernorV1";
-  const blank = "<!doctype html><html><body style='margin:0;background:#fff'></body></html>";
-  let governor = window[key];
-  if (!governor) {{
-    const states = new WeakMap();
-    let sequence = 0;
-    const observer = new IntersectionObserver((entries) => {{
-      for (const entry of entries) {{
-        const frame = entry.target;
-        const state = states.get(frame);
-        if (!state) continue;
-        state.visible = entry.isIntersecting || entry.intersectionRatio > 0;
-        if (state.visible) {{
-          state.seen = ++sequence;
-          clearTimeout(state.releaseTimer);
-          state.releaseTimer = null;
-          if (state.dormant && frame.isConnected) {{
-            state.dormant = false;
-            frame.srcdoc = state.source;
-          }}
-          continue;
-        }}
-        clearTimeout(state.releaseTimer);
-        state.releaseTimer = setTimeout(() => {{
-          if (state.visible || state.dormant || !frame.isConnected) return;
-          state.dormant = true;
-          frame.srcdoc = blank;
-        }}, 120);
-      }}
-    }}, {{ rootMargin: "100% 0px 100% 0px" }});
-    governor = window[key] = {{
-      register(frame) {{
-        if (states.has(frame)) return;
-        states.set(frame, {{
-          source: frame.srcdoc,
-          visible: true,
-          dormant: false,
-          releaseTimer: null,
-          seen: ++sequence,
-        }});
-        observer.observe(frame);
-      }},
-    }};
-  }}
-  const script = document.currentScript;
-  const panelGrid = script && script.previousElementSibling;
-  // Classic Jupyter may evaluate this script after insertion, when
-  // document.currentScript is null.  Scanning the document is safe because
-  // register() is idempotent through its WeakMap.
-  const root = panelGrid || document;
-  for (const frame of root.querySelectorAll("iframe[data-fc-pyplot-panel]")) {{
-    governor.register(frame);
-  }}
-}})();
+{export._DECODE_B64_JS}
+const panels = [{",".join(payloads)}];
+const hosts = document.querySelectorAll("[data-fc-pyplot-panel]");
+panels.forEach((p, i) => {{
+  xy.renderStandalone(hosts[i], p.spec, xyDecodeB64(p.chunks, p.n));
+}});
 </script>
 </body>
 </html>"""
