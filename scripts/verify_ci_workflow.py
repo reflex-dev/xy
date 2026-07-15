@@ -448,13 +448,21 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         jobs,
         "wasm",
         "release",
-        "best-effort Pyodide/Emscripten WASM wheel",
-        "continue-on-error: true",
+        "runtime-verified Pyodide/Emscripten WASM wheel",
+        "toolchain: 1.97.0",
         "wasm32-unknown-emscripten",
         "setup-emsdk",
+        'version: "4.0.9"',
+        'RUSTFLAGS: "-C panic=abort"',
+        "pyodide_2025_0_wasm32",
+        "pyodide@0.29.4",
+        "scripts/pyodide_load_smoke.py",
         "scripts/verify_wheel.py",
         "--expect-native",
     )
+    wasm_job = jobs.get("wasm", "")
+    if "continue-on-error:" in wasm_job:
+        errors.append("release wasm job must block publishing when the Pyodide runtime probe fails")
     _require_job_contains(
         errors,
         jobs,
