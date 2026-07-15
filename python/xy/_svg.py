@@ -1132,7 +1132,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             marks.append(_scatter_marks(t, blob, cols, sx, sy, style, color))
 
         elif kind == "hexbin":
-            marks.append(_triangle_mesh_marks(t, blob, cols, sx, sy, style, color))
+            marks.append(_hexbin_marks(t, blob, cols, sx, sy, style, color))
 
         elif kind in {"errorbar", "stem", "box_whisker", "box_median", "contour", "segments"}:
             marks.append(_segment_marks(t, blob, cols, sx, sy, style, color))
@@ -1470,23 +1470,72 @@ def _scatter_marks(
     return "".join(out)
 
 
-def _triangle_mesh_marks(
-    t: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict, fallback: str
-) -> str:
-    vertices = [_column(blob, cols[t[name]]) for name in ("x0", "y0", "x1", "y1", "x2", "y2")]
-    n = min(len(values) for values in vertices)
+# The hexagon ring around a hexbin cell center, as fractions of the cell
+# pitch (style hex_dx/hex_dy). Shared by the SVG and raster exporters; the JS
+# client mirrors it in _buildHexbinMark (js/src/50_chartview.js) — keep them
+# in sync.
+HEX_RING = (
+    (0.0, -1.0 / 3.0),
+    (0.5, -1.0 / 6.0),
+    (0.5, 1.0 / 6.0),
+    (0.0, 1.0 / 3.0),
+    (-0.5, 1.0 / 6.0),
+    (-0.5, -1.0 / 6.0),
+)
+
+
+def hexbin_ring(style: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Data-space hexagon vertex offsets (6) for a hexbin trace's cell pitch."""
+    ring = np.asarray(HEX_RING, dtype=np.float64)
+    return ring[:, 0] * float(style.get("hex_dx", 0.0)), ring[:, 1] * float(
+        style.get("hex_dy", 0.0)
+    )
+
+
+def _mesh_fills(t: dict, blob: bytes, cols: list, n: int, fallback: str) -> list[str]:
+    """Per-mark CSS fill colors from a trace's color channel (n marks)."""
     color_ch = t.get("color") or {}
     mode = color_ch.get("mode")
     if mode == "continuous":
         values = _column(blob, cols[color_ch["buf"]])[:n]
         rgb = _lut(color_ch.get("colormap", "viridis"), values)
-        fills = [f"rgb({r},{g},{b})" for r, g, b in rgb]
-    elif mode == "categorical":
+        return [f"rgb({r},{g},{b})" for r, g, b in rgb]
+    if mode == "categorical":
         codes = _column(blob, cols[color_ch["buf"]])[:n].astype(int)
         palette = color_ch.get("palette") or DEFAULT_PALETTE
-        fills = [palette[code % len(palette)] for code in codes]
-    else:
-        fills = [_css(color_ch.get("color"), fallback)] * n
+        return [palette[code % len(palette)] for code in codes]
+    return [_css(color_ch.get("color"), fallback)] * n
+
+
+def _hexbin_marks(
+    t: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict, fallback: str
+) -> str:
+    """One hexagon polygon per cell, expanded locally from shipped centers."""
+    cx = _column(blob, cols[t["x"]])
+    cy = _column(blob, cols[t["y"]])
+    n = min(len(cx), len(cy))
+    fills = _mesh_fills(t, blob, cols, n, fallback)
+    ring_x, ring_y = hexbin_ring(style)
+    xs = np.asarray(sx(cx[:n, None] + ring_x[None, :]), dtype=np.float64)
+    ys = np.asarray(sy(cy[:n, None] + ring_y[None, :]), dtype=np.float64)
+    fill_op = _fill_opacity(style)
+    group_attr = f' fill-opacity="{_num(fill_op)}"' if fill_op < 1 else ""
+    out = [f"<g{group_attr}>"]
+    for i in range(n):
+        points = " ".join(
+            f"{_num(float(x))},{_num(float(y))}" for x, y in zip(xs[i], ys[i], strict=True)
+        )
+        out.append(f'<polygon points="{points}" fill="{escape(fills[i])}"/>')
+    out.append("</g>")
+    return "".join(out)
+
+
+def _triangle_mesh_marks(
+    t: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, style: dict, fallback: str
+) -> str:
+    vertices = [_column(blob, cols[t[name]]) for name in ("x0", "y0", "x1", "y1", "x2", "y2")]
+    n = min(len(values) for values in vertices)
+    fills = _mesh_fills(t, blob, cols, n, fallback)
 
     fill_op = _fill_opacity(style)
     stroke_op = _stroke_opacity(style)

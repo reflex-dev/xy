@@ -221,7 +221,38 @@ def _css_property_name(key: str) -> str:
     return key.replace("_", "-")
 
 
+# Validated style dicts, keyed by their exact items. Chart chrome ships the
+# same few style dicts on every build (theme fonts, rc-derived title/tick
+# slots), and validating one is pure — so each distinct dict validates once
+# per process, not once per chart build (the pyplot perf guardrail counts on
+# this). Only successful validations are cached; the type names keep e.g.
+# True from hitting a cached 1 (equal, same hash, different verdict).
+_STYLE_MAPPING_CACHE: dict[tuple, dict[str, str | int | float]] = {}
+
+
 def style_mapping(value: dict[str, Any], label: str) -> dict[str, str | int | float]:
+    if isinstance(value, dict):
+        try:
+            key = (
+                label,
+                tuple((k, v, type(v).__name__) for k, v in value.items()),
+            )
+            cached = _STYLE_MAPPING_CACHE.get(key)
+        except TypeError:  # unhashable value: validate (and likely raise) below
+            key = cached = None
+        if cached is not None:
+            return dict(cached)
+    else:
+        key = None
+    out = _validate_style_mapping(value, label)
+    if key is not None:
+        if len(_STYLE_MAPPING_CACHE) > 4096:
+            _STYLE_MAPPING_CACHE.clear()
+        _STYLE_MAPPING_CACHE[key] = dict(out)
+    return out
+
+
+def _validate_style_mapping(value: dict[str, Any], label: str) -> dict[str, str | int | float]:
     from . import kernels
 
     if not isinstance(value, dict):

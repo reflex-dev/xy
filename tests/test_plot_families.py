@@ -60,8 +60,13 @@ def test_hexbin_is_screen_bounded_and_contour_emits_isolines() -> None:
     assert hex_spec["traces"][0]["kind"] == "hexbin"
     ny = int(32 / np.sqrt(3.0))
     assert hex_spec["traces"][0]["n_marks"] <= (32 + 1) * (ny + 1) + 32 * ny
-    assert all(key in hex_spec["traces"][0] for key in ("x0", "y0", "x1", "y1", "x2", "y2"))
-    assert "x" not in hex_spec["traces"][0]
+    # Centers plus one color value per cell; renderers expand the shared
+    # hexagon geometry (style hex_dx/hex_dy) locally instead of shipping
+    # six vertices per cell across seven columns.
+    assert all(key in hex_spec["traces"][0] for key in ("x", "y", "color"))
+    assert "x0" not in hex_spec["traces"][0]
+    assert hex_spec["traces"][0]["style"]["hex_dx"] > 0
+    assert hex_spec["traces"][0]["style"]["hex_dy"] > 0
     assert contour_spec["traces"][0]["kind"] == "contour"
     assert contour_spec["traces"][0]["n_marks"] > 0
 
