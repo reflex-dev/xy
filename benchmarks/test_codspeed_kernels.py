@@ -33,6 +33,7 @@ HIST_N = 100_000
 AREA_N = 100_000
 BAR_N = 1_000
 HEATMAP_W, HEATMAP_H = 160, 120
+HEXBIN_GRIDSIZE = 128
 EXPORT_N = 100_000
 APPEND_N = 100_000
 APPEND_BATCH = 1_000
@@ -638,7 +639,7 @@ def _statistical_payload(values: list[np.ndarray]) -> int:
 
 
 def _hexbin_payload(x: np.ndarray, y: np.ndarray) -> int:
-    fig = fc.chart(fc.hexbin(x=x, y=y, gridsize=128)).figure()
+    fig = fc.chart(fc.hexbin(x=x, y=y, gridsize=HEXBIN_GRIDSIZE)).figure()
     _spec, buffers = fig.build_payload_split(N_BUCKETS)
     return sum(b.nbytes for b in buffers)
 
@@ -873,7 +874,11 @@ def test_first_payload_hexbin_core_2d(benchmark, medium_data):
     """Hexbin scans source points through the native screen-sized bin kernel."""
     x, y = medium_data
     payload_bytes = benchmark(_hexbin_payload, x, y)
-    assert 0 < payload_bytes < x.nbytes + y.nbytes
+    grid_height = max(2, int(HEXBIN_GRIDSIZE / np.sqrt(3.0)))
+    max_cells = (HEXBIN_GRIDSIZE + 1) * (grid_height + 1) + HEXBIN_GRIDSIZE * grid_height
+    # Each cell is six triangles with six coordinate and one color f32 buffer.
+    max_payload_bytes = max_cells * 6 * 7 * np.dtype(np.float32).itemsize
+    assert 0 < payload_bytes <= max_payload_bytes
 
 
 def test_first_payload_errorbar_large(benchmark, data):
