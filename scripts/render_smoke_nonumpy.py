@@ -313,9 +313,17 @@ try{{
     const zoomTrigger = bar && bar.querySelector("[data-fc-modebar-menu-trigger]");
     const zoomMenu = bar && bar.querySelector("[data-fc-modebar-menu]");
     const selectButton = bar && bar.querySelector("[data-fc-modebar-select]");
+    const selectMenu = bar && bar.querySelector("[data-fc-modebar-select-menu]");
     const zoomPercent = zoomTrigger && zoomTrigger.querySelector("[data-fc-modebar-zoom-percent]");
     const zoomIndicator = zoomTrigger && zoomTrigger.querySelector("[data-fc-modebar-menu-indicator] svg");
     const zoomTriggerInitial = zoomPercent && zoomPercent.textContent === "100%" && zoomIndicator;
+    const zoomLabelView = {{...v.view}};
+    v.view = {{...v.view, x1:v.view.x0+(v.view.x1-v.view.x0)/4000}};
+    v._updateZoomMenuLabel();
+    const zoomCompact = zoomPercent && zoomPercent.textContent === "400…%"
+      && zoomPercent.dataset.fcZoomExact === "400000%";
+    v.view = zoomLabelView;
+    v._updateZoomMenuLabel();
     if (zoomTrigger) zoomTrigger.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
     const menuOpened = zoomMenu && zoomMenu.style.display === "flex"
       && zoomTrigger.getAttribute("aria-expanded") === "true"
@@ -336,14 +344,25 @@ try{{
     const modebarDrag = grip && parseFloat(bar.style.left) > barLeft0 + 20
       && bar.querySelectorAll("button[hidden]").length === 0 ? 1 : 0;
     if (selectButton) selectButton.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
-    const modebarSelect = selectButton && v.dragMode === "select"
-      && selectButton.classList.contains("fc-active") ? 1 : 0;
+    const selectItems = selectMenu
+      ? [...selectMenu.querySelectorAll("[data-fc-modebar-select-item]")]
+      : [];
+    const selectModes = selectItems.map((item) => item.dataset.fcModebarSelectItem);
+    const lassoItem = selectMenu
+      && selectMenu.querySelector('[data-fc-modebar-select-item="select-lasso"]');
+    const selectMenuOpened = selectMenu && selectMenu.style.display === "flex"
+      && selectButton.getAttribute("aria-expanded") === "true"
+      && ["select", "select-lasso", "select-x", "select-y"].every((mode) => selectModes.includes(mode));
+    if (lassoItem) lassoItem.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
+    const modebarSelect = selectMenuOpened && v.dragMode === "select-lasso"
+      && selectButton.classList.contains("fc-active")
+      && lassoItem.classList.contains("fc-active") && selectMenu.style.display === "none" ? 1 : 0;
     v._setDragMode("pan");
     const spanX = () => v.view.x1 - v.view.x0;
     const s0 = spanX();
     v._zoomBy(0.5);                 // zoom in -> span shrinks
     const zoomTriggerIn = zoomPercent && zoomPercent.textContent === "200%";
-    const zin = spanX() < s0 && zoomTriggerInitial && zoomTriggerIn ? 1 : 0;
+    const zin = spanX() < s0 && zoomTriggerInitial && zoomCompact && zoomTriggerIn ? 1 : 0;
     v._zoomBy(2);                   // back out
     v._zoomBy(0.8,true);            // modebar path animates
     const smooth=(v._viewAnim && v._animRaf)?1:0;
@@ -1242,7 +1261,7 @@ try{{
         raise SystemExit(f"sub-range selection implausible: {sel_some} of {sel_all}")
     if active != 1:
         raise SystemExit("selection mask did not activate")
-    if btns < 8:
+    if btns < 12:
         raise SystemExit(f"modebar missing buttons: {btns}")
     if modebar_hidden != 1 or modebar_hover != 1:
         raise SystemExit("modebar did not hide at rest and show on chart hover")

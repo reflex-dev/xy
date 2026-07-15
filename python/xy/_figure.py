@@ -1102,6 +1102,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
         """Box-select → canonical indices per scatter trace (§34 Filter Tier A)."""
         return interaction.select_range(self, x0, x1, y0, y1, trace_id)
 
+    def select_polygon(self, points: Any, trace_id: Optional[int] = None) -> dict[int, np.ndarray]:
+        """Lasso-select → canonical indices per scatter trace."""
+        return interaction.select_polygon(self, points, trace_id)
+
     def to_shipped_indices(self, trace_id: int, canonical: np.ndarray) -> np.ndarray:
         """Canonical rows → shipped vertex positions (the client's mask space)."""
         return interaction.to_shipped_indices(self, trace_id, canonical)

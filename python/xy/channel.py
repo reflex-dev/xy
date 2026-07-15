@@ -89,12 +89,42 @@ class ChannelCallbacks:
 
     on_hover: Optional[Callable[[dict[str, Any]], None]] = None
     on_click: Optional[Callable[[dict[str, Any]], None]] = None
-    on_brush: Optional[Callable[[dict[str, float]], None]] = None
+    on_brush: Optional[Callable[[dict[str, Any]], None]] = None
     on_select: Optional[Callable[[Selection], None]] = None
     on_view_change: Optional[Callable[[dict[str, Any]], None]] = None
 
 
 _NO_CALLBACKS = ChannelCallbacks()
+
+
+def _selection_reply(
+    fig: "Figure",
+    selected: dict[int, Any],
+    callbacks: ChannelCallbacks,
+    brush: dict[str, Any],
+) -> Reply:
+    if callbacks.on_brush is not None:
+        callbacks.on_brush(brush)
+    traces = []
+    out: list[bytes] = []
+    total = 0
+    for tid, idx in selected.items():
+        # The wire mask speaks shipped-vertex positions; callbacks retain
+        # canonical rows (§34 — the GPU and Python have distinct index spaces).
+        wire_idx = fig.to_shipped_indices(tid, idx)
+        traces.append(
+            {
+                "id": tid,
+                "count": int(len(wire_idx)),
+                "buf": len(out),
+                "drill_seq": fig.traces[tid].drill_seq,
+            }
+        )
+        out.append(wire_idx.tobytes())
+        total += len(idx)
+    if callbacks.on_select is not None:
+        callbacks.on_select(Selection(fig, selected))
+    return {"type": "selection", "traces": traces, "total": total}, out
 
 
 def handle_message(
@@ -221,31 +251,20 @@ def handle_message(
             )
         except (KeyError, TypeError, ValueError):
             return None
-        if callbacks.on_brush is not None:
-            callbacks.on_brush({"x0": x0, "x1": x1, "y0": y0, "y1": y1})
-        traces = []
-        out: list[bytes] = []
-        total = 0
-        for tid, idx in sel.items():
-            # The wire mask speaks shipped-vertex positions; the Selection
-            # callback below keeps canonical rows (§34 — callbacks get real
-            # data, the GPU gets its own coordinate space).
-            wire_idx = fig.to_shipped_indices(tid, idx)
-            traces.append(
-                {
-                    "id": tid,
-                    "count": int(len(wire_idx)),
-                    "buf": len(out),
-                    # Which drilled subset this mask speaks for; the client
-                    # drops it if its buffers have moved on (§17).
-                    "drill_seq": fig.traces[tid].drill_seq,
-                }
-            )
-            out.append(wire_idx.tobytes())
-            total += len(idx)
-        if callbacks.on_select is not None:
-            callbacks.on_select(Selection(fig, sel))
-        return {"type": "selection", "traces": traces, "total": total}, out
+        return _selection_reply(
+            fig,
+            sel,
+            callbacks,
+            {"x0": x0, "x1": x1, "y0": y0, "y1": y1},
+        )
+    if kind == "select_polygon":
+        try:
+            points = content["points"]
+            sel = fig.select_polygon(points)
+            polygon = [[float(point[0]), float(point[1])] for point in points]
+        except (IndexError, KeyError, TypeError, ValueError):
+            return None
+        return _selection_reply(fig, sel, callbacks, {"polygon": polygon})
     if kind == "select_clear":
         if callbacks.on_select is not None:
             callbacks.on_select(Selection(fig, {}))

@@ -148,7 +148,8 @@ class ChartView {
     this._hoverTarget = null;
     this._viewEventRaf = null;
     this._linkedSource = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    this.dragMode = "pan"; // "pan" | "zoom" | "select"; toggled via the modebar
+    // pan | zoom | select (box) | select-lasso | select-x | select-y
+    this.dragMode = "pan";
 
     // Responsive size: "100%" means the *container* owns that axis — measure
     // it now, track it with a ResizeObserver below. Numeric sizes are fixed.

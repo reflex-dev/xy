@@ -142,6 +142,49 @@ def select_range(
     return out
 
 
+def select_polygon(
+    fig: "Figure", points: Any, trace_id: Optional[int] = None
+) -> dict[int, np.ndarray]:
+    """Canonical scatter indices inside a finite lasso polygon.
+
+    The polygon's bounding box first reuses the zone-pruned range predicate;
+    ray casting then runs only on those candidates rather than every row.
+    """
+    polygon = np.asarray(points, dtype=np.float64)
+    if polygon.ndim != 2 or polygon.shape[1:] != (2,) or not 3 <= len(polygon) <= 2048:
+        raise ValueError("selection polygon must contain 3 to 2048 x/y points")
+    if not np.isfinite(polygon).all():
+        raise ValueError("selection polygon must be finite")
+    candidates = select_range(
+        fig,
+        float(polygon[:, 0].min()),
+        float(polygon[:, 0].max()),
+        float(polygon[:, 1].min()),
+        float(polygon[:, 1].max()),
+        trace_id,
+    )
+    out: dict[int, np.ndarray] = {}
+    for tid, rows in candidates.items():
+        if len(rows) == 0:
+            out[tid] = rows
+            continue
+        trace = fig.traces[tid]
+        x = trace.x.values[rows]
+        y = trace.y.values[rows]
+        inside = np.zeros(len(rows), dtype=np.bool_)
+        j = len(polygon) - 1
+        for i in range(len(polygon)):
+            xi, yi = polygon[i]
+            xj, yj = polygon[j]
+            crosses = (yi > y) != (yj > y)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                edge_x = (xj - xi) * (y - yi) / (yj - yi) + xi
+            inside ^= crosses & (x < edge_x)
+            j = i
+        out[tid] = rows[inside]
+    return out
+
+
 def to_shipped_indices(fig: "Figure", trace_id: int, canonical: np.ndarray) -> np.ndarray:
     """Translate canonical row indices to *shipped* vertex positions for a
     trace — the coordinate space the client's per-vertex selection mask uses.

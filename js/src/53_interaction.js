@@ -15,6 +15,13 @@ Object.assign(ChartView.prototype, {
     this.selRect.style.cssText = "position:absolute;display:none;pointer-events:none;z-index:4;";
     this._applySlot(this.selRect, "selection");
     this.root.appendChild(this.selRect);
+    this.selLasso = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    this.selLasso.style.cssText =
+      "position:absolute;display:none;pointer-events:none;z-index:4;overflow:visible;";
+    this.selLassoPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    this.selLassoPath.dataset.fcSelectionLasso = "";
+    this.selLasso.appendChild(this.selLassoPath);
+    this.root.appendChild(this.selLasso);
 
     if (this._interactionFlag("crosshair")) {
       this.crosshairX = document.createElement("div");
@@ -39,10 +46,16 @@ Object.assign(ChartView.prototype, {
       // Shift-drag box-selects (§34); the modebar can make selection or box-zoom
       // the default plain-drag gesture; otherwise a plain drag pans.
       const canBrush = this._interactionFlag("brush", true) && this._interactionFlag("select", true);
-      const mode = (e.shiftKey || this.dragMode === "select") && canBrush && this._pickable ? "select"
+      const selectMode = this.dragMode.startsWith("select") ? this.dragMode : null;
+      const mode = (e.shiftKey || selectMode) && canBrush && this._pickable
+        ? (e.shiftKey ? "select" : selectMode)
         : this.dragMode === "zoom" ? "zoom" : null;
       if (mode) {
-        band = { mode, sx: e.clientX, sy: e.clientY, d0: dataAt(e.clientX, e.clientY) };
+        const d0 = dataAt(e.clientX, e.clientY);
+        band = {
+          mode, sx: e.clientX, sy: e.clientY, d0,
+          points: mode === "select-lasso" ? [{ x: e.clientX, y: e.clientY, data: d0 }] : null,
+        };
         c.setPointerCapture(e.pointerId);
         this.tooltip.style.display = "none";
         return;
@@ -79,11 +92,24 @@ Object.assign(ChartView.prototype, {
     const end = (e) => {
       if (band) {
         this.selRect.style.display = "none";
+        this.selLasso.style.display = "none";
         const d1 = dataAt(e.clientX, e.clientY);
         const moved = Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
         if (moved) {
           if (band.mode === "zoom") this._zoomToBox(band.d0, d1, true);
-          else this._sendSelect(band.d0, d1);
+          else if (band.mode === "select-lasso" && band.points.length >= 3) {
+            this._sendSelectPolygon(band.points.map((point) => point.data));
+          } else {
+            let d0 = band.d0;
+            if (band.mode === "select-x") {
+              d0 = [band.d0[0], this.view.y0];
+              d1[1] = this.view.y1;
+            } else if (band.mode === "select-y") {
+              d0 = [this.view.x0, band.d0[1]];
+              d1[0] = this.view.x1;
+            }
+            this._sendSelect(d0, d1);
+          }
           this._ignoreNextClick = true;
         }
         band = null;
@@ -94,7 +120,12 @@ Object.assign(ChartView.prototype, {
       drag = null;
     };
     this._listen(c, "pointerup", end);
-    this._listen(c, "pointercancel", () => { this.selRect.style.display = "none"; band = null; drag = null; });
+    this._listen(c, "pointercancel", () => {
+      this.selRect.style.display = "none";
+      this.selLasso.style.display = "none";
+      band = null;
+      drag = null;
+    });
     this._listen(c, "pointerleave", () => {
       const hadHover = this._hoverId !== -1;
       this._hoverId = -1;
@@ -184,6 +215,27 @@ Object.assign(ChartView.prototype, {
   _updateBand(band, e) {
     const rect = this.canvas.getBoundingClientRect();
     const rootRect = this.root.getBoundingClientRect();
+    if (band.mode === "select-lasso") {
+      const previous = band.points[band.points.length - 1];
+      if (band.points.length < 2048
+          && Math.hypot(e.clientX - previous.x, e.clientY - previous.y) >= 3) {
+        band.points.push({ x: e.clientX, y: e.clientY, data: this._dataFromCanvas(
+          e.clientX - rect.left, e.clientY - rect.top
+        ) });
+      }
+      const points = band.points.map((point) => [
+        Math.max(this.plot.x, Math.min(this.plot.x + this.plot.w, point.x - rootRect.left)),
+        Math.max(this.plot.y, Math.min(this.plot.y + this.plot.h, point.y - rootRect.top)),
+      ]);
+      this.selLasso.style.display = "block";
+      this.selLasso.style.inset = "0";
+      this.selLasso.setAttribute("width", String(this.root.clientWidth));
+      this.selLasso.setAttribute("height", String(this.root.clientHeight));
+      this.selLassoPath.setAttribute(
+        "d", points.map((point, i) => `${i ? "L" : "M"}${point[0]} ${point[1]}`).join(" ") + " Z"
+      );
+      return;
+    }
     const x = Math.min(band.sx, e.clientX) - rootRect.left;
     const y = Math.min(band.sy, e.clientY) - rootRect.top;
     const w = Math.abs(e.clientX - band.sx);
@@ -191,7 +243,10 @@ Object.assign(ChartView.prototype, {
     // clamp to plot area
     const px = this.plot.x, py = this.plot.y;
     const x2 = Math.min(x + w, px + this.plot.w), y2 = Math.min(y + h, py + this.plot.h);
-    const cx = Math.max(x, px), cy = Math.max(y, py);
+    let cx = Math.max(x, px), cy = Math.max(y, py);
+    let bx2 = x2, by2 = y2;
+    if (band.mode === "select-x") { cy = py; by2 = py + this.plot.h; }
+    if (band.mode === "select-y") { cx = px; bx2 = px + this.plot.w; }
     // Band paint (border/background) is a defeatable :where() default keyed on
     // data-fc-band, NOT pinned inline — otherwise a `class_names={"selection":…}`
     // utility (or `styles[selection]`) would lose to the inline style, breaking
@@ -201,8 +256,8 @@ Object.assign(ChartView.prototype, {
     this.selRect.style.display = "block";
     this.selRect.style.left = cx + "px";
     this.selRect.style.top = cy + "px";
-    this.selRect.style.width = Math.max(0, x2 - cx) + "px";
-    this.selRect.style.height = Math.max(0, y2 - cy) + "px";
+    this.selRect.style.width = Math.max(0, bx2 - cx) + "px";
+    this.selRect.style.height = Math.max(0, by2 - cy) + "px";
     void rect;
   },
 
@@ -216,6 +271,54 @@ Object.assign(ChartView.prototype, {
     } else {
       this._selectLocal(x0, x1, y0, y1); // standalone: compute from resident f32
     }
+  },
+
+  _sendSelectPolygon(points) {
+    if (!Array.isArray(points) || points.length < 3) return;
+    const polygon = points.map((point) => [point[0], point[1]]);
+    this._dispatchChartEvent("brush", {
+      polygon,
+      view: this._eventView("brush"),
+    });
+    if (this.comm) {
+      this.comm.send({ type: "select_polygon", points: polygon });
+    } else {
+      this._selectLocalPolygon(polygon);
+    }
+  },
+
+  _selectLocalPolygon(points) {
+    const inside = (x, y) => {
+      let hit = false;
+      for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+        const [xi, yi] = points[i], [xj, yj] = points[j];
+        if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+      }
+      return hit;
+    };
+    let total = 0;
+    for (const g of this.gpuTraces) {
+      if (!g._cpu || g.tier === "density") continue;
+      const cx = g._cpu.x, cy = g._cpu.y;
+      const xMeta = g._cpu.xMeta || g.xMeta;
+      const yMeta = g._cpu.yMeta || g.yMeta;
+      const ox = xMeta.offset, sx = xMeta.scale || 1;
+      const oy = yMeta.offset, sy = yMeta.scale || 1;
+      const mask = new Float32Array(g.n);
+      let count = 0;
+      for (let i = 0; i < g.n; i++) {
+        if (inside(cx[i] / sx + ox, cy[i] / sy + oy)) { mask[i] = 1; count++; }
+      }
+      this._applySelMask(g, mask);
+      total += count;
+    }
+    this._selectionCount = total;
+    this.draw();
+    this._dispatchChartEvent("select", {
+      total,
+      polygon: points,
+      view: this._eventView("select"),
+    });
   },
 
   // Standalone selection (no kernel): mask the retained CPU f32 columns (§37).
@@ -294,6 +397,7 @@ Object.assign(ChartView.prototype, {
     this._modebarMoved = false;
     bar.dataset.fcCollapsed = "false";
     let setZoomMenuOpen = () => {};
+    let setSelectMenuOpen = () => {};
 
     const setVisible = (visible) => {
       const show = visible || this._modebarDragging || bar.contains(document.activeElement);
@@ -304,6 +408,7 @@ Object.assign(ChartView.prototype, {
     this._listen(root, "pointerleave", () => {
       setVisible(false);
       setZoomMenuOpen(false);
+      setSelectMenuOpen(false);
     });
     this._listen(bar, "focusin", () => setVisible(true));
     this._listen(bar, "focusout", () => {
@@ -332,7 +437,10 @@ Object.assign(ChartView.prototype, {
     const setCollapsed = (collapsed) => {
       this._modebarCollapsed = collapsed;
       bar.dataset.fcCollapsed = String(collapsed);
-      if (collapsed) setZoomMenuOpen(false);
+      if (collapsed) {
+        setZoomMenuOpen(false);
+        setSelectMenuOpen(false);
+      }
       for (const button of bar.querySelectorAll("button")) {
         if (button !== grip) {
           button.hidden = collapsed;
@@ -376,6 +484,7 @@ Object.assign(ChartView.prototype, {
         this._modebarMoved = true;
         bar.style.transition = "none";
         setZoomMenuOpen(false);
+        setSelectMenuOpen(false);
         try { grip.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
       }
       const rootRect = root.getBoundingClientRect();
@@ -447,11 +556,21 @@ Object.assign(ChartView.prototype, {
     const canSelect = this._pickable
       && this._interactionFlag("brush", true)
       && this._interactionFlag("select", true);
+    let selectTrigger = null;
+    let selectIndicator = null;
     if (canSelect) {
-      const selectButton = mk(
-        "select", "Select points", () => this._setDragMode("select"), "select"
-      );
-      selectButton.dataset.fcModebarSelect = "";
+      selectTrigger = mk("select", "Selection controls", () => {
+        setSelectMenuOpen(!this._selectMenuOpen);
+      });
+      selectTrigger.dataset.fcModebarSelect = "";
+      selectTrigger.dataset.fcModebarSelectTrigger = "";
+      selectTrigger.setAttribute("aria-haspopup", "menu");
+      selectTrigger.setAttribute("aria-expanded", "false");
+      selectIndicator = document.createElement("span");
+      selectIndicator.dataset.fcModebarMenuIndicator = "";
+      selectIndicator.innerHTML = this._icon("chevrondown");
+      selectTrigger.appendChild(selectIndicator);
+      this._selectMenuButton = selectTrigger;
     }
 
     const zoomMenu = document.createElement("div");
@@ -504,8 +623,55 @@ Object.assign(ChartView.prototype, {
     mkZoomItem("zoom", "Box Zoom", "B", () => this._setDragMode("zoom"), "zoom");
     mkZoomItem("reset", "Reset View", "0", resetView, null, true);
 
+    const selectMenu = document.createElement("div");
+    selectMenu.dataset.fcModebarMenu = "";
+    selectMenu.dataset.fcModebarSelectMenu = "";
+    selectMenu.setAttribute("role", "menu");
+    selectMenu.setAttribute("aria-label", "Selection controls");
+    selectMenu.style.cssText =
+      "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
+    bar.appendChild(selectMenu);
+    const selectMenuItems = [];
+    const mkSelectItem = (name, label, shortcut, mode) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.tabIndex = -1;
+      button.dataset.fcModebarMenuItem = name;
+      button.dataset.fcModebarSelectItem = mode;
+      button.setAttribute("role", "menuitem");
+      button.style.cssText = "display:flex;align-items:center;pointer-events:auto;";
+      this._applySlot(button, "modebar_button");
+      const icon = document.createElement("span");
+      icon.dataset.fcModebarMenuIcon = "";
+      icon.innerHTML = this._icon(name);
+      button.appendChild(icon);
+      const text = document.createElement("span");
+      text.textContent = label;
+      button.appendChild(text);
+      const hint = document.createElement("span");
+      hint.dataset.fcModebarMenuShortcut = "";
+      hint.textContent = shortcut;
+      button.appendChild(hint);
+      this._listen(button, "pointerdown", (e) => e.stopPropagation());
+      this._listen(button, "click", (e) => {
+        e.stopPropagation();
+        setSelectMenuOpen(false, true);
+        this._setDragMode(mode);
+      });
+      selectMenu.appendChild(button);
+      selectMenuItems.push(button);
+      this._modeBtns[mode] = button;
+    };
+    if (canSelect) {
+      mkSelectItem("select", "Box Select", "B", "select");
+      mkSelectItem("lasso", "Lasso Select", "L", "select-lasso");
+      mkSelectItem("selectx", "X Range", "X", "select-x");
+      mkSelectItem("selecty", "Y Range", "Y", "select-y");
+    }
+
     setZoomMenuOpen = (open, restoreFocus = false) => {
       const show = Boolean(open) && !this._modebarCollapsed;
+      if (show) setSelectMenuOpen(false);
       this._zoomMenuOpen = show;
       zoomTrigger.setAttribute("aria-expanded", String(show));
       if (!show) {
@@ -532,9 +698,43 @@ Object.assign(ChartView.prototype, {
       zoomMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
       zoomMenu.style.visibility = "visible";
     };
-    this._closeModebarMenu = () => setZoomMenuOpen(false);
+    setSelectMenuOpen = (open, restoreFocus = false) => {
+      if (!selectTrigger) return;
+      const show = Boolean(open) && !this._modebarCollapsed;
+      if (show) setZoomMenuOpen(false);
+      this._selectMenuOpen = show;
+      selectTrigger.setAttribute("aria-expanded", String(show));
+      if (!show) {
+        selectMenu.style.display = "none";
+        selectIndicator.style.transform = "none";
+        if (restoreFocus) selectTrigger.focus();
+        return;
+      }
+      selectMenu.style.display = "flex";
+      selectMenu.style.visibility = "hidden";
+      const rootRect = root.getBoundingClientRect();
+      const barRect = bar.getBoundingClientRect();
+      const rootLeft = barRect.left - rootRect.left;
+      const rootTop = barRect.top - rootRect.top;
+      const below = bar.offsetHeight + 6;
+      const above = -selectMenu.offsetHeight - 6;
+      const preferredTop = barRect.bottom + 6 + selectMenu.offsetHeight <= rootRect.bottom
+        ? below
+        : above;
+      selectIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
+      const maxLeft = root.clientWidth - rootLeft - selectMenu.offsetWidth;
+      const maxTop = root.clientHeight - rootTop - selectMenu.offsetHeight;
+      selectMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, selectTrigger.offsetLeft))}px`;
+      selectMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
+      selectMenu.style.visibility = "visible";
+    };
+    this._closeModebarMenu = () => {
+      setZoomMenuOpen(false);
+      setSelectMenuOpen(false);
+    };
     this._listen(document, "pointerdown", (e) => {
       if (this._zoomMenuOpen && !bar.contains(e.target)) setZoomMenuOpen(false);
+      if (this._selectMenuOpen && !bar.contains(e.target)) setSelectMenuOpen(false);
     });
     this._listen(zoomTrigger, "keydown", (e) => {
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
@@ -559,6 +759,33 @@ Object.assign(ChartView.prototype, {
       if (e.key === "ArrowUp") next = (current - 1 + zoomMenuItems.length) % zoomMenuItems.length;
       zoomMenuItems[next].focus();
     });
+    if (selectTrigger) {
+      this._listen(selectTrigger, "keydown", (e) => {
+        if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+        e.preventDefault();
+        e.stopPropagation();
+        setSelectMenuOpen(true);
+        const index = e.key === "ArrowDown" ? 0 : selectMenuItems.length - 1;
+        selectMenuItems[index].focus();
+      });
+      this._listen(selectMenu, "keydown", (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          setSelectMenuOpen(false, true);
+          return;
+        }
+        if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+        e.preventDefault();
+        const current = selectMenuItems.indexOf(document.activeElement);
+        let next = e.key === "Home" ? 0 : e.key === "End" ? selectMenuItems.length - 1 : current;
+        if (e.key === "ArrowDown") next = (current + 1) % selectMenuItems.length;
+        if (e.key === "ArrowUp") {
+          next = (current - 1 + selectMenuItems.length) % selectMenuItems.length;
+        }
+        selectMenuItems[next].focus();
+      });
+    }
     root.appendChild(bar);
     this._fitModebar();
     // The pointer may already be over a chart that mounted beneath it, in
@@ -601,6 +828,7 @@ Object.assign(ChartView.prototype, {
       btn.classList.toggle("fc-active", name === mode);
     }
     this._zoomMenuButton?.classList.toggle("fc-active", mode === "zoom");
+    this._selectMenuButton?.classList.toggle("fc-active", mode.startsWith("select"));
   },
 
   _updateZoomMenuLabel() {
@@ -618,10 +846,13 @@ Object.assign(ChartView.prototype, {
     const percent = axisPercent("x", this.view.x0, this.view.x1, this.view0.x0, this.view0.x1)
       ?? axisPercent("y", this.view.y0, this.view.y1, this.view0.y0, this.view0.y1)
       ?? 100;
-    const text = percent < 1 ? "<1%" : `${Math.round(percent)}%`;
-    this._zoomMenuLabel.textContent = text;
-    this._zoomMenuButton.title = `Zoom controls (${text})`;
-    this._zoomMenuButton.setAttribute("aria-label", `Zoom controls, ${text}`);
+    const rounded = Math.round(percent);
+    const exactText = percent < 1 ? "<1%" : `${rounded}%`;
+    const displayText = rounded > 999 ? `${String(rounded).slice(0, 3)}…%` : exactText;
+    this._zoomMenuLabel.textContent = displayText;
+    this._zoomMenuLabel.dataset.fcZoomExact = exactText;
+    this._zoomMenuButton.title = `Zoom controls (${exactText})`;
+    this._zoomMenuButton.setAttribute("aria-label", `Zoom controls, ${exactText}`);
   },
 
   _prefersReducedMotion() {
@@ -807,6 +1038,17 @@ Object.assign(ChartView.prototype, {
           'stroke-dasharray="2.5 2"/><circle cx="7" cy="7" r="1" fill="currentColor" ' +
           'stroke="none"/><circle cx="12.5" cy="9" r="1" fill="currentColor" stroke="none"/>' +
           '<circle cx="9.5" cy="13" r="1" fill="currentColor" stroke="none"/>');
+      case "lasso":
+        return svg('<path d="M4 6 C6 2 15 3 16 8 C17 13 11 17 6 14 C2 12 2 8 4 6 Z" ' +
+          'stroke-dasharray="2.5 2"/><circle cx="6" cy="8" r="1" fill="currentColor" ' +
+          'stroke="none"/><circle cx="12" cy="7" r="1" fill="currentColor" stroke="none"/>' +
+          '<circle cx="10" cy="12" r="1" fill="currentColor" stroke="none"/>');
+      case "selectx":
+        return svg('<rect x="3" y="5" width="14" height="10" rx="1" stroke-dasharray="2.5 2"/>' +
+          '<path d="M6 10 H14 M6 10 L8 8 M6 10 L8 12 M14 10 L12 8 M14 10 L12 12"/>');
+      case "selecty":
+        return svg('<rect x="5" y="3" width="10" height="14" rx="1" stroke-dasharray="2.5 2"/>' +
+          '<path d="M10 6 V14 M10 6 L8 8 M10 6 L12 8 M10 14 L8 12 M10 14 L12 12"/>');
       case "chevrondown":
         return svg('<path d="M6 8 L10 12 L14 8"/>');
       case "reset":
