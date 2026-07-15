@@ -18,6 +18,7 @@ from typing import Any, Optional
 import numpy as np
 
 from . import _png, _scene
+from ._arrowgeom import arrow_shapes as _arrow_shapes
 from ._svg import (
     _AXIS,
     _AXIS_GRID_DASHES,
@@ -821,43 +822,45 @@ def _emit_annotations(cmd, annotations, sx, sy, plot, width, height, *, phase="m
                 _rect_pts(x0, y0, x1, y1),
                 _rgba(style.get("color"), "#64748b", float(style.get("opacity", 0.14))),
             )
-        elif ann.get("kind") == "arrow":
-            x0, y0 = float(sx(float(ann["x0"]))), float(sy(float(ann["y0"])))
-            x1, y1 = float(sx(float(ann["x1"]))), float(sy(float(ann["y1"])))
+        elif ann.get("kind") in ("arrow", "callout"):
+            if ann.get("kind") == "arrow":
+                x0, y0 = float(sx(float(ann["x0"]))), float(sy(float(ann["y0"])))
+                x1, y1 = float(sx(float(ann["x1"]))), float(sy(float(ann["y1"])))
+            else:  # pointer from the offset label back to the data point
+                x1, y1 = float(sx(float(ann["x"]))), float(sy(float(ann["y"])))
+                x0, y0 = x1 + float(ann.get("dx", 0.0)), y1 + float(ann.get("dy", 0.0))
             if all(np.isfinite(v) for v in (x0, y0, x1, y1)):
-                angle = np.arctan2(y1 - y0, x1 - x0)
-                head = max(7.0, float(style.get("head_size", 8.0)))
-                cmd.stroke(
-                    [(x0, y0), (x1, y1)],
-                    max(0.5, float(style.get("width", 1.5))),
-                    color,
-                    dash=(
-                        [float(value) for value in style["dash"].split(",")]
-                        if isinstance(style.get("dash"), str)
-                        else style.get("dash")
-                    ),
-                )
-                cmd.fill(
-                    [
-                        (x1, y1),
-                        (
-                            x1 - head * float(np.cos(angle - np.pi / 6)),
-                            y1 - head * float(np.sin(angle - np.pi / 6)),
+                shapes = _arrow_shapes(x0, y0, x1, y1, style)
+                stroke_width = max(0.5, float(style.get("width", 1.5)))
+                if shapes["taper"] is not None:
+                    cmd.fill(shapes["taper"], color)
+                else:
+                    cmd.stroke(
+                        shapes["shaft"],
+                        stroke_width,
+                        color,
+                        dash=(
+                            [float(value) for value in style["dash"].split(",")]
+                            if isinstance(style.get("dash"), str)
+                            else style.get("dash")
                         ),
-                        (
-                            x1 - head * float(np.cos(angle + np.pi / 6)),
-                            y1 - head * float(np.sin(angle + np.pi / 6)),
-                        ),
-                    ],
-                    color,
-                )
-        if ann.get("kind") == "text" and ann.get("text"):
+                    )
+                for decoration in (shapes["head"], shapes["tail"]):
+                    if decoration is None:
+                        continue
+                    if decoration["kind"] == "fill":
+                        cmd.fill(decoration["points"], color)
+                    else:
+                        cmd.stroke(decoration["points"], stroke_width, color)
+        if ann.get("kind") in ("text", "callout") and ann.get("text"):
             x, y = _annotation_point(ann, style, sx, sy, plot, width, height)
             anchor = {"start": 0, "middle": 1, "end": 2}.get(ann.get("anchor"), 0)
             font_size = float(style.get("font_size", 11))
             lines = str(ann["text"]).splitlines() or [""]
             line_height = font_size * 1.2
-            color = _rgba(style.get("color"), _TEXT, float(style.get("opacity", 1.0)))
+            # A callout's `color` paints its arrow; the label prefers its own.
+            label_color = style.get("label_color") or style.get("color")
+            color = _rgba(label_color, _TEXT, float(style.get("opacity", 1.0)))
             rotation = float(style.get("rotation", 0.0)) % 360.0
             if rotation in (90.0, 270.0):
                 # Vertical text via the rasterizer's rotated glyph paths.
@@ -886,6 +889,11 @@ def _emit_annotations(cmd, annotations, sx, sy, plot, width, height, *, phase="m
                     )
                 continue
             first_y = y - (len(lines) - 1) * line_height / 2
+            vertical_align = style.get("vertical_align")
+            if vertical_align in ("center", "middle"):
+                first_y += font_size * 0.35
+            elif vertical_align == "top":
+                first_y += font_size * 0.8
             for index, line in enumerate(lines):
                 cmd.text(
                     x + float(ann.get("dx", 0.0)),

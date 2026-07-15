@@ -27,6 +27,7 @@ from xml.sax.saxutils import escape
 import numpy as np
 
 from . import _png
+from ._arrowgeom import arrow_shapes as _arrow_shapes
 from .config import DEFAULT_PALETTE
 
 
@@ -1309,34 +1310,43 @@ def _annotation_svg(annotations, sx, sy, plot, width, height):
                 f'<rect x="{_num(x0)}" y="{_num(y0)}" width="{_num(x1 - x0)}" '
                 f'height="{_num(y1 - y0)}" fill="{color}" fill-opacity="{_num(float(style.get("opacity", 0.14)))}"/>'
             )
-        elif kind == "arrow":
-            x0, y0 = float(sx(float(ann["x0"]))), float(sy(float(ann["y0"])))
-            x1, y1 = float(sx(float(ann["x1"]))), float(sy(float(ann["y1"])))
+        elif kind in ("arrow", "callout"):
+            if kind == "arrow":
+                x0, y0 = float(sx(float(ann["x0"]))), float(sy(float(ann["y0"])))
+                x1, y1 = float(sx(float(ann["x1"]))), float(sy(float(ann["y1"])))
+            else:  # pointer from the offset label back to the data point
+                x1, y1 = float(sx(float(ann["x"]))), float(sy(float(ann["y"])))
+                x0, y0 = x1 + float(ann.get("dx", 0.0)), y1 + float(ann.get("dy", 0.0))
             if all(np.isfinite(v) for v in (x0, y0, x1, y1)):
-                angle = np.arctan2(y1 - y0, x1 - x0)
-                head = max(7.0, float(style.get("head_size", 8.0)))
-                wings = (
-                    (
-                        x1 - head * float(np.cos(angle - np.pi / 6)),
-                        y1 - head * float(np.sin(angle - np.pi / 6)),
-                    ),
-                    (
-                        x1 - head * float(np.cos(angle + np.pi / 6)),
-                        y1 - head * float(np.sin(angle + np.pi / 6)),
-                    ),
-                )
-                marks.append(
-                    f'<line x1="{_num(x0)}" y1="{_num(y0)}" x2="{_num(x1)}" y2="{_num(y1)}" '
-                    f'stroke="{color}" stroke-width="{_num(max(0.5, float(style.get("width", 1.5))))}" '
-                    f'stroke-opacity="{_num(opacity)}"{_dash_attr(style)}/>'
-                )
-                marks.append(
-                    f'<polygon points="{_num(x1)},{_num(y1)} '
-                    f"{_num(wings[0][0])},{_num(wings[0][1])} "
-                    f'{_num(wings[1][0])},{_num(wings[1][1])}" '
-                    f'fill="{color}" fill-opacity="{_num(opacity)}"/>'
-                )
-        if kind == "text" and ann.get("text"):
+                shapes = _arrow_shapes(x0, y0, x1, y1, style)
+                stroke_width = _num(max(0.5, float(style.get("width", 1.5))))
+                if shapes["taper"] is not None:
+                    taper = " ".join(f"{_num(px)},{_num(py)}" for px, py in shapes["taper"])
+                    marks.append(
+                        f'<polygon points="{taper}" fill="{color}" fill-opacity="{_num(opacity)}"/>'
+                    )
+                else:
+                    shaft = " ".join(f"{_num(px)},{_num(py)}" for px, py in shapes["shaft"])
+                    marks.append(
+                        f'<polyline points="{shaft}" fill="none" '
+                        f'stroke="{color}" stroke-width="{stroke_width}" '
+                        f'stroke-opacity="{_num(opacity)}"{_dash_attr(style)}/>'
+                    )
+                for decoration in (shapes["head"], shapes["tail"]):
+                    if decoration is None:
+                        continue
+                    points = " ".join(f"{_num(px)},{_num(py)}" for px, py in decoration["points"])
+                    if decoration["kind"] == "fill":
+                        marks.append(
+                            f'<polygon points="{points}" fill="{color}" '
+                            f'fill-opacity="{_num(opacity)}"/>'
+                        )
+                    else:
+                        marks.append(
+                            f'<polyline points="{points}" fill="none" stroke="{color}" '
+                            f'stroke-width="{stroke_width}" stroke-opacity="{_num(opacity)}"/>'
+                        )
+        if kind in ("text", "callout") and ann.get("text"):
             x, y = float(ann.get("x", 0.0)), float(ann.get("y", 0.0))
             space = style.get("coordinate_space")
             if space == "axes_fraction":
@@ -1387,16 +1397,23 @@ def _annotation_svg(annotations, sx, sy, plot, width, height):
                 continue
             x_text = tx + float(ann.get("dx", 0))
             y_text = ty + float(ann.get("dy", 0)) - (len(lines) - 1) * line_height / 2
+            vertical_align = style.get("vertical_align")
+            if vertical_align in ("center", "middle"):
+                y_text += font_size * 0.35
+            elif vertical_align == "top":
+                y_text += font_size * 0.8
             tspans = "".join(
                 f'<tspan x="{_num(x_text)}" y="{_num(y_text + index * line_height)}">'
                 f"{escape(line)}</tspan>"
                 for index, line in enumerate(lines)
             )
             text_opacity = float(style.get("opacity", 1.0))
+            # A callout's `color` paints its arrow; the label prefers its own.
+            label_color = escape(_css(style.get("label_color"), "")) or color
             labels.append(
                 f'<text text-anchor="{anchor}" font-size="{_num(font_size)}" '
                 + (f'fill-opacity="{_num(text_opacity)}" ' if text_opacity < 1 else "")
-                + f'fill="{color}">{tspans}</text>'
+                + f'fill="{label_color}">{tspans}</text>'
             )
     return marks, labels
 

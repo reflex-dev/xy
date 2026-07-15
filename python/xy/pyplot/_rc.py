@@ -21,6 +21,10 @@ class _PropCycle:
 
 
 _DEFAULTS: dict[str, Any] = {
+    # Matplotlib's inline backend shows no toolbar, so the shim defaults the
+    # interactive modebar off; "toolbar2"/"toolmanager" (or figure(toolbar=True))
+    # opt back in to the on-chart controls.
+    "toolbar": "none",
     "figure.figsize": (6.4, 4.8),  # inches, matplotlib default
     "figure.dpi": 100.0,
     "figure.facecolor": "white",

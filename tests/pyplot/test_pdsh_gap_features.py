@@ -5,7 +5,10 @@ Each block mirrors real notebook usage (Python Data Science Handbook ch. 4),
 so a regression here means real scripts break again.
 """
 
+from __future__ import annotations
+
 import io
+import re
 
 import numpy as np
 import pytest
@@ -69,6 +72,41 @@ def test_maxn_locator_caps_tick_count():
     ax.xaxis.set_major_locator(plt.MaxNLocator(3))
     ticks = ax.get_xticks()
     assert 2 <= len(ticks) <= 4
+
+
+def test_maxn_locator_matches_matplotlib_tick_values():
+    # Reference values from matplotlib 3.11 MaxNLocator.tick_values; edge
+    # ticks may overrun the view — the axis clips them at draw time.
+    assert np.allclose(plt.MaxNLocator(3).tick_values(0, 1), [0.0, 0.4, 0.8, 1.2])
+    assert np.allclose(plt.MaxNLocator(5).tick_values(0, 1), [0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
+    assert np.allclose(
+        plt.MaxNLocator(4, steps=[1, 3, 10]).tick_values(0, 1), [0.0, 0.3, 0.6, 0.9, 1.2]
+    )
+    assert np.allclose(
+        plt.MaxNLocator(5, integer=True).tick_values(-0.5, 6.5), [-2.0, 0.0, 2.0, 4.0, 6.0, 8.0]
+    )
+    assert np.allclose(plt.MaxNLocator(3).tick_values(-3.15, 66.15), [-25.0, 0.0, 25.0, 50.0, 75.0])
+    with pytest.raises(ValueError):
+        plt.MaxNLocator(3, steps=[0.5, 1])
+
+
+def test_maxn_locator_grid_renders_matplotlib_ticks():
+    # PDSH 04.10: MaxNLocator(3) on a 4x4 grid labels 0.0/0.4/0.8, not 0/0.5/1.
+    fig, axs = plt.subplots(4, 4, sharex=True, sharey=True)
+    for axi in axs.flat:
+        axi.xaxis.set_major_locator(plt.MaxNLocator(3))
+        axi.yaxis.set_major_locator(plt.MaxNLocator(3))
+    assert set(re.findall(r"<text[^>]*>([^<]+)</text>", _svg())) == {"0.0", "0.4", "0.8"}
+
+
+def test_auto_locator_density_adapts_to_panel_size():
+    # matplotlib's AutoLocator budgets ticks by axes size: tiny panels get
+    # two intervals, so an explicit AutoLocator must match the default axes.
+    fig, axs = plt.subplots(4, 4, sharex=True, sharey=True)
+    for axi in axs.flat:
+        axi.xaxis.set_major_locator(plt.AutoLocator())
+        axi.yaxis.set_major_locator(plt.AutoLocator())
+    assert set(re.findall(r"<text[^>]*>([^<]+)</text>", _svg())) == {"0.0", "0.5", "1.0"}
 
 
 def test_func_formatter_labels_reach_the_export():
@@ -417,3 +455,250 @@ def test_period_values_plot_as_timestamps():
     (line,) = ax.plot(pd.period_range("2012-01", periods=5, freq="M"), np.arange(5))
     assert np.issubdtype(np.asarray(line.get_xdata()).dtype, np.datetime64)
     _png()
+
+
+# -- pandas dynamic timeseries + xy.pyplot.dates (PDSH 04.09) ----------------
+
+
+def _ms(stamp: str) -> float:
+    return float(np.datetime64(stamp, "ms").astype(np.int64))
+
+
+def test_pandas_datetime_series_plot_completes():
+    pd = pytest.importorskip("pandas")
+    index = pd.date_range("2012-01-01", periods=120, freq="D")
+    series = pd.Series(np.linspace(4000.0, 5000.0, 120), index=index)
+    fig, ax = plt.subplots()
+    series.plot(ax=ax)  # pandas' ts path: get_xdata(orig=False) + set_xlim
+    lo, hi = ax.get_xlim()
+    assert lo == _ms("2012-01-01") and hi == _ms("2012-04-29")
+    _png()
+
+
+def test_get_xdata_orig_false_is_ms_since_epoch():
+    fig, ax = plt.subplots()
+    x = np.asarray(["2012-01-01", "NaT", "2012-01-03"], dtype="datetime64[ns]")
+    (line,) = ax.plot(x, [1.0, 2.0, 3.0])
+    assert np.issubdtype(np.asarray(line.get_xdata()).dtype, np.datetime64)
+    converted = np.asarray(line.get_xdata(orig=False))
+    assert converted.dtype == np.float64
+    assert converted[0] == _ms("2012-01-01") and np.isnan(converted[1])
+    assert np.asarray(line.get_ydata(orig=False)).dtype == np.float64
+
+
+def test_month_locator_ticks_month_starts_in_ms():
+    locator = plt.dates.MonthLocator()
+    ticks = locator.tick_values(_ms("2012-01-15"), _ms("2012-04-20"))
+    assert list(ticks) == [_ms("2012-02-01"), _ms("2012-03-01"), _ms("2012-04-01")]
+    mid = plt.dates.MonthLocator(bymonthday=15).tick_values(_ms("2012-01-01"), _ms("2012-03-01"))
+    assert list(mid) == [_ms("2012-01-15"), _ms("2012-02-15")]
+
+
+def test_date_formatter_formats_ms_values():
+    assert plt.dates.DateFormatter("%b %d")(_ms("2012-11-25")) == "Nov 25"
+
+
+def test_labeled_minor_ticker_pair_is_promoted_when_majors_are_blank():
+    fig, ax = plt.subplots()
+    x = np.arange("2012-01-01", "2012-07-01", dtype="datetime64[D]")
+    ax.plot(x, np.linspace(0.0, 1.0, len(x)))
+    ax.xaxis.set_major_locator(plt.dates.MonthLocator())
+    ax.xaxis.set_minor_locator(plt.dates.MonthLocator(bymonthday=15))
+    ax.xaxis.set_major_formatter(plt.NullFormatter())
+    ax.xaxis.set_minor_formatter(plt.dates.DateFormatter("%b"))
+    svg = _svg()
+    assert "Feb" in svg and "May" in svg
+
+
+def test_pandas_period_ordinal_tickers_are_ignored():
+    pd = pytest.importorskip("pandas")
+    converter = pytest.importorskip("pandas.plotting._matplotlib.converter")
+    index = pd.date_range("2012-01-01", periods=30, freq="D")
+    fig, ax = plt.subplots()
+    ax.plot(index.values, np.arange(30.0))
+    ax.xaxis.set_major_locator(
+        converter.TimeSeries_DateLocator(index.to_period("D").freq, plot_obj=None)
+    )
+    ax.xaxis.set_major_formatter(
+        converter.TimeSeries_DateFormatter(index.to_period("D").freq, plot_obj=None)
+    )
+    assert isinstance(ax.xaxis.get_major_locator(), plt.AutoLocator)
+    assert isinstance(ax.xaxis.get_major_formatter(), plt.ScalarFormatter)
+    _png()
+
+
+def test_axis_proxy_majorticklabel_handles():
+    fig, ax = plt.subplots()
+    ax.plot([0.0, 4.0], [0.0, 4.0])
+    labels = ax.xaxis.get_majorticklabels()
+    assert labels and all(hasattr(label, "set_rotation") for label in labels)
+    assert ax.xaxis.get_minorticklabels() == []
+
+
+def test_figure_get_axes_matches_axes_property():
+    fig, axes = plt.subplots(2, 2)
+    assert fig.get_axes() == list(axes.ravel())
+
+
+def test_annotate_accepts_size_alias():
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 1])
+    ax.annotate("peak", xy=(0.5, 0.5), size=13)
+    assert "peak" in _svg()
+
+
+def test_text_date_string_coordinates_on_a_date_axis():
+    fig, ax = plt.subplots()
+    x = np.arange("2012-01-01", "2012-12-31", dtype="datetime64[D]")
+    ax.plot(x, np.linspace(3600.0, 5400.0, len(x)))
+    ax.text("2012-1-1", 3950, "New Year's Day", color="gray")  # unpadded, like PDSH
+    ax.text("2012-11-25", 4450, "Thanksgiving", ha="center")
+    svg = _svg()
+    assert "New Year" in svg and "Thanksgiving" in svg
+
+
+def test_text_string_coordinates_stay_categorical_on_category_axes():
+    fig, ax = plt.subplots()
+    ax.bar(["a", "b", "c"], [1.0, 3.0, 2.0])
+    ax.text("b", 3.1, "peak")
+    assert "peak" in _svg()
+
+
+def test_subplots_facecolor_reaches_figure_and_notebook_display():
+    fig, ax = plt.subplots(facecolor="lightgray")
+    ax.plot([0.0, 1.0], [0.0, 1.0])
+    assert fig.get_facecolor() == "lightgray"
+    # The display document paints its own opaque body; the figure patch is a
+    # later same-specificity body background override in the head.
+    assert "body{background:lightgray}" in fig._repr_html_()
+    _png(fig)
+
+
+# -- annotate arrows and boxes (PDSH 04.09 births cell) ----------------------
+
+
+def _annotation_specs(ax):
+    return ax._build_chart(640, 480).figure()._annotation_specs()
+
+
+def test_offset_point_annotate_with_arrowprops_becomes_a_callout():
+    fig, ax = plt.subplots()
+    ax.plot([0.0, 10.0], [0.0, 10.0])
+    ax.annotate(
+        "peak",
+        xy=(5, 5),
+        xytext=(30, 30),
+        textcoords="offset points",
+        arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=-0.2"),
+    )
+    (callout,) = [a for a in _annotation_specs(ax) if a["kind"] == "callout"]
+    assert callout["text"] == "peak"
+    assert callout["style"]["head_style"] == "v"  # "->" is an open stroke head
+    assert callout["style"]["curve"] == pytest.approx(-0.2)  # arc3 rad
+    assert callout["style"]["gap_start"] > 0  # clears the text patch
+    # Offset points go up; pixel offsets go down.
+    assert callout["dx"] > 0 and callout["dy"] < 0
+
+
+def test_arrowstyle_shapes_map_to_engine_arrow_styles():
+    fig, ax = plt.subplots()
+    ax.plot([0.0, 10.0], [0.0, 10.0])
+    ax.annotate(
+        "", xy=(1, 1), xytext=(2, 2), arrowprops={"arrowstyle": "|-|,widthA=0.2,widthB=0.2"}
+    )
+    ax.annotate("w", xy=(3, 3), xytext=(4, 4), arrowprops=dict(arrowstyle="wedge,tail_width=0.5"))
+    ax.annotate(
+        "f",
+        xy=(5, 5),
+        xytext=(6, 6),
+        arrowprops=dict(
+            arrowstyle="fancy", fc="0.6", ec="none", connectionstyle="angle3,angleA=0,angleB=-90"
+        ),
+    )
+    bar, wedge, fancy = [a for a in _annotation_specs(ax) if a["kind"] == "arrow"]
+    assert bar["style"]["head_style"] == "bar" and bar["style"]["tail_style"] == "bar"
+    assert wedge["style"]["head_style"] == "none"  # the wedge tip IS the pointer
+    assert wedge["style"]["shaft_width_start"] > wedge["style"]["shaft_width_end"]
+    assert fancy["style"]["shaft_width_end"] > fancy["style"]["shaft_width_start"]
+    assert fancy["style"]["angle_a"] == 0.0 and fancy["style"]["angle_b"] == -90.0
+    assert fancy["style"]["color"] == "rgb(153,153,153)"  # fc="0.6" shorthand
+
+
+def test_annotate_date_string_endpoints_draw_a_data_space_arrow():
+    fig, ax = plt.subplots()
+    x = np.arange("2012-08-01", "2012-10-01", dtype="datetime64[D]")
+    ax.plot(x, np.linspace(4000.0, 5000.0, len(x)))
+    ax.annotate(
+        "",
+        xy=("2012-9-1", 4850),
+        xytext=("2012-9-7", 4850),
+        xycoords="data",
+        textcoords="data",
+        arrowprops={"arrowstyle": "|-|,widthA=0.2,widthB=0.2"},
+    )
+    (arrow,) = [a for a in _annotation_specs(ax) if a["kind"] == "arrow"]
+    assert arrow["x0"] == pytest.approx(_ms("2012-09-07"))
+    assert arrow["x1"] == pytest.approx(_ms("2012-09-01"))
+    assert arrow["y0"] == arrow["y1"] == 4850.0
+
+
+def test_annotate_bbox_becomes_label_box_styles():
+    fig, ax = plt.subplots()
+    ax.plot([0.0, 1.0], [0.0, 1.0])
+    ax.annotate(
+        "Thanksgiving",
+        xy=(0.5, 0.5),
+        xytext=(-40, -30),
+        textcoords="offset points",
+        bbox=dict(boxstyle="round4,pad=.5", fc="0.9"),
+        arrowprops=dict(arrowstyle="->"),
+    )
+    (callout,) = [a for a in _annotation_specs(ax) if a["kind"] == "callout"]
+    style = callout["style"]
+    assert style["background"] == "rgb(230,230,230)"  # fc="0.9" gray shorthand
+    assert style["border"].endswith("black") and style["border_radius"] == 8.0
+    assert style["padding"].startswith("6.94")  # pad=.5 of the 13.9px font
+
+
+def test_annotate_arrowprops_alpha_dims_only_the_arrow():
+    fig, ax = plt.subplots()
+    ax.plot([0.0, 1.0], [0.0, 1.0])
+    ax.annotate(
+        "Christmas",
+        xy=(0.9, 0.1),
+        xytext=(-30, 0),
+        textcoords="offset points",
+        arrowprops=dict(arrowstyle="wedge,tail_width=0.5", alpha=0.1),
+    )
+    (callout,) = [a for a in _annotation_specs(ax) if a["kind"] == "callout"]
+    assert callout["style"]["color"] == "rgba(0,0,0,0.1)"
+    assert callout["style"]["label_color"] == "black"  # the text stays opaque
+
+
+def test_callout_arrows_reach_static_exports():
+    fig, ax = plt.subplots()
+    ax.plot([0.0, 10.0], [0.0, 10.0])
+    ax.annotate(
+        "peak",
+        xy=(5, 5),
+        xytext=(30, 30),
+        textcoords="offset points",
+        arrowprops=dict(arrowstyle="->"),
+    )
+    svg = _svg()
+    assert "peak" in svg and "<polyline" in svg  # shaft + open V head
+    _png(fig)
+
+
+def test_default_rc_font_sizes_are_explicit_everywhere():
+    fig, ax = plt.subplots()
+    ax.plot([0.0, 1.0], [0.0, 1.0])
+    ax.text(0.5, 0.5, "note")
+    chart = ax._build_chart(640, 480)
+    axes = {child.which: child for child in chart.children if hasattr(child, "which")}
+    # font.size "medium" (10 pt at dpi 100) must land explicitly: the render
+    # client and static exporters otherwise fall back to their 11 px default.
+    assert axes["x"].style["tick_label_size"] == pytest.approx(13.8889, rel=1e-4)
+    assert axes["x"].style["label_size"] == pytest.approx(13.8889, rel=1e-4)
+    (text_ann,) = [a for a in _annotation_specs(ax) if a["kind"] == "text"]
+    assert text_ann["style"]["font_size"] == pytest.approx(13.8889, rel=1e-4)

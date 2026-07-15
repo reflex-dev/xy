@@ -12,6 +12,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 SHARED_ID = "xy-pdsh-dual-engine-intro"
 IMPORT_REPLACEMENTS = {
+    # xy.pyplot serves as both `plt` and `mpl` (it carries the `dates` module
+    # etc.); the reference engine needs the real top-level package for `mpl`.
+    # Ordered before the generic rule so it wins for the `mpl` alias.
+    "import xy.pyplot as mpl\n": "import matplotlib as mpl\n",
     "import xy.pyplot as ": "import matplotlib.pyplot as ",
     "from xy.pyplot import LinearSegmentedColormap": (
         "from matplotlib.colors import LinearSegmentedColormap"
@@ -30,6 +34,24 @@ ENGINE_NAMES = (
     "cycler",
     "FacetGrid",
 )
+# Cross-cell engine state: these variables are written in one cell and read in
+# a later cell of the same engine, so the paired cells must not share them —
+# an unprefixed `grid = xy_plt.GridSpec(...)` overwrote the matplotlib cell's
+# `grid` and fed an xy object into real matplotlib. Prefixed like the aliases,
+# but never in kwarg (`ax=ax`), attribute (`ax.grid(...)`), or string
+# (`plt.rc("grid", ...)`) positions.
+STATE_NAMES = ("fig", "ax", "grid")
+
+
+def _prefix_state(line: str, prefix: str) -> str:
+    for name in STATE_NAMES:
+        line = re.sub(
+            rf"""(?<![.'"]) \b{name}\b (?!['"]|=(?!=))""",
+            f"{prefix}_{name}",
+            line,
+            flags=re.VERBOSE,
+        )
+    return line
 
 
 def notebooks() -> list[Path]:
@@ -54,7 +76,7 @@ def _xy_cells(notebook: dict) -> list[dict]:
                 if metadata.get("xy_pdsh_auto_show") is True:
                     cell["source"] = cell["source"][:-3]
                 for index, line in enumerate(cell.get("source", [])):
-                    for name in ENGINE_NAMES:
+                    for name in (*ENGINE_NAMES, *STATE_NAMES):
                         line = re.sub(rf"\bxy_{re.escape(name)}\b", name, line)
                     for name in ENGINE_NAMES[2:]:
                         line = line.replace(f" import {name} as {name}", f" import {name}")
@@ -83,6 +105,7 @@ def _engine_cell(cell: dict, engine: str) -> dict:
                 line = line.replace(old, new)
         for name in ENGINE_NAMES:
             line = re.sub(rf"\b{re.escape(name)}\b", f"{prefix}_{name}", line)
+        line = _prefix_state(line, prefix)
         for name in ENGINE_NAMES[2:]:
             line = line.replace(f" import {prefix}_{name}", f" import {name} as {prefix}_{name}")
         replaced.append(line)

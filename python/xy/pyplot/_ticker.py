@@ -3,13 +3,15 @@
 Locators own tick *positions* over the axis view interval; formatters own
 label text. The Axes applies them at chart-build time, when data limits are
 known, so locator-driven axes keep refreshing as data lands — the same
-contract as the native tick generator they displace. The math is xy-owned
-and approximates matplotlib's locators (documented in the compat table);
-positions are exact for Null/Fixed/Multiple, heuristic for MaxN.
+contract as the native tick generator they displace. The math is xy-owned;
+positions are exact for Null/Fixed/Multiple/Linear and MaxN/Auto port
+matplotlib's ``MaxNLocator._raw_ticks`` (Log stays approximate, documented
+in the compat table).
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from typing import Any, Optional
 
@@ -18,23 +20,54 @@ import numpy as np
 from ._translate import check_unsupported
 
 
+def _scale_range(vmin: float, vmax: float, n: int) -> tuple[float, float]:
+    """matplotlib's ``ticker.scale_range``: decade scale and offset for a span."""
+    dv = abs(vmax - vmin)
+    maxabsv = max(abs(vmin), abs(vmax))
+    if maxabsv == 0 or dv / maxabsv < 1e-12:
+        return 1.0, 0.0
+    meanv = (vmax + vmin) / 2
+    offset = 0.0
+    if abs(meanv) / dv >= 100:  # threshold: far-from-zero spans get an offset
+        offset = math.copysign(10 ** (math.log10(abs(meanv)) // 1), meanv)
+    scale = 10 ** (math.log10(dv / n) // 1)
+    return scale, offset
+
+
+class _EdgeInteger:
+    """matplotlib's ``ticker._Edge_integer``: offset-tolerant edge rounding."""
+
+    def __init__(self, step: float, offset: float) -> None:
+        self.step = step
+        self._offset = abs(offset)
+
+    def _close_to(self, ms: float, edge: float) -> bool:
+        if self._offset > 0:
+            digits = np.log10(self._offset / self.step)
+            tol = min(0.4999, max(1e-10, 10 ** (digits - 12)))
+        else:
+            tol = 1e-10
+        return abs(ms - edge) < tol
+
+    def le(self, x: float) -> float:
+        d, m = divmod(x, self.step)
+        return d + 1 if self._close_to(m / self.step, 1) else d
+
+    def ge(self, x: float) -> float:
+        d, m = divmod(x, self.step)
+        return d if self._close_to(m / self.step, 0) else d + 1
+
+
 class Locator:
+    # Axes-size tick budget, set by the Axes before tick_values() when the
+    # axis pixel length is known (matplotlib reads it off self.axis instead).
+    _nbins_hint: Optional[int] = None
+
     def tick_values(self, vmin: float, vmax: float) -> np.ndarray:
         raise NotImplementedError
 
     def __repr__(self) -> str:
         return f"<xy.pyplot.{type(self).__name__}>"
-
-
-class AutoLocator(Locator):
-    """The default: the engine's nice-linear tick generator."""
-
-    def tick_values(self, vmin: float, vmax: float) -> np.ndarray:
-        from xy._svg import _linear_ticks
-
-        if not (np.isfinite(vmin) and np.isfinite(vmax)) or vmin == vmax:
-            return np.asarray([], dtype=float)
-        return np.asarray(_linear_ticks(float(vmin), float(vmax))[0], dtype=float)
 
 
 class NullLocator(Locator):
@@ -71,41 +104,81 @@ class MultipleLocator(Locator):
 
 
 class MaxNLocator(Locator):
-    """At most *nbins* intervals on nice step sizes (1, 2, 2.5, 5) × 10^k."""
+    """matplotlib's MaxNLocator (``_raw_ticks`` port): at most *nbins* intervals
+    on nice step values; edge ticks may overrun the view — the axis clips them,
+    exactly as matplotlib trims at draw time."""
 
-    _default_steps = (1.0, 2.0, 2.5, 5.0, 10.0)
+    _default_steps = (1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0)
 
     def __init__(self, nbins: Any = 10, **kwargs: Any) -> None:
         self._integer = bool(kwargs.pop("integer", False))
         steps = kwargs.pop("steps", None)
         kwargs.pop("prune", None)  # compat-noop: ticks outside the view never draw
+        self._min_n_ticks = max(1, int(kwargs.pop("min_n_ticks", 2)))
         check_unsupported(kwargs, "MaxNLocator()")
-        if nbins == "auto":
-            nbins = 9  # matplotlib's density heuristic collapsed to its default
-        self._nbins = max(1, int(nbins))
-        self._steps = (
-            tuple(sorted(float(step) for step in steps))
-            if steps is not None
-            else MaxNLocator._default_steps
+        self._nbins: Any = nbins if nbins == "auto" else max(1, int(nbins))
+        if steps is None:
+            validated = list(MaxNLocator._default_steps)
+        else:
+            validated = sorted(float(step) for step in steps)
+            if any(step < 1 or step > 10 for step in validated):
+                raise ValueError("steps must be numbers between 1 and 10 inclusive")
+            if validated[0] != 1.0:
+                validated.insert(0, 1.0)
+            if validated[-1] != 10.0:
+                validated.append(10.0)
+        self._steps = tuple(validated)
+        self._extended_steps = np.concatenate(
+            [
+                0.1 * np.asarray(self._steps[:-1]),
+                np.asarray(self._steps),
+                [10.0 * self._steps[1]],
+            ]
         )
 
     def tick_values(self, vmin: float, vmax: float) -> np.ndarray:
         vmin, vmax = sorted((float(vmin), float(vmax)))
         if not (np.isfinite(vmin) and np.isfinite(vmax)) or vmin == vmax:
             return np.asarray([vmin], dtype=float)
-        raw = (vmax - vmin) / self._nbins
-        magnitude = 10.0 ** np.floor(np.log10(raw))
-        for scale in (magnitude, magnitude * 10.0, magnitude * 100.0):
-            for step in self._steps:
-                candidate = step * scale
-                if self._integer:
-                    candidate = max(1.0, np.round(candidate))
-                first = np.ceil(vmin / candidate - 1e-9)
-                last = np.floor(vmax / candidate + 1e-9)
-                if last < first or last - first > self._nbins:
-                    continue
-                return np.arange(first, last + 1) * candidate
-        return np.asarray([vmin, vmax], dtype=float)
+        if self._nbins == "auto":
+            hint = 9 if self._nbins_hint is None else int(self._nbins_hint)
+            nbins = int(np.clip(hint, max(1, self._min_n_ticks - 1), 9))
+        else:
+            nbins = self._nbins
+        scale, offset = _scale_range(vmin, vmax, nbins)
+        _vmin = vmin - offset
+        _vmax = vmax - offset
+        steps = self._extended_steps * scale
+        if self._integer:
+            # For steps > 1, keep only integer values.
+            steps = steps[(steps < 1) | (np.abs(steps - np.round(steps)) < 0.001)]
+        raw_step = (_vmax - _vmin) / nbins
+        large = np.nonzero(steps >= raw_step)[0]
+        istep = int(large[0]) if len(large) else len(steps) - 1
+        # Start at the smallest step >= the raw step; walk down only if it
+        # leaves fewer than min_n_ticks ticks inside the view.
+        ticks = np.asarray([_vmin, _vmax])
+        for step in steps[: istep + 1][::-1]:
+            step = float(step)
+            if self._integer and np.floor(_vmax) - np.ceil(_vmin) >= self._min_n_ticks - 1:
+                step = max(1.0, step)
+            best_vmin = (_vmin // step) * step
+            edge = _EdgeInteger(step, offset)
+            low = edge.le(_vmin - best_vmin)
+            high = edge.ge(_vmax - best_vmin)
+            ticks = np.arange(low, high + 1) * step + best_vmin
+            if ((ticks >= _vmin) & (ticks <= _vmax)).sum() >= self._min_n_ticks:
+                break
+        return ticks + offset
+
+
+class AutoLocator(MaxNLocator):
+    """The default: matplotlib's AutoLocator — MaxNLocator with axes-size
+    density and the restricted (1, 2, 2.5, 5, 10) step table, which is also
+    the engine's native nice-step rule."""
+
+    def __init__(self) -> None:
+        super().__init__(nbins="auto", steps=(1.0, 2.0, 2.5, 5.0, 10.0))
 
 
 class LinearLocator(Locator):

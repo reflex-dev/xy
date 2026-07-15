@@ -80,6 +80,19 @@ const FC_CONTEXT_GOVERNOR = {
       if (over <= 0) break;
       if (view._releaseContext()) over -= 1;
     }
+    if (over <= 0) return;
+    // Every remaining live view is on screen (a dense subplot grid). Release
+    // least-recently-visible ones anyway: the snapshot stand-in keeps them
+    // looking rendered, and pointer entry revives them. Letting the browser
+    // LRU-evict instead blanks visible charts with no recovery until the
+    // page scrolls (§28: data-fc-ctx stays legible either way).
+    const visible = live
+      .filter((view) => view._ctxVisible)
+      .sort((a, b) => (a._ctxSeenSeq || 0) - (b._ctxSeenSeq || 0));
+    for (const view of visible) {
+      if (over <= 0) break;
+      if (view._releaseContext()) over -= 1;
+    }
   },
   acquired(requester) {
     requester._ctxPendingReservation = false;
@@ -145,7 +158,14 @@ class ChartView {
     const rect = this.fluid || this.fluidH ? el.getBoundingClientRect() : null;
     const cw = this.fluid ? Math.round(rect.width) || 640 : spec.width; // 0 = hidden; RO corrects
     const ch = this.fluidH ? Math.round(rect.height) || 420 : spec.height;
-    this.size = { w: Math.max(120, cw), h: Math.max(120, ch) };
+    // Fluid floors stay high (a collapsed/hidden container must not produce a
+    // degenerate chart), but explicit sizes are honored down to a tiny floor:
+    // dense pyplot subplot grids legitimately build sub-120px panels whose
+    // plot boxes must land exactly on their matplotlib rects.
+    this.size = {
+      w: Math.max(this.fluid ? 120 : 48, cw),
+      h: Math.max(this.fluidH ? 120 : 48, ch),
+    };
     this._layout();
 
     this._buildDom(el);
@@ -588,6 +608,7 @@ class ChartView {
       this.root.dataset.fcContextState = "ready";
       this._scheduleViewRequest(this.view, { delay: 0 });
       this.draw();
+      this._dropContextSnapshot(); // live frame is back; retire the stand-in
       this._dispatchChartEvent("context_restored", {
         loss_count: this._contextLossCount,
         restore_count: this._contextRestoreCount,
@@ -604,6 +625,7 @@ class ChartView {
     if (this._destroyed || !this.gl || this._glLost || this.gl.isContextLost()) return false;
     const ext = this.gl.getExtension("WEBGL_lose_context");
     if (!ext) return false;
+    this._snapshotBeforeRelease();
     this._ctxReleasedExt = ext;
     this._ctxReleases += 1;
     this._glLost = true; // synchronous: the lost *event* arrives as a task
@@ -612,6 +634,44 @@ class ChartView {
     this._raf = null;
     ext.loseContext();
     return true;
+  }
+
+  // Freeze the current frame into a 2D stand-in before the GL context goes
+  // away. This is what lets the governor release *visible* views: an
+  // over-budget panel keeps showing its last frame as a static image
+  // (matplotlib-style) instead of blanking, and pointer entry swaps the live
+  // context back in. The draw must be synchronous and in the same task as the
+  // copy — the default drawing buffer does not persist between frames.
+  _snapshotBeforeRelease() {
+    try {
+      if (this._raf) cancelAnimationFrame(this._raf);
+      this._raf = null;
+      this._rafKeepPick = true; // pick FBO stays valid; only the color buffer is read
+      this._drawNow();
+      let snap = this._ctxSnapshot;
+      if (!snap) {
+        snap = this._ctxSnapshot = document.createElement("canvas");
+        snap.dataset.fcCtxSnapshot = "";
+      }
+      snap.width = this.canvas.width;
+      snap.height = this.canvas.height;
+      snap.style.cssText = this.canvas.style.cssText;
+      snap.style.pointerEvents = "none";
+      snap.getContext("2d").drawImage(this.canvas, 0, 0);
+      this.canvas.before(snap);
+      // Chrome composites a lost-context canvas as an opaque broken-image
+      // tile, which would sit on top of the stand-in. Events still reach the
+      // root, so pointer-entry revival keeps working.
+      this.canvas.style.visibility = "hidden";
+    } catch (_err) {
+      this._dropContextSnapshot(); // released view degrades to blank, as before
+    }
+  }
+
+  _dropContextSnapshot() {
+    this.canvas.style.visibility = "";
+    if (this._ctxSnapshot) this._ctxSnapshot.remove();
+    this._ctxSnapshot = null;
   }
 
   // Re-acquire on scroll-into-view. Governed releases undo via
@@ -667,6 +727,7 @@ class ChartView {
     }
     this._scheduleViewRequest(this.view, { delay: 0 });
     this.draw();
+    this._dropContextSnapshot();
   }
 
   // Visibility feed for the governor: tracks least-recently-visible order and
@@ -674,6 +735,12 @@ class ChartView {
   // view (25% rootMargin = pre-warm hysteresis; release is demand-driven only,
   // so fast scrolling never thrashes contexts).
   _armContextVisibilityWatch() {
+    // A released-while-visible view (snapshot stand-in) revives on pointer
+    // entry — visibility alone can't distinguish it from its neighbors, and
+    // touching a chart is the interaction signal that it needs to be live.
+    this._listen(this.root, "pointerenter", () => {
+      if (this._glLost && !this._destroyed) this._recoverContext();
+    });
     if (typeof IntersectionObserver === "undefined") {
       this._ctxVisible = true; // no observer: never treat as releasable
       return;
@@ -725,6 +792,7 @@ class ChartView {
     }
     this._positionReductionBadges();
     this._positionColorbar();
+    this._fitModebar();
     this._pickDirty = true;
     this.draw();
     this._scheduleViewRequest();
@@ -2245,7 +2313,19 @@ class ChartView {
     gl.uniform4f(u("u_view"), vx0 ?? x0, vx1 ?? x1, vy0 ?? y0, vy1 ?? y1);
     gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
-    gl.uniform4f(u("u_gridRange"), h.xRange[0], h.xRange[1], h.yRange[0], h.yRange[1]);
+    // Grid row/column 0 anchors to the bottom/left edge of the grid rect in
+    // *display* orientation — the raster/SVG exporters' convention (the shim's
+    // imshow pre-flips rows for origin='upper' assuming it). A reversed axis
+    // flips the data direction, not the buffer, so swap the sampled range to
+    // keep the anchoring; without this an inverted-y imshow rendered upside
+    // down on canvas while every export of the same spec was upright.
+    const xrev = (vx0 ?? x0) > (vx1 ?? x1);
+    const yrev = (vy0 ?? y0) > (vy1 ?? y1);
+    gl.uniform4f(
+      u("u_gridRange"),
+      h.xRange[xrev ? 1 : 0], h.xRange[xrev ? 0 : 1],
+      h.yRange[yrev ? 1 : 0], h.yRange[yrev ? 0 : 1],
+    );
     gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
     gl.uniform1i(u("u_truecolor"), h.truecolor ? 1 : 0);
     gl.activeTexture(gl.TEXTURE0);
@@ -3277,8 +3357,14 @@ class ChartView {
     const [x0, x1] = h.xRange;
     const [y0, y1] = h.yRange;
     if (dataX < x0 || dataX > x1 || dataY < y0 || dataY > y1) return null;
-    const col = Math.min(h.w - 1, Math.max(0, Math.floor(((dataX - x0) / (x1 - x0)) * h.w)));
-    const row = Math.min(h.h - 1, Math.max(0, Math.floor(((dataY - y0) / (y1 - y0)) * h.h)));
+    // Mirror _drawHeatmap's display-orientation anchoring: on a reversed axis
+    // buffer row/column 0 sits at the opposite end of the data range.
+    const [ax0, ax1] = this._axisRange(g.xAxis) ?? [this.view.x0, this.view.x1];
+    const [ay0, ay1] = this._axisRange(g.yAxis) ?? [this.view.y0, this.view.y1];
+    const fx = ((ax0 ?? this.view.x0) > (ax1 ?? this.view.x1)) ? (x1 - dataX) : (dataX - x0);
+    const fy = ((ay0 ?? this.view.y0) > (ay1 ?? this.view.y1)) ? (y1 - dataY) : (dataY - y0);
+    const col = Math.min(h.w - 1, Math.max(0, Math.floor((fx / (x1 - x0)) * h.w)));
+    const row = Math.min(h.h - 1, Math.max(0, Math.floor((fy / (y1 - y0)) * h.h)));
     return { trace: g.trace.id, index: row * h.w + col, g, heatmap: { row, col }, synthetic: true };
   }
 
