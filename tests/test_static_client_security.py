@@ -112,6 +112,7 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
         assert inner_html_lines == [
             'grip.innerHTML = this._icon("drag");',
             "b.innerHTML = this._icon(name);",
+            'zoomIndicator.innerHTML = this._icon("chevrondown");',
             "icon.innerHTML = this._icon(name);",
         ]
 

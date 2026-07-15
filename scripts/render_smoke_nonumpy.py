@@ -312,6 +312,9 @@ try{{
       && collapsedGrip && expandedButtons === 0 && keyboardCollapsed && keyboardExpanded ? 1 : 0;
     const zoomTrigger = bar && bar.querySelector("[data-fc-modebar-menu-trigger]");
     const zoomMenu = bar && bar.querySelector("[data-fc-modebar-menu]");
+    const zoomPercent = zoomTrigger && zoomTrigger.querySelector("[data-fc-modebar-zoom-percent]");
+    const zoomIndicator = zoomTrigger && zoomTrigger.querySelector("[data-fc-modebar-menu-indicator] svg");
+    const zoomTriggerInitial = zoomPercent && zoomPercent.textContent === "100%" && zoomIndicator;
     if (zoomTrigger) zoomTrigger.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
     const menuOpened = zoomMenu && zoomMenu.style.display === "flex"
       && zoomTrigger.getAttribute("aria-expanded") === "true"
@@ -334,7 +337,8 @@ try{{
     const spanX = () => v.view.x1 - v.view.x0;
     const s0 = spanX();
     v._zoomBy(0.5);                 // zoom in -> span shrinks
-    const zin = spanX() < s0 ? 1 : 0;
+    const zoomTriggerIn = zoomPercent && zoomPercent.textContent === "200%";
+    const zin = spanX() < s0 && zoomTriggerInitial && zoomTriggerIn ? 1 : 0;
     v._zoomBy(2);                   // back out
     v._zoomBy(0.8,true);            // modebar path animates
     const smooth=(v._viewAnim && v._animRaf)?1:0;

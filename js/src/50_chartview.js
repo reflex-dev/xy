@@ -2032,6 +2032,7 @@ class ChartView {
   // frame invalidates (§17 — steady hover must not re-render N-point picks).
   draw(keepPick = false) {
     if (this._destroyed || this._glLost || !this.gl) return;
+    this._updateZoomMenuLabel?.();
     if (this._raf) {
       this._rafKeepPick = this._rafKeepPick && keepPick;
       return;

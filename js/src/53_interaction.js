@@ -431,6 +431,16 @@ Object.assign(ChartView.prototype, {
     });
     this._zoomMenuButton = zoomTrigger;
     zoomTrigger.dataset.fcModebarMenuTrigger = "";
+    zoomTrigger.replaceChildren();
+    const zoomPercent = document.createElement("span");
+    zoomPercent.dataset.fcModebarZoomPercent = "";
+    zoomPercent.textContent = "100%";
+    zoomTrigger.appendChild(zoomPercent);
+    const zoomIndicator = document.createElement("span");
+    zoomIndicator.dataset.fcModebarMenuIndicator = "";
+    zoomIndicator.innerHTML = this._icon("chevrondown");
+    zoomTrigger.appendChild(zoomIndicator);
+    this._zoomMenuLabel = zoomPercent;
     zoomTrigger.setAttribute("aria-haspopup", "menu");
     zoomTrigger.setAttribute("aria-expanded", "false");
     mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
@@ -491,6 +501,7 @@ Object.assign(ChartView.prototype, {
       zoomTrigger.setAttribute("aria-expanded", String(show));
       if (!show) {
         zoomMenu.style.display = "none";
+        zoomIndicator.style.transform = "none";
         if (restoreFocus) zoomTrigger.focus();
         return;
       }
@@ -505,6 +516,7 @@ Object.assign(ChartView.prototype, {
       const preferredTop = barRect.bottom + 6 + zoomMenu.offsetHeight <= rootRect.bottom
         ? below
         : above;
+      zoomIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
       const maxLeft = root.clientWidth - rootLeft - zoomMenu.offsetWidth;
       const maxTop = root.clientHeight - rootTop - zoomMenu.offsetHeight;
       zoomMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, zoomTrigger.offsetLeft))}px`;
@@ -580,6 +592,27 @@ Object.assign(ChartView.prototype, {
       btn.classList.toggle("fc-active", name === mode);
     }
     this._zoomMenuButton?.classList.toggle("fc-active", mode === "zoom");
+  },
+
+  _updateZoomMenuLabel() {
+    if (!this._zoomMenuLabel || !this.view || !this.view0) return;
+    const axisPercent = (axisId, lo, hi, homeLo, homeHi) => {
+      const axis = this._axis(axisId);
+      const span = Math.abs(this._axisCoord(axis, hi) - this._axisCoord(axis, lo));
+      const homeSpan = Math.abs(
+        this._axisCoord(axis, homeHi) - this._axisCoord(axis, homeLo)
+      );
+      return Number.isFinite(span) && span > 0 && Number.isFinite(homeSpan) && homeSpan > 0
+        ? (homeSpan / span) * 100
+        : null;
+    };
+    const percent = axisPercent("x", this.view.x0, this.view.x1, this.view0.x0, this.view0.x1)
+      ?? axisPercent("y", this.view.y0, this.view.y1, this.view0.y0, this.view0.y1)
+      ?? 100;
+    const text = percent < 1 ? "<1%" : `${Math.round(percent)}%`;
+    this._zoomMenuLabel.textContent = text;
+    this._zoomMenuButton.title = `Zoom controls (${text})`;
+    this._zoomMenuButton.setAttribute("aria-label", `Zoom controls, ${text}`);
   },
 
   _prefersReducedMotion() {
@@ -760,9 +793,8 @@ Object.assign(ChartView.prototype, {
       case "zoom":
         return svg('<rect x="3.5" y="3.5" width="13" height="13" rx="1" ' +
           'stroke-dasharray="3 2"/>');
-      case "zoommenu":
-        return svg('<circle cx="8" cy="8" r="4.5"/><path d="M11.5 11.5 L15 15"/>' +
-          '<path d="M16 7 L18 9 L16 11"/>');
+      case "chevrondown":
+        return svg('<path d="M6 8 L10 12 L14 8"/>');
       case "reset":
         return svg('<path d="M4 10 a6 6 0 1 1 1.8 4.3"/><path d="M4 6 V10 H8"/>');
       case "drag":

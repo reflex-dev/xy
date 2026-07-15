@@ -244,6 +244,9 @@ const FC_CHROME_CSS = `
 :where(.xy [data-fc-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
 :where(.xy [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-axis,currentColor);cursor:pointer}
 :where(.xy [data-fc-modebar-drag-handle]){cursor:move}
+:where(.xy [data-fc-modebar-menu-trigger]){width:auto;min-width:58px;gap:2px;padding:0 6px;font-size:11px;font-variant-numeric:tabular-nums}
+:where(.xy [data-fc-modebar-menu-indicator]){display:flex;transition:transform .15s}
+:where(.xy [data-fc-modebar-menu-indicator] svg){width:11px;height:11px}
 :where(.xy [data-fc-modebar-menu]){min-width:148px;gap:1px;padding:4px;background:var(--chart-modebar-bg,rgba(255,255,255,.94));border:1px solid rgba(128,128,128,.22);border-radius:7px;box-shadow:0 5px 18px rgba(15,23,42,.18);backdrop-filter:blur(8px)}
 :where(.xy [data-fc-modebar-menu-item]){width:100%;height:28px;justify-content:flex-start;padding:0 9px;border-radius:4px;text-align:left;white-space:nowrap}
 :where(.xy [data-fc-modebar-menu-item]:hover,.xy [data-fc-modebar-menu-item]:focus-visible){background:var(--chart-modebar-active,rgba(128,128,128,.18));outline:none}
@@ -3373,6 +3376,7 @@ gl.uniform1i(u(`${prefix}mode`), this._axisMode(axisId));
 }
 draw(keepPick = false) {
 if (this._destroyed || this._glLost || !this.gl) return;
+this._updateZoomMenuLabel?.();
 if (this._raf) {
 this._rafKeepPick = this._rafKeepPick && keepPick;
 return;
@@ -5744,6 +5748,16 @@ setZoomMenuOpen(!this._zoomMenuOpen);
 });
 this._zoomMenuButton = zoomTrigger;
 zoomTrigger.dataset.fcModebarMenuTrigger = "";
+zoomTrigger.replaceChildren();
+const zoomPercent = document.createElement("span");
+zoomPercent.dataset.fcModebarZoomPercent = "";
+zoomPercent.textContent = "100%";
+zoomTrigger.appendChild(zoomPercent);
+const zoomIndicator = document.createElement("span");
+zoomIndicator.dataset.fcModebarMenuIndicator = "";
+zoomIndicator.innerHTML = this._icon("chevrondown");
+zoomTrigger.appendChild(zoomIndicator);
+this._zoomMenuLabel = zoomPercent;
 zoomTrigger.setAttribute("aria-haspopup", "menu");
 zoomTrigger.setAttribute("aria-expanded", "false");
 mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
@@ -5801,6 +5815,7 @@ this._zoomMenuOpen = show;
 zoomTrigger.setAttribute("aria-expanded", String(show));
 if (!show) {
 zoomMenu.style.display = "none";
+zoomIndicator.style.transform = "none";
 if (restoreFocus) zoomTrigger.focus();
 return;
 }
@@ -5815,6 +5830,7 @@ const above = -zoomMenu.offsetHeight - 6;
 const preferredTop = barRect.bottom + 6 + zoomMenu.offsetHeight <= rootRect.bottom
 ? below
 : above;
+zoomIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
 const maxLeft = root.clientWidth - rootLeft - zoomMenu.offsetWidth;
 const maxTop = root.clientHeight - rootTop - zoomMenu.offsetHeight;
 zoomMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, zoomTrigger.offsetLeft))}px`;
@@ -5877,6 +5893,26 @@ for (const [name, btn] of Object.entries(this._modeBtns || {})) {
 btn.classList.toggle("fc-active", name === mode);
 }
 this._zoomMenuButton?.classList.toggle("fc-active", mode === "zoom");
+},
+_updateZoomMenuLabel() {
+if (!this._zoomMenuLabel || !this.view || !this.view0) return;
+const axisPercent = (axisId, lo, hi, homeLo, homeHi) => {
+const axis = this._axis(axisId);
+const span = Math.abs(this._axisCoord(axis, hi) - this._axisCoord(axis, lo));
+const homeSpan = Math.abs(
+this._axisCoord(axis, homeHi) - this._axisCoord(axis, homeLo)
+);
+return Number.isFinite(span) && span > 0 && Number.isFinite(homeSpan) && homeSpan > 0
+? (homeSpan / span) * 100
+: null;
+};
+const percent = axisPercent("x", this.view.x0, this.view.x1, this.view0.x0, this.view0.x1)
+?? axisPercent("y", this.view.y0, this.view.y1, this.view0.y0, this.view0.y1)
+?? 100;
+const text = percent < 1 ? "<1%" : `${Math.round(percent)}%`;
+this._zoomMenuLabel.textContent = text;
+this._zoomMenuButton.title = `Zoom controls (${text})`;
+this._zoomMenuButton.setAttribute("aria-label", `Zoom controls, ${text}`);
 },
 _prefersReducedMotion() {
 return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
@@ -6041,9 +6077,8 @@ return svg('<path d="M10 3 V17 M3 10 H17"/><path d="M10 3 L8 5 M10 3 L12 5"/>' +
 case "zoom":
 return svg('<rect x="3.5" y="3.5" width="13" height="13" rx="1" ' +
 'stroke-dasharray="3 2"/>');
-case "zoommenu":
-return svg('<circle cx="8" cy="8" r="4.5"/><path d="M11.5 11.5 L15 15"/>' +
-'<path d="M16 7 L18 9 L16 11"/>');
+case "chevrondown":
+return svg('<path d="M6 8 L10 12 L14 8"/>');
 case "reset":
 return svg('<path d="M4 10 a6 6 0 1 1 1.8 4.3"/><path d="M4 6 V10 H8"/>');
 case "drag":
