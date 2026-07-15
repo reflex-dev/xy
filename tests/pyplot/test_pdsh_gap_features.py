@@ -5,6 +5,8 @@ Each block mirrors real notebook usage (Python Data Science Handbook ch. 4),
 so a regression here means real scripts break again.
 """
 
+from __future__ import annotations
+
 import io
 
 import numpy as np
