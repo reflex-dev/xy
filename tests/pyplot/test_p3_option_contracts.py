@@ -57,7 +57,19 @@ def test_scatter_color_domain_is_retained_and_norm_is_loud() -> None:
 def test_rule_linestyle_is_retained_as_dash_geometry() -> None:
     _fig, ax = plt.subplots()
     ax.axvline(1, linestyle="--")
-    assert ax._entries[0]["kwargs"]["style"]["dash"] == "6.0,4.0"
+    # Matplotlib's "--" pattern (3.7, 1.6) pt scaled by lw=1.5 and dpi=100.
+    assert ax._entries[0]["kwargs"]["style"]["dash"] == "7.7083,3.3333"
+
+
+def test_named_dash_patterns_follow_linewidth_and_figure_dpi() -> None:
+    _fig, ax = plt.subplots(dpi=144)
+    line = ax.plot([0, 1], [0, 1], linestyle="-.", linewidth=2)[0]
+    step = ax.step([0, 1], [1, 0], linestyle=":", linewidth=3)[0]
+
+    # At 144 dpi one point is two pixels. Matplotlib scales each named pattern
+    # by the line width before the point-to-pixel conversion.
+    assert line._entry["kwargs"]["dash"] == [25.6, 6.4, 4.0, 6.4]
+    assert step._entry["kwargs"]["dash"] == [6.0, 9.9]
 
 
 def test_hlines_and_vlines_emit_dash_geometry() -> None:

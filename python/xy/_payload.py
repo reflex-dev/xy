@@ -243,6 +243,9 @@ class PayloadMixin(_Host):
         }
         if self.legend_options:
             spec["legend"] = self.legend_options
+        extra_legends = getattr(self, "extra_legends", None)
+        if extra_legends:
+            spec["extra_legends"] = extra_legends
         if self.frame_sides is not None:
             spec["frame_sides"] = list(self.frame_sides)
         if self.colorbar_options:
