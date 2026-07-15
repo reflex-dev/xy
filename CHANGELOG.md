@@ -35,6 +35,23 @@ in the README).
   to the internal engine object.
 
 ### Added
+- `xy.pyplot.FacetGrid`: a seaborn-shaped row/column facet grid running
+  entirely on the shim (seaborn's `map` contract: subset → activate panel →
+  call the pyplot function), with shared domains, edge-only axis labels,
+  top-row column titles, and rotated `margin_titles`. Text annotations are now
+  unclipped like matplotlib, axes-fraction text right of the axes box reserves
+  right margin in every exporter, and `rotation=90/270` renders vertical text
+  in browser, native PNG (new CW glyph path, ABI 34), and SVG. New style
+  sheets `seaborn-v0_8-darkgrid` and `seaborn-v0_8-deep` mirror `sns.set()`
+  (darkgrid panels, white forced patch edges via the new
+  `patch.edgecolor`/`patch.force_edgecolor` rcParams, deep color cycle).
+- **Client fixes surfaced by the darkgrid theme.** Re-applied the
+  chrome-under-bg stacking fix (423e020) that a later merge clobbered — an
+  opaque `--chart-bg` again hid grid lines, rules, bands, and annotation
+  shapes in the live client; the render smoke now pixel-probes this stacking
+  (`bgocc`) so it cannot regress silently. Modebar icons color from
+  `--chart-text` instead of `--chart-axis`, staying visible when a style sets
+  white axis edges.
 - **Production binary HTTP frame v1.** `xy.channel` now exposes a
   framework-free, little-endian `XYBF` codec with separate transport
   versioning, strict JSON metadata, 8-byte-aligned buffers, zero padding,

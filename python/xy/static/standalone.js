@@ -242,7 +242,7 @@ const FC_CHROME_CSS = `
 :where(.xy [data-fc-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
 :where(.xy [data-fc-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
 :where(.xy [data-fc-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
-:where(.xy [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-axis,currentColor);cursor:pointer}
+:where(.xy [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-text,currentColor);cursor:pointer}
 :where(.xy [data-fc-slot="modebar_button"].fc-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
 :where(.xy [data-fc-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
 :where(.xy [data-fc-slot="selection"][data-fc-band="zoom"]){border-color:var(--chart-zoom-selection,rgba(120,120,120,.9));background:var(--chart-zoom-selection-fill,rgba(120,120,120,.12))}
@@ -5139,15 +5139,32 @@ d.textContent = text;
 const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
 const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
 const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0px";
-const va = style.vertical_align;
+const rot = Number.isFinite(Number(style.rotation))
+? ((Number(style.rotation) % 360) + 360) % 360
+: 0;
+const va = String(style.vertical_align || "");
 const vAnchor =
 va === "center" || va === "middle" ? "-50%"
 : va === "bottom" ? "-100%"
 : va === "top" ? "0px"
 : "calc(-100% + 0.35em)";
+let transform = `translate(${anchor},${vAnchor})`;
+if (rot === 90 || rot === 270) {
+const cw = rot === 270;
+const along =
+va === "center" || va === "middle" ? "-50%"
+: va === "top" ? (cw ? "0" : "-100%")
+: va === "bottom" ? (cw ? "-100%" : "0")
+: cw ? "0" : "-100%";
+const cross =
+ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? (cw ? "0" : "-100%") : cw ? "-100%" : "0";
+transform = `rotate(${cw ? 90 : -90}deg) translate(${along},${cross})`;
+} else if (rot) {
+transform = `rotate(${-rot}deg) translate(${anchor},${vAnchor})`;
+}
 d.style.cssText =
 `position:absolute;left:${px + dx}px;top:${py + dy}px;` +
-`transform:translate(${anchor},${vAnchor});pointer-events:none;` +
+`transform:${transform};transform-origin:0 0;pointer-events:none;` +
 `white-space:pre-line;text-align:center;width:max-content;`;
 this._applySlot(d, "annotation_label");
 this._applyClass(d, ann.class_name);
@@ -5167,11 +5184,12 @@ const padL = edge(cs.paddingLeft, cs.borderLeftWidth);
 const padR = edge(cs.paddingRight, cs.borderRightWidth);
 const padT = edge(cs.paddingTop, cs.borderTopWidth);
 const padB = edge(cs.paddingBottom, cs.borderBottomWidth);
-if (padL || padR || padT || padB) {
+if ((padL || padR || padT || padB) && rot !== 90 && rot !== 270) {
 const hShift = anchor === "-100%" ? padR : anchor === "-50%" ? 0 : -padL;
 const vShift =
 vAnchor === "-50%" ? 0 : vAnchor === "0px" ? -padT : padB;
 d.style.transform =
+`${rot ? `rotate(${-rot}deg) ` : ""}` +
 `translate(calc(${anchor} + ${hShift}px), calc(${vAnchor} + ${vShift}px))`;
 }
 }

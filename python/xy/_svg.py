@@ -1365,6 +1365,36 @@ def _annotation_svg(annotations, sx, sy, plot, width, height):
             font_size = float(style.get("font_size", 11))
             lines = str(ann["text"]).splitlines() or [""]
             line_height = font_size * 1.2
+            rotation = float(style.get("rotation", 0.0)) % 360.0
+            if rotation in (90.0, 270.0):
+                # Vertical text, mirroring the native rasterizer's geometry:
+                # vertical_align anchors along the reading axis, the horizontal
+                # anchor shifts the baseline across the post-rotation box.
+                cw = rotation == 270.0
+                va = str(style.get("vertical_align", ""))
+                along = {
+                    "center": "middle",
+                    "top": "start" if cw else "end",
+                    "bottom": "end" if cw else "start",
+                }.get(va, "start")
+                ascent, descent = font_size * 0.78, font_size * 0.22
+                if cw:
+                    base = {"middle": (descent - ascent) / 2, "end": -ascent}.get(anchor, descent)
+                else:
+                    base = {"middle": (ascent - descent) / 2, "end": -descent}.get(anchor, ascent)
+                stack = -line_height if cw else line_height  # later lines: glyph-down
+                by = ty + float(ann.get("dy", 0))
+                text_opacity = float(style.get("opacity", 1.0))
+                for index, line in enumerate(lines):
+                    bx = tx + float(ann.get("dx", 0)) + base + index * stack
+                    labels.append(
+                        f'<text text-anchor="{along}" font-size="{_num(font_size)}" '
+                        f'transform="rotate({90 if cw else -90} {_num(bx)} {_num(by)})" '
+                        f'x="{_num(bx)}" y="{_num(by)}" '
+                        + (f'fill-opacity="{_num(text_opacity)}" ' if text_opacity < 1 else "")
+                        + f'fill="{color}">{escape(line)}</text>'
+                    )
+                continue
             x_text = tx + float(ann.get("dx", 0))
             y_text = ty + float(ann.get("dy", 0)) - (len(lines) - 1) * line_height / 2
             vertical_align = style.get("vertical_align")

@@ -863,6 +863,40 @@ try{{
     }}
     const axisontop=(axisRuleN>=2)?1:0;
     vMs.destroy();holderMs.remove();
+    // Opaque --chart-bg must NOT occlude chrome-canvas shapes: the marks
+    // canvas always clears transparent and the plot background + grid paint
+    // on the chrome canvas below it (regression guard for 423e020).
+    const occBuf=new ArrayBuffer(32); const occCols=[]; let occOff=0;
+    const occcol=(vals)=>{{new Float32Array(occBuf,occOff*4,vals.length).set(vals);
+      occCols.push({{byte_offset:occOff*4,len:vals.length,offset:0,scale:1,kind:"float"}});
+      occOff+=vals.length; return occCols.length-1;}};
+    const occSpec={{protocol:3,width:200,height:160,title:"",backend:"none",
+      show_legend:false,show_modebar:false,
+      dom:{{style:{{"--chart-bg":"#eaeaf2","--chart-grid":"#ffffff"}}}},
+      x_axis:{{kind:"linear",label:"",range:[0,4]}},
+      y_axis:{{kind:"linear",label:"",range:[0,8]}},
+      traces:[{{id:0,kind:"line",name:"l",tier:"direct",n_points:2,n_marks:2,
+        style:{{color:"#2563eb",width:2,opacity:1}},x:occcol([0,4]),y:occcol([1,2])}}],
+      columns:occCols}};
+    const holderOcc=document.createElement("div");document.body.appendChild(holderOcc);
+    const vOcc=xy.renderStandalone(holderOcc,occSpec,occBuf);
+    vOcc._drawNow();
+    // Marks canvas: transparent where no mark is drawn (upper plot region).
+    const gO=vOcc.gl,WO=gO.drawingBufferWidth,HO=gO.drawingBufferHeight;
+    const oPx=new Uint8Array(4);
+    gO.readPixels(Math.round(WO/2),Math.round(HO*0.9),1,1,gO.RGBA,gO.UNSIGNED_BYTE,oPx);
+    // Chrome canvas below it: plot background fill plus white grid lines.
+    const cctx=vOcc.chrome.getContext("2d");
+    const cim=cctx.getImageData(0,0,vOcc.chrome.width,vOcc.chrome.height).data;
+    let occLav=0, occGrid=0;
+    for(let i=0;i<cim.length;i+=4){{
+      if(cim[i+3]>200){{
+        if(cim[i]>248&&cim[i+1]>248&&cim[i+2]>248) occGrid++;
+        else if(Math.abs(cim[i]-234)<6&&Math.abs(cim[i+1]-234)<6&&Math.abs(cim[i+2]-242)<6) occLav++;
+      }}
+    }}
+    const bgocc=(oPx[3]<20 && occLav>500 && occGrid>20)?1:0;
+    vOcc.destroy();holderOcc.remove();
     // curve:"smooth": the GPU polyline densifies ((n-1)*16+1 verts) while the
     // hover/_cpu columns keep the 5 source rows; area smooths its base too.
     const smBuf=new ArrayBuffer(128); const smCols=[]; let smOff=0;
@@ -887,7 +921,7 @@ try{{
     const gLn=vSm.gpuTraces[0], gAr=vSm.gpuTraces[1];
     const msmooth=(gLn.n===65 && gLn._cpu.x.length===5 && gAr.n===65 && gAr._cpu.base.length===5)?1:0;
     vSm.destroy();holderSm.remove();
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}}`;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -1114,6 +1148,7 @@ try{{
     bar_grad = int(re.search(r"bgrad=(\d+)", title).group(1))
     bar_corner = int(re.search(r"bcorner=(\d+)", title).group(1))
     mark_smooth = int(re.search(r"msmooth=(\d+)", title).group(1))
+    bg_occlusion = int(re.search(r"bgocc=(\d+)", title).group(1))
     frac = lit / max(total, 1)
     print(
         f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}, pick hits: {pick}, "
@@ -1263,11 +1298,16 @@ try{{
         raise SystemExit("corner_radius left the bar corner pixel lit")
     if mark_smooth != 1:
         raise SystemExit("curve:'smooth' did not densify line/area GPU geometry")
+    if bg_occlusion != 1:
+        raise SystemExit(
+            "opaque --chart-bg occluded chrome shapes: the marks canvas must clear "
+            "transparent and the plot background+grid must paint on the chrome canvas"
+        )
     print(
         "render smoke OK (no numpy): line + colored/sized scatter + density + "
         "area + bars + heatmap + picking + box-select + modebar/box-zoom + "
         "responsive resize + LOD drill-in + mark styling (gradient/radius/"
-        "stroke/smooth)"
+        "stroke/smooth) + chrome-under-bg stacking"
     )
 
 
