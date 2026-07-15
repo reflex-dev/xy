@@ -1262,21 +1262,22 @@ class Axes(PlotTypeMixin):
         kwargs: dict[str, Any],
     ) -> BarContainer:
         cat_array = np.asarray(cats)
-        if cat_array.dtype.kind == "U":
+        if cat_array.dtype.kind == "U" and cat_array.dtype.isnative:
             # _plain_text only rewrites labels containing TeX markers; a
             # vectorized scan skips the per-label Python loop for the common
             # plain-string case (O(categories) per build otherwise). The scan
             # reads the UCS4 storage as codepoints rather than using
             # np.char/np.strings, whose first call pays a multi-millisecond
             # lazy ufunc setup — a one-shot cost CodSpeed attributes to
-            # whichever chart build hits it first.
+            # whichever chart build hits it first. The uint32 view is only
+            # codepoints on native byte order; swapped arrays take the loop.
             flat = cat_array.reshape(-1)
             codes = np.ascontiguousarray(flat).view(np.uint32)
             if (codes == 36).any() or (codes == 92).any():  # "$" and "\" codepoints
                 cats = np.asarray([_plain_text(value) for value in flat]).reshape(cat_array.shape)
             else:
                 cats = cat_array
-        elif cat_array.dtype.kind in {"S", "O"} and all(
+        elif cat_array.dtype.kind in {"U", "S", "O"} and all(
             isinstance(value, str) for value in cat_array.reshape(-1)
         ):
             cats = np.asarray([_plain_text(value) for value in cat_array.reshape(-1)]).reshape(
@@ -4022,9 +4023,15 @@ class Axes(PlotTypeMixin):
             if len(xv) > 4096:
                 # Stride down before the finite scan: occupancy scoring is
                 # already sampled, so the full-array isfinite pass was pure
-                # O(n) per-build cost on large legended series.
+                # O(n) per-build cost on large legended series. Sparse finite
+                # points can slip between strides on a mostly-NaN series, so
+                # a sample with no finite pair falls back to the full array —
+                # a series the old full-array pass scored still scores instead
+                # of vanishing from placement.
                 strided = np.linspace(0, len(xv) - 1, 4096, dtype=np.intp)
-                xv, yv = xv[strided], yv[strided]
+                sampled_x, sampled_y = xv[strided], yv[strided]
+                if (np.isfinite(sampled_x) & np.isfinite(sampled_y)).any():
+                    xv, yv = sampled_x, sampled_y
             finite = np.flatnonzero(np.isfinite(xv) & np.isfinite(yv))
             if len(finite) > 512:
                 finite = finite[np.linspace(0, len(finite) - 1, 512, dtype=np.intp)]
