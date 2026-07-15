@@ -117,7 +117,6 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
             "icon.innerHTML = this._icon(name);",
             "icon.innerHTML = this._icon(name);",
             "icon.innerHTML = this._icon(name);",
-            'if (icon) icon.innerHTML = this._icon(dark ? "sun" : "moon");',
         ]
 
 
@@ -131,7 +130,6 @@ def test_modebar_exports_are_local_and_exclude_interaction_chrome() -> None:
         "const content = new XMLSerializer().serializeToString(clone);",
         '[data-fc-slot="modebar"],[data-fc-slot="tooltip"]',
         'const columns = ["trace", "name", "kind", "index", "x", "y"',
-        "this.root.dataset.fcColorMode = this._colorMode;",
     )
     for path, text in CLIENT_FILES:
         for snippet in required:

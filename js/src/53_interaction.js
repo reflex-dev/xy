@@ -690,13 +690,12 @@ Object.assign(ChartView.prototype, {
       "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
     bar.appendChild(exportMenu);
     const exportMenuItems = [];
-    const mkExportItem = (name, label, onClick, separator = false) => {
+    const mkExportItem = (name, label, onClick) => {
       const button = document.createElement("button");
       button.type = "button";
       button.tabIndex = -1;
       button.dataset.fcModebarMenuItem = name;
       button.dataset.fcModebarExportItem = name;
-      if (separator) button.dataset.fcSeparator = "";
       button.setAttribute("role", "menuitem");
       button.style.cssText = "display:flex;align-items:center;pointer-events:auto;";
       this._applySlot(button, "modebar_button");
@@ -717,14 +716,7 @@ Object.assign(ChartView.prototype, {
       exportMenuItems.push(button);
       return button;
     };
-    const themeItem = mkExportItem("moon", "Dark Mode", () => this._toggleColorMode());
-    themeItem.dataset.fcModebarThemeToggle = "";
-    themeItem.setAttribute("role", "menuitemcheckbox");
-    themeItem.setAttribute("aria-checked", "false");
-    this._themeMenuItem = themeItem;
-    this._colorMode = "light";
-    this._updateColorModeItem();
-    mkExportItem("png", "Export PNG", () => this._exportPng(), true);
+    mkExportItem("png", "Export PNG", () => this._exportPng());
     mkExportItem("svg", "Export SVG", () => this._exportSvg());
     mkExportItem("csv", "Export CSV", () => this._exportCsv());
 
@@ -1135,62 +1127,6 @@ Object.assign(ChartView.prototype, {
     this._setView({ x0, x1, y0, y1 }, { animate });
   },
 
-  _updateColorModeItem() {
-    if (!this._themeMenuItem) return;
-    const dark = this._colorMode === "dark";
-    const icon = this._themeMenuItem.querySelector("[data-fc-modebar-menu-icon]");
-    const label = icon?.nextElementSibling;
-    if (icon) icon.innerHTML = this._icon(dark ? "sun" : "moon");
-    if (label) label.textContent = dark ? "Light Mode" : "Dark Mode";
-    this._themeMenuItem.dataset.fcModebarExportItem = dark ? "light" : "dark";
-    this._themeMenuItem.setAttribute("aria-checked", String(dark));
-  },
-
-  _setColorMode(mode) {
-    const dark = mode === "dark";
-    this._colorMode = dark ? "dark" : "light";
-    this.root.dataset.fcColorMode = this._colorMode;
-    const colors = dark ? {
-      color: "#e5e7eb",
-      background: "#0b1220",
-      "--chart-bg": "#111827",
-      "--chart-grid": "rgba(226,232,240,.14)",
-      "--chart-axis": "#94a3b8",
-      "--chart-text": "#e5e7eb",
-      "--chart-legend-bg": "rgba(30,41,59,.84)",
-      "--chart-modebar-bg": "rgba(15,23,42,.94)",
-      "--chart-modebar-active": "rgba(148,163,184,.24)",
-      "--chart-tooltip-bg": "rgba(2,6,23,.96)",
-      "--chart-tooltip-text": "#f8fafc",
-      "--chart-badge-bg": "rgba(30,41,59,.9)",
-      "--chart-badge-text": "#e2e8f0",
-    } : {
-      color: "#1f2937",
-      background: "#ffffff",
-      "--chart-bg": "#ffffff",
-      "--chart-grid": "rgba(15,23,42,.12)",
-      "--chart-axis": "#64748b",
-      "--chart-text": "#1f2937",
-      "--chart-legend-bg": "rgba(241,245,249,.88)",
-      "--chart-modebar-bg": "rgba(255,255,255,.94)",
-      "--chart-modebar-active": "rgba(100,116,139,.18)",
-      "--chart-tooltip-bg": "rgba(20,24,33,.94)",
-      "--chart-tooltip-text": "#ffffff",
-      "--chart-badge-bg": "rgba(255,255,255,.9)",
-      "--chart-badge-text": "#0f172a",
-    };
-    for (const [name, value] of Object.entries(colors)) {
-      if (name === "color" || name === "background") this.root.style[name] = value;
-      else this.root.style.setProperty(name, value);
-    }
-    this._updateColorModeItem();
-    this.refreshTheme();
-  },
-
-  _toggleColorMode() {
-    this._setColorMode(this._colorMode === "dark" ? "light" : "dark");
-  },
-
   _exportFilename(extension) {
     const title = String(this.spec.title || "xy-chart")
       .trim()
@@ -1392,12 +1328,6 @@ Object.assign(ChartView.prototype, {
         return svg('<circle cx="5" cy="10" r="1" fill="currentColor" stroke="none"/>' +
           '<circle cx="10" cy="10" r="1" fill="currentColor" stroke="none"/>' +
           '<circle cx="15" cy="10" r="1" fill="currentColor" stroke="none"/>');
-      case "moon":
-        return svg('<path d="M14.8 13.8 A6.5 6.5 0 0 1 6.2 5.2 A6.5 6.5 0 1 0 14.8 13.8 Z"/>');
-      case "sun":
-        return svg('<circle cx="10" cy="10" r="3"/><path d="M10 2 V4 M10 16 V18 ' +
-          'M2 10 H4 M16 10 H18 M4.3 4.3 L5.7 5.7 M14.3 14.3 L15.7 15.7 ' +
-          'M15.7 4.3 L14.3 5.7 M5.7 14.3 L4.3 15.7"/>');
       case "png":
         return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
           '<path d="M7 13 L9 10.5 L11 12 L13.5 9 V15 H7 Z"/>');
