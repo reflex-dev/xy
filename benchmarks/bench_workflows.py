@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import statistics
 import sys
 import time
@@ -318,7 +319,7 @@ def _export_rows(n: int, reps: int, chromium: str | None) -> list[dict[str, Any]
         ),
         (
             "export_png_native_decimated_line",
-            lambda fig: fig.to_png(engine="native"),
+            lambda fig: fig.to_png(engine=fc.Engine.default),
             _png_oracle,
         ),
     ):
@@ -336,19 +337,27 @@ def _export_rows(n: int, reps: int, chromium: str | None) -> list[dict[str, Any]
             )
         )
     if chromium:
-        rows.append(
-            _measure(
-                scenario="export_png_chromium_decimated_line",
-                family="export",
-                n=n,
-                setup=figure,
-                operation=lambda fig: fig.to_png(engine="chromium", chromium=chromium),
-                reps=1,
-                category_ids=("static_export", "payload_export_size"),
-                scope="public-chromium-png-export",
-                oracle=_png_oracle,
+        previous_browser = os.environ.get("XY_BROWSER")
+        os.environ["XY_BROWSER"] = chromium
+        try:
+            rows.append(
+                _measure(
+                    scenario="export_png_chromium_decimated_line",
+                    family="export",
+                    n=n,
+                    setup=figure,
+                    operation=lambda fig: fig.to_png(engine=fc.Engine.chromium),
+                    reps=1,
+                    category_ids=("static_export", "payload_export_size"),
+                    scope="public-chromium-png-export",
+                    oracle=_png_oracle,
+                )
             )
-        )
+        finally:
+            if previous_browser is None:
+                os.environ.pop("XY_BROWSER", None)
+            else:
+                os.environ["XY_BROWSER"] = previous_browser
     return rows
 
 

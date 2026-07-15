@@ -349,7 +349,7 @@ const DENSITY_FS = `#version 300 es
 precision highp float;
 uniform sampler2D u_grid; uniform sampler2D u_lut;
 uniform vec4 u_gridRange; // gx0,gx1,gy0,gy1
-uniform float u_opacity;
+uniform float u_opacity; uniform vec4 u_color; uniform int u_constantColor;
 in vec2 v_data;
 out vec4 outColor;
 void main() {
@@ -358,8 +358,11 @@ void main() {
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
   float t = texture(u_grid, uv).r;
   if (t <= 0.0) discard;
-  vec3 rgb = texture(u_lut, vec2(clamp(t, 0.0, 1.0), 0.5)).rgb;
-  float alpha = u_opacity * clamp(t * 1.35, 0.0, 1.0);
+  vec4 paint = u_constantColor == 1
+    ? u_color
+    : texture(u_lut, vec2(clamp(t, 0.0, 1.0), 0.5));
+  vec3 rgb = paint.rgb;
+  float alpha = u_opacity * paint.a * clamp(t * 1.35, 0.0, 1.0);
   if (alpha <= 0.01) discard;
   outColor = vec4(rgb * alpha, alpha);
 }`;

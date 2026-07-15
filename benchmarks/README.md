@@ -155,8 +155,8 @@ and request-to-next-frame measurements.
 Set `XY_BENCH_HARDWARE_GL=1` to disable the benchmark helpers' SwiftShader
 flags. Artifacts record `environment.browser_renderer=hardware`.
 The workflow benchmark measures native Rust PNG separately from the opt-in
-`engine="chromium"` screenshot row. The latter remains `software-gl` because
-the Chromium exporter forces SwiftShader; keep it out of hardware-GPU comparisons.
+`engine=Engine.chromium` screenshot row. The Chromium adapter remains
+`software-gl` because it forces SwiftShader; keep it out of hardware-GPU comparisons.
 Record CPU model/core count, RAM, GPU and driver, OS build, power mode, browser
 version, Python, Rust, Node, package versions, commit, and ambient workload.
 

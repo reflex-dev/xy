@@ -8,6 +8,21 @@ in the README).
 
 ## [Unreleased]
 
+### Migration notes
+- Mark `style={...}` now uses paint-specific CSS: `stroke` for line-like marks
+  and `fill` for filled marks. The legacy `color=` argument remains supported,
+  but `color` is not an alias inside `style`.
+- `MarkStyle` / `mark_style(...)` are removed. Interaction state styling belongs
+  to the host framework (for example, Reflex state, conditions, and event
+  handlers), rather than a second XY state system.
+- PNG export now defaults to the browser-free native renderer. Use
+  `engine=Engine.chromium` for browser CSS/WebGL fidelity; string engine values
+  remain temporary deprecated aliases. Browser executable parameters were
+  removed in favor of automatic discovery or `XY_BROWSER`.
+- Chromium PNG and batch export accept `custom_css=`. Native PNG rejects it,
+  while complete chart-level color tokens such as `var(--accent)` resolve in
+  native SVG/PNG from the chart's own `style` mapping.
+
 ### Removed
 - **The fluent `Figure` API is removed from the public surface.**
   `xy.Figure` is no longer exported; `figure.py` is internalized as

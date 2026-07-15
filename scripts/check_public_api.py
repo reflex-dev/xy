@@ -76,9 +76,9 @@ DECLARATIVE_AXIS_EXPORTS = ("x_axis", "y_axis")
 DECLARATIVE_CHROME_EXPORTS = (
     "legend",
     "tooltip",
+    "colorbar",
     "modebar",
     "theme",
-    "mark_style",
     "interaction_config",
 )
 DECLARATIVE_CHART_EXPORTS = (

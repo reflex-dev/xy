@@ -976,8 +976,10 @@ class ChartView {
         `rgb(${c[0]},${c[1]},${c[2]})`).join(",")})`;
     }
     bar.style.cssText = horizontal
-      ? `position:absolute;inset:0 0 auto 0;height:${COLORBAR_THICKNESS}px;background:${gradient};border:1px solid currentColor;box-sizing:border-box;`
-      : `position:absolute;inset:0 auto 0 0;width:${COLORBAR_THICKNESS}px;background:${gradient};border:1px solid currentColor;box-sizing:border-box;`;
+      ? `position:absolute;inset:0 0 auto 0;height:${COLORBAR_THICKNESS}px;`
+      : `position:absolute;inset:0 auto 0 0;width:${COLORBAR_THICKNESS}px;`;
+    bar.style.setProperty("--xy-colorbar-gradient", gradient);
+    this._applySlot(bar, "colorbar_bar");
     box.appendChild(bar);
 
     const domain = cb.domain || [0, 1];
@@ -995,6 +997,7 @@ class ChartView {
       tick.style.cssText = horizontal
         ? `position:absolute;left:${100 * fraction}%;top:${COLORBAR_THICKNESS + 2}px;transform:translateX(-50%);white-space:nowrap;`
         : `position:absolute;left:${COLORBAR_THICKNESS + 5}px;top:${100 * (1 - fraction)}%;transform:translateY(-50%);white-space:nowrap;`;
+      this._applySlot(tick, "colorbar_tick");
       box.appendChild(tick);
     }
     if (cb.label) {
@@ -1003,6 +1006,7 @@ class ChartView {
       label.style.cssText = horizontal
         ? `position:absolute;left:50%;top:${COLORBAR_THICKNESS + 18}px;transform:translateX(-50%);white-space:nowrap;`
         : `position:absolute;left:${COLORBAR_THICKNESS + 40}px;top:50%;writing-mode:vertical-rl;transform:translateY(-50%) rotate(180deg);white-space:nowrap;`;
+      this._applySlot(label, "colorbar_title");
       box.appendChild(label);
     }
     box.title = `${cb.label ? cb.label + ": " : ""}${domain[0]} – ${domain[1]}`;
@@ -1149,6 +1153,7 @@ class ChartView {
       g.densityNormMax = d.max;
       g.density = {
         w: d.w, h: d.h, max: d.max, normMax: d.max, colormap: d.colormap,
+        color: d.color ? parseColor(this.root, d.color, [0.3, 0.47, 0.66, 1]) : null,
         xRange: d.x_range, yRange: d.y_range,
         grid: lodCopyGrid(grid),
         tex: this._uploadGrid(grid, d.w, d.h, d.max),
@@ -1383,6 +1388,14 @@ class ChartView {
     gl.uniform4fv(u("u_gradColor"), grad.colors);
   }
 
+  _fillOpacity(style, fallback = 1) {
+    return Number(style.opacity ?? fallback) * Number(style.fill_opacity ?? 1);
+  }
+
+  _strokeOpacity(style, fallback = 1) {
+    return Number(style.opacity ?? fallback) * Number(style.stroke_opacity ?? 1);
+  }
+
   // Rect-family styling uniforms (rounded corners, stroke, gradient). Radius
   // and stroke width are CSS px -> device px; the stroke color ships
   // premultiplied to match the shader's blend space.
@@ -1394,7 +1407,8 @@ class ChartView {
     gl.uniform2f(u("u_radius"), cr[0] * this.dpr, cr[1] * this.dpr);
     gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
     const sc = g.strokeColor || [0, 0, 0, 0];
-    gl.uniform4f(u("u_stroke"), sc[0] * sc[3], sc[1] * sc[3], sc[2] * sc[3], sc[3]);
+    const sa = sc[3] * this._strokeOpacity(g.trace.style || {});
+    gl.uniform4f(u("u_stroke"), sc[0] * sa, sc[1] * sa, sc[2] * sa, sa);
     this._setGradientUniforms(prog, g.grad);
   }
 
@@ -1522,6 +1536,60 @@ class ChartView {
       g.lut = this._paletteLut(t.color.palette);
     }
     const style = t.style || {};
+    g.meshStrokeWidth = Number(style.stroke_width) || 0;
+    g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
+  }
+
+  // Hexbin ships cell centers plus one color value per cell; every hexagon
+  // shares the same geometry (style hex_dx/hex_dy), so the six-triangle fan
+  // expands here instead of on the wire. Vertices stay in the centers'
+  // encoded space: stored = (value - offset) * scale, so a data-space delta
+  // scales by meta.scale and the center columns' metas serve every vertex.
+  // The ring must match HEX_RING in python/xy/_svg.py.
+  _buildHexbinMark(g, t, buffer) {
+    const cx = this._columnView(buffer, this.spec.columns[t.x]);
+    const cy = this._columnView(buffer, this.spec.columns[t.y]);
+    const xMeta = { ...this.spec.columns[t.x] };
+    const yMeta = { ...this.spec.columns[t.y] };
+    const n = Math.min(cx.length, cy.length);
+    const style = t.style || {};
+    const dx = (Number(style.hex_dx) || 0) * (xMeta.scale || 1);
+    const dy = (Number(style.hex_dy) || 0) * (yMeta.scale || 1);
+    const ringX = [0, dx / 2, dx / 2, 0, -dx / 2, -dx / 2, 0];
+    const ringY = [-dy / 3, -dy / 6, dy / 6, dy / 3, dy / 6, -dy / 6, -dy / 3];
+    const parts = {};
+    for (const name of ["x0", "x1", "x2", "y0", "y1", "y2"]) parts[name] = new Float32Array(n * 6);
+    for (let i = 0; i < n; i++) {
+      const px = cx[i], py = cy[i];
+      for (let k = 0; k < 6; k++) {
+        const j = i * 6 + k;
+        parts.x0[j] = px;
+        parts.y0[j] = py;
+        parts.x1[j] = px + ringX[k];
+        parts.y1[j] = py + ringY[k];
+        parts.x2[j] = px + ringX[k + 1];
+        parts.y2[j] = py + ringY[k + 1];
+      }
+    }
+    for (const name of ["x0", "x1", "x2"]) {
+      g[name + "Meta"] = { ...xMeta };
+      g[name + "Buf"] = this._upload(parts[name]);
+    }
+    for (const name of ["y0", "y1", "y2"]) {
+      g[name + "Meta"] = { ...yMeta };
+      g[name + "Buf"] = this._upload(parts[name]);
+    }
+    g.n = n * 6;
+    g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
+    g.colorMode = 0;
+    if (t.color && (t.color.mode === "continuous" || t.color.mode === "categorical")) {
+      g.colorMode = t.color.mode === "continuous" ? 1 : 2;
+      const cval = this._columnView(buffer, this.spec.columns[t.color.buf]);
+      const expanded = new Float32Array(n * 6);
+      for (let i = 0; i < n; i++) expanded.fill(cval[i], i * 6, i * 6 + 6);
+      g.cBuf = this._upload(expanded);
+      g.lut = t.color.mode === "continuous" ? this._lut(t.color.colormap) : this._paletteLut(t.color.palette);
+    }
     g.meshStrokeWidth = Number(style.stroke_width) || 0;
     g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
   }
@@ -1923,7 +1991,7 @@ class ChartView {
     gl.uniform1i(u("u_sizeMode"), g.sizeMode);
     gl.uniform2f(u("u_sizeRange"), g.sizeRange[0], g.sizeRange[1]);
     gl.uniform1i(u("u_colorMode"), g.colorMode);
-    const markOpacity = (g.trace.style.opacity ?? 0.8) * opacityScale;
+    const markOpacity = this._fillOpacity(g.trace.style, 0.8) * opacityScale;
     gl.uniform1f(u("u_opacity"), markOpacity);
     gl.uniform1f(u("u_selectedOpacity"), this._markStateNumber("selected", "opacity", 1));
     gl.uniform1f(u("u_unselectedOpacity"), this._markStateNumber("unselected", "opacity", 0.12));
@@ -1938,7 +2006,9 @@ class ChartView {
     gl.uniform4f(u("u_color"), r, gg, b, 1);
     gl.uniform1i(u("u_symbol"), g.symbol || 0);
     const sc = g.pointStroke;
-    const strokeAlpha = sc ? sc[3] * markOpacity : 0;
+    const strokeAlpha = sc
+      ? sc[3] * this._strokeOpacity(g.trace.style, 0.8) * opacityScale
+      : 0;
     gl.uniform1f(u("u_ptStrokeWidth"), (g.pointStrokeWidth || 0) * this.dpr);
     gl.uniform1i(u("u_ptStrokeFace"), g.pointStrokeFace ? 1 : 0);
     gl.uniform4f(u("u_ptStroke"), sc ? sc[0] * strokeAlpha : 0, sc ? sc[1] * strokeAlpha : 0,
@@ -2018,7 +2088,7 @@ class ChartView {
     gl.uniform1f(u("u_dpr"), this.dpr);
     gl.uniform1f(u("u_size"), g.size);
     const [r, gg, b] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, (g.trace.style.opacity ?? 0.8) * opacityScale);
+    gl.uniform4f(u("u_color"), r, gg, b, this._fillOpacity(g.trace.style, 0.8) * opacityScale);
     this._bindVao(
       g,
       "points-simple",
@@ -2100,7 +2170,10 @@ class ChartView {
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     const d = density || g.density;
     gl.uniform4f(u("u_gridRange"), d.xRange[0], d.xRange[1], d.yRange[0], d.yRange[1]);
-    gl.uniform1f(u("u_opacity"), (g.trace.style.opacity ?? 1.0) * opacityScale);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * opacityScale);
+    const constant = d.color;
+    gl.uniform1i(u("u_constantColor"), constant ? 1 : 0);
+    gl.uniform4f(u("u_color"), ...(constant || [1, 1, 1, 1]));
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, d.tex);
     gl.uniform1i(u("u_grid"), 0);
@@ -2125,7 +2198,7 @@ class ChartView {
     gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     gl.uniform4f(u("u_gridRange"), h.xRange[0], h.xRange[1], h.yRange[0], h.yRange[1]);
-    gl.uniform1f(u("u_opacity"), g.trace.style.opacity ?? 1.0);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
     gl.uniform1i(u("u_truecolor"), h.truecolor ? 1 : 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, h.tex);
@@ -2151,7 +2224,8 @@ class ChartView {
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     gl.uniform1f(u("u_width"), (width ?? g.trace.style.width ?? 1.5) * this.dpr);
     const [r, gg, b, a] = color || g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * (opacity ?? g.trace.style.opacity ?? 1));
+    const strokeOpacity = this._strokeOpacity(g.trace.style) * (opacity ?? 1);
+    gl.uniform4f(u("u_color"), r, gg, b, a * strokeOpacity);
     const dashed = this._lineDash(g);
     this._bindVao(
       g,
@@ -2186,7 +2260,7 @@ class ChartView {
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     gl.uniform1f(u("u_width"), (g.trace.style.width ?? 1.5) * this.dpr);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
+    gl.uniform4f(u("u_color"), r, gg, b, a * this._strokeOpacity(g.trace.style));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     const dashed = this._segmentDash(g, prog);
     if (g.colorMode && g.lut) {
@@ -2301,10 +2375,12 @@ class ChartView {
     for (const name of ["x0", "x1", "x2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.xAxis);
     for (const name of ["y0", "y1", "y2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.yAxis);
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
-    gl.uniform1f(u("u_opacity"), g.trace.style.opacity ?? 1);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
     gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], 1);
     const stroke = g.meshStroke || [0, 0, 0, 0];
-    gl.uniform4f(u("u_stroke"), stroke[0] * stroke[3], stroke[1] * stroke[3], stroke[2] * stroke[3], stroke[3]);
+    const strokeAlpha = stroke[3] * this._strokeOpacity(g.trace.style);
+    gl.uniform4f(u("u_stroke"), stroke[0] * strokeAlpha, stroke[1] * strokeAlpha,
+      stroke[2] * strokeAlpha, strokeAlpha);
     gl.uniform1f(u("u_strokeWidth"), g.meshStrokeWidth || 0);
     if (g.colorMode && g.lut) {
       gl.activeTexture(gl.TEXTURE0);
@@ -2384,7 +2460,7 @@ class ChartView {
     this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
     this._setAxisUniforms(prog, "u_b", g.baseMeta, g.yAxis);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 0.35));
+    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.35));
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     this._setGradientUniforms(prog, g.grad);
     this._bindVao(g, "area", [g.xBuf._fcId, g.yBuf._fcId, g.baseBuf._fcId], () => {
@@ -2416,7 +2492,7 @@ class ChartView {
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     gl.uniform4f(u("u_edgePad"), edgePad[0], edgePad[1], edgePad[2], edgePad[3]);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
+    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     this._setRectStyleUniforms(prog, g);
     const colorOn = g.colorMode && g.cBuf;
@@ -2463,7 +2539,7 @@ class ChartView {
     gl.uniform1f(u("u_v0Const"), v0Const ?? 0);
     gl.uniform1f(u("u_v0EdgePad"), v0EdgePad);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * (g.trace.style.opacity ?? 1));
+    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     this._setRectStyleUniforms(prog, g);
     const v0On = g.value0Mode === 1 && g.value0Buf;
@@ -2519,6 +2595,14 @@ class ChartView {
   _axisStyleValue(axis, key) {
     const style = axis && typeof axis.style === "object" ? axis.style : null;
     return style && Object.prototype.hasOwnProperty.call(style, key) ? style[key] : undefined;
+  }
+
+  _axisGridDash(axis) {
+    const value = String(this._axisStyleValue(axis, "grid_dash") || "solid");
+    if (value === "dashed") return [6, 4];
+    if (value === "dotted") return [1, 3];
+    if (value === "dashdot") return [6, 3, 1, 3];
+    return [];
   }
 
   _axisTickLabelStrategy(axis) {
@@ -2590,7 +2674,10 @@ class ChartView {
 
   _layoutTickLabels(axis, dim, labels) {
     if (labels.length <= 1) return labels.map((label) => ({ ...label, angle: 0, row: 0 }));
-    const fontSize = Math.max(8, this._axisStyleNumber(axis, "tick_size", 11));
+    const fontSize = Math.max(
+      8,
+      this._axisStyleNumber(axis, "tick_label_size", this._axisStyleNumber(axis, "tick_size", 11)),
+    );
     const minGap = this._axisTickLabelMinGap(axis, dim);
     const explicitAngle = this._axisTickLabelAngle(axis);
     const baseAngle = explicitAngle === null ? 0 : explicitAngle;
@@ -2707,6 +2794,8 @@ class ChartView {
 
     ctx.strokeStyle = this._axisStylePaint(xAxis, "grid_color", this.theme.grid);
     ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(xAxis, "grid_width", 1));
+    ctx.globalAlpha = this._axisStyleNumber(xAxis, "grid_opacity", 1);
+    ctx.setLineDash(this._axisGridDash(xAxis));
     ctx.beginPath();
     for (const v of (hideX ? [] : xt.ticks)) {
       const px = this._dataPx("x", v);
@@ -2719,6 +2808,8 @@ class ChartView {
 
     ctx.strokeStyle = this._axisStylePaint(yAxis, "grid_color", this.theme.grid);
     ctx.lineWidth = Math.max(0.5, this._axisStyleNumber(yAxis, "grid_width", 1));
+    ctx.globalAlpha = this._axisStyleNumber(yAxis, "grid_opacity", 1);
+    ctx.setLineDash(this._axisGridDash(yAxis));
     ctx.beginPath();
     for (const v of (hideY ? [] : yt.ticks)) {
       const py = this._dataPx("y", v);
@@ -2728,6 +2819,8 @@ class ChartView {
       ctx.lineTo(p.x + p.w, y);
     }
     ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.setLineDash([]);
 
     this._drawAnnotationShapes(ctx);
 
@@ -2737,11 +2830,11 @@ class ChartView {
     // the chrome canvas, behind the data). Rebuilt with the labels; static
     // between throttled zoom frames since the plot rect doesn't move on zoom.
     if (updateLabels) {
-      const rule = (styleAxis, left, top, w, h) => {
+      const rule = (styleAxis, left, top, w, h, colorKey = "axis_color") => {
         const d = document.createElement("div");
         d.style.cssText =
           `position:absolute;left:${left}px;top:${top}px;width:${w}px;height:${h}px;` +
-          `background:${this._axisStylePaint(styleAxis, "axis_color", this.theme.axis)};` +
+          `background:${this._axisStylePaint(styleAxis, colorKey, this.theme.axis)};` +
           "pointer-events:none;";
         this.labels.appendChild(d);
       };
@@ -2781,7 +2874,7 @@ class ChartView {
           const x = this._dataPx("x", value);
           if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
           const top = side === "top" ? edge - tick.outward : edge - tick.inward;
-          rule(xAxis, x - tick.width / 2, top, tick.width, tick.inward + tick.outward);
+          rule(xAxis, x - tick.width / 2, top, tick.width, tick.inward + tick.outward, "tick_color");
         }
       }
       if (!hideY) {
@@ -2792,7 +2885,7 @@ class ChartView {
           const y = this._dataPx("y", value);
           if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
           const left = side === "right" ? edge - tick.inward : edge - tick.outward;
-          rule(yAxis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width);
+          rule(yAxis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width, "tick_color");
         }
       }
     }
@@ -2804,8 +2897,14 @@ class ChartView {
       d.dataset.fcLabelKind = kind;
       d.dataset.fcAxis = axis && axis.id !== undefined ? String(axis.id) : "";
       d.dataset.fcAxisSide = axis && axis.side ? String(axis.side) : "";
-      const colorKey = kind === "label" ? "label_color" : "tick_color";
-      const sizeKey = kind === "label" ? "label_size" : "tick_size";
+      const colorKey = kind === "label"
+        ? "label_color"
+        : (this._axisStyleValue(axis, "tick_label_color") !== undefined
+          ? "tick_label_color" : "tick_color");
+      const sizeKey = kind === "label"
+        ? "label_size"
+        : (this._axisStyleValue(axis, "tick_label_size") !== undefined
+          ? "tick_label_size" : "tick_size");
       // Color/size are inline ONLY when the axis spec set them explicitly (the
       // Python set_axis API); otherwise the stylesheet's tick_label/axis_title
       // default applies so a user utility class can win. Structure stays inline.
@@ -2830,7 +2929,12 @@ class ChartView {
       xLabelCandidates.push({ pos: px, text });
     }
     for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
-      const rowOffset = Number(item.row || 0) * (Math.max(8, this._axisStyleNumber(xAxis, "tick_size", 11)) + 4);
+      const tickLabelSize = this._axisStyleNumber(
+        xAxis,
+        "tick_label_size",
+        this._axisStyleNumber(xAxis, "tick_size", 11),
+      );
+      const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
       const top = xAxis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
       const transform = `translateX(-50%) rotate(${Number(item.angle || 0)}deg)`;
       const origin = xAxis.side === "top" ? "bottom center" : "top center";

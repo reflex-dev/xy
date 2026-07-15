@@ -19,10 +19,10 @@ from xy.components import (
     Annotation,
     Axis,
     Chart,
+    Colorbar,
     Interaction,
     Legend,
     Mark,
-    MarkStyle,
     Modebar,
     Theme,
     Tooltip,
@@ -88,10 +88,11 @@ def test_factories_return_components():
     assert isinstance(fc.threshold(1.0), Annotation)
     assert isinstance(fc.threshold_zone(0.0, 1.0), Annotation)
     assert isinstance(fc.tooltip(fields=["x"]), Tooltip)
+    assert isinstance(fc.colorbar(show=False), Colorbar)
     assert isinstance(fc.modebar(show=False), Modebar)
     assert isinstance(fc.theme(style={"--chart-bg": "transparent"}), Theme)
-    assert isinstance(fc.mark_style(hover={"size": 14}), MarkStyle)
     assert isinstance(fc.interaction_config(crosshair=True), Interaction)
+    assert not hasattr(fc, "mark_style")
     chart = fc.scatter_chart(fc.scatter(x=[1.0], y=[2.0]))
     assert isinstance(chart, Chart)
     assert isinstance(fc.chart(fc.scatter(x=[1.0], y=[2.0])), Chart)
@@ -419,11 +420,6 @@ def test_component_style_tooltip_and_modebar_metadata_is_opt_in():
             grid_color="rgba(0,0,0,.1)",
             selection_fill="rgba(37,99,235,.14)",
         ),
-        fc.mark_style(
-            hover={"color": "#0f172a", "size": 18, "opacity": 0.9},
-            selected={"opacity": 1},
-            unselected={"opacity": 0.2},
-        ),
         class_name="root-node",
         class_names={"legend": "legend-slot", "tooltip": "tooltip-slot"},
         style={"--chart-grid": "rgba(1,2,3,.25)", "--chart-axis": "currentColor"},
@@ -446,11 +442,6 @@ def test_component_style_tooltip_and_modebar_metadata_is_opt_in():
     assert spec["dom"]["styles"]["legend"] == {"max-height": 220}
     assert spec["dom"]["styles"]["tooltip"] == {"background-color": "black"}
     assert spec["dom"]["styles"]["modebar_button"] == {"border-radius": 4}
-    assert spec["mark_style"] == {
-        "hover": {"color": "#0f172a", "size": 18, "opacity": 0.9},
-        "selected": {"opacity": 1},
-        "unselected": {"opacity": 0.2},
-    }
     assert spec["tooltip"] == {
         "fields": ["feature_a", "feature_b", "segment"],
         "title": "{segment}",
@@ -472,6 +463,7 @@ def test_component_style_tooltip_and_modebar_metadata_is_opt_in():
 def test_declarative_core_contract_for_layered_axis_chrome_and_interaction():
     legend_component = FakeReflexComponent("legend")
     tooltip_component = FakeReflexComponent("tooltip")
+    colorbar_component = FakeReflexComponent("colorbar")
     data = FakeFrame(
         {
             "month": np.array(["Jan", "Feb", "Mar"]),
@@ -532,6 +524,11 @@ def test_declarative_core_contract_for_layered_axis_chrome_and_interaction():
             class_name="tooltip-node",
             style={"background": "linear-gradient(red,blue)"},
         ),
+        fc.colorbar(
+            colorbar_component,
+            class_name="colorbar-node",
+            style={"font-size": 12},
+        ),
         fc.modebar(
             show=True,
             class_name="modebar-node",
@@ -558,6 +555,7 @@ def test_declarative_core_contract_for_layered_axis_chrome_and_interaction():
     assert chart.chrome_components() == {
         "legend": legend_component,
         "tooltip": tooltip_component,
+        "colorbar": colorbar_component,
     }
 
     spec, _ = chart.figure().build_payload()
@@ -566,6 +564,8 @@ def test_declarative_core_contract_for_layered_axis_chrome_and_interaction():
     assert spec["height"] == 430
     assert spec["show_legend"] is True
     assert spec["show_tooltip"] is False
+    assert spec["dom"]["class_names"]["colorbar"] == "colorbar-node"
+    assert spec["dom"]["styles"]["colorbar"] == {"font-size": 12}
     assert [trace["kind"] for trace in spec["traces"]] == ["bar", "line"]
     assert [trace["y_axis"] for trace in spec["traces"]] == ["y", "y2"]
     assert spec["traces"][0]["style"]["class_name"] == "revenue-bars"
@@ -604,6 +604,7 @@ def test_declarative_core_contract_for_layered_axis_chrome_and_interaction():
             "modebar": "modebar-node",
             "modebar_button": "modebar-button",
             "tooltip": "tooltip-node",
+            "colorbar": "colorbar-node",
         },
         "style": {
             "--chart-bg": "transparent",
@@ -613,6 +614,7 @@ def test_declarative_core_contract_for_layered_axis_chrome_and_interaction():
         "styles": {
             "legend": {"max-height": 180},
             "tooltip": {"background": "linear-gradient(red,blue)"},
+            "colorbar": {"font-size": 12},
         },
     }
     assert spec["tooltip"]["fields"] == ["month", "revenue", "latency"]
@@ -656,10 +658,28 @@ def test_legend_and_tooltip_accept_opaque_framework_components_without_serializi
     assert spec["tooltip"] == {"fields": ["x", "y"]}
     assert spec["dom"]["class_names"]["tooltip"] == "tooltip-node"
     assert "FakeReflexComponent" not in json.dumps(spec)
-
     html = chart.to_html()
     assert "FakeReflexComponent" not in html
     assert "show_tooltip" in html
+
+
+def test_colorbar_show_false_clears_generated_colorbar_options(monkeypatch):
+    original = components_module._MARK_APPLIERS["line"]
+
+    def apply_with_colorbar(fig, mark, data):
+        original(fig, mark, data)
+        fig.colorbar_options = {"domain": [0.0, 1.0], "colormap": "viridis"}
+
+    monkeypatch.setitem(components_module._MARK_APPLIERS, "line", apply_with_colorbar)
+    chart = fc.chart(
+        fc.line(x=[0.0, 1.0], y=[1.0, 2.0]),
+        fc.colorbar(show=False),
+    )
+
+    figure = chart.figure()
+    spec, _ = figure.build_payload()
+    assert figure.colorbar_options is None
+    assert "colorbar" not in spec
 
 
 def test_declarative_chart_keeps_notebook_export_and_framework_chrome_contract(
@@ -1535,9 +1555,9 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         width=None,
         height=None,
         scale=2.0,
-        engine="native",
+        engine=fc.Engine.default,
         optimize=False,
-        chromium=None,
+        custom_css=None,
         sandbox=True,
         gl="software",
     ):
@@ -1550,7 +1570,7 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
                 "scale": scale,
                 "engine": engine,
                 "optimize": optimize,
-                "chromium": chromium,
+                "custom_css": custom_css,
                 "sandbox": sandbox,
                 "gl": gl,
             }
@@ -1564,9 +1584,9 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         width=320,
         height=200,
         scale=1.5,
-        engine="chromium",
+        engine=fc.Engine.chromium,
         optimize=True,
-        chromium="/chrome",
+        custom_css=".chart { color: rebeccapurple; }",
         sandbox=False,
         gl="hardware",
     )
@@ -1578,9 +1598,9 @@ def test_component_to_png_delegates_to_composed_figure(monkeypatch):
         "width": 320,
         "height": 200,
         "scale": 1.5,
-        "engine": "chromium",
+        "engine": fc.Engine.chromium,
         "optimize": True,
-        "chromium": "/chrome",
+        "custom_css": ".chart { color: rebeccapurple; }",
         "sandbox": False,
         "gl": "hardware",
     }
