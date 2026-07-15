@@ -152,7 +152,8 @@ class ChartView {
     this._hoverTarget = null;
     this._viewEventRaf = null;
     this._linkedSource = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    this.dragMode = "pan"; // "pan" | "zoom" (box zoom); toggled via the modebar
+    // pan | zoom | select (box) | select-lasso | select-x | select-y
+    this.dragMode = "pan";
 
     // Responsive size: "100%" means the *container* owns that axis — measure
     // it now, track it with a ResizeObserver below. Numeric sizes are fixed.
@@ -2095,6 +2096,7 @@ class ChartView {
   // frame invalidates (§17 — steady hover must not re-render N-point picks).
   draw(keepPick = false) {
     if (this._destroyed || this._glLost || !this.gl) return;
+    this._updateZoomMenuLabel?.();
     if (this._raf) {
       this._rafKeepPick = this._rafKeepPick && keepPick;
       return;
@@ -2137,6 +2139,7 @@ class ChartView {
     if (!this._rafKeepPick) this._pickDirty = true;
     this._rafKeepPick = false;
     this._drawChrome();
+    this._renderLassoSelection?.();
   }
 
   // Centralized clock seam for animation state machines. Production uses the

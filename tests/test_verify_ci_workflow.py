@@ -429,6 +429,43 @@ def test_release_workflow_rejects_missing_native_wheel_verifier(tmp_path: Path) 
     assert any("release wheels job" in error and "verify_wheel" in error for error in errors)
 
 
+def test_release_workflow_rejects_unpinned_pyodide_runtime_contract(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace('          RUSTFLAGS: "-C panic=abort"\n', "")
+        .replace('          version: "4.0.9"\n', "")
+        .replace("          npm i --no-save pyodide@0.29.4\n", ""),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "release wasm job" in error and "panic=abort" in error and "pyodide@0.29.4" in error
+        for error in errors
+    )
+
+
+def test_release_workflow_rejects_nonblocking_pyodide_probe(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            "    runs-on: ubuntu-latest\n",
+            "    runs-on: ubuntu-latest\n    continue-on-error: true\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("wasm job must block publishing" in error for error in errors)
+
+
 def test_release_workflow_rejects_missing_sdist_norust_smoke(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     path = tmp_path / "release.yml"

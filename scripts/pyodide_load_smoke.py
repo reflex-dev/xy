@@ -2,15 +2,10 @@
 """Load the built Pyodide wheel in a real Pyodide runtime (node) and call a
 native kernel through the ctypes seam.
 
-The wasm job builds a structurally valid Emscripten side-module, but "builds"
-is not "loads": Pyodide's dynamic linker must instantiate the module and the
-`fc_*` C-ABI symbols must be callable. As of 2026-07-08 this FAILS — the Rust
-core's default `panic=unwind` emits a `__cpp_exception` tag import Pyodide's
-runtime does not provide (LinkError at WebAssembly.instantiate). This smoke is
-the regression probe for that: it prints a clear PASS/FAIL and exits non-zero
-on failure, but the wasm CI job runs it non-gating (continue-on-error) so the
-experimental wheel never blocks a release — it just keeps the status honest and
-visible until the exception-handling build is fixed.
+"Builds" is not "loads": Pyodide's dynamic linker must instantiate the module
+and the `fc_*` C-ABI symbols must be callable. This is the regression probe for
+the release wheel's exception-free Rust build: it installs the exact artifact,
+checks the ABI version, calls a native kernel, and exits non-zero on failure.
 
 Usage: python scripts/pyodide_load_smoke.py path/to/xy-...-pyodide_....whl
 Requires: node with the `pyodide` npm package resolvable from CWD.

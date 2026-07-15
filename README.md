@@ -160,10 +160,10 @@ npm, no CDN** at install time. Wheels are published per platform by the release
 workflow — Linux glibc **and** musl/Alpine (x86-64, aarch64, armv7), macOS
 (x86-64, Apple Silicon), and Windows (x86, x64, arm64). Because the core is a
 plain C ABI with no CPython ABI, one wheel per platform serves every supported
-Python version. An experimental Pyodide/Emscripten WASM wheel is also built,
-but does **not** yet load in-browser — the Rust core's `panic=unwind` emits a
-`__cpp_exception` import Pyodide's runtime can't satisfy — so it is not part of
-the supported set (see [`docs/production-readiness.md`](docs/production-readiness.md)).
+Python version. The release workflow also builds a Pyodide/Emscripten wheel for
+the `pyodide_2025_0` ABI and gates it by installing the artifact in Pyodide
+0.29.4 and calling a native Rust kernel (see
+[`docs/production-readiness.md`](docs/production-readiness.md)).
 
 ### From source
 
@@ -202,9 +202,9 @@ loudly on import, keeping the no-wheel behavior a defined, actionable error.
 
 Published wheels cover Linux glibc and musl/Alpine (x86-64, aarch64, armv7),
 macOS (x86-64, Apple Silicon), and Windows (x86, x64, arm64); the C-ABI core
-means one wheel per platform serves every supported Python version. An
-experimental Pyodide/Emscripten WASM wheel is built but does not yet load
-in-browser (see [`docs/production-readiness.md`](docs/production-readiness.md)).
+means one wheel per platform serves every supported Python version. Release
+artifacts also include a runtime-verified `pyodide_2025_0` WASM wheel (see
+[`docs/production-readiness.md`](docs/production-readiness.md)).
 
 ### Check the active backend
 
