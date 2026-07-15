@@ -312,6 +312,7 @@ try{{
       && collapsedGrip && expandedButtons === 0 && keyboardCollapsed && keyboardExpanded ? 1 : 0;
     const zoomTrigger = bar && bar.querySelector("[data-fc-modebar-menu-trigger]");
     const zoomMenu = bar && bar.querySelector("[data-fc-modebar-menu]");
+    const selectButton = bar && bar.querySelector("[data-fc-modebar-select]");
     const zoomPercent = zoomTrigger && zoomTrigger.querySelector("[data-fc-modebar-zoom-percent]");
     const zoomIndicator = zoomTrigger && zoomTrigger.querySelector("[data-fc-modebar-menu-indicator] svg");
     const zoomTriggerInitial = zoomPercent && zoomPercent.textContent === "100%" && zoomIndicator;
@@ -334,6 +335,10 @@ try{{
     }}
     const modebarDrag = grip && parseFloat(bar.style.left) > barLeft0 + 20
       && bar.querySelectorAll("button[hidden]").length === 0 ? 1 : 0;
+    if (selectButton) selectButton.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
+    const modebarSelect = selectButton && v.dragMode === "select"
+      && selectButton.classList.contains("fc-active") ? 1 : 0;
+    v._setDragMode("pan");
     const spanX = () => v.view.x1 - v.view.x0;
     const s0 = spanX();
     v._zoomBy(0.5);                 // zoom in -> span shrinks
@@ -976,7 +981,7 @@ try{{
     const gLn=vSm.gpuTraces[0], gAr=vSm.gpuTraces[1];
     const msmooth=(gLn.n===65 && gLn._cpu.x.length===5 && gAr.n===65 && gAr._cpu.base.length===5)?1:0;
     vSm.destroy();holderSm.remove();
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHidden}} modebarHover=${{modebarHover}} modebarCollapse=${{modebarCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHidden}} modebarHover=${{modebarHover}} modebarCollapse=${{modebarCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -1150,6 +1155,7 @@ try{{
     modebar_collapse = int(re.search(r"modebarCollapse=(\d+)", title).group(1))
     modebar_menu = int(re.search(r"modebarMenu=(\d+)", title).group(1))
     modebar_drag = int(re.search(r"modebarDrag=(\d+)", title).group(1))
+    modebar_select = int(re.search(r"modebarSelect=(\d+)", title).group(1))
     zin = int(re.search(r"zin=(\d+)", title).group(1))
     smooth = int(re.search(r"smooth=(\d+)", title).group(1))
     label_throttle = int(re.search(r"labelThrottle=(\d+)", title).group(1))
@@ -1213,8 +1219,9 @@ try{{
     print(
         f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}, pick hits: {pick}, "
         f"row-decoded: {rowok}, select all/sub: {sel_all}/{sel_some}, mask active: {active}, "
-        f"modebar btns: {btns}, hidden/hover/collapse/menu/drag: "
-        f"{modebar_hidden}/{modebar_hover}/{modebar_collapse}/{modebar_menu}/{modebar_drag}, "
+        f"modebar btns: {btns}, hidden/hover/collapse/menu/drag/select: "
+        f"{modebar_hidden}/{modebar_hover}/{modebar_collapse}/{modebar_menu}/"
+        f"{modebar_drag}/{modebar_select}, "
         f"zoom-in: {zin}, box-zoom: {box}, zoom-mode: {zmode}, "
         f"fluid: {fluid}, resize grew: {grew}, pick realloc: {pick2}, "
         f"destroyed: {destroyed}, unsub: {unsub}"
@@ -1235,7 +1242,7 @@ try{{
         raise SystemExit(f"sub-range selection implausible: {sel_some} of {sel_all}")
     if active != 1:
         raise SystemExit("selection mask did not activate")
-    if btns < 7:
+    if btns < 8:
         raise SystemExit(f"modebar missing buttons: {btns}")
     if modebar_hidden != 1 or modebar_hover != 1:
         raise SystemExit("modebar did not hide at rest and show on chart hover")
@@ -1245,6 +1252,8 @@ try{{
         raise SystemExit("modebar zoom dropdown did not open and close")
     if modebar_drag != 1:
         raise SystemExit("modebar drag handle did not move the toolbar")
+    if modebar_select != 1:
+        raise SystemExit("modebar select button did not activate selection mode")
     if zin != 1:
         raise SystemExit("modebar zoom-in did not shrink the view span")
     if smooth != 1:

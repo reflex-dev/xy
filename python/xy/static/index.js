@@ -5389,7 +5389,7 @@ return this._dataFromCanvas(clientX - r.left, clientY - r.top);
 this._listen(c, "pointerdown", (e) => {
 this._cancelViewAnimation();
 const canBrush = this._interactionFlag("brush", true) && this._interactionFlag("select", true);
-const mode = e.shiftKey && canBrush && this._pickable ? "select"
+const mode = (e.shiftKey || this.dragMode === "select") && canBrush && this._pickable ? "select"
 : this.dragMode === "zoom" ? "zoom" : null;
 if (mode) {
 band = { mode, sx: e.clientX, sy: e.clientY, d0: dataAt(e.clientX, e.clientY) };
@@ -5760,6 +5760,15 @@ this._zoomMenuLabel = zoomPercent;
 zoomTrigger.setAttribute("aria-haspopup", "menu");
 zoomTrigger.setAttribute("aria-expanded", "false");
 mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
+const canSelect = this._pickable
+&& this._interactionFlag("brush", true)
+&& this._interactionFlag("select", true);
+if (canSelect) {
+const selectButton = mk(
+"select", "Select points", () => this._setDragMode("select"), "select"
+);
+selectButton.dataset.fcModebarSelect = "";
+}
 const zoomMenu = document.createElement("div");
 zoomMenu.dataset.fcModebarMenu = "";
 zoomMenu.setAttribute("role", "menu");
@@ -6076,6 +6085,11 @@ return svg('<path d="M10 3 V17 M3 10 H17"/><path d="M10 3 L8 5 M10 3 L12 5"/>' +
 case "zoom":
 return svg('<rect x="3.5" y="3.5" width="13" height="13" rx="1" ' +
 'stroke-dasharray="3 2"/>');
+case "select":
+return svg('<rect x="3.5" y="3.5" width="13" height="13" rx="1" ' +
+'stroke-dasharray="2.5 2"/><circle cx="7" cy="7" r="1" fill="currentColor" ' +
+'stroke="none"/><circle cx="12.5" cy="9" r="1" fill="currentColor" stroke="none"/>' +
+'<circle cx="9.5" cy="13" r="1" fill="currentColor" stroke="none"/>');
 case "chevrondown":
 return svg('<path d="M6 8 L10 12 L14 8"/>');
 case "reset":
