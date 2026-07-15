@@ -500,3 +500,27 @@ def test_axis_proxy_majorticklabel_handles():
 def test_figure_get_axes_matches_axes_property():
     fig, axes = plt.subplots(2, 2)
     assert fig.get_axes() == list(axes.ravel())
+
+
+def test_annotate_accepts_size_alias():
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 1])
+    ax.annotate("peak", xy=(0.5, 0.5), size=13)
+    assert "peak" in _svg()
+
+
+def test_text_date_string_coordinates_on_a_date_axis():
+    fig, ax = plt.subplots()
+    x = np.arange("2012-01-01", "2012-12-31", dtype="datetime64[D]")
+    ax.plot(x, np.linspace(3600.0, 5400.0, len(x)))
+    ax.text("2012-1-1", 3950, "New Year's Day", color="gray")  # unpadded, like PDSH
+    ax.text("2012-11-25", 4450, "Thanksgiving", ha="center")
+    svg = _svg()
+    assert "New Year" in svg and "Thanksgiving" in svg
+
+
+def test_text_string_coordinates_stay_categorical_on_category_axes():
+    fig, ax = plt.subplots()
+    ax.bar(["a", "b", "c"], [1.0, 3.0, 2.0])
+    ax.text("b", 3.1, "peak")
+    assert "peak" in _svg()

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import copy
 from contextlib import suppress
-from datetime import timedelta
+from datetime import datetime, timedelta
 from itertools import pairwise
 from typing import Any, Optional
 
@@ -2067,7 +2067,7 @@ class Axes(PlotTypeMixin):
 
     def annotate(self, text: str, xy: tuple, xytext: Optional[tuple] = None, **kwargs: Any) -> Text:
         arrowprops = kwargs.pop("arrowprops", None)
-        fontsize = kwargs.pop("fontsize", None)
+        fontsize = kwargs.pop("fontsize", kwargs.pop("size", None))
         color = kwargs.pop("color", None)
         xycoords = kwargs.pop("xycoords", "data")
         textcoords = kwargs.pop("textcoords", None)
@@ -2299,6 +2299,12 @@ class Axes(PlotTypeMixin):
     def set_position(self, position: Any) -> None:
         self._figure_rect = _parse_bounds(position, "set_position()")
         self._invalidate()
+
+    def _axis_holds_datetimes(self, axis: str) -> bool:
+        from xy.components import _is_datetime_like
+
+        key = "x" if axis == "x" else "y"
+        return any(key in entry and _is_datetime_like(entry[key]) for entry in self._entries)
 
     def _entry_extent(self, axis: str) -> tuple[float, float]:
         values: list[np.ndarray] = []
@@ -3704,7 +3710,14 @@ class Axes(PlotTypeMixin):
                     )
                 if opacity is not None and float(opacity) < 1.0:
                     text_kw["style"] = {**(text_kw.get("style") or {}), "opacity": float(opacity)}
-                children.append(fc.text(*e["args"], **text_kw))
+                # matplotlib's pandas-registered converter parses date strings
+                # placed on a date axis; categorical axes keep their strings.
+                x, y = e["args"][0], e["args"][1]
+                if isinstance(x, str) and self._axis_holds_datetimes("x"):
+                    x = _parse_date_text(x) or x
+                if isinstance(y, str) and self._axis_holds_datetimes("y"):
+                    y = _parse_date_text(y) or y
+                children.append(fc.text(x, y, *e["args"][2:], **text_kw))
         return children
 
     def _best_legend_loc(self) -> str:
@@ -4039,6 +4052,26 @@ def _parse_bounds(value: Any, context: str) -> tuple[float, float, float, float]
     if width < 0 or height < 0:
         raise ValueError(f"{context} width and height must be non-negative")
     return left, bottom, width, height
+
+
+_DATE_TEXT_FORMATS = (
+    "%Y-%m-%d",
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d %H:%M",
+)
+
+
+def _parse_date_text(value: str) -> Optional[np.datetime64]:
+    """A date string in the dateutil shapes gallery scripts use, or None.
+
+    strptime's %m/%d accept unpadded fields, so '2012-1-1' parses too."""
+    for fmt in _DATE_TEXT_FORMATS:
+        try:
+            return np.datetime64(datetime.strptime(value, fmt))
+        except ValueError:
+            continue
+    return None
 
 
 def _convert_timedelta_axis(values: np.ndarray) -> np.ndarray:
