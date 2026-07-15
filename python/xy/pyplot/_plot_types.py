@@ -925,7 +925,7 @@ class PlotTypeMixin:
 
         Exactly one of ``xy2`` and ``slope`` must be given. Styled by the
         ``plot`` line keywords — ``color``/``c``, ``linewidth``/``lw``,
-        ``linestyle``/``ls``, ``dashes``, ``alpha``, ``label``, ``zorder`` —
+        ``linestyle``/``ls``, ``dashes``, ``alpha``, ``label`` —
         plus ``transform``; unsupported keywords raise loudly.
         """
         if (xy2 is None) == (slope is None):
@@ -978,7 +978,7 @@ class PlotTypeMixin:
         ``pad_to`` sets the FFT length, and ``scale`` is ``"linear"`` or
         ``"dB"``. ``window`` and ``sides`` raise loudly. Line keywords
         (``color``/``c``, ``linewidth``/``lw``, ``alpha``,
-        ``linestyle``/``ls``, ``dashes``, ``label``, ``zorder``) style the
+        ``linestyle``/``ls``, ``dashes``, ``label``) style the
         curve; unknown keywords raise loudly. Returns
         ``(spectrum, freqs, line)``.
         """
@@ -1015,7 +1015,7 @@ class PlotTypeMixin:
         ``Fs`` is the sampling frequency, ``Fc`` offsets the frequency axis,
         and ``pad_to`` sets the FFT length; ``window`` and ``sides`` raise
         loudly. Line keywords (``color``/``c``, ``linewidth``/``lw``,
-        ``alpha``, ``linestyle``/``ls``, ``dashes``, ``label``, ``zorder``)
+        ``alpha``, ``linestyle``/``ls``, ``dashes``, ``label``)
         style the curve. Returns ``(spectrum, freqs, line)``.
         """
         _reject_spectral_options("angle_spectrum()", window=window, sides=sides)
@@ -1044,7 +1044,7 @@ class PlotTypeMixin:
         ``Fs`` is the sampling frequency, ``Fc`` offsets the frequency axis,
         and ``pad_to`` sets the FFT length; ``window`` and ``sides`` raise
         loudly. Line keywords (``color``/``c``, ``linewidth``/``lw``,
-        ``alpha``, ``linestyle``/``ls``, ``dashes``, ``label``, ``zorder``)
+        ``alpha``, ``linestyle``/``ls``, ``dashes``, ``label``)
         style the curve. Returns ``(spectrum, freqs, line)``.
         """
         _reject_spectral_options("phase_spectrum()", window=window, sides=sides)
@@ -1239,7 +1239,7 @@ class PlotTypeMixin:
         sampling frequency; ``detrend``, ``window``, ``pad_to``, ``sides``,
         and ``scale_by_freq`` raise loudly. Line keywords (``color``/``c``,
         ``linewidth``/``lw``, ``alpha``, ``linestyle``/``ls``, ``dashes``,
-        ``label``, ``zorder``) style the curve. Returns ``(Pxx, freqs)``
+        ``label``) style the curve. Returns ``(Pxx, freqs)``
         (plus the line with ``return_line=True``).
         """
         _reject_spectral_options(
@@ -1283,7 +1283,7 @@ class PlotTypeMixin:
         Same segmenting keywords as ``psd``; ``detrend``, ``window``,
         ``pad_to``, ``sides``, and ``scale_by_freq`` raise loudly, and line
         keywords (``color``/``c``, ``linewidth``/``lw``, ``alpha``,
-        ``linestyle``/``ls``, ``dashes``, ``label``, ``zorder``) style the
+        ``linestyle``/``ls``, ``dashes``, ``label``) style the
         curve. Returns ``(Pxy, freqs)`` (plus the line with
         ``return_line=True``).
         """
@@ -1329,7 +1329,7 @@ class PlotTypeMixin:
         Same segmenting keywords as ``psd``; ``detrend``, ``window``,
         ``pad_to``, ``sides``, and ``scale_by_freq`` raise loudly, and line
         keywords (``color``/``c``, ``linewidth``/``lw``, ``alpha``,
-        ``linestyle``/``ls``, ``dashes``, ``label``, ``zorder``) style the
+        ``linestyle``/``ls``, ``dashes``, ``label``) style the
         curve. Returns ``(Cxy, freqs)``.
         """
         _reject_spectral_options(
@@ -1578,7 +1578,7 @@ class PlotTypeMixin:
         ``values`` has one entry per interval, ``edges`` one more (defaults
         to ``0..len(values)``). Supported keywords: the ``plot`` line
         keywords (``color``/``c``, ``linewidth``/``lw``, ``alpha``,
-        ``linestyle``/``ls``, ``dashes``, ``label``, ``zorder``) plus
+        ``linestyle``/``ls``, ``dashes``, ``label``) plus
         ``hatch``; unknown keywords raise loudly.
         """
         values = _from_data(values, data)
@@ -1725,7 +1725,7 @@ class PlotTypeMixin:
         ``complementary=True`` plots 1 - ECDF, ``weights`` weighs the
         samples, and ``orientation`` may be ``"horizontal"``. Line keywords
         (``color``/``c``, ``linewidth``/``lw``, ``alpha``,
-        ``linestyle``/``ls``, ``dashes``, ``label``, ``zorder``) style the
+        ``linestyle``/``ls``, ``dashes``, ``label``) style the
         curve; unknown keywords raise loudly.
         """
         values = np.asarray(_from_data(x, data), dtype=np.float64)
@@ -2149,7 +2149,7 @@ class PlotTypeMixin:
         and markers. ``ecolor``/``elinewidth``/``capsize`` style the bars,
         ``errorevery`` subsamples them, and the ``*lims`` flags zero the
         limited side. Line keywords (``color``/``c``, ``linewidth``/``lw``,
-        ``alpha``, ``label``, ``zorder``, ...) style the line; ``barsabove``,
+        ``alpha``, ``label``, ...) style the line; ``barsabove``,
         ``capthick``, ``elinestyle``, and unknown keywords raise loudly.
         """
         unsupported = {
@@ -3954,7 +3954,7 @@ class PlotTypeMixin:
         Call as ``triplot(x, y[, fmt])`` with optional ``triangles`` indices.
         Supported keywords: ``markersize``/``ms`` plus the ``plot`` line
         keywords (``color``/``c``, ``linewidth``/``lw``, ``alpha``,
-        ``linestyle``/``ls``, ``label``, ``zorder``); ``dashes`` sequences
+        ``linestyle``/``ls``, ``label``); ``dashes`` sequences
         and unknown keywords raise loudly.
         """
         x, y, topology, rest = _triangulation_inputs(args, triangles, data)

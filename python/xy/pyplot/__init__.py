@@ -675,7 +675,7 @@ def plot(
     operand draws one line per column.
 
     Supported keywords: ``color``/``c``, ``linewidth``/``lw``,
-    ``linestyle``/``ls``, ``dashes``, ``alpha``, ``label``, ``zorder``,
+    ``linestyle``/``ls``, ``dashes``, ``alpha``, ``label``,
     ``marker``, ``markersize``/``ms``, ``markerfacecolor``/``mfc``,
     ``markeredgecolor``/``mec``, ``markeredgewidth``/``mew``,
     ``markevery``, ``drawstyle``, and ``transform``. Anything else
@@ -2019,9 +2019,10 @@ def errorbar(
 
     ``xerr``/``yerr`` are scalars, per-point arrays, or ``(lower,
     upper)`` pairs; ``fmt`` is a `plot`-style format for the data line
-    and markers. ``ecolor``/``elinewidth``/``capsize``/``capthick``
-    style the bars, ``errorevery`` subsamples them, and the ``*lims``
-    flags draw one-sided limit arrows. `plot` keywords style the line.
+    and markers. ``ecolor``/``elinewidth``/``capsize`` style the bars,
+    ``errorevery`` subsamples them, and the ``*lims`` flags zero the
+    limited side. `plot` keywords style the line; non-default
+    ``barsabove``/``capthick``/``elinestyle`` raise loudly.
     """
     return gca().errorbar(
         x,
