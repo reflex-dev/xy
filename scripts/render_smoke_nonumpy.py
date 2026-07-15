@@ -284,35 +284,10 @@ try{{
     v.root.dispatchEvent(new PointerEvent("pointerenter", {{bubbles:true}}));
     const modebarHover = bar && bar.style.opacity === "1" && bar.style.pointerEvents === "auto" ? 1 : 0;
     const grip = bar && bar.querySelector("[data-fc-modebar-drag-handle]");
-    const tapGrip = (pointerId) => {{
-      if (!grip) return;
-      const gr = grip.getBoundingClientRect();
-      const init = {{pointerId,pointerType:"mouse",button:0,
-        clientX:gr.left+gr.width/2,clientY:gr.top+gr.height/2,bubbles:true}};
-      grip.dispatchEvent(new PointerEvent("pointerdown", init));
-      grip.dispatchEvent(new PointerEvent("pointerup", init));
-      grip.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
-    }};
-    tapGrip(65); tapGrip(66);
-    const expectedCollapsedButtons = Math.max(0, bar.querySelectorAll(":scope > button").length - 1);
-    const collapsedButtons = bar ? bar.querySelectorAll("button[hidden]").length : 0;
-    const collapsedDisplays = bar
-      ? [...bar.querySelectorAll("button[hidden]")].filter((button) => button.style.display === "none").length
-      : 0;
-    const collapsedGrip = grip && !grip.hidden && bar.dataset.fcCollapsed === "true"
-      && grip.getAttribute("aria-expanded") === "false";
-    tapGrip(67); tapGrip(68);
-    const expandedButtons = bar ? bar.querySelectorAll("button[hidden]").length : -1;
-    const collapseItem = bar && bar.querySelector("[data-fc-modebar-collapse-item]");
-    if (collapseItem) collapseItem.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
-    const menuCollapsed = grip && bar.dataset.fcCollapsed === "true"
-      && bar.querySelectorAll("button[hidden]").length === expectedCollapsedButtons;
-    if (collapseItem) collapseItem.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
-    const menuExpanded = grip && bar.dataset.fcCollapsed === "false"
-      && bar.querySelectorAll("button[hidden]").length === 0;
-    const modebarCollapse = collapsedButtons === expectedCollapsedButtons
-      && collapsedDisplays === expectedCollapsedButtons
-      && collapsedGrip && expandedButtons === 0 && menuCollapsed && menuExpanded ? 1 : 0;
+    const modebarNoCollapse = bar && !bar.hasAttribute("data-fc-collapsed")
+      && !bar.querySelector("[data-fc-modebar-collapse-item]")
+      && [...bar.querySelectorAll(":scope > button")]
+        .every((button) => !button.hidden && button.style.display !== "none") ? 1 : 0;
     const zoomTrigger = bar && bar.querySelector("[data-fc-modebar-menu-trigger]");
     const zoomMenu = bar && bar.querySelector("[data-fc-modebar-menu]");
     const selectButton = bar && bar.querySelector("[data-fc-modebar-select]");
@@ -1019,7 +994,7 @@ try{{
     const gLn=vSm.gpuTraces[0], gAr=vSm.gpuTraces[1];
     const msmooth=(gLn.n===65 && gLn._cpu.x.length===5 && gAr.n===65 && gAr._cpu.base.length===5)?1:0;
     vSm.destroy();holderSm.remove();
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHidden}} modebarHover=${{modebarHover}} modebarCollapse=${{modebarCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} modebarExport=${{modebarExport}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHidden}} modebarHover=${{modebarHover}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} modebarExport=${{modebarExport}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -1190,7 +1165,7 @@ try{{
     btns = int(re.search(r"btns=(\d+)", title).group(1))
     modebar_hidden = int(re.search(r"modebarHidden=(\d+)", title).group(1))
     modebar_hover = int(re.search(r"modebarHover=(\d+)", title).group(1))
-    modebar_collapse = int(re.search(r"modebarCollapse=(\d+)", title).group(1))
+    modebar_no_collapse = int(re.search(r"modebarNoCollapse=(\d+)", title).group(1))
     modebar_menu = int(re.search(r"modebarMenu=(\d+)", title).group(1))
     modebar_drag = int(re.search(r"modebarDrag=(\d+)", title).group(1))
     modebar_select = int(re.search(r"modebarSelect=(\d+)", title).group(1))
@@ -1258,8 +1233,8 @@ try{{
     print(
         f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}, pick hits: {pick}, "
         f"row-decoded: {rowok}, select all/sub: {sel_all}/{sel_some}, mask active: {active}, "
-        f"modebar btns: {btns}, hidden/hover/collapse/menu/drag/select/export: "
-        f"{modebar_hidden}/{modebar_hover}/{modebar_collapse}/{modebar_menu}/"
+        f"modebar btns: {btns}, hidden/hover/no-collapse/menu/drag/select/export: "
+        f"{modebar_hidden}/{modebar_hover}/{modebar_no_collapse}/{modebar_menu}/"
         f"{modebar_drag}/{modebar_select}/{modebar_export}, "
         f"zoom-in: {zin}, box-zoom: {box}, zoom-mode: {zmode}, "
         f"fluid: {fluid}, resize grew: {grew}, pick realloc: {pick2}, "
@@ -1281,12 +1256,12 @@ try{{
         raise SystemExit(f"sub-range selection implausible: {sel_some} of {sel_all}")
     if active != 1:
         raise SystemExit("selection mask did not activate")
-    if btns < 16:
+    if btns < 15:
         raise SystemExit(f"modebar missing buttons: {btns}")
     if modebar_hidden != 1 or modebar_hover != 1:
         raise SystemExit("modebar did not hide at rest and show on chart hover")
-    if modebar_collapse != 1:
-        raise SystemExit("modebar grip did not collapse and expand the toolbar")
+    if modebar_no_collapse != 1:
+        raise SystemExit("modebar still exposes collapsible toolbar behavior")
     if modebar_menu != 1:
         raise SystemExit("modebar zoom dropdown did not open and close")
     if modebar_drag != 1:

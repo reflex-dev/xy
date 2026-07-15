@@ -244,8 +244,6 @@ const FC_CHROME_CSS = `
 :where(.xy [data-fc-slot="modebar_button"]){width:24px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-text,currentColor);cursor:pointer}
 :where(.xy [data-fc-modebar-drag-handle]){position:relative;width:22px;margin-right:2px;cursor:move}
 :where(.xy [data-fc-modebar-drag-handle])::after{content:"";position:absolute;top:4px;right:-1px;bottom:4px;width:1px;background:rgba(128,128,128,.28);pointer-events:none}
-:where(.xy [data-fc-slot="modebar"][data-fc-collapsed="true"]>[data-fc-modebar-drag-handle]){margin-right:0}
-:where(.xy [data-fc-slot="modebar"][data-fc-collapsed="true"]>[data-fc-modebar-drag-handle])::after{display:none}
 :where(.xy [data-fc-modebar-menu-trigger]){width:auto;min-width:52px;gap:1px;padding:0 4px;font-size:11px;font-variant-numeric:tabular-nums}
 :where(.xy [data-fc-modebar-select-trigger]){width:auto;min-width:30px;gap:0;padding:0 2px}
 :where(.xy [data-fc-modebar-menu-indicator]){display:flex;transition:transform .15s}
@@ -5739,13 +5737,10 @@ bar.style.cssText =
 this._applySlot(bar, "modebar");
 this._modebar = bar;
 this._modeBtns = {};
-this._modebarCollapsed = false;
 this._modebarMoved = false;
-bar.dataset.fcCollapsed = "false";
 let setZoomMenuOpen = () => {};
 let setSelectMenuOpen = () => {};
 let setExportMenuOpen = () => {};
-let updateCollapseItem = () => {};
 const setVisible = (visible) => {
 const show = visible || this._modebarDragging || bar.contains(document.activeElement);
 bar.style.opacity = show ? "1" : "0";
@@ -5764,7 +5759,7 @@ if (!root.matches(":hover")) setVisible(false);
 });
 const grip = document.createElement("button");
 grip.type = "button";
-grip.title = "Click for toolbar options; drag to move; double-click to collapse";
+grip.title = "Click for toolbar options; drag to move";
 grip.setAttribute("aria-label", "Toolbar options");
 grip.setAttribute("aria-haspopup", "menu");
 grip.setAttribute("aria-expanded", "false");
@@ -5776,38 +5771,12 @@ grip.style.cssText =
 "display:flex;align-items:center;justify-content:center;pointer-events:auto;touch-action:none;";
 this._applySlot(grip, "modebar_button");
 bar.appendChild(grip);
-const DOUBLE_CLICK_MS = 500;
 const DRAG_THRESHOLD_PX = 6;
 let modebarDrag = null;
-let lastGripDown = 0;
 let suppressGripClickUntil = 0;
-const setCollapsed = (collapsed) => {
-this._modebarCollapsed = collapsed;
-bar.dataset.fcCollapsed = String(collapsed);
-if (collapsed) {
-setZoomMenuOpen(false);
-setSelectMenuOpen(false);
-setExportMenuOpen(false);
-}
-for (const button of bar.querySelectorAll(":scope > button")) {
-if (button !== grip) {
-button.hidden = collapsed;
-button.style.display = collapsed ? "none" : "flex";
-}
-}
-grip.title = collapsed
-? "Click for toolbar options; drag to move; double-click to expand"
-: "Click for toolbar options; drag to move; double-click to collapse";
-updateCollapseItem();
-this._fitModebar();
-};
-const toggleModebar = () => setCollapsed(!this._modebarCollapsed);
 this._listen(grip, "pointerdown", (e) => {
 if (e.pointerType === "mouse" && e.button !== 0) return;
 e.stopPropagation();
-const now = e.timeStamp || performance.now();
-const doubleClick = lastGripDown > 0 && now - lastGripDown <= DOUBLE_CLICK_MS;
-lastGripDown = doubleClick ? 0 : now;
 const barRect = bar.getBoundingClientRect();
 modebarDrag = {
 pointerId: e.pointerId,
@@ -5818,10 +5787,6 @@ dy: e.clientY - barRect.top,
 moved: false,
 };
 setVisible(true);
-if (doubleClick) {
-suppressGripClickUntil = performance.now() + 100;
-toggleModebar();
-}
 });
 this._listen(grip, "pointermove", (e) => {
 if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
@@ -5829,7 +5794,6 @@ const distance = Math.hypot(e.clientX - modebarDrag.startX, e.clientY - modebarD
 if (!modebarDrag.moved) {
 if (distance < DRAG_THRESHOLD_PX) return;
 modebarDrag.moved = true;
-lastGripDown = 0;
 this._modebarDragging = true;
 this._modebarMoved = true;
 bar.style.transition = "none";
@@ -5852,7 +5816,6 @@ this._modebarDragging = false;
 bar.style.transition = "opacity .15s";
 setVisible(root.matches(":hover"));
 if (moved || cancelled) {
-lastGripDown = 0;
 suppressGripClickUntil = performance.now() + 100;
 }
 };
@@ -5865,10 +5828,6 @@ suppressGripClickUntil = 0;
 return;
 }
 setExportMenuOpen(!this._exportMenuOpen);
-});
-this._listen(grip, "dblclick", (e) => {
-e.preventDefault();
-e.stopPropagation();
 });
 const mk = (name, title, onClick, toggles) => {
 const b = document.createElement("button");
@@ -6050,22 +6009,11 @@ exportMenu.appendChild(button);
 exportMenuItems.push(button);
 return button;
 };
-const collapseItem = mkExportItem("collapse", "Collapse Toolbar", toggleModebar);
-collapseItem.dataset.fcModebarCollapseItem = "";
-updateCollapseItem = () => {
-const collapsed = this._modebarCollapsed;
-const icon = collapseItem.querySelector("[data-fc-modebar-menu-icon]");
-const label = icon?.nextElementSibling;
-if (icon) icon.innerHTML = this._icon(collapsed ? "expand" : "collapse");
-if (label) label.textContent = collapsed ? "Expand Toolbar" : "Collapse Toolbar";
-collapseItem.dataset.fcModebarExportItem = collapsed ? "expand" : "collapse";
-};
-updateCollapseItem();
-mkExportItem("png", "Export PNG", () => this._exportPng(), true);
+mkExportItem("png", "Export PNG", () => this._exportPng());
 mkExportItem("svg", "Export SVG", () => this._exportSvg());
 mkExportItem("csv", "Export CSV", () => this._exportCsv());
 setZoomMenuOpen = (open, restoreFocus = false) => {
-const show = Boolean(open) && !this._modebarCollapsed;
+const show = Boolean(open);
 if (show) {
 setSelectMenuOpen(false);
 setExportMenuOpen(false);
@@ -6098,7 +6046,7 @@ zoomMenu.style.visibility = "visible";
 };
 setSelectMenuOpen = (open, restoreFocus = false) => {
 if (!selectTrigger) return;
-const show = Boolean(open) && !this._modebarCollapsed;
+const show = Boolean(open);
 if (show) {
 setZoomMenuOpen(false);
 setExportMenuOpen(false);

@@ -89,8 +89,6 @@ const FC_CHROME_CSS = `
 :where(.xy [data-fc-slot="modebar_button"]){width:24px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-text,currentColor);cursor:pointer}
 :where(.xy [data-fc-modebar-drag-handle]){position:relative;width:22px;margin-right:2px;cursor:move}
 :where(.xy [data-fc-modebar-drag-handle])::after{content:"";position:absolute;top:4px;right:-1px;bottom:4px;width:1px;background:rgba(128,128,128,.28);pointer-events:none}
-:where(.xy [data-fc-slot="modebar"][data-fc-collapsed="true"]>[data-fc-modebar-drag-handle]){margin-right:0}
-:where(.xy [data-fc-slot="modebar"][data-fc-collapsed="true"]>[data-fc-modebar-drag-handle])::after{display:none}
 :where(.xy [data-fc-modebar-menu-trigger]){width:auto;min-width:52px;gap:1px;padding:0 4px;font-size:11px;font-variant-numeric:tabular-nums}
 :where(.xy [data-fc-modebar-select-trigger]){width:auto;min-width:30px;gap:0;padding:0 2px}
 :where(.xy [data-fc-modebar-menu-indicator]){display:flex;transition:transform .15s}

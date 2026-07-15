@@ -393,13 +393,10 @@ Object.assign(ChartView.prototype, {
     this._applySlot(bar, "modebar");
     this._modebar = bar;
     this._modeBtns = {};
-    this._modebarCollapsed = false;
     this._modebarMoved = false;
-    bar.dataset.fcCollapsed = "false";
     let setZoomMenuOpen = () => {};
     let setSelectMenuOpen = () => {};
     let setExportMenuOpen = () => {};
-    let updateCollapseItem = () => {};
 
     const setVisible = (visible) => {
       const show = visible || this._modebarDragging || bar.contains(document.activeElement);
@@ -419,11 +416,10 @@ Object.assign(ChartView.prototype, {
     });
 
     // One combined grip/menu control avoids a second, visually redundant dots
-    // button. Click opens toolbar options, drag moves, and double-click keeps
-    // the quick collapse shortcut; Collapse/Expand is also a menu action.
+    // button. Click opens toolbar options and drag moves the toolbar.
     const grip = document.createElement("button");
     grip.type = "button";
-    grip.title = "Click for toolbar options; drag to move; double-click to collapse";
+    grip.title = "Click for toolbar options; drag to move";
     grip.setAttribute("aria-label", "Toolbar options");
     grip.setAttribute("aria-haspopup", "menu");
     grip.setAttribute("aria-expanded", "false");
@@ -436,40 +432,12 @@ Object.assign(ChartView.prototype, {
     this._applySlot(grip, "modebar_button");
     bar.appendChild(grip);
 
-    const DOUBLE_CLICK_MS = 500;
     const DRAG_THRESHOLD_PX = 6;
     let modebarDrag = null;
-    let lastGripDown = 0;
     let suppressGripClickUntil = 0;
-    const setCollapsed = (collapsed) => {
-      this._modebarCollapsed = collapsed;
-      bar.dataset.fcCollapsed = String(collapsed);
-      if (collapsed) {
-        setZoomMenuOpen(false);
-        setSelectMenuOpen(false);
-        setExportMenuOpen(false);
-      }
-      // Only collapse top-level controls. Menu items stay available because
-      // this same grip is the only visible control in the collapsed state.
-      for (const button of bar.querySelectorAll(":scope > button")) {
-        if (button !== grip) {
-          button.hidden = collapsed;
-          button.style.display = collapsed ? "none" : "flex";
-        }
-      }
-      grip.title = collapsed
-        ? "Click for toolbar options; drag to move; double-click to expand"
-        : "Click for toolbar options; drag to move; double-click to collapse";
-      updateCollapseItem();
-      this._fitModebar();
-    };
-    const toggleModebar = () => setCollapsed(!this._modebarCollapsed);
     this._listen(grip, "pointerdown", (e) => {
       if (e.pointerType === "mouse" && e.button !== 0) return;
       e.stopPropagation();
-      const now = e.timeStamp || performance.now();
-      const doubleClick = lastGripDown > 0 && now - lastGripDown <= DOUBLE_CLICK_MS;
-      lastGripDown = doubleClick ? 0 : now;
       const barRect = bar.getBoundingClientRect();
       modebarDrag = {
         pointerId: e.pointerId,
@@ -480,10 +448,6 @@ Object.assign(ChartView.prototype, {
         moved: false,
       };
       setVisible(true);
-      if (doubleClick) {
-        suppressGripClickUntil = performance.now() + 100;
-        toggleModebar();
-      }
     });
     this._listen(grip, "pointermove", (e) => {
       if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
@@ -491,7 +455,6 @@ Object.assign(ChartView.prototype, {
       if (!modebarDrag.moved) {
         if (distance < DRAG_THRESHOLD_PX) return;
         modebarDrag.moved = true;
-        lastGripDown = 0;
         this._modebarDragging = true;
         this._modebarMoved = true;
         bar.style.transition = "none";
@@ -514,7 +477,6 @@ Object.assign(ChartView.prototype, {
       bar.style.transition = "opacity .15s";
       setVisible(root.matches(":hover"));
       if (moved || cancelled) {
-        lastGripDown = 0;
         suppressGripClickUntil = performance.now() + 100;
       }
     };
@@ -527,10 +489,6 @@ Object.assign(ChartView.prototype, {
         return;
       }
       setExportMenuOpen(!this._exportMenuOpen);
-    });
-    this._listen(grip, "dblclick", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
     });
 
     const mk = (name, title, onClick, toggles) => {
@@ -719,23 +677,12 @@ Object.assign(ChartView.prototype, {
       exportMenuItems.push(button);
       return button;
     };
-    const collapseItem = mkExportItem("collapse", "Collapse Toolbar", toggleModebar);
-    collapseItem.dataset.fcModebarCollapseItem = "";
-    updateCollapseItem = () => {
-      const collapsed = this._modebarCollapsed;
-      const icon = collapseItem.querySelector("[data-fc-modebar-menu-icon]");
-      const label = icon?.nextElementSibling;
-      if (icon) icon.innerHTML = this._icon(collapsed ? "expand" : "collapse");
-      if (label) label.textContent = collapsed ? "Expand Toolbar" : "Collapse Toolbar";
-      collapseItem.dataset.fcModebarExportItem = collapsed ? "expand" : "collapse";
-    };
-    updateCollapseItem();
-    mkExportItem("png", "Export PNG", () => this._exportPng(), true);
+    mkExportItem("png", "Export PNG", () => this._exportPng());
     mkExportItem("svg", "Export SVG", () => this._exportSvg());
     mkExportItem("csv", "Export CSV", () => this._exportCsv());
 
     setZoomMenuOpen = (open, restoreFocus = false) => {
-      const show = Boolean(open) && !this._modebarCollapsed;
+      const show = Boolean(open);
       if (show) {
         setSelectMenuOpen(false);
         setExportMenuOpen(false);
@@ -768,7 +715,7 @@ Object.assign(ChartView.prototype, {
     };
     setSelectMenuOpen = (open, restoreFocus = false) => {
       if (!selectTrigger) return;
-      const show = Boolean(open) && !this._modebarCollapsed;
+      const show = Boolean(open);
       if (show) {
         setZoomMenuOpen(false);
         setExportMenuOpen(false);
