@@ -453,6 +453,10 @@ Object.assign(ChartView.prototype, {
       button.style.cssText =
         "display:flex;align-items:center;pointer-events:auto;";
       this._applySlot(button, "modebar_button");
+      const icon = document.createElement("span");
+      icon.dataset.fcModebarMenuIcon = "";
+      icon.innerHTML = this._icon(name);
+      button.appendChild(icon);
       const text = document.createElement("span");
       text.textContent = label;
       button.appendChild(text);
