@@ -221,10 +221,11 @@ def subplots(
     gridspec_kw = kwargs.pop("gridspec_kw", None) or {}
     subplot_kw = kwargs.pop("subplot_kw", None) or {}
     toolbar = kwargs.pop("toolbar", None)
-    fig = figure(figsize=figsize, dpi=dpi, toolbar=toolbar)
+    # Remaining kwargs are matplotlib's **fig_kw, forwarded to figure().
+    fig = figure(figsize=figsize, dpi=dpi, toolbar=toolbar, **kwargs)
     if fig._axes and any(ax._entries for ax in fig._axes):
         # fresh figure, mpl semantics
-        fig = figure(None, figsize=figsize, dpi=dpi, toolbar=toolbar)
+        fig = figure(None, figsize=figsize, dpi=dpi, toolbar=toolbar, **kwargs)
     axes = fig.subplots(
         nrows,
         ncols,

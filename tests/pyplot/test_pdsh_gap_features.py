@@ -524,3 +524,13 @@ def test_text_string_coordinates_stay_categorical_on_category_axes():
     ax.bar(["a", "b", "c"], [1.0, 3.0, 2.0])
     ax.text("b", 3.1, "peak")
     assert "peak" in _svg()
+
+
+def test_subplots_facecolor_reaches_figure_and_notebook_display():
+    fig, ax = plt.subplots(facecolor="lightgray")
+    ax.plot([0.0, 1.0], [0.0, 1.0])
+    assert fig.get_facecolor() == "lightgray"
+    # The display document paints its own opaque body; the figure patch is a
+    # later same-specificity body background override in the head.
+    assert "body{background:lightgray}" in fig._repr_html_()
+    _png(fig)

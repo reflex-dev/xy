@@ -855,12 +855,7 @@ class Figure:
             elif suffix == "html":
                 if metadata:
                     raise not_implemented("savefig(format='html', metadata=...)", "PNG or SVG")
-                data = self._to_html().encode()
-                if self._facecolor not in ("none", "white"):
-                    import html
-
-                    fill = html.escape(self._facecolor, quote=True)
-                    data = f'<div style="background-color:{fill}">'.encode() + data + b"</div>"
+                data = self._facecolor_wrapped(self._to_html()).encode()
             else:
                 raise not_implemented(f"savefig(format={suffix!r})", "png, svg, or html")
         finally:
@@ -993,18 +988,33 @@ class Figure:
             return doc, content_w, content_h
         return doc, width, height
 
+    def _facecolor_wrapped(self, doc: str) -> str:
+        """The figure facecolor behind an HTML document — matplotlib's figure
+        patch around the (separately painted, `--chart-bg`) axes plot box."""
+        if self._facecolor in ("none", "white"):
+            return doc
+        import html
+
+        fill = html.escape(self._facecolor, quote=True)
+        head_end = doc.find("</head>")
+        if head_end != -1:
+            # Same element specificity as the document's body{background:#fff}
+            # rule; later in the head, so it wins.
+            return doc[:head_end] + f"<style>body{{background:{fill}}}</style>" + doc[head_end:]
+        return f'<div style="background-color:{fill}">{doc}</div>'
+
     def _repr_html_(self) -> str:
         from xy import export
 
         doc, width, height = self._to_notebook_html()
-        return export.notebook_iframe(doc, width=width, height=height)
+        return export.notebook_iframe(self._facecolor_wrapped(doc), width=width, height=height)
 
     def show(self, *args: Any, **kwargs: Any) -> None:
         import tempfile
         import webbrowser
 
         with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False) as f:
-            f.write(self._to_html())
+            f.write(self._facecolor_wrapped(self._to_html()))
         webbrowser.open(f"file://{f.name}")
 
 

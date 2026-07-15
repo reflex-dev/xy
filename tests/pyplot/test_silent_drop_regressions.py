@@ -317,7 +317,9 @@ def test_savefig_svg_and_html_honor_facecolor_and_single_chart_suptitle():
     assert b'<rect width="100%" height="100%" fill="red"/>' in svg.getvalue()
     html_out = io.BytesIO()
     fig.savefig(html_out, format="html", facecolor="red")
-    assert b"background-color:red" in html_out.getvalue()
+    # A head-level body override: the document body paints its own opaque
+    # background, so a wrapper div around the document would never show.
+    assert b"<style>body{background:red}</style>" in html_out.getvalue()
     with pytest.raises(NotImplementedError):
         fig.savefig(io.BytesIO(), format="html", metadata={"Title": "x"})
     with pytest.raises(ValueError, match="Latin-1"):
