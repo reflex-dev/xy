@@ -19,6 +19,7 @@ const FC_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
   "angle_b",
   "gap_start",
   "gap_end",
+  "label_clear",
   "dash",
   "span_start",
   "span_end",
@@ -35,7 +36,22 @@ const FC_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
 // bulge as a fraction of chord length) or `angle_a`/`angle_b` (matplotlib
 // angle3/angle departure/arrival angles in degrees, y-up screen space —
 // control point at the ray intersection), then `gap_start`/`gap_end` px
-// trims along the path tangents (label/point clearance).
+// trims along the path tangents (label/point clearance). `label_clear`
+// ("left,right,up,down" px, y-down) is the start label's extents rectangle:
+// the start trims to where the departure tangent exits it — matplotlib's
+// text-patch clipping.
+function fcLabelClearExit(style, tangent) {
+  if (typeof style.label_clear !== "string") return 0;
+  const parts = style.label_clear.split(",").map(Number);
+  if (parts.length !== 4 || parts.some((p) => !Number.isFinite(p) || p < 0)) return 0;
+  const [left, right, up, down] = parts;
+  const [tx, ty] = tangent;
+  const exitX = tx > 1e-9 ? right / tx : tx < -1e-9 ? left / -tx : Infinity;
+  const exitY = ty > 1e-9 ? down / ty : ty < -1e-9 ? up / -ty : Infinity;
+  const exit = Math.min(exitX, exitY);
+  return Number.isFinite(exit) ? exit : 0;
+}
+
 function fcArrowGeometry(x0, y0, x1, y1, style) {
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
   const angleA = num(style.angle_a);
@@ -65,7 +81,7 @@ function fcArrowGeometry(x0, y0, x1, y1, style) {
   };
   const t0 = cx === null ? toward(x0, y0, x1, y1) : toward(x0, y0, cx, cy);
   const t1 = cx === null ? toward(x1, y1, x0, y0) : toward(x1, y1, cx, cy);
-  const gapStart = Math.max(0, num(style.gap_start) || 0);
+  const gapStart = Math.max(0, num(style.gap_start) || 0, fcLabelClearExit(style, t0));
   const gapEnd = Math.max(0, num(style.gap_end) || 0);
   const span = Math.hypot(x1 - x0, y1 - y0);
   const trim = gapStart + gapEnd < span * 0.9;
@@ -400,11 +416,16 @@ Object.assign(ChartView.prototype, {
       d.textContent = text;
       const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
       const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
-      const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0";
-      // matplotlib's va: the anchor y is the text center/bottom, not its top.
+      const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0px";
+      // matplotlib's va, matching the SVG/raster exporters: the default is
+      // the text BASELINE at the anchor (~0.35em of descent hangs below it),
+      // not the box top.
       const va = style.vertical_align;
       const vAnchor =
-        va === "center" || va === "middle" ? "-50%" : va === "bottom" ? "-100%" : "0";
+        va === "center" || va === "middle" ? "-50%"
+          : va === "bottom" ? "-100%"
+          : va === "top" ? "0px"
+          : "calc(-100% + 0.35em)";
       // Structural inline only (position telegraphs the anchor); font + default
       // color live in the defeatable :where() stylesheet so utility classes win.
       // width:max-content: shrink-to-fit for an absolutely positioned label is
@@ -431,6 +452,25 @@ Object.assign(ChartView.prototype, {
         d.style.color = this._annotationLabelPaint(style, this.theme.label);
       }
       this.labels.appendChild(d);
+      // matplotlib anchors the TEXT at its position; a bbox patch grows
+      // outward around it. A padded/bordered label must therefore anchor by
+      // its text edge, not its box edge — shift the translate by the leading
+      // padding+border on each anchored side (a no-op for plain labels).
+      const cs = getComputedStyle(d);
+      const edge = (pad, border) => (parseFloat(pad) || 0) + (parseFloat(border) || 0);
+      const padL = edge(cs.paddingLeft, cs.borderLeftWidth);
+      const padR = edge(cs.paddingRight, cs.borderRightWidth);
+      const padT = edge(cs.paddingTop, cs.borderTopWidth);
+      const padB = edge(cs.paddingBottom, cs.borderBottomWidth);
+      if (padL || padR || padT || padB) {
+        const hShift = anchor === "-100%" ? padR : anchor === "-50%" ? 0 : -padL;
+        // Bottom-referenced anchors (bottom, and the baseline default) ride
+        // up as bottom padding grows; top-referenced ones ride down.
+        const vShift =
+          vAnchor === "-50%" ? 0 : vAnchor === "0px" ? -padT : padB;
+        d.style.transform =
+          `translate(calc(${anchor} + ${hShift}px), calc(${vAnchor} + ${vShift}px))`;
+      }
     }
   },
 });

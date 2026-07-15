@@ -5,8 +5,11 @@ sync. Style keys: ``curve`` (matplotlib arc3 rad — quadratic bulge as a
 fraction of chord length), ``angle_a``/``angle_b`` (matplotlib angle3/angle
 departure/arrival angles, degrees, y-up screen space — the control point is
 the ray intersection), ``gap_start``/``gap_end`` (px trims along the path
-tangents for label/point clearance), ``head_style``/``tail_style``
-(``triangle``/``v``/``bar``/``none``) and ``head_size``.
+tangents for label/point clearance), ``label_clear`` (a
+"left,right,up,down" px rectangle around the start point — the label's
+extents in y-down screen space; the start trims to where the departure
+tangent exits it, matplotlib's text-patch clipping), ``head_style``/
+``tail_style`` (``triangle``/``v``/``bar``/``none``) and ``head_size``.
 """
 
 from __future__ import annotations
@@ -21,6 +24,24 @@ def _number(value: Any) -> Optional[float]:
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None
+
+
+def _label_clear_exit(style: dict[str, Any], tangent: tuple[float, float]) -> float:
+    """Distance from the start point to the ``label_clear`` rectangle's edge
+    along the departure tangent (0 when absent or leaving immediately)."""
+    raw = style.get("label_clear")
+    if not isinstance(raw, str):
+        return 0.0
+    parts = [_number(part) for part in raw.split(",")]
+    extents = [part for part in parts if part is not None and part >= 0]
+    if len(parts) != 4 or len(extents) != 4:
+        return 0.0
+    left, right, up, down = extents
+    tx, ty = tangent
+    exit_x = right / tx if tx > 1e-9 else (left / -tx if tx < -1e-9 else math.inf)
+    exit_y = down / ty if ty > 1e-9 else (up / -ty if ty < -1e-9 else math.inf)
+    exit_distance = min(exit_x, exit_y)
+    return exit_distance if math.isfinite(exit_distance) else 0.0
 
 
 def arrow_geometry(
@@ -48,7 +69,7 @@ def arrow_geometry(
 
     t0 = toward(x0, y0, *control) if control else toward(x0, y0, x1, y1)
     t1 = toward(x1, y1, *control) if control else toward(x1, y1, x0, y0)
-    gap_start = max(0.0, _number(style.get("gap_start")) or 0.0)
+    gap_start = max(0.0, _number(style.get("gap_start")) or 0.0, _label_clear_exit(style, t0))
     gap_end = max(0.0, _number(style.get("gap_end")) or 0.0)
     trim = gap_start + gap_end < math.hypot(x1 - x0, y1 - y0) * 0.9
     p0 = (x0 + gap_start * t0[0], y0 + gap_start * t0[1]) if trim else (x0, y0)

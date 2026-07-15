@@ -2163,14 +2163,27 @@ class Axes(PlotTypeMixin):
                 dx_a, dy_a = ex0 - sx0, ey0 - sy0
                 sx0, sy0 = sx0 + shrink * dx_a, sy0 + shrink * dy_a
                 ex0, ey0 = ex0 - shrink * dx_a, ey0 - shrink * dy_a
-            arrow_color, arrow_width, arrow_style = _arrow_visuals(
-                arrowprops,
-                mutation_scale=_font_size_points(
+            font_px = (
+                _font_size_points(
                     fontsize if fontsize is not None else rcParams["font.size"],
                     rcParams["font.size"],
                 )
-                * self._point_scale(),
+                * self._point_scale()
             )
+            arrow_color, arrow_width, arrow_style = _arrow_visuals(
+                arrowprops, mutation_scale=font_px
+            )
+            # matplotlib clips the arrow at the text patch (patchA + 2pt
+            # shrink); the geometry's label_clear rectangle is that clipping.
+            clear = _label_clear_box(
+                _plain_text(text),
+                font_px,
+                akw.get("anchor", "start"),
+                style.get("vertical_align"),
+                bbox=bbox is not None,
+            )
+            if clear is not None and not shrink:
+                arrow_style = {**arrow_style, "label_clear": clear}
             self._add(
                 "@arrow",
                 {
@@ -3817,8 +3830,18 @@ class Axes(PlotTypeMixin):
                     )
                     style: dict[str, Any] = {**(text_kw.get("style") or {}), **arrow_style}
                     # matplotlib starts the arrow at the text patch edge
-                    # (shrinkA/B default 2 pt); approximate the patch with a
-                    # radial clearance around the label anchor.
+                    # (shrinkA/B default 2 pt): label_clear carves the label's
+                    # estimated extents out of the shaft; the radial gap keeps
+                    # a floor for departures that leave the label immediately.
+                    clear = _label_clear_box(
+                        value,
+                        font_size,
+                        text_kw.get("anchor", "start"),
+                        (text_kw.get("style") or {}).get("vertical_align"),
+                        bbox=bool(kw.get("bbox")),
+                    )
+                    if clear is not None:
+                        style.setdefault("label_clear", clear)
                     style.setdefault("gap_start", font_size * 0.5 + 2.0)
                     style.setdefault("gap_end", 3.0)
                     # The callout color prop paints the arrow; pin the label's
@@ -4256,6 +4279,47 @@ def _connection_curve(connectionstyle: Any) -> dict[str, float]:
     if name in ("angle3", "angle"):
         return {"angle_a": options.get("angleA", 90.0), "angle_b": options.get("angleB", 0.0)}
     return {}
+
+
+def _label_clear_box(
+    text: str,
+    font_px: float,
+    anchor: str,
+    vertical: Any,
+    *,
+    bbox: bool = False,
+) -> Optional[str]:
+    """Estimated label extents around an arrow start, as the render seam's
+    ``label_clear`` "left,right,up,down" px style string (y-down).
+
+    Mirrors how the renderers anchor labels: horizontally by ``anchor``
+    (start/middle/end), vertically baseline-at-anchor unless
+    ``vertical_align`` says otherwise. Width uses the ~0.58 em/char average
+    the DOM labels measure at; the margin models matplotlib's text-patch
+    clearance — its bbox is wider than glyph ink, so the visible gap between
+    text and arrow is ~0.35em + the 2pt shrink (plus the bbox patch padding
+    when one is drawn)."""
+    if not text:
+        return None
+    lines = text.split("\n")
+    width = 0.58 * font_px * max(len(line) for line in lines)
+    height = 1.2 * font_px * len(lines)
+    margin = 2.8 + 0.35 * font_px + (0.4 * font_px if bbox else 0.0)
+    if anchor == "middle":
+        left, right = width / 2, width / 2
+    elif anchor == "end":
+        left, right = width, 0.0
+    else:
+        left, right = 0.0, width
+    if vertical in ("center", "middle", "center_baseline"):
+        up, down = height / 2, height / 2
+    elif vertical == "bottom":
+        up, down = height, 0.0
+    elif vertical == "top":
+        up, down = 0.0, height
+    else:  # baseline at the anchor: ascent above, ~0.35em of descent below
+        up, down = height - 0.35 * font_px, 0.35 * font_px
+    return f"{left + margin:.1f},{right + margin:.1f},{up + margin:.1f},{down + margin:.1f}"
 
 
 def _arrow_visuals(
