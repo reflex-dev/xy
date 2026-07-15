@@ -2234,8 +2234,8 @@ this.chrome.style.width = this.size.w + "px";
 this.chrome.style.height = this.size.h + "px";
 this.chrome.width = this.size.w * this.dpr;
 this.chrome.height = this.size.h * this.dpr;
-if (this._legend && this._slotStyleValue("legend", "max-height") == null) {
-this._legend.style.maxHeight = p.h - 12 + "px";
+if (this._legends && this._legends.length && this._slotStyleValue("legend", "max-height") == null) {
+for (const lg of this._legends) lg.style.maxHeight = p.h - 12 + "px";
 }
 this._positionReductionBadges();
 this._positionColorbar();
@@ -2345,6 +2345,7 @@ this._refreshReductionBadges();
 }
 _buildLegend(root) {
 const s = this.spec;
+this._legends = [];
 const items = [];
 if (s.show_legend !== false) {
 for (const t of s.traces) {
@@ -2361,7 +2362,7 @@ const line = ["line", "segments", "step", "stairs", "errorbar"].includes(t.kind)
 items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {} });
 }
 }
-if (items.length) this._legendBox(root, items, s.legend || {}, true);
+if (items.length) this._legendBox(root, items, s.legend || {});
 }
 for (const extra of s.extra_legends || []) {
 const mapped = (extra.items || []).map((it) => ({
@@ -2371,10 +2372,10 @@ symbol: it.kind === "scatter" ? (it.style?.symbol || "circle") : null,
 line: ["line", "segments", "step", "stairs", "errorbar"].includes(it.kind),
 style: it.style || {},
 }));
-if (mapped.length) this._legendBox(root, mapped, extra, false);
+if (mapped.length) this._legendBox(root, mapped, extra);
 }
 }
-_legendBox(root, items, options, isPrimary) {
+_legendBox(root, items, options) {
 const lg = document.createElement("div");
 const loc = options.loc || "upper right";
 const ncols = Math.max(1, Number(options.ncols) || 1);
@@ -2455,7 +2456,7 @@ ln.setAttribute("y1", "6");
 ln.setAttribute("x2", "21");
 ln.setAttribute("y2", "6");
 ln.setAttribute("stroke", safeCssPaint(this.root, bg));
-ln.setAttribute("stroke-width", String(it.style?.width || 1.5));
+ln.setAttribute("stroke-width", String(it.style?.width ?? 1.5));
 if (it.style?.dash && it.style.dash.length) ln.setAttribute("stroke-dasharray", it.style.dash.join(" "));
 svg.appendChild(ln);
 sw.appendChild(svg);
@@ -2470,7 +2471,7 @@ row.appendChild(document.createTextNode(it.name));
 lg.appendChild(row);
 }
 root.appendChild(lg);
-if (isPrimary) this._legend = lg;
+this._legends.push(lg);
 return lg;
 }
 _buildColorbar(root) {

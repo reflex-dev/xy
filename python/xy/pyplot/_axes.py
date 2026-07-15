@@ -2805,7 +2805,7 @@ class Axes(PlotTypeMixin):
     def add_artist(self, artist: Any) -> Any:
         if isinstance(artist, Legend):
             host = self._y2_of or self
-            artist._parent = host
+            artist._attach(host)
             host._extra_legends.append(artist)
             host._invalidate()
             return artist
@@ -3746,10 +3746,7 @@ class Axes(PlotTypeMixin):
         for name in scores:
             scores[name] /= entries_used
         best = min(scores.values())
-        for name in scores:
-            if scores[name] <= best + 0.02:
-                return name
-        return "upper right"
+        return next(name for name, score in scores.items() if score <= best + 0.02)
 
     def _build_chart(self, width: int, height: int) -> Any:
         if self._y2_of is not None:

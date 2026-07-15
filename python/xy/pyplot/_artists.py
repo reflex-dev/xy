@@ -8,6 +8,7 @@ dominant mutation idioms without reproducing matplotlib's artist graph.
 
 from __future__ import annotations
 
+import warnings
 from itertools import pairwise
 from typing import Any, Optional
 
@@ -885,12 +886,14 @@ class Legend:
     """
 
     def __init__(self, parent: Any, handles: Any, labels: Any, loc: Any = "best", **kwargs: Any):
-        self._parent = parent
-        options_kwargs = dict(kwargs)
-        options_kwargs.setdefault("loc", loc)
-        self._options = parent._compose_legend_options(options_kwargs)
-        scale = parent._point_scale()
-        items: list[dict[str, Any]] = []
+        handles, labels = list(handles), list(labels)
+        if len(handles) != len(labels):
+            warnings.warn(
+                f"Legend: mismatched number of handles ({len(handles)}) and "
+                f"labels ({len(labels)}); the extras are ignored",
+                stacklevel=2,
+            )
+        self._pairs: list[tuple[dict[str, Any], Any]] = []
         for handle, label in zip(handles, labels, strict=False):
             entry = getattr(handle, "_entry", None)
             if entry is None:
@@ -898,9 +901,28 @@ class Legend:
                 # compatibility artist rather than inheriting Artist itself.
                 entry = getattr(getattr(handle, "_artist", None), "_entry", None)
             if entry is None:
+                warnings.warn(
+                    f"Legend does not support {type(handle).__name__} handles; "
+                    f"dropping the entry for {label!r}",
+                    stacklevel=2,
+                )
                 continue
-            items.append(_legend_item_from_entry(entry, label, scale))
-        self._items = items
+            self._pairs.append((entry, label))
+        self._kwargs = dict(kwargs)
+        self._kwargs.setdefault("loc", loc)
+        self._attach(parent)
+
+    def _attach(self, parent: Any) -> None:
+        """(Re)freeze options and swatch scaling against *parent*'s figure state.
+
+        ``Axes.add_artist`` calls this so a legend constructed against one axes
+        but attached to another picks up the host's dpi/rcParams state rather
+        than keeping the constructor's.
+        """
+        self._parent = parent
+        self._options = parent._compose_legend_options(dict(self._kwargs))
+        scale = parent._point_scale()
+        self._items = [_legend_item_from_entry(entry, label, scale) for entry, label in self._pairs]
 
     def spec(self) -> dict[str, Any]:
         """The option dict plus explicit items, ready for the render payload."""

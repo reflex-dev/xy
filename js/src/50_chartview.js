@@ -717,10 +717,11 @@ class ChartView {
     this.chrome.style.height = this.size.h + "px";
     this.chrome.width = this.size.w * this.dpr;
     this.chrome.height = this.size.h * this.dpr;
-    if (this._legend && this._slotStyleValue("legend", "max-height") == null) {
+    if (this._legends && this._legends.length && this._slotStyleValue("legend", "max-height") == null) {
       // _slotStyleValue canonicalizes keys, so this one check honors snake_case
       // / camelCase / kebab author styles alike (no separate maxHeight probe).
-      this._legend.style.maxHeight = p.h - 12 + "px";
+      // Extra legend boxes share the primary's slot, so all get the refresh.
+      for (const lg of this._legends) lg.style.maxHeight = p.h - 12 + "px";
     }
     this._positionReductionBadges();
     this._positionColorbar();
@@ -851,6 +852,7 @@ class ChartView {
 
   _buildLegend(root) {
     const s = this.spec;
+    this._legends = [];
     const items = [];
     if (s.show_legend !== false) {
       for (const t of s.traces) {
@@ -869,7 +871,7 @@ class ChartView {
           items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {} });
         }
       }
-      if (items.length) this._legendBox(root, items, s.legend || {}, true);
+      if (items.length) this._legendBox(root, items, s.legend || {});
     }
     // Manually added Legend artists ship explicit items + their own loc, so a
     // second legend (e.g. one per line group) renders as its own box.
@@ -881,11 +883,11 @@ class ChartView {
         line: ["line", "segments", "step", "stairs", "errorbar"].includes(it.kind),
         style: it.style || {},
       }));
-      if (mapped.length) this._legendBox(root, mapped, extra, false);
+      if (mapped.length) this._legendBox(root, mapped, extra);
     }
   }
 
-  _legendBox(root, items, options, isPrimary) {
+  _legendBox(root, items, options) {
     const lg = document.createElement("div");
     const loc = options.loc || "upper right";
     const ncols = Math.max(1, Number(options.ncols) || 1);
@@ -973,7 +975,9 @@ class ChartView {
         ln.setAttribute("x2", "21");
         ln.setAttribute("y2", "6");
         ln.setAttribute("stroke", safeCssPaint(this.root, bg));
-        ln.setAttribute("stroke-width", String(it.style?.width || 1.5));
+        // ?? not ||: an explicit lw=0 keeps 0 and draws nothing, like the
+        // exporters' dict-default and Matplotlib itself.
+        ln.setAttribute("stroke-width", String(it.style?.width ?? 1.5));
         if (it.style?.dash && it.style.dash.length) ln.setAttribute("stroke-dasharray", it.style.dash.join(" "));
         svg.appendChild(ln);
         sw.appendChild(svg);
@@ -988,7 +992,7 @@ class ChartView {
       lg.appendChild(row);
     }
     root.appendChild(lg);
-    if (isPrimary) this._legend = lg; // _resize refreshes its max-height
+    this._legends.push(lg); // _resize refreshes every box's max-height
     return lg;
   }
 
