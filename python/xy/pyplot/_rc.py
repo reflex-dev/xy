@@ -71,9 +71,38 @@ _warned: set[str] = set()
 
 
 class RcParams(dict):
-    """Dict with matplotlib's validate-on-set flavor, reduced to warn-on-unknown."""
+    """Dict with matplotlib's validate-on-set flavor, reduced to warn-on-unknown.
+
+    ``version`` increments on every mutation so derived snapshots (the axes'
+    rc-chrome styling) can be cached per rc state instead of recomputed for
+    every axes (see Axes._load_rc_chrome).
+    """
+
+    version: int = 0
+
+    def __delitem__(self, key: str) -> None:
+        type(self).version += 1
+        super().__delitem__(key)
+
+    def clear(self) -> None:
+        type(self).version += 1
+        super().clear()
+
+    def pop(self, *args: Any) -> Any:
+        type(self).version += 1
+        return super().pop(*args)
+
+    def popitem(self) -> tuple[Any, Any]:
+        type(self).version += 1
+        return super().popitem()
+
+    def setdefault(self, key: str, default: Any = None) -> Any:
+        if key not in self:
+            self[key] = default
+        return self[key]
 
     def __setitem__(self, key: str, value: Any) -> None:
+        type(self).version += 1
         if key not in _DEFAULTS and key not in _warned:
             _warned.add(key)
             warnings.warn(

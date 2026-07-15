@@ -34,7 +34,7 @@ from ._colors import PROP_CYCLE, resolve_cmap, resolve_color
 from ._fmt import parse_fmt
 from ._mathtext import mathtext_to_unicode
 from ._plot_types import PlotTypeMixin
-from ._rc import rcParams
+from ._rc import RcParams, rcParams
 from ._ticker import AutoLocator, NullLocator, ScalarFormatter, as_formatter
 from ._transforms import Bbox, CoordinateTransform, IdentityTransform
 from ._translate import (
@@ -60,6 +60,66 @@ _MPL_GRID_COLOR = "#b0b0b0"
 # core once, not once per figure (the perf guardrail in tests/pyplot counts
 # on this staying O(1) per process).
 _component_cache: dict[tuple, Any] = {}
+
+# rc-derived chrome styling per (RcParams.version, dpi); see _load_rc_chrome.
+_rc_chrome_cache: dict[tuple, dict[str, Any]] = {}
+
+
+def _rc_chrome_snapshot(dpi: float) -> dict[str, Any]:
+    cycle = rcParams["axes.prop_cycle"].by_key().get("color", [])
+    family = rcParams["font.family"]
+    family = family if isinstance(family, str) else ", ".join(map(str, family))
+    if family == "sans-serif":
+        family = "DejaVu Sans, sans-serif"
+    theme_tokens = {
+        "plot_background": resolve_color(rcParams["axes.facecolor"]),
+        "axis_color": resolve_color(rcParams["axes.edgecolor"]),
+        "text_color": resolve_color(
+            rcParams["axes.labelcolor"]
+            if rcParams["axes.titlecolor"] == "auto"
+            else rcParams["axes.titlecolor"]
+        ),
+    }
+    return {
+        "prop_cycle": [
+            resolved for color in cycle if (resolved := resolve_color(color)) is not None
+        ],
+        "grid_color": resolve_color(rcParams["grid.color"]) or _MPL_GRID_COLOR,
+        "theme_tokens": theme_tokens,
+        "theme_style": {
+            "font-family": family,
+            "font-size": f"{_font_size(rcParams['font.size'], rcParams['font.size'], dpi):g}px",
+        },
+        "chrome_styles": {
+            "title": {
+                "font-size": (
+                    f"{_font_size(rcParams['axes.titlesize'], rcParams['font.size'], dpi):g}px"
+                ),
+                "color": theme_tokens["text_color"],
+            },
+            "axis_title": {
+                "font-size": (
+                    f"{_font_size(rcParams['axes.labelsize'], rcParams['font.size'], dpi):g}px"
+                ),
+                "color": resolve_color(rcParams["axes.labelcolor"]),
+            },
+            "tick_label": {
+                "font-size": (
+                    f"{_font_size(rcParams['xtick.labelsize'], rcParams['font.size'], dpi):g}px"
+                ),
+                "color": resolve_color(
+                    rcParams["xtick.color"]
+                    if rcParams["xtick.labelcolor"] == "inherit"
+                    else rcParams["xtick.labelcolor"]
+                ),
+            },
+        },
+        "hidden_spines": {
+            side
+            for side in ("left", "bottom", "top", "right")
+            if not bool(rcParams[f"axes.spines.{side}"])
+        },
+    }
 
 
 def _identity_transform() -> Any:
@@ -483,54 +543,27 @@ class Axes(PlotTypeMixin):
     # -- lifecycle -----------------------------------------------------------
 
     def _load_rc_chrome(self) -> None:
-        """Snapshot the rcParams-derived color cycle, theme, and chrome styles."""
+        """Snapshot the rcParams-derived color cycle, theme, and chrome styles.
+
+        The derived snapshot is a pure function of (rcParams state, figure
+        dpi), so it is computed once per rc state and shared across axes —
+        per-axes recomputation was measurable in the shim's fixed build cost
+        (tests/pyplot/test_perf_guardrail.py). Only the members that axes
+        mutate in place (theme tokens, hidden spines) are copied per axes.
+        """
         dpi = float(self.figure._dpi if self.figure._dpi is not None else rcParams["figure.dpi"])
-        cycle = rcParams["axes.prop_cycle"].by_key().get("color", [])
-        self._prop_cycle = [
-            resolved for color in cycle if (resolved := resolve_color(color)) is not None
-        ]
-        self._grid_color = resolve_color(rcParams["grid.color"]) or _MPL_GRID_COLOR
-        self._theme_tokens = {
-            "plot_background": resolve_color(rcParams["axes.facecolor"]),
-            "axis_color": resolve_color(rcParams["axes.edgecolor"]),
-            "text_color": resolve_color(
-                rcParams["axes.labelcolor"]
-                if rcParams["axes.titlecolor"] == "auto"
-                else rcParams["axes.titlecolor"]
-            ),
-        }
-        family = rcParams["font.family"]
-        family = family if isinstance(family, str) else ", ".join(map(str, family))
-        if family == "sans-serif":
-            family = "DejaVu Sans, sans-serif"
-        self._theme_style = {
-            "font-family": family,
-            "font-size": f"{_font_size(rcParams['font.size'], rcParams['font.size'], dpi):g}px",
-        }
-        title_color = self._theme_tokens["text_color"]
-        self._chrome_styles = {
-            "title": {
-                "font-size": f"{_font_size(rcParams['axes.titlesize'], rcParams['font.size'], dpi):g}px",
-                "color": title_color,
-            },
-            "axis_title": {
-                "font-size": f"{_font_size(rcParams['axes.labelsize'], rcParams['font.size'], dpi):g}px",
-                "color": resolve_color(rcParams["axes.labelcolor"]),
-            },
-            "tick_label": {
-                "font-size": f"{_font_size(rcParams['xtick.labelsize'], rcParams['font.size'], dpi):g}px",
-                "color": resolve_color(
-                    rcParams["xtick.color"]
-                    if rcParams["xtick.labelcolor"] == "inherit"
-                    else rcParams["xtick.labelcolor"]
-                ),
-            },
-        }
-        self._hidden_spines = {
-            side
-            for side in ("left", "bottom", "top", "right")
-            if not bool(rcParams[f"axes.spines.{side}"])
-        }
+        key = (RcParams.version, dpi)
+        snapshot = _rc_chrome_cache.get(key)
+        if snapshot is None:
+            if len(_rc_chrome_cache) > 64:
+                _rc_chrome_cache.clear()
+            snapshot = _rc_chrome_cache[key] = _rc_chrome_snapshot(dpi)
+        self._prop_cycle = snapshot["prop_cycle"]
+        self._grid_color = snapshot["grid_color"]
+        self._theme_tokens = dict(snapshot["theme_tokens"])  # set_facecolor mutates
+        self._theme_style = snapshot["theme_style"]
+        self._chrome_styles = snapshot["chrome_styles"]
+        self._hidden_spines = set(snapshot["hidden_spines"])  # spines API mutates
 
     def _invalidate(self) -> None:
         host = self._y2_of or self
@@ -924,21 +957,40 @@ class Axes(PlotTypeMixin):
             if dash is not None:
                 entry_kwargs["dash"] = dash
             numeric_x = np.asarray(x)
+            # finite_pairs stays None for gap-free data: a non-finite value
+            # anywhere leaves the sum non-finite (inf - inf is nan), so the
+            # common clean case skips the per-element isfinite mask. Finite
+            # data whose sum overflows merely takes the exact scan.
+            finite_pairs = None
             try:
-                finite_pairs = np.isfinite(np.asarray(x, dtype=np.float64)) & np.isfinite(
-                    np.asarray(y, dtype=np.float64)
-                )
+                xv64 = np.asarray(x, dtype=np.float64)
+                yv64 = np.asarray(y, dtype=np.float64)
+                if not np.isfinite(xv64.sum() + yv64.sum()):
+                    finite_pairs = np.isfinite(xv64)
+                    finite_pairs &= np.isfinite(yv64)
             except (TypeError, ValueError):
-                finite_pairs = np.ones(len(x), dtype=bool)
-            has_gaps = not bool(np.all(finite_pairs))
+                pass
+            has_gaps = finite_pairs is not None and not bool(np.all(finite_pairs))
+            if not has_gaps:
+                finite_pairs = None
+            from xy import kernels
+
+            # Native sortedness instead of an astype copy + diff + compare —
+            # this runs on every plot() call, and O(n) temporaries here are
+            # exactly what the perf guardrail exists to catch. For gap-free
+            # data (the only case where the value matters — has_gaps routes
+            # to segments regardless) `not is_sorted` == any(diff < 0).
             preserve_path = (
-                numeric_x.ndim == 1
+                not has_gaps
+                and numeric_x.ndim == 1
                 and len(numeric_x) > 1
                 and np.issubdtype(numeric_x.dtype, np.number)
-                and np.any(np.diff(numeric_x.astype(np.float64)) < 0)
+                and not kernels.is_sorted(np.asarray(numeric_x, dtype=np.float64))
             )
             if preserve_path or has_gaps:
                 xv, yv = np.asarray(x), np.asarray(y)
+                if finite_pairs is None:  # parametric path, no gaps
+                    finite_pairs = np.ones(len(xv), dtype=bool)
                 keep = finite_pairs[:-1] & finite_pairs[1:]
                 segment_kwargs = {
                     key: value
@@ -3850,13 +3902,13 @@ class Axes(PlotTypeMixin):
             if self._grid_axis != "both":
                 tokens = dict(theme_tokens)
                 tokens["grid_color"] = "transparent"
-                children.append(fc.theme(style=self._theme_style, **tokens))  # ty: ignore[invalid-argument-type]
+                children.append(fc.theme(style=self._theme_style, **tokens))
             elif self._grid_color == _MPL_GRID_COLOR:
                 children.append(_cached_theme(self._grid, theme_tokens, self._theme_style))
             else:
                 tokens = dict(theme_tokens)
                 tokens["grid_color"] = self._grid_color if self._grid else "transparent"
-                children.append(fc.theme(style=self._theme_style, **tokens))  # ty: ignore[invalid-argument-type]
+                children.append(fc.theme(style=self._theme_style, **tokens))
         self._chart = fc.chart(
             *children,
             title=self._title,

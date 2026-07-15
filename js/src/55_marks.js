@@ -166,7 +166,7 @@ const MARK_KINDS = {
   triangle_mesh: MESH_MARK,
   error_band: AREA_MARK,
   hexbin: {
-    build: (view, g, t, buffer) => view._buildMeshMark(g, t, buffer),
+    build: (view, g, t, buffer) => view._buildHexbinMark(g, t, buffer),
     draw: (view, g) => {
       const [x0, x1] = view._axisRange(g.xAxis);
       const [y0, y1] = view._axisRange(g.yAxis);

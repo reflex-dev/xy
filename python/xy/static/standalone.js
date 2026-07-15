@@ -3000,6 +3000,53 @@ const style = t.style || {};
 g.meshStrokeWidth = Number(style.stroke_width) || 0;
 g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
 }
+_buildHexbinMark(g, t, buffer) {
+const cx = this._columnView(buffer, this.spec.columns[t.x]);
+const cy = this._columnView(buffer, this.spec.columns[t.y]);
+const xMeta = { ...this.spec.columns[t.x] };
+const yMeta = { ...this.spec.columns[t.y] };
+const n = Math.min(cx.length, cy.length);
+const style = t.style || {};
+const dx = (Number(style.hex_dx) || 0) * (xMeta.scale || 1);
+const dy = (Number(style.hex_dy) || 0) * (yMeta.scale || 1);
+const ringX = [0, dx / 2, dx / 2, 0, -dx / 2, -dx / 2, 0];
+const ringY = [-dy / 3, -dy / 6, dy / 6, dy / 3, dy / 6, -dy / 6, -dy / 3];
+const parts = {};
+for (const name of ["x0", "x1", "x2", "y0", "y1", "y2"]) parts[name] = new Float32Array(n * 6);
+for (let i = 0; i < n; i++) {
+const px = cx[i], py = cy[i];
+for (let k = 0; k < 6; k++) {
+const j = i * 6 + k;
+parts.x0[j] = px;
+parts.y0[j] = py;
+parts.x1[j] = px + ringX[k];
+parts.y1[j] = py + ringY[k];
+parts.x2[j] = px + ringX[k + 1];
+parts.y2[j] = py + ringY[k + 1];
+}
+}
+for (const name of ["x0", "x1", "x2"]) {
+g[name + "Meta"] = { ...xMeta };
+g[name + "Buf"] = this._upload(parts[name]);
+}
+for (const name of ["y0", "y1", "y2"]) {
+g[name + "Meta"] = { ...yMeta };
+g[name + "Buf"] = this._upload(parts[name]);
+}
+g.n = n * 6;
+g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
+g.colorMode = 0;
+if (t.color && (t.color.mode === "continuous" || t.color.mode === "categorical")) {
+g.colorMode = t.color.mode === "continuous" ? 1 : 2;
+const cval = this._columnView(buffer, this.spec.columns[t.color.buf]);
+const expanded = new Float32Array(n * 6);
+for (let i = 0; i < n; i++) expanded.fill(cval[i], i * 6, i * 6 + 6);
+g.cBuf = this._upload(expanded);
+g.lut = t.color.mode === "continuous" ? this._lut(t.color.colormap) : this._paletteLut(t.color.palette);
+}
+g.meshStrokeWidth = Number(style.stroke_width) || 0;
+g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
+}
 _buildAreaMark(g, t, buffer) {
 const x = this._columnView(buffer, this.spec.columns[t.x]);
 const y = this._columnView(buffer, this.spec.columns[t.y]);
@@ -5991,7 +6038,7 @@ segments: SEGMENT_MARK,
 triangle_mesh: MESH_MARK,
 error_band: AREA_MARK,
 hexbin: {
-build: (view, g, t, buffer) => view._buildMeshMark(g, t, buffer),
+build: (view, g, t, buffer) => view._buildHexbinMark(g, t, buffer),
 draw: (view, g) => {
 const [x0, x1] = view._axisRange(g.xAxis);
 const [y0, y1] = view._axisRange(g.yAxis);

@@ -417,50 +417,24 @@ class PayloadMixin(_Host):
         sel = self._finite_sel(t, xv, yv)
         if sel is not None:
             xv, yv = xv[sel], yv[sel]
-        style = self._default_styled(t)
-        dx = float(style.pop("hex_dx"))
-        dy = float(style.pop("hex_dy"))
-        # Six center-fan triangles per occupied cell preserve a true data-space
-        # tessellation at every aspect ratio and in every renderer.
-        offsets = np.asarray(
-            [
-                (0.0, -dy / 3.0),
-                (dx / 2.0, -dy / 6.0),
-                (dx / 2.0, dy / 6.0),
-                (0.0, dy / 3.0),
-                (-dx / 2.0, dy / 6.0),
-                (-dx / 2.0, -dy / 6.0),
-                (0.0, -dy / 3.0),
-            ],
-            dtype=np.float64,
-        )
-        cx = np.repeat(xv, 6)
-        cy = np.repeat(yv, 6)
-        x1 = (xv[:, None] + offsets[:-1, 0]).reshape(-1)
-        y1 = (yv[:, None] + offsets[:-1, 1]).reshape(-1)
-        x2 = (xv[:, None] + offsets[1:, 0]).reshape(-1)
-        y2 = (yv[:, None] + offsets[1:, 1]).reshape(-1)
+        # Cells ship as centers plus one scalar color value. Every hexagon
+        # shares the same geometry (style hex_dx/hex_dy), so each renderer
+        # expands the six-triangle fan locally and the wire cost stays
+        # O(cells), not O(cells x vertices x channels) (§29).
         entry = {
             "id": t.id,
             "kind": t.kind,
             "name": t.name,
-            "style": style,
+            "style": self._default_styled(t),
             "tier": "direct",
             "n_points": t.n_points,
             "n_marks": int(len(xv)),
             "x_axis": t.x_axis,
             "y_axis": t.y_axis,
-            "x0": pw.ship_values(cx),
-            "y0": pw.ship_values(cy),
-            "x1": pw.ship_values(x1),
-            "y1": pw.ship_values(y1),
-            "x2": pw.ship_values(x2),
-            "y2": pw.ship_values(y2),
+            "x": pw.ship_values(xv),
+            "y": pw.ship_values(yv),
         }
-        triangle_sel = np.repeat(
-            np.arange(len(t.x), dtype=np.intp) if sel is None else np.asarray(sel), 6
-        )
-        entry["color"], _size = self._ship_channels(t, triangle_sel, pw.ship_scalar, pw.ship_u8)
+        entry["color"], _size = self._ship_channels(t, sel, pw.ship_scalar, pw.ship_u8)
         return entry
 
     def _emit_histogram(
