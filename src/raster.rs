@@ -1186,10 +1186,13 @@ fn glyph_index(ch: char) -> Option<usize> {
 
 /// High bit of the anchor byte requests 90°-CCW text (bottom-up y-axis titles).
 pub const TEXT_ROTATED: u8 = 0x80;
+/// 0x40 requests 90°-CW text (top-down right-margin titles, mpl rotation=270).
+pub const TEXT_ROTATED_CW: u8 = 0x40;
 
 fn text(cv: &mut Canvas, x: f32, y: f32, anchor: u8, size: f32, rgba: [f32; 4], s: &[u8]) {
     let rotated = anchor & TEXT_ROTATED != 0;
-    let anchor = anchor & !TEXT_ROTATED;
+    let rotated_cw = anchor & TEXT_ROTATED_CW != 0;
+    let anchor = anchor & !(TEXT_ROTATED | TEXT_ROTATED_CW);
     let scale = size / font::BASE_PX as f32;
     let text = String::from_utf8_lossy(s);
     // Total advance for anchoring.
@@ -1199,8 +1202,18 @@ fn text(cv: &mut Canvas, x: f32, y: f32, anchor: u8, size: f32, rgba: [f32; 4], 
             adv += font::GLYPHS[i].0 as f32;
         }
     }
-    // The pen walks +x for horizontal text, -y (upward) when rotated.
-    let (mut penx, mut peny) = if rotated {
+    // The pen walks +x for horizontal text, -y (upward) when rotated CCW,
+    // +y (downward) when rotated CW.
+    let (mut penx, mut peny) = if rotated_cw {
+        (
+            x,
+            match anchor {
+                1 => y - adv * scale * 0.5,
+                2 => y - adv * scale,
+                _ => y,
+            },
+        )
+    } else if rotated {
         (
             x,
             match anchor {
@@ -1238,7 +1251,23 @@ fn text(cv: &mut Canvas, x: f32, y: f32, anchor: u8, size: f32, rgba: [f32; 4], 
                     + sample(x0, y1c) * (1.0 - fx) * fy
                     + sample(x1, y1c) * fx * fy
             };
-            if rotated {
+            if rotated_cw {
+                // CW: glyph +u (right) points down (+y), +v (down) points -x.
+                let gx = penx - (top + gh) as f32 * scale;
+                let gy = peny + left as f32 * scale;
+                let (dw, dh) = (gh as f32 * scale, gw as f32 * scale);
+                let (bx0, by0, bx1, by1) = cv.bbox(gx, gy, gx + dw, gy + dh);
+                for py in by0..by1 {
+                    for px in bx0..bx1 {
+                        let u = (py as f32 + 0.5 - gy) / dh * gw as f32 - 0.5;
+                        let vv = (gx + dw - (px as f32 + 0.5)) / dw * gh as f32 - 0.5;
+                        let c = bilinear(u, vv);
+                        if c > 0.0 {
+                            cv.blend(px, py, rgba, c);
+                        }
+                    }
+                }
+            } else if rotated {
                 // CCW: glyph +u (right) points up (-y), +v (down) points +x.
                 let gx = penx + top as f32 * scale;
                 let gy = peny - (left + gw) as f32 * scale;
@@ -1271,7 +1300,9 @@ fn text(cv: &mut Canvas, x: f32, y: f32, anchor: u8, size: f32, rgba: [f32; 4], 
                 }
             }
         }
-        if rotated {
+        if rotated_cw {
+            peny += advance as f32 * scale;
+        } else if rotated {
             peny -= advance as f32 * scale;
         } else {
             penx += advance as f32 * scale;
@@ -2600,6 +2631,31 @@ mod tests {
         assert!(rasterize_into(&cmd, 40, 40, &mut out));
         let ink: u32 = out.chunks(4).map(|p| (p[3] > 32) as u32).sum();
         assert!(ink > 5, "glyph produced no ink: {ink}");
+    }
+
+    #[test]
+    fn rotated_cw_text_walks_downward() {
+        // "II" rotated CW from (20, 5): ink extends down the column below the
+        // start point, and none is drawn above it.
+        let mut cmd = vec![OP_TEXT];
+        cmd.extend(f32le(20.0));
+        cmd.extend(f32le(5.0));
+        cmd.push(TEXT_ROTATED_CW); // anchor start, CW rotation
+        cmd.extend(f32le(20.0)); // size
+        cmd.extend([0, 0, 0, 255]);
+        let s = b"II";
+        cmd.extend(u32le(s.len() as u32));
+        cmd.extend_from_slice(s);
+        let mut out = vec![0u8; 40 * 40 * 4];
+        assert!(rasterize_into(&cmd, 40, 40, &mut out));
+        let ink_at = |lo: usize, hi: usize| -> u32 {
+            (lo..hi)
+                .flat_map(|y| (0..40).map(move |x| (y, x)))
+                .map(|(y, x)| (out[(y * 40 + x) * 4 + 3] > 32) as u32)
+                .sum()
+        };
+        assert_eq!(ink_at(0, 5), 0, "ink above the CW start point");
+        assert!(ink_at(5, 40) > 5, "CW glyphs produced no ink below the start");
     }
 
     #[test]

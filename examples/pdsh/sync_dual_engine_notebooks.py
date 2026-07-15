@@ -23,6 +23,7 @@ IMPORT_REPLACEMENTS = {
     "from xy.pyplot import Legend": "from matplotlib.legend import Legend",
     "from xy.pyplot import Triangulation": "from matplotlib.tri import Triangulation",
     "from xy.pyplot import cycler": "from matplotlib import cycler",
+    "from xy.pyplot import FacetGrid": "from seaborn import FacetGrid",
 }
 ENGINE_NAMES = (
     "plt",
@@ -31,6 +32,7 @@ ENGINE_NAMES = (
     "Legend",
     "Triangulation",
     "cycler",
+    "FacetGrid",
 )
 # Cross-cell engine state: these variables are written in one cell and read in
 # a later cell of the same engine, so the paired cells must not share them —

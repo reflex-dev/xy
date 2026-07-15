@@ -1269,6 +1269,8 @@ class Axes(PlotTypeMixin):
         alpha = kwargs.pop("alpha", None)
         label = kwargs.pop("label", None)
         edgecolor = kwargs.pop("edgecolor", None)
+        if edgecolor is None and rcParams["patch.force_edgecolor"]:
+            edgecolor = rcParams["patch.edgecolor"]  # seaborn styles force patch edges
         linewidth = kwargs.pop("linewidth", None)
         xerr = kwargs.pop("xerr", None)
         yerr = kwargs.pop("yerr", None)
@@ -1387,6 +1389,12 @@ class Axes(PlotTypeMixin):
         orientation = kwargs.pop("orientation", "vertical")
         stacked = bool(kwargs.pop("stacked", False))
         edgecolor = kwargs.pop("edgecolor", None)
+        if (
+            edgecolor is None
+            and histtype in ("bar", "barstacked")
+            and rcParams["patch.force_edgecolor"]
+        ):
+            edgecolor = rcParams["patch.edgecolor"]  # seaborn styles force patch edges
         check_unsupported(kwargs, "hist()")
         if orientation not in {"vertical", "horizontal"}:
             raise ValueError("orientation must be 'vertical' or 'horizontal'")
@@ -3763,6 +3771,10 @@ class Axes(PlotTypeMixin):
                     for key, value in kw.items()
                     if key in {"dx", "dy", "color", "anchor", "class_name", "style"}
                 }
+                # matplotlib text sits exactly at its anchor point; only offset
+                # textcoords set dx/dy, so the callout defaults must not leak in.
+                text_kw.setdefault("dx", 0.0)
+                text_kw.setdefault("dy", 0.0)
                 if "font_size" in (text_kw.get("style") or {}):
                     text_kw["style"] = dict(text_kw["style"])
                     text_kw["style"]["font_size"] = (
@@ -4015,6 +4027,20 @@ class Axes(PlotTypeMixin):
             self._axis["x"]["domain"] = self._auto_domain("x")
         if not adjusted_aspect and self._ymargin != 0.0 and "y" not in self._explicit_domains:
             self._axis["y"]["domain"] = self._auto_domain("y")
+        if chart_padding is None and any(
+            entry["kind"] == "@text"
+            and (entry["kwargs"].get("style") or {}).get("coordinate_space") == "axes_fraction"
+            and _is_number(entry["args"][0])
+            and float(entry["args"][0]) > 1.0
+            for entry in self._entries
+        ):
+            # Margin text right of the axes box (seaborn-style row titles at
+            # axes-fraction x > 1) needs room the label-aware default margins
+            # don't reserve; mirror layout()'s defaults and widen the right side.
+            compact = width < 520
+            chart_padding = (
+                [6.0, 8.0 + 26.0, 36.0, 46.0] if compact else [10.0, 14.0 + 26.0, 42.0, 62.0]
+            )
         # A dataless matplotlib axis views exactly (0, 1) — margins never apply.
         # Pin it so the engine's autorange padding cannot widen the empty view
         # (padding turns the 0.5 midpoint tick into a bare 0/1 pair).

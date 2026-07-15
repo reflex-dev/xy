@@ -401,10 +401,31 @@ Object.assign(ChartView.prototype, {
       const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
       const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
       const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0";
+      const rot = Number.isFinite(Number(style.rotation))
+        ? ((Number(style.rotation) % 360) + 360) % 360
+        : 0;
       // matplotlib's va: the anchor y is the text center/bottom, not its top.
-      const va = style.vertical_align;
+      const va = String(style.vertical_align || "");
       const vAnchor =
         va === "center" || va === "middle" ? "-50%" : va === "bottom" ? "-100%" : "0";
+      // mpl rotation is CCW; CSS rotate is CW. For vertical text mpl aligns
+      // the post-rotation box: vertical_align picks the along-reading offset,
+      // the anchor the cross-axis one (translate runs first, in the element's
+      // own frame, so percentages track its box).
+      let transform = `translate(${anchor},${vAnchor})`;
+      if (rot === 90 || rot === 270) {
+        const cw = rot === 270;
+        const along =
+          va === "center" || va === "middle" ? "-50%"
+          : va === "top" ? (cw ? "0" : "-100%")
+          : va === "bottom" ? (cw ? "-100%" : "0")
+          : cw ? "0" : "-100%";
+        const cross =
+          ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? (cw ? "0" : "-100%") : cw ? "-100%" : "0";
+        transform = `rotate(${cw ? 90 : -90}deg) translate(${along},${cross})`;
+      } else if (rot) {
+        transform = `rotate(${-rot}deg) translate(${anchor},${vAnchor})`;
+      }
       // Structural inline only (position telegraphs the anchor); font + default
       // color live in the defeatable :where() stylesheet so utility classes win.
       // width:max-content: shrink-to-fit for an absolutely positioned label is
@@ -413,7 +434,7 @@ Object.assign(ChartView.prototype, {
       // translate(-100%) shift moves it back inside.
       d.style.cssText =
         `position:absolute;left:${px + dx}px;top:${py + dy}px;` +
-        `transform:translate(${anchor},${vAnchor});pointer-events:none;` +
+        `transform:${transform};transform-origin:0 0;pointer-events:none;` +
         `white-space:pre-line;text-align:center;width:max-content;`;
       this._applySlot(d, "annotation_label");
       this._applyClass(d, ann.class_name);
