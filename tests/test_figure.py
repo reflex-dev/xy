@@ -1780,15 +1780,17 @@ def test_normal_magnitudes_keep_unit_scale():
 
 
 def test_to_png_full_path(tmp_path):
-    # End-to-end Figure.to_png: needs a Chromium binary; skip cleanly without
-    # one (the mechanism itself is covered dependency-free by png_export_smoke).
+    # End-to-end browser Figure.to_png: skip cleanly without a supported
+    # installed browser (the mechanism is also covered dependency-free by the
+    # PNG smoke).
     from xy import export
 
-    if export.find_chromium() is None:
-        pytest.skip("no chromium for PNG export")
+    browser = export.find_browser()
+    if browser is None:
+        pytest.skip("no supported browser for PNG export")
     fig = Figure(width=320, height=200).line(np.arange(50.0), np.sin(np.arange(50.0)))
     out = tmp_path / "chart.png"
-    data = fig.to_png(str(out))
+    data = fig.to_png(str(out), engine=export.Engine.chromium)
     assert data[:8] == b"\x89PNG\r\n\x1a\n"
     assert out.read_bytes() == data
     # 320x200 at default scale=2 -> 640x400
@@ -1798,37 +1800,134 @@ def test_to_png_full_path(tmp_path):
     assert (w, h) == (640, 400)
 
 
-def test_find_chromium_checks_standard_macos_app_paths(monkeypatch):
+def test_find_browser_checks_standard_macos_app_paths(monkeypatch):
     from xy import export
 
     chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    monkeypatch.delenv("XY_BROWSER", raising=False)
     monkeypatch.delenv("XY_CHROMIUM", raising=False)
     monkeypatch.setattr(export.shutil, "which", lambda _name: None)
     monkeypatch.setattr(export.Path, "exists", lambda path: str(path) == chrome)
 
+    assert export.find_browser() == chrome
     assert export.find_chromium() == chrome
 
 
-def test_to_png_missing_chromium_is_clear(monkeypatch):
-    # The chromium engine, without a browser, names the fix (mirrors plotly
-    # needing kaleido) and never silently returns bad bytes. (The default native
-    # engine needs no browser at all.)
+def test_find_browser_explicit_missing_path_does_not_fall_back(monkeypatch):
     from xy import export
 
-    monkeypatch.setattr(export, "find_chromium", lambda explicit=None: None)
-    fig = Figure(width=200, height=150).scatter(np.arange(5.0), np.arange(5.0))
-    with pytest.raises(RuntimeError, match="Chromium"):
-        fig.to_png(engine="chromium")
+    monkeypatch.setattr(
+        export.shutil,
+        "which",
+        lambda name: None if name.startswith("/") else "/installed/chrome",
+    )
+    monkeypatch.setattr(export.Path, "exists", lambda _path: False)
+
+    assert export.find_browser("/missing/browser") is None
 
 
-def test_to_png_rejects_bad_export_geometry_before_chromium_lookup(monkeypatch):
+def test_find_browser_prefers_new_environment_variable(monkeypatch):
+    from xy import export
+
+    monkeypatch.setenv("XY_BROWSER", "/new/browser")
+    monkeypatch.setenv("XY_CHROMIUM", "/legacy/browser")
+    monkeypatch.setattr(export.Path, "exists", lambda path: str(path) == "/new/browser")
+
+    assert export.find_browser() == "/new/browser"
+
+
+def test_find_browser_discovers_edge_on_path(monkeypatch):
+    from xy import export
+
+    monkeypatch.delenv("XY_BROWSER", raising=False)
+    monkeypatch.delenv("XY_CHROMIUM", raising=False)
+    monkeypatch.setattr(export.Path, "exists", lambda _path: False)
+    monkeypatch.setattr(
+        export.shutil,
+        "which",
+        lambda name: "/usr/bin/microsoft-edge" if name == "microsoft-edge" else None,
+    )
+
+    assert export.find_browser() == "/usr/bin/microsoft-edge"
+
+
+def test_default_engine_never_looks_for_a_browser(monkeypatch):
     from xy import export
 
     def fail_lookup(explicit=None):
         del explicit
-        raise AssertionError("Chromium lookup should not run for invalid PNG export options")
+        raise AssertionError("Engine.default must remain browser-free")
 
-    monkeypatch.setattr(export, "find_chromium", fail_lookup)
+    monkeypatch.setattr(export, "find_browser", fail_lookup)
+    fig = Figure(width=200, height=150).scatter(np.arange(5.0), np.arange(5.0))
+
+    assert fig.to_png(engine=export.Engine.default).startswith(b"\x89PNG")
+
+
+def test_to_png_missing_browser_is_clear(monkeypatch):
+    # Browser mode never silently falls back to native. The default native
+    # engine needs no installed browser at all.
+    from xy import export
+
+    monkeypatch.setattr(export, "find_browser", lambda explicit=None: None)
+    fig = Figure(width=200, height=150).scatter(np.arange(5.0), np.arange(5.0))
+    with pytest.raises(RuntimeError, match="browser PNG export"):
+        fig.to_png(engine=export.Engine.chromium)
+
+
+def test_to_png_string_engine_is_deprecated_alias(monkeypatch):
+    from xy import export
+
+    seen = {}
+
+    def fake_html_to_png(_html, _width, _height, **kwargs):
+        seen.update(kwargs)
+        return b"\x89PNG\r\n\x1a\nlegacy"
+
+    monkeypatch.setattr(export, "html_to_png", fake_html_to_png)
+    fig = Figure(width=200, height=150).scatter(np.arange(5.0), np.arange(5.0))
+    with pytest.warns(DeprecationWarning, match="string export engines"):
+        data = fig.to_png(engine="chromium")
+
+    assert data.endswith(b"legacy")
+    assert seen["sandbox"] is True
+
+
+def test_to_png_chromium_threads_custom_css_into_standalone_html(monkeypatch):
+    from xy import export
+
+    seen = {}
+
+    def fake_html_to_png(html, _width, _height, **_kwargs):
+        seen["html"] = html
+        return b"\x89PNG\r\n\x1a\ncss"
+
+    monkeypatch.setattr(export, "html_to_png", fake_html_to_png)
+    fig = Figure(width=200, height=150).line([0.0, 1.0], [1.0, 2.0])
+    css = '[data-fc-slot="title"] { color: rebeccapurple; }'
+
+    data = fig.to_png(engine=export.Engine.chromium, custom_css=css)
+
+    assert data.endswith(b"css")
+    assert f"<style>{css}</style>" in seen["html"]
+
+
+def test_to_png_native_rejects_browser_only_custom_css():
+    from xy import export
+
+    fig = Figure(width=200, height=150).line([0.0, 1.0], [1.0, 2.0])
+    with pytest.raises(ValueError, match=r"custom_css requires engine=Engine.chromium"):
+        fig.to_png(engine=export.Engine.default, custom_css=".xy { color: red; }")
+
+
+def test_to_png_rejects_bad_export_geometry_before_browser_lookup(monkeypatch):
+    from xy import export
+
+    def fail_lookup(explicit=None):
+        del explicit
+        raise AssertionError("browser lookup should not run for invalid PNG export options")
+
+    monkeypatch.setattr(export, "find_browser", fail_lookup)
     fig = Figure(width="100%", height="100%").line([0.0, 1.0], [1.0, 2.0])
     cases = [
         ({"width": 0}, "PNG width"),
@@ -1846,14 +1945,14 @@ def test_to_png_rejects_bad_export_geometry_before_chromium_lookup(monkeypatch):
             fig.to_png(**kwargs)
 
 
-def test_html_to_png_rejects_bad_mechanism_options_before_chromium_lookup(monkeypatch):
+def test_html_to_png_rejects_bad_mechanism_options_before_browser_lookup(monkeypatch):
     from xy import export
 
     def fail_lookup(explicit=None):
         del explicit
-        raise AssertionError("Chromium lookup should not run for invalid PNG export options")
+        raise AssertionError("browser lookup should not run for invalid PNG export options")
 
-    monkeypatch.setattr(export, "find_chromium", fail_lookup)
+    monkeypatch.setattr(export, "find_browser", fail_lookup)
     cases = [
         ({"width": 0, "height": 200}, "PNG width"),
         ({"width": 320, "height": False}, "PNG height"),
@@ -1868,12 +1967,12 @@ def test_html_to_png_rejects_bad_mechanism_options_before_chromium_lookup(monkey
             export.html_to_png("<!doctype html>", **kwargs)
 
 
-def test_html_to_png_uses_chromium_sandbox_by_default(monkeypatch):
+def test_html_to_png_uses_browser_sandbox_by_default(monkeypatch):
     from xy import export
 
     seen = []
 
-    monkeypatch.setattr(export, "find_chromium", lambda explicit=None: "/fake/chrome")
+    monkeypatch.setattr(export, "find_browser", lambda explicit=None: "/fake/chrome")
 
     def fake_run(args, **kwargs):
         del kwargs
@@ -1893,12 +1992,12 @@ def test_html_to_png_uses_chromium_sandbox_by_default(monkeypatch):
     assert "--no-sandbox" in seen[1]
 
 
-def test_html_to_png_retries_without_sandbox_when_chromium_crashes(monkeypatch):
+def test_html_to_png_retries_without_sandbox_when_browser_crashes(monkeypatch):
     from xy import export
 
     seen = []
 
-    monkeypatch.setattr(export, "find_chromium", lambda explicit=None: "/fake/chrome")
+    monkeypatch.setattr(export, "find_browser", lambda explicit=None: "/fake/chrome")
 
     def fake_run(args, **kwargs):
         del kwargs

@@ -13,7 +13,7 @@ from typing import Any, Optional, TypeAlias
 
 import numpy as np
 
-from . import _annotations, _validate, channels, columns, export, interaction, kernels
+from . import _annotations, _validate, channels, columns, export, interaction, kernels, styles
 from . import marks as _marks
 from ._annotations import AnnotationsMixin
 from ._payload import PayloadMixin
@@ -197,7 +197,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             if tick_label_min_gap is None
             else self._nonnegative_scalar(tick_label_min_gap, f"{axis_id} axis tick_label_min_gap"),
             "side": side,
-            "style": self._optional_state_style(style, f"{axis_id} axis style"),
+            "style": styles.compile_axis_style(style, f"{axis_id} axis style"),
         }
         if axis_id == "x":
             self.x_label = self.axis_options[axis_id]["label"]
@@ -259,7 +259,12 @@ class Figure(AnnotationsMixin, PayloadMixin):
         selected: Optional[dict[str, Any]] = None,
         unselected: Optional[dict[str, Any]] = None,
     ) -> "Figure":
-        """Configure mark hover/selection state styling."""
+        """Configure legacy standalone hover/selection styling.
+
+        This low-level compatibility hook is intentionally not exposed by the
+        declarative component API. Reflex integrations should derive ordinary
+        mark props/styles from Reflex state instead of maintaining XY state.
+        """
         for state, value in (
             ("hover", hover),
             ("selected", selected),
@@ -960,7 +965,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             spec["domain"] = list(opts["domain"])
         if opts.get("format") is not None:
             spec["format"] = opts["format"]
-        style = self._optional_state_style(opts.get("style"), f"{axis_id} axis style")
+        style = styles.compile_axis_style(opts.get("style"), f"{axis_id} axis style")
         if style:
             spec["style"] = style
         if kind == "category":
@@ -1181,20 +1186,21 @@ class Figure(AnnotationsMixin, PayloadMixin):
         width: Optional[int] = None,
         height: Optional[int] = None,
         scale: float = 2.0,
-        engine: str = "native",
+        engine: export.Engine = export.Engine.default,
         optimize: bool = False,
-        chromium: Optional[str] = None,
+        custom_css: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
     ) -> bytes:
-        """Static PNG (export.py). `engine="native"` (default) paints the
+        """Static PNG (export.py). `engine=Engine.default` paints the
         decimated payload with the built-in Rust rasterizer — no browser,
         millisecond export. `optimize=True` uses the slower size-oriented
-        indexed encoder. `engine="chromium"` screenshots
-        the standalone HTML for a pixel-exact match to the live WebGL chart
-        (needs a Chromium/Chrome binary; see export.find_chromium); `gl`
-        selects its WebGL backend — "software" (default, deterministic
-        SwiftShader) or "hardware" (real GPU)."""
+        indexed encoder. `engine=Engine.chromium` screenshots the standalone
+        HTML with an automatically discovered installed browser for browser
+        CSS/WebGL fidelity (see export.find_browser); `gl` selects its WebGL
+        backend — "software" (default, deterministic SwiftShader) or
+        "hardware" (real GPU). `custom_css` is Chromium-only and injects an
+        author stylesheet into the captured document."""
         return export.to_png(
             self,
             path,
@@ -1203,7 +1209,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             scale=scale,
             engine=engine,
             optimize=optimize,
-            chromium=chromium,
+            custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
         )

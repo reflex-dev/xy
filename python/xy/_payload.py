@@ -138,14 +138,16 @@ class _PayloadWriter:
 
     def blob(self) -> bytes:
         return b"".join(
-            chunk if isinstance(chunk, bytes) else memoryview(chunk).cast("B")
-            for chunk in self._chunks
+            chunk if isinstance(chunk, bytes) else chunk.data.cast("B") for chunk in self._chunks
         )
 
     def buffers(self) -> list[memoryview]:
         """Per-column wire buffers (split mode): zero-copy views over the
         encoded chunks, ready to ship as separate binary comm frames."""
-        return [memoryview(c).cast("B") for c in self._chunks]
+        return [
+            memoryview(c).cast("B") if isinstance(c, bytes) else c.data.cast("B")
+            for c in self._chunks
+        ]
 
 
 class PayloadMixin(_Host):
@@ -913,6 +915,8 @@ class PayloadMixin(_Host):
             "y_range": list(yr),
             "channels_dropped": dropped,  # never silent (§28)
         }
+        if t.color_ch and t.color_ch.mode == "constant" and t.color_ch.constant is not None:
+            density["color"] = t.color_ch.constant
         sample = self._density_sample_spec(t, sel, visible, xr, yr, pw, sample_sel=sample_sel)
         if sample is not None:
             density["sample"] = sample

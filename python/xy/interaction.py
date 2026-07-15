@@ -456,6 +456,8 @@ def density_view(
         "x_range": [lo_x, hi_x],
         "y_range": [lo_y, hi_y],
     }
+    if t.color_ch and t.color_ch.mode == "constant" and t.color_ch.constant is not None:
+        density["color"] = t.color_ch.constant
     if sample is not None:
         density["sample"] = sample
     return (

@@ -780,12 +780,13 @@ fails. Re-bless the baseline from a CI run with
 
 ### Static image export
 
-`Figure.to_png()` defaults to the browser-free native Rust rasterizer and its
-latency-oriented PNG encoder; `optimize=True` selects the slower, smaller-file
-path. `engine="chromium"` remains available when a pixel-exact match to the
-live WebGL chart is required (Chromium discovered via env/PATH/Playwright
-cache). Both modes are covered by the PNG tests; HTML export (`to_html`) needs
-nothing extra.
+`Figure.to_png()` defaults to `Engine.default`, the browser-free native Rust
+rasterizer and its latency-oriented PNG encoder; `optimize=True` selects the
+slower, smaller-file path. `engine=Engine.chromium` remains available when
+browser CSS/WebGL fidelity is required (Chrome, Chromium, Edge, or
+`chrome-headless-shell` discovered via
+`XY_BROWSER`, PATH, and common application locations). Both modes are covered
+by the PNG tests; HTML export (`to_html`) needs nothing extra.
 
 ---
 

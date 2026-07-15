@@ -35,7 +35,7 @@ Beyond the mark set, three capability layers now ship on `main`:
 - **Mark-level styling (§ "Styling & Theming" below):** CSS `linear-gradient`
   fills, rounded (`corner_radius`, independent tip/base) and stroked bars,
   line/area dashes, smooth (monotone-cubic) curves, scatter symbols + strokes,
-  and per-state `mark_style` colors — all resolved from CSS so the marks obey
+  and mark colors — all resolved from CSS so the marks obey
   the same theme tokens as the chrome. Every styling input is validated at
   build time by the native CSS grammar (`src/css.rs`, ABI v9): closed grammars
   (hex/`rgb()`/`hsl()`/named colors, lengths, numbers) parse strictly,
@@ -45,7 +45,7 @@ Beyond the mark set, three capability layers now ship on `main`:
 - **Static export:** `fig.to_svg(...)` (pure-Python, screen-bounded vector —
   a 10M-point line exports in ~4 ms / ~58 KB) and `fig.to_png(...)` (a
   browser-free native Rust rasterizer by default, ~50× faster than the
-  `engine="chromium"` screenshot). Both consume the same decimated payload, so
+  `engine=Engine.chromium` screenshot). Both consume the same decimated payload, so
   export cost scales with pixels, not points.
 - **Standalone LOD without a kernel:** `to_html` exports now re-bin the
   retained density sample in a bundled Web Worker on zoom (off the main
@@ -299,9 +299,8 @@ The marks themselves speak CSS. `fill=` accepts a real CSS
 `corner_radius` (scalar or independent `(tip, base)`), `stroke`, and
 `stroke_width`; lines and area outlines take `dash` (presets or an on/off
 pattern); line/area take `curve="smooth"` (monotone-cubic); scatter takes
-`symbol` (circle/square/diamond/triangle/cross) plus point strokes; and
-`mark_style` sets per-state (hover/selected/unselected) colors. Every color
-flows through the same `--chart-*` tokens as the chrome, so a theme change
+`symbol` (circle/square/diamond/triangle/cross) plus point strokes. Mark colors
+flow through the same `--chart-*` tokens as the chrome, so a theme change
 re-resolves marks and chrome together. The full matrix and per-mark support
 table live in [`docs/styling.md`](styling.md). Static SVG export reproduces all
 of it (gradients → `<linearGradient>`, smooth curves → exact cubic Béziers,
@@ -378,12 +377,12 @@ integration and compatibility depth, not re-implementing shipped primitives.
 Parallel, non-chart-type tracks:
 
 - **Native PNG rasterizer** (perf) — **shipped** (dossier Phase 3).
-  `Chart.to_png(engine="native")`, now the default, paints the decimated
+  `Chart.to_png(engine=Engine.default)`, now the default, paints the decimated
   payload with an AA rasterizer in the Rust core (introduced in ABI v8,
   `fc_rasterize`) — no browser, ~50× faster than the Chromium screenshot,
   fast truecolor PNGs, and a baked bitmap font for text. `optimize=True`
   retains the slower indexed-palette path for smaller files;
-  `engine="chromium"` stays for a pixel-exact WebGL screenshot.
+  `engine=Engine.chromium` stays for an installed-browser CSS/WebGL screenshot.
 - **Reflex-first reactive API** — now the primary post-alpha product track, as
   described in step 2 above.
 

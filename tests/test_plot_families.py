@@ -81,7 +81,7 @@ def test_generic_segments_share_instanced_renderers() -> None:
     assert spec["traces"][0]["kind"] == "segments"
     assert spec["traces"][0]["n_marks"] == 2
     assert "<line" in fig.to_svg()
-    assert fig.to_png(engine="native").startswith(b"\x89PNG")
+    assert fig.to_png(engine=fc.Engine.default).startswith(b"\x89PNG")
 
 
 def test_triangle_mesh_ships_per_triangle_color_and_renders_static_exports() -> None:
@@ -104,7 +104,7 @@ def test_triangle_mesh_ships_per_triangle_color_and_renders_static_exports() -> 
     assert all(name in trace for name in ("x0", "y0", "x1", "y1", "x2", "y2"))
     svg = fig.to_svg()
     assert svg.count("<polygon") == 2
-    assert fig.to_png(engine="native").startswith(b"\x89PNG")
+    assert fig.to_png(engine=fc.Engine.default).startswith(b"\x89PNG")
 
 
 def test_triangle_mesh_filters_nonfinite_geometry_and_color_rows() -> None:

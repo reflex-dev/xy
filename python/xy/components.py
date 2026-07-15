@@ -40,7 +40,7 @@ from typing import Any, Optional, TypeAlias, Union
 
 import numpy as np
 
-from . import _validate, channels
+from . import _validate, channels, export, styles
 from ._figure import Figure, Selection
 from .dom import CHART_DOM_SLOTS, validate_dom_slots
 
@@ -60,12 +60,12 @@ __all__ = [
     "Annotation",
     "Axis",
     "Chart",
+    "Colorbar",
     "Component",
     "FacetChart",
     "Interaction",
     "Legend",
     "Mark",
-    "MarkStyle",
     "Modebar",
     "Theme",
     "Tooltip",
@@ -78,6 +78,7 @@ __all__ = [
     "box_chart",
     "callout",
     "chart",
+    "colorbar",
     "column",
     "column_chart",
     "contour",
@@ -102,7 +103,6 @@ __all__ = [
     "legend",
     "line",
     "line_chart",
-    "mark_style",
     "marker",
     "modebar",
     "scatter",
@@ -152,6 +152,7 @@ class Mark(Component):
     data: Any = None
     name: Optional[str] = None
     class_name: Optional[str] = None
+    style: dict[str, StyleValue] = field(default_factory=dict)
     props: dict[str, Any] = field(default_factory=dict)
 
 
@@ -212,6 +213,16 @@ class Tooltip(Component):
 
 
 @dataclass
+class Colorbar(Component):
+    """Color scale chrome; ``render`` remains opaque for Reflex adapters."""
+
+    show: bool = True
+    class_name: Optional[str] = None
+    style: dict[str, StyleValue] = field(default_factory=dict)
+    render: Any = None
+
+
+@dataclass
 class Modebar(Component):
     show: bool = True
     class_name: Optional[str] = None
@@ -223,13 +234,6 @@ class Modebar(Component):
 @dataclass
 class Theme(Component):
     style: dict[str, StyleValue] = field(default_factory=dict)
-
-
-@dataclass
-class MarkStyle(Component):
-    hover: dict[str, StyleValue] = field(default_factory=dict)
-    selected: dict[str, StyleValue] = field(default_factory=dict)
-    unselected: dict[str, StyleValue] = field(default_factory=dict)
 
 
 @dataclass
@@ -265,6 +269,7 @@ def scatter(
     symbol: str = "circle",
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -280,6 +285,7 @@ def scatter(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "scatter style"),
         props={
             "color": color,
             "size": size,
@@ -308,6 +314,7 @@ def line(
     opacity: float = 1.0,
     curve: str = "linear",
     dash: Any = None,
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -321,6 +328,7 @@ def line(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "line style"),
         props={
             "color": color,
             "width": width,
@@ -349,6 +357,7 @@ def area(
     fill: Any = None,
     curve: str = "linear",
     dash: Any = None,
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -363,6 +372,7 @@ def area(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "area style"),
         props={
             "base": base,
             "color": color,
@@ -392,6 +402,7 @@ def error_band(
     line_width: float = 0.0,
     line_opacity: float = 0.0,
     fill: Any = None,
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -404,6 +415,7 @@ def error_band(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "error_band style"),
         props={
             "upper": upper,
             "color": color,
@@ -429,6 +441,7 @@ def errorbar(
     width: float = 1.2,
     cap_size: Optional[float] = None,
     opacity: float = 1.0,
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -441,6 +454,7 @@ def errorbar(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "errorbar style"),
         props={
             "yerr": yerr,
             "xerr": xerr,
@@ -467,6 +481,7 @@ def segments(
     domain: Optional[tuple[float, float]] = None,
     width: float = 1.2,
     opacity: float = 1.0,
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -479,6 +494,7 @@ def segments(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "segments style"),
         props={
             "x1": x1,
             "y1": y1,
@@ -509,6 +525,7 @@ def triangle_mesh(
     opacity: float = 1.0,
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -521,6 +538,7 @@ def triangle_mesh(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "triangle_mesh style"),
         props={
             "x1": x1,
             "y1": y1,
@@ -549,6 +567,7 @@ def step(
     width: float = 1.5,
     opacity: float = 1.0,
     dash: Any = None,
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -561,6 +580,7 @@ def step(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "step style"),
         props={
             "where": where,
             "color": color,
@@ -584,6 +604,7 @@ def stairs(
     width: float = 1.5,
     opacity: float = 1.0,
     dash: Any = None,
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -596,6 +617,7 @@ def stairs(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "stairs style"),
         props={
             "where": where,
             "color": color,
@@ -621,6 +643,7 @@ def stem(
     marker: bool = True,
     marker_size: float = 5.0,
     symbol: str = "circle",
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -633,6 +656,7 @@ def stem(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "stem style"),
         props={
             "base": base,
             "color": color,
@@ -657,6 +681,7 @@ def ecdf(
     width: float = 1.5,
     opacity: float = 1.0,
     dash: Any = None,
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -668,6 +693,7 @@ def ecdf(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "ecdf style"),
         props={
             "bins": bins,
             "color": color,
@@ -693,6 +719,7 @@ def box(
     orientation: str = "vertical",
     show_outliers: bool = True,
     outlier_size: float = 4.0,
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -704,6 +731,7 @@ def box(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "box style"),
         props={
             "x": x,
             "group": group,
@@ -731,6 +759,7 @@ def violin(
     bins: int = 64,
     opacity: float = 0.55,
     orientation: str = "vertical",
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -742,6 +771,7 @@ def violin(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "violin style"),
         props={
             "x": x,
             "group": group,
@@ -770,6 +800,7 @@ def hexbin(
     name: Optional[str] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     opacity: float = 0.9,
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -782,6 +813,7 @@ def hexbin(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "hexbin style"),
         props={
             "gridsize": gridsize,
             "range": range,
@@ -811,6 +843,7 @@ def contour(
     width: float = 1.1,
     opacity: float = 0.9,
     dash_negative: bool = False,
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -823,6 +856,7 @@ def contour(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "contour style"),
         props={
             "z": z,
             "levels": levels,
@@ -853,6 +887,7 @@ def histogram(
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
     fill: Any = None,
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -864,6 +899,7 @@ def histogram(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "histogram style"),
         props={
             "bins": bins,
             "range": range,
@@ -896,6 +932,7 @@ def hist(
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
     fill: Any = None,
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -915,6 +952,7 @@ def hist(
         stroke=stroke,
         stroke_width=stroke_width,
         fill=fill,
+        style=style,
         class_name=class_name,
         x_axis=x_axis,
         y_axis=y_axis,
@@ -939,6 +977,7 @@ def bar(
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
     fill: Any = None,
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -952,6 +991,7 @@ def bar(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "bar style"),
         props={
             "color": color,
             "colors": colors,
@@ -989,6 +1029,7 @@ def column(
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
     fill: Any = None,
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -1001,6 +1042,7 @@ def column(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "column style"),
         props={
             "color": color,
             "colors": colors,
@@ -1030,6 +1072,7 @@ def heatmap(
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     opacity: float = 0.95,
+    style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
     y_axis: str = "y",
@@ -1042,6 +1085,7 @@ def heatmap(
         data=data,
         name=name,
         class_name=class_name,
+        style=_mark_style_dict(style, "heatmap style"),
         props={
             "z": z,
             "colormap": colormap,
@@ -1413,7 +1457,7 @@ def x_axis(
             tick_label_min_gap, "x_axis tick_label_min_gap"
         ),
         side=_axis_side(side, "x"),
-        style=_style_dict(style, "x_axis style"),
+        style=styles.compile_axis_style(style, "x_axis style"),
     )
 
 
@@ -1464,7 +1508,7 @@ def y_axis(
             tick_label_min_gap, "y_axis tick_label_min_gap"
         ),
         side=_axis_side(side, "y"),
-        style=_style_dict(style, "y_axis style"),
+        style=styles.compile_axis_style(style, "y_axis style"),
     )
 
 
@@ -1508,6 +1552,23 @@ def tooltip(
         format=_string_dict(format, "tooltip format"),
         class_name=_optional_string(class_name, "tooltip class_name"),
         style=_style_dict(style, "tooltip style"),
+        render=render,
+    )
+
+
+def colorbar(
+    *children: Any,
+    show: bool = True,
+    render: Any = None,
+    class_name: Optional[str] = None,
+    style: Optional[dict[str, StyleValue]] = None,
+) -> Colorbar:
+    """Style built-in color chrome or supply an opaque Reflex replacement."""
+    show, render = _chrome_render_args(children, show, render, "colorbar")
+    return Colorbar(
+        show=_strict_bool(show, "colorbar show"),
+        class_name=_optional_string(class_name, "colorbar class_name"),
+        style=_style_dict(style, "colorbar style"),
         render=render,
     )
 
@@ -1559,26 +1620,6 @@ def theme(
     if tokens:
         merged.update(_theme_tokens(tokens, "theme tokens"))
     return Theme(style=merged)
-
-
-def mark_style(
-    *,
-    hover: Optional[dict[str, StyleValue]] = None,
-    selected: Optional[dict[str, StyleValue]] = None,
-    unselected: Optional[dict[str, StyleValue]] = None,
-) -> MarkStyle:
-    """Style mark interaction states declaratively.
-
-    The first renderer-backed fields are scatter hover highlights and
-    selected/unselected opacity. The component shape is shared by future mark
-    kinds so charts do not need an API migration when bars/lines gain richer
-    state styling.
-    """
-    return MarkStyle(
-        hover=_style_dict(hover, "mark_style hover"),
-        selected=_style_dict(selected, "mark_style selected"),
-        unselected=_style_dict(unselected, "mark_style unselected"),
-    )
 
 
 def interaction_config(
@@ -1757,9 +1798,9 @@ class Chart(Component):
         axes = {c.id or c.which: c for c in axis_children}
         legends = [c for c in self.children if isinstance(c, Legend)]
         tooltips = [c for c in self.children if isinstance(c, Tooltip)]
+        colorbars = [c for c in self.children if isinstance(c, Colorbar)]
         modebars = [c for c in self.children if isinstance(c, Modebar)]
         themes = [c for c in self.children if isinstance(c, Theme)]
-        mark_styles = [c for c in self.children if isinstance(c, MarkStyle)]
         interactions = [c for c in self.children if isinstance(c, Interaction)]
         legend_shows = [_strict_bool(c.show, "legend show") for c in legends]
         known = (
@@ -1768,16 +1809,16 @@ class Chart(Component):
             Axis,
             Legend,
             Tooltip,
+            Colorbar,
             Modebar,
             Theme,
-            MarkStyle,
             Interaction,
         )
         unknown = [c for c in self.children if not isinstance(c, known)]
         if unknown:
             raise TypeError(
                 f"{self.kind}() children must be marks/annotations/axes/legend/tooltip/"
-                f"modebar/theme/mark_style/interaction_config, got "
+                f"colorbar/modebar/theme/interaction_config, got "
                 f"{[type(c).__name__ for c in unknown]}"
             )
 
@@ -1825,12 +1866,6 @@ class Chart(Component):
         fig.style.update(self.style)
         for slot, slot_style in self.styles.items():
             fig.chrome_styles[slot] = {**fig.chrome_styles.get(slot, {}), **slot_style}
-        for node in mark_styles:
-            fig.set_mark_style(
-                hover=node.hover,
-                selected=node.selected,
-                unselected=node.unselected,
-            )
         if (
             self.hover is not None
             or self.click is not None
@@ -1918,6 +1953,11 @@ class Chart(Component):
             _apply_chrome_node(fig, "tooltip", node.class_name, node.style)
             fig.show_tooltip = node.show
             fig.tooltip = _tooltip_spec(node, tooltip_aliases, tooltip_sources)
+        if colorbars:
+            node = colorbars[-1]
+            _apply_chrome_node(fig, "colorbar", node.class_name, node.style)
+            if not node.show:
+                fig.colorbar_options = None
         self._figure = fig
         return fig
 
@@ -1928,7 +1968,7 @@ class Chart(Component):
 
         Core xy does not import or serialize framework components. The
         objects returned here are the exact Python objects passed to
-        `fc.legend(...)` / `fc.tooltip(...)`, so an adapter can mount them while
+        `fc.legend(...)` / `fc.tooltip(...)` / `fc.colorbar(...)`, so an adapter can mount them while
         standalone HTML keeps using the built-in safe DOM fallback.
         """
         result: dict[str, Any] = {}
@@ -1938,6 +1978,9 @@ class Chart(Component):
         tooltips = [c for c in self.children if isinstance(c, Tooltip)]
         if tooltips and tooltips[-1].render is not None:
             result["tooltip"] = tooltips[-1].render
+        colorbars = [c for c in self.children if isinstance(c, Colorbar)]
+        if colorbars and colorbars[-1].render is not None:
+            result["colorbar"] = colorbars[-1].render
         return result
 
     def reflex_components(self) -> dict[str, Any]:
@@ -2001,9 +2044,9 @@ class Chart(Component):
         width: Optional[int] = None,
         height: Optional[int] = None,
         scale: float = 2.0,
-        engine: str = "native",
+        engine: export.Engine = export.Engine.default,
         optimize: bool = False,
-        chromium: Optional[str] = None,
+        custom_css: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
     ) -> bytes:
@@ -2014,7 +2057,7 @@ class Chart(Component):
             scale=scale,
             engine=engine,
             optimize=optimize,
-            chromium=chromium,
+            custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
         )
@@ -2106,6 +2149,10 @@ def _style_dict(value: Any, label: str) -> dict[str, StyleValue]:
     if value is None:
         return {}
     return Figure._style_mapping(value, label)
+
+
+def _mark_style_dict(value: Any, label: str) -> dict[str, StyleValue]:
+    return styles.normalize_css_style(value, label)
 
 
 def _slot_styles_dict(value: Any, label: str) -> dict[str, dict[str, StyleValue]]:
@@ -2310,6 +2357,7 @@ def _facet_mark(mark: Mark, mask: np.ndarray, n: int) -> Mark:
         data=_subset_data(mark.data, mask, n),
         name=mark.name,
         class_name=mark.class_name,
+        style=mark.style,
         props=mark.props,
     )
 
@@ -2485,9 +2533,9 @@ class FacetChart(Component):
         path: Optional[str | PathLike[str]] = None,
         *,
         scale: float = 2.0,
-        engine: str = "native",
+        engine: export.Engine = export.Engine.default,
         optimize: bool = False,
-        chromium: Optional[str] = None,
+        custom_css: Optional[str] = None,
         sandbox: bool = True,
         gl: str = "software",
     ) -> bytes:
@@ -2496,7 +2544,7 @@ class FacetChart(Component):
             scale=scale,
             engine=engine,
             optimize=optimize,
-            chromium=chromium,
+            custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
         )
@@ -2606,6 +2654,7 @@ def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
             symbol=m.props["symbol"],
             stroke=m.props["stroke"],
             stroke_width=m.props["stroke_width"],
+            style=m.style,
         )
     except Exception:
         # Axis resolution happens before Figure.scatter's own transactional
@@ -2624,6 +2673,7 @@ def _apply_line(fig: Figure, m: Mark, data: Any) -> None:
         opacity=m.props["opacity"],
         curve=m.props["curve"],
         dash=m.props["dash"],
+        style=m.style,
     )
 
 
@@ -2643,6 +2693,7 @@ def _apply_area(fig: Figure, m: Mark, data: Any) -> None:
         fill=m.props["fill"],
         curve=m.props["curve"],
         dash=m.props["dash"],
+        style=m.style,
     )
 
 
@@ -2657,6 +2708,7 @@ def _apply_error_band(fig: Figure, m: Mark, data: Any) -> None:
         line_width=m.props["line_width"],
         line_opacity=m.props["line_opacity"],
         fill=m.props["fill"],
+        style=m.style,
     )
 
 
@@ -2673,6 +2725,7 @@ def _apply_errorbar(fig: Figure, m: Mark, data: Any) -> None:
         width=m.props["width"],
         cap_size=m.props["cap_size"],
         opacity=m.props["opacity"],
+        style=m.style,
     )
 
 
@@ -2689,6 +2742,7 @@ def _apply_segments(fig: Figure, m: Mark, data: Any) -> None:
         domain=m.props["domain"],
         width=m.props["width"],
         opacity=m.props["opacity"],
+        style=m.style,
     )
 
 
@@ -2708,6 +2762,7 @@ def _apply_triangle_mesh(fig: Figure, m: Mark, data: Any) -> None:
         opacity=m.props["opacity"],
         stroke=m.props["stroke"],
         stroke_width=m.props["stroke_width"],
+        style=m.style,
     )
 
 
@@ -2721,6 +2776,7 @@ def _apply_step(fig: Figure, m: Mark, data: Any) -> None:
         width=m.props["width"],
         opacity=m.props["opacity"],
         dash=m.props["dash"],
+        style=m.style,
     )
 
 
@@ -2735,6 +2791,7 @@ def _apply_stairs(fig: Figure, m: Mark, data: Any) -> None:
         width=m.props["width"],
         opacity=m.props["opacity"],
         dash=m.props["dash"],
+        style=m.style,
     )
 
 
@@ -2751,6 +2808,7 @@ def _apply_stem(fig: Figure, m: Mark, data: Any) -> None:
         marker=m.props["marker"],
         marker_size=m.props["marker_size"],
         symbol=m.props["symbol"],
+        style=m.style,
     )
 
 
@@ -2763,6 +2821,7 @@ def _apply_ecdf(fig: Figure, m: Mark, data: Any) -> None:
         width=m.props["width"],
         opacity=m.props["opacity"],
         dash=m.props["dash"],
+        style=m.style,
     )
 
 
@@ -2780,6 +2839,7 @@ def _apply_box(fig: Figure, m: Mark, data: Any) -> None:
         orientation=m.props["orientation"],
         show_outliers=m.props["show_outliers"],
         outlier_size=m.props["outlier_size"],
+        style=m.style,
     )
 
 
@@ -2796,6 +2856,7 @@ def _apply_violin(fig: Figure, m: Mark, data: Any) -> None:
         bins=m.props["bins"],
         opacity=m.props["opacity"],
         orientation=m.props["orientation"],
+        style=m.style,
     )
 
 
@@ -2814,6 +2875,7 @@ def _apply_hexbin(fig: Figure, m: Mark, data: Any) -> None:
         name=m.name,
         colormap=m.props["colormap"],
         opacity=m.props["opacity"],
+        style=m.style,
     )
 
 
@@ -2830,6 +2892,7 @@ def _apply_contour(fig: Figure, m: Mark, data: Any) -> None:
         width=m.props["width"],
         opacity=m.props["opacity"],
         dash_negative=m.props.get("dash_negative", False),
+        style=m.style,
     )
 
 
@@ -2847,6 +2910,7 @@ def _apply_histogram(fig: Figure, m: Mark, data: Any) -> None:
         stroke=m.props["stroke"],
         stroke_width=m.props["stroke_width"],
         fill=m.props["fill"],
+        style=m.style,
     )
 
 
@@ -2859,6 +2923,7 @@ def _apply_heatmap(fig: Figure, m: Mark, data: Any) -> None:
         colormap=m.props["colormap"],
         domain=m.props["domain"],
         opacity=m.props["opacity"],
+        style=m.style,
     )
 
 
@@ -2880,6 +2945,7 @@ def _apply_bar(fig: Figure, m: Mark, data: Any) -> None:
         stroke=m.props["stroke"],
         stroke_width=m.props["stroke_width"],
         fill=m.props["fill"],
+        style=m.style,
     )
 
 
@@ -2901,6 +2967,7 @@ def _apply_column(fig: Figure, m: Mark, data: Any) -> None:
         stroke=m.props["stroke"],
         stroke_width=m.props["stroke_width"],
         fill=m.props["fill"],
+        style=m.style,
     )
 
 

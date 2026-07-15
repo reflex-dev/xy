@@ -30,9 +30,13 @@ hatch, but it is not part of the public chart-building surface.
 
 Charts accept `width="100%"` and/or `height="100%"` for responsive layouts.
 Standalone `to_html(...)` needs no browser dependency, and `to_png(...)` defaults
-to a browser-free native rasterizer. `to_png(..., engine="chromium")` needs a
-local Chrome/Chromium executable because it screenshots the same standalone HTML
-document for a pixel-exact match to the live chart.
+to a browser-free native rasterizer (`Engine.default`).
+`to_png(..., engine=Engine.chromium)` uses an
+installed Chrome, Chromium, Edge, or `chrome-headless-shell` executable because
+it screenshots the same standalone HTML document for browser CSS/WebGL fidelity.
+Automatic discovery can be overridden with `XY_BROWSER`. Pass `custom_css=` to
+that engine when the screenshot also needs author CSS; native PNG intentionally
+rejects browser-only stylesheets.
 
 ## Chart Family Quick Reference
 

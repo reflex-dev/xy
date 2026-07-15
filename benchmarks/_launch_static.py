@@ -55,7 +55,7 @@ def nonblank_png(png: bytes) -> int:
 def child_run(library: str, n: int) -> dict[str, Any]:
     # Imports are excluded from chart-to-PNG time but included in RSS.
     if library == "xy":
-        from xy import scatter, scatter_chart
+        from xy import Engine, scatter, scatter_chart
     elif library == "plotly":
         import plotly.express as px
     elif library == "matplotlib":
@@ -71,7 +71,7 @@ def child_run(library: str, n: int) -> dict[str, Any]:
     t0 = time.perf_counter()
     if library == "xy":
         fig = scatter_chart(scatter(x=x, y=y), width=WIDTH, height=HEIGHT).figure()
-        png = fig.to_png(width=WIDTH, height=HEIGHT, scale=1, engine="native")
+        png = fig.to_png(width=WIDTH, height=HEIGHT, scale=1, engine=Engine.default)
         mode = "density" if fig.traces[0].use_density() else "direct"
     elif library == "plotly":
         # render_mode remains px.scatter's default "auto".

@@ -697,11 +697,6 @@ chart = fc.chart(
         link_group="demo-linked-x",
         link_axes=("x",),
     ),
-    fc.mark_style(
-        hover={"color": "#0f172a", "size": 18, "opacity": 0.9},
-        selected={"opacity": 1},
-        unselected={"opacity": 0.18},
-    ),
     fc.theme(plot_background="white", grid_color="rgba(37,99,235,.12)"),
     fc.tooltip(fields=["x", "y"], format={"x": ".2f", "y": ".2f"}),
     fc.legend(),
