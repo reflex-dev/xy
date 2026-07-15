@@ -22,6 +22,7 @@ import numpy as np
 
 from ._artists import Legend
 from ._axes import Axes
+from ._axisgrid import FacetGrid
 from ._colors import LinearSegmentedColormap, ListedColormap
 from ._mplfig import Figure, GridSpec
 from ._rc import _PropCycle, rc, rc_context, rcdefaults, rcParams
@@ -46,6 +47,7 @@ from ._translate import not_implemented
 __all__ = [
     "AutoLocator",
     "Axes",
+    "FacetGrid",
     "Figure",
     "FixedFormatter",
     "FixedLocator",
@@ -921,8 +923,29 @@ _NAMED_STYLES: dict[str, dict[str, Any]] = {
         "ytick.color": "#262626",
         "legend.frameon": False,
     },
+    "seaborn-v0_8-darkgrid": {
+        "figure.facecolor": "white",
+        "axes.facecolor": "#EAEAF2",
+        "axes.edgecolor": "white",
+        "axes.labelcolor": "#262626",
+        "axes.grid": True,
+        "grid.color": "white",
+        "xtick.color": "#262626",
+        "ytick.color": "#262626",
+        "legend.frameon": False,
+        # seaborn's axes_style forces white patch edges (bar/hist separators).
+        "patch.edgecolor": "white",
+        "patch.force_edgecolor": True,
+    },
+    # seaborn's classic "deep" palette — the cycle sns.set() installs.
+    "seaborn-v0_8-deep": {
+        "axes.prop_cycle": _PropCycle(
+            ["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B3", "#937860"]
+        ),
+    },
 }
 _NAMED_STYLES["seaborn-whitegrid"] = _NAMED_STYLES["seaborn-v0_8-whitegrid"]
+_NAMED_STYLES["seaborn-darkgrid"] = _NAMED_STYLES["seaborn-v0_8-darkgrid"]
 
 
 class _StyleNamespace:

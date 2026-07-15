@@ -226,12 +226,35 @@ Object.assign(ChartView.prototype, {
       const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
       const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
       const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0";
+      const rot = Number.isFinite(Number(style.rotation))
+        ? ((Number(style.rotation) % 360) + 360) % 360
+        : 0;
+      // mpl rotation is CCW; CSS rotate is CW. For vertical text mpl aligns
+      // the post-rotation box: vertical_align picks the along-reading offset,
+      // the anchor the cross-axis one (translate runs first, in the element's
+      // own frame, so percentages track its box).
+      let transform = `translate(${anchor},0)`;
+      if (rot === 90 || rot === 270) {
+        const cw = rot === 270;
+        const va = String(style.vertical_align || "");
+        const along =
+          va === "center" ? "-50%"
+          : va === "top" ? (cw ? "0" : "-100%")
+          : va === "bottom" ? (cw ? "-100%" : "0")
+          : cw ? "0" : "-100%";
+        const cross =
+          ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? (cw ? "0" : "-100%") : cw ? "-100%" : "0";
+        transform = `rotate(${cw ? 90 : -90}deg) translate(${along},${cross})`;
+      } else if (rot) {
+        transform = `rotate(${-rot}deg) translate(${anchor},0)`;
+      }
       // Structural inline only (position telegraphs the anchor); font + default
       // color live in the defeatable :where() stylesheet so utility classes win.
       d.style.cssText =
         `position:absolute;left:${px + dx}px;top:${py + dy}px;` +
-        `transform:translate(${anchor},0);pointer-events:none;` +
-        `white-space:pre-line;text-align:center;`;
+        `transform:${transform};transform-origin:0 0;pointer-events:none;` +
+        // max-content: matplotlib text never wraps to fit the canvas edge.
+        `white-space:pre-line;text-align:center;width:max-content;`;
       this._applySlot(d, "annotation_label");
       this._applyClass(d, ann.class_name);
       this._applyStyle(d, style);

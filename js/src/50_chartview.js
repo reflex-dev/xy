@@ -1983,9 +1983,11 @@ class ChartView {
     const { x0, x1, y0, y1 } = this.view;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    const bg = this.theme.bg;
-    if (bg) gl.clearColor(bg[0] * bg[3], bg[1] * bg[3], bg[2] * bg[3], bg[3]);
-    else gl.clearColor(0, 0, 0, 0);
+    // Always transparent: this canvas sits ABOVE the chrome canvas over the
+    // plot rect, so an opaque --chart-bg clear here would occlude everything
+    // chrome draws inside the plot (grid, bands, rules, arrows). The plot
+    // background paints at the bottom of the stack in _drawChrome instead.
+    gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     for (const g of this.gpuTraces) {
@@ -2826,6 +2828,13 @@ class ChartView {
     }
 
     const p = this.plot;
+    // Plot background (--chart-bg) paints here, at the bottom of the chrome
+    // canvas, so the grid and annotation shapes drawn next stay visible and
+    // the transparent marks canvas above shows all of it (§36 theming).
+    if (this.theme.bg) {
+      ctx.fillStyle = cssColor(this.theme.bg);
+      ctx.fillRect(p.x, p.y, p.w, p.h);
+    }
     const xAxis = this._axis("x");
     const yAxis = this._axis("y");
     const hideX = this._axisTickLabelStrategy(xAxis) === "none";

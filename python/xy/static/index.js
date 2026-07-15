@@ -241,7 +241,7 @@ const FC_CHROME_CSS = `
 :where(.xy [data-fc-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
 :where(.xy [data-fc-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
 :where(.xy [data-fc-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
-:where(.xy [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-axis,currentColor);cursor:pointer}
+:where(.xy [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-text,currentColor);cursor:pointer}
 :where(.xy [data-fc-slot="modebar_button"].fc-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
 :where(.xy [data-fc-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
 :where(.xy [data-fc-slot="selection"][data-fc-band="zoom"]){border-color:var(--chart-zoom-selection,rgba(120,120,120,.9));background:var(--chart-zoom-selection-fill,rgba(120,120,120,.12))}
@@ -3336,9 +3336,7 @@ const gl = this.gl;
 const { x0, x1, y0, y1 } = this.view;
 gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-const bg = this.theme.bg;
-if (bg) gl.clearColor(bg[0] * bg[3], bg[1] * bg[3], bg[2] * bg[3], bg[3]);
-else gl.clearColor(0, 0, 0, 0);
+gl.clearColor(0, 0, 0, 0);
 gl.clear(gl.COLOR_BUFFER_BIT);
 for (const g of this.gpuTraces) {
 if (g.tier === "density") {
@@ -4111,6 +4109,10 @@ this.labels.textContent = "";
 this._lastLabelDraw = now;
 }
 const p = this.plot;
+if (this.theme.bg) {
+ctx.fillStyle = cssColor(this.theme.bg);
+ctx.fillRect(p.x, p.y, p.w, p.h);
+}
 const xAxis = this._axis("x");
 const yAxis = this._axis("y");
 const hideX = this._axisTickLabelStrategy(xAxis) === "none";
@@ -4911,10 +4913,28 @@ d.textContent = text;
 const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
 const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
 const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0";
+const rot = Number.isFinite(Number(style.rotation))
+? ((Number(style.rotation) % 360) + 360) % 360
+: 0;
+let transform = `translate(${anchor},0)`;
+if (rot === 90 || rot === 270) {
+const cw = rot === 270;
+const va = String(style.vertical_align || "");
+const along =
+va === "center" ? "-50%"
+: va === "top" ? (cw ? "0" : "-100%")
+: va === "bottom" ? (cw ? "-100%" : "0")
+: cw ? "0" : "-100%";
+const cross =
+ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? (cw ? "0" : "-100%") : cw ? "-100%" : "0";
+transform = `rotate(${cw ? 90 : -90}deg) translate(${along},${cross})`;
+} else if (rot) {
+transform = `rotate(${-rot}deg) translate(${anchor},0)`;
+}
 d.style.cssText =
 `position:absolute;left:${px + dx}px;top:${py + dy}px;` +
-`transform:translate(${anchor},0);pointer-events:none;` +
-`white-space:pre-line;text-align:center;`;
+`transform:${transform};transform-origin:0 0;pointer-events:none;` +
+`white-space:pre-line;text-align:center;width:max-content;`;
 this._applySlot(d, "annotation_label");
 this._applyClass(d, ann.class_name);
 this._applyStyle(d, style);

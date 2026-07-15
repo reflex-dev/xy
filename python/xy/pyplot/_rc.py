@@ -28,6 +28,8 @@ _DEFAULTS: dict[str, Any] = {
     "lines.markersize": 6.0,
     "lines.markeredgewidth": 1.0,
     "patch.linewidth": 1.0,
+    "patch.edgecolor": "black",
+    "patch.force_edgecolor": False,
     "scatter.edgecolors": "face",
     "font.size": 10.0,
     "font.family": ["sans-serif"],

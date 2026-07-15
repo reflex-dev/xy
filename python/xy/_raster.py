@@ -59,6 +59,11 @@ from ._svg import (
     _AFFINE_CHANNEL_POINTS,
     _STROKED_TRIANGLES,
 ) = range(17)
+# Anchor-byte rotation flags — must match TEXT_ROTATED/TEXT_ROTATED_CW in
+# src/raster.rs. CCW reads bottom-to-top (y-axis titles), CW top-to-bottom
+# (right-margin titles, matplotlib rotation=270).
+_TEXT_ROT_CCW = 0x80
+_TEXT_ROT_CW = 0x40
 _SYMBOLS = {
     "circle": 0,
     "square": 1,
@@ -603,6 +608,9 @@ def render_raster(
 
     # Chrome (unclipped): baselines, labels, title, legend.
     cmd.clip(0, 0, width, height)
+    # Text annotations are unclipped like matplotlib Text (clip_on=False):
+    # margin titles and edge labels may live outside the plot rectangle.
+    _emit_annotations(cmd, spec.get("annotations") or [], sx, sy, plot, width, height, phase="text")
     # "none" silences the whole axis chrome (sparklines); "off" hides only the
     # label text and keeps baselines and the axis title (mpl shared axes).
     frame_sides = spec.get("frame_sides")
@@ -773,9 +781,13 @@ def _annotation_point(ann, style, sx, sy, plot, width, height):
     return float(sx(x)), float(sy(y))
 
 
-def _emit_annotations(cmd, annotations, sx, sy, plot, width, height):
+def _emit_annotations(cmd, annotations, sx, sy, plot, width, height, *, phase="marks"):
     px0, py0 = plot["x"], plot["y"]
     for ann in annotations:
+        # Geometry (rules/bands/arrows) draws in the clipped marks pass; text
+        # draws in the unclipped chrome pass, matching matplotlib's Text.
+        if (ann.get("kind") == "text") != (phase == "text"):
+            continue
         style = ann.get("style") or {}
         color = _rgba(style.get("color"), "#667085", float(style.get("opacity", 1.0)))
         start = max(0.0, min(1.0, float(style.get("span_start", 0.0))))
@@ -845,6 +857,34 @@ def _emit_annotations(cmd, annotations, sx, sy, plot, width, height):
             font_size = float(style.get("font_size", 11))
             lines = str(ann["text"]).splitlines() or [""]
             line_height = font_size * 1.2
+            color = _rgba(style.get("color"), _TEXT, float(style.get("opacity", 1.0)))
+            rotation = float(style.get("rotation", 0.0)) % 360.0
+            if rotation in (90.0, 270.0):
+                # Vertical text via the rasterizer's rotated glyph paths.
+                # matplotlib aligns the post-rotation box: vertical_align picks
+                # the anchor along the reading axis, the horizontal anchor
+                # shifts the baseline across it (ascent ~0.78em, descent ~0.22em).
+                x += float(ann.get("dx", 0.0))
+                y += float(ann.get("dy", 0.0))
+                cw = rotation == 270.0
+                va = str(style.get("vertical_align", ""))
+                along = {"center": 1, "top": 0 if cw else 2, "bottom": 2 if cw else 0}.get(va, 0)
+                ascent, descent = font_size * 0.78, font_size * 0.22
+                if cw:
+                    base = {0: descent, 1: (descent - ascent) / 2, 2: -ascent}[anchor]
+                else:
+                    base = {0: ascent, 1: (ascent - descent) / 2, 2: -descent}[anchor]
+                stack = -line_height if cw else line_height  # later lines: glyph-down
+                for index, line in enumerate(lines):
+                    cmd.text(
+                        x + base + index * stack,
+                        y,
+                        along | (_TEXT_ROT_CW if cw else _TEXT_ROT_CCW),
+                        font_size,
+                        color,
+                        line,
+                    )
+                continue
             first_y = y - (len(lines) - 1) * line_height / 2
             for index, line in enumerate(lines):
                 cmd.text(
@@ -852,7 +892,7 @@ def _emit_annotations(cmd, annotations, sx, sy, plot, width, height):
                     first_y + index * line_height + float(ann.get("dy", 0.0)),
                     anchor,
                     font_size,
-                    _rgba(style.get("color"), _TEXT, float(style.get("opacity", 1.0))),
+                    color,
                     line,
                 )
 
