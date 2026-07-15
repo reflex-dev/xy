@@ -146,6 +146,12 @@ class Component:
 
 @dataclass
 class Mark(Component):
+    """A data series inside a chart: one mark kind plus its data/encodings.
+
+    Built by the mark constructors (`scatter`, `line`, `bar`, ...) rather
+    than directly; ``props`` carries the kind-specific options verbatim.
+    """
+
     kind: str  # chart mark registry key
     x: Any = None
     y: Any = None
@@ -158,6 +164,11 @@ class Mark(Component):
 
 @dataclass
 class Annotation(Component):
+    """A non-data overlay (reference rule, band, or text label).
+
+    Built by `vline`/`hline`/`x_band`/`y_band`/`text`/`label` and friends.
+    """
+
     kind: str  # "rule" | "band" | "text"
     axis: Optional[str] = None
     x: Any = None
@@ -170,6 +181,9 @@ class Annotation(Component):
 
 @dataclass
 class Axis(Component):
+    """Axis configuration (scale, domain, ticks, label). Built by
+    `x_axis`/`y_axis`, which validate every field."""
+
     which: str  # "x" | "y"
     id: Optional[str] = None
     label: Optional[str] = None
@@ -192,6 +206,8 @@ class Axis(Component):
 
 @dataclass
 class Legend(Component):
+    """Legend chrome; ``render`` remains opaque for Reflex adapters."""
+
     show: bool = True
     loc: Optional[str] = None
     ncols: int = 1
@@ -203,6 +219,8 @@ class Legend(Component):
 
 @dataclass
 class Tooltip(Component):
+    """Hover-tooltip chrome; ``render`` remains opaque for Reflex adapters."""
+
     show: bool = True
     fields: Optional[list[str]] = None
     title: Optional[str] = None
@@ -224,6 +242,8 @@ class Colorbar(Component):
 
 @dataclass
 class Modebar(Component):
+    """Modebar (zoom/pan/reset controls) chrome."""
+
     show: bool = True
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
@@ -233,11 +253,16 @@ class Modebar(Component):
 
 @dataclass
 class Theme(Component):
+    """Chart-wide style tokens (plot background, grid/axis/text colors)."""
+
     style: dict[str, StyleValue] = field(default_factory=dict)
 
 
 @dataclass
 class Interaction(Component):
+    """Interaction switches (hover/click/select/brush/crosshair) and
+    cross-chart axis linking. Built by `interaction_config`."""
+
     hover: Optional[bool] = None
     click: Optional[bool] = None
     select: Optional[bool] = None
@@ -1430,6 +1455,16 @@ def x_axis(
     side: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Axis:
+    """Configure an x axis of the chart.
+
+    ``type_`` picks the scale (``"linear"``/``"time"``/``"log"``,
+    auto-detected when None), ``domain`` pins the data range, ``reverse``
+    flips it, and ``format`` is a d3-style tick format. Ticks may be
+    counted (``tick_count``) or pinned (``tick_values`` with optional
+    ``tick_labels``); the ``tick_label_*`` options rotate and thin the
+    labels. ``id`` names the axis so marks can target it (multi-axis
+    charts); ``side`` places it (``"bottom"``/``"top"``).
+    """
     _validate_axis_type(type_)
     values = None if tick_values is None else [float(v) for v in tick_values]
     labels = None if tick_labels is None else [str(v) for v in tick_labels]
@@ -1481,6 +1516,11 @@ def y_axis(
     side: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Axis:
+    """Configure a y axis of the chart (options as in `x_axis`).
+
+    ``side`` places it (``"left"``/``"right"``); a second y axis with
+    ``id="y2"`` enables dual-axis charts.
+    """
     _validate_axis_type(type_)
     values = None if tick_values is None else [float(v) for v in tick_values]
     labels = None if tick_labels is None else [str(v) for v in tick_labels]
@@ -1522,6 +1562,12 @@ def legend(
     class_name: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Legend:
+    """Configure the chart legend.
+
+    ``loc`` is a matplotlib-style location string, ``ncols`` lays entries
+    out in columns, and ``title`` adds a heading. Pass ``show=False`` to
+    hide it; ``render`` stays opaque for Reflex adapters.
+    """
     show, render = _chrome_render_args(children, show, render, "legend")
     return Legend(
         show=_strict_bool(show, "legend show"),
@@ -1544,6 +1590,11 @@ def tooltip(
     class_name: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Tooltip:
+    """Configure the hover tooltip.
+
+    ``fields`` restricts which encodings appear, ``format`` maps a field
+    to a d3-style format string, and ``title`` overrides the heading.
+    """
     show, render = _chrome_render_args(children, show, render, "tooltip")
     return Tooltip(
         show=_strict_bool(show, "tooltip show"),
@@ -1581,6 +1632,7 @@ def modebar(
     button_class_name: Optional[str] = None,
     button_style: Optional[dict[str, StyleValue]] = None,
 ) -> Modebar:
+    """Configure the modebar (zoom/pan/reset controls) of the chart."""
     return Modebar(
         show=_strict_bool(show, "modebar show"),
         class_name=_optional_string(class_name, "modebar class_name"),
@@ -1602,6 +1654,12 @@ def theme(
     selection_fill: Optional[StyleValue] = None,
     **tokens: StyleValue,
 ) -> Theme:
+    """Configure chart-wide style tokens.
+
+    The named keywords cover the common tokens (plot background, grid,
+    axis, text, crosshair, and selection colors); extra ``**tokens`` and
+    a raw ``style`` dict pass through validated.
+    """
     merged = _style_dict(style, "theme style")
     merged.update(
         _theme_tokens(
@@ -1988,6 +2046,11 @@ class Chart(Component):
         return self.chrome_components()
 
     def widget(self) -> Any:
+        """The live notebook widget for this chart (built once, cached).
+
+        Requires the widget extras (anywidget); event callbacks passed to
+        the chart are wired onto it.
+        """
         if self._widget is None:
             from .widget import FigureWidget
 
@@ -2002,6 +2065,7 @@ class Chart(Component):
         return self._widget
 
     def show(self) -> Any:
+        """Display the chart: returns the live widget (see `widget`)."""
         return self.widget()
 
     def _ipython_display_(self) -> None:
@@ -2015,6 +2079,10 @@ class Chart(Component):
         *,
         custom_css: Optional[str] = None,
     ) -> str:
+        """A self-contained HTML document for the chart.
+
+        Writes it to ``path`` when given; returns the HTML either way.
+        """
         return self.figure().to_html(path, custom_css=custom_css)
 
     def html(
@@ -2023,6 +2091,7 @@ class Chart(Component):
         *,
         custom_css: Optional[str] = None,
     ) -> str:
+        """Alias of `to_html`."""
         return self.to_html(path, custom_css=custom_css)
 
     def _repr_html_(self) -> str:
@@ -2035,6 +2104,7 @@ class Chart(Component):
         width: Optional[int] = None,
         height: Optional[int] = None,
     ) -> str:
+        """A static SVG render of the chart (written to ``path`` if given)."""
         return self.figure().to_svg(path, width=width, height=height)
 
     def to_png(
@@ -2050,6 +2120,12 @@ class Chart(Component):
         sandbox: bool = True,
         gl: str = "software",
     ) -> bytes:
+        """A PNG render of the chart, returned as bytes.
+
+        ``scale`` multiplies the pixel density; ``engine`` picks the
+        raster path (native or headless Chromium). Written to ``path``
+        when given.
+        """
         return self.figure().to_png(
             path,
             width=width,
@@ -2063,6 +2139,7 @@ class Chart(Component):
         )
 
     def memory_report(self) -> dict[str, Any]:
+        """Byte-level accounting of the figure's buffers (§27 caches)."""
         return self.figure().memory_report()
 
     # -- live data (structure-immutable: build a new chart for new marks) ----
@@ -2402,6 +2479,7 @@ class FacetChart(Component):
         self._grid: Any = None
 
     def figure(self) -> Any:
+        """The composed `FacetGrid` of per-panel figures (built once, cached)."""
         if self._grid is not None:
             return self._grid
         from .facets import FacetGrid, _facet_values, _subset_data
@@ -2507,25 +2585,30 @@ class FacetChart(Component):
         return self._grid
 
     def widget(self) -> list[Any]:
+        """Live notebook widgets, one per facet panel."""
         return self.figure().widget()
 
     def show(self) -> list[Any]:
+        """Display the facet grid: returns the panel widgets."""
         return self.widget()
 
     def to_html(
         self, path: Optional[str | PathLike[str]] = None, *, custom_css: Optional[str] = None
     ) -> str:
+        """A self-contained HTML document laying the panels out as a grid."""
         return self.figure().to_html(path, custom_css=custom_css)
 
     def html(
         self, path: Optional[str | PathLike[str]] = None, *, custom_css: Optional[str] = None
     ) -> str:
+        """Alias of `to_html`."""
         return self.to_html(path, custom_css=custom_css)
 
     def _repr_html_(self) -> str:
         return self.to_html()
 
     def to_svg(self, path: Optional[str | PathLike[str]] = None) -> str:
+        """A static SVG render of the facet grid (written to ``path`` if given)."""
         return self.figure().to_svg(path)
 
     def to_png(
@@ -2539,6 +2622,7 @@ class FacetChart(Component):
         sandbox: bool = True,
         gl: str = "software",
     ) -> bytes:
+        """A PNG render of the facet grid, returned as bytes (see `Chart.to_png`)."""
         return self.figure().to_png(
             path,
             scale=scale,
@@ -2550,6 +2634,7 @@ class FacetChart(Component):
         )
 
     def memory_report(self) -> dict[str, Any]:
+        """Byte-level accounting of every panel's buffers (§27 caches)."""
         return self.figure().memory_report()
 
 

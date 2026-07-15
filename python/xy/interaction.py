@@ -302,7 +302,7 @@ def _pyramid_resident_bytes(base_dim: int = PYRAMID_BASE_DIM) -> int:
         dim >>= 1
 
 
-def pyramid_report_bytes(fig) -> int:
+def pyramid_report_bytes(fig: Any) -> int:
     """§27 memory-report line: native bytes held by live trace pyramids."""
     return sum(_pyramid_resident_bytes() for t in fig.traces if getattr(t, "_pyr_handle", 0))
 

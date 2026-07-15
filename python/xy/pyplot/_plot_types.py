@@ -468,6 +468,11 @@ class PlotTypeMixin:
         def _invalidate(self) -> None: ...
 
     def semilogx(self, *args: Any, **kwargs: Any) -> list[Line2D]:
+        """Like ``plot``, but sets the x-axis to log scale first.
+
+        Accepts ``base``/``basex``, ``subs``/``subsx``, and
+        ``nonpositive``/``nonposx`` in addition to every ``plot`` keyword.
+        """
         base = kwargs.pop("base", kwargs.pop("basex", None))
         subs = kwargs.pop("subs", kwargs.pop("subsx", None))
         nonpositive = kwargs.pop("nonpositive", kwargs.pop("nonposx", "clip"))
@@ -477,6 +482,11 @@ class PlotTypeMixin:
         return self.plot(*args, **kwargs)
 
     def semilogy(self, *args: Any, **kwargs: Any) -> list[Line2D]:
+        """Like ``plot``, but sets the y-axis to log scale first.
+
+        Accepts ``base``/``basey``, ``subs``/``subsy``, and
+        ``nonpositive``/``nonposy`` in addition to every ``plot`` keyword.
+        """
         base = kwargs.pop("base", kwargs.pop("basey", None))
         subs = kwargs.pop("subs", kwargs.pop("subsy", None))
         nonpositive = kwargs.pop("nonpositive", kwargs.pop("nonposy", "clip"))
@@ -486,6 +496,11 @@ class PlotTypeMixin:
         return self.plot(*args, **kwargs)
 
     def loglog(self, *args: Any, **kwargs: Any) -> list[Line2D]:
+        """Like ``plot``, but sets both axes to log scale first.
+
+        Accepts ``base``, ``subs``, and ``nonpositive`` in addition to every
+        ``plot`` keyword.
+        """
         base = kwargs.pop("base", None)
         subs = kwargs.pop("subs", None)
         nonpositive = kwargs.pop("nonpositive", "clip")
@@ -508,6 +523,14 @@ class PlotTypeMixin:
         label: Any = "",
         **kwargs: Any,
     ) -> PolyCollection:
+        """Horizontal line segments from ``xmin`` to ``xmax`` at each ``y``.
+
+        ``colors`` (a scalar or sequence; the first entry wins) and
+        ``linestyles`` style the segments; supported keywords are
+        ``linewidth``/``linewidths``/``lw``, ``alpha``, ``data``, and
+        ``transform``. Dashed linestyles are emitted as data-space
+        sub-segments. Unsupported keywords raise loudly.
+        """
         width = kwargs.pop("linewidth", kwargs.pop("linewidths", kwargs.pop("lw", 1.2)))
         alpha = kwargs.pop("alpha", None)
         data = kwargs.pop("data", None)
@@ -556,6 +579,13 @@ class PlotTypeMixin:
         label: Any = "",
         **kwargs: Any,
     ) -> PolyCollection:
+        """Vertical line segments from ``ymin`` to ``ymax`` at each ``x``.
+
+        The vertical twin of ``hlines``: supported keywords are
+        ``linewidth``/``linewidths``/``lw``, ``color``, ``alpha``, ``data``,
+        and ``transform``; dashed linestyles become data-space sub-segments,
+        and unsupported keywords raise loudly.
+        """
         data = kwargs.pop("data", None)
         x, ymin, ymax = (_from_data(value, data) for value in (x, ymin, ymax))
         xv, y0, y1 = np.broadcast_arrays(x, ymin, ymax)
@@ -610,6 +640,14 @@ class PlotTypeMixin:
         return PolyCollection(self, entry)
 
     def broken_barh(self, xranges: Any, yrange: Any, **kwargs: Any) -> PolyCollection:
+        """A sequence of horizontal bars at one vertical position.
+
+        ``xranges`` is a sequence of ``(start, width)`` pairs and ``yrange`` a
+        single ``(y, height)``. Supported keywords:
+        ``facecolors``/``facecolor``/``color``, ``edgecolors``/``edgecolor``,
+        ``linewidth``/``linewidths``, ``alpha``, ``label``, and ``align``
+        (``"center"`` only). Unsupported keywords raise loudly.
+        """
         ranges = np.asarray(xranges, dtype=np.float64)
         if ranges.ndim != 2 or ranges.shape[1:] != (2,):
             raise ValueError("broken_barh xranges must have shape (n, 2)")
@@ -653,6 +691,14 @@ class PlotTypeMixin:
     def fill_betweenx(
         self, y: Any, x1: Any, x2: Any = 0, where: Any = None, **kwargs: Any
     ) -> PolyCollection:
+        """Fill the area between two vertical curves ``x1`` and ``x2``.
+
+        The vertical twin of ``fill_between``: ``where`` masks the fill to a
+        boolean condition. Supported keywords: ``color``/``facecolor``,
+        ``alpha``, ``label``, and ``data``. ``edgecolor``, ``linewidth``,
+        ``interpolate=True``, ``step``, ``transform``, and any unknown
+        keyword raise loudly.
+        """
         data = kwargs.pop("data", None)
         if data is not None:
             # resolve string keys before any float coercion sees them
@@ -735,6 +781,13 @@ class PlotTypeMixin:
         return PolyCollection(self, entries[0])
 
     def fill(self, *args: Any, data: Any = None, **kwargs: Any) -> list[PolyCollection]:
+        """Draw filled polygons from ``x, y[, color]`` argument groups.
+
+        Accepts matplotlib's repeated-group form ``fill(x1, y1, "b", x2, y2,
+        "r")``. Supported keywords: ``color``/``facecolor``,
+        ``edgecolor``/``ec``, ``linewidth``/``lw``, ``alpha``, and ``label``.
+        Unsupported keywords raise loudly.
+        """
         if len(args) < 2:
             raise TypeError("fill() requires x and y polygon coordinates")
         facecolor = kwargs.pop("color", kwargs.pop("facecolor", None))
@@ -811,6 +864,14 @@ class PlotTypeMixin:
         return result
 
     def arrow(self, x: float, y: float, dx: float, dy: float, **kwargs: Any) -> PolyCollection:
+        """An arrow from ``(x, y)`` to ``(x + dx, y + dy)`` in data coordinates.
+
+        Supported keywords: ``color``/``facecolor``/``edgecolor``, ``alpha``,
+        ``linewidth``/``width``, ``head_width``, ``head_length``, and
+        ``transform``. ``length_includes_head``, non-``"full"`` ``shape``,
+        ``overhang``, ``head_starts_at_zero``, and any unknown keyword raise
+        loudly.
+        """
         color = kwargs.pop("color", kwargs.pop("facecolor", kwargs.pop("edgecolor", None)))
         alpha = kwargs.pop("alpha", None)
         width = kwargs.pop("linewidth", kwargs.pop("width", 1.2))
@@ -860,6 +921,13 @@ class PlotTypeMixin:
     def axline(
         self, xy1: tuple[float, float], xy2: Any = None, *, slope: Any = None, **kwargs: Any
     ) -> Line2D:
+        """An infinite line through ``xy1`` and ``xy2`` (or with ``slope``).
+
+        Exactly one of ``xy2`` and ``slope`` must be given. Styled by the
+        ``plot`` line keywords — ``color``/``c``, ``linewidth``/``lw``,
+        ``linestyle``/``ls``, ``dashes``, ``alpha``, ``label``, ``zorder`` —
+        plus ``transform``; unsupported keywords raise loudly.
+        """
         if (xy2 is None) == (slope is None):
             raise TypeError("axline() requires exactly one of xy2 or slope")
         if xy2 is None:
@@ -904,6 +972,16 @@ class PlotTypeMixin:
         data: Any = None,
         **kwargs: Any,
     ) -> tuple[np.ndarray, np.ndarray, Line2D]:
+        """Plot the magnitude spectrum of ``x``.
+
+        ``Fs`` is the sampling frequency, ``Fc`` offsets the frequency axis,
+        ``pad_to`` sets the FFT length, and ``scale`` is ``"linear"`` or
+        ``"dB"``. ``window`` and ``sides`` raise loudly. Line keywords
+        (``color``/``c``, ``linewidth``/``lw``, ``alpha``,
+        ``linestyle``/``ls``, ``dashes``, ``label``, ``zorder``) style the
+        curve; unknown keywords raise loudly. Returns
+        ``(spectrum, freqs, line)``.
+        """
         _reject_spectral_options("magnitude_spectrum()", window=window, sides=sides)
         if scale not in (None, "linear", "dB"):
             raise ValueError("magnitude_spectrum scale must be 'linear' or 'dB'")
@@ -932,6 +1010,14 @@ class PlotTypeMixin:
         data: Any = None,
         **kwargs: Any,
     ) -> tuple[np.ndarray, np.ndarray, Line2D]:
+        """Plot the angle (wrapped phase) spectrum of ``x``.
+
+        ``Fs`` is the sampling frequency, ``Fc`` offsets the frequency axis,
+        and ``pad_to`` sets the FFT length; ``window`` and ``sides`` raise
+        loudly. Line keywords (``color``/``c``, ``linewidth``/``lw``,
+        ``alpha``, ``linestyle``/``ls``, ``dashes``, ``label``, ``zorder``)
+        style the curve. Returns ``(spectrum, freqs, line)``.
+        """
         _reject_spectral_options("angle_spectrum()", window=window, sides=sides)
         values = np.asarray(_from_data(x, data), dtype=np.float64)
         nfft = len(values) if pad_to is None else int(pad_to)
@@ -953,6 +1039,14 @@ class PlotTypeMixin:
         data: Any = None,
         **kwargs: Any,
     ) -> tuple[np.ndarray, np.ndarray, Line2D]:
+        """Plot the unwrapped phase spectrum of ``x``.
+
+        ``Fs`` is the sampling frequency, ``Fc`` offsets the frequency axis,
+        and ``pad_to`` sets the FFT length; ``window`` and ``sides`` raise
+        loudly. Line keywords (``color``/``c``, ``linewidth``/``lw``,
+        ``alpha``, ``linestyle``/``ls``, ``dashes``, ``label``, ``zorder``)
+        style the curve. Returns ``(spectrum, freqs, line)``.
+        """
         _reject_spectral_options("phase_spectrum()", window=window, sides=sides)
         values = np.asarray(_from_data(x, data), dtype=np.float64)
         nfft = len(values) if pad_to is None else int(pad_to)
@@ -1059,6 +1153,14 @@ class PlotTypeMixin:
         padding: float = 0,
         **kwargs: Any,
     ) -> list[Text]:
+        """Label the bars of a ``bar``/``barh`` container with their values.
+
+        ``labels`` overrides the default value labels; ``fmt`` is a %-format,
+        ``{}``-format, or callable; ``label_type`` places labels at the bar
+        ``"edge"`` or ``"center"``, offset by ``padding`` points. Supported
+        keywords: ``color`` and ``fontsize``; ``fontproperties`` and any
+        unknown keyword raise loudly.
+        """
         if label_type not in ("edge", "center"):
             raise ValueError("bar_label label_type must be 'edge' or 'center'")
         values = np.asarray(container.datavalues, dtype=np.float64)
@@ -1131,6 +1233,15 @@ class PlotTypeMixin:
         data: Any = None,
         **kwargs: Any,
     ) -> Any:
+        """Plot the power spectral density of ``x`` (Welch's method).
+
+        ``NFFT``/``noverlap`` control the segmenting and ``Fs`` is the
+        sampling frequency; ``detrend``, ``window``, ``pad_to``, ``sides``,
+        and ``scale_by_freq`` raise loudly. Line keywords (``color``/``c``,
+        ``linewidth``/``lw``, ``alpha``, ``linestyle``/``ls``, ``dashes``,
+        ``label``, ``zorder``) style the curve. Returns ``(Pxx, freqs)``
+        (plus the line with ``return_line=True``).
+        """
         _reject_spectral_options(
             "psd()",
             detrend=detrend,
@@ -1167,6 +1278,15 @@ class PlotTypeMixin:
         data: Any = None,
         **kwargs: Any,
     ) -> Any:
+        """Plot the cross-spectral density of ``x`` and ``y``.
+
+        Same segmenting keywords as ``psd``; ``detrend``, ``window``,
+        ``pad_to``, ``sides``, and ``scale_by_freq`` raise loudly, and line
+        keywords (``color``/``c``, ``linewidth``/``lw``, ``alpha``,
+        ``linestyle``/``ls``, ``dashes``, ``label``, ``zorder``) style the
+        curve. Returns ``(Pxy, freqs)`` (plus the line with
+        ``return_line=True``).
+        """
         _reject_spectral_options(
             "csd()",
             detrend=detrend,
@@ -1204,6 +1324,14 @@ class PlotTypeMixin:
         data: Any = None,
         **kwargs: Any,
     ) -> tuple[np.ndarray, np.ndarray]:
+        """Plot the coherence between ``x`` and ``y``.
+
+        Same segmenting keywords as ``psd``; ``detrend``, ``window``,
+        ``pad_to``, ``sides``, and ``scale_by_freq`` raise loudly, and line
+        keywords (``color``/``c``, ``linewidth``/``lw``, ``alpha``,
+        ``linestyle``/``ls``, ``dashes``, ``label``, ``zorder``) style the
+        curve. Returns ``(Cxy, freqs)``.
+        """
         _reject_spectral_options(
             "cohere()",
             detrend=detrend,
@@ -1245,6 +1373,14 @@ class PlotTypeMixin:
         data: Any = None,
         **kwargs: Any,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, PolyCollection]:
+        """Plot a spectrogram of ``x`` as a pseudocolor image.
+
+        Segmenting follows ``psd``; ``cmap``, ``vmin``/``vmax``, and the
+        ``alpha`` keyword style the image. ``detrend``, ``window``,
+        ``xextent``, ``pad_to``, ``sides``, ``scale_by_freq``, ``mode``,
+        ``scale``, and any unknown keyword raise loudly. Returns
+        ``(spectrum, freqs, t, image)``.
+        """
         _reject_spectral_options(
             "specgram()",
             detrend=detrend,
@@ -1290,6 +1426,14 @@ class PlotTypeMixin:
         data: Any = None,
         **kwargs: Any,
     ) -> tuple[np.ndarray, np.ndarray, Any, Any]:
+        """Plot the cross-correlation of ``x`` and ``y`` per lag.
+
+        ``maxlags`` bounds the lag window, ``usevlines`` draws stems instead
+        of markers, and ``detrend`` is an optional callable applied to both
+        inputs. Supported keywords: ``color`` and ``linewidth``/``lw``;
+        anything else raises loudly. Returns
+        ``(lags, correlations, lines, baseline)``.
+        """
         xv = np.asarray(_from_data(x, data), dtype=np.float64)
         yv = np.asarray(_from_data(y, data), dtype=np.float64)
         if detrend is not None:
@@ -1320,6 +1464,10 @@ class PlotTypeMixin:
         return lag, correlation, artist, baseline
 
     def acorr(self, x: Any, **kwargs: Any) -> tuple[np.ndarray, np.ndarray, Any, Any]:
+        """Plot the autocorrelation of ``x`` (see ``xcorr`` for the keywords).
+
+        Returns ``(lags, correlations, lines, baseline)``.
+        """
         return self.xcorr(x, x, **kwargs)
 
     def stem(
@@ -1333,6 +1481,14 @@ class PlotTypeMixin:
         orientation: str = "vertical",
         data: Any = None,
     ) -> StemContainer:
+        """A stem plot: vertical lines from a baseline to markers at each y.
+
+        Call as ``stem(y)`` or ``stem(x, y)``. ``linefmt``/``markerfmt`` are
+        ``plot``-style fmt strings for the stems and heads, ``bottom`` moves
+        the baseline, and ``orientation`` may be ``"horizontal"``. Only the
+        default ``basefmt`` (``"C3-"``) is honored — the shim renders no
+        baseline rule.
+        """
         if len(args) == 1:
             y = _from_data(args[0], data)
             x = np.arange(len(y), dtype=np.float64)
@@ -1417,6 +1573,14 @@ class PlotTypeMixin:
         data: Any = None,
         **kwargs: Any,
     ) -> StepPatch:
+        """A stepwise constant function as a line or filled patch.
+
+        ``values`` has one entry per interval, ``edges`` one more (defaults
+        to ``0..len(values)``). Supported keywords: the ``plot`` line
+        keywords (``color``/``c``, ``linewidth``/``lw``, ``alpha``,
+        ``linestyle``/``ls``, ``dashes``, ``label``, ``zorder``) plus
+        ``hatch``; unknown keywords raise loudly.
+        """
         values = _from_data(values, data)
         edges = _from_data(edges, data)
         hatch = kwargs.pop("hatch", None)
@@ -1556,6 +1720,14 @@ class PlotTypeMixin:
         data: Any = None,
         **kwargs: Any,
     ) -> Artist:
+        """The empirical cumulative distribution function of ``x``.
+
+        ``complementary=True`` plots 1 - ECDF, ``weights`` weighs the
+        samples, and ``orientation`` may be ``"horizontal"``. Line keywords
+        (``color``/``c``, ``linewidth``/``lw``, ``alpha``,
+        ``linestyle``/``ls``, ``dashes``, ``label``, ``zorder``) style the
+        curve; unknown keywords raise loudly.
+        """
         values = np.asarray(_from_data(x, data), dtype=np.float64)
         props = _line_props(self, kwargs)
         check_unsupported(kwargs, "ecdf()")
@@ -1621,6 +1793,13 @@ class PlotTypeMixin:
         label: Any = None,
         data: Any = None,
     ) -> dict[str, list[Artist]]:
+        """Box-and-whisker plots of one dataset or a sequence of datasets.
+
+        Follows matplotlib's ``Axes.boxplot``: ``whis`` sets the whisker
+        reach, ``positions``/``widths``/``tick_labels`` lay the boxes out,
+        the ``show*`` flags toggle elements, and the ``*props`` dicts style
+        them. Returns the matplotlib-shaped dict of artist lists.
+        """
         if vert is not None:
             orientation = "vertical" if vert else "horizontal"
         values = _from_data(x, data)
@@ -1803,6 +1982,12 @@ class PlotTypeMixin:
         linecolor: Any = None,
         data: Any = None,
     ) -> dict[str, Any]:
+        """Violin plots (kernel density estimates) of one or more datasets.
+
+        ``bw_method`` tunes the KDE bandwidth, ``points`` its resolution;
+        the ``show*`` flags toggle means/extrema/medians and ``side`` draws
+        half violins. Returns the matplotlib-shaped dict of artists.
+        """
         if vert is not None:
             orientation = "vertical" if vert else "horizontal"
         values = _from_data(dataset, data)
@@ -1957,6 +2142,16 @@ class PlotTypeMixin:
         data: Any = None,
         **kwargs: Any,
     ) -> ErrorbarContainer:
+        """Plot ``y`` versus ``x`` with error bars.
+
+        ``xerr``/``yerr`` are scalars, per-point arrays, or ``(lower,
+        upper)`` pairs; ``fmt`` is a ``plot``-style format for the data line
+        and markers. ``ecolor``/``elinewidth``/``capsize`` style the bars,
+        ``errorevery`` subsamples them, and the ``*lims`` flags zero the
+        limited side. Line keywords (``color``/``c``, ``linewidth``/``lw``,
+        ``alpha``, ``label``, ``zorder``, ...) style the line; ``barsabove``,
+        ``capthick``, ``elinestyle``, and unknown keywords raise loudly.
+        """
         unsupported = {
             "barsabove": True if barsabove else None,
             "capthick": capthick,
@@ -2071,6 +2266,16 @@ class PlotTypeMixin:
         data: Any = None,
         **kwargs: Any,
     ) -> PathCollection:
+        """A hexagonal binning plot of ``x``/``y`` point density.
+
+        With ``C`` given, each hexagon shows ``reduce_C_function`` of the
+        values that fall in it instead of a count. ``gridsize`` sets the
+        number of hexagons across, ``bins="log"`` log-scales the counts,
+        ``mincnt`` hides sparse cells, and ``cmap``/``alpha``/``extent``
+        style the mesh. ``norm``, ``vmin``/``vmax``, ``marginals``,
+        ``colorizer``, ``linewidths``, non-``"face"`` ``edgecolors``, and
+        unknown keywords raise loudly.
+        """
         if linewidths is not None:
             raise not_implemented("hexbin(linewidths=...)")
         if edgecolors not in (None, "face"):
@@ -2340,9 +2545,23 @@ class PlotTypeMixin:
         return ContourSet(self, entry)
 
     def contour(self, *args: Any, data: Any = None, **kwargs: Any) -> ContourSet:
+        """Contour lines of a 2-D array.
+
+        Call as ``contour(Z)``, ``contour(X, Y, Z)``, or with a trailing
+        level count/sequence. Supported keywords: ``levels``, ``cmap``,
+        ``colors``, ``linewidths``, ``alpha``, ``extent``, ``norm``,
+        ``extend``, ``hatches``, and ``locator``; ``origin``,
+        ``linestyles``, and unknown keywords raise loudly.
+        """
         return self._contour(False, tuple(_from_data(value, data) for value in args), kwargs)
 
     def contourf(self, *args: Any, data: Any = None, **kwargs: Any) -> ContourSet:
+        """Filled contours of a 2-D array (same call forms as ``contour``).
+
+        Accepts the ``contour`` keywords; ``hatches`` fills bands with
+        approximate hatch strokes, and ``colors="none"`` renders a fully
+        transparent fill.
+        """
         return self._contour(True, tuple(_from_data(value, data) for value in args), kwargs)
 
     def clabel(
@@ -2833,6 +3052,14 @@ class PlotTypeMixin:
         data: Any = None,
         **kwargs: Any,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, PolyCollection]:
+        """A 2-D histogram of ``x``/``y`` rendered as a pseudocolor mesh.
+
+        ``bins``/``range``/``density``/``weights`` follow
+        ``numpy.histogram2d``; ``cmin``/``cmax`` blank cells outside the
+        count window. Supported keywords: ``cmap``, ``alpha``, and
+        ``vmin``/``vmax``; ``norm`` and unknown keywords raise loudly.
+        Returns ``(counts, xedges, yedges, image)`` as matplotlib does.
+        """
         x = np.asarray(_from_data(x, data), dtype=np.float64)
         y = np.asarray(_from_data(y, data), dtype=np.float64)
         if x.ndim != 1 or y.ndim != 1 or len(x) != len(y):
@@ -2949,6 +3176,13 @@ class PlotTypeMixin:
         data: Any = None,
         **kwargs: Any,
     ) -> list[PolyCollection]:
+        """Plot identical parallel event lines at the given positions.
+
+        One row (or column, with ``orientation="vertical"``) per dataset;
+        ``lineoffsets``/``linelengths`` place and size the ticks, and
+        ``linewidths``/``colors``/``alpha``/``linestyles`` may be scalars or
+        one per dataset. Unknown keywords raise loudly.
+        """
         check_unsupported(kwargs, "eventplot()")
         source = _from_data(positions, data)
         try:
@@ -3086,6 +3320,15 @@ class PlotTypeMixin:
         return result
 
     def pcolormesh(self, *args: Any, **kwargs: Any) -> PolyCollection:
+        """A pseudocolor quadrilateral mesh of a 2-D array.
+
+        Call as ``pcolormesh(C)`` or ``pcolormesh(X, Y, C)``. Supported
+        keywords: ``cmap``, ``vmin``/``vmax``, ``alpha``, ``shading``
+        (``"flat"``/``"nearest"``/``"auto"``/``"gouraud"``),
+        ``edgecolors``/``edgecolor``, ``linewidth``/``linewidths``, ``norm``
+        (linear ``Normalize`` only), and ``antialiased`` (default only).
+        Unknown keywords raise loudly.
+        """
         if len(args) == 1:
             z = _masked_float(args[0])
             x = y = None
@@ -3180,12 +3423,26 @@ class PlotTypeMixin:
         return PolyCollection(self, entry)
 
     def pcolor(self, *args: Any, **kwargs: Any) -> PolyCollection:
+        """A pseudocolor plot of a 2-D array (see ``pcolormesh``).
+
+        Same call forms and keywords as ``pcolormesh``, which implements it.
+        """
         return self.pcolormesh(*args, **kwargs)
 
     def pcolorfast(self, *args: Any, **kwargs: Any) -> PolyCollection:
+        """matplotlib's fast pseudocolor path, served by ``pcolormesh`` here.
+
+        Same call forms and keywords as ``pcolormesh``.
+        """
         return self.pcolormesh(*args, **kwargs)
 
     def matshow(self, z: Any, **kwargs: Any) -> Any:
+        """Display a matrix with ticks on top, as matplotlib's ``matshow``.
+
+        Accepts the ``imshow`` keywords (``cmap``, ``vmin``/``vmax``,
+        ``alpha``, ``extent``, ...); the y-axis is reversed and the x ticks
+        move to the top.
+        """
         kwargs.setdefault("origin", "upper")
         image = self.imshow(z, **kwargs)
         self._axis_props("y")["reverse"] = True
@@ -3203,6 +3460,13 @@ class PlotTypeMixin:
         origin: str = "upper",
         **kwargs: Any,
     ) -> Any:
+        """Plot the sparsity pattern of a 2-D array.
+
+        Cells with ``|value| > precision`` are drawn; with ``marker`` or
+        ``markersize`` given they render as marker-like blocks instead of
+        image cells. Remaining keywords go to ``imshow``; a non-``"equal"``
+        ``aspect`` raises loudly.
+        """
         _reject_non_default("spy", "aspect", aspect, "equal")
         values = z.toarray() if hasattr(z, "toarray") else np.asarray(z)
         threshold = 0.0 if precision in (None, "present") else float(precision)
@@ -3257,6 +3521,15 @@ class PlotTypeMixin:
         *,
         data: Any = None,
     ) -> Any:
+        """A pie chart of the values in ``x``.
+
+        ``explode`` offsets slices, ``autopct`` labels them with their share
+        (%-format or callable), ``startangle``/``counterclock`` control
+        orientation, and ``wedgeprops``/``textprops`` style slices and
+        labels. ``shadow``, ``frame``, ``rotatelabels``, and ``hatch`` raise
+        loudly. Returns ``(wedges, texts)`` or ``(wedges, texts, autotexts)``
+        as matplotlib does.
+        """
         _reject_non_default("pie", "shadow", shadow, False)
         _reject_non_default("pie", "frame", frame, False)
         _reject_non_default("pie", "rotatelabels", rotatelabels, False)
@@ -3397,6 +3670,13 @@ class PlotTypeMixin:
         rotate: bool = False,
         alignment: str = "auto",
     ) -> list[Text]:
+        """Label the wedges of a ``pie`` result (matplotlib 3.11's ``Axes.pie_label``).
+
+        ``labels`` may be a sequence or a ``{}``-format string receiving
+        ``absval`` and ``frac`` per wedge; ``distance`` places labels as a
+        fraction of the radius and ``textprops`` styles them.
+        ``rotate=True`` raises loudly.
+        """
         _reject_non_default("pie_label", "rotate", rotate, False)
         if alignment not in ("auto", "center", "outer"):
             raise ValueError("pie_label alignment must be 'auto', 'center', or 'outer'")
@@ -3597,6 +3877,15 @@ class PlotTypeMixin:
         data: Any = None,
         **kwargs: Any,
     ) -> PolyCollection:
+        """A pseudocolor plot over an unstructured triangular grid.
+
+        Call as ``tripcolor(x, y, values)`` with optional ``triangles``
+        indices (Delaunay otherwise), or pass ``facecolors`` for per-triangle
+        values. Supported keywords: ``cmap``, ``alpha``, ``vmin``/``vmax``,
+        ``edgecolors``/``edgecolor``, ``linewidth``/``linewidths``,
+        ``label``, and ``norm`` (linear ``Normalize`` only); unknown
+        keywords raise loudly.
+        """
         x, y, topology, rest = _triangulation_inputs(args, triangles, data)
         if facecolors is None:
             if len(rest) != 1:
@@ -3660,6 +3949,14 @@ class PlotTypeMixin:
     def triplot(
         self, *args: Any, triangles: Any = None, data: Any = None, **kwargs: Any
     ) -> list[Line2D]:
+        """Draw the edges of an unstructured triangular grid.
+
+        Call as ``triplot(x, y[, fmt])`` with optional ``triangles`` indices.
+        Supported keywords: ``markersize``/``ms`` plus the ``plot`` line
+        keywords (``color``/``c``, ``linewidth``/``lw``, ``alpha``,
+        ``linestyle``/``ls``, ``label``, ``zorder``); ``dashes`` sequences
+        and unknown keywords raise loudly.
+        """
         x, y, topology, rest = _triangulation_inputs(args, triangles, data)
         fmt = rest[0] if rest else None
         if len(rest) > 1:
@@ -3854,9 +4151,23 @@ class PlotTypeMixin:
         return ContourSet(self, entry)
 
     def tricontour(self, *args: Any, **kwargs: Any) -> ContourSet:
+        """Contour lines over an unstructured triangular grid.
+
+        Call as ``tricontour(x, y, values[, levels])`` with optional
+        ``triangles`` indices. Supported keywords: ``levels``, ``cmap``,
+        ``colors``, ``linewidths``, ``alpha``, ``label``, ``norm`` (linear
+        ``Normalize`` only), and ``data``; ``linestyles``, a non-default
+        ``extend``, and unknown keywords raise loudly.
+        """
         return self._tricontour(False, args, kwargs)
 
     def tricontourf(self, *args: Any, **kwargs: Any) -> ContourSet:
+        """Filled contours over an unstructured triangular grid.
+
+        Same call forms and keywords as ``tricontour``; ``hatches`` fills
+        bands with approximate hatch strokes, and ``colors="none"`` renders
+        a fully transparent fill.
+        """
         return self._tricontour(True, args, kwargs)
 
     def _vector_field(
@@ -4013,11 +4324,27 @@ class PlotTypeMixin:
         return PolyCollection(self, entry)
 
     def quiver(self, *args: Any, data: Any = None, **kwargs: Any) -> PolyCollection:
+        """A field of arrows: ``quiver(U, V)`` or ``quiver(X, Y, U, V[, C])``.
+
+        Supported keywords: ``color``, ``alpha``, ``width``/``linewidth``,
+        ``scale``, ``pivot``, ``angles``, ``scale_units``, ``cmap``, and
+        ``data``. Non-default ``units``/``headwidth``/``headlength``/
+        ``headaxislength``/``minshaft``/``minlength``, any
+        ``norm``/``clim``/``zorder``, and unknown keywords raise loudly.
+        """
         return self._vector_field(
             tuple(_from_data(value, data) for value in args), kwargs, "quiver"
         )
 
     def barbs(self, *args: Any, data: Any = None, **kwargs: Any) -> PolyCollection:
+        """A field of wind barbs: ``barbs(U, V)`` or ``barbs(X, Y, U, V[, C])``.
+
+        Accepts the ``quiver`` field keywords (``color``, ``alpha``,
+        ``width``/``linewidth``, ``scale``, ``pivot``, ...). Rendered at
+        matplotlib's default barb geometry: non-default
+        ``length``/``fill_empty``/``rounding``/``flip_barb`` raise loudly,
+        as do ``sizes``/``barbcolor``/``flagcolor``/``barb_increments``.
+        """
         args = tuple(_from_data(value, data) for value in args)
         _reject_non_default("barbs", "length", kwargs.pop("length", None), 7.0)
         _reject_non_default("barbs", "fill_empty", kwargs.pop("fill_empty", None), False)
@@ -4037,6 +4364,13 @@ class PlotTypeMixin:
         label: str,
         **kwargs: Any,
     ) -> PolyCollection:
+        """Add a key (reference arrow + label) for a ``quiver`` plot.
+
+        Supported keywords: ``coordinates`` (default ``"axes"``),
+        ``labelpos`` (N/S/E/W), ``labelsep``, ``angle``, ``color``, and
+        ``labelcolor``. ``fontproperties``, ``zorder``, and unknown keywords
+        raise loudly.
+        """
         angle = np.deg2rad(float(kwargs.pop("angle", 0.0)))
         coordinates = kwargs.pop("coordinates", "axes")
         labelpos = kwargs.pop("labelpos", "N")
@@ -4122,6 +4456,15 @@ class PlotTypeMixin:
         num_arrows: int = 1,
         data: Any = None,
     ) -> StreamplotSet:
+        """Streamlines of the vector field ``(u, v)`` on the grid ``(x, y)``.
+
+        ``density`` controls line spacing, ``start_points`` seeds specific
+        trajectories, and ``color``/``linewidth`` may be arrays evaluated
+        along the field (``cmap``/``norm`` map array colors). Non-default
+        ``arrowstyle``, ``minlength``, ``broken_streamlines``, and
+        integration scale options raise loudly, as do ``transform`` and
+        ``zorder``.
+        """
         if transform is not None:
             raise not_implemented("streamplot(transform=...)")
         if zorder is not None:
