@@ -3710,6 +3710,14 @@ class Axes(PlotTypeMixin):
                     )
                 if opacity is not None and float(opacity) < 1.0:
                     text_kw["style"] = {**(text_kw.get("style") or {}), "opacity": float(opacity)}
+                if "font_size" not in (text_kw.get("style") or {}):
+                    # matplotlib text defaults to font.size (10 pt → 13.9 px at
+                    # dpi 100); without this the client's 11 px slot default wins.
+                    text_kw["style"] = {
+                        **(text_kw.get("style") or {}),
+                        "font_size": _font_size_points(rcParams["font.size"], rcParams["font.size"])
+                        * self._point_scale(),
+                    }
                 # matplotlib's pandas-registered converter parses date strings
                 # placed on a date axis; categorical axes keep their strings.
                 x, y = e["args"][0], e["args"][1]
@@ -4032,14 +4040,15 @@ def _rc_axis_style(axis: str, dpi: float = 96.0) -> dict[str, Any]:
         result["tick_label_color"] = resolve_color(
             tick_color if label_color == "inherit" else label_color
         )
-    if rcParams[f"{prefix}.labelsize"] != "medium":
-        result["tick_label_size"] = _font_size(
-            rcParams[f"{prefix}.labelsize"], rcParams["font.size"], dpi
-        )
+    # Always explicit: the render client and static exporters otherwise fall
+    # back to their own 11 px default, not matplotlib's font.size-derived
+    # medium (10 pt → 13.9 px at dpi 100).
+    result["tick_label_size"] = _font_size(
+        rcParams[f"{prefix}.labelsize"], rcParams["font.size"], dpi
+    )
     if rcParams["axes.labelcolor"] != "black":
         result["label_color"] = resolve_color(rcParams["axes.labelcolor"])
-    if rcParams["axes.labelsize"] != "medium":
-        result["label_size"] = _font_size(rcParams["axes.labelsize"], rcParams["font.size"], dpi)
+    result["label_size"] = _font_size(rcParams["axes.labelsize"], rcParams["font.size"], dpi)
     return result
 
 

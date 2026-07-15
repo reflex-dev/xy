@@ -179,6 +179,10 @@ def test_tick_params_records_supported_style_and_rejects_unknown() -> None:
         "tick_length": pytest.approx(7.0 * 100.0 / 72.0),
         "tick_width": pytest.approx(2.0 * 100.0 / 72.0),
         "tick_direction": "in",
+        # Always explicit (10 pt font.size at dpi 100): the render client and
+        # static exporters otherwise fall back to their own 11 px default.
+        "tick_label_size": pytest.approx(10.0 * 100.0 / 72.0),
+        "label_size": pytest.approx(10.0 * 100.0 / 72.0),
     }
 
     with pytest.raises(TypeError, match="unsupported keyword"):

@@ -534,3 +534,24 @@ def test_subplots_facecolor_reaches_figure_and_notebook_display():
     # later same-specificity body background override in the head.
     assert "body{background:lightgray}" in fig._repr_html_()
     _png(fig)
+
+
+# -- annotate arrows and boxes (PDSH 04.09 births cell) ----------------------
+
+
+def _annotation_specs(ax):
+    return ax._build_chart(640, 480).figure()._annotation_specs()
+
+
+def test_default_rc_font_sizes_are_explicit_everywhere():
+    fig, ax = plt.subplots()
+    ax.plot([0.0, 1.0], [0.0, 1.0])
+    ax.text(0.5, 0.5, "note")
+    chart = ax._build_chart(640, 480)
+    axes = {child.which: child for child in chart.children if hasattr(child, "which")}
+    # font.size "medium" (10 pt at dpi 100) must land explicitly: the render
+    # client and static exporters otherwise fall back to their 11 px default.
+    assert axes["x"].style["tick_label_size"] == pytest.approx(13.8889, rel=1e-4)
+    assert axes["x"].style["label_size"] == pytest.approx(13.8889, rel=1e-4)
+    (text_ann,) = [a for a in _annotation_specs(ax) if a["kind"] == "text"]
+    assert text_ann["style"]["font_size"] == pytest.approx(13.8889, rel=1e-4)
