@@ -4766,6 +4766,7 @@ const FC_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
 "angle_b",
 "gap_start",
 "gap_end",
+"start_offset",
 "label_clear",
 "dash",
 "span_start",
@@ -4789,6 +4790,13 @@ return Number.isFinite(exit) ? exit : 0;
 }
 function fcArrowGeometry(x0, y0, x1, y1, style) {
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+if (typeof style.start_offset === "string") {
+const offset = style.start_offset.split(",").map(Number);
+if (offset.length === 2 && offset.every(Number.isFinite)) {
+x0 += offset[0];
+y0 += offset[1];
+}
+}
 const angleA = num(style.angle_a);
 const angleB = num(style.angle_b);
 const curve = num(style.curve);

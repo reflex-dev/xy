@@ -19,6 +19,7 @@ const FC_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
   "angle_b",
   "gap_start",
   "gap_end",
+  "start_offset",
   "label_clear",
   "dash",
   "span_start",
@@ -36,10 +37,12 @@ const FC_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
 // bulge as a fraction of chord length) or `angle_a`/`angle_b` (matplotlib
 // angle3/angle departure/arrival angles in degrees, y-up screen space —
 // control point at the ray intersection), then `gap_start`/`gap_end` px
-// trims along the path tangents (label/point clearance). `label_clear`
-// ("left,right,up,down" px, y-down) is the start label's extents rectangle:
-// the start trims to where the departure tangent exits it — matplotlib's
-// text-patch clipping.
+// trims along the path tangents (label/point clearance). `start_offset`
+// ("x,y" px) shifts the start point — matplotlib's relpos: the arrow leaves
+// the label's box CENTER, not its anchor. `label_clear`
+// ("left,right,up,down" px, y-down) is the start label's extents rectangle
+// around the shifted start: the start trims to where the departure tangent
+// exits it — matplotlib's text-patch clipping.
 function fcLabelClearExit(style, tangent) {
   if (typeof style.label_clear !== "string") return 0;
   const parts = style.label_clear.split(",").map(Number);
@@ -54,6 +57,13 @@ function fcLabelClearExit(style, tangent) {
 
 function fcArrowGeometry(x0, y0, x1, y1, style) {
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+  if (typeof style.start_offset === "string") {
+    const offset = style.start_offset.split(",").map(Number);
+    if (offset.length === 2 && offset.every(Number.isFinite)) {
+      x0 += offset[0];
+      y0 += offset[1];
+    }
+  }
   const angleA = num(style.angle_a);
   const angleB = num(style.angle_b);
   const curve = num(style.curve);

@@ -2173,17 +2173,18 @@ class Axes(PlotTypeMixin):
             arrow_color, arrow_width, arrow_style = _arrow_visuals(
                 arrowprops, mutation_scale=font_px
             )
-            # matplotlib clips the arrow at the text patch (patchA + 2pt
-            # shrink); the geometry's label_clear rectangle is that clipping.
-            clear = _label_clear_box(
+            # matplotlib draws the arrow from the text patch center, clipped
+            # at the patch edge (+2pt shrink); start_offset + label_clear are
+            # that attach model in the shared geometry.
+            attach = _label_attach_styles(
                 _plain_text(text),
                 font_px,
                 akw.get("anchor", "start"),
                 style.get("vertical_align"),
                 bbox=bbox is not None,
             )
-            if clear is not None and not shrink:
-                arrow_style = {**arrow_style, "label_clear": clear}
+            if attach is not None and not shrink:
+                arrow_style = {**arrow_style, **attach}
             self._add(
                 "@arrow",
                 {
@@ -3829,20 +3830,20 @@ class Axes(PlotTypeMixin):
                         arrowprops, mutation_scale=font_size
                     )
                     style: dict[str, Any] = {**(text_kw.get("style") or {}), **arrow_style}
-                    # matplotlib starts the arrow at the text patch edge
-                    # (shrinkA/B default 2 pt): label_clear carves the label's
-                    # estimated extents out of the shaft; the radial gap keeps
-                    # a floor for departures that leave the label immediately.
-                    clear = _label_clear_box(
+                    # matplotlib draws the arrow from the text patch center,
+                    # clipped at the patch edge (shrinkA/B default 2 pt):
+                    # start_offset + label_clear are that attach model; the
+                    # small radial gap floor covers the label-less case.
+                    attach = _label_attach_styles(
                         value,
                         font_size,
                         text_kw.get("anchor", "start"),
                         (text_kw.get("style") or {}).get("vertical_align"),
                         bbox=bool(kw.get("bbox")),
                     )
-                    if clear is not None:
-                        style.setdefault("label_clear", clear)
-                    style.setdefault("gap_start", font_size * 0.5 + 2.0)
+                    for key, spec_value in (attach or {}).items():
+                        style.setdefault(key, spec_value)
+                    style.setdefault("gap_start", 2.8)
                     style.setdefault("gap_end", 3.0)
                     # The callout color prop paints the arrow; pin the label's
                     # own color so it doesn't inherit the arrow's.
@@ -4281,24 +4282,27 @@ def _connection_curve(connectionstyle: Any) -> dict[str, float]:
     return {}
 
 
-def _label_clear_box(
+def _label_attach_styles(
     text: str,
     font_px: float,
     anchor: str,
     vertical: Any,
     *,
     bbox: bool = False,
-) -> Optional[str]:
-    """Estimated label extents around an arrow start, as the render seam's
-    ``label_clear`` "left,right,up,down" px style string (y-down).
+) -> Optional[dict[str, str]]:
+    """The render seam's arrow-attach styles for a label: ``start_offset``
+    (anchor → text-box center, px) and ``label_clear`` (box extents around
+    that center, "left,right,up,down" px, y-down).
 
-    Mirrors how the renderers anchor labels: horizontally by ``anchor``
-    (start/middle/end), vertically baseline-at-anchor unless
-    ``vertical_align`` says otherwise. Width uses the ~0.58 em/char average
-    the DOM labels measure at; the margin models matplotlib's text-patch
-    clearance — its bbox is wider than glyph ink, so the visible gap between
-    text and arrow is ~0.35em + the 2pt shrink (plus the bbox patch padding
-    when one is drawn)."""
+    matplotlib's annotation arrows leave the text patch CENTER (relpos
+    default (0.5, 0.5)) clipped at the patch edge — measured on 3.11.0 for
+    "local minimum" at 13.89px: box anchor+[0, 106]x[-11.0, +3.3] (y-down),
+    arrow start at (+111.6, -5.5), NOT at the baseline anchor. The estimates
+    here (~0.58 em/char width, 1.2em line height, 0.35em descent below the
+    baseline anchor, 2pt + ~0.35em clearance margin, + the bbox patch
+    padding when one is drawn) land within a few px of that; the reference
+    relations are pinned in tests/pyplot/test_annotation_label_clearance.py.
+    """
     if not text:
         return None
     lines = text.split("\n")
@@ -4306,20 +4310,24 @@ def _label_clear_box(
     height = 1.2 * font_px * len(lines)
     margin = 2.8 + 0.35 * font_px + (0.4 * font_px if bbox else 0.0)
     if anchor == "middle":
-        left, right = width / 2, width / 2
+        offset_x = 0.0
     elif anchor == "end":
-        left, right = width, 0.0
+        offset_x = -width / 2
     else:
-        left, right = 0.0, width
+        offset_x = width / 2
     if vertical in ("center", "middle", "center_baseline"):
-        up, down = height / 2, height / 2
+        offset_y = 0.0
     elif vertical == "bottom":
-        up, down = height, 0.0
+        offset_y = -height / 2
     elif vertical == "top":
-        up, down = 0.0, height
-    else:  # baseline at the anchor: ascent above, ~0.35em of descent below
-        up, down = height - 0.35 * font_px, 0.35 * font_px
-    return f"{left + margin:.1f},{right + margin:.1f},{up + margin:.1f},{down + margin:.1f}"
+        offset_y = height / 2
+    else:  # baseline at the anchor: ~0.35em of descent hangs below it
+        offset_y = -(height / 2 - 0.35 * font_px)
+    half_w, half_h = width / 2 + margin, height / 2 + margin
+    return {
+        "start_offset": f"{offset_x:.1f},{offset_y:.1f}",
+        "label_clear": f"{half_w:.1f},{half_w:.1f},{half_h:.1f},{half_h:.1f}",
+    }
 
 
 def _arrow_visuals(

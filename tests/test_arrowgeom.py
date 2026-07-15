@@ -41,6 +41,21 @@ def test_label_clear_malformed_values_are_ignored():
         assert geom["p0"] == (0, 0)
 
 
+def test_start_offset_shifts_the_departure_point():
+    # matplotlib relpos: the arrow leaves the label's box center. The offset
+    # moves the start before tangents, control points, and gaps resolve.
+    geom = arrow_geometry(0, 0, 300, 40, {"start_offset": "50,-7"})
+    assert geom["p0"] == (50, -7)
+    geom = arrow_geometry(0, 0, 300, 0, {"start_offset": "50,-7", "label_clear": "60,60,12,12"})
+    assert geom["p0"][0] > 50 + 55  # trimmed from the shifted center outward
+
+
+def test_start_offset_malformed_values_are_ignored():
+    for bad in ("", "5", "5,x", 7):
+        geom = arrow_geometry(0, 0, 300, 0, {"start_offset": bad})
+        assert geom["p0"] == (0, 0)
+
+
 def test_label_clear_never_swallows_short_arrows():
     # The existing trim guard: gaps close to the whole span leave the arrow
     # untrimmed instead of collapsing it.

@@ -5,11 +5,13 @@ sync. Style keys: ``curve`` (matplotlib arc3 rad — quadratic bulge as a
 fraction of chord length), ``angle_a``/``angle_b`` (matplotlib angle3/angle
 departure/arrival angles, degrees, y-up screen space — the control point is
 the ray intersection), ``gap_start``/``gap_end`` (px trims along the path
-tangents for label/point clearance), ``label_clear`` (a
-"left,right,up,down" px rectangle around the start point — the label's
-extents in y-down screen space; the start trims to where the departure
-tangent exits it, matplotlib's text-patch clipping), ``head_style``/
-``tail_style`` (``triangle``/``v``/``bar``/``none``) and ``head_size``.
+tangents for label/point clearance), ``start_offset`` (an "x,y" px shift of
+the start point — matplotlib's relpos: the arrow leaves the label's box
+CENTER, not its anchor), ``label_clear`` (a "left,right,up,down" px
+rectangle around the shifted start — the label's extents in y-down screen
+space; the start trims to where the departure tangent exits it,
+matplotlib's text-patch clipping), ``head_style``/``tail_style``
+(``triangle``/``v``/``bar``/``none``) and ``head_size``.
 """
 
 from __future__ import annotations
@@ -47,6 +49,12 @@ def _label_clear_exit(style: dict[str, Any], tangent: tuple[float, float]) -> fl
 def arrow_geometry(
     x0: float, y0: float, x1: float, y1: float, style: dict[str, Any]
 ) -> dict[str, Any]:
+    raw_offset = style.get("start_offset")
+    if isinstance(raw_offset, str):
+        offset = [_number(part) for part in raw_offset.split(",")]
+        if len(offset) == 2 and None not in offset:
+            x0 += offset[0] or 0.0
+            y0 += offset[1] or 0.0
     angle_a = _number(style.get("angle_a"))
     angle_b = _number(style.get("angle_b"))
     curve = _number(style.get("curve"))
