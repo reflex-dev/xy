@@ -254,7 +254,6 @@ const FC_CHROME_CSS = `
 :where(.xy [data-fc-modebar-menu-item][data-fc-separator]){margin-top:3px;border-top:1px solid rgba(128,128,128,.2);border-radius:0 0 4px 4px}
 :where(.xy [data-fc-modebar-menu-icon]){display:flex;width:16px;margin-right:7px}
 :where(.xy [data-fc-modebar-menu-icon] svg){width:14px;height:14px}
-:where(.xy [data-fc-modebar-menu-shortcut]){margin-left:auto;padding-left:20px;color:var(--chart-axis,currentColor);font-size:10px;opacity:.72}
 :where(.xy [data-fc-slot="modebar_button"].fc-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
 :where(.xy [data-fc-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
 :where(.xy [data-fc-slot="selection"][data-fc-band="zoom"]){border-color:var(--chart-zoom-selection,rgba(120,120,120,.9));background:var(--chart-zoom-selection-fill,rgba(120,120,120,.12))}
@@ -5407,7 +5406,8 @@ this.root.appendChild(this.selLasso);
 this._lassoPolygon = null;
 let lassoHandleDrag = null;
 const moveLassoHandle = (e) => {
-if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
+if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId
+|| !this._lassoPolygon) return;
 const rect = c.getBoundingClientRect();
 const cssX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
 const cssY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
@@ -5440,14 +5440,16 @@ moveLassoHandle(e);
 const handle = lassoHandleDrag.handle;
 lassoHandleDrag = null;
 delete handle.dataset.fcActive;
-this._sendSelectPolygon(this._lassoPolygon);
+if (this._lassoPolygon) this._sendSelectPolygon(this._lassoPolygon);
 });
 this._listen(this.selLasso, "pointercancel", (e) => {
 if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
+if (this._lassoPolygon) {
 this._lassoPolygon[lassoHandleDrag.index] = lassoHandleDrag.original;
+}
 delete lassoHandleDrag.handle.dataset.fcActive;
 lassoHandleDrag = null;
-this._renderLassoSelection();
+if (this._lassoPolygon) this._renderLassoSelection();
 e.stopPropagation();
 });
 if (this._interactionFlag("crosshair")) {
@@ -5536,9 +5538,14 @@ const d1 = dataAt(e.clientX, e.clientY);
 const moved = Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
 if (moved) {
 if (band.mode === "zoom") this._zoomToBox(band.d0, d1, true);
-else if (band.mode === "select-lasso" && band.points.length >= 3) {
+else if (band.mode === "select-lasso") {
+if (band.points.length >= 3) {
 const editable = this._simplifyLassoPoints(band.points);
 this._sendSelectPolygon(editable.map((point) => point.data));
+} else if (band.previousLasso) {
+this._lassoPolygon = band.previousLasso;
+this._renderLassoSelection();
+}
 } else {
 let d0 = band.d0;
 if (band.mode === "select-x") {
@@ -5714,11 +5721,12 @@ const t = Math.max(0, Math.min(1,
 const x = start.x + t * dx, y = start.y + t * dy;
 return (point.x - x) ** 2 + (point.y - y) ** 2;
 };
+const simplifyAt = (currentTolerance) => {
 const keep = new Uint8Array(source.length);
 keep[0] = 1;
 keep[source.length - 1] = 1;
 const stack = [[0, source.length - 1]];
-const toleranceSq = tolerance * tolerance;
+const toleranceSq = currentTolerance * currentTolerance;
 while (stack.length) {
 const [start, end] = stack.pop();
 let furthest = -1, furthestDistance = toleranceSq;
@@ -5734,14 +5742,32 @@ keep[furthest] = 1;
 stack.push([start, furthest], [furthest, end]);
 }
 }
-let simplified = source.filter((_point, index) => keep[index]);
+return source.filter((_point, index) => keep[index]);
+};
+let simplified = simplifyAt(tolerance);
 if (simplified.length < 3) {
 simplified = [source[0], source[Math.floor(source.length / 2)], source[source.length - 1]];
 }
 if (simplified.length > maxPoints) {
-simplified = Array.from({ length: maxPoints }, (_value, index) => (
-simplified[Math.round(index * (simplified.length - 1) / (maxPoints - 1))]
-));
+let low = tolerance;
+let high = Math.max(tolerance, 1);
+for (let i = 0; i < 16 && simplified.length > maxPoints; i++) {
+low = high;
+high *= 2;
+simplified = simplifyAt(high);
+}
+for (let i = 0; i < 12; i++) {
+const middle = (low + high) / 2;
+const candidate = simplifyAt(middle);
+if (candidate.length > maxPoints) low = middle;
+else {
+high = middle;
+simplified = candidate;
+}
+}
+if (simplified.length < 3) {
+simplified = [source[0], source[Math.floor(source.length / 2)], source[source.length - 1]];
+}
 }
 return simplified;
 },
@@ -5825,6 +5851,10 @@ this._selectLocalPolygon(polygon);
 }
 },
 _selectLocalPolygon(points) {
+const xs = points.map((point) => point[0]);
+const ys = points.map((point) => point[1]);
+const minX = Math.min(...xs), maxX = Math.max(...xs);
+const minY = Math.min(...ys), maxY = Math.max(...ys);
 const inside = (x, y) => {
 let hit = false;
 for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
@@ -5844,7 +5874,12 @@ const oy = yMeta.offset, sy = yMeta.scale || 1;
 const mask = new Float32Array(g.n);
 let count = 0;
 for (let i = 0; i < g.n; i++) {
-if (inside(cx[i] / sx + ox, cy[i] / sy + oy)) { mask[i] = 1; count++; }
+const x = cx[i] / sx + ox;
+const y = cy[i] / sy + oy;
+if (x >= minX && x <= maxX && y >= minY && y <= maxY && inside(x, y)) {
+mask[i] = 1;
+count++;
+}
 }
 this._applySelMask(g, mask);
 total += count;
@@ -5938,8 +5973,8 @@ setSelectMenuOpen(false);
 setExportMenuOpen(false);
 });
 this._listen(bar, "focusin", () => setVisible(true));
-this._listen(bar, "focusout", () => {
-if (!root.matches(":hover")) setVisible(false);
+this._listen(bar, "focusout", (e) => {
+if (!bar.contains(e.relatedTarget) && !root.matches(":hover")) setVisible(false);
 });
 const grip = document.createElement("button");
 grip.type = "button";
@@ -5970,6 +6005,7 @@ dx: e.clientX - barRect.left,
 dy: e.clientY - barRect.top,
 moved: false,
 };
+try { grip.setPointerCapture(e.pointerId); } catch (_err) {   }
 setVisible(true);
 });
 this._listen(grip, "pointermove", (e) => {
@@ -5984,7 +6020,6 @@ bar.style.transition = "none";
 setZoomMenuOpen(false);
 setSelectMenuOpen(false);
 setExportMenuOpen(false);
-try { grip.setPointerCapture(e.pointerId); } catch (_err) {   }
 }
 const rootRect = root.getBoundingClientRect();
 const left = e.clientX - rootRect.left - modebarDrag.dx;
@@ -6072,7 +6107,7 @@ zoomMenu.style.cssText =
 "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
 bar.appendChild(zoomMenu);
 const zoomMenuItems = [];
-const mkZoomItem = (name, label, shortcut, onClick, toggles, separator = false) => {
+const mkZoomItem = (name, label, onClick, toggles, separator = false) => {
 const button = document.createElement("button");
 button.type = "button";
 button.tabIndex = -1;
@@ -6089,10 +6124,6 @@ button.appendChild(icon);
 const text = document.createElement("span");
 text.textContent = label;
 button.appendChild(text);
-const hint = document.createElement("span");
-hint.dataset.fcModebarMenuShortcut = "";
-hint.textContent = shortcut;
-button.appendChild(hint);
 this._listen(button, "pointerdown", (e) => e.stopPropagation());
 this._listen(button, "click", (e) => {
 e.stopPropagation();
@@ -6108,10 +6139,10 @@ const resetView = () => {
 this._clearSelection();
 this._setView(this.view0, { animate: true });
 };
-mkZoomItem("zoomin", "Zoom In", "+", () => this._zoomBy(0.5, true));
-mkZoomItem("zoomout", "Zoom Out", "−", () => this._zoomBy(2, true));
-mkZoomItem("zoom", "Box Zoom", "B", () => this._setDragMode("zoom"), "zoom");
-mkZoomItem("reset", "Reset View", "0", resetView, null, true);
+mkZoomItem("zoomin", "Zoom In", () => this._zoomBy(0.5, true));
+mkZoomItem("zoomout", "Zoom Out", () => this._zoomBy(2, true));
+mkZoomItem("zoom", "Box Zoom", () => this._setDragMode("zoom"), "zoom");
+mkZoomItem("reset", "Reset View", resetView, null, true);
 const selectMenu = document.createElement("div");
 selectMenu.dataset.fcModebarMenu = "";
 selectMenu.dataset.fcModebarSelectMenu = "";
@@ -6121,7 +6152,7 @@ selectMenu.style.cssText =
 "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
 bar.appendChild(selectMenu);
 const selectMenuItems = [];
-const mkSelectItem = (name, label, shortcut, mode) => {
+const mkSelectItem = (name, label, mode) => {
 const button = document.createElement("button");
 button.type = "button";
 button.tabIndex = -1;
@@ -6137,10 +6168,6 @@ button.appendChild(icon);
 const text = document.createElement("span");
 text.textContent = label;
 button.appendChild(text);
-const hint = document.createElement("span");
-hint.dataset.fcModebarMenuShortcut = "";
-hint.textContent = shortcut;
-button.appendChild(hint);
 this._listen(button, "pointerdown", (e) => e.stopPropagation());
 this._listen(button, "click", (e) => {
 e.stopPropagation();
@@ -6152,10 +6179,10 @@ selectMenuItems.push(button);
 this._modeBtns[mode] = button;
 };
 if (canSelect) {
-mkSelectItem("select", "Box Select", "B", "select");
-mkSelectItem("lasso", "Lasso Select", "L", "select-lasso");
-mkSelectItem("selectx", "X Range", "X", "select-x");
-mkSelectItem("selecty", "Y Range", "Y", "select-y");
+mkSelectItem("select", "Box Select", "select");
+mkSelectItem("lasso", "Lasso Select", "select-lasso");
+mkSelectItem("selectx", "X Range", "select-x");
+mkSelectItem("selecty", "Y Range", "select-y");
 }
 const exportMenu = document.createElement("div");
 exportMenu.dataset.fcModebarMenu = "";
@@ -6425,6 +6452,8 @@ const percent = axisPercent("x", this.view.x0, this.view.x1, this.view0.x0, this
 const rounded = Math.round(percent);
 const exactText = percent < 1 ? "<1%" : `${rounded}%`;
 const displayText = rounded > 999 ? `${String(rounded).slice(0, 3)}…%` : exactText;
+if (this._zoomMenuLabel.dataset.fcZoomExact === exactText
+&& this._zoomMenuLabel.textContent === displayText) return;
 this._zoomMenuLabel.textContent = displayText;
 this._zoomMenuLabel.dataset.fcZoomExact = exactText;
 this._zoomMenuButton.title = `Zoom controls (${exactText})`;
@@ -6603,6 +6632,29 @@ clone.style.width = `${width}px`;
 clone.style.height = `${height}px`;
 clone.style.margin = "0";
 clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+const computed = getComputedStyle(this.root);
+const inheritedProperties = [
+"color", "font-family", "font-size", "font-style", "font-weight",
+"letter-spacing", "line-height",
+];
+const chartTokens = [
+"--chart-bg", "--chart-text", "--chart-grid", "--chart-axis",
+"--chart-tooltip-bg", "--chart-tooltip-text", "--chart-legend-bg",
+"--chart-badge-bg", "--chart-badge-text", "--chart-modebar-bg",
+"--chart-modebar-active", "--chart-selection", "--chart-selection-fill",
+"--chart-zoom-selection", "--chart-zoom-selection-fill", "--chart-crosshair",
+"--chart-annotation-text", "--chart-cursor", "--chart-cursor-pan",
+];
+for (let i = 0; i < computed.length; i++) {
+const property = computed.item(i);
+if (!property.startsWith("--")) continue;
+const value = computed.getPropertyValue(property).trim();
+if (value) clone.style.setProperty(property, value);
+}
+for (const property of [...inheritedProperties, ...chartTokens]) {
+const value = computed.getPropertyValue(property).trim();
+if (value) clone.style.setProperty(property, value);
+}
 const sourceCanvases = [...this.root.querySelectorAll("canvas")];
 const clonedCanvases = [...clone.querySelectorAll("canvas")];
 for (let i = 0; i < clonedCanvases.length; i++) {

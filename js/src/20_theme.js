@@ -99,7 +99,6 @@ const FC_CHROME_CSS = `
 :where(.xy [data-fc-modebar-menu-item][data-fc-separator]){margin-top:3px;border-top:1px solid rgba(128,128,128,.2);border-radius:0 0 4px 4px}
 :where(.xy [data-fc-modebar-menu-icon]){display:flex;width:16px;margin-right:7px}
 :where(.xy [data-fc-modebar-menu-icon] svg){width:14px;height:14px}
-:where(.xy [data-fc-modebar-menu-shortcut]){margin-left:auto;padding-left:20px;color:var(--chart-axis,currentColor);font-size:10px;opacity:.72}
 :where(.xy [data-fc-slot="modebar_button"].fc-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
 :where(.xy [data-fc-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
 :where(.xy [data-fc-slot="selection"][data-fc-band="zoom"]){border-color:var(--chart-zoom-selection,rgba(120,120,120,.9));background:var(--chart-zoom-selection-fill,rgba(120,120,120,.12))}

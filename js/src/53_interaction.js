@@ -30,7 +30,8 @@ Object.assign(ChartView.prototype, {
     let lassoHandleDrag = null;
 
     const moveLassoHandle = (e) => {
-      if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
+      if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId
+          || !this._lassoPolygon) return;
       const rect = c.getBoundingClientRect();
       const cssX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
       const cssY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
@@ -63,14 +64,16 @@ Object.assign(ChartView.prototype, {
       const handle = lassoHandleDrag.handle;
       lassoHandleDrag = null;
       delete handle.dataset.fcActive;
-      this._sendSelectPolygon(this._lassoPolygon);
+      if (this._lassoPolygon) this._sendSelectPolygon(this._lassoPolygon);
     });
     this._listen(this.selLasso, "pointercancel", (e) => {
       if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
-      this._lassoPolygon[lassoHandleDrag.index] = lassoHandleDrag.original;
+      if (this._lassoPolygon) {
+        this._lassoPolygon[lassoHandleDrag.index] = lassoHandleDrag.original;
+      }
       delete lassoHandleDrag.handle.dataset.fcActive;
       lassoHandleDrag = null;
-      this._renderLassoSelection();
+      if (this._lassoPolygon) this._renderLassoSelection();
       e.stopPropagation();
     });
 
@@ -164,9 +167,14 @@ Object.assign(ChartView.prototype, {
         const moved = Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
         if (moved) {
           if (band.mode === "zoom") this._zoomToBox(band.d0, d1, true);
-          else if (band.mode === "select-lasso" && band.points.length >= 3) {
-            const editable = this._simplifyLassoPoints(band.points);
-            this._sendSelectPolygon(editable.map((point) => point.data));
+          else if (band.mode === "select-lasso") {
+            if (band.points.length >= 3) {
+              const editable = this._simplifyLassoPoints(band.points);
+              this._sendSelectPolygon(editable.map((point) => point.data));
+            } else if (band.previousLasso) {
+              this._lassoPolygon = band.previousLasso;
+              this._renderLassoSelection();
+            }
           } else {
             let d0 = band.d0;
             if (band.mode === "select-x") {
@@ -357,34 +365,56 @@ Object.assign(ChartView.prototype, {
       const x = start.x + t * dx, y = start.y + t * dy;
       return (point.x - x) ** 2 + (point.y - y) ** 2;
     };
-    const keep = new Uint8Array(source.length);
-    keep[0] = 1;
-    keep[source.length - 1] = 1;
-    const stack = [[0, source.length - 1]];
-    const toleranceSq = tolerance * tolerance;
-    while (stack.length) {
-      const [start, end] = stack.pop();
-      let furthest = -1, furthestDistance = toleranceSq;
-      for (let i = start + 1; i < end; i++) {
-        const distance = distanceToSegmentSq(source[i], source[start], source[end]);
-        if (distance > furthestDistance) {
-          furthest = i;
-          furthestDistance = distance;
+    const simplifyAt = (currentTolerance) => {
+      const keep = new Uint8Array(source.length);
+      keep[0] = 1;
+      keep[source.length - 1] = 1;
+      const stack = [[0, source.length - 1]];
+      const toleranceSq = currentTolerance * currentTolerance;
+      while (stack.length) {
+        const [start, end] = stack.pop();
+        let furthest = -1, furthestDistance = toleranceSq;
+        for (let i = start + 1; i < end; i++) {
+          const distance = distanceToSegmentSq(source[i], source[start], source[end]);
+          if (distance > furthestDistance) {
+            furthest = i;
+            furthestDistance = distance;
+          }
+        }
+        if (furthest >= 0) {
+          keep[furthest] = 1;
+          stack.push([start, furthest], [furthest, end]);
         }
       }
-      if (furthest >= 0) {
-        keep[furthest] = 1;
-        stack.push([start, furthest], [furthest, end]);
-      }
-    }
-    let simplified = source.filter((_point, index) => keep[index]);
+      return source.filter((_point, index) => keep[index]);
+    };
+    let simplified = simplifyAt(tolerance);
     if (simplified.length < 3) {
       simplified = [source[0], source[Math.floor(source.length / 2)], source[source.length - 1]];
     }
     if (simplified.length > maxPoints) {
-      simplified = Array.from({ length: maxPoints }, (_value, index) => (
-        simplified[Math.round(index * (simplified.length - 1) / (maxPoints - 1))]
-      ));
+      // Raise the RDP tolerance until the handle budget is met. Unlike uniform
+      // re-sampling, this continues to preserve the polygon's most significant
+      // corners as the editable overlay becomes simpler.
+      let low = tolerance;
+      let high = Math.max(tolerance, 1);
+      for (let i = 0; i < 16 && simplified.length > maxPoints; i++) {
+        low = high;
+        high *= 2;
+        simplified = simplifyAt(high);
+      }
+      for (let i = 0; i < 12; i++) {
+        const middle = (low + high) / 2;
+        const candidate = simplifyAt(middle);
+        if (candidate.length > maxPoints) low = middle;
+        else {
+          high = middle;
+          simplified = candidate;
+        }
+      }
+      if (simplified.length < 3) {
+        simplified = [source[0], source[Math.floor(source.length / 2)], source[source.length - 1]];
+      }
     }
     return simplified;
   },
@@ -474,6 +504,10 @@ Object.assign(ChartView.prototype, {
   },
 
   _selectLocalPolygon(points) {
+    const xs = points.map((point) => point[0]);
+    const ys = points.map((point) => point[1]);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
     const inside = (x, y) => {
       let hit = false;
       for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
@@ -493,7 +527,12 @@ Object.assign(ChartView.prototype, {
       const mask = new Float32Array(g.n);
       let count = 0;
       for (let i = 0; i < g.n; i++) {
-        if (inside(cx[i] / sx + ox, cy[i] / sy + oy)) { mask[i] = 1; count++; }
+        const x = cx[i] / sx + ox;
+        const y = cy[i] / sy + oy;
+        if (x >= minX && x <= maxX && y >= minY && y <= maxY && inside(x, y)) {
+          mask[i] = 1;
+          count++;
+        }
       }
       this._applySelMask(g, mask);
       total += count;
@@ -598,8 +637,8 @@ Object.assign(ChartView.prototype, {
       setExportMenuOpen(false);
     });
     this._listen(bar, "focusin", () => setVisible(true));
-    this._listen(bar, "focusout", () => {
-      if (!root.matches(":hover")) setVisible(false);
+    this._listen(bar, "focusout", (e) => {
+      if (!bar.contains(e.relatedTarget) && !root.matches(":hover")) setVisible(false);
     });
 
     // One combined grip/menu control avoids a second, visually redundant dots
@@ -634,6 +673,7 @@ Object.assign(ChartView.prototype, {
         dy: e.clientY - barRect.top,
         moved: false,
       };
+      try { grip.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
       setVisible(true);
     });
     this._listen(grip, "pointermove", (e) => {
@@ -648,7 +688,6 @@ Object.assign(ChartView.prototype, {
         setZoomMenuOpen(false);
         setSelectMenuOpen(false);
         setExportMenuOpen(false);
-        try { grip.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
       }
       const rootRect = root.getBoundingClientRect();
       const left = e.clientX - rootRect.left - modebarDrag.dx;
@@ -740,7 +779,7 @@ Object.assign(ChartView.prototype, {
       "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
     bar.appendChild(zoomMenu);
     const zoomMenuItems = [];
-    const mkZoomItem = (name, label, shortcut, onClick, toggles, separator = false) => {
+    const mkZoomItem = (name, label, onClick, toggles, separator = false) => {
       const button = document.createElement("button");
       button.type = "button";
       button.tabIndex = -1;
@@ -757,10 +796,6 @@ Object.assign(ChartView.prototype, {
       const text = document.createElement("span");
       text.textContent = label;
       button.appendChild(text);
-      const hint = document.createElement("span");
-      hint.dataset.fcModebarMenuShortcut = "";
-      hint.textContent = shortcut;
-      button.appendChild(hint);
       this._listen(button, "pointerdown", (e) => e.stopPropagation());
       this._listen(button, "click", (e) => {
         e.stopPropagation();
@@ -777,10 +812,10 @@ Object.assign(ChartView.prototype, {
       this._clearSelection();
       this._setView(this.view0, { animate: true });
     };
-    mkZoomItem("zoomin", "Zoom In", "+", () => this._zoomBy(0.5, true));
-    mkZoomItem("zoomout", "Zoom Out", "−", () => this._zoomBy(2, true));
-    mkZoomItem("zoom", "Box Zoom", "B", () => this._setDragMode("zoom"), "zoom");
-    mkZoomItem("reset", "Reset View", "0", resetView, null, true);
+    mkZoomItem("zoomin", "Zoom In", () => this._zoomBy(0.5, true));
+    mkZoomItem("zoomout", "Zoom Out", () => this._zoomBy(2, true));
+    mkZoomItem("zoom", "Box Zoom", () => this._setDragMode("zoom"), "zoom");
+    mkZoomItem("reset", "Reset View", resetView, null, true);
 
     const selectMenu = document.createElement("div");
     selectMenu.dataset.fcModebarMenu = "";
@@ -791,7 +826,7 @@ Object.assign(ChartView.prototype, {
       "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
     bar.appendChild(selectMenu);
     const selectMenuItems = [];
-    const mkSelectItem = (name, label, shortcut, mode) => {
+    const mkSelectItem = (name, label, mode) => {
       const button = document.createElement("button");
       button.type = "button";
       button.tabIndex = -1;
@@ -807,10 +842,6 @@ Object.assign(ChartView.prototype, {
       const text = document.createElement("span");
       text.textContent = label;
       button.appendChild(text);
-      const hint = document.createElement("span");
-      hint.dataset.fcModebarMenuShortcut = "";
-      hint.textContent = shortcut;
-      button.appendChild(hint);
       this._listen(button, "pointerdown", (e) => e.stopPropagation());
       this._listen(button, "click", (e) => {
         e.stopPropagation();
@@ -822,10 +853,10 @@ Object.assign(ChartView.prototype, {
       this._modeBtns[mode] = button;
     };
     if (canSelect) {
-      mkSelectItem("select", "Box Select", "B", "select");
-      mkSelectItem("lasso", "Lasso Select", "L", "select-lasso");
-      mkSelectItem("selectx", "X Range", "X", "select-x");
-      mkSelectItem("selecty", "Y Range", "Y", "select-y");
+      mkSelectItem("select", "Box Select", "select");
+      mkSelectItem("lasso", "Lasso Select", "select-lasso");
+      mkSelectItem("selectx", "X Range", "select-x");
+      mkSelectItem("selecty", "Y Range", "select-y");
     }
 
     const exportMenu = document.createElement("div");
@@ -1111,6 +1142,8 @@ Object.assign(ChartView.prototype, {
     const rounded = Math.round(percent);
     const exactText = percent < 1 ? "<1%" : `${rounded}%`;
     const displayText = rounded > 999 ? `${String(rounded).slice(0, 3)}…%` : exactText;
+    if (this._zoomMenuLabel.dataset.fcZoomExact === exactText
+        && this._zoomMenuLabel.textContent === displayText) return;
     this._zoomMenuLabel.textContent = displayText;
     this._zoomMenuLabel.dataset.fcZoomExact = exactText;
     this._zoomMenuButton.title = `Zoom controls (${exactText})`;
@@ -1306,6 +1339,32 @@ Object.assign(ChartView.prototype, {
     clone.style.height = `${height}px`;
     clone.style.margin = "0";
     clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+
+    // The clone is detached from its host, so inherited theme tokens and text
+    // styles must be made explicit before it is serialized for SVG/PNG export.
+    const computed = getComputedStyle(this.root);
+    const inheritedProperties = [
+      "color", "font-family", "font-size", "font-style", "font-weight",
+      "letter-spacing", "line-height",
+    ];
+    const chartTokens = [
+      "--chart-bg", "--chart-text", "--chart-grid", "--chart-axis",
+      "--chart-tooltip-bg", "--chart-tooltip-text", "--chart-legend-bg",
+      "--chart-badge-bg", "--chart-badge-text", "--chart-modebar-bg",
+      "--chart-modebar-active", "--chart-selection", "--chart-selection-fill",
+      "--chart-zoom-selection", "--chart-zoom-selection-fill", "--chart-crosshair",
+      "--chart-annotation-text", "--chart-cursor", "--chart-cursor-pan",
+    ];
+    for (let i = 0; i < computed.length; i++) {
+      const property = computed.item(i);
+      if (!property.startsWith("--")) continue;
+      const value = computed.getPropertyValue(property).trim();
+      if (value) clone.style.setProperty(property, value);
+    }
+    for (const property of [...inheritedProperties, ...chartTokens]) {
+      const value = computed.getPropertyValue(property).trim();
+      if (value) clone.style.setProperty(property, value);
+    }
 
     const sourceCanvases = [...this.root.querySelectorAll("canvas")];
     const clonedCanvases = [...clone.querySelectorAll("canvas")];

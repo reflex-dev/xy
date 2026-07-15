@@ -344,17 +344,24 @@ try{{
       : [];
     const lassoPathBefore = v.selLassoPath.getAttribute("d");
     const lassoPointBefore = v._lassoPolygon ? [...v._lassoPolygon[0]] : null;
+    const pointer = (target, type, x, y, pointerId = 72) => target.dispatchEvent(new PointerEvent(type, {{
+      pointerId,pointerType:"mouse",button:0,buttons:type === "pointerup" ? 0 : 1,
+      clientX:x,clientY:y,bubbles:true,cancelable:true,
+    }}));
     if (lassoHandles[0]) {{
       const cr = v.canvas.getBoundingClientRect();
-      const pointer = (target, type, x, y) => target.dispatchEvent(new PointerEvent(type, {{
-        pointerId:72,pointerType:"mouse",button:0,buttons:type === "pointerup" ? 0 : 1,
-        clientX:x,clientY:y,bubbles:true,cancelable:true,
-      }}));
       const handleRect = lassoHandles[0].getBoundingClientRect();
       pointer(lassoHandles[0], "pointerdown", handleRect.left + 2, handleRect.top + 2);
       pointer(v.selLasso, "pointermove", cr.left + cr.width * 0.3, cr.top + cr.height * 0.25);
       pointer(v.selLasso, "pointerup", cr.left + cr.width * 0.3, cr.top + cr.height * 0.25);
     }}
+    const shortLassoBefore = JSON.stringify(v._lassoPolygon);
+    const lassoCanvasRect = v.canvas.getBoundingClientRect();
+    v._setDragMode("select-lasso");
+    pointer(v.canvas, "pointerdown", lassoCanvasRect.left + 30, lassoCanvasRect.top + 30, 73);
+    pointer(v.canvas, "pointermove", lassoCanvasRect.left + 34, lassoCanvasRect.top + 30, 73);
+    pointer(v.canvas, "pointerup", lassoCanvasRect.left + 34, lassoCanvasRect.top + 30, 73);
+    const shortLassoRestored = JSON.stringify(v._lassoPolygon) === shortLassoBefore;
     const manyLassoPoints = Array.from({{length:80}}, (_value, index) => ({{
       x:100+60*Math.cos(index/80*Math.PI*2),
       y:100+40*Math.sin(index/80*Math.PI*2),
@@ -366,7 +373,8 @@ try{{
         || v._lassoPolygon[0][1] !== lassoPointBefore[1])
       && v.selLassoPath.getAttribute("d") !== lassoPathBefore
       && v.selLassoHandles.childElementCount === 4
-      && simplifiedLasso.length >= 3 && simplifiedLasso.length <= 16 ? 1 : 0;
+      && simplifiedLasso.length >= 3 && simplifiedLasso.length <= 16
+      && shortLassoRestored ? 1 : 0;
     if (exportButton) exportButton.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
     const exportItems = exportMenu
       ? [...exportMenu.querySelectorAll("[data-fc-modebar-export-item]")]
@@ -376,10 +384,22 @@ try{{
       && exportButton.getAttribute("aria-expanded") === "true"
       && ["png", "svg", "csv"].every((format) => exportItems.includes(format));
     if (exportMenu) exportMenu.dispatchEvent(new KeyboardEvent("keydown", {{key:"Escape",bubbles:true}}));
+    const previousChartBg = v.root.style.getPropertyValue("--chart-bg");
+    const previousFontFamily = v.root.style.fontFamily;
+    v.root.style.setProperty("--chart-bg", "#123456");
+    v.root.style.fontFamily = "Smoke Export Sans, sans-serif";
+    const themedExport = v._exportSvgMarkup();
+    if (previousChartBg) v.root.style.setProperty("--chart-bg", previousChartBg);
+    else v.root.style.removeProperty("--chart-bg");
+    v.root.style.fontFamily = previousFontFamily;
+    const exportThemePreserved = themedExport.includes("#123456")
+      && themedExport.includes("Smoke Export Sans");
+    const shortcutHintsAbsent = !v.root.querySelector("[data-fc-modebar-menu-shortcut]");
     const modebarExport = exportOpened && typeof v._exportCsvText === "function"
       && typeof v._exportSvgMarkup === "function" && typeof v._exportPng === "function"
       && exportMenu.style.display === "none"
-      && exportButton.getAttribute("aria-expanded") === "false" ? 1 : 0;
+      && exportButton.getAttribute("aria-expanded") === "false"
+      && exportThemePreserved && shortcutHintsAbsent ? 1 : 0;
     v._setDragMode("pan");
     const spanX = () => v.view.x1 - v.view.x0;
     const s0 = spanX();
