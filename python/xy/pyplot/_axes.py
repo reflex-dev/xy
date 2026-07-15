@@ -3611,7 +3611,9 @@ class Axes(PlotTypeMixin):
             lo, hi = sorted(map(float, _scale_values(np.asarray([lo, hi]), spec, inverse=True)))
         return lo, hi
 
-    def _apply_tickers(self, key: str, props: dict[str, Any]) -> None:
+    def _apply_tickers(
+        self, key: str, props: dict[str, Any], nbins_hint: Optional[int] = None
+    ) -> None:
         """Resolve a user locator/formatter into concrete tick props (in place)."""
         from ._ticker import NullFormatter
 
@@ -3640,6 +3642,7 @@ class Axes(PlotTypeMixin):
         lo, hi = self._ticker_view(key, props)
         auto_log = False
         if locator is not None:
+            locator._nbins_hint = nbins_hint
             ticks = np.asarray(locator.tick_values(lo, hi), dtype=float).reshape(-1)
             pad = (hi - lo) * 1e-9
             ticks = ticks[(ticks >= lo - pad) & (ticks <= hi + pad)]
@@ -3651,7 +3654,11 @@ class Axes(PlotTypeMixin):
             from ._ticker import LogLocator
 
             auto = LogLocator() if is_log else AutoLocator()
+            auto._nbins_hint = nbins_hint
             ticks = np.asarray(auto.tick_values(lo, hi), dtype=float).reshape(-1)
+            if not is_log:
+                pad = (hi - lo) * 1e-9
+                ticks = ticks[(ticks >= lo - pad) & (ticks <= hi + pad)]
             auto_log = is_log
         props["tick_values"] = list(map(float, _scale_values(ticks, spec)))
         if formatter is not None:
@@ -4008,16 +4015,17 @@ class Axes(PlotTypeMixin):
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
         if aspect_domains is not None:
             x_props["domain"], y_props["domain"] = aspect_domains
-        self._apply_tickers("x", x_props)
-        self._apply_tickers("y", y_props)
-        self._apply_auto_tick_density(x_props, y_props, width, height)
+        auto_tick_counts = self._auto_tick_counts(x_props, width, height)
+        self._apply_tickers("x", x_props, auto_tick_counts["x"])
+        self._apply_tickers("y", y_props, auto_tick_counts["y"])
+        self._apply_auto_tick_density(x_props, y_props, auto_tick_counts)
         children.append(_cached_axis("x", x_props))
         children.append(_cached_axis("y", y_props))
         for index, secondary in enumerate(self._secondary_axes, 1):
             children.append(secondary._component(index))
         if self._twin is not None:
             y2_props = {k: v for k, v in self._axis["y2"].items() if v is not None}
-            self._apply_tickers("y2", y2_props)
+            self._apply_tickers("y2", y2_props, auto_tick_counts["y"])
             children.append(fc.y_axis(id="y2", side="right", **y2_props))
         if self._legend:
             legend_options = dict(self._legend_options)
@@ -4076,14 +4084,14 @@ class Axes(PlotTypeMixin):
             core_figure.extra_legends = extras
         return self._chart
 
-    def _apply_auto_tick_density(
+    def _auto_tick_counts(
         self,
         x_props: dict[str, Any],
-        y_props: dict[str, Any],
         width: int,
         height: int,
-    ) -> None:
-        """Match Matplotlib AutoLocator's axes-size tick-space heuristic."""
+    ) -> dict[str, int]:
+        """Matplotlib's ``Axis.get_tick_space()`` per axis: how many tick
+        intervals fit the estimated plot rect at the tick-label font size."""
         compact = width < 520
         if self._padding is None:
             left, right = (46.0, 8.0) if compact else (62.0, 14.0)
@@ -4100,10 +4108,18 @@ class Axes(PlotTypeMixin):
         base = float(rcParams["font.size"])
         x_font = _font_size_points(rcParams["xtick.labelsize"], base)
         y_font = _font_size_points(rcParams["ytick.labelsize"], base)
-        counts = {
+        return {
             "x": max(1, min(9, int(np.floor(plot_width * 72.0 / dpi / (x_font * 3.0))))),
             "y": max(1, min(9, int(np.floor(plot_height * 72.0 / dpi / (y_font * 2.0))))),
         }
+
+    def _apply_auto_tick_density(
+        self,
+        x_props: dict[str, Any],
+        y_props: dict[str, Any],
+        counts: dict[str, int],
+    ) -> None:
+        """Match Matplotlib AutoLocator's axes-size tick-space heuristic."""
         for axis, props in (("x", x_props), ("y", y_props)):
             if (
                 "tick_count" not in props

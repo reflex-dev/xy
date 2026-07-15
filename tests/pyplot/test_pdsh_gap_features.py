@@ -8,6 +8,7 @@ so a regression here means real scripts break again.
 from __future__ import annotations
 
 import io
+import re
 
 import numpy as np
 import pytest
@@ -71,6 +72,41 @@ def test_maxn_locator_caps_tick_count():
     ax.xaxis.set_major_locator(plt.MaxNLocator(3))
     ticks = ax.get_xticks()
     assert 2 <= len(ticks) <= 4
+
+
+def test_maxn_locator_matches_matplotlib_tick_values():
+    # Reference values from matplotlib 3.11 MaxNLocator.tick_values; edge
+    # ticks may overrun the view — the axis clips them at draw time.
+    assert np.allclose(plt.MaxNLocator(3).tick_values(0, 1), [0.0, 0.4, 0.8, 1.2])
+    assert np.allclose(plt.MaxNLocator(5).tick_values(0, 1), [0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
+    assert np.allclose(
+        plt.MaxNLocator(4, steps=[1, 3, 10]).tick_values(0, 1), [0.0, 0.3, 0.6, 0.9, 1.2]
+    )
+    assert np.allclose(
+        plt.MaxNLocator(5, integer=True).tick_values(-0.5, 6.5), [-2.0, 0.0, 2.0, 4.0, 6.0, 8.0]
+    )
+    assert np.allclose(plt.MaxNLocator(3).tick_values(-3.15, 66.15), [-25.0, 0.0, 25.0, 50.0, 75.0])
+    with pytest.raises(ValueError):
+        plt.MaxNLocator(3, steps=[0.5, 1])
+
+
+def test_maxn_locator_grid_renders_matplotlib_ticks():
+    # PDSH 04.10: MaxNLocator(3) on a 4x4 grid labels 0.0/0.4/0.8, not 0/0.5/1.
+    fig, axs = plt.subplots(4, 4, sharex=True, sharey=True)
+    for axi in axs.flat:
+        axi.xaxis.set_major_locator(plt.MaxNLocator(3))
+        axi.yaxis.set_major_locator(plt.MaxNLocator(3))
+    assert set(re.findall(r"<text[^>]*>([^<]+)</text>", _svg())) == {"0.0", "0.4", "0.8"}
+
+
+def test_auto_locator_density_adapts_to_panel_size():
+    # matplotlib's AutoLocator budgets ticks by axes size: tiny panels get
+    # two intervals, so an explicit AutoLocator must match the default axes.
+    fig, axs = plt.subplots(4, 4, sharex=True, sharey=True)
+    for axi in axs.flat:
+        axi.xaxis.set_major_locator(plt.AutoLocator())
+        axi.yaxis.set_major_locator(plt.AutoLocator())
+    assert set(re.findall(r"<text[^>]*>([^<]+)</text>", _svg())) == {"0.0", "0.5", "1.0"}
 
 
 def test_func_formatter_labels_reach_the_export():
