@@ -301,19 +301,15 @@ Before tagging a release:
 - Confirm CI built and verified native wheels for Linux glibc and musl/Alpine
   (x86-64, aarch64, armv7), macOS (x86-64, Apple Silicon), and Windows (x86, x64,
   arm64).
-- The Pyodide/Emscripten WASM wheel is **built but not functional at runtime**
-  and is excluded from the supported set. Verified 2026-07-08 by loading the
-  wheel in Pyodide 0.26.4 (node): it is a structurally valid side-module (wasm
-  magic, `dylink` section, all `fc_*` symbols exported), and micropip installs
-  it, but `WebAssembly.instantiate` fails with `LinkError: Import "env"
-  "__cpp_exception": tag import requires a WebAssembly.Tag`. Root cause: the
-  Rust core builds with the default `panic=unwind`, which emits a C++
-  exception-handling tag import Pyodide's runtime does not provide. Fix
-  direction: build the `wasm32-unknown-emscripten` target with `panic=abort`
-  (likely `-Z build-std=std,panic_abort`) or force emscripten's legacy JS
-  exception handling, then re-verify with a Pyodide load. The wasm job stays
-  `continue-on-error` and the wheel is not advertised as working until a
-  Pyodide runtime load passes in CI.
+- Confirm the Pyodide/Emscripten wheel passes its runtime load gate, not only
+  its structural wheel check. The tested toolchain is Rust 1.97.0 with
+  `panic=abort`, Emscripten 4.0.9, the `pyodide_2025_0` wheel ABI, and Pyodide
+  0.29.4. The abort strategy is required: the previous unwind build imported a
+  `__cpp_exception` WebAssembly tag that Pyodide's main module did not provide.
+  `scripts/pyodide_load_smoke.py` installs the built artifact with micropip,
+  loads the C ABI through `ctypes`, verifies `fc_abi_version`, and calls the
+  native `min_max` kernel. The wasm job is release-blocking so an ABI or
+  toolchain drift cannot silently ship a build-only, unloadable artifact.
 - Confirm the no-Rust install job passed (it must build, install, and then
   raise a clear ImportError on first compute — never a silent fallback).
 - Confirm the sdist verifier passed and the source archive contains the expected
