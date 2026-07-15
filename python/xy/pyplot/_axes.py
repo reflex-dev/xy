@@ -1265,9 +1265,14 @@ class Axes(PlotTypeMixin):
         if cat_array.dtype.kind == "U":
             # _plain_text only rewrites labels containing TeX markers; a
             # vectorized scan skips the per-label Python loop for the common
-            # plain-string case (O(categories) per build otherwise).
+            # plain-string case (O(categories) per build otherwise). The scan
+            # reads the UCS4 storage as codepoints rather than using
+            # np.char/np.strings, whose first call pays a multi-millisecond
+            # lazy ufunc setup — a one-shot cost CodSpeed attributes to
+            # whichever chart build hits it first.
             flat = cat_array.reshape(-1)
-            if (np.char.find(flat, "$") >= 0).any() or (np.char.find(flat, "\\") >= 0).any():
+            codes = np.ascontiguousarray(flat).view(np.uint32)
+            if (codes == 36).any() or (codes == 92).any():  # "$" and "\" codepoints
                 cats = np.asarray([_plain_text(value) for value in flat]).reshape(cat_array.shape)
             else:
                 cats = cat_array

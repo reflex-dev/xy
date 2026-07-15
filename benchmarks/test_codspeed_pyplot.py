@@ -65,18 +65,26 @@ def warm_lazy_modules() -> None:
     """
     x = np.array([0.0, 1.0, 2.0, 3.0])
     y = np.array([0.0, 1.0, 0.0, 1.0])
-    raw = fc.chart(fc.line(x=x, y=y), fc.x_axis(), fc.y_axis()).figure()
+    raw = fc.chart(fc.line(x=x, y=y), fc.scatter(x=x, y=y), fc.x_axis(), fc.y_axis()).figure()
     raw.build_payload_split(N_BUCKETS)
+    fc.chart(fc.bar(["a", "b"], np.array([1.0, 2.0]))).figure().build_payload_split(N_BUCKETS)
+    fc.chart(fc.histogram(y, bins=4)).figure().build_payload_split(N_BUCKETS)
     raw_fig = fc.chart(fc.line(x=x, y=y)).figure()
     raw_fig.to_png(engine=fc.Engine.default, scale=1.0)
 
     plt.close("all")
     fig, ax = plt.subplots()
     ax.plot(x, y, "r--", label="warm")
+    ax.scatter(x, y, c="#1f77b4", s=9.0)
     ax.legend()
     ax._build_chart(WIDTH, HEIGHT).figure().build_payload_split(N_BUCKETS)
     buffer = io.BytesIO()
     fig.savefig(buffer, format="png")
+    plt.close("all")
+    _fig2, ax2 = plt.subplots()
+    ax2.bar(["a", "b"], [1.0, 2.0])
+    ax2.hist(y, bins=4)
+    ax2._build_chart(WIDTH, HEIGHT).figure().build_payload_split(N_BUCKETS)
     plt.close("all")
 
 
