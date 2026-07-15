@@ -180,7 +180,7 @@ def test_api_examples_document_alpha_api_stability_boundary() -> None:
         "`chart.figure()` as an advanced escape hatch",
         '`width="100%"`',
         "Standalone `to_html(...)` needs no browser dependency",
-        '`to_png(..., engine="chromium")` needs a local Chrome/Chromium executable',
+        "`to_png(..., engine=Engine.chromium)` uses an installed Chrome, Chromium, Edge, or",
     ]
     for marker in required:
         assert marker in text

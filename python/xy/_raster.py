@@ -20,7 +20,9 @@ import numpy as np
 from . import _png, _scene
 from ._svg import (
     _AXIS,
+    _AXIS_GRID_DASHES,
     _GRID,
+    _STATIC_COLOR_FALLBACK,
     _TEXT,
     DEFAULT_PALETTE,
     _colormap_stops,
@@ -28,6 +30,7 @@ from ._svg import (
     _corner_radii,
     _css,
     _lut,
+    _resolve_static_css_vars,
     _Scale,
     _step_arrays,
     _tick_text,
@@ -82,8 +85,8 @@ def _parse_color(css: str, opacity: float = 1.0) -> tuple[int, int, int, int]:
     colors can never drift from the API contract. `none` renders transparent
     (the SVG idiom); browser-only forms that survive `_css`'s fallback (an
     `oklch()` a DOM would resolve) and — defensively — anything unparseable
-    fall back to a mid gray so a static export never renders an invisible
-    mark."""
+    use the same blue-gray fallback as the browser renderer so a static export
+    never renders an invisible or target-dependent mark."""
     from . import kernels
 
     s = str(css).strip()
@@ -91,7 +94,7 @@ def _parse_color(css: str, opacity: float = 1.0) -> tuple[int, int, int, int]:
         return (0, 0, 0, 0)
     _status, rgba = kernels.css_check(kernels.CSS_COLOR, s)
     if rgba is None:
-        rgba = (100.0 / 255.0, 100.0 / 255.0, 100.0 / 255.0, 1.0)
+        rgba = _STATIC_COLOR_FALLBACK
     r, g, b, a = rgba
     return (
         int(round(r * 255)),
@@ -103,6 +106,14 @@ def _parse_color(css: str, opacity: float = 1.0) -> tuple[int, int, int, int]:
 
 def _rgba(css: Any, fallback: str, opacity: float = 1.0) -> tuple[int, int, int, int]:
     return _parse_color(_css(css, fallback), opacity)
+
+
+def _fill_opacity(style: dict[str, Any], default: float = 1.0) -> float:
+    return float(style.get("opacity", default)) * float(style.get("fill_opacity", 1.0))
+
+
+def _stroke_opacity(style: dict[str, Any], default: float = 1.0) -> float:
+    return float(style.get("opacity", default)) * float(style.get("stroke_opacity", 1.0))
 
 
 class _Cmd:
@@ -497,6 +508,7 @@ def render_raster(
     borrowed: tuple[np.ndarray, ...] = (),
 ) -> np.ndarray | bytes:
     """Paint `spec` into an ``(h, w, 4)`` RGBA8 image via the native rasterizer."""
+    spec = _resolve_static_css_vars(spec)
     width, height, compact, plot = layout(spec)
     xa, ya = spec["x_axis"], spec["y_axis"]
     sx = _Scale(xa, plot["x"], plot["x"] + plot["w"])
@@ -525,17 +537,41 @@ def render_raster(
 
     xt, xlab, xstep = axis_ticks(xa, plot["w"], True)
     yt, ylab, ystep = axis_ticks(ya, plot["h"], False)
-    grid = _parse_color(_css(dom_style.get("--chart-grid"), _GRID))
+    xstyle, ystyle = xa.get("style") or {}, ya.get("style") or {}
+    default_grid = _css(dom_style.get("--chart-grid"), _GRID)
+    default_axis = _css(dom_style.get("--chart-axis"), _AXIS)
+    default_text = _css(dom_style.get("--chart-text"), _TEXT)
     px0, py0 = plot["x"], plot["y"]
     px1, py1 = plot["x"] + plot["w"], plot["y"] + plot["h"]
 
+    hide_x = xa.get("tick_label_strategy") == "none"
+    hide_y = ya.get("tick_label_strategy") == "none"
+    hide_x_labels = hide_x or xa.get("tick_label_strategy") == "off"
+    hide_y_labels = hide_y or ya.get("tick_label_strategy") == "off"
+
     cmd.clip(px0, py0, plot["w"], plot["h"])
-    for v in xt:
+    for v in [] if hide_x else xt:
         gx = float(sx(v))
-        cmd.stroke([(gx, py0), (gx, py1)], 1.0, grid)
-    for v in yt:
+        cmd.stroke(
+            [(gx, py0), (gx, py1)],
+            float(xstyle.get("grid_width", 1)),
+            _parse_color(
+                _css(xstyle.get("grid_color"), default_grid),
+                float(xstyle.get("grid_opacity", 1.0)),
+            ),
+            dash=_AXIS_GRID_DASHES.get(str(xstyle.get("grid_dash", "solid"))),
+        )
+    for v in [] if hide_y else yt:
         gy = float(sy(v))
-        cmd.stroke([(px0, gy), (px1, gy)], 1.0, grid)
+        cmd.stroke(
+            [(px0, gy), (px1, gy)],
+            float(ystyle.get("grid_width", 1)),
+            _parse_color(
+                _css(ystyle.get("grid_color"), default_grid),
+                float(ystyle.get("grid_opacity", 1.0)),
+            ),
+            dash=_AXIS_GRID_DASHES.get(str(ystyle.get("grid_dash", "solid"))),
+        )
 
     for palette_i, t in enumerate(spec["traces"]):
         style = t.get("style") or {}
@@ -566,42 +602,129 @@ def render_raster(
 
     # Chrome (unclipped): baselines, labels, title, legend.
     cmd.clip(0, 0, width, height)
-    axis_c = _parse_color(_AXIS)
     # "none" silences the whole axis chrome (sparklines); "off" hides only the
     # label text and keeps baselines and the axis title (mpl shared axes).
-    hide_x = xa.get("tick_label_strategy") == "none"
-    hide_y = ya.get("tick_label_strategy") == "none"
-    hide_x_labels = hide_x or xa.get("tick_label_strategy") == "off"
-    hide_y_labels = hide_y or ya.get("tick_label_strategy") == "off"
     frame_sides = spec.get("frame_sides")
     if frame_sides is None:
         frame_sides = [xa.get("side", "bottom"), ya.get("side", "left")]
     if not hide_y:
         if "left" in frame_sides:
-            cmd.stroke([(px0, py0), (px0, py1)], 1.0, axis_c)
+            cmd.stroke(
+                [(px0, py0), (px0, py1)],
+                float(ystyle.get("axis_width", 1)),
+                _parse_color(_css(ystyle.get("axis_color"), default_axis)),
+            )
         if "right" in frame_sides:
-            cmd.stroke([(px1, py0), (px1, py1)], 1.0, axis_c)
+            cmd.stroke(
+                [(px1, py0), (px1, py1)],
+                float(ystyle.get("axis_width", 1)),
+                _parse_color(_css(ystyle.get("axis_color"), default_axis)),
+            )
     if not hide_x:
         if "top" in frame_sides:
-            cmd.stroke([(px0, py0), (px1, py0)], 1.0, axis_c)
+            cmd.stroke(
+                [(px0, py0), (px1, py0)],
+                float(xstyle.get("axis_width", 1)),
+                _parse_color(_css(xstyle.get("axis_color"), default_axis)),
+            )
         if "bottom" in frame_sides:
-            cmd.stroke([(px0, py1), (px1, py1)], 1.0, axis_c)
+            cmd.stroke(
+                [(px0, py1), (px1, py1)],
+                float(xstyle.get("axis_width", 1)),
+                _parse_color(_css(xstyle.get("axis_color"), default_axis)),
+            )
 
-    text_c = _parse_color(_TEXT)
+    def tick_span(style):
+        length = max(0.0, float(style.get("tick_length", 0)))
+        direction = str(style.get("tick_direction", "out"))
+        if direction == "in":
+            return length, 0.0
+        if direction == "inout":
+            return length / 2, length / 2
+        return 0.0, length
+
+    if not hide_x:
+        inward, outward = tick_span(xstyle)
+        side = xa.get("side", "bottom")
+        edge = py0 if side == "top" else py1
+        for value in xt:
+            x = float(sx(value))
+            y0, y1 = (
+                (edge - outward, edge + inward)
+                if side == "top"
+                else (edge - inward, edge + outward)
+            )
+            cmd.stroke(
+                [(x, y0), (x, y1)],
+                float(xstyle.get("tick_width", 1)),
+                _parse_color(_css(xstyle.get("tick_color"), default_axis)),
+            )
+    if not hide_y:
+        inward, outward = tick_span(ystyle)
+        side = ya.get("side", "left")
+        edge = px1 if side == "right" else px0
+        for value in yt:
+            y = float(sy(value))
+            x0, x1 = (
+                (edge - inward, edge + outward)
+                if side == "right"
+                else (edge - outward, edge + inward)
+            )
+            cmd.stroke(
+                [(x0, y), (x1, y)],
+                float(ystyle.get("tick_width", 1)),
+                _parse_color(_css(ystyle.get("tick_color"), default_axis)),
+            )
+
+    text_c = _parse_color(default_text)
     if not hide_x_labels:
+        x_tick_c = _parse_color(
+            _css(xstyle.get("tick_label_color", xstyle.get("tick_color")), default_text)
+        )
         for v in xlab:
             label_y = py0 - 7 if xa.get("side") == "top" else py1 + 15
-            cmd.text(float(sx(v)), label_y, 1, 11, text_c, _tick_text(xa, v, xstep))
+            cmd.text(
+                float(sx(v)),
+                label_y,
+                1,
+                float(xstyle.get("tick_label_size", xstyle.get("tick_size", 11))),
+                x_tick_c,
+                _tick_text(xa, v, xstep),
+            )
     if not hide_y_labels:
+        y_tick_c = _parse_color(
+            _css(ystyle.get("tick_label_color", ystyle.get("tick_color")), default_text)
+        )
         for v in ylab:
-            cmd.text(px0 - 8, float(sy(v)) + 4, 2, 11, text_c, _tick_text(ya, v, ystep))
+            cmd.text(
+                px0 - 8,
+                float(sy(v)) + 4,
+                2,
+                float(ystyle.get("tick_label_size", ystyle.get("tick_size", 11))),
+                y_tick_c,
+                _tick_text(ya, v, ystep),
+            )
     if spec.get("title"):
         cmd.text(width / 2, plot["y"] - (10 if compact else 12), 1, 14, text_c, str(spec["title"]))
     if xa.get("label") and not hide_x:
-        cmd.text(px0 + plot["w"] / 2, py1 + 33, 1, 12, text_c, str(xa["label"]))
+        cmd.text(
+            px0 + plot["w"] / 2,
+            py1 + 33,
+            1,
+            float(xstyle.get("label_size", 12)),
+            _parse_color(_css(xstyle.get("label_color"), default_text)),
+            str(xa["label"]),
+        )
     if ya.get("label") and not hide_y:
         # Rotated 90° CCW alongside the axis, matching the SVG export.
-        cmd.text(14, plot["y"] + plot["h"] / 2, 1 | 0x80, 12, text_c, str(ya["label"]))
+        cmd.text(
+            14,
+            plot["y"] + plot["h"] / 2,
+            1 | 0x80,
+            float(ystyle.get("label_size", 12)),
+            _parse_color(_css(ystyle.get("label_color"), default_text)),
+            str(ya["label"]),
+        )
 
     named = [t for t in spec["traces"] if t.get("name")]
     if spec.get("show_legend", True) and named:
@@ -622,7 +745,7 @@ def _emit_line(cmd, t, blob, cols, sx, sy, style, color):
     xv, yv = _column(blob, cols[t["x"]]), _column(blob, cols[t["y"]])
     if style.get("step"):
         xv, yv = _step_arrays(xv, yv, style["step"])
-    c = _rgba(style.get("color"), color, float(style.get("opacity", 1.0)))
+    c = _rgba(style.get("color"), color, _stroke_opacity(style))
     width = float(style.get("width", 1.5))
     if style.get("curve") == "smooth" and len(xv) >= 3 and sx.affine and sy.affine:
         cmd.smooth_stroke(xv, yv, sx, sy, width, c, dash=style.get("dash"))
@@ -737,7 +860,7 @@ def _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot):
     top = _scene.curve_points(xv, yv, sx, sy, smooth)
     base = _scene.curve_points(xv[::-1], bv[::-1], sx, sy, smooth)
     poly = np.vstack([top, base])
-    op = float(style.get("opacity", 0.35))
+    op = _fill_opacity(style, 0.35)
     fill_spec = style.get("fill")
     if isinstance(fill_spec, dict):
         xs, ys = poly[:, 0], poly[:, 1]
@@ -751,7 +874,7 @@ def _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot):
         cmd.fill(poly.tolist(), _rgba(style.get("color"), color, op))
     lw = float(style.get("line_width", 1.2))
     if lw > 0:
-        lop = float(style.get("line_opacity", 1.0))
+        lop = _stroke_opacity(style, 0.35) * float(style.get("line_opacity", 1.0))
         line_color = _rgba(style.get("line_color"), style.get("color") or color, lop)
         cmd.stroke(top, lw, line_color, dash=style.get("dash"))
         if style.get("stroke_perimeter"):
@@ -761,13 +884,18 @@ def _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot):
 def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
     ch = t.get("color") or {}
     size_ch = t.get("size") or {}
-    op = float(style.get("opacity", 0.8))
+    fill_op = _fill_opacity(style, 0.8)
+    stroke_op = _stroke_opacity(style, 0.8)
     sw = float(style.get("stroke_width", 0.0))
     sym = _SYMBOLS.get(style.get("symbol", "circle"), 0)
     # Transparent is the private wire sentinel for edgecolors="face".  The
     # native point painter replaces it with each point's resolved RGBA fill.
     stroke_value = style.get("stroke")
-    stroke = _rgba(stroke_value, color, op) if sw > 0 and stroke_value is not None else (0, 0, 0, 0)
+    stroke = (
+        _rgba(stroke_value, color, stroke_op)
+        if sw > 0 and stroke_value is not None
+        else (0, 0, 0, 0)
+    )
 
     color_mode = ch.get("mode")
     size_mode = size_ch.get("mode")
@@ -776,7 +904,7 @@ def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
         and sy.affine
         and (color_mode in {"continuous", "categorical"} or size_mode == "continuous")
     ):
-        alpha = max(0, min(255, int(round(op * 255))))
+        alpha = max(0, min(255, int(round(fill_op * 255))))
         rgb = _parse_color(_css(ch.get("color"), color))[:3]
         cmd.affine_channel_points(
             cols[t["x"]],
@@ -803,7 +931,7 @@ def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
         and ch.get("mode") not in {"continuous", "categorical"}
         and size_ch.get("mode") != "continuous"
     ):
-        alpha = max(0, min(255, int(round(op * 255))))
+        alpha = max(0, min(255, int(round(fill_op * 255))))
         rgb = _parse_color(_css(ch.get("color"), color))[:3]
         fill = (rgb[0], rgb[1], rgb[2], alpha)
         radius = float(size_ch.get("size", 4.0)) / 2
@@ -814,7 +942,7 @@ def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
     px, py = sx(xv), sy(yv)
     n = len(xv)
     fills = np.empty((n, 4), dtype=np.uint8)
-    fills[:, 3] = max(0, min(255, int(round(op * 255))))
+    fills[:, 3] = max(0, min(255, int(round(fill_op * 255))))
     if ch.get("mode") == "continuous":
         fills[:, :3] = _lut(ch.get("colormap", "viridis"), _column(blob, cols[ch["buf"]]))
     elif ch.get("mode") == "categorical":
@@ -842,7 +970,7 @@ def _emit_segments(cmd, t, blob, cols, sx, sy, style, color):
     y0 = _column(blob, cols[t["y0"]])
     y1 = _column(blob, cols[t["y1"]])
     ch = t.get("color") or {}
-    opacity = float(style.get("opacity", 1.0))
+    opacity = _stroke_opacity(style)
     colors = np.empty((len(x0), 4), dtype=np.uint8)
     colors[:, 3] = max(0, min(255, int(round(255 * opacity))))
     if ch.get("mode") == "continuous":
@@ -878,9 +1006,10 @@ def _emit_triangle_mesh(cmd, t, blob, cols, sx, sy, style, color):
     vertices = [_column(blob, cols[t[name]]) for name in ("x0", "y0", "x1", "y1", "x2", "y2")]
     n = min(len(values) for values in vertices)
     ch = t.get("color") or {}
-    op = float(style.get("opacity", 1.0))
+    fill_op = _fill_opacity(style)
+    stroke_op = _stroke_opacity(style)
     fills = np.empty((n, 4), dtype=np.uint8)
-    fills[:, 3] = max(0, min(255, int(round(op * 255))))
+    fills[:, 3] = max(0, min(255, int(round(fill_op * 255))))
     if ch.get("mode") == "continuous":
         fills[:, :3] = _lut(ch.get("colormap", "viridis"), _column(blob, cols[ch["buf"]])[:n])
     elif ch.get("mode") == "categorical":
@@ -893,7 +1022,7 @@ def _emit_triangle_mesh(cmd, t, blob, cols, sx, sy, style, color):
 
     x0, y0, x1, y1, x2, y2 = vertices
     sw = float(style.get("stroke_width", 0.0))
-    stroke = _rgba(style.get("stroke"), color) if sw > 0 else (0, 0, 0, 0)
+    stroke = _rgba(style.get("stroke"), color, stroke_op) if sw > 0 else (0, 0, 0, 0)
     cmd.triangles(
         sx(x0[:n]),
         sy(y0[:n]),
@@ -923,12 +1052,15 @@ def _bar_geom(cmd, x, y, w, h, style, fill_cmd, stroke_c, sw, tip_top):
 
 def _fill_maker(cmd, style, color, plot):
     """Return (fill_cmd, stroke_c, sw) closure honoring gradient/stroke style."""
-    op = float(style.get("opacity", 0.85))
+    fill_op = _fill_opacity(style, 0.85)
+    stroke_op = _stroke_opacity(style, 0.85)
     sw = float(style.get("stroke_width", 0.0))
-    stroke_c = _rgba(style.get("stroke"), color) if sw > 0 else (0, 0, 0, 0)
+    stroke_c = _rgba(style.get("stroke"), color, stroke_op) if sw > 0 else (0, 0, 0, 0)
     fill_spec = style.get("fill")
     if isinstance(fill_spec, dict):
-        stops = [(o, (c[0], c[1], c[2], int(c[3] * op))) for o, c in _grad_stops(fill_spec, color)]
+        stops = [
+            (o, (c[0], c[1], c[2], int(c[3] * fill_op))) for o, c in _grad_stops(fill_spec, color)
+        ]
 
         def fill_cmd(poly):
             xs = [p[0] for p in poly]
@@ -939,7 +1071,7 @@ def _fill_maker(cmd, style, color, plot):
             )
             cmd.grad(poly, g0, g1, stops)
     else:
-        flat = _rgba(style.get("color"), color, op)
+        flat = _rgba(style.get("color"), color, fill_op)
 
         def fill_cmd(poly):
             cmd.fill(poly, flat)
@@ -969,7 +1101,7 @@ def _emit_bars(cmd, t, blob, cols, sx, sy, style, color, plot):
             ya, yb = sy(np.maximum(v0, v1)), sy(np.minimum(v0, v1))
         x0, x1 = np.minimum(xa, xb), np.maximum(xa, xb)
         y0, y1 = np.minimum(ya, yb), np.maximum(ya, yb)
-        fill = _rgba(style.get("color"), color, float(style.get("opacity", 0.85)))
+        fill = _rgba(style.get("color"), color, _fill_opacity(style, 0.85))
         fills = np.tile(np.asarray(fill, dtype=np.uint8), (len(pos), 1))
         cmd.rects(x0, y0, x1, y1, fills)
         return
@@ -995,7 +1127,7 @@ def _emit_rects(cmd, t, blob, cols, sx, sy, style, color, plot):
     if not isinstance(style.get("fill"), dict) and not (r_tip or r_base or sw > 0):
         xa, xb = sx(x0v), sx(x1v)
         ya, yb = sy(y0v), sy(y1v)
-        fill = _rgba(style.get("color"), color, float(style.get("opacity", 0.85)))
+        fill = _rgba(style.get("color"), color, _fill_opacity(style, 0.85))
         fills = np.tile(np.asarray(fill, dtype=np.uint8), (len(x0v), 1))
         cmd.rects(
             np.minimum(xa, xb),
@@ -1021,9 +1153,7 @@ def _emit_grid(cmd, kind, g, blob, cols, sx, sy, style):
         if "rgba_bufs" in g:
             channels = [_column(blob, cols[index]) for index in g["rgba_bufs"]]
             rgba = np.clip(np.column_stack(channels) * 255.0, 0, 255).astype(np.uint8)
-            rgba[:, 3] = (rgba[:, 3].astype(np.float64) * float(style.get("opacity", 1.0))).astype(
-                np.uint8
-            )
+            rgba[:, 3] = (rgba[:, 3].astype(np.float64) * _fill_opacity(style)).astype(np.uint8)
             rgba = rgba.reshape(h, w, 4)[::-1]
             xr, yr = g["x_range"], g["y_range"]
             dx, dy, dw, dh = _scene.grid_dest_rect(xr, yr, sx, sy)
@@ -1031,7 +1161,7 @@ def _emit_grid(cmd, kind, g, blob, cols, sx, sy, style):
             return
         meta = cols[g["buf"]]
         stops = np.asarray(_colormap_stops(g.get("colormap", "viridis")), dtype=np.uint8)
-        alpha = int(255 * float(style.get("opacity", 0.95)))
+        alpha = int(255 * _fill_opacity(style, 0.95))
         xr, yr = g["x_range"], g["y_range"]
         dx, dy, dw, dh = _scene.grid_dest_rect(xr, yr, sx, sy)
         canonical = g.get("enc") == "canonical-f64"
@@ -1053,7 +1183,13 @@ def _emit_grid(cmd, kind, g, blob, cols, sx, sy, style):
     elif g.get("enc") == "log-u8":
         w, h = int(g["w"]), int(g["h"])
         meta = cols[g["buf"]]
-        stops = np.asarray(_colormap_stops(g.get("colormap", "viridis")), dtype=np.uint8)
+        paint_alpha = 1.0
+        if g.get("color") is not None:
+            red, green, blue, alpha = _parse_color(g["color"])
+            stops = np.asarray([(red, green, blue), (red, green, blue)], dtype=np.uint8)
+            paint_alpha = alpha / 255.0
+        else:
+            stops = np.asarray(_colormap_stops(g.get("colormap", "viridis")), dtype=np.uint8)
         xr, yr = g["x_range"], g["y_range"]
         dx, dy, dw, dh = _scene.grid_dest_rect(xr, yr, sx, sy)
         cmd.density_image(
@@ -1066,7 +1202,7 @@ def _emit_grid(cmd, kind, g, blob, cols, sx, sy, style):
             meta["byte_offset"],
             float(g.get("max") or 0.0),
             stops,
-            float(style.get("opacity", 0.85)),
+            _fill_opacity(style, 0.85) * paint_alpha,
             span=int(meta.get("span", 0)),
         )
         return

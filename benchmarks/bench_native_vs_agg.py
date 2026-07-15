@@ -3,7 +3,7 @@
 The WebGL export path pays a browser tax (HTML parse + upload) that Matplotlib
 never does, so ``xy-webgl 15 s vs matplotlib 5.6 s`` at 100M compares different
 pipelines. THIS benchmark removes the browser from both sides: xy's built-in
-Rust rasterizer (``to_png(engine="native")``) against Matplotlib's Agg backend —
+Rust rasterizer (``to_png(engine=Engine.default)``) against Matplotlib's Agg backend —
 both go numpy array → CPU rasterize → PNG bytes, in one process, no browser.
 
 Fairness controls:

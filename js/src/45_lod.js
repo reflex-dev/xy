@@ -410,6 +410,7 @@ function lodApplyDensityUpdate(view, g, upd, buffers) {
   g._densityFadeStart = view._now();
   g.density = {
     w: d.w, h: d.h, max: d.max, normMax, colormap: d.colormap || g.density.colormap,
+    color: d.color ? parseColor(view.root, d.color, [0.3, 0.47, 0.66, 1]) : g.density.color,
     xRange: d.x_range, yRange: d.y_range,
     grid,
     tex: view._uploadGrid(grid, d.w, d.h, normMax),

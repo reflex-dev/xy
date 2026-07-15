@@ -168,5 +168,5 @@ def test_raster_parse_color_uses_the_native_grammar() -> None:
     assert _parse_color("none") == (0, 0, 0, 0)
     assert _parse_color("transparent")[3] == 0
     assert _parse_color("#ff0000", opacity=0.5) == (255, 0, 0, 128)
-    # Unparseable input keeps the documented never-invisible mid-gray fallback.
-    assert _parse_color("oklch(0.7 0.1 250)") == (100, 100, 100, 255)
+    # Browser-only input uses the same never-invisible blue-gray as the JS renderer.
+    assert _parse_color("oklch(0.7 0.1 250)") == (76, 120, 168, 255)

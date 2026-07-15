@@ -1087,7 +1087,8 @@ class Axes(PlotTypeMixin):
             # matplotlib s= is absolute (points²); pin the engine's size range
             # to the converted pixel values so normalization is the identity
             # instead of compressing everything into the default 2-18 px band.
-            finite_sizes = size_px[np.isfinite(size_px)]
+            size_values = np.asarray(size_px, dtype=np.float64)
+            finite_sizes = size_values[np.isfinite(size_values)]
             if finite_sizes.size:
                 lo_px, hi_px = float(finite_sizes.min()), float(finite_sizes.max())
                 if hi_px > lo_px:
