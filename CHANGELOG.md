@@ -99,6 +99,13 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **`xy.pyplot` no longer pays an O(n) dataless-axis scan on every build.**
+  The empty-view pin in `_build_chart` materialized and finite-filtered every
+  entry's full data for both axes just to ask "is this axis empty?", adding a
+  data-proportional cost to each shim figure build (~3x the raw declarative
+  build at 1M points). It now short-circuits on the first finite value via a
+  prefix probe; `tests/pyplot/test_perf_guardrail.py` passes again on Linux
+  runners and the new CodSpeed pairs track the margin continuously.
 - **Payload copy elimination (native ABI v32).** Partial-view density sampling
   now hashes native `u32` row selections without first widening the full array
   to `u64`; exact-full index buffers avoid a trailing-slice copy; and payload
@@ -125,6 +132,14 @@ in the README).
   faster; fluent path unchanged by construction).
 
 ### Added
+- **CodSpeed shim-overhead pairs** (`benchmarks/test_codspeed_pyplot.py`):
+  every workload (10k/1M line, 100k scatter, 200-bin histogram, 1k-category
+  bars, a chrome-heavy styled panel, and static PNG export) is built twice
+  from the same arrays — once through the raw declarative API and once
+  through the identical `xy.pyplot` calls — ending in the same split wire
+  payload or PNG bytes, so the `*_pyplot` minus `*_raw` gap in CodSpeed is
+  exactly the shim's translation cost. Collected automatically by the
+  existing `benchmarks/test_codspeed_*.py` CI glob.
 - **Dashboard context governor**: browsers cap live WebGL contexts per page
   (~16 in Chrome) and LRU-evict the oldest on overflow, which permanently
   blanked the earliest charts of a 20+/50-chart dashboard. The render client

@@ -2368,9 +2368,8 @@ class Axes(PlotTypeMixin):
         y = self._data_coordinate(xy[1], "y")
         return None if x is None or y is None else (x, y)
 
-    def _entry_values(self, axis: str) -> np.ndarray:
-        """Every finite data coordinate the entries contribute to *axis* autoscale."""
-        values: list[np.ndarray] = []
+    def _iter_entry_arrays(self, axis: str):
+        """Yield each (array, needs_finite_filter) an entry contributes to *axis*."""
         for entry in self._entries:
             key = "x" if axis == "x" else "y"
             if key in entry:
@@ -2380,7 +2379,7 @@ class Axes(PlotTypeMixin):
                     )
                 except (TypeError, ValueError):
                     continue
-                values.append(array[np.isfinite(array)])
+                yield array, True
             if entry.get("kind") == "@mark":
                 factory = entry.get("factory")
                 indexes = {
@@ -2388,20 +2387,42 @@ class Axes(PlotTypeMixin):
                     "triangle_mesh": (0, 2, 4) if axis == "x" else (1, 3, 5),
                 }.get(factory, ())
                 for index in indexes:
-                    array = np.asarray(entry["args"][index], dtype=np.float64).reshape(-1)
-                    values.append(array[np.isfinite(array)])
+                    yield np.asarray(entry["args"][index], dtype=np.float64).reshape(-1), True
                 if factory == "contour":
                     z = np.asarray(entry["args"][0])
                     coordinates = entry.get("kwargs", {}).get(key)
                     if coordinates is None and z.ndim >= 2:
                         coordinates = np.arange(z.shape[1 if axis == "x" else 0], dtype=float)
                     if coordinates is not None:
-                        array = np.asarray(coordinates, dtype=np.float64).reshape(-1)
-                        values.append(array[np.isfinite(array)])
+                        yield np.asarray(coordinates, dtype=np.float64).reshape(-1), True
             elif entry.get("kind") == "heatmap" and entry.get("extent") is not None:
                 bounds = entry["extent"]
-                values.append(np.asarray(bounds[:2] if axis == "x" else bounds[2:], dtype=float))
+                yield np.asarray(bounds[:2] if axis == "x" else bounds[2:], dtype=float), False
+
+    def _entry_values(self, axis: str) -> np.ndarray:
+        """Every finite data coordinate the entries contribute to *axis* autoscale."""
+        values = [
+            array[np.isfinite(array)] if needs_filter else array
+            for array, needs_filter in self._iter_entry_arrays(axis)
+        ]
         return np.concatenate(values) if values else np.array([], dtype=np.float64)
+
+    def _axis_is_dataless(self, axis: str) -> bool:
+        """True when the entries contribute no coordinate to *axis* autoscale.
+
+        The empty-view pin in `_build_chart` asks this on every default build,
+        so it must not pay `_entry_values`'s full O(n) materialization when the
+        chart obviously has data (tests/pyplot/test_perf_guardrail.py). A short
+        prefix probe answers real data immediately; only all-non-finite
+        prefixes fall through to a full scan.
+        """
+        for array, needs_filter in self._iter_entry_arrays(axis):
+            if not needs_filter:
+                if array.size:
+                    return False
+            elif np.isfinite(array[:1024]).any() or np.isfinite(array[1024:]).any():
+                return False
+        return True
 
     def _entry_extent(self, axis: str) -> tuple[float, float]:
         finite = self._entry_values(axis)
@@ -4086,7 +4107,7 @@ class Axes(PlotTypeMixin):
             if not adjusted_aspect
             and axis not in self._explicit_domains
             and self._axis[axis].get("domain") is None
-            and len(self._entry_values(axis)) == 0
+            and self._axis_is_dataless(axis)
         }
         x_props = {k: v for k, v in self._axis["x"].items() if v is not None}
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
