@@ -21,6 +21,7 @@ DEFAULT_CODSPEED_WORKFLOW = ROOT / ".github" / "workflows" / "codspeed.yml"
 DEFAULT_RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 DEFAULT_WORKFLOW = DEFAULT_CI_WORKFLOW
 REQUIRED_CI_JOBS = {
+    "browser_conformance",
     "matplotlib_reference",
     "test",
     "python_floor",
@@ -227,6 +228,18 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "if-no-files-found: warn",
         "docs/benchmark_metrics.md",
         "transport.json",
+    )
+    _require_job_contains(
+        errors,
+        jobs,
+        "browser_conformance",
+        "CI",
+        "accessibility and three-engine conformance gate",
+        'node-version: "22"',
+        "npm ci",
+        "npx playwright install --with-deps chromium firefox webkit",
+        "node js/build.mjs --check",
+        "node scripts/browser_conformance.mjs",
     )
     _require_job_contains(
         errors,

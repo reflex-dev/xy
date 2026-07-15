@@ -96,6 +96,9 @@ const FC_CHROME_CSS = `
 :where(.xy [data-fc-slot="annotation_label"]){font-size:11px;line-height:1.2;font-weight:500;color:var(--chart-annotation-text,var(--chart-text,inherit))}
 :where(.xy [data-fc-slot="canvas"]){cursor:var(--chart-cursor,crosshair)}
 :where(.xy [data-fc-slot="canvas"][data-fc-dragmode="pan"]){cursor:var(--chart-cursor-pan,grab)}
+:where(.xy [data-fc-slot="canvas"]:focus-visible,.xy [data-fc-slot="modebar_button"]:focus-visible){outline:2px solid var(--chart-focus,#2563eb);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){:where(.xy [data-fc-slot="modebar"]){transition-duration:0s!important}}
+@media (forced-colors:active){:where(.xy [data-fc-slot="modebar"],.xy [data-fc-slot="tooltip"]){border:1px solid CanvasText}:where(.xy [data-fc-slot="modebar_button"].fc-active){outline:2px solid Highlight}:where(.xy [data-fc-slot="canvas"]:focus){outline:2px solid Highlight}}
 `;
 
 // Inject FC_CHROME_CSS once per DOM root (document head or shadow root), so

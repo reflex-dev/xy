@@ -5,6 +5,10 @@
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
 const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
+let FC_A11Y_ID = 0;
+const FC_SR_ONLY_STYLE =
+  "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;" +
+  "clip:rect(0,0,0,0);white-space:nowrap;border:0;";
 const UNITLESS_STYLE_PROPS = new Set([
   "animation-iteration-count",
   "aspect-ratio",
@@ -185,6 +189,7 @@ class ChartView {
     this._contextRestoreCount = 0;
     this._contextRecoveryError = null;
     this._initGl(buffer);
+    this._initA11y();
     this.root.dataset.fcContextState = "ready";
     this._initContextLossRecovery();
     this._armContextVisibilityWatch();
@@ -814,6 +819,25 @@ class ChartView {
     // classes/styles win (§36). Only structural/state styles stay inline below.
     ensureChromeStylesheet(root);
 
+    // Canvas pixels need a parallel semantic surface (§20). Keep the region
+    // separate from the plot-area image role so the real toolbar descendants
+    // remain exposed to assistive technology.
+    const a11yId = `xy-a11y-${++FC_A11Y_ID}`;
+    root.setAttribute("role", "region");
+    root.setAttribute("aria-label", s.title ? `Chart: ${s.title}` : "Interactive chart");
+    this.a11ySummary = document.createElement("div");
+    this.a11ySummary.id = `${a11yId}-summary`;
+    this.a11ySummary.style.cssText = FC_SR_ONLY_STYLE;
+    root.setAttribute("aria-describedby", this.a11ySummary.id);
+    root.appendChild(this.a11ySummary);
+    this.a11yLive = document.createElement("div");
+    this.a11yLive.id = `${a11yId}-live`;
+    this.a11yLive.setAttribute("role", "status");
+    this.a11yLive.setAttribute("aria-live", "polite");
+    this.a11yLive.setAttribute("aria-atomic", "true");
+    this.a11yLive.style.cssText = FC_SR_ONLY_STYLE;
+    root.appendChild(this.a11yLive);
+
     if (s.title) {
       const t = document.createElement("div");
       t.textContent = s.title;
@@ -834,6 +858,9 @@ class ChartView {
       `position:absolute;left:${this.plot.x}px;top:${this.plot.y}px;` +
       `width:${this.plot.w}px;height:${this.plot.h}px;touch-action:none;`;
     this._applySlot(this.canvas, "canvas");
+    this.canvas.tabIndex = 0;
+    this.canvas.setAttribute("role", "img");
+    this.canvas.setAttribute("aria-describedby", this.a11ySummary.id);
     root.appendChild(this.canvas);
 
     this.labels = document.createElement("div");
@@ -847,11 +874,42 @@ class ChartView {
     this.tooltip.style.cssText =
       "position:absolute;display:none;pointer-events:none;z-index:5;white-space:nowrap;";
     this._applySlot(this.tooltip, "tooltip");
+    this.tooltip.setAttribute("aria-hidden", "true");
     root.appendChild(this.tooltip);
 
     this._buildLegend(root);
     this._buildColorbar(root);
     this._buildReductionBadges(root);
+  }
+
+  _a11yAxisSummary(axisId, name) {
+    const axis = this._axis(axisId);
+    const range = axis.range || [];
+    if (range.length < 2) return null;
+    const label = axis.label ? `${name} axis (${axis.label})` : `${name} axis`;
+    return `${label} ranges from ${fmtValue(range[0], axis.kind)} to ${fmtValue(range[1], axis.kind)}.`;
+  }
+
+  _a11ySummaryText() {
+    const traces = Array.isArray(this.spec.traces) ? this.spec.traces : [];
+    const parts = [this.spec.title ? `${this.spec.title}.` : "Interactive chart."];
+    parts.push(`${traces.length} data series.`);
+    const names = traces.map((trace) => trace && trace.name).filter(Boolean).slice(0, 6);
+    if (names.length) parts.push(`Series: ${names.join(", ")}.`);
+    const x = this._a11yAxisSummary("x", "X");
+    const y = this._a11yAxisSummary("y", "Y");
+    if (x) parts.push(x);
+    if (y) parts.push(y);
+    return parts.join(" ");
+  }
+
+  _initA11y() {
+    if (!this.a11ySummary || !this.canvas) return;
+    this.a11ySummary.textContent = this._a11ySummaryText();
+    const instruction = this._pickable
+      ? " Use Left and Right Arrow keys to explore data points; Home and End jump to the first and last point."
+      : "";
+    this.canvas.setAttribute("aria-label", `Plot area.${instruction}`);
   }
 
   _compactInt(value) {

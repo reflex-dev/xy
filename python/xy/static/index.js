@@ -251,6 +251,9 @@ const FC_CHROME_CSS = `
 :where(.xy [data-fc-slot="annotation_label"]){font-size:11px;line-height:1.2;font-weight:500;color:var(--chart-annotation-text,var(--chart-text,inherit))}
 :where(.xy [data-fc-slot="canvas"]){cursor:var(--chart-cursor,crosshair)}
 :where(.xy [data-fc-slot="canvas"][data-fc-dragmode="pan"]){cursor:var(--chart-cursor-pan,grab)}
+:where(.xy [data-fc-slot="canvas"]:focus-visible,.xy [data-fc-slot="modebar_button"]:focus-visible){outline:2px solid var(--chart-focus,#2563eb);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){:where(.xy [data-fc-slot="modebar"]){transition-duration:0s!important}}
+@media (forced-colors:active){:where(.xy [data-fc-slot="modebar"],.xy [data-fc-slot="tooltip"]){border:1px solid CanvasText}:where(.xy [data-fc-slot="modebar_button"].fc-active){outline:2px solid Highlight}:where(.xy [data-fc-slot="canvas"]:focus){outline:2px solid Highlight}}
 `;
 function ensureChromeStylesheet(node) {
 let root = node && node.getRootNode ? node.getRootNode() : document;
@@ -1666,6 +1669,10 @@ return null;
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
 const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
+let FC_A11Y_ID = 0;
+const FC_SR_ONLY_STYLE =
+"position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;" +
+"clip:rect(0,0,0,0);white-space:nowrap;border:0;";
 const UNITLESS_STYLE_PROPS = new Set([
 "animation-iteration-count",
 "aspect-ratio",
@@ -1805,6 +1812,7 @@ this._contextLossCount = 0;
 this._contextRestoreCount = 0;
 this._contextRecoveryError = null;
 this._initGl(buffer);
+this._initA11y();
 this.root.dataset.fcContextState = "ready";
 this._initContextLossRecovery();
 this._armContextVisibilityWatch();
@@ -2307,6 +2315,21 @@ this._applySlot(root, "root");
 el.appendChild(root);
 this.root = root;
 ensureChromeStylesheet(root);
+const a11yId = `xy-a11y-${++FC_A11Y_ID}`;
+root.setAttribute("role", "region");
+root.setAttribute("aria-label", s.title ? `Chart: ${s.title}` : "Interactive chart");
+this.a11ySummary = document.createElement("div");
+this.a11ySummary.id = `${a11yId}-summary`;
+this.a11ySummary.style.cssText = FC_SR_ONLY_STYLE;
+root.setAttribute("aria-describedby", this.a11ySummary.id);
+root.appendChild(this.a11ySummary);
+this.a11yLive = document.createElement("div");
+this.a11yLive.id = `${a11yId}-live`;
+this.a11yLive.setAttribute("role", "status");
+this.a11yLive.setAttribute("aria-live", "polite");
+this.a11yLive.setAttribute("aria-atomic", "true");
+this.a11yLive.style.cssText = FC_SR_ONLY_STYLE;
+root.appendChild(this.a11yLive);
 if (s.title) {
 const t = document.createElement("div");
 t.textContent = s.title;
@@ -2323,6 +2346,9 @@ this.canvas.style.cssText =
 `position:absolute;left:${this.plot.x}px;top:${this.plot.y}px;` +
 `width:${this.plot.w}px;height:${this.plot.h}px;touch-action:none;`;
 this._applySlot(this.canvas, "canvas");
+this.canvas.tabIndex = 0;
+this.canvas.setAttribute("role", "img");
+this.canvas.setAttribute("aria-describedby", this.a11ySummary.id);
 root.appendChild(this.canvas);
 this.labels = document.createElement("div");
 this.labels.style.cssText = "position:absolute;inset:0;pointer-events:none;";
@@ -2332,10 +2358,38 @@ this.tooltip = document.createElement("div");
 this.tooltip.style.cssText =
 "position:absolute;display:none;pointer-events:none;z-index:5;white-space:nowrap;";
 this._applySlot(this.tooltip, "tooltip");
+this.tooltip.setAttribute("aria-hidden", "true");
 root.appendChild(this.tooltip);
 this._buildLegend(root);
 this._buildColorbar(root);
 this._buildReductionBadges(root);
+}
+_a11yAxisSummary(axisId, name) {
+const axis = this._axis(axisId);
+const range = axis.range || [];
+if (range.length < 2) return null;
+const label = axis.label ? `${name} axis (${axis.label})` : `${name} axis`;
+return `${label} ranges from ${fmtValue(range[0], axis.kind)} to ${fmtValue(range[1], axis.kind)}.`;
+}
+_a11ySummaryText() {
+const traces = Array.isArray(this.spec.traces) ? this.spec.traces : [];
+const parts = [this.spec.title ? `${this.spec.title}.` : "Interactive chart."];
+parts.push(`${traces.length} data series.`);
+const names = traces.map((trace) => trace && trace.name).filter(Boolean).slice(0, 6);
+if (names.length) parts.push(`Series: ${names.join(", ")}.`);
+const x = this._a11yAxisSummary("x", "X");
+const y = this._a11yAxisSummary("y", "Y");
+if (x) parts.push(x);
+if (y) parts.push(y);
+return parts.join(" ");
+}
+_initA11y() {
+if (!this.a11ySummary || !this.canvas) return;
+this.a11ySummary.textContent = this._a11ySummaryText();
+const instruction = this._pickable
+? " Use Left and Right Arrow keys to explore data points; Home and End jump to the first and last point."
+: "";
+this.canvas.setAttribute("aria-label", `Plot area.${instruction}`);
 }
 _compactInt(value) {
 const n = Number(value);
@@ -5397,6 +5451,10 @@ lines.forEach((ln, i) => {
 if (i) this.tooltip.appendChild(document.createElement("br"));
 this.tooltip.appendChild(document.createTextNode(ln));
 });
+if (this.a11yLive) {
+const announcement = lines.join(", ");
+if (this.a11yLive.textContent !== announcement) this.a11yLive.textContent = announcement;
+}
 this.tooltip.style.display = "block";
 const tw = this.tooltip.offsetWidth;
 this.tooltip.style.left = Math.min(lx + 12, this.size.w - tw - 4) + "px";
@@ -5511,6 +5569,60 @@ this._listen(c, "dblclick", () => {
 this._clearSelection();
 this._setView(this.view0, { animate: true });
 });
+this._listen(c, "keydown", (e) => this._onA11yKey(e));
+},
+_a11yPointGroups() {
+return (this.gpuTraces || []).filter((g) =>
+markOf(g.trace.kind).pointPick && g.tier !== "density" && g._cpu &&
+g._cpu.x && g._cpu.y && Math.min(g._cpu.x.length, g._cpu.y.length) > 0);
+},
+_onA11yKey(e) {
+const direction = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+if (direction === undefined && e.key !== "Home" && e.key !== "End" && e.key !== "Escape") {
+return;
+}
+if (e.key === "Escape") {
+this.tooltip.style.display = "none";
+this._hoverId = -1;
+this._hoverTarget = null;
+this._drawKeepPick();
+return;
+}
+const groups = this._a11yPointGroups();
+const total = groups.reduce((sum, g) => sum + Math.min(g._cpu.x.length, g._cpu.y.length), 0);
+if (!total) return;
+e.preventDefault();
+let flat = Number.isInteger(this._a11yPointIndex) ? this._a11yPointIndex : -1;
+if (e.key === "Home") flat = 0;
+else if (e.key === "End") flat = total - 1;
+else if (flat < 0) flat = direction > 0 ? 0 : total - 1;
+else flat = Math.max(0, Math.min(total - 1, flat + direction));
+this._a11yPointIndex = flat;
+let offset = flat;
+let g = groups[0];
+for (const candidate of groups) {
+const n = Math.min(candidate._cpu.x.length, candidate._cpu.y.length);
+if (offset < n) { g = candidate; break; }
+offset -= n;
+}
+const hit = { trace: g.trace.id, index: offset, g };
+const row = this._localRow(hit);
+const xValue = this._decodeValue(g._cpu.x, g._cpu.xMeta || g.xMeta, offset);
+const yValue = this._decodeValue(g._cpu.y, g._cpu.yMeta || g.yMeta, offset);
+const x = this._dataPx(g.xAxis || "x", xValue) - this.plot.x;
+const y = this._dataPx(g.yAxis || "y", yValue) - this.plot.y;
+const rect = this.canvas.getBoundingClientRect();
+const clientX = rect.left + Math.max(0, Math.min(rect.width, x));
+const clientY = rect.top + Math.max(0, Math.min(rect.height, y));
+this._hoverId = hit.trace * 1e9 + hit.index;
+this._hoverTarget = hit;
+this._lastHoverXY = { clientX, clientY };
+this._showTooltip(hit, clientX, clientY);
+this._drawKeepPick();
+if (this.a11yLive) {
+const detail = this._tooltipLines(row).join(", ");
+this.a11yLive.textContent = `Point ${flat + 1} of ${total}. ${detail}`;
+}
 },
 _updateCrosshair(e) {
 if (!this.crosshairX || !this.crosshairY) return;
@@ -5646,14 +5758,22 @@ bar.style.cssText =
 `position:absolute;top:${this.plot.y + 4}px;left:${this.plot.x + 4}px;z-index:6;` +
 "display:flex;opacity:.72;transition:opacity .15s;";
 this._applySlot(bar, "modebar");
+bar.setAttribute("role", "toolbar");
+bar.setAttribute("aria-label", "Chart controls");
 this._listen(root, "pointerenter", () => { bar.style.opacity = "1"; });
-this._listen(root, "pointerleave", () => { bar.style.opacity = ".72"; });
+this._listen(root, "pointerleave", () => {
+if (!bar.contains(document.activeElement)) bar.style.opacity = ".72";
+});
+this._listen(bar, "focusin", () => { bar.style.opacity = "1"; });
+this._listen(bar, "focusout", () => { bar.style.opacity = ".72"; });
 this._modebar = bar;
 this._modeBtns = {};
 const mk = (name, title, onClick, toggles) => {
 const b = document.createElement("button");
 b.type = "button";
 b.title = title;
+b.setAttribute("aria-label", title);
+if (toggles) b.setAttribute("aria-pressed", "false");
 b.innerHTML = this._icon(name);
 b.style.cssText =
 "display:flex;align-items:center;justify-content:center;pointer-events:auto;";
@@ -5691,6 +5811,7 @@ this.dragMode = mode;
 if (this.canvas) this.canvas.dataset.fcDragmode = mode;
 for (const [name, btn] of Object.entries(this._modeBtns || {})) {
 btn.classList.toggle("fc-active", name === mode);
+btn.setAttribute("aria-pressed", String(name === mode));
 }
 },
 _prefersReducedMotion() {

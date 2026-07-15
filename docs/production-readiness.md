@@ -34,6 +34,27 @@ screen-bounded performance core, but the stable commitments today are narrower:
 The composition API, chart-type set, visual styling surface, and Reflex
 integration are still experimental and may change before a 1.0 release.
 
+## Accessibility and Cross-Browser Conformance Status
+
+The current conformance tier is intentionally narrower than a claim of full
+WCAG parity or pixel-identical output across browsers. The browser client now
+ships a parallel semantic chart region and generated trace/axis summary, a
+polite live region for hover and keyboard readouts, focusable direct-point
+navigation with Arrow/Home/End keys, named toolbar controls with toggle state,
+visible focus styling, reduced-motion behavior, and forced-colors affordances.
+
+CI runs the same focused chart in Playwright Chromium, Firefox, and WebKit. It
+checks those semantics and interactions in every engine, compares WebGL output
+with a coarse per-channel perceptual signature, and compares DOM chrome through
+layout boxes rather than browser-font glyph pixels. The gate does **not** yet
+cover aggregated-bin keyboard navigation, a view-as-table escape hatch,
+screen-reader/OS combinations, every chart family, or full-page screenshot
+parity. Until those surfaces have dedicated evidence, neither full
+accessibility parity nor broad perceptual cross-browser consistency is a safe
+public claim. Run the focused tier locally with `make check-conformance` after
+installing all three engines with
+`npx playwright install chromium firefox webkit`.
+
 ## Release-Blocking Gates
 
 These must pass before publishing or making a broad performance claim.
@@ -53,6 +74,7 @@ These must pass before publishing or making a broad performance claim.
 | Native ABI | C ABI can be loaded from the built core | `python scripts/abi_smoke.py` |
 | JavaScript | Committed bundles match source | `node js/build.mjs --check` |
 | Browser render | WebGL smoke reaches real pixels | `python scripts/render_smoke_nonumpy.py <chromium>` |
+| Accessibility / cross-browser | Semantic interaction checks plus tolerant WebGL/layout comparison pass in Chromium, Firefox, and WebKit | `make check-conformance` |
 | Real chart render | A real composed chart exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |
 | sdist | Source archive contains required source/bundles, benchmark regression harness/baseline, release docs/tests/scripts, the Reflex example app, `PKG-INFO` version/dependencies matching `pyproject.toml`, no duplicate members, and no generated junk | `python scripts/verify_sdist.py dist/*.tar.gz` |
 | Native wheel | Platform wheel contains package-only files, exactly one native library, `METADATA` version/dependencies matching `pyproject.toml`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |

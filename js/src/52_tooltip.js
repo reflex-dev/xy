@@ -228,6 +228,10 @@ Object.assign(ChartView.prototype, {
       if (i) this.tooltip.appendChild(document.createElement("br"));
       this.tooltip.appendChild(document.createTextNode(ln));
     });
+    if (this.a11yLive) {
+      const announcement = lines.join(", ");
+      if (this.a11yLive.textContent !== announcement) this.a11yLive.textContent = announcement;
+    }
     this.tooltip.style.display = "block";
     const tw = this.tooltip.offsetWidth;
     this.tooltip.style.left = Math.min(lx + 12, this.size.w - tw - 4) + "px";
