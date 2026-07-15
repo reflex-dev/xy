@@ -259,7 +259,9 @@ const FC_CHROME_CSS = `
 :where(.xy [data-fc-slot="modebar_button"].fc-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
 :where(.xy [data-fc-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
 :where(.xy [data-fc-slot="selection"][data-fc-band="zoom"]){border-color:var(--chart-zoom-selection,rgba(120,120,120,.9));background:var(--chart-zoom-selection-fill,rgba(120,120,120,.12))}
-:where(.xy [data-fc-selection-lasso]){fill:var(--chart-selection-fill,rgba(90,140,240,.15));stroke:var(--chart-selection,rgba(90,140,240,.9));stroke-width:1.5;stroke-linejoin:round}
+:where(.xy [data-fc-selection-lasso]){fill:var(--chart-selection-fill,rgba(90,140,240,.15));stroke:var(--chart-selection,rgba(90,140,240,.9));stroke-width:1.5;stroke-linejoin:round;pointer-events:none}
+:where(.xy [data-fc-selection-lasso-handle]){fill:var(--chart-bg,#fff);stroke:var(--chart-selection,rgba(90,140,240,.9));stroke-width:1.5;cursor:grab;pointer-events:all}
+:where(.xy [data-fc-selection-lasso-handle][data-fc-active]){cursor:grabbing;fill:var(--chart-selection,rgba(90,140,240,.9))}
 :where(.xy [data-fc-slot="crosshair_x"],.xy [data-fc-slot="crosshair_y"]){background:var(--chart-crosshair,rgba(15,23,42,.42))}
 :where(.xy [data-fc-slot="tick_label"]){color:var(--chart-text,inherit)}
 :where(.xy [data-fc-slot="axis_title"]){color:var(--chart-text,inherit);font-size:12px}
@@ -3412,6 +3414,7 @@ this._drawHoverState();
 if (!this._rafKeepPick) this._pickDirty = true;
 this._rafKeepPick = false;
 this._drawChrome();
+this._renderLassoSelection?.();
 }
 _now() {
 return performance.now();
@@ -5394,10 +5397,60 @@ this.root.appendChild(this.selRect);
 this.selLasso = document.createElementNS("http://www.w3.org/2000/svg", "svg");
 this.selLasso.style.cssText =
 "position:absolute;display:none;pointer-events:none;z-index:4;overflow:visible;";
+this.selLasso.dataset.fcSelectionLassoOverlay = "";
 this.selLassoPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
 this.selLassoPath.dataset.fcSelectionLasso = "";
 this.selLasso.appendChild(this.selLassoPath);
+this.selLassoHandles = document.createElementNS("http://www.w3.org/2000/svg", "g");
+this.selLassoHandles.dataset.fcSelectionLassoHandles = "";
+this.selLasso.appendChild(this.selLassoHandles);
 this.root.appendChild(this.selLasso);
+this._lassoPolygon = null;
+let lassoHandleDrag = null;
+const moveLassoHandle = (e) => {
+if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
+const rect = c.getBoundingClientRect();
+const cssX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+const cssY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+this._lassoPolygon[lassoHandleDrag.index] = this._dataFromCanvas(cssX, cssY);
+this._renderLassoSelection();
+e.preventDefault();
+e.stopPropagation();
+};
+this._listen(this.selLasso, "pointerdown", (e) => {
+const handle = e.target.closest?.("[data-fc-selection-lasso-handle]");
+if (!handle || !this._lassoPolygon) return;
+const index = Number(handle.dataset.fcSelectionLassoHandle);
+if (!Number.isInteger(index) || !this._lassoPolygon[index]) return;
+lassoHandleDrag = {
+index,
+pointerId: e.pointerId,
+original: [...this._lassoPolygon[index]],
+handle,
+};
+handle.dataset.fcActive = "";
+this.tooltip.style.display = "none";
+try { this.selLasso.setPointerCapture(e.pointerId); } catch (_err) {   }
+e.preventDefault();
+e.stopPropagation();
+});
+this._listen(this.selLasso, "pointermove", moveLassoHandle);
+this._listen(this.selLasso, "pointerup", (e) => {
+if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
+moveLassoHandle(e);
+const handle = lassoHandleDrag.handle;
+lassoHandleDrag = null;
+delete handle.dataset.fcActive;
+this._sendSelectPolygon(this._lassoPolygon);
+});
+this._listen(this.selLasso, "pointercancel", (e) => {
+if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
+this._lassoPolygon[lassoHandleDrag.index] = lassoHandleDrag.original;
+delete lassoHandleDrag.handle.dataset.fcActive;
+lassoHandleDrag = null;
+this._renderLassoSelection();
+e.stopPropagation();
+});
 if (this._interactionFlag("crosshair")) {
 this.crosshairX = document.createElement("div");
 this.crosshairX.style.cssText =
@@ -5414,6 +5467,16 @@ const dataAt = (clientX, clientY) => {
 const r = c.getBoundingClientRect();
 return this._dataFromCanvas(clientX - r.left, clientY - r.top);
 };
+const lassoPointAt = (clientX, clientY) => {
+const r = c.getBoundingClientRect();
+const cssX = Math.max(0, Math.min(r.width, clientX - r.left));
+const cssY = Math.max(0, Math.min(r.height, clientY - r.top));
+return {
+x: r.left + cssX,
+y: r.top + cssY,
+data: this._dataFromCanvas(cssX, cssY),
+};
+};
 this._listen(c, "pointerdown", (e) => {
 this._cancelViewAnimation();
 const canBrush = this._interactionFlag("brush", true) && this._interactionFlag("select", true);
@@ -5422,10 +5485,16 @@ const mode = (e.shiftKey || selectMode) && canBrush && this._pickable
 ? (e.shiftKey ? "select" : selectMode)
 : this.dragMode === "zoom" ? "zoom" : null;
 if (mode) {
-const d0 = dataAt(e.clientX, e.clientY);
+const previousLasso = mode.startsWith("select") && this._lassoPolygon
+? this._lassoPolygon.map((point) => [...point])
+: null;
+if (mode.startsWith("select")) this._clearLassoOverlay();
+const firstLassoPoint = mode === "select-lasso" ? lassoPointAt(e.clientX, e.clientY) : null;
+const d0 = firstLassoPoint ? firstLassoPoint.data : dataAt(e.clientX, e.clientY);
 band = {
 mode, sx: e.clientX, sy: e.clientY, d0,
-points: mode === "select-lasso" ? [{ x: e.clientX, y: e.clientY, data: d0 }] : null,
+points: firstLassoPoint ? [firstLassoPoint] : null,
+previousLasso,
 };
 c.setPointerCapture(e.pointerId);
 this.tooltip.style.display = "none";
@@ -5469,7 +5538,8 @@ const moved = Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy)
 if (moved) {
 if (band.mode === "zoom") this._zoomToBox(band.d0, d1, true);
 else if (band.mode === "select-lasso" && band.points.length >= 3) {
-this._sendSelectPolygon(band.points.map((point) => point.data));
+const editable = this._simplifyLassoPoints(band.points);
+this._sendSelectPolygon(editable.map((point) => point.data));
 } else {
 let d0 = band.d0;
 if (band.mode === "select-x") {
@@ -5482,6 +5552,9 @@ d1[0] = this.view.x1;
 this._sendSelect(d0, d1);
 }
 this._ignoreNextClick = true;
+} else if (band.previousLasso) {
+this._lassoPolygon = band.previousLasso;
+this._renderLassoSelection();
 }
 band = null;
 return;
@@ -5494,6 +5567,10 @@ this._listen(c, "pointerup", end);
 this._listen(c, "pointercancel", () => {
 this.selRect.style.display = "none";
 this.selLasso.style.display = "none";
+if (band?.previousLasso) {
+this._lassoPolygon = band.previousLasso;
+this._renderLassoSelection();
+}
 band = null;
 drag = null;
 });
@@ -5581,11 +5658,13 @@ const rect = this.canvas.getBoundingClientRect();
 const rootRect = this.root.getBoundingClientRect();
 if (band.mode === "select-lasso") {
 const previous = band.points[band.points.length - 1];
+const cssX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+const cssY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+const clientX = rect.left + cssX;
+const clientY = rect.top + cssY;
 if (band.points.length < 2048
-&& Math.hypot(e.clientX - previous.x, e.clientY - previous.y) >= 3) {
-band.points.push({ x: e.clientX, y: e.clientY, data: this._dataFromCanvas(
-e.clientX - rect.left, e.clientY - rect.top
-) });
+&& Math.hypot(clientX - previous.x, clientY - previous.y) >= 3) {
+band.points.push({ x: clientX, y: clientY, data: this._dataFromCanvas(cssX, cssY) });
 }
 const points = band.points.map((point) => [
 Math.max(this.plot.x, Math.min(this.plot.x + this.plot.w, point.x - rootRect.left)),
@@ -5618,7 +5697,108 @@ this.selRect.style.width = Math.max(0, bx2 - cx) + "px";
 this.selRect.style.height = Math.max(0, by2 - cy) + "px";
 void rect;
 },
+_simplifyLassoPoints(points, tolerance = 6, maxPoints = 16) {
+const source = points.filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y));
+if (source.length > 3) {
+const first = source[0], last = source[source.length - 1];
+if (Math.hypot(first.x - last.x, first.y - last.y) <= tolerance) source.pop();
+}
+if (source.length <= 3) return source.slice();
+const distanceToSegmentSq = (point, start, end) => {
+const dx = end.x - start.x, dy = end.y - start.y;
+if (dx === 0 && dy === 0) {
+return (point.x - start.x) ** 2 + (point.y - start.y) ** 2;
+}
+const t = Math.max(0, Math.min(1,
+((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy)
+));
+const x = start.x + t * dx, y = start.y + t * dy;
+return (point.x - x) ** 2 + (point.y - y) ** 2;
+};
+const keep = new Uint8Array(source.length);
+keep[0] = 1;
+keep[source.length - 1] = 1;
+const stack = [[0, source.length - 1]];
+const toleranceSq = tolerance * tolerance;
+while (stack.length) {
+const [start, end] = stack.pop();
+let furthest = -1, furthestDistance = toleranceSq;
+for (let i = start + 1; i < end; i++) {
+const distance = distanceToSegmentSq(source[i], source[start], source[end]);
+if (distance > furthestDistance) {
+furthest = i;
+furthestDistance = distance;
+}
+}
+if (furthest >= 0) {
+keep[furthest] = 1;
+stack.push([start, furthest], [furthest, end]);
+}
+}
+let simplified = source.filter((_point, index) => keep[index]);
+if (simplified.length < 3) {
+simplified = [source[0], source[Math.floor(source.length / 2)], source[source.length - 1]];
+}
+if (simplified.length > maxPoints) {
+simplified = Array.from({ length: maxPoints }, (_value, index) => (
+simplified[Math.round(index * (simplified.length - 1) / (maxPoints - 1))]
+));
+}
+return simplified;
+},
+_clearLassoOverlay() {
+this._lassoPolygon = null;
+if (!this.selLasso) return;
+this.selLasso.style.display = "none";
+this.selLassoPath?.removeAttribute("d");
+this.selLassoHandles?.replaceChildren();
+},
+_renderLassoSelection() {
+const polygon = this._lassoPolygon;
+if (!this.selLasso || !this.selLassoPath || !this.selLassoHandles
+|| !Array.isArray(polygon) || polygon.length < 3) return;
+const [x0, x1] = this._axisRange("x");
+const [y0, y1] = this._axisRange("y");
+const xAxis = this._axis("x"), yAxis = this._axis("y");
+const cx0 = this._axisCoord(xAxis, x0), cx1 = this._axisCoord(xAxis, x1);
+const cy0 = this._axisCoord(yAxis, y0), cy1 = this._axisCoord(yAxis, y1);
+if (![cx0, cx1, cy0, cy1].every(Number.isFinite) || cx0 === cx1 || cy0 === cy1) return;
+const points = polygon.map((point) => {
+const cx = this._axisCoord(xAxis, point[0]);
+const cy = this._axisCoord(yAxis, point[1]);
+const x = this.plot.x + ((cx - cx0) / (cx1 - cx0)) * this.plot.w;
+const y = this.plot.y + ((cy1 - cy) / (cy1 - cy0)) * this.plot.h;
+return [
+Math.max(this.plot.x, Math.min(this.plot.x + this.plot.w, x)),
+Math.max(this.plot.y, Math.min(this.plot.y + this.plot.h, y)),
+];
+});
+if (!points.flat().every(Number.isFinite)) return;
+this.selLasso.style.display = "block";
+this.selLasso.style.inset = "0";
+this.selLasso.setAttribute("width", String(this.root.clientWidth));
+this.selLasso.setAttribute("height", String(this.root.clientHeight));
+this.selLassoPath.setAttribute(
+"d", points.map((point, index) => `${index ? "L" : "M"}${point[0]} ${point[1]}`).join(" ") + " Z"
+);
+while (this.selLassoHandles.childElementCount < points.length) {
+const handle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+handle.dataset.fcSelectionLassoHandle = "";
+handle.setAttribute("r", "4");
+this.selLassoHandles.appendChild(handle);
+}
+while (this.selLassoHandles.childElementCount > points.length) {
+this.selLassoHandles.lastElementChild.remove();
+}
+[...this.selLassoHandles.children].forEach((handle, index) => {
+handle.dataset.fcSelectionLassoHandle = String(index);
+handle.setAttribute("cx", String(points[index][0]));
+handle.setAttribute("cy", String(points[index][1]));
+handle.setAttribute("aria-label", `Lasso point ${index + 1}`);
+});
+},
 _sendSelect(d0, d1) {
+this._clearLassoOverlay();
 const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
 const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
 const range = { x0, x1, y0, y1 };
@@ -5632,6 +5812,9 @@ this._selectLocal(x0, x1, y0, y1);
 _sendSelectPolygon(points) {
 if (!Array.isArray(points) || points.length < 3) return;
 const polygon = points.map((point) => [point[0], point[1]]);
+if (!polygon.every((point) => point.every(Number.isFinite))) return;
+this._lassoPolygon = polygon;
+this._renderLassoSelection();
 this._dispatchChartEvent("brush", {
 polygon,
 view: this._eventView("brush"),
@@ -5709,6 +5892,7 @@ gl.bufferData(gl.ARRAY_BUFFER, maskF32, gl.STATIC_DRAW);
 g.selActive = true;
 },
 _clearSelection() {
+this._clearLassoOverlay();
 for (const g of this.gpuTraces) {
 g.selActive = false;
 if (g.drill) g.drill.selActive = false;
@@ -6439,7 +6623,7 @@ target.replaceWith(image);
 }
 clone.querySelectorAll(
 '[data-fc-slot="modebar"],[data-fc-slot="tooltip"],' +
-'[data-fc-slot="selection"],[data-fc-selection-lasso],' +
+'[data-fc-slot="selection"],[data-fc-selection-lasso-overlay],' +
 '[data-fc-slot="crosshair_x"],[data-fc-slot="crosshair_y"]'
 ).forEach((node) => node.remove());
 const stylesheet = document.createElement("style");

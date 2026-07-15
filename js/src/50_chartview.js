@@ -2076,6 +2076,7 @@ class ChartView {
     if (!this._rafKeepPick) this._pickDirty = true;
     this._rafKeepPick = false;
     this._drawChrome();
+    this._renderLassoSelection?.();
   }
 
   // Centralized clock seam for animation state machines. Production uses the

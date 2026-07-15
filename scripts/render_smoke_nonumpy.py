@@ -338,6 +338,35 @@ try{{
     const modebarSelect = selectMenuOpened && v.dragMode === "select-lasso"
       && selectButton.classList.contains("fc-active")
       && lassoItem.classList.contains("fc-active") && selectMenu.style.display === "none" ? 1 : 0;
+    v._sendSelectPolygon([[0,-0.4],[4,-0.4],[4,0.4],[0,0.4]]);
+    const lassoHandles = v.selLassoHandles
+      ? [...v.selLassoHandles.querySelectorAll("[data-fc-selection-lasso-handle]")]
+      : [];
+    const lassoPathBefore = v.selLassoPath.getAttribute("d");
+    const lassoPointBefore = v._lassoPolygon ? [...v._lassoPolygon[0]] : null;
+    if (lassoHandles[0]) {{
+      const cr = v.canvas.getBoundingClientRect();
+      const pointer = (target, type, x, y) => target.dispatchEvent(new PointerEvent(type, {{
+        pointerId:72,pointerType:"mouse",button:0,buttons:type === "pointerup" ? 0 : 1,
+        clientX:x,clientY:y,bubbles:true,cancelable:true,
+      }}));
+      const handleRect = lassoHandles[0].getBoundingClientRect();
+      pointer(lassoHandles[0], "pointerdown", handleRect.left + 2, handleRect.top + 2);
+      pointer(v.selLasso, "pointermove", cr.left + cr.width * 0.3, cr.top + cr.height * 0.25);
+      pointer(v.selLasso, "pointerup", cr.left + cr.width * 0.3, cr.top + cr.height * 0.25);
+    }}
+    const manyLassoPoints = Array.from({{length:80}}, (_value, index) => ({{
+      x:100+60*Math.cos(index/80*Math.PI*2),
+      y:100+40*Math.sin(index/80*Math.PI*2),
+      data:[index,index],
+    }}));
+    const simplifiedLasso = v._simplifyLassoPoints(manyLassoPoints);
+    const lassoEdit = lassoHandles.length === 4 && v.selLasso.style.display === "block"
+      && lassoPointBefore && (v._lassoPolygon[0][0] !== lassoPointBefore[0]
+        || v._lassoPolygon[0][1] !== lassoPointBefore[1])
+      && v.selLassoPath.getAttribute("d") !== lassoPathBefore
+      && v.selLassoHandles.childElementCount === 4
+      && simplifiedLasso.length >= 3 && simplifiedLasso.length <= 16 ? 1 : 0;
     if (exportButton) exportButton.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
     const exportItems = exportMenu
       ? [...exportMenu.querySelectorAll("[data-fc-modebar-export-item]")]
@@ -994,7 +1023,7 @@ try{{
     const gLn=vSm.gpuTraces[0], gAr=vSm.gpuTraces[1];
     const msmooth=(gLn.n===65 && gLn._cpu.x.length===5 && gAr.n===65 && gAr._cpu.base.length===5)?1:0;
     vSm.destroy();holderSm.remove();
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHidden}} modebarHover=${{modebarHover}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} modebarExport=${{modebarExport}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
+    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHidden}} modebarHover=${{modebarHover}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -1169,6 +1198,7 @@ try{{
     modebar_menu = int(re.search(r"modebarMenu=(\d+)", title).group(1))
     modebar_drag = int(re.search(r"modebarDrag=(\d+)", title).group(1))
     modebar_select = int(re.search(r"modebarSelect=(\d+)", title).group(1))
+    lasso_edit = int(re.search(r"lassoEdit=(\d+)", title).group(1))
     modebar_export = int(re.search(r"modebarExport=(\d+)", title).group(1))
     zin = int(re.search(r"zin=(\d+)", title).group(1))
     smooth = int(re.search(r"smooth=(\d+)", title).group(1))
@@ -1233,9 +1263,9 @@ try{{
     print(
         f"lit fraction: {frac:.3%}, DOM chrome nodes: {labels}, pick hits: {pick}, "
         f"row-decoded: {rowok}, select all/sub: {sel_all}/{sel_some}, mask active: {active}, "
-        f"modebar btns: {btns}, hidden/hover/no-collapse/menu/drag/select/export: "
+        f"modebar btns: {btns}, hidden/hover/no-collapse/menu/drag/select/lasso-edit/export: "
         f"{modebar_hidden}/{modebar_hover}/{modebar_no_collapse}/{modebar_menu}/"
-        f"{modebar_drag}/{modebar_select}/{modebar_export}, "
+        f"{modebar_drag}/{modebar_select}/{lasso_edit}/{modebar_export}, "
         f"zoom-in: {zin}, box-zoom: {box}, zoom-mode: {zmode}, "
         f"fluid: {fluid}, resize grew: {grew}, pick realloc: {pick2}, "
         f"destroyed: {destroyed}, unsub: {unsub}"
@@ -1268,6 +1298,8 @@ try{{
         raise SystemExit("modebar drag handle did not move the toolbar")
     if modebar_select != 1:
         raise SystemExit("modebar select button did not activate selection mode")
+    if lasso_edit != 1:
+        raise SystemExit("completed lasso did not expose draggable editable points")
     if modebar_export != 1:
         raise SystemExit("modebar export menu did not produce PNG/SVG/CSV actions")
     if zin != 1:
