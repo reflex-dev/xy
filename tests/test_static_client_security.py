@@ -107,7 +107,10 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
             assert sink not in text, f"{path} must not use HTML sink {sink}"
 
         inner_html_lines = [line.strip() for line in text.splitlines() if ".innerHTML" in line]
-        assert inner_html_lines == ["b.innerHTML = this._icon(name);"]
+        assert inner_html_lines == [
+            'grip.innerHTML = this._icon("drag");',
+            "b.innerHTML = this._icon(name);",
+        ]
 
 
 def test_client_respects_user_legend_max_height_style() -> None:

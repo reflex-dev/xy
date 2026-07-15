@@ -242,7 +242,8 @@ const FC_CHROME_CSS = `
 :where(.xy [data-fc-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
 :where(.xy [data-fc-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
 :where(.xy [data-fc-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
-:where(.xy [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-text,currentColor);cursor:pointer}
+:where(.xy [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-axis,currentColor);cursor:pointer}
+:where(.xy [data-fc-modebar-drag-handle]){cursor:move}
 :where(.xy [data-fc-slot="modebar_button"].fc-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
 :where(.xy [data-fc-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
 :where(.xy [data-fc-slot="selection"][data-fc-band="zoom"]){border-color:var(--chart-zoom-selection,rgba(120,120,120,.9));background:var(--chart-zoom-selection-fill,rgba(120,120,120,.12))}
@@ -5119,29 +5120,12 @@ d.textContent = text;
 const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
 const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
 const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0";
-const rot = Number.isFinite(Number(style.rotation))
-? ((Number(style.rotation) % 360) + 360) % 360
-: 0;
-const va = String(style.vertical_align || "");
+const va = style.vertical_align;
 const vAnchor =
 va === "center" || va === "middle" ? "-50%" : va === "bottom" ? "-100%" : "0";
-let transform = `translate(${anchor},${vAnchor})`;
-if (rot === 90 || rot === 270) {
-const cw = rot === 270;
-const along =
-va === "center" || va === "middle" ? "-50%"
-: va === "top" ? (cw ? "0" : "-100%")
-: va === "bottom" ? (cw ? "-100%" : "0")
-: cw ? "0" : "-100%";
-const cross =
-ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? (cw ? "0" : "-100%") : cw ? "-100%" : "0";
-transform = `rotate(${cw ? 90 : -90}deg) translate(${along},${cross})`;
-} else if (rot) {
-transform = `rotate(${-rot}deg) translate(${anchor},${vAnchor})`;
-}
 d.style.cssText =
 `position:absolute;left:${px + dx}px;top:${py + dy}px;` +
-`transform:${transform};transform-origin:0 0;pointer-events:none;` +
+`transform:translate(${anchor},${vAnchor});pointer-events:none;` +
 `white-space:pre-line;text-align:center;width:max-content;`;
 this._applySlot(d, "annotation_label");
 this._applyClass(d, ann.class_name);
@@ -5603,17 +5587,131 @@ if (this.comm) this.comm.send({ type: "select_clear" });
 this._dispatchChartEvent("select", { total: 0, view: this._eventView("select_clear") });
 }
 },
+_clampModebar(left, top) {
+const bar = this._modebar;
+if (!bar || !this.root) return;
+const currentLeft = left ?? (Number.parseFloat(bar.style.left) || 0);
+const currentTop = top ?? (Number.parseFloat(bar.style.top) || 0);
+const maxLeft = Math.max(0, this.root.clientWidth - bar.offsetWidth);
+const maxTop = Math.max(0, this.root.clientHeight - bar.offsetHeight);
+bar.style.left = `${Math.max(0, Math.min(maxLeft, currentLeft))}px`;
+bar.style.top = `${Math.max(0, Math.min(maxTop, currentTop))}px`;
+},
 _buildModebar(root) {
 if (this.spec.show_modebar === false) return;
 const bar = document.createElement("div");
 bar.style.cssText =
 `position:absolute;top:${this.plot.y + 4}px;left:${this.plot.x + 4}px;z-index:6;` +
-"display:flex;opacity:.72;transition:opacity .15s;";
+"display:flex;opacity:0;pointer-events:none;transition:opacity .15s;";
 this._applySlot(bar, "modebar");
-this._listen(root, "pointerenter", () => { bar.style.opacity = "1"; });
-this._listen(root, "pointerleave", () => { bar.style.opacity = ".72"; });
 this._modebar = bar;
 this._modeBtns = {};
+this._modebarCollapsed = false;
+this._modebarMoved = false;
+bar.dataset.fcCollapsed = "false";
+const setVisible = (visible) => {
+const show = visible || this._modebarDragging || bar.contains(document.activeElement);
+bar.style.opacity = show ? "1" : "0";
+bar.style.pointerEvents = show ? "auto" : "none";
+};
+this._listen(root, "pointerenter", () => setVisible(true));
+this._listen(root, "pointerleave", () => setVisible(false));
+this._listen(bar, "focusin", () => setVisible(true));
+this._listen(bar, "focusout", () => {
+if (!root.matches(":hover")) setVisible(false);
+});
+const grip = document.createElement("button");
+grip.type = "button";
+grip.title = "Double-click to collapse; drag to move";
+grip.setAttribute("aria-label", "Collapse toolbar");
+grip.setAttribute("aria-expanded", "true");
+grip.dataset.fcModebarDragHandle = "";
+grip.innerHTML = this._icon("drag");
+grip.style.cssText =
+"display:flex;align-items:center;justify-content:center;pointer-events:auto;touch-action:none;";
+this._applySlot(grip, "modebar_button");
+bar.appendChild(grip);
+const DOUBLE_CLICK_MS = 500;
+const DRAG_THRESHOLD_PX = 6;
+let modebarDrag = null;
+let lastGripDown = 0;
+const setCollapsed = (collapsed) => {
+this._modebarCollapsed = collapsed;
+bar.dataset.fcCollapsed = String(collapsed);
+for (const button of bar.querySelectorAll("button")) {
+if (button !== grip) {
+button.hidden = collapsed;
+button.style.display = collapsed ? "none" : "flex";
+}
+}
+grip.title = collapsed
+? "Double-click to expand; drag to move"
+: "Double-click to collapse; drag to move";
+grip.setAttribute("aria-label", collapsed ? "Expand toolbar" : "Collapse toolbar");
+grip.setAttribute("aria-expanded", String(!collapsed));
+this._fitModebar();
+};
+const toggleModebar = () => setCollapsed(!this._modebarCollapsed);
+this._listen(grip, "pointerdown", (e) => {
+if (e.pointerType === "mouse" && e.button !== 0) return;
+e.stopPropagation();
+const now = e.timeStamp || performance.now();
+const doubleClick = lastGripDown > 0 && now - lastGripDown <= DOUBLE_CLICK_MS;
+lastGripDown = doubleClick ? 0 : now;
+const barRect = bar.getBoundingClientRect();
+modebarDrag = {
+pointerId: e.pointerId,
+startX: e.clientX,
+startY: e.clientY,
+dx: e.clientX - barRect.left,
+dy: e.clientY - barRect.top,
+moved: false,
+};
+setVisible(true);
+if (doubleClick) toggleModebar();
+});
+this._listen(grip, "pointermove", (e) => {
+if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
+const distance = Math.hypot(e.clientX - modebarDrag.startX, e.clientY - modebarDrag.startY);
+if (!modebarDrag.moved) {
+if (distance < DRAG_THRESHOLD_PX) return;
+modebarDrag.moved = true;
+lastGripDown = 0;
+this._modebarDragging = true;
+this._modebarMoved = true;
+bar.style.transition = "none";
+try { grip.setPointerCapture(e.pointerId); } catch (_err) {   }
+}
+const rootRect = root.getBoundingClientRect();
+const left = e.clientX - rootRect.left - modebarDrag.dx;
+const top = e.clientY - rootRect.top - modebarDrag.dy;
+this._clampModebar(left, top);
+});
+const endModebarDrag = (e) => {
+if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
+const moved = modebarDrag.moved;
+const cancelled = e.type === "pointercancel";
+modebarDrag = null;
+this._modebarDragging = false;
+bar.style.transition = "opacity .15s";
+setVisible(root.matches(":hover"));
+if (moved || cancelled) {
+lastGripDown = 0;
+}
+};
+this._listen(grip, "pointerup", endModebarDrag);
+this._listen(grip, "pointercancel", endModebarDrag);
+this._listen(grip, "click", (e) => e.stopPropagation());
+this._listen(grip, "dblclick", (e) => {
+e.preventDefault();
+e.stopPropagation();
+});
+this._listen(grip, "keydown", (e) => {
+if (e.repeat || (e.key !== "Enter" && e.key !== " ")) return;
+e.preventDefault();
+e.stopPropagation();
+toggleModebar();
+});
 const mk = (name, title, onClick, toggles) => {
 const b = document.createElement("button");
 b.type = "button";
@@ -5638,17 +5736,24 @@ this._setView(this.view0, { animate: true });
 });
 root.appendChild(bar);
 this._fitModebar();
+setVisible(root.matches(":hover"));
 this._setDragMode(this.dragMode);
 },
 _fitModebar() {
 const bar = this._modebar;
 if (!bar) return;
+if (!this._modebarMoved) {
 bar.style.top = `${this.plot.y + 4}px`;
 bar.style.left = `${this.plot.x + 4}px`;
+}
 bar.style.display = "flex";
 const fits =
 bar.offsetWidth + 8 <= this.plot.w && bar.offsetHeight + 8 <= this.plot.h;
-if (!fits) bar.style.display = "none";
+if (!fits) {
+bar.style.display = "none";
+return;
+}
+this._clampModebar();
 },
 _setDragMode(mode) {
 this.dragMode = mode;
@@ -5822,6 +5927,13 @@ return svg('<rect x="3.5" y="3.5" width="13" height="13" rx="1" ' +
 'stroke-dasharray="3 2"/>');
 case "reset":
 return svg('<path d="M4 10 a6 6 0 1 1 1.8 4.3"/><path d="M4 6 V10 H8"/>');
+case "drag":
+return svg('<circle cx="7" cy="5" r=".8" fill="currentColor" stroke="none"/>' +
+'<circle cx="13" cy="5" r=".8" fill="currentColor" stroke="none"/>' +
+'<circle cx="7" cy="10" r=".8" fill="currentColor" stroke="none"/>' +
+'<circle cx="13" cy="10" r=".8" fill="currentColor" stroke="none"/>' +
+'<circle cx="7" cy="15" r=".8" fill="currentColor" stroke="none"/>' +
+'<circle cx="13" cy="15" r=".8" fill="currentColor" stroke="none"/>');
 default:
 return svg("");
 }

@@ -267,20 +267,141 @@ Object.assign(ChartView.prototype, {
     }
   },
 
+  _clampModebar(left, top) {
+    const bar = this._modebar;
+    if (!bar || !this.root) return;
+    const currentLeft = left ?? (Number.parseFloat(bar.style.left) || 0);
+    const currentTop = top ?? (Number.parseFloat(bar.style.top) || 0);
+    const maxLeft = Math.max(0, this.root.clientWidth - bar.offsetWidth);
+    const maxTop = Math.max(0, this.root.clientHeight - bar.offsetHeight);
+    bar.style.left = `${Math.max(0, Math.min(maxLeft, currentLeft))}px`;
+    bar.style.top = `${Math.max(0, Math.min(maxTop, currentTop))}px`;
+  },
+
   _buildModebar(root) {
     if (this.spec.show_modebar === false) return;
     const bar = document.createElement("div");
-    // Visible by default, then stronger on hover. At .25 opacity the controls
-    // were technically present but easy to miss in embedded dashboards. Layout
-    // + opacity state stay inline; the box styling is in the stylesheet.
+    // The modebar is chrome, so keep it out of the way until the chart is
+    // hovered (or a keyboard user focuses one of its controls). Layout +
+    // visibility state stay inline; the box styling is in the stylesheet.
     bar.style.cssText =
       `position:absolute;top:${this.plot.y + 4}px;left:${this.plot.x + 4}px;z-index:6;` +
-      "display:flex;opacity:.72;transition:opacity .15s;";
+      "display:flex;opacity:0;pointer-events:none;transition:opacity .15s;";
     this._applySlot(bar, "modebar");
-    this._listen(root, "pointerenter", () => { bar.style.opacity = "1"; });
-    this._listen(root, "pointerleave", () => { bar.style.opacity = ".72"; });
     this._modebar = bar;
     this._modeBtns = {};
+    this._modebarCollapsed = false;
+    this._modebarMoved = false;
+    bar.dataset.fcCollapsed = "false";
+
+    const setVisible = (visible) => {
+      const show = visible || this._modebarDragging || bar.contains(document.activeElement);
+      bar.style.opacity = show ? "1" : "0";
+      bar.style.pointerEvents = show ? "auto" : "none";
+    };
+    this._listen(root, "pointerenter", () => setVisible(true));
+    this._listen(root, "pointerleave", () => setVisible(false));
+    this._listen(bar, "focusin", () => setVisible(true));
+    this._listen(bar, "focusout", () => {
+      if (!root.matches(":hover")) setVisible(false);
+    });
+
+    // A dedicated grip keeps button clicks distinct from toolbar movement.
+    // Pointer capture lets a drag finish cleanly even if it leaves the chart;
+    // the coordinates are still clamped to the chart root below.
+    const grip = document.createElement("button");
+    grip.type = "button";
+    grip.title = "Double-click to collapse; drag to move";
+    grip.setAttribute("aria-label", "Collapse toolbar");
+    grip.setAttribute("aria-expanded", "true");
+    grip.dataset.fcModebarDragHandle = "";
+    grip.innerHTML = this._icon("drag");
+    grip.style.cssText =
+      "display:flex;align-items:center;justify-content:center;pointer-events:auto;touch-action:none;";
+    this._applySlot(grip, "modebar_button");
+    bar.appendChild(grip);
+
+    const DOUBLE_CLICK_MS = 500;
+    const DRAG_THRESHOLD_PX = 6;
+    let modebarDrag = null;
+    let lastGripDown = 0;
+    const setCollapsed = (collapsed) => {
+      this._modebarCollapsed = collapsed;
+      bar.dataset.fcCollapsed = String(collapsed);
+      for (const button of bar.querySelectorAll("button")) {
+        if (button !== grip) {
+          button.hidden = collapsed;
+          button.style.display = collapsed ? "none" : "flex";
+        }
+      }
+      grip.title = collapsed
+        ? "Double-click to expand; drag to move"
+        : "Double-click to collapse; drag to move";
+      grip.setAttribute("aria-label", collapsed ? "Expand toolbar" : "Collapse toolbar");
+      grip.setAttribute("aria-expanded", String(!collapsed));
+      this._fitModebar();
+    };
+    const toggleModebar = () => setCollapsed(!this._modebarCollapsed);
+    this._listen(grip, "pointerdown", (e) => {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      e.stopPropagation();
+      const now = e.timeStamp || performance.now();
+      const doubleClick = lastGripDown > 0 && now - lastGripDown <= DOUBLE_CLICK_MS;
+      lastGripDown = doubleClick ? 0 : now;
+      const barRect = bar.getBoundingClientRect();
+      modebarDrag = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        dx: e.clientX - barRect.left,
+        dy: e.clientY - barRect.top,
+        moved: false,
+      };
+      setVisible(true);
+      if (doubleClick) toggleModebar();
+    });
+    this._listen(grip, "pointermove", (e) => {
+      if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
+      const distance = Math.hypot(e.clientX - modebarDrag.startX, e.clientY - modebarDrag.startY);
+      if (!modebarDrag.moved) {
+        if (distance < DRAG_THRESHOLD_PX) return;
+        modebarDrag.moved = true;
+        lastGripDown = 0;
+        this._modebarDragging = true;
+        this._modebarMoved = true;
+        bar.style.transition = "none";
+        try { grip.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
+      }
+      const rootRect = root.getBoundingClientRect();
+      const left = e.clientX - rootRect.left - modebarDrag.dx;
+      const top = e.clientY - rootRect.top - modebarDrag.dy;
+      this._clampModebar(left, top);
+    });
+    const endModebarDrag = (e) => {
+      if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
+      const moved = modebarDrag.moved;
+      const cancelled = e.type === "pointercancel";
+      modebarDrag = null;
+      this._modebarDragging = false;
+      bar.style.transition = "opacity .15s";
+      setVisible(root.matches(":hover"));
+      if (moved || cancelled) {
+        lastGripDown = 0;
+      }
+    };
+    this._listen(grip, "pointerup", endModebarDrag);
+    this._listen(grip, "pointercancel", endModebarDrag);
+    this._listen(grip, "click", (e) => e.stopPropagation());
+    this._listen(grip, "dblclick", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    this._listen(grip, "keydown", (e) => {
+      if (e.repeat || (e.key !== "Enter" && e.key !== " ")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      toggleModebar();
+    });
 
     const mk = (name, title, onClick, toggles) => {
       const b = document.createElement("button");
@@ -309,6 +430,9 @@ Object.assign(ChartView.prototype, {
     });
     root.appendChild(bar);
     this._fitModebar();
+    // The pointer may already be over a chart that mounted beneath it, in
+    // which case no pointerenter fires after these listeners are installed.
+    setVisible(root.matches(":hover"));
     this._setDragMode(this.dragMode);
   },
 
@@ -319,12 +443,18 @@ Object.assign(ChartView.prototype, {
   _fitModebar() {
     const bar = this._modebar;
     if (!bar) return;
-    bar.style.top = `${this.plot.y + 4}px`;
-    bar.style.left = `${this.plot.x + 4}px`;
+    if (!this._modebarMoved) {
+      bar.style.top = `${this.plot.y + 4}px`;
+      bar.style.left = `${this.plot.x + 4}px`;
+    }
     bar.style.display = "flex"; // measurable before the verdict
     const fits =
       bar.offsetWidth + 8 <= this.plot.w && bar.offsetHeight + 8 <= this.plot.h;
-    if (!fits) bar.style.display = "none";
+    if (!fits) {
+      bar.style.display = "none";
+      return;
+    }
+    this._clampModebar();
   },
 
   _setDragMode(mode) {
@@ -520,6 +650,13 @@ Object.assign(ChartView.prototype, {
           'stroke-dasharray="3 2"/>');
       case "reset":
         return svg('<path d="M4 10 a6 6 0 1 1 1.8 4.3"/><path d="M4 6 V10 H8"/>');
+      case "drag":
+        return svg('<circle cx="7" cy="5" r=".8" fill="currentColor" stroke="none"/>' +
+          '<circle cx="13" cy="5" r=".8" fill="currentColor" stroke="none"/>' +
+          '<circle cx="7" cy="10" r=".8" fill="currentColor" stroke="none"/>' +
+          '<circle cx="13" cy="10" r=".8" fill="currentColor" stroke="none"/>' +
+          '<circle cx="7" cy="15" r=".8" fill="currentColor" stroke="none"/>' +
+          '<circle cx="13" cy="15" r=".8" fill="currentColor" stroke="none"/>');
       default:
         return svg("");
     }
