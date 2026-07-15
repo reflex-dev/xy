@@ -35,6 +35,7 @@ from ._svg import (
     _step_arrays,
     _tick_text,
     axis_ticks,
+    hexbin_ring,
     layout,
 )
 
@@ -586,7 +587,7 @@ def render_raster(
         elif kind == "scatter":
             _emit_scatter(cmd, t, blob, cols, sx, sy, style, color)
         elif kind == "hexbin":
-            _emit_triangle_mesh(cmd, t, blob, cols, sx, sy, style, color)
+            _emit_hexbin(cmd, t, blob, cols, sx, sy, style, color)
         elif kind in {"errorbar", "stem", "box_whisker", "box_median", "contour", "segments"}:
             _emit_segments(cmd, t, blob, cols, sx, sy, style, color)
         elif kind in ("bar", "column") and t.get("bar"):
@@ -1002,12 +1003,9 @@ def _emit_segments(cmd, t, blob, cols, sx, sy, style, color):
     cmd.segments(sx(x0), sy(y0), sx(x1), sy(y1), width, colors)
 
 
-def _emit_triangle_mesh(cmd, t, blob, cols, sx, sy, style, color):
-    vertices = [_column(blob, cols[t[name]]) for name in ("x0", "y0", "x1", "y1", "x2", "y2")]
-    n = min(len(values) for values in vertices)
+def _mesh_fill_rgba(t, blob, cols, n, style, color):
     ch = t.get("color") or {}
     fill_op = _fill_opacity(style)
-    stroke_op = _stroke_opacity(style)
     fills = np.empty((n, 4), dtype=np.uint8)
     fills[:, 3] = max(0, min(255, int(round(fill_op * 255))))
     if ch.get("mode") == "continuous":
@@ -1019,6 +1017,32 @@ def _emit_triangle_mesh(cmd, t, blob, cols, sx, sy, style, color):
         fills[:, :3] = palette_rgb[codes % len(palette_rgb)]
     else:
         fills[:, :3] = _parse_color(_css(ch.get("color"), color))[:3]
+    return fills
+
+
+def _emit_hexbin(cmd, t, blob, cols, sx, sy, style, color):
+    """Expand shipped cell centers into the six-triangle hexagon fan locally
+    (the payload carries centers only — see _payload._emit_hexbin)."""
+    cx = _column(blob, cols[t["x"]])
+    cy = _column(blob, cols[t["y"]])
+    n = min(len(cx), len(cy))
+    ring_x, ring_y = hexbin_ring(style)
+    ring_x, ring_y = np.append(ring_x, ring_x[0]), np.append(ring_y, ring_y[0])
+    x0 = np.repeat(sx(cx[:n]), 6)
+    y0 = np.repeat(sy(cy[:n]), 6)
+    x1 = np.asarray(sx(cx[:n, None] + ring_x[None, :-1]), dtype=np.float64).reshape(-1)
+    y1 = np.asarray(sy(cy[:n, None] + ring_y[None, :-1]), dtype=np.float64).reshape(-1)
+    x2 = np.asarray(sx(cx[:n, None] + ring_x[None, 1:]), dtype=np.float64).reshape(-1)
+    y2 = np.asarray(sy(cy[:n, None] + ring_y[None, 1:]), dtype=np.float64).reshape(-1)
+    fills = np.repeat(_mesh_fill_rgba(t, blob, cols, n, style, color), 6, axis=0)
+    cmd.triangles(x0, y0, x1, y1, x2, y2, fills, 0.0, (0, 0, 0, 0))
+
+
+def _emit_triangle_mesh(cmd, t, blob, cols, sx, sy, style, color):
+    vertices = [_column(blob, cols[t[name]]) for name in ("x0", "y0", "x1", "y1", "x2", "y2")]
+    n = min(len(values) for values in vertices)
+    stroke_op = _stroke_opacity(style)
+    fills = _mesh_fill_rgba(t, blob, cols, n, style, color)
 
     x0, y0, x1, y1, x2, y2 = vertices
     sw = float(style.get("stroke_width", 0.0))

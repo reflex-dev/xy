@@ -60,6 +60,41 @@ _MARK_KINDS = tuple(
 )
 
 
+# Compiled style dicts keyed by their exact input items. Charts rebuild with
+# the same handful of style dicts (rc-derived axis chrome, repeated mark
+# styles), and compilation — normalization, native CSS parsing, px/opacity
+# checks — is a pure function of (kind, label, dict), so each distinct input
+# compiles once per process instead of once per chart build (the pyplot perf
+# guardrail counts on this). Only successful compilations are cached; the
+# type names keep e.g. True from hitting a cached 1 (equal, same hash,
+# different verdict).
+_COMPILE_CACHE: dict[tuple, dict[str, Any]] = {}
+
+
+def _compile_cached(cache_kind: str, label: str, value: Any, compute: Any) -> dict[str, Any]:
+    if value is None or isinstance(value, dict):
+        try:
+            items = (
+                () if value is None else tuple((k, v, type(v).__name__) for k, v in value.items())
+            )
+            key = (cache_kind, label, items)
+            hit = _COMPILE_CACHE.get(key)
+        except TypeError:  # unhashable value: compile (and likely raise) below
+            key = hit = None
+        if hit is not None:
+            # Fresh top-level dict and fresh lists (dasharrays): callers own
+            # their copy outright, nothing aliases the cache.
+            return {k: list(v) if isinstance(v, list) else v for k, v in hit.items()}
+    else:
+        key = None
+    out = compute()
+    if key is not None:
+        if len(_COMPILE_CACHE) > 4096:
+            _COMPILE_CACHE.clear()
+        _COMPILE_CACHE[key] = {k: list(v) if isinstance(v, list) else v for k, v in out.items()}
+    return out
+
+
 def normalize_css_style(value: StyleMapping | None, label: str = "style") -> dict[str, StyleValue]:
     """Validate and canonicalize a CSS declaration mapping.
 
@@ -211,6 +246,12 @@ def compile_mark_style(
 ) -> dict[str, Any]:
     """Compile standard CSS declarations into a mark builder's keyword args."""
     label = label or f"{kind} style"
+    return _compile_cached(
+        f"mark:{kind}", label, value, lambda: _compile_mark_style(kind, value, label)
+    )
+
+
+def _compile_mark_style(kind: str, value: StyleMapping | None, label: str) -> dict[str, Any]:
     style = normalize_css_style(value, label)
     supported = set(_supported_mark_style_properties(kind))
     unknown = sorted(set(style) - supported)
@@ -277,6 +318,12 @@ def compile_axis_style(
     The more explicit ``tick_label_*`` keys are retained for the pyplot adapter
     and can differ from the tick-mark paint.
     """
+    return _compile_cached("axis", label, value, lambda: _compile_axis_style(value, label))
+
+
+def _compile_axis_style(
+    value: StyleMapping | None, label: str = "axis style"
+) -> dict[str, StyleValue]:
     style = normalize_css_style(value, label)
     supported = (
         _AXIS_COLOR_PROPERTIES

@@ -1,11 +1,12 @@
 """The shim's speed promise, as a test: pyplot builds the same chart the
 declarative API builds, plus only figure-lifecycle bookkeeping.
 
-Locally measured (2026-07-10, M-series): +9% at 10k points, +2% at 100k,
-+0.6% at 1M. The gate uses generous headroom plus a small absolute allowance
-for sub-millisecond timer jitter on CI runners — it exists to catch structural
-regressions (an O(n) copy or per-build revalidation sneaking into the shim),
-not to re-measure the margin.
+Locally measured (2026-07-14, M-series): +60% at 10k points, +26% at 100k —
+the 10k number is ~50us of fixed per-figure bookkeeping over an ~85us
+baseline, not O(n) work. The gate uses generous headroom plus a small
+absolute allowance for sub-millisecond timer jitter on CI runners — it exists
+to catch structural regressions (an O(n) copy or per-build revalidation
+sneaking into the shim), not to re-measure the margin.
 """
 
 from __future__ import annotations

@@ -876,9 +876,12 @@ def test_first_payload_hexbin_core_2d(benchmark, medium_data):
     payload_bytes = benchmark(_hexbin_payload, x, y)
     grid_height = max(2, int(HEXBIN_GRIDSIZE / np.sqrt(3.0)))
     max_cells = (HEXBIN_GRIDSIZE + 1) * (grid_height + 1) + HEXBIN_GRIDSIZE * grid_height
-    # Each cell is six triangles with six coordinate and one color f32 buffer.
-    max_payload_bytes = max_cells * 6 * 7 * np.dtype(np.float32).itemsize
+    # Each cell ships as a center (x, y) plus one color value; renderers
+    # expand the shared hexagon geometry locally, so the payload stays
+    # grid-bounded and far below the raw input.
+    max_payload_bytes = max_cells * 3 * np.dtype(np.float32).itemsize
     assert 0 < payload_bytes <= max_payload_bytes
+    assert payload_bytes < x.nbytes + y.nbytes
 
 
 def test_first_payload_errorbar_large(benchmark, data):
