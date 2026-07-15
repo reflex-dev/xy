@@ -36,7 +36,7 @@ from ._fmt import parse_fmt
 from ._mathtext import mathtext_to_unicode
 from ._plot_types import PlotTypeMixin
 from ._rc import RcParams, rcParams
-from ._ticker import AutoLocator, NullLocator, ScalarFormatter, as_formatter
+from ._ticker import AutoLocator, Locator, NullLocator, ScalarFormatter, as_formatter
 from ._transforms import Bbox, CoordinateTransform, IdentityTransform
 from ._translate import (
     LINESTYLE_TO_DASH,
@@ -530,6 +530,9 @@ class Axes(PlotTypeMixin):
         self._insets: list[tuple["Axes", tuple[float, float, float, float]]] = []
         self._insets_materialized = False
         self._figure_rect: Optional[tuple[float, float, float, float]] = None
+        # The originating gridspec span, when _figure_rect came from one —
+        # subplots_adjust() re-resolves the rect instead of keeping it frozen.
+        self._subplot_spec: Optional[Any] = None
         self._absolute_plot_ratio: Optional[float] = None
         self._padding: Optional[list[float]] = None
         self._xmargin = 0.0
@@ -2309,6 +2312,8 @@ class Axes(PlotTypeMixin):
         return Bbox.from_bounds(*(self._figure_rect or (0.125, 0.11, 0.775, 0.77)))
 
     def set_position(self, position: Any) -> None:
+        # The gridspec spec (if any) is kept: matplotlib's subplots_adjust
+        # re-resolves every subplotspec-backed axes, overriding set_position.
         self._figure_rect = _parse_bounds(position, "set_position()")
         self._invalidate()
 
@@ -3646,7 +3651,10 @@ class Axes(PlotTypeMixin):
         lo, hi = self._ticker_view(key, props)
         auto_log = False
         if locator is not None:
-            locator._nbins_hint = nbins_hint
+            if isinstance(locator, Locator):
+                # Third-party locators only promise tick_values(); the density
+                # hint is an xy-locator protocol, never forced onto them.
+                locator._nbins_hint = nbins_hint
             ticks = np.asarray(locator.tick_values(lo, hi), dtype=float).reshape(-1)
             pad = (hi - lo) * 1e-9
             ticks = ticks[(ticks >= lo - pad) & (ticks <= hi + pad)]
@@ -3796,7 +3804,10 @@ class Axes(PlotTypeMixin):
                     y = _parse_date_text(y) or y
                 arrowprops = kw.get("arrowprops")
                 value = str(e["args"][2]) if len(e["args"]) > 2 else ""
-                if arrowprops and value and text_kw.get("dx") is not None:
+                # "dx" in kw (not text_kw, which defaults it) marks offset
+                # placement. An empty dict or empty label still draws the
+                # arrow patch in matplotlib, so neither gates the callout.
+                if arrowprops is not None and "dx" in kw:
                     # Offset-placed annotate(arrowprops=): matplotlib pins the
                     # arrow from the text to the data point across zoom — the
                     # engine's callout annotation is exactly that object.
@@ -4017,17 +4028,22 @@ class Axes(PlotTypeMixin):
             self._axis["y"]["domain"] = self._auto_domain("y")
         # A dataless matplotlib axis views exactly (0, 1) — margins never apply.
         # Pin it so the engine's autorange padding cannot widen the empty view
-        # (padding turns the 0.5 midpoint tick into a bare 0/1 pair).
-        for axis in ("x", "y"):
-            if (
-                not adjusted_aspect
-                and axis not in self._explicit_domains
-                and self._axis[axis].get("domain") is None
-                and len(self._entry_values(axis)) == 0
-            ):
-                self._axis[axis]["domain"] = (0.0, 1.0)
+        # (padding turns the 0.5 midpoint tick into a bare 0/1 pair). Render
+        # snapshot only: data plotted after a render must autoscale as usual.
+        empty_view = {
+            axis
+            for axis in ("x", "y")
+            if not adjusted_aspect
+            and axis not in self._explicit_domains
+            and self._axis[axis].get("domain") is None
+            and len(self._entry_values(axis)) == 0
+        }
         x_props = {k: v for k, v in self._axis["x"].items() if v is not None}
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
+        if "x" in empty_view:
+            x_props["domain"] = (0.0, 1.0)
+        if "y" in empty_view:
+            y_props["domain"] = (0.0, 1.0)
         if aspect_domains is not None:
             x_props["domain"], y_props["domain"] = aspect_domains
         auto_tick_counts = self._auto_tick_counts(x_props, width, height)

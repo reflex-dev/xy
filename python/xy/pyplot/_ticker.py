@@ -23,8 +23,7 @@ from ._translate import check_unsupported
 def _scale_range(vmin: float, vmax: float, n: int) -> tuple[float, float]:
     """matplotlib's ``ticker.scale_range``: decade scale and offset for a span."""
     dv = abs(vmax - vmin)
-    maxabsv = max(abs(vmin), abs(vmax))
-    if maxabsv == 0 or dv / maxabsv < 1e-12:
+    if dv == 0:
         return 1.0, 0.0
     meanv = (vmax + vmin) / 2
     offset = 0.0

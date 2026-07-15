@@ -10,6 +10,7 @@ with the same ``set_major_locator``/``set_major_formatter`` contract as
 
 from __future__ import annotations
 
+import calendar
 import datetime as dt
 from typing import Any, Optional
 
@@ -51,23 +52,57 @@ def _month_set(bymonth: Any) -> tuple[int, ...]:
     return months
 
 
+def _shift_months(base: dt.datetime, months: int) -> dt.datetime:
+    """Calendar-arithmetic month shift with day-of-month clamping."""
+    total = base.year * 12 + (base.month - 1) + months
+    year, month0 = divmod(total, 12)
+    day = min(base.day, calendar.monthrange(year, month0 + 1)[1])
+    return base.replace(year=year, month=month0 + 1, day=day)
+
+
+def _rrule_dtstart(lo: dt.datetime, hi: dt.datetime) -> dt.datetime:
+    """matplotlib's RRuleLocator recurrence anchor for a view interval.
+
+    ``RRuleLocator._create_rrule`` sets ``dtstart = vmin - relativedelta(vmax,
+    vmin)``, so ``interval`` counting is phased relative to the view, not a
+    fixed epoch. This reproduces that arithmetic (months first, then the
+    residual timedelta) without dateutil.
+    """
+    months = (hi.year - lo.year) * 12 + (hi.month - lo.month)
+    while _shift_months(lo, months) > hi:
+        months -= 1
+    remainder = hi - _shift_months(lo, months)
+    try:
+        return _shift_months(lo, -months) - remainder
+    except (ValueError, OverflowError):
+        return dt.datetime(1, 1, 1)  # matplotlib caps at the datetime floor
+
+
 class _CalendarLocator(Locator):
     """Shared clip loop over calendar-rule candidates (rrule approximation:
-    occurrence counting for ``interval`` is anchored at the 1970 epoch, the
-    same dtstart matplotlib's rules default to)."""
+    ``interval`` filters occurrence numbers relative to the same view-derived
+    dtstart matplotlib's rules use)."""
 
     _interval: int
 
     def _candidates(self, lo: dt.datetime, hi: dt.datetime) -> list[tuple[int, dt.datetime]]:
         raise NotImplementedError
 
+    def _anchor(self, dtstart: dt.datetime) -> int:
+        """The occurrence number of the rule's dtstart (0 = epoch-anchored,
+        matching YearLocator's multiple-of-base years)."""
+        del dtstart
+        return 0
+
     def tick_values(self, vmin: float, vmax: float) -> np.ndarray:
         lo, hi = sorted((float(vmin), float(vmax)))
         if not (np.isfinite(lo) and np.isfinite(hi)):
             return np.asarray([], dtype=float)
+        lo_dt, hi_dt = _from_ms(lo), _from_ms(hi)
+        anchor = self._anchor(_rrule_dtstart(lo_dt, hi_dt)) if self._interval > 1 else 0
         ticks: list[float] = []
-        for occurrence, when in self._candidates(_from_ms(lo), _from_ms(hi)):
-            if occurrence % self._interval:
+        for occurrence, when in self._candidates(lo_dt, hi_dt):
+            if (occurrence - anchor) % self._interval:
                 continue
             value = _to_ms(when)
             if lo <= value <= hi:
@@ -90,15 +125,20 @@ class MonthLocator(_CalendarLocator):
             raise ValueError("bymonthday must be in 1..31")
         self._interval = max(1, int(interval))
 
+    def _anchor(self, dtstart: dt.datetime) -> int:
+        return dtstart.year * 12 + dtstart.month - 1
+
     def _candidates(self, lo: dt.datetime, hi: dt.datetime) -> list[tuple[int, dt.datetime]]:
+        # Occurrence numbers count *all* months (rrule's MONTHLY stride);
+        # bymonth only filters which survivors become candidates.
         out = []
         for year in range(lo.year, hi.year + 1):
-            for index, month in enumerate(self._months):
+            for month in self._months:
                 try:
                     when = dt.datetime(year, month, self._day)
                 except ValueError:  # bymonthday past the month's end: rrule skips it
                     continue
-                out.append(((year - 1970) * len(self._months) + index, when))
+                out.append((year * 12 + month - 1, when))
         return out
 
 
@@ -132,12 +172,15 @@ class DayLocator(_CalendarLocator):
             raise ValueError("bymonthday values must be in 1..31")
         self._interval = max(1, int(interval))
 
+    def _anchor(self, dtstart: dt.datetime) -> int:
+        return dtstart.toordinal()
+
     def _candidates(self, lo: dt.datetime, hi: dt.datetime) -> list[tuple[int, dt.datetime]]:
         out = []
         day = dt.datetime(lo.year, lo.month, lo.day)
         while day <= hi:
             if self._days is None or day.day in self._days:
-                out.append((day.toordinal() - _EPOCH.toordinal(), day))
+                out.append((day.toordinal(), day))
             if len(out) > _MAXTICKS * max(1, self._interval):
                 break  # tick_values raises past _MAXTICKS; stop generating
             day += dt.timedelta(days=1)

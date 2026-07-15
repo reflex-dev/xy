@@ -16,6 +16,7 @@ import numpy as np
 
 from ._artists import Text
 from ._axes import Axes, _plain_text
+from ._colors import resolve_color
 from ._rc import rc_figsize_px, rcParams
 from ._transforms import CoordinateTransform
 from ._translate import check_unsupported, not_implemented
@@ -62,7 +63,10 @@ class Figure:
         self._figsize = figsize
         self._dpi = dpi
         self._toolbar = toolbar  # None -> rcParams["toolbar"] decides
-        self._facecolor = facecolor or "white"
+        # RGBA tuples and other matplotlib color specs normalize to a CSS
+        # string here — everything downstream (HTML escaping, "none"/"white"
+        # short-circuits) assumes a string.
+        self._facecolor = (resolve_color(facecolor) if facecolor is not None else None) or "white"
         self._edgecolor = "white"
         self._suptitle: Optional[str] = None
         self._suptitle_style: dict[str, Any] = {}
@@ -113,7 +117,9 @@ class Figure:
                 ax = self._axes_at(spec.index)
             else:
                 # Spans and custom spacing become explicit figure rectangles.
+                # The spec is kept so subplots_adjust() can re-resolve them.
                 ax = self.add_axes(spec.gridspec.cell_rect(spec.rows, spec.cols))
+                ax._subplot_spec = spec
         elif args and args != (1, 1, 1) and args != (111,):
             nrows, ncols, index = _parse_subplot_args(args)
             if any(a._figure_rect is not None for a in self._axes):
@@ -121,9 +127,14 @@ class Figure:
                 # hold free-form axes; keep the figure free-form via the cell
                 # rectangle (and return the existing axes for a repeat spec).
                 row, col = divmod(index - 1, ncols)
-                rect = _GridSpec(self, nrows, ncols).cell_rect((row, row + 1), (col, col + 1))
+                grid = _GridSpec(self, nrows, ncols)
+                rect = grid.cell_rect((row, row + 1), (col, col + 1))
                 existing = next((a for a in self._axes if a._figure_rect == rect), None)
-                ax = existing if existing is not None else self.add_axes(rect)
+                if existing is not None:
+                    ax = existing
+                else:
+                    ax = self.add_axes(rect)
+                    ax._subplot_spec = _SubplotSpec(grid, (row, row + 1), (col, col + 1))
             else:
                 self._ensure_grid(nrows, ncols)
                 ax = self._axes_at(index - 1)
@@ -399,6 +410,11 @@ class Figure:
             raise ValueError("bottom cannot be >= top")
         self._subplot_adjust.update(material)
         for ax in self._axes:
+            if ax._subplot_spec is not None:
+                # Gridspec-derived rectangles track the moved SubplotParams
+                # frame (matplotlib re-resolves subplot positions on draw).
+                spec = ax._subplot_spec
+                ax._figure_rect = spec.gridspec.cell_rect(spec.rows, spec.cols)
             ax._invalidate()
         self._invalidate()
 
@@ -444,7 +460,7 @@ class Figure:
         self.set_dpi(value)
 
     def set_facecolor(self, color: Any) -> None:
-        self._facecolor = str(color)
+        self._facecolor = resolve_color(color) or "none"
         self._invalidate()
 
     def get_facecolor(self) -> str:
@@ -678,9 +694,13 @@ class Figure:
                 plot_h = max(1, round(total_h * rect[3]))
                 # Absolute axes rectangles describe the plot box.  Export
                 # chrome lives outside that rectangle in the surrounding
-                # figure buffer, matching Matplotlib add_axes semantics.
+                # figure buffer, matching Matplotlib add_axes semantics —
+                # including the axes title, which matplotlib draws above the
+                # axes without moving its position.
                 compact = plot_w + 54 < 520
                 margin_w, margin_h = (54, 42) if compact else (76, 52)
+                if ax._title:
+                    margin_h += 26 if compact else 30
                 ax._absolute_plot_ratio = plot_w / plot_h
                 charts.append(ax._build_chart(plot_w + margin_w, plot_h + margin_h))
         else:
@@ -752,10 +772,14 @@ class Figure:
         exactly on the requested figure rectangle.
         """
         positions = []
-        for rect in rects:
+        for ax, rect in zip(self._axes, rects, strict=True):
             compact = round(canvas_size[0] * rect[2]) + 54 < 520
             left, bottom = (46, 36) if compact else (62, 42)
             width, height = (54, 42) if compact else (76, 52)
+            if ax._title:
+                # The panel was built taller for its title (`_charts`); grow
+                # the placement upward so the plot box stays on the rect.
+                height += 26 if compact else 30
             positions.append(
                 (
                     rect[0] - left / canvas_size[0],
@@ -995,7 +1019,7 @@ class Figure:
     def _facecolor_wrapped(self, doc: str) -> str:
         """The figure facecolor behind an HTML document — matplotlib's figure
         patch around the (separately painted, `--chart-bg`) axes plot box."""
-        if self._facecolor in ("none", "white"):
+        if self._facecolor in ("none", "transparent", "white"):
             return doc
         import html
 
@@ -1129,14 +1153,20 @@ class _GridSpec:
         self, rows: tuple[int, int], cols: tuple[int, int]
     ) -> tuple[float, float, float, float]:
         """[left, bottom, width, height] figure fractions for a cell span."""
+        # Per-key precedence, as in matplotlib: the gridspec's own geometry,
+        # else the figure's (subplots_adjust-moved) SubplotParams, else the
+        # rcParams-shaped defaults.
+        adjust = self.figure._subplot_adjust if self.figure is not None else {}
         frame = {
-            key: (self._geometry[key] if self._geometry[key] is not None else default)
+            key: (
+                self._geometry[key] if self._geometry[key] is not None else adjust.get(key, default)
+            )
             for key, default in _SUBPLOT_PARAMS.items()
         }
         wspace = self._geometry["wspace"]
         hspace = self._geometry["hspace"]
-        wspace = _SUBPLOT_SPACING if wspace is None else float(wspace)
-        hspace = _SUBPLOT_SPACING if hspace is None else float(hspace)
+        wspace = float(adjust.get("wspace", _SUBPLOT_SPACING)) if wspace is None else float(wspace)
+        hspace = float(adjust.get("hspace", _SUBPLOT_SPACING)) if hspace is None else float(hspace)
         span_w = float(frame["right"]) - float(frame["left"])
         span_h = float(frame["top"]) - float(frame["bottom"])
         # wspace/hspace are fractions of the *average* cell size (matplotlib).
