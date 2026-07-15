@@ -14,6 +14,17 @@ from ._colors import resolve_color
 
 COMPAT_URL = "https://github.com/reflex-dev/xy/blob/main/docs/matplotlib-compat.md"
 
+# Matplotlib's unscaled named dash patterns, in points (rcParams
+# lines.{dashed,dotted,dashdot}_pattern). Matplotlib multiplies these by the
+# line width (lines.scale_dashes) and then by the figure DPI; the shim does the
+# same so "--"/":"/"-." read like Matplotlib instead of the denser, shorter
+# CSS presets used by the public composition API.
+MPL_DASH_PATTERN = {
+    "dashed": (3.7, 1.6),
+    "dotted": (1.0, 1.65),
+    "dashdot": (6.4, 1.6, 1.0, 1.6),
+}
+
 LINESTYLE_TO_DASH = {
     "-": None,
     "solid": None,

@@ -730,6 +730,10 @@ def render_raster(
     named = [t for t in spec["traces"] if t.get("name")]
     if spec.get("show_legend", True) and named:
         _emit_legend(cmd, named, plot, spec.get("legend") or {})
+    for extra in spec.get("extra_legends") or []:
+        items = extra.get("items") or []
+        if items:
+            _emit_legend(cmd, items, plot, extra)
     if spec.get("colorbar"):
         _emit_colorbar(cmd, spec["colorbar"], plot)
 
@@ -1256,8 +1260,20 @@ def _emit_legend(cmd, named, plot, options):
     cell_w = max(len(str(t["name"])) for t in named) * 6.2 + handle + gap + 2 * pad
     box_w, box_h = ncols * cell_w + pad, nrows * line_h + pad + title_h
     loc = options.get("loc") or "upper right"
-    x = plot["x"] + 6 if "left" in loc else plot["x"] + plot["w"] - box_w - 6
-    y = plot["y"] + plot["h"] - box_h - 6 if "lower" in loc else plot["y"] + 6
+    # "center" is the per-axis fallback: "center right" is the right edge at
+    # vertical center, "upper center" the top edge at horizontal center.
+    if "left" in loc:
+        x = plot["x"] + 6
+    elif "right" in loc:
+        x = plot["x"] + plot["w"] - box_w - 6
+    else:
+        x = plot["x"] + (plot["w"] - box_w) / 2
+    if "upper" in loc:
+        y = plot["y"] + 6
+    elif "lower" in loc:
+        y = plot["y"] + plot["h"] - box_h - 6
+    else:
+        y = plot["y"] + (plot["h"] - box_h) / 2
     # frameon=False (background transparent) drops the box entirely (§ mpl parity).
     if style_opts.get("background") != "transparent":
         if style_opts.get("boxShadow"):

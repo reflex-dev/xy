@@ -8,6 +8,7 @@ dominant mutation idioms without reproducing matplotlib's artist graph.
 
 from __future__ import annotations
 
+import warnings
 from itertools import pairwise
 from typing import Any, Optional
 
@@ -818,3 +819,113 @@ class StreamplotSet:
     def __init__(self, lines: PolyCollection, arrows: PolyCollection) -> None:
         self.lines = lines
         self.arrows = arrows
+
+
+def _legend_item_from_entry(
+    entry: dict[str, Any], label: Any, point_scale: float
+) -> dict[str, Any]:
+    """Freeze a plotted entry into a standalone legend swatch descriptor.
+
+    The primary legend derives its swatches from trace names inside the render
+    client; a manually built :class:`Legend` instead ships explicit items so it
+    can show a *subset* of the handles under different labels. The item shape
+    (``kind`` + ``style`` with color/width/dash/symbol) matches what every
+    renderer already draws for a named trace, so line dashes and marker glyphs
+    render identically.
+    """
+    kind = str(entry.get("kind", "line"))
+    if kind.startswith("@"):  # generic marks (errorbar, vlines, …) → a line sample
+        kind = "line"
+    kw = entry.get("kwargs", {})
+    style: dict[str, Any] = {}
+    color = kw.get("color")
+    if isinstance(color, str):
+        style["color"] = color
+    width = kw.get("width")
+    if width is not None:
+        style["width"] = float(width) * point_scale
+    opacity = kw.get("opacity")
+    if opacity is not None:
+        style["opacity"] = float(opacity)
+    # Rule annotations keep renderer-specific geometry inside ``style`` while
+    # ordinary line/step entries keep it at the top level. Accept both shapes
+    # so explicit Legend handles preserve the plotted dash.
+    dash = kw.get("dash", (kw.get("style") or {}).get("dash"))
+    if isinstance(dash, str) and "," in dash:
+        try:
+            dash = [float(value.strip()) for value in dash.split(",")]
+        except ValueError:
+            dash = None
+    if isinstance(dash, str) and dash not in ("", "none", "solid"):
+        from .. import _validate
+
+        try:
+            resolved = _validate.dash(dash, "legend dash")
+        except (ValueError, TypeError):
+            resolved = None
+        if resolved:
+            style["dash"] = resolved
+    elif isinstance(dash, (list, tuple)):
+        style["dash"] = [float(v) for v in dash]
+    if kind == "scatter":
+        symbol = kw.get("symbol")
+        if symbol:
+            style["symbol"] = symbol
+        for key in ("stroke", "stroke_width"):
+            if kw.get(key) is not None:
+                style[key] = kw[key]
+    return {"name": str(label), "kind": kind, "style": style}
+
+
+class Legend:
+    """A standalone legend artist, as ``matplotlib.legend.Legend``.
+
+    Construct it with the parent axes plus explicit handles/labels, then attach
+    it via ``ax.add_artist(leg)`` to render a *second* legend (e.g. one legend
+    per group of lines) alongside the axes' own ``ax.legend()``.
+    """
+
+    def __init__(self, parent: Any, handles: Any, labels: Any, loc: Any = "best", **kwargs: Any):
+        handles, labels = list(handles), list(labels)
+        if len(handles) != len(labels):
+            warnings.warn(
+                f"Legend: mismatched number of handles ({len(handles)}) and "
+                f"labels ({len(labels)}); the extras are ignored",
+                stacklevel=2,
+            )
+        self._pairs: list[tuple[dict[str, Any], Any]] = []
+        for handle, label in zip(handles, labels, strict=False):
+            entry = getattr(handle, "_entry", None)
+            if entry is None:
+                # ErrorbarContainer exposes the bars through its private
+                # compatibility artist rather than inheriting Artist itself.
+                entry = getattr(getattr(handle, "_artist", None), "_entry", None)
+            if entry is None:
+                warnings.warn(
+                    f"Legend does not support {type(handle).__name__} handles; "
+                    f"dropping the entry for {label!r}",
+                    stacklevel=2,
+                )
+                continue
+            self._pairs.append((entry, label))
+        self._kwargs = dict(kwargs)
+        self._kwargs.setdefault("loc", loc)
+        self._attach(parent)
+
+    def _attach(self, parent: Any) -> None:
+        """(Re)freeze options and swatch scaling against *parent*'s figure state.
+
+        ``Axes.add_artist`` calls this so a legend constructed against one axes
+        but attached to another picks up the host's dpi/rcParams state rather
+        than keeping the constructor's.
+        """
+        self._parent = parent
+        self._options = parent._compose_legend_options(dict(self._kwargs))
+        scale = parent._point_scale()
+        self._items = [_legend_item_from_entry(entry, label, scale) for entry, label in self._pairs]
+
+    def spec(self) -> dict[str, Any]:
+        """The option dict plus explicit items, ready for the render payload."""
+        options = dict(self._options)
+        options["items"] = self._items
+        return options
