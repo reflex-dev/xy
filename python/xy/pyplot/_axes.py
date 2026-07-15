@@ -2341,7 +2341,8 @@ class Axes(PlotTypeMixin):
         y = self._data_coordinate(xy[1], "y")
         return None if x is None or y is None else (x, y)
 
-    def _entry_extent(self, axis: str) -> tuple[float, float]:
+    def _entry_values(self, axis: str) -> np.ndarray:
+        """Every finite data coordinate the entries contribute to *axis* autoscale."""
         values: list[np.ndarray] = []
         for entry in self._entries:
             key = "x" if axis == "x" else "y"
@@ -2373,7 +2374,10 @@ class Axes(PlotTypeMixin):
             elif entry.get("kind") == "heatmap" and entry.get("extent") is not None:
                 bounds = entry["extent"]
                 values.append(np.asarray(bounds[:2] if axis == "x" else bounds[2:], dtype=float))
-        finite = np.concatenate(values) if values else np.array([], dtype=np.float64)
+        return np.concatenate(values) if values else np.array([], dtype=np.float64)
+
+    def _entry_extent(self, axis: str) -> tuple[float, float]:
+        finite = self._entry_values(axis)
         if len(finite) == 0:
             return (0.0, 1.0)
         lo, hi = float(np.min(finite)), float(np.max(finite))
@@ -4011,6 +4015,17 @@ class Axes(PlotTypeMixin):
             self._axis["x"]["domain"] = self._auto_domain("x")
         if not adjusted_aspect and self._ymargin != 0.0 and "y" not in self._explicit_domains:
             self._axis["y"]["domain"] = self._auto_domain("y")
+        # A dataless matplotlib axis views exactly (0, 1) — margins never apply.
+        # Pin it so the engine's autorange padding cannot widen the empty view
+        # (padding turns the 0.5 midpoint tick into a bare 0/1 pair).
+        for axis in ("x", "y"):
+            if (
+                not adjusted_aspect
+                and axis not in self._explicit_domains
+                and self._axis[axis].get("domain") is None
+                and len(self._entry_values(axis)) == 0
+            ):
+                self._axis[axis]["domain"] = (0.0, 1.0)
         x_props = {k: v for k, v in self._axis["x"].items() if v is not None}
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
         if aspect_domains is not None:

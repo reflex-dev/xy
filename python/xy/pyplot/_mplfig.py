@@ -698,8 +698,12 @@ class Figure:
                 linked.append(dim)
                 for group in self._share_groups(shared, len(figures)):
                     members = [figures[i] for i in group]
+                    # matplotlib shared limits autoscale over the group's data;
+                    # dataless panels follow the group instead of contributing
+                    # their (0, 1) default view to the union.
+                    sources = [figure for figure in members if figure.traces] or members
                     ranges = [
-                        figure.x_range() if dim == "x" else figure.y_range() for figure in members
+                        figure.x_range() if dim == "x" else figure.y_range() for figure in sources
                     ]
                     domain = (
                         min(min(pair) for pair in ranges),
