@@ -2307,6 +2307,10 @@ this.chrome.style.width = this.size.w + "px";
 this.chrome.style.height = this.size.h + "px";
 this.chrome.width = this.size.w * this.dpr;
 this.chrome.height = this.size.h * this.dpr;
+this.overlay.style.width = this.size.w + "px";
+this.overlay.style.height = this.size.h + "px";
+this.overlay.width = this.size.w * this.dpr;
+this.overlay.height = this.size.h * this.dpr;
 if (this._legends && this._legends.length && this._slotStyleValue("legend", "max-height") == null) {
 for (const lg of this._legends) lg.style.maxHeight = p.h - 12 + "px";
 }
@@ -2370,6 +2374,9 @@ this.canvas.tabIndex = 0;
 this.canvas.setAttribute("role", "img");
 this.canvas.setAttribute("aria-describedby", this.a11ySummary.id);
 root.appendChild(this.canvas);
+this.overlay = document.createElement("canvas");
+this.overlay.style.cssText = "position:absolute;inset:0;pointer-events:none;";
+root.appendChild(this.overlay);
 this.labels = document.createElement("div");
 this.labels.style.cssText = "position:absolute;inset:0;pointer-events:none;";
 this._applySlot(this.labels, "labels");
@@ -2679,6 +2686,10 @@ this.chrome.width = this.size.w * dpr;
 this.chrome.height = this.size.h * dpr;
 this.chrome.style.width = this.size.w + "px";
 this.chrome.style.height = this.size.h + "px";
+this.overlay.width = this.size.w * dpr;
+this.overlay.height = this.size.h * dpr;
+this.overlay.style.width = this.size.w + "px";
+this.overlay.style.height = this.size.h + "px";
 XY_CONTEXT_GOVERNOR.reserve(this);
 const gl = this.canvas.getContext("webgl2", {
 antialias: false, premultipliedAlpha: true, alpha: true,
@@ -4279,7 +4290,10 @@ ctx.lineTo(p.x + p.w, y);
 ctx.stroke();
 ctx.globalAlpha = 1;
 ctx.setLineDash([]);
-this._drawAnnotationShapes(ctx);
+const octx = this.overlay.getContext("2d");
+octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+octx.clearRect(0, 0, this.size.w, this.size.h);
+this._drawAnnotationShapes(octx);
 if (updateLabels) {
 const rule = (styleAxis, left, top, w, h, colorKey = "axis_color") => {
 const d = document.createElement("div");
@@ -5167,6 +5181,7 @@ if (!text) continue;
 const style = ann && typeof ann.style === "object" ? ann.style : {};
 let px = null;
 let py = null;
+let lift = null;
 if (ann.kind === "text") {
 if (style.coordinate_space === "axes_fraction") {
 px = p.x + Number(ann.x) * p.w;
@@ -5201,8 +5216,17 @@ px = p.x + p.w - 6;
 py = (this._dataPxY(Number(ann.start)) + this._dataPxY(Number(ann.end))) / 2;
 }
 } else if (ann.kind === "arrow") {
-px = (this._dataPxX(Number(ann.x0)) + this._dataPxX(Number(ann.x1))) / 2;
-py = (this._dataPxY(Number(ann.y0)) + this._dataPxY(Number(ann.y1))) / 2;
+const ax0 = this._dataPxX(Number(ann.x0));
+const ay0 = this._dataPxY(Number(ann.y0));
+const ax1 = this._dataPxX(Number(ann.x1));
+const ay1 = this._dataPxY(Number(ann.y1));
+px = (ax0 + ax1) / 2;
+py = (ay0 + ay1) / 2;
+const len = Math.hypot(ax1 - ax0, ay1 - ay0);
+if (len > 1e-6) {
+lift = [-(ay1 - ay0) / len, (ax1 - ax0) / len];
+if (lift[1] > 0) lift = [-lift[0], -lift[1]];
+}
 } else if (ann.kind === "callout") {
 px = this._dataPxX(Number(ann.x));
 py = this._dataPxY(Number(ann.y));
@@ -5218,11 +5242,24 @@ const d = document.createElement("div");
 d.textContent = text;
 const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
 const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
-const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0px";
+let anchorName = ann.anchor;
+let va = String(style.vertical_align || "");
+if (ann.kind === "rule" || ann.kind === "band") {
+if (ann.axis === "x") {
+if (!anchorName && ann.kind === "band") anchorName = "middle";
+if (!va) va = "top";
+} else {
+if (!anchorName) anchorName = "end";
+if (!va && ann.kind === "band") va = "middle";
+}
+} else if (ann.kind === "arrow") {
+if (!anchorName) anchorName = "middle";
+if (!va) va = "middle";
+}
+const anchor = anchorName === "middle" ? "-50%" : anchorName === "end" ? "-100%" : "0px";
 const rot = Number.isFinite(Number(style.rotation))
 ? ((Number(style.rotation) % 360) + 360) % 360
 : 0;
-const va = String(style.vertical_align || "");
 const vAnchor =
 va === "center" || va === "middle" ? "-50%"
 : va === "bottom" ? "-100%"
@@ -5237,7 +5274,7 @@ va === "center" || va === "middle" ? "-50%"
 : va === "bottom" ? (cw ? "-100%" : "0")
 : cw ? "0" : "-100%";
 const cross =
-ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? (cw ? "0" : "-100%") : cw ? "-100%" : "0";
+anchorName === "middle" ? "-50%" : anchorName === "end" ? (cw ? "0" : "-100%") : cw ? "-100%" : "0";
 transform = `rotate(${cw ? 90 : -90}deg) translate(${along},${cross})`;
 } else if (rot) {
 transform = `rotate(${-rot}deg) translate(${anchor},${vAnchor})`;
@@ -5248,9 +5285,11 @@ d.style.cssText =
 `white-space:pre-line;text-align:center;width:max-content;`;
 this._applySlot(d, "annotation_label");
 this._applyClass(d, ann.class_name);
+const opacityIsShape = ann.kind !== "text" && ann.kind !== "callout";
 const labelStyle = {};
 for (const [key, value] of Object.entries(style)) {
 if (XY_ANNOTATION_SHAPE_STYLE_KEYS.has(key)) continue;
+if (opacityIsShape && key === "opacity") continue;
 labelStyle[key] = value;
 }
 this._applyStyle(d, labelStyle);
@@ -5271,6 +5310,31 @@ vAnchor === "-50%" ? 0 : vAnchor === "0px" ? -padT : padB;
 d.style.transform =
 `${rot ? `rotate(${-rot}deg) ` : ""}` +
 `translate(calc(${anchor} + ${hShift}px), calc(${vAnchor} + ${vShift}px))`;
+}
+const liftBounds = lift && this.labels.getBoundingClientRect();
+if (lift && liftBounds.width > 0) {
+const liftScale = liftBounds.width / this.size.w;
+const r = d.getBoundingClientRect();
+const clear =
+(r.width / liftScale / 2) * Math.abs(lift[0]) +
+(r.height / liftScale / 2) * Math.abs(lift[1]) + 3;
+px += lift[0] * clear;
+py += lift[1] * clear;
+d.style.left = `${px + dx}px`;
+d.style.top = `${py + dy}px`;
+}
+const bounds = this.labels.getBoundingClientRect();
+if (bounds.width > 0) {
+const scale = bounds.width / this.size.w;
+const r = d.getBoundingClientRect();
+const pullX =
+r.right > bounds.right ? bounds.right - r.right
+: r.left < bounds.left ? bounds.left - r.left : 0;
+const pullY =
+r.bottom > bounds.bottom ? bounds.bottom - r.bottom
+: r.top < bounds.top ? bounds.top - r.top : 0;
+if (pullX) d.style.left = `${px + dx + pullX / scale}px`;
+if (pullY) d.style.top = `${py + dy + pullY / scale}px`;
 }
 }
 },
