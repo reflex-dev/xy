@@ -106,6 +106,37 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **`savefig` single-panel PNG export now uses the fused Rust encoder.** A
+  one-axes figure with no suptitle/colorbar/tight-bbox and the default white
+  facecolor is exactly one native render, so `stitch_png` returns the
+  rasterizer's own PNG (the latency-first `Figure.to_png` default) instead of
+  round-tripping RGBA through the Python size-oriented encoder — pixel-
+  identical output, ~10x faster (119.8ms → 11.7ms on a 100k-point savefig;
+  1.2x the raw `to_png` at the same 1280x960 output). Multi-panel and
+  tight-bbox exports keep the composed path but now probe a stride sample
+  before the full-image palette attempt, skipping a doomed O(n log n) unique
+  scan on antialiased charts.
+- **`ax.hist` no longer boxes numeric input or copies it to find bin edges.**
+  The input-shape sniff skipped its object-dtype round trip for 1-D numeric
+  arrays, and fixed-count bins derive their range from the native NaN-skipping
+  min/max scan instead of a finite-filtered concatenated copy. Counts still
+  come from `np.histogram` against the identical edges — the kernel-based
+  shortcut was rejected because it disagrees with numpy by ±1 on values
+  exactly at interior bin edges. ~2.3x faster shim histogram builds.
+- **`ax.bar`/`ax.barh` label sanitization is vectorized.** Plain string
+  category arrays are scanned for TeX markers with one vectorized pass
+  instead of a per-label Python loop through the mathtext converter.
+- **Legend `loc="best"` scoring subsamples before its finite scan** instead
+  of running `isfinite` over every point of every legended series — the
+  scoring was already sample-based; the full-array pass was pure O(n)
+  per-build cost.
+- **`xy.pyplot` no longer pays an O(n) dataless-axis scan on every build.**
+  The empty-view pin in `_build_chart` materialized and finite-filtered every
+  entry's full data for both axes just to ask "is this axis empty?", adding a
+  data-proportional cost to each shim figure build (~3x the raw declarative
+  build at 1M points). It now short-circuits on the first finite value via a
+  prefix probe; `tests/pyplot/test_perf_guardrail.py` passes again on Linux
+  runners and the new CodSpeed pairs track the margin continuously.
 - **Payload copy elimination (native ABI v32).** Partial-view density sampling
   now hashes native `u32` row selections without first widening the full array
   to `u64`; exact-full index buffers avoid a trailing-slice copy; and payload
@@ -132,6 +163,14 @@ in the README).
   faster; fluent path unchanged by construction).
 
 ### Added
+- **CodSpeed shim-overhead pairs** (`benchmarks/test_codspeed_pyplot.py`):
+  every workload (10k/1M line, 100k scatter, 200-bin histogram, 1k-category
+  bars, a chrome-heavy styled panel, and static PNG export) is built twice
+  from the same arrays — once through the raw declarative API and once
+  through the identical `xy.pyplot` calls — ending in the same split wire
+  payload or PNG bytes, so the `*_pyplot` minus `*_raw` gap in CodSpeed is
+  exactly the shim's translation cost. Collected automatically by the
+  existing `benchmarks/test_codspeed_*.py` CI glob.
 - **Dashboard context governor**: browsers cap live WebGL contexts per page
   (~16 in Chrome) and LRU-evict the oldest on overflow, which permanently
   blanked the earliest charts of a 20+/50-chart dashboard. The render client

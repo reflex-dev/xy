@@ -231,6 +231,28 @@ def stitch_png(
     from xy import _png, _raster  # sanctioned escape hatch (see module doc)
 
     scale = 2.0
+    if (
+        len(charts) == 1
+        and positions is None
+        and not suptitle
+        and not colorbar
+        and not bbox_tight
+        and facecolor in ("white", "#ffffff")
+    ):
+        # A single panel with no chrome to compose is exactly one native
+        # render, so fuse rasterization with the Rust PNG encoder (the
+        # latency-first default of Figure.to_png) instead of round-tripping
+        # RGBA through the Python size-oriented encoder — ~17x on a
+        # 100k-point savefig. The fused canvas initializes white, which is
+        # why the fast path is gated on the default facecolor.
+        fig = charts[0].figure()
+        spec, blob, borrowed = fig._build_raster_payload(px_width=max(256, int(fig.width)))
+        spec["canvas_background"] = facecolor
+        rendered = _raster.render_raster(spec, blob, scale, fast_png=True, borrowed=borrowed)
+        if isinstance(rendered, bytes):
+            return rendered
+        return _png.encode(rendered)
+
     tiles: list[np.ndarray] = []
     for chart in charts:
         fig = chart.figure()

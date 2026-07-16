@@ -1262,7 +1262,22 @@ class Axes(PlotTypeMixin):
         kwargs: dict[str, Any],
     ) -> BarContainer:
         cat_array = np.asarray(cats)
-        if cat_array.dtype.kind in {"U", "S", "O"} and all(
+        if cat_array.dtype.kind == "U" and cat_array.dtype.isnative:
+            # _plain_text only rewrites labels containing TeX markers; a
+            # vectorized scan skips the per-label Python loop for the common
+            # plain-string case (O(categories) per build otherwise). The scan
+            # reads the UCS4 storage as codepoints rather than using
+            # np.char/np.strings, whose first call pays a multi-millisecond
+            # lazy ufunc setup — a one-shot cost CodSpeed attributes to
+            # whichever chart build hits it first. The uint32 view is only
+            # codepoints on native byte order; swapped arrays take the loop.
+            flat = cat_array.reshape(-1)
+            codes = np.ascontiguousarray(flat).view(np.uint32)
+            if (codes == 36).any() or (codes == 92).any():  # "$" and "\" codepoints
+                cats = np.asarray([_plain_text(value) for value in flat]).reshape(cat_array.shape)
+            else:
+                cats = cat_array
+        elif cat_array.dtype.kind in {"U", "S", "O"} and all(
             isinstance(value, str) for value in cat_array.reshape(-1)
         ):
             cats = np.asarray([_plain_text(value) for value in cat_array.reshape(-1)]).reshape(
@@ -1404,15 +1419,37 @@ class Axes(PlotTypeMixin):
         if histtype not in {"bar", "barstacked", "step", "stepfilled"}:
             raise ValueError(f"unsupported histtype {histtype!r}")
 
-        raw = np.asarray(x, dtype=object)
-        if raw.ndim == 1 and (len(raw) == 0 or np.isscalar(raw[0])):
+        if isinstance(x, np.ndarray) and x.ndim == 1 and x.dtype.kind in "fiub":
+            # The common numeric-array call must not round-trip through an
+            # object array: boxing every element just to sniff the input shape
+            # is an O(n) cost per build (tests/pyplot/test_perf_guardrail.py).
             datasets = [np.asarray(x, dtype=np.float64)]
-        elif isinstance(x, np.ndarray) and x.ndim == 2:
-            datasets = [np.asarray(x[:, i], dtype=np.float64) for i in range(x.shape[1])]
         else:
-            datasets = [np.asarray(values, dtype=np.float64) for values in x]
-        all_finite = np.concatenate([values[np.isfinite(values)] for values in datasets])
-        edges = np.histogram_bin_edges(all_finite, bins=bins, range=range)
+            raw = np.asarray(x, dtype=object)
+            if raw.ndim == 1 and (len(raw) == 0 or np.isscalar(raw[0])):
+                datasets = [np.asarray(x, dtype=np.float64)]
+            elif isinstance(x, np.ndarray) and x.ndim == 2:
+                datasets = [np.asarray(x[:, i], dtype=np.float64) for i in range(x.shape[1])]
+            else:
+                datasets = [np.asarray(values, dtype=np.float64) for values in x]
+        if isinstance(bins, (int, np.integer)) and not isinstance(bins, bool):
+            # Fixed bin count: the edges depend only on the finite data range,
+            # so a native NaN-skipping min/max scan replaces the filtered
+            # concatenated copy. numpy applies its own defaults/expansion to
+            # the range exactly as it would to data-derived outer edges.
+            from xy import kernels
+
+            if range is None:
+                spans = [span for span in map(kernels.min_max, datasets) if span is not None]
+                data_range = (
+                    (min(lo for lo, _ in spans), max(hi for _, hi in spans)) if spans else None
+                )
+            else:
+                data_range = range
+            edges = np.histogram_bin_edges(np.empty(0), bins=bins, range=data_range)
+        else:
+            all_finite = np.concatenate([values[np.isfinite(values)] for values in datasets])
+            edges = np.histogram_bin_edges(all_finite, bins=bins, range=range)
         if weights is None:
             weight_sets = [None] * len(datasets)
         elif len(datasets) == 1:
@@ -2368,9 +2405,8 @@ class Axes(PlotTypeMixin):
         y = self._data_coordinate(xy[1], "y")
         return None if x is None or y is None else (x, y)
 
-    def _entry_values(self, axis: str) -> np.ndarray:
-        """Every finite data coordinate the entries contribute to *axis* autoscale."""
-        values: list[np.ndarray] = []
+    def _iter_entry_arrays(self, axis: str):
+        """Yield each (array, needs_finite_filter) an entry contributes to *axis*."""
         for entry in self._entries:
             key = "x" if axis == "x" else "y"
             if key in entry:
@@ -2380,7 +2416,7 @@ class Axes(PlotTypeMixin):
                     )
                 except (TypeError, ValueError):
                     continue
-                values.append(array[np.isfinite(array)])
+                yield array, True
             if entry.get("kind") == "@mark":
                 factory = entry.get("factory")
                 indexes = {
@@ -2388,20 +2424,42 @@ class Axes(PlotTypeMixin):
                     "triangle_mesh": (0, 2, 4) if axis == "x" else (1, 3, 5),
                 }.get(factory, ())
                 for index in indexes:
-                    array = np.asarray(entry["args"][index], dtype=np.float64).reshape(-1)
-                    values.append(array[np.isfinite(array)])
+                    yield np.asarray(entry["args"][index], dtype=np.float64).reshape(-1), True
                 if factory == "contour":
                     z = np.asarray(entry["args"][0])
                     coordinates = entry.get("kwargs", {}).get(key)
                     if coordinates is None and z.ndim >= 2:
                         coordinates = np.arange(z.shape[1 if axis == "x" else 0], dtype=float)
                     if coordinates is not None:
-                        array = np.asarray(coordinates, dtype=np.float64).reshape(-1)
-                        values.append(array[np.isfinite(array)])
+                        yield np.asarray(coordinates, dtype=np.float64).reshape(-1), True
             elif entry.get("kind") == "heatmap" and entry.get("extent") is not None:
                 bounds = entry["extent"]
-                values.append(np.asarray(bounds[:2] if axis == "x" else bounds[2:], dtype=float))
+                yield np.asarray(bounds[:2] if axis == "x" else bounds[2:], dtype=float), False
+
+    def _entry_values(self, axis: str) -> np.ndarray:
+        """Every finite data coordinate the entries contribute to *axis* autoscale."""
+        values = [
+            array[np.isfinite(array)] if needs_filter else array
+            for array, needs_filter in self._iter_entry_arrays(axis)
+        ]
         return np.concatenate(values) if values else np.array([], dtype=np.float64)
+
+    def _axis_is_dataless(self, axis: str) -> bool:
+        """True when the entries contribute no coordinate to *axis* autoscale.
+
+        The empty-view pin in `_build_chart` asks this on every default build,
+        so it must not pay `_entry_values`'s full O(n) materialization when the
+        chart obviously has data (tests/pyplot/test_perf_guardrail.py). A short
+        prefix probe answers real data immediately; only all-non-finite
+        prefixes fall through to a full scan.
+        """
+        for array, needs_filter in self._iter_entry_arrays(axis):
+            if not needs_filter:
+                if array.size:
+                    return False
+            elif np.isfinite(array[:1024]).any() or np.isfinite(array[1024:]).any():
+                return False
+        return True
 
     def _entry_extent(self, axis: str) -> tuple[float, float]:
         finite = self._entry_values(axis)
@@ -3962,6 +4020,18 @@ class Axes(PlotTypeMixin):
             except (TypeError, ValueError):
                 continue
             xv, yv = xv.reshape(-1), yv.reshape(-1)
+            if len(xv) > 4096:
+                # Stride down before the finite scan: occupancy scoring is
+                # already sampled, so the full-array isfinite pass was pure
+                # O(n) per-build cost on large legended series. Sparse finite
+                # points can slip between strides on a mostly-NaN series, so
+                # a sample with no finite pair falls back to the full array —
+                # a series the old full-array pass scored still scores instead
+                # of vanishing from placement.
+                strided = np.linspace(0, len(xv) - 1, 4096, dtype=np.intp)
+                sampled_x, sampled_y = xv[strided], yv[strided]
+                if (np.isfinite(sampled_x) & np.isfinite(sampled_y)).any():
+                    xv, yv = sampled_x, sampled_y
             finite = np.flatnonzero(np.isfinite(xv) & np.isfinite(yv))
             if len(finite) > 512:
                 finite = finite[np.linspace(0, len(finite) - 1, 512, dtype=np.intp)]
@@ -4086,7 +4156,7 @@ class Axes(PlotTypeMixin):
             if not adjusted_aspect
             and axis not in self._explicit_domains
             and self._axis[axis].get("domain") is None
-            and len(self._entry_values(axis)) == 0
+            and self._axis_is_dataless(axis)
         }
         x_props = {k: v for k, v in self._axis["x"].items() if v is not None}
         y_props = {k: v for k, v in self._axis["y"].items() if v is not None}
