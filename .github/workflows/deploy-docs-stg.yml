@@ -1,0 +1,130 @@
+# Build one versioned image pair, deploy it to staging, wait for production
+# approval, then promote the exact same images to production.
+
+name: Deploy XY Docs to Stage and Prod
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Existing XY version tag (for example v0.1.0)"
+        required: true
+        type: string
+  push:
+    tags:
+      - "v[0-9]*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-xy-docs-stg
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+    steps:
+      - name: Resolve version and source commit
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version || github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.+-]+)?$ ]]; then
+            echo "::error::version must be semver like v0.1.0"
+            exit 1
+          fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            SHA=$(gh api "repos/${REPO}/commits/${VERSION}" --jq '.sha')
+          else
+            SHA="$EVENT_SHA"
+          fi
+          if [[ ! "$SHA" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "::error::resolved SHA is not a 40-character hex commit"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$SHA" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build Versioned Images
+    needs: prepare
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_build-docs-images.yml
+    with:
+      image_tag: ${{ needs.prepare.outputs.version }}
+      source_ref: ${{ needs.prepare.outputs.source_sha }}
+    secrets: inherit
+
+  helm-pr-stg:
+    name: Update Staging Helm Values
+    needs: [prepare, build]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_helm-docs-pr.yml
+    with:
+      image_tag: ${{ needs.prepare.outputs.version }}
+      environment: stg
+      source_ref: ${{ needs.prepare.outputs.source_sha }}
+      auto_merge: true
+    secrets: inherit
+
+  await-prod-approval:
+    name: Await Production Approval
+    needs: helm-pr-stg
+    runs-on: ubuntu-latest
+    timeout-minutes: 720
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - run: echo "Approved for production promotion"
+
+  release:
+    name: Create GitHub Release
+    needs: [prepare, await-prod-approval]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Create release if needed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$VERSION" --repo "$REPO" >/dev/null 2>&1; then
+            echo "::notice::Release $VERSION already exists"
+            exit 0
+          fi
+          NOTES=$(printf "Production deployment of XY docs.\n\n**Source SHA:** \`%s\`\n**Image tag:** \`%s\`" "$SOURCE_SHA" "$VERSION")
+          gh release create "$VERSION" \
+            --repo "$REPO" \
+            --title "Release $VERSION" \
+            --notes "$NOTES" \
+            --target "$SOURCE_SHA"
+
+  helm-pr-prod:
+    name: Update Production Helm Values
+    needs: [prepare, await-prod-approval, release]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_helm-docs-pr.yml
+    with:
+      image_tag: ${{ needs.prepare.outputs.version }}
+      environment: prod
+      source_ref: ${{ needs.prepare.outputs.source_sha }}
+      auto_merge: true
+    secrets: inherit
