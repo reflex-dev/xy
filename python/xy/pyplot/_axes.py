@@ -11,15 +11,20 @@ test in tests/pyplot/.
 from __future__ import annotations
 
 import copy
+
+# Runtime imports, not TYPE_CHECKING: `typing.get_type_hints()` on the public
+# Axes methods must resolve these annotation names (all stdlib or xy-local).
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import suppress
 from datetime import datetime, timedelta
 from itertools import pairwise
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import Any, Literal, Optional
 
 import numpy as np
 
 import xy as fc
 
+from .._typing import ArrayLike, ColorLike, ColorsLike, LimitsLike, Scalar
 from ._artists import (
     Artist,
     AxesImage,
@@ -47,11 +52,6 @@ from ._translate import (
     marker_size_to_scatter_size,
     not_implemented,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Sequence
-
-    from .._typing import ArrayLike, ColorLike, ColorsLike, LimitsLike, Scalar
 
 # matplotlib's default look: white panel, no grid until grid(True).
 _MPL_THEME_TOKENS = {

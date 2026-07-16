@@ -16,11 +16,18 @@ and the loud `NotImplementedError` list.
 from __future__ import annotations
 
 import contextlib
-from typing import TYPE_CHECKING, Any, Literal, Optional, Union, overload
+
+# The annotation dependencies below (collections.abc, pathlib, IO, Cmap) are
+# deliberately runtime imports, not TYPE_CHECKING: public annotations
+# reference them, and `typing.get_type_hints()` on the exported callables
+# must resolve. All are stdlib or shim-local, so import weight is unchanged.
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from pathlib import Path
+from typing import IO, Any, Literal, Optional, Union, overload
 
 import numpy as np
 
-from .._typing import ArrayLike, ColorLike, ColorsLike, TableLike
+from .._typing import ArrayLike, ColorLike, ColorsLike, LimitsLike, TableLike
 from . import dates
 from ._artists import (
     Artist,
@@ -42,7 +49,7 @@ from ._artists import (
 )
 from ._axes import Axes
 from ._axisgrid import FacetGrid
-from ._colors import LinearSegmentedColormap, ListedColormap
+from ._colors import Cmap, LinearSegmentedColormap, ListedColormap
 from ._mplfig import Figure, GridSpec
 from ._rc import _PropCycle, rc, rc_context, rcdefaults, rcParams
 from ._state import all_figures, close, figlabels, fignum_exists, fignums, figure, gca, gcf, sca
@@ -62,13 +69,6 @@ from ._ticker import (
     StrMethodFormatter,
 )
 from ._translate import not_implemented
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping, Sequence
-    from pathlib import Path
-    from typing import IO
-
-    from ._colors import Cmap
 
 __all__ = [
     "AutoLocator",
@@ -480,20 +480,28 @@ def get(obj: Any, property: Optional[str] = None) -> Any:
 
 
 def findobj(obj: Any = None, match: Any = None) -> list[Any]:
-    """Collect axes and artists under ``obj`` (default: the current figure).
+    """Collect axes and their artists under ``obj`` (default: the current
+    figure).
 
-    ``match`` is an optional predicate applied to each candidate.
+    ``match`` filters the candidates: a class matches by ``isinstance``
+    (e.g. ``match=Line2D``), a callable is used as a predicate, and None
+    matches everything.
     """
+
+    def matches(candidate: Any) -> bool:
+        if match is None:
+            return True
+        if isinstance(match, type):
+            return isinstance(candidate, match)
+        return bool(match(candidate))
+
     root = obj or gcf()
     found: list[Any] = []
     axes = getattr(root, "axes", []) if not isinstance(root, Axes) else [root]
     for ax in axes:
-        if match is None or match(ax):
+        if matches(ax):
             found.append(ax)
-        for entry in getattr(ax, "_entries", []):
-            artist = getattr(entry, "_artist", None)
-            if artist is not None and (match is None or match(artist)):
-                found.append(artist)
+        found.extend(artist for artist in getattr(ax, "_owned_artists", []) if matches(artist))
     return found
 
 
@@ -2612,8 +2620,11 @@ def get_xbound() -> tuple[float, float]:
     return gca().get_xbound()
 
 
-def set_xbound(lower: float | None = None, upper: float | None = None) -> None:
-    """Set the current axes' x bounds, keeping the axis orientation."""
+def set_xbound(lower: float | LimitsLike | None = None, upper: float | None = None) -> None:
+    """Set the current axes' x bounds, keeping the axis orientation.
+
+    ``lower`` may also be a ``(lower, upper)`` pair.
+    """
     return gca().set_xbound(lower, upper)
 
 
@@ -2622,8 +2633,11 @@ def get_ybound() -> tuple[float, float]:
     return gca().get_ybound()
 
 
-def set_ybound(lower: float | None = None, upper: float | None = None) -> None:
-    """Set the current axes' y bounds, keeping the axis orientation."""
+def set_ybound(lower: float | LimitsLike | None = None, upper: float | None = None) -> None:
+    """Set the current axes' y bounds, keeping the axis orientation.
+
+    ``lower`` may also be a ``(lower, upper)`` pair.
+    """
     return gca().set_ybound(lower, upper)
 
 

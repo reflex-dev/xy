@@ -9,11 +9,15 @@ Rust kernel rather than NumPy.
 
 from __future__ import annotations
 
+# Runtime imports, not TYPE_CHECKING: `typing.get_type_hints()` on the public
+# plotting methods must resolve these annotation names (all stdlib or xy-local).
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
+from .._typing import ArrayLike, ColorLike, ColorsLike, TableLike
 from ._artists import (
     Artist,
     BarContainer,
@@ -41,11 +45,6 @@ from ._translate import (
     line_kwargs,
     not_implemented,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
-
-    from .._typing import ArrayLike, ColorLike, ColorsLike, TableLike
 
 
 def _from_data(value: Any, data: Any) -> Any:
