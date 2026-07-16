@@ -43,16 +43,6 @@ uv add xy
 Published wheels contain the Python package, JavaScript client, and native Rust
 core. End users do not need Rust, Node, npm, or a CDN.
 
-### Standalone HTML Safety And CSP
-
-`Chart.to_html()` produces one portable file with the client, spec, and data
-inlined. Its Content-Security-Policy blocks network fetches, but portable HTML
-requires inline scripts. A strict nonce/hash deployment needs an application
-wrapper that serves the JavaScript bundle separately. It escapes titles, axis
-labels, trace names, legends, series names, and categories, and non-finite JSON
-metadata is rejected. See the [security policy](SECURITY.md) for the full
-contract.
-
 ## Getting started
 
 Create a small business chart:
@@ -214,6 +204,7 @@ needed for browser behavior.
 - [Matplotlib compatibility](docs/matplotlib-compat.md)
 - [Architecture and design](docs/design-dossier.md)
 - [Production readiness](docs/production-readiness.md)
+- [Security](SECURITY.md)
 - [Changelog](CHANGELOG.md)
 
 ## Development

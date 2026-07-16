@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 API_EXAMPLES = ROOT / "docs" / "api-examples.md"
 README = ROOT / "README.md"
 CONTRIBUTING = ROOT / "CONTRIBUTING.md"
+SECURITY = ROOT / "SECURITY.md"
 BENCHMARK_DOC = ROOT / "docs" / "benchmark.md"
 PRODUCTION_DOC = ROOT / "docs" / "production-readiness.md"
 REFLEX_SHAPED_API_DOC = ROOT / "docs" / "design" / "reflex-shaped-api.md"
@@ -241,8 +242,8 @@ def test_api_examples_quick_reference_covers_registered_composition_marks() -> N
         assert f"fc.{mark}_chart" in rows or mark in {"bar"}
 
 
-def test_readme_documents_standalone_html_security_contract() -> None:
-    text = " ".join(README.read_text(encoding="utf-8").split())
+def test_security_policy_documents_standalone_html_contract() -> None:
+    text = " ".join(SECURITY.read_text(encoding="utf-8").split())
     required = [
         "Standalone HTML Safety And CSP",
         "Content-Security-Policy",
