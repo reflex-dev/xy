@@ -11,7 +11,7 @@ columns, pan/zoom, worker-based density re-bin), with kernel round-trips
 (deep drilldown, server picks, streaming) deliberately out of scope. Reach
 for `reflex_xy.inline` or `@reflex_xy.figure` when those matter.
 
-Why this works from any context (docs/design/reflex-integration.md):
+Why this works from any context (docs/engineering/design/reflex-integration.md):
 
 - **Page bodies** run in the process that compiles the frontend, *before*
   the compiler copies ``assets/`` into ``.web/public`` — so a file written

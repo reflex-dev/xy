@@ -7,13 +7,14 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-API_EXAMPLES = ROOT / "docs" / "api-examples.md"
+ENGINEERING_DOCS = ROOT / "docs" / "engineering"
+API_EXAMPLES = ENGINEERING_DOCS / "api-examples.md"
 README = ROOT / "README.md"
 CONTRIBUTING = ROOT / "CONTRIBUTING.md"
 SECURITY = ROOT / "SECURITY.md"
-BENCHMARK_DOC = ROOT / "docs" / "benchmark.md"
-PRODUCTION_DOC = ROOT / "docs" / "production-readiness.md"
-REFLEX_SHAPED_API_DOC = ROOT / "docs" / "design" / "reflex-shaped-api.md"
+BENCHMARK_DOC = ENGINEERING_DOCS / "benchmark.md"
+PRODUCTION_DOC = ENGINEERING_DOCS / "production-readiness.md"
+REFLEX_SHAPED_API_DOC = ENGINEERING_DOCS / "design" / "reflex-shaped-api.md"
 EXPECTED_QUICK_REFERENCE = {
     "Line": ("fc.line_chart", "fc.line"),
     "Scatter": ("fc.scatter_chart", "fc.scatter"),
@@ -363,7 +364,7 @@ def test_benchmark_docs_name_ci_report_artifacts() -> None:
         "benchmark-report",
         "regression-benchmark-report",
         "docs/benchmark_ci.md",
-        "docs/benchmark_metrics.md",
+        "docs/engineering/benchmark_metrics.md",
         "scatter.json",
         "kernel.json",
         "compact summary",
@@ -394,7 +395,9 @@ def test_benchmark_docs_include_copyable_claim_taxonomy() -> None:
 def test_docs_name_benchmark_harness_shortcut() -> None:
     readme = " ".join(README.read_text(encoding="utf-8").split())
     production = " ".join(PRODUCTION_DOC.read_text(encoding="utf-8").split())
-    contributing = " ".join((ROOT / "docs" / "contributing.md").read_text(encoding="utf-8").split())
+    contributing = " ".join(
+        (ENGINEERING_DOCS / "contributing.md").read_text(encoding="utf-8").split()
+    )
 
     for text in (readme, production, contributing):
         assert "make check-benchmark-harness" in text
@@ -406,7 +409,9 @@ def test_docs_name_benchmark_harness_shortcut() -> None:
 def test_docs_name_claim_guardrail_shortcut() -> None:
     readme = " ".join(README.read_text(encoding="utf-8").split())
     production = " ".join(PRODUCTION_DOC.read_text(encoding="utf-8").split())
-    contributing = " ".join((ROOT / "docs" / "contributing.md").read_text(encoding="utf-8").split())
+    contributing = " ".join(
+        (ENGINEERING_DOCS / "contributing.md").read_text(encoding="utf-8").split()
+    )
 
     for text in (readme, production, contributing):
         assert "make check-claims" in text
@@ -464,7 +469,9 @@ def test_production_docs_name_ci_workflow_gate_shortcut() -> None:
 def test_docs_name_split_browser_hardening_gates() -> None:
     readme = " ".join(README.read_text(encoding="utf-8").split())
     production = " ".join(PRODUCTION_DOC.read_text(encoding="utf-8").split())
-    contributing = " ".join((ROOT / "docs" / "contributing.md").read_text(encoding="utf-8").split())
+    contributing = " ".join(
+        (ENGINEERING_DOCS / "contributing.md").read_text(encoding="utf-8").split()
+    )
 
     step_names = [
         "Browser lifecycle smoke (Chromium)",

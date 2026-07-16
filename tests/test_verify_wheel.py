@@ -394,7 +394,7 @@ def test_verify_wheel_rejects_unexpected_native_artifact(tmp_path: Path) -> None
 @pytest.mark.parametrize(
     "extra_name",
     [
-        "docs/api-examples.md",
+        "docs/engineering/api-examples.md",
         "tests/test_docs_examples.py",
         "benchmarks/bench_vs.py",
         "examples/reflex/reflex_xy_app/reflex_xy_app.py",

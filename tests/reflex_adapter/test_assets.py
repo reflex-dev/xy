@@ -66,8 +66,18 @@ def test_wrapper_speaks_the_namespace_protocol():
     # static tier: fetch the payload asset, decode the XYBF frame, render
     # kernel-less via the same entry point static HTML exports use
     assert "decodeFrame" in jsx
-    assert "renderStandalone(el, frame.message, frame.buffers[0])" in jsx
+    assert "renderStandalone(el, fitSpecToElement(frame.message), frame.buffers[0])" in jsx
     assert "fetch(src)" in jsx
+
+
+def test_wrapper_sizes_static_and_live_charts_to_the_reflex_mount():
+    """The inner chart must not overflow dimensions assigned to its component."""
+    jsx = (ADAPTER_ASSETS / "XYChart.jsx").read_text(encoding="utf-8")
+
+    assert 'width: "100%"' in jsx
+    assert 'height: "100%"' in jsx
+    assert "renderStandalone(el, fitSpecToElement(frame.message)" in jsx
+    assert "fitSpecToElement(data.spec)," in jsx
 
 
 def test_wrapper_mirrors_reflex_connection_options():

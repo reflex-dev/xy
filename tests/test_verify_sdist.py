@@ -35,7 +35,7 @@ README_MD = (
     "# xy\n\n"
     "## Stable vs. Experimental\n\n"
     "Python 3.11+ package import is documented here.\n"
-    "See docs/api-examples.md for examples.\n"
+    "See docs/engineering/api-examples.md for examples.\n"
     "Run make check-examples after editing example docs.\n" + ("readme padding\n" * 100)
 )
 API_EXAMPLES_MD = (
@@ -50,7 +50,7 @@ API_EXAMPLES_MD = (
 BENCHMARK_MD = (
     "# Benchmark\n\n"
     "The docs/benchmark_ci.md numbers land in the benchmark-report artifact.\n"
-    "The docs/benchmark_metrics.md regression table, scatter.json, and kernel.json "
+    "The docs/engineering/benchmark_metrics.md regression table, scatter.json, and kernel.json "
     "land in the regression-benchmark-report artifact.\n" + ("benchmark padding\n" * 100)
 )
 PRODUCTION_READINESS_MD = (
@@ -69,7 +69,7 @@ CONTRIBUTING_MD = (
     "## Pull Request Checklist\n\n"
     "Run make check-full, make check-sdist, make check-wheel, and "
     "make check-benchmark-report.\n"
-    "Run make check-examples for README snippets, docs/api-examples.md, and "
+    "Run make check-examples for README snippets, docs/engineering/api-examples.md, and "
     "the Reflex example app.\n\n"
     "## Performance Claims\n\n"
     "Claims need benchmark context.\n" + ("contributing padding\n" * 100)
@@ -185,13 +185,13 @@ def _write_sdist(
                 data = ENTRIES_JS.encode("utf-8")
             elif name == "README.md":
                 data = README_MD.encode("utf-8")
-            elif name == "docs/api-examples.md":
+            elif name == "docs/engineering/api-examples.md":
                 data = API_EXAMPLES_MD.encode("utf-8")
-            elif name == "docs/benchmark.md":
+            elif name == "docs/engineering/benchmark.md":
                 data = BENCHMARK_MD.encode("utf-8")
-            elif name == "docs/production-readiness.md":
+            elif name == "docs/engineering/production-readiness.md":
                 data = PRODUCTION_READINESS_MD.encode("utf-8")
-            elif name == "docs/contributing.md":
+            elif name == "docs/engineering/contributing.md":
                 data = CONTRIBUTING_MD.encode("utf-8")
             elif name == "examples/reflex/README.md":
                 data = REFLEX_README_MD.encode("utf-8")
@@ -288,7 +288,9 @@ def test_verify_sdist_rejects_partial_type_marker(tmp_path: Path) -> None:
 
 def test_verify_sdist_rejects_missing_production_docs_or_tooling(tmp_path: Path) -> None:
     sdist = tmp_path / "xy-0.1.0.tar.gz"
-    _write_sdist(sdist, omit={"docs/production-readiness.md", "scripts/verify_local.py"})
+    _write_sdist(
+        sdist, omit={"docs/engineering/production-readiness.md", "scripts/verify_local.py"}
+    )
 
     with pytest.raises(AssertionError, match="production-readiness"):
         verify_sdist.verify_sdist(str(sdist))
@@ -362,7 +364,7 @@ def test_verify_sdist_rejects_stale_api_examples_doc(tmp_path: Path) -> None:
     sdist = tmp_path / "xy-0.1.0.tar.gz"
     _write_sdist(
         sdist,
-        replacements={"docs/api-examples.md": "# API Examples\n" + ("padding\n" * 200)},
+        replacements={"docs/engineering/api-examples.md": "# API Examples\n" + ("padding\n" * 200)},
     )
 
     with pytest.raises(AssertionError, match="api-examples"):
@@ -373,7 +375,7 @@ def test_verify_sdist_rejects_stale_benchmark_doc(tmp_path: Path) -> None:
     sdist = tmp_path / "xy-0.1.0.tar.gz"
     _write_sdist(
         sdist,
-        replacements={"docs/benchmark.md": "# Benchmark\n" + ("padding\n" * 200)},
+        replacements={"docs/engineering/benchmark.md": "# Benchmark\n" + ("padding\n" * 200)},
     )
 
     with pytest.raises(AssertionError, match="benchmark"):
@@ -393,7 +395,8 @@ def test_verify_sdist_rejects_stale_production_readiness_doc(tmp_path: Path) -> 
     _write_sdist(
         sdist,
         replacements={
-            "docs/production-readiness.md": "# Production Readiness\n" + ("padding\n" * 200)
+            "docs/engineering/production-readiness.md": "# Production Readiness\n"
+            + ("padding\n" * 200)
         },
     )
 
@@ -405,7 +408,7 @@ def test_verify_sdist_rejects_stale_contributing_doc(tmp_path: Path) -> None:
     sdist = tmp_path / "xy-0.1.0.tar.gz"
     _write_sdist(
         sdist,
-        replacements={"docs/contributing.md": "# Contributing\n" + ("padding\n" * 200)},
+        replacements={"docs/engineering/contributing.md": "# Contributing\n" + ("padding\n" * 200)},
     )
 
     with pytest.raises(AssertionError, match="contributing"):
