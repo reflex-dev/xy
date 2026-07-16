@@ -37,7 +37,7 @@ standalone HTML, and static PNG or SVG output.
 ## Installation
 
 ```bash
-pip install xy
+uv add xy
 ```
 
 Published wheels contain the Python package, JavaScript client, and native Rust

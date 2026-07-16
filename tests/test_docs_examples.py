@@ -300,7 +300,7 @@ def test_contributing_documents_backend_check() -> None:
 def test_readme_documents_install_paths() -> None:
     text = " ".join(README.read_text(encoding="utf-8").split())
     required = [
-        "pip install xy",
+        "uv add xy",
         "Published wheels contain the Python package, JavaScript client, and native Rust core",
         "End users do not need Rust, Node, npm, or a CDN",
     ]
