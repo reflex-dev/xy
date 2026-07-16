@@ -1,4 +1,4 @@
-"""Native PNG export (`_raster.py` + the Rust `fc_rasterize` core): valid PNGs
+"""Native PNG export (`_raster.py` + the Rust `xy_rasterize` core): valid PNGs
 for every chart kind, `scale=`/dimension handling, indexed-vs-truecolor
 selection, the screen-bounded size guarantee, colormap fidelity, and parity of
 the shared layout with the SVG exporter."""

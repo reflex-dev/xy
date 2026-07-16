@@ -73,15 +73,15 @@ def _parse_sizes(text: str) -> list[int]:
 def _scatter_figure(n: int) -> Any:
     if np is None:
         raise SystemExit("numpy is required for benchmarks/bench_interaction.py")
-    import xy as fc
+    import xy
 
     rng = np.random.default_rng(70_011 + n)
     x = rng.normal(0.0, 1.0, n).astype(np.float64, copy=False)
     y = (0.58 * x + rng.normal(0.0, 0.72, n)).astype(np.float64, copy=False)
-    return fc.scatter_chart(
-        fc.scatter(x=x, y=y, name="points", opacity=0.72),
-        fc.x_axis(label="x"),
-        fc.y_axis(label="y"),
+    return xy.scatter_chart(
+        xy.scatter(x=x, y=y, name="points", opacity=0.72),
+        xy.x_axis(label="x"),
+        xy.y_axis(label="y"),
         width=RENDER_W,
         height=RENDER_H,
         title=f"{n:,} point interaction probe",
@@ -97,7 +97,7 @@ def _scatter_figure(n: int) -> Any:
 def _core_interaction_figures() -> list[dict[str, Any]]:
     if np is None:
         raise SystemExit("numpy is required for benchmarks/bench_interaction.py")
-    import xy as fc
+    import xy
 
     all_interactions = {
         "hover": True,
@@ -112,10 +112,10 @@ def _core_interaction_figures() -> list[dict[str, Any]]:
 
     x_line = np.linspace(0.0, 18_000.0, 120_000, dtype=np.float64)
     y_line = np.cumsum(rng.normal(0.0, 0.18, x_line.size)).astype(np.float64, copy=False)
-    line = fc.line_chart(
-        fc.line(x=x_line, y=y_line, name="signal", width=1.4),
-        fc.x_axis(label="sample"),
-        fc.y_axis(label="signal"),
+    line = xy.line_chart(
+        xy.line(x=x_line, y=y_line, name="signal", width=1.4),
+        xy.x_axis(label="sample"),
+        xy.y_axis(label="signal"),
         width=RENDER_W,
         height=RENDER_H,
         title="120k sample line interaction probe",
@@ -128,10 +128,10 @@ def _core_interaction_figures() -> list[dict[str, Any]]:
             rng.normal(1.35, 0.68, 50_000),
         ]
     )
-    hist = fc.histogram_chart(
-        fc.histogram(hist_values, bins=180, name="distribution"),
-        fc.x_axis(label="value"),
-        fc.y_axis(label="count"),
+    hist = xy.histogram_chart(
+        xy.histogram(hist_values, bins=180, name="distribution"),
+        xy.x_axis(label="value"),
+        xy.y_axis(label="count"),
         width=RENDER_W,
         height=RENDER_H,
         title="120k value histogram interaction probe",
@@ -144,10 +144,10 @@ def _core_interaction_figures() -> list[dict[str, Any]]:
         + 18.0 * np.sin(np.linspace(0.0, 18.0, len(categories)))
         + rng.normal(0.0, 3.0, len(categories))
     )
-    bars = fc.bar_chart(
-        fc.bar(categories, values, name="bars"),
-        fc.x_axis(label="category"),
-        fc.y_axis(label="value"),
+    bars = xy.bar_chart(
+        xy.bar(categories, values, name="bars"),
+        xy.x_axis(label="category"),
+        xy.y_axis(label="value"),
         width=RENDER_W,
         height=RENDER_H,
         title="1.2k bar interaction probe",
@@ -160,10 +160,10 @@ def _core_interaction_figures() -> list[dict[str, Any]]:
     z = np.exp(-((xx - 0.85) ** 2 + (yy + 0.3) ** 2)) + 0.72 * np.exp(
         -((xx + 1.2) ** 2 + (yy - 0.65) ** 2) / 0.52
     )
-    heatmap = fc.heatmap_chart(
-        fc.heatmap(z, x=hx, y=hy, name="heat"),
-        fc.x_axis(label="x"),
-        fc.y_axis(label="y"),
+    heatmap = xy.heatmap_chart(
+        xy.heatmap(z, x=hx, y=hy, name="heat"),
+        xy.x_axis(label="x"),
+        xy.y_axis(label="y"),
         width=RENDER_W,
         height=RENDER_H,
         title="220x180 heatmap interaction probe",
@@ -206,10 +206,10 @@ def _probe_js(reps: int) -> str:
     return f"""
 (() => {{
   try {{
-    const payload = FC_CHARTS[0];
+    const payload = XY_CHARTS[0];
     const el = document.createElement("div");
     document.getElementById("root").appendChild(el);
-    const view = xy.renderStandalone(el, payload.spec, fcBytesFromPayload(payload));
+    const view = xy.renderStandalone(el, payload.spec, xyBytesFromPayload(payload));
     // Under --virtual-time-budget an outstanding Web Worker round-trip pauses
     // virtual time forever: the first density zoom schedules the standalone
     // sample-rebin worker and the page deadlocks until the wall-clock timeout
@@ -294,7 +294,7 @@ def _probe_js(reps: int) -> str:
         settlePixels();
         values.push(performance.now() - t0);
       }}
-      return fcStats(values);
+      return xyStats(values);
     }}
     function nonblankCanvasPixels() {{
       view._drawNow();
@@ -312,14 +312,14 @@ def _probe_js(reps: int) -> str:
     function tickLabelOverlapCount() {{
       view._lastLabelDraw = null;
       view._drawNow();
-      const labels = Array.from(view.labels.querySelectorAll("[data-fc-label-kind='tick']"))
+      const labels = Array.from(view.labels.querySelectorAll("[data-xy-label-kind='tick']"))
         .filter((node) => {{
           const style = getComputedStyle(node);
           return style.display !== "none" && style.visibility !== "hidden";
         }})
         .map((node) => ({{
-          axis: node.dataset.fcAxis || "",
-          side: node.dataset.fcAxisSide || "",
+          axis: node.dataset.xyAxis || "",
+          side: node.dataset.xyAxisSide || "",
           text: node.textContent || "",
           rect: node.getBoundingClientRect(),
         }}))
@@ -569,7 +569,7 @@ def _probe_js(reps: int) -> str:
     }});
     view._setView(before, {{animate: false, request: false}});
     settlePixels();
-    const nonblank = Math.max(fcNonblankPixels(view), nonblankCanvasPixels());
+    const nonblank = Math.max(xyNonblankPixels(view), nonblankCanvasPixels());
     if (nonblank <= 0) throw new Error("blank WebGL canvas");
     const crosshairVisible = !!(view.crosshairX && view.crosshairY &&
       view.crosshairX.style.display === "block" && view.crosshairY.style.display === "block");
@@ -579,7 +579,7 @@ def _probe_js(reps: int) -> str:
     const tooltip = tooltipProbe();
     const boxZoomInvariant = boxZoomInvariantProbe();
     const brushSelectionInvariant = brushSelectionInvariantProbe();
-    fcReport("FC_INTERACTION", {{
+    xyReport("XY_INTERACTION", {{
       status: "ok",
       tier: payload.spec.traces[0].tier,
       nonblank_pixels: nonblank,
@@ -599,7 +599,7 @@ def _probe_js(reps: int) -> str:
       brush_select: brush,
     }});
   }} catch (err) {{
-    fcFail("FC_INTERACTION", err);
+    xyFail("XY_INTERACTION", err);
   }}
 }})();
 """
@@ -668,13 +668,13 @@ def _worker_probe_js() -> str:
     return """
 (() => {
   try {
-    const payload = FC_CHARTS[0];
+    const payload = XY_CHARTS[0];
     const el = document.createElement("div");
     document.getElementById("root").appendChild(el);
-    const view = xy.renderStandalone(el, payload.spec, fcBytesFromPayload(payload));
+    const view = xy.renderStandalone(el, payload.spec, xyBytesFromPayload(payload));
     const g = view.gpuTraces[0];
     if (!g || !g.sampleOverlay || !g.sampleOverlay._cpu) {
-      fcReport("FC_WORKER", {status: "failed(no retained sample)"});
+      xyReport("XY_WORKER", {status: "failed(no retained sample)"});
       return;
     }
     const before = {...view.view};
@@ -689,10 +689,10 @@ def _worker_probe_js() -> str:
     const poll = () => {
       if (g._sampleRebinned === true) {
         view._drawNow();
-        fcReport("FC_WORKER", {
+        xyReport("XY_WORKER", {
           status: "ok",
           worker_rebinned: true,
-          nonblank_pixels: fcNonblankPixels(view),
+          nonblank_pixels: xyNonblankPixels(view),
           worker_created: !!view._rebinWorker,
           x_range_changed: !!(g.density && g.density.xRange &&
             Math.abs(g.density.xRange[0] - before.x0) > xSpan * 0.05),
@@ -700,7 +700,7 @@ def _worker_probe_js() -> str:
         return;
       }
       if (performance.now() - started >= 12_000) {
-        fcReport("FC_WORKER", {
+        xyReport("XY_WORKER", {
           status: "failed(timeout)",
           worker_created: !!view._rebinWorker,
           sample_rebinned: !!g._sampleRebinned,
@@ -711,7 +711,7 @@ def _worker_probe_js() -> str:
     };
     setTimeout(poll, 150);
   } catch (err) {
-    fcFail("FC_WORKER", err);
+    xyFail("XY_WORKER", err);
   }
 })();
 """
@@ -763,7 +763,7 @@ const { chromium } = require("playwright");
     page.on("console", (msg) => console.error("CONSOLE", msg.text()));
     await page.goto(process.env.XY_PROBE, {waitUntil: "load"});
     try {
-      await page.waitForFunction(() => document.title.startsWith("FC_WORKER "), null, {timeout: 12000});
+      await page.waitForFunction(() => document.title.startsWith("XY_WORKER "), null, {timeout: 12000});
     } catch (err) {
       console.error("TITLE", await page.title());
       throw err;
@@ -798,10 +798,10 @@ const { chromium } = require("playwright");
         detail = " ".join(error[-4:]) if error else "playwright"
         return {"status": f"failed({detail[:480]})"}
     title = completed.stdout.strip().splitlines()[-1] if completed.stdout.strip() else ""
-    if not title.startswith("FC_WORKER "):
+    if not title.startswith("XY_WORKER "):
         return {"status": "failed(no worker probe title)"}
     try:
-        return json.loads(title[len("FC_WORKER ") :])
+        return json.loads(title[len("XY_WORKER ") :])
     except json.JSONDecodeError as exc:
         return {"status": f"failed(bad worker probe JSON: {exc})"}
 
@@ -817,7 +817,7 @@ def _probe_with_retries(
     silent (§28: every reliability decision is recorded)."""
     result = run_json_probe(
         html,
-        marker="FC_INTERACTION",
+        marker="XY_INTERACTION",
         chromium=chromium,
         virtual_time_ms=PROBE_VIRTUAL_TIME_MS,
         timeout_s=PROBE_TIMEOUT_S,
@@ -830,7 +830,7 @@ def _probe_with_retries(
         )
         result = run_json_probe(
             html,
-            marker="FC_INTERACTION",
+            marker="XY_INTERACTION",
             chromium=chromium,
             virtual_time_ms=PROBE_VIRTUAL_TIME_MS,
             timeout_s=PROBE_TIMEOUT_S,

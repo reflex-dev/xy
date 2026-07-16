@@ -259,8 +259,8 @@ contract entry before it lands.
    same anti-shimmer contract holds without rescanning raw rows.
 
 **Phase 3 — pyramid (~2-3 wks)**
-6. `src/tiles.rs`: pyramid build + tile fetch (C ABI: `fc_pyramid_build`,
-   `fc_pyramid_tile`); Python `Pyramid` cache keyed per trace; build lazily
+6. `src/tiles.rs`: pyramid build + tile fetch (C ABI: `xy_pyramid_build`,
+   `xy_pyramid_tile`); Python `Pyramid` cache keyed per trace; build lazily
    on first Tier-2 entry above a size threshold (recorded).
 7. `density_view` serves from pyramid when present (level select + compose);
    below-floor re-bin via `range_indices`.

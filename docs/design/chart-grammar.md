@@ -20,8 +20,8 @@ and marks — they never own data. Everything is a plain declarative node
 (dataclass), composable as children, and compiles to the existing internal
 engine figure + wire spec. One public front door over that engine:
 
-- **Compositional (Reflex-flavored):** `fc.chart(fc.scatter(...), fc.line(...),
-  fc.x_axis(...))` — declarative, component-tree shaped, what a Reflex wrapper
+- **Compositional (Reflex-flavored):** `xy.chart(xy.scatter(...), xy.line(...),
+  xy.x_axis(...))` — declarative, component-tree shaped, what a Reflex wrapper
   serializes naturally. (The internal `_figure.Figure` fluent methods share the
   same mark implementations, so the vocabulary cannot fork.)
 
@@ -58,32 +58,32 @@ not break.
 ## 3. The 10 common charts (all expressible today or with planned nodes)
 
 ```python
-import xy as fc
+import xy
 
 # 1. line
-fc.chart(fc.line(x="date", y="close", data=df), title="Price")
+xy.chart(xy.line(x="date", y="close", data=df), title="Price")
 # 2. multi-series line (wide → long handled by repeated marks)
-fc.chart(fc.line(x="date", y="aapl", data=df, name="AAPL"),
-         fc.line(x="date", y="msft", data=df, name="MSFT"), fc.legend())
+xy.chart(xy.line(x="date", y="aapl", data=df, name="AAPL"),
+         xy.line(x="date", y="msft", data=df, name="MSFT"), xy.legend())
 # 3. scatter with channels
-fc.chart(fc.scatter(x="gdp", y="life", color="continent", size="pop", data=df))
+xy.chart(xy.scatter(x="gdp", y="life", color="continent", size="pop", data=df))
 # 4. big scatter (auto density tier — same call, no special API)
-fc.chart(fc.scatter(x="x", y="y", data=ten_million_rows))
+xy.chart(xy.scatter(x="x", y="y", data=ten_million_rows))
 # 5. area
-fc.chart(fc.area(x="date", y="active_users", data=df))
+xy.chart(xy.area(x="date", y="active_users", data=df))
 # 6. histogram
-fc.chart(fc.histogram(values="latency_ms", bins=256, data=df))
+xy.chart(xy.histogram(values="latency_ms", bins=256, data=df))
 # 7. bar
-fc.chart(fc.bar(x="region", y="revenue", data=df))
+xy.chart(xy.bar(x="region", y="revenue", data=df))
 # 8. horizontal bar
-fc.chart(fc.bar(y="region", x="revenue", data=df, orientation="h"))
+xy.chart(xy.bar(y="region", x="revenue", data=df, orientation="h"))
 # 9. heatmap
-fc.chart(fc.heatmap(z=matrix, colormap="viridis"))
+xy.chart(xy.heatmap(z=matrix, colormap="viridis"))
 # 10. time series with unit-scale y
-fc.chart(fc.line(x="ts", y="value", data=df), fc.y_axis(label="watts"))
+xy.chart(xy.line(x="ts", y="value", data=df), xy.y_axis(label="watts"))
 ```
 
-(`fc.chart` is the kind-neutral container; the existing `scatter_chart`/
+(`xy.chart` is the kind-neutral container; the existing `scatter_chart`/
 `line_chart`/… wrappers remain as readable aliases — they already just tag
 `Chart(kind_str, children)`.)
 
@@ -91,36 +91,36 @@ fc.chart(fc.line(x="ts", y="value", data=df), fc.y_axis(label="watts"))
 
 ```python
 # A. line-on-scatter (regression overlay) — shared scales, order = layering
-fc.chart(
-    fc.scatter(x="x", y="y", data=df, opacity=0.4),
-    fc.line(x=xs_fit, y=ys_fit, color="var(--accent)", width=2),
+xy.chart(
+    xy.scatter(x="x", y="y", data=df, opacity=0.4),
+    xy.line(x=xs_fit, y=ys_fit, color="var(--accent)", width=2),
 )
 
 # B. area-under-line (band + emphasis line)
-fc.chart(
-    fc.area(x="date", y="p95", base="p5", data=df, opacity=0.25, name="p5-p95"),
-    fc.line(x="date", y="median", data=df, name="median"),
+xy.chart(
+    xy.area(x="date", y="p95", base="p5", data=df, opacity=0.25, name="p5-p95"),
+    xy.line(x="date", y="median", data=df, name="median"),
 )
 
 # C. histogram + KDE-style line
-fc.chart(
-    fc.histogram(values="dur", bins=200, density=True, data=df),
-    fc.line(x=kde_x, y=kde_y, width=2),
+xy.chart(
+    xy.histogram(values="dur", bins=200, density=True, data=df),
+    xy.line(x=kde_x, y=kde_y, width=2),
 )
 
 # D. volume-under-candles (finance pane pair) — PANELS, not one panel:
-fc.figure(
-    fc.panel(fc.candlestick(x="t", open="o", high="h", low="l", close="c", data=df),
+xy.figure(
+    xy.panel(xy.candlestick(x="t", open="o", high="h", low="l", close="c", data=df),
              height=3),
-    fc.panel(fc.bar(x="t", y="volume", data=df), height=1),
+    xy.panel(xy.bar(x="t", y="volume", data=df), height=1),
     link_x=True,   # shared x scale + synced pan/zoom across panels
 )
 
 # E. threshold rule + annotated scatter
-fc.chart(
-    fc.scatter(x="x", y="y", color="cluster", data=df),
-    fc.rule(y=0.8, color="#ef5350", dash=True),      # planned: rule mark
-    fc.label(x=3.2, y=0.85, text="SLA"),             # planned: label mark
+xy.chart(
+    xy.scatter(x="x", y="y", color="cluster", data=df),
+    xy.rule(y=0.8, color="#ef5350", dash=True),      # planned: rule mark
+    xy.label(x=3.2, y=0.85, text="SLA"),             # planned: label mark
 )
 ```
 
@@ -153,7 +153,7 @@ idiom), event props. It remains a XY-owned tree, not a Reflex object,
 so the core package keeps zero Reflex dependencies. A future Reflex wrapper is
 therefore a *thin* codegen layer:
 
-1. Each `fc.*` factory maps 1:1 to a Reflex component; props serialize as-is
+1. Each `xy.*` factory maps 1:1 to a Reflex component; props serialize as-is
    (they're plain scalars/strings/arrays).
 2. Data flows as the existing binary payload through a Reflex asset/endpoint
    (the 100M live-drilldown demo already proves the comm shape: a `comm`
@@ -182,7 +182,7 @@ geometry (theming stays on the `--chart-*` token path).
 
 ## 8. Implementation order
 
-1. `fc.chart` neutral container + `rule`/`band`/`label` annotation marks
+1. `xy.chart` neutral container + `rule`/`band`/`label` annotation marks
    (small, high leverage for real dashboards).
 2. Explicit scale objects in the spec + `category`/`log` axis completion.
 3. `panel`/`figure` grid + `link_x` view sync (enables finance pair, subplot

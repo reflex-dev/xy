@@ -115,7 +115,7 @@ reported).
    points → density zoom-out; the 10M+ exact-hover oracle remains the larger
    browser/widget follow-up.
 6. `core_2d_payloads`: CodSpeed tracks native histogram, area, bar, heatmap,
-   and composed/layered `fc.chart(...)` payload prep;
+   and composed/layered `xy.chart(...)` payload prep;
    `benchmarks/bench_2d_charts.py` stays the Plotly/Seaborn chart-to-pixels
    comparison.
 7. `dashboard_scale`: `benchmarks/bench_dashboard.py` attempts 10/20/50 mixed

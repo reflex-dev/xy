@@ -152,7 +152,7 @@ exclude = ["examples/pdsh/*.ipynb"]
 "tests/reflex_adapter/*.py" = ["RUF012"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["fastcharts", "xy"]
+known-first-party = ["xy"]
 
 [tool.ty.environment]
 python = ".venv"

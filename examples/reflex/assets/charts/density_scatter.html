@@ -24,14 +24,14 @@ maxMetadataBytes: 8 * 1024 * 1024,
 maxBuffers: 4096,
 maxBufferBytes: 256 * 1024 * 1024,
 });
-function fcByteSpan(value, label = "buffer") {
+function xyByteSpan(value, label = "buffer") {
 if (value instanceof ArrayBuffer) return new Uint8Array(value);
 if (ArrayBuffer.isView(value)) {
 return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
 }
 throw new TypeError(`${label} must be an ArrayBuffer or ArrayBuffer view`);
 }
-function fcFrameLimit(limits, name) {
+function xyFrameLimit(limits, name) {
 const fallback = XY_FRAME_DEFAULT_LIMITS[name];
 const value = limits && limits[name] != null ? limits[name] : fallback;
 if (!Number.isSafeInteger(value) || value <= 0) {
@@ -39,17 +39,17 @@ throw new RangeError(`${name} must be a positive safe integer`);
 }
 return value;
 }
-function fcAlign8(value) {
+function xyAlign8(value) {
 return Math.ceil(value / XY_FRAME_ALIGNMENT) * XY_FRAME_ALIGNMENT;
 }
-function fcFrameU64(view, offset, label) {
+function xyFrameU64(view, offset, label) {
 const value = view.getBigUint64(offset, true);
 if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
 throw new RangeError(`${label} exceeds JavaScript's safe integer range`);
 }
 return Number(value);
 }
-function fcRequireZeroPadding(bytes, start, end, label) {
+function xyRequireZeroPadding(bytes, start, end, label) {
 if (end > bytes.byteLength) throw new RangeError(`truncated ${label} padding`);
 for (let i = start; i < end; i++) {
 if (bytes[i] !== 0) throw new RangeError(`non-zero ${label} padding`);
@@ -57,11 +57,11 @@ if (bytes[i] !== 0) throw new RangeError(`non-zero ${label} padding`);
 }
 
 function decodeFrame(body, limits = null) {
-const bytes = fcByteSpan(body, "frame body");
-const maxFrameBytes = fcFrameLimit(limits, "maxFrameBytes");
-const maxMetadataBytes = fcFrameLimit(limits, "maxMetadataBytes");
-const maxBuffers = fcFrameLimit(limits, "maxBuffers");
-const maxBufferBytes = fcFrameLimit(limits, "maxBufferBytes");
+const bytes = xyByteSpan(body, "frame body");
+const maxFrameBytes = xyFrameLimit(limits, "maxFrameBytes");
+const maxMetadataBytes = xyFrameLimit(limits, "maxMetadataBytes");
+const maxBuffers = xyFrameLimit(limits, "maxBuffers");
+const maxBufferBytes = xyFrameLimit(limits, "maxBufferBytes");
 if (maxMetadataBytes > maxFrameBytes) {
 throw new RangeError("maxMetadataBytes cannot exceed maxFrameBytes");
 }
@@ -89,7 +89,7 @@ throw new RangeError(`unsupported frame header size ${headerSize}`);
 }
 const metadataLength = view.getUint32(8, true);
 const bufferCount = view.getUint32(12, true);
-const totalLength = fcFrameU64(view, 16, "declared frame length");
+const totalLength = xyFrameU64(view, 16, "declared frame length");
 if (totalLength !== bytes.byteLength) {
 throw new RangeError(
 `declared frame length ${totalLength} does not match body length ${bytes.byteLength}`
@@ -117,12 +117,12 @@ throw new RangeError(`invalid frame metadata JSON: ${error}`);
 if (!message || Array.isArray(message) || typeof message !== "object") {
 throw new RangeError("frame metadata must decode to an object");
 }
-let position = fcAlign8(metadataEnd);
-fcRequireZeroPadding(bytes, metadataEnd, position, "metadata");
+let position = xyAlign8(metadataEnd);
+xyRequireZeroPadding(bytes, metadataEnd, position, "metadata");
 const buffers = [];
 for (let i = 0; i < bufferCount; i++) {
 if (position + 8 > bytes.byteLength) throw new RangeError(`truncated buffer ${i} length`);
-const bufferLength = fcFrameU64(view, position, `buffer ${i} length`);
+const bufferLength = xyFrameU64(view, position, `buffer ${i} length`);
 position += 8;
 if (bufferLength > maxBufferBytes) {
 throw new RangeError(`buffer ${i} length ${bufferLength} exceeds limit ${maxBufferBytes}`);
@@ -134,8 +134,8 @@ if (absoluteOffset % XY_FRAME_ALIGNMENT !== 0) {
 throw new RangeError(`buffer ${i} is not 8-byte aligned`);
 }
 buffers.push(new Uint8Array(bytes.buffer, absoluteOffset, bufferLength));
-const paddedEnd = fcAlign8(end);
-fcRequireZeroPadding(bytes, end, paddedEnd, `buffer ${i}`);
+const paddedEnd = xyAlign8(end);
+xyRequireZeroPadding(bytes, end, paddedEnd, `buffer ${i}`);
 position = paddedEnd;
 }
 if (position !== bytes.byteLength) {
@@ -264,23 +264,23 @@ label: tok("--chart-text") || withA(text, 0.85),
 function cssColor([r, g, b, a]) {
 return `rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},${a})`;
 }
-const FC_CHROME_CSS = `
-:where(.xy [data-fc-slot="title"]){text-align:center;font-size:14px;font-weight:600;color:var(--chart-text,inherit)}
-:where(.xy [data-fc-slot="tooltip"]){background:var(--chart-tooltip-bg,rgba(20,24,33,.92));color:var(--chart-tooltip-text,#fff);padding:5px 8px;border-radius:4px;font-size:11px;line-height:1.35;box-shadow:0 2px 8px rgba(0,0,0,.3)}
-:where(.xy [data-fc-slot="legend"]){gap:2px;font-size:11px;background:var(--chart-legend-bg,rgba(128,128,128,.08));border-radius:4px;padding:4px 8px;color:var(--chart-text,inherit)}
-:where(.xy [data-fc-slot="legend_swatch"]){width:12px;height:10px;border-radius:2px;margin-right:5px}
-:where(.xy [data-fc-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
-:where(.xy [data-fc-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
-:where(.xy [data-fc-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
-:where(.xy [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-axis,currentColor);cursor:pointer}
-:where(.xy [data-fc-slot="modebar_button"].fc-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
-:where(.xy [data-fc-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
-:where(.xy [data-fc-slot="crosshair_x"],.xy [data-fc-slot="crosshair_y"]){background:var(--chart-crosshair,rgba(15,23,42,.42))}
-:where(.xy [data-fc-slot="tick_label"]){color:var(--chart-text,inherit)}
-:where(.xy [data-fc-slot="axis_title"]){color:var(--chart-text,inherit);font-size:12px}
-:where(.xy [data-fc-slot="annotation_label"]){font-size:11px;line-height:1.2;font-weight:500;color:var(--chart-annotation-text,var(--chart-text,inherit))}
-:where(.xy [data-fc-slot="canvas"]){cursor:var(--chart-cursor,crosshair)}
-:where(.xy [data-fc-slot="canvas"][data-fc-dragmode="pan"]){cursor:var(--chart-cursor-pan,grab)}
+const XY_CHROME_CSS = `
+:where(.xy [data-xy-slot="title"]){text-align:center;font-size:14px;font-weight:600;color:var(--chart-text,inherit)}
+:where(.xy [data-xy-slot="tooltip"]){background:var(--chart-tooltip-bg,rgba(20,24,33,.92));color:var(--chart-tooltip-text,#fff);padding:5px 8px;border-radius:4px;font-size:11px;line-height:1.35;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+:where(.xy [data-xy-slot="legend"]){gap:2px;font-size:11px;background:var(--chart-legend-bg,rgba(128,128,128,.08));border-radius:4px;padding:4px 8px;color:var(--chart-text,inherit)}
+:where(.xy [data-xy-slot="legend_swatch"]){width:12px;height:10px;border-radius:2px;margin-right:5px}
+:where(.xy [data-xy-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
+:where(.xy [data-xy-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
+:where(.xy [data-xy-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+:where(.xy [data-xy-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-axis,currentColor);cursor:pointer}
+:where(.xy [data-xy-slot="modebar_button"].xy-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
+:where(.xy [data-xy-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
+:where(.xy [data-xy-slot="crosshair_x"],.xy [data-xy-slot="crosshair_y"]){background:var(--chart-crosshair,rgba(15,23,42,.42))}
+:where(.xy [data-xy-slot="tick_label"]){color:var(--chart-text,inherit)}
+:where(.xy [data-xy-slot="axis_title"]){color:var(--chart-text,inherit);font-size:12px}
+:where(.xy [data-xy-slot="annotation_label"]){font-size:11px;line-height:1.2;font-weight:500;color:var(--chart-annotation-text,var(--chart-text,inherit))}
+:where(.xy [data-xy-slot="canvas"]){cursor:var(--chart-cursor,crosshair)}
+:where(.xy [data-xy-slot="canvas"][data-xy-dragmode="pan"]){cursor:var(--chart-cursor-pan,grab)}
 `;
 function ensureChromeStylesheet(node) {
 let root = node && node.getRootNode ? node.getRootNode() : document;
@@ -291,7 +291,7 @@ if (!scope || !scope.querySelector) return;
 if (scope.querySelector("style[data-xy-chrome]")) return;
 const style = document.createElement("style");
 style.setAttribute("data-xy-chrome", "");
-style.textContent = FC_CHROME_CSS;
+style.textContent = XY_CHROME_CSS;
 scope.appendChild(style);
 }
 function safeCssPaint(host, expr, fallback = [0.5, 0.5, 0.5, 1]) {
@@ -538,22 +538,22 @@ prog._u[name] = loc;
 return loc;
 }
 const AXIS_GLSL = `
-float fcDecode(float encoded, vec2 meta) {
+float xyDecode(float encoded, vec2 meta) {
   return encoded / max(abs(meta.y), 1e-30) + meta.x;
 }
-float fcAxisCoord(float encoded, vec2 meta, int mode) {
-  float value = fcDecode(encoded, meta);
+float xyAxisCoord(float encoded, vec2 meta, int mode) {
+  float value = xyDecode(encoded, meta);
   if (mode == 1) return value > 0.0 ? log(value) / log(10.0) : -1e30;
   return value;
 }
-float fcMap(float encoded, vec2 map, vec2 meta, int mode) {
-  return fcAxisCoord(encoded, meta, mode) * map.x + map.y;
+float xyMap(float encoded, vec2 map, vec2 meta, int mode) {
+  return xyAxisCoord(encoded, meta, mode) * map.x + map.y;
 }
-float fcViewCoord(float value, int mode) {
+float xyViewCoord(float value, int mode) {
   if (mode == 1) return value > 0.0 ? log(value) / log(10.0) : -1e30;
   return value;
 }
-float fcViewValue(float coord, int mode) {
+float xyViewValue(float coord, int mode) {
   if (mode == 1) return pow(10.0, coord);
   return coord;
 }
@@ -568,7 +568,7 @@ uniform float u_selectedOpacity; uniform float u_unselectedOpacity;
 out float v_lutCoord; out float v_dim; out float v_dval; out float v_ptSize; out float v_sel;
 ${AXIS_GLSL}
 void main() {
-  gl_Position = vec4(fcMap(ax, u_xmap, u_xmeta, u_xmode), fcMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  gl_Position = vec4(xyMap(ax, u_xmap, u_xmeta, u_xmode), xyMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = sz * u_dpr;
   v_ptSize = sz * u_dpr;
@@ -582,7 +582,7 @@ void main() {
   v_dim = u_selActive == 1 ? mix(u_unselectedOpacity, u_selectedOpacity, step(0.5, a_sel)) : 1.0;
 }`;
 const MARKER_SDF_GLSL = `
-float fcMarkerSdf(vec2 d, int shape) {
+float xyMarkerSdf(vec2 d, int shape) {
   if (shape == 1) return max(abs(d.x), abs(d.y)) - 0.5;              // square
   if (shape == 2) return (abs(d.x) + abs(d.y)) - 0.5;               // diamond
   if (shape == 4) {                                                 // cross / plus
@@ -617,7 +617,7 @@ out vec4 outColor;
 ${MARKER_SDF_GLSL}
 void main() {
   vec2 d = gl_PointCoord - 0.5;
-  float sd = fcMarkerSdf(d, u_symbol);
+  float sd = xyMarkerSdf(d, u_symbol);
   float aa = fwidth(sd) + 1e-4;
   float shapeCov = clamp(0.5 - sd / aa, 0.0, 1.0);
   if (shapeCov <= 0.001) discard;
@@ -650,7 +650,7 @@ uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_y
 uniform float u_size; uniform float u_dpr;
 ${AXIS_GLSL}
 void main() {
-  gl_Position = vec4(fcMap(ax, u_xmap, u_xmeta, u_xmode), fcMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  gl_Position = vec4(xyMap(ax, u_xmap, u_xmeta, u_xmode), xyMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   gl_PointSize = u_size * u_dpr;
 }`;
 const POINT_SIMPLE_FS = `#version 300 es
@@ -672,7 +672,7 @@ uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange; uniform 
 flat out int v_id;
 ${AXIS_GLSL}
 void main() {
-  gl_Position = vec4(fcMap(ax, u_xmap, u_xmeta, u_xmode), fcMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  gl_Position = vec4(xyMap(ax, u_xmap, u_xmeta, u_xmode), xyMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = max(sz, 6.0) * u_dpr; // enlarge hit target
   v_id = gl_VertexID;
@@ -701,9 +701,9 @@ out vec2 v_data;
 ${AXIS_GLSL}
 void main() {
   gl_Position = vec4(a_corner * 2.0 - 1.0, 0.0, 1.0);
-  float x = mix(fcViewCoord(u_view.x, u_xmode), fcViewCoord(u_view.y, u_xmode), a_corner.x);
-  float y = mix(fcViewCoord(u_view.z, u_ymode), fcViewCoord(u_view.w, u_ymode), a_corner.y);
-  v_data = vec2(fcViewValue(x, u_xmode), fcViewValue(y, u_ymode));
+  float x = mix(xyViewCoord(u_view.x, u_xmode), xyViewCoord(u_view.y, u_xmode), a_corner.x);
+  float y = mix(xyViewCoord(u_view.z, u_ymode), xyViewCoord(u_view.w, u_ymode), a_corner.y);
+  v_data = vec2(xyViewValue(x, u_xmode), xyViewValue(y, u_ymode));
 }`;
 const DENSITY_FS = `#version 300 es
 precision highp float;
@@ -758,8 +758,8 @@ out float v_off; out float v_dash;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
-  vec2 p0 = vec2(fcMap(ax0, u_xmap, u_xmeta, u_xmode), fcMap(ay0, u_ymap, u_ymeta, u_ymode));
-  vec2 p1 = vec2(fcMap(ax1, u_xmap, u_xmeta, u_xmode), fcMap(ay1, u_ymap, u_ymeta, u_ymode));
+  vec2 p0 = vec2(xyMap(ax0, u_xmap, u_xmeta, u_xmode), xyMap(ay0, u_ymap, u_ymeta, u_ymode));
+  vec2 p1 = vec2(xyMap(ax1, u_xmap, u_xmeta, u_xmode), xyMap(ay1, u_ymap, u_ymeta, u_ymode));
   vec2 pix0 = (p0 * 0.5 + 0.5) * u_res;
   vec2 pix1 = (p1 * 0.5 + 0.5) * u_res;
   vec2 dir = pix1 - pix0;
@@ -815,8 +815,8 @@ out float v_off; out float v_cval;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
-  vec2 p0 = vec2(fcMap(ax0, u_xmap, u_x0meta, u_x0mode), fcMap(ay0, u_ymap, u_y0meta, u_y0mode));
-  vec2 p1 = vec2(fcMap(ax1, u_xmap, u_x1meta, u_x1mode), fcMap(ay1, u_ymap, u_y1meta, u_y1mode));
+  vec2 p0 = vec2(xyMap(ax0, u_xmap, u_x0meta, u_x0mode), xyMap(ay0, u_ymap, u_y0meta, u_y0mode));
+  vec2 p1 = vec2(xyMap(ax1, u_xmap, u_x1meta, u_x1mode), xyMap(ay1, u_ymap, u_y1meta, u_y1mode));
   vec2 pix0 = (p0 * 0.5 + 0.5) * u_res;
   vec2 pix1 = (p1 * 0.5 + 0.5) * u_res;
   vec2 dir = pix1 - pix0;
@@ -860,7 +860,7 @@ void main() {
   vec2 ym = vertex == 0 ? u_y0meta : (vertex == 1 ? u_y1meta : u_y2meta);
   int xmode = vertex == 0 ? u_x0mode : (vertex == 1 ? u_x1mode : u_x2mode);
   int ymode = vertex == 0 ? u_y0mode : (vertex == 1 ? u_y1mode : u_y2mode);
-  gl_Position = vec4(fcMap(x, u_xmap, xm, xmode), fcMap(y, u_ymap, ym, ymode), 0.0, 1.0);
+  gl_Position = vec4(xyMap(x, u_xmap, xm, xmode), xyMap(y, u_ymap, ym, ymode), 0.0, 1.0);
   v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   v_bary = vertex == 0 ? vec3(1.,0.,0.) : (vertex == 1 ? vec3(0.,1.,0.) : vec3(0.,0.,1.));
 }`;
@@ -884,7 +884,7 @@ void main() {
 const GRAD_GLSL = `
 uniform int u_gradMode; uniform int u_gradDir; uniform int u_gradCount;
 uniform float u_gradPos[8]; uniform vec4 u_gradColor[8];
-vec4 fcGradSample(float t) {
+vec4 xyGradSample(float t) {
   vec4 c0 = u_gradColor[0]; float p0 = u_gradPos[0];
   if (t <= p0) return c0;
   for (int i = 1; i < 8; i++) {
@@ -895,7 +895,7 @@ vec4 fcGradSample(float t) {
   }
   return c0;
 }
-float fcGradT(float markT, vec2 res) {
+float xyGradT(float markT, vec2 res) {
   float t;
   if (u_gradMode == 2) {
     vec2 f = gl_FragCoord.xy / max(res, vec2(1.0));
@@ -915,12 +915,12 @@ const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1
 ${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
-  float x0 = fcMap(ax0, u_xmap, u_xmeta, u_xmode);
-  float x1 = fcMap(ax1, u_xmap, u_xmeta, u_xmode);
-  float y0 = fcMap(ay0, u_ymap, u_ymeta, u_ymode);
-  float y1 = fcMap(ay1, u_ymap, u_ymeta, u_ymode);
-  float b0 = fcMap(ab0, u_bmap, u_bmeta, u_ymode);
-  float b1 = fcMap(ab1, u_bmap, u_bmeta, u_ymode);
+  float x0 = xyMap(ax0, u_xmap, u_xmeta, u_xmode);
+  float x1 = xyMap(ax1, u_xmap, u_xmeta, u_xmode);
+  float y0 = xyMap(ay0, u_ymap, u_ymeta, u_ymode);
+  float y1 = xyMap(ay1, u_ymap, u_ymeta, u_ymode);
+  float b0 = xyMap(ab0, u_bmap, u_bmeta, u_ymode);
+  float b1 = xyMap(ab1, u_bmap, u_bmeta, u_ymode);
   float top = mix(y0, y1, c.x);
   float base = mix(b0, b1, c.x);
   float clipY = mix(base, top, c.y);
@@ -948,7 +948,7 @@ void main() {
     float denom = v_top - v_base;
     float markT = clamp((v_pos - v_base) / (abs(denom) > 1e-6 ? denom : 1e-6), 0.0, 1.0);
     // Compose the mark opacity (premultiplied) over the gradient sample.
-    premult = fcGradSample(fcGradT(markT, u_res)) * u_color.a;
+    premult = xyGradSample(xyGradT(markT, u_res)) * u_color.a;
   }
   if (premult.a <= 0.001) discard;
   outColor = premult;
@@ -967,10 +967,10 @@ const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1
 ${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
-  float x0 = fcMap(ax0, u_x0map, u_x0meta, u_xmode) + u_edgePad.x;
-  float x1 = fcMap(ax1, u_x1map, u_x1meta, u_xmode) + u_edgePad.y;
-  float y0 = fcMap(ay0, u_y0map, u_y0meta, u_ymode) + u_edgePad.z;
-  float y1 = fcMap(ay1, u_y1map, u_y1meta, u_ymode) + u_edgePad.w;
+  float x0 = xyMap(ax0, u_x0map, u_x0meta, u_xmode) + u_edgePad.x;
+  float x1 = xyMap(ax1, u_x1map, u_x1meta, u_xmode) + u_edgePad.y;
+  float y0 = xyMap(ay0, u_y0map, u_y0meta, u_ymode) + u_edgePad.z;
+  float y1 = xyMap(ay1, u_y1map, u_y1meta, u_ymode) + u_edgePad.w;
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   // Pixel-space local frame for the rounded-corner/stroke SDF (v_half is
   // constant across the quad; v_local interpolates to the fragment offset).
@@ -996,10 +996,10 @@ const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1
 ${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
-  float p = fcMap(a_pos, u_pmap, u_pmeta, u_pmode);
+  float p = xyMap(a_pos, u_pmap, u_pmeta, u_pmode);
   float halfW = abs(u_width * u_pmap.x) * 0.5;
-  float v0 = (u_v0Mode == 0 ? u_v0Const : fcMap(a_v0, u_v0map, u_v0meta, u_vmode)) + u_v0EdgePad;
-  float v1 = fcMap(a_v1, u_v1map, u_v1meta, u_vmode);
+  float v0 = (u_v0Mode == 0 ? u_v0Const : xyMap(a_v0, u_v0map, u_v0meta, u_vmode)) + u_v0EdgePad;
+  float v1 = xyMap(a_v1, u_v1map, u_v1meta, u_vmode);
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   vec2 clipA, clipB;
   if (u_orientation == 0) {
@@ -1032,7 +1032,7 @@ void main() {
   vec4 premult = vec4(rgb * u_color.a, u_color.a);
   // Compose the mark opacity (u_color.a) over the gradient — premultiplied, so
   // one scalar multiply fades every stop, including a fade-to-transparent.
-  if (u_gradMode != 0) premult = fcGradSample(fcGradT(v_t, u_res)) * u_color.a;
+  if (u_gradMode != 0) premult = xyGradSample(xyGradT(v_t, u_res)) * u_color.a;
   if (u_radius.x > 0.0 || u_radius.y > 0.0 || u_strokeWidth > 0.0) {
     // u_radius = (tip, base) in mark space: v_t > 0.5 is the tip half, so
     // corner_radius=(6, 0) rounds only the value end of the bar. On the
@@ -1051,7 +1051,7 @@ void main() {
   if (premult.a <= 0.001) discard;
   outColor = premult;
 }`;
-function fcMonotoneTangents(x, y, n) {
+function xyMonotoneTangents(x, y, n) {
 const d = new Float64Array(n - 1);
 const m = new Float64Array(n);
 for (let i = 0; i < n - 1; i++) {
@@ -1074,7 +1074,7 @@ m[i + 1] = t * b * d[i];
 }
 return m;
 }
-function fcSmoothResample(x, y, extra, n, maxOut) {
+function xySmoothResample(x, y, extra, n, maxOut) {
 if (n < 3) return null;
 const sub = Math.max(1, Math.min(16, Math.floor(maxOut / n)));
 if (sub <= 1) return null;
@@ -1083,8 +1083,8 @@ if (!Number.isFinite(x[i]) || !Number.isFinite(y[i])) return null;
 if (i > 0 && x[i] < x[i - 1]) return null;
 if (extra && !Number.isFinite(extra[i])) return null;
 }
-const my = fcMonotoneTangents(x, y, n);
-const me = extra ? fcMonotoneTangents(x, extra, n) : null;
+const my = xyMonotoneTangents(x, y, n);
+const me = extra ? xyMonotoneTangents(x, extra, n) : null;
 const outN = (n - 1) * sub + 1;
 const ox = new Float32Array(outN);
 const oy = new Float32Array(outN);
@@ -1559,7 +1559,7 @@ view._map(d.yMeta, y0, y1, d.yAxis)
 );
 }
 }
-const FC_REBIN_WORKER_SRC = `
+const XY_REBIN_WORKER_SRC = `
 const DATA = new Map();
 self.onmessage = (e) => {
   const m = e.data;
@@ -1589,10 +1589,10 @@ self.onmessage = (e) => {
   );
 };
 `;
-function fcCreateRebinWorker() {
+function xyCreateRebinWorker() {
 try {
 const url = URL.createObjectURL(
-new Blob([FC_REBIN_WORKER_SRC], { type: "application/javascript" })
+new Blob([XY_REBIN_WORKER_SRC], { type: "application/javascript" })
 );
 const worker = new Worker(url);
 worker._fcUrl = url;
@@ -1627,7 +1627,7 @@ const UNITLESS_STYLE_PROPS = new Set([
 "stroke-miterlimit",
 "stroke-opacity",
 ]);
-const FC_CONTEXT_GOVERNOR = {
+const XY_CONTEXT_GOVERNOR = {
 views: new Set(),
 seq: 1,
 budget() {
@@ -1667,7 +1667,7 @@ cancel(requester) {
 requester._ctxPendingReservation = false;
 },
 };
-function fcInitiallyVisible(el) {
+function xyInitiallyVisible(el) {
 if (typeof window === "undefined" || !el.getBoundingClientRect) return true;
 const rect = el.getBoundingClientRect();
 if (!rect.width && !rect.height) return false;
@@ -1723,14 +1723,14 @@ this._glLost = false;
 this._ctxReleasedExt = null;
 this._ctxReleases = 0;
 this._ctxRecoveries = 0;
-this._ctxVisible = fcInitiallyVisible(el);
-FC_CONTEXT_GOVERNOR.register(this);
-if (this._ctxVisible) this._ctxSeenSeq = FC_CONTEXT_GOVERNOR.seq++;
+this._ctxVisible = xyInitiallyVisible(el);
+XY_CONTEXT_GOVERNOR.register(this);
+if (this._ctxVisible) this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
 this._contextLossCount = 0;
 this._contextRestoreCount = 0;
 this._contextRecoveryError = null;
 this._initGl(buffer);
-this.root.dataset.fcContextState = "ready";
+this.root.dataset.xyContextState = "ready";
 this._initContextLossRecovery();
 this._armContextVisibilityWatch();
 this._initInteraction();
@@ -1950,7 +1950,7 @@ if (cssValue != null) el.style.setProperty(property, cssValue);
 }
 }
 _applySlot(el, slot) {
-if (el && el.dataset) el.dataset.fcSlot = slot;
+if (el && el.dataset) el.dataset.xySlot = slot;
 const dom = this.spec.dom;
 if (!dom || typeof dom !== "object") return;
 if (slot === "root") this._applyClass(el, dom.class_name);
@@ -2023,13 +2023,13 @@ _initContextLossRecovery() {
 this._listen(this.canvas, "webglcontextlost", (e) => {
 e.preventDefault();
 if (this._destroyed) return;
-const governedRelease = this.canvas.dataset.fcCtx === "released";
+const governedRelease = this.canvas.dataset.xyCtx === "released";
 if (this._glLost && !governedRelease) return;
 this._glLost = true;
-if (!governedRelease) this.canvas.dataset.fcCtx = "lost";
+if (!governedRelease) this.canvas.dataset.xyCtx = "lost";
 this._contextLossCount += 1;
 this._contextRecoveryError = null;
-this.root.dataset.fcContextState = "lost";
+this.root.dataset.xyContextState = "lost";
 this.seq += 1;
 if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
@@ -2056,7 +2056,7 @@ this._initGl(this._payload);
 } catch (err) {
 this._glLost = true;
 this._contextRecoveryError = err;
-this.root.dataset.fcContextState = "failed";
+this.root.dataset.xyContextState = "failed";
 try { this._destroyGlResources(); } catch (_cleanupErr) {}
 this.gl = null;
 this._dispatchChartEvent("context_restore_failed", {
@@ -2069,7 +2069,7 @@ return;
 this._glLost = false;
 this._contextRestoreCount += 1;
 this._contextRecoveryError = null;
-this.root.dataset.fcContextState = "ready";
+this.root.dataset.xyContextState = "ready";
 this._scheduleViewRequest(this.view, { delay: 0 });
 this.draw();
 this._dispatchChartEvent("context_restored", {
@@ -2085,7 +2085,7 @@ if (!ext) return false;
 this._ctxReleasedExt = ext;
 this._ctxReleases += 1;
 this._glLost = true;
-this.canvas.dataset.fcCtx = "released";
+this.canvas.dataset.xyCtx = "released";
 if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
 ext.loseContext();
@@ -2098,11 +2098,11 @@ if (this._ctxReleasedExt) {
 const ext = this._ctxReleasedExt;
 this._ctxReleasedExt = null;
 try {
-FC_CONTEXT_GOVERNOR.reserve(this);
+XY_CONTEXT_GOVERNOR.reserve(this);
 ext.restoreContext();
 return;
 } catch (_err) {
-FC_CONTEXT_GOVERNOR.cancel(this);
+XY_CONTEXT_GOVERNOR.cancel(this);
 }
 }
 this._rebuildEvictedContext();
@@ -2126,7 +2126,7 @@ try {
 this._initGl(this._payload);
 } catch (_err) {
 this._glLost = true;
-this.canvas.dataset.fcCtx = "lost";
+this.canvas.dataset.xyCtx = "lost";
 return;
 }
 this._scheduleViewRequest(this.view, { delay: 0 });
@@ -2142,7 +2142,7 @@ this._ctxIo = new IntersectionObserver(
 const entry = entries[entries.length - 1];
 this._ctxVisible = entry.isIntersecting || entry.intersectionRatio > 0;
 if (this._ctxVisible) {
-this._ctxSeenSeq = FC_CONTEXT_GOVERNOR.seq++;
+this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
 if (this._glLost && !this._destroyed) this._recoverContext();
 }
 },
@@ -2366,18 +2366,18 @@ this.chrome.width = this.size.w * dpr;
 this.chrome.height = this.size.h * dpr;
 this.chrome.style.width = this.size.w + "px";
 this.chrome.style.height = this.size.h + "px";
-FC_CONTEXT_GOVERNOR.reserve(this);
+XY_CONTEXT_GOVERNOR.reserve(this);
 const gl = this.canvas.getContext("webgl2", {
 antialias: false, premultipliedAlpha: true, alpha: true,
 });
 if (!gl) {
-FC_CONTEXT_GOVERNOR.cancel(this);
+XY_CONTEXT_GOVERNOR.cancel(this);
 this.root.textContent = "xy: WebGL2 unavailable in this browser.";
 throw new Error("webgl2 unavailable");
 }
 this.gl = gl;
-FC_CONTEXT_GOVERNOR.acquired(this);
-this.canvas.dataset.fcCtx = "live";
+XY_CONTEXT_GOVERNOR.acquired(this);
+this.canvas.dataset.xyCtx = "live";
 gl.enable(gl.BLEND);
 gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 this._progCache = new Map();
@@ -2700,7 +2700,7 @@ g.grad = this._resolveMarkFill(s, g.color);
 }
 _smoothArrays(t, x, y, base, n) {
 if (!t.style || t.style.curve !== "smooth") return null;
-return fcSmoothResample(x, y, base || null, n, 32768);
+return xySmoothResample(x, y, base || null, n, 32768);
 }
 _stepArrays(t, x, y, n) {
 const where = t.style && t.style.step;
@@ -2955,7 +2955,7 @@ split
 : "xy: spec column carries a wire-buffer index but the transport delivered one blob",
 );
 }
-const span = fcByteSpan(split ? buffer[meta.buf] : buffer, "chart payload");
+const span = xyByteSpan(split ? buffer[meta.buf] : buffer, "chart payload");
 const relativeOffset = Number(meta.byte_offset);
 const length = Number(meta.len);
 if (!Number.isSafeInteger(relativeOffset) || relativeOffset < 0 ||
@@ -3823,9 +3823,9 @@ const label = (text, css, axis, kind = "tick", extraStyle = null) => {
 if (!updateLabels) return;
 const d = document.createElement("div");
 d.textContent = text;
-d.dataset.fcLabelKind = kind;
-d.dataset.fcAxis = axis && axis.id !== undefined ? String(axis.id) : "";
-d.dataset.fcAxisSide = axis && axis.side ? String(axis.side) : "";
+d.dataset.xyLabelKind = kind;
+d.dataset.xyAxis = axis && axis.id !== undefined ? String(axis.id) : "";
+d.dataset.xyAxisSide = axis && axis.side ? String(axis.side) : "";
 const colorKey = kind === "label" ? "label_color" : "tick_color";
 const sizeKey = kind === "label" ? "label_size" : "tick_size";
 let color = "";
@@ -4186,7 +4186,7 @@ this.draw();
 destroy() {
 if (this._destroyed) return;
 this._destroyed = true;
-FC_CONTEXT_GOVERNOR.unregister(this);
+XY_CONTEXT_GOVERNOR.unregister(this);
 this._ctxIo?.disconnect();
 this._ctxIo = null;
 clearTimeout(this._rebinTimer);
@@ -5008,9 +5008,9 @@ this._setDragMode(this.dragMode);
 },
 _setDragMode(mode) {
 this.dragMode = mode;
-if (this.canvas) this.canvas.dataset.fcDragmode = mode;
+if (this.canvas) this.canvas.dataset.xyDragmode = mode;
 for (const [name, btn] of Object.entries(this._modeBtns || {})) {
-btn.classList.toggle("fc-active", name === mode);
+btn.classList.toggle("xy-active", name === mode);
 }
 },
 _prefersReducedMotion() {
@@ -5281,7 +5281,7 @@ return;
 }
 if (this._sampleRebinDisabled) return;
 if (!this._rebinWorker) {
-this._rebinWorker = fcCreateRebinWorker();
+this._rebinWorker = xyCreateRebinWorker();
 if (!this._rebinWorker) {
 this._sampleRebinDisabled = true;
 return;
@@ -5674,7 +5674,7 @@ function markOf(kind) {
 return MARK_KINDS[kind] || MARK_KINDS.scatter;
 }
 function bytesToSpan(b) {
-const span = fcByteSpan(b, "chart payload");
+const span = xyByteSpan(b, "chart payload");
 return span.byteOffset % 4 === 0 ? span : new Uint8Array(span);
 }
 

@@ -1,7 +1,7 @@
 """The shim Axes: matplotlib's per-panel API translated onto composition marks.
 
 An Axes accumulates *entries* — light spec dicts, one per plotted thing —
-plus axis/chrome state, and materializes a single `fc.chart(...)` lazily.
+plus axis/chrome state, and materializes a single `xy.chart(...)` lazily.
 Mutation (artists, labels, limits) invalidates the cached chart; the next
 render rebuilds. Build cost is therefore the declarative API's build cost
 plus dict bookkeeping — that closeness is asserted by the perf guardrail
@@ -18,7 +18,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-import xy as fc
+import xy
 
 from ._artists import (
     Artist,
@@ -390,7 +390,7 @@ class SecondaryAxis:
         if positions.shape != secondary_values.shape or not np.all(np.isfinite(positions)):
             raise ValueError("secondary axis functions must return matching finite values")
         labels = self._tick_labels or [f"{value:g}" for value in secondary_values]
-        factory = fc.x_axis if self._axis == "x" else fc.y_axis
+        factory = xy.x_axis if self._axis == "x" else xy.y_axis
         axis_domain = (float(domain[0]), float(domain[1]))
         return factory(
             id=f"{self._axis}s{index}",
@@ -488,7 +488,7 @@ def _cached_theme(grid: bool, tokens: dict[str, Any], style: dict[str, Any]) -> 
     if made is None:
         applied = dict(tokens)
         applied["grid_color"] = _MPL_GRID_COLOR if grid else "transparent"
-        made = _component_cache[key] = fc.theme(style=style, **applied)
+        made = _component_cache[key] = xy.theme(style=style, **applied)
     return made
 
 
@@ -496,18 +496,18 @@ def _cached_modebar(show: bool) -> Any:
     key = ("modebar", show)
     made = _component_cache.get(key)
     if made is None:
-        made = _component_cache[key] = fc.modebar(show=show)
+        made = _component_cache[key] = xy.modebar(show=show)
     return made
 
 
 def _cached_axis(which: str, props: dict) -> Any:
     if props:
-        factory = fc.x_axis if which == "x" else fc.y_axis
+        factory = xy.x_axis if which == "x" else xy.y_axis
         return factory(**props)
     key = ("axis", which)
     made = _component_cache.get(key)
     if made is None:
-        made = _component_cache[key] = (fc.x_axis if which == "x" else fc.y_axis)()
+        made = _component_cache[key] = (xy.x_axis if which == "x" else xy.y_axis)()
     return made
 
 
@@ -3786,7 +3786,7 @@ class Axes(PlotTypeMixin):
                 kw["width"] = (
                     float(kw.get("width", rcParams["lines.linewidth"])) * self._point_scale()
                 )
-                children.append(fc.line(x=e["x"], y=e["y"], **kw, **axis_kw))
+                children.append(xy.line(x=e["x"], y=e["y"], **kw, **axis_kw))
             elif kind == "scatter":
                 kw = dict(kw)
                 domain = kw.pop("domain", None)  # vmin/vmax → the color channel window
@@ -3805,13 +3805,13 @@ class Axes(PlotTypeMixin):
                     domain = dom
                 if domain is not None:
                     kw["color_domain"] = (float(domain[0]), float(domain[1]))
-                children.append(fc.scatter(x=e["x"], y=e["y"], **kw, **axis_kw))
+                children.append(xy.scatter(x=e["x"], y=e["y"], **kw, **axis_kw))
             elif kind == "bar":
-                children.append(fc.bar(x=e["x"], y=e["y"], **kw, **axis_kw))
+                children.append(xy.bar(x=e["x"], y=e["y"], **kw, **axis_kw))
             elif kind == "area":
-                children.append(fc.area(x=e["x"], y=e["y"], **kw, **axis_kw))
+                children.append(xy.area(x=e["x"], y=e["y"], **kw, **axis_kw))
             elif kind == "histogram":
-                children.append(fc.histogram(values=e["values"], **kw, **axis_kw))
+                children.append(xy.histogram(values=e["values"], **kw, **axis_kw))
             elif kind == "heatmap":
                 z = e["z"]
                 levels = e.get("discrete_levels")
@@ -3829,19 +3829,19 @@ class Axes(PlotTypeMixin):
                             )
                         z = _quantize_to_levels(zarr, dom, int(levels))
                         kw["domain"] = (float(dom[0]), float(dom[1]))
-                children.append(fc.heatmap(z=z, **kw, **axis_kw))
+                children.append(xy.heatmap(z=z, **kw, **axis_kw))
             elif kind == "@mark":
-                children.append(getattr(fc, e["factory"])(*e["args"], **kw, **axis_kw))
+                children.append(getattr(xy, e["factory"])(*e["args"], **kw, **axis_kw))
             elif kind == "@hline":
-                children.append(fc.hline(*e["args"], **kw))
+                children.append(xy.hline(*e["args"], **kw))
             elif kind == "@arrow":
-                children.append(fc.arrow(*e["args"], **kw))
+                children.append(xy.arrow(*e["args"], **kw))
             elif kind == "@vline":
-                children.append(fc.vline(*e["args"], **kw))
+                children.append(xy.vline(*e["args"], **kw))
             elif kind == "@x_band":
-                children.append(fc.x_band(*e["args"], **kw))
+                children.append(xy.x_band(*e["args"], **kw))
             elif kind == "@y_band":
-                children.append(fc.y_band(*e["args"], **kw))
+                children.append(xy.y_band(*e["args"], **kw))
             elif kind == "@text":
                 opacity = kw.get("opacity")
                 if opacity is not None and float(opacity) == 0.0:
@@ -3924,7 +3924,7 @@ class Axes(PlotTypeMixin):
                         or "black",
                     )
                     children.append(
-                        fc.callout(
+                        xy.callout(
                             x,
                             y,
                             value,
@@ -3938,7 +3938,7 @@ class Axes(PlotTypeMixin):
                         )
                     )
                 else:
-                    children.append(fc.text(x, y, *e["args"][2:], **text_kw))
+                    children.append(xy.text(x, y, *e["args"][2:], **text_kw))
         return children
 
     def _best_legend_loc(
@@ -4177,18 +4177,18 @@ class Axes(PlotTypeMixin):
         if self._twin is not None:
             y2_props = {k: v for k, v in self._axis["y2"].items() if v is not None}
             self._apply_tickers("y2", y2_props, auto_tick_counts["y"])
-            children.append(fc.y_axis(id="y2", side="right", **y2_props))
+            children.append(xy.y_axis(id="y2", side="right", **y2_props))
         if self._legend:
             legend_options = dict(self._legend_options)
             if legend_options.get("loc") in (None, "best"):
                 legend_options["loc"] = self._best_legend_loc(
                     x_props.get("domain"), y_props.get("domain")
                 )
-            children.append(fc.legend(**legend_options))
+            children.append(xy.legend(**legend_options))
         elif not any(entry.get("kwargs", {}).get("name") for entry in self._entries):
             # Core XY can auto-create a continuous-color "value" legend.
             # An unlabeled Matplotlib collection must not acquire one.
-            children.append(fc.legend(show=False))
+            children.append(xy.legend(show=False))
         if not self.figure._show_toolbar():
             children.append(_cached_modebar(False))
         theme_tokens = self._theme_tokens
@@ -4196,14 +4196,14 @@ class Axes(PlotTypeMixin):
             if self._grid_axis != "both":
                 tokens = dict(theme_tokens)
                 tokens["grid_color"] = "transparent"
-                children.append(fc.theme(style=self._theme_style, **tokens))
+                children.append(xy.theme(style=self._theme_style, **tokens))
             elif self._grid_color == _MPL_GRID_COLOR:
                 children.append(_cached_theme(self._grid, theme_tokens, self._theme_style))
             else:
                 tokens = dict(theme_tokens)
                 tokens["grid_color"] = self._grid_color if self._grid else "transparent"
-                children.append(fc.theme(style=self._theme_style, **tokens))
-        self._chart = fc.chart(
+                children.append(xy.theme(style=self._theme_style, **tokens))
+        self._chart = xy.chart(
             *children,
             title=self._title,
             width=width,

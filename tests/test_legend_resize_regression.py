@@ -29,7 +29,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
 
-import xy as fc  # noqa: E402
+import xy  # noqa: E402
 from xy.export import find_chromium  # noqa: E402
 
 # Capture the standalone render call's return value so the probe can drive the
@@ -52,7 +52,7 @@ _PROBE = """
     if (!view) throw new Error("no probe view captured");
     let legend = null;
     for (let i = 0; i < 200; i++) {
-      legend = document.querySelector('[data-fc-slot="legend"]');
+      legend = document.querySelector('[data-xy-slot="legend"]');
       if (legend) break;
       await sleep(25);
     }
@@ -63,15 +63,15 @@ _PROBE = """
     view.fluidH = true;
     view._resize(view.size.w, view.size.h + 260);
     await raf();
-    legend = document.querySelector('[data-fc-slot="legend"]') || legend;
+    legend = document.querySelector('[data-xy-slot="legend"]') || legend;
     const afterResize = getComputedStyle(legend).maxHeight;
     document.body.setAttribute(
-      "data-fc-legend-maxheight",
+      "data-xy-legend-maxheight",
       JSON.stringify({ initial, afterResize })
     );
   } catch (err) {
     document.body.setAttribute(
-      "data-fc-legend-maxheight-error",
+      "data-xy-legend-maxheight-error",
       String((err && err.stack) || err)
     );
   }
@@ -121,11 +121,11 @@ def _probe_maxheight(chromium: str, document: str, page: Path) -> dict | None:
         dom = _dump_dom(chromium, page)
         if dom is None:
             continue
-        error = re.search(r'data-fc-legend-maxheight-error="([^"]*)"', dom)
+        error = re.search(r'data-xy-legend-maxheight-error="([^"]*)"', dom)
         if error:
             last = f"probe error: {html_lib.unescape(error.group(1))}"
             continue
-        match = re.search(r'data-fc-legend-maxheight="([^"]*)"', dom)
+        match = re.search(r'data-xy-legend-maxheight="([^"]*)"', dom)
         if match:
             return json.loads(html_lib.unescape(match.group(1)))
         last = "probe did not finish (no result attribute)"
@@ -140,10 +140,10 @@ def test_snake_case_legend_max_height_survives_resize() -> None:
     if not chromium:
         pytest.skip("no chromium available for the resize regression probe")
 
-    fig = fc.chart(
-        fc.line(x=[0, 1, 2, 3], y=[0, 1, 0, 1], name="alpha"),
-        fc.line(x=[0, 1, 2, 3], y=[1, 0, 1, 0], name="beta"),
-        fc.legend(),
+    fig = xy.chart(
+        xy.line(x=[0, 1, 2, 3], y=[0, 1, 0, 1], name="alpha"),
+        xy.line(x=[0, 1, 2, 3], y=[1, 0, 1, 0], name="beta"),
+        xy.legend(),
         # snake_case is the documented Python API form; it must reach the client
         # AND be honored by the responsive-cap guard on resize.
         styles={"legend": {"max_height": 50}},

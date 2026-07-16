@@ -92,7 +92,7 @@ regress between commits. The suite asserts `xy.kernels.BACKEND ==
   `test_first_payload_bar_core_2d`,
   `test_first_payload_heatmap_core_2d`, and
   `test_first_payload_composed_layered_core_2d` for the public
-  `fc.chart(...)` layered API.
+  `xy.chart(...)` layered API.
 - Native static export rows include exact and categorical scatter, stroked
   triangle meshes, and heatmaps. The mesh row protects batched fill+stroke;
   the heatmap row protects the direct external arena sampler rather than only

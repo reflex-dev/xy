@@ -110,7 +110,7 @@ Object.assign(ChartView.prototype, {
     }
     if (this._sampleRebinDisabled) return;
     if (!this._rebinWorker) {
-      this._rebinWorker = fcCreateRebinWorker();
+      this._rebinWorker = xyCreateRebinWorker();
       if (!this._rebinWorker) {
         this._sampleRebinDisabled = true; // no worker: stretched overview stays
         return;

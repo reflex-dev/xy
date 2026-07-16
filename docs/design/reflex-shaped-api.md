@@ -16,20 +16,20 @@ and overlays; this one defines the public API shape and styling contract.
 XY should expose a small framework-agnostic component model:
 
 ```python
-import xy as fc
+import xy
 
-chart = fc.chart(
-    fc.scatter(
+chart = xy.chart(
+    xy.scatter(
         x="feature_a",
         y="feature_b",
         color="segment",
         data=df,
         opacity=0.7,
     ),
-    fc.line(x=fit_x, y=fit_y, color="var(--brand-accent)", width=2),
-    fc.x_axis(label="feature A"),
-    fc.y_axis(label="feature B"),
-    fc.legend(),
+    xy.line(x=fit_x, y=fit_y, color="var(--brand-accent)", width=2),
+    xy.x_axis(label="feature A"),
+    xy.y_axis(label="feature B"),
+    xy.legend(),
     title="Customer clusters",
     width="100%",
     height=420,
@@ -51,7 +51,7 @@ html = chart.to_html()       # standalone HTML
 chart.to_html("chart.html")  # shareable file
 chart._repr_html_()          # standalone HTML repr fallback
 chart.to_png("chart.png")    # fast browser-free native PNG
-chart.to_png("browser.png", engine=fc.Engine.chromium)  # browser CSS/WebGL fidelity
+chart.to_png("browser.png", engine=xy.Engine.chromium)  # browser CSS/WebGL fidelity
 ```
 
 The tree is not a Reflex tree. It is a pure XY Python object graph that
@@ -59,7 +59,7 @@ can be rendered by notebooks, static HTML export, and future adapters:
 
 ```mermaid
 flowchart LR
-  USER["Python API<br/>fc.chart(...children)"]
+  USER["Python API<br/>xy.chart(...children)"]
   TREE["Framework-free<br/>component tree"]
   FIG["Internal figure compiler<br/>ColumnStore + traces"]
   SPEC["Wire spec + buffers"]
@@ -108,8 +108,8 @@ sources of state and composition semantics.
 - **Declarative by default.** Component construction records intent. Rendering
   happens when the user calls `.show()`, `widget()`, `to_html(...)`,
   `to_png(...)`, or when an adapter mounts it.
-- **One chart vocabulary.** Every mark factory (`fc.scatter(...)`,
-  `fc.line(...)`, ...) resolves to the single mark implementation in
+- **One chart vocabulary.** Every mark factory (`xy.scatter(...)`,
+  `xy.line(...)`, ...) resolves to the single mark implementation in
   `marks.py`, so mark names, channel names, defaults, and validation rules
   cannot fork.
 - **CSS vocabulary styles chrome and marks.** DOM chrome receives the normal
@@ -129,12 +129,12 @@ sources of state and composition semantics.
 Every public node is a plain Python object with `props` and `children`.
 
 ```python
-fc.chart(
-    fc.scatter(...),
-    fc.line(...),
-    fc.x_axis(...),
-    fc.y_axis(...),
-    fc.legend(...),
+xy.chart(
+    xy.scatter(...),
+    xy.line(...),
+    xy.x_axis(...),
+    xy.y_axis(...),
+    xy.legend(...),
     title="...",
 )
 ```
@@ -168,14 +168,14 @@ Props should follow Reflex-style Python naming:
   `on_view_change`.
 
 ```python
-fc.scatter(
+xy.scatter(
     x="date",
     y="latency_ms",
     color="region",
     size="requests",
     data=df,
     name="requests",
-    class_name="fc-mark-latency",
+    class_name="xy-mark-latency",
     style={"fill": "var(--accent)", "stroke-width": "1px"},
 )
 ```
@@ -185,7 +185,7 @@ readouts and adapters. It cannot directly style already-rastered WebGL pixels.
 Mark appearance uses the cross-renderer CSS subset:
 
 ```python
-fc.line(
+xy.line(
     x="t",
     y="p95",
     data=df,
@@ -249,8 +249,8 @@ Recommended token surface:
 Example:
 
 ```python
-fc.chart(
-    fc.line(x="date", y="revenue", data=df, color="var(--chart-accent)"),
+xy.chart(
+    xy.line(x="date", y="revenue", data=df, color="var(--chart-accent)"),
     class_name="text-slate-900 dark:text-slate-50",
     style={
         "--chart-bg": "transparent",
@@ -299,10 +299,10 @@ DOM chrome slots:
 | `axis_title` | Axis title label |
 | `annotation_label` | Text/label/callout annotation (DOM overlay) |
 
-Each rendered slot also receives `data-fc-slot="<slot>"`, so plain CSS,
+Each rendered slot also receives `data-xy-slot="<slot>"`, so plain CSS,
 attribute selectors, and Tailwind arbitrary variants can target the same stable
 surface even when the caller does not add a class. The client ships one
-zero-specificity `:where([data-fc-slot="…"])` default stylesheet, so a
+zero-specificity `:where([data-xy-slot="…"])` default stylesheet, so a
 `class_names` utility class (or an inline `chrome_styles` value) always wins
 over the built-in look without needing `!important`. In the standalone
 `to_html(...)` export — which has no host page to inherit Tailwind from — pass
@@ -319,8 +319,8 @@ internal `_figure.Figure` export path, so mutating `fig.class_names` or
 Tailwind example:
 
 ```python
-fc.chart(
-    fc.histogram(values="latency", data=df, bins=200),
+xy.chart(
+    xy.histogram(values="latency", data=df, bins=200),
     title="Latency distribution",
     class_name="h-[360px] w-full rounded-md border border-zinc-200 bg-white text-zinc-950 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50",
     class_names={
@@ -351,7 +351,7 @@ individual WebGL points/bars/lines after they are rasterized. For marks, use
 props that resolve CSS colors:
 
 ```python
-fc.scatter(x="x", y="y", data=df, color="var(--chart-accent)")
+xy.scatter(x="x", y="y", data=df, color="var(--chart-accent)")
 ```
 
 This keeps Tailwind useful without pretending CSS can reach GPU buffers.
@@ -364,9 +364,9 @@ users expect customization.
 Target API:
 
 ```python
-fc.chart(
-    fc.scatter(x="x", y="y", color="segment", data=df),
-    fc.tooltip(
+xy.chart(
+    xy.scatter(x="x", y="y", color="segment", data=df),
+    xy.tooltip(
         fields=["x", "y", "segment"],
         title="{segment}",
         format={
@@ -390,11 +390,11 @@ Design rules:
 Implemented adapter hook:
 
 ```python
-chart = fc.chart(
-    fc.scatter(x="x", y="y", color="segment", data=df),
-    fc.legend(rx.vstack(...), show=False),
-    fc.tooltip(rx.box(...), show=False, fields=["x", "y", "segment"]),
-    fc.colorbar(rx.vstack(...), show=False),
+chart = xy.chart(
+    xy.scatter(x="x", y="y", color="segment", data=df),
+    xy.legend(rx.vstack(...), show=False),
+    xy.tooltip(rx.box(...), show=False, fields=["x", "y", "segment"]),
+    xy.colorbar(rx.vstack(...), show=False),
 )
 
 chart.chrome_components()
@@ -408,7 +408,7 @@ suppresses the built-in DOM chrome when an adapter is replacing it; leaving
 Potential future advanced API:
 
 ```python
-fc.tooltip(render="compact_metric")  # named client-side template
+xy.tooltip(render="compact_metric")  # named client-side template
 ```
 
 Avoid accepting arbitrary JS callbacks in standalone HTML. Notebook callbacks
@@ -423,8 +423,8 @@ def hover(row: dict): ...
 def selected(selection: dict): ...
 def view_changed(view: dict): ...
 
-fc.chart(
-    fc.scatter(x="x", y="y", data=df),
+xy.chart(
+    xy.scatter(x="x", y="y", data=df),
     on_hover=hover,
     on_select=selected,
     on_view_change=view_changed,
@@ -469,8 +469,8 @@ package.
 XY core:
 
 ```python
-chart = fc.chart(
-    fc.scatter(x="x", y="y", data=df),
+chart = xy.chart(
+    xy.scatter(x="x", y="y", data=df),
     class_name="h-full w-full",
 )
 ```
@@ -485,7 +485,7 @@ class State(rx.State):
     chart_token: str = ""
 
     def load(self):
-        chart = fc.chart(fc.scatter(x="x", y="y", data=df))
+        chart = xy.chart(xy.scatter(x="x", y="y", data=df))
         self.chart_token = rfc.register(chart)
 
 def index():
@@ -536,7 +536,7 @@ still works like today's notebook-friendly XY objects.
 ```python
 import numpy as np
 import pandas as pd
-import xy as fc
+import xy
 
 rng = np.random.default_rng(7)
 df = pd.DataFrame(
@@ -547,8 +547,8 @@ df = pd.DataFrame(
     }
 )
 
-chart = fc.chart(
-    fc.scatter(
+chart = xy.chart(
+    xy.scatter(
         x="x",
         y="y",
         color="segment",
@@ -556,9 +556,9 @@ chart = fc.chart(
         opacity=0.55,
         name="accounts",
     ),
-    fc.x_axis(label="activation score"),
-    fc.y_axis(label="retention score"),
-    fc.legend(),
+    xy.x_axis(label="activation score"),
+    xy.y_axis(label="retention score"),
+    xy.legend(),
     title="Account clusters",
     width="100%",
     height=420,
@@ -583,10 +583,10 @@ This example shows the styling contract: Tailwind classes style the wrapper and
 DOM chrome, while marks use props and CSS variables that the renderer resolves.
 
 ```python
-import xy as fc
+import xy
 
-chart = fc.chart(
-    fc.histogram(
+chart = xy.chart(
+    xy.histogram(
         values="latency_ms",
         data=requests,
         bins=240,
@@ -594,8 +594,8 @@ chart = fc.chart(
         color="var(--chart-accent)",
         name="latency",
     ),
-    fc.rule(y=0.95, color="var(--chart-critical)", dash=True),
-    fc.tooltip(
+    xy.rule(y=0.95, color="var(--chart-critical)", dash=True),
+    xy.tooltip(
         fields=["latency_ms", "count"],
         title="Latency",
         format={"latency_ms": ".1f", "count": ",.0f"},
@@ -635,7 +635,7 @@ not because the core charting package depends on Reflex.
 
 ```python
 import reflex as rx
-import xy as fc
+import xy
 import reflex_xy as rfc
 
 
@@ -644,8 +644,8 @@ class Dashboard(rx.State):
     hovered: dict = {}
 
     def load(self):
-        chart = fc.chart(
-            fc.scatter(x="x", y="y", color="segment", data=load_big_frame()),
+        chart = xy.chart(
+            xy.scatter(x="x", y="y", color="segment", data=load_big_frame()),
             title="Live customer map",
             class_name="h-[520px] w-full",
         )
@@ -684,9 +684,9 @@ Must keep:
 
 Now part of the core alpha contract:
 
-- Neutral `fc.chart(...)`.
-- `fc.tooltip(...)`, `fc.modebar(...)`, `fc.theme(...)`.
-- `fc.colorbar(...)` with the same CSS-slot and opaque adapter-render contract.
+- Neutral `xy.chart(...)`.
+- `xy.tooltip(...)`, `xy.modebar(...)`, `xy.theme(...)`.
+- `xy.colorbar(...)` with the same CSS-slot and opaque adapter-render contract.
 - `class_name`, `class_names`, and `style` props.
 
 Can add:
@@ -717,8 +717,8 @@ Should avoid:
 
 ### Phase 2: Neutral Container And Tooltip Node
 
-- Add `fc.chart(...)` as a kind-neutral alias.
-- Add `fc.tooltip(...)` node compiling to safe tooltip readout spec.
+- Add `xy.chart(...)` as a kind-neutral alias.
+- Add `xy.tooltip(...)` node compiling to safe tooltip readout spec.
 - Keep existing `*_chart(...)` helpers as ergonomic aliases.
 
 ### Phase 3: CSS Variable Expansion

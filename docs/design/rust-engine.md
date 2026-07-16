@@ -29,16 +29,16 @@ clear ImportError when it can't load, with no pure-Python fallback.
 | static display-list raster, row-banded polyline/point/segment paint, batched fill+stroke triangle meshes, affine scatter projection plus typed color/size resolution, density/heatmap colormap and sampling | Rust (ABI v31) | correct — commands borrow f32/u8 payload or canonical spans synchronously; compact stratified sampling reuses factorization counts; batched/banded output is byte-identical |
 | ohlc_decimate (when finance returns) | was NumPy-in-kernels.py | acceptable stopgap **only** because candles decimate to ≤px buckets; promote to Rust with the pyramid work |
 | tier decisions, hysteresis, drill_seq, spec/emitters, channel resolution | Python | correct — keep |
-| visible-count mask for drill | NumPy expression in `lod.visible_mask` | promote: it's O(N) per zoom step at 100M — fold into `fc_range_indices` (already exists) so count+indices come from one pass |
+| visible-count mask for drill | NumPy expression in `lod.visible_mask` | promote: it's O(N) per zoom step at 100M — fold into `xy_range_indices` (already exists) so count+indices come from one pass |
 
 ### Target Rust ownership (matches the priority list)
 
 binning (1D/2D/channel-aware) ✅/plan · decimation (M4 ✅, OHLC plan) ·
-range filtering (`fc_range_indices` ✅) · implicit uniform and compact-u8
-stratified sampling (`fc_sample_range_indices` / `fc_stratified_sample_range_u8` ✅) · grouping/category encoding
-(`fc_factorize_fixed` ✅ for contiguous fixed-width values; defensive Python
+range filtering (`xy_range_indices` ✅) · implicit uniform and compact-u8
+stratified sampling (`xy_sample_range_indices` / `xy_stratified_sample_range_u8` ✅) · grouping/category encoding
+(`xy_factorize_fixed` ✅ for contiguous fixed-width values; defensive Python
 label canonicalization for mixed objects) · histogram stats ✅ · quantiles (plan:
-`fc_quantiles`, needed by box/violin) · box/violin stats (thin composition
+`xy_quantiles`, needed by box/violin) · box/violin stats (thin composition
 over quantiles — stats in Rust, assembly in Python) · multi-resolution tile
 generation (`tiles.rs` ✅, including stable-domain incremental updates) ·
 Rust-owned streaming column buffers (plan: `stream.rs`, §5 below).
@@ -83,9 +83,9 @@ argminmax, tsdownsample-class speed) with the lean build as default.
 
 ### 3.2 Evolution rules (the anti-rewrite discipline)
 
-- **E1 — additive by default**: new capability = new `fc_*` symbol. Existing
+- **E1 — additive by default**: new capability = new `xy_*` symbol. Existing
   signatures are immutable once shipped in a release; changing one means a
-  new name (`fc_bin_2d_v2`) + ABI bump, old symbol kept for one minor cycle.
+  new name (`xy_bin_2d_v2`) + ABI bump, old symbol kept for one minor cycle.
 - **E2 — flags-struct for growth-prone kernels**: kernels we *know* will grow
   options (tile fetch, channel binning) take a final `*const FcOpts` pointer
   to a versioned plain-C struct (`{u32 size; ...}`); size-checked so old
@@ -105,7 +105,7 @@ argminmax, tsdownsample-class speed) with the lean build as default.
   merge; worker count is also capped by actual chunks. CodSpeed stays serial
   because its simulator sums thread instructions rather than wall time.
   Async/incremental build = handle +
-  `fc_pyramid_poll` (E3).
+  `xy_pyramid_poll` (E3).
 
 ### 3.3 Opaque handles (for tiles/streams)
 
@@ -113,9 +113,9 @@ Arrays-in/arrays-out stops working when Rust must own long-lived state
 (pyramid, append buffers). Pattern:
 
 ```c
-u64  fc_pyramid_build(const f64* x, const f64* y, /*channels…*/, FcOpts*);
-i32  fc_pyramid_tile(u64 h, u32 level, u32 tx, u32 ty, f32* out_count, ...);
-void fc_pyramid_free(u64 h);
+u64  xy_pyramid_build(const f64* x, const f64* y, /*channels…*/, FcOpts*);
+i32  xy_pyramid_tile(u64 h, u32 level, u32 tx, u32 ty, f32* out_count, ...);
+void xy_pyramid_free(u64 h);
 ```
 
 Handles are indices into a Rust-side registry (mutex-guarded slab), not raw
@@ -180,15 +180,15 @@ intersecting pyramid tiles dirty with lazy per-tile rebuild (bounded: a
 stream touching one region rebuilds ~1 tile/level). Phase-0 instead frees
 the whole pyramid on append, so a >2M-point stream pays a full pyramid
 rebuild on its next far-out view — recorded, not hidden. ABI:
-`fc_stream_new/append/seal/free` + the pyramid fetch reading through the
+`xy_stream_new/append/seal/free` + the pyramid fetch reading through the
 stream handle.
 
 ## 6. Implementation order
 
 1. E4 panic-shield + error enum (with next ABI bump, cheap insurance).
-2. `fc_bin_2d_channels` (LOD doc phase 1) — first FcOpts-style kernel.
-3. Fold drill visible-count into `fc_range_indices` (one pass, count+idx).
-4. `stats.rs`: `fc_quantiles` (+ box/violin composition) — unblocks rank-8
+2. `xy_bin_2d_channels` (LOD doc phase 1) — first FcOpts-style kernel.
+3. Fold drill visible-count into `xy_range_indices` (one pass, count+idx).
+4. `stats.rs`: `xy_quantiles` (+ box/violin composition) — unblocks rank-8
    box plots with Rust-grade interaction.
 5. `tiles.rs` pyramid handles (LOD phases 3-4).
 6. `stream.rs` append (after Arrow ingest lands).

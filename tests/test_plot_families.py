@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import xy as fc
+import xy
 from xy._figure import Figure
 
 
@@ -86,7 +86,7 @@ def test_generic_segments_share_instanced_renderers() -> None:
     assert spec["traces"][0]["kind"] == "segments"
     assert spec["traces"][0]["n_marks"] == 2
     assert "<line" in fig.to_svg()
-    assert fig.to_png(engine=fc.Engine.default).startswith(b"\x89PNG")
+    assert fig.to_png(engine=xy.Engine.default).startswith(b"\x89PNG")
 
 
 def test_triangle_mesh_ships_per_triangle_color_and_renders_static_exports() -> None:
@@ -109,7 +109,7 @@ def test_triangle_mesh_ships_per_triangle_color_and_renders_static_exports() -> 
     assert all(name in trace for name in ("x0", "y0", "x1", "y1", "x2", "y2"))
     svg = fig.to_svg()
     assert svg.count("<polygon") == 2
-    assert fig.to_png(engine=fc.Engine.default).startswith(b"\x89PNG")
+    assert fig.to_png(engine=xy.Engine.default).startswith(b"\x89PNG")
 
 
 def test_triangle_mesh_filters_nonfinite_geometry_and_color_rows() -> None:
@@ -322,7 +322,7 @@ def test_facet_chart_filters_table_and_shares_domains() -> None:
         "y": [1, 2, 3, 3, 2, 1],
         "group": ["a", "a", "a", "b", "b", "b"],
     }
-    grid = fc.facet_chart(fc.line(x="x", y="y"), by="group", data=data, cols=2).figure()
+    grid = xy.facet_chart(xy.line(x="x", y="y"), by="group", data=data, cols=2).figure()
     assert len(grid.figures) == 2
     assert grid.labels == ("a", "b")
     assert grid.figures[0].x_range() == grid.figures[1].x_range()

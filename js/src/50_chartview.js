@@ -5,8 +5,8 @@
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
 const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
-let FC_A11Y_ID = 0;
-const FC_SR_ONLY_STYLE =
+let XY_A11Y_ID = 0;
+const XY_SR_ONLY_STYLE =
   "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;" +
   "clip:rect(0,0,0,0);white-space:nowrap;border:0;";
 const UNITLESS_STYLE_PROPS = new Set([
@@ -44,9 +44,9 @@ const UNITLESS_STYLE_PROPS = new Set([
 // WEBGL_lose_context — a controlled loss the existing restore machinery can
 // undo — and re-acquires when scrolled back into view. Under the budget no
 // view ever releases, so pages with few charts behave exactly as before.
-// Every decision is observable (§28): `data-fc-ctx` on the canvas reads
+// Every decision is observable (§28): `data-xy-ctx` on the canvas reads
 // "live" | "released" | "lost", and views count releases/recoveries.
-const FC_CONTEXT_GOVERNOR = {
+const XY_CONTEXT_GOVERNOR = {
   views: new Set(),
   seq: 1,
   budget() {
@@ -89,7 +89,7 @@ const FC_CONTEXT_GOVERNOR = {
     // least-recently-visible ones anyway: the snapshot stand-in keeps them
     // looking rendered, and pointer entry revives them. Letting the browser
     // LRU-evict instead blanks visible charts with no recovery until the
-    // page scrolls (§28: data-fc-ctx stays legible either way).
+    // page scrolls (§28: data-xy-ctx stays legible either way).
     const visible = live
       .filter((view) => view._ctxVisible)
       .sort((a, b) => (a._ctxSeenSeq || 0) - (b._ctxSeenSeq || 0));
@@ -110,7 +110,7 @@ const FC_CONTEXT_GOVERNOR = {
 // arrive asynchronously, but big dashboards create every chart synchronously —
 // the estimate lets reserve() prefer below-the-fold charts immediately. The
 // 25% margin matches the observer's rootMargin (recovery hysteresis).
-function fcInitiallyVisible(el) {
+function xyInitiallyVisible(el) {
   if (typeof window === "undefined" || !el.getBoundingClientRect) return true;
   const rect = el.getBoundingClientRect();
   if (!rect.width && !rect.height) return false; // hidden boot slot: recoverable
@@ -183,15 +183,15 @@ class ChartView {
     this._ctxReleasedExt = null;
     this._ctxReleases = 0;
     this._ctxRecoveries = 0;
-    this._ctxVisible = fcInitiallyVisible(el);
-    FC_CONTEXT_GOVERNOR.register(this);
-    if (this._ctxVisible) this._ctxSeenSeq = FC_CONTEXT_GOVERNOR.seq++;
+    this._ctxVisible = xyInitiallyVisible(el);
+    XY_CONTEXT_GOVERNOR.register(this);
+    if (this._ctxVisible) this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
     this._contextLossCount = 0;
     this._contextRestoreCount = 0;
     this._contextRecoveryError = null;
     this._initGl(buffer);
     this._initA11y();
-    this.root.dataset.fcContextState = "ready";
+    this.root.dataset.xyContextState = "ready";
     this._initContextLossRecovery();
     this._armContextVisibilityWatch();
     this._initInteraction();
@@ -454,7 +454,7 @@ class ChartView {
   }
 
   _applySlot(el, slot) {
-    if (el && el.dataset) el.dataset.fcSlot = slot;
+    if (el && el.dataset) el.dataset.xySlot = slot;
     const dom = this.spec.dom;
     if (!dom || typeof dom !== "object") return;
     if (slot === "root") this._applyClass(el, dom.class_name);
@@ -553,7 +553,7 @@ class ChartView {
     this._listen(this.canvas, "webglcontextlost", (e) => {
       e.preventDefault();
       if (this._destroyed) return;
-      const governedRelease = this.canvas.dataset.fcCtx === "released";
+      const governedRelease = this.canvas.dataset.xyCtx === "released";
       // _releaseContext marks the view lost synchronously before the browser
       // dispatches this event. Still run the full quiesce/telemetry path for
       // that first governed event; only ignore duplicate ungoverned losses.
@@ -561,10 +561,10 @@ class ChartView {
       this._glLost = true;
       // Governed releases already stamped "released"; anything else is a
       // browser-side eviction/driver reset (§28: the difference stays legible).
-      if (!governedRelease) this.canvas.dataset.fcCtx = "lost";
+      if (!governedRelease) this.canvas.dataset.xyCtx = "lost";
       this._contextLossCount += 1;
       this._contextRecoveryError = null;
-      this.root.dataset.fcContextState = "lost";
+      this.root.dataset.xyContextState = "lost";
       // Quiesce every source of deferred GPU work, not only the draw RAF.
       // Incrementing seq makes pre-loss kernel/worker replies stale, so they
       // cannot populate the newly restored context with an old view.
@@ -598,7 +598,7 @@ class ChartView {
       } catch (err) {
         this._glLost = true;
         this._contextRecoveryError = err;
-        this.root.dataset.fcContextState = "failed";
+        this.root.dataset.xyContextState = "failed";
         try { this._destroyGlResources(); } catch (_cleanupErr) {}
         this.gl = null;
         this._dispatchChartEvent("context_restore_failed", {
@@ -611,7 +611,7 @@ class ChartView {
       this._glLost = false;
       this._contextRestoreCount += 1;
       this._contextRecoveryError = null;
-      this.root.dataset.fcContextState = "ready";
+      this.root.dataset.xyContextState = "ready";
       this._scheduleViewRequest(this.view, { delay: 0 });
       this.draw();
       this._dropContextSnapshot(); // live frame is back; retire the stand-in
@@ -635,7 +635,7 @@ class ChartView {
     this._ctxReleasedExt = ext;
     this._ctxReleases += 1;
     this._glLost = true; // synchronous: the lost *event* arrives as a task
-    this.canvas.dataset.fcCtx = "released";
+    this.canvas.dataset.xyCtx = "released";
     if (this._raf) cancelAnimationFrame(this._raf);
     this._raf = null;
     ext.loseContext();
@@ -657,7 +657,7 @@ class ChartView {
       let snap = this._ctxSnapshot;
       if (!snap) {
         snap = this._ctxSnapshot = document.createElement("canvas");
-        snap.dataset.fcCtxSnapshot = "";
+        snap.dataset.xyCtxSnapshot = "";
       }
       snap.width = this.canvas.width;
       snap.height = this.canvas.height;
@@ -694,11 +694,11 @@ class ChartView {
         // Reserve before asking the browser to restore. The restored event is
         // asynchronous, so the pending reservation must count against later
         // recoveries in the same IntersectionObserver delivery.
-        FC_CONTEXT_GOVERNOR.reserve(this);
+        XY_CONTEXT_GOVERNOR.reserve(this);
         ext.restoreContext(); // restored event -> full rebuild
         return;
       } catch (_err) {
-        FC_CONTEXT_GOVERNOR.cancel(this);
+        XY_CONTEXT_GOVERNOR.cancel(this);
         // Extension refused (context was also evicted for real): fall through.
       }
     }
@@ -728,7 +728,7 @@ class ChartView {
       this._initGl(this._payload);
     } catch (_err) {
       this._glLost = true;
-      this.canvas.dataset.fcCtx = "lost";
+      this.canvas.dataset.xyCtx = "lost";
       return; // context pressure persists; the next visibility pass retries
     }
     this._scheduleViewRequest(this.view, { delay: 0 });
@@ -756,7 +756,7 @@ class ChartView {
         const entry = entries[entries.length - 1];
         this._ctxVisible = entry.isIntersecting || entry.intersectionRatio > 0;
         if (this._ctxVisible) {
-          this._ctxSeenSeq = FC_CONTEXT_GOVERNOR.seq++;
+          this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
           if (this._glLost && !this._destroyed) this._recoverContext();
         }
       },
@@ -825,7 +825,7 @@ class ChartView {
     // remain exposed to assistive technology.
     let a11yId;
     do {
-      a11yId = `xy-a11y-${++FC_A11Y_ID}`;
+      a11yId = `xy-a11y-${++XY_A11Y_ID}`;
     } while (
       document.getElementById(`${a11yId}-summary`) || document.getElementById(`${a11yId}-live`)
     );
@@ -833,7 +833,7 @@ class ChartView {
     root.setAttribute("aria-label", s.title ? `Chart: ${s.title}` : "Interactive chart");
     this.a11ySummary = document.createElement("div");
     this.a11ySummary.id = `${a11yId}-summary`;
-    this.a11ySummary.style.cssText = FC_SR_ONLY_STYLE;
+    this.a11ySummary.style.cssText = XY_SR_ONLY_STYLE;
     root.setAttribute("aria-describedby", this.a11ySummary.id);
     root.appendChild(this.a11ySummary);
     this.a11yLive = document.createElement("div");
@@ -841,7 +841,7 @@ class ChartView {
     this.a11yLive.setAttribute("role", "status");
     this.a11yLive.setAttribute("aria-live", "polite");
     this.a11yLive.setAttribute("aria-atomic", "true");
-    this.a11yLive.style.cssText = FC_SR_ONLY_STYLE;
+    this.a11yLive.style.cssText = XY_SR_ONLY_STYLE;
     root.appendChild(this.a11yLive);
 
     if (s.title) {
@@ -858,7 +858,7 @@ class ChartView {
     root.appendChild(this.chrome);
 
     this.canvas = document.createElement("canvas");
-    // cursor is a defeatable stylesheet default keyed on data-fc-dragmode; only
+    // cursor is a defeatable stylesheet default keyed on data-xy-dragmode; only
     // structural geometry + touch-action stay inline here.
     this.canvas.style.cssText =
       `position:absolute;left:${this.plot.x}px;top:${this.plot.y}px;` +
@@ -1215,18 +1215,18 @@ class ChartView {
 
     // Stay inside the page's context budget before acquiring (governor above):
     // at budget, the least-recently-visible off-screen view releases first.
-    FC_CONTEXT_GOVERNOR.reserve(this);
+    XY_CONTEXT_GOVERNOR.reserve(this);
     const gl = this.canvas.getContext("webgl2", {
       antialias: false, premultipliedAlpha: true, alpha: true,
     });
     if (!gl) {
-      FC_CONTEXT_GOVERNOR.cancel(this);
+      XY_CONTEXT_GOVERNOR.cancel(this);
       this.root.textContent = "xy: WebGL2 unavailable in this browser.";
       throw new Error("webgl2 unavailable");
     }
     this.gl = gl;
-    FC_CONTEXT_GOVERNOR.acquired(this);
-    this.canvas.dataset.fcCtx = "live";
+    XY_CONTEXT_GOVERNOR.acquired(this);
+    this.canvas.dataset.xyCtx = "live";
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
@@ -1611,7 +1611,7 @@ class ChartView {
   // `_cpu` columns either way (`_nearestCpuIndex` limits to the source length).
   _smoothArrays(t, x, y, base, n) {
     if (!t.style || t.style.curve !== "smooth") return null;
-    return fcSmoothResample(x, y, base || null, n, 32768);
+    return xySmoothResample(x, y, base || null, n, 32768);
   }
 
   // Expand a step-styled polyline (style.step: "pre" | "mid" | "post") into
@@ -1947,7 +1947,7 @@ class ChartView {
           : "xy: spec column carries a wire-buffer index but the transport delivered one blob",
       );
     }
-    const span = fcByteSpan(split ? buffer[meta.buf] : buffer, "chart payload");
+    const span = xyByteSpan(split ? buffer[meta.buf] : buffer, "chart payload");
     const relativeOffset = Number(meta.byte_offset);
     const length = Number(meta.len);
     if (!Number.isSafeInteger(relativeOffset) || relativeOffset < 0 ||
@@ -3095,9 +3095,9 @@ class ChartView {
       if (!updateLabels) return;
       const d = document.createElement("div");
       d.textContent = text;
-      d.dataset.fcLabelKind = kind;
-      d.dataset.fcAxis = axis && axis.id !== undefined ? String(axis.id) : "";
-      d.dataset.fcAxisSide = axis && axis.side ? String(axis.side) : "";
+      d.dataset.xyLabelKind = kind;
+      d.dataset.xyAxis = axis && axis.id !== undefined ? String(axis.id) : "";
+      d.dataset.xyAxisSide = axis && axis.side ? String(axis.side) : "";
       const colorKey = kind === "label"
         ? "label_color"
         : (this._axisStyleValue(axis, "tick_label_color") !== undefined
@@ -3562,7 +3562,7 @@ class ChartView {
   destroy() {
     if (this._destroyed) return;
     this._destroyed = true;
-    FC_CONTEXT_GOVERNOR.unregister(this);
+    XY_CONTEXT_GOVERNOR.unregister(this);
     this._ctxIo?.disconnect();
     this._ctxIo = null;
     clearTimeout(this._rebinTimer);

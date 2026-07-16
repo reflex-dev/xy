@@ -3,7 +3,7 @@
 native kernel through the ctypes seam.
 
 "Builds" is not "loads": Pyodide's dynamic linker must instantiate the module
-and the `fc_*` C-ABI symbols must be callable. This is the regression probe for
+and the `xy_*` C-ABI symbols must be callable. This is the regression probe for
 the release wheel's exception-free Rust build: it installs the exact artifact,
 checks the ABI version, calls a native kernel, and exits non-zero on failure.
 
@@ -36,7 +36,7 @@ import xy.kernels as k
 import numpy as np
 mn, mx = k.min_max(np.array([3.0, 1.0, 2.0]))
 from xy import _native
-abi = _native._lib.fc_abi_version()
+abi = _native._lib.xy_abi_version()
 f"{k.BACKEND}|{abi}|{mn}|{mx}"
 `);
   const [backend, abi, mn, mx] = r.split("|");

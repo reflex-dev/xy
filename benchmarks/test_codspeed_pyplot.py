@@ -26,7 +26,7 @@ import io
 import numpy as np
 import pytest
 
-import xy as fc
+import xy
 import xy.pyplot as plt
 from xy import kernels as k
 
@@ -65,12 +65,12 @@ def warm_lazy_modules() -> None:
     """
     x = np.array([0.0, 1.0, 2.0, 3.0])
     y = np.array([0.0, 1.0, 0.0, 1.0])
-    raw = fc.chart(fc.line(x=x, y=y), fc.scatter(x=x, y=y), fc.x_axis(), fc.y_axis()).figure()
+    raw = xy.chart(xy.line(x=x, y=y), xy.scatter(x=x, y=y), xy.x_axis(), xy.y_axis()).figure()
     raw.build_payload_split(N_BUCKETS)
-    fc.chart(fc.bar(["a", "b"], np.array([1.0, 2.0]))).figure().build_payload_split(N_BUCKETS)
-    fc.chart(fc.histogram(y, bins=4)).figure().build_payload_split(N_BUCKETS)
-    raw_fig = fc.chart(fc.line(x=x, y=y)).figure()
-    raw_fig.to_png(engine=fc.Engine.default, scale=1.0)
+    xy.chart(xy.bar(["a", "b"], np.array([1.0, 2.0]))).figure().build_payload_split(N_BUCKETS)
+    xy.chart(xy.histogram(y, bins=4)).figure().build_payload_split(N_BUCKETS)
+    raw_fig = xy.chart(xy.line(x=x, y=y)).figure()
+    raw_fig.to_png(engine=xy.Engine.default, scale=1.0)
 
     plt.close("all")
     fig, ax = plt.subplots()
@@ -157,10 +157,10 @@ def export_data() -> tuple[np.ndarray, np.ndarray]:
 
 
 def _raw_line_payload(x: np.ndarray, y: np.ndarray) -> int:
-    c = fc.chart(
-        fc.line(x=x, y=y, color="#1f77b4"),
-        fc.x_axis(),
-        fc.y_axis(),
+    c = xy.chart(
+        xy.line(x=x, y=y, color="#1f77b4"),
+        xy.x_axis(),
+        xy.y_axis(),
         width=WIDTH,
         height=HEIGHT,
     )
@@ -177,10 +177,10 @@ def _pyplot_line_payload(x: np.ndarray, y: np.ndarray) -> int:
 
 
 def _raw_scatter_payload(x: np.ndarray, y: np.ndarray) -> int:
-    c = fc.chart(
-        fc.scatter(x=x, y=y, color="#1f77b4", size=6.0),
-        fc.x_axis(),
-        fc.y_axis(),
+    c = xy.chart(
+        xy.scatter(x=x, y=y, color="#1f77b4", size=6.0),
+        xy.x_axis(),
+        xy.y_axis(),
         width=WIDTH,
         height=HEIGHT,
     )
@@ -197,10 +197,10 @@ def _pyplot_scatter_payload(x: np.ndarray, y: np.ndarray) -> int:
 
 
 def _raw_histogram_payload(values: np.ndarray) -> int:
-    c = fc.chart(
-        fc.histogram(values, bins=HIST_BINS),
-        fc.x_axis(),
-        fc.y_axis(),
+    c = xy.chart(
+        xy.histogram(values, bins=HIST_BINS),
+        xy.x_axis(),
+        xy.y_axis(),
         width=WIDTH,
         height=HEIGHT,
     )
@@ -217,10 +217,10 @@ def _pyplot_histogram_payload(values: np.ndarray) -> int:
 
 
 def _raw_bar_payload(categories: list[str], values: np.ndarray) -> int:
-    c = fc.chart(
-        fc.bar(categories, values),
-        fc.x_axis(),
-        fc.y_axis(),
+    c = xy.chart(
+        xy.bar(categories, values),
+        xy.x_axis(),
+        xy.y_axis(),
         width=WIDTH,
         height=HEIGHT,
     )
@@ -239,13 +239,13 @@ def _pyplot_bar_payload(categories: list[str], values: np.ndarray) -> int:
 def _raw_styled_panel_payload(
     x: np.ndarray, actual: np.ndarray, target: np.ndarray, sample: np.ndarray
 ) -> int:
-    c = fc.chart(
-        fc.line(x=x, y=actual, color="#ff0000", dash="dashed", width=2.0, name="actual"),
-        fc.line(x=x, y=target, color="#008000", name="target"),
-        fc.scatter(x=x, y=sample, color="#1f77b4", size=6.0, name="sample"),
-        fc.x_axis(label="time"),
-        fc.y_axis(label="value"),
-        fc.legend(),
+    c = xy.chart(
+        xy.line(x=x, y=actual, color="#ff0000", dash="dashed", width=2.0, name="actual"),
+        xy.line(x=x, y=target, color="#008000", name="target"),
+        xy.scatter(x=x, y=sample, color="#1f77b4", size=6.0, name="sample"),
+        xy.x_axis(label="time"),
+        xy.y_axis(label="value"),
+        xy.legend(),
         title="pipeline",
         width=WIDTH,
         height=HEIGHT,
@@ -324,7 +324,7 @@ def test_build_histogram_pyplot(benchmark, hist_values):
     """Same histogram via ax.hist, including its return-tuple construction.
 
     ax.hist pre-bins with NumPy (it must return matplotlib's (n, bins,
-    patches) tuple) and ships bar geometry, while fc.histogram bins natively
+    patches) tuple) and ships bar geometry, while xy.histogram bins natively
     and ships rect columns — so the two arms' payload layouts differ. Both
     must stay bounded by bin count, never by the observation count.
     """
@@ -373,8 +373,8 @@ def test_png_export_line_raw(benchmark, export_data):
     shim's gap.
     """
     x, y = export_data
-    fig = fc.chart(fc.line(x=x, y=y), width=WIDTH, height=HEIGHT).figure()
-    png = benchmark(fig.to_png, engine=fc.Engine.default, scale=2.0)
+    fig = xy.chart(xy.line(x=x, y=y), width=WIDTH, height=HEIGHT).figure()
+    png = benchmark(fig.to_png, engine=xy.Engine.default, scale=2.0)
     assert png.startswith(b"\x89PNG")
 
 

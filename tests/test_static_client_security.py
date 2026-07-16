@@ -39,21 +39,21 @@ def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
     the elements must carry only structural inline styles (no inline
     background/color that would beat a utility class)."""
     where_rules = (
-        ':where(.xy [data-fc-slot="tooltip"]){',
-        ':where(.xy [data-fc-slot="legend"]){',
-        ':where(.xy [data-fc-slot="legend_swatch"]){',
-        ':where(.xy [data-fc-slot="modebar"]){',
-        ':where(.xy [data-fc-slot="modebar_button"]){',
-        ":where(.xy [data-fc-modebar-menu]){",
-        ":where(.xy [data-fc-modebar-menu-item]){",
-        ':where(.xy [data-fc-slot="modebar_button"].fc-active){',
-        ':where(.xy [data-fc-slot="selection"]){',
-        ':where(.xy [data-fc-slot="badge_item"]){',
-        ':where(.xy [data-fc-slot="tick_label"]){',
-        ':where(.xy [data-fc-slot="axis_title"]){',
-        ':where(.xy [data-fc-slot="annotation_label"]){',
-        ':where(.xy [data-fc-slot="canvas"]){cursor:',
-        ':where(.xy [data-fc-slot="canvas"][data-fc-dragmode="pan"]){cursor:',
+        ':where(.xy [data-xy-slot="tooltip"]){',
+        ':where(.xy [data-xy-slot="legend"]){',
+        ':where(.xy [data-xy-slot="legend_swatch"]){',
+        ':where(.xy [data-xy-slot="modebar"]){',
+        ':where(.xy [data-xy-slot="modebar_button"]){',
+        ":where(.xy [data-xy-modebar-menu]){",
+        ":where(.xy [data-xy-modebar-menu-item]){",
+        ':where(.xy [data-xy-slot="modebar_button"].xy-active){',
+        ':where(.xy [data-xy-slot="selection"]){',
+        ':where(.xy [data-xy-slot="badge_item"]){',
+        ':where(.xy [data-xy-slot="tick_label"]){',
+        ':where(.xy [data-xy-slot="axis_title"]){',
+        ':where(.xy [data-xy-slot="annotation_label"]){',
+        ':where(.xy [data-xy-slot="canvas"]){cursor:',
+        ':where(.xy [data-xy-slot="canvas"][data-xy-dragmode="pan"]){cursor:',
     )
     tokens = (
         "--chart-tooltip-bg",
@@ -81,7 +81,7 @@ def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
     assert "background:var(--chart-tooltip-bg" not in chartview
     # modebar active state is a class toggle, never inline (its builder now lives
     # in 53_interaction.js, so assert against the whole client source).
-    assert 'btn.classList.toggle("fc-active"' in _CLIENT_SRC[1]
+    assert 'btn.classList.toggle("xy-active"' in _CLIENT_SRC[1]
 
 
 def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
@@ -123,12 +123,12 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
 def test_modebar_exports_are_local_and_exclude_interaction_chrome() -> None:
     """Browser exports stay self-contained and never serialize the toolbar itself."""
     required = (
-        'exportMenu.dataset.fcModebarExportMenu = "";',
+        'exportMenu.dataset.xyModebarExportMenu = "";',
         'new Blob([svg], { type: "image/svg+xml;charset=utf-8" })',
         'new Blob([this._exportCsvText()], { type: "text/csv;charset=utf-8" })',
         "link.download = filename;",
         "const content = new XMLSerializer().serializeToString(clone);",
-        '[data-fc-slot="modebar"],[data-fc-slot="tooltip"]',
+        '[data-xy-slot="modebar"],[data-xy-slot="tooltip"]',
         'const columns = ["trace", "name", "kind", "index", "x", "y"',
     )
     for path, text in CLIENT_FILES:
@@ -191,19 +191,19 @@ def test_client_numeric_styles_default_to_pixels_for_lengths() -> None:
 
 def test_client_selection_band_paint_is_a_defeatable_stylesheet_default() -> None:
     """The box-select/zoom band must paint via the zero-specificity :where()
-    stylesheet (keyed on data-fc-band), never inline — otherwise a
+    stylesheet (keyed on data-xy-band), never inline — otherwise a
     `class_names={"selection": …}` utility or `styles[selection]` would lose to
     the inline style, the one slot that breaks the "your styles always win"
     contract (§36)."""
     for path, text in CLIENT_FILES:
-        assert "this.selRect.dataset.fcBand =" in text, (
+        assert "this.selRect.dataset.xyBand =" in text, (
             f"{path} no longer drives the selection band via a data attribute"
         )
         assert "selRect.style.border" not in text and "selRect.style.background" not in text, (
             f"{path} pins selection band paint inline; it must be a stylesheet default"
         )
     for path, text in THEME_FILES:
-        assert '[data-fc-slot="selection"][data-fc-band="zoom"]){' in text, (
+        assert '[data-xy-slot="selection"][data-xy-band="zoom"]){' in text, (
             f"{path} is missing the defeatable zoom-band :where() default"
         )
 
@@ -244,8 +244,8 @@ def test_client_applies_every_public_dom_slot() -> None:
 
 def test_client_stamps_public_dom_slot_attributes() -> None:
     for path, text in CLIENT_FILES:
-        assert "el.dataset.fcSlot = slot;" in text, f"{path} no longer stamps data-fc-slot"
-        assert text.index("el.dataset.fcSlot = slot;") < text.index("const dom = this.spec.dom;"), (
+        assert "el.dataset.xySlot = slot;" in text, f"{path} no longer stamps data-xy-slot"
+        assert text.index("el.dataset.xySlot = slot;") < text.index("const dom = this.spec.dom;"), (
             f"{path} stamps slot attributes after reading spec.dom"
         )
 
@@ -378,8 +378,8 @@ def test_client_hardens_responsive_visibility_recovery() -> None:
 
 def test_client_quiesces_and_rebuilds_repeated_context_loss() -> None:
     required = (
-        'this.root.dataset.fcContextState = "lost";',
-        'this.root.dataset.fcContextState = "ready";',
+        'this.root.dataset.xyContextState = "lost";',
+        'this.root.dataset.xyContextState = "ready";',
         "this._contextLossCount += 1;",
         "this._contextRestoreCount += 1;",
         'this._dispatchChartEvent("context_lost"',
@@ -579,7 +579,7 @@ def test_annotation_labels_and_cursor_stay_css_defeatable() -> None:
     specificity :where() stylesheet, never as inline styles that beat classes."""
     for path, text in CLIENT_FILES:
         assert '_applySlot(d, "annotation_label")' in text, (
-            f"{path} annotation label carries no data-fc-slot for CSS targeting"
+            f"{path} annotation label carries no data-xy-slot for CSS targeting"
         )
 
     # Annotation label font is a stylesheet default, not inline (only the
@@ -595,7 +595,7 @@ def test_annotation_labels_and_cursor_stay_css_defeatable() -> None:
     interaction = _read(ROOT / "js/src/53_interaction.js")
     assert "cursor:" not in chartview, "canvas re-pins cursor inline"
     assert "this.canvas.style.cursor" not in interaction, "drag-mode re-pins cursor inline"
-    assert "this.canvas.dataset.fcDragmode = mode;" in interaction
+    assert "this.canvas.dataset.xyDragmode = mode;" in interaction
     assert "cursor:pointer" not in interaction, "modebar button pins cursor inline"
 
 
@@ -605,15 +605,15 @@ def test_client_renders_mark_level_styling() -> None:
     monotone-cubic densification are first-class mark styling
     (docs/styling.md#styling-the-marks)."""
     required = (
-        "fcGradSample(",  # gradient sampler shared by area + rect shaders
+        "xyGradSample(",  # gradient sampler shared by area + rect shaders
         "u_gradMode",
         'u("u_radius")',  # rounded-corner SDF uniform
         'u("u_strokeWidth")',
-        "fcGradSample(fcGradT(v_t, u_res)) * u_color.a",  # opacity composes w/ gradient
+        "xyGradSample(xyGradT(v_t, u_res)) * u_color.a",  # opacity composes w/ gradient
         "(v_pos - v_base) / (abs(denom)",  # area gradient: per-column, seam-free + even
-        "fcSmoothResample(",  # monotone cubic (Fritsch–Carlson)
-        "fcMonotoneTangents(",
-        "fcMarkerSdf(d, u_symbol)",  # scatter symbol shapes (circle/square/diamond/triangle/cross)
+        "xySmoothResample(",  # monotone cubic (Fritsch–Carlson)
+        "xyMonotoneTangents(",
+        "xyMarkerSdf(d, u_symbol)",  # scatter symbol shapes (circle/square/diamond/triangle/cross)
         "_pointMarkStyle(",  # point stroke + symbol resolution
         "rgb = mix(rgb, sc.rgb, sc.a);",  # selected/unselected recolor (mark_style)
         "v_dash = mix(a_len0, a_len1, c.x);",  # screen-space arc-length line dashes
@@ -640,8 +640,8 @@ def test_standalone_density_rebin_worker() -> None:
     as a badge, falling back to the stretched overview when workers are
     unavailable. The smoke proves it end-to-end under the production CSP."""
     required = (
-        "FC_REBIN_WORKER_SRC",  # worker source ships inside the bundle
-        "fcCreateRebinWorker(",
+        "XY_REBIN_WORKER_SRC",  # worker source ships inside the bundle
+        "xyCreateRebinWorker(",
         "_scheduleSampleRebin(",  # standalone branch of the view-request path
         "_requestSampleRebin(",
         '"zoom re-binned from sample"',  # §28: the reduction is badged

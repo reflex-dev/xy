@@ -61,7 +61,7 @@ def bench(lib, n: int) -> dict:
 
     # encode_f32
     enc = array("f", bytes(4 * n))
-    t = timeit(lambda: lib.fc_encode_f32(_ptr(x, D), n, x[n // 2], 1.0, _ptr(enc, F)))
+    t = timeit(lambda: lib.xy_encode_f32(_ptr(x, D), n, x[n // 2], 1.0, _ptr(enc, F)))
     encode_mpts = n / t / 1e6
 
     # zone_maps (64k chunks)
@@ -75,7 +75,7 @@ def bench(lib, n: int) -> dict:
     zc = array("Q", bytes(8 * nchunks))
     zn = array("Q", bytes(8 * nchunks))
     t = timeit(
-        lambda: lib.fc_zone_maps(
+        lambda: lib.xy_zone_maps(
             _ptr(x, D),
             n,
             65536,
@@ -95,14 +95,14 @@ def bench(lib, n: int) -> dict:
     buckets = 2048
     idx = array("I", bytes(4 * buckets * 4))
     t = timeit(
-        lambda: lib.fc_m4_indices(_ptr(x, D), _ptr(y, D), n, 0.0, float(n), buckets, _ptr(idx, U32))
+        lambda: lib.xy_m4_indices(_ptr(x, D), _ptr(y, D), n, 0.0, float(n), buckets, _ptr(idx, U32))
     )
     m4_mpts = n / t / 1e6
 
     # m4 over a 1% window (the zoom re-decimation cost — §17)
     x0, x1 = n * 0.495, n * 0.505
     t = timeit(
-        lambda: lib.fc_m4_indices(_ptr(x, D), _ptr(y, D), n, x0, x1, buckets, _ptr(idx, U32))
+        lambda: lib.xy_m4_indices(_ptr(x, D), _ptr(y, D), n, x0, x1, buckets, _ptr(idx, U32))
     )
     zoom_ms = t * 1e3
 
@@ -110,7 +110,7 @@ def bench(lib, n: int) -> dict:
     gw, gh = 512, 384
     grid = array("f", bytes(4 * gw * gh))
     t = timeit(
-        lambda: lib.fc_bin_2d(
+        lambda: lib.xy_bin_2d(
             _ptr(x, D), _ptr(y, D), n, 0.0, float(n), -3.0, 3.0, gw, gh, _ptr(grid, F)
         )
     )
@@ -121,20 +121,20 @@ def bench(lib, n: int) -> dict:
     bins = 512
     counts = array("d", bytes(8 * bins))
     t = timeit(
-        lambda: lib.fc_histogram_uniform(_ptr(x, D), n, 0.0, float(n), bins, 0, _ptr(counts, D))
+        lambda: lib.xy_histogram_uniform(_ptr(x, D), n, 0.0, float(n), bins, 0, _ptr(counts, D))
     )
     hist_mpts = n / t / 1e6
     hist_ms = t * 1e3
 
     # normalize_f32: color/size channels and heatmap normalization.
     norm = array("f", bytes(4 * n))
-    t = timeit(lambda: lib.fc_normalize_f32(_ptr(y, D), n, -1.0, 1.0, 0, _ptr(norm, F)))
+    t = timeit(lambda: lib.xy_normalize_f32(_ptr(y, D), n, -1.0, 1.0, 0, _ptr(norm, F)))
     norm_mpts = n / t / 1e6
 
     # range_indices: rectangular viewport/selection scan used by drilldown.
     sel = array("I", bytes(4 * n))
     t = timeit(
-        lambda: lib.fc_range_indices(
+        lambda: lib.xy_range_indices(
             _ptr(x, D), _ptr(y, D), n, n * 0.45, n * 0.55, -2.0, 2.0, _ptr(sel, U32)
         )
     )
@@ -146,7 +146,7 @@ def bench(lib, n: int) -> dict:
     local_n = min(n, 200_000)
     local = array("f", bytes(4 * local_n))
     t = timeit(
-        lambda: lib.fc_local_log_density(
+        lambda: lib.xy_local_log_density(
             _ptr(x, D),
             _ptr(y, D),
             local_n,

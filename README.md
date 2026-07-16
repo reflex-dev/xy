@@ -177,7 +177,7 @@ Still experimental and expected to change before 1.0:
 
 | Surface | Current status | Notes |
 |---|---|---|
-| Composition API | Stabilizing alpha | The single public chart-building API: declarative `fc.chart(...children)` with CSS/Tailwind hooks. |
+| Composition API | Stabilizing alpha | The single public chart-building API: declarative `xy.chart(...children)` with CSS/Tailwind hooks. |
 | Standalone HTML export | Stable alpha | Self-contained output with the client and binary data included. |
 | Native Rust backend | Stable alpha; required compute core | Published wheels include it; an unsupported build raises a clear error rather than degrading. |
 | Reflex integration | Experimental | Kept outside the core package dependency graph. |
@@ -186,7 +186,7 @@ Still experimental and expected to change before 1.0:
 The composition contract we are locking is intentionally narrow and durable:
 charts contain lightweight marks and chrome; `Chart` owns display and export;
 and `class_name`, `class_names`, and `style` reach stable DOM slots. It returns
-opaque framework objects passed to `fc.legend(...)` / `fc.tooltip(...)` to
+opaque framework objects passed to `xy.legend(...)` / `xy.tooltip(...)` to
 adapters without being serialized into standalone HTML. Python `on_*` callbacks
 stay widget-side; standalone HTML receives only the safe interaction flags
 needed for browser behavior.

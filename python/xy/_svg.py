@@ -702,7 +702,7 @@ _png_rgba = _png.png_truecolor
 
 
 def _monotone_tangents(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-    """Fritsch–Carlson tangents — the same construction as fcSmoothResample."""
+    """Fritsch–Carlson tangents — the same construction as xySmoothResample."""
     n = len(x)
     dx = np.diff(x)
     dy = np.diff(y)

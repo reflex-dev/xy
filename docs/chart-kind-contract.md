@@ -146,7 +146,7 @@ usually wrong). Each has an explicit trigger:
 1. Internal `Figure.<K>(...)` builder (`marks.py`) + `_emit_<K>` (kernel
    spec/columns, explicit tier).
 2. `MARK_KINDS[K] = { build, draw }` (+ shaders if a new primitive).
-3. Public composition surface: a `fc.<K>(...)` mark factory, an entry in
+3. Public composition surface: a `xy.<K>(...)` mark factory, an entry in
    `components._MARK_APPLIERS`, and a `*_chart` fn.
 4. Tests: payload shape + tier decision (pytest); a render probe in
    `scripts/render_smoke_nonumpy.py` asserting it lights pixels.

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-import xy as fc
+import xy
 from xy._figure import Figure
 from xy._svg import COLORMAP_STOPS
 
@@ -126,9 +126,9 @@ def test_svg_write_and_dimension_override(tmp_path: Path) -> None:
 
 
 def test_composition_chart_to_svg_parity() -> None:
-    chart = fc.line_chart(
-        fc.line(x=[0.0, 1.0], y=[1.0, 2.0], name="s"),
-        fc.x_axis(label="time"),
+    chart = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[1.0, 2.0], name="s"),
+        xy.x_axis(label="time"),
         title="comp",
     )
     svg = chart.to_svg(width=500, height=300)
