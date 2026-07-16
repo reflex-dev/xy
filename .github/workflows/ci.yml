@@ -116,7 +116,7 @@ jobs:
           python3 scripts/verify_benchmark_report.py kernel.json --kind kernel-native
           python3 scripts/verify_benchmark_report.py transport.json --kind transport-loopback
           python3 scripts/check_regressions.py --scatter scatter.json --kernel kernel.json \
-            --transport transport.json --emit-md docs/benchmark_metrics.md
+            --transport transport.json --emit-md docs/engineering/benchmark_metrics.md
 
       - name: Upload regression benchmark report
         if: always()
@@ -125,7 +125,7 @@ jobs:
           name: regression-benchmark-report
           if-no-files-found: warn
           path: |
-            docs/benchmark_metrics.md
+            docs/engineering/benchmark_metrics.md
             scatter.json
             kernel.json
             transport.json
@@ -254,7 +254,7 @@ jobs:
       - name: Python 3.11 tests (native core)
         run: .venv/bin/python -m pytest -q
 
-  # Cross-library scatter benchmark incl. time-to-first-render (docs/benchmark.md).
+  # Cross-library scatter benchmark incl. time-to-first-render (docs/engineering/benchmark.md).
   # Each isolated group uses the same deterministic input sizes and runs in
   # parallel. The report job below merges the partial results.
   benchmark_vs:

@@ -1,7 +1,7 @@
 # xy / xy
 
 A high-performance charting engine. The authoritative design is
-`docs/design-dossier.md` — **read the relevant § before changing behavior**;
+`docs/engineering/design-dossier.md` — **read the relevant § before changing behavior**;
 code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
 
 ## Layout
@@ -31,9 +31,9 @@ code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
 - `python/xy/pyplot/` — the matplotlib shim, fully contained
   (one-way dependency onto the public composition API; guardrails in
   `tests/pyplot/test_boundaries.py`). Corpus-defined compatibility:
-  `tests/pyplot/corpus/` + `docs/matplotlib-compat.md`.
+  `tests/pyplot/corpus/` + `docs/engineering/matplotlib-compat.md`.
 - `python/reflex-xy/` — the Reflex adapter, a separate distributable
-  package (`reflex_xy`; design: `docs/design/reflex-integration.md`). Chart
+  package (`reflex_xy`; design: `docs/engineering/design/reflex-integration.md`). Chart
   data rides the app's own websocket as a second socket.io namespace;
   figures live in a per-process registry rebuilt from Reflex state on miss.
   Depends on `xy` + `reflex`; `xy` itself must never import

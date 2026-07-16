@@ -3,7 +3,7 @@
 **Status:** methodology spec. Extends the shipped harness (`benchmarks/
 bench_vs.py` adapters, `categories.py` registry, `_browser.py` FCP-based
 TTFR, `bench_scatter_native.py`, CI `benchmark` job feeding
-`docs/benchmark.md`). Written to survive a hostile Hacker News thread: every
+`docs/engineering/benchmark.md`). Written to survive a hostile Hacker News thread: every
 number is mode-scoped, reproducible, oracle-checked, and the cases we *lose*
 are published.
 
@@ -93,7 +93,7 @@ reported).
   machine" — pre-empt by publishing both.
 - Every table header carries: dataset generator + seed, library versions,
   timestamp, harness commit. `benchmark.json` (already emitted by CI) is the
-  canonical artifact; `docs/benchmark.md` renders from it — numbers in prose
+  canonical artifact; `docs/engineering/benchmark.md` renders from it — numbers in prose
   that don't exist in the artifact are banned (existing policy, kept).
 - **Warm/cold discipline:** every timing reports which it is; first-run
   (cold cache) and steady-state are separate rows for TTFR and import.

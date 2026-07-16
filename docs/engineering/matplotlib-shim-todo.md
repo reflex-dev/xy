@@ -102,7 +102,7 @@ The shim can be called complete for ordinary 2-D scripts when:
 - [x] Optional support for real Matplotlib objects is tested in a dedicated CI
       environment.
 - [x] Public compatibility boundaries and intentional exclusions are current
-      in both this document and `docs/matplotlib-compat.md`.
+      in both this document and `docs/engineering/matplotlib-compat.md`.
 
 ## P0 — make the compatibility claim measurable
 
@@ -348,7 +348,7 @@ method accepts the call.
 - [x] `barbs`: non-default increments, flags, rounding, empty-barb, flip,
       color and size options now fail loudly instead of being discarded. The
       rendered glyph remains a documented visual approximation (bounded tick
-      count, not WMO barb geometry) — see `docs/matplotlib-compat.md`.
+      count, not WMO barb geometry) — see `docs/engineering/matplotlib-compat.md`.
 - [x] `quiverkey`: coordinates, label positions, fonts and sizing.
 - [x] `streamplot`: always integrates with the shim's own bounded fixed-step
       kernel, so output no longer depends on whether Matplotlib is installed;
@@ -416,7 +416,7 @@ method accepts the call.
 - [x] Add a useful typed public surface for `xy.pyplot`, `Axes`, `Figure`,
       common Artists, containers and return tuples; reduce broad `Any` usage.
 - [x] Add API documentation generated from the supported compatibility matrix.
-- [x] Fix the stale `docs/chart-roadmap.md` rows that still call pie, vector
+- [x] Fix the stale `docs/engineering/chart-roadmap.md` rows that still call pie, vector
       fields and irregular-grid families planned even though the shim exposes
       implementations.
 - [x] Document approximation levels: exact geometry, equivalent semantics,

@@ -83,6 +83,7 @@ include = [
     "CONTRIBUTING.md",
 ]
 exclude = [
+    "/docs/app/**",
     "/.*-venv/**",
     "/.venv/**",
     "/venv/**",
@@ -105,6 +106,7 @@ exclude = [
 line-length = 100
 target-version = "py311"
 src = ["python", "tests", "scripts", "benchmarks"]
+extend-exclude = ["docs/app"]
 
 [tool.ruff.lint]
 select = [

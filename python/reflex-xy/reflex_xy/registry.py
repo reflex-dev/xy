@@ -1,7 +1,7 @@
 """Per-process figure registry: tokens in Reflex state, figures in here.
 
 The registry is deliberately NOT a distributed store (see
-docs/design/reflex-integration.md §4): Reflex state is the durable,
+docs/engineering/design/reflex-integration.md §4): Reflex state is the durable,
 already-distributed source of truth, and every registered figure is a
 rebuildable cache of it — the same rule the dossier applies to GPU buffers
 (§27). A registry miss (worker restart, reconnect landing on another node)

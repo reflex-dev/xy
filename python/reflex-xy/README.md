@@ -5,7 +5,7 @@
 interactivity, and streaming updates — with chart data riding the app's
 **existing websocket**, not a sidecar API.
 
-Status: **prototype** implementing `docs/design/reflex-integration.md`.
+Status: **prototype** implementing `docs/engineering/design/reflex-integration.md`.
 
 ## How it works
 

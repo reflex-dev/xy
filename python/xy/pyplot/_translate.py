@@ -12,7 +12,7 @@ import numpy as np
 
 from ._colors import resolve_color
 
-COMPAT_URL = "https://github.com/reflex-dev/xy/blob/main/docs/matplotlib-compat.md"
+COMPAT_URL = "https://github.com/reflex-dev/xy/blob/main/docs/engineering/matplotlib-compat.md"
 
 # Matplotlib's unscaled named dash patterns, in points (rcParams
 # lines.{dashed,dotted,dashdot}_pattern). Matplotlib multiplies these by the
