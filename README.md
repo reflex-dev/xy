@@ -779,6 +779,14 @@ as `Browser lifecycle smoke (Chromium)`, `Browser visual regression smoke
 Chromium; the underlying `scripts/verify_local.py --list/--dry-run` commands
 show exactly what will run.
 
+The focused `make check-conformance` tier additionally exercises Chromium,
+Firefox, and WebKit for semantic chart/toolbar structure, direct-point keyboard
+readouts, reduced-motion behavior, WebGL perceptual signatures, and DOM layout
+boxes. This is an initial evidence-backed tier, not a claim of full WCAG parity
+or pixel-identical cross-browser output; the exact covered and still-open
+surfaces are recorded in
+[`docs/production-readiness.md`](docs/production-readiness.md).
+
 See [`docs/contributing.md`](docs/contributing.md) for the PR checklist and
 chart-type contribution guide.
 

@@ -195,6 +195,34 @@ jobs:
       - name: Benchmark smoke (1e5/1e6 — §12 harness runs every phase)
         run: .venv/bin/python scripts/bench.py --sizes 1e5,1e6
 
+  browser_conformance:
+    name: Accessibility + cross-browser conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: Cache Playwright browsers
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+      - name: Install Playwright browser engines
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium firefox webkit
+      - name: Verify committed JS bundles are fresh
+        run: node js/build.mjs --check
+      - name: Run accessibility and cross-browser conformance
+        # Headless Firefox on GitHub's Linux runners exposes no WebGL2. Use the
+        # virtual display installed by Playwright so every engine still runs
+        # the real WebGL rendering and perceptual assertions.
+        env:
+          MOZ_WEBRENDER: "1"
+          XY_CONFORMANCE_HEADFUL: "1"
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node scripts/browser_conformance.mjs
+
   python_floor:
     name: Python 3.11 floor
     runs-on: ubuntu-latest

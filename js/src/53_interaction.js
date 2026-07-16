@@ -213,6 +213,9 @@ Object.assign(ChartView.prototype, {
       const hadHover = this._hoverId !== -1;
       this._hoverId = -1;
       this._hoverTarget = null;
+      this._lastHoverXY = null;
+      this._a11yKeyboardReadout = null;
+      this._pickSeq = (this._pickSeq || 0) + 1;
       this.tooltip.style.display = "none";
       this._hideCrosshair();
       if (this._interactionFlag("hover")) {
@@ -236,6 +239,78 @@ Object.assign(ChartView.prototype, {
       this._clearSelection();
       this._setView(this.view0, { animate: true });
     });
+    this._listen(c, "keydown", (e) => this._onA11yKey(e));
+  },
+
+  _a11yPointGroups() {
+    return (this.gpuTraces || []).filter((g) =>
+      markOf(g.trace.kind).pointPick && g.tier !== "density" && g._cpu &&
+      g._cpu.x && g._cpu.y && Math.min(g._cpu.x.length, g._cpu.y.length) > 0);
+  },
+
+  _onA11yKey(e) {
+    const direction = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+    if (direction === undefined && e.key !== "Home" && e.key !== "End" && e.key !== "Escape") {
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      const hadHover = this._hoverId !== -1;
+      this.tooltip.style.display = "none";
+      this._hoverId = -1;
+      this._hoverTarget = null;
+      this._lastHoverXY = null;
+      this._a11yKeyboardReadout = null;
+      // Invalidate an exact-value reply already in flight so dismissal cannot
+      // reopen the tooltip. Keep _a11yPointIndex: refocusing resumes at the
+      // dismissed point, and every later traversal clamps it to current data.
+      this._pickSeq = (this._pickSeq || 0) + 1;
+      if (this.a11yLive) this.a11yLive.textContent = "Readout closed.";
+      if (hadHover && this._interactionFlag("hover")) {
+        this._dispatchChartEvent("leave", { view: this._eventView("leave") });
+      }
+      if (hadHover) this._drawKeepPick();
+      return;
+    }
+    e.preventDefault();
+    // Match pointer hover: never expose a readout against an in-between view,
+    // density handoff, or animated tier frame.
+    if (this._transitionActive()) return;
+    const groups = this._a11yPointGroups();
+    const total = groups.reduce((sum, g) => sum + Math.min(g._cpu.x.length, g._cpu.y.length), 0);
+    if (!total) return;
+    // Traversal intentionally follows trace/series data order, not visual x
+    // order: sorting would change source-row identity and make streamed appends
+    // reorder the user's position under focus.
+    let flat = Number.isInteger(this._a11yPointIndex) ? this._a11yPointIndex : -1;
+    if (e.key === "Home") flat = 0;
+    else if (e.key === "End") flat = total - 1;
+    else if (flat < 0) flat = direction > 0 ? 0 : total - 1;
+    else flat = Math.max(0, Math.min(total - 1, flat + direction));
+    this._a11yPointIndex = flat;
+    let offset = flat;
+    let g = groups[0];
+    for (const candidate of groups) {
+      const n = Math.min(candidate._cpu.x.length, candidate._cpu.y.length);
+      if (offset < n) { g = candidate; break; }
+      offset -= n;
+    }
+    const hit = { trace: g.trace.id, index: offset, g };
+    // Use the encoded numeric coordinates for positioning; _localRow may have
+    // already converted categorical coordinates into display strings.
+    const xValue = this._decodeValue(g._cpu.x, g._cpu.xMeta || g.xMeta, offset);
+    const yValue = this._decodeValue(g._cpu.y, g._cpu.yMeta || g.yMeta, offset);
+    const x = this._dataPx(g.xAxis || "x", xValue) - this.plot.x;
+    const y = this._dataPx(g.yAxis || "y", yValue) - this.plot.y;
+    const rect = this.canvas.getBoundingClientRect();
+    const clientX = rect.left + Math.max(0, Math.min(rect.width, x));
+    const clientY = rect.top + Math.max(0, Math.min(rect.height, y));
+    this._hoverId = hit.trace * 1e9 + hit.index;
+    this._hoverTarget = hit;
+    this._lastHoverXY = { clientX, clientY };
+    this._a11yKeyboardReadout = { flat, total };
+    this._showTooltip(hit, clientX, clientY);
+    this._drawKeepPick();
   },
 
   _updateCrosshair(e) {
@@ -617,6 +692,8 @@ Object.assign(ChartView.prototype, {
       `position:absolute;top:${this.plot.y + 4}px;left:${this.plot.x + 4}px;z-index:6;` +
       "display:flex;opacity:0;pointer-events:none;transition:opacity .15s;";
     this._applySlot(bar, "modebar");
+    bar.setAttribute("role", "toolbar");
+    bar.setAttribute("aria-label", "Chart controls");
     this._modebar = bar;
     this._modeBtns = {};
     this._modebarMoved = false;
@@ -721,6 +798,8 @@ Object.assign(ChartView.prototype, {
       const b = document.createElement("button");
       b.type = "button";
       b.title = title;
+      b.setAttribute("aria-label", title);
+      if (toggles) b.setAttribute("aria-pressed", "false");
       b.innerHTML = this._icon(name);
       // Box/size/color are stylesheet defaults (--chart-axis); only layout +
       // interactivity stay inline so a user class can restyle the button.
@@ -1119,6 +1198,7 @@ Object.assign(ChartView.prototype, {
     // --chart-modebar-active), not an inline background that would beat classes.
     for (const [name, btn] of Object.entries(this._modeBtns || {})) {
       btn.classList.toggle("fc-active", name === mode);
+      btn.setAttribute("aria-pressed", String(name === mode));
     }
     this._zoomMenuButton?.classList.toggle("fc-active", mode === "zoom");
     this._selectMenuButton?.classList.toggle("fc-active", mode.startsWith("select"));
