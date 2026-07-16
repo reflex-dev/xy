@@ -199,7 +199,7 @@ def test_live_preview_markdown_builds_real_xy_components(
     pages = [
         page
         for page in discover_docs(DOCS_CONFIG)
-        if "python demo-only exec" in page.content
+        if "python demo exec" in page.content
     ]
 
     assert len(pages) == 10

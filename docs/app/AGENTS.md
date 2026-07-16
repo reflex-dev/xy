@@ -100,8 +100,10 @@ repository root.
 - Public pages are Markdown files discovered through `DocsSiteConfig`. Add
   routes and sidebar order to `DOCS_NAVIGATION`; do not add ordering
   frontmatter to individual files.
-- Use `python demo-only exec` fences for live examples. They must compile into
-  real `reflex_xy.chart` components and static `.xyf` payloads.
+- Use `python demo exec` fences for code with a live preview, matching the
+  official Reflex docs. Reserve `python demo-only exec` for intentionally
+  hidden duplicate code. Demos must compile into real `reflex_xy.chart`
+  components and static `.xyf` payloads.
 - Preserve `/docs/xy` in internal links, canonical URLs, generated Markdown
   aliases, and sitemap entries.
 - Reuse `reflex-site-shared` for the docs shell, Markdown renderer, styles,

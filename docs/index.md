@@ -15,14 +15,19 @@ PNG, or SVG.
 
 ## Basic Example
 
-~~~python
+~~~python demo exec
 import numpy as np
+import reflex_xy
 import xy as fc
 
 months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
 values = np.array([
-    [42, 45, 48, 51, 55, 59],
-    [35, 38, 42, 40, 46, 50],
+    [42, 35],
+    [45, 38],
+    [48, 42],
+    [51, 40],
+    [55, 46],
+    [59, 50],
 ])
 
 chart = fc.column_chart(
@@ -32,38 +37,13 @@ chart = fc.column_chart(
         mode="grouped",
         series=["Revenue", "Pipeline"],
     ),
+    fc.legend(),
     title="Business overview",
 )
-~~~
-
-## Live Reflex Preview
-
-~~~python demo-only exec
-import reflex_xy
-import xy as fc
 
 
 def business_overview():
-    return reflex_xy.chart(
-        fc.column_chart(
-            fc.column(
-                ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
-                [
-                    [42, 35],
-                    [45, 38],
-                    [48, 42],
-                    [51, 40],
-                    [55, 46],
-                    [59, 50],
-                ],
-                mode="grouped",
-                series=["Revenue", "Pipeline"],
-            ),
-            fc.legend(),
-            title="Business overview",
-        ),
-        height="320px",
-    )
+    return reflex_xy.chart(chart, height="320px")
 ~~~
 
 ## What to Read Next

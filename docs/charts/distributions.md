@@ -14,8 +14,9 @@ XY includes four complementary distribution marks:
 
 ## Histograms and ECDFs
 
-~~~python
+~~~python demo exec
 import numpy as np
+import reflex_xy
 import xy as fc
 
 rng = np.random.default_rng(3)
@@ -24,6 +25,8 @@ latency = rng.gamma(shape=2.0, scale=40.0, size=100_000)
 histogram = fc.histogram_chart(
     fc.histogram(latency, bins=120, color="#6e56cf"),
     fc.x_axis(label="latency (ms)"),
+    fc.y_axis(label="requests"),
+    title="Request latency",
 )
 
 cdf = fc.ecdf_chart(
@@ -31,6 +34,10 @@ cdf = fc.ecdf_chart(
     fc.x_axis(label="latency (ms)"),
     fc.y_axis(label="fraction"),
 )
+
+
+def latency_distribution():
+    return reflex_xy.chart(histogram, height="320px")
 ~~~
 
 Histograms support `range`, `density`, and `cumulative`. With both
@@ -48,24 +55,4 @@ chart = fc.chart(
     fc.x_axis(label="cohort"),
     fc.y_axis(label="score"),
 )
-~~~
-
-## Live Reflex Preview
-
-~~~python demo-only exec
-import reflex_xy
-import xy as fc
-
-
-def latency_distribution():
-    latency = [18, 22, 24, 27, 31, 34, 37, 39, 43, 46, 52, 58, 67, 79, 96]
-    return reflex_xy.chart(
-        fc.histogram_chart(
-            fc.histogram(latency, bins=8, color="#6e56cf"),
-            fc.x_axis(label="latency (ms)"),
-            fc.y_axis(label="requests"),
-            title="Request latency",
-        ),
-        height="320px",
-    )
 ~~~

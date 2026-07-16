@@ -10,8 +10,9 @@ Use `heatmap` for an existing matrix, `hexbin` to aggregate point clouds, and
 
 ## Heatmaps
 
-~~~python
+~~~python demo exec
 import numpy as np
+import reflex_xy
 import xy as fc
 
 x = np.linspace(-3, 3, 80)
@@ -23,6 +24,10 @@ chart = fc.heatmap_chart(
     fc.heatmap(z, x=x, y=y, colormap="viridis"),
     fc.colorbar(),
 )
+
+
+def heatmap_chart_demo():
+    return reflex_xy.chart(chart, height="360px")
 ~~~
 
 `domain=(min, max)` fixes the color window. `x` and `y` may provide numeric or
@@ -50,32 +55,4 @@ Hexbin supports count bins or an additional `C` channel reduced per cell with
 chart = fc.contour_chart(
     fc.contour(z, x=x, y=y, levels=12, filled=True, colormap="viridis"),
 )
-~~~
-
-## Live Reflex Preview
-
-~~~python demo-only exec
-import reflex_xy
-import xy as fc
-
-
-def density_preview():
-    values = [
-        [0.05, 0.12, 0.20, 0.12, 0.05],
-        [0.10, 0.28, 0.52, 0.28, 0.10],
-        [0.18, 0.50, 1.00, 0.50, 0.18],
-        [0.10, 0.28, 0.52, 0.28, 0.10],
-        [0.05, 0.12, 0.20, 0.12, 0.05],
-    ]
-    figure = fc.heatmap_chart(
-        fc.heatmap(
-            values,
-            x=["Mon", "Tue", "Wed", "Thu", "Fri"],
-            y=["North", "East", "Central", "South", "West"],
-            colormap="viridis",
-        ),
-        fc.colorbar(),
-        title="Activity density",
-    )
-    return reflex_xy.chart(figure, height="360px")
 ~~~

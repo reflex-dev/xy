@@ -34,7 +34,9 @@ frontmatter to individual Markdown files. The `docs/engineering/` tree is
 internal project documentation and is intentionally excluded from the public
 site.
 
-Executable fences marked `python demo-only exec` become live Reflex previews.
+Executable fences marked `python demo exec` show their code and render a live
+Reflex preview beneath it, matching the official Reflex docs. Use
+`python demo-only exec` only when the code is intentionally shown elsewhere.
 Keep examples deterministic, small, and valid without external services.
 Static XY payloads generated during compilation are written below
 `assets/xy/` and must not be committed.

@@ -35,38 +35,20 @@ screen-bounded payload behavior.
 
 ## Layer Different Marks
 
-~~~python
+~~~python demo exec
+import reflex_xy
+import xy as fc
+
 chart = fc.chart(
     fc.bar(["A", "B", "C"], [4, 7, 5], color="#c4b5fd"),
     fc.scatter(["A", "B", "C"], [4.5, 6.5, 5.5], color="#1b212a"),
     fc.hline(6, text="Target"),
 )
+
+
+def layered_chart_demo():
+    return reflex_xy.chart(chart, height="360px")
 ~~~
 
 Children render in declaration order. Put broad fills and bands first, then
 lines or points, followed by annotations and chart chrome.
-
-## Live Reflex Preview
-
-~~~python demo-only exec
-import reflex_xy
-import xy as fc
-
-
-def layers_preview():
-    categories = ["A", "B", "C", "D"]
-    values = [4, 7, 5, 8]
-    figure = fc.chart(
-        fc.bar(categories, values, color="#c4b5fd", name="Actual"),
-        fc.scatter(
-            categories,
-            [4.5, 6.5, 5.5, 7.5],
-            color="#1b212a",
-            name="Forecast",
-        ),
-        fc.hline(6, text="Target", color="#6e56cf"),
-        fc.legend(),
-        title="Layered performance",
-    )
-    return reflex_xy.chart(figure, height="360px")
-~~~

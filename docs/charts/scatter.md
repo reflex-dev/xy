@@ -9,8 +9,9 @@ Scatter charts accept NumPy arrays directly and preserve interactive navigation.
 
 ## Create a Scatter Chart
 
-~~~python
+~~~python demo exec
 import numpy as np
+import reflex_xy
 import xy as fc
 
 rng = np.random.default_rng(7)
@@ -31,7 +32,14 @@ chart = fc.scatter_chart(
     fc.y_axis(label="feature B"),
     title="20k interactive points",
 )
+
+
+def scatter_chart_demo():
+    return reflex_xy.chart(chart, height="420px")
 ~~~
+
+Hover and selection resolve canonical source rows even when the visible
+overview uses an aggregated representation.
 
 ## Color and Size Encodings
 
@@ -48,35 +56,3 @@ Large point collections automatically switch to a bounded density surface when
 individual markers become sub-pixel. Set `density=True` to force aggregation,
 `False` to keep points, or leave it as `None` for automatic selection. Zooming
 can refine the visible window back toward exact points.
-
-## Live Reflex Preview
-
-~~~python demo-only exec
-import reflex_xy
-import xy as fc
-
-
-def feature_relationship():
-    x = [-2.4, -1.9, -1.4, -1.0, -0.7, -0.2, 0.1, 0.5, 0.9, 1.2, 1.7, 2.2]
-    y = [-1.1, -1.5, -0.6, -0.9, 0.2, -0.1, 0.6, 0.3, 1.2, 0.8, 1.6, 1.4]
-    return reflex_xy.chart(
-        fc.scatter_chart(
-            fc.scatter(
-                x,
-                y,
-                color=y,
-                size=[6, 8, 5, 9, 7, 6, 10, 8, 11, 7, 9, 12],
-                colormap="viridis",
-                size_range=(5, 14),
-                opacity=0.75,
-            ),
-            fc.x_axis(label="feature A"),
-            fc.y_axis(label="feature B"),
-            title="Feature relationship",
-        ),
-        height="320px",
-    )
-~~~
-
-Hover and selection resolve canonical source rows even when the visible
-overview uses an aggregated representation.

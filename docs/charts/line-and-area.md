@@ -11,8 +11,9 @@ named axes.
 
 ## Layer Lines and Areas
 
-~~~python
+~~~python demo exec
 import numpy as np
+import reflex_xy
 import xy as fc
 
 x = np.linspace(0, 12, 240)
@@ -34,40 +35,10 @@ chart = fc.chart(
     fc.y_axis(label="revenue"),
     fc.legend(),
 )
-~~~
-
-## Live Reflex Preview
-
-~~~python demo-only exec
-import reflex_xy
-import xy as fc
 
 
 def plan_and_actual():
-    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
-    return reflex_xy.chart(
-        fc.chart(
-            fc.area(
-                months,
-                [42, 47, 51, 49, 58, 64],
-                name="Actual",
-                color="#6e56cf",
-                opacity=0.35,
-                curve="smooth",
-            ),
-            fc.line(
-                months,
-                [40, 44, 48, 52, 56, 60],
-                name="Plan",
-                color="#2563eb",
-                dash="dashed",
-            ),
-            fc.x_axis(label="month"),
-            fc.y_axis(label="revenue"),
-            fc.legend(),
-        ),
-        height="320px",
-    )
+    return reflex_xy.chart(chart, height="320px")
 ~~~
 
 `base` on `area` may be a scalar, array, or named column. Set
