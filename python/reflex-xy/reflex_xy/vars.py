@@ -14,61 +14,107 @@ registry. Reflex's own dependency tracking decides when that happens:
   the component resubscribes, the registry misses, and the namespace
   rebuilds from state via the builder this module attached to the var.
 
-The builder must be a pure function of its state instance (same discipline
-as any cached computed var) — that purity is exactly what makes the figure
-a rebuildable cache instead of precious process state.
+Sync and async builders are both supported, mirroring reflex's own
+`ComputedVar`/`AsyncComputedVar` split (and using the same
+`iscoroutinefunction` dispatch `rx.var` uses): an ``async def`` builder may
+await a database, an HTTP endpoint, or a dataframe store, and evaluates
+under reflex's normal async-var machinery — cached the same way, marked
+dirty the same way.
+
+Builders must be pure functions of their state instance (same discipline as
+any cached computed var) — that purity is exactly what makes the figure a
+rebuildable cache instead of precious process state. For async builders the
+bar is "deterministic given state": fetching the rows your state points at
+is fine; the rebuild path (state_bridge.py) will await the same fetch when
+a fresh worker needs the figure back.
 """
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from typing import Any, Optional, overload
 
-from reflex_base.vars.base import ComputedVar
+from reflex_base.vars.base import AsyncComputedVar, ComputedVar
 
 from .registry import _figure_of, registry
 from .tokens import BUILDER_ATTR, build_state_token
 
-__all__ = ["FigureVar", "figure"]
+__all__ = ["AsyncFigureVar", "FigureVar", "figure"]
+
+
+def _builder_target(var: Any, obj: Any) -> Any:
+    """Point dependency tracking at the *builder*, not the token wrapper:
+    reflex should track what the chart reads, and the wrapper fget reads
+    nothing but the router."""
+    if obj is not None:
+        return obj
+    return getattr(var._fget, BUILDER_ATTR, None)
 
 
 class FigureVar(ComputedVar):
-    """ComputedVar whose value is a figure token and whose dependencies are
-    the *builder's* — reflex tracks what the chart reads, not what the
-    token-minting wrapper reads."""
+    """ComputedVar whose value is a figure token (sync builder)."""
 
     def _deps(self, objclass: Any, obj: Any = None) -> dict[str, set[str]]:
-        if obj is None:
-            builder = getattr(self._fget, BUILDER_ATTR, None)
-            if builder is not None:
-                obj = builder
-        return super()._deps(objclass, obj=obj)
+        return ComputedVar._deps(self, objclass, obj=_builder_target(self, obj))
+
+
+class AsyncFigureVar(AsyncComputedVar):
+    """AsyncComputedVar whose value is a figure token (async builder)."""
+
+    def _deps(self, objclass: Any, obj: Any = None) -> dict[str, set[str]]:
+        return AsyncComputedVar._deps(self, objclass, obj=_builder_target(self, obj))
+
+
+def _mint_token(state: Any, builder_name: str) -> Optional[str]:
+    """Deterministic token for this (session, state, var) — or None
+    pre-hydration (no session yet, so no figure to serve; the component
+    treats "" as "not ready" and waits for the hydrated value)."""
+    client_token = state.router.session.client_token
+    if not client_token:
+        return None
+    return build_state_token(client_token, type(state).get_full_name(), builder_name)
+
+
+def _publish(token: str, chart: Any) -> str:
+    if chart is None:
+        registry.release(token)
+        return ""
+    registry.publish(token, _figure_of(chart))
+    return token
+
+
+def _adopt_identity(fget: Any, builder: Callable[..., Any], name: str) -> None:
+    fget.__name__ = name
+    fget.__qualname__ = getattr(builder, "__qualname__", name)
+    fget.__module__ = getattr(builder, "__module__", fget.__module__)
+    fget.__doc__ = builder.__doc__
+    setattr(fget, BUILDER_ATTR, builder)
 
 
 def _make_fget(builder: Callable[[Any], Any]) -> Callable[[Any], str]:
     builder_name = _fn_name(builder)
 
     def fget(self: Any) -> str:
-        client_token = self.router.session.client_token
-        if not client_token:
-            # Pre-hydration evaluation (e.g. initial state snapshot at
-            # compile time): no session yet, so no figure to serve. The
-            # component treats "" as "not ready" and waits for the
-            # hydrated value.
+        token = _mint_token(self, builder_name)
+        if token is None:
             return ""
-        token = build_state_token(client_token, type(self).get_full_name(), builder_name)
-        chart = builder(self)
-        if chart is None:
-            registry.release(token)
-            return ""
-        registry.publish(token, _figure_of(chart))
-        return token
+        return _publish(token, builder(self))
 
-    fget.__name__ = builder_name
-    fget.__qualname__ = getattr(builder, "__qualname__", builder_name)
-    fget.__module__ = getattr(builder, "__module__", fget.__module__)
-    fget.__doc__ = builder.__doc__
-    setattr(fget, BUILDER_ATTR, builder)
+    _adopt_identity(fget, builder, builder_name)
+    return fget
+
+
+def _make_async_fget(builder: Callable[[Any], Any]) -> Callable[[Any], Any]:
+    builder_name = _fn_name(builder)
+
+    async def fget(self: Any) -> str:
+        token = _mint_token(self, builder_name)
+        if token is None:
+            return ""
+        return _publish(token, await builder(self))
+
+    _adopt_identity(fget, builder, builder_name)
     return fget
 
 
@@ -81,18 +127,18 @@ def _fn_name(fn: Callable[..., Any]) -> str:
 
 
 @overload
-def figure(builder: Callable[[Any], Any]) -> FigureVar: ...
+def figure(builder: Callable[[Any], Any]) -> "FigureVar | AsyncFigureVar": ...
 
 
 @overload
 def figure(
     builder: None = None, **var_kwargs: Any
-) -> Callable[[Callable[[Any], Any]], FigureVar]: ...
+) -> Callable[[Callable[[Any], Any]], "FigureVar | AsyncFigureVar"]: ...
 
 
 def figure(
     builder: Optional[Callable[[Any], Any]] = None, **var_kwargs: Any
-) -> "FigureVar | Callable[[Callable[[Any], Any]], FigureVar]":
+) -> "FigureVar | AsyncFigureVar | Callable[[Callable[[Any], Any]], FigureVar | AsyncFigureVar]":
     """Declare a chart on a Reflex state class.
 
     Usage::
@@ -105,16 +151,22 @@ def figure(
                 x, y = self._points(self.n)
                 return xy.scatter_chart(xy.scatter(x, y))
 
+            @reflex_xy.figure
+            async def remote(self) -> xy.Chart:
+                rows = await fetch_rows(self.query)     # db / http / store
+                return xy.line_chart(xy.line(rows.t, rows.value))
+
         # in the page:  reflex_xy.chart(Dash.chart, height="480px")
 
     The method must return a public ``xy`` chart (or an internal
-    Figure), or ``None`` for "no chart right now". Keyword arguments pass
-    through to reflex's ``ComputedVar`` (``deps=``, ``auto_deps=``,
-    ``interval=``, ...); dependencies are auto-tracked from the builder's
-    body by default, exactly like a normal ``@rx.var``.
+    Figure), or ``None`` for "no chart right now". ``async def`` builders
+    become reflex ``AsyncComputedVar``s (same dispatch rule as ``rx.var``).
+    Keyword arguments pass through to reflex's computed var (``deps=``,
+    ``auto_deps=``, ``interval=``, ...); dependencies are auto-tracked from
+    the builder's body by default, exactly like a normal ``@rx.var``.
     """
 
-    def _decorate(fn: Callable[[Any], Any]) -> FigureVar:
+    def _decorate(fn: Callable[[Any], Any]) -> "FigureVar | AsyncFigureVar":
         if _fn_name(fn).startswith("_"):
             # Backend (underscore) vars never reach the client, but the
             # token must — refuse early with a clear message instead of
@@ -124,6 +176,8 @@ def figure(
             )
             raise ValueError(msg)
         var_kwargs.setdefault("cache", True)
+        if inspect.iscoroutinefunction(fn):
+            return AsyncFigureVar(fget=_make_async_fget(fn), return_type=str, **var_kwargs)
         return FigureVar(fget=_make_fget(fn), return_type=str, **var_kwargs)
 
     if builder is None:

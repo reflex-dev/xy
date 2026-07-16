@@ -16,6 +16,7 @@ the same contract cached computed vars already impose.
 
 from __future__ import annotations
 
+import inspect
 from typing import TYPE_CHECKING, Any, Optional
 
 from .registry import _figure_of
@@ -53,7 +54,12 @@ async def rebuild_figure(app: Any, parsed: ParsedToken) -> Optional["Figure"]:
     token = rx.BaseStateToken(ident=parsed.client_token, cls=rx.State)
     root = await app.state_manager.get_state(token)
     substate = await root.get_state(state_cls)
-    chart = builder(substate)
+    # Async builders (AsyncFigureVar) await their data source here exactly
+    # as they would during normal var evaluation.
+    if inspect.iscoroutinefunction(builder):
+        chart = await builder(substate)
+    else:
+        chart = builder(substate)
     if chart is None:
         return None
     return _figure_of(chart)

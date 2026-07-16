@@ -47,10 +47,11 @@ from .app import XYPlugin, append, setup
 from .component import chart
 from .namespace import XY_NAMESPACE, XYNamespace
 from .registry import FigureRegistry, _figure_of, registry
-from .vars import FigureVar, figure
+from .vars import AsyncFigureVar, FigureVar, figure
 
 __all__ = [
     "XY_NAMESPACE",
+    "AsyncFigureVar",
     "FigureRegistry",
     "FigureVar",
     "XYNamespace",

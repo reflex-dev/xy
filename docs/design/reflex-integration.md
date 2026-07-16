@@ -148,6 +148,11 @@ class Dash(rx.State):
     def cloud(self) -> xy.Chart:
         x, y, mag = load(self.points)
         return xy.scatter_chart(xy.scatter(x, y, color=mag), width="100%", height=460)
+
+    @reflex_xy.figure
+    async def remote(self) -> xy.Chart:
+        rows = await fetch_rows(self.query)      # db / http / dataframe store
+        return xy.line_chart(xy.line(rows.t, rows.value), width="100%", height=220)
 ```
 
 `@reflex_xy.figure` is a computed var whose **value is only the token
@@ -165,11 +170,20 @@ subclass points dependency analysis at it), so:
 - Reconnect (same node or another): the cached token comes back with the
   state; the component re-`sub`s; hit → serve, miss → §3.2.
 
+Async builders are first-class, mirroring reflex's own
+`ComputedVar`/`AsyncComputedVar` split with the same
+`iscoroutinefunction` dispatch `rx.var` uses: an `async def` builder becomes
+an `AsyncFigureVar` (an `AsyncComputedVar`), evaluated and cached by
+reflex's normal async-var machinery, and the rebuild path awaits the same
+builder when a fresh worker recovers the figure.
+
 Builders must be pure functions of their state instance — the discipline
 cached computed vars already impose — because purity is exactly what makes
-the figure a *rebuildable cache* instead of precious process state. This is
-§27 applied to processes: canonical data is Reflex state; every registered
-figure is a derived buffer.
+the figure a *rebuildable cache* instead of precious process state (for
+async builders: deterministic given state — refetching the rows state
+points at is exactly the recovery contract). This is §27 applied to
+processes: canonical data is Reflex state; every registered figure is a
+derived buffer.
 
 ### 3.2 Registry miss: rebuild from state
 

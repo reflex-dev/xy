@@ -39,6 +39,14 @@ def _cloud(n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     return x, y, np.hypot(x, y)
 
 
+async def _magnitudes() -> tuple[np.ndarray, np.ndarray]:
+    """Async data source for the histogram builder — stands in for a
+    database, HTTP endpoint, or dataframe-store round trip."""
+    await asyncio.sleep(0)
+    x, _, mag = _cloud(POINTS)
+    return x, mag
+
+
 class Demo(rx.State):
     """Charts are figure vars; everything else is ordinary app state."""
 
@@ -63,8 +71,10 @@ class Demo(rx.State):
         )
 
     @reflex_xy.figure
-    def histogram(self) -> xy.Chart:
-        x, _, mag = _cloud(POINTS)
+    async def histogram(self) -> xy.Chart:
+        # Async builder: reflex evaluates it as an AsyncComputedVar, so the
+        # data pull can await a database / HTTP endpoint / dataframe store.
+        x, mag = await _magnitudes()
         if self.sel_active and self.sel_x1 > self.sel_x0:
             mag = mag[(x >= self.sel_x0) & (x <= self.sel_x1)]
         label = "selection" if self.sel_active else "all points"

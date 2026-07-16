@@ -72,6 +72,16 @@ Change `points` in an event handler and the chart re-publishes itself to
 every subscriber — the token never changes, so nothing re-renders except
 pixels.
 
+Builders can be `async def` (they become reflex `AsyncComputedVar`s, same
+rule as `rx.var`) — await a database, HTTP endpoint, or dataframe store:
+
+```python
+    @reflex_xy.figure
+    async def remote(self) -> xy.Chart:
+        rows = await fetch_rows(self.query)
+        return xy.line_chart(xy.line(rows.t, rows.value))
+```
+
 Streaming: `reflex_xy.append(token, x=[...], y=[...])` from any handler or
 background task pushes an incremental update over the same socket.
 

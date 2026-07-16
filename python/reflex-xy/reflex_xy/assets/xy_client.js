@@ -241,16 +241,34 @@ const FC_CHROME_CSS = `
 :where(.xy [data-fc-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
 :where(.xy [data-fc-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
 :where(.xy [data-fc-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
-:where(.xy [data-fc-slot="modebar_button"]){width:26px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-axis,currentColor);cursor:pointer}
+:where(.xy [data-fc-slot="modebar_button"]){width:24px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-text,currentColor);cursor:pointer}
+:where(.xy [data-fc-modebar-drag-handle]){position:relative;width:22px;margin-right:4px;cursor:move}
+:where(.xy [data-fc-modebar-drag-handle])::after{content:"";position:absolute;top:4px;right:-3px;bottom:4px;width:1px;background:rgba(128,128,128,.28);pointer-events:none}
+:where(.xy [data-fc-modebar-menu-trigger]){width:auto;min-width:48px;gap:1px;padding:0 4px;font-size:11px;font-variant-numeric:tabular-nums}
+:where(.xy [data-fc-modebar-select-trigger]){width:auto;min-width:30px;gap:0;padding:0 2px}
+:where(.xy [data-fc-modebar-menu-indicator]){display:flex;transition:transform .15s}
+:where(.xy [data-fc-modebar-menu-indicator] svg){width:11px;height:11px}
+:where(.xy [data-fc-modebar-menu]){min-width:148px;gap:1px;padding:4px;background:var(--chart-modebar-bg,rgba(255,255,255,.94));border:1px solid rgba(128,128,128,.22);border-radius:7px;box-shadow:0 5px 18px rgba(15,23,42,.18);backdrop-filter:blur(8px)}
+:where(.xy [data-fc-modebar-menu-item]){width:100%;height:28px;justify-content:flex-start;padding:0 9px;border-radius:4px;text-align:left;white-space:nowrap}
+:where(.xy [data-fc-modebar-menu-item]:hover,.xy [data-fc-modebar-menu-item]:focus-visible){background:var(--chart-modebar-active,rgba(128,128,128,.18));outline:none}
+:where(.xy [data-fc-modebar-menu-item][data-fc-separator]){margin-top:3px;border-top:1px solid rgba(128,128,128,.2);border-radius:0 0 4px 4px}
+:where(.xy [data-fc-modebar-menu-icon]){display:flex;width:16px;margin-right:7px}
+:where(.xy [data-fc-modebar-menu-icon] svg){width:14px;height:14px}
 :where(.xy [data-fc-slot="modebar_button"].fc-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
 :where(.xy [data-fc-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
 :where(.xy [data-fc-slot="selection"][data-fc-band="zoom"]){border-color:var(--chart-zoom-selection,rgba(120,120,120,.9));background:var(--chart-zoom-selection-fill,rgba(120,120,120,.12))}
+:where(.xy [data-fc-selection-lasso]){fill:var(--chart-selection-fill,rgba(90,140,240,.15));stroke:var(--chart-selection,rgba(90,140,240,.9));stroke-width:1.5;stroke-linejoin:round;pointer-events:none}
+:where(.xy [data-fc-selection-lasso-handle]){fill:var(--chart-bg,#fff);stroke:var(--chart-selection,rgba(90,140,240,.9));stroke-width:1.5;cursor:grab;pointer-events:all}
+:where(.xy [data-fc-selection-lasso-handle][data-fc-active]){cursor:grabbing;fill:var(--chart-selection,rgba(90,140,240,.9))}
 :where(.xy [data-fc-slot="crosshair_x"],.xy [data-fc-slot="crosshair_y"]){background:var(--chart-crosshair,rgba(15,23,42,.42))}
 :where(.xy [data-fc-slot="tick_label"]){color:var(--chart-text,inherit)}
 :where(.xy [data-fc-slot="axis_title"]){color:var(--chart-text,inherit);font-size:12px}
 :where(.xy [data-fc-slot="annotation_label"]){font-size:11px;line-height:1.2;font-weight:500;color:var(--chart-annotation-text,var(--chart-text,inherit))}
 :where(.xy [data-fc-slot="canvas"]){cursor:var(--chart-cursor,crosshair)}
 :where(.xy [data-fc-slot="canvas"][data-fc-dragmode="pan"]){cursor:var(--chart-cursor-pan,grab)}
+:where(.xy [data-fc-slot="canvas"]:focus-visible,.xy [data-fc-slot="modebar_button"]:focus-visible){outline:2px solid var(--chart-focus,#2563eb);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){:where(.xy [data-fc-slot="modebar"]){transition-duration:0s!important}}
+@media (forced-colors:active){:where(.xy [data-fc-slot="modebar"],.xy [data-fc-slot="tooltip"]){border:1px solid CanvasText}:where(.xy [data-fc-slot="modebar_button"].fc-active){outline:2px solid Highlight}:where(.xy [data-fc-slot="canvas"]:focus){outline:2px solid Highlight}}
 `;
 function ensureChromeStylesheet(node) {
 let root = node && node.getRootNode ? node.getRootNode() : document;
@@ -1666,6 +1684,10 @@ return null;
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
 const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
+let FC_A11Y_ID = 0;
+const FC_SR_ONLY_STYLE =
+"position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;" +
+"clip:rect(0,0,0,0);white-space:nowrap;border:0;";
 const UNITLESS_STYLE_PROPS = new Set([
 "animation-iteration-count",
 "aspect-ratio",
@@ -1720,6 +1742,14 @@ const candidates = live
 .filter((view) => !view._ctxVisible)
 .sort((a, b) => (a._ctxSeenSeq || 0) - (b._ctxSeenSeq || 0));
 for (const view of candidates) {
+if (over <= 0) break;
+if (view._releaseContext()) over -= 1;
+}
+if (over <= 0) return;
+const visible = live
+.filter((view) => view._ctxVisible)
+.sort((a, b) => (a._ctxSeenSeq || 0) - (b._ctxSeenSeq || 0));
+for (const view of visible) {
 if (over <= 0) break;
 if (view._releaseContext()) over -= 1;
 }
@@ -1778,7 +1808,10 @@ this.fluidH = spec.height === "100%";
 const rect = this.fluid || this.fluidH ? el.getBoundingClientRect() : null;
 const cw = this.fluid ? Math.round(rect.width) || 640 : spec.width;
 const ch = this.fluidH ? Math.round(rect.height) || 420 : spec.height;
-this.size = { w: Math.max(120, cw), h: Math.max(120, ch) };
+this.size = {
+w: Math.max(this.fluid ? 120 : 48, cw),
+h: Math.max(this.fluidH ? 120 : 48, ch),
+};
 this._layout();
 this._buildDom(el);
 this.theme = readTheme(this.root);
@@ -1794,6 +1827,7 @@ this._contextLossCount = 0;
 this._contextRestoreCount = 0;
 this._contextRecoveryError = null;
 this._initGl(buffer);
+this._initA11y();
 this.root.dataset.fcContextState = "ready";
 this._initContextLossRecovery();
 this._armContextVisibilityWatch();
@@ -2144,6 +2178,7 @@ this._contextRecoveryError = null;
 this.root.dataset.fcContextState = "ready";
 this._scheduleViewRequest(this.view, { delay: 0 });
 this.draw();
+this._dropContextSnapshot();
 this._dispatchChartEvent("context_restored", {
 loss_count: this._contextLossCount,
 restore_count: this._contextRestoreCount,
@@ -2154,6 +2189,7 @@ _releaseContext() {
 if (this._destroyed || !this.gl || this._glLost || this.gl.isContextLost()) return false;
 const ext = this.gl.getExtension("WEBGL_lose_context");
 if (!ext) return false;
+this._snapshotBeforeRelease();
 this._ctxReleasedExt = ext;
 this._ctxReleases += 1;
 this._glLost = true;
@@ -2162,6 +2198,33 @@ if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
 ext.loseContext();
 return true;
+}
+_snapshotBeforeRelease() {
+try {
+if (this._raf) cancelAnimationFrame(this._raf);
+this._raf = null;
+this._rafKeepPick = true;
+this._drawNow();
+let snap = this._ctxSnapshot;
+if (!snap) {
+snap = this._ctxSnapshot = document.createElement("canvas");
+snap.dataset.fcCtxSnapshot = "";
+}
+snap.width = this.canvas.width;
+snap.height = this.canvas.height;
+snap.style.cssText = this.canvas.style.cssText;
+snap.style.pointerEvents = "none";
+snap.getContext("2d").drawImage(this.canvas, 0, 0);
+this.canvas.before(snap);
+this.canvas.style.visibility = "hidden";
+} catch (_err) {
+this._dropContextSnapshot();
+}
+}
+_dropContextSnapshot() {
+this.canvas.style.visibility = "";
+if (this._ctxSnapshot) this._ctxSnapshot.remove();
+this._ctxSnapshot = null;
 }
 _recoverContext() {
 if (this._destroyed || !this._glLost) return;
@@ -2203,8 +2266,12 @@ return;
 }
 this._scheduleViewRequest(this.view, { delay: 0 });
 this.draw();
+this._dropContextSnapshot();
 }
 _armContextVisibilityWatch() {
+this._listen(this.root, "pointerenter", () => {
+if (this._glLost && !this._destroyed) this._recoverContext();
+});
 if (typeof IntersectionObserver === "undefined") {
 this._ctxVisible = true;
 return;
@@ -2240,11 +2307,12 @@ this.chrome.style.width = this.size.w + "px";
 this.chrome.style.height = this.size.h + "px";
 this.chrome.width = this.size.w * this.dpr;
 this.chrome.height = this.size.h * this.dpr;
-if (this._legend && this._slotStyleValue("legend", "max-height") == null) {
-this._legend.style.maxHeight = p.h - 12 + "px";
+if (this._legends && this._legends.length && this._slotStyleValue("legend", "max-height") == null) {
+for (const lg of this._legends) lg.style.maxHeight = p.h - 12 + "px";
 }
 this._positionReductionBadges();
 this._positionColorbar();
+this._fitModebar();
 this._pickDirty = true;
 this.draw();
 this._scheduleViewRequest();
@@ -2262,6 +2330,26 @@ this._applySlot(root, "root");
 el.appendChild(root);
 this.root = root;
 ensureChromeStylesheet(root);
+let a11yId;
+do {
+a11yId = `xy-a11y-${++FC_A11Y_ID}`;
+} while (
+document.getElementById(`${a11yId}-summary`) || document.getElementById(`${a11yId}-live`)
+);
+root.setAttribute("role", "region");
+root.setAttribute("aria-label", s.title ? `Chart: ${s.title}` : "Interactive chart");
+this.a11ySummary = document.createElement("div");
+this.a11ySummary.id = `${a11yId}-summary`;
+this.a11ySummary.style.cssText = FC_SR_ONLY_STYLE;
+root.setAttribute("aria-describedby", this.a11ySummary.id);
+root.appendChild(this.a11ySummary);
+this.a11yLive = document.createElement("div");
+this.a11yLive.id = `${a11yId}-live`;
+this.a11yLive.setAttribute("role", "status");
+this.a11yLive.setAttribute("aria-live", "polite");
+this.a11yLive.setAttribute("aria-atomic", "true");
+this.a11yLive.style.cssText = FC_SR_ONLY_STYLE;
+root.appendChild(this.a11yLive);
 if (s.title) {
 const t = document.createElement("div");
 t.textContent = s.title;
@@ -2278,6 +2366,9 @@ this.canvas.style.cssText =
 `position:absolute;left:${this.plot.x}px;top:${this.plot.y}px;` +
 `width:${this.plot.w}px;height:${this.plot.h}px;touch-action:none;`;
 this._applySlot(this.canvas, "canvas");
+this.canvas.tabIndex = 0;
+this.canvas.setAttribute("role", "img");
+this.canvas.setAttribute("aria-describedby", this.a11ySummary.id);
 root.appendChild(this.canvas);
 this.labels = document.createElement("div");
 this.labels.style.cssText = "position:absolute;inset:0;pointer-events:none;";
@@ -2287,10 +2378,38 @@ this.tooltip = document.createElement("div");
 this.tooltip.style.cssText =
 "position:absolute;display:none;pointer-events:none;z-index:5;white-space:nowrap;";
 this._applySlot(this.tooltip, "tooltip");
+this.tooltip.setAttribute("aria-hidden", "true");
 root.appendChild(this.tooltip);
 this._buildLegend(root);
 this._buildColorbar(root);
 this._buildReductionBadges(root);
+}
+_a11yAxisSummary(axisId, name) {
+const axis = this._axis(axisId);
+const range = axis.range || [];
+if (range.length < 2) return null;
+const label = axis.label ? `${name} axis (${axis.label})` : `${name} axis`;
+return `${label} ranges from ${fmtValue(range[0], axis.kind)} to ${fmtValue(range[1], axis.kind)}.`;
+}
+_a11ySummaryText() {
+const traces = Array.isArray(this.spec.traces) ? this.spec.traces : [];
+const parts = [this.spec.title ? `${this.spec.title}.` : "Interactive chart."];
+parts.push(`${traces.length} data series.`);
+const names = traces.map((trace) => trace && trace.name).filter(Boolean).slice(0, 6);
+if (names.length) parts.push(`Series: ${names.join(", ")}.`);
+const x = this._a11yAxisSummary("x", "X");
+const y = this._a11yAxisSummary("y", "Y");
+if (x) parts.push(x);
+if (y) parts.push(y);
+return parts.join(" ");
+}
+_initA11y() {
+if (!this.a11ySummary || !this.canvas) return;
+this.a11ySummary.textContent = this._a11ySummaryText();
+const instruction = this._pickable
+? " Use Arrow keys to explore data points in series data order; Home and End jump to the first and last point; Escape closes the readout."
+: "";
+this.canvas.setAttribute("aria-label", `Plot area.${instruction}`);
 }
 _compactInt(value) {
 const n = Number(value);
@@ -2351,8 +2470,9 @@ this._refreshReductionBadges();
 }
 _buildLegend(root) {
 const s = this.spec;
-if (s.show_legend === false) return;
+this._legends = [];
 const items = [];
+if (s.show_legend !== false) {
 for (const t of s.traces) {
 if (t.tier === "density") {
 items.push({ swatch: "gradient", cmap: t.density.colormap, name: t.name || "density" });
@@ -2363,27 +2483,40 @@ items.push({ swatch: t.color.palette[i], name: cat, symbol: t.kind === "scatter"
 items.push({ swatch: "gradient", cmap: t.color.colormap, name: t.name || "value" });
 } else if (t.name) {
 const c = (t.color && t.color.color) || (t.style && t.style.color);
-items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, style: t.style || {} });
+const line = ["line", "segments", "step", "stairs", "errorbar"].includes(t.kind);
+items.push({ swatch: c, name: t.name, symbol: t.kind === "scatter" ? (t.style?.symbol || "circle") : null, line, style: t.style || {} });
 }
 }
-if (!items.length) return;
+if (items.length) this._legendBox(root, items, s.legend || {});
+}
+for (const extra of s.extra_legends || []) {
+const mapped = (extra.items || []).map((it) => ({
+swatch: it.style && it.style.color,
+name: it.name,
+symbol: it.kind === "scatter" ? (it.style?.symbol || "circle") : null,
+line: ["line", "segments", "step", "stairs", "errorbar"].includes(it.kind),
+style: it.style || {},
+}));
+if (mapped.length) this._legendBox(root, mapped, extra);
+}
+}
+_legendBox(root, items, options) {
 const lg = document.createElement("div");
-const options = s.legend || {};
 const loc = options.loc || "upper right";
 const ncols = Math.max(1, Number(options.ncols) || 1);
 const rightInset = this.size.w - (this.plot.x + this.plot.w);
 const horizontal = ncols > 1;
-const xPos = loc.includes("left")
-? `left:${this.plot.x + 6}px;`
-: loc.includes("center")
-? `left:${this.plot.x + this.plot.w / 2}px;transform:translateX(-50%);`
-: `right:${rightInset + 6}px;`;
-const yPos = loc.includes("lower")
-? `bottom:${this.size.h - (this.plot.y + this.plot.h) + 6}px;`
-: loc === "center" || loc.includes("center left") || loc.includes("center right")
-? `top:${this.plot.y + this.plot.h / 2}px;transform:${loc.includes("center") && !loc.includes("left") && !loc.includes("right") ? "translate(-50%,-50%)" : "translateY(-50%)"};`
-: `top:${this.plot.y + 6}px;`;
-lg.style.cssText = `position:absolute;${xPos}${yPos}` +
+const h = loc.includes("left") ? "left" : loc.includes("right") ? "right" : "center";
+const v = loc.includes("upper") ? "upper" : loc.includes("lower") ? "lower" : "center";
+let xPos, yPos, tx = "0", ty = "0";
+if (h === "left") xPos = `left:${this.plot.x + 6}px;`;
+else if (h === "right") xPos = `right:${rightInset + 6}px;`;
+else { xPos = `left:${this.plot.x + this.plot.w / 2}px;`; tx = "-50%"; }
+if (v === "upper") yPos = `top:${this.plot.y + 6}px;`;
+else if (v === "lower") yPos = `bottom:${this.size.h - (this.plot.y + this.plot.h) + 6}px;`;
+else { yPos = `top:${this.plot.y + this.plot.h / 2}px;`; ty = "-50%"; }
+const transform = tx === "0" && ty === "0" ? "" : `transform:translate(${tx},${ty});`;
+lg.style.cssText = `position:absolute;${xPos}${yPos}${transform}` +
 `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
 "overflow:auto;" + `max-height:${this.plot.h - 12}px;`;
 this._applySlot(lg, "legend");
@@ -2436,6 +2569,24 @@ svg.appendChild(path);
 sw.appendChild(svg);
 sw.style.width = "18px";
 sw.style.height = "14px";
+} else if (it.line) {
+const ns = "http://www.w3.org/2000/svg";
+const svg = document.createElementNS(ns, "svg");
+svg.setAttribute("viewBox", "0 0 22 12");
+svg.setAttribute("width", "22");
+svg.setAttribute("height", "12");
+const ln = document.createElementNS(ns, "line");
+ln.setAttribute("x1", "1");
+ln.setAttribute("y1", "6");
+ln.setAttribute("x2", "21");
+ln.setAttribute("y2", "6");
+ln.setAttribute("stroke", safeCssPaint(this.root, bg));
+ln.setAttribute("stroke-width", String(it.style?.width ?? 1.5));
+if (it.style?.dash && it.style.dash.length) ln.setAttribute("stroke-dasharray", it.style.dash.join(" "));
+svg.appendChild(ln);
+sw.appendChild(svg);
+sw.style.width = "22px";
+sw.style.height = "12px";
 } else {
 sw.style.background = safeCssPaint(this.root, bg);
 }
@@ -2445,7 +2596,8 @@ row.appendChild(document.createTextNode(it.name));
 lg.appendChild(row);
 }
 root.appendChild(lg);
-this._legend = lg;
+this._legends.push(lg);
+return lg;
 }
 _buildColorbar(root) {
 const cb = this.spec.colorbar;
@@ -2966,6 +3118,53 @@ const style = t.style || {};
 g.meshStrokeWidth = Number(style.stroke_width) || 0;
 g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
 }
+_buildHexbinMark(g, t, buffer) {
+const cx = this._columnView(buffer, this.spec.columns[t.x]);
+const cy = this._columnView(buffer, this.spec.columns[t.y]);
+const xMeta = { ...this.spec.columns[t.x] };
+const yMeta = { ...this.spec.columns[t.y] };
+const n = Math.min(cx.length, cy.length);
+const style = t.style || {};
+const dx = (Number(style.hex_dx) || 0) * (xMeta.scale || 1);
+const dy = (Number(style.hex_dy) || 0) * (yMeta.scale || 1);
+const ringX = [0, dx / 2, dx / 2, 0, -dx / 2, -dx / 2, 0];
+const ringY = [-dy / 3, -dy / 6, dy / 6, dy / 3, dy / 6, -dy / 6, -dy / 3];
+const parts = {};
+for (const name of ["x0", "x1", "x2", "y0", "y1", "y2"]) parts[name] = new Float32Array(n * 6);
+for (let i = 0; i < n; i++) {
+const px = cx[i], py = cy[i];
+for (let k = 0; k < 6; k++) {
+const j = i * 6 + k;
+parts.x0[j] = px;
+parts.y0[j] = py;
+parts.x1[j] = px + ringX[k];
+parts.y1[j] = py + ringY[k];
+parts.x2[j] = px + ringX[k + 1];
+parts.y2[j] = py + ringY[k + 1];
+}
+}
+for (const name of ["x0", "x1", "x2"]) {
+g[name + "Meta"] = { ...xMeta };
+g[name + "Buf"] = this._upload(parts[name]);
+}
+for (const name of ["y0", "y1", "y2"]) {
+g[name + "Meta"] = { ...yMeta };
+g[name + "Buf"] = this._upload(parts[name]);
+}
+g.n = n * 6;
+g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
+g.colorMode = 0;
+if (t.color && (t.color.mode === "continuous" || t.color.mode === "categorical")) {
+g.colorMode = t.color.mode === "continuous" ? 1 : 2;
+const cval = this._columnView(buffer, this.spec.columns[t.color.buf]);
+const expanded = new Float32Array(n * 6);
+for (let i = 0; i < n; i++) expanded.fill(cval[i], i * 6, i * 6 + 6);
+g.cBuf = this._upload(expanded);
+g.lut = t.color.mode === "continuous" ? this._lut(t.color.colormap) : this._paletteLut(t.color.palette);
+}
+g.meshStrokeWidth = Number(style.stroke_width) || 0;
+g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
+}
 _buildAreaMark(g, t, buffer) {
 const x = this._columnView(buffer, this.spec.columns[t.x]);
 const y = this._columnView(buffer, this.spec.columns[t.y]);
@@ -3239,6 +3438,7 @@ gl.uniform1i(u(`${prefix}mode`), this._axisMode(axisId));
 }
 draw(keepPick = false) {
 if (this._destroyed || this._glLost || !this.gl) return;
+this._updateZoomMenuLabel?.();
 if (this._raf) {
 this._rafKeepPick = this._rafKeepPick && keepPick;
 return;
@@ -3256,9 +3456,7 @@ const gl = this.gl;
 const { x0, x1, y0, y1 } = this.view;
 gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-const bg = this.theme.bg;
-if (bg) gl.clearColor(bg[0] * bg[3], bg[1] * bg[3], bg[2] * bg[3], bg[3]);
-else gl.clearColor(0, 0, 0, 0);
+gl.clearColor(0, 0, 0, 0);
 gl.clear(gl.COLOR_BUFFER_BIT);
 for (const g of this.gpuTraces) {
 if (g.tier === "density") {
@@ -3273,6 +3471,7 @@ this._drawHoverState();
 if (!this._rafKeepPick) this._pickDirty = true;
 this._rafKeepPick = false;
 this._drawChrome();
+this._renderLassoSelection?.();
 }
 _now() {
 return performance.now();
@@ -3490,7 +3689,13 @@ const [vy0, vy1] = this._axisRange(g.yAxis);
 gl.uniform4f(u("u_view"), vx0 ?? x0, vx1 ?? x1, vy0 ?? y0, vy1 ?? y1);
 gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
 gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
-gl.uniform4f(u("u_gridRange"), h.xRange[0], h.xRange[1], h.yRange[0], h.yRange[1]);
+const xrev = (vx0 ?? x0) > (vx1 ?? x1);
+const yrev = (vy0 ?? y0) > (vy1 ?? y1);
+gl.uniform4f(
+u("u_gridRange"),
+h.xRange[xrev ? 1 : 0], h.xRange[xrev ? 0 : 1],
+h.yRange[yrev ? 1 : 0], h.yRange[yrev ? 0 : 1],
+);
 gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
 gl.uniform1i(u("u_truecolor"), h.truecolor ? 1 : 0);
 gl.activeTexture(gl.TEXTURE0);
@@ -4031,6 +4236,10 @@ this.labels.textContent = "";
 this._lastLabelDraw = now;
 }
 const p = this.plot;
+if (this.theme.bg) {
+ctx.fillStyle = cssColor(this.theme.bg);
+ctx.fillRect(p.x, p.y, p.w, p.h);
+}
 const xAxis = this._axis("x");
 const yAxis = this._axis("y");
 const hideX = this._axisTickLabelStrategy(xAxis) === "none";
@@ -4440,18 +4649,25 @@ if (!h || !g._cpuHeatmap) return null;
 const [x0, x1] = h.xRange;
 const [y0, y1] = h.yRange;
 if (dataX < x0 || dataX > x1 || dataY < y0 || dataY > y1) return null;
-const col = Math.min(h.w - 1, Math.max(0, Math.floor(((dataX - x0) / (x1 - x0)) * h.w)));
-const row = Math.min(h.h - 1, Math.max(0, Math.floor(((dataY - y0) / (y1 - y0)) * h.h)));
+const [ax0, ax1] = this._axisRange(g.xAxis) ?? [this.view.x0, this.view.x1];
+const [ay0, ay1] = this._axisRange(g.yAxis) ?? [this.view.y0, this.view.y1];
+const fx = ((ax0 ?? this.view.x0) > (ax1 ?? this.view.x1)) ? (x1 - dataX) : (dataX - x0);
+const fy = ((ay0 ?? this.view.y0) > (ay1 ?? this.view.y1)) ? (y1 - dataY) : (dataY - y0);
+const col = Math.min(h.w - 1, Math.max(0, Math.floor((fx / (x1 - x0)) * h.w)));
+const row = Math.min(h.h - 1, Math.max(0, Math.floor((fy / (y1 - y0)) * h.h)));
 return { trace: g.trace.id, index: row * h.w + col, g, heatmap: { row, col }, synthetic: true };
 }
 _drawKeepPick() {
 this.draw(true);
 }
 _hover(e) {
+this._a11yKeyboardReadout = null;
 if (this._transitionActive()) {
 const hadHover = this._hoverId !== -1;
 this._hoverId = -1;
 this._hoverTarget = null;
+this._lastHoverXY = null;
+this._pickSeq = (this._pickSeq || 0) + 1;
 this.tooltip.style.display = "none";
 if (hadHover) this.draw();
 return;
@@ -4464,6 +4680,8 @@ if (!hit) {
 const hadHover = this._hoverId !== -1;
 this._hoverId = -1;
 this._hoverTarget = null;
+this._lastHoverXY = null;
+this._pickSeq = (this._pickSeq || 0) + 1;
 this.tooltip.style.display = "none";
 if (hadHover) this._drawKeepPick();
 return;
@@ -4614,6 +4832,135 @@ this._glPrograms = this._progCache;
 this.gpuTraces = [];
 }
 }
+const FC_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
+"color",
+"label_color",
+"width",
+"head_size",
+"head_style",
+"tail_style",
+"shaft_width_start",
+"shaft_width_end",
+"curve",
+"angle_a",
+"angle_b",
+"gap_start",
+"gap_end",
+"start_offset",
+"label_clear",
+"dash",
+"span_start",
+"span_end",
+"size",
+"symbol",
+"stroke_color",
+"stroke_width",
+"coordinate_space",
+]);
+function fcLabelClearExit(style, tangent) {
+if (typeof style.label_clear !== "string") return 0;
+const parts = style.label_clear.split(",").map(Number);
+if (parts.length !== 4 || parts.some((p) => !Number.isFinite(p) || p < 0)) return 0;
+const [left, right, up, down] = parts;
+const [tx, ty] = tangent;
+const exitX = tx > 1e-9 ? right / tx : tx < -1e-9 ? left / -tx : Infinity;
+const exitY = ty > 1e-9 ? down / ty : ty < -1e-9 ? up / -ty : Infinity;
+const exit = Math.min(exitX, exitY);
+return Number.isFinite(exit) ? exit : 0;
+}
+function fcArrowGeometry(x0, y0, x1, y1, style) {
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+if (typeof style.start_offset === "string") {
+const offset = style.start_offset.split(",").map(Number);
+if (offset.length === 2 && offset.every(Number.isFinite)) {
+x0 += offset[0];
+y0 += offset[1];
+}
+}
+const angleA = num(style.angle_a);
+const angleB = num(style.angle_b);
+const curve = num(style.curve);
+let cx = null;
+let cy = null;
+if (angleA !== null && angleB !== null) {
+const a = (-angleA * Math.PI) / 180;
+const b = (-angleB * Math.PI) / 180;
+const denom = Math.cos(a) * Math.sin(b) - Math.sin(a) * Math.cos(b);
+if (Math.abs(denom) > 1e-6) {
+const t = ((x1 - x0) * Math.sin(b) - (y1 - y0) * Math.cos(b)) / denom;
+cx = x0 + t * Math.cos(a);
+cy = y0 + t * Math.sin(a);
+}
+} else if (curve) {
+const dx = x1 - x0;
+const dy = y1 - y0;
+cx = (x0 + x1) / 2 + curve * dy;
+cy = (y0 + y1) / 2 - curve * dx;
+}
+const toward = (px, py, qx, qy) => {
+const d = Math.hypot(qx - px, qy - py) || 1;
+return [(qx - px) / d, (qy - py) / d];
+};
+const t0 = cx === null ? toward(x0, y0, x1, y1) : toward(x0, y0, cx, cy);
+const t1 = cx === null ? toward(x1, y1, x0, y0) : toward(x1, y1, cx, cy);
+const gapStart = Math.max(0, num(style.gap_start) || 0, fcLabelClearExit(style, t0));
+const gapEnd = Math.max(0, num(style.gap_end) || 0);
+const span = Math.hypot(x1 - x0, y1 - y0);
+const trim = gapStart + gapEnd < span * 0.9;
+const p0 = trim ? [x0 + gapStart * t0[0], y0 + gapStart * t0[1]] : [x0, y0];
+const p1 = trim ? [x1 + gapEnd * t1[0], y1 + gapEnd * t1[1]] : [x1, y1];
+const dir1 = cx === null ? toward(p0[0], p0[1], p1[0], p1[1]) : toward(cx, cy, p1[0], p1[1]);
+const dir0 = cx === null ? toward(p1[0], p1[1], p0[0], p0[1]) : toward(cx, cy, p0[0], p0[1]);
+return { p0, p1, control: cx === null ? null : [cx, cy], dir0, dir1 };
+}
+function fcArrowShaftPoints(geom, samples = 24) {
+const [x0, y0] = geom.p0;
+const [x1, y1] = geom.p1;
+if (!geom.control) return [[x0, y0], [x1, y1]];
+const [cx, cy] = geom.control;
+const points = [];
+for (let i = 0; i <= samples; i++) {
+const t = i / samples;
+const u = 1 - t;
+points.push([u * u * x0 + 2 * u * t * cx + t * t * x1, u * u * y0 + 2 * u * t * cy + t * t * y1]);
+}
+return points;
+}
+function fcTrimPolylineEnd(points, trim) {
+if (!(trim > 0) || points.length < 2) return points;
+const out = points.slice();
+let remaining = trim;
+while (out.length >= 2) {
+const [ax, ay] = out[out.length - 2];
+const [bx, by] = out[out.length - 1];
+const seg = Math.hypot(bx - ax, by - ay);
+if (seg > remaining) {
+const t = 1 - remaining / seg;
+out[out.length - 1] = [ax + t * (bx - ax), ay + t * (by - ay)];
+return out;
+}
+remaining -= seg;
+out.pop();
+}
+return out;
+}
+function fcTaperPolygon(points, w0, w1) {
+const left = [];
+const right = [];
+const count = points.length;
+for (let i = 0; i < count; i++) {
+const [px, py] = points[i];
+const [ax, ay] = points[Math.max(0, i - 1)];
+const [bx, by] = points[Math.min(count - 1, i + 1)];
+const d = Math.hypot(bx - ax, by - ay) || 1;
+const nx = -(by - ay) / d;
+const ny = (bx - ax) / d;
+const half = (w0 + (w1 - w0) * (i / Math.max(1, count - 1))) / 2;
+left.push([px + half * nx, py + half * ny]);
+right.push([px - half * nx, py - half * ny]);
+}
+return left.concat(right.reverse());
+}
 Object.assign(ChartView.prototype, {
 _annotationPaint(style, fallback) {
 return safeCssPaint(this.root, style && style.color, fallback);
@@ -4661,8 +5008,7 @@ ctx.restore();
 },
 _drawArrowLine(ctx, x0, y0, x1, y1, style) {
 if (![x0, y0, x1, y1].every(Number.isFinite)) return;
-const angle = Math.atan2(y1 - y0, x1 - x0);
-const head = Math.max(7, this._styleNumber(style, "head_size", 8));
+const geom = fcArrowGeometry(x0, y0, x1, y1, style);
 ctx.save();
 ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
 ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
@@ -4670,23 +5016,65 @@ ctx.fillStyle = ctx.strokeStyle;
 ctx.lineWidth = Math.max(0.5, this._styleNumber(style, "width", 1.5));
 ctx.setLineDash(Array.isArray(style.dash) ? style.dash :
 (typeof style.dash === "string" ? style.dash.split(",").map(Number) : []));
-ctx.beginPath();
-ctx.moveTo(x0, y0);
-ctx.lineTo(x1, y1);
-ctx.stroke();
-ctx.beginPath();
-ctx.moveTo(x1, y1);
-ctx.lineTo(
-x1 - head * Math.cos(angle - Math.PI / 6),
-y1 - head * Math.sin(angle - Math.PI / 6)
+const w0 = Number(style.shaft_width_start);
+const w1 = Number(style.shaft_width_end);
+const headStyle = style.head_style || "triangle";
+const head = Math.max(4, this._styleNumber(style, "head_size", 8));
+if (Number.isFinite(w0) || Number.isFinite(w1)) {
+let points = fcArrowShaftPoints(geom);
+if (headStyle === "triangle") {
+points = fcTrimPolylineEnd(points, head * Math.cos(Math.PI / 6));
+}
+const polygon = fcTaperPolygon(
+points,
+Number.isFinite(w0) ? w0 : 1,
+Number.isFinite(w1) ? w1 : 1
 );
-ctx.lineTo(
-x1 - head * Math.cos(angle + Math.PI / 6),
-y1 - head * Math.sin(angle + Math.PI / 6)
-);
+ctx.beginPath();
+ctx.moveTo(polygon[0][0], polygon[0][1]);
+for (let i = 1; i < polygon.length; i++) ctx.lineTo(polygon[i][0], polygon[i][1]);
 ctx.closePath();
 ctx.fill();
+} else {
+ctx.beginPath();
+ctx.moveTo(geom.p0[0], geom.p0[1]);
+if (geom.control) ctx.quadraticCurveTo(geom.control[0], geom.control[1], geom.p1[0], geom.p1[1]);
+else ctx.lineTo(geom.p1[0], geom.p1[1]);
+ctx.stroke();
+}
+this._drawArrowEnd(ctx, geom.p1, geom.dir1, headStyle, head);
+this._drawArrowEnd(ctx, geom.p0, geom.dir0, style.tail_style || "none", head);
 ctx.restore();
+},
+_drawArrowEnd(ctx, point, dir, endStyle, head) {
+if (endStyle === "none") return;
+const [px, py] = point;
+const angle = Math.atan2(dir[1], dir[0]);
+ctx.beginPath();
+if (endStyle === "bar") {
+ctx.moveTo(px - (head / 2) * Math.sin(angle), py + (head / 2) * Math.cos(angle));
+ctx.lineTo(px + (head / 2) * Math.sin(angle), py - (head / 2) * Math.cos(angle));
+ctx.stroke();
+return;
+}
+const wing = (side) => [
+px - head * Math.cos(angle - side * Math.PI / 6),
+py - head * Math.sin(angle - side * Math.PI / 6),
+];
+const [ax, ay] = wing(1);
+const [bx, by] = wing(-1);
+if (endStyle === "v") {
+ctx.moveTo(ax, ay);
+ctx.lineTo(px, py);
+ctx.lineTo(bx, by);
+ctx.stroke();
+return;
+}
+ctx.moveTo(px, py);
+ctx.lineTo(ax, ay);
+ctx.lineTo(bx, by);
+ctx.closePath();
+ctx.fill();
 },
 _drawAnnotationShapes(ctx) {
 const annotations = Array.isArray(this.spec.annotations) ? this.spec.annotations : [];
@@ -4830,18 +5218,60 @@ const d = document.createElement("div");
 d.textContent = text;
 const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
 const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
-const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0";
+const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0px";
+const rot = Number.isFinite(Number(style.rotation))
+? ((Number(style.rotation) % 360) + 360) % 360
+: 0;
+const va = String(style.vertical_align || "");
+const vAnchor =
+va === "center" || va === "middle" ? "-50%"
+: va === "bottom" ? "-100%"
+: va === "top" ? "0px"
+: "calc(-100% + 0.35em)";
+let transform = `translate(${anchor},${vAnchor})`;
+if (rot === 90 || rot === 270) {
+const cw = rot === 270;
+const along =
+va === "center" || va === "middle" ? "-50%"
+: va === "top" ? (cw ? "0" : "-100%")
+: va === "bottom" ? (cw ? "-100%" : "0")
+: cw ? "0" : "-100%";
+const cross =
+ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? (cw ? "0" : "-100%") : cw ? "-100%" : "0";
+transform = `rotate(${cw ? 90 : -90}deg) translate(${along},${cross})`;
+} else if (rot) {
+transform = `rotate(${-rot}deg) translate(${anchor},${vAnchor})`;
+}
 d.style.cssText =
 `position:absolute;left:${px + dx}px;top:${py + dy}px;` +
-`transform:translate(${anchor},0);pointer-events:none;` +
-`white-space:pre-line;text-align:center;`;
+`transform:${transform};transform-origin:0 0;pointer-events:none;` +
+`white-space:pre-line;text-align:center;width:max-content;`;
 this._applySlot(d, "annotation_label");
 this._applyClass(d, ann.class_name);
-this._applyStyle(d, style);
+const labelStyle = {};
+for (const [key, value] of Object.entries(style)) {
+if (FC_ANNOTATION_SHAPE_STYLE_KEYS.has(key)) continue;
+labelStyle[key] = value;
+}
+this._applyStyle(d, labelStyle);
 if (style && (style.label_color || style.color)) {
 d.style.color = this._annotationLabelPaint(style, this.theme.label);
 }
 this.labels.appendChild(d);
+const cs = getComputedStyle(d);
+const edge = (pad, border) => (parseFloat(pad) || 0) + (parseFloat(border) || 0);
+const padL = edge(cs.paddingLeft, cs.borderLeftWidth);
+const padR = edge(cs.paddingRight, cs.borderRightWidth);
+const padT = edge(cs.paddingTop, cs.borderTopWidth);
+const padB = edge(cs.paddingBottom, cs.borderBottomWidth);
+if ((padL || padR || padT || padB) && rot !== 90 && rot !== 270) {
+const hShift = anchor === "-100%" ? padR : anchor === "-50%" ? 0 : -padL;
+const vShift =
+vAnchor === "-50%" ? 0 : vAnchor === "0px" ? -padT : padB;
+d.style.transform =
+`${rot ? `rotate(${-rot}deg) ` : ""}` +
+`translate(calc(${anchor} + ${hShift}px), calc(${vAnchor} + ${vShift}px))`;
+}
 }
 },
 });
@@ -5034,7 +5464,7 @@ lines.push(`${field}: ${this._formatTooltipValue(value, kind, formats[field])}`)
 }
 return lines.length ? lines : this._defaultTooltipLines(row);
 },
-_renderTooltip(row, clientX, clientY) {
+_renderTooltip(row, clientX, clientY, options = {}) {
 if (!row || this.spec.show_tooltip === false) {
 this.tooltip.style.display = "none";
 return;
@@ -5048,6 +5478,14 @@ lines.forEach((ln, i) => {
 if (i) this.tooltip.appendChild(document.createElement("br"));
 this.tooltip.appendChild(document.createTextNode(ln));
 });
+if (this.a11yLive && options.announce !== false) {
+const prefix = this._a11yKeyboardReadout;
+const detail = lines.join(", ");
+const announcement = prefix
+? `Point ${prefix.flat + 1} of ${prefix.total}. ${detail}`
+: detail;
+if (this.a11yLive.textContent !== announcement) this.a11yLive.textContent = announcement;
+}
 this.tooltip.style.display = "block";
 const tw = this.tooltip.offsetWidth;
 this.tooltip.style.left = Math.min(lx + 12, this.size.w - tw - 4) + "px";
@@ -5063,6 +5501,66 @@ this.selRect = document.createElement("div");
 this.selRect.style.cssText = "position:absolute;display:none;pointer-events:none;z-index:4;";
 this._applySlot(this.selRect, "selection");
 this.root.appendChild(this.selRect);
+this.selLasso = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+this.selLasso.style.cssText =
+"position:absolute;display:none;pointer-events:none;z-index:4;overflow:visible;";
+this.selLasso.dataset.fcSelectionLassoOverlay = "";
+this.selLassoPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+this.selLassoPath.dataset.fcSelectionLasso = "";
+this.selLasso.appendChild(this.selLassoPath);
+this.selLassoHandles = document.createElementNS("http://www.w3.org/2000/svg", "g");
+this.selLassoHandles.dataset.fcSelectionLassoHandles = "";
+this.selLasso.appendChild(this.selLassoHandles);
+this.root.appendChild(this.selLasso);
+this._lassoPolygon = null;
+let lassoHandleDrag = null;
+const moveLassoHandle = (e) => {
+if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId
+|| !this._lassoPolygon) return;
+const rect = c.getBoundingClientRect();
+const cssX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+const cssY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+this._lassoPolygon[lassoHandleDrag.index] = this._dataFromCanvas(cssX, cssY);
+this._renderLassoSelection();
+e.preventDefault();
+e.stopPropagation();
+};
+this._listen(this.selLasso, "pointerdown", (e) => {
+const handle = e.target.closest?.("[data-fc-selection-lasso-handle]");
+if (!handle || !this._lassoPolygon) return;
+const index = Number(handle.dataset.fcSelectionLassoHandle);
+if (!Number.isInteger(index) || !this._lassoPolygon[index]) return;
+lassoHandleDrag = {
+index,
+pointerId: e.pointerId,
+original: [...this._lassoPolygon[index]],
+handle,
+};
+handle.dataset.fcActive = "";
+this.tooltip.style.display = "none";
+try { this.selLasso.setPointerCapture(e.pointerId); } catch (_err) {   }
+e.preventDefault();
+e.stopPropagation();
+});
+this._listen(this.selLasso, "pointermove", moveLassoHandle);
+this._listen(this.selLasso, "pointerup", (e) => {
+if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
+moveLassoHandle(e);
+const handle = lassoHandleDrag.handle;
+lassoHandleDrag = null;
+delete handle.dataset.fcActive;
+if (this._lassoPolygon) this._sendSelectPolygon(this._lassoPolygon);
+});
+this._listen(this.selLasso, "pointercancel", (e) => {
+if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
+if (this._lassoPolygon) {
+this._lassoPolygon[lassoHandleDrag.index] = lassoHandleDrag.original;
+}
+delete lassoHandleDrag.handle.dataset.fcActive;
+lassoHandleDrag = null;
+if (this._lassoPolygon) this._renderLassoSelection();
+e.stopPropagation();
+});
 if (this._interactionFlag("crosshair")) {
 this.crosshairX = document.createElement("div");
 this.crosshairX.style.cssText =
@@ -5079,13 +5577,35 @@ const dataAt = (clientX, clientY) => {
 const r = c.getBoundingClientRect();
 return this._dataFromCanvas(clientX - r.left, clientY - r.top);
 };
+const lassoPointAt = (clientX, clientY) => {
+const r = c.getBoundingClientRect();
+const cssX = Math.max(0, Math.min(r.width, clientX - r.left));
+const cssY = Math.max(0, Math.min(r.height, clientY - r.top));
+return {
+x: r.left + cssX,
+y: r.top + cssY,
+data: this._dataFromCanvas(cssX, cssY),
+};
+};
 this._listen(c, "pointerdown", (e) => {
 this._cancelViewAnimation();
 const canBrush = this._interactionFlag("brush", true) && this._interactionFlag("select", true);
-const mode = e.shiftKey && canBrush && this._pickable ? "select"
+const selectMode = this.dragMode.startsWith("select") ? this.dragMode : null;
+const mode = (e.shiftKey || selectMode) && canBrush && this._pickable
+? (e.shiftKey ? "select" : selectMode)
 : this.dragMode === "zoom" ? "zoom" : null;
 if (mode) {
-band = { mode, sx: e.clientX, sy: e.clientY, d0: dataAt(e.clientX, e.clientY) };
+const previousLasso = mode.startsWith("select") && this._lassoPolygon
+? this._lassoPolygon.map((point) => [...point])
+: null;
+if (mode.startsWith("select")) this._clearLassoOverlay();
+const firstLassoPoint = mode === "select-lasso" ? lassoPointAt(e.clientX, e.clientY) : null;
+const d0 = firstLassoPoint ? firstLassoPoint.data : dataAt(e.clientX, e.clientY);
+band = {
+mode, sx: e.clientX, sy: e.clientY, d0,
+points: firstLassoPoint ? [firstLassoPoint] : null,
+previousLasso,
+};
 c.setPointerCapture(e.pointerId);
 this.tooltip.style.display = "none";
 return;
@@ -5122,12 +5642,34 @@ this._hover(e);
 const end = (e) => {
 if (band) {
 this.selRect.style.display = "none";
+this.selLasso.style.display = "none";
 const d1 = dataAt(e.clientX, e.clientY);
 const moved = Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
 if (moved) {
 if (band.mode === "zoom") this._zoomToBox(band.d0, d1, true);
-else this._sendSelect(band.d0, d1);
+else if (band.mode === "select-lasso") {
+if (band.points.length >= 3) {
+const editable = this._simplifyLassoPoints(band.points);
+this._sendSelectPolygon(editable.map((point) => point.data));
+} else if (band.previousLasso) {
+this._lassoPolygon = band.previousLasso;
+this._renderLassoSelection();
+}
+} else {
+let d0 = band.d0;
+if (band.mode === "select-x") {
+d0 = [band.d0[0], this.view.y0];
+d1[1] = this.view.y1;
+} else if (band.mode === "select-y") {
+d0 = [this.view.x0, band.d0[1]];
+d1[0] = this.view.x1;
+}
+this._sendSelect(d0, d1);
+}
 this._ignoreNextClick = true;
+} else if (band.previousLasso) {
+this._lassoPolygon = band.previousLasso;
+this._renderLassoSelection();
 }
 band = null;
 return;
@@ -5137,11 +5679,23 @@ if (drag && !drag.moved) this.tooltip.style.display = "none";
 drag = null;
 };
 this._listen(c, "pointerup", end);
-this._listen(c, "pointercancel", () => { this.selRect.style.display = "none"; band = null; drag = null; });
+this._listen(c, "pointercancel", () => {
+this.selRect.style.display = "none";
+this.selLasso.style.display = "none";
+if (band?.previousLasso) {
+this._lassoPolygon = band.previousLasso;
+this._renderLassoSelection();
+}
+band = null;
+drag = null;
+});
 this._listen(c, "pointerleave", () => {
 const hadHover = this._hoverId !== -1;
 this._hoverId = -1;
 this._hoverTarget = null;
+this._lastHoverXY = null;
+this._a11yKeyboardReadout = null;
+this._pickSeq = (this._pickSeq || 0) + 1;
 this.tooltip.style.display = "none";
 this._hideCrosshair();
 if (this._interactionFlag("hover")) {
@@ -5162,6 +5716,66 @@ this._listen(c, "dblclick", () => {
 this._clearSelection();
 this._setView(this.view0, { animate: true });
 });
+this._listen(c, "keydown", (e) => this._onA11yKey(e));
+},
+_a11yPointGroups() {
+return (this.gpuTraces || []).filter((g) =>
+markOf(g.trace.kind).pointPick && g.tier !== "density" && g._cpu &&
+g._cpu.x && g._cpu.y && Math.min(g._cpu.x.length, g._cpu.y.length) > 0);
+},
+_onA11yKey(e) {
+const direction = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+if (direction === undefined && e.key !== "Home" && e.key !== "End" && e.key !== "Escape") {
+return;
+}
+if (e.key === "Escape") {
+e.preventDefault();
+const hadHover = this._hoverId !== -1;
+this.tooltip.style.display = "none";
+this._hoverId = -1;
+this._hoverTarget = null;
+this._lastHoverXY = null;
+this._a11yKeyboardReadout = null;
+this._pickSeq = (this._pickSeq || 0) + 1;
+if (this.a11yLive) this.a11yLive.textContent = "Readout closed.";
+if (hadHover && this._interactionFlag("hover")) {
+this._dispatchChartEvent("leave", { view: this._eventView("leave") });
+}
+if (hadHover) this._drawKeepPick();
+return;
+}
+e.preventDefault();
+if (this._transitionActive()) return;
+const groups = this._a11yPointGroups();
+const total = groups.reduce((sum, g) => sum + Math.min(g._cpu.x.length, g._cpu.y.length), 0);
+if (!total) return;
+let flat = Number.isInteger(this._a11yPointIndex) ? this._a11yPointIndex : -1;
+if (e.key === "Home") flat = 0;
+else if (e.key === "End") flat = total - 1;
+else if (flat < 0) flat = direction > 0 ? 0 : total - 1;
+else flat = Math.max(0, Math.min(total - 1, flat + direction));
+this._a11yPointIndex = flat;
+let offset = flat;
+let g = groups[0];
+for (const candidate of groups) {
+const n = Math.min(candidate._cpu.x.length, candidate._cpu.y.length);
+if (offset < n) { g = candidate; break; }
+offset -= n;
+}
+const hit = { trace: g.trace.id, index: offset, g };
+const xValue = this._decodeValue(g._cpu.x, g._cpu.xMeta || g.xMeta, offset);
+const yValue = this._decodeValue(g._cpu.y, g._cpu.yMeta || g.yMeta, offset);
+const x = this._dataPx(g.xAxis || "x", xValue) - this.plot.x;
+const y = this._dataPx(g.yAxis || "y", yValue) - this.plot.y;
+const rect = this.canvas.getBoundingClientRect();
+const clientX = rect.left + Math.max(0, Math.min(rect.width, x));
+const clientY = rect.top + Math.max(0, Math.min(rect.height, y));
+this._hoverId = hit.trace * 1e9 + hit.index;
+this._hoverTarget = hit;
+this._lastHoverXY = { clientX, clientY };
+this._a11yKeyboardReadout = { flat, total };
+this._showTooltip(hit, clientX, clientY);
+this._drawKeepPick();
 },
 _updateCrosshair(e) {
 if (!this.crosshairX || !this.crosshairY) return;
@@ -5220,22 +5834,168 @@ this.comm.send(msg);
 _updateBand(band, e) {
 const rect = this.canvas.getBoundingClientRect();
 const rootRect = this.root.getBoundingClientRect();
+if (band.mode === "select-lasso") {
+const previous = band.points[band.points.length - 1];
+const cssX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+const cssY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+const clientX = rect.left + cssX;
+const clientY = rect.top + cssY;
+if (band.points.length < 2048
+&& Math.hypot(clientX - previous.x, clientY - previous.y) >= 3) {
+band.points.push({ x: clientX, y: clientY, data: this._dataFromCanvas(cssX, cssY) });
+}
+const points = band.points.map((point) => [
+Math.max(this.plot.x, Math.min(this.plot.x + this.plot.w, point.x - rootRect.left)),
+Math.max(this.plot.y, Math.min(this.plot.y + this.plot.h, point.y - rootRect.top)),
+]);
+this.selLasso.style.display = "block";
+this.selLasso.style.inset = "0";
+this.selLasso.setAttribute("width", String(this.root.clientWidth));
+this.selLasso.setAttribute("height", String(this.root.clientHeight));
+this.selLassoPath.setAttribute(
+"d", points.map((point, i) => `${i ? "L" : "M"}${point[0]} ${point[1]}`).join(" ") + " Z"
+);
+return;
+}
 const x = Math.min(band.sx, e.clientX) - rootRect.left;
 const y = Math.min(band.sy, e.clientY) - rootRect.top;
 const w = Math.abs(e.clientX - band.sx);
 const h = Math.abs(e.clientY - band.sy);
 const px = this.plot.x, py = this.plot.y;
 const x2 = Math.min(x + w, px + this.plot.w), y2 = Math.min(y + h, py + this.plot.h);
-const cx = Math.max(x, px), cy = Math.max(y, py);
+let cx = Math.max(x, px), cy = Math.max(y, py);
+let bx2 = x2, by2 = y2;
+if (band.mode === "select-x") { cy = py; by2 = py + this.plot.h; }
+if (band.mode === "select-y") { cx = px; bx2 = px + this.plot.w; }
 this.selRect.dataset.fcBand = band.mode === "zoom" ? "zoom" : "select";
 this.selRect.style.display = "block";
 this.selRect.style.left = cx + "px";
 this.selRect.style.top = cy + "px";
-this.selRect.style.width = Math.max(0, x2 - cx) + "px";
-this.selRect.style.height = Math.max(0, y2 - cy) + "px";
+this.selRect.style.width = Math.max(0, bx2 - cx) + "px";
+this.selRect.style.height = Math.max(0, by2 - cy) + "px";
 void rect;
 },
+_simplifyLassoPoints(points, tolerance = 6, maxPoints = 16) {
+const source = points.filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y));
+if (source.length > 3) {
+const first = source[0], last = source[source.length - 1];
+if (Math.hypot(first.x - last.x, first.y - last.y) <= tolerance) source.pop();
+}
+if (source.length <= 3) return source.slice();
+const distanceToSegmentSq = (point, start, end) => {
+const dx = end.x - start.x, dy = end.y - start.y;
+if (dx === 0 && dy === 0) {
+return (point.x - start.x) ** 2 + (point.y - start.y) ** 2;
+}
+const t = Math.max(0, Math.min(1,
+((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy)
+));
+const x = start.x + t * dx, y = start.y + t * dy;
+return (point.x - x) ** 2 + (point.y - y) ** 2;
+};
+const simplifyAt = (currentTolerance) => {
+const keep = new Uint8Array(source.length);
+keep[0] = 1;
+keep[source.length - 1] = 1;
+const stack = [[0, source.length - 1]];
+const toleranceSq = currentTolerance * currentTolerance;
+while (stack.length) {
+const [start, end] = stack.pop();
+let furthest = -1, furthestDistance = toleranceSq;
+for (let i = start + 1; i < end; i++) {
+const distance = distanceToSegmentSq(source[i], source[start], source[end]);
+if (distance > furthestDistance) {
+furthest = i;
+furthestDistance = distance;
+}
+}
+if (furthest >= 0) {
+keep[furthest] = 1;
+stack.push([start, furthest], [furthest, end]);
+}
+}
+return source.filter((_point, index) => keep[index]);
+};
+let simplified = simplifyAt(tolerance);
+if (simplified.length < 3) {
+simplified = [source[0], source[Math.floor(source.length / 2)], source[source.length - 1]];
+}
+if (simplified.length > maxPoints) {
+let low = tolerance;
+let high = Math.max(tolerance, 1);
+for (let i = 0; i < 16 && simplified.length > maxPoints; i++) {
+low = high;
+high *= 2;
+simplified = simplifyAt(high);
+}
+for (let i = 0; i < 12; i++) {
+const middle = (low + high) / 2;
+const candidate = simplifyAt(middle);
+if (candidate.length > maxPoints) low = middle;
+else {
+high = middle;
+simplified = candidate;
+}
+}
+if (simplified.length < 3) {
+simplified = [source[0], source[Math.floor(source.length / 2)], source[source.length - 1]];
+}
+}
+return simplified;
+},
+_clearLassoOverlay() {
+this._lassoPolygon = null;
+if (!this.selLasso) return;
+this.selLasso.style.display = "none";
+this.selLassoPath?.removeAttribute("d");
+this.selLassoHandles?.replaceChildren();
+},
+_renderLassoSelection() {
+const polygon = this._lassoPolygon;
+if (!this.selLasso || !this.selLassoPath || !this.selLassoHandles
+|| !Array.isArray(polygon) || polygon.length < 3) return;
+const [x0, x1] = this._axisRange("x");
+const [y0, y1] = this._axisRange("y");
+const xAxis = this._axis("x"), yAxis = this._axis("y");
+const cx0 = this._axisCoord(xAxis, x0), cx1 = this._axisCoord(xAxis, x1);
+const cy0 = this._axisCoord(yAxis, y0), cy1 = this._axisCoord(yAxis, y1);
+if (![cx0, cx1, cy0, cy1].every(Number.isFinite) || cx0 === cx1 || cy0 === cy1) return;
+const points = polygon.map((point) => {
+const cx = this._axisCoord(xAxis, point[0]);
+const cy = this._axisCoord(yAxis, point[1]);
+const x = this.plot.x + ((cx - cx0) / (cx1 - cx0)) * this.plot.w;
+const y = this.plot.y + ((cy1 - cy) / (cy1 - cy0)) * this.plot.h;
+return [
+Math.max(this.plot.x, Math.min(this.plot.x + this.plot.w, x)),
+Math.max(this.plot.y, Math.min(this.plot.y + this.plot.h, y)),
+];
+});
+if (!points.flat().every(Number.isFinite)) return;
+this.selLasso.style.display = "block";
+this.selLasso.style.inset = "0";
+this.selLasso.setAttribute("width", String(this.root.clientWidth));
+this.selLasso.setAttribute("height", String(this.root.clientHeight));
+this.selLassoPath.setAttribute(
+"d", points.map((point, index) => `${index ? "L" : "M"}${point[0]} ${point[1]}`).join(" ") + " Z"
+);
+while (this.selLassoHandles.childElementCount < points.length) {
+const handle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+handle.dataset.fcSelectionLassoHandle = "";
+handle.setAttribute("r", "4");
+this.selLassoHandles.appendChild(handle);
+}
+while (this.selLassoHandles.childElementCount > points.length) {
+this.selLassoHandles.lastElementChild.remove();
+}
+[...this.selLassoHandles.children].forEach((handle, index) => {
+handle.dataset.fcSelectionLassoHandle = String(index);
+handle.setAttribute("cx", String(points[index][0]));
+handle.setAttribute("cy", String(points[index][1]));
+handle.setAttribute("aria-label", `Lasso point ${index + 1}`);
+});
+},
 _sendSelect(d0, d1) {
+this._clearLassoOverlay();
 const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
 const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
 const range = { x0, x1, y0, y1 };
@@ -5245,6 +6005,64 @@ this.comm.send({ type: "select", x0, x1, y0, y1 });
 } else {
 this._selectLocal(x0, x1, y0, y1);
 }
+},
+_sendSelectPolygon(points) {
+if (!Array.isArray(points) || points.length < 3) return;
+const polygon = points.map((point) => [point[0], point[1]]);
+if (!polygon.every((point) => point.every(Number.isFinite))) return;
+this._lassoPolygon = polygon;
+this._renderLassoSelection();
+this._dispatchChartEvent("brush", {
+polygon,
+view: this._eventView("brush"),
+});
+if (this.comm) {
+this.comm.send({ type: "select_polygon", points: polygon });
+} else {
+this._selectLocalPolygon(polygon);
+}
+},
+_selectLocalPolygon(points) {
+const xs = points.map((point) => point[0]);
+const ys = points.map((point) => point[1]);
+const minX = Math.min(...xs), maxX = Math.max(...xs);
+const minY = Math.min(...ys), maxY = Math.max(...ys);
+const inside = (x, y) => {
+let hit = false;
+for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+const [xi, yi] = points[i], [xj, yj] = points[j];
+if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+}
+return hit;
+};
+let total = 0;
+for (const g of this.gpuTraces) {
+if (!g._cpu || g.tier === "density") continue;
+const cx = g._cpu.x, cy = g._cpu.y;
+const xMeta = g._cpu.xMeta || g.xMeta;
+const yMeta = g._cpu.yMeta || g.yMeta;
+const ox = xMeta.offset, sx = xMeta.scale || 1;
+const oy = yMeta.offset, sy = yMeta.scale || 1;
+const mask = new Float32Array(g.n);
+let count = 0;
+for (let i = 0; i < g.n; i++) {
+const x = cx[i] / sx + ox;
+const y = cy[i] / sy + oy;
+if (x >= minX && x <= maxX && y >= minY && y <= maxY && inside(x, y)) {
+mask[i] = 1;
+count++;
+}
+}
+this._applySelMask(g, mask);
+total += count;
+}
+this._selectionCount = total;
+this.draw();
+this._dispatchChartEvent("select", {
+total,
+polygon: points,
+view: this._eventView("select"),
+});
 },
 _selectLocal(x0, x1, y0, y1) {
 let total = 0;
@@ -5280,6 +6098,7 @@ gl.bufferData(gl.ARRAY_BUFFER, maskF32, gl.STATIC_DRAW);
 g.selActive = true;
 },
 _clearSelection() {
+this._clearLassoOverlay();
 for (const g of this.gpuTraces) {
 g.selActive = false;
 if (g.drill) g.drill.selActive = false;
@@ -5290,21 +6109,125 @@ if (this.comm) this.comm.send({ type: "select_clear" });
 this._dispatchChartEvent("select", { total: 0, view: this._eventView("select_clear") });
 }
 },
+_clampModebar(left, top) {
+const bar = this._modebar;
+if (!bar || !this.root) return;
+const currentLeft = left ?? (Number.parseFloat(bar.style.left) || 0);
+const currentTop = top ?? (Number.parseFloat(bar.style.top) || 0);
+const maxLeft = Math.max(0, this.root.clientWidth - bar.offsetWidth);
+const maxTop = Math.max(0, this.root.clientHeight - bar.offsetHeight);
+bar.style.left = `${Math.max(0, Math.min(maxLeft, currentLeft))}px`;
+bar.style.top = `${Math.max(0, Math.min(maxTop, currentTop))}px`;
+},
 _buildModebar(root) {
 if (this.spec.show_modebar === false) return;
 const bar = document.createElement("div");
 bar.style.cssText =
 `position:absolute;top:${this.plot.y + 4}px;left:${this.plot.x + 4}px;z-index:6;` +
-"display:flex;opacity:.72;transition:opacity .15s;";
+"display:flex;opacity:0;pointer-events:none;transition:opacity .15s;";
 this._applySlot(bar, "modebar");
-this._listen(root, "pointerenter", () => { bar.style.opacity = "1"; });
-this._listen(root, "pointerleave", () => { bar.style.opacity = ".72"; });
+bar.setAttribute("role", "toolbar");
+bar.setAttribute("aria-label", "Chart controls");
 this._modebar = bar;
 this._modeBtns = {};
+this._modebarMoved = false;
+let setZoomMenuOpen = () => {};
+let setSelectMenuOpen = () => {};
+let setExportMenuOpen = () => {};
+const setVisible = (visible) => {
+const show = visible || this._modebarDragging || bar.contains(document.activeElement);
+bar.style.opacity = show ? "1" : "0";
+bar.style.pointerEvents = show ? "auto" : "none";
+};
+this._listen(root, "pointerenter", () => setVisible(true));
+this._listen(root, "pointerleave", () => {
+setVisible(false);
+setZoomMenuOpen(false);
+setSelectMenuOpen(false);
+setExportMenuOpen(false);
+});
+this._listen(bar, "focusin", () => setVisible(true));
+this._listen(bar, "focusout", (e) => {
+if (!bar.contains(e.relatedTarget) && !root.matches(":hover")) setVisible(false);
+});
+const grip = document.createElement("button");
+grip.type = "button";
+grip.title = "Click for toolbar options; drag to move";
+grip.setAttribute("aria-label", "Toolbar options");
+grip.setAttribute("aria-haspopup", "menu");
+grip.setAttribute("aria-expanded", "false");
+grip.dataset.fcModebarDragHandle = "";
+grip.dataset.fcModebarExport = "";
+grip.dataset.fcModebarExportTrigger = "";
+grip.innerHTML = this._icon("drag");
+grip.style.cssText =
+"display:flex;align-items:center;justify-content:center;pointer-events:auto;touch-action:none;";
+this._applySlot(grip, "modebar_button");
+bar.appendChild(grip);
+const DRAG_THRESHOLD_PX = 6;
+let modebarDrag = null;
+let suppressGripClickUntil = 0;
+this._listen(grip, "pointerdown", (e) => {
+if (e.pointerType === "mouse" && e.button !== 0) return;
+e.stopPropagation();
+const barRect = bar.getBoundingClientRect();
+modebarDrag = {
+pointerId: e.pointerId,
+startX: e.clientX,
+startY: e.clientY,
+dx: e.clientX - barRect.left,
+dy: e.clientY - barRect.top,
+moved: false,
+};
+try { grip.setPointerCapture(e.pointerId); } catch (_err) {   }
+setVisible(true);
+});
+this._listen(grip, "pointermove", (e) => {
+if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
+const distance = Math.hypot(e.clientX - modebarDrag.startX, e.clientY - modebarDrag.startY);
+if (!modebarDrag.moved) {
+if (distance < DRAG_THRESHOLD_PX) return;
+modebarDrag.moved = true;
+this._modebarDragging = true;
+this._modebarMoved = true;
+bar.style.transition = "none";
+setZoomMenuOpen(false);
+setSelectMenuOpen(false);
+setExportMenuOpen(false);
+}
+const rootRect = root.getBoundingClientRect();
+const left = e.clientX - rootRect.left - modebarDrag.dx;
+const top = e.clientY - rootRect.top - modebarDrag.dy;
+this._clampModebar(left, top);
+});
+const endModebarDrag = (e) => {
+if (!modebarDrag || e.pointerId !== modebarDrag.pointerId) return;
+const moved = modebarDrag.moved;
+const cancelled = e.type === "pointercancel";
+modebarDrag = null;
+this._modebarDragging = false;
+bar.style.transition = "opacity .15s";
+setVisible(root.matches(":hover"));
+if (moved || cancelled) {
+suppressGripClickUntil = performance.now() + 100;
+}
+};
+this._listen(grip, "pointerup", endModebarDrag);
+this._listen(grip, "pointercancel", endModebarDrag);
+this._listen(grip, "click", (e) => {
+e.stopPropagation();
+if (performance.now() <= suppressGripClickUntil) {
+suppressGripClickUntil = 0;
+return;
+}
+setExportMenuOpen(!this._exportMenuOpen);
+});
 const mk = (name, title, onClick, toggles) => {
 const b = document.createElement("button");
 b.type = "button";
 b.title = title;
+b.setAttribute("aria-label", title);
+if (toggles) b.setAttribute("aria-pressed", "false");
 b.innerHTML = this._icon(name);
 b.style.cssText =
 "display:flex;align-items:center;justify-content:center;pointer-events:auto;";
@@ -5315,23 +6238,403 @@ bar.appendChild(b);
 if (toggles) this._modeBtns[toggles] = b;
 return b;
 };
-mk("zoomin", "Zoom in", () => this._zoomBy(0.5, true));
-mk("zoomout", "Zoom out", () => this._zoomBy(2, true));
+const zoomTrigger = mk("zoommenu", "Zoom controls", () => {
+setZoomMenuOpen(!this._zoomMenuOpen);
+});
+this._zoomMenuButton = zoomTrigger;
+zoomTrigger.dataset.fcModebarMenuTrigger = "";
+zoomTrigger.replaceChildren();
+const zoomPercent = document.createElement("span");
+zoomPercent.dataset.fcModebarZoomPercent = "";
+zoomPercent.textContent = "100%";
+zoomTrigger.appendChild(zoomPercent);
+const zoomIndicator = document.createElement("span");
+zoomIndicator.dataset.fcModebarMenuIndicator = "";
+zoomIndicator.innerHTML = this._icon("chevrondown");
+zoomTrigger.appendChild(zoomIndicator);
+this._zoomMenuLabel = zoomPercent;
+zoomTrigger.setAttribute("aria-haspopup", "menu");
+zoomTrigger.setAttribute("aria-expanded", "false");
+const canSelect = this._pickable
+&& this._interactionFlag("brush", true)
+&& this._interactionFlag("select", true);
+let selectTrigger = null;
+let selectIndicator = null;
+if (canSelect) {
+selectTrigger = mk("select", "Selection controls", () => {
+setSelectMenuOpen(!this._selectMenuOpen);
+});
+selectTrigger.dataset.fcModebarSelect = "";
+selectTrigger.dataset.fcModebarSelectTrigger = "";
+selectTrigger.setAttribute("aria-haspopup", "menu");
+selectTrigger.setAttribute("aria-expanded", "false");
+selectIndicator = document.createElement("span");
+selectIndicator.dataset.fcModebarMenuIndicator = "";
+selectIndicator.innerHTML = this._icon("chevrondown");
+selectTrigger.appendChild(selectIndicator);
+this._selectMenuButton = selectTrigger;
+}
 mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
-mk("zoom", "Box zoom", () => this._setDragMode("zoom"), "zoom");
-mk("reset", "Reset view", () => {
+const zoomMenu = document.createElement("div");
+zoomMenu.dataset.fcModebarMenu = "";
+zoomMenu.setAttribute("role", "menu");
+zoomMenu.setAttribute("aria-label", "Zoom controls");
+zoomMenu.style.cssText =
+"position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
+bar.appendChild(zoomMenu);
+const zoomMenuItems = [];
+const mkZoomItem = (name, label, onClick, toggles, separator = false) => {
+const button = document.createElement("button");
+button.type = "button";
+button.tabIndex = -1;
+button.dataset.fcModebarMenuItem = name;
+if (separator) button.dataset.fcSeparator = "";
+button.setAttribute("role", "menuitem");
+button.style.cssText =
+"display:flex;align-items:center;pointer-events:auto;";
+this._applySlot(button, "modebar_button");
+const icon = document.createElement("span");
+icon.dataset.fcModebarMenuIcon = "";
+icon.innerHTML = this._icon(name);
+button.appendChild(icon);
+const text = document.createElement("span");
+text.textContent = label;
+button.appendChild(text);
+this._listen(button, "pointerdown", (e) => e.stopPropagation());
+this._listen(button, "click", (e) => {
+e.stopPropagation();
+setZoomMenuOpen(false, true);
+onClick();
+});
+zoomMenu.appendChild(button);
+zoomMenuItems.push(button);
+if (toggles) this._modeBtns[toggles] = button;
+return button;
+};
+const resetView = () => {
 this._clearSelection();
 this._setView(this.view0, { animate: true });
+};
+mkZoomItem("zoomin", "Zoom In", () => this._zoomBy(0.5, true));
+mkZoomItem("zoomout", "Zoom Out", () => this._zoomBy(2, true));
+mkZoomItem("zoom", "Box Zoom", () => this._setDragMode("zoom"), "zoom");
+mkZoomItem("reset", "Reset View", resetView, null, true);
+const selectMenu = document.createElement("div");
+selectMenu.dataset.fcModebarMenu = "";
+selectMenu.dataset.fcModebarSelectMenu = "";
+selectMenu.setAttribute("role", "menu");
+selectMenu.setAttribute("aria-label", "Selection controls");
+selectMenu.style.cssText =
+"position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
+bar.appendChild(selectMenu);
+const selectMenuItems = [];
+const mkSelectItem = (name, label, mode) => {
+const button = document.createElement("button");
+button.type = "button";
+button.tabIndex = -1;
+button.dataset.fcModebarMenuItem = name;
+button.dataset.fcModebarSelectItem = mode;
+button.setAttribute("role", "menuitem");
+button.style.cssText = "display:flex;align-items:center;pointer-events:auto;";
+this._applySlot(button, "modebar_button");
+const icon = document.createElement("span");
+icon.dataset.fcModebarMenuIcon = "";
+icon.innerHTML = this._icon(name);
+button.appendChild(icon);
+const text = document.createElement("span");
+text.textContent = label;
+button.appendChild(text);
+this._listen(button, "pointerdown", (e) => e.stopPropagation());
+this._listen(button, "click", (e) => {
+e.stopPropagation();
+setSelectMenuOpen(false, true);
+this._setDragMode(mode);
+});
+selectMenu.appendChild(button);
+selectMenuItems.push(button);
+this._modeBtns[mode] = button;
+};
+if (canSelect) {
+mkSelectItem("select", "Box Select", "select");
+mkSelectItem("lasso", "Lasso Select", "select-lasso");
+mkSelectItem("selectx", "X Range", "select-x");
+mkSelectItem("selecty", "Y Range", "select-y");
+}
+const exportMenu = document.createElement("div");
+exportMenu.dataset.fcModebarMenu = "";
+exportMenu.dataset.fcModebarExportMenu = "";
+exportMenu.setAttribute("role", "menu");
+exportMenu.setAttribute("aria-label", "Toolbar options");
+exportMenu.style.cssText =
+"position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
+bar.appendChild(exportMenu);
+const exportMenuItems = [];
+const mkExportItem = (name, label, onClick, separator = false) => {
+const button = document.createElement("button");
+button.type = "button";
+button.tabIndex = -1;
+button.dataset.fcModebarMenuItem = name;
+button.dataset.fcModebarExportItem = name;
+if (separator) button.dataset.fcSeparator = "";
+button.setAttribute("role", "menuitem");
+button.style.cssText = "display:flex;align-items:center;pointer-events:auto;";
+this._applySlot(button, "modebar_button");
+const icon = document.createElement("span");
+icon.dataset.fcModebarMenuIcon = "";
+icon.innerHTML = this._icon(name);
+button.appendChild(icon);
+const text = document.createElement("span");
+text.textContent = label;
+button.appendChild(text);
+this._listen(button, "pointerdown", (e) => e.stopPropagation());
+this._listen(button, "click", (e) => {
+e.stopPropagation();
+setExportMenuOpen(false, true);
+Promise.resolve(onClick()).catch((error) => console.error(`xy: ${label} failed`, error));
+});
+exportMenu.appendChild(button);
+exportMenuItems.push(button);
+return button;
+};
+mkExportItem("png", "Export PNG", () => this._exportPng());
+mkExportItem("svg", "Export SVG", () => this._exportSvg());
+mkExportItem("csv", "Export CSV", () => this._exportCsv());
+setZoomMenuOpen = (open, restoreFocus = false) => {
+const show = Boolean(open);
+if (show) {
+setSelectMenuOpen(false);
+setExportMenuOpen(false);
+}
+this._zoomMenuOpen = show;
+zoomTrigger.setAttribute("aria-expanded", String(show));
+if (!show) {
+zoomMenu.style.display = "none";
+zoomIndicator.style.transform = "none";
+if (restoreFocus) zoomTrigger.focus();
+return;
+}
+zoomMenu.style.display = "flex";
+zoomMenu.style.visibility = "hidden";
+const rootRect = root.getBoundingClientRect();
+const barRect = bar.getBoundingClientRect();
+const rootLeft = barRect.left - rootRect.left;
+const rootTop = barRect.top - rootRect.top;
+const below = bar.offsetHeight + 6;
+const above = -zoomMenu.offsetHeight - 6;
+const preferredTop = barRect.bottom + 6 + zoomMenu.offsetHeight <= rootRect.bottom
+? below
+: above;
+zoomIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
+const maxLeft = root.clientWidth - rootLeft - zoomMenu.offsetWidth;
+const maxTop = root.clientHeight - rootTop - zoomMenu.offsetHeight;
+zoomMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, zoomTrigger.offsetLeft))}px`;
+zoomMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
+zoomMenu.style.visibility = "visible";
+};
+setSelectMenuOpen = (open, restoreFocus = false) => {
+if (!selectTrigger) return;
+const show = Boolean(open);
+if (show) {
+setZoomMenuOpen(false);
+setExportMenuOpen(false);
+}
+this._selectMenuOpen = show;
+selectTrigger.setAttribute("aria-expanded", String(show));
+if (!show) {
+selectMenu.style.display = "none";
+selectIndicator.style.transform = "none";
+if (restoreFocus) selectTrigger.focus();
+return;
+}
+selectMenu.style.display = "flex";
+selectMenu.style.visibility = "hidden";
+const rootRect = root.getBoundingClientRect();
+const barRect = bar.getBoundingClientRect();
+const rootLeft = barRect.left - rootRect.left;
+const rootTop = barRect.top - rootRect.top;
+const below = bar.offsetHeight + 6;
+const above = -selectMenu.offsetHeight - 6;
+const preferredTop = barRect.bottom + 6 + selectMenu.offsetHeight <= rootRect.bottom
+? below
+: above;
+selectIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
+const maxLeft = root.clientWidth - rootLeft - selectMenu.offsetWidth;
+const maxTop = root.clientHeight - rootTop - selectMenu.offsetHeight;
+selectMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, selectTrigger.offsetLeft))}px`;
+selectMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
+selectMenu.style.visibility = "visible";
+};
+setExportMenuOpen = (open, restoreFocus = false) => {
+const show = Boolean(open);
+if (show) {
+setZoomMenuOpen(false);
+setSelectMenuOpen(false);
+}
+this._exportMenuOpen = show;
+grip.setAttribute("aria-expanded", String(show));
+if (!show) {
+exportMenu.style.display = "none";
+if (restoreFocus) grip.focus();
+return;
+}
+exportMenu.style.display = "flex";
+exportMenu.style.visibility = "hidden";
+const rootRect = root.getBoundingClientRect();
+const barRect = bar.getBoundingClientRect();
+const rootLeft = barRect.left - rootRect.left;
+const rootTop = barRect.top - rootRect.top;
+const below = bar.offsetHeight + 6;
+const above = -exportMenu.offsetHeight - 6;
+const preferredTop = barRect.bottom + 6 + exportMenu.offsetHeight <= rootRect.bottom
+? below
+: above;
+const maxLeft = root.clientWidth - rootLeft - exportMenu.offsetWidth;
+const maxTop = root.clientHeight - rootTop - exportMenu.offsetHeight;
+exportMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, grip.offsetLeft))}px`;
+exportMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
+exportMenu.style.visibility = "visible";
+};
+this._closeModebarMenu = () => {
+setZoomMenuOpen(false);
+setSelectMenuOpen(false);
+setExportMenuOpen(false);
+};
+this._listen(document, "pointerdown", (e) => {
+if (this._zoomMenuOpen && !bar.contains(e.target)) setZoomMenuOpen(false);
+if (this._selectMenuOpen && !bar.contains(e.target)) setSelectMenuOpen(false);
+if (this._exportMenuOpen && !bar.contains(e.target)) setExportMenuOpen(false);
+});
+this._listen(zoomTrigger, "keydown", (e) => {
+if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+e.preventDefault();
+e.stopPropagation();
+setZoomMenuOpen(true);
+const index = e.key === "ArrowDown" ? 0 : zoomMenuItems.length - 1;
+zoomMenuItems[index].focus();
+});
+this._listen(zoomMenu, "keydown", (e) => {
+if (e.key === "Escape") {
+e.preventDefault();
+e.stopPropagation();
+setZoomMenuOpen(false, true);
+return;
+}
+if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+e.preventDefault();
+const current = zoomMenuItems.indexOf(document.activeElement);
+let next = e.key === "Home" ? 0 : e.key === "End" ? zoomMenuItems.length - 1 : current;
+if (e.key === "ArrowDown") next = (current + 1) % zoomMenuItems.length;
+if (e.key === "ArrowUp") next = (current - 1 + zoomMenuItems.length) % zoomMenuItems.length;
+zoomMenuItems[next].focus();
+});
+if (selectTrigger) {
+this._listen(selectTrigger, "keydown", (e) => {
+if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+e.preventDefault();
+e.stopPropagation();
+setSelectMenuOpen(true);
+const index = e.key === "ArrowDown" ? 0 : selectMenuItems.length - 1;
+selectMenuItems[index].focus();
+});
+this._listen(selectMenu, "keydown", (e) => {
+if (e.key === "Escape") {
+e.preventDefault();
+e.stopPropagation();
+setSelectMenuOpen(false, true);
+return;
+}
+if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+e.preventDefault();
+const current = selectMenuItems.indexOf(document.activeElement);
+let next = e.key === "Home" ? 0 : e.key === "End" ? selectMenuItems.length - 1 : current;
+if (e.key === "ArrowDown") next = (current + 1) % selectMenuItems.length;
+if (e.key === "ArrowUp") {
+next = (current - 1 + selectMenuItems.length) % selectMenuItems.length;
+}
+selectMenuItems[next].focus();
+});
+}
+this._listen(grip, "keydown", (e) => {
+if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+e.preventDefault();
+e.stopPropagation();
+setExportMenuOpen(true);
+const index = e.key === "ArrowDown" ? 0 : exportMenuItems.length - 1;
+exportMenuItems[index].focus();
+});
+this._listen(exportMenu, "keydown", (e) => {
+if (e.key === "Escape") {
+e.preventDefault();
+e.stopPropagation();
+setExportMenuOpen(false, true);
+return;
+}
+if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+e.preventDefault();
+const current = exportMenuItems.indexOf(document.activeElement);
+let next = e.key === "Home" ? 0 : e.key === "End" ? exportMenuItems.length - 1 : current;
+if (e.key === "ArrowDown") next = (current + 1) % exportMenuItems.length;
+if (e.key === "ArrowUp") {
+next = (current - 1 + exportMenuItems.length) % exportMenuItems.length;
+}
+exportMenuItems[next].focus();
 });
 root.appendChild(bar);
+this._fitModebar();
+setVisible(root.matches(":hover"));
 this._setDragMode(this.dragMode);
+},
+_fitModebar() {
+const bar = this._modebar;
+if (!bar) return;
+this._closeModebarMenu?.();
+if (!this._modebarMoved) {
+bar.style.top = `${this.plot.y + 4}px`;
+bar.style.left = `${this.plot.x + 4}px`;
+}
+bar.style.display = "flex";
+const fits =
+bar.offsetWidth + 8 <= this.plot.w && bar.offsetHeight + 8 <= this.plot.h;
+if (!fits) {
+bar.style.display = "none";
+return;
+}
+this._clampModebar();
 },
 _setDragMode(mode) {
 this.dragMode = mode;
 if (this.canvas) this.canvas.dataset.fcDragmode = mode;
 for (const [name, btn] of Object.entries(this._modeBtns || {})) {
 btn.classList.toggle("fc-active", name === mode);
+btn.setAttribute("aria-pressed", String(name === mode));
 }
+this._zoomMenuButton?.classList.toggle("fc-active", mode === "zoom");
+this._selectMenuButton?.classList.toggle("fc-active", mode.startsWith("select"));
+},
+_updateZoomMenuLabel() {
+if (!this._zoomMenuLabel || !this.view || !this.view0) return;
+const axisPercent = (axisId, lo, hi, homeLo, homeHi) => {
+const axis = this._axis(axisId);
+const span = Math.abs(this._axisCoord(axis, hi) - this._axisCoord(axis, lo));
+const homeSpan = Math.abs(
+this._axisCoord(axis, homeHi) - this._axisCoord(axis, homeLo)
+);
+return Number.isFinite(span) && span > 0 && Number.isFinite(homeSpan) && homeSpan > 0
+? (homeSpan / span) * 100
+: null;
+};
+const percent = axisPercent("x", this.view.x0, this.view.x1, this.view0.x0, this.view0.x1)
+?? axisPercent("y", this.view.y0, this.view.y1, this.view0.y0, this.view0.y1)
+?? 100;
+const rounded = Math.round(percent);
+const exactText = percent < 1 ? "<1%" : `${rounded}%`;
+const displayText = rounded > 999 ? `${String(rounded).slice(0, 3)}…%` : exactText;
+if (this._zoomMenuLabel.dataset.fcZoomExact === exactText
+&& this._zoomMenuLabel.textContent === displayText) return;
+this._zoomMenuLabel.textContent = displayText;
+this._zoomMenuLabel.dataset.fcZoomExact = exactText;
+this._zoomMenuButton.title = `Zoom controls (${exactText})`;
+this._zoomMenuButton.setAttribute("aria-label", `Zoom controls, ${exactText}`);
 },
 _prefersReducedMotion() {
 return window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
@@ -5477,6 +6780,179 @@ const y0 = yReversed ? yhi : ylo;
 const y1 = yReversed ? ylo : yhi;
 this._setView({ x0, x1, y0, y1 }, { animate });
 },
+_exportFilename(extension) {
+const title = String(this.spec.title || "xy-chart")
+.trim()
+.toLowerCase()
+.replace(/[^a-z0-9]+/g, "-")
+.replace(/^-+|-+$/g, "") || "xy-chart";
+return `${title}.${extension}`;
+},
+_downloadExport(blob, filename) {
+const url = URL.createObjectURL(blob);
+const link = document.createElement("a");
+link.href = url;
+link.download = filename;
+link.style.display = "none";
+document.body.appendChild(link);
+link.click();
+link.remove();
+setTimeout(() => URL.revokeObjectURL(url), 0);
+},
+_exportSvgMarkup() {
+this._drawNow?.();
+this.gl?.finish?.();
+const width = this.size.w;
+const height = this.size.h;
+const clone = this.root.cloneNode(true);
+clone.style.width = `${width}px`;
+clone.style.height = `${height}px`;
+clone.style.margin = "0";
+clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+const computed = getComputedStyle(this.root);
+const inheritedProperties = [
+"color", "font-family", "font-size", "font-style", "font-weight",
+"letter-spacing", "line-height",
+];
+const chartTokens = [
+"--chart-bg", "--chart-text", "--chart-grid", "--chart-axis",
+"--chart-tooltip-bg", "--chart-tooltip-text", "--chart-legend-bg",
+"--chart-badge-bg", "--chart-badge-text", "--chart-modebar-bg",
+"--chart-modebar-active", "--chart-selection", "--chart-selection-fill",
+"--chart-zoom-selection", "--chart-zoom-selection-fill", "--chart-crosshair",
+"--chart-annotation-text", "--chart-cursor", "--chart-cursor-pan",
+];
+for (let i = 0; i < computed.length; i++) {
+const property = computed.item(i);
+if (!property.startsWith("--")) continue;
+const value = computed.getPropertyValue(property).trim();
+if (value) clone.style.setProperty(property, value);
+}
+for (const property of [...inheritedProperties, ...chartTokens]) {
+const value = computed.getPropertyValue(property).trim();
+if (value) clone.style.setProperty(property, value);
+}
+const sourceCanvases = [...this.root.querySelectorAll("canvas")];
+const clonedCanvases = [...clone.querySelectorAll("canvas")];
+for (let i = 0; i < clonedCanvases.length; i++) {
+const source = sourceCanvases[i];
+const target = clonedCanvases[i];
+if (!source || !target) continue;
+const image = document.createElement("img");
+image.setAttribute("src", source.toDataURL("image/png"));
+image.setAttribute("alt", "");
+image.setAttribute("style", target.getAttribute("style") || "");
+image.setAttribute("width", String(source.clientWidth || source.width));
+image.setAttribute("height", String(source.clientHeight || source.height));
+for (const attr of target.attributes) {
+if (attr.name.startsWith("data-")) image.setAttribute(attr.name, attr.value);
+}
+target.replaceWith(image);
+}
+clone.querySelectorAll(
+'[data-fc-slot="modebar"],[data-fc-slot="tooltip"],' +
+'[data-fc-slot="selection"],[data-fc-selection-lasso-overlay],' +
+'[data-fc-slot="crosshair_x"],[data-fc-slot="crosshair_y"]'
+).forEach((node) => node.remove());
+const stylesheet = document.createElement("style");
+stylesheet.textContent = FC_CHROME_CSS;
+clone.prepend(stylesheet);
+const content = new XMLSerializer().serializeToString(clone);
+return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" ` +
+`viewBox="0 0 ${width} ${height}"><foreignObject width="100%" height="100%">` +
+`${content}</foreignObject></svg>`;
+},
+_exportSvg() {
+const svg = this._exportSvgMarkup();
+this._downloadExport(
+new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
+this._exportFilename("svg")
+);
+},
+_exportPng() {
+const svg = this._exportSvgMarkup();
+const sourceUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+const image = new Image();
+return new Promise((resolve, reject) => {
+image.onload = () => {
+const scale = Math.max(1, window.devicePixelRatio || 1);
+const canvas = document.createElement("canvas");
+canvas.width = Math.round(this.size.w * scale);
+canvas.height = Math.round(this.size.h * scale);
+const ctx = canvas.getContext("2d");
+ctx.scale(scale, scale);
+ctx.drawImage(image, 0, 0, this.size.w, this.size.h);
+canvas.toBlob((blob) => {
+if (!blob) {
+reject(new Error("PNG encoding returned no data"));
+return;
+}
+this._downloadExport(blob, this._exportFilename("png"));
+resolve();
+}, "image/png");
+};
+image.onerror = () => {
+reject(new Error("chart SVG could not be rasterized"));
+};
+image.src = sourceUrl;
+});
+},
+_exportCsvText() {
+const columns = ["trace", "name", "kind", "index", "x", "y", "x0", "x1", "y0", "y1", "value"];
+const rows = [columns];
+const clean = (value) => Number.isFinite(value) ? value : "";
+for (const g of this.gpuTraces || []) {
+const trace = g.trace || {};
+const prefix = [trace.id ?? "", trace.name ?? "", trace.kind ?? ""];
+if (g._cpuRect) {
+const r = g._cpuRect;
+const n = Math.min(r.x0.length, r.x1.length, r.y0.length, r.y1.length);
+for (let i = 0; i < n; i++) {
+rows.push([...prefix, i, "", "",
+clean(this._decodeValue(r.x0, r.x0Meta, i)),
+clean(this._decodeValue(r.x1, r.x1Meta, i)),
+clean(this._decodeValue(r.y0, r.y0Meta, i)),
+clean(this._decodeValue(r.y1, r.y1Meta, i)), ""]);
+}
+continue;
+}
+if (g.heatmap && g._cpuHeatmap) {
+const h = g.heatmap;
+for (let i = 0; i < g._cpuHeatmap.grid.length; i++) {
+const row = Math.floor(i / h.w);
+const col = i % h.w;
+const x = h.xRange[0] + (col + 0.5) * ((h.xRange[1] - h.xRange[0]) / h.w);
+const y = h.yRange[0] + (row + 0.5) * ((h.yRange[1] - h.yRange[0]) / h.h);
+const value = this._denormalizeUnit(g._cpuHeatmap.grid[i], trace.color?.domain);
+rows.push([...prefix, i, clean(x), clean(y), "", "", "", "", clean(value)]);
+}
+continue;
+}
+const cpu = g._cpu;
+if (!cpu?.x || !cpu?.y) continue;
+const n = Math.min(cpu.x.length, cpu.y.length, g.n || Infinity);
+for (let i = 0; i < n; i++) {
+rows.push([...prefix, i,
+clean(this._decodeValue(cpu.x, cpu.xMeta || g.xMeta, i)),
+clean(this._decodeValue(cpu.y, cpu.yMeta || g.yMeta, i)),
+"", "", "", "", ""]);
+}
+}
+const quote = (value) => {
+const text = String(value ?? "");
+const escaped = text.split('"').join('""');
+return text.includes(",") || text.includes('"') || text.includes("\r") || text.includes("\n")
+? `"${escaped}"`
+: text;
+};
+return rows.map((row) => row.map(quote).join(",")).join("\r\n") + "\r\n";
+},
+_exportCsv() {
+this._downloadExport(
+new Blob([this._exportCsvText()], { type: "text/csv;charset=utf-8" }),
+this._exportFilename("csv")
+);
+},
 _icon(name) {
 const svg = (body) =>
 `<svg width="15" height="15" viewBox="0 0 20 20" fill="none" ` +
@@ -5496,8 +6972,46 @@ return svg('<path d="M10 3 V17 M3 10 H17"/><path d="M10 3 L8 5 M10 3 L12 5"/>' +
 case "zoom":
 return svg('<rect x="3.5" y="3.5" width="13" height="13" rx="1" ' +
 'stroke-dasharray="3 2"/>');
+case "select":
+return svg('<rect x="3.5" y="3.5" width="13" height="13" rx="1" ' +
+'stroke-dasharray="2.5 2"/><circle cx="7" cy="7" r="1" fill="currentColor" ' +
+'stroke="none"/><circle cx="12.5" cy="9" r="1" fill="currentColor" stroke="none"/>' +
+'<circle cx="9.5" cy="13" r="1" fill="currentColor" stroke="none"/>');
+case "lasso":
+return svg('<path d="M4 6 C6 2 15 3 16 8 C17 13 11 17 6 14 C2 12 2 8 4 6 Z" ' +
+'stroke-dasharray="2.5 2"/><circle cx="6" cy="8" r="1" fill="currentColor" ' +
+'stroke="none"/><circle cx="12" cy="7" r="1" fill="currentColor" stroke="none"/>' +
+'<circle cx="10" cy="12" r="1" fill="currentColor" stroke="none"/>');
+case "selectx":
+return svg('<rect x="3" y="5" width="14" height="10" rx="1" stroke-dasharray="2.5 2"/>' +
+'<path d="M6 10 H14 M6 10 L8 8 M6 10 L8 12 M14 10 L12 8 M14 10 L12 12"/>');
+case "selecty":
+return svg('<rect x="5" y="3" width="10" height="14" rx="1" stroke-dasharray="2.5 2"/>' +
+'<path d="M10 6 V14 M10 6 L8 8 M10 6 L12 8 M10 14 L8 12 M10 14 L12 12"/>');
+case "chevrondown":
+return svg('<path d="M6 8 L10 12 L14 8"/>');
+case "collapse":
+return svg('<path d="M4 5 H16 M4 15 H16 M7 8 L10 11 L13 8"/>');
+case "expand":
+return svg('<path d="M4 5 H16 M4 15 H16 M7 12 L10 9 L13 12"/>');
+case "png":
+return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+'<path d="M7 13 L9 10.5 L11 12 L13.5 9 V15 H7 Z"/>');
+case "svg":
+return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+'<path d="M7 13 L9 9 L11 14 L13.5 10"/>');
+case "csv":
+return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+'<path d="M7 9 H13 M7 12 H13 M7 15 H13 M9 8 V16"/>');
 case "reset":
 return svg('<path d="M4 10 a6 6 0 1 1 1.8 4.3"/><path d="M4 6 V10 H8"/>');
+case "drag":
+return svg('<circle cx="7" cy="5" r=".8" fill="currentColor" stroke="none"/>' +
+'<circle cx="13" cy="5" r=".8" fill="currentColor" stroke="none"/>' +
+'<circle cx="7" cy="10" r=".8" fill="currentColor" stroke="none"/>' +
+'<circle cx="13" cy="10" r=".8" fill="currentColor" stroke="none"/>' +
+'<circle cx="7" cy="15" r=".8" fill="currentColor" stroke="none"/>' +
+'<circle cx="13" cy="15" r=".8" fill="currentColor" stroke="none"/>');
 default:
 return svg("");
 }
@@ -5765,10 +7279,13 @@ this.draw();
 } else if (msg.type === "append") {
 this._applyAppend(msg, buffers);
 } else if (msg.type === "pick_result") {
+if (msg.seq !== undefined && msg.seq !== this._pickSeq) return;
 if (!msg.row) { this.tooltip.style.display = "none"; return; }
 this._lastRow = msg.row;
 const xy = this._lastHoverXY;
-if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY);
+if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY, {
+announce: !this._a11yKeyboardReadout,
+});
 if (this._interactionFlag("hover")) {
 this._dispatchChartEvent("hover", {
 row: msg.row,
@@ -5957,7 +7474,7 @@ segments: SEGMENT_MARK,
 triangle_mesh: MESH_MARK,
 error_band: AREA_MARK,
 hexbin: {
-build: (view, g, t, buffer) => view._buildMeshMark(g, t, buffer),
+build: (view, g, t, buffer) => view._buildHexbinMark(g, t, buffer),
 draw: (view, g) => {
 const [x0, x1] = view._axisRange(g.xAxis);
 const [y0, y1] = view._axisRange(g.yAxis);
