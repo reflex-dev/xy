@@ -225,15 +225,23 @@ const exportTail = markerLineEnd < 0 ? "" : src.slice(markerLineEnd + 1);
 const iife = `(() => {\n${body}\nwindow.xy = { render, renderStandalone, decodeFrame, ChartView, MARK_KINDS, markOf };\n})();\n`;
 new Function(iife);
 
+// The Reflex adapter ships the identical ESM client as a bundler-visible
+// shared asset (docs/design/reflex-integration.md §5): one renderer for
+// notebooks, static export, and Reflex. Emitted here so the copies can
+// never drift — the --check mode and tests/reflex_xy/test_assets.py both
+// fail on a stale copy.
+const reflexAssetsDir = join(here, "..", "python", "reflex-xy", "reflex_xy", "assets");
+const esm = body + "\n" + exportTail.trimStart();
 const outputs = [
-  ["index.js", body + "\n" + exportTail.trimStart()],
-  ["standalone.js", iife],
+  [outDir, "index.js", esm],
+  [outDir, "standalone.js", iife],
+  [reflexAssetsDir, "xy_client.js", esm],
 ];
 
 if (checkOnly) {
   const stale = [];
-  for (const [name, expected] of outputs) {
-    const path = join(outDir, name);
+  for (const [dir, name, expected] of outputs) {
+    const path = join(dir, name);
     let actual = null;
     try {
       actual = readText(path);
@@ -245,13 +253,15 @@ if (checkOnly) {
   }
   if (stale.length) {
     console.error(
-      `static JS bundle check failed: ${stale.join(", ")}. Run \`node js/build.mjs\` and commit python/xy/static/*.js.`
+      `static JS bundle check failed: ${stale.join(", ")}. Run \`node js/build.mjs\` and commit python/xy/static/*.js + python/reflex-xy/reflex_xy/assets/xy_client.js.`
     );
     process.exit(1);
   }
   console.log(`static JS bundles are fresh (${PARTS.length} parts)`);
 } else {
-  mkdirSync(outDir, { recursive: true });
-  for (const [name, data] of outputs) writeFileSync(join(outDir, name), data);
-  console.log(`built static/index.js and static/standalone.js from ${PARTS.length} parts`);
+  for (const [dir, name, data] of outputs) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, name), data);
+  }
+  console.log(`built static/index.js, static/standalone.js, and reflex_xy assets from ${PARTS.length} parts`);
 }
