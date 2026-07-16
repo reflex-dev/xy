@@ -48,7 +48,7 @@ def _parse_counts(text: str) -> list[int]:
 def _dashboard_figures(count: int) -> list[Any]:
     if np is None:
         raise SystemExit("numpy is required for benchmarks/bench_dashboard.py")
-    import xy as fc
+    import xy
 
     rng = np.random.default_rng(91_337)
     figures: list[Any] = []
@@ -59,8 +59,8 @@ def _dashboard_figures(count: int) -> list[Any]:
             x = np.arange(n, dtype=np.float64)
             y = np.cumsum(rng.normal(0.0, 0.05, n)).astype(np.float64, copy=False)
             figures.append(
-                fc.chart(
-                    fc.line(x=x, y=y, name="signal"),
+                xy.chart(
+                    xy.line(x=x, y=y, name="signal"),
                     width=RENDER_W,
                     height=RENDER_H,
                     title=f"Line {i + 1}",
@@ -71,8 +71,8 @@ def _dashboard_figures(count: int) -> list[Any]:
             x = rng.normal(0.0, 1.0, n).astype(np.float64, copy=False)
             y = (0.45 * x + rng.normal(0.0, 0.8, n)).astype(np.float64, copy=False)
             figures.append(
-                fc.chart(
-                    fc.scatter(x=x, y=y, name="points", opacity=0.65),
+                xy.chart(
+                    xy.scatter(x=x, y=y, name="points", opacity=0.65),
                     width=RENDER_W,
                     height=RENDER_H,
                     title=f"Scatter {i + 1}",
@@ -86,8 +86,8 @@ def _dashboard_figures(count: int) -> list[Any]:
                 ]
             ).astype(np.float64, copy=False)
             figures.append(
-                fc.chart(
-                    fc.hist(values, bins=160, name="distribution"),
+                xy.chart(
+                    xy.hist(values, bins=160, name="distribution"),
                     width=RENDER_W,
                     height=RENDER_H,
                     title=f"Histogram {i + 1}",
@@ -97,8 +97,8 @@ def _dashboard_figures(count: int) -> list[Any]:
             labels = np.array([f"C{j:02d}" for j in range(36)], dtype=object)
             values = rng.random((3, len(labels))) * 100
             figures.append(
-                fc.chart(
-                    fc.bar(
+                xy.chart(
+                    xy.bar(
                         labels,
                         values,
                         mode="grouped",
@@ -118,8 +118,8 @@ def _dashboard_figures(count: int) -> list[Any]:
                 + rng.normal(0.0, 0.06, (len(ys), len(xs)))
             )
             figures.append(
-                fc.chart(
-                    fc.heatmap(z, colormap="turbo"),
+                xy.chart(
+                    xy.heatmap(z, colormap="turbo"),
                     width=RENDER_W,
                     height=RENDER_H,
                     title=f"Heatmap {i + 1}",
@@ -139,19 +139,19 @@ def _probe_js() -> str:
     let phase = "create";
     const heapBefore = performance.memory ? performance.memory.usedJSHeapSize : null;
     const t0 = performance.now();
-    for (const payload of FC_CHARTS) {
+    for (const payload of XY_CHARTS) {
       const cell = document.createElement("div");
       cell.className = "chart-cell";
       cell.dataset.chartId = payload.id;
       root.appendChild(cell);
       try {
-        const view = xy.renderStandalone(cell, payload.spec, fcBytesFromPayload(payload));
+        const view = xy.renderStandalone(cell, payload.spec, xyBytesFromPayload(payload));
         const state = {lost: false};
         view.canvas.addEventListener("webglcontextlost", () => {
           state.lost = true;
           contextEvents.push({
             id: payload.id, type: "lost", phase, at_ms: performance.now() - t0,
-            governed: view.canvas.dataset.fcCtx === "released",
+            governed: view.canvas.dataset.xyCtx === "released",
           });
         });
         view.canvas.addEventListener("webglcontextrestored", () => {
@@ -181,7 +181,7 @@ def _probe_js() -> str:
     function nonblankPixels(slot) {
       if (contextLost(slot)) return 0;
       try {
-        return fcNonblankPixels(slot.view);
+        return xyNonblankPixels(slot.view);
       } catch (_err) {
         return 0;
       }
@@ -246,7 +246,7 @@ def _probe_js() -> str:
       .map((slot) => slot.id);
     const ctxState = (slot) =>
       slot.view && slot.view.canvas && slot.view.canvas.dataset
-        ? slot.view.canvas.dataset.fcCtx || null
+        ? slot.view.canvas.dataset.xyCtx || null
         : null;
     // End-state split (§28): "released" is a governed, recoverable release;
     // "lost" is a browser-side eviction the governor could not prevent.
@@ -268,14 +268,14 @@ def _probe_js() -> str:
       createdCharts === slots.length &&
       scrollNonblankIds.length === slots.length &&
       governedLostEvents.length === lostEvents.length;
-    fcReport("FC_DASHBOARD", {
+    xyReport("XY_DASHBOARD", {
       status: "ok",
       render_status: fullyNonblank ? "complete" : governedHealth ? "governed" : "partial",
       fully_nonblank: fullyNonblank,
       render_ms: renderMs,
       navigation_ready_ms: navigationReadyMs,
       scroll_pass_ms: scrollPassMs,
-      steady_redraw_p95_ms: fcPercentile(steadyRedraws, 95),
+      steady_redraw_p95_ms: xyPercentile(steadyRedraws, 95),
       steady_redraw_active_charts: slots.filter((slot) => slot.view && !contextLost(slot)).length,
       js_heap_before_bytes: heapBefore,
       js_heap_bytes: heapAfter,
@@ -290,7 +290,7 @@ def _probe_js() -> str:
       scroll_nonblank_charts: scrollNonblankIds.length,
       scroll_nonblank_chart_ids: scrollNonblankIds,
       scroll_blank_chart_ids: complement(scrollNonblankIds),
-      scroll_recovery_p95_ms: fcPercentile(scrollRecoveryMs, 95),
+      scroll_recovery_p95_ms: xyPercentile(scrollRecoveryMs, 95),
       governed_context_lost_events: governedLostEvents.length,
       released_chart_ids: releasedChartIds,
       evicted_chart_ids: evictedChartIds,
@@ -302,7 +302,7 @@ def _probe_js() -> str:
       context_events: contextEvents,
     });
   } catch (err) {
-    fcFail("FC_DASHBOARD", err);
+    xyFail("XY_DASHBOARD", err);
   }
 })();
 """
@@ -330,7 +330,7 @@ def run(*, chart_counts: list[int], chromium: str | None = None) -> dict[str, An
                 ".chart-cell{width:420px;height:280px;border:1px solid #dde3ec;}"
             ),
         )
-        result = run_json_probe(html, marker="FC_DASHBOARD", chromium=chromium)
+        result = run_json_probe(html, marker="XY_DASHBOARD", chromium=chromium)
         row: dict[str, Any] = {
             "scenario": f"dashboard_{count}",
             "chart_count": count,

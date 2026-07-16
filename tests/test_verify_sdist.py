@@ -43,7 +43,7 @@ API_EXAMPLES_MD = (
     "## Chart Family Quick Reference\n\n"
     "| Chart family | Fluent API | Composition API |\n"
     "|---|---|---|\n"
-    "| Heatmap | `Figure().heatmap(z, x=x, y=y)` | `fc.heatmap_chart(fc.heatmap(...))` |\n"
+    "| Heatmap | `Figure().heatmap(z, x=x, y=y)` | `xy.heatmap_chart(xy.heatmap(...))` |\n"
     "\n## Small Business Chart\n\n"
     "Revenue vs pipeline\n" + ("api examples padding\n" * 100)
 )

@@ -344,8 +344,8 @@ def verify_sdist(path: str) -> None:
             "Chart Family Quick Reference",
             "Small Business Chart",
             "Revenue vs pipeline",
-            "fc.heatmap(",
-            "fc.heatmap_chart",
+            "xy.heatmap(",
+            "xy.heatmap_chart",
         },
     )
     _require_file_contains(

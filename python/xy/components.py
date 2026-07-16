@@ -5,13 +5,13 @@ mark and axis children, snake_case keyword props, `data=` + column-name
 resolution, and `on_*` event props — but xy does **not** import or depend
 on Reflex. It's the same ergonomics on top of the xy engine (`Figure`):
 
-    import xy as fc
+    import xy
 
-    fc.scatter_chart(
-        fc.scatter(x="sepal_w", y="sepal_l", color="species", size="petal_l", data=df),
-        fc.x_axis(label="sepal width"),
-        fc.y_axis(label="sepal length"),
-        fc.legend(),
+    xy.scatter_chart(
+        xy.scatter(x="sepal_w", y="sepal_l", color="species", size="petal_l", data=df),
+        xy.x_axis(label="sepal width"),
+        xy.y_axis(label="sepal length"),
+        xy.legend(),
         title="Iris",
         on_hover=lambda row: print(row),
         on_select=lambda sel: print(len(sel.index), "points"),
@@ -2541,7 +2541,7 @@ class Chart(Component):
 
         Core xy does not import or serialize framework components. The
         objects returned here are the exact Python objects passed to
-        `fc.legend(...)` / `fc.tooltip(...)` / `fc.colorbar(...)`, so an adapter can mount them while
+        `xy.legend(...)` / `xy.tooltip(...)` / `xy.colorbar(...)`, so an adapter can mount them while
         standalone HTML keeps using the built-in safe DOM fallback.
         """
         result: dict[str, Any] = {}
@@ -3065,7 +3065,7 @@ class FacetChart(Component):
                 fig._set_axis_domain(dim, (lo, hi))
         if shared_dims and not any("link_group" in fig.interaction for fig in figures):
             # Shared-axis panels pan/zoom together in live outputs.
-            group = f"fc-facet-{uuid.uuid4().hex[:8]}"
+            group = f"xy-facet-{uuid.uuid4().hex[:8]}"
             for fig in figures:
                 fig.set_interaction(link_group=group, link_axes=tuple(shared_dims))
         self._grid = FacetGrid(
@@ -3153,7 +3153,7 @@ def _mark_axis_ids(mark: Mark, axes: dict[str, Axis]) -> tuple[str, str]:
     for axis_id, factory in ((x_axis_id, "x_axis"), (y_axis_id, "y_axis")):
         if axis_id in {"x", "y"} or axis_id in axes:
             continue
-        raise ValueError(f"{mark.kind} {axis_id!r} has no matching fc.{factory}(id={axis_id!r})")
+        raise ValueError(f"{mark.kind} {axis_id!r} has no matching xy.{factory}(id={axis_id!r})")
     return x_axis_id, y_axis_id
 
 

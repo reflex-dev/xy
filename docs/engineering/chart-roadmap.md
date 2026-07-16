@@ -98,13 +98,13 @@ not fall out of sight.
 |---:|---|---|---|---|
 | 1 | Line and time series | line, step line, spline, markers+line, multi-line, streaming line | Implemented core | Most universal analytical chart; core for finance, monitoring, science, product metrics. |
 | 2 | Scatter / marker plots | scatter, scattergl-style, bubble, colored scatter, sized scatter | Implemented core | Large-point interactivity is the xy wedge; basis for drilldown, selection, and density. |
-| 3 | Bar / column | vertical bar, horizontal bar, grouped, stacked, normalized stacked, diverging bar | Implemented core | `fc.bar(...)` / `fc.column(...)` ship categorical/numeric vertical and horizontal bars, grouped bars, stacked bars, and normalized stacked bars (`mode="normalized"`) through the shared rectangle renderer. Follow-up: labels. |
-| 4 | Area | filled line, stacked area, streamgraph, ridgeline-lite area bands | Implemented core | `fc.area(...)` ships a filled area with scalar/array baseline and optional line overlay. Follow-ups: stacked area helpers and streamgraph offsets. |
+| 3 | Bar / column | vertical bar, horizontal bar, grouped, stacked, normalized stacked, diverging bar | Implemented core | `xy.bar(...)` / `xy.column(...)` ship categorical/numeric vertical and horizontal bars, grouped bars, stacked bars, and normalized stacked bars (`mode="normalized"`) through the shared rectangle renderer. Follow-up: labels. |
+| 4 | Area | filled line, stacked area, streamgraph, ridgeline-lite area bands | Implemented core | `xy.area(...)` ships a filled area with scalar/array baseline and optional line overlay. Follow-ups: stacked area helpers and streamgraph offsets. |
 | 5 | Histogram | count, probability, density, cumulative histogram | Implemented core | Python-side binning plus the shared rectangle renderer; `cumulative=True` (count CDF and, with `density=True`, empirical CDF) is implemented. Follow-up: viewport-aware re-binning for huge streamed distributions. |
 | 6 | Pie / donut | pie, donut, nested donut, variable-radius pie | Implemented in `xy.pyplot` | Native pie/donut tessellation with Matplotlib-style containers and labels; richer nested/variable-radius composition remains future depth. |
-| 7 | Heatmap / image / matrix | heatmap, image, annotated matrix, correlation matrix, cohort heatmap | Implemented core | `fc.heatmap(...)` renders matrix cells through a compact grid texture with continuous colormaps and categorical/numeric axes. Native static export borrows canonical f64 spans and normalizes only sampled pixels in Rust, verified through 4.29B cells without a derived grid or RGBA expansion. Follow-ups: annotation and tiled huge-image browser transport. |
+| 7 | Heatmap / image / matrix | heatmap, image, annotated matrix, correlation matrix, cohort heatmap | Implemented core | `xy.heatmap(...)` renders matrix cells through a compact grid texture with continuous colormaps and categorical/numeric axes. Native static export borrows canonical f64 spans and normalizes only sampled pixels in Rust, verified through 4.29B cells without a derived grid or RGBA expansion. Follow-ups: annotation and tiled huge-image browser transport. |
 | 8 | Box plot | box, grouped box, notched box, outlier points | Implemented core | Tukey quartiles, whiskers, median, deterministic outliers, numeric or categorical groups. |
-| 9 | Candlestick / OHLC | candlestick, OHLC bars, volume overlay, range selector | Prototyped (PR closed unmerged) | `fc.candlestick(...)`/`fc.ohlc(...)` + `fc.candlestick_chart(...)` on the closed `codex/finance-charting-surface` exploration branch: OHLC decimation, shared-y f32 frame, time axes, hover, and a volume pane. Critical finance surface; inherits LOD and time-axis work from core primitives. |
+| 9 | Candlestick / OHLC | candlestick, OHLC bars, volume overlay, range selector | Prototyped (PR closed unmerged) | `xy.candlestick(...)`/`xy.ohlc(...)` + `xy.candlestick_chart(...)` on the closed `codex/finance-charting-surface` exploration branch: OHLC decimation, shared-y f32 frame, time axes, hover, and a volume pane. Critical finance surface; inherits LOD and time-axis work from core primitives. |
 | 10 | Error and interval charts | error bars, error bands, confidence intervals, line range, bar range, whisker, rule | Implemented core | Instanced segment error bars and M4-reduced filled error bands. |
 | 11 | 2D density charts | 2D histogram, hexbin, density heatmap, KDE contours | Implemented core | Native-kernel occupied-bin hexbin plus bounded density payloads. |
 | 12 | Violin and distribution shapes | violin, split violin, KDE plot, density ridge | Implemented core | Bounded-resolution smoothed distribution bands through the rectangle renderer. |
@@ -115,7 +115,7 @@ not fall out of sight.
 | 17 | Sunburst / icicle | sunburst, icicle, radial hierarchy | Planned | Plotly/Highcharts/ECharts compatibility for hierarchical data. |
 | 18 | Radar / polar | radar, spider, polar area, radial bar | Planned | Common in Chart.js/Highcharts; needs polar axes and interaction semantics. |
 | 19 | Gauge / indicator | gauge, bullet, KPI indicator | Planned | Dashboard compatibility; mostly DOM/SVG/canvas chrome rather than large-data rendering. |
-| 20 | Small multiples | facet grid, repeat chart, trellis chart, pair grid | Implemented core | `fc.facet_chart(...)` builds per-panel screen-bounded Figures with optional shared domains. |
+| 20 | Small multiples | facet grid, repeat chart, trellis chart, pair grid | Implemented core | `xy.facet_chart(...)` builds per-panel screen-bounded Figures with optional shared domains. |
 | 21 | Scatter matrix / pair plots | SPLOM, pairplot, corner plot | Planned | High-value exploratory data analysis; should reuse scatter kernels across many panels. |
 | 22 | Joint/distribution composites | joint plot, marginal histogram, marginal rug, scatter+hist combo | Planned | Common Seaborn/Plotly workflow; depends on clean chart composition. |
 | 23 | Regression diagnostics | trendline, regression line, residual plot, QQ plot, PP plot | Planned | Data-science compatibility and model-evaluation workflows. |
@@ -141,10 +141,10 @@ not fall out of sight.
 
 | Rank | Chart | Why it is popular | Why it fits xy | Suggested API |
 |---:|---|---|---|---|
-| 1 | Histogram | Core statistical chart in Plotly, Matplotlib, Altair; common first chart for distributions. | Implemented core: Python-side binning + shared instanced rectangle renderer, incl. `density` and `cumulative` modes. Follow-up: viewport-aware re-binning for very large streamed distributions. | `fc.histogram_chart(fc.hist(values, bins=512, cumulative=True))` |
-| 2 | Bar / column | Present in every major library; expected for categorical comparison. | Implemented core: category axis + shared instanced rectangle renderer for basic, grouped, stacked, normalized stacked, and horizontal bars. Follow-up: labels. | `fc.bar_chart(fc.bar(x, y))` |
-| 3 | Area / filled line | Common extension of line charts in Plotly, Chart.js, Highcharts, Altair. | Implemented core: sorted x, M4 first payload, and filled WebGL segment strips. Follow-up: stacked area helper. | `fc.area_chart(fc.area(x, y))` |
-| 4 | Heatmap / image | Common in scientific and BI tools; Matplotlib, Plotly, Altair, Highcharts all surface it. | Implemented core: matrix-to-grid texture path with color channel reuse. Follow-up: image/raster tiling for huge grids. | `fc.heatmap_chart(fc.heatmap(z, x=None, y=None))` |
+| 1 | Histogram | Core statistical chart in Plotly, Matplotlib, Altair; common first chart for distributions. | Implemented core: Python-side binning + shared instanced rectangle renderer, incl. `density` and `cumulative` modes. Follow-up: viewport-aware re-binning for very large streamed distributions. | `xy.histogram_chart(xy.hist(values, bins=512, cumulative=True))` |
+| 2 | Bar / column | Present in every major library; expected for categorical comparison. | Implemented core: category axis + shared instanced rectangle renderer for basic, grouped, stacked, normalized stacked, and horizontal bars. Follow-up: labels. | `xy.bar_chart(xy.bar(x, y))` |
+| 3 | Area / filled line | Common extension of line charts in Plotly, Chart.js, Highcharts, Altair. | Implemented core: sorted x, M4 first payload, and filled WebGL segment strips. Follow-up: stacked area helper. | `xy.area_chart(xy.area(x, y))` |
+| 4 | Heatmap / image | Common in scientific and BI tools; Matplotlib, Plotly, Altair, Highcharts all surface it. | Implemented core: matrix-to-grid texture path with color channel reuse. Follow-up: image/raster tiling for huge grids. | `xy.heatmap_chart(xy.heatmap(z, x=None, y=None))` |
 
 P1 and the first statistical breadth block are now implemented at the core
 primitive level. The next implementation block can focus on compatibility
@@ -316,9 +316,9 @@ colors accept any CSS expression (`var(--brand-500)`, named colors, etc.). So
 Tailwind can already drive the chart's **theme** by setting a text color or those
 variables on the container, and can style the wrapper freely.
 
-**Status: shipped.** Every DOM chrome element now carries a `data-fc-slot`
+**Status: shipped.** Every DOM chrome element now carries a `data-xy-slot`
 attribute and takes per-slot `class_names` / `chrome_styles`, and its *visual*
-defaults live in a single zero-specificity `:where([data-fc-slot="…"])`
+defaults live in a single zero-specificity `:where([data-xy-slot="…"])`
 stylesheet injected once per document. Because `:where(...)` contributes zero
 specificity, a `class_names` utility class (or an inline `chrome_styles` value)
 always wins over the built-in look **without `!important`** — verified in a real
@@ -379,7 +379,7 @@ Parallel, non-chart-type tracks:
 - **Native PNG rasterizer** (perf) — **shipped** (dossier Phase 3).
   `Chart.to_png(engine=Engine.default)`, now the default, paints the decimated
   payload with an AA rasterizer in the Rust core (introduced in ABI v8,
-  `fc_rasterize`) — no browser, ~50× faster than the Chromium screenshot,
+  `xy_rasterize`) — no browser, ~50× faster than the Chromium screenshot,
   fast truecolor PNGs, and a baked bitmap font for text. `optimize=True`
   retains the slower indexed-palette path for smaller files;
   `engine=Engine.chromium` stays for an installed-browser CSS/WebGL screenshot.
@@ -389,25 +389,25 @@ Parallel, non-chart-type tracks:
 ## Near-Term API Sketch
 
 ```python
-import xy as fc
+import xy
 
 # shipped
-fc.histogram_chart(fc.hist(values, bins=512, density=False, cumulative=False))
-fc.bar_chart(fc.bar(categories, values, mode="grouped", orientation="vertical"))
-fc.area_chart(fc.area(x, y, base=0.0))     # + fill=linear-gradient, curve, dash
-fc.heatmap_chart(fc.heatmap(z, x=None, y=None, colormap="viridis"))
-fc.box_chart(fc.box(values, group=None))
-fc.violin_chart(fc.violin(values, group=None, bandwidth="auto"))
-fc.chart(fc.errorbar(x, y, yerr=..., xerr=...))
-fc.chart(fc.hexbin(x, y, gridsize=50, color_scale="log"))
-fc.candlestick_chart(fc.candlestick(x, open, high, low, close))  # prototyped (closed finance PR)
+xy.histogram_chart(xy.hist(values, bins=512, density=False, cumulative=False))
+xy.bar_chart(xy.bar(categories, values, mode="grouped", orientation="vertical"))
+xy.area_chart(xy.area(x, y, base=0.0))     # + fill=linear-gradient, curve, dash
+xy.heatmap_chart(xy.heatmap(z, x=None, y=None, colormap="viridis"))
+xy.box_chart(xy.box(values, group=None))
+xy.violin_chart(xy.violin(values, group=None, bandwidth="auto"))
+xy.chart(xy.errorbar(x, y, yerr=..., xerr=...))
+xy.chart(xy.hexbin(x, y, gridsize=50, color_scale="log"))
+xy.candlestick_chart(xy.candlestick(x, open, high, low, close))  # prototyped (closed finance PR)
 
 # next
-fc.pie_chart(fc.pie(values, labels=..., donut=0.0))
+xy.pie_chart(xy.pie(values, labels=..., donut=0.0))
 ```
 
 New chart kinds land as composition marks plus a family container
-(`fc.box_chart(fc.box(...))`, `fc.pie_chart(fc.pie(...))`, …).
+(`xy.box_chart(xy.box(...))`, `xy.pie_chart(xy.pie(...))`, …).
 
 ## Decision Summary
 

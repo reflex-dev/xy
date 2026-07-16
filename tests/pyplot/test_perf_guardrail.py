@@ -16,7 +16,7 @@ import time
 import numpy as np
 import pytest
 
-import xy as fc
+import xy
 import xy.pyplot as plt
 
 _CI_TIMER_JITTER = 100e-6
@@ -41,7 +41,7 @@ def test_pyplot_build_tracks_declarative(n: int, reps: int, ceiling: float) -> N
     y = rng.normal(size=n)
 
     def declarative() -> None:
-        c = fc.chart(fc.line(x=x, y=y, color="#1f77b4"), fc.x_axis(), fc.y_axis())
+        c = xy.chart(xy.line(x=x, y=y, color="#1f77b4"), xy.x_axis(), xy.y_axis())
         c.figure().build_payload(2048)
 
     def pyplot() -> None:

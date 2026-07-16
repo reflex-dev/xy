@@ -8,7 +8,7 @@ renders from its own spec + base64 blob into its card.
     uv run python examples/dashboard/site_overview.py       # writes site_overview.html
     uv run python examples/dashboard/site_overview.py --png  # also renders a PNG
 
-Showcases: `fc.chart(..., padding=...)`, `curve="smooth"`,
+Showcases: `xy.chart(..., padding=...)`, `curve="smooth"`,
 `fill="linear-gradient(...)"`, `tick_label_strategy="none"`, and
 `width="100%"` responsive sizing.
 """
@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
-import xy as fc
+import xy
 from xy.export import _STANDALONE_CSP, _bundled_js, _json_for_inline_script
 
 HERE = Path(__file__).resolve().parent
@@ -35,7 +35,7 @@ def spark(kind: str, x, y, color: str, *, fill: bool = True, width: float = 2.4)
     ResizeObserver rather than overflowing at a fixed pixel width.
     """
     if kind == "area":
-        mark = fc.area(
+        mark = xy.area(
             x,
             y,
             color=color,
@@ -45,18 +45,18 @@ def spark(kind: str, x, y, color: str, *, fill: bool = True, width: float = 2.4)
             fill="linear-gradient(currentColor, transparent)" if fill else None,
         )
     else:
-        mark = fc.line(x, y, color=color, curve="smooth", width=width)
+        mark = xy.line(x, y, color=color, curve="smooth", width=width)
     hidden_axis = {
         "style": {"grid_color": "rgba(0,0,0,0)", "axis_color": "rgba(0,0,0,0)"},
         "tick_label_strategy": "none",
     }
-    chart = fc.chart(
+    chart = xy.chart(
         mark,
-        fc.x_axis(**hidden_axis),
-        fc.y_axis(**hidden_axis),
-        fc.legend(show=False),
-        fc.tooltip(show=False),
-        fc.modebar(show=False),
+        xy.x_axis(**hidden_axis),
+        xy.y_axis(**hidden_axis),
+        xy.legend(show=False),
+        xy.tooltip(show=False),
+        xy.modebar(show=False),
         width="100%",
         height=104,
         padding=[6, 1, 2, 1],

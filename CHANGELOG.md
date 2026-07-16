@@ -26,8 +26,8 @@ in the README).
 ### Removed
 - **The fluent `Figure` API is removed from the public surface.**
   `xy.Figure` is no longer exported; `figure.py` is internalized as
-  `xy/_figure.py`. The declarative composition API (`fc.chart(...)`,
-  `fc.line_chart(...)`, `fc.scatter_chart(...)`, marks, axes, annotations,
+  `xy/_figure.py`. The declarative composition API (`xy.chart(...)`,
+  `xy.line_chart(...)`, `xy.scatter_chart(...)`, marks, axes, annotations,
   chrome) is now the single public chart-building API. `Selection` stays
   public, composed `Chart` objects keep the full readout surface
   (`to_html`/`to_png`/`to_svg`/`widget`/`show`/`append`/`pick`/`select_range`/
@@ -180,7 +180,7 @@ in the README).
   (`WEBGL_lose_context`, a controlled loss the existing restore machinery
   undoes) and re-acquires when scrolled back into view — including canvas-swap
   recovery for real browser evictions. Under the budget nothing releases, so
-  small pages are unaffected. Every decision is observable: `data-fc-ctx` on
+  small pages are unaffected. Every decision is observable: `data-xy-ctx` on
   the canvas reads live/released/lost. The dashboard benchmark now
   settle-waits each scrolled chart (reporting per-visit recovery latency),
   classifies governed releases vs evictions, adds a `governed` health tier,
@@ -189,7 +189,7 @@ in the README).
   when visited, recovery p95 ~8 ms, with 10-chart dashboards byte-identical
   in behavior and heap/render times unchanged.
 - **Stratified sampling in the native core** (ABI v10,
-  `fc_stratified_sample_mask` / `kernels.stratified_sample_mask`).
+  `xy_stratified_sample_mask` / `kernels.stratified_sample_mask`).
   `lod.stratified_sample_keep_mask` — the category-aware mask behind
   categorical density overlays — now runs as one fused native pass
   (per-category `sqrt`-scaled hash thresholds plus the lowest-hash
@@ -209,7 +209,7 @@ in the README).
   100k-point categorical scatter drops ~186 ms → ~1 ms, and the command
   buffer shrinks ~40%. The batch skips non-finite marks defensively and
   truncated buffers are rejected like every other opcode.
-- **CSS value validation in the native core** (ABI v9, `fc_css_check` /
+- **CSS value validation in the native core** (ABI v9, `xy_css_check` /
   `kernels.css_check`). One grammar (`src/css.rs`) now gates every styling
   surface at build time: trace/annotation/series colors, gradient stops,
   `mark_style` states, and `style=` declarations parse strictly where the
@@ -227,7 +227,7 @@ in the README).
   hand-written specs instead of silently painting the fallback.
 - **Browser-free native PNG export** (`Figure.to_png(engine="native")`, now the
   default). A dependency-free anti-aliased rasterizer in the Rust core (ABI v8,
-  `fc_rasterize`) paints the same decimated payload the SVG exporter consumes,
+  `xy_rasterize`) paints the same decimated payload the SVG exporter consumes,
   driven by a Python-built display-list command buffer — no Chromium, ~40 ms for
   a 10M-point line, and indexed-palette PNGs for small files. Carries the full
   mark-styling surface (gradients, dashes, symbols, rounded/stroked bars, smooth
@@ -263,7 +263,7 @@ in the README).
     change.
 - **CSS/Tailwind:** every DOM chrome element now takes per-slot `class_names` /
   `chrome_styles`, and its visual defaults live in one zero-specificity
-  `:where([data-fc-slot="…"])` stylesheet — so a utility class or inline style
+  `:where([data-xy-slot="…"])` stylesheet — so a utility class or inline style
   overrides the built-in look **without `!important`**. New slots
   `legend_swatch`, `tick_label`, `axis_title`; class-driven modebar active
   state (`--chart-modebar-active`). `Figure.to_html(..., custom_css=...)`
@@ -300,9 +300,9 @@ in the README).
 
 ### Added
 - Cumulative histogram mode: `Figure.histogram(..., cumulative=True)` and
-  `fc.histogram(cumulative=...)`; combined with `density=True` it yields the
+  `xy.histogram(cumulative=...)`; combined with `density=True` it yields the
   empirical CDF.
-- Normalized stacked bars: `mode="normalized"` on `Figure.bar` / `fc.bar`.
+- Normalized stacked bars: `mode="normalized"` on `Figure.bar` / `xy.bar`.
 - Fluent/composition API parity guard test, preventing the two public
   surfaces from drifting apart.
 - Prebuilt-wheel coverage expanded to a pydantic-class platform matrix:
@@ -315,8 +315,8 @@ in the README).
   full artifact matrix without publishing to PyPI (default for manual runs).
 - `benchmark-refresh` CI workflow: regenerates the cross-library benchmark
   tables (10M scatter and core-2D) from a consistent Ubuntu run.
-- Native fused kernels: `fc_sample_mask` (deterministic density-overlay
-  sampling) and `fc_bin_2d_indices` (density grid + visible rows in one pass).
+- Native fused kernels: `xy_sample_mask` (deterministic density-overlay
+  sampling) and `xy_bin_2d_indices` (density grid + visible rows in one pass).
 - Pyodide runtime load probe (`scripts/pyodide_load_smoke.py`), run
   non-gating in the wasm release job.
 

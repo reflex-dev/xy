@@ -82,7 +82,7 @@ def test_write_images_chromium_threads_custom_css(tmp_path, monkeypatch):
 
     monkeypatch.setattr(export, "find_browser", lambda explicit=None: "/fake/chrome")
     monkeypatch.setattr(_chromium, "ChromiumSession", FakeSession)
-    css = '[data-fc-slot="title"] { color: rebeccapurple; }'
+    css = '[data-xy-slot="title"] { color: rebeccapurple; }'
     path = tmp_path / "x.png"
 
     result = export.write_images(

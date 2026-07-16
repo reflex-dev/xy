@@ -69,22 +69,22 @@ function uniformOf(gl, prog, name) {
 // is a 256×1 texture (colormap or cycled palette). Size mode maps a_sval into a
 // px range. SDF-antialiased in the fragment stage.
 const AXIS_GLSL = `
-float fcDecode(float encoded, vec2 meta) {
+float xyDecode(float encoded, vec2 meta) {
   return encoded / max(abs(meta.y), 1e-30) + meta.x;
 }
-float fcAxisCoord(float encoded, vec2 meta, int mode) {
-  float value = fcDecode(encoded, meta);
+float xyAxisCoord(float encoded, vec2 meta, int mode) {
+  float value = xyDecode(encoded, meta);
   if (mode == 1) return value > 0.0 ? log(value) / log(10.0) : -1e30;
   return value;
 }
-float fcMap(float encoded, vec2 map, vec2 meta, int mode) {
-  return fcAxisCoord(encoded, meta, mode) * map.x + map.y;
+float xyMap(float encoded, vec2 map, vec2 meta, int mode) {
+  return xyAxisCoord(encoded, meta, mode) * map.x + map.y;
 }
-float fcViewCoord(float value, int mode) {
+float xyViewCoord(float value, int mode) {
   if (mode == 1) return value > 0.0 ? log(value) / log(10.0) : -1e30;
   return value;
 }
-float fcViewValue(float coord, int mode) {
+float xyViewValue(float coord, int mode) {
   if (mode == 1) return pow(10.0, coord);
   return coord;
 }
@@ -100,7 +100,7 @@ uniform float u_selectedOpacity; uniform float u_unselectedOpacity;
 out float v_lutCoord; out float v_dim; out float v_dval; out float v_ptSize; out float v_sel;
 ${AXIS_GLSL}
 void main() {
-  gl_Position = vec4(fcMap(ax, u_xmap, u_xmeta, u_xmode), fcMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  gl_Position = vec4(xyMap(ax, u_xmap, u_xmeta, u_xmode), xyMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = sz * u_dpr;
   v_ptSize = sz * u_dpr;
@@ -118,13 +118,13 @@ void main() {
 // <0 inside, 0 at the boundary. Symbols match the annotation markers plus
 // triangle. With u_symbol=0 and no stroke this reduces to the old circle.
 const MARKER_SDF_GLSL = `
-float fcSegmentDistance(vec2 p, vec2 a, vec2 b) {
+float xySegmentDistance(vec2 p, vec2 a, vec2 b) {
   vec2 e = b - a;
   return length(p - a - e * clamp(dot(p - a, e) / dot(e, e), 0.0, 1.0));
 }
-float fcTriangleDistance(vec2 p, vec2 a, vec2 b, vec2 c) {
-  float dist = min(fcSegmentDistance(p, a, b),
-                   min(fcSegmentDistance(p, b, c), fcSegmentDistance(p, c, a)));
+float xyTriangleDistance(vec2 p, vec2 a, vec2 b, vec2 c) {
+  float dist = min(xySegmentDistance(p, a, b),
+                   min(xySegmentDistance(p, b, c), xySegmentDistance(p, c, a)));
   float c0 = (b.x-a.x)*(p.y-a.y) - (b.y-a.y)*(p.x-a.x);
   float c1 = (c.x-b.x)*(p.y-b.y) - (c.y-b.y)*(p.x-b.x);
   float c2 = (a.x-c.x)*(p.y-c.y) - (a.y-c.y)*(p.x-c.x);
@@ -132,16 +132,16 @@ float fcTriangleDistance(vec2 p, vec2 a, vec2 b, vec2 c) {
                 (c0 <= 0.0 && c1 <= 0.0 && c2 <= 0.0);
   return inside ? -dist : dist;
 }
-float fcPentagonDistance(vec2 p) {
+float xyPentagonDistance(vec2 p) {
   // Path.unit_regular_polygon(5), then Matplotlib's 0.5 marker transform.
   vec2 a = vec2(0.0, -0.5);
   vec2 b = vec2(-0.475528258, -0.154508497);
   vec2 c = vec2(-0.293892626, 0.404508497);
   vec2 d = vec2(0.293892626, 0.404508497);
   vec2 e = vec2(0.475528258, -0.154508497);
-  float dist = min(min(fcSegmentDistance(p, a, b), fcSegmentDistance(p, b, c)),
-                   min(min(fcSegmentDistance(p, c, d), fcSegmentDistance(p, d, e)),
-                       fcSegmentDistance(p, e, a)));
+  float dist = min(min(xySegmentDistance(p, a, b), xySegmentDistance(p, b, c)),
+                   min(min(xySegmentDistance(p, c, d), xySegmentDistance(p, d, e)),
+                       xySegmentDistance(p, e, a)));
   float c0 = (b.x-a.x)*(p.y-a.y) - (b.y-a.y)*(p.x-a.x);
   float c1 = (c.x-b.x)*(p.y-b.y) - (c.y-b.y)*(p.x-b.x);
   float c2 = (d.x-c.x)*(p.y-c.y) - (d.y-c.y)*(p.x-c.x);
@@ -151,7 +151,7 @@ float fcPentagonDistance(vec2 p) {
                 (c0 <= 0.0 && c1 <= 0.0 && c2 <= 0.0 && c3 <= 0.0 && c4 <= 0.0);
   return inside ? -dist : dist;
 }
-float fcMarkerSdf(vec2 d, int shape) {
+float xyMarkerSdf(vec2 d, int shape) {
   if (shape == 1) return max(abs(d.x), abs(d.y)) - 0.5;              // square
   if (shape == 2) return (abs(d.x) + abs(d.y)) - 0.5;               // diamond
   if (shape == 4) {                                                 // cross / plus
@@ -165,7 +165,7 @@ float fcMarkerSdf(vec2 d, int shape) {
     p -= vec2(clamp(p.x, -k.z * 0.5, k.z * 0.5), 0.5);
     return length(p) * sign(p.y);
   }
-  if (shape == 6) return fcPentagonDistance(d);                      // exact regular pentagon
+  if (shape == 6) return xyPentagonDistance(d);                      // exact regular pentagon
   if (shape == 7) {                                                 // five-pointed star (apex up)
     const float rf = 0.45;
     const vec2 k1 = vec2(0.809016994, -0.587785252);
@@ -183,7 +183,7 @@ float fcMarkerSdf(vec2 d, int shape) {
     if (shape == 8) q = -d;
     if (shape == 9) q = vec2(d.y, -d.x);
     if (shape == 10) q = vec2(-d.y, d.x);
-    return fcTriangleDistance(q, vec2(0.0, -0.5), vec2(-0.5, 0.5), vec2(0.5, 0.5));
+    return xyTriangleDistance(q, vec2(0.0, -0.5), vec2(-0.5, 0.5), vec2(0.5, 0.5));
   }
   if (shape == 11) {                                                // diagonal x
     vec2 q = vec2(d.x + d.y, d.y - d.x) * 0.707106781;
@@ -214,7 +214,7 @@ void main() {
     vec2 a = abs(q);
     sd = min(max(a.x - 0.5, a.y - halfWidth), max(a.y - 0.5, a.x - halfWidth));
   } else {
-    sd = fcMarkerSdf(d, u_symbol);
+    sd = xyMarkerSdf(d, u_symbol);
   }
   float aa = fwidth(sd) + 1e-4;
   float shapeCov = clamp(0.5 - sd / aa, 0.0, 1.0);
@@ -267,7 +267,7 @@ uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_y
 uniform float u_size; uniform float u_dpr;
 ${AXIS_GLSL}
 void main() {
-  gl_Position = vec4(fcMap(ax, u_xmap, u_xmeta, u_xmode), fcMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  gl_Position = vec4(xyMap(ax, u_xmap, u_xmeta, u_xmode), xyMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   gl_PointSize = u_size * u_dpr;
 }`;
 
@@ -302,7 +302,7 @@ uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange; uniform 
 flat out int v_id;
 ${AXIS_GLSL}
 void main() {
-  gl_Position = vec4(fcMap(ax, u_xmap, u_xmeta, u_xmode), fcMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  gl_Position = vec4(xyMap(ax, u_xmap, u_xmeta, u_xmode), xyMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = max(sz, 6.0) * u_dpr; // enlarge hit target
   v_id = gl_VertexID;
@@ -340,9 +340,9 @@ out vec2 v_data;
 ${AXIS_GLSL}
 void main() {
   gl_Position = vec4(a_corner * 2.0 - 1.0, 0.0, 1.0);
-  float x = mix(fcViewCoord(u_view.x, u_xmode), fcViewCoord(u_view.y, u_xmode), a_corner.x);
-  float y = mix(fcViewCoord(u_view.z, u_ymode), fcViewCoord(u_view.w, u_ymode), a_corner.y);
-  v_data = vec2(fcViewValue(x, u_xmode), fcViewValue(y, u_ymode));
+  float x = mix(xyViewCoord(u_view.x, u_xmode), xyViewCoord(u_view.y, u_xmode), a_corner.x);
+  float y = mix(xyViewCoord(u_view.z, u_ymode), xyViewCoord(u_view.w, u_ymode), a_corner.y);
+  v_data = vec2(xyViewValue(x, u_xmode), xyViewValue(y, u_ymode));
 }`;
 
 const DENSITY_FS = `#version 300 es
@@ -406,8 +406,8 @@ out float v_off; out float v_dash;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
-  vec2 p0 = vec2(fcMap(ax0, u_xmap, u_xmeta, u_xmode), fcMap(ay0, u_ymap, u_ymeta, u_ymode));
-  vec2 p1 = vec2(fcMap(ax1, u_xmap, u_xmeta, u_xmode), fcMap(ay1, u_ymap, u_ymeta, u_ymode));
+  vec2 p0 = vec2(xyMap(ax0, u_xmap, u_xmeta, u_xmode), xyMap(ay0, u_ymap, u_ymeta, u_ymode));
+  vec2 p1 = vec2(xyMap(ax1, u_xmap, u_xmeta, u_xmode), xyMap(ay1, u_ymap, u_ymeta, u_ymode));
   vec2 pix0 = (p0 * 0.5 + 0.5) * u_res;
   vec2 pix1 = (p1 * 0.5 + 0.5) * u_res;
   vec2 dir = pix1 - pix0;
@@ -470,8 +470,8 @@ out float v_off; out float v_cval; out float v_dash;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
-  vec2 p0 = vec2(fcMap(ax0, u_xmap, u_x0meta, u_x0mode), fcMap(ay0, u_ymap, u_y0meta, u_y0mode));
-  vec2 p1 = vec2(fcMap(ax1, u_xmap, u_x1meta, u_x1mode), fcMap(ay1, u_ymap, u_y1meta, u_y1mode));
+  vec2 p0 = vec2(xyMap(ax0, u_xmap, u_x0meta, u_x0mode), xyMap(ay0, u_ymap, u_y0meta, u_y0mode));
+  vec2 p1 = vec2(xyMap(ax1, u_xmap, u_x1meta, u_x1mode), xyMap(ay1, u_ymap, u_y1meta, u_y1mode));
   vec2 pix0 = (p0 * 0.5 + 0.5) * u_res;
   vec2 pix1 = (p1 * 0.5 + 0.5) * u_res;
   vec2 dir = pix1 - pix0;
@@ -533,7 +533,7 @@ void main() {
   vec2 ym = vertex == 0 ? u_y0meta : (vertex == 1 ? u_y1meta : u_y2meta);
   int xmode = vertex == 0 ? u_x0mode : (vertex == 1 ? u_x1mode : u_x2mode);
   int ymode = vertex == 0 ? u_y0mode : (vertex == 1 ? u_y1mode : u_y2mode);
-  gl_Position = vec4(fcMap(x, u_xmap, xm, xmode), fcMap(y, u_ymap, ym, ymode), 0.0, 1.0);
+  gl_Position = vec4(xyMap(x, u_xmap, xm, xmode), xyMap(y, u_ymap, ym, ymode), 0.0, 1.0);
   v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   v_bary = vertex == 0 ? vec3(1.,0.,0.) : (vertex == 1 ? vec3(0.,1.,0.) : vec3(0.,0.,1.));
 }`;
@@ -565,7 +565,7 @@ void main() {
 const GRAD_GLSL = `
 uniform int u_gradMode; uniform int u_gradDir; uniform int u_gradCount;
 uniform float u_gradPos[8]; uniform vec4 u_gradColor[8];
-vec4 fcGradSample(float t) {
+vec4 xyGradSample(float t) {
   vec4 c0 = u_gradColor[0]; float p0 = u_gradPos[0];
   if (t <= p0) return c0;
   for (int i = 1; i < 8; i++) {
@@ -576,7 +576,7 @@ vec4 fcGradSample(float t) {
   }
   return c0;
 }
-float fcGradT(float markT, vec2 res) {
+float xyGradT(float markT, vec2 res) {
   float t;
   if (u_gradMode == 2) {
     vec2 f = gl_FragCoord.xy / max(res, vec2(1.0));
@@ -599,12 +599,12 @@ const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1
 ${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
-  float x0 = fcMap(ax0, u_xmap, u_xmeta, u_xmode);
-  float x1 = fcMap(ax1, u_xmap, u_xmeta, u_xmode);
-  float y0 = fcMap(ay0, u_ymap, u_ymeta, u_ymode);
-  float y1 = fcMap(ay1, u_ymap, u_ymeta, u_ymode);
-  float b0 = fcMap(ab0, u_bmap, u_bmeta, u_ymode);
-  float b1 = fcMap(ab1, u_bmap, u_bmeta, u_ymode);
+  float x0 = xyMap(ax0, u_xmap, u_xmeta, u_xmode);
+  float x1 = xyMap(ax1, u_xmap, u_xmeta, u_xmode);
+  float y0 = xyMap(ay0, u_ymap, u_ymeta, u_ymode);
+  float y1 = xyMap(ay1, u_ymap, u_ymeta, u_ymode);
+  float b0 = xyMap(ab0, u_bmap, u_bmeta, u_ymode);
+  float b1 = xyMap(ab1, u_bmap, u_bmeta, u_ymode);
   float top = mix(y0, y1, c.x);
   float base = mix(b0, b1, c.x);
   float clipY = mix(base, top, c.y);
@@ -633,7 +633,7 @@ void main() {
     float denom = v_top - v_base;
     float markT = clamp((v_pos - v_base) / (abs(denom) > 1e-6 ? denom : 1e-6), 0.0, 1.0);
     // Compose the mark opacity (premultiplied) over the gradient sample.
-    premult = fcGradSample(fcGradT(markT, u_res)) * u_color.a;
+    premult = xyGradSample(xyGradT(markT, u_res)) * u_color.a;
   }
   if (premult.a <= 0.001) discard;
   outColor = premult;
@@ -656,10 +656,10 @@ const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1
 ${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
-  float x0 = fcMap(ax0, u_x0map, u_x0meta, u_xmode) + u_edgePad.x;
-  float x1 = fcMap(ax1, u_x1map, u_x1meta, u_xmode) + u_edgePad.y;
-  float y0 = fcMap(ay0, u_y0map, u_y0meta, u_ymode) + u_edgePad.z;
-  float y1 = fcMap(ay1, u_y1map, u_y1meta, u_ymode) + u_edgePad.w;
+  float x0 = xyMap(ax0, u_x0map, u_x0meta, u_xmode) + u_edgePad.x;
+  float x1 = xyMap(ax1, u_x1map, u_x1meta, u_xmode) + u_edgePad.y;
+  float y0 = xyMap(ay0, u_y0map, u_y0meta, u_ymode) + u_edgePad.z;
+  float y1 = xyMap(ay1, u_y1map, u_y1meta, u_ymode) + u_edgePad.w;
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   // Pixel-space local frame for the rounded-corner/stroke SDF (v_half is
   // constant across the quad; v_local interpolates to the fragment offset).
@@ -690,10 +690,10 @@ const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1
 ${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
-  float p = fcMap(a_pos, u_pmap, u_pmeta, u_pmode);
+  float p = xyMap(a_pos, u_pmap, u_pmeta, u_pmode);
   float halfW = abs(u_width * u_pmap.x) * 0.5;
-  float v0 = (u_v0Mode == 0 ? u_v0Const : fcMap(a_v0, u_v0map, u_v0meta, u_vmode)) + u_v0EdgePad;
-  float v1 = fcMap(a_v1, u_v1map, u_v1meta, u_vmode);
+  float v0 = (u_v0Mode == 0 ? u_v0Const : xyMap(a_v0, u_v0map, u_v0meta, u_vmode)) + u_v0EdgePad;
+  float v1 = xyMap(a_v1, u_v1map, u_v1meta, u_vmode);
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   vec2 clipA, clipB;
   if (u_orientation == 0) {
@@ -732,7 +732,7 @@ void main() {
   vec4 premult = vec4(rgb * u_color.a, u_color.a);
   // Compose the mark opacity (u_color.a) over the gradient — premultiplied, so
   // one scalar multiply fades every stop, including a fade-to-transparent.
-  if (u_gradMode != 0) premult = fcGradSample(fcGradT(v_t, u_res)) * u_color.a;
+  if (u_gradMode != 0) premult = xyGradSample(xyGradT(v_t, u_res)) * u_color.a;
   if (u_radius.x > 0.0 || u_radius.y > 0.0 || u_strokeWidth > 0.0) {
     // u_radius = (tip, base) in mark space: v_t > 0.5 is the tip half, so
     // corner_radius=(6, 0) rounds only the value end of the bar. On the
@@ -761,7 +761,7 @@ void main() {
 // offset-encoded f32 columns (§4) is exact. Output is capped at `maxOut`
 // vertices; past that the polyline is sub-pixel dense and smoothing is a no-op.
 // ---------------------------------------------------------------------------
-function fcMonotoneTangents(x, y, n) {
+function xyMonotoneTangents(x, y, n) {
   const d = new Float64Array(n - 1);
   const m = new Float64Array(n);
   for (let i = 0; i < n - 1; i++) {
@@ -785,7 +785,7 @@ function fcMonotoneTangents(x, y, n) {
   return m;
 }
 
-function fcSmoothResample(x, y, extra, n, maxOut) {
+function xySmoothResample(x, y, extra, n, maxOut) {
   if (n < 3) return null;
   const sub = Math.max(1, Math.min(16, Math.floor(maxOut / n)));
   if (sub <= 1) return null; // already pixel-dense; identity at pixel scale
@@ -794,8 +794,8 @@ function fcSmoothResample(x, y, extra, n, maxOut) {
     if (i > 0 && x[i] < x[i - 1]) return null; // needs sorted x (line ingest sorts)
     if (extra && !Number.isFinite(extra[i])) return null;
   }
-  const my = fcMonotoneTangents(x, y, n);
-  const me = extra ? fcMonotoneTangents(x, extra, n) : null;
+  const my = xyMonotoneTangents(x, y, n);
+  const me = extra ? xyMonotoneTangents(x, extra, n) : null;
   const outN = (n - 1) * sub + 1;
   const ox = new Float32Array(outN);
   const oy = new Float32Array(outN);

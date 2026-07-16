@@ -10,7 +10,7 @@ the Reflex demo are out of scope except where the library can reduce exposure.
 
 ## Fixed Findings
 
-### FC-SEC-2026-01: Standalone HTML lacked a defensive CSP
+### XY-SEC-2026-01: Standalone HTML lacked a defensive CSP
 
 Severity: medium defense-in-depth.
 
@@ -31,7 +31,7 @@ Fix:
 Strict nonce/hash CSP still requires a host wrapper that serves the JS bundle as
 a separate asset.
 
-### FC-SEC-2026-02: Legend swatches accepted raw CSS paint strings
+### XY-SEC-2026-02: Legend swatches accepted raw CSS paint strings
 
 Severity: medium.
 
@@ -49,7 +49,7 @@ Fix:
   fixed library-generated strings.
 - Added static client tests that guard the sanitized legend sink.
 
-### FC-SEC-2026-03: PNG export disabled Chromium sandbox by default
+### XY-SEC-2026-03: PNG export disabled Chromium sandbox by default
 
 Severity: medium.
 
@@ -65,7 +65,7 @@ Fix:
 - Threaded the option through `Figure.to_png()` and composed chart `to_png()`.
 - Added tests proving `--no-sandbox` only appears when explicitly requested.
 
-### FC-SEC-2026-04: Pyramid native-boundary validation was weaker than other kernels
+### XY-SEC-2026-04: Pyramid native-boundary validation was weaker than other kernels
 
 Severity: low/medium robustness.
 
@@ -81,7 +81,7 @@ Fix:
 - Rejected bool values before they can alias integer handles or dimensions.
 - Added parity tests covering native-dispatch and fallback behavior.
 
-### FC-CI-2026-01: Clippy hard gate failed on staged SIMD helpers
+### XY-CI-2026-01: Clippy hard gate failed on staged SIMD helpers
 
 Severity: CI hardening.
 

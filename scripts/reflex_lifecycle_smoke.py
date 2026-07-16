@@ -131,22 +131,22 @@ WRAP_SCRIPT_TEMPLATE = r"""
   }
 
   function installLifecycleWrap() {
-    const fc = window.xy;
-    if (!fc || fc.__lifecycleWrapped) return false;
-    fc.__lifecycleWrapped = true;
+    const xy = window.xy;
+    if (!xy || xy.__lifecycleWrapped) return false;
+    xy.__lifecycleWrapped = true;
 
-    const originalRenderStandalone = fc.renderStandalone;
+    const originalRenderStandalone = xy.renderStandalone;
     if (typeof originalRenderStandalone === "function") {
-      fc.renderStandalone = function (...args) {
+      xy.renderStandalone = function (...args) {
         const view = originalRenderStandalone.apply(this, args);
         views.push(view);
         return view;
       };
     }
 
-    const OriginalChartView = fc.ChartView;
+    const OriginalChartView = xy.ChartView;
     if (typeof OriginalChartView === "function") {
-      fc.ChartView = class LifecycleChartView extends OriginalChartView {
+      xy.ChartView = class LifecycleChartView extends OriginalChartView {
         constructor(...args) {
           super(...args);
           views.push(this);
@@ -189,9 +189,9 @@ WRAP_SCRIPT_TEMPLATE = r"""
         unexpected: ["(missing-root)"],
       };
     }
-    const nodes = [root, ...root.querySelectorAll("[data-fc-slot]")];
+    const nodes = [root, ...root.querySelectorAll("[data-xy-slot]")];
     for (const node of nodes) {
-      const slot = node && node.dataset ? node.dataset.fcSlot : "";
+      const slot = node && node.dataset ? node.dataset.xySlot : "";
       if (!slot) continue;
       counts[slot] = (counts[slot] || 0) + 1;
       if (!publicDomSlots.has(slot)) unexpected.add(slot);
@@ -366,7 +366,7 @@ WRAP_SCRIPT_TEMPLATE = r"""
         missing_slots: missingSlots,
         unexpected_slots: unexpectedSlots,
       };
-      document.body.setAttribute("data-fc-child-lifecycle", JSON.stringify(payload));
+      document.body.setAttribute("data-xy-child-lifecycle", JSON.stringify(payload));
       window.parent?.postMessage({
         source: "xy-lifecycle-smoke",
         asset: decodeURIComponent(location.pathname.split("/").pop() || ""),
@@ -375,7 +375,7 @@ WRAP_SCRIPT_TEMPLATE = r"""
       }, "*");
     } catch (err) {
       const payload = (err && err.stack ? err.stack : String(err)).slice(0, 1200);
-      document.body.setAttribute("data-fc-child-lifecycle-error", payload);
+      document.body.setAttribute("data-xy-child-lifecycle-error", payload);
       window.parent?.postMessage({
         source: "xy-lifecycle-smoke",
         asset: decodeURIComponent(location.pathname.split("/").pop() || ""),
@@ -495,7 +495,7 @@ def _write_shell_page(
     let activePhase = "";
     let keepAliveTick = 0;
     const keepAlive = setInterval(() => {{
-      document.body.setAttribute("data-fc-shell-tick", String(++keepAliveTick));
+      document.body.setAttribute("data-xy-shell-tick", String(++keepAliveTick));
     }}, 250);
 
     function nextFrame() {{
@@ -593,7 +593,7 @@ def _write_shell_page(
         }}, 45000);
         const poll = setInterval(() => {{
           ticks++;
-          document.body.setAttribute("data-fc-shell-poll", `${{phase}}:${{ticks}}:${{seen.size}}`);
+          document.body.setAttribute("data-xy-shell-poll", `${{phase}}:${{ticks}}:${{seen.size}}`);
           for (const iframe of viewport.querySelectorAll("iframe")) {{
             const asset = iframe.getAttribute("data-asset");
             if (!asset || seen.has(asset)) continue;
@@ -607,14 +607,14 @@ def _write_shell_page(
               return;
             }}
             if (!body) continue;
-            const error = body.getAttribute("data-fc-child-lifecycle-error");
+            const error = body.getAttribute("data-xy-child-lifecycle-error");
             if (error) {{
               clearTimeout(timer);
               clearInterval(poll);
               reject(new Error(`${{phase}}/${{asset}}: ${{error}}`));
               return;
             }}
-            const raw = body.getAttribute("data-fc-child-lifecycle");
+            const raw = body.getAttribute("data-xy-child-lifecycle");
             if (!raw) continue;
             let payload;
             try {{
@@ -679,7 +679,7 @@ def _write_shell_page(
         const slotCount = flat.reduce((sum, payload) => sum + Number(payload.slot_count || 0), 0);
         if (!(minLit > 8)) throw new Error(`blank shell probe min_lit=${{minLit}}`);
         if (!(slotCount > 0)) throw new Error("shell DOM slot probe found no public slots");
-        document.body.setAttribute("data-fc-shell-lifecycle", JSON.stringify({{
+        document.body.setAttribute("data-xy-shell-lifecycle", JSON.stringify({{
           status: "ok",
           phases: reports.length,
           phase_names: reports.map((phase) => phase.phase),
@@ -696,7 +696,7 @@ def _write_shell_page(
         clearInterval(keepAlive);
       }} catch (err) {{
         document.body.setAttribute(
-          "data-fc-shell-lifecycle-error",
+          "data-xy-shell-lifecycle-error",
           String(err && err.stack ? err.stack : err).slice(0, 1200),
         );
         clearInterval(keepAlive);
@@ -747,10 +747,10 @@ def _html_attr_json(dom: str, attr: str) -> dict[str, object] | None:
 
 
 def _child_result(dom: str, asset: str) -> dict[str, object]:
-    error = re.search(r"<body\b[^>]*data-fc-child-lifecycle-error=\"([^\"]*)\"", dom)
+    error = re.search(r"<body\b[^>]*data-xy-child-lifecycle-error=\"([^\"]*)\"", dom)
     if error:
         raise SystemExit(f"{asset}: {html.unescape(error.group(1))}")
-    payload = _html_attr_json(dom, "data-fc-child-lifecycle")
+    payload = _html_attr_json(dom, "data-xy-child-lifecycle")
     if payload is None:
         title_match = re.search(r"<title>(.*?)</title>", dom, flags=re.IGNORECASE | re.S)
         title = html.unescape(title_match.group(1).strip()) if title_match else "(no title)"
@@ -775,10 +775,10 @@ def _shell_result(
     asset_count: int,
     critical_assets: tuple[str, ...] = CRITICAL_ASSETS,
 ) -> dict[str, object]:
-    error = re.search(r"<body\b[^>]*data-fc-shell-lifecycle-error=\"([^\"]*)\"", dom)
+    error = re.search(r"<body\b[^>]*data-xy-shell-lifecycle-error=\"([^\"]*)\"", dom)
     if error:
         raise SystemExit(f"iframe shell: {html.unescape(error.group(1))}")
-    payload = _html_attr_json(dom, "data-fc-shell-lifecycle")
+    payload = _html_attr_json(dom, "data-xy-shell-lifecycle")
     if payload is None:
         raise SystemExit("iframe shell: lifecycle probe did not finish")
     if payload.get("status") != "ok":

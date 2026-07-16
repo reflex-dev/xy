@@ -142,7 +142,7 @@ async function probe(name) {
     HTMLCanvasElement.prototype.getContext = originalGetContext;
     window.xyConformanceView._drawNow();
   }, { spec, values });
-  await page.locator('[data-fc-slot="canvas"]').focus();
+  await page.locator('[data-xy-slot="canvas"]').focus();
   await page.keyboard.press("Home");
   await page.keyboard.press("ArrowRight");
   await page.evaluate(() => {
@@ -243,8 +243,8 @@ async function probe(name) {
         root: rect(v.root),
         canvas: rect(v.canvas),
         toolbar: rect(v._modebar),
-        title: rect(v.root.querySelector('[data-fc-slot="title"]')),
-        labelPositions: [...v.labels.querySelectorAll('[data-fc-slot="tick_label"], [data-fc-slot="axis_title"]')]
+        title: rect(v.root.querySelector('[data-xy-slot="title"]')),
+        labelPositions: [...v.labels.querySelectorAll('[data-xy-slot="tick_label"], [data-xy-slot="axis_title"]')]
           .map((el) => { const r = rect(el); return [r.x, r.y]; }),
       },
       signature,

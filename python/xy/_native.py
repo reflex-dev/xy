@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_CONTOUR_WORK, MAX_SCREEN_DIM
 
-ABI_VERSION = 34
+ABI_VERSION = 35
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.
@@ -70,9 +70,9 @@ def _find_library() -> Path:
 def _load() -> ctypes.CDLL:
     lib = ctypes.CDLL(str(_find_library()))
 
-    lib.fc_abi_version.restype = ctypes.c_uint32
-    lib.fc_abi_version.argtypes = []
-    got = lib.fc_abi_version()
+    lib.xy_abi_version.restype = ctypes.c_uint32
+    lib.xy_abi_version.argtypes = []
+    got = lib.xy_abi_version()
     if got != ABI_VERSION:
         raise ImportError(
             f"xy native core ABI mismatch: python wrapper expects "
@@ -80,16 +80,16 @@ def _load() -> ctypes.CDLL:
             "wheel and package versions match."
         )
 
-    lib.fc_factorize_fixed.restype = ctypes.c_size_t
-    lib.fc_factorize_fixed.argtypes = [
+    lib.xy_factorize_fixed.restype = ctypes.c_size_t
+    lib.xy_factorize_fixed.argtypes = [
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_size_t,
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
-    lib.fc_factorize_fixed_u8.restype = ctypes.c_size_t
-    lib.fc_factorize_fixed_u8.argtypes = [
+    lib.xy_factorize_fixed_u8.restype = ctypes.c_size_t
+    lib.xy_factorize_fixed_u8.argtypes = [
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_size_t,
@@ -97,8 +97,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_size_t,
     ]
-    lib.fc_factorize_fixed_u8_counts.restype = ctypes.c_size_t
-    lib.fc_factorize_fixed_u8_counts.argtypes = [
+    lib.xy_factorize_fixed_u8_counts.restype = ctypes.c_size_t
+    lib.xy_factorize_fixed_u8_counts.argtypes = [
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_size_t,
@@ -107,8 +107,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_size_t,
     ]
-    lib.fc_factorize_unicode1_u8_counts.restype = ctypes.c_size_t
-    lib.fc_factorize_unicode1_u8_counts.argtypes = [
+    lib.xy_factorize_unicode1_u8_counts.restype = ctypes.c_size_t
+    lib.xy_factorize_unicode1_u8_counts.argtypes = [
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_int32,
@@ -117,16 +117,16 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_size_t,
     ]
-    lib.fc_remap_u8.restype = ctypes.c_int32
-    lib.fc_remap_u8.argtypes = [
+    lib.xy_remap_u8.restype = ctypes.c_int32
+    lib.xy_remap_u8.argtypes = [
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_void_p,
         ctypes.c_size_t,
     ]
 
-    lib.fc_zone_maps.restype = ctypes.c_size_t
-    lib.fc_zone_maps.argtypes = [
+    lib.xy_zone_maps.restype = ctypes.c_size_t
+    lib.xy_zone_maps.argtypes = [
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_size_t,
@@ -139,8 +139,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
-    lib.fc_zone_maps_pair.restype = ctypes.c_size_t
-    lib.fc_zone_maps_pair.argtypes = [
+    lib.xy_zone_maps_pair.restype = ctypes.c_size_t
+    lib.xy_zone_maps_pair.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_size_t,
@@ -148,16 +148,16 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
-    lib.fc_encode_f32.restype = ctypes.c_int32
-    lib.fc_encode_f32.argtypes = [
+    lib.xy_encode_f32.restype = ctypes.c_int32
+    lib.xy_encode_f32.argtypes = [
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_double,
         ctypes.c_double,
         ctypes.c_void_p,
     ]
-    lib.fc_m4_indices.restype = ctypes.c_size_t
-    lib.fc_m4_indices.argtypes = [
+    lib.xy_m4_indices.restype = ctypes.c_size_t
+    lib.xy_m4_indices.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_size_t,
@@ -166,8 +166,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,
         ctypes.c_void_p,
     ]
-    lib.fc_stacked_bounds.restype = ctypes.c_int32
-    lib.fc_stacked_bounds.argtypes = [
+    lib.xy_stacked_bounds.restype = ctypes.c_int32
+    lib.xy_stacked_bounds.argtypes = [
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_size_t,
@@ -175,8 +175,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
-    lib.fc_histogram2d.restype = ctypes.c_int32
-    lib.fc_histogram2d.argtypes = [
+    lib.xy_histogram2d.restype = ctypes.c_int32
+    lib.xy_histogram2d.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -187,8 +187,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,
         ctypes.c_void_p,
     ]
-    lib.fc_quad_mesh_triangles.restype = ctypes.c_size_t
-    lib.fc_quad_mesh_triangles.argtypes = [
+    lib.xy_quad_mesh_triangles.restype = ctypes.c_size_t
+    lib.xy_quad_mesh_triangles.argtypes = [
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_void_p,
@@ -205,8 +205,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
-    lib.fc_sector_triangles.restype = ctypes.c_size_t
-    lib.fc_sector_triangles.argtypes = [
+    lib.xy_sector_triangles.restype = ctypes.c_size_t
+    lib.xy_sector_triangles.argtypes = [
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_void_p,
@@ -226,8 +226,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_size_t,
     ]
-    lib.fc_rfft.restype = ctypes.c_int32
-    lib.fc_rfft.argtypes = [
+    lib.xy_rfft.restype = ctypes.c_int32
+    lib.xy_rfft.argtypes = [
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_size_t,
@@ -236,8 +236,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
-    lib.fc_welch_spectra.restype = ctypes.c_int32
-    lib.fc_welch_spectra.argtypes = [
+    lib.xy_welch_spectra.restype = ctypes.c_int32
+    lib.xy_welch_spectra.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_size_t,
@@ -250,8 +250,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
-    lib.fc_spectrogram.restype = ctypes.c_int32
-    lib.fc_spectrogram.argtypes = [
+    lib.xy_spectrogram.restype = ctypes.c_int32
+    lib.xy_spectrogram.argtypes = [
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_size_t,
@@ -261,8 +261,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
-    lib.fc_correlation.restype = ctypes.c_int32
-    lib.fc_correlation.argtypes = [
+    lib.xy_correlation.restype = ctypes.c_int32
+    lib.xy_correlation.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_size_t,
@@ -271,16 +271,16 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
-    lib.fc_weighted_ecdf.restype = ctypes.c_size_t
-    lib.fc_weighted_ecdf.argtypes = [
+    lib.xy_weighted_ecdf.restype = ctypes.c_size_t
+    lib.xy_weighted_ecdf.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
-    lib.fc_indexed_triangles.restype = ctypes.c_size_t
-    lib.fc_indexed_triangles.argtypes = [
+    lib.xy_indexed_triangles.restype = ctypes.c_size_t
+    lib.xy_indexed_triangles.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_size_t,
@@ -297,8 +297,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
-    lib.fc_triangle_edges.restype = ctypes.c_size_t
-    lib.fc_triangle_edges.argtypes = [
+    lib.xy_triangle_edges.restype = ctypes.c_size_t
+    lib.xy_triangle_edges.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_size_t,
@@ -309,24 +309,24 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
-    lib.fc_delaunay_triangles.restype = ctypes.c_size_t
-    lib.fc_delaunay_triangles.argtypes = [
+    lib.xy_delaunay_triangles.restype = ctypes.c_size_t
+    lib.xy_delaunay_triangles.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_void_p,
         ctypes.c_size_t,
     ]
-    lib.fc_polygon_triangles.restype = ctypes.c_size_t
-    lib.fc_polygon_triangles.argtypes = [
+    lib.xy_polygon_triangles.restype = ctypes.c_size_t
+    lib.xy_polygon_triangles.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_void_p,
         ctypes.c_size_t,
     ]
-    lib.fc_marching_triangles.restype = ctypes.c_size_t
-    lib.fc_marching_triangles.argtypes = [
+    lib.xy_marching_triangles.restype = ctypes.c_size_t
+    lib.xy_marching_triangles.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -342,8 +342,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_size_t,
     ]
-    lib.fc_vector_segments.restype = ctypes.c_size_t
-    lib.fc_vector_segments.argtypes = [
+    lib.xy_vector_segments.restype = ctypes.c_size_t
+    lib.xy_vector_segments.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_void_p,
@@ -357,8 +357,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
-    lib.fc_streamlines.restype = ctypes.c_size_t
-    lib.fc_streamlines.argtypes = [
+    lib.xy_streamlines.restype = ctypes.c_size_t
+    lib.xy_streamlines.argtypes = [
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_void_p,
@@ -373,8 +373,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_size_t,
     ]
-    lib.fc_marching_squares.restype = ctypes.c_size_t
-    lib.fc_marching_squares.argtypes = [
+    lib.xy_marching_squares.restype = ctypes.c_size_t
+    lib.xy_marching_squares.argtypes = [
         ctypes.c_void_p,  # z (rows * cols f64s)
         ctypes.c_size_t,  # rows
         ctypes.c_size_t,  # cols
@@ -389,12 +389,12 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,  # level output
         ctypes.c_size_t,  # output capacity in segments
     ]
-    lib.fc_min_max.restype = ctypes.c_int32
-    lib.fc_min_max.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.c_void_p]
-    lib.fc_is_sorted.restype = ctypes.c_int32
-    lib.fc_is_sorted.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
-    lib.fc_bin_2d.restype = ctypes.c_int32
-    lib.fc_bin_2d.argtypes = [
+    lib.xy_min_max.restype = ctypes.c_int32
+    lib.xy_min_max.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.c_void_p]
+    lib.xy_is_sorted.restype = ctypes.c_int32
+    lib.xy_is_sorted.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+    lib.xy_bin_2d.restype = ctypes.c_int32
+    lib.xy_bin_2d.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_size_t,
@@ -406,8 +406,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,
         ctypes.c_void_p,
     ]
-    lib.fc_bin_2d_indices.restype = ctypes.c_size_t
-    lib.fc_bin_2d_indices.argtypes = [
+    lib.xy_bin_2d_indices.restype = ctypes.c_size_t
+    lib.xy_bin_2d_indices.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_size_t,
@@ -420,8 +420,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_void_p,
     ]
-    lib.fc_bin_2d_sample_range.restype = ctypes.c_size_t
-    lib.fc_bin_2d_sample_range.argtypes = [
+    lib.xy_bin_2d_sample_range.restype = ctypes.c_size_t
+    lib.xy_bin_2d_sample_range.argtypes = [
         ctypes.c_void_p,  # x
         ctypes.c_void_p,  # y
         ctypes.c_size_t,  # len
@@ -437,8 +437,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,  # sampled rows
         ctypes.c_size_t,  # sampled-row capacity
     ]
-    lib.fc_bin_2d_stratified_sample_range_u8_counted.restype = ctypes.c_size_t
-    lib.fc_bin_2d_stratified_sample_range_u8_counted.argtypes = [
+    lib.xy_bin_2d_stratified_sample_range_u8_counted.restype = ctypes.c_size_t
+    lib.xy_bin_2d_stratified_sample_range_u8_counted.argtypes = [
         ctypes.c_void_p,  # x
         ctypes.c_void_p,  # y
         ctypes.c_void_p,  # groups
@@ -458,8 +458,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,  # sampled rows
         ctypes.c_size_t,  # sampled-row capacity
     ]
-    lib.fc_histogram_uniform.restype = ctypes.c_size_t
-    lib.fc_histogram_uniform.argtypes = [
+    lib.xy_histogram_uniform.restype = ctypes.c_size_t
+    lib.xy_histogram_uniform.argtypes = [
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_double,
@@ -468,8 +468,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_int32,
         ctypes.c_void_p,
     ]
-    lib.fc_normalize_f32.restype = ctypes.c_int32
-    lib.fc_normalize_f32.argtypes = [
+    lib.xy_normalize_f32.restype = ctypes.c_int32
+    lib.xy_normalize_f32.argtypes = [
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_double,
@@ -477,8 +477,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_int32,
         ctypes.c_void_p,
     ]
-    lib.fc_valid_indices_f64.restype = ctypes.c_size_t
-    lib.fc_valid_indices_f64.argtypes = [
+    lib.xy_valid_indices_f64.restype = ctypes.c_size_t
+    lib.xy_valid_indices_f64.argtypes = [
         ctypes.c_void_p,  # array of f64 pointers
         ctypes.c_size_t,  # number of columns
         ctypes.c_size_t,  # row count
@@ -486,8 +486,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,  # output row IDs
         ctypes.c_size_t,  # output capacity
     ]
-    lib.fc_range_indices.restype = ctypes.c_size_t
-    lib.fc_range_indices.argtypes = [
+    lib.xy_range_indices.restype = ctypes.c_size_t
+    lib.xy_range_indices.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_size_t,
@@ -497,26 +497,26 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_void_p,
     ]
-    lib.fc_sample_mask.restype = ctypes.c_int32
-    lib.fc_sample_mask.argtypes = [
+    lib.xy_sample_mask.restype = ctypes.c_int32
+    lib.xy_sample_mask.argtypes = [
         ctypes.c_void_p,
         ctypes.c_size_t,
         ctypes.c_uint64,
         ctypes.c_uint64,
         ctypes.c_void_p,
     ]
-    lib.fc_sample_mask_u32.restype = ctypes.c_int32
-    lib.fc_sample_mask_u32.argtypes = list(lib.fc_sample_mask.argtypes)
-    lib.fc_sample_range_indices.restype = ctypes.c_size_t
-    lib.fc_sample_range_indices.argtypes = [
+    lib.xy_sample_mask_u32.restype = ctypes.c_int32
+    lib.xy_sample_mask_u32.argtypes = list(lib.xy_sample_mask.argtypes)
+    lib.xy_sample_range_indices.restype = ctypes.c_size_t
+    lib.xy_sample_range_indices.argtypes = [
         ctypes.c_size_t,
         ctypes.c_uint64,
         ctypes.c_uint64,
         ctypes.c_void_p,
         ctypes.c_size_t,
     ]
-    lib.fc_stratified_sample_range_u8.restype = ctypes.c_size_t
-    lib.fc_stratified_sample_range_u8.argtypes = [
+    lib.xy_stratified_sample_range_u8.restype = ctypes.c_size_t
+    lib.xy_stratified_sample_range_u8.argtypes = [
         ctypes.c_void_p,  # groups
         ctypes.c_size_t,  # len
         ctypes.c_size_t,  # n_groups
@@ -526,8 +526,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,  # out
         ctypes.c_size_t,  # capacity
     ]
-    lib.fc_stratified_sample_range_u8_counted.restype = ctypes.c_size_t
-    lib.fc_stratified_sample_range_u8_counted.argtypes = [
+    lib.xy_stratified_sample_range_u8_counted.restype = ctypes.c_size_t
+    lib.xy_stratified_sample_range_u8_counted.argtypes = [
         ctypes.c_void_p,  # groups
         ctypes.c_size_t,  # len
         ctypes.c_void_p,  # counts
@@ -538,8 +538,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,  # out
         ctypes.c_size_t,  # capacity
     ]
-    lib.fc_stratified_sample_mask.restype = ctypes.c_int32
-    lib.fc_stratified_sample_mask.argtypes = [
+    lib.xy_stratified_sample_mask.restype = ctypes.c_int32
+    lib.xy_stratified_sample_mask.argtypes = [
         ctypes.c_void_p,  # ids
         ctypes.c_void_p,  # groups
         ctypes.c_size_t,  # len
@@ -549,10 +549,10 @@ def _load() -> ctypes.CDLL:
         ctypes.c_uint64,  # min_count
         ctypes.c_void_p,  # out
     ]
-    lib.fc_stratified_sample_mask_u32.restype = ctypes.c_int32
-    lib.fc_stratified_sample_mask_u32.argtypes = list(lib.fc_stratified_sample_mask.argtypes)
-    lib.fc_pyramid_build.restype = ctypes.c_uint64
-    lib.fc_pyramid_build.argtypes = [
+    lib.xy_stratified_sample_mask_u32.restype = ctypes.c_int32
+    lib.xy_stratified_sample_mask_u32.argtypes = list(lib.xy_stratified_sample_mask.argtypes)
+    lib.xy_pyramid_build.restype = ctypes.c_uint64
+    lib.xy_pyramid_build.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_size_t,
@@ -562,15 +562,15 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_uint32,
     ]
-    lib.fc_pyramid_append.restype = ctypes.c_int32
-    lib.fc_pyramid_append.argtypes = [
+    lib.xy_pyramid_append.restype = ctypes.c_int32
+    lib.xy_pyramid_append.argtypes = [
         ctypes.c_uint64,
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_size_t,
     ]
-    lib.fc_pyramid_count.restype = ctypes.c_int32
-    lib.fc_pyramid_count.argtypes = [
+    lib.xy_pyramid_count.restype = ctypes.c_int32
+    lib.xy_pyramid_count.argtypes = [
         ctypes.c_uint64,
         ctypes.c_double,
         ctypes.c_double,
@@ -578,8 +578,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_void_p,
     ]
-    lib.fc_pyramid_compose.restype = ctypes.c_int32
-    lib.fc_pyramid_compose.argtypes = [
+    lib.xy_pyramid_compose.restype = ctypes.c_int32
+    lib.xy_pyramid_compose.argtypes = [
         ctypes.c_uint64,
         ctypes.c_double,
         ctypes.c_double,
@@ -589,10 +589,10 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,
         ctypes.c_void_p,
     ]
-    lib.fc_pyramid_free.restype = ctypes.c_int32
-    lib.fc_pyramid_free.argtypes = [ctypes.c_uint64]
-    lib.fc_local_log_density.restype = ctypes.c_int32
-    lib.fc_local_log_density.argtypes = [
+    lib.xy_pyramid_free.restype = ctypes.c_int32
+    lib.xy_pyramid_free.argtypes = [ctypes.c_uint64]
+    lib.xy_local_log_density.restype = ctypes.c_int32
+    lib.xy_local_log_density.argtypes = [
         ctypes.c_void_p,
         ctypes.c_void_p,
         ctypes.c_size_t,
@@ -604,16 +604,16 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,
         ctypes.c_void_p,
     ]
-    lib.fc_rasterize.restype = ctypes.c_int32
-    lib.fc_rasterize.argtypes = [
+    lib.xy_rasterize.restype = ctypes.c_int32
+    lib.xy_rasterize.argtypes = [
         ctypes.c_void_p,  # cmd
         ctypes.c_size_t,  # cmd_len
         ctypes.c_void_p,  # out (w*h*4 RGBA8)
         ctypes.c_size_t,  # w
         ctypes.c_size_t,  # h
     ]
-    lib.fc_rasterize_png.restype = ctypes.c_size_t
-    lib.fc_rasterize_png.argtypes = [
+    lib.xy_rasterize_png.restype = ctypes.c_size_t
+    lib.xy_rasterize_png.argtypes = [
         ctypes.c_void_p,  # cmd
         ctypes.c_size_t,  # cmd_len
         ctypes.c_void_p,  # out PNG bytes
@@ -621,8 +621,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,  # w
         ctypes.c_size_t,  # h
     ]
-    lib.fc_rasterize_data.restype = ctypes.c_int32
-    lib.fc_rasterize_data.argtypes = [
+    lib.xy_rasterize_data.restype = ctypes.c_int32
+    lib.xy_rasterize_data.argtypes = [
         ctypes.c_void_p,  # cmd
         ctypes.c_size_t,  # cmd_len
         ctypes.c_void_p,  # external data arena
@@ -631,8 +631,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,  # w
         ctypes.c_size_t,  # h
     ]
-    lib.fc_rasterize_png_data.restype = ctypes.c_size_t
-    lib.fc_rasterize_png_data.argtypes = [
+    lib.xy_rasterize_png_data.restype = ctypes.c_size_t
+    lib.xy_rasterize_png_data.argtypes = [
         ctypes.c_void_p,  # cmd
         ctypes.c_size_t,  # cmd_len
         ctypes.c_void_p,  # external data arena
@@ -642,8 +642,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,  # w
         ctypes.c_size_t,  # h
     ]
-    lib.fc_rasterize_spans.restype = ctypes.c_int32
-    lib.fc_rasterize_spans.argtypes = [
+    lib.xy_rasterize_spans.restype = ctypes.c_int32
+    lib.xy_rasterize_spans.argtypes = [
         ctypes.c_void_p,  # cmd
         ctypes.c_size_t,  # cmd_len
         ctypes.POINTER(ctypes.c_void_p),  # span pointers
@@ -653,8 +653,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,  # w
         ctypes.c_size_t,  # h
     ]
-    lib.fc_rasterize_png_spans.restype = ctypes.c_size_t
-    lib.fc_rasterize_png_spans.argtypes = [
+    lib.xy_rasterize_png_spans.restype = ctypes.c_size_t
+    lib.xy_rasterize_png_spans.argtypes = [
         ctypes.c_void_p,  # cmd
         ctypes.c_size_t,  # cmd_len
         ctypes.POINTER(ctypes.c_void_p),  # span pointers
@@ -665,8 +665,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_size_t,  # w
         ctypes.c_size_t,  # h
     ]
-    lib.fc_heatmap_rgba.restype = ctypes.c_int32
-    lib.fc_heatmap_rgba.argtypes = [
+    lib.xy_heatmap_rgba.restype = ctypes.c_int32
+    lib.xy_heatmap_rgba.argtypes = [
         ctypes.c_void_p,  # raw f64
         ctypes.c_size_t,  # w
         ctypes.c_size_t,  # h
@@ -675,8 +675,8 @@ def _load() -> ctypes.CDLL:
         ctypes.c_uint8,  # alpha
         ctypes.c_void_p,  # out RGBA8
     ]
-    lib.fc_density_rgba.restype = ctypes.c_int32
-    lib.fc_density_rgba.argtypes = [
+    lib.xy_density_rgba.restype = ctypes.c_int32
+    lib.xy_density_rgba.argtypes = [
         ctypes.c_void_p,  # encoded log-u8
         ctypes.c_size_t,  # w
         ctypes.c_size_t,  # h
@@ -686,15 +686,15 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,  # opacity
         ctypes.c_void_p,  # out RGBA8
     ]
-    lib.fc_density_log_u8.restype = ctypes.c_int32
-    lib.fc_density_log_u8.argtypes = [
+    lib.xy_density_log_u8.restype = ctypes.c_int32
+    lib.xy_density_log_u8.argtypes = [
         ctypes.c_void_p,  # grid f32
         ctypes.c_size_t,  # len
         ctypes.c_void_p,  # out u8
         ctypes.c_void_p,  # out max f64
     ]
-    lib.fc_css_check.restype = ctypes.c_int32
-    lib.fc_css_check.argtypes = [
+    lib.xy_css_check.restype = ctypes.c_int32
+    lib.xy_css_check.argtypes = [
         ctypes.c_uint32,  # kind (0 decl, 1 color, 2 length list, 3 number)
         ctypes.c_char_p,  # prop (UTF-8; null only at len 0)
         ctypes.c_size_t,  # prop_len
@@ -751,7 +751,7 @@ def factorize_fixed(
     unique_indices = np.empty(n, dtype=np.uint32)
     if n == 0:
         return codes, unique_indices
-    written = _lib.fc_factorize_fixed(
+    written = _lib.xy_factorize_fixed(
         records.ctypes.data,
         n,
         width,
@@ -774,7 +774,7 @@ def factorize_fixed_u8(
     unique_indices = np.empty(min(n, max_unique), dtype=np.uint32)
     if n == 0:
         return codes, unique_indices
-    written = _lib.fc_factorize_fixed_u8(
+    written = _lib.xy_factorize_fixed_u8(
         records.ctypes.data,
         n,
         width,
@@ -808,7 +808,7 @@ def factorize_fixed_u8_counts(
     counts = np.empty(capacity, dtype=np.uint64)
     if n == 0:
         return codes, unique_indices, counts
-    written = _lib.fc_factorize_fixed_u8_counts(
+    written = _lib.xy_factorize_fixed_u8_counts(
         records.ctypes.data,
         n,
         width,
@@ -847,7 +847,7 @@ def factorize_unicode1_u8_counts(
         return codes, unique_indices, counts
     native_order = "<" if sys.byteorder == "little" else ">"
     swap_endian = records.dtype.byteorder not in ("=", "|", native_order)
-    written = _lib.fc_factorize_unicode1_u8_counts(
+    written = _lib.xy_factorize_unicode1_u8_counts(
         records.ctypes.data,
         n,
         int(swap_endian),
@@ -875,7 +875,7 @@ def remap_u8(values: npt.NDArray[np.uint8], mapping: npt.NDArray[np.uint8]) -> N
         return
     if len(mapping) == 0:
         raise ValueError("remap_u8 mapping must be non-empty")
-    ok = _lib.fc_remap_u8(
+    ok = _lib.xy_remap_u8(
         values.ctypes.data,
         len(values),
         mapping.ctypes.data,
@@ -1000,7 +1000,7 @@ def zone_maps(
     f64_ptr = f64_rows.ctypes.data
     u64_ptr = u64_rows.ctypes.data
     row_bytes = n_chunks * 8
-    written = _lib.fc_zone_maps(
+    written = _lib.xy_zone_maps(
         _ptr_f64(data),
         n,
         chunk_size,
@@ -1054,7 +1054,7 @@ def zone_maps_pair(
     x_records = np.empty(n_chunks, dtype=_ZONE_MAP_DTYPE)
     y_records = np.empty(n_chunks, dtype=_ZONE_MAP_DTYPE)
     if len(x):
-        written = _lib.fc_zone_maps_pair(
+        written = _lib.xy_zone_maps_pair(
             x.ctypes.data,
             y.ctypes.data,
             len(x),
@@ -1094,7 +1094,7 @@ def encode_f32(
     if len(data) == 0:  # empty NumPy arrays may carry a null pointer
         return np.empty(0, dtype=np.float32)
     out = np.empty(len(data), dtype=np.float32)
-    ok = _lib.fc_encode_f32(_ptr_f64(data), len(data), offset, scale, out.ctypes.data)
+    ok = _lib.xy_encode_f32(_ptr_f64(data), len(data), offset, scale, out.ctypes.data)
     if ok != 1:
         raise RuntimeError("xy native encode_f32 failed (output undefined)")
     return out
@@ -1112,7 +1112,7 @@ def stacked_bounds(
         raise ValueError(f"values must be a non-empty 2-D array, got shape {values.shape}")
     lower = np.empty_like(values)
     upper = np.empty_like(values)
-    ok = _lib.fc_stacked_bounds(
+    ok = _lib.xy_stacked_bounds(
         values.ctypes.data,
         values.shape[0],
         values.shape[1],
@@ -1149,7 +1149,7 @@ def histogram2d(
     else:
         weights_ptr = 0
     out = np.empty((len(x_edges) - 1, len(y_edges) - 1), dtype=np.float64)
-    ok = _lib.fc_histogram2d(
+    ok = _lib.xy_histogram2d(
         x.ctypes.data if len(x) else 0,
         y.ctypes.data if len(y) else 0,
         weights_ptr,
@@ -1209,7 +1209,7 @@ def quad_mesh_triangles(
     y_flat = y_values.reshape(-1)
     capacity = rows * cols * 2
     outputs = [np.empty(capacity, dtype=np.float64) for _ in range(7)]
-    written = _lib.fc_quad_mesh_triangles(
+    written = _lib.xy_quad_mesh_triangles(
         x_flat.ctypes.data,
         len(x_flat),
         y_flat.ctypes.data,
@@ -1276,11 +1276,11 @@ def sector_triangles(
         int(bool(counterclockwise)),
         int(bool(normalize)),
     )
-    query = _lib.fc_sector_triangles(*common, 0, 0, 0, 0, 0, 0, 0, 0)
+    query = _lib.xy_sector_triangles(*common, 0, 0, 0, 0, 0, 0, 0, 0)
     if query == _USIZE_MAX:
         raise ValueError("invalid sector geometry")
     outputs = [np.empty(query, dtype=np.float64) for _ in range(7)]
-    written = _lib.fc_sector_triangles(
+    written = _lib.xy_sector_triangles(
         *common,
         *(output.ctypes.data for output in outputs),
         query,
@@ -1298,7 +1298,7 @@ def rfft(
     nfft = _bounded_positive_int(nfft, "nfft", max_value=65_536)
     sample_rate = _finite_float(sample_rate, "sample_rate")
     outputs = [np.empty(nfft // 2 + 1, dtype=np.float64) for _ in range(3)]
-    ok = _lib.fc_rfft(
+    ok = _lib.xy_rfft(
         values.ctypes.data if len(values) else 0,
         len(values),
         nfft,
@@ -1335,7 +1335,7 @@ def welch_spectra(
         raise ValueError("noverlap must be non-negative and less than nfft")
     sample_rate = _finite_float(sample_rate, "sample_rate")
     outputs = [np.empty(nfft // 2 + 1, dtype=np.float64) for _ in range(5)]
-    ok = _lib.fc_welch_spectra(
+    ok = _lib.xy_welch_spectra(
         x_values.ctypes.data if len(x_values) else 0,
         y_values.ctypes.data if y_values is not None else 0,
         len(x_values),
@@ -1367,7 +1367,7 @@ def spectrogram(
     frequency = np.empty(nfft // 2 + 1, dtype=np.float64)
     time = np.empty(segments, dtype=np.float64)
     power = np.empty((segments, len(frequency)), dtype=np.float64)
-    ok = _lib.fc_spectrogram(
+    ok = _lib.xy_spectrogram(
         values.ctypes.data if len(values) else 0,
         len(values),
         nfft,
@@ -1399,7 +1399,7 @@ def correlation(
         raise ValueError("max_lags must be between 0 and len(x)-1")
     lag = np.empty(2 * lag_count + 1, dtype=np.float64)
     result = np.empty_like(lag)
-    ok = _lib.fc_correlation(
+    ok = _lib.xy_correlation(
         x_values.ctypes.data,
         y_values.ctypes.data,
         len(x_values),
@@ -1423,7 +1423,7 @@ def weighted_ecdf(
         raise ValueError("values and weights must have equal non-zero length")
     output_values = np.empty(len(value_array), dtype=np.float64)
     cumulative = np.empty(len(value_array), dtype=np.float64)
-    written = _lib.fc_weighted_ecdf(
+    written = _lib.xy_weighted_ecdf(
         value_array.ctypes.data,
         weight_array.ctypes.data,
         len(value_array),
@@ -1486,7 +1486,7 @@ def indexed_triangles(
         if len(scalar) != expected:
             raise ValueError(f"{values_at} values must have length {expected}, got {len(scalar)}")
     outputs = [np.empty(len(topology), dtype=np.float64) for _ in range(7)]
-    written = _lib.fc_indexed_triangles(
+    written = _lib.xy_indexed_triangles(
         x_values.ctypes.data,
         y_values.ctypes.data,
         len(x_values),
@@ -1524,7 +1524,7 @@ def triangle_edges(
     x_values, y_values, topology = _triangle_inputs(x, y, triangles)
     capacity = len(topology) * 3
     outputs = [np.empty(capacity, dtype=np.float64) for _ in range(4)]
-    written = _lib.fc_triangle_edges(
+    written = _lib.xy_triangle_edges(
         x_values.ctypes.data,
         y_values.ctypes.data,
         len(x_values),
@@ -1554,7 +1554,7 @@ def delaunay_triangles(
     # A planar triangulation has at most 2n-5 faces for n>=3.
     capacity = max(1, 2 * len(x_values))
     output = np.empty((capacity, 3), dtype=np.int64)
-    written = _lib.fc_delaunay_triangles(
+    written = _lib.xy_delaunay_triangles(
         x_values.ctypes.data,
         y_values.ctypes.data,
         len(x_values),
@@ -1579,7 +1579,7 @@ def polygon_triangles(
     closed = x_values[0] == x_values[-1] and y_values[0] == y_values[-1]
     capacity = len(x_values) - (3 if closed else 2)
     output = np.empty((capacity, 3), dtype=np.int64)
-    written = _lib.fc_polygon_triangles(
+    written = _lib.xy_polygon_triangles(
         x_values.ctypes.data,
         y_values.ctypes.data,
         len(x_values),
@@ -1627,13 +1627,13 @@ def marching_triangles(
         level_values.ctypes.data if len(level_values) else 0,
         len(level_values),
     )
-    query = _lib.fc_marching_triangles(*common, 0, 0, 0, 0, 0, 0)
+    query = _lib.xy_marching_triangles(*common, 0, 0, 0, 0, 0, 0)
     if query == _USIZE_MAX:
         raise ValueError("invalid marching triangle geometry")
     outputs = [np.empty(query, dtype=np.float64) for _ in range(5)]
     if query == 0:
         return outputs[0], outputs[1], outputs[2], outputs[3], outputs[4]
-    written = _lib.fc_marching_triangles(
+    written = _lib.xy_marching_triangles(
         *common,
         *(output.ctypes.data for output in outputs),
         query,
@@ -1673,7 +1673,7 @@ def vector_segments(
     outputs = [np.empty(capacity, dtype=np.float64) for _ in range(4)]
     if capacity == 0:
         return outputs[0], outputs[1], outputs[2], outputs[3]
-    written = _lib.fc_vector_segments(
+    written = _lib.xy_vector_segments(
         *(values.ctypes.data for values in arrays),
         len(arrays[0]),
         scale,
@@ -1711,7 +1711,7 @@ def streamlines(
         raise ValueError(f"u and v must both have shape {expected}")
     density = _finite_float(density, "density")
     max_steps = _bounded_positive_int(max_steps, "max_steps", max_value=100_000)
-    query = _lib.fc_streamlines(
+    query = _lib.xy_streamlines(
         x_coords.ctypes.data,
         len(x_coords),
         y_coords.ctypes.data,
@@ -1731,7 +1731,7 @@ def streamlines(
     outputs = [np.empty(query, dtype=np.float64) for _ in range(4)]
     if query == 0:
         return outputs[0], outputs[1], outputs[2], outputs[3]
-    written = _lib.fc_streamlines(
+    written = _lib.xy_streamlines(
         x_coords.ctypes.data,
         len(x_coords),
         y_coords.ctypes.data,
@@ -1765,7 +1765,7 @@ def m4_indices(
     if len(x) == 0:
         return np.empty(0, dtype=np.uint32)
     out = np.empty(n_buckets * 4, dtype=np.uint32)
-    written = _lib.fc_m4_indices(
+    written = _lib.xy_m4_indices(
         _ptr_f64(x),
         _ptr_f64(y),
         len(x),
@@ -1843,7 +1843,7 @@ def marching_squares(
 
     def extract(outputs: tuple[npt.NDArray[np.float64], ...]) -> int:
         return int(
-            _lib.fc_marching_squares(
+            _lib.xy_marching_squares(
                 _ptr_f64(z),
                 rows,
                 cols,
@@ -1895,7 +1895,7 @@ def bin_2d(
         raise ValueError("x and y must have equal length")
     out = np.zeros((h, w), dtype=np.float32)
     if len(x):
-        ok = _lib.fc_bin_2d(
+        ok = _lib.xy_bin_2d(
             _ptr_f64(x),
             _ptr_f64(y),
             len(x),
@@ -1940,7 +1940,7 @@ def bin_2d_indices(
     idx = np.empty(len(x), dtype=np.uint32)
     if len(x) == 0:
         return grid, idx
-    written = _lib.fc_bin_2d_indices(
+    written = _lib.xy_bin_2d_indices(
         _ptr_f64(x),
         _ptr_f64(y),
         len(x),
@@ -1991,7 +1991,7 @@ def bin_2d_sample_range(
 
     def extract(output: npt.NDArray[np.uint32]) -> int:
         return int(
-            _lib.fc_bin_2d_sample_range(
+            _lib.xy_bin_2d_sample_range(
                 _ptr_f64(x),
                 _ptr_f64(y),
                 len(x),
@@ -2064,7 +2064,7 @@ def bin_2d_stratified_sample_range_u8_counted(
 
     def extract(output: npt.NDArray[np.uint32]) -> int:
         return int(
-            _lib.fc_bin_2d_stratified_sample_range_u8_counted(
+            _lib.xy_bin_2d_stratified_sample_range_u8_counted(
                 _ptr_f64(x),
                 _ptr_f64(y),
                 groups.ctypes.data if len(groups) else None,
@@ -2103,7 +2103,7 @@ def is_sorted(data: npt.NDArray[np.float64]) -> bool:
     data = _as_f64(data, "data")
     if len(data) < 2:
         return True
-    return bool(_lib.fc_is_sorted(_ptr_f64(data), len(data)))
+    return bool(_lib.xy_is_sorted(_ptr_f64(data), len(data)))
 
 
 def min_max(data: npt.NDArray[np.float64]) -> Optional[tuple[float, float]]:
@@ -2113,7 +2113,7 @@ def min_max(data: npt.NDArray[np.float64]) -> Optional[tuple[float, float]]:
         return None
     lo = ctypes.c_double()
     hi = ctypes.c_double()
-    ok = _lib.fc_min_max(_ptr_f64(data), len(data), ctypes.byref(lo), ctypes.byref(hi))
+    ok = _lib.xy_min_max(_ptr_f64(data), len(data), ctypes.byref(lo), ctypes.byref(hi))
     return (lo.value, hi.value) if ok else None
 
 
@@ -2130,7 +2130,7 @@ def histogram_uniform(
     lo, hi = _finite_increasing(lo, hi, "histogram range")
     data = _as_f64(data, "data")
     counts = np.empty(n_bins, dtype=np.float64)
-    written = _lib.fc_histogram_uniform(
+    written = _lib.xy_histogram_uniform(
         _ptr_f64(data),
         len(data),
         lo,
@@ -2163,7 +2163,7 @@ def normalize_f32(
     out = np.empty(len(data), dtype=np.float32)
     nan_mode = 1 if nonfinite == "nan" else 0
     if len(data):
-        ok = _lib.fc_normalize_f32(_ptr_f64(data), len(data), lo, hi, nan_mode, out.ctypes.data)
+        ok = _lib.xy_normalize_f32(_ptr_f64(data), len(data), lo, hi, nan_mode, out.ctypes.data)
         if ok != 1:
             raise RuntimeError("xy native normalize_f32 failed (output undefined)")
     return out
@@ -2195,7 +2195,7 @@ def valid_indices_f64(
 
     def invoke(output: npt.NDArray[np.uint32] | None) -> int:
         return int(
-            _lib.fc_valid_indices_f64(
+            _lib.xy_valid_indices_f64(
                 pointers,
                 len(arrays),
                 size,
@@ -2238,7 +2238,7 @@ def range_indices(
     out = np.empty(len(x), dtype=np.uint32)
     if len(x) == 0:
         return out
-    written = _lib.fc_range_indices(
+    written = _lib.xy_range_indices(
         _ptr_f64(x),
         _ptr_f64(y),
         len(x),
@@ -2268,10 +2268,10 @@ def sample_mask(
     ids = np.asarray(ids)
     if ids.dtype == np.uint32:
         ids = np.ascontiguousarray(ids)
-        fn = _lib.fc_sample_mask_u32
+        fn = _lib.xy_sample_mask_u32
     else:
         ids = np.ascontiguousarray(ids, dtype=np.uint64)
-        fn = _lib.fc_sample_mask
+        fn = _lib.xy_sample_mask
     if ids.ndim != 1:
         raise ValueError("ids must be a one-dimensional uint64 array")
     out = np.empty(len(ids), dtype=np.uint8)
@@ -2298,7 +2298,7 @@ def sample_range_indices(
     size = _bounded_nonnegative_int(size, "size", max_value=np.iinfo(np.uint32).max)
     capacity = _bounded_nonnegative_int(capacity_hint, "capacity_hint", max_value=size)
     out = np.empty(capacity, dtype=np.uint32)
-    written = _lib.fc_sample_range_indices(
+    written = _lib.xy_sample_range_indices(
         size,
         ctypes.c_uint64(int(seed)),
         ctypes.c_uint64(int(threshold)),
@@ -2309,7 +2309,7 @@ def sample_range_indices(
         raise ValueError("invalid sample_range_indices arguments")
     if written > capacity:
         out = np.empty(written, dtype=np.uint32)
-        repeated = _lib.fc_sample_range_indices(
+        repeated = _lib.xy_sample_range_indices(
             size,
             ctypes.c_uint64(int(seed)),
             ctypes.c_uint64(int(threshold)),
@@ -2354,7 +2354,7 @@ def stratified_sample_range_u8(
     def invoke(out_pointer: int | None, out_capacity: int) -> int:
         if counts is None:
             return int(
-                _lib.fc_stratified_sample_range_u8(
+                _lib.xy_stratified_sample_range_u8(
                     groups.ctypes.data if len(groups) else None,
                     len(groups),
                     n_groups,
@@ -2366,7 +2366,7 @@ def stratified_sample_range_u8(
                 )
             )
         return int(
-            _lib.fc_stratified_sample_range_u8_counted(
+            _lib.xy_stratified_sample_range_u8_counted(
                 groups.ctypes.data if len(groups) else None,
                 len(groups),
                 counts.ctypes.data,
@@ -2411,10 +2411,10 @@ def stratified_sample_mask(
     ids = np.asarray(ids)
     if ids.dtype == np.uint32:
         ids = np.ascontiguousarray(ids)
-        fn = _lib.fc_stratified_sample_mask_u32
+        fn = _lib.xy_stratified_sample_mask_u32
     else:
         ids = np.ascontiguousarray(ids, dtype=np.uint64)
-        fn = _lib.fc_stratified_sample_mask
+        fn = _lib.xy_stratified_sample_mask
     groups = np.ascontiguousarray(groups, dtype=np.uint32)
     if ids.ndim != 1 or groups.ndim != 1:
         raise ValueError("ids and groups must be one-dimensional arrays")
@@ -2468,7 +2468,7 @@ def pyramid_build(
     if len(x) == 0:
         return 0
     return int(
-        _lib.fc_pyramid_build(
+        _lib.xy_pyramid_build(
             x.ctypes.data,
             y.ctypes.data,
             len(x),
@@ -2498,7 +2498,7 @@ def pyramid_append(
     if len(x) != len(y):
         raise ValueError("x and y must have equal length")
     return (
-        _lib.fc_pyramid_append(
+        _lib.xy_pyramid_append(
             ctypes.c_uint64(handle),
             _ptr_f64(x) if len(x) else None,
             _ptr_f64(y) if len(y) else None,
@@ -2513,7 +2513,7 @@ def pyramid_count(handle: int, lo_x: float, hi_x: float, lo_y: float, hi_y: floa
     lo_x, hi_x = _finite_increasing(lo_x, hi_x, "x range")
     lo_y, hi_y = _finite_increasing(lo_y, hi_y, "y range")
     out = ctypes.c_double(0.0)
-    ok = _lib.fc_pyramid_count(
+    ok = _lib.xy_pyramid_count(
         ctypes.c_uint64(handle),
         lo_x,
         hi_x,
@@ -2535,7 +2535,7 @@ def pyramid_compose(
     w = _bounded_positive_int(w, "w")
     h = _bounded_positive_int(h, "h")
     out = np.zeros(w * h, dtype=np.float32)
-    level = _lib.fc_pyramid_compose(
+    level = _lib.xy_pyramid_compose(
         ctypes.c_uint64(handle),
         lo_x,
         hi_x,
@@ -2551,7 +2551,7 @@ def pyramid_compose(
 
 
 def pyramid_free(handle: int) -> bool:
-    return _lib.fc_pyramid_free(ctypes.c_uint64(_pyramid_handle(handle))) == 1
+    return _lib.xy_pyramid_free(ctypes.c_uint64(_pyramid_handle(handle))) == 1
 
 
 def local_log_density(
@@ -2575,7 +2575,7 @@ def local_log_density(
         raise ValueError("x and y must have equal length")
     out = np.empty(len(x), dtype=np.float32)
     if len(x):
-        ok = _lib.fc_local_log_density(
+        ok = _lib.xy_local_log_density(
             _ptr_f64(x),
             _ptr_f64(y),
             len(x),
@@ -2601,7 +2601,7 @@ def rasterize(cmds: bytes, w: int, h: int) -> npt.NDArray[np.uint8]:
     buf = np.frombuffer(cmds, dtype=np.uint8)
     out = np.zeros((h, w, 4), dtype=np.uint8)
     cmd_ptr = _ptr_u8(buf) if buf.size else None
-    ok = _lib.fc_rasterize(cmd_ptr, buf.size, _ptr_u8(out), w, h)
+    ok = _lib.xy_rasterize(cmd_ptr, buf.size, _ptr_u8(out), w, h)
     if not ok:
         raise ValueError("native rasterizer rejected the command buffer")
     return out
@@ -2616,7 +2616,7 @@ def rasterize_png(cmds: bytes, w: int, h: int) -> bytes:
     capacity = raw_len + raw_len // 8 + 65_536
     out = np.empty(capacity, dtype=np.uint8)
     cmd_ptr = _ptr_u8(buf) if buf.size else None
-    written = _lib.fc_rasterize_png(cmd_ptr, buf.size, _ptr_u8(out), out.size, w, h)
+    written = _lib.xy_rasterize_png(cmd_ptr, buf.size, _ptr_u8(out), out.size, w, h)
     if written == _USIZE_MAX or written > out.size:
         raise ValueError("native raster-to-PNG encoder rejected the command buffer")
     return out[:written].tobytes()
@@ -2629,7 +2629,7 @@ def rasterize_data(cmds: bytes, data: bytes, w: int, h: int) -> npt.NDArray[np.u
     buf = np.frombuffer(cmds, dtype=np.uint8)
     arena = np.frombuffer(data, dtype=np.uint8)
     out = np.zeros((h, w, 4), dtype=np.uint8)
-    ok = _lib.fc_rasterize_data(
+    ok = _lib.xy_rasterize_data(
         _ptr_u8(buf) if buf.size else None,
         buf.size,
         _ptr_u8(arena) if arena.size else None,
@@ -2652,7 +2652,7 @@ def rasterize_png_data(cmds: bytes, data: bytes, w: int, h: int) -> bytes:
     raw_len = operator.mul(operator.mul(w, h), 4)
     capacity = raw_len + raw_len // 8 + 65_536
     out = np.empty(capacity, dtype=np.uint8)
-    written = _lib.fc_rasterize_png_data(
+    written = _lib.xy_rasterize_png_data(
         _ptr_u8(buf) if buf.size else None,
         buf.size,
         _ptr_u8(arena) if arena.size else None,
@@ -2692,7 +2692,7 @@ def rasterize_spans(cmds: bytes, spans, w: int, h: int) -> npt.NDArray[np.uint8]
     buf = np.frombuffer(cmds, dtype=np.uint8)
     arenas, pointers, lengths = _byte_span_arrays(spans)
     out = np.zeros((h, w, 4), dtype=np.uint8)
-    ok = _lib.fc_rasterize_spans(
+    ok = _lib.xy_rasterize_spans(
         _ptr_u8(buf) if buf.size else None,
         buf.size,
         pointers if arenas else None,
@@ -2716,7 +2716,7 @@ def rasterize_png_spans(cmds: bytes, spans, w: int, h: int) -> bytes:  # noqa: A
     raw_len = operator.mul(operator.mul(w, h), 4)
     capacity = raw_len + raw_len // 8 + 65_536
     out = np.empty(capacity, dtype=np.uint8)
-    written = _lib.fc_rasterize_png_spans(
+    written = _lib.xy_rasterize_png_spans(
         _ptr_u8(buf) if buf.size else None,
         buf.size,
         pointers if arenas else None,
@@ -2752,7 +2752,7 @@ def heatmap_rgba(
     if not 0 <= alpha <= 255:
         raise ValueError("heatmap alpha must be in [0, 255]")
     out = np.empty((h, w, 4), dtype=np.uint8)
-    ok = _lib.fc_heatmap_rgba(
+    ok = _lib.xy_heatmap_rgba(
         _ptr_f64(values),
         w,
         h,
@@ -2790,7 +2790,7 @@ def density_rgba(
     if stop_array.ndim != 2 or stop_array.shape[1] != 3 or stop_array.shape[0] < 1:
         raise ValueError("density stops must be a non-empty (n, 3) array")
     out = np.empty((h, w, 4), dtype=np.uint8)
-    ok = _lib.fc_density_rgba(
+    ok = _lib.xy_density_rgba(
         _ptr_u8(values),
         w,
         h,
@@ -2812,7 +2812,7 @@ def density_log_u8(grid: npt.NDArray[np.float32]) -> tuple[npt.NDArray[np.uint8]
         raise ValueError("density grid must be one- or two-dimensional")
     out = np.empty(values.shape, dtype=np.uint8)
     maximum = ctypes.c_double()
-    ok = _lib.fc_density_log_u8(
+    ok = _lib.xy_density_log_u8(
         values.ctypes.data if values.size else None,
         values.size,
         out.ctypes.data if out.size else None,
@@ -2823,7 +2823,7 @@ def density_log_u8(grid: npt.NDArray[np.float32]) -> tuple[npt.NDArray[np.uint8]
     return out, float(maximum.value)
 
 
-# fc_css_check kinds — keep in sync with `src/lib.rs`.
+# xy_css_check kinds — keep in sync with `src/lib.rs`.
 CSS_DECLARATION = 0
 CSS_COLOR = 1
 CSS_LENGTH = 2
@@ -2837,7 +2837,7 @@ def css_check(
 
     Returns ``(status, rgba)``: status 1 = parsed statically, 2 = valid but
     browser-resolved (`var()`/`oklch()`/`calc()`/unknown-property
-    passthrough), negative = error code (see `fc_css_check` docs). ``rgba``
+    passthrough), negative = error code (see `xy_css_check` docs). ``rgba``
     is the 0..1 channel tuple for statically-resolved colors, else None
     (`currentColor` parses with no static channels). The error-message
     mapping lives in `_validate.py`; this wrapper stays mechanical.
@@ -2845,6 +2845,6 @@ def css_check(
     vb = value.encode("utf-8")
     pb = prop.encode("utf-8")
     out = (ctypes.c_float * 4)(float("nan"), 0.0, 0.0, 0.0)
-    status = int(_lib.fc_css_check(kind, pb or None, len(pb), vb or None, len(vb), out))
+    status = int(_lib.xy_css_check(kind, pb or None, len(pb), vb or None, len(vb), out))
     wrote = status == 1 and out[0] == out[0]  # NaN sentinel: untouched = no static color
     return status, (out[0], out[1], out[2], out[3]) if wrote else None

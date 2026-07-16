@@ -364,20 +364,20 @@ def _fmt_ratio(value: float | None, suffix: str = "x") -> str:
     return f"{value:.2f}{suffix}"
 
 
-def _verdict(fc: dict[str, Any] | None, plotly: dict[str, Any] | None) -> str:
-    if not fc or fc.get("status") != "ok":
+def _verdict(xy: dict[str, Any] | None, plotly: dict[str, Any] | None) -> str:
+    if not xy or xy.get("status") != "ok":
         return "fail"
     if not plotly or plotly.get("status") != "ok":
         return "no-plotly"
-    if fc.get("ttfr_ms") is not None and plotly.get("ttfr_ms") is not None:
+    if xy.get("ttfr_ms") is not None and plotly.get("ttfr_ms") is not None:
         checks = [
-            fc["ttfr_ms"] <= plotly["ttfr_ms"] * 1.10,
-            fc["payload_bytes"] <= plotly["payload_bytes"] * 1.10,
+            xy["ttfr_ms"] <= plotly["ttfr_ms"] * 1.10,
+            xy["payload_bytes"] <= plotly["payload_bytes"] * 1.10,
         ]
         return "pass" if all(checks) else "watch"
     checks = [
-        fc["total_s"] <= plotly["total_s"] * 1.10,
-        fc["payload_bytes"] <= plotly["payload_bytes"] * 1.10,
+        xy["total_s"] <= plotly["total_s"] * 1.10,
+        xy["payload_bytes"] <= plotly["payload_bytes"] * 1.10,
     ]
     return "pass" if all(checks) else "watch"
 
@@ -403,7 +403,7 @@ def make_cases(profile: str) -> list[Case]:
             ]
         ).astype(np.float64, copy=False)
 
-        def fc():
+        def xy():
             return chart(hist(values, bins=bins), width=RENDER_W, height=RENDER_H).figure()
 
         def pl():
@@ -425,7 +425,7 @@ def make_cases(profile: str) -> list[Case]:
                 f"{n:,} values / {bins} bins",
                 n,
                 "values",
-                fc,
+                xy,
                 pl if go else None,
                 sb if seaborn else None,
             )
@@ -435,7 +435,7 @@ def make_cases(profile: str) -> list[Case]:
         x = np.arange(n, dtype=np.float64)
         y = 30 + np.sin(np.linspace(0, 32, n)) * 9 + np.cumsum(rng.normal(0, 0.025, n))
 
-        def fc():
+        def xy():
             return chart(area(x, y, color="#0891b2"), width=RENDER_W, height=RENDER_H).figure()
 
         def pl():
@@ -445,13 +445,13 @@ def make_cases(profile: str) -> list[Case]:
             fig.update_layout(width=RENDER_W, height=RENDER_H, template="plotly_white")
             return fig
 
-        cases.append(Case("area", f"{n:,} samples", n, "samples", fc, pl if go else None, None))
+        cases.append(Case("area", f"{n:,} samples", n, "samples", xy, pl if go else None, None))
 
     def add_bar(n: int) -> None:
         labels = np.array([f"C{i:05d}" for i in range(n)], dtype=object)
         values = (rng.random(n) * 100).astype(np.float64)
 
-        def fc():
+        def xy():
             return chart(
                 bar(labels, values, color="#2563eb"), width=RENDER_W, height=RENDER_H
             ).figure()
@@ -477,7 +477,7 @@ def make_cases(profile: str) -> list[Case]:
                 f"{n:,} categories",
                 n,
                 "bars",
-                fc,
+                xy,
                 pl if go else None,
                 sb if seaborn else None,
             )
@@ -492,7 +492,7 @@ def make_cases(profile: str) -> list[Case]:
         long_series = np.tile(names, n)
         long_values = values.T.reshape(-1)
 
-        def fc():
+        def xy():
             return chart(
                 bar(
                     labels,
@@ -533,7 +533,7 @@ def make_cases(profile: str) -> list[Case]:
                 f"{n:,} categories x {series_count}",
                 n * series_count,
                 "bars",
-                fc,
+                xy,
                 pl if go else None,
                 sb if seaborn else None,
             )
@@ -545,7 +545,7 @@ def make_cases(profile: str) -> list[Case]:
         names = [f"S{i + 1}" for i in range(series_count)]
         colors = ["#0f766e", "#7c3aed", "#dc2626", "#0891b2"][:series_count]
 
-        def fc():
+        def xy():
             return chart(
                 column(
                     labels,
@@ -576,7 +576,7 @@ def make_cases(profile: str) -> list[Case]:
                 f"{n:,} categories x {series_count}",
                 n * series_count,
                 "bars",
-                fc,
+                xy,
                 pl if go else None,
                 None,
             )
@@ -591,7 +591,7 @@ def make_cases(profile: str) -> list[Case]:
             np.float64
         )
 
-        def fc():
+        def xy():
             return chart(
                 heatmap(z, x=x, y=y, colormap="turbo"), width=RENDER_W, height=RENDER_H
             ).figure()
@@ -616,7 +616,7 @@ def make_cases(profile: str) -> list[Case]:
                 f"{rows:,} x {cols:,} cells",
                 cells,
                 "cells",
-                fc,
+                xy,
                 pl if go else None,
                 sb if seaborn else None,
             )
@@ -711,7 +711,7 @@ def run(
 
     comparisons = []
     for case in cases:
-        fc = _find_row(rows, case, "xy")
+        xy = _find_row(rows, case, "xy")
         pl = _find_row(rows, case, "plotly")
         sb = _find_row(rows, case, "seaborn")
         comp = {
@@ -719,25 +719,25 @@ def run(
             "case": case.label,
             "work_units": case.work_units,
             "unit": case.unit,
-            "verdict": _verdict(fc, pl),
+            "verdict": _verdict(xy, pl),
         }
-        if fc and pl and fc.get("status") == "ok" and pl.get("status") == "ok":
-            comp["speedup"] = pl["total_s"] / fc["total_s"] if fc["total_s"] else None
+        if xy and pl and xy.get("status") == "ok" and pl.get("status") == "ok":
+            comp["speedup"] = pl["total_s"] / xy["total_s"] if xy["total_s"] else None
             comp["payload_reduction"] = (
-                pl["payload_bytes"] / fc["payload_bytes"] if fc["payload_bytes"] else None
+                pl["payload_bytes"] / xy["payload_bytes"] if xy["payload_bytes"] else None
             )
-            if fc.get("ttfr_ms") is not None and pl.get("ttfr_ms") is not None:
-                comp["ttfr_speedup"] = pl["ttfr_ms"] / fc["ttfr_ms"] if fc["ttfr_ms"] else None
-        if fc and sb:
+            if xy.get("ttfr_ms") is not None and pl.get("ttfr_ms") is not None:
+                comp["ttfr_speedup"] = pl["ttfr_ms"] / xy["ttfr_ms"] if xy["ttfr_ms"] else None
+        if xy and sb:
             comp["seaborn_status"] = sb.get("status")
-        if fc and sb and fc.get("status") == "ok" and sb.get("status") == "ok":
-            comp["seaborn_speedup"] = sb["total_s"] / fc["total_s"] if fc["total_s"] else None
+        if xy and sb and xy.get("status") == "ok" and sb.get("status") == "ok":
+            comp["seaborn_speedup"] = sb["total_s"] / xy["total_s"] if xy["total_s"] else None
             comp["seaborn_payload_reduction"] = (
-                sb["payload_bytes"] / fc["payload_bytes"] if fc["payload_bytes"] else None
+                sb["payload_bytes"] / xy["payload_bytes"] if xy["payload_bytes"] else None
             )
-            if fc.get("ttfr_ms") is not None and sb.get("ttfr_ms") is not None:
+            if xy.get("ttfr_ms") is not None and sb.get("ttfr_ms") is not None:
                 comp["seaborn_ttfr_speedup"] = (
-                    sb["ttfr_ms"] / fc["ttfr_ms"] if fc["ttfr_ms"] else None
+                    sb["ttfr_ms"] / xy["ttfr_ms"] if xy["ttfr_ms"] else None
                 )
         comparisons.append(comp)
 

@@ -329,7 +329,7 @@ Before tagging a release:
   0.29.4. The abort strategy is required: the previous unwind build imported a
   `__cpp_exception` WebAssembly tag that Pyodide's main module did not provide.
   `scripts/pyodide_load_smoke.py` installs the built artifact with micropip,
-  loads the C ABI through `ctypes`, verifies `fc_abi_version`, and calls the
+  loads the C ABI through `ctypes`, verifies `xy_abi_version`, and calls the
   native `min_max` kernel. The wasm job is release-blocking so an ABI or
   toolchain drift cannot silently ship a build-only, unloadable artifact.
 - Confirm the no-Rust install job passed (it must build, install, and then

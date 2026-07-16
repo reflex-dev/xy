@@ -177,7 +177,7 @@ class FacetGrid:
         for i, fig in enumerate(self.figures):
             spec, blob = fig.build_payload(px_width=self.panel_width)
             panels.append(
-                "{" + f'"id":"fc-facet-{i}",'
+                "{" + f'"id":"xy-facet-{i}",'
                 f'"spec":{export._json_for_inline_script(spec)},'
                 f'"chunks":{export._json_for_inline_script(export._base64_chunks(blob))},'
                 f'"n":{len(blob)}' + "}"
@@ -226,7 +226,7 @@ for(const p of panels){{
         # Per-panel id prefixes keep clipPath/gradient ids unique in the
         # composed document; each panel's title is its facet label, and the
         # grid title is drawn exactly once below.
-        panel_svgs = [_svg.to_svg(fig, id_prefix=f"fc{i}-") for i, fig in enumerate(self.figures)]
+        panel_svgs = [_svg.to_svg(fig, id_prefix=f"xy{i}-") for i, fig in enumerate(self.figures)]
         total_h = self.grid_height + self._title_height
         body: list[str] = []
         for i, svg in enumerate(panel_svgs):

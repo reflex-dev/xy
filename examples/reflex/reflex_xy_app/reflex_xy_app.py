@@ -69,7 +69,7 @@ CORE_API_STATUS = [
         "title": "Composable layers",
         "status": "done",
         "color": "green",
-        "shipped": "fc.chart(...) overlays scatter, line, bars, area, heatmap, tooltip, and legend.",
+        "shipped": "xy.chart(...) overlays scatter, line, bars, area, heatmap, tooltip, and legend.",
         "next": "More mixed-axis examples and richer z-order controls.",
     },
     {
@@ -241,7 +241,7 @@ CHART_NAV = [
 
 CHART_CODE_SNIPPETS = {
     "custom-chrome": """
-import xy as fc
+import xy
 import reflex as rx
 
 def my_legend():
@@ -267,8 +267,8 @@ data = {
     "segment": ["Enterprise", "Enterprise", "Growth", "Enterprise"],
 }
 
-chart = fc.chart(
-    fc.scatter(
+chart = xy.chart(
+    xy.scatter(
         x="activation",
         y="retention",
         color="segment",
@@ -278,16 +278,16 @@ chart = fc.chart(
     ),
     # show=False disables the built-in XY chrome. The Reflex
     # components still belong to the chart and can be mounted by the panel.
-    fc.legend(my_legend(), show=False),
-    fc.tooltip(
+    xy.legend(my_legend(), show=False),
+    xy.tooltip(
         my_tooltip(),
         show=False,
         fields=["activation", "retention", "segment"],
         title="{segment}",
         format={"activation": ".2f", "retention": ".2f"},
     ),
-    fc.x_axis(label="activation"),
-    fc.y_axis(label="retention"),
+    xy.x_axis(label="activation"),
+    xy.y_axis(label="retention"),
     title="Custom Reflex legend + tooltip",
     width="100%",
     height=430,
@@ -308,7 +308,7 @@ def chart_panel():
     return xy_html_chart(chart, "/charts/custom_chrome.html")
 """.strip(),
     "business-overview": """
-import xy as fc
+import xy
 import numpy as np
 
 months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
@@ -317,16 +317,16 @@ values = np.array([
     [35, 38, 42, 40, 46, 50],
 ])
 
-chart = fc.chart(
-    fc.column(
+chart = xy.chart(
+    xy.column(
         months,
         values,
         mode="grouped",
         series=["Revenue", "Pipeline"],
         colors=["#2563eb", "#16a34a"],
     ),
-    fc.x_axis(label="month"),
-    fc.y_axis(label="USD thousands"),
+    xy.x_axis(label="month"),
+    xy.y_axis(label="USD thousands"),
     title="Small business overview",
     width="100%",
     height=430,
@@ -335,7 +335,7 @@ chart = fc.chart(
 chart.to_html("assets/charts/business_overview.html")
 """.strip(),
     "retention-cohort": """
-import xy as fc
+import xy
 import numpy as np
 
 cohorts = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
@@ -349,17 +349,17 @@ retention = np.array([
     [1.00, 0.77, 0.68, 0.62, 0.57, 0.52],
 ])
 
-chart = fc.chart(
-    fc.heatmap(retention, x=weeks, y=cohorts, name="retention", colormap="viridis"),
-    fc.x_axis(label="week"),
-    fc.y_axis(label="signup cohort"),
+chart = xy.chart(
+    xy.heatmap(retention, x=weeks, y=cohorts, name="retention", colormap="viridis"),
+    xy.x_axis(label="week"),
+    xy.y_axis(label="signup cohort"),
     title="Small retention cohort",
     width="100%",
     height=430,
 )
 """.strip(),
     "line": """
-import xy as fc
+import xy
 import numpy as np
 
 rng = np.random.default_rng(7)
@@ -367,17 +367,17 @@ n = 120_000
 x = np.arange(n)
 y = np.cumsum(rng.normal(0, 0.35, n)) + np.sin(np.linspace(0, 24, n)) * 18
 
-chart = fc.chart(
-    fc.line(x, y, name="walk", color="#3267c8", width=1.4),
-    fc.x_axis(label="sample"),
-    fc.y_axis(label="value"),
+chart = xy.chart(
+    xy.line(x, y, name="walk", color="#3267c8", width=1.4),
+    xy.x_axis(label="sample"),
+    xy.y_axis(label="value"),
     title="120k sample random walk",
     width="100%",
     height=430,
 )
 """.strip(),
     "area": """
-import xy as fc
+import xy
 import numpy as np
 
 rng = np.random.default_rng(13)
@@ -386,17 +386,17 @@ x = np.arange(n)
 y = 35 + np.sin(np.linspace(0, 28, n)) * 8 + np.cumsum(rng.normal(0, 0.025, n))
 base = np.full(n, 25.0)
 
-chart = fc.chart(
-    fc.area(x, y, base=base, name="active users", color="#0891b2"),
-    fc.x_axis(label="sample"),
-    fc.y_axis(label="active users"),
+chart = xy.chart(
+    xy.area(x, y, base=base, name="active users", color="#0891b2"),
+    xy.x_axis(label="sample"),
+    xy.y_axis(label="active users"),
     title="80k filled area",
     width="100%",
     height=430,
 )
 """.strip(),
     "histogram": """
-import xy as fc
+import xy
 import numpy as np
 
 rng = np.random.default_rng(41)
@@ -405,17 +405,17 @@ values = np.concatenate([
     rng.normal(1.4, 0.8, 250_000),
 ])
 
-chart = fc.chart(
-    fc.hist(values, bins=160, name="distribution", color="#3b82f6"),
-    fc.x_axis(label="value"),
-    fc.y_axis(label="count"),
+chart = xy.chart(
+    xy.hist(values, bins=160, name="distribution", color="#3b82f6"),
+    xy.x_axis(label="value"),
+    xy.y_axis(label="count"),
     title="500k sample histogram",
     width="100%",
     height=430,
 )
 """.strip(),
     "grouped-bars": """
-import xy as fc
+import xy
 import numpy as np
 
 categories = ["Search", "Ads", "Email", "Direct", "Partner", "Social"]
@@ -425,23 +425,23 @@ values = np.array([
     [42, 39, 26, 31, 19, 14],
 ])
 
-chart = fc.chart(
-    fc.bar(
+chart = xy.chart(
+    xy.bar(
         categories,
         values,
         mode="grouped",
         series=["Desktop", "Mobile", "Tablet"],
         colors=["#2563eb", "#16a34a", "#f59e0b"],
     ),
-    fc.x_axis(label="channel"),
-    fc.y_axis(label="conversions"),
+    xy.x_axis(label="channel"),
+    xy.y_axis(label="conversions"),
     title="Grouped category bars",
     width="100%",
     height=430,
 )
 """.strip(),
     "stacked-bars": """
-import xy as fc
+import xy
 import numpy as np
 
 quarters = ["Q1", "Q2", "Q3", "Q4"]
@@ -451,39 +451,39 @@ values = np.array([
     [16, 19, 24, 29],
 ])
 
-chart = fc.chart(
-    fc.column(
+chart = xy.chart(
+    xy.column(
         quarters,
         values,
         mode="stacked",
         series=["Core", "Expansion", "Services"],
         colors=["#0f766e", "#7c3aed", "#dc2626"],
     ),
-    fc.x_axis(label="quarter"),
-    fc.y_axis(label="revenue"),
+    xy.x_axis(label="quarter"),
+    xy.y_axis(label="revenue"),
     title="Stacked revenue bars",
     width="100%",
     height=430,
 )
 """.strip(),
     "horizontal-bars": """
-import xy as fc
+import xy
 import numpy as np
 
 regions = ["NA", "EU", "APAC", "LATAM", "MEA"]
 values = np.array([142, 128, 116, 74, 52])
 
-chart = fc.chart(
-    fc.bar(regions, values, orientation="horizontal", name="revenue", color="#9333ea"),
-    fc.x_axis(label="revenue"),
-    fc.y_axis(label="region"),
+chart = xy.chart(
+    xy.bar(regions, values, orientation="horizontal", name="revenue", color="#9333ea"),
+    xy.x_axis(label="revenue"),
+    xy.y_axis(label="region"),
     title="Horizontal category bars",
     width="100%",
     height=430,
 )
 """.strip(),
     "heatmap": """
-import xy as fc
+import xy
 import numpy as np
 
 cols = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -497,17 +497,17 @@ z = np.array([
     [0.38, 0.40, 0.44, 0.48, 0.55, 0.58, 0.50],
 ])
 
-chart = fc.chart(
-    fc.heatmap(z, x=cols, y=rows, name="activity", colormap="turbo"),
-    fc.x_axis(label="day"),
-    fc.y_axis(label="hour"),
+chart = xy.chart(
+    xy.heatmap(z, x=cols, y=rows, name="activity", colormap="turbo"),
+    xy.x_axis(label="day"),
+    xy.y_axis(label="hour"),
     title="Weekly activity heatmap",
     width="100%",
     height=430,
 )
 """.strip(),
     "composed-layers": """
-import xy as fc
+import xy
 import numpy as np
 
 data = {
@@ -518,29 +518,29 @@ data = {
     "sample": np.array([41, 47, 46.5, 53.5, 56, 64]),
 }
 
-chart = fc.chart(
-    fc.bar(x="month", y="bookings", data=data, name="bookings", color="#f59e0b", opacity=0.34),
-    fc.area(x="month", y="forecast", data=data, base=36, name="forecast band", color="#14b8a6"),
-    fc.scatter(x="month", y="sample", data=data, name="samples", color="#2563eb", size=8),
-    fc.line(x="month", y="target", data=data, name="target", color="#dc2626", width=2),
-    fc.x_band("Mar", "May", text="launch window", color="#7c3aed", opacity=0.12),
-    fc.vline("Apr", text="release", color="#7c3aed", width=1.8),
-    fc.marker("Jun", 64, text="sample peak", color="#2563eb", size=10, symbol="diamond"),
-    fc.x_axis(label="month"),
-    fc.y_axis(label="pipeline"),
-    fc.tooltip(
+chart = xy.chart(
+    xy.bar(x="month", y="bookings", data=data, name="bookings", color="#f59e0b", opacity=0.34),
+    xy.area(x="month", y="forecast", data=data, base=36, name="forecast band", color="#14b8a6"),
+    xy.scatter(x="month", y="sample", data=data, name="samples", color="#2563eb", size=8),
+    xy.line(x="month", y="target", data=data, name="target", color="#dc2626", width=2),
+    xy.x_band("Mar", "May", text="launch window", color="#7c3aed", opacity=0.12),
+    xy.vline("Apr", text="release", color="#7c3aed", width=1.8),
+    xy.marker("Jun", 64, text="sample peak", color="#2563eb", size=10, symbol="diamond"),
+    xy.x_axis(label="month"),
+    xy.y_axis(label="pipeline"),
+    xy.tooltip(
         fields=["month", "bookings", "forecast", "sample", "target"],
         title="{month}",
         format={"bookings": ".1f", "forecast": ".1f", "sample": ".1f", "target": ".1f"},
     ),
-    fc.legend(),
+    xy.legend(),
     title="Composed layered chart",
     width="100%",
     height=430,
 )
 """.strip(),
     "annotated-heatmap": """
-import xy as fc
+import xy
 import numpy as np
 import reflex as rx
 
@@ -572,8 +572,8 @@ risk = np.array([
 ])
 data = {"day": cols, "risk_tier": rows, "risk_score": risk}
 
-chart = fc.chart(
-    fc.heatmap(
+chart = xy.chart(
+    xy.heatmap(
         z="risk_score",
         x="day",
         y="risk_tier",
@@ -582,18 +582,18 @@ chart = fc.chart(
         colormap="turbo",
         domain=(0, 1),
     ),
-    fc.threshold_zone("Wed", "Fri", axis="x", text="launch window", color="#2563eb", opacity=0.10),
-    fc.threshold("High", axis="y", text="alert threshold", color="#e11d48", width=1.8),
-    fc.marker("Thu", "Critical", text="max load", dx=8, dy=-12, color="#0f172a", symbol="diamond"),
-    fc.label("Wed", "High", "72%", dx=0, dy=-6, color="#0f172a", anchor="middle"),
-    fc.label("Thu", "Critical", "96%", dx=0, dy=-6, color="#ffffff", anchor="middle"),
-    fc.arrow("Tue", "Medium", "Wed", "High", text="escalation", color="#7c3aed"),
-    fc.callout("Fri", "Critical", "ops review", dx=-78, dy=-30, color="#0f172a"),
-    fc.theme(plot_background="#f8fafc", grid_color="rgba(100, 116, 139, 0.16)"),
-    fc.x_axis(label="day"),
-    fc.y_axis(label="risk tier"),
-    fc.legend(risk_legend(), show=False),
-    fc.tooltip(
+    xy.threshold_zone("Wed", "Fri", axis="x", text="launch window", color="#2563eb", opacity=0.10),
+    xy.threshold("High", axis="y", text="alert threshold", color="#e11d48", width=1.8),
+    xy.marker("Thu", "Critical", text="max load", dx=8, dy=-12, color="#0f172a", symbol="diamond"),
+    xy.label("Wed", "High", "72%", dx=0, dy=-6, color="#0f172a", anchor="middle"),
+    xy.label("Thu", "Critical", "96%", dx=0, dy=-6, color="#ffffff", anchor="middle"),
+    xy.arrow("Tue", "Medium", "Wed", "High", text="escalation", color="#7c3aed"),
+    xy.callout("Fri", "Critical", "ops review", dx=-78, dy=-30, color="#0f172a"),
+    xy.theme(plot_background="#f8fafc", grid_color="rgba(100, 116, 139, 0.16)"),
+    xy.x_axis(label="day"),
+    xy.y_axis(label="risk tier"),
+    xy.legend(risk_legend(), show=False),
+    xy.tooltip(
         risk_tooltip(),
         show=False,
         fields=["day", "risk_tier", "risk_score"],
@@ -615,7 +615,7 @@ def chart_panel():
     )
 """.strip(),
     "axes-scales": """
-import xy as fc
+import xy
 import numpy as np
 
 x = np.logspace(0, 6, 240)
@@ -624,10 +624,10 @@ rank = 96 - lx * 11.5 + np.sin(lx * 3) * 3
 conversion = 0.08 + lx * 0.035 + np.cos(lx * 2.1) * 0.012
 sampled = np.linspace(0, len(x) - 1, 34, dtype=np.int64)
 
-chart = fc.chart(
-    fc.line(x=x, y=rank, name="quality rank", color="#2563eb", width=2),
-    fc.scatter(x=x[sampled], y=rank[sampled], name="sampled checks", color="#0f766e", size=7),
-    fc.line(
+chart = xy.chart(
+    xy.line(x=x, y=rank, name="quality rank", color="#2563eb", width=2),
+    xy.scatter(x=x[sampled], y=rank[sampled], name="sampled checks", color="#0f766e", size=7),
+    xy.line(
         x=x,
         y=conversion,
         y_axis="y2",
@@ -635,7 +635,7 @@ chart = fc.chart(
         color="#dc2626",
         width=1.8,
     ),
-    fc.x_axis(
+    xy.x_axis(
         label="request volume",
         label_position="inside_end",
         label_offset=8,
@@ -644,7 +644,7 @@ chart = fc.chart(
         format=",.0f",
         style={"grid_color": "rgba(37,99,235,.14)", "tick_color": "#1d4ed8"},
     ),
-    fc.y_axis(
+    xy.y_axis(
         label="rank (reversed)",
         label_position="inside_start",
         label_offset=10,
@@ -654,7 +654,7 @@ chart = fc.chart(
         format=".0f",
         style={"axis_color": "#2563eb", "label_color": "#1e40af"},
     ),
-    fc.y_axis(
+    xy.y_axis(
         id="y2",
         label="conversion",
         label_position={
@@ -668,14 +668,14 @@ chart = fc.chart(
         format=".0%",
         style={"axis_color": "#dc2626", "tick_color": "#991b1b", "label_color": "#991b1b"},
     ),
-    fc.legend(),
+    xy.legend(),
     title="Log scale, reversed axis, fixed domains, dual y-axis",
     width="100%",
     height=430,
 )
 """.strip(),
     "interaction-basics": """
-import xy as fc
+import xy
 import numpy as np
 
 x = np.linspace(0, 12, 180)
@@ -685,10 +685,10 @@ trend = x * 0.08
 def handle_brush(brush):
     print("brushed range", brush)
 
-chart = fc.chart(
-    fc.scatter(x=x[::6], y=actual[::6], name="samples", color="#2563eb", size=8),
-    fc.line(x=x, y=trend, name="trend", color="#dc2626", width=2),
-    fc.interaction_config(
+chart = xy.chart(
+    xy.scatter(x=x[::6], y=actual[::6], name="samples", color="#2563eb", size=8),
+    xy.line(x=x, y=trend, name="trend", color="#dc2626", width=2),
+    xy.interaction_config(
         hover=True,
         click=True,
         select=True,
@@ -697,11 +697,11 @@ chart = fc.chart(
         link_group="demo-linked-x",
         link_axes=("x",),
     ),
-    fc.theme(plot_background="white", grid_color="rgba(37,99,235,.12)"),
-    fc.tooltip(fields=["x", "y"], format={"x": ".2f", "y": ".2f"}),
-    fc.legend(),
-    fc.x_axis(label="time", tick_count=13),
-    fc.y_axis(label="value"),
+    xy.theme(plot_background="white", grid_color="rgba(37,99,235,.12)"),
+    xy.tooltip(fields=["x", "y"], format={"x": ".2f", "y": ".2f"}),
+    xy.legend(),
+    xy.x_axis(label="time", tick_count=13),
+    xy.y_axis(label="value"),
     on_brush=handle_brush,
     title="Crosshair, click, brush select, linked x-axis",
     width="100%",
@@ -709,7 +709,7 @@ chart = fc.chart(
 )
 """.strip(),
     "density-scatter": """
-import xy as fc
+import xy
 import numpy as np
 
 rng = np.random.default_rng(23)
@@ -719,10 +719,10 @@ groups = rng.integers(0, len(centers), n, dtype=np.int8)
 x = centers[groups, 0] + rng.normal(0, 0.33, n)
 y = centers[groups, 1] + rng.normal(0, 0.33, n)
 
-chart = fc.chart(
-    fc.scatter(x, y, opacity=0.9),
-    fc.x_axis(label="x"),
-    fc.y_axis(label="y"),
+chart = xy.chart(
+    xy.scatter(x, y, opacity=0.9),
+    xy.x_axis(label="x"),
+    xy.y_axis(label="y"),
     title="10M density scatter",
     width="100%",
     height=430,

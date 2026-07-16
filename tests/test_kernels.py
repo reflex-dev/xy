@@ -685,11 +685,11 @@ def test_size_sentinel_detection_matches_platform_usize_width(monkeypatch):
     monkeypatch.setattr(_native, "_USIZE_MAX", sentinel)
     x = np.arange(8.0)
     cases = [
-        ("fc_zone_maps", lambda: _native.zone_maps(x, 4)),
-        ("fc_m4_indices", lambda: _native.m4_indices(x, x, 0.0, 8.0, 2)),
-        ("fc_bin_2d_indices", lambda: _native.bin_2d_indices(x, x, 0.0, 8.0, 0.0, 8.0, 4, 4)),
-        ("fc_histogram_uniform", lambda: _native.histogram_uniform(x, 0.0, 8.0, 4)),
-        ("fc_range_indices", lambda: _native.range_indices(x, x, 0.0, 8.0, 0.0, 8.0)),
+        ("xy_zone_maps", lambda: _native.zone_maps(x, 4)),
+        ("xy_m4_indices", lambda: _native.m4_indices(x, x, 0.0, 8.0, 2)),
+        ("xy_bin_2d_indices", lambda: _native.bin_2d_indices(x, x, 0.0, 8.0, 0.0, 8.0, 4, 4)),
+        ("xy_histogram_uniform", lambda: _native.histogram_uniform(x, 0.0, 8.0, 4)),
+        ("xy_range_indices", lambda: _native.range_indices(x, x, 0.0, 8.0, 0.0, 8.0)),
     ]
     for symbol, call in cases:
         monkeypatch.setattr(_native._lib, symbol, lambda *args, _s=sentinel: _s)

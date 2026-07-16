@@ -11,14 +11,14 @@ maxMetadataBytes: 8 * 1024 * 1024,
 maxBuffers: 4096,
 maxBufferBytes: 256 * 1024 * 1024,
 });
-function fcByteSpan(value, label = "buffer") {
+function xyByteSpan(value, label = "buffer") {
 if (value instanceof ArrayBuffer) return new Uint8Array(value);
 if (ArrayBuffer.isView(value)) {
 return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
 }
 throw new TypeError(`${label} must be an ArrayBuffer or ArrayBuffer view`);
 }
-function fcFrameLimit(limits, name) {
+function xyFrameLimit(limits, name) {
 const fallback = XY_FRAME_DEFAULT_LIMITS[name];
 const value = limits && limits[name] != null ? limits[name] : fallback;
 if (!Number.isSafeInteger(value) || value <= 0) {
@@ -26,17 +26,17 @@ throw new RangeError(`${name} must be a positive safe integer`);
 }
 return value;
 }
-function fcAlign8(value) {
+function xyAlign8(value) {
 return Math.ceil(value / XY_FRAME_ALIGNMENT) * XY_FRAME_ALIGNMENT;
 }
-function fcFrameU64(view, offset, label) {
+function xyFrameU64(view, offset, label) {
 const value = view.getBigUint64(offset, true);
 if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
 throw new RangeError(`${label} exceeds JavaScript's safe integer range`);
 }
 return Number(value);
 }
-function fcRequireZeroPadding(bytes, start, end, label) {
+function xyRequireZeroPadding(bytes, start, end, label) {
 if (end > bytes.byteLength) throw new RangeError(`truncated ${label} padding`);
 for (let i = start; i < end; i++) {
 if (bytes[i] !== 0) throw new RangeError(`non-zero ${label} padding`);
@@ -44,11 +44,11 @@ if (bytes[i] !== 0) throw new RangeError(`non-zero ${label} padding`);
 }
 
 function decodeFrame(body, limits = null) {
-const bytes = fcByteSpan(body, "frame body");
-const maxFrameBytes = fcFrameLimit(limits, "maxFrameBytes");
-const maxMetadataBytes = fcFrameLimit(limits, "maxMetadataBytes");
-const maxBuffers = fcFrameLimit(limits, "maxBuffers");
-const maxBufferBytes = fcFrameLimit(limits, "maxBufferBytes");
+const bytes = xyByteSpan(body, "frame body");
+const maxFrameBytes = xyFrameLimit(limits, "maxFrameBytes");
+const maxMetadataBytes = xyFrameLimit(limits, "maxMetadataBytes");
+const maxBuffers = xyFrameLimit(limits, "maxBuffers");
+const maxBufferBytes = xyFrameLimit(limits, "maxBufferBytes");
 if (maxMetadataBytes > maxFrameBytes) {
 throw new RangeError("maxMetadataBytes cannot exceed maxFrameBytes");
 }
@@ -76,7 +76,7 @@ throw new RangeError(`unsupported frame header size ${headerSize}`);
 }
 const metadataLength = view.getUint32(8, true);
 const bufferCount = view.getUint32(12, true);
-const totalLength = fcFrameU64(view, 16, "declared frame length");
+const totalLength = xyFrameU64(view, 16, "declared frame length");
 if (totalLength !== bytes.byteLength) {
 throw new RangeError(
 `declared frame length ${totalLength} does not match body length ${bytes.byteLength}`
@@ -104,12 +104,12 @@ throw new RangeError(`invalid frame metadata JSON: ${error}`);
 if (!message || Array.isArray(message) || typeof message !== "object") {
 throw new RangeError("frame metadata must decode to an object");
 }
-let position = fcAlign8(metadataEnd);
-fcRequireZeroPadding(bytes, metadataEnd, position, "metadata");
+let position = xyAlign8(metadataEnd);
+xyRequireZeroPadding(bytes, metadataEnd, position, "metadata");
 const buffers = [];
 for (let i = 0; i < bufferCount; i++) {
 if (position + 8 > bytes.byteLength) throw new RangeError(`truncated buffer ${i} length`);
-const bufferLength = fcFrameU64(view, position, `buffer ${i} length`);
+const bufferLength = xyFrameU64(view, position, `buffer ${i} length`);
 position += 8;
 if (bufferLength > maxBufferBytes) {
 throw new RangeError(`buffer ${i} length ${bufferLength} exceeds limit ${maxBufferBytes}`);
@@ -121,8 +121,8 @@ if (absoluteOffset % XY_FRAME_ALIGNMENT !== 0) {
 throw new RangeError(`buffer ${i} is not 8-byte aligned`);
 }
 buffers.push(new Uint8Array(bytes.buffer, absoluteOffset, bufferLength));
-const paddedEnd = fcAlign8(end);
-fcRequireZeroPadding(bytes, end, paddedEnd, `buffer ${i}`);
+const paddedEnd = xyAlign8(end);
+xyRequireZeroPadding(bytes, end, paddedEnd, `buffer ${i}`);
 position = paddedEnd;
 }
 if (position !== bytes.byteLength) {
@@ -230,45 +230,45 @@ label: tok("--chart-text") || withA(text, 0.85),
 function cssColor([r, g, b, a]) {
 return `rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},${a})`;
 }
-const FC_CHROME_CSS = `
-:where(.xy [data-fc-slot="title"]){text-align:center;font-size:14px;font-weight:600;color:var(--chart-text,inherit)}
-:where(.xy [data-fc-slot="tooltip"]){background:var(--chart-tooltip-bg,rgba(20,24,33,.92));color:var(--chart-tooltip-text,#fff);padding:5px 8px;border-radius:4px;font-size:11px;line-height:1.35;box-shadow:0 2px 8px rgba(0,0,0,.3)}
-:where(.xy [data-fc-slot="legend"]){gap:2px;font-size:11px;background:var(--chart-legend-bg,rgba(128,128,128,.08));border-radius:4px;padding:4px 8px;color:var(--chart-text,inherit)}
-:where(.xy [data-fc-slot="legend_swatch"]){width:12px;height:10px;border-radius:2px;margin-right:5px}
-:where(.xy [data-fc-slot="colorbar"]){color:var(--chart-text,inherit);font-size:10px}
-:where(.xy [data-fc-slot="colorbar_bar"]){background:var(--xy-colorbar-gradient);border:1px solid currentColor;box-sizing:border-box}
-:where(.xy [data-fc-slot="colorbar_title"]){font-weight:500}
-:where(.xy [data-fc-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
-:where(.xy [data-fc-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
-:where(.xy [data-fc-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
-:where(.xy [data-fc-slot="modebar_button"]){width:24px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-text,currentColor);cursor:pointer}
-:where(.xy [data-fc-modebar-drag-handle]){position:relative;width:22px;margin-right:4px;cursor:move}
-:where(.xy [data-fc-modebar-drag-handle])::after{content:"";position:absolute;top:4px;right:-3px;bottom:4px;width:1px;background:rgba(128,128,128,.28);pointer-events:none}
-:where(.xy [data-fc-modebar-menu-trigger]){width:auto;min-width:48px;gap:1px;padding:0 4px;font-size:11px;font-variant-numeric:tabular-nums}
-:where(.xy [data-fc-modebar-select-trigger]){width:auto;min-width:30px;gap:0;padding:0 2px}
-:where(.xy [data-fc-modebar-menu-indicator]){display:flex;transition:transform .15s}
-:where(.xy [data-fc-modebar-menu-indicator] svg){width:11px;height:11px}
-:where(.xy [data-fc-modebar-menu]){min-width:148px;gap:1px;padding:4px;background:var(--chart-modebar-bg,rgba(255,255,255,.94));border:1px solid rgba(128,128,128,.22);border-radius:7px;box-shadow:0 5px 18px rgba(15,23,42,.18);backdrop-filter:blur(8px)}
-:where(.xy [data-fc-modebar-menu-item]){width:100%;height:28px;justify-content:flex-start;padding:0 9px;border-radius:4px;text-align:left;white-space:nowrap}
-:where(.xy [data-fc-modebar-menu-item]:hover,.xy [data-fc-modebar-menu-item]:focus-visible){background:var(--chart-modebar-active,rgba(128,128,128,.18));outline:none}
-:where(.xy [data-fc-modebar-menu-item][data-fc-separator]){margin-top:3px;border-top:1px solid rgba(128,128,128,.2);border-radius:0 0 4px 4px}
-:where(.xy [data-fc-modebar-menu-icon]){display:flex;width:16px;margin-right:7px}
-:where(.xy [data-fc-modebar-menu-icon] svg){width:14px;height:14px}
-:where(.xy [data-fc-slot="modebar_button"].fc-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
-:where(.xy [data-fc-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
-:where(.xy [data-fc-slot="selection"][data-fc-band="zoom"]){border-color:var(--chart-zoom-selection,rgba(120,120,120,.9));background:var(--chart-zoom-selection-fill,rgba(120,120,120,.12))}
-:where(.xy [data-fc-selection-lasso]){fill:var(--chart-selection-fill,rgba(90,140,240,.15));stroke:var(--chart-selection,rgba(90,140,240,.9));stroke-width:1.5;stroke-linejoin:round;pointer-events:none}
-:where(.xy [data-fc-selection-lasso-handle]){fill:var(--chart-bg,#fff);stroke:var(--chart-selection,rgba(90,140,240,.9));stroke-width:1.5;cursor:grab;pointer-events:all}
-:where(.xy [data-fc-selection-lasso-handle][data-fc-active]){cursor:grabbing;fill:var(--chart-selection,rgba(90,140,240,.9))}
-:where(.xy [data-fc-slot="crosshair_x"],.xy [data-fc-slot="crosshair_y"]){background:var(--chart-crosshair,rgba(15,23,42,.42))}
-:where(.xy [data-fc-slot="tick_label"]){color:var(--chart-text,inherit)}
-:where(.xy [data-fc-slot="axis_title"]){color:var(--chart-text,inherit);font-size:12px}
-:where(.xy [data-fc-slot="annotation_label"]){font-size:11px;line-height:1.2;font-weight:500;color:var(--chart-annotation-text,var(--chart-text,inherit))}
-:where(.xy [data-fc-slot="canvas"]){cursor:var(--chart-cursor,crosshair)}
-:where(.xy [data-fc-slot="canvas"][data-fc-dragmode="pan"]){cursor:var(--chart-cursor-pan,grab)}
-:where(.xy [data-fc-slot="canvas"]:focus-visible,.xy [data-fc-slot="modebar_button"]:focus-visible){outline:2px solid var(--chart-focus,#2563eb);outline-offset:2px}
-@media (prefers-reduced-motion:reduce){:where(.xy [data-fc-slot="modebar"]){transition-duration:0s!important}}
-@media (forced-colors:active){:where(.xy [data-fc-slot="modebar"],.xy [data-fc-slot="tooltip"]){border:1px solid CanvasText}:where(.xy [data-fc-slot="modebar_button"].fc-active){outline:2px solid Highlight}:where(.xy [data-fc-slot="canvas"]:focus){outline:2px solid Highlight}}
+const XY_CHROME_CSS = `
+:where(.xy [data-xy-slot="title"]){text-align:center;font-size:14px;font-weight:600;color:var(--chart-text,inherit)}
+:where(.xy [data-xy-slot="tooltip"]){background:var(--chart-tooltip-bg,rgba(20,24,33,.92));color:var(--chart-tooltip-text,#fff);padding:5px 8px;border-radius:4px;font-size:11px;line-height:1.35;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+:where(.xy [data-xy-slot="legend"]){gap:2px;font-size:11px;background:var(--chart-legend-bg,rgba(128,128,128,.08));border-radius:4px;padding:4px 8px;color:var(--chart-text,inherit)}
+:where(.xy [data-xy-slot="legend_swatch"]){width:12px;height:10px;border-radius:2px;margin-right:5px}
+:where(.xy [data-xy-slot="colorbar"]){color:var(--chart-text,inherit);font-size:10px}
+:where(.xy [data-xy-slot="colorbar_bar"]){background:var(--xy-colorbar-gradient);border:1px solid currentColor;box-sizing:border-box}
+:where(.xy [data-xy-slot="colorbar_title"]){font-weight:500}
+:where(.xy [data-xy-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
+:where(.xy [data-xy-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
+:where(.xy [data-xy-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+:where(.xy [data-xy-slot="modebar_button"]){width:24px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-text,currentColor);cursor:pointer}
+:where(.xy [data-xy-modebar-drag-handle]){position:relative;width:22px;margin-right:4px;cursor:move}
+:where(.xy [data-xy-modebar-drag-handle])::after{content:"";position:absolute;top:4px;right:-3px;bottom:4px;width:1px;background:rgba(128,128,128,.28);pointer-events:none}
+:where(.xy [data-xy-modebar-menu-trigger]){width:auto;min-width:48px;gap:1px;padding:0 4px;font-size:11px;font-variant-numeric:tabular-nums}
+:where(.xy [data-xy-modebar-select-trigger]){width:auto;min-width:30px;gap:0;padding:0 2px}
+:where(.xy [data-xy-modebar-menu-indicator]){display:flex;transition:transform .15s}
+:where(.xy [data-xy-modebar-menu-indicator] svg){width:11px;height:11px}
+:where(.xy [data-xy-modebar-menu]){min-width:148px;gap:1px;padding:4px;background:var(--chart-modebar-bg,rgba(255,255,255,.94));border:1px solid rgba(128,128,128,.22);border-radius:7px;box-shadow:0 5px 18px rgba(15,23,42,.18);backdrop-filter:blur(8px)}
+:where(.xy [data-xy-modebar-menu-item]){width:100%;height:28px;justify-content:flex-start;padding:0 9px;border-radius:4px;text-align:left;white-space:nowrap}
+:where(.xy [data-xy-modebar-menu-item]:hover,.xy [data-xy-modebar-menu-item]:focus-visible){background:var(--chart-modebar-active,rgba(128,128,128,.18));outline:none}
+:where(.xy [data-xy-modebar-menu-item][data-xy-separator]){margin-top:3px;border-top:1px solid rgba(128,128,128,.2);border-radius:0 0 4px 4px}
+:where(.xy [data-xy-modebar-menu-icon]){display:flex;width:16px;margin-right:7px}
+:where(.xy [data-xy-modebar-menu-icon] svg){width:14px;height:14px}
+:where(.xy [data-xy-slot="modebar_button"].xy-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
+:where(.xy [data-xy-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
+:where(.xy [data-xy-slot="selection"][data-xy-band="zoom"]){border-color:var(--chart-zoom-selection,rgba(120,120,120,.9));background:var(--chart-zoom-selection-fill,rgba(120,120,120,.12))}
+:where(.xy [data-xy-selection-lasso]){fill:var(--chart-selection-fill,rgba(90,140,240,.15));stroke:var(--chart-selection,rgba(90,140,240,.9));stroke-width:1.5;stroke-linejoin:round;pointer-events:none}
+:where(.xy [data-xy-selection-lasso-handle]){fill:var(--chart-bg,#fff);stroke:var(--chart-selection,rgba(90,140,240,.9));stroke-width:1.5;cursor:grab;pointer-events:all}
+:where(.xy [data-xy-selection-lasso-handle][data-xy-active]){cursor:grabbing;fill:var(--chart-selection,rgba(90,140,240,.9))}
+:where(.xy [data-xy-slot="crosshair_x"],.xy [data-xy-slot="crosshair_y"]){background:var(--chart-crosshair,rgba(15,23,42,.42))}
+:where(.xy [data-xy-slot="tick_label"]){color:var(--chart-text,inherit)}
+:where(.xy [data-xy-slot="axis_title"]){color:var(--chart-text,inherit);font-size:12px}
+:where(.xy [data-xy-slot="annotation_label"]){font-size:11px;line-height:1.2;font-weight:500;color:var(--chart-annotation-text,var(--chart-text,inherit))}
+:where(.xy [data-xy-slot="canvas"]){cursor:var(--chart-cursor,crosshair)}
+:where(.xy [data-xy-slot="canvas"][data-xy-dragmode="pan"]){cursor:var(--chart-cursor-pan,grab)}
+:where(.xy [data-xy-slot="canvas"]:focus-visible,.xy [data-xy-slot="modebar_button"]:focus-visible){outline:2px solid var(--chart-focus,#2563eb);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){:where(.xy [data-xy-slot="modebar"]){transition-duration:0s!important}}
+@media (forced-colors:active){:where(.xy [data-xy-slot="modebar"],.xy [data-xy-slot="tooltip"]){border:1px solid CanvasText}:where(.xy [data-xy-slot="modebar_button"].xy-active){outline:2px solid Highlight}:where(.xy [data-xy-slot="canvas"]:focus){outline:2px solid Highlight}}
 `;
 function ensureChromeStylesheet(node) {
 let root = node && node.getRootNode ? node.getRootNode() : document;
@@ -279,7 +279,7 @@ if (!scope || !scope.querySelector) return;
 if (scope.querySelector("style[data-xy-chrome]")) return;
 const style = document.createElement("style");
 style.setAttribute("data-xy-chrome", "");
-style.textContent = FC_CHROME_CSS;
+style.textContent = XY_CHROME_CSS;
 scope.appendChild(style);
 }
 function safeCssPaint(host, expr, fallback = [0.5, 0.5, 0.5, 1]) {
@@ -525,22 +525,22 @@ prog._u[name] = loc;
 return loc;
 }
 const AXIS_GLSL = `
-float fcDecode(float encoded, vec2 meta) {
+float xyDecode(float encoded, vec2 meta) {
   return encoded / max(abs(meta.y), 1e-30) + meta.x;
 }
-float fcAxisCoord(float encoded, vec2 meta, int mode) {
-  float value = fcDecode(encoded, meta);
+float xyAxisCoord(float encoded, vec2 meta, int mode) {
+  float value = xyDecode(encoded, meta);
   if (mode == 1) return value > 0.0 ? log(value) / log(10.0) : -1e30;
   return value;
 }
-float fcMap(float encoded, vec2 map, vec2 meta, int mode) {
-  return fcAxisCoord(encoded, meta, mode) * map.x + map.y;
+float xyMap(float encoded, vec2 map, vec2 meta, int mode) {
+  return xyAxisCoord(encoded, meta, mode) * map.x + map.y;
 }
-float fcViewCoord(float value, int mode) {
+float xyViewCoord(float value, int mode) {
   if (mode == 1) return value > 0.0 ? log(value) / log(10.0) : -1e30;
   return value;
 }
-float fcViewValue(float coord, int mode) {
+float xyViewValue(float coord, int mode) {
   if (mode == 1) return pow(10.0, coord);
   return coord;
 }
@@ -555,7 +555,7 @@ uniform float u_selectedOpacity; uniform float u_unselectedOpacity;
 out float v_lutCoord; out float v_dim; out float v_dval; out float v_ptSize; out float v_sel;
 ${AXIS_GLSL}
 void main() {
-  gl_Position = vec4(fcMap(ax, u_xmap, u_xmeta, u_xmode), fcMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  gl_Position = vec4(xyMap(ax, u_xmap, u_xmeta, u_xmode), xyMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = sz * u_dpr;
   v_ptSize = sz * u_dpr;
@@ -569,13 +569,13 @@ void main() {
   v_dim = u_selActive == 1 ? mix(u_unselectedOpacity, u_selectedOpacity, step(0.5, a_sel)) : 1.0;
 }`;
 const MARKER_SDF_GLSL = `
-float fcSegmentDistance(vec2 p, vec2 a, vec2 b) {
+float xySegmentDistance(vec2 p, vec2 a, vec2 b) {
   vec2 e = b - a;
   return length(p - a - e * clamp(dot(p - a, e) / dot(e, e), 0.0, 1.0));
 }
-float fcTriangleDistance(vec2 p, vec2 a, vec2 b, vec2 c) {
-  float dist = min(fcSegmentDistance(p, a, b),
-                   min(fcSegmentDistance(p, b, c), fcSegmentDistance(p, c, a)));
+float xyTriangleDistance(vec2 p, vec2 a, vec2 b, vec2 c) {
+  float dist = min(xySegmentDistance(p, a, b),
+                   min(xySegmentDistance(p, b, c), xySegmentDistance(p, c, a)));
   float c0 = (b.x-a.x)*(p.y-a.y) - (b.y-a.y)*(p.x-a.x);
   float c1 = (c.x-b.x)*(p.y-b.y) - (c.y-b.y)*(p.x-b.x);
   float c2 = (a.x-c.x)*(p.y-c.y) - (a.y-c.y)*(p.x-c.x);
@@ -583,16 +583,16 @@ float fcTriangleDistance(vec2 p, vec2 a, vec2 b, vec2 c) {
                 (c0 <= 0.0 && c1 <= 0.0 && c2 <= 0.0);
   return inside ? -dist : dist;
 }
-float fcPentagonDistance(vec2 p) {
+float xyPentagonDistance(vec2 p) {
   // Path.unit_regular_polygon(5), then Matplotlib's 0.5 marker transform.
   vec2 a = vec2(0.0, -0.5);
   vec2 b = vec2(-0.475528258, -0.154508497);
   vec2 c = vec2(-0.293892626, 0.404508497);
   vec2 d = vec2(0.293892626, 0.404508497);
   vec2 e = vec2(0.475528258, -0.154508497);
-  float dist = min(min(fcSegmentDistance(p, a, b), fcSegmentDistance(p, b, c)),
-                   min(min(fcSegmentDistance(p, c, d), fcSegmentDistance(p, d, e)),
-                       fcSegmentDistance(p, e, a)));
+  float dist = min(min(xySegmentDistance(p, a, b), xySegmentDistance(p, b, c)),
+                   min(min(xySegmentDistance(p, c, d), xySegmentDistance(p, d, e)),
+                       xySegmentDistance(p, e, a)));
   float c0 = (b.x-a.x)*(p.y-a.y) - (b.y-a.y)*(p.x-a.x);
   float c1 = (c.x-b.x)*(p.y-b.y) - (c.y-b.y)*(p.x-b.x);
   float c2 = (d.x-c.x)*(p.y-c.y) - (d.y-c.y)*(p.x-c.x);
@@ -602,7 +602,7 @@ float fcPentagonDistance(vec2 p) {
                 (c0 <= 0.0 && c1 <= 0.0 && c2 <= 0.0 && c3 <= 0.0 && c4 <= 0.0);
   return inside ? -dist : dist;
 }
-float fcMarkerSdf(vec2 d, int shape) {
+float xyMarkerSdf(vec2 d, int shape) {
   if (shape == 1) return max(abs(d.x), abs(d.y)) - 0.5;              // square
   if (shape == 2) return (abs(d.x) + abs(d.y)) - 0.5;               // diamond
   if (shape == 4) {                                                 // cross / plus
@@ -616,7 +616,7 @@ float fcMarkerSdf(vec2 d, int shape) {
     p -= vec2(clamp(p.x, -k.z * 0.5, k.z * 0.5), 0.5);
     return length(p) * sign(p.y);
   }
-  if (shape == 6) return fcPentagonDistance(d);                      // exact regular pentagon
+  if (shape == 6) return xyPentagonDistance(d);                      // exact regular pentagon
   if (shape == 7) {                                                 // five-pointed star (apex up)
     const float rf = 0.45;
     const vec2 k1 = vec2(0.809016994, -0.587785252);
@@ -634,7 +634,7 @@ float fcMarkerSdf(vec2 d, int shape) {
     if (shape == 8) q = -d;
     if (shape == 9) q = vec2(d.y, -d.x);
     if (shape == 10) q = vec2(-d.y, d.x);
-    return fcTriangleDistance(q, vec2(0.0, -0.5), vec2(-0.5, 0.5), vec2(0.5, 0.5));
+    return xyTriangleDistance(q, vec2(0.0, -0.5), vec2(-0.5, 0.5), vec2(0.5, 0.5));
   }
   if (shape == 11) {                                                // diagonal x
     vec2 q = vec2(d.x + d.y, d.y - d.x) * 0.707106781;
@@ -664,7 +664,7 @@ void main() {
     vec2 a = abs(q);
     sd = min(max(a.x - 0.5, a.y - halfWidth), max(a.y - 0.5, a.x - halfWidth));
   } else {
-    sd = fcMarkerSdf(d, u_symbol);
+    sd = xyMarkerSdf(d, u_symbol);
   }
   float aa = fwidth(sd) + 1e-4;
   float shapeCov = clamp(0.5 - sd / aa, 0.0, 1.0);
@@ -711,7 +711,7 @@ uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_y
 uniform float u_size; uniform float u_dpr;
 ${AXIS_GLSL}
 void main() {
-  gl_Position = vec4(fcMap(ax, u_xmap, u_xmeta, u_xmode), fcMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  gl_Position = vec4(xyMap(ax, u_xmap, u_xmeta, u_xmode), xyMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   gl_PointSize = u_size * u_dpr;
 }`;
 const POINT_SIMPLE_FS = `#version 300 es
@@ -733,7 +733,7 @@ uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange; uniform 
 flat out int v_id;
 ${AXIS_GLSL}
 void main() {
-  gl_Position = vec4(fcMap(ax, u_xmap, u_xmeta, u_xmode), fcMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
+  gl_Position = vec4(xyMap(ax, u_xmap, u_xmeta, u_xmode), xyMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
   float sz = u_sizeMode == 1 ? mix(u_sizeRange.x, u_sizeRange.y, a_sval) : u_size;
   gl_PointSize = max(sz, 6.0) * u_dpr; // enlarge hit target
   v_id = gl_VertexID;
@@ -762,9 +762,9 @@ out vec2 v_data;
 ${AXIS_GLSL}
 void main() {
   gl_Position = vec4(a_corner * 2.0 - 1.0, 0.0, 1.0);
-  float x = mix(fcViewCoord(u_view.x, u_xmode), fcViewCoord(u_view.y, u_xmode), a_corner.x);
-  float y = mix(fcViewCoord(u_view.z, u_ymode), fcViewCoord(u_view.w, u_ymode), a_corner.y);
-  v_data = vec2(fcViewValue(x, u_xmode), fcViewValue(y, u_ymode));
+  float x = mix(xyViewCoord(u_view.x, u_xmode), xyViewCoord(u_view.y, u_xmode), a_corner.x);
+  float y = mix(xyViewCoord(u_view.z, u_ymode), xyViewCoord(u_view.w, u_ymode), a_corner.y);
+  v_data = vec2(xyViewValue(x, u_xmode), xyViewValue(y, u_ymode));
 }`;
 const DENSITY_FS = `#version 300 es
 precision highp float;
@@ -822,8 +822,8 @@ out float v_off; out float v_dash;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
-  vec2 p0 = vec2(fcMap(ax0, u_xmap, u_xmeta, u_xmode), fcMap(ay0, u_ymap, u_ymeta, u_ymode));
-  vec2 p1 = vec2(fcMap(ax1, u_xmap, u_xmeta, u_xmode), fcMap(ay1, u_ymap, u_ymeta, u_ymode));
+  vec2 p0 = vec2(xyMap(ax0, u_xmap, u_xmeta, u_xmode), xyMap(ay0, u_ymap, u_ymeta, u_ymode));
+  vec2 p1 = vec2(xyMap(ax1, u_xmap, u_xmeta, u_xmode), xyMap(ay1, u_ymap, u_ymeta, u_ymode));
   vec2 pix0 = (p0 * 0.5 + 0.5) * u_res;
   vec2 pix1 = (p1 * 0.5 + 0.5) * u_res;
   vec2 dir = pix1 - pix0;
@@ -880,8 +880,8 @@ out float v_off; out float v_cval; out float v_dash;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
-  vec2 p0 = vec2(fcMap(ax0, u_xmap, u_x0meta, u_x0mode), fcMap(ay0, u_ymap, u_y0meta, u_y0mode));
-  vec2 p1 = vec2(fcMap(ax1, u_xmap, u_x1meta, u_x1mode), fcMap(ay1, u_ymap, u_y1meta, u_y1mode));
+  vec2 p0 = vec2(xyMap(ax0, u_xmap, u_x0meta, u_x0mode), xyMap(ay0, u_ymap, u_y0meta, u_y0mode));
+  vec2 p1 = vec2(xyMap(ax1, u_xmap, u_x1meta, u_x1mode), xyMap(ay1, u_ymap, u_y1meta, u_y1mode));
   vec2 pix0 = (p0 * 0.5 + 0.5) * u_res;
   vec2 pix1 = (p1 * 0.5 + 0.5) * u_res;
   vec2 dir = pix1 - pix0;
@@ -939,7 +939,7 @@ void main() {
   vec2 ym = vertex == 0 ? u_y0meta : (vertex == 1 ? u_y1meta : u_y2meta);
   int xmode = vertex == 0 ? u_x0mode : (vertex == 1 ? u_x1mode : u_x2mode);
   int ymode = vertex == 0 ? u_y0mode : (vertex == 1 ? u_y1mode : u_y2mode);
-  gl_Position = vec4(fcMap(x, u_xmap, xm, xmode), fcMap(y, u_ymap, ym, ymode), 0.0, 1.0);
+  gl_Position = vec4(xyMap(x, u_xmap, xm, xmode), xyMap(y, u_ymap, ym, ymode), 0.0, 1.0);
   v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   v_bary = vertex == 0 ? vec3(1.,0.,0.) : (vertex == 1 ? vec3(0.,1.,0.) : vec3(0.,0.,1.));
 }`;
@@ -963,7 +963,7 @@ void main() {
 const GRAD_GLSL = `
 uniform int u_gradMode; uniform int u_gradDir; uniform int u_gradCount;
 uniform float u_gradPos[8]; uniform vec4 u_gradColor[8];
-vec4 fcGradSample(float t) {
+vec4 xyGradSample(float t) {
   vec4 c0 = u_gradColor[0]; float p0 = u_gradPos[0];
   if (t <= p0) return c0;
   for (int i = 1; i < 8; i++) {
@@ -974,7 +974,7 @@ vec4 fcGradSample(float t) {
   }
   return c0;
 }
-float fcGradT(float markT, vec2 res) {
+float xyGradT(float markT, vec2 res) {
   float t;
   if (u_gradMode == 2) {
     vec2 f = gl_FragCoord.xy / max(res, vec2(1.0));
@@ -994,12 +994,12 @@ const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1
 ${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
-  float x0 = fcMap(ax0, u_xmap, u_xmeta, u_xmode);
-  float x1 = fcMap(ax1, u_xmap, u_xmeta, u_xmode);
-  float y0 = fcMap(ay0, u_ymap, u_ymeta, u_ymode);
-  float y1 = fcMap(ay1, u_ymap, u_ymeta, u_ymode);
-  float b0 = fcMap(ab0, u_bmap, u_bmeta, u_ymode);
-  float b1 = fcMap(ab1, u_bmap, u_bmeta, u_ymode);
+  float x0 = xyMap(ax0, u_xmap, u_xmeta, u_xmode);
+  float x1 = xyMap(ax1, u_xmap, u_xmeta, u_xmode);
+  float y0 = xyMap(ay0, u_ymap, u_ymeta, u_ymode);
+  float y1 = xyMap(ay1, u_ymap, u_ymeta, u_ymode);
+  float b0 = xyMap(ab0, u_bmap, u_bmeta, u_ymode);
+  float b1 = xyMap(ab1, u_bmap, u_bmeta, u_ymode);
   float top = mix(y0, y1, c.x);
   float base = mix(b0, b1, c.x);
   float clipY = mix(base, top, c.y);
@@ -1027,7 +1027,7 @@ void main() {
     float denom = v_top - v_base;
     float markT = clamp((v_pos - v_base) / (abs(denom) > 1e-6 ? denom : 1e-6), 0.0, 1.0);
     // Compose the mark opacity (premultiplied) over the gradient sample.
-    premult = fcGradSample(fcGradT(markT, u_res)) * u_color.a;
+    premult = xyGradSample(xyGradT(markT, u_res)) * u_color.a;
   }
   if (premult.a <= 0.001) discard;
   outColor = premult;
@@ -1046,10 +1046,10 @@ const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1
 ${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
-  float x0 = fcMap(ax0, u_x0map, u_x0meta, u_xmode) + u_edgePad.x;
-  float x1 = fcMap(ax1, u_x1map, u_x1meta, u_xmode) + u_edgePad.y;
-  float y0 = fcMap(ay0, u_y0map, u_y0meta, u_ymode) + u_edgePad.z;
-  float y1 = fcMap(ay1, u_y1map, u_y1meta, u_ymode) + u_edgePad.w;
+  float x0 = xyMap(ax0, u_x0map, u_x0meta, u_xmode) + u_edgePad.x;
+  float x1 = xyMap(ax1, u_x1map, u_x1meta, u_xmode) + u_edgePad.y;
+  float y0 = xyMap(ay0, u_y0map, u_y0meta, u_ymode) + u_edgePad.z;
+  float y1 = xyMap(ay1, u_y1map, u_y1meta, u_ymode) + u_edgePad.w;
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   // Pixel-space local frame for the rounded-corner/stroke SDF (v_half is
   // constant across the quad; v_local interpolates to the fragment offset).
@@ -1075,10 +1075,10 @@ const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1
 ${AXIS_GLSL}
 void main() {
   vec2 c = corners[gl_VertexID];
-  float p = fcMap(a_pos, u_pmap, u_pmeta, u_pmode);
+  float p = xyMap(a_pos, u_pmap, u_pmeta, u_pmode);
   float halfW = abs(u_width * u_pmap.x) * 0.5;
-  float v0 = (u_v0Mode == 0 ? u_v0Const : fcMap(a_v0, u_v0map, u_v0meta, u_vmode)) + u_v0EdgePad;
-  float v1 = fcMap(a_v1, u_v1map, u_v1meta, u_vmode);
+  float v0 = (u_v0Mode == 0 ? u_v0Const : xyMap(a_v0, u_v0map, u_v0meta, u_vmode)) + u_v0EdgePad;
+  float v1 = xyMap(a_v1, u_v1map, u_v1meta, u_vmode);
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   vec2 clipA, clipB;
   if (u_orientation == 0) {
@@ -1111,7 +1111,7 @@ void main() {
   vec4 premult = vec4(rgb * u_color.a, u_color.a);
   // Compose the mark opacity (u_color.a) over the gradient — premultiplied, so
   // one scalar multiply fades every stop, including a fade-to-transparent.
-  if (u_gradMode != 0) premult = fcGradSample(fcGradT(v_t, u_res)) * u_color.a;
+  if (u_gradMode != 0) premult = xyGradSample(xyGradT(v_t, u_res)) * u_color.a;
   if (u_radius.x > 0.0 || u_radius.y > 0.0 || u_strokeWidth > 0.0) {
     // u_radius = (tip, base) in mark space: v_t > 0.5 is the tip half, so
     // corner_radius=(6, 0) rounds only the value end of the bar. On the
@@ -1130,7 +1130,7 @@ void main() {
   if (premult.a <= 0.001) discard;
   outColor = premult;
 }`;
-function fcMonotoneTangents(x, y, n) {
+function xyMonotoneTangents(x, y, n) {
 const d = new Float64Array(n - 1);
 const m = new Float64Array(n);
 for (let i = 0; i < n - 1; i++) {
@@ -1153,7 +1153,7 @@ m[i + 1] = t * b * d[i];
 }
 return m;
 }
-function fcSmoothResample(x, y, extra, n, maxOut) {
+function xySmoothResample(x, y, extra, n, maxOut) {
 if (n < 3) return null;
 const sub = Math.max(1, Math.min(16, Math.floor(maxOut / n)));
 if (sub <= 1) return null;
@@ -1162,8 +1162,8 @@ if (!Number.isFinite(x[i]) || !Number.isFinite(y[i])) return null;
 if (i > 0 && x[i] < x[i - 1]) return null;
 if (extra && !Number.isFinite(extra[i])) return null;
 }
-const my = fcMonotoneTangents(x, y, n);
-const me = extra ? fcMonotoneTangents(x, extra, n) : null;
+const my = xyMonotoneTangents(x, y, n);
+const me = extra ? xyMonotoneTangents(x, extra, n) : null;
 const outN = (n - 1) * sub + 1;
 const ox = new Float32Array(outN);
 const oy = new Float32Array(outN);
@@ -1639,7 +1639,7 @@ view._map(d.yMeta, y0, y1, d.yAxis)
 );
 }
 }
-const FC_REBIN_WORKER_SRC = `
+const XY_REBIN_WORKER_SRC = `
 const DATA = new Map();
 self.onmessage = (e) => {
   const m = e.data;
@@ -1669,10 +1669,10 @@ self.onmessage = (e) => {
   );
 };
 `;
-function fcCreateRebinWorker() {
+function xyCreateRebinWorker() {
 try {
 const url = URL.createObjectURL(
-new Blob([FC_REBIN_WORKER_SRC], { type: "application/javascript" })
+new Blob([XY_REBIN_WORKER_SRC], { type: "application/javascript" })
 );
 const worker = new Worker(url);
 worker._fcUrl = url;
@@ -1684,8 +1684,8 @@ return null;
 const MARGIN = { l: 62, r: 14, t: 10, b: 42 };
 const COLORBAR_THICKNESS = 18;
 const COLORBAR_GAP = 24;
-let FC_A11Y_ID = 0;
-const FC_SR_ONLY_STYLE =
+let XY_A11Y_ID = 0;
+const XY_SR_ONLY_STYLE =
 "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;" +
 "clip:rect(0,0,0,0);white-space:nowrap;border:0;";
 const UNITLESS_STYLE_PROPS = new Set([
@@ -1713,7 +1713,7 @@ const UNITLESS_STYLE_PROPS = new Set([
 "stroke-miterlimit",
 "stroke-opacity",
 ]);
-const FC_CONTEXT_GOVERNOR = {
+const XY_CONTEXT_GOVERNOR = {
 views: new Set(),
 seq: 1,
 budget() {
@@ -1761,7 +1761,7 @@ cancel(requester) {
 requester._ctxPendingReservation = false;
 },
 };
-function fcInitiallyVisible(el) {
+function xyInitiallyVisible(el) {
 if (typeof window === "undefined" || !el.getBoundingClientRect) return true;
 const rect = el.getBoundingClientRect();
 if (!rect.width && !rect.height) return false;
@@ -1820,15 +1820,15 @@ this._glLost = false;
 this._ctxReleasedExt = null;
 this._ctxReleases = 0;
 this._ctxRecoveries = 0;
-this._ctxVisible = fcInitiallyVisible(el);
-FC_CONTEXT_GOVERNOR.register(this);
-if (this._ctxVisible) this._ctxSeenSeq = FC_CONTEXT_GOVERNOR.seq++;
+this._ctxVisible = xyInitiallyVisible(el);
+XY_CONTEXT_GOVERNOR.register(this);
+if (this._ctxVisible) this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
 this._contextLossCount = 0;
 this._contextRestoreCount = 0;
 this._contextRecoveryError = null;
 this._initGl(buffer);
 this._initA11y();
-this.root.dataset.fcContextState = "ready";
+this.root.dataset.xyContextState = "ready";
 this._initContextLossRecovery();
 this._armContextVisibilityWatch();
 this._initInteraction();
@@ -2053,7 +2053,7 @@ if (cssValue != null) el.style.setProperty(property, cssValue);
 }
 }
 _applySlot(el, slot) {
-if (el && el.dataset) el.dataset.fcSlot = slot;
+if (el && el.dataset) el.dataset.xySlot = slot;
 const dom = this.spec.dom;
 if (!dom || typeof dom !== "object") return;
 if (slot === "root") this._applyClass(el, dom.class_name);
@@ -2129,13 +2129,13 @@ _initContextLossRecovery() {
 this._listen(this.canvas, "webglcontextlost", (e) => {
 e.preventDefault();
 if (this._destroyed) return;
-const governedRelease = this.canvas.dataset.fcCtx === "released";
+const governedRelease = this.canvas.dataset.xyCtx === "released";
 if (this._glLost && !governedRelease) return;
 this._glLost = true;
-if (!governedRelease) this.canvas.dataset.fcCtx = "lost";
+if (!governedRelease) this.canvas.dataset.xyCtx = "lost";
 this._contextLossCount += 1;
 this._contextRecoveryError = null;
-this.root.dataset.fcContextState = "lost";
+this.root.dataset.xyContextState = "lost";
 this.seq += 1;
 if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
@@ -2162,7 +2162,7 @@ this._initGl(this._payload);
 } catch (err) {
 this._glLost = true;
 this._contextRecoveryError = err;
-this.root.dataset.fcContextState = "failed";
+this.root.dataset.xyContextState = "failed";
 try { this._destroyGlResources(); } catch (_cleanupErr) {}
 this.gl = null;
 this._dispatchChartEvent("context_restore_failed", {
@@ -2175,7 +2175,7 @@ return;
 this._glLost = false;
 this._contextRestoreCount += 1;
 this._contextRecoveryError = null;
-this.root.dataset.fcContextState = "ready";
+this.root.dataset.xyContextState = "ready";
 this._scheduleViewRequest(this.view, { delay: 0 });
 this.draw();
 this._dropContextSnapshot();
@@ -2193,7 +2193,7 @@ this._snapshotBeforeRelease();
 this._ctxReleasedExt = ext;
 this._ctxReleases += 1;
 this._glLost = true;
-this.canvas.dataset.fcCtx = "released";
+this.canvas.dataset.xyCtx = "released";
 if (this._raf) cancelAnimationFrame(this._raf);
 this._raf = null;
 ext.loseContext();
@@ -2208,7 +2208,7 @@ this._drawNow();
 let snap = this._ctxSnapshot;
 if (!snap) {
 snap = this._ctxSnapshot = document.createElement("canvas");
-snap.dataset.fcCtxSnapshot = "";
+snap.dataset.xyCtxSnapshot = "";
 }
 snap.width = this.canvas.width;
 snap.height = this.canvas.height;
@@ -2233,11 +2233,11 @@ if (this._ctxReleasedExt) {
 const ext = this._ctxReleasedExt;
 this._ctxReleasedExt = null;
 try {
-FC_CONTEXT_GOVERNOR.reserve(this);
+XY_CONTEXT_GOVERNOR.reserve(this);
 ext.restoreContext();
 return;
 } catch (_err) {
-FC_CONTEXT_GOVERNOR.cancel(this);
+XY_CONTEXT_GOVERNOR.cancel(this);
 }
 }
 this._rebuildEvictedContext();
@@ -2261,7 +2261,7 @@ try {
 this._initGl(this._payload);
 } catch (_err) {
 this._glLost = true;
-this.canvas.dataset.fcCtx = "lost";
+this.canvas.dataset.xyCtx = "lost";
 return;
 }
 this._scheduleViewRequest(this.view, { delay: 0 });
@@ -2281,7 +2281,7 @@ this._ctxIo = new IntersectionObserver(
 const entry = entries[entries.length - 1];
 this._ctxVisible = entry.isIntersecting || entry.intersectionRatio > 0;
 if (this._ctxVisible) {
-this._ctxSeenSeq = FC_CONTEXT_GOVERNOR.seq++;
+this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
 if (this._glLost && !this._destroyed) this._recoverContext();
 }
 },
@@ -2332,7 +2332,7 @@ this.root = root;
 ensureChromeStylesheet(root);
 let a11yId;
 do {
-a11yId = `xy-a11y-${++FC_A11Y_ID}`;
+a11yId = `xy-a11y-${++XY_A11Y_ID}`;
 } while (
 document.getElementById(`${a11yId}-summary`) || document.getElementById(`${a11yId}-live`)
 );
@@ -2340,7 +2340,7 @@ root.setAttribute("role", "region");
 root.setAttribute("aria-label", s.title ? `Chart: ${s.title}` : "Interactive chart");
 this.a11ySummary = document.createElement("div");
 this.a11ySummary.id = `${a11yId}-summary`;
-this.a11ySummary.style.cssText = FC_SR_ONLY_STYLE;
+this.a11ySummary.style.cssText = XY_SR_ONLY_STYLE;
 root.setAttribute("aria-describedby", this.a11ySummary.id);
 root.appendChild(this.a11ySummary);
 this.a11yLive = document.createElement("div");
@@ -2348,7 +2348,7 @@ this.a11yLive.id = `${a11yId}-live`;
 this.a11yLive.setAttribute("role", "status");
 this.a11yLive.setAttribute("aria-live", "polite");
 this.a11yLive.setAttribute("aria-atomic", "true");
-this.a11yLive.style.cssText = FC_SR_ONLY_STYLE;
+this.a11yLive.style.cssText = XY_SR_ONLY_STYLE;
 root.appendChild(this.a11yLive);
 if (s.title) {
 const t = document.createElement("div");
@@ -2679,18 +2679,18 @@ this.chrome.width = this.size.w * dpr;
 this.chrome.height = this.size.h * dpr;
 this.chrome.style.width = this.size.w + "px";
 this.chrome.style.height = this.size.h + "px";
-FC_CONTEXT_GOVERNOR.reserve(this);
+XY_CONTEXT_GOVERNOR.reserve(this);
 const gl = this.canvas.getContext("webgl2", {
 antialias: false, premultipliedAlpha: true, alpha: true,
 });
 if (!gl) {
-FC_CONTEXT_GOVERNOR.cancel(this);
+XY_CONTEXT_GOVERNOR.cancel(this);
 this.root.textContent = "xy: WebGL2 unavailable in this browser.";
 throw new Error("webgl2 unavailable");
 }
 this.gl = gl;
-FC_CONTEXT_GOVERNOR.acquired(this);
-this.canvas.dataset.fcCtx = "live";
+XY_CONTEXT_GOVERNOR.acquired(this);
+this.canvas.dataset.xyCtx = "live";
 gl.enable(gl.BLEND);
 gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 this._progCache = new Map();
@@ -3021,7 +3021,7 @@ g.grad = this._resolveMarkFill(s, g.color);
 }
 _smoothArrays(t, x, y, base, n) {
 if (!t.style || t.style.curve !== "smooth") return null;
-return fcSmoothResample(x, y, base || null, n, 32768);
+return xySmoothResample(x, y, base || null, n, 32768);
 }
 _stepArrays(t, x, y, n) {
 const where = t.style && t.style.step;
@@ -3324,7 +3324,7 @@ split
 : "xy: spec column carries a wire-buffer index but the transport delivered one blob",
 );
 }
-const span = fcByteSpan(split ? buffer[meta.buf] : buffer, "chart payload");
+const span = xyByteSpan(split ? buffer[meta.buf] : buffer, "chart payload");
 const relativeOffset = Number(meta.byte_offset);
 const length = Number(meta.len);
 if (!Number.isSafeInteger(relativeOffset) || relativeOffset < 0 ||
@@ -4343,9 +4343,9 @@ const label = (text, css, axis, kind = "tick", extraStyle = null) => {
 if (!updateLabels) return;
 const d = document.createElement("div");
 d.textContent = text;
-d.dataset.fcLabelKind = kind;
-d.dataset.fcAxis = axis && axis.id !== undefined ? String(axis.id) : "";
-d.dataset.fcAxisSide = axis && axis.side ? String(axis.side) : "";
+d.dataset.xyLabelKind = kind;
+d.dataset.xyAxis = axis && axis.id !== undefined ? String(axis.id) : "";
+d.dataset.xyAxisSide = axis && axis.side ? String(axis.side) : "";
 const colorKey = kind === "label"
 ? "label_color"
 : (this._axisStyleValue(axis, "tick_label_color") !== undefined
@@ -4726,7 +4726,7 @@ this.draw();
 destroy() {
 if (this._destroyed) return;
 this._destroyed = true;
-FC_CONTEXT_GOVERNOR.unregister(this);
+XY_CONTEXT_GOVERNOR.unregister(this);
 this._ctxIo?.disconnect();
 this._ctxIo = null;
 clearTimeout(this._rebinTimer);
@@ -4832,7 +4832,7 @@ this._glPrograms = this._progCache;
 this.gpuTraces = [];
 }
 }
-const FC_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
+const XY_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
 "color",
 "label_color",
 "width",
@@ -4857,7 +4857,7 @@ const FC_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
 "stroke_width",
 "coordinate_space",
 ]);
-function fcLabelClearExit(style, tangent) {
+function xyLabelClearExit(style, tangent) {
 if (typeof style.label_clear !== "string") return 0;
 const parts = style.label_clear.split(",").map(Number);
 if (parts.length !== 4 || parts.some((p) => !Number.isFinite(p) || p < 0)) return 0;
@@ -4868,7 +4868,7 @@ const exitY = ty > 1e-9 ? down / ty : ty < -1e-9 ? up / -ty : Infinity;
 const exit = Math.min(exitX, exitY);
 return Number.isFinite(exit) ? exit : 0;
 }
-function fcArrowGeometry(x0, y0, x1, y1, style) {
+function xyArrowGeometry(x0, y0, x1, y1, style) {
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
 if (typeof style.start_offset === "string") {
 const offset = style.start_offset.split(",").map(Number);
@@ -4903,7 +4903,7 @@ return [(qx - px) / d, (qy - py) / d];
 };
 const t0 = cx === null ? toward(x0, y0, x1, y1) : toward(x0, y0, cx, cy);
 const t1 = cx === null ? toward(x1, y1, x0, y0) : toward(x1, y1, cx, cy);
-const gapStart = Math.max(0, num(style.gap_start) || 0, fcLabelClearExit(style, t0));
+const gapStart = Math.max(0, num(style.gap_start) || 0, xyLabelClearExit(style, t0));
 const gapEnd = Math.max(0, num(style.gap_end) || 0);
 const span = Math.hypot(x1 - x0, y1 - y0);
 const trim = gapStart + gapEnd < span * 0.9;
@@ -4913,7 +4913,7 @@ const dir1 = cx === null ? toward(p0[0], p0[1], p1[0], p1[1]) : toward(cx, cy, p
 const dir0 = cx === null ? toward(p1[0], p1[1], p0[0], p0[1]) : toward(cx, cy, p0[0], p0[1]);
 return { p0, p1, control: cx === null ? null : [cx, cy], dir0, dir1 };
 }
-function fcArrowShaftPoints(geom, samples = 24) {
+function xyArrowShaftPoints(geom, samples = 24) {
 const [x0, y0] = geom.p0;
 const [x1, y1] = geom.p1;
 if (!geom.control) return [[x0, y0], [x1, y1]];
@@ -4926,7 +4926,7 @@ points.push([u * u * x0 + 2 * u * t * cx + t * t * x1, u * u * y0 + 2 * u * t * 
 }
 return points;
 }
-function fcTrimPolylineEnd(points, trim) {
+function xyTrimPolylineEnd(points, trim) {
 if (!(trim > 0) || points.length < 2) return points;
 const out = points.slice();
 let remaining = trim;
@@ -4944,7 +4944,7 @@ out.pop();
 }
 return out;
 }
-function fcTaperPolygon(points, w0, w1) {
+function xyTaperPolygon(points, w0, w1) {
 const left = [];
 const right = [];
 const count = points.length;
@@ -5008,7 +5008,7 @@ ctx.restore();
 },
 _drawArrowLine(ctx, x0, y0, x1, y1, style) {
 if (![x0, y0, x1, y1].every(Number.isFinite)) return;
-const geom = fcArrowGeometry(x0, y0, x1, y1, style);
+const geom = xyArrowGeometry(x0, y0, x1, y1, style);
 ctx.save();
 ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
 ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
@@ -5021,11 +5021,11 @@ const w1 = Number(style.shaft_width_end);
 const headStyle = style.head_style || "triangle";
 const head = Math.max(4, this._styleNumber(style, "head_size", 8));
 if (Number.isFinite(w0) || Number.isFinite(w1)) {
-let points = fcArrowShaftPoints(geom);
+let points = xyArrowShaftPoints(geom);
 if (headStyle === "triangle") {
-points = fcTrimPolylineEnd(points, head * Math.cos(Math.PI / 6));
+points = xyTrimPolylineEnd(points, head * Math.cos(Math.PI / 6));
 }
-const polygon = fcTaperPolygon(
+const polygon = xyTaperPolygon(
 points,
 Number.isFinite(w0) ? w0 : 1,
 Number.isFinite(w1) ? w1 : 1
@@ -5250,7 +5250,7 @@ this._applySlot(d, "annotation_label");
 this._applyClass(d, ann.class_name);
 const labelStyle = {};
 for (const [key, value] of Object.entries(style)) {
-if (FC_ANNOTATION_SHAPE_STYLE_KEYS.has(key)) continue;
+if (XY_ANNOTATION_SHAPE_STYLE_KEYS.has(key)) continue;
 labelStyle[key] = value;
 }
 this._applyStyle(d, labelStyle);
@@ -5504,12 +5504,12 @@ this.root.appendChild(this.selRect);
 this.selLasso = document.createElementNS("http://www.w3.org/2000/svg", "svg");
 this.selLasso.style.cssText =
 "position:absolute;display:none;pointer-events:none;z-index:4;overflow:visible;";
-this.selLasso.dataset.fcSelectionLassoOverlay = "";
+this.selLasso.dataset.xySelectionLassoOverlay = "";
 this.selLassoPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
-this.selLassoPath.dataset.fcSelectionLasso = "";
+this.selLassoPath.dataset.xySelectionLasso = "";
 this.selLasso.appendChild(this.selLassoPath);
 this.selLassoHandles = document.createElementNS("http://www.w3.org/2000/svg", "g");
-this.selLassoHandles.dataset.fcSelectionLassoHandles = "";
+this.selLassoHandles.dataset.xySelectionLassoHandles = "";
 this.selLasso.appendChild(this.selLassoHandles);
 this.root.appendChild(this.selLasso);
 this._lassoPolygon = null;
@@ -5526,9 +5526,9 @@ e.preventDefault();
 e.stopPropagation();
 };
 this._listen(this.selLasso, "pointerdown", (e) => {
-const handle = e.target.closest?.("[data-fc-selection-lasso-handle]");
+const handle = e.target.closest?.("[data-xy-selection-lasso-handle]");
 if (!handle || !this._lassoPolygon) return;
-const index = Number(handle.dataset.fcSelectionLassoHandle);
+const index = Number(handle.dataset.xySelectionLassoHandle);
 if (!Number.isInteger(index) || !this._lassoPolygon[index]) return;
 lassoHandleDrag = {
 index,
@@ -5536,7 +5536,7 @@ pointerId: e.pointerId,
 original: [...this._lassoPolygon[index]],
 handle,
 };
-handle.dataset.fcActive = "";
+handle.dataset.xyActive = "";
 this.tooltip.style.display = "none";
 try { this.selLasso.setPointerCapture(e.pointerId); } catch (_err) {   }
 e.preventDefault();
@@ -5548,7 +5548,7 @@ if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
 moveLassoHandle(e);
 const handle = lassoHandleDrag.handle;
 lassoHandleDrag = null;
-delete handle.dataset.fcActive;
+delete handle.dataset.xyActive;
 if (this._lassoPolygon) this._sendSelectPolygon(this._lassoPolygon);
 });
 this._listen(this.selLasso, "pointercancel", (e) => {
@@ -5556,7 +5556,7 @@ if (!lassoHandleDrag || e.pointerId !== lassoHandleDrag.pointerId) return;
 if (this._lassoPolygon) {
 this._lassoPolygon[lassoHandleDrag.index] = lassoHandleDrag.original;
 }
-delete lassoHandleDrag.handle.dataset.fcActive;
+delete lassoHandleDrag.handle.dataset.xyActive;
 lassoHandleDrag = null;
 if (this._lassoPolygon) this._renderLassoSelection();
 e.stopPropagation();
@@ -5867,7 +5867,7 @@ let cx = Math.max(x, px), cy = Math.max(y, py);
 let bx2 = x2, by2 = y2;
 if (band.mode === "select-x") { cy = py; by2 = py + this.plot.h; }
 if (band.mode === "select-y") { cx = px; bx2 = px + this.plot.w; }
-this.selRect.dataset.fcBand = band.mode === "zoom" ? "zoom" : "select";
+this.selRect.dataset.xyBand = band.mode === "zoom" ? "zoom" : "select";
 this.selRect.style.display = "block";
 this.selRect.style.left = cx + "px";
 this.selRect.style.top = cy + "px";
@@ -5980,7 +5980,7 @@ this.selLassoPath.setAttribute(
 );
 while (this.selLassoHandles.childElementCount < points.length) {
 const handle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-handle.dataset.fcSelectionLassoHandle = "";
+handle.dataset.xySelectionLassoHandle = "";
 handle.setAttribute("r", "4");
 this.selLassoHandles.appendChild(handle);
 }
@@ -5988,7 +5988,7 @@ while (this.selLassoHandles.childElementCount > points.length) {
 this.selLassoHandles.lastElementChild.remove();
 }
 [...this.selLassoHandles.children].forEach((handle, index) => {
-handle.dataset.fcSelectionLassoHandle = String(index);
+handle.dataset.xySelectionLassoHandle = String(index);
 handle.setAttribute("cx", String(points[index][0]));
 handle.setAttribute("cy", String(points[index][1]));
 handle.setAttribute("aria-label", `Lasso point ${index + 1}`);
@@ -6156,9 +6156,9 @@ grip.title = "Click for toolbar options; drag to move";
 grip.setAttribute("aria-label", "Toolbar options");
 grip.setAttribute("aria-haspopup", "menu");
 grip.setAttribute("aria-expanded", "false");
-grip.dataset.fcModebarDragHandle = "";
-grip.dataset.fcModebarExport = "";
-grip.dataset.fcModebarExportTrigger = "";
+grip.dataset.xyModebarDragHandle = "";
+grip.dataset.xyModebarExport = "";
+grip.dataset.xyModebarExportTrigger = "";
 grip.innerHTML = this._icon("drag");
 grip.style.cssText =
 "display:flex;align-items:center;justify-content:center;pointer-events:auto;touch-action:none;";
@@ -6242,14 +6242,14 @@ const zoomTrigger = mk("zoommenu", "Zoom controls", () => {
 setZoomMenuOpen(!this._zoomMenuOpen);
 });
 this._zoomMenuButton = zoomTrigger;
-zoomTrigger.dataset.fcModebarMenuTrigger = "";
+zoomTrigger.dataset.xyModebarMenuTrigger = "";
 zoomTrigger.replaceChildren();
 const zoomPercent = document.createElement("span");
-zoomPercent.dataset.fcModebarZoomPercent = "";
+zoomPercent.dataset.xyModebarZoomPercent = "";
 zoomPercent.textContent = "100%";
 zoomTrigger.appendChild(zoomPercent);
 const zoomIndicator = document.createElement("span");
-zoomIndicator.dataset.fcModebarMenuIndicator = "";
+zoomIndicator.dataset.xyModebarMenuIndicator = "";
 zoomIndicator.innerHTML = this._icon("chevrondown");
 zoomTrigger.appendChild(zoomIndicator);
 this._zoomMenuLabel = zoomPercent;
@@ -6264,19 +6264,19 @@ if (canSelect) {
 selectTrigger = mk("select", "Selection controls", () => {
 setSelectMenuOpen(!this._selectMenuOpen);
 });
-selectTrigger.dataset.fcModebarSelect = "";
-selectTrigger.dataset.fcModebarSelectTrigger = "";
+selectTrigger.dataset.xyModebarSelect = "";
+selectTrigger.dataset.xyModebarSelectTrigger = "";
 selectTrigger.setAttribute("aria-haspopup", "menu");
 selectTrigger.setAttribute("aria-expanded", "false");
 selectIndicator = document.createElement("span");
-selectIndicator.dataset.fcModebarMenuIndicator = "";
+selectIndicator.dataset.xyModebarMenuIndicator = "";
 selectIndicator.innerHTML = this._icon("chevrondown");
 selectTrigger.appendChild(selectIndicator);
 this._selectMenuButton = selectTrigger;
 }
 mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
 const zoomMenu = document.createElement("div");
-zoomMenu.dataset.fcModebarMenu = "";
+zoomMenu.dataset.xyModebarMenu = "";
 zoomMenu.setAttribute("role", "menu");
 zoomMenu.setAttribute("aria-label", "Zoom controls");
 zoomMenu.style.cssText =
@@ -6287,14 +6287,14 @@ const mkZoomItem = (name, label, onClick, toggles, separator = false) => {
 const button = document.createElement("button");
 button.type = "button";
 button.tabIndex = -1;
-button.dataset.fcModebarMenuItem = name;
-if (separator) button.dataset.fcSeparator = "";
+button.dataset.xyModebarMenuItem = name;
+if (separator) button.dataset.xySeparator = "";
 button.setAttribute("role", "menuitem");
 button.style.cssText =
 "display:flex;align-items:center;pointer-events:auto;";
 this._applySlot(button, "modebar_button");
 const icon = document.createElement("span");
-icon.dataset.fcModebarMenuIcon = "";
+icon.dataset.xyModebarMenuIcon = "";
 icon.innerHTML = this._icon(name);
 button.appendChild(icon);
 const text = document.createElement("span");
@@ -6320,8 +6320,8 @@ mkZoomItem("zoomout", "Zoom Out", () => this._zoomBy(2, true));
 mkZoomItem("zoom", "Box Zoom", () => this._setDragMode("zoom"), "zoom");
 mkZoomItem("reset", "Reset View", resetView, null, true);
 const selectMenu = document.createElement("div");
-selectMenu.dataset.fcModebarMenu = "";
-selectMenu.dataset.fcModebarSelectMenu = "";
+selectMenu.dataset.xyModebarMenu = "";
+selectMenu.dataset.xyModebarSelectMenu = "";
 selectMenu.setAttribute("role", "menu");
 selectMenu.setAttribute("aria-label", "Selection controls");
 selectMenu.style.cssText =
@@ -6332,13 +6332,13 @@ const mkSelectItem = (name, label, mode) => {
 const button = document.createElement("button");
 button.type = "button";
 button.tabIndex = -1;
-button.dataset.fcModebarMenuItem = name;
-button.dataset.fcModebarSelectItem = mode;
+button.dataset.xyModebarMenuItem = name;
+button.dataset.xyModebarSelectItem = mode;
 button.setAttribute("role", "menuitem");
 button.style.cssText = "display:flex;align-items:center;pointer-events:auto;";
 this._applySlot(button, "modebar_button");
 const icon = document.createElement("span");
-icon.dataset.fcModebarMenuIcon = "";
+icon.dataset.xyModebarMenuIcon = "";
 icon.innerHTML = this._icon(name);
 button.appendChild(icon);
 const text = document.createElement("span");
@@ -6361,8 +6361,8 @@ mkSelectItem("selectx", "X Range", "select-x");
 mkSelectItem("selecty", "Y Range", "select-y");
 }
 const exportMenu = document.createElement("div");
-exportMenu.dataset.fcModebarMenu = "";
-exportMenu.dataset.fcModebarExportMenu = "";
+exportMenu.dataset.xyModebarMenu = "";
+exportMenu.dataset.xyModebarExportMenu = "";
 exportMenu.setAttribute("role", "menu");
 exportMenu.setAttribute("aria-label", "Toolbar options");
 exportMenu.style.cssText =
@@ -6373,14 +6373,14 @@ const mkExportItem = (name, label, onClick, separator = false) => {
 const button = document.createElement("button");
 button.type = "button";
 button.tabIndex = -1;
-button.dataset.fcModebarMenuItem = name;
-button.dataset.fcModebarExportItem = name;
-if (separator) button.dataset.fcSeparator = "";
+button.dataset.xyModebarMenuItem = name;
+button.dataset.xyModebarExportItem = name;
+if (separator) button.dataset.xySeparator = "";
 button.setAttribute("role", "menuitem");
 button.style.cssText = "display:flex;align-items:center;pointer-events:auto;";
 this._applySlot(button, "modebar_button");
 const icon = document.createElement("span");
-icon.dataset.fcModebarMenuIcon = "";
+icon.dataset.xyModebarMenuIcon = "";
 icon.innerHTML = this._icon(name);
 button.appendChild(icon);
 const text = document.createElement("span");
@@ -6603,13 +6603,13 @@ this._clampModebar();
 },
 _setDragMode(mode) {
 this.dragMode = mode;
-if (this.canvas) this.canvas.dataset.fcDragmode = mode;
+if (this.canvas) this.canvas.dataset.xyDragmode = mode;
 for (const [name, btn] of Object.entries(this._modeBtns || {})) {
-btn.classList.toggle("fc-active", name === mode);
+btn.classList.toggle("xy-active", name === mode);
 btn.setAttribute("aria-pressed", String(name === mode));
 }
-this._zoomMenuButton?.classList.toggle("fc-active", mode === "zoom");
-this._selectMenuButton?.classList.toggle("fc-active", mode.startsWith("select"));
+this._zoomMenuButton?.classList.toggle("xy-active", mode === "zoom");
+this._selectMenuButton?.classList.toggle("xy-active", mode.startsWith("select"));
 },
 _updateZoomMenuLabel() {
 if (!this._zoomMenuLabel || !this.view || !this.view0) return;
@@ -6629,10 +6629,10 @@ const percent = axisPercent("x", this.view.x0, this.view.x1, this.view0.x0, this
 const rounded = Math.round(percent);
 const exactText = percent < 1 ? "<1%" : `${rounded}%`;
 const displayText = rounded > 999 ? `${String(rounded).slice(0, 3)}…%` : exactText;
-if (this._zoomMenuLabel.dataset.fcZoomExact === exactText
+if (this._zoomMenuLabel.dataset.xyZoomExact === exactText
 && this._zoomMenuLabel.textContent === displayText) return;
 this._zoomMenuLabel.textContent = displayText;
-this._zoomMenuLabel.dataset.fcZoomExact = exactText;
+this._zoomMenuLabel.dataset.xyZoomExact = exactText;
 this._zoomMenuButton.title = `Zoom controls (${exactText})`;
 this._zoomMenuButton.setAttribute("aria-label", `Zoom controls, ${exactText}`);
 },
@@ -6850,12 +6850,12 @@ if (attr.name.startsWith("data-")) image.setAttribute(attr.name, attr.value);
 target.replaceWith(image);
 }
 clone.querySelectorAll(
-'[data-fc-slot="modebar"],[data-fc-slot="tooltip"],' +
-'[data-fc-slot="selection"],[data-fc-selection-lasso-overlay],' +
-'[data-fc-slot="crosshair_x"],[data-fc-slot="crosshair_y"]'
+'[data-xy-slot="modebar"],[data-xy-slot="tooltip"],' +
+'[data-xy-slot="selection"],[data-xy-selection-lasso-overlay],' +
+'[data-xy-slot="crosshair_x"],[data-xy-slot="crosshair_y"]'
 ).forEach((node) => node.remove());
 const stylesheet = document.createElement("style");
-stylesheet.textContent = FC_CHROME_CSS;
+stylesheet.textContent = XY_CHROME_CSS;
 clone.prepend(stylesheet);
 const content = new XMLSerializer().serializeToString(clone);
 return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" ` +
@@ -7115,7 +7115,7 @@ return;
 }
 if (this._sampleRebinDisabled) return;
 if (!this._rebinWorker) {
-this._rebinWorker = fcCreateRebinWorker();
+this._rebinWorker = xyCreateRebinWorker();
 if (!this._rebinWorker) {
 this._sampleRebinDisabled = true;
 return;
@@ -7525,7 +7525,7 @@ function markOf(kind) {
 return MARK_KINDS[kind] || MARK_KINDS.scatter;
 }
 function bytesToSpan(b) {
-const span = fcByteSpan(b, "chart payload");
+const span = xyByteSpan(b, "chart payload");
 return span.byteOffset % 4 === 0 ? span : new Uint8Array(span);
 }
 

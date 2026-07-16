@@ -12,17 +12,17 @@ see [renderer-architecture.md](design/renderer-architecture.md).
 
 | Mechanism | Scope | Where |
 | --- | --- | --- |
-| `class_names={slot: "..."}` | Add classes to a chrome slot (great for Tailwind) | `fc.chart(...)` |
-| `styles={slot: {...}}` | Inline CSS on a chrome slot | `fc.chart(...)` |
-| `style={...}` | Cross-renderer CSS appearance subset for a rendered mark | `fc.line(...)`, `fc.scatter(...)`, … |
+| `class_names={slot: "..."}` | Add classes to a chrome slot (great for Tailwind) | `xy.chart(...)` |
+| `styles={slot: {...}}` | Inline CSS on a chrome slot | `xy.chart(...)` |
+| `style={...}` | Cross-renderer CSS appearance subset for a rendered mark | `xy.line(...)`, `xy.scatter(...)`, … |
 | `class_name=` / `style=` | A single annotation (per-call) | `.vline(...)`, `.text(...)`, … |
 | `custom_css="..."` | A raw author stylesheet in the exported document | `to_html(fig, custom_css=...)` |
 
 ```python
-import xy as fc
+import xy
 
-chart = fc.chart(
-    fc.scatter(
+chart = xy.chart(
+    xy.scatter(
         x=xs,
         y=ys,
         style={"fill": "var(--accent)", "stroke": "currentColor", "stroke-width": "1px"},
@@ -49,7 +49,7 @@ names are canonical CSS kebab-case; snake_case aliases remain accepted for
 Python compatibility. Unsupported properties raise before the figure mutates.
 
 ```python
-fc.line(
+xy.line(
     x=x,
     y=y,
     style={
@@ -60,7 +60,7 @@ fc.line(
     },
 )
 
-fc.bar(
+xy.bar(
     x=category,
     y=value,
     style={
@@ -100,7 +100,7 @@ bridge for design tokens and theme changes.
 
 ### Axis paint and geometry
 
-`fc.x_axis(style={...})` and `fc.y_axis(style={...})` accept a strict,
+`xy.x_axis(style={...})` and `xy.y_axis(style={...})` accept a strict,
 cross-renderer axis vocabulary. Unknown keys and invalid values raise when the
 axis component is created, before the chart or an export is rendered. Keys may
 use Python snake_case or CSS kebab-case; pixel geometry accepts a finite number
@@ -117,7 +117,7 @@ or a CSS `px` value such as `"3px"`.
 | `tick_direction` | `"in"`, `"out"`, or `"inout"` |
 
 ```python
-fc.x_axis(
+xy.x_axis(
     label="time",
     style={
         "grid-color": "rgb(148 163 184 / 25%)",
@@ -136,8 +136,8 @@ fc.x_axis(
 
 ## Slot reference
 
-Every element below is rendered with `data-fc-slot="<slot>"`, so
-`class_names[slot]`, `styles[slot]`, and a plain `[data-fc-slot="<slot>"]`
+Every element below is rendered with `data-xy-slot="<slot>"`, so
+`class_names[slot]`, `styles[slot]`, and a plain `[data-xy-slot="<slot>"]`
 selector all target the same node. Slot names are validated — an unknown slot
 raises before it reaches the client.
 
@@ -157,7 +157,7 @@ raises before it reaches the client.
 | `colorbar_title` | Colorbar title |
 | `tooltip` | Hover tooltip |
 | `modebar` | Mode/tool bar container |
-| `modebar_button` | One mode/tool button (`.fc-active` when engaged) |
+| `modebar_button` | One mode/tool button (`.xy-active` when engaged) |
 | `selection` | Box/lasso selection rectangle |
 | `crosshair_x` | Vertical crosshair line |
 | `crosshair_y` | Horizontal crosshair line |
@@ -169,14 +169,14 @@ raises before it reaches the client.
 
 ```css
 /* plain CSS — no build step, no classes on the Python side */
-.xy [data-fc-slot="tooltip"] { border-radius: 10px; }
-.xy [data-fc-slot="annotation_label"] { font-style: italic; }
-.xy [data-fc-slot="canvas"] { cursor: cell; }
+.xy [data-xy-slot="tooltip"] { border-radius: 10px; }
+.xy [data-xy-slot="annotation_label"] { font-style: italic; }
+.xy [data-xy-slot="canvas"] { cursor: cell; }
 ```
 
 ```html
 <!-- Tailwind arbitrary variant, targeting the same attribute -->
-<div class="[&_[data-fc-slot=legend]]:bg-transparent"> … </div>
+<div class="[&_[data-xy-slot=legend]]:bg-transparent"> … </div>
 ```
 
 ## Why your styles always win
@@ -189,7 +189,7 @@ inline `styles[slot]` (inline, highest) therefore beats the default with no
 `!important` and regardless of stylesheet source order.
 
 The rendered elements carry only **structural** inline styles — position, size,
-z-index, and interaction state (`data-fc-dragmode`, the `.fc-active` class).
+z-index, and interaction state (`data-xy-dragmode`, the `.xy-active` class).
 Nothing themeable is pinned inline, so nothing themeable can shadow your class.
 This is what "ultra customizable" means here: defaults are suggestions, your CSS
 is authority.
@@ -251,7 +251,7 @@ from xy import to_html
 
 to_html(fig, "chart.html", custom_css="""
   .xy { --chart-text: #1f2937; font-family: 'Inter', system-ui; }
-  .xy [data-fc-slot="tooltip"] { backdrop-filter: blur(4px); }
+  .xy [data-xy-slot="tooltip"] { backdrop-filter: blur(4px); }
 """)
 ```
 
@@ -416,12 +416,12 @@ file is **screen-bounded**: a 10M-point line exports in ~4 ms as a ~58 KB SVG.
 Density/heatmap tiers embed as compact rasters.
 
 `fig.to_png(path?, width=, height=, scale=)` defaults to
-`engine=fc.Engine.default`: the
+`engine=xy.Engine.default`: the
 built-in **Rust rasterizer** paints that same decimated payload — no browser and
 millisecond export. Pass `optimize=True` to trade latency for indexed-palette
 PNG compression and smaller files. Text uses a baked bitmap font (the core has no FreeType),
 so small labels are slightly less refined than a browser's.
-For browser CSS, font, and WebGL fidelity, `engine=fc.Engine.chromium`
+For browser CSS, font, and WebGL fidelity, `engine=xy.Engine.chromium`
 screenshots the standalone HTML with an installed Chrome, Chromium, Edge, or
 `chrome-headless-shell`. Set `XY_BROWSER` to an executable path to override
 automatic discovery. Pass `custom_css="..."` to inject an author stylesheet

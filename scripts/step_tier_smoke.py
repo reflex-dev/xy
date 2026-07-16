@@ -22,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
-import xy as fc
+import xy
 from xy.export import _bundled_js
 
 CHROMIUM_CANDIDATES = [
@@ -54,7 +54,7 @@ def build_page() -> str:
     x = np.arange(n, dtype=np.float64)
     rng = np.random.default_rng(7)
     y = np.cumsum(rng.normal(size=n))
-    chart = fc.chart(fc.step(x, y, name="steps", where="post"), title="step tier smoke")
+    chart = xy.chart(xy.step(x, y, name="steps", where="post"), title="step tier smoke")
     spec, blob = chart.figure().build_payload()
     assert spec["traces"][0]["tier"] == "decimated", spec["traces"][0]["tier"]
     assert spec["traces"][0]["style"].get("step") == "post"
@@ -91,11 +91,11 @@ def build_page() -> str:
         }};
         view._onKernelMsg(msg, [xs.buffer, ys.buffer]);
         const after = {{ n: g.n, dupes: countDupes(g._dashX) }};
-        document.title = `FC_OK before_n=${{before.n}} before_dupes=${{before.dupes}} ` +
+        document.title = `XY_OK before_n=${{before.n}} before_dupes=${{before.dupes}} ` +
           `after_n=${{after.n}} after_dupes=${{after.dupes}}`;
-      }} catch (e) {{ document.title = "FC_ERROR " + e.message; }}
+      }} catch (e) {{ document.title = "XY_ERROR " + e.message; }}
     }}, 200);
-  }} catch (e) {{ document.title = "FC_ERROR " + e.message; }}
+  }} catch (e) {{ document.title = "XY_ERROR " + e.message; }}
 </script></body></html>"""
 
 
@@ -123,7 +123,7 @@ def main() -> None:
     m = re.search(r"<title>([^<]*)</title>", out.stdout)
     title = m.group(1) if m else "(no title in DOM dump)"
     print("probe:", title)
-    if not title.startswith("FC_OK"):
+    if not title.startswith("XY_OK"):
         print(out.stderr[-2000:], file=sys.stderr)
         raise SystemExit(f"step tier smoke failed: {title}")
     vals = {k: int(v) for k, v in re.findall(r"(\w+)=(-?\d+)", title)}

@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 function bytesToSpan(b) {
-  const span = fcByteSpan(b, "chart payload");
+  const span = xyByteSpan(b, "chart payload");
   // anywidget/third-party callers may hand us an oddly-offset DataView. Keep
   // the normal aligned path zero-copy; preserve compatibility with one narrow
   // view-sized copy only when f32 columns could not be constructed in place.
