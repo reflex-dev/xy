@@ -2508,7 +2508,7 @@ def pyramid_append(
     )
 
 
-def pyramid_count(handle: int, lo_x: float, hi_x: float, lo_y: float, hi_y: float):
+def pyramid_count(handle: int, lo_x: float, hi_x: float, lo_y: float, hi_y: float) -> float | None:
     handle = _pyramid_handle(handle)
     lo_x, hi_x = _finite_increasing(lo_x, hi_x, "x range")
     lo_y, hi_y = _finite_increasing(lo_y, hi_y, "y range")
@@ -2526,7 +2526,7 @@ def pyramid_count(handle: int, lo_x: float, hi_x: float, lo_y: float, hi_y: floa
 
 def pyramid_compose(
     handle: int, lo_x: float, hi_x: float, lo_y: float, hi_y: float, w: int, h: int
-):
+) -> tuple[npt.NDArray[np.float32], int] | None:
     """(grid f32 [h*w], level) from the pyramid, or None when the window
     outresolves it (caller falls back to an exact re-bin, §28)."""
     handle = _pyramid_handle(handle)

@@ -33,7 +33,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from os import PathLike
 from typing import Any, Optional, TypeAlias, Union
@@ -42,6 +42,7 @@ import numpy as np
 
 from . import _validate, channels, export, styles
 from ._figure import Figure, Selection
+from ._typing import ArrayLike, ColorLike, Scalar, TableLike
 from .dom import CHART_DOM_SLOTS, validate_dom_slots
 
 # Shared validators (single source of truth in `_validate`); these aliases keep
@@ -132,6 +133,10 @@ __all__ = [
 ]
 
 StyleValue: TypeAlias = str | int | float
+
+# One annotation coordinate: a number, a datetime, or (on a categorical
+# axis) a category label.
+CoordinateLike: TypeAlias = Union[Scalar, str, dt.datetime, dt.date, np.datetime64]
 AxisLabelPosition: TypeAlias = str | dict[str, StyleValue]
 AxisTickLabelStrategy: TypeAlias = str
 
@@ -153,9 +158,9 @@ class Mark(Component):
     """
 
     kind: str  # chart mark registry key
-    x: Any = None
-    y: Any = None
-    data: Any = None
+    x: Any = None  # column name or ArrayLike (typed on the mark factories)
+    y: Any = None  # column name or ArrayLike (typed on the mark factories)
+    data: TableLike = None
     name: Optional[str] = None
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
@@ -171,8 +176,8 @@ class Annotation(Component):
 
     kind: str  # "rule" | "band" | "text"
     axis: Optional[str] = None
-    x: Any = None
-    y: Any = None
+    x: Optional[CoordinateLike] = None
+    y: Optional[CoordinateLike] = None
     text: Optional[str] = None
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
@@ -279,12 +284,12 @@ class Interaction(Component):
 
 
 def scatter(
-    x: Union[str, Any] = None,
-    y: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
-    color: Union[str, Any, None] = None,
-    size: Union[str, float, Any] = 4.0,
+    data: TableLike = None,
+    color: Union[str, ColorLike, ArrayLike, None] = None,
+    size: Union[str, Scalar, ArrayLike, None] = 4.0,
     name: Optional[str] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     color_domain: Optional[tuple[float, float]] = None,
@@ -329,16 +334,16 @@ def scatter(
 
 
 def line(
-    x: Union[str, Any] = None,
-    y: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.5,
     opacity: float = 1.0,
     curve: str = "linear",
-    dash: Any = None,
+    dash: Union[str, Sequence[float], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -367,11 +372,11 @@ def line(
 
 
 def area(
-    x: Union[str, Any] = None,
-    y: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
-    base: Union[str, float, Any] = 0.0,
+    data: TableLike = None,
+    base: Union[str, Scalar, ArrayLike] = 0.0,
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.35,
@@ -379,9 +384,9 @@ def area(
     line_width: float = 1.2,
     line_opacity: float = 1.0,
     stroke_perimeter: bool = False,
-    fill: Any = None,
+    fill: Union[str, dict[str, str], None] = None,
     curve: str = "linear",
-    dash: Any = None,
+    dash: Union[str, Sequence[float], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -416,17 +421,17 @@ def area(
 
 
 def error_band(
-    x: Union[str, Any] = None,
-    lower: Union[str, Any] = None,
-    upper: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    lower: Union[str, ArrayLike, None] = None,
+    upper: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.22,
     line_width: float = 0.0,
     line_opacity: float = 0.0,
-    fill: Any = None,
+    fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -455,12 +460,12 @@ def error_band(
 
 
 def errorbar(
-    x: Union[str, Any] = None,
-    y: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
-    yerr: Union[str, Any, None] = None,
-    xerr: Union[str, Any, None] = None,
+    data: TableLike = None,
+    yerr: Union[str, Scalar, ArrayLike, None] = None,
+    xerr: Union[str, Scalar, ArrayLike, None] = None,
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.2,
@@ -494,14 +499,14 @@ def errorbar(
 
 
 def segments(
-    x0: Union[str, Any] = None,
-    y0: Union[str, Any] = None,
-    x1: Union[str, Any] = None,
-    y1: Union[str, Any] = None,
+    x0: Union[str, ArrayLike, None] = None,
+    y0: Union[str, ArrayLike, None] = None,
+    x1: Union[str, ArrayLike, None] = None,
+    y1: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
     name: Optional[str] = None,
-    color: Any = None,
+    color: Union[str, ColorLike, ArrayLike, None] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     width: float = 1.2,
@@ -535,15 +540,15 @@ def segments(
 
 
 def triangle_mesh(
-    x0: Union[str, Any] = None,
-    y0: Union[str, Any] = None,
-    x1: Union[str, Any] = None,
-    y1: Union[str, Any] = None,
-    x2: Union[str, Any] = None,
-    y2: Union[str, Any] = None,
+    x0: Union[str, ArrayLike, None] = None,
+    y0: Union[str, ArrayLike, None] = None,
+    x1: Union[str, ArrayLike, None] = None,
+    y1: Union[str, ArrayLike, None] = None,
+    x2: Union[str, ArrayLike, None] = None,
+    y2: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
-    color: Any = None,
+    data: TableLike = None,
+    color: Union[str, ColorLike, ArrayLike, None] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     name: Optional[str] = None,
@@ -582,16 +587,16 @@ def triangle_mesh(
 
 
 def step(
-    x: Union[str, Any] = None,
-    y: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
     where: str = "post",
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.5,
     opacity: float = 1.0,
-    dash: Any = None,
+    dash: Union[str, Sequence[float], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -619,16 +624,16 @@ def step(
 
 
 def stairs(
-    values: Union[str, Any] = None,
-    edges: Union[str, Any, None] = None,
+    values: Union[str, ArrayLike, None] = None,
+    edges: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
     where: str = "post",
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.5,
     opacity: float = 1.0,
-    dash: Any = None,
+    dash: Union[str, Sequence[float], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -656,11 +661,11 @@ def stairs(
 
 
 def stem(
-    x: Union[str, Any] = None,
-    y: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
-    base: Union[str, float, Any] = 0.0,
+    data: TableLike = None,
+    base: Union[str, Scalar, ArrayLike] = 0.0,
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.2,
@@ -697,15 +702,15 @@ def stem(
 
 
 def ecdf(
-    values: Union[str, Any] = None,
+    values: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
     bins: Optional[int] = None,
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.5,
     opacity: float = 1.0,
-    dash: Any = None,
+    dash: Union[str, Sequence[float], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -732,11 +737,11 @@ def ecdf(
 
 
 def box(
-    values: Union[str, Any] = None,
+    values: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
-    x: Union[str, Any, None] = None,
-    group: Union[str, Any, None] = None,
+    data: TableLike = None,
+    x: Union[str, ArrayLike, None] = None,
+    group: Union[str, ArrayLike, None] = None,
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 0.6,
@@ -773,11 +778,11 @@ def box(
 
 
 def violin(
-    values: Union[str, Any] = None,
+    values: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
-    x: Union[str, Any, None] = None,
-    group: Union[str, Any, None] = None,
+    data: TableLike = None,
+    x: Union[str, ArrayLike, None] = None,
+    group: Union[str, ArrayLike, None] = None,
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 0.8,
@@ -812,15 +817,15 @@ def violin(
 
 
 def hexbin(
-    x: Union[str, Any] = None,
-    y: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
     gridsize: int | tuple[int, int] = 64,
     range: Optional[tuple[tuple[float, float], tuple[float, float]]] = None,
     bins: str = "count",
-    C: Any = None,
-    reduce_C_function: Any = np.mean,
+    C: Union[str, ArrayLike, None] = None,
+    reduce_C_function: Callable[[np.ndarray], Scalar] = np.mean,
     mincnt: Optional[int] = None,
     name: Optional[str] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
@@ -855,12 +860,12 @@ def hexbin(
 
 
 def contour(
-    z: Union[str, Any] = None,
+    z: Union[str, ArrayLike, None] = None,
     *,
-    x: Union[str, Any, None] = None,
-    y: Union[str, Any, None] = None,
-    data: Any = None,
-    levels: int | Any = 10,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
+    data: TableLike = None,
+    levels: Union[int, ArrayLike] = 10,
     filled: bool = False,
     name: Optional[str] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
@@ -898,20 +903,20 @@ def contour(
 
 
 def histogram(
-    values: Union[str, Any] = None,
+    values: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
-    bins: Any = "auto",
+    data: TableLike = None,
+    bins: Union[int, str, ArrayLike] = "auto",
     range: Optional[tuple[float, float]] = None,
     density: bool = False,
     cumulative: bool = False,
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.85,
-    corner_radius: Any = 0.0,
+    corner_radius: Union[float, tuple[float, float]] = 0.0,
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
-    fill: Any = None,
+    fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -943,20 +948,20 @@ def histogram(
 
 
 def hist(
-    values: Union[str, Any] = None,
+    values: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
-    bins: Any = "auto",
+    data: TableLike = None,
+    bins: Union[int, str, ArrayLike] = "auto",
     range: Optional[tuple[float, float]] = None,
     density: bool = False,
     cumulative: bool = False,
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.85,
-    corner_radius: Any = 0.0,
+    corner_radius: Union[float, tuple[float, float]] = 0.0,
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
-    fill: Any = None,
+    fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -985,23 +990,23 @@ def hist(
 
 
 def bar(
-    x: Union[str, Any] = None,
-    y: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
     name: Optional[str] = None,
-    color: Any = None,
+    color: Union[str, Sequence[str], None] = None,
     colors: Optional[list[str]] = None,
     width: float = 0.8,
-    base: Union[str, float, Any] = 0.0,
+    base: Union[str, Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
     series: Optional[list[str]] = None,
     opacity: float = 0.85,
-    corner_radius: Any = 0.0,
+    corner_radius: Union[float, tuple[float, float]] = 0.0,
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
-    fill: Any = None,
+    fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -1037,23 +1042,23 @@ def bar(
 
 
 def column(
-    x: Union[str, Any] = None,
-    y: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
     name: Optional[str] = None,
-    color: Any = None,
+    color: Union[str, Sequence[str], None] = None,
     colors: Optional[list[str]] = None,
     width: float = 0.8,
-    base: Union[str, float, Any] = 0.0,
+    base: Union[str, Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
     series: Optional[list[str]] = None,
     opacity: float = 0.85,
-    corner_radius: Any = 0.0,
+    corner_radius: Union[float, tuple[float, float]] = 0.0,
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
-    fill: Any = None,
+    fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -1088,11 +1093,11 @@ def column(
 
 
 def heatmap(
-    z: Union[str, Any] = None,
+    z: Union[str, ArrayLike, None] = None,
     *,
-    x: Union[str, Any, None] = None,
-    y: Union[str, Any, None] = None,
-    data: Any = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
+    data: TableLike = None,
     name: Optional[str] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
@@ -1123,7 +1128,7 @@ def heatmap(
 
 
 def vline(
-    x: Any,
+    x: CoordinateLike,
     *,
     text: Optional[str] = None,
     color: Optional[str] = "#667085",
@@ -1145,7 +1150,7 @@ def vline(
 
 
 def hline(
-    y: Any,
+    y: CoordinateLike,
     *,
     text: Optional[str] = None,
     color: Optional[str] = "#667085",
@@ -1167,8 +1172,8 @@ def hline(
 
 
 def x_band(
-    x0: Any,
-    x1: Any,
+    x0: CoordinateLike,
+    x1: CoordinateLike,
     *,
     text: Optional[str] = None,
     color: Optional[str] = "#64748b",
@@ -1190,8 +1195,8 @@ def x_band(
 
 
 def y_band(
-    y0: Any,
-    y1: Any,
+    y0: CoordinateLike,
+    y1: CoordinateLike,
     *,
     text: Optional[str] = None,
     color: Optional[str] = "#64748b",
@@ -1213,8 +1218,8 @@ def y_band(
 
 
 def text(
-    x: Any,
-    y: Any,
+    x: CoordinateLike,
+    y: CoordinateLike,
     value: str,
     *,
     dx: float = 6.0,
@@ -1239,8 +1244,8 @@ def text(
 
 
 def label(
-    x: Any,
-    y: Any,
+    x: CoordinateLike,
+    y: CoordinateLike,
     value: str,
     *,
     dx: float = 6.0,
@@ -1265,8 +1270,8 @@ def label(
 
 
 def marker(
-    x: Any,
-    y: Any,
+    x: CoordinateLike,
+    y: CoordinateLike,
     *,
     text: Optional[str] = None,
     color: Optional[str] = "#2563eb",
@@ -1304,10 +1309,10 @@ def marker(
 
 
 def arrow(
-    x0: Any,
-    y0: Any,
-    x1: Any,
-    y1: Any,
+    x0: CoordinateLike,
+    y0: CoordinateLike,
+    x1: CoordinateLike,
+    y1: CoordinateLike,
     *,
     text: Optional[str] = None,
     color: Optional[str] = "#667085",
@@ -1329,7 +1334,7 @@ def arrow(
 
 
 def threshold(
-    value: Any,
+    value: CoordinateLike,
     *,
     axis: str = "y",
     text: Optional[str] = None,
@@ -1365,8 +1370,8 @@ def threshold(
 
 
 def threshold_zone(
-    start: Any,
-    end: Any,
+    start: CoordinateLike,
+    end: CoordinateLike,
     *,
     axis: str = "y",
     text: Optional[str] = None,
@@ -1401,8 +1406,8 @@ def threshold_zone(
 
 
 def callout(
-    x: Any,
-    y: Any,
+    x: CoordinateLike,
+    y: CoordinateLike,
     value: str,
     *,
     dx: float = 36.0,
@@ -1447,8 +1452,8 @@ def x_axis(
     reverse: bool = False,
     format: Optional[str] = None,
     tick_count: Optional[int] = None,
-    tick_values: Optional[Any] = None,
-    tick_labels: Optional[Any] = None,
+    tick_values: Union[Sequence[float], np.ndarray, None] = None,
+    tick_labels: Optional[Sequence[str]] = None,
     tick_label_angle: Optional[float] = None,
     tick_label_strategy: Optional[AxisTickLabelStrategy] = None,
     tick_label_min_gap: Optional[float] = None,
@@ -1508,8 +1513,8 @@ def y_axis(
     reverse: bool = False,
     format: Optional[str] = None,
     tick_count: Optional[int] = None,
-    tick_values: Optional[Any] = None,
-    tick_labels: Optional[Any] = None,
+    tick_values: Union[Sequence[float], np.ndarray, None] = None,
+    tick_labels: Optional[Sequence[str]] = None,
     tick_label_angle: Optional[float] = None,
     tick_label_strategy: Optional[AxisTickLabelStrategy] = None,
     tick_label_min_gap: Optional[float] = None,
@@ -1791,8 +1796,10 @@ class Chart(Component):
         title: Optional[str] = None,
         width: "int | str" = 900,  # pixels, or "100%" to fill the parent
         height: "int | str" = 420,  # pixels, or "100%" (parent needs a height)
-        padding: Any = None,  # override plot margins; 0 = edge-to-edge sparkline
-        data: Any = None,
+        padding: Union[
+            float, Sequence[float], None
+        ] = None,  # plot margins; 0 = edge-to-edge sparkline
+        data: TableLike = None,
         class_name: Optional[str] = None,
         class_names: Optional[dict[str, str]] = None,
         style: Optional[dict[str, StyleValue]] = None,
@@ -1800,7 +1807,7 @@ class Chart(Component):
         on_hover: Optional[Callable[[dict], None]] = None,
         on_click: Optional[Callable[[dict], None]] = None,
         on_brush: Optional[Callable[[dict], None]] = None,
-        on_select: Optional[Callable[[Any], None]] = None,
+        on_select: Optional[Callable[[Selection], None]] = None,
         on_view_change: Optional[Callable[[dict], None]] = None,
         hover: Optional[bool] = None,
         click: Optional[bool] = None,
@@ -2144,7 +2151,15 @@ class Chart(Component):
 
     # -- live data (structure-immutable: build a new chart for new marks) ----
 
-    def append(self, trace_id: int, x: Any, y: Any, *, color: Any = None, size: Any = None) -> None:
+    def append(
+        self,
+        trace_id: int,
+        x: ArrayLike,
+        y: ArrayLike,
+        *,
+        color: Optional[ArrayLike] = None,
+        size: Optional[ArrayLike] = None,
+    ) -> None:
         """Streaming append: extend a trace's data in place.
 
         Routed through the live widget when one exists (client refresh plus
@@ -2446,7 +2461,7 @@ class FacetChart(Component):
         self,
         children: tuple[Component, ...],
         *,
-        by: Any,
+        by: Union[str, ArrayLike, None],
         cols: int = 3,
         share_x: bool = True,
         share_y: bool = True,
@@ -3309,7 +3324,7 @@ def triangle_mesh_chart(*children: Component, **props: Any) -> Chart:
 
 def facet_chart(
     *children: Component,
-    by: Any = None,
+    by: Union[str, ArrayLike, None] = None,
     cols: int = 3,
     share_x: bool = True,
     share_y: bool = True,

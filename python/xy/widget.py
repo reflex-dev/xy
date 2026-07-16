@@ -40,6 +40,9 @@ def bundled_js(which: str = "widget") -> str:
 
 
 class FigureWidget(anywidget.AnyWidget):
+    """The live notebook widget host: a data-less spec trait plus binary
+    column buffers, rendered by the shipped ES module (§9/§29)."""
+
     _esm = _STATIC / "index.js"
 
     # Data-less spec (§9) — tiny JSON, sync'd as a trait.

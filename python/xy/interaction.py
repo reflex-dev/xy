@@ -32,6 +32,7 @@ from .config import (
 
 if TYPE_CHECKING:
     from ._figure import Figure
+    from ._trace import Trace
 
 
 def _integer_id(value: int, label: str) -> int:
@@ -245,7 +246,7 @@ def decimate_view(
     return {"traces": updates}, writer.buffers
 
 
-def _ensure_pyramid(t) -> int | None:
+def _ensure_pyramid(t: Trace) -> int | None:
     """Lazily build the trace's count pyramid (§5 Tier 3). Cached on the
     trace; 0 is remembered as "tried and not applicable" so we never rebuild.
     Only worth the memory for genuinely large traces."""
@@ -276,7 +277,7 @@ def _ensure_pyramid(t) -> int | None:
     return handle or None
 
 
-def _free_pyramid(t) -> None:
+def _free_pyramid(t: Trace) -> None:
     """Free the trace's pyramid now and disarm its GC finalizer.
 
     Resets the handle to None ("never tried") so the next far-out view
@@ -286,7 +287,7 @@ def _free_pyramid(t) -> None:
     if fin is not None:
         fin()  # runs pyramid_free exactly once; later GC becomes a no-op
         t._pyr_finalizer = None
-    elif getattr(t, "_pyr_handle", None):
+    elif t._pyr_handle:
         kernels.pyramid_free(t._pyr_handle)
     t._pyr_handle = None
 

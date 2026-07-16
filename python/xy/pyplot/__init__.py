@@ -16,10 +16,11 @@ and the loud `NotImplementedError` list.
 from __future__ import annotations
 
 import contextlib
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Literal, Optional, Union, overload
 
 import numpy as np
 
+from .._typing import ArrayLike, ColorLike, ColorsLike, TableLike
 from . import dates
 from ._artists import (
     Artist,
@@ -61,6 +62,13 @@ from ._ticker import (
     StrMethodFormatter,
 )
 from ._translate import not_implemented
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator, Mapping, Sequence
+    from pathlib import Path
+    from typing import IO
+
+    from ._colors import Cmap
 
 __all__ = [
     "AutoLocator",
@@ -226,6 +234,33 @@ __all__ = [
 # -- figure/axes management ----------------------------------------------------
 
 
+# The 1×1 default (squeeze=True) hands back a bare Axes — the shape almost
+# every script uses — so type checkers and IDE hover see the real type
+# instead of the grid union.
+@overload
+def subplots(
+    nrows: Literal[1] = 1,
+    ncols: Literal[1] = 1,
+    *,
+    figsize: Optional[tuple[float, float]] = None,
+    dpi: Optional[float] = None,
+    sharex: bool = False,
+    sharey: bool = False,
+    squeeze: Literal[True] = True,
+    **kwargs: Any,
+) -> tuple[Figure, Axes]: ...
+@overload
+def subplots(
+    nrows: int = 1,
+    ncols: int = 1,
+    *,
+    figsize: Optional[tuple[float, float]] = None,
+    dpi: Optional[float] = None,
+    sharex: bool = False,
+    sharey: bool = False,
+    squeeze: bool = True,
+    **kwargs: Any,
+) -> tuple[Figure, Any]: ...
 def subplots(
     nrows: int = 1,
     ncols: int = 1,
@@ -301,7 +336,7 @@ def subplot(*args: Any, **kwargs: Any) -> Axes:
     return gcf().add_subplot(*args, **kwargs)
 
 
-def subplot_mosaic(mosaic: Any, **kwargs: Any) -> tuple[Figure, dict[Any, Axes]]:
+def subplot_mosaic(mosaic: str | list[Any], **kwargs: Any) -> tuple[Figure, dict[Any, Axes]]:
     """Create a figure whose layout is described by an ASCII/list mosaic.
 
     ``mosaic`` is a string like ``"AB;CC"`` or a nested list of labels;
@@ -314,7 +349,7 @@ def subplot_mosaic(mosaic: Any, **kwargs: Any) -> tuple[Figure, dict[Any, Axes]]
     return fig, fig.subplot_mosaic(mosaic, **kwargs)
 
 
-def axes(arg: Any = None, **kwargs: Any) -> Axes:
+def axes(arg: Sequence[float] | None = None, **kwargs: Any) -> Axes:
     """Add an axes to the current figure and make it current.
 
     ``axes()`` adds a full-figure axes; ``axes((left, bottom, width,
@@ -354,12 +389,12 @@ def get_figlabels() -> list[str]:
     return figlabels()
 
 
-def figtext(x: float, y: float, s: str, **kwargs: Any) -> Any:
+def figtext(x: float, y: float, s: str, **kwargs: Any) -> Text:
     """Place text at figure-fraction coordinates ``(x, y)`` (see `text`)."""
     return gcf().text(x, y, s, **kwargs)
 
 
-def figlegend(*args: Any, **kwargs: Any) -> Any:
+def figlegend(*args: Any, **kwargs: Any) -> None:
     """Add a figure-level legend (same call forms and keywords as `legend`)."""
     return gcf().legend(*args, **kwargs)
 
@@ -398,7 +433,7 @@ def subplot2grid(
 
 def box(on: Optional[bool] = None) -> None:
     """Show or hide the current axes' frame box (toggle when ``on=None``)."""
-    ax = gca()
+    ax: Any = gca()
     ax._box = True if on is None else bool(on)
     ax._invalidate()
 
@@ -462,7 +497,7 @@ def findobj(obj: Any = None, match: Any = None) -> list[Any]:
     return found
 
 
-def set_cmap(cmap: Any) -> None:
+def set_cmap(cmap: str | Cmap | ListedColormap | LinearSegmentedColormap) -> None:
     """Set the default colormap (``rcParams["image.cmap"]``) by name."""
     from ._colors import resolve_cmap
 
@@ -471,25 +506,25 @@ def set_cmap(cmap: Any) -> None:
     rcParams["image.cmap"] = name
 
 
-def viridis() -> Any:
+def viridis() -> Cmap:
     """Set the default colormap to viridis and return it."""
     set_cmap("viridis")
     return get_cmap("viridis")
 
 
-def plasma() -> Any:
+def plasma() -> Cmap:
     """Set the default colormap to plasma and return it."""
     set_cmap("plasma")
     return get_cmap("plasma")
 
 
-def gray() -> Any:
+def gray() -> Cmap:
     """Set the default colormap to gray and return it."""
     set_cmap("gray")
     return get_cmap("gray")
 
 
-def imsave(fname: Any, arr: Any, **kwargs: Any) -> None:
+def imsave(fname: Any, arr: ArrayLike, **kwargs: Any) -> None:
     """Save an array as a PNG image file, without drawing a figure.
 
     ``arr`` is 2-D scalar data (colormapped via ``cmap``) or an
@@ -662,7 +697,7 @@ def _record_mappable(result: Any) -> Any:
 
 
 def plot(
-    *args: Any,
+    *args: ArrayLike | str,
     scalex: bool = True,
     scaley: bool = True,
     **kwargs: Any,
@@ -686,7 +721,7 @@ def plot(
     return gca().plot(*args, scalex=scalex, scaley=scaley, **kwargs)
 
 
-def semilogx(*args: Any, **kwargs: Any) -> list[Line2D]:
+def semilogx(*args: ArrayLike | str, **kwargs: Any) -> list[Line2D]:
     """Like `plot`, but sets the x-axis to log scale first.
 
     Accepts ``base``/``basex``, ``subs``/``subsx``, and
@@ -695,7 +730,7 @@ def semilogx(*args: Any, **kwargs: Any) -> list[Line2D]:
     return gca().semilogx(*args, **kwargs)
 
 
-def semilogy(*args: Any, **kwargs: Any) -> list[Line2D]:
+def semilogy(*args: ArrayLike | str, **kwargs: Any) -> list[Line2D]:
     """Like `plot`, but sets the y-axis to log scale first.
 
     Accepts ``base``/``basey``, ``subs``/``subsy``, and
@@ -704,7 +739,7 @@ def semilogy(*args: Any, **kwargs: Any) -> list[Line2D]:
     return gca().semilogy(*args, **kwargs)
 
 
-def loglog(*args: Any, **kwargs: Any) -> list[Line2D]:
+def loglog(*args: ArrayLike | str, **kwargs: Any) -> list[Line2D]:
     """Like `plot`, but sets both axes to log scale first.
 
     Accepts ``base``, ``subs``, and ``nonpositive`` in addition to every
@@ -714,18 +749,18 @@ def loglog(*args: Any, **kwargs: Any) -> list[Line2D]:
 
 
 def scatter(
-    x: Any,
-    y: Any,
-    s: Any = None,
-    c: Any = None,
+    x: ArrayLike,
+    y: ArrayLike,
+    s: float | ArrayLike | None = None,
+    c: ColorsLike | None = None,
     *,
     marker: Optional[str] = None,
-    cmap: Any = None,
+    cmap: str | Cmap | ListedColormap | LinearSegmentedColormap | None = None,
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
     alpha: Optional[float] = None,
-    linewidths: Any = None,
-    edgecolors: Any = None,
+    linewidths: float | ArrayLike | None = None,
+    edgecolors: ColorsLike | None = None,
     plotnonfinite: bool = False,
     label: Optional[str] = None,
     transform: Any = None,
@@ -784,7 +819,9 @@ def scatter(
     )
 
 
-def step(x: Any, y: Any, *args: Any, where: str = "pre", **kwargs: Any) -> list[Line2D]:
+def step(
+    x: ArrayLike, y: ArrayLike, *args: ArrayLike | str, where: str = "pre", **kwargs: Any
+) -> list[Line2D]:
     """A step plot: `plot` with the line drawn as steps.
 
     ``where`` places the step transition at ``"pre"``, ``"post"``, or
@@ -795,21 +832,21 @@ def step(x: Any, y: Any, *args: Any, where: str = "pre", **kwargs: Any) -> list[
 
 
 def bar(
-    x: Any,
-    height: Any,
+    x: ArrayLike,
+    height: float | ArrayLike,
     width: float = 0.8,
-    bottom: Any = None,
+    bottom: float | ArrayLike | None = None,
     *,
-    color: Any = None,
-    edgecolor: Any = None,
+    color: ColorsLike | None = None,
+    edgecolor: ColorsLike | None = None,
     linewidth: Optional[float] = None,
     alpha: Optional[float] = None,
     label: Optional[str] = None,
     align: str = "center",
-    xerr: Any = None,
-    yerr: Any = None,
+    xerr: float | ArrayLike | None = None,
+    yerr: float | ArrayLike | None = None,
     capsize: Optional[float] = None,
-    ecolor: Any = None,
+    ecolor: ColorsLike | None = None,
     error_kw: Optional[dict[str, Any]] = None,
     **kwargs: Any,
 ) -> BarContainer:
@@ -846,21 +883,21 @@ def bar(
 
 
 def barh(
-    y: Any,
-    width: Any,
+    y: ArrayLike,
+    width: float | ArrayLike,
     height: float = 0.8,
-    left: Any = None,
+    left: float | ArrayLike | None = None,
     *,
-    color: Any = None,
-    edgecolor: Any = None,
+    color: ColorsLike | None = None,
+    edgecolor: ColorsLike | None = None,
     linewidth: Optional[float] = None,
     alpha: Optional[float] = None,
     label: Optional[str] = None,
     align: str = "center",
-    xerr: Any = None,
-    yerr: Any = None,
+    xerr: float | ArrayLike | None = None,
+    yerr: float | ArrayLike | None = None,
     capsize: Optional[float] = None,
-    ecolor: Any = None,
+    ecolor: ColorsLike | None = None,
     error_kw: Optional[dict[str, Any]] = None,
     **kwargs: Any,
 ) -> BarContainer:
@@ -894,13 +931,13 @@ def barh(
 
 def bar_label(
     container: BarContainer,
-    labels: Any = None,
+    labels: Sequence[str] | None = None,
     *,
-    fmt: Any = "%g",
+    fmt: str | Callable[[float], str] = "%g",
     label_type: str = "edge",
     padding: float = 0,
-    color: Any = None,
-    fontsize: Any = None,
+    color: ColorLike | None = None,
+    fontsize: float | str | None = None,
     **kwargs: Any,
 ) -> list[Text]:
     """Label the bars of a `bar`/`barh` container with their values.
@@ -921,15 +958,15 @@ def bar_label(
 
 
 def grouped_bar(
-    heights: Any,
+    heights: ArrayLike | Mapping[str, ArrayLike],
     *,
-    positions: Any = None,
+    positions: ArrayLike | None = None,
     group_spacing: float = 1.5,
     bar_spacing: float = 0,
-    tick_labels: Any = None,
-    labels: Any = None,
+    tick_labels: Sequence[str] | None = None,
+    labels: Sequence[str] | None = None,
     orientation: str = "vertical",
-    colors: Any = None,
+    colors: ColorsLike | None = None,
     **kwargs: Any,
 ) -> GroupedBarReturn:
     """Grouped bars: one group per position, one bar per dataset.
@@ -952,17 +989,17 @@ def grouped_bar(
 
 
 def hist(
-    x: Any,
-    bins: Any = 10,
-    range: Any = None,
+    x: ArrayLike,
+    bins: int | ArrayLike | str = 10,
+    range: tuple[float, float] | None = None,
     density: bool = False,
     cumulative: bool = False,
     *,
-    weights: Any = None,
-    color: Any = None,
-    edgecolor: Any = None,
+    weights: ArrayLike | None = None,
+    color: ColorsLike | None = None,
+    edgecolor: ColorsLike | None = None,
     alpha: Optional[float] = None,
-    label: Any = None,
+    label: str | Sequence[str] | None = None,
     histtype: str = "bar",
     orientation: str = "vertical",
     stacked: bool = False,
@@ -1018,14 +1055,14 @@ def hist(
 
 
 def fill_between(
-    x: Any,
-    y1: Any,
-    y2: Any = 0.0,
-    where: Any = None,
+    x: ArrayLike,
+    y1: float | ArrayLike,
+    y2: float | ArrayLike = 0.0,
+    where: ArrayLike | None = None,
     *,
     interpolate: bool = False,
-    step: Any = None,
-    color: Any = None,
+    step: str | None = None,
+    color: ColorLike | None = None,
     alpha: Optional[float] = None,
     label: Optional[str] = None,
     transform: Any = None,
@@ -1056,10 +1093,10 @@ def fill_between(
 
 
 def fill_betweenx(
-    y: Any,
-    x1: Any,
-    x2: Any = 0,
-    where: Any = None,
+    y: ArrayLike,
+    x1: float | ArrayLike,
+    x2: float | ArrayLike = 0,
+    where: ArrayLike | None = None,
     **kwargs: Any,
 ) -> PolyCollection:
     """Fill the area between two vertical curves ``x1`` and ``x2``.
@@ -1071,7 +1108,7 @@ def fill_betweenx(
     return gca().fill_betweenx(y, x1, x2, where, **kwargs)
 
 
-def fill(*args: Any, data: Any = None, **kwargs: Any) -> list[PolyCollection]:
+def fill(*args: ArrayLike | str, data: TableLike = None, **kwargs: Any) -> list[PolyCollection]:
     """Draw filled polygons from ``x, y[, color]`` argument groups.
 
     Accepts matplotlib's repeated-group form ``fill(x1, y1, "b", x2, y2,
@@ -1082,12 +1119,12 @@ def fill(*args: Any, data: Any = None, **kwargs: Any) -> list[PolyCollection]:
 
 
 def stackplot(
-    x: Any,
-    *args: Any,
-    labels: Any = (),
-    colors: Any = None,
+    x: ArrayLike,
+    *args: ArrayLike,
+    labels: Sequence[str] = (),
+    colors: ColorsLike | None = None,
     baseline: str = "zero",
-    data: Any = None,
+    data: TableLike = None,
     **kwargs: Any,
 ) -> list[PolyCollection]:
     """A stacked area plot of one or more series over ``x``.
@@ -1103,14 +1140,14 @@ def stackplot(
 
 
 def stem(
-    *args: Any,
-    linefmt: Any = None,
-    markerfmt: Any = None,
-    basefmt: Any = None,
+    *args: ArrayLike,
+    linefmt: str | None = None,
+    markerfmt: str | None = None,
+    basefmt: str | None = None,
     bottom: float = 0,
-    label: Any = None,
+    label: str | None = None,
     orientation: str = "vertical",
-    data: Any = None,
+    data: TableLike = None,
 ) -> StemContainer:
     """A stem plot: vertical lines from a baseline to markers at each y.
 
@@ -1131,13 +1168,13 @@ def stem(
 
 
 def stairs(
-    values: Any,
-    edges: Any = None,
+    values: ArrayLike,
+    edges: ArrayLike | None = None,
     *,
     orientation: str = "vertical",
-    baseline: Any = 0,
+    baseline: float | ArrayLike | None = 0,
     fill: bool = False,
-    data: Any = None,
+    data: TableLike = None,
     **kwargs: Any,
 ) -> StepPatch:
     """A stepwise constant function as a line or filled patch.
@@ -1158,13 +1195,13 @@ def stairs(
 
 
 def ecdf(
-    x: Any,
-    weights: Any = None,
+    x: ArrayLike,
+    weights: ArrayLike | None = None,
     *,
     complementary: bool = False,
     orientation: str = "vertical",
     compress: bool = False,
-    data: Any = None,
+    data: TableLike = None,
     **kwargs: Any,
 ) -> Artist:
     """The empirical cumulative distribution function of ``x``.
@@ -1184,15 +1221,15 @@ def ecdf(
 
 
 def imshow(
-    z: Any,
-    cmap: Any = None,
+    z: ArrayLike,
+    cmap: str | Cmap | ListedColormap | LinearSegmentedColormap | None = None,
     *,
     vmin: Optional[float] = None,
     vmax: Optional[float] = None,
     alpha: Optional[float] = None,
     origin: Optional[str] = None,
-    aspect: Any = None,
-    extent: Any = None,
+    aspect: str | float | None = None,
+    extent: tuple[float, float, float, float] | None = None,
     interpolation: Optional[str] = None,
     **kwargs: Any,
 ) -> AxesImage:
@@ -1243,7 +1280,7 @@ def imshow(
     )
 
 
-def matshow(z: Any, **kwargs: Any) -> Any:
+def matshow(z: ArrayLike, **kwargs: Any) -> Any:
     """Display a matrix with ticks on top, as matplotlib's `matshow`.
 
     Accepts the `imshow` keywords (``cmap``, ``vmin``/``vmax``,
@@ -1252,7 +1289,7 @@ def matshow(z: Any, **kwargs: Any) -> Any:
     return _record_mappable(gca().matshow(z, **kwargs))
 
 
-def pcolormesh(*args: Any, **kwargs: Any) -> PolyCollection:
+def pcolormesh(*args: ArrayLike, **kwargs: Any) -> PolyCollection:
     """A pseudocolor quadrilateral mesh of a 2-D array.
 
     Call as ``pcolormesh(C)`` or ``pcolormesh(X, Y, C)``. Supported
@@ -1264,7 +1301,7 @@ def pcolormesh(*args: Any, **kwargs: Any) -> PolyCollection:
     return _record_mappable(gca().pcolormesh(*args, **kwargs))
 
 
-def pcolor(*args: Any, **kwargs: Any) -> PolyCollection:
+def pcolor(*args: ArrayLike, **kwargs: Any) -> PolyCollection:
     """A pseudocolor plot of a 2-D array (see `pcolormesh`).
 
     Same call forms and keywords as `pcolormesh`, which implements it.
@@ -1272,7 +1309,7 @@ def pcolor(*args: Any, **kwargs: Any) -> PolyCollection:
     return _record_mappable(gca().pcolor(*args, **kwargs))
 
 
-def pcolorfast(*args: Any, **kwargs: Any) -> PolyCollection:
+def pcolorfast(*args: ArrayLike, **kwargs: Any) -> PolyCollection:
     """matplotlib's fast pseudocolor path, served by `pcolormesh` here.
 
     Same call forms and keywords as `pcolormesh`.
@@ -1281,16 +1318,16 @@ def pcolorfast(*args: Any, **kwargs: Any) -> PolyCollection:
 
 
 def hist2d(
-    x: Any,
-    y: Any,
-    bins: Any = 10,
+    x: ArrayLike,
+    y: ArrayLike,
+    bins: int | ArrayLike = 10,
     *,
-    range: Any = None,
+    range: tuple[tuple[float, float], tuple[float, float]] | None = None,
     density: bool = False,
-    weights: Any = None,
-    cmin: Any = None,
-    cmax: Any = None,
-    data: Any = None,
+    weights: ArrayLike | None = None,
+    cmin: float | None = None,
+    cmax: float | None = None,
+    data: TableLike = None,
     **kwargs: Any,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, PolyCollection]:
     """A 2-D histogram of ``x``/``y`` rendered as a pseudocolor mesh.
@@ -1319,27 +1356,27 @@ def hist2d(
 
 
 def hexbin(
-    x: Any,
-    y: Any,
-    C: Any = None,
+    x: ArrayLike,
+    y: ArrayLike,
+    C: ArrayLike | None = None,
     *,
-    gridsize: Any = 100,
-    bins: Any = None,
+    gridsize: int | tuple[int, int] = 100,
+    bins: str | None = None,
     xscale: str = "linear",
     yscale: str = "linear",
-    extent: Any = None,
-    cmap: Any = None,
+    extent: tuple[float, float, float, float] | None = None,
+    cmap: str | Cmap | ListedColormap | LinearSegmentedColormap | None = None,
     norm: Any = None,
-    vmin: Any = None,
-    vmax: Any = None,
-    alpha: Any = None,
-    linewidths: Any = None,
-    edgecolors: Any = "face",
-    reduce_C_function: Any = np.mean,
-    mincnt: Any = None,
+    vmin: float | None = None,
+    vmax: float | None = None,
+    alpha: float | None = None,
+    linewidths: float | None = None,
+    edgecolors: str | None = "face",
+    reduce_C_function: Callable[..., Any] = np.mean,
+    mincnt: int | None = None,
     marginals: bool = False,
     colorizer: Any = None,
-    data: Any = None,
+    data: TableLike = None,
     **kwargs: Any,
 ) -> PathCollection:
     """A hexagonal binning plot of ``x``/``y`` point density.
@@ -1377,7 +1414,7 @@ def hexbin(
     )
 
 
-def contour(*args: Any, data: Any = None, **kwargs: Any) -> ContourSet:
+def contour(*args: ArrayLike, data: TableLike = None, **kwargs: Any) -> ContourSet:
     """Contour lines of a 2-D array.
 
     Call as ``contour(Z)``, ``contour(X, Y, Z)``, or with a trailing
@@ -1388,24 +1425,24 @@ def contour(*args: Any, data: Any = None, **kwargs: Any) -> ContourSet:
     return _record_mappable(gca().contour(*args, data=data, **kwargs))
 
 
-def contourf(*args: Any, data: Any = None, **kwargs: Any) -> ContourSet:
+def contourf(*args: ArrayLike, data: TableLike = None, **kwargs: Any) -> ContourSet:
     """Filled contours of a 2-D array (same call forms as `contour`)."""
     return _record_mappable(gca().contourf(*args, data=data, **kwargs))
 
 
 def clabel(
     CS: ContourSet,
-    levels: Any = None,
+    levels: ArrayLike | None = None,
     *,
-    fontsize: Any = None,
+    fontsize: float | str | None = None,
     inline: bool = True,
     inline_spacing: float = 5,
-    fmt: Any = None,
-    colors: Any = None,
+    fmt: str | Callable[[float], str] | Mapping[float, str] | None = None,
+    colors: ColorsLike | None = None,
     use_clabeltext: bool = False,
     manual: Any = False,
     rightside_up: bool = True,
-    zorder: Any = None,
+    zorder: float | None = None,
 ) -> list[Text]:
     """Label the levels of a `contour` result in place.
 
@@ -1428,11 +1465,11 @@ def clabel(
 
 
 def spy(
-    z: Any,
-    precision: Any = 0,
-    marker: Any = None,
-    markersize: Any = None,
-    aspect: Any = "equal",
+    z: ArrayLike,
+    precision: float | str = 0,
+    marker: str | None = None,
+    markersize: float | None = None,
+    aspect: str = "equal",
     origin: str = "upper",
     **kwargs: Any,
 ) -> Any:
@@ -1493,12 +1530,12 @@ def axline(
 
 
 def hlines(
-    y: Any,
-    xmin: Any,
-    xmax: Any,
-    colors: Any = None,
-    linestyles: Any = "solid",
-    label: Any = "",
+    y: float | ArrayLike,
+    xmin: float | ArrayLike,
+    xmax: float | ArrayLike,
+    colors: ColorsLike | None = None,
+    linestyles: str = "solid",
+    label: str = "",
     **kwargs: Any,
 ) -> PolyCollection:
     """Horizontal line segments from ``xmin`` to ``xmax`` at each ``y``.
@@ -1511,12 +1548,12 @@ def hlines(
 
 
 def vlines(
-    x: Any,
-    ymin: Any,
-    ymax: Any,
-    colors: Any = None,
-    linestyles: Any = "solid",
-    label: Any = "",
+    x: float | ArrayLike,
+    ymin: float | ArrayLike,
+    ymax: float | ArrayLike,
+    colors: ColorsLike | None = None,
+    linestyles: str = "solid",
+    label: str = "",
     **kwargs: Any,
 ) -> PolyCollection:
     """Vertical line segments from ``ymin`` to ``ymax`` at each ``x``.
@@ -1526,7 +1563,9 @@ def vlines(
     return gca().vlines(x, ymin, ymax, colors, linestyles, label, **kwargs)
 
 
-def broken_barh(xranges: Any, yrange: Any, **kwargs: Any) -> PolyCollection:
+def broken_barh(
+    xranges: Sequence[tuple[float, float]], yrange: tuple[float, float], **kwargs: Any
+) -> PolyCollection:
     """A sequence of horizontal bars at one vertical position.
 
     ``xranges`` is a sequence of ``(start, width)`` pairs and ``yrange``
@@ -1548,18 +1587,18 @@ def arrow(x: float, y: float, dx: float, dy: float, **kwargs: Any) -> PolyCollec
 
 
 def text(
-    x: Any,
-    y: Any,
+    x: float | str,
+    y: float | str,
     s: str,
     fontdict: Optional[dict[str, Any]] = None,
     *,
-    color: Any = None,
-    fontsize: Any = None,
+    color: ColorLike | None = None,
+    fontsize: float | str | None = None,
     ha: Optional[str] = None,
     va: Optional[str] = None,
-    rotation: Any = None,
-    fontweight: Any = None,
-    fontfamily: Any = None,
+    rotation: float | str | None = None,
+    fontweight: str | float | None = None,
+    fontfamily: str | None = None,
     transform: Any = None,
     **kwargs: Any,
 ) -> Text:
@@ -1619,15 +1658,15 @@ def annotate(
 
 
 def table(
-    cellText: Any = None,
-    cellColours: Any = None,
+    cellText: Sequence[Sequence[str]] | None = None,
+    cellColours: Sequence[Sequence[ColorLike]] | None = None,
     cellLoc: str = "right",
-    colWidths: Any = None,
-    rowLabels: Any = None,
-    rowColours: Any = None,
+    colWidths: Sequence[float] | None = None,
+    rowLabels: Sequence[str] | None = None,
+    rowColours: Sequence[ColorLike] | None = None,
     rowLoc: str = "left",
-    colLabels: Any = None,
-    colColours: Any = None,
+    colLabels: Sequence[str] | None = None,
+    colColours: Sequence[ColorLike] | None = None,
     colLoc: str = "center",
     loc: str = "bottom",
     bbox: Any = None,
@@ -1671,12 +1710,12 @@ def legend(*args: Any, **kwargs: Any) -> None:
 
 
 def grid(
-    visible: Any = True,
+    visible: bool | None = True,
     which: str = "major",
     axis: str = "both",
     *,
-    color: Any = None,
-    linestyle: Any = None,
+    color: ColorLike | None = None,
+    linestyle: str | None = None,
     linewidth: Optional[float] = None,
     alpha: Optional[float] = None,
     **kwargs: Any,
@@ -1697,7 +1736,9 @@ def grid(
     )
 
 
-def axis(arg: Any = None, **kwargs: Any) -> tuple[float, float, float, float]:
+def axis(
+    arg: str | bool | tuple[float, float, float, float] | None = None, **kwargs: Any
+) -> tuple[float, float, float, float]:
     """Get or set axis properties of the current axes.
 
     ``axis()`` returns ``(xmin, xmax, ymin, ymax)``;
@@ -1709,26 +1750,26 @@ def axis(arg: Any = None, **kwargs: Any) -> tuple[float, float, float, float]:
 
 
 def pie(
-    x: Any,
-    explode: Any = None,
-    labels: Any = None,
-    colors: Any = None,
-    autopct: Any = None,
+    x: ArrayLike,
+    explode: ArrayLike | None = None,
+    labels: Sequence[str] | None = None,
+    colors: ColorsLike | None = None,
+    autopct: str | Callable[[float], str] | None = None,
     pctdistance: float = 0.6,
-    shadow: Any = False,
-    labeldistance: Any = 1.1,
+    shadow: bool = False,
+    labeldistance: float | None = 1.1,
     startangle: float = 0,
     radius: float = 1,
     counterclock: bool = True,
-    wedgeprops: Any = None,
-    textprops: Any = None,
+    wedgeprops: dict[str, Any] | None = None,
+    textprops: dict[str, Any] | None = None,
     center: tuple[float, float] = (0, 0),
     frame: bool = False,
     rotatelabels: bool = False,
     normalize: bool = True,
-    hatch: Any = None,
+    hatch: str | Sequence[str] | None = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
 ) -> Any:
     """A pie chart of the values in ``x``.
 
@@ -1763,10 +1804,10 @@ def pie(
 
 def pie_label(
     container: PieContainer,
-    labels: Any,
+    labels: str | Sequence[str],
     *,
     distance: float = 0.6,
-    textprops: Any = None,
+    textprops: dict[str, Any] | None = None,
     rotate: bool = False,
     alignment: str = "auto",
 ) -> list[Text]:
@@ -1787,37 +1828,37 @@ def pie_label(
 
 
 def boxplot(
-    x: Any,
+    x: ArrayLike,
     *,
-    notch: Any = None,
-    sym: Any = None,
-    vert: Any = None,
+    notch: bool | None = None,
+    sym: str | None = None,
+    vert: bool | None = None,
     orientation: str = "vertical",
-    whis: Any = None,
-    positions: Any = None,
-    widths: Any = None,
-    patch_artist: Any = None,
-    bootstrap: Any = None,
-    usermedians: Any = None,
-    conf_intervals: Any = None,
-    meanline: Any = None,
-    showmeans: Any = None,
-    showcaps: Any = None,
-    showbox: Any = None,
-    showfliers: Any = None,
-    boxprops: Any = None,
-    tick_labels: Any = None,
-    flierprops: Any = None,
-    medianprops: Any = None,
-    meanprops: Any = None,
-    capprops: Any = None,
-    whiskerprops: Any = None,
+    whis: float | tuple[float, float] | None = None,
+    positions: ArrayLike | None = None,
+    widths: float | ArrayLike | None = None,
+    patch_artist: bool | None = None,
+    bootstrap: int | None = None,
+    usermedians: ArrayLike | None = None,
+    conf_intervals: ArrayLike | None = None,
+    meanline: bool | None = None,
+    showmeans: bool | None = None,
+    showcaps: bool | None = None,
+    showbox: bool | None = None,
+    showfliers: bool | None = None,
+    boxprops: dict[str, Any] | None = None,
+    tick_labels: Sequence[str] | None = None,
+    flierprops: dict[str, Any] | None = None,
+    medianprops: dict[str, Any] | None = None,
+    meanprops: dict[str, Any] | None = None,
+    capprops: dict[str, Any] | None = None,
+    whiskerprops: dict[str, Any] | None = None,
     manage_ticks: bool = True,
     autorange: bool = False,
-    zorder: Any = None,
-    capwidths: Any = None,
-    label: Any = None,
-    data: Any = None,
+    zorder: float | None = None,
+    capwidths: float | ArrayLike | None = None,
+    label: str | None = None,
+    data: TableLike = None,
 ) -> dict[str, list[Artist]]:
     """Box-and-whisker plots of one dataset or a sequence of datasets.
 
@@ -1861,11 +1902,11 @@ def boxplot(
 
 
 def bxp(
-    bxpstats: Any,
-    positions: Any = None,
+    bxpstats: Sequence[dict[str, Any]],
+    positions: ArrayLike | None = None,
     *,
-    widths: Any = None,
-    vert: Any = None,
+    widths: float | ArrayLike | None = None,
+    vert: bool | None = None,
     orientation: str = "vertical",
     patch_artist: bool = False,
     shownotches: bool = False,
@@ -1873,17 +1914,17 @@ def bxp(
     showcaps: bool = True,
     showbox: bool = True,
     showfliers: bool = True,
-    boxprops: Any = None,
-    whiskerprops: Any = None,
-    flierprops: Any = None,
-    medianprops: Any = None,
-    capprops: Any = None,
-    meanprops: Any = None,
+    boxprops: dict[str, Any] | None = None,
+    whiskerprops: dict[str, Any] | None = None,
+    flierprops: dict[str, Any] | None = None,
+    medianprops: dict[str, Any] | None = None,
+    capprops: dict[str, Any] | None = None,
+    meanprops: dict[str, Any] | None = None,
     meanline: bool = False,
     manage_ticks: bool = True,
-    zorder: Any = None,
-    capwidths: Any = None,
-    label: Any = None,
+    zorder: float | None = None,
+    capwidths: float | ArrayLike | None = None,
+    label: str | None = None,
 ) -> dict[str, list[Artist]]:
     """Draw box plots from precomputed statistics.
 
@@ -1918,22 +1959,22 @@ def bxp(
 
 
 def violinplot(
-    dataset: Any,
-    positions: Any = None,
+    dataset: ArrayLike,
+    positions: ArrayLike | None = None,
     *,
-    vert: Any = None,
+    vert: bool | None = None,
     orientation: str = "vertical",
     widths: float = 0.5,
     showmeans: bool = False,
     showextrema: bool = True,
     showmedians: bool = False,
-    quantiles: Any = None,
+    quantiles: ArrayLike | None = None,
     points: int = 100,
-    bw_method: Any = None,
+    bw_method: str | float | Callable[..., float] | None = None,
     side: str = "both",
-    facecolor: Any = None,
-    linecolor: Any = None,
-    data: Any = None,
+    facecolor: ColorLike | None = None,
+    linecolor: ColorLike | None = None,
+    data: TableLike = None,
 ) -> dict[str, Any]:
     """Violin plots (kernel density estimates) of one or more datasets.
 
@@ -1961,18 +2002,18 @@ def violinplot(
 
 
 def violin(
-    vpstats: Any,
-    positions: Any = None,
+    vpstats: Sequence[dict[str, Any]],
+    positions: ArrayLike | None = None,
     *,
-    vert: Any = None,
+    vert: bool | None = None,
     orientation: str = "vertical",
-    widths: Any = 0.5,
+    widths: float | ArrayLike = 0.5,
     showmeans: bool = False,
     showextrema: bool = True,
     showmedians: bool = False,
     side: str = "both",
-    facecolor: Any = None,
-    linecolor: Any = None,
+    facecolor: ColorLike | None = None,
+    linecolor: ColorLike | None = None,
 ) -> dict[str, Any]:
     """Draw violins from precomputed statistics (see `violinplot`).
 
@@ -1995,24 +2036,24 @@ def violin(
 
 
 def errorbar(
-    x: Any,
-    y: Any,
-    yerr: Any = None,
-    xerr: Any = None,
+    x: float | ArrayLike,
+    y: float | ArrayLike,
+    yerr: float | ArrayLike | None = None,
+    xerr: float | ArrayLike | None = None,
     fmt: str = "",
     *,
-    ecolor: Any = None,
-    elinewidth: Any = None,
-    capsize: Any = None,
+    ecolor: ColorLike | None = None,
+    elinewidth: float | None = None,
+    capsize: float | None = None,
     barsabove: bool = False,
-    lolims: Any = False,
-    uplims: Any = False,
-    xlolims: Any = False,
-    xuplims: Any = False,
-    errorevery: Any = 1,
-    capthick: Any = None,
-    elinestyle: Any = None,
-    data: Any = None,
+    lolims: bool | ArrayLike = False,
+    uplims: bool | ArrayLike = False,
+    xlolims: bool | ArrayLike = False,
+    xuplims: bool | ArrayLike = False,
+    errorevery: int | tuple[int, int] = 1,
+    capthick: float | None = None,
+    elinestyle: str | None = None,
+    data: TableLike = None,
     **kwargs: Any,
 ) -> ErrorbarContainer:
     """Plot ``y`` versus ``x`` with error bars.
@@ -2047,16 +2088,16 @@ def errorbar(
 
 
 def eventplot(
-    positions: Any,
+    positions: ArrayLike,
     *,
     orientation: str = "horizontal",
-    lineoffsets: Any = 1,
-    linelengths: Any = 1,
-    linewidths: Any = None,
-    colors: Any = None,
-    alpha: Any = None,
-    linestyles: Any = "solid",
-    data: Any = None,
+    lineoffsets: float | ArrayLike = 1,
+    linelengths: float | ArrayLike = 1,
+    linewidths: float | ArrayLike | None = None,
+    colors: ColorsLike | None = None,
+    alpha: float | None = None,
+    linestyles: str | Sequence[str] = "solid",
+    data: TableLike = None,
     **kwargs: Any,
 ) -> list[PolyCollection]:
     """Plot identical parallel event lines at the given positions.
@@ -2078,7 +2119,7 @@ def eventplot(
     )
 
 
-def acorr(x: Any, **kwargs: Any) -> tuple[np.ndarray, np.ndarray, Any, Any]:
+def acorr(x: ArrayLike, **kwargs: Any) -> tuple[np.ndarray, np.ndarray, Any, Any]:
     """Plot the autocorrelation of ``x`` (see `xcorr` for the keywords).
 
     Returns ``(lags, correlations, lines, baseline)``.
@@ -2087,13 +2128,13 @@ def acorr(x: Any, **kwargs: Any) -> tuple[np.ndarray, np.ndarray, Any, Any]:
 
 
 def xcorr(
-    x: Any,
-    y: Any,
+    x: ArrayLike,
+    y: ArrayLike,
     normed: bool = True,
-    detrend: Any = None,
+    detrend: Callable[[np.ndarray], np.ndarray] | None = None,
     usevlines: bool = True,
-    maxlags: Any = 10,
-    data: Any = None,
+    maxlags: int | None = 10,
+    data: TableLike = None,
     **kwargs: Any,
 ) -> tuple[np.ndarray, np.ndarray, Any, Any]:
     """Plot the cross-correlation of ``x`` and ``y`` per lag.
@@ -2116,18 +2157,18 @@ def xcorr(
 
 
 def psd(
-    x: Any,
+    x: ArrayLike,
     NFFT: int = 256,
     Fs: float = 2,
     Fc: float = 0,
-    detrend: Any = None,
-    window: Any = None,
+    detrend: str | Callable[[np.ndarray], np.ndarray] | None = None,
+    window: ArrayLike | Callable[[np.ndarray], np.ndarray] | None = None,
     noverlap: int = 0,
-    pad_to: Any = None,
-    sides: Any = None,
-    scale_by_freq: Any = None,
-    return_line: Any = None,
-    data: Any = None,
+    pad_to: int | None = None,
+    sides: str | None = None,
+    scale_by_freq: bool | None = None,
+    return_line: bool | None = None,
+    data: TableLike = None,
     **kwargs: Any,
 ) -> Any:
     """Plot the power spectral density of ``x`` (Welch's method).
@@ -2154,19 +2195,19 @@ def psd(
 
 
 def csd(
-    x: Any,
-    y: Any,
+    x: ArrayLike,
+    y: ArrayLike,
     NFFT: int = 256,
     Fs: float = 2,
     Fc: float = 0,
-    detrend: Any = None,
-    window: Any = None,
+    detrend: str | Callable[[np.ndarray], np.ndarray] | None = None,
+    window: ArrayLike | Callable[[np.ndarray], np.ndarray] | None = None,
     noverlap: int = 0,
-    pad_to: Any = None,
-    sides: Any = None,
-    scale_by_freq: Any = None,
-    return_line: Any = None,
-    data: Any = None,
+    pad_to: int | None = None,
+    sides: str | None = None,
+    scale_by_freq: bool | None = None,
+    return_line: bool | None = None,
+    data: TableLike = None,
     **kwargs: Any,
 ) -> Any:
     """Plot the cross-spectral density of ``x`` and ``y``.
@@ -2193,18 +2234,18 @@ def csd(
 
 
 def cohere(
-    x: Any,
-    y: Any,
+    x: ArrayLike,
+    y: ArrayLike,
     NFFT: int = 256,
     Fs: float = 2,
     Fc: float = 0,
-    detrend: Any = None,
-    window: Any = None,
+    detrend: str | Callable[[np.ndarray], np.ndarray] | None = None,
+    window: ArrayLike | Callable[[np.ndarray], np.ndarray] | None = None,
     noverlap: int = 0,
-    pad_to: Any = None,
-    sides: Any = None,
-    scale_by_freq: Any = None,
-    data: Any = None,
+    pad_to: int | None = None,
+    sides: str | None = None,
+    scale_by_freq: bool | None = None,
+    data: TableLike = None,
     **kwargs: Any,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Plot the coherence between ``x`` and ``y`` (see `psd` keywords).
@@ -2229,23 +2270,23 @@ def cohere(
 
 
 def specgram(
-    x: Any,
+    x: ArrayLike,
     NFFT: int = 256,
     Fs: float = 2,
     Fc: float = 0,
-    detrend: Any = None,
-    window: Any = None,
+    detrend: str | Callable[[np.ndarray], np.ndarray] | None = None,
+    window: ArrayLike | Callable[[np.ndarray], np.ndarray] | None = None,
     noverlap: int = 128,
-    cmap: Any = None,
-    xextent: Any = None,
-    pad_to: Any = None,
-    sides: Any = None,
-    scale_by_freq: Any = None,
-    mode: Any = None,
-    scale: Any = None,
-    vmin: Any = None,
-    vmax: Any = None,
-    data: Any = None,
+    cmap: str | Cmap | ListedColormap | LinearSegmentedColormap | None = None,
+    xextent: tuple[float, float] | None = None,
+    pad_to: int | None = None,
+    sides: str | None = None,
+    scale_by_freq: bool | None = None,
+    mode: str | None = None,
+    scale: str | None = None,
+    vmin: float | None = None,
+    vmax: float | None = None,
+    data: TableLike = None,
     **kwargs: Any,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, PolyCollection]:
     """Plot a spectrogram of ``x`` as a pseudocolor image.
@@ -2276,14 +2317,14 @@ def specgram(
 
 
 def magnitude_spectrum(
-    x: Any,
+    x: ArrayLike,
     Fs: float = 2,
     Fc: float = 0,
-    window: Any = None,
-    pad_to: Any = None,
-    sides: Any = None,
-    scale: Any = None,
-    data: Any = None,
+    window: ArrayLike | Callable[[np.ndarray], np.ndarray] | None = None,
+    pad_to: int | None = None,
+    sides: str | None = None,
+    scale: str | None = None,
+    data: TableLike = None,
     **kwargs: Any,
 ) -> tuple[np.ndarray, np.ndarray, Line2D]:
     """Plot the magnitude spectrum of ``x``.
@@ -2305,13 +2346,13 @@ def magnitude_spectrum(
 
 
 def angle_spectrum(
-    x: Any,
+    x: ArrayLike,
     Fs: float = 2,
     Fc: float = 0,
-    window: Any = None,
-    pad_to: Any = None,
-    sides: Any = None,
-    data: Any = None,
+    window: ArrayLike | Callable[[np.ndarray], np.ndarray] | None = None,
+    pad_to: int | None = None,
+    sides: str | None = None,
+    data: TableLike = None,
     **kwargs: Any,
 ) -> tuple[np.ndarray, np.ndarray, Line2D]:
     """Plot the angle (wrapped phase) spectrum of ``x``.
@@ -2331,13 +2372,13 @@ def angle_spectrum(
 
 
 def phase_spectrum(
-    x: Any,
+    x: ArrayLike,
     Fs: float = 2,
     Fc: float = 0,
-    window: Any = None,
-    pad_to: Any = None,
-    sides: Any = None,
-    data: Any = None,
+    window: ArrayLike | Callable[[np.ndarray], np.ndarray] | None = None,
+    pad_to: int | None = None,
+    sides: str | None = None,
+    data: TableLike = None,
     **kwargs: Any,
 ) -> tuple[np.ndarray, np.ndarray, Line2D]:
     """Plot the unwrapped phase spectrum of ``x``.
@@ -2356,7 +2397,7 @@ def phase_spectrum(
     )
 
 
-def quiver(*args: Any, data: Any = None, **kwargs: Any) -> PolyCollection:
+def quiver(*args: ArrayLike, data: TableLike = None, **kwargs: Any) -> PolyCollection:
     """A field of arrows: ``quiver(U, V)`` or ``quiver(X, Y, U, V)``.
 
     Optionally followed by a color array ``C``. Styling keywords
@@ -2383,7 +2424,7 @@ def quiverkey(
     return gca().quiverkey(Q, X, Y, U, label, **kwargs)
 
 
-def barbs(*args: Any, data: Any = None, **kwargs: Any) -> PolyCollection:
+def barbs(*args: ArrayLike, data: TableLike = None, **kwargs: Any) -> PolyCollection:
     """A field of wind barbs: ``barbs(U, V)`` or ``barbs(X, Y, U, V)``.
 
     Rendered at matplotlib's default barb geometry; non-default
@@ -2393,21 +2434,21 @@ def barbs(*args: Any, data: Any = None, **kwargs: Any) -> PolyCollection:
 
 
 def streamplot(
-    x: Any,
-    y: Any,
-    u: Any,
-    v: Any,
-    density: Any = 1,
-    linewidth: Any = None,
-    color: Any = None,
-    cmap: Any = None,
+    x: ArrayLike,
+    y: ArrayLike,
+    u: ArrayLike,
+    v: ArrayLike,
+    density: float | tuple[float, float] = 1,
+    linewidth: float | ArrayLike | None = None,
+    color: ColorsLike | None = None,
+    cmap: str | Cmap | ListedColormap | LinearSegmentedColormap | None = None,
     norm: Any = None,
     arrowsize: float = 1,
     arrowstyle: str = "-|>",
     minlength: float = 0.1,
     transform: Any = None,
-    zorder: Any = None,
-    start_points: Any = None,
+    zorder: float | None = None,
+    start_points: ArrayLike | None = None,
     maxlength: float = 4.0,
     integration_direction: str = "both",
     broken_streamlines: bool = True,
@@ -2415,7 +2456,7 @@ def streamplot(
     integration_max_error_scale: float = 1.0,
     *,
     num_arrows: int = 1,
-    data: Any = None,
+    data: TableLike = None,
 ) -> StreamplotSet:
     """Streamlines of the vector field ``(u, v)`` on the grid ``(x, y)``.
 
@@ -2450,11 +2491,11 @@ def streamplot(
 
 
 def tripcolor(
-    *args: Any,
-    triangles: Any = None,
-    facecolors: Any = None,
+    *args: ArrayLike,
+    triangles: ArrayLike | None = None,
+    facecolors: ArrayLike | None = None,
     shading: str = "flat",
-    data: Any = None,
+    data: TableLike = None,
     **kwargs: Any,
 ) -> PolyCollection:
     """A pseudocolor plot over an unstructured triangular grid.
@@ -2477,9 +2518,9 @@ def tripcolor(
 
 
 def triplot(
-    *args: Any,
-    triangles: Any = None,
-    data: Any = None,
+    *args: ArrayLike | str,
+    triangles: ArrayLike | None = None,
+    data: TableLike = None,
     **kwargs: Any,
 ) -> list[Line2D]:
     """Draw the edges of an unstructured triangular grid.
@@ -2490,7 +2531,7 @@ def triplot(
     return gca().triplot(*args, triangles=triangles, data=data, **kwargs)
 
 
-def tricontour(*args: Any, **kwargs: Any) -> ContourSet:
+def tricontour(*args: ArrayLike, **kwargs: Any) -> ContourSet:
     """Contour lines over an unstructured triangular grid.
 
     Call as ``tricontour(x, y, values[, levels])``; accepts the
@@ -2499,7 +2540,7 @@ def tricontour(*args: Any, **kwargs: Any) -> ContourSet:
     return gca().tricontour(*args, **kwargs)
 
 
-def tricontourf(*args: Any, **kwargs: Any) -> ContourSet:
+def tricontourf(*args: ArrayLike, **kwargs: Any) -> ContourSet:
     """Filled contours over an unstructured triangular grid.
 
     Call as ``tricontourf(x, y, values[, levels])``; accepts the
@@ -2532,9 +2573,9 @@ def ticklabel_format(
     axis: str = "both",
     style: Optional[str] = None,
     scilimits: Optional[tuple[int, int]] = None,
-    useOffset: Any = None,
-    useLocale: Any = None,
-    useMathText: Any = None,
+    useOffset: bool | float | None = None,
+    useLocale: bool | None = None,
+    useMathText: bool | None = None,
     **kwargs: Any,
 ) -> None:
     """Configure the scalar tick-label formatter of the current axes.
@@ -2571,7 +2612,7 @@ def get_xbound() -> tuple[float, float]:
     return gca().get_xbound()
 
 
-def set_xbound(lower: Any = None, upper: Any = None) -> None:
+def set_xbound(lower: float | None = None, upper: float | None = None) -> None:
     """Set the current axes' x bounds, keeping the axis orientation."""
     return gca().set_xbound(lower, upper)
 
@@ -2581,7 +2622,7 @@ def get_ybound() -> tuple[float, float]:
     return gca().get_ybound()
 
 
-def set_ybound(lower: Any = None, upper: Any = None) -> None:
+def set_ybound(lower: float | None = None, upper: float | None = None) -> None:
     """Set the current axes' y bounds, keeping the axis orientation."""
     return gca().set_ybound(lower, upper)
 
@@ -2634,7 +2675,13 @@ def yscale(scale: str) -> None:
     gca().set_yscale(scale)
 
 
-def xticks(ticks: Any = None, labels: Any = None, *, rotation: Any = None, **kwargs: Any) -> None:
+def xticks(
+    ticks: ArrayLike | None = None,
+    labels: Sequence[str] | None = None,
+    *,
+    rotation: float | None = None,
+    **kwargs: Any,
+) -> None:
     """Place the x ticks at the given positions, optionally relabeled.
 
     ``rotation`` (degrees) and supported text keywords style the labels.
@@ -2642,7 +2689,13 @@ def xticks(ticks: Any = None, labels: Any = None, *, rotation: Any = None, **kwa
     gca().set_xticks(ticks, labels, rotation=rotation, **kwargs)
 
 
-def yticks(ticks: Any = None, labels: Any = None, *, rotation: Any = None, **kwargs: Any) -> None:
+def yticks(
+    ticks: ArrayLike | None = None,
+    labels: Sequence[str] | None = None,
+    *,
+    rotation: float | None = None,
+    **kwargs: Any,
+) -> None:
     """Place the y ticks at the given positions (see `xticks`)."""
     gca().set_yticks(ticks, labels, rotation=rotation, **kwargs)
 
@@ -2658,7 +2711,7 @@ def subplots_adjust(**kwargs: Any) -> None:
     gcf().subplots_adjust(**kwargs)
 
 
-def get_cmap(name: Any = None, lut: Any = None) -> Any:
+def get_cmap(name: str | None = None, lut: int | None = None) -> Cmap:
     """Look up a colormap by name (default viridis).
 
     ``lut`` resamples it to that many entries.
@@ -2688,7 +2741,7 @@ def sci(mappable: Any) -> None:
     gcf()._gci = mappable
 
 
-def clim(vmin: Any = None, vmax: Any = None) -> None:
+def clim(vmin: float | None = None, vmax: float | None = None) -> None:
     """Set the color limits of the current image (see `gci`)."""
     image = gci()
     if image is None:
@@ -2701,7 +2754,7 @@ def clim(vmin: Any = None, vmax: Any = None) -> None:
 # -- output ---------------------------------------------------------------------
 
 
-def savefig(fname: Any, **kwargs: Any) -> None:
+def savefig(fname: str | Path | IO[bytes], **kwargs: Any) -> None:
     """Save the current figure to ``fname``.
 
     The format comes from the suffix (or ``format=``): png, svg, or
@@ -2761,7 +2814,7 @@ class _CmapNamespace:
     """plt.cm.viridis and friends: name carriers the shim resolves by name."""
 
     @staticmethod
-    def get_cmap(name: Any = None, lut: Any = None) -> Any:
+    def get_cmap(name: str | None = None, lut: int | None = None) -> Cmap:
         # matplotlib removed cm.get_cmap in 3.9; older scripts still call it.
         return get_cmap(name, lut)
 
@@ -2780,12 +2833,12 @@ cm = _CmapNamespace()
 
 
 class _ColormapRegistry:
-    def __getitem__(self, name: str) -> Any:
+    def __getitem__(self, name: str) -> Cmap:
         from ._colors import Cmap
 
         return Cmap(name)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         fallback = (
             "viridis",
             "plasma",
@@ -2985,7 +3038,9 @@ class _StyleNamespace:
 
     @staticmethod
     @contextlib.contextmanager
-    def context(name: Union[str, dict[str, Any], list[Union[str, dict[str, Any]]]]):
+    def context(
+        name: Union[str, dict[str, Any], list[Union[str, dict[str, Any]]]],
+    ) -> Iterator[None]:
         from . import _axes
 
         snapshot = dict(rcParams)
