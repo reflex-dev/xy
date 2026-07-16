@@ -115,10 +115,17 @@ def test_readme_python_example_runs(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     namespace: dict[str, object] = {"__name__": f"xy_readme_example_{heading}"}
+    uses_pyplot_show = source.rstrip().endswith("plt.show()")
+    if uses_pyplot_show:
+        import xy.pyplot as pyplot
+
+        monkeypatch.setattr(pyplot, "show", lambda *_args, **_kwargs: None)
 
     exec(compile(_capture_final_expression(source), str(README), "exec"), namespace)
 
     result = namespace.get("__example_result__")
+    if uses_pyplot_show and result is None:
+        result = namespace.get("fig")
     assert result is not None, f"{heading} README example should end with an expression"
     if isinstance(result, str):
         assert "xy.renderStandalone" in result
@@ -316,8 +323,8 @@ def test_readme_getting_started_includes_small_business_chart() -> None:
         "Create a small business chart",
         "Revenue vs pipeline",
         "USD thousands",
-        "fc.line(months, revenue",
-        "fc.line(months, pipeline",
+        "xy.line(months, revenue",
+        "xy.line(months, pipeline",
     ]
     for marker in required:
         assert marker in text
