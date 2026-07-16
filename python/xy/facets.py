@@ -336,7 +336,7 @@ for(const p of panels){{
         return self.widget()
 
     def memory_report(self) -> dict[str, Any]:
-        """Aggregated §27 buffer accounting across all panels."""
+        """Aggregated data/cache buffer accounting across all panels."""
         reports = [fig.memory_report() for fig in self.figures]
         return {
             "panels": len(reports),

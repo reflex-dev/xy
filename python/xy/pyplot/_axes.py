@@ -2616,7 +2616,7 @@ class Axes(PlotTypeMixin):
         y = self._data_coordinate(xy[1], "y")
         return None if x is None or y is None else (x, y)
 
-    def _iter_entry_arrays(self, axis: str):
+    def _iter_entry_arrays(self, axis: str) -> Iterator[tuple[np.ndarray, bool]]:
         """Yield each (array, needs_finite_filter) an entry contributes to *axis*."""
         for entry in self._entries:
             key = "x" if axis == "x" else "y"
