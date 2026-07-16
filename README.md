@@ -1,13 +1,13 @@
 <h1 align="center">xy</h1>
 
 <p align="center">
-  <strong>Interactive Python charts whose cost follows the screen, not the dataset.</strong>
-</p>
-
-<p align="center">
   <a href="https://github.com/reflex-dev/xy/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/reflex-dev/xy/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://app.codspeed.io/reflex-dev/xy?utm_source=badge"><img alt="CodSpeed" src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json"></a>
   <a href="pyproject.toml"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab?logo=python&logoColor=white"></a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/launch-benchmark-comparison.svg" alt="Grouped horizontal bar-chart comparison of xy, Matplotlib, and Plotly cold-render times at 10 million points; xy has the lowest measured time in all three output modes in this recorded run." width="1200">
 </p>
 
 xy is an experimental Python charting library for large, interactive datasets.
@@ -43,18 +43,18 @@ core. End users do not need Rust, Node, npm, or a CDN.
 Create a small business chart:
 
 ```python
-import xy as fc
+import xy
 
 months = [1, 2, 3, 4, 5, 6]
 revenue = [42, 45, 48, 51, 55, 59]
 pipeline = [35, 38, 42, 40, 46, 50]
 
-chart = fc.line_chart(
-    fc.line(months, revenue, name="revenue", color="#2563eb"),
-    fc.line(months, pipeline, name="pipeline", color="#16a34a"),
-    fc.x_axis(label="month"),
-    fc.y_axis(label="USD thousands"),
-    fc.legend(),
+chart = xy.line_chart(
+    xy.line(months, revenue, name="revenue", color="#2563eb"),
+    xy.line(months, pipeline, name="pipeline", color="#16a34a"),
+    xy.x_axis(label="month"),
+    xy.y_axis(label="USD thousands"),
+    xy.legend(),
     title="Revenue vs pipeline",
 )
 # chart.to_html("chart.html")
@@ -82,7 +82,7 @@ x = np.linspace(0, 10, 200)
 fig, ax = plt.subplots()
 ax.plot(x, np.sin(x), "r--", label="signal")
 ax.legend()
-fig
+plt.show()
 ```
 
 The shim intentionally covers common plotting workflows rather than every
@@ -105,11 +105,11 @@ an Apple M5 Pro with 64 GB RAM. Times are mean ± sample standard deviation.
 
 At 10M points, the same recorded run measured:
 
-| 900×420 output contract | xy | Plotly | Matplotlib |
+| 900×420 output contract | xy | Matplotlib | Plotly |
 |---|---:|---:|---:|
-| Static CPU PNG | 0.0232 s | 9.5834 s | 2.7842 s |
-| Interactive first render, default GPU | 0.1797 s | 3.6434 s | 3.0029 s |
-| Interactive first render, CPU fallback | 0.9920 s | 8.2152 s | 3.6735 s |
+| Static CPU PNG | 0.0232 s | 2.7842 s | 9.5834 s |
+| Interactive first render, default GPU | 0.1797 s | 3.0029 s | 3.6434 s |
+| Interactive first render, CPU fallback | 0.9920 s | 3.6735 s | 8.2152 s |
 
 At 1B points, xy produced a density PNG in 1.1452 seconds and an interactive
 density overview in 1.2530 seconds. The exact-point Plotly and Matplotlib paths
