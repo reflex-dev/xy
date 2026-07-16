@@ -772,7 +772,7 @@ runners:
   noise never breaks the build.
 
 The current metric table is regenerated (never hand-typed) into
-[`docs/benchmark_metrics.md`](benchmark_metrics.md). CI uploads that table plus
+[`docs/engineering/benchmark_metrics.md`](benchmark_metrics.md). CI uploads that table plus
 the raw `scatter.json` and `kernel.json` inputs as the
 `regression-benchmark-report` artifact, even when the hard regression gate
 fails. Re-bless the baseline from a CI run with

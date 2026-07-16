@@ -1762,7 +1762,7 @@ def test_selection_payload():
 
 
 def test_chart_styles_prop_is_the_documented_per_slot_mechanism() -> None:
-    """docs/styling.md's fourth mechanism: `styles={slot: {...}}` on xy.chart —
+    """docs/engineering/styling.md's fourth mechanism: `styles={slot: {...}}` on xy.chart —
     slot-validated, CSS-validated, merged with per-component `style=`."""
     xs = np.arange(6.0)
     chart = xy.chart(

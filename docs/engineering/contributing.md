@@ -97,7 +97,7 @@ or anything that could become a public performance claim, run:
 make check-claims
 ```
 
-When you edit README snippets, `docs/api-examples.md`, or the Reflex example
+When you edit README snippets, `docs/engineering/api-examples.md`, or the Reflex example
 dashboard registry/assets, run:
 
 ```bash
@@ -235,5 +235,5 @@ Do not write broad claims like "faster than Plotly" without naming:
 Numeric multipliers such as "10x faster" or "5x smaller" need the same measured
 benchmark context.
 
-When in doubt, phrase it as a measured row from `docs/benchmark.md`, not as a
+When in doubt, phrase it as a measured row from `docs/engineering/benchmark.md`, not as a
 universal product claim, and run `make check-claims` before publishing.

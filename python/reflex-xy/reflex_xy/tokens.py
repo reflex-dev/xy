@@ -10,7 +10,7 @@ Two token families, one namespace:
   Reflex state is the pantry).
 - **Opaque tokens** (`xyfig-<uuid>`) come from imperative
   `reflex_xy.register(...)`. They cannot be rebuilt elsewhere — dev-tier by
-  design, documented in docs/design/reflex-integration.md.
+  design, documented in docs/engineering/design/reflex-integration.md.
 
 Tokens are visible to their own client (they ride through state deltas), so
 they must not carry anything the client doesn't already know: the client

@@ -538,7 +538,7 @@ def area(
 
     `base` may be a scalar or a length-N array, which covers both the common
     zero-baseline area chart and future stacked-area construction.
-    `fill` accepts a CSS `linear-gradient(...)` (see docs/styling.md);
+    `fill` accepts a CSS `linear-gradient(...)` (see docs/engineering/styling.md);
     `curve="smooth"` renders a monotone cubic through the points; `dash`
     dashes the outline.
     """
@@ -1827,7 +1827,7 @@ def bar(
 
     `corner_radius`/`stroke`/`stroke_width` are the CSS border analogues
     rendered into the mark; `fill` accepts a CSS `linear-gradient(...)`
-    (docs/styling.md#styling-the-marks)."""
+    (docs/engineering/styling.md#styling-the-marks)."""
     css = styles.compile_mark_style("bar", style)
     color = css.get("color", color)
     opacity = css.get("opacity", opacity)

@@ -52,11 +52,11 @@ REQUIRED_FILES = {
     "benchmarks/bench_workflows.py",
     "benchmarks/categories.py",
     "benchmarks/environment.py",
-    "docs/api-examples.md",
-    "docs/benchmark.md",
-    "docs/chart-roadmap.md",
-    "docs/contributing.md",
-    "docs/production-readiness.md",
+    "docs/engineering/api-examples.md",
+    "docs/engineering/benchmark.md",
+    "docs/engineering/chart-roadmap.md",
+    "docs/engineering/contributing.md",
+    "docs/engineering/production-readiness.md",
     "hatch_build.py",
     "pyproject.toml",
     "js/src/00_header.js",
@@ -329,12 +329,17 @@ def verify_sdist(path: str) -> None:
         path,
         root,
         "README.md",
-        {"Stable vs. Experimental", "Python 3.11+", "docs/api-examples.md", "make check-examples"},
+        {
+            "Stable vs. Experimental",
+            "Python 3.11+",
+            "docs/engineering/api-examples.md",
+            "make check-examples",
+        },
     )
     _require_file_contains(
         path,
         root,
-        "docs/api-examples.md",
+        "docs/engineering/api-examples.md",
         {
             "Chart Family Quick Reference",
             "Small Business Chart",
@@ -346,11 +351,11 @@ def verify_sdist(path: str) -> None:
     _require_file_contains(
         path,
         root,
-        "docs/benchmark.md",
+        "docs/engineering/benchmark.md",
         {
             "benchmark-report",
             "regression-benchmark-report",
-            "docs/benchmark_metrics.md",
+            "docs/engineering/benchmark_metrics.md",
             "scatter.json",
             "kernel.json",
         },
@@ -358,7 +363,7 @@ def verify_sdist(path: str) -> None:
     _require_file_contains(
         path,
         root,
-        "docs/production-readiness.md",
+        "docs/engineering/production-readiness.md",
         {
             "Release-Blocking Gates",
             "make check-artifacts",
@@ -374,7 +379,7 @@ def verify_sdist(path: str) -> None:
     _require_file_contains(
         path,
         root,
-        "docs/contributing.md",
+        "docs/engineering/contributing.md",
         {
             "Pull Request Checklist",
             "make check-full",

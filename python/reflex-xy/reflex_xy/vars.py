@@ -1,6 +1,6 @@
 """`@reflex_xy.figure`: a computed var that *is* the chart registration.
 
-The pattern (docs/design/reflex-integration.md): the state method builds the
+The pattern (docs/engineering/design/reflex-integration.md): the state method builds the
 chart from state, the computed var's value is only the figure *token*, and
 evaluating the var is what (re)registers the figure in the per-process
 registry. Reflex's own dependency tracking decides when that happens:

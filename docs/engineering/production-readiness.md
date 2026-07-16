@@ -121,7 +121,7 @@ production-facing push:
 | Changed surface | Focused gate |
 |---|---|
 | README/API prose, examples, public benchmark wording | `make check-docs` |
-| README snippets, `docs/api-examples.md`, Reflex chart registry/assets | `make check-examples` |
+| README snippets, `docs/engineering/api-examples.md`, Reflex chart registry/assets | `make check-examples` |
 | Public validation, error messages, builder rollback, LOD/drill mutation boundaries, chart/widget caching | `make check-errors` |
 | Public exports, lazy import mappings, component factories, public annotations | `make check-api` |
 | Import-time budget, `xy.__init__`, dependency boundaries, widget/export/backend import boundaries | `make check-import` |
@@ -198,7 +198,7 @@ verify those exact files rather than rebuilding locally:
 make check-artifacts SDIST=/path/to/xy.tar.gz WHEEL=/path/to/xy.whl
 ```
 
-Use this after editing README snippets, `docs/api-examples.md`, or the Reflex
+Use this after editing README snippets, `docs/engineering/api-examples.md`, or the Reflex
 dashboard chart registry/assets:
 
 ```bash
@@ -346,7 +346,7 @@ Before tagging a release:
   package-only: docs, tests, benchmarks, scripts, and `examples/reflex/`
   are sdist-only.
 - Confirm the wheel size budget is still below 15 MB.
-- Confirm README examples and `docs/api-examples.md` run against the tagged API.
+- Confirm README examples and `docs/engineering/api-examples.md` run against the tagged API.
 - Confirm package metadata uses measured, scoped language rather than broad
   "faster/best" positioning.
 - Confirm performance claims mention chart type, mode, backend, data size, and
@@ -361,7 +361,7 @@ Safe claims:
 - The native backend is substantially faster than pure Python/NumPy for kernel
   work covered by the benchmarks.
 - Current 2D core chart benchmarks beat Plotly on the measured payload-prep,
-  payload-size, and TTFR rows documented in `docs/benchmark.md`.
+  payload-size, and TTFR rows documented in `docs/engineering/benchmark.md`.
 
 Claims that need qualification:
 

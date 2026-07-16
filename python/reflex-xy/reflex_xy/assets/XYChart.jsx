@@ -1,6 +1,6 @@
 // XYChart: mount a xy figure inside a Reflex app.
 //
-// Two modes, one prop apart (docs/design/reflex-integration.md):
+// Two modes, one prop apart (docs/engineering/design/reflex-integration.md):
 //
 // `token` (live) — this component does NOT open its own connection.
 // socket.io multiplexing reuses the app's engine.io websocket when the
@@ -76,6 +76,15 @@ function xySocket() {
 
 let nextMountId = 1;
 
+// Reflex owns the mount's CSS dimensions. Payload dimensions are useful for
+// standalone exports, but inside a component they must follow that mount or a
+// fixed payload can paint beyond the space Reflex reserved in the page flow.
+const fitSpecToElement = (spec) => ({
+  ...spec,
+  width: "100%",
+  height: "100%",
+});
+
 export function XYChart(props) {
   const {
     token,
@@ -111,7 +120,7 @@ export function XYChart(props) {
         el.replaceChildren();
         // Same call the static HTML export makes: spec + one packed blob
         // span, comm = null → local hover columns + worker density re-bin.
-        view = renderStandalone(el, frame.message, frame.buffers[0]);
+        view = renderStandalone(el, fitSpecToElement(frame.message), frame.buffers[0]);
         (window.__xy_views ||= new Map()).set(key, view);
         dbg("static payload mounted", { src, bytes: body.byteLength });
       })
@@ -193,7 +202,12 @@ export function XYChart(props) {
       if (view) view.destroy();
       viewCallbacks.length = 0;
       el.replaceChildren();
-      view = new ChartView(el, data.spec, toSpans(data.spec, data.buffers), comm);
+      view = new ChartView(
+        el,
+        fitSpecToElement(data.spec),
+        toSpans(data.spec, data.buffers),
+        comm,
+      );
       // Debug/e2e handle (same spirit as the standalone example's
       // window.xyLiveDrilldown): headless probes assert on live views.
       (window.__xy_views ||= new Map()).set(el.id || mid, view);

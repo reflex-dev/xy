@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/launch-benchmark-comparison.svg" alt="Grouped horizontal bar-chart comparison of xy, Matplotlib, and Plotly cold-render times at 10 million points; xy has the lowest measured time in all three output modes in this recorded run." width="1200">
+  <img src="docs/engineering/assets/launch-benchmark-comparison.svg" alt="Grouped horizontal bar-chart comparison of xy, Matplotlib, and Plotly cold-render times at 10 million points; xy has the lowest measured time in all three output modes in this recorded run." width="1200">
 </p>
 
 xy is an experimental Python charting library for large, interactive datasets.
@@ -68,7 +68,7 @@ The same chart can be exported without changing how it is built.
 xy currently includes line, scatter, area, histogram, bar and column, heatmap,
 error bar and band, box, violin, ECDF, hexbin, contour, step, stairs, stem,
 triangle mesh, and faceted charts. See the
-[copyable examples](docs/api-examples.md) for the complete surface.
+[copyable examples](docs/engineering/api-examples.md) for the complete surface.
 
 ### Coming from matplotlib
 
@@ -86,7 +86,7 @@ plt.show()
 ```
 
 The shim intentionally covers common plotting workflows rather than every
-matplotlib feature. See the [compatibility guide](docs/matplotlib-compat.md).
+matplotlib feature. See the [compatibility guide](docs/engineering/matplotlib-compat.md).
 
 ## Benchmarks
 
@@ -158,7 +158,7 @@ hover and selection can still return original rows.
 For benchmark methodology and measured results, see the
 [benchmark runbook](benchmarks/README.md) and the committed
 [launch report](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md).
-For the full design, see the [design dossier](docs/design-dossier.md).
+For the full design, see the [design dossier](docs/engineering/design-dossier.md).
 
 ## Stable vs. Experimental
 
@@ -193,12 +193,16 @@ needed for browser behavior.
 
 ## Documentation
 
-- [API examples](docs/api-examples.md)
-- [Styling](docs/styling.md)
+- [Public XY documentation](docs/index.md) ([live site](https://reflex.dev/docs/xy/))
+
+Engineering references:
+
+- [API examples](docs/engineering/api-examples.md)
+- [Styling](docs/engineering/styling.md)
 - [Benchmarks](benchmarks/README.md)
-- [Matplotlib compatibility](docs/matplotlib-compat.md)
-- [Architecture and design](docs/design-dossier.md)
-- [Production readiness](docs/production-readiness.md)
+- [Matplotlib compatibility](docs/engineering/matplotlib-compat.md)
+- [Architecture and design](docs/engineering/design-dossier.md)
+- [Production readiness](docs/engineering/production-readiness.md)
 - [Security](SECURITY.md)
 - [Changelog](CHANGELOG.md)
 
