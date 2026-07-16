@@ -1,0 +1,229 @@
+# Reusable workflow: update the XY app image tags in the internal Helm chart.
+# The helm-charts repository's Flux consumers perform the actual deployment
+# after the generated PR is merged.
+
+name: Open XY Docs Helm Chart PR
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: "Image tag to set in the values file"
+        required: true
+        type: string
+      environment:
+        description: "Environment name (dev, stg, or prod)"
+        required: true
+        type: string
+      source_ref:
+        description: "Source commit SHA from reflex-dev/xy"
+        required: true
+        type: string
+      auto_merge:
+        description: "Merge the Helm PR immediately"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  HELM_REPO: reflex-dev/helm-charts
+  CHART_DIR: charts/internal
+  FRONTEND_IMAGE: 176771536320.dkr.ecr.us-west-2.amazonaws.com/xy/frontend
+  BACKEND_IMAGE: 176771536320.dkr.ecr.us-west-2.amazonaws.com/xy/backend
+
+jobs:
+  open-helm-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Validate inputs
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          if [[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9._-]+$ ]] || [[ "${#IMAGE_TAG}" -gt 128 ]]; then
+            echo "::error::image_tag must match [A-Za-z0-9._-]+ and be <=128 characters"
+            exit 1
+          fi
+          if [[ "$ENVIRONMENT" != "dev" && "$ENVIRONMENT" != "stg" && "$ENVIRONMENT" != "prod" ]]; then
+            echo "::error::environment must be one of dev|stg|prod"
+            exit 1
+          fi
+          if [[ ! "$SOURCE_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || [[ "${#SOURCE_REF}" -gt 128 ]]; then
+            echo "::error::source_ref contains unsafe characters"
+            exit 1
+          fi
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.HELM_BOT_APP_ID }}
+          private-key: ${{ secrets.HELM_BOT_PRIVATE_KEY }}
+          owner: reflex-dev
+          repositories: helm-charts
+
+      - name: Install yq
+        env:
+          YQ_VERSION: v4.53.2
+          YQ_SHA256: d56bf5c6819e8e696340c312bd70f849dc1678a7cda9c2ad63eebd906371d56b
+        run: |
+          tmpfile=$(mktemp)
+          curl -fsSL "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" -o "$tmpfile"
+          echo "${YQ_SHA256}  ${tmpfile}" | sha256sum -c -
+          sudo install -m 0755 "$tmpfile" /usr/local/bin/yq
+          rm -f "$tmpfile"
+
+      - name: Checkout helm-charts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ env.HELM_REPO }}
+          token: ${{ steps.app-token.outputs.token }}
+          path: helm-charts
+          persist-credentials: false
+
+      - name: Resolve values file
+        id: values
+        working-directory: helm-charts
+        env:
+          CHART_DIR: ${{ env.CHART_DIR }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          HELM_REPO: ${{ env.HELM_REPO }}
+        run: |
+          FILE="${CHART_DIR}/values-${ENVIRONMENT}.yaml"
+          if [[ ! -f "$FILE" ]]; then
+            echo "::error::Values file $FILE not found in ${HELM_REPO}"
+            exit 1
+          fi
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Check for existing branch
+        id: check
+        working-directory: helm-charts
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          HELM_REPO: ${{ env.HELM_REPO }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          BRANCH="xy/${ENVIRONMENT}/${IMAGE_TAG}"
+          if git ls-remote --heads "https://x-access-token:${GH_TOKEN}@github.com/${HELM_REPO}.git" "$BRANCH" | grep -q .; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Branch $BRANCH already exists; skipping PR creation"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Create branch and update values
+        if: steps.check.outputs.exists != 'true'
+        working-directory: helm-charts
+        env:
+          BRANCH: ${{ steps.check.outputs.branch }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          VALUES_FILE: ${{ steps.values.outputs.file }}
+        run: |
+          git checkout -b "$BRANCH"
+          IMAGE_TAG="$IMAGE_TAG" yq -i '.apps.xy.frontend.image.tag = strenv(IMAGE_TAG)' "$VALUES_FILE"
+          IMAGE_TAG="$IMAGE_TAG" yq -i '.apps.xy.backend.image.tag = strenv(IMAGE_TAG)' "$VALUES_FILE"
+
+      - name: Commit and push
+        id: push
+        if: steps.check.outputs.exists != 'true'
+        working-directory: helm-charts
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ steps.check.outputs.branch }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          VALUES_FILE: ${{ steps.values.outputs.file }}
+          HELM_REPO: ${{ env.HELM_REPO }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$VALUES_FILE"
+          if git diff --staged --quiet; then
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::${VALUES_FILE} already uses ${IMAGE_TAG}; skipping PR creation"
+            exit 0
+          fi
+          git commit -m "[internal/xy ${ENVIRONMENT}] Update image to ${IMAGE_TAG}"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${HELM_REPO}.git" "HEAD:refs/heads/${BRANCH}"
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create PR body
+        if: steps.push.outputs.pushed == 'true'
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          VALUES_FILE: ${{ steps.values.outputs.file }}
+          FRONTEND_IMAGE: ${{ env.FRONTEND_IMAGE }}
+          BACKEND_IMAGE: ${{ env.BACKEND_IMAGE }}
+          REPO: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          {
+            echo "## XY docs image update (internal chart)"
+            echo ""
+            echo "**Environment:** \`${ENVIRONMENT}\`"
+            echo "**Values file:** \`${VALUES_FILE}\`"
+            echo "**Image tag:** \`${IMAGE_TAG}\`"
+            echo ""
+            echo "**Frontend:** \`${FRONTEND_IMAGE}:${IMAGE_TAG}\`"
+            echo "**Backend:** \`${BACKEND_IMAGE}:${IMAGE_TAG}\`"
+            echo ""
+            echo "Updates \`apps.xy.frontend.image.tag\` and \`apps.xy.backend.image.tag\`."
+            echo ""
+            echo "---"
+            echo "**Source commit:** https://github.com/${REPO}/commit/${SOURCE_REF}"
+            echo "**Workflow run:** ${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}"
+          } > /tmp/pr-body.md
+
+      - name: Create pull request
+        if: steps.push.outputs.pushed == 'true'
+        working-directory: helm-charts
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          HELM_REPO: ${{ env.HELM_REPO }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          BRANCH: ${{ steps.check.outputs.branch }}
+        run: |
+          gh pr create \
+            --repo "$HELM_REPO" \
+            --title "[internal/xy ${ENVIRONMENT}] Update image to ${IMAGE_TAG}" \
+            --body-file /tmp/pr-body.md \
+            --base main \
+            --head "$BRANCH"
+
+      - name: Merge pull request
+        if: steps.push.outputs.pushed == 'true' && inputs.auto_merge
+        working-directory: helm-charts
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          HELM_REPO: ${{ env.HELM_REPO }}
+          BRANCH: ${{ steps.check.outputs.branch }}
+        run: gh pr merge --repo "$HELM_REPO" --squash --admin "$BRANCH"
+
+      - name: Summary
+        if: steps.push.outputs.pushed == 'true'
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          VALUES_FILE: ${{ steps.values.outputs.file }}
+        run: |
+          {
+            echo "### XY docs Helm PR created"
+            echo ""
+            echo "**Environment:** ${ENVIRONMENT}"
+            echo "**Values file:** \`${VALUES_FILE}\`"
+            echo "**Image tag:** \`${IMAGE_TAG}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
