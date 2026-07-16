@@ -67,16 +67,19 @@ class ViewportRequest:
         *,
         require_area: bool = True,
     ) -> "ViewportRequest":
+        """Build a validated viewport from raw client window/screen values."""
         lo_x, hi_x, lo_y, hi_y = normalize_window(x0, x1, y0, y1, require_area=require_area)
         w, h = screen_shape(width, height)
         return cls(lo_x=lo_x, hi_x=hi_x, lo_y=lo_y, hi_y=hi_y, width=w, height=h)
 
     @property
     def x_range(self) -> tuple[float, float]:
+        """The x window as an ascending ``(lo, hi)``."""
         return (self.lo_x, self.hi_x)
 
     @property
     def y_range(self) -> tuple[float, float]:
+        """The y window as an ascending ``(lo, hi)``."""
         return (self.lo_y, self.hi_y)
 
 
@@ -100,6 +103,7 @@ class LodPlan:
     exact: bool
 
     def metadata(self) -> dict[str, Any]:
+        """The spec-recorded tier decision (§28: never silent)."""
         return {
             "mode": self.mode,
             "tier": self.tier,
@@ -122,6 +126,7 @@ class EncodedColumn:
 
     @property
     def length(self) -> int:
+        """Number of encoded values."""
         return int(len(self.values))
 
 
@@ -733,14 +738,17 @@ class BufferWriter:
         self.buffers: list[bytes] = []
 
     def add_f32(self, arr: np.ndarray) -> int:
+        """Append ``arr`` as a contiguous f32 buffer; returns its index."""
         self.buffers.append(np.ascontiguousarray(arr, dtype=np.float32).tobytes())
         return len(self.buffers) - 1
 
     def add_u8(self, arr: np.ndarray) -> int:
+        """Append ``arr`` as a flat u8 buffer; returns its index."""
         self.buffers.append(np.ascontiguousarray(arr, dtype=np.uint8).reshape(-1).tobytes())
         return len(self.buffers) - 1
 
     def add_raw(self, raw: bytes) -> int:
+        """Append pre-encoded bytes untouched; returns their index."""
         self.buffers.append(raw)
         return len(self.buffers) - 1
 

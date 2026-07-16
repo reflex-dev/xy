@@ -115,6 +115,16 @@ def test_hist_density_cumulative() -> None:
     assert _traces(ax)
 
 
+def test_hist_2d_array_draws_one_dataset_per_column() -> None:
+    # Regression: the `range` parameter shadowed builtins.range in the 2-D
+    # branch, so any (n, k) ndarray input crashed with a TypeError.
+    _fig, ax = plt.subplots()
+    counts, edges, _patches = ax.hist(np.random.default_rng(0).normal(size=(30, 3)), bins=4)
+    assert len(counts) == 3
+    assert all(np.asarray(c).sum() == 30 for c in counts)
+    assert len(edges) == 5
+
+
 def test_imshow_flips_origin_upper() -> None:
     _fig, ax = plt.subplots()
     z = np.array([[1.0, 2.0], [3.0, 4.0]])

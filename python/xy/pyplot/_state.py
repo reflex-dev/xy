@@ -6,10 +6,13 @@ activates, gcf/gca materialize on demand, close() forgets.
 
 from __future__ import annotations
 
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ._mplfig import Figure
 from ._rc import rcParams
+
+if TYPE_CHECKING:
+    from ._axes import Axes
 
 _figures: dict[int, Figure] = {}
 _current: Optional[int] = None
@@ -59,12 +62,12 @@ def gcf() -> Figure:
     return _figures[_current]
 
 
-def gca() -> Any:
+def gca() -> Axes:
     """The current axes of the current figure, creating both on demand."""
     return gcf().gca()
 
 
-def sca(ax: Any) -> None:
+def sca(ax: Axes) -> None:
     """Make ``ax`` (and its figure) current."""
     global _current
     fig = ax.figure if ax.figure is not None else gcf()

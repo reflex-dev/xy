@@ -42,6 +42,11 @@ from ._translate import (
     not_implemented,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping, Sequence
+
+    from .._typing import ArrayLike, ColorLike, ColorsLike, TableLike
+
 
 def _from_data(value: Any, data: Any) -> Any:
     if data is not None and isinstance(value, str):
@@ -515,12 +520,12 @@ class PlotTypeMixin:
 
     def hlines(
         self,
-        y: Any,
-        xmin: Any,
-        xmax: Any,
+        y: float | ArrayLike,
+        xmin: float | ArrayLike,
+        xmax: float | ArrayLike,
         colors: Any = None,
-        linestyles: Any = "solid",
-        label: Any = "",
+        linestyles: str = "solid",
+        label: str = "",
         **kwargs: Any,
     ) -> PolyCollection:
         """Horizontal line segments from ``xmin`` to ``xmax`` at each ``y``.
@@ -571,12 +576,12 @@ class PlotTypeMixin:
 
     def vlines(
         self,
-        x: Any,
-        ymin: Any,
-        ymax: Any,
-        colors: Any = None,
-        linestyles: Any = "solid",
-        label: Any = "",
+        x: float | ArrayLike,
+        ymin: float | ArrayLike,
+        ymax: float | ArrayLike,
+        colors: str | ColorsLike | None = None,
+        linestyles: str = "solid",
+        label: str = "",
         **kwargs: Any,
     ) -> PolyCollection:
         """Vertical line segments from ``ymin`` to ``ymax`` at each ``x``.
@@ -639,7 +644,9 @@ class PlotTypeMixin:
         )
         return PolyCollection(self, entry)
 
-    def broken_barh(self, xranges: Any, yrange: Any, **kwargs: Any) -> PolyCollection:
+    def broken_barh(
+        self, xranges: ArrayLike, yrange: tuple[float | str, float], **kwargs: Any
+    ) -> PolyCollection:
         """A sequence of horizontal bars at one vertical position.
 
         ``xranges`` is a sequence of ``(start, width)`` pairs and ``yrange`` a
@@ -689,7 +696,12 @@ class PlotTypeMixin:
         return PolyCollection(self, entry)
 
     def fill_betweenx(
-        self, y: Any, x1: Any, x2: Any = 0, where: Any = None, **kwargs: Any
+        self,
+        y: ArrayLike,
+        x1: float | ArrayLike,
+        x2: float | ArrayLike = 0,
+        where: ArrayLike | None = None,
+        **kwargs: Any,
     ) -> PolyCollection:
         """Fill the area between two vertical curves ``x1`` and ``x2``.
 
@@ -780,7 +792,7 @@ class PlotTypeMixin:
             )
         return PolyCollection(self, entries[0])
 
-    def fill(self, *args: Any, data: Any = None, **kwargs: Any) -> list[PolyCollection]:
+    def fill(self, *args: Any, data: TableLike = None, **kwargs: Any) -> list[PolyCollection]:
         """Draw filled polygons from ``x, y[, color]`` argument groups.
 
         Accepts matplotlib's repeated-group form ``fill(x1, y1, "b", x2, y2,
@@ -962,14 +974,14 @@ class PlotTypeMixin:
 
     def magnitude_spectrum(
         self,
-        x: Any,
+        x: ArrayLike,
         Fs: float = 2,
         Fc: float = 0,
         window: Any = None,
-        pad_to: Any = None,
-        sides: Any = None,
-        scale: Any = None,
-        data: Any = None,
+        pad_to: int | None = None,
+        sides: str | None = None,
+        scale: str | None = None,
+        data: TableLike = None,
         **kwargs: Any,
     ) -> tuple[np.ndarray, np.ndarray, Line2D]:
         """Plot the magnitude spectrum of ``x``.
@@ -1001,13 +1013,13 @@ class PlotTypeMixin:
 
     def angle_spectrum(
         self,
-        x: Any,
+        x: ArrayLike,
         Fs: float = 2,
         Fc: float = 0,
         window: Any = None,
-        pad_to: Any = None,
-        sides: Any = None,
-        data: Any = None,
+        pad_to: int | None = None,
+        sides: str | None = None,
+        data: TableLike = None,
         **kwargs: Any,
     ) -> tuple[np.ndarray, np.ndarray, Line2D]:
         """Plot the angle (wrapped phase) spectrum of ``x``.
@@ -1030,13 +1042,13 @@ class PlotTypeMixin:
 
     def phase_spectrum(
         self,
-        x: Any,
+        x: ArrayLike,
         Fs: float = 2,
         Fc: float = 0,
         window: Any = None,
-        pad_to: Any = None,
-        sides: Any = None,
-        data: Any = None,
+        pad_to: int | None = None,
+        sides: str | None = None,
+        data: TableLike = None,
         **kwargs: Any,
     ) -> tuple[np.ndarray, np.ndarray, Line2D]:
         """Plot the unwrapped phase spectrum of ``x``.
@@ -1061,11 +1073,11 @@ class PlotTypeMixin:
         self,
         heights: Any,
         *,
-        positions: Any = None,
+        positions: ArrayLike | None = None,
         group_spacing: float = 1.5,
         bar_spacing: float = 0,
-        tick_labels: Any = None,
-        labels: Any = None,
+        tick_labels: Sequence[str] | None = None,
+        labels: Sequence[str] | None = None,
         orientation: str = "vertical",
         colors: Any = None,
         **kwargs: Any,
@@ -1146,7 +1158,7 @@ class PlotTypeMixin:
     def bar_label(
         self,
         container: BarContainer,
-        labels: Any = None,
+        labels: Sequence[str] | None = None,
         *,
         fmt: Any = "%g",
         label_type: str = "edge",
@@ -1219,18 +1231,18 @@ class PlotTypeMixin:
 
     def psd(
         self,
-        x: Any,
+        x: ArrayLike,
         NFFT: int = 256,
         Fs: float = 2,
         Fc: float = 0,
         detrend: Any = None,
         window: Any = None,
         noverlap: int = 0,
-        pad_to: Any = None,
-        sides: Any = None,
-        scale_by_freq: Any = None,
-        return_line: Any = None,
-        data: Any = None,
+        pad_to: int | None = None,
+        sides: str | None = None,
+        scale_by_freq: bool | None = None,
+        return_line: bool | None = None,
+        data: TableLike = None,
         **kwargs: Any,
     ) -> Any:
         """Plot the power spectral density of ``x`` (Welch's method).
@@ -1263,19 +1275,19 @@ class PlotTypeMixin:
 
     def csd(
         self,
-        x: Any,
-        y: Any,
+        x: ArrayLike,
+        y: ArrayLike,
         NFFT: int = 256,
         Fs: float = 2,
         Fc: float = 0,
         detrend: Any = None,
         window: Any = None,
         noverlap: int = 0,
-        pad_to: Any = None,
-        sides: Any = None,
-        scale_by_freq: Any = None,
-        return_line: Any = None,
-        data: Any = None,
+        pad_to: int | None = None,
+        sides: str | None = None,
+        scale_by_freq: bool | None = None,
+        return_line: bool | None = None,
+        data: TableLike = None,
         **kwargs: Any,
     ) -> Any:
         """Plot the cross-spectral density of ``x`` and ``y``.
@@ -1310,18 +1322,18 @@ class PlotTypeMixin:
 
     def cohere(
         self,
-        x: Any,
-        y: Any,
+        x: ArrayLike,
+        y: ArrayLike,
         NFFT: int = 256,
         Fs: float = 2,
         Fc: float = 0,
         detrend: Any = None,
         window: Any = None,
         noverlap: int = 0,
-        pad_to: Any = None,
-        sides: Any = None,
-        scale_by_freq: Any = None,
-        data: Any = None,
+        pad_to: int | None = None,
+        sides: str | None = None,
+        scale_by_freq: bool | None = None,
+        data: TableLike = None,
         **kwargs: Any,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Plot the coherence between ``x`` and ``y``.
@@ -1354,7 +1366,7 @@ class PlotTypeMixin:
 
     def specgram(
         self,
-        x: Any,
+        x: ArrayLike,
         NFFT: int = 256,
         Fs: float = 2,
         Fc: float = 0,
@@ -1362,15 +1374,15 @@ class PlotTypeMixin:
         window: Any = None,
         noverlap: int = 128,
         cmap: Any = None,
-        xextent: Any = None,
-        pad_to: Any = None,
-        sides: Any = None,
-        scale_by_freq: Any = None,
-        mode: Any = None,
-        scale: Any = None,
-        vmin: Any = None,
-        vmax: Any = None,
-        data: Any = None,
+        xextent: tuple[float, float] | None = None,
+        pad_to: int | None = None,
+        sides: str | None = None,
+        scale_by_freq: bool | None = None,
+        mode: str | None = None,
+        scale: str | None = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
+        data: TableLike = None,
         **kwargs: Any,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, PolyCollection]:
         """Plot a spectrogram of ``x`` as a pseudocolor image.
@@ -1417,13 +1429,13 @@ class PlotTypeMixin:
 
     def xcorr(
         self,
-        x: Any,
-        y: Any,
+        x: ArrayLike,
+        y: ArrayLike,
         normed: bool = True,
-        detrend: Any = None,
+        detrend: Callable[[np.ndarray], ArrayLike] | None = None,
         usevlines: bool = True,
-        maxlags: Any = 10,
-        data: Any = None,
+        maxlags: int | None = 10,
+        data: TableLike = None,
         **kwargs: Any,
     ) -> tuple[np.ndarray, np.ndarray, Any, Any]:
         """Plot the cross-correlation of ``x`` and ``y`` per lag.
@@ -1463,7 +1475,7 @@ class PlotTypeMixin:
         baseline = self.axhline(0.0, color=chosen, linewidth=0.8)
         return lag, correlation, artist, baseline
 
-    def acorr(self, x: Any, **kwargs: Any) -> tuple[np.ndarray, np.ndarray, Any, Any]:
+    def acorr(self, x: ArrayLike, **kwargs: Any) -> tuple[np.ndarray, np.ndarray, Any, Any]:
         """Plot the autocorrelation of ``x`` (see ``xcorr`` for the keywords).
 
         Returns ``(lags, correlations, lines, baseline)``.
@@ -1473,13 +1485,13 @@ class PlotTypeMixin:
     def stem(
         self,
         *args: Any,
-        linefmt: Any = None,
-        markerfmt: Any = None,
-        basefmt: Any = None,
+        linefmt: str | None = None,
+        markerfmt: str | None = None,
+        basefmt: str | None = None,
         bottom: float = 0,
-        label: Any = None,
+        label: str | None = None,
         orientation: str = "vertical",
-        data: Any = None,
+        data: TableLike = None,
     ) -> StemContainer:
         """A stem plot: vertical lines from a baseline to markers at each y.
 
@@ -1564,13 +1576,13 @@ class PlotTypeMixin:
 
     def stairs(
         self,
-        values: Any,
-        edges: Any = None,
+        values: ArrayLike,
+        edges: ArrayLike | None = None,
         *,
         orientation: str = "vertical",
-        baseline: Any = 0,
+        baseline: float | ArrayLike | None = 0,
         fill: bool = False,
-        data: Any = None,
+        data: TableLike = None,
         **kwargs: Any,
     ) -> StepPatch:
         """A stepwise constant function as a line or filled patch.
@@ -1711,13 +1723,13 @@ class PlotTypeMixin:
 
     def ecdf(
         self,
-        x: Any,
-        weights: Any = None,
+        x: ArrayLike,
+        weights: ArrayLike | None = None,
         *,
         complementary: bool = False,
         orientation: str = "vertical",
         compress: bool = False,
-        data: Any = None,
+        data: TableLike = None,
         **kwargs: Any,
     ) -> Artist:
         """The empirical cumulative distribution function of ``x``.
@@ -1761,37 +1773,37 @@ class PlotTypeMixin:
 
     def boxplot(
         self,
-        x: Any,
+        x: ArrayLike,
         *,
-        notch: Any = None,
-        sym: Any = None,
-        vert: Any = None,
+        notch: bool | None = None,
+        sym: str | None = None,
+        vert: bool | None = None,
         orientation: str = "vertical",
-        whis: Any = None,
-        positions: Any = None,
-        widths: Any = None,
-        patch_artist: Any = None,
-        bootstrap: Any = None,
+        whis: float | tuple[float, float] | None = None,
+        positions: ArrayLike | None = None,
+        widths: float | ArrayLike | None = None,
+        patch_artist: bool | None = None,
+        bootstrap: int | None = None,
         usermedians: Any = None,
         conf_intervals: Any = None,
-        meanline: Any = None,
-        showmeans: Any = None,
-        showcaps: Any = None,
-        showbox: Any = None,
-        showfliers: Any = None,
-        boxprops: Any = None,
-        tick_labels: Any = None,
-        flierprops: Any = None,
-        medianprops: Any = None,
-        meanprops: Any = None,
-        capprops: Any = None,
-        whiskerprops: Any = None,
+        meanline: bool | None = None,
+        showmeans: bool | None = None,
+        showcaps: bool | None = None,
+        showbox: bool | None = None,
+        showfliers: bool | None = None,
+        boxprops: Mapping[str, Any] | None = None,
+        tick_labels: Sequence[str] | None = None,
+        flierprops: Mapping[str, Any] | None = None,
+        medianprops: Mapping[str, Any] | None = None,
+        meanprops: Mapping[str, Any] | None = None,
+        capprops: Mapping[str, Any] | None = None,
+        whiskerprops: Mapping[str, Any] | None = None,
         manage_ticks: bool = True,
         autorange: bool = False,
-        zorder: Any = None,
-        capwidths: Any = None,
-        label: Any = None,
-        data: Any = None,
+        zorder: float | None = None,
+        capwidths: float | ArrayLike | None = None,
+        label: str | None = None,
+        data: TableLike = None,
     ) -> dict[str, list[Artist]]:
         """Box-and-whisker plots of one dataset or a sequence of datasets.
 
@@ -1965,10 +1977,10 @@ class PlotTypeMixin:
 
     def violinplot(
         self,
-        dataset: Any,
-        positions: Any = None,
+        dataset: ArrayLike,
+        positions: ArrayLike | None = None,
         *,
-        vert: Any = None,
+        vert: bool | None = None,
         orientation: str = "vertical",
         widths: float = 0.5,
         showmeans: bool = False,
@@ -1978,9 +1990,9 @@ class PlotTypeMixin:
         points: int = 100,
         bw_method: Any = None,
         side: str = "both",
-        facecolor: Any = None,
-        linecolor: Any = None,
-        data: Any = None,
+        facecolor: ColorLike | None = None,
+        linecolor: ColorLike | None = None,
+        data: TableLike = None,
     ) -> dict[str, Any]:
         """Violin plots (kernel density estimates) of one or more datasets.
 
@@ -2122,24 +2134,24 @@ class PlotTypeMixin:
 
     def errorbar(
         self,
-        x: Any,
-        y: Any,
-        yerr: Any = None,
-        xerr: Any = None,
+        x: ArrayLike,
+        y: ArrayLike,
+        yerr: float | ArrayLike | None = None,
+        xerr: float | ArrayLike | None = None,
         fmt: str = "",
         *,
-        ecolor: Any = None,
-        elinewidth: Any = None,
-        capsize: Any = None,
+        ecolor: ColorLike | None = None,
+        elinewidth: float | None = None,
+        capsize: float | None = None,
         barsabove: bool = False,
-        lolims: Any = False,
-        uplims: Any = False,
-        xlolims: Any = False,
-        xuplims: Any = False,
+        lolims: bool | ArrayLike = False,
+        uplims: bool | ArrayLike = False,
+        xlolims: bool | ArrayLike = False,
+        xuplims: bool | ArrayLike = False,
         errorevery: Any = 1,
-        capthick: Any = None,
-        elinestyle: Any = None,
-        data: Any = None,
+        capthick: float | None = None,
+        elinestyle: str | None = None,
+        data: TableLike = None,
         **kwargs: Any,
     ) -> ErrorbarContainer:
         """Plot ``y`` versus ``x`` with error bars.
@@ -2243,27 +2255,27 @@ class PlotTypeMixin:
 
     def hexbin(
         self,
-        x: Any,
-        y: Any,
-        C: Any = None,
+        x: ArrayLike,
+        y: ArrayLike,
+        C: ArrayLike | None = None,
         *,
-        gridsize: Any = 100,
-        bins: Any = None,
+        gridsize: int | tuple[int, int] = 100,
+        bins: str | None = None,
         xscale: str = "linear",
         yscale: str = "linear",
-        extent: Any = None,
+        extent: tuple[float, float, float, float] | None = None,
         cmap: Any = None,
         norm: Any = None,
-        vmin: Any = None,
-        vmax: Any = None,
-        alpha: Any = None,
-        linewidths: Any = None,
-        edgecolors: Any = "face",
-        reduce_C_function: Any = np.mean,
-        mincnt: Any = None,
+        vmin: float | None = None,
+        vmax: float | None = None,
+        alpha: float | None = None,
+        linewidths: float | None = None,
+        edgecolors: str | None = "face",
+        reduce_C_function: Callable[..., Any] = np.mean,
+        mincnt: int | None = None,
         marginals: bool = False,
         colorizer: Any = None,
-        data: Any = None,
+        data: TableLike = None,
         **kwargs: Any,
     ) -> PathCollection:
         """A hexagonal binning plot of ``x``/``y`` point density.
@@ -2544,7 +2556,7 @@ class PlotTypeMixin:
                     )
         return ContourSet(self, entry)
 
-    def contour(self, *args: Any, data: Any = None, **kwargs: Any) -> ContourSet:
+    def contour(self, *args: Any, data: TableLike = None, **kwargs: Any) -> ContourSet:
         """Contour lines of a 2-D array.
 
         Call as ``contour(Z)``, ``contour(X, Y, Z)``, or with a trailing
@@ -2555,7 +2567,7 @@ class PlotTypeMixin:
         """
         return self._contour(False, tuple(_from_data(value, data) for value in args), kwargs)
 
-    def contourf(self, *args: Any, data: Any = None, **kwargs: Any) -> ContourSet:
+    def contourf(self, *args: Any, data: TableLike = None, **kwargs: Any) -> ContourSet:
         """Filled contours of a 2-D array (same call forms as ``contour``).
 
         Accepts the ``contour`` keywords; ``hatches`` fills bands with
@@ -2567,9 +2579,9 @@ class PlotTypeMixin:
     def clabel(
         self,
         CS: ContourSet,
-        levels: Any = None,
+        levels: ArrayLike | None = None,
         *,
-        fontsize: Any = None,
+        fontsize: float | str | None = None,
         inline: bool = True,
         inline_spacing: float = 5,
         fmt: Any = None,
@@ -2577,7 +2589,7 @@ class PlotTypeMixin:
         use_clabeltext: bool = False,
         manual: Any = False,
         rightside_up: bool = True,
-        zorder: Any = None,
+        zorder: float | None = None,
     ) -> list[Text]:
         """Label contour levels without exposing contour semantics to core."""
         del (
@@ -2671,11 +2683,11 @@ class PlotTypeMixin:
 
     def bxp(
         self,
-        bxpstats: Any,
-        positions: Any = None,
+        bxpstats: Sequence[Mapping[str, Any]],
+        positions: ArrayLike | None = None,
         *,
-        widths: Any = None,
-        vert: Any = None,
+        widths: float | ArrayLike | None = None,
+        vert: bool | None = None,
         orientation: str = "vertical",
         patch_artist: bool = False,
         shownotches: bool = False,
@@ -2683,17 +2695,17 @@ class PlotTypeMixin:
         showcaps: bool = True,
         showbox: bool = True,
         showfliers: bool = True,
-        boxprops: Any = None,
-        whiskerprops: Any = None,
-        flierprops: Any = None,
-        medianprops: Any = None,
-        capprops: Any = None,
-        meanprops: Any = None,
+        boxprops: Mapping[str, Any] | None = None,
+        whiskerprops: Mapping[str, Any] | None = None,
+        flierprops: Mapping[str, Any] | None = None,
+        medianprops: Mapping[str, Any] | None = None,
+        capprops: Mapping[str, Any] | None = None,
+        meanprops: Mapping[str, Any] | None = None,
         meanline: bool = False,
         manage_ticks: bool = True,
-        zorder: Any = None,
-        capwidths: Any = None,
-        label: Any = None,
+        zorder: float | None = None,
+        capwidths: float | ArrayLike | None = None,
+        label: str | None = None,
     ) -> dict[str, list[Artist]]:
         """Draw exact precomputed box geometry with generic segment/scatter marks."""
         if patch_artist:
@@ -2905,18 +2917,18 @@ class PlotTypeMixin:
 
     def violin(
         self,
-        vpstats: Any,
-        positions: Any = None,
+        vpstats: Sequence[Mapping[str, Any]],
+        positions: ArrayLike | None = None,
         *,
-        vert: Any = None,
+        vert: bool | None = None,
         orientation: str = "vertical",
-        widths: Any = 0.5,
+        widths: float | ArrayLike = 0.5,
         showmeans: bool = False,
         showextrema: bool = True,
         showmedians: bool = False,
         side: str = "both",
-        facecolor: Any = None,
-        linecolor: Any = None,
+        facecolor: ColorLike | None = None,
+        linecolor: ColorLike | None = None,
     ) -> dict[str, Any]:
         """Draw violin bodies from precomputed coordinates and densities."""
         stats = list(vpstats)
@@ -3040,16 +3052,16 @@ class PlotTypeMixin:
 
     def hist2d(
         self,
-        x: Any,
-        y: Any,
+        x: ArrayLike,
+        y: ArrayLike,
         bins: Any = 10,
         *,
-        range: Any = None,  # noqa: A002 - Matplotlib signature
+        range: tuple[tuple[float, float], tuple[float, float]] | None = None,  # noqa: A002 - Matplotlib signature
         density: bool = False,
-        weights: Any = None,
-        cmin: Any = None,
-        cmax: Any = None,
-        data: Any = None,
+        weights: ArrayLike | None = None,
+        cmin: float | None = None,
+        cmax: float | None = None,
+        data: TableLike = None,
         **kwargs: Any,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, PolyCollection]:
         """A 2-D histogram of ``x``/``y`` rendered as a pseudocolor mesh.
@@ -3164,16 +3176,16 @@ class PlotTypeMixin:
 
     def eventplot(
         self,
-        positions: Any,
+        positions: ArrayLike,
         *,
         orientation: str = "horizontal",
-        lineoffsets: Any = 1,
-        linelengths: Any = 1,
-        linewidths: Any = None,
-        colors: Any = None,
-        alpha: Any = None,
-        linestyles: Any = "solid",
-        data: Any = None,
+        lineoffsets: float | ArrayLike = 1,
+        linelengths: float | ArrayLike = 1,
+        linewidths: float | ArrayLike | None = None,
+        colors: ColorsLike | None = None,
+        alpha: float | None = None,
+        linestyles: str | Sequence[str] = "solid",
+        data: TableLike = None,
         **kwargs: Any,
     ) -> list[PolyCollection]:
         """Plot identical parallel event lines at the given positions.
@@ -3257,12 +3269,12 @@ class PlotTypeMixin:
 
     def stackplot(
         self,
-        x: Any,
+        x: ArrayLike,
         *args: Any,
-        labels: Any = (),
+        labels: Sequence[str] = (),
         colors: Any = None,
         baseline: str = "zero",
-        data: Any = None,
+        data: TableLike = None,
         **kwargs: Any,
     ) -> list[PolyCollection]:
         """Stack areas using native lower/upper-bound computation."""
@@ -3436,7 +3448,7 @@ class PlotTypeMixin:
         """
         return self.pcolormesh(*args, **kwargs)
 
-    def matshow(self, z: Any, **kwargs: Any) -> Any:
+    def matshow(self, z: ArrayLike, **kwargs: Any) -> Any:
         """Display a matrix with ticks on top, as matplotlib's ``matshow``.
 
         Accepts the ``imshow`` keywords (``cmap``, ``vmin``/``vmax``,
@@ -3453,10 +3465,10 @@ class PlotTypeMixin:
     def spy(
         self,
         z: Any,
-        precision: Any = 0,
-        marker: Any = None,
-        markersize: Any = None,
-        aspect: Any = "equal",
+        precision: float | str = 0,
+        marker: str | None = None,
+        markersize: float | None = None,
+        aspect: str = "equal",
         origin: str = "upper",
         **kwargs: Any,
     ) -> Any:
@@ -3500,26 +3512,26 @@ class PlotTypeMixin:
 
     def pie(
         self,
-        x: Any,
-        explode: Any = None,
-        labels: Any = None,
+        x: ArrayLike,
+        explode: ArrayLike | None = None,
+        labels: Sequence[str] | None = None,
         colors: Any = None,
         autopct: Any = None,
         pctdistance: float = 0.6,
-        shadow: Any = False,
-        labeldistance: Any = 1.1,
+        shadow: bool = False,
+        labeldistance: float | None = 1.1,
         startangle: float = 0,
         radius: float = 1,
         counterclock: bool = True,
-        wedgeprops: Any = None,
-        textprops: Any = None,
+        wedgeprops: Mapping[str, Any] | None = None,
+        textprops: Mapping[str, Any] | None = None,
         center: tuple[float, float] = (0, 0),
         frame: bool = False,
         rotatelabels: bool = False,
         normalize: bool = True,
-        hatch: Any = None,
+        hatch: str | Sequence[str] | None = None,
         *,
-        data: Any = None,
+        data: TableLike = None,
     ) -> Any:
         """A pie chart of the values in ``x``.
 
@@ -3663,10 +3675,10 @@ class PlotTypeMixin:
     def pie_label(
         self,
         container: PieContainer,
-        labels: Any,
+        labels: str | Sequence[str],
         *,
         distance: float = 0.6,
-        textprops: Any = None,
+        textprops: Mapping[str, Any] | None = None,
         rotate: bool = False,
         alignment: str = "auto",
     ) -> list[Text]:
@@ -3715,18 +3727,18 @@ class PlotTypeMixin:
 
     def table(
         self,
-        cellText: Any = None,
+        cellText: Sequence[Sequence[str]] | None = None,
         cellColours: Any = None,
         cellLoc: str = "right",
-        colWidths: Any = None,
-        rowLabels: Any = None,
-        rowColours: Any = None,
+        colWidths: Sequence[float] | None = None,
+        rowLabels: Sequence[str] | None = None,
+        rowColours: Sequence[ColorLike] | None = None,
         rowLoc: str = "left",
-        colLabels: Any = None,
-        colColours: Any = None,
+        colLabels: Sequence[str] | None = None,
+        colColours: Sequence[ColorLike] | None = None,
         colLoc: str = "center",
         loc: str = "bottom",
-        bbox: Any = None,
+        bbox: tuple[float, float, float, float] | None = None,
         edges: str = "closed",
         **kwargs: Any,
     ) -> Table:
@@ -3871,10 +3883,10 @@ class PlotTypeMixin:
     def tripcolor(
         self,
         *args: Any,
-        triangles: Any = None,
-        facecolors: Any = None,
+        triangles: ArrayLike | None = None,
+        facecolors: ArrayLike | None = None,
         shading: str = "flat",
-        data: Any = None,
+        data: TableLike = None,
         **kwargs: Any,
     ) -> PolyCollection:
         """A pseudocolor plot over an unstructured triangular grid.
@@ -3947,7 +3959,7 @@ class PlotTypeMixin:
         return PolyCollection(self, entry)
 
     def triplot(
-        self, *args: Any, triangles: Any = None, data: Any = None, **kwargs: Any
+        self, *args: Any, triangles: ArrayLike | None = None, data: TableLike = None, **kwargs: Any
     ) -> list[Line2D]:
         """Draw the edges of an unstructured triangular grid.
 
@@ -4323,7 +4335,7 @@ class PlotTypeMixin:
         )
         return PolyCollection(self, entry)
 
-    def quiver(self, *args: Any, data: Any = None, **kwargs: Any) -> PolyCollection:
+    def quiver(self, *args: Any, data: TableLike = None, **kwargs: Any) -> PolyCollection:
         """A field of arrows: ``quiver(U, V)`` or ``quiver(X, Y, U, V[, C])``.
 
         Supported keywords: ``color``, ``alpha``, ``width``/``linewidth``,
@@ -4336,7 +4348,7 @@ class PlotTypeMixin:
             tuple(_from_data(value, data) for value in args), kwargs, "quiver"
         )
 
-    def barbs(self, *args: Any, data: Any = None, **kwargs: Any) -> PolyCollection:
+    def barbs(self, *args: Any, data: TableLike = None, **kwargs: Any) -> PolyCollection:
         """A field of wind barbs: ``barbs(U, V)`` or ``barbs(X, Y, U, V[, C])``.
 
         Accepts the ``quiver`` field keywords (``color``, ``alpha``,
@@ -4432,21 +4444,21 @@ class PlotTypeMixin:
 
     def streamplot(
         self,
-        x: Any,
-        y: Any,
-        u: Any,
-        v: Any,
-        density: Any = 1,
-        linewidth: Any = None,
-        color: Any = None,
+        x: ArrayLike,
+        y: ArrayLike,
+        u: ArrayLike,
+        v: ArrayLike,
+        density: float | ArrayLike = 1,
+        linewidth: float | ArrayLike | None = None,
+        color: str | ArrayLike | None = None,
         cmap: Any = None,
         norm: Any = None,
         arrowsize: float = 1,
         arrowstyle: str = "-|>",
         minlength: float = 0.1,
         transform: Any = None,
-        zorder: Any = None,
-        start_points: Any = None,
+        zorder: float | None = None,
+        start_points: ArrayLike | None = None,
         maxlength: float = 4.0,
         integration_direction: str = "both",
         broken_streamlines: bool = True,
@@ -4454,7 +4466,7 @@ class PlotTypeMixin:
         integration_max_error_scale: float = 1.0,
         *,
         num_arrows: int = 1,
-        data: Any = None,
+        data: TableLike = None,
     ) -> StreamplotSet:
         """Streamlines of the vector field ``(u, v)`` on the grid ``(x, y)``.
 

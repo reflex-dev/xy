@@ -14,7 +14,7 @@ import copy
 from contextlib import suppress
 from datetime import datetime, timedelta
 from itertools import pairwise
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import numpy as np
 
@@ -47,6 +47,11 @@ from ._translate import (
     marker_size_to_scatter_size,
     not_implemented,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator, Sequence
+
+    from .._typing import ArrayLike, ColorLike, ColorsLike, LimitsLike, Scalar
 
 # matplotlib's default look: white panel, no grid until grid(True).
 _MPL_THEME_TOKENS = {
@@ -338,7 +343,7 @@ class SecondaryAxis:
         self._ticks: Optional[np.ndarray] = None
         self._tick_labels: Optional[list[str]] = None
 
-    def set_xlabel(self, label: Any, **kwargs: Any) -> "SecondaryAxis":
+    def set_xlabel(self, label: str, **kwargs: Any) -> "SecondaryAxis":
         if self._axis != "x":
             raise AttributeError("secondary y axes use set_ylabel()")
         if kwargs:
@@ -347,7 +352,7 @@ class SecondaryAxis:
         self._parent._invalidate()
         return self
 
-    def set_ylabel(self, label: Any, **kwargs: Any) -> "SecondaryAxis":
+    def set_ylabel(self, label: str, **kwargs: Any) -> "SecondaryAxis":
         if self._axis != "y":
             raise AttributeError("secondary x axes use set_xlabel()")
         if kwargs:
@@ -356,7 +361,9 @@ class SecondaryAxis:
         self._parent._invalidate()
         return self
 
-    def set_ticks(self, ticks: Any, labels: Any = None, **kwargs: Any) -> None:
+    def set_ticks(
+        self, ticks: ArrayLike, labels: Sequence[str] | None = None, **kwargs: Any
+    ) -> None:
         check_unsupported(kwargs, "secondary-axis set_ticks()")
         self._ticks = np.asarray(ticks, dtype=float)
         self._tick_labels = None
@@ -412,12 +419,12 @@ class _TickLabel:
     def get_text(self) -> str:
         return self._text
 
-    def set_color(self, color: Any) -> None:
+    def set_color(self, color: ColorLike) -> None:
         style = self._axes._axis_props(self._axis).setdefault("style", {})
         style["tick_label_color"] = resolve_color(color)
         self._axes._invalidate()
 
-    def set_rotation(self, angle: Any) -> None:
+    def set_rotation(self, angle: float) -> None:
         self._axes._axis_props(self._axis)["tick_label_angle"] = float(angle)
         self._axes._invalidate()
 
@@ -432,11 +439,11 @@ class _SharedAxesGroup:
         fig = getattr(ax, "figure", None)
         return list(fig._axes) if fig is not None else [ax]
 
-    def get_siblings(self, ax: Any) -> list[Any]:
+    def get_siblings(self, ax: Axes) -> list[Any]:
         props = ax._axis_props(self._axis)
         return [a for a in self._pool(ax) if a._axis_props(self._axis) is props] or [ax]
 
-    def joined(self, a: Any, b: Any) -> bool:
+    def joined(self, a: Axes, b: Axes) -> bool:
         return a._axis_props(self._axis) is b._axis_props(self._axis)
 
     def join(self, *axes_list: Any) -> None:
@@ -470,7 +477,7 @@ class _SpineProxy:
     def items(self) -> list[tuple[str, "_SpineProxy"]]:
         return [(name, _SpineProxy(self.axes, (name,))) for name in self.names]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(self.names)
 
     def set_visible(self, visible: bool) -> None:
@@ -1114,7 +1121,12 @@ class Axes(PlotTypeMixin):
         return handle
 
     def scatter(
-        self, x: Any, y: Any, s: Any = None, c: Any = None, **kwargs: Any
+        self,
+        x: ArrayLike,
+        y: ArrayLike,
+        s: float | ArrayLike | None = None,
+        c: ColorsLike | None = None,
+        **kwargs: Any,
     ) -> PathCollection:
         """A scatter plot of ``y`` versus ``x``.
 
@@ -1280,7 +1292,12 @@ class Axes(PlotTypeMixin):
         return artist
 
     def bar(
-        self, x: Any, height: Any, width: float = 0.8, bottom: Any = None, **kwargs: Any
+        self,
+        x: float | ArrayLike,
+        height: float | ArrayLike,
+        width: float = 0.8,
+        bottom: float | ArrayLike | None = None,
+        **kwargs: Any,
     ) -> BarContainer:
         """Vertical bars of the given ``height`` at positions ``x``.
 
@@ -1295,7 +1312,12 @@ class Axes(PlotTypeMixin):
         return self._bar_like(x, height, width, bottom, "vertical", kwargs)
 
     def barh(
-        self, y: Any, width: Any, height: float = 0.8, left: Any = None, **kwargs: Any
+        self,
+        y: float | ArrayLike,
+        width: float | ArrayLike,
+        height: float = 0.8,
+        left: float | ArrayLike | None = None,
+        **kwargs: Any,
     ) -> BarContainer:
         """Horizontal bars of the given ``width`` at positions ``y``.
 
@@ -1447,7 +1469,7 @@ class Axes(PlotTypeMixin):
     def hist(
         self,
         x: Any,
-        bins: Any = 10,
+        bins: int | ArrayLike | str = 10,
         range: Any = None,  # noqa: A002 - matplotlib's own signature
         density: bool = False,
         cumulative: bool = False,
@@ -1489,12 +1511,13 @@ class Axes(PlotTypeMixin):
             # object array: boxing every element just to sniff the input shape
             # is an O(n) cost per build (tests/pyplot/test_perf_guardrail.py).
             datasets = [np.asarray(x, dtype=np.float64)]
+        elif isinstance(x, np.ndarray) and x.ndim == 2:
+            # NB: iterate columns via .T — `range` here is the bin-range parameter.
+            datasets = [np.asarray(column, dtype=np.float64) for column in x.T]
         else:
             raw = np.asarray(x, dtype=object)
             if raw.ndim == 1 and (len(raw) == 0 or np.isscalar(raw[0])):
                 datasets = [np.asarray(x, dtype=np.float64)]
-            elif isinstance(x, np.ndarray) and x.ndim == 2:
-                datasets = [np.asarray(x[:, i], dtype=np.float64) for i in range(x.shape[1])]
             else:
                 datasets = [np.asarray(values, dtype=np.float64) for values in x]
         if isinstance(bins, (int, np.integer)) and not isinstance(bins, bool):
@@ -1662,7 +1685,9 @@ class Axes(PlotTypeMixin):
             (containers[0] if len(containers) == 1 else containers),
         )
 
-    def fill_between(self, x: Any, y1: Any, y2: Any = 0.0, **kwargs: Any) -> PolyCollection:
+    def fill_between(
+        self, x: ArrayLike, y1: float | ArrayLike, y2: float | ArrayLike = 0.0, **kwargs: Any
+    ) -> PolyCollection:
         """Fill the area between two horizontal curves ``y1`` and ``y2``.
 
         Supported keywords: ``where`` masks the fill to a boolean condition
@@ -1824,7 +1849,7 @@ class Axes(PlotTypeMixin):
             )
         return PolyCollection(self, entries[0])
 
-    def imshow(self, z: Any, cmap: Any = None, **kwargs: Any) -> AxesImage:
+    def imshow(self, z: ArrayLike, cmap: Any = None, **kwargs: Any) -> AxesImage:
         """Display a 2-D scalar array or RGB(A) image.
 
         ``z`` is ``(M, N)`` scalar data mapped through ``cmap`` or an
@@ -2094,7 +2119,7 @@ class Axes(PlotTypeMixin):
             image.set_clip_path(clip_path)
         return image
 
-    def step(self, x: Any, y: Any, *args: Any, **kwargs: Any) -> list[Line2D]:
+    def step(self, x: ArrayLike, y: ArrayLike, *args: Any, **kwargs: Any) -> list[Line2D]:
         """A step plot of ``y`` versus ``x``.
 
         ``where`` places the step transition at ``"pre"`` (default),
@@ -2207,7 +2232,12 @@ class Axes(PlotTypeMixin):
         return self._add(f"@{kind}", {"args": args, "kwargs": akw})
 
     def text(
-        self, x: Any, y: Any, s: str, fontdict: Optional[dict[str, Any]] = None, **kwargs: Any
+        self,
+        x: Scalar | str | datetime,
+        y: Scalar | str | datetime,
+        s: str,
+        fontdict: Optional[dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> Text:
         """Place text at data coordinates ``(x, y)``.
 
@@ -2474,7 +2504,7 @@ class Axes(PlotTypeMixin):
         self._invalidate()
         return self
 
-    def set_xlim(self, left: Any = None, right: Any = None) -> None:
+    def set_xlim(self, left: float | LimitsLike | None = None, right: float | None = None) -> None:
         """Set the x view limits.
 
         Call as ``set_xlim(left, right)`` or ``set_xlim((left, right))``;
@@ -2507,7 +2537,7 @@ class Axes(PlotTypeMixin):
         )
         return (hi, lo) if self._axis_props("x").get("reverse") else (lo, hi)
 
-    def set_ylim(self, bottom: Any = None, top: Any = None) -> None:
+    def set_ylim(self, bottom: float | LimitsLike | None = None, top: float | None = None) -> None:
         """Set the y view limits (forms as in `set_xlim`).
 
         A descending ``(bottom, top)`` pair inverts the axis; on a twin axes
@@ -2545,7 +2575,7 @@ class Axes(PlotTypeMixin):
         del original  # compat-noop: shim axes have no active/original position split
         return Bbox.from_bounds(*(self._figure_rect or (0.125, 0.11, 0.775, 0.77)))
 
-    def set_position(self, position: Any) -> None:
+    def set_position(self, position: Bbox | tuple[float, float, float, float]) -> None:
         """Place the axes at a figure-fraction rectangle.
 
         ``position`` is ``[left, bottom, width, height]`` (a Bbox-like with
@@ -2658,7 +2688,9 @@ class Axes(PlotTypeMixin):
         pad = span * margin if span > 0 else abs(lo) * margin or margin
         return lo - pad, hi + pad
 
-    def axis(self, arg: Any = None, **kwargs: Any) -> tuple[float, float, float, float]:
+    def axis(
+        self, arg: str | bool | tuple[float, float, float, float] | None = None, **kwargs: Any
+    ) -> tuple[float, float, float, float]:
         """Get or set axis properties in one call.
 
         ``axis()`` returns ``(xmin, xmax, ymin, ymax)``; ``axis((xmin, xmax,
@@ -2743,7 +2775,7 @@ class Axes(PlotTypeMixin):
         y0, y1 = self.get_ylim()
         return float(x0), float(x1), float(y0), float(y1)
 
-    def set_aspect(self, aspect: Any, **kwargs: Any) -> None:
+    def set_aspect(self, aspect: str | float, **kwargs: Any) -> None:
         """Set the data aspect ratio: ``"equal"``/``1`` or ``"auto"``.
 
         ``adjustable`` is ``"box"`` (resize the axes rectangle) or
@@ -2857,7 +2889,9 @@ class Axes(PlotTypeMixin):
         """The x bounds as a ``(lower, upper)`` pair (see `get_xlim`)."""
         return self.get_xlim()
 
-    def set_xbound(self, lower: Any = None, upper: Any = None) -> None:
+    def set_xbound(
+        self, lower: float | LimitsLike | None = None, upper: float | None = None
+    ) -> None:
         """Set the x bounds via `set_xlim`.
 
         Accepts ``set_xbound(lower, upper)`` or a single ``(lower, upper)``
@@ -2874,7 +2908,9 @@ class Axes(PlotTypeMixin):
         """The y bounds as a ``(lower, upper)`` pair (see `get_ylim`)."""
         return self.get_ylim()
 
-    def set_ybound(self, lower: Any = None, upper: Any = None) -> None:
+    def set_ybound(
+        self, lower: float | LimitsLike | None = None, upper: float | None = None
+    ) -> None:
         """Set the y bounds via `set_ylim` (forms as in `set_xbound`)."""
         if isinstance(lower, (tuple, list)):
             lower, upper = lower
@@ -2951,7 +2987,7 @@ class Axes(PlotTypeMixin):
         """The y-axis proxy (the same object as ``ax.yaxis``)."""
         return self.yaxis
 
-    def get_figure(self, root: Any = None) -> Any:
+    def get_figure(self, root: bool | None = None) -> Any:
         """The owning figure (``root`` is a compat-noop)."""
         del root  # compat-noop: no nested subfigures; both roots are self.figure
         return self.figure
@@ -2983,7 +3019,7 @@ class Axes(PlotTypeMixin):
             labels = [f"{value:g}" for value in self._computed_ticks(axis, False)]
         return [_TickLabel(self, axis, str(text)) for text in labels]
 
-    def set_facecolor(self, color: Any) -> None:
+    def set_facecolor(self, color: ColorLike) -> None:
         """Set the plot-panel background color."""
         resolved = resolve_color(color)
         if resolved is not None:
@@ -2994,7 +3030,7 @@ class Axes(PlotTypeMixin):
         """The plot-panel background color."""
         return self._theme_tokens.get("plot_background")
 
-    def set_axisbelow(self, b: Any) -> None:
+    def set_axisbelow(self, b: bool) -> None:
         """Accept ``set_axisbelow(True)``; any other order raises loudly.
 
         The engine always composites grid lines beneath data marks, which is
@@ -3064,7 +3100,7 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def secondary_xaxis(
-        self, location: Any = "top", functions: Any = None, *, transform: Any = None
+        self, location: str | float = "top", functions: Any = None, *, transform: Any = None
     ) -> SecondaryAxis:
         """Add a linked, tick-only secondary x-axis.
 
@@ -3081,7 +3117,7 @@ class Axes(PlotTypeMixin):
         return made
 
     def secondary_yaxis(
-        self, location: Any = "right", functions: Any = None, *, transform: Any = None
+        self, location: str | float = "right", functions: Any = None, *, transform: Any = None
     ) -> SecondaryAxis:
         """Add a linked, tick-only secondary y-axis.
 
@@ -3168,7 +3204,9 @@ class Axes(PlotTypeMixin):
         self.xaxis.set_visible(False)
         self.yaxis.set_visible(False)
 
-    def inset_axes(self, bounds: Any, **kwargs: Any) -> "Axes":
+    def inset_axes(
+        self, bounds: tuple[float, float, float, float] | Sequence[float], **kwargs: Any
+    ) -> "Axes":
         """Add a child inset axes.
 
         ``bounds`` is ``(left, bottom, width, height)`` in parent-axes
@@ -3193,7 +3231,9 @@ class Axes(PlotTypeMixin):
         parent_x = self._axis["x"].get("domain", self._entry_extent("x"))
         parent_y = self._axis["y"].get("domain", self._entry_extent("y"))
 
-        def mapper(source: tuple[float, float], target: tuple[float, float]):
+        def mapper(
+            source: tuple[float, float], target: tuple[float, float]
+        ) -> Callable[[Any], np.ndarray]:
             scale = (target[1] - target[0]) / ((source[1] - source[0]) or 1.0)
             return lambda value: target[0] + (np.asarray(value, dtype=float) - source[0]) * scale
 
@@ -3723,7 +3763,12 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def set_xticks(
-        self, ticks: Any, labels: Any = None, *, rotation: Any = None, **kwargs: Any
+        self,
+        ticks: ArrayLike | None,
+        labels: Sequence[str] | None = None,
+        *,
+        rotation: float | None = None,
+        **kwargs: Any,
     ) -> None:
         """Place the x ticks at the given positions, optionally relabeled.
 
@@ -3761,7 +3806,12 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def set_yticks(
-        self, ticks: Any, labels: Any = None, *, rotation: Any = None, **kwargs: Any
+        self,
+        ticks: ArrayLike | None,
+        labels: Sequence[str] | None = None,
+        *,
+        rotation: float | None = None,
+        **kwargs: Any,
     ) -> None:
         """Place the y ticks at the given positions (see `set_xticks`)."""
         if kwargs.pop("minor", False):
@@ -3834,7 +3884,7 @@ class Axes(PlotTypeMixin):
             return np.asarray(_log_ticks(float(lo), float(hi))[0], dtype=float)
         return np.asarray(_linear_ticks(float(lo), float(hi))[0], dtype=float)
 
-    def set_anchor(self, anchor: Any) -> None:
+    def set_anchor(self, anchor: str | Literal[False]) -> None:
         """Anchor the axes box within its allotted space.
 
         ``anchor`` is a compass code (``"C"``, ``"SW"``, ``"S"``, ``"SE"``,
@@ -3850,7 +3900,7 @@ class Axes(PlotTypeMixin):
         self._anchor = normalized
         self._invalidate()
 
-    def locator_params(self, axis: str = "both", nbins: Any = None, **kwargs: Any) -> None:
+    def locator_params(self, axis: str = "both", nbins: int | None = None, **kwargs: Any) -> None:
         """Control tick density: ``nbins`` caps the tick count per axis.
 
         ``axis`` selects ``"x"``/``"y"``/``"both"``; other keywords are
@@ -4043,7 +4093,7 @@ class Axes(PlotTypeMixin):
             options["style"] = style
         return options
 
-    def grid(self, visible: Any = True, **kwargs: Any) -> None:
+    def grid(self, visible: bool | None = True, **kwargs: Any) -> None:
         """Toggle and style the grid.
 
         ``visible=None`` toggles the current state; ``which`` must be
