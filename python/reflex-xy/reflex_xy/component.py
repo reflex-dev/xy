@@ -1,4 +1,16 @@
-"""The Reflex component: `reflex_xy.chart(State.figure_var, ...)`.
+"""The Reflex component: `reflex_xy.chart(...)`.
+
+One factory, three chart sources (docs/design/reflex-integration.md §5):
+
+    reflex_xy.chart(Dash.chart)            # @reflex_xy.figure state var (live)
+    reflex_xy.chart(some_token_string)     # register()/inline() token (live)
+    reflex_xy.chart(fc.scatter_chart(...)) # a Chart directly (static tier)
+
+A live source compiles to the `token` prop and rides the shared-websocket
+data plane. A `xy` Chart (or internal Figure) passed directly is
+compiled to a static payload asset (payload_asset.py) and lands in the
+`src` prop: the wrapper fetches the binary frame and runs the render client
+kernel-less — no registry, no socket, works under `reflex export`.
 
 The wrapper React component lives in `assets/XYChart.jsx` and is shipped as
 a shared asset (the same mechanism reflex's own radix color-mode provider
@@ -7,7 +19,7 @@ compiling app's `assets/` directory, so the component class is only built
 the first time a chart is actually placed in a page tree.
 
 Semantic events cross the normal Reflex event system as small JSON —
-row dicts and selection summaries, never data buffers (§2 of the design):
+row dicts and selection summaries, never data buffers (§1 of the design):
 
     reflex_xy.chart(
         Dash.chart,
@@ -17,6 +29,10 @@ row dicts and selection summaries, never data buffers (§2 of the design):
         on_view_change=Dash.viewed,    # def viewed(self, view: dict)
         height="480px",
     )
+
+Semantic events need the kernel, so they apply to live sources; a static
+chart renders, pans/zooms, and resolves hover tooltips client-side but
+dispatches no backend events.
 """
 
 from __future__ import annotations
@@ -26,6 +42,7 @@ from typing import Any, Optional
 import reflex as rx
 
 from .assets import WRAPPER_TAG, register
+from .payload_asset import payload_asset
 
 __all__ = ["chart"]
 
@@ -38,17 +55,22 @@ def _build_component_cls() -> Any:
     wrapper_library = register()
 
     class XYChart(rx.Component):
-        """A xy figure bound to a registry token."""
+        """A xy figure bound to a registry token or a static payload."""
 
         # The shared-asset module path ($/public/external/reflex_xy/assets/…):
         # a local-JS library, never sent to the package manager.
         library = wrapper_library
         tag = WRAPPER_TAG
 
-        # The figure token minted by @reflex_xy.figure (or register()).
+        # Live mode: the figure token minted by @reflex_xy.figure /
+        # register() / inline(). Exactly one of token/src is ever set.
         token: rx.Var[str]
+        # Static mode: URL of a payload asset (XYBF frame) to render
+        # kernel-less.
+        src: rx.Var[str]
 
-        # Semantic events out (small JSON by construction — §2).
+        # Semantic events out (small JSON by construction — §1). Live mode
+        # only; the static tier has no kernel to resolve rows.
         on_point_hover: rx.EventHandler[lambda row: [row]]
         on_point_click: rx.EventHandler[lambda row: [row]]
         on_select_end: rx.EventHandler[lambda selection: [selection]]
@@ -62,9 +84,20 @@ def _build_component_cls() -> Any:
     return XYChart
 
 
-def chart(token: Any, **props: Any) -> Any:
-    """Place a xy chart bound to `token` (a `@reflex_xy.figure` var
-    or a `reflex_xy.register()` token string).
+def _is_chart_like(source: Any) -> bool:
+    """A public `xy.Chart` (has .figure()) or an internal Figure."""
+    return callable(getattr(source, "figure", None)) or callable(
+        getattr(source, "build_payload", None)
+    )
+
+
+def chart(source: Any, **props: Any) -> Any:
+    """Place a xy chart.
+
+    `source` is a figure token (a `@reflex_xy.figure` state var, or a
+    `register()`/`inline()` token string) for a live, kernel-backed chart —
+    or a `xy` Chart/Figure directly, which renders as a static
+    payload asset with client-side interactivity only (see module doc).
 
     Sizing: the outer element defaults to `width: 100%` and a 420px height;
     pass `width=`/`height=` (or any style prop) to override. Charts built
@@ -75,4 +108,14 @@ def chart(token: Any, **props: Any) -> Any:
         _component_cls = _build_component_cls()
     props.setdefault("width", "100%")
     props.setdefault("height", "420px")
-    return _component_cls.create(token=token, **props)
+    if isinstance(source, (str, rx.Var)):
+        props["token"] = source
+    elif _is_chart_like(source):
+        props["src"] = payload_asset(source)
+    else:
+        msg = (
+            "reflex_xy.chart() takes a figure token (state var or string) or a "
+            f"xy Chart/Figure, got {type(source).__name__}"
+        )
+        raise TypeError(msg)
+    return _component_cls.create(**props)

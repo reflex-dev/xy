@@ -185,6 +185,18 @@ class Probe:
                 urls.extend(e.get("url", "") for e in events)
         return [u for u in urls if "/_event" in u or "/_xy" in u]
 
+    def sent_ws_frames(self, needle: str) -> list[str]:
+        """Payloads of sent websocket frames containing `needle`."""
+        self.eval("1")
+        out: list[str] = []
+        for (sid, method), events in self.s._events.items():
+            if sid == self.sid and method == "Network.webSocketFrameSent":
+                for e in events:
+                    data = e.get("response", {}).get("payloadData", "")
+                    if needle in data:
+                        out.append(data)
+        return out
+
     def screenshot(self) -> bytes:
         shot = self._call(
             "Page.captureScreenshot",
@@ -229,11 +241,11 @@ def main() -> None:
     with ChromiumSession(chromium, gl="software", sandbox=False) as session:
         probe = Probe(session, args.frontend)
 
-        # 1) all three charts mount live views fed by socket payloads
+        # 1) all four charts mount live views (three socket-fed, one static)
         probe.wait_for(
-            "window.__xy_views && window.__xy_views.size >= 3",
+            "window.__xy_views && window.__xy_views.size >= 4",
             timeout_s=120.0,
-            label="3 mounted chart views",
+            label="4 mounted chart views",
         )
         print("mounted views:", probe.eval("Array.from(window.__xy_views.keys()).sort()"))
 
@@ -244,11 +256,19 @@ def main() -> None:
         if len(ws) != 1:
             failures.append(f"expected exactly 1 backend websocket (shared transport), got {ws}")
 
+        # 2b) the direct-Chart mount is truly static: it never subscribed —
+        #     exactly one sub per live chart, none mentioning the inline one
+        subs = probe.sent_ws_frames('"sub"')
+        print(f"sub frames sent: {len(subs)}")
+        if len(subs) != 3:
+            failures.append(f"expected 3 sub frames (live charts only), got {len(subs)}")
+
         # 3) pixels: every chart paints ink inside its rect (full-page shot,
         #    rects in page coordinates so below-the-fold charts count too)
         time.sleep(1.0)
         png = probe.screenshot()
-        for chart_id, min_ink in (("cloud", 0.02), ("hist", 0.02), ("live", 0.005)):
+        checks = (("cloud", 0.02), ("hist", 0.02), ("live", 0.005), ("inline", 0.005))
+        for chart_id, min_ink in checks:
             frac = ink_fraction(png, probe.rect(chart_id, page_coords=True), 1.0)
             print(f"{chart_id}: ink fraction {frac:.2%}")
             if frac < min_ink:

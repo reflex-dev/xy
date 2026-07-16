@@ -75,6 +75,38 @@ pixels.
 Streaming: `reflex_xy.append(token, x=[...], y=[...])` from any handler or
 background task pushes an incremental update over the same socket.
 
+## Fixed-data charts
+
+For a chart that doesn't depend on state, skip the state var entirely —
+pass the Chart straight in:
+
+```python
+def index() -> rx.Component:
+    return reflex_xy.chart(
+        fc.line_chart(fc.line(t, np.sin(t)), width="100%", height=220),
+        height="220px",
+    )
+```
+
+That compiles the figure to a content-addressed binary asset at page build
+and renders it with **zero backend involvement** — client-side hover,
+pan/zoom, and density re-bin, same as `Figure.to_html()` exports; works
+under `reflex export`. When a fixed chart still needs kernel round-trips
+(deep drilldown into millions of points), register it once at module scope
+instead:
+
+```python
+cloud = reflex_xy.inline(fc.scatter_chart(fc.scatter(x, y)))  # module scope
+
+def index() -> rx.Component:
+    return reflex_xy.chart(cloud, height="460px")
+```
+
+`inline()` tokens are content-addressed, so every backend worker derives
+the same one — no state, no coordination. The escalation path is:
+direct Chart (static) → `inline()` (fixed data, live kernel) →
+`@reflex_xy.figure` (per-session, state-driven).
+
 ## Demo
 
 `examples/demo_app/` in this directory is a runnable dashboard (drilldown

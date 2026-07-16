@@ -123,6 +123,21 @@ class Demo(rx.State):
             await asyncio.sleep(0.25)
 
 
+def sparkline_chart() -> fc.Chart:
+    """A fixed chart passed *directly* to reflex_xy.chart(): compiled to a
+    static payload asset at page build — no token, no registry, no socket."""
+    t = np.linspace(0.0, 6.0 * np.pi, 4000)
+    decay = np.exp(-t / 9.0)
+    return fc.line_chart(
+        fc.line(t, np.sin(t) * decay, name="signal"),
+        fc.line(t, decay, name="envelope"),
+        fc.x_axis(label="t"),
+        title="static payload (no backend)",
+        width="100%",
+        height=220,
+    )
+
+
 def hover_readout() -> rx.Component:
     return rx.hstack(
         rx.badge("hover"),
@@ -175,6 +190,8 @@ def index() -> rx.Component:
                 ),
                 width="100%",
             ),
+            # A Chart object passed directly: static payload tier, zero backend.
+            reflex_xy.chart(sparkline_chart(), height="220px", id="inline"),
             spacing="4",
             width="100%",
         ),

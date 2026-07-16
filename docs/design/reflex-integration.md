@@ -201,13 +201,48 @@ never-registered token of your *own* session materializes a default-state
 figure — indistinguishable from loading the page fresh, and gated by the
 same affinity check.
 
-### 3.4 Imperative tier
+### 3.4 Fixed-data tiers: direct Charts and `inline()`
 
-`reflex_xy.register(chart) -> "xyfig-<uuid>"` / `release(token)` keep the
-old draft's explicit API for figures that aren't state-derived (ad-hoc
-exploration, tests). Opaque tokens rely on unguessability (same trust model
-as the client token itself), are **not** rebuildable, and die with the
-process or the TTL sweep — documented as the dev tier, not deployment-safe.
+Not every chart derives from state. Two tiers cover fixed data, chosen by
+whether the kernel still matters:
+
+**Static payload tier — pass the Chart straight to the component.**
+`reflex_xy.chart(fc.scatter_chart(...))` compiles the figure to its
+first-paint payload at page build, writes it into the app's `assets/xy/` as
+one content-addressed XYBF frame (`<digest>.xyf` — the §3.2 framing's
+natural home), and hands the wrapper a `src` URL instead of a token. The
+wrapper fetches the static file and runs the render client **kernel-less**:
+the exact `renderStandalone` semantics of `Figure.to_html()` exports —
+client-side hover from retained columns, pan/zoom, worker-based density
+re-bin — with no registry entry, no subscription, no backend coupling at
+all. Deployment story is airtight by construction: page bodies run in the
+process that compiles the frontend, *before* the compiler copies `assets/`
+into the web build, so the file ships with every compile — including
+`reflex export` static hosting, where this tier keeps working with no
+backend running. Content addressing makes writes idempotent across workers
+and recompiles (prod workers re-evaluate stateful pages but skip writing,
+mirroring `rx.asset`'s backend-only guard) and makes the browser cache
+correct for free. What this tier gives up, deliberately: kernel round-trips
+(deep drilldown past the shipped tiers, exact server picks, streaming) and
+semantic events.
+
+**`inline()` — fixed data that still wants the kernel.**
+`token = reflex_xy.inline(chart)` at **module scope** registers the figure
+under a content-addressed token (`xyin-<digest>`): every backend worker
+independently derives the same token when it imports the app module, so the
+token baked into the compiled frontend resolves on any worker with no state
+and no rebuild hook. Module scope is the load-bearing requirement — page
+bodies only run where the frontend compiles, module bodies run everywhere.
+Entries are **pinned** (exempt from the TTL sweep) because no rebuild
+recipe exists. Shared by design: one figure serves every viewer, so
+kernel-side drill state is shared too — same shape as N notebook views of
+one widget. Per-viewer data or isolation belongs in `@reflex_xy.figure`.
+
+**`register()` — the dev tier.** `reflex_xy.register(chart) ->
+"xyfig-<uuid>"` / `release(token)` keep the old draft's explicit API for
+ad-hoc exploration and tests. Opaque uuid tokens rely on unguessability
+(same trust model as the client token itself), are **not** rebuildable and
+not stable across workers — documented as dev-only, not deployment-safe.
 
 ### 3.5 Lifecycle
 
@@ -237,12 +272,21 @@ absorbs newer publishes and always ships the latest payload.
 
 ```python
 reflex_xy.chart(
-    Dash.cloud,                      # the figure var (or a register() token)
+    Dash.cloud,                      # a figure var / inline() / register() token…
     on_point_hover=Dash.on_hover,    # semantic events -> normal handlers
     on_select_end=Dash.on_select,
     height="460px",
 )
+
+reflex_xy.chart(fc.line_chart(...))  # …or a Chart directly: static tier (§3.4)
 ```
+
+One factory, dispatched on the source: tokens (state vars or strings)
+compile to the `token` prop and ride the socket data plane; a Chart/Figure
+passed directly compiles to a payload asset and lands in the `src` prop,
+which the wrapper fetches and renders kernel-less. Semantic-event props
+apply to live sources; a static chart resolves hover tooltips client-side
+but dispatches no backend events.
 
 `chart()` is a plain `rx.Component` whose `library` is a **local JSX shared
 asset** (`$/public/external/reflex_xy/assets/XYChart.jsx`, the same
@@ -290,15 +334,22 @@ python/reflex-xy/
   reflex_xy/namespace.py     XYNamespace: sub/unsub/msg, payload/msg/err,
                              affinity, rebuild-on-miss, binary attachments
   reflex_xy/app.py           setup(app), XYPlugin (post_compile), lifespan
-  reflex_xy/component.py     chart() -> rx.Component (local-JSX library)
+  reflex_xy/component.py     chart() -> rx.Component (local-JSX library);
+                             dispatches token (live) vs Chart (static tier)
+  reflex_xy/payload_asset.py static tier: Chart -> content-addressed XYBF
+                             asset in assets/xy/ (§3.4)
   reflex_xy/assets/          XYChart.jsx + xy_client.js (build artifact)
-  examples/demo_app/         1M-point drilldown + hover + cross-filter + stream
-tests/reflex_adapter/        54+ tests: token/registry/var/bridge units,
-                             component compile, and a real-websocket
+  examples/demo_app/         1M-point drilldown + hover + cross-filter +
+                             stream + a direct-Chart static payload
+tests/reflex_adapter/        65 tests: token/registry/var/bridge/payload-asset
+                             units, component compile, and a real-websocket
                              integration suite (uvicorn + socketio client)
                              covering payload/pick/select/affinity/rebuild/
                              publish-broadcast/append/unsub
 ```
+
+`inline()` (content-addressed pinned tokens, §3.4) lives in the package
+root beside `register()`/`release()`.
 
 `xy` itself stays Reflex-free (CLAUDE.md rule); the adapter depends on
 `xy` + full `reflex` for now — the 0.9.6 `reflex-base` split covers
@@ -323,6 +374,12 @@ message protocol is transport-agnostic either way.
 
 - **Payload push sizing**: room-wide refreshes use the figure's default
   `px_width`; per-sid re-fit to each viewport is a straightforward follow-up.
+- **Static tier px baseline**: payload assets build at the fluid default
+  (2048 px) like `to_html()` exports; decimated line tiers cannot re-refine
+  without a kernel, so extreme upscaling shows the export tier's limits.
+  Orphaned `assets/xy/*.xyf` digests accumulate under changing data until
+  manually cleared; a compile-time sweep of unreferenced digests is a
+  possible follow-up.
 - **Chunked payload emission** if head-of-line blocking ever shows up in
   traces (§1).
 - **Server-side event dispatch** (kernel callbacks → `app.event_processor`)

@@ -1,8 +1,10 @@
 # reflex-xy demo
 
 One page exercising the whole integration: a 1M-point drillable density
-scatter, hover row readout, box-select cross-filtering a histogram, and a
-live streaming line — all chart data on the app's own websocket.
+scatter, hover row readout, box-select cross-filtering a histogram, a live
+streaming line — all chart data on the app's own websocket — plus a static
+chart passed directly as a `fc.Chart` (compiled to a payload asset, no
+backend involvement at all).
 
 ```bash
 # from the xy repo root

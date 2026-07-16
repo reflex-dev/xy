@@ -1,5 +1,6 @@
 .states
 assets/external/
+assets/xy/
 .web
 *.db
 __pycache__/

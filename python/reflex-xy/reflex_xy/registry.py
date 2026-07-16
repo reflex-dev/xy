@@ -48,6 +48,10 @@ class FigureEntry:
     # Serializes kernel calls per figure; concurrent figures still
     # parallelize (the kernels release the GIL on the Rust side).
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Pinned entries are exempt from the TTL sweep: figures with no rebuild
+    # recipe elsewhere (module-level `inline()` charts) live as long as the
+    # process, or a sweep would break them permanently after idling.
+    pinned: bool = False
 
     def touch(self) -> None:
         self.last_access = time.monotonic()
@@ -95,7 +99,9 @@ class FigureRegistry:
                 entry.touch()
             return entry
 
-    def publish(self, token: str, figure: "Figure", *, broadcast: bool = True) -> FigureEntry:
+    def publish(
+        self, token: str, figure: "Figure", *, broadcast: bool = True, pinned: bool = False
+    ) -> FigureEntry:
         """Insert or replace a figure under `token` and bump its version.
 
         Re-publishing the same Figure object is a no-op version-wise unless
@@ -105,7 +111,7 @@ class FigureRegistry:
         with self._mutex:
             entry = self._entries.get(token)
             if entry is None:
-                entry = FigureEntry(figure=figure, token=token)
+                entry = FigureEntry(figure=figure, token=token, pinned=pinned)
                 self._entries[token] = entry
                 changed = True
             else:
@@ -113,6 +119,7 @@ class FigureRegistry:
                 if changed:
                     entry.figure = figure
                     entry.version += 1
+                entry.pinned = entry.pinned or pinned
                 entry.touch()
         if broadcast and changed:
             # Re-publishing the identical object means nothing moved; a new
@@ -239,12 +246,12 @@ class FigureRegistry:
     # -- TTL sweep -----------------------------------------------------------
 
     def sweep(self, *, now: Optional[float] = None) -> list[str]:
-        """Drop entries idle past the TTL; returns the dropped tokens."""
+        """Drop unpinned entries idle past the TTL; returns dropped tokens."""
         now = time.monotonic() if now is None else now
         dropped: list[str] = []
         with self._mutex:
             for token, entry in list(self._entries.items()):
-                if now - entry.last_access > self._ttl:
+                if not entry.pinned and now - entry.last_access > self._ttl:
                     del self._entries[token]
                     dropped.append(token)
         return dropped

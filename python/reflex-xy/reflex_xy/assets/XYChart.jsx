@@ -1,18 +1,26 @@
 // XYChart: mount a xy figure inside a Reflex app.
 //
-// Transport (docs/design/reflex-integration.md): this component does NOT open
-// its own connection. socket.io multiplexing reuses the app's engine.io
-// websocket when the manager options match, so `xySocket()` below constructs
-// its `/_xy` namespace socket with exactly the options Reflex's own
-// `connect()` uses (`$/utils/state`). Whichever side runs first creates the
-// shared manager; the other rides it. One TCP connection carries app state
-// and chart data — same lifecycle, same auth surface, same proxy config.
+// Two modes, one prop apart (docs/design/reflex-integration.md):
 //
-// Data protocol (namespace.py):
+// `token` (live) — this component does NOT open its own connection.
+// socket.io multiplexing reuses the app's engine.io websocket when the
+// manager options match, so `xySocket()` below constructs its `/_xy`
+// namespace socket with exactly the options Reflex's own `connect()` uses
+// (`$/utils/state`). Whichever side runs first creates the shared manager;
+// the other rides it. One TCP connection carries app state and chart data —
+// same lifecycle, same auth surface, same proxy config.
+//
+// Live data protocol (namespace.py):
 //   out:  sub {fig, px, mid} | unsub {fig, mid} | msg {fig, mid, m}
 //   in:   payload {fig, version, spec, buffers} — buffers are ArrayBuffers
 //         msg {fig, mid?, message, buffers}     — replies carry our mid
 //         err {fig, error}
+//
+// `src` (static) — the payload was compiled ahead of time into a binary
+// XYBF asset (payload_asset.py). Fetch it, decode the frame, and run the
+// render client kernel-less: renderStandalone retains CPU columns so hover
+// resolves locally, and density traces refine via the bundled worker. No
+// socket, no backend — works under `reflex export`.
 //
 // The chart client itself is the same ESM bundle notebooks use (a byte-exact
 // sibling copy, ./xy_client.js). Its `comm` seam is fed from socket events;
@@ -27,7 +35,7 @@ import io from "socket.io-client";
 import env from "$/env.json";
 import reflexEnvironment from "$/reflex.json";
 import { getBackendURL, getToken } from "$/utils/state";
-import { ChartView } from "./xy_client.js";
+import { ChartView, decodeFrame, renderStandalone } from "./xy_client.js";
 
 // Opt-in console tracing: localStorage.setItem("xy_debug", "1")
 const DEBUG = globalThis.localStorage?.getItem?.("xy_debug") === "1";
@@ -71,6 +79,7 @@ let nextMountId = 1;
 export function XYChart(props) {
   const {
     token,
+    src,
     onPointHover,
     onPointClick,
     onSelectEnd,
@@ -79,15 +88,50 @@ export function XYChart(props) {
     ...divProps
   } = props;
   const elRef = useRef(null);
-  dbg("render", { id: divProps.id, tokenType: typeof token, token: String(token).slice(0, 30) });
+  dbg("render", { id: divProps.id, token: String(token).slice(0, 30), src });
   // Live callback refs so socket handlers never close over stale props.
   const cbRef = useRef({});
   cbRef.current = { onPointHover, onPointClick, onSelectEnd, onViewChange };
 
+  // Static mode: fetch the payload asset, render kernel-less.
+  useEffect(() => {
+    const el = elRef.current;
+    if (!src || !el) return undefined;
+    const key = el.id || `src:${src}`;
+    let view = null;
+    let cancelled = false;
+    fetch(src)
+      .then((resp) => {
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        return resp.arrayBuffer();
+      })
+      .then((body) => {
+        if (cancelled) return;
+        const frame = decodeFrame(body);
+        el.replaceChildren();
+        // Same call the static HTML export makes: spec + one packed blob
+        // span, comm = null → local hover columns + worker density re-bin.
+        view = renderStandalone(el, frame.message, frame.buffers[0]);
+        (window.__xy_views ||= new Map()).set(key, view);
+        dbg("static payload mounted", { src, bytes: body.byteLength });
+      })
+      .catch((err) => {
+        if (!cancelled) console.warn(`xy: static payload failed for ${src}`, err);
+      });
+    return () => {
+      cancelled = true;
+      if (view) view.destroy();
+      view = null;
+      window.__xy_views?.delete(key);
+      el.replaceChildren();
+    };
+  }, [src]);
+
+  // Live mode: subscribe on the shared websocket.
   useEffect(() => {
     const el = elRef.current;
     dbg("effect run", { token: token && token.slice(0, 24), hasEl: !!el });
-    if (!token || !el) return undefined;
+    if (!token || src || !el) return undefined;
     const socket = xySocket();
     const mid = `m${nextMountId++}`;
     let view = null;
@@ -216,7 +260,7 @@ export function XYChart(props) {
       window.__xy_views?.delete(el.id || mid);
       el.replaceChildren();
     };
-  }, [token]);
+  }, [token, src]);
 
   // One DOM node, two consumers: our mount logic and reflex's ref registry.
   const mergedRef = (node) => {

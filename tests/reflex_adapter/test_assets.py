@@ -36,6 +36,11 @@ def test_wrapper_speaks_the_namespace_protocol():
     assert "new Uint8Array(b)" in jsx
     # the wrapper imports the sibling client copy, not a CDN or npm package
     assert 'from "./xy_client.js"' in jsx
+    # static tier: fetch the payload asset, decode the XYBF frame, render
+    # kernel-less via the same entry point static HTML exports use
+    assert "decodeFrame" in jsx
+    assert "renderStandalone(el, frame.message, frame.buffers[0])" in jsx
+    assert "fetch(src)" in jsx
 
 
 def test_wrapper_mirrors_reflex_connection_options():

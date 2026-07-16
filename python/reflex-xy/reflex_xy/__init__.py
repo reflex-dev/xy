@@ -39,6 +39,8 @@ Quickstart::
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from .app import XYPlugin, append, setup
@@ -56,6 +58,7 @@ __all__ = [
     "append",
     "chart",
     "figure",
+    "inline",
     "register",
     "registry",
     "release",
@@ -73,6 +76,39 @@ def register(chart_or_figure: Any) -> str:
     `@reflex_xy.figure` for anything long-lived (see the module doc).
     """
     return registry.register(_figure_of(chart_or_figure))
+
+
+def inline(chart_or_figure: Any) -> str:
+    """Register a fixed, kernel-backed chart at module scope; returns its token.
+
+    For charts whose data never changes but which still want server-side
+    drilldown/picks on the shared websocket. Call at **module scope** so the
+    registration side effect runs in every backend worker (page bodies only
+    run where the frontend compiles)::
+
+        cloud = reflex_xy.inline(fc.scatter_chart(fc.scatter(x, y)))
+
+        def index():
+            return reflex_xy.chart(cloud, height="460px")
+
+    The token is content-addressed — every worker independently derives the
+    same one, so the frontend's baked-in token resolves everywhere without
+    state or rebuild hooks. The entry is pinned (exempt from the TTL sweep):
+    there is no recipe to rebuild it from, so it lives with the process.
+
+    Shared by design: one figure object serves every viewer, so kernel-side
+    drill state is shared too (like N notebook views of one widget). Data
+    depending on who's looking belongs in `@reflex_xy.figure`; data needing
+    no kernel at all can be passed straight to `reflex_xy.chart()` (static
+    payload tier).
+    """
+    fig = _figure_of(chart_or_figure)
+    spec, blob = fig.build_payload()
+    canonical = json.dumps(spec, sort_keys=True, separators=(",", ":")).encode()
+    digest = hashlib.sha256(canonical + blob).hexdigest()[:20]
+    token = f"xyin-{digest}"
+    registry.publish(token, fig, broadcast=False, pinned=True)
+    return token
 
 
 def release(token: str) -> None:
