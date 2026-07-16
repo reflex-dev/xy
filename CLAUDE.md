@@ -37,7 +37,9 @@ code comments cite dossier sections (e.g. §16 = deep-zoom re-centering).
   data rides the app's own websocket as a second socket.io namespace;
   figures live in a per-process registry rebuilt from Reflex state on miss.
   Depends on `xy` + `reflex`; `xy` itself must never import
-  reflex. Its `assets/xy_client.js` is a build artifact of `js/build.mjs`.
+  reflex. The render client is linked out of the installed `xy`
+  package at app compile (no second copy to drift), and the adapter stays
+  out of the root `xy` sdist (`scripts/verify_sdist.py` enforces it).
   Tests: `tests/reflex_adapter/` (skip unless reflex installed).
 - `js/src/*.js` — the render client as ordered parts (concat order in
   `js/build.mjs`; exports live only in `60_entries.js`), one dependency-free ES

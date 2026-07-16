@@ -55,7 +55,11 @@ include = [
     ".github/workflows/ci.yml",
     ".github/workflows/codspeed.yml",
     ".github/workflows/release.yml",
-    "python",
+    # The xy package only — python/reflex-xy is its own distributable
+    # (own pyproject, depends on reflex) and must not ride in this sdist;
+    # scripts/verify_sdist.py enforces both the no-reflex-dependency rule
+    # and the ban on its reflex.lock frontend pins.
+    "python/xy",
     "src",
     "js/src",
     "benchmarks",
@@ -89,6 +93,12 @@ exclude = [
     "/node_modules/**",
     "/target/**",
     "/dist/**",
+    # Adapter tests ship with the reflex-xy package's repo checkout, not
+    # with the xy sdist (whose package they can't exercise anyway).
+    "/tests/reflex_adapter/**",
+    # Belt and braces for the include narrowing above: hatchling auto-admits
+    # readme-named files, which would smuggle adapter docs back in.
+    "/python/reflex-xy/**",
 ]
 
 [tool.ruff]

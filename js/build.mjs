@@ -225,17 +225,14 @@ const exportTail = markerLineEnd < 0 ? "" : src.slice(markerLineEnd + 1);
 const iife = `(() => {\n${body}\nwindow.xy = { render, renderStandalone, decodeFrame, ChartView, MARK_KINDS, markOf };\n})();\n`;
 new Function(iife);
 
-// The Reflex adapter ships the identical ESM client as a bundler-visible
-// shared asset (docs/design/reflex-integration.md §5): one renderer for
-// notebooks, static export, and Reflex. Emitted here so the copies can
-// never drift — the --check mode and tests/reflex_xy/test_assets.py both
-// fail on a stale copy.
-const reflexAssetsDir = join(here, "..", "python", "reflex-xy", "reflex_xy", "assets");
+// The Reflex adapter serves this same ESM client — but from the *installed*
+// xy package (reflex_xy links xy/static/index.js at app compile), so
+// there is no second copy to drift. One renderer for notebooks, static
+// export, and Reflex.
 const esm = body + "\n" + exportTail.trimStart();
 const outputs = [
   [outDir, "index.js", esm],
   [outDir, "standalone.js", iife],
-  [reflexAssetsDir, "xy_client.js", esm],
 ];
 
 if (checkOnly) {
@@ -253,7 +250,7 @@ if (checkOnly) {
   }
   if (stale.length) {
     console.error(
-      `static JS bundle check failed: ${stale.join(", ")}. Run \`node js/build.mjs\` and commit python/xy/static/*.js + python/reflex-xy/reflex_xy/assets/xy_client.js.`
+      `static JS bundle check failed: ${stale.join(", ")}. Run \`node js/build.mjs\` and commit python/xy/static/*.js.`
     );
     process.exit(1);
   }
@@ -263,5 +260,5 @@ if (checkOnly) {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, name), data);
   }
-  console.log(`built static/index.js, static/standalone.js, and reflex_xy assets from ${PARTS.length} parts`);
+  console.log(`built static/index.js and static/standalone.js from ${PARTS.length} parts`);
 }

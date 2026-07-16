@@ -31,9 +31,7 @@ Repository = "https://github.com/reflex-dev/xy"
 
 [tool.hatch.build.targets.wheel]
 packages = ["reflex_xy"]
-
-[tool.hatch.build.targets.wheel.force-include]
-# The render client is a build artifact synced from the xy repo
-# (node js/build.mjs); ship whatever is committed here.
-"reflex_xy/assets/xy_client.js" = "reflex_xy/assets/xy_client.js"
-"reflex_xy/assets/XYChart.jsx" = "reflex_xy/assets/XYChart.jsx"
+# reflex_xy/assets/XYChart.jsx ships as ordinary package data; the render
+# client is NOT packaged — it links out of the installed xy wheel at
+# app compile time (see reflex_xy/assets/__init__.py), so it can never
+# drift from the kernel that produces its payloads.

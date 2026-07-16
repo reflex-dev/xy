@@ -1,23 +1,50 @@
-"""Shipped frontend assets: parity with the canonical bundle + wrapper contract."""
+"""Shipped frontend assets: client sourced from the xy install + wrapper contract."""
 
 from __future__ import annotations
 
 import pathlib
 
 import reflex_xy
+from reflex_xy.assets import _client_source, _link_client
+
+import xy
 
 ADAPTER_ASSETS = pathlib.Path(reflex_xy.__file__).parent / "assets"
-CANONICAL = pathlib.Path(__file__).resolve().parents[2] / "python" / "xy" / "static"
 
 
-def test_client_copy_matches_canonical_bundle():
-    """xy_client.js is a build artifact: byte-identical to static/index.js.
+def test_client_is_not_packaged():
+    """No second copy of the render client exists to drift: the adapter links
+    the installed xy bundle at app compile time."""
+    assert not (ADAPTER_ASSETS / "xy_client.js").exists()
 
-    On drift: run `node js/build.mjs` and commit both copies.
-    """
-    adapter = (ADAPTER_ASSETS / "xy_client.js").read_bytes()
-    canonical = (CANONICAL / "index.js").read_bytes()
-    assert adapter == canonical
+
+def test_client_source_is_the_installed_bundle():
+    source = _client_source()
+    assert source == pathlib.Path(xy.__file__).resolve().parent / "static" / "index.js"
+    text = source.read_text(encoding="utf-8")
+    for marker in ("function renderStandalone(", "function decodeFrame(", "class ChartView"):
+        assert marker in text
+
+
+def test_link_client_creates_and_repairs(tmp_path):
+    asset_root = tmp_path / "assets"
+    _link_client(asset_root)
+    dst = asset_root / "external" / "reflex_xy" / "assets" / "xy_client.js"
+    assert dst.is_symlink()
+    assert dst.resolve() == _client_source()
+
+    # idempotent
+    _link_client(asset_root)
+    assert dst.resolve() == _client_source()
+
+    # a stale link (xy reinstalled elsewhere, venv moved) gets repaired,
+    # unlike rx.asset's fixed-location shared files
+    dst.unlink()
+    imposter = tmp_path / "old_install.js"
+    imposter.write_text("stale")
+    dst.symlink_to(imposter)
+    _link_client(asset_root)
+    assert dst.resolve() == _client_source()
 
 
 def test_wrapper_speaks_the_namespace_protocol():

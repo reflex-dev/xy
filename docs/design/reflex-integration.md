@@ -305,9 +305,12 @@ but dispatches no backend events.
 `chart()` is a plain `rx.Component` whose `library` is a **local JSX shared
 asset** (`$/public/external/reflex_xy/assets/XYChart.jsx`, the same
 mechanism reflex's own radix color-mode provider uses) — no npm package, no
-CDN. Beside it ships `xy_client.js`, a byte-exact copy of the wheel's
-ESM render client (`node js/build.mjs` emits both; a parity test fails on
-drift): one renderer for notebooks, static export, and Reflex.
+CDN. Beside it, `register()` links `xy_client.js` **out of the installed
+`xy` package** (`xy/static/index.js`): the adapter carries no copy
+of the render client at all, so client/kernel drift is structurally
+impossible — the JS that renders a payload is always the build that shipped
+with the Python that produced it. One renderer for notebooks, static
+export, and Reflex.
 
 The wrapper: opens/reuses the shared namespace socket, `sub`s with the
 element's measured width, builds a `ChartView` per `payload` (full refresh =
@@ -352,7 +355,7 @@ python/reflex-xy/
                              dispatches token (live) vs Chart (static tier)
   reflex_xy/payload_asset.py static tier: Chart -> content-addressed XYBF
                              asset in assets/xy/ (§3.4)
-  reflex_xy/assets/          XYChart.jsx + xy_client.js (build artifact)
+  reflex_xy/assets/          XYChart.jsx; links xy's installed render client
   examples/demo_app/         1M-point drilldown + hover + cross-filter +
                              stream + a direct-Chart static payload
 tests/reflex_adapter/        65 tests: token/registry/var/bridge/payload-asset
