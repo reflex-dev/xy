@@ -37,7 +37,7 @@ config = rx.Config(app_name="dash", plugins=[reflex_xy.XYPlugin()])
 # dash/dash.py
 import numpy as np
 import reflex as rx
-import xy as fc
+import xy
 import reflex_xy
 
 
@@ -46,11 +46,11 @@ class Dash(rx.State):
     hovered: dict = {}
 
     @reflex_xy.figure
-    def chart(self) -> fc.Chart:
+    def chart(self) -> xy.Chart:
         rng = np.random.default_rng(7)
         xs = rng.normal(size=self.points)
         ys = xs * 0.6 + rng.normal(scale=0.6, size=self.points)
-        return fc.scatter_chart(fc.scatter(xs, ys), width="100%", height=460)
+        return xy.scatter_chart(xy.scatter(xs, ys), width="100%", height=460)
 
     @rx.event
     def on_hover(self, row: dict):
@@ -83,7 +83,7 @@ pass the Chart straight in:
 ```python
 def index() -> rx.Component:
     return reflex_xy.chart(
-        fc.line_chart(fc.line(t, np.sin(t)), width="100%", height=220),
+        xy.line_chart(xy.line(t, np.sin(t)), width="100%", height=220),
         height="220px",
     )
 ```
@@ -96,7 +96,7 @@ under `reflex export`. When a fixed chart still needs kernel round-trips
 instead:
 
 ```python
-cloud = reflex_xy.inline(fc.scatter_chart(fc.scatter(x, y)))  # module scope
+cloud = reflex_xy.inline(xy.scatter_chart(xy.scatter(x, y)))  # module scope
 
 def index() -> rx.Component:
     return reflex_xy.chart(cloud, height="460px")

@@ -18,18 +18,18 @@ Quickstart::
     # dash/dash.py
     import numpy as np
     import reflex as rx
-    import xy as fc
+    import xy
     import reflex_xy
 
     class Dash(rx.State):
         points: int = 200_000
 
         @reflex_xy.figure
-        def chart(self) -> fc.Chart:
+        def chart(self) -> xy.Chart:
             rng = np.random.default_rng(7)
             xs = rng.normal(size=self.points)
             ys = xs * 0.6 + rng.normal(scale=0.6, size=self.points)
-            return fc.scatter_chart(fc.scatter(xs, ys), width="100%", height=460)
+            return xy.scatter_chart(xy.scatter(xs, ys), width="100%", height=460)
 
     def index() -> rx.Component:
         return reflex_xy.chart(Dash.chart, height="460px")
@@ -86,7 +86,7 @@ def inline(chart_or_figure: Any) -> str:
     registration side effect runs in every backend worker (page bodies only
     run where the frontend compiles)::
 
-        cloud = reflex_xy.inline(fc.scatter_chart(fc.scatter(x, y)))
+        cloud = reflex_xy.inline(xy.scatter_chart(xy.scatter(x, y)))
 
         def index():
             return reflex_xy.chart(cloud, height="460px")

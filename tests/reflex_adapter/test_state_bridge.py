@@ -13,16 +13,16 @@ from reflex.istate.manager.memory import StateManagerMemory
 from reflex_xy.state_bridge import make_rebuild_hook
 from reflex_xy.tokens import build_state_token, parse_token
 
-import xy as fc
+import xy
 
 
 class BridgeDemo(rx.State):
     points: int = 12
 
     @reflex_xy.figure
-    def chart(self) -> fc.Chart:
+    def chart(self) -> xy.Chart:
         xs = np.linspace(0.0, 1.0, self.points)
-        return fc.scatter_chart(fc.scatter(xs, xs), width=400, height=300)
+        return xy.scatter_chart(xy.scatter(xs, xs), width=400, height=300)
 
 
 def make_app_stub():

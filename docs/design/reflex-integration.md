@@ -145,9 +145,9 @@ class Dash(rx.State):
     points: int = 1_000_000
 
     @reflex_xy.figure
-    def cloud(self) -> fc.Chart:
+    def cloud(self) -> xy.Chart:
         x, y, mag = load(self.points)
-        return fc.scatter_chart(fc.scatter(x, y, color=mag), width="100%", height=460)
+        return xy.scatter_chart(xy.scatter(x, y, color=mag), width="100%", height=460)
 ```
 
 `@reflex_xy.figure` is a computed var whose **value is only the token
@@ -207,7 +207,7 @@ Not every chart derives from state. Two tiers cover fixed data, chosen by
 whether the kernel still matters:
 
 **Static payload tier — pass the Chart straight to the component.**
-`reflex_xy.chart(fc.scatter_chart(...))` compiles the figure to its
+`reflex_xy.chart(xy.scatter_chart(...))` compiles the figure to its
 first-paint payload at page build, writes it into the app's `assets/xy/` as
 one content-addressed XYBF frame (`<digest>.xyf` — the §3.2 framing's
 natural home), and hands the wrapper a `src` URL instead of a token. The
@@ -278,7 +278,7 @@ reflex_xy.chart(
     height="460px",
 )
 
-reflex_xy.chart(fc.line_chart(...))  # …or a Chart directly: static tier (§3.4)
+reflex_xy.chart(xy.line_chart(...))  # …or a Chart directly: static tier (§3.4)
 ```
 
 One factory, dispatched on the source: tokens (state vars or strings)

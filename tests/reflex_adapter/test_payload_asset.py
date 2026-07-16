@@ -9,13 +9,13 @@ import reflex_xy
 from reflex_xy.payload_asset import payload_asset
 from reflex_xy.tokens import parse_token
 
-import xy as fc
+import xy
 from xy.channel import decode_frame
 
 
 def make_chart(n: int = 32, seed: float = 1.0):
     xs = np.linspace(0.0, seed, n)
-    return fc.line_chart(fc.line(xs, xs * seed), width=400, height=200)
+    return xy.line_chart(xy.line(xs, xs * seed), width=400, height=200)
 
 
 @pytest.fixture

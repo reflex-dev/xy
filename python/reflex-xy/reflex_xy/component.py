@@ -4,7 +4,7 @@ One factory, three chart sources (docs/design/reflex-integration.md §5):
 
     reflex_xy.chart(Dash.chart)            # @reflex_xy.figure state var (live)
     reflex_xy.chart(some_token_string)     # register()/inline() token (live)
-    reflex_xy.chart(fc.scatter_chart(...)) # a Chart directly (static tier)
+    reflex_xy.chart(xy.scatter_chart(...)) # a Chart directly (static tier)
 
 A live source compiles to the `token` prop and rides the shared-websocket
 data plane. A `xy` Chart (or internal Figure) passed directly is

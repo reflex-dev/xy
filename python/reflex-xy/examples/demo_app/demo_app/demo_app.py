@@ -23,7 +23,7 @@ import numpy as np
 import reflex as rx
 import reflex_xy
 
-import xy as fc
+import xy
 
 POINTS = 1_000_000
 RNG_SEED = 11
@@ -51,35 +51,35 @@ class Demo(rx.State):
     _stream_t: float = 0.0
 
     @reflex_xy.figure
-    def cloud(self) -> fc.Chart:
+    def cloud(self) -> xy.Chart:
         x, y, mag = _cloud(POINTS)
-        return fc.scatter_chart(
-            fc.scatter(x, y, color=mag, colormap="viridis", opacity=0.8, density=True),
-            fc.x_axis(label="feature A"),
-            fc.y_axis(label="feature B"),
+        return xy.scatter_chart(
+            xy.scatter(x, y, color=mag, colormap="viridis", opacity=0.8, density=True),
+            xy.x_axis(label="feature A"),
+            xy.y_axis(label="feature B"),
             title=f"{POINTS // 1_000_000}M points, drillable",
             width="100%",
             height=460,
         )
 
     @reflex_xy.figure
-    def histogram(self) -> fc.Chart:
+    def histogram(self) -> xy.Chart:
         x, _, mag = _cloud(POINTS)
         if self.sel_active and self.sel_x1 > self.sel_x0:
             mag = mag[(x >= self.sel_x0) & (x <= self.sel_x1)]
         label = "selection" if self.sel_active else "all points"
-        return fc.histogram_chart(
-            fc.histogram(mag, bins=80),
-            fc.x_axis(label=f"magnitude ({label})"),
+        return xy.histogram_chart(
+            xy.histogram(mag, bins=80),
+            xy.x_axis(label=f"magnitude ({label})"),
             title="magnitude distribution",
             width="100%",
             height=220,
         )
 
     @reflex_xy.figure
-    def live(self) -> fc.Chart:
-        return fc.line_chart(
-            fc.line(np.array([0.0]), np.array([0.0])),
+    def live(self) -> xy.Chart:
+        return xy.line_chart(
+            xy.line(np.array([0.0]), np.array([0.0])),
             title="live stream",
             width="100%",
             height=220,
@@ -123,15 +123,15 @@ class Demo(rx.State):
             await asyncio.sleep(0.25)
 
 
-def sparkline_chart() -> fc.Chart:
+def sparkline_chart() -> xy.Chart:
     """A fixed chart passed *directly* to reflex_xy.chart(): compiled to a
     static payload asset at page build — no token, no registry, no socket."""
     t = np.linspace(0.0, 6.0 * np.pi, 4000)
     decay = np.exp(-t / 9.0)
-    return fc.line_chart(
-        fc.line(t, np.sin(t) * decay, name="signal"),
-        fc.line(t, decay, name="envelope"),
-        fc.x_axis(label="t"),
+    return xy.line_chart(
+        xy.line(t, np.sin(t) * decay, name="signal"),
+        xy.line(t, decay, name="envelope"),
+        xy.x_axis(label="t"),
         title="static payload (no backend)",
         width="100%",
         height=220,

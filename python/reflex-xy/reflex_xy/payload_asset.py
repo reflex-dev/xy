@@ -1,6 +1,6 @@
 """Static payload assets: the zero-backend chart tier.
 
-`reflex_xy.chart(fc.scatter_chart(...))` — passing a chart object instead of
+`reflex_xy.chart(xy.scatter_chart(...))` — passing a chart object instead of
 a token — lands here: the figure compiles once to its first-paint payload,
 which is written into the app's ``assets/`` tree as one binary XYBF frame
 (``xy.channel`` §3.2 framing) and served as an ordinary static file.

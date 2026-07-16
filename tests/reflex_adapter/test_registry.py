@@ -6,12 +6,12 @@ import numpy as np
 import pytest
 from reflex_xy.registry import FigureRegistry
 
-import xy as fc
+import xy
 
 
 def make_figure(n: int = 16):
     xs = np.linspace(0.0, 1.0, n)
-    return fc.scatter_chart(fc.scatter(xs, xs * 2.0), width=400, height=300).figure()
+    return xy.scatter_chart(xy.scatter(xs, xs * 2.0), width=400, height=300).figure()
 
 
 def test_register_release_roundtrip(_fresh_registry):
@@ -111,7 +111,7 @@ def test_broadcast_noop_before_setup(_fresh_registry):
 def test_figure_accepts_chart_or_figure(_fresh_registry):
     registry = _fresh_registry
     xs = np.linspace(0.0, 1.0, 8)
-    chart = fc.scatter_chart(fc.scatter(xs, xs), width=300, height=200)
+    chart = xy.scatter_chart(xy.scatter(xs, xs), width=300, height=200)
     token_from_chart = registry.register(chart.figure())
     assert registry.get(token_from_chart) is not None
 

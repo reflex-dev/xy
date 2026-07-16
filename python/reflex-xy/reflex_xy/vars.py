@@ -101,9 +101,9 @@ def figure(
             n: int = 100_000
 
             @reflex_xy.figure
-            def chart(self) -> fc.Chart:
+            def chart(self) -> xy.Chart:
                 x, y = self._points(self.n)
-                return fc.scatter_chart(fc.scatter(x, y))
+                return xy.scatter_chart(xy.scatter(x, y))
 
         # in the page:  reflex_xy.chart(Dash.chart, height="480px")
 

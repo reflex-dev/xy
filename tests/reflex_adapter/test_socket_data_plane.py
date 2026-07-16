@@ -27,7 +27,7 @@ from reflex_xy.namespace import XYNamespace
 from reflex_xy.registry import registry
 from reflex_xy.tokens import build_state_token
 
-import xy as fc
+import xy
 
 CLIENT_TOKEN = "11111111-2222-4333-8444-555566667777"
 OTHER_TOKEN = "99999999-8888-4777-8666-555544443333"
@@ -36,7 +36,7 @@ OTHER_TOKEN = "99999999-8888-4777-8666-555544443333"
 def make_figure(n: int = 64):
     xs = np.linspace(0.0, 1.0, n)
     ys = xs * 3.0
-    return fc.scatter_chart(fc.scatter(xs, ys), width=640, height=400).figure()
+    return xy.scatter_chart(xy.scatter(xs, ys), width=640, height=400).figure()
 
 
 def free_port() -> int:
