@@ -145,6 +145,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         tick_labels: Optional[Any] = None,
         tick_label_angle: Optional[float] = None,
         tick_label_strategy: Optional[str] = None,
+        tick_label_anchor: Optional[str] = None,
         tick_label_min_gap: Optional[float] = None,
         side: Optional[str] = None,
         style: Optional[dict[str, Any]] = None,
@@ -192,6 +193,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
             ),
             "tick_label_strategy": self._axis_tick_label_strategy(
                 tick_label_strategy, f"{axis_id} axis tick_label_strategy"
+            ),
+            "tick_label_anchor": self._axis_tick_label_anchor(
+                tick_label_anchor, f"{axis_id} axis tick_label_anchor"
             ),
             "tick_label_min_gap": None
             if tick_label_min_gap is None
@@ -439,6 +443,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
     _optional_finite_scalar = staticmethod(_validate.optional_finite_scalar)
     _optional_positive_int = staticmethod(_validate.optional_positive_int)
     _axis_tick_label_strategy = staticmethod(_validate.axis_tick_label_strategy)
+    _axis_tick_label_anchor = staticmethod(_validate.axis_tick_label_anchor)
     _nonnegative_scalar = staticmethod(_validate.nonnegative_scalar)
     _opacity = staticmethod(_validate.opacity)
     _padding = staticmethod(_validate.plot_padding)
@@ -924,6 +929,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         tick_label_strategy = self._axis_tick_label_strategy(
             opts.get("tick_label_strategy"), f"{axis_id} axis tick_label_strategy"
         )
+        tick_label_anchor = self._axis_tick_label_anchor(
+            opts.get("tick_label_anchor"), f"{axis_id} axis tick_label_anchor"
+        )
         tick_label_min_gap = (
             None
             if opts.get("tick_label_min_gap") is None
@@ -955,6 +963,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             spec["tick_label_angle"] = tick_label_angle
         if tick_label_strategy is not None:
             spec["tick_label_strategy"] = tick_label_strategy
+        if tick_label_anchor is not None:
+            spec["tick_label_anchor"] = tick_label_anchor
         if tick_label_min_gap is not None:
             spec["tick_label_min_gap"] = tick_label_min_gap
         if self._axis_scale(axis_id) == "log":

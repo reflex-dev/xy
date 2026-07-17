@@ -31,9 +31,12 @@ from ._svg import (
     _corner_radii,
     _css,
     _lut,
+    _px_size,
     _resolve_static_css_vars,
     _Scale,
+    _solid_paint,
     _step_arrays,
+    _tick_label_anchor,
     _tick_text,
     axis_ticks,
     hexbin_ring,
@@ -113,6 +116,18 @@ def _parse_color(css: str, opacity: float = 1.0) -> tuple[int, int, int, int]:
 
 def _rgba(css: Any, fallback: str, opacity: float = 1.0) -> tuple[int, int, int, int]:
     return _parse_color(_css(css, fallback), opacity)
+
+
+def _solid_color(css: Any) -> Optional[tuple[int, int, int, int]]:
+    """A parseable solid CSS color, or None when unset/unpaintable (var(),
+    gradients) — for background fills that must be skipped rather than
+    fallback-painted. One policy with the SVG exporter (`_solid_paint`)."""
+    s = _solid_paint(css)
+    return None if s is None else _parse_color(s)
+
+
+# cmd.text anchor codes (must match src/raster.rs): start/center/end of string.
+_TEXT_ANCHOR_CODES = {"start": 0, "center": 1, "end": 2}
 
 
 def _fill_opacity(style: dict[str, Any], default: float = 1.0) -> float:
@@ -525,22 +540,42 @@ def render_raster(
 
     dom_style = (spec.get("dom") or {}).get("style") or {}
 
+    # Figure patch (mpl figure.facecolor): `theme(background=)` lands on the
+    # root element's CSS background, painted over the whole canvas so the
+    # margins match the browser. Gradients stay browser-only (skipped).
+    figure_background = _solid_color(dom_style.get("background"))
+
     # The fused PNG path initializes its native canvas white, avoiding a second
-    # full-frame memory pass. Raw RGBA callers still receive an explicit fill.
-    if not fast_png:
+    # full-frame memory pass. Raw RGBA callers still receive an explicit fill —
+    # skipped when an opaque figure background would fully cover it anyway
+    # (a translucent one keeps the white underlay to composite over, matching
+    # the browser's white host page).
+    if not fast_png and (figure_background is None or figure_background[3] < 255):
         cmd.fill(
             _rect_pts(0, 0, width, height),
             _parse_color(spec.get("canvas_background", "#ffffff")),
         )
+    if figure_background is not None:
+        cmd.fill(_rect_pts(0, 0, width, height), figure_background)
 
     # Static exports honor the same axes background token as HTML/SVG.  This
     # is deliberately a plot-rect fill rather than a canvas fill: the latter
-    # is the Figure patch and is composed by pyplot's grid exporter.
-    plot_background = _parse_color(_css(dom_style.get("--chart-bg"), "#ffffff"))
-    cmd.fill(
-        _rect_pts(plot["x"], plot["y"], plot["x"] + plot["w"], plot["y"] + plot["h"]),
-        plot_background,
-    )
+    # is the Figure patch, composed above (or by pyplot's grid exporter). An
+    # unset token keeps the plot rect transparent when a figure background is
+    # present — matching the browser, where the root shows through — and
+    # falls back to the classic white fill otherwise.
+    plot_css = _css(dom_style.get("--chart-bg"), "")
+    if plot_css:
+        plot_background = _parse_color(plot_css)
+    elif figure_background is None:
+        plot_background = _parse_color("#ffffff")
+    else:
+        plot_background = None
+    if plot_background is not None:
+        cmd.fill(
+            _rect_pts(plot["x"], plot["y"], plot["x"] + plot["w"], plot["y"] + plot["h"]),
+            plot_background,
+        )
 
     xt, xlab, xstep = axis_ticks(xa, plot["w"], True)
     yt, ylab, ystep = axis_ticks(ya, plot["h"], False)
@@ -691,12 +726,13 @@ def render_raster(
         x_tick_c = _parse_color(
             _css(xstyle.get("tick_label_color", xstyle.get("tick_color")), default_text)
         )
+        x_anchor = _TEXT_ANCHOR_CODES[_tick_label_anchor(xa, xstyle, "center")]
         for v in xlab:
             label_y = py0 - 7 if xa.get("side") == "top" else py1 + 15
             cmd.text(
                 float(sx(v)),
                 label_y,
-                1,
+                x_anchor,
                 float(xstyle.get("tick_label_size", xstyle.get("tick_size", 11))),
                 x_tick_c,
                 _tick_text(xa, v, xstep),
@@ -705,11 +741,12 @@ def render_raster(
         y_tick_c = _parse_color(
             _css(ystyle.get("tick_label_color", ystyle.get("tick_color")), default_text)
         )
+        y_anchor = _TEXT_ANCHOR_CODES[_tick_label_anchor(ya, ystyle, "end")]
         for v in ylab:
             cmd.text(
                 px0 - 8,
                 float(sy(v)) + 4,
-                2,
+                y_anchor,
                 float(ystyle.get("tick_label_size", ystyle.get("tick_size", 11))),
                 y_tick_c,
                 _tick_text(ya, v, ystep),
@@ -855,7 +892,7 @@ def _emit_annotations(cmd, annotations, sx, sy, plot, width, height, *, phase="m
         if ann.get("kind") in ("text", "callout") and ann.get("text"):
             x, y = _annotation_point(ann, style, sx, sy, plot, width, height)
             anchor = {"start": 0, "middle": 1, "end": 2}.get(ann.get("anchor"), 0)
-            font_size = float(style.get("font_size", 11))
+            font_size = _px_size(style.get("font_size"), 11.0)
             lines = str(ann["text"]).splitlines() or [""]
             line_height = font_size * 1.2
             # A callout's `color` paints its arrow; the label prefers its own.

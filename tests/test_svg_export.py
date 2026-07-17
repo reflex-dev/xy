@@ -54,6 +54,54 @@ def test_every_chart_kind_exports_wellformed_svg() -> None:
         assert 'xmlns="http://www.w3.org/2000/svg"' in svg
 
 
+def test_svg_paints_figure_and_plot_backgrounds() -> None:
+    chart = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[0.0, 1.0]),
+        xy.theme(background="#000000", plot_background="#101418"),
+        width=300,
+        height=200,
+    )
+    svg = chart.figure().to_svg()
+    assert '<rect width="300" height="200" fill="#000000"/>' in svg  # figure patch
+    assert 'fill="#101418"' in svg  # plot rect
+
+    # Browser-only paints (gradients) are omitted, never fallback-painted.
+    gradient = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[0.0, 1.0]),
+        xy.theme(style={"background": "linear-gradient(red, blue)"}),
+        width=300,
+        height=200,
+    )
+    assert "linear-gradient" not in gradient.figure().to_svg()
+
+
+def test_svg_honors_tick_label_anchor() -> None:
+    chart = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[0.0, 1.0]),
+        xy.x_axis(tick_label_anchor="right"),  # mpl `ha` alias -> "end"
+        xy.y_axis(tick_label_anchor="center"),
+        width=300,
+        height=200,
+    )
+    svg = chart.figure().to_svg()
+    # No title/axis labels, so the only text-anchor sources are tick labels:
+    # x pins its right edge ("end"), y centers ("middle"), nothing at "start".
+    assert 'text-anchor="end"' in svg
+    assert 'text-anchor="middle"' in svg
+    assert 'text-anchor="start"' not in svg
+
+    # Defaults reproduce the classic layout: x centered, y right edge at the
+    # tick ("end" — labels sit left of the plot).
+    default = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[0.0, 1.0]),
+        width=300,
+        height=200,
+    )
+    default_svg = default.figure().to_svg()
+    assert 'text-anchor="middle"' in default_svg
+    assert 'text-anchor="end"' in default_svg
+
+
 def test_svg_stays_screen_bounded_for_large_lines() -> None:
     n = 2_000_000
     y = np.cumsum(np.random.default_rng(1).normal(size=n))

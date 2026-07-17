@@ -592,6 +592,45 @@ def _css(c: Any, fallback: str) -> str:
     return s
 
 
+_TEXT_ANCHORS = {"start": "start", "center": "middle", "end": "end"}
+
+
+def _tick_label_anchor(axis: dict[str, Any], style: dict[str, Any], default: str) -> str:
+    """Canonical tick-label anchor (``start``/``center``/``end``) from the
+    axis spec or its style — validators normalize the mpl aliases upstream —
+    with ``default`` (the classic layout) when unset."""
+    raw = axis.get("tick_label_anchor") or style.get("tick_label_anchor")
+    return raw if raw in ("start", "center", "end") else default
+
+
+def _px_size(value: Any, default: float) -> float:
+    """Tolerant CSS px length — `15` or `"15px"` — matching the browser, where
+    annotation styles land as CSS declarations; `default` on anything else."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip().removesuffix("px"))
+        except ValueError:
+            return default
+    return default
+
+
+def _solid_paint(css: Any) -> Optional[str]:
+    """A parseable solid CSS color string, or None when unset/unpaintable
+    (var(), gradients) — for background rects that must be omitted rather
+    than fallback-painted."""
+    from . import kernels
+
+    s = _css(css, "")
+    if not s:
+        return None
+    _status, rgba = kernels.css_check(kernels.CSS_COLOR, s)
+    if rgba is None:
+        return None
+    return s
+
+
 _CSS_VAR_RE = re.compile(
     r"^var\(\s*(--[A-Za-z_][A-Za-z0-9_-]*)\s*(?:,\s*(.+))?\)$",
     re.DOTALL | re.IGNORECASE,
@@ -1035,6 +1074,10 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             f'stroke-width="{_num(float(ystyle.get("grid_width", 1)))}"'
             f"{_axis_grid_attrs(ystyle)}/>"
         )
+    # Anchored tick labels rotate about the tick point (the rotate() pivot
+    # below), so anchor and rotation compose — matching the browser client.
+    x_anchor = _TEXT_ANCHORS[_tick_label_anchor(xa, xstyle, "center")]
+    y_anchor = _TEXT_ANCHORS[_tick_label_anchor(ya, ystyle, "end")]
     if not hide_x_labels:
         for v in xlab:
             tick_y = plot["y"] - 7 if xa.get("side") == "top" else plot["y"] + plot["h"] + 16
@@ -1042,7 +1085,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 f'<text x="{_num(float(sx(v)))}" y="{_num(tick_y)}" '
                 f'fill="{escape(_css(xstyle.get("tick_label_color", xstyle.get("tick_color")), default_text))}" '
                 f'font-size="{_num(float(xstyle.get("tick_label_size", xstyle.get("tick_size", 11))))}" '
-                f'text-anchor="middle"'
+                f'text-anchor="{x_anchor}"'
                 + (
                     f' transform="rotate({_num(float(xa["tick_label_angle"]))} '
                     f'{_num(float(sx(v)))} {_num(tick_y)})"'
@@ -1057,7 +1100,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 f'<text x="{_num(plot["x"] - 8)}" y="{_num(float(sy(v)) + 4)}" '
                 f'fill="{escape(_css(ystyle.get("tick_label_color", ystyle.get("tick_color")), default_text))}" '
                 f'font-size="{_num(float(ystyle.get("tick_label_size", ystyle.get("tick_size", 11))))}" '
-                f'text-anchor="end"'
+                f'text-anchor="{y_anchor}"'
                 + (
                     f' transform="rotate({_num(float(ya["tick_label_angle"]))} '
                     f'{_num(plot["x"] - 8)} {_num(float(sy(v)) + 4)})"'
@@ -1261,10 +1304,27 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         f'width="{_num(plot["w"])}" height="{_num(plot["h"])}"/></clipPath>'
     )
     defs = f"<defs>{''.join(svg.defs)}</defs>" if svg.defs else ""
+    # Figure patch + plot-rect backgrounds, mirroring the browser: the root
+    # element's CSS `background` (theme(background=)) behind everything, then
+    # the --chart-bg token over the plot rect only. Solid colors only —
+    # gradients stay browser-only, and an unset token stays transparent.
+    backgrounds = ""
+    figure_background = _solid_paint(dom_style.get("background"))
+    if figure_background is not None:
+        backgrounds += (
+            f'<rect width="{width}" height="{height}" fill="{escape(figure_background)}"/>'
+        )
+    plot_paint = _solid_paint(dom_style.get("--chart-bg"))
+    if plot_paint is not None:
+        backgrounds += (
+            f'<rect x="{_num(plot["x"])}" y="{_num(plot["y"])}" width="{_num(plot["w"])}" '
+            f'height="{_num(plot["h"])}" fill="{escape(plot_paint)}"/>'
+        )
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
         f'viewBox="0 0 {width} {height}" font-family="{_FONT}" font-size="11">'
         f"{defs}"
+        f"{backgrounds}"
         f"<g>{''.join(grid)}</g>"
         f'<g clip-path="url(#{clip_id})">{"".join(marks)}</g>'
         f"{baselines}"
@@ -1362,7 +1422,7 @@ def _annotation_svg(annotations, sx, sy, plot, width, height):
             anchor = {"start": "start", "middle": "middle", "end": "end"}.get(
                 ann.get("anchor"), "start"
             )
-            font_size = float(style.get("font_size", 11))
+            font_size = _px_size(style.get("font_size"), 11.0)
             lines = str(ann["text"]).splitlines() or [""]
             line_height = font_size * 1.2
             rotation = float(style.get("rotation", 0.0)) % 360.0

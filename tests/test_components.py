@@ -460,6 +460,20 @@ def test_component_style_tooltip_and_modebar_metadata_is_opt_in():
     assert spec["traces"][0]["style"]["class_name"] == "xy-mark-accounts"
 
 
+def test_theme_background_separates_figure_and_plot():
+    # mpl parity: background= is the figure facecolor (root CSS background,
+    # margins included); plot_background= is the axes facecolor (--chart-bg,
+    # plot rect only).
+    chart = xy.scatter_chart(
+        xy.scatter(x=[1.0], y=[2.0]),
+        xy.theme(background="#000000", plot_background="#111111"),
+    )
+    spec, _ = chart.figure().build_payload()
+    style = spec["dom"]["style"]
+    assert style["background"] == "#000000"
+    assert style["--chart-bg"] == "#111111"
+
+
 def test_declarative_core_contract_for_layered_axis_chrome_and_interaction():
     legend_component = FakeReflexComponent("legend")
     tooltip_component = FakeReflexComponent("tooltip")
@@ -1358,6 +1372,7 @@ def test_component_axis_tick_layout_controls_emit_to_payload():
             tick_count=4,
             tick_label_angle=-35,
             tick_label_strategy="stagger",
+            tick_label_anchor="end",
             tick_label_min_gap=12,
         ),
         xy.y_axis(tick_count=3, tick_label_strategy="hide"),
@@ -1368,14 +1383,23 @@ def test_component_axis_tick_layout_controls_emit_to_payload():
     assert spec["x_axis"]["tick_count"] == 4
     assert spec["x_axis"]["tick_label_angle"] == -35.0
     assert spec["x_axis"]["tick_label_strategy"] == "stagger"
+    assert spec["x_axis"]["tick_label_anchor"] == "end"
     assert spec["x_axis"]["tick_label_min_gap"] == 12.0
     assert spec["y_axis"]["tick_count"] == 3
     assert spec["y_axis"]["tick_label_strategy"] == "hide"
+    assert "tick_label_anchor" not in spec["y_axis"]
+
+    # mpl `ha` vocabulary normalizes to the canonical anchors
+    assert xy.x_axis(tick_label_anchor="right").tick_label_anchor == "end"
+    assert xy.x_axis(tick_label_anchor="left").tick_label_anchor == "start"
+    assert xy.x_axis(tick_label_anchor="middle").tick_label_anchor == "center"
 
     with pytest.raises(ValueError, match="tick_count"):
         xy.x_axis(tick_count=0)
     with pytest.raises(ValueError, match="tick_label_strategy"):
         xy.x_axis(tick_label_strategy="squish")
+    with pytest.raises(ValueError, match="tick_label_anchor"):
+        xy.x_axis(tick_label_anchor="sideways")
     with pytest.raises(ValueError, match="tick_label_min_gap"):
         xy.y_axis(tick_label_min_gap=-1)
 
