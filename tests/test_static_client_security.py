@@ -459,6 +459,19 @@ def test_client_refreshes_and_destroys_density_sample_overlays() -> None:
         assert "view._applyDensitySample(g, d.sample, buffers);" in text
 
 
+def test_client_refreshes_theme_when_framework_theme_classes_change() -> None:
+    """Keep canvas paint synchronized with class-driven light/dark themes."""
+    required = (
+        "new MutationObserver(() => this.refreshTheme())",
+        'attributeFilter: ["class", "style"]',
+        "this._themeMutationObserver?.disconnect();",
+    )
+
+    for path, text in CLIENT_FILES:
+        for marker in required:
+            assert marker in text, f"{path} lost class-driven theme refresh {marker!r}"
+
+
 def test_client_lod_layer_stays_chart_agnostic_and_renderer_delegated() -> None:
     source_lod = (ROOT / "js/src/45_lod.js").read_text(encoding="utf-8")
     assert "trace.kind" not in source_lod

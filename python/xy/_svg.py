@@ -762,10 +762,49 @@ class _Svg:
             units = f'gradientUnits="userSpaceOnUse" x1="{_num(x0)}" y1="{_num(y0)}" x2="{_num(x1)}" y2="{_num(y1)}"'
         else:
             units = f'x1="{ends[0]}" y1="{ends[1]}" x2="{ends[2]}" y2="{ends[3]}"'
-        stops = "".join(
-            f'<stop offset="{_num(t * 100)}%" stop-color="{escape(_css(c, mark_color), {chr(34): "&quot;"})}"/>'
-            for t, c in fill.get("stops", [])
-        )
+        raw_stops = fill.get("stops", [])
+        resolved = [_css(c, mark_color) for _t, c in raw_stops]
+        stops_out: list[str] = []
+        for index, ((t, raw_color), color) in enumerate(zip(raw_stops, resolved, strict=True)):
+            offset = _num(t * 100)
+            if str(raw_color).strip().lower() != "transparent":
+                escaped = escape(color, {chr(34): "&quot;"})
+                stops_out.append(f'<stop offset="{offset}%" stop-color="{escaped}"/>')
+                continue
+
+            # SVG interpolates stop RGB independently from stop opacity. A
+            # literal `transparent` stop is transparent black, which makes a
+            # colored fade pass through a muddy gray fringe. Give the zero-
+            # opacity stop the adjacent visible hue instead, matching the
+            # browser renderer's premultiplied-alpha interpolation. When a
+            # transparent stop sits between two different colors, duplicate
+            # it at the same offset; the invisible color switch preserves the
+            # hue on both segments.
+            previous = next(
+                (
+                    resolved[i]
+                    for i in range(index - 1, -1, -1)
+                    if str(raw_stops[i][1]).strip().lower() != "transparent"
+                ),
+                None,
+            )
+            following = next(
+                (
+                    resolved[i]
+                    for i in range(index + 1, len(raw_stops))
+                    if str(raw_stops[i][1]).strip().lower() != "transparent"
+                ),
+                None,
+            )
+            transparent_colors = [previous or following or mark_color]
+            if previous and following and previous != following:
+                transparent_colors.append(following)
+            for transparent_color in transparent_colors:
+                escaped = escape(transparent_color, {chr(34): "&quot;"})
+                stops_out.append(
+                    f'<stop offset="{offset}%" stop-color="{escaped}" stop-opacity="0"/>'
+                )
+        stops = "".join(stops_out)
         self.defs.append(f'<linearGradient id="{gid}" {units}>{stops}</linearGradient>')
         return f"url(#{gid})"
 

@@ -105,7 +105,7 @@ legend_tooltip_chart = xy.line_chart(
         title="Month {month}",
         format={"actual": ",.0f", "plan": ",.0f"},
         style={
-            "background": "rgb(15 23 42 / 94%)",
+            "background": "rgb(24 24 27 / 94%)",
             "color": "#f8fafc",
             "border-radius": 8,
             "padding": "8px 10px",
@@ -119,7 +119,7 @@ legend_tooltip_chart = xy.line_chart(
     },
     class_name=(
         "[--legend-bg:#fffffff0] [--legend-text:#0f172a] "
-        "[--legend-border:#e2e8f0] dark:[--legend-bg:#1e293bf0] "
+        "[--legend-border:#e2e8f0] dark:[--legend-bg:#27272af0] "
         "dark:[--legend-text:#e2e8f0] dark:[--legend-border:#475569]"
     ),
 )
@@ -280,7 +280,7 @@ reference_chart = xy.chart(
         "[--warning-label:#92400e] [--warning-bg:#fffbeb] "
         "[--warning-border:#fde68a] [--teal-label:#115e59] "
         "[--teal-bg:#f0fdfa] [--success-label:#166534] "
-        "[--success-bg:#f0fdf4] dark:[--axes-bg:#0f172a] "
+        "[--success-bg:#f0fdf4] dark:[--axes-bg:#18181b] "
         "dark:[--axes-text:#e2e8f0] dark:[--axes-grid:#e2e8f01f] "
         "dark:[--axes-neutral:#94a3b8] dark:[--axes-purple:#c4b5fd] "
         "dark:[--axes-blue:#93c5fd] dark:[--axes-red:#fda4af] "
@@ -464,7 +464,7 @@ interaction_chart = xy.scatter_chart(
     xy.modebar(
         class_name=(
             "rounded-lg border border-slate-200 bg-white/95 shadow-md "
-            "dark:border-slate-700 dark:bg-slate-900/95"
+            "dark:border-zinc-700 dark:bg-zinc-900/95"
         ),
         button_class_name=(
             "rounded-md hover:bg-violet-50 focus:ring-2 focus:ring-violet-500 "
@@ -578,7 +578,7 @@ def interaction_chrome_styling_preview():
             align="start",
             class_name=(
                 "rounded-lg border border-slate-200 bg-white p-4 "
-                "dark:border-slate-700 dark:bg-slate-950"
+                "dark:border-zinc-700 dark:bg-zinc-950"
             ),
         ),
         width="100%",

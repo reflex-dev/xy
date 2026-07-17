@@ -4,6 +4,8 @@ import reflex as rx
 from reflex_site_shared import styles
 from reflex_site_shared.docs import DocsLayoutConfig, register_docs
 from reflex_site_shared.telemetry import get_pixel_website_trackers
+from reflex_site_shared.templates.docs import docs_layout
+from reflex_site_shared.utils.docpage import right_sidebar_item_highlight
 
 from xy_docs.breadcrumb import xy_docs_breadcrumb
 from xy_docs.config import DOCS_CONFIG
@@ -35,18 +37,29 @@ app = rx.App(
     head_components=get_pixel_website_trackers(),
 )
 
+_LAYOUT_CONFIG = DocsLayoutConfig(
+    site_title="XY",
+    github_url="https://github.com/reflex-dev/xy",
+    show_github_navbar=False,
+    navbar=xy_docs_navbar,
+    sidebar=xy_docs_sidebar,
+    breadcrumb=xy_docs_breadcrumb,
+    page_footer=xy_docs_footer,
+)
+
+
+def xy_docs_layout(page, content, navigation) -> rx.Component:
+    """Render the shared docs layout with Reflex's TOC scroll highlighter."""
+    return rx.box(
+        docs_layout(page, content, navigation, config=_LAYOUT_CONFIG),
+        display="contents",
+        on_mount=rx.call_script(right_sidebar_item_highlight()),
+    )
+
 
 register_docs(
     app,
     DOCS_CONFIG,
     renderer=render_xy_markdown_page,
-    layout_config=DocsLayoutConfig(
-        site_title="XY",
-        github_url="https://github.com/reflex-dev/xy",
-        show_github_navbar=False,
-        navbar=xy_docs_navbar,
-        sidebar=xy_docs_sidebar,
-        breadcrumb=xy_docs_breadcrumb,
-        page_footer=xy_docs_footer,
-    ),
+    layout=xy_docs_layout,
 )

@@ -68,9 +68,9 @@ def shell_chart(accent: str, title: str):
             loc="upper left",
             title="Series",
             style={
-                "background": "var(--shell-legend-bg, rgb(255 255 255 / 86%))",
-                "color": "var(--shell-text, #0f172a)",
-                "border": "1px solid var(--shell-border, #e2e8f0)",
+                "background": "var(--secondary-3)",
+                "color": "var(--secondary-12)",
+                "border": "1px solid var(--secondary-5)",
             },
         ),
         xy.tooltip(title="Sample {x}", format={"y": ".1f"}),
@@ -78,23 +78,18 @@ def shell_chart(accent: str, title: str):
         xy.y_axis(label="value"),
         xy.theme(
             style={
-                "--chart-bg": "var(--shell-bg, #ffffff)",
-                "--chart-text": "var(--shell-text, #0f172a)",
-                "--chart-grid": "var(--shell-grid, rgb(148 163 184 / 22%))",
-                "--chart-axis": "var(--shell-axis, #64748b)",
-                "--chart-legend-bg": "var(--shell-legend-bg, rgb(255 255 255 / 86%))",
-                "--chart-tooltip-bg": "#020617",
-                "--chart-tooltip-text": "#f8fafc",
+                "--chart-bg": "var(--secondary-2)",
+                "--chart-text": "var(--secondary-11)",
+                "--chart-grid": "var(--secondary-a5)",
+                "--chart-axis": "var(--secondary-a8)",
+                "--chart-legend-bg": "var(--secondary-3)",
+                "--chart-tooltip-bg": "var(--secondary-3)",
+                "--chart-tooltip-text": "var(--secondary-12)",
             }
         ),
         class_name=(
-            "rounded-2xl border bg-[var(--shell-bg)] text-[var(--shell-text)] "
-            "shadow-sm [--shell-bg:#ffffff] [--shell-text:#0f172a] "
-            "[--shell-grid:#94a3b838] [--shell-axis:#64748b] "
-            "[--shell-border:#e2e8f0] [--shell-legend-bg:#ffffffdb] "
-            "dark:[--shell-bg:#0f172a] dark:[--shell-text:#e2e8f0] "
-            "dark:[--shell-grid:#e2e8f01f] dark:[--shell-axis:#94a3b8] "
-            "dark:[--shell-border:#334155] dark:[--shell-legend-bg:#020617db]"
+            "rounded-2xl border border-secondary-5 bg-secondary-2 "
+            "text-secondary-12 shadow-sm"
         ),
         class_names={
             "title": "font-semibold tracking-tight",
@@ -103,11 +98,11 @@ def shell_chart(accent: str, title: str):
             "modebar_button": "rounded-md focus:ring-2",
         },
         styles={
-            "root": {"border_color": "var(--shell-border, #e2e8f0)"},
+            "root": {"border_color": "var(--secondary-5)"},
             "legend_item": {"padding": "2px 4px"},
             "legend_swatch": {"border_radius": 999},
         },
-        style={"background": "var(--shell-bg, #ffffff)"},
+        style={"background": "var(--secondary-2)"},
         width="100%",
         height=350,
         padding=[42, 40, 64, 58],
@@ -146,9 +141,9 @@ Python conditionals:
 ~~~css
 @media (prefers-color-scheme: dark) {
   .xy {
-    --chart-bg: #0f172a;
-    --chart-text: #e2e8f0;
-    --chart-grid: rgb(226 232 240 / 12%);
+    --chart-bg: #18181b;
+    --chart-text: #e4e4e7;
+    --chart-grid: rgb(212 212 216 / 12%);
   }
 }
 ~~~
@@ -244,15 +239,12 @@ responsive_chrome_chart = xy.chart(
         selection_color="#7c3aed",
         selection_fill="rgb(124 58 237 / 16%)",
     ),
-    class_name=(
-        "rounded-2xl border border-slate-200 bg-white text-slate-900 shadow-sm "
-        "dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-    ),
+    class_name="text-slate-900 dark:text-slate-100",
     class_names={
         "legend": (
-            "rounded-xl bg-white/90 shadow-lg backdrop-blur-sm dark:bg-slate-900/90"
+            "rounded-xl bg-white/90 shadow-lg backdrop-blur-sm dark:bg-zinc-900/90"
         ),
-        "tooltip": "rounded-xl bg-slate-950/95 px-3 py-2 text-white shadow-2xl",
+        "tooltip": "rounded-xl bg-zinc-950/95 px-3 py-2 text-white shadow-2xl",
     },
     styles={
         "legend_item": {"padding": "2px 5px"},
@@ -293,11 +285,15 @@ trend_atlas = xy.chart(
         x,
         [2, 3, 3, 5, 4, 6, 7],
         name="Area",
-        color="#c4b5fd",
-        fill="linear-gradient(to top, transparent, currentColor)",
-        opacity=0.46,
-        line_color="#7c3aed",
+        color="#8b5cf6",
+        fill=(
+            "linear-gradient(to top, rgb(124 58 237 / 0%), "
+            "rgb(124 58 237 / 14%) 55%, rgb(167 139 250 / 38%))"
+        ),
+        opacity=1,
+        line_color="#8b5cf6",
         line_width=1.5,
+        line_opacity=0.9,
     ),
     xy.line(
         x,
@@ -445,12 +441,15 @@ histogram_chart = xy.histogram_chart(
         [2, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 7, 8, 9],
         bins=7,
         name="Histogram",
-        color="#c4b5fd",
-        fill="linear-gradient(to top, #ede9fe, #7c3aed)",
-        opacity=0.82,
+        color="#8b5cf6",
+        fill=(
+            "linear-gradient(to top, rgb(109 40 217 / 38%), "
+            "rgb(139 92 246 / 92%))"
+        ),
+        opacity=1,
         corner_radius=(5, 1),
-        stroke="#6d28d9",
-        stroke_width=0.8,
+        stroke="#7c3aed",
+        stroke_width=0.9,
     ),
     title="Rounded histogram",
 )
@@ -895,7 +894,7 @@ reduction_chart = xy.scatter_chart(
     },
     styles={
         "badge_item": {
-            "background": "rgb(15 23 42 / 88%)",
+            "background": "rgb(24 24 27 / 88%)",
             "border": "1px solid rgb(148 163 184 / 40%)",
             "color": "#f8fafc",
             "padding": "3px 7px",
@@ -959,15 +958,15 @@ def styled_facet_preview():
     return rx.html(
         styled_facets.to_svg(),
         class_name=(
-            "w-full overflow-hidden rounded-xl border border-slate-200 "
-            "bg-[var(--facet-bg)] p-2 [--facet-bg:#ffffff] "
+            "w-full [--facet-bg:#ffffff] "
             "[--facet-text:#334155] [--facet-grid:#94a3b838] "
             "[--facet-axis:#64748b] [--facet-accent:#a78bfa] "
             "[--facet-line:#6d28d9] [&>svg]:h-auto [&>svg]:w-full "
-            "dark:border-slate-700 dark:[--facet-bg:#0f172a] "
-            "dark:[--facet-text:#e2e8f0] dark:[--facet-grid:#e2e8f01f] "
-            "dark:[--facet-axis:#94a3b8] dark:[--facet-accent:#c4b5fd] "
-            "dark:[--facet-line:#a78bfa]"
+            "dark:[--facet-bg:#18181b] dark:[--facet-text:#e4e4e7] "
+            "dark:[--facet-grid:#d4d4d81f] dark:[--facet-axis:#a1a1aa] "
+            "dark:[--facet-accent:#c4b5fd] dark:[--facet-line:#a78bfa] "
+            "dark:[&_text]:fill-zinc-200 "
+            "dark:[&_path[stroke]]:stroke-violet-400"
         ),
     )
 ~~~
@@ -977,7 +976,7 @@ For standalone HTML, style the grid itself at export time:
 ~~~python
 html = styled_facets.to_html(
     custom_css="""
-.xy-facet-grid { gap: 1rem; padding: 1rem; background: #f8fafc; }
+.xy-facet-grid { gap: 1rem; padding: 1rem; background: #fafafa; }
 .xy-facet-panel { overflow: hidden; border: 1px solid #e2e8f0; border-radius: 12px; }
 .xy-facet-title { color: #312e81; letter-spacing: .02em; }
 """

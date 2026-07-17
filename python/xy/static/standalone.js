@@ -1872,6 +1872,15 @@ this._initLinkedCharts();
 this._themeWatch = window.matchMedia("(prefers-color-scheme: dark)");
 this._onScheme = () => this.refreshTheme();
 this._themeWatch.addEventListener?.("change", this._onScheme);
+if (typeof MutationObserver !== "undefined") {
+this._themeMutationObserver = new MutationObserver(() => this.refreshTheme());
+for (let node = this.root; node; node = node.parentElement) {
+this._themeMutationObserver.observe(node, {
+attributes: true,
+attributeFilter: ["class", "style"],
+});
+}
+}
 this._unsubscribeComm = comm ? comm.onMessage((msg, buffers) => this._onKernelMsg(msg, buffers)) : null;
 this.draw();
 }
@@ -4879,6 +4888,8 @@ this._ro?.disconnect();
 this._io?.disconnect();
 this._io = null;
 this._themeWatch?.removeEventListener?.("change", this._onScheme);
+this._themeMutationObserver?.disconnect();
+this._themeMutationObserver = null;
 this._dprMq?.removeEventListener?.("change", this._onDprChange);
 this._dprMq = null;
 this._unsubscribeComm?.();

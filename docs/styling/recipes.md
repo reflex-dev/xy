@@ -105,15 +105,15 @@ monochrome = xy.line_chart(
         periods,
         [42, 48, 51, 57, 61, 68],
         name="Actual",
-        color="var(--mono-text, #111111)",
+        color="var(--secondary-12)",
         width=2.5,
     ),
     xy.scatter(
         periods,
         [42, 48, 51, 57, 61, 68],
         symbol="circle",
-        color="var(--mono-bg, #ffffff)",
-        stroke="var(--mono-text, #111111)",
+        color="var(--secondary-2)",
+        stroke="var(--secondary-12)",
         stroke_width=2,
         size=8,
     ),
@@ -121,7 +121,7 @@ monochrome = xy.line_chart(
         periods,
         [40, 46, 53, 55, 63, 66],
         name="Plan",
-        color="var(--mono-muted, #555555)",
+        color="var(--secondary-10)",
         width=2.5,
         dash="dashed",
     ),
@@ -129,25 +129,19 @@ monochrome = xy.line_chart(
         periods,
         [40, 46, 53, 55, 63, 66],
         symbol="square",
-        color="var(--mono-muted, #555555)",
+        color="var(--secondary-10)",
         size=7,
     ),
     xy.legend(loc="upper left", ncols=2),
     xy.tooltip(title="{x}"),
     xy.theme(
-        plot_background="var(--mono-bg, #ffffff)",
-        grid_color="var(--mono-grid, #d4d4d4)",
-        axis_color="var(--mono-axis, #525252)",
-        text_color="var(--mono-text, #171717)",
+        plot_background="var(--secondary-2)",
+        grid_color="var(--secondary-a5)",
+        axis_color="var(--secondary-a8)",
+        text_color="var(--secondary-11)",
     ),
-    class_name=(
-        "[--mono-bg:#ffffff] [--mono-grid:#d4d4d4] [--mono-axis:#525252] "
-        "[--mono-text:#171717] [--mono-muted:#555555] "
-        "dark:[--mono-bg:#0f172a] dark:[--mono-grid:#334155] "
-        "dark:[--mono-axis:#94a3b8] dark:[--mono-text:#f8fafc] "
-        "dark:[--mono-muted:#cbd5e1]"
-    ),
-    style={"background": "var(--mono-bg, #ffffff)"},
+    class_name="bg-secondary-2 text-secondary-11",
+    style={"background": "var(--secondary-2)"},
     title="Actual versus plan",
 )
 
@@ -225,16 +219,16 @@ dark_card = xy.scatter_chart(
     ),
     xy.theme(
         style={
-            "--chart-bg": "#0f172a",
-            "--chart-text": "#e2e8f0",
-            "--chart-grid": "rgb(226 232 240 / 12%)",
-            "--chart-axis": "rgb(226 232 240 / 55%)",
-            "--chart-tooltip-bg": "#020617",
-            "--chart-tooltip-text": "#f8fafc",
+            "--chart-bg": "#18181b",
+            "--chart-text": "#e4e4e7",
+            "--chart-grid": "rgb(212 212 216 / 12%)",
+            "--chart-axis": "rgb(212 212 216 / 55%)",
+            "--chart-tooltip-bg": "#09090b",
+            "--chart-tooltip-text": "#fafafa",
             "--chart-accent": "#a78bfa",
         }
     ),
-    style={"background": "#0f172a", "border_radius": 14},
+    style={"background": "#18181b", "border_radius": 14},
     title="Dark-mode card",
 )
 
@@ -270,28 +264,28 @@ branded = xy.area_chart(
     xy.legend(loc="upper left"),
     xy.tooltip(title="Month {x}"),
     xy.theme(
-        plot_background="var(--brand-surface, #f8fafc)",
+        plot_background="var(--brand-surface, #fafafa)",
         text_color="var(--brand-text, #172554)",
         grid_color="var(--brand-grid, rgb(37 99 235 / 14%))",
         axis_color="var(--brand-axis, rgb(30 64 175 / 55%))",
         style={
             "--brand-primary": "var(--brand-accent, #2563eb)",
-            "--chart-tooltip-bg": "var(--brand-tooltip, #172554)",
-            "--chart-tooltip-text": "var(--brand-tooltip-text, #eff6ff)",
-            "--chart-legend-bg": "var(--brand-legend, rgb(248 250 252 / 88%))",
+            "--chart-tooltip-bg": "var(--brand-tooltip, #27272a)",
+            "--chart-tooltip-text": "var(--brand-tooltip-text, #fafafa)",
+            "--chart-legend-bg": "var(--brand-legend, rgb(250 250 250 / 88%))",
         },
     ),
     class_name=(
-        "[--brand-surface:#f8fafc] [--brand-text:#172554] "
+        "[--brand-surface:#fafafa] [--brand-text:#172554] "
         "[--brand-grid:#2563eb24] [--brand-axis:#1e40af8c] "
-        "[--brand-accent:#2563eb] [--brand-tooltip:#172554] "
-        "[--brand-tooltip-text:#eff6ff] [--brand-legend:#f8fafce0] "
-        "dark:[--brand-surface:#0f172a] dark:[--brand-text:#dbeafe] "
+        "[--brand-accent:#2563eb] [--brand-tooltip:#27272a] "
+        "[--brand-tooltip-text:#fafafa] [--brand-legend:#fafafae0] "
+        "dark:[--brand-surface:#18181b] dark:[--brand-text:#dbeafe] "
         "dark:[--brand-grid:#93c5fd33] dark:[--brand-axis:#93c5fd99] "
-        "dark:[--brand-accent:#60a5fa] dark:[--brand-tooltip:#020617] "
-        "dark:[--brand-tooltip-text:#eff6ff] dark:[--brand-legend:#1e293be6]"
+        "dark:[--brand-accent:#60a5fa] dark:[--brand-tooltip:#09090b] "
+        "dark:[--brand-tooltip-text:#eff6ff] dark:[--brand-legend:#27272ae6]"
     ),
-    style={"background": "var(--brand-surface, #f8fafc)"},
+    style={"background": "var(--brand-surface, #fafafa)"},
     title="Branded growth",
 )
 
@@ -335,8 +329,8 @@ dashboard_card = xy.line_chart(
     xy.tooltip(title="{x}", format={"y": ".0f"}),
     xy.theme(grid_color="rgb(148 163 184 / 20%)"),
     class_names={
-        "legend": "rounded-md bg-white/90 text-xs dark:bg-slate-900/90",
-        "tooltip": "rounded-lg bg-slate-950 px-3 py-2 text-white shadow-xl",
+        "legend": "rounded-md bg-white/90 text-xs dark:bg-zinc-900/90",
+        "tooltip": "rounded-lg bg-zinc-950 px-3 py-2 text-white shadow-xl",
     },
     width="100%",
     height=280,

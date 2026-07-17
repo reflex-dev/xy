@@ -66,15 +66,15 @@ chart = xy.scatter_chart(
     xy.legend(loc="upper left"),
     class_name=(
         "rounded-xl border border-slate-200 bg-white text-slate-900 shadow-sm "
-        "dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+        "dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
     ),
     class_names={
-        "tooltip": "rounded-lg bg-slate-900/90 text-white shadow-xl",
+        "tooltip": "rounded-lg bg-zinc-900/90 text-white shadow-xl",
         "legend": (
             "rounded-md border border-slate-200 bg-white/90 text-xs font-medium "
-            "dark:border-slate-700 dark:bg-slate-900/90"
+            "dark:border-zinc-700 dark:bg-zinc-900/90"
         ),
-        "modebar_button": "hover:bg-slate-200 dark:hover:bg-slate-800",
+        "modebar_button": "hover:bg-zinc-200 dark:hover:bg-zinc-800",
     },
     styles={"title": {"font_size": 18, "letter_spacing": "0.02em"}},
     style={

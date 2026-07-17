@@ -217,6 +217,19 @@ class ChartView {
     this._themeWatch = window.matchMedia("(prefers-color-scheme: dark)");
     this._onScheme = () => this.refreshTheme();
     this._themeWatch.addEventListener?.("change", this._onScheme);
+    // Framework theme switches usually toggle a class (for example `.dark`)
+    // on the chart or one of its ancestors without changing the OS color
+    // scheme. Watch that cascade path as well so canvas/SVG paint refreshed
+    // from --chart-* tokens stays in sync with the CSS-owned chart chrome.
+    if (typeof MutationObserver !== "undefined") {
+      this._themeMutationObserver = new MutationObserver(() => this.refreshTheme());
+      for (let node = this.root; node; node = node.parentElement) {
+        this._themeMutationObserver.observe(node, {
+          attributes: true,
+          attributeFilter: ["class", "style"],
+        });
+      }
+    }
 
     this._unsubscribeComm = comm ? comm.onMessage((msg, buffers) => this._onKernelMsg(msg, buffers)) : null;
     this.draw();
@@ -3699,6 +3712,8 @@ class ChartView {
     this._io?.disconnect();
     this._io = null;
     this._themeWatch?.removeEventListener?.("change", this._onScheme);
+    this._themeMutationObserver?.disconnect();
+    this._themeMutationObserver = null;
     this._dprMq?.removeEventListener?.("change", this._onDprChange);
     this._dprMq = null;
     this._unsubscribeComm?.();

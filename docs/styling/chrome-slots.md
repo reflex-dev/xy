@@ -66,15 +66,12 @@ import xy
 chart = xy.line_chart(
     xy.line([0, 1, 2, 3], [2, 5, 3, 8], name="Signal"),
     xy.legend(),
-    class_name=(
-        "rounded-xl border border-slate-200 bg-white text-slate-900 shadow-sm "
-        "dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-    ),
+    class_name="text-slate-900 dark:text-zinc-100",
     class_names={
         "title": "text-base font-semibold",
         "legend": "bg-transparent text-xs text-slate-600 dark:text-slate-300",
-        "tooltip": "rounded-lg bg-slate-950/90 px-3 py-2 text-white shadow-xl",
-        "modebar_button": "hover:bg-slate-100 focus:ring-2 dark:hover:bg-slate-800",
+        "tooltip": "rounded-lg bg-zinc-950/90 px-3 py-2 text-white shadow-xl",
+        "modebar_button": "hover:bg-zinc-100 focus:ring-2 dark:hover:bg-zinc-800",
     },
     title="Tailwind chrome",
 )
@@ -84,7 +81,7 @@ def tailwind_chrome_preview():
     return reflex_xy.chart(chart, height="320px")
 ~~~
 
-Keep each utility name complete and literal, such as `bg-slate-950/90`. Tailwind
+Keep each utility name complete and literal, such as `bg-zinc-950/90`. Tailwind
 cannot discover a name assembled at runtime from fragments such as
 `f"bg-{tone}-950"`; map dynamic state to complete class strings instead.
 
@@ -114,7 +111,7 @@ chart = xy.scatter_chart(
     xy.scatter([1, 2, 3], [3, 5, 4]),
     class_names={
         "tooltip": (
-            "rounded-lg border border-slate-700 bg-slate-950 "
+            "rounded-lg border border-zinc-700 bg-zinc-950 "
             "px-3 py-2 text-white shadow-xl"
         )
     },
@@ -128,7 +125,7 @@ chart = xy.scatter_chart(
     xy.scatter([1, 2, 3], [3, 5, 4]),
     styles={
         "tooltip": {
-            "background": "#020617",
+            "background": "#09090b",
             "color": "#ffffff",
             "border": "1px solid #334155",
             "border_radius": 8,
@@ -145,7 +142,7 @@ export needs raw author CSS:
 ~~~python
 tooltip_css = """
 .analytics [data-xy-slot="tooltip"] {
-  background: #020617;
+  background: #09090b;
   color: #fff;
   border: 1px solid #334155;
   border-radius: 8px;
@@ -176,7 +173,7 @@ chart = xy.scatter_chart(
     styles={
         "title": {"font_size": 18, "letter_spacing": "0.02em"},
         "tooltip": {
-            "background_color": "rgba(15, 23, 42, 0.94)",
+            "background_color": "rgba(24, 24, 27, 0.94)",
             "border_radius": 10,
         },
     },

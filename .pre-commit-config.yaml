@@ -5,11 +5,11 @@ repos:
     rev: v0.15.8
     hooks:
       - id: ruff-check
-        args: ["--config=pyproject.toml", "."]
+        args: ["--config=pyproject.toml", "--fix", "--exit-non-zero-on-fix", "."]
         pass_filenames: false
         stages: [pre-commit]
       - id: ruff-format
-        args: [--config=pyproject.toml, --check, .]
+        args: [--config=pyproject.toml, .]
         pass_filenames: false
         stages: [pre-commit]
   - repo: local

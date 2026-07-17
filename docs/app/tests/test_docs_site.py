@@ -52,7 +52,7 @@ from xy_docs.gallery import (
     _responsive_gallery_svg,
     chart_gallery_grid,
 )
-from xy_docs.markdown import render_xy_markdown_page
+from xy_docs.markdown import XyDocsMarkdownTransformer, render_xy_markdown_page
 from xy_docs.navbar import xy_docs_navbar
 from xy_docs.sidebar import (
     SIDEBAR_SECTION_GROUPS,
@@ -426,6 +426,39 @@ def test_custom_font_docs_cover_browser_and_static_export_boundaries() -> None:
         assert requirement in content
 
 
+def test_theme_component_demo_uses_site_color_mode_tokens() -> None:
+    """Keep the introductory theme demo neutral and responsive to site mode."""
+    content = (DOCS_ROOT / "styling/themes-and-tokens.md").read_text(encoding="utf-8")
+    demo = content.split("~~~python demo exec", 1)[1].split("~~~", 1)[0]
+
+    for token in (
+        "var(--secondary-2)",
+        "var(--secondary-a5)",
+        "var(--secondary-a8)",
+        "var(--secondary-11)",
+        "var(--primary-9)",
+    ):
+        assert token in demo
+    assert "--demo-bg" not in demo
+
+
+def test_accessible_monochrome_recipe_uses_neutral_site_tokens() -> None:
+    """Keep the monochrome recipe neutral in both site color modes."""
+    content = (DOCS_ROOT / "styling/recipes.md").read_text(encoding="utf-8")
+    section = content.split("## Accessible monochrome comparison", 1)[1].split("## ", 1)[0]
+
+    for token in (
+        "var(--secondary-2)",
+        "var(--secondary-a5)",
+        "var(--secondary-a8)",
+        "var(--secondary-10)",
+        "var(--secondary-11)",
+        "var(--secondary-12)",
+    ):
+        assert token in section
+    assert "--mono-bg" not in section
+
+
 def test_generated_mark_api_does_not_claim_canvas_marks_are_dom_nodes() -> None:
     """Keep generated class_name descriptions aligned with canvas rendering."""
     for factory in MARKS:
@@ -575,6 +608,44 @@ def test_complete_styling_examples_render_live_previews() -> None:
                 violations.append(f"{path.relative_to(DOCS_ROOT)}: {fence}")
 
     assert not violations, "\n".join(violations)
+
+
+def test_single_chart_styling_demos_keep_only_the_parent_preview_card() -> None:
+    """Keep Live Demo chrome while avoiding a second chart-owned surface."""
+    gallery = (DOCS_ROOT / "styling/gallery.md").read_text(encoding="utf-8")
+    blocks = re.findall(r"~~~(python[^\n]*)\n(.*?)\n~~~", gallery, re.DOTALL)
+    long_legend = next(
+        body for _fence, body in blocks if "long_legend_edge_tooltip_preview" in body
+    )
+    facets = next(body for _fence, body in blocks if "styled_facet_preview" in body)
+
+    chrome_slots = (DOCS_ROOT / "styling/chrome-slots.md").read_text(encoding="utf-8")
+    chrome_blocks = re.findall(r"~~~(python[^\n]*)\n(.*?)\n~~~", chrome_slots, re.DOTALL)
+    tailwind_chrome = next(
+        body for _fence, body in chrome_blocks if "tailwind_chrome_preview" in body
+    )
+
+    assert "rounded-2xl border border-slate-200 bg-white" not in long_legend
+    assert "overflow-hidden rounded-xl border border-slate-200" not in facets
+    assert "rounded-xl border border-slate-200 bg-white" not in tailwind_chrome
+
+    content = """~~~python demo exec
+import reflex as rx
+
+def one_chart_preview():
+    return rx.box("chart", width="100%")
+~~~"""
+    rendered = str(
+        XyDocsMarkdownTransformer(
+            virtual_filepath="docs/styling/test.md",
+            filename="docs/styling/test.md",
+        ).transform(parse_document(content))
+    )
+    parent_card = (
+        'className:"flex flex-col p-6 rounded-xl overflow-x-auto border '
+        'border-secondary-4 bg-secondary-2 items-center justify-center w-full"'
+    )
+    assert rendered.count(parent_card) == 1
 
 
 def test_styling_demos_pair_light_surfaces_with_readable_text() -> None:

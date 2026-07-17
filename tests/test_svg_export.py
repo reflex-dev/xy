@@ -99,6 +99,34 @@ def test_svg_styling_fidelity_markers() -> None:
     assert ">styled<" in svg
 
 
+def test_svg_transparent_gradient_stops_preserve_adjacent_hues() -> None:
+    fade = (
+        Figure()
+        .area(
+            [0.0, 1.0],
+            [1.0, 2.0],
+            color="#a78bfa",
+            fill="linear-gradient(currentColor, transparent)",
+        )
+        .to_svg()
+    )
+    assert 'stop-color="#a78bfa" stop-opacity="0"' in fade
+    assert 'stop-color="transparent"' not in fade
+
+    split = (
+        Figure()
+        .bar(
+            [0.0, 1.0],
+            [1.0, 2.0],
+            fill="linear-gradient(#ff0000, transparent 50%, #0000ff)",
+        )
+        .to_svg()
+    )
+    assert split.count('offset="50%"') == 2
+    assert 'offset="50%" stop-color="#ff0000" stop-opacity="0"' in split
+    assert 'offset="50%" stop-color="#0000ff" stop-opacity="0"' in split
+
+
 def test_svg_axes_chrome_and_hiding() -> None:
     fig = Figure(title="t", x_label="xx", y_label="yy")
     fig.line([0.0, 1.0], [0.0, 1.0], name="n")

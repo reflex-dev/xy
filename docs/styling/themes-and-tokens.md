@@ -31,21 +31,15 @@ chart = xy.line_chart(
     xy.legend(loc="upper left"),
     xy.tooltip(title="{x}", format={"y": ".1f"}),
     xy.theme(
-        plot_background="var(--demo-bg, #ffffff)",
-        grid_color="var(--demo-grid, #e2e8f0)",
-        axis_color="var(--demo-axis, #64748b)",
-        text_color="var(--demo-text, #1e293b)",
+        plot_background="var(--secondary-2)",
+        grid_color="var(--secondary-a5)",
+        axis_color="var(--secondary-a8)",
+        text_color="var(--secondary-11)",
         # Custom variables belong in style and can be reused by marks.
-        style={"--series-primary": "var(--demo-series, #6e56cf)"},
+        style={"--series-primary": "var(--primary-9)"},
     ),
-    class_name=(
-        "[--demo-bg:#ffffff] [--demo-grid:#e2e8f0] [--demo-axis:#64748b] "
-        "[--demo-text:#1e293b] [--demo-series:#6e56cf] "
-        "dark:[--demo-bg:#0f172a] dark:[--demo-grid:#334155] "
-        "dark:[--demo-axis:#94a3b8] dark:[--demo-text:#e2e8f0] "
-        "dark:[--demo-series:#a78bfa]"
-    ),
-    style={"background": "var(--demo-bg, #ffffff)"},
+    class_name="bg-secondary-2 text-secondary-11",
+    style={"background": "var(--secondary-2)"},
     title="Monthly revenue",
 )
 
@@ -129,7 +123,7 @@ resolves it against the chart root on each render.
   --chart-text: #e5e7eb;
   --chart-grid: rgb(255 255 255 / 12%);
   --chart-axis: rgb(255 255 255 / 50%);
-  --chart-tooltip-bg: #0b1220;
+  --chart-tooltip-bg: #09090b;
   --chart-tooltip-text: #f8fafc;
   --chart-accent: #a78bfa;
 }
@@ -287,7 +281,7 @@ chart.to_html(
       .xy { --chart-accent: #6e56cf; }
       @media (prefers-color-scheme: dark) {
         .xy {
-          --chart-bg: #0f172a;
+          --chart-bg: #18181b;
           --chart-text: #e2e8f0;
           --chart-grid: rgb(226 232 240 / 12%);
           --chart-axis: rgb(226 232 240 / 55%);
