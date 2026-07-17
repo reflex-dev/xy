@@ -96,7 +96,12 @@ jobs:
           ENVIRONMENT: ${{ inputs.environment }}
           HELM_REPO: ${{ env.HELM_REPO }}
         run: |
-          FILE="${CHART_DIR}/values-${ENVIRONMENT}.yaml"
+          # The live dev env is tenant-dev on the main cluster; the dev
+          # cluster (values-dev.yaml) was retired 2026-07-01.
+          case "$ENVIRONMENT" in
+            dev)  FILE="${CHART_DIR}/values-tenant-dev.yaml" ;;
+            *)    FILE="${CHART_DIR}/values-${ENVIRONMENT}.yaml" ;;
+          esac
           if [[ ! -f "$FILE" ]]; then
             echo "::error::Values file $FILE not found in ${HELM_REPO}"
             exit 1
@@ -132,6 +137,11 @@ jobs:
           git checkout -b "$BRANCH"
           IMAGE_TAG="$IMAGE_TAG" yq -i '.apps.xy.frontend.image.tag = strenv(IMAGE_TAG)' "$VALUES_FILE"
           IMAGE_TAG="$IMAGE_TAG" yq -i '.apps.xy.backend.image.tag = strenv(IMAGE_TAG)' "$VALUES_FILE"
+          # ChartVersion reconcile strategy: Flux only repackages the chart
+          # when Chart.yaml's version changes, so bump patch every deploy.
+          CHART_FILE="$(dirname "$VALUES_FILE")/Chart.yaml"
+          NEW_VERSION=$(yq '.version' "$CHART_FILE" | awk -F. '{printf "%s.%s.%s", $1, $2, $3+1}')
+          NEW_VERSION="$NEW_VERSION" yq -i '.version = strenv(NEW_VERSION)' "$CHART_FILE"
 
       - name: Commit and push
         id: push
@@ -147,7 +157,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "$VALUES_FILE"
+          git add "$VALUES_FILE" "$(dirname "$VALUES_FILE")/Chart.yaml"
           if git diff --staged --quiet; then
             echo "pushed=false" >> "$GITHUB_OUTPUT"
             echo "::notice::${VALUES_FILE} already uses ${IMAGE_TAG}; skipping PR creation"
