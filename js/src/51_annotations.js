@@ -8,6 +8,8 @@
 const XY_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
   "color",
   "label_color",
+  "label_opacity",
+  "opacity",
   "width",
   "head_size",
   "head_style",
@@ -426,7 +428,18 @@ Object.assign(ChartView.prototype, {
       d.textContent = text;
       const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
       const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
-      const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0px";
+      // Arrow labels and x-oriented rule/band labels are positioned at their
+      // geometric midpoint.  With the generic start fallback their left edge
+      // landed on that midpoint, visibly shifting the label to the right.
+      // Point labels and right-edge y rule/band labels keep their existing
+      // explicit/start semantics.
+      const anchorName = ["start", "middle", "end"].includes(ann.anchor)
+        ? ann.anchor
+        : ann.kind === "arrow" ||
+            ((ann.kind === "rule" || ann.kind === "band") && ann.axis === "x")
+          ? "middle"
+          : "start";
+      const anchor = anchorName === "middle" ? "-50%" : anchorName === "end" ? "-100%" : "0px";
       const rot = Number.isFinite(Number(style.rotation))
         ? ((Number(style.rotation) % 360) + 360) % 360
         : 0;
@@ -452,7 +465,7 @@ Object.assign(ChartView.prototype, {
           : va === "bottom" ? (cw ? "-100%" : "0")
           : cw ? "0" : "-100%";
         const cross =
-          ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? (cw ? "0" : "-100%") : cw ? "-100%" : "0";
+          anchorName === "middle" ? "-50%" : anchorName === "end" ? (cw ? "0" : "-100%") : cw ? "-100%" : "0";
         transform = `rotate(${cw ? 90 : -90}deg) translate(${along},${cross})`;
       } else if (rot) {
         transform = `rotate(${-rot}deg) translate(${anchor},${vAnchor})`;
@@ -473,6 +486,10 @@ Object.assign(ChartView.prototype, {
       // e.g. an arrow's shaft `width` must not become CSS width on the label.
       const labelStyle = {};
       for (const [key, value] of Object.entries(style)) {
+        if (key === "opacity" && ann.kind === "text") {
+          labelStyle[key] = value;
+          continue;
+        }
         if (XY_ANNOTATION_SHAPE_STYLE_KEYS.has(key)) continue;
         labelStyle[key] = value;
       }
@@ -481,6 +498,12 @@ Object.assign(ChartView.prototype, {
       // stylesheet's --chart-annotation-text default stays overridable by CSS.
       if (style && (style.label_color || style.color)) {
         d.style.color = this._annotationLabelPaint(style, this.theme.label);
+      }
+      if (style && style.label_opacity !== undefined) {
+        const labelOpacity = Number(style.label_opacity);
+        if (Number.isFinite(labelOpacity)) {
+          d.style.opacity = String(Math.max(0, Math.min(1, labelOpacity)));
+        }
       }
       this.labels.appendChild(d);
       // matplotlib anchors the TEXT at its position; a bbox patch grows

@@ -67,13 +67,12 @@ function cssColor([r, g, b, a]) {
   return `rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},${a})`;
 }
 
-// Chrome *visual* defaults, one stylesheet per document. Every rule is wrapped
-// in :where(...) so it carries ZERO specificity — any user utility class
-// (`class_names[slot]`, specificity ≥ 0,1,0) or inline `styles[slot]` beats it
-// without needing !important, regardless of stylesheet source order. This is
-// what makes Tailwind actually win on the chrome: the elements now carry only
-// *structural* inline styles (position/size/z-index/state), while background,
-// color, padding, border, font, box-shadow live here as overridable defaults.
+// Chrome *visual* defaults, one stylesheet per document. Rules live in the
+// low-priority `base` cascade layer and use :where(...) for ZERO specificity.
+// Unlayered author CSS, later utility layers (including Tailwind), and inline
+// `styles[slot]` therefore beat them without !important. The elements carry
+// only structural inline styles (position/size/z-index/state); background,
+// color, padding, border, font, and box-shadow stay overridable here.
 // All colors flow through --chart-* tokens so container theming still cascades.
 //
 // The modebar's own default surface (its background/border/shadow, which have
@@ -86,9 +85,10 @@ function cssColor([r, g, b, a]) {
 // These are still zero-specificity :where() rules, so a host --chart-modebar-*
 // token or utility class overrides them in either scheme.
 const XY_CHROME_CSS = `
+@layer base{
 :where(.xy [data-xy-slot="title"]){text-align:center;font-size:14px;font-weight:600;color:var(--chart-text,inherit)}
-:where(.xy [data-xy-slot="tooltip"]){background:var(--chart-tooltip-bg,rgba(20,24,33,.92));color:var(--chart-tooltip-text,#fff);padding:5px 8px;border-radius:4px;font-size:11px;line-height:1.35;box-shadow:0 2px 8px rgba(0,0,0,.3)}
-:where(.xy [data-xy-slot="legend"]){gap:2px;font-size:11px;background:var(--chart-legend-bg,rgba(128,128,128,.08));border-radius:4px;padding:4px 8px;color:var(--chart-text,inherit)}
+:where(.xy [data-xy-slot="tooltip"]){max-width:calc(100% - 8px);max-height:calc(100% - 8px);box-sizing:border-box;white-space:normal;overflow-wrap:anywhere;overflow:auto;background:var(--chart-tooltip-bg,rgba(20,24,33,.92));color:var(--chart-tooltip-text,#fff);padding:5px 8px;border-radius:4px;font-size:11px;line-height:1.35;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+:where(.xy [data-xy-slot="legend"]){left:var(--xy-legend-left,auto);right:var(--xy-legend-right,auto);top:var(--xy-legend-top,auto);bottom:var(--xy-legend-bottom,auto);transform:var(--xy-legend-transform,none);max-width:var(--xy-legend-max-width);max-height:var(--xy-legend-max-height);gap:2px;font-size:11px;background:var(--chart-legend-bg,rgba(128,128,128,.08));border-radius:4px;padding:4px 8px;color:var(--chart-text,inherit)}
 :where(.xy [data-xy-slot="legend_swatch"]){width:12px;height:10px;border-radius:2px;margin-right:5px}
 :where(.xy [data-xy-slot="colorbar"]){color:var(--chart-text,inherit);font-size:10px}
 :where(.xy [data-xy-slot="colorbar_bar"]){background:var(--xy-colorbar-gradient);border:1px solid currentColor;box-sizing:border-box}
@@ -102,8 +102,9 @@ const XY_CHROME_CSS = `
 :where(.xy [data-xy-modebar-drag-handle]){position:relative;width:22px;margin-right:4px;cursor:move}
 :where(.xy [data-xy-modebar-drag-handle])::after{content:"";position:absolute;top:4px;right:-3px;bottom:4px;width:1px;background:rgba(128,128,128,.28);pointer-events:none}
 :where(.xy [data-xy-modebar-menu-trigger]){width:auto;min-width:48px;gap:1px;padding:0 4px;font-size:11px;font-variant-numeric:tabular-nums}
-:where(.xy [data-xy-modebar-select-trigger]){width:auto;min-width:30px;gap:0;padding:0 2px}
-:where(.xy [data-xy-modebar-menu-indicator]){display:flex;transition:transform .15s}
+:where(.xy [data-xy-modebar-select-trigger]){width:auto;min-width:42px;gap:2px;padding:0 4px}
+:where(.xy [data-xy-modebar-select-icon]){display:flex;flex:0 0 auto}
+:where(.xy [data-xy-modebar-menu-indicator]){display:flex;flex:0 0 auto;transition:transform .15s}
 :where(.xy [data-xy-modebar-menu-indicator] svg){width:11px;height:11px}
 :where(.xy [data-xy-modebar-menu]){min-width:148px;gap:1px;padding:4px;background:var(--chart-modebar-bg,var(--xy-modebar-menu-bg));border:1px solid var(--xy-modebar-menu-border);border-radius:7px;box-shadow:var(--xy-modebar-menu-shadow);backdrop-filter:blur(8px)}
 :where(.xy [data-xy-modebar-menu-item]){width:100%;height:28px;justify-content:flex-start;padding:0 9px;border-radius:4px;text-align:left;white-space:nowrap}
@@ -126,6 +127,7 @@ const XY_CHROME_CSS = `
 :where(.xy [data-xy-slot="canvas"]:focus-visible,.xy [data-xy-slot="modebar_button"]:focus-visible){outline:2px solid var(--chart-focus,#2563eb);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){:where(.xy [data-xy-slot="modebar"]){transition-duration:0s!important}}
 @media (forced-colors:active){:where(.xy [data-xy-slot="modebar"],.xy [data-xy-slot="tooltip"]){border:1px solid CanvasText}:where(.xy [data-xy-slot="modebar_button"].xy-active){outline:2px solid Highlight}:where(.xy [data-xy-slot="canvas"]:focus){outline:2px solid Highlight}}
+}
 `;
 
 // Inject XY_CHROME_CSS once per DOM root (document head or shadow root), so

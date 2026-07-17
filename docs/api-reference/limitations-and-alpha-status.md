@@ -60,8 +60,9 @@ and [Benchmarks](/docs/xy/overview/benchmarks/) for scoped evidence.
   structural layout rule, mark renderer, annotation shape, or native export.
 - Native PNG cannot apply author `custom_css`. Use renderable chart/mark styles
   or `Engine.chromium` for browser CSS fidelity.
-- Declarative `colorbar()` is a visibility/style/replacement hook; it does not
-  yet build a complete colorbar from a continuous mark channel.
+- Declarative `colorbar()` derives built-in chrome from supported continuous
+  marks. It intentionally omits constant/categorical color, truecolor grids,
+  and density scatter after that tier drops per-row color values.
 - Self-contained HTML blocks network access but requires inline script/style
   and a `blob:` worker under its emitted CSP. A nonce/hash-only host must serve
   the bundle and data through its own wrapper.

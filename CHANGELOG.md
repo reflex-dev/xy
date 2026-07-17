@@ -35,6 +35,19 @@ in the README).
   to the internal engine object.
 
 ### Added
+- **Declarative continuous colorbars.** `xy.colorbar()` derives the domain,
+  colormap, and default title from the last compatible heatmap, continuous
+  scatter, hexbin, contour, segment, or triangle-mesh mark, with explicit
+  `title`, `orientation`, and `ticks`. Constant/categorical colors, truecolor
+  grids, and density scatter whose source color channel was dropped do not
+  advertise a misleading scale.
+- **Complete styling atlas and Reflex/Tailwind bridge.** New styling guides and
+  live stress examples cover every rendered mark family, all 17 scatter
+  symbols, grouped/normalized bars, axes and annotations, both colorbar
+  orientations, responsive chrome, custom host components, facets, badges,
+  interactions, and export boundaries. Fixed charts passed directly to
+  `reflex_xy.chart()` now mirror their embedded class tokens into generated JSX
+  so Reflex's Tailwind plugin can discover them at compile time.
 - **Compact chart toolbar and editable lasso selection.** The client toolbar
   appears on chart hover or keyboard focus, can be dragged within the chart,
   groups zoom and selection modes into accessible menus, and exports PNG, SVG,
@@ -106,6 +119,23 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **Responsive, author-defeatable browser chrome.** XY's visual defaults now
+  live in a low-priority cascade layer, so Tailwind utilities, ordinary author
+  CSS, and slot styles override them without `!important`. Long legends remain
+  bounded and correctly anchored after compact-layout resizes; edge tooltips
+  wrap, clamp, and flip within the chart; canvas offsets refresh with the plot.
+- **Named-axis and static-export parity.** Browser, SVG, and native PNG output
+  now render and independently scale named x and y axes, including their
+  baseline, ticks, labels, titles, style, reverse ranges, collision strategy,
+  and label placement. Static legends are bounded and long labels ellipsize
+  instead of escaping small plots.
+- Rich tooltips retain resident color/size fields after WebGL context recovery
+  and rehydrate shared fields after exact kernel picks instead of collapsing to
+  positional x/y values.
+- Annotation geometry opacity no longer fades browser DOM labels. Rules,
+  bands, markers, arrows, and callouts can stay visually subtle while their
+  text remains readable; annotation-style `label_opacity` explicitly controls
+  label alpha when desired.
 - **`savefig` single-panel PNG export now uses the fused Rust encoder.** A
   one-axes figure with no suptitle/colorbar/tight-bbox and the default white
   facecolor is exactly one native render, so `stitch_png` returns the

@@ -134,6 +134,27 @@ function fmtLinear(v, step) {
   return v.toFixed(Math.min(dec, 8));
 }
 
+// Match Python's default ``:g`` formatting used by the SVG/native colorbar
+// exporters. Explicit ticks are authored values, so their precision must not
+// be inferred from the unrelated automatic tick step for the whole domain.
+function fmtGeneral(v, precision = 6) {
+  const value = Number(v);
+  if (!Number.isFinite(value)) return String(v);
+  if (value === 0) return Object.is(value, -0) ? "-0" : "0";
+  // %g picks fixed vs exponential from the exponent AFTER rounding to
+  // `precision` significant digits (999999.5 -> 1e+06, 0.00009999995 -> 0.0001).
+  let [coefficient, exponentText] = value.toExponential(precision - 1).split("e");
+  const exponent = Number(exponentText);
+  if (exponent < -4 || exponent >= precision) {
+    coefficient = coefficient.replace(/0+$/, "").replace(/\.$/, "");
+    return `${coefficient}e${exponent >= 0 ? "+" : "-"}${String(Math.abs(exponent)).padStart(2, "0")}`;
+  }
+  const decimals = Math.max(0, precision - exponent - 1);
+  let text = Number(value.toPrecision(precision)).toFixed(decimals);
+  if (text.includes(".")) text = text.replace(/0+$/, "").replace(/\.$/, "");
+  return text;
+}
+
 function fmtCategory(v, categories) {
   const i = Math.round(v);
   return i >= 0 && i < categories.length ? String(categories[i]) : "";

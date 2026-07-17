@@ -232,9 +232,10 @@ function cssColor([r, g, b, a]) {
 return `rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},${a})`;
 }
 const XY_CHROME_CSS = `
+@layer base{
 :where(.xy [data-xy-slot="title"]){text-align:center;font-size:14px;font-weight:600;color:var(--chart-text,inherit)}
-:where(.xy [data-xy-slot="tooltip"]){background:var(--chart-tooltip-bg,rgba(20,24,33,.92));color:var(--chart-tooltip-text,#fff);padding:5px 8px;border-radius:4px;font-size:11px;line-height:1.35;box-shadow:0 2px 8px rgba(0,0,0,.3)}
-:where(.xy [data-xy-slot="legend"]){gap:2px;font-size:11px;background:var(--chart-legend-bg,rgba(128,128,128,.08));border-radius:4px;padding:4px 8px;color:var(--chart-text,inherit)}
+:where(.xy [data-xy-slot="tooltip"]){max-width:calc(100% - 8px);max-height:calc(100% - 8px);box-sizing:border-box;white-space:normal;overflow-wrap:anywhere;overflow:auto;background:var(--chart-tooltip-bg,rgba(20,24,33,.92));color:var(--chart-tooltip-text,#fff);padding:5px 8px;border-radius:4px;font-size:11px;line-height:1.35;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+:where(.xy [data-xy-slot="legend"]){left:var(--xy-legend-left,auto);right:var(--xy-legend-right,auto);top:var(--xy-legend-top,auto);bottom:var(--xy-legend-bottom,auto);transform:var(--xy-legend-transform,none);max-width:var(--xy-legend-max-width);max-height:var(--xy-legend-max-height);gap:2px;font-size:11px;background:var(--chart-legend-bg,rgba(128,128,128,.08));border-radius:4px;padding:4px 8px;color:var(--chart-text,inherit)}
 :where(.xy [data-xy-slot="legend_swatch"]){width:12px;height:10px;border-radius:2px;margin-right:5px}
 :where(.xy [data-xy-slot="colorbar"]){color:var(--chart-text,inherit);font-size:10px}
 :where(.xy [data-xy-slot="colorbar_bar"]){background:var(--xy-colorbar-gradient);border:1px solid currentColor;box-sizing:border-box}
@@ -248,8 +249,9 @@ const XY_CHROME_CSS = `
 :where(.xy [data-xy-modebar-drag-handle]){position:relative;width:22px;margin-right:4px;cursor:move}
 :where(.xy [data-xy-modebar-drag-handle])::after{content:"";position:absolute;top:4px;right:-3px;bottom:4px;width:1px;background:rgba(128,128,128,.28);pointer-events:none}
 :where(.xy [data-xy-modebar-menu-trigger]){width:auto;min-width:48px;gap:1px;padding:0 4px;font-size:11px;font-variant-numeric:tabular-nums}
-:where(.xy [data-xy-modebar-select-trigger]){width:auto;min-width:30px;gap:0;padding:0 2px}
-:where(.xy [data-xy-modebar-menu-indicator]){display:flex;transition:transform .15s}
+:where(.xy [data-xy-modebar-select-trigger]){width:auto;min-width:42px;gap:2px;padding:0 4px}
+:where(.xy [data-xy-modebar-select-icon]){display:flex;flex:0 0 auto}
+:where(.xy [data-xy-modebar-menu-indicator]){display:flex;flex:0 0 auto;transition:transform .15s}
 :where(.xy [data-xy-modebar-menu-indicator] svg){width:11px;height:11px}
 :where(.xy [data-xy-modebar-menu]){min-width:148px;gap:1px;padding:4px;background:var(--chart-modebar-bg,var(--xy-modebar-menu-bg));border:1px solid var(--xy-modebar-menu-border);border-radius:7px;box-shadow:var(--xy-modebar-menu-shadow);backdrop-filter:blur(8px)}
 :where(.xy [data-xy-modebar-menu-item]){width:100%;height:28px;justify-content:flex-start;padding:0 9px;border-radius:4px;text-align:left;white-space:nowrap}
@@ -272,6 +274,7 @@ const XY_CHROME_CSS = `
 :where(.xy [data-xy-slot="canvas"]:focus-visible,.xy [data-xy-slot="modebar_button"]:focus-visible){outline:2px solid var(--chart-focus,#2563eb);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){:where(.xy [data-xy-slot="modebar"]){transition-duration:0s!important}}
 @media (forced-colors:active){:where(.xy [data-xy-slot="modebar"],.xy [data-xy-slot="tooltip"]){border:1px solid CanvasText}:where(.xy [data-xy-slot="modebar_button"].xy-active){outline:2px solid Highlight}:where(.xy [data-xy-slot="canvas"]:focus){outline:2px solid Highlight}}
+}
 `;
 function ensureChromeStylesheet(node) {
 let root = node && node.getRootNode ? node.getRootNode() : document;
@@ -414,6 +417,21 @@ if (av >= 1e6 || (av !== 0 && av < 1e-4)) return v.toExponential(1).replace("e+"
 let dec = step ? Math.max(0, Math.ceil(-Math.log10(Math.abs(step)))) : 0;
 while (dec < 8 && Math.abs(Number(step.toFixed(dec)) - step) > Math.abs(step) / 1000) dec++;
 return v.toFixed(Math.min(dec, 8));
+}
+function fmtGeneral(v, precision = 6) {
+const value = Number(v);
+if (!Number.isFinite(value)) return String(v);
+if (value === 0) return Object.is(value, -0) ? "-0" : "0";
+let [coefficient, exponentText] = value.toExponential(precision - 1).split("e");
+const exponent = Number(exponentText);
+if (exponent < -4 || exponent >= precision) {
+coefficient = coefficient.replace(/0+$/, "").replace(/\.$/, "");
+return `${coefficient}e${exponent >= 0 ? "+" : "-"}${String(Math.abs(exponent)).padStart(2, "0")}`;
+}
+const decimals = Math.max(0, precision - exponent - 1);
+let text = Number(value.toPrecision(precision)).toFixed(decimals);
+if (text.includes(".")) text = text.replace(/0+$/, "").replace(/\.$/, "");
+return text;
 }
 function fmtCategory(v, categories) {
 const i = Math.round(v);
@@ -1854,6 +1872,15 @@ this._initLinkedCharts();
 this._themeWatch = window.matchMedia("(prefers-color-scheme: dark)");
 this._onScheme = () => this.refreshTheme();
 this._themeWatch.addEventListener?.("change", this._onScheme);
+if (typeof MutationObserver !== "undefined") {
+this._themeMutationObserver = new MutationObserver(() => this.refreshTheme());
+for (let node = this.root; node; node = node.parentElement) {
+this._themeMutationObserver.observe(node, {
+attributes: true,
+attributeFilter: ["class", "style"],
+});
+}
+}
 this._unsubscribeComm = comm ? comm.onMessage((msg, buffers) => this._onKernelMsg(msg, buffers)) : null;
 this.draw();
 }
@@ -1869,11 +1896,21 @@ const colorbarBottomRoom = horizontalColorbar ? 38 + (colorbar.label ? 16 : 0) :
 const marginRight = (pad ? pad[1] : compact ? 8 : MARGIN.r) + colorbarRightRoom;
 const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
 const marginBottom = (pad ? pad[2] : compact ? 36 : MARGIN.b) + colorbarBottomRoom;
-const topAxisRoom = this._axis("x").side === "top" ? (compact ? 26 : 32) : 0;
+const hasBottomAxis = Object.values(this.axes || {}).some((axis) =>
+axis && String(axis.id || "").startsWith("x") && axis.side !== "top" &&
+this._axisTickLabelStrategy(axis) !== "none");
+this._bottomAxisRoom = hasBottomAxis ? (compact ? 36 : MARGIN.b) : 0;
+const topAxisRoom = Object.values(this.axes || {}).some((axis) =>
+axis && String(axis.id || "").startsWith("x") && axis.side === "top" &&
+this._axisTickLabelStrategy(axis) !== "none")
+? (compact ? 26 : 32)
+: 0;
 const top = marginTop + (this.spec.title ? (compact ? 26 : 30) : 0) + topAxisRoom;
-const extraRightAxes = Object.values(this.axes || {}).filter((axis) =>
-axis && axis.id !== "y" && String(axis.id || "").startsWith("y") && axis.side === "right");
-const right = marginRight + (extraRightAxes.length ? (compact ? 42 : 54) : 0);
+const rightAxes = Object.values(this.axes || {}).filter((axis) =>
+axis && String(axis.id || "").startsWith("y") &&
+axis.side === "right" && this._axisTickLabelStrategy(axis) !== "none");
+this._rightAxisRoom = rightAxes.length ? (compact ? 42 : 54) : 0;
+const right = marginRight + this._rightAxisRoom;
 this.plot = {
 x: marginLeft,
 y: top,
@@ -1921,7 +1958,8 @@ _axisTicks(axisId, target) {
 const axis = this._axis(axisId);
 const [lo, hi] = this._axisRange(axisId);
 if (Array.isArray(axis.tick_values)) {
-const ticks = axis.tick_values.map(Number).filter((v) => Number.isFinite(v) && v >= lo && v <= hi);
+const a = Math.min(lo, hi), b = Math.max(lo, hi);
+const ticks = axis.tick_values.map(Number).filter((v) => Number.isFinite(v) && v >= a && v <= b);
 return { ticks, labels: ticks, step: ticks.length > 1 ? Math.abs(ticks[1] - ticks[0]) : 1 };
 }
 if (axis.kind === "time") return timeTicks(lo, hi, target);
@@ -2302,6 +2340,10 @@ this.size.w = w;
 this.size.h = h;
 this._layout();
 const p = this.plot;
+this.root.style.setProperty("--xy-legend-max-width", Math.max(40, p.w - 12) + "px");
+this.root.style.setProperty("--xy-legend-max-height", Math.max(40, p.h - 12) + "px");
+this.canvas.style.left = p.x + "px";
+this.canvas.style.top = p.y + "px";
 this.canvas.style.width = p.w + "px";
 this.canvas.style.height = p.h + "px";
 this.canvas.width = p.w * this.dpr;
@@ -2310,8 +2352,8 @@ this.chrome.style.width = this.size.w + "px";
 this.chrome.style.height = this.size.h + "px";
 this.chrome.width = this.size.w * this.dpr;
 this.chrome.height = this.size.h * this.dpr;
-if (this._legends && this._legends.length && this._slotStyleValue("legend", "max-height") == null) {
-for (const lg of this._legends) lg.style.maxHeight = p.h - 12 + "px";
+for (const lg of this._legends || []) {
+this._positionLegend(lg, lg.dataset.xyLegendLoc || "upper right");
 }
 this._positionReductionBadges();
 this._positionColorbar();
@@ -2327,6 +2369,8 @@ root.className = "xy";
 root.style.cssText =
 `position:relative;width:${this.fluid ? "100%" : this.size.w + "px"};` +
 `height:${this.fluidH ? "100%" : this.size.h + "px"};` +
+`--xy-legend-max-width:${Math.max(40, this.plot.w - 12)}px;` +
+`--xy-legend-max-height:${Math.max(40, this.plot.h - 12)}px;` +
 (this.fluidH ? "min-height:120px;" : "") +
 "font:12px system-ui,sans-serif;user-select:none;";
 this._applySlot(root, "root");
@@ -2379,7 +2423,7 @@ this._applySlot(this.labels, "labels");
 root.appendChild(this.labels);
 this.tooltip = document.createElement("div");
 this.tooltip.style.cssText =
-"position:absolute;display:none;pointer-events:none;z-index:5;white-space:nowrap;";
+"position:absolute;display:none;pointer-events:none;z-index:5;";
 this._applySlot(this.tooltip, "tooltip");
 this.tooltip.setAttribute("aria-hidden", "true");
 root.appendChild(this.tooltip);
@@ -2507,21 +2551,12 @@ _legendBox(root, items, options) {
 const lg = document.createElement("div");
 const loc = options.loc || "upper right";
 const ncols = Math.max(1, Number(options.ncols) || 1);
-const rightInset = this.size.w - (this.plot.x + this.plot.w);
 const horizontal = ncols > 1;
-const h = loc.includes("left") ? "left" : loc.includes("right") ? "right" : "center";
-const v = loc.includes("upper") ? "upper" : loc.includes("lower") ? "lower" : "center";
-let xPos, yPos, tx = "0", ty = "0";
-if (h === "left") xPos = `left:${this.plot.x + 6}px;`;
-else if (h === "right") xPos = `right:${rightInset + 6}px;`;
-else { xPos = `left:${this.plot.x + this.plot.w / 2}px;`; tx = "-50%"; }
-if (v === "upper") yPos = `top:${this.plot.y + 6}px;`;
-else if (v === "lower") yPos = `bottom:${this.size.h - (this.plot.y + this.plot.h) + 6}px;`;
-else { yPos = `top:${this.plot.y + this.plot.h / 2}px;`; ty = "-50%"; }
-const transform = tx === "0" && ty === "0" ? "" : `transform:translate(${tx},${ty});`;
-lg.style.cssText = `position:absolute;${xPos}${yPos}${transform}` +
+lg.style.cssText = "position:absolute;" +
 `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
-"overflow:auto;" + `max-height:${this.plot.h - 12}px;`;
+"overflow:auto;";
+lg.dataset.xyLegendLoc = loc;
+this._positionLegend(lg, loc);
 this._applySlot(lg, "legend");
 if (options.title) {
 const title = document.createElement("div");
@@ -2602,6 +2637,23 @@ root.appendChild(lg);
 this._legends.push(lg);
 return lg;
 }
+_positionLegend(lg, loc) {
+if (!lg) return;
+const rightInset = this.size.w - (this.plot.x + this.plot.w);
+const h = loc.includes("left") ? "left" : loc.includes("right") ? "right" : "center";
+const v = loc.includes("upper") ? "upper" : loc.includes("lower") ? "lower" : "center";
+const left = h === "left" ? this.plot.x + 6 : h === "center" ? this.plot.x + this.plot.w / 2 : null;
+const right = h === "right" ? rightInset + 6 : null;
+const top = v === "upper" ? this.plot.y + 6 : v === "center" ? this.plot.y + this.plot.h / 2 : null;
+const bottom = v === "lower" ? this.size.h - (this.plot.y + this.plot.h) + 6 : null;
+lg.style.setProperty("--xy-legend-left", left == null ? "auto" : left + "px");
+lg.style.setProperty("--xy-legend-right", right == null ? "auto" : right + "px");
+lg.style.setProperty("--xy-legend-top", top == null ? "auto" : top + "px");
+lg.style.setProperty("--xy-legend-bottom", bottom == null ? "auto" : bottom + "px");
+const tx = h === "center" ? "-50%" : "0";
+const ty = v === "center" ? "-50%" : "0";
+lg.style.setProperty("--xy-legend-transform", `translate(${tx},${ty})`);
+}
 _buildColorbar(root) {
 const cb = this.spec.colorbar;
 if (!cb) return;
@@ -2636,13 +2688,14 @@ const domain = cb.domain || [0, 1];
 const lo = Number(domain[0]), hi = Number(domain[1]);
 const span = hi - lo || 1;
 const tickResult = linearTicks(lo, hi, 8);
-const tickValues = Array.isArray(cb.ticks) ? cb.ticks : tickResult.ticks;
+const hasExplicitTicks = Array.isArray(cb.ticks);
+const tickValues = hasExplicitTicks ? cb.ticks : tickResult.ticks;
 const tickStep = tickResult.step;
 for (const raw of tickValues) {
 const value = Number(raw);
 if (!Number.isFinite(value) || value < Math.min(lo, hi) || value > Math.max(lo, hi)) continue;
 const tick = document.createElement("span");
-tick.textContent = fmtLinear(value, tickStep);
+tick.textContent = hasExplicitTicks ? fmtGeneral(value) : fmtLinear(value, tickStep);
 const fraction = (value - lo) / span;
 tick.style.cssText = horizontal
 ? `position:absolute;left:${100 * fraction}%;top:${COLORBAR_THICKNESS + 2}px;transform:translateX(-50%);white-space:nowrap;`
@@ -2668,8 +2721,12 @@ this._positionColorbar();
 _positionColorbar() {
 if (!this._colorbar) return;
 const horizontal = this._colorbarHorizontal;
-this._colorbar.style.left = (horizontal ? this.plot.x : this.plot.x + this.plot.w + COLORBAR_GAP) + "px";
-this._colorbar.style.top = (horizontal ? this.plot.y + this.plot.h + 8 : this.plot.y) + "px";
+this._colorbar.style.left = (horizontal
+? this.plot.x
+: this.plot.x + this.plot.w + this._rightAxisRoom + COLORBAR_GAP) + "px";
+this._colorbar.style.top = (horizontal
+? this.plot.y + this.plot.h + (this._bottomAxisRoom || 8)
+: this.plot.y) + "px";
 this._colorbar.style.width = (horizontal ? this.plot.w : 66) + "px";
 this._colorbar.style.height = (horizontal ? 50 : Math.max(24, this.plot.h)) + "px";
 }
@@ -2813,11 +2870,13 @@ g.colorMode = 0;
 g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
 if (t.color && t.color.mode === "continuous") {
 g.colorMode = 1;
-g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+g._cpu.color = this._columnView(buffer, this.spec.columns[t.color.buf]);
+g.cBuf = this._upload(g._cpu.color);
 g.lut = this._lut(t.color.colormap);
 } else if (t.color && t.color.mode === "categorical") {
 g.colorMode = 2;
-g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+g._cpu.color = this._columnView(buffer, this.spec.columns[t.color.buf]);
+g.cBuf = this._upload(g._cpu.color);
 g.lut = this._paletteLut(t.color.palette);
 }
 g.sizeMode = 0;
@@ -2825,7 +2884,8 @@ g.size = (t.size && t.size.size) || 4.0;
 g.sizeRange = [2, 18];
 if (t.size && t.size.mode === "continuous") {
 g.sizeMode = 1;
-g.sBuf = this._upload(this._columnView(buffer, this.spec.columns[t.size.buf]));
+g._cpu.size = this._columnView(buffer, this.spec.columns[t.size.buf]);
+g.sBuf = this._upload(g._cpu.size);
 g.sizeRange = t.size.range_px;
 }
 this._pointMarkStyle(g, t);
@@ -4087,24 +4147,15 @@ if (value === "dashdot") return [6, 3, 1, 3];
 return [];
 }
 _axisTickLabelStrategy(axis) {
-const raw = axis && axis.tick_label_strategy !== undefined
-? axis.tick_label_strategy
-: this._axisStyleValue(axis, "tick_label_strategy");
-const value = String(raw || "auto").replace(/-/g, "_");
+const value = String((axis && axis.tick_label_strategy) || "auto").replace(/-/g, "_");
 return ["auto", "hide", "rotate", "stagger", "none", "off"].includes(value) ? value : "auto";
 }
 _axisTickLabelAngle(axis) {
-const raw = axis && axis.tick_label_angle !== undefined
-? axis.tick_label_angle
-: this._axisStyleValue(axis, "tick_label_angle");
-const angle = Number(raw);
+const angle = Number(axis ? axis.tick_label_angle : undefined);
 return Number.isFinite(angle) ? angle : null;
 }
 _axisTickLabelMinGap(axis, dim) {
-const raw = axis && axis.tick_label_min_gap !== undefined
-? axis.tick_label_min_gap
-: this._axisStyleValue(axis, "tick_label_min_gap");
-const gap = Number(raw);
+const gap = Number(axis ? axis.tick_label_min_gap : undefined);
 return Number.isFinite(gap) && gap >= 0 ? gap : (dim === "x" ? 8 : 4);
 }
 _estimateTickLabel(text, fontSize) {
@@ -4147,7 +4198,12 @@ if (!this._tickLabelsCollide(out, dim, fontSize, minGap)) return out;
 return labels.slice(0, 1);
 }
 _layoutTickLabels(axis, dim, labels) {
-if (labels.length <= 1) return labels.map((label) => ({ ...label, angle: 0, row: 0 }));
+const strategyValue = this._axisTickLabelStrategy(axis);
+if (strategyValue === "none" || strategyValue === "off") return [];
+if (labels.length <= 1) {
+const angle = this._axisTickLabelAngle(axis);
+return labels.map((label) => ({ ...label, angle: angle === null ? 0 : angle, row: 0 }));
+}
 const fontSize = Math.max(
 8,
 this._axisStyleNumber(axis, "tick_label_size", this._axisStyleNumber(axis, "tick_size", 11)),
@@ -4156,9 +4212,7 @@ const minGap = this._axisTickLabelMinGap(axis, dim);
 const explicitAngle = this._axisTickLabelAngle(axis);
 const baseAngle = explicitAngle === null ? 0 : explicitAngle;
 const withBase = labels.map((label) => ({ ...label, angle: baseAngle, row: 0 }));
-let strategy = this._axisTickLabelStrategy(axis);
-if (strategy === "none") return [];
-if (strategy === "off") return [];
+let strategy = strategyValue;
 if (strategy === "auto") {
 if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap)) return withBase;
 if (dim === "x" && axis.kind === "category" && labels.length <= 16) strategy = "rotate";
@@ -4172,10 +4226,26 @@ out = labels.map((label) => ({ ...label, angle, row: 0 }));
 } else if (strategy === "stagger" && dim === "x") {
 out = labels.map((label, i) => ({ ...label, angle: baseAngle, row: i % 2 }));
 }
-if (strategy === "hide" || this._tickLabelsCollide(out, dim, fontSize, minGap)) {
+if (this._tickLabelsCollide(out, dim, fontSize, minGap)) {
 out = this._downsampleTickLabels(out, dim, fontSize, minGap);
 }
 return out;
+}
+_xTickLabelTransform(axis, angle) {
+const value = Number(angle || 0);
+const side = axis && axis.side === "top" ? "top" : "bottom";
+if (value === 0) {
+return {
+transform: "translateX(-50%)",
+origin: side === "top" ? "bottom center" : "top center",
+};
+}
+const anchorAtEnd = (side === "bottom" && value < 0) || (side === "top" && value > 0);
+const verticalOrigin = side === "top" ? "bottom" : "top";
+return {
+transform: `${anchorAtEnd ? "translateX(-100%) " : ""}rotate(${value}deg)`,
+origin: `${verticalOrigin} ${anchorAtEnd ? "right" : "left"}`,
+};
 }
 _axisLabelCss(axis, dim, fallbackCss) {
 const rawPosition = axis && axis.label_position;
@@ -4245,6 +4315,10 @@ ctx.fillRect(p.x, p.y, p.w, p.h);
 }
 const xAxis = this._axis("x");
 const yAxis = this._axis("y");
+const extraXAxes = Object.values(this.axes).filter((axis) =>
+axis && axis.id !== "x" && String(axis.id || "").startsWith("x"));
+const extraYAxes = Object.values(this.axes).filter((axis) =>
+axis && axis.id !== "y" && String(axis.id || "").startsWith("y"));
 const hideX = this._axisTickLabelStrategy(xAxis) === "none";
 const hideY = this._axisTickLabelStrategy(yAxis) === "none";
 const xt = this._axisTicks(
@@ -4305,8 +4379,14 @@ const xHeight = Math.max(1, this._axisStyleNumber(xAxis, "axis_width", 1));
 if (frameSides.includes("top")) rule(xAxis, p.x, p.y, p.w, xHeight);
 if (frameSides.includes("bottom")) rule(xAxis, p.x, p.y + p.h - xHeight, p.w, xHeight);
 }
-for (const axis of Object.values(this.axes)) {
-if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
+for (const axis of extraXAxes) {
+if (this._axisTickLabelStrategy(axis) === "none") continue;
+const h = Math.max(1, this._axisStyleNumber(axis, "axis_width", 1));
+const y = axis.side === "top" ? p.y : p.y + p.h - h;
+rule(axis, p.x, y, p.w, h);
+}
+for (const axis of extraYAxes) {
+if (this._axisTickLabelStrategy(axis) === "none") continue;
 const w = Math.max(1, this._axisStyleNumber(axis, "axis_width", 1));
 const x = axis.side === "left" ? p.x : p.x + p.w - w;
 rule(axis, x, p.y, w, p.h);
@@ -4339,6 +4419,38 @@ const y = this._dataPx("y", value);
 if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
 const left = side === "right" ? edge - tick.inward : edge - tick.outward;
 rule(yAxis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width, "tick_color");
+}
+}
+for (const axis of extraXAxes) {
+if (this._axisTickLabelStrategy(axis) === "none") continue;
+const ticks = this._axisTicks(
+axis.id,
+this._axisTickTarget(axis.id, Math.max(3, p.w / (axis.kind === "time" ? 90 : 80))),
+);
+const tick = tickParts(axis);
+const side = axis.side || "bottom";
+const edge = side === "top" ? p.y : p.y + p.h;
+for (const value of ticks.ticks) {
+const x = this._dataPx(axis.id, value);
+if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
+const top = side === "top" ? edge - tick.outward : edge - tick.inward;
+rule(axis, x - tick.width / 2, top, tick.width, tick.inward + tick.outward, "tick_color");
+}
+}
+for (const axis of extraYAxes) {
+if (this._axisTickLabelStrategy(axis) === "none") continue;
+const ticks = this._axisTicks(
+axis.id,
+this._axisTickTarget(axis.id, Math.max(3, p.h / 45)),
+);
+const tick = tickParts(axis);
+const side = axis.side || "right";
+const edge = side === "right" ? p.x + p.w : p.x;
+for (const value of ticks.ticks) {
+const y = this._dataPx(axis.id, value);
+if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
+const left = side === "right" ? edge - tick.inward : edge - tick.outward;
+rule(axis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width, "tick_color");
 }
 }
 }
@@ -4385,13 +4497,48 @@ this._axisStyleNumber(xAxis, "tick_size", 11),
 );
 const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
 const top = xAxis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
-const transform = `translateX(-50%) rotate(${Number(item.angle || 0)}deg)`;
-const origin = xAxis.side === "top" ? "bottom center" : "top center";
+const placement = this._xTickLabelTransform(xAxis, item.angle);
 label(
 item.text,
-`left:${item.pos}px;top:${top}px;transform:${transform};transform-origin:${origin};`,
+`left:${item.pos}px;top:${top}px;transform:${placement.transform};` +
+`transform-origin:${placement.origin};`,
 xAxis,
 );
+}
+for (const axis of extraXAxes) {
+const ticks = this._axisTicks(
+axis.id,
+this._axisTickTarget(axis.id, Math.max(3, p.w / (axis.kind === "time" ? 90 : 80))),
+);
+const labelCandidates = [];
+for (const value of (ticks.labels || ticks.ticks)) {
+const px = this._dataPx(axis.id, value);
+if (px < p.x - 1 || px > p.x + p.w + 1) continue;
+labelCandidates.push({ pos: px, text: this._axisTickText(axis, value, ticks.step) });
+}
+for (const item of this._layoutTickLabels(axis, "x", labelCandidates)) {
+const tickLabelSize = this._axisStyleNumber(
+axis,
+"tick_label_size",
+this._axisStyleNumber(axis, "tick_size", 11),
+);
+const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
+const top = axis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
+const placement = this._xTickLabelTransform(axis, item.angle);
+label(
+item.text,
+`left:${item.pos}px;top:${top}px;transform:${placement.transform};` +
+`transform-origin:${placement.origin};`,
+axis,
+);
+}
+if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
+const top = axis.side === "top" ? p.y - 34 : p.y + p.h + 24;
+const fallbackCss =
+`left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`;
+const placement = this._axisLabelCss(axis, "x", fallbackCss);
+label(axis.label, placement.css, axis, "label", placement.style);
+}
 }
 const yLabelCandidates = [];
 for (const v of (yt.labels || yt.ticks)) {
@@ -4407,8 +4554,7 @@ const css = yAxis.side === "right"
 : `right:${this.size.w - p.x + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:right center;`;
 label(item.text, css, yAxis);
 }
-for (const axis of Object.values(this.axes)) {
-if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
+for (const axis of extraYAxes) {
 const ticks = this._axisTicks(axis.id, this._axisTickTarget(axis.id, Math.max(3, p.h / 45)));
 const labelCandidates = [];
 for (const v of (ticks.labels || ticks.ticks)) {
@@ -4424,7 +4570,7 @@ const css = axis.side === "left"
 : `left:${p.x + p.w + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:left center;`;
 label(item.text, css, axis);
 }
-if (axis.label) {
+if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
 const fallbackCss = axis.side === "left"
 ? `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`
 : `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`;
@@ -4432,13 +4578,13 @@ const placement = this._axisLabelCss(axis, "y", fallbackCss);
 label(axis.label, placement.css, axis, "label", placement.style);
 }
 }
-if (s.x_axis.label) {
+if (s.x_axis.label && !hideX) {
 const top = xAxis.side === "top" ? p.y - 34 : p.y + p.h + 24;
 const fallbackCss = `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`;
 const placement = this._axisLabelCss(xAxis, "x", fallbackCss);
 label(s.x_axis.label, placement.css, xAxis, "label", placement.style);
 }
-if (s.y_axis.label) {
+if (s.y_axis.label && !hideY) {
 const fallbackCss = yAxis.side === "right"
 ? `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`
 : `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`;
@@ -4742,6 +4888,8 @@ this._ro?.disconnect();
 this._io?.disconnect();
 this._io = null;
 this._themeWatch?.removeEventListener?.("change", this._onScheme);
+this._themeMutationObserver?.disconnect();
+this._themeMutationObserver = null;
 this._dprMq?.removeEventListener?.("change", this._onDprChange);
 this._dprMq = null;
 this._unsubscribeComm?.();
@@ -4838,6 +4986,8 @@ this.gpuTraces = [];
 const XY_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
 "color",
 "label_color",
+"label_opacity",
+"opacity",
 "width",
 "head_size",
 "head_style",
@@ -5221,7 +5371,13 @@ const d = document.createElement("div");
 d.textContent = text;
 const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
 const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
-const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0px";
+const anchorName = ["start", "middle", "end"].includes(ann.anchor)
+? ann.anchor
+: ann.kind === "arrow" ||
+((ann.kind === "rule" || ann.kind === "band") && ann.axis === "x")
+? "middle"
+: "start";
+const anchor = anchorName === "middle" ? "-50%" : anchorName === "end" ? "-100%" : "0px";
 const rot = Number.isFinite(Number(style.rotation))
 ? ((Number(style.rotation) % 360) + 360) % 360
 : 0;
@@ -5240,7 +5396,7 @@ va === "center" || va === "middle" ? "-50%"
 : va === "bottom" ? (cw ? "-100%" : "0")
 : cw ? "0" : "-100%";
 const cross =
-ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? (cw ? "0" : "-100%") : cw ? "-100%" : "0";
+anchorName === "middle" ? "-50%" : anchorName === "end" ? (cw ? "0" : "-100%") : cw ? "-100%" : "0";
 transform = `rotate(${cw ? 90 : -90}deg) translate(${along},${cross})`;
 } else if (rot) {
 transform = `rotate(${-rot}deg) translate(${anchor},${vAnchor})`;
@@ -5253,12 +5409,22 @@ this._applySlot(d, "annotation_label");
 this._applyClass(d, ann.class_name);
 const labelStyle = {};
 for (const [key, value] of Object.entries(style)) {
+if (key === "opacity" && ann.kind === "text") {
+labelStyle[key] = value;
+continue;
+}
 if (XY_ANNOTATION_SHAPE_STYLE_KEYS.has(key)) continue;
 labelStyle[key] = value;
 }
 this._applyStyle(d, labelStyle);
 if (style && (style.label_color || style.color)) {
 d.style.color = this._annotationLabelPaint(style, this.theme.label);
+}
+if (style && style.label_opacity !== undefined) {
+const labelOpacity = Number(style.label_opacity);
+if (Number.isFinite(labelOpacity)) {
+d.style.opacity = String(Math.max(0, Math.min(1, labelOpacity)));
+}
 }
 this.labels.appendChild(d);
 const cs = getComputedStyle(d);
@@ -5491,8 +5657,16 @@ if (this.a11yLive.textContent !== announcement) this.a11yLive.textContent = anno
 }
 this.tooltip.style.display = "block";
 const tw = this.tooltip.offsetWidth;
-this.tooltip.style.left = Math.min(lx + 12, this.size.w - tw - 4) + "px";
-this.tooltip.style.top = ly + 12 + "px";
+const th = this.tooltip.offsetHeight;
+const edge = 4;
+const gap = 12;
+const maxLeft = Math.max(edge, this.size.w - tw - edge);
+const left = Math.max(edge, Math.min(lx + gap, maxLeft));
+const below = ly + gap;
+const above = ly - th - gap;
+const top = below + th <= this.size.h - edge ? below : Math.max(edge, above);
+this.tooltip.style.left = left + "px";
+this.tooltip.style.top = top + "px";
 },
 });
 Object.assign(ChartView.prototype, {
@@ -5609,12 +5783,12 @@ mode, sx: e.clientX, sy: e.clientY, d0,
 points: firstLassoPoint ? [firstLassoPoint] : null,
 previousLasso,
 };
-c.setPointerCapture(e.pointerId);
+try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
 this.tooltip.style.display = "none";
 return;
 }
 drag = { px: e.clientX, py: e.clientY, view: { ...this.view }, moved: false };
-c.setPointerCapture(e.pointerId);
+try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
 this.tooltip.style.display = "none";
 });
 this._listen(c, "pointermove", (e) => {
@@ -5644,10 +5818,13 @@ this._hover(e);
 });
 const end = (e) => {
 if (band) {
+if (band.mode === "select-lasso") this._updateBand(band, e);
 this.selRect.style.display = "none";
 this.selLasso.style.display = "none";
 const d1 = dataAt(e.clientX, e.clientY);
-const moved = Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
+const moved = band.mode === "select-lasso"
+? band.points.length >= 3
+: Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
 if (moved) {
 if (band.mode === "zoom") this._zoomToBox(band.d0, d1, true);
 else if (band.mode === "select-lasso") {
@@ -6263,6 +6440,7 @@ const canSelect = this._pickable
 && this._interactionFlag("select", true);
 let selectTrigger = null;
 let selectIndicator = null;
+let selectModeIcon = null;
 if (canSelect) {
 selectTrigger = mk("select", "Selection controls", () => {
 setSelectMenuOpen(!this._selectMenuOpen);
@@ -6271,11 +6449,17 @@ selectTrigger.dataset.xyModebarSelect = "";
 selectTrigger.dataset.xyModebarSelectTrigger = "";
 selectTrigger.setAttribute("aria-haspopup", "menu");
 selectTrigger.setAttribute("aria-expanded", "false");
+selectTrigger.replaceChildren();
+selectModeIcon = document.createElement("span");
+selectModeIcon.dataset.xyModebarSelectIcon = "";
+selectModeIcon.innerHTML = this._icon("select");
+selectTrigger.appendChild(selectModeIcon);
 selectIndicator = document.createElement("span");
 selectIndicator.dataset.xyModebarMenuIndicator = "";
 selectIndicator.innerHTML = this._icon("chevrondown");
 selectTrigger.appendChild(selectIndicator);
 this._selectMenuButton = selectTrigger;
+this._selectMenuIcon = selectModeIcon;
 }
 mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
 const zoomMenu = document.createElement("div");
@@ -6613,6 +6797,18 @@ btn.setAttribute("aria-pressed", String(name === mode));
 }
 this._zoomMenuButton?.classList.toggle("xy-active", mode === "zoom");
 this._selectMenuButton?.classList.toggle("xy-active", mode.startsWith("select"));
+const selectionMode = {
+select: ["select", "Box Select"],
+"select-lasso": ["lasso", "Lasso Select"],
+"select-x": ["selectx", "X Range"],
+"select-y": ["selecty", "Y Range"],
+}[mode];
+if (selectionMode && this._selectMenuButton && this._selectMenuIcon) {
+const [iconName, label] = selectionMode;
+this._selectMenuIcon.innerHTML = this._icon(iconName);
+this._selectMenuButton.title = `Selection controls: ${label}`;
+this._selectMenuButton.setAttribute("aria-label", `Selection controls: ${label}`);
+}
 },
 _updateZoomMenuLabel() {
 if (!this._zoomMenuLabel || !this.view || !this.view0) return;
@@ -6973,24 +7169,25 @@ return svg('<path d="M10 3 V17 M3 10 H17"/><path d="M10 3 L8 5 M10 3 L12 5"/>' +
 '<path d="M10 17 L8 15 M10 17 L12 15"/><path d="M3 10 L5 8 M3 10 L5 12"/>' +
 '<path d="M17 10 L15 8 M17 10 L15 12"/>');
 case "zoom":
-return svg('<rect x="3.5" y="3.5" width="13" height="13" rx="1" ' +
-'stroke-dasharray="3 2"/>');
+return svg('<path d="M7 3.5 H3.5 V7 M13 3.5 H16.5 V7 ' +
+'M3.5 13 V16.5 H7 M16.5 13 V16.5 H13"/>');
 case "select":
-return svg('<rect x="3.5" y="3.5" width="13" height="13" rx="1" ' +
-'stroke-dasharray="2.5 2"/><circle cx="7" cy="7" r="1" fill="currentColor" ' +
+return svg('<path d="M7 4 H4 V7 M13 4 H16 V7 M4 13 V16 H7 ' +
+'M16 13 V16 H13"/><circle cx="7" cy="8" r="1" fill="currentColor" ' +
 'stroke="none"/><circle cx="12.5" cy="9" r="1" fill="currentColor" stroke="none"/>' +
 '<circle cx="9.5" cy="13" r="1" fill="currentColor" stroke="none"/>');
 case "lasso":
-return svg('<path d="M4 6 C6 2 15 3 16 8 C17 13 11 17 6 14 C2 12 2 8 4 6 Z" ' +
-'stroke-dasharray="2.5 2"/><circle cx="6" cy="8" r="1" fill="currentColor" ' +
-'stroke="none"/><circle cx="12" cy="7" r="1" fill="currentColor" stroke="none"/>' +
-'<circle cx="10" cy="12" r="1" fill="currentColor" stroke="none"/>');
+return svg('<path d="M5 5.5 C7 3 13.5 3.5 15.5 7 C17 10 14 15.5 9 15.5 ' +
+'C4.5 15.5 2.5 11 4 7.5 Z"/><circle cx="5" cy="5.5" r="1" ' +
+'fill="currentColor" stroke="none"/><circle cx="15.5" cy="7" r="1" ' +
+'fill="currentColor" stroke="none"/><circle cx="9" cy="15.5" r="1" ' +
+'fill="currentColor" stroke="none"/>');
 case "selectx":
-return svg('<rect x="3" y="5" width="14" height="10" rx="1" stroke-dasharray="2.5 2"/>' +
-'<path d="M6 10 H14 M6 10 L8 8 M6 10 L8 12 M14 10 L12 8 M14 10 L12 12"/>');
+return svg('<path d="M5 4 V16 M15 4 V16 M7 10 H13 ' +
+'M7 10 L9 8 M7 10 L9 12 M13 10 L11 8 M13 10 L11 12"/>');
 case "selecty":
-return svg('<rect x="5" y="3" width="10" height="14" rx="1" stroke-dasharray="2.5 2"/>' +
-'<path d="M10 6 V14 M10 6 L8 8 M10 6 L12 8 M10 14 L8 12 M10 14 L12 12"/>');
+return svg('<path d="M4 5 H16 M4 15 H16 M10 7 V13 ' +
+'M10 7 L8 9 M10 7 L12 9 M10 13 L8 11 M10 13 L12 11"/>');
 case "chevrondown":
 return svg('<path d="M6 8 L10 12 L14 8"/>');
 case "collapse":
@@ -7284,6 +7481,13 @@ this._applyAppend(msg, buffers);
 } else if (msg.type === "pick_result") {
 if (msg.seq !== undefined && msg.seq !== this._pickSeq) return;
 if (!msg.row) { this.tooltip.style.display = "none"; return; }
+const local = this._lastRow;
+if (local && local.trace === msg.row.trace && local.index === msg.row.index) {
+for (const [key, value] of Object.entries(local)) {
+if (msg.row[key] === undefined) msg.row[key] = value;
+}
+}
+this._applySharedTooltipFields(msg.row);
 this._lastRow = msg.row;
 const xy = this._lastHoverXY;
 if (xy) this._renderTooltip(msg.row, xy.clientX, xy.clientY, {

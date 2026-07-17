@@ -249,6 +249,30 @@ def test_shared_categorical_axis_uses_union_category_order() -> None:
     assert specs[0]["x_axis"]["domain"] == specs[1]["x_axis"]["domain"]
 
 
+def test_shared_named_categorical_axis_uses_its_own_union_category_order() -> None:
+    data = {
+        "x": [1.0, 2.0, 3.0, 4.0],
+        "category": ["a", "b", "a", "c"],
+        "y": [1.0, 2.0, 3.0, 4.0],
+        "g": ["g1", "g1", "g2", "g2"],
+    }
+    grid = xy.facet_chart(
+        xy.line(x="x", y="y"),
+        xy.line(x="category", y="y", x_axis="x2"),
+        xy.x_axis(id="x2", side="top"),
+        by="g",
+        data=data,
+    ).figure()
+    specs = [fig.build_payload()[0] for fig in grid.figures]
+
+    assert all("categories" not in spec["axes"]["x"] for spec in specs)
+    assert [spec["axes"]["x2"]["categories"] for spec in specs] == [
+        ["a", "b", "c"],
+        ["a", "b", "c"],
+    ]
+    assert specs[0]["axes"]["x2"]["domain"] == specs[1]["axes"]["x2"]["domain"]
+
+
 # -- interaction linking ------------------------------------------------------
 
 

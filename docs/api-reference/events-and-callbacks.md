@@ -74,6 +74,8 @@ The separate `reflex-xy` adapter intentionally uses semantic component props:
 `on_point_hover`, `on_point_click`, `on_select_end`, and `on_view_change`.
 Those are adapter props, not aliases accepted by core `Chart`. See the
 [Reflex integration](/docs/xy/integrations/reflex/) for state-backed payloads.
+`on_select_end` includes `total`, `cleared`, and either box bounds or the
+data-space `polygon` used by a lasso selection.
 
 Linked charts broadcast viewport ranges only. They do not automatically link
 selection state or cross-filter data.

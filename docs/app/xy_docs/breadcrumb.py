@@ -5,6 +5,10 @@ import reflex_components_internal as ui
 from reflex_site_shared.docs.models import DocsPage
 from reflex_site_shared.views.sidebar import docs_sidebar_drawer
 
+_BREADCRUMB_LABELS = {
+    "modebars-and-interaction-controls": "Modebars & Controls",
+}
+
 
 def _breadcrumb_label(segment: str) -> str:
     """Convert one URL segment to its visible breadcrumb label.
@@ -15,7 +19,7 @@ def _breadcrumb_label(segment: str) -> str:
     Returns:
         Title-cased breadcrumb label.
     """
-    return segment.replace("-", " ").title()
+    return _BREADCRUMB_LABELS.get(segment, segment.replace("-", " ").title())
 
 
 def xy_docs_breadcrumb(page: DocsPage, sidebar: rx.Component) -> rx.Component:
@@ -51,16 +55,18 @@ def xy_docs_breadcrumb(page: DocsPage, sidebar: rx.Component) -> rx.Component:
             )
         )
         if index < len(segments) - 1:
-            breadcrumbs.extend((
-                ui.icon(
-                    "ArrowRight01Icon",
-                    class_name="hidden size-4 text-secondary-11 lg:flex",
-                ),
-                rx.text(
-                    "/",
-                    class_name="flex font-sm text-secondary-11 lg:hidden",
-                ),
-            ))
+            breadcrumbs.extend(
+                (
+                    ui.icon(
+                        "ArrowRight01Icon",
+                        class_name="hidden size-4 text-secondary-11 lg:flex",
+                    ),
+                    rx.text(
+                        "/",
+                        class_name="flex font-sm text-secondary-11 lg:hidden",
+                    ),
+                )
+            )
 
     if not breadcrumbs:
         breadcrumbs.append(

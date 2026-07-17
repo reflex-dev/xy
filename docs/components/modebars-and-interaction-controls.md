@@ -1,9 +1,9 @@
 ---
-title: Modebars and Interaction Controls
+title: Modebars & Controls
 description: Configure XY's toolbar, gestures, selection, exports, and linked viewports.
 ---
 
-# Modebars and Interaction Controls
+# Modebars & Controls
 
 Interactive charts include a compact modebar by default. It exposes pan, zoom
 in/out, box zoom, reset, selection modes when selection is enabled, and local
