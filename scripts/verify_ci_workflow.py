@@ -459,6 +459,12 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "actions/upload-artifact@",
         "dist/*.whl",
     )
+    wheels_job = jobs.get("wheels", "")
+    if "continue-on-error:" in wheels_job:
+        errors.append(
+            "release wheels job must block publishing when any native wheel build or "
+            "verification fails"
+        )
     _require_job_contains(
         errors,
         jobs,
