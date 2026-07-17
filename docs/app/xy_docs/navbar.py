@@ -8,14 +8,13 @@ from reflex_site_shared.components.docs_shell import (
 )
 from reflex_site_shared.components.inkeep import inkeep
 from reflex_site_shared.components.marketing_button import button
-from reflex_site_shared.constants import REFLEX_URL
 from reflex_site_shared.views.sidebar import navbar_sidebar_button
 
 _REFLEX_NAV_LINKS = (
-    ("Overview", f"{REFLEX_URL}docs/"),
-    ("Build with AI", f"{REFLEX_URL}docs/ai/overview/best-practices/"),
-    ("Framework", f"{REFLEX_URL}docs/getting-started/introduction/"),
-    ("Cloud", f"{REFLEX_URL}docs/hosting/deploy-quick-start/"),
+    ("Overview", "/docs/"),
+    ("Build with AI", "/docs/ai/overview/best-practices/"),
+    ("Framework", "/docs/getting-started/introduction/"),
+    ("Cloud", "/docs/hosting/deploy-quick-start/"),
 )
 
 
@@ -79,7 +78,7 @@ def _menu_item(label: str, href: str, *, active: bool = False) -> rx.Component:
         else ""
     )
     return ui.navigation_menu.item(
-        rx.el.a(
+        rx.el.elements.a(
             button(label, size="sm", variant="ghost", native_button=False),
             href=href,
             class_name="no-underline",
@@ -101,7 +100,7 @@ def _navigation_menu() -> rx.Component:
     return ui.navigation_menu.root(
         ui.navigation_menu.list(
             *(_menu_item(label, href) for label, href in _REFLEX_NAV_LINKS),
-            _menu_item("XY", "/", active=True),
+            _menu_item("XY", "/docs/xy/", active=True),
             class_name="m-0 flex h-full list-none flex-row items-center gap-2",
             custom_attrs={"role": "menubar"},
         ),
@@ -139,9 +138,9 @@ def xy_docs_navbar() -> rx.Component:
         Official documentation navbar with an active XY section.
     """
     return docs_navbar_frame(
-        rx.el.a(
+        rx.el.elements.a(
             xy_docs_logo(),
-            href=REFLEX_URL,
+            href="/",
             class_name="mr-10 flex shrink-0 items-center gap-2.5 no-underline",
         ),
         _navigation_menu(),

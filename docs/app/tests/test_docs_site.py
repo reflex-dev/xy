@@ -826,13 +826,14 @@ def test_xy_mobile_navbar_uses_the_official_drawer_button() -> None:
 
     rendered = str(xy_docs_navbar._definition.component)
 
-    assert 'to:"https://reflex.dev/"' in rendered
+    assert 'href:"/"' in rendered
     assert '"aria-label":"Reflex XY"' in rendered
     assert "M29 16H32V10H39V7H32V4H39V1H29V16" in rendered
-    assert 'to:"https://reflex.dev/docs/"' in rendered
-    assert 'to:"https://reflex.dev/docs/ai/overview/best-practices/"' in rendered
-    assert 'to:"https://reflex.dev/docs/getting-started/introduction/"' in rendered
-    assert 'to:"https://reflex.dev/docs/hosting/deploy-quick-start/"' in rendered
+    assert 'href:"/docs/"' in rendered
+    assert 'href:"/docs/ai/overview/best-practices/"' in rendered
+    assert 'href:"/docs/getting-started/introduction/"' in rendered
+    assert 'href:"/docs/hosting/deploy-quick-start/"' in rendered
+    assert 'href:"/docs/xy/"' in rendered
     assert 'variant:"ghost"},"XY"' in rendered
     assert "Open sidebar" in rendered
     assert "Menu01Icon" in rendered
