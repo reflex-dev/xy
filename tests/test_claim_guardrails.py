@@ -34,8 +34,7 @@ def test_claim_guardrail_accepts_current_public_docs() -> None:
         in check_claim_guardrails._default_paths()
     )
     assert (
-        check_claim_guardrails.ROOT / "docs" / "index.md"
-        in check_claim_guardrails._default_paths()
+        check_claim_guardrails.ROOT / "docs" / "index.md" in check_claim_guardrails._default_paths()
     )
 
 

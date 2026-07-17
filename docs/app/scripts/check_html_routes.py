@@ -4,7 +4,6 @@ import re
 from pathlib import Path
 
 from reflex_site_shared.docs import discover_docs
-
 from xy_docs.config import DOCS_CONFIG
 
 APP_ROOT = Path(__file__).resolve().parents[1]
