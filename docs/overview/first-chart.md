@@ -16,12 +16,31 @@ Create a scatter chart and write one self-contained interactive HTML file:
 import xy
 
 chart = xy.scatter_chart(
-    xy.scatter([1, 2, 3, 4], [3, 5, 4, 7]),
+    xy.scatter([1, 2, 3, 4], [3, 5, 4, 7], color="#6e56cf", size=10),
     xy.x_axis(label="sample"),
     xy.y_axis(label="value"),
     title="First chart",
 )
 chart.to_html("scatter.html")
+~~~
+
+The same chart is rendered live below. Hover the points or use the toolbar to
+pan, zoom, and reset the view.
+
+~~~python demo-only exec
+import reflex_xy
+import xy
+
+chart = xy.scatter_chart(
+    xy.scatter([1, 2, 3, 4], [3, 5, 4, 7], color="#6e56cf", size=10),
+    xy.x_axis(label="sample"),
+    xy.y_axis(label="value"),
+    title="First chart",
+)
+
+
+def first_chart_demo():
+    return reflex_xy.chart(chart, height="320px")
 ~~~
 
 Open `scatter.html` in a browser. Hover, pan, zoom, and the built-in controls
