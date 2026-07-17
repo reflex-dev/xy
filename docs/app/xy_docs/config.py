@@ -116,6 +116,18 @@ DOCS_SECTIONS = (
         ),
     ),
     (
+        "Advanced",
+        "/advanced/",
+        "network",
+        (
+            ("XY Architecture", "/advanced/"),
+            (
+                "Runtime and Deployment",
+                "/advanced/runtime-and-deployment/",
+            ),
+        ),
+    ),
+    (
         "Reference",
         "/api-reference/",
         "book-text",

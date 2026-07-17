@@ -193,7 +193,7 @@ def _link_line(source: str, target: str, cursor: int) -> tuple[int, int]:
 
 
 def test_public_markdown_routes_match_the_docs_navigation() -> None:
-    """Discover the exact eight-section, two-level public information architecture."""
+    """Discover the exact nine-section, two-level public information architecture."""
     assert tuple(title for title, _route, _icon, _leaves in DOCS_SECTIONS) == (
         "Overview",
         "Core Concepts",
@@ -202,6 +202,7 @@ def test_public_markdown_routes_match_the_docs_navigation() -> None:
         "Components",
         "Integrations",
         "Guides",
+        "Advanced",
         "Reference",
     )
     section_routes = tuple(
