@@ -123,7 +123,7 @@ jobs:
 
   # Pyodide / Emscripten WASM wheel for in-browser CPython. Pyodide's platform
   # ABI is compiler-sensitive, so keep Rust, Emscripten, the wheel tag, and the
-  # runtime probe pinned as one tested set (see docs/production-readiness.md).
+  # runtime probe pinned as one tested set (see docs/engineering/production-readiness.md).
   wasm:
     name: Wheel Pyodide (runtime verified)
     runs-on: ubuntu-latest
@@ -137,7 +137,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
-      - uses: mymindstorm/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
+      - uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
         with:
           # Pyodide 0.29.x / pyodide_2025_0 ABI compiler version.
           version: "4.0.9"
@@ -229,8 +229,8 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    # wasm is best-effort (continue-on-error), so it never blocks the release; its
-    # artifact is collected by the dist-* download pattern when it succeeds.
+    # Publishing requires the runtime-verified Pyodide wheel alongside every native
+    # wheel and the sdist; the dist-* download pattern collects all of their artifacts.
     needs: [wheels, sdist, wasm]
     runs-on: ubuntu-latest
     environment: pypi

@@ -69,38 +69,38 @@ def page_for_charts(
 <div id="root"></div>
 <script>{_standalone_js()}</script>
 <script>
-const FC_CHARTS = {payloads};
+const XY_CHARTS = {payloads};
 {_xy_export._DECODE_B64_JS}
-function fcBytesFromPayload(payload) {{
+function xyBytesFromPayload(payload) {{
   return xyDecodeB64(payload.chunks, payload.n);
 }}
-function fcReport(marker, payload) {{
+function xyReport(marker, payload) {{
   document.title = marker + " " + JSON.stringify(payload);
 }}
-function fcFail(marker, err) {{
+function xyFail(marker, err) {{
   const msg = (err && (err.stack || err.message)) ? (err.stack || err.message) : String(err);
-  document.title = "FC_ERROR " + marker + " " + msg.slice(0, 480);
+  document.title = "XY_ERROR " + marker + " " + msg.slice(0, 480);
 }}
-function fcRaf() {{
+function xyRaf() {{
   return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 }}
-function fcPercentile(values, p) {{
+function xyPercentile(values, p) {{
   if (!values.length) return null;
   const sorted = values.slice().sort((a, b) => a - b);
   const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
   return sorted[idx];
 }}
-function fcStats(values) {{
+function xyStats(values) {{
   return {{
-    min_ms: fcPercentile(values, 0),
-    median_ms: fcPercentile(values, 50),
-    p95_ms: fcPercentile(values, 95),
-    p99_ms: fcPercentile(values, 99),
-    max_ms: fcPercentile(values, 100),
+    min_ms: xyPercentile(values, 0),
+    median_ms: xyPercentile(values, 50),
+    p95_ms: xyPercentile(values, 95),
+    p99_ms: xyPercentile(values, 99),
+    max_ms: xyPercentile(values, 100),
     reps: values.length,
   }};
 }}
-function fcNonblankPixels(view) {{
+function xyNonblankPixels(view) {{
   const gl = view.gl;
   view._drawNow();
   const w = Math.max(1, Math.min(64, view.canvas.width));
@@ -168,7 +168,7 @@ def run_json_probe(
             return {"status": f"failed(bad probe JSON: {exc})"}
         payload.setdefault("status", "ok")
         return payload
-    if title_text.startswith("FC_ERROR "):
+    if title_text.startswith("XY_ERROR "):
         return {"status": f"failed({title_text[:220]})"}
     if completed.returncode != 0:
         err = (completed.stderr or completed.stdout).strip().splitlines()

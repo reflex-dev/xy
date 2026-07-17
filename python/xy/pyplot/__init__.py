@@ -9,7 +9,7 @@
 
 Every call translates onto the public declarative API (`xy.chart`
 and friends); the engine never knows this module exists. Coverage is
-corpus-defined — see docs/matplotlib-compat.md for the supported surface
+corpus-defined — see docs/engineering/matplotlib-compat.md for the supported surface
 and the loud `NotImplementedError` list.
 """
 
@@ -2840,7 +2840,9 @@ class _CmapNamespace:
 
         if name.lower() in CMAPS:
             return name
-        raise AttributeError(f"colormap {name!r} is not supported; see docs/matplotlib-compat.md")
+        raise AttributeError(
+            f"colormap {name!r} is not supported; see docs/engineering/matplotlib-compat.md"
+        )
 
 
 cm = _CmapNamespace()

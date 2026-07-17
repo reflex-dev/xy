@@ -16,12 +16,12 @@
 //!   characters — so a style value can never escape its declaration when
 //!   serialized (the HTML-export safety contract, applied to styles).
 //!
-//! One grammar serves the Python API gate (`fc_css_check` over the C ABI) and
+//! One grammar serves the Python API gate (`xy_css_check` over the C ABI) and
 //! the native raster's color resolution, so validation and rendering cannot
 //! drift.
 
 /// Why a value was rejected. Discriminants are the C-ABI error codes
-/// (returned negated by `fc_css_check`); keep them stable.
+/// (returned negated by `xy_css_check`); keep them stable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CssErr {
     Empty = 1,

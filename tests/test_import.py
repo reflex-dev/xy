@@ -240,9 +240,9 @@ def test_html_export_does_not_load_widget_stack() -> None:
         """
         import sys
 
-        import xy as fc
+        import xy
 
-        chart = fc.line_chart(fc.line(x=[0, 1], y=[1, 2]), title="lazy boundary")
+        chart = xy.line_chart(xy.line(x=[0, 1], y=[1, 2]), title="lazy boundary")
         assert "xy.widget" not in sys.modules
         assert "anywidget" not in sys.modules
         assert "traitlets" not in sys.modules
@@ -262,15 +262,15 @@ def test_declarative_html_exports_do_not_load_widget_stack() -> None:
         """
         import sys
 
-        import xy as fc
+        import xy
 
-        chart = fc.chart(
-            fc.scatter(x=[0, 1, 2], y=[1, 3, 2], name="points"),
-            fc.line(x=[0, 1, 2], y=[1, 2, 2.5], name="trend"),
-            fc.x_axis(label="x"),
-            fc.y_axis(label="y"),
-            fc.legend(),
-            fc.tooltip(fields=["x", "y"]),
+        chart = xy.chart(
+            xy.scatter(x=[0, 1, 2], y=[1, 3, 2], name="points"),
+            xy.line(x=[0, 1, 2], y=[1, 2, 2.5], name="trend"),
+            xy.x_axis(label="x"),
+            xy.y_axis(label="y"),
+            xy.legend(),
+            xy.tooltip(fields=["x", "y"]),
             title="declarative lazy boundary",
         )
         assert "xy.widget" not in sys.modules
@@ -307,9 +307,9 @@ def test_widget_method_is_the_widget_import_boundary() -> None:
         """
         import sys
 
-        import xy as fc
+        import xy
 
-        chart = fc.line_chart(fc.line(x=[0, 1], y=[1, 2]), title="widget boundary")
+        chart = xy.line_chart(xy.line(x=[0, 1], y=[1, 2]), title="widget boundary")
         chart.to_html()
         assert "xy.widget" not in sys.modules
         assert "anywidget" not in sys.modules
@@ -371,9 +371,9 @@ def test_chart_headless_append_does_not_load_widget_stack() -> None:
         """
         import sys
 
-        import xy as fc
+        import xy
 
-        chart = fc.scatter_chart(fc.scatter(x=[0.0, 1.0], y=[0.0, 1.0]))
+        chart = xy.scatter_chart(xy.scatter(x=[0.0, 1.0], y=[0.0, 1.0]))
         chart.append(0, [2.0], [3.0])
 
         assert len(chart.figure().traces[0].x.values) == 3

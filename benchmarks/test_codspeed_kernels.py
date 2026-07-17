@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import xy as fc
+import xy
 from xy import kernels as k
 from xy._figure import Figure  # harness type annotations only
 
@@ -64,11 +64,11 @@ def warm_lazy_modules() -> None:
     """
     x = np.array([0.0, 1.0, 2.0, 3.0])
     y = np.array([0.0, 1.0, 0.0, 1.0])
-    fig = fc.chart(fc.scatter(x=x, y=y), fc.line(x=x, y=y)).figure()
+    fig = xy.chart(xy.scatter(x=x, y=y), xy.line(x=x, y=y)).figure()
     fig.build_payload(N_BUCKETS)
     fig.build_payload_split(N_BUCKETS)
     fig.to_svg(width=64, height=48)
-    fig.to_png(engine=fc.Engine.default, scale=1.0)
+    fig.to_png(engine=xy.Engine.default, scale=1.0)
     fig.to_html()
 
 
@@ -230,7 +230,7 @@ def drilldown_figure() -> Figure:
     rng = np.random.default_rng(17)
     x = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
     y = rng.uniform(0.0, 100.0, DRILL_N).astype(np.float64, copy=False)
-    fig = fc.chart(fc.scatter(x=x, y=y, density=True)).figure()
+    fig = xy.chart(xy.scatter(x=x, y=y, density=True)).figure()
     fig._benchmark_deep_expected = int(np.count_nonzero((x < 10.0) & (y < 10.0)))
 
     # Warm the lazily-built pyramid so CodSpeed tracks interactive viewport
@@ -589,69 +589,69 @@ def test_range_indices(benchmark, data):
 # the export benchmarks (to_png/to_svg/to_html), which are its remaining
 # production consumers.
 def _scatter_payload(x: np.ndarray, y: np.ndarray, *, density: bool | None = None) -> int:
-    fig = fc.chart(fc.scatter(x=x, y=y, density=density)).figure()
+    fig = xy.chart(xy.scatter(x=x, y=y, density=density)).figure()
     _spec, buffers = fig.build_payload_split(N_BUCKETS)
     return sum(b.nbytes for b in buffers)
 
 
 def _line_payload(x: np.ndarray, y: np.ndarray) -> int:
-    fig = fc.chart(fc.line(x=x, y=y)).figure()
+    fig = xy.chart(xy.line(x=x, y=y)).figure()
     _spec, buffers = fig.build_payload_split(N_BUCKETS)
     return sum(b.nbytes for b in buffers)
 
 
 def _density_memory_report(x: np.ndarray, y: np.ndarray) -> dict[str, object]:
-    fig = fc.chart(fc.scatter(x=x, y=y, density=True)).figure()
+    fig = xy.chart(xy.scatter(x=x, y=y, density=True)).figure()
     return fig.memory_report()
 
 
 def _histogram_payload(values: np.ndarray) -> int:
-    fig = fc.chart(fc.histogram(values, bins=200)).figure()
+    fig = xy.chart(xy.histogram(values, bins=200)).figure()
     _spec, buffers = fig.build_payload_split(N_BUCKETS)
     return sum(b.nbytes for b in buffers)
 
 
 def _area_payload(x: np.ndarray, y: np.ndarray) -> int:
-    fig = fc.chart(fc.area(x, y)).figure()
+    fig = xy.chart(xy.area(x, y)).figure()
     _spec, buffers = fig.build_payload_split(N_BUCKETS)
     return sum(b.nbytes for b in buffers)
 
 
 def _bar_payload(categories: list[str], values: np.ndarray) -> int:
-    fig = fc.chart(fc.bar(categories, values)).figure()
+    fig = xy.chart(xy.bar(categories, values)).figure()
     _spec, buffers = fig.build_payload_split(N_BUCKETS)
     return sum(b.nbytes for b in buffers)
 
 
 def _heatmap_payload(z: np.ndarray, x: np.ndarray, y: np.ndarray) -> int:
-    fig = fc.chart(fc.heatmap(z, x=x, y=y)).figure()
+    fig = xy.chart(xy.heatmap(z, x=x, y=y)).figure()
     _spec, buffers = fig.build_payload_split(N_BUCKETS)
     return sum(b.nbytes for b in buffers)
 
 
 def _statistical_payload(values: list[np.ndarray]) -> int:
-    fig = fc.chart(
-        fc.box(values=values, name="box"),
-        fc.violin(values=values, bins=64, name="violin"),
+    fig = xy.chart(
+        xy.box(values=values, name="box"),
+        xy.violin(values=values, bins=64, name="violin"),
     ).figure()
     _spec, buffers = fig.build_payload_split(N_BUCKETS)
     return sum(b.nbytes for b in buffers)
 
 
 def _hexbin_payload(x: np.ndarray, y: np.ndarray) -> int:
-    fig = fc.chart(fc.hexbin(x=x, y=y, gridsize=HEXBIN_GRIDSIZE)).figure()
+    fig = xy.chart(xy.hexbin(x=x, y=y, gridsize=HEXBIN_GRIDSIZE)).figure()
     _spec, buffers = fig.build_payload_split(N_BUCKETS)
     return sum(b.nbytes for b in buffers)
 
 
 def _contour_payload(z: np.ndarray) -> int:
-    fig = fc.chart(fc.contour(z=z, levels=12, filled=True)).figure()
+    fig = xy.chart(xy.contour(z=z, levels=12, filled=True)).figure()
     _spec, buffers = fig.build_payload_split(N_BUCKETS)
     return sum(b.nbytes for b in buffers)
 
 
 def _errorbar_payload(x: np.ndarray, y: np.ndarray) -> int:
-    fig = fc.chart(fc.errorbar(x=x, y=y, yerr=1.0)).figure()
+    fig = xy.chart(xy.errorbar(x=x, y=y, yerr=1.0)).figure()
     spec, buffers = fig.build_payload_split(N_BUCKETS)
     # The point of this bench is the segment-emission decimation branch.
     assert spec["traces"][0]["tier"] == "decimated"
@@ -659,40 +659,40 @@ def _errorbar_payload(x: np.ndarray, y: np.ndarray) -> int:
 
 
 def _composed_layered_payload(data: dict[str, object]) -> int:
-    chart = fc.chart(
-        fc.bar(x="category", y="actual", data=data, name="actual", color="#f59e0b"),
-        fc.scatter(x="category", y="sample", data=data, name="sample", color="#2563eb", size=8),
-        fc.line(x="category", y="target", data=data, name="target", color="#dc2626", width=2),
-        fc.x_band("C0200", "C0400", text="campaign", color="#7c3aed", opacity=0.12),
-        fc.vline("C0500", text="release", color="#7c3aed"),
-        fc.x_axis(label="category", tick_label_strategy="auto", tick_label_min_gap=28),
-        fc.y_axis(label="pipeline"),
-        fc.tooltip(
+    chart = xy.chart(
+        xy.bar(x="category", y="actual", data=data, name="actual", color="#f59e0b"),
+        xy.scatter(x="category", y="sample", data=data, name="sample", color="#2563eb", size=8),
+        xy.line(x="category", y="target", data=data, name="target", color="#dc2626", width=2),
+        xy.x_band("C0200", "C0400", text="campaign", color="#7c3aed", opacity=0.12),
+        xy.vline("C0500", text="release", color="#7c3aed"),
+        xy.x_axis(label="category", tick_label_strategy="auto", tick_label_min_gap=28),
+        xy.y_axis(label="pipeline"),
+        xy.tooltip(
             fields=["category", "actual", "sample", "target"],
             title="{category}",
             format={"actual": ".1f", "sample": ".1f", "target": ".1f"},
         ),
-        fc.legend(),
+        xy.legend(),
         title="CodSpeed layered core 2D",
         width=720,
         height=420,
-        class_name="fc-chart",
-        class_names={"legend": "fc-legend", "tooltip": "fc-tooltip"},
-        style={"--fc-accent": "#2563eb"},
+        class_name="xy-chart",
+        class_names={"legend": "xy-legend", "tooltip": "xy-tooltip"},
+        style={"--xy-accent": "#2563eb"},
     )
     _spec, buffers = chart.figure().build_payload_split(N_BUCKETS)
     return sum(b.nbytes for b in buffers)
 
 
 def _composed_layered_memory_report(data: dict[str, object]) -> dict[str, object]:
-    chart = fc.chart(
-        fc.bar(x="category", y="actual", data=data, name="actual", color="#f59e0b"),
-        fc.scatter(x="category", y="sample", data=data, name="sample", color="#2563eb", size=8),
-        fc.line(x="category", y="target", data=data, name="target", color="#dc2626", width=2),
-        fc.x_axis(label="category", tick_label_strategy="auto", tick_label_min_gap=28),
-        fc.y_axis(label="pipeline"),
-        fc.tooltip(fields=["category", "actual", "sample", "target"]),
-        fc.legend(),
+    chart = xy.chart(
+        xy.bar(x="category", y="actual", data=data, name="actual", color="#f59e0b"),
+        xy.scatter(x="category", y="sample", data=data, name="sample", color="#2563eb", size=8),
+        xy.line(x="category", y="target", data=data, name="target", color="#dc2626", width=2),
+        xy.x_axis(label="category", tick_label_strategy="auto", tick_label_min_gap=28),
+        xy.y_axis(label="pipeline"),
+        xy.tooltip(fields=["category", "actual", "sample", "target"]),
+        xy.legend(),
         title="CodSpeed layered core 2D memory",
     )
     return chart.memory_report()
@@ -718,7 +718,7 @@ def test_first_payload_scatter_categorical_color(benchmark, medium_data):
     categories = np.array([f"group-{i % 24:02d}" for i in range(len(x))])
 
     def build():
-        fig = fc.chart(fc.scatter(x=x, y=y, color=categories)).figure()
+        fig = xy.chart(xy.scatter(x=x, y=y, color=categories)).figure()
         return fig.build_payload_split(N_BUCKETS)
 
     spec, buffers = benchmark(build)
@@ -739,7 +739,7 @@ def test_first_payload_scatter_continuous_channels(benchmark, medium_data):
     size = 4.0 + 3.0 * np.abs(np.cos(x * 0.0003))
 
     def build():
-        fig = fc.chart(fc.scatter(x=x, y=y, color=color, size=size)).figure()
+        fig = xy.chart(xy.scatter(x=x, y=y, color=color, size=size)).figure()
         return fig.build_payload_split(N_BUCKETS)
 
     spec, buffers = benchmark(build)
@@ -755,7 +755,7 @@ def test_first_payload_line_unsorted_x(benchmark, medium_data):
     unsorted_y = y[shuffled]
 
     def build():
-        fig = fc.chart(fc.line(x=unsorted_x, y=unsorted_y)).figure()
+        fig = xy.chart(xy.line(x=unsorted_x, y=unsorted_y)).figure()
         return fig.build_payload_split(N_BUCKETS)
 
     spec, buffers = benchmark(build)
@@ -774,7 +774,7 @@ def test_first_payload_ingest_flavors(benchmark, kind):
         x = np.arange(n, dtype=np.float64).tolist()
 
     def build():
-        fig = fc.chart(fc.line(x=x, y=values)).figure()
+        fig = xy.chart(xy.line(x=x, y=values)).figure()
         return fig.build_payload_split(N_BUCKETS)
 
     spec, buffers = benchmark(build)
@@ -788,7 +788,7 @@ def test_density_view_exact_pan(benchmark):
     rng = np.random.default_rng(53)
     x = rng.uniform(0.0, 100.0, n).astype(np.float64, copy=False)
     y = rng.uniform(-2.0, 2.0, n).astype(np.float64, copy=False)
-    fig = fc.chart(fc.scatter(x=x, y=y, density=True)).figure()
+    fig = xy.chart(xy.scatter(x=x, y=y, density=True)).figure()
     fig.density_view(0, 0.0, 100.0, -2.0, 2.0, GRID_W, GRID_H)
 
     def pan():
@@ -917,8 +917,8 @@ def test_marching_squares(benchmark, core_2d_data):
 def test_native_png_export_scatter(benchmark, export_data):
     """Native raster export after screen-bounded payload preparation."""
     x, y = export_data
-    fig = fc.chart(fc.scatter(x=x, y=y)).figure()
-    png = benchmark(fig.to_png, engine=fc.Engine.default, scale=1.0)
+    fig = xy.chart(xy.scatter(x=x, y=y)).figure()
+    png = benchmark(fig.to_png, engine=xy.Engine.default, scale=1.0)
     assert png.startswith(b"\x89PNG")
 
 
@@ -926,8 +926,8 @@ def test_native_png_export_categorical_scatter(benchmark, export_data):
     """Borrowed u8 palette codes stay on the affine Rust export path."""
     x, y = export_data
     categories = np.asarray([f"group-{i % 24:02d}" for i in range(len(x))])
-    fig = fc.chart(fc.scatter(x=x, y=y, color=categories)).figure()
-    png = benchmark(fig.to_png, engine=fc.Engine.default, scale=1.0)
+    fig = xy.chart(xy.scatter(x=x, y=y, color=categories)).figure()
+    png = benchmark(fig.to_png, engine=xy.Engine.default, scale=1.0)
     assert png.startswith(b"\x89PNG")
 
 
@@ -938,8 +938,8 @@ def test_native_png_export_stroked_triangle_mesh(benchmark, compatibility_kernel
         compatibility_kernel_data["mesh_y"],
         compatibility_kernel_data["mesh_z"],
     )
-    fig = fc.chart(
-        fc.triangle_mesh(
+    fig = xy.chart(
+        xy.triangle_mesh(
             x0=mesh[0],
             y0=mesh[1],
             x1=mesh[2],
@@ -951,7 +951,7 @@ def test_native_png_export_stroked_triangle_mesh(benchmark, compatibility_kernel
             stroke_width=0.5,
         )
     ).figure()
-    png = benchmark(fig.to_png, engine=fc.Engine.default, scale=1.0)
+    png = benchmark(fig.to_png, engine=xy.Engine.default, scale=1.0)
     assert png.startswith(b"\x89PNG")
 
 
@@ -960,15 +960,15 @@ def test_native_png_export_heatmap(benchmark, core_2d_data):
     z = core_2d_data["heatmap_z"]
     x = core_2d_data["heatmap_x"]
     y = core_2d_data["heatmap_y"]
-    fig = fc.chart(fc.heatmap(z, x=x, y=y)).figure()
-    png = benchmark(fig.to_png, engine=fc.Engine.default, scale=1.0)
+    fig = xy.chart(xy.heatmap(z, x=x, y=y)).figure()
+    png = benchmark(fig.to_png, engine=xy.Engine.default, scale=1.0)
     assert png.startswith(b"\x89PNG")
 
 
 def test_svg_export_line(benchmark, export_data):
     """Static SVG export shares decimation but exercises XML serialization."""
     x, y = export_data
-    fig = fc.chart(fc.line(x=x, y=y)).figure()
+    fig = xy.chart(xy.line(x=x, y=y)).figure()
     svg = benchmark(fig.to_svg, width=720, height=420)
     assert svg.startswith("<svg")
 
@@ -976,7 +976,7 @@ def test_svg_export_line(benchmark, export_data):
 def test_html_export_line(benchmark, export_data):
     """Standalone HTML export, including embedded spec and buffers."""
     x, y = export_data
-    fig = fc.chart(fc.line(x=x, y=y)).figure()
+    fig = xy.chart(xy.line(x=x, y=y)).figure()
     html = benchmark(fig.to_html)
     assert "<html" in html.lower()
 
@@ -984,7 +984,7 @@ def test_html_export_line(benchmark, export_data):
 def test_stream_line_append(benchmark, append_data):
     """Append refresh cost for a warmed 100k-row line chart."""
     x, y, tail_x, tail_y = append_data
-    fig = fc.chart(fc.line(x=x, y=y)).figure()
+    fig = xy.chart(xy.line(x=x, y=y)).figure()
     fig.build_payload(N_BUCKETS)
 
     def append_next():
@@ -1003,7 +1003,7 @@ def test_stream_line_append(benchmark, append_data):
 def test_stream_density_append_incremental_pyramid(benchmark, pyramid_data):
     """Stable-domain density append with an in-place native pyramid update."""
     x, y = pyramid_data
-    fig = fc.chart(fc.scatter(x=x, y=y, density=True)).figure()
+    fig = xy.chart(xy.scatter(x=x, y=y, density=True)).figure()
     fig.build_payload(N_BUCKETS)
     warm, _ = fig.density_view(0, 0.0, 100.0, 0.0, 100.0, GRID_W, GRID_H)
     assert str(warm["traces"][0]["binning"]).startswith("pyramid-L")
@@ -1045,7 +1045,7 @@ def test_build_payload(benchmark, data):
     x, y = data
 
     def build():
-        fig = fc.chart(fc.line(x=x, y=y)).figure()
+        fig = xy.chart(xy.line(x=x, y=y)).figure()
         return fig.build_payload(N_BUCKETS)
 
     benchmark(build)
@@ -1054,7 +1054,7 @@ def test_build_payload(benchmark, data):
 def test_decimate_view(benchmark, data):
     """Zoom interaction: kernel-side re-decimation of a 1% window."""
     x, y = data
-    fig = fc.chart(fc.line(x=x, y=y)).figure()
+    fig = xy.chart(xy.line(x=x, y=y)).figure()
     x0, x1 = N * 0.495, N * 0.505
     benchmark(fig.decimate_view, x0, x1, N_BUCKETS)
 

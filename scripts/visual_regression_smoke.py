@@ -27,7 +27,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "python"))
 
-import xy as fc  # noqa: E402
+import xy  # noqa: E402
 from xy.export import find_chromium  # noqa: E402
 
 CHART_ASSET_DIR = ROOT / "examples" / "reflex" / "assets" / "charts"
@@ -329,15 +329,15 @@ LABEL_OVERLAP_SCRIPT = r"""
     if (view && typeof view._drawNow === "function") view._drawNow();
     let tickNodes = [];
     for (let i = 0; i < 80; i++) {
-      tickNodes = Array.from(document.querySelectorAll("[data-fc-label-kind='tick']"));
+      tickNodes = Array.from(document.querySelectorAll("[data-xy-label-kind='tick']"));
       if (tickNodes.length) break;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     const labels = tickNodes.map((el) => {
       const r = el.getBoundingClientRect();
       return {
-        axis: el.dataset.fcAxis || "",
-        side: el.dataset.fcAxisSide || "",
+        axis: el.dataset.xyAxis || "",
+        side: el.dataset.xyAxisSide || "",
         text: el.textContent || "",
         left: r.left,
         right: r.right,
@@ -368,13 +368,13 @@ LABEL_OVERLAP_SCRIPT = r"""
         }
       }
     }
-    document.body.setAttribute("data-fc-label-overlap", JSON.stringify({
+    document.body.setAttribute("data-xy-label-overlap", JSON.stringify({
       label_count: labels.length,
       overlap_count: overlaps.length,
       overlaps: overlaps.slice(0, 8),
     }));
   } catch (err) {
-    document.body.setAttribute("data-fc-label-overlap-error", String(err && err.stack || err));
+    document.body.setAttribute("data-xy-label-overlap-error", String(err && err.stack || err));
   }
 })();
 </script>
@@ -432,10 +432,10 @@ def _assert_no_tick_label_overlaps_from_document(
         page.write_text(document, encoding="utf-8")
         dom = _dump_dom(chromium, page)
 
-    error = re.search(r'data-fc-label-overlap-error="([^"]*)"', dom)
+    error = re.search(r'data-xy-label-overlap-error="([^"]*)"', dom)
     if error:
         raise SystemExit(f"{name}: label overlap probe failed: {html_lib.unescape(error.group(1))}")
-    match = re.search(r'data-fc-label-overlap="([^"]*)"', dom)
+    match = re.search(r'data-xy-label-overlap="([^"]*)"', dom)
     if not match:
         raise SystemExit(f"{name}: label overlap probe did not finish")
     payload = json.loads(html_lib.unescape(match.group(1)))
@@ -445,47 +445,47 @@ def _assert_no_tick_label_overlaps_from_document(
         raise SystemExit(f"{name}: tick label overlaps detected: {payload['overlaps']}")
 
 
-def _assert_no_tick_label_overlaps(name: str, chart: fc.Chart, chromium: str) -> None:
+def _assert_no_tick_label_overlaps(name: str, chart: xy.Chart, chromium: str) -> None:
     _assert_no_tick_label_overlaps_from_document(name, chart.to_html(), chromium)
 
 
-def _scatter_chart() -> fc.Chart:
+def _scatter_chart() -> xy.Chart:
     rng = np.random.default_rng(10)
     n = 8_000
     x = rng.normal(size=n)
     y = 0.55 * x + rng.normal(scale=0.55, size=n)
     segment = np.where(x > 0.7, "growth", np.where(x < -0.7, "risk", "core"))
-    return fc.chart(
-        fc.scatter(x=x, y=y, color=segment, size=5, name="accounts", opacity=0.72),
-        fc.x_axis(label="activation"),
-        fc.y_axis(label="retention"),
-        fc.legend(),
-        fc.tooltip(fields=["activation", "retention", "segment"], title="{segment}"),
+    return xy.chart(
+        xy.scatter(x=x, y=y, color=segment, size=5, name="accounts", opacity=0.72),
+        xy.x_axis(label="activation"),
+        xy.y_axis(label="retention"),
+        xy.legend(),
+        xy.tooltip(fields=["activation", "retention", "segment"], title="{segment}"),
         title="visual smoke scatter",
         width=W,
         height=H,
     )
 
 
-def _line_area_chart() -> fc.Chart:
+def _line_area_chart() -> xy.Chart:
     x = np.linspace(0.0, 36.0, 900)
     y = 54.0 + 0.8 * x + 5.5 * np.sin(x / 2.7)
     trend = 54.0 + 0.8 * x
-    return fc.chart(
-        fc.area(x=x, y=y - 7.0, color="#93c5fd", opacity=0.28, name="range"),
-        fc.line(x=x, y=y, color="#2563eb", width=2.0, name="actual"),
-        fc.line(x=x, y=trend, color="#f97316", width=1.8, name="trend"),
-        fc.threshold(72.0, text="target", color="#16a34a"),
-        fc.x_axis(label="week"),
-        fc.y_axis(label="score"),
-        fc.legend(),
+    return xy.chart(
+        xy.area(x=x, y=y - 7.0, color="#93c5fd", opacity=0.28, name="range"),
+        xy.line(x=x, y=y, color="#2563eb", width=2.0, name="actual"),
+        xy.line(x=x, y=trend, color="#f97316", width=1.8, name="trend"),
+        xy.threshold(72.0, text="target", color="#16a34a"),
+        xy.x_axis(label="week"),
+        xy.y_axis(label="score"),
+        xy.legend(),
         title="visual smoke line and area",
         width=W,
         height=H,
     )
 
 
-def _bar_chart() -> fc.Chart:
+def _bar_chart() -> xy.Chart:
     categories = ["Search", "Ads", "Email", "Direct", "Partner", "Social"]
     values = np.array(
         [
@@ -498,8 +498,8 @@ def _bar_chart() -> fc.Chart:
         ],
         dtype=float,
     )
-    return fc.chart(
-        fc.bar(
+    return xy.chart(
+        xy.bar(
             x=categories,
             y=values,
             series=["Desktop", "Mobile", "Tablet"],
@@ -507,16 +507,16 @@ def _bar_chart() -> fc.Chart:
             name="conversions",
             mode="grouped",
         ),
-        fc.x_axis(label="channel"),
-        fc.y_axis(label="conversions"),
-        fc.legend(),
+        xy.x_axis(label="channel"),
+        xy.y_axis(label="conversions"),
+        xy.legend(),
         title="visual smoke grouped bars",
         width=W,
         height=H,
     )
 
 
-def _histogram_chart() -> fc.Chart:
+def _histogram_chart() -> xy.Chart:
     rng = np.random.default_rng(11)
     values = np.concatenate(
         [
@@ -524,47 +524,47 @@ def _histogram_chart() -> fc.Chart:
             rng.normal(1.35, 0.62, 35_000),
         ]
     )
-    return fc.chart(
-        fc.histogram(values, bins=180, color="#3b82f6", name="distribution"),
-        fc.x_axis(label="value"),
-        fc.y_axis(label="count"),
-        fc.legend(),
+    return xy.chart(
+        xy.histogram(values, bins=180, color="#3b82f6", name="distribution"),
+        xy.x_axis(label="value"),
+        xy.y_axis(label="count"),
+        xy.legend(),
         title="visual smoke histogram",
         width=W,
         height=H,
     )
 
 
-def _heatmap_chart() -> fc.Chart:
+def _heatmap_chart() -> xy.Chart:
     x = np.linspace(-2.8, 2.8, 70)
     y = np.linspace(-2.2, 2.2, 54)
     xx, yy = np.meshgrid(x, y)
     z = np.exp(-((xx - 0.9) ** 2 + (yy + 0.25) ** 2)) + 0.7 * np.exp(
         -((xx + 1.1) ** 2 + (yy - 0.6) ** 2) / 0.55
     )
-    return fc.chart(
-        fc.heatmap(z, x=x, y=y, colormap="viridis", name="load"),
-        fc.text(-1.05, 0.6, "cluster A", color="#111827"),
-        fc.marker(0.9, -0.25, text="peak", color="#f97316"),
-        fc.x_axis(label="dimension A"),
-        fc.y_axis(label="dimension B"),
-        fc.legend(),
+    return xy.chart(
+        xy.heatmap(z, x=x, y=y, colormap="viridis", name="load"),
+        xy.text(-1.05, 0.6, "cluster A", color="#111827"),
+        xy.marker(0.9, -0.25, text="peak", color="#f97316"),
+        xy.x_axis(label="dimension A"),
+        xy.y_axis(label="dimension B"),
+        xy.legend(),
         title="visual smoke heatmap",
         width=W,
         height=H,
     )
 
 
-def _composed_axes_chart() -> fc.Chart:
+def _composed_axes_chart() -> xy.Chart:
     x = np.arange(1, 13, dtype=float)
     revenue = np.array([18, 21, 24, 31, 37, 44, 48, 53, 58, 62, 66, 72], dtype=float)
     latency = np.array([220, 190, 168, 144, 128, 116, 104, 96, 90, 84, 79, 73], dtype=float)
-    return fc.chart(
-        fc.bar(x=x, y=revenue, color="#60a5fa", name="revenue", y_axis="y"),
-        fc.line(x=x, y=latency, color="#dc2626", width=2.2, name="latency", y_axis="y2"),
-        fc.x_axis(label="month", tick_count=6),
-        fc.y_axis(label="revenue", domain=(0, 90), format=".0f"),
-        fc.y_axis(
+    return xy.chart(
+        xy.bar(x=x, y=revenue, color="#60a5fa", name="revenue", y_axis="y"),
+        xy.line(x=x, y=latency, color="#dc2626", width=2.2, name="latency", y_axis="y2"),
+        xy.x_axis(label="month", tick_count=6),
+        xy.y_axis(label="revenue", domain=(0, 90), format=".0f"),
+        xy.y_axis(
             id="y2",
             label="latency",
             side="right",
@@ -572,21 +572,21 @@ def _composed_axes_chart() -> fc.Chart:
             domain=(60, 240),
             format=".0f",
         ),
-        fc.x_band(5, 7, text="launch", color="#f59e0b", opacity=0.12),
-        fc.legend(style={"background": "rgba(255,255,255,0.82)", "borderRadius": "8px"}),
+        xy.x_band(5, 7, text="launch", color="#f59e0b", opacity=0.12),
+        xy.legend(style={"background": "rgba(255,255,255,0.82)", "borderRadius": "8px"}),
         title="visual smoke composed axes",
         width=W,
         height=H,
     )
 
 
-def _axes_scales_stress_chart() -> fc.Chart:
+def _axes_scales_stress_chart() -> xy.Chart:
     x = np.logspace(0.0, 12.0, 360)
     rank = 210.0 - np.log10(x) * 13.5 + 3.0 * np.sin(np.log10(x) * 1.7)
     conversion = 0.006 + np.log10(x) * 0.0042
-    return fc.chart(
-        fc.line(x=x, y=rank, color="#2563eb", width=2.0, name="rank"),
-        fc.line(
+    return xy.chart(
+        xy.line(x=x, y=rank, color="#2563eb", width=2.0, name="rank"),
+        xy.line(
             x=x,
             y=conversion,
             color="#dc2626",
@@ -594,7 +594,7 @@ def _axes_scales_stress_chart() -> fc.Chart:
             name="conversion",
             y_axis="y2",
         ),
-        fc.x_axis(
+        xy.x_axis(
             label="request volume",
             type_="log",
             domain=(1.0, 1_000_000_000_000.0),
@@ -602,14 +602,14 @@ def _axes_scales_stress_chart() -> fc.Chart:
             tick_count=26,
             tick_label_min_gap=14,
         ),
-        fc.y_axis(
+        xy.y_axis(
             label="rank (reversed)",
             domain=(0.0, 220.0),
             reverse=True,
             format=",.0f",
             label_position={"left": 22, "top": "52%"},
         ),
-        fc.y_axis(
+        xy.y_axis(
             id="y2",
             label="conversion",
             side="right",
@@ -618,27 +618,27 @@ def _axes_scales_stress_chart() -> fc.Chart:
             label_position={"right": 18, "top": "16%"},
             style={"axis_color": "#dc2626", "tick_color": "#dc2626"},
         ),
-        fc.legend(style={"background": "rgba(255,255,255,0.84)", "borderRadius": "8px"}),
+        xy.legend(style={"background": "rgba(255,255,255,0.84)", "borderRadius": "8px"}),
         title="visual smoke axes and scales stress",
         width=W,
         height=H,
     )
 
 
-def _custom_chrome_chart() -> fc.Chart:
+def _custom_chrome_chart() -> xy.Chart:
     rng = np.random.default_rng(12)
     x = rng.normal(size=4_000)
     y = 0.35 * x + rng.normal(scale=0.5, size=x.size)
-    return fc.chart(
-        fc.scatter(x=x, y=y, color=np.where(y > 0.25, "expansion", "base"), size=6),
-        fc.x_axis(label="activation"),
-        fc.y_axis(label="retention"),
-        fc.legend(
+    return xy.chart(
+        xy.scatter(x=x, y=y, color=np.where(y > 0.25, "expansion", "base"), size=6),
+        xy.x_axis(label="activation"),
+        xy.y_axis(label="retention"),
+        xy.legend(
             object(),
             show=False,
             style={"padding": "10px", "background": "linear-gradient(135deg,#111827,#2563eb)"},
         ),
-        fc.tooltip(
+        xy.tooltip(
             object(),
             show=False,
             fields=["activation", "retention"],
@@ -650,23 +650,23 @@ def _custom_chrome_chart() -> fc.Chart:
     )
 
 
-def _adaptive_density_chart() -> fc.Chart:
+def _adaptive_density_chart() -> xy.Chart:
     rng = np.random.default_rng(13)
     n = 260_000
     x = rng.normal(size=n)
     y = 0.45 * x + rng.normal(scale=0.7, size=n)
-    return fc.chart(
-        fc.scatter(x=x, y=y, colormap="viridis", name="density", density=True),
-        fc.x_axis(label="feature A"),
-        fc.y_axis(label="feature B"),
-        fc.legend(),
+    return xy.chart(
+        xy.scatter(x=x, y=y, colormap="viridis", name="density", density=True),
+        xy.x_axis(label="feature A"),
+        xy.y_axis(label="feature B"),
+        xy.legend(),
         title="visual smoke adaptive density overview",
         width=W,
         height=H,
     )
 
 
-CASES: tuple[tuple[str, Callable[[], fc.Chart]], ...] = (
+CASES: tuple[tuple[str, Callable[[], xy.Chart]], ...] = (
     ("scatter", _scatter_chart),
     ("line_area", _line_area_chart),
     ("grouped_bar", _bar_chart),
@@ -756,7 +756,7 @@ def _chrome_shell_probe_script(required_ids: tuple[str, ...]) -> str:
       hidden.push(id);
     }}
   }}
-  document.body.setAttribute("data-fc-custom-chrome-shell", JSON.stringify({{
+  document.body.setAttribute("data-xy-custom-chrome-shell", JSON.stringify({{
     required,
     missing,
     hidden,
@@ -883,12 +883,12 @@ def _write_chrome_shell(
 
 
 def _assert_chrome_shell_dom(name: str, dom: str) -> None:
-    error = re.search(r'data-fc-custom-chrome-shell-error="([^"]*)"', dom)
+    error = re.search(r'data-xy-custom-chrome-shell-error="([^"]*)"', dom)
     if error:
         raise SystemExit(
             f"{name}: custom chrome shell probe failed: {html_lib.unescape(error.group(1))}"
         )
-    match = re.search(r'data-fc-custom-chrome-shell="([^"]*)"', dom)
+    match = re.search(r'data-xy-custom-chrome-shell="([^"]*)"', dom)
     if not match:
         raise SystemExit(f"{name}: custom chrome shell probe did not finish")
     payload = json.loads(html_lib.unescape(match.group(1)))

@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "reflex-xy"
+version = "0.1.0"
+description = "Reflex integration for xy: WebGL charts over the app's own websocket"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "xy",
+    # Prototype dependency surface. The adapter needs: Component/Var/EventHandler
+    # (reflex-base), plus App/State/state_manager access, which today live in the
+    # full `reflex` distribution. Revisit when the reflex-base split grows a
+    # public state/app surface (docs/engineering/design/reflex-integration.md §4).
+    "reflex>=0.9.6",
+]
+
+[project.optional-dependencies]
+# tests/reflex_adapter drives the data plane over a real websocket:
+# uvicorn serves the socket app, aiohttp backs socketio.AsyncClient.
+dev = [
+    "aiohttp>=3.9",
+    "uvicorn>=0.23",
+]
+
+[project.urls]
+Repository = "https://github.com/reflex-dev/xy"
+
+[tool.hatch.build.targets.wheel]
+packages = ["reflex_xy"]
+# reflex_xy/assets/XYChart.jsx ships as ordinary package data; the render
+# client is NOT packaged — it links out of the installed xy wheel at
+# app compile time (see reflex_xy/assets/__init__.py), so it can never
+# drift from the kernel that produces its payloads.

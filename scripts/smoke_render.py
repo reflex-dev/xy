@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
-import xy as fc
+import xy
 from xy.export import _bundled_js
 
 CHROMIUM_CANDIDATES = [
@@ -51,9 +51,9 @@ def build_page() -> str:
     x = np.arange(n, dtype=np.float64)
     rng = np.random.default_rng(1)
     y = np.cumsum(rng.normal(size=n))
-    chart = fc.chart(
-        fc.line(x, y, name="walk"),
-        fc.scatter(x[::100], y[::100] + 20.0, name="pts", size=3.0),
+    chart = xy.chart(
+        xy.line(x, y, name="walk"),
+        xy.scatter(x[::100], y[::100] + 20.0, name="pts", size=3.0),
         title="smoke",
     )
     spec, blob = chart.figure().build_payload()
@@ -78,10 +78,10 @@ def build_page() -> str:
         let lit = 0;
         for (let i = 3; i < px.length; i += 4) if (px[i] > 8) lit++;
         const labels = document.querySelectorAll(".xy div").length;
-        document.title = `FC_OK lit=${{lit}} total=${{w * h}} labels=${{labels}}`;
-      }} catch (e) {{ document.title = "FC_ERROR " + e.message; }}
+        document.title = `XY_OK lit=${{lit}} total=${{w * h}} labels=${{labels}}`;
+      }} catch (e) {{ document.title = "XY_ERROR " + e.message; }}
     }}, 200);
-  }} catch (e) {{ document.title = "FC_ERROR " + e.message; }}
+  }} catch (e) {{ document.title = "XY_ERROR " + e.message; }}
 </script></body></html>"""
 
 
@@ -109,7 +109,7 @@ def main() -> None:
     m = re.search(r"<title>([^<]*)</title>", out.stdout)
     title = m.group(1) if m else "(no title in DOM dump)"
     print("probe:", title)
-    if not title.startswith("FC_OK"):
+    if not title.startswith("XY_OK"):
         print(out.stderr[-2000:], file=sys.stderr)
         raise SystemExit(f"render smoke failed: {title}")
     lit = int(re.search(r"lit=(\d+)", title).group(1))  # type: ignore[union-attr]

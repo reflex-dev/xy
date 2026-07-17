@@ -74,7 +74,7 @@ cannot download the Olivetti faces; the previously recorded failure was
 the `subplots_adjust` rejection itself, raised before any drawing).
 
 ¹ 3D projections are outside xy's 2-D chart-method compatibility target
-(see [docs/matplotlib-compat.md](../../docs/matplotlib-compat.md));
+(see [docs/engineering/matplotlib-compat.md](../../docs/engineering/matplotlib-compat.md));
 `plt.axes(projection='3d')` fails loudly rather than silently returning
 a 2-D axes, so only this notebook's 2-D cells pass.
 ² Soft evidence: seaborn draws through real matplotlib internally, so
@@ -95,7 +95,7 @@ graded pairs) stands at **34 match / 38 minor / 8 major** — majors down
 from 33 on those notebooks, with the stylesheet-legend, color-cycle,
 colorbar-domain, and colormap-fidelity classes fully cleared. The audit
 findings, fixes, and remaining boundaries are recorded in
-[docs/matplotlib-compat-changelog.md](../../docs/matplotlib-compat-changelog.md).
+[docs/engineering/matplotlib-compat-changelog.md](../../docs/engineering/matplotlib-compat-changelog.md).
 
 One caveat inflates the scorecard above: with seaborn (which draws
 through real matplotlib) holding the current figure, module-level

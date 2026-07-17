@@ -124,6 +124,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
         self.mark_style: dict[str, dict[str, str | int | float]] = {}
         self.annotations: list[dict[str, Any]] = []
         self._axis_categories: dict[str, list[str]] = {}
+        # Declarative marks still call the shared fluent mark bodies with the
+        # channel dimensions ("x"/"y").  Chart temporarily points those
+        # dimensions at the mark's bound axis ids while it applies each mark,
+        # so category registries stay independent for x, x2, y, y2, ... .
+        self._active_axis_ids: dict[str, str] = {"x": "x", "y": "y"}
         self._widget: Any = None
 
     # -- axis config --------------------------------------------------------
@@ -618,15 +623,20 @@ class Figure(AnnotationsMixin, PayloadMixin):
             return np.asarray(values)
         return values
 
+    def _category_axis_id(self, axis: str) -> str:
+        """Resolve a mark channel dimension to its active declarative axis id."""
+        return self._active_axis_ids.get(axis, axis)
+
     def _axis_positions(self, values: Any, axis: str, *, commit: bool = True) -> np.ndarray:
         values = self._materialize_sequence(values)
         if not self._is_category_like(values):
             return self._as_1d_float(values, f"{axis} values")
         raw_labels = self._category_axis_labels(values, axis)
+        axis_id = self._category_axis_id(axis)
         labels = (
-            self._axis_categories.setdefault(axis, [])
+            self._axis_categories.setdefault(axis_id, [])
             if commit
-            else list(self._axis_categories.get(axis, []))
+            else list(self._axis_categories.get(axis_id, []))
         )
         return self._category_positions(raw_labels, labels)
 
@@ -661,12 +671,14 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if not self._is_category_like(values):
             return self._as_1d_float(values, f"{axis} values"), None
         raw_labels = self._category_axis_labels(values, axis)
-        return self._category_positions(raw_labels, list(self._axis_categories.get(axis, []))), (
-            raw_labels
-        )
+        axis_id = self._category_axis_id(axis)
+        return self._category_positions(
+            raw_labels, list(self._axis_categories.get(axis_id, []))
+        ), raw_labels
 
     def _commit_category_labels(self, raw_labels: list[str], axis: str) -> None:
-        labels = self._axis_categories.setdefault(axis, [])
+        axis_id = self._category_axis_id(axis)
+        labels = self._axis_categories.setdefault(axis_id, [])
         # Insertion-ordered union: existing labels first, then new ones in
         # first-appearance order — identical to the provisioning loop above.
         merged = dict.fromkeys(labels)
@@ -884,7 +896,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         forced = self.axis_options.get(axis_id, {}).get("type")
         if forced == "time":
             return "time"
-        if axis in self._axis_categories:
+        if axis_id in self._axis_categories:
             return "category"
         for t in self.traces:
             if axis == "x" and t.x_axis != axis_id:
@@ -969,7 +981,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if style:
             spec["style"] = style
         if kind == "category":
-            spec["categories"] = list(self._axis_categories.get(axis, []))
+            spec["categories"] = list(self._axis_categories.get(axis_id, []))
         return spec
 
     def _range_columns(self, t: Trace, axis_id: str) -> list[Column]:
@@ -1015,6 +1027,35 @@ class Figure(AnnotationsMixin, PayloadMixin):
             if style:
                 spec[state] = style
         return spec
+
+    def dom_class_strings(self) -> list[str]:
+        """Every DOM class string this figure emits, deduped in insertion order.
+
+        Contract: this is the *complete* set of class strings that can reach
+        the DOM — the chart root (``class_name``), the chrome slots
+        (``class_names`` values), per-trace mark styles
+        (``trace.style["class_name"]``), and annotation nodes
+        (``annotation["class_name"]``). The Reflex adapter joins it into the
+        Tailwind scan manifest for static charts (XYBF payloads are opaque to
+        Tailwind's source scan), so this method must be extended whenever a
+        new class-carrying surface is added to the figure.
+        """
+        class_strings: list[str] = []
+        seen: set[str] = set()
+
+        def add(value: Any) -> None:
+            if isinstance(value, str) and value.strip() and value not in seen:
+                seen.add(value)
+                class_strings.append(value)
+
+        add(self.class_name)
+        for value in self.class_names.values():
+            add(value)
+        for trace in self.traces:
+            add(trace.style.get("class_name"))
+        for annotation in self.annotations:
+            add(annotation.get("class_name"))
+        return class_strings
 
     def _dom_spec(self) -> dict[str, Any]:
         dom: dict[str, Any] = {}

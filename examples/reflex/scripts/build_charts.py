@@ -21,10 +21,10 @@ from reflex_xy_app.live_drilldown import (  # noqa: E402
     live_drilldown_html,
 )
 
-import xy as fc  # noqa: E402
+import xy  # noqa: E402
 
 
-def write_chart(chart: fc.Chart, name: str) -> None:
+def write_chart(chart: xy.Chart, name: str) -> None:
     ASSET_DIR.mkdir(parents=True, exist_ok=True)
     path = ASSET_DIR / name
     chart.to_html(str(path))
@@ -76,23 +76,23 @@ def write_plotly_chart(name: str) -> None:
     print(f"wrote {path.relative_to(APP_ROOT)}")
 
 
-def line_walk() -> fc.Chart:
+def line_walk() -> xy.Chart:
     rng = np.random.default_rng(7)
     n = 120_000
     x = np.arange(n, dtype=np.float64)
     trend = np.sin(np.linspace(0, 24, n)) * 18
     y = np.cumsum(rng.normal(0, 0.35, n)) + trend
-    return fc.line_chart(
-        fc.line(x, y, name="walk", color="#3267c8", width=1.4),
-        fc.x_axis(label="sample"),
-        fc.y_axis(label="value"),
+    return xy.line_chart(
+        xy.line(x, y, name="walk", color="#3267c8", width=1.4),
+        xy.x_axis(label="sample"),
+        xy.y_axis(label="value"),
         title="120k sample random walk",
         width=980,
         height=430,
     )
 
 
-def business_overview_demo() -> fc.Chart:
+def business_overview_demo() -> xy.Chart:
     months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
     values = np.array(
         [
@@ -100,8 +100,8 @@ def business_overview_demo() -> fc.Chart:
             [35.0, 38.0, 42.0, 40.0, 46.0, 50.0],
         ]
     )
-    return fc.column_chart(
-        fc.column(
+    return xy.column_chart(
+        xy.column(
             months,
             values,
             mode="grouped",
@@ -109,15 +109,15 @@ def business_overview_demo() -> fc.Chart:
             colors=["#2563eb", "#16a34a"],
             opacity=0.86,
         ),
-        fc.x_axis(label="month"),
-        fc.y_axis(label="USD thousands"),
+        xy.x_axis(label="month"),
+        xy.y_axis(label="USD thousands"),
         title="Small business overview",
         width="100%",
         height=430,
     )
 
 
-def retention_cohort_demo() -> fc.Chart:
+def retention_cohort_demo() -> xy.Chart:
     cohorts = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
     weeks = ["W0", "W1", "W2", "W3", "W4", "W5"]
     retention = np.array(
@@ -131,38 +131,38 @@ def retention_cohort_demo() -> fc.Chart:
         ],
         dtype=np.float64,
     )
-    return fc.heatmap_chart(
-        fc.heatmap(
+    return xy.heatmap_chart(
+        xy.heatmap(
             retention, x=weeks, y=cohorts, name="retention", colormap="viridis", opacity=0.94
         ),
-        fc.x_axis(label="week"),
-        fc.y_axis(label="signup cohort"),
+        xy.x_axis(label="week"),
+        xy.y_axis(label="signup cohort"),
         title="Small retention cohort",
         width="100%",
         height=430,
     )
 
 
-def area_demo() -> fc.Chart:
+def area_demo() -> xy.Chart:
     rng = np.random.default_rng(13)
     n = 80_000
     x = np.arange(n, dtype=np.float64)
     seasonal = 35 + np.sin(np.linspace(0, 28, n)) * 8
     y = seasonal + np.cumsum(rng.normal(0, 0.025, n))
     base = np.full(n, 25.0)
-    return fc.area_chart(
-        fc.area(
+    return xy.area_chart(
+        xy.area(
             x, y, base=base, name="active users", color="#0891b2", opacity=0.34, line_width=1.1
         ),
-        fc.x_axis(label="sample"),
-        fc.y_axis(label="active users"),
+        xy.x_axis(label="sample"),
+        xy.y_axis(label="active users"),
         title="80k filled area",
         width="100%",
         height=430,
     )
 
 
-def colored_scatter() -> fc.Chart:
+def colored_scatter() -> xy.Chart:
     return colored_scatter_chart(
         STATIC_COLORED_SCATTER_POINTS,
         title=f"{STATIC_COLORED_SCATTER_POINTS // 1_000_000}M colored scatter",
@@ -171,7 +171,7 @@ def colored_scatter() -> fc.Chart:
     )
 
 
-def density_scatter() -> fc.Chart:
+def density_scatter() -> xy.Chart:
     rng = np.random.default_rng(23)
     n = 10_000_000
     centers = np.array([[-1.4, -0.9], [-0.2, 0.8], [1.0, -0.2], [1.8, 1.1]])
@@ -180,17 +180,17 @@ def density_scatter() -> fc.Chart:
     y = centers[groups, 1].astype(np.float64, copy=True)
     x += rng.normal(0, 0.33, n)
     y += rng.normal(0, 0.33, n)
-    return fc.scatter_chart(
-        fc.scatter(x, y, opacity=0.9),
-        fc.x_axis(label="x"),
-        fc.y_axis(label="y"),
+    return xy.scatter_chart(
+        xy.scatter(x, y, opacity=0.9),
+        xy.x_axis(label="x"),
+        xy.y_axis(label="y"),
         title="10M density scatter",
         width="100%",
         height=430,
     )
 
 
-def histogram_demo() -> fc.Chart:
+def histogram_demo() -> xy.Chart:
     rng = np.random.default_rng(41)
     n = 500_000
     values = np.concatenate(
@@ -199,17 +199,17 @@ def histogram_demo() -> fc.Chart:
             rng.normal(1.4, 0.8, n // 2),
         ]
     )
-    return fc.histogram_chart(
-        fc.hist(values, bins=160, name="distribution", color="#3b82f6", opacity=0.82),
-        fc.x_axis(label="value"),
-        fc.y_axis(label="count"),
+    return xy.histogram_chart(
+        xy.hist(values, bins=160, name="distribution", color="#3b82f6", opacity=0.82),
+        xy.x_axis(label="value"),
+        xy.y_axis(label="count"),
         title="500k sample histogram",
         width="100%",
         height=430,
     )
 
 
-def bar_column_demo() -> fc.Chart:
+def bar_column_demo() -> xy.Chart:
     categories = ["Search", "Ads", "Email", "Direct", "Partner", "Social"]
     values = np.array(
         [
@@ -218,8 +218,8 @@ def bar_column_demo() -> fc.Chart:
             [42.0, 39.0, 26.0, 31.0, 19.0, 14.0],
         ]
     )
-    return fc.bar_chart(
-        fc.bar(
+    return xy.bar_chart(
+        xy.bar(
             categories,
             values,
             mode="grouped",
@@ -227,15 +227,15 @@ def bar_column_demo() -> fc.Chart:
             colors=["#2563eb", "#16a34a", "#f59e0b"],
             opacity=0.86,
         ),
-        fc.x_axis(label="channel"),
-        fc.y_axis(label="conversions"),
+        xy.x_axis(label="channel"),
+        xy.y_axis(label="conversions"),
         title="Grouped category bars",
         width="100%",
         height=430,
     )
 
 
-def stacked_bar_demo() -> fc.Chart:
+def stacked_bar_demo() -> xy.Chart:
     quarters = ["Q1", "Q2", "Q3", "Q4"]
     values = np.array(
         [
@@ -244,8 +244,8 @@ def stacked_bar_demo() -> fc.Chart:
             [16.0, 19.0, 24.0, 29.0],
         ]
     )
-    return fc.column_chart(
-        fc.column(
+    return xy.column_chart(
+        xy.column(
             quarters,
             values,
             mode="stacked",
@@ -253,19 +253,19 @@ def stacked_bar_demo() -> fc.Chart:
             colors=["#0f766e", "#7c3aed", "#dc2626"],
             opacity=0.88,
         ),
-        fc.x_axis(label="quarter"),
-        fc.y_axis(label="revenue"),
+        xy.x_axis(label="quarter"),
+        xy.y_axis(label="revenue"),
         title="Stacked revenue bars",
         width="100%",
         height=430,
     )
 
 
-def horizontal_bar_demo() -> fc.Chart:
+def horizontal_bar_demo() -> xy.Chart:
     regions = ["NA", "EU", "APAC", "LATAM", "MEA"]
     values = np.array([142.0, 128.0, 116.0, 74.0, 52.0])
-    return fc.bar_chart(
-        fc.bar(
+    return xy.bar_chart(
+        xy.bar(
             regions,
             values,
             orientation="horizontal",
@@ -273,15 +273,15 @@ def horizontal_bar_demo() -> fc.Chart:
             color="#9333ea",
             opacity=0.86,
         ),
-        fc.x_axis(label="revenue"),
-        fc.y_axis(label="region"),
+        xy.x_axis(label="revenue"),
+        xy.y_axis(label="region"),
         title="Horizontal category bars",
         width="100%",
         height=430,
     )
 
 
-def heatmap_demo() -> fc.Chart:
+def heatmap_demo() -> xy.Chart:
     rng = np.random.default_rng(97)
     cols = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     rows = ["00", "04", "08", "12", "16", "20"]
@@ -297,17 +297,17 @@ def heatmap_demo() -> fc.Chart:
         dtype=np.float64,
     )
     z = base + rng.normal(0, 0.025, base.shape)
-    return fc.heatmap_chart(
-        fc.heatmap(z, x=cols, y=rows, name="activity", colormap="turbo", opacity=0.94),
-        fc.x_axis(label="day"),
-        fc.y_axis(label="hour"),
+    return xy.heatmap_chart(
+        xy.heatmap(z, x=cols, y=rows, name="activity", colormap="turbo", opacity=0.94),
+        xy.x_axis(label="day"),
+        xy.y_axis(label="hour"),
         title="Weekly activity heatmap",
         width="100%",
         height=430,
     )
 
 
-def composed_layers_demo() -> fc.Chart:
+def composed_layers_demo() -> xy.Chart:
     monthly = {
         "month": np.array(["Jan", "Feb", "Mar", "Apr", "May", "Jun"]),
         "bookings": np.array([42.0, 45.0, 48.0, 52.0, 58.0, 63.0]),
@@ -315,11 +315,11 @@ def composed_layers_demo() -> fc.Chart:
         "forecast": np.array([40.0, 43.0, 46.0, 50.0, 55.0, 60.0]),
         "sample": np.array([41.0, 47.0, 46.5, 53.5, 56.0, 64.0]),
     }
-    return fc.chart(
-        fc.bar(
+    return xy.chart(
+        xy.bar(
             x="month", y="bookings", data=monthly, name="bookings", color="#f59e0b", opacity=0.34
         ),
-        fc.area(
+        xy.area(
             x="month",
             y="forecast",
             data=monthly,
@@ -328,7 +328,7 @@ def composed_layers_demo() -> fc.Chart:
             color="#14b8a6",
             opacity=0.18,
         ),
-        fc.scatter(
+        xy.scatter(
             x="month",
             y="sample",
             data=monthly,
@@ -337,10 +337,10 @@ def composed_layers_demo() -> fc.Chart:
             size=8.0,
             opacity=0.86,
         ),
-        fc.line(x="month", y="target", data=monthly, name="target", color="#dc2626", width=2.0),
-        fc.x_band("Mar", "May", text="launch window", color="#7c3aed", opacity=0.12),
-        fc.vline("Apr", text="release", color="#7c3aed", width=1.8),
-        fc.marker(
+        xy.line(x="month", y="target", data=monthly, name="target", color="#dc2626", width=2.0),
+        xy.x_band("Mar", "May", text="launch window", color="#7c3aed", opacity=0.12),
+        xy.vline("Apr", text="release", color="#7c3aed", width=1.8),
+        xy.marker(
             "Jun",
             64.0,
             text="sample peak",
@@ -351,9 +351,9 @@ def composed_layers_demo() -> fc.Chart:
             dy=-22.0,
             anchor="end",
         ),
-        fc.x_axis(label="month"),
-        fc.y_axis(label="pipeline"),
-        fc.tooltip(
+        xy.x_axis(label="month"),
+        xy.y_axis(label="pipeline"),
+        xy.tooltip(
             fields=["month", "bookings", "forecast", "sample", "target"],
             title="{month}",
             format={
@@ -363,14 +363,14 @@ def composed_layers_demo() -> fc.Chart:
                 "target": ".1f",
             },
         ),
-        fc.legend(),
+        xy.legend(),
         title="Composed layered chart",
         width="100%",
         height=430,
     )
 
 
-def annotated_heatmap_demo() -> fc.Chart:
+def annotated_heatmap_demo() -> xy.Chart:
     rows = ["Low", "Medium", "High", "Critical"]
     cols = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
     risk = np.array(
@@ -386,8 +386,8 @@ def annotated_heatmap_demo() -> fc.Chart:
     # Opaque placeholders stand in for real Reflex components in the app.
     legend_component = object()
     tooltip_component = object()
-    return fc.chart(
-        fc.heatmap(
+    return xy.chart(
+        xy.heatmap(
             z="risk_score",
             x="day",
             y="risk_tier",
@@ -397,7 +397,7 @@ def annotated_heatmap_demo() -> fc.Chart:
             domain=(0.0, 1.0),
             opacity=0.90,
         ),
-        fc.threshold_zone(
+        xy.threshold_zone(
             "Wed",
             "Fri",
             axis="x",
@@ -413,7 +413,7 @@ def annotated_heatmap_demo() -> fc.Chart:
                 "font_weight": 700,
             },
         ),
-        fc.threshold(
+        xy.threshold(
             "High",
             axis="y",
             text="alert threshold",
@@ -428,7 +428,7 @@ def annotated_heatmap_demo() -> fc.Chart:
                 "font_weight": 700,
             },
         ),
-        fc.marker(
+        xy.marker(
             "Thu",
             "Critical",
             text="max load",
@@ -445,7 +445,7 @@ def annotated_heatmap_demo() -> fc.Chart:
                 "box_shadow": "0 10px 24px rgba(15, 23, 42, 0.18)",
             },
         ),
-        fc.label(
+        xy.label(
             "Wed",
             "High",
             "72%",
@@ -459,7 +459,7 @@ def annotated_heatmap_demo() -> fc.Chart:
                 "text_shadow": "0 1px 2px rgba(255, 255, 255, 0.70)",
             },
         ),
-        fc.label(
+        xy.label(
             "Thu",
             "Critical",
             "96%",
@@ -473,8 +473,8 @@ def annotated_heatmap_demo() -> fc.Chart:
                 "text_shadow": "0 1px 2px rgba(15, 23, 42, 0.55)",
             },
         ),
-        fc.arrow("Tue", "Medium", "Wed", "High", text="escalation", color="#7c3aed"),
-        fc.callout(
+        xy.arrow("Tue", "Medium", "Wed", "High", text="escalation", color="#7c3aed"),
+        xy.callout(
             "Fri",
             "Critical",
             "ops review",
@@ -488,22 +488,22 @@ def annotated_heatmap_demo() -> fc.Chart:
                 "padding": "3px 7px",
             },
         ),
-        fc.theme(
+        xy.theme(
             plot_background="#f8fafc",
             grid_color="rgba(100, 116, 139, 0.16)",
             axis_color="#cbd5e1",
             text_color="#334155",
         ),
-        fc.x_axis(
+        xy.x_axis(
             label="day",
             style={"tick_color": "#334155", "label_color": "#0f172a", "label_size": 12},
         ),
-        fc.y_axis(
+        xy.y_axis(
             label="risk tier",
             style={"tick_color": "#334155", "label_color": "#0f172a", "label_size": 12},
         ),
-        fc.legend(legend_component, show=False),
-        fc.tooltip(
+        xy.legend(legend_component, show=False),
+        xy.tooltip(
             tooltip_component,
             show=False,
             fields=["day", "risk_tier", "risk_score"],
@@ -516,16 +516,16 @@ def annotated_heatmap_demo() -> fc.Chart:
     )
 
 
-def axes_scales_demo() -> fc.Chart:
+def axes_scales_demo() -> xy.Chart:
     x = np.logspace(0.0, 6.0, 240)
     lx = np.log10(x)
     rank = 96.0 - lx * 11.5 + np.sin(lx * 3.0) * 3.0
     conversion = 0.08 + lx * 0.035 + np.cos(lx * 2.1) * 0.012
     sampled = np.linspace(0, len(x) - 1, 34, dtype=np.int64)
-    return fc.chart(
-        fc.line(x=x, y=rank, name="quality rank", color="#2563eb", width=2.0),
-        fc.scatter(x=x[sampled], y=rank[sampled], name="sampled checks", color="#0f766e", size=7.0),
-        fc.line(
+    return xy.chart(
+        xy.line(x=x, y=rank, name="quality rank", color="#2563eb", width=2.0),
+        xy.scatter(x=x[sampled], y=rank[sampled], name="sampled checks", color="#0f766e", size=7.0),
+        xy.line(
             x=x,
             y=conversion,
             y_axis="y2",
@@ -533,7 +533,7 @@ def axes_scales_demo() -> fc.Chart:
             color="#dc2626",
             width=1.8,
         ),
-        fc.x_axis(
+        xy.x_axis(
             label="request volume",
             label_position="inside_end",
             label_offset=8,
@@ -545,7 +545,7 @@ def axes_scales_demo() -> fc.Chart:
             tick_label_min_gap=18,
             style={"grid_color": "rgba(37,99,235,.14)", "tick_color": "#1d4ed8"},
         ),
-        fc.y_axis(
+        xy.y_axis(
             label="rank (reversed)",
             label_position="inside_start",
             label_offset=10,
@@ -557,7 +557,7 @@ def axes_scales_demo() -> fc.Chart:
             tick_label_strategy="hide",
             style={"axis_color": "#2563eb", "label_color": "#1e40af"},
         ),
-        fc.y_axis(
+        xy.y_axis(
             id="y2",
             label="conversion",
             label_position={
@@ -573,22 +573,22 @@ def axes_scales_demo() -> fc.Chart:
             tick_label_strategy="hide",
             style={"axis_color": "#dc2626", "tick_color": "#991b1b", "label_color": "#991b1b"},
         ),
-        fc.tooltip(fields=["x", "y"], format={"x": ",.0f", "y": ".2f"}),
-        fc.legend(),
+        xy.tooltip(fields=["x", "y"], format={"x": ",.0f", "y": ".2f"}),
+        xy.legend(),
         title="Log scale, reversed axis, fixed domains, dual y-axis",
         width="100%",
         height=430,
     )
 
 
-def interaction_basics_demo() -> fc.Chart:
+def interaction_basics_demo() -> xy.Chart:
     x = np.linspace(0.0, 12.0, 180)
     actual = np.sin(x) + x * 0.08
     trend = x * 0.08
-    return fc.chart(
-        fc.scatter(x=x[::6], y=actual[::6], name="samples", color="#2563eb", size=8.0),
-        fc.line(x=x, y=trend, name="trend", color="#dc2626", width=2.0),
-        fc.interaction_config(
+    return xy.chart(
+        xy.scatter(x=x[::6], y=actual[::6], name="samples", color="#2563eb", size=8.0),
+        xy.line(x=x, y=trend, name="trend", color="#dc2626", width=2.0),
+        xy.interaction_config(
             hover=True,
             click=True,
             select=True,
@@ -598,18 +598,18 @@ def interaction_basics_demo() -> fc.Chart:
             link_group="demo-linked-x",
             link_axes=("x",),
         ),
-        fc.theme(plot_background="white", grid_color="rgba(37,99,235,.12)"),
-        fc.tooltip(fields=["x", "y"], format={"x": ".2f", "y": ".2f"}),
-        fc.legend(),
-        fc.x_axis(label="time", tick_count=13),
-        fc.y_axis(label="value"),
+        xy.theme(plot_background="white", grid_color="rgba(37,99,235,.12)"),
+        xy.tooltip(fields=["x", "y"], format={"x": ".2f", "y": ".2f"}),
+        xy.legend(),
+        xy.x_axis(label="time", tick_count=13),
+        xy.y_axis(label="value"),
         title="Crosshair, click, brush select, linked x-axis",
         width="100%",
         height=430,
     )
 
 
-def custom_chrome_demo() -> fc.Chart:
+def custom_chrome_demo() -> xy.Chart:
     data = {
         "activation": [0.72, 0.81, 0.58, 0.93, 0.66, 0.88, 0.49, 0.77],
         "retention": [0.61, 0.74, 0.52, 0.86, 0.57, 0.81, 0.46, 0.69],
@@ -628,8 +628,8 @@ def custom_chrome_demo() -> fc.Chart:
     # components use. They are intentionally not serialized into the HTML.
     legend_component = object()
     tooltip_component = object()
-    return fc.chart(
-        fc.scatter(
+    return xy.chart(
+        xy.scatter(
             x="activation",
             y="retention",
             color="segment",
@@ -638,16 +638,16 @@ def custom_chrome_demo() -> fc.Chart:
             name="accounts",
             opacity=0.88,
         ),
-        fc.legend(legend_component, show=False),
-        fc.tooltip(
+        xy.legend(legend_component, show=False),
+        xy.tooltip(
             tooltip_component,
             show=False,
             fields=["activation", "retention", "segment"],
             title="{segment}",
             format={"activation": ".2f", "retention": ".2f"},
         ),
-        fc.x_axis(label="activation"),
-        fc.y_axis(label="retention"),
+        xy.x_axis(label="activation"),
+        xy.y_axis(label="retention"),
         title="Custom Reflex legend + tooltip",
         width="100%",
         height=430,

@@ -62,7 +62,7 @@ def compose_html(
             y = round((1.0 - bottom - panel_height) * canvas_size[1])
             placement = f"position:absolute;left:{x}px;top:{y}px;"
         panels.append(
-            '<div class="fc-panel" data-fc-pyplot-panel '
+            '<div class="xy-panel" data-xy-pyplot-panel '
             f'style="{placement}width:{width}px;height:{height}px"></div>'
         )
         payloads.append(
@@ -84,24 +84,24 @@ def compose_html(
             str(style.get("ha", "center")), "-50%"
         )
         title_html = (
-            "<div class='fc-suptitle' style='position:absolute;"
+            "<div class='xy-suptitle' style='position:absolute;"
             f"left:{float(style.get('x', 0.5)) * 100:g}%;"
             f"top:{(1.0 - float(style.get('y', 0.98))) * 100:g}%;"
             f"transform:translate({shift},0);margin:0;{title_css}'>"
             f"{_html.escape(suptitle)}</div>"
         )
     else:
-        title_html = f"<h2 class='fc-suptitle' style='{title_css}'>{_html.escape(suptitle)}</h2>"
+        title_html = f"<h2 class='xy-suptitle' style='{title_css}'>{_html.escape(suptitle)}</h2>"
     if absolute:
         grid_css = (
-            f".fc-grid {{ position: relative; width: {canvas_size[0]}px; "
+            f".xy-grid {{ position: relative; width: {canvas_size[0]}px; "
             f"height: {canvas_size[1]}px; overflow: hidden; }}"
         )
         grid = "\n".join(panels) + ("\n" + title_html if title_html else "")
         title_html = ""
     else:
         grid_css = (
-            f".fc-grid {{ display: grid; grid-template-columns: repeat({ncols}, max-content); "
+            f".xy-grid {{ display: grid; grid-template-columns: repeat({ncols}, max-content); "
             "gap: 4px; padding: 4px; overflow-x: auto; }}"
         )
         grid = "\n".join(panels)
@@ -113,21 +113,21 @@ def compose_html(
 <meta http-equiv="Content-Security-Policy" content="{export._STANDALONE_CSP}">
 <style>
   body {{ margin: 0; font-family: system-ui, sans-serif; background: #ffffff; }}
-  .fc-suptitle {{ text-align: center; margin: 8px 0 0; font-size: 16px; color: #262626; }}
+  .xy-suptitle {{ text-align: center; margin: 8px 0 0; font-size: 16px; color: #262626; }}
   {grid_css}
-  .fc-panel {{ position: relative; }}
+  .xy-panel {{ position: relative; }}
 </style>
 </head>
 <body>
 {title_html}
-<div class="fc-grid">
+<div class="xy-grid">
 {grid}
 </div>
 <script>{client_js}</script>
 <script>
 {export._DECODE_B64_JS}
 const panels = [{",".join(payloads)}];
-const hosts = document.querySelectorAll("[data-fc-pyplot-panel]");
+const hosts = document.querySelectorAll("[data-xy-pyplot-panel]");
 panels.forEach((p, i) => {{
   xy.renderStandalone(hosts[i], p.spec, xyDecodeB64(p.chunks, p.n));
 }});

@@ -11,7 +11,7 @@ import numpy as np
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-import xy as fc
+import xy
 
 # The live drilldown server probes the engine directly (traces, density_view,
 # drill bookkeeping), so it works on the internal figure compiled from the
@@ -69,13 +69,13 @@ def colored_scatter_chart(
     title: str | None = None,
     width: Union[str, int] = "100%",
     height: int = 430,
-) -> fc.Chart:
+) -> xy.Chart:
     title = title or f"{_point_label(n)} live drilldown scatter"
     x, y, color, size = colored_scatter_data(n)
-    return fc.scatter_chart(
-        fc.scatter(x, y, color=color, size=size, colormap="viridis", opacity=0.72, density=True),
-        fc.x_axis(label="feature A"),
-        fc.y_axis(label="feature B"),
+    return xy.scatter_chart(
+        xy.scatter(x, y, color=color, size=size, colormap="viridis", opacity=0.72, density=True),
+        xy.x_axis(label="feature A"),
+        xy.y_axis(label="feature B"),
         title=title,
         width=width,
         height=height,

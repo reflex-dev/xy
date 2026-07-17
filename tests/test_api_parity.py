@@ -22,7 +22,7 @@ import inspect
 
 import pytest
 
-import xy as fc
+import xy
 from xy._figure import Figure
 from xy.components import _MARK_APPLIERS
 
@@ -58,25 +58,25 @@ MARK_PAIRS = [
 
 # One inline-data Mark per applier kind, used to exercise real forwarding.
 SAMPLE_MARKS = {
-    "scatter": lambda: fc.scatter(x=[1.0, 2.0], y=[3.0, 4.0]),
-    "line": lambda: fc.line(x=[1.0, 2.0], y=[3.0, 4.0]),
-    "area": lambda: fc.area(x=[1.0, 2.0], y=[3.0, 4.0]),
-    "histogram": lambda: fc.histogram(values=[1.0, 2.0, 3.0]),
-    "bar": lambda: fc.bar(x=["a", "b"], y=[1.0, 2.0]),
-    "column": lambda: fc.column(x=["a", "b"], y=[1.0, 2.0]),
-    "heatmap": lambda: fc.heatmap(z=[[1.0, 2.0], [3.0, 4.0]]),
-    "error_band": lambda: fc.error_band(x=[1.0, 2.0], lower=[2.0, 3.0], upper=[3.0, 4.0]),
-    "errorbar": lambda: fc.errorbar(x=[1.0, 2.0], y=[3.0, 4.0], yerr=[0.1, 0.2]),
-    "box": lambda: fc.box(values=[[1.0, 2.0], [2.0, 3.0]]),
-    "violin": lambda: fc.violin(values=[[1.0, 2.0], [2.0, 3.0]]),
-    "ecdf": lambda: fc.ecdf(values=[1.0, 2.0, 3.0]),
-    "hexbin": lambda: fc.hexbin(x=[1.0, 2.0], y=[3.0, 4.0]),
-    "contour": lambda: fc.contour(z=[[1.0, 2.0], [2.0, 3.0]]),
-    "step": lambda: fc.step(x=[1.0, 2.0], y=[3.0, 4.0]),
-    "stairs": lambda: fc.stairs(values=[1.0, 2.0], edges=[0.0, 1.0, 2.0]),
-    "stem": lambda: fc.stem(x=[1.0, 2.0], y=[3.0, 4.0]),
-    "segments": lambda: fc.segments(x0=[0.0, 1.0], y0=[0.0, 1.0], x1=[1.0, 2.0], y1=[1.0, 0.0]),
-    "triangle_mesh": lambda: fc.triangle_mesh(
+    "scatter": lambda: xy.scatter(x=[1.0, 2.0], y=[3.0, 4.0]),
+    "line": lambda: xy.line(x=[1.0, 2.0], y=[3.0, 4.0]),
+    "area": lambda: xy.area(x=[1.0, 2.0], y=[3.0, 4.0]),
+    "histogram": lambda: xy.histogram(values=[1.0, 2.0, 3.0]),
+    "bar": lambda: xy.bar(x=["a", "b"], y=[1.0, 2.0]),
+    "column": lambda: xy.column(x=["a", "b"], y=[1.0, 2.0]),
+    "heatmap": lambda: xy.heatmap(z=[[1.0, 2.0], [3.0, 4.0]]),
+    "error_band": lambda: xy.error_band(x=[1.0, 2.0], lower=[2.0, 3.0], upper=[3.0, 4.0]),
+    "errorbar": lambda: xy.errorbar(x=[1.0, 2.0], y=[3.0, 4.0], yerr=[0.1, 0.2]),
+    "box": lambda: xy.box(values=[[1.0, 2.0], [2.0, 3.0]]),
+    "violin": lambda: xy.violin(values=[[1.0, 2.0], [2.0, 3.0]]),
+    "ecdf": lambda: xy.ecdf(values=[1.0, 2.0, 3.0]),
+    "hexbin": lambda: xy.hexbin(x=[1.0, 2.0], y=[3.0, 4.0]),
+    "contour": lambda: xy.contour(z=[[1.0, 2.0], [2.0, 3.0]]),
+    "step": lambda: xy.step(x=[1.0, 2.0], y=[3.0, 4.0]),
+    "stairs": lambda: xy.stairs(values=[1.0, 2.0], edges=[0.0, 1.0, 2.0]),
+    "stem": lambda: xy.stem(x=[1.0, 2.0], y=[3.0, 4.0]),
+    "segments": lambda: xy.segments(x0=[0.0, 1.0], y0=[0.0, 1.0], x1=[1.0, 2.0], y1=[1.0, 0.0]),
+    "triangle_mesh": lambda: xy.triangle_mesh(
         x0=[0.0], y0=[0.0], x1=[1.0], y1=[0.0], x2=[0.5], y2=[1.0]
     ),
 }
@@ -96,11 +96,11 @@ def _keyword_only_names(fn) -> set[str]:
 
 @pytest.mark.parametrize(("factory_name", "method_name"), MARK_PAIRS)
 def test_factory_props_map_to_engine_parameters(factory_name, method_name):
-    factory = getattr(fc, factory_name)
+    factory = getattr(xy, factory_name)
     method = getattr(Figure, method_name)
     unmapped = _param_names(factory) - _param_names(method) - COMPOSITION_ONLY
     assert not unmapped, (
-        f"fc.{factory_name} accepts {sorted(unmapped)} which map to no "
+        f"xy.{factory_name} accepts {sorted(unmapped)} which map to no "
         f"Figure.{method_name} parameter; either add the engine parameter or "
         "list the prop in COMPOSITION_ONLY"
     )
@@ -108,11 +108,11 @@ def test_factory_props_map_to_engine_parameters(factory_name, method_name):
 
 @pytest.mark.parametrize(("factory_name", "method_name"), MARK_PAIRS)
 def test_engine_keywords_all_reachable_from_factory(factory_name, method_name):
-    factory = getattr(fc, factory_name)
+    factory = getattr(xy, factory_name)
     method = getattr(Figure, method_name)
     missing = _param_names(method) - _param_names(factory)
     assert not missing, (
-        f"Figure.{method_name} gained {sorted(missing)} but fc.{factory_name} "
+        f"Figure.{method_name} gained {sorted(missing)} but xy.{factory_name} "
         "does not expose them; thread the keyword through the factory and its "
         "_apply_* dispatcher"
     )
@@ -164,7 +164,7 @@ def test_factory_defaults_match_engine_defaults(factory_name, method_name):
     make the data positionals optional for the data-key idiom); a default that
     drifts from the engine's silently changes what the declarative dialect
     renders. Compare values, not just names."""
-    factory_params = inspect.signature(getattr(fc, factory_name)).parameters
+    factory_params = inspect.signature(getattr(xy, factory_name)).parameters
     engine_params = inspect.signature(getattr(Figure, method_name)).parameters
     for name, engine_param in engine_params.items():
         if name in COMPOSITION_ONLY or name not in factory_params:

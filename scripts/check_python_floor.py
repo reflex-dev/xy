@@ -42,7 +42,7 @@ SKIP_PARTS = {
 
 DECLARATION_DOCS = (
     Path("README.md"),
-    Path("docs/production-readiness.md"),
+    Path("docs/engineering/production-readiness.md"),
 )
 
 

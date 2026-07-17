@@ -9,8 +9,9 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-import xy as fc
+import xy
 from xy._figure import Figure
 from xy._svg import COLORMAP_STOPS
 
@@ -98,6 +99,34 @@ def test_svg_styling_fidelity_markers() -> None:
     assert ">styled<" in svg
 
 
+def test_svg_transparent_gradient_stops_preserve_adjacent_hues() -> None:
+    fade = (
+        Figure()
+        .area(
+            [0.0, 1.0],
+            [1.0, 2.0],
+            color="#a78bfa",
+            fill="linear-gradient(currentColor, transparent)",
+        )
+        .to_svg()
+    )
+    assert 'stop-color="#a78bfa" stop-opacity="0"' in fade
+    assert 'stop-color="transparent"' not in fade
+
+    split = (
+        Figure()
+        .bar(
+            [0.0, 1.0],
+            [1.0, 2.0],
+            fill="linear-gradient(#ff0000, transparent 50%, #0000ff)",
+        )
+        .to_svg()
+    )
+    assert split.count('offset="50%"') == 2
+    assert 'offset="50%" stop-color="#ff0000" stop-opacity="0"' in split
+    assert 'offset="50%" stop-color="#0000ff" stop-opacity="0"' in split
+
+
 def test_svg_axes_chrome_and_hiding() -> None:
     fig = Figure(title="t", x_label="xx", y_label="yy")
     fig.line([0.0, 1.0], [0.0, 1.0], name="n")
@@ -114,6 +143,385 @@ def test_svg_axes_chrome_and_hiding() -> None:
     assert 'text-anchor="middle">' not in sparse  # no x tick labels / titles
 
 
+def test_svg_long_legend_is_clamped_and_ellipsized_inside_plot() -> None:
+    from xy import _svg
+
+    names = [f"series-{index}-" + "very-long-operational-label-" * 2 for index in range(4)]
+    chart = xy.line_chart(
+        *(
+            xy.line([0.0, 1.0], [float(index), float(index + 1)], name=name)
+            for index, name in enumerate(names)
+        ),
+        xy.legend(
+            loc="upper right",
+            ncols=2,
+            title="Long operational series",
+            style={"background": "#ff00ff", "--xy-legend-frame-alpha": 1},
+        ),
+        width=320,
+        height=260,
+    )
+    fig = chart.figure()
+    spec, _blob = fig.build_payload()
+    _width, _height, _compact, plot = _svg.layout(spec)
+    svg = fig.to_svg()
+    root = _parse(svg)
+
+    frame = next(node for node in root.iter() if node.get("fill") == "#ff00ff")
+    x, y = float(frame.get("x", "nan")), float(frame.get("y", "nan"))
+    width, height = float(frame.get("width", "nan")), float(frame.get("height", "nan"))
+    assert plot["x"] <= x <= x + width <= plot["x"] + plot["w"]
+    assert plot["y"] <= y <= y + height <= plot["y"] + plot["h"]
+    assert any(node.tag.endswith("clipPath") for node in root.iter())
+    assert all(name not in svg for name in names)
+    assert any((node.text or "").endswith("...") for node in root.iter())
+
+
+def test_svg_secondary_y_axis_scales_trace_and_renders_right_chrome() -> None:
+    from xy import _svg
+
+    chart = xy.chart(
+        xy.line([0.0, 1.0], [0.0, 1.0], color="#2563eb"),
+        xy.line([0.0, 1.0], [100.0, 200.0], color="#dc2626", y_axis="y2"),
+        xy.y_axis(label="Primary"),
+        xy.y_axis(
+            id="y2",
+            label="Secondary",
+            side="right",
+            domain=(100.0, 200.0),
+            tick_values=(100.0, 150.0, 200.0),
+            style={
+                "axis_color": "#dc2626",
+                "tick_color": "#dc2626",
+                "tick_label_color": "#dc2626",
+                "label_color": "#dc2626",
+                "tick_length": 5,
+            },
+        ),
+        width=400,
+        height=240,
+    )
+    fig = chart.figure()
+    spec, _blob = fig.build_payload()
+    _width, _height, _compact, plot = _svg.layout(spec)
+    root = _parse(fig.to_svg())
+
+    secondary_path = next(
+        node
+        for node in root.iter()
+        if node.tag.endswith("path") and node.get("stroke") == "#dc2626"
+    )
+    coords = [float(value) for value in re.findall(r"-?\d+(?:\.\d+)?", secondary_path.get("d", ""))]
+    ys = coords[1::2]
+    assert ys
+    assert all(plot["y"] <= value <= plot["y"] + plot["h"] for value in ys)
+
+    texts = {node.text for node in root.iter() if node.text}
+    assert {"100", "150", "200", "Secondary"} <= texts
+    right_edge = plot["x"] + plot["w"]
+    red_lines = [
+        node
+        for node in root.iter()
+        if node.tag.endswith("line") and node.get("stroke") == "#dc2626"
+    ]
+    assert any(
+        float(node.get("x1", "nan")) == right_edge and float(node.get("x2", "nan")) == right_edge
+        for node in red_lines
+    )
+    assert sum(float(node.get("x2", "0")) > right_edge for node in red_lines) >= 3
+
+
+def test_svg_short_chart_with_titled_legend_emits_no_empty_legend_box() -> None:
+    # A plot too short for even one legend row must not paint a floating
+    # frame/title-only box.
+    chart = xy.line_chart(
+        xy.line([0.0, 1.0], [0.0, 1.0], name="series-a"),
+        xy.legend(title="Legend title", style={"background": "#ff00ff"}),
+        width=400,
+        height=70,
+    )
+    svg = chart.to_svg()
+    assert "#ff00ff" not in svg
+    assert "Legend title" not in svg
+    assert "series-a" not in svg
+
+
+def test_svg_vertical_colorbar_clears_right_named_axis_chrome() -> None:
+    from xy import _svg
+
+    chart = xy.chart(
+        xy.heatmap([[0.0, 1.0], [2.0, 3.0]], name="field", colormap="viridis"),
+        xy.line([0.0, 1.0], [100.0, 200.0], y_axis="y2"),
+        xy.y_axis(id="y2", label="Secondary", side="right", domain=(100.0, 200.0)),
+        xy.colorbar(title="Field"),
+        width=560,
+        height=300,
+    )
+    fig = chart.figure()
+    spec, _blob = fig.build_payload()
+    _width, _height, _compact, plot = _svg.layout(spec)
+    root = _parse(fig.to_svg())
+
+    bar = next(
+        node for node in root.iter() if (node.get("fill") or "").startswith("url(#xy-colorbar-")
+    )
+    # The whole colorbar shifts right of the axis gutter, past the rotated
+    # secondary-axis title at plot-right+40.
+    assert float(bar.get("x", "nan")) > plot["x"] + plot["w"] + 40
+
+
+def test_svg_colorbar_clears_primary_right_axis_and_bottom_axis_chrome() -> None:
+    from xy import _svg
+
+    vertical = xy.heatmap_chart(
+        xy.heatmap([[0.0, 1.0], [2.0, 3.0]], colormap="viridis"),
+        xy.y_axis(label="Primary right", side="right"),
+        xy.colorbar(),
+        width=560,
+        height=320,
+    )
+    vertical_spec, _blob = vertical.figure().build_payload()
+    _width, _height, _compact, vertical_plot = _svg.layout(vertical_spec)
+    vertical_root = _parse(vertical.to_svg())
+    vertical_bar = next(
+        node
+        for node in vertical_root.iter()
+        if (node.get("fill") or "").startswith("url(#xy-colorbar-")
+    )
+    right_title = next(node for node in vertical_root.iter() if node.text == "Primary right")
+    assert float(vertical_bar.get("x", "nan")) > float(right_title.get("x", "nan"))
+    assert float(vertical_bar.get("x", "nan")) > vertical_plot["x"] + vertical_plot["w"] + 40
+
+    horizontal = xy.heatmap_chart(
+        xy.heatmap([[0.0, 1.0], [2.0, 3.0]], colormap="viridis"),
+        xy.x_axis(label="Bottom axis"),
+        xy.colorbar(orientation="horizontal", title="Intensity"),
+        width=560,
+        height=320,
+    )
+    horizontal_spec, _blob = horizontal.figure().build_payload()
+    _width, _height, _compact, horizontal_plot = _svg.layout(horizontal_spec)
+    horizontal_root = _parse(horizontal.to_svg())
+    horizontal_bar = next(
+        node
+        for node in horizontal_root.iter()
+        if (node.get("fill") or "").startswith("url(#xy-colorbar-")
+    )
+    bottom_title = next(node for node in horizontal_root.iter() if node.text == "Bottom axis")
+    assert float(horizontal_bar.get("y", "nan")) > float(bottom_title.get("y", "nan"))
+    assert float(horizontal_bar.get("y", "nan")) >= (
+        horizontal_plot["y"] + horizontal_plot["h"] + horizontal_plot["bottom_axis_room"]
+    )
+
+
+def test_svg_secondary_x_axis_scales_trace_and_renders_top_chrome() -> None:
+    from xy import _svg
+
+    chart = xy.chart(
+        xy.line([0.0, 1.0], [0.0, 1.0], color="#2563eb"),
+        xy.line([100.0, 200.0], [0.2, 0.8], color="#dc2626", x_axis="x2"),
+        xy.x_axis(label="Primary X"),
+        xy.x_axis(
+            id="x2",
+            label="Secondary X",
+            side="top",
+            domain=(100.0, 200.0),
+            tick_values=(100.0, 150.0, 200.0),
+            style={
+                "axis_color": "#dc2626",
+                "tick_color": "#dc2626",
+                "tick_label_color": "#dc2626",
+                "label_color": "#dc2626",
+                "tick_length": 5,
+            },
+        ),
+        width=400,
+        height=240,
+    )
+    fig = chart.figure()
+    spec, _blob = fig.build_payload()
+    _width, _height, _compact, plot = _svg.layout(spec)
+    root = _parse(fig.to_svg())
+
+    secondary_path = next(
+        node
+        for node in root.iter()
+        if node.tag.endswith("path") and node.get("stroke") == "#dc2626"
+    )
+    coords = [float(value) for value in re.findall(r"-?\d+(?:\.\d+)?", secondary_path.get("d", ""))]
+    xs = coords[0::2]
+    assert xs
+    assert all(plot["x"] <= value <= plot["x"] + plot["w"] for value in xs)
+
+    texts = {node.text for node in root.iter() if node.text}
+    assert {"100", "150", "200", "Secondary X"} <= texts
+    red_lines = [
+        node
+        for node in root.iter()
+        if node.tag.endswith("line") and node.get("stroke") == "#dc2626"
+    ]
+    assert any(
+        float(node.get("y1", "nan")) == plot["y"] and float(node.get("y2", "nan")) == plot["y"]
+        for node in red_lines
+    )
+    assert sum(float(node.get("y1", "inf")) < plot["y"] for node in red_lines) >= 3
+
+
+def test_svg_mixed_primary_and_named_x_axis_kinds_render_independently() -> None:
+    cases = (
+        (
+            xy.chart(
+                xy.line(["Primary Alpha", "Primary Beta", "Primary Gamma"], [1.0, 2.0, 3.0]),
+                xy.line([100.0, 200.0, 300.0], [3.0, 2.0, 1.0], x_axis="x2"),
+                xy.x_axis(tick_label_strategy="rotate"),
+                xy.x_axis(
+                    id="x2",
+                    side="top",
+                    type_="linear",
+                    tick_values=(100.0, 200.0, 300.0),
+                    tick_labels=("N100", "N200", "N300"),
+                    tick_label_strategy="rotate",
+                ),
+                width=560,
+                height=300,
+            ),
+            {"Primary Alpha", "Primary Beta", "Primary Gamma", "N100", "N200", "N300"},
+        ),
+        (
+            xy.chart(
+                xy.line([10.0, 20.0, 30.0], [1.0, 2.0, 3.0]),
+                xy.line(["Named Red", "Named Green", "Named Blue"], [3.0, 2.0, 1.0], x_axis="x2"),
+                xy.x_axis(
+                    type_="linear",
+                    tick_values=(10.0, 20.0, 30.0),
+                    tick_labels=("P10", "P20", "P30"),
+                    tick_label_strategy="rotate",
+                ),
+                xy.x_axis(id="x2", side="top", tick_label_strategy="rotate"),
+                width=560,
+                height=300,
+            ),
+            {"P10", "P20", "P30", "Named Red", "Named Green", "Named Blue"},
+        ),
+    )
+
+    for chart, expected_labels in cases:
+        root = _parse(chart.figure().to_svg())
+        rendered_labels = {node.text for node in root.iter() if node.text}
+        assert expected_labels <= rendered_labels
+
+
+@pytest.mark.parametrize(
+    ("side", "angle", "expected_anchor"),
+    [
+        ("bottom", -35, "end"),
+        ("bottom", 35, "start"),
+        ("top", 35, "end"),
+        ("top", -35, "start"),
+    ],
+)
+def test_svg_rotated_x_tick_labels_anchor_away_from_plot(
+    side: str,
+    angle: int,
+    expected_anchor: str,
+) -> None:
+    axis_id = "x" if side == "bottom" else "x2"
+    chart = xy.chart(
+        xy.line([0, 1], [0, 1], x_axis=axis_id),
+        xy.x_axis(
+            id=axis_id,
+            side=side,
+            tick_values=(0, 1),
+            tick_labels=("Long category alpha", "Long category beta"),
+            tick_label_strategy="rotate",
+            tick_label_angle=angle,
+        ),
+        width=480,
+        height=280,
+    )
+
+    root = _parse(chart.figure().to_svg())
+    labels = {
+        node.text: node
+        for node in root.iter()
+        if node.text in {"Long category alpha", "Long category beta"}
+    }
+    assert set(labels) == {"Long category alpha", "Long category beta"}
+    assert {node.get("text-anchor") for node in labels.values()} == {expected_anchor}
+    assert all(f"rotate({angle}" in node.get("transform", "") for node in labels.values())
+
+
+def test_static_named_axes_handle_reverse_silence_and_tick_count() -> None:
+    from xy import _svg
+
+    base = xy.chart(xy.line([0.0, 1.0], [0.0, 1.0]), width=400, height=240)
+    silent = xy.chart(
+        xy.line([0.0, 1.0], [0.0, 1.0]),
+        xy.x_axis(id="x2", side="top", tick_label_strategy="none"),
+        xy.y_axis(id="y2", side="right", tick_label_strategy="none"),
+        width=400,
+        height=240,
+    )
+    base_spec, _ = base.figure().build_payload()
+    silent_spec, _ = silent.figure().build_payload()
+    assert _svg.layout(silent_spec)[3] == _svg.layout(base_spec)[3]
+
+    chart = xy.chart(
+        xy.line([100.0, 150.0, 200.0], [0.0, 1.0, 2.0], x_axis="x2"),
+        xy.x_axis(
+            id="x2",
+            side="top",
+            domain=(100.0, 200.0),
+            reverse=True,
+            tick_values=(100.0, 150.0, 200.0),
+            tick_labels=("low", "middle", "high"),
+        ),
+        xy.y_axis(id="y2", side="right", domain=(0.0, 100.0), tick_count=2),
+        width=400,
+        height=240,
+    )
+    spec, _ = chart.figure().build_payload()
+    ticks, labels, _step = _svg.axis_ticks(spec["axes"]["x2"], 300, True)
+    assert ticks == labels == [100.0, 150.0, 200.0]
+    y_ticks, _y_labels, _y_step = _svg.axis_ticks(spec["axes"]["y2"], 180, False)
+    assert len(y_ticks) <= 3  # tick_count is a target and includes both endpoints
+    texts = {node.text for node in _parse(chart.to_svg()).iter() if node.text}
+    assert {"low", "middle", "high"} <= texts
+
+
+def test_svg_named_axis_collision_and_title_placement_controls() -> None:
+    values = list(range(30))
+    tick_labels = [f"very-long-secondary-label-{value}" for value in values]
+    chart = xy.chart(
+        xy.line(values, values, x_axis="x2"),
+        xy.x_axis(
+            id="x2",
+            side="top",
+            label="Secondary positioned title",
+            label_position="inside_end",
+            label_offset=6,
+            label_angle=47,
+            domain=(0.0, 29.0),
+            tick_values=values,
+            tick_labels=tick_labels,
+            tick_label_strategy="hide",
+        ),
+        width=400,
+        height=240,
+    )
+    spec, _ = chart.figure().build_payload()
+    _width, _height, _compact, plot = xy._svg.layout(spec)
+    root = _parse(chart.to_svg())
+
+    rendered_tick_labels = [node.text for node in root.iter() if node.text in tick_labels]
+    assert 0 < len(rendered_tick_labels) < len(tick_labels)
+    title = next(node for node in root.iter() if node.text == "Secondary positioned title")
+    assert float(title.get("x", "nan")) == plot["x"] + plot["w"]
+    assert plot["y"] < float(title.get("y", "nan")) < plot["y"] + plot["h"]
+    assert title.get("text-anchor") == "end"
+    assert title.get("transform", "").startswith("rotate(47 ")
+
+
 def test_svg_write_and_dimension_override(tmp_path: Path) -> None:
     fig = Figure(width="100%", height="100%")
     fig.line([0.0, 1.0], [0.0, 1.0])
@@ -126,9 +534,9 @@ def test_svg_write_and_dimension_override(tmp_path: Path) -> None:
 
 
 def test_composition_chart_to_svg_parity() -> None:
-    chart = fc.line_chart(
-        fc.line(x=[0.0, 1.0], y=[1.0, 2.0], name="s"),
-        fc.x_axis(label="time"),
+    chart = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[1.0, 2.0], name="s"),
+        xy.x_axis(label="time"),
         title="comp",
     )
     svg = chart.to_svg(width=500, height=300)

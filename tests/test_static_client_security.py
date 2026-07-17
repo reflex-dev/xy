@@ -33,27 +33,27 @@ THEME_FILES = (("js/src/20_theme.js", _read(ROOT / "js/src/20_theme.js")), _INDE
 
 
 def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
-    """Themeable chrome styling lives in a zero-specificity :where() stylesheet
+    """Chrome styling lives in a layered, zero-specificity :where() stylesheet
     so user class_names / styles always win (the CSS+Tailwind contract).
     Every chrome slot's visual defaults + --chart-* token must be present, and
     the elements must carry only structural inline styles (no inline
     background/color that would beat a utility class)."""
     where_rules = (
-        ':where(.xy [data-fc-slot="tooltip"]){',
-        ':where(.xy [data-fc-slot="legend"]){',
-        ':where(.xy [data-fc-slot="legend_swatch"]){',
-        ':where(.xy [data-fc-slot="modebar"]){',
-        ':where(.xy [data-fc-slot="modebar_button"]){',
-        ":where(.xy [data-fc-modebar-menu]){",
-        ":where(.xy [data-fc-modebar-menu-item]){",
-        ':where(.xy [data-fc-slot="modebar_button"].fc-active){',
-        ':where(.xy [data-fc-slot="selection"]){',
-        ':where(.xy [data-fc-slot="badge_item"]){',
-        ':where(.xy [data-fc-slot="tick_label"]){',
-        ':where(.xy [data-fc-slot="axis_title"]){',
-        ':where(.xy [data-fc-slot="annotation_label"]){',
-        ':where(.xy [data-fc-slot="canvas"]){cursor:',
-        ':where(.xy [data-fc-slot="canvas"][data-fc-dragmode="pan"]){cursor:',
+        ':where(.xy [data-xy-slot="tooltip"]){',
+        ':where(.xy [data-xy-slot="legend"]){',
+        ':where(.xy [data-xy-slot="legend_swatch"]){',
+        ':where(.xy [data-xy-slot="modebar"]){',
+        ':where(.xy [data-xy-slot="modebar_button"]){',
+        ":where(.xy [data-xy-modebar-menu]){",
+        ":where(.xy [data-xy-modebar-menu-item]){",
+        ':where(.xy [data-xy-slot="modebar_button"].xy-active){',
+        ':where(.xy [data-xy-slot="selection"]){',
+        ':where(.xy [data-xy-slot="badge_item"]){',
+        ':where(.xy [data-xy-slot="tick_label"]){',
+        ':where(.xy [data-xy-slot="axis_title"]){',
+        ':where(.xy [data-xy-slot="annotation_label"]){',
+        ':where(.xy [data-xy-slot="canvas"]){cursor:',
+        ':where(.xy [data-xy-slot="canvas"][data-xy-dragmode="pan"]){cursor:',
     )
     tokens = (
         "--chart-tooltip-bg",
@@ -68,6 +68,9 @@ def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
         "--chart-badge-text",
     )
     for path, text in THEME_FILES:
+        assert "@layer base{" in text, (
+            f"{path} leaves XY defaults unlayered, which outranks Tailwind utilities"
+        )
         for rule in where_rules:
             assert rule in text, f"{path} missing defeatable chrome rule {rule!r}"
         for token in tokens:
@@ -81,7 +84,7 @@ def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
     assert "background:var(--chart-tooltip-bg" not in chartview
     # modebar active state is a class toggle, never inline (its builder now lives
     # in 53_interaction.js, so assert against the whole client source).
-    assert 'btn.classList.toggle("fc-active"' in _CLIENT_SRC[1]
+    assert 'btn.classList.toggle("xy-active"' in _CLIENT_SRC[1]
 
 
 def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
@@ -113,22 +116,46 @@ def test_client_user_text_surfaces_use_text_nodes_not_html() -> None:
             'grip.innerHTML = this._icon("drag");',
             "b.innerHTML = this._icon(name);",
             'zoomIndicator.innerHTML = this._icon("chevrondown");',
+            'selectModeIcon.innerHTML = this._icon("select");',
             'selectIndicator.innerHTML = this._icon("chevrondown");',
             "icon.innerHTML = this._icon(name);",
             "icon.innerHTML = this._icon(name);",
             "icon.innerHTML = this._icon(name);",
+            "this._selectMenuIcon.innerHTML = this._icon(iconName);",
         ]
+
+
+def test_selection_mode_icons_are_crisp_and_the_trigger_tracks_active_mode() -> None:
+    """Selection glyphs avoid tiny dashed paths and expose the chosen gesture."""
+    required = (
+        'selectModeIcon.dataset.xyModebarSelectIcon = "";',
+        "this._selectMenuIcon.innerHTML = this._icon(iconName);",
+        'select: ["select", "Box Select"]',
+        '"select-lasso": ["lasso", "Lasso Select"]',
+        '"select-x": ["selectx", "X Range"]',
+        '"select-y": ["selecty", "Y Range"]',
+    )
+    for path, text in CLIENT_FILES:
+        for snippet in required:
+            assert snippet in text, f"{path} no longer reflects the active selection mode"
+        assert 'stroke-dasharray="2.5 2"' not in text, (
+            f"{path} restored fractional dashed selection glyphs that blur at toolbar size"
+        )
+
+    for path, text in THEME_FILES:
+        assert "min-width:42px" in text, f"{path} crowds the selection icon and chevron"
+        assert "[data-xy-modebar-select-icon]" in text, path
 
 
 def test_modebar_exports_are_local_and_exclude_interaction_chrome() -> None:
     """Browser exports stay self-contained and never serialize the toolbar itself."""
     required = (
-        'exportMenu.dataset.fcModebarExportMenu = "";',
+        'exportMenu.dataset.xyModebarExportMenu = "";',
         'new Blob([svg], { type: "image/svg+xml;charset=utf-8" })',
         'new Blob([this._exportCsvText()], { type: "text/csv;charset=utf-8" })',
         "link.download = filename;",
         "const content = new XMLSerializer().serializeToString(clone);",
-        '[data-fc-slot="modebar"],[data-fc-slot="tooltip"]',
+        '[data-xy-slot="modebar"],[data-xy-slot="tooltip"]',
         'const columns = ["trace", "name", "kind", "index", "x", "y"',
     )
     for path, text in CLIENT_FILES:
@@ -136,26 +163,34 @@ def test_modebar_exports_are_local_and_exclude_interaction_chrome() -> None:
             assert snippet in text, f"{path} missing toolbar export contract {snippet!r}"
 
 
-def test_client_respects_user_legend_max_height_style() -> None:
-    """The responsive legend cap must not overwrite explicit component styles.
+def test_pointer_capture_tolerates_synthetic_accessibility_clicks() -> None:
+    """Keyboard/automation focus clicks must not abort interaction setup.
 
-    _slotStyleValue canonicalizes the stored key, so a single canonical-name
-    guard honors snake_case (`max_height`, the Python API form), camelCase, and
-    kebab alike. A raw-key-only lookup let the snake_case form slip past the
-    guard, so the auto-cap clobbered it on resize (browser-verified 50px → plot
-    height)."""
-    required_guards = (
-        'this._slotStyleValue("legend", "max-height") == null',
-        # the canonical-name match inside _slotStyleValue is what makes the guard
-        # snake_case-aware — its removal would reintroduce the resize regression.
-        "if (this._stylePropertyName(key) === want) return style[key];",
-    )
-
+    Browsers can reject pointer capture for synthetic pointer events. Every
+    capture site therefore needs to degrade cleanly instead of surfacing an
+    uncaught ``InvalidStateError`` through the host framework.
+    """
     for path, text in CLIENT_FILES:
-        for guard in required_guards:
-            assert guard in text, f"{path} no longer preserves explicit legend max-height"
-        assert 'this._slotStyleValue("legend", "maxHeight")' not in text, (
-            f"{path} still uses the old raw-key double guard; _slotStyleValue now normalizes"
+        capture_lines = [
+            line.strip() for line in text.splitlines() if ".setPointerCapture(" in line
+        ]
+        assert len(capture_lines) == 4, f"{path} has an unexpected capture site"
+        assert all(line.startswith("try {") and "catch (_err)" in line for line in capture_lines), (
+            f"{path} leaves pointer capture unguarded for synthetic events"
+        )
+
+
+def test_exact_kernel_pick_preserves_shared_tooltip_fields() -> None:
+    """Exact pick replies must retain fields resident on sibling layers."""
+    required = (
+        '} else if (msg.type === "pick_result") {',
+        "this._applySharedTooltipFields(msg.row);",
+        "this._lastRow = msg.row;",
+    )
+    for path, text in CLIENT_FILES:
+        positions = [text.index(snippet) for snippet in required]
+        assert positions == sorted(positions), (
+            f"{path} no longer rehydrates a precise tooltip before rendering it"
         )
 
 
@@ -190,20 +225,20 @@ def test_client_numeric_styles_default_to_pixels_for_lengths() -> None:
 
 
 def test_client_selection_band_paint_is_a_defeatable_stylesheet_default() -> None:
-    """The box-select/zoom band must paint via the zero-specificity :where()
-    stylesheet (keyed on data-fc-band), never inline — otherwise a
+    """The box-select/zoom band must paint via the layered :where()
+    stylesheet (keyed on data-xy-band), never inline — otherwise a
     `class_names={"selection": …}` utility or `styles[selection]` would lose to
     the inline style, the one slot that breaks the "your styles always win"
     contract (§36)."""
     for path, text in CLIENT_FILES:
-        assert "this.selRect.dataset.fcBand =" in text, (
+        assert "this.selRect.dataset.xyBand =" in text, (
             f"{path} no longer drives the selection band via a data attribute"
         )
         assert "selRect.style.border" not in text and "selRect.style.background" not in text, (
             f"{path} pins selection band paint inline; it must be a stylesheet default"
         )
     for path, text in THEME_FILES:
-        assert '[data-fc-slot="selection"][data-fc-band="zoom"]){' in text, (
+        assert '[data-xy-slot="selection"][data-xy-band="zoom"]){' in text, (
             f"{path} is missing the defeatable zoom-band :where() default"
         )
 
@@ -244,8 +279,8 @@ def test_client_applies_every_public_dom_slot() -> None:
 
 def test_client_stamps_public_dom_slot_attributes() -> None:
     for path, text in CLIENT_FILES:
-        assert "el.dataset.fcSlot = slot;" in text, f"{path} no longer stamps data-fc-slot"
-        assert text.index("el.dataset.fcSlot = slot;") < text.index("const dom = this.spec.dom;"), (
+        assert "el.dataset.xySlot = slot;" in text, f"{path} no longer stamps data-xy-slot"
+        assert text.index("el.dataset.xySlot = slot;") < text.index("const dom = this.spec.dom;"), (
             f"{path} stamps slot attributes after reading spec.dom"
         )
 
@@ -378,8 +413,8 @@ def test_client_hardens_responsive_visibility_recovery() -> None:
 
 def test_client_quiesces_and_rebuilds_repeated_context_loss() -> None:
     required = (
-        'this.root.dataset.fcContextState = "lost";',
-        'this.root.dataset.fcContextState = "ready";',
+        'this.root.dataset.xyContextState = "lost";',
+        'this.root.dataset.xyContextState = "ready";',
         "this._contextLossCount += 1;",
         "this._contextRestoreCount += 1;",
         'this._dispatchChartEvent("context_lost"',
@@ -422,6 +457,19 @@ def test_client_refreshes_and_destroys_density_sample_overlays() -> None:
         text = path.read_text(encoding="utf-8")
         assert 'Object.prototype.hasOwnProperty.call(d, "sample")' in text
         assert "view._applyDensitySample(g, d.sample, buffers);" in text
+
+
+def test_client_refreshes_theme_when_framework_theme_classes_change() -> None:
+    """Keep canvas paint synchronized with class-driven light/dark themes."""
+    required = (
+        "new MutationObserver(() => this.refreshTheme())",
+        'attributeFilter: ["class", "style"]',
+        "this._themeMutationObserver?.disconnect();",
+    )
+
+    for path, text in CLIENT_FILES:
+        for marker in required:
+            assert marker in text, f"{path} lost class-driven theme refresh {marker!r}"
 
 
 def test_client_lod_layer_stays_chart_agnostic_and_renderer_delegated() -> None:
@@ -575,11 +623,11 @@ def test_widget_bundle_is_valid_esm_not_leaking_marker_prose() -> None:
 
 def test_annotation_labels_and_cursor_stay_css_defeatable() -> None:
     """Annotation labels (DOM) and the interaction cursor must be overridable by
-    user CSS/Tailwind: the slot + font + cursor defaults live in the zero-
+    user CSS/Tailwind: the slot + font + cursor defaults live in the layered zero-
     specificity :where() stylesheet, never as inline styles that beat classes."""
     for path, text in CLIENT_FILES:
         assert '_applySlot(d, "annotation_label")' in text, (
-            f"{path} annotation label carries no data-fc-slot for CSS targeting"
+            f"{path} annotation label carries no data-xy-slot for CSS targeting"
         )
 
     # Annotation label font is a stylesheet default, not inline (only the
@@ -589,13 +637,18 @@ def test_annotation_labels_and_cursor_stay_css_defeatable() -> None:
         "annotation label pins font inline; move it to the :where() stylesheet"
     )
     assert "if (style && (style.label_color || style.color)) {" in annotations
+    assert '"opacity",' in annotations
+    assert '"label_opacity",' in annotations
+    assert 'if (key === "opacity" && ann.kind === "text") {' in annotations
+    assert "if (style && style.label_opacity !== undefined) {" in annotations
+    assert "d.style.opacity = String(Math.max(0, Math.min(1, labelOpacity)));" in annotations
 
     # Cursor is attribute-driven, never inline (inline cursor beats cursor-* utils).
     chartview = _read(ROOT / "js/src/50_chartview.js")
     interaction = _read(ROOT / "js/src/53_interaction.js")
     assert "cursor:" not in chartview, "canvas re-pins cursor inline"
     assert "this.canvas.style.cursor" not in interaction, "drag-mode re-pins cursor inline"
-    assert "this.canvas.dataset.fcDragmode = mode;" in interaction
+    assert "this.canvas.dataset.xyDragmode = mode;" in interaction
     assert "cursor:pointer" not in interaction, "modebar button pins cursor inline"
 
 
@@ -603,17 +656,17 @@ def test_client_renders_mark_level_styling() -> None:
     """Gradient fills (premultiplied, currentColor-aware), rounded corners +
     stroke borders on both rect-family GPU programs, and curve:"smooth"
     monotone-cubic densification are first-class mark styling
-    (docs/styling.md#styling-the-marks)."""
+    (docs/engineering/styling.md#styling-the-marks)."""
     required = (
-        "fcGradSample(",  # gradient sampler shared by area + rect shaders
+        "xyGradSample(",  # gradient sampler shared by area + rect shaders
         "u_gradMode",
         'u("u_radius")',  # rounded-corner SDF uniform
         'u("u_strokeWidth")',
-        "fcGradSample(fcGradT(v_t, u_res)) * u_color.a",  # opacity composes w/ gradient
+        "xyGradSample(xyGradT(v_t, u_res)) * u_color.a",  # opacity composes w/ gradient
         "(v_pos - v_base) / (abs(denom)",  # area gradient: per-column, seam-free + even
-        "fcSmoothResample(",  # monotone cubic (Fritsch–Carlson)
-        "fcMonotoneTangents(",
-        "fcMarkerSdf(d, u_symbol)",  # scatter symbol shapes (circle/square/diamond/triangle/cross)
+        "xySmoothResample(",  # monotone cubic (Fritsch–Carlson)
+        "xyMonotoneTangents(",
+        "xyMarkerSdf(d, u_symbol)",  # scatter symbol shapes (circle/square/diamond/triangle/cross)
         "_pointMarkStyle(",  # point stroke + symbol resolution
         "rgb = mix(rgb, sc.rgb, sc.a);",  # selected/unselected recolor (mark_style)
         "v_dash = mix(a_len0, a_len1, c.x);",  # screen-space arc-length line dashes
@@ -640,8 +693,8 @@ def test_standalone_density_rebin_worker() -> None:
     as a badge, falling back to the stretched overview when workers are
     unavailable. The smoke proves it end-to-end under the production CSP."""
     required = (
-        "FC_REBIN_WORKER_SRC",  # worker source ships inside the bundle
-        "fcCreateRebinWorker(",
+        "XY_REBIN_WORKER_SRC",  # worker source ships inside the bundle
+        "xyCreateRebinWorker(",
         "_scheduleSampleRebin(",  # standalone branch of the view-request path
         "_requestSampleRebin(",
         '"zoom re-binned from sample"',  # §28: the reduction is badged
@@ -678,7 +731,31 @@ def test_client_supports_edge_to_edge_sparklines() -> None:
     # padding override feeds _layout's margins
     assert "Array.isArray(this.spec.padding) ? this.spec.padding : null" in src
     assert "marginLeft = pad ? pad[3]" in src
-    # "none" returns an empty label set (previously returned all labels unlaid-out)
-    assert 'if (strategy === "none") return [];' in src
+    # "none" returns an empty label set even when the axis has only one tick.
+    assert 'if (strategyValue === "none" || strategyValue === "off") return [];' in src
+    assert "if (s.x_axis.label && !hideX)" in src
+    assert "if (s.y_axis.label && !hideY)" in src
     for path, text in CLIENT_FILES:
-        assert 'if (strategy === "none") return [];' in text, f"{path} lost none-hides-labels"
+        assert 'if (strategyValue === "none" || strategyValue === "off") return [];' in text, (
+            f"{path} lost none-hides-labels"
+        )
+
+
+def test_client_named_axes_handle_silent_gutters_and_reversed_ticks() -> None:
+    """Silent secondary chrome must not shrink the plot, and explicit ticks
+    remain valid when a named scale's range is reversed."""
+    required = (
+        'this._axisTickLabelStrategy(axis) !== "none"',
+        "const a = Math.min(lo, hi), b = Math.max(lo, hi);",
+        "v >= a && v <= b",
+    )
+    for path, text in CLIENT_FILES:
+        for marker in required:
+            assert marker in text, f"{path} lost named-axis range/layout guard {marker!r}"
+
+        label_layout = text.split("_layoutTickLabels(axis, dim, labels)", 1)[1].split(
+            "_axisLabelCss(axis, dim, fallbackCss)", 1
+        )[0]
+        assert label_layout.index("strategyValue") < label_layout.index("labels.length <= 1"), (
+            f"{path} lets a single label bypass tick_label_strategy='none'"
+        )

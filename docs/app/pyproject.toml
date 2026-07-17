@@ -1,0 +1,42 @@
+[project]
+name = "xy-docs-app"
+version = "0.1.0"
+description = "Documentation site for XY."
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "pillow",
+    "reflex @ git+https://github.com/reflex-dev/reflex@main",
+    "reflex-components-internal @ git+https://github.com/reflex-dev/reflex@main#subdirectory=packages/reflex-components-internal",
+    "reflex-docgen @ git+https://github.com/reflex-dev/reflex@main#subdirectory=packages/reflex-docgen",
+    "reflex-xy",
+    "reflex-site-shared @ git+https://github.com/reflex-dev/reflex@main#subdirectory=packages/reflex-site-shared",
+    "xy",
+]
+
+[dependency-groups]
+dev = ["codespell", "pre-commit", "pytest", "ruff"]
+
+[tool.uv.sources]
+reflex-xy = { path = "../../python/reflex-xy", editable = true }
+xy = { path = "../..", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["xy_docs"]
+
+[tool.ruff]
+extend = "../../pyproject.toml"
+
+[tool.codespell]
+skip = "*/.venv/*,*/.web/*,*/assets/external/*,*/assets/xy/*,*/reflex.lock/*,*/uv.lock"
+ignore-words-list = "inout"
+
+[tool.uv]
+required-version = ">=0.7.0"

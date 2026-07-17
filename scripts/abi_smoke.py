@@ -71,12 +71,12 @@ def load() -> ctypes.CDLL:
     U32P = ctypes.POINTER(ctypes.c_uint32)
     U8P = ctypes.POINTER(ctypes.c_uint8)
 
-    lib.fc_abi_version.restype = ctypes.c_uint32
-    lib.fc_abi_version.argtypes = []
-    lib.fc_factorize_fixed.restype = ctypes.c_size_t
-    lib.fc_factorize_fixed.argtypes = [U8P, ctypes.c_size_t, ctypes.c_size_t, U32P, U32P]
-    lib.fc_factorize_fixed_u8.restype = ctypes.c_size_t
-    lib.fc_factorize_fixed_u8.argtypes = [
+    lib.xy_abi_version.restype = ctypes.c_uint32
+    lib.xy_abi_version.argtypes = []
+    lib.xy_factorize_fixed.restype = ctypes.c_size_t
+    lib.xy_factorize_fixed.argtypes = [U8P, ctypes.c_size_t, ctypes.c_size_t, U32P, U32P]
+    lib.xy_factorize_fixed_u8.restype = ctypes.c_size_t
+    lib.xy_factorize_fixed_u8.argtypes = [
         U8P,
         ctypes.c_size_t,
         ctypes.c_size_t,
@@ -84,8 +84,8 @@ def load() -> ctypes.CDLL:
         U32P,
         ctypes.c_size_t,
     ]
-    lib.fc_factorize_fixed_u8_counts.restype = ctypes.c_size_t
-    lib.fc_factorize_fixed_u8_counts.argtypes = [
+    lib.xy_factorize_fixed_u8_counts.restype = ctypes.c_size_t
+    lib.xy_factorize_fixed_u8_counts.argtypes = [
         U8P,
         ctypes.c_size_t,
         ctypes.c_size_t,
@@ -94,8 +94,8 @@ def load() -> ctypes.CDLL:
         U64P,
         ctypes.c_size_t,
     ]
-    lib.fc_factorize_unicode1_u8_counts.restype = ctypes.c_size_t
-    lib.fc_factorize_unicode1_u8_counts.argtypes = [
+    lib.xy_factorize_unicode1_u8_counts.restype = ctypes.c_size_t
+    lib.xy_factorize_unicode1_u8_counts.argtypes = [
         U32P,
         ctypes.c_size_t,
         ctypes.c_int32,
@@ -104,12 +104,12 @@ def load() -> ctypes.CDLL:
         U64P,
         ctypes.c_size_t,
     ]
-    lib.fc_remap_u8.restype = ctypes.c_int32
-    lib.fc_remap_u8.argtypes = [U8P, ctypes.c_size_t, U8P, ctypes.c_size_t]
-    lib.fc_encode_f32.restype = ctypes.c_int32
-    lib.fc_encode_f32.argtypes = [F64P, ctypes.c_size_t, ctypes.c_double, ctypes.c_double, F32P]
-    lib.fc_m4_indices.restype = ctypes.c_size_t
-    lib.fc_m4_indices.argtypes = [
+    lib.xy_remap_u8.restype = ctypes.c_int32
+    lib.xy_remap_u8.argtypes = [U8P, ctypes.c_size_t, U8P, ctypes.c_size_t]
+    lib.xy_encode_f32.restype = ctypes.c_int32
+    lib.xy_encode_f32.argtypes = [F64P, ctypes.c_size_t, ctypes.c_double, ctypes.c_double, F32P]
+    lib.xy_m4_indices.restype = ctypes.c_size_t
+    lib.xy_m4_indices.argtypes = [
         F64P,
         F64P,
         ctypes.c_size_t,
@@ -118,8 +118,8 @@ def load() -> ctypes.CDLL:
         ctypes.c_size_t,
         U32P,
     ]
-    lib.fc_zone_maps.restype = ctypes.c_size_t
-    lib.fc_zone_maps.argtypes = [F64P, ctypes.c_size_t, ctypes.c_size_t] + [
+    lib.xy_zone_maps.restype = ctypes.c_size_t
+    lib.xy_zone_maps.argtypes = [F64P, ctypes.c_size_t, ctypes.c_size_t] + [
         F64P,
         F64P,
         U64P,
@@ -129,8 +129,8 @@ def load() -> ctypes.CDLL:
         F64P,
         F64P,
     ]
-    lib.fc_zone_maps_pair.restype = ctypes.c_size_t
-    lib.fc_zone_maps_pair.argtypes = [
+    lib.xy_zone_maps_pair.restype = ctypes.c_size_t
+    lib.xy_zone_maps_pair.argtypes = [
         F64P,
         F64P,
         ctypes.c_size_t,
@@ -138,18 +138,18 @@ def load() -> ctypes.CDLL:
         ctypes.POINTER(CZoneMap),
         ctypes.POINTER(CZoneMap),
     ]
-    lib.fc_min_max.restype = ctypes.c_int32
-    lib.fc_min_max.argtypes = [F64P, ctypes.c_size_t, F64P, F64P]
-    lib.fc_is_sorted.restype = ctypes.c_int32
-    lib.fc_is_sorted.argtypes = [F64P, ctypes.c_size_t]
+    lib.xy_min_max.restype = ctypes.c_int32
+    lib.xy_min_max.argtypes = [F64P, ctypes.c_size_t, F64P, F64P]
+    lib.xy_is_sorted.restype = ctypes.c_int32
+    lib.xy_is_sorted.argtypes = [F64P, ctypes.c_size_t]
     D = ctypes.c_double
     Z = ctypes.c_size_t
-    lib.fc_bin_2d.restype = ctypes.c_int32
-    lib.fc_bin_2d.argtypes = [F64P, F64P, Z, D, D, D, D, Z, Z, F32P]
-    lib.fc_bin_2d_indices.restype = ctypes.c_size_t
-    lib.fc_bin_2d_indices.argtypes = [F64P, F64P, Z, D, D, D, D, Z, Z, F32P, U32P]
-    lib.fc_bin_2d_sample_range.restype = ctypes.c_size_t
-    lib.fc_bin_2d_sample_range.argtypes = [
+    lib.xy_bin_2d.restype = ctypes.c_int32
+    lib.xy_bin_2d.argtypes = [F64P, F64P, Z, D, D, D, D, Z, Z, F32P]
+    lib.xy_bin_2d_indices.restype = ctypes.c_size_t
+    lib.xy_bin_2d_indices.argtypes = [F64P, F64P, Z, D, D, D, D, Z, Z, F32P, U32P]
+    lib.xy_bin_2d_sample_range.restype = ctypes.c_size_t
+    lib.xy_bin_2d_sample_range.argtypes = [
         F64P,
         F64P,
         Z,
@@ -165,8 +165,8 @@ def load() -> ctypes.CDLL:
         U32P,
         Z,
     ]
-    lib.fc_bin_2d_stratified_sample_range_u8_counted.restype = ctypes.c_size_t
-    lib.fc_bin_2d_stratified_sample_range_u8_counted.argtypes = [
+    lib.xy_bin_2d_stratified_sample_range_u8_counted.restype = ctypes.c_size_t
+    lib.xy_bin_2d_stratified_sample_range_u8_counted.argtypes = [
         F64P,
         F64P,
         ctypes.POINTER(ctypes.c_uint8),
@@ -186,8 +186,8 @@ def load() -> ctypes.CDLL:
         U32P,
         Z,
     ]
-    lib.fc_histogram_uniform.restype = ctypes.c_size_t
-    lib.fc_histogram_uniform.argtypes = [
+    lib.xy_histogram_uniform.restype = ctypes.c_size_t
+    lib.xy_histogram_uniform.argtypes = [
         F64P,
         ctypes.c_size_t,
         D,
@@ -196,38 +196,38 @@ def load() -> ctypes.CDLL:
         ctypes.c_int32,
         F64P,
     ]
-    lib.fc_normalize_f32.restype = ctypes.c_int32
-    lib.fc_normalize_f32.argtypes = [F64P, ctypes.c_size_t, D, D, ctypes.c_int32, F32P]
-    lib.fc_valid_indices_f64.restype = ctypes.c_size_t
-    lib.fc_valid_indices_f64.argtypes = [ctypes.POINTER(F64P), Z, Z, ctypes.c_uint64, U32P, Z]
-    lib.fc_range_indices.restype = ctypes.c_size_t
-    lib.fc_range_indices.argtypes = [F64P, F64P, ctypes.c_size_t, D, D, D, D, U32P]
-    lib.fc_sample_mask.restype = ctypes.c_int32
-    lib.fc_sample_mask.argtypes = [
+    lib.xy_normalize_f32.restype = ctypes.c_int32
+    lib.xy_normalize_f32.argtypes = [F64P, ctypes.c_size_t, D, D, ctypes.c_int32, F32P]
+    lib.xy_valid_indices_f64.restype = ctypes.c_size_t
+    lib.xy_valid_indices_f64.argtypes = [ctypes.POINTER(F64P), Z, Z, ctypes.c_uint64, U32P, Z]
+    lib.xy_range_indices.restype = ctypes.c_size_t
+    lib.xy_range_indices.argtypes = [F64P, F64P, ctypes.c_size_t, D, D, D, D, U32P]
+    lib.xy_sample_mask.restype = ctypes.c_int32
+    lib.xy_sample_mask.argtypes = [
         U64P,
         ctypes.c_size_t,
         ctypes.c_uint64,
         ctypes.c_uint64,
         ctypes.POINTER(ctypes.c_uint8),
     ]
-    lib.fc_sample_mask_u32.restype = ctypes.c_int32
-    lib.fc_sample_mask_u32.argtypes = [
+    lib.xy_sample_mask_u32.restype = ctypes.c_int32
+    lib.xy_sample_mask_u32.argtypes = [
         U32P,
         ctypes.c_size_t,
         ctypes.c_uint64,
         ctypes.c_uint64,
         ctypes.POINTER(ctypes.c_uint8),
     ]
-    lib.fc_sample_range_indices.restype = ctypes.c_size_t
-    lib.fc_sample_range_indices.argtypes = [
+    lib.xy_sample_range_indices.restype = ctypes.c_size_t
+    lib.xy_sample_range_indices.argtypes = [
         ctypes.c_size_t,
         ctypes.c_uint64,
         ctypes.c_uint64,
         U32P,
         ctypes.c_size_t,
     ]
-    lib.fc_stratified_sample_range_u8.restype = ctypes.c_size_t
-    lib.fc_stratified_sample_range_u8.argtypes = [
+    lib.xy_stratified_sample_range_u8.restype = ctypes.c_size_t
+    lib.xy_stratified_sample_range_u8.argtypes = [
         U8P,
         ctypes.c_size_t,
         ctypes.c_size_t,
@@ -237,8 +237,8 @@ def load() -> ctypes.CDLL:
         U32P,
         ctypes.c_size_t,
     ]
-    lib.fc_stratified_sample_range_u8_counted.restype = ctypes.c_size_t
-    lib.fc_stratified_sample_range_u8_counted.argtypes = [
+    lib.xy_stratified_sample_range_u8_counted.restype = ctypes.c_size_t
+    lib.xy_stratified_sample_range_u8_counted.argtypes = [
         U8P,
         ctypes.c_size_t,
         U64P,
@@ -249,8 +249,8 @@ def load() -> ctypes.CDLL:
         U32P,
         ctypes.c_size_t,
     ]
-    lib.fc_stratified_sample_mask.restype = ctypes.c_int32
-    lib.fc_stratified_sample_mask.argtypes = [
+    lib.xy_stratified_sample_mask.restype = ctypes.c_int32
+    lib.xy_stratified_sample_mask.argtypes = [
         U64P,
         U32P,
         ctypes.c_size_t,
@@ -260,8 +260,8 @@ def load() -> ctypes.CDLL:
         ctypes.c_uint64,
         ctypes.POINTER(ctypes.c_uint8),
     ]
-    lib.fc_stratified_sample_mask_u32.restype = ctypes.c_int32
-    lib.fc_stratified_sample_mask_u32.argtypes = [
+    lib.xy_stratified_sample_mask_u32.restype = ctypes.c_int32
+    lib.xy_stratified_sample_mask_u32.argtypes = [
         U32P,
         U32P,
         ctypes.c_size_t,
@@ -271,10 +271,10 @@ def load() -> ctypes.CDLL:
         ctypes.c_uint64,
         ctypes.POINTER(ctypes.c_uint8),
     ]
-    lib.fc_rasterize.restype = ctypes.c_int32
-    lib.fc_rasterize.argtypes = [U8P, ctypes.c_size_t, U8P, ctypes.c_size_t, ctypes.c_size_t]
-    lib.fc_rasterize_png.restype = ctypes.c_size_t
-    lib.fc_rasterize_png.argtypes = [
+    lib.xy_rasterize.restype = ctypes.c_int32
+    lib.xy_rasterize.argtypes = [U8P, ctypes.c_size_t, U8P, ctypes.c_size_t, ctypes.c_size_t]
+    lib.xy_rasterize_png.restype = ctypes.c_size_t
+    lib.xy_rasterize_png.argtypes = [
         U8P,
         ctypes.c_size_t,
         U8P,
@@ -282,8 +282,8 @@ def load() -> ctypes.CDLL:
         ctypes.c_size_t,
         ctypes.c_size_t,
     ]
-    lib.fc_rasterize_data.restype = ctypes.c_int32
-    lib.fc_rasterize_data.argtypes = [
+    lib.xy_rasterize_data.restype = ctypes.c_int32
+    lib.xy_rasterize_data.argtypes = [
         U8P,
         ctypes.c_size_t,
         U8P,
@@ -292,8 +292,8 @@ def load() -> ctypes.CDLL:
         ctypes.c_size_t,
         ctypes.c_size_t,
     ]
-    lib.fc_rasterize_png_data.restype = ctypes.c_size_t
-    lib.fc_rasterize_png_data.argtypes = [
+    lib.xy_rasterize_png_data.restype = ctypes.c_size_t
+    lib.xy_rasterize_png_data.argtypes = [
         U8P,
         ctypes.c_size_t,
         U8P,
@@ -303,8 +303,8 @@ def load() -> ctypes.CDLL:
         ctypes.c_size_t,
         ctypes.c_size_t,
     ]
-    lib.fc_rasterize_spans.restype = ctypes.c_int32
-    lib.fc_rasterize_spans.argtypes = [
+    lib.xy_rasterize_spans.restype = ctypes.c_int32
+    lib.xy_rasterize_spans.argtypes = [
         U8P,
         ctypes.c_size_t,
         ctypes.POINTER(U8P),
@@ -314,8 +314,8 @@ def load() -> ctypes.CDLL:
         ctypes.c_size_t,
         ctypes.c_size_t,
     ]
-    lib.fc_rasterize_png_spans.restype = ctypes.c_size_t
-    lib.fc_rasterize_png_spans.argtypes = [
+    lib.xy_rasterize_png_spans.restype = ctypes.c_size_t
+    lib.xy_rasterize_png_spans.argtypes = [
         U8P,
         ctypes.c_size_t,
         ctypes.POINTER(U8P),
@@ -326,8 +326,8 @@ def load() -> ctypes.CDLL:
         ctypes.c_size_t,
         ctypes.c_size_t,
     ]
-    lib.fc_heatmap_rgba.restype = ctypes.c_int32
-    lib.fc_heatmap_rgba.argtypes = [
+    lib.xy_heatmap_rgba.restype = ctypes.c_int32
+    lib.xy_heatmap_rgba.argtypes = [
         F64P,
         ctypes.c_size_t,
         ctypes.c_size_t,
@@ -336,8 +336,8 @@ def load() -> ctypes.CDLL:
         ctypes.c_uint8,
         U8P,
     ]
-    lib.fc_density_rgba.restype = ctypes.c_int32
-    lib.fc_density_rgba.argtypes = [
+    lib.xy_density_rgba.restype = ctypes.c_int32
+    lib.xy_density_rgba.argtypes = [
         U8P,
         ctypes.c_size_t,
         ctypes.c_size_t,
@@ -347,10 +347,10 @@ def load() -> ctypes.CDLL:
         ctypes.c_double,
         U8P,
     ]
-    lib.fc_density_log_u8.restype = ctypes.c_int32
-    lib.fc_density_log_u8.argtypes = [F32P, ctypes.c_size_t, U8P, F64P]
-    lib.fc_local_log_density.restype = ctypes.c_int32
-    lib.fc_local_log_density.argtypes = [
+    lib.xy_density_log_u8.restype = ctypes.c_int32
+    lib.xy_density_log_u8.argtypes = [F32P, ctypes.c_size_t, U8P, F64P]
+    lib.xy_local_log_density.restype = ctypes.c_int32
+    lib.xy_local_log_density.argtypes = [
         F64P,
         F64P,
         ctypes.c_size_t,
@@ -392,21 +392,21 @@ def main() -> None:
             raise SystemExit(f"FAIL: {msg}")
         checks += 1
 
-    ok(lib.fc_abi_version() == ABI_VERSION, "abi version")
+    ok(lib.xy_abi_version() == ABI_VERSION, "abi version")
     ok(ctypes.sizeof(CZoneMap) == 64, "ZoneMap repr(C) size")
 
     ok(
-        lib.fc_factorize_fixed(null_u8, 0, 0, null_u32, null_u32) == 0,
+        lib.xy_factorize_fixed(null_u8, 0, 0, null_u32, null_u32) == 0,
         "factorize_fixed empty/null returns zero",
     )
     ok(
-        lib.fc_factorize_fixed(null_u8, 1, 3, null_u32, null_u32) == size_max,
+        lib.xy_factorize_fixed(null_u8, 1, 3, null_u32, null_u32) == size_max,
         "factorize_fixed non-empty/null sentinel",
     )
     records = array("B", b"ab\0xy\0ab\0abxxy\0")
     factor_codes = array("I", [99] * 5)
     factor_unique = array("I", [99] * 5)
-    factor_count = lib.fc_factorize_fixed(
+    factor_count = lib.xy_factorize_fixed(
         _ptr(records, ctypes.c_uint8),
         5,
         3,
@@ -420,7 +420,7 @@ def main() -> None:
     )
     compact_codes = array("B", [99] * 5)
     compact_unique = array("I", [99] * 3)
-    compact_count = lib.fc_factorize_fixed_u8(
+    compact_count = lib.xy_factorize_fixed_u8(
         _ptr(records, ctypes.c_uint8),
         5,
         3,
@@ -434,7 +434,7 @@ def main() -> None:
         "factorize_fixed_u8 compact codes",
     )
     compact_counts = array("Q", [99] * 3)
-    compact_count = lib.fc_factorize_fixed_u8_counts(
+    compact_count = lib.xy_factorize_fixed_u8_counts(
         _ptr(records, ctypes.c_uint8),
         5,
         3,
@@ -451,7 +451,7 @@ def main() -> None:
     unicode_codes = array("B", [99] * 5)
     unicode_unique = array("I", [99] * 5)
     unicode_counts = array("Q", [99] * 5)
-    unicode_count = lib.fc_factorize_unicode1_u8_counts(
+    unicode_count = lib.xy_factorize_unicode1_u8_counts(
         _ptr(unicode_records, ctypes.c_uint32),
         5,
         0,
@@ -476,7 +476,7 @@ def main() -> None:
             for value in unicode_records
         ],
     )
-    swapped_count = lib.fc_factorize_unicode1_u8_counts(
+    swapped_count = lib.xy_factorize_unicode1_u8_counts(
         _ptr(swapped_unicode, ctypes.c_uint32),
         5,
         1,
@@ -491,7 +491,7 @@ def main() -> None:
     )
     small_unique = array("I", [99] * 2)
     ok(
-        lib.fc_factorize_fixed_u8(
+        lib.xy_factorize_fixed_u8(
             _ptr(records, ctypes.c_uint8),
             5,
             3,
@@ -504,7 +504,7 @@ def main() -> None:
     )
     remap = array("B", [2, 0, 1])
     ok(
-        lib.fc_remap_u8(
+        lib.xy_remap_u8(
             _ptr(compact_codes, ctypes.c_uint8),
             len(compact_codes),
             _ptr(remap, ctypes.c_uint8),
@@ -517,23 +517,23 @@ def main() -> None:
 
     # Boundary guardrails: empty inputs may carry null pointers; invalid
     # non-empty null inputs must return sentinels/flags rather than crash.
-    ok(lib.fc_encode_f32(null_f64, 0, 0.0, 1.0, null_f32) == 1, "encode_f32 empty/null ok status")
+    ok(lib.xy_encode_f32(null_f64, 0, 0.0, 1.0, null_f32) == 1, "encode_f32 empty/null ok status")
     tiny_f = array("f", [123.0])
-    status = lib.fc_encode_f32(null_f64, 1, 0.0, 1.0, _ptr(tiny_f, ctypes.c_float))
+    status = lib.xy_encode_f32(null_f64, 1, 0.0, 1.0, _ptr(tiny_f, ctypes.c_float))
     ok(
         status == 0 and tiny_f[0] == 123.0,
         "encode_f32 rejects null input with 0 status, without writing",
     )
     ok(
-        lib.fc_m4_indices(null_f64, null_f64, 0, 0.0, 1.0, 4, null_u32) == 0,
+        lib.xy_m4_indices(null_f64, null_f64, 0, 0.0, 1.0, 4, null_u32) == 0,
         "m4 empty/null returns zero",
     )
     ok(
-        lib.fc_m4_indices(null_f64, null_f64, 1, 0.0, 1.0, 4, null_u32) == size_max,
+        lib.xy_m4_indices(null_f64, null_f64, 1, 0.0, 1.0, 4, null_u32) == size_max,
         "m4 non-empty/null sentinel",
     )
     ok(
-        lib.fc_zone_maps(
+        lib.xy_zone_maps(
             null_f64,
             0,
             65_536,
@@ -550,7 +550,7 @@ def main() -> None:
         "zone_maps empty/null returns zero",
     )
     ok(
-        lib.fc_zone_maps(
+        lib.xy_zone_maps(
             null_f64,
             1,
             65_536,
@@ -567,23 +567,23 @@ def main() -> None:
         "zone_maps non-empty/null sentinel",
     )
     ok(
-        lib.fc_min_max(
+        lib.xy_min_max(
             null_f64, 0, ctypes.byref(ctypes.c_double()), ctypes.byref(ctypes.c_double())
         )
         == 0,
         "min_max empty/null returns zero",
     )
-    ok(lib.fc_is_sorted(null_f64, 0) == 1, "is_sorted empty is sorted")
-    ok(lib.fc_is_sorted(null_f64, 2) == 0, "is_sorted null non-empty returns unsorted")
+    ok(lib.xy_is_sorted(null_f64, 0) == 1, "is_sorted empty is sorted")
+    ok(lib.xy_is_sorted(null_f64, 2) == 0, "is_sorted null non-empty returns unsorted")
     sorted_pair = array("d", [1.0, 2.0])
     unsorted_pair = array("d", [2.0, 1.0])
     nan_pair = array("d", [1.0, float("nan")])
-    ok(lib.fc_is_sorted(_ptr(sorted_pair, ctypes.c_double), 2) == 1, "is_sorted sorted pair")
-    ok(lib.fc_is_sorted(_ptr(unsorted_pair, ctypes.c_double), 2) == 0, "is_sorted unsorted pair")
-    ok(lib.fc_is_sorted(_ptr(nan_pair, ctypes.c_double), 2) == 0, "is_sorted NaN poisons")
+    ok(lib.xy_is_sorted(_ptr(sorted_pair, ctypes.c_double), 2) == 1, "is_sorted sorted pair")
+    ok(lib.xy_is_sorted(_ptr(unsorted_pair, ctypes.c_double), 2) == 0, "is_sorted unsorted pair")
+    ok(lib.xy_is_sorted(_ptr(nan_pair, ctypes.c_double), 2) == 0, "is_sorted NaN poisons")
     empty_grid = array("f", [99.0]) * 4
     ok(
-        lib.fc_bin_2d(
+        lib.xy_bin_2d(
             null_f64, null_f64, 0, 0.0, 1.0, 0.0, 1.0, 2, 2, _ptr(empty_grid, ctypes.c_float)
         )
         == 1
@@ -591,7 +591,7 @@ def main() -> None:
         "bin_2d empty/null zeroes grid",
     )
     ok(
-        lib.fc_bin_2d(
+        lib.xy_bin_2d(
             null_f64, null_f64, 1, 0.0, 1.0, 0.0, 1.0, 2, 2, _ptr(empty_grid, ctypes.c_float)
         )
         == 0,
@@ -599,28 +599,28 @@ def main() -> None:
     )
     empty_hist = array("d", [99.0]) * 4
     ok(
-        lib.fc_histogram_uniform(null_f64, 0, 0.0, 1.0, 4, 0, _ptr(empty_hist, ctypes.c_double))
+        lib.xy_histogram_uniform(null_f64, 0, 0.0, 1.0, 4, 0, _ptr(empty_hist, ctypes.c_double))
         == 0
         and list(empty_hist) == [0.0, 0.0, 0.0, 0.0],
         "histogram empty/null zeroes counts",
     )
     ok(
-        lib.fc_histogram_uniform(null_f64, 1, 0.0, 1.0, 4, 0, _ptr(empty_hist, ctypes.c_double))
+        lib.xy_histogram_uniform(null_f64, 1, 0.0, 1.0, 4, 0, _ptr(empty_hist, ctypes.c_double))
         == size_max,
         "histogram non-empty/null sentinel",
     )
     ok(
-        lib.fc_normalize_f32(null_f64, 0, 0.0, 1.0, 0, null_f32) == 1,
+        lib.xy_normalize_f32(null_f64, 0, 0.0, 1.0, 0, null_f32) == 1,
         "normalize_f32 empty/null ok status",
     )
     tiny_norm = array("f", [123.0])
-    status = lib.fc_normalize_f32(null_f64, 1, 0.0, 1.0, 0, _ptr(tiny_norm, ctypes.c_float))
+    status = lib.xy_normalize_f32(null_f64, 1, 0.0, 1.0, 0, _ptr(tiny_norm, ctypes.c_float))
     ok(
         status == 0 and tiny_norm[0] == 123.0,
         "normalize_f32 rejects null input with 0 status, without writing",
     )
     one_val = array("d", [0.5])
-    status = lib.fc_normalize_f32(
+    status = lib.xy_normalize_f32(
         _ptr(one_val, ctypes.c_double), 1, 1.0, 0.0, 0, _ptr(tiny_norm, ctypes.c_float)
     )
     ok(
@@ -628,11 +628,11 @@ def main() -> None:
         "normalize_f32 inverted domain now signals 0 (was a silent void)",
     )
     ok(
-        lib.fc_range_indices(null_f64, null_f64, 0, 0.0, 1.0, 0.0, 1.0, null_u32) == 0,
+        lib.xy_range_indices(null_f64, null_f64, 0, 0.0, 1.0, 0.0, 1.0, null_u32) == 0,
         "range_indices empty/null returns zero",
     )
     ok(
-        lib.fc_range_indices(null_f64, null_f64, 1, 0.0, 1.0, 0.0, 1.0, null_u32) == size_max,
+        lib.xy_range_indices(null_f64, null_f64, 1, 0.0, 1.0, 0.0, 1.0, null_u32) == size_max,
         "range_indices non-empty/null sentinel",
     )
     # bin_2d_indices: fused grid + visible-row scan. A point exactly on the
@@ -642,7 +642,7 @@ def main() -> None:
     by = array("d", [0.25, 0.5])
     bgrid = array("f", [9.0]) * 4
     bidx = array("I", [7, 7])
-    written = lib.fc_bin_2d_indices(
+    written = lib.xy_bin_2d_indices(
         _ptr(bx, ctypes.c_double),
         _ptr(by, ctypes.c_double),
         2,
@@ -658,7 +658,7 @@ def main() -> None:
     ok(written == 2 and list(bidx) == [0, 1], "bin_2d_indices inclusive index list")
     ok(sum(bgrid) == 1.0, "bin_2d_indices half-open grid excludes hi edge")
     ok(
-        lib.fc_bin_2d_indices(
+        lib.xy_bin_2d_indices(
             null_f64, null_f64, 0, 0.0, 1.0, 0.0, 1.0, 2, 2, _ptr(bgrid, ctypes.c_float), null_u32
         )
         == 0
@@ -666,7 +666,7 @@ def main() -> None:
         "bin_2d_indices empty/null zeroes grid, returns zero",
     )
     ok(
-        lib.fc_bin_2d_indices(
+        lib.xy_bin_2d_indices(
             null_f64, null_f64, 1, 0.0, 1.0, 0.0, 1.0, 2, 2, _ptr(bgrid, ctypes.c_float), null_u32
         )
         == size_max,
@@ -676,7 +676,7 @@ def main() -> None:
     # writes the exact grid and reports the required row count; retrying with
     # that capacity returns the same ascending sample as the standalone ABI.
     sample_grid = array("f", [9.0]) * 4
-    required = lib.fc_bin_2d_sample_range(
+    required = lib.xy_bin_2d_sample_range(
         _ptr(bx, ctypes.c_double),
         _ptr(by, ctypes.c_double),
         2,
@@ -694,7 +694,7 @@ def main() -> None:
     )
     ok(required == 2 and sum(sample_grid) == 1.0, "bin_2d_sample_range query")
     sample_rows = array("I", [7, 7])
-    repeated = lib.fc_bin_2d_sample_range(
+    repeated = lib.xy_bin_2d_sample_range(
         _ptr(bx, ctypes.c_double),
         _ptr(by, ctypes.c_double),
         2,
@@ -714,7 +714,7 @@ def main() -> None:
     sample_groups = array("B", [0, 1])
     sample_counts = array("Q", [1, 1])
     categorical_rows = array("I", [7, 7])
-    categorical_written = lib.fc_bin_2d_stratified_sample_range_u8_counted(
+    categorical_written = lib.xy_bin_2d_stratified_sample_range_u8_counted(
         _ptr(bx, ctypes.c_double),
         _ptr(by, ctypes.c_double),
         _ptr(sample_groups, ctypes.c_uint8),
@@ -743,7 +743,7 @@ def main() -> None:
         _ptr(by, ctypes.c_double),
     )
     ok(
-        lib.fc_valid_indices_f64(valid_columns, 2, 2, 0b11, null_u32, 0) == 2,
+        lib.xy_valid_indices_f64(valid_columns, 2, 2, 0b11, null_u32, 0) == 2,
         "valid_indices_f64 all-valid query",
     )
     validity_x = array("d", [1.0, float("nan"), -1.0])
@@ -754,7 +754,7 @@ def main() -> None:
     )
     filtered_rows = array("I", [7, 7, 7])
     ok(
-        lib.fc_valid_indices_f64(
+        lib.xy_valid_indices_f64(
             filtered_columns,
             2,
             3,
@@ -769,7 +769,7 @@ def main() -> None:
     # sample_mask: SplitMix64(id + seed) <= threshold, one byte per row.
     ids = array("Q", [0, 1, 2, 3])
     mask = array("B", [9, 9, 9, 9])
-    lib.fc_sample_mask(
+    lib.xy_sample_mask(
         _ptr(ids, ctypes.c_uint64),
         4,
         ctypes.c_uint64(0),
@@ -777,7 +777,7 @@ def main() -> None:
         _ptr(mask, ctypes.c_uint8),
     )
     ok(list(mask) == [1, 1, 1, 1], "sample_mask threshold=max keeps all")
-    lib.fc_sample_mask(
+    lib.xy_sample_mask(
         _ptr(ids, ctypes.c_uint64),
         4,
         ctypes.c_uint64(0),
@@ -786,7 +786,7 @@ def main() -> None:
     )
     ok(list(mask) == [0, 0, 0, 0], "sample_mask threshold=0 keeps none")
     # SplitMix64(0+0) reference value — must match lod.hash_row_ids bit-for-bit.
-    lib.fc_sample_mask(
+    lib.xy_sample_mask(
         _ptr(ids, ctypes.c_uint64),
         1,
         ctypes.c_uint64(0),
@@ -794,7 +794,7 @@ def main() -> None:
         _ptr(mask, ctypes.c_uint8),
     )
     ok(mask[0] == 1, "sample_mask splitmix64(0) reference vector inclusive")
-    lib.fc_sample_mask(
+    lib.xy_sample_mask(
         _ptr(ids, ctypes.c_uint64),
         1,
         ctypes.c_uint64(0),
@@ -803,7 +803,7 @@ def main() -> None:
     )
     ok(mask[0] == 0, "sample_mask splitmix64(0) reference vector exclusive")
     mask_null = array("B", [7])
-    status = lib.fc_sample_mask(
+    status = lib.xy_sample_mask(
         null_u64, 1, ctypes.c_uint64(0), ctypes.c_uint64(1), _ptr(mask_null, ctypes.c_uint8)
     )
     ok(
@@ -811,7 +811,7 @@ def main() -> None:
         "sample_mask rejects null input with 0 status, without writing",
     )
     ok(
-        lib.fc_sample_mask(
+        lib.xy_sample_mask(
             null_u64, 0, ctypes.c_uint64(0), ctypes.c_uint64(1), ctypes.POINTER(ctypes.c_uint8)()
         )
         == 1,
@@ -819,7 +819,7 @@ def main() -> None:
     )
     ids32 = array("I", [0, 1, 2, 3])
     mask32 = array("B", [9, 9, 9, 9])
-    lib.fc_sample_mask_u32(
+    lib.xy_sample_mask_u32(
         _ptr(ids32, ctypes.c_uint32),
         1,
         ctypes.c_uint64(0),
@@ -827,7 +827,7 @@ def main() -> None:
         _ptr(mask32, ctypes.c_uint8),
     )
     ok(mask32[0] == 1, "sample_mask_u32 matches the u64 reference vector")
-    lib.fc_sample_mask_u32(
+    lib.xy_sample_mask_u32(
         _ptr(ids32, ctypes.c_uint32),
         4,
         ctypes.c_uint64(0),
@@ -836,7 +836,7 @@ def main() -> None:
     )
     ok(list(mask32) == [0, 0, 0, 0], "sample_mask_u32 threshold=0 keeps none")
     sampled = array("I", [999]) * 4
-    written = lib.fc_sample_range_indices(
+    written = lib.xy_sample_range_indices(
         4,
         ctypes.c_uint64(0),
         ctypes.c_uint64(2**64 - 1),
@@ -845,13 +845,13 @@ def main() -> None:
     )
     ok(written == 4 and list(sampled) == [0, 1, 2, 3], "sample_range_indices implicit parity")
     ok(
-        lib.fc_sample_range_indices(0, ctypes.c_uint64(0), ctypes.c_uint64(1), null_u32, 0) == 0,
+        lib.xy_sample_range_indices(0, ctypes.c_uint64(0), ctypes.c_uint64(1), null_u32, 0) == 0,
         "sample_range_indices empty/null returns zero",
     )
     # Compact full-domain categorical sampler: implicit ids + u8 groups.
     range_groups = array("B", [0, 0, 0, 1])
     stratified_rows = array("I", [999]) * 4
-    written = lib.fc_stratified_sample_range_u8(
+    written = lib.xy_stratified_sample_range_u8(
         _ptr(range_groups, ctypes.c_uint8),
         4,
         2,
@@ -866,7 +866,7 @@ def main() -> None:
         "stratified_sample_range_u8 implicit parity",
     )
     range_counts = array("Q", [3, 1])
-    written = lib.fc_stratified_sample_range_u8_counted(
+    written = lib.xy_stratified_sample_range_u8_counted(
         _ptr(range_groups, ctypes.c_uint8),
         4,
         _ptr(range_counts, ctypes.c_uint64),
@@ -883,7 +883,7 @@ def main() -> None:
     )
     bad_range_counts = array("Q", [2, 1])
     ok(
-        lib.fc_stratified_sample_range_u8_counted(
+        lib.xy_stratified_sample_range_u8_counted(
             _ptr(range_groups, ctypes.c_uint8),
             4,
             _ptr(bad_range_counts, ctypes.c_uint64),
@@ -898,7 +898,7 @@ def main() -> None:
         "stratified_sample_range_u8_counted rejects inconsistent counts",
     )
     too_small = array("I", [777])
-    written = lib.fc_stratified_sample_range_u8(
+    written = lib.xy_stratified_sample_range_u8(
         _ptr(range_groups, ctypes.c_uint8),
         4,
         2,
@@ -914,7 +914,7 @@ def main() -> None:
     )
     bad_range_groups = array("B", [0, 2])
     ok(
-        lib.fc_stratified_sample_range_u8(
+        lib.xy_stratified_sample_range_u8(
             _ptr(bad_range_groups, ctypes.c_uint8),
             2,
             2,
@@ -928,7 +928,7 @@ def main() -> None:
         "stratified_sample_range_u8 rejects out-of-range group codes",
     )
     ok(
-        lib.fc_stratified_sample_range_u8(
+        lib.xy_stratified_sample_range_u8(
             ctypes.POINTER(ctypes.c_uint8)(),
             0,
             1,
@@ -944,7 +944,7 @@ def main() -> None:
     # stratified_sample_mask: per-category thresholds + lowest-hash floor.
     sgroups = array("I", [0, 0, 0, 1])
     smask = array("B", [9, 9, 9, 9])
-    status = lib.fc_stratified_sample_mask(
+    status = lib.xy_stratified_sample_mask(
         _ptr(ids, ctypes.c_uint64),
         _ptr(sgroups, ctypes.c_uint32),
         4,
@@ -958,7 +958,7 @@ def main() -> None:
         status == 1 and list(smask) == [1, 1, 1, 1],
         "stratified_sample_mask fraction=1 keeps all",
     )
-    status = lib.fc_stratified_sample_mask(
+    status = lib.xy_stratified_sample_mask(
         _ptr(ids, ctypes.c_uint64),
         _ptr(sgroups, ctypes.c_uint32),
         4,
@@ -973,7 +973,7 @@ def main() -> None:
         "stratified_sample_mask floor pins one row per category",
     )
     smask32 = array("B", [9, 9, 9, 9])
-    status = lib.fc_stratified_sample_mask_u32(
+    status = lib.xy_stratified_sample_mask_u32(
         _ptr(ids32, ctypes.c_uint32),
         _ptr(sgroups, ctypes.c_uint32),
         4,
@@ -990,7 +990,7 @@ def main() -> None:
     smask_bad = array("B", [7, 7, 7, 7])
     bad_groups = array("I", [0, 0, 0, 5])  # 5 >= n_groups
     ok(
-        lib.fc_stratified_sample_mask(
+        lib.xy_stratified_sample_mask(
             _ptr(ids, ctypes.c_uint64),
             _ptr(bad_groups, ctypes.c_uint32),
             4,
@@ -1004,7 +1004,7 @@ def main() -> None:
         "stratified_sample_mask rejects out-of-range group codes",
     )
     ok(
-        lib.fc_stratified_sample_mask(
+        lib.xy_stratified_sample_mask(
             null_u64,
             _ptr(sgroups, ctypes.c_uint32),
             4,
@@ -1018,7 +1018,7 @@ def main() -> None:
         "stratified_sample_mask rejects null ids with 0 status",
     )
     ok(
-        lib.fc_stratified_sample_mask(
+        lib.xy_stratified_sample_mask(
             null_u64,
             null_u32,
             0,
@@ -1032,11 +1032,11 @@ def main() -> None:
         "stratified_sample_mask empty/null ok status",
     )
     ok(
-        lib.fc_local_log_density(null_f64, null_f64, 0, 0.0, 1.0, 0.0, 1.0, 2, 2, null_f32) == 1,
+        lib.xy_local_log_density(null_f64, null_f64, 0, 0.0, 1.0, 0.0, 1.0, 2, 2, null_f32) == 1,
         "local_log_density empty/null ok",
     )
     ok(
-        lib.fc_local_log_density(
+        lib.xy_local_log_density(
             null_f64,
             null_f64,
             1,
@@ -1057,13 +1057,13 @@ def main() -> None:
     x = array("d", [t0 + i for i in range(1000)])
     offset = t0 + 500.0
     out = array("f", [0.0]) * len(x)
-    lib.fc_encode_f32(_ptr(x, ctypes.c_double), len(x), offset, 1.0, _ptr(out, ctypes.c_float))
+    lib.xy_encode_f32(_ptr(x, ctypes.c_double), len(x), offset, 1.0, _ptr(out, ctypes.c_float))
     worst = max(abs((out[i] + offset) - x[i]) for i in range(len(x)))
     ok(worst < 1e-3, f"offset-encoded precision worst={worst}")
 
     # Control: naive f32 (offset 0) is visibly wrong.
     naive = array("f", [0.0]) * len(x)
-    lib.fc_encode_f32(_ptr(x, ctypes.c_double), len(x), 0.0, 1.0, _ptr(naive, ctypes.c_float))
+    lib.xy_encode_f32(_ptr(x, ctypes.c_double), len(x), 0.0, 1.0, _ptr(naive, ctypes.c_float))
     ok(max(abs(naive[i] - x[i]) for i in range(len(x))) > 1.0, "naive f32 corrupts")
 
     # m4_indices: spike preservation + first/last, through the ABI.
@@ -1074,7 +1074,7 @@ def main() -> None:
     ys[7891] = -100.0
     buckets = 100
     idx_buf = array("I", [0]) * (buckets * 4)
-    written = lib.fc_m4_indices(
+    written = lib.xy_m4_indices(
         _ptr(xs, ctypes.c_double),
         _ptr(ys, ctypes.c_double),
         n,
@@ -1089,7 +1089,7 @@ def main() -> None:
     ok(written <= buckets * 4, "m4 bounded output")
 
     # m4 invalid-arg sentinel (usize::MAX).
-    bad = lib.fc_m4_indices(
+    bad = lib.xy_m4_indices(
         _ptr(xs, ctypes.c_double),
         _ptr(ys, ctypes.c_double),
         n,
@@ -1107,7 +1107,7 @@ def main() -> None:
     zm = [array("d", [0.0]) * nchunks for _ in range(6)]  # min,max,sum,sumsq,+positive min/max
     cnt = array("Q", [0]) * nchunks
     nul = array("Q", [0]) * nchunks
-    wrote = lib.fc_zone_maps(
+    wrote = lib.xy_zone_maps(
         _ptr(data, ctypes.c_double),
         len(data),
         65536,
@@ -1127,7 +1127,7 @@ def main() -> None:
     pair_y = array("d", [float(9 - i) for i in range(10)])
     pair_x_out = (CZoneMap * 1)()
     pair_y_out = (CZoneMap * 1)()
-    wrote = lib.fc_zone_maps_pair(
+    wrote = lib.xy_zone_maps_pair(
         _ptr(data, ctypes.c_double),
         _ptr(pair_y, ctypes.c_double),
         10,
@@ -1153,7 +1153,7 @@ def main() -> None:
     izm = [array("d", [0.0]) for _ in range(6)]
     icnt = array("Q", [0])
     inul = array("Q", [0])
-    lib.fc_zone_maps(
+    lib.xy_zone_maps(
         _ptr(idata, ctypes.c_double),
         4,
         65536,
@@ -1173,11 +1173,11 @@ def main() -> None:
     # min_max sentinel path.
     lo = ctypes.c_double()
     hi = ctypes.c_double()
-    got = lib.fc_min_max(_ptr(data, ctypes.c_double), len(data), ctypes.byref(lo), ctypes.byref(hi))
+    got = lib.xy_min_max(_ptr(data, ctypes.c_double), len(data), ctypes.byref(lo), ctypes.byref(hi))
     ok(got == 1 and lo.value == 0.0 and hi.value == 9.0, "min_max ok")
     allnan = array("d", [float("nan")])
     ok(
-        lib.fc_min_max(_ptr(allnan, ctypes.c_double), 1, ctypes.byref(lo), ctypes.byref(hi)) == 0,
+        lib.xy_min_max(_ptr(allnan, ctypes.c_double), 1, ctypes.byref(lo), ctypes.byref(hi)) == 0,
         "min_max all-NaN returns 0",
     )
 
@@ -1185,7 +1185,7 @@ def main() -> None:
     bx = array("d", [0.25, 0.75, 0.25, 0.75])
     by = array("d", [0.25, 0.25, 0.75, 0.75])
     grid = array("f", [0.0]) * 4
-    got = lib.fc_bin_2d(
+    got = lib.xy_bin_2d(
         _ptr(bx, ctypes.c_double),
         _ptr(by, ctypes.c_double),
         4,
@@ -1204,7 +1204,7 @@ def main() -> None:
     cx = array("d", [0.1] * 500 + [0.9])
     cy = array("d", [0.1] * 500 + [0.9])
     g2 = array("f", [0.0]) * 4
-    lib.fc_bin_2d(
+    lib.xy_bin_2d(
         _ptr(cx, ctypes.c_double),
         _ptr(cy, ctypes.c_double),
         501,
@@ -1221,7 +1221,7 @@ def main() -> None:
     # histogram_uniform: fixed-bin counts, last edge closed.
     hx = array("d", [0.0, 0.2, 0.9, 1.0, 1.1, float("nan"), float("inf")])
     hist = array("d", [0.0]) * 4
-    total = lib.fc_histogram_uniform(
+    total = lib.xy_histogram_uniform(
         _ptr(hx, ctypes.c_double),
         len(hx),
         0.0,
@@ -1236,7 +1236,7 @@ def main() -> None:
     # normalize_f32: clamp finite values, route non-finite values by mode.
     nx = array("d", [-1.0, 0.0, 5.0, 10.0, 11.0, float("nan"), float("inf")])
     norm = array("f", [0.0]) * len(nx)
-    lib.fc_normalize_f32(
+    lib.xy_normalize_f32(
         _ptr(nx, ctypes.c_double),
         len(nx),
         0.0,
@@ -1245,7 +1245,7 @@ def main() -> None:
         _ptr(norm, ctypes.c_float),
     )
     ok(list(norm) == [0.0, 0.0, 0.5, 1.0, 1.0, 0.0, 0.0], "normalize zero mode")
-    lib.fc_normalize_f32(
+    lib.xy_normalize_f32(
         _ptr(nx, ctypes.c_double),
         len(nx),
         0.0,
@@ -1259,7 +1259,7 @@ def main() -> None:
     rx = array("d", [0.0, 1.0, 2.0, 3.0, float("nan")])
     ry = array("d", [0.0, 1.5, 2.5, 4.0, 1.0])
     ridx = array("I", [0]) * len(rx)
-    written = lib.fc_range_indices(
+    written = lib.xy_range_indices(
         _ptr(rx, ctypes.c_double),
         _ptr(ry, ctypes.c_double),
         len(rx),
@@ -1275,7 +1275,7 @@ def main() -> None:
     lx = array("d", [0.1, 0.1, 0.1, 0.9])
     ly = array("d", [0.1, 0.1, 0.1, 0.9])
     lout = array("f", [0.0]) * len(lx)
-    got = lib.fc_local_log_density(
+    got = lib.xy_local_log_density(
         _ptr(lx, ctypes.c_double),
         _ptr(ly, ctypes.c_double),
         len(lx),
@@ -1296,8 +1296,8 @@ def main() -> None:
     n_p = 64
     px = array("d", [float(i % 8) + 0.5 for i in range(n_p)])
     py = array("d", [float(i // 8) + 0.5 for i in range(n_p)])
-    lib.fc_pyramid_build.restype = ctypes.c_uint64
-    lib.fc_pyramid_build.argtypes = [
+    lib.xy_pyramid_build.restype = ctypes.c_uint64
+    lib.xy_pyramid_build.argtypes = [
         ctypes.POINTER(ctypes.c_double),
         ctypes.POINTER(ctypes.c_double),
         ctypes.c_size_t,
@@ -1307,15 +1307,15 @@ def main() -> None:
         ctypes.c_double,
         ctypes.c_uint32,
     ]
-    lib.fc_pyramid_append.restype = ctypes.c_int32
-    lib.fc_pyramid_append.argtypes = [
+    lib.xy_pyramid_append.restype = ctypes.c_int32
+    lib.xy_pyramid_append.argtypes = [
         ctypes.c_uint64,
         ctypes.POINTER(ctypes.c_double),
         ctypes.POINTER(ctypes.c_double),
         ctypes.c_size_t,
     ]
-    lib.fc_pyramid_count.restype = ctypes.c_int32
-    lib.fc_pyramid_count.argtypes = [
+    lib.xy_pyramid_count.restype = ctypes.c_int32
+    lib.xy_pyramid_count.argtypes = [
         ctypes.c_uint64,
         ctypes.c_double,
         ctypes.c_double,
@@ -1323,8 +1323,8 @@ def main() -> None:
         ctypes.c_double,
         ctypes.POINTER(ctypes.c_double),
     ]
-    lib.fc_pyramid_compose.restype = ctypes.c_int32
-    lib.fc_pyramid_compose.argtypes = [
+    lib.xy_pyramid_compose.restype = ctypes.c_int32
+    lib.xy_pyramid_compose.argtypes = [
         ctypes.c_uint64,
         ctypes.c_double,
         ctypes.c_double,
@@ -1334,22 +1334,22 @@ def main() -> None:
         ctypes.c_size_t,
         ctypes.POINTER(ctypes.c_float),
     ]
-    lib.fc_pyramid_free.restype = ctypes.c_int32
-    lib.fc_pyramid_free.argtypes = [ctypes.c_uint64]
-    handle = lib.fc_pyramid_build(
+    lib.xy_pyramid_free.restype = ctypes.c_int32
+    lib.xy_pyramid_free.argtypes = [ctypes.c_uint64]
+    handle = lib.xy_pyramid_build(
         _ptr(px, ctypes.c_double), _ptr(py, ctypes.c_double), n_p, 0.0, 8.0, 0.0, 8.0, 8
     )
     ok(handle != 0, "pyramid build returns a handle")
     cnt = ctypes.c_double(0.0)
     ok(
-        lib.fc_pyramid_count(ctypes.c_uint64(handle), 0.0, 8.0, 0.0, 8.0, ctypes.byref(cnt)) == 1,
+        lib.xy_pyramid_count(ctypes.c_uint64(handle), 0.0, 8.0, 0.0, 8.0, ctypes.byref(cnt)) == 1,
         "pyramid count ok",
     )
     ok(cnt.value == float(n_p), "pyramid count is exact on the full window")
     append_x = array("d", [1.5, 6.5])
     append_y = array("d", [1.5, 6.5])
     ok(
-        lib.fc_pyramid_append(
+        lib.xy_pyramid_append(
             ctypes.c_uint64(handle),
             _ptr(append_x, ctypes.c_double),
             _ptr(append_y, ctypes.c_double),
@@ -1359,14 +1359,14 @@ def main() -> None:
         "pyramid append updates a stable domain",
     )
     ok(
-        lib.fc_pyramid_count(ctypes.c_uint64(handle), 0.0, 8.0, 0.0, 8.0, ctypes.byref(cnt)) == 1
+        lib.xy_pyramid_count(ctypes.c_uint64(handle), 0.0, 8.0, 0.0, 8.0, ctypes.byref(cnt)) == 1
         and cnt.value == float(n_p + len(append_x)),
         "pyramid append conserves the new total",
     )
     outside_x = array("d", [8.0])
     outside_y = array("d", [4.0])
     ok(
-        lib.fc_pyramid_append(
+        lib.xy_pyramid_append(
             ctypes.c_uint64(handle),
             _ptr(outside_x, ctypes.c_double),
             _ptr(outside_y, ctypes.c_double),
@@ -1376,53 +1376,53 @@ def main() -> None:
         "pyramid append rejects domain growth",
     )
     grid_p = array("f", bytes(4 * 8 * 8))
-    lvl = lib.fc_pyramid_compose(
+    lvl = lib.xy_pyramid_compose(
         ctypes.c_uint64(handle), 0.0, 8.0, 0.0, 8.0, 8, 8, _ptr(grid_p, ctypes.c_float)
     )
     ok(lvl == 0, "full-window compose uses level 0")
     ok(sum(grid_p) == float(n_p + len(append_x)), "compose conserves the appended count")
     tiny = array("f", bytes(4 * 64 * 64))
     ok(
-        lib.fc_pyramid_compose(
+        lib.xy_pyramid_compose(
             ctypes.c_uint64(handle), 3.0, 3.1, 3.0, 3.1, 64, 64, _ptr(tiny, ctypes.c_float)
         )
         == -2,
         "outresolving window is refused, not faked",
     )
-    ok(lib.fc_pyramid_free(ctypes.c_uint64(handle)) == 1, "pyramid free")
-    ok(lib.fc_pyramid_free(ctypes.c_uint64(handle)) == 0, "double free is an error code")
+    ok(lib.xy_pyramid_free(ctypes.c_uint64(handle)) == 1, "pyramid free")
+    ok(lib.xy_pyramid_free(ctypes.c_uint64(handle)) == 0, "double free is an error code")
 
     # rasterize: caller-owned RGBA8 framebuffer; empty command buffer clears to
     # transparent, a malformed op is rejected, and a null out is refused.
     null_u8 = U8P()
     fb = array("B", [9]) * (2 * 2 * 4)
     ok(
-        lib.fc_rasterize(null_u8, 0, _ptr(fb, ctypes.c_uint8), 2, 2) == 1
+        lib.xy_rasterize(null_u8, 0, _ptr(fb, ctypes.c_uint8), 2, 2) == 1
         and all(v == 0 for v in fb),
         "rasterize empty buffer clears framebuffer",
     )
     bad = array("B", [1, 9, 9, 9, 9])  # FILL_POLY claiming a huge point count
     ok(
-        lib.fc_rasterize(_ptr(bad, ctypes.c_uint8), len(bad), _ptr(fb, ctypes.c_uint8), 2, 2) == 0,
+        lib.xy_rasterize(_ptr(bad, ctypes.c_uint8), len(bad), _ptr(fb, ctypes.c_uint8), 2, 2) == 0,
         "rasterize rejects a malformed command buffer",
     )
-    ok(lib.fc_rasterize(null_u8, 0, null_u8, 2, 2) == 0, "rasterize refuses a null framebuffer")
+    ok(lib.xy_rasterize(null_u8, 0, null_u8, 2, 2) == 0, "rasterize refuses a null framebuffer")
 
     png = array("B", [0]) * 1024
-    png_len = lib.fc_rasterize_png(null_u8, 0, _ptr(png, ctypes.c_uint8), len(png), 2, 2)
+    png_len = lib.xy_rasterize_png(null_u8, 0, _ptr(png, ctypes.c_uint8), len(png), 2, 2)
     ok(
         png_len < len(png) and bytes(png[:8]) == b"\x89PNG\r\n\x1a\n",
         "fused raster-to-PNG emits a valid signature",
     )
     ok(
-        lib.fc_rasterize_data(null_u8, 0, null_u8, 0, _ptr(fb, ctypes.c_uint8), 2, 2) == 1,
+        lib.xy_rasterize_data(null_u8, 0, null_u8, 0, _ptr(fb, ctypes.c_uint8), 2, 2) == 1,
         "external-arena rasterizer accepts an empty arena",
     )
     ok(
-        lib.fc_rasterize_data(null_u8, 0, null_u8, 1, _ptr(fb, ctypes.c_uint8), 2, 2) == 0,
+        lib.xy_rasterize_data(null_u8, 0, null_u8, 1, _ptr(fb, ctypes.c_uint8), 2, 2) == 0,
         "external-arena rasterizer rejects a non-empty null arena",
     )
-    png_len = lib.fc_rasterize_png_data(
+    png_len = lib.xy_rasterize_png_data(
         null_u8, 0, null_u8, 0, _ptr(png, ctypes.c_uint8), len(png), 2, 2
     )
     ok(
@@ -1430,14 +1430,14 @@ def main() -> None:
         "external-arena raster-to-PNG emits a valid signature",
     )
     ok(
-        lib.fc_rasterize_spans(null_u8, 0, None, None, 0, _ptr(fb, ctypes.c_uint8), 2, 2) == 1,
+        lib.xy_rasterize_spans(null_u8, 0, None, None, 0, _ptr(fb, ctypes.c_uint8), 2, 2) == 1,
         "multi-span rasterizer accepts zero spans",
     )
     ok(
-        lib.fc_rasterize_spans(null_u8, 0, None, None, 1, _ptr(fb, ctypes.c_uint8), 2, 2) == 0,
+        lib.xy_rasterize_spans(null_u8, 0, None, None, 1, _ptr(fb, ctypes.c_uint8), 2, 2) == 0,
         "multi-span rasterizer rejects missing descriptor arrays",
     )
-    png_len = lib.fc_rasterize_png_spans(
+    png_len = lib.xy_rasterize_png_spans(
         null_u8, 0, None, None, 0, _ptr(png, ctypes.c_uint8), len(png), 2, 2
     )
     ok(
@@ -1451,7 +1451,7 @@ def main() -> None:
     heat_stops = array("B", [0, 10, 20, 100, 110, 120])
     heat_rgba = array("B", [0]) * 16
     ok(
-        lib.fc_heatmap_rgba(
+        lib.xy_heatmap_rgba(
             _ptr(heat_values, ctypes.c_double),
             2,
             2,
@@ -1468,7 +1468,7 @@ def main() -> None:
     density_codes = array("B", [0, 255, 128, 1])
     density_rgba = array("B", [0]) * 16
     ok(
-        lib.fc_density_rgba(
+        lib.xy_density_rgba(
             _ptr(density_codes, ctypes.c_uint8),
             2,
             2,
@@ -1488,7 +1488,7 @@ def main() -> None:
     encoded = array("B", [0]) * len(density)
     density_max = ctypes.c_double(-1.0)
     ok(
-        lib.fc_density_log_u8(
+        lib.xy_density_log_u8(
             _ptr(density, ctypes.c_float),
             len(density),
             _ptr(encoded, ctypes.c_uint8),

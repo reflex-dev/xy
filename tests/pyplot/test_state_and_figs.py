@@ -112,7 +112,7 @@ def test_grid_html_has_panels() -> None:
     for i, ax in enumerate(axes.ravel()):
         ax.plot([0, 1], [i, i + 1])
     html = plt.gcf()._to_html()
-    assert html.count('class="fc-panel"') == 4
+    assert html.count('class="xy-panel"') == 4
     # Multi-panel grids are absolutely placed on a figsize canvas at their
     # matplotlib gridspec rects.
     assert html.count("position:absolute") >= 4

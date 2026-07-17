@@ -283,31 +283,31 @@ try{{
     const modebarHidden = bar && bar.style.opacity === "0" && bar.style.pointerEvents === "none" ? 1 : 0;
     v.root.dispatchEvent(new PointerEvent("pointerenter", {{bubbles:true}}));
     const modebarHover = bar && bar.style.opacity === "1" && bar.style.pointerEvents === "auto" ? 1 : 0;
-    const grip = bar && bar.querySelector("[data-fc-modebar-drag-handle]");
-    const modebarNoCollapse = bar && !bar.hasAttribute("data-fc-collapsed")
-      && !bar.querySelector("[data-fc-modebar-collapse-item]")
+    const grip = bar && bar.querySelector("[data-xy-modebar-drag-handle]");
+    const modebarNoCollapse = bar && !bar.hasAttribute("data-xy-collapsed")
+      && !bar.querySelector("[data-xy-modebar-collapse-item]")
       && [...bar.querySelectorAll(":scope > button")]
         .every((button) => !button.hidden && button.style.display !== "none") ? 1 : 0;
-    const zoomTrigger = bar && bar.querySelector("[data-fc-modebar-menu-trigger]");
-    const zoomMenu = bar && bar.querySelector("[data-fc-modebar-menu]");
-    const selectButton = bar && bar.querySelector("[data-fc-modebar-select]");
-    const selectMenu = bar && bar.querySelector("[data-fc-modebar-select-menu]");
-    const exportButton = bar && bar.querySelector("[data-fc-modebar-export]");
-    const exportMenu = bar && bar.querySelector("[data-fc-modebar-export-menu]");
-    const zoomPercent = zoomTrigger && zoomTrigger.querySelector("[data-fc-modebar-zoom-percent]");
-    const zoomIndicator = zoomTrigger && zoomTrigger.querySelector("[data-fc-modebar-menu-indicator] svg");
+    const zoomTrigger = bar && bar.querySelector("[data-xy-modebar-menu-trigger]");
+    const zoomMenu = bar && bar.querySelector("[data-xy-modebar-menu]");
+    const selectButton = bar && bar.querySelector("[data-xy-modebar-select]");
+    const selectMenu = bar && bar.querySelector("[data-xy-modebar-select-menu]");
+    const exportButton = bar && bar.querySelector("[data-xy-modebar-export]");
+    const exportMenu = bar && bar.querySelector("[data-xy-modebar-export-menu]");
+    const zoomPercent = zoomTrigger && zoomTrigger.querySelector("[data-xy-modebar-zoom-percent]");
+    const zoomIndicator = zoomTrigger && zoomTrigger.querySelector("[data-xy-modebar-menu-indicator] svg");
     const zoomTriggerInitial = zoomPercent && zoomPercent.textContent === "100%" && zoomIndicator;
     const zoomLabelView = {{...v.view}};
     v.view = {{...v.view, x1:v.view.x0+(v.view.x1-v.view.x0)/4000}};
     v._updateZoomMenuLabel();
     const zoomCompact = zoomPercent && zoomPercent.textContent === "400…%"
-      && zoomPercent.dataset.fcZoomExact === "400000%";
+      && zoomPercent.dataset.xyZoomExact === "400000%";
     v.view = zoomLabelView;
     v._updateZoomMenuLabel();
     if (zoomTrigger) zoomTrigger.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
     const menuOpened = zoomMenu && zoomMenu.style.display === "flex"
       && zoomTrigger.getAttribute("aria-expanded") === "true"
-      && zoomMenu.querySelectorAll("[data-fc-modebar-menu-item]").length === 4;
+      && zoomMenu.querySelectorAll("[data-xy-modebar-menu-item]").length === 4;
     if (zoomMenu) zoomMenu.dispatchEvent(new KeyboardEvent("keydown", {{key:"Escape",bubbles:true}}));
     const modebarMenu = menuOpened && zoomMenu.style.display === "none"
       && zoomTrigger.getAttribute("aria-expanded") === "false" ? 1 : 0;
@@ -326,21 +326,21 @@ try{{
       && bar.querySelectorAll("button[hidden]").length === 0 ? 1 : 0;
     if (selectButton) selectButton.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
     const selectItems = selectMenu
-      ? [...selectMenu.querySelectorAll("[data-fc-modebar-select-item]")]
+      ? [...selectMenu.querySelectorAll("[data-xy-modebar-select-item]")]
       : [];
-    const selectModes = selectItems.map((item) => item.dataset.fcModebarSelectItem);
+    const selectModes = selectItems.map((item) => item.dataset.xyModebarSelectItem);
     const lassoItem = selectMenu
-      && selectMenu.querySelector('[data-fc-modebar-select-item="select-lasso"]');
+      && selectMenu.querySelector('[data-xy-modebar-select-item="select-lasso"]');
     const selectMenuOpened = selectMenu && selectMenu.style.display === "flex"
       && selectButton.getAttribute("aria-expanded") === "true"
       && ["select", "select-lasso", "select-x", "select-y"].every((mode) => selectModes.includes(mode));
     if (lassoItem) lassoItem.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
     const modebarSelect = selectMenuOpened && v.dragMode === "select-lasso"
-      && selectButton.classList.contains("fc-active")
-      && lassoItem.classList.contains("fc-active") && selectMenu.style.display === "none" ? 1 : 0;
+      && selectButton.classList.contains("xy-active")
+      && lassoItem.classList.contains("xy-active") && selectMenu.style.display === "none" ? 1 : 0;
     v._sendSelectPolygon([[0,-0.4],[4,-0.4],[4,0.4],[0,0.4]]);
     const lassoHandles = v.selLassoHandles
-      ? [...v.selLassoHandles.querySelectorAll("[data-fc-selection-lasso-handle]")]
+      ? [...v.selLassoHandles.querySelectorAll("[data-xy-selection-lasso-handle]")]
       : [];
     const lassoPathBefore = v.selLassoPath.getAttribute("d");
     const lassoPointBefore = v._lassoPolygon ? [...v._lassoPolygon[0]] : null;
@@ -377,8 +377,8 @@ try{{
       && shortLassoRestored ? 1 : 0;
     if (exportButton) exportButton.dispatchEvent(new MouseEvent("click", {{bubbles:true}}));
     const exportItems = exportMenu
-      ? [...exportMenu.querySelectorAll("[data-fc-modebar-export-item]")]
-        .map((item) => item.dataset.fcModebarExportItem)
+      ? [...exportMenu.querySelectorAll("[data-xy-modebar-export-item]")]
+        .map((item) => item.dataset.xyModebarExportItem)
       : [];
     const exportOpened = exportMenu && exportMenu.style.display === "flex"
       && exportButton.getAttribute("aria-expanded") === "true"
@@ -394,7 +394,7 @@ try{{
     v.root.style.fontFamily = previousFontFamily;
     const exportThemePreserved = themedExport.includes("#123456")
       && themedExport.includes("Smoke Export Sans");
-    const shortcutHintsAbsent = !v.root.querySelector("[data-fc-modebar-menu-shortcut]");
+    const shortcutHintsAbsent = !v.root.querySelector("[data-xy-modebar-menu-shortcut]");
     const modebarExport = exportOpened && typeof v._exportCsvText === "function"
       && typeof v._exportSvgMarkup === "function" && typeof v._exportPng === "function"
       && exportMenu.style.display === "none"
@@ -478,7 +478,7 @@ try{{
     const boxOk = (Math.abs(v.view.x0-10)<1e-6 && Math.abs(v.view.x1-20)<1e-6) ? 1 : 0;
     v.view = {{...v.view0}};
     v._setDragMode("zoom");
-    const zmode = (v.dragMode==="zoom" && v.canvas.dataset.fcDragmode==="zoom") ? 1 : 0;
+    const zmode = (v.dragMode==="zoom" && v.canvas.dataset.xyDragmode==="zoom") ? 1 : 0;
     v._setDragMode("pan");
     // Adaptive LOD drill-in (§5): a synthetic kernel "points" update swaps the
     // density texture for real colored markers (pickable); a density update
@@ -930,7 +930,7 @@ try{{
     vS._drawNow();
     vS.destroy();holderS.remove();
     const stream=(okGrow&&okHome&&okHoldS&&okPin&&okPayload)?1:0;
-    // Mark styling (docs/styling.md#styling-the-marks): gradient fills,
+    // Mark styling (docs/engineering/styling.md#styling-the-marks): gradient fills,
     // rounded corners, and stroke borders on BOTH rect-family programs
     // (histogram uses RECT, compact bar uses BAR), plus curve:"smooth"
     // monotone-cubic densification for line/area.
@@ -1043,7 +1043,7 @@ try{{
     const gLn=vSm.gpuTraces[0], gAr=vSm.gpuTraces[1];
     const msmooth=(gLn.n===65 && gLn._cpu.x.length===5 && gAr.n===65 && gAr._cpu.base.length===5)?1:0;
     vSm.destroy();holderSm.remove();
-    const base=`FC_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHidden}} modebarHover=${{modebarHover}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
+    const base=`XY_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHidden}} modebarHover=${{modebarHover}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -1136,9 +1136,9 @@ try{{
           v4.draw();
           if(v4._raf!==null || v4._wheelZoomRaf!==null || v4._animRaf!==null
               || v4._viewTimer!==null || v4._rebinTimer!==null
-              || v4.seq<=seqBeforeLoss || v4.root.dataset.fcContextState!=="lost") ctxquiet=0;
+              || v4.seq<=seqBeforeLoss || v4.root.dataset.xyContextState!=="lost") ctxquiet=0;
           ext.restoreContext();
-          await waitFor(()=>v4._glLost===false && v4.root.dataset.fcContextState==="ready",
+          await waitFor(()=>v4._glLost===false && v4.root.dataset.xyContextState==="ready",
             `restore ${{cycle+1}}`);
           for(const g of v4.gpuTraces) g._densityNormAnim=null;
           v4._drawNow();
@@ -1172,10 +1172,10 @@ try{{
         Object.defineProperty(window,"devicePixelRatio",{{value:dpr0,configurable:true}});
         v5.destroy(); holder5.remove();
         document.title=`${{base}} fluid=${{fluid0}} grew=${{grew}} pick2=${{pick2}} destroyed=${{destroyed}} unsub=${{unsub}} ctxloss=${{ctxloss}} ctxcycles=${{ctxcycles}} ctxquiet=${{ctxquiet}} ctxpixels=${{ctxpixels}} ctxhashes=${{ctxhashes.join(",")}} ctxpost=${{ctxpost}} ctxevents=${{rootLost}}/${{rootRestored}} ctxcounts=${{v4._contextLossCount}}/${{v4._contextRestoreCount}} dprw=${{dprw}}`;
-      }}catch(e){{document.title="FC_ERROR "+(e.stack||e.message)}}}})();
-    }}catch(e){{document.title="FC_ERROR "+(e.stack||e.message)}}}},250);
-  }}catch(e){{document.title="FC_ERROR "+(e.stack||e.message)}}}},200);
-}}catch(e){{document.title="FC_ERROR "+(e.stack||e.message)}}
+      }}catch(e){{document.title="XY_ERROR "+(e.stack||e.message)}}}})();
+    }}catch(e){{document.title="XY_ERROR "+(e.stack||e.message)}}}},250);
+  }}catch(e){{document.title="XY_ERROR "+(e.stack||e.message)}}}},200);
+}}catch(e){{document.title="XY_ERROR "+(e.stack||e.message)}}
 </script></body></html>"""
 
     with tempfile.TemporaryDirectory() as td:
@@ -1200,7 +1200,7 @@ try{{
     m = re.search(r"<title>([^<]*)</title>", out.stdout)
     title = m.group(1) if m else "(none)"
     print("probe:", title)
-    if not title.startswith("FC_OK"):
+    if not title.startswith("XY_OK"):
         print(out.stderr[-2000:], file=sys.stderr)
         raise SystemExit("render failed")
     lit = int(re.search(r"lit=(\d+)", title).group(1))

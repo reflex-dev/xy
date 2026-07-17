@@ -82,7 +82,7 @@ def test_accessibility_media_preferences_are_explicit() -> None:
     for label, text in CLIENTS:
         assert "@media (prefers-reduced-motion:reduce)" in text, label
         assert "@media (forced-colors:active)" in text, label
-        assert '[data-fc-slot="canvas"]:focus-visible' in text, label
+        assert '[data-xy-slot="canvas"]:focus-visible' in text, label
 
 
 def test_cross_browser_probe_covers_all_engines_and_honest_metrics() -> None:

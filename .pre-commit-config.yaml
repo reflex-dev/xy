@@ -5,10 +5,20 @@ repos:
     rev: v0.15.8
     hooks:
       - id: ruff-check
-        args: ["."]
+        args: ["--config=pyproject.toml", "--fix", "--exit-non-zero-on-fix", "."]
         pass_filenames: false
         stages: [pre-commit]
       - id: ruff-format
-        args: [--check, .]
+        args: [--config=pyproject.toml, .]
         pass_filenames: false
         stages: [pre-commit]
+  - repo: local
+    hooks:
+      - id: docs-app-codespell
+        name: docs app codespell
+        entry: uv run --project docs/app --no-sync codespell --toml docs/app/pyproject.toml
+        language: system
+        types: [text]
+        files: ^docs/
+        exclude: ^docs/engineering/
+        require_serial: true

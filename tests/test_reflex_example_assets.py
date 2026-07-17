@@ -223,12 +223,12 @@ def test_reflex_dashboard_has_code_snippets_for_every_chart() -> None:
         assert snippet.strip()
         assert (
             "Figure" in snippet
-            or "fc.chart" in snippet
+            or "xy.chart" in snippet
             or "Plotly" in snippet
             or "live_drilldown" in snippet
         )
         if chart_id != "plotly-scatter":
-            assert "xy" in snippet or "Figure" in snippet or "fc." in snippet
+            assert "xy" in snippet or "Figure" in snippet or "xy." in snippet
 
 
 def test_reflex_dashboard_chart_nav_is_unique_and_asset_backed() -> None:
@@ -388,7 +388,7 @@ def test_reflex_lifecycle_smoke_exercises_iframe_remounts() -> None:
         "xy-lifecycle-parent",
         "run-probe",
         "revealHiddenBoot",
-        "data-fc-shell-lifecycle",
+        "data-xy-shell-lifecycle",
         'viewport.textContent = ""',
         'document.dispatchEvent(new Event("visibilitychange"))',
         'window.dispatchEvent(new Event("resize"))',
@@ -418,7 +418,7 @@ def test_reflex_lifecycle_smoke_exercises_iframe_remounts() -> None:
         "publicDomSlots",
         "requiredRuntimeDomSlots",
         "domSlotReport",
-        "data-fc-slot",
+        "data-xy-slot",
         "slot_count",
         "missing_slots",
         "unexpected_slots",
@@ -439,7 +439,7 @@ def test_reflex_lifecycle_smoke_rejects_shortened_child_phase_report() -> None:
         "labels": 4,
     }
     encoded = html.escape(json.dumps(payload), quote=True)
-    dom = f'<html><body data-fc-child-lifecycle="{encoded}"></body></html>'
+    dom = f'<html><body data-xy-child-lifecycle="{encoded}"></body></html>'
 
     with pytest.raises(SystemExit, match="lifecycle phases incomplete"):
         lifecycle._child_result(dom, "shortened.html")
@@ -459,7 +459,7 @@ def test_reflex_lifecycle_smoke_rejects_child_without_dom_slot_probe() -> None:
         "unexpected_slots": [],
     }
     encoded = html.escape(json.dumps(payload), quote=True)
-    dom = f'<html><body data-fc-child-lifecycle="{encoded}"></body></html>'
+    dom = f'<html><body data-xy-child-lifecycle="{encoded}"></body></html>'
 
     with pytest.raises(SystemExit, match="DOM slot probe found no public slots"):
         lifecycle._child_result(dom, "slotless.html")
@@ -479,7 +479,7 @@ def test_reflex_lifecycle_smoke_rejects_child_with_bad_dom_slots() -> None:
         "unexpected_slots": [],
     }
     encoded = html.escape(json.dumps(payload), quote=True)
-    dom = f'<html><body data-fc-child-lifecycle="{encoded}"></body></html>'
+    dom = f'<html><body data-xy-child-lifecycle="{encoded}"></body></html>'
 
     with pytest.raises(SystemExit, match="DOM slot probe found missing slots"):
         lifecycle._child_result(dom, "missing-slot.html")
@@ -487,7 +487,7 @@ def test_reflex_lifecycle_smoke_rejects_child_with_bad_dom_slots() -> None:
     payload["missing_slots"] = []
     payload["unexpected_slots"] = ["plot"]
     encoded = html.escape(json.dumps(payload), quote=True)
-    dom = f'<html><body data-fc-child-lifecycle="{encoded}"></body></html>'
+    dom = f'<html><body data-xy-child-lifecycle="{encoded}"></body></html>'
 
     with pytest.raises(SystemExit, match="DOM slot probe found unexpected slots"):
         lifecycle._child_result(dom, "unexpected-slot.html")
@@ -510,7 +510,7 @@ def test_reflex_lifecycle_smoke_rejects_shell_without_reload_phase() -> None:
         "critical_reports": len(lifecycle.CRITICAL_ASSETS) * 4,
     }
     encoded = html.escape(json.dumps(payload), quote=True)
-    dom = f'<html><body data-fc-shell-lifecycle="{encoded}"></body></html>'
+    dom = f'<html><body data-xy-shell-lifecycle="{encoded}"></body></html>'
 
     with pytest.raises(SystemExit, match="iframe shell lifecycle phases incomplete"):
         lifecycle._shell_result(dom, len(lifecycle.CHART_ASSETS))
@@ -536,7 +536,7 @@ def test_reflex_lifecycle_smoke_rejects_missing_any_shell_asset_phase_report() -
         "slot_count": expected_reports,
     }
     encoded = html.escape(json.dumps(payload), quote=True)
-    dom = f'<html><body data-fc-shell-lifecycle="{encoded}"></body></html>'
+    dom = f'<html><body data-xy-shell-lifecycle="{encoded}"></body></html>'
 
     with pytest.raises(SystemExit, match="iframe shell asset reports incomplete"):
         lifecycle._shell_result(dom, len(lifecycle.CHART_ASSETS))
@@ -563,7 +563,7 @@ def test_reflex_lifecycle_smoke_rejects_missing_critical_asset_phase_pair() -> N
         "slot_count": len(lifecycle.CHART_ASSETS) * len(lifecycle.SHELL_PHASES),
     }
     encoded = html.escape(json.dumps(payload), quote=True)
-    dom = f'<html><body data-fc-shell-lifecycle="{encoded}"></body></html>'
+    dom = f'<html><body data-xy-shell-lifecycle="{encoded}"></body></html>'
 
     with pytest.raises(SystemExit, match="critical asset phase coverage incomplete"):
         lifecycle._shell_result(dom, len(lifecycle.CHART_ASSETS))
@@ -629,7 +629,7 @@ def test_visual_regression_smoke_checks_layout_regions_not_just_blankness() -> N
         "x_axis_box = (0.08, 0.70, 0.94, 0.99)",
         '"x-axis": (700, 250 if asset else 40)',
         "CHROME_SHELL_CASES",
-        "data-fc-custom-chrome-shell",
+        "data-xy-custom-chrome-shell",
         "_write_chrome_shell",
         "_assert_chrome_shell_dom",
         "custom chrome shell missing nodes",

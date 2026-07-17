@@ -4,14 +4,18 @@
   <a href="https://github.com/reflex-dev/xy/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/reflex-dev/xy/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://app.codspeed.io/reflex-dev/xy?utm_source=badge"><img alt="CodSpeed" src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json"></a>
   <a href="pyproject.toml"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab?logo=python&logoColor=white"></a>
+  <a href="https://reflex-staging.dev/docs/xy/" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/docs-reflex--staging.dev-blue" alt="Docs" /></a>
 </p>
 
 <p align="center">
-  <img src="docs/assets/launch-benchmark-comparison.svg" alt="Grouped horizontal bar-chart comparison of xy, Matplotlib, and Plotly cold-render times at 10 million points; xy has the lowest measured time in all three output modes in this recorded run." width="1200">
+  <img src="docs/engineering/assets/launch-benchmark-comparison.svg" alt="Grouped horizontal bar-chart comparison of xy, Matplotlib, and Plotly cold-render times at 10 million points; xy has the lowest measured time in all three output modes in this recorded run." width="1200">
 </p>
 
 xy is an experimental Python charting library for large, interactive datasets.
 Its Rust core and WebGL2 renderer keep work bounded by what the screen can show.
+
+> [!IMPORTANT]
+> This repo's docs will not be complete until official release. Current docs can be found [here](https://reflex-staging.dev/docs/xy/).
 
 > [!IMPORTANT]
 > xy is early alpha; APIs may change before 1.0.
@@ -68,7 +72,7 @@ The same chart can be exported without changing how it is built.
 xy currently includes line, scatter, area, histogram, bar and column, heatmap,
 error bar and band, box, violin, ECDF, hexbin, contour, step, stairs, stem,
 triangle mesh, and faceted charts. See the
-[copyable examples](docs/api-examples.md) for the complete surface.
+[copyable examples](docs/engineering/api-examples.md) for the complete surface.
 
 ### Coming from matplotlib
 
@@ -86,7 +90,7 @@ plt.show()
 ```
 
 The shim intentionally covers common plotting workflows rather than every
-matplotlib feature. See the [compatibility guide](docs/matplotlib-compat.md).
+matplotlib feature. See the [compatibility guide](docs/engineering/matplotlib-compat.md).
 
 ## Benchmarks
 
@@ -158,7 +162,7 @@ hover and selection can still return original rows.
 For benchmark methodology and measured results, see the
 [benchmark runbook](benchmarks/README.md) and the committed
 [launch report](benchmarks/launch_baselines/xy-0.1.0/macos-arm64-m5-pro/report.md).
-For the full design, see the [design dossier](docs/design-dossier.md).
+For the full design, see the [design dossier](docs/engineering/design-dossier.md).
 
 ## Stable vs. Experimental
 
@@ -177,7 +181,7 @@ Still experimental and expected to change before 1.0:
 
 | Surface | Current status | Notes |
 |---|---|---|
-| Composition API | Stabilizing alpha | The single public chart-building API: declarative `fc.chart(...children)` with CSS/Tailwind hooks. |
+| Composition API | Stabilizing alpha | The single public chart-building API: declarative `xy.chart(...children)` with CSS/Tailwind hooks. |
 | Standalone HTML export | Stable alpha | Self-contained output with the client and binary data included. |
 | Native Rust backend | Stable alpha; required compute core | Published wheels include it; an unsupported build raises a clear error rather than degrading. |
 | Reflex integration | Experimental | Kept outside the core package dependency graph. |
@@ -186,19 +190,23 @@ Still experimental and expected to change before 1.0:
 The composition contract we are locking is intentionally narrow and durable:
 charts contain lightweight marks and chrome; `Chart` owns display and export;
 and `class_name`, `class_names`, and `style` reach stable DOM slots. It returns
-opaque framework objects passed to `fc.legend(...)` / `fc.tooltip(...)` to
+opaque framework objects passed to `xy.legend(...)` / `xy.tooltip(...)` to
 adapters without being serialized into standalone HTML. Python `on_*` callbacks
 stay widget-side; standalone HTML receives only the safe interaction flags
 needed for browser behavior.
 
 ## Documentation
 
-- [API examples](docs/api-examples.md)
-- [Styling](docs/styling.md)
+- [Public XY documentation](docs/index.md) ([live site](https://reflex.dev/docs/xy/))
+
+Engineering references:
+
+- [API examples](docs/engineering/api-examples.md)
+- [Styling](docs/engineering/styling.md)
 - [Benchmarks](benchmarks/README.md)
-- [Matplotlib compatibility](docs/matplotlib-compat.md)
-- [Architecture and design](docs/design-dossier.md)
-- [Production readiness](docs/production-readiness.md)
+- [Matplotlib compatibility](docs/engineering/matplotlib-compat.md)
+- [Architecture and design](docs/engineering/design-dossier.md)
+- [Production readiness](docs/engineering/production-readiness.md)
 - [Security](SECURITY.md)
 - [Changelog](CHANGELOG.md)
 

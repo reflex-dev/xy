@@ -228,7 +228,7 @@ def test_context_governor_reserves_pending_restores() -> None:
 
     assert "view._ctxPendingReservation" in client
     recover = client.index("_recoverContext()")
-    reserve = client.index("FC_CONTEXT_GOVERNOR.reserve(this);", recover)
+    reserve = client.index("XY_CONTEXT_GOVERNOR.reserve(this);", recover)
     restore = client.index("ext.restoreContext();", recover)
     assert reserve < restore
 

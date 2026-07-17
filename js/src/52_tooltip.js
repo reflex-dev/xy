@@ -238,7 +238,15 @@ Object.assign(ChartView.prototype, {
     }
     this.tooltip.style.display = "block";
     const tw = this.tooltip.offsetWidth;
-    this.tooltip.style.left = Math.min(lx + 12, this.size.w - tw - 4) + "px";
-    this.tooltip.style.top = ly + 12 + "px";
+    const th = this.tooltip.offsetHeight;
+    const edge = 4;
+    const gap = 12;
+    const maxLeft = Math.max(edge, this.size.w - tw - edge);
+    const left = Math.max(edge, Math.min(lx + gap, maxLeft));
+    const below = ly + gap;
+    const above = ly - th - gap;
+    const top = below + th <= this.size.h - edge ? below : Math.max(edge, above);
+    this.tooltip.style.left = left + "px";
+    this.tooltip.style.top = top + "px";
   },
 });

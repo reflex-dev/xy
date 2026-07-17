@@ -26,8 +26,8 @@ in the README).
 ### Removed
 - **The fluent `Figure` API is removed from the public surface.**
   `xy.Figure` is no longer exported; `figure.py` is internalized as
-  `xy/_figure.py`. The declarative composition API (`fc.chart(...)`,
-  `fc.line_chart(...)`, `fc.scatter_chart(...)`, marks, axes, annotations,
+  `xy/_figure.py`. The declarative composition API (`xy.chart(...)`,
+  `xy.line_chart(...)`, `xy.scatter_chart(...)`, marks, axes, annotations,
   chrome) is now the single public chart-building API. `Selection` stays
   public, composed `Chart` objects keep the full readout surface
   (`to_html`/`to_png`/`to_svg`/`widget`/`show`/`append`/`pick`/`select_range`/
@@ -35,6 +35,19 @@ in the README).
   to the internal engine object.
 
 ### Added
+- **Declarative continuous colorbars.** `xy.colorbar()` derives the domain,
+  colormap, and default title from the last compatible heatmap, continuous
+  scatter, hexbin, contour, segment, or triangle-mesh mark, with explicit
+  `title`, `orientation`, and `ticks`. Constant/categorical colors, truecolor
+  grids, and density scatter whose source color channel was dropped do not
+  advertise a misleading scale.
+- **Complete styling atlas and Reflex/Tailwind bridge.** New styling guides and
+  live stress examples cover every rendered mark family, all 17 scatter
+  symbols, grouped/normalized bars, axes and annotations, both colorbar
+  orientations, responsive chrome, custom host components, facets, badges,
+  interactions, and export boundaries. Fixed charts passed directly to
+  `reflex_xy.chart()` now mirror their embedded class tokens into generated JSX
+  so Reflex's Tailwind plugin can discover them at compile time.
 - **Compact chart toolbar and editable lasso selection.** The client toolbar
   appears on chart hover or keyboard focus, can be dragged within the chart,
   groups zoom and selection modes into accessible menus, and exports PNG, SVG,
@@ -83,7 +96,7 @@ in the README).
   values.
 - `xy.pyplot`: a matplotlib-flavored shim over the composition
   API (`import xy.pyplot as plt`). Corpus-defined compatibility —
-  see `docs/matplotlib-compat.md`; fully contained in
+  see `docs/engineering/matplotlib-compat.md`; fully contained in
   `python/xy/pyplot/` with boundary guardrails.
 - **Statistical and density chart breadth.** Added first-class `errorbar`/
   `error_band`, `box`, `violin`, `ecdf`, `hexbin`, and `contour` marks plus
@@ -106,6 +119,23 @@ in the README).
   contract without importing the widget stack.
 
 ### Changed
+- **Responsive, author-defeatable browser chrome.** XY's visual defaults now
+  live in a low-priority cascade layer, so Tailwind utilities, ordinary author
+  CSS, and slot styles override them without `!important`. Long legends remain
+  bounded and correctly anchored after compact-layout resizes; edge tooltips
+  wrap, clamp, and flip within the chart; canvas offsets refresh with the plot.
+- **Named-axis and static-export parity.** Browser, SVG, and native PNG output
+  now render and independently scale named x and y axes, including their
+  baseline, ticks, labels, titles, style, reverse ranges, collision strategy,
+  and label placement. Static legends are bounded and long labels ellipsize
+  instead of escaping small plots.
+- Rich tooltips retain resident color/size fields after WebGL context recovery
+  and rehydrate shared fields after exact kernel picks instead of collapsing to
+  positional x/y values.
+- Annotation geometry opacity no longer fades browser DOM labels. Rules,
+  bands, markers, arrows, and callouts can stay visually subtle while their
+  text remains readable; annotation-style `label_opacity` explicitly controls
+  label alpha when desired.
 - **`savefig` single-panel PNG export now uses the fused Rust encoder.** A
   one-axes figure with no suptitle/colorbar/tight-bbox and the default white
   facecolor is exactly one native render, so `stitch_png` returns the
@@ -180,7 +210,7 @@ in the README).
   (`WEBGL_lose_context`, a controlled loss the existing restore machinery
   undoes) and re-acquires when scrolled back into view — including canvas-swap
   recovery for real browser evictions. Under the budget nothing releases, so
-  small pages are unaffected. Every decision is observable: `data-fc-ctx` on
+  small pages are unaffected. Every decision is observable: `data-xy-ctx` on
   the canvas reads live/released/lost. The dashboard benchmark now
   settle-waits each scrolled chart (reporting per-visit recovery latency),
   classifies governed releases vs evictions, adds a `governed` health tier,
@@ -189,7 +219,7 @@ in the README).
   when visited, recovery p95 ~8 ms, with 10-chart dashboards byte-identical
   in behavior and heap/render times unchanged.
 - **Stratified sampling in the native core** (ABI v10,
-  `fc_stratified_sample_mask` / `kernels.stratified_sample_mask`).
+  `xy_stratified_sample_mask` / `kernels.stratified_sample_mask`).
   `lod.stratified_sample_keep_mask` — the category-aware mask behind
   categorical density overlays — now runs as one fused native pass
   (per-category `sqrt`-scaled hash thresholds plus the lowest-hash
@@ -209,7 +239,7 @@ in the README).
   100k-point categorical scatter drops ~186 ms → ~1 ms, and the command
   buffer shrinks ~40%. The batch skips non-finite marks defensively and
   truncated buffers are rejected like every other opcode.
-- **CSS value validation in the native core** (ABI v9, `fc_css_check` /
+- **CSS value validation in the native core** (ABI v9, `xy_css_check` /
   `kernels.css_check`). One grammar (`src/css.rs`) now gates every styling
   surface at build time: trace/annotation/series colors, gradient stops,
   `mark_style` states, and `style=` declarations parse strictly where the
@@ -227,7 +257,7 @@ in the README).
   hand-written specs instead of silently painting the fallback.
 - **Browser-free native PNG export** (`Figure.to_png(engine="native")`, now the
   default). A dependency-free anti-aliased rasterizer in the Rust core (ABI v8,
-  `fc_rasterize`) paints the same decimated payload the SVG exporter consumes,
+  `xy_rasterize`) paints the same decimated payload the SVG exporter consumes,
   driven by a Python-built display-list command buffer — no Chromium, ~40 ms for
   a 10M-point line, and indexed-palette PNGs for small files. Carries the full
   mark-styling surface (gradients, dashes, symbols, rounded/stroked bars, smooth
@@ -246,7 +276,7 @@ in the README).
   as a ~58 KB, resolution-independent SVG); covers every chart kind including
   density/heatmap rasters, and the full mark styling surface (gradients,
   dashes, symbols, rounded bars, smooth curves as exact cubic Béziers).
-- **Mark-level styling** (both APIs; `docs/styling.md#styling-the-marks`):
+- **Mark-level styling** (both APIs; `docs/engineering/styling.md#styling-the-marks`):
   - `fill="linear-gradient(...)"` on `area`/`bar`/`column`/`histogram` — real
     CSS gradient syntax (2–8 stops, `%` positions, `currentColor` = the mark's
     own resolved color, hue-preserving fades to `transparent`); mark-space by
@@ -263,7 +293,7 @@ in the README).
     change.
 - **CSS/Tailwind:** every DOM chrome element now takes per-slot `class_names` /
   `chrome_styles`, and its visual defaults live in one zero-specificity
-  `:where([data-fc-slot="…"])` stylesheet — so a utility class or inline style
+  `:where([data-xy-slot="…"])` stylesheet — so a utility class or inline style
   overrides the built-in look **without `!important`**. New slots
   `legend_swatch`, `tick_label`, `axis_title`; class-driven modebar active
   state (`--chart-modebar-active`). `Figure.to_html(..., custom_css=...)`
@@ -300,23 +330,23 @@ in the README).
 
 ### Added
 - Cumulative histogram mode: `Figure.histogram(..., cumulative=True)` and
-  `fc.histogram(cumulative=...)`; combined with `density=True` it yields the
+  `xy.histogram(cumulative=...)`; combined with `density=True` it yields the
   empirical CDF.
-- Normalized stacked bars: `mode="normalized"` on `Figure.bar` / `fc.bar`.
+- Normalized stacked bars: `mode="normalized"` on `Figure.bar` / `xy.bar`.
 - Fluent/composition API parity guard test, preventing the two public
   surfaces from drifting apart.
 - Prebuilt-wheel coverage expanded to a pydantic-class platform matrix:
   Linux glibc **and** musl/Alpine (x86-64, aarch64, armv7), macOS (x86-64,
   Apple Silicon), and Windows (x86, x64, arm64). An experimental
   Pyodide/Emscripten WASM wheel is built but does not yet load in-browser
-  (`docs/production-readiness.md` documents the exact linker failure and fix
+  (`docs/engineering/production-readiness.md` documents the exact linker failure and fix
   direction).
 - Release workflow `workflow_dispatch` dry-run mode: builds and verifies the
   full artifact matrix without publishing to PyPI (default for manual runs).
 - `benchmark-refresh` CI workflow: regenerates the cross-library benchmark
   tables (10M scatter and core-2D) from a consistent Ubuntu run.
-- Native fused kernels: `fc_sample_mask` (deterministic density-overlay
-  sampling) and `fc_bin_2d_indices` (density grid + visible rows in one pass).
+- Native fused kernels: `xy_sample_mask` (deterministic density-overlay
+  sampling) and `xy_bin_2d_indices` (density grid + visible rows in one pass).
 - Pyodide runtime load probe (`scripts/pyodide_load_smoke.py`), run
   non-gating in the wasm release job.
 
@@ -337,7 +367,7 @@ in the README).
 - `XY_FORCE_FALLBACK` environment switch and the pure-NumPy kernel
   backend (`xy/_fallback.py`).
 
-## [0.1.0] — unreleased development line
+## [0.0.1] — 2026-07-16
 
 Initial development snapshot: line/scatter/area/histogram/bar/heatmap chart
 families, binary columnar transport, WebGL2 rendering, M4 decimation, density

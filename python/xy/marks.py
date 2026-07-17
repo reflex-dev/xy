@@ -12,14 +12,12 @@ axis-position helpers — through it.
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
 from . import _validate, channels, columns, kernels, styles
 from ._trace import Trace
-from ._typing import ArrayLike, Scalar
 from .config import DEFAULT_PALETTE, DIRECT_SOFT_CEILING, MAX_CONTOUR_WORK
 
 if TYPE_CHECKING:
@@ -27,21 +25,21 @@ if TYPE_CHECKING:
 
 
 def _append_segment_trace(
-    self: "Figure",
+    self,
     kind: str,
-    x0: ArrayLike,
-    x1: ArrayLike,
-    y0: ArrayLike,
-    y1: ArrayLike,
+    x0: Any,
+    x1: Any,
+    y0: Any,
+    y1: Any,
     *,
     name: Optional[str],
     color: Optional[str],
     opacity: float,
     width: float,
     role: str,
-    color_ch: Optional[channels.ColorChannel] = None,
+    color_ch: Any = None,
     count: Optional[int] = None,
-    dash: Optional[list[float]] = None,
+    dash: Any = None,
     extra_style: Optional[dict[str, Any]] = None,
 ) -> None:
     """Append a compact instanced line-segment trace.
@@ -96,14 +94,14 @@ def _append_segment_trace(
 
 
 def segments(
-    self: "Figure",
-    x0: ArrayLike,
-    y0: ArrayLike,
-    x1: ArrayLike,
-    y1: ArrayLike,
+    self,
+    x0: Any,
+    y0: Any,
+    x1: Any,
+    y1: Any,
     *,
     name: Optional[str] = None,
-    color: Union[str, ArrayLike, None] = None,
+    color: Any = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     width: float = 1.2,
@@ -145,15 +143,15 @@ def segments(
 
 
 def triangle_mesh(
-    self: "Figure",
-    x0: ArrayLike,
-    y0: ArrayLike,
-    x1: ArrayLike,
-    y1: ArrayLike,
-    x2: ArrayLike,
-    y2: ArrayLike,
+    self,
+    x0: Any,
+    y0: Any,
+    x1: Any,
+    y1: Any,
+    x2: Any,
+    y2: Any,
     *,
-    color: Union[str, ArrayLike, None] = None,
+    color: Any = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     name: Optional[str] = None,
@@ -226,7 +224,7 @@ def triangle_mesh(
 
 
 def _error_extent(
-    value: Union[Scalar, ArrayLike], n: int, center: np.ndarray, label: str
+    value: Any, n: int, center: np.ndarray, label: str
 ) -> tuple[np.ndarray, np.ndarray]:
     """Normalize scalar, symmetric, or ``(lower, upper)`` error input."""
     if value is None:
@@ -277,11 +275,7 @@ def _split_by_positions(
 
 
 def _distribution_groups(
-    self: "Figure",
-    values: Any,  # 1-D/2-D ArrayLike or a ragged sequence of 1-D datasets
-    x: Optional[ArrayLike],
-    group: Optional[ArrayLike],
-    kind: str,
+    self, values: Any, x: Any, group: Any, kind: str
 ) -> tuple[list[np.ndarray], np.ndarray]:
     """Return finite value groups and their category/position coordinates.
 
@@ -347,30 +341,30 @@ def _distribution_stats(group: np.ndarray) -> tuple[float, float, float, float, 
 
 def _contour_segments(
     z: np.ndarray, x_coords: np.ndarray, y_coords: np.ndarray, levels: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+):
     """Extract flat contour segments through the native marching-squares kernel."""
     return kernels.marching_squares(z, x_coords, y_coords, levels)
 
 
 def _bar_like(
-    self: "Figure",
+    self,
     kind: str,
-    x: ArrayLike,
-    y: ArrayLike,
+    x: Any,
+    y: Any,
     *,
     name: Optional[str],
-    color: Union[str, Sequence[str], None],
+    color: Any,
     colors: Optional[list[str]],
     width: float,
-    base: Union[Scalar, ArrayLike],
+    base: Any,
     mode: str,
     orientation: str,
     series: Optional[list[str]],
     opacity: float,
-    corner_radius: Union[float, tuple[float, float]] = 0.0,
+    corner_radius: Any = 0.0,
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
-    fill: Union[str, dict[str, str], None] = None,
+    fill: Any = None,
     style_extra: Optional[dict[str, Any]] = None,
 ) -> "Figure":
     name = self._optional_text(name, f"{kind} name")
@@ -465,23 +459,18 @@ def _bar_like(
 
 
 def line(
-    self: "Figure",
-    x: ArrayLike,
-    y: ArrayLike,
+    self,
+    x: Any,
+    y: Any,
     *,
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.5,
     opacity: float = 1.0,
     curve: str = "linear",
-    dash: Union[str, Sequence[float], None] = None,
+    dash: Any = None,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
-    """Add a line series. Very long series are automatically downsampled for
-    display without changing the drawn shape.
-
-    ``curve="smooth"`` renders a monotone cubic; ``dash`` dashes the line.
-    """
     css = styles.compile_mark_style("line", style)
     color = css.get("color", color)
     width = css.get("width", width)
@@ -528,11 +517,11 @@ def line(
 
 
 def area(
-    self: "Figure",
-    x: ArrayLike,
-    y: ArrayLike,
+    self,
+    x: Any,
+    y: Any,
     *,
-    base: Union[Scalar, ArrayLike] = 0.0,
+    base: Any = 0.0,
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.35,
@@ -540,16 +529,16 @@ def area(
     line_width: float = 1.2,
     line_opacity: float = 1.0,
     stroke_perimeter: bool = False,
-    fill: Union[str, dict[str, str], None] = None,
+    fill: Any = None,
     curve: str = "linear",
-    dash: Union[str, Sequence[float], None] = None,
+    dash: Any = None,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add a filled area trace between `y` and `base`.
 
     `base` may be a scalar or a length-N array, which covers both the common
     zero-baseline area chart and future stacked-area construction.
-    `fill` accepts a CSS `linear-gradient(...)` (see docs/styling.md);
+    `fill` accepts a CSS `linear-gradient(...)` (see docs/engineering/styling.md);
     `curve="smooth"` renders a monotone cubic through the points; `dash`
     dashes the outline.
     """
@@ -620,17 +609,17 @@ def area(
 
 
 def error_band(
-    self: "Figure",
-    x: ArrayLike,
-    lower: ArrayLike,
-    upper: ArrayLike,
+    self,
+    x: Any,
+    lower: Any,
+    upper: Any,
     *,
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.22,
     line_width: float = 0.0,
     line_opacity: float = 0.0,
-    fill: Union[str, dict[str, str], None] = None,
+    fill: Any = None,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add an uncertainty/confidence band between ``lower`` and ``upper``.
@@ -701,12 +690,12 @@ def _auto_cap_size(positions: np.ndarray) -> float:
 
 
 def errorbar(
-    self: "Figure",
-    x: ArrayLike,
-    y: ArrayLike,
+    self,
+    x: Any,
+    y: Any,
     *,
-    yerr: Union[Scalar, ArrayLike, None] = None,
-    xerr: Union[Scalar, ArrayLike, None] = None,
+    yerr: Any = None,
+    xerr: Any = None,
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.2,
@@ -800,16 +789,16 @@ def errorbar(
 
 
 def step(
-    self: "Figure",
-    x: ArrayLike,
-    y: ArrayLike,
+    self,
+    x: Any,
+    y: Any,
     *,
     where: str = "post",
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.5,
     opacity: float = 1.0,
-    dash: Union[str, Sequence[float], None] = None,
+    dash: Any = None,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add a step line without expanding the canonical input columns."""
@@ -831,16 +820,16 @@ def step(
 
 
 def stairs(
-    self: "Figure",
-    values: ArrayLike,
-    edges: Optional[ArrayLike] = None,
+    self,
+    values: Any,
+    edges: Any = None,
     *,
     where: str = "post",
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.5,
     opacity: float = 1.0,
-    dash: Union[str, Sequence[float], None] = None,
+    dash: Any = None,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add a Matplotlib-style precomputed stairs series.
@@ -882,15 +871,15 @@ def stairs(
 
 
 def ecdf(
-    self: "Figure",
-    values: ArrayLike,
+    self,
+    values: Any,
     *,
     bins: Optional[int] = None,
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.5,
     opacity: float = 1.0,
-    dash: Union[str, Sequence[float], None] = None,
+    dash: Any = None,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add an empirical cumulative distribution function.
@@ -948,11 +937,11 @@ def ecdf(
 
 
 def stem(
-    self: "Figure",
-    x: ArrayLike,
-    y: ArrayLike,
+    self,
+    x: Any,
+    y: Any,
     *,
-    base: Union[Scalar, ArrayLike] = 0.0,
+    base: Any = 0.0,
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.2,
@@ -1011,13 +1000,13 @@ def stem(
 
 
 def scatter(
-    self: "Figure",
-    x: ArrayLike,
-    y: ArrayLike,
+    self,
+    x: Any,
+    y: Any,
     *,
     name: Optional[str] = None,
-    color: Union[str, ArrayLike, None] = None,
-    size: Union[Scalar, ArrayLike, None] = 4.0,
+    color: Any = None,
+    size: Any = 4.0,
     opacity: float = 0.8,
     colormap: str = channels.DEFAULT_COLORMAP,
     color_domain: Optional[tuple[float, float]] = None,
@@ -1033,10 +1022,9 @@ def scatter(
     `color` may be a CSS color (constant), a numeric array (continuous →
     colormap), or a categorical array (factorized → palette). `size` may be
     a scalar or a numeric array (mapped to `size_range` px). `symbol` picks
-    the marker shape (circle/square/diamond/triangle/cross); `stroke` /
-    `stroke_width` draw a point border. Very large scatters automatically
-    switch to an aggregated density surface instead of drawing individual
-    points; pass `density=True/False` to force or disable that.
+    one of the 17 renderer-backed marker shapes; `stroke` / `stroke_width`
+    draw a point border. Large scatters automatically switch to an aggregated
+    density surface; pass `density=True/False` to force or disable it.
     """
     css = styles.compile_mark_style("scatter", style)
     color = css.get("color", color)
@@ -1121,20 +1109,20 @@ def scatter(
 
 
 def histogram(
-    self: "Figure",
-    values: ArrayLike,
+    self,
+    values: Any,
     *,
-    bins: Union[int, str, ArrayLike] = "auto",
+    bins: Any = "auto",
     range: Optional[tuple[float, float]] = None,
     density: bool = False,
     cumulative: bool = False,
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.85,
-    corner_radius: Union[float, tuple[float, float]] = 0.0,
+    corner_radius: Any = 0.0,
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
-    fill: Union[str, dict[str, str], None] = None,
+    fill: Any = None,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add a 1D histogram backed by the shared rectangle primitive.
@@ -1202,20 +1190,20 @@ def histogram(
 
 
 def hist(
-    self: "Figure",
-    values: ArrayLike,
+    self,
+    values: Any,
     *,
-    bins: Union[int, str, ArrayLike] = "auto",
+    bins: Any = "auto",
     range: Optional[tuple[float, float]] = None,
     density: bool = False,
     cumulative: bool = False,
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.85,
-    corner_radius: Union[float, tuple[float, float]] = 0.0,
+    corner_radius: Any = 0.0,
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
-    fill: Union[str, dict[str, str], None] = None,
+    fill: Any = None,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Short alias for `histogram(...)`, matching common Python chart APIs."""
@@ -1237,11 +1225,11 @@ def hist(
 
 
 def box(
-    self: "Figure",
-    values: ArrayLike,
+    self,
+    values: Any,
     *,
-    x: Optional[ArrayLike] = None,
-    group: Optional[ArrayLike] = None,
+    x: Any = None,
+    group: Any = None,
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 0.6,
@@ -1389,11 +1377,11 @@ def box(
 
 
 def violin(
-    self: "Figure",
-    values: ArrayLike,
+    self,
+    values: Any,
     *,
-    x: Optional[ArrayLike] = None,
-    group: Optional[ArrayLike] = None,
+    x: Any = None,
+    group: Any = None,
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 0.8,
@@ -1483,15 +1471,15 @@ def violin(
 
 
 def hexbin(
-    self: "Figure",
-    x: ArrayLike,
-    y: ArrayLike,
+    self,
+    x: Any,
+    y: Any,
     *,
     gridsize: int | tuple[int, int] = 64,
     range: Optional[tuple[tuple[float, float], tuple[float, float]]] = None,
     bins: str = "count",
-    C: Optional[ArrayLike] = None,
-    reduce_C_function: Callable[[np.ndarray], Scalar] = np.mean,
+    C: Any = None,
+    reduce_C_function: Any = np.mean,
     mincnt: Optional[int] = None,
     name: Optional[str] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
@@ -1677,12 +1665,12 @@ def _interpolate_contourf_grid(
 
 
 def contour(
-    self: "Figure",
-    z: ArrayLike,
+    self,
+    z: Any,
     *,
-    x: Optional[ArrayLike] = None,
-    y: Optional[ArrayLike] = None,
-    levels: Union[int, ArrayLike] = 10,
+    x: Any = None,
+    y: Any = None,
+    levels: int | Any = 10,
     filled: bool = False,
     name: Optional[str] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
@@ -1815,23 +1803,23 @@ def contour(
 
 
 def bar(
-    self: "Figure",
-    x: ArrayLike,
-    y: ArrayLike,
+    self,
+    x: Any,
+    y: Any,
     *,
     name: Optional[str] = None,
-    color: Union[str, Sequence[str], None] = None,
+    color: Any = None,
     colors: Optional[list[str]] = None,
     width: float = 0.8,
-    base: Union[Scalar, ArrayLike] = 0.0,
+    base: Any = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
     series: Optional[list[str]] = None,
     opacity: float = 0.85,
-    corner_radius: Union[float, tuple[float, float]] = 0.0,
+    corner_radius: Any = 0.0,
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
-    fill: Union[str, dict[str, str], None] = None,
+    fill: Any = None,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Add vertical bars. 2D y values render grouped, stacked, or
@@ -1839,7 +1827,7 @@ def bar(
 
     `corner_radius`/`stroke`/`stroke_width` are the CSS border analogues
     rendered into the mark; `fill` accepts a CSS `linear-gradient(...)`
-    (docs/styling.md#styling-the-marks)."""
+    (docs/engineering/styling.md#styling-the-marks)."""
     css = styles.compile_mark_style("bar", style)
     color = css.get("color", color)
     opacity = css.get("opacity", opacity)
@@ -1870,23 +1858,23 @@ def bar(
 
 
 def column(
-    self: "Figure",
-    x: ArrayLike,
-    y: ArrayLike,
+    self,
+    x: Any,
+    y: Any,
     *,
     name: Optional[str] = None,
-    color: Union[str, Sequence[str], None] = None,
+    color: Any = None,
     colors: Optional[list[str]] = None,
     width: float = 0.8,
-    base: Union[Scalar, ArrayLike] = 0.0,
+    base: Any = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
     series: Optional[list[str]] = None,
     opacity: float = 0.85,
-    corner_radius: Union[float, tuple[float, float]] = 0.0,
+    corner_radius: Any = 0.0,
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
-    fill: Union[str, dict[str, str], None] = None,
+    fill: Any = None,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
     """Alias for vertical column charts; shares the bar/rect renderer."""
@@ -1920,11 +1908,11 @@ def column(
 
 
 def heatmap(
-    self: "Figure",
-    z: Any,  # 2-D (rows, cols) or RGB(A) ArrayLike, or a DataFrame-like with .to_numpy()
+    self,
+    z: Any,
     *,
-    x: Optional[ArrayLike] = None,
-    y: Optional[ArrayLike] = None,
+    x: Any = None,
+    y: Any = None,
     name: Optional[str] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
@@ -1994,12 +1982,7 @@ def heatmap(
                 y=self.store.ingest(np.array([y_edges[0], y_edges[-1]], dtype=np.float64)),
                 grid=grid,
                 rgba_grid=(
-                    (
-                        self.store.ingest(rgba[..., 0].reshape(-1)),
-                        self.store.ingest(rgba[..., 1].reshape(-1)),
-                        self.store.ingest(rgba[..., 2].reshape(-1)),
-                        self.store.ingest(rgba[..., 3].reshape(-1)),
-                    )
+                    tuple(self.store.ingest(rgba[..., index].reshape(-1)) for index in range(4))
                     if truecolor
                     else None
                 ),

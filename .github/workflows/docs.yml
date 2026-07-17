@@ -1,0 +1,150 @@
+name: Docs
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+    paths:
+      - "docs/**"
+      - "js/**"
+      - "python/**"
+      - "src/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "hatch_build.py"
+      - "pyproject.toml"
+      - ".pre-commit-config.yaml"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "js/**"
+      - "python/**"
+      - "src/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "hatch_build.py"
+      - "pyproject.toml"
+      - ".pre-commit-config.yaml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Docs tests and lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: docs/app/uv.lock
+      - name: Install docs dependencies
+        run: uv sync --project docs/app --frozen --group dev
+      - name: Run docs tests
+        run: uv run --project docs/app --no-sync pytest docs/app/tests -v
+      - name: Run docs quality hooks
+        run: |
+          uv run --project docs/app --no-sync pre-commit run ruff-format --all-files
+          uv run --project docs/app --no-sync pre-commit run ruff-check --all-files
+          uv run --project docs/app --no-sync pre-commit run docs-app-codespell --all-files
+
+  production:
+    name: Production docs (Python ${{ matrix.python-version }})
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: docs/app/uv.lock
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: Install docs dependencies
+        run: uv sync --project docs/app --frozen --group dev
+      - name: Initialize docs frontend
+        working-directory: docs/app
+        env:
+          REFLEX_TELEMETRY_ENABLED: "false"
+        run: uv run --no-sync reflex init
+      - name: Run production docs and check the public route
+        working-directory: docs/app
+        env:
+          REFLEX_TELEMETRY_ENABLED: "false"
+        run: |
+          set -euo pipefail
+          server_log="$RUNNER_TEMP/xy-docs.log"
+          response="$RUNNER_TEMP/xy-docs-index.html"
+          setsid uv run --no-sync reflex run --env prod --loglevel debug >"$server_log" 2>&1 &
+          server_pid=$!
+          cleanup() {
+            trap - EXIT INT TERM
+            kill -TERM -- "-$server_pid" 2>/dev/null || true
+            for _ in {1..10}; do
+              kill -0 "$server_pid" 2>/dev/null || break
+              sleep 1
+            done
+            kill -KILL -- "-$server_pid" 2>/dev/null || true
+            wait "$server_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          trap 'exit 130' INT TERM
+
+          deadline=$((SECONDS + 300))
+          while (( SECONDS < deadline )); do
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              cat "$server_log"
+              exit 1
+            fi
+            if curl --fail --location --silent \
+              --connect-timeout 2 --max-time 10 \
+              http://127.0.0.1:3000/docs/xy/ --output "$response"; then
+              test -s "$response"
+              break
+            fi
+            sleep 2
+          done
+
+          if [[ ! -s "$response" ]]; then
+            cat "$server_log"
+            echo "XY docs did not become ready within 300 seconds"
+            exit 1
+          fi
+
+          if grep -Eiq "traceback|uncaught|unhandled|fatal error" "$server_log"; then
+            cat "$server_log"
+            echo "XY docs emitted a production runtime error"
+            exit 1
+          fi
+      - name: Validate Markdown links against the generated sitemap
+        working-directory: docs/app
+        run: |
+          uv run --no-sync pytest --runxfail \
+            tests/test_docs_site.py::test_xy_markdown_docs_links_match_exported_sitemap \
+            tests/test_docs_site.py::test_static_xy_tailwind_manifest_reaches_compiled_css \
+            -v
+      - name: Validate generated sitemap
+        working-directory: docs/app
+        run: uv run --no-sync python scripts/check_sitemap.py
+      - name: Validate generated Markdown assets
+        working-directory: docs/app
+        run: uv run --no-sync python scripts/check_markdown_assets.py
+      - name: Validate generated HTML routes and previews
+        working-directory: docs/app
+        run: uv run --no-sync python scripts/check_html_routes.py

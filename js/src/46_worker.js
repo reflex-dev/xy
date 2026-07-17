@@ -14,7 +14,7 @@
 // stricter CSP) fall back to the old stretched-overview behavior.
 // ---------------------------------------------------------------------------
 
-const FC_REBIN_WORKER_SRC = `
+const XY_REBIN_WORKER_SRC = `
 const DATA = new Map();
 self.onmessage = (e) => {
   const m = e.data;
@@ -45,10 +45,10 @@ self.onmessage = (e) => {
 };
 `;
 
-function fcCreateRebinWorker() {
+function xyCreateRebinWorker() {
   try {
     const url = URL.createObjectURL(
-      new Blob([FC_REBIN_WORKER_SRC], { type: "application/javascript" })
+      new Blob([XY_REBIN_WORKER_SRC], { type: "application/javascript" })
     );
     const worker = new Worker(url);
     worker._fcUrl = url; // revoked on terminate (destroy)

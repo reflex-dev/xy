@@ -5,9 +5,11 @@
 
 // Annotation style keys consumed by the canvas shape (shaft/head/marker
 // geometry and paint) — never forwarded to the DOM label as CSS.
-const FC_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
+const XY_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
   "color",
   "label_color",
+  "label_opacity",
+  "opacity",
   "width",
   "head_size",
   "head_style",
@@ -43,7 +45,7 @@ const FC_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
 // ("left,right,up,down" px, y-down) is the start label's extents rectangle
 // around the shifted start: the start trims to where the departure tangent
 // exits it — matplotlib's text-patch clipping.
-function fcLabelClearExit(style, tangent) {
+function xyLabelClearExit(style, tangent) {
   if (typeof style.label_clear !== "string") return 0;
   const parts = style.label_clear.split(",").map(Number);
   if (parts.length !== 4 || parts.some((p) => !Number.isFinite(p) || p < 0)) return 0;
@@ -55,7 +57,7 @@ function fcLabelClearExit(style, tangent) {
   return Number.isFinite(exit) ? exit : 0;
 }
 
-function fcArrowGeometry(x0, y0, x1, y1, style) {
+function xyArrowGeometry(x0, y0, x1, y1, style) {
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
   if (typeof style.start_offset === "string") {
     const offset = style.start_offset.split(",").map(Number);
@@ -91,7 +93,7 @@ function fcArrowGeometry(x0, y0, x1, y1, style) {
   };
   const t0 = cx === null ? toward(x0, y0, x1, y1) : toward(x0, y0, cx, cy);
   const t1 = cx === null ? toward(x1, y1, x0, y0) : toward(x1, y1, cx, cy);
-  const gapStart = Math.max(0, num(style.gap_start) || 0, fcLabelClearExit(style, t0));
+  const gapStart = Math.max(0, num(style.gap_start) || 0, xyLabelClearExit(style, t0));
   const gapEnd = Math.max(0, num(style.gap_end) || 0);
   const span = Math.hypot(x1 - x0, y1 - y0);
   const trim = gapStart + gapEnd < span * 0.9;
@@ -104,7 +106,7 @@ function fcArrowGeometry(x0, y0, x1, y1, style) {
 }
 
 // The shaft as a point list (quadratic Bézier sampled when curved).
-function fcArrowShaftPoints(geom, samples = 24) {
+function xyArrowShaftPoints(geom, samples = 24) {
   const [x0, y0] = geom.p0;
   const [x1, y1] = geom.p1;
   if (!geom.control) return [[x0, y0], [x1, y1]];
@@ -120,7 +122,7 @@ function fcArrowShaftPoints(geom, samples = 24) {
 
 // The polyline with `trim` px of arclength removed from its end (a tapered
 // shaft ends at the head BASE — a full-length shaft would swallow the head).
-function fcTrimPolylineEnd(points, trim) {
+function xyTrimPolylineEnd(points, trim) {
   if (!(trim > 0) || points.length < 2) return points;
   const out = points.slice();
   let remaining = trim;
@@ -141,7 +143,7 @@ function fcTrimPolylineEnd(points, trim) {
 
 // The shaft as a filled polygon whose width interpolates from w0 to w1
 // (matplotlib's fancy/simple/wedge arrowstyles are filled tapered shafts).
-function fcTaperPolygon(points, w0, w1) {
+function xyTaperPolygon(points, w0, w1) {
   const left = [];
   const right = [];
   const count = points.length;
@@ -210,7 +212,7 @@ Object.assign(ChartView.prototype, {
 
   _drawArrowLine(ctx, x0, y0, x1, y1, style) {
     if (![x0, y0, x1, y1].every(Number.isFinite)) return;
-    const geom = fcArrowGeometry(x0, y0, x1, y1, style);
+    const geom = xyArrowGeometry(x0, y0, x1, y1, style);
     ctx.save();
     ctx.globalAlpha = this._styleNumber(style, "opacity", 1);
     ctx.strokeStyle = this._annotationPaint(style, [0.4, 0.44, 0.52, 1]);
@@ -223,11 +225,11 @@ Object.assign(ChartView.prototype, {
     const headStyle = style.head_style || "triangle";
     const head = Math.max(4, this._styleNumber(style, "head_size", 8));
     if (Number.isFinite(w0) || Number.isFinite(w1)) {
-      let points = fcArrowShaftPoints(geom);
+      let points = xyArrowShaftPoints(geom);
       if (headStyle === "triangle") {
-        points = fcTrimPolylineEnd(points, head * Math.cos(Math.PI / 6));
+        points = xyTrimPolylineEnd(points, head * Math.cos(Math.PI / 6));
       }
-      const polygon = fcTaperPolygon(
+      const polygon = xyTaperPolygon(
         points,
         Number.isFinite(w0) ? w0 : 1,
         Number.isFinite(w1) ? w1 : 1
@@ -426,7 +428,18 @@ Object.assign(ChartView.prototype, {
       d.textContent = text;
       const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
       const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
-      const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0px";
+      // Arrow labels and x-oriented rule/band labels are positioned at their
+      // geometric midpoint.  With the generic start fallback their left edge
+      // landed on that midpoint, visibly shifting the label to the right.
+      // Point labels and right-edge y rule/band labels keep their existing
+      // explicit/start semantics.
+      const anchorName = ["start", "middle", "end"].includes(ann.anchor)
+        ? ann.anchor
+        : ann.kind === "arrow" ||
+            ((ann.kind === "rule" || ann.kind === "band") && ann.axis === "x")
+          ? "middle"
+          : "start";
+      const anchor = anchorName === "middle" ? "-50%" : anchorName === "end" ? "-100%" : "0px";
       const rot = Number.isFinite(Number(style.rotation))
         ? ((Number(style.rotation) % 360) + 360) % 360
         : 0;
@@ -452,7 +465,7 @@ Object.assign(ChartView.prototype, {
           : va === "bottom" ? (cw ? "-100%" : "0")
           : cw ? "0" : "-100%";
         const cross =
-          ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? (cw ? "0" : "-100%") : cw ? "-100%" : "0";
+          anchorName === "middle" ? "-50%" : anchorName === "end" ? (cw ? "0" : "-100%") : cw ? "-100%" : "0";
         transform = `rotate(${cw ? 90 : -90}deg) translate(${along},${cross})`;
       } else if (rot) {
         transform = `rotate(${-rot}deg) translate(${anchor},${vAnchor})`;
@@ -473,7 +486,11 @@ Object.assign(ChartView.prototype, {
       // e.g. an arrow's shaft `width` must not become CSS width on the label.
       const labelStyle = {};
       for (const [key, value] of Object.entries(style)) {
-        if (FC_ANNOTATION_SHAPE_STYLE_KEYS.has(key)) continue;
+        if (key === "opacity" && ann.kind === "text") {
+          labelStyle[key] = value;
+          continue;
+        }
+        if (XY_ANNOTATION_SHAPE_STYLE_KEYS.has(key)) continue;
         labelStyle[key] = value;
       }
       this._applyStyle(d, labelStyle);
@@ -481,6 +498,12 @@ Object.assign(ChartView.prototype, {
       // stylesheet's --chart-annotation-text default stays overridable by CSS.
       if (style && (style.label_color || style.color)) {
         d.style.color = this._annotationLabelPaint(style, this.theme.label);
+      }
+      if (style && style.label_opacity !== undefined) {
+        const labelOpacity = Number(style.label_opacity);
+        if (Number.isFinite(labelOpacity)) {
+          d.style.opacity = String(Math.max(0, Math.min(1, labelOpacity)));
+        }
       }
       this.labels.appendChild(d);
       // matplotlib anchors the TEXT at its position; a bbox patch grows

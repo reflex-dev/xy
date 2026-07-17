@@ -321,7 +321,7 @@ def test_ci_workflow_rejects_missing_regression_gate(tmp_path: Path) -> None:
     path.write_text(
         workflow.replace(
             "          python3 scripts/check_regressions.py --scatter scatter.json --kernel kernel.json \\\n"
-            "            --transport transport.json --emit-md docs/benchmark_metrics.md\n",
+            "            --transport transport.json --emit-md docs/engineering/benchmark_metrics.md\n",
             "",
         ),
         encoding="utf-8",
@@ -427,6 +427,23 @@ def test_release_workflow_rejects_missing_native_wheel_verifier(tmp_path: Path) 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
     assert any("release wheels job" in error and "verify_wheel" in error for error in errors)
+
+
+def test_release_workflow_rejects_nonblocking_native_wheel_matrix(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            "    runs-on: ${{ matrix.os }}\n",
+            "    runs-on: ${{ matrix.os }}\n    continue-on-error: true\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("wheels job must block publishing" in error for error in errors)
 
 
 def test_release_workflow_rejects_unpinned_pyodide_runtime_contract(

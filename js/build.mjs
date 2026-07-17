@@ -225,15 +225,20 @@ const exportTail = markerLineEnd < 0 ? "" : src.slice(markerLineEnd + 1);
 const iife = `(() => {\n${body}\nwindow.xy = { render, renderStandalone, decodeFrame, ChartView, MARK_KINDS, markOf };\n})();\n`;
 new Function(iife);
 
+// The Reflex adapter serves this same ESM client — but from the *installed*
+// xy package (reflex_xy links xy/static/index.js at app compile), so
+// there is no second copy to drift. One renderer for notebooks, static
+// export, and Reflex.
+const esm = body + "\n" + exportTail.trimStart();
 const outputs = [
-  ["index.js", body + "\n" + exportTail.trimStart()],
-  ["standalone.js", iife],
+  [outDir, "index.js", esm],
+  [outDir, "standalone.js", iife],
 ];
 
 if (checkOnly) {
   const stale = [];
-  for (const [name, expected] of outputs) {
-    const path = join(outDir, name);
+  for (const [dir, name, expected] of outputs) {
+    const path = join(dir, name);
     let actual = null;
     try {
       actual = readText(path);
@@ -251,7 +256,9 @@ if (checkOnly) {
   }
   console.log(`static JS bundles are fresh (${PARTS.length} parts)`);
 } else {
-  mkdirSync(outDir, { recursive: true });
-  for (const [name, data] of outputs) writeFileSync(join(outDir, name), data);
+  for (const [dir, name, data] of outputs) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, name), data);
+  }
   console.log(`built static/index.js and static/standalone.js from ${PARTS.length} parts`);
 }

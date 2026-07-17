@@ -38,7 +38,7 @@ const XY_FRAME_DEFAULT_LIMITS = Object.freeze({
   maxBufferBytes: 256 * 1024 * 1024,
 });
 
-function fcByteSpan(value, label = "buffer") {
+function xyByteSpan(value, label = "buffer") {
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   if (ArrayBuffer.isView(value)) {
     return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
@@ -46,7 +46,7 @@ function fcByteSpan(value, label = "buffer") {
   throw new TypeError(`${label} must be an ArrayBuffer or ArrayBuffer view`);
 }
 
-function fcFrameLimit(limits, name) {
+function xyFrameLimit(limits, name) {
   const fallback = XY_FRAME_DEFAULT_LIMITS[name];
   const value = limits && limits[name] != null ? limits[name] : fallback;
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -55,11 +55,11 @@ function fcFrameLimit(limits, name) {
   return value;
 }
 
-function fcAlign8(value) {
+function xyAlign8(value) {
   return Math.ceil(value / XY_FRAME_ALIGNMENT) * XY_FRAME_ALIGNMENT;
 }
 
-function fcFrameU64(view, offset, label) {
+function xyFrameU64(view, offset, label) {
   const value = view.getBigUint64(offset, true);
   if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new RangeError(`${label} exceeds JavaScript's safe integer range`);
@@ -67,7 +67,7 @@ function fcFrameU64(view, offset, label) {
   return Number(value);
 }
 
-function fcRequireZeroPadding(bytes, start, end, label) {
+function xyRequireZeroPadding(bytes, start, end, label) {
   if (end > bytes.byteLength) throw new RangeError(`truncated ${label} padding`);
   for (let i = start; i < end; i++) {
     if (bytes[i] !== 0) throw new RangeError(`non-zero ${label} padding`);
@@ -81,11 +81,11 @@ function fcRequireZeroPadding(bytes, start, end, label) {
  * unaligned subview is rejected rather than silently slicing the whole frame.
  */
 function decodeFrame(body, limits = null) {
-  const bytes = fcByteSpan(body, "frame body");
-  const maxFrameBytes = fcFrameLimit(limits, "maxFrameBytes");
-  const maxMetadataBytes = fcFrameLimit(limits, "maxMetadataBytes");
-  const maxBuffers = fcFrameLimit(limits, "maxBuffers");
-  const maxBufferBytes = fcFrameLimit(limits, "maxBufferBytes");
+  const bytes = xyByteSpan(body, "frame body");
+  const maxFrameBytes = xyFrameLimit(limits, "maxFrameBytes");
+  const maxMetadataBytes = xyFrameLimit(limits, "maxMetadataBytes");
+  const maxBuffers = xyFrameLimit(limits, "maxBuffers");
+  const maxBufferBytes = xyFrameLimit(limits, "maxBufferBytes");
   if (maxMetadataBytes > maxFrameBytes) {
     throw new RangeError("maxMetadataBytes cannot exceed maxFrameBytes");
   }
@@ -114,7 +114,7 @@ function decodeFrame(body, limits = null) {
   }
   const metadataLength = view.getUint32(8, true);
   const bufferCount = view.getUint32(12, true);
-  const totalLength = fcFrameU64(view, 16, "declared frame length");
+  const totalLength = xyFrameU64(view, 16, "declared frame length");
   if (totalLength !== bytes.byteLength) {
     throw new RangeError(
       `declared frame length ${totalLength} does not match body length ${bytes.byteLength}`
@@ -144,12 +144,12 @@ function decodeFrame(body, limits = null) {
     throw new RangeError("frame metadata must decode to an object");
   }
 
-  let position = fcAlign8(metadataEnd);
-  fcRequireZeroPadding(bytes, metadataEnd, position, "metadata");
+  let position = xyAlign8(metadataEnd);
+  xyRequireZeroPadding(bytes, metadataEnd, position, "metadata");
   const buffers = [];
   for (let i = 0; i < bufferCount; i++) {
     if (position + 8 > bytes.byteLength) throw new RangeError(`truncated buffer ${i} length`);
-    const bufferLength = fcFrameU64(view, position, `buffer ${i} length`);
+    const bufferLength = xyFrameU64(view, position, `buffer ${i} length`);
     position += 8;
     if (bufferLength > maxBufferBytes) {
       throw new RangeError(`buffer ${i} length ${bufferLength} exceeds limit ${maxBufferBytes}`);
@@ -161,8 +161,8 @@ function decodeFrame(body, limits = null) {
       throw new RangeError(`buffer ${i} is not 8-byte aligned`);
     }
     buffers.push(new Uint8Array(bytes.buffer, absoluteOffset, bufferLength));
-    const paddedEnd = fcAlign8(end);
-    fcRequireZeroPadding(bytes, end, paddedEnd, `buffer ${i}`);
+    const paddedEnd = xyAlign8(end);
+    xyRequireZeroPadding(bytes, end, paddedEnd, `buffer ${i}`);
     position = paddedEnd;
   }
   if (position !== bytes.byteLength) {

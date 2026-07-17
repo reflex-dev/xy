@@ -110,7 +110,7 @@ Object.assign(ChartView.prototype, {
     }
     if (this._sampleRebinDisabled) return;
     if (!this._rebinWorker) {
-      this._rebinWorker = fcCreateRebinWorker();
+      this._rebinWorker = xyCreateRebinWorker();
       if (!this._rebinWorker) {
         this._sampleRebinDisabled = true; // no worker: stretched overview stays
         return;
@@ -307,6 +307,20 @@ Object.assign(ChartView.prototype, {
     } else if (msg.type === "pick_result") {
       if (msg.seq !== undefined && msg.seq !== this._pickSeq) return;
       if (!msg.row) { this.tooltip.style.display = "none"; return; }
+      // The kernel returns exact values for the picked trace only. Rehydrate
+      // tooltip fields sourced from sibling traces before replacing the local
+      // approximate row, otherwise a rich layered tooltip visibly collapses.
+      // _localRow already resolved those fields for this same hover; reuse
+      // them (fields the kernel row lacks are exactly the sibling-sourced
+      // ones) so _applySharedTooltipFields finds nothing missing and skips
+      // its O(n) sibling scans. It stays as the mismatch fallback.
+      const local = this._lastRow;
+      if (local && local.trace === msg.row.trace && local.index === msg.row.index) {
+        for (const [key, value] of Object.entries(local)) {
+          if (msg.row[key] === undefined) msg.row[key] = value;
+        }
+      }
+      this._applySharedTooltipFields(msg.row);
       this._lastRow = msg.row;
       const xy = this._lastHoverXY;
       // Exact values replace the visible approximate tooltip. A keyboard

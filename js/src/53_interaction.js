@@ -18,12 +18,12 @@ Object.assign(ChartView.prototype, {
     this.selLasso = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     this.selLasso.style.cssText =
       "position:absolute;display:none;pointer-events:none;z-index:4;overflow:visible;";
-    this.selLasso.dataset.fcSelectionLassoOverlay = "";
+    this.selLasso.dataset.xySelectionLassoOverlay = "";
     this.selLassoPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    this.selLassoPath.dataset.fcSelectionLasso = "";
+    this.selLassoPath.dataset.xySelectionLasso = "";
     this.selLasso.appendChild(this.selLassoPath);
     this.selLassoHandles = document.createElementNS("http://www.w3.org/2000/svg", "g");
-    this.selLassoHandles.dataset.fcSelectionLassoHandles = "";
+    this.selLassoHandles.dataset.xySelectionLassoHandles = "";
     this.selLasso.appendChild(this.selLassoHandles);
     this.root.appendChild(this.selLasso);
     this._lassoPolygon = null;
@@ -41,9 +41,9 @@ Object.assign(ChartView.prototype, {
       e.stopPropagation();
     };
     this._listen(this.selLasso, "pointerdown", (e) => {
-      const handle = e.target.closest?.("[data-fc-selection-lasso-handle]");
+      const handle = e.target.closest?.("[data-xy-selection-lasso-handle]");
       if (!handle || !this._lassoPolygon) return;
-      const index = Number(handle.dataset.fcSelectionLassoHandle);
+      const index = Number(handle.dataset.xySelectionLassoHandle);
       if (!Number.isInteger(index) || !this._lassoPolygon[index]) return;
       lassoHandleDrag = {
         index,
@@ -51,7 +51,7 @@ Object.assign(ChartView.prototype, {
         original: [...this._lassoPolygon[index]],
         handle,
       };
-      handle.dataset.fcActive = "";
+      handle.dataset.xyActive = "";
       this.tooltip.style.display = "none";
       try { this.selLasso.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
       e.preventDefault();
@@ -63,7 +63,7 @@ Object.assign(ChartView.prototype, {
       moveLassoHandle(e);
       const handle = lassoHandleDrag.handle;
       lassoHandleDrag = null;
-      delete handle.dataset.fcActive;
+      delete handle.dataset.xyActive;
       if (this._lassoPolygon) this._sendSelectPolygon(this._lassoPolygon);
     });
     this._listen(this.selLasso, "pointercancel", (e) => {
@@ -71,7 +71,7 @@ Object.assign(ChartView.prototype, {
       if (this._lassoPolygon) {
         this._lassoPolygon[lassoHandleDrag.index] = lassoHandleDrag.original;
       }
-      delete lassoHandleDrag.handle.dataset.fcActive;
+      delete lassoHandleDrag.handle.dataset.xyActive;
       lassoHandleDrag = null;
       if (this._lassoPolygon) this._renderLassoSelection();
       e.stopPropagation();
@@ -126,12 +126,12 @@ Object.assign(ChartView.prototype, {
           points: firstLassoPoint ? [firstLassoPoint] : null,
           previousLasso,
         };
-        c.setPointerCapture(e.pointerId);
+        try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
         this.tooltip.style.display = "none";
         return;
       }
       drag = { px: e.clientX, py: e.clientY, view: { ...this.view }, moved: false };
-      c.setPointerCapture(e.pointerId);
+      try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
       this.tooltip.style.display = "none";
     });
     this._listen(c, "pointermove", (e) => {
@@ -161,10 +161,17 @@ Object.assign(ChartView.prototype, {
     });
     const end = (e) => {
       if (band) {
+        // Pointermove is not guaranteed to run at the pointer-up coordinate.
+        // Capture that final vertex before deciding whether the gesture moved;
+        // a naturally closed lasso finishes near its start and therefore has
+        // almost no *net* displacement despite enclosing a real area.
+        if (band.mode === "select-lasso") this._updateBand(band, e);
         this.selRect.style.display = "none";
         this.selLasso.style.display = "none";
         const d1 = dataAt(e.clientX, e.clientY);
-        const moved = Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
+        const moved = band.mode === "select-lasso"
+          ? band.points.length >= 3
+          : Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
         if (moved) {
           if (band.mode === "zoom") this._zoomToBox(band.d0, d1, true);
           else if (band.mode === "select-lasso") {
@@ -408,11 +415,11 @@ Object.assign(ChartView.prototype, {
     if (band.mode === "select-x") { cy = py; by2 = py + this.plot.h; }
     if (band.mode === "select-y") { cx = px; bx2 = px + this.plot.w; }
     // Band paint (border/background) is a defeatable :where() default keyed on
-    // data-fc-band, NOT pinned inline — otherwise a `class_names={"selection":…}`
+    // data-xy-band, NOT pinned inline — otherwise a `class_names={"selection":…}`
     // utility (or `styles[selection]`) would lose to the inline style, breaking
     // the "your styles always win" contract for this one slot. Only the mode
     // discriminator and structural position/size stay inline (matches §36).
-    this.selRect.dataset.fcBand = band.mode === "zoom" ? "zoom" : "select";
+    this.selRect.dataset.xyBand = band.mode === "zoom" ? "zoom" : "select";
     this.selRect.style.display = "block";
     this.selRect.style.left = cx + "px";
     this.selRect.style.top = cy + "px";
@@ -533,7 +540,7 @@ Object.assign(ChartView.prototype, {
     );
     while (this.selLassoHandles.childElementCount < points.length) {
       const handle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-      handle.dataset.fcSelectionLassoHandle = "";
+      handle.dataset.xySelectionLassoHandle = "";
       handle.setAttribute("r", "4");
       this.selLassoHandles.appendChild(handle);
     }
@@ -541,7 +548,7 @@ Object.assign(ChartView.prototype, {
       this.selLassoHandles.lastElementChild.remove();
     }
     [...this.selLassoHandles.children].forEach((handle, index) => {
-      handle.dataset.fcSelectionLassoHandle = String(index);
+      handle.dataset.xySelectionLassoHandle = String(index);
       handle.setAttribute("cx", String(points[index][0]));
       handle.setAttribute("cy", String(points[index][1]));
       handle.setAttribute("aria-label", `Lasso point ${index + 1}`);
@@ -726,9 +733,9 @@ Object.assign(ChartView.prototype, {
     grip.setAttribute("aria-label", "Toolbar options");
     grip.setAttribute("aria-haspopup", "menu");
     grip.setAttribute("aria-expanded", "false");
-    grip.dataset.fcModebarDragHandle = "";
-    grip.dataset.fcModebarExport = "";
-    grip.dataset.fcModebarExportTrigger = "";
+    grip.dataset.xyModebarDragHandle = "";
+    grip.dataset.xyModebarExport = "";
+    grip.dataset.xyModebarExportTrigger = "";
     grip.innerHTML = this._icon("drag");
     grip.style.cssText =
       "display:flex;align-items:center;justify-content:center;pointer-events:auto;touch-action:none;";
@@ -817,14 +824,14 @@ Object.assign(ChartView.prototype, {
       setZoomMenuOpen(!this._zoomMenuOpen);
     });
     this._zoomMenuButton = zoomTrigger;
-    zoomTrigger.dataset.fcModebarMenuTrigger = "";
+    zoomTrigger.dataset.xyModebarMenuTrigger = "";
     zoomTrigger.replaceChildren();
     const zoomPercent = document.createElement("span");
-    zoomPercent.dataset.fcModebarZoomPercent = "";
+    zoomPercent.dataset.xyModebarZoomPercent = "";
     zoomPercent.textContent = "100%";
     zoomTrigger.appendChild(zoomPercent);
     const zoomIndicator = document.createElement("span");
-    zoomIndicator.dataset.fcModebarMenuIndicator = "";
+    zoomIndicator.dataset.xyModebarMenuIndicator = "";
     zoomIndicator.innerHTML = this._icon("chevrondown");
     zoomTrigger.appendChild(zoomIndicator);
     this._zoomMenuLabel = zoomPercent;
@@ -835,23 +842,30 @@ Object.assign(ChartView.prototype, {
       && this._interactionFlag("select", true);
     let selectTrigger = null;
     let selectIndicator = null;
+    let selectModeIcon = null;
     if (canSelect) {
       selectTrigger = mk("select", "Selection controls", () => {
         setSelectMenuOpen(!this._selectMenuOpen);
       });
-      selectTrigger.dataset.fcModebarSelect = "";
-      selectTrigger.dataset.fcModebarSelectTrigger = "";
+      selectTrigger.dataset.xyModebarSelect = "";
+      selectTrigger.dataset.xyModebarSelectTrigger = "";
       selectTrigger.setAttribute("aria-haspopup", "menu");
       selectTrigger.setAttribute("aria-expanded", "false");
+      selectTrigger.replaceChildren();
+      selectModeIcon = document.createElement("span");
+      selectModeIcon.dataset.xyModebarSelectIcon = "";
+      selectModeIcon.innerHTML = this._icon("select");
+      selectTrigger.appendChild(selectModeIcon);
       selectIndicator = document.createElement("span");
-      selectIndicator.dataset.fcModebarMenuIndicator = "";
+      selectIndicator.dataset.xyModebarMenuIndicator = "";
       selectIndicator.innerHTML = this._icon("chevrondown");
       selectTrigger.appendChild(selectIndicator);
       this._selectMenuButton = selectTrigger;
+      this._selectMenuIcon = selectModeIcon;
     }
     mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
     const zoomMenu = document.createElement("div");
-    zoomMenu.dataset.fcModebarMenu = "";
+    zoomMenu.dataset.xyModebarMenu = "";
     zoomMenu.setAttribute("role", "menu");
     zoomMenu.setAttribute("aria-label", "Zoom controls");
     zoomMenu.style.cssText =
@@ -862,14 +876,14 @@ Object.assign(ChartView.prototype, {
       const button = document.createElement("button");
       button.type = "button";
       button.tabIndex = -1;
-      button.dataset.fcModebarMenuItem = name;
-      if (separator) button.dataset.fcSeparator = "";
+      button.dataset.xyModebarMenuItem = name;
+      if (separator) button.dataset.xySeparator = "";
       button.setAttribute("role", "menuitem");
       button.style.cssText =
         "display:flex;align-items:center;pointer-events:auto;";
       this._applySlot(button, "modebar_button");
       const icon = document.createElement("span");
-      icon.dataset.fcModebarMenuIcon = "";
+      icon.dataset.xyModebarMenuIcon = "";
       icon.innerHTML = this._icon(name);
       button.appendChild(icon);
       const text = document.createElement("span");
@@ -897,8 +911,8 @@ Object.assign(ChartView.prototype, {
     mkZoomItem("reset", "Reset View", resetView, null, true);
 
     const selectMenu = document.createElement("div");
-    selectMenu.dataset.fcModebarMenu = "";
-    selectMenu.dataset.fcModebarSelectMenu = "";
+    selectMenu.dataset.xyModebarMenu = "";
+    selectMenu.dataset.xyModebarSelectMenu = "";
     selectMenu.setAttribute("role", "menu");
     selectMenu.setAttribute("aria-label", "Selection controls");
     selectMenu.style.cssText =
@@ -909,13 +923,13 @@ Object.assign(ChartView.prototype, {
       const button = document.createElement("button");
       button.type = "button";
       button.tabIndex = -1;
-      button.dataset.fcModebarMenuItem = name;
-      button.dataset.fcModebarSelectItem = mode;
+      button.dataset.xyModebarMenuItem = name;
+      button.dataset.xyModebarSelectItem = mode;
       button.setAttribute("role", "menuitem");
       button.style.cssText = "display:flex;align-items:center;pointer-events:auto;";
       this._applySlot(button, "modebar_button");
       const icon = document.createElement("span");
-      icon.dataset.fcModebarMenuIcon = "";
+      icon.dataset.xyModebarMenuIcon = "";
       icon.innerHTML = this._icon(name);
       button.appendChild(icon);
       const text = document.createElement("span");
@@ -939,8 +953,8 @@ Object.assign(ChartView.prototype, {
     }
 
     const exportMenu = document.createElement("div");
-    exportMenu.dataset.fcModebarMenu = "";
-    exportMenu.dataset.fcModebarExportMenu = "";
+    exportMenu.dataset.xyModebarMenu = "";
+    exportMenu.dataset.xyModebarExportMenu = "";
     exportMenu.setAttribute("role", "menu");
     exportMenu.setAttribute("aria-label", "Toolbar options");
     exportMenu.style.cssText =
@@ -951,14 +965,14 @@ Object.assign(ChartView.prototype, {
       const button = document.createElement("button");
       button.type = "button";
       button.tabIndex = -1;
-      button.dataset.fcModebarMenuItem = name;
-      button.dataset.fcModebarExportItem = name;
-      if (separator) button.dataset.fcSeparator = "";
+      button.dataset.xyModebarMenuItem = name;
+      button.dataset.xyModebarExportItem = name;
+      if (separator) button.dataset.xySeparator = "";
       button.setAttribute("role", "menuitem");
       button.style.cssText = "display:flex;align-items:center;pointer-events:auto;";
       this._applySlot(button, "modebar_button");
       const icon = document.createElement("span");
-      icon.dataset.fcModebarMenuIcon = "";
+      icon.dataset.xyModebarMenuIcon = "";
       icon.innerHTML = this._icon(name);
       button.appendChild(icon);
       const text = document.createElement("span");
@@ -1191,17 +1205,29 @@ Object.assign(ChartView.prototype, {
   _setDragMode(mode) {
     this.dragMode = mode;
     // Cursor telegraphs the gesture (grab for pan, crosshair for box-zoom) but
-    // lives in the defeatable :where([data-fc-slot="canvas"]) stylesheet keyed on
+    // lives in the defeatable :where([data-xy-slot="canvas"]) stylesheet keyed on
     // this attribute — inline cursor would beat a user's cursor-* utility class.
-    if (this.canvas) this.canvas.dataset.fcDragmode = mode;
+    if (this.canvas) this.canvas.dataset.xyDragmode = mode;
     // Active state is a class (defeatable via the stylesheet's :where rule /
     // --chart-modebar-active), not an inline background that would beat classes.
     for (const [name, btn] of Object.entries(this._modeBtns || {})) {
-      btn.classList.toggle("fc-active", name === mode);
+      btn.classList.toggle("xy-active", name === mode);
       btn.setAttribute("aria-pressed", String(name === mode));
     }
-    this._zoomMenuButton?.classList.toggle("fc-active", mode === "zoom");
-    this._selectMenuButton?.classList.toggle("fc-active", mode.startsWith("select"));
+    this._zoomMenuButton?.classList.toggle("xy-active", mode === "zoom");
+    this._selectMenuButton?.classList.toggle("xy-active", mode.startsWith("select"));
+    const selectionMode = {
+      select: ["select", "Box Select"],
+      "select-lasso": ["lasso", "Lasso Select"],
+      "select-x": ["selectx", "X Range"],
+      "select-y": ["selecty", "Y Range"],
+    }[mode];
+    if (selectionMode && this._selectMenuButton && this._selectMenuIcon) {
+      const [iconName, label] = selectionMode;
+      this._selectMenuIcon.innerHTML = this._icon(iconName);
+      this._selectMenuButton.title = `Selection controls: ${label}`;
+      this._selectMenuButton.setAttribute("aria-label", `Selection controls: ${label}`);
+    }
   },
 
   _updateZoomMenuLabel() {
@@ -1222,10 +1248,10 @@ Object.assign(ChartView.prototype, {
     const rounded = Math.round(percent);
     const exactText = percent < 1 ? "<1%" : `${rounded}%`;
     const displayText = rounded > 999 ? `${String(rounded).slice(0, 3)}…%` : exactText;
-    if (this._zoomMenuLabel.dataset.fcZoomExact === exactText
+    if (this._zoomMenuLabel.dataset.xyZoomExact === exactText
         && this._zoomMenuLabel.textContent === displayText) return;
     this._zoomMenuLabel.textContent = displayText;
-    this._zoomMenuLabel.dataset.fcZoomExact = exactText;
+    this._zoomMenuLabel.dataset.xyZoomExact = exactText;
     this._zoomMenuButton.title = `Zoom controls (${exactText})`;
     this._zoomMenuButton.setAttribute("aria-label", `Zoom controls, ${exactText}`);
   },
@@ -1465,12 +1491,12 @@ Object.assign(ChartView.prototype, {
     }
 
     clone.querySelectorAll(
-      '[data-fc-slot="modebar"],[data-fc-slot="tooltip"],' +
-      '[data-fc-slot="selection"],[data-fc-selection-lasso-overlay],' +
-      '[data-fc-slot="crosshair_x"],[data-fc-slot="crosshair_y"]'
+      '[data-xy-slot="modebar"],[data-xy-slot="tooltip"],' +
+      '[data-xy-slot="selection"],[data-xy-selection-lasso-overlay],' +
+      '[data-xy-slot="crosshair_x"],[data-xy-slot="crosshair_y"]'
     ).forEach((node) => node.remove());
     const stylesheet = document.createElement("style");
-    stylesheet.textContent = FC_CHROME_CSS;
+    stylesheet.textContent = XY_CHROME_CSS;
     clone.prepend(stylesheet);
     const content = new XMLSerializer().serializeToString(clone);
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" ` +
@@ -1591,24 +1617,25 @@ Object.assign(ChartView.prototype, {
           '<path d="M10 17 L8 15 M10 17 L12 15"/><path d="M3 10 L5 8 M3 10 L5 12"/>' +
           '<path d="M17 10 L15 8 M17 10 L15 12"/>');
       case "zoom":
-        return svg('<rect x="3.5" y="3.5" width="13" height="13" rx="1" ' +
-          'stroke-dasharray="3 2"/>');
+        return svg('<path d="M7 3.5 H3.5 V7 M13 3.5 H16.5 V7 ' +
+          'M3.5 13 V16.5 H7 M16.5 13 V16.5 H13"/>');
       case "select":
-        return svg('<rect x="3.5" y="3.5" width="13" height="13" rx="1" ' +
-          'stroke-dasharray="2.5 2"/><circle cx="7" cy="7" r="1" fill="currentColor" ' +
+        return svg('<path d="M7 4 H4 V7 M13 4 H16 V7 M4 13 V16 H7 ' +
+          'M16 13 V16 H13"/><circle cx="7" cy="8" r="1" fill="currentColor" ' +
           'stroke="none"/><circle cx="12.5" cy="9" r="1" fill="currentColor" stroke="none"/>' +
           '<circle cx="9.5" cy="13" r="1" fill="currentColor" stroke="none"/>');
       case "lasso":
-        return svg('<path d="M4 6 C6 2 15 3 16 8 C17 13 11 17 6 14 C2 12 2 8 4 6 Z" ' +
-          'stroke-dasharray="2.5 2"/><circle cx="6" cy="8" r="1" fill="currentColor" ' +
-          'stroke="none"/><circle cx="12" cy="7" r="1" fill="currentColor" stroke="none"/>' +
-          '<circle cx="10" cy="12" r="1" fill="currentColor" stroke="none"/>');
+        return svg('<path d="M5 5.5 C7 3 13.5 3.5 15.5 7 C17 10 14 15.5 9 15.5 ' +
+          'C4.5 15.5 2.5 11 4 7.5 Z"/><circle cx="5" cy="5.5" r="1" ' +
+          'fill="currentColor" stroke="none"/><circle cx="15.5" cy="7" r="1" ' +
+          'fill="currentColor" stroke="none"/><circle cx="9" cy="15.5" r="1" ' +
+          'fill="currentColor" stroke="none"/>');
       case "selectx":
-        return svg('<rect x="3" y="5" width="14" height="10" rx="1" stroke-dasharray="2.5 2"/>' +
-          '<path d="M6 10 H14 M6 10 L8 8 M6 10 L8 12 M14 10 L12 8 M14 10 L12 12"/>');
+        return svg('<path d="M5 4 V16 M15 4 V16 M7 10 H13 ' +
+          'M7 10 L9 8 M7 10 L9 12 M13 10 L11 8 M13 10 L11 12"/>');
       case "selecty":
-        return svg('<rect x="5" y="3" width="10" height="14" rx="1" stroke-dasharray="2.5 2"/>' +
-          '<path d="M10 6 V14 M10 6 L8 8 M10 6 L12 8 M10 14 L8 12 M10 14 L12 12"/>');
+        return svg('<path d="M4 5 H16 M4 15 H16 M10 7 V13 ' +
+          'M10 7 L8 9 M10 7 L12 9 M10 13 L8 11 M10 13 L12 11"/>');
       case "chevrondown":
         return svg('<path d="M6 8 L10 12 L14 8"/>');
       case "collapse":
