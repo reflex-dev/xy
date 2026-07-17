@@ -7,15 +7,19 @@ description: Install XY, understand its bundled runtime, and choose optional int
 
 XY supports Python 3.11 and newer. Add it with your preferred package manager:
 
+~~~~md tabs
+## uv
+
 ~~~bash
 uv add xy
 ~~~
 
-or:
+## pip
 
 ~~~bash
 python -m pip install xy
 ~~~
+~~~~
 
 Confirm the package imports from the environment where your code will run:
 

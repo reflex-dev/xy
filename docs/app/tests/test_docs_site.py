@@ -334,6 +334,24 @@ def test_live_preview_markdown_builds_real_xy_components(
     } == app_payloads_before
 
 
+def test_installation_uses_uv_first_package_manager_tabs() -> None:
+    """Present install commands as tabs with uv selected by default."""
+    source_path = DOCS_ROOT / "overview" / "installation.md"
+    rendered = str(
+        render_markdown(
+            source_path.read_text(encoding="utf-8"),
+            virtual_filepath="overview/installation.md",
+            filename=source_path.as_posix(),
+        )
+    )
+
+    assert 'defaultValue:"tab1"' in rendered
+    assert rendered.count('className:"pill-tab"') == 2
+    assert rendered.index('value:"tab1"},"uv"') < rendered.index('value:"tab2"},"pip"')
+    assert 'code:"uv add xy"' in rendered
+    assert 'code:"python -m pip install xy"' in rendered
+
+
 def test_chart_gallery_grid_renders_every_type_with_bounded_live_previews(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
