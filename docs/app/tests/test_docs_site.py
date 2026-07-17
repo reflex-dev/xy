@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import inspect
 import re
+import tomllib
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from pathlib import Path
@@ -489,40 +490,77 @@ def test_styling_docs_cover_every_annotation_factory_and_alias() -> None:
     assert all(f"`{factory}" in content for factory in factories)
 
 
-def test_what_is_xy_shows_density_hero_without_inline_code() -> None:
-    """Keep the signature example visible without exposing its long source."""
+def test_what_is_xy_shows_sdf_plot_grid_without_inline_code() -> None:
+    """Keep the four signature plots visible without exposing their source."""
     content = (DOCS_ROOT / "index.md").read_text(encoding="utf-8")
-    demo_source = (DOCS_APP_ROOT / "xy_docs/demos/instrument_sans_density.py").read_text(
-        encoding="utf-8"
-    )
+    demo_source = (DOCS_APP_ROOT / "xy_docs/demos/xy_sdf_plots.py").read_text(encoding="utf-8")
     font = DOCS_APP_ROOT / "xy_docs/assets/InstrumentSans-wdth-wght.ttf"
     license_file = DOCS_APP_ROOT / "xy_docs/assets/OFL.txt"
 
     hero = content.index("~~~python demo-only exec")
-    introduction = content.index("XY is an experimental Python charting library")
+    introduction = content.index("xy is an experimental Python charting library")
     styling = content.index("**Styling uses familiar web vocabulary.**")
     early_alpha = content.index("### Early alpha")
 
     assert introduction < styling < hero < early_alpha
     assert "demo exec toggle" not in content
-    assert "from xy_docs.demos.instrument_sans_density import xy_density_hero" in content
-    assert "View the complete Python source" in content
-    assert "N_POINTS = 40_000" in demo_source
-    assert "N_INLIERS = round(N_POINTS * 0.97)" in demo_source
+    assert "from xy_docs.demos.xy_sdf_plots import xy_sdf_plot_grid" in content
+    assert "View the customizable Python source" in content
+    assert "sample_points: int = 50_000" in demo_source
+    assert "density_points: int = 1_000_000" in demo_source
+    assert "density_display_points: int = 250_000" in demo_source
+    assert "@lru_cache(maxsize=4)" in demo_source
+    assert (
+        'class_name="grid w-full grid-cols-1 gap-0 overflow-hidden md:grid-cols-2"' in demo_source
+    )
     assert "InstrumentSans-wdth-wght.ttf" in demo_source
     assert 'width="100%"' in demo_source
-    assert 'height="min(74vw, 560px)"' in demo_source
+    assert 'height="auto"' in demo_source
     assert hashlib.sha256(font.read_bytes()).hexdigest() == (
         "b24f1812584816958afcf22e22d08e44318c5e51651e25d2438efdde389b33b1"
     )
     assert "SIL OPEN FONT LICENSE Version 1.1" in license_file.read_text(encoding="utf-8")
 
 
-def test_density_hero_toolbar_follows_reflex_color_mode() -> None:
-    """Theme the hero toolbar from the host site's adaptive Radix tokens."""
-    from xy_docs.demos.instrument_sans_density import xy_density_hero
+def test_sdf_plot_grid_is_cached_and_uses_reflex_toolbar_tokens() -> None:
+    """Build once while keeping every chart toolbar tied to Reflex tokens."""
+    from dataclasses import replace
 
-    rendered = str(xy_density_hero())
+    from xy_docs.demos.xy_sdf_plots import (
+        DEFAULT_CONFIG,
+        build_sdf_plots,
+        xy_sdf_plot_grid,
+    )
+
+    config = replace(
+        DEFAULT_CONFIG,
+        font_size=180,
+        x_height_bins=12,
+        sample_points=1_000,
+        density_points=2_000,
+        density_display_points=1_500,
+        bin_min_count=2,
+        heatmap_stride=4,
+        contour_cells_per_bin=4,
+    )
+    first = build_sdf_plots(config)
+    assert build_sdf_plots(config) is first
+    assert first.reading_order == (
+        first.bins_scatter,
+        first.heatmap,
+        first.contours,
+        first.million_scatter,
+    )
+    density_mark = first.million_scatter.children[0]
+    assert density_mark.kind == "scatter"
+    assert len(density_mark.x) == config.density_display_points
+    assert density_mark.props["density"] is False
+    sizes = density_mark.props["size"]
+    assert density_mark.props["size_range"] == (float(sizes.min()), float(sizes.max()))
+    assert sizes.min() >= config.density_size_offset
+    assert sizes.max() <= config.density_size_offset + config.density_size_scale
+
+    rendered = str(xy_sdf_plot_grid(config))
     expected_tokens = {
         "--chart-modebar-bg": "var(--secondary-2)",
         "--chart-modebar-active": "var(--primary-a4)",
@@ -531,7 +569,52 @@ def test_density_hero_toolbar_follows_reflex_color_mode() -> None:
     }
 
     for name, value in expected_tokens.items():
-        assert f'["{name}"] : "{value}"' in rendered
+        assert rendered.count(f'["{name}"] : "{value}"') == 4
+    assert 'id:"xy-sdf-plot-grid"' in rendered
+    assert "gap-0" in rendered
+
+
+def test_sdf_heatmap_outside_support_uses_page_background() -> None:
+    """Use the page surface outside support without changing the PDF ramp."""
+    from xy_docs.demos import xy_sdf_plots as demo
+
+    colors = demo._heatmap_colors(
+        demo.np.array([[0.0, 1e-12, 1.0]]),
+        demo.DEFAULT_CONFIG,
+        demo.DEFAULT_PALETTE,
+    )
+    background = demo.DEFAULT_PALETTE.dark_background.removeprefix("#")
+    expected = [int(background[index : index + 2], 16) / 255 for index in (0, 2, 4)]
+    assert demo.DEFAULT_PALETTE.dark_background == "#090A0B"
+    assert colors[0, 0, :3] == pytest.approx(expected)
+    assert colors[0, 1, :3] != pytest.approx(expected)
+    assert colors[0, 2, :3] != pytest.approx(expected)
+    assert demo.np.allclose(colors[..., 3], 1)
+
+
+def test_sdf_distance_transform_is_exact_without_scipy() -> None:
+    """Keep the signed-distance model exact without a heavyweight dependency."""
+    from xy_docs.demos import xy_sdf_plots as demo
+
+    mask = demo.np.array(
+        [
+            [True, True, True, True, True],
+            [True, False, True, False, True],
+            [True, True, True, True, True],
+            [True, True, False, True, True],
+        ]
+    )
+    zero_cells = demo.np.argwhere(~mask)
+    expected = demo.np.empty(mask.shape, dtype=float)
+    for cell in demo.np.ndindex(mask.shape):
+        expected[cell] = demo.np.sqrt(demo.np.min(demo.np.sum((zero_cells - cell) ** 2, axis=1)))
+
+    assert demo.np.allclose(demo._distance_transform_edt(mask), expected)
+
+    manifest = tomllib.loads((DOCS_APP_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert not any(
+        dependency.lower().startswith("scipy") for dependency in manifest["project"]["dependencies"]
+    )
 
 
 def test_public_docs_use_the_xy_namespace_without_the_legacy_alias() -> None:

@@ -1,16 +1,14 @@
 ---
-title: What is XY?
+title: What is `xy`?
 description: Understand XY's screen-bounded rendering and CSS-first styling model.
 ---
 
-# What is XY?
+# What is `xy`?
 
-XY is an experimental Python charting library for responsive, interactive 2D
+xy is an experimental Python charting library for responsive, interactive 2D
 visualizations. It combines a native Rust compute core, binary column transport,
 and a WebGL2 client with a declarative Python API that works in notebooks,
-applications, and standalone exports.
-
-Two ideas shape the library:
+applications, and standalone exports. Two ideas shape the library:
 
 - **Rendered output is bounded by the visible result.** Long ordered series are
   decimated and dense point clouds become fixed-resolution density surfaces,
@@ -24,16 +22,17 @@ Two ideas shape the library:
   selectors can target pixels inside a canvas.
 
 ~~~python demo-only exec
-from xy_docs.demos.instrument_sans_density import xy_density_hero
+from xy_docs.demos.xy_sdf_plots import xy_sdf_plot_grid
 
-density_demo = xy_density_hero
+sdf_plots = xy_sdf_plot_grid
 ~~~
 
-This chart is generated from 40,000 points: 97% sampled inside lowercase
-Instrument Sans glyphs and 3% retained as a sparse outlier halo. Dense cells
-become a screen-bounded RGBA heatmap while the source points remain available.
-Pillow is used only to rasterize the font mask for this example; it is not an
-XY runtime dependency. [View the complete Python source](https://github.com/reflex-dev/xy/blob/main/docs/app/xy_docs/demos/instrument_sans_density.py).
+All four interactive charts come from one cached signed-distance probability
+field for lowercase Instrument Sans `xy`. The builder samples one million
+points once, reuses the first 50,000 for the binned scatter view and 250,000 for
+the final direct scatter, and shares the same PDF with the direct heatmap and
+contours. The demo's only extra dependency is Pillow; its exact Euclidean
+distance transform is implemented directly with NumPy. [View the customizable Python source](https://github.com/reflex-dev/xy/blob/main/docs/app/xy_docs/demos/xy_sdf_plots.py).
 
 ~~~md alert warning
 ### Early alpha
