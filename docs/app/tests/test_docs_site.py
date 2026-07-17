@@ -262,6 +262,22 @@ def test_what_is_xy_shows_density_hero_without_inline_code() -> None:
     )
 
 
+def test_density_hero_toolbar_follows_reflex_color_mode() -> None:
+    """Theme the hero toolbar from the host site's adaptive Radix tokens."""
+    from xy_docs.demos.instrument_sans_density import xy_density_hero
+
+    rendered = str(xy_density_hero())
+    expected_tokens = {
+        "--chart-modebar-bg": "var(--secondary-2)",
+        "--chart-modebar-active": "var(--primary-a4)",
+        "--chart-text": "var(--secondary-11)",
+        "--chart-focus": "var(--primary-9)",
+    }
+
+    for name, value in expected_tokens.items():
+        assert f'["{name}"] : "{value}"' in rendered
+
+
 def test_public_docs_use_the_xy_namespace_without_the_legacy_alias() -> None:
     """Keep examples, generated references, and docs tests on the public name."""
     legacy_alias = "".join(("f", "c"))

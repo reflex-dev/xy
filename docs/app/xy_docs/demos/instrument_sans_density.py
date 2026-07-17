@@ -174,4 +174,10 @@ def xy_density_hero():
         _chart,
         width="100%",
         height="min(74vw, 560px)",
+        style={
+            "--chart-modebar-bg": "var(--secondary-2)",
+            "--chart-modebar-active": "var(--primary-a4)",
+            "--chart-text": "var(--secondary-11)",
+            "--chart-focus": "var(--primary-9)",
+        },
     )
