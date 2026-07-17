@@ -16,6 +16,7 @@ from reflex_base.components.memo import MemoComponent
 from reflex_docgen.markdown import (
     Block,
     BoldSpan,
+    CodeBlock,
     DirectiveBlock,
     HeadingBlock,
     ImageSpan,
@@ -351,16 +352,64 @@ def test_live_preview_markdown_builds_real_xy_components(
 
 
 @pytest.mark.parametrize(
-    "relative_path",
-    ("overview/first-chart.md", "core-concepts/index.md"),
+    ("relative_path", "demo_name"),
+    (
+        ("overview/first-chart.md", "first_chart_demo"),
+        ("core-concepts/index.md", "composition_model_demo"),
+    ),
 )
-def test_beginner_examples_keep_their_live_previews(relative_path: str) -> None:
-    """Keep introductory examples paired with rendered interactive charts."""
-    content = (DOCS_ROOT / relative_path).read_text(encoding="utf-8")
+def test_beginner_examples_use_docdemos(
+    relative_path: str,
+    demo_name: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Keep beginner code and its live result together in a DocDemo."""
+    source_path = DOCS_ROOT / relative_path
+    content = source_path.read_text(encoding="utf-8")
+    live_blocks = [
+        block
+        for block in parse_document(content).blocks
+        if isinstance(block, CodeBlock)
+        and block.language == "python"
+        and {"demo", "exec"} <= set(block.flags)
+    ]
 
-    assert any(marker in content for marker in check_html_routes.LIVE_PREVIEW_MARKERS)
-    assert "import reflex_xy" in content
-    assert "return reflex_xy.chart(" in content
+    assert len(live_blocks) == 1
+    assert "demo-only" not in live_blocks[0].flags
+    assert demo_name in live_blocks[0].content
+    assert "reflex_xy.chart" in live_blocks[0].content
+
+    export_calls: list[tuple[tuple, dict]] = []
+
+    def forbid_export(*args, **kwargs) -> None:
+        export_calls.append((args, kwargs))
+        msg = "DocDemo executed chart.to_html()"
+        raise AssertionError(msg)
+
+    if relative_path == "overview/first-chart.md":
+        assert 'if __name__ == "__main__":' in live_blocks[0].content
+        assert 'chart.to_html("scatter.html")' in live_blocks[0].content
+        monkeypatch.setattr(xy.Chart, "to_html", forbid_export)
+
+    monkeypatch.chdir(tmp_path)
+    rendered = str(
+        render_markdown(
+            content,
+            virtual_filepath=f"tests/docdemo/{relative_path}",
+            filename=source_path.as_posix(),
+        )
+    )
+
+    shell = 'className:"py-4 gap-4 flex flex-col w-full"'
+    preview = 'className:"flex flex-col p-6 rounded-xl overflow-x-auto border border-secondary-4 bg-secondary-2 items-center justify-center w-full"'
+    assert rendered.count(shell) == 1
+    assert rendered.count(preview) == 1
+    assert rendered.count("XYChart") == 1
+    assert rendered.index(shell) < rendered.index(preview)
+    assert demo_name in rendered
+    assert export_calls == []
+    assert not (tmp_path / "scatter.html").exists()
 
 
 def test_installation_uses_uv_first_package_manager_tabs() -> None:

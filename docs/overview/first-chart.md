@@ -10,25 +10,11 @@ while marks and axes describe what belongs inside it.
 
 ## In a Python script
 
-Create a scatter chart and write one self-contained interactive HTML file:
+Build the chart once and choose how to display it. The demo below renders the
+same `xy.Chart` that the script exports; the small `first_chart_demo()` function
+is only the Reflex wrapper used by this documentation site.
 
-~~~python
-import xy
-
-chart = xy.scatter_chart(
-    xy.scatter([1, 2, 3, 4], [3, 5, 4, 7], color="#6e56cf", size=10),
-    xy.x_axis(label="sample"),
-    xy.y_axis(label="value"),
-    title="First chart",
-)
-chart.to_html("scatter.html")
-~~~
-
-The same chart is rendered live below. Hover the points or use the toolbar to
-pan, zoom, and reset the view.
-
-~~~python demo-only exec
-import reflex_xy
+~~~python demo exec
 import xy
 
 chart = xy.scatter_chart(
@@ -39,13 +25,21 @@ chart = xy.scatter_chart(
 )
 
 
+# This documentation site uses Reflex to render the chart above.
 def first_chart_demo():
+    import reflex_xy
+
     return reflex_xy.chart(chart, height="320px")
+
+
+if __name__ == "__main__":
+    chart.to_html("scatter.html")
 ~~~
 
-Open `scatter.html` in a browser. Hover, pan, zoom, and the built-in controls
-run locally; the file does not need a Python process or a network connection
-after export.
+Run the file with `python first_chart.py`, then open `scatter.html`. Hover, pan,
+zoom, and the built-in controls run locally; the exported file does not need a
+Python process or network connection. In your own script or notebook, you do
+not need the `first_chart_demo()` wrapper.
 
 ## In a notebook
 
