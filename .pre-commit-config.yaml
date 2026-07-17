@@ -5,31 +5,15 @@ repos:
     rev: v0.15.8
     hooks:
       - id: ruff-check
-        args: ["."]
+        args: ["--config=pyproject.toml", "--fix", "--exit-non-zero-on-fix", "."]
         pass_filenames: false
         stages: [pre-commit]
       - id: ruff-format
-        args: [--check, .]
+        args: [--config=pyproject.toml, .]
         pass_filenames: false
         stages: [pre-commit]
   - repo: local
     hooks:
-      - id: docs-app-ruff-format
-        name: docs app ruff format
-        entry: uv run --project docs/app --no-sync ruff format --config docs/app/pyproject.toml
-        language: system
-        types_or: [python, markdown]
-        files: ^docs/
-        exclude: ^docs/engineering/
-        require_serial: true
-      - id: docs-app-ruff-check
-        name: docs app ruff check
-        entry: uv run --project docs/app --no-sync ruff check --config docs/app/pyproject.toml
-        args: [--fix, --exit-non-zero-on-fix]
-        language: system
-        types_or: [python, pyi]
-        files: ^docs/app/
-        require_serial: true
       - id: docs-app-codespell
         name: docs app codespell
         entry: uv run --project docs/app --no-sync codespell --toml docs/app/pyproject.toml

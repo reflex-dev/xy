@@ -4,8 +4,11 @@ Every rendered chrome element is a stable, CSS-addressable surface. You can
 restyle the whole chart with plain CSS, attribute selectors, Tailwind, or
 per-slot inline styles — and your styles always win, without `!important`.
 
-This guide is the single reference for the styling contract. For the API shapes
-see [reflex-shaped-api.md](design/reflex-shaped-api.md); for the render internals
+This engineering guide explains the implementation contract. The public,
+task-oriented references are [Styling](../styling/index.md),
+[Component Variations](../styling/component-variations.md), and
+[Mark Styles](../styling/mark-styles.md). For the API shapes see
+[reflex-shaped-api.md](design/reflex-shaped-api.md); for the render internals
 see [renderer-architecture.md](design/renderer-architecture.md).
 
 ## The five ways to style
@@ -15,7 +18,7 @@ see [renderer-architecture.md](design/renderer-architecture.md).
 | `class_names={slot: "..."}` | Add classes to a chrome slot (great for Tailwind) | `xy.chart(...)` |
 | `styles={slot: {...}}` | Inline CSS on a chrome slot | `xy.chart(...)` |
 | `style={...}` | Cross-renderer CSS appearance subset for a rendered mark | `xy.line(...)`, `xy.scatter(...)`, … |
-| `class_name=` / `style=` | A single annotation (per-call) | `.vline(...)`, `.text(...)`, … |
+| `class_name=` / `style=` | One annotation label; geometry still uses typed props | `.vline(...)`, `.text(...)`, … |
 | `custom_css="..."` | A raw author stylesheet in the exported document | `to_html(fig, custom_css=...)` |
 
 ```python
@@ -40,6 +43,12 @@ chart = xy.chart(
 style APIs: a bare number on a length property becomes `px` (`{"font_size": 18}`
 → `font-size:18px`), custom properties (`--x`) and unitless properties pass
 through untouched.
+
+In Reflex, Tailwind utilities require `rx.plugins.TailwindV4Plugin()`. Complete
+literal classes emitted into Reflex's generated JSX work with the plugin's
+normal scan paths; the original Python or Markdown path does not need to be
+added. See the public [Chrome Slots](../styling/chrome-slots.md) guide for the
+standalone-export and dynamic-class boundaries.
 
 ## Rendered marks: standard CSS vocabulary
 
@@ -89,6 +98,10 @@ Within `style`, use the standard paint property for the geometry: `stroke` for
 line-like marks and `fill` for filled marks. `color` is not a paint alias there;
 this avoids ambiguous combinations such as `color` plus `stroke` and keeps the
 same declarations meaningful in SVG, WebGL, and native PNG output.
+
+A mark's `class_name` is adapter-only trace metadata. It does not create a DOM
+node and is not interpreted as a paint selector by the shipped browser,
+Reflex, SVG, or native renderers.
 
 ### Reflex integration boundary
 
@@ -158,7 +171,7 @@ raises before it reaches the client.
 | `tooltip` | Hover tooltip |
 | `modebar` | Mode/tool bar container |
 | `modebar_button` | One mode/tool button (`.xy-active` when engaged) |
-| `selection` | Box/lasso selection rectangle |
+| `selection` | Active box-select or box-zoom rectangle |
 | `crosshair_x` | Vertical crosshair line |
 | `crosshair_y` | Horizontal crosshair line |
 | `badge` | Reduction/density badge container |
@@ -182,11 +195,11 @@ raises before it reaches the client.
 ## Why your styles always win
 
 The client injects one stylesheet of *visual* defaults (background, color,
-padding, border, font, box-shadow, cursor). Every rule is wrapped in
-[`:where(...)`](https://developer.mozilla.org/en-US/docs/Web/CSS/:where), which
-has **zero specificity**. A Tailwind utility class (specificity `0,1,0`) or an
-inline `styles[slot]` (inline, highest) therefore beats the default with no
-`!important` and regardless of stylesheet source order.
+padding, border, font, box-shadow, cursor). It lives in the low-priority `base`
+cascade layer, and every selector uses
+[`:where(...)`](https://developer.mozilla.org/en-US/docs/Web/CSS/:where) for
+**zero specificity**. Tailwind's later utility layer, unlayered author CSS, and
+inline `styles[slot]` therefore beat the defaults without `!important`.
 
 The rendered elements carry only **structural** inline styles — position, size,
 z-index, and interaction state (`data-xy-dragmode`, the `.xy-active` class).
@@ -334,12 +347,13 @@ fill with an opaque outline, keep whole-mark opacity at `1` and set
 
 ### Scatter markers — `symbol`, `stroke`, `stroke_width`
 
-`scatter` markers take a `symbol` — `circle` (default), `square`, `diamond`,
-`triangle`, or `cross` — plus a `stroke` color and `stroke_width` (px) for a
-border, e.g. `scatter(x, y, symbol="triangle", stroke="#fff", stroke_width=2)`.
-Each is an antialiased SDF in the point shader, so shapes stay crisp at any size
-and the border is a true ring (a stroke width with no color borders in the mark
-color). Symbols compose with the color/size channels.
+`scatter` markers take any of the 17 renderer-backed symbols listed in the
+public [Mark styles](../styling/mark-styles.md#mark-specific-appearance) guide,
+plus a `stroke` color and `stroke_width` (px) for a border, e.g.
+`scatter(x, y, symbol="triangle", stroke="#fff", stroke_width=2)`. Each is an
+antialiased SDF in the point shader, so shapes stay crisp at any size and the
+border is a true ring (a stroke width with no color borders in the mark color).
+Symbols compose with the color/size channels.
 
 Interaction state belongs to the host framework. In Reflex, use Reflex state,
 event handlers, conditions, and ordinary CSS classes/styles; XY only emits the
@@ -354,7 +368,11 @@ Hover and tooltips keep reporting the real data points, not interpolated ones.
 Densification caps at ~32k vertices — past that the polyline is sub-pixel
 dense and smoothing is invisible by construction.
 
-### The full mark-styling matrix
+### Common typed appearance combinations
+
+This table compares the most feature-rich typed appearance props. The public
+[Mark Styles](../styling/mark-styles.md) matrix is exhaustive across every
+rendered mark family and its accepted `style=` properties.
 
 | Mark | Color/opacity | Gradient fill | Corner radius | Stroke | Curve | Dash | Size/width |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -362,7 +380,7 @@ dense and smoothing is invisible by construction.
 | `histogram` | ✅ | ✅ | ✅ all or `(tip, base)` | ✅ | — | — | bin-driven |
 | `area` | ✅ (+ `line_width`/`line_opacity`) | ✅ | — | line is the stroke | ✅ | ✅ outline | ✅ |
 | `line` | ✅ | — (stroke gradients: roadmap) | — | is a stroke | ✅ | ✅ | ✅ `width` |
-| `scatter` | ✅ + color/size channels | — | `symbol` (circle/square/diamond/triangle/cross) | ✅ `stroke`/`stroke_width` | — | — | ✅ + size channel |
+| `scatter` | ✅ + color/size channels | — | 17 `symbol` glyphs | ✅ `stroke`/`stroke_width` | — | — | ✅ + size channel |
 | `heatmap` | colormap + `domain` | colormap is the gradient | — | — | — | — | cell-driven |
 
 On the roadmap, in likely order: per-mark drop

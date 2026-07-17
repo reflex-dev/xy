@@ -126,12 +126,12 @@ Object.assign(ChartView.prototype, {
           points: firstLassoPoint ? [firstLassoPoint] : null,
           previousLasso,
         };
-        c.setPointerCapture(e.pointerId);
+        try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
         this.tooltip.style.display = "none";
         return;
       }
       drag = { px: e.clientX, py: e.clientY, view: { ...this.view }, moved: false };
-      c.setPointerCapture(e.pointerId);
+      try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
       this.tooltip.style.display = "none";
     });
     this._listen(c, "pointermove", (e) => {
@@ -161,10 +161,17 @@ Object.assign(ChartView.prototype, {
     });
     const end = (e) => {
       if (band) {
+        // Pointermove is not guaranteed to run at the pointer-up coordinate.
+        // Capture that final vertex before deciding whether the gesture moved;
+        // a naturally closed lasso finishes near its start and therefore has
+        // almost no *net* displacement despite enclosing a real area.
+        if (band.mode === "select-lasso") this._updateBand(band, e);
         this.selRect.style.display = "none";
         this.selLasso.style.display = "none";
         const d1 = dataAt(e.clientX, e.clientY);
-        const moved = Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
+        const moved = band.mode === "select-lasso"
+          ? band.points.length >= 3
+          : Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
         if (moved) {
           if (band.mode === "zoom") this._zoomToBox(band.d0, d1, true);
           else if (band.mode === "select-lasso") {
@@ -835,6 +842,7 @@ Object.assign(ChartView.prototype, {
       && this._interactionFlag("select", true);
     let selectTrigger = null;
     let selectIndicator = null;
+    let selectModeIcon = null;
     if (canSelect) {
       selectTrigger = mk("select", "Selection controls", () => {
         setSelectMenuOpen(!this._selectMenuOpen);
@@ -843,11 +851,17 @@ Object.assign(ChartView.prototype, {
       selectTrigger.dataset.xyModebarSelectTrigger = "";
       selectTrigger.setAttribute("aria-haspopup", "menu");
       selectTrigger.setAttribute("aria-expanded", "false");
+      selectTrigger.replaceChildren();
+      selectModeIcon = document.createElement("span");
+      selectModeIcon.dataset.xyModebarSelectIcon = "";
+      selectModeIcon.innerHTML = this._icon("select");
+      selectTrigger.appendChild(selectModeIcon);
       selectIndicator = document.createElement("span");
       selectIndicator.dataset.xyModebarMenuIndicator = "";
       selectIndicator.innerHTML = this._icon("chevrondown");
       selectTrigger.appendChild(selectIndicator);
       this._selectMenuButton = selectTrigger;
+      this._selectMenuIcon = selectModeIcon;
     }
     mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
     const zoomMenu = document.createElement("div");
@@ -1202,6 +1216,18 @@ Object.assign(ChartView.prototype, {
     }
     this._zoomMenuButton?.classList.toggle("xy-active", mode === "zoom");
     this._selectMenuButton?.classList.toggle("xy-active", mode.startsWith("select"));
+    const selectionMode = {
+      select: ["select", "Box Select"],
+      "select-lasso": ["lasso", "Lasso Select"],
+      "select-x": ["selectx", "X Range"],
+      "select-y": ["selecty", "Y Range"],
+    }[mode];
+    if (selectionMode && this._selectMenuButton && this._selectMenuIcon) {
+      const [iconName, label] = selectionMode;
+      this._selectMenuIcon.innerHTML = this._icon(iconName);
+      this._selectMenuButton.title = `Selection controls: ${label}`;
+      this._selectMenuButton.setAttribute("aria-label", `Selection controls: ${label}`);
+    }
   },
 
   _updateZoomMenuLabel() {
@@ -1591,24 +1617,25 @@ Object.assign(ChartView.prototype, {
           '<path d="M10 17 L8 15 M10 17 L12 15"/><path d="M3 10 L5 8 M3 10 L5 12"/>' +
           '<path d="M17 10 L15 8 M17 10 L15 12"/>');
       case "zoom":
-        return svg('<rect x="3.5" y="3.5" width="13" height="13" rx="1" ' +
-          'stroke-dasharray="3 2"/>');
+        return svg('<path d="M7 3.5 H3.5 V7 M13 3.5 H16.5 V7 ' +
+          'M3.5 13 V16.5 H7 M16.5 13 V16.5 H13"/>');
       case "select":
-        return svg('<rect x="3.5" y="3.5" width="13" height="13" rx="1" ' +
-          'stroke-dasharray="2.5 2"/><circle cx="7" cy="7" r="1" fill="currentColor" ' +
+        return svg('<path d="M7 4 H4 V7 M13 4 H16 V7 M4 13 V16 H7 ' +
+          'M16 13 V16 H13"/><circle cx="7" cy="8" r="1" fill="currentColor" ' +
           'stroke="none"/><circle cx="12.5" cy="9" r="1" fill="currentColor" stroke="none"/>' +
           '<circle cx="9.5" cy="13" r="1" fill="currentColor" stroke="none"/>');
       case "lasso":
-        return svg('<path d="M4 6 C6 2 15 3 16 8 C17 13 11 17 6 14 C2 12 2 8 4 6 Z" ' +
-          'stroke-dasharray="2.5 2"/><circle cx="6" cy="8" r="1" fill="currentColor" ' +
-          'stroke="none"/><circle cx="12" cy="7" r="1" fill="currentColor" stroke="none"/>' +
-          '<circle cx="10" cy="12" r="1" fill="currentColor" stroke="none"/>');
+        return svg('<path d="M5 5.5 C7 3 13.5 3.5 15.5 7 C17 10 14 15.5 9 15.5 ' +
+          'C4.5 15.5 2.5 11 4 7.5 Z"/><circle cx="5" cy="5.5" r="1" ' +
+          'fill="currentColor" stroke="none"/><circle cx="15.5" cy="7" r="1" ' +
+          'fill="currentColor" stroke="none"/><circle cx="9" cy="15.5" r="1" ' +
+          'fill="currentColor" stroke="none"/>');
       case "selectx":
-        return svg('<rect x="3" y="5" width="14" height="10" rx="1" stroke-dasharray="2.5 2"/>' +
-          '<path d="M6 10 H14 M6 10 L8 8 M6 10 L8 12 M14 10 L12 8 M14 10 L12 12"/>');
+        return svg('<path d="M5 4 V16 M15 4 V16 M7 10 H13 ' +
+          'M7 10 L9 8 M7 10 L9 12 M13 10 L11 8 M13 10 L11 12"/>');
       case "selecty":
-        return svg('<rect x="5" y="3" width="10" height="14" rx="1" stroke-dasharray="2.5 2"/>' +
-          '<path d="M10 6 V14 M10 6 L8 8 M10 6 L12 8 M10 14 L8 12 M10 14 L12 12"/>');
+        return svg('<path d="M4 5 H16 M4 15 H16 M10 7 V13 ' +
+          'M10 7 L8 9 M10 7 L12 9 M10 13 L8 11 M10 13 L12 11"/>');
       case "chevrondown":
         return svg('<path d="M6 8 L10 12 L14 8"/>');
       case "collapse":

@@ -302,8 +302,9 @@ DOM chrome slots:
 Each rendered slot also receives `data-xy-slot="<slot>"`, so plain CSS,
 attribute selectors, and Tailwind arbitrary variants can target the same stable
 surface even when the caller does not add a class. The client ships one
-zero-specificity `:where([data-xy-slot="…"])` default stylesheet, so a
-`class_names` utility class (or an inline `chrome_styles` value) always wins
+low-priority `base`-layer stylesheet whose selectors use
+zero-specificity `:where([data-xy-slot="…"])`. Tailwind utilities in their
+later layer, unlayered author CSS, and inline `chrome_styles` therefore win
 over the built-in look without needing `!important`. In the standalone
 `to_html(...)` export — which has no host page to inherit Tailwind from — pass
 `custom_css="…"` to inject the stylesheet that defines those utility classes.
@@ -355,6 +356,11 @@ xy.scatter(x="x", y="y", data=df, color="var(--chart-accent)")
 ```
 
 This keeps Tailwind useful without pretending CSS can reach GPU buffers.
+
+The Reflex adapter mirrors class strings from a fixed `xy.Chart`/`xy.Figure`
+into generated JSX so Tailwind can discover them at compile time. A live token
+or Var figure does not exist until runtime; its complete utility names must
+also appear literally in ordinary application source or in the host safelist.
 
 ## 5. Tooltip Customization
 
@@ -686,7 +692,8 @@ Now part of the core alpha contract:
 
 - Neutral `xy.chart(...)`.
 - `xy.tooltip(...)`, `xy.modebar(...)`, `xy.theme(...)`.
-- `xy.colorbar(...)` with the same CSS-slot and opaque adapter-render contract.
+- `xy.colorbar(...)` with inferred built-in continuous-scale chrome, the same
+  CSS slots, and an opaque adapter-render replacement contract.
 - `class_name`, `class_names`, and `style` props.
 
 Can add:

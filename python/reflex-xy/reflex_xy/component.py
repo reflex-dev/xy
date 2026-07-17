@@ -43,6 +43,7 @@ import reflex as rx
 
 from .assets import WRAPPER_TAG, register
 from .payload_asset import payload_asset
+from .registry import _figure_of
 
 __all__ = ["chart"]
 
@@ -69,6 +70,13 @@ def _build_component_cls() -> Any:
         # kernel-less.
         src: rx.Var[str]
 
+        # Static charts carry their DOM class strings inside the binary XYBF
+        # payload, where Reflex's TailwindV4Plugin cannot discover them.  This
+        # compile-only prop mirrors those literal strings into the generated
+        # JSX source so Tailwind can emit the corresponding utilities.  The
+        # wrapper destructures and discards it; it never reaches the DOM.
+        tailwind_class_tokens: rx.Var[str]
+
         # Semantic events out (small JSON by construction — §1). Live mode
         # only; the static tier has no kernel to resolve rows.
         on_point_hover: rx.EventHandler[lambda row: [row]]
@@ -91,6 +99,16 @@ def _is_chart_like(source: Any) -> bool:
     )
 
 
+def _tailwind_class_manifest(figure: Any) -> str:
+    """Return every static-chart DOM class string as one scan-only literal.
+
+    The inventory itself is core-Figure knowledge and lives on
+    :meth:`xy.Figure.dom_class_strings`; reading the built figure avoids a
+    second payload compilation (which can be expensive for large charts).
+    """
+    return " ".join(figure.dom_class_strings())
+
+
 def chart(source: Any, **props: Any) -> Any:
     """Place a xy chart.
 
@@ -111,7 +129,15 @@ def chart(source: Any, **props: Any) -> Any:
     if isinstance(source, (str, rx.Var)):
         props["token"] = source
     elif _is_chart_like(source):
-        props["src"] = payload_asset(source)
+        # Build a public Chart once, then reuse the cached Figure for both the
+        # payload and its Tailwind scan manifest.  In particular, do not call
+        # build_payload() just to discover classes: that would duplicate the
+        # largest part of static-chart compilation.
+        figure = _figure_of(source)
+        props["src"] = payload_asset(figure)
+        class_manifest = _tailwind_class_manifest(figure)
+        if class_manifest:
+            props["tailwind_class_tokens"] = class_manifest
     else:
         msg = (
             "reflex_xy.chart() takes a figure token (state var or string) or a "

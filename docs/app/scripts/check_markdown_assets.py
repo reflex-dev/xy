@@ -20,9 +20,7 @@ def markdown_paths(route: str, *, is_index: bool) -> tuple[Path, Path]:
         Paths relative to the documentation build root.
     """
     route_path = Path(route.strip("/"))
-    direct_path = (
-        route_path / "index.md" if is_index else Path(f"{route.strip('/')}.md")
-    )
+    direct_path = route_path / "index.md" if is_index else Path(f"{route.strip('/')}.md")
     trailing_path = route_path / ".md" if route_path.parts else Path(".md")
     return direct_path, trailing_path
 

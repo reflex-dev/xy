@@ -9,6 +9,7 @@ dominant mutation idioms without reproducing matplotlib's artist graph.
 from __future__ import annotations
 
 import warnings
+from collections.abc import Iterator
 from itertools import pairwise
 from typing import Any, Optional
 
@@ -385,7 +386,9 @@ class PathCollection(Artist):
         self._entry["y"] = arr[:, 1]
         self._touch()
 
-    def legend_elements(self, prop: str = "colors", num: Any = "auto", **kwargs: Any):
+    def legend_elements(
+        self, prop: str = "colors", num: Any = "auto", **kwargs: Any
+    ) -> tuple[list["PathCollection"], list[str]]:
         import numpy as np
 
         del kwargs
@@ -612,7 +615,7 @@ class StemContainer:
         self.baseline = artist
         artist._axes._register_container(self)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Any]:
         return iter((self.markerline, self.stemlines, self.baseline))
 
     def remove(self) -> None:
@@ -630,7 +633,7 @@ class ErrorbarContainer:
         self._artist = artist
         artist._axes._register_container(self)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Any]:
         return iter(self.lines)
 
     def remove(self) -> None:
@@ -769,7 +772,7 @@ class PieContainer:
             for item in group:
                 item.remove()
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[list[Any]]:
         """Keep the pre-3.11 ``wedges, texts[, autotexts]`` idiom working."""
         yield self.wedges
         yield self._texts[0] if self._texts else []
@@ -898,7 +901,9 @@ class Legend:
     per group of lines) alongside the axes' own ``ax.legend()``.
     """
 
-    def __init__(self, parent: Any, handles: Any, labels: Any, loc: Any = "best", **kwargs: Any):
+    def __init__(
+        self, parent: Any, handles: Any, labels: Any, loc: Any = "best", **kwargs: Any
+    ) -> None:
         handles, labels = list(handles), list(labels)
         if len(handles) != len(labels):
             warnings.warn(

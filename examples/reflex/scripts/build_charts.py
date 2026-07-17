@@ -435,8 +435,8 @@ def annotated_heatmap_demo() -> xy.Chart:
             color="#0f172a",
             size=9.0,
             symbol="diamond",
-            dx=8.0,
-            dy=-12.0,
+            dx=10.0,
+            dy=20.0,
             style={
                 "background": "rgba(15, 23, 42, 0.88)",
                 "label_color": "#ffffff",

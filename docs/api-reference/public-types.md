@@ -18,7 +18,7 @@ construct lowercase factory results and only name these types in annotations.
 | `Axis` | X or y scale and tick specification |
 | `Legend` | Legend chrome or opaque framework replacement |
 | `Tooltip` | Tooltip chrome or opaque framework replacement |
-| `Colorbar` | Minimal colorbar chrome or replacement hook |
+| `Colorbar` | Inferred continuous-scale chrome or opaque framework replacement |
 | `Modebar` | Toolbar visibility and DOM styling |
 | `Theme` | Validated chart theme tokens |
 | `Interaction` | Browser interaction and linked-viewport configuration |

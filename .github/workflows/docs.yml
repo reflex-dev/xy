@@ -53,8 +53,8 @@ jobs:
         run: uv run --project docs/app --no-sync pytest docs/app/tests -v
       - name: Run docs quality hooks
         run: |
-          uv run --project docs/app --no-sync pre-commit run docs-app-ruff-format --all-files
-          uv run --project docs/app --no-sync pre-commit run docs-app-ruff-check --all-files
+          uv run --project docs/app --no-sync pre-commit run ruff-format --all-files
+          uv run --project docs/app --no-sync pre-commit run ruff-check --all-files
           uv run --project docs/app --no-sync pre-commit run docs-app-codespell --all-files
 
   production:
@@ -134,9 +134,11 @@ jobs:
           fi
       - name: Validate Markdown links against the generated sitemap
         working-directory: docs/app
-        run: >-
-          uv run --no-sync pytest --runxfail
-          tests/test_docs_site.py::test_xy_markdown_docs_links_match_exported_sitemap -v
+        run: |
+          uv run --no-sync pytest --runxfail \
+            tests/test_docs_site.py::test_xy_markdown_docs_links_match_exported_sitemap \
+            tests/test_docs_site.py::test_static_xy_tailwind_manifest_reaches_compiled_css \
+            -v
       - name: Validate generated sitemap
         working-directory: docs/app
         run: uv run --no-sync python scripts/check_sitemap.py

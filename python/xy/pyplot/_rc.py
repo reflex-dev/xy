@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import contextlib
 import warnings
+from collections.abc import Iterator
 from typing import Any
 
 from ._translate import COMPAT_URL
@@ -178,7 +179,7 @@ def rcdefaults() -> None:
 
 
 @contextlib.contextmanager
-def rc_context(rc: dict[str, Any] | None = None):
+def rc_context(rc: dict[str, Any] | None = None) -> Iterator[None]:
     old = dict(rcParams)
     try:
         if rc:

@@ -59,6 +59,11 @@ class Trace:
     # subset is dropped instead of translating indices in the wrong space
     # (§16/§17: exact readout beats stale availability).
     drill_seq: int = 0
+    # Count-pyramid cache (§5 Tier 3), managed by `interaction.py`: None =
+    # never tried, 0 = tried and not applicable, otherwise the native handle.
+    # The finalizer frees the native side when the trace is collected.
+    _pyr_handle: Optional[int] = field(default=None, init=False, repr=False, compare=False)
+    _pyr_finalizer: Optional[Any] = field(default=None, init=False, repr=False, compare=False)
 
     @property
     def n_points(self) -> int:

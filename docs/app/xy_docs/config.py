@@ -43,7 +43,9 @@ DOCS_SECTIONS = (
         "palette",
         (
             ("Overview", "/styling/"),
+            ("Styling Gallery", "/styling/gallery/"),
             ("Chrome Slots", "/styling/chrome-slots/"),
+            ("Component Variations", "/styling/component-variations/"),
             ("Mark Styles", "/styling/mark-styles/"),
             ("Themes and Tokens", "/styling/themes-and-tokens/"),
             ("Recipes", "/styling/recipes/"),
@@ -76,7 +78,7 @@ DOCS_SECTIONS = (
             ("Tooltips", "/components/tooltips/"),
             ("Colorbars", "/components/colorbars/"),
             (
-                "Modebars and Interaction Controls",
+                "Modebars & Controls",
                 "/components/modebars-and-interaction-controls/",
             ),
             ("Annotations", "/components/annotations/"),

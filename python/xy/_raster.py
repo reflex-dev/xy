@@ -12,6 +12,7 @@ browser did that resolution for the SVG/widget.
 from __future__ import annotations
 
 import struct
+from collections.abc import Callable, Sequence
 from os import PathLike
 from typing import Any, Optional
 
@@ -26,15 +27,21 @@ from ._svg import (
     _STATIC_COLOR_FALLBACK,
     _TEXT,
     DEFAULT_PALETTE,
+    _axis_label_geometry,
+    _axis_scales,
+    _axis_tick_font_size,
+    _axis_tick_label_layout,
+    _axis_tick_label_strategy,
+    _colorbar_right_axis_room,
     _colormap_stops,
     _column,
     _corner_radii,
     _css,
+    _legend_layout,
     _lut,
     _resolve_static_css_vars,
     _Scale,
     _step_arrays,
-    _tick_text,
     axis_ticks,
     hexbin_ring,
     layout,
@@ -146,7 +153,7 @@ class _Cmd:
     def _u64(self, v: int) -> None:
         self.buf += struct.pack("<Q", v)
 
-    def _rgba(self, c: tuple[int, int, int, int]) -> None:
+    def _rgba(self, c: tuple[int, ...]) -> None:
         self.buf += bytes(c)
 
     def clip(self, x: float, y: float, w: float, h: float) -> None:
@@ -156,7 +163,7 @@ class _Cmd:
         self._f(w)
         self._f(h)
 
-    def fill(self, pts, color) -> None:
+    def fill(self, pts: Sequence[tuple[float, float]], color: tuple[int, ...]) -> None:
         if len(pts) < 3:
             return
         self.buf.append(_FILL)
@@ -166,7 +173,13 @@ class _Cmd:
             self._f(y)
         self._rgba(color)
 
-    def grad(self, pts, g0, g1, stops) -> None:
+    def grad(
+        self,
+        pts: Sequence[tuple[float, float]],
+        g0: tuple[float, float],
+        g1: tuple[float, float],
+        stops: Sequence[tuple[float, tuple[int, ...]]],
+    ) -> None:
         if len(pts) < 3 or not stops:
             return
         self.buf.append(_GRAD)
@@ -183,7 +196,14 @@ class _Cmd:
             self._raw_f(off)
             self._rgba(col)
 
-    def stroke(self, pts, width, color, closed=False, dash=None) -> None:
+    def stroke(
+        self,
+        pts: np.ndarray | Sequence[tuple[float, float]],
+        width: float,
+        color: tuple[int, ...],
+        closed: bool = False,
+        dash: Sequence[float] | None = None,
+    ) -> None:
         if len(pts) < 2 or width <= 0:
             return
         self.buf.append(_STROKE)
@@ -203,7 +223,16 @@ class _Cmd:
         for d in dash:
             self._f(d)
 
-    def point(self, cx, cy, r, symbol, fill, sw, stroke) -> None:
+    def point(
+        self,
+        cx: float,
+        cy: float,
+        r: float,
+        symbol: int,
+        fill: tuple[int, ...],
+        sw: float,
+        stroke: tuple[int, ...],
+    ) -> None:
         self.buf.append(_POINT)
         self._f(cx)
         self._f(cy)
@@ -213,7 +242,16 @@ class _Cmd:
         self._f(sw)
         self._rgba(stroke)
 
-    def points(self, cx, cy, r, fills, symbol, sw, stroke) -> None:
+    def points(
+        self,
+        cx: np.ndarray,
+        cy: np.ndarray,
+        r: np.ndarray,
+        fills: np.ndarray,
+        symbol: int,
+        sw: float,
+        stroke: tuple[int, ...],
+    ) -> None:
         """Batched marks, struct-of-arrays: whole NumPy columns are packed in
         one shot (`cx`/`cy`/`r` arrays, `fills` as `(n, 4)` RGBA8) and the
         native side loops — pixel-identical to per-mark `point()` calls,
@@ -231,7 +269,18 @@ class _Cmd:
             self.buf += scaled.astype("<f4").tobytes()
         self.buf += np.ascontiguousarray(fills, dtype=np.uint8).tobytes()
 
-    def affine_points(self, x_meta, y_meta, sx, sy, radius, fill, symbol, sw, stroke) -> None:
+    def affine_points(
+        self,
+        x_meta: dict[str, Any],
+        y_meta: dict[str, Any],
+        sx: _Scale,
+        sy: _Scale,
+        radius: float,
+        fill: tuple[int, ...],
+        symbol: int,
+        sw: float,
+        stroke: tuple[int, ...],
+    ) -> None:
         """Borrow offset-encoded f32 x/y columns and project them in Rust.
 
         This private static-export command is the zero-copy counterpart of
@@ -264,17 +313,17 @@ class _Cmd:
 
     def affine_channel_points(
         self,
-        x_meta,
-        y_meta,
-        sx,
-        sy,
-        color_channel,
-        size_channel,
-        fill,
-        symbol,
-        sw,
-        stroke,
-        columns,
+        x_meta: dict[str, Any],
+        y_meta: dict[str, Any],
+        sx: _Scale,
+        sy: _Scale,
+        color_channel: dict[str, Any],
+        size_channel: dict[str, Any],
+        fill: tuple[int, ...],
+        symbol: int,
+        sw: float,
+        stroke: tuple[int, ...],
+        columns: list[dict[str, Any]],
     ) -> None:
         """Borrow affine geometry plus data-driven color/size channels.
 
@@ -344,7 +393,15 @@ class _Cmd:
         else:
             self._f(float(size_channel.get("size", 4.0)) / 2)
 
-    def segments(self, x0, y0, x1, y1, width, colors) -> None:
+    def segments(
+        self,
+        x0: np.ndarray,
+        y0: np.ndarray,
+        x1: np.ndarray,
+        y1: np.ndarray,
+        width: float,
+        colors: np.ndarray,
+    ) -> None:
         n = len(x0)
         if n == 0 or width <= 0:
             return
@@ -356,7 +413,14 @@ class _Cmd:
             self.buf += scaled.astype("<f4").tobytes()
         self.buf += np.ascontiguousarray(colors, dtype=np.uint8).tobytes()
 
-    def rects(self, x0, y0, x1, y1, fills) -> None:
+    def rects(
+        self,
+        x0: np.ndarray,
+        y0: np.ndarray,
+        x1: np.ndarray,
+        y1: np.ndarray,
+        fills: np.ndarray,
+    ) -> None:
         n = len(x0)
         if n == 0:
             return
@@ -367,7 +431,18 @@ class _Cmd:
             self.buf += scaled.astype("<f4").tobytes()
         self.buf += np.ascontiguousarray(fills, dtype=np.uint8).tobytes()
 
-    def triangles(self, x0, y0, x1, y1, x2, y2, fills, sw=0.0, stroke=None) -> None:
+    def triangles(
+        self,
+        x0: np.ndarray,
+        y0: np.ndarray,
+        x1: np.ndarray,
+        y1: np.ndarray,
+        x2: np.ndarray,
+        y2: np.ndarray,
+        fills: np.ndarray,
+        sw: float = 0.0,
+        stroke: tuple[int, ...] | None = None,
+    ) -> None:
         n = len(x0)
         if n == 0:
             return
@@ -382,7 +457,16 @@ class _Cmd:
             self.buf += scaled.astype("<f4").tobytes()
         self.buf += np.ascontiguousarray(fills, dtype=np.uint8).tobytes()
 
-    def smooth_stroke(self, xv, yv, sx, sy, width, color, dash=None) -> None:
+    def smooth_stroke(
+        self,
+        xv: np.ndarray,
+        yv: np.ndarray,
+        sx: _Scale,
+        sy: _Scale,
+        width: float,
+        color: tuple[int, ...],
+        dash: Sequence[float] | None = None,
+    ) -> None:
         """Native monotone-Hermite flattening + stroke for affine axes."""
         n = len(xv)
         if n < 2 or width <= 0:
@@ -409,7 +493,18 @@ class _Cmd:
         for value in dash:
             self._f(value)
 
-    def image(self, dx, dy, dw, dh, iw, ih, rgba_bytes, *, nearest=False) -> None:
+    def image(
+        self,
+        dx: float,
+        dy: float,
+        dw: float,
+        dh: float,
+        iw: int,
+        ih: int,
+        rgba_bytes: bytes,
+        *,
+        nearest: bool = False,
+    ) -> None:
         self.buf.append(_IMAGE)
         self._f(dx)
         self._f(dy)
@@ -421,7 +516,19 @@ class _Cmd:
         self.buf += rgba_bytes
 
     def density_image(
-        self, dx, dy, dw, dh, iw, ih, byte_offset, maximum, stops, opacity, *, span=0
+        self,
+        dx: float,
+        dy: float,
+        dw: float,
+        dh: float,
+        iw: int,
+        ih: int,
+        byte_offset: int,
+        maximum: float,
+        stops: np.ndarray,
+        opacity: float,
+        *,
+        span: int = 0,
     ) -> None:
         """Reference a compact log-u8 density grid in the payload data arena."""
         self.buf.append(_DENSITY_IMAGE)
@@ -441,19 +548,19 @@ class _Cmd:
 
     def heatmap_image(
         self,
-        dx,
-        dy,
-        dw,
-        dh,
-        iw,
-        ih,
-        byte_offset,
-        stops,
-        alpha,
+        dx: float,
+        dy: float,
+        dw: float,
+        dh: float,
+        iw: int,
+        ih: int,
+        byte_offset: int,
+        stops: np.ndarray,
+        alpha: int,
         *,
-        span=0,
-        canonical=False,
-        domain=(0.0, 1.0),
+        span: int = 0,
+        canonical: bool = False,
+        domain: tuple[float, float] = (0.0, 1.0),
     ) -> None:
         """Reference normalized f32 heatmap values in the payload data arena."""
         self.buf.append(_HEATMAP_IMAGE)
@@ -473,7 +580,9 @@ class _Cmd:
         self._u32(len(stops))
         self.buf += stops.tobytes()
 
-    def text(self, x, y, anchor, size, color, s) -> None:
+    def text(
+        self, x: float, y: float, anchor: int, size: float, color: tuple[int, ...], s: str
+    ) -> None:
         data = str(s).encode("utf-8")
         self.buf.append(_TEXT_OP)
         self._f(x)
@@ -485,11 +594,16 @@ class _Cmd:
         self.buf += data
 
 
-def _rect_pts(x0, y0, x1, y1):
+def _rect_pts(x0: float, y0: float, x1: float, y1: float) -> list[tuple[float, float]]:
     return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
 
 
-def _grad_line(space: str, direction: str, bbox, plot):
+def _grad_line(
+    space: str,
+    direction: str,
+    bbox: tuple[float, float, float, float],
+    plot: dict[str, float],
+) -> tuple[tuple[float, float], tuple[float, float]]:
     """(g0, g1) endpoints for a linear gradient over a mark bbox (mark space) or
     the plot rect (plot space)."""
     x, y, w, h = bbox if space != "plot" else (plot["x"], plot["y"], plot["w"], plot["h"])
@@ -518,8 +632,7 @@ def render_raster(
     spec = _resolve_static_css_vars(spec)
     width, height, compact, plot = layout(spec)
     xa, ya = spec["x_axis"], spec["y_axis"]
-    sx = _Scale(xa, plot["x"], plot["x"] + plot["w"])
-    sy = _Scale(ya, plot["y"] + plot["h"], plot["y"])
+    x_scales, y_scales, sx, sy, extra_x_axes, extra_y_axes = _axis_scales(spec, plot)
     cols = spec["columns"]
     cmd = _Cmd(scale)
 
@@ -544,6 +657,12 @@ def render_raster(
 
     xt, xlab, xstep = axis_ticks(xa, plot["w"], True)
     yt, ylab, ystep = axis_ticks(ya, plot["h"], False)
+    extra_x_ticks = {
+        axis_id: axis_ticks(axis, plot["w"], True) for axis_id, axis, _axis_scale in extra_x_axes
+    }
+    extra_y_ticks = {
+        axis_id: axis_ticks(axis, plot["h"], False) for axis_id, axis, _axis_scale in extra_y_axes
+    }
     xstyle, ystyle = xa.get("style") or {}, ya.get("style") or {}
     default_grid = _css(dom_style.get("--chart-grid"), _GRID)
     default_axis = _css(dom_style.get("--chart-axis"), _AXIS)
@@ -553,8 +672,6 @@ def render_raster(
 
     hide_x = xa.get("tick_label_strategy") == "none"
     hide_y = ya.get("tick_label_strategy") == "none"
-    hide_x_labels = hide_x or xa.get("tick_label_strategy") == "off"
-    hide_y_labels = hide_y or ya.get("tick_label_strategy") == "off"
 
     cmd.clip(px0, py0, plot["w"], plot["h"])
     for v in [] if hide_x else xt:
@@ -584,26 +701,28 @@ def render_raster(
         style = t.get("style") or {}
         color = _css(style.get("color"), DEFAULT_PALETTE[palette_i % len(DEFAULT_PALETTE)])
         kind = t["kind"]
+        trace_sx = x_scales.get(t.get("x_axis", "x"), sx)
+        trace_sy = y_scales.get(t.get("y_axis", "y"), sy)
         if t.get("tier") == "density" and t.get("density"):
-            _emit_grid(cmd, "density", t["density"], blob, cols, sx, sy, style)
+            _emit_grid(cmd, "density", t["density"], blob, cols, trace_sx, trace_sy, style)
         elif kind == "line":
-            _emit_line(cmd, t, blob, cols, sx, sy, style, color)
+            _emit_line(cmd, t, blob, cols, trace_sx, trace_sy, style, color)
         elif kind in ("area", "error_band"):
-            _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot)
+            _emit_area(cmd, t, blob, cols, trace_sx, trace_sy, style, color, plot)
         elif kind == "scatter":
-            _emit_scatter(cmd, t, blob, cols, sx, sy, style, color)
+            _emit_scatter(cmd, t, blob, cols, trace_sx, trace_sy, style, color)
         elif kind == "hexbin":
-            _emit_hexbin(cmd, t, blob, cols, sx, sy, style, color)
+            _emit_hexbin(cmd, t, blob, cols, trace_sx, trace_sy, style, color)
         elif kind in {"errorbar", "stem", "box_whisker", "box_median", "contour", "segments"}:
-            _emit_segments(cmd, t, blob, cols, sx, sy, style, color)
+            _emit_segments(cmd, t, blob, cols, trace_sx, trace_sy, style, color)
         elif kind in ("bar", "column") and t.get("bar"):
-            _emit_bars(cmd, t, blob, cols, sx, sy, style, color, plot)
+            _emit_bars(cmd, t, blob, cols, trace_sx, trace_sy, style, color, plot)
         elif kind == "heatmap" and t.get("heatmap"):
-            _emit_grid(cmd, "heatmap", t["heatmap"], blob, cols, sx, sy, style)
+            _emit_grid(cmd, "heatmap", t["heatmap"], blob, cols, trace_sx, trace_sy, style)
         elif kind == "triangle_mesh":
-            _emit_triangle_mesh(cmd, t, blob, cols, sx, sy, style, color)
+            _emit_triangle_mesh(cmd, t, blob, cols, trace_sx, trace_sy, style, color)
         elif all(k in t for k in ("x0", "x1", "y0", "y1")):
-            _emit_rects(cmd, t, blob, cols, sx, sy, style, color, plot)
+            _emit_rects(cmd, t, blob, cols, trace_sx, trace_sy, style, color, plot)
 
     _emit_annotations(cmd, spec.get("annotations") or [], sx, sy, plot, width, height)
 
@@ -643,8 +762,28 @@ def render_raster(
                 float(xstyle.get("axis_width", 1)),
                 _parse_color(_css(xstyle.get("axis_color"), default_axis)),
             )
+    for _axis_id, axis, _axis_scale in extra_x_axes:
+        if _axis_tick_label_strategy(axis) == "none":
+            continue
+        axis_style = axis.get("style") or {}
+        edge = py0 if axis.get("side", "bottom") == "top" else py1
+        cmd.stroke(
+            [(px0, edge), (px1, edge)],
+            float(axis_style.get("axis_width", 1)),
+            _parse_color(_css(axis_style.get("axis_color"), default_axis)),
+        )
+    for _axis_id, axis, _axis_scale in extra_y_axes:
+        if _axis_tick_label_strategy(axis) == "none":
+            continue
+        axis_style = axis.get("style") or {}
+        edge = px1 if axis.get("side", "right") == "right" else px0
+        cmd.stroke(
+            [(edge, py0), (edge, py1)],
+            float(axis_style.get("axis_width", 1)),
+            _parse_color(_css(axis_style.get("axis_color"), default_axis)),
+        )
 
-    def tick_span(style):
+    def tick_span(style: dict[str, Any]) -> tuple[float, float]:
         length = max(0.0, float(style.get("tick_length", 0)))
         direction = str(style.get("tick_direction", "out"))
         if direction == "in":
@@ -685,66 +824,158 @@ def render_raster(
                 float(ystyle.get("tick_width", 1)),
                 _parse_color(_css(ystyle.get("tick_color"), default_axis)),
             )
+    for axis_id, axis, axis_scale in extra_x_axes:
+        if _axis_tick_label_strategy(axis) == "none":
+            continue
+        axis_style = axis.get("style") or {}
+        inward, outward = tick_span(axis_style)
+        side = axis.get("side", "bottom")
+        edge = py0 if side == "top" else py1
+        for value in extra_x_ticks[axis_id][0]:
+            x = float(axis_scale(value))
+            y0, y1 = (
+                (edge - outward, edge + inward)
+                if side == "top"
+                else (edge - inward, edge + outward)
+            )
+            cmd.stroke(
+                [(x, y0), (x, y1)],
+                float(axis_style.get("tick_width", 1)),
+                _parse_color(_css(axis_style.get("tick_color"), default_axis)),
+            )
+    for axis_id, axis, axis_scale in extra_y_axes:
+        if _axis_tick_label_strategy(axis) == "none":
+            continue
+        axis_style = axis.get("style") or {}
+        inward, outward = tick_span(axis_style)
+        side = axis.get("side", "right")
+        edge = px1 if side == "right" else px0
+        for value in extra_y_ticks[axis_id][0]:
+            y = float(axis_scale(value))
+            x0, x1 = (
+                (edge - inward, edge + outward)
+                if side == "right"
+                else (edge - outward, edge + inward)
+            )
+            cmd.stroke(
+                [(x0, y), (x1, y)],
+                float(axis_style.get("tick_width", 1)),
+                _parse_color(_css(axis_style.get("tick_color"), default_axis)),
+            )
 
     text_c = _parse_color(default_text)
-    if not hide_x_labels:
-        x_tick_c = _parse_color(
-            _css(xstyle.get("tick_label_color", xstyle.get("tick_color")), default_text)
-        )
-        for v in xlab:
-            label_y = py0 - 7 if xa.get("side") == "top" else py1 + 15
-            cmd.text(
-                float(sx(v)),
-                label_y,
-                1,
-                float(xstyle.get("tick_label_size", xstyle.get("tick_size", 11))),
-                x_tick_c,
-                _tick_text(xa, v, xstep),
+
+    def rotation_flag(angle: float) -> int:
+        normalized = angle % 360.0
+        if abs(normalized - 90.0) < 1e-9:
+            return _TEXT_ROT_CW
+        if abs(normalized - 270.0) < 1e-9:
+            return _TEXT_ROT_CCW
+        return 0
+
+    def emit_tick_labels(
+        axis: dict[str, Any],
+        values: list[float],
+        step: float,
+        axis_scale: _Scale,
+        *,
+        is_x: bool,
+    ) -> None:
+        axis_style = axis.get("style") or {}
+        items = _axis_tick_label_layout(axis, values, step, axis_scale, is_x)
+        # The native glyph protocol supports quarter-turns, not arbitrary
+        # angles. When SVG/browser collision relief chose a diagonal rotation,
+        # fall back to horizontal downsampling rather than paint overlapping text.
+        if any(rotation_flag(float(item["angle"])) == 0 and item["angle"] for item in items):
+            fallback_axis = {
+                **axis,
+                "tick_label_angle": 0,
+                "tick_label_strategy": "hide",
+            }
+            items = _axis_tick_label_layout(fallback_axis, values, step, axis_scale, is_x)
+        tick_color = _parse_color(
+            _css(
+                axis_style.get("tick_label_color", axis_style.get("tick_color")),
+                default_text,
             )
-    if not hide_y_labels:
-        y_tick_c = _parse_color(
-            _css(ystyle.get("tick_label_color", ystyle.get("tick_color")), default_text)
         )
-        for v in ylab:
-            cmd.text(
-                px0 - 8,
-                float(sy(v)) + 4,
-                2,
-                float(ystyle.get("tick_label_size", ystyle.get("tick_size", 11))),
-                y_tick_c,
-                _tick_text(ya, v, ystep),
-            )
+        font_size = _axis_tick_font_size(axis)
+        side = axis.get("side", "bottom" if is_x else "left")
+        for item in items:
+            flag = rotation_flag(float(item["angle"]))
+            if is_x:
+                row_offset = float(item["row"]) * (font_size + 4)
+                x = float(item["pos"])
+                y = py0 - 7 - row_offset if side == "top" else py1 + 15 + row_offset
+                anchor = 1
+            else:
+                x = px1 + 8 if side == "right" else px0 - 8
+                y = float(item["pos"]) + 4
+                anchor = 0 if side == "right" else 2
+            cmd.text(x, y, anchor | flag, font_size, tick_color, item["text"])
+
+    emit_tick_labels(xa, xlab, xstep, sx, is_x=True)
+    emit_tick_labels(ya, ylab, ystep, sy, is_x=False)
+    for axis_id, axis, axis_scale in extra_x_axes:
+        _ticks, tick_labels, step = extra_x_ticks[axis_id]
+        emit_tick_labels(axis, tick_labels, step, axis_scale, is_x=True)
+    for axis_id, axis, axis_scale in extra_y_axes:
+        _ticks, tick_labels, step = extra_y_ticks[axis_id]
+        emit_tick_labels(axis, tick_labels, step, axis_scale, is_x=False)
     if spec.get("title"):
-        cmd.text(width / 2, plot["y"] - (10 if compact else 12), 1, 14, text_c, str(spec["title"]))
-    if xa.get("label") and not hide_x:
         cmd.text(
-            px0 + plot["w"] / 2,
-            py1 + 33,
+            width / 2,
+            plot["y"] - plot["top_axis_room"] - (10 if compact else 12),
             1,
-            float(xstyle.get("label_size", 12)),
-            _parse_color(_css(xstyle.get("label_color"), default_text)),
-            str(xa["label"]),
-        )
-    if ya.get("label") and not hide_y:
-        # Rotated 90° CCW alongside the axis, matching the SVG export.
-        cmd.text(
             14,
-            plot["y"] + plot["h"] / 2,
-            1 | 0x80,
-            float(ystyle.get("label_size", 12)),
-            _parse_color(_css(ystyle.get("label_color"), default_text)),
-            str(ya["label"]),
+            text_c,
+            str(spec["title"]),
         )
 
+    def emit_axis_title(axis: dict[str, Any], *, is_x: bool) -> None:
+        if not axis.get("label") or _axis_tick_label_strategy(axis) == "none":
+            return
+        axis_style = axis.get("style") or {}
+        geometry = _axis_label_geometry(axis, plot, is_x=is_x)
+        anchor = {"start": 0, "middle": 1, "end": 2}[geometry["anchor"]]
+        cmd.text(
+            geometry["x"],
+            geometry["y"],
+            anchor | rotation_flag(float(geometry["angle"])),
+            geometry["font_size"],
+            _parse_color(_css(axis_style.get("label_color"), default_text)),
+            str(axis["label"]),
+        )
+
+    emit_axis_title(xa, is_x=True)
+    emit_axis_title(ya, is_x=False)
+    for _axis_id, axis, _axis_scale in extra_x_axes:
+        emit_axis_title(axis, is_x=True)
+    for _axis_id, axis, _axis_scale in extra_y_axes:
+        emit_axis_title(axis, is_x=False)
+
     named = [t for t in spec["traces"] if t.get("name")]
-    if spec.get("show_legend", True) and named:
+    show_main_legend = spec.get("show_legend", True) and bool(named)
+    extra_legends = [(extra, extra.get("items") or []) for extra in spec.get("extra_legends") or []]
+    legend_present = show_main_legend or any(items for _extra, items in extra_legends)
+    if legend_present:
+        # The browser scrolls an oversized legend. Static files cannot, so
+        # clip the bounded/truncated equivalent to the plot rectangle.
+        cmd.clip(px0, py0, plot["w"], plot["h"])
+    if show_main_legend:
         _emit_legend(cmd, named, plot, spec.get("legend") or {})
-    for extra in spec.get("extra_legends") or []:
-        items = extra.get("items") or []
+    for extra, items in extra_legends:
         if items:
             _emit_legend(cmd, items, plot, extra)
+    if legend_present:
+        cmd.clip(0, 0, width, height)
     if spec.get("colorbar"):
-        _emit_colorbar(cmd, spec["colorbar"], plot)
+        _emit_colorbar(
+            cmd,
+            spec["colorbar"],
+            plot,
+            _colorbar_right_axis_room(ya, extra_y_axes, compact),
+        )
 
     w_px, h_px = max(1, round(width * scale)), max(1, round(height * scale))
     from . import _native
@@ -755,7 +986,16 @@ def render_raster(
     return _native.rasterize_spans(bytes(cmd.buf), spans, w_px, h_px)
 
 
-def _emit_line(cmd, t, blob, cols, sx, sy, style, color):
+def _emit_line(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+) -> None:
     xv, yv = _column(blob, cols[t["x"]]), _column(blob, cols[t["y"]])
     if style.get("step"):
         xv, yv = _step_arrays(xv, yv, style["step"])
@@ -768,7 +1008,15 @@ def _emit_line(cmd, t, blob, cols, sx, sy, style, color):
         cmd.stroke(pts, width, c, dash=style.get("dash"))
 
 
-def _annotation_point(ann, style, sx, sy, plot, width, height):
+def _annotation_point(
+    ann: dict[str, Any],
+    style: dict[str, Any],
+    sx: _Scale,
+    sy: _Scale,
+    plot: dict[str, float],
+    width: float,
+    height: float,
+) -> tuple[float, float]:
     space = style.get("coordinate_space")
     x, y = float(ann.get("x", 0.0)), float(ann.get("y", 0.0))
     if space == "axes_fraction":
@@ -782,7 +1030,17 @@ def _annotation_point(ann, style, sx, sy, plot, width, height):
     return float(sx(x)), float(sy(y))
 
 
-def _emit_annotations(cmd, annotations, sx, sy, plot, width, height, *, phase="marks"):
+def _emit_annotations(
+    cmd: _Cmd,
+    annotations: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    plot: dict[str, float],
+    width: float,
+    height: float,
+    *,
+    phase: str = "marks",
+) -> None:
     px0, py0 = plot["x"], plot["y"]
     for ann in annotations:
         # Geometry (rules/bands/arrows) draws in the clipped marks pass; text
@@ -860,7 +1118,11 @@ def _emit_annotations(cmd, annotations, sx, sy, plot, width, height, *, phase="m
             line_height = font_size * 1.2
             # A callout's `color` paints its arrow; the label prefers its own.
             label_color = style.get("label_color") or style.get("color")
-            color = _rgba(label_color, _TEXT, float(style.get("opacity", 1.0)))
+            label_opacity = style.get(
+                "label_opacity",
+                style.get("opacity", 1.0) if ann.get("kind") == "text" else 1.0,
+            )
+            color = _rgba(label_color, _TEXT, float(label_opacity))
             rotation = float(style.get("rotation", 0.0)) % 360.0
             if rotation in (90.0, 270.0):
                 # Vertical text via the rasterizer's rotated glyph paths.
@@ -905,7 +1167,17 @@ def _emit_annotations(cmd, annotations, sx, sy, plot, width, height, *, phase="m
                 )
 
 
-def _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot):
+def _emit_area(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+    plot: dict[str, float],
+) -> None:
     xv = _column(blob, cols[t["x"]])
     yv = _column(blob, cols[t["y"]])
     bv = _column(blob, cols[t["base"]])
@@ -934,7 +1206,16 @@ def _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot):
             cmd.stroke(base, lw, line_color, dash=style.get("dash"))
 
 
-def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
+def _emit_scatter(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+) -> None:
     ch = t.get("color") or {}
     size_ch = t.get("size") or {}
     fill_op = _fill_opacity(style, 0.8)
@@ -1017,7 +1298,16 @@ def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
     cmd.points(px, py, radii, fills, sym, sw, stroke)
 
 
-def _emit_segments(cmd, t, blob, cols, sx, sy, style, color):
+def _emit_segments(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+) -> None:
     x0 = _column(blob, cols[t["x0"]])
     x1 = _column(blob, cols[t["x1"]])
     y0 = _column(blob, cols[t["y0"]])
@@ -1055,7 +1345,14 @@ def _emit_segments(cmd, t, blob, cols, sx, sy, style, color):
     cmd.segments(sx(x0), sy(y0), sx(x1), sy(y1), width, colors)
 
 
-def _mesh_fill_rgba(t, blob, cols, n, style, color):
+def _mesh_fill_rgba(
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    n: int,
+    style: dict[str, Any],
+    color: str,
+) -> np.ndarray:
     ch = t.get("color") or {}
     fill_op = _fill_opacity(style)
     fills = np.empty((n, 4), dtype=np.uint8)
@@ -1072,7 +1369,16 @@ def _mesh_fill_rgba(t, blob, cols, n, style, color):
     return fills
 
 
-def _emit_hexbin(cmd, t, blob, cols, sx, sy, style, color):
+def _emit_hexbin(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+) -> None:
     """Expand shipped cell centers into the six-triangle hexagon fan locally
     (the payload carries centers only — see _payload._emit_hexbin)."""
     cx = _column(blob, cols[t["x"]])
@@ -1090,7 +1396,16 @@ def _emit_hexbin(cmd, t, blob, cols, sx, sy, style, color):
     cmd.triangles(x0, y0, x1, y1, x2, y2, fills, 0.0, (0, 0, 0, 0))
 
 
-def _emit_triangle_mesh(cmd, t, blob, cols, sx, sy, style, color):
+def _emit_triangle_mesh(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+) -> None:
     vertices = [_column(blob, cols[t[name]]) for name in ("x0", "y0", "x1", "y1", "x2", "y2")]
     n = min(len(values) for values in vertices)
     stroke_op = _stroke_opacity(style)
@@ -1112,7 +1427,18 @@ def _emit_triangle_mesh(cmd, t, blob, cols, sx, sy, style, color):
     )
 
 
-def _bar_geom(cmd, x, y, w, h, style, fill_cmd, stroke_c, sw, tip_top):
+def _bar_geom(
+    cmd: _Cmd,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    style: dict[str, Any],
+    fill_cmd: Callable[[list[tuple[float, float]]], None],
+    stroke_c: tuple[int, ...],
+    sw: float,
+    tip_top: bool,
+) -> None:
     r_tip, r_base = _corner_radii(style)
     if r_tip or r_base:
         poly = _scene.rounded_rect_poly(x, y, w, h, r_tip, r_base, tip_top)
@@ -1126,7 +1452,12 @@ def _bar_geom(cmd, x, y, w, h, style, fill_cmd, stroke_c, sw, tip_top):
             cmd.stroke(poly, sw, stroke_c, closed=True)
 
 
-def _fill_maker(cmd, style, color, plot):
+def _fill_maker(
+    cmd: _Cmd,
+    style: dict[str, Any],
+    color: str,
+    plot: dict[str, float],
+) -> tuple[Callable[[list[tuple[float, float]]], None], tuple[int, ...], float]:
     """Return (fill_cmd, stroke_c, sw) closure honoring gradient/stroke style."""
     fill_op = _fill_opacity(style, 0.85)
     stroke_op = _stroke_opacity(style, 0.85)
@@ -1138,7 +1469,7 @@ def _fill_maker(cmd, style, color, plot):
             (o, (c[0], c[1], c[2], int(c[3] * fill_op))) for o, c in _grad_stops(fill_spec, color)
         ]
 
-        def fill_cmd(poly):
+        def fill_cmd(poly: list[tuple[float, float]]) -> None:
             xs = [p[0] for p in poly]
             ys = [p[1] for p in poly]
             bbox = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
@@ -1149,13 +1480,23 @@ def _fill_maker(cmd, style, color, plot):
     else:
         flat = _rgba(style.get("color"), color, fill_op)
 
-        def fill_cmd(poly):
+        def fill_cmd(poly: list[tuple[float, float]]) -> None:
             cmd.fill(poly, flat)
 
     return fill_cmd, stroke_c, sw
 
 
-def _emit_bars(cmd, t, blob, cols, sx, sy, style, color, plot):
+def _emit_bars(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+    plot: dict[str, float],
+) -> None:
     b = t["bar"]
     pos = _column(blob, cols[b["pos"]])
     v1 = _column(blob, cols[b["value1"]])
@@ -1195,7 +1536,17 @@ def _emit_bars(cmd, t, blob, cols, sx, sy, style, color, plot):
         _bar_geom(cmd, x, y, abs(x1 - x0), abs(y1 - y0), style, fill_cmd, stroke_c, sw, tip_top)
 
 
-def _emit_rects(cmd, t, blob, cols, sx, sy, style, color, plot):
+def _emit_rects(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+    plot: dict[str, float],
+) -> None:
     x0v, x1v = _column(blob, cols[t["x0"]]), _column(blob, cols[t["x1"]])
     y0v, y1v = _column(blob, cols[t["y0"]]), _column(blob, cols[t["y1"]])
     r_tip, r_base = _corner_radii(style)
@@ -1223,7 +1574,16 @@ def _emit_rects(cmd, t, blob, cols, sx, sy, style, color, plot):
         )
 
 
-def _emit_grid(cmd, kind, g, blob, cols, sx, sy, style):
+def _emit_grid(
+    cmd: _Cmd,
+    kind: str,
+    g: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+) -> None:
     if kind == "heatmap":
         w, h = int(g["w"]), int(g["h"])
         if "rgba_bufs" in g:
@@ -1294,34 +1654,23 @@ def _emit_grid(cmd, kind, g, blob, cols, sx, sy, style):
 _LEGEND_LINE_KINDS = frozenset({"line", "segments", "step", "stairs", "errorbar"})
 
 
-def _emit_legend(cmd, named, plot, options):
-    style_opts = options.get("style") or {}
-    pad, handle, gap, line_h = 8.0, 20, 5, 16.0
-    if str(style_opts.get("padding", "")).endswith("em"):
-        pad = 11.0 * float(str(style_opts["padding"])[:-2])
-    if str(style_opts.get("rowGap", "")).endswith("em"):
-        line_h = 11.0 * (1.0 + float(str(style_opts["rowGap"])[:-2]))
-    ncols = min(len(named), max(1, int(options.get("ncols", 1))))
-    nrows = (len(named) + ncols - 1) // ncols
-    title = options.get("title")
-    title_h = 16 if title else 0
-    cell_w = max(len(str(t["name"])) for t in named) * 6.2 + handle + gap + 2 * pad
-    box_w, box_h = ncols * cell_w + pad, nrows * line_h + pad + title_h
-    loc = options.get("loc") or "upper right"
-    # "center" is the per-axis fallback: "center right" is the right edge at
-    # vertical center, "upper center" the top edge at horizontal center.
-    if "left" in loc:
-        x = plot["x"] + 6
-    elif "right" in loc:
-        x = plot["x"] + plot["w"] - box_w - 6
-    else:
-        x = plot["x"] + (plot["w"] - box_w) / 2
-    if "upper" in loc:
-        y = plot["y"] + 6
-    elif "lower" in loc:
-        y = plot["y"] + plot["h"] - box_h - 6
-    else:
-        y = plot["y"] + (plot["h"] - box_h) / 2
+def _emit_legend(
+    cmd: _Cmd,
+    named: list[dict[str, Any]],
+    plot: dict[str, float],
+    options: dict[str, Any],
+) -> None:
+    legend = _legend_layout(named, plot, options)
+    if not legend["visible_count"]:
+        # A plot too short for even one entry: no floating frame/title either.
+        return
+    style_opts = legend["style"]
+    pad, handle, gap = legend["pad"], legend["handle"], legend["gap"]
+    line_h, ncols = legend["line_h"], legend["ncols"]
+    title, title_h = legend["title"], legend["title_h"]
+    cell_w = legend["cell_w"]
+    box_w, box_h = legend["box_w"], legend["box_h"]
+    x, y = legend["x"], legend["y"]
     # frameon=False (background transparent) drops the box entirely (§ mpl parity).
     if style_opts.get("background") != "transparent":
         if style_opts.get("boxShadow"):
@@ -1336,7 +1685,7 @@ def _emit_legend(cmd, named, plot, options):
         cmd.fill(_rect_pts(x, y, x + box_w, y + box_h), frame)
     if title:
         cmd.text(x + pad, y + pad / 2 + 11, 0, 11, _parse_color(_TEXT), str(title))
-    for i, t in enumerate(named):
+    for i, t in enumerate(named[: legend["visible_count"]]):
         style = t.get("style") or {}
         color_str = _css(
             style.get("color") or (t.get("color") or {}).get("color"),
@@ -1361,17 +1710,27 @@ def _emit_legend(cmd, named, plot, options):
             )
         else:
             cmd.fill(_rect_pts(hx0, cy - 4, hx1, cy + 4), c)
-        cmd.text(hx1 + gap, ry + 11, 0, 11, _parse_color(_TEXT), str(t["name"]))
+        cmd.text(hx1 + gap, ry + 11, 0, 11, _parse_color(_TEXT), legend["names"][i])
 
 
-def _emit_colorbar(cmd, options, plot):
+def _emit_colorbar(
+    cmd: _Cmd,
+    options: dict[str, Any],
+    plot: dict[str, float],
+    right_axis_room: float = 0.0,
+) -> None:
     from ._svg import _linear_ticks, _lut
 
     orientation = options.get("orientation", "vertical")
     if orientation == "horizontal":
-        x, y, width, height = plot["x"], plot["y"] + plot["h"] + 10, plot["w"], 18
+        x = plot["x"]
+        y = plot["y"] + plot["h"] + (plot["bottom_axis_room"] or 10)
+        width, height = plot["w"], 18
     else:
-        x, y, width, height = plot["x"] + plot["w"] + 24, plot["y"], 18, plot["h"]
+        # right_axis_room shifts the whole colorbar clear of right-side named
+        # y-axis chrome (layout() reserves room for both additively).
+        x = plot["x"] + plot["w"] + right_axis_room + 24
+        y, width, height = plot["y"], 18, plot["h"]
     # A discrete (resampled) colormap paints N solid bands; otherwise a smooth
     # 64-step gradient approximates the continuous ramp.
     levels = options.get("levels")

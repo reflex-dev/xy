@@ -132,7 +132,7 @@ component props:
 | `on_hover` | `on_point_hover` | Resolved row dictionary |
 | `on_click` | `on_point_click` | Resolved row dictionary |
 | `on_brush` | No dedicated prop | — |
-| `on_select` | `on_select_end` | JSON-safe summary with `total`, optional bounds, and `cleared` |
+| `on_select` | `on_select_end` | JSON-safe summary with `total`, optional bounds or `polygon`, and `cleared` |
 | `on_view_change` | `on_view_change` | View dictionary |
 
 In particular, notebook `on_select` receives an `xy.Selection` with canonical

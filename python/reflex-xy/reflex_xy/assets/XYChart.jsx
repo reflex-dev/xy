@@ -93,9 +93,14 @@ export function XYChart(props) {
     onPointClick,
     onSelectEnd,
     onViewChange,
+    // Compile-time-only literal scanned by Reflex's TailwindV4Plugin. The
+    // runtime chart receives the same classes from its XYBF payload; keeping
+    // this prop out of divProps prevents an unknown attribute or class leak.
+    tailwindClassTokens: _tailwindClassTokens,
     ref: externalRef, // reflex attaches its own ref to id-bearing components
     ...divProps
   } = props;
+  void _tailwindClassTokens;
   const elRef = useRef(null);
   dbg("render", { id: divProps.id, token: String(token).slice(0, 30), src });
   // Live callback refs so socket handlers never close over stale props.
@@ -162,8 +167,8 @@ export function XYChart(props) {
           cbRef.current.onViewChange?.(m);
           return;
         }
-        if (m.type === "select" || m.type === "select_clear") {
-          lastSelect = m.type === "select" ? m : null;
+        if (m.type === "select" || m.type === "select_polygon" || m.type === "select_clear") {
+          lastSelect = m.type === "select_clear" ? null : m;
         }
         socket.emit("msg", { fig: token, mid, m });
         if (m.type === "click" && cbRef.current.onPointClick) {
@@ -235,6 +240,7 @@ export function XYChart(props) {
           x1: lastSelect?.x1 ?? null,
           y0: lastSelect?.y0 ?? null,
           y1: lastSelect?.y1 ?? null,
+          polygon: lastSelect?.type === "select_polygon" ? lastSelect.points : null,
           cleared: message.total === 0 && lastSelect === null,
         });
       }
