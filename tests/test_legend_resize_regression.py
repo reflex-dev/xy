@@ -242,17 +242,31 @@ _ANNOTATION_ALIGNMENT_PROBE = """
     const arrow = findLabel("arrow-center");
     if (!band || !arrow) throw new Error("annotation labels never rendered");
     const root = view.root.getBoundingClientRect();
-    const centerX = (element) => {
+    const center = (element) => {
       const rect = element.getBoundingClientRect();
-      return (rect.left + rect.right) / 2;
+      return [(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2];
     };
+    const [bandCenterX] = center(band);
+    const [arrowCenterX, arrowCenterY] = center(arrow);
     const bandExpected = root.left + (view._dataPxX(2) + view._dataPxX(4)) / 2;
-    const arrowExpected = root.left + (view._dataPxX(0) + view._dataPxX(2)) / 2;
+    const arrowX0 = root.left + view._dataPxX(0);
+    const arrowY0 = root.top + view._dataPxY(0);
+    const arrowX1 = root.left + view._dataPxX(2);
+    const arrowY1 = root.top + view._dataPxY(2);
+    const arrowExpectedX = (arrowX0 + arrowX1) / 2;
+    const arrowExpectedY = (arrowY0 + arrowY1) / 2;
+    const arrowDx = arrowX1 - arrowX0;
+    const arrowDy = arrowY1 - arrowY0;
+    const arrowLength = Math.hypot(arrowDx, arrowDy);
+    const arrowAlongError = Math.abs(
+      ((arrowCenterX - arrowExpectedX) * arrowDx +
+        (arrowCenterY - arrowExpectedY) * arrowDy) / arrowLength
+    );
     document.body.setAttribute(
       "data-xy-annotation-alignment",
       JSON.stringify({
-        bandCenterError: Math.abs(centerX(band) - bandExpected),
-        arrowCenterError: Math.abs(centerX(arrow) - arrowExpected),
+        bandCenterError: Math.abs(bandCenterX - bandExpected),
+        arrowCenterError: arrowAlongError,
         bandTransform: band.style.transform,
         arrowTransform: arrow.style.transform,
       })
