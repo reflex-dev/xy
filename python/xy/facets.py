@@ -144,14 +144,17 @@ class FacetGrid:
 
     @property
     def rows(self) -> int:
+        """Number of grid rows implied by the panel count and ``cols``."""
         return (len(self.figures) + self.cols - 1) // self.cols
 
     @property
     def panel_width(self) -> int:
+        """Width of one panel in pixels (grid width split across columns)."""
         return max(120, (self.width - (self.cols - 1) * self.gap) // self.cols)
 
     @property
     def panel_height(self) -> int:
+        """Height of one panel in pixels."""
         return self.height
 
     # Grid-level title strip height, shared by the HTML/SVG composers and the
@@ -173,6 +176,10 @@ class FacetGrid:
         *,
         custom_css: Optional[str] = None,
     ) -> str:
+        """A self-contained HTML document laying the panels out as a grid.
+
+        Writes it to ``path`` when given; returns the HTML either way.
+        """
         panels: list[str] = []
         for i, fig in enumerate(self.figures):
             spec, blob = fig.build_payload(px_width=self.panel_width)
@@ -259,6 +266,12 @@ for(const p of panels){{
         sandbox: bool = True,
         gl: str = "software",
     ) -> bytes:
+        """A PNG render of the composed grid, returned as bytes.
+
+        ``scale`` multiplies the pixel density; ``engine`` picks the
+        raster path (native or headless Chromium). Written to ``path``
+        when given.
+        """
         optimize = export._bool_option(optimize, "facet PNG optimize")
         resolved_engine = export._png_engine(engine, "facet PNG")
         if resolved_engine == "browser":
@@ -313,14 +326,17 @@ for(const p of panels){{
         return data
 
     def widget(self) -> list[Any]:
+        """Live notebook widgets, one per facet panel."""
         from .widget import FigureWidget
 
         return [FigureWidget(fig) for fig in self.figures]
 
     def show(self) -> list[Any]:
+        """Display the facet grid: returns the panel widgets."""
         return self.widget()
 
     def memory_report(self) -> dict[str, Any]:
+        """Aggregated data/cache buffer accounting across all panels."""
         reports = [fig.memory_report() for fig in self.figures]
         return {
             "panels": len(reports),

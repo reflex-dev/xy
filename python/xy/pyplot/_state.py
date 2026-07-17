@@ -6,10 +6,16 @@ activates, gcf/gca materialize on demand, close() forgets.
 
 from __future__ import annotations
 
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
+# Runtime import so `typing.get_type_hints(gca)` resolves; `_axes` never
+# imports `_state`, so there is no cycle.
+from ._axes import Axes
 from ._mplfig import Figure
 from ._rc import rcParams
+
+if TYPE_CHECKING:
+    from ._axes import Axes
 
 _figures: dict[int, Figure] = {}
 _current: Optional[int] = None
@@ -21,6 +27,13 @@ def figure(
     dpi: Optional[float] = None,
     **kwargs: Any,
 ) -> Figure:
+    """Create a new figure, or activate the one numbered/labeled ``num``.
+
+    ``figsize`` is ``(width, height)`` in inches and ``dpi`` the dots
+    per inch; on an existing figure they update it in place.
+    ``facecolor`` and ``toolbar`` are also accepted. The figure becomes
+    current (the target of `gcf`/`gca`).
+    """
     global _current
     toolbar = kwargs.pop("toolbar", None)
     if num is None:
@@ -46,16 +59,19 @@ def figure(
 
 
 def gcf() -> Figure:
+    """The current figure, creating one if none exists."""
     if _current is None or _current not in _figures:
         return figure()
     return _figures[_current]
 
 
-def gca() -> Any:
+def gca() -> Axes:
+    """The current axes of the current figure, creating both on demand."""
     return gcf().gca()
 
 
-def sca(ax: Any) -> None:
+def sca(ax: Axes) -> None:
+    """Make ``ax`` (and its figure) current."""
     global _current
     fig = ax.figure if ax.figure is not None else gcf()
     _figures.setdefault(fig.number, fig)
@@ -64,6 +80,7 @@ def sca(ax: Any) -> None:
 
 
 def close(target: Any = None) -> None:
+    """Close a figure: the current one, a `Figure`, a num, or ``"all"``."""
     global _current
     if target == "all":
         _figures.clear()
@@ -81,10 +98,12 @@ def close(target: Any = None) -> None:
 
 
 def fignums() -> list[int]:
+    """The numbers of all open figures, sorted."""
     return sorted(key for key in _figures if isinstance(key, int))
 
 
 def fignum_exists(num: Union[int, str]) -> bool:
+    """Whether a figure with this number or label is open."""
     key = num if isinstance(num, int) else hash(num)
     return key in _figures
 
