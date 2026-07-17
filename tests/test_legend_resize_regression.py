@@ -247,12 +247,32 @@ _ANNOTATION_ALIGNMENT_PROBE = """
       return (rect.left + rect.right) / 2;
     };
     const bandExpected = root.left + (view._dataPxX(2) + view._dataPxX(4)) / 2;
-    const arrowExpected = root.left + (view._dataPxX(0) + view._dataPxX(2)) / 2;
+    // The arrow label is centered on the shaft midpoint, then lifted along
+    // the shaft's upward normal until the box clears the line (plus a small
+    // margin). Measure its offset from the midpoint in the shaft's own
+    // frame: the tangential component must stay ~0 (still centered along
+    // the shaft) and the normal component must be at least the box's
+    // projection onto the normal (clear of the line, on the upper side).
+    const ax0 = view._dataPxX(0);
+    const ay0 = view._dataPxY(0);
+    const ax1 = view._dataPxX(2);
+    const ay1 = view._dataPxY(2);
+    const shaftLen = Math.hypot(ax1 - ax0, ay1 - ay0);
+    const tangent = [(ax1 - ax0) / shaftLen, (ay1 - ay0) / shaftLen];
+    let normal = [-tangent[1], tangent[0]];
+    if (normal[1] > 0) normal = [-normal[0], -normal[1]];
+    const arrowRect = arrow.getBoundingClientRect();
+    const offX = (arrowRect.left + arrowRect.right) / 2 - root.left - (ax0 + ax1) / 2;
+    const offY = (arrowRect.top + arrowRect.bottom) / 2 - root.top - (ay0 + ay1) / 2;
     document.body.setAttribute(
       "data-xy-annotation-alignment",
       JSON.stringify({
         bandCenterError: Math.abs(centerX(band) - bandExpected),
-        arrowCenterError: Math.abs(centerX(arrow) - arrowExpected),
+        arrowTangentialError: Math.abs(offX * tangent[0] + offY * tangent[1]),
+        arrowNormalOffset: offX * normal[0] + offY * normal[1],
+        arrowRequiredClearance:
+          (arrowRect.width / 2) * Math.abs(normal[0]) +
+          (arrowRect.height / 2) * Math.abs(normal[1]),
         bandTransform: band.style.transform,
         arrowTransform: arrow.style.transform,
       })
@@ -470,7 +490,10 @@ def test_midpoint_annotation_labels_are_visually_centered() -> None:
         )
 
     assert payload["bandCenterError"] <= 1, payload
-    assert payload["arrowCenterError"] <= 1, payload
+    # Centered along the shaft, offset only along its upward normal — far
+    # enough that the box clears the line instead of being struck through.
+    assert payload["arrowTangentialError"] <= 1, payload
+    assert payload["arrowNormalOffset"] >= payload["arrowRequiredClearance"], payload
     assert "-50%" in payload["bandTransform"], payload
     assert "-50%" in payload["arrowTransform"], payload
 
