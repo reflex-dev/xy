@@ -241,7 +241,9 @@ const XY_CHROME_CSS = `
 :where(.xy [data-xy-slot="colorbar_title"]){font-weight:500}
 :where(.xy [data-xy-slot="badge"]){gap:3px;font-size:11px;line-height:1.2}
 :where(.xy [data-xy-slot="badge_item"]){padding:3px 6px;border-radius:4px;color:var(--chart-badge-text,#0f172a);background:var(--chart-badge-bg,rgba(255,255,255,.82));box-shadow:0 1px 4px rgba(15,23,42,.14)}
-:where(.xy [data-xy-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,rgba(255,255,255,.78));border:1px solid rgba(128,128,128,.18);border-radius:4px;padding:1px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+:where(.xy){--xy-modebar-bg:rgba(255,255,255,.78);--xy-modebar-menu-bg:rgba(255,255,255,.94);--xy-modebar-border:rgba(128,128,128,.18);--xy-modebar-menu-border:rgba(128,128,128,.22);--xy-modebar-active:rgba(128,128,128,.2);--xy-modebar-shadow:0 1px 4px rgba(0,0,0,.08);--xy-modebar-menu-shadow:0 5px 18px rgba(15,23,42,.18)}
+:where(.dark .xy,.xy.dark){--xy-modebar-bg:rgba(37,42,52,.9);--xy-modebar-menu-bg:rgba(30,35,44,.97);--xy-modebar-border:rgba(255,255,255,.14);--xy-modebar-menu-border:rgba(255,255,255,.16);--xy-modebar-active:rgba(255,255,255,.16);--xy-modebar-shadow:0 1px 4px rgba(0,0,0,.5);--xy-modebar-menu-shadow:0 8px 24px rgba(0,0,0,.6)}
+:where(.xy [data-xy-slot="modebar"]){gap:1px;background:var(--chart-modebar-bg,var(--xy-modebar-bg));border:1px solid var(--xy-modebar-border);border-radius:4px;padding:1px;box-shadow:var(--xy-modebar-shadow)}
 :where(.xy [data-xy-slot="modebar_button"]){width:24px;height:24px;padding:0;border:none;background:transparent;border-radius:3px;color:var(--chart-text,currentColor);cursor:pointer}
 :where(.xy [data-xy-modebar-drag-handle]){position:relative;width:22px;margin-right:4px;cursor:move}
 :where(.xy [data-xy-modebar-drag-handle])::after{content:"";position:absolute;top:4px;right:-3px;bottom:4px;width:1px;background:rgba(128,128,128,.28);pointer-events:none}
@@ -250,13 +252,13 @@ const XY_CHROME_CSS = `
 :where(.xy [data-xy-modebar-select-icon]){display:flex;flex:0 0 auto}
 :where(.xy [data-xy-modebar-menu-indicator]){display:flex;flex:0 0 auto;transition:transform .15s}
 :where(.xy [data-xy-modebar-menu-indicator] svg){width:11px;height:11px}
-:where(.xy [data-xy-modebar-menu]){min-width:148px;gap:1px;padding:4px;background:var(--chart-modebar-bg,rgba(255,255,255,.94));border:1px solid rgba(128,128,128,.22);border-radius:7px;box-shadow:0 5px 18px rgba(15,23,42,.18);backdrop-filter:blur(8px)}
+:where(.xy [data-xy-modebar-menu]){min-width:148px;gap:1px;padding:4px;background:var(--chart-modebar-bg,var(--xy-modebar-menu-bg));border:1px solid var(--xy-modebar-menu-border);border-radius:7px;box-shadow:var(--xy-modebar-menu-shadow);backdrop-filter:blur(8px)}
 :where(.xy [data-xy-modebar-menu-item]){width:100%;height:28px;justify-content:flex-start;padding:0 9px;border-radius:4px;text-align:left;white-space:nowrap}
-:where(.xy [data-xy-modebar-menu-item]:hover,.xy [data-xy-modebar-menu-item]:focus-visible){background:var(--chart-modebar-active,rgba(128,128,128,.18));outline:none}
+:where(.xy [data-xy-modebar-menu-item]:hover,.xy [data-xy-modebar-menu-item]:focus-visible){background:var(--chart-modebar-active,var(--xy-modebar-active));outline:none}
 :where(.xy [data-xy-modebar-menu-item][data-xy-separator]){margin-top:3px;border-top:1px solid rgba(128,128,128,.2);border-radius:0 0 4px 4px}
 :where(.xy [data-xy-modebar-menu-icon]){display:flex;width:16px;margin-right:7px}
 :where(.xy [data-xy-modebar-menu-icon] svg){width:14px;height:14px}
-:where(.xy [data-xy-slot="modebar_button"].xy-active){background:var(--chart-modebar-active,rgba(128,128,128,.22))}
+:where(.xy [data-xy-slot="modebar_button"].xy-active){background:var(--chart-modebar-active,var(--xy-modebar-active))}
 :where(.xy [data-xy-slot="selection"]){border:1px solid var(--chart-selection,rgba(90,140,240,.9));background:var(--chart-selection-fill,rgba(90,140,240,.15))}
 :where(.xy [data-xy-slot="selection"][data-xy-band="zoom"]){border-color:var(--chart-zoom-selection,rgba(120,120,120,.9));background:var(--chart-zoom-selection-fill,rgba(120,120,120,.12))}
 :where(.xy [data-xy-selection-lasso]){fill:var(--chart-selection-fill,rgba(90,140,240,.15));stroke:var(--chart-selection,rgba(90,140,240,.9));stroke-width:1.5;stroke-linejoin:round;pointer-events:none}

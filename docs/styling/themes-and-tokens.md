@@ -109,7 +109,7 @@ chart = xy.line_chart(
 | `--chart-tooltip-bg` / `--chart-tooltip-text` | Tooltip | dark translucent / white |
 | `--chart-legend-bg` | Legend background | faint neutral fill |
 | `--chart-badge-bg` / `--chart-badge-text` | Reduction badges | light / dark |
-| `--chart-modebar-bg` / `--chart-modebar-active` | Toolbar and active button | light translucent / neutral |
+| `--chart-modebar-bg` / `--chart-modebar-active` | Toolbar and active button | light or dark translucent (follows a `.dark` root class) / neutral |
 | `--chart-selection` / `--chart-selection-fill` | Selection outline/fill | blue outline / translucent blue |
 | `--chart-zoom-selection` / `--chart-zoom-selection-fill` | Box-zoom outline/fill | neutral outline/fill |
 | `--chart-crosshair` | Crosshair lines | translucent dark |
@@ -260,6 +260,23 @@ chart.to_png(
 | Chromium PNG | Supports the same browser CSS through `custom_css`. |
 | Native PNG | Uses XY's baked bitmap font; custom fonts are not supported. |
 | Python `to_svg()` | Uses XY's fixed system font stack and cannot embed a custom font. |
+
+## Automatic dark mode for the toolbar
+
+The interactive toolbar (modebar) has no colored default a page can show
+through, so it reads the light/dark state straight from your page: when a
+`.dark` class is present on the chart root or any ancestor — the convention
+Reflex (next-themes), Radix Themes, and Tailwind all set on the root `<html>`
+element — its background, border, and shadow switch to a dark palette. Icon
+color already follows the inherited text color, so the toolbar stays readable in
+both modes with no configuration. An explicit `.light` class (or no class at
+all) keeps the light palette.
+
+That is only the built-in default. A `--chart-modebar-bg` or
+`--chart-modebar-active` value you set — through `theme()`, chart `style=`, or a
+host stylesheet — still wins in either mode, so mapping the toolbar onto your
+own adaptive design tokens (for example Radix's `--secondary-2`) replaces the
+automatic palette entirely.
 
 ## Dark mode in a standalone export
 
