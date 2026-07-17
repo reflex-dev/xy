@@ -31,8 +31,8 @@ All four interactive charts come from one cached signed-distance probability
 field for lowercase Instrument Sans `xy`. The builder samples one million
 points once, reuses the first 50,000 for the binned scatter view and 250,000 for
 the final direct scatter, and shares the same PDF with the direct heatmap and
-contours. Pillow and SciPy are documentation demo dependencies, not XY runtime
-dependencies. [View the customizable Python source](https://github.com/reflex-dev/xy/blob/main/docs/app/xy_docs/demos/xy_sdf_plots.py).
+contours. The demo's only extra dependency is Pillow; its exact Euclidean
+distance transform is implemented directly with NumPy. [View the customizable Python source](https://github.com/reflex-dev/xy/blob/main/docs/app/xy_docs/demos/xy_sdf_plots.py).
 
 ~~~md alert warning
 ### Early alpha

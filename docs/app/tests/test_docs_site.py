@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import inspect
 import re
+import tomllib
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from pathlib import Path
@@ -336,6 +337,34 @@ def test_sdf_heatmap_outside_support_uses_page_background() -> None:
     assert colors[0, 1, :3] != pytest.approx(expected)
     assert colors[0, 2, :3] != pytest.approx(expected)
     assert demo.np.allclose(colors[..., 3], 1)
+
+
+def test_sdf_distance_transform_is_exact_without_scipy() -> None:
+    """Keep the signed-distance model exact without a heavyweight dependency."""
+    from xy_docs.demos import xy_sdf_plots as demo
+
+    mask = demo.np.array([
+        [True, True, True, True, True],
+        [True, False, True, False, True],
+        [True, True, True, True, True],
+        [True, True, False, True, True],
+    ])
+    zero_cells = demo.np.argwhere(~mask)
+    expected = demo.np.empty(mask.shape, dtype=float)
+    for cell in demo.np.ndindex(mask.shape):
+        expected[cell] = demo.np.sqrt(
+            demo.np.min(demo.np.sum((zero_cells - cell) ** 2, axis=1))
+        )
+
+    assert demo.np.allclose(demo._distance_transform_edt(mask), expected)
+
+    manifest = tomllib.loads(
+        (DOCS_APP_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    assert not any(
+        dependency.lower().startswith("scipy")
+        for dependency in manifest["project"]["dependencies"]
+    )
 
 
 def test_public_docs_use_the_xy_namespace_without_the_legacy_alias() -> None:

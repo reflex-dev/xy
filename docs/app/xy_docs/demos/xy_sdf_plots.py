@@ -11,7 +11,6 @@ import reflex as rx
 import reflex_xy
 import xy
 from PIL import Image, ImageDraw, ImageFont
-from scipy.ndimage import distance_transform_edt
 
 
 @dataclass(frozen=True)
@@ -202,10 +201,60 @@ def _rasterize(config: SDFPlotConfig) -> _Raster:
     )
 
 
+def _squared_distance_transform_1d(values: np.ndarray) -> np.ndarray:
+    """Compute the lower envelope of squared-distance parabolas in linear time."""
+    finite_sites = np.flatnonzero(np.isfinite(values))
+    if not finite_sites.size:
+        return np.full(values.shape, np.inf)
+
+    size = values.size
+    sites = np.empty(size, dtype=np.intp)
+    boundaries = np.empty(size + 1, dtype=float)
+    envelope_size = 0
+    sites[0] = finite_sites[0]
+    boundaries[0] = -np.inf
+    boundaries[1] = np.inf
+
+    for site in finite_sites[1:]:
+        previous = sites[envelope_size]
+        boundary = (
+            values[site] + site * site - values[previous] - previous * previous
+        ) / (2 * (site - previous))
+        while boundary <= boundaries[envelope_size]:
+            envelope_size -= 1
+            previous = sites[envelope_size]
+            boundary = (
+                values[site] + site * site - values[previous] - previous * previous
+            ) / (2 * (site - previous))
+        envelope_size += 1
+        sites[envelope_size] = site
+        boundaries[envelope_size] = boundary
+        boundaries[envelope_size + 1] = np.inf
+
+    result = np.empty(size, dtype=float)
+    envelope_index = 0
+    for position in range(size):
+        while boundaries[envelope_index + 1] < position:
+            envelope_index += 1
+        offset = position - sites[envelope_index]
+        result[position] = offset * offset + values[sites[envelope_index]]
+    return result
+
+
+def _distance_transform_edt(mask: np.ndarray) -> np.ndarray:
+    """Return exact Euclidean distances from true cells to the nearest false cell."""
+    squared = np.where(mask, np.inf, 0.0)
+    for row in range(squared.shape[0]):
+        squared[row] = _squared_distance_transform_1d(squared[row])
+    for column in range(squared.shape[1]):
+        squared[:, column] = _squared_distance_transform_1d(squared[:, column])
+    return np.sqrt(squared)
+
+
 def _build_model(config: SDFPlotConfig) -> _Model:
     raster = _rasterize(config)
-    inside_distance = distance_transform_edt(raster.inside)
-    outside_distance = distance_transform_edt(~raster.inside)
+    inside_distance = _distance_transform_edt(raster.inside)
+    outside_distance = _distance_transform_edt(~raster.inside)
     sdf = (
         np.where(
             raster.inside,
