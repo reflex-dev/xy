@@ -1,9 +1,9 @@
 ---
-title: Gallery
+title: Chart Gallery
 description: Browse every chart type and visual pattern available in XY.
 ---
 
-# Gallery
+# Chart Gallery
 
 Start with the visual result you need. Every public chart type is represented
 below, grouped to match the Chart Gallery navigation. Each tile opens a focused

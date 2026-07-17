@@ -56,7 +56,7 @@ built.
 | Uncertainty | `errorbar`, `error_band` |
 | Explicit geometry | `stem`, `segments`, `triangle_mesh` |
 
-The [Chart Gallery](/docs/xy/charts/) explains expected data shapes and
+The [Chart Gallery](/docs/xy/overview/gallery/) explains expected data shapes and
 family-specific choices.
 
 ## Shared Mark Behavior

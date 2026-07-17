@@ -15,7 +15,6 @@ DOCS_SECTIONS = (
         "compass",
         (
             ("What is xy?", "/"),
-            ("Gallery", "/overview/gallery/"),
             ("Installation", "/overview/installation/"),
             ("Your First Chart", "/overview/first-chart/"),
             ("Benchmarks", "/overview/benchmarks/"),
@@ -53,7 +52,7 @@ DOCS_SECTIONS = (
     ),
     (
         "Chart Gallery",
-        "/charts/",
+        "/overview/gallery/",
         "chart-column",
         (
             ("Line and Area", "/charts/line-and-area/"),
@@ -113,6 +112,18 @@ DOCS_SECTIONS = (
                 "/guides/serving-csp-and-offline-use/",
             ),
             ("Troubleshooting", "/guides/troubleshooting/"),
+        ),
+    ),
+    (
+        "Advanced",
+        "/advanced/",
+        "network",
+        (
+            ("XY Architecture", "/advanced/"),
+            (
+                "Runtime and Deployment",
+                "/advanced/runtime-and-deployment/",
+            ),
         ),
     ),
     (

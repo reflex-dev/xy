@@ -194,7 +194,7 @@ def _link_line(source: str, target: str, cursor: int) -> tuple[int, int]:
 
 
 def test_public_markdown_routes_match_the_docs_navigation() -> None:
-    """Discover the exact eight-section, two-level public information architecture."""
+    """Discover the exact nine-section, two-level public information architecture."""
     assert tuple(title for title, _route, _icon, _leaves in DOCS_SECTIONS) == (
         "Overview",
         "Core Concepts",
@@ -203,7 +203,16 @@ def test_public_markdown_routes_match_the_docs_navigation() -> None:
         "Components",
         "Integrations",
         "Guides",
+        "Advanced",
         "Reference",
+    )
+    assert (
+        next(
+            landing_route
+            for title, landing_route, _icon, _leaves in DOCS_SECTIONS
+            if title == "Chart Gallery"
+        )
+        == "/overview/gallery/"
     )
     section_routes = tuple(
         dict.fromkeys(
@@ -216,6 +225,8 @@ def test_public_markdown_routes_match_the_docs_navigation() -> None:
         )
     )
     assert section_routes == DOCS_NAVIGATION
+    assert "/overview/gallery/" in DOCS_NAVIGATION
+    assert "/charts/" not in DOCS_NAVIGATION
     assert (
         max(len(tuple(part for part in route.split("/") if part)) for route in section_routes) <= 2
     )
@@ -1190,7 +1201,7 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
         assert group_title in rendered
     for category, route in (
         ("Learn", "/"),
-        ("Build", "/charts/"),
+        ("Build", "/overview/gallery/"),
         ("API Reference", "/api-reference/"),
     ):
         assert f'aria-label":"Navigate to {category}"' in rendered
@@ -1233,9 +1244,9 @@ def test_xy_breadcrumb_opens_the_official_docs_sidebar_drawer() -> None:
 
     assert "Drawer.Root" in rendered
     assert "Drawer.Trigger" in rendered
-    assert "Charts" in rendered
+    assert "Chart Gallery" in rendered
     assert "Scatter" in rendered
-    assert "/charts/" in rendered
+    assert "/overview/gallery/" in rendered
     assert "/charts/scatter/" in rendered
     assert "ArrowDown01Icon" in rendered
 
@@ -1256,14 +1267,14 @@ def test_xy_breadcrumb_shortens_the_modebar_page_label() -> None:
 
 def test_xy_footer_reuses_official_footer_with_source_aware_links() -> None:
     """Keep the complete official footer while targeting the XY repository."""
-    page = next(page for page in discover_docs(DOCS_CONFIG) if page.route == "/charts/")
+    page = next(page for page in discover_docs(DOCS_CONFIG) if page.route == "/overview/gallery/")
 
     rendered = str(xy_docs_footer(page))
 
     assert "https://github.com/reflex-dev/xy/issues/new" in rendered
-    assert "Issue with reflex.dev/docs/xy/charts/" in rendered
-    assert "Path: /docs/xy/charts/" in rendered
-    assert "https://github.com/reflex-dev/xy/blob/main/docs/charts/index.md" in rendered
+    assert "Issue with reflex.dev/docs/xy/overview/gallery/" in rendered
+    assert "Path: /docs/xy/overview/gallery/" in rendered
+    assert "https://github.com/reflex-dev/xy/blob/main/docs/overview/gallery.md" in rendered
 
 
 def test_component_api_uses_generated_shared_tables() -> None:

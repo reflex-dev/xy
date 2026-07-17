@@ -7,8 +7,8 @@ description: Reference XY chart containers, shared props, and facet construction
 
 Chart factories compose marks, axes, annotations, and chrome into a public
 `Chart`. The generated inventory below follows the same taxonomy as the
-[Chart Gallery](/docs/xy/charts/). Its names, signatures, and defaults come
-directly from XY's public Python callables.
+[Chart Gallery](/docs/xy/overview/gallery/). Its names, signatures, and
+defaults come directly from XY's public Python callables.
 
 Use `chart()` when different mark kinds share a panel. A family container is
 usually clearer when the children represent one chart family.
