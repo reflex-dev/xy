@@ -470,6 +470,24 @@ def test_makefile_exposes_sdist_verification_shortcut() -> None:
     assert "make check-sdist" in makefile
 
 
+def test_contributor_setup_builds_native_core_and_docs_use_it() -> None:
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    setup_recipe = makefile.split("setup:\n", 1)[1].split("\n\n", 1)[0]
+
+    assert "uv venv" in setup_recipe
+    assert 'uv pip install -e ".[dev]"' in setup_recipe
+    assert "cargo build --release" in setup_recipe
+
+    contributor_docs = (
+        (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8"),
+        (ENGINEERING_DOCS / "contributing.md").read_text(encoding="utf-8"),
+        (ROOT / "README.md").read_text(encoding="utf-8"),
+        (ROOT / "docs" / "api-reference" / "contributing.md").read_text(encoding="utf-8"),
+    )
+    for text in contributor_docs:
+        assert "make setup" in text
+
+
 def test_makefile_exposes_wheel_verification_shortcut() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
 

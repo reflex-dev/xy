@@ -13,7 +13,7 @@ help:
 	@printf '%s\n' \
 		'xy developer shortcuts' \
 		'' \
-		'  make setup            create .venv and install .[dev]' \
+		'  make setup            create .venv, install .[dev], and build the native core' \
 		'  make setup-browser    install the pinned Playwright browser-test driver' \
 		'  make check            run the fast local verification gate' \
 		'  make check-full       run JS, Rust, and ABI gates too' \
@@ -46,6 +46,7 @@ help:
 setup:
 	uv venv
 	uv pip install -e ".[dev]"
+	cargo build --release
 
 setup-browser:
 	npm install
