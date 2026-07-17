@@ -25,8 +25,11 @@ Chart compiler -----> ColumnStore (canonical f64 columns)
         |                         |
         |                         v
         |                Native Rust compute core
-        |                statistics, binning, M4,
-        |                range queries, rasterization
+        |                  |-- exact path (no sampling):
+        |                  |   full points, statistics, range queries
+        |                  |-- reduced path (optional):
+        |                  |   M4 or density bins + a sample
+        |                  +-- static export: rasterization
         |                         |
         +-------------------------+
         |
@@ -79,10 +82,13 @@ they are not the source of truth.
 
 Published wheels include a required native Rust core behind a narrow C ABI.
 Python keeps validation, policy, column ownership, chart composition, and host
-integration. Rust handles measured data-path work such as statistics, range
-queries, M4 line reduction, density binning, selection, and native
-rasterization. Unsupported platforms fail clearly instead of silently
-switching to a slower compute implementation.
+integration. Rust can take an exact path that keeps every visible point, or an
+optional reduced path that uses M4 for long lines or density bins plus a
+deterministic sample for dense scatter. It also handles statistics, range
+queries, selection, and native rasterization. Reduction changes only the
+render representation: the exact canonical columns remain available.
+Unsupported platforms fail clearly instead of silently switching to a slower
+compute implementation.
 
 See [Data and Columns](/docs/xy/core-concepts/data/) for accepted inputs and
 [Large Data and Performance](/docs/xy/core-concepts/large-data-and-performance/)
