@@ -127,7 +127,6 @@ jobs:
   wasm:
     name: Wheel Pyodide (runtime verified)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
@@ -230,8 +229,8 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    # wasm is best-effort (continue-on-error), so it never blocks the release; its
-    # artifact is collected by the dist-* download pattern when it succeeds.
+    # Publishing requires the runtime-verified Pyodide wheel alongside every native
+    # wheel and the sdist; the dist-* download pattern collects all of their artifacts.
     needs: [wheels, sdist, wasm]
     runs-on: ubuntu-latest
     environment: pypi
