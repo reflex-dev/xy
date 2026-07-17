@@ -4,6 +4,7 @@
   <a href="https://github.com/reflex-dev/xy/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/reflex-dev/xy/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://app.codspeed.io/reflex-dev/xy?utm_source=badge"><img alt="CodSpeed" src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json"></a>
   <a href="pyproject.toml"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab?logo=python&logoColor=white"></a>
+  <a href="https://reflex-staging.dev/docs/xy/" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/docs-reflex--staging.dev-blue" alt="Docs" /></a>
 </p>
 
 <p align="center">
@@ -12,6 +13,9 @@
 
 xy is an experimental Python charting library for large, interactive datasets.
 Its Rust core and WebGL2 renderer keep work bounded by what the screen can show.
+
+> [!IMPORTANT]
+> This repo's docs will not be complete until official release. Current docs can be found [here](https://reflex-staging.dev/docs/xy/).
 
 > [!IMPORTANT]
 > xy is early alpha; APIs may change before 1.0.
