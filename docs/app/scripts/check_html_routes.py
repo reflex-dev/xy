@@ -44,11 +44,7 @@ def route_module_path(route: str) -> Path:
         Generated route module path.
     """
     parts = route.strip("/").split("/") if route.strip("/") else []
-    filename = (
-        ".".join(f"[{part}]" for part in parts) + "._index.jsx"
-        if parts
-        else "_index.jsx"
-    )
+    filename = ".".join(f"[{part}]" for part in parts) + "._index.jsx" if parts else "_index.jsx"
     return ROUTES_ROOT / filename
 
 

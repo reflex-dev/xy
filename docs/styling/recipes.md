@@ -1,18 +1,19 @@
 ---
 title: Styling Recipes
-description: Copy visual recipes for dashboard areas, gradient bars, and dark charts.
+description: Ready-to-use styling examples for dashboard areas, gradient bars, and dark charts.
 ---
 
 # Styling Recipes
 
-These recipes use only shipped styling surfaces. Copy the chart construction
-into a script or notebook; the small `reflex_xy.chart(...)` wrapper exists only
-to render the live documentation preview.
+Each recipe uses public XY styling APIs. Copy the chart construction into a
+script or notebook; the `reflex_xy.chart(...)` function simply displays the
+interactive preview on this page.
 
 ## Dashboard sparkline
 
-Remove chart chrome, tighten the plot padding, and fade a smooth area into its
-baseline:
+Build a compact trend chart by hiding the axes, legend, tooltip, and toolbar.
+The reduced padding saves space, while the gradient makes the area fill fade
+toward the baseline:
 
 ~~~python demo exec
 import numpy as np
@@ -87,6 +88,121 @@ For one continuous gradient across the whole plot, pass
 `fill={"gradient": "linear-gradient(to right, #2563eb, #a78bfa)",
 "space": "plot"}`.
 
+## Accessible monochrome comparison
+
+Do not rely on hue alone when a chart must survive grayscale printing or serve
+users with color-vision differences. Combine stroke dash, marker shape, and a
+clear legend so each series has multiple visual identifiers:
+
+~~~python demo exec
+import reflex_xy
+import xy
+
+periods = ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6"]
+
+monochrome = xy.line_chart(
+    xy.line(
+        periods,
+        [42, 48, 51, 57, 61, 68],
+        name="Actual",
+        color="var(--mono-text, #111111)",
+        width=2.5,
+    ),
+    xy.scatter(
+        periods,
+        [42, 48, 51, 57, 61, 68],
+        symbol="circle",
+        color="var(--mono-bg, #ffffff)",
+        stroke="var(--mono-text, #111111)",
+        stroke_width=2,
+        size=8,
+    ),
+    xy.line(
+        periods,
+        [40, 46, 53, 55, 63, 66],
+        name="Plan",
+        color="var(--mono-muted, #555555)",
+        width=2.5,
+        dash="dashed",
+    ),
+    xy.scatter(
+        periods,
+        [40, 46, 53, 55, 63, 66],
+        symbol="square",
+        color="var(--mono-muted, #555555)",
+        size=7,
+    ),
+    xy.legend(loc="upper left", ncols=2),
+    xy.tooltip(title="{x}"),
+    xy.theme(
+        plot_background="var(--mono-bg, #ffffff)",
+        grid_color="var(--mono-grid, #d4d4d4)",
+        axis_color="var(--mono-axis, #525252)",
+        text_color="var(--mono-text, #171717)",
+    ),
+    class_name=(
+        "[--mono-bg:#ffffff] [--mono-grid:#d4d4d4] [--mono-axis:#525252] "
+        "[--mono-text:#171717] [--mono-muted:#555555] "
+        "dark:[--mono-bg:#0f172a] dark:[--mono-grid:#334155] "
+        "dark:[--mono-axis:#94a3b8] dark:[--mono-text:#f8fafc] "
+        "dark:[--mono-muted:#cbd5e1]"
+    ),
+    style={"background": "var(--mono-bg, #ffffff)"},
+    title="Actual versus plan",
+)
+
+
+def accessible_monochrome_recipe():
+    return reflex_xy.chart(monochrome, height="320px")
+~~~
+
+The points intentionally have no legend names, so they reinforce the two line
+series without creating duplicate legend rows.
+
+## Dense categorical labels
+
+Long category names can overlap or be clipped. Rotate the x-axis labels and
+reserve extra space below the plot so every region name remains readable. If
+showing every label is unnecessary, use `tick_label_strategy="hide"` instead.
+
+~~~python demo exec
+import reflex_xy
+import xy
+
+dense_categories = xy.column_chart(
+    xy.column(
+        [
+            "North America",
+            "Latin America",
+            "Western Europe",
+            "Eastern Europe",
+            "Middle East",
+            "Asia Pacific",
+        ],
+        [78, 54, 69, 47, 58, 83],
+        fill="linear-gradient(to top, #4338ca, #a5b4fc)",
+        corner_radius=(6, 0),
+    ),
+    xy.x_axis(
+        tick_label_strategy="rotate",
+        tick_label_angle=-35,
+        tick_label_min_gap=8,
+    ),
+    xy.y_axis(label="adoption (%)", domain=(0, 100)),
+    width="100%",
+    height=360,
+    padding=[38, 24, 92, 54],
+    title="Regional adoption",
+)
+
+
+def dense_categorical_axis_recipe():
+    return reflex_xy.chart(dense_categories, height="360px")
+~~~
+
+Keep the chart root's overflow visible. Axis labels are DOM chrome and can be
+clipped when `overflow-hidden` is applied directly to the XY root.
+
 ## Dark chart card
 
 Keep every export-critical color on the chart. Marks can consume a custom
@@ -130,3 +246,118 @@ def dark_chart_card_recipe():
 To follow system dark mode rather than fixing one palette, move the token
 values into the `@media (prefers-color-scheme: dark)` stylesheet shown in
 [Themes and tokens](/docs/xy/styling/themes-and-tokens/#dark-mode-in-a-standalone-export).
+
+## Export-safe brand theme
+
+Put export-critical variables on the chart itself. Browser-only host CSS is
+appropriate for application decoration, but native SVG and PNG cannot inherit
+from the page that happened to contain the chart.
+
+~~~python demo exec
+import reflex_xy
+import xy
+
+branded = xy.area_chart(
+    xy.area(
+        [0, 1, 2, 3, 4, 5],
+        [18, 24, 22, 31, 35, 43],
+        name="Active teams",
+        color="var(--brand-primary, #2563eb)",
+        curve="smooth",
+        line_width=2.5,
+        fill="linear-gradient(currentColor, transparent)",
+    ),
+    xy.legend(loc="upper left"),
+    xy.tooltip(title="Month {x}"),
+    xy.theme(
+        plot_background="var(--brand-surface, #f8fafc)",
+        text_color="var(--brand-text, #172554)",
+        grid_color="var(--brand-grid, rgb(37 99 235 / 14%))",
+        axis_color="var(--brand-axis, rgb(30 64 175 / 55%))",
+        style={
+            "--brand-primary": "var(--brand-accent, #2563eb)",
+            "--chart-tooltip-bg": "var(--brand-tooltip, #172554)",
+            "--chart-tooltip-text": "var(--brand-tooltip-text, #eff6ff)",
+            "--chart-legend-bg": "var(--brand-legend, rgb(248 250 252 / 88%))",
+        },
+    ),
+    class_name=(
+        "[--brand-surface:#f8fafc] [--brand-text:#172554] "
+        "[--brand-grid:#2563eb24] [--brand-axis:#1e40af8c] "
+        "[--brand-accent:#2563eb] [--brand-tooltip:#172554] "
+        "[--brand-tooltip-text:#eff6ff] [--brand-legend:#f8fafce0] "
+        "dark:[--brand-surface:#0f172a] dark:[--brand-text:#dbeafe] "
+        "dark:[--brand-grid:#93c5fd33] dark:[--brand-axis:#93c5fd99] "
+        "dark:[--brand-accent:#60a5fa] dark:[--brand-tooltip:#020617] "
+        "dark:[--brand-tooltip-text:#eff6ff] dark:[--brand-legend:#1e293be6]"
+    ),
+    style={"background": "var(--brand-surface, #f8fafc)"},
+    title="Branded growth",
+)
+
+
+def export_safe_brand_recipe():
+    return reflex_xy.chart(branded, height="320px")
+~~~
+
+The same chart can now use `to_svg()` or native `to_png()` without depending on
+an ancestor stylesheet. Use `custom_css` with the Chromium engine only when an
+export intentionally needs browser selectors or a host-loaded font.
+
+## Responsive dashboard card
+
+Make the chart fluid horizontally but give it a real height. Constrain an outer
+host card—not the XY root—so labels remain free to extend into the chart's
+padding and the chart can remeasure when its container changes.
+
+~~~python demo exec
+import reflex as rx
+import reflex_xy
+import xy
+
+dashboard_card = xy.line_chart(
+    xy.line(
+        ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        [82, 91, 87, 104, 112, 108, 126],
+        name="Requests",
+        color="#0f766e",
+        width=2.5,
+        curve="smooth",
+    ),
+    xy.line(
+        ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        [76, 84, 90, 96, 102, 108, 114],
+        name="Expected",
+        color="#94a3b8",
+        dash="dashed",
+    ),
+    xy.legend(loc="upper left", ncols=2),
+    xy.tooltip(title="{x}", format={"y": ".0f"}),
+    xy.theme(grid_color="rgb(148 163 184 / 20%)"),
+    class_names={
+        "legend": "rounded-md bg-white/90 text-xs dark:bg-slate-900/90",
+        "tooltip": "rounded-lg bg-slate-950 px-3 py-2 text-white shadow-xl",
+    },
+    width="100%",
+    height=280,
+    padding=[42, 22, 48, 48],
+    title="Weekly traffic",
+)
+
+
+def responsive_dashboard_card_recipe():
+    return rx.box(
+        reflex_xy.chart(dashboard_card, height="280px"),
+        width="100%",
+        max_width="36rem",
+        margin_x="auto",
+        padding="3",
+        border="1px solid var(--gray-a5)",
+        border_radius="12px",
+        box_shadow="0 8px 24px rgb(15 23 42 / 8%)",
+    )
+~~~
+
+Avoid `height="100%"` unless every ancestor has a defined height. An explicit
+component height with chart `width="100%"` is the most reliable responsive
+starting point.

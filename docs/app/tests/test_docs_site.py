@@ -11,7 +11,6 @@ from urllib.parse import urlparse
 
 import pytest
 import reflex_xy
-import xy
 from reflex_base.components.memo import MemoComponent
 from reflex_docgen.markdown import (
     Block,
@@ -53,6 +52,7 @@ from xy_docs.gallery import (
     _responsive_gallery_svg,
     chart_gallery_grid,
 )
+from xy_docs.markdown import render_xy_markdown_page
 from xy_docs.navbar import xy_docs_navbar
 from xy_docs.sidebar import (
     SIDEBAR_SECTION_GROUPS,
@@ -60,10 +60,15 @@ from xy_docs.sidebar import (
     xy_docs_sidebar_comp,
 )
 
+import xy
+from xy._validate import _POINT_SYMBOLS
+from xy.components import _MARK_APPLIERS
+
 SITEMAP_NAMESPACE = {"sitemap": "https://www.sitemaps.org/schemas/sitemap/0.9"}
 DOCS_APP_ROOT = Path(__file__).resolve().parent.parent
 DOCS_ROOT = DOCS_APP_ROOT.parent
 EXPORTED_SITEMAP = DOCS_APP_ROOT / ".web" / "public" / "sitemap.xml"
+EXPORTED_CLIENT_ASSETS = DOCS_APP_ROOT / ".web" / "build" / "client" / "docs" / "xy" / "assets"
 CHECK_HTML_ROUTES_PATH = DOCS_APP_ROOT / "scripts" / "check_html_routes.py"
 CHECK_HTML_ROUTES_SPEC = importlib.util.spec_from_file_location(
     "xy_docs_check_html_routes",
@@ -211,11 +216,7 @@ def test_public_markdown_routes_match_the_docs_navigation() -> None:
     )
     assert section_routes == DOCS_NAVIGATION
     assert (
-        max(
-            len(tuple(part for part in route.split("/") if part))
-            for route in section_routes
-        )
-        <= 2
+        max(len(tuple(part for part in route.split("/") if part)) for route in section_routes) <= 2
     )
 
     pages = discover_docs(DOCS_CONFIG)
@@ -230,12 +231,237 @@ def test_docs_app_configures_the_reflex_xy_adapter() -> None:
     assert any(isinstance(plugin, reflex_xy.XYPlugin) for plugin in config.plugins)
 
 
+def test_tailwind_styling_docs_match_the_reflex_plugin_contract() -> None:
+    """Keep the Reflex scan-path guidance aligned with the configured plugin."""
+    content = (DOCS_ROOT / "styling/chrome-slots.md").read_text(encoding="utf-8")
+
+    assert any(plugin.__class__.__name__ == "TailwindV4Plugin" for plugin in config.plugins)
+    assert "the adapter mirrors its chart, slot, mark, and annotation class strings" in content
+    assert "without adding the original Python or\nMarkdown file" in content
+    assert "Live token/Var charts are different" in content
+    assert "normal Reflex component (or safelist it" in content
+
+
+@pytest.mark.xfail(
+    not EXPORTED_CLIENT_ASSETS.is_dir(),
+    reason="Build the XY docs frontend before validating compiled Tailwind CSS.",
+    run=False,
+)
+def test_static_xy_tailwind_manifest_reaches_compiled_css() -> None:
+    """Prove an XYBF-only class survives the complete Tailwind build.
+
+    The sentinel is assembled from fragments in ``xy_docs.gallery``, so
+    Tailwind cannot find its complete arbitrary-property token in Python
+    source. The compiled route must receive it through ``tailwindClassTokens``
+    and the final stylesheet must contain the corresponding declaration.
+    """
+    javascript = "\n".join(
+        path.read_text(encoding="utf-8") for path in EXPORTED_CLIENT_ASSETS.glob("*.js")
+    )
+    stylesheets = "\n".join(
+        path.read_text(encoding="utf-8") for path in EXPORTED_CLIENT_ASSETS.glob("*.css")
+    )
+
+    sentinel = "[--xy-tailwind-bridge:compiled]"
+    assert "tailwindClassTokens" in javascript
+    assert sentinel in javascript
+    assert "--xy-tailwind-bridge:compiled" in stylesheets
+
+
+def test_styling_troubleshooting_covers_common_host_and_export_failures() -> None:
+    """Keep the public styling entry point useful when visual CSS fails."""
+    content = (DOCS_ROOT / "styling/index.md").read_text(encoding="utf-8")
+
+    for requirement in (
+        "## Styling troubleshooting",
+        "Tailwind classes are present but have no effect",
+        "A custom font silently falls back",
+        "Marks are WebGL/canvas geometry",
+        "to_html(custom_css=...)",
+        "engine=Engine.chromium",
+        "overflow-hidden",
+        'height="100%"',
+        "normal cascade",
+    ):
+        assert requirement in content
+
+
+def test_component_styling_matrix_covers_public_chrome_boundaries() -> None:
+    """Keep the styling guide explicit about built-in and custom components."""
+    content = (DOCS_ROOT / "styling/component-variations.md").read_text(encoding="utf-8")
+    expected = {
+        "legend_item",
+        "legend_swatch",
+        "tooltip(fields=..., title=..., format=...)",
+        "x_axis(...)",
+        "y_axis(...)",
+        "vline(x)",
+        "hline(y)",
+        "crosshair_x",
+        "crosshair_y",
+        "selection",
+        "legend(render=...)",
+        "tooltip(render=...)",
+        "colorbar(render=...)",
+    }
+
+    missing = {value for value in expected if value not in content}
+    assert not missing
+    assert 'id="x2"' in content
+    assert 'side="top"' in content
+    assert "button_class_name=" in content
+    assert "button_style=" in content
+    assert "does not render components passed through" in content
+    assert "Standalone exports cannot include framework-owned components either." in content
+
+
+def test_styling_docs_cover_every_public_dom_slot() -> None:
+    """Make a new stable browser slot fail docs CI until it is documented."""
+    chrome = (DOCS_ROOT / "styling/chrome-slots.md").read_text(encoding="utf-8")
+    variations = (DOCS_ROOT / "styling/component-variations.md").read_text(encoding="utf-8")
+
+    assert all(f"`{slot}`" in chrome for slot in xy.CHART_DOM_SLOTS)
+    for slot in ("root", "title", "chrome", "canvas", "labels", "badge", "badge_item"):
+        assert f"`{slot}`" in variations
+
+
+def test_styling_docs_cover_every_rendered_mark_family() -> None:
+    """Tie the mark-style matrix to the actual declarative mark registry."""
+    content = (DOCS_ROOT / "styling/mark-styles.md").read_text(encoding="utf-8").lower()
+
+    missing = {
+        kind
+        for kind in _MARK_APPLIERS
+        if kind not in content and kind.replace("_", " ") not in content
+    }
+    assert not missing
+
+
+def test_styling_gallery_exercises_every_rendered_mark_family() -> None:
+    """Keep the visual styling atlas complete as XY gains mark families."""
+    content = (DOCS_ROOT / "styling/gallery.md").read_text(encoding="utf-8").lower()
+
+    missing = {
+        kind
+        for kind in _MARK_APPLIERS
+        if f"`{kind}`" not in content and f"`{kind.replace('_', ' ')}`" not in content
+    }
+    assert not missing
+
+    required_surfaces = {
+        "responsive",
+        "prefers-color-scheme",
+        "custom legend",
+        "custom tooltip",
+        "reduction badge",
+        "facet_chart",
+        "categorical",
+        "time axis",
+        "to_html(custom_css=",
+        "xy.interaction_config(",
+        "hover=true",
+        "click=true",
+        "select=true",
+        "brush=true",
+        "crosshair=true",
+        "view_change=true",
+        'loc="upper center"',
+        "critical-payments-reconciliation-with-extra-long-label",
+    }
+    assert all(surface in content for surface in required_surfaces)
+    assert len(_POINT_SYMBOLS) == 17
+    assert all(f'"{symbol}"' in content for symbol in _POINT_SYMBOLS)
+    assert 'mode="grouped"' in content
+    assert 'mode="normalized"' in content
+    assert 'mode="stacked"' in content
+    assert 'orientation="vertical"' in content
+    assert 'orientation="horizontal"' in content
+    assert "colorbar_bar" in content
+    assert "colorbar_tick" in content
+    assert "colorbar_title" in content
+
+
+def test_markdown_heading_links_are_route_local_after_client_navigation() -> None:
+    """Do not let a previously visited docs route leak into heading self-links."""
+    pages = {page.route: page for page in discover_docs(DOCS_CONFIG)}
+
+    for route in ("/overview/gallery/", "/styling/gallery/"):
+        rendered = str(render_xy_markdown_page(pages[route]))
+        assert 'to:"#' in rendered
+        assert "router_rx_state_" not in rendered
+
+
+def test_colorbar_docs_match_the_declarative_and_custom_boundaries() -> None:
+    """Keep inferred built-ins distinct from opaque framework replacements."""
+    content = (DOCS_ROOT / "components/colorbars.md").read_text(encoding="utf-8")
+
+    for option in (
+        "title=",
+        "orientation=",
+        "ticks=",
+        "colorbar(show=False)",
+    ):
+        assert option in content
+    for slot in ("colorbar", "colorbar_bar", "colorbar_tick", "colorbar_title"):
+        assert f"`{slot}`" in content
+    assert "The last compatible continuous mark wins" in content
+    assert "does not currently mount custom chrome" in content
+
+
+def test_custom_font_docs_cover_browser_and_static_export_boundaries() -> None:
+    """Keep font loading advice honest across browser and native outputs."""
+    content = (DOCS_ROOT / "styling/themes-and-tokens.md").read_text(encoding="utf-8")
+
+    for requirement in (
+        "## Custom fonts and export limitations",
+        "@font-face",
+        'style={"font_family":',
+        "Engine.chromium",
+        "Toolbar PNG",
+        "Toolbar SVG",
+        "Native PNG",
+        "Python `to_svg()`",
+        "baked bitmap font",
+    ):
+        assert requirement in content
+
+
+def test_generated_mark_api_does_not_claim_canvas_marks_are_dom_nodes() -> None:
+    """Keep generated class_name descriptions aligned with canvas rendering."""
+    for factory in MARKS:
+        if "class_name" not in inspect.signature(factory).parameters:
+            continue
+        docstring = inspect.getdoc(factory) or ""
+        assert "DOM class name applied to the mark" not in docstring
+        assert "Adapter-only trace metadata" in docstring
+
+
+def test_styling_docs_cover_every_annotation_factory_and_alias() -> None:
+    """Keep every public annotation primitive visible in the styling guide."""
+    content = (DOCS_ROOT / "styling/component-variations.md").read_text(encoding="utf-8")
+    factories = (
+        "vline",
+        "hline",
+        "x_band",
+        "y_band",
+        "text",
+        "label",
+        "marker",
+        "arrow",
+        "threshold",
+        "threshold_zone",
+        "callout",
+    )
+
+    assert all(f"`{factory}" in content for factory in factories)
+
+
 def test_what_is_xy_shows_density_hero_without_inline_code() -> None:
     """Keep the signature example visible without exposing its long source."""
     content = (DOCS_ROOT / "index.md").read_text(encoding="utf-8")
-    demo_source = (
-        DOCS_APP_ROOT / "xy_docs/demos/instrument_sans_density.py"
-    ).read_text(encoding="utf-8")
+    demo_source = (DOCS_APP_ROOT / "xy_docs/demos/instrument_sans_density.py").read_text(
+        encoding="utf-8"
+    )
     font = DOCS_APP_ROOT / "xy_docs/assets/InstrumentSans-wdth-wght.ttf"
     license_file = DOCS_APP_ROOT / "xy_docs/assets/OFL.txt"
 
@@ -246,9 +472,7 @@ def test_what_is_xy_shows_density_hero_without_inline_code() -> None:
 
     assert introduction < styling < hero < early_alpha
     assert "demo exec toggle" not in content
-    assert (
-        "from xy_docs.demos.instrument_sans_density import xy_density_hero" in content
-    )
+    assert "from xy_docs.demos.instrument_sans_density import xy_density_hero" in content
     assert "View the complete Python source" in content
     assert "N_POINTS = 40_000" in demo_source
     assert "N_INLIERS = round(N_POINTS * 0.97)" in demo_source
@@ -258,9 +482,7 @@ def test_what_is_xy_shows_density_hero_without_inline_code() -> None:
     assert hashlib.sha256(font.read_bytes()).hexdigest() == (
         "b24f1812584816958afcf22e22d08e44318c5e51651e25d2438efdde389b33b1"
     )
-    assert "SIL OPEN FONT LICENSE Version 1.1" in license_file.read_text(
-        encoding="utf-8"
-    )
+    assert "SIL OPEN FONT LICENSE Version 1.1" in license_file.read_text(encoding="utf-8")
 
 
 def test_density_hero_toolbar_follows_reflex_color_mode() -> None:
@@ -312,16 +534,12 @@ def test_live_preview_markdown_builds_real_xy_components(
 ) -> None:
     """Compile every live preview through docgen and the static XY adapter."""
     app_payload_dir = DOCS_APP_ROOT / "assets" / "xy"
-    app_payloads_before = {
-        path: path.read_bytes() for path in app_payload_dir.glob("*.xyf")
-    }
+    app_payloads_before = {path: path.read_bytes() for path in app_payload_dir.glob("*.xyf")}
     monkeypatch.chdir(tmp_path)
     pages = [
         page
         for page in discover_docs(DOCS_CONFIG)
-        if any(
-            marker in page.content for marker in check_html_routes.LIVE_PREVIEW_MARKERS
-        )
+        if any(marker in page.content for marker in check_html_routes.LIVE_PREVIEW_MARKERS)
     ]
 
     assert pages
@@ -336,19 +554,51 @@ def test_live_preview_markdown_builds_real_xy_components(
         )
         assert "XYChart" in rendered, page.relative_path
         assert "Interactive preview coming soon" not in page.content
-        page_payloads = set(
-            re.findall(r'src:"(?:/docs/xy)?/xy/([^"]+\.xyf)"', rendered)
-        )
+        page_payloads = set(re.findall(r'src:"(?:/docs/xy)?/xy/([^"]+\.xyf)"', rendered))
         assert page_payloads, page.relative_path
         referenced_payloads.update(page_payloads)
 
-    generated_payloads = {
-        path.name for path in (tmp_path / "assets" / "xy").glob("*.xyf")
-    }
+    generated_payloads = {path.name for path in (tmp_path / "assets" / "xy").glob("*.xyf")}
     assert generated_payloads == referenced_payloads
     assert {
         path: path.read_bytes() for path in app_payload_dir.glob("*.xyf")
     } == app_payloads_before
+
+
+def test_complete_styling_examples_render_live_previews() -> None:
+    """Do not show component-producing styling examples as source code only."""
+    violations: list[str] = []
+    for path in sorted((DOCS_ROOT / "styling").glob("*.md")):
+        content = path.read_text(encoding="utf-8")
+        for fence, body in re.findall(r"~~~(python[^\n]*)\n(.*?)\n~~~", content, re.DOTALL):
+            if re.search(r"^def\s+\w+\(", body, re.MULTILINE) and "demo exec" not in fence:
+                violations.append(f"{path.relative_to(DOCS_ROOT)}: {fence}")
+
+    assert not violations, "\n".join(violations)
+
+
+def test_styling_demos_pair_light_surfaces_with_readable_text() -> None:
+    """Prevent light demo panels from inheriting low-contrast dark-mode text."""
+    violations: list[str] = []
+    for path in sorted((DOCS_ROOT / "styling").glob("*.md")):
+        content = path.read_text(encoding="utf-8")
+        for _fence, body in re.findall(
+            r"~~~(python demo exec[^\n]*)\n(.*?)\n~~~",
+            content,
+            re.DOTALL,
+        ):
+            if "bg-white" in body and "dark:bg" not in body:
+                violations.append(f"{path.relative_to(DOCS_ROOT)}: unpaired bg-white")
+            if re.search(r'(?:plot_background|"background")\s*[:=]\s*"#f', body):
+                violations.append(f"{path.relative_to(DOCS_ROOT)}: fixed light background")
+            if '"background": "rgb(255 255 255' in body and '"color":' not in body:
+                violations.append(f"{path.relative_to(DOCS_ROOT)}: light component without color")
+
+    assert not violations, "\n".join(violations)
+
+    gallery = (DOCS_ROOT / "styling/gallery.md").read_text(encoding="utf-8")
+    assert '"background": "var(--chart-bg)"' in gallery
+    assert '"colorbar_tick": {"color": "var(--chart-text)"}' in gallery
 
 
 @pytest.mark.parametrize(
@@ -436,16 +686,12 @@ def test_chart_gallery_grid_renders_every_type_with_bounded_live_previews(
 ) -> None:
     """Show every chart type without exceeding the live WebGL context budget."""
     app_payload_dir = DOCS_APP_ROOT / "assets" / "xy"
-    app_payloads_before = {
-        path: path.read_bytes() for path in app_payload_dir.glob("*.xyf")
-    }
+    app_payloads_before = {path: path.read_bytes() for path in app_payload_dir.glob("*.xyf")}
     monkeypatch.chdir(tmp_path)
 
     rendered = str(chart_gallery_grid())
     chart_section = next(
-        leaves
-        for title, _landing_route, _icon, leaves in DOCS_SECTIONS
-        if title == "Chart Gallery"
+        leaves for title, _landing_route, _icon, leaves in DOCS_SECTIONS if title == "Chart Gallery"
     )
     assert len(chart_section) == 9
     assert rendered.count("XYChart") == 9
@@ -453,12 +699,7 @@ def test_chart_gallery_grid_renders_every_type_with_bounded_live_previews(
     assert rendered.count("dangerouslySetInnerHTML") == 19
     assert rendered.count('id:"xy-chart-gallery"') == 1
     assert rendered.count("main:has(#xy-chart-gallery) > div:has(#toc-navigation)") == 1
-    assert (
-        rendered.count(
-            "main:has(#xy-chart-gallery) > div:has(article #xy-chart-gallery)"
-        )
-        == 1
-    )
+    assert rendered.count("main:has(#xy-chart-gallery) > div:has(article #xy-chart-gallery)") == 1
     assert rendered.count("display: none") == 1
     assert rendered.count("max-width: 88rem") == 1
     assert rendered.count("2xl:grid-cols-3") == 9
@@ -511,10 +752,7 @@ def test_chart_gallery_grid_renders_every_type_with_bounded_live_previews(
 
 def test_chart_gallery_combines_only_the_requested_related_tiles() -> None:
     """Merge Step/Stairs and Bar/Column without collapsing other chart types."""
-    titles = {
-        title
-        for title, _description, _route, _chart_factory, _live in _iter_gallery_items()
-    }
+    titles = {title for title, _description, _route, _chart_factory, _live in _iter_gallery_items()}
 
     assert len(titles) == 28
     assert {"Step + Stairs", "Bar + Column"} <= titles
@@ -536,18 +774,14 @@ def test_chart_gallery_hides_the_modebar_from_every_preview() -> None:
     """Keep compact gallery tiles focused on the chart itself."""
     for _title, _description, _route, chart_factory, _live in _iter_gallery_items():
         chart = _gallery_chart(chart_factory)
-        modebars = [
-            child for child in chart.children if type(child).__name__ == "Modebar"
-        ]
+        modebars = [child for child in chart.children if type(child).__name__ == "Modebar"]
         assert len(modebars) == 1
         assert modebars[0].show is False
 
 
 def test_chart_gallery_uses_only_purple_and_gray() -> None:
     """Keep every rendered gallery preview inside one restrained palette."""
-    svg_paint = re.compile(
-        r"#[0-9a-fA-F]{6}|rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+(?:\s*,[^)]*)?\)"
-    )
+    svg_paint = re.compile(r"#[0-9a-fA-F]{6}|rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+(?:\s*,[^)]*)?\)")
 
     def _paint_rgb(paint: str) -> tuple[int, int, int]:
         if paint.startswith("#"):
@@ -642,9 +876,7 @@ def test_chart_gallery_previews_follow_the_site_color_mode() -> None:
     }
 
     for chart in charts:
-        theme = next(
-            child for child in chart.children if type(child).__name__ == "Theme"
-        )
+        theme = next(child for child in chart.children if type(child).__name__ == "Theme")
         assert theme.style == expected_theme
 
         svg = _responsive_gallery_svg(chart)
@@ -754,9 +986,7 @@ def test_xy_sitemap_path_normalization_requires_the_exact_frontend_path() -> Non
     """Normalize canonical locations without accepting sibling docs sites."""
     assert _normalize_xy_docs_path("https://reflex.dev/docs/xy/") == "/"
     assert (
-        _normalize_xy_docs_path(
-            "https://reflex.dev/docs/xy/charts/scatter/?source=test#example"
-        )
+        _normalize_xy_docs_path("https://reflex.dev/docs/xy/charts/scatter/?source=test#example")
         == "/charts/scatter"
     )
     assert _normalize_xy_docs_path("https://reflex.dev/docs/charts/") is None
@@ -770,9 +1000,7 @@ def test_xy_link_walker_resolves_references_and_ignores_code_fences() -> None:
         "```markdown\n[not a link](/docs/xy/missing/)\n```\n"
     )
 
-    assert [link.target for link in _walk_blocks(document.blocks)] == [
-        "/docs/xy/charts/"
-    ]
+    assert [link.target for link in _walk_blocks(document.blocks)] == ["/docs/xy/charts/"]
 
 
 def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
@@ -844,9 +1072,7 @@ def test_xy_mobile_navbar_uses_the_official_drawer_button() -> None:
 
 def test_xy_breadcrumb_opens_the_official_docs_sidebar_drawer() -> None:
     """Reuse the complete memoized sidebar in the mobile page-header drawer."""
-    page = next(
-        page for page in discover_docs(DOCS_CONFIG) if page.route == "/charts/scatter/"
-    )
+    page = next(page for page in discover_docs(DOCS_CONFIG) if page.route == "/charts/scatter/")
 
     rendered = str(xy_docs_breadcrumb(page, xy_docs_sidebar(page.route)))
 
@@ -857,6 +1083,20 @@ def test_xy_breadcrumb_opens_the_official_docs_sidebar_drawer() -> None:
     assert "/charts/" in rendered
     assert "/charts/scatter/" in rendered
     assert "ArrowDown01Icon" in rendered
+
+
+def test_xy_breadcrumb_shortens_the_modebar_page_label() -> None:
+    """Keep the longest component route from overflowing the mobile header."""
+    page = next(
+        page
+        for page in discover_docs(DOCS_CONFIG)
+        if page.route == "/components/modebars-and-interaction-controls/"
+    )
+
+    rendered = str(xy_docs_breadcrumb(page, xy_docs_sidebar(page.route)))
+
+    assert "Modebars & Controls" in rendered
+    assert "Modebars And Interaction Controls" not in rendered
 
 
 def test_xy_footer_reuses_official_footer_with_source_aware_links() -> None:

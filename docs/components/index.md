@@ -31,7 +31,7 @@ the last declaration as their effective configuration.
 | [Axes](/docs/xy/components/axes/) | Scales, domains, ticks, labels, and named axes |
 | [Legends](/docs/xy/components/legends/) | Named-series keys and framework replacements |
 | [Tooltips](/docs/xy/components/tooltips/) | Hover fields, titles, formatting, and replacements |
-| [Colorbars](/docs/xy/components/colorbars/) | Continuous-scale chrome and its current declarative boundary |
+| [Colorbars](/docs/xy/components/colorbars/) | Inferred continuous scales, orientation, ticks, slots, and custom replacements |
 | [Modebars and interaction controls](/docs/xy/components/modebars-and-interaction-controls/) | Pan, zoom, selection, export controls, and linked viewports |
 | [Annotations](/docs/xy/components/annotations/) | Rules, bands, text, markers, arrows, thresholds, and callouts |
 

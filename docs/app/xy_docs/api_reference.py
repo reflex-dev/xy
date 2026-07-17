@@ -1,11 +1,12 @@
 """Generated API-reference sections for XY's public component factories."""
 
 import reflex as rx
-import xy
 from reflex_site_shared.components.docs_api import (
     callable_api_group,
     callable_api_reference,
 )
+
+import xy
 
 CHART_FACTORY_GROUPS = (
     (

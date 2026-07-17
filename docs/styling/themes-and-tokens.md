@@ -9,31 +9,94 @@ XY routes its default chrome colors through `--chart-*` CSS custom properties.
 Set common tokens with `theme()`, add any token through chart/theme `style=`, or
 let a host application's CSS cascade them from an ancestor.
 
-## Theme component
+## Start with the theme component
 
-~~~python
+Use `xy.theme()` when the value belongs to the chart rather than one specific
+mark. Its named arguments are readable aliases for the standard tokens: for
+example, `plot_background` writes `--chart-bg`, while `grid_color` writes
+`--chart-grid`.
+
+~~~python demo exec
+import reflex_xy
 import xy
 
 chart = xy.line_chart(
     xy.line(
-        [0, 1, 2, 3],
+        ["Jan", "Feb", "Mar", "Apr"],
         [2, 5, 3, 8],
-        style={"stroke": "var(--chart-accent)", "stroke-width": 2.5},
+        name="Revenue",
+        color="var(--series-primary, #6e56cf)",
+        width=2.5,
     ),
+    xy.legend(loc="upper left"),
+    xy.tooltip(title="{x}", format={"y": ".1f"}),
     xy.theme(
-        plot_background="#ffffff",
-        grid_color="#e2e8f0",
-        axis_color="#64748b",
-        text_color="#1e293b",
-        style={"--chart-accent": "#6e56cf"},
+        plot_background="var(--demo-bg, #ffffff)",
+        grid_color="var(--demo-grid, #e2e8f0)",
+        axis_color="var(--demo-axis, #64748b)",
+        text_color="var(--demo-text, #1e293b)",
+        # Custom variables belong in style and can be reused by marks.
+        style={"--series-primary": "var(--demo-series, #6e56cf)"},
     ),
+    class_name=(
+        "[--demo-bg:#ffffff] [--demo-grid:#e2e8f0] [--demo-axis:#64748b] "
+        "[--demo-text:#1e293b] [--demo-series:#6e56cf] "
+        "dark:[--demo-bg:#0f172a] dark:[--demo-grid:#334155] "
+        "dark:[--demo-axis:#94a3b8] dark:[--demo-text:#e2e8f0] "
+        "dark:[--demo-series:#a78bfa]"
+    ),
+    style={"background": "var(--demo-bg, #ffffff)"},
+    title="Monthly revenue",
+)
+
+
+def theme_component_preview():
+    return reflex_xy.chart(chart, height="320px")
+~~~
+
+There are two kinds of values in this example:
+
+- `plot_background`, `grid_color`, `axis_color`, and `text_color` configure
+  standard XY chrome.
+- `--series-primary` is an application token. XY does not assign it a meaning;
+  the line opts into it with `var(--series-primary)`.
+
+Use a fallback when a custom variable may not be defined by every host:
+
+~~~python
+xy.line(
+    x,
+    y,
+    color="var(--series-primary, #6e56cf)",
 )
 ~~~
 
-`plot_background`, `grid_color`, `axis_color`, `text_color`,
-`crosshair_color`, `selection_color`, and `selection_fill` are readable aliases
-for their CSS tokens. Later theme values override earlier theme values, and the
-chart's own `style=` is the final root-level override.
+## Where should a token be set?
+
+| Goal | Recommended location |
+| --- | --- |
+| Keep browser, SVG, and PNG exports consistent | `xy.theme(...)` or chart `style={...}` |
+| Share a palette across many browser charts | CSS variables on a common host ancestor |
+| Let Reflex state choose a palette | Resolve the state to a chart class or `style` mapping |
+| Change only one mark | Use the mark's `color`, `fill`, `stroke`, or `style` directly |
+
+If the same token is set in more than one place, XY resolves it in this order:
+
+1. A chart inherits the host ancestor's value when it has no local value.
+2. `xy.theme()` writes a local chart value; later theme components win over
+   earlier ones.
+3. The chart's own `style=` mapping is the final XY-level override.
+
+For example, this line is red because chart `style=` wins over the earlier
+theme value:
+
+~~~python
+chart = xy.line_chart(
+    xy.line([0, 1, 2], [2, 5, 3], color="var(--series-primary)"),
+    xy.theme(style={"--series-primary": "#2563eb"}),  # blue default
+    style={"--series-primary": "#dc2626"},  # final red override
+)
+~~~
 
 ## Token reference
 
@@ -81,6 +144,122 @@ chart = xy.line_chart(
 
 In Reflex, resolve reactive theme choices into ordinary classes, styles, or CSS
 variables. XY does not duplicate Reflex conditions or application state.
+
+## What survives each output
+
+Browser-backed output can preserve computed host styling that browser-free
+exporters cannot evaluate. Use this table when choosing where to define a
+visual treatment:
+
+| Styling surface | Browser / HTML | Toolbar PNG / SVG | Python SVG | Native PNG |
+| --- | --- | --- | --- | --- |
+| Theme tokens | Yes | Yes | Resolved subset | Resolved subset |
+| Slot classes and CSS | Yes | Computed snapshot | No | No |
+| Mark styles | Yes | Yes | Yes | Yes |
+| Custom fonts | Host-loaded | Usually | Limited | Bitmap fallback |
+| Custom `render=` chrome | Adapter-dependent | Adapter-dependent | No | No |
+
+“Resolved subset” means the browser-free exporter understands the tokens it
+uses directly, but it does not run a general CSS cascade. “Computed snapshot”
+means the toolbar export reads the live chart’s computed browser styles at the
+moment of export. For exporter selection and code examples, see
+[Display and Export](/docs/xy/guides/display-and-export/).
+
+## Custom fonts and export limitations
+
+Browser charts inherit fonts from the chart root. Load the font in the host
+application first, then set `font_family` through chart `style=` or apply a
+class that defines `font-family`. The live example uses a system serif so it
+does not depend on a network font; replace that stack with the family your host
+loads.
+
+~~~python demo exec
+import reflex_xy
+import xy
+
+font_chart = xy.line_chart(
+    xy.line(
+        [0, 1, 2, 3, 4],
+        [3, 6, 4, 8, 7],
+        name="Revenue",
+        color="#7c3aed",
+        width=2.5,
+        curve="smooth",
+    ),
+    xy.legend(),
+    xy.tooltip(),
+    xy.x_axis(label="quarter"),
+    xy.y_axis(label="revenue"),
+    style={"font_family": "Georgia, 'Times New Roman', serif"},
+    styles={
+        "title": {"font_weight": 700, "letter_spacing": "0.02em"},
+        "legend": {"font_style": "italic"},
+    },
+    title="Host font family",
+)
+
+
+def custom_font_preview():
+    return reflex_xy.chart(font_chart, height="320px")
+~~~
+
+For a downloaded or self-hosted font, define `@font-face` in the Reflex
+application's global stylesheet and use the same family on the chart:
+
+~~~css
+@font-face {
+  font-family: "Acme Sans";
+  src: url("/fonts/acme-sans.woff2") format("woff2");
+  font-display: swap;
+}
+
+.xy-font-brand {
+  font-family: "Acme Sans", system-ui, sans-serif;
+}
+~~~
+
+~~~python
+chart = xy.line_chart(
+    xy.line([0, 1, 2], [2, 5, 3]),
+    class_name="xy-font-brand",
+)
+~~~
+
+Tailwind users can apply a configured font utility through `class_name` in the
+same way. XY does not download, register, or rewrite font files itself.
+
+Standalone HTML and Chromium PNG accept the font declaration through
+`custom_css`. Embed the font as a data URL when the HTML file must remain fully
+portable; an ordinary URL still depends on that resource being reachable.
+
+~~~python
+from xy import Engine
+
+font_css = """
+  @font-face {
+    font-family: "Acme Sans";
+    src: url("data:font/woff2;base64,...") format("woff2");
+  }
+  .xy { font-family: "Acme Sans", system-ui, sans-serif; }
+"""
+
+chart.to_html("chart.html", custom_css=font_css)
+chart.to_png(
+    "chart.png",
+    engine=Engine.chromium,
+    custom_css=font_css,
+)
+~~~
+
+| Output | Custom-font behavior |
+| --- | --- |
+| Live browser / Reflex | Uses a font already loaded by the host page. |
+| Toolbar PNG | Captures the browser-rendered font into pixels. |
+| Toolbar SVG | Preserves the computed family and font styles, but does not embed the font file. |
+| Standalone HTML | Supports `@font-face` and root `font-family` through `custom_css`. |
+| Chromium PNG | Supports the same browser CSS through `custom_css`. |
+| Native PNG | Uses XY's baked bitmap font; custom fonts are not supported. |
+| Python `to_svg()` | Uses XY's fixed system font stack and cannot embed a custom font. |
 
 ## Dark mode in a standalone export
 

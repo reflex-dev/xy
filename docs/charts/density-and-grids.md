@@ -68,11 +68,11 @@ Heatmaps use `colormap`, `domain`, and `opacity`. Hexbin uses `gridsize`,
 `bins`, `mincnt`, `C`, and `reduce_C_function`. Contours use `levels`,
 `filled`, `colormap`, `width`, `opacity`, and `dash_negative`.
 
-The colormap is encoded directly into these marks. Declarative
-[`xy.colorbar()`](/docs/xy/components/colorbars/) only configures or replaces
-colorbar chrome; it does not generate colorbar metadata from a mark's colormap
-and domain. Without adapter-supplied metadata it adds no visible scale, so the
-examples omit it.
+The colormap is encoded directly into these marks. Add declarative
+[`xy.colorbar()`](/docs/xy/components/colorbars/) to derive visible scale
+chrome from the last compatible heatmap, hexbin, or contour domain and
+colormap. Use its `title`, `orientation`, and `ticks` options to override the
+inferred presentation.
 
 `hexbin` bins source points in the native engine and ships occupied cell
 centers plus values, so its rendered geometry is bounded by `gridsize`; the

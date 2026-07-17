@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterator
 
 import reflex as rx
 import reflex_xy
+
 import xy
 
 ChartSource = xy.Chart | xy.FacetChart
@@ -22,6 +23,9 @@ _PURPLE_LIGHT = "#C4B5FD"
 _GRAY_DARK = "#1C2024"
 _GRAY_MID = "#8B8D98"
 _GRAY_LIGHT = "#CDCED6"
+# Constructed in two pieces so Tailwind cannot discover the complete arbitrary
+# property from Python source. It must arrive through XYChart's scan manifest.
+_TAILWIND_BRIDGE_SENTINEL = "[--xy-tailwind-" + "bridge:compiled]"
 _STATIC_SVG_PAINT_TOKENS = {
     "rgba(32,32,32,0.14)": "var(--secondary-a5)",
     "rgba(32,32,32,0.55)": "var(--secondary-a8)",
@@ -73,6 +77,7 @@ def _line() -> xy.Chart:
         width=_WIDTH,
         height=_HEIGHT,
         padding=_PADDING,
+        class_name=_TAILWIND_BRIDGE_SENTINEL,
     )
 
 
@@ -505,9 +510,7 @@ def _text() -> xy.Chart:
 
 
 def _threshold_zone() -> xy.Chart:
-    return _annotation_base(
-        xy.threshold_zone(6, 9, text="healthy", color=_PURPLE, opacity=0.13)
-    )
+    return _annotation_base(xy.threshold_zone(6, 9, text="healthy", color=_PURPLE, opacity=0.13))
 
 
 def _facet_chart() -> xy.FacetChart:
@@ -726,9 +729,7 @@ def _gallery_card(
                     rx.icon(
                         "arrow-up-right",
                         size=15,
-                        class_name=(
-                            "text-secondary-8 transition group-hover:text-primary-10"
-                        ),
+                        class_name=("text-secondary-8 transition group-hover:text-primary-10"),
                     ),
                     class_name="flex items-center justify-between gap-3",
                 ),
@@ -780,10 +781,7 @@ def chart_gallery_grid() -> rx.Component:
                             )
                             for title, description, chart_factory, live in items
                         ),
-                        class_name=(
-                            "grid w-full grid-cols-1 gap-6 md:grid-cols-2 "
-                            "2xl:grid-cols-3"
-                        ),
+                        class_name=("grid w-full grid-cols-1 gap-6 md:grid-cols-2 2xl:grid-cols-3"),
                     ),
                     class_name="flex w-full flex-col gap-4",
                 )

@@ -8,6 +8,7 @@ from reflex_site_shared.telemetry import get_pixel_website_trackers
 from xy_docs.breadcrumb import xy_docs_breadcrumb
 from xy_docs.config import DOCS_CONFIG
 from xy_docs.footer import xy_docs_footer
+from xy_docs.markdown import render_xy_markdown_page
 from xy_docs.navbar import xy_docs_navbar
 from xy_docs.sidebar import xy_docs_sidebar
 
@@ -38,6 +39,7 @@ app = rx.App(
 register_docs(
     app,
     DOCS_CONFIG,
+    renderer=render_xy_markdown_page,
     layout_config=DocsLayoutConfig(
         site_title="XY",
         github_url="https://github.com/reflex-dev/xy",
