@@ -34,6 +34,50 @@ chart = xy.chart(
 )
 ~~~
 
+The composed result is live below. Hover the marks, inspect the shared tooltip,
+or use the toolbar to pan and zoom.
+
+~~~python demo-only exec
+import reflex_xy
+import xy
+
+data = {
+    "month": ["Jan", "Feb", "Mar", "Apr"],
+    "actual": [12, 18, 16, 22],
+    "target": [14, 15, 17, 20],
+}
+
+chart = xy.chart(
+    xy.bar(x="month", y="actual", name="Actual", color="#c4b5fd"),
+    xy.line(x="month", y="target", name="Target", color="#6e56cf"),
+    xy.vline("Mar", text="Release", color="#7c3aed"),
+    xy.x_axis(label="month"),
+    xy.y_axis(label="pipeline"),
+    xy.legend(),
+    xy.tooltip(fields=["month", "actual", "target"]),
+    data=data,
+    title="Layered pipeline",
+)
+
+
+def composition_model_demo():
+    return reflex_xy.chart(
+        chart,
+        height="360px",
+        style={
+            "--chart-modebar-bg": "var(--secondary-2)",
+            "--chart-modebar-active": "var(--primary-a4)",
+            "--chart-text": "var(--secondary-11)",
+            "--chart-grid": "var(--secondary-a5)",
+            "--chart-axis": "var(--secondary-a8)",
+            "--chart-legend-bg": "var(--secondary-2)",
+            "--chart-tooltip-bg": "var(--secondary-3)",
+            "--chart-tooltip-text": "var(--secondary-12)",
+            "--chart-focus": "var(--primary-9)",
+        },
+    )
+~~~
+
 Rendered marks keep their declaration order, so the line is painted after the
 bars. Axes and chrome configure the panel rather than becoming data traces.
 When more than one legend, tooltip, colorbar, modebar, theme, or interaction

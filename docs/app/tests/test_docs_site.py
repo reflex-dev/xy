@@ -350,13 +350,17 @@ def test_live_preview_markdown_builds_real_xy_components(
     } == app_payloads_before
 
 
-def test_first_chart_keeps_its_live_preview() -> None:
-    """Keep the beginner example paired with a rendered interactive chart."""
-    content = (DOCS_ROOT / "overview" / "first-chart.md").read_text(encoding="utf-8")
+@pytest.mark.parametrize(
+    "relative_path",
+    ("overview/first-chart.md", "core-concepts/index.md"),
+)
+def test_beginner_examples_keep_their_live_previews(relative_path: str) -> None:
+    """Keep introductory examples paired with rendered interactive charts."""
+    content = (DOCS_ROOT / relative_path).read_text(encoding="utf-8")
 
     assert any(marker in content for marker in check_html_routes.LIVE_PREVIEW_MARKERS)
     assert "import reflex_xy" in content
-    assert "return reflex_xy.chart(chart" in content
+    assert "return reflex_xy.chart(" in content
 
 
 def test_installation_uses_uv_first_package_manager_tabs() -> None:
