@@ -45,7 +45,6 @@ main:has(#xy-chart-gallery) > div:has(article #xy-chart-gallery) {
   border-color: var(--secondary-a6);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-  backdrop-filter: blur(10px);
 }
 #xy-chart-gallery [data-xy-slot="modebar"] {
   padding: 2px;
@@ -55,7 +54,7 @@ main:has(#xy-chart-gallery) > div:has(article #xy-chart-gallery) {
   transition: background-color 150ms ease, color 150ms ease;
 }
 #xy-chart-gallery [data-xy-slot="modebar_button"]:hover {
-  background: var(--secondary-a4);
+  background: var(--chart-modebar-active);
 }
 #xy-chart-gallery [data-xy-slot="modebar_button"].xy-active {
   color: var(--primary-11);
