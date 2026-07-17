@@ -12,6 +12,7 @@ browser did that resolution for the SVG/widget.
 from __future__ import annotations
 
 import struct
+from collections.abc import Callable, Sequence
 from os import PathLike
 from typing import Any, Optional
 
@@ -152,7 +153,7 @@ class _Cmd:
     def _u64(self, v: int) -> None:
         self.buf += struct.pack("<Q", v)
 
-    def _rgba(self, c: tuple[int, int, int, int]) -> None:
+    def _rgba(self, c: tuple[int, ...]) -> None:
         self.buf += bytes(c)
 
     def clip(self, x: float, y: float, w: float, h: float) -> None:
@@ -162,7 +163,7 @@ class _Cmd:
         self._f(w)
         self._f(h)
 
-    def fill(self, pts, color) -> None:
+    def fill(self, pts: Sequence[tuple[float, float]], color: tuple[int, ...]) -> None:
         if len(pts) < 3:
             return
         self.buf.append(_FILL)
@@ -172,7 +173,13 @@ class _Cmd:
             self._f(y)
         self._rgba(color)
 
-    def grad(self, pts, g0, g1, stops) -> None:
+    def grad(
+        self,
+        pts: Sequence[tuple[float, float]],
+        g0: tuple[float, float],
+        g1: tuple[float, float],
+        stops: Sequence[tuple[float, tuple[int, ...]]],
+    ) -> None:
         if len(pts) < 3 or not stops:
             return
         self.buf.append(_GRAD)
@@ -189,7 +196,14 @@ class _Cmd:
             self._raw_f(off)
             self._rgba(col)
 
-    def stroke(self, pts, width, color, closed=False, dash=None) -> None:
+    def stroke(
+        self,
+        pts: np.ndarray | Sequence[tuple[float, float]],
+        width: float,
+        color: tuple[int, ...],
+        closed: bool = False,
+        dash: Sequence[float] | None = None,
+    ) -> None:
         if len(pts) < 2 or width <= 0:
             return
         self.buf.append(_STROKE)
@@ -209,7 +223,16 @@ class _Cmd:
         for d in dash:
             self._f(d)
 
-    def point(self, cx, cy, r, symbol, fill, sw, stroke) -> None:
+    def point(
+        self,
+        cx: float,
+        cy: float,
+        r: float,
+        symbol: int,
+        fill: tuple[int, ...],
+        sw: float,
+        stroke: tuple[int, ...],
+    ) -> None:
         self.buf.append(_POINT)
         self._f(cx)
         self._f(cy)
@@ -219,7 +242,16 @@ class _Cmd:
         self._f(sw)
         self._rgba(stroke)
 
-    def points(self, cx, cy, r, fills, symbol, sw, stroke) -> None:
+    def points(
+        self,
+        cx: np.ndarray,
+        cy: np.ndarray,
+        r: np.ndarray,
+        fills: np.ndarray,
+        symbol: int,
+        sw: float,
+        stroke: tuple[int, ...],
+    ) -> None:
         """Batched marks, struct-of-arrays: whole NumPy columns are packed in
         one shot (`cx`/`cy`/`r` arrays, `fills` as `(n, 4)` RGBA8) and the
         native side loops — pixel-identical to per-mark `point()` calls,
@@ -237,7 +269,18 @@ class _Cmd:
             self.buf += scaled.astype("<f4").tobytes()
         self.buf += np.ascontiguousarray(fills, dtype=np.uint8).tobytes()
 
-    def affine_points(self, x_meta, y_meta, sx, sy, radius, fill, symbol, sw, stroke) -> None:
+    def affine_points(
+        self,
+        x_meta: dict[str, Any],
+        y_meta: dict[str, Any],
+        sx: _Scale,
+        sy: _Scale,
+        radius: float,
+        fill: tuple[int, ...],
+        symbol: int,
+        sw: float,
+        stroke: tuple[int, ...],
+    ) -> None:
         """Borrow offset-encoded f32 x/y columns and project them in Rust.
 
         This private static-export command is the zero-copy counterpart of
@@ -270,17 +313,17 @@ class _Cmd:
 
     def affine_channel_points(
         self,
-        x_meta,
-        y_meta,
-        sx,
-        sy,
-        color_channel,
-        size_channel,
-        fill,
-        symbol,
-        sw,
-        stroke,
-        columns,
+        x_meta: dict[str, Any],
+        y_meta: dict[str, Any],
+        sx: _Scale,
+        sy: _Scale,
+        color_channel: dict[str, Any],
+        size_channel: dict[str, Any],
+        fill: tuple[int, ...],
+        symbol: int,
+        sw: float,
+        stroke: tuple[int, ...],
+        columns: list[dict[str, Any]],
     ) -> None:
         """Borrow affine geometry plus data-driven color/size channels.
 
@@ -350,7 +393,15 @@ class _Cmd:
         else:
             self._f(float(size_channel.get("size", 4.0)) / 2)
 
-    def segments(self, x0, y0, x1, y1, width, colors) -> None:
+    def segments(
+        self,
+        x0: np.ndarray,
+        y0: np.ndarray,
+        x1: np.ndarray,
+        y1: np.ndarray,
+        width: float,
+        colors: np.ndarray,
+    ) -> None:
         n = len(x0)
         if n == 0 or width <= 0:
             return
@@ -362,7 +413,14 @@ class _Cmd:
             self.buf += scaled.astype("<f4").tobytes()
         self.buf += np.ascontiguousarray(colors, dtype=np.uint8).tobytes()
 
-    def rects(self, x0, y0, x1, y1, fills) -> None:
+    def rects(
+        self,
+        x0: np.ndarray,
+        y0: np.ndarray,
+        x1: np.ndarray,
+        y1: np.ndarray,
+        fills: np.ndarray,
+    ) -> None:
         n = len(x0)
         if n == 0:
             return
@@ -373,7 +431,18 @@ class _Cmd:
             self.buf += scaled.astype("<f4").tobytes()
         self.buf += np.ascontiguousarray(fills, dtype=np.uint8).tobytes()
 
-    def triangles(self, x0, y0, x1, y1, x2, y2, fills, sw=0.0, stroke=None) -> None:
+    def triangles(
+        self,
+        x0: np.ndarray,
+        y0: np.ndarray,
+        x1: np.ndarray,
+        y1: np.ndarray,
+        x2: np.ndarray,
+        y2: np.ndarray,
+        fills: np.ndarray,
+        sw: float = 0.0,
+        stroke: tuple[int, ...] | None = None,
+    ) -> None:
         n = len(x0)
         if n == 0:
             return
@@ -388,7 +457,16 @@ class _Cmd:
             self.buf += scaled.astype("<f4").tobytes()
         self.buf += np.ascontiguousarray(fills, dtype=np.uint8).tobytes()
 
-    def smooth_stroke(self, xv, yv, sx, sy, width, color, dash=None) -> None:
+    def smooth_stroke(
+        self,
+        xv: np.ndarray,
+        yv: np.ndarray,
+        sx: _Scale,
+        sy: _Scale,
+        width: float,
+        color: tuple[int, ...],
+        dash: Sequence[float] | None = None,
+    ) -> None:
         """Native monotone-Hermite flattening + stroke for affine axes."""
         n = len(xv)
         if n < 2 or width <= 0:
@@ -415,7 +493,18 @@ class _Cmd:
         for value in dash:
             self._f(value)
 
-    def image(self, dx, dy, dw, dh, iw, ih, rgba_bytes, *, nearest=False) -> None:
+    def image(
+        self,
+        dx: float,
+        dy: float,
+        dw: float,
+        dh: float,
+        iw: int,
+        ih: int,
+        rgba_bytes: bytes,
+        *,
+        nearest: bool = False,
+    ) -> None:
         self.buf.append(_IMAGE)
         self._f(dx)
         self._f(dy)
@@ -427,7 +516,19 @@ class _Cmd:
         self.buf += rgba_bytes
 
     def density_image(
-        self, dx, dy, dw, dh, iw, ih, byte_offset, maximum, stops, opacity, *, span=0
+        self,
+        dx: float,
+        dy: float,
+        dw: float,
+        dh: float,
+        iw: int,
+        ih: int,
+        byte_offset: int,
+        maximum: float,
+        stops: np.ndarray,
+        opacity: float,
+        *,
+        span: int = 0,
     ) -> None:
         """Reference a compact log-u8 density grid in the payload data arena."""
         self.buf.append(_DENSITY_IMAGE)
@@ -447,19 +548,19 @@ class _Cmd:
 
     def heatmap_image(
         self,
-        dx,
-        dy,
-        dw,
-        dh,
-        iw,
-        ih,
-        byte_offset,
-        stops,
-        alpha,
+        dx: float,
+        dy: float,
+        dw: float,
+        dh: float,
+        iw: int,
+        ih: int,
+        byte_offset: int,
+        stops: np.ndarray,
+        alpha: int,
         *,
-        span=0,
-        canonical=False,
-        domain=(0.0, 1.0),
+        span: int = 0,
+        canonical: bool = False,
+        domain: tuple[float, float] = (0.0, 1.0),
     ) -> None:
         """Reference normalized f32 heatmap values in the payload data arena."""
         self.buf.append(_HEATMAP_IMAGE)
@@ -479,7 +580,9 @@ class _Cmd:
         self._u32(len(stops))
         self.buf += stops.tobytes()
 
-    def text(self, x, y, anchor, size, color, s) -> None:
+    def text(
+        self, x: float, y: float, anchor: int, size: float, color: tuple[int, ...], s: str
+    ) -> None:
         data = str(s).encode("utf-8")
         self.buf.append(_TEXT_OP)
         self._f(x)
@@ -491,11 +594,16 @@ class _Cmd:
         self.buf += data
 
 
-def _rect_pts(x0, y0, x1, y1):
+def _rect_pts(x0: float, y0: float, x1: float, y1: float) -> list[tuple[float, float]]:
     return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
 
 
-def _grad_line(space: str, direction: str, bbox, plot):
+def _grad_line(
+    space: str,
+    direction: str,
+    bbox: tuple[float, float, float, float],
+    plot: dict[str, float],
+) -> tuple[tuple[float, float], tuple[float, float]]:
     """(g0, g1) endpoints for a linear gradient over a mark bbox (mark space) or
     the plot rect (plot space)."""
     x, y, w, h = bbox if space != "plot" else (plot["x"], plot["y"], plot["w"], plot["h"])
@@ -675,7 +783,7 @@ def render_raster(
             _parse_color(_css(axis_style.get("axis_color"), default_axis)),
         )
 
-    def tick_span(style):
+    def tick_span(style: dict[str, Any]) -> tuple[float, float]:
         length = max(0.0, float(style.get("tick_length", 0)))
         direction = str(style.get("tick_direction", "out"))
         if direction == "in":
@@ -878,7 +986,16 @@ def render_raster(
     return _native.rasterize_spans(bytes(cmd.buf), spans, w_px, h_px)
 
 
-def _emit_line(cmd, t, blob, cols, sx, sy, style, color):
+def _emit_line(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+) -> None:
     xv, yv = _column(blob, cols[t["x"]]), _column(blob, cols[t["y"]])
     if style.get("step"):
         xv, yv = _step_arrays(xv, yv, style["step"])
@@ -891,7 +1008,15 @@ def _emit_line(cmd, t, blob, cols, sx, sy, style, color):
         cmd.stroke(pts, width, c, dash=style.get("dash"))
 
 
-def _annotation_point(ann, style, sx, sy, plot, width, height):
+def _annotation_point(
+    ann: dict[str, Any],
+    style: dict[str, Any],
+    sx: _Scale,
+    sy: _Scale,
+    plot: dict[str, float],
+    width: float,
+    height: float,
+) -> tuple[float, float]:
     space = style.get("coordinate_space")
     x, y = float(ann.get("x", 0.0)), float(ann.get("y", 0.0))
     if space == "axes_fraction":
@@ -905,7 +1030,17 @@ def _annotation_point(ann, style, sx, sy, plot, width, height):
     return float(sx(x)), float(sy(y))
 
 
-def _emit_annotations(cmd, annotations, sx, sy, plot, width, height, *, phase="marks"):
+def _emit_annotations(
+    cmd: _Cmd,
+    annotations: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    plot: dict[str, float],
+    width: float,
+    height: float,
+    *,
+    phase: str = "marks",
+) -> None:
     px0, py0 = plot["x"], plot["y"]
     for ann in annotations:
         # Geometry (rules/bands/arrows) draws in the clipped marks pass; text
@@ -1032,7 +1167,17 @@ def _emit_annotations(cmd, annotations, sx, sy, plot, width, height, *, phase="m
                 )
 
 
-def _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot):
+def _emit_area(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+    plot: dict[str, float],
+) -> None:
     xv = _column(blob, cols[t["x"]])
     yv = _column(blob, cols[t["y"]])
     bv = _column(blob, cols[t["base"]])
@@ -1061,7 +1206,16 @@ def _emit_area(cmd, t, blob, cols, sx, sy, style, color, plot):
             cmd.stroke(base, lw, line_color, dash=style.get("dash"))
 
 
-def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
+def _emit_scatter(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+) -> None:
     ch = t.get("color") or {}
     size_ch = t.get("size") or {}
     fill_op = _fill_opacity(style, 0.8)
@@ -1144,7 +1298,16 @@ def _emit_scatter(cmd, t, blob, cols, sx, sy, style, color):
     cmd.points(px, py, radii, fills, sym, sw, stroke)
 
 
-def _emit_segments(cmd, t, blob, cols, sx, sy, style, color):
+def _emit_segments(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+) -> None:
     x0 = _column(blob, cols[t["x0"]])
     x1 = _column(blob, cols[t["x1"]])
     y0 = _column(blob, cols[t["y0"]])
@@ -1182,7 +1345,14 @@ def _emit_segments(cmd, t, blob, cols, sx, sy, style, color):
     cmd.segments(sx(x0), sy(y0), sx(x1), sy(y1), width, colors)
 
 
-def _mesh_fill_rgba(t, blob, cols, n, style, color):
+def _mesh_fill_rgba(
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    n: int,
+    style: dict[str, Any],
+    color: str,
+) -> np.ndarray:
     ch = t.get("color") or {}
     fill_op = _fill_opacity(style)
     fills = np.empty((n, 4), dtype=np.uint8)
@@ -1199,7 +1369,16 @@ def _mesh_fill_rgba(t, blob, cols, n, style, color):
     return fills
 
 
-def _emit_hexbin(cmd, t, blob, cols, sx, sy, style, color):
+def _emit_hexbin(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+) -> None:
     """Expand shipped cell centers into the six-triangle hexagon fan locally
     (the payload carries centers only — see _payload._emit_hexbin)."""
     cx = _column(blob, cols[t["x"]])
@@ -1217,7 +1396,16 @@ def _emit_hexbin(cmd, t, blob, cols, sx, sy, style, color):
     cmd.triangles(x0, y0, x1, y1, x2, y2, fills, 0.0, (0, 0, 0, 0))
 
 
-def _emit_triangle_mesh(cmd, t, blob, cols, sx, sy, style, color):
+def _emit_triangle_mesh(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+) -> None:
     vertices = [_column(blob, cols[t[name]]) for name in ("x0", "y0", "x1", "y1", "x2", "y2")]
     n = min(len(values) for values in vertices)
     stroke_op = _stroke_opacity(style)
@@ -1239,7 +1427,18 @@ def _emit_triangle_mesh(cmd, t, blob, cols, sx, sy, style, color):
     )
 
 
-def _bar_geom(cmd, x, y, w, h, style, fill_cmd, stroke_c, sw, tip_top):
+def _bar_geom(
+    cmd: _Cmd,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    style: dict[str, Any],
+    fill_cmd: Callable[[list[tuple[float, float]]], None],
+    stroke_c: tuple[int, ...],
+    sw: float,
+    tip_top: bool,
+) -> None:
     r_tip, r_base = _corner_radii(style)
     if r_tip or r_base:
         poly = _scene.rounded_rect_poly(x, y, w, h, r_tip, r_base, tip_top)
@@ -1253,7 +1452,12 @@ def _bar_geom(cmd, x, y, w, h, style, fill_cmd, stroke_c, sw, tip_top):
             cmd.stroke(poly, sw, stroke_c, closed=True)
 
 
-def _fill_maker(cmd, style, color, plot):
+def _fill_maker(
+    cmd: _Cmd,
+    style: dict[str, Any],
+    color: str,
+    plot: dict[str, float],
+) -> tuple[Callable[[list[tuple[float, float]]], None], tuple[int, ...], float]:
     """Return (fill_cmd, stroke_c, sw) closure honoring gradient/stroke style."""
     fill_op = _fill_opacity(style, 0.85)
     stroke_op = _stroke_opacity(style, 0.85)
@@ -1265,7 +1469,7 @@ def _fill_maker(cmd, style, color, plot):
             (o, (c[0], c[1], c[2], int(c[3] * fill_op))) for o, c in _grad_stops(fill_spec, color)
         ]
 
-        def fill_cmd(poly):
+        def fill_cmd(poly: list[tuple[float, float]]) -> None:
             xs = [p[0] for p in poly]
             ys = [p[1] for p in poly]
             bbox = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
@@ -1276,13 +1480,23 @@ def _fill_maker(cmd, style, color, plot):
     else:
         flat = _rgba(style.get("color"), color, fill_op)
 
-        def fill_cmd(poly):
+        def fill_cmd(poly: list[tuple[float, float]]) -> None:
             cmd.fill(poly, flat)
 
     return fill_cmd, stroke_c, sw
 
 
-def _emit_bars(cmd, t, blob, cols, sx, sy, style, color, plot):
+def _emit_bars(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+    plot: dict[str, float],
+) -> None:
     b = t["bar"]
     pos = _column(blob, cols[b["pos"]])
     v1 = _column(blob, cols[b["value1"]])
@@ -1322,7 +1536,17 @@ def _emit_bars(cmd, t, blob, cols, sx, sy, style, color, plot):
         _bar_geom(cmd, x, y, abs(x1 - x0), abs(y1 - y0), style, fill_cmd, stroke_c, sw, tip_top)
 
 
-def _emit_rects(cmd, t, blob, cols, sx, sy, style, color, plot):
+def _emit_rects(
+    cmd: _Cmd,
+    t: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+    color: str,
+    plot: dict[str, float],
+) -> None:
     x0v, x1v = _column(blob, cols[t["x0"]]), _column(blob, cols[t["x1"]])
     y0v, y1v = _column(blob, cols[t["y0"]]), _column(blob, cols[t["y1"]])
     r_tip, r_base = _corner_radii(style)
@@ -1350,7 +1574,16 @@ def _emit_rects(cmd, t, blob, cols, sx, sy, style, color, plot):
         )
 
 
-def _emit_grid(cmd, kind, g, blob, cols, sx, sy, style):
+def _emit_grid(
+    cmd: _Cmd,
+    kind: str,
+    g: dict[str, Any],
+    blob: bytes,
+    cols: list[dict[str, Any]],
+    sx: _Scale,
+    sy: _Scale,
+    style: dict[str, Any],
+) -> None:
     if kind == "heatmap":
         w, h = int(g["w"]), int(g["h"])
         if "rgba_bufs" in g:
