@@ -299,7 +299,7 @@ class PayloadMixin(_Host):
         }
 
     @staticmethod
-    def _finite_sel(t: Trace, xv: np.ndarray, yv: np.ndarray):
+    def _finite_sel(t: Trace, xv: np.ndarray, yv: np.ndarray) -> np.ndarray | None:
         """Indices where both x and y are finite, or None if nothing to drop.
 
         Non-finite (NaN or ±inf) never reaches a vertex buffer — it silently

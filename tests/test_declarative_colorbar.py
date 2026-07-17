@@ -286,25 +286,27 @@ def _browser_colorbar_probe(chromium: str, document: str, page: Path) -> dict:
     assert render_call in document
     probe = """
   const view = xy.renderStandalone(document.getElementById("chart"), spec, buf);
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    try {
-      const bar = document.querySelector('[data-xy-slot="colorbar_bar"]');
-      const title = document.querySelector('[data-xy-slot="colorbar_title"]');
-      const ticks = [...document.querySelectorAll('[data-xy-slot="colorbar_tick"]')];
-      document.body.setAttribute('data-xy-colorbar-probe', JSON.stringify({
-        exists: !!bar,
-        title: title && title.textContent,
-        tooltip: view._colorbar && view._colorbar.title,
-        gradient: bar && getComputedStyle(bar).backgroundImage,
-        tickLabels: ticks.map((tick) => tick.textContent),
-      }));
-    } catch (err) {
-      document.body.setAttribute(
-        'data-xy-colorbar-probe-error',
-        String((err && err.stack) || err)
-      );
-    }
-  }));
+  try {
+    // Bare rAF may not tick under --virtual-time-budget --dump-dom. Drain the
+    // initial scheduled draw synchronously before inspecting browser chrome.
+    view._drawNow();
+    view._raf = null;
+    const bar = document.querySelector('[data-xy-slot="colorbar_bar"]');
+    const title = document.querySelector('[data-xy-slot="colorbar_title"]');
+    const ticks = [...document.querySelectorAll('[data-xy-slot="colorbar_tick"]')];
+    document.body.setAttribute('data-xy-colorbar-probe', JSON.stringify({
+      exists: !!bar,
+      title: title && title.textContent,
+      tooltip: view._colorbar && view._colorbar.title,
+      gradient: bar && getComputedStyle(bar).backgroundImage,
+      tickLabels: ticks.map((tick) => tick.textContent),
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      'data-xy-colorbar-probe-error',
+      String((err && err.stack) || err)
+    );
+  }
 """
     return run_browser_probe(
         chromium,

@@ -824,6 +824,10 @@ class ChartView {
     this.chrome.style.height = this.size.h + "px";
     this.chrome.width = this.size.w * this.dpr;
     this.chrome.height = this.size.h * this.dpr;
+    this.overlay.style.width = this.size.w + "px";
+    this.overlay.style.height = this.size.h + "px";
+    this.overlay.width = this.size.w * this.dpr;
+    this.overlay.height = this.size.h * this.dpr;
     for (const lg of this._legends || []) {
       this._positionLegend(lg, lg.dataset.xyLegendLoc || "upper right");
     }
@@ -901,6 +905,14 @@ class ChartView {
     this.canvas.setAttribute("role", "img");
     this.canvas.setAttribute("aria-describedby", this.a11ySummary.id);
     root.appendChild(this.canvas);
+
+    // Annotation shapes (rules/bands/arrows/markers) draw here, ABOVE the
+    // marks canvas: the exporters emit annotation marks after every data
+    // trace, and a dense/opaque mark (heatmap) would otherwise bury them.
+    // The chrome canvas below keeps the plot background and grid.
+    this.overlay = document.createElement("canvas");
+    this.overlay.style.cssText = "position:absolute;inset:0;pointer-events:none;";
+    root.appendChild(this.overlay);
 
     this.labels = document.createElement("div");
     this.labels.style.cssText = "position:absolute;inset:0;pointer-events:none;";
@@ -1257,6 +1269,10 @@ class ChartView {
     this.chrome.height = this.size.h * dpr;
     this.chrome.style.width = this.size.w + "px";
     this.chrome.style.height = this.size.h + "px";
+    this.overlay.width = this.size.w * dpr;
+    this.overlay.height = this.size.h * dpr;
+    this.overlay.style.width = this.size.w + "px";
+    this.overlay.style.height = this.size.h + "px";
 
     // Stay inside the page's context budget before acquiring (governor above):
     // at budget, the least-recently-visible off-screen view releases first.
@@ -3088,7 +3104,12 @@ class ChartView {
     ctx.globalAlpha = 1;
     ctx.setLineDash([]);
 
-    this._drawAnnotationShapes(ctx);
+    // Annotation shapes go on the overlay canvas, above the marks canvas —
+    // exporter parity: SVG/raster emit annotation marks after the data.
+    const octx = this.overlay.getContext("2d");
+    octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    octx.clearRect(0, 0, this.size.w, this.size.h);
+    this._drawAnnotationShapes(octx);
 
     // Axis baselines render in the labels overlay — *above* the marks canvas —
     // so a filled mark (bars, area) sits under a crisp, continuous baseline

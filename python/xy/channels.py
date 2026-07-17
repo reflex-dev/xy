@@ -87,6 +87,8 @@ class ColorChannel:
     )
 
     def spec(self) -> dict[str, Any]:
+        """The channel's resolved settings as a plain dict, exactly as
+        shipped in the chart spec."""
         if self.mode == "constant":
             return {"mode": "constant", "color": self.constant}
         if self.mode == "continuous":
@@ -100,6 +102,9 @@ class ColorChannel:
 
 @dataclass
 class SizeChannel:
+    """A resolved scatter size encoding: constant, or values mapped to a
+    pixel range. Built by `resolve_size`."""
+
     mode: str  # "constant" | "continuous"
     constant: float = 4.0
     values: Optional[npt.NDArray[np.float64]] = None
@@ -111,6 +116,8 @@ class SizeChannel:
     )
 
     def spec(self) -> dict[str, Any]:
+        """The channel's resolved settings as a plain dict, exactly as
+        shipped in the chart spec."""
         if self.mode == "constant":
             return {"mode": "constant", "size": self.constant}
         return {
@@ -419,6 +426,11 @@ def resolve_color(
 
 
 def resolve_size(size: Any, n: int, *, range_px: tuple[float, float] = (2.0, 18.0)) -> SizeChannel:
+    """Resolve a scatter ``size`` input into a `SizeChannel`.
+
+    A scalar (or None) becomes a constant size; a length-``n`` numeric
+    array maps linearly onto ``range_px`` pixels.
+    """
     if size is None:
         return SizeChannel(mode="constant")
     if np.isscalar(size):
@@ -443,8 +455,9 @@ def resolve_size(size: Any, n: int, *, range_px: tuple[float, float] = (2.0, 18.
 
 def normalize_to_unit(values: npt.NDArray[np.float64], domain: tuple[float, float]) -> np.ndarray:
     """Map values to [0,1] over `domain` (for continuous color/size upload).
-    Non-finite (NaN, ±inf) → domain floor so it never poisons a vertex (§19);
-    the validity story tightens with real bitmaps later."""
+    Non-finite (NaN, ±inf) → domain floor so it never poisons a vertex
+    (design dossier §19); the validity story tightens with real bitmaps
+    later."""
     return kernels.normalize_f32(values, domain, nonfinite="zero")
 
 
@@ -456,7 +469,7 @@ def ship_channels(
     palette: list[str],
 ) -> tuple[Any, Any]:
     """Ship a trace's color and size channels in the standard wire shape
-    (§29/§36c): per-point channels carry a `buf` index into the blob; constant
+    (design dossier §29/§36c): per-point channels carry a `buf` index into the blob; constant
     channels ship spec-only. Used by the build path and by drill-in view
     updates for any chart kind with per-mark channels.
 

@@ -41,7 +41,7 @@ _FigureCheckpoint: TypeAlias = tuple[ColumnStoreCheckpoint, int, dict[str, list[
 
 
 class Selection:
-    """The payload handed to an `on_select` callback (§34). Holds the selected
+    """The payload handed to an `on_select` callback. Holds the selected
     row indices per trace and lends convenient access to the underlying data —
     callbacks receive real arrays, never JSON."""
 
@@ -1124,23 +1124,22 @@ class Figure(AnnotationsMixin, PayloadMixin):
     def density_view(
         self, trace_id: int, x0: float, x1: float, y0: float, y1: float, w: int, h: int
     ) -> tuple[dict[str, Any], list[bytes]]:
-        """Re-bin a Tier-2 scatter for a new viewport (§5)."""
+        """Re-bin a density-mode scatter's aggregation grid for a new viewport."""
         return interaction.density_view(self, trace_id, x0, x1, y0, y1, w, h)
 
     def pick(
         self, trace_id: int, index: int, drill_seq: Optional[int] = None
     ) -> Optional[dict[str, Any]]:
-        """Exact source-row readout for a hover/pick (§16/§17); `index` is a
-        shipped vertex index, translated to a canonical row when NaN rows were
-        dropped at ship time (§19). Pass the client's `drill_seq` to reject a
-        pick that raced a drill update (wrong index space → None, never a
-        wrong row)."""
+        """Exact source-row readout for a hover/pick; `index` is a shipped
+        vertex index, translated to a canonical row when NaN rows were dropped
+        at ship time. Pass the client's `drill_seq` to reject a pick that
+        raced a drill update (wrong index space → None, never a wrong row)."""
         return interaction.pick(self, trace_id, index, drill_seq)
 
     def select_range(
         self, x0: float, x1: float, y0: float, y1: float, trace_id: Optional[int] = None
     ) -> dict[int, np.ndarray]:
-        """Box-select → canonical indices per scatter trace (§34 Filter Tier A)."""
+        """Box-select: the canonical row indices inside the box, per scatter trace."""
         return interaction.select_range(self, x0, x1, y0, y1, trace_id)
 
     def select_polygon(self, points: Any, trace_id: Optional[int] = None) -> dict[int, np.ndarray]:
@@ -1154,17 +1153,18 @@ class Figure(AnnotationsMixin, PayloadMixin):
     def decimate_view(
         self, x0: float, x1: float, px_width: int
     ) -> tuple[dict[str, Any], list[bytes]]:
-        """Re-decimate visible line windows on zoom (§28), offsets re-centered (§16)."""
+        """Re-decimate the visible line windows on zoom, re-centering the
+        f32 upload offsets so precision holds at deep zoom."""
         return interaction.decimate_view(self, x0, x1, px_width)
 
     def append(
         self, trace_id: int, x: Any, y: Any, *, color: Any = None, size: Any = None
     ) -> tuple[dict[str, Any], list[bytes]]:
-        """Streaming append (rust-engine §5): extend a scatter/line trace's
-        canonical columns and get the client refresh message back. The widget's
-        `append` sends it; headless callers can inspect or discard it. Payloads
-        stay screen-bounded (§29), so this is O(pixels) on the wire regardless
-        of how much data has accumulated."""
+        """Streaming append: extend a scatter/line trace's canonical columns
+        and get the client refresh message back. The widget's `append` sends
+        it; headless callers can inspect or discard it. Payloads stay
+        screen-bounded, so this is O(pixels) on the wire regardless of how
+        much data has accumulated."""
         return interaction.append_data(self, trace_id, x, y, color, size)
 
     # -- output -----------------------------------------------------------
@@ -1190,10 +1190,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
         *,
         custom_css: Optional[str] = None,
     ) -> str:
-        """Standalone interactive HTML (export.py): JS client + spec + base64
-        buffers in one self-contained file. Base64 carries a stated ~33% size
-        tax (§29 static-export row). `custom_css` injects an author stylesheet
-        so `class_names` utility classes (e.g. Tailwind) resolve in the export."""
+        """Standalone interactive HTML: JS client + spec + base64 buffers in
+        one self-contained file (base64 carries a ~33% size tax). `custom_css`
+        injects an author stylesheet so `class_names` utility classes
+        (e.g. Tailwind) resolve in the export."""
         return export.to_html(self, path, custom_css=custom_css)
 
     def html(
@@ -1260,7 +1260,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         )
 
     def memory_report(self) -> dict[str, Any]:
-        """§27: every byte class itemized; if it isn't in the report it isn't real."""
+        """Every byte class itemized; if it isn't in the report it isn't real."""
         from . import interaction  # method-local: no load-time cycle
 
         spec, blob = self.build_payload()
