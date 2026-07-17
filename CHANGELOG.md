@@ -337,7 +337,7 @@ in the README).
 - `XY_FORCE_FALLBACK` environment switch and the pure-NumPy kernel
   backend (`xy/_fallback.py`).
 
-## [0.1.0] — unreleased development line
+## [0.0.1] — 2026-07-16
 
 Initial development snapshot: line/scatter/area/histogram/bar/heatmap chart
 families, binary columnar transport, WebGL2 rendering, M4 decimation, density
