@@ -47,7 +47,11 @@ from xy_docs.api_reference import (
 from xy_docs.breadcrumb import xy_docs_breadcrumb
 from xy_docs.config import DOCS_CONFIG, DOCS_NAVIGATION, DOCS_SECTIONS
 from xy_docs.footer import xy_docs_footer
-from xy_docs.gallery import _iter_gallery_items, chart_gallery_grid
+from xy_docs.gallery import (
+    _iter_gallery_items,
+    _responsive_gallery_svg,
+    chart_gallery_grid,
+)
 from xy_docs.navbar import xy_docs_navbar
 from xy_docs.sidebar import (
     SIDEBAR_SECTION_GROUPS,
@@ -447,6 +451,40 @@ def test_chart_gallery_uses_only_purple_and_gray() -> None:
     }
 
     assert not {title: paints for title, paints in violations.items() if paints}
+
+
+def test_chart_gallery_previews_follow_the_site_color_mode() -> None:
+    """Keep live and static gallery chrome readable in light and dark modes."""
+    charts = [
+        chart_factory()
+        for _title, _description, _route, chart_factory, _live in _iter_gallery_items()
+    ]
+    expected_theme = {
+        "--chart-modebar-bg": "var(--secondary-2)",
+        "--chart-modebar-active": "var(--primary-a4)",
+        "--chart-focus": "var(--primary-9)",
+        "--chart-bg": "transparent",
+        "--chart-grid": "var(--secondary-a5)",
+        "--chart-axis": "var(--secondary-a8)",
+        "--chart-text": "var(--secondary-11)",
+        "--chart-crosshair": "var(--primary-a9)",
+        "--chart-selection": "var(--primary-9)",
+        "--chart-selection-fill": "var(--primary-a3)",
+    }
+
+    for chart in charts:
+        theme = next(
+            child for child in chart.children if type(child).__name__ == "Theme"
+        )
+        assert theme.style == expected_theme
+
+        svg = _responsive_gallery_svg(chart)
+        assert "rgba(32,32,32,0.14)" not in svg
+        assert "rgba(32,32,32,0.55)" not in svg
+        assert "rgba(32,32,32,0.85)" not in svg
+        assert "var(--secondary-a5)" in svg
+        assert "var(--secondary-a8)" in svg
+        assert "var(--secondary-11)" in svg
 
 
 def test_live_preview_route_validator_requires_real_xy_payloads(

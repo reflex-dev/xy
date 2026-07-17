@@ -20,8 +20,19 @@ _PURPLE = "#6E56CF"
 _PURPLE_DARK = "#6550B9"
 _PURPLE_LIGHT = "#C4B5FD"
 _GRAY_DARK = "#1C2024"
-_GRAY_MID = "#60646C"
+_GRAY_MID = "#8B8D98"
 _GRAY_LIGHT = "#CDCED6"
+_STATIC_SVG_PAINT_TOKENS = {
+    "rgba(32,32,32,0.14)": "var(--secondary-a5)",
+    "rgba(32,32,32,0.55)": "var(--secondary-a8)",
+    "rgba(32,32,32,0.85)": "var(--secondary-11)",
+    _PURPLE: "var(--primary-9)",
+    _PURPLE_DARK: "var(--primary-10)",
+    _PURPLE_LIGHT: "var(--primary-7)",
+    _GRAY_DARK: "var(--secondary-11)",
+    _GRAY_MID: "var(--secondary-10)",
+    _GRAY_LIGHT: "var(--secondary-8)",
+}
 _GALLERY_LAYOUT_CSS = """
 main:has(#xy-chart-gallery) > div:has(#toc-navigation) {
   display: none;
@@ -29,18 +40,43 @@ main:has(#xy-chart-gallery) > div:has(#toc-navigation) {
 main:has(#xy-chart-gallery) > div:has(article #xy-chart-gallery) {
   max-width: 88rem;
 }
+#xy-chart-gallery [data-xy-slot="modebar"],
+#xy-chart-gallery [data-xy-modebar-menu] {
+  border-color: var(--secondary-a6);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(10px);
+}
+#xy-chart-gallery [data-xy-slot="modebar"] {
+  padding: 2px;
+}
+#xy-chart-gallery [data-xy-slot="modebar_button"] {
+  border-radius: 6px;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+#xy-chart-gallery [data-xy-slot="modebar_button"]:hover {
+  background: var(--secondary-a4);
+}
+#xy-chart-gallery [data-xy-slot="modebar_button"].xy-active {
+  color: var(--primary-11);
+}
 """
 
 
 def _gallery_theme() -> xy.Theme:
     return xy.theme(
-        plot_background="#FAF9FB",
-        grid_color="#E8E5ED",
-        axis_color=_GRAY_LIGHT,
-        text_color=_GRAY_MID,
-        crosshair_color=_PURPLE,
-        selection_color=_PURPLE_DARK,
-        selection_fill="rgba(110, 86, 207, 0.14)",
+        style={
+            "--chart-modebar-bg": "var(--secondary-2)",
+            "--chart-modebar-active": "var(--primary-a4)",
+            "--chart-focus": "var(--primary-9)",
+        },
+        plot_background="transparent",
+        grid_color="var(--secondary-a5)",
+        axis_color="var(--secondary-a8)",
+        text_color="var(--secondary-11)",
+        crosshair_color="var(--primary-a9)",
+        selection_color="var(--primary-9)",
+        selection_fill="var(--primary-a3)",
     )
 
 
@@ -641,6 +677,14 @@ def _iter_gallery_items() -> Iterator[tuple[str, str, str, ChartFactory, bool]]:
             yield title, description, route, chart_factory, live
 
 
+def _responsive_gallery_svg(chart: ChartSource) -> str:
+    """Replace static-renderer fallback paints with site color-mode tokens."""
+    svg = chart.to_svg()
+    for paint, token in _STATIC_SVG_PAINT_TOKENS.items():
+        svg = svg.replace(paint, token)
+    return svg
+
+
 def _gallery_preview(chart_factory: ChartFactory, *, live: bool) -> rx.Component:
     chart = chart_factory()
     if live:
@@ -650,7 +694,7 @@ def _gallery_preview(chart_factory: ChartFactory, *, live: bool) -> rx.Component
     # Static tiles therefore use SVG rendered by XY itself; one representative
     # tile in every family stays live, and every linked family page has a live demo.
     return rx.html(
-        chart.to_svg(),
+        _responsive_gallery_svg(chart),
         class_name="h-[220px] w-full [&>svg]:h-full [&>svg]:w-full",
     )
 
@@ -670,7 +714,7 @@ def _gallery_card(
                 _gallery_preview(chart_factory, live=live),
                 class_name=(
                     "h-[220px] w-full overflow-hidden bg-gradient-to-br "
-                    "from-secondary-1 via-primary-1 to-primary-2"
+                    "from-secondary-1 via-primary-1 to-primary-2 text-secondary-11"
                 ),
             ),
             rx.box(
