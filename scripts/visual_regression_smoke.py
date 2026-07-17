@@ -780,9 +780,9 @@ def _write_chrome_shell(
     <iframe id="custom-chrome-frame" src="{chart_uri}" title="Custom chrome chart"></iframe>
     <aside id="custom-chrome-legend" class="custom-chrome-legend">
       <strong>Segment</strong>
-      <span><i style="background:#4c78a8"></i> Enterprise</span>
-      <span><i style="background:#f58518"></i> Growth</span>
-      <span><i style="background:#54a24b"></i> Self serve</span>
+      <span><i style="background:#3987e5"></i> Enterprise</span>
+      <span><i style="background:#008300"></i> Growth</span>
+      <span><i style="background:#d55181"></i> Self serve</span>
     </aside>
     <div id="custom-chrome-tooltip" class="custom-chrome-tooltip">
       <strong id="custom-chrome-tooltip-title">Growth</strong>

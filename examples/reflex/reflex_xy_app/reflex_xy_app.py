@@ -38,9 +38,9 @@ CUSTOM_CHROME_CHART = {
 }
 
 CUSTOM_CHROME_SEGMENTS = [
-    {"label": "Enterprise", "color": "#4c78a8"},
-    {"label": "Growth", "color": "#f58518"},
-    {"label": "Self serve", "color": "#54a24b"},
+    {"label": "Enterprise", "color": "#3987e5"},
+    {"label": "Growth", "color": "#008300"},
+    {"label": "Self serve", "color": "#d55181"},
 ]
 
 ANNOTATED_HEATMAP_MARKERS = [
@@ -247,9 +247,9 @@ import reflex as rx
 def my_legend():
     return rx.box(
         rx.text("Segment"),
-        rx.hstack(rx.box(background="#4c78a8"), rx.text("Enterprise")),
-        rx.hstack(rx.box(background="#f58518"), rx.text("Growth")),
-        rx.hstack(rx.box(background="#54a24b"), rx.text("Self serve")),
+        rx.hstack(rx.box(background="#3987e5"), rx.text("Enterprise")),
+        rx.hstack(rx.box(background="#008300"), rx.text("Growth")),
+        rx.hstack(rx.box(background="#d55181"), rx.text("Self serve")),
     )
 
 def my_tooltip():
