@@ -33,7 +33,7 @@ REQUIRED_CI_JOBS = {
     "install_without_rust",
 }
 REQUIRED_CODSPEED_JOBS = {"benchmarks"}
-REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish", "wasm"}
+REQUIRED_RELEASE_JOBS = {"wheels", "sdist", "publish", "publish-pyodide", "wasm"}
 
 
 def _job_blocks(text: str) -> dict[str, str]:
@@ -532,6 +532,29 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "dry_run:",
         "type: boolean",
         "default: true",
+    )
+    _require_job_contains(
+        errors,
+        jobs,
+        "publish-pyodide",
+        "release",
+        "GitHub Release publication of the runtime-verified Pyodide wheel",
+        "needs: [wheels, sdist, wasm]",
+        "contents: write",
+        "actions/setup-node@",
+        'node-version: "22"',
+        "actions/download-artifact@",
+        "name: pyodide-wheel",
+        "dry_run",
+        "scripts/check_release_version.py",
+        "GH_TOKEN",
+        "gh release upload",
+        "--clobber",
+        "gh release create",
+        "--verify-tag",
+        "steps.publish.outputs.wheel_url",
+        "pyodide@0.29.4",
+        "scripts/pyodide_load_smoke.py",
     )
 
     publish = jobs.get("publish", "")

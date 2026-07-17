@@ -330,8 +330,11 @@ Before tagging a release:
   `__cpp_exception` WebAssembly tag that Pyodide's main module did not provide.
   `scripts/pyodide_load_smoke.py` installs the built artifact with micropip,
   loads the C ABI through `ctypes`, verifies `xy_abi_version`, and calls the
-  native `min_max` kernel. The wasm job is release-blocking so an ABI or
-  toolchain drift cannot silently ship a build-only, unloadable artifact.
+  native `min_max` kernel. PyPI does not accept Pyodide platform tags, so the
+  release workflow publishes this wheel as a GitHub Release asset and repeats
+  the same runtime smoke against its public HTTPS URL. The wasm job is
+  release-blocking so an ABI or toolchain drift cannot silently ship a
+  build-only, unloadable artifact.
 - Confirm the no-Rust install job passed (it must build, install, and then
   raise a clear ImportError on first compute — never a silent fallback).
 - Confirm the sdist verifier passed and the source archive contains the expected
