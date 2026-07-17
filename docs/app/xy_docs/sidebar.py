@@ -10,6 +10,14 @@ from reflex_site_shared.docs import (
     docs_sidebar_section,
 )
 
+from xy_docs.config import DOCS_SECTIONS
+
+SIDEBAR_SECTION_GROUPS = (
+    ("Learning", "/", DOCS_SECTIONS[:3]),
+    ("Examples", "/charts/", DOCS_SECTIONS[3:5]),
+    ("Other", "/integrations/", DOCS_SECTIONS[5:]),
+)
+
 
 def _leaf(
     title: str,
@@ -34,6 +42,16 @@ def _leaf(
     )
 
 
+def _section_leaves(
+    landing_route: str,
+    leaves: tuple[tuple[str, str], ...],
+) -> tuple[tuple[str, str], ...]:
+    """Include a section landing page without adding another hierarchy level."""
+    if any(route == landing_route for _title, route in leaves):
+        return leaves
+    return (("Overview", landing_route), *leaves)
+
+
 @rx.memo
 def xy_docs_sidebar_comp(url: rx.vars.StringVar[str]) -> rx.Component:
     """Render the memoized XY sidebar tree.
@@ -47,23 +65,21 @@ def xy_docs_sidebar_comp(url: rx.vars.StringVar[str]) -> rx.Component:
     categories = rx.el.ul(
         docs_sidebar_category(
             "Learn",
-            "/getting-started/",
+            "/",
             "graduation-cap",
-            url.startswith("/getting-started/")
+            (url == "/")
+            | url.startswith("/overview/")
             | url.startswith("/core-concepts/")
             | url.startswith("/guides/"),
         ),
         docs_sidebar_category(
-            "Charts",
+            "Build",
             "/charts/",
-            "chart-column",
-            url.startswith("/charts/"),
-        ),
-        docs_sidebar_category(
-            "Components",
-            "/components/",
-            "layout-panel-left",
-            url.startswith("/components/"),
+            "boxes",
+            url.startswith("/styling/")
+            | url.startswith("/charts/")
+            | url.startswith("/components/")
+            | url.startswith("/integrations/"),
         ),
         docs_sidebar_category(
             "API Reference",
@@ -71,92 +87,37 @@ def xy_docs_sidebar_comp(url: rx.vars.StringVar[str]) -> rx.Component:
             "book-text",
             url.startswith("/api-reference/"),
         ),
-        class_name="flex w-full list-none flex-col items-start gap-2",
+        class_name="m-0 flex w-full list-none flex-col items-start gap-2 p-0",
     )
     content = rx.el.ul(
-        docs_sidebar_section(
-            "Learn",
-            "/getting-started/",
-            docs_sidebar_group(
-                "Getting Started",
-                _leaf("Introduction", "/getting-started/", url),
-                icon="rocket",
-                open_=url.startswith("/getting-started/"),
-            ),
-            docs_sidebar_group(
-                "Core Concepts",
-                _leaf("Overview", "/core-concepts/", url),
-                _leaf("Composition", "/core-concepts/composition/", url),
-                _leaf("Data and Columns", "/core-concepts/data/", url),
-                _leaf("Axes and Scales", "/core-concepts/axes-and-scales/", url),
-                _leaf("Interactions", "/core-concepts/interactions/", url),
-                _leaf("Styling and Themes", "/core-concepts/styling/", url),
-                icon="boxes",
-                open_=url.startswith("/core-concepts/"),
-            ),
-            connected_line=False,
+        *(
+            docs_sidebar_section(
+                group_title,
+                group_route,
+                *(
+                    docs_sidebar_group(
+                        title,
+                        *(
+                            _leaf(leaf_title, leaf_route, url)
+                            for leaf_title, leaf_route in _section_leaves(
+                                landing_route,
+                                leaves,
+                            )
+                        ),
+                        icon=icon,
+                        open_=(
+                            (url == "/") | url.startswith("/overview/")
+                            if landing_route == "/"
+                            else url.startswith(landing_route)
+                        ),
+                    )
+                    for title, landing_route, icon, leaves in sections
+                ),
+                connected_line=False,
+            )
+            for group_title, group_route, sections in SIDEBAR_SECTION_GROUPS
         ),
-        docs_sidebar_section(
-            "Charts",
-            "/charts/",
-            docs_sidebar_group(
-                "Charts",
-                _leaf("Overview", "/charts/", url),
-                _leaf("Line and Area Charts", "/charts/line-and-area/", url),
-                _leaf("Scatter Charts", "/charts/scatter/", url),
-                _leaf("Bar and Column Charts", "/charts/bar-and-column/", url),
-                _leaf("Distribution Charts", "/charts/distributions/", url),
-                _leaf("Density and Grid Charts", "/charts/density-and-grids/", url),
-                _leaf("Error Bars and Bands", "/charts/uncertainty/", url),
-                _leaf("Specialized Charts", "/charts/specialized/", url),
-                _leaf("Facets and Layers", "/charts/facets-and-layers/", url),
-                icon="chart-column",
-                open_=url.startswith("/charts/"),
-            ),
-            connected_line=False,
-        ),
-        docs_sidebar_section(
-            "Components",
-            "/components/",
-            docs_sidebar_group(
-                "Components",
-                _leaf("Overview", "/components/", url),
-                _leaf("Annotations", "/components/annotations/", url),
-                _leaf("Chart Chrome", "/components/chart-chrome/", url),
-                icon="layout-panel-left",
-                open_=url.startswith("/components/"),
-            ),
-            connected_line=False,
-        ),
-        docs_sidebar_section(
-            "Guides",
-            "/guides/",
-            docs_sidebar_group(
-                "Guides",
-                _leaf("Overview", "/guides/", url),
-                _leaf("Exporting", "/guides/exporting/", url),
-                _leaf("Notebooks and Pyplot", "/guides/notebooks-and-pyplot/", url),
-                _leaf("Large Datasets", "/guides/large-datasets/", url),
-                _leaf("Streaming Data", "/guides/streaming-data/", url),
-                _leaf("Framework Integration", "/guides/framework-integration/", url),
-                icon="book-open",
-                open_=url.startswith("/guides/"),
-            ),
-            connected_line=False,
-        ),
-        docs_sidebar_section(
-            "API Reference",
-            "/api-reference/",
-            docs_sidebar_group(
-                "API Reference",
-                _leaf("Overview", "/api-reference/", url),
-                _leaf("Components", "/api-reference/components/", url),
-                icon="book-text",
-                open_=url.startswith("/api-reference/"),
-            ),
-            connected_line=False,
-        ),
-        class_name="m-0 flex w-full list-none flex-col items-start gap-8 p-0",
+        class_name="m-0 flex w-full list-none flex-col items-start gap-6 p-0",
     )
     return rx.box(
         categories,
@@ -182,4 +143,8 @@ def xy_docs_sidebar(route: str) -> rx.Component:
     return xy_docs_sidebar_comp(url=normalized_route)
 
 
-__all__ = ["xy_docs_sidebar", "xy_docs_sidebar_comp"]
+__all__ = [
+    "SIDEBAR_SECTION_GROUPS",
+    "xy_docs_sidebar",
+    "xy_docs_sidebar_comp",
+]

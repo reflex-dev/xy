@@ -1,9 +1,9 @@
 ---
-title: Reflex Integration
-description: Render XY charts as first-class Reflex components.
+title: Reflex
+description: Render fixed and state-backed XY charts as first-class Reflex components.
 ---
 
-# Reflex Integration
+# Reflex
 
 The `reflex-xy` adapter renders an XY chart as a first-class Reflex component.
 The core `xy` package stays framework-neutral: application state and events
@@ -43,16 +43,16 @@ backend connection.
 import numpy as np
 import reflex as rx
 import reflex_xy
-import xy as fc
+import xy
 
 t = np.linspace(0, 4 * np.pi, 800)
 
 
 def index() -> rx.Component:
     return reflex_xy.chart(
-        fc.line_chart(
-            fc.line(t, np.sin(t), name="signal"),
-            fc.x_axis(label="t"),
+        xy.line_chart(
+            xy.line(t, np.sin(t), name="signal"),
+            xy.x_axis(label="t"),
             title="Static payload",
             width="100%",
             height=280,
@@ -61,8 +61,9 @@ def index() -> rx.Component:
     )
 ~~~
 
-These documentation previews use this static tier. Hover, pan, zoom, and local
-density refinement remain interactive in the browser.
+Static charts retain browser-local hover, pan, zoom, and density refinement.
+They do not dispatch backend event handlers because there is no live kernel to
+resolve semantic event payloads.
 
 ## State-Backed Charts
 
@@ -74,7 +75,7 @@ the app's existing websocket rather than through Reflex state JSON.
 import numpy as np
 import reflex as rx
 import reflex_xy
-import xy as fc
+import xy
 
 
 class Dashboard(rx.State):
@@ -82,18 +83,18 @@ class Dashboard(rx.State):
     hovered: dict = {}
 
     @reflex_xy.figure
-    def cloud(self) -> fc.Chart:
+    def cloud(self) -> xy.Chart:
         rng = np.random.default_rng(7)
         x = rng.normal(size=self.points)
         y = 0.6 * x + rng.normal(scale=0.6, size=self.points)
-        return fc.scatter_chart(
-            fc.scatter(x, y, density=True),
+        return xy.scatter_chart(
+            xy.scatter(x, y, density=True),
             width="100%",
             height=420,
         )
 
     @rx.event
-    def on_hover(self, row: dict):
+    def record_hover(self, row: dict):
         self.hovered = row
 
 
@@ -101,7 +102,7 @@ def index() -> rx.Component:
     return rx.vstack(
         reflex_xy.chart(
             Dashboard.cloud,
-            on_point_hover=Dashboard.on_hover,
+            on_point_hover=Dashboard.record_hover,
             height="420px",
         ),
         rx.text(Dashboard.hovered.to_string()),
@@ -116,7 +117,29 @@ async computed vars.
 
 `on_point_hover`, `on_point_click`, `on_select_end`, and `on_view_change`
 dispatch small semantic payloads through normal Reflex event handlers. Large
-chart buffers never enter those payloads.
+chart buffers never enter those payloads. These props belong on the outer
+`reflex_xy.chart(...)` component and work only with a live token source, such
+as an `inline()` token or an `@reflex_xy.figure` var.
+
+They are separate from the core callbacks accepted by `xy` chart containers.
+Core `on_hover`, `on_click`, `on_brush`, `on_select`, and `on_view_change`
+callbacks are ordinary Python callables for the notebook widget. The Reflex
+adapter does not turn those callbacks into Reflex events. Instead, use its
+component props:
+
+| Core notebook callback | Reflex component prop | Reflex payload |
+| --- | --- | --- |
+| `on_hover` | `on_point_hover` | Resolved row dictionary |
+| `on_click` | `on_point_click` | Resolved row dictionary |
+| `on_brush` | No dedicated prop | — |
+| `on_select` | `on_select_end` | JSON-safe summary with `total`, optional bounds, and `cleared` |
+| `on_view_change` | `on_view_change` | View dictionary |
+
+In particular, notebook `on_select` receives an `xy.Selection` with canonical
+row indices, while Reflex `on_select_end` receives a compact summary suitable
+for an ordinary Reflex event. See
+[Interactions and selections](/docs/xy/core-concepts/interactions/) for the
+core callback contract.
 
 To extend a registered chart from an event or background task, append new
 points without rebuilding the component:
@@ -125,39 +148,46 @@ points without rebuilding the component:
 reflex_xy.append(token, x=[next_x], y=[next_y])
 ~~~
 
+See [Real-time and streaming data](/docs/xy/guides/real-time-and-streaming-data/)
+for the mutation and snapshot contract.
+
 ## Choose a Data Tier
 
-| Source passed to `reflex_xy.chart` | Best for | Backend |
+| Component source | Best for | Backend |
 | --- | --- | --- |
-| `xy.Chart` | Fixed, exportable charts | None |
-| `reflex_xy.inline(chart)` | Fixed data with kernel round-trips | XY registry |
-| `@reflex_xy.figure` var | Session and state-driven charts | Reflex + XY registry |
+| A direct `xy.Chart`: `reflex_xy.chart(chart)` | Fixed, exportable charts | None |
+| A module-scope `token = reflex_xy.inline(chart)`, then `reflex_xy.chart(token)` | Fixed data with kernel round-trips | XY registry |
+| An `@reflex_xy.figure` var: `reflex_xy.chart(State.figure)` | Session and state-driven charts | Reflex + XY registry |
 
 `inline()` should run at module scope so every backend worker registers the
-same content-addressed token.
+same content-addressed token. Despite its name, `inline()` is the live,
+kernel-backed fixed-data tier; passing a Chart directly is the static tier.
 
 ## Custom Chrome Slots
 
 Legend, tooltip, and colorbar components can retain opaque framework objects:
 
 ~~~python
-import xy as fc
+import xy
 
 custom_legend = object()
 custom_tooltip = object()
 
-chart = fc.scatter_chart(
-    fc.scatter([1, 2], [3, 5]),
-    fc.legend(custom_legend, show=False),
-    fc.tooltip(custom_tooltip, show=False),
+chart = xy.scatter_chart(
+    xy.scatter([1, 2], [3, 5]),
+    xy.legend(custom_legend, show=False),
+    xy.tooltip(custom_tooltip, show=False),
 )
 
 chrome = chart.reflex_components()
 assert chrome["legend"] is custom_legend
 ~~~
 
-The adapter can mount those objects beside its chart host. Opaque render
-objects never enter standalone HTML.
+The shipped adapter does not currently mount those objects beside its chart
+host. A custom adapter can read `chart.chrome_components()` (or its
+`reflex_components()` alias) and mount them alongside the chart. Opaque render
+objects never enter standalone HTML. For ordinary DOM customization, use the
+[chrome-slot styling API](/docs/xy/styling/chrome-slots/).
 
 ~~~md alert warning
 ### Experimental Boundary

@@ -11,8 +11,20 @@ from xy_docs.footer import xy_docs_footer
 from xy_docs.navbar import xy_docs_navbar
 from xy_docs.sidebar import xy_docs_sidebar
 
+_CHART_STYLE = {
+    "--chart-modebar-bg": "var(--secondary-2)",
+    "--chart-modebar-active": "var(--primary-a4)",
+    "--chart-text": "var(--secondary-11)",
+    "--chart-grid": "var(--secondary-a5)",
+    "--chart-axis": "var(--secondary-a8)",
+    "--chart-legend-bg": "var(--secondary-2)",
+    "--chart-tooltip-bg": "var(--secondary-3)",
+    "--chart-tooltip-text": "var(--secondary-12)",
+    "--chart-focus": "var(--primary-9)",
+}
+
 app = rx.App(
-    style=styles.BASE_STYLE,
+    style={**styles.BASE_STYLE, **_CHART_STYLE},
     app_wraps={},
     theme=rx.theme(
         has_background=True,

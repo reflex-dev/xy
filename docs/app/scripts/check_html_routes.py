@@ -10,7 +10,8 @@ APP_ROOT = Path(__file__).resolve().parents[1]
 CLIENT_ROOT = APP_ROOT / ".web" / "build" / "client"
 BUILD_ROOT = CLIENT_ROOT / "docs" / "xy"
 ROUTES_ROOT = APP_ROOT / ".web" / "app" / "routes"
-LIVE_PREVIEW_MARKER = "python demo-only exec"
+LIVE_PREVIEW_MARKERS = ("python demo exec", "python demo-only exec")
+LIVE_PREVIEW_ROUTES = {"/overview/gallery/"}
 XY_PAYLOAD_PATTERN = re.compile(r'["\'](?P<url>/docs/xy/xy/[a-f0-9]+\.xyf)["\']')
 XY_PAYLOAD_MAGIC = b"XYBF"
 
@@ -94,7 +95,9 @@ def main() -> None:
         if not module_path.is_file():
             msg = f"Missing compiled documentation route: {module_path}"
             raise RuntimeError(msg)
-        if LIVE_PREVIEW_MARKER in page.content:
+        if page.route in LIVE_PREVIEW_ROUTES or any(
+            marker in page.content for marker in LIVE_PREVIEW_MARKERS
+        ):
             validate_live_preview(page.route, module_path)
         html_paths = route_html_paths(page.route)
         route_depth = len(Path(page.route.strip("/")).parts)
