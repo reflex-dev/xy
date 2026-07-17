@@ -28,6 +28,12 @@ chart = xy.scatter_chart(
 the `modebar` and `modebar_button` chart slots. Use `show=False` to remove the
 toolbar. The last modebar component supplies the effective configuration.
 
+The toolbar's default surface follows your page's light or dark mode
+automatically: a `.dark` class on the chart root or any ancestor (as Reflex,
+Radix, and Tailwind set on the root `<html>`) switches it to a dark palette,
+while `--chart-modebar-*` tokens you supply still override it. See
+[Themes and tokens](/docs/xy/styling/themes-and-tokens/#automatic-dark-mode-for-the-toolbar).
+
 The CSV command exports data resident in the browser representation. On a
 decimated or density-tier chart that is not necessarily every canonical source
 row; export the source table from Python when a complete data extract is
