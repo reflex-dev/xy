@@ -11,15 +11,20 @@ test in tests/pyplot/.
 from __future__ import annotations
 
 import copy
+
+# Runtime imports, not TYPE_CHECKING: `typing.get_type_hints()` on the public
+# Axes methods must resolve these annotation names (all stdlib or xy-local).
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import suppress
 from datetime import datetime, timedelta
 from itertools import pairwise
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import numpy as np
 
 import xy
 
+from .._typing import ArrayLike, ColorLike, ColorsLike, LimitsLike, Scalar
 from ._artists import (
     Artist,
     AxesImage,
@@ -338,7 +343,7 @@ class SecondaryAxis:
         self._ticks: Optional[np.ndarray] = None
         self._tick_labels: Optional[list[str]] = None
 
-    def set_xlabel(self, label: Any, **kwargs: Any) -> "SecondaryAxis":
+    def set_xlabel(self, label: str, **kwargs: Any) -> "SecondaryAxis":
         if self._axis != "x":
             raise AttributeError("secondary y axes use set_ylabel()")
         if kwargs:
@@ -347,7 +352,7 @@ class SecondaryAxis:
         self._parent._invalidate()
         return self
 
-    def set_ylabel(self, label: Any, **kwargs: Any) -> "SecondaryAxis":
+    def set_ylabel(self, label: str, **kwargs: Any) -> "SecondaryAxis":
         if self._axis != "y":
             raise AttributeError("secondary x axes use set_xlabel()")
         if kwargs:
@@ -356,7 +361,9 @@ class SecondaryAxis:
         self._parent._invalidate()
         return self
 
-    def set_ticks(self, ticks: Any, labels: Any = None, **kwargs: Any) -> None:
+    def set_ticks(
+        self, ticks: ArrayLike, labels: Sequence[str] | None = None, **kwargs: Any
+    ) -> None:
         check_unsupported(kwargs, "secondary-axis set_ticks()")
         self._ticks = np.asarray(ticks, dtype=float)
         self._tick_labels = None
@@ -412,12 +419,12 @@ class _TickLabel:
     def get_text(self) -> str:
         return self._text
 
-    def set_color(self, color: Any) -> None:
+    def set_color(self, color: ColorLike) -> None:
         style = self._axes._axis_props(self._axis).setdefault("style", {})
         style["tick_label_color"] = resolve_color(color)
         self._axes._invalidate()
 
-    def set_rotation(self, angle: Any) -> None:
+    def set_rotation(self, angle: float) -> None:
         self._axes._axis_props(self._axis)["tick_label_angle"] = float(angle)
         self._axes._invalidate()
 
@@ -432,11 +439,11 @@ class _SharedAxesGroup:
         fig = getattr(ax, "figure", None)
         return list(fig._axes) if fig is not None else [ax]
 
-    def get_siblings(self, ax: Any) -> list[Any]:
+    def get_siblings(self, ax: Axes) -> list[Any]:
         props = ax._axis_props(self._axis)
         return [a for a in self._pool(ax) if a._axis_props(self._axis) is props] or [ax]
 
-    def joined(self, a: Any, b: Any) -> bool:
+    def joined(self, a: Axes, b: Axes) -> bool:
         return a._axis_props(self._axis) is b._axis_props(self._axis)
 
     def join(self, *axes_list: Any) -> None:
@@ -470,7 +477,7 @@ class _SpineProxy:
     def items(self) -> list[tuple[str, "_SpineProxy"]]:
         return [(name, _SpineProxy(self.axes, (name,))) for name in self.names]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(self.names)
 
     def set_visible(self, visible: bool) -> None:
@@ -649,10 +656,12 @@ class Axes(PlotTypeMixin):
 
     @property
     def lines(self) -> list[Any]:
+        """The `Line2D` artists owned by this axes."""
         return [item for item in self._owned_artists if isinstance(item, Line2D)]
 
     @property
     def collections(self) -> list[Any]:
+        """The collection artists (scatter/poly/contour) owned by this axes."""
         from ._artists import ContourSet
 
         return [
@@ -663,30 +672,36 @@ class Axes(PlotTypeMixin):
 
     @property
     def patches(self) -> list[Any]:
+        """The wedge patches owned by this axes."""
         from ._artists import Wedge
 
         return [item for item in self._owned_artists if isinstance(item, Wedge)]
 
     @property
     def texts(self) -> list[Any]:
+        """The `Text` artists owned by this axes."""
         return [item for item in self._owned_artists if isinstance(item, Text)]
 
     @property
     def images(self) -> list[Any]:
+        """The `AxesImage` artists owned by this axes."""
         return [item for item in self._owned_artists if isinstance(item, AxesImage)]
 
     @property
     def tables(self) -> list[Any]:
+        """The `Table` artists owned by this axes."""
         from ._artists import Table
 
         return [item for item in self._owned_artists if isinstance(item, Table)]
 
     @property
     def containers(self) -> list[Any]:
+        """The bar/errorbar/stem containers registered on this axes."""
         return list(self._containers)
 
     @property
     def artists(self) -> list[Any]:
+        """Owned artists that fall in no other category list."""
         categorized = set(
             self.lines
             + self.collections
@@ -779,6 +794,12 @@ class Axes(PlotTypeMixin):
         return entry
 
     def clear(self) -> None:
+        """Reset the axes to a pristine state, removing every plotted thing.
+
+        Drops all entries, owned artists, and containers, and restores axis
+        limits, scales, ticks, title, legend, grid, aspect, and the color
+        cycle to their rc defaults. ``cla`` is an alias of this method.
+        """
         self._entries.clear()
         self._owned_artists.clear()
         self._containers.clear()
@@ -827,6 +848,18 @@ class Axes(PlotTypeMixin):
     # -- plotting ------------------------------------------------------------
 
     def plot(self, *args: Any, **kwargs: Any) -> list[Line2D]:
+        """Plot y versus x as lines and/or markers.
+
+        Accepts matplotlib's call forms: ``plot(y)``, ``plot(x, y)``,
+        ``plot(x, y, fmt)``, and repeated ``x, y, fmt`` groups, where ``fmt``
+        is a ``[marker][line][color]`` shorthand such as ``"r--o"``. A 2-D
+        operand draws one line per column. Supported keywords: ``color``/``c``,
+        ``linewidth``/``lw``, ``linestyle``/``ls``, ``dashes``, ``alpha``,
+        ``label``, ``marker``, ``markersize``/``ms``, ``markerfacecolor``/
+        ``mfc``, ``markeredgecolor``/``mec``, ``markeredgewidth``/``mew``,
+        ``markevery``, ``drawstyle``, and ``transform``; anything else raises
+        loudly. Returns the list of `Line2D` handles, one per series.
+        """
         scalex = kwargs.pop("scalex", True)
         scaley = kwargs.pop("scaley", True)
         if scalex is not True or scaley is not True:
@@ -1088,8 +1121,24 @@ class Axes(PlotTypeMixin):
         return handle
 
     def scatter(
-        self, x: Any, y: Any, s: Any = None, c: Any = None, **kwargs: Any
+        self,
+        x: ArrayLike,
+        y: ArrayLike,
+        s: float | ArrayLike | None = None,
+        c: ColorsLike | None = None,
+        **kwargs: Any,
     ) -> PathCollection:
+        """A scatter plot of ``y`` versus ``x``.
+
+        ``s`` is the marker area in points² (scalar or per point); ``c`` is a
+        single color, one color per point, or a numeric array mapped through
+        ``cmap`` (pin the color limits with ``vmin``/``vmax``). Other
+        supported keywords: ``marker``, ``alpha``, ``label``,
+        ``edgecolors``/``edgecolor``, ``linewidths``/``linewidth``/``lw``,
+        ``plotnonfinite``, and ``transform``. Masked entries are dropped,
+        matching matplotlib; ``norm`` and other unsupported keywords raise
+        loudly. Returns a `PathCollection`.
+        """
         if c is None and "color" in kwargs:
             c = kwargs.pop("color")
         cmap = kwargs.pop("cmap", None)
@@ -1243,13 +1292,40 @@ class Axes(PlotTypeMixin):
         return artist
 
     def bar(
-        self, x: Any, height: Any, width: float = 0.8, bottom: Any = None, **kwargs: Any
+        self,
+        x: float | ArrayLike,
+        height: float | ArrayLike,
+        width: float = 0.8,
+        bottom: float | ArrayLike | None = None,
+        **kwargs: Any,
     ) -> BarContainer:
+        """Vertical bars of the given ``height`` at positions ``x``.
+
+        ``x`` may be numeric positions or category labels; ``bottom`` stacks
+        this series on top of another. Supported keywords: ``align``
+        (``"center"`` or ``"edge"``), ``color`` (scalar or per bar),
+        ``edgecolor``, ``linewidth``, ``alpha``, ``label``, and the
+        ``xerr``/``yerr``/``capsize``/``ecolor``/``error_kw`` error-bar
+        options; anything else raises loudly. Returns the `BarContainer`
+        holding one patch per bar.
+        """
         return self._bar_like(x, height, width, bottom, "vertical", kwargs)
 
     def barh(
-        self, y: Any, width: Any, height: float = 0.8, left: Any = None, **kwargs: Any
+        self,
+        y: float | ArrayLike,
+        width: float | ArrayLike,
+        height: float = 0.8,
+        left: float | ArrayLike | None = None,
+        **kwargs: Any,
     ) -> BarContainer:
+        """Horizontal bars of the given ``width`` at positions ``y``.
+
+        The horizontal twin of `bar`: ``left`` stacks series, ``align`` is
+        ``"center"`` or ``"edge"``, and the same styling and error-bar
+        keywords apply (``color``, ``edgecolor``, ``linewidth``, ``alpha``,
+        ``label``, ``xerr``/``yerr``/``capsize``/``ecolor``/``error_kw``).
+        """
         return self._bar_like(y, width, height, left, "horizontal", kwargs)
 
     def _bar_like(
@@ -1393,12 +1469,23 @@ class Axes(PlotTypeMixin):
     def hist(
         self,
         x: Any,
-        bins: Any = 10,
+        bins: int | ArrayLike | str = 10,
         range: Any = None,  # noqa: A002 - matplotlib's own signature
         density: bool = False,
         cumulative: bool = False,
         **kwargs: Any,
     ) -> tuple[Any, np.ndarray, Any]:
+        """A histogram of ``x``.
+
+        ``x`` is one dataset or a sequence of datasets (drawn grouped, or
+        stacked with ``stacked=True``); ``bins``/``range`` follow
+        `numpy.histogram`, ``density`` normalizes, and ``cumulative``
+        accumulates. Supported keywords: ``weights``, ``color``,
+        ``edgecolor``, ``alpha``, ``label``, ``histtype`` (``"bar"``/
+        ``"barstacked"``/``"step"``/``"stepfilled"``), ``orientation``, and
+        ``stacked``; anything else raises loudly. Returns
+        ``(counts, bin_edges, patches)`` as matplotlib does.
+        """
         color = kwargs.pop("color", None)
         alpha = kwargs.pop("alpha", None)
         label = kwargs.pop("label", None)
@@ -1424,12 +1511,13 @@ class Axes(PlotTypeMixin):
             # object array: boxing every element just to sniff the input shape
             # is an O(n) cost per build (tests/pyplot/test_perf_guardrail.py).
             datasets = [np.asarray(x, dtype=np.float64)]
+        elif isinstance(x, np.ndarray) and x.ndim == 2:
+            # NB: iterate columns via .T — `range` here is the bin-range parameter.
+            datasets = [np.asarray(column, dtype=np.float64) for column in x.T]
         else:
             raw = np.asarray(x, dtype=object)
             if raw.ndim == 1 and (len(raw) == 0 or np.isscalar(raw[0])):
                 datasets = [np.asarray(x, dtype=np.float64)]
-            elif isinstance(x, np.ndarray) and x.ndim == 2:
-                datasets = [np.asarray(x[:, i], dtype=np.float64) for i in range(x.shape[1])]
             else:
                 datasets = [np.asarray(values, dtype=np.float64) for values in x]
         if isinstance(bins, (int, np.integer)) and not isinstance(bins, bool):
@@ -1597,7 +1685,18 @@ class Axes(PlotTypeMixin):
             (containers[0] if len(containers) == 1 else containers),
         )
 
-    def fill_between(self, x: Any, y1: Any, y2: Any = 0.0, **kwargs: Any) -> PolyCollection:
+    def fill_between(
+        self, x: ArrayLike, y1: float | ArrayLike, y2: float | ArrayLike = 0.0, **kwargs: Any
+    ) -> PolyCollection:
+        """Fill the area between two horizontal curves ``y1`` and ``y2``.
+
+        Supported keywords: ``where`` masks the fill to a boolean condition
+        (``interpolate=True`` closes the gaps at crossings), ``step`` fills
+        as steps (``"pre"``/``"post"``/``"mid"``), and
+        ``color``/``facecolor``/``fc``, ``alpha``, ``label``, and
+        ``transform`` style the patch; anything else raises loudly. Returns
+        a `PolyCollection`.
+        """
         color = kwargs.pop("color", kwargs.pop("facecolor", kwargs.pop("fc", None)))
         alpha = kwargs.pop("alpha", None)
         label = kwargs.pop("label", None)
@@ -1750,7 +1849,17 @@ class Axes(PlotTypeMixin):
             )
         return PolyCollection(self, entries[0])
 
-    def imshow(self, z: Any, cmap: Any = None, **kwargs: Any) -> AxesImage:
+    def imshow(self, z: ArrayLike, cmap: Any = None, **kwargs: Any) -> AxesImage:
+        """Display a 2-D scalar array or RGB(A) image.
+
+        ``z`` is ``(M, N)`` scalar data mapped through ``cmap`` or an
+        ``(M, N, 3|4)`` RGB(A) array. Supported keywords: ``vmin``/``vmax``
+        (or ``clim``) pin the color limits, ``alpha`` (scalar or array),
+        ``origin`` (``"upper"``/``"lower"``), ``aspect``, ``extent``,
+        ``interpolation``, ``norm``, ``colorizer``, ``clip_path``, and
+        ``transform``; unsupported keywords or values raise loudly. Returns
+        an `AxesImage`.
+        """
         vmin = kwargs.pop("vmin", None)
         vmax = kwargs.pop("vmax", None)
         origin = kwargs.pop("origin", rcParams["image.origin"])
@@ -2010,7 +2119,14 @@ class Axes(PlotTypeMixin):
             image.set_clip_path(clip_path)
         return image
 
-    def step(self, x: Any, y: Any, *args: Any, **kwargs: Any) -> list[Line2D]:
+    def step(self, x: ArrayLike, y: ArrayLike, *args: Any, **kwargs: Any) -> list[Line2D]:
+        """A step plot of ``y`` versus ``x``.
+
+        ``where`` places the step transition at ``"pre"`` (default),
+        ``"post"``, or ``"mid"``. Styled by the `plot` line keywords
+        (``color``/``c``, ``linewidth``/``lw``, ``linestyle``/``ls``,
+        ``dashes``, ``alpha``, ``label``); anything else raises loudly.
+        """
         where = kwargs.pop("where", "pre")
         if args:
             raise TypeError("step() accepts x, y and keyword arguments")
@@ -2039,15 +2155,39 @@ class Axes(PlotTypeMixin):
     # -- annotations -----------------------------------------------------------
 
     def axhline(self, y: float = 0.0, **kwargs: Any) -> Line2D:
+        """A horizontal line spanning the axes at data coordinate ``y``.
+
+        ``xmin``/``xmax`` bound it as axes fractions in [0, 1]. Supported
+        styling keywords: ``color``/``c``/``facecolor``, ``linewidth``/``lw``,
+        ``linestyle``/``ls``, ``alpha``, and ``label``; anything else raises
+        loudly.
+        """
         return Line2D(self, self._annotation("hline", (y,), kwargs))
 
     def axvline(self, x: float = 0.0, **kwargs: Any) -> Line2D:
+        """A vertical line spanning the axes at data coordinate ``x``.
+
+        ``ymin``/``ymax`` bound it as axes fractions in [0, 1]; the same
+        styling keywords as `axhline` apply (``color``/``c``/``facecolor``,
+        ``linewidth``/``lw``, ``linestyle``/``ls``, ``alpha``, ``label``).
+        """
         return Line2D(self, self._annotation("vline", (x,), kwargs))
 
     def axhspan(self, ymin: float, ymax: float, **kwargs: Any) -> Artist:
+        """A horizontal band spanning the axes between ``ymin`` and ``ymax``.
+
+        ``xmin``/``xmax`` bound it as axes fractions in [0, 1];
+        ``color``/``c``/``facecolor``, ``alpha``, ``linestyle``/``ls``, and
+        ``label`` style the patch. Anything else raises loudly.
+        """
         return Artist(self, self._annotation("y_band", (ymin, ymax), kwargs))
 
     def axvspan(self, xmin: float, xmax: float, **kwargs: Any) -> Artist:
+        """A vertical band spanning the axes between ``xmin`` and ``xmax``.
+
+        ``ymin``/``ymax`` bound it as axes fractions in [0, 1]; the same
+        styling keywords as `axhspan` apply.
+        """
         return Artist(self, self._annotation("x_band", (xmin, xmax), kwargs))
 
     def _annotation(self, kind: str, args: tuple, kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -2092,8 +2232,23 @@ class Axes(PlotTypeMixin):
         return self._add(f"@{kind}", {"args": args, "kwargs": akw})
 
     def text(
-        self, x: Any, y: Any, s: str, fontdict: Optional[dict[str, Any]] = None, **kwargs: Any
+        self,
+        x: Scalar | str | datetime,
+        y: Scalar | str | datetime,
+        s: str,
+        fontdict: Optional[dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> Text:
+        """Place text at data coordinates ``(x, y)``.
+
+        ``ha``/``va`` (aliases ``horizontalalignment``/``verticalalignment``)
+        anchor the text; ``color``/``c``, ``fontsize``/``size``,
+        ``fontweight``/``weight``, ``fontfamily``/``family``, and
+        ``rotation`` style it, with ``fontdict`` supplying defaults. Pass
+        ``transform=ax.transAxes`` (or the figure's ``transFigure``) for
+        fraction placement. Basic mathtext (``$...$``) is rendered;
+        unsupported keywords raise loudly.
+        """
         if fontdict:
             kwargs = {**fontdict, **kwargs}
         color = kwargs.pop("color", kwargs.pop("c", None))
@@ -2130,6 +2285,15 @@ class Axes(PlotTypeMixin):
         return Text(self, self._add("@text", {"args": (x, y, _plain_text(s)), "kwargs": akw}))
 
     def annotate(self, text: str, xy: tuple, xytext: Optional[tuple] = None, **kwargs: Any) -> Text:
+        """Annotate the point ``xy`` with text, optionally offset at ``xytext``.
+
+        ``xycoords``/``textcoords`` choose the coordinate systems
+        (``"data"``, ``"axes fraction"``, ``"offset points"``, ...);
+        ``arrowprops`` draws a matplotlib-style arrow between the text and
+        the point. `text` styling keywords (``color``, ``fontsize``/``size``,
+        ``ha``/``va``, ``fontweight``/``weight``, ``fontfamily``/``family``,
+        ``rotation``, ``bbox``) are accepted; anything else raises loudly.
+        """
         arrowprops = kwargs.pop("arrowprops", None)
         fontsize = kwargs.pop("fontsize", kwargs.pop("size", None))
         color = kwargs.pop("color", None)
@@ -2251,24 +2415,50 @@ class Axes(PlotTypeMixin):
     # -- axis config -----------------------------------------------------------
 
     def set_xlabel(self, label: str, **kwargs: Any) -> None:
+        """Set the x-axis label.
+
+        ``labelpad`` offsets it and ``loc`` (``"left"``/``"center"``/
+        ``"right"``) places it; the matplotlib text keywords (``fontsize``,
+        ``color``, ...) are accepted as compatibility inputs, and anything
+        else raises loudly. Basic mathtext (``$...$``) is rendered.
+        """
         props = self._axis_props("x")
         props["label"] = _plain_text(label)
         _apply_axis_label_kwargs(props, kwargs, "set_xlabel()")
         self._invalidate()
 
     def set_ylabel(self, label: str, **kwargs: Any) -> None:
+        """Set the y-axis label (same keywords as `set_xlabel`).
+
+        ``loc`` takes ``"bottom"``/``"center"``/``"top"`` for this axis.
+        """
         props = self._axis_props("y")
         props["label"] = _plain_text(label)
         _apply_axis_label_kwargs(props, kwargs, "set_ylabel()")
         self._invalidate()
 
     def set_title(self, title: str, **kwargs: Any) -> None:
+        """Set the axes title.
+
+        The matplotlib text keywords (``fontsize``, ``color``, ``pad``, ...)
+        are accepted as compatibility inputs; anything else raises loudly.
+        Basic mathtext (``$...$``) is rendered.
+        """
         _consume_text_kwargs(kwargs, "set_title()")
         host = self._y2_of or self
         host._title = _plain_text(title)
         host._invalidate()
 
     def set(self, **kwargs: Any) -> "Axes":
+        """Set multiple axes properties at once, matplotlib-style.
+
+        Supported property names: ``xlabel``, ``ylabel``, ``title``,
+        ``xlim``, ``ylim``, ``xscale``, ``yscale``, ``xticks``, ``yticks``,
+        ``xticklabels``, ``yticklabels``, ``position``, ``anchor``,
+        ``aspect``, ``facecolor``, and ``axisbelow`` (``projection`` must
+        stay rectilinear). Unknown names raise loudly. Returns the axes for
+        chaining.
+        """
         aliases = {
             "xlabel": self.set_xlabel,
             "ylabel": self.set_ylabel,
@@ -2314,7 +2504,14 @@ class Axes(PlotTypeMixin):
         self._invalidate()
         return self
 
-    def set_xlim(self, left: Any = None, right: Any = None) -> None:
+    def set_xlim(self, left: float | LimitsLike | None = None, right: float | None = None) -> None:
+        """Set the x view limits.
+
+        Call as ``set_xlim(left, right)`` or ``set_xlim((left, right))``;
+        either side may be None to keep the current value. A descending pair
+        inverts the axis. Values are in data space — nonlinear scales
+        transform them internally.
+        """
         if isinstance(left, (tuple, list)):
             left, right = left
         current = self._axis_props("x").get("domain")
@@ -2330,6 +2527,7 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def get_xlim(self) -> tuple[float, float]:
+        """The current x view limits, in data space and display order."""
         lo, hi = self._axis_props("x").get("domain", self._auto_domain("x"))
         lo, hi = map(
             float,
@@ -2339,7 +2537,12 @@ class Axes(PlotTypeMixin):
         )
         return (hi, lo) if self._axis_props("x").get("reverse") else (lo, hi)
 
-    def set_ylim(self, bottom: Any = None, top: Any = None) -> None:
+    def set_ylim(self, bottom: float | LimitsLike | None = None, top: float | None = None) -> None:
+        """Set the y view limits (forms as in `set_xlim`).
+
+        A descending ``(bottom, top)`` pair inverts the axis; on a twin axes
+        the limits apply to its own right-hand y-axis.
+        """
         if isinstance(bottom, (tuple, list)):
             bottom, top = bottom
         current = self._axis_props("y").get("domain")
@@ -2356,6 +2559,7 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def get_ylim(self) -> tuple[float, float]:
+        """The current y view limits, in data space and display order."""
         lo, hi = self._axis_props("y").get("domain", self._auto_domain("y"))
         key = "y2" if self._y2_of is not None else "y"
         lo, hi = map(
@@ -2367,10 +2571,17 @@ class Axes(PlotTypeMixin):
         return (hi, lo) if self._axis_props("y").get("reverse") else (lo, hi)
 
     def get_position(self, original: bool = False) -> Bbox:
+        """The axes rectangle in figure fractions, as a `Bbox`."""
         del original  # compat-noop: shim axes have no active/original position split
         return Bbox.from_bounds(*(self._figure_rect or (0.125, 0.11, 0.775, 0.77)))
 
-    def set_position(self, position: Any) -> None:
+    def set_position(self, position: Bbox | tuple[float, float, float, float]) -> None:
+        """Place the axes at a figure-fraction rectangle.
+
+        ``position`` is ``[left, bottom, width, height]`` (a Bbox-like with
+        ``.bounds`` is also accepted); a later ``subplots_adjust`` still
+        re-resolves gridspec-backed axes over this.
+        """
         # The gridspec spec (if any) is kept: matplotlib's subplots_adjust
         # re-resolves every subplotspec-backed axes, overriding set_position.
         self._figure_rect = _parse_bounds(position, "set_position()")
@@ -2405,7 +2616,7 @@ class Axes(PlotTypeMixin):
         y = self._data_coordinate(xy[1], "y")
         return None if x is None or y is None else (x, y)
 
-    def _iter_entry_arrays(self, axis: str):
+    def _iter_entry_arrays(self, axis: str) -> Iterator[tuple[np.ndarray, bool]]:
         """Yield each (array, needs_finite_filter) an entry contributes to *axis*."""
         for entry in self._entries:
             key = "x" if axis == "x" else "y"
@@ -2477,7 +2688,18 @@ class Axes(PlotTypeMixin):
         pad = span * margin if span > 0 else abs(lo) * margin or margin
         return lo - pad, hi + pad
 
-    def axis(self, arg: Any = None, **kwargs: Any) -> tuple[float, float, float, float]:
+    def axis(
+        self, arg: str | bool | tuple[float, float, float, float] | None = None, **kwargs: Any
+    ) -> tuple[float, float, float, float]:
+        """Get or set axis properties in one call.
+
+        ``axis()`` returns ``(xmin, xmax, ymin, ymax)``; ``axis((xmin, xmax,
+        ymin, ymax))`` sets the limits; ``axis("off"/"on"/"equal"/"scaled"/
+        "image"/"square"/"tight"/"auto")`` applies the matplotlib convenience
+        modes (a bool means on/off). ``xmin``/``xmax``/``ymin``/``ymax``
+        keywords adjust single limits and ``emit`` is a compat-noop;
+        anything else raises loudly. Always returns the resulting limits.
+        """
         kwargs.pop("emit", None)  # compat-noop: callback emission is not exposed
         if isinstance(arg, bool):
             arg = "on" if arg else "off"
@@ -2553,7 +2775,13 @@ class Axes(PlotTypeMixin):
         y0, y1 = self.get_ylim()
         return float(x0), float(x1), float(y0), float(y1)
 
-    def set_aspect(self, aspect: Any, **kwargs: Any) -> None:
+    def set_aspect(self, aspect: str | float, **kwargs: Any) -> None:
+        """Set the data aspect ratio: ``"equal"``/``1`` or ``"auto"``.
+
+        ``adjustable`` is ``"box"`` (resize the axes rectangle) or
+        ``"datalim"`` (expand a data limit at draw time); ``anchor`` and
+        ``share`` are accepted compat-noops. Anything else raises loudly.
+        """
         adjustable = kwargs.pop("adjustable", None)
         # anchor/share are accepted compatibility hints; the shim has no
         # independent Artist layout graph on which to apply them.
@@ -2575,6 +2803,12 @@ class Axes(PlotTypeMixin):
             self._invalidate()
 
     def margins(self, *args: Any, **kwargs: Any) -> None:
+        """Set the autoscaling padding around the data, as axis fractions.
+
+        Call as ``margins(m)``, ``margins(x, y)``, or with ``x=``/``y=``;
+        values must be finite and non-negative. ``tight`` is accepted and
+        ignored; explicitly set limits are left alone.
+        """
         tight = kwargs.pop("tight", None)
         del tight
         x = kwargs.pop("x", None)
@@ -2602,6 +2836,11 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def relim(self, visible_only: bool = False) -> None:
+        """Recompute the data limits from the plotted entries.
+
+        Axes with explicitly set limits keep them; ``visible_only`` is a
+        compat-noop (invisible entries retain the same data extent).
+        """
         del visible_only  # compat-noop: invisible entries retain the same data extent
         for axis in ("x", "y"):
             if axis not in self._explicit_domains:
@@ -2611,6 +2850,12 @@ class Axes(PlotTypeMixin):
     def autoscale(
         self, enable: bool = True, axis: str = "both", tight: Optional[bool] = None
     ) -> None:
+        """Turn autoscaling on or off and re-fit the limits.
+
+        ``axis`` restricts to ``"x"`` or ``"y"`` (default ``"both"``);
+        ``tight=True`` pins the limits to the raw data extent, and
+        ``enable=False`` freezes the current auto limits.
+        """
         if axis not in {"both", "x", "y"}:
             raise ValueError("autoscale() axis must be 'both', 'x', or 'y'")
         axes = ("x", "y") if axis == "both" else (axis,)
@@ -2630,15 +2875,28 @@ class Axes(PlotTypeMixin):
     def autoscale_view(
         self, tight: Optional[bool] = None, scalex: bool = True, scaley: bool = True
     ) -> None:
+        """Re-fit the axes limits to the data (see `autoscale`).
+
+        ``scalex``/``scaley`` select which axes to autoscale; ``tight``
+        drops the data margins.
+        """
         if scalex:
             self.autoscale(True, axis="x", tight=tight)
         if scaley:
             self.autoscale(True, axis="y", tight=tight)
 
     def get_xbound(self) -> tuple[float, float]:
+        """The x bounds as a ``(lower, upper)`` pair (see `get_xlim`)."""
         return self.get_xlim()
 
-    def set_xbound(self, lower: Any = None, upper: Any = None) -> None:
+    def set_xbound(
+        self, lower: float | LimitsLike | None = None, upper: float | None = None
+    ) -> None:
+        """Set the x bounds via `set_xlim`.
+
+        Accepts ``set_xbound(lower, upper)`` or a single ``(lower, upper)``
+        pair; either side may be None to keep the current value.
+        """
         if isinstance(lower, (tuple, list)):
             lower, upper = lower
         current = self.get_xlim()
@@ -2647,9 +2905,13 @@ class Axes(PlotTypeMixin):
         )
 
     def get_ybound(self) -> tuple[float, float]:
+        """The y bounds as a ``(lower, upper)`` pair (see `get_ylim`)."""
         return self.get_ylim()
 
-    def set_ybound(self, lower: Any = None, upper: Any = None) -> None:
+    def set_ybound(
+        self, lower: float | LimitsLike | None = None, upper: float | None = None
+    ) -> None:
+        """Set the y bounds via `set_ylim` (forms as in `set_xbound`)."""
         if isinstance(lower, (tuple, list)):
             lower, upper = lower
         current = self.get_ylim()
@@ -2658,6 +2920,14 @@ class Axes(PlotTypeMixin):
         )
 
     def ticklabel_format(self, **kwargs: Any) -> None:
+        """Configure the scalar tick-label formatter.
+
+        Supported keywords: ``axis`` (``"both"``/``"x"``/``"y"``), ``style``
+        (``"plain"`` or ``"sci"``/``"scientific"``), ``scilimits=(m, n)``
+        bounding the exponent range that stays plain, and ``useOffset``
+        (alias ``useoffset``). ``useLocale``/``useMathText`` must stay False
+        and anything else raises loudly.
+        """
         axis = kwargs.pop("axis", "both")
         style = kwargs.pop("style", None)
         scilimits = kwargs.pop("scilimits", None)
@@ -2686,48 +2956,61 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def minorticks_on(self) -> None:
+        """Show minor ticks on both axes."""
         self._axis_props("x")["minor_ticks"] = True
         self._axis_props("y")["minor_ticks"] = True
         self._invalidate()
 
     def minorticks_off(self) -> None:
+        """Hide minor ticks on both axes."""
         self._axis_props("x")["minor_ticks"] = False
         self._axis_props("y")["minor_ticks"] = False
         self._invalidate()
 
     def get_xlabel(self) -> str:
+        """The x-axis label text (empty string when unset)."""
         return str(self._axis_props("x").get("label", ""))
 
     def get_ylabel(self) -> str:
+        """The y-axis label text (empty string when unset)."""
         return str(self._axis_props("y").get("label", ""))
 
     def get_title(self) -> str:
+        """The axes title text (empty string when unset)."""
         return "" if self._title is None else str(self._title)
 
     def get_xaxis(self) -> _AxisProxy:
+        """The x-axis proxy (the same object as ``ax.xaxis``)."""
         return self.xaxis
 
     def get_yaxis(self) -> _AxisProxy:
+        """The y-axis proxy (the same object as ``ax.yaxis``)."""
         return self.yaxis
 
-    def get_figure(self, root: Any = None) -> Any:
+    def get_figure(self, root: bool | None = None) -> Any:
+        """The owning figure (``root`` is a compat-noop)."""
         del root  # compat-noop: no nested subfigures; both roots are self.figure
         return self.figure
 
     def get_lines(self) -> list[Line2D]:
+        """The `Line2D` artists on this axes, in creation order."""
         host = self._y2_of or self
         return [artist for artist in host._owned_artists if isinstance(artist, Line2D)]
 
     def get_shared_x_axes(self) -> _SharedAxesGroup:
+        """matplotlib's shared-x Grouper view over the figure's axes."""
         return _SharedAxesGroup("x")
 
     def get_shared_y_axes(self) -> _SharedAxesGroup:
+        """matplotlib's shared-y Grouper view over the figure's axes."""
         return _SharedAxesGroup("y")
 
     def get_xticklabels(self) -> list[_TickLabel]:
+        """Handles for the x tick labels (styling applies axis-wide)."""
         return self._tick_label_handles("x")
 
     def get_yticklabels(self) -> list[_TickLabel]:
+        """Handles for the y tick labels (styling applies axis-wide)."""
         return self._tick_label_handles("y")
 
     def _tick_label_handles(self, axis: str) -> list[_TickLabel]:
@@ -2736,16 +3019,24 @@ class Axes(PlotTypeMixin):
             labels = [f"{value:g}" for value in self._computed_ticks(axis, False)]
         return [_TickLabel(self, axis, str(text)) for text in labels]
 
-    def set_facecolor(self, color: Any) -> None:
+    def set_facecolor(self, color: ColorLike) -> None:
+        """Set the plot-panel background color."""
         resolved = resolve_color(color)
         if resolved is not None:
             self._theme_tokens["plot_background"] = resolved
         self._invalidate()
 
     def get_facecolor(self) -> Any:
+        """The plot-panel background color."""
         return self._theme_tokens.get("plot_background")
 
-    def set_axisbelow(self, b: Any) -> None:
+    def set_axisbelow(self, b: bool) -> None:
+        """Accept ``set_axisbelow(True)``; any other order raises loudly.
+
+        The engine always composites grid lines beneath data marks, which is
+        exactly ``axisbelow=True``; other stacking orders are not
+        expressible.
+        """
         # The engine composites grid lines beneath data marks unconditionally,
         # which is exactly axisbelow=True; other orders are not expressible.
         if b is not True:
@@ -2754,9 +3045,15 @@ class Axes(PlotTypeMixin):
             )
 
     def get_legend(self) -> Any:
+        """A truthy legend handle when a legend is shown, else None."""
         return self if (self._y2_of or self)._legend else None
 
     def get_legend_handles_labels(self) -> tuple[list[Artist], list[str]]:
+        """Handles and labels of the entries that would appear in the legend.
+
+        Entries whose label starts with ``"_"`` are excluded, matching
+        matplotlib.
+        """
         handles: list[Artist] = []
         labels: list[str] = []
         for entry in (self._y2_of or self)._entries:
@@ -2767,6 +3064,14 @@ class Axes(PlotTypeMixin):
         return handles, labels
 
     def set_prop_cycle(self, *args: Any, **kwargs: Any) -> None:
+        """Set the color cycle used for new artists.
+
+        Accepts a cycler, a ``{"color": [...]}`` dict,
+        ``set_prop_cycle("color", colors)``, or a ``color=`` keyword;
+        ``set_prop_cycle(None)`` restores the rc cycle. Only color cycles
+        are supported — other properties raise loudly. Resets the cycle
+        position.
+        """
         if args and kwargs:
             raise TypeError("set_prop_cycle() accepts positional or keyword form, not both")
         colors = None
@@ -2795,8 +3100,15 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def secondary_xaxis(
-        self, location: Any = "top", functions: Any = None, *, transform: Any = None
+        self, location: str | float = "top", functions: Any = None, *, transform: Any = None
     ) -> SecondaryAxis:
+        """Add a linked, tick-only secondary x-axis.
+
+        ``location`` is ``"top"`` or ``"bottom"``; ``functions`` is a
+        ``(forward, inverse)`` pair (or invertible transform) mapping parent
+        coordinates to secondary ones. ``transform=`` raises loudly.
+        Returns the `SecondaryAxis`.
+        """
         if transform is not None:
             raise not_implemented("secondary_xaxis(transform=...)")
         made = SecondaryAxis(self, "x", location, functions)
@@ -2805,8 +3117,14 @@ class Axes(PlotTypeMixin):
         return made
 
     def secondary_yaxis(
-        self, location: Any = "right", functions: Any = None, *, transform: Any = None
+        self, location: str | float = "right", functions: Any = None, *, transform: Any = None
     ) -> SecondaryAxis:
+        """Add a linked, tick-only secondary y-axis.
+
+        The y twin of `secondary_xaxis`: ``location`` is ``"left"`` or
+        ``"right"``, and ``functions`` maps parent coordinates to secondary
+        ones.
+        """
         if transform is not None:
             raise not_implemented("secondary_yaxis(transform=...)")
         made = SecondaryAxis(self, "y", location, functions)
@@ -2882,10 +3200,20 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def set_axis_off(self) -> None:
+        """Hide both axes, like matplotlib's ``axis("off")``."""
         self.xaxis.set_visible(False)
         self.yaxis.set_visible(False)
 
-    def inset_axes(self, bounds: Any, **kwargs: Any) -> "Axes":
+    def inset_axes(
+        self, bounds: tuple[float, float, float, float] | Sequence[float], **kwargs: Any
+    ) -> "Axes":
+        """Add a child inset axes.
+
+        ``bounds`` is ``(left, bottom, width, height)`` in parent-axes
+        fractions; ``sharex``/``sharey`` hints link the figure's axes. The
+        inset's contents are drawn into the parent when the chart
+        materializes.
+        """
         inset = Axes(self.figure)
         parsed = tuple(float(value) for value in bounds)
         if len(parsed) != 4:
@@ -2903,7 +3231,9 @@ class Axes(PlotTypeMixin):
         parent_x = self._axis["x"].get("domain", self._entry_extent("x"))
         parent_y = self._axis["y"].get("domain", self._entry_extent("y"))
 
-        def mapper(source: tuple[float, float], target: tuple[float, float]):
+        def mapper(
+            source: tuple[float, float], target: tuple[float, float]
+        ) -> Callable[[Any], np.ndarray]:
             scale = (target[1] - target[0]) / ((source[1] - source[0]) or 1.0)
             return lambda value: target[0] + (np.asarray(value, dtype=float) - source[0]) * scale
 
@@ -2988,17 +3318,27 @@ class Axes(PlotTypeMixin):
         self._insets_materialized = True
 
     def get_xaxis_transform(self, **kwargs: Any) -> str:
+        """The x-axis transform sentinel: data-space x, axes-fraction y."""
         del kwargs
         return "xaxis transform"
 
     def get_yaxis_transform(self, **kwargs: Any) -> str:
+        """The y-axis transform sentinel: axes-fraction x, data-space y."""
         del kwargs
         return "yaxis transform"
 
     def label_outer(self, **kwargs: Any) -> None:
+        """Compat-noop: the engine lays out shared-axis tick labels itself."""
         del kwargs
 
     def add_artist(self, artist: Any) -> Any:
+        """Add a prebuilt artist to the axes.
+
+        Accepts a `Legend` (attached as an extra legend) or an image-like
+        mappable with ``get_array()`` (drawn via `imshow`); anything else
+        raises with a pointer to ``text()``/``imshow()``/``add_line()``/
+        ``add_patch()``/``add_collection()``.
+        """
         if isinstance(artist, Legend):
             host = self._y2_of or self
             artist._attach(host)
@@ -3048,6 +3388,12 @@ class Axes(PlotTypeMixin):
         )
 
     def add_line(self, line: Any) -> Line2D:
+        """Add a `Line2D`-like artist, replotting foreign ones via `plot`.
+
+        A shim `Line2D` must already belong to this axes; any other object
+        needs ``get_data()`` and may carry ``get_color``/``get_label``/
+        ``get_linewidth``/``get_alpha``.
+        """
         if isinstance(line, Line2D):
             if line._axes is not self:
                 raise ValueError("cannot move a Line2D between Axes")
@@ -3073,6 +3419,11 @@ class Axes(PlotTypeMixin):
         return self.plot(x, y, **kwargs)[0]
 
     def add_container(self, container: Any) -> Any:
+        """Register an existing container on this axes.
+
+        Only `BarContainer`, `ErrorbarContainer`, and `StemContainer` are
+        supported; other types raise.
+        """
         from ._artists import BarContainer, ErrorbarContainer, StemContainer
 
         if not isinstance(container, (BarContainer, ErrorbarContainer, StemContainer)):
@@ -3084,6 +3435,7 @@ class Axes(PlotTypeMixin):
         return container
 
     def add_table(self, table: Any) -> Any:
+        """Register a `Table` created by ``Axes.table()``; other objects raise."""
         from ._artists import Table
 
         if not isinstance(table, Table):
@@ -3096,6 +3448,13 @@ class Axes(PlotTypeMixin):
         return table
 
     def add_collection(self, collection: Any) -> Artist:
+        """Add a LineCollection-like artist (anything with ``get_segments()``).
+
+        A ``get_array()`` value array becomes a per-segment color encoding
+        through the collection's colormap; otherwise the first
+        ``get_colors()`` entry (or the next cycle color) paints every
+        segment.
+        """
         if not hasattr(collection, "get_segments"):
             raise TypeError(f"unsupported collection {type(collection).__name__}")
         x0: list[float] = []
@@ -3145,6 +3504,12 @@ class Axes(PlotTypeMixin):
         return Artist(self, entry)
 
     def add_patch(self, patch: Any) -> Artist:
+        """Add a patch, approximated as its outline or a stairs fill.
+
+        StepPatch-likes (with ``get_data()``) route to `stairs`; Rectangle-
+        and Path-based patches draw their edge as line segments. Unsupported
+        patch types raise.
+        """
         if hasattr(patch, "get_data"):
             data = patch.get_data()
             color = None
@@ -3184,6 +3549,12 @@ class Axes(PlotTypeMixin):
         return Artist(self, entry)
 
     def add_image(self, image: Any) -> AxesImage:
+        """Add an AxesImage-like artist by resampling it through `imshow`.
+
+        Non-uniform pixel coordinates (``pcolorfast``-style ``_Ax``/``_Ay``)
+        are resampled onto a uniform grid, nearest or linear per the image's
+        interpolation mode.
+        """
         data = np.ma.asarray(image.get_array(), dtype=np.float64).filled(np.nan)
         cmap = getattr(getattr(image, "get_cmap", lambda: None)(), "name", None)
         x = getattr(image, "_Ax", None)
@@ -3243,9 +3614,19 @@ class Axes(PlotTypeMixin):
         )
 
     def set_xscale(self, scale: str, **kwargs: Any) -> None:
+        """Set the x-axis scale.
+
+        ``scale`` is ``"linear"``, ``"log"``, ``"symlog"``, ``"logit"``, or
+        ``"asinh"``. ``symlog`` accepts ``base``/``linthresh``/``linscale``
+        and ``asinh`` accepts ``linear_width``; log only supports base 10
+        with ``nonpositive="clip"``. Existing data, limits, and auto ticks
+        are re-expressed in the new scale; unsupported keywords raise
+        loudly.
+        """
         self._set_scale("x", scale, kwargs)
 
     def set_yscale(self, scale: str, **kwargs: Any) -> None:
+        """Set the y-axis scale (same values and keywords as `set_xscale`)."""
         self._set_scale("y", scale, kwargs)
 
     def _set_scale(self, axis: str, scale: str, kwargs: Optional[dict[str, Any]] = None) -> None:
@@ -3325,16 +3706,27 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def invert_yaxis(self) -> None:
+        """Flip the y-axis direction (toggles on repeated calls)."""
         props = self._axis_props("y")
         props["reverse"] = not props.get("reverse", False)
         self._invalidate()
 
     def invert_xaxis(self) -> None:
+        """Flip the x-axis direction (toggles on repeated calls)."""
         props = self._axis_props("x")
         props["reverse"] = not props.get("reverse", False)
         self._invalidate()
 
     def tick_params(self, axis: str = "both", **kwargs: Any) -> None:
+        """Change tick, tick-label, and axis-color appearance.
+
+        ``axis`` selects ``"x"``/``"y"``/``"both"``. Supported keywords:
+        ``labelrotation``/``rotation``, ``colors``, ``color``,
+        ``labelcolor``, ``length``, ``width``, ``direction``
+        (``"in"``/``"out"``/``"inout"``), and the ``labelbottom``/
+        ``labeltop``/``labelleft``/``labelright`` visibility flags; anything
+        else raises loudly.
+        """
         if axis not in {"both", "x", "y"}:
             raise ValueError("tick_params() axis must be 'both', 'x', or 'y'")
         rotation = kwargs.pop("labelrotation", kwargs.pop("rotation", None))
@@ -3371,8 +3763,20 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def set_xticks(
-        self, ticks: Any, labels: Any = None, *, rotation: Any = None, **kwargs: Any
+        self,
+        ticks: ArrayLike | None,
+        labels: Sequence[str] | None = None,
+        *,
+        rotation: float | None = None,
+        **kwargs: Any,
     ) -> None:
+        """Place the x ticks at the given positions, optionally relabeled.
+
+        ``labels`` must match ``ticks`` in length and displaces any user
+        formatter; ``rotation`` angles the labels in degrees. ``minor=True``
+        is a compat-noop (minor ticks are outside the native axis contract).
+        Positions are in data space, so nonlinear scales transform them.
+        """
         if kwargs.pop("minor", False):
             return
         props = self._axis_props("x")
@@ -3402,8 +3806,14 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def set_yticks(
-        self, ticks: Any, labels: Any = None, *, rotation: Any = None, **kwargs: Any
+        self,
+        ticks: ArrayLike | None,
+        labels: Sequence[str] | None = None,
+        *,
+        rotation: float | None = None,
+        **kwargs: Any,
     ) -> None:
+        """Place the y ticks at the given positions (see `set_xticks`)."""
         if kwargs.pop("minor", False):
             return
         props = self._axis_props("y")
@@ -3433,9 +3843,16 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def get_xticks(self, *, minor: bool = False) -> np.ndarray:
+        """The x tick positions in data space.
+
+        Explicit ticks return as set; auto-ticked axes report the same nice
+        locations the exporters draw. ``minor=True`` returns the minor ticks
+        (usually empty).
+        """
         return self._computed_ticks("x", minor)
 
     def get_yticks(self, *, minor: bool = False) -> np.ndarray:
+        """The y tick positions in data space (see `get_xticks`)."""
         return self._computed_ticks("y", minor)
 
     def _computed_ticks(self, axis: str, minor: bool) -> np.ndarray:
@@ -3467,7 +3884,12 @@ class Axes(PlotTypeMixin):
             return np.asarray(_log_ticks(float(lo), float(hi))[0], dtype=float)
         return np.asarray(_linear_ticks(float(lo), float(hi))[0], dtype=float)
 
-    def set_anchor(self, anchor: Any) -> None:
+    def set_anchor(self, anchor: str | Literal[False]) -> None:
+        """Anchor the axes box within its allotted space.
+
+        ``anchor`` is a compass code (``"C"``, ``"SW"``, ``"S"``, ``"SE"``,
+        ``"E"``, ``"NE"``, ``"N"``, ``"NW"``, ``"W"``); False clears it.
+        """
         if anchor is False:
             self._anchor = None
             self._invalidate()
@@ -3478,7 +3900,12 @@ class Axes(PlotTypeMixin):
         self._anchor = normalized
         self._invalidate()
 
-    def locator_params(self, axis: str = "both", nbins: Any = None, **kwargs: Any) -> None:
+    def locator_params(self, axis: str = "both", nbins: int | None = None, **kwargs: Any) -> None:
+        """Control tick density: ``nbins`` caps the tick count per axis.
+
+        ``axis`` selects ``"x"``/``"y"``/``"both"``; other keywords are
+        accepted compat-noops.
+        """
         del kwargs
         if nbins is None:
             return
@@ -3489,6 +3916,11 @@ class Axes(PlotTypeMixin):
         self._invalidate()
 
     def indicate_inset_zoom(self, inset_ax: "Axes", **kwargs: Any) -> Artist:
+        """Draw a rectangle marking ``inset_ax``'s view limits on this axes.
+
+        ``ec``/``edgecolor`` sets the outline color; connector lines are
+        not drawn.
+        """
         color = resolve_color(kwargs.pop("ec", kwargs.pop("edgecolor", "#000000")))
         x0, x1 = inset_ax.get_xlim()
         y0, y1 = inset_ax.get_ylim()
@@ -3504,6 +3936,10 @@ class Axes(PlotTypeMixin):
         return Artist(self, entry)
 
     def twinx(self) -> "Axes":
+        """A twin axes sharing this x-axis, with its own right-hand y-axis.
+
+        Repeated calls return the same twin; twinning a twin raises.
+        """
         if self._y2_of is not None:
             raise ValueError("twinx() of a twin axes is not supported")
         if self._twin is None:
@@ -3511,6 +3947,11 @@ class Axes(PlotTypeMixin):
         return self._twin
 
     def twiny(self) -> "Axes":
+        """A new axes sharing this y-axis (matplotlib's `twiny`).
+
+        The twin joins the figure, becomes the current axes, and draws its
+        own x-axis.
+        """
         if self.figure is None:
             raise ValueError("twiny() requires an Axes attached to a Figure")
         twin = Axes(self.figure)
@@ -3521,6 +3962,16 @@ class Axes(PlotTypeMixin):
         return twin
 
     def legend(self, *args: Any, **kwargs: Any) -> None:
+        """Show the legend for this axes.
+
+        Call forms: ``legend()`` (labeled artists), ``legend(labels)``
+        (assigned positionally), or ``legend(handles, labels)``. Supported
+        keywords: ``loc``, ``ncols``/``ncol``, ``title``, ``fontsize`` (or
+        ``prop={"size": ...}``), ``labelcolor``, ``frameon``, ``facecolor``,
+        ``edgecolor``, ``framealpha``, ``fancybox``, ``shadow``,
+        ``borderpad``, and ``labelspacing``; unsupported layout keywords
+        raise loudly. ``loc="best"`` picks the least occupied corner.
+        """
         host = self._y2_of or self
         if len(args) >= 2:
             # legend(handles, labels): relabel the artists the caller passed.
@@ -3642,7 +4093,15 @@ class Axes(PlotTypeMixin):
             options["style"] = style
         return options
 
-    def grid(self, visible: Any = True, **kwargs: Any) -> None:
+    def grid(self, visible: bool | None = True, **kwargs: Any) -> None:
+        """Toggle and style the grid.
+
+        ``visible=None`` toggles the current state; ``which`` must be
+        ``"major"``/``"both"`` (minor grids are unsupported) and ``axis``
+        restricts to ``"x"`` or ``"y"``. ``color``/``c``,
+        ``linestyle``/``ls``, ``linewidth``/``lw``, and ``alpha`` style the
+        lines; anything else raises loudly.
+        """
         host = self._y2_of or self
         which = kwargs.pop("which", "major")
         axis = kwargs.pop("axis", "both")

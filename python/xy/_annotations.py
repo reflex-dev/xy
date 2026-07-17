@@ -546,6 +546,10 @@ class AnnotationsMixin(_Host):
             raise ValueError("annotation style must be a dict[str, str | int | float]")
         raw_style = {key: value for key, value in raw_style.items() if value is not None}
         style = self._style_mapping(raw_style, "annotation style")
+        if "label_opacity" in style:
+            style["label_opacity"] = self._opacity(
+                style["label_opacity"], "annotation style label_opacity"
+            )
         if style:
             out["style"] = style
         return out

@@ -10,6 +10,7 @@ import zlib
 
 import numpy as np
 
+import xy
 from xy import _png, _raster
 from xy._figure import Figure
 
@@ -96,6 +97,19 @@ def _decode_rgba(png: bytes) -> np.ndarray:
             destination += 4
         previous = row
     return np.frombuffer(decoded, dtype=np.uint8).reshape(height, width, 4)
+
+
+def _record_text(monkeypatch) -> list[tuple[float, float, int, float, str]]:
+    """Capture every native text command as (x, y, anchor_flags, size, text)."""
+    recorded: list[tuple[float, float, int, float, str]] = []
+    original_text = _raster._Cmd.text
+
+    def record_text(self, x, y, anchor, size, color, value):
+        recorded.append((float(x), float(y), int(anchor), float(size), str(value)))
+        return original_text(self, x, y, anchor, size, color, value)
+
+    monkeypatch.setattr(_raster._Cmd, "text", record_text)
+    return recorded
 
 
 def test_every_chart_kind_exports_valid_png() -> None:
@@ -302,6 +316,244 @@ def test_native_and_svg_share_layout() -> None:
     assert plot["w"] > 0 and plot["h"] > 0
     xt, _lab, _step = _svg.axis_ticks(spec["x_axis"], plot["w"], True)
     assert len(xt) >= 2  # shared tick math produces ticks both engines label
+
+
+def test_native_long_legend_is_clamped_and_ellipsized_inside_plot(monkeypatch) -> None:
+    from xy import _svg
+
+    names = [f"series-{index}-" + "very-long-operational-label-" * 2 for index in range(4)]
+    chart = xy.line_chart(
+        *(
+            xy.line([0.0, 1.0], [float(index), float(index + 1)], name=name)
+            for index, name in enumerate(names)
+        ),
+        xy.legend(
+            loc="upper right",
+            ncols=2,
+            title="Long operational series",
+            style={"background": "#ff00ff", "--xy-legend-frame-alpha": 1},
+        ),
+        width=320,
+        height=260,
+    )
+    spec, blob = chart.figure().build_payload()
+    _width, _height, _compact, plot = _svg.layout(spec)
+    recorded = _record_text(monkeypatch)
+    image = _raster.render_raster(spec, blob, scale=1)
+    rendered_text = [entry[4] for entry in recorded]
+
+    magenta = np.all(image[:, :, :3] == np.array([255, 0, 255], dtype=np.uint8), axis=2)
+    rows, columns = np.where(magenta)
+    assert len(columns) > 0
+    assert columns.min() >= int(plot["x"])
+    assert columns.max() <= int(plot["x"] + plot["w"])
+    assert rows.min() >= int(plot["y"])
+    assert rows.max() <= int(plot["y"] + plot["h"])
+    assert all(name not in rendered_text for name in names)
+    assert any(text.endswith("...") for text in rendered_text)
+
+
+def test_native_secondary_y_axis_scales_trace_and_renders_right_chrome() -> None:
+    from xy import _svg
+
+    chart = xy.chart(
+        xy.line([0.0, 1.0], [0.0, 1.0], color="#2563eb", width=3),
+        xy.line(
+            [0.0, 1.0],
+            [100.0, 200.0],
+            color="#dc2626",
+            width=3,
+            y_axis="y2",
+        ),
+        xy.y_axis(label="Primary"),
+        xy.y_axis(
+            id="y2",
+            label="Secondary",
+            side="right",
+            domain=(100.0, 200.0),
+            tick_values=(100.0, 150.0, 200.0),
+            style={
+                "axis_color": "#dc2626",
+                "axis_width": 2,
+                "tick_color": "#dc2626",
+                "tick_label_color": "#dc2626",
+                "label_color": "#dc2626",
+                "tick_length": 5,
+                "tick_width": 2,
+            },
+        ),
+        width=400,
+        height=240,
+    )
+    spec, blob = chart.figure().build_payload()
+    width, _height, _compact, plot = _svg.layout(spec)
+    image = _raster.render_raster(spec, blob, scale=1)
+
+    red = (
+        (image[:, :, 0] > 180)
+        & (image[:, :, 1] < 100)
+        & (image[:, :, 2] < 100)
+        & (image[:, :, 3] > 0)
+    )
+    x0, x1 = int(plot["x"]), int(plot["x"] + plot["w"])
+    y0, y1 = int(plot["y"]), int(plot["y"] + plot["h"])
+    assert int(red[y0 + 2 : y1 - 2, x0 + 2 : x1 - 2].sum()) > 20
+    assert int(red[y0:y1, x1 + 1 : width].sum()) > 20
+
+
+def test_native_secondary_x_axis_scales_trace_and_renders_top_chrome() -> None:
+    from xy import _svg
+
+    chart = xy.chart(
+        xy.line([0.0, 1.0], [0.0, 1.0], color="#2563eb", width=3),
+        xy.line(
+            [100.0, 200.0],
+            [0.2, 0.8],
+            color="#dc2626",
+            width=3,
+            x_axis="x2",
+        ),
+        xy.x_axis(label="Primary X"),
+        xy.x_axis(
+            id="x2",
+            label="Secondary X",
+            side="top",
+            domain=(100.0, 200.0),
+            tick_values=(100.0, 150.0, 200.0),
+            style={
+                "axis_color": "#dc2626",
+                "axis_width": 2,
+                "tick_color": "#dc2626",
+                "tick_label_color": "#dc2626",
+                "label_color": "#dc2626",
+                "tick_length": 5,
+                "tick_width": 2,
+            },
+        ),
+        width=400,
+        height=240,
+    )
+    spec, blob = chart.figure().build_payload()
+    _width, _height, _compact, plot = _svg.layout(spec)
+    image = _raster.render_raster(spec, blob, scale=1)
+
+    red = (
+        (image[:, :, 0] > 180)
+        & (image[:, :, 1] < 100)
+        & (image[:, :, 2] < 100)
+        & (image[:, :, 3] > 0)
+    )
+    x0, x1 = int(plot["x"]), int(plot["x"] + plot["w"])
+    y0, y1 = int(plot["y"]), int(plot["y"] + plot["h"])
+    assert int(red[y0 + 2 : y1 - 2, x0 + 2 : x1 - 2].sum()) > 20
+    assert int(red[:y0, x0:x1].sum()) > 20
+
+
+def test_native_mixed_primary_and_named_x_axis_kinds_render_independently(monkeypatch) -> None:
+    cases = (
+        (
+            xy.chart(
+                xy.line(["Primary Alpha", "Primary Beta", "Primary Gamma"], [1.0, 2.0, 3.0]),
+                xy.line([100.0, 200.0, 300.0], [3.0, 2.0, 1.0], x_axis="x2"),
+                xy.x_axis(tick_label_strategy="rotate"),
+                xy.x_axis(
+                    id="x2",
+                    side="top",
+                    type_="linear",
+                    tick_values=(100.0, 200.0, 300.0),
+                    tick_labels=("N100", "N200", "N300"),
+                    tick_label_strategy="rotate",
+                ),
+                width=560,
+                height=300,
+            ),
+            {"Primary Alpha", "Primary Gamma", "N100", "N300"},
+        ),
+        (
+            xy.chart(
+                xy.line([10.0, 20.0, 30.0], [1.0, 2.0, 3.0]),
+                xy.line(["Named Red", "Named Green", "Named Blue"], [3.0, 2.0, 1.0], x_axis="x2"),
+                xy.x_axis(
+                    type_="linear",
+                    tick_values=(10.0, 20.0, 30.0),
+                    tick_labels=("P10", "P20", "P30"),
+                    tick_label_strategy="rotate",
+                ),
+                xy.x_axis(id="x2", side="top", tick_label_strategy="rotate"),
+                width=560,
+                height=300,
+            ),
+            {"P10", "P30", "Named Red", "Named Blue"},
+        ),
+    )
+    recorded = _record_text(monkeypatch)
+    for chart, expected_labels in cases:
+        recorded.clear()
+        spec, blob = chart.figure().build_payload()
+        _raster.render_raster(spec, blob, scale=1)
+        assert expected_labels <= {entry[4] for entry in recorded}
+
+
+def test_native_named_axis_collision_and_title_placement_controls(monkeypatch) -> None:
+    from xy import _svg
+
+    values = list(range(30))
+    tick_labels = [f"very-long-native-label-{value}" for value in values]
+    chart = xy.chart(
+        xy.line(values, values, x_axis="x2"),
+        xy.x_axis(
+            id="x2",
+            side="top",
+            label="Native positioned title",
+            label_position="inside_end",
+            label_offset=6,
+            label_angle=90,
+            domain=(0.0, 29.0),
+            tick_values=values,
+            tick_labels=tick_labels,
+            tick_label_strategy="hide",
+        ),
+        width=400,
+        height=240,
+    )
+    spec, blob = chart.figure().build_payload()
+    _width, _height, _compact, plot = _svg.layout(spec)
+    recorded = _record_text(monkeypatch)
+    _raster.render_raster(spec, blob, scale=1)
+
+    visible_ticks = [entry for entry in recorded if entry[4] in tick_labels]
+    assert 0 < len(visible_ticks) < len(tick_labels)
+    title_x, title_y, title_anchor, _size, _text = next(
+        entry for entry in recorded if entry[4] == "Native positioned title"
+    )
+    assert title_x == plot["x"] + plot["w"]
+    assert plot["y"] < title_y < plot["y"] + plot["h"]
+    assert title_anchor == 2 | _raster._TEXT_ROT_CW
+
+
+def test_native_diagonal_tick_angle_keeps_all_labels_when_they_fit(monkeypatch) -> None:
+    # The native glyph protocol only rotates in quarter-turns, so a diagonal
+    # tick_label_angle falls back to horizontal strategy="hide" — which must
+    # only downsample on a real collision, not unconditionally.
+    tick_values = [0.0, 25.0, 50.0, 75.0, 100.0]
+    tick_labels = ["t0", "t25", "t50", "t75", "t100"]
+    chart = xy.chart(
+        xy.line([0.0, 100.0], [0.0, 1.0]),
+        xy.x_axis(
+            domain=(0.0, 100.0),
+            tick_values=tick_values,
+            tick_labels=tick_labels,
+            tick_label_angle=45,
+        ),
+        width=560,
+        height=300,
+    )
+    spec, blob = chart.figure().build_payload()
+    recorded = _record_text(monkeypatch)
+    _raster.render_raster(spec, blob, scale=1)
+
+    rendered = {entry[4] for entry in recorded}
+    assert set(tick_labels) <= rendered
 
 
 def test_native_smooth_stroke_matches_reference_polyline() -> None:

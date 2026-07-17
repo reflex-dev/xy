@@ -56,8 +56,10 @@ CSS subset.
 
 Annotation labels are browser DOM elements. Their `class_name` and `style`
 values can customize the label, and chart-level styling can target the stable
-`annotation_label` slot. Keep geometry in the component props when output must
-agree across HTML, SVG, and native PNG.
+`annotation_label` slot. Geometry `opacity` is independent from label text;
+use annotation-style `label_opacity` only when the label should also fade.
+Keep geometry in the component props when output must agree across HTML, SVG,
+and native PNG.
 
 If more than one annotation occupies the same coordinate, declaration order
 controls their paint order. For a chart-family view of annotation patterns, see

@@ -39,9 +39,10 @@ axes_and_annotations_api()
 
 ## Chrome and Behavior
 
-Chrome components configure legends, tooltips, colorbar hooks, the modebar,
-theme tokens, and interaction behavior. The public colorbar component is
-minimal; it does not independently author ticks, title, orientation, or domain.
+Chrome components configure legends, tooltips, inferred colorbars, the modebar,
+theme tokens, and interaction behavior. `colorbar()` derives its domain and
+colormap from the last supported continuous mark, while `title`, `ticks`, and
+`orientation` control its presentation.
 
 ~~~python exec
 from xy_docs.api_reference import chrome_and_behavior_api

@@ -41,7 +41,7 @@ _FigureCheckpoint: TypeAlias = tuple[ColumnStoreCheckpoint, int, dict[str, list[
 
 
 class Selection:
-    """The payload handed to an `on_select` callback (§34). Holds the selected
+    """The payload handed to an `on_select` callback. Holds the selected
     row indices per trace and lends convenient access to the underlying data —
     callbacks receive real arrays, never JSON."""
 
@@ -124,6 +124,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
         self.mark_style: dict[str, dict[str, str | int | float]] = {}
         self.annotations: list[dict[str, Any]] = []
         self._axis_categories: dict[str, list[str]] = {}
+        # Declarative marks still call the shared fluent mark bodies with the
+        # channel dimensions ("x"/"y").  Chart temporarily points those
+        # dimensions at the mark's bound axis ids while it applies each mark,
+        # so category registries stay independent for x, x2, y, y2, ... .
+        self._active_axis_ids: dict[str, str] = {"x": "x", "y": "y"}
         self._widget: Any = None
 
     # -- axis config --------------------------------------------------------
@@ -623,15 +628,20 @@ class Figure(AnnotationsMixin, PayloadMixin):
             return np.asarray(values)
         return values
 
+    def _category_axis_id(self, axis: str) -> str:
+        """Resolve a mark channel dimension to its active declarative axis id."""
+        return self._active_axis_ids.get(axis, axis)
+
     def _axis_positions(self, values: Any, axis: str, *, commit: bool = True) -> np.ndarray:
         values = self._materialize_sequence(values)
         if not self._is_category_like(values):
             return self._as_1d_float(values, f"{axis} values")
         raw_labels = self._category_axis_labels(values, axis)
+        axis_id = self._category_axis_id(axis)
         labels = (
-            self._axis_categories.setdefault(axis, [])
+            self._axis_categories.setdefault(axis_id, [])
             if commit
-            else list(self._axis_categories.get(axis, []))
+            else list(self._axis_categories.get(axis_id, []))
         )
         return self._category_positions(raw_labels, labels)
 
@@ -666,12 +676,14 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if not self._is_category_like(values):
             return self._as_1d_float(values, f"{axis} values"), None
         raw_labels = self._category_axis_labels(values, axis)
-        return self._category_positions(raw_labels, list(self._axis_categories.get(axis, []))), (
-            raw_labels
-        )
+        axis_id = self._category_axis_id(axis)
+        return self._category_positions(
+            raw_labels, list(self._axis_categories.get(axis_id, []))
+        ), raw_labels
 
     def _commit_category_labels(self, raw_labels: list[str], axis: str) -> None:
-        labels = self._axis_categories.setdefault(axis, [])
+        axis_id = self._category_axis_id(axis)
+        labels = self._axis_categories.setdefault(axis_id, [])
         # Insertion-ordered union: existing labels first, then new ones in
         # first-appearance order — identical to the provisioning loop above.
         merged = dict.fromkeys(labels)
@@ -889,7 +901,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         forced = self.axis_options.get(axis_id, {}).get("type")
         if forced == "time":
             return "time"
-        if axis in self._axis_categories:
+        if axis_id in self._axis_categories:
             return "category"
         for t in self.traces:
             if axis == "x" and t.x_axis != axis_id:
@@ -979,7 +991,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if style:
             spec["style"] = style
         if kind == "category":
-            spec["categories"] = list(self._axis_categories.get(axis, []))
+            spec["categories"] = list(self._axis_categories.get(axis_id, []))
         return spec
 
     def _range_columns(self, t: Trace, axis_id: str) -> list[Column]:
@@ -1025,6 +1037,35 @@ class Figure(AnnotationsMixin, PayloadMixin):
             if style:
                 spec[state] = style
         return spec
+
+    def dom_class_strings(self) -> list[str]:
+        """Every DOM class string this figure emits, deduped in insertion order.
+
+        Contract: this is the *complete* set of class strings that can reach
+        the DOM — the chart root (``class_name``), the chrome slots
+        (``class_names`` values), per-trace mark styles
+        (``trace.style["class_name"]``), and annotation nodes
+        (``annotation["class_name"]``). The Reflex adapter joins it into the
+        Tailwind scan manifest for static charts (XYBF payloads are opaque to
+        Tailwind's source scan), so this method must be extended whenever a
+        new class-carrying surface is added to the figure.
+        """
+        class_strings: list[str] = []
+        seen: set[str] = set()
+
+        def add(value: Any) -> None:
+            if isinstance(value, str) and value.strip() and value not in seen:
+                seen.add(value)
+                class_strings.append(value)
+
+        add(self.class_name)
+        for value in self.class_names.values():
+            add(value)
+        for trace in self.traces:
+            add(trace.style.get("class_name"))
+        for annotation in self.annotations:
+            add(annotation.get("class_name"))
+        return class_strings
 
     def _dom_spec(self) -> dict[str, Any]:
         dom: dict[str, Any] = {}
@@ -1093,23 +1134,22 @@ class Figure(AnnotationsMixin, PayloadMixin):
     def density_view(
         self, trace_id: int, x0: float, x1: float, y0: float, y1: float, w: int, h: int
     ) -> tuple[dict[str, Any], list[bytes]]:
-        """Re-bin a Tier-2 scatter for a new viewport (§5)."""
+        """Re-bin a density-mode scatter's aggregation grid for a new viewport."""
         return interaction.density_view(self, trace_id, x0, x1, y0, y1, w, h)
 
     def pick(
         self, trace_id: int, index: int, drill_seq: Optional[int] = None
     ) -> Optional[dict[str, Any]]:
-        """Exact source-row readout for a hover/pick (§16/§17); `index` is a
-        shipped vertex index, translated to a canonical row when NaN rows were
-        dropped at ship time (§19). Pass the client's `drill_seq` to reject a
-        pick that raced a drill update (wrong index space → None, never a
-        wrong row)."""
+        """Exact source-row readout for a hover/pick; `index` is a shipped
+        vertex index, translated to a canonical row when NaN rows were dropped
+        at ship time. Pass the client's `drill_seq` to reject a pick that
+        raced a drill update (wrong index space → None, never a wrong row)."""
         return interaction.pick(self, trace_id, index, drill_seq)
 
     def select_range(
         self, x0: float, x1: float, y0: float, y1: float, trace_id: Optional[int] = None
     ) -> dict[int, np.ndarray]:
-        """Box-select → canonical indices per scatter trace (§34 Filter Tier A)."""
+        """Box-select: the canonical row indices inside the box, per scatter trace."""
         return interaction.select_range(self, x0, x1, y0, y1, trace_id)
 
     def select_polygon(self, points: Any, trace_id: Optional[int] = None) -> dict[int, np.ndarray]:
@@ -1123,17 +1163,18 @@ class Figure(AnnotationsMixin, PayloadMixin):
     def decimate_view(
         self, x0: float, x1: float, px_width: int
     ) -> tuple[dict[str, Any], list[bytes]]:
-        """Re-decimate visible line windows on zoom (§28), offsets re-centered (§16)."""
+        """Re-decimate the visible line windows on zoom, re-centering the
+        f32 upload offsets so precision holds at deep zoom."""
         return interaction.decimate_view(self, x0, x1, px_width)
 
     def append(
         self, trace_id: int, x: Any, y: Any, *, color: Any = None, size: Any = None
     ) -> tuple[dict[str, Any], list[bytes]]:
-        """Streaming append (rust-engine §5): extend a scatter/line trace's
-        canonical columns and get the client refresh message back. The widget's
-        `append` sends it; headless callers can inspect or discard it. Payloads
-        stay screen-bounded (§29), so this is O(pixels) on the wire regardless
-        of how much data has accumulated."""
+        """Streaming append: extend a scatter/line trace's canonical columns
+        and get the client refresh message back. The widget's `append` sends
+        it; headless callers can inspect or discard it. Payloads stay
+        screen-bounded, so this is O(pixels) on the wire regardless of how
+        much data has accumulated."""
         return interaction.append_data(self, trace_id, x, y, color, size)
 
     # -- output -----------------------------------------------------------
@@ -1159,10 +1200,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
         *,
         custom_css: Optional[str] = None,
     ) -> str:
-        """Standalone interactive HTML (export.py): JS client + spec + base64
-        buffers in one self-contained file. Base64 carries a stated ~33% size
-        tax (§29 static-export row). `custom_css` injects an author stylesheet
-        so `class_names` utility classes (e.g. Tailwind) resolve in the export."""
+        """Standalone interactive HTML: JS client + spec + base64 buffers in
+        one self-contained file (base64 carries a ~33% size tax). `custom_css`
+        injects an author stylesheet so `class_names` utility classes
+        (e.g. Tailwind) resolve in the export."""
         return export.to_html(self, path, custom_css=custom_css)
 
     def html(
@@ -1229,7 +1270,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         )
 
     def memory_report(self) -> dict[str, Any]:
-        """§27: every byte class itemized; if it isn't in the report it isn't real."""
+        """Every byte class itemized; if it isn't in the report it isn't real."""
         from . import interaction  # method-local: no load-time cycle
 
         spec, blob = self.build_payload()

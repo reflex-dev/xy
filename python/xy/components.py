@@ -33,7 +33,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from os import PathLike
 from typing import Any, Optional, TypeAlias, Union
@@ -42,6 +42,7 @@ import numpy as np
 
 from . import _validate, channels, export, styles
 from ._figure import Figure, Selection
+from ._typing import ArrayLike, ColorLike, Scalar, TableLike
 from .dom import CHART_DOM_SLOTS, validate_dom_slots
 
 # Shared validators (single source of truth in `_validate`); these aliases keep
@@ -133,6 +134,10 @@ __all__ = [
 ]
 
 StyleValue: TypeAlias = str | int | float
+
+# One annotation coordinate: a number, a datetime, or (on a categorical
+# axis) a category label.
+CoordinateLike: TypeAlias = Union[Scalar, str, dt.datetime, dt.date, np.datetime64]
 AxisLabelPosition: TypeAlias = str | dict[str, StyleValue]
 AxisTickLabelStrategy: TypeAlias = str
 
@@ -147,10 +152,16 @@ class Component:
 
 @dataclass
 class Mark(Component):
+    """A data series inside a chart: one mark kind plus its data/encodings.
+
+    Built by the mark constructors (`scatter`, `line`, `bar`, ...) rather
+    than directly; ``props`` carries the kind-specific options verbatim.
+    """
+
     kind: str  # chart mark registry key
-    x: Any = None
-    y: Any = None
-    data: Any = None
+    x: Any = None  # column name or ArrayLike (typed on the mark factories)
+    y: Any = None  # column name or ArrayLike (typed on the mark factories)
+    data: TableLike = None
     name: Optional[str] = None
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
@@ -159,10 +170,15 @@ class Mark(Component):
 
 @dataclass
 class Annotation(Component):
+    """A non-data overlay (reference rule, band, or text label).
+
+    Built by `vline`/`hline`/`x_band`/`y_band`/`text`/`label` and friends.
+    """
+
     kind: str  # "rule" | "band" | "text"
     axis: Optional[str] = None
-    x: Any = None
-    y: Any = None
+    x: Optional[CoordinateLike] = None
+    y: Optional[CoordinateLike] = None
     text: Optional[str] = None
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
@@ -171,6 +187,9 @@ class Annotation(Component):
 
 @dataclass
 class Axis(Component):
+    """Axis configuration (scale, domain, ticks, label). Built by
+    `x_axis`/`y_axis`, which validate every field."""
+
     which: str  # "x" | "y"
     id: Optional[str] = None
     label: Optional[str] = None
@@ -194,6 +213,8 @@ class Axis(Component):
 
 @dataclass
 class Legend(Component):
+    """Legend chrome; ``render`` remains opaque for Reflex adapters."""
+
     show: bool = True
     loc: Optional[str] = None
     ncols: int = 1
@@ -205,6 +226,8 @@ class Legend(Component):
 
 @dataclass
 class Tooltip(Component):
+    """Hover-tooltip chrome; ``render`` remains opaque for Reflex adapters."""
+
     show: bool = True
     fields: Optional[list[str]] = None
     title: Optional[str] = None
@@ -219,6 +242,9 @@ class Colorbar(Component):
     """Color scale chrome; ``render`` remains opaque for Reflex adapters."""
 
     show: bool = True
+    title: Optional[str] = None
+    orientation: str = "vertical"
+    ticks: Optional[list[float]] = None
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
     render: Any = None
@@ -226,6 +252,8 @@ class Colorbar(Component):
 
 @dataclass
 class Modebar(Component):
+    """Modebar (zoom/pan/reset controls) chrome."""
+
     show: bool = True
     class_name: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
@@ -235,11 +263,16 @@ class Modebar(Component):
 
 @dataclass
 class Theme(Component):
+    """Chart-wide style tokens (plot background, grid/axis/text colors)."""
+
     style: dict[str, StyleValue] = field(default_factory=dict)
 
 
 @dataclass
 class Interaction(Component):
+    """Interaction switches (hover/click/select/brush/crosshair) and
+    cross-chart axis linking. Built by `interaction_config`."""
+
     hover: Optional[bool] = None
     click: Optional[bool] = None
     select: Optional[bool] = None
@@ -256,12 +289,12 @@ class Interaction(Component):
 
 
 def scatter(
-    x: Union[str, Any] = None,
-    y: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
-    color: Union[str, Any, None] = None,
-    size: Union[str, float, Any] = 4.0,
+    data: TableLike = None,
+    color: Union[str, ColorLike, ArrayLike, None] = None,
+    size: Union[str, Scalar, ArrayLike, None] = 4.0,
     name: Optional[str] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     color_domain: Optional[tuple[float, float]] = None,
@@ -294,7 +327,7 @@ def scatter(
         stroke: Optional marker outline color.
         stroke_width: Marker outline width in pixels.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -324,16 +357,16 @@ def scatter(
 
 
 def line(
-    x: Union[str, Any] = None,
-    y: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.5,
     opacity: float = 1.0,
     curve: str = "linear",
-    dash: Any = None,
+    dash: Union[str, Sequence[float], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -352,7 +385,7 @@ def line(
         curve: Interpolation mode, such as ``linear`` or ``smooth``.
         dash: Optional line dash pattern.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -377,11 +410,11 @@ def line(
 
 
 def area(
-    x: Union[str, Any] = None,
-    y: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
-    base: Union[str, float, Any] = 0.0,
+    data: TableLike = None,
+    base: Union[str, Scalar, ArrayLike] = 0.0,
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.35,
@@ -389,9 +422,9 @@ def area(
     line_width: float = 1.2,
     line_opacity: float = 1.0,
     stroke_perimeter: bool = False,
-    fill: Any = None,
+    fill: Union[str, dict[str, str], None] = None,
     curve: str = "linear",
-    dash: Any = None,
+    dash: Union[str, Sequence[float], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -415,7 +448,7 @@ def area(
         curve: Interpolation mode, such as ``linear`` or ``smooth``.
         dash: Optional outline dash pattern.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -445,17 +478,17 @@ def area(
 
 
 def error_band(
-    x: Union[str, Any] = None,
-    lower: Union[str, Any] = None,
-    upper: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    lower: Union[str, ArrayLike, None] = None,
+    upper: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.22,
     line_width: float = 0.0,
     line_opacity: float = 0.0,
-    fill: Any = None,
+    fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -475,7 +508,7 @@ def error_band(
         line_opacity: Boundary-line opacity from zero to one.
         fill: CSS fill value or linear gradient.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -501,12 +534,12 @@ def error_band(
 
 
 def errorbar(
-    x: Union[str, Any] = None,
-    y: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
-    yerr: Union[str, Any, None] = None,
-    xerr: Union[str, Any, None] = None,
+    data: TableLike = None,
+    yerr: Union[str, Scalar, ArrayLike, None] = None,
+    xerr: Union[str, Scalar, ArrayLike, None] = None,
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.2,
@@ -531,7 +564,7 @@ def errorbar(
         cap_size: Optional cap length in pixels.
         opacity: Stroke opacity from zero to one.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -557,14 +590,14 @@ def errorbar(
 
 
 def segments(
-    x0: Union[str, Any] = None,
-    y0: Union[str, Any] = None,
-    x1: Union[str, Any] = None,
-    y1: Union[str, Any] = None,
+    x0: Union[str, ArrayLike, None] = None,
+    y0: Union[str, ArrayLike, None] = None,
+    x1: Union[str, ArrayLike, None] = None,
+    y1: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
     name: Optional[str] = None,
-    color: Any = None,
+    color: Union[str, ColorLike, ArrayLike, None] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     width: float = 1.2,
@@ -589,7 +622,7 @@ def segments(
         width: Segment width in pixels.
         opacity: Segment opacity from zero to one.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -616,15 +649,15 @@ def segments(
 
 
 def triangle_mesh(
-    x0: Union[str, Any] = None,
-    y0: Union[str, Any] = None,
-    x1: Union[str, Any] = None,
-    y1: Union[str, Any] = None,
-    x2: Union[str, Any] = None,
-    y2: Union[str, Any] = None,
+    x0: Union[str, ArrayLike, None] = None,
+    y0: Union[str, ArrayLike, None] = None,
+    x1: Union[str, ArrayLike, None] = None,
+    y1: Union[str, ArrayLike, None] = None,
+    x2: Union[str, ArrayLike, None] = None,
+    y2: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
-    color: Any = None,
+    data: TableLike = None,
+    color: Union[str, ColorLike, ArrayLike, None] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     name: Optional[str] = None,
@@ -654,7 +687,7 @@ def triangle_mesh(
         stroke: Optional triangle outline color.
         stroke_width: Triangle outline width in pixels.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -684,16 +717,16 @@ def triangle_mesh(
 
 
 def step(
-    x: Union[str, Any] = None,
-    y: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
     where: str = "post",
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.5,
     opacity: float = 1.0,
-    dash: Any = None,
+    dash: Union[str, Sequence[float], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -712,7 +745,7 @@ def step(
         opacity: Line opacity from zero to one.
         dash: Optional line dash pattern.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -737,16 +770,16 @@ def step(
 
 
 def stairs(
-    values: Union[str, Any] = None,
-    edges: Union[str, Any, None] = None,
+    values: Union[str, ArrayLike, None] = None,
+    edges: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
     where: str = "post",
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.5,
     opacity: float = 1.0,
-    dash: Any = None,
+    dash: Union[str, Sequence[float], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -765,7 +798,7 @@ def stairs(
         opacity: Line opacity from zero to one.
         dash: Optional line dash pattern.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -790,11 +823,11 @@ def stairs(
 
 
 def stem(
-    x: Union[str, Any] = None,
-    y: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
-    base: Union[str, float, Any] = 0.0,
+    data: TableLike = None,
+    base: Union[str, Scalar, ArrayLike] = 0.0,
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.2,
@@ -822,7 +855,7 @@ def stem(
         marker_size: Marker size in pixels.
         symbol: Marker symbol name.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -849,15 +882,15 @@ def stem(
 
 
 def ecdf(
-    values: Union[str, Any] = None,
+    values: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
     bins: Optional[int] = None,
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 1.5,
     opacity: float = 1.0,
-    dash: Any = None,
+    dash: Union[str, Sequence[float], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -875,7 +908,7 @@ def ecdf(
         opacity: Line opacity from zero to one.
         dash: Optional line dash pattern.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -899,11 +932,11 @@ def ecdf(
 
 
 def box(
-    values: Union[str, Any] = None,
+    values: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
-    x: Union[str, Any, None] = None,
-    group: Union[str, Any, None] = None,
+    data: TableLike = None,
+    x: Union[str, ArrayLike, None] = None,
+    group: Union[str, ArrayLike, None] = None,
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 0.6,
@@ -931,7 +964,7 @@ def box(
         show_outliers: Whether to render outlier points.
         outlier_size: Outlier marker size in pixels.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -958,11 +991,11 @@ def box(
 
 
 def violin(
-    values: Union[str, Any] = None,
+    values: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
-    x: Union[str, Any, None] = None,
-    group: Union[str, Any, None] = None,
+    data: TableLike = None,
+    x: Union[str, ArrayLike, None] = None,
+    group: Union[str, ArrayLike, None] = None,
     name: Optional[str] = None,
     color: Optional[str] = None,
     width: float = 0.8,
@@ -988,7 +1021,7 @@ def violin(
         opacity: Violin opacity from zero to one.
         orientation: ``vertical`` or ``horizontal`` orientation.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -1014,15 +1047,15 @@ def violin(
 
 
 def hexbin(
-    x: Union[str, Any] = None,
-    y: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
     gridsize: int | tuple[int, int] = 64,
     range: Optional[tuple[tuple[float, float], tuple[float, float]]] = None,
     bins: str = "count",
-    C: Any = None,
-    reduce_C_function: Any = np.mean,
+    C: Union[str, ArrayLike, None] = None,
+    reduce_C_function: Callable[[np.ndarray], Scalar] = np.mean,
     mincnt: Optional[int] = None,
     name: Optional[str] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
@@ -1048,7 +1081,7 @@ def hexbin(
         colormap: Colormap used for bin values.
         opacity: Hexagon opacity from zero to one.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -1076,12 +1109,12 @@ def hexbin(
 
 
 def contour(
-    z: Union[str, Any] = None,
+    z: Union[str, ArrayLike, None] = None,
     *,
-    x: Union[str, Any, None] = None,
-    y: Union[str, Any, None] = None,
-    data: Any = None,
-    levels: int | Any = 10,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
+    data: TableLike = None,
+    levels: Union[int, ArrayLike] = 10,
     filled: bool = False,
     name: Optional[str] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
@@ -1110,7 +1143,7 @@ def contour(
         opacity: Contour opacity from zero to one.
         dash_negative: Whether negative isolines use a dashed stroke.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -1138,20 +1171,20 @@ def contour(
 
 
 def histogram(
-    values: Union[str, Any] = None,
+    values: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
-    bins: Any = "auto",
+    data: TableLike = None,
+    bins: Union[int, str, ArrayLike] = "auto",
     range: Optional[tuple[float, float]] = None,
     density: bool = False,
     cumulative: bool = False,
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.85,
-    corner_radius: Any = 0.0,
+    corner_radius: Union[float, tuple[float, float]] = 0.0,
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
-    fill: Any = None,
+    fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -1174,7 +1207,7 @@ def histogram(
         stroke_width: Bar outline width in pixels.
         fill: CSS fill value or linear gradient.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -1203,20 +1236,20 @@ def histogram(
 
 
 def hist(
-    values: Union[str, Any] = None,
+    values: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
-    bins: Any = "auto",
+    data: TableLike = None,
+    bins: Union[int, str, ArrayLike] = "auto",
     range: Optional[tuple[float, float]] = None,
     density: bool = False,
     cumulative: bool = False,
     name: Optional[str] = None,
     color: Optional[str] = None,
     opacity: float = 0.85,
-    corner_radius: Any = 0.0,
+    corner_radius: Union[float, tuple[float, float]] = 0.0,
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
-    fill: Any = None,
+    fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -1245,23 +1278,23 @@ def hist(
 
 
 def bar(
-    x: Union[str, Any] = None,
-    y: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
     name: Optional[str] = None,
-    color: Any = None,
+    color: Union[str, Sequence[str], None] = None,
     colors: Optional[list[str]] = None,
     width: float = 0.8,
-    base: Union[str, float, Any] = 0.0,
+    base: Union[str, Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
     series: Optional[list[str]] = None,
     opacity: float = 0.85,
-    corner_radius: Any = 0.0,
+    corner_radius: Union[float, tuple[float, float]] = 0.0,
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
-    fill: Any = None,
+    fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -1287,7 +1320,7 @@ def bar(
         stroke_width: Bar outline width in pixels.
         fill: CSS fill value or linear gradient.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -1319,23 +1352,23 @@ def bar(
 
 
 def column(
-    x: Union[str, Any] = None,
-    y: Union[str, Any] = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
     *,
-    data: Any = None,
+    data: TableLike = None,
     name: Optional[str] = None,
-    color: Any = None,
+    color: Union[str, Sequence[str], None] = None,
     colors: Optional[list[str]] = None,
     width: float = 0.8,
-    base: Union[str, float, Any] = 0.0,
+    base: Union[str, Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
     series: Optional[list[str]] = None,
     opacity: float = 0.85,
-    corner_radius: Any = 0.0,
+    corner_radius: Union[float, tuple[float, float]] = 0.0,
     stroke: Optional[str] = None,
     stroke_width: float = 0.0,
-    fill: Any = None,
+    fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -1361,7 +1394,7 @@ def column(
         stroke_width: Column outline width in pixels.
         fill: CSS fill value or linear gradient.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -1393,11 +1426,11 @@ def column(
 
 
 def heatmap(
-    z: Union[str, Any] = None,
+    z: Union[str, ArrayLike, None] = None,
     *,
-    x: Union[str, Any, None] = None,
-    y: Union[str, Any, None] = None,
-    data: Any = None,
+    x: Union[str, ArrayLike, None] = None,
+    y: Union[str, ArrayLike, None] = None,
+    data: TableLike = None,
     name: Optional[str] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
@@ -1419,7 +1452,7 @@ def heatmap(
         domain: Explicit minimum and maximum for the color scale.
         opacity: Cell opacity from zero to one.
         style: Mark style overrides.
-        class_name: DOM class name applied to the mark.
+        class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
         y_axis: Identifier of the y axis used by this mark.
     """
@@ -1443,7 +1476,7 @@ def heatmap(
 
 
 def vline(
-    x: Any,
+    x: CoordinateLike,
     *,
     text: Optional[str] = None,
     color: Optional[str] = "#667085",
@@ -1475,7 +1508,7 @@ def vline(
 
 
 def hline(
-    y: Any,
+    y: CoordinateLike,
     *,
     text: Optional[str] = None,
     color: Optional[str] = "#667085",
@@ -1507,8 +1540,8 @@ def hline(
 
 
 def x_band(
-    x0: Any,
-    x1: Any,
+    x0: CoordinateLike,
+    x1: CoordinateLike,
     *,
     text: Optional[str] = None,
     color: Optional[str] = "#64748b",
@@ -1540,8 +1573,8 @@ def x_band(
 
 
 def y_band(
-    y0: Any,
-    y1: Any,
+    y0: CoordinateLike,
+    y1: CoordinateLike,
     *,
     text: Optional[str] = None,
     color: Optional[str] = "#64748b",
@@ -1573,8 +1606,8 @@ def y_band(
 
 
 def text(
-    x: Any,
-    y: Any,
+    x: CoordinateLike,
+    y: CoordinateLike,
     value: str,
     *,
     dx: float = 6.0,
@@ -1611,8 +1644,8 @@ def text(
 
 
 def label(
-    x: Any,
-    y: Any,
+    x: CoordinateLike,
+    y: CoordinateLike,
     value: str,
     *,
     dx: float = 6.0,
@@ -1649,8 +1682,8 @@ def label(
 
 
 def marker(
-    x: Any,
-    y: Any,
+    x: CoordinateLike,
+    y: CoordinateLike,
     *,
     text: Optional[str] = None,
     color: Optional[str] = "#2563eb",
@@ -1705,10 +1738,10 @@ def marker(
 
 
 def arrow(
-    x0: Any,
-    y0: Any,
-    x1: Any,
-    y1: Any,
+    x0: CoordinateLike,
+    y0: CoordinateLike,
+    x1: CoordinateLike,
+    y1: CoordinateLike,
     *,
     text: Optional[str] = None,
     color: Optional[str] = "#667085",
@@ -1743,7 +1776,7 @@ def arrow(
 
 
 def threshold(
-    value: Any,
+    value: CoordinateLike,
     *,
     axis: str = "y",
     text: Optional[str] = None,
@@ -1790,8 +1823,8 @@ def threshold(
 
 
 def threshold_zone(
-    start: Any,
-    end: Any,
+    start: CoordinateLike,
+    end: CoordinateLike,
     *,
     axis: str = "y",
     text: Optional[str] = None,
@@ -1837,8 +1870,8 @@ def threshold_zone(
 
 
 def callout(
-    x: Any,
-    y: Any,
+    x: CoordinateLike,
+    y: CoordinateLike,
     value: str,
     *,
     dx: float = 36.0,
@@ -1897,8 +1930,8 @@ def x_axis(
     reverse: bool = False,
     format: Optional[str] = None,
     tick_count: Optional[int] = None,
-    tick_values: Optional[Any] = None,
-    tick_labels: Optional[Any] = None,
+    tick_values: Union[Sequence[float], np.ndarray, None] = None,
+    tick_labels: Optional[Sequence[str]] = None,
     tick_label_angle: Optional[float] = None,
     tick_label_strategy: Optional[AxisTickLabelStrategy] = None,
     tick_label_anchor: Optional[str] = None,
@@ -1977,8 +2010,8 @@ def y_axis(
     reverse: bool = False,
     format: Optional[str] = None,
     tick_count: Optional[int] = None,
-    tick_values: Optional[Any] = None,
-    tick_labels: Optional[Any] = None,
+    tick_values: Union[Sequence[float], np.ndarray, None] = None,
+    tick_labels: Optional[Sequence[str]] = None,
     tick_label_angle: Optional[float] = None,
     tick_label_strategy: Optional[AxisTickLabelStrategy] = None,
     tick_label_anchor: Optional[str] = None,
@@ -2117,6 +2150,9 @@ def colorbar(
     *children: Any,
     show: bool = True,
     render: Any = None,
+    title: Optional[str] = None,
+    orientation: str = "vertical",
+    ticks: Optional[list[float]] = None,
     class_name: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
 ) -> Colorbar:
@@ -2126,16 +2162,74 @@ def colorbar(
         *children: Optional opaque replacement content.
         show: Whether to display the colorbar.
         render: Opaque renderer supplied by an adapter.
+        title: Optional colorbar title. By default XY uses the color field or
+            mark name when one is available.
+        orientation: ``vertical`` or ``horizontal`` placement.
+        ticks: Optional finite numeric tick positions.
         class_name: DOM class name applied to the colorbar.
         style: Colorbar style overrides.
     """
     show, render = _chrome_render_args(children, show, render, "colorbar")
+    show, title, orientation, ticks, class_name, style = _validated_colorbar_fields(
+        show, title, orientation, ticks, class_name, style
+    )
     return Colorbar(
-        show=_strict_bool(show, "colorbar show"),
-        class_name=_optional_string(class_name, "colorbar class_name"),
-        style=_style_dict(style, "colorbar style"),
+        show=show,
+        title=title,
+        orientation=orientation,
+        ticks=ticks,
+        class_name=class_name,
+        style=style,
         render=render,
     )
+
+
+def _validated_colorbar_fields(
+    show: Any,
+    title: Any,
+    orientation: Any,
+    ticks: Any,
+    class_name: Any,
+    style: Any,
+) -> tuple[
+    bool,
+    Optional[str],
+    str,
+    Optional[list[float]],
+    Optional[str],
+    dict[str, StyleValue],
+]:
+    """Validate the public ``Colorbar`` fields; the single validation body.
+
+    Called by the ``colorbar()`` factory and by Chart's apply path, so a
+    directly constructed ``Colorbar`` node cannot put malformed chrome
+    options on the wire.
+    """
+    return (
+        _strict_bool(show, "colorbar show"),
+        _optional_string(title, "colorbar title"),
+        _colorbar_orientation(orientation),
+        _colorbar_ticks(ticks),
+        _optional_string(class_name, "colorbar class_name"),
+        _style_dict(style, "colorbar style"),
+    )
+
+
+def _colorbar_orientation(value: Any) -> str:
+    if not isinstance(value, str) or value not in {"vertical", "horizontal"}:
+        raise ValueError("colorbar orientation must be 'vertical' or 'horizontal'")
+    return value
+
+
+def _colorbar_ticks(value: Any) -> Optional[list[float]]:
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes)):
+        raise ValueError("colorbar ticks must be an iterable of finite numbers or None")
+    try:
+        return [_finite_number(tick, "colorbar tick") for tick in value]
+    except TypeError as exc:
+        raise ValueError("colorbar ticks must be an iterable of finite numbers or None") from exc
 
 
 def modebar(
@@ -2331,8 +2425,10 @@ class Chart(Component):
         title: Optional[str] = None,
         width: "int | str" = 900,  # pixels, or "100%" to fill the parent
         height: "int | str" = 420,  # pixels, or "100%" (parent needs a height)
-        padding: Any = None,  # override plot margins; 0 = edge-to-edge sparkline
-        data: Any = None,
+        padding: Union[
+            float, Sequence[float], None
+        ] = None,  # plot margins; 0 = edge-to-edge sparkline
+        data: TableLike = None,
         class_name: Optional[str] = None,
         class_names: Optional[dict[str, str]] = None,
         style: Optional[dict[str, StyleValue]] = None,
@@ -2340,7 +2436,7 @@ class Chart(Component):
         on_hover: Optional[Callable[[dict], None]] = None,
         on_click: Optional[Callable[[dict], None]] = None,
         on_brush: Optional[Callable[[dict], None]] = None,
-        on_select: Optional[Callable[[Any], None]] = None,
+        on_select: Optional[Callable[[Selection], None]] = None,
         on_view_change: Optional[Callable[[dict], None]] = None,
         hover: Optional[bool] = None,
         click: Optional[bool] = None,
@@ -2455,8 +2551,8 @@ class Chart(Component):
         # attribute by FacetChart) so shared categorical domains align the
         # same categories at the same positions across panels; positions are
         # committed at ingest, so this must land before the marks apply.
-        for axis_dim, categories in self._facet_axis_categories.items():
-            fig._axis_categories[axis_dim] = list(categories)
+        for axis_id, categories in self._facet_axis_categories.items():
+            fig._axis_categories[axis_id] = list(categories)
         fig.class_name = self.class_name
         fig.class_names = dict(self.class_names)
         fig.style = {}
@@ -2504,6 +2600,7 @@ class Chart(Component):
         )
         tooltip_aliases: dict[str, str] = {}
         tooltip_sources: dict[str, list[dict[str, Any]]] = {}
+        colorbar_candidates: list[dict[str, Any]] = []
         for m in marks:
             data = m.data if m.data is not None else self.data
             applier = _MARK_APPLIERS.get(m.kind)
@@ -2511,7 +2608,12 @@ class Chart(Component):
                 raise TypeError(f"no applier registered for mark kind {m.kind!r}")
             x_axis_id, y_axis_id = _mark_axis_ids(m, axes)
             before = len(fig.traces)
-            applier(fig, m, data)
+            previous_axis_ids = fig._active_axis_ids
+            fig._active_axis_ids = {"x": x_axis_id, "y": y_axis_id}
+            try:
+                applier(fig, m, data)
+            finally:
+                fig._active_axis_ids = previous_axis_ids
             new_traces = fig.traces[before:]
             for trace in new_traces:
                 trace.x_axis = x_axis_id
@@ -2522,6 +2624,9 @@ class Chart(Component):
                     trace.style["class_name"] = class_name
             _merge_tooltip_aliases(tooltip_aliases, m, new_traces)
             _merge_tooltip_sources(tooltip_sources, m, new_traces)
+            colorbar_candidate = _declarative_colorbar_options(m, new_traces)
+            if colorbar_candidate is not None:
+                colorbar_candidates.append(colorbar_candidate)
 
         for annotation in annotations:
             applier = _ANNOTATION_APPLIERS.get(annotation.kind)
@@ -2554,9 +2659,40 @@ class Chart(Component):
             fig.tooltip = _tooltip_spec(node, tooltip_aliases, tooltip_sources)
         if colorbars:
             node = colorbars[-1]
-            _apply_chrome_node(fig, "colorbar", node.class_name, node.style)
-            if not node.show:
+            # ``Colorbar`` is a public dataclass as well as the return type of
+            # ``colorbar()``. Re-run the shared validators here so direct
+            # construction cannot put malformed chrome options on the wire.
+            (
+                node_show,
+                node_title,
+                node_orientation,
+                node_ticks,
+                node_class_name,
+                node_style,
+            ) = _validated_colorbar_fields(
+                node.show,
+                node.title,
+                node.orientation,
+                node.ticks,
+                node.class_name,
+                node.style,
+            )
+            _apply_chrome_node(fig, "colorbar", node_class_name, node_style)
+            if not node_show:
                 fig.colorbar_options = None
+            elif node.render is None:
+                options = (
+                    dict(colorbar_candidates[-1])
+                    if colorbar_candidates
+                    else (dict(fig.colorbar_options) if fig.colorbar_options else None)
+                )
+                if options is not None:
+                    options["orientation"] = node_orientation
+                    if node_title is not None:
+                        options["label"] = node_title
+                    if node_ticks is not None:
+                        options["ticks"] = node_ticks
+                    fig.colorbar_options = options
         self._figure = fig
         return fig
 
@@ -2587,6 +2723,11 @@ class Chart(Component):
         return self.chrome_components()
 
     def widget(self) -> Any:
+        """The live notebook widget for this chart (built once, cached).
+
+        Requires the widget extras (anywidget); event callbacks passed to
+        the chart are wired onto it.
+        """
         if self._widget is None:
             from .widget import FigureWidget
 
@@ -2601,6 +2742,7 @@ class Chart(Component):
         return self._widget
 
     def show(self) -> Any:
+        """Display the chart: returns the live widget (see `widget`)."""
         return self.widget()
 
     def _ipython_display_(self) -> None:
@@ -2614,6 +2756,10 @@ class Chart(Component):
         *,
         custom_css: Optional[str] = None,
     ) -> str:
+        """A self-contained HTML document for the chart.
+
+        Writes it to ``path`` when given; returns the HTML either way.
+        """
         return self.figure().to_html(path, custom_css=custom_css)
 
     def html(
@@ -2622,6 +2768,7 @@ class Chart(Component):
         *,
         custom_css: Optional[str] = None,
     ) -> str:
+        """Alias of `to_html`."""
         return self.to_html(path, custom_css=custom_css)
 
     def _repr_html_(self) -> str:
@@ -2634,6 +2781,7 @@ class Chart(Component):
         width: Optional[int] = None,
         height: Optional[int] = None,
     ) -> str:
+        """A static SVG render of the chart (written to ``path`` if given)."""
         return self.figure().to_svg(path, width=width, height=height)
 
     def to_png(
@@ -2649,6 +2797,12 @@ class Chart(Component):
         sandbox: bool = True,
         gl: str = "software",
     ) -> bytes:
+        """A PNG render of the chart, returned as bytes.
+
+        ``scale`` multiplies the pixel density; ``engine`` picks the
+        raster path (native or headless Chromium). Written to ``path``
+        when given.
+        """
         return self.figure().to_png(
             path,
             width=width,
@@ -2662,11 +2816,20 @@ class Chart(Component):
         )
 
     def memory_report(self) -> dict[str, Any]:
+        """Byte-level accounting of the chart's data and cache buffers."""
         return self.figure().memory_report()
 
     # -- live data (structure-immutable: build a new chart for new marks) ----
 
-    def append(self, trace_id: int, x: Any, y: Any, *, color: Any = None, size: Any = None) -> None:
+    def append(
+        self,
+        trace_id: int,
+        x: ArrayLike,
+        y: ArrayLike,
+        *,
+        color: Optional[ArrayLike] = None,
+        size: Optional[ArrayLike] = None,
+    ) -> None:
         """Streaming append: extend a trace's data in place.
 
         Routed through the live widget when one exists (client refresh plus
@@ -2722,6 +2885,87 @@ def _resolve_color(data: Any, color: Any, *, context: Optional[str] = None) -> A
             # misleading column-lookup error.
             _validate.css_color(color, context or "color")
         raise
+
+
+def _colorbar_source_title(mark: Mark) -> Optional[str]:
+    """Human-readable title for the scalar channel represented by a mark.
+
+    Column-name channels are more precise than a trace name (a scatter named
+    ``"observations"`` can still be colored by ``"temperature"``). For
+    array-backed scalar fields the mark name is the only declarative label.
+    Hexbin's implicit metric is named explicitly because it is derived rather
+    than supplied by the caller.
+    """
+    if mark.kind in {"scatter", "segments", "triangle_mesh"}:
+        color = mark.props.get("color")
+        if isinstance(color, str) and not _looks_like_css(color):
+            return color
+    elif mark.kind in {"heatmap", "contour"}:
+        z = mark.props.get("z")
+        if isinstance(z, str):
+            return z
+    elif mark.kind == "hexbin":
+        values = mark.props.get("C")
+        if isinstance(values, str):
+            return values
+        if values is None:
+            return "log(count + 1)" if mark.props.get("bins") == "log" else "count"
+    return mark.name
+
+
+def _declarative_colorbar_options(mark: Mark, traces: list[Any]) -> Optional[dict[str, Any]]:
+    """Infer built-in colorbar metadata from the mark's compiled scalar channel.
+
+    The compiled trace is authoritative: it owns the post-validation domain
+    and colormap and distinguishes continuous, categorical, constant, and
+    true-color channels. A mark can expand to multiple traces, so the last
+    compatible trace mirrors the chart's last-mappable-wins composition rule.
+    """
+    options: Optional[dict[str, Any]] = None
+    for trace in traces:
+        if trace.kind == "heatmap":
+            if trace.style.get("truecolor"):
+                continue
+            domain = trace.style.get("domain")
+            colormap = trace.style.get("colormap")
+        else:
+            channel = trace.color_ch
+            if channel is None or channel.mode != "continuous":
+                continue
+            # A density-tier scatter colors aggregate counts; its original
+            # per-row color channel is explicitly dropped, so advertising that
+            # channel's domain beside the density ramp would be misleading.
+            if trace.kind == "scatter" and trace.use_density():
+                continue
+            domain = channel.domain
+            colormap = channel.colormap
+        if domain is None or colormap is None:
+            continue
+        options = {
+            "domain": [float(domain[0]), float(domain[1])],
+            "colormap": str(colormap),
+        }
+
+    if options is None:
+        return None
+    title = _colorbar_source_title(mark)
+    if title is not None:
+        options["label"] = title
+    if mark.kind == "contour" and mark.props.get("filled"):
+        levels = mark.props.get("levels")
+        if isinstance(levels, (int, np.integer)):
+            count = int(levels)
+        elif levels is None:
+            count = 0
+        else:
+            try:
+                count = len(levels)
+            except TypeError:
+                count = 0
+        # Filled contour intervals lie between adjacent level boundaries.
+        if count > 1:
+            options["levels"] = count - 1
+    return options
 
 
 def _string_list(value: Any, label: str) -> Optional[list[str]]:
@@ -2971,7 +3215,7 @@ class FacetChart(Component):
         self,
         children: tuple[Component, ...],
         *,
-        by: Any,
+        by: Union[str, ArrayLike, None],
         cols: int = 3,
         share_x: bool = True,
         share_y: bool = True,
@@ -3004,6 +3248,7 @@ class FacetChart(Component):
         self._grid: Any = None
 
     def figure(self) -> Any:
+        """The composed `FacetGrid` of per-panel figures (built once, cached)."""
         if self._grid is not None:
             return self._grid
         from .facets import FacetGrid, _facet_values, _subset_data
@@ -3051,21 +3296,31 @@ class FacetChart(Component):
 
         figures = build_panels({})
         shared_dims = [dim for dim, shared in (("x", self.share_x), ("y", self.share_y)) if shared]
+        shared_axis_ids = [
+            axis_id
+            for dim in shared_dims
+            for axis_id in dict.fromkeys(
+                axis_id
+                for fig in figures
+                for axis_id in fig.axis_options
+                if fig._axis_dim(axis_id) == dim
+            )
+        ]
         unshareable: set[str] = set()
         preseed: dict[str, list[str]] = {}
-        for dim in shared_dims:
-            per_panel = [fig._axis_categories.get(dim) for fig in figures]
+        for axis_id in shared_axis_ids:
+            per_panel = [fig._axis_categories.get(axis_id) for fig in figures]
             if all(categories is None for categories in per_panel):
                 continue
             if any(categories is None for categories in per_panel):
                 warnings.warn(
-                    f"facet_chart cannot share the {dim} axis: the {dim} channel is "
+                    f"facet_chart cannot share the {axis_id} axis: the {axis_id} channel is "
                     "categorical in some panels but numeric in others; skipping "
-                    f"{dim} domain sharing",
+                    f"{axis_id} domain sharing",
                     UserWarning,
                     stacklevel=2,
                 )
-                unshareable.add(dim)
+                unshareable.add(axis_id)
                 continue
             union: list[str] = []
             seen: set[str] = set()
@@ -3075,23 +3330,23 @@ class FacetChart(Component):
                         seen.add(category)
                         union.append(category)
             if any(categories != union for categories in per_panel):
-                preseed[dim] = union
+                preseed[axis_id] = union
         if preseed:
             # Category positions commit at ingest, so panels with differing
             # category sets must be rebuilt with the union order pre-seeded —
             # otherwise a shared numeric domain aligns different categories
             # at the same position.
             figures = build_panels(preseed)
-        for dim in shared_dims:
-            if dim in unshareable:
+        for axis_id in shared_axis_ids:
+            if axis_id in unshareable:
                 continue
-            ranges = [fig.x_range() if dim == "x" else fig.y_range() for fig in figures]
+            ranges = [fig._range(axis_id) for fig in figures]
             # Reversed axes report descending (hi, lo) pairs; take the pairwise
             # min/max so the merged domain is always increasing.
             lo = min(min(pair) for pair in ranges)
             hi = max(max(pair) for pair in ranges)
             for fig in figures:
-                fig._set_axis_domain(dim, (lo, hi))
+                fig._set_axis_domain(axis_id, (lo, hi))
         if shared_dims and not any("link_group" in fig.interaction for fig in figures):
             # Shared-axis panels pan/zoom together in live outputs.
             group = f"xy-facet-{uuid.uuid4().hex[:8]}"
@@ -3109,25 +3364,30 @@ class FacetChart(Component):
         return self._grid
 
     def widget(self) -> list[Any]:
+        """Live notebook widgets, one per facet panel."""
         return self.figure().widget()
 
     def show(self) -> list[Any]:
+        """Display the facet grid: returns the panel widgets."""
         return self.widget()
 
     def to_html(
         self, path: Optional[str | PathLike[str]] = None, *, custom_css: Optional[str] = None
     ) -> str:
+        """A self-contained HTML document laying the panels out as a grid."""
         return self.figure().to_html(path, custom_css=custom_css)
 
     def html(
         self, path: Optional[str | PathLike[str]] = None, *, custom_css: Optional[str] = None
     ) -> str:
+        """Alias of `to_html`."""
         return self.to_html(path, custom_css=custom_css)
 
     def _repr_html_(self) -> str:
         return self.to_html()
 
     def to_svg(self, path: Optional[str | PathLike[str]] = None) -> str:
+        """A static SVG render of the facet grid (written to ``path`` if given)."""
         return self.figure().to_svg(path)
 
     def to_png(
@@ -3141,6 +3401,7 @@ class FacetChart(Component):
         sandbox: bool = True,
         gl: str = "software",
     ) -> bytes:
+        """A PNG render of the facet grid, returned as bytes (see `Chart.to_png`)."""
         return self.figure().to_png(
             path,
             scale=scale,
@@ -3152,6 +3413,7 @@ class FacetChart(Component):
         )
 
     def memory_report(self) -> dict[str, Any]:
+        """Byte-level accounting of every panel's data and cache buffers."""
         return self.figure().memory_report()
 
 
@@ -3826,7 +4088,7 @@ def triangle_mesh_chart(*children: Component, **props: Any) -> Chart:
 
 def facet_chart(
     *children: Component,
-    by: Any = None,
+    by: Union[str, ArrayLike, None] = None,
     cols: int = 3,
     share_x: bool = True,
     share_y: bool = True,

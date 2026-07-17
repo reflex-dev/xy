@@ -4,8 +4,9 @@ from importlib.resources import files
 
 import numpy as np
 import reflex_xy
-import xy
 from PIL import Image, ImageDraw, ImageFont
+
+import xy
 
 N_POINTS = 40_000
 N_INLIERS = round(N_POINTS * 0.97)
@@ -55,12 +56,14 @@ def _inside(mask, points):
 
 def _sample_glyph(mask, box, count, correlation):
     x0, y0, x1, y1 = box
-    bounds = np.array([
-        (x0 - _left) / _pixels_per_unit,
-        (_bottom - y1) / _pixels_per_unit,
-        (x1 - _left) / _pixels_per_unit,
-        (_bottom - y0) / _pixels_per_unit,
-    ])
+    bounds = np.array(
+        [
+            (x0 - _left) / _pixels_per_unit,
+            (_bottom - y1) / _pixels_per_unit,
+            (x1 - _left) / _pixels_per_unit,
+            (_bottom - y0) / _pixels_per_unit,
+        ]
+    )
     center = bounds.reshape(2, 2).mean(axis=0)
     width, height = bounds[2:] - bounds[:2]
     sx, sy = width * 0.42, height * 0.44
@@ -81,10 +84,12 @@ def _sample_glyph(mask, box, count, correlation):
 
 
 _n_x = round(N_INLIERS * 0.48)
-_inliers = np.vstack((
-    _sample_glyph(_x_mask, _x_box, _n_x, 0.08),
-    _sample_glyph(_y_mask, _y_box, N_INLIERS - _n_x, -0.10),
-))
+_inliers = np.vstack(
+    (
+        _sample_glyph(_x_mask, _x_box, _n_x, 0.08),
+        _sample_glyph(_y_mask, _y_box, N_INLIERS - _n_x, -0.10),
+    )
+)
 _xlim = (-3.5, (_right - _left) / _pixels_per_unit + 3.5)
 _ylim = (-3.5, (_bottom - _top) / _pixels_per_unit + 3.5)
 
@@ -95,10 +100,12 @@ while _outlier_count < N_POINTS - N_INLIERS:
     _source = _RNG.integers(0, N_INLIERS, _batch)
     _spread = _RNG.choice([0.65, 1.45, 2.75], _batch, p=[0.55, 0.32, 0.13])
     _spread *= np.sqrt(0.60)
-    _candidates = np.column_stack((
-        _inliers[_source, 0] + _RNG.normal(0, _spread),
-        _inliers[_source, 1] + _RNG.normal(0, _spread),
-    ))
+    _candidates = np.column_stack(
+        (
+            _inliers[_source, 0] + _RNG.normal(0, _spread),
+            _inliers[_source, 1] + _RNG.normal(0, _spread),
+        )
+    )
     _keep = ~_inside(_glyph_mask_xy, _candidates)
     _keep &= np.all(
         (_candidates >= [_xlim[0], _ylim[0]]) & (_candidates <= [_xlim[1], _ylim[1]]),
@@ -119,15 +126,17 @@ _density = np.histogram2d(
 )[0].T
 _density = np.where(_density >= 8, _density, np.nan)
 
-_stops = np.array([
-    [0.06, 0.055, 0.07],
-    [0.10, 0.075, 0.13],
-    [0.17, 0.12, 0.27],
-    [0.26, 0.18, 0.43],
-    [0.34, 0.25, 0.62],
-    [0.431, 0.337, 0.812],
-    [0.61, 0.53, 0.91],
-])
+_stops = np.array(
+    [
+        [0.06, 0.055, 0.07],
+        [0.10, 0.075, 0.13],
+        [0.17, 0.12, 0.27],
+        [0.26, 0.18, 0.43],
+        [0.34, 0.25, 0.62],
+        [0.431, 0.337, 0.812],
+        [0.61, 0.53, 0.91],
+    ]
+)
 _finite = np.isfinite(_density)
 _lo, _hi = np.nanmin(_density), np.nanpercentile(_density, 98)
 _scaled = np.clip((_density - _lo) / (_hi - _lo), 0, 1) ** 1.25

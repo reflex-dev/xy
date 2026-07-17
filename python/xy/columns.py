@@ -37,7 +37,7 @@ ZONE_CHUNK = 65_536
 
 @dataclass
 class ZoneMaps:
-    """Per-chunk statistics (§22)."""
+    """Per-chunk column statistics (min/max/counts; design dossier §22)."""
 
     mins: npt.NDArray[np.float64]
     maxs: npt.NDArray[np.float64]
@@ -55,30 +55,36 @@ class ZoneMaps:
 
     @cached_property
     def min(self) -> float:
+        """Column-wide minimum over non-empty zones (NaN when all-null)."""
         valid = self.mins[self.counts > 0]
         return min(valid.tolist()) if len(valid) else float("nan")
 
     @cached_property
     def max(self) -> float:
+        """Column-wide maximum over non-empty zones (NaN when all-null)."""
         valid = self.maxs[self.counts > 0]
         return max(valid.tolist()) if len(valid) else float("nan")
 
     @cached_property
     def positive_min(self) -> float:
+        """Smallest strictly-positive value (for log-scale domains)."""
         valid = self.positive_mins[np.isfinite(self.positive_mins)]
         return min(valid.tolist()) if len(valid) else float("nan")
 
     @cached_property
     def positive_max(self) -> float:
+        """Largest strictly-positive value (for log-scale domains)."""
         valid = self.positive_maxs[np.isfinite(self.positive_maxs)]
         return max(valid.tolist()) if len(valid) else float("nan")
 
     @cached_property
     def count(self) -> int:
+        """Total finite-value count across zones."""
         return int(self.counts.sum())
 
     @cached_property
     def null_count(self) -> int:
+        """Total NaN/null count across zones."""
         return int(self.null_counts.sum())
 
 
@@ -104,32 +110,35 @@ class Column:
 
     @property
     def min(self) -> float:
+        """Column minimum, materializing zone maps on first use."""
         return self.zone.min
 
     @property
     def max(self) -> float:
+        """Column maximum, materializing zone maps on first use."""
         return self.zone.max
 
     def suggest_offset(self) -> float:
-        """Midpoint offset for relative-f32 encoding (§4). Re-centering on deep
-        zoom (§16) picks a new offset at the viewport center instead."""
+        """Midpoint offset for relative-f32 encoding (design dossier §4).
+        Re-centering on deep zoom (§16 there) picks a new offset at the
+        viewport center instead."""
         lo, hi = self.min, self.max
         if np.isnan(lo) or np.isnan(hi):
             return 0.0
         return (lo + hi) / 2.0
 
     def append(self, data: Any) -> None:
-        """Streaming append (rust-engine §5, Phase-0 Python-side).
+        """Streaming append (design dossier §5, Phase-0 Python-side).
 
         Canonicalizes `data` like ingest and extends this column in place:
 
         - **Amortized growth buffer**: values live in a capacity-doubling
           backing array, so a long append stream pays O(N) total copies, not
-          O(N) per append. Migrations are counted in `ingest_copies` (§29);
+          O(N) per append. Migrations are counted in `ingest_copies`;
           the tail write itself is inherent to appending, not a copy on the
           books. (Zero-copy Arrow views migrate on first append — the read-only
           Arrow buffer cannot be grown in place.)
-        - **Incremental zone maps** (§22): only chunks at or after the old
+        - **Incremental zone maps**: only chunks at or after the old
           length are recomputed; the splice is bitwise identical to a
           from-scratch recompute because chunks fold serially either way.
         - Kind is sticky: appending floats to a `time_ms` column (or vice
@@ -170,9 +179,9 @@ class Column:
 
 
 class ColumnStore:
-    """Owns canonical columns for one figure. Deduplicates by array identity so
-    N traces over the same array hold the data once (§18's shared-columns win,
-    per-figure scope in Phase 0)."""
+    """Owns canonical columns for one figure. Deduplicates by array identity
+    so N traces over the same array hold the data once (the design dossier's
+    §18 shared-columns win; per-figure scope in Phase 0)."""
 
     def __init__(self) -> None:
         self._columns: list[Column] = []
@@ -186,6 +195,7 @@ class ColumnStore:
 
     @property
     def columns(self) -> list[Column]:
+        """All ingested columns, in id order."""
         return self._columns
 
     def checkpoint(self) -> ColumnStoreCheckpoint:
@@ -246,6 +256,11 @@ class ColumnStore:
         return self._append_canonical(arr, kind, copies, key, zone)
 
     def ingest(self, data: Any, *, defer_zone_maps: bool = False) -> Column:
+        """Canonicalize ``data`` to an f64 `Column`, deduplicating repeats.
+
+        ``defer_zone_maps=True`` postpones the statistics fold until first
+        use (streaming builders re-fold anyway).
+        """
         arr, kind, copies = _canonicalize(data)
         return self._ingest_canonical(
             arr,
@@ -306,8 +321,9 @@ class ColumnStore:
         return x_col, y_col
 
     def memory_report(self) -> dict[str, Any]:
-        """Canonical bytes per column (§27: if a number isn't in the report, it
-        isn't real). Derived/GPU classes are added as those caches land."""
+        """Canonical bytes per column — if a number isn't in the report, it
+        isn't real (design dossier §27). Derived/GPU classes are added as
+        those caches land."""
         return {
             "canonical_bytes": int(sum(c.values.nbytes for c in self._columns)),
             "columns": [

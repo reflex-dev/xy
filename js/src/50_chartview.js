@@ -152,7 +152,7 @@ class ChartView {
     this._hoverTarget = null;
     this._viewEventRaf = null;
     this._linkedSource = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    // pan | zoom | select (box) | select-lasso | select-x | select-y
+    // pan | zoom | internal selection modes (the modebar exposes only pan/zoom)
     this.dragMode = "pan";
 
     // Responsive size: "100%" means the *container* owns that axis — measure
@@ -223,6 +223,19 @@ class ChartView {
     this._themeWatch = window.matchMedia("(prefers-color-scheme: dark)");
     this._onScheme = () => this.refreshTheme();
     this._themeWatch.addEventListener?.("change", this._onScheme);
+    // Framework theme switches usually toggle a class (for example `.dark`)
+    // on the chart or one of its ancestors without changing the OS color
+    // scheme. Watch that cascade path as well so canvas/SVG paint refreshed
+    // from --chart-* tokens stays in sync with the CSS-owned chart chrome.
+    if (typeof MutationObserver !== "undefined") {
+      this._themeMutationObserver = new MutationObserver(() => this.refreshTheme());
+      for (let node = this.root; node; node = node.parentElement) {
+        this._themeMutationObserver.observe(node, {
+          attributes: true,
+          attributeFilter: ["class", "style"],
+        });
+      }
+    }
 
     this._unsubscribeComm = comm ? comm.onMessage((msg, buffers) => this._onKernelMsg(msg, buffers)) : null;
     this.draw();
@@ -243,11 +256,27 @@ class ChartView {
     const marginRight = (pad ? pad[1] : compact ? 8 : MARGIN.r) + colorbarRightRoom;
     const marginTop = pad ? pad[0] : compact ? 6 : MARGIN.t;
     const marginBottom = (pad ? pad[2] : compact ? 36 : MARGIN.b) + colorbarBottomRoom;
-    const topAxisRoom = this._axis("x").side === "top" ? (compact ? 26 : 32) : 0;
+    const hasBottomAxis = Object.values(this.axes || {}).some((axis) =>
+      axis && String(axis.id || "").startsWith("x") && axis.side !== "top" &&
+      this._axisTickLabelStrategy(axis) !== "none");
+    this._bottomAxisRoom = hasBottomAxis ? (compact ? 36 : MARGIN.b) : 0;
+    // A named x axis can own the top edge even when the primary x axis stays
+    // on the bottom. Reserve one shared gutter for every top-side x axis;
+    // multiple axes on the same side intentionally overlay until axis offsets
+    // become part of the public API (the same rule used by secondary y axes).
+    const topAxisRoom = Object.values(this.axes || {}).some((axis) =>
+      axis && String(axis.id || "").startsWith("x") && axis.side === "top" &&
+      this._axisTickLabelStrategy(axis) !== "none")
+      ? (compact ? 26 : 32)
+      : 0;
     const top = marginTop + (this.spec.title ? (compact ? 26 : 30) : 0) + topAxisRoom;
-    const extraRightAxes = Object.values(this.axes || {}).filter((axis) =>
-      axis && axis.id !== "y" && String(axis.id || "").startsWith("y") && axis.side === "right");
-    const right = marginRight + (extraRightAxes.length ? (compact ? 42 : 54) : 0);
+    const rightAxes = Object.values(this.axes || {}).filter((axis) =>
+      axis && String(axis.id || "").startsWith("y") &&
+      axis.side === "right" && this._axisTickLabelStrategy(axis) !== "none");
+    // The vertical colorbar shifts right by this room (see _positionColorbar);
+    // the Python SVG/raster exporters apply the identical 42/54 rule.
+    this._rightAxisRoom = rightAxes.length ? (compact ? 42 : 54) : 0;
+    const right = marginRight + this._rightAxisRoom;
     this.plot = {
       x: marginLeft,
       y: top,
@@ -303,7 +332,8 @@ class ChartView {
     const axis = this._axis(axisId);
     const [lo, hi] = this._axisRange(axisId);
     if (Array.isArray(axis.tick_values)) {
-      const ticks = axis.tick_values.map(Number).filter((v) => Number.isFinite(v) && v >= lo && v <= hi);
+      const a = Math.min(lo, hi), b = Math.max(lo, hi);
+      const ticks = axis.tick_values.map(Number).filter((v) => Number.isFinite(v) && v >= a && v <= b);
       return { ticks, labels: ticks, step: ticks.length > 1 ? Math.abs(ticks[1] - ticks[0]) : 1 };
     }
     if (axis.kind === "time") return timeTicks(lo, hi, target);
@@ -789,6 +819,10 @@ class ChartView {
     this.size.h = h;
     this._layout();
     const p = this.plot;
+    this.root.style.setProperty("--xy-legend-max-width", Math.max(40, p.w - 12) + "px");
+    this.root.style.setProperty("--xy-legend-max-height", Math.max(40, p.h - 12) + "px");
+    this.canvas.style.left = p.x + "px";
+    this.canvas.style.top = p.y + "px";
     this.canvas.style.width = p.w + "px";
     this.canvas.style.height = p.h + "px";
     this.canvas.width = p.w * this.dpr;
@@ -797,11 +831,12 @@ class ChartView {
     this.chrome.style.height = this.size.h + "px";
     this.chrome.width = this.size.w * this.dpr;
     this.chrome.height = this.size.h * this.dpr;
-    if (this._legends && this._legends.length && this._slotStyleValue("legend", "max-height") == null) {
-      // _slotStyleValue canonicalizes keys, so this one check honors snake_case
-      // / camelCase / kebab author styles alike (no separate maxHeight probe).
-      // Extra legend boxes share the primary's slot, so all get the refresh.
-      for (const lg of this._legends) lg.style.maxHeight = p.h - 12 + "px";
+    this.overlay.style.width = this.size.w + "px";
+    this.overlay.style.height = this.size.h + "px";
+    this.overlay.width = this.size.w * this.dpr;
+    this.overlay.height = this.size.h * this.dpr;
+    for (const lg of this._legends || []) {
+      this._positionLegend(lg, lg.dataset.xyLegendLoc || "upper right");
     }
     this._positionReductionBadges();
     this._positionColorbar();
@@ -818,6 +853,8 @@ class ChartView {
     root.style.cssText =
       `position:relative;width:${this.fluid ? "100%" : this.size.w + "px"};` +
       `height:${this.fluidH ? "100%" : this.size.h + "px"};` +
+      `--xy-legend-max-width:${Math.max(40, this.plot.w - 12)}px;` +
+      `--xy-legend-max-height:${Math.max(40, this.plot.h - 12)}px;` +
       (this.fluidH ? "min-height:120px;" : "") + // parent without a height -> visible floor
       "font:12px system-ui,sans-serif;user-select:none;";
     this._applySlot(root, "root");
@@ -880,6 +917,14 @@ class ChartView {
     this.canvas.setAttribute("aria-describedby", this.a11ySummary.id);
     root.appendChild(this.canvas);
 
+    // Annotation shapes (rules/bands/arrows/markers) draw here, ABOVE the
+    // marks canvas: the exporters emit annotation marks after every data
+    // trace, and a dense/opaque mark (heatmap) would otherwise bury them.
+    // The chrome canvas below keeps the plot background and grid.
+    this.overlay = document.createElement("canvas");
+    this.overlay.style.cssText = "position:absolute;inset:0;pointer-events:none;";
+    root.appendChild(this.overlay);
+
     this.labels = document.createElement("div");
     this.labels.style.cssText = "position:absolute;inset:0;pointer-events:none;";
     this._applySlot(this.labels, "labels");
@@ -889,7 +934,7 @@ class ChartView {
     // styling is in the shared stylesheet; only position/state stays inline.
     this.tooltip = document.createElement("div");
     this.tooltip.style.cssText =
-      "position:absolute;display:none;pointer-events:none;z-index:5;white-space:nowrap;";
+      "position:absolute;display:none;pointer-events:none;z-index:5;";
     this._applySlot(this.tooltip, "tooltip");
     this.tooltip.setAttribute("aria-hidden", "true");
     root.appendChild(this.tooltip);
@@ -1034,26 +1079,12 @@ class ChartView {
     const lg = document.createElement("div");
     const loc = options.loc || "upper right";
     const ncols = Math.max(1, Number(options.ncols) || 1);
-    const rightInset = this.size.w - (this.plot.x + this.plot.w);
     const horizontal = ncols > 1;
-    // Parse the loc into independent horizontal/vertical anchors. "center" is
-    // the fallback on each axis, so "center right" reads as right-edge +
-    // vertical-center and "upper center" as top + horizontal-center. Both
-    // translate offsets go into ONE transform (two `transform:` declarations
-    // would clobber each other, dropping the horizontal recenter on "center").
-    const h = loc.includes("left") ? "left" : loc.includes("right") ? "right" : "center";
-    const v = loc.includes("upper") ? "upper" : loc.includes("lower") ? "lower" : "center";
-    let xPos, yPos, tx = "0", ty = "0";
-    if (h === "left") xPos = `left:${this.plot.x + 6}px;`;
-    else if (h === "right") xPos = `right:${rightInset + 6}px;`;
-    else { xPos = `left:${this.plot.x + this.plot.w / 2}px;`; tx = "-50%"; }
-    if (v === "upper") yPos = `top:${this.plot.y + 6}px;`;
-    else if (v === "lower") yPos = `bottom:${this.size.h - (this.plot.y + this.plot.h) + 6}px;`;
-    else { yPos = `top:${this.plot.y + this.plot.h / 2}px;`; ty = "-50%"; }
-    const transform = tx === "0" && ty === "0" ? "" : `transform:translate(${tx},${ty});`;
-    lg.style.cssText = `position:absolute;${xPos}${yPos}${transform}` +
+    lg.style.cssText = "position:absolute;" +
       `display:grid;grid-template-columns:repeat(${horizontal ? ncols : 1},max-content);` +
-      "overflow:auto;" + `max-height:${this.plot.h - 12}px;`;
+      "overflow:auto;";
+    lg.dataset.xyLegendLoc = loc;
+    this._positionLegend(lg, loc);
     this._applySlot(lg, "legend");
     if (options.title) {
       const title = document.createElement("div");
@@ -1135,8 +1166,29 @@ class ChartView {
       lg.appendChild(row);
     }
     root.appendChild(lg);
-    this._legends.push(lg); // _resize refreshes every box's max-height
+    this._legends.push(lg); // _resize refreshes each box's responsive anchor
     return lg;
+  }
+
+  _positionLegend(lg, loc) {
+    if (!lg) return;
+    // Responsive anchors flow through private custom properties consumed by a
+    // zero-specificity rule. Author classes or component styles can still set
+    // real left/right/top/bottom/transform declarations and win normally.
+    const rightInset = this.size.w - (this.plot.x + this.plot.w);
+    const h = loc.includes("left") ? "left" : loc.includes("right") ? "right" : "center";
+    const v = loc.includes("upper") ? "upper" : loc.includes("lower") ? "lower" : "center";
+    const left = h === "left" ? this.plot.x + 6 : h === "center" ? this.plot.x + this.plot.w / 2 : null;
+    const right = h === "right" ? rightInset + 6 : null;
+    const top = v === "upper" ? this.plot.y + 6 : v === "center" ? this.plot.y + this.plot.h / 2 : null;
+    const bottom = v === "lower" ? this.size.h - (this.plot.y + this.plot.h) + 6 : null;
+    lg.style.setProperty("--xy-legend-left", left == null ? "auto" : left + "px");
+    lg.style.setProperty("--xy-legend-right", right == null ? "auto" : right + "px");
+    lg.style.setProperty("--xy-legend-top", top == null ? "auto" : top + "px");
+    lg.style.setProperty("--xy-legend-bottom", bottom == null ? "auto" : bottom + "px");
+    const tx = h === "center" ? "-50%" : "0";
+    const ty = v === "center" ? "-50%" : "0";
+    lg.style.setProperty("--xy-legend-transform", `translate(${tx},${ty})`);
   }
 
   _buildColorbar(root) {
@@ -1175,13 +1227,14 @@ class ChartView {
     const lo = Number(domain[0]), hi = Number(domain[1]);
     const span = hi - lo || 1;
     const tickResult = linearTicks(lo, hi, 8);
-    const tickValues = Array.isArray(cb.ticks) ? cb.ticks : tickResult.ticks;
+    const hasExplicitTicks = Array.isArray(cb.ticks);
+    const tickValues = hasExplicitTicks ? cb.ticks : tickResult.ticks;
     const tickStep = tickResult.step;
     for (const raw of tickValues) {
       const value = Number(raw);
       if (!Number.isFinite(value) || value < Math.min(lo, hi) || value > Math.max(lo, hi)) continue;
       const tick = document.createElement("span");
-      tick.textContent = fmtLinear(value, tickStep);
+      tick.textContent = hasExplicitTicks ? fmtGeneral(value) : fmtLinear(value, tickStep);
       const fraction = (value - lo) / span;
       tick.style.cssText = horizontal
         ? `position:absolute;left:${100 * fraction}%;top:${COLORBAR_THICKNESS + 2}px;transform:translateX(-50%);white-space:nowrap;`
@@ -1208,8 +1261,12 @@ class ChartView {
   _positionColorbar() {
     if (!this._colorbar) return;
     const horizontal = this._colorbarHorizontal;
-    this._colorbar.style.left = (horizontal ? this.plot.x : this.plot.x + this.plot.w + COLORBAR_GAP) + "px";
-    this._colorbar.style.top = (horizontal ? this.plot.y + this.plot.h + 8 : this.plot.y) + "px";
+    this._colorbar.style.left = (horizontal
+      ? this.plot.x
+      : this.plot.x + this.plot.w + this._rightAxisRoom + COLORBAR_GAP) + "px";
+    this._colorbar.style.top = (horizontal
+      ? this.plot.y + this.plot.h + (this._bottomAxisRoom || 8)
+      : this.plot.y) + "px";
     this._colorbar.style.width = (horizontal ? this.plot.w : 66) + "px";
     this._colorbar.style.height = (horizontal ? 50 : Math.max(24, this.plot.h)) + "px";
   }
@@ -1223,6 +1280,10 @@ class ChartView {
     this.chrome.height = this.size.h * dpr;
     this.chrome.style.width = this.size.w + "px";
     this.chrome.style.height = this.size.h + "px";
+    this.overlay.width = this.size.w * dpr;
+    this.overlay.height = this.size.h * dpr;
+    this.overlay.style.width = this.size.w + "px";
+    this.overlay.style.height = this.size.h + "px";
 
     // Stay inside the page's context budget before acquiring (governor above):
     // at budget, the least-recently-visible off-screen view releases first.
@@ -1380,11 +1441,13 @@ class ChartView {
     g.color = parseColor(this.root, t.color && t.color.color, [0.3, 0.47, 0.66, 1]);
     if (t.color && t.color.mode === "continuous") {
       g.colorMode = 1;
-      g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+      g._cpu.color = this._columnView(buffer, this.spec.columns[t.color.buf]);
+      g.cBuf = this._upload(g._cpu.color);
       g.lut = this._lut(t.color.colormap);
     } else if (t.color && t.color.mode === "categorical") {
       g.colorMode = 2;
-      g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
+      g._cpu.color = this._columnView(buffer, this.spec.columns[t.color.buf]);
+      g.cBuf = this._upload(g._cpu.color);
       g.lut = this._paletteLut(t.color.palette);
     }
     g.sizeMode = 0;
@@ -1392,7 +1455,8 @@ class ChartView {
     g.sizeRange = [2, 18];
     if (t.size && t.size.mode === "continuous") {
       g.sizeMode = 1;
-      g.sBuf = this._upload(this._columnView(buffer, this.spec.columns[t.size.buf]));
+      g._cpu.size = this._columnView(buffer, this.spec.columns[t.size.buf]);
+      g.sBuf = this._upload(g._cpu.size);
       g.sizeRange = t.size.range_px;
     }
     this._pointMarkStyle(g, t);
@@ -2812,10 +2876,7 @@ class ChartView {
   }
 
   _axisTickLabelStrategy(axis) {
-    const raw = axis && axis.tick_label_strategy !== undefined
-      ? axis.tick_label_strategy
-      : this._axisStyleValue(axis, "tick_label_strategy");
-    const value = String(raw || "auto").replace(/-/g, "_");
+    const value = String((axis && axis.tick_label_strategy) || "auto").replace(/-/g, "_");
     return ["auto", "hide", "rotate", "stagger", "none", "off"].includes(value) ? value : "auto";
   }
 
@@ -2832,18 +2893,12 @@ class ChartView {
   }
 
   _axisTickLabelAngle(axis) {
-    const raw = axis && axis.tick_label_angle !== undefined
-      ? axis.tick_label_angle
-      : this._axisStyleValue(axis, "tick_label_angle");
-    const angle = Number(raw);
+    const angle = Number(axis ? axis.tick_label_angle : undefined);
     return Number.isFinite(angle) ? angle : null;
   }
 
   _axisTickLabelMinGap(axis, dim) {
-    const raw = axis && axis.tick_label_min_gap !== undefined
-      ? axis.tick_label_min_gap
-      : this._axisStyleValue(axis, "tick_label_min_gap");
-    const gap = Number(raw);
+    const gap = Number(axis ? axis.tick_label_min_gap : undefined);
     return Number.isFinite(gap) && gap >= 0 ? gap : (dim === "x" ? 8 : 4);
   }
 
@@ -2910,7 +2965,12 @@ class ChartView {
   }
 
   _layoutTickLabels(axis, dim, labels) {
-    if (labels.length <= 1) return labels.map((label) => ({ ...label, angle: 0, row: 0 }));
+    const strategyValue = this._axisTickLabelStrategy(axis);
+    if (strategyValue === "none" || strategyValue === "off") return [];
+    if (labels.length <= 1) {
+      const angle = this._axisTickLabelAngle(axis);
+      return labels.map((label) => ({ ...label, angle: angle === null ? 0 : angle, row: 0 }));
+    }
     const fontSize = Math.max(
       8,
       this._axisStyleNumber(axis, "tick_label_size", this._axisStyleNumber(axis, "tick_size", 11)),
@@ -2923,9 +2983,7 @@ class ChartView {
     const explicitAngle = this._axisTickLabelAngle(axis);
     const baseAngle = explicitAngle === null ? 0 : explicitAngle;
     const withBase = labels.map((label) => ({ ...label, angle: baseAngle, row: 0 }));
-    let strategy = this._axisTickLabelStrategy(axis);
-    if (strategy === "none") return []; // hide every tick label (sparklines)
-    if (strategy === "off") return []; // labels only; grid/baselines stay (mpl shared axes)
+    let strategy = strategyValue;
     if (strategy === "auto") {
       if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap, anchor)) return withBase;
       if (dim === "x" && axis.kind === "category" && labels.length <= 16) strategy = "rotate";
@@ -2941,10 +2999,42 @@ class ChartView {
       out = labels.map((label, i) => ({ ...label, angle: baseAngle, row: i % 2 }));
     }
 
-    if (strategy === "hide" || this._tickLabelsCollide(out, dim, fontSize, minGap, anchor)) {
+    // Strategies handle collisions; a non-colliding label set stays intact
+    // even under an explicit "hide" (matches the Python exporters).
+    if (this._tickLabelsCollide(out, dim, fontSize, minGap, anchor)) {
       out = this._downsampleTickLabels(out, dim, fontSize, minGap, anchor);
     }
     return out;
+  }
+
+  _xTickLabelTransform(axis, angle) {
+    const value = Number(angle || 0);
+    const side = axis && axis.side === "top" ? "top" : "bottom";
+    // An explicit anchor (mpl `ha`) pins that edge as the transform origin,
+    // so a rotated label pivots about the point pinned at the tick instead
+    // of seesawing its trailing half into the plot. Unset, the anchor is
+    // derived from the rotation direction below.
+    const anchor = this._axisTickLabelAnchor(axis);
+    if (anchor) {
+      const shift = anchor === "end" ? "-100%" : anchor === "start" ? "0%" : "-50%";
+      const originX = anchor === "end" ? "right" : anchor === "start" ? "left" : "center";
+      return {
+        transform: `translateX(${shift}) rotate(${value}deg)`,
+        origin: `${originX} ${side === "top" ? "bottom" : "top"}`,
+      };
+    }
+    if (value === 0) {
+      return {
+        transform: "translateX(-50%)",
+        origin: side === "top" ? "bottom center" : "top center",
+      };
+    }
+    const anchorAtEnd = (side === "bottom" && value < 0) || (side === "top" && value > 0);
+    const verticalOrigin = side === "top" ? "bottom" : "top";
+    return {
+      transform: `${anchorAtEnd ? "translateX(-100%) " : ""}rotate(${value}deg)`,
+      origin: `${verticalOrigin} ${anchorAtEnd ? "right" : "left"}`,
+    };
   }
 
   _axisLabelCss(axis, dim, fallbackCss) {
@@ -3030,6 +3120,10 @@ class ChartView {
     }
     const xAxis = this._axis("x");
     const yAxis = this._axis("y");
+    const extraXAxes = Object.values(this.axes).filter((axis) =>
+      axis && axis.id !== "x" && String(axis.id || "").startsWith("x"));
+    const extraYAxes = Object.values(this.axes).filter((axis) =>
+      axis && axis.id !== "y" && String(axis.id || "").startsWith("y"));
     const hideX = this._axisTickLabelStrategy(xAxis) === "none";
     const hideY = this._axisTickLabelStrategy(yAxis) === "none";
     const xt = this._axisTicks(
@@ -3070,7 +3164,12 @@ class ChartView {
     ctx.globalAlpha = 1;
     ctx.setLineDash([]);
 
-    this._drawAnnotationShapes(ctx);
+    // Annotation shapes go on the overlay canvas, above the marks canvas —
+    // exporter parity: SVG/raster emit annotation marks after the data.
+    const octx = this.overlay.getContext("2d");
+    octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    octx.clearRect(0, 0, this.size.w, this.size.h);
+    this._drawAnnotationShapes(octx);
 
     // Axis baselines render in the labels overlay — *above* the marks canvas —
     // so a filled mark (bars, area) sits under a crisp, continuous baseline
@@ -3099,8 +3198,14 @@ class ChartView {
         if (frameSides.includes("top")) rule(xAxis, p.x, p.y, p.w, xHeight);
         if (frameSides.includes("bottom")) rule(xAxis, p.x, p.y + p.h - xHeight, p.w, xHeight);
       }
-      for (const axis of Object.values(this.axes)) {
-        if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
+      for (const axis of extraXAxes) {
+        if (this._axisTickLabelStrategy(axis) === "none") continue;
+        const h = Math.max(1, this._axisStyleNumber(axis, "axis_width", 1));
+        const y = axis.side === "top" ? p.y : p.y + p.h - h;
+        rule(axis, p.x, y, p.w, h);
+      }
+      for (const axis of extraYAxes) {
+        if (this._axisTickLabelStrategy(axis) === "none") continue;
         const w = Math.max(1, this._axisStyleNumber(axis, "axis_width", 1));
         const x = axis.side === "left" ? p.x : p.x + p.w - w;
         rule(axis, x, p.y, w, p.h);
@@ -3134,6 +3239,38 @@ class ChartView {
           if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
           const left = side === "right" ? edge - tick.inward : edge - tick.outward;
           rule(yAxis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width, "tick_color");
+        }
+      }
+      for (const axis of extraXAxes) {
+        if (this._axisTickLabelStrategy(axis) === "none") continue;
+        const ticks = this._axisTicks(
+          axis.id,
+          this._axisTickTarget(axis.id, Math.max(3, p.w / (axis.kind === "time" ? 90 : 80))),
+        );
+        const tick = tickParts(axis);
+        const side = axis.side || "bottom";
+        const edge = side === "top" ? p.y : p.y + p.h;
+        for (const value of ticks.ticks) {
+          const x = this._dataPx(axis.id, value);
+          if (!Number.isFinite(x) || x < p.x - 1 || x > p.x + p.w + 1) continue;
+          const top = side === "top" ? edge - tick.outward : edge - tick.inward;
+          rule(axis, x - tick.width / 2, top, tick.width, tick.inward + tick.outward, "tick_color");
+        }
+      }
+      for (const axis of extraYAxes) {
+        if (this._axisTickLabelStrategy(axis) === "none") continue;
+        const ticks = this._axisTicks(
+          axis.id,
+          this._axisTickTarget(axis.id, Math.max(3, p.h / 45)),
+        );
+        const tick = tickParts(axis);
+        const side = axis.side || "right";
+        const edge = side === "right" ? p.x + p.w : p.x;
+        for (const value of ticks.ticks) {
+          const y = this._dataPx(axis.id, value);
+          if (!Number.isFinite(y) || y < p.y - 1 || y > p.y + p.h + 1) continue;
+          const left = side === "right" ? edge - tick.inward : edge - tick.outward;
+          rule(axis, left, y - tick.width / 2, tick.inward + tick.outward, tick.width, "tick_color");
         }
       }
     }
@@ -3181,23 +3318,51 @@ class ChartView {
       "tick_label_size",
       this._axisStyleNumber(xAxis, "tick_size", 11),
     );
-    // The anchored edge is the transform origin, so a rotated label pivots
-    // about the point pinned at the tick (mpl `ha` + anchored rotation)
-    // instead of seesawing its trailing half into the plot.
-    const xAnchor = this._axisTickLabelAnchor(xAxis) ?? "center";
-    const xShift = xAnchor === "end" ? "-100%" : xAnchor === "start" ? "0%" : "-50%";
-    const xOrigin =
-      `${xAnchor === "end" ? "right" : xAnchor === "start" ? "left" : "center"} ` +
-      `${xAxis.side === "top" ? "bottom" : "top"}`;
     for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
       const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
       const top = xAxis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
-      const transform = `translateX(${xShift}) rotate(${Number(item.angle || 0)}deg)`;
+      const placement = this._xTickLabelTransform(xAxis, item.angle);
       label(
         item.text,
-        `left:${item.pos}px;top:${top}px;transform:${transform};transform-origin:${xOrigin};`,
+        `left:${item.pos}px;top:${top}px;transform:${placement.transform};` +
+          `transform-origin:${placement.origin};`,
         xAxis,
       );
+    }
+    for (const axis of extraXAxes) {
+      const ticks = this._axisTicks(
+        axis.id,
+        this._axisTickTarget(axis.id, Math.max(3, p.w / (axis.kind === "time" ? 90 : 80))),
+      );
+      const labelCandidates = [];
+      for (const value of (ticks.labels || ticks.ticks)) {
+        const px = this._dataPx(axis.id, value);
+        if (px < p.x - 1 || px > p.x + p.w + 1) continue;
+        labelCandidates.push({ pos: px, text: this._axisTickText(axis, value, ticks.step) });
+      }
+      for (const item of this._layoutTickLabels(axis, "x", labelCandidates)) {
+        const tickLabelSize = this._axisStyleNumber(
+          axis,
+          "tick_label_size",
+          this._axisStyleNumber(axis, "tick_size", 11),
+        );
+        const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
+        const top = axis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
+        const placement = this._xTickLabelTransform(axis, item.angle);
+        label(
+          item.text,
+          `left:${item.pos}px;top:${top}px;transform:${placement.transform};` +
+            `transform-origin:${placement.origin};`,
+          axis,
+        );
+      }
+      if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
+        const top = axis.side === "top" ? p.y - 34 : p.y + p.h + 24;
+        const fallbackCss =
+          `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`;
+        const placement = this._axisLabelCss(axis, "x", fallbackCss);
+        label(axis.label, placement.css, axis, "label", placement.style);
+      }
     }
     const yLabelCandidates = [];
     for (const v of (yt.labels || yt.ticks)) {
@@ -3222,8 +3387,7 @@ class ChartView {
     for (const item of this._layoutTickLabels(yAxis, "y", yLabelCandidates)) {
       label(item.text, yLabelCss(yAxis, yAxis.side === "right", item), yAxis);
     }
-    for (const axis of Object.values(this.axes)) {
-      if (!axis || axis.id === "y" || !String(axis.id || "").startsWith("y")) continue;
+    for (const axis of extraYAxes) {
       const ticks = this._axisTicks(axis.id, this._axisTickTarget(axis.id, Math.max(3, p.h / 45)));
       const labelCandidates = [];
       for (const v of (ticks.labels || ticks.ticks)) {
@@ -3235,7 +3399,7 @@ class ChartView {
       for (const item of this._layoutTickLabels(axis, "y", labelCandidates)) {
         label(item.text, yLabelCss(axis, axis.side !== "left", item), axis);
       }
-      if (axis.label) {
+      if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
         const fallbackCss = axis.side === "left"
           ? `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`
           : `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`;
@@ -3243,13 +3407,13 @@ class ChartView {
         label(axis.label, placement.css, axis, "label", placement.style);
       }
     }
-    if (s.x_axis.label) {
+    if (s.x_axis.label && !hideX) {
       const top = xAxis.side === "top" ? p.y - 34 : p.y + p.h + 24;
       const fallbackCss = `left:${p.x + p.w / 2}px;top:${top}px;transform:translateX(-50%);font-weight:500;`;
       const placement = this._axisLabelCss(xAxis, "x", fallbackCss);
       label(s.x_axis.label, placement.css, xAxis, "label", placement.style);
     }
-    if (s.y_axis.label) {
+    if (s.y_axis.label && !hideY) {
       const fallbackCss = yAxis.side === "right"
         ? `left:${p.x + p.w + 40}px;top:${p.y + p.h / 2}px;transform:rotate(90deg) translateX(-50%);transform-origin:left;font-weight:500;`
         : `left:10px;top:${p.y + p.h / 2}px;transform:rotate(-90deg) translateX(50%);transform-origin:left;font-weight:500;`;
@@ -3650,6 +3814,8 @@ class ChartView {
     this._io?.disconnect();
     this._io = null;
     this._themeWatch?.removeEventListener?.("change", this._onScheme);
+    this._themeMutationObserver?.disconnect();
+    this._themeMutationObserver = null;
     this._dprMq?.removeEventListener?.("change", this._onDprChange);
     this._dprMq = null;
     this._unsubscribeComm?.();

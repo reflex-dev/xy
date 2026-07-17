@@ -52,8 +52,10 @@ source row.
 uses `colormap` and optional `color_domain`; categorical color creates a stable
 palette. `size_range` maps numeric size values into pixel diameters.
 
-Markers support `circle`, `square`, `diamond`, `triangle`, and `cross` symbols,
-plus `stroke` and `stroke_width` for crisp borders.
+Markers support 17 renderer-backed symbols, from `circle`, `square`, and
+directional triangles through `star`, `hexagon`, pixel/point, and line-only
+glyphs, plus `stroke` and `stroke_width` for crisp borders. The complete list
+is in [Mark styles](/docs/xy/styling/mark-styles/#mark-specific-appearance).
 
 ## Expected Data Shape
 

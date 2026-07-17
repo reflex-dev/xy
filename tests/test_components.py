@@ -303,6 +303,27 @@ def test_semantic_annotations_and_markers_emit_expected_specs():
         xy.threshold(1.0, axis="z")
 
 
+def test_annotation_label_opacity_is_independent_from_geometry_opacity():
+    chart = xy.chart(
+        xy.x_band(
+            1.0,
+            2.0,
+            text="window",
+            opacity=0.12,
+            style={"label_opacity": 0.85},
+        )
+    )
+
+    spec, _ = chart.figure().build_payload()
+    style = spec["annotations"][0]["style"]
+
+    assert style["opacity"] == 0.12
+    assert style["label_opacity"] == 0.85
+
+    with pytest.raises(ValueError, match="label_opacity"):
+        xy.chart(xy.x_band(1.0, 2.0, text="window", style={"label_opacity": 1.1})).figure()
+
+
 def test_layered_tooltip_sources_keep_fields_tied_to_their_traces():
     data = FakeFrame(
         {
@@ -472,6 +493,26 @@ def test_theme_background_separates_figure_and_plot():
     style = spec["dom"]["style"]
     assert style["background"] == "#000000"
     assert style["--chart-bg"] == "#111111"
+
+
+def test_figure_dom_class_strings_covers_every_class_carrying_surface():
+    """`Figure.dom_class_strings()` is the Tailwind scan inventory (see its
+    docstring): chart root, chrome slots, per-mark styles, annotation nodes."""
+    chart = xy.chart(
+        xy.line([0, 1], [1, 2], class_name="mark-node"),
+        xy.line([0, 1], [2, 3], class_name="mark-node"),  # dedupe, keep order
+        xy.vline(0.5, text="release", class_name="annotation-node"),
+        xy.legend(class_name="legend-node"),
+        class_name="root-node",
+        class_names={"title": "title-slot"},
+    )
+
+    class_strings = chart.figure().dom_class_strings()
+
+    for class_string in ("root-node", "title-slot", "legend-node", "mark-node", "annotation-node"):
+        assert class_string in class_strings, class_strings
+    assert len(class_strings) == len(set(class_strings)), class_strings
+    assert class_strings[0] == "root-node", class_strings
 
 
 def test_declarative_core_contract_for_layered_axis_chrome_and_interaction():
@@ -1735,6 +1776,58 @@ def test_dual_axis_component_payload_binds_traces_to_secondary_axis():
         xy.chart(
             xy.line(x=np.arange(3.0), y=np.arange(3.0), y_axis="y2"),
         ).figure()
+
+
+@pytest.mark.parametrize("axis_dim", ["x", "y"])
+@pytest.mark.parametrize(
+    "primary_is_category",
+    [True, False],
+    ids=["primary-category-named-linear", "primary-linear-named-category"],
+)
+def test_declarative_named_axis_category_state_is_scoped_per_axis_id(
+    axis_dim: str, primary_is_category: bool
+) -> None:
+    named_axis_id = f"{axis_dim}2"
+    axis_factory = xy.x_axis if axis_dim == "x" else xy.y_axis
+    side = "top" if axis_dim == "x" else "right"
+    category_values = ["Alpha", "Beta"]
+    numeric_values = [100.0, 200.0]
+    primary_values = category_values if primary_is_category else numeric_values
+    named_values = numeric_values if primary_is_category else category_values
+
+    def mark(values, *, named: bool = False):
+        props = (
+            {"x": values, "y": [1.0, 2.0]} if axis_dim == "x" else {"x": [1.0, 2.0], "y": values}
+        )
+        if named:
+            props[f"{axis_dim}_axis"] = named_axis_id
+        return xy.line(**props)
+
+    chart = xy.chart(
+        mark(primary_values),
+        mark(named_values, named=True),
+        axis_factory(type_="linear" if not primary_is_category else None),
+        axis_factory(
+            id=named_axis_id,
+            side=side,
+            type_="linear" if primary_is_category else None,
+        ),
+    )
+
+    fig = chart.figure()
+    spec, _ = fig.build_payload()
+    category_axis_id = axis_dim if primary_is_category else named_axis_id
+    linear_axis_id = named_axis_id if primary_is_category else axis_dim
+
+    assert fig._axis_categories == {category_axis_id: category_values}
+    assert spec["axes"][category_axis_id]["kind"] == "category"
+    assert spec["axes"][category_axis_id]["categories"] == category_values
+    assert spec["axes"][linear_axis_id]["kind"] == "linear"
+    assert "categories" not in spec["axes"][linear_axis_id]
+    assert [trace[f"{axis_dim}_axis"] for trace in spec["traces"]] == [
+        axis_dim,
+        named_axis_id,
+    ]
 
 
 def test_bad_child_type():

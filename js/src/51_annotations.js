@@ -8,6 +8,8 @@
 const XY_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
   "color",
   "label_color",
+  "label_opacity",
+  "opacity",
   "width",
   "head_size",
   "head_style",
@@ -375,6 +377,7 @@ Object.assign(ChartView.prototype, {
       const style = ann && typeof ann.style === "object" ? ann.style : {};
       let px = null;
       let py = null;
+      let lift = null;
       if (ann.kind === "text") {
         if (style.coordinate_space === "axes_fraction") {
           px = p.x + Number(ann.x) * p.w;
@@ -409,8 +412,19 @@ Object.assign(ChartView.prototype, {
           py = (this._dataPxY(Number(ann.start)) + this._dataPxY(Number(ann.end))) / 2;
         }
       } else if (ann.kind === "arrow") {
-        px = (this._dataPxX(Number(ann.x0)) + this._dataPxX(Number(ann.x1))) / 2;
-        py = (this._dataPxY(Number(ann.y0)) + this._dataPxY(Number(ann.y1))) / 2;
+        const ax0 = this._dataPxX(Number(ann.x0));
+        const ay0 = this._dataPxY(Number(ann.y0));
+        const ax1 = this._dataPxX(Number(ann.x1));
+        const ay1 = this._dataPxY(Number(ann.y1));
+        px = (ax0 + ax1) / 2;
+        py = (ay0 + ay1) / 2;
+        // Upward unit normal of the shaft: the label lifts along it (after
+        // measuring, below) so the line doesn't strike through the word.
+        const len = Math.hypot(ax1 - ax0, ay1 - ay0);
+        if (len > 1e-6) {
+          lift = [-(ay1 - ay0) / len, (ax1 - ax0) / len];
+          if (lift[1] > 0) lift = [-lift[0], -lift[1]];
+        }
       } else if (ann.kind === "callout") {
         px = this._dataPxX(Number(ann.x));
         py = this._dataPxY(Number(ann.y));
@@ -426,14 +440,32 @@ Object.assign(ChartView.prototype, {
       d.textContent = text;
       const dx = Number.isFinite(Number(ann.dx)) ? Number(ann.dx) : 0;
       const dy = Number.isFinite(Number(ann.dy)) ? Number(ann.dy) : 0;
-      const anchor = ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? "-100%" : "0px";
+      // Rule/band specs carry no anchor; default to the placement that keeps
+      // the badge inside the plot: y labels sit at the right edge and must
+      // grow LEFT, x labels sit at the top edge and must hang DOWN (band text
+      // centered on the band, y-band text centered on its span).
+      let anchorName = ann.anchor;
+      let va = String(style.vertical_align || "");
+      if (ann.kind === "rule" || ann.kind === "band") {
+        if (ann.axis === "x") {
+          if (!anchorName && ann.kind === "band") anchorName = "middle";
+          if (!va) va = "top";
+        } else {
+          if (!anchorName) anchorName = "end";
+          if (!va && ann.kind === "band") va = "middle";
+        }
+      } else if (ann.kind === "arrow") {
+        // Centered on the shaft midpoint, then lifted clear of the line.
+        if (!anchorName) anchorName = "middle";
+        if (!va) va = "middle";
+      }
+      const anchor = anchorName === "middle" ? "-50%" : anchorName === "end" ? "-100%" : "0px";
       const rot = Number.isFinite(Number(style.rotation))
         ? ((Number(style.rotation) % 360) + 360) % 360
         : 0;
       // matplotlib's va, matching the SVG/raster exporters: the default is
       // the text BASELINE at the anchor (~0.35em of descent hangs below it),
       // not the box top.
-      const va = String(style.vertical_align || "");
       const vAnchor =
         va === "center" || va === "middle" ? "-50%"
           : va === "bottom" ? "-100%"
@@ -452,7 +484,7 @@ Object.assign(ChartView.prototype, {
           : va === "bottom" ? (cw ? "-100%" : "0")
           : cw ? "0" : "-100%";
         const cross =
-          ann.anchor === "middle" ? "-50%" : ann.anchor === "end" ? (cw ? "0" : "-100%") : cw ? "-100%" : "0";
+          anchorName === "middle" ? "-50%" : anchorName === "end" ? (cw ? "0" : "-100%") : cw ? "-100%" : "0";
         transform = `rotate(${cw ? 90 : -90}deg) translate(${along},${cross})`;
       } else if (rot) {
         transform = `rotate(${-rot}deg) translate(${anchor},${vAnchor})`;
@@ -471,9 +503,18 @@ Object.assign(ChartView.prototype, {
       this._applyClass(d, ann.class_name);
       // Shape-geometry/paint keys style the canvas shape, not the label DOM —
       // e.g. an arrow's shaft `width` must not become CSS width on the label.
+      // Likewise `opacity` on a shape-bearing annotation is the band fill /
+      // rule stroke / arrow / marker alpha (exporter semantics), not a label
+      // dimmer; only text/callout labels own their opacity.
+      const opacityIsShape = ann.kind !== "text" && ann.kind !== "callout";
       const labelStyle = {};
       for (const [key, value] of Object.entries(style)) {
+        if (key === "opacity" && ann.kind === "text") {
+          labelStyle[key] = value;
+          continue;
+        }
         if (XY_ANNOTATION_SHAPE_STYLE_KEYS.has(key)) continue;
+        if (opacityIsShape && key === "opacity") continue;
         labelStyle[key] = value;
       }
       this._applyStyle(d, labelStyle);
@@ -481,6 +522,12 @@ Object.assign(ChartView.prototype, {
       // stylesheet's --chart-annotation-text default stays overridable by CSS.
       if (style && (style.label_color || style.color)) {
         d.style.color = this._annotationLabelPaint(style, this.theme.label);
+      }
+      if (style && style.label_opacity !== undefined) {
+        const labelOpacity = Number(style.label_opacity);
+        if (Number.isFinite(labelOpacity)) {
+          d.style.opacity = String(Math.max(0, Math.min(1, labelOpacity)));
+        }
       }
       this.labels.appendChild(d);
       // matplotlib anchors the TEXT at its position; a bbox patch grows
@@ -506,6 +553,38 @@ Object.assign(ChartView.prototype, {
         d.style.transform =
           `${rot ? `rotate(${-rot}deg) ` : ""}` +
           `translate(calc(${anchor} + ${hShift}px), calc(${vAnchor} + ${vShift}px))`;
+      }
+      // Arrow labels sit at the shaft midpoint; push the box out along the
+      // shaft's upward normal until it clears the (possibly slanted) line —
+      // a fixed offset alone still lets a wide word's far end hit the shaft.
+      // Client-only geometry: the exporters do not render arrow labels.
+      const liftBounds = lift && this.labels.getBoundingClientRect();
+      if (lift && liftBounds.width > 0) {
+        const liftScale = liftBounds.width / this.size.w;
+        const r = d.getBoundingClientRect();
+        const clear =
+          (r.width / liftScale / 2) * Math.abs(lift[0]) +
+          (r.height / liftScale / 2) * Math.abs(lift[1]) + 3;
+        px += lift[0] * clear;
+        py += lift[1] * clear;
+        d.style.left = `${px + dx}px`;
+        d.style.top = `${py + dy}px`;
+      }
+      // A label anchored at a plot edge (or pushed out by dx/padding) must
+      // never overflow the figure: measure the laid-out box and pull it back
+      // inside. Rects are in visual px, left/top in figure px — rescale.
+      const bounds = this.labels.getBoundingClientRect();
+      if (bounds.width > 0) {
+        const scale = bounds.width / this.size.w;
+        const r = d.getBoundingClientRect();
+        const pullX =
+          r.right > bounds.right ? bounds.right - r.right
+          : r.left < bounds.left ? bounds.left - r.left : 0;
+        const pullY =
+          r.bottom > bounds.bottom ? bounds.bottom - r.bottom
+          : r.top < bounds.top ? bounds.top - r.top : 0;
+        if (pullX) d.style.left = `${px + dx + pullX / scale}px`;
+        if (pullY) d.style.top = `${py + dy + pullY / scale}px`;
       }
     }
   },
