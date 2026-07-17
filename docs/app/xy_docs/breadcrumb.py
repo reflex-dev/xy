@@ -6,7 +6,13 @@ from reflex_site_shared.docs.models import DocsPage
 from reflex_site_shared.views.sidebar import docs_sidebar_drawer
 
 _BREADCRUMB_LABELS = {
+    "charts": "Chart Gallery",
+    "gallery": "Chart Gallery",
     "modebars-and-interaction-controls": "Modebars & Controls",
+}
+
+_BREADCRUMB_ROUTES = {
+    "/charts": "/overview/gallery/",
 }
 
 
@@ -38,7 +44,7 @@ def xy_docs_breadcrumb(page: DocsPage, sidebar: rx.Component) -> rx.Component:
 
     for index, segment in enumerate(segments):
         current_path += f"/{segment}"
-        href = f"{current_path}/"
+        href = _BREADCRUMB_ROUTES.get(current_path, f"{current_path}/")
         base_class = ui.cn(
             "min-h-8 flex items-center text-sm font-[525] text-secondary-12 last:text-secondary-11",
             "truncate" if index == len(segments) - 1 else "",
