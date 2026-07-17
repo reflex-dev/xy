@@ -477,7 +477,8 @@ def line(
     dash: Union[str, Sequence[float], None] = None,
     style: styles.StyleMapping | None = None,
 ) -> "Figure":
-    """Add a line series (M4-decimated above the threshold, §5 Tier 1).
+    """Add a line series. Very long series are automatically downsampled for
+    display without changing the drawn shape.
 
     ``curve="smooth"`` renders a monotone cubic; ``dash`` dashes the line.
     """
@@ -1033,8 +1034,9 @@ def scatter(
     colormap), or a categorical array (factorized → palette). `size` may be
     a scalar or a numeric array (mapped to `size_range` px). `symbol` picks
     the marker shape (circle/square/diamond/triangle/cross); `stroke` /
-    `stroke_width` draw a point border. Large scatters auto-switch to a
-    Tier-2 density surface (§5); pass `density=True/False` to force it.
+    `stroke_width` draw a point border. Very large scatters automatically
+    switch to an aggregated density surface instead of drawing individual
+    points; pass `density=True/False` to force or disable that.
     """
     css = styles.compile_mark_style("scatter", style)
     color = css.get("color", color)

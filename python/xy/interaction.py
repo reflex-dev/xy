@@ -65,16 +65,16 @@ def _screen_shape(w: int, h: int) -> tuple[int, int]:
 def pick(
     fig: "Figure", trace_id: int, index: int, drill_seq: Optional[int] = None
 ) -> Optional[dict[str, Any]]:
-    """Exact source-row readout for a hover/pick (§17 Tier-0 hover; §16 —
-    values come from the f64 canonical store, never through the f32 GPU path).
+    """Exact source-row readout for a hover/pick — values come from the f64
+    canonical store, never through the f32 GPU path (design dossier §16/§17).
 
     `index` is a *shipped* vertex index (what the client's GPU pick sees);
     it is translated to a canonical row when the shipped copy dropped NaN
-    rows (§19). Returns None if out of range.
+    rows. Returns None if out of range.
 
     `drill_seq` is the subset version the client picked against. If the drill
     advanced (or exited) since, the index is in a dead coordinate space —
-    return None rather than translate it into the wrong row (§16: exact or
+    return None rather than translate it into the wrong row (exact or
     nothing; a stale pick after drill-out would otherwise read `index` as a
     *canonical* row, i.e. an arbitrary point)."""
     try:
@@ -116,9 +116,10 @@ def pick(
 def select_range(
     fig: "Figure", x0: float, x1: float, y0: float, y1: float, trace_id: Optional[int] = None
 ) -> dict[int, np.ndarray]:
-    """Indices of points inside the box, per scatter trace (§34 Filter Tier A:
-    an indexed range predicate). A plain NumPy mask over canonical here; the
-    zone-map-pruned version is the scale path. Returns {trace_id: indices}."""
+    """Indices of points inside the box, per scatter trace (an indexed range
+    predicate; design dossier §34). A plain NumPy mask over canonical here;
+    the zone-map-pruned version is the scale path. Returns
+    {trace_id: indices}."""
     lo_x, hi_x, lo_y, hi_y = lod.normalize_window(x0, x1, y0, y1, require_area=False)
     tid = None if trace_id is None else _trace(fig, trace_id).id
     out: dict[int, np.ndarray] = {}
@@ -140,6 +141,49 @@ def select_range(
                 t.x.values[candidates], t.y.values[candidates], lo_x, hi_x, lo_y, hi_y
             )
             out[t.id] = candidates[out[t.id]]
+    return out
+
+
+def select_polygon(
+    fig: "Figure", points: Any, trace_id: Optional[int] = None
+) -> dict[int, np.ndarray]:
+    """Canonical scatter indices inside a finite lasso polygon.
+
+    The polygon's bounding box first reuses the zone-pruned range predicate;
+    ray casting then runs only on those candidates rather than every row.
+    """
+    polygon = np.asarray(points, dtype=np.float64)
+    if polygon.ndim != 2 or polygon.shape[1:] != (2,) or not 3 <= len(polygon) <= 2048:
+        raise ValueError("selection polygon must contain 3 to 2048 x/y points")
+    if not np.isfinite(polygon).all():
+        raise ValueError("selection polygon must be finite")
+    candidates = select_range(
+        fig,
+        float(polygon[:, 0].min()),
+        float(polygon[:, 0].max()),
+        float(polygon[:, 1].min()),
+        float(polygon[:, 1].max()),
+        trace_id,
+    )
+    out: dict[int, np.ndarray] = {}
+    for tid, rows in candidates.items():
+        if len(rows) == 0:
+            out[tid] = rows
+            continue
+        trace = fig.traces[tid]
+        x = trace.x.values[rows]
+        y = trace.y.values[rows]
+        inside = np.zeros(len(rows), dtype=np.bool_)
+        j = len(polygon) - 1
+        for i in range(len(polygon)):
+            xi, yi = polygon[i]
+            xj, yj = polygon[j]
+            crosses = (yi > y) != (yj > y)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                edge_x = (xj - xi) * (y - yi) / (yj - yi) + xi
+            inside ^= crosses & (x < edge_x)
+            j = i
+        out[tid] = rows[inside]
     return out
 
 
@@ -207,8 +251,8 @@ def _point_shipped_sel(t: Any) -> Optional[np.ndarray]:
 def decimate_view(
     fig: "Figure", x0: float, x1: float, px_width: int
 ) -> tuple[dict[str, Any], list[bytes]]:
-    """Re-decimate visible windows for a zoomed view (§28 line/area rule:
-    recompute for the visible x-range only). The offset re-centers on the
+    """Re-decimate visible windows for a zoomed view (recompute for the
+    visible x-range only; design dossier §28). The offset re-centers on the
     window midpoint — the §16 deep-zoom rule — so f32 precision follows the
     viewport instead of the whole series.
     """
@@ -304,7 +348,8 @@ def _pyramid_resident_bytes(base_dim: int = PYRAMID_BASE_DIM) -> int:
 
 
 def pyramid_report_bytes(fig: Any) -> int:
-    """§27 memory-report line: native bytes held by live trace pyramids."""
+    """Memory-report line (design dossier §27): native bytes held by live
+    trace pyramids."""
     return sum(_pyramid_resident_bytes() for t in fig.traces if getattr(t, "_pyr_handle", 0))
 
 
@@ -379,13 +424,14 @@ def _density_sample_update(
 def density_view(
     fig: "Figure", trace_id: int, x0: float, x1: float, y0: float, y1: float, w: int, h: int
 ) -> tuple[dict[str, Any], list[bytes]]:
-    """Re-aggregate a Tier-2 scatter for a new viewport (§5: O(visible points);
-    the client requests this when pan/zoom leaves the shipped grid).
+    """Re-aggregate a density-mode scatter for a new viewport (O(visible
+    points); the client requests this when pan/zoom leaves the shipped grid).
 
-    The tier is a function of the *visible* count, not the total (§5) — deep
+    The render tier is a function of the *visible* count, not the total
+    (design dossier §5) — deep
     zoom drills back to real points, color/size channels restored, once the
     window fits the direct budget; zooming out returns to density. The per-view
-    decision rides each update as `mode` — never silent (§28)."""
+    decision rides each update as `mode` — never silent."""
     t = _trace(fig, trace_id)
     request = lod.ViewportRequest.from_client(x0, x1, y0, y1, w, h)
     lo_x, hi_x = request.x_range
@@ -557,15 +603,15 @@ def append_data(
     color: Any = None,
     size: Any = None,
 ) -> tuple[dict[str, Any], list[bytes]]:
-    """Streaming append (rust-engine §5, Phase-0): extend a trace's canonical
+    """Streaming append (Phase-0): extend a trace's canonical
     columns in place and return the client refresh message.
 
     The wire never ships deltas because it never needs to: every tier's payload
-    is screen-bounded by construction (§29 — direct ≤ budget, M4 ≤ 4·px,
-    density = grid), so re-emitting the affected trace costs O(pixels), not
-    O(N). The message carries a complete fresh payload; the client rebuilds
-    only the traces named in `affected` and re-requests its current view
-    through the normal stale-while-revalidate path (§17).
+    is screen-bounded by construction (design dossier §29 — direct ≤ budget,
+    M4 ≤ 4·px, density = grid), so re-emitting the affected trace costs
+    O(pixels), not O(N). The message carries a complete fresh payload; the
+    client rebuilds only the traces named in `affected` and re-requests its
+    current view through the normal stale-while-revalidate path.
 
     Phase-0 contract (violations raise before anything mutates):
     - scatter and line traces only;

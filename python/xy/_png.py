@@ -70,6 +70,14 @@ def encode(img: np.ndarray) -> bytes:
     flat = np.ascontiguousarray(img).reshape(-1, 4)
     # One 32-bit key per pixel for a fast unique/lookup.
     keys = flat.view(np.uint32).reshape(-1)
+    if keys.size > 65_536:
+        # Antialiased marks push most real charts past 256 colors; probing a
+        # stride sample first skips the full-image unique/argsort when the
+        # palette attempt is doomed. A probe over 256 colors proves the whole
+        # image is too, so the truecolor result is identical either way.
+        probe = keys[:: keys.size // 65_536]
+        if np.unique(probe).size > 256:
+            return png_truecolor(w, h, np.ascontiguousarray(img).tobytes())
     palette_keys, inverse = np.unique(keys, return_inverse=True)
     if palette_keys.size <= 256:
         palette = palette_keys.view(np.uint8).reshape(-1, 4)

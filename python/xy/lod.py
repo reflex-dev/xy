@@ -103,7 +103,8 @@ class LodPlan:
     exact: bool
 
     def metadata(self) -> dict[str, Any]:
-        """The spec-recorded tier decision (§28: never silent)."""
+        """The downsampling decision as recorded in the chart spec —
+        reductions are always disclosed there, never silent."""
         return {
             "mode": self.mode,
             "tier": self.tier,
@@ -178,15 +179,17 @@ def visible_mask(
     xv: np.ndarray, yv: np.ndarray, lo_x: float, hi_x: float, lo_y: float, hi_y: float
 ) -> np.ndarray:
     """Boolean mask of rows inside the window. NaN/±inf compare False on
-    either side, so non-finite rows never enter a drilled subset (§19)."""
+    either side, so non-finite rows never enter a drilled subset
+    (non-finite must never reach a vertex buffer; design dossier §19)."""
     return (xv >= lo_x) & (xv <= hi_x) & (yv >= lo_y) & (yv <= hi_y)
 
 
 def drill_decision(
     visible: int, budget: float, in_drill: bool, exit_factor: float = DRILL_EXIT_FACTOR
 ) -> bool:
-    """§5: the tier is a function of the *visible* count, hysteresis-guarded —
-    once drilled, stay until the count clearly exceeds the budget again."""
+    """The render tier is a function of the *visible* point count (design
+    dossier §5), hysteresis-guarded — once drilled down to real points, stay
+    until the count clearly exceeds the budget again."""
     return visible <= budget * (exit_factor if in_drill else 1.0)
 
 
@@ -711,8 +714,9 @@ def bin_2d_stratified_sample_row_range_for_target(
 
 def enter_drill(trace: Any, sel: np.ndarray) -> int:
     """Adopt `sel` as the trace's shipped subset. Picks/selections translate
-    through it (§17), and the version bump invalidates in-flight replies built
-    against the previous subset (§16: exact or nothing). Returns the seq."""
+    through it, and the version bump invalidates in-flight replies built
+    against the previous subset (exact or nothing; design dossier §16/§17).
+    Returns the seq."""
     trace.drill_mode = True
     trace.shipped_sel = sel
     trace.drill_seq += 1
@@ -730,9 +734,9 @@ def exit_drill(trace: Any) -> None:
 
 
 class BufferWriter:
-    """Accumulates a view-update's binary buffers (typed scalars, §29).
-    The update spec references entries by index — the same shape every tiered
-    chart's incremental updates use."""
+    """Accumulates a view-update's binary buffers (typed scalars, never JSON
+    numbers). The update spec references entries by index — the same shape
+    every tiered chart's incremental updates use."""
 
     def __init__(self) -> None:
         self.buffers: list[bytes] = []
@@ -763,10 +767,11 @@ F32_SAFE_MAG = 1e37
 
 
 def f32_safe_scale(offset: float, lo: float, hi: float) -> float:
-    """Scale for offset-encoding so finite f64 can never overflow f32 (§19:
-    nothing non-finite may reach a vertex buffer — a 1e300-magnitude domain
-    would otherwise encode to ±inf). Exactly 1.0 for every normal domain, so
-    the common path is unchanged; only absurd magnitudes normalize."""
+    """Scale for offset-encoding so finite f64 can never overflow f32
+    (nothing non-finite may reach a vertex buffer — a 1e300-magnitude domain
+    would otherwise encode to ±inf; design dossier §19). Exactly 1.0 for every
+    normal domain, so the common path is unchanged; only absurd magnitudes
+    normalize."""
     half = max(abs(lo - offset), abs(hi - offset))
     if not np.isfinite(half) or half <= F32_SAFE_MAG:
         return 1.0
@@ -836,9 +841,10 @@ def add_window_xy(
 def encode_window_xy(
     xs: np.ndarray, ys: np.ndarray, lo_x: float, hi_x: float, lo_y: float, hi_y: float
 ) -> tuple[dict, dict, np.ndarray, np.ndarray]:
-    """Offset-encode a drilled subset re-centered on the window midpoint (§16
-    deep-zoom rule) — f32 precision follows the viewport, not the dataset.
-    Returns wire metas ({offset, scale}) plus the encoded arrays."""
+    """Offset-encode a drilled subset re-centered on the window midpoint (the
+    design dossier's §16 deep-zoom rule) — f32 precision follows the viewport,
+    not the dataset. Returns wire metas ({offset, scale}) plus the encoded
+    arrays."""
     x_col, y_col = encode_window_xy_columns(xs, ys, lo_x, hi_x, lo_y, hi_y)
     return (x_col.meta, y_col.meta, x_col.values, y_col.values)
 
@@ -872,7 +878,7 @@ def local_log_density(
 ) -> np.ndarray:
     """Per-point log-normalized local density in [0,1] — the LUT coordinate
     the client blends during the drill handoff so freshly drilled marks wear
-    the aggregate's colormap (§5: never a palette jump)."""
+    the aggregate's colormap (never a palette jump)."""
     if len(xs) and hi_x > lo_x and hi_y > lo_y:
         return kernels.local_log_density(xs, ys, lo_x, hi_x, lo_y, hi_y, gw, gh)
     return np.zeros(len(xs), dtype=np.float32)

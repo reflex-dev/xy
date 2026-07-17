@@ -14,6 +14,18 @@ make check        # fast gate
 make check-full   # full production gate (needs Rust + Node 18+)
 ```
 
+## Check the active backend
+
+`import xy` is intentionally lightweight: it does not import NumPy or load the
+native core. Import `xy.kernels` to initialize the compute backend:
+
+```bash
+python -c "import xy.kernels as k; print(k.BACKEND)"
+```
+
+`BACKEND` is always `native`; an unavailable native core raises `ImportError`
+with remediation instead of silently degrading.
+
 Design questions are settled by [`docs/design-dossier.md`](docs/design-dossier.md)
 — code comments cite its §-numbers. Read the relevant section before changing
 behavior, and don't regress the invariants listed in `CLAUDE.md`.

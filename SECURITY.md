@@ -11,6 +11,15 @@ Please **do not** open a public issue for security reports. Instead, use
 [GitHub private vulnerability reporting](https://github.com/reflex-dev/xy/security/advisories/new)
 on this repository. Reports are acknowledged within a week.
 
+## Standalone HTML Safety And CSP
+
+`Chart.to_html()` produces one portable file with the client, spec, and data
+inlined. Its Content-Security-Policy blocks network fetches, but portable HTML
+requires inline scripts. A strict nonce/hash deployment needs an application
+wrapper that serves the JavaScript bundle separately. It escapes titles, axis
+labels, trace names, legends, series names, and categories, and non-finite JSON
+metadata is rejected.
+
 ## Scope notes for triage
 
 - **Standalone HTML export** (`Figure.to_html` / `Chart.to_html`) is the most

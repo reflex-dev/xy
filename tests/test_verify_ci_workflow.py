@@ -278,6 +278,43 @@ def test_ci_workflow_rejects_missing_visual_regression_smoke(tmp_path: Path) -> 
     assert any("test job" in error and "visual_regression_smoke" in error for error in errors)
 
 
+def test_ci_workflow_rejects_missing_cross_browser_conformance(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(
+            '        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" '
+            "node scripts/browser_conformance.mjs\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("browser_conformance" in error and "conformance gate" in error for error in errors)
+
+
+def test_ci_workflow_rejects_missing_playwright_browser_cache(tmp_path: Path) -> None:
+    text = verify_ci_workflow.DEFAULT_CI_WORKFLOW.read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        text.replace(
+            "      - name: Cache Playwright browsers\n"
+            "        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3\n"
+            "        with:\n"
+            "          path: ~/.cache/ms-playwright\n"
+            "          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}\n",
+            "",
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("browser_conformance" in error and "actions/cache" in error for error in errors)
+
+
 def test_ci_workflow_rejects_missing_regression_gate(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     path = tmp_path / "ci.yml"
@@ -390,6 +427,43 @@ def test_release_workflow_rejects_missing_native_wheel_verifier(tmp_path: Path) 
     errors = verify_ci_workflow.validate_release_workflow(path)
 
     assert any("release wheels job" in error and "verify_wheel" in error for error in errors)
+
+
+def test_release_workflow_rejects_unpinned_pyodide_runtime_contract(
+    tmp_path: Path,
+) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace('          RUSTFLAGS: "-C panic=abort"\n', "")
+        .replace('          version: "4.0.9"\n', "")
+        .replace("          npm i --no-save pyodide@0.29.4\n", ""),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any(
+        "release wasm job" in error and "panic=abort" in error and "pyodide@0.29.4" in error
+        for error in errors
+    )
+
+
+def test_release_workflow_rejects_nonblocking_pyodide_probe(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace(
+            "    runs-on: ubuntu-latest\n",
+            "    runs-on: ubuntu-latest\n    continue-on-error: true\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("wasm job must block publishing" in error for error in errors)
 
 
 def test_release_workflow_rejects_missing_sdist_norust_smoke(tmp_path: Path) -> None:

@@ -7,7 +7,7 @@ WHEEL ?=
 BENCHMARK_JSON ?= benchmark.json
 BENCHMARK_KIND ?= auto
 
-.PHONY: help setup setup-browser check check-full check-browser check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-benchmark-harness check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
+.PHONY: help setup setup-browser check check-full check-browser check-conformance check-docs check-examples check-security check-errors check-api check-import check-ci check-claims check-benchmark-harness check-pyplot check-pyplot-speed check-sdist check-wheel check-artifacts check-benchmark-report list-checks test lint format typecheck public-api python-floor js-check rust-check abi-smoke
 
 help:
 	@printf '%s\n' \
@@ -18,6 +18,7 @@ help:
 		'  make check            run the fast local verification gate' \
 		'  make check-full       run JS, Rust, and ABI gates too' \
 		'  make check-browser    run browser smokes (set CHROMIUM=/path/to/chrome)' \
+		'  make check-conformance run accessibility + Chromium/Firefox/WebKit conformance' \
 		'  make check-docs       run docs examples and public claim guardrails' \
 		'  make check-examples   run README/API examples and Reflex asset registry checks' \
 		'  make check-security   run standalone HTML safety and client text-sink checks' \
@@ -65,6 +66,13 @@ check-browser:
 		exit 2; \
 	}
 	$(PYTHON) scripts/verify_local.py --browser --chromium "$(CHROMIUM)"
+
+check-conformance:
+	@node -e "require.resolve('playwright')" >/dev/null 2>&1 || { \
+		echo 'Playwright is required. Run: make setup-browser && npx playwright install chromium firefox webkit' >&2; \
+		exit 2; \
+	}
+	node scripts/browser_conformance.mjs
 
 check-docs:
 	$(PYTHON) scripts/verify_local.py --only examples,claim_guardrails

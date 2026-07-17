@@ -34,6 +34,27 @@ screen-bounded performance core, but the stable commitments today are narrower:
 The composition API, chart-type set, visual styling surface, and Reflex
 integration are still experimental and may change before a 1.0 release.
 
+## Accessibility and Cross-Browser Conformance Status
+
+The current conformance tier is intentionally narrower than a claim of full
+WCAG parity or pixel-identical output across browsers. The browser client now
+ships a parallel semantic chart region and generated trace/axis summary, a
+polite live region for hover and keyboard readouts, focusable direct-point
+navigation with Arrow/Home/End keys, named toolbar controls with toggle state,
+visible focus styling, reduced-motion behavior, and forced-colors affordances.
+
+CI runs the same focused chart in Playwright Chromium, Firefox, and WebKit. It
+checks those semantics and interactions in every engine, compares WebGL output
+with a coarse per-channel perceptual signature, and compares DOM chrome through
+layout boxes rather than browser-font glyph pixels. The gate does **not** yet
+cover aggregated-bin keyboard navigation, a view-as-table escape hatch,
+screen-reader/OS combinations, every chart family, or full-page screenshot
+parity. Until those surfaces have dedicated evidence, neither full
+accessibility parity nor broad perceptual cross-browser consistency is a safe
+public claim. Run the focused tier locally with `make check-conformance` after
+installing all three engines with
+`npx playwright install chromium firefox webkit`.
+
 ## Release-Blocking Gates
 
 These must pass before publishing or making a broad performance claim.
@@ -53,6 +74,7 @@ These must pass before publishing or making a broad performance claim.
 | Native ABI | C ABI can be loaded from the built core | `python scripts/abi_smoke.py` |
 | JavaScript | Committed bundles match source | `node js/build.mjs --check` |
 | Browser render | WebGL smoke reaches real pixels | `python scripts/render_smoke_nonumpy.py <chromium>` |
+| Accessibility / cross-browser | Semantic interaction checks plus tolerant WebGL/layout comparison pass in Chromium, Firefox, and WebKit | `make check-conformance` |
 | Real chart render | A real composed chart exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |
 | sdist | Source archive contains required source/bundles, benchmark regression harness/baseline, release docs/tests/scripts, the Reflex example app, `PKG-INFO` version/dependencies matching `pyproject.toml`, no duplicate members, and no generated junk | `python scripts/verify_sdist.py dist/*.tar.gz` |
 | Native wheel | Platform wheel contains package-only files, exactly one native library, `METADATA` version/dependencies matching `pyproject.toml`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
@@ -301,19 +323,15 @@ Before tagging a release:
 - Confirm CI built and verified native wheels for Linux glibc and musl/Alpine
   (x86-64, aarch64, armv7), macOS (x86-64, Apple Silicon), and Windows (x86, x64,
   arm64).
-- The Pyodide/Emscripten WASM wheel is **built but not functional at runtime**
-  and is excluded from the supported set. Verified 2026-07-08 by loading the
-  wheel in Pyodide 0.26.4 (node): it is a structurally valid side-module (wasm
-  magic, `dylink` section, all `fc_*` symbols exported), and micropip installs
-  it, but `WebAssembly.instantiate` fails with `LinkError: Import "env"
-  "__cpp_exception": tag import requires a WebAssembly.Tag`. Root cause: the
-  Rust core builds with the default `panic=unwind`, which emits a C++
-  exception-handling tag import Pyodide's runtime does not provide. Fix
-  direction: build the `wasm32-unknown-emscripten` target with `panic=abort`
-  (likely `-Z build-std=std,panic_abort`) or force emscripten's legacy JS
-  exception handling, then re-verify with a Pyodide load. The wasm job stays
-  `continue-on-error` and the wheel is not advertised as working until a
-  Pyodide runtime load passes in CI.
+- Confirm the Pyodide/Emscripten wheel passes its runtime load gate, not only
+  its structural wheel check. The tested toolchain is Rust 1.97.0 with
+  `panic=abort`, Emscripten 4.0.9, the `pyodide_2025_0` wheel ABI, and Pyodide
+  0.29.4. The abort strategy is required: the previous unwind build imported a
+  `__cpp_exception` WebAssembly tag that Pyodide's main module did not provide.
+  `scripts/pyodide_load_smoke.py` installs the built artifact with micropip,
+  loads the C ABI through `ctypes`, verifies `fc_abi_version`, and calls the
+  native `min_max` kernel. The wasm job is release-blocking so an ABI or
+  toolchain drift cannot silently ship a build-only, unloadable artifact.
 - Confirm the no-Rust install job passed (it must build, install, and then
   raise a clear ImportError on first compute — never a silent fallback).
 - Confirm the sdist verifier passed and the source archive contains the expected

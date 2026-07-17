@@ -66,6 +66,11 @@ uv run ruff format --check .
 The two `*_smoke*` scripts need neither numpy nor PyPI — they verify the
 Python↔Rust ABI and the render client directly, and run first in CI.
 
+Never credit Claude in git history: no Claude author or committer identity,
+no `Co-Authored-By: Claude` trailers, no AI attribution in commit messages,
+PRs, or code. Set `git config user.name/user.email` to the human author
+(e.g. from `git log origin/main`) before committing.
+
 ## Invariants (from the dossier — don't regress silently)
 
 - No JSON numbers on the wire; data moves as raw f32 buffers (§29).

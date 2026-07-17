@@ -21,6 +21,7 @@ DEFAULT_CODSPEED_WORKFLOW = ROOT / ".github" / "workflows" / "codspeed.yml"
 DEFAULT_RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 DEFAULT_WORKFLOW = DEFAULT_CI_WORKFLOW
 REQUIRED_CI_JOBS = {
+    "browser_conformance",
     "matplotlib_reference",
     "test",
     "python_floor",
@@ -227,6 +228,21 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         "if-no-files-found: warn",
         "docs/benchmark_metrics.md",
         "transport.json",
+    )
+    _require_job_contains(
+        errors,
+        jobs,
+        "browser_conformance",
+        "CI",
+        "accessibility and three-engine conformance gate",
+        'node-version: "22"',
+        "npm ci",
+        "actions/cache@5a3ec84eff668545956fd18022155c47e93e2684",
+        "~/.cache/ms-playwright",
+        "playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}",
+        "npx playwright install --with-deps chromium firefox webkit",
+        "node js/build.mjs --check",
+        "node scripts/browser_conformance.mjs",
     )
     _require_job_contains(
         errors,
@@ -448,13 +464,21 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         jobs,
         "wasm",
         "release",
-        "best-effort Pyodide/Emscripten WASM wheel",
-        "continue-on-error: true",
+        "runtime-verified Pyodide/Emscripten WASM wheel",
+        "toolchain: 1.97.0",
         "wasm32-unknown-emscripten",
         "setup-emsdk",
+        'version: "4.0.9"',
+        'RUSTFLAGS: "-C panic=abort"',
+        "pyodide_2025_0_wasm32",
+        "pyodide@0.29.4",
+        "scripts/pyodide_load_smoke.py",
         "scripts/verify_wheel.py",
         "--expect-native",
     )
+    wasm_job = jobs.get("wasm", "")
+    if "continue-on-error:" in wasm_job:
+        errors.append("release wasm job must block publishing when the Pyodide runtime probe fails")
     _require_job_contains(
         errors,
         jobs,

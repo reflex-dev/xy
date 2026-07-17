@@ -306,8 +306,9 @@ def scatter(
 ) -> Mark:
     """A scatter series. `x`/`y`/`color`/`size` may be arrays or column names in
     `data`. `color` is auto-typed (numeric → colormap, categorical → palette);
-    `symbol`/`stroke`/`stroke_width` style the markers; large series
-    auto-aggregate to a Tier-2 density surface (§5)."""
+    `symbol`/`stroke`/`stroke_width` style the markers. Very large series are
+    automatically drawn as an aggregated density surface instead of individual
+    points (`density=True/False` forces or disables this)."""
     return Mark(
         kind="scatter",
         x=x,
@@ -349,8 +350,9 @@ def line(
     x_axis: str = "x",
     y_axis: str = "y",
 ) -> Mark:
-    """A line series (M4-decimated above the threshold, §5 Tier 1).
-    `curve="smooth"` renders a monotone cubic; `dash` dashes the line."""
+    """A line series. Very long series are automatically downsampled for
+    display without changing the drawn shape. `curve="smooth"` renders a
+    monotone cubic; `dash` dashes the line."""
     return Mark(
         kind="line",
         x=x,
@@ -2146,7 +2148,7 @@ class Chart(Component):
         )
 
     def memory_report(self) -> dict[str, Any]:
-        """Byte-level accounting of the figure's buffers (§27 caches)."""
+        """Byte-level accounting of the chart's data and cache buffers."""
         return self.figure().memory_report()
 
     # -- live data (structure-immutable: build a new chart for new marks) ----
@@ -2649,7 +2651,7 @@ class FacetChart(Component):
         )
 
     def memory_report(self) -> dict[str, Any]:
-        """Byte-level accounting of every panel's buffers (§27 caches)."""
+        """Byte-level accounting of every panel's data and cache buffers."""
         return self.figure().memory_report()
 
 

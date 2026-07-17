@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional, Union
 
+# Runtime import so `typing.get_type_hints(gca)` resolves; `_axes` never
+# imports `_state`, so there is no cycle.
+from ._axes import Axes
 from ._mplfig import Figure
 from ._rc import rcParams
 

@@ -212,7 +212,7 @@ Object.assign(ChartView.prototype, {
     return lines.length ? lines : this._defaultTooltipLines(row);
   },
 
-  _renderTooltip(row, clientX, clientY) {
+  _renderTooltip(row, clientX, clientY, options = {}) {
     if (!row || this.spec.show_tooltip === false) {
       this.tooltip.style.display = "none";
       return;
@@ -228,6 +228,14 @@ Object.assign(ChartView.prototype, {
       if (i) this.tooltip.appendChild(document.createElement("br"));
       this.tooltip.appendChild(document.createTextNode(ln));
     });
+    if (this.a11yLive && options.announce !== false) {
+      const prefix = this._a11yKeyboardReadout;
+      const detail = lines.join(", ");
+      const announcement = prefix
+        ? `Point ${prefix.flat + 1} of ${prefix.total}. ${detail}`
+        : detail;
+      if (this.a11yLive.textContent !== announcement) this.a11yLive.textContent = announcement;
+    }
     this.tooltip.style.display = "block";
     const tw = this.tooltip.offsetWidth;
     this.tooltip.style.left = Math.min(lx + 12, this.size.w - tw - 4) + "px";

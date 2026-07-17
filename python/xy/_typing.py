@@ -13,12 +13,10 @@ re-uses these same names so both API layers read alike.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Protocol, TypeAlias, Union
+from typing import Protocol, TypeAlias, Union
 
+import numpy as np
 import numpy.typing as npt
-
-if TYPE_CHECKING:
-    import numpy as np
 
 # One-dimensional data: a list/tuple of numbers, a NumPy array, or anything
 # that converts to one (pandas Series/Index, array-API objects, generators
@@ -28,7 +26,7 @@ if TYPE_CHECKING:
 ArrayLike: TypeAlias = npt.ArrayLike
 
 # A single scalar cell of data: Python or NumPy numbers.
-Scalar: TypeAlias = Union[int, float, "np.integer", "np.floating"]
+Scalar: TypeAlias = Union[int, float, np.integer, np.floating]
 
 # One color: a name ("tab:blue", "rebeccapurple"), hex string ("#22aa88"),
 # shorthand ("r", "k"), or an RGB(A) tuple of floats in [0, 1].

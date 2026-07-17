@@ -121,29 +121,36 @@ jobs:
           name: dist-${{ matrix.plat }}
           path: dist/*.whl
 
-  # Best-effort Pyodide / Emscripten WASM wheel for in-browser CPython. The core
-  # cross-compiles to wasm32-unknown-emscripten; loading a side-module cdylib via
-  # ctypes under Pyodide is the remaining risk, so this job is non-blocking and
-  # the wheel is treated as experimental (see docs/production-readiness.md).
+  # Pyodide / Emscripten WASM wheel for in-browser CPython. Pyodide's platform
+  # ABI is compiler-sensitive, so keep Rust, Emscripten, the wheel tag, and the
+  # runtime probe pinned as one tested set (see docs/production-readiness.md).
   wasm:
-    name: Wheel pyodide (experimental)
+    name: Wheel Pyodide (runtime verified)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
+          toolchain: 1.97.0
           targets: wasm32-unknown-emscripten
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
       - uses: mymindstorm/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
+        with:
+          # Pyodide 0.29.x / pyodide_2025_0 ABI compiler version.
+          version: "4.0.9"
       - name: Verify committed JS bundles are fresh
         run: node js/build.mjs --check
       - name: Build JS client
         run: node js/build.mjs
       - name: Cross-compile the native core (emscripten)
+        env:
+          # Unwinding imports a __cpp_exception WebAssembly tag that Pyodide's
+          # main module does not provide. Abort keeps the C ABI side module
+          # exception-free and was runtime-verified against Pyodide 0.29.4.
+          RUSTFLAGS: "-C panic=abort"
         run: cargo build --release --target wasm32-unknown-emscripten
       - name: Build the Pyodide wheel
         shell: bash
@@ -151,21 +158,18 @@ jobs:
           XY_REQUIRE_CARGO: "1"
           XY_SKIP_CARGO: "1"
           XY_CARGO_TARGET: wasm32-unknown-emscripten
-          XY_WHEEL_PLATFORM: pyodide_2024_0_wasm32
+          XY_WHEEL_PLATFORM: pyodide_2025_0_wasm32
         run: uv build --wheel
       - name: Verify wheel contents
         shell: bash
         run: |
           whl=$(ls dist/*.whl)
           python scripts/verify_wheel.py "$whl" --expect-native
-      # Runtime load probe: "builds" is not "loads". This installs the wheel in
-      # a real Pyodide (node) and calls a native kernel. It currently FAILS
-      # (Rust panic=unwind emits a __cpp_exception import Pyodide can't satisfy)
-      # — kept non-gating via the job's continue-on-error so the experimental
-      # wheel never blocks a release, but the status stays visible until fixed.
-      - name: Pyodide runtime load probe (informational)
+      # "Builds" is not "loads": install the exact wheel in a real Pyodide
+      # runtime and call both the C ABI version function and a native kernel.
+      - name: Pyodide runtime load probe
         run: |
-          npm i --no-save pyodide@0.26.4
+          npm i --no-save pyodide@0.29.4
           whl=$(ls dist/*.whl)
           python scripts/pyodide_load_smoke.py "$whl"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

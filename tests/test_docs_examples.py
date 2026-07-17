@@ -9,6 +9,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 API_EXAMPLES = ROOT / "docs" / "api-examples.md"
 README = ROOT / "README.md"
+CONTRIBUTING = ROOT / "CONTRIBUTING.md"
+SECURITY = ROOT / "SECURITY.md"
 BENCHMARK_DOC = ROOT / "docs" / "benchmark.md"
 PRODUCTION_DOC = ROOT / "docs" / "production-readiness.md"
 REFLEX_SHAPED_API_DOC = ROOT / "docs" / "design" / "reflex-shaped-api.md"
@@ -113,10 +115,17 @@ def test_readme_python_example_runs(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     namespace: dict[str, object] = {"__name__": f"xy_readme_example_{heading}"}
+    uses_pyplot_show = source.rstrip().endswith("plt.show()")
+    if uses_pyplot_show:
+        import xy.pyplot as pyplot
+
+        monkeypatch.setattr(pyplot, "show", lambda *_args, **_kwargs: None)
 
     exec(compile(_capture_final_expression(source), str(README), "exec"), namespace)
 
     result = namespace.get("__example_result__")
+    if uses_pyplot_show and result is None:
+        result = namespace.get("fig")
     assert result is not None, f"{heading} README example should end with an expression"
     if isinstance(result, str):
         assert "xy.renderStandalone" in result
@@ -240,8 +249,8 @@ def test_api_examples_quick_reference_covers_registered_composition_marks() -> N
         assert f"fc.{mark}_chart" in rows or mark in {"bar"}
 
 
-def test_readme_documents_standalone_html_security_contract() -> None:
-    text = " ".join(README.read_text(encoding="utf-8").split())
+def test_security_policy_documents_standalone_html_contract() -> None:
+    text = " ".join(SECURITY.read_text(encoding="utf-8").split())
     required = [
         "Standalone HTML Safety And CSP",
         "Content-Security-Policy",
@@ -276,6 +285,14 @@ def test_readme_documents_stability_and_backend_contract() -> None:
         "native Rust kernels",
         "required compute core",
         "raises a clear error rather than degrading",
+    ]
+    for marker in required:
+        assert marker in text
+
+
+def test_contributing_documents_backend_check() -> None:
+    text = " ".join(CONTRIBUTING.read_text(encoding="utf-8").split())
+    required = [
         "Check the active backend",
         "is intentionally lightweight",
         "does not import NumPy or load the native core",
@@ -288,23 +305,16 @@ def test_readme_documents_stability_and_backend_contract() -> None:
         assert marker in text
 
 
-def test_readme_documents_install_backend_matrix() -> None:
+def test_readme_documents_install_paths() -> None:
     text = " ".join(README.read_text(encoding="utf-8").split())
     required = [
-        "Install/backend quick matrix",
-        "| Path | Command | Toolchain needed | Result |",
-        "Published wheel",
-        "`pip install xy`",
-        "none",
-        "`native` on supported platform wheels",
-        "Source with Rust",
-        '`uv pip install -e ".[dev]"`',
-        "Platform/build with no native core",
-        "clear `ImportError` on first compute, naming supported platforms",
-        "Rust is required from source",
+        "uv add xy",
+        "Published wheels contain the Python package, JavaScript client, and native Rust core",
+        "End users do not need Rust, Node, npm, or a CDN",
     ]
     for marker in required:
         assert marker in text
+    assert "Install/backend quick matrix" not in text
 
 
 def test_readme_getting_started_includes_small_business_chart() -> None:
@@ -313,8 +323,8 @@ def test_readme_getting_started_includes_small_business_chart() -> None:
         "Create a small business chart",
         "Revenue vs pipeline",
         "USD thousands",
-        "fc.line(months, revenue",
-        "fc.line(months, pipeline",
+        "xy.line(months, revenue",
+        "xy.line(months, pipeline",
     ]
     for marker in required:
         assert marker in text
