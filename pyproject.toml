@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "xy"
-version = "0.1.0"
+version = "0.0.1"
 description = "Experimental Python charting engine with a native Rust core, binary columnar transport, and a GPU render client"
 readme = "README.md"
 requires-python = ">=3.11"
