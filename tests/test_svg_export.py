@@ -55,6 +55,30 @@ def test_every_chart_kind_exports_wellformed_svg() -> None:
         assert 'xmlns="http://www.w3.org/2000/svg"' in svg
 
 
+def test_svg_legend_text_honors_theme_text_color() -> None:
+    chart = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[0.0, 1.0], name="walk"),
+        xy.legend(loc="upper right", title="models"),
+        xy.theme(text_color="#ffffff"),
+        width=300,
+        height=200,
+    )
+    svg = chart.figure().to_svg()
+    assert re.search(r'<text[^>]*fill="#ffffff"[^>]*>walk</text>', svg)
+    assert re.search(r'<text[^>]*fill="#ffffff"[^>]*>models</text>', svg)
+
+    # Without a theme the legend keeps the light-mode default text color.
+    plain = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[0.0, 1.0], name="walk"),
+        xy.legend(loc="upper right"),
+        width=300,
+        height=200,
+    )
+    assert re.search(
+        r'<text[^>]*fill="rgba\(32,32,32,0\.85\)"[^>]*>walk</text>', plain.figure().to_svg()
+    )
+
+
 def test_svg_stays_screen_bounded_for_large_lines() -> None:
     n = 2_000_000
     y = np.cumsum(np.random.default_rng(1).normal(size=n))
