@@ -5,10 +5,10 @@ description: Browse every chart type and visual pattern available in XY.
 
 # Gallery
 
-Start with the visual result you need. Every public chart type has a tile below,
-grouped to match the Chart Gallery navigation. Each tile opens a focused family
-page with guidance on when to use the chart, a live example, its expected data
-shape, common variants, and the options that matter most.
+Start with the visual result you need. Every public chart type is represented
+below, grouped to match the Chart Gallery navigation. Each tile opens a focused
+family page with guidance on when to use the chart, a live example, its expected
+data shape, common variants, and the options that matter most.
 
 ~~~python exec
 from xy_docs.gallery import chart_gallery_grid
@@ -19,8 +19,9 @@ chart_gallery_grid()
 ~~~
 
 The representative tile in each family is interactive; the remaining previews
-are SVGs rendered by XY itself so this index stays quick and avoids creating 30
-WebGL contexts at once. Every linked family page includes a full-size live demo.
+are SVGs rendered by XY itself so this index stays quick and avoids creating a
+WebGL context for every tile at once. Every linked family page includes a
+full-size live demo.
 
 All chart families use the same [composition model](/docs/xy/core-concepts/),
 [data binding](/docs/xy/core-concepts/data/), styling surface, and display/export

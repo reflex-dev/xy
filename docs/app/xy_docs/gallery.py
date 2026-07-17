@@ -40,25 +40,6 @@ main:has(#xy-chart-gallery) > div:has(#toc-navigation) {
 main:has(#xy-chart-gallery) > div:has(article #xy-chart-gallery) {
   max-width: 88rem;
 }
-#xy-chart-gallery [data-xy-slot="modebar"],
-#xy-chart-gallery [data-xy-modebar-menu] {
-  border-color: var(--secondary-a6);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
-}
-#xy-chart-gallery [data-xy-slot="modebar"] {
-  padding: 2px;
-}
-#xy-chart-gallery [data-xy-slot="modebar_button"] {
-  border-radius: 6px;
-  transition: background-color 150ms ease, color 150ms ease;
-}
-#xy-chart-gallery [data-xy-slot="modebar_button"]:hover {
-  background: var(--chart-modebar-active);
-}
-#xy-chart-gallery [data-xy-slot="modebar_button"].xy-active {
-  color: var(--primary-11);
-}
 """
 
 
@@ -304,15 +285,19 @@ def _hexbin() -> xy.Chart:
 
 
 def _heatmap() -> xy.Chart:
+    purple_pale = tuple(bytes.fromhex("EDE9FE"))
+    purple_light = tuple(bytes.fromhex(_PURPLE_LIGHT[1:]))
+    purple_mid = tuple(bytes.fromhex("A78BFA"))
+    purple = tuple(bytes.fromhex(_PURPLE[1:]))
+    purple_dark = tuple(bytes.fromhex(_PURPLE_DARK[1:]))
     return xy.heatmap_chart(
         xy.heatmap(
             [
-                [0.1, 0.3, 0.5, 0.2],
-                [0.2, 0.7, 1.0, 0.4],
-                [0.1, 0.4, 0.6, 0.3],
+                [purple_pale, purple_light, purple_mid, purple_light],
+                [purple_light, purple, purple_dark, purple],
+                [purple_pale, purple_light, purple_mid, purple_light],
             ],
-            colormap="purples",
-            domain=(-0.2, 1.0),
+            opacity=1.0,
         ),
         _gallery_theme(),
         width=_WIDTH,
@@ -571,8 +556,12 @@ _GALLERY_GROUPS: tuple[GalleryGroup, ...] = (
         (
             ("Line", "Continuous trends and ordered series.", _line, True),
             ("Area", "Magnitude over an ordered domain.", _area, False),
-            ("Step", "Values that change at each observation.", _step, False),
-            ("Stairs", "Binned values defined by explicit edges.", _stairs, False),
+            (
+                "Step + Stairs",
+                "Piecewise-constant values at observations or explicit bin edges.",
+                _step,
+                False,
+            ),
         ),
     ),
     (
@@ -584,8 +573,12 @@ _GALLERY_GROUPS: tuple[GalleryGroup, ...] = (
         "Bar and Column",
         "/charts/bar-and-column/",
         (
-            ("Bar", "Horizontal category comparisons.", _bar, False),
-            ("Column", "Vertical category comparisons.", _column, True),
+            (
+                "Bar + Column",
+                "Horizontal and vertical category comparisons.",
+                _column,
+                True,
+            ),
         ),
     ),
     (
@@ -679,13 +672,24 @@ def _iter_gallery_items() -> Iterator[tuple[str, str, str, ChartFactory, bool]]:
 def _responsive_gallery_svg(chart: ChartSource) -> str:
     """Replace static-renderer fallback paints with site color-mode tokens."""
     svg = chart.to_svg()
+    if any(getattr(child, "kind", None) == "hexbin" for child in chart.children):
+        # The first ``purples`` stop is nearly white. Keep low-count hexagons
+        # visible by promoting that Hexbin-only stop to the light site purple.
+        svg = svg.replace("rgb(252,251,253)", _PURPLE_LIGHT)
     for paint, token in _STATIC_SVG_PAINT_TOKENS.items():
         svg = svg.replace(paint, token)
     return svg
 
 
-def _gallery_preview(chart_factory: ChartFactory, *, live: bool) -> rx.Component:
+def _gallery_chart(chart_factory: ChartFactory) -> ChartSource:
+    """Build a preview chart without the full-page interaction toolbar."""
     chart = chart_factory()
+    chart.children = (*chart.children, xy.modebar(show=False))
+    return chart
+
+
+def _gallery_preview(chart_factory: ChartFactory, *, live: bool) -> rx.Component:
+    chart = _gallery_chart(chart_factory)
     if live:
         return reflex_xy.chart(chart, width="100%", height="220px")
 

@@ -48,6 +48,7 @@ from xy_docs.breadcrumb import xy_docs_breadcrumb
 from xy_docs.config import DOCS_CONFIG, DOCS_NAVIGATION, DOCS_SECTIONS
 from xy_docs.footer import xy_docs_footer
 from xy_docs.gallery import (
+    _gallery_chart,
     _iter_gallery_items,
     _responsive_gallery_svg,
     chart_gallery_grid,
@@ -448,8 +449,8 @@ def test_chart_gallery_grid_renders_every_type_with_bounded_live_previews(
     )
     assert len(chart_section) == 9
     assert rendered.count("XYChart") == 9
-    assert rendered.count(" chart guide") == 30
-    assert rendered.count("dangerouslySetInnerHTML") == 21
+    assert rendered.count(" chart guide") == 28
+    assert rendered.count("dangerouslySetInnerHTML") == 19
     assert rendered.count('id:"xy-chart-gallery"') == 1
     assert rendered.count("main:has(#xy-chart-gallery) > div:has(#toc-navigation)") == 1
     assert (
@@ -461,7 +462,7 @@ def test_chart_gallery_grid_renders_every_type_with_bounded_live_previews(
     assert rendered.count("display: none") == 1
     assert rendered.count("max-width: 88rem") == 1
     assert rendered.count("2xl:grid-cols-3") == 9
-    assert rendered.count("h-[220px]") == 51
+    assert rendered.count("h-[220px]") == 47
     assert rendered.count('["height"] : "220px"') == 9
     for chart_type in (
         "Line",
@@ -508,6 +509,40 @@ def test_chart_gallery_grid_renders_every_type_with_bounded_live_previews(
     } == app_payloads_before
 
 
+def test_chart_gallery_combines_only_the_requested_related_tiles() -> None:
+    """Merge Step/Stairs and Bar/Column without collapsing other chart types."""
+    titles = {
+        title
+        for title, _description, _route, _chart_factory, _live in _iter_gallery_items()
+    }
+
+    assert len(titles) == 28
+    assert {"Step + Stairs", "Bar + Column"} <= titles
+    assert {"Step", "Stairs", "Bar", "Column"}.isdisjoint(titles)
+    assert {
+        "Box",
+        "Violin",
+        "Hexbin",
+        "Heatmap",
+        "Contour",
+        "Error Band",
+        "Error Bar",
+        "Facet Chart",
+        "Layered Marks",
+    } <= titles
+
+
+def test_chart_gallery_hides_the_modebar_from_every_preview() -> None:
+    """Keep compact gallery tiles focused on the chart itself."""
+    for _title, _description, _route, chart_factory, _live in _iter_gallery_items():
+        chart = _gallery_chart(chart_factory)
+        modebars = [
+            child for child in chart.children if type(child).__name__ == "Modebar"
+        ]
+        assert len(modebars) == 1
+        assert modebars[0].show is False
+
+
 def test_chart_gallery_uses_only_purple_and_gray() -> None:
     """Keep every rendered gallery preview inside one restrained palette."""
     svg_paint = re.compile(
@@ -546,6 +581,45 @@ def test_chart_gallery_uses_only_purple_and_gray() -> None:
     }
 
     assert not {title: paints for title, paints in violations.items() if paints}
+
+
+def test_density_grid_heatmap_uses_only_purple_truecolor() -> None:
+    """Keep the live density preview on one cohesive purple ramp."""
+    heatmap_factory = next(
+        chart_factory
+        for title, _description, _route, chart_factory, _live in _iter_gallery_items()
+        if title == "Heatmap"
+    )
+    heatmap = heatmap_factory()
+    mark = next(child for child in heatmap.children if child.kind == "heatmap")
+    colors = {tuple(color) for row in mark.props["z"] for color in row}
+
+    assert (255, 255, 255) not in colors
+    assert colors == {
+        (237, 233, 254),
+        (196, 181, 253),
+        (167, 139, 250),
+        (110, 86, 207),
+        (101, 80, 185),
+    }
+    assert all(blue > red and blue > green for red, green, blue in colors)
+
+
+def test_density_grid_hexbin_replaces_white_bins_with_light_purple() -> None:
+    """Keep every occupied Hexbin visible as a shade of purple."""
+    hexbin_factory = next(
+        chart_factory
+        for title, _description, _route, chart_factory, _live in _iter_gallery_items()
+        if title == "Hexbin"
+    )
+    hexbin = hexbin_factory()
+    raw_svg = hexbin.to_svg()
+    responsive_svg = _responsive_gallery_svg(hexbin)
+
+    assert "rgb(252,251,253)" in raw_svg
+    assert "rgb(252,251,253)" not in responsive_svg
+    assert "var(--primary-7)" in responsive_svg
+    assert "rgb(63,0,125)" in responsive_svg
 
 
 def test_chart_gallery_previews_follow_the_site_color_mode() -> None:
