@@ -9,8 +9,9 @@ from importlib.resources import files
 import numpy as np
 import reflex as rx
 import reflex_xy
-import xy
 from PIL import Image, ImageDraw, ImageFont
+
+import xy
 
 
 @dataclass(frozen=True)
@@ -217,15 +218,15 @@ def _squared_distance_transform_1d(values: np.ndarray) -> np.ndarray:
 
     for site in finite_sites[1:]:
         previous = sites[envelope_size]
-        boundary = (
-            values[site] + site * site - values[previous] - previous * previous
-        ) / (2 * (site - previous))
+        boundary = (values[site] + site * site - values[previous] - previous * previous) / (
+            2 * (site - previous)
+        )
         while boundary <= boundaries[envelope_size]:
             envelope_size -= 1
             previous = sites[envelope_size]
-            boundary = (
-                values[site] + site * site - values[previous] - previous * previous
-            ) / (2 * (site - previous))
+            boundary = (values[site] + site * site - values[previous] - previous * previous) / (
+                2 * (site - previous)
+            )
         envelope_size += 1
         sites[envelope_size] = site
         boundaries[envelope_size] = boundary
@@ -299,12 +300,8 @@ def _sample(model: _Model, count: int, seed: int) -> tuple[np.ndarray, ...]:
     chosen = rng.choice(probabilities.size, count, replace=True, p=probabilities)
     row, column = np.divmod(chosen, model.pdf.shape[1])
     raster = model.raster
-    x = (
-        column + rng.uniform(-0.5, 0.5, count) - (raster.x_bbox[0] - 0.5)
-    ) / raster.pixels_per_bin
-    y = (
-        raster.x_bbox[3] - 0.5 - row - rng.uniform(-0.5, 0.5, count)
-    ) / raster.pixels_per_bin
+    x = (column + rng.uniform(-0.5, 0.5, count) - (raster.x_bbox[0] - 0.5)) / raster.pixels_per_bin
+    y = (raster.x_bbox[3] - 0.5 - row - rng.uniform(-0.5, 0.5, count)) / raster.pixels_per_bin
     return x, y, model.pdf[row, column]
 
 
@@ -325,9 +322,7 @@ def _interpolate(values: np.ndarray, stops: np.ndarray) -> np.ndarray:
     return stops[lower] * (1 - mix) + stops[upper] * mix
 
 
-def _bin_colors(
-    counts: np.ndarray, config: SDFPlotConfig, palette: SDFPalette
-) -> np.ndarray:
+def _bin_colors(counts: np.ndarray, config: SDFPlotConfig, palette: SDFPalette) -> np.ndarray:
     finite = np.isfinite(counts)
     rgba = np.zeros((*counts.shape, 4), dtype=float)
     if not finite.any():
@@ -345,14 +340,10 @@ def _bin_colors(
     return rgba
 
 
-def _heatmap_colors(
-    pdf: np.ndarray, config: SDFPlotConfig, palette: SDFPalette
-) -> np.ndarray:
+def _heatmap_colors(pdf: np.ndarray, config: SDFPlotConfig, palette: SDFPalette) -> np.ndarray:
     clipped = np.clip(pdf, 0, 1)
     background = palette.dark_background.removeprefix("#")
-    background_rgb = (
-        np.array([int(background[index : index + 2], 16) for index in (0, 2, 4)]) / 255
-    )
+    background_rgb = np.array([int(background[index : index + 2], 16) for index in (0, 2, 4)]) / 255
     rgba = np.empty((*pdf.shape, 4), dtype=float)
     rgba[..., :3] = _interpolate(
         clipped**config.heatmap_gamma,
@@ -407,9 +398,7 @@ def build_sdf_plots(
         np.ceil(model.ylim[1] / config.bin_size) * config.bin_size + config.bin_size,
         config.bin_size,
     )
-    counts = np.histogram2d(x[sample_slice], y[sample_slice], bins=(x_edges, y_edges))[
-        0
-    ].T
+    counts = np.histogram2d(x[sample_slice], y[sample_slice], bins=(x_edges, y_edges))[0].T
     visible_counts = np.where(counts >= config.bin_min_count, counts, np.nan)
     bins_scatter = _chart(
         xy.scatter(
@@ -472,9 +461,7 @@ def build_sdf_plots(
 
     display_slice = slice(0, config.density_display_points)
     display_pdf = sampled_pdf[display_slice]
-    sizes = config.density_size_offset + config.density_size_scale * np.clip(
-        display_pdf, 0, 1
-    )
+    sizes = config.density_size_offset + config.density_size_scale * np.clip(display_pdf, 0, 1)
     million_scatter = _chart(
         xy.scatter(
             x[display_slice],
