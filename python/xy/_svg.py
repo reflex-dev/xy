@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import math
 import re
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from os import PathLike
 from typing import Any, Optional
@@ -1682,7 +1683,14 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     )
 
 
-def _annotation_svg(annotations, sx, sy, plot, width, height):
+def _annotation_svg(
+    annotations: Sequence[dict[str, Any]],
+    sx: Callable[[float], float],
+    sy: Callable[[float], float],
+    plot: dict[str, float],
+    width: float,
+    height: float,
+) -> tuple[list[str], list[str]]:
     marks: list[str] = []
     labels: list[str] = []
     px0, py0 = plot["x"], plot["y"]

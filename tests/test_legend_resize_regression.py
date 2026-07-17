@@ -39,10 +39,13 @@ _PROBE = """
 <script>
 (async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const raf = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   try {
     const view = window.__fcProbeView;
     if (!view) throw new Error("no probe view captured");
+    // Bare rAF may not tick under --virtual-time-budget --dump-dom. Drain the
+    // initial scheduled draw synchronously so DOM chrome exists deterministically.
+    view._drawNow();
+    view._raf = null;
     let legend = null;
     for (let i = 0; i < 200; i++) {
       legend = document.querySelector('[data-xy-slot="legend"]');
@@ -55,7 +58,8 @@ _PROBE = """
     view.fluid = true;
     view.fluidH = true;
     view._resize(view.size.w, view.size.h + 260);
-    await raf();
+    view._drawNow();
+    view._raf = null;
     legend = document.querySelector('[data-xy-slot="legend"]') || legend;
     const afterResize = getComputedStyle(legend).maxHeight;
     document.body.setAttribute(
@@ -76,10 +80,11 @@ _OVERFLOW_PROBE = """
 <script>
 (async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const raf = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   try {
     const view = window.__fcProbeView;
     if (!view) throw new Error("no probe view captured");
+    view._drawNow();
+    view._raf = null;
     const utilityStyle = document.createElement("style");
     utilityStyle.textContent = `
       @layer base, utilities;
@@ -101,7 +106,8 @@ _OVERFLOW_PROBE = """
     view.fluid = true;
     view.fluidH = true;
     view._resize(320, 360);
-    await raf();
+    view._drawNow();
+    view._raf = null;
 
     // A docs page can exceed the WebGL context budget. Exercise the same trace
     // builder used during recovery and verify it retains the non-positional
@@ -123,7 +129,6 @@ _OVERFLOW_PROBE = """
     for (let i = 0; i < 100 && view.tooltip.style.display !== "block"; i++) {
       await sleep(20);
     }
-    await raf();
     const tooltip = document.querySelector('[data-xy-slot="tooltip"]');
     if (!tooltip || tooltip.style.display !== "block") {
       throw new Error("keyboard tooltip never rendered");
@@ -175,21 +180,22 @@ _AXIS_CATEGORY_PROBE = """
 <script>
 (async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const raf = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   try {
     const view = window.__fcProbeView;
     if (!view) throw new Error("no probe view captured");
+    view._drawNow();
+    view._raf = null;
+    const hasBothAxes = (nodes) =>
+      nodes.some((node) => node.dataset.xyAxis === "x") &&
+      nodes.some((node) => node.dataset.xyAxis === "x2");
     let ticks = [];
     for (let i = 0; i < 200; i++) {
       ticks = [...document.querySelectorAll('[data-xy-label-kind="tick"]')];
-      if (
-        ticks.some((node) => node.dataset.xyAxis === "x") &&
-        ticks.some((node) => node.dataset.xyAxis === "x2")
-      ) break;
+      if (hasBothAxes(ticks)) break;
       await sleep(25);
     }
-    await raf();
     ticks = [...document.querySelectorAll('[data-xy-label-kind="tick"]')];
+    if (!hasBothAxes(ticks)) throw new Error("axis ticks never rendered");
     const read = (axisId) => {
       const axis = view.axes[axisId];
       if (!axis) throw new Error(`missing ${axisId} axis`);
@@ -219,17 +225,18 @@ _ANNOTATION_ALIGNMENT_PROBE = """
 <script>
 (async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const raf = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   try {
     const view = window.__fcProbeView;
     if (!view) throw new Error("no probe view captured");
+    view._drawNow();
+    view._raf = null;
     let labels = [];
     for (let i = 0; i < 200; i++) {
       labels = [...document.querySelectorAll('[data-xy-slot="annotation_label"]')];
       if (labels.length >= 2) break;
       await sleep(25);
     }
-    await raf();
+    labels = [...document.querySelectorAll('[data-xy-slot="annotation_label"]')];
     const findLabel = (text) => labels.find((label) => label.textContent === text);
     const band = findLabel("band-center");
     const arrow = findLabel("arrow-center");
