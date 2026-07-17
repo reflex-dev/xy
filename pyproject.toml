@@ -115,13 +115,6 @@ select = [
     "B",             # bugbear
     "SIM",           # simplify
     "RUF",
-    # Typed, documented library surface (see per-file-ignores: the library
-    # only — tests/scripts/benchmarks stay dynamic). ANN401 (no-Any) stays
-    # off: a matplotlib-compatible shim needs `**kwargs: Any` pervasively;
-    # instead the public signatures use the real unions in xy/_typing.py.
-    "ANN001", "ANN002", "ANN003",           # every parameter is annotated
-    "ANN201", "ANN202", "ANN204", "ANN205", "ANN206",  # every return is annotated
-    "D100", "D101", "D102", "D103", "D104", "D106",    # public API is documented
 ]
 
 ignore = [
@@ -149,12 +142,6 @@ ignore = [
 exclude = ["examples/pdsh/*.ipynb"]
 
 [tool.ruff.lint.per-file-ignores]
-# The annotation/docstring contract applies to the shipped library only;
-# tests, tooling, and examples keep their dynamic style.
-"tests/**" = ["ANN", "D1"]
-"scripts/**" = ["ANN", "D1"]
-"benchmarks/**" = ["ANN", "D1"]
-"examples/**" = ["ANN", "D1"]
 # Third-party example code (PDSH notebooks): kept faithful to upstream, so
 # upstream's import placement and naming style is not ours to lint. F811: the
 # dual-engine layout mirrors every cell (matplotlib then xy), so imports and
