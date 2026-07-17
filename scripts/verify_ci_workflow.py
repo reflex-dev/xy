@@ -481,6 +481,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "scripts/pyodide_load_smoke.py",
         "scripts/verify_wheel.py",
         "--expect-native",
+        "name: pyodide-wheel",
     )
     wasm_job = jobs.get("wasm", "")
     if "continue-on-error:" in wasm_job:
@@ -519,6 +520,7 @@ def validate_release_workflow(path: Path = DEFAULT_RELEASE_WORKFLOW) -> list[str
         "dry_run",
         "pypa/gh-action-pypi-publish@",
         "packages-dir: dist/",
+        "skip-existing: true",
     )
     _require_workflow_contains(
         errors,

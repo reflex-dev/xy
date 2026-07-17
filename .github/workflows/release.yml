@@ -174,7 +174,10 @@ jobs:
           python scripts/pyodide_load_smoke.py "$whl"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: dist-pyodide
+          # Keep this outside the dist-* namespace: PyPI rejects Pyodide's
+          # pyodide_* platform tags, so this wheel is retained as a workflow
+          # artifact but must not enter the PyPI upload directory.
+          name: pyodide-wheel
           path: dist/*.whl
 
   sdist:
@@ -229,8 +232,9 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    # Publishing requires the runtime-verified Pyodide wheel alongside every native
-    # wheel and the sdist; the dist-* download pattern collects all of their artifacts.
+    # Publishing still requires the runtime-verified Pyodide job to pass, but
+    # only native wheels and the sdist use dist-* artifact names. PyPI does not
+    # accept Pyodide platform tags, so its wheel remains a separate artifact.
     needs: [wheels, sdist, wasm]
     runs-on: ubuntu-latest
     environment: pypi
@@ -265,3 +269,6 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
         with:
           packages-dir: dist/
+          # A failed upload can leave a partial release on immutable PyPI.
+          # Retrying the same tag should skip files that were already accepted.
+          skip-existing: true
