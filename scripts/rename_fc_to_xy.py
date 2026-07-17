@@ -47,10 +47,12 @@ REPO = Path(__file__).resolve().parent.parent
 
 # Files where the old name must stay: lockfile hashes, frozen benchmark
 # artifacts, and vendored third-party code are not ours to rewrite.
-EXCLUDED = (
+EXCLUDED_BASENAMES = {
     "uv.lock",
     "Cargo.lock",
     "package-lock.json",
+}
+EXCLUDED = (
     "benchmarks/launch_baselines/",
     "examples/reflex/assets/charts/plotly_colored_scatter.html",
 )
@@ -117,7 +119,9 @@ def tracked_files() -> list[Path]:
 
 
 def is_excluded(rel: str) -> bool:
-    return any(rel == e or rel.startswith(e) for e in EXCLUDED)
+    return Path(rel).name in EXCLUDED_BASENAMES or any(
+        rel == entry or rel.startswith(entry) for entry in EXCLUDED
+    )
 
 
 def rewrite(rel: str, text: str) -> tuple[str, dict[str, int]]:

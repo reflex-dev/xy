@@ -1,7 +1,9 @@
 """Tests for the standalone XY documentation application."""
 
+import hashlib
 import importlib.util
 import inspect
+import re
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from pathlib import Path
@@ -9,7 +11,7 @@ from urllib.parse import urlparse
 
 import pytest
 import reflex_xy
-import xy as fc
+import xy
 from reflex_base.components.memo import MemoComponent
 from reflex_docgen.markdown import (
     Block,
@@ -29,21 +31,29 @@ from reflex_docgen.markdown import (
 )
 from reflex_site_shared.docs import render_markdown
 from reflex_site_shared.docs.content import discover_docs
+
 from rxconfig import config
 from xy_docs.api_reference import (
     AXES_AND_ANNOTATIONS,
+    CHART_FACTORY_GROUPS,
     CHROME_AND_BEHAVIOR,
     MARKS,
     axes_and_annotations_api,
     chart_containers_api,
+    chart_factories_api,
     chrome_and_behavior_api,
     marks_api,
 )
 from xy_docs.breadcrumb import xy_docs_breadcrumb
-from xy_docs.config import DOCS_CONFIG, DOCS_NAVIGATION
+from xy_docs.config import DOCS_CONFIG, DOCS_NAVIGATION, DOCS_SECTIONS
 from xy_docs.footer import xy_docs_footer
+from xy_docs.gallery import _iter_gallery_items, chart_gallery_grid
 from xy_docs.navbar import xy_docs_navbar
-from xy_docs.sidebar import xy_docs_sidebar, xy_docs_sidebar_comp
+from xy_docs.sidebar import (
+    SIDEBAR_SECTION_GROUPS,
+    xy_docs_sidebar,
+    xy_docs_sidebar_comp,
+)
 
 SITEMAP_NAMESPACE = {"sitemap": "https://www.sitemaps.org/schemas/sitemap/0.9"}
 DOCS_APP_ROOT = Path(__file__).resolve().parent.parent
@@ -173,7 +183,36 @@ def _link_line(source: str, target: str, cursor: int) -> tuple[int, int]:
 
 
 def test_public_markdown_routes_match_the_docs_navigation() -> None:
-    """Discover only the public Markdown pages registered by the app."""
+    """Discover the exact eight-section, two-level public information architecture."""
+    assert tuple(title for title, _route, _icon, _leaves in DOCS_SECTIONS) == (
+        "Overview",
+        "Core Concepts",
+        "Styling",
+        "Chart Gallery",
+        "Components",
+        "Integrations",
+        "Guides",
+        "Reference",
+    )
+    section_routes = tuple(
+        dict.fromkeys(
+            route
+            for _title, landing_route, _icon, leaves in DOCS_SECTIONS
+            for route in (
+                landing_route,
+                *(leaf_route for _leaf_title, leaf_route in leaves),
+            )
+        )
+    )
+    assert section_routes == DOCS_NAVIGATION
+    assert (
+        max(
+            len(tuple(part for part in route.split("/") if part))
+            for route in section_routes
+        )
+        <= 2
+    )
+
     pages = discover_docs(DOCS_CONFIG)
 
     assert tuple(page.route for page in pages) == DOCS_NAVIGATION
@@ -184,6 +223,66 @@ def test_docs_app_configures_the_reflex_xy_adapter() -> None:
     """Compile live documentation examples through the shipped Reflex adapter."""
     assert config.telemetry_enabled is False
     assert any(isinstance(plugin, reflex_xy.XYPlugin) for plugin in config.plugins)
+
+
+def test_what_is_xy_shows_density_hero_without_inline_code() -> None:
+    """Keep the signature example visible without exposing its long source."""
+    content = (DOCS_ROOT / "index.md").read_text(encoding="utf-8")
+    demo_source = (
+        DOCS_APP_ROOT / "xy_docs/demos/instrument_sans_density.py"
+    ).read_text(encoding="utf-8")
+    font = DOCS_APP_ROOT / "xy_docs/assets/InstrumentSans-wdth-wght.ttf"
+    license_file = DOCS_APP_ROOT / "xy_docs/assets/OFL.txt"
+
+    hero = content.index("~~~python demo-only exec")
+    introduction = content.index("XY is an experimental Python charting library")
+    styling = content.index("**Styling uses familiar web vocabulary.**")
+    early_alpha = content.index("### Early alpha")
+
+    assert introduction < styling < hero < early_alpha
+    assert "demo exec toggle" not in content
+    assert (
+        "from xy_docs.demos.instrument_sans_density import xy_density_hero" in content
+    )
+    assert "View the complete Python source" in content
+    assert "N_POINTS = 40_000" in demo_source
+    assert "N_INLIERS = round(N_POINTS * 0.97)" in demo_source
+    assert "InstrumentSans-wdth-wght.ttf" in demo_source
+    assert 'width="100%"' in demo_source
+    assert 'height="min(74vw, 560px)"' in demo_source
+    assert hashlib.sha256(font.read_bytes()).hexdigest() == (
+        "b24f1812584816958afcf22e22d08e44318c5e51651e25d2438efdde389b33b1"
+    )
+    assert "SIL OPEN FONT LICENSE Version 1.1" in license_file.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_public_docs_use_the_xy_namespace_without_the_legacy_alias() -> None:
+    """Keep examples, generated references, and docs tests on the public name."""
+    legacy_alias = "".join(("f", "c"))
+    forbidden = (
+        f"import xy as {legacy_alias}",
+        f"{legacy_alias}.",
+        f"data-{legacy_alias}-",
+        f".{legacy_alias}-",
+        f'namespace="{legacy_alias}"',
+    )
+    sources = {page.source_path for page in discover_docs(DOCS_CONFIG)}
+    sources.update((DOCS_APP_ROOT / "xy_docs").rglob("*.py"))
+    sources.update((DOCS_APP_ROOT / "tests").rglob("*.py"))
+
+    violations = [
+        f"{path.relative_to(DOCS_ROOT)}:{line_number}: {line.strip()}"
+        for path in sorted(sources)
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(),
+            1,
+        )
+        if any(token in line for token in forbidden)
+    ]
+
+    assert not violations, "\n".join(violations)
 
 
 def test_live_preview_markdown_builds_real_xy_components(
@@ -199,10 +298,13 @@ def test_live_preview_markdown_builds_real_xy_components(
     pages = [
         page
         for page in discover_docs(DOCS_CONFIG)
-        if "python demo exec" in page.content
+        if any(
+            marker in page.content for marker in check_html_routes.LIVE_PREVIEW_MARKERS
+        )
     ]
 
-    assert len(pages) == 10
+    assert pages
+    referenced_payloads: set[str] = set()
     for page in pages:
         rendered = str(
             render_markdown(
@@ -213,11 +315,138 @@ def test_live_preview_markdown_builds_real_xy_components(
         )
         assert "XYChart" in rendered, page.relative_path
         assert "Interactive preview coming soon" not in page.content
+        page_payloads = set(
+            re.findall(r'src:"(?:/docs/xy)?/xy/([^"]+\.xyf)"', rendered)
+        )
+        assert page_payloads, page.relative_path
+        referenced_payloads.update(page_payloads)
 
-    assert len(list((tmp_path / "assets" / "xy").glob("*.xyf"))) == len(pages)
+    generated_payloads = {
+        path.name for path in (tmp_path / "assets" / "xy").glob("*.xyf")
+    }
+    assert generated_payloads == referenced_payloads
     assert {
         path: path.read_bytes() for path in app_payload_dir.glob("*.xyf")
     } == app_payloads_before
+
+
+def test_chart_gallery_grid_renders_every_type_with_bounded_live_previews(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Show every chart type without exceeding the live WebGL context budget."""
+    app_payload_dir = DOCS_APP_ROOT / "assets" / "xy"
+    app_payloads_before = {
+        path: path.read_bytes() for path in app_payload_dir.glob("*.xyf")
+    }
+    monkeypatch.chdir(tmp_path)
+
+    rendered = str(chart_gallery_grid())
+    chart_section = next(
+        leaves
+        for title, _landing_route, _icon, leaves in DOCS_SECTIONS
+        if title == "Chart Gallery"
+    )
+    assert len(chart_section) == 9
+    assert rendered.count("XYChart") == 9
+    assert rendered.count(" chart guide") == 30
+    assert rendered.count("dangerouslySetInnerHTML") == 21
+    assert rendered.count('id:"xy-chart-gallery"') == 1
+    assert rendered.count("main:has(#xy-chart-gallery) > div:has(#toc-navigation)") == 1
+    assert (
+        rendered.count(
+            "main:has(#xy-chart-gallery) > div:has(article #xy-chart-gallery)"
+        )
+        == 1
+    )
+    assert rendered.count("display: none") == 1
+    assert rendered.count("max-width: 88rem") == 1
+    assert rendered.count("2xl:grid-cols-3") == 9
+    assert rendered.count("h-[220px]") == 51
+    assert rendered.count('["height"] : "220px"') == 9
+    for chart_type in (
+        "Line",
+        "Area",
+        "Step",
+        "Stairs",
+        "Scatter",
+        "Bar",
+        "Column",
+        "Histogram",
+        "ECDF",
+        "Box",
+        "Violin",
+        "Hexbin",
+        "Heatmap",
+        "Contour",
+        "Error Band",
+        "Error Bar",
+        "Stem",
+        "Segments",
+        "Threshold",
+        "Triangle Mesh",
+        "Horizontal Line",
+        "Vertical Line",
+        "Bands",
+        "Callout",
+        "Arrow",
+        "Label",
+        "Text",
+        "Threshold Zone",
+        "Facet Chart",
+        "Layered Marks",
+    ):
+        assert chart_type in rendered
+    for _title, route in chart_section:
+        assert f'to:"{route}"' in rendered
+        assert f'to:"/docs/xy{route}"' not in rendered
+
+    payloads = list((tmp_path / "assets" / "xy").glob("*.xyf"))
+    assert len(payloads) == 9
+    assert all(path.read_bytes().startswith(b"XYBF") for path in payloads)
+    assert {
+        path: path.read_bytes() for path in app_payload_dir.glob("*.xyf")
+    } == app_payloads_before
+
+
+def test_chart_gallery_uses_only_purple_and_gray() -> None:
+    """Keep every rendered gallery preview inside one restrained palette."""
+    svg_paint = re.compile(
+        r"#[0-9a-fA-F]{6}|rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+(?:\s*,[^)]*)?\)"
+    )
+
+    def _paint_rgb(paint: str) -> tuple[int, int, int]:
+        if paint.startswith("#"):
+            red, green, blue = bytes.fromhex(paint[1:])
+            return red, green, blue
+        red, green, blue = map(int, re.findall(r"\d+", paint)[:3])
+        return red, green, blue
+
+    def _is_purple_or_gray(rgb: tuple[int, int, int]) -> bool:
+        red, green, blue = rgb
+        is_gray = max(rgb) - min(rgb) <= 18
+        is_purple = blue > red and blue > green and red + 8 >= green
+        return is_gray or is_purple
+
+    charts = {
+        title: chart_factory()
+        for title, _description, _route, chart_factory, _live in _iter_gallery_items()
+    }
+    assert all(
+        any(type(child).__name__ == "Theme" for child in chart.children)
+        for chart in charts.values()
+    )
+
+    violations = {
+        title: sorted(
+            paint
+            for paint in svg_paint.findall(chart.to_svg())
+            if not _is_purple_or_gray(_paint_rgb(paint))
+        )
+        for title, chart in charts.items()
+    }
+
+    assert not {title: paints for title, paints in violations.items() if paints}
 
 
 def test_live_preview_route_validator_requires_real_xy_payloads(
@@ -340,7 +569,7 @@ def test_xy_link_walker_resolves_references_and_ignores_code_fences() -> None:
 
 
 def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
-    """Render the curated icon navigation and selected shared leaf."""
+    """Render quick tabs plus three labeled groups of direct accordions."""
     component = xy_docs_sidebar_comp(url="/core-concepts/axes-and-scales/")
     assert isinstance(component, MemoComponent)
 
@@ -348,13 +577,38 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
     rendered = str(xy_docs_sidebar_comp._definition.component)
 
     assert "/core-concepts/axes-and-scales/" in instance
-    assert "Navigate to Learn" in rendered
-    assert "Navigate to Charts" in rendered
-    assert "Navigate to Components" in rendered
-    assert "Navigate to API Reference" in rendered
-    assert "Core Concepts" in rendered
+    assert re.findall(
+        r'jsx\(RadixThemesText,\{as:"p",className:"m-0 text-sm font-\[525\]"\},"([^"]+)"\)',
+        rendered,
+    ) == [title for title, _route, _icon, _leaves in DOCS_SECTIONS]
+    expected_leaf_count = sum(
+        len(leaves) + int(not any(route == landing_route for _title, route in leaves))
+        for _title, landing_route, _icon, leaves in DOCS_SECTIONS
+    )
+    assert rendered.count('jsx("details"') == len(DOCS_SECTIONS)
+    assert rendered.count('jsx("summary"') == len(DOCS_SECTIONS)
+    assert rendered.count("group/details") == len(DOCS_SECTIONS)
+    assert rendered.count("guideMarginClass") == expected_leaf_count
+    assert (
+        tuple(
+            section
+            for _group_title, _group_route, sections in SIDEBAR_SECTION_GROUPS
+            for section in sections
+        )
+        == DOCS_SECTIONS
+    )
+    for group_title in ("Learning", "Examples", "Other"):
+        assert group_title in rendered
+    for category, route in (
+        ("Learn", "/"),
+        ("Build", "/charts/"),
+        ("API Reference", "/api-reference/"),
+    ):
+        assert f'aria-label":"Navigate to {category}"' in rendered
+        assert f'to:"{route}"' in rendered
+    assert 'aria-label":"Navigate to Charts"' not in rendered
+    assert 'aria-label":"Navigate to Components"' not in rendered
     assert "Axes and Scales" in rendered
-    assert "group/details" in rendered
     assert ">XY<" not in rendered
 
 
@@ -421,16 +675,23 @@ def test_component_api_uses_generated_shared_tables() -> None:
     for functions, render in groups:
         rendered = str(render())
         for function in functions:
-            assert f"fc.{function.__name__}" in rendered
+            assert f"xy.{function.__name__}" in rendered
         assert "Props" in rendered
         assert "Description" in rendered
 
     containers = str(chart_containers_api())
     assert "Shared chart props" in containers
-    assert "fc.facet_chart" in containers
     assert "title" in containers
     assert "link_group" in containers
     assert "kind" not in containers
+
+    factories = str(chart_factories_api())
+    for group_name, group_factories in CHART_FACTORY_GROUPS:
+        assert group_name in factories
+        for factory in group_factories:
+            assert f"xy.{factory.__name__}" in factories
+    assert "Props" in factories
+    assert "Description" in factories
 
 
 def test_documented_factories_describe_every_parameter() -> None:
@@ -439,7 +700,7 @@ def test_documented_factories_describe_every_parameter() -> None:
         *MARKS,
         *AXES_AND_ANNOTATIONS,
         *CHROME_AND_BEHAVIOR,
-        fc.facet_chart,
+        xy.facet_chart,
     )
 
     for factory in factories:

@@ -5,6 +5,7 @@ description = "Documentation site for XY."
 requires-python = ">=3.11"
 dependencies = [
     "numpy",
+    "pillow",
     "reflex @ git+https://github.com/reflex-dev/reflex@carlos/reusable-docs-components",
     "reflex-components-internal @ git+https://github.com/reflex-dev/reflex@carlos/reusable-docs-components#subdirectory=packages/reflex-components-internal",
     "reflex-docgen @ git+https://github.com/reflex-dev/reflex@carlos/reusable-docs-components#subdirectory=packages/reflex-docgen",

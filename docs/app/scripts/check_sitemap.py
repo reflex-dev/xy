@@ -4,6 +4,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from reflex_site_shared.docs import discover_docs
+
 from xy_docs.config import DOCS_CONFIG
 from xy_docs.constants import PUBLIC_DOCS_URL
 

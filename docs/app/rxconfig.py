@@ -3,6 +3,7 @@
 import reflex as rx
 import reflex_xy
 from reflex_site_shared.plugins import DocsMarkdownPlugin, SharedSiteStylesPlugin
+
 from xy_docs.config import DOCS_CONFIG
 
 config = rx.Config(

@@ -1,23 +1,31 @@
 ---
-title: Charts
+title: Chart Gallery
 description: Choose the XY mark and container that match your data.
 ---
 
-# Charts
+# Chart Gallery
 
 XY chart families share one composition model and one output interface. Start
 with a family container for a single mark type, or combine marks with `chart()`.
 
-| Use case | Components |
+| Family | Components |
 | --- | --- |
-| Trends and ranges | `line`, `area` |
-| Point relationships | `scatter` |
-| Category comparison | `bar`, `column` |
-| Distributions | `histogram`, `box`, `violin`, `ecdf` |
-| Gridded and dense data | `heatmap`, `hexbin`, `contour` |
-| Uncertainty | `errorbar`, `error_band` |
-| Discrete and geometric data | `step`, `stairs`, `stem`, `segments`, `triangle_mesh` |
-| Small multiples | `facet_chart` |
+| Line and area | `line`, `area`, `step`, `stairs` |
+| Scatter | `scatter` |
+| Bar and column | `bar`, `column` |
+| Distributions | `histogram`, `ecdf`, `box`, `violin` |
+| Density and grids | `hexbin`, `heatmap`, `contour` |
+| Uncertainty | `error_band`, `errorbar` |
+| Specialized | `stem`, `segments`, `threshold`, `triangle_mesh` |
+| Annotations | `hline`, `vline`, bands, `callout`, `arrow`, `marker`, `label`, `text`, `threshold_zone` |
+| Facets and layers | `facet_chart`, `chart` |
 
-Each mark accepts `data`, `class_name`, `style`, and named axis bindings where
-applicable. Family-specific pages cover the remaining props and patterns.
+The gallery covers XY's declarative chart families. The separate
+[`xy.pyplot` integration](/docs/xy/integrations/matplotlib/) includes additional
+Matplotlib-shaped methods that compile into these same rendering primitives.
+
+Each family page follows the same path: when to use it, a live demo, common
+variants, the expected data shape, and the options that matter most.
+
+[Open the visual gallery](/docs/xy/overview/gallery/) or choose a family from
+the table above.

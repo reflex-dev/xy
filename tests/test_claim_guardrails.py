@@ -33,6 +33,10 @@ def test_claim_guardrail_accepts_current_public_docs() -> None:
         check_claim_guardrails.ROOT / "examples" / "reflex" / "README.md"
         in check_claim_guardrails._default_paths()
     )
+    assert (
+        check_claim_guardrails.ROOT / "docs" / "index.md"
+        in check_claim_guardrails._default_paths()
+    )
 
 
 def test_claim_guardrail_rejects_broad_fastest_claim(tmp_path: Path) -> None:

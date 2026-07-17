@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 FRAMEWORK_INTEGRATION_DOC = (
-    Path(__file__).resolve().parents[2] / "guides" / "framework-integration.md"
+    Path(__file__).resolve().parents[2] / "integrations" / "reflex.md"
 )
 
 

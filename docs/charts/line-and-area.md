@@ -5,23 +5,29 @@ description: Render trends, ranges, baselines, smooth curves, and layered series
 
 # Line and Area Charts
 
+## When to Use
+
 Use `line` for trends and `area` when the magnitude relative to a baseline is
 important. Both support smooth curves, screen-space dash patterns, opacity, and
 named axes.
 
-## Layer Lines and Areas
+Use `step` for state changes attached to samples and `stairs` when you already
+have bin edges. For isolated impulses, use the
+[specialized chart guide](/docs/xy/charts/specialized/).
+
+## Live Demo
 
 ~~~python demo exec
 import numpy as np
 import reflex_xy
-import xy as fc
+import xy
 
 x = np.linspace(0, 12, 240)
 plan = 48 + 1.8 * x
 actual = plan + 7 * np.sin(x * 0.9)
 
-chart = fc.chart(
-    fc.area(
+chart = xy.chart(
+    xy.area(
         x,
         actual,
         name="Actual",
@@ -30,10 +36,10 @@ chart = fc.chart(
         opacity=0.42,
         curve="smooth",
     ),
-    fc.line(x, plan, name="Plan", color="#2563eb", dash="dashed"),
-    fc.x_axis(label="month"),
-    fc.y_axis(label="revenue"),
-    fc.legend(),
+    xy.line(x, plan, name="Plan", color="#2563eb", dash="dashed"),
+    xy.x_axis(label="month"),
+    xy.y_axis(label="revenue"),
+    xy.legend(),
 )
 
 
@@ -41,9 +47,27 @@ def plan_and_actual():
     return reflex_xy.chart(chart, height="320px")
 ~~~
 
-`base` on `area` may be a scalar, array, or named column. Set
-`stroke_perimeter=True` to outline the full filled polygon. Use `line_width`
-and `line_opacity` to tune the area's boundary separately from its fill.
+## Variants
+
+- Layer several named `line` or `area` marks and add `legend()`.
+- Use `curve="smooth"` for interpolation or `dash` for plan/actual comparisons.
+- Set `where="pre"`, `"mid"`, or `"post"` on `step` and `stairs` for
+  discrete signals.
+- Bind marks to named axes for series with different units.
+
+## Expected Data Shape
+
+Pass one-dimensional x and y arrays of equal length, or pass column names with
+`data=`. `area` also accepts a scalar, array, or named-column `base`. Missing
+numeric values create line gaps. `step` uses the same x/y shape. `stairs` takes
+one value per bin and, when supplied, one more edge than values.
+
+## Key Options
+
+`line` uses `color`, `width`, `opacity`, `curve`, and `dash`. `area` adds
+`fill`, `base`, `stroke_perimeter`, `line_width`, and `line_opacity`.
+`step` and `stairs` add `where="pre"`, `"mid"`, or `"post"`; `stairs` also
+accepts `edges` and otherwise generates integer edges.
 
 For very long lines, XY decimates to the visible resolution and refines again
 when the viewport changes.
