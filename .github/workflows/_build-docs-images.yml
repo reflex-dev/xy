@@ -1,0 +1,155 @@
+# Reusable workflow: build and push the XY docs frontend and backend images.
+#
+# The image pair is environment-agnostic. The docs frontend is always mounted
+# at /docs/xy, while the internal chart rewrites the baked localhost API URLs
+# to each environment's backend route at pod startup.
+
+name: Build and Push Docs Images
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: "Image tag to apply (for example sha-abc1234 or v0.1.0)"
+        required: true
+        type: string
+      source_ref:
+        description: "Exact reflex-dev/xy commit or tag to build"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: 176771536320.dkr.ecr.us-west-2.amazonaws.com
+  CADDY_IMAGE: 176771536320.dkr.ecr.us-west-2.amazonaws.com/xy/frontend
+  BACKEND_IMAGE: 176771536320.dkr.ecr.us-west-2.amazonaws.com/xy/backend
+  DEPOT_PROJECT: ${{ vars.DOCS_DEPOT_PROJECT }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Validate inputs
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          DEPOT_PROJECT: ${{ env.DEPOT_PROJECT }}
+        run: |
+          if [[ ! "$IMAGE_TAG" =~ ^[A-Za-z0-9._-]+$ ]] || [[ "${#IMAGE_TAG}" -gt 128 ]]; then
+            echo "::error::image_tag must match [A-Za-z0-9._-]+ and be <=128 characters"
+            exit 1
+          fi
+          if [[ ! "$SOURCE_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || [[ "${#SOURCE_REF}" -gt 128 ]]; then
+            echo "::error::source_ref contains unsafe characters"
+            exit 1
+          fi
+          if [[ ! "$DEPOT_PROJECT" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            echo "::error::Set the DOCS_DEPOT_PROJECT repository variable to the XY Depot project ID"
+            exit 1
+          fi
+
+      - name: Checkout XY
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: Install UV
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.13"
+          activate-environment: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: 1.97.0
+
+      - name: Verify committed render client
+        run: node js/build.mjs --check
+
+      - name: Install docs dependencies
+        env:
+          XY_REQUIRE_CARGO: "1"
+        run: uv sync --project docs/app --frozen --no-dev
+
+      - name: Verify the native core
+        run: >-
+          uv run --project docs/app --no-sync python -c
+          "import xy.kernels as kernels; assert kernels.BACKEND == 'native', kernels.BACKEND"
+
+      - name: Export frontend
+        working-directory: docs/app
+        env:
+          REFLEX_TELEMETRY_ENABLED: "false"
+        run: uv run --no-sync reflex export --frontend-only
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885 # v6.1.1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+          mask-aws-account-id: true
+
+      - name: Log in to Amazon ECR
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+        run: aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin "$REGISTRY"
+
+      - name: Set up Depot CLI
+        uses: depot/setup-action@15c09a5f77a0840ad4bce955686522a257853461 # v1.7.1
+
+      - name: Build and push frontend image
+        env:
+          DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+          DEPOT_PROJECT: ${{ env.DEPOT_PROJECT }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          CADDY_IMAGE: ${{ env.CADDY_IMAGE }}
+        run: |
+          depot build \
+            --project "$DEPOT_PROJECT" \
+            --file docs/app/dockerfiles/caddy.Dockerfile \
+            --tag "${CADDY_IMAGE}:${IMAGE_TAG}" \
+            --push \
+            --platform linux/amd64,linux/arm64 \
+            --provenance=false \
+            ./docs/app
+
+      - name: Build and push backend image
+        env:
+          DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+          DEPOT_PROJECT: ${{ env.DEPOT_PROJECT }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          BACKEND_IMAGE: ${{ env.BACKEND_IMAGE }}
+        run: |
+          depot build \
+            --project "$DEPOT_PROJECT" \
+            --file docs/app/dockerfiles/backend.Dockerfile \
+            --tag "${BACKEND_IMAGE}:${IMAGE_TAG}" \
+            --push \
+            --platform linux/amd64,linux/arm64 \
+            --provenance=false \
+            .
+
+      - name: Summary
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          CADDY_IMAGE: ${{ env.CADDY_IMAGE }}
+          BACKEND_IMAGE: ${{ env.BACKEND_IMAGE }}
+        run: |
+          {
+            echo "### XY docs images built"
+            echo ""
+            echo "**Tag:** \`${IMAGE_TAG}\`"
+            echo ""
+            echo "- Frontend: \`${CADDY_IMAGE}:${IMAGE_TAG}\`"
+            echo "- Backend: \`${BACKEND_IMAGE}:${IMAGE_TAG}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -8,6 +8,8 @@
 const XY_ANNOTATION_SHAPE_STYLE_KEYS = new Set([
   "color",
   "label_color",
+  "label_opacity",
+  "opacity",
   "width",
   "head_size",
   "head_style",
@@ -507,6 +509,10 @@ Object.assign(ChartView.prototype, {
       const opacityIsShape = ann.kind !== "text" && ann.kind !== "callout";
       const labelStyle = {};
       for (const [key, value] of Object.entries(style)) {
+        if (key === "opacity" && ann.kind === "text") {
+          labelStyle[key] = value;
+          continue;
+        }
         if (XY_ANNOTATION_SHAPE_STYLE_KEYS.has(key)) continue;
         if (opacityIsShape && key === "opacity") continue;
         labelStyle[key] = value;
@@ -516,6 +522,12 @@ Object.assign(ChartView.prototype, {
       // stylesheet's --chart-annotation-text default stays overridable by CSS.
       if (style && (style.label_color || style.color)) {
         d.style.color = this._annotationLabelPaint(style, this.theme.label);
+      }
+      if (style && style.label_opacity !== undefined) {
+        const labelOpacity = Number(style.label_opacity);
+        if (Number.isFinite(labelOpacity)) {
+          d.style.opacity = String(Math.max(0, Math.min(1, labelOpacity)));
+        }
       }
       this.labels.appendChild(d);
       // matplotlib anchors the TEXT at its position; a bbox patch grows

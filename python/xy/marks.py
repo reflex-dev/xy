@@ -1022,8 +1022,8 @@ def scatter(
     `color` may be a CSS color (constant), a numeric array (continuous →
     colormap), or a categorical array (factorized → palette). `size` may be
     a scalar or a numeric array (mapped to `size_range` px). `symbol` picks
-    the marker shape (circle/square/diamond/triangle/cross); `stroke` /
-    `stroke_width` draw a point border. Large scatters auto-switch to a
+    one of the 17 renderer-backed marker shapes; `stroke` / `stroke_width`
+    draw a point border. Large scatters auto-switch to a
     Tier-2 density surface (§5); pass `density=True/False` to force it.
     """
     css = styles.compile_mark_style("scatter", style)

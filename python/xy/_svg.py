@@ -18,6 +18,7 @@ browser-dependent in SVG and use the native PNG fallback.
 from __future__ import annotations
 
 import base64
+import math
 import re
 from datetime import UTC, datetime
 from os import PathLike
@@ -761,10 +762,49 @@ class _Svg:
             units = f'gradientUnits="userSpaceOnUse" x1="{_num(x0)}" y1="{_num(y0)}" x2="{_num(x1)}" y2="{_num(y1)}"'
         else:
             units = f'x1="{ends[0]}" y1="{ends[1]}" x2="{ends[2]}" y2="{ends[3]}"'
-        stops = "".join(
-            f'<stop offset="{_num(t * 100)}%" stop-color="{escape(_css(c, mark_color), {chr(34): "&quot;"})}"/>'
-            for t, c in fill.get("stops", [])
-        )
+        raw_stops = fill.get("stops", [])
+        resolved = [_css(c, mark_color) for _t, c in raw_stops]
+        stops_out: list[str] = []
+        for index, ((t, raw_color), color) in enumerate(zip(raw_stops, resolved, strict=True)):
+            offset = _num(t * 100)
+            if str(raw_color).strip().lower() != "transparent":
+                escaped = escape(color, {chr(34): "&quot;"})
+                stops_out.append(f'<stop offset="{offset}%" stop-color="{escaped}"/>')
+                continue
+
+            # SVG interpolates stop RGB independently from stop opacity. A
+            # literal `transparent` stop is transparent black, which makes a
+            # colored fade pass through a muddy gray fringe. Give the zero-
+            # opacity stop the adjacent visible hue instead, matching the
+            # browser renderer's premultiplied-alpha interpolation. When a
+            # transparent stop sits between two different colors, duplicate
+            # it at the same offset; the invisible color switch preserves the
+            # hue on both segments.
+            previous = next(
+                (
+                    resolved[i]
+                    for i in range(index - 1, -1, -1)
+                    if str(raw_stops[i][1]).strip().lower() != "transparent"
+                ),
+                None,
+            )
+            following = next(
+                (
+                    resolved[i]
+                    for i in range(index + 1, len(raw_stops))
+                    if str(raw_stops[i][1]).strip().lower() != "transparent"
+                ),
+                None,
+            )
+            transparent_colors = [previous or following or mark_color]
+            if previous and following and previous != following:
+                transparent_colors.append(following)
+            for transparent_color in transparent_colors:
+                escaped = escape(transparent_color, {chr(34): "&quot;"})
+                stops_out.append(
+                    f'<stop offset="{offset}%" stop-color="{escaped}" stop-opacity="0"/>'
+                )
+        stops = "".join(stops_out)
         self.defs.append(f'<linearGradient id="{gid}" {units}>{stops}</linearGradient>')
         return f"url(#{gid})"
 
@@ -927,6 +967,80 @@ def _dash_attr(style: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _axes_by_id(spec: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return every configured axis keyed by its wire id.
+
+    Older payloads only carried the primary ``x_axis``/``y_axis`` fields;
+    current payloads additionally carry an ``axes`` mapping for named axes.
+    Static exporters accept both shapes and let the primary compatibility
+    fields win, matching the browser client's normalization.
+    """
+    axes = dict(spec.get("axes") or {})
+    axes["x"] = spec["x_axis"]
+    axes["y"] = spec["y_axis"]
+    return axes
+
+
+def _axis_scales(
+    spec: dict[str, Any], plot: dict[str, float]
+) -> tuple[
+    dict[str, _Scale],
+    dict[str, _Scale],
+    _Scale,
+    _Scale,
+    list[tuple[str, dict[str, Any], _Scale]],
+    list[tuple[str, dict[str, Any], _Scale]],
+]:
+    """Pixel scales for every configured axis plus the named-axis lists —
+    shared by the SVG and native exporters so their geometry stays identical.
+
+    Returns ``(x_scales, y_scales, sx, sy, extra_x_axes, extra_y_axes)``.
+    """
+    axes = _axes_by_id(spec)
+    x_scales = {
+        axis_id: _Scale(axis, plot["x"], plot["x"] + plot["w"])
+        for axis_id, axis in axes.items()
+        if axis_id.startswith("x")
+    }
+    y_scales = {
+        axis_id: _Scale(axis, plot["y"] + plot["h"], plot["y"])
+        for axis_id, axis in axes.items()
+        if axis_id.startswith("y")
+    }
+    sx = x_scales["x"]
+    sy = y_scales["y"]  # y grows downward in raster space
+    extra_x_axes = [
+        (axis_id, axis, x_scales[axis_id])
+        for axis_id, axis in axes.items()
+        if axis_id != "x" and axis_id.startswith("x")
+    ]
+    extra_y_axes = [
+        (axis_id, axis, y_scales[axis_id])
+        for axis_id, axis in axes.items()
+        if axis_id != "y" and axis_id.startswith("y")
+    ]
+    return x_scales, y_scales, sx, sy, extra_x_axes, extra_y_axes
+
+
+def _colorbar_right_axis_room(
+    y_axis: dict[str, Any],
+    extra_y_axes: list[tuple[str, dict[str, Any], _Scale]],
+    compact: bool,
+) -> float:
+    """Gutter layout() reserves for visible right-side named y axes.
+
+    The vertical colorbar shifts right by this amount so its bar/ticks/label
+    clear the axis tick labels (plot-right+8) and rotated axis title
+    (plot-right+40); the JS client applies the identical rule."""
+    axes = [y_axis, *(axis for _axis_id, axis, _axis_scale in extra_y_axes)]
+    if any(
+        axis.get("side", "left") == "right" and _axis_tick_label_strategy(axis) != "none"
+        for axis in axes
+    ):
+        return 42.0 if compact else 54.0
+    return 0.0
+
+
 def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
     """Concrete pixel dimensions + plot rect from a spec — shared by the SVG and
     native-PNG exporters so their chrome/plot geometry stays identical."""
@@ -947,16 +1061,50 @@ def layout(spec: dict[str, Any]) -> tuple[int, int, bool, dict[str, float]]:
         bottom = 36 if compact else 42
     if spec.get("title"):
         top += 26 if compact else 30
+    axes = _axes_by_id(spec)
+    bottom_axis_room = 0.0
+    if any(
+        axis_id.startswith("x")
+        and axis.get("side", "bottom") == "bottom"
+        and _axis_tick_label_strategy(axis) != "none"
+        for axis_id, axis in axes.items()
+    ):
+        bottom_axis_room = 36 if compact else 42
+    top_axis_room = 0.0
+    if any(
+        axis_id.startswith("x")
+        and axis.get("side", "bottom") == "top"
+        and _axis_tick_label_strategy(axis) != "none"
+        for axis_id, axis in axes.items()
+    ):
+        # One shared top gutter mirrors ChartView. Multiple named x axes on
+        # the same edge intentionally overlap until per-axis offsets exist.
+        top_axis_room = 26 if compact else 32
+        top += top_axis_room
     colorbar = spec.get("colorbar") or {}
     if colorbar.get("orientation") == "horizontal":
         bottom += 38 + (16 if colorbar.get("label") else 0)
     elif colorbar:
         right += 86 + (18 if colorbar.get("label") else 0)
+    if any(
+        axis_id.startswith("y")
+        and axis.get("side", "right") == "right"
+        and _axis_tick_label_strategy(axis) != "none"
+        for axis_id, axis in axes.items()
+    ):
+        # Match ChartView._layout(): one shared right-side gutter contains the
+        # secondary-y tick labels/title. Multiple right axes intentionally
+        # overlay in both renderers until offset axes become part of the API.
+        right += 42 if compact else 54
     plot = {
         "x": left,
         "y": top,
         "w": max(40, width - left - right),
         "h": max(40, height - top - bottom),
+        # Emitters place the figure title above this gutter; recording it here
+        # keeps layout() the single source of the top-axis reservation.
+        "top_axis_room": top_axis_room,
+        "bottom_axis_room": bottom_axis_room,
     }
     return width, height, compact, plot
 
@@ -968,10 +1116,15 @@ def axis_ticks(
     tick density so SVG and PNG label the same values."""
     if axis.get("tick_values") is not None:
         lo, hi = axis["range"]
-        ticks = [float(v) for v in axis["tick_values"] if lo <= float(v) <= hi]
+        low, high = min(lo, hi), max(lo, hi)
+        ticks = [float(v) for v in axis["tick_values"] if low <= float(v) <= high]
         step = abs(ticks[1] - ticks[0]) if len(ticks) > 1 else 1.0
         return ticks, ticks, step
-    target = max(3, int(length_px / 80)) if is_x else max(3, int(length_px / 45))
+    requested = axis.get("tick_count")
+    if isinstance(requested, (int, float)) and not isinstance(requested, bool) and requested > 0:
+        target = max(1, min(200, int(requested)))
+    else:
+        target = max(3, int(length_px / 80)) if is_x else max(3, int(length_px / 45))
     kind = axis.get("kind")
     lo, hi = axis["range"]
     if axis.get("scale") == "log" or kind == "log":
@@ -986,14 +1139,174 @@ def axis_ticks(
     return t, t, step
 
 
+def _axis_tick_label_strategy(axis: dict[str, Any]) -> str:
+    value = str(axis.get("tick_label_strategy") or "auto").replace("-", "_")
+    return value if value in {"auto", "hide", "rotate", "stagger", "none", "off"} else "auto"
+
+
+def _axis_tick_font_size(axis: dict[str, Any]) -> float:
+    style = axis.get("style") or {}
+    return max(8.0, float(style.get("tick_label_size", style.get("tick_size", 11))))
+
+
+def _axis_tick_label_layout(
+    axis: dict[str, Any],
+    values: list[float],
+    step: float,
+    scale: _Scale,
+    is_x: bool,
+) -> list[dict[str, Any]]:
+    """Port ChartView._layoutTickLabels for deterministic static chrome."""
+    strategy = _axis_tick_label_strategy(axis)
+    if strategy in {"none", "off"}:
+        return []
+
+    font_size = _axis_tick_font_size(axis)
+    min_gap = float(axis.get("tick_label_min_gap", 8 if is_x else 4))
+    raw_angle = axis.get("tick_label_angle")
+    explicit_angle = float(raw_angle) if raw_angle is not None else None
+    base_angle = explicit_angle or 0.0
+    labels = [
+        {
+            "value": value,
+            "pos": float(scale(value)),
+            "text": _tick_text(axis, value, step),
+            "angle": base_angle,
+            "row": 0,
+        }
+        for value in values
+    ]
+    if len(labels) <= 1:
+        return labels
+
+    def extent(label: dict[str, Any]) -> float:
+        width = max(font_size * 0.7, len(str(label["text"])) * font_size * 0.62)
+        height = font_size * 1.2
+        angle = abs(float(label.get("angle", 0.0))) * math.pi / 180.0
+        if is_x:
+            return abs(math.cos(angle)) * width + abs(math.sin(angle)) * height
+        return abs(math.sin(angle)) * width + abs(math.cos(angle)) * height
+
+    def collide(items: list[dict[str, Any]]) -> bool:
+        rows: dict[int, list[dict[str, Any]]] = {}
+        for item in items:
+            rows.setdefault(int(item.get("row", 0)), []).append(item)
+        for row in rows.values():
+            last_end = -math.inf
+            for item in sorted(row, key=lambda candidate: float(candidate["pos"])):
+                half = extent(item) / 2.0
+                start = float(item["pos"]) - half
+                if start < last_end + min_gap:
+                    return True
+                last_end = float(item["pos"]) + half
+        return False
+
+    if strategy == "auto":
+        if not collide(labels):
+            return labels
+        if is_x and axis.get("kind") == "category" and len(labels) <= 16:
+            strategy = "rotate"
+        elif is_x and len(labels) <= 24:
+            strategy = "stagger"
+        else:
+            strategy = "hide"
+
+    if strategy == "rotate" and is_x:
+        angle = (
+            explicit_angle
+            if explicit_angle is not None
+            else (35.0 if axis.get("side") == "top" else -35.0)
+        )
+        labels = [{**label, "angle": angle, "row": 0} for label in labels]
+    elif strategy == "stagger" and is_x:
+        labels = [{**label, "row": index % 2} for index, label in enumerate(labels)]
+
+    # "hide" is a collision-handling strategy: the stride loop engages only
+    # when the full label set actually overlaps, so relayouts that force
+    # strategy="hide" (native diagonal-angle fallback) keep fitting labels.
+    if collide(labels):
+        for stride in range(2, len(labels) + 1):
+            reduced = labels[::stride]
+            if not collide(reduced):
+                return reduced
+        return labels[:1]
+    return labels
+
+
+def _axis_label_geometry(
+    axis: dict[str, Any],
+    plot: dict[str, float],
+    *,
+    is_x: bool,
+) -> dict[str, Any]:
+    """Resolve named axis-title placement shared by SVG and native output.
+
+    Named positions, offsets, and angles mirror ChartView. Structured CSS
+    dictionaries remain a browser-only escape hatch because native exporters
+    do not have a CSS layout engine.
+    """
+    style = axis.get("style") or {}
+    font_size = float(style.get("label_size", 12))
+    raw_position = axis.get("label_position")
+    position = raw_position if isinstance(raw_position, str) else "center"
+    position = position.replace("-", "_")
+    inside = position.startswith("inside_")
+    anchor = position.removeprefix("inside_") if inside else position
+    anchor_fraction = 0.0 if anchor == "start" else 1.0 if anchor == "end" else 0.5
+    offset = float(axis.get("label_offset", 0.0))
+    side = axis.get("side", "bottom" if is_x else "left")
+
+    if is_x:
+        x = plot["x"] + plot["w"] * anchor_fraction
+        outside_top = plot["y"] - 34
+        outside_bottom = plot["y"] + plot["h"] + 24
+        inside_top = plot["y"] + 12
+        inside_bottom = plot["y"] + plot["h"] - 12
+        y = (
+            (inside_top if side == "top" else inside_bottom)
+            if inside
+            else (outside_top if side == "top" else outside_bottom)
+        )
+        y += (
+            (-offset if not inside else offset)
+            if side == "top"
+            else (offset if not inside else -offset)
+        )
+        # DOM labels use top positioning; static text commands use a baseline.
+        y += font_size * 0.82
+        text_anchor = "start" if anchor == "start" else "end" if anchor == "end" else "middle"
+        angle = float(axis.get("label_angle", 0.0))
+    else:
+        outside_x = plot["x"] + plot["w"] + 40 if side == "right" else 10
+        inside_x = plot["x"] + plot["w"] - 12 if side == "right" else plot["x"] + 12
+        x = inside_x if inside else outside_x
+        x += (-offset if inside else offset) if side == "right" else (offset if inside else -offset)
+        y = plot["y"] + plot["h"] * (1.0 - anchor_fraction)
+        text_anchor = "middle"
+        angle = float(axis.get("label_angle", 90.0 if side == "right" else -90.0))
+
+    return {
+        "x": x,
+        "y": y,
+        "anchor": text_anchor,
+        "angle": angle,
+        "font_size": font_size,
+    }
+
+
 def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str:
     spec = _resolve_static_css_vars(spec)
     width, height, compact, plot = layout(spec)
     xa, ya = spec["x_axis"], spec["y_axis"]
-    sx = _Scale(xa, plot["x"], plot["x"] + plot["w"])
-    sy = _Scale(ya, plot["y"] + plot["h"], plot["y"])  # y grows downward in SVG
+    x_scales, y_scales, sx, sy, extra_x_axes, extra_y_axes = _axis_scales(spec, plot)
     svg = _Svg(id_prefix)
     cols = spec["columns"]
+    # One plot-rect clipPath serves the marks group and every legend.
+    clip_id = svg.uid("clip")
+    svg.defs.append(
+        f'<clipPath id="{clip_id}"><rect x="{_num(plot["x"])}" y="{_num(plot["y"])}" '
+        f'width="{_num(plot["w"])}" height="{_num(plot["h"])}"/></clipPath>'
+    )
 
     def ticks_for(axis: dict[str, Any], length_px: float) -> tuple[list[float], list[float], float]:
         return axis_ticks(axis, length_px, axis is xa)
@@ -1012,8 +1325,6 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
     # label text and keeps grid, baselines and the axis title (mpl shared axes).
     hide_x = xa.get("tick_label_strategy") == "none"
     hide_y = ya.get("tick_label_strategy") == "none"
-    hide_x_labels = hide_x or xa.get("tick_label_strategy") == "off"
-    hide_y_labels = hide_y or ya.get("tick_label_strategy") == "off"
     for v in xt:
         if hide_x:
             break
@@ -1035,37 +1346,63 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             f'stroke-width="{_num(float(ystyle.get("grid_width", 1)))}"'
             f"{_axis_grid_attrs(ystyle)}/>"
         )
-    if not hide_x_labels:
-        for v in xlab:
-            tick_y = plot["y"] - 7 if xa.get("side") == "top" else plot["y"] + plot["h"] + 16
-            labels.append(
-                f'<text x="{_num(float(sx(v)))}" y="{_num(tick_y)}" '
-                f'fill="{escape(_css(xstyle.get("tick_label_color", xstyle.get("tick_color")), default_text))}" '
-                f'font-size="{_num(float(xstyle.get("tick_label_size", xstyle.get("tick_size", 11))))}" '
-                f'text-anchor="middle"'
-                + (
-                    f' transform="rotate({_num(float(xa["tick_label_angle"]))} '
-                    f'{_num(float(sx(v)))} {_num(tick_y)})"'
-                    if xa.get("tick_label_angle") is not None
-                    else ""
-                )
-                + f">{escape(_tick_text(xa, v, xstep))}</text>"
+
+    def append_tick_labels(
+        axis: dict[str, Any],
+        values: list[float],
+        step: float,
+        axis_scale: _Scale,
+        *,
+        is_x: bool,
+    ) -> None:
+        axis_style = axis.get("style") or {}
+        color = escape(
+            _css(
+                axis_style.get("tick_label_color", axis_style.get("tick_color")),
+                default_text,
             )
-    if not hide_y_labels:
-        for v in ylab:
-            labels.append(
-                f'<text x="{_num(plot["x"] - 8)}" y="{_num(float(sy(v)) + 4)}" '
-                f'fill="{escape(_css(ystyle.get("tick_label_color", ystyle.get("tick_color")), default_text))}" '
-                f'font-size="{_num(float(ystyle.get("tick_label_size", ystyle.get("tick_size", 11))))}" '
-                f'text-anchor="end"'
-                + (
-                    f' transform="rotate({_num(float(ya["tick_label_angle"]))} '
-                    f'{_num(plot["x"] - 8)} {_num(float(sy(v)) + 4)})"'
-                    if ya.get("tick_label_angle") is not None
-                    else ""
+        )
+        font_size = _axis_tick_font_size(axis)
+        side = axis.get("side", "bottom" if is_x else "left")
+        for item in _axis_tick_label_layout(axis, values, step, axis_scale, is_x):
+            angle = float(item["angle"])
+            if is_x:
+                row_offset = float(item["row"]) * (font_size + 4)
+                x = float(item["pos"])
+                y = (
+                    plot["y"] - 7 - row_offset
+                    if side == "top"
+                    else plot["y"] + plot["h"] + 16 + row_offset
                 )
-                + f">{escape(_tick_text(ya, v, ystep))}</text>"
+                if angle == 0:
+                    anchor = "middle"
+                elif (side == "bottom" and angle < 0) or (side == "top" and angle > 0):
+                    anchor = "end"
+                else:
+                    anchor = "start"
+            else:
+                x = plot["x"] + plot["w"] + 8 if side == "right" else plot["x"] - 8
+                y = float(item["pos"]) + 4
+                anchor = "start" if side == "right" else "end"
+            transform = f' transform="rotate({_num(angle)} {_num(x)} {_num(y)})"' if angle else ""
+            labels.append(
+                f'<text x="{_num(x)}" y="{_num(y)}" fill="{color}" '
+                f'font-size="{_num(font_size)}" text-anchor="{anchor}"{transform}>'
+                f"{escape(str(item['text']))}</text>"
             )
+
+    append_tick_labels(xa, xlab, xstep, sx, is_x=True)
+    append_tick_labels(ya, ylab, ystep, sy, is_x=False)
+    extra_x_ticks: dict[str, tuple[list[float], list[float], float]] = {}
+    for axis_id, axis, axis_scale in extra_x_axes:
+        ticks, tick_labels, step = axis_ticks(axis, plot["w"], True)
+        extra_x_ticks[axis_id] = (ticks, tick_labels, step)
+        append_tick_labels(axis, tick_labels, step, axis_scale, is_x=True)
+    extra_y_ticks: dict[str, tuple[list[float], list[float], float]] = {}
+    for axis_id, axis, axis_scale in extra_y_axes:
+        ticks, tick_labels, step = axis_ticks(axis, plot["h"], False)
+        extra_y_ticks[axis_id] = (ticks, tick_labels, step)
+        append_tick_labels(axis, tick_labels, step, axis_scale, is_x=False)
 
     # -- marks --------------------------------------------------------------
     marks: list[str] = []
@@ -1087,9 +1424,11 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         tier = t.get("tier")
         color = _css(style.get("color"), DEFAULT_PALETTE[palette_cycle % len(DEFAULT_PALETTE)])
         palette_cycle += 1
+        trace_sx = x_scales.get(t.get("x_axis", "x"), sx)
+        trace_sy = y_scales.get(t.get("y_axis", "y"), sy)
 
         if tier == "density" and t.get("density"):
-            marks.append(_density_image(t["density"], blob, cols, sx, sy, style, svg))
+            marks.append(_density_image(t["density"], blob, cols, trace_sx, trace_sy, style, svg))
             continue
 
         if kind == "line":
@@ -1097,7 +1436,7 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             yv = _column(blob, cols[t["y"]])
             if style.get("step"):
                 xv, yv = _step_arrays(xv, yv, style["step"])
-            d = _curve_path(xv, yv, sx, sy, style.get("curve") == "smooth")
+            d = _curve_path(xv, yv, trace_sx, trace_sy, style.get("curve") == "smooth")
             marks.append(f'<path d="{d}" {line_attrs(style, color)}/>')
 
         elif kind in ("area", "error_band"):
@@ -1105,8 +1444,8 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             yv = _column(blob, cols[t["y"]])
             bv = _column(blob, cols[t["base"]])
             smooth = style.get("curve") == "smooth"
-            top_path = _curve_path(xv, yv, sx, sy, smooth)
-            base_path = _curve_path(xv[::-1], bv[::-1], sx, sy, smooth)
+            top_path = _curve_path(xv, yv, trace_sx, trace_sy, smooth)
+            base_path = _curve_path(xv[::-1], bv[::-1], trace_sx, trace_sy, smooth)
             fill_spec = style.get("fill")
             fill = (
                 svg.gradient(fill_spec, color, plot)
@@ -1130,58 +1469,72 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 )
 
         elif kind == "scatter":
-            marks.append(_scatter_marks(t, blob, cols, sx, sy, style, color))
+            marks.append(_scatter_marks(t, blob, cols, trace_sx, trace_sy, style, color))
 
         elif kind == "hexbin":
-            marks.append(_hexbin_marks(t, blob, cols, sx, sy, style, color))
+            marks.append(_hexbin_marks(t, blob, cols, trace_sx, trace_sy, style, color))
 
         elif kind in {"errorbar", "stem", "box_whisker", "box_median", "contour", "segments"}:
-            marks.append(_segment_marks(t, blob, cols, sx, sy, style, color))
+            marks.append(_segment_marks(t, blob, cols, trace_sx, trace_sy, style, color))
 
         elif kind in ("bar", "column") and t.get("bar"):
-            marks.append(_bar_marks(t, blob, cols, sx, sy, style, color, svg, plot))
+            marks.append(_bar_marks(t, blob, cols, trace_sx, trace_sy, style, color, svg, plot))
 
         elif kind == "heatmap" and t.get("heatmap"):
-            marks.append(_heatmap_image(t["heatmap"], blob, cols, sx, sy, style))
+            marks.append(_heatmap_image(t["heatmap"], blob, cols, trace_sx, trace_sy, style))
 
         elif kind == "triangle_mesh":
-            marks.append(_triangle_mesh_marks(t, blob, cols, sx, sy, style, color))
+            marks.append(_triangle_mesh_marks(t, blob, cols, trace_sx, trace_sy, style, color))
 
         elif all(k in t for k in ("x0", "x1", "y0", "y1")):  # histogram / rect family
-            marks.append(_rect_marks(t, blob, cols, sx, sy, style, color, svg, plot))
+            marks.append(_rect_marks(t, blob, cols, trace_sx, trace_sy, style, color, svg, plot))
 
     # -- chrome text ----------------------------------------------------------
     chrome: list[str] = []
     if spec.get("title"):
         chrome.append(
-            f'<text x="{_num(width / 2)}" y="{_num(plot["y"] - (10 if compact else 12))}" '
+            f'<text x="{_num(width / 2)}" '
+            f'y="{_num(plot["y"] - plot["top_axis_room"] - (10 if compact else 12))}" '
             f'text-anchor="middle" font-size="14" font-weight="600" '
             f'fill="{escape(default_text)}">{escape(str(spec["title"]))}</text>'
         )
-    if xa.get("label") and not hide_x:
+
+    def append_axis_title(axis: dict[str, Any], *, is_x: bool) -> None:
+        if not axis.get("label") or _axis_tick_label_strategy(axis) == "none":
+            return
+        axis_style = axis.get("style") or {}
+        geometry = _axis_label_geometry(axis, plot, is_x=is_x)
+        x, y = float(geometry["x"]), float(geometry["y"])
+        angle = float(geometry["angle"])
+        transform = f' transform="rotate({_num(angle)} {_num(x)} {_num(y)})"' if angle else ""
         chrome.append(
-            f'<text x="{_num(plot["x"] + plot["w"] / 2)}" y="{_num(plot["y"] + plot["h"] + 34)}" '
-            f'text-anchor="middle" font-size="{_num(float(xstyle.get("label_size", 12)))}" '
-            f'font-weight="500" fill="{escape(_css(xstyle.get("label_color"), default_text))}">'
-            f"{escape(str(xa['label']))}</text>"
+            f'<text x="{_num(x)}" y="{_num(y)}" text-anchor="{geometry["anchor"]}" '
+            f'font-size="{_num(float(geometry["font_size"]))}" font-weight="500" '
+            f'fill="{escape(_css(axis_style.get("label_color"), default_text))}"{transform}>'
+            f"{escape(str(axis['label']))}</text>"
         )
-    if ya.get("label") and not hide_y:
-        cx, cy = 14, plot["y"] + plot["h"] / 2
-        chrome.append(
-            f'<text x="{_num(cx)}" y="{_num(cy)}" text-anchor="middle" '
-            f'font-size="{_num(float(ystyle.get("label_size", 12)))}" '
-            f'font-weight="500" fill="{escape(_css(ystyle.get("label_color"), default_text))}" '
-            f'transform="rotate(-90 {_num(cx)} {_num(cy)})">{escape(str(ya["label"]))}</text>'
-        )
+
+    append_axis_title(xa, is_x=True)
+    append_axis_title(ya, is_x=False)
+    for _axis_id, axis, _axis_scale in extra_x_axes:
+        append_axis_title(axis, is_x=True)
+    for _axis_id, axis, _axis_scale in extra_y_axes:
+        append_axis_title(axis, is_x=False)
     named = [t for t in spec["traces"] if t.get("name")]
     if spec.get("show_legend", True) and named:
-        chrome.append(_legend(named, plot, spec.get("legend") or {}))
+        chrome.append(_legend(named, plot, spec.get("legend") or {}, clip_id))
     for extra in spec.get("extra_legends") or []:
         items = extra.get("items") or []
         if items:
-            chrome.append(_legend(items, plot, extra))
+            chrome.append(_legend(items, plot, extra, clip_id))
     if spec.get("colorbar"):
-        chrome.append(_colorbar(spec["colorbar"], plot))
+        chrome.append(
+            _colorbar(
+                spec["colorbar"],
+                plot,
+                _colorbar_right_axis_room(ya, extra_y_axes, compact),
+            )
+        )
 
     annotation_marks, annotation_labels = _annotation_svg(
         spec.get("annotations") or [], sx, sy, plot, width, height
@@ -1212,6 +1565,28 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                     f'stroke="{escape(_css(xstyle.get("axis_color"), default_axis))}" '
                     f'stroke-width="{_num(float(xstyle.get("axis_width", 1)))}"/>'
                 )
+    for _axis_id, axis, _axis_scale in extra_x_axes:
+        if _axis_tick_label_strategy(axis) == "none":
+            continue
+        axis_style = axis.get("style") or {}
+        edge = plot["y"] if axis.get("side", "bottom") == "top" else plot["y"] + plot["h"]
+        baselines += (
+            f'<line x1="{_num(plot["x"])}" y1="{_num(edge)}" '
+            f'x2="{_num(plot["x"] + plot["w"])}" y2="{_num(edge)}" '
+            f'stroke="{escape(_css(axis_style.get("axis_color"), default_axis))}" '
+            f'stroke-width="{_num(float(axis_style.get("axis_width", 1)))}"/>'
+        )
+    for _axis_id, axis, _axis_scale in extra_y_axes:
+        if _axis_tick_label_strategy(axis) == "none":
+            continue
+        axis_style = axis.get("style") or {}
+        edge = plot["x"] + plot["w"] if axis.get("side", "right") == "right" else plot["x"]
+        baselines += (
+            f'<line x1="{_num(edge)}" y1="{_num(plot["y"])}" x2="{_num(edge)}" '
+            f'y2="{_num(plot["y"] + plot["h"])}" '
+            f'stroke="{escape(_css(axis_style.get("axis_color"), default_axis))}" '
+            f'stroke-width="{_num(float(axis_style.get("axis_width", 1)))}"/>'
+        )
 
     def tick_span(style: dict[str, Any]) -> tuple[float, float, float]:
         length = max(0.0, float(style.get("tick_length", 0)))
@@ -1254,12 +1629,45 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                 f'stroke="{escape(_css(ystyle.get("tick_color"), default_axis))}" '
                 f'stroke-width="{_num(tick_width)}"/>'
             )
+    for axis_id, axis, axis_scale in extra_x_axes:
+        if _axis_tick_label_strategy(axis) == "none":
+            continue
+        axis_style = axis.get("style") or {}
+        inward, outward, tick_width = tick_span(axis_style)
+        side = axis.get("side", "bottom")
+        edge = plot["y"] if side == "top" else plot["y"] + plot["h"]
+        for value in extra_x_ticks[axis_id][0]:
+            x = float(axis_scale(value))
+            y1, y2 = (
+                (edge - outward, edge + inward)
+                if side == "top"
+                else (edge - inward, edge + outward)
+            )
+            baselines += (
+                f'<line x1="{_num(x)}" y1="{_num(y1)}" x2="{_num(x)}" y2="{_num(y2)}" '
+                f'stroke="{escape(_css(axis_style.get("tick_color"), default_axis))}" '
+                f'stroke-width="{_num(tick_width)}"/>'
+            )
+    for axis_id, axis, axis_scale in extra_y_axes:
+        if _axis_tick_label_strategy(axis) == "none":
+            continue
+        axis_style = axis.get("style") or {}
+        inward, outward, tick_width = tick_span(axis_style)
+        side = axis.get("side", "right")
+        edge = plot["x"] + plot["w"] if side == "right" else plot["x"]
+        for value in extra_y_ticks[axis_id][0]:
+            y = float(axis_scale(value))
+            x1, x2 = (
+                (edge - inward, edge + outward)
+                if side == "right"
+                else (edge - outward, edge + inward)
+            )
+            baselines += (
+                f'<line x1="{_num(x1)}" y1="{_num(y)}" x2="{_num(x2)}" y2="{_num(y)}" '
+                f'stroke="{escape(_css(axis_style.get("tick_color"), default_axis))}" '
+                f'stroke-width="{_num(tick_width)}"/>'
+            )
 
-    clip_id = svg.uid("clip")
-    svg.defs.append(
-        f'<clipPath id="{clip_id}"><rect x="{_num(plot["x"])}" y="{_num(plot["y"])}" '
-        f'width="{_num(plot["w"])}" height="{_num(plot["h"])}"/></clipPath>'
-    )
     defs = f"<defs>{''.join(svg.defs)}</defs>" if svg.defs else ""
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
@@ -1384,7 +1792,12 @@ def _annotation_svg(annotations, sx, sy, plot, width, height):
                     base = {"middle": (ascent - descent) / 2, "end": -descent}.get(anchor, ascent)
                 stack = -line_height if cw else line_height  # later lines: glyph-down
                 by = ty + float(ann.get("dy", 0))
-                text_opacity = float(style.get("opacity", 1.0))
+                text_opacity = float(
+                    style.get(
+                        "label_opacity",
+                        style.get("opacity", 1.0) if kind == "text" else 1.0,
+                    )
+                )
                 for index, line in enumerate(lines):
                     bx = tx + float(ann.get("dx", 0)) + base + index * stack
                     labels.append(
@@ -1407,7 +1820,12 @@ def _annotation_svg(annotations, sx, sy, plot, width, height):
                 f"{escape(line)}</tspan>"
                 for index, line in enumerate(lines)
             )
-            text_opacity = float(style.get("opacity", 1.0))
+            text_opacity = float(
+                style.get(
+                    "label_opacity",
+                    style.get("opacity", 1.0) if kind == "text" else 1.0,
+                )
+            )
             # A callout's `color` paints its arrow; the label prefers its own.
             label_color = escape(_css(style.get("label_color"), "")) or color
             labels.append(
@@ -1773,35 +2191,121 @@ def _heatmap_image(hm: dict, blob: bytes, cols: list, sx: _Scale, sy: _Scale, st
 _LEGEND_LINE_KINDS = frozenset({"line", "segments", "step", "stairs", "errorbar"})
 
 
-def _legend(named: list[dict], plot: dict, options: dict) -> str:
-    rows = []
+_LEGEND_CHAR_WIDTH = 6.2
+
+
+def _legend_text(value: Any, max_width: float) -> str:
+    """Conservatively ellipsize a static legend string to a pixel budget."""
+    text = str(value)
+    # ``cell_w`` is itself derived from ``len(text) * _LEGEND_CHAR_WIDTH``;
+    # compensate for the tiny binary-float underflow at exact-fit boundaries.
+    max_chars = max(0, int((max_width + 1e-9) / _LEGEND_CHAR_WIDTH))
+    if len(text) <= max_chars:
+        return text
+    if max_chars <= 3:
+        return "." * max_chars
+    return text[: max_chars - 3] + "..."
+
+
+def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, Any]:
+    """Shared bounded legend geometry for SVG and native raster exports.
+
+    Static files cannot offer the browser legend's scrollbar, so an oversized
+    legend is kept inside the plot and its labels are visibly ellipsized. A
+    legend that already fits keeps its historical geometry byte-for-byte.
+    """
     style_opts = options.get("style") or {}
-    pad, handle, gap, line_h = 8.0, 20, 5, 16.0
+    pad, handle, gap, line_h = 8.0, 20.0, 5.0, 16.0
     if str(style_opts.get("padding", "")).endswith("em"):
         pad = 11.0 * float(str(style_opts["padding"])[:-2])
     if str(style_opts.get("rowGap", "")).endswith("em"):
         line_h = 11.0 * (1.0 + float(str(style_opts["rowGap"])[:-2]))
-    ncols = min(len(named), max(1, int(options.get("ncols", 1))))
-    nrows = (len(named) + ncols - 1) // ncols
+
+    requested_cols = min(len(named), max(1, int(options.get("ncols", 1))))
     title = options.get("title")
-    title_h = 16 if title else 0
-    cell_w = max(len(str(t["name"])) for t in named) * 6.2 + handle + gap + 2 * pad
-    box_w, box_h = ncols * cell_w + pad, nrows * line_h + pad + title_h
+    title_h = 16.0 if title else 0.0
+    natural_cell_w = (
+        max(len(str(t.get("name", ""))) for t in named) * _LEGEND_CHAR_WIDTH
+        + handle
+        + gap
+        + 2 * pad
+    )
+    inset = 6.0
+    available_w = max(1.0, float(plot["w"]) - 2 * inset)
+    ncols = requested_cols
+    if ncols * natural_cell_w + pad > available_w:
+        # A cell must at least retain its handle and a visible ellipsis. Reduce
+        # an impossible column count before shortening the individual labels.
+        min_cell_w = handle + gap + 2 * pad + 4 * _LEGEND_CHAR_WIDTH
+        max_fit_cols = max(1, int(max(0.0, available_w - pad) // min_cell_w))
+        ncols = min(ncols, max_fit_cols)
+    cell_w = min(natural_cell_w, max(1.0, (available_w - pad) / ncols))
+    box_w = min(available_w, ncols * cell_w + pad)
+
+    nrows = (len(named) + ncols - 1) // ncols
+    available_h = max(1.0, float(plot["h"]) - 2 * inset)
+    visible_rows = nrows
+    natural_box_h = nrows * line_h + pad + title_h
+    if natural_box_h > available_h:
+        visible_rows = max(0, int((available_h - pad - title_h) // line_h))
+    visible_count = min(len(named), visible_rows * ncols)
+    box_h = min(available_h, visible_rows * line_h + pad + title_h)
+
     loc = options.get("loc") or "upper right"
-    # "center" is the per-axis fallback: "center right" is the right edge at
-    # vertical center, "upper center" the top edge at horizontal center.
     if "left" in loc:
-        x = plot["x"] + 6
+        x = float(plot["x"]) + inset
     elif "right" in loc:
-        x = plot["x"] + plot["w"] - box_w - 6
+        x = float(plot["x"]) + float(plot["w"]) - box_w - inset
     else:
-        x = plot["x"] + (plot["w"] - box_w) / 2
+        x = float(plot["x"]) + (float(plot["w"]) - box_w) / 2
     if "upper" in loc:
-        y = plot["y"] + 6
+        y = float(plot["y"]) + inset
     elif "lower" in loc:
-        y = plot["y"] + plot["h"] - box_h - 6
+        y = float(plot["y"]) + float(plot["h"]) - box_h - inset
     else:
-        y = plot["y"] + (plot["h"] - box_h) / 2
+        y = float(plot["y"]) + (float(plot["h"]) - box_h) / 2
+    x = min(
+        max(x, float(plot["x"]) + inset),
+        float(plot["x"]) + float(plot["w"]) - box_w - inset,
+    )
+    y = min(
+        max(y, float(plot["y"]) + inset),
+        float(plot["y"]) + float(plot["h"]) - box_h - inset,
+    )
+
+    text_width = max(0.0, cell_w - handle - gap - 2 * pad)
+    return {
+        "style": style_opts,
+        "pad": pad,
+        "handle": handle,
+        "gap": gap,
+        "line_h": line_h,
+        "ncols": ncols,
+        "title": _legend_text(title, max(0.0, box_w - 2 * pad)) if title else None,
+        "title_h": title_h,
+        "cell_w": cell_w,
+        "box_w": box_w,
+        "box_h": box_h,
+        "x": x,
+        "y": y,
+        "visible_count": visible_count,
+        "names": [_legend_text(t.get("name", ""), text_width) for t in named[:visible_count]],
+    }
+
+
+def _legend(named: list[dict], plot: dict, options: dict, clip_id: str) -> str:
+    legend = _legend_layout(named, plot, options)
+    if not legend["visible_count"]:
+        # A plot too short for even one entry: no floating frame/title either.
+        return ""
+    rows = []
+    style_opts = legend["style"]
+    pad, handle, gap = legend["pad"], legend["handle"], legend["gap"]
+    line_h, ncols = legend["line_h"], legend["ncols"]
+    title, title_h = legend["title"], legend["title_h"]
+    cell_w = legend["cell_w"]
+    box_w, box_h = legend["box_w"], legend["box_h"]
+    x, y = legend["x"], legend["y"]
     if style_opts.get("background") != "transparent":
         if style_opts.get("boxShadow"):
             rows.append(
@@ -1825,7 +2329,7 @@ def _legend(named: list[dict], plot: dict, options: dict) -> str:
             f'<text x="{_num(x + pad)}" y="{_num(y + pad / 2 + 11)}" '
             f'font-weight="600" fill="{_TEXT}">{escape(str(title))}</text>'
         )
-    for i, t in enumerate(named):
+    for i, t in enumerate(named[: legend["visible_count"]]):
         style = t.get("style") or {}
         color = _css(
             style.get("color") or (t.get("color") or {}).get("color"),
@@ -1869,12 +2373,12 @@ def _legend(named: list[dict], plot: dict, options: dict) -> str:
             )
         rows.append(
             f'<text x="{_num(hx1 + gap)}" y="{_num(ry + 11)}" '
-            f'fill="{_TEXT}">{escape(str(t["name"]))}</text>'
+            f'fill="{_TEXT}">{escape(legend["names"][i])}</text>'
         )
-    return "".join(rows)
+    return f'<g clip-path="url(#{clip_id})">{"".join(rows)}</g>'
 
 
-def _colorbar(options: dict, plot: dict) -> str:
+def _colorbar(options: dict, plot: dict, right_axis_room: float = 0.0) -> str:
     cmap = str(options.get("colormap", "viridis"))
     gradient_id = f"xy-colorbar-{sum(map(ord, cmap))}"
     stops = _colormap_stops(cmap)
@@ -1886,10 +2390,15 @@ def _colorbar(options: dict, plot: dict) -> str:
     orientation = options.get("orientation", "vertical")
     domain = options.get("domain", [0.0, 1.0])
     if orientation == "horizontal":
-        x, y, width, height = plot["x"], plot["y"] + plot["h"] + 10, plot["w"], 18
+        x = plot["x"]
+        y = plot["y"] + plot["h"] + (plot["bottom_axis_room"] or 10)
+        width, height = plot["w"], 18
         gradient_attrs = 'x1="0" y1="0" x2="100%" y2="0"'
     else:
-        x, y, width, height = plot["x"] + plot["w"] + 24, plot["y"], 18, plot["h"]
+        # right_axis_room shifts the whole colorbar clear of right-side named
+        # y-axis chrome (layout() reserves room for both additively).
+        x = plot["x"] + plot["w"] + right_axis_room + 24
+        y, width, height = plot["y"], 18, plot["h"]
         gradient_attrs = 'x1="0" y1="100%" x2="0" y2="0"'
     label = str(options.get("label") or "")
     label_node = (

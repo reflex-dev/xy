@@ -6,9 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-FRAMEWORK_INTEGRATION_DOC = (
-    Path(__file__).resolve().parents[2] / "guides" / "framework-integration.md"
-)
+FRAMEWORK_INTEGRATION_DOC = Path(__file__).resolve().parents[2] / "integrations" / "reflex.md"
 
 
 def _python_examples() -> dict[str, str]:

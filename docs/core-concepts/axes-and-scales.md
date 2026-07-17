@@ -1,55 +1,96 @@
 ---
 title: Axes and Scales
-description: Configure domains, scale types, formatting, ticks, and multiple axes.
+description: Configure domains, scale types, ticks, formatting, and named axes.
 ---
 
 # Axes and Scales
 
-Add `x_axis()` and `y_axis()` children to label and constrain a chart. XY can
-infer ordinary linear, datetime, and categorical axes, or you can configure
-them explicitly.
+Add `x_axis()` and `y_axis()` children to label and constrain a chart. XY
+infers linear, time, and categorical scales from the bound columns.
+Datetime-like values select the time scale automatically, or you can make the
+contract explicit.
 
-## Domains and Scale Types
+## Scale type and domain
+
+`type_` accepts `"linear"`, `"time"`, or `"log"`. Leave it as `None` to infer
+the scale. The explicit token is `"time"`, not `"datetime"`.
+`domain=(low, high)` pins a data-space window; `reverse=True` flips its display
+direction without changing the source values.
 
 ~~~python
 import numpy as np
-import xy as fc
+import xy
 
 x = np.logspace(0, 6, 240)
 rank = 96 - np.log10(x) * 11.5
-conversion = 0.08 + np.log10(x) * 0.035
 
-chart = fc.chart(
-    fc.line(x, rank, name="Rank", color="#2563eb"),
-    fc.line(x, conversion, y_axis="y2", name="Conversion", color="#dc2626"),
-    fc.x_axis(
+chart = xy.line_chart(
+    xy.line(x, rank),
+    xy.x_axis(
         label="request volume",
         type_="log",
         domain=(1, 1_000_000),
         format=",.0f",
     ),
-    fc.y_axis(label="rank", domain=(0, 100), reverse=True, format=".0f"),
-    fc.y_axis(
-        id="y2",
-        label="conversion",
-        side="right",
-        domain=(0, 0.35),
-        format=".0%",
-    ),
-    fc.legend(),
+    xy.y_axis(label="rank", domain=(0, 100), reverse=True, format=".0f"),
 )
 ~~~
 
-## Tick Controls
+Log domains must be positive. Date and datetime values use XY's canonical
+milliseconds-since-epoch coordinate system while their ticks render as time.
+String categories preserve a stable category order and receive categorical
+positions.
 
-Use `tick_count` for a target count or provide exact `tick_values` and optional
-`tick_labels`. Long labels can use `tick_label_angle`, `tick_label_min_gap`, or
-the `tick_label_strategy` supported by the axis component.
+## Tick controls
 
-`label_position`, `label_offset`, and `label_angle` control the axis title.
-`side="right"` or `side="top"` places compatible axes on the opposite side.
+Use `tick_count` as a target, or provide exact `tick_values` with optional
+`tick_labels`:
 
-## Bind a Mark to a Named Axis
+~~~python
+axis = xy.y_axis(
+    label="conversion",
+    domain=(0, 1),
+    tick_values=[0, 0.25, 0.5, 0.75, 1],
+    tick_labels=["0%", "25%", "50%", "75%", "100%"],
+)
+~~~
 
-Every mark accepts `x_axis` and `y_axis` identifiers. Define matching axes with
-`x_axis(id="x2", ...)` or `y_axis(id="y2", ...)` before building the chart.
+`format` controls numeric labels. For crowded labels, use
+`tick_label_angle`, `tick_label_min_gap`, and `tick_label_strategy`.
+`label_position`, `label_offset`, and `label_angle` position the axis title.
+
+Axis `style=` uses a strict cross-renderer vocabulary for grid, axis, tick, and
+label paint/geometry. See [Mark styles](/docs/xy/styling/mark-styles/#axis-styles)
+for the supported keys.
+
+## Named and opposite-side axes
+
+Marks bind to axis identifiers through `x_axis=` and `y_axis=`. Define a
+matching `id` on the axis component, and use `side="right"` or `side="top"`
+for an opposite-side axis:
+
+~~~python
+chart = xy.chart(
+    xy.line([1, 10, 100], [80, 70, 60], name="Rank"),
+    xy.line(
+        [1, 10, 100],
+        [0.08, 0.12, 0.19],
+        y_axis="y2",
+        name="Conversion",
+        color="#dc2626",
+    ),
+    xy.x_axis(type_="log", label="requests"),
+    xy.y_axis(label="rank", domain=(0, 100)),
+    xy.y_axis(
+        id="y2",
+        side="right",
+        label="conversion",
+        domain=(0, 0.25),
+        format=".0%",
+    ),
+    xy.legend(),
+)
+~~~
+
+Named axes share the panel but keep their own scale and tick contract. Bindings
+that name an undefined axis fail at chart build time.

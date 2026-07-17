@@ -1,15 +1,23 @@
 ---
 title: Guides
-description: Export, embed, stream, scale, and migrate chart workflows.
+description: Display, export, stream, link, deploy, and troubleshoot XY charts.
 ---
 
 # Guides
 
-- [Exporting](/docs/xy/guides/exporting/) covers standalone HTML, native PNG, Chromium
-  screenshots, SVG, and batch image writing.
-- [Notebooks and pyplot](/docs/xy/guides/notebooks-and-pyplot/) covers display and the
-  Matplotlib-shaped compatibility layer.
-- [Large datasets](/docs/xy/guides/large-datasets/) explains screen-bounded rendering.
-- [Streaming data](/docs/xy/guides/streaming-data/) covers append, readout, and selection.
-- [Framework integration](/docs/xy/guides/framework-integration/) explains the boundary
-  between XY's core and host frameworks such as Reflex.
+- [Display and export](/docs/xy/guides/display-and-export/) covers notebook
+  display, standalone HTML, native and Chromium PNG, SVG, and batch output.
+- [Real-time and streaming data](/docs/xy/guides/real-time-and-streaming-data/)
+  covers append, exact readout, selections, live widgets, and snapshots.
+- [Dashboards and linked views](/docs/xy/guides/dashboards-and-linked-views/)
+  covers synchronized ranges, application-driven cross-filtering, and the
+  browser's live-context budget.
+- [Serving, CSP, and offline use](/docs/xy/guides/serving-csp-and-offline-use/)
+  explains bundled assets, standalone HTML security, strict CSP wrappers, and
+  air-gapped environments.
+- [Troubleshooting](/docs/xy/guides/troubleshooting/) maps common runtime and
+  validation failures to concrete fixes.
+
+For host-specific setup, see [Integrations](/docs/xy/integrations/). For the
+screen-bounded representation model, see
+[Large data and performance](/docs/xy/core-concepts/large-data-and-performance/).

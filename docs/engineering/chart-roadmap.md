@@ -298,8 +298,8 @@ The marks themselves speak CSS. `fill=` accepts a real CSS
 `linear-gradient(...)` (mark-space or plot-space); bars/rects take
 `corner_radius` (scalar or independent `(tip, base)`), `stroke`, and
 `stroke_width`; lines and area outlines take `dash` (presets or an on/off
-pattern); line/area take `curve="smooth"` (monotone-cubic); scatter takes
-`symbol` (circle/square/diamond/triangle/cross) plus point strokes. Mark colors
+pattern); line/area take `curve="smooth"` (monotone-cubic); scatter takes 17
+renderer-backed `symbol` glyphs plus point strokes. Mark colors
 flow through the same `--chart-*` tokens as the chrome, so a theme change
 re-resolves marks and chrome together. The full matrix and per-mark support
 table live in [`docs/engineering/styling.md`](styling.md). Static SVG export reproduces all
@@ -318,19 +318,23 @@ variables on the container, and can style the wrapper freely.
 
 **Status: shipped.** Every DOM chrome element now carries a `data-xy-slot`
 attribute and takes per-slot `class_names` / `chrome_styles`, and its *visual*
-defaults live in a single zero-specificity `:where([data-xy-slot="…"])`
-stylesheet injected once per document. Because `:where(...)` contributes zero
-specificity, a `class_names` utility class (or an inline `chrome_styles` value)
-always wins over the built-in look **without `!important`** — verified in a real
-browser (a `.bg-*` class on the tooltip changes its computed background). The
+defaults live in a single low-priority `base` cascade layer with
+zero-specificity `:where([data-xy-slot="…"])` selectors, injected once per
+document. Tailwind's later utility layer, unlayered author CSS, and inline
+`chrome_styles` therefore win over the built-in look **without `!important`** —
+verified in a real browser (a `.bg-*` class on the tooltip changes its computed
+background). The
 elements keep only *structural* inline styles (position/size/z-index/state), so
 nothing themeable competes with a user class. The full slot list (including
 `legend_swatch`, `tick_label`, `axis_title`, and the class-driven modebar
 active state via `--chart-modebar-active`) is `xy.CHART_DOM_SLOTS`.
 
-For the standalone `to_html(...)` export — which has no host page to inherit
-Tailwind from — pass `custom_css="…"` to inject the stylesheet defining those
-utility classes; the widget path inherits the host page's Tailwind directly.
+For a fixed chart, the Reflex adapter also mirrors embedded class strings into
+generated JSX for Tailwind's compile-time scan. Runtime token/Var charts must
+put their complete names in ordinary host source or a safelist. For the
+standalone `to_html(...)` export — which has no host page to inherit Tailwind
+from — pass `custom_css="…"` to inject the stylesheet defining those utility
+classes.
 
 Explicitly **out of scope** (browser limit, not a backlog item): the plotted
 marks are WebGL2 canvas pixels — no CSS, Tailwind or otherwise, can style them.

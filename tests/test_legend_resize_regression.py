@@ -1,14 +1,9 @@
-"""Behavioral regression: an explicit legend max-height survives a resize.
+"""Browser regressions for responsive legend and tooltip chrome.
 
-The client's responsive legend cap (`_resize`) re-applies an automatic
-`max-height` unless the author set one. The guard reads the chrome `styles`
-spec, which ships the author's *raw* key — and the Python API form is
-snake_case (`max_height`). A raw-key-only lookup missed that form, so on a
-responsive resize the automatic cap clobbered an explicit `max_height`
-(browser-verified: 50px became the plot height). The source-grep suites cannot
-see this — it only manifests in a live browser after a resize — so this test
-renders the standalone export in headless Chromium and asserts the computed
-`max-height` before *and* after a forced resize.
+The automatic legend bounds are low-priority, zero-specificity stylesheet defaults so an
+explicit component style survives resize. Narrow-chart probes additionally
+exercise long legend rows, edge tooltips, and the compact-layout origin; these
+failures only manifest after the browser computes real geometry.
 
 Skips (never fails) when no Chromium is available or the headless GL context
 can't come up, matching the repo's other browser probes.
@@ -16,15 +11,13 @@ can't come up, matching the repo's other browser probes.
 
 from __future__ import annotations
 
-import html as html_lib
-import json
-import re
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 import pytest
+
+from conftest import run_browser_probe
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python"))
@@ -79,60 +72,225 @@ _PROBE = """
 </script>
 """
 
+_OVERFLOW_PROBE = """
+<script>
+(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const raf = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  try {
+    const view = window.__fcProbeView;
+    if (!view) throw new Error("no probe view captured");
+    const utilityStyle = document.createElement("style");
+    utilityStyle.textContent = `
+      @layer base, utilities;
+      @layer utilities {
+        .xy-probe-tooltip {
+          background: rgb(1 2 3);
+          color: rgb(250 251 252);
+          padding: 9px 11px;
+          border-radius: 13px;
+        }
+      }
+    `;
+    document.head.appendChild(utilityStyle);
+    const host = view.root.parentElement;
+    host.style.width = "320px";
+    host.style.height = "360px";
+    view.root.style.width = "320px";
+    view.root.style.height = "360px";
+    view.fluid = true;
+    view.fluidH = true;
+    view._resize(320, 360);
+    await raf();
 
-def _dump_dom(chromium: str, page: Path) -> str | None:
-    """One headless render pass; None on a chromium-level failure (retryable)."""
-    try:
-        proc = subprocess.run(
-            [
-                chromium,
-                "--headless=new",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--allow-file-access-from-files",
-                "--use-angle=swiftshader",
-                "--enable-unsafe-swiftshader",
-                "--hide-scrollbars",
-                "--window-size=640,480",
-                "--virtual-time-budget=8000",
-                "--dump-dom",
-                page.as_uri(),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-    except subprocess.TimeoutExpired:
-        return None
-    return proc.stdout if proc.returncode == 0 else None
+    // A docs page can exceed the WebGL context budget. Exercise the same trace
+    // builder used during recovery and verify it retains the non-positional
+    // CPU channel views that rich tooltips need after the rebuild.
+    const sourceScatter = view.gpuTraces.find((g) => g.trace.id === 8);
+    const rebuiltScatter = {
+      trace: sourceScatter.trace,
+      xAxis: sourceScatter.xAxis,
+      yAxis: sourceScatter.yAxis,
+    };
+    view._buildScatterMark(rebuiltScatter, sourceScatter.trace, view._payload);
+    const colorCpuRetained = !!rebuiltScatter._cpu?.color;
+    const sizeCpuRetained = !!rebuiltScatter._cpu?.size;
+
+    const legend = document.querySelector('[data-xy-slot="legend"]');
+    if (!legend) throw new Error("legend never rendered");
+    view.canvas.focus();
+    view.canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    for (let i = 0; i < 100 && view.tooltip.style.display !== "block"; i++) {
+      await sleep(20);
+    }
+    await raf();
+    const tooltip = document.querySelector('[data-xy-slot="tooltip"]');
+    if (!tooltip || tooltip.style.display !== "block") {
+      throw new Error("keyboard tooltip never rendered");
+    }
+
+    const rootRect = view.root.getBoundingClientRect();
+    const legendRect = legend.getBoundingClientRect();
+    const tooltipRect = tooltip.getBoundingClientRect();
+    const tooltipStyle = getComputedStyle(tooltip);
+    const inside = (rect) =>
+      rect.left >= rootRect.left - 1 && rect.right <= rootRect.right + 1 &&
+      rect.top >= rootRect.top - 1 && rect.bottom <= rootRect.bottom + 1;
+    document.body.setAttribute("data-xy-chrome-overflow", JSON.stringify({
+      rootWidth: rootRect.width,
+      legendWithinRoot: inside(legendRect),
+      legendCenterError: Math.abs(
+        (legendRect.left + legendRect.right) / 2 -
+        (rootRect.left + view.plot.x + view.plot.w / 2)
+      ),
+      legendHasOverflow: legend.scrollWidth > legend.clientWidth || legend.scrollHeight > legend.clientHeight,
+      legendMaxWidth: getComputedStyle(legend).maxWidth,
+      canvasLeftError: Math.abs(
+        view.canvas.getBoundingClientRect().left - (rootRect.left + view.plot.x)
+      ),
+      canvasTopError: Math.abs(
+        view.canvas.getBoundingClientRect().top - (rootRect.top + view.plot.y)
+      ),
+      colorCpuRetained,
+      sizeCpuRetained,
+      tooltipWithinRoot: inside(tooltipRect),
+      tooltipWidth: tooltipRect.width,
+      tooltipText: tooltip.textContent,
+      tooltipBackground: tooltipStyle.backgroundColor,
+      tooltipColor: tooltipStyle.color,
+      tooltipPadding: tooltipStyle.padding,
+      tooltipRadius: tooltipStyle.borderRadius,
+    }));
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-chrome-overflow-error",
+      String((err && err.stack) || err)
+    );
+  }
+})();
+</script>
+"""
+
+_AXIS_CATEGORY_PROBE = """
+<script>
+(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const raf = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  try {
+    const view = window.__fcProbeView;
+    if (!view) throw new Error("no probe view captured");
+    let ticks = [];
+    for (let i = 0; i < 200; i++) {
+      ticks = [...document.querySelectorAll('[data-xy-label-kind="tick"]')];
+      if (
+        ticks.some((node) => node.dataset.xyAxis === "x") &&
+        ticks.some((node) => node.dataset.xyAxis === "x2")
+      ) break;
+      await sleep(25);
+    }
+    await raf();
+    ticks = [...document.querySelectorAll('[data-xy-label-kind="tick"]')];
+    const read = (axisId) => {
+      const axis = view.axes[axisId];
+      if (!axis) throw new Error(`missing ${axisId} axis`);
+      return {
+        kind: axis.kind,
+        categories: Array.from(axis.categories || []),
+        labels: ticks
+          .filter((node) => node.dataset.xyAxis === axisId)
+          .map((node) => node.textContent),
+      };
+    };
+    document.body.setAttribute(
+      "data-xy-axis-categories",
+      JSON.stringify({ x: read("x"), x2: read("x2") })
+    );
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-axis-categories-error",
+      String((err && err.stack) || err)
+    );
+  }
+})();
+</script>
+"""
+
+_ANNOTATION_ALIGNMENT_PROBE = """
+<script>
+(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const raf = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  try {
+    const view = window.__fcProbeView;
+    if (!view) throw new Error("no probe view captured");
+    let labels = [];
+    for (let i = 0; i < 200; i++) {
+      labels = [...document.querySelectorAll('[data-xy-slot="annotation_label"]')];
+      if (labels.length >= 2) break;
+      await sleep(25);
+    }
+    await raf();
+    const findLabel = (text) => labels.find((label) => label.textContent === text);
+    const band = findLabel("band-center");
+    const arrow = findLabel("arrow-center");
+    if (!band || !arrow) throw new Error("annotation labels never rendered");
+    const root = view.root.getBoundingClientRect();
+    const centerX = (element) => {
+      const rect = element.getBoundingClientRect();
+      return (rect.left + rect.right) / 2;
+    };
+    const bandExpected = root.left + (view._dataPxX(2) + view._dataPxX(4)) / 2;
+    const arrowExpected = root.left + (view._dataPxX(0) + view._dataPxX(2)) / 2;
+    document.body.setAttribute(
+      "data-xy-annotation-alignment",
+      JSON.stringify({
+        bandCenterError: Math.abs(centerX(band) - bandExpected),
+        arrowCenterError: Math.abs(centerX(arrow) - arrowExpected),
+        bandTransform: band.style.transform,
+        arrowTransform: arrow.style.transform,
+      })
+    );
+  } catch (err) {
+    document.body.setAttribute(
+      "data-xy-annotation-alignment-error",
+      String((err && err.stack) || err)
+    );
+  }
+})();
+</script>
+"""
 
 
-def _probe_maxheight(chromium: str, document: str, page: Path) -> dict | None:
-    """Render + probe with retries. Returns the parsed result payload, or None
-    if every attempt hit an environmental miss (no DOM / GL error / no result).
+def _probe_maxheight(chromium: str, document: str, page: Path) -> dict:
+    """Render + probe the legend max-height across a responsive resize."""
+    return run_browser_probe(
+        chromium, document, page, "data-xy-legend-maxheight", label="legend resize probe"
+    )
 
-    Headless probes on shared runners have transient warm-up misses (virtual
-    time / GL init) that a relaunch clears; a genuine regression fails every
-    attempt with a *value* mismatch, which we surface — never retry away.
-    """
-    page.write_text(document, encoding="utf-8")
-    last: str | None = None
-    for _ in range(3):
-        dom = _dump_dom(chromium, page)
-        if dom is None:
-            continue
-        error = re.search(r'data-xy-legend-maxheight-error="([^"]*)"', dom)
-        if error:
-            last = f"probe error: {html_lib.unescape(error.group(1))}"
-            continue
-        match = re.search(r'data-xy-legend-maxheight="([^"]*)"', dom)
-        if match:
-            return json.loads(html_lib.unescape(match.group(1)))
-        last = "probe did not finish (no result attribute)"
-    if last:
-        pytest.skip(f"legend resize probe could not run after retries: {last}")
-    pytest.skip("headless chromium unavailable/failed after retries")
-    return None  # unreachable; keeps type-checkers happy
+
+def _probe_overflow(chromium: str, document: str, page: Path) -> dict:
+    """Render the narrow chrome stress case and read its DOM bounds."""
+    return run_browser_probe(
+        chromium, document, page, "data-xy-chrome-overflow", label="chrome overflow probe"
+    )
+
+
+def _probe_axis_categories(chromium: str, document: str, page: Path) -> dict:
+    """Render mixed primary/named scales and read their normalized state + labels."""
+    return run_browser_probe(
+        chromium, document, page, "data-xy-axis-categories", label="axis category probe"
+    )
+
+
+def _probe_annotation_alignment(chromium: str, document: str, page: Path) -> dict:
+    """Render annotation labels and compare their DOM centers with geometry."""
+    return run_browser_probe(
+        chromium,
+        document,
+        page,
+        "data-xy-annotation-alignment",
+        label="annotation alignment probe",
+    )
 
 
 def test_snake_case_legend_max_height_survives_resize() -> None:
@@ -170,3 +328,218 @@ def test_snake_case_legend_max_height_survives_resize() -> None:
     assert payload["afterResize"] == "50px", (
         f"resize clobbered the explicit snake_case max_height: {payload}"
     )
+
+
+def test_long_legend_and_edge_tooltip_stay_inside_narrow_chart() -> None:
+    chromium = find_chromium()
+    if not chromium:
+        pytest.skip("no chromium available for the chrome overflow probe")
+
+    colors = (
+        "#2563eb",
+        "#7c3aed",
+        "#db2777",
+        "#ea580c",
+        "#0f766e",
+        "#0891b2",
+        "#4f46e5",
+        "#be123c",
+    )
+    children = [
+        xy.line(
+            [0, 1, 2],
+            [2 + index * 0.35, 4 + index * 0.2, 1.5 + index * 0.25],
+            name=f"Service {index + 1}: reconciliation and settlement pipeline",
+            color=color,
+        )
+        for index, color in enumerate(colors)
+    ]
+    data = {
+        "sample": [0, 1, 2],
+        "latency_ms": [8.0, 5.0, 1.0],
+        "service_tier": [
+            "edge",
+            "core",
+            "critical-payments-reconciliation-with-extra-long-label",
+        ],
+        "requests_per_minute": [1_200, 4_800, 12_400],
+    }
+    children.append(
+        xy.scatter(
+            x="sample",
+            y="latency_ms",
+            color="service_tier",
+            size="requests_per_minute",
+            data=data,
+            name="Interactive incident samples with resident tooltip fields",
+        )
+    )
+    chart = xy.chart(
+        *children,
+        xy.legend(loc="upper center", ncols=2, title="Long operational series"),
+        xy.tooltip(
+            fields=["sample", "latency_ms", "service_tier", "requests_per_minute"],
+            title="{service_tier}",
+            format={"latency_ms": ".1f", "requests_per_minute": ",.0f"},
+        ),
+        xy.interaction_config(
+            hover=True,
+            click=True,
+            crosshair=True,
+            select=True,
+            brush=True,
+            view_change=True,
+        ),
+        class_names={"tooltip": "xy-probe-tooltip"},
+        width="100%",
+        height=360,
+    )
+
+    document = chart.to_html()
+    render_call = next((call for call in _RENDER_CALLS if call in document), None)
+    assert render_call is not None
+    document = document.replace(
+        render_call,
+        render_call.replace(
+            "xy.renderStandalone(", "window.__fcProbeView = xy.renderStandalone(", 1
+        ),
+        1,
+    )
+    document = document.replace("</body>", _OVERFLOW_PROBE + "\n</body>", 1)
+
+    with tempfile.TemporaryDirectory() as td:
+        payload = _probe_overflow(chromium, document, Path(td) / "chrome_overflow.html")
+
+    assert payload["rootWidth"] == pytest.approx(320, abs=1), payload
+    assert payload["legendWithinRoot"] is True, payload
+    assert payload["legendCenterError"] <= 1, payload
+    assert payload["legendHasOverflow"] is True, payload
+    assert payload["legendMaxWidth"].endswith("px"), payload
+    assert payload["canvasLeftError"] <= 1, payload
+    assert payload["canvasTopError"] <= 1, payload
+    assert payload["colorCpuRetained"] is True, payload
+    assert payload["sizeCpuRetained"] is True, payload
+    assert payload["tooltipWithinRoot"] is True, payload
+    assert payload["tooltipWidth"] <= 312, payload
+    assert "critical-payments-reconciliation" in payload["tooltipText"], payload
+    assert payload["tooltipBackground"] == "rgb(1, 2, 3)", payload
+    assert payload["tooltipColor"] == "rgb(250, 251, 252)", payload
+    assert payload["tooltipPadding"] == "9px 11px", payload
+    assert payload["tooltipRadius"] == "13px", payload
+
+
+def test_midpoint_annotation_labels_are_visually_centered() -> None:
+    chromium = find_chromium()
+    if not chromium:
+        pytest.skip("no chromium available for the annotation alignment probe")
+
+    chart = xy.chart(
+        xy.line([0, 1, 2, 3, 4], [0, 1, 2, 3, 4]),
+        xy.x_band(2, 4, text="band-center"),
+        xy.arrow(0, 0, 2, 2, text="arrow-center"),
+        xy.x_axis(domain=(-0.5, 4.5)),
+        xy.y_axis(domain=(-0.5, 4.5)),
+        width=520,
+        height=320,
+    )
+
+    document = chart.to_html()
+    render_call = next((call for call in _RENDER_CALLS if call in document), None)
+    assert render_call is not None
+    document = document.replace(
+        render_call,
+        render_call.replace(
+            "xy.renderStandalone(", "window.__fcProbeView = xy.renderStandalone(", 1
+        ),
+        1,
+    )
+    document = document.replace("</body>", _ANNOTATION_ALIGNMENT_PROBE + "\n</body>", 1)
+
+    with tempfile.TemporaryDirectory() as td:
+        payload = _probe_annotation_alignment(
+            chromium,
+            document,
+            Path(td) / "annotation_alignment.html",
+        )
+
+    assert payload["bandCenterError"] <= 1, payload
+    assert payload["arrowCenterError"] <= 1, payload
+    assert "-50%" in payload["bandTransform"], payload
+    assert "-50%" in payload["arrowTransform"], payload
+
+
+@pytest.mark.parametrize(
+    "primary_is_category",
+    [True, False],
+    ids=["primary-category-named-linear", "primary-linear-named-category"],
+)
+def test_browser_named_axis_category_state_and_tick_chrome_are_independent(
+    primary_is_category: bool,
+) -> None:
+    chromium = find_chromium()
+    if not chromium:
+        pytest.skip("no chromium available for the named-axis category probe")
+
+    if primary_is_category:
+        chart = xy.chart(
+            xy.line(["Alpha", "Beta", "Gamma"], [1.0, 2.0, 3.0]),
+            xy.line([100.0, 200.0, 300.0], [3.0, 2.0, 1.0], x_axis="x2"),
+            xy.x_axis(tick_label_strategy="rotate"),
+            xy.x_axis(
+                id="x2",
+                side="top",
+                type_="linear",
+                tick_values=(100.0, 200.0, 300.0),
+                tick_labels=("N100", "N200", "N300"),
+                tick_label_strategy="rotate",
+            ),
+            width=560,
+            height=300,
+        )
+        expected = {
+            "x": {
+                "kind": "category",
+                "categories": ["Alpha", "Beta", "Gamma"],
+                "labels": ["Alpha", "Beta", "Gamma"],
+            },
+            "x2": {"kind": "linear", "categories": [], "labels": ["N100", "N200", "N300"]},
+        }
+    else:
+        chart = xy.chart(
+            xy.line([10.0, 20.0, 30.0], [1.0, 2.0, 3.0]),
+            xy.line(["Red", "Green", "Blue"], [3.0, 2.0, 1.0], x_axis="x2"),
+            xy.x_axis(
+                type_="linear",
+                tick_values=(10.0, 20.0, 30.0),
+                tick_labels=("P10", "P20", "P30"),
+                tick_label_strategy="rotate",
+            ),
+            xy.x_axis(id="x2", side="top", tick_label_strategy="rotate"),
+            width=560,
+            height=300,
+        )
+        expected = {
+            "x": {"kind": "linear", "categories": [], "labels": ["P10", "P20", "P30"]},
+            "x2": {
+                "kind": "category",
+                "categories": ["Red", "Green", "Blue"],
+                "labels": ["Red", "Green", "Blue"],
+            },
+        }
+
+    document = chart.to_html()
+    render_call = next((call for call in _RENDER_CALLS if call in document), None)
+    assert render_call is not None
+    document = document.replace(
+        render_call,
+        render_call.replace(
+            "xy.renderStandalone(", "window.__fcProbeView = xy.renderStandalone(", 1
+        ),
+        1,
+    )
+    document = document.replace("</body>", _AXIS_CATEGORY_PROBE + "\n</body>", 1)
+
+    with tempfile.TemporaryDirectory() as td:
+        payload = _probe_axis_categories(chromium, document, Path(td) / "axis_categories.html")
+
+    assert payload == expected

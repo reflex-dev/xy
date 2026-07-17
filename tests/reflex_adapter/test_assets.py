@@ -80,6 +80,15 @@ def test_wrapper_sizes_static_and_live_charts_to_the_reflex_mount():
     assert "fitSpecToElement(data.spec)," in jsx
 
 
+def test_wrapper_discards_tailwind_scan_manifest_before_dom_props():
+    """The scan bridge must not become an unknown DOM attribute at runtime."""
+    jsx = (ADAPTER_ASSETS / "XYChart.jsx").read_text(encoding="utf-8")
+
+    assert "tailwindClassTokens: _tailwindClassTokens" in jsx
+    assert "void _tailwindClassTokens;" in jsx
+    assert "...divProps" in jsx
+
+
 def test_wrapper_mirrors_reflex_connection_options():
     """The shared-manager trick only works if our io() options match reflex's
     connect() (utils/state.js). These names are the coupling surface — if
