@@ -108,14 +108,12 @@ chart = xy.line_chart(
 Missing numeric values break line/area runs or are omitted from point geometry,
 while canonical row indices remain stable.
 
-~~~md alert info
-### Color strings
+## Color strings
 
 A valid CSS color such as `"rebeccapurple"`, `"#6e56cf"`, or
 `"var(--accent)"` is a constant color. Another string is treated as a column
 name and resolved through `data=`. A color-shaped typo raises its CSS validation
 error instead of falling through to a misleading missing-column error.
-~~~
 
 Next, configure [Axes and scales](/docs/xy/core-concepts/axes-and-scales/) or
 learn how the stored columns feed

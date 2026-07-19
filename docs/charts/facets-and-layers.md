@@ -58,7 +58,9 @@ per-mark decimation and aggregation behavior as a standalone chart.
 
 Marks render in declaration order, so put broad fills first and then lines or
 points. Annotations are composed separately from the mark trace order as
-data-aligned chart chrome.
+data-aligned chart chrome; see the
+[annotation guide](/docs/xy/components/annotations/) for rules, bands, labels,
+and callouts.
 
 ## Expected Data Shape
 

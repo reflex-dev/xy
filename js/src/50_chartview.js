@@ -935,9 +935,17 @@ class ChartView {
 
   _a11yAxisSummary(axisId, name) {
     const axis = this._axis(axisId);
+    const label = axis.label ? `${name} axis (${axis.label})` : `${name} axis`;
+    if (axis.kind === "category") {
+      const categories = Array.isArray(axis.categories) ? axis.categories : [];
+      if (!categories.length) return `${label} uses categories.`;
+      const shown = categories.slice(0, 6).map((value) => String(value));
+      const remaining = categories.length - shown.length;
+      const suffix = remaining > 0 ? `, and ${remaining} more` : "";
+      return `${label} has ${categories.length} categories: ${shown.join(", ")}${suffix}.`;
+    }
     const range = axis.range || [];
     if (range.length < 2) return null;
-    const label = axis.label ? `${name} axis (${axis.label})` : `${name} axis`;
     return `${label} ranges from ${fmtValue(range[0], axis.kind)} to ${fmtValue(range[1], axis.kind)}.`;
   }
 

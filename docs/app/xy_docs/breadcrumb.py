@@ -16,16 +16,39 @@ _BREADCRUMB_ROUTES = {
 }
 
 
-def _breadcrumb_label(segment: str) -> str:
+def _breadcrumb_label(segment: str, *, page_title: str | None = None) -> str:
     """Convert one URL segment to its visible breadcrumb label.
 
     Args:
         segment: Kebab-case URL segment.
 
     Returns:
-        Title-cased breadcrumb label.
+        Page title or title-cased breadcrumb label.
     """
-    return _BREADCRUMB_LABELS.get(segment, segment.replace("-", " ").title())
+    return _BREADCRUMB_LABELS.get(
+        segment,
+        page_title or segment.replace("-", " ").title(),
+    )
+
+
+def _breadcrumb_parts(page: DocsPage) -> tuple[tuple[str, str], ...]:
+    """Return breadcrumb labels and destinations for one documentation page."""
+    segments = [segment for segment in page.route.split("/") if segment]
+    current_path = ""
+    parts: list[tuple[str, str]] = []
+
+    for index, segment in enumerate(segments):
+        current_path += f"/{segment}"
+        parts.append(
+            (
+                _breadcrumb_label(
+                    segment,
+                    page_title=page.title if index == len(segments) - 1 else None,
+                ),
+                _BREADCRUMB_ROUTES.get(current_path, f"{current_path}/"),
+            )
+        )
+    return tuple(parts)
 
 
 def xy_docs_breadcrumb(page: DocsPage, sidebar: rx.Component) -> rx.Component:
@@ -38,20 +61,17 @@ def xy_docs_breadcrumb(page: DocsPage, sidebar: rx.Component) -> rx.Component:
     Returns:
         Responsive breadcrumb row and drawer trigger.
     """
-    segments = [segment for segment in page.route.split("/") if segment]
+    parts = _breadcrumb_parts(page)
     breadcrumbs: list[rx.Component] = []
-    current_path = ""
 
-    for index, segment in enumerate(segments):
-        current_path += f"/{segment}"
-        href = _BREADCRUMB_ROUTES.get(current_path, f"{current_path}/")
+    for index, (label, href) in enumerate(parts):
         base_class = ui.cn(
             "min-h-8 flex items-center text-sm font-[525] text-secondary-12 last:text-secondary-11",
-            "truncate" if index == len(segments) - 1 else "",
+            "truncate" if index == len(parts) - 1 else "",
         )
         breadcrumbs.append(
             rx.el.a(
-                _breadcrumb_label(segment),
+                label,
                 class_name=ui.cn(
                     base_class,
                     "hover:text-primary-10 dark:hover:text-primary-9",
@@ -60,7 +80,7 @@ def xy_docs_breadcrumb(page: DocsPage, sidebar: rx.Component) -> rx.Component:
                 href=href,
             )
         )
-        if index < len(segments) - 1:
+        if index < len(parts) - 1:
             breadcrumbs.extend(
                 (
                     ui.icon(
@@ -74,7 +94,7 @@ def xy_docs_breadcrumb(page: DocsPage, sidebar: rx.Component) -> rx.Component:
                 )
             )
 
-    if not breadcrumbs:
+    if not parts:
         breadcrumbs.append(
             rx.el.span(
                 page.title,

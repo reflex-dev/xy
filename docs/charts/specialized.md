@@ -1,6 +1,6 @@
 ---
 title: Specialized Charts
-description: Draw stems, segments, thresholds, and triangle meshes.
+description: Draw stems, independent segments, and triangle meshes.
 ---
 
 # Specialized Charts
@@ -8,8 +8,8 @@ description: Draw stems, segments, thresholds, and triangle meshes.
 ## When to Use
 
 XY includes compact marks for impulses, explicit geometry, and precomputed
-triangle topology. It also includes `threshold`, a semantic rule annotation.
-Step and stairs charts live with
+triangle topology. Thresholds belong to the
+[annotation guide](/docs/xy/components/annotations/). Step and stairs charts live with
 [line and area charts](/docs/xy/charts/line-and-area/).
 
 ## Live Demo
@@ -24,7 +24,6 @@ values = np.array([2, 5, 3, 7, 6, 9, 8, 11, 10, 13])
 
 chart = xy.chart(
     xy.stem(x, values - 1.5, name="Events", color="#2563eb"),
-    xy.threshold(6, text="target", color="#6e56cf"),
     xy.legend(),
 )
 
@@ -60,11 +59,10 @@ precomputed topology.
 
 `stem` takes matching one-dimensional x and y arrays. `segments` takes matching
 start/end coordinate arrays. `triangle_mesh` takes three x/y vertex pairs per
-triangle. `threshold` takes one coordinate and an axis.
+triangle.
 
 ## Key Options
 
 Stems expose line and marker styling. Segments expose width, opacity, and color
-channels. The `threshold` annotation exposes axis, text, color, width, and
-opacity. Triangle meshes expose constant or per-triangle color, `domain`,
+channels. Triangle meshes expose constant or per-triangle color, `domain`,
 `colormap`, stroke, and opacity.

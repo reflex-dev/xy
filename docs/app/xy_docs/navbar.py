@@ -2,13 +2,15 @@
 
 import reflex as rx
 import reflex_components_internal as ui
-from reflex_site_shared.components.docs_shell import (
-    docs_book_demo_action,
-    docs_navbar_frame,
-)
+from reflex_site_shared.components.icons import get_icon
 from reflex_site_shared.components.inkeep import inkeep
 from reflex_site_shared.components.marketing_button import button
+from reflex_site_shared.constants import REFLEX_ASSETS_CDN
+from reflex_site_shared.views.hosting_banner import HostingBannerState
 from reflex_site_shared.views.sidebar import navbar_sidebar_button
+
+XY_REPOSITORY_URL = "https://github.com/reflex-dev/xy"
+XY_GITHUB_STARS = 5
 
 _REFLEX_NAV_LINKS = (
     ("Overview", "/docs/"),
@@ -111,7 +113,21 @@ def _navigation_menu() -> rx.Component:
                 custom_attrs={"role": "menuitem"},
             ),
             ui.navigation_menu.item(
-                docs_book_demo_action(),
+                rx.el.elements.a(
+                    button(
+                        get_icon(icon="github_navbar", class_name="size-4 shrink-0"),
+                        str(XY_GITHUB_STARS),
+                        custom_attrs={
+                            "aria-label": (f"View XY on GitHub - {XY_GITHUB_STARS} stars")
+                        },
+                        size="sm",
+                        variant="ghost",
+                    ),
+                    href=XY_REPOSITORY_URL,
+                    target="_blank",
+                    rel="noopener noreferrer",
+                    aria_label=f"View XY on GitHub - {XY_GITHUB_STARS} stars",
+                ),
                 unstyled=True,
                 class_name="hidden xl:flex",
                 custom_attrs={"role": "menuitem"},
@@ -130,6 +146,123 @@ def _navigation_menu() -> rx.Component:
     )
 
 
+def _xy_launch_banner() -> rx.Component:
+    """Render the XY initial-launch announcement."""
+    return rx.el.div(
+        rx.cond(
+            HostingBannerState.is_banner_visible,
+            rx.el.div(
+                rx.el.elements.a(
+                    rx.box(
+                        rx.image(
+                            src=(
+                                f"{REFLEX_ASSETS_CDN}common/"
+                                f"{rx.color_mode_cond('light', 'dark')}/squares_banner.svg"
+                            ),
+                            alt="",
+                            class_name=("pointer-events-none absolute -left-[16rem] max-lg:hidden"),
+                        ),
+                        rx.box(
+                            rx.el.span(
+                                "New",
+                                class_name=(
+                                    "items-center h-7 rounded-lg border border-white/16 "
+                                    "px-2.5 text-sm font-[525] text-white z-[1] "
+                                    "max-lg:hidden lg:inline-flex"
+                                ),
+                            ),
+                            rx.el.span(
+                                "XY's initial launch is here",
+                                rx.el.span(
+                                    ". Get started",
+                                    class_name="text-white/70 lg:hidden",
+                                ),
+                                class_name=(
+                                    "inline-block text-sm font-[525] text-white lg:text-nowrap"
+                                ),
+                            ),
+                            rx.el.span(
+                                class_name=(
+                                    "h-7 w-px bg-gradient-to-b from-transparent "
+                                    "via-white/24 to-transparent max-lg:hidden"
+                                ),
+                            ),
+                            ui.button(
+                                "Get started",
+                                ui.icon("ArrowRight01Icon"),
+                                variant="ghost-highlight",
+                                size="xs",
+                                aria_label="Get started with XY on GitHub",
+                                class_name=("text-white hover:text-primary-10 max-lg:hidden"),
+                            ),
+                            class_name="flex flex-row items-center gap-2 md:gap-4",
+                        ),
+                        rx.image(
+                            src=(
+                                f"{REFLEX_ASSETS_CDN}common/"
+                                f"{rx.color_mode_cond('light', 'dark')}/squares_banner.svg"
+                            ),
+                            alt="",
+                            class_name=(
+                                "pointer-events-none absolute -right-[16rem] max-lg:hidden"
+                            ),
+                        ),
+                        class_name="relative flex flex-row items-center",
+                    ),
+                    href=XY_REPOSITORY_URL,
+                    aria_label="Get started with XY on GitHub",
+                    class_name=(
+                        "flex max-w-[73rem] justify-start md:col-start-2 md:justify-center"
+                    ),
+                ),
+                rx.el.button(
+                    ui.icon("MultiplicationSignIcon"),
+                    aria_label="Close banner",
+                    type="button",
+                    class_name=(
+                        "ml-auto flex size-10 shrink-0 cursor-pointer items-center "
+                        "justify-center justify-self-end text-white transition-colors "
+                        "hover:text-white/80 z-10 md:col-start-3"
+                    ),
+                    on_click=HostingBannerState.hide_banner,
+                ),
+                class_name=(
+                    "group relative flex min-h-[2rem] w-screen max-w-full items-center "
+                    "gap-4 overflow-hidden bg-secondary-12 px-5 py-2 "
+                    "dark:bg-[#6550B9] md:grid md:grid-cols-[1fr_auto_1fr] "
+                    "lg:h-10 lg:px-0 lg:py-0"
+                ),
+            ),
+        ),
+        on_mount=HostingBannerState.show_agent_toolkit_banner,
+    )
+
+
+def _xy_docs_navbar_frame(logo: rx.Component, navigation: rx.Component) -> rx.Component:
+    """Render the unchanged docs navbar frame with the XY launch banner."""
+    return rx.el.div(
+        _xy_launch_banner(),
+        rx.el.header(
+            rx.el.div(
+                logo,
+                navigation,
+                class_name=(
+                    "relative mx-auto flex h-full w-full max-w-[108rem] flex-row "
+                    "items-center justify-between gap-6"
+                ),
+            ),
+            class_name=(
+                "mx-auto flex h-[4.5rem] w-full max-w-full flex-row items-center "
+                "bg-gradient-to-b from-secondary-2 to-secondary-1 px-6 "
+                "shadow-[0_-2px_2px_1px_rgba(0,0,0,0.02),0_1px_1px_0_rgba(0,0,0,0.08),0_4px_8px_0_rgba(0,0,0,0.03),0_0_0_1px_#FFF_inset] "
+                "backdrop-blur-[16px] dark:border-b dark:border-secondary-4 "
+                "dark:shadow-none 3xl:px-16"
+            ),
+        ),
+        class_name="fixed top-0 z-[9999] flex w-full flex-col self-center",
+    )
+
+
 @rx.memo
 def xy_docs_navbar() -> rx.Component:
     """Render the memoized XY navbar.
@@ -137,7 +270,7 @@ def xy_docs_navbar() -> rx.Component:
     Returns:
         Official documentation navbar with an active XY section.
     """
-    return docs_navbar_frame(
+    return _xy_docs_navbar_frame(
         rx.el.elements.a(
             xy_docs_logo(),
             href="/",
@@ -147,4 +280,9 @@ def xy_docs_navbar() -> rx.Component:
     )
 
 
-__all__ = ["xy_docs_logo", "xy_docs_navbar"]
+__all__ = [
+    "XY_GITHUB_STARS",
+    "XY_REPOSITORY_URL",
+    "xy_docs_logo",
+    "xy_docs_navbar",
+]

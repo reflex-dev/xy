@@ -10,6 +10,32 @@ coordinates, so they stay aligned while users pan and zoom. Text offsets such
 as `dx` and `dy` are screen-space pixels, which keeps a label legible without
 changing its data anchor.
 
+## When to Use
+
+Use annotations to explain important coordinates without changing the
+underlying data marks. Rules and bands show references or ranges; labels,
+markers, arrows, and callouts draw attention to individual observations.
+
+## Live Demo
+
+~~~python demo exec
+import reflex_xy
+import xy
+
+chart = xy.line_chart(
+    xy.line([0, 1, 2, 3, 4], [38, 41, 43, 46, 52], color="#6e56cf"),
+    xy.threshold_zone(45, 60, text="target zone", color="#16a34a"),
+    xy.vline(3, text="launch", color="#2563eb"),
+    xy.marker(4, 52, text="v1", color="#2563eb"),
+    xy.callout(4, 52, "record", dx=-60, dy=-30),
+    title="Release progress",
+)
+
+
+def annotations_preview():
+    return reflex_xy.chart(chart, height="360px")
+~~~
+
 ## Rules and Bands
 
 | Component | Purpose |
@@ -30,25 +56,13 @@ not a data mark. `threshold_zone` similarly selects an x or y band.
 optional label. `arrow(x0, y0, x1, y1)` connects two points. `callout` pins a
 label to a point with configurable screen-space `dx` and `dy` offsets.
 
-~~~python demo exec
-import reflex_xy
-import xy
+## Data and Coordinates
 
-chart = xy.line_chart(
-    xy.line([0, 1, 2, 3, 4], [38, 41, 43, 46, 52], color="#6e56cf"),
-    xy.threshold_zone(45, 60, text="target zone", color="#16a34a"),
-    xy.vline(3, text="launch", color="#2563eb"),
-    xy.marker(4, 52, text="v1", color="#2563eb"),
-    xy.callout(4, 52, "record", dx=-60, dy=-30),
-    title="Release progress",
-)
+Annotation coordinates use the chart's axis space. Rules and markers take
+scalar coordinates or categories, bands take two endpoints, and arrows take a
+start and end point. They do not require a separate data table.
 
-
-def annotations_preview():
-    return reflex_xy.chart(chart, height="360px")
-~~~
-
-## Paint and Labels
+## Styling and Paint Order
 
 Annotation geometry uses `color`, `width`, `opacity`, and component-specific
 stroke or marker props. These are annotation controls, not the compiled mark
@@ -62,7 +76,5 @@ Keep geometry in the component props when output must agree across HTML, SVG,
 and native PNG.
 
 If more than one annotation occupies the same coordinate, declaration order
-controls their paint order. For a chart-family view of annotation patterns, see
-[Annotations Gallery](/docs/xy/charts/annotations/). Exact signatures and
-defaults are in
+controls their paint order. Exact signatures and defaults are in
 [Marks and components reference](/docs/xy/api-reference/marks-and-components/).

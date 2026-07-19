@@ -44,8 +44,9 @@ from xy_docs.api_reference import (
     chrome_and_behavior_api,
     marks_api,
 )
-from xy_docs.breadcrumb import xy_docs_breadcrumb
-from xy_docs.config import DOCS_CONFIG, DOCS_NAVIGATION, DOCS_SECTIONS
+from xy_docs.breadcrumb import _breadcrumb_parts, xy_docs_breadcrumb
+from xy_docs.config import DOCS_CONFIG, DOCS_NAVIGATION, DOCS_REDIRECTS, DOCS_SECTIONS
+from xy_docs.constants import PUBLIC_DOCS_URL, PUBLIC_XY_VERSION, SOCIAL_IMAGE_URL
 from xy_docs.footer import xy_docs_footer
 from xy_docs.gallery import (
     _gallery_chart,
@@ -54,12 +55,13 @@ from xy_docs.gallery import (
     chart_gallery_grid,
 )
 from xy_docs.markdown import XyDocsMarkdownTransformer, render_xy_markdown_page
-from xy_docs.navbar import xy_docs_navbar
+from xy_docs.navbar import XY_GITHUB_STARS, XY_REPOSITORY_URL, xy_docs_navbar
 from xy_docs.sidebar import (
     SIDEBAR_SECTION_GROUPS,
     xy_docs_sidebar,
     xy_docs_sidebar_comp,
 )
+from xy_docs.xy_docs import _DOCS_ROUTES, app
 
 import xy
 from xy._validate import _POINT_SYMBOLS
@@ -224,7 +226,14 @@ def test_public_markdown_routes_match_the_docs_navigation() -> None:
             )
         )
     )
-    assert section_routes == DOCS_NAVIGATION
+    assert set(section_routes) == set(DOCS_NAVIGATION)
+    assert DOCS_NAVIGATION[:4] == (
+        "/",
+        "/overview/installation/",
+        "/overview/first-chart/",
+        "/guides/dataframes-and-real-data/",
+    )
+    assert DOCS_NAVIGATION[-1] == "/overview/benchmarks/"
     assert "/overview/gallery/" in DOCS_NAVIGATION
     assert "/charts/" not in DOCS_NAVIGATION
     assert (
@@ -501,22 +510,51 @@ def test_styling_docs_cover_every_annotation_factory_and_alias() -> None:
     assert all(f"`{factory}" in content for factory in factories)
 
 
-def test_what_is_xy_shows_sdf_plot_grid_without_inline_code() -> None:
-    """Keep the four signature plots visible without exposing their source."""
+def test_what_is_xy_restores_the_sdf_hero_and_ends_with_a_short_pitch() -> None:
+    """Keep the original visual opening and the merged Why XY section."""
     content = (DOCS_ROOT / "index.md").read_text(encoding="utf-8")
+
+    heading = content.index("# What is `xy`?")
+    styling = content.index("**Completely customizable.**")
+    hero = content.index("~~~python demo-only exec")
+    early_alpha = content.index("**Early alpha.**")
+    start_here = content.index("## Start here")
+    why_xy = content.index("## Why XY")
+    why_copy = content[why_xy:]
+
+    assert heading < styling < hero < early_alpha < start_here < why_xy
+    assert content.rfind("\n## ") + 1 == why_xy
+    assert "from xy_docs.demos.xy_sdf_plots import xy_sdf_plot_grid" in content
+    assert "All four interactive charts" in content
+    assert "View the customizable Python source" in content
+    assert "/docs/xy/overview/first-chart/" in content
+    assert "/docs/xy/overview/why-xy/" not in content
+    assert not (DOCS_ROOT / "overview/why-xy.md").exists()
+    assert len(why_copy.split()) < 230
+    assert "10-million-point launch benchmark" in why_copy
+    assert "Compare by workflow, not by slogan" not in why_copy
+
+
+def test_core_concepts_keep_essential_binding_content_visible() -> None:
+    """Render core semantics as normal content and avoid teaching default no-ops."""
+    data = (DOCS_ROOT / "core-concepts/data.md").read_text(encoding="utf-8")
+    configuration = (DOCS_ROOT / "core-concepts/configuration.md").read_text(encoding="utf-8")
+    overview = (DOCS_ROOT / "index.md").read_text(encoding="utf-8")
+
+    assert "## Color strings" in data
+    assert "### Color strings" not in data
+    assert "~~~md alert info\n## Color strings" not in data
+    assert "density=None" not in configuration
+    assert "~~~md alert warning\n**Early alpha.**" in overview
+    assert "### Early alpha" not in overview
+
+
+def test_sdf_demo_assets_remain_reproducible_for_deeper_examples() -> None:
+    """Keep the cached SDF demo and its licensed font reproducible."""
     demo_source = (DOCS_APP_ROOT / "xy_docs/demos/xy_sdf_plots.py").read_text(encoding="utf-8")
     font = DOCS_APP_ROOT / "xy_docs/assets/InstrumentSans-wdth-wght.ttf"
     license_file = DOCS_APP_ROOT / "xy_docs/assets/OFL.txt"
 
-    hero = content.index("~~~python demo-only exec")
-    introduction = content.index("xy is an experimental Python charting library")
-    styling = content.index("**Styling uses familiar web vocabulary.**")
-    early_alpha = content.index("### Early alpha")
-
-    assert introduction < styling < hero < early_alpha
-    assert "demo exec toggle" not in content
-    assert "from xy_docs.demos.xy_sdf_plots import xy_sdf_plot_grid" in content
-    assert "View the customizable Python source" in content
     assert "sample_points: int = 50_000" in demo_source
     assert "density_points: int = 1_000_000" in demo_source
     assert "density_display_points: int = 250_000" in demo_source
@@ -845,6 +883,22 @@ def test_installation_uses_uv_first_package_manager_tabs() -> None:
     assert 'code:"python -m pip install xy"' in rendered
 
 
+def test_installation_distinguishes_supported_targets_from_pypi_artifacts() -> None:
+    """Do not present missing release wheels as missing platform support."""
+    content = (DOCS_ROOT / "overview" / "installation.md").read_text(encoding="utf-8")
+    windows_row = next(line for line in content.splitlines() if line.startswith("| Windows |"))
+    wasm_row = next(line for line in content.splitlines() if line.startswith("| WebAssembly |"))
+
+    assert all(value in windows_row for value in ("`x86_64`", "`x86`", "`arm64`"))
+    assert "| Supported | Not included |" in windows_row
+    assert "Pyodide 0.29.4" in wasm_row
+    assert "`wasm32` | Supported | Not accepted by PyPI |" in wasm_row
+    assert "Windows is supported by XY's native core and release pipeline." in content
+    assert "0.0.1 PyPI upload does not include Windows wheels" in content
+    assert "runtime-verified Pyodide wheel" in content
+    assert "`pyodide_2025_0_wasm32` platform" in content
+
+
 def test_chart_gallery_grid_renders_every_type_with_bounded_live_previews(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -858,7 +912,7 @@ def test_chart_gallery_grid_renders_every_type_with_bounded_live_previews(
     chart_section = next(
         leaves for title, _landing_route, _icon, leaves in DOCS_SECTIONS if title == "Chart Gallery"
     )
-    assert len(chart_section) == 9
+    assert len(chart_section) == 8
     assert rendered.count("XYChart") == 9
     assert rendered.count(" chart guide") == 28
     assert rendered.count("dangerouslySetInnerHTML") == 19
@@ -906,6 +960,8 @@ def test_chart_gallery_grid_renders_every_type_with_bounded_live_previews(
     for _title, route in chart_section:
         assert f'to:"{route}"' in rendered
         assert f'to:"/docs/xy{route}"' not in rendered
+    assert 'to:"/components/annotations/"' in rendered
+    assert 'to:"/charts/annotations/"' not in rendered
 
     payloads = list((tmp_path / "assets" / "xy").glob("*.xyf"))
     assert len(payloads) == 9
@@ -933,6 +989,28 @@ def test_chart_gallery_combines_only_the_requested_related_tiles() -> None:
         "Facet Chart",
         "Layered Marks",
     } <= titles
+
+
+def test_annotations_have_one_canonical_guide_and_a_legacy_redirect() -> None:
+    """Keep annotation guidance consolidated without breaking the old chart URL."""
+    pages = discover_docs(DOCS_CONFIG)
+    annotation_pages = [page for page in pages if page.title == "Annotations"]
+    chart_section = next(
+        leaves for title, _landing_route, _icon, leaves in DOCS_SECTIONS if title == "Chart Gallery"
+    )
+
+    assert [page.route for page in annotation_pages] == ["/components/annotations/"]
+    assert ("Annotations", "/charts/annotations/") not in chart_section
+    assert DOCS_REDIRECTS == {
+        "/charts/annotations/": "/components/annotations/",
+    }
+
+    redirect = app._unevaluated_pages["charts/annotations"]
+    rendered_meta = "\n".join(str(component) for component in redirect.meta)
+    assert redirect.context == {"sitemap": None}
+    assert "https://reflex.dev/docs/xy/components/annotations/" in rendered_meta
+    assert "0; url=/docs/xy/components/annotations/" in rendered_meta
+    assert "Open the combined Annotations guide" in str(redirect.component())
 
 
 def test_chart_gallery_hides_the_modebar_from_every_preview() -> None:
@@ -1175,12 +1253,17 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
 
     instance = str(xy_docs_sidebar("/core-concepts/axes-and-scales/"))
     rendered = str(xy_docs_sidebar_comp._definition.component)
+    grouped_sections = tuple(
+        section
+        for _group_title, _group_route, sections in SIDEBAR_SECTION_GROUPS
+        for section in sections
+    )
 
     assert "/core-concepts/axes-and-scales/" in instance
     assert re.findall(
         r'jsx\(RadixThemesText,\{as:"p",className:"m-0 text-sm font-\[525\]"\},"([^"]+)"\)',
         rendered,
-    ) == [title for title, _route, _icon, _leaves in DOCS_SECTIONS]
+    ) == [title for title, _route, _icon, _leaves in grouped_sections]
     expected_leaf_count = sum(
         len(leaves) + int(not any(route == landing_route for _title, route in leaves))
         for _title, landing_route, _icon, leaves in DOCS_SECTIONS
@@ -1189,14 +1272,18 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
     assert rendered.count('jsx("summary"') == len(DOCS_SECTIONS)
     assert rendered.count("group/details") == len(DOCS_SECTIONS)
     assert rendered.count("guideMarginClass") == expected_leaf_count
-    assert (
-        tuple(
-            section
-            for _group_title, _group_route, sections in SIDEBAR_SECTION_GROUPS
-            for section in sections
-        )
-        == DOCS_SECTIONS
+    assert sorted(section[0] for section in grouped_sections) == sorted(
+        section[0] for section in DOCS_SECTIONS
     )
+    learning_sections = SIDEBAR_SECTION_GROUPS[0][2]
+    other_sections = SIDEBAR_SECTION_GROUPS[2][2]
+    assert [section[0] for section in learning_sections] == [
+        "Overview",
+        "Core Concepts",
+        "Styling",
+        "Advanced",
+    ]
+    assert "Advanced" not in {section[0] for section in other_sections}
     for group_title in ("Learning", "Examples", "Other"):
         assert group_title in rendered
     for category, route in (
@@ -1234,6 +1321,15 @@ def test_xy_mobile_navbar_uses_the_official_drawer_button() -> None:
     assert "Mobile documentation navigation" not in rendered
     assert "<details" not in rendered
     assert "<summary" not in rendered
+    assert XY_REPOSITORY_URL in rendered
+    assert f"View XY on GitHub - {XY_GITHUB_STARS} stars" in rendered
+    assert 'target:"_blank"' in rendered
+    assert 'rel:"noopener noreferrer"' in rendered
+    assert "XY's initial launch is here" in rendered
+    assert "Get started" in rendered
+    assert "Reserve your spot" not in rendered
+    assert "https://luma.com/a1ty77bt" not in rendered
+    assert "Reflex Agent Toolkit is launching" not in rendered
 
 
 def test_xy_breadcrumb_opens_the_official_docs_sidebar_drawer() -> None:
@@ -1265,16 +1361,99 @@ def test_xy_breadcrumb_shortens_the_modebar_page_label() -> None:
     assert "Modebars And Interaction Controls" not in rendered
 
 
-def test_xy_footer_reuses_official_footer_with_source_aware_links() -> None:
-    """Keep the complete official footer while targeting the XY repository."""
+@pytest.mark.parametrize(
+    ("route", "expected"),
+    (
+        ("/core-concepts/", (("Composition Model", "/core-concepts/"),)),
+        (
+            "/core-concepts/data/",
+            (
+                ("Core Concepts", "/core-concepts/"),
+                ("Data and Columns", "/core-concepts/data/"),
+            ),
+        ),
+        (
+            "/core-concepts/axes-and-scales/",
+            (
+                ("Core Concepts", "/core-concepts/"),
+                ("Axes and Scales", "/core-concepts/axes-and-scales/"),
+            ),
+        ),
+        (
+            "/core-concepts/interactions/",
+            (
+                ("Core Concepts", "/core-concepts/"),
+                ("Interactions and Selections", "/core-concepts/interactions/"),
+            ),
+        ),
+        (
+            "/core-concepts/large-data-and-performance/",
+            (
+                ("Core Concepts", "/core-concepts/"),
+                (
+                    "Large Data and Performance",
+                    "/core-concepts/large-data-and-performance/",
+                ),
+            ),
+        ),
+        (
+            "/core-concepts/configuration/",
+            (
+                ("Core Concepts", "/core-concepts/"),
+                ("Configuration", "/core-concepts/configuration/"),
+            ),
+        ),
+    ),
+)
+def test_core_concept_breadcrumbs_use_page_titles(
+    route: str,
+    expected: tuple[tuple[str, str], ...],
+) -> None:
+    """Use frontmatter titles instead of lossy slug title-casing."""
+    page = next(page for page in discover_docs(DOCS_CONFIG) if page.route == route)
+
+    assert _breadcrumb_parts(page) == expected
+
+
+def test_xy_footer_is_project_specific_and_keeps_source_aware_links() -> None:
+    """Target XY support and source pages without parent-product dead ends."""
     page = next(page for page in discover_docs(DOCS_CONFIG) if page.route == "/overview/gallery/")
 
     rendered = str(xy_docs_footer(page))
 
     assert "https://github.com/reflex-dev/xy/issues/new" in rendered
-    assert "Issue with reflex.dev/docs/xy/overview/gallery/" in rendered
-    assert "Path: /docs/xy/overview/gallery/" in rendered
+    assert "Issue%20with%20reflex.dev/docs/xy/overview/gallery/" in rendered
+    assert "Path%3A%20/docs/xy/overview/gallery/%0A%0A" in rendered
     assert "https://github.com/reflex-dev/xy/blob/main/docs/overview/gallery.md" in rendered
+    assert 'to:"/guides/getting-help/"' in rendered
+    assert 'to:"/guides/deployment-recipes/"' in rendered
+    assert 'to:"/docs/xy/' not in rendered
+    assert "SECURITY.md" in rendered
+    assert "Book a Demo" not in rendered
+    assert "reflex.dev/docs/getting-started" not in rendered
+
+
+def test_every_docs_route_has_canonical_and_social_metadata() -> None:
+    """Publish branded canonical and social metadata for every route."""
+    assert len(_DOCS_ROUTES) + len(DOCS_REDIRECTS) == len(app._unevaluated_pages)
+    assert PUBLIC_XY_VERSION == "0.0.1"
+    assert (
+        (DOCS_APP_ROOT / "assets/xy-social-card.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    )
+
+    for route in _DOCS_ROUTES:
+        route_key = route.path.strip("/") or "index"
+        page = app._unevaluated_pages[route_key]
+        canonical = f"{PUBLIC_DOCS_URL}{route.path}"
+        rendered_meta = "\n".join(str(component) for component in page.meta)
+
+        assert page.context == {"sitemap": {"loc": canonical}}
+        assert page.image == SOCIAL_IMAGE_URL
+        assert f'href:"{canonical}",rel:"canonical"' in rendered_meta
+        assert 'property:"og:title"' in rendered_meta
+        assert f'content:"{canonical}",property:"og:url"' in rendered_meta
+        assert 'content:"summary_large_image",name:"twitter:card"' in rendered_meta
+        assert f'content:"{SOCIAL_IMAGE_URL}",name:"twitter:image"' in rendered_meta
 
 
 def test_component_api_uses_generated_shared_tables() -> None:
