@@ -1844,9 +1844,7 @@ def svg_poly_path(x: npt.ArrayLike, y: npt.ArrayLike) -> str:
     capacity = max(64, len(xa) * 32)
     while True:
         out = ctypes.create_string_buffer(capacity)
-        written = _lib.xy_svg_poly_path(
-            _ptr_f64(xa), _ptr_f64(ya), len(xa), out, capacity
-        )
+        written = _lib.xy_svg_poly_path(_ptr_f64(xa), _ptr_f64(ya), len(xa), out, capacity)
         if written == _USIZE_MAX:
             raise ValueError("invalid SVG polyline coordinates")
         if written <= capacity:

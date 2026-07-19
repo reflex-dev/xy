@@ -23,8 +23,8 @@ pub mod css;
 mod font;
 pub mod kernels;
 pub mod raster;
-pub mod svg;
 mod simd;
+pub mod svg;
 pub mod tiles;
 
 use kernels::ZoneMap;
