@@ -590,6 +590,56 @@ pub unsafe extern "C" fn xy_m4_indices(
     idx.len()
 }
 
+/// Fused M4 decimation for a parallel x/y pair. Unlike `xy_m4_indices`, this
+/// writes the selected values directly and avoids returning an index array for
+/// Python to gather through NumPy. SVG and PNG payload construction both use
+/// this entry point, so their common reduction path stays native.
+///
+/// Returns the number of values written, or `usize::MAX` on invalid input.
+/// `out_x` and `out_y` must each hold `4 * n_buckets` f64 values.
+///
+/// # Safety
+/// `x` and `y` must point to `len` readable f64s; both output pointers must
+/// address the documented writable capacity.
+#[no_mangle]
+pub unsafe extern "C" fn xy_m4_points(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    x0: f64,
+    x1: f64,
+    n_buckets: usize,
+    out_x: *mut f64,
+    out_y: *mut f64,
+) -> usize {
+    if n_buckets == 0 || !finite_gt(x0, x1) || len > u32::MAX as usize {
+        return usize::MAX;
+    }
+    let out_len = match n_buckets.checked_mul(4) {
+        Some(n) => n,
+        None => return usize::MAX,
+    };
+    if len == 0 {
+        return 0;
+    }
+    if x.is_null() || y.is_null() || out_x.is_null() || out_y.is_null() {
+        return usize::MAX;
+    }
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    let Some(idx) = ffi_guard(None, || Some(kernels::m4_indices(x, y, x0, x1, n_buckets))) else {
+        return usize::MAX;
+    };
+    let out_x = std::slice::from_raw_parts_mut(out_x, out_len);
+    let out_y = std::slice::from_raw_parts_mut(out_y, out_len);
+    for (dst, &source) in idx.iter().enumerate() {
+        let source = source as usize;
+        out_x[dst] = x[source];
+        out_y[dst] = y[source];
+    }
+    idx.len()
+}
+
 /// Native stacked-series layout. `values`, `out_lower`, and `out_upper` are
 /// row-major `rows * cols` f64 buffers. `baseline` uses the generic engine
 /// layout ids documented by `kernels::stacked_bounds_into`.

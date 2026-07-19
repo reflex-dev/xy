@@ -1202,3 +1202,14 @@ def test_native_svg_poly_path_format_and_validation():
         _native.svg_poly_path([], [])
     with pytest.raises(ValueError, match="coordinates"):
         _native.svg_poly_path([1.0], [np.nan])
+
+
+def test_native_m4_points_matches_index_gather():
+    from xy import _native
+
+    x = np.arange(10_000, dtype=np.float64)
+    y = np.sin(x * 0.01)
+    idx = _native.m4_indices(x, y, 500.0, 9_500.0, 128)
+    selected_x, selected_y = _native.m4_points(x, y, 500.0, 9_500.0, 128)
+    np.testing.assert_array_equal(selected_x, x[idx])
+    np.testing.assert_array_equal(selected_y, y[idx])

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
-from . import channels, kernels, lod
+from . import _native, channels, kernels, lod
 from ._trace import Trace
 from .columns import Column
 from .config import (
@@ -347,6 +347,11 @@ class PayloadMixin(_Host):
         Returns `(tier, arrays)` — shared by the line and area emitters."""
         if t.n_points <= DECIMATION_THRESHOLD:
             return "direct", arrays
+        if len(arrays) == 2:
+            selected = _native.m4_points(
+                arrays[0], arrays[1], xr[0], xr[1] + np.finfo(np.float64).eps, px_width
+            )
+            return "decimated", selected
         idx = kernels.m4_indices(
             arrays[0], arrays[1], xr[0], xr[1] + np.finfo(np.float64).eps, px_width
         )

@@ -174,6 +174,17 @@ def _load() -> ctypes.CDLL:
         ctypes.c_void_p,
         ctypes.c_size_t,
     ]
+    lib.xy_m4_points.restype = ctypes.c_size_t
+    lib.xy_m4_points.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_double,
+        ctypes.c_double,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+    ]
     lib.xy_stacked_bounds.restype = ctypes.c_int32
     lib.xy_stacked_bounds.argtypes = [
         ctypes.c_void_p,
@@ -1785,6 +1796,40 @@ def m4_indices(
     if written == _USIZE_MAX:
         raise ValueError("invalid m4 arguments")
     return out[:written].copy()
+
+
+def m4_points(
+    x: npt.NDArray[np.float64],
+    y: npt.NDArray[np.float64],
+    x0: float,
+    x1: float,
+    n_buckets: int,
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    """M4-decimate an x/y pair without materializing gather indices in Python."""
+    n_buckets = _bounded_positive_int(n_buckets, "n_buckets")
+    x0, x1 = _finite_increasing(x0, x1, "x range")
+    x = _as_f64(x, "x")
+    y = _as_f64(y, "y")
+    if len(x) != len(y):
+        raise ValueError("x and y must have equal length")
+    if len(x) == 0:
+        empty = np.empty(0, dtype=np.float64)
+        return empty, empty.copy()
+    out_x = np.empty(n_buckets * 4, dtype=np.float64)
+    out_y = np.empty(n_buckets * 4, dtype=np.float64)
+    written = _lib.xy_m4_points(
+        _ptr_f64(x),
+        _ptr_f64(y),
+        len(x),
+        x0,
+        x1,
+        n_buckets,
+        _ptr_f64(out_x),
+        _ptr_f64(out_y),
+    )
+    if written == _USIZE_MAX:
+        raise ValueError("invalid m4 arguments")
+    return out_x[:written], out_y[:written]
 
 
 def svg_poly_path(x: npt.ArrayLike, y: npt.ArrayLike) -> str:
