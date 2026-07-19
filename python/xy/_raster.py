@@ -963,10 +963,10 @@ def render_raster(
         # clip the bounded/truncated equivalent to the plot rectangle.
         cmd.clip(px0, py0, plot["w"], plot["h"])
     if show_main_legend:
-        _emit_legend(cmd, named, plot, spec.get("legend") or {})
+        _emit_legend(cmd, named, plot, spec.get("legend") or {}, default_text)
     for extra, items in extra_legends:
         if items:
-            _emit_legend(cmd, items, plot, extra)
+            _emit_legend(cmd, items, plot, extra, default_text)
     if legend_present:
         cmd.clip(0, 0, width, height)
     if spec.get("colorbar"):
@@ -975,6 +975,7 @@ def render_raster(
             spec["colorbar"],
             plot,
             _colorbar_right_axis_room(ya, extra_y_axes, compact),
+            default_text,
         )
 
     w_px, h_px = max(1, round(width * scale)), max(1, round(height * scale))
@@ -1659,6 +1660,7 @@ def _emit_legend(
     named: list[dict[str, Any]],
     plot: dict[str, float],
     options: dict[str, Any],
+    text_color: str = _TEXT,
 ) -> None:
     legend = _legend_layout(named, plot, options)
     if not legend["visible_count"]:
@@ -1684,7 +1686,7 @@ def _emit_legend(
         )
         cmd.fill(_rect_pts(x, y, x + box_w, y + box_h), frame)
     if title:
-        cmd.text(x + pad, y + pad / 2 + 11, 0, 11, _parse_color(_TEXT), str(title))
+        cmd.text(x + pad, y + pad / 2 + 11, 0, 11, _parse_color(text_color), str(title))
     for i, t in enumerate(named[: legend["visible_count"]]):
         style = t.get("style") or {}
         color_str = _css(
@@ -1710,7 +1712,7 @@ def _emit_legend(
             )
         else:
             cmd.fill(_rect_pts(hx0, cy - 4, hx1, cy + 4), c)
-        cmd.text(hx1 + gap, ry + 11, 0, 11, _parse_color(_TEXT), legend["names"][i])
+        cmd.text(hx1 + gap, ry + 11, 0, 11, _parse_color(text_color), legend["names"][i])
 
 
 def _emit_colorbar(
@@ -1718,6 +1720,7 @@ def _emit_colorbar(
     options: dict[str, Any],
     plot: dict[str, float],
     right_axis_room: float = 0.0,
+    text_color: str = _TEXT,
 ) -> None:
     from ._svg import _linear_ticks, _lut
 
@@ -1782,7 +1785,7 @@ def _emit_colorbar(
                 y + height + 13,
                 1,
                 10,
-                _parse_color(_TEXT),
+                _parse_color(text_color),
                 f"{value:g}",
             )
         if options.get("label"):
@@ -1791,7 +1794,7 @@ def _emit_colorbar(
                 y + height + 26,
                 1,
                 10,
-                _parse_color(_TEXT),
+                _parse_color(text_color),
                 str(options["label"]),
             )
     else:
@@ -1806,7 +1809,7 @@ def _emit_colorbar(
                 y + height * (1 - (value - lo) / span) + 4,
                 0,
                 10,
-                _parse_color(_TEXT),
+                _parse_color(text_color),
                 f"{value:g}",
             )
         # The native text primitive does not rotate; a compact label above the
@@ -1817,7 +1820,7 @@ def _emit_colorbar(
                 y - 5,
                 0,
                 10,
-                _parse_color(_TEXT),
+                _parse_color(text_color),
                 str(options["label"]),
             )
 
