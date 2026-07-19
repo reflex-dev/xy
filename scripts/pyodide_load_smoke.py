@@ -7,7 +7,7 @@ and the `xy_*` C-ABI symbols must be callable. This is the regression probe for
 the release wheel's exception-free Rust build: it installs the exact artifact,
 checks the ABI version, calls a native kernel, and exits non-zero on failure.
 
-Usage: python scripts/pyodide_load_smoke.py path/to/xy-...-pyodide_....whl
+Usage: python scripts/pyodide_load_smoke.py <wheel-path-or-https-url>
 Requires: node with the `pyodide` npm package resolvable from CWD.
 """
 
@@ -22,15 +22,22 @@ _DRIVER = r"""
 import { loadPyodide } from "pyodide";
 import fs from "node:fs";
 const wheelPath = process.argv[2];
-const name = wheelPath.split("/").pop();
+const isUrl = wheelPath.startsWith("https://") || wheelPath.startsWith("http://");
+const name = isUrl
+  ? new URL(wheelPath).pathname.split("/").pop()
+  : wheelPath.split("/").pop();
 const out = (o) => console.log("RESULT " + JSON.stringify(o));
 try {
   const py = await loadPyodide();
   await py.loadPackage(["numpy", "micropip"]);
   const micropip = py.pyimport("micropip");
-  py.FS.mkdirTree("/wheels");
-  py.FS.writeFile("/wheels/" + name, fs.readFileSync(wheelPath));
-  await micropip.install("emfs:/wheels/" + name);
+  if (isUrl) {
+    await micropip.install(wheelPath);
+  } else {
+    py.FS.mkdirTree("/wheels");
+    py.FS.writeFile("/wheels/" + name, fs.readFileSync(wheelPath));
+    await micropip.install("emfs:/wheels/" + name);
+  }
   const r = await py.runPythonAsync(`
 import xy.kernels as k
 import numpy as np
@@ -51,10 +58,15 @@ def main() -> int:
     if len(sys.argv) != 2:
         print("usage: pyodide_load_smoke.py <wheel>", file=sys.stderr)
         return 2
-    wheel = Path(sys.argv[1]).resolve()
-    if not wheel.exists():
-        print(f"wheel not found: {wheel}", file=sys.stderr)
-        return 2
+    source = sys.argv[1]
+    if source.startswith(("https://", "http://")):
+        wheel_source = source
+    else:
+        wheel = Path(source).resolve()
+        if not wheel.exists():
+            print(f"wheel not found: {wheel}", file=sys.stderr)
+            return 2
+        wheel_source = str(wheel)
 
     # Write the driver into CWD so its `import "pyodide"` resolves against the
     # node_modules of the directory where `npm install pyodide` was run (node
@@ -63,7 +75,7 @@ def main() -> int:
     driver.write_text(_DRIVER, encoding="utf-8")
     try:
         proc = subprocess.run(
-            ["node", str(driver), str(wheel)],
+            ["node", str(driver), wheel_source],
             capture_output=True,
             text=True,
             check=False,

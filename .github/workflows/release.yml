@@ -174,7 +174,10 @@ jobs:
           python scripts/pyodide_load_smoke.py "$whl"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: dist-pyodide
+          # Keep this outside the dist-* namespace: PyPI rejects Pyodide's
+          # pyodide_* platform tags, so this wheel is retained as a workflow
+          # artifact but must not enter the PyPI upload directory.
+          name: pyodide-wheel
           path: dist/*.whl
 
   sdist:
@@ -229,8 +232,9 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    # Publishing requires the runtime-verified Pyodide wheel alongside every native
-    # wheel and the sdist; the dist-* download pattern collects all of their artifacts.
+    # Publishing still requires the runtime-verified Pyodide job to pass, but
+    # only native wheels and the sdist use dist-* artifact names. PyPI does not
+    # accept Pyodide platform tags, so its wheel remains a separate artifact.
     needs: [wheels, sdist, wasm]
     runs-on: ubuntu-latest
     environment: pypi
@@ -265,3 +269,58 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
         with:
           packages-dir: dist/
+          # A failed upload can leave a partial release on immutable PyPI.
+          # Retrying the same tag should skip files that were already accepted.
+          skip-existing: true
+
+  publish-pyodide:
+    name: Publish Pyodide wheel
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
+    needs: [wheels, sdist, wasm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: pyodide-wheel
+          path: dist-pyodide
+      # PyPI rejects Pyodide platform tags. Publish the runtime-verified wheel
+      # as a release asset instead; micropip supports installing binary WASM
+      # wheels directly from HTTPS URLs.
+      - name: Upload Pyodide wheel to GitHub Release
+        id: publish
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          tag="v${version}"
+          if [[ "$EVENT_NAME" == "push" && "$REF_NAME" != "$tag" ]]; then
+            echo "tag $REF_NAME does not match project version $tag" >&2
+            exit 1
+          fi
+          python3 scripts/check_release_version.py --tag "$tag"
+          wheel=$(find dist-pyodide -maxdepth 1 -name '*.whl' -print -quit)
+          test -n "$wheel"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$wheel" --clobber
+          else
+            gh release create "$tag" "$wheel" --verify-tag --generate-notes --title "$tag"
+          fi
+          url="https://github.com/${GH_REPO}/releases/download/${tag}/$(basename "$wheel")"
+          echo "wheel_url=$url" >> "$GITHUB_OUTPUT"
+          echo "Pyodide wheel: $url"
+      - name: Verify published Pyodide wheel from its HTTPS URL
+        env:
+          WHEEL_URL: ${{ steps.publish.outputs.wheel_url }}
+        run: |
+          npm i --no-save pyodide@0.29.4
+          python3 scripts/pyodide_load_smoke.py "$WHEEL_URL"

@@ -483,6 +483,32 @@ def test_release_workflow_rejects_nonblocking_pyodide_probe(tmp_path: Path) -> N
     assert any("wasm job must block publishing" in error for error in errors)
 
 
+def test_release_workflow_rejects_pyodide_artifact_in_pypi_batch(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace("          name: pyodide-wheel\n", "          name: dist-pyodide\n"),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("release wasm job" in error and "pyodide-wheel" in error for error in errors)
+
+
+def test_release_workflow_rejects_missing_pyodide_release_publisher(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(
+        workflow.replace("  publish-pyodide:\n", "  publish-pyodide-removed:\n"),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("missing required release job 'publish-pyodide'" in error for error in errors)
+
+
 def test_release_workflow_rejects_missing_sdist_norust_smoke(tmp_path: Path) -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     path = tmp_path / "release.yml"
@@ -550,3 +576,13 @@ def test_release_workflow_rejects_ungated_pypi_publish_step(tmp_path: Path) -> N
     errors = verify_ci_workflow.validate_release_workflow(path)
 
     assert any("has no if: condition of its own" in error for error in errors)
+
+
+def test_release_workflow_rejects_non_retryable_pypi_publish(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    path = tmp_path / "release.yml"
+    path.write_text(workflow.replace("          skip-existing: true\n", ""), encoding="utf-8")
+
+    errors = verify_ci_workflow.validate_release_workflow(path)
+
+    assert any("release publish job" in error and "skip-existing" in error for error in errors)
