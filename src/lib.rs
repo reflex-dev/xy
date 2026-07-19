@@ -24,6 +24,7 @@ mod font;
 pub mod kernels;
 pub mod raster;
 mod simd;
+pub mod svg;
 pub mod tiles;
 
 use kernels::ZoneMap;
@@ -79,12 +80,46 @@ unsafe fn borrowed_byte_spans<'a>(
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 35;
+pub const ABI_VERSION: u32 = 36;
 const FACTORIZE_CAPACITY_EXCEEDED: usize = usize::MAX - 1;
 
 #[no_mangle]
 pub extern "C" fn xy_abi_version() -> u32 {
     ABI_VERSION
+}
+
+/// Serialize parallel f64 screen coordinates into SVG polyline path data.
+/// Returns the required byte count, or `usize::MAX` for invalid inputs. When
+/// `out_cap` is too small no bytes are written, allowing callers to retry.
+///
+/// # Safety
+/// `x` and `y` must point to `len` readable f64s. When `out_cap` is sufficient,
+/// `out` must point to `out_cap` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn xy_svg_poly_path(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    out: *mut u8,
+    out_cap: usize,
+) -> usize {
+    if len == 0 || x.is_null() || y.is_null() {
+        return usize::MAX;
+    }
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    let Some(path) = ffi_guard(None, || svg::poly_path(x, y)) else {
+        return usize::MAX;
+    };
+    let required = path.len();
+    if out_cap < required {
+        return required;
+    }
+    if out.is_null() {
+        return usize::MAX;
+    }
+    std::slice::from_raw_parts_mut(out, out_cap)[..required].copy_from_slice(path.as_bytes());
+    required
 }
 
 /// Factor `len` fixed-width records into first-seen u32 codes. Returns the
@@ -552,6 +587,56 @@ pub unsafe extern "C" fn xy_m4_indices(
     }
     let out = std::slice::from_raw_parts_mut(out, out_len);
     out[..idx.len()].copy_from_slice(&idx);
+    idx.len()
+}
+
+/// Fused M4 decimation for a parallel x/y pair. Unlike `xy_m4_indices`, this
+/// writes the selected values directly and avoids returning an index array for
+/// Python to gather through NumPy. SVG and PNG payload construction both use
+/// this entry point, so their common reduction path stays native.
+///
+/// Returns the number of values written, or `usize::MAX` on invalid input.
+/// `out_x` and `out_y` must each hold `4 * n_buckets` f64 values.
+///
+/// # Safety
+/// `x` and `y` must point to `len` readable f64s; both output pointers must
+/// address the documented writable capacity.
+#[no_mangle]
+pub unsafe extern "C" fn xy_m4_points(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    x0: f64,
+    x1: f64,
+    n_buckets: usize,
+    out_x: *mut f64,
+    out_y: *mut f64,
+) -> usize {
+    if n_buckets == 0 || !finite_gt(x0, x1) || len > u32::MAX as usize {
+        return usize::MAX;
+    }
+    let out_len = match n_buckets.checked_mul(4) {
+        Some(n) => n,
+        None => return usize::MAX,
+    };
+    if len == 0 {
+        return 0;
+    }
+    if x.is_null() || y.is_null() || out_x.is_null() || out_y.is_null() {
+        return usize::MAX;
+    }
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    let Some(idx) = ffi_guard(None, || Some(kernels::m4_indices(x, y, x0, x1, n_buckets))) else {
+        return usize::MAX;
+    };
+    let out_x = std::slice::from_raw_parts_mut(out_x, out_len);
+    let out_y = std::slice::from_raw_parts_mut(out_y, out_len);
+    for (dst, &source) in idx.iter().enumerate() {
+        let source = source as usize;
+        out_x[dst] = x[source];
+        out_y[dst] = y[source];
+    }
     idx.len()
 }
 

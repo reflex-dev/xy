@@ -28,7 +28,7 @@ from xml.sax.saxutils import escape
 
 import numpy as np
 
-from . import _png
+from . import _native, _png
 from ._arrowgeom import arrow_shapes as _arrow_shapes
 from .config import DEFAULT_PALETTE
 
@@ -836,9 +836,7 @@ def _rounded_rect_path(
 
 
 def _poly_path(px: np.ndarray, py: np.ndarray) -> str:
-    parts = [f"M {_num(px[0])} {_num(py[0])}"]
-    parts.extend(f"L {_num(px[i])} {_num(py[i])}" for i in range(1, len(px)))
-    return " ".join(parts)
+    return _native.svg_poly_path(px, py)
 
 
 def _curve_path(xv: np.ndarray, yv: np.ndarray, sx: _Scale, sy: _Scale, smooth: bool) -> str:
