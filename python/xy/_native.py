@@ -24,7 +24,7 @@ import numpy.typing as npt
 
 from .config import MAX_CONTOUR_WORK, MAX_SCREEN_DIM
 
-ABI_VERSION = 35
+ABI_VERSION = 36
 
 # Rust reports invalid arguments (and, via the ffi_guard panic shield, any
 # internal panic) by returning `usize::MAX` from size-returning entry points.
@@ -165,6 +165,14 @@ def _load() -> ctypes.CDLL:
         ctypes.c_double,
         ctypes.c_size_t,
         ctypes.c_void_p,
+    ]
+    lib.xy_svg_poly_path.restype = ctypes.c_size_t
+    lib.xy_svg_poly_path.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
     ]
     lib.xy_stacked_bounds.restype = ctypes.c_int32
     lib.xy_stacked_bounds.argtypes = [
@@ -1777,6 +1785,28 @@ def m4_indices(
     if written == _USIZE_MAX:
         raise ValueError("invalid m4 arguments")
     return out[:written].copy()
+
+
+def svg_poly_path(x: npt.ArrayLike, y: npt.ArrayLike) -> str:
+    """Serialize parallel screen coordinates as SVG path data in Rust."""
+    xa = np.ascontiguousarray(x, dtype=np.float64).reshape(-1)
+    ya = np.ascontiguousarray(y, dtype=np.float64).reshape(-1)
+    if len(xa) != len(ya) or len(xa) == 0:
+        raise ValueError("x and y must be non-empty and have equal length")
+    # Normal chart coordinates fit comfortably. The ABI returns the exact
+    # requirement without writing when an adversarial fixed-point value needs
+    # more room, so the uncommon retry remains allocation-safe.
+    capacity = max(64, len(xa) * 32)
+    while True:
+        out = ctypes.create_string_buffer(capacity)
+        written = _lib.xy_svg_poly_path(
+            _ptr_f64(xa), _ptr_f64(ya), len(xa), out, capacity
+        )
+        if written == _USIZE_MAX:
+            raise ValueError("invalid SVG polyline coordinates")
+        if written <= capacity:
+            return out.raw[:written].decode("ascii")
+        capacity = written
 
 
 def marching_squares(

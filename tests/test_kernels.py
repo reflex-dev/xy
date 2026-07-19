@@ -1190,3 +1190,15 @@ def test_density_rgba_validates_shape_and_domain():
         k.density_rgba(np.zeros(4, dtype=np.uint8), 2, 2, -1.0, stops, 1.0)
     with pytest.raises(ValueError, match="opacity"):
         k.density_rgba(np.zeros(4, dtype=np.uint8), 2, 2, 1.0, stops, 1.1)
+
+
+def test_native_svg_poly_path_format_and_validation():
+    from xy import _native
+
+    assert _native.svg_poly_path([1.0, 2.345, -0.001], [4.5, 6.789, -0.0]) == (
+        "M 1 4.5 L 2.35 6.79 L -0 -0"
+    )
+    with pytest.raises(ValueError, match="non-empty"):
+        _native.svg_poly_path([], [])
+    with pytest.raises(ValueError, match="coordinates"):
+        _native.svg_poly_path([1.0], [np.nan])

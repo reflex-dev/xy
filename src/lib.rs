@@ -23,6 +23,7 @@ pub mod css;
 mod font;
 pub mod kernels;
 pub mod raster;
+pub mod svg;
 mod simd;
 pub mod tiles;
 
@@ -79,12 +80,46 @@ unsafe fn borrowed_byte_spans<'a>(
 /// ABI version — bumped on any signature change. The Python wrapper checks this
 /// at load time and refuses a mismatched library loudly (§33 comm-versioning
 /// rule, applied to the in-process boundary).
-pub const ABI_VERSION: u32 = 35;
+pub const ABI_VERSION: u32 = 36;
 const FACTORIZE_CAPACITY_EXCEEDED: usize = usize::MAX - 1;
 
 #[no_mangle]
 pub extern "C" fn xy_abi_version() -> u32 {
     ABI_VERSION
+}
+
+/// Serialize parallel f64 screen coordinates into SVG polyline path data.
+/// Returns the required byte count, or `usize::MAX` for invalid inputs. When
+/// `out_cap` is too small no bytes are written, allowing callers to retry.
+///
+/// # Safety
+/// `x` and `y` must point to `len` readable f64s. When `out_cap` is sufficient,
+/// `out` must point to `out_cap` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn xy_svg_poly_path(
+    x: *const f64,
+    y: *const f64,
+    len: usize,
+    out: *mut u8,
+    out_cap: usize,
+) -> usize {
+    if len == 0 || x.is_null() || y.is_null() {
+        return usize::MAX;
+    }
+    let x = std::slice::from_raw_parts(x, len);
+    let y = std::slice::from_raw_parts(y, len);
+    let Some(path) = ffi_guard(None, || svg::poly_path(x, y)) else {
+        return usize::MAX;
+    };
+    let required = path.len();
+    if out_cap < required {
+        return required;
+    }
+    if out.is_null() {
+        return usize::MAX;
+    }
+    std::slice::from_raw_parts_mut(out, out_cap)[..required].copy_from_slice(path.as_bytes());
+    required
 }
 
 /// Factor `len` fixed-width records into first-seen u32 codes. Returns the
