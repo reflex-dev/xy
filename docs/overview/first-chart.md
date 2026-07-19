@@ -1,18 +1,21 @@
 ---
 title: Your First Chart
-description: Build and display a minimal XY scatter chart from Python.
+description: Create an interactive XY chart in a Python script or notebook, then choose where to go next.
 ---
 
 # Your First Chart
 
-An XY chart is a small component tree: a chart container owns layout and output,
-while marks and axes describe what belongs inside it.
+You only need the core `xy` package to create, display, and export a chart. The
+same chart object works in a Python script and a notebook; only the final
+display line changes.
 
-## In a Python script
+If XY is not installed yet, follow [Installation](/docs/xy/overview/installation/).
 
-Build the chart once and choose how to display it. The demo below renders the
-same `xy.Chart` that the script exports; the small `first_chart_demo()` function
-is only the Reflex wrapper used by this documentation site.
+## Script path: export interactive HTML
+
+Build the chart once and choose how to display it. The small
+`first_chart_demo()` function only lets this documentation site show the live
+result; you do not need it in your own script or notebook.
 
 ~~~python demo exec
 import xy
@@ -36,32 +39,54 @@ if __name__ == "__main__":
     chart.to_html("scatter.html")
 ~~~
 
-Run the file with `python first_chart.py`, then open `scatter.html`. Hover, pan,
-zoom, and the built-in controls run locally; the exported file does not need a
-Python process or network connection. In your own script or notebook, you do
-not need the `first_chart_demo()` wrapper.
+Run it and open the generated file:
 
-## In a notebook
+~~~bash
+python first_chart.py
+~~~
 
-Run the same construction code in Jupyter, JupyterLab, VS Code, Colab, Marimo,
-or another compatible anywidget frontend, then leave the chart as the final
-expression in a cell:
+`scatter.html` is self-contained. Hover, pan, zoom, and the built-in controls
+run locally without a Python process or network connection.
+
+## Notebook path: display a live widget
+
+Run this cell in Jupyter, JupyterLab, VS Code, Colab, Marimo, or another
+compatible anywidget frontend:
 
 ~~~python
+import xy
+
+chart = xy.scatter_chart(
+    xy.scatter([1, 2, 3, 4], [3, 5, 4, 7], color="#6e56cf", size=10),
+    xy.x_axis(label="sample"),
+    xy.y_axis(label="value"),
+    title="First chart",
+)
+
 chart
 ~~~
 
-XY displays the interactive widget automatically. Use `chart.show()` when an
-explicit display call is clearer.
+Leaving `chart` as the final expression displays the interactive widget. Use
+`chart.show()` when an explicit display call is clearer. See
+[Notebooks](/docs/xy/integrations/notebooks/) for supported hosts, callbacks,
+and troubleshooting.
 
-## What each line contributes
+## What each part does
 
-- `scatter()` is the rendered mark and binds the x/y values.
-- `scatter_chart()` composes the mark, axes, title, interaction settings, and
-  output methods into a `Chart`.
-- `to_html()`, `to_png()`, `to_svg()`, `show()`, and `widget()` all read from
-  that same chart; changing output does not require rebuilding it.
+- `scatter()` binds the x/y values and describes the rendered marks.
+- `x_axis()` and `y_axis()` add labeled axes.
+- `scatter_chart()` composes the marks, axes, title, interactions, and output
+  methods into one `Chart`.
+- `to_html()`, `to_png()`, `to_svg()`, `show()`, and `widget()` all use that
+  same chart; changing output does not require rebuilding it.
 
-Continue with [Data and columns](/docs/xy/core-concepts/data/), browse the
-[Gallery](/docs/xy/overview/gallery/), or customize the result in
-[Styling](/docs/xy/styling/).
+## Choose your next step
+
+- Bring NumPy, Pandas, or Arrow values into a chart with
+  [Data and columns](/docs/xy/core-concepts/data/).
+- Start from the visual result you need in the
+  [Chart Gallery](/docs/xy/overview/gallery/).
+- Customize colors, typography, and component chrome in
+  [Styling](/docs/xy/styling/).
+- Export HTML, PNG, SVG, or image batches with
+  [Display and export](/docs/xy/guides/display-and-export/).

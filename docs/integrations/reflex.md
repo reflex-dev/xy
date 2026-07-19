@@ -5,17 +5,41 @@ description: Render fixed and state-backed XY charts as first-class Reflex compo
 
 # Reflex
 
-The `reflex-xy` adapter renders an XY chart as a first-class Reflex component.
-The core `xy` package stays framework-neutral: application state and events
-remain in Reflex while XY owns chart data, rendering, and interaction math.
+The experimental `reflex-xy` adapter renders an XY chart as a first-class
+Reflex component. The core `xy` package stays framework-neutral: application
+state and events remain in Reflex while XY owns chart data, rendering, and
+interaction math.
+
+~~~md alert warning
+### Unreleased Adapter
+
+`reflex-xy` is not published on PyPI. The adapter is an opt-in prototype whose
+API and event payloads may change before its first release. Install it from the
+tagged Git subdirectory below; installing it by package name alone with uv or
+pip will not work.
+~~~
 
 ## Install and Configure
 
-Install both packages and register the adapter plugin:
+Pair the public `xy` 0.0.1 wheel with the adapter from the matching `v0.0.1`
+repository tag. Pinning both sides avoids mixing an unreleased adapter revision
+with a different core API:
+
+~~~~md tabs
+## uv
 
 ~~~bash
-uv add xy reflex-xy
+uv add "xy==0.0.1" "reflex-xy @ git+https://github.com/reflex-dev/xy.git@v0.0.1#subdirectory=python/reflex-xy"
 ~~~
+
+## pip
+
+~~~bash
+python -m pip install "xy==0.0.1" "reflex-xy @ git+https://github.com/reflex-dev/xy.git@v0.0.1#subdirectory=python/reflex-xy"
+~~~
+~~~~
+
+The adapter installs Reflex as a dependency. Then register its plugin:
 
 ~~~python
 # rxconfig.py
@@ -132,7 +156,7 @@ component props:
 | `on_hover` | `on_point_hover` | Resolved row dictionary |
 | `on_click` | `on_point_click` | Resolved row dictionary |
 | `on_brush` | No dedicated prop | — |
-| `on_select` | `on_select_end` | JSON-safe summary with `total`, optional bounds or `polygon`, and `cleared` |
+| `on_select` | `on_select_end` | JSON-safe summary with `total`, optional bounds, and `cleared` |
 | `on_view_change` | `on_view_change` | View dictionary |
 
 In particular, notebook `on_select` receives an `xy.Selection` with canonical
@@ -192,7 +216,8 @@ objects never enter standalone HTML. For ordinary DOM customization, use the
 ~~~md alert warning
 ### Experimental Boundary
 
-The Reflex adapter and callback payload details are still experimental. Build
-against `reflex_xy.chart`, `@reflex_xy.figure`, and `reflex_xy.append` rather
-than private transport or registry modules.
+The Reflex adapter and callback payload details are still experimental and the
+package has no PyPI release. Keep `xy` and the adapter on the matching tag, and
+build against `reflex_xy.chart`, `@reflex_xy.figure`, and `reflex_xy.append`
+rather than private transport or registry modules.
 ~~~

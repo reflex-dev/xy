@@ -38,6 +38,18 @@ def test_chart_exposes_parallel_semantic_layer() -> None:
             assert snippet in text, f"{label} missing accessibility contract {snippet!r}"
 
 
+def test_categorical_axes_announce_categories_instead_of_numeric_padding() -> None:
+    required = (
+        'axis.kind === "category"',
+        "Array.isArray(axis.categories)",
+        "categories.slice(0, 6)",
+        "has ${categories.length} categories:",
+    )
+    for label, text in CLIENTS:
+        for snippet in required:
+            assert snippet in text, f"{label} missing categorical axis summary {snippet!r}"
+
+
 def test_keyboard_navigation_reuses_hover_and_tooltip_pipeline() -> None:
     required = (
         'this._listen(c, "keydown", (e) => this._onA11yKey(e))',

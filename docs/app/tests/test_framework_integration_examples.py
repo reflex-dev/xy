@@ -18,6 +18,7 @@ def _python_examples() -> dict[str, str]:
     examples: dict[str, str] = {}
     heading = "Introduction"
     fence: str | None = None
+    container_fence: str | None = None
     source: list[str] = []
 
     for line in FRAMEWORK_INTEGRATION_DOC.read_text(encoding="utf-8").splitlines():
@@ -30,6 +31,13 @@ def _python_examples() -> dict[str, str]:
                 fence = None
             else:
                 source.append(line)
+            continue
+        if container_fence is not None:
+            if line == container_fence:
+                container_fence = None
+            continue
+        if line.startswith("~~~~"):
+            container_fence = line[:4]
             continue
         if line.startswith("#"):
             heading = line.lstrip("#").strip()

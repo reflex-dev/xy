@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 from reflex_site_shared.docs import discover_docs
-from xy_docs.config import DOCS_CONFIG
+from xy_docs.config import DOCS_CONFIG, DOCS_REDIRECTS
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 CLIENT_ROOT = APP_ROOT / ".web" / "build" / "client"
@@ -17,21 +17,18 @@ XY_PAYLOAD_MAGIC = b"XYBF"
 
 
 def route_html_paths(route: str) -> tuple[Path, ...]:
-    """Return supported prerender output paths for a route.
+    """Return the canonical trailing-slash HTML path for a route.
 
     Args:
         route: Public documentation route.
 
     Returns:
-        Flat and directory-index HTML candidates.
+        The directory-index HTML path served for the canonical URL.
     """
     route_path = route.strip("/")
     if not route_path:
         return (BUILD_ROOT / "index.html",)
-    return (
-        BUILD_ROOT / f"{route_path}.html",
-        BUILD_ROOT / route_path / "index.html",
-    )
+    return (BUILD_ROOT / route_path / "index.html",)
 
 
 def route_module_path(route: str) -> Path:
@@ -96,13 +93,18 @@ def main() -> None:
         ):
             validate_live_preview(page.route, module_path)
         html_paths = route_html_paths(page.route)
-        route_depth = len(Path(page.route.strip("/")).parts)
-        if route_depth > 1:
-            # Deeper optional segments use the SPA fallback. The route module
-            # above proves the Python page was compiled into it.
-            continue
         if not any(path.is_file() for path in html_paths):
             msg = f"Missing prerendered documentation route: {html_paths!r}"
+            raise RuntimeError(msg)
+
+    for route in DOCS_REDIRECTS:
+        module_path = route_module_path(route)
+        if not module_path.is_file():
+            msg = f"Missing compiled redirect route: {module_path}"
+            raise RuntimeError(msg)
+        html_paths = route_html_paths(route)
+        if not any(path.is_file() for path in html_paths):
+            msg = f"Missing prerendered redirect route: {html_paths!r}"
             raise RuntimeError(msg)
 
 

@@ -13,9 +13,9 @@ from reflex_site_shared.docs import (
 from xy_docs.config import DOCS_SECTIONS
 
 SIDEBAR_SECTION_GROUPS = (
-    ("Learning", "/", DOCS_SECTIONS[:3]),
+    ("Learning", "/", (*DOCS_SECTIONS[:3], DOCS_SECTIONS[7])),
     ("Examples", "/overview/gallery/", DOCS_SECTIONS[3:5]),
-    ("Other", "/integrations/", DOCS_SECTIONS[5:]),
+    ("Other", "/integrations/", (*DOCS_SECTIONS[5:7], *DOCS_SECTIONS[8:])),
 )
 
 
@@ -70,7 +70,8 @@ def xy_docs_sidebar_comp(url: rx.vars.StringVar[str]) -> rx.Component:
             (url == "/")
             | (url.startswith("/overview/") & (url != "/overview/gallery/"))
             | url.startswith("/core-concepts/")
-            | url.startswith("/guides/"),
+            | url.startswith("/guides/")
+            | url.startswith("/advanced/"),
         ),
         docs_sidebar_category(
             "Build",

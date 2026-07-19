@@ -1,251 +1,139 @@
 ---
 title: XY Architecture
-description: Follow a chart from the declarative Python API through native reduction, binary transport, browser rendering, interaction, and export.
+description: See how XY keeps exact data in Python while native compute and screen-bounded rendering keep charts responsive.
 ---
 
 # XY Architecture
 
-XY separates canonical data, derived render data, and presentation. Python
-owns the chart definition and exact source columns, the native Rust core does
-data-dependent compute, and the browser draws a representation sized for the
-visible result. Notebook and Reflex integrations add a live channel back to
-Python; standalone exports deliberately do not.
+XY separates source data, render data, and presentation. Python owns the chart
+definition and exact columns, Rust handles data-heavy work, and the browser
+draws only the representation needed for the current view.
 
-This separation lets the same chart object serve interactive applications,
-notebooks, self-contained HTML, and static image exports without making the
-browser retain every source row.
+That same chart can run in notebooks and applications or export to HTML, PNG,
+and SVG.
 
 ## System overview
 
 ~~~text
-Declarative Python API
+Declarative Python chart
         |
         v
-Chart compiler -----> ColumnStore (canonical f64 columns)
-        |                         |
-        |                         v
-        |                Native Rust compute core
-        |                  |-- exact path (no sampling):
-        |                  |   full points, statistics, range queries
-        |                  |-- reduced path (optional):
-        |                  |   M4 or density bins + a sample
-        |                  +-- static export: rasterization
-        |                         |
-        +-------------------------+
+Chart compiler + exact columns
+        |
+        v
+Native Rust compute
+(exact points, line reduction, density, statistics, PNG)
         |
         v
 Small JSON spec + typed binary buffers
         |
-        +--------------+----------------+
-        |              |                |
-        v              v                v
-  WebGL2 marks    2D canvas chrome    DOM chrome
-  and textures    grid and axes       text, legend,
-                                     tooltip, controls
-        |
         v
-Interaction controller -- live host channel --> Python figure
-                        (notebook or Reflex)
+WebGL2 marks + canvas axes + DOM labels and controls
+        |
+        +---- live updates ----> Python host (notebook or Reflex)
 ~~~
 
-The wire spec describes traces, axes, styles, interactions, and references to
-columns. Numeric data travels beside it in typed binary buffers, not as JSON
-number arrays or base64 strings.
+| Layer | Responsibility |
+| --- | --- |
+| Python | Public API, exact source columns, chart policy, callbacks, and host integration |
+| Rust | Statistics, range queries, line reduction, density aggregation, selection, and native PNG |
+| Browser | Drawing, picking, pan and zoom, tooltips, controls, and immediate interaction |
 
-## 1. Declarative API and figure compilation
+Standalone HTML has no live Python connection; notebooks and Reflex charts do.
 
-Factories such as `xy.scatter()`, `xy.line()`, and `xy.x_axis()` create a
-framework-independent component tree. A chart compiles that tree into an
-internal `Figure`; the core `xy` package does not depend on Reflex, a notebook
-runtime, or a browser.
+## From source data to pixels
 
-Compilation performs four jobs:
+### 1. Compile and compute
 
-1. It validates component props, data bindings, axes, styles, and interaction
-   settings.
-2. It normalizes numeric and time data into typed columns.
-3. It registers traces that reference those columns instead of embedding data
-   in the chart spec.
-4. It chooses the initial rendered representation for each trace.
+Chart components are validated and compiled into a framework-independent
+figure. Exact numeric and time values stay in a figure-owned `ColumnStore` as
+contiguous `float64` columns.
 
-The public component tree is the durable authoring model. `Chart.figure()` is
-an advanced escape hatch into the compiled figure and its host-specific
-methods.
+Rust then prepares either exact visible points or a smaller render
+representation. Long lines use M4 reduction, while dense scatter can use a
+density grid plus a deterministic sample. These render buffers are disposable;
+the exact columns remain the source of truth.
 
-## 2. Canonical columns and native compute
+### 2. Send a compact payload
 
-Each figure owns a `ColumnStore`. Canonical numeric and time columns are kept
-as contiguous `float64` arrays, deduplicated within the figure when traces
-share the same underlying array. Chunk-level zone maps cache statistics used
-for autorange and range queries. Derived render buffers are rebuildable caches;
-they are not the source of truth.
+Chart structure, styles, and column references travel in a small JSON spec.
+Numeric data travels separately in typed binary buffers rather than large JSON
+number arrays.
 
-Published wheels include a required native Rust core behind a narrow C ABI.
-Python keeps validation, policy, column ownership, chart composition, and host
-integration. Rust can take an exact path that keeps every visible point, or an
-optional reduced path that uses M4 for long lines or density bins plus a
-deterministic sample for dense scatter. It also handles statistics, range
-queries, selection, and native rasterization. Reduction changes only the
-render representation: the exact canonical columns remain available.
-Unsupported platforms fail clearly instead of silently switching to a slower
-compute implementation.
-
-See [Data and Columns](/docs/xy/core-concepts/data/) for accepted inputs and
-[Large Data and Performance](/docs/xy/core-concepts/large-data-and-performance/)
-for the representation ladder.
-
-## 3. Screen-bounded payloads
-
-The payload compiler emits two coordinated pieces:
-
-- a small JSON-compatible spec containing structure, metadata, and column
-  references;
-- typed binary columns containing geometry, channels, density grids, and
-  selection data.
-
-Geometry is offset-encoded to `float32` for transport and GPU upload. The
-offset and scale remain in metadata so large values such as millisecond epoch
-timestamps do not lose their visible differences through a naive `float32`
-cast.
-
-The payload depends on the active representation:
-
-| Tier | Typical use | Browser payload |
+| Representation | Used for | Browser receives |
 | --- | --- | --- |
-| Direct | Small visible traces | Exact visible marks |
-| Decimated | Long ordered lines and areas | M4-preserved extrema at viewport resolution |
-| Density | Dense scatter overviews | Fixed-size count grid plus a deterministic sample |
-| Refined | A narrower live view | Recomputed aggregate or exact visible points when they fit |
+| Direct | Small traces | Exact visible marks |
+| Decimated | Long lines and areas | Viewport-sized extrema |
+| Density | Dense scatter overviews | A fixed-size grid and sample |
+| Refined | A narrower live view | A recomputed aggregate or exact points |
 
-Every reduction is recorded in the trace spec. Tier selection changes visible
-geometry, not the canonical source columns.
+Geometry is offset-encoded to `float32` for efficient GPU upload while keeping
+visible differences in large values such as timestamps.
 
-## 4. Why XY can outperform conventional chart libraries
+### 3. Draw and interact
 
-The important difference is not simply that XY uses Rust or WebGL. It is that
-XY avoids letting source-row count determine every later stage of the render
-pipeline.
+The browser uses WebGL2 for marks and density textures, a 2D canvas for grid
+lines and axis rules, and the DOM for labels, legends, tooltips, controls, and
+accessible chart chrome.
 
-A conventional Python-to-browser chart path often pays a sequence of
-data-sized costs: turn every value into JSON, copy the text across the host
-boundary, parse it back into JavaScript values, create or upload one mark per
-row, and revisit that full representation during interaction. SVG-based
-renderers can also create one DOM node per mark. A WebGL renderer removes the
-DOM-node cost, but it can still upload and draw every point if it has no
-level-of-detail policy.
+Pan and zoom update locally first. When a live host is available, the browser
+can request a refined view or resolve selections against exact source rows.
+Sequence numbers prevent late replies from replacing a newer view.
 
-XY changes the cost model:
+CSS and Tailwind style DOM elements; mark styles are compiled consistently for
+WebGL, SVG, and native PNG. See [Chrome Slots](/docs/xy/styling/chrome-slots/)
+and [Mark Styles](/docs/xy/styling/mark-styles/).
+
+## Why it stays fast
 
 ~~~text
-Conventional path: O(N) encode + O(N) transfer + O(N) parse + O(N) draw
-XY tiered path:    O(N) ingest/reduce + O(P) transfer + O(P) draw
+Conventional path: O(N) encode + transfer + parse + draw
+XY tiered path:    O(N) ingest/reduce + O(P) transfer + draw
 
 N = source rows
-P = marks, segments, or cells useful at the current pixel resolution
+P = detail useful at the current pixel resolution
 ~~~
 
-The initial ingest or reduction still has to inspect source data. XY's
-advantage is that those rows do not automatically become an equally large
-browser payload and draw workload.
+XY still has to inspect source data. Its advantage is that every source row
+does not automatically become a browser object:
 
-| Architectural choice | Work it avoids |
+- Native columnar kernels avoid Python object loops for data-heavy work.
+- Binary buffers avoid formatting and parsing large numeric JSON payloads.
+- Line reduction and density grids avoid drawing detail the screen cannot show.
+- Retained GPU buffers and local interaction avoid rebuilding the chart on
+  every pointer movement.
+
+This is a focused design, not a claim that every chart is faster. Compare the
+same data, output, and rendering mode. The
+[benchmark snapshot](/docs/xy/overview/benchmarks/) publishes those contracts
+and records when XY uses a reduced representation.
+
+## Runtime and output choices
+
+| Target | Behavior |
 | --- | --- |
-| Typed binary buffers | Decimal formatting, large JSON text, JavaScript number-array parsing, and base64 expansion |
-| Native columnar kernels | Python object loops for statistics, binning, range queries, and line reduction |
-| M4 line reduction | Uploading and drawing line vertices the viewport cannot distinguish while retaining bucket extrema |
-| Density grids for large scatter | Uploading and drawing every overlapping marker; the browser draws a screen-sized texture instead |
-| Offset-encoded `float32` geometry | Double-width GPU geometry without giving up the visible precision of large-magnitude source values |
-| Retained GPU buffers and uniform-based pan/zoom | Rebuilding geometry on every pointer movement |
-| Batched and instanced WebGL2 marks | Per-mark DOM/SVG nodes and repeated JavaScript draw calls |
-| Local browser interaction | Python round-trips for immediate pan/zoom feedback and chrome updates; live refinement can follow asynchronously |
-| Native PNG renderer | Browser startup, DOM layout, and GPU setup when browser fidelity is not requested |
+| Notebook or Reflex | Live Python callbacks and view refinement |
+| Standalone HTML | Embedded browser client and initial data; no Python server |
+| Native PNG | Browser-free Rust rasterization |
+| Chromium PNG | Browser rendering when CSS and WebGL fidelity matter |
+| SVG | Vector output for supported marks and chart chrome |
 
-These choices reinforce one another. Native reduction would help less if its
-result were expanded back into JSON. Binary transport would help less if the
-browser still drew every invisible overlap. WebGL would help less if pan and
-zoom rebuilt every vertex buffer. XY keeps the reduced representation compact
-through compute, transport, GPU upload, and drawing.
+The chart definition stays the same; only the renderer and live capabilities
+change. See [Runtime and Deployment](/docs/xy/advanced/runtime-and-deployment/)
+for the full decision guide.
 
-This is not a claim that XY wins every chart workload. Small charts may be
-dominated by fixed initialization cost, some other libraries also provide
-binary transport or GPU aggregation, and exact unreduced output necessarily
-does more work. Compare like-for-like output contracts and environments. The
-[benchmark snapshot](/docs/xy/overview/benchmarks/) reports native static,
-interactive GPU, and CPU-fallback results separately and records when XY uses
-a density representation instead of individual markers.
+## Key boundaries
 
-## 5. Browser rendering surfaces
+- Exact columns are authoritative; render and GPU buffers are replaceable.
+- Numeric columns use binary transport; JSON describes structure and metadata.
+- Reduced traces are identified as reduced and never presented as exact marks.
+- Render work is bounded by the visible result, but ingest can still scale with
+  source-data size.
+- Python owns product policy, Rust owns native compute, and the browser owns
+  drawing and immediate interaction.
+- The core chart API stays independent of notebooks, Reflex, and other hosts.
 
-The browser client uses three coordinated surfaces, each chosen for the work
-it does best:
-
-| Surface | Responsibility |
-| --- | --- |
-| WebGL2 canvas | Marks, instanced geometry, density textures, and GPU picking |
-| 2D canvas | Grid lines and axis rules |
-| DOM | Labels, legends, tooltips, controls, annotations, and accessibility-oriented chrome |
-
-Pan and zoom primarily update view-transform uniforms. Geometry is uploaded
-again only when a new level of detail is needed. A mark registry keeps the
-main render loop independent of individual chart kinds, while the
-level-of-detail module owns tier changes, caches, and crossfades.
-
-This split also defines the styling boundary: normal CSS and Tailwind apply to
-DOM chrome, while mark styles are compiled into WebGL, native raster, and SVG
-renderer values. See [Chrome Slots](/docs/xy/styling/chrome-slots/) and
-[Mark Styles](/docs/xy/styling/mark-styles/).
-
-## 6. Interaction and live refinement
-
-Pointer input first resolves against the currently rendered representation.
-When a live Python host is available, the client sends compact semantic
-messages for view changes, picking, or selection. The shared Python dispatcher
-validates the request against the canonical figure and returns a small reply
-plus binary buffers when new geometry is required.
-
-View and drill requests carry sequence numbers. The client ignores stale
-replies, keeps drawing the previous representation while refinement is in
-flight, and swaps tiers only when the matching update arrives. Exact hover and
-selection callbacks resolve canonical row indices rather than presenting a
-density cell as if it were an individual point.
-
-The transport changes by host, but the figure protocol does not. Notebook
-widgets use binary comm frames, state-backed Reflex charts use the app's
-websocket, and standalone HTML uses no live Python transport. The runtime
-and deployment mode determines which refinement and callback paths are
-available. See [Runtime and Deployment](/docs/xy/advanced/runtime-and-deployment/)
-for the complete decision guide.
-
-## 7. Static export paths
-
-Static outputs reuse the compiled chart contract but choose a renderer for the
-requested fidelity:
-
-- native PNG uses the Rust raster path and does not require a browser;
-- Chromium PNG captures the browser renderer when browser CSS and WebGL
-  fidelity matter;
-- SVG walks the scene into vector output for supported marks and chrome;
-- standalone HTML packages the browser client and first-paint payload.
-
-The chart definition therefore stays the same while the final renderer and
-interaction capabilities change.
-
-## Architectural invariants
-
-When extending XY or diagnosing a chart, preserve these boundaries:
-
-- Canonical columns are authoritative; GPU and level-of-detail buffers are
-  disposable.
-- Data columns use binary transport; JSON describes structure and metadata.
-- Reductions are explicit in the spec and must not imply exact marks.
-- Render work is bounded by visible output, while ingest and reduction can
-  still depend on source-data size.
-- Python owns product policy and host semantics; Rust owns the native compute
-  path; the browser owns drawing and immediate interaction.
-- Stale live replies never replace newer view state.
-- The core chart API remains independent of host frameworks.
-
-For callback payloads and selection semantics, continue to
-[Events and Callbacks](/docs/xy/api-reference/events-and-callbacks/). For
-contracts that are still changing before 1.0, see
+For public callback contracts, continue to
+[Events and Callbacks](/docs/xy/api-reference/events-and-callbacks/). For APIs
+still changing before 1.0, see
 [Limitations and Alpha Status](/docs/xy/api-reference/limitations-and-alpha-status/).

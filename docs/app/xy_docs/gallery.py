@@ -617,7 +617,6 @@ _GALLERY_GROUPS: tuple[GalleryGroup, ...] = (
         (
             ("Stem", "Discrete values anchored to a baseline.", _stem, True),
             ("Segments", "Independent data-aligned line segments.", _segments, False),
-            ("Threshold", "A labeled reference boundary.", _threshold, False),
             (
                 "Triangle Mesh",
                 "Irregular triangulated surfaces.",
@@ -628,8 +627,9 @@ _GALLERY_GROUPS: tuple[GalleryGroup, ...] = (
     ),
     (
         "Annotations",
-        "/charts/annotations/",
+        "/components/annotations/",
         (
+            ("Threshold", "A labeled reference boundary.", _threshold, False),
             ("Horizontal Line", "A y-aligned rule across the plot.", _hline, False),
             ("Vertical Line", "An x-aligned event marker.", _vline, False),
             ("Bands", "Highlight x and y intervals.", _bands, False),

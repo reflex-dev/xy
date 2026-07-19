@@ -1,54 +1,76 @@
 ---
 title: Choosing a Runtime and Deployment Mode
-description: Choose between notebooks, standalone HTML, Reflex runtimes, and static renderers based on interaction, state, and deployment needs.
+description: Use Reflex for deployed interactive apps, notebooks for exploration, standalone HTML for sharing, or static renderers for reports.
 ---
 
 # Choosing a Runtime and Deployment Mode
 
-The same XY chart definition can run with a live Python kernel, as a portable
-browser document, inside a Reflex application, or through a static renderer.
-Choose the mode from the capabilities the deployed chart needs, not only from
-where it was developed.
+For a deployed interactive application, start with Reflex. XY charts become
+first-class components in an all-Python web app: Reflex handles UI, state,
+events, and deployment, while XY handles data transport, rendering, and
+interaction math. Start with a fixed chart and move to a session-backed figure
+when the app needs live data without rewriting the chart definition.
+
+XY also works outside an application. Use notebooks for exploration,
+standalone HTML for a portable interactive result, and PNG or SVG for static
+output.
+
+## Start with Reflex for Applications
+
+Reflex gives XY the application capabilities a standalone chart cannot:
+
+- Compose XY charts with normal Reflex components in Python.
+- Drive charts from per-session state with `@reflex_xy.figure`.
+- Connect hover, click, selection, and view changes to normal Reflex event
+  handlers, then stream updates with `reflex_xy.append`.
+- Reuse the app's existing websocket and XY's binary data plane instead of
+  deploying a separate chart service.
+- Compile fixed charts into assets that work with `reflex export` and need no
+  backend connection.
+
+The adapter is still experimental and installed from the matching XY Git tag.
+See the [Reflex integration guide](/docs/xy/integrations/reflex/) for the
+current installation and API boundary.
 
 ## Compare the modes
 
-| Mode | Best for | Important tradeoff |
-| --- | --- | --- |
-| Notebook widget | Exploration, callbacks, streaming, and exact live refinement | Requires a running Python kernel |
-| Standalone HTML | A portable interactive file that works without a server | Keeps browser interaction, but cannot call Python or request server-side exact refinement |
-| Reflex fixed chart | Fixed application data and static `reflex export` deployments | Compiles to a content-addressed `.xyf` asset with no backend event handlers |
-| Reflex `inline()` | Fixed data that still needs kernel round-trips and Reflex events | Must be registered at module scope; the live figure is shared rather than session-derived |
-| Reflex `@reflex_xy.figure` | Per-session, state-driven charts, events, streaming, and multi-worker recovery | Requires the Reflex backend and its websocket data plane |
-| Native PNG | Fast reports, tests, thumbnails, and batch output | No interaction and no browser-only CSS |
-| Chromium PNG | A static image matching browser fonts, CSS, and WebGL rendering | Pays browser startup and rendering overhead |
-| SVG | Scalable or editable browser-free output | Large reductions can contain compact raster data rather than one vector element per source row |
+| Mode | Best for |
+| --- | --- |
+| Reflex `@reflex_xy.figure` | Stateful Python applications with per-session data, events, streaming, and exact live refinement |
+| Reflex fixed chart | Exportable Reflex sites and application views with fixed data and browser interaction |
+| Reflex `inline()` | Fixed application data that still needs live Python round-trips and Reflex events |
+| Notebook widget | Exploration, callbacks, streaming, and exact live refinement |
+| Standalone HTML | A portable interactive file that works without a server |
+| Native PNG | Fast reports, tests, thumbnails, and batch output |
+| Chromium PNG | Static output matching browser fonts, CSS, and WebGL rendering |
+| SVG | Scalable or editable browser-free output |
 
 ## Follow the decision path
 
-1. **Do you need interaction?** If not, use native PNG for speed, Chromium PNG
-   for browser fidelity, or SVG for scalable output.
-2. **Must the interactive result work without a server?** If so, use
-   standalone HTML or a fixed Reflex chart.
-3. **Does the data depend on the current user or application state?** Use
-   `@reflex_xy.figure`. For fixed data, pass the chart directly unless it needs
-   a live kernel; then use module-scope `inline()`.
-4. **Do you need Python callbacks, streaming, or exact deep refinement?** Keep
-   a live notebook or Reflex-backed figure. A standalone payload cannot call a
-   Python process that is not there.
+1. **Building an interactive application? Start with Reflex.** Pass an
+   `xy.Chart` directly when its data is fixed and exportable. Use
+   `@reflex_xy.figure` when data depends on the current session or Reflex
+   state. Use module-scope `inline()` for fixed data that still needs live
+   Python refinement.
+2. **Exploring data? Use the notebook widget.** It keeps callbacks, streaming,
+   and exact refinement close to the analysis kernel.
+3. **Sharing an interactive result without a server?** Use standalone HTML.
+4. **Producing a static artifact?** Choose native PNG for speed, SVG for
+   scalable output, or Chromium PNG for browser-level visual fidelity.
 
 ## Understand the deployment boundary
 
-Choosing the wrong mode often appears as a deployment bug: a chart still pans
-and zooms, but callbacks never fire; a static export cannot drill past its
-retained data; or a locally registered figure is unavailable on another
-backend worker.
+Reflex makes the live Python boundary explicit. A direct `xy.Chart` becomes a
+content-addressed asset that works with `reflex export`. An `inline()` or
+`@reflex_xy.figure` source stays connected to the Reflex backend through the
+app's existing websocket, enabling events, streaming, and exact row
+resolution.
 
-The key boundary is whether a live Python figure exists after deployment.
-Notebook widgets and live Reflex figures can resolve exact rows, accept
-streaming updates, and run Python callbacks. Standalone HTML and fixed Reflex
-charts keep browser-local interaction but have no Python process to call.
+Notebook widgets also keep a live Python figure. Standalone HTML and fixed
+Reflex charts retain browser-local hover, pan, zoom, and selection, but cannot
+call a Python process after deployment. PNG and SVG are final static artifacts.
 
-Continue with [Display and Export](/docs/xy/guides/display-and-export/) for
-output APIs, [Notebooks](/docs/xy/integrations/notebooks/) for live kernel
-behavior, and [Reflex](/docs/xy/integrations/reflex/) for fixed, `inline()`, and
-state-backed examples.
+For most deployed interactive work, continue with
+[Reflex](/docs/xy/integrations/reflex/). For exploration, see
+[Notebooks](/docs/xy/integrations/notebooks/). For portable files and static
+rendering, see [Display and Export](/docs/xy/guides/display-and-export/).
