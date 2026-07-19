@@ -1206,6 +1206,11 @@ def _axis_tick_label_layout(
     raw_angle = axis.get("tick_label_angle")
     explicit_angle = float(raw_angle) if raw_angle is not None else None
     base_angle = explicit_angle or 0.0
+    # y collision keeps the centered extent model: every label on an axis
+    # shares one anchor+angle, so an anchored y layout shifts all boxes by
+    # the same offset and pairwise gaps are unchanged.  Mirror JS exactly.
+    axis_style = axis.get("style") or {}
+    anchor = _tick_label_anchor(axis, axis_style, "center") if is_x else "center"
     labels = [
         {
             "value": value,
@@ -1232,13 +1237,34 @@ def _axis_tick_label_layout(
         for item in items:
             rows.setdefault(int(item.get("row", 0)), []).append(item)
         for row in rows.values():
-            last_end = -math.inf
-            for item in sorted(row, key=lambda candidate: float(candidate["pos"])):
-                half = extent(item) / 2.0
-                start = float(item["pos"]) - half
-                if start < last_end + min_gap:
-                    return True
-                last_end = float(item["pos"]) + half
+            row_sorted = sorted(row, key=lambda candidate: float(candidate["pos"]))
+            if is_x and anchor != "center":
+                # Edge-anchored labels all run the same direction from their
+                # tick.  Rotated ones are parallel lines: they clear each other
+                # when the perpendicular gap between adjacent anchors exceeds
+                # the line height, regardless of horizontal bounding-box overlap.
+                # Mirror JS _tickLabelsCollide exactly.
+                for i in range(1, len(row_sorted)):
+                    prev = row_sorted[i - 1]
+                    label = row_sorted[i]
+                    spacing = float(label["pos"]) - float(prev["pos"])
+                    angle = abs(float(label.get("angle", 0.0))) * math.pi / 180.0
+                    if angle:
+                        if spacing * math.sin(angle) < font_size * 1.2 + min_gap:
+                            return True
+                    else:
+                        lead = label if anchor == "end" else prev
+                        w = max(font_size * 0.7, len(str(lead["text"])) * font_size * 0.62)
+                        if spacing < w + min_gap:
+                            return True
+            else:
+                last_end = -math.inf
+                for item in row_sorted:
+                    half = extent(item) / 2.0
+                    start = float(item["pos"]) - half
+                    if start < last_end + min_gap:
+                        return True
+                    last_end = float(item["pos"]) + half
         return False
 
     if strategy == "auto":

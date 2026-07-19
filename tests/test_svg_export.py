@@ -103,6 +103,50 @@ def test_svg_honors_tick_label_anchor() -> None:
     assert 'text-anchor="end"' in default_svg
 
 
+def test_svg_tick_label_anchor_collision_parity() -> None:
+    """Anchor-aware collision model matches JS _tickLabelsCollide.
+
+    9 categories, tick_label_angle=-30, tick_label_anchor="end", wide chart:
+      spacing * sin(30°) > lineHeight + minGap  →  JS keeps all 9 labels.
+    The old centered-extent model treated labels as ±half-extent boxes centred
+    on each tick and found them colliding (extent > spacing), so it would
+    stride-2 downsample to 5.  The fixed Python exporter must also keep all 9.
+    """
+    from xy._svg import _Scale, _axis_tick_label_layout
+
+    # 15-char labels; font_size=11, angle=-30, anchor="end", min_gap=8.
+    #   new model:  spacing * sin(30°) = 90*0.5 = 45  >  11*1.2+8 = 21.2  → ok
+    #   old model:  extent = cos(30°)*102.3 + sin(30°)*13.2 ≈ 95.2
+    #               gap = 90 - 95.2 = -5.2  <  8  → would collide → stride-2
+    n = 9
+    cats = [f"Category_Name_{i:02d}" for i in range(n)]  # 15 chars each
+    axis: dict = {
+        "kind": "category",
+        "categories": cats,
+        "range": [0.0, float(n - 1)],
+        "tick_label_angle": -30,
+        "tick_label_anchor": "end",
+        "tick_label_strategy": "rotate",
+    }
+    # plot_width=720px → spacing = 720/8 = 90px
+    scale = _Scale(axis, px0=100.0, px1=820.0)
+    values = [float(i) for i in range(n)]
+    kept = _axis_tick_label_layout(axis, values, 1.0, scale, is_x=True)
+    assert len(kept) == n, (
+        f"anchor-aware collision model should keep all {n} labels, got {len(kept)}"
+    )
+
+    # Sanity: without the anchor the old centered-extent model is used and the
+    # same geometry collides, so strategy="rotate" still downsample to fit.
+    axis_no_anchor: dict = {**axis}
+    del axis_no_anchor["tick_label_anchor"]
+    kept_no_anchor = _axis_tick_label_layout(axis_no_anchor, values, 1.0, scale, is_x=True)
+    assert len(kept_no_anchor) < n, (
+        "centered-extent model should find collision (geometry not wide enough) "
+        f"but kept {len(kept_no_anchor)} of {n}"
+    )
+
+
 def test_svg_stays_screen_bounded_for_large_lines() -> None:
     n = 2_000_000
     y = np.cumsum(np.random.default_rng(1).normal(size=n))
