@@ -19,7 +19,6 @@ SIDEBAR_SECTION_GROUPS = (
 )
 
 INTEGRATION_LINK_ICONS = {
-    "/integrations/": "plug",
     "/integrations/reflex/": "atom",
     "/integrations/notebooks/": "notebook-tabs",
     "/integrations/matplotlib/": "chart-no-axes-combined",
@@ -112,6 +111,7 @@ def _section_items(
                 url,
             )
             for leaf_title, leaf_route in section_leaves
+            if leaf_route != landing_route
         )
     return (
         docs_sidebar_group(

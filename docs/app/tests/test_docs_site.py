@@ -1344,7 +1344,6 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
         for title, landing_route, _icon, leaves in grouped_sections
         for row_title in (
             (
-                title,
                 *(leaf_title for leaf_title, _leaf_route in leaves),
             )
             if title == "Integrations"
@@ -1387,20 +1386,19 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
     assert 'aria-label":"Navigate to Components"' not in rendered
     assert "Axes and Scales" in rendered
     for route in (
-        "/integrations/",
         "/integrations/reflex/",
         "/integrations/notebooks/",
         "/integrations/matplotlib/",
     ):
         assert f'to:"{route}"' in rendered
     for icon in (
-        "LucidePlug",
         "LucideAtom",
         "LucideNotebookTabs",
         "LucideChartNoAxesCombined",
     ):
         assert icon in rendered
-    assert rendered.count('"aria-current":((') == 4
+    assert "LucidePlug" not in rendered
+    assert rendered.count('"aria-current":((') == 3
     assert ">XY<" not in rendered
 
 
