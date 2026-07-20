@@ -211,7 +211,7 @@ The shipped adapter does not currently mount those objects beside its chart
 host. A custom adapter can read `chart.chrome_components()` (or its
 `reflex_components()` alias) and mount them alongside the chart. Opaque render
 objects never enter standalone HTML. For ordinary DOM customization, use the
-[chrome-slot styling API](/docs/xy/styling/chrome-slots/).
+[Customize Each Part](/docs/xy/styling/customize/#legend) slot styling guide.
 
 ~~~md alert warning
 ### Experimental Boundary

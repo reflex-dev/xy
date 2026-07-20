@@ -63,7 +63,6 @@ from xy_docs.sidebar import (
 from xy_docs.xy_docs import _DOCS_ROUTES, app
 
 import xy
-from xy._validate import _POINT_SYMBOLS
 from xy.components import _MARK_APPLIERS
 
 SITEMAP_NAMESPACE = {"sitemap": "https://www.sitemaps.org/schemas/sitemap/0.9"}
@@ -255,10 +254,10 @@ def test_tailwind_styling_docs_match_the_reflex_plugin_contract() -> None:
     content = (DOCS_ROOT / "styling/chrome-slots.md").read_text(encoding="utf-8")
 
     assert any(plugin.__class__.__name__ == "TailwindV4Plugin" for plugin in config.plugins)
-    assert "the adapter mirrors its chart, slot, mark, and annotation class strings" in content
-    assert "without adding the original Python or\nMarkdown file" in content
-    assert "Live token/Var charts are different" in content
-    assert "normal Reflex component (or safelist it" in content
+    assert "literal class strings in Tailwind's default scan" in content
+    assert "original Python or Markdown file" in content
+    assert "charts produced from a token or `Var`" in content
+    assert "safelist it in the host app" in content
 
 
 def test_styling_troubleshooting_covers_common_host_and_export_failures() -> None:
@@ -300,8 +299,6 @@ def test_component_styling_matrix_covers_public_chrome_boundaries() -> None:
 
     missing = {value for value in expected if value not in content}
     assert not missing
-    assert 'id="x2"' in content
-    assert 'side="top"' in content
     assert "button_class_name=" in content
     assert "button_style=" in content
     assert "does not render components passed through" in content
@@ -330,48 +327,107 @@ def test_styling_docs_cover_every_rendered_mark_family() -> None:
     assert not missing
 
 
-def test_styling_gallery_exercises_every_rendered_mark_family() -> None:
-    """Keep the visual styling atlas complete as XY gains mark families."""
+def test_styling_gallery_covers_retained_advanced_surfaces() -> None:
+    """Keep the focused gallery explicit about its retained advanced surfaces."""
     content = (DOCS_ROOT / "styling/gallery.md").read_text(encoding="utf-8").lower()
 
-    missing = {
-        kind
-        for kind in _MARK_APPLIERS
-        if f"`{kind}`" not in content and f"`{kind.replace('_', ' ')}`" not in content
+    required_marks = {
+        "area",
+        "ecdf",
+        "heatmap",
+        "contour",
+        "hexbin",
+        "error_band",
+        "errorbar",
+        "segments",
+        "stem",
+        "triangle_mesh",
     }
-    assert not missing
+    assert all(f"`{mark}`" in content for mark in required_marks)
 
     required_surfaces = {
-        "responsive",
-        "prefers-color-scheme",
         "custom legend",
-        "custom tooltip",
+        "styled cursor tooltip",
         "reduction badge",
         "facet_chart",
-        "categorical",
-        "time axis",
         "to_html(custom_css=",
-        "xy.interaction_config(",
-        "hover=true",
-        "click=true",
-        "select=true",
-        "brush=true",
-        "crosshair=true",
-        "view_change=true",
-        'loc="upper center"',
-        "critical-payments-reconciliation-with-extra-long-label",
+        "xy.tooltip(",
     }
     assert all(surface in content for surface in required_surfaces)
-    assert len(_POINT_SYMBOLS) == 17
-    assert all(f'"{symbol}"' in content for symbol in _POINT_SYMBOLS)
-    assert 'mode="grouped"' in content
-    assert 'mode="normalized"' in content
-    assert 'mode="stacked"' in content
-    assert 'orientation="vertical"' in content
-    assert 'orientation="horizontal"' in content
     assert "colorbar_bar" in content
     assert "colorbar_tick" in content
     assert "colorbar_title" in content
+
+
+def test_chart_examples_are_wide_copyable_demos_without_a_toc() -> None:
+    """Keep the dedicated examples page spacious and copy-ready."""
+    page = next(page for page in discover_docs(DOCS_CONFIG) if page.route == "/styling/examples/")
+    document = parse_document(page.content)
+    demos = [
+        block
+        for block in document.blocks
+        if isinstance(block, CodeBlock)
+        and {"demo", "exec", "toggle", "preview-code"} <= set(block.flags)
+    ]
+
+    assert len(demos) >= 4
+    assert all(block.content.count("def ") == 1 for block in demos)
+    assert all("reflex_xy.chart" in block.content for block in demos)
+    assert all('"grid_opacity": 0' in block.content for block in demos)
+    assert all('"axis_color": "#00000000"' in block.content for block in demos)
+    assert all("xy.vline(" not in block.content for block in demos)
+    assert sum("xy.area(" in block.content for block in demos) >= 2
+    assert sum("xy.bar(" in block.content or "xy.column(" in block.content for block in demos) >= 4
+
+    stacked_demo = next(block for block in demos if "def stacked_product_mix" in block.content)
+    assert stacked_demo.content.count("xy.column(") == 3
+    assert stacked_demo.content.count("corner_radius=(6, 0)") == 1
+    assert "base=growth_base" in stacked_demo.content
+    assert "base=enterprise_base" in stacked_demo.content
+
+    rendered_page = str(render_xy_markdown_page(page))
+    demo_count = len(demos)
+    assert rendered_page.count("XYChart") == demo_count + 6
+    assert rendered_page.count('value:"preview"') == demo_count * 2
+    assert rendered_page.count('value:"code"') == demo_count * 2
+    assert rendered_page.count("xy-example-tab cursor-pointer") == demo_count * 2
+    assert rendered_page.count("xy-example-tab-list inline-flex") == demo_count
+    assert "xy-chart-examples" in rendered_page
+    assert "max-width: 88rem" in rendered_page
+    assert "div:has(#toc-navigation)" in rendered_page
+    assert "display: none" in rendered_page
+    assert rendered_page.count('id:"responsive-combo-chart"') == 1
+    assert rendered_page.count('id:"responsive-combo-chart-demo"') == 1
+    assert "var(--chart-" not in page.content
+    assert "currentColor" not in page.content
+    assert '"transparent"' not in page.content
+
+
+def test_palette_playground_drives_a_reactive_chart_grid() -> None:
+    """Keep the preset palettes wired to the state-backed XY figures."""
+    from xy_docs.playground import PLAYGROUND_PALETTES, ChartPlaygroundState, chart_playground
+
+    rendered_page = str(chart_playground())
+
+    assert rendered_page.count("XYChart") == 6
+    assert 'type:"color"' not in rendered_page
+    assert rendered_page.count("apply_palette") == len(PLAYGROUND_PALETTES) == 5
+    assert "xy-palette-playground" in rendered_page
+    assert "grid grid-cols-1 gap-5 xl:grid-cols-2" in rendered_page
+    for label, palette in PLAYGROUND_PALETTES:
+        assert label in rendered_page
+        assert len(palette) == 3
+        assert all(re.fullmatch(r"#[0-9a-f]{6}", color) for color in palette)
+    assert {
+        "momentum",
+        "comparison",
+        "product_mix",
+        "funnel",
+        "traffic_share",
+        "channel_mix",
+    } <= set(ChartPlaygroundState.computed_vars)
+    assert "div:has(#toc-navigation)" in rendered_page
+    assert "display: none" in rendered_page
 
 
 def test_markdown_heading_links_are_route_local_after_client_navigation() -> None:
@@ -420,37 +476,21 @@ def test_custom_font_docs_cover_browser_and_static_export_boundaries() -> None:
 
 
 def test_theme_component_demo_uses_site_color_mode_tokens() -> None:
-    """Keep the introductory theme demo neutral and responsive to site mode."""
+    """Keep the introductory theme demo neutral, vivid, and mode-responsive."""
     content = (DOCS_ROOT / "styling/themes-and-tokens.md").read_text(encoding="utf-8")
     section = content.split("## Start with the theme component", 1)[1].split("## ", 1)[0]
     demo = section.split("~~~python demo exec", 1)[1].split("~~~", 1)[0]
 
     for token in (
-        "var(--secondary-2)",
-        "var(--secondary-a5)",
-        "var(--secondary-a8)",
-        "var(--secondary-11)",
-        "var(--primary-9)",
+        "--demo-surface:#ffffff",
+        "dark:[--demo-surface:#000000]",
+        "--demo-grid:#e5e7eb",
+        'color="#f43f5e"',
+        'fill="linear-gradient(#f43f5e4d 5%, #f43f5e00 95%)"',
+        "xy.legend(show=False)",
+        '"grid_opacity": 0',
     ):
         assert token in demo
-    assert "--demo-bg" not in demo
-
-
-def test_accessible_monochrome_recipe_uses_neutral_site_tokens() -> None:
-    """Keep the monochrome recipe neutral in both site color modes."""
-    content = (DOCS_ROOT / "styling/recipes.md").read_text(encoding="utf-8")
-    section = content.split("## Accessible monochrome comparison", 1)[1].split("## ", 1)[0]
-
-    for token in (
-        "var(--secondary-2)",
-        "var(--secondary-a5)",
-        "var(--secondary-a8)",
-        "var(--secondary-10)",
-        "var(--secondary-11)",
-        "var(--secondary-12)",
-    ):
-        assert token in section
-    assert "--mono-bg" not in section
 
 
 def test_generated_mark_api_does_not_claim_canvas_marks_are_dom_nodes() -> None:
@@ -716,12 +756,10 @@ def test_complete_styling_examples_render_live_previews() -> None:
 
 
 def test_single_chart_styling_demos_keep_only_the_parent_preview_card() -> None:
-    """Keep Live Demo chrome while avoiding a second chart-owned surface."""
+    """Keep one neutral preview surface without a nested chart-owned card."""
     gallery = (DOCS_ROOT / "styling/gallery.md").read_text(encoding="utf-8")
     blocks = re.findall(r"~~~(python[^\n]*)\n(.*?)\n~~~", gallery, re.DOTALL)
-    long_legend = next(
-        body for _fence, body in blocks if "long_legend_edge_tooltip_preview" in body
-    )
+    trend = next(body for _fence, body in blocks if "trend_mark_atlas_preview" in body)
     facets = next(body for _fence, body in blocks if "styled_facet_preview" in body)
 
     chrome_slots = (DOCS_ROOT / "styling/chrome-slots.md").read_text(encoding="utf-8")
@@ -730,7 +768,7 @@ def test_single_chart_styling_demos_keep_only_the_parent_preview_card() -> None:
         body for _fence, body in chrome_blocks if "tailwind_chrome_preview" in body
     )
 
-    assert "rounded-2xl border border-slate-200 bg-white" not in long_legend
+    assert "rounded-2xl border border-slate-200 bg-white" not in trend
     assert "overflow-hidden rounded-xl border border-slate-200" not in facets
     assert "rounded-xl border border-slate-200 bg-white" not in tailwind_chrome
 
@@ -746,11 +784,10 @@ def one_chart_preview():
             filename="docs/styling/test.md",
         ).transform(parse_document(content))
     )
-    parent_card = (
-        'className:"flex flex-col p-6 rounded-xl overflow-x-auto border '
-        'border-secondary-4 bg-secondary-2 items-center justify-center w-full"'
-    )
-    assert rendered.count(parent_card) == 1
+    assert rendered.count("border-secondary-4") == 1
+    assert rendered.count("bg-white") == 1
+    assert rendered.count("dark:bg-black") == 1
+    assert "bg-secondary-2" not in rendered
 
 
 def test_styling_demos_pair_light_surfaces_with_readable_text() -> None:
@@ -1126,9 +1163,7 @@ def test_annotations_have_one_canonical_guide_and_a_legacy_redirect() -> None:
 
     assert [page.route for page in annotation_pages] == ["/components/annotations/"]
     assert ("Annotations", "/charts/annotations/") not in chart_section
-    assert DOCS_REDIRECTS == {
-        "/charts/annotations/": "/components/annotations/",
-    }
+    assert DOCS_REDIRECTS["/charts/annotations/"] == "/components/annotations/"
 
     redirect = app._unevaluated_pages["charts/annotations"]
     rendered_meta = "\n".join(str(component) for component in redirect.meta)

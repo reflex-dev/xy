@@ -1,6 +1,6 @@
 ---
 title: Component Variations
-description: Style legends, tooltips, axes, reference lines, annotations, and interaction chrome.
+description: Style legends, tooltips, annotations, interaction feedback, and host-owned chart chrome.
 ---
 
 # Component Variations
@@ -8,14 +8,16 @@ description: Style legends, tooltips, axes, reference lines, annotations, and in
 Styling is split by what the renderer owns. Built-in chart chrome is browser
 DOM, axes combine canvas geometry with DOM labels, and annotations combine
 painted shapes with DOM labels. Custom framework components are a separate
-integration boundary.
+integration boundary. The sections below cover legend and tooltip chrome,
+annotation variants, selection feedback, host-owned replacements, and
+conditional wrappers. For axis paint and tick styling, continue to
+[Customize Each Part](/docs/xy/styling/customize/#axes,-grid,-and-ticks).
 
 ## Choose a component task
 
 | I want to style... | Continue with |
 | --- | --- |
 | A built-in legend or tooltip | [Built-in legend and tooltip](#built-in-legend-and-tooltip) |
-| Axes, secondary axes, rules, or bands | [Axes and reference lines or bands](#axes-and-reference-lines-or-bands) |
 | Labels, markers, arrows, and callouts | [Annotation variants](#annotation-variants) |
 | Crosshairs or selection feedback | [Crosshair and selection](#crosshair-and-selection) |
 | A host-owned legend, tooltip, or color scale | [Custom component replacements](#custom-component-replacements) |
@@ -25,7 +27,10 @@ The key boundary is ownership: built-in chrome can be restyled through XY
 slots, while a genuinely custom Reflex component must be rendered and updated
 by the host application.
 
-## Coverage matrix
+## Component styling reference
+
+Use this table to choose the API that configures each surface and the hook that
+styles it.
 
 | Surface | Configure content or behavior | Style it |
 | --- | --- | --- |
@@ -61,43 +66,36 @@ data = {
     "plan": [40_000, 44_000, 48_000, 52_000, 56_000, 60_000],
 }
 
-legend_tooltip_chart = xy.line_chart(
-    xy.line(
+legend_tooltip_chart = xy.area_chart(
+    xy.area(
         x="month",
         y="actual",
         data=data,
         name="Actual",
-        style={"stroke": "#6e56cf", "stroke-width": 2.5},
+        color="#2b7fff",
+        fill="linear-gradient(#2b7fff4d 5%, #2b7fff00 95%)",
+        line_width=2,
+        curve="smooth",
     ),
-    xy.line(
+    xy.area(
         x="month",
         y="plan",
         data=data,
         name="Plan",
-        style={
-            "stroke": "#0ea5e9",
-            "stroke-width": 2,
-            "stroke-dasharray": "6px 4px",
-        },
-    ),
-    xy.scatter(
-        x="month",
-        y="actual",
-        data=data,
-        name="Observed",
-        size=8,
-        style={"fill": "#ffffff", "stroke": "#6e56cf", "stroke-width": 2},
+        color="#00bc7d",
+        fill="linear-gradient(#00bc7d4d 5%, #00bc7d00 95%)",
+        line_width=2,
+        curve="smooth",
     ),
     xy.legend(
-        loc="upper left",
-        ncols=3,
-        title="Revenue",
+        loc="upper right",
+        ncols=2,
         style={
-            "background": "var(--legend-bg, rgb(255 255 255 / 92%))",
-            "color": "var(--legend-text, #0f172a)",
-            "border": "1px solid var(--legend-border, #e2e8f0)",
-            "border-radius": 10,
-            "box-shadow": "0 8px 24px rgb(15 23 42 / 10%)",
+            "background": "var(--legend-bg, #fffffff0)",
+            "color": "var(--legend-text, #1d293d)",
+            "border": "1px solid var(--legend-border, #e5e7eb)",
+            "border-radius": 8,
+            "box-shadow": "0 4px 12px #11182714",
         },
     ),
     xy.tooltip(
@@ -105,22 +103,52 @@ legend_tooltip_chart = xy.line_chart(
         title="Month {month}",
         format={"actual": ",.0f", "plan": ",.0f"},
         style={
-            "background": "rgb(24 24 27 / 94%)",
-            "color": "#f8fafc",
+            "background": "#18181ff0",
+            "color": "#f9fafb",
+            "border": "1px solid #3f3f46",
             "border-radius": 8,
             "padding": "8px 10px",
+            "box-shadow": "0 8px 24px #00000029",
         },
     ),
-    xy.x_axis(label="month", tick_count=6),
-    xy.y_axis(label="revenue", format=",.0f"),
+    xy.x_axis(
+        tick_label_strategy="none",
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "grid_opacity": 0,
+            "tick_width": 0,
+            "tick_color": "#00000000",
+        },
+    ),
+    xy.y_axis(
+        format=",.0f",
+        tick_label_strategy="none",
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "tick_width": 0,
+            "tick_color": "#00000000",
+        },
+    ),
+    xy.theme(
+        plot_background="var(--demo-surface, #ffffff)",
+        grid_color="var(--demo-grid, #e5e7eb)",
+        axis_color="var(--demo-axis, #d1d5db)",
+        text_color="var(--demo-text, #6a7282)",
+    ),
     styles={
         "legend_item": {"gap": 6, "padding": "3px 5px"},
         "legend_swatch": {"border-radius": 3},
     },
     class_name=(
-        "[--legend-bg:#fffffff0] [--legend-text:#0f172a] "
-        "[--legend-border:#e2e8f0] dark:[--legend-bg:#27272af0] "
-        "dark:[--legend-text:#e2e8f0] dark:[--legend-border:#475569]"
+        "bg-[#ffffff] py-4 sm:py-5 [--demo-surface:#ffffff] [--demo-grid:#e5e7eb] "
+        "[--demo-axis:#d1d5db] [--demo-text:#6a7282] [--legend-bg:#fffffff0] "
+        "[--legend-text:#1d293d] [--legend-border:#e5e7eb] dark:bg-[#000000] "
+        "dark:[--demo-surface:#000000] dark:[--demo-grid:#27272a] "
+        "dark:[--demo-axis:#3f3f46] dark:[--demo-text:#99a1af] "
+        "dark:[--legend-bg:#18181ff0] dark:[--legend-text:#f3f4f6] "
+        "dark:[--legend-border:#3f3f46]"
     ),
 )
 
@@ -133,177 +161,11 @@ The tooltip can only display values resident in the browser payload. Fields
 used by x, y, color, size, or heatmap value channels are resident; naming an
 otherwise-unused source column in `fields` does not ship it automatically.
 
-## Axes and reference lines or bands
-
-This example covers bottom and top x axes, left and right y axes, independently
-styled named scales, both reference-line directions, and both band directions.
-Annotation geometry uses explicit props, while its text box uses normal DOM
-styles.
-
-~~~python demo exec
-import reflex_xy
-import xy
-
-x = [0, 1, 2, 3, 4, 5, 6]
-latency = [82, 76, 71, 68, 64, 61, 58]
-errors = [1.4, 1.7, 1.3, 2.1, 1.8, 1.2, 0.9]
-
-reference_chart = xy.chart(
-    xy.line(
-        x,
-        latency,
-        name="Latency",
-        style={"stroke": "#2563eb", "stroke-width": 2.5},
-    ),
-    xy.line(
-        x,
-        errors,
-        y_axis="y2",
-        name="Errors",
-        style={"stroke": "#e11d48", "stroke-width": 2},
-    ),
-    xy.line(
-        [10, 20, 30, 40, 50, 60, 70],
-        [78, 74, 72, 69, 66, 63, 60],
-        x_axis="x2",
-        name="Load-index projection",
-        style={
-            "stroke": "#7c3aed",
-            "stroke-width": 1.8,
-            "stroke-dasharray": "5px 4px",
-        },
-    ),
-    xy.x_band(
-        3.3,
-        4.3,
-        text="deploy window",
-        color="#f59e0b",
-        opacity=0.12,
-        style={
-            "label_color": "var(--warning-label, #92400e)",
-            "background": "var(--warning-bg, #fffbeb)",
-            "padding": "2px 5px",
-        },
-    ),
-    xy.y_band(
-        72,
-        77,
-        text="watch band",
-        color="#0d9488",
-        opacity=0.10,
-        style={
-            "label_color": "var(--teal-label, #115e59)",
-            "background": "var(--teal-bg, #f0fdfa)",
-            "padding": "2px 5px",
-        },
-    ),
-    xy.vline(
-        2,
-        text="release",
-        color="#d97706",
-        width=2,
-        style={
-            "label_color": "var(--warning-label, #92400e)",
-            "background": "var(--warning-bg, #fffbeb)",
-            "border": "1px solid var(--warning-border, #fde68a)",
-            "border-radius": 5,
-            "padding": "2px 5px",
-        },
-    ),
-    xy.hline(
-        65,
-        text="SLO",
-        color="#16a34a",
-        width=2,
-        style={
-            "label_color": "var(--success-label, #166534)",
-            "background": "var(--success-bg, #f0fdf4)",
-            "border-radius": 5,
-            "padding": "2px 5px",
-        },
-    ),
-    xy.x_axis(
-        label="release",
-        style={
-            "grid_color": "var(--axes-grid, rgb(148 163 184 / 20%))",
-            "grid_dash": "dotted",
-            "axis_color": "var(--axes-neutral, #475569)",
-            "tick_color": "var(--axes-neutral, #475569)",
-            "tick_direction": "out",
-            "tick_length": 6,
-        },
-    ),
-    xy.x_axis(
-        id="x2",
-        side="top",
-        label="load index",
-        domain=(10, 70),
-        tick_count=4,
-        style={
-            "axis_color": "var(--axes-purple, #7c3aed)",
-            "tick_color": "var(--axes-purple, #7c3aed)",
-            "tick_label_color": "var(--axes-purple, #6d28d9)",
-            "label_color": "var(--axes-purple, #6d28d9)",
-        },
-    ),
-    xy.y_axis(
-        label="latency (ms)",
-        style={
-            "label_color": "var(--axes-blue, #1d4ed8)",
-            "tick_label_color": "var(--axes-blue, #1d4ed8)",
-        },
-    ),
-    xy.y_axis(
-        id="y2",
-        side="right",
-        label="errors (%)",
-        domain=(0, 3),
-        format=".1f",
-        style={
-            "axis_color": "var(--axes-red, #be123c)",
-            "tick_color": "var(--axes-red, #be123c)",
-            "tick_label_color": "var(--axes-red, #be123c)",
-            "label_color": "var(--axes-red, #be123c)",
-        },
-    ),
-    xy.legend(loc="upper right"),
-    xy.theme(
-        plot_background="var(--axes-bg, #ffffff)",
-        text_color="var(--axes-text, #334155)",
-        grid_color="var(--axes-grid, rgb(148 163 184 / 20%))",
-        axis_color="var(--axes-neutral, #64748b)",
-    ),
-    class_name=(
-        "[--axes-bg:#ffffff] [--axes-text:#334155] [--axes-grid:#94a3b833] "
-        "[--axes-neutral:#475569] [--axes-purple:#6d28d9] "
-        "[--axes-blue:#1d4ed8] [--axes-red:#be123c] "
-        "[--warning-label:#92400e] [--warning-bg:#fffbeb] "
-        "[--warning-border:#fde68a] [--teal-label:#115e59] "
-        "[--teal-bg:#f0fdfa] [--success-label:#166534] "
-        "[--success-bg:#f0fdf4] dark:[--axes-bg:#18181b] "
-        "dark:[--axes-text:#e2e8f0] dark:[--axes-grid:#e2e8f01f] "
-        "dark:[--axes-neutral:#94a3b8] dark:[--axes-purple:#c4b5fd] "
-        "dark:[--axes-blue:#93c5fd] dark:[--axes-red:#fda4af] "
-        "dark:[--warning-label:#fde68a] dark:[--warning-bg:#451a03] "
-        "dark:[--warning-border:#92400e] dark:[--teal-label:#99f6e4] "
-        "dark:[--teal-bg:#134e4a] dark:[--success-label:#bbf7d0] "
-        "dark:[--success-bg:#14532d]"
-    ),
-    style={"background": "var(--axes-bg, #ffffff)"},
-    title="Axes and reference geometry",
-)
-
-
-def axis_reference_styling_preview():
-    return reflex_xy.chart(reference_chart, height="430px")
-~~~
-
 ## Annotation variants
 
 Every annotation splits into up to two styling layers: its canvas-painted
-geometry and its DOM label. This example exercises the positioned text alias,
-marker, arrow, semantic threshold, semantic threshold zone, and callout. The
-preceding example covers the underlying rule and band primitives directly.
+geometry and its DOM label. The chart below shows positioned text, a marker,
+an arrow, a threshold, a threshold zone, and a callout.
 Geometry `opacity` does not fade label text; set `label_opacity` in the
 annotation style when that label should also be translucent.
 
@@ -315,7 +177,7 @@ annotation_chart = xy.line_chart(
     xy.line(
         [0, 1, 2, 3, 4, 5],
         [3, 5, 4, 7, 6, 9],
-        style={"stroke": "#94a3b8", "stroke-width": 1.5},
+        style={"stroke": "#6a7282", "stroke-width": 2},
     ),
     xy.text(
         0,
@@ -324,7 +186,7 @@ annotation_chart = xy.line_chart(
         dx=0,
         dy=-14,
         anchor="middle",
-        color="var(--chart-text)",
+        color="var(--demo-text, #6a7282)",
         class_name="font-medium",
     ),
     xy.label(
@@ -334,9 +196,9 @@ annotation_chart = xy.line_chart(
         dx=0,
         dy=-16,
         anchor="middle",
-        color="var(--purple-label, #7c3aed)",
+        color="#8e51ff",
         style={
-            "background": "var(--purple-bg, #f5f3ff)",
+            "background": "var(--violet-soft, #8e51ff1a)",
             "padding": "2px 5px",
         },
     ),
@@ -346,7 +208,7 @@ annotation_chart = xy.line_chart(
         text="marker",
         symbol="diamond",
         size=11,
-        color="#0ea5e9",
+        color="#00b8db",
         stroke_color="#ffffff",
         stroke_width=2,
         dx=0,
@@ -359,11 +221,11 @@ annotation_chart = xy.line_chart(
         3,
         7,
         text="arrow",
-        color="#e11d48",
+        color="#2b7fff",
         width=2,
         style={
-            "label_color": "var(--rose-label, #9f1239)",
-            "background": "var(--rose-bg, #fff1f2)",
+            "label_color": "#2b7fff",
+            "background": "var(--blue-soft, #2b7fff1a)",
             "border-radius": 4,
             "padding": "1px 4px",
             "font_weight": 600,
@@ -373,11 +235,11 @@ annotation_chart = xy.line_chart(
         8,
         axis="y",
         text="threshold",
-        color="#ea580c",
+        color="#fe9a00",
         width=2,
         style={
-            "label_color": "var(--orange-label, #9a3412)",
-            "background": "var(--orange-bg, #fff7ed)",
+            "label_color": "#fe9a00",
+            "background": "var(--amber-soft, #fe9a001a)",
             "padding": "2px 5px",
         },
     ),
@@ -386,12 +248,12 @@ annotation_chart = xy.line_chart(
         4.5,
         axis="x",
         text="threshold zone",
-        color="#14b8a6",
+        color="#00bc7d",
         opacity=0.12,
         style={
-            "label_color": "var(--teal-label, #115e59)",
-            "background": "var(--teal-bg, #f0fdfa)",
-            "border": "1px solid var(--teal-border, #99f6e4)",
+            "label_color": "#00bc7d",
+            "background": "var(--emerald-soft, #00bc7d1a)",
+            "border": "1px solid #00bc7d66",
             "border-radius": 4,
             "padding": "1px 4px",
         },
@@ -403,33 +265,55 @@ annotation_chart = xy.line_chart(
         dx=-18,
         dy=-28,
         anchor="end",
-        color="#6e56cf",
+        color="#8e51ff",
         width=2,
         style={
-            "label_color": "var(--purple-label, #6b21a8)",
-            "background": "var(--purple-bg, #faf5ff)",
-            "border": "1px solid var(--purple-border, #d8b4fe)",
+            "label_color": "#8e51ff",
+            "background": "var(--violet-soft, #8e51ff1a)",
+            "border": "1px solid #8e51ff66",
             "border-radius": 6,
             "padding": "3px 6px",
         },
     ),
-    xy.x_axis(domain=(-0.35, 5.35)),
-    xy.y_axis(domain=(2, 10)),
-    styles={"annotation_label": {"line_height": 1.2}},
-    class_name=(
-        "[--purple-label:#6b21a8] [--purple-bg:#faf5ff] "
-        "[--purple-border:#d8b4fe] [--rose-label:#9f1239] "
-        "[--rose-bg:#fff1f2] [--orange-label:#9a3412] "
-        "[--orange-bg:#fff7ed] [--teal-label:#115e59] "
-        "[--teal-bg:#f0fdfa] [--teal-border:#99f6e4] "
-        "dark:[--purple-label:#e9d5ff] dark:[--purple-bg:#3b0764] "
-        "dark:[--purple-border:#7e22ce] dark:[--rose-label:#fecdd3] "
-        "dark:[--rose-bg:#4c0519] dark:[--orange-label:#fed7aa] "
-        "dark:[--orange-bg:#431407] dark:[--teal-label:#99f6e4] "
-        "dark:[--teal-bg:#134e4a] dark:[--teal-border:#0f766e]"
+    xy.x_axis(
+        domain=(-0.35, 5.35),
+        tick_label_strategy="none",
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "grid_opacity": 0,
+            "tick_width": 0,
+            "tick_color": "#00000000",
+        },
     ),
-    padding=[48, 88, 52, 88],
-    title="Annotation styling layers",
+    xy.y_axis(
+        domain=(2, 10),
+        tick_label_strategy="none",
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "tick_width": 0,
+            "tick_color": "#00000000",
+        },
+    ),
+    xy.theme(
+        plot_background="var(--demo-surface, #ffffff)",
+        grid_color="var(--demo-grid, #e5e7eb)",
+        axis_color="var(--demo-axis, #d1d5db)",
+        text_color="var(--demo-text, #6a7282)",
+    ),
+    styles={
+        "annotation_label": {"line_height": 1.2},
+    },
+    class_name=(
+        "bg-[#ffffff] [--demo-surface:#ffffff] [--demo-grid:#e5e7eb] "
+        "[--demo-axis:#d1d5db] [--demo-text:#6a7282] [--blue-soft:#2b7fff1a] "
+        "[--emerald-soft:#00bc7d1a] [--violet-soft:#8e51ff1a] "
+        "[--amber-soft:#fe9a001a] dark:bg-[#000000] "
+        "dark:[--demo-surface:#000000] dark:[--demo-grid:#27272a] "
+        "dark:[--demo-axis:#3f3f46] dark:[--demo-text:#99a1af]"
+    ),
+    padding=[36, 72, 36, 72],
 )
 
 
@@ -458,33 +342,59 @@ interaction_chart = xy.scatter_chart(
         [0, 1, 2, 3, 4, 5, 6, 7],
         [2, 5, 3, 7, 6, 9, 8, 11],
         size=10,
-        style={"fill": "#7c3aed", "stroke": "#ffffff", "stroke-width": 1.5},
+        style={"fill": "#00b8db", "stroke": "#ffffff", "stroke-width": 1.5},
     ),
     xy.interaction_config(crosshair=True, select=True, brush=True),
     xy.modebar(
         class_name=(
-            "rounded-lg border border-slate-200 bg-white/95 shadow-md "
-            "dark:border-zinc-700 dark:bg-zinc-900/95"
+            "rounded-lg border border-[#e5e7eb] bg-[#fffffff2] shadow-md "
+            "dark:border-[#3f3f46] dark:bg-[#18181ff2]"
         ),
         button_class_name=(
-            "rounded-md hover:bg-violet-50 focus:ring-2 focus:ring-violet-500 "
-            "dark:hover:bg-violet-950"
+            "rounded-md hover:bg-[#8e51ff1a] focus:ring-2 focus:ring-[#8e51ff]"
         ),
         style={"padding": 4},
         button_style={"color": "var(--chart-text)"},
     ),
     xy.theme(
-        crosshair_color="#e11d48",
-        selection_color="#7c3aed",
-        selection_fill="rgb(124 58 237 / 16%)",
+        plot_background="var(--demo-surface, #ffffff)",
+        grid_color="var(--demo-grid, #e5e7eb)",
+        axis_color="var(--demo-axis, #d1d5db)",
+        text_color="var(--demo-text, #6a7282)",
+        crosshair_color="#2b7fff",
+        selection_color="#8e51ff",
+        selection_fill="#8e51ff29",
     ),
-    xy.x_axis(label="sample"),
-    xy.y_axis(label="value"),
+    xy.x_axis(
+        tick_label_strategy="none",
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "grid_opacity": 0,
+            "tick_width": 0,
+            "tick_color": "#00000000",
+        },
+    ),
+    xy.y_axis(
+        tick_label_strategy="none",
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "tick_width": 0,
+            "tick_color": "#00000000",
+        },
+    ),
     styles={
         "crosshair_x": {"width": 2},
         "crosshair_y": {"height": 2},
         "selection": {"border-radius": 6},
     },
+    class_name=(
+        "bg-[#ffffff] [--demo-surface:#ffffff] [--demo-grid:#e5e7eb] "
+        "[--demo-axis:#d1d5db] [--demo-text:#6a7282] dark:bg-[#000000] "
+        "dark:[--demo-surface:#000000] dark:[--demo-grid:#27272a] "
+        "dark:[--demo-axis:#3f3f46] dark:[--demo-text:#99a1af]"
+    ),
 )
 
 interaction_token = reflex_xy.inline(interaction_chart)
@@ -533,43 +443,37 @@ def interaction_chrome_styling_preview():
             rx.vstack(
                 rx.text(
                     "Selected",
-                    class_name="text-xs text-slate-500 dark:text-slate-400",
+                    class_name="text-xs text-[#6a7282] dark:text-[#99a1af]",
                 ),
                 rx.text(
                     InteractionChromeState.selected_count,
-                    class_name=(
-                        "text-2xl font-semibold text-violet-700 dark:text-violet-300"
-                    ),
+                    class_name="text-2xl font-semibold text-[#8e51ff]",
                 ),
                 align="start",
             ),
             rx.vstack(
                 rx.text(
                     "Dataset share",
-                    class_name="text-xs text-slate-500 dark:text-slate-400",
+                    class_name="text-xs text-[#6a7282] dark:text-[#99a1af]",
                 ),
                 rx.text(
                     InteractionChromeState.selected_share,
-                    class_name=(
-                        "text-2xl font-semibold text-violet-700 dark:text-violet-300"
-                    ),
+                    class_name="text-2xl font-semibold text-[#8e51ff]",
                 ),
                 align="start",
             ),
             rx.vstack(
                 rx.text(
                     "Selection",
-                    class_name="text-xs text-slate-500 dark:text-slate-400",
+                    class_name="text-xs text-[#6a7282] dark:text-[#99a1af]",
                 ),
                 rx.text(
                     InteractionChromeState.selection_shape,
-                    class_name=(
-                        "text-sm font-semibold text-slate-800 dark:text-slate-100"
-                    ),
+                    class_name=("text-sm font-semibold text-[#1d293d] dark:text-[#f3f4f6]"),
                 ),
                 rx.text(
                     InteractionChromeState.selection_region,
-                    class_name="text-xs text-slate-500 dark:text-slate-400",
+                    class_name="text-xs text-[#6a7282] dark:text-[#99a1af]",
                 ),
                 align="start",
             ),
@@ -577,8 +481,8 @@ def interaction_chrome_styling_preview():
             justify="between",
             align="start",
             class_name=(
-                "rounded-lg border border-slate-200 bg-white p-4 "
-                "dark:border-zinc-700 dark:bg-zinc-950"
+                "border-t border-[#e5e7eb] bg-[#ffffff] px-1 pt-3 "
+                "dark:border-[#27272a] dark:bg-[#000000]"
             ),
         ),
         width="100%",
@@ -599,15 +503,15 @@ filters, aggregate cards, or related views.
 There are two different meanings of “custom”:
 
 1. **Restyle built-in chrome.** Use the component and slot APIs demonstrated
-   above. This works in the shipped browser client, Reflex adapter, standalone
-   HTML, and Chromium export.
+   above. This works in browser and Reflex charts, standalone HTML, and
+   Chromium export.
 2. **Replace chrome with a framework component.** The built-in
    `reflex_xy.chart` adapter does not render components passed through
    `legend(render=...)`, `tooltip(render=...)`, or `colorbar(render=...)`.
    Standalone exports cannot include framework-owned components either.
 
-For a framework-owned legend with the shipped Reflex adapter, compose it next
-to the chart and hide XY's built-in legend:
+For a framework-owned legend in Reflex, compose it next to the chart and hide
+XY's built-in legend:
 
 ~~~python demo exec
 import reflex as rx
@@ -615,10 +519,54 @@ import reflex_xy
 import xy
 
 custom_legend_chart = xy.line_chart(
-    xy.line([0, 1, 2, 3], [2, 5, 3, 7], color="#6e56cf"),
-    xy.line([0, 1, 2, 3], [1, 3, 4, 6], color="#0ea5e9"),
+    xy.line(
+        [0, 1, 2, 3],
+        [2, 5, 3, 7],
+        name="Actual",
+        color="#2b7fff",
+        width=2,
+        curve="smooth",
+    ),
+    xy.line(
+        [0, 1, 2, 3],
+        [1, 3, 4, 6],
+        name="Plan",
+        color="#00bc7d",
+        width=2,
+        curve="smooth",
+    ),
     xy.legend(show=False),
-    title="Framework-owned legend",
+    xy.x_axis(
+        tick_label_strategy="none",
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "grid_opacity": 0,
+            "tick_width": 0,
+            "tick_color": "#00000000",
+        },
+    ),
+    xy.y_axis(
+        tick_label_strategy="none",
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "tick_width": 0,
+            "tick_color": "#00000000",
+        },
+    ),
+    xy.theme(
+        plot_background="var(--custom-surface, #ffffff)",
+        grid_color="var(--custom-grid, #e5e7eb)",
+        axis_color="var(--custom-axis, #d1d5db)",
+        text_color="var(--custom-text, #6a7282)",
+    ),
+    class_name=(
+        "bg-[#ffffff] [--custom-surface:#ffffff] [--custom-grid:#e5e7eb] "
+        "[--custom-axis:#d1d5db] [--custom-text:#6a7282] dark:bg-[#000000] "
+        "dark:[--custom-surface:#000000] dark:[--custom-grid:#27272a] "
+        "dark:[--custom-axis:#3f3f46] dark:[--custom-text:#99a1af]"
+    ),
 )
 
 
@@ -635,12 +583,13 @@ def custom_reflex_legend_preview():
     return rx.vstack(
         reflex_xy.chart(custom_legend_chart, height="300px"),
         rx.hstack(
-            legend_key("#6e56cf", "Actual"),
-            legend_key("#0ea5e9", "Plan"),
+            legend_key("#2b7fff", "Actual"),
+            legend_key("#00bc7d", "Plan"),
             spacing="4",
         ),
         width="100%",
         align="center",
+        class_name="py-4 sm:py-5",
     )
 ~~~
 
