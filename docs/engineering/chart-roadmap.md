@@ -30,7 +30,7 @@ aggregation. Line and area cover direct and M4-decimated time series. Histogram
 and bar/column share the instanced rectangle renderer; heatmap ships a compact
 grid texture.
 
-Beyond the mark set, three capability layers now ship on `main`:
+Beyond the mark set, four capability layers now ship on `main`:
 
 - **Mark-level styling (§ "Styling & Theming" below):** CSS `linear-gradient`
   fills, rounded (`corner_radius`, independent tip/base) and stroked bars,
@@ -50,6 +50,15 @@ Beyond the mark set, three capability layers now ship on `main`:
 - **Standalone LOD without a kernel:** `to_html` exports now re-bin the
   retained density sample in a bundled Web Worker on zoom (off the main
   thread), so a kernel-less page refines instead of stretching the overview.
+- **Reflex-first reactive API (`python/reflex-xy/`):** xy figures as
+  first-class Reflex components (PR #55). Chart data multiplexes onto the
+  app's existing websocket as a second socket.io namespace (`/_xy`) with
+  binary column attachments (§29 — no JSON numbers, no sidecar HTTP
+  endpoints); the only chart state in Reflex is a token string. The
+  `@reflex_xy.figure` computed-var decorator binds figure builders to Reflex
+  state so dependency tracking drives rebuilds and republishes, and a static
+  payload tier compiles zero-backend charts to asset files. See
+  `docs/integrations/reflex.md` and `docs/engineering/design/reflex-integration.md`.
 
 **Prototyped (not on `main`):** candlestick + OHLC marks and a finance
 overlay/indicator layer (volume pane, SMA, VWAP, Bollinger, RSI, MACD,
@@ -359,21 +368,28 @@ interaction-latency comparison, not assumed.
 
 The first breadth milestone — **histogram, bar/column, area, heatmap** — and
 the first statistical block — **box, violin, ECDF, error bars/bands, hexbin,
-contour, steps/stairs/stems, and facets** — are done. The engine and packaging
-gates are ready for the first alpha; the next sequence is therefore product
-integration and compatibility depth, not re-implementing shipped primitives.
+contour, steps/stairs/stems, and facets** — are done. The first alpha
+(`v0.0.1`) is launched with a live docs site and the reflex-xy adapter on
+`main`; the next sequence is therefore stabilization and compatibility depth,
+not re-implementing shipped primitives.
 
-1. **Ship and stabilize the `0.1.x` alpha.** Keep correctness, interaction,
-   packaging, and benchmark gates green while real users exercise the public
-   composition and `xy.pyplot` surfaces.
-2. **Reflex-first reactive API.** Bind charts to Reflex state/data keys through
-   the transport-neutral channel dispatcher without manual payload rebuilds or
-   a hard Reflex dependency in core `xy`.
+1. **Stabilize the launched `v0.0.1` alpha.** `v0.0.1` is released (PyPI +
+   Pyodide wheels), the docs site is live, and the reflex-xy adapter is on
+   `main` — so the current gate is the post-launch bug backlog, not shipping.
+   Interaction-correctness issues (heatmap hover kernel crash, box-zoom view
+   collapse, double-click blanking a dense Reflex scatter, reflex-xy static
+   chart crash, FacetChart CSS leak) come before any new chart family.
+2. **Reflex-first reactive API — shipped** (PR #55, `python/reflex-xy/`; see
+   the capability-layer summary near the top of this doc). Remaining depth is
+   adapter polish: install/packaging docs from a clean environment, linked
+   facet interactions, and first-class pan/zoom controls surfaced through the
+   component API.
 3. **Statistical compatibility depth.** Add strip/swarm/boxen/rug,
    regression/diagnostic helpers, richer density hover/readout, and
    scatter-matrix/joint-plot composition on the shipped primitives.
-4. **Pie / donut.** Low performance differentiation but a top dashboard ask;
-   implement for completeness with bounded arc geometry and label placement.
+4. **Pie / donut in the composition API.** Implemented in `xy.pyplot` today;
+   promote to a core `xy.pie_chart(xy.pie(...))` surface with bounded arc
+   geometry and label placement.
 5. **Re-land the finance surface.** Open a fresh PR from the closed exploration
    branch, rebased onto current composition/LOD primitives, then extend the
    `FinanceLayer` system with depth charts, Heikin-Ashi, and Renko.
@@ -387,8 +403,9 @@ Parallel, non-chart-type tracks:
   fast truecolor PNGs, and a baked bitmap font for text. `optimize=True`
   retains the slower indexed-palette path for smaller files;
   `engine=Engine.chromium` stays for an installed-browser CSS/WebGL screenshot.
-- **Reflex-first reactive API** — now the primary post-alpha product track, as
-  described in step 2 above.
+- **Reflex-first reactive API** — **shipped** (PR #55): the reflex-xy adapter
+  described in step 2 above, with websocket-multiplexed binary transport and
+  computed-var figure binding.
 
 ## Near-Term API Sketch
 
@@ -416,8 +433,10 @@ New chart kinds land as composition marks plus a family container
 ## Decision Summary
 
 The rectangle/polygon/grid-texture foundations, statistical breadth block,
-full mark styling, and native PNG rasterizer are in place. The next product
-track is the **Reflex-first reactive API**, followed by statistical
-compatibility depth and **pie/donut** completeness. Finance (candlestick plus
+full mark styling, native PNG rasterizer, and the **Reflex-first reactive API**
+(reflex-xy adapter) are in place, and `v0.0.1` is launched with a live docs
+site. The next product track is **post-launch stabilization** (the open
+interaction/adapter bug backlog), followed by statistical compatibility depth
+and **pie/donut** in the composition API. Finance (candlestick plus
 indicators) remains prototyped on a closed exploration branch awaiting a fresh
 landing.
