@@ -109,13 +109,14 @@ Object.assign(ChartView.prototype, {
       this._cancelViewAnimation();
       const canPan = this._interactionFlag("pan", true);
       const canZoom = this._interactionFlag("zoom", true);
+      const canNavigate = this._interactionFlag("navigation", true);
       // Shift-drag box-selects (§34); the modebar can make selection or box-zoom
       // the default plain-drag gesture; otherwise a plain drag pans.
       const canBrush = this._interactionFlag("brush", true) && this._interactionFlag("select", true);
       const selectMode = this.dragMode.startsWith("select") ? this.dragMode : null;
       const mode = (e.shiftKey || selectMode) && canBrush && this._pickable
         ? (e.shiftKey ? "select" : selectMode)
-        : this.dragMode === "zoom" && canZoom ? "zoom" : null;
+        : this.dragMode === "zoom" && canNavigate && canZoom ? "zoom" : null;
       if (mode) {
         const previousLasso = mode.startsWith("select") && this._lassoPolygon
           ? this._lassoPolygon.map((point) => [...point])
@@ -132,7 +133,7 @@ Object.assign(ChartView.prototype, {
         this.tooltip.style.display = "none";
         return;
       }
-      if (canPan) {
+      if (canNavigate && canPan) {
         drag = { px: e.clientX, py: e.clientY, view: { ...this.view }, moved: false };
         try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
         this.tooltip.style.display = "none";
@@ -149,15 +150,12 @@ Object.assign(ChartView.prototype, {
         const cy0 = this._axisCoord(ya, y0), cy1 = this._axisCoord(ya, y1);
         const dx = ((e.clientX - drag.px) / this.plot.w) * (cx1 - cx0);
         const dy = ((e.clientY - drag.py) / this.plot.h) * (cy1 - cy0);
-        this.view = {
+        this._setView({
           x0: this._axisValue(xa, cx0 - dx),
           x1: this._axisValue(xa, cx1 - dx),
           y0: this._axisValue(ya, cy0 + dy),
           y1: this._axisValue(ya, cy1 + dy),
-        };
-        this.draw();
-        this._scheduleViewRequest();
-        this._emitViewChange("pan");
+        }, { source: "pan" });
         return;
       }
       this._updateCrosshair(e);
@@ -239,6 +237,7 @@ Object.assign(ChartView.prototype, {
     this._listen(c, "click", (e) => this._click(e));
 
     this._listen(c, "wheel", (e) => {
+      if (!this._interactionFlag("navigation", true)) return;
       if (!this._interactionFlag("zoom", true)) return;
       e.preventDefault();
       const f = Math.pow(1.0015, e.deltaY);
@@ -249,10 +248,10 @@ Object.assign(ChartView.prototype, {
     }, { passive: false });
 
     this._listen(c, "dblclick", () => {
+      if (!this._interactionFlag("navigation", true)) return;
+      if (!this._interactionFlag("zoom", true)) return;
       this._clearSelection();
-      if (this._interactionFlag("zoom", true)) {
-        this._setView(this.view0, { animate: true });
-      }
+      this._setView(this.view0, { animate: true });
     });
     this._listen(c, "keydown", (e) => this._onA11yKey(e));
   },
@@ -1009,9 +1008,25 @@ Object.assign(ChartView.prototype, {
       exportMenuItems.push(button);
       return button;
     };
-    mkExportItem("png", "Export PNG", () => this._exportPng());
-    mkExportItem("svg", "Export SVG", () => this._exportSvg());
-    mkExportItem("csv", "Export CSV", () => this._exportCsv());
+    // Declarative export config (spec.export, from xy.export_config): the
+    // formats list governs menu availability and order. Only the client-safe
+    // subset renders here — pdf/html entries are Python-side formats and are
+    // skipped. No config keeps the historical png/svg/csv menu; an explicit
+    // empty list hides the download items entirely.
+    const EXPORT_ITEMS = {
+      png: ["Export PNG", () => this._exportRaster("png")],
+      jpeg: ["Export JPEG", () => this._exportRaster("jpeg")],
+      webp: ["Export WebP", () => this._exportRaster("webp")],
+      svg: ["Export SVG", () => this._exportSvg()],
+      csv: ["Export CSV", () => this._exportCsv()],
+    };
+    const configuredFormats = Array.isArray(this._exportConfig().formats)
+      ? this._exportConfig().formats
+      : ["png", "svg", "csv"];
+    for (const name of configuredFormats) {
+      const item = EXPORT_ITEMS[name];
+      if (item) mkExportItem(name, item[0], item[1]);
+    }
 
     if (zoomTrigger) {
       setZoomMenuOpen = (open, restoreFocus = false) => {
@@ -1081,7 +1096,9 @@ Object.assign(ChartView.prototype, {
       selectMenu.style.visibility = "visible";
     };
     setExportMenuOpen = (open, restoreFocus = false) => {
-      const show = Boolean(open);
+      // export_config(formats=[]) leaves nothing to show: the grip stays a
+      // pure drag handle rather than opening an empty menu.
+      const show = Boolean(open) && exportMenuItems.length > 0;
       if (show) {
         setZoomMenuOpen(false);
         setSelectMenuOpen(false);
@@ -1174,6 +1191,9 @@ Object.assign(ChartView.prototype, {
     }
     this._listen(grip, "keydown", (e) => {
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      // export_config(formats=[]) (or a PDF/HTML-only list) leaves no
+      // client-side items: nothing to open or focus.
+      if (!exportMenuItems.length) return;
       e.preventDefault();
       e.stopPropagation();
       setExportMenuOpen(true);
@@ -1293,7 +1313,8 @@ Object.assign(ChartView.prototype, {
 
   _setView(next, opts = {}) {
     if (this._destroyed) return;
-    const target = { x0: next.x0, x1: next.x1, y0: next.y0, y1: next.y1 };
+    const target = this._clampView(
+      { x0: next.x0, x1: next.x1, y0: next.y0, y1: next.y1 });
     const animate = opts.animate === true && !this._prefersReducedMotion();
     const duration = opts.duration || 180;
     if (!animate || duration <= 0) {
@@ -1361,6 +1382,38 @@ Object.assign(ChartView.prototype, {
       }
     };
     this._animRaf = requestAnimationFrame(step);
+  },
+
+  // Keep a proposed viewport wholly inside each axis's optional hard bounds.
+  // Work in scale coordinates so log bounds clamp multiplicatively, while
+  // preserving the range direction used by reversed axes.
+  _clampAxisRange(axisId, lo, hi) {
+    const axis = this._axis(axisId);
+    if (!Array.isArray(axis.bounds) || axis.bounds.length !== 2) return [lo, hi];
+    const c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+    const b0 = this._axisCoord(axis, axis.bounds[0]);
+    const b1 = this._axisCoord(axis, axis.bounds[1]);
+    if (![c0, c1, b0, b1].every(Number.isFinite) || b0 === b1) return [lo, hi];
+    const reverse = c1 < c0;
+    const boundLo = Math.min(b0, b1), boundHi = Math.max(b0, b1);
+    let outLo = Math.min(c0, c1), outHi = Math.max(c0, c1);
+    if (outHi - outLo >= boundHi - boundLo) {
+      outLo = boundLo;
+      outHi = boundHi;
+    } else {
+      const shift = Math.max(boundLo - outLo, Math.min(boundHi - outHi, 0));
+      outLo += shift;
+      outHi += shift;
+    }
+    const first = reverse ? outHi : outLo;
+    const second = reverse ? outLo : outHi;
+    return [this._axisValue(axis, first), this._axisValue(axis, second)];
+  },
+
+  _clampView(view) {
+    const x = this._clampAxisRange("x", view.x0, view.x1);
+    const y = this._clampAxisRange("y", view.y0, view.y1);
+    return { x0: x[0], x1: x[1], y0: y[0], y1: y[1] };
   },
 
   // Center-anchored zoom (f<1 in, f>1 out) — the modebar buttons; wheel is
@@ -1439,7 +1492,17 @@ Object.assign(ChartView.prototype, {
     this._setView({ x0, x1, y0, y1 }, { animate });
   },
 
+  // Declarative export defaults (spec.export, produced by xy.export_config).
+  // The same filename/scale/background/quality semantics as the Python
+  // exporters, so a chart downloads identically from either side.
+  _exportConfig() {
+    const config = this.spec && this.spec.export;
+    return config && typeof config === "object" ? config : {};
+  },
+
   _exportFilename(extension) {
+    const configured = this._exportConfig().filename;
+    if (typeof configured === "string" && configured) return `${configured}.${extension}`;
     const title = String(this.spec.title || "xy-chart")
       .trim()
       .toLowerCase()
@@ -1538,26 +1601,58 @@ Object.assign(ChartView.prototype, {
   },
 
   _exportPng() {
+    return this._exportRaster("png");
+  },
+
+  _exportRaster(format) {
     const svg = this._exportSvgMarkup();
     const sourceUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
     const image = new Image();
+    const config = this._exportConfig();
+    const mime = { png: "image/png", jpeg: "image/jpeg", webp: "image/webp" }[format];
+    if (!mime) return Promise.reject(new Error(`unsupported raster export ${format}`));
     return new Promise((resolve, reject) => {
       image.onload = () => {
-        const scale = Math.max(1, window.devicePixelRatio || 1);
+        const scale = Number.isFinite(config.scale) && config.scale > 0
+          ? config.scale
+          : Math.max(1, window.devicePixelRatio || 1);
         const canvas = document.createElement("canvas");
         canvas.width = Math.round(this.size.w * scale);
         canvas.height = Math.round(this.size.h * scale);
         const ctx = canvas.getContext("2d");
+        // Background policy mirrors the Python exporters: JPEG has no alpha
+        // channel so it always flattens onto the configured backdrop (default
+        // white); PNG/WebP paint a backdrop only for an explicit opaque color
+        // and keep transparency otherwise.
+        const configured = typeof config.background === "string" &&
+          config.background !== "auto" ? config.background : null;
+        const transparent = configured === "transparent" || configured === "none";
+        if (format === "jpeg") {
+          ctx.fillStyle = configured && !transparent ? configured : "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        } else if (configured && !transparent) {
+          ctx.fillStyle = configured;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
         ctx.scale(scale, scale);
         ctx.drawImage(image, 0, 0, this.size.w, this.size.h);
+        const quality = Number.isFinite(config.quality)
+          ? Math.min(1, Math.max(0.01, config.quality / 100))
+          : 0.9;
         canvas.toBlob((blob) => {
           if (!blob) {
-            reject(new Error("PNG encoding returned no data"));
+            reject(new Error(`${format.toUpperCase()} encoding returned no data`));
             return;
           }
-          this._downloadExport(blob, this._exportFilename("png"));
+          // A browser without the requested encoder returns PNG instead
+          // (canvas.toBlob's specified fallback); name the download by what
+          // was actually produced so the extension never lies.
+          const actual = blob.type === "image/jpeg" ? "jpg"
+            : blob.type === "image/webp" ? "webp"
+            : "png";
+          this._downloadExport(blob, this._exportFilename(actual));
           resolve();
-        }, "image/png");
+        }, mime, format === "png" ? undefined : quality);
       };
       image.onerror = () => {
         reject(new Error("chart SVG could not be rasterized"));
@@ -1670,6 +1765,13 @@ Object.assign(ChartView.prototype, {
       case "png":
         return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
           '<path d="M7 13 L9 10.5 L11 12 L13.5 9 V15 H7 Z"/>');
+      case "jpeg":
+        return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+          '<circle cx="8.5" cy="10" r="1.2"/><path d="M7 15 L10 12 L13.5 15 Z"/>');
+      case "webp":
+        return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+          '<path d="M7 11 C8 10 9 10 10 11 C11 12 12 12 13.5 11"/>' +
+          '<path d="M7 14 C8 13 9 13 10 14 C11 15 12 15 13.5 14"/>');
       case "svg":
         return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
           '<path d="M7 13 L9 9 L11 14 L13.5 10"/>');

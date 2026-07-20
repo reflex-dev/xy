@@ -1746,6 +1746,8 @@ const UNITLESS_STYLE_PROPS = new Set([
 const XY_CONTEXT_GOVERNOR = {
 views: new Set(),
 seq: 1,
+hiddenReleaseChannel: null,
+hiddenReleaseQueue: [],
 budget() {
 const v = typeof window !== "undefined" ? window.XY_CONTEXT_BUDGET : null;
 return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 12;
@@ -1789,6 +1791,44 @@ requester._ctxPendingReservation = false;
 },
 cancel(requester) {
 requester._ctxPendingReservation = false;
+},
+scheduleHiddenReleases() {
+if (this.hiddenReleaseChannel !== null) return;
+this.hiddenReleaseQueue = Array.from(this.views);
+const channel = new MessageChannel();
+this.hiddenReleaseChannel = channel;
+channel.port1.onmessage = () => {
+if (
+typeof document === "undefined" ||
+document.visibilityState !== "hidden"
+) {
+this.cancelHiddenReleases();
+return;
+}
+let view = null;
+while (this.hiddenReleaseQueue.length && !view) {
+const candidate = this.hiddenReleaseQueue.shift();
+if (
+!candidate._destroyed &&
+candidate.gl &&
+!candidate._glLost &&
+!candidate.gl.isContextLost()
+) view = candidate;
+}
+if (!view) {
+this.cancelHiddenReleases();
+return;
+}
+view._releaseContext();
+channel.port2.postMessage(null);
+};
+channel.port2.postMessage(null);
+},
+cancelHiddenReleases() {
+this.hiddenReleaseChannel?.port1.close();
+this.hiddenReleaseChannel?.port2.close();
+this.hiddenReleaseChannel = null;
+this.hiddenReleaseQueue = [];
 },
 };
 function xyInitiallyVisible(el) {
@@ -1857,7 +1897,16 @@ if (this._ctxVisible) this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
 this._contextLossCount = 0;
 this._contextRestoreCount = 0;
 this._contextRecoveryError = null;
+try {
 this._initGl(buffer);
+} catch (err) {
+XY_CONTEXT_GOVERNOR.unregister(this);
+if (String(err && err.message || err) === "webgl2 unavailable") {
+this.root.textContent = "xy: WebGL2 unavailable in this browser.";
+}
+throw err;
+}
+this.canvas.dataset.xyCtx = "live";
 this._initA11y();
 this.root.dataset.xyContextState = "ready";
 this._initContextLossRecovery();
@@ -1873,10 +1922,10 @@ this._ro.observe(this.root);
 }
 this._armVisibilityResizeWatch();
 this._armDprWatch();
-this.view0 = {
+this.view0 = this._clampView({
 x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
 y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
-};
+});
 this.view = { ...this.view0 };
 this._initLinkedCharts();
 this._themeWatch = window.matchMedia("(prefers-color-scheme: dark)");
@@ -2203,6 +2252,22 @@ this._viewRequestBurstStart = null;
 this._dispatchChartEvent("context_lost", {
 loss_count: this._contextLossCount,
 });
+const documentVisible =
+typeof document === "undefined" ||
+!document.visibilityState ||
+document.visibilityState === "visible";
+if (!governedRelease && this._ctxVisible && documentVisible) {
+setTimeout(() => {
+if (
+!this._destroyed &&
+this._glLost &&
+this.canvas.dataset.xyCtx === "lost" &&
+this._ctxVisible
+) {
+this._recoverContext();
+}
+}, 0);
+}
 });
 this._listen(this.canvas, "webglcontextrestored", () => {
 if (this._destroyed || this._contextRecoveryError) return;
@@ -2211,8 +2276,23 @@ this.pickFbo = null;
 this.pickTex = null;
 try {
 this._initGl(this._payload);
+this._glLost = false;
+this._drawNow();
+this._assertContextFrameReady("restore");
 } catch (err) {
 this._glLost = true;
+this.canvas.dataset.xyCtx = "lost";
+this.root.dataset.xyContextState = "lost";
+const transient =
+!this.gl ||
+this.gl.isContextLost() ||
+String(err && err.message || err).includes("shader compile: null") ||
+String(err && err.message || err).startsWith("WebGL error ");
+if (transient) {
+this._contextRecoveryError = null;
+this._scheduleContextRecovery();
+return;
+}
 this._contextRecoveryError = err;
 this.root.dataset.xyContextState = "failed";
 try { this._destroyGlResources(); } catch (_cleanupErr) {}
@@ -2224,12 +2304,12 @@ message: err instanceof Error ? err.message : String(err),
 this.root.textContent = "xy: WebGL2 context could not be restored.";
 return;
 }
-this._glLost = false;
 this._contextRestoreCount += 1;
 this._contextRecoveryError = null;
+this._ctxRecoveryDelay = 0;
+this.canvas.dataset.xyCtx = "live";
 this.root.dataset.xyContextState = "ready";
 this._scheduleViewRequest(this.view, { delay: 0 });
-this.draw();
 this._dropContextSnapshot();
 this._dispatchChartEvent("context_restored", {
 loss_count: this._contextLossCount,
@@ -2266,7 +2346,37 @@ snap.width = this.canvas.width;
 snap.height = this.canvas.height;
 snap.style.cssText = this.canvas.style.cssText;
 snap.style.pointerEvents = "none";
-snap.getContext("2d").drawImage(this.canvas, 0, 0);
+const gl = this.gl;
+const w = this.canvas.width;
+const h = this.canvas.height;
+gl.finish();
+const pixels = new Uint8Array(w * h * 4);
+gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+const ctx = snap.getContext("2d");
+const image = ctx.createImageData(w, h);
+const data = image.data;
+for (let srcY = 0; srcY < h; srcY++) {
+let src = srcY * w * 4;
+const srcEnd = src + w * 4;
+let dst = (h - 1 - srcY) * w * 4;
+for (; src < srcEnd; src += 4, dst += 4) {
+const alpha = pixels[src + 3];
+let red = pixels[src];
+let green = pixels[src + 1];
+let blue = pixels[src + 2];
+if (alpha > 0 && alpha < 255) {
+const scale = 255 / alpha;
+red = Math.min(255, Math.round(red * scale));
+green = Math.min(255, Math.round(green * scale));
+blue = Math.min(255, Math.round(blue * scale));
+}
+data[dst] = red;
+data[dst + 1] = green;
+data[dst + 2] = blue;
+data[dst + 3] = alpha;
+}
+}
+ctx.putImageData(image, 0, 0);
 this.canvas.before(snap);
 this.canvas.style.visibility = "hidden";
 } catch (_err) {
@@ -2294,7 +2404,35 @@ XY_CONTEXT_GOVERNOR.cancel(this);
 }
 this._rebuildEvictedContext();
 }
+_assertContextFrameReady(stage) {
+if (!this.gl) {
+throw new Error(`context lost during ${stage} draw`);
+}
+this.gl.finish();
+if (this.gl.isContextLost()) throw new Error(`context lost during ${stage} draw`);
+const error = this.gl.getError();
+if (error !== this.gl.NO_ERROR) {
+throw new Error(`WebGL error ${error} during ${stage} draw`);
+}
+}
+_scheduleContextRecovery() {
+if (this._ctxRecoveryTimer || this._destroyed || !this._ctxVisible) return;
+if (
+typeof document !== "undefined" &&
+document.visibilityState &&
+document.visibilityState !== "visible"
+) return;
+const delay = this._ctxRecoveryDelay || 50;
+this._ctxRecoveryDelay = Math.min(1000, delay * 2);
+this._ctxRecoveryTimer = setTimeout(() => {
+this._ctxRecoveryTimer = null;
+if (this._glLost && !this._destroyed && this._ctxVisible) this._recoverContext();
+}, delay);
+}
 _rebuildEvictedContext() {
+if (this.gl && !this.gl.isContextLost()) {
+try { this.gl.getExtension("WEBGL_lose_context")?.loseContext(); } catch (_err) {}
+}
 const fresh = this.canvas.cloneNode(false);
 for (const record of this._listeners) {
 if (record.target === this.canvas) {
@@ -2311,19 +2449,41 @@ this.pickFbo = null;
 this.pickTex = null;
 try {
 this._initGl(this._payload);
+this._glLost = false;
+this._drawNow();
+this._assertContextFrameReady("rebuild");
 } catch (_err) {
 this._glLost = true;
 this.canvas.dataset.xyCtx = "lost";
+this._scheduleContextRecovery();
 return;
 }
+this._ctxRecoveryDelay = 0;
+this.canvas.dataset.xyCtx = "live";
 this._scheduleViewRequest(this.view, { delay: 0 });
-this.draw();
 this._dropContextSnapshot();
 }
 _armContextVisibilityWatch() {
 this._listen(this.root, "pointerenter", () => {
 if (this._glLost && !this._destroyed) this._recoverContext();
 });
+if (typeof document !== "undefined") {
+this._listen(document, "visibilitychange", () => {
+if (document.visibilityState === "hidden") {
+XY_CONTEXT_GOVERNOR.scheduleHiddenReleases();
+return;
+}
+XY_CONTEXT_GOVERNOR.cancelHiddenReleases();
+if (
+document.visibilityState === "visible" &&
+this._ctxVisible &&
+this._glLost &&
+!this._destroyed
+) {
+this._recoverContext();
+}
+});
+}
 if (typeof IntersectionObserver === "undefined") {
 this._ctxVisible = true;
 return;
@@ -2777,12 +2937,10 @@ antialias: false, premultipliedAlpha: true, alpha: true,
 });
 if (!gl) {
 XY_CONTEXT_GOVERNOR.cancel(this);
-this.root.textContent = "xy: WebGL2 unavailable in this browser.";
 throw new Error("webgl2 unavailable");
 }
 this.gl = gl;
 XY_CONTEXT_GOVERNOR.acquired(this);
-this.canvas.dataset.xyCtx = "live";
 gl.enable(gl.BLEND);
 gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 this._progCache = new Map();
@@ -4734,8 +4892,20 @@ gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 this._pickDirty = false;
 }
 _pickAt(cssX, cssY) {
-if (!this._pickable) return null;
-if (this._pickDirty) this._renderPick();
+if (
+!this._pickable ||
+this._glLost ||
+!this.gl ||
+this.gl.isContextLost()
+) return null;
+if (this._pickDirty) {
+try {
+this._renderPick();
+} catch (err) {
+if (!this.gl || this.gl.isContextLost()) return null;
+throw err;
+}
+}
 const gl = this.gl;
 const px = Math.round(cssX * this.dpr);
 const py = Math.round((this.plot.h - cssY) * this.dpr);
@@ -4960,6 +5130,8 @@ this._destroyed = true;
 XY_CONTEXT_GOVERNOR.unregister(this);
 this._ctxIo?.disconnect();
 this._ctxIo = null;
+clearTimeout(this._ctxRecoveryTimer);
+this._ctxRecoveryTimer = null;
 clearTimeout(this._rebinTimer);
 if (this._rebinWorker) {
 this._rebinWorker.terminate();
@@ -5616,17 +5788,25 @@ const x0 = this._decodeValue(r.x0, r.x0Meta, hit.index);
 const x1 = this._decodeValue(r.x1, r.x1Meta, hit.index);
 const y0 = this._decodeValue(r.y0, r.y0Meta, hit.index);
 const y1 = this._decodeValue(r.y1, r.y1Meta, hit.index);
-row.x = x0 + (x1 - x0) / 2;
-row.y = y1;
-row.x_kind = r.x0Meta.kind;
-row.y_kind = r.y1Meta.kind;
+const [x, xKind] = this._sourceDisplayValue(
+g, "x", x0 + (x1 - x0) / 2, r.x0Meta.kind,
+);
+const [y, yKind] = this._sourceDisplayValue(g, "y", y1, r.y1Meta.kind);
+row.x = x;
+row.y = y;
+if (xKind !== undefined) row.x_kind = xKind;
+if (yKind !== undefined) row.y_kind = yKind;
 } else if (cpu) {
 const xMeta = cpu.xMeta || g.xMeta;
 const yMeta = cpu.yMeta || g.yMeta;
-row.x = this._decodeValue(cpu.x, xMeta, hit.index);
-row.y = this._decodeValue(cpu.y, yMeta, hit.index);
-row.x_kind = xMeta && xMeta.kind;
-row.y_kind = yMeta && yMeta.kind;
+const rawX = this._decodeValue(cpu.x, xMeta, hit.index);
+const rawY = this._decodeValue(cpu.y, yMeta, hit.index);
+const [x, xKind] = this._sourceDisplayValue(g, "x", rawX, xMeta && xMeta.kind);
+const [y, yKind] = this._sourceDisplayValue(g, "y", rawY, yMeta && yMeta.kind);
+row.x = x;
+row.y = y;
+if (xKind !== undefined) row.x_kind = xKind;
+if (yKind !== undefined) row.y_kind = yKind;
 const color = g.trace.color;
 if (cpu.color && color) {
 if (color.mode === "categorical" && Array.isArray(color.categories)) {
@@ -5894,11 +6074,12 @@ this._listen(c, "pointerdown", (e) => {
 this._cancelViewAnimation();
 const canPan = this._interactionFlag("pan", true);
 const canZoom = this._interactionFlag("zoom", true);
+const canNavigate = this._interactionFlag("navigation", true);
 const canBrush = this._interactionFlag("brush", true) && this._interactionFlag("select", true);
 const selectMode = this.dragMode.startsWith("select") ? this.dragMode : null;
 const mode = (e.shiftKey || selectMode) && canBrush && this._pickable
 ? (e.shiftKey ? "select" : selectMode)
-: this.dragMode === "zoom" && canZoom ? "zoom" : null;
+: this.dragMode === "zoom" && canNavigate && canZoom ? "zoom" : null;
 if (mode) {
 const previousLasso = mode.startsWith("select") && this._lassoPolygon
 ? this._lassoPolygon.map((point) => [...point])
@@ -5915,7 +6096,7 @@ try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
 this.tooltip.style.display = "none";
 return;
 }
-if (canPan) {
+if (canNavigate && canPan) {
 drag = { px: e.clientX, py: e.clientY, view: { ...this.view }, moved: false };
 try { c.setPointerCapture(e.pointerId); } catch (_err) {   }
 this.tooltip.style.display = "none";
@@ -5932,15 +6113,12 @@ const cx0 = this._axisCoord(xa, x0), cx1 = this._axisCoord(xa, x1);
 const cy0 = this._axisCoord(ya, y0), cy1 = this._axisCoord(ya, y1);
 const dx = ((e.clientX - drag.px) / this.plot.w) * (cx1 - cx0);
 const dy = ((e.clientY - drag.py) / this.plot.h) * (cy1 - cy0);
-this.view = {
+this._setView({
 x0: this._axisValue(xa, cx0 - dx),
 x1: this._axisValue(xa, cx1 - dx),
 y0: this._axisValue(ya, cy0 + dy),
 y1: this._axisValue(ya, cy1 + dy),
-};
-this.draw();
-this._scheduleViewRequest();
-this._emitViewChange("pan");
+}, { source: "pan" });
 return;
 }
 this._updateCrosshair(e);
@@ -6016,6 +6194,7 @@ if (hadHover) this._drawKeepPick();
 });
 this._listen(c, "click", (e) => this._click(e));
 this._listen(c, "wheel", (e) => {
+if (!this._interactionFlag("navigation", true)) return;
 if (!this._interactionFlag("zoom", true)) return;
 e.preventDefault();
 const f = Math.pow(1.0015, e.deltaY);
@@ -6025,10 +6204,10 @@ const fy = 1 - (e.clientY - r.top) / r.height;
 this._queueWheelZoom(f, fx, fy);
 }, { passive: false });
 this._listen(c, "dblclick", () => {
+if (!this._interactionFlag("navigation", true)) return;
+if (!this._interactionFlag("zoom", true)) return;
 this._clearSelection();
-if (this._interactionFlag("zoom", true)) {
 this._setView(this.view0, { animate: true });
-}
 });
 this._listen(c, "keydown", (e) => this._onA11yKey(e));
 },
@@ -6730,9 +6909,20 @@ exportMenu.appendChild(button);
 exportMenuItems.push(button);
 return button;
 };
-mkExportItem("png", "Export PNG", () => this._exportPng());
-mkExportItem("svg", "Export SVG", () => this._exportSvg());
-mkExportItem("csv", "Export CSV", () => this._exportCsv());
+const EXPORT_ITEMS = {
+png: ["Export PNG", () => this._exportRaster("png")],
+jpeg: ["Export JPEG", () => this._exportRaster("jpeg")],
+webp: ["Export WebP", () => this._exportRaster("webp")],
+svg: ["Export SVG", () => this._exportSvg()],
+csv: ["Export CSV", () => this._exportCsv()],
+};
+const configuredFormats = Array.isArray(this._exportConfig().formats)
+? this._exportConfig().formats
+: ["png", "svg", "csv"];
+for (const name of configuredFormats) {
+const item = EXPORT_ITEMS[name];
+if (item) mkExportItem(name, item[0], item[1]);
+}
 if (zoomTrigger) {
 setZoomMenuOpen = (open, restoreFocus = false) => {
 const show = Boolean(open);
@@ -6801,7 +6991,7 @@ selectMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`
 selectMenu.style.visibility = "visible";
 };
 setExportMenuOpen = (open, restoreFocus = false) => {
-const show = Boolean(open);
+const show = Boolean(open) && exportMenuItems.length > 0;
 if (show) {
 setZoomMenuOpen(false);
 setSelectMenuOpen(false);
@@ -6894,6 +7084,7 @@ selectMenuItems[next].focus();
 }
 this._listen(grip, "keydown", (e) => {
 if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+if (!exportMenuItems.length) return;
 e.preventDefault();
 e.stopPropagation();
 setExportMenuOpen(true);
@@ -6996,7 +7187,8 @@ this._viewAnim = null;
 },
 _setView(next, opts = {}) {
 if (this._destroyed) return;
-const target = { x0: next.x0, x1: next.x1, y0: next.y0, y1: next.y1 };
+const target = this._clampView(
+{ x0: next.x0, x1: next.x1, y0: next.y0, y1: next.y1 });
 const animate = opts.animate === true && !this._prefersReducedMotion();
 const duration = opts.duration || 180;
 if (!animate || duration <= 0) {
@@ -7062,6 +7254,33 @@ this._emitViewChange(opts.source || "view", { broadcast: opts.broadcast });
 }
 };
 this._animRaf = requestAnimationFrame(step);
+},
+_clampAxisRange(axisId, lo, hi) {
+const axis = this._axis(axisId);
+if (!Array.isArray(axis.bounds) || axis.bounds.length !== 2) return [lo, hi];
+const c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+const b0 = this._axisCoord(axis, axis.bounds[0]);
+const b1 = this._axisCoord(axis, axis.bounds[1]);
+if (![c0, c1, b0, b1].every(Number.isFinite) || b0 === b1) return [lo, hi];
+const reverse = c1 < c0;
+const boundLo = Math.min(b0, b1), boundHi = Math.max(b0, b1);
+let outLo = Math.min(c0, c1), outHi = Math.max(c0, c1);
+if (outHi - outLo >= boundHi - boundLo) {
+outLo = boundLo;
+outHi = boundHi;
+} else {
+const shift = Math.max(boundLo - outLo, Math.min(boundHi - outHi, 0));
+outLo += shift;
+outHi += shift;
+}
+const first = reverse ? outHi : outLo;
+const second = reverse ? outLo : outHi;
+return [this._axisValue(axis, first), this._axisValue(axis, second)];
+},
+_clampView(view) {
+const x = this._clampAxisRange("x", view.x0, view.x1);
+const y = this._clampAxisRange("y", view.y0, view.y1);
+return { x0: x[0], x1: x[1], y0: y[0], y1: y[1] };
 },
 _zoomBy(f, animate = false) {
 const base = this._viewAnim ? this._viewAnim.target : this.view;
@@ -7130,7 +7349,13 @@ const y0 = yReversed ? yhi : ylo;
 const y1 = yReversed ? ylo : yhi;
 this._setView({ x0, x1, y0, y1 }, { animate });
 },
+_exportConfig() {
+const config = this.spec && this.spec.export;
+return config && typeof config === "object" ? config : {};
+},
 _exportFilename(extension) {
+const configured = this._exportConfig().filename;
+if (typeof configured === "string" && configured) return `${configured}.${extension}`;
 const title = String(this.spec.title || "xy-chart")
 .trim()
 .toLowerCase()
@@ -7220,26 +7445,50 @@ this._exportFilename("svg")
 );
 },
 _exportPng() {
+return this._exportRaster("png");
+},
+_exportRaster(format) {
 const svg = this._exportSvgMarkup();
 const sourceUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 const image = new Image();
+const config = this._exportConfig();
+const mime = { png: "image/png", jpeg: "image/jpeg", webp: "image/webp" }[format];
+if (!mime) return Promise.reject(new Error(`unsupported raster export ${format}`));
 return new Promise((resolve, reject) => {
 image.onload = () => {
-const scale = Math.max(1, window.devicePixelRatio || 1);
+const scale = Number.isFinite(config.scale) && config.scale > 0
+? config.scale
+: Math.max(1, window.devicePixelRatio || 1);
 const canvas = document.createElement("canvas");
 canvas.width = Math.round(this.size.w * scale);
 canvas.height = Math.round(this.size.h * scale);
 const ctx = canvas.getContext("2d");
+const configured = typeof config.background === "string" &&
+config.background !== "auto" ? config.background : null;
+const transparent = configured === "transparent" || configured === "none";
+if (format === "jpeg") {
+ctx.fillStyle = configured && !transparent ? configured : "#ffffff";
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+} else if (configured && !transparent) {
+ctx.fillStyle = configured;
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
 ctx.scale(scale, scale);
 ctx.drawImage(image, 0, 0, this.size.w, this.size.h);
+const quality = Number.isFinite(config.quality)
+? Math.min(1, Math.max(0.01, config.quality / 100))
+: 0.9;
 canvas.toBlob((blob) => {
 if (!blob) {
-reject(new Error("PNG encoding returned no data"));
+reject(new Error(`${format.toUpperCase()} encoding returned no data`));
 return;
 }
-this._downloadExport(blob, this._exportFilename("png"));
+const actual = blob.type === "image/jpeg" ? "jpg"
+: blob.type === "image/webp" ? "webp"
+: "png";
+this._downloadExport(blob, this._exportFilename(actual));
 resolve();
-}, "image/png");
+}, mime, format === "png" ? undefined : quality);
 };
 image.onerror = () => {
 reject(new Error("chart SVG could not be rasterized"));
@@ -7348,6 +7597,13 @@ return svg('<path d="M4 5 H16 M4 15 H16 M7 12 L10 9 L13 12"/>');
 case "png":
 return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
 '<path d="M7 13 L9 10.5 L11 12 L13.5 9 V15 H7 Z"/>');
+case "jpeg":
+return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+'<circle cx="8.5" cy="10" r="1.2"/><path d="M7 15 L10 12 L13.5 15 Z"/>');
+case "webp":
+return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+'<path d="M7 11 C8 10 9 10 10 11 C11 12 12 12 13.5 11"/>' +
+'<path d="M7 14 C8 13 9 13 10 14 C11 15 12 15 13.5 14"/>');
 case "svg":
 return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
 '<path d="M7 13 L9 9 L11 14 L13.5 10"/>');

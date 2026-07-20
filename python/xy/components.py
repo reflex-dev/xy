@@ -31,12 +31,13 @@ behavior, signatures, or defaults (asserted by tests/test_api_parity.py).
 from __future__ import annotations
 
 import datetime as dt
+import re
 import uuid
 import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from os import PathLike
-from typing import Any, Optional, TypeAlias, Union
+from typing import Any, Literal, Optional, TypeAlias, Union
 
 import numpy as np
 
@@ -64,6 +65,7 @@ __all__ = [
     "Chart",
     "Colorbar",
     "Component",
+    "ExportConfig",
     "FacetChart",
     "Interaction",
     "Legend",
@@ -91,6 +93,7 @@ __all__ = [
     "error_band_chart",
     "errorbar",
     "errorbar_chart",
+    "export_config",
     "facet_chart",
     "heatmap",
     "heatmap_chart",
@@ -198,6 +201,7 @@ class Axis(Component):
     label_angle: Optional[float] = None
     type_: Optional[str] = None  # "linear" | "time" | "log" (auto-detected if None)
     domain: Optional[tuple[float, float]] = None
+    bounds: Union[tuple[float, float], Literal["data"], None] = None
     reverse: bool = False
     format: Optional[str] = None
     tick_count: Optional[int] = None
@@ -262,6 +266,21 @@ class Modebar(Component):
 
 
 @dataclass
+class ExportConfig(Component):
+    """Declarative export defaults (built by `export_config`): governs the
+    modebar's download menu (formats/filename) and provides defaults for the
+    Python export APIs. Pure description — no I/O happens at build time."""
+
+    formats: Optional[tuple[str, ...]] = None
+    filename: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    scale: Optional[float] = None
+    background: Optional[str] = None
+    quality: Optional[int] = None
+
+
+@dataclass
 class Theme(Component):
     """Chart-wide style tokens (plot background, grid/axis/text colors)."""
 
@@ -270,7 +289,7 @@ class Theme(Component):
 
 @dataclass
 class Interaction(Component):
-    """Interaction switches (hover/click/select/brush/crosshair) and
+    """Interaction switches (hover/click/select/brush/crosshair/navigation/pan/zoom) and
     cross-chart axis linking. Built by `interaction_config`."""
 
     hover: Optional[bool] = None
@@ -278,6 +297,7 @@ class Interaction(Component):
     select: Optional[bool] = None
     brush: Optional[bool] = None
     crosshair: Optional[bool] = None
+    navigation: Optional[bool] = None
     pan: Optional[bool] = None
     zoom: Optional[bool] = None
     view_change: Optional[bool] = None
@@ -1929,6 +1949,7 @@ def x_axis(
     label_angle: Optional[float] = None,
     type_: Optional[str] = None,
     domain: Optional[tuple[float, float]] = None,
+    bounds: Union[tuple[float, float], Literal["data"], None] = None,
     reverse: bool = False,
     format: Optional[str] = None,
     tick_count: Optional[int] = None,
@@ -1951,6 +1972,9 @@ def x_axis(
         label_angle: Label rotation in degrees.
         type_: Scale type, such as ``linear``, ``time``, or ``log``.
         domain: Explicit minimum and maximum scale values.
+        bounds: Hard navigation limits, or ``"data"`` to use the data range.
+            Pan and zoom are clamped within these limits; ``None`` leaves
+            navigation unrestricted.
         reverse: Whether to reverse the scale direction.
         format: Tick-label format string.
         tick_count: Requested number of ticks.
@@ -1982,6 +2006,7 @@ def x_axis(
         label_angle=_optional_finite_number(label_angle, "x_axis label_angle"),
         type_=type_,
         domain=_axis_domain(domain, "x_axis domain"),
+        bounds=_axis_bounds(bounds, "x_axis bounds"),
         reverse=_strict_bool(reverse, "x_axis reverse"),
         format=_optional_string(format, "x_axis format"),
         tick_count=_optional_positive_int(tick_count, "x_axis tick_count"),
@@ -2009,6 +2034,7 @@ def y_axis(
     label_angle: Optional[float] = None,
     type_: Optional[str] = None,
     domain: Optional[tuple[float, float]] = None,
+    bounds: Union[tuple[float, float], Literal["data"], None] = None,
     reverse: bool = False,
     format: Optional[str] = None,
     tick_count: Optional[int] = None,
@@ -2031,6 +2057,9 @@ def y_axis(
         label_angle: Label rotation in degrees.
         type_: Scale type, such as ``linear``, ``time``, or ``log``.
         domain: Explicit minimum and maximum scale values.
+        bounds: Hard navigation limits, or ``"data"`` to use the data range.
+            Pan and zoom are clamped within these limits; ``None`` leaves
+            navigation unrestricted.
         reverse: Whether to reverse the scale direction.
         format: Tick-label format string.
         tick_count: Requested number of ticks.
@@ -2062,6 +2091,7 @@ def y_axis(
         label_angle=_optional_finite_number(label_angle, "y_axis label_angle"),
         type_=type_,
         domain=_axis_domain(domain, "y_axis domain"),
+        bounds=_axis_bounds(bounds, "y_axis bounds"),
         reverse=_strict_bool(reverse, "y_axis reverse"),
         format=_optional_string(format, "y_axis format"),
         tick_count=_optional_positive_int(tick_count, "y_axis tick_count"),
@@ -2260,6 +2290,85 @@ def modebar(
     )
 
 
+# Everything `export_config(formats=...)` accepts: the unified image matrix
+# plus the non-image exports. The browser modebar shows the client-safe subset
+# (png/jpeg/webp/svg/csv) in the configured order; pdf/html entries govern the
+# Python-side defaults only.
+_EXPORT_CONFIG_FORMATS = ("png", "jpeg", "webp", "svg", "pdf", "csv", "html")
+_EXPORT_FILENAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]*$")
+
+
+def export_config(
+    formats: Optional[Sequence[str]] = None,
+    *,
+    filename: Optional[str] = None,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+    scale: Optional[float] = None,
+    background: Optional[str] = None,
+    quality: Optional[int] = None,
+) -> ExportConfig:
+    """Describe export defaults as part of the chart (no I/O at build time).
+
+    Args:
+        formats: Download formats, in menu order. The modebar shows the
+            client-safe subset (png/jpeg/webp/svg/csv); an empty list hides
+            the download menu entirely. Also the default format list for
+            batch export helpers.
+        filename: Download/file basename (no extension or path separators).
+        width: Default export width in pixels.
+        height: Default export height in pixels.
+        scale: Default device-pixel-ratio for raster export.
+        background: Default export background ("auto", a CSS color, or
+            "transparent"; JPEG rejects transparent at export time).
+        quality: Default JPEG/lossy-WebP quality (1-100).
+    """
+    validated_formats: Optional[tuple[str, ...]] = None
+    if formats is not None:
+        if isinstance(formats, str):
+            raise ValueError("export_config formats must be a sequence of format names")
+        seen: list[str] = []
+        for value in formats:
+            fmt = export._FORMAT_ALIASES.get(str(value).lower(), str(value).lower())
+            if fmt not in _EXPORT_CONFIG_FORMATS:
+                raise ValueError(
+                    f"export_config format must be one of {_EXPORT_CONFIG_FORMATS}, got {value!r}"
+                )
+            if fmt in seen:
+                raise ValueError(f"export_config formats repeats {fmt!r}")
+            seen.append(fmt)
+        validated_formats = tuple(seen)
+    if filename is not None:
+        filename = _optional_string(filename, "export_config filename") or ""
+        if not _EXPORT_FILENAME_RE.fullmatch(filename):
+            raise ValueError(
+                "export_config filename must be a plain basename "
+                f"(letters/digits/dot/dash/underscore/space), got {filename!r}"
+            )
+    if quality is not None and (
+        isinstance(quality, bool) or not isinstance(quality, int) or not 1 <= quality <= 100
+    ):
+        raise ValueError(f"export_config quality must be an integer in 1..100, got {quality!r}")
+    return ExportConfig(
+        formats=validated_formats,
+        filename=filename,
+        width=None if width is None else export._positive_pixel_count(width, "export width"),
+        height=None if height is None else export._positive_pixel_count(height, "export height"),
+        scale=None if scale is None else export._positive_finite_float(scale, "export scale"),
+        background=None if background is None else _export_background(background),
+        quality=quality,
+    )
+
+
+def _export_background(background: str) -> str:
+    if not isinstance(background, str) or not background.strip():
+        raise ValueError(f"export_config background must be a CSS color string, got {background!r}")
+    value = background.strip()
+    if value != "auto" and not export._BACKGROUND_RE.fullmatch(value):
+        raise ValueError(f"export_config background is not a safe CSS color: {background!r}")
+    return value
+
+
 def theme(
     style: Optional[dict[str, StyleValue]] = None,
     *,
@@ -2319,6 +2428,7 @@ def interaction_config(
     select: Optional[bool] = None,
     brush: Optional[bool] = None,
     crosshair: Optional[bool] = None,
+    navigation: Optional[bool] = None,
     pan: Optional[bool] = None,
     zoom: Optional[bool] = None,
     view_change: Optional[bool] = None,
@@ -2333,6 +2443,7 @@ def interaction_config(
         select: Whether shift-drag box selection is enabled.
         brush: Whether brush selection is enabled.
         crosshair: Whether plot-aligned hover guides are shown.
+        navigation: Whether pointer drag and wheel gestures pan or zoom the chart.
         pan: Whether plain-drag pan is enabled. ``False`` ignores plain-drag
             pan gestures. The default keeps panning enabled.
         zoom: Whether viewport zoom is enabled. ``False`` ignores wheel and
@@ -2348,6 +2459,7 @@ def interaction_config(
         select=select,
         brush=brush,
         crosshair=crosshair,
+        navigation=navigation,
         pan=pan,
         zoom=zoom,
         view_change=view_change,
@@ -2454,6 +2566,7 @@ class Chart(Component):
         select: Optional[bool] = None,
         brush: Optional[bool] = None,
         crosshair: Optional[bool] = None,
+        navigation: Optional[bool] = None,
         pan: Optional[bool] = None,
         zoom: Optional[bool] = None,
         view_change: Optional[bool] = None,
@@ -2481,6 +2594,7 @@ class Chart(Component):
         self.select = select
         self.brush = brush
         self.crosshair = crosshair
+        self.navigation = navigation
         self.pan = pan
         self.zoom = zoom
         self.view_change = view_change
@@ -2509,6 +2623,7 @@ class Chart(Component):
         tooltips = [c for c in self.children if isinstance(c, Tooltip)]
         colorbars = [c for c in self.children if isinstance(c, Colorbar)]
         modebars = [c for c in self.children if isinstance(c, Modebar)]
+        export_configs = [c for c in self.children if isinstance(c, ExportConfig)]
         themes = [c for c in self.children if isinstance(c, Theme)]
         interactions = [c for c in self.children if isinstance(c, Interaction)]
         legend_shows = [_strict_bool(c.show, "legend show") for c in legends]
@@ -2520,6 +2635,7 @@ class Chart(Component):
             Tooltip,
             Colorbar,
             Modebar,
+            ExportConfig,
             Theme,
             Interaction,
         )
@@ -2527,7 +2643,7 @@ class Chart(Component):
         if unknown:
             raise TypeError(
                 f"{self.kind}() children must be marks/annotations/axes/legend/tooltip/"
-                f"colorbar/modebar/theme/interaction_config, got "
+                f"colorbar/modebar/export_config/theme/interaction_config, got "
                 f"{[type(c).__name__ for c in unknown]}"
             )
 
@@ -2550,6 +2666,7 @@ class Chart(Component):
                 label_angle=axis.label_angle,
                 type_=axis.type_,
                 domain=axis.domain,
+                bounds=axis.bounds,
                 reverse=axis.reverse,
                 format=axis.format,
                 tick_count=axis.tick_count,
@@ -2582,6 +2699,7 @@ class Chart(Component):
             or self.select is not None
             or self.brush is not None
             or self.crosshair is not None
+            or self.navigation is not None
             or self.pan is not None
             or self.zoom is not None
             or self.view_change is not None
@@ -2593,6 +2711,7 @@ class Chart(Component):
                 select=self.select,
                 brush=self.brush,
                 crosshair=self.crosshair,
+                navigation=self.navigation,
                 pan=self.pan,
                 zoom=self.zoom,
                 view_change=self.view_change,
@@ -2606,6 +2725,7 @@ class Chart(Component):
                 select=node.select,
                 brush=node.brush,
                 crosshair=node.crosshair,
+                navigation=node.navigation,
                 pan=node.pan,
                 zoom=node.zoom,
                 view_change=node.view_change,
@@ -2673,6 +2793,28 @@ class Chart(Component):
             _apply_chrome_node(fig, "modebar", node.class_name, node.style)
             _apply_chrome_node(fig, "modebar_button", node.button_class_name, node.button_style)
             fig.show_modebar = node.show
+        if export_configs:
+            node = export_configs[-1]
+            # Re-validate: ``ExportConfig`` is a public dataclass as well as
+            # the `export_config()` return type, so direct construction must
+            # not put malformed options on the wire.
+            validated = export_config(
+                formats=node.formats,
+                filename=node.filename,
+                width=node.width,
+                height=node.height,
+                scale=node.scale,
+                background=node.background,
+                quality=node.quality,
+            )
+            export_options: dict[str, Any] = {}
+            if validated.formats is not None:
+                export_options["formats"] = list(validated.formats)
+            for key in ("filename", "width", "height", "scale", "background", "quality"):
+                value = getattr(validated, key)
+                if value is not None:
+                    export_options[key] = value
+            fig.export_options = export_options or None
         if tooltips:
             node = tooltips[-1]
             _apply_chrome_node(fig, "tooltip", node.class_name, node.style)
@@ -2834,6 +2976,143 @@ class Chart(Component):
             custom_css=custom_css,
             sandbox=sandbox,
             gl=gl,
+        )
+
+    def _export_defaults(
+        self,
+        fmt: str,
+        width: Optional[int],
+        height: Optional[int],
+        scale: Optional[float],
+        background: Optional[str],
+        quality: Optional[int],
+        *,
+        lossy_webp: bool = False,
+    ) -> dict[str, Any]:
+        """Fill omitted export options from the chart's `export_config`.
+
+        Direct arguments always win. Declarative defaults degrade gracefully
+        where a format cannot honor them (config quality applies only where
+        output is actually lossy — JPEG, plus WebP when the resolved engine
+        is Chromium; a config "transparent" background is dropped for JPEG)
+        — only *explicit* arguments produce hard errors downstream."""
+        config = self.figure().export_options or {}
+        if quality is None and (fmt == "jpeg" or (fmt == "webp" and lossy_webp)):
+            quality = config.get("quality")
+        if background is None:
+            background = config.get("background")
+            if background == "auto" or (background == "transparent" and fmt == "jpeg"):
+                background = None
+        return {
+            "width": width if width is not None else config.get("width"),
+            "height": height if height is not None else config.get("height"),
+            "scale": scale if scale is not None else config.get("scale", 2.0),
+            "background": background,
+            "quality": quality,
+        }
+
+    def to_image(
+        self,
+        format: str = "png",
+        *,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        scale: Optional[float] = None,
+        background: Optional[str] = None,
+        engine: export.Engine | str = export.Engine.auto,
+        quality: Optional[int] = None,
+        optimize: bool = False,
+        custom_css: Optional[str] = None,
+        sandbox: bool = True,
+        gl: str = "software",
+    ) -> bytes:
+        """Unified static export: PNG/JPEG/WebP/SVG/PDF bytes.
+
+        Omitted width/height/scale/background/quality fall back to the
+        chart's `export_config` defaults; explicit arguments override them.
+        See `export.to_image` for the full format/engine/background policy."""
+        fmt = export._normalize_format(format)
+        resolved = export._resolve_image_engine(engine, fmt, custom_css)
+        return self.figure().to_image(
+            format,
+            engine=engine,
+            optimize=optimize,
+            custom_css=custom_css,
+            sandbox=sandbox,
+            gl=gl,
+            **self._export_defaults(
+                fmt,
+                width,
+                height,
+                scale,
+                background,
+                quality,
+                lossy_webp=resolved == "browser",
+            ),
+        )
+
+    def write_image(
+        self,
+        path: str | PathLike[str],
+        *,
+        format: Optional[str] = None,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        scale: Optional[float] = None,
+        background: Optional[str] = None,
+        engine: export.Engine | str = export.Engine.auto,
+        quality: Optional[int] = None,
+        optimize: bool = False,
+        custom_css: Optional[str] = None,
+        sandbox: bool = True,
+        gl: str = "software",
+    ) -> bytes:
+        """Atomic file export with extension-inferred format (.png/.jpg/
+        .jpeg/.webp/.svg/.pdf/.html). `export_config` defaults apply as in
+        `to_image`; explicit arguments override them."""
+        fmt = (
+            export._normalize_format(format, allow_html=True)
+            if format is not None
+            else export._infer_format(path)
+        )
+        if fmt != "html":
+            resolved = export._resolve_image_engine(engine, fmt, custom_css)
+            defaults = self._export_defaults(
+                fmt,
+                width,
+                height,
+                scale,
+                background,
+                quality,
+                lossy_webp=resolved == "browser",
+            )
+        if fmt == "html":
+            # HTML routing rejects raster-only options; forward the user's own
+            # arguments (not the declarative defaults) so that rejection
+            # applies to what was actually passed.
+            return self.figure().write_image(
+                path,
+                format=format,
+                width=width,
+                height=height,
+                scale=scale if scale is not None else 2.0,
+                background=background,
+                engine=engine,
+                quality=quality,
+                optimize=optimize,
+                custom_css=custom_css,
+                sandbox=sandbox,
+                gl=gl,
+            )
+        return self.figure().write_image(
+            path,
+            format=format,
+            engine=engine,
+            optimize=optimize,
+            custom_css=custom_css,
+            sandbox=sandbox,
+            gl=gl,
+            **defaults,
         )
 
     def memory_report(self) -> dict[str, Any]:
@@ -3433,6 +3712,62 @@ class FacetChart(Component):
             gl=gl,
         )
 
+    def to_image(
+        self,
+        format: str = "png",
+        *,
+        scale: float = 2.0,
+        background: Optional[str] = None,
+        engine: export.Engine | str = export.Engine.auto,
+        quality: Optional[int] = None,
+        optimize: bool = False,
+        custom_css: Optional[str] = None,
+        sandbox: bool = True,
+        gl: str = "software",
+    ) -> bytes:
+        """Unified static export of the grid (same format matrix as
+        `Chart.to_image`; the grid's geometry is fixed by its panels)."""
+        return self.figure().to_image(
+            format,
+            scale=scale,
+            background=background,
+            engine=engine,
+            quality=quality,
+            optimize=optimize,
+            custom_css=custom_css,
+            sandbox=sandbox,
+            gl=gl,
+        )
+
+    def write_image(
+        self,
+        path: str | PathLike[str],
+        *,
+        format: Optional[str] = None,
+        scale: float = 2.0,
+        background: Optional[str] = None,
+        engine: export.Engine | str = export.Engine.auto,
+        quality: Optional[int] = None,
+        optimize: bool = False,
+        custom_css: Optional[str] = None,
+        sandbox: bool = True,
+        gl: str = "software",
+    ) -> bytes:
+        """Atomic extension-inferred file export of the grid (see
+        `FacetGrid.write_image`)."""
+        return self.figure().write_image(
+            path,
+            format=format,
+            scale=scale,
+            background=background,
+            engine=engine,
+            quality=quality,
+            optimize=optimize,
+            custom_css=custom_css,
+            sandbox=sandbox,
+            gl=gl,
+        )
+
     def memory_report(self) -> dict[str, Any]:
         """Byte-level accounting of every panel's data and cache buffers."""
         return self.figure().memory_report()
@@ -3478,6 +3813,16 @@ def _validate_axis_type(type_: Optional[str]) -> None:
 def _axis_domain(value: Any, label: str) -> Optional[tuple[float, float]]:
     if value is None:
         return None
+    return _validate.finite_increasing_pair(value, label)
+
+
+def _axis_bounds(value: Any, label: str) -> Union[tuple[float, float], Literal["data"], None]:
+    if value is None:
+        return value
+    if isinstance(value, str):
+        if value == "data":
+            return value
+        raise ValueError(f"{label} must be an increasing pair, 'data', or None")
     return _validate.finite_increasing_pair(value, label)
 
 

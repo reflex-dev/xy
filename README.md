@@ -29,7 +29,8 @@ Its Rust core and WebGL2 renderer keep work bounded by what the screen can show.
 - **Interactive by default.** Pan, zoom, hover, select, and inspect exact source
   rows without shipping the entire dataset as JSON.
 - **One chart, many outputs.** Display in Jupyter, VS Code, Colab, and Marimo,
-  or export self-contained HTML, browser-free PNG, and SVG.
+  or export self-contained HTML plus browser-free PNG, JPEG, WebP, SVG, and
+  PDF through one `to_image`/`write_image` API.
 - **Designed for applications.** Layer marks and style both chart chrome and
   marks with CSS/Tailwind-friendly hooks, gradients, strokes, and curves.
 

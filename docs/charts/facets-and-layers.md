@@ -29,27 +29,53 @@ def layered_chart_demo():
     return reflex_xy.chart(chart, height="360px")
 ~~~
 
-## Variants
+## Chart Types
 
-### Small Multiples
+### Layered Marks
 
-~~~python
+Use a neutral `chart()` container to layer different marks in one coordinate
+system. Declare broad fills first, followed by lines, points, and annotations.
+
+### Facet Chart
+
+~~~python demo exec
+import reflex as rx
+import reflex_xy
 import xy
 
-data = {
+facet_detail_data = {
     "x": [0, 1, 2, 0, 1, 2],
     "y": [1, 2, 3, 3, 2, 1],
     "region": ["West", "West", "West", "East", "East", "East"],
 }
 
-grid = xy.facet_chart(
-    xy.scatter(x="x", y="y", color="#6e56cf"),
+facet_detail_chart = xy.facet_chart(
+    xy.line(x="x", y="y", color="#6e56cf", width=2.5),
+    xy.scatter(x="x", y="y", color="#6e56cf", size=7),
+    xy.x_axis(label="period"),
+    xy.y_axis(label="value"),
     by="region",
-    data=data,
+    data=facet_detail_data,
     cols=2,
     share_x=True,
     share_y=True,
+    width=720,
+    height=260,
+    title="Regional trends",
 )
+
+
+def facet_chart_demo():
+    facet_grid = facet_detail_chart.figure()
+    return rx.grid(
+        *[
+            reflex_xy.chart(panel, height="260px")
+            for panel in facet_grid.figures
+        ],
+        columns="2",
+        gap="3",
+        width="100%",
+    )
 ~~~
 
 `cols` controls wrapping, `gap` controls panel spacing, and shared axes keep

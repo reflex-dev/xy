@@ -81,8 +81,8 @@ can request a refined view or resolve selections against exact source rows.
 Sequence numbers prevent late replies from replacing a newer view.
 
 CSS and Tailwind style DOM elements; mark styles are compiled consistently for
-WebGL, SVG, and native PNG. See [Chrome Slots](/docs/xy/styling/chrome-slots/)
-and [Mark Styles](/docs/xy/styling/mark-styles/).
+WebGL, SVG, and native PNG. See
+[Customize Each Part](/docs/xy/styling/customize/).
 
 ## Why it stays fast
 
