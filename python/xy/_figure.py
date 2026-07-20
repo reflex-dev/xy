@@ -146,6 +146,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         label_angle: Optional[float] = None,
         type_: Optional[str] = None,
         domain: Optional[tuple[float, float]] = None,
+        bounds: Any = None,
         reverse: bool = False,
         format: Optional[str] = None,
         tick_count: Optional[int] = None,
@@ -166,6 +167,13 @@ class Figure(AnnotationsMixin, PayloadMixin):
             domain = self._finite_increasing_pair(domain, f"{axis_id} axis domain")
             if type_ == "log" and domain[0] <= 0:
                 raise ValueError(f"{axis_id} log axis domain must be positive")
+        if isinstance(bounds, str):
+            if bounds != "data":
+                raise ValueError(f"{axis_id} axis bounds must be an increasing pair or 'data'")
+        elif bounds is not None:
+            bounds = self._finite_increasing_pair(bounds, f"{axis_id} axis bounds")
+            if type_ == "log" and bounds[0] <= 0:
+                raise ValueError(f"{axis_id} log axis bounds must be positive")
         if side is None:
             side = "bottom" if axis_dim == "x" else ("right" if axis_id != "y" else "left")
         elif axis_dim == "x" and side not in {"top", "bottom"}:
@@ -191,6 +199,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             "label_angle": self._optional_finite_scalar(label_angle, f"{axis_id} axis label_angle"),
             "type": type_,
             "domain": domain,
+            "bounds": bounds,
             "reverse": self._bool_param(reverse, f"{axis_id} axis reverse"),
             "format": self._optional_text(format, f"{axis_id} axis format"),
             "tick_count": self._optional_positive_int(tick_count, f"{axis_id} axis tick_count"),
@@ -822,10 +831,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
     def y_range(self) -> tuple[float, float]:
         return self._range("y")
 
-    def _range(self, axis_id: str) -> tuple[float, float]:
+    def _range(self, axis_id: str, *, use_domain: bool = True) -> tuple[float, float]:
         opts = self.axis_options.get(axis_id, {})
         fixed = opts.get("domain")
-        if fixed is not None:
+        if use_domain and fixed is not None:
             lo, hi = fixed
             return (hi, lo) if opts.get("reverse") else (lo, hi)
 
@@ -990,6 +999,13 @@ class Figure(AnnotationsMixin, PayloadMixin):
             spec["reverse"] = True
         if opts.get("domain") is not None:
             spec["domain"] = list(opts["domain"])
+        bounds = opts.get("bounds")
+        if bounds == "data":
+            # Resolve once on the Python side so the client receives concrete
+            # limits even when an independent explicit domain sets view0.
+            bounds = self._range(axis_id, use_domain=False)
+        if bounds is not None:
+            spec["bounds"] = sorted(bounds)
         if opts.get("format") is not None:
             spec["format"] = opts["format"]
         style = styles.compile_axis_style(opts.get("style"), f"{axis_id} axis style")

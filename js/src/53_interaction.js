@@ -146,15 +146,12 @@ Object.assign(ChartView.prototype, {
         const cy0 = this._axisCoord(ya, y0), cy1 = this._axisCoord(ya, y1);
         const dx = ((e.clientX - drag.px) / this.plot.w) * (cx1 - cx0);
         const dy = ((e.clientY - drag.py) / this.plot.h) * (cy1 - cy0);
-        this.view = {
+        this._setView({
           x0: this._axisValue(xa, cx0 - dx),
           x1: this._axisValue(xa, cx1 - dx),
           y0: this._axisValue(ya, cy0 + dy),
           y1: this._axisValue(ya, cy1 + dy),
-        };
-        this.draw();
-        this._scheduleViewRequest();
-        this._emitViewChange("pan");
+        }, { source: "pan" });
         return;
       }
       this._updateCrosshair(e);
@@ -1292,7 +1289,8 @@ Object.assign(ChartView.prototype, {
 
   _setView(next, opts = {}) {
     if (this._destroyed) return;
-    const target = { x0: next.x0, x1: next.x1, y0: next.y0, y1: next.y1 };
+    const target = this._clampView(
+      { x0: next.x0, x1: next.x1, y0: next.y0, y1: next.y1 });
     const animate = opts.animate === true && !this._prefersReducedMotion();
     const duration = opts.duration || 180;
     if (!animate || duration <= 0) {
@@ -1360,6 +1358,38 @@ Object.assign(ChartView.prototype, {
       }
     };
     this._animRaf = requestAnimationFrame(step);
+  },
+
+  // Keep a proposed viewport wholly inside each axis's optional hard bounds.
+  // Work in scale coordinates so log bounds clamp multiplicatively, while
+  // preserving the range direction used by reversed axes.
+  _clampAxisRange(axisId, lo, hi) {
+    const axis = this._axis(axisId);
+    if (!Array.isArray(axis.bounds) || axis.bounds.length !== 2) return [lo, hi];
+    const c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+    const b0 = this._axisCoord(axis, axis.bounds[0]);
+    const b1 = this._axisCoord(axis, axis.bounds[1]);
+    if (![c0, c1, b0, b1].every(Number.isFinite) || b0 === b1) return [lo, hi];
+    const reverse = c1 < c0;
+    const boundLo = Math.min(b0, b1), boundHi = Math.max(b0, b1);
+    let outLo = Math.min(c0, c1), outHi = Math.max(c0, c1);
+    if (outHi - outLo >= boundHi - boundLo) {
+      outLo = boundLo;
+      outHi = boundHi;
+    } else {
+      const shift = Math.max(boundLo - outLo, Math.min(boundHi - outHi, 0));
+      outLo += shift;
+      outHi += shift;
+    }
+    const first = reverse ? outHi : outLo;
+    const second = reverse ? outLo : outHi;
+    return [this._axisValue(axis, first), this._axisValue(axis, second)];
+  },
+
+  _clampView(view) {
+    const x = this._clampAxisRange("x", view.x0, view.x1);
+    const y = this._clampAxisRange("y", view.y0, view.y1);
+    return { x0: x[0], x1: x[1], y0: y[0], y1: y[1] };
   },
 
   // Center-anchored zoom (f<1 in, f>1 out) — the modebar buttons; wheel is
