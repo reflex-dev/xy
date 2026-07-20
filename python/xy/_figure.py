@@ -113,6 +113,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         # pyplot sets an explicit Matplotlib-style spine list.
         self.frame_sides: Optional[list[str]] = None
         self.colorbar_options: Optional[dict[str, Any]] = None
+        # Declarative export defaults (xy.export_config): governs the client
+        # modebar's format menu + filename and the Python export defaults.
+        self.export_options: Optional[dict[str, Any]] = None
         self.show_modebar = True
         self.show_tooltip = True
         self.class_name: Optional[str] = None
@@ -1263,6 +1266,76 @@ class Figure(AnnotationsMixin, PayloadMixin):
             height=height,
             scale=scale,
             engine=engine,
+            optimize=optimize,
+            custom_css=custom_css,
+            sandbox=sandbox,
+            gl=gl,
+        )
+
+    def to_image(
+        self,
+        format: str = "png",
+        *,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        scale: float = 2.0,
+        background: Optional[str] = None,
+        engine: export.Engine | str = export.Engine.auto,
+        quality: Optional[int] = None,
+        optimize: bool = False,
+        custom_css: Optional[str] = None,
+        sandbox: bool = True,
+        gl: str = "software",
+    ) -> bytes:
+        """Unified static export: PNG/JPEG/WebP/SVG/PDF bytes (export.py).
+
+        `engine=Engine.auto` is deterministic — the browser-free native path
+        for every format, Chromium only when `custom_css` needs a real CSS
+        engine. See `export.to_image` for the format, quality, and background
+        policies."""
+        return export.to_image(
+            self,
+            format,
+            width=width,
+            height=height,
+            scale=scale,
+            background=background,
+            engine=engine,
+            quality=quality,
+            optimize=optimize,
+            custom_css=custom_css,
+            sandbox=sandbox,
+            gl=gl,
+        )
+
+    def write_image(
+        self,
+        path: str | PathLike[str],
+        *,
+        format: Optional[str] = None,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        scale: float = 2.0,
+        background: Optional[str] = None,
+        engine: export.Engine | str = export.Engine.auto,
+        quality: Optional[int] = None,
+        optimize: bool = False,
+        custom_css: Optional[str] = None,
+        sandbox: bool = True,
+        gl: str = "software",
+    ) -> bytes:
+        """Atomic file export with extension-inferred format (export.py):
+        .png/.jpg/.jpeg/.webp/.svg/.pdf, plus .html routing to `to_html`."""
+        return export.write_image(
+            self,
+            path,
+            format=format,
+            width=width,
+            height=height,
+            scale=scale,
+            background=background,
+            engine=engine,
+            quality=quality,
             optimize=optimize,
             custom_css=custom_css,
             sandbox=sandbox,

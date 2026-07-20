@@ -173,7 +173,7 @@ def test_component_types_are_lazy_public_root_exports() -> None:
 def test_export_engine_is_lazy_public_enum() -> None:
     assert "Engine" in xy.__all__
     assert xy.Engine is Engine
-    assert tuple(Engine) == (Engine.default, Engine.chromium)
+    assert tuple(Engine) == (Engine.auto, Engine.default, Engine.chromium)
 
 
 def test_chart_dom_slots_are_public_styling_contract() -> None:
