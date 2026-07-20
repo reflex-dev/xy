@@ -1,4 +1,16 @@
-(() => {
+<!doctype html>
+<html>
+<head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; worker-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Latency histogram with x-only zoom</title>
+<style>
+html,body{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;background:#fff;}
+#chart{width:100%;}
+</style>
+</head>
+<body>
+<div id="chart"></div>
+<script>(() => {
 
 "use strict";
 const PROTOCOL = 3;
@@ -3216,7 +3228,7 @@ this._refreshReductionBadges();
 }
 _drawDensitySample(g, x0, x1, y0, y1, opacityScale = 1) {
 const s = g && g.sampleOverlay;
-if (!s || !s.n || !this._viewOverlaps(s.win)) return;
+if (!s || !s.n || !this._viewInside(s.win)) return;
 this._drawPoints(
 s,
 this._map(s.xMeta, x0, x1, s.xAxis),
@@ -7481,7 +7493,7 @@ clone.prepend(stylesheet);
 const content = new XMLSerializer().serializeToString(clone);
 return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" ` +
 `viewBox="0 0 ${width} ${height}"><foreignObject width="100%" height="100%">` +
-`${content}</foreignObject></svg>`;
+`${content}<\/foreignObject><\/svg>`;
 },
 _exportSvg() {
 const svg = this._exportSvgMarkup();
@@ -7602,7 +7614,7 @@ _icon(name) {
 const svg = (body) =>
 `<svg width="15" height="15" viewBox="0 0 20 20" fill="none" ` +
 `stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ` +
-`stroke-linejoin="round">${body}</svg>`;
+`stroke-linejoin="round">${body}<\/svg>`;
 switch (name) {
 case "zoomin":
 return svg('<circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.5 12.5 L17 17"/>' +
@@ -7751,13 +7763,12 @@ for (const g of targets) this._requestSampleRebin(g, view, seq);
 _requestSampleRebin(g, view, seq) {
 if (!g._homeDensity) g._homeDensity = g.density;
 const v0 = this.view0;
-const homeSpanX = Math.max(Math.abs(v0.x1 - v0.x0), 1e-300);
-const homeSpanY = Math.max(Math.abs(v0.y1 - v0.y0), 1e-300);
-const viewSpanX = Math.abs(view.x1 - view.x0);
-const viewSpanY = Math.abs(view.y1 - view.y0);
-const notZoomedIn =
-viewSpanX >= homeSpanX * (1 - 1e-6) && viewSpanY >= homeSpanY * (1 - 1e-6);
-if (notZoomedIn) {
+const ex = Math.max(Math.abs(v0.x1 - v0.x0), 1e-300) * 1e-9;
+const ey = Math.max(Math.abs(v0.y1 - v0.y0), 1e-300) * 1e-9;
+const atHome =
+Math.min(view.x0, view.x1) <= v0.x0 + ex && Math.max(view.x0, view.x1) >= v0.x1 - ex &&
+Math.min(view.y0, view.y1) <= v0.y0 + ey && Math.max(view.y0, view.y1) >= v0.y1 - ey;
+if (atHome) {
 if (g.density !== g._homeDensity) {
 const hd = g._homeDensity;
 this._applySampleRebinGrid(g, {
@@ -8004,15 +8015,6 @@ const wx0 = Math.min(win.x0, win.x1), wx1 = Math.max(win.x0, win.x1);
 const wy0 = Math.min(win.y0, win.y1), wy1 = Math.max(win.y0, win.y1);
 return vx0 >= wx0 - ex && vx1 <= wx1 + ex && vy0 >= wy0 - ey && vy1 <= wy1 + ey;
 },
-_viewOverlaps(win) {
-if (!win) return false;
-const { x0, x1, y0, y1 } = this.view;
-const vx0 = Math.min(x0, x1), vx1 = Math.max(x0, x1);
-const vy0 = Math.min(y0, y1), vy1 = Math.max(y0, y1);
-const wx0 = Math.min(win.x0, win.x1), wx1 = Math.max(win.x0, win.x1);
-const wy0 = Math.min(win.y0, win.y1), wy1 = Math.max(win.y0, win.y1);
-return vx0 <= wx1 && vx1 >= wx0 && vy0 <= wy1 && vy1 >= wy0;
-},
 _viewInsideRange(xRange, yRange) {
 if (!xRange || !yRange) return false;
 return this._viewInside({ x0: xRange[0], x1: xRange[1], y0: yRange[0], y1: yRange[1] });
@@ -8251,3 +8253,15 @@ return view;
 
 window.xy = { render, renderStandalone, decodeFrame, ChartView, MARK_KINDS, markOf };
 })();
+</script>
+<script>var __xyChunks = [];</script>
+<script>__xyChunks.push("3gutw3WOqsMNEajDpJOlwzwWo8PUmKDDaxuewwOem8OaIJnDMqOWw8kllMNhqJHD+CqPw5CtjMMnMIrDv7KHw1Y1hcPut4LDhTqAwzl6e8Nof3bDl4Rxw8aJbMP1jmfDJJRiw1OZXcODnljDsqNTw+GoTsMQrknDP7NEw264P8OdvTrDzMI1w/vHMMMqzSvDWdImw4jXIcO33BzD5uEXwxXnEsNE7A3Dc/EIw6L2A8Oi9/3CAAL0wl4M6sK8FuDCGiHWwngrzMLWNcLCNEC4wpJKrsLwVKTCTl+awqxpkMIKdIbC0fx4wo0RZcJJJlHCBTs9wsFPKcJ9ZBXCOXkBwusb28FjRbPB226LwacwR8EvB+/AH1ofwB9aH0AvB+9ApzBHQdtui0FjRbNB6xvbQTl5AUJ9ZBVCwU8pQgU7PUJJJlFCjRFlQtH8eEIKdIZCrGmQQk5fmkLwVKRCkkquQjRAuELWNcJCeCvMQhoh1kK8FuBCXgzqQgAC9EKi9/1CovYDQ3PxCENE7A1DFecSQ+bhF0O33BxDiNchQ1nSJkMqzStD+8cwQ8zCNUOdvTpDbrg/Qz+zREMQrklD4ahOQ7KjU0ODnlhDU5ldQySUYkP1jmdDxolsQ5eEcUNof3ZDOXp7Q4U6gEPut4JDVjWFQ7+yh0MnMIpDkK2MQ/gqj0NhqJFDySWUQzKjlkOaIJlDA56bQ2sbnkPUmKBDPBajQ6STpUMNEahDdY6qQ94LrUPeC63DdY6qww0RqMOkk6XDPBajw9SYoMNrG57DA56bw5ogmcMyo5bDySWUw2GokcP4Ko/DkK2MwycwisO/sofDVjWFw+63gsOFOoDDOXp7w2h/dsOXhHHDxolsw/WOZ8MklGLDU5ldw4OeWMOyo1PD4ahOwxCuScM/s0TDbrg/w529OsPMwjXD+8cwwyrNK8NZ0ibDiNchw7fcHMPm4RfDFecSw0TsDcNz8QjDovYDw6L3/cIAAvTCXgzqwrwW4MIaIdbCeCvMwtY1wsI0QLjCkkquwvBUpMJOX5rCrGmQwgp0hsLR/HjCjRFlwkkmUcIFOz3CwU8pwn1kFcI5eQHC6xvbwWNFs8HbbovBpzBHwS8H78AfWh/AH1ofQC8H70CnMEdB226LQWNFs0HrG9tBOXkBQn1kFULBTylCBTs9QkkmUUKNEWVC0fx4Qgp0hkKsaZBCTl+aQvBUpEKSSq5CNEC4QtY1wkJ4K8xCGiHWQrwW4EJeDOpCAAL0QqL3/UKi9gNDc/EIQ0TsDUMV5xJD5uEXQ7fcHEOI1yFDWdImQyrNK0P7xzBDzMI1Q529OkNuuD9DP7NEQxCuSUPhqE5DsqNTQ4OeWENTmV1DJJRiQ/WOZ0PGiWxDl4RxQ2h/dkM5entDhTqAQ+63gkNWNYVDv7KHQycwikOQrYxD+CqPQ2GokUPJJZRDMqOWQ5ogmUMDnptDaxueQ9SYoEM8FqNDpJOlQw0RqEN1jqpD3gutQwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOj+xQD47sUAcLvFAPBNxQAAacMAQDJFAGilRQB41EUAoPtFAOgARgDw9UUAyOJFACjGRQDIoEUAcHlFAJAxRQAAukQAQA1EAADtwwAAvcQAIA7FAGA/xQDgZcUAaIjFAGiVxQBQpsUAQLLFAAC9xQAox8UAGMzFAIjVxQAw2sUAgN7FABDkxQA46cUAeOrFAMjwxQCw8MUAqPPFAJj1xQDQ9sUAAPnFAMj4xQDQ+cUA6PvFAJj7xQCg/MUAuP3FALD9xQAI/sUAcP7FACD/xQBY/8UAAADGANj/xQAYAMYAMADGACQAxgBkAMYAgADGAKAAxgB8AMYAeADGAMAAxgCgAMYAuADGAJQAxgDAAMYApADGAMAAxgDAAMYAwADGAMwAxgDEAMYA3ADGAOQAxgDkAMYA3ADGANAAxgDkAMYA5ADGAOAAxgDkAMYA5ADGANwAxgDcAMYA6ADGANgAxgDkAMYA3ADGAOgAxgDcAMYA6ADGAOQAxgDgAMYA5ADGAOgAxgDkAMYA5ADGAOgAxgDoAMYA6ADGAOgAxgDoAMYA6ADGAOgAxgDoAMYA5ADGAOgAxgDoAMYA6ADGAOgAxgDoAMYA6ADGAOgAxgDoAMYA6ADGAOQAxgDoAMYA5ADGAOgAxgDoAMYA6ADGAOgAxgDoAMYA6ADGAOgAxgDoAMYA6ADGAOQAxgDoAMYA6ADGAOgAxgDoAMYA6ADGAOgAxgDoAMYA6ADGAOgAxgDkAMY=");</script>
+<script>
+  function xyDecodeB64(chunks, total) {const bytes = new Uint8Array(total); let off = 0;const native = typeof bytes.setFromBase64 === "function";for (let i = 0; i < chunks.length; i++) {const s = chunks[i];if (native) { off += bytes.subarray(off).setFromBase64(s).written; }else { const bin = atob(s), n = bin.length;for (let j = 0; j < n; j++) bytes[off + j] = bin.charCodeAt(j); off += n; }} return bytes.buffer; }
+  const spec = {"protocol":3,"width":"100%","height":430,"title":"Latency histogram with x-only zoom","x_axis":{"id":"x","kind":"linear","label":"request latency (ms)","range":[-12.133942518350535,726.8611412011858],"side":"bottom"},"y_axis":{"id":"y","kind":"linear","label":"requests","range":[0.0,16995.0],"side":"left"},"axes":{"x":{"id":"x","kind":"linear","label":"request latency (ms)","range":[-12.133942518350535,726.8611412011858],"side":"bottom"},"y":{"id":"y","kind":"linear","label":"requests","range":[0.0,16995.0],"side":"left"}},"traces":[{"id":0,"kind":"histogram","name":"requests","style":{"color":"#7c3aed","opacity":0.86,"role":"histogram","cumulative":false,"density":false},"tier":"direct","n_points":250000,"n_marks":140,"x_axis":"x","y_axis":"y","x0":0,"x1":1,"y0":2,"y1":3}],"columns":[{"byte_offset":0,"len":140,"offset":354.87372372241646,"scale":1.0,"kind":"float"},{"byte_offset":560,"len":140,"offset":359.8534749604188,"scale":1.0,"kind":"float"},{"byte_offset":1120,"len":140,"offset":0.0,"scale":1.0,"kind":"float"},{"byte_offset":1680,"len":140,"offset":8250.0,"scale":1.0,"kind":"float"}],"backend":"native","show_legend":true,"dom":{"style":{"--chart-bg":"#fafafa","--chart-grid":"rgba(100, 116, 139, 0.16)"}},"interaction":{"zoom_axes":["x"]}};
+  const buf = xyDecodeB64(__xyChunks, 2240);
+  __xyChunks.length = 0;
+  xy.renderStandalone(document.getElementById("chart"), spec, buf);
+</script>
+</body>
+</html>

@@ -209,6 +209,21 @@ def histogram_demo() -> xy.Chart:
     )
 
 
+def histogram_x_zoom_demo() -> xy.Chart:
+    rng = np.random.default_rng(73)
+    values = rng.lognormal(mean=4.25, sigma=0.48, size=250_000)
+    return xy.histogram_chart(
+        xy.hist(values, bins=140, name="requests", color="#7c3aed", opacity=0.86),
+        xy.interaction_config(zoom_axes=("x",)),
+        xy.x_axis(label="request latency (ms)"),
+        xy.y_axis(label="requests"),
+        xy.theme(plot_background="#fafafa", grid_color="rgba(100, 116, 139, 0.16)"),
+        title="Latency histogram with x-only zoom",
+        width="100%",
+        height=430,
+    )
+
+
 def bar_column_demo() -> xy.Chart:
     categories = ["Search", "Ads", "Email", "Direct", "Partner", "Social"]
     values = np.array(
@@ -276,6 +291,142 @@ def horizontal_bar_demo() -> xy.Chart:
         xy.x_axis(label="revenue"),
         xy.y_axis(label="region"),
         title="Horizontal category bars",
+        width="100%",
+        height=430,
+    )
+
+
+def normalized_bar_demo() -> xy.Chart:
+    channels = ["Organic", "Paid", "Partner", "Lifecycle", "Events"]
+    values = np.array(
+        [
+            [52.0, 34.0, 22.0, 44.0, 28.0],
+            [31.0, 48.0, 56.0, 33.0, 45.0],
+            [17.0, 18.0, 22.0, 23.0, 27.0],
+        ]
+    )
+    return xy.bar_chart(
+        xy.bar(
+            channels,
+            values,
+            mode="normalized",
+            series=["New", "Returning", "Reactivated"],
+            colors=["#2563eb", "#14b8a6", "#f59e0b"],
+            opacity=0.9,
+        ),
+        xy.x_axis(label="acquisition channel"),
+        xy.y_axis(
+            label="customer mix",
+            domain=(0, 1),
+            tick_values=[0, 0.25, 0.5, 0.75, 1],
+            tick_labels=["0%", "25%", "50%", "75%", "100%"],
+        ),
+        xy.theme(plot_background="#f8fafc", grid_color="rgba(100, 116, 139, 0.18)"),
+        title="100% stacked customer mix",
+        width="100%",
+        height=430,
+    )
+
+
+def diverging_bar_demo() -> xy.Chart:
+    products = ["Core", "Cloud", "Data", "Mobile", "Support", "Labs"]
+    changes = [0.34, 0.21, 0.12, -0.08, -0.17, 0.27]
+    colors = ["#0f766e" if value >= 0 else "#e11d48" for value in changes]
+    labels = [f"{value:+.0%}" for value in changes]
+
+    return xy.bar_chart(
+        *[
+            xy.bar(
+                [product],
+                [value],
+                name=product,
+                color=color,
+                width=0.68,
+                opacity=0.92,
+                corner_radius=(6, 6),
+            )
+            for product, value, color in zip(products, changes, colors, strict=True)
+        ],
+        *[
+            xy.text(
+                product,
+                value,
+                label,
+                dx=0,
+                dy=-10 if value >= 0 else 18,
+                anchor="middle",
+                color="#0f172a",
+                style={"font_size": "13px", "font_weight": "700"},
+            )
+            for product, value, label in zip(products, changes, labels, strict=True)
+        ],
+        xy.hline(0, color="#64748b", width=1.4),
+        xy.x_axis(label="product"),
+        xy.y_axis(
+            label="year-over-year change",
+            domain=(-0.3, 0.45),
+            tick_values=[-0.25, 0, 0.25],
+            tick_labels=["-25%", "0%", "+25%"],
+        ),
+        xy.legend(show=False),
+        xy.theme(plot_background="#ffffff", grid_color="rgba(100, 116, 139, 0.16)"),
+        title="Diverging product growth",
+        width="100%",
+        height=430,
+    )
+
+
+def rounded_goal_bar_demo() -> xy.Chart:
+    teams = ["Platform", "Growth", "Data", "Success", "Security"]
+    completion = [92.0, 84.0, 78.0, 71.0, 63.0]
+    fills = [
+        {"gradient": "linear-gradient(to right, #2563eb, #60a5fa)", "space": "plot"},
+        {"gradient": "linear-gradient(to right, #7c3aed, #a78bfa)", "space": "plot"},
+        {"gradient": "linear-gradient(to right, #0891b2, #22d3ee)", "space": "plot"},
+        {"gradient": "linear-gradient(to right, #0f766e, #34d399)", "space": "plot"},
+        {"gradient": "linear-gradient(to right, #c2410c, #fb923c)", "space": "plot"},
+    ]
+
+    return xy.bar_chart(
+        *[
+            xy.bar(
+                [team],
+                [value],
+                orientation="horizontal",
+                name=team,
+                fill=fill,
+                width=0.62,
+                corner_radius=10,
+                stroke="rgba(15, 23, 42, 0.12)",
+                stroke_width=1,
+                opacity=0.96,
+            )
+            for team, value, fill in zip(teams, completion, fills, strict=True)
+        ],
+        *[
+            xy.text(
+                value,
+                team,
+                f"{value:.0f}%",
+                dx=10,
+                dy=4,
+                anchor="start",
+                color="#0f172a",
+                style={"font_size": "13px", "font_weight": "800"},
+            )
+            for team, value in zip(teams, completion, strict=True)
+        ],
+        xy.vline(80, text="goal", color="#475569", width=1.5),
+        xy.x_axis(
+            label="quarterly goal completion",
+            domain=(0, 110),
+            tick_values=[0, 25, 50, 75, 100],
+            tick_labels=["0%", "25%", "50%", "75%", "100%"],
+        ),
+        xy.y_axis(label=None),
+        xy.legend(show=False),
+        xy.theme(plot_background="#f8fafc", grid_color="rgba(148, 163, 184, 0.20)"),
+        title="Team goal progress",
         width="100%",
         height=430,
     )
@@ -595,6 +746,7 @@ def interaction_basics_demo() -> xy.Chart:
             brush=True,
             crosshair=True,
             view_change=True,
+            zoom_axes=("x",),
             link_group="demo-linked-x",
             link_axes=("x",),
         ),
@@ -603,7 +755,7 @@ def interaction_basics_demo() -> xy.Chart:
         xy.legend(),
         xy.x_axis(label="time", tick_count=13),
         xy.y_axis(label="value"),
-        title="Crosshair, click, brush select, linked x-axis",
+        title="X-only zoom, crosshair, click, and brush select",
         width="100%",
         height=430,
     )
@@ -796,9 +948,13 @@ def main() -> None:
     write_plotly_chart("plotly_colored_scatter.html")
     write_chart(density_scatter(), "density_scatter.html")
     write_chart(histogram_demo(), "histogram.html")
+    write_chart(histogram_x_zoom_demo(), "histogram_x_zoom.html")
     write_chart(bar_column_demo(), "bar_column.html")
     write_chart(stacked_bar_demo(), "stacked_bar.html")
     write_chart(horizontal_bar_demo(), "horizontal_bar.html")
+    write_chart(normalized_bar_demo(), "normalized_bar.html")
+    write_chart(diverging_bar_demo(), "diverging_bar.html")
+    write_chart(rounded_goal_bar_demo(), "rounded_goal_bar.html")
     write_chart(heatmap_demo(), "heatmap.html")
     write_chart(composed_layers_demo(), "composed_layers.html")
     write_annotated_heatmap_chart()

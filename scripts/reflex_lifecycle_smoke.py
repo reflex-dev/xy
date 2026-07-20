@@ -48,6 +48,7 @@ CHART_ASSETS = (
     "area.html",
     "bar_column.html",
     "histogram.html",
+    "histogram_x_zoom.html",
     "heatmap.html",
     "colored_scatter.html",
     "density_scatter.html",
@@ -55,6 +56,9 @@ CHART_ASSETS = (
     "live_drilldown_100m.html",
     "stacked_bar.html",
     "horizontal_bar.html",
+    "normalized_bar.html",
+    "diverging_bar.html",
+    "rounded_goal_bar.html",
     "interaction_basics.html",
 )
 

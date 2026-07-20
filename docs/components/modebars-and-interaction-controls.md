@@ -61,6 +61,20 @@ Supplying a Python callback on the chart automatically enables its matching
 interaction. Browser gestures still work in standalone HTML, but Python
 callbacks require a live notebook or framework transport.
 
+Limit zoom to one axis with `zoom_axes`. The setting applies consistently to
+wheel zoom, the modebar zoom-in/out actions, and box zoom:
+
+~~~python
+chart = xy.line_chart(
+    xy.line([0, 1, 2, 3], [1, 3, 2, 5]),
+    xy.interaction_config(zoom_axes=("x",)),
+)
+~~~
+
+Use `zoom_axes=("y",)` for y-only zoom. Omitting the option preserves the
+default two-axis behavior. Pan remains independent and continues to follow the
+`pan` and `navigation` switches.
+
 Selection controls include box, lasso, x-range, and y-range modes. The
 `on_select` callback receives a canonical `Selection`; `on_brush` receives the
 box or polygon geometry.

@@ -251,6 +251,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         navigation: Optional[bool] = None,
         pan: Optional[bool] = None,
         zoom: Optional[bool] = None,
+        zoom_axes: Optional[tuple[str, ...]] = None,
         view_change: Optional[bool] = None,
         link_group: Optional[str] = None,
         link_axes: tuple[str, ...] = ("x", "y"),
@@ -272,6 +273,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             normalized = self._optional_bool(value, f"interaction {name}")
             if normalized is not None:
                 updates[name] = normalized
+        if zoom_axes is not None:
+            updates["zoom_axes"] = self._zoom_axes(zoom_axes)
         if link_group is not None:
             group = self._optional_text(link_group, "interaction link_group")
             if not group:
@@ -491,6 +494,21 @@ class Figure(AnnotationsMixin, PayloadMixin):
         axes = list(value)
         if any(axis not in {"x", "y"} for axis in axes):
             raise ValueError("interaction link_axes must contain only 'x' and/or 'y'")
+        out: list[str] = []
+        for axis in axes:
+            if axis not in out:
+                out.append(axis)
+        return out
+
+    @staticmethod
+    def _zoom_axes(value: Any) -> list[str]:
+        if not isinstance(value, (tuple, list)):
+            raise ValueError("interaction zoom_axes must be a tuple/list containing 'x' and/or 'y'")
+        axes = list(value)
+        if not axes:
+            raise ValueError("interaction zoom_axes must contain at least one axis")
+        if any(axis not in {"x", "y"} for axis in axes):
+            raise ValueError("interaction zoom_axes must contain only 'x' and/or 'y'")
         out: list[str] = []
         for axis in axes:
             if axis not in out:
@@ -1059,6 +1077,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
         ):
             if name in self.interaction:
                 spec[name] = self._bool_param(self.interaction[name], f"interaction {name}")
+        if "zoom_axes" in self.interaction:
+            spec["zoom_axes"] = self._zoom_axes(self.interaction["zoom_axes"])
         link_group = self.interaction.get("link_group")
         if link_group is not None:
             group = self._optional_text(link_group, "interaction link_group")

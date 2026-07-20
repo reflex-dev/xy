@@ -300,6 +300,7 @@ class Interaction(Component):
     navigation: Optional[bool] = None
     pan: Optional[bool] = None
     zoom: Optional[bool] = None
+    zoom_axes: Optional[tuple[str, ...]] = None
     view_change: Optional[bool] = None
     link_group: Optional[str] = None
     link_axes: tuple[str, ...] = ("x", "y")
@@ -2431,6 +2432,7 @@ def interaction_config(
     navigation: Optional[bool] = None,
     pan: Optional[bool] = None,
     zoom: Optional[bool] = None,
+    zoom_axes: Optional[tuple[str, ...]] = None,
     view_change: Optional[bool] = None,
     link_group: Optional[str] = None,
     link_axes: tuple[str, ...] = ("x", "y"),
@@ -2449,6 +2451,9 @@ def interaction_config(
         zoom: Whether viewport zoom is enabled. ``False`` ignores wheel and
             box zoom, double-click reset, and modebar zoom controls. The
             default keeps zooming enabled.
+        zoom_axes: Axis dimensions changed by wheel, modebar, and box zoom.
+            Use ``("x",)`` for x-only zoom or ``("y",)`` for y-only zoom.
+            The default changes both axes.
         view_change: Whether pan, zoom, and reset emit range events.
         link_group: Identifier used to synchronize charts in the browser.
         link_axes: Axes synchronized within the link group.
@@ -2462,6 +2467,7 @@ def interaction_config(
         navigation=navigation,
         pan=pan,
         zoom=zoom,
+        zoom_axes=zoom_axes,
         view_change=view_change,
         link_group=link_group,
         link_axes=link_axes,
@@ -2569,6 +2575,7 @@ class Chart(Component):
         navigation: Optional[bool] = None,
         pan: Optional[bool] = None,
         zoom: Optional[bool] = None,
+        zoom_axes: Optional[tuple[str, ...]] = None,
         view_change: Optional[bool] = None,
         link_group: Optional[str] = None,
         link_axes: tuple[str, ...] = ("x", "y"),
@@ -2597,6 +2604,7 @@ class Chart(Component):
         self.navigation = navigation
         self.pan = pan
         self.zoom = zoom
+        self.zoom_axes = zoom_axes
         self.view_change = view_change
         self.link_group = link_group
         self.link_axes = link_axes
@@ -2702,6 +2710,7 @@ class Chart(Component):
             or self.navigation is not None
             or self.pan is not None
             or self.zoom is not None
+            or self.zoom_axes is not None
             or self.view_change is not None
             or self.link_group is not None
         ):
@@ -2714,6 +2723,7 @@ class Chart(Component):
                 navigation=self.navigation,
                 pan=self.pan,
                 zoom=self.zoom,
+                zoom_axes=self.zoom_axes,
                 view_change=self.view_change,
                 link_group=self.link_group,
                 link_axes=self.link_axes,
@@ -2728,6 +2738,7 @@ class Chart(Component):
                 navigation=node.navigation,
                 pan=node.pan,
                 zoom=node.zoom,
+                zoom_axes=node.zoom_axes,
                 view_change=node.view_change,
                 link_group=node.link_group,
                 link_axes=node.link_axes,

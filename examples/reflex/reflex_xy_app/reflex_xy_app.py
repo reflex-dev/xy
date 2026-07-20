@@ -143,6 +143,14 @@ HISTOGRAM_CHART = {
     "stat": "500k values",
 }
 
+HISTOGRAM_X_ZOOM_CHART = {
+    "id": "histogram-x-zoom",
+    "title": "Histogram — X-only Zoom",
+    "subtitle": "Wheel, toolbar, and box zoom change the latency range while y stays fixed.",
+    "src": "/charts/histogram_x_zoom.html",
+    "stat": "x-only zoom",
+}
+
 BAR_CHART = {
     "id": "grouped-bars",
     "title": "Grouped Bars",
@@ -165,6 +173,30 @@ HORIZONTAL_BAR_CHART = {
     "subtitle": "Category labels on the y-axis with value bars extending along x.",
     "src": "/charts/horizontal_bar.html",
     "stat": "horizontal",
+}
+
+NORMALIZED_BAR_CHART = {
+    "id": "normalized-bars",
+    "title": "100% Stacked Bars",
+    "subtitle": "Per-channel customer mix normalized to a consistent 100% total.",
+    "src": "/charts/normalized_bar.html",
+    "stat": "normalized",
+}
+
+DIVERGING_BAR_CHART = {
+    "id": "diverging-bars",
+    "title": "Diverging Growth Bars",
+    "subtitle": "Positive and negative year-over-year change with direct value labels.",
+    "src": "/charts/diverging_bar.html",
+    "stat": "+ / -",
+}
+
+ROUNDED_GOAL_BAR_CHART = {
+    "id": "rounded-goal-bars",
+    "title": "Rounded Goal Bars",
+    "subtitle": "Gradient fills, rounded corners, value labels, and an 80% target rule.",
+    "src": "/charts/rounded_goal_bar.html",
+    "stat": "styled",
 }
 
 HEATMAP_CHART = {
@@ -202,7 +234,7 @@ AXES_SCALES_CHART = {
 INTERACTION_CHART = {
     "id": "interaction-basics",
     "title": "Interaction Basics",
-    "subtitle": "Crosshair, click events, brush selection, and linked-view configuration.",
+    "subtitle": "X-only zoom plus crosshair, click, brush, and linked-view configuration.",
     "src": "/charts/interaction_basics.html",
     "stat": "events",
 }
@@ -213,13 +245,20 @@ BUSINESS_CHARTS = [
     RETENTION_CHART,
 ]
 
+BAR_CHARTS = [
+    BAR_CHART,
+    STACKED_BAR_CHART,
+    HORIZONTAL_BAR_CHART,
+    NORMALIZED_BAR_CHART,
+    DIVERGING_BAR_CHART,
+    ROUNDED_GOAL_BAR_CHART,
+]
+
 CORE_CHARTS = [
     LINE_CHART,
     AREA_CHART,
     HISTOGRAM_CHART,
-    BAR_CHART,
-    STACKED_BAR_CHART,
-    HORIZONTAL_BAR_CHART,
+    HISTOGRAM_X_ZOOM_CHART,
     HEATMAP_CHART,
     COMPOSED_LAYERS_CHART,
     ANNOTATED_HEATMAP_CHART,
@@ -235,6 +274,7 @@ LARGE_DATA_CHARTS = [
 
 CHART_NAV = [
     *BUSINESS_CHARTS,
+    *BAR_CHARTS,
     *CORE_CHARTS,
     *LARGE_DATA_CHARTS,
 ]
@@ -414,6 +454,23 @@ chart = xy.chart(
     height=430,
 )
 """.strip(),
+    "histogram-x-zoom": """
+import xy
+import numpy as np
+
+rng = np.random.default_rng(73)
+values = rng.lognormal(mean=4.25, sigma=0.48, size=250_000)
+
+chart = xy.chart(
+    xy.hist(values, bins=140, name="requests", color="#7c3aed"),
+    xy.interaction_config(zoom_axes=("x",)),
+    xy.x_axis(label="request latency (ms)"),
+    xy.y_axis(label="requests"),
+    title="Latency histogram with x-only zoom",
+    width="100%",
+    height=430,
+)
+""".strip(),
     "grouped-bars": """
 import xy
 import numpy as np
@@ -478,6 +535,114 @@ chart = xy.chart(
     xy.x_axis(label="revenue"),
     xy.y_axis(label="region"),
     title="Horizontal category bars",
+    width="100%",
+    height=430,
+)
+""".strip(),
+    "normalized-bars": """
+import xy
+import numpy as np
+
+channels = ["Organic", "Paid", "Partner", "Lifecycle", "Events"]
+values = np.array([
+    [52, 34, 22, 44, 28],
+    [31, 48, 56, 33, 45],
+    [17, 18, 22, 23, 27],
+])
+
+chart = xy.chart(
+    xy.bar(
+        channels,
+        values,
+        mode="normalized",
+        series=["New", "Returning", "Reactivated"],
+        colors=["#2563eb", "#14b8a6", "#f59e0b"],
+    ),
+    xy.x_axis(label="acquisition channel"),
+    xy.y_axis(
+        label="customer mix",
+        domain=(0, 1),
+        tick_values=[0, 0.25, 0.5, 0.75, 1],
+        tick_labels=["0%", "25%", "50%", "75%", "100%"],
+    ),
+    title="100% stacked customer mix",
+    width="100%",
+    height=430,
+)
+""".strip(),
+    "diverging-bars": """
+import xy
+
+products = ["Core", "Cloud", "Data", "Mobile", "Support", "Labs"]
+changes = [0.34, 0.21, 0.12, -0.08, -0.17, 0.27]
+
+chart = xy.chart(
+    *[
+        xy.bar(
+            [product],
+            [value],
+            color="#0f766e" if value >= 0 else "#e11d48",
+            width=0.68,
+            corner_radius=(6, 6),
+        )
+        for product, value in zip(products, changes, strict=True)
+    ],
+    *[
+        xy.text(
+            product,
+            value,
+            f"{value:+.0%}",
+            dx=0,
+            dy=-10 if value >= 0 else 18,
+            anchor="middle",
+        )
+        for product, value in zip(products, changes, strict=True)
+    ],
+    xy.hline(0, color="#64748b"),
+    xy.x_axis(label="product"),
+    xy.y_axis(label="year-over-year change", domain=(-0.3, 0.45)),
+    xy.legend(show=False),
+    title="Diverging product growth",
+    width="100%",
+    height=430,
+)
+""".strip(),
+    "rounded-goal-bars": """
+import xy
+
+teams = ["Platform", "Growth", "Data", "Success", "Security"]
+completion = [92, 84, 78, 71, 63]
+fills = [
+    {"gradient": "linear-gradient(to right, #2563eb, #60a5fa)", "space": "plot"},
+    {"gradient": "linear-gradient(to right, #7c3aed, #a78bfa)", "space": "plot"},
+    {"gradient": "linear-gradient(to right, #0891b2, #22d3ee)", "space": "plot"},
+    {"gradient": "linear-gradient(to right, #0f766e, #34d399)", "space": "plot"},
+    {"gradient": "linear-gradient(to right, #c2410c, #fb923c)", "space": "plot"},
+]
+
+chart = xy.chart(
+    *[
+        xy.bar(
+            [team],
+            [value],
+            orientation="horizontal",
+            fill=fill,
+            width=0.62,
+            corner_radius=10,
+            stroke="rgba(15, 23, 42, 0.12)",
+            stroke_width=1,
+        )
+        for team, value, fill in zip(teams, completion, fills, strict=True)
+    ],
+    *[
+        xy.text(value, team, f"{value:.0f}%", dx=10, dy=4, anchor="start")
+        for team, value in zip(teams, completion, strict=True)
+    ],
+    xy.vline(80, text="goal", color="#475569"),
+    xy.x_axis(label="quarterly goal completion", domain=(0, 110)),
+    xy.y_axis(label=None),
+    xy.legend(show=False),
+    title="Team goal progress",
     width="100%",
     height=430,
 )
@@ -694,6 +859,7 @@ chart = xy.chart(
         select=True,
         brush=True,
         crosshair=True,
+        zoom_axes=("x",),
         link_group="demo-linked-x",
         link_axes=("x",),
     ),
@@ -703,7 +869,7 @@ chart = xy.chart(
     xy.x_axis(label="time", tick_count=13),
     xy.y_axis(label="value"),
     on_brush=handle_brush,
-    title="Crosshair, click, brush select, linked x-axis",
+    title="X-only zoom, crosshair, click, and brush select",
     width="100%",
     height=430,
 )
@@ -1545,7 +1711,7 @@ def index() -> rx.Component:
             rx.grid(
                 metric("Renderer", "WebGL2"),
                 metric("Transport", "binary f32"),
-                metric("Business demos", str(len(BUSINESS_CHARTS))),
+                metric("Bar chart demos", str(len(BAR_CHARTS))),
                 metric("Largest demo", "100M points"),
                 columns={"initial": "1", "sm": "2", "lg": "4"},
                 gap="1rem",
@@ -1555,6 +1721,7 @@ def index() -> rx.Component:
             hash_scroll_bridge(),
             core_api_status(),
             chart_section("Business charts", BUSINESS_CHARTS),
+            chart_section("Bar chart examples", BAR_CHARTS),
             chart_section("Core 2D gallery", CORE_CHARTS),
             chart_section("Large-data demos", LARGE_DATA_CHARTS, columns={"initial": "1"}),
             spacing="5",

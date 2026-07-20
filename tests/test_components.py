@@ -598,6 +598,7 @@ def test_declarative_core_contract_for_layered_axis_chrome_and_interaction():
             navigation=False,
             pan=True,
             zoom=True,
+            zoom_axes=("x",),
             view_change=True,
             link_group="ops",
             link_axes=("x",),
@@ -689,6 +690,7 @@ def test_declarative_core_contract_for_layered_axis_chrome_and_interaction():
         "navigation": False,
         "pan": True,
         "zoom": True,
+        "zoom_axes": ["x"],
         "view_change": True,
         "link_group": "ops",
         "link_axes": ["x"],
@@ -711,11 +713,27 @@ def test_chart_level_pan_and_zoom_kwargs_build_declarative_spec():
         xy.bar(x=["A", "B"], y=[1.0, 2.0]),
         pan=False,
         zoom=False,
+        zoom_axes=("x",),
     )
 
     spec, _ = chart.figure().build_payload()
 
-    assert spec["interaction"] == {"pan": False, "zoom": False}
+    assert spec["interaction"] == {"pan": False, "zoom": False, "zoom_axes": ["x"]}
+
+
+def test_zoom_axes_defaults_to_both_and_validates_explicit_dimensions():
+    default_chart = xy.chart(xy.scatter(x=[1.0, 2.0], y=[2.0, 3.0]))
+    default_spec, _ = default_chart.figure().build_payload()
+    assert "zoom_axes" not in default_spec.get("interaction", {})
+
+    for zoom_axes in ((), ("z",), "x"):
+        chart = xy.chart(
+            xy.scatter(x=[1.0, 2.0], y=[2.0, 3.0]),
+            xy.interaction_config(zoom_axes=zoom_axes),
+        )
+        with pytest.raises(ValueError, match="zoom_axes"):
+            chart.figure()
+        assert chart._figure is None
 
 
 def test_legend_and_tooltip_accept_opaque_framework_components_without_serializing():

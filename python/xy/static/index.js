@@ -7188,8 +7188,13 @@ return Number.isFinite(span) && span > 0 && Number.isFinite(homeSpan) && homeSpa
 ? (homeSpan / span) * 100
 : null;
 };
-const percent = axisPercent("x", this.view.x0, this.view.x1, this.view0.x0, this.view0.x1)
-?? axisPercent("y", this.view.y0, this.view.y1, this.view0.y0, this.view0.y1)
+const zoomAxes = this._zoomAxes();
+const percent = (zoomAxes.has("x")
+? axisPercent("x", this.view.x0, this.view.x1, this.view0.x0, this.view0.x1)
+: null)
+?? (zoomAxes.has("y")
+? axisPercent("y", this.view.y0, this.view.y1, this.view0.y0, this.view0.y1)
+: null)
 ?? 100;
 const rounded = Math.round(percent);
 const exactText = percent < 1 ? "<1%" : `${rounded}%`;
@@ -7306,11 +7311,18 @@ const x = this._clampAxisRange("x", view.x0, view.x1);
 const y = this._clampAxisRange("y", view.y0, view.y1);
 return { x0: x[0], x1: x[1], y0: y[0], y1: y[1] };
 },
+_zoomAxes() {
+const configured = this.spec?.interaction?.zoom_axes;
+if (!Array.isArray(configured)) return new Set(["x", "y"]);
+const axes = new Set(configured.filter((axis) => axis === "x" || axis === "y"));
+return axes.size ? axes : new Set(["x", "y"]);
+},
 _zoomBy(f, animate = false) {
 const base = this._viewAnim ? this._viewAnim.target : this.view;
 const { x0, x1, y0, y1 } = base;
-const xr = this._zoomAxisRange("x", x0, x1, f, 0.5);
-const yr = this._zoomAxisRange("y", y0, y1, f, 0.5);
+const axes = this._zoomAxes();
+const xr = axes.has("x") ? this._zoomAxisRange("x", x0, x1, f, 0.5) : [x0, x1];
+const yr = axes.has("y") ? this._zoomAxisRange("y", y0, y1, f, 0.5) : [y0, y1];
 if (!xr || !yr) return;
 this._setView({ x0: xr[0], x1: xr[1], y0: yr[0], y1: yr[1] }, { animate });
 },
@@ -7332,8 +7344,9 @@ this._axisValue(axis, ca + (c1 - ca) * f),
 _zoomAt(f, fx, fy, animate = false, duration = 120) {
 const base = this._viewAnim ? this._viewAnim.target : this.view;
 const { x0, x1, y0, y1 } = base;
-const xr = this._zoomAxisRange("x", x0, x1, f, fx);
-const yr = this._zoomAxisRange("y", y0, y1, f, fy);
+const axes = this._zoomAxes();
+const xr = axes.has("x") ? this._zoomAxisRange("x", x0, x1, f, fx) : [x0, x1];
+const yr = axes.has("y") ? this._zoomAxisRange("y", y0, y1, f, fy) : [y0, y1];
 if (!xr || !yr) return;
 this._setView({ x0: xr[0], x1: xr[1], y0: yr[0], y1: yr[1] }, { animate, duration });
 },
@@ -7355,22 +7368,30 @@ this._zoomAt(pending.factor, pending.fx, pending.fy, false);
 });
 },
 _zoomToBox(d0, d1, animate = false) {
+const axes = this._zoomAxes();
 const xa = this._axis("x");
 const ya = this._axis("y");
 const xlo = Math.min(d0[0], d1[0]), xhi = Math.max(d0[0], d1[0]);
 const ylo = Math.min(d0[1], d1[1]), yhi = Math.max(d0[1], d1[1]);
-const cx0 = this._axisCoord(xa, xlo), cx1 = this._axisCoord(xa, xhi);
-const cy0 = this._axisCoord(ya, ylo), cy1 = this._axisCoord(ya, yhi);
-if (![cx0, cx1, cy0, cy1].every(Number.isFinite)) return;
-const minSpanX = Math.max(Math.abs(cx0), Math.abs(cx1), 1e-30) * 1e-12;
-const minSpanY = Math.max(Math.abs(cy0), Math.abs(cy1), 1e-30) * 1e-12;
-if (Math.abs(cx1 - cx0) < minSpanX || Math.abs(cy1 - cy0) < minSpanY) return;
 const xReversed = this.view.x1 < this.view.x0;
 const yReversed = this.view.y1 < this.view.y0;
-const x0 = xReversed ? xhi : xlo;
-const x1 = xReversed ? xlo : xhi;
-const y0 = yReversed ? yhi : ylo;
-const y1 = yReversed ? ylo : yhi;
+let { x0, x1, y0, y1 } = this.view;
+if (axes.has("x")) {
+const cx0 = this._axisCoord(xa, xlo), cx1 = this._axisCoord(xa, xhi);
+if (![cx0, cx1].every(Number.isFinite)) return;
+const minSpanX = Math.max(Math.abs(cx0), Math.abs(cx1), 1e-30) * 1e-12;
+if (Math.abs(cx1 - cx0) < minSpanX) return;
+x0 = xReversed ? xhi : xlo;
+x1 = xReversed ? xlo : xhi;
+}
+if (axes.has("y")) {
+const cy0 = this._axisCoord(ya, ylo), cy1 = this._axisCoord(ya, yhi);
+if (![cy0, cy1].every(Number.isFinite)) return;
+const minSpanY = Math.max(Math.abs(cy0), Math.abs(cy1), 1e-30) * 1e-12;
+if (Math.abs(cy1 - cy0) < minSpanY) return;
+y0 = yReversed ? yhi : ylo;
+y1 = yReversed ? ylo : yhi;
+}
 this._setView({ x0, x1, y0, y1 }, { animate });
 },
 _exportConfig() {

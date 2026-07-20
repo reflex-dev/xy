@@ -37,9 +37,13 @@ Then open the URL printed by Reflex, usually `http://localhost:3000`.
 | Plotly Scattergl | `assets/charts/plotly_colored_scatter.html` | 100k sampled points from the colored scatter distribution |
 | Density scatter | `assets/charts/density_scatter.html` | 10M points rendered as a responsive density surface |
 | Histogram | `assets/charts/histogram.html` | 500k values binned into the shared rectangle renderer |
+| Histogram with x-only zoom | `assets/charts/histogram_x_zoom.html` | Wheel, toolbar, and box zoom change x while y remains fixed |
 | Grouped bars | `assets/charts/bar_column.html` | Category-axis grouped bars using the shared rectangle renderer |
 | Stacked bars | `assets/charts/stacked_bar.html` | Stacked column bars using the shared rectangle renderer |
 | Horizontal bars | `assets/charts/horizontal_bar.html` | Category-axis horizontal bars using the shared rectangle renderer |
+| 100% stacked bars | `assets/charts/normalized_bar.html` | Per-category series normalized to a consistent 100% total |
+| Diverging bars | `assets/charts/diverging_bar.html` | Positive and negative change with direct value labels |
+| Rounded goal bars | `assets/charts/rounded_goal_bar.html` | Gradient fills, rounded corners, labels, and a target rule |
 | Heatmap | `assets/charts/heatmap.html` | Matrix values rendered as colored cells on categorical axes |
 
 Regenerate the chart assets any time with:

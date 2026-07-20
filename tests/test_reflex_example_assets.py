@@ -145,9 +145,11 @@ def test_reflex_dashboard_has_selector_and_small_business_chart() -> None:
         "BUSINESS_CHART",
         "RETENTION_CHART",
         "BUSINESS_CHARTS",
+        "BAR_CHARTS",
         "CORE_CHARTS",
         "LARGE_DATA_CHARTS",
         'chart_section("Business charts", BUSINESS_CHARTS)',
+        'chart_section("Bar chart examples", BAR_CHARTS)',
         'chart_section("Core 2D gallery", CORE_CHARTS)',
         'chart_section("Large-data demos", LARGE_DATA_CHARTS',
         "def core_api_status()",
@@ -204,10 +206,24 @@ def test_reflex_dashboard_groups_small_and_large_examples() -> None:
     ]
     assert "live-drilldown" not in {chart["id"] for chart in constants["BUSINESS_CHARTS"]}
     assert "live-drilldown" in {chart["id"] for chart in constants["LARGE_DATA_CHARTS"]}
+    assert [chart["id"] for chart in constants["BAR_CHARTS"]] == [
+        "grouped-bars",
+        "stacked-bars",
+        "horizontal-bars",
+        "normalized-bars",
+        "diverging-bars",
+        "rounded-goal-bars",
+    ]
     business_count = len(constants["BUSINESS_CHARTS"])
     assert constants["CHART_NAV"][:business_count] == constants["BUSINESS_CHARTS"]
+    bar_count = len(constants["BAR_CHARTS"])
     assert (
-        constants["CHART_NAV"][business_count : business_count + len(constants["CORE_CHARTS"])]
+        constants["CHART_NAV"][business_count : business_count + bar_count]
+        == constants["BAR_CHARTS"]
+    )
+    core_start = business_count + bar_count
+    assert (
+        constants["CHART_NAV"][core_start : core_start + len(constants["CORE_CHARTS"])]
         == constants["CORE_CHARTS"]
     )
 
