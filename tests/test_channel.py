@@ -82,6 +82,26 @@ def test_valid_pick_replies_after_malformed_input_and_fires_hover():
     assert hovered == [msg["row"]]
 
 
+def test_heatmap_pick_message_replies_without_raising():
+    z = np.arange(20 * 20, dtype=float).reshape(20, 20)
+    fig = Figure().heatmap(z).contour(z, levels=8)
+    hovered = []
+
+    reply = handle(
+        fig,
+        {"type": "pick", "seq": 7, "trace": 0, "index": 250},
+        on_hover=hovered.append,
+    )
+
+    assert reply is not None
+    msg, buffers = reply
+    assert buffers is None
+    assert msg["type"] == "pick_result"
+    assert msg["seq"] == 7
+    assert msg["row"]["color_value"] == z.reshape(-1)[250]
+    assert hovered == [msg["row"]]
+
+
 def test_stale_drill_seq_pick_replies_row_none_without_hover():
     fig = Figure().scatter(np.arange(3.0), np.arange(3.0))
     hovered = []
