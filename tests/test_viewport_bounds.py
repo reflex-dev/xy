@@ -54,4 +54,4 @@ def test_client_clamps_pan_zoom_and_reversed_log_ranges() -> None:
     assert "_clampAxisRange(axisId, lo, hi)" in source
     assert "const reverse = c1 < c0" in source
     assert "const target = this._clampView(" in source
-    assert "this.view = this._clampView({" in source
+    assert '}, { source: "pan" });' in source

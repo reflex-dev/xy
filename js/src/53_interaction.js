@@ -145,15 +145,12 @@ Object.assign(ChartView.prototype, {
         const cy0 = this._axisCoord(ya, y0), cy1 = this._axisCoord(ya, y1);
         const dx = ((e.clientX - drag.px) / this.plot.w) * (cx1 - cx0);
         const dy = ((e.clientY - drag.py) / this.plot.h) * (cy1 - cy0);
-        this.view = this._clampView({
+        this._setView({
           x0: this._axisValue(xa, cx0 - dx),
           x1: this._axisValue(xa, cx1 - dx),
           y0: this._axisValue(ya, cy0 + dy),
           y1: this._axisValue(ya, cy1 + dy),
-        });
-        this.draw();
-        this._scheduleViewRequest();
-        this._emitViewChange("pan");
+        }, { source: "pan" });
         return;
       }
       this._updateCrosshair(e);
@@ -1351,17 +1348,14 @@ Object.assign(ChartView.prototype, {
     if (![c0, c1, b0, b1].every(Number.isFinite) || b0 === b1) return [lo, hi];
     const reverse = c1 < c0;
     const boundLo = Math.min(b0, b1), boundHi = Math.max(b0, b1);
-    const boundSpan = boundHi - boundLo;
-    const span = Math.abs(c1 - c0);
-    let outLo, outHi;
-    if (span >= boundSpan) {
+    let outLo = Math.min(c0, c1), outHi = Math.max(c0, c1);
+    if (outHi - outLo >= boundHi - boundLo) {
       outLo = boundLo;
       outHi = boundHi;
     } else {
-      outLo = Math.min(c0, c1);
-      outHi = Math.max(c0, c1);
-      if (outLo < boundLo) { outHi += boundLo - outLo; outLo = boundLo; }
-      if (outHi > boundHi) { outLo -= outHi - boundHi; outHi = boundHi; }
+      const shift = Math.max(boundLo - outLo, Math.min(boundHi - outHi, 0));
+      outLo += shift;
+      outHi += shift;
     }
     const first = reverse ? outHi : outLo;
     const second = reverse ? outLo : outHi;
