@@ -2130,10 +2130,7 @@ class ChartView {
   // -- drawing --------------------------------------------------------------
 
   _map(meta, lo, hi, axisId = null) {
-    // Linear shader mapping operates directly on offset-encoded f32 values.
-    // Besides matching the legacy axis-less path, this avoids reconstructing
-    // large absolute coordinates in f32 before subtracting a deep-zoom view.
-    if (!axisId || this._axisMode(axisId) === 0) {
+    if (!axisId) {
       const mul = 2 / ((hi - lo) * meta.scale);
       const add = ((meta.offset - lo) / (hi - lo)) * 2 - 1;
       return [mul, add];
