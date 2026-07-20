@@ -176,6 +176,14 @@ def test_export_engine_is_lazy_public_enum() -> None:
     assert tuple(Engine) == (Engine.default, Engine.chromium)
 
 
+def test_theme_discovery_functions_are_typed_lazy_exports() -> None:
+    for name in ("theme_presets", "theme_palettes"):
+        function = getattr(xy, name)
+        assert name in xy.__all__
+        assert function is getattr(components, name)
+        assert get_type_hints(function)["return"] == tuple[str, ...]
+
+
 def test_chart_dom_slots_are_public_styling_contract() -> None:
     expected = (
         "root",

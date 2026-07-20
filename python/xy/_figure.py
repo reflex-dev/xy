@@ -118,6 +118,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         self.class_name: Optional[str] = None
         self.class_names: dict[str, str] = {}
         self.style: dict[str, str | int | float] = {}
+        self.default_palette: Optional[list[str]] = None
+        self.dark_style: dict[str, str | int | float] = {}
+        self.color_scheme: Optional[str] = None
         self.chrome_styles: dict[str, dict[str, str | int | float]] = {}
         self.tooltip: Optional[dict[str, Any]] = None
         self.interaction: dict[str, Any] = {}
@@ -590,6 +593,15 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if color is not None:
             color = _validate.css_color(color, "color")
         return [color for _ in range(n_series)]
+
+    def _next_default_color(self) -> str:
+        """Return the palette color for the next trace."""
+        palette = self.default_palette or DEFAULT_PALETTE
+        return palette[len(self.traces) % len(palette)]
+
+    def _categorical_palette(self) -> list[str]:
+        """Return a fresh categorical palette for wire encoding."""
+        return list(self.default_palette or DEFAULT_PALETTE)
 
     @staticmethod
     def _is_category_like(values: Any) -> bool:
@@ -1080,6 +1092,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         style = self._style_mapping(self.style, "style")
         if style:
             dom["style"] = style
+        if self.color_scheme == "system" and self.dark_style:
+            dom["styleDark"] = self._style_mapping(self.dark_style, "styleDark")
+            dom["colorScheme"] = "system"
         styles = {
             slot: self._style_mapping(slot_style, f"chrome_styles[{slot!r}]")
             for slot, slot_style in self.chrome_styles.items()

@@ -173,6 +173,7 @@ class ChartView {
     };
     this._layout();
 
+    this._themeWatch = window.matchMedia("(prefers-color-scheme: dark)");
     this._buildDom(el);
     // getComputedStyle yields nothing on a detached element, so a chart
     // constructed before its output node lands in the document (notebook
@@ -220,8 +221,10 @@ class ChartView {
     this.view = { ...this.view0 };
     this._initLinkedCharts();
 
-    this._themeWatch = window.matchMedia("(prefers-color-scheme: dark)");
-    this._onScheme = () => this.refreshTheme();
+    this._onScheme = () => {
+      this._applySchemeTokens();
+      this.refreshTheme();
+    };
     this._themeWatch.addEventListener?.("change", this._onScheme);
     // Framework theme switches usually toggle a class (for example `.dark`)
     // on the chart or one of its ancestors without changing the OS color
@@ -848,6 +851,7 @@ class ChartView {
 
   _buildDom(el) {
     const s = this.spec;
+    const dom = s.dom && typeof s.dom === "object" ? s.dom : {};
     const root = document.createElement("div");
     root.className = "xy";
     root.style.cssText =
@@ -857,13 +861,21 @@ class ChartView {
       `--xy-legend-max-height:${Math.max(40, this.plot.h - 12)}px;` +
       (this.fluidH ? "min-height:120px;" : "") + // parent without a height -> visible floor
       "font:12px system-ui,sans-serif;user-select:none;";
+    this.root = root;
+    this._schemeBaseTokens =
+      dom.style && typeof dom.style === "object" && !Array.isArray(dom.style) ? dom.style : {};
+    this._schemeDarkTokens =
+      dom.styleDark && typeof dom.styleDark === "object" && !Array.isArray(dom.styleDark)
+        ? dom.styleDark
+        : null;
+    this._schemeMode = dom.colorScheme || null;
     this._applySlot(root, "root");
+    this._applySchemeTokens();
     // A chart that brings its own backdrop (theme(background=) → inline root
     // background) marks itself so host-page overrides — VS Code's white
     // ipywidget card — can be scoped to charts that don't need it.
     if (root.style.background || root.style.backgroundColor) root.dataset.xyOwnBg = "";
     el.appendChild(root);
-    this.root = root;
     // Visual chrome defaults live in one zero-specificity stylesheet so user
     // classes/styles win (§36). Only structural/state styles stay inline below.
     ensureChromeStylesheet(root);
@@ -942,6 +954,31 @@ class ChartView {
     this._buildLegend(root);
     this._buildColorbar(root);
     this._buildReductionBadges(root);
+  }
+
+  _applySchemeTokens() {
+    if (this._schemeMode !== "system" || !this._schemeDarkTokens || !this.root) return;
+    const dark = this._themeWatch ? this._themeWatch.matches : false;
+    for (const [key, darkValue] of Object.entries(this._schemeDarkTokens)) {
+      if (typeof key !== "string") continue;
+      const property = this._stylePropertyName(key);
+      const rawValue = dark ? darkValue : this._schemeBaseTokens[key];
+      if (rawValue === undefined) {
+        if (this.root.style.getPropertyValue(property)) this.root.style.removeProperty(property);
+        continue;
+      }
+      if (typeof rawValue !== "string" && typeof rawValue !== "number") continue;
+      const cssValue = this._stylePropertyValue(property, rawValue);
+      if (cssValue != null && this.root.style.getPropertyValue(property) !== cssValue) {
+        this.root.style.setProperty(property, cssValue);
+      }
+    }
+    const ownsBackground = [...Object.keys(this._schemeBaseTokens), ...Object.keys(this._schemeDarkTokens)]
+      .some((key) => {
+        const property = this._stylePropertyName(key);
+        return property === "background" || property === "background-color";
+      });
+    if (ownsBackground) this.root.dataset.xyOwnBg = "";
   }
 
   _a11yAxisSummary(axisId, name) {

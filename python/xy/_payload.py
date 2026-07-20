@@ -15,7 +15,6 @@ from ._trace import Trace
 from .columns import Column
 from .config import (
     DECIMATION_THRESHOLD,
-    DEFAULT_PALETTE,
     DENSITY_GRID,
     DENSITY_SAMPLE_SEED,
     DENSITY_SAMPLE_TARGET,
@@ -329,13 +328,13 @@ class PayloadMixin(_Host):
             mask &= np.isfinite(base)
         return mask
 
-    @staticmethod
-    def _default_styled(t: Trace) -> dict[str, Any]:
+    def _default_styled(self, t: Trace) -> dict[str, Any]:
         """Trace style dict with the per-trace palette default when no color
         was given — the one place this rule lives (was copy-pasted per kind)."""
         style = dict(t.style)
         if style.get("color") is None:
-            style["color"] = DEFAULT_PALETTE[t.id % len(DEFAULT_PALETTE)]
+            palette = self._categorical_palette()
+            style["color"] = palette[t.id % len(palette)]
         return style
 
     @staticmethod
@@ -740,7 +739,7 @@ class PayloadMixin(_Host):
     def _ship_channels(self, t: Trace, sel, ship_scalar, ship_u8) -> tuple[Any, Any]:  # noqa: ANN001
         """Ship a trace's color/size channels (delegates to channels.py — the
         same wire shape serves the build path and drill-in view updates)."""
-        return channels.ship_channels(t, sel, ship_scalar, ship_u8, DEFAULT_PALETTE)
+        return channels.ship_channels(t, sel, ship_scalar, ship_u8, self._categorical_palette())
 
     def _density_sample_spec(
         self,

@@ -47,6 +47,7 @@ DOCS_SECTIONS = (
             ("Component Variations", "/styling/component-variations/"),
             ("Mark Styles", "/styling/mark-styles/"),
             ("Themes and Tokens", "/styling/themes-and-tokens/"),
+            ("Theme Presets", "/styling/theme-presets/"),
             ("Recipes", "/styling/recipes/"),
         ),
     ),

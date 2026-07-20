@@ -1842,6 +1842,7 @@ w: Math.max(this.fluid ? 120 : 48, cw),
 h: Math.max(this.fluidH ? 120 : 48, ch),
 };
 this._layout();
+this._themeWatch = window.matchMedia("(prefers-color-scheme: dark)");
 this._buildDom(el);
 this.theme = readTheme(this.root);
 this._themeStale = !this.root.isConnected;
@@ -1878,8 +1879,10 @@ y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
 };
 this.view = { ...this.view0 };
 this._initLinkedCharts();
-this._themeWatch = window.matchMedia("(prefers-color-scheme: dark)");
-this._onScheme = () => this.refreshTheme();
+this._onScheme = () => {
+this._applySchemeTokens();
+this.refreshTheme();
+};
 this._themeWatch.addEventListener?.("change", this._onScheme);
 if (typeof MutationObserver !== "undefined") {
 this._themeMutationObserver = new MutationObserver(() => this.refreshTheme());
@@ -2378,6 +2381,7 @@ this._scheduleViewRequest();
 }
 _buildDom(el) {
 const s = this.spec;
+const dom = s.dom && typeof s.dom === "object" ? s.dom : {};
 const root = document.createElement("div");
 root.className = "xy";
 root.style.cssText =
@@ -2387,10 +2391,18 @@ root.style.cssText =
 `--xy-legend-max-height:${Math.max(40, this.plot.h - 12)}px;` +
 (this.fluidH ? "min-height:120px;" : "") +
 "font:12px system-ui,sans-serif;user-select:none;";
+this.root = root;
+this._schemeBaseTokens =
+dom.style && typeof dom.style === "object" && !Array.isArray(dom.style) ? dom.style : {};
+this._schemeDarkTokens =
+dom.styleDark && typeof dom.styleDark === "object" && !Array.isArray(dom.styleDark)
+? dom.styleDark
+: null;
+this._schemeMode = dom.colorScheme || null;
 this._applySlot(root, "root");
+this._applySchemeTokens();
 if (root.style.background || root.style.backgroundColor) root.dataset.xyOwnBg = "";
 el.appendChild(root);
-this.root = root;
 ensureChromeStylesheet(root);
 let a11yId;
 do {
@@ -2448,6 +2460,30 @@ root.appendChild(this.tooltip);
 this._buildLegend(root);
 this._buildColorbar(root);
 this._buildReductionBadges(root);
+}
+_applySchemeTokens() {
+if (this._schemeMode !== "system" || !this._schemeDarkTokens || !this.root) return;
+const dark = this._themeWatch ? this._themeWatch.matches : false;
+for (const [key, darkValue] of Object.entries(this._schemeDarkTokens)) {
+if (typeof key !== "string") continue;
+const property = this._stylePropertyName(key);
+const rawValue = dark ? darkValue : this._schemeBaseTokens[key];
+if (rawValue === undefined) {
+if (this.root.style.getPropertyValue(property)) this.root.style.removeProperty(property);
+continue;
+}
+if (typeof rawValue !== "string" && typeof rawValue !== "number") continue;
+const cssValue = this._stylePropertyValue(property, rawValue);
+if (cssValue != null && this.root.style.getPropertyValue(property) !== cssValue) {
+this.root.style.setProperty(property, cssValue);
+}
+}
+const ownsBackground = [...Object.keys(this._schemeBaseTokens), ...Object.keys(this._schemeDarkTokens)]
+.some((key) => {
+const property = this._stylePropertyName(key);
+return property === "background" || property === "background-color";
+});
+if (ownsBackground) this.root.dataset.xyOwnBg = "";
 }
 _a11yAxisSummary(axisId, name) {
 const axis = this._axis(axisId);

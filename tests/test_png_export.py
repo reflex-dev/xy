@@ -199,6 +199,26 @@ def test_render_paints_figure_background() -> None:
     assert (img[10, 50][:3] < 100).all()
 
 
+def test_png_theme_preset_dark_and_system_fallback() -> None:
+    dark = xy.line_chart(
+        xy.line([0, 1], [0, 1]),
+        xy.theme(preset="dashboard", color_scheme="dark"),
+        width=200,
+        height=120,
+    ).figure()
+    dark_image = _raster.render_raster(*dark.build_payload(), scale=1)
+    assert tuple(dark_image[0, 0]) == (9, 9, 11, 255)
+
+    system = xy.line_chart(
+        xy.line([0, 1], [0, 1]),
+        xy.theme(preset="dashboard", color_scheme="system"),
+        width=200,
+        height=120,
+    ).figure()
+    system_image = _raster.render_raster(*system.build_payload(), scale=1)
+    assert tuple(system_image[0, 0]) == (255, 255, 255, 255)
+
+
 def test_render_composites_translucent_figure_background() -> None:
     import xy
 
