@@ -105,8 +105,14 @@ def _tailwind_class_manifest(figure: Any) -> str:
     The inventory itself is core-Figure knowledge and lives on
     :meth:`xy.Figure.dom_class_strings`; reading the built figure avoids a
     second payload compilation (which can be expensive for large charts).
+    Older xy releases do not expose that optional inventory; their static
+    payloads remain renderable, but cannot contribute classes to Tailwind's
+    source scan.
     """
-    return " ".join(figure.dom_class_strings())
+    dom_class_strings = getattr(figure, "dom_class_strings", None)
+    if not callable(dom_class_strings):
+        return ""
+    return " ".join(dom_class_strings())
 
 
 def chart(source: Any, **props: Any) -> Any:

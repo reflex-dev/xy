@@ -110,6 +110,20 @@ def test_static_chart_classes_are_visible_to_tailwind_source_scan(app_cwd):
         assert class_string in rendered
 
 
+def test_static_chart_without_class_inventory_still_compiles(app_cwd):
+    """Older core Figures predate the optional Tailwind class inventory."""
+    figure = xy.scatter_chart(xy.scatter([1, 2, 3], [3, 2, 1])).figure()
+
+    class LegacyFigure:
+        def build_payload(self):
+            return figure.build_payload()
+
+    rendered = str(reflex_xy.chart(LegacyFigure(), id="legacy-static-chart"))
+    assert 'id:"legacy-static-chart"' in rendered
+    assert "src:" in rendered
+    assert "tailwindClassTokens" not in rendered
+
+
 def test_live_chart_does_not_claim_runtime_classes_are_compile_time_known(app_cwd):
     rendered = str(reflex_xy.chart("xyfig-runtime"))
     assert "tailwindClassTokens" not in rendered
