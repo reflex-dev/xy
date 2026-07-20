@@ -300,6 +300,9 @@ def scatter(
     color_domain: Optional[tuple[float, float]] = None,
     size_range: tuple[float, float] = (2.0, 18.0),
     opacity: float = 0.8,
+    zoom_size_factor: float = 1.0,
+    zoom_opacity: Optional[float] = None,
+    zoom_emphasis: float = 16.0,
     density: Optional[bool] = None,
     symbol: str = "circle",
     stroke: Optional[str] = None,
@@ -322,6 +325,9 @@ def scatter(
         color_domain: Explicit minimum and maximum for continuous colors.
         size_range: Minimum and maximum rendered marker sizes.
         opacity: Marker opacity from zero to one.
+        zoom_size_factor: Marker-size multiplier reached on deep zoom.
+        zoom_opacity: Optional marker opacity reached on deep zoom.
+        zoom_emphasis: Zoom factor at which responsive targets are reached.
         density: Whether to force or disable density aggregation.
         symbol: Marker symbol name.
         stroke: Optional marker outline color.
@@ -346,6 +352,9 @@ def scatter(
             "color_domain": color_domain,
             "size_range": size_range,
             "opacity": opacity,
+            "zoom_size_factor": zoom_size_factor,
+            "zoom_opacity": zoom_opacity,
+            "zoom_emphasis": zoom_emphasis,
             "density": density,
             "symbol": symbol,
             "stroke": stroke,

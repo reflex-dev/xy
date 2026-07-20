@@ -3571,7 +3571,38 @@ this._renderLassoSelection?.();
 _now() {
 return performance.now();
 }
+_pointZoomStyle(g) {
+const style = g.trace?.style || {};
+const baseOpacity = this._fillOpacity(style, 0.8);
+const targetSizeFactor = Number(style.zoom_size_factor) || 1;
+const targetOpacity = style.zoom_opacity === undefined
+? baseOpacity
+: Math.max(0, Math.min(1, Number(style.zoom_opacity)));
+const emphasis = Number(style.zoom_emphasis) || 16;
+if ((targetSizeFactor === 1 && targetOpacity === baseOpacity) || emphasis <= 1) {
+return { sizeFactor: 1, opacity: baseOpacity };
+}
+const axisZoom = (axisId, lo, hi, homeLo, homeHi) => {
+const axis = this._axis(axisId);
+const span = Math.abs(this._axisCoord(axis, hi) - this._axisCoord(axis, lo));
+const homeSpan = Math.abs(
+this._axisCoord(axis, homeHi) - this._axisCoord(axis, homeLo)
+);
+return Number.isFinite(span) && span > 0 && Number.isFinite(homeSpan) && homeSpan > 0
+? homeSpan / span
+: null;
+};
+const zoom = axisZoom("x", this.view.x0, this.view.x1, this.view0.x0, this.view0.x1)
+?? axisZoom("y", this.view.y0, this.view.y1, this.view0.y0, this.view0.y1)
+?? 1;
+const t = Math.max(0, Math.min(1, Math.log(Math.max(1, zoom)) / Math.log(emphasis)));
+return {
+sizeFactor: 1 + (targetSizeFactor - 1) * t,
+opacity: baseOpacity + (targetOpacity - baseOpacity) * t,
+};
+}
 _drawPoints(g, xm, ym, opacityScale = 1) {
+const zoomStyle = this._pointZoomStyle(g);
 const simple =
 g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
 (g.symbol || 0) === 0 && (g.pointStrokeWidth || 0) <= 0 &&
@@ -3589,11 +3620,12 @@ gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
 this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
 this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
 gl.uniform1f(u("u_dpr"), this.dpr);
-gl.uniform1f(u("u_size"), g.size);
+gl.uniform1f(u("u_size"), g.size * zoomStyle.sizeFactor);
 gl.uniform1i(u("u_sizeMode"), g.sizeMode);
-gl.uniform2f(u("u_sizeRange"), g.sizeRange[0], g.sizeRange[1]);
+gl.uniform2f(u("u_sizeRange"), g.sizeRange[0] * zoomStyle.sizeFactor,
+g.sizeRange[1] * zoomStyle.sizeFactor);
 gl.uniform1i(u("u_colorMode"), g.colorMode);
-const markOpacity = this._fillOpacity(g.trace.style, 0.8) * opacityScale;
+const markOpacity = zoomStyle.opacity * opacityScale;
 gl.uniform1f(u("u_opacity"), markOpacity);
 gl.uniform1f(u("u_selectedOpacity"), this._markStateNumber("selected", "opacity", 1));
 gl.uniform1f(u("u_unselectedOpacity"), this._markStateNumber("unselected", "opacity", 0.12));
@@ -3678,9 +3710,10 @@ gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
 this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
 this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
 gl.uniform1f(u("u_dpr"), this.dpr);
-gl.uniform1f(u("u_size"), g.size);
+const zoomStyle = this._pointZoomStyle(g);
+gl.uniform1f(u("u_size"), g.size * zoomStyle.sizeFactor);
 const [r, gg, b] = g.color;
-gl.uniform4f(u("u_color"), r, gg, b, this._fillOpacity(g.trace.style, 0.8) * opacityScale);
+gl.uniform4f(u("u_color"), r, gg, b, zoomStyle.opacity * opacityScale);
 this._bindVao(
 g,
 "points-simple",
@@ -3716,7 +3749,8 @@ gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
 gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
 this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
 this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
-const defaultSize = Math.max((g.size || 4) * 1.75, (g.size || 4) + 5);
+const adjustedSize = (g.size || 4) * this._pointZoomStyle(g).sizeFactor;
+const defaultSize = Math.max(adjustedSize * 1.75, adjustedSize + 5);
 const size = Math.max(0, this._markStateNumber("hover", "size", defaultSize));
 const opacity = Math.max(0, Math.min(1, this._markStateNumber("hover", "opacity", 0.95)));
 const color = parseColor(
@@ -4707,9 +4741,11 @@ gl.uniform2f(u("u_xmap"), xm[0], xm[1]);
 gl.uniform2f(u("u_ymap"), ym[0], ym[1]);
 this._setAxisUniforms(prog, "u_x", pg.xMeta, pg.xAxis || g.xAxis);
 this._setAxisUniforms(prog, "u_y", pg.yMeta, pg.yAxis || g.yAxis);
-gl.uniform1f(u("u_size"), pg.size);
+const zoomStyle = this._pointZoomStyle(pg);
+gl.uniform1f(u("u_size"), pg.size * zoomStyle.sizeFactor);
 gl.uniform1i(u("u_sizeMode"), pg.sizeMode);
-gl.uniform2f(u("u_sizeRange"), pg.sizeRange[0], pg.sizeRange[1]);
+gl.uniform2f(u("u_sizeRange"), pg.sizeRange[0] * zoomStyle.sizeFactor,
+pg.sizeRange[1] * zoomStyle.sizeFactor);
 gl.uniform1i(u("u_pick_base"), base);
 g.pickBase = base;
 g.pickCount = pg.n;

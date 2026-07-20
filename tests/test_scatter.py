@@ -178,6 +178,41 @@ def test_size_modes():
     assert s.domain == (0.0, 9.0)
 
 
+def test_zoom_responsive_style_is_serialized_and_defaults_are_fixed():
+    fixed, _ = Figure().scatter([0.0], [1.0], size=3, opacity=0.2).build_payload()
+    assert fixed["traces"][0]["style"] == {"opacity": 0.2}
+
+    responsive, _ = Figure().scatter(
+        [0.0],
+        [1.0],
+        size=1.3,
+        opacity=0.2,
+        zoom_size_factor=4,
+        zoom_opacity=0.85,
+        zoom_emphasis=16,
+    ).build_payload()
+    assert responsive["traces"][0]["style"] == {
+        "opacity": 0.2,
+        "zoom_size_factor": 4.0,
+        "zoom_opacity": 0.85,
+        "zoom_emphasis": 16.0,
+    }
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"zoom_size_factor": 0}, "zoom_size_factor"),
+        ({"zoom_size_factor": float("inf")}, "zoom_size_factor"),
+        ({"zoom_opacity": 1.1}, "zoom_opacity"),
+        ({"zoom_emphasis": 1}, "zoom_emphasis"),
+    ],
+)
+def test_zoom_responsive_style_validation(kwargs, message):
+    with pytest.raises((TypeError, ValueError), match=message):
+        Figure().scatter([0.0], [1.0], **kwargs)
+
+
 def test_object_numeric_size_with_missing_is_continuous():
     vals = np.array([1, None, 3.0], dtype=object)
     s = ch.resolve_size(vals, 3, range_px=(2.0, 12.0))
