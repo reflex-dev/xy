@@ -18,9 +18,8 @@ from xy_docs.gallery import chart_gallery_grid
 chart_gallery_grid()
 ~~~
 
-The representative tile in each family is interactive; the remaining previews
-are SVGs rendered by XY itself so this index stays quick and avoids creating a
-WebGL context for every tile at once. Every linked family page includes a
+Every preview is a code-native inline SVG, keeping this index quick and making
+the artwork straightforward to restyle. Every linked family page includes a
 full-size live demo.
 
 All chart families use the same [composition model](/docs/xy/core-concepts/),

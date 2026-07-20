@@ -49,9 +49,8 @@ from xy_docs.config import DOCS_CONFIG, DOCS_NAVIGATION, DOCS_REDIRECTS, DOCS_SE
 from xy_docs.constants import PUBLIC_DOCS_URL, PUBLIC_XY_VERSION, SOCIAL_IMAGE_URL
 from xy_docs.footer import xy_docs_footer
 from xy_docs.gallery import (
-    _gallery_chart,
-    _iter_gallery_items,
-    _responsive_gallery_svg,
+    _GALLERY_GROUPS,
+    _gallery_preview_svg,
     chart_gallery_grid,
 )
 from xy_docs.markdown import XyDocsMarkdownTransformer, render_xy_markdown_page
@@ -71,7 +70,6 @@ SITEMAP_NAMESPACE = {"sitemap": "https://www.sitemaps.org/schemas/sitemap/0.9"}
 DOCS_APP_ROOT = Path(__file__).resolve().parent.parent
 DOCS_ROOT = DOCS_APP_ROOT.parent
 EXPORTED_SITEMAP = DOCS_APP_ROOT / ".web" / "public" / "sitemap.xml"
-EXPORTED_CLIENT_ASSETS = DOCS_APP_ROOT / ".web" / "build" / "client" / "docs" / "xy" / "assets"
 CHECK_HTML_ROUTES_PATH = DOCS_APP_ROOT / "scripts" / "check_html_routes.py"
 CHECK_HTML_ROUTES_SPEC = importlib.util.spec_from_file_location(
     "xy_docs_check_html_routes",
@@ -261,32 +259,6 @@ def test_tailwind_styling_docs_match_the_reflex_plugin_contract() -> None:
     assert "without adding the original Python or\nMarkdown file" in content
     assert "Live token/Var charts are different" in content
     assert "normal Reflex component (or safelist it" in content
-
-
-@pytest.mark.xfail(
-    not EXPORTED_CLIENT_ASSETS.is_dir(),
-    reason="Build the XY docs frontend before validating compiled Tailwind CSS.",
-    run=False,
-)
-def test_static_xy_tailwind_manifest_reaches_compiled_css() -> None:
-    """Prove an XYBF-only class survives the complete Tailwind build.
-
-    The sentinel is assembled from fragments in ``xy_docs.gallery``, so
-    Tailwind cannot find its complete arbitrary-property token in Python
-    source. The compiled route must receive it through ``tailwindClassTokens``
-    and the final stylesheet must contain the corresponding declaration.
-    """
-    javascript = "\n".join(
-        path.read_text(encoding="utf-8") for path in EXPORTED_CLIENT_ASSETS.glob("*.js")
-    )
-    stylesheets = "\n".join(
-        path.read_text(encoding="utf-8") for path in EXPORTED_CLIENT_ASSETS.glob("*.css")
-    )
-
-    sentinel = "[--xy-tailwind-bridge:compiled]"
-    assert "tailwindClassTokens" in javascript
-    assert sentinel in javascript
-    assert "--xy-tailwind-bridge:compiled" in stylesheets
 
 
 def test_styling_troubleshooting_covers_common_host_and_export_failures() -> None:
@@ -899,11 +871,11 @@ def test_installation_distinguishes_supported_targets_from_pypi_artifacts() -> N
     assert "`pyodide_2025_0_wasm32` platform" in content
 
 
-def test_chart_gallery_grid_renders_every_type_with_bounded_live_previews(
+def test_chart_gallery_grid_renders_every_type_as_inline_svg(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Show every chart type without exceeding the live WebGL context budget."""
+    """Show every chart type as an editable preview without WebGL payloads."""
     app_payload_dir = DOCS_APP_ROOT / "assets" / "xy"
     app_payloads_before = {path: path.read_bytes() for path in app_payload_dir.glob("*.xyf")}
     monkeypatch.chdir(tmp_path)
@@ -913,17 +885,29 @@ def test_chart_gallery_grid_renders_every_type_with_bounded_live_previews(
         leaves for title, _landing_route, _icon, leaves in DOCS_SECTIONS if title == "Chart Gallery"
     )
     assert len(chart_section) == 8
-    assert rendered.count("XYChart") == 9
-    assert rendered.count(" chart guide") == 28
-    assert rendered.count("dangerouslySetInnerHTML") == 19
+    assert "XYChart" not in rendered
+    assert rendered.count("dangerouslySetInnerHTML") == 28
     assert rendered.count('id:"xy-chart-gallery"') == 1
     assert rendered.count("main:has(#xy-chart-gallery) > div:has(#toc-navigation)") == 1
     assert rendered.count("main:has(#xy-chart-gallery) > div:has(article #xy-chart-gallery)") == 1
     assert rendered.count("display: none") == 1
     assert rendered.count("max-width: 88rem") == 1
-    assert rendered.count("2xl:grid-cols-3") == 9
-    assert rendered.count("h-[220px]") == 47
-    assert rendered.count('["height"] : "220px"') == 9
+    assert rendered.count("2xl:grid-cols-3") == 8
+    assert rendered.count("aspect-[320/232]") == 28
+    assert rendered.count("shadow-large") == 28
+    assert rendered.count("transition-bg") == 28
+    assert "--gallery-preview-surface: #fff" in rendered
+    assert "--gallery-preview-fill: #efeaff" in rendered
+    assert "--gallery-preview-soft: #dccfff" in rendered
+    assert "--gallery-preview-bar: #dccfff" in rendered
+    assert "--gallery-preview-stroke: #a790f0" in rendered
+    assert "--gallery-preview-strong: #8067d7" in rendered
+    assert "--gallery-preview-muted" not in rendered
+    assert "object-contain" not in rendered
+    assert "object-center" not in rendered
+    assert "xy-tailwind-bridge" not in rendered
+    assert rendered.count("size:14") == 28
+    assert "size:6" not in rendered
     for chart_type in (
         "Line",
         "Area",
@@ -960,22 +944,162 @@ def test_chart_gallery_grid_renders_every_type_with_bounded_live_previews(
     for _title, route in chart_section:
         assert f'to:"{route}"' in rendered
         assert f'to:"/docs/xy{route}"' not in rendered
+    for group in _GALLERY_GROUPS:
+        if group.route is not None:
+            assert f'to:"{group.route}"' in rendered
+            assert f'"aria-label":"Open the {group.title} chart family guide"' in rendered
+        for item in group.items:
+            route = item.route or group.route
+            assert route is not None
+            assert f'to:"{route}' in rendered
+            assert f'"aria-label":"Open the {item.title} guide"' in rendered
+    assert '"aria-label":"Open the Bar, Column, and Scatter chart family guide"' not in rendered
     assert 'to:"/components/annotations/"' in rendered
     assert 'to:"/charts/annotations/"' not in rendered
 
-    payloads = list((tmp_path / "assets" / "xy").glob("*.xyf"))
-    assert len(payloads) == 9
-    assert all(path.read_bytes().startswith(b"XYBF") for path in payloads)
+    assert not list((tmp_path / "assets" / "xy").glob("*.xyf"))
     assert {
         path: path.read_bytes() for path in app_payload_dir.glob("*.xyf")
     } == app_payloads_before
 
 
+def test_chart_gallery_inline_svgs_share_the_component_preview_style() -> None:
+    """Keep all code-native previews on the Reflex 320 by 232 tile system."""
+    previews = {
+        item.title: _gallery_preview_svg(item.title)
+        for group in _GALLERY_GROUPS
+        for item in group.items
+    }
+
+    assert len(previews) == 28
+    for svg in previews.values():
+        assert 'viewBox="0 0 320 232"' in svg
+        assert '<rect x="52" y="62" width="216" height="108" rx="12"' in svg
+        assert "var(--gallery-preview-surface)" in svg
+        assert "<style>" not in svg
+        assert 'class="preview-' in svg
+        assert "effect2_dropShadow" in svg
+
+    rendered = str(chart_gallery_grid())
+    assert rendered.count("#xy-chart-gallery .preview-fill { fill:") == 1
+    assert rendered.count("#xy-chart-gallery .preview-line {") == 1
+
+    assert "M109 142.5C81.5 142.5 67.5 83 42 83V172H284.5V100H276" in previews["Area"]
+    assert "M42 83C67.5 83 81.5 142.5 109 142.5C136.5 142.5 140.5 103 160 103" in previews["Area"]
+    assert previews["Scatter"].count("<circle ") == 14
+    for scatter_tone in (
+        "preview-scatter-low",
+        "preview-scatter-mid",
+        "preview-scatter-high",
+    ):
+        assert scatter_tone in previews["Scatter"]
+        assert rendered.count(f"#xy-chart-gallery .{scatter_tone} {{") == 1
+
+
+def test_chart_gallery_cards_link_to_family_pages_with_live_demo_anchors() -> None:
+    """Anchor only chart types with dedicated live sections."""
+    pages = {page.route: page for page in discover_docs(DOCS_CONFIG)}
+    rendered = str(chart_gallery_grid())
+    anchored_items: list[tuple[str, str]] = []
+
+    for group in _GALLERY_GROUPS:
+        if group.route is not None:
+            assert "#" not in group.route
+            assert group.route in pages
+
+        for item in group.items:
+            route = item.route or group.route
+            assert route is not None
+            assert "#" not in route
+            assert route in pages
+            destination = f"{route}#{item.fragment}" if item.fragment else route
+            assert f'to:"{destination}"' in rendered
+            if item.fragment:
+                anchored_items.append((item.title, destination))
+
+    assert anchored_items == [
+        ("Step + Stairs", "/charts/line-and-area/#step-and-stairs"),
+        ("ECDF", "/charts/distributions/#ecdf"),
+        ("Box", "/charts/distributions/#box"),
+        ("Violin", "/charts/distributions/#violin"),
+        ("Hexbin", "/charts/density-and-grids/#hexbin"),
+        ("Contour", "/charts/density-and-grids/#contour"),
+        ("Segments", "/charts/specialized/#segments"),
+        ("Triangle Mesh", "/charts/specialized/#triangle-mesh"),
+        ("Threshold", "/components/annotations/#threshold"),
+        ("Horizontal Line", "/components/annotations/#horizontal-line"),
+        ("Bands", "/components/annotations/#bands"),
+        ("Arrow", "/components/annotations/#arrow"),
+        ("Label", "/components/annotations/#label"),
+        ("Text", "/components/annotations/#text"),
+        ("Facet Chart", "/charts/facets-and-layers/#facet-chart"),
+    ]
+
+    line_and_area = pages["/charts/line-and-area/"]
+    assert "### Step and Stairs" in line_and_area.content
+    assert "def step_and_stairs_demo():" in line_and_area.content
+    assert "xy.step(" in line_and_area.content
+    assert "xy.stairs(" in line_and_area.content
+    assert 'id:"step-and-stairs"' in str(render_xy_markdown_page(line_and_area))
+
+    distributions = pages["/charts/distributions/"]
+    assert "### ECDF" in distributions.content
+    assert "def ecdf_demo():" in distributions.content
+    assert "xy.ecdf(" in distributions.content
+    assert "def box_demo():" in distributions.content
+    assert "xy.box(" in distributions.content
+    assert "def violin_demo():" in distributions.content
+    assert "xy.violin(" in distributions.content
+    rendered_distributions = str(render_xy_markdown_page(distributions))
+    for fragment in ("ecdf", "box", "violin"):
+        assert f'id:"{fragment}"' in rendered_distributions
+
+    dedicated_pages = {
+        "/charts/density-and-grids/": {
+            "hexbin": ("def hexbin_demo():", "xy.hexbin("),
+            "contour": ("def contour_demo():", "xy.contour("),
+        },
+        "/charts/specialized/": {
+            "segments": ("def segments_demo():", "xy.segments("),
+            "triangle-mesh": ("def triangle_mesh_demo():", "xy.triangle_mesh("),
+        },
+        "/components/annotations/": {
+            "threshold": ("def threshold_demo():", "xy.threshold("),
+            "horizontal-line": ("def horizontal_line_demo():", "xy.hline("),
+            "bands": ("def bands_demo():", "xy.x_band("),
+            "arrow": ("def arrow_demo():", "xy.arrow("),
+            "label": ("def label_demo():", "xy.label("),
+            "text": ("def text_demo():", "xy.text("),
+        },
+        "/charts/facets-and-layers/": {
+            "facet-chart": ("def facet_chart_demo():", "xy.facet_chart("),
+        },
+    }
+    for route, examples in dedicated_pages.items():
+        page = pages[route]
+        rendered_page = str(render_xy_markdown_page(page))
+        for fragment, requirements in examples.items():
+            assert f'id:"{fragment}"' in rendered_page
+            assert all(requirement in page.content for requirement in requirements)
+
+
 def test_chart_gallery_combines_only_the_requested_related_tiles() -> None:
-    """Merge Step/Stairs and Bar/Column without collapsing other chart types."""
-    titles = {title for title, _description, _route, _chart_factory, _live in _iter_gallery_items()}
+    """Keep requested combined tiles and section ordering explicit."""
+    titles = {item.title for group in _GALLERY_GROUPS for item in group.items}
+    section_titles = [group.title for group in _GALLERY_GROUPS]
 
     assert len(titles) == 28
+    assert section_titles[:3] == [
+        "Line and Area",
+        "Distributions",
+        "Bar, Column, and Scatter",
+    ]
+    combined_group = _GALLERY_GROUPS[2]
+    assert combined_group.route is None
+    assert [(item.title, item.route) for item in combined_group.items] == [
+        ("Bar + Column", "/charts/bar-and-column/"),
+        ("Scatter", "/charts/scatter/"),
+    ]
     assert {"Step + Stairs", "Bar + Column"} <= titles
     assert {"Step", "Stairs", "Bar", "Column"}.isdisjoint(titles)
     assert {
@@ -1011,124 +1135,6 @@ def test_annotations_have_one_canonical_guide_and_a_legacy_redirect() -> None:
     assert "https://reflex.dev/docs/xy/components/annotations/" in rendered_meta
     assert "0; url=/docs/xy/components/annotations/" in rendered_meta
     assert "Open the combined Annotations guide" in str(redirect.component())
-
-
-def test_chart_gallery_hides_the_modebar_from_every_preview() -> None:
-    """Keep compact gallery tiles focused on the chart itself."""
-    for _title, _description, _route, chart_factory, _live in _iter_gallery_items():
-        chart = _gallery_chart(chart_factory)
-        modebars = [child for child in chart.children if type(child).__name__ == "Modebar"]
-        assert len(modebars) == 1
-        assert modebars[0].show is False
-
-
-def test_chart_gallery_uses_only_purple_and_gray() -> None:
-    """Keep every rendered gallery preview inside one restrained palette."""
-    svg_paint = re.compile(r"#[0-9a-fA-F]{6}|rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+(?:\s*,[^)]*)?\)")
-
-    def _paint_rgb(paint: str) -> tuple[int, int, int]:
-        if paint.startswith("#"):
-            red, green, blue = bytes.fromhex(paint[1:])
-            return red, green, blue
-        red, green, blue = map(int, re.findall(r"\d+", paint)[:3])
-        return red, green, blue
-
-    def _is_purple_or_gray(rgb: tuple[int, int, int]) -> bool:
-        red, green, blue = rgb
-        is_gray = max(rgb) - min(rgb) <= 18
-        is_purple = blue > red and blue > green and red + 8 >= green
-        return is_gray or is_purple
-
-    charts = {
-        title: chart_factory()
-        for title, _description, _route, chart_factory, _live in _iter_gallery_items()
-    }
-    assert all(
-        any(type(child).__name__ == "Theme" for child in chart.children)
-        for chart in charts.values()
-    )
-
-    violations = {
-        title: sorted(
-            paint
-            for paint in svg_paint.findall(chart.to_svg())
-            if not _is_purple_or_gray(_paint_rgb(paint))
-        )
-        for title, chart in charts.items()
-    }
-
-    assert not {title: paints for title, paints in violations.items() if paints}
-
-
-def test_density_grid_heatmap_uses_only_purple_truecolor() -> None:
-    """Keep the live density preview on one cohesive purple ramp."""
-    heatmap_factory = next(
-        chart_factory
-        for title, _description, _route, chart_factory, _live in _iter_gallery_items()
-        if title == "Heatmap"
-    )
-    heatmap = heatmap_factory()
-    mark = next(child for child in heatmap.children if child.kind == "heatmap")
-    colors = {tuple(color) for row in mark.props["z"] for color in row}
-
-    assert (255, 255, 255) not in colors
-    assert colors == {
-        (237, 233, 254),
-        (196, 181, 253),
-        (167, 139, 250),
-        (110, 86, 207),
-        (101, 80, 185),
-    }
-    assert all(blue > red and blue > green for red, green, blue in colors)
-
-
-def test_density_grid_hexbin_replaces_white_bins_with_light_purple() -> None:
-    """Keep every occupied Hexbin visible as a shade of purple."""
-    hexbin_factory = next(
-        chart_factory
-        for title, _description, _route, chart_factory, _live in _iter_gallery_items()
-        if title == "Hexbin"
-    )
-    hexbin = hexbin_factory()
-    raw_svg = hexbin.to_svg()
-    responsive_svg = _responsive_gallery_svg(hexbin)
-
-    assert "rgb(252,251,253)" in raw_svg
-    assert "rgb(252,251,253)" not in responsive_svg
-    assert "var(--primary-7)" in responsive_svg
-    assert "rgb(63,0,125)" in responsive_svg
-
-
-def test_chart_gallery_previews_follow_the_site_color_mode() -> None:
-    """Keep live and static gallery chrome readable in light and dark modes."""
-    charts = [
-        chart_factory()
-        for _title, _description, _route, chart_factory, _live in _iter_gallery_items()
-    ]
-    expected_theme = {
-        "--chart-modebar-bg": "var(--secondary-2)",
-        "--chart-modebar-active": "var(--primary-a4)",
-        "--chart-focus": "var(--primary-9)",
-        "--chart-bg": "transparent",
-        "--chart-grid": "var(--secondary-a5)",
-        "--chart-axis": "var(--secondary-a8)",
-        "--chart-text": "var(--secondary-11)",
-        "--chart-crosshair": "var(--primary-a9)",
-        "--chart-selection": "var(--primary-9)",
-        "--chart-selection-fill": "var(--primary-a3)",
-    }
-
-    for chart in charts:
-        theme = next(child for child in chart.children if type(child).__name__ == "Theme")
-        assert theme.style == expected_theme
-
-        svg = _responsive_gallery_svg(chart)
-        assert "rgba(32,32,32,0.14)" not in svg
-        assert "rgba(32,32,32,0.55)" not in svg
-        assert "rgba(32,32,32,0.85)" not in svg
-        assert "var(--secondary-a5)" in svg
-        assert "var(--secondary-a8)" in svg
-        assert "var(--secondary-11)" in svg
 
 
 def test_live_preview_route_validator_requires_real_xy_payloads(
@@ -1186,6 +1192,25 @@ def test_live_preview_route_validator_rejects_incomplete_builds(
 
     with pytest.raises(RuntimeError, match=error):
         check_html_routes.validate_live_preview("/charts/scatter/", module_path)
+
+
+def test_inline_svg_gallery_validator_requires_every_styled_preview(tmp_path: Path) -> None:
+    """Accept only the complete code-native gallery in the production route."""
+    module_path = tmp_path / "route.jsx"
+    preview = 'viewBox=\\"0 0 320 232\\"'
+    module_path.write_text(
+        preview * 28 + "gallery-preview-surface aspect-[320/232] shadow-large",
+        encoding="utf-8",
+    )
+
+    check_html_routes.validate_inline_svg_gallery("/overview/gallery/", module_path)
+
+    module_path.write_text(
+        preview * 27 + "gallery-preview-surface aspect-[320/232] shadow-large",
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="27 previews, expected 28"):
+        check_html_routes.validate_inline_svg_gallery("/overview/gallery/", module_path)
 
 
 @pytest.mark.xfail(

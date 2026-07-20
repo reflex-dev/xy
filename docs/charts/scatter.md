@@ -46,6 +46,12 @@ overview is aggregated. Point hover becomes available when the view refines to
 direct points; the density surface itself does not pretend that a pixel is one
 source row.
 
+## Scatter
+
+Use `scatter` for individual observations positioned by two variables. Optional
+size, color, symbol, opacity, and stroke channels can reveal additional groups
+or measures without changing the x/y relationship.
+
 ## Variants
 
 `color` and `size` accept constants, arrays, or named columns. Numeric color
