@@ -1,5 +1,7 @@
 """Hard navigation-bound API and client-clamping contracts."""
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import pytest
