@@ -443,6 +443,7 @@ class ChartView {
         next.y1 = Number(msg.view.y1);
       }
       if (![next.x0, next.x1, next.y0, next.y1].every(Number.isFinite)) return;
+      if (!this._interactionFlag("pan", true) && !this._interactionFlag("zoom", true)) return;
       this._setView(next, { animate: false, source: "linked", broadcast: false });
     };
   }
