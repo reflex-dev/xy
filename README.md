@@ -213,8 +213,7 @@ Engineering references:
 ## Development
 
 ```bash
-uv venv
-uv pip install -e ".[dev]"
+make setup  # installs .[dev] and builds the required native core
 make check
 ```
 

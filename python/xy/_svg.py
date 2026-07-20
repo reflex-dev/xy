@@ -28,7 +28,7 @@ from xml.sax.saxutils import escape
 
 import numpy as np
 
-from . import _png
+from . import _native, _png
 from ._arrowgeom import arrow_shapes as _arrow_shapes
 from .config import DEFAULT_PALETTE
 
@@ -875,9 +875,7 @@ def _rounded_rect_path(
 
 
 def _poly_path(px: np.ndarray, py: np.ndarray) -> str:
-    parts = [f"M {_num(px[0])} {_num(py[0])}"]
-    parts.extend(f"L {_num(px[i])} {_num(py[i])}" for i in range(1, len(px)))
-    return " ".join(parts)
+    return _native.svg_poly_path(px, py)
 
 
 def _curve_path(xv: np.ndarray, yv: np.ndarray, sx: _Scale, sy: _Scale, smooth: bool) -> str:
@@ -1598,17 +1596,18 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         append_axis_title(axis, is_x=False)
     named = [t for t in spec["traces"] if t.get("name")]
     if spec.get("show_legend", True) and named:
-        chrome.append(_legend(named, plot, spec.get("legend") or {}, clip_id))
+        chrome.append(_legend(named, plot, spec.get("legend") or {}, clip_id, default_text))
     for extra in spec.get("extra_legends") or []:
         items = extra.get("items") or []
         if items:
-            chrome.append(_legend(items, plot, extra, clip_id))
+            chrome.append(_legend(items, plot, extra, clip_id, default_text))
     if spec.get("colorbar"):
         chrome.append(
             _colorbar(
                 spec["colorbar"],
                 plot,
                 _colorbar_right_axis_room(ya, extra_y_axes, compact),
+                default_text,
             )
         )
 
@@ -2393,7 +2392,9 @@ def _legend_layout(named: list[dict], plot: dict, options: dict) -> dict[str, An
     }
 
 
-def _legend(named: list[dict], plot: dict, options: dict, clip_id: str) -> str:
+def _legend(
+    named: list[dict], plot: dict, options: dict, clip_id: str, text_color: str = _TEXT
+) -> str:
     legend = _legend_layout(named, plot, options)
     if not legend["visible_count"]:
         # A plot too short for even one entry: no floating frame/title either.
@@ -2427,7 +2428,7 @@ def _legend(named: list[dict], plot: dict, options: dict, clip_id: str) -> str:
     if title:
         rows.append(
             f'<text x="{_num(x + pad)}" y="{_num(y + pad / 2 + 11)}" '
-            f'font-weight="600" fill="{_TEXT}">{escape(str(title))}</text>'
+            f'font-weight="600" fill="{escape(text_color)}">{escape(str(title))}</text>'
         )
     for i, t in enumerate(named[: legend["visible_count"]]):
         style = t.get("style") or {}
@@ -2473,12 +2474,14 @@ def _legend(named: list[dict], plot: dict, options: dict, clip_id: str) -> str:
             )
         rows.append(
             f'<text x="{_num(hx1 + gap)}" y="{_num(ry + 11)}" '
-            f'fill="{_TEXT}">{escape(legend["names"][i])}</text>'
+            f'fill="{escape(text_color)}">{escape(legend["names"][i])}</text>'
         )
     return f'<g clip-path="url(#{clip_id})">{"".join(rows)}</g>'
 
 
-def _colorbar(options: dict, plot: dict, right_axis_room: float = 0.0) -> str:
+def _colorbar(
+    options: dict, plot: dict, right_axis_room: float = 0.0, text_color: str = _TEXT
+) -> str:
     cmap = str(options.get("colormap", "viridis"))
     gradient_id = f"xy-colorbar-{sum(map(ord, cmap))}"
     stops = _colormap_stops(cmap)
@@ -2504,11 +2507,11 @@ def _colorbar(options: dict, plot: dict, right_axis_room: float = 0.0) -> str:
     label_node = (
         f'<text x="{_num(x + width + 38)}" y="{_num(y + height / 2)}" '
         f'text-anchor="middle" transform="rotate(-90 {_num(x + width + 38)} '
-        f'{_num(y + height / 2)})" fill="{_TEXT}">{escape(label)}</text>'
+        f'{_num(y + height / 2)})" fill="{escape(text_color)}">{escape(label)}</text>'
         if label and orientation != "horizontal"
         else (
             f'<text x="{_num(x + width / 2)}" y="{_num(y + height + 22)}" '
-            f'text-anchor="middle" fill="{_TEXT}">{escape(label)}</text>'
+            f'text-anchor="middle" fill="{escape(text_color)}">{escape(label)}</text>'
             if label
             else ""
         )
@@ -2525,14 +2528,14 @@ def _colorbar(options: dict, plot: dict, right_axis_room: float = 0.0) -> str:
         "".join(
             f'<text x="{_num(x + width + 4)}" '
             f'y="{_num(y + height * (1 - (value - lo) / span) + 4)}" '
-            f'fill="{_TEXT}">{value:g}</text>'
+            f'fill="{escape(text_color)}">{value:g}</text>'
             for value in tick_positions
         )
         if orientation != "horizontal"
         else "".join(
             f'<text x="{_num(x + width * (value - lo) / span)}" '
             f'y="{_num(y + height + 12)}" text-anchor="middle" '
-            f'fill="{_TEXT}">{value:g}</text>'
+            f'fill="{escape(text_color)}">{value:g}</text>'
             for value in tick_positions
         )
     )

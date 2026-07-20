@@ -15,13 +15,14 @@ the engineering version contains the complete release and browser checklists.
 ~~~bash
 git clone https://github.com/reflex-dev/xy.git
 cd xy
-uv venv
-uv pip install -e ".[dev]"
+make setup
 make check
 ~~~
 
-Source development needs Python 3.11+, a Rust toolchain for the native core,
-and Node 18+ for bundle checks. Confirm the active compute backend explicitly:
+`make setup` installs the editable development package and builds the required
+native core. Source development needs Python 3.11+, a Rust toolchain for that
+core, and Node 18+ for bundle checks. Confirm the active compute backend
+explicitly:
 
 ~~~bash
 python -c "import xy.kernels as k; print(k.BACKEND)"

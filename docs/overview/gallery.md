@@ -1,9 +1,9 @@
 ---
-title: Gallery
+title: Chart Gallery
 description: Browse every chart type and visual pattern available in XY.
 ---
 
-# Gallery
+# Chart Gallery
 
 Start with the visual result you need. Every public chart type is represented
 below, grouped to match the Chart Gallery navigation. Each tile opens a focused
@@ -39,8 +39,8 @@ Looking for a specific family?
   hexbins, and contours
 - [Uncertainty](/docs/xy/charts/uncertainty/) for error bars and bands
 - [Specialized charts](/docs/xy/charts/specialized/) for stems, segments,
-  thresholds, and triangle meshes
-- [Annotations](/docs/xy/charts/annotations/) for rules, bands, labels, arrows,
+  and triangle meshes
+- [Annotations](/docs/xy/components/annotations/) for rules, bands, labels, arrows,
   callouts, and threshold zones
 - [Facets and layers](/docs/xy/charts/facets-and-layers/) for small multiples
   and composed overlays

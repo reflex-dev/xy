@@ -2,8 +2,10 @@
 
 import reflex as rx
 import reflex_xy
-from reflex_site_shared.plugins import DocsMarkdownPlugin, SharedSiteStylesPlugin
+from reflex_site_shared.plugins import SharedSiteStylesPlugin
 from xy_docs.config import DOCS_CONFIG
+from xy_docs.plugins import XYDocsAgentFilesPlugin
+from xy_docs.prerender import XyDocsMarkdownPlugin
 
 config = rx.Config(
     app_name="xy_docs",
@@ -21,7 +23,8 @@ config = rx.Config(
         SharedSiteStylesPlugin(),
         rx.plugins.RadixThemesPlugin(),
         rx.plugins.SitemapPlugin(trailing_slash="always"),
-        DocsMarkdownPlugin(docs=DOCS_CONFIG),
+        XyDocsMarkdownPlugin(docs=DOCS_CONFIG),
+        XYDocsAgentFilesPlugin(docs=DOCS_CONFIG),
         reflex_xy.XYPlugin(),
     ],
 )

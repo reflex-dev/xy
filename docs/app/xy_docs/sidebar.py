@@ -13,9 +13,9 @@ from reflex_site_shared.docs import (
 from xy_docs.config import DOCS_SECTIONS
 
 SIDEBAR_SECTION_GROUPS = (
-    ("Learning", "/", DOCS_SECTIONS[:3]),
-    ("Examples", "/charts/", DOCS_SECTIONS[3:5]),
-    ("Other", "/integrations/", DOCS_SECTIONS[5:]),
+    ("Learning", "/", (*DOCS_SECTIONS[:3], DOCS_SECTIONS[7])),
+    ("Examples", "/overview/gallery/", DOCS_SECTIONS[3:5]),
+    ("Other", "/integrations/", (*DOCS_SECTIONS[5:7], *DOCS_SECTIONS[8:])),
 )
 
 
@@ -68,15 +68,17 @@ def xy_docs_sidebar_comp(url: rx.vars.StringVar[str]) -> rx.Component:
             "/",
             "graduation-cap",
             (url == "/")
-            | url.startswith("/overview/")
+            | (url.startswith("/overview/") & (url != "/overview/gallery/"))
             | url.startswith("/core-concepts/")
-            | url.startswith("/guides/"),
+            | url.startswith("/guides/")
+            | url.startswith("/advanced/"),
         ),
         docs_sidebar_category(
             "Build",
-            "/charts/",
+            "/overview/gallery/",
             "boxes",
-            url.startswith("/styling/")
+            (url == "/overview/gallery/")
+            | url.startswith("/styling/")
             | url.startswith("/charts/")
             | url.startswith("/components/")
             | url.startswith("/integrations/"),
@@ -108,7 +110,11 @@ def xy_docs_sidebar_comp(url: rx.vars.StringVar[str]) -> rx.Component:
                         open_=(
                             (url == "/") | url.startswith("/overview/")
                             if landing_route == "/"
-                            else url.startswith(landing_route)
+                            else (
+                                (url == landing_route) | url.startswith("/charts/")
+                                if title == "Chart Gallery"
+                                else url.startswith(landing_route)
+                            )
                         ),
                     )
                     for title, landing_route, icon, leaves in sections

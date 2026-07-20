@@ -16,7 +16,7 @@ charts in one process from changing one another implicitly.
 import xy
 
 chart = xy.scatter_chart(
-    xy.scatter([1, 2, 3], [3, 5, 4], density=None),
+    xy.scatter([1, 2, 3], [3, 5, 4]),
     xy.x_axis(label="sample", tick_count=5),
     xy.y_axis(label="value", domain=(0, 6)),
     xy.interaction_config(hover=True, crosshair=True, select=True),

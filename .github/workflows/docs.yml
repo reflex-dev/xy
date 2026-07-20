@@ -12,6 +12,7 @@ on:
       - "Cargo.toml"
       - "hatch_build.py"
       - "pyproject.toml"
+      - "scripts/verify_released_docs_quickstart.py"
       - ".pre-commit-config.yaml"
       - ".github/workflows/docs.yml"
   pull_request:
@@ -24,6 +25,7 @@ on:
       - "Cargo.toml"
       - "hatch_build.py"
       - "pyproject.toml"
+      - "scripts/verify_released_docs_quickstart.py"
       - ".pre-commit-config.yaml"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
@@ -36,6 +38,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  released-quickstart:
+    name: Published quickstart (xy==0.0.1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      XY_PUBLIC_RELEASE: "0.0.1"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Run public docs quickstarts against the PyPI wheel
+        env:
+          PYTHONNOUSERSITE: "1"
+        run: |
+          uv run --isolated --no-project --python 3.12 \
+            --with "xy==$XY_PUBLIC_RELEASE" \
+            python scripts/verify_released_docs_quickstart.py \
+            --expected-version "$XY_PUBLIC_RELEASE"
+
   quality:
     name: Docs tests and lint
     runs-on: ubuntu-latest
@@ -59,7 +82,7 @@ jobs:
 
   production:
     name: Production docs (Python ${{ matrix.python-version }})
-    needs: quality
+    needs: [quality, released-quickstart]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -91,6 +114,7 @@ jobs:
           set -euo pipefail
           server_log="$RUNNER_TEMP/xy-docs.log"
           response="$RUNNER_TEMP/xy-docs-index.html"
+          nested_response="$RUNNER_TEMP/xy-docs-data.html"
           setsid uv run --no-sync reflex run --env prod --loglevel debug >"$server_log" 2>&1 &
           server_pid=$!
           cleanup() {
@@ -126,6 +150,12 @@ jobs:
             echo "XY docs did not become ready within 300 seconds"
             exit 1
           fi
+
+          curl --fail --location --silent \
+            --connect-timeout 2 --max-time 10 \
+            http://127.0.0.1:3000/docs/xy/core-concepts/data/ \
+            --output "$nested_response"
+          grep -Fq '<title>Data and Columns · XY</title>' "$nested_response"
 
           if grep -Eiq "traceback|uncaught|unhandled|fatal error" "$server_log"; then
             cat "$server_log"

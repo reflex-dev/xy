@@ -242,10 +242,11 @@ _ANNOTATION_ALIGNMENT_PROBE = """
     const arrow = findLabel("arrow-center");
     if (!band || !arrow) throw new Error("annotation labels never rendered");
     const root = view.root.getBoundingClientRect();
-    const centerX = (element) => {
+    const center = (element) => {
       const rect = element.getBoundingClientRect();
-      return (rect.left + rect.right) / 2;
+      return [(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2];
     };
+    const [bandCenterX] = center(band);
     const bandExpected = root.left + (view._dataPxX(2) + view._dataPxX(4)) / 2;
     // The arrow label is centered on the shaft midpoint, then lifted along
     // the shaft's upward normal until the box clears the line (plus a small
@@ -267,7 +268,7 @@ _ANNOTATION_ALIGNMENT_PROBE = """
     document.body.setAttribute(
       "data-xy-annotation-alignment",
       JSON.stringify({
-        bandCenterError: Math.abs(centerX(band) - bandExpected),
+        bandCenterError: Math.abs(bandCenterX - bandExpected),
         arrowTangentialError: Math.abs(offX * tangent[0] + offY * tangent[1]),
         arrowNormalOffset: offX * normal[0] + offY * normal[1],
         arrowRequiredClearance:

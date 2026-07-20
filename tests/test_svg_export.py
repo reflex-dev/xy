@@ -13,7 +13,7 @@ import pytest
 
 import xy
 from xy._figure import Figure
-from xy._svg import COLORMAP_STOPS
+from xy._svg import COLORMAP_STOPS, _axis_tick_label_layout, _Scale
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -112,8 +112,6 @@ def test_svg_tick_label_anchor_collision_parity() -> None:
     on each tick and found them colliding (extent > spacing), so it would
     stride-2 downsample to 5.  The fixed Python exporter must also keep all 9.
     """
-    from xy._svg import _Scale, _axis_tick_label_layout
-
     # 15-char labels; font_size=11, angle=-30, anchor="end", min_gap=8.
     #   new model:  spacing * sin(30°) = 90*0.5 = 45  >  11*1.2+8 = 21.2  → ok
     #   old model:  extent = cos(30°)*109.1 + sin(30°)*13.2 ≈ 101.1
@@ -144,6 +142,30 @@ def test_svg_tick_label_anchor_collision_parity() -> None:
     assert len(kept_no_anchor) < n, (
         "centered-extent model should find collision (geometry not wide enough) "
         f"but kept {len(kept_no_anchor)} of {n}"
+    )
+
+
+def test_svg_legend_text_honors_theme_text_color() -> None:
+    chart = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[0.0, 1.0], name="walk"),
+        xy.legend(loc="upper right", title="models"),
+        xy.theme(text_color="#ffffff"),
+        width=300,
+        height=200,
+    )
+    svg = chart.figure().to_svg()
+    assert re.search(r'<text[^>]*fill="#ffffff"[^>]*>walk</text>', svg)
+    assert re.search(r'<text[^>]*fill="#ffffff"[^>]*>models</text>', svg)
+
+    # Without a theme the legend keeps the light-mode default text color.
+    plain = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[0.0, 1.0], name="walk"),
+        xy.legend(loc="upper right"),
+        width=300,
+        height=200,
+    )
+    assert re.search(
+        r'<text[^>]*fill="rgba\(32,32,32,0\.85\)"[^>]*>walk</text>', plain.figure().to_svg()
     )
 
 

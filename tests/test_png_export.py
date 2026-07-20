@@ -232,6 +232,28 @@ def test_raster_honors_tick_label_anchor() -> None:
     assert not np.array_equal(render(), render(tick_label_anchor="end"))
 
 
+def test_raster_legend_text_honors_theme_text_color() -> None:
+    # Red is reserved for the theme text color; every other paint is green,
+    # and the tick labels are overridden, so red pixels can only come from
+    # the legend text.
+    chart = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[0.0, 1.0], color="#00ff00", name="walk"),
+        xy.x_axis(style={"tick_label_color": "#00ff00"}),
+        xy.y_axis(style={"tick_label_color": "#00ff00"}),
+        xy.legend(loc="upper right"),
+        xy.theme(
+            text_color="#ff0000",
+            grid_color="transparent",
+            axis_color="#00ff00",
+        ),
+        width=300,
+        height=200,
+    )
+    img = _raster.render_raster(*chart.figure().build_payload(), scale=1)
+    red = (img[:, :, 0] > 150) & (img[:, :, 1] < 80) & (img[:, :, 2] < 80)
+    assert int(red.sum()) > 20
+
+
 def test_render_is_non_blank_and_has_background() -> None:
     fig = Figure(width=200, height=120).line([0.0, 1.0], [0.0, 1.0])
     img = _raster.render_raster(*fig.build_payload(), scale=1)

@@ -16,12 +16,15 @@ the hard-won production invariants while the chart surface grows.
 
 ## Local Checks
 
-Install the dev environment:
+Install the dev environment and build the required native core:
 
 ```bash
-uv venv
-uv pip install -e ".[dev]"
+make setup
 ```
+
+`make setup` requires a Rust toolchain because it runs `cargo build --release`
+after installing the editable Python package. This leaves the checkout ready
+to import `xy.kernels` and run the fast gate.
 
 Run the fast local gate:
 

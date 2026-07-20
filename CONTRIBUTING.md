@@ -9,9 +9,9 @@ Quick start:
 ```bash
 git clone https://github.com/reflex-dev/xy.git
 cd xy
-uv venv && uv pip install -e ".[dev]"
+make setup        # dev environment + native core (needs Rust)
 make check        # fast gate
-make check-full   # full production gate (needs Rust + Node 18+)
+make check-full   # full production gate (also needs Node 18+ and clippy)
 ```
 
 ## Check the active backend

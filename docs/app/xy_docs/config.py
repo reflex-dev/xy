@@ -15,7 +15,6 @@ DOCS_SECTIONS = (
         "compass",
         (
             ("What is xy?", "/"),
-            ("Gallery", "/overview/gallery/"),
             ("Installation", "/overview/installation/"),
             ("Your First Chart", "/overview/first-chart/"),
             ("Benchmarks", "/overview/benchmarks/"),
@@ -53,7 +52,7 @@ DOCS_SECTIONS = (
     ),
     (
         "Chart Gallery",
-        "/charts/",
+        "/overview/gallery/",
         "chart-column",
         (
             ("Line and Area", "/charts/line-and-area/"),
@@ -63,7 +62,6 @@ DOCS_SECTIONS = (
             ("Density and Grids", "/charts/density-and-grids/"),
             ("Uncertainty", "/charts/uncertainty/"),
             ("Specialized", "/charts/specialized/"),
-            ("Annotations", "/charts/annotations/"),
             ("Facets and Layers", "/charts/facets-and-layers/"),
         ),
     ),
@@ -99,6 +97,10 @@ DOCS_SECTIONS = (
         "/guides/",
         "book-open",
         (
+            (
+                "DataFrames and Real Data",
+                "/guides/dataframes-and-real-data/",
+            ),
             ("Display and Export", "/guides/display-and-export/"),
             (
                 "Real-time and Streaming Data",
@@ -112,7 +114,21 @@ DOCS_SECTIONS = (
                 "Serving, CSP, and Offline Use",
                 "/guides/serving-csp-and-offline-use/",
             ),
+            ("Deployment Recipes", "/guides/deployment-recipes/"),
             ("Troubleshooting", "/guides/troubleshooting/"),
+            ("Getting Help", "/guides/getting-help/"),
+        ),
+    ),
+    (
+        "Advanced",
+        "/advanced/",
+        "network",
+        (
+            ("XY Architecture", "/advanced/"),
+            (
+                "Runtime and Deployment",
+                "/advanced/runtime-and-deployment/",
+            ),
         ),
     ),
     (
@@ -135,13 +151,42 @@ DOCS_SECTIONS = (
     ),
 )
 
-DOCS_NAVIGATION = tuple(
+DOCS_REDIRECTS = {
+    "/charts/annotations/": "/components/annotations/",
+}
+
+_SECTION_ROUTES = tuple(
     dict.fromkeys(
         route
         for _title, landing_route, _icon, leaves in DOCS_SECTIONS
         for route in (
             landing_route,
             *(leaf_route for _leaf_title, leaf_route in leaves),
+        )
+    )
+)
+
+# The pager is an adoption path, not just a serialization of the sidebar.
+# Move readers from installation to a first chart and then directly into a
+# real-data workflow. Benchmark methodology stays available in Overview but is
+# deferred until after the task-oriented documentation.
+_ONBOARDING_ROUTES = (
+    "/",
+    "/overview/installation/",
+    "/overview/first-chart/",
+    "/guides/dataframes-and-real-data/",
+)
+_DEFERRED_ROUTES = ("/overview/benchmarks/",)
+DOCS_NAVIGATION = tuple(
+    dict.fromkeys(
+        (
+            *_ONBOARDING_ROUTES,
+            *(
+                route
+                for route in _SECTION_ROUTES
+                if route not in {*_ONBOARDING_ROUTES, *_DEFERRED_ROUTES}
+            ),
+            *_DEFERRED_ROUTES,
         )
     )
 )
@@ -157,4 +202,10 @@ DOCS_CONFIG = DocsSiteConfig(
     sitemap_base_url=PUBLIC_DOCS_URL,
 )
 
-__all__ = ["DOCS_CONFIG", "DOCS_NAVIGATION", "DOCS_ROOT", "DOCS_SECTIONS"]
+__all__ = [
+    "DOCS_CONFIG",
+    "DOCS_NAVIGATION",
+    "DOCS_REDIRECTS",
+    "DOCS_ROOT",
+    "DOCS_SECTIONS",
+]
