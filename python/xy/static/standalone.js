@@ -7061,9 +7061,22 @@ if (f < 1) {
 const minSpan = Math.max(Math.abs(ca), 1e-30) * 1e-12;
 if (Math.abs((c1 - c0) * f) < minSpan) return null;
 }
+const next0 = ca - (ca - c0) * f;
+const next1 = ca + (c1 - ca) * f;
+if (f > 1 && this.view0) {
+const home = axisId === "x"
+? [this.view0.x0, this.view0.x1]
+: [this.view0.y0, this.view0.y1];
+const home0 = this._axisCoord(axis, home[0]);
+const home1 = this._axisCoord(axis, home[1]);
+if ([home0, home1].every(Number.isFinite)
+&& Math.abs(next1 - next0) >= Math.abs(home1 - home0)) {
+return home;
+}
+}
 return [
-this._axisValue(axis, ca - (ca - c0) * f),
-this._axisValue(axis, ca + (c1 - ca) * f),
+this._axisValue(axis, next0),
+this._axisValue(axis, next1),
 ];
 },
 _zoomAt(f, fx, fy, animate = false, duration = 120) {
