@@ -1052,9 +1052,7 @@ def scatter(
     stroke_width = css.get("stroke_width", stroke_width)
     name = self._optional_text(name, "scatter name")
     opacity = self._opacity(opacity, "scatter opacity")
-    zoom_size_factor = self._nonnegative_scalar(
-        zoom_size_factor, "scatter zoom_size_factor"
-    )
+    zoom_size_factor = self._nonnegative_scalar(zoom_size_factor, "scatter zoom_size_factor")
     if zoom_size_factor == 0.0:
         raise ValueError("scatter zoom_size_factor must be > 0")
     if zoom_opacity is not None:

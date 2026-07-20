@@ -182,15 +182,19 @@ def test_zoom_responsive_style_is_serialized_and_defaults_are_fixed():
     fixed, _ = Figure().scatter([0.0], [1.0], size=3, opacity=0.2).build_payload()
     assert fixed["traces"][0]["style"] == {"opacity": 0.2}
 
-    responsive, _ = Figure().scatter(
-        [0.0],
-        [1.0],
-        size=1.3,
-        opacity=0.2,
-        zoom_size_factor=4,
-        zoom_opacity=0.85,
-        zoom_emphasis=16,
-    ).build_payload()
+    responsive, _ = (
+        Figure()
+        .scatter(
+            [0.0],
+            [1.0],
+            size=1.3,
+            opacity=0.2,
+            zoom_size_factor=4,
+            zoom_opacity=0.85,
+            zoom_emphasis=16,
+        )
+        .build_payload()
+    )
     assert responsive["traces"][0]["style"] == {
         "opacity": 0.2,
         "zoom_size_factor": 4.0,
