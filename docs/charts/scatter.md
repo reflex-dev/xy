@@ -46,6 +46,12 @@ overview is aggregated. Point hover becomes available when the view refines to
 direct points; the density surface itself does not pretend that a pixel is one
 source row.
 
+## Scatter
+
+Use `scatter` for individual observations positioned by two variables. Optional
+size, color, symbol, opacity, and stroke channels can reveal additional groups
+or measures without changing the x/y relationship.
+
 ## Variants
 
 `color` and `size` accept constants, arrays, or named columns. Numeric color
@@ -55,7 +61,7 @@ palette. `size_range` maps numeric size values into pixel diameters.
 Markers support 17 renderer-backed symbols, from `circle`, `square`, and
 directional triangles through `star`, `hexagon`, pixel/point, and line-only
 glyphs, plus `stroke` and `stroke_width` for crisp borders. The complete list
-is in [Mark styles](/docs/xy/styling/mark-styles/#mark-specific-appearance).
+is in [Customize Each Part](/docs/xy/styling/customize/#fill,-stroke,-opacity,-and-gradients).
 
 ## Expected Data Shape
 

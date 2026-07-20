@@ -35,6 +35,29 @@ in the README).
   to the internal engine object.
 
 ### Added
+- **Export format parity and a unified export API (ENG-10447).**
+  `to_image(format=...)` and extension-inferred, atomic `write_image(path)`
+  on charts, facet grids, and the internal figure cover PNG, JPEG/JPG, WebP,
+  SVG, and PDF alongside interactive HTML; `to_png`/`to_svg`/`to_html`
+  remain as compatibility conveniences. All five image formats export
+  browser-free by default: JPEG uses a new pure-numpy baseline encoder
+  (4:4:4, quality 1-100), WebP a new bit-exact lossless VP8L encoder with
+  alpha, and PDF a new vector backend that converts XY's own SVG output
+  (vector text via Helvetica metrics, axial-shading gradients, embedded
+  rasters for density/heatmap layers — the documented hybrid-vector
+  policy). `engine=Engine.auto` deterministically selects native per
+  format and switches to Chromium only for `custom_css`;
+  `Engine.chromium` adds browser-fidelity JPEG/WebP (CDP screenshots) and
+  PDF (`printToPDF`). A shared background policy spans every format
+  ("auto"/CSS color/"transparent", JPEG rejects transparent instead of
+  silently flattening). `xy.write_images(figures=..., files=...)` batches
+  mixed formats through one reused browser session with atomic per-file
+  writes. `xy.export_config()` declares formats/filename/dimensions/
+  scale/background/quality on the chart itself, governing both Python
+  defaults and the modebar's download menu, which now offers PNG, JPEG,
+  WebP, SVG, and CSV (client-safe subset) with the same filename and
+  background semantics — including in standalone HTML with no kernel and
+  in Reflex apps.
 - **Declarative continuous colorbars.** `xy.colorbar()` derives the domain,
   colormap, and default title from the last compatible heatmap, continuous
   scatter, hexbin, contour, segment, or triangle-mesh mark, with explicit

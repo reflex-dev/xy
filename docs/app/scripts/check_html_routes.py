@@ -11,7 +11,7 @@ CLIENT_ROOT = APP_ROOT / ".web" / "build" / "client"
 BUILD_ROOT = CLIENT_ROOT / "docs" / "xy"
 ROUTES_ROOT = APP_ROOT / ".web" / "app" / "routes"
 LIVE_PREVIEW_MARKERS = ("python demo exec", "python demo-only exec")
-LIVE_PREVIEW_ROUTES = {"/overview/gallery/"}
+INLINE_SVG_PREVIEW_ROUTES = {"/overview/gallery/"}
 XY_PAYLOAD_PATTERN = re.compile(r'["\'](?P<url>/docs/xy/xy/[a-f0-9]+\.xyf)["\']')
 XY_PAYLOAD_MAGIC = b"XYBF"
 
@@ -75,6 +75,19 @@ def validate_live_preview(page_route: str, module_path: Path) -> None:
             raise RuntimeError(msg)
 
 
+def validate_inline_svg_gallery(page_route: str, module_path: Path) -> None:
+    """Validate the code-native chart tiles in the compiled gallery route."""
+    source = module_path.read_text(encoding="utf-8")
+    preview_count = source.count('viewBox=\\"0 0 320 232\\"')
+    if preview_count != 28:
+        msg = f"Inline SVG gallery has {preview_count} previews, expected 28: {page_route}"
+        raise RuntimeError(msg)
+    for marker in ("gallery-preview-surface", "aspect-[320/232]", "shadow-large"):
+        if marker not in source:
+            msg = f"Inline SVG gallery omits {marker!r}: {page_route}"
+            raise RuntimeError(msg)
+
+
 def main() -> None:
     """Check every generated docs route."""
     fallback = BUILD_ROOT / "__spa-fallback.html"
@@ -88,9 +101,9 @@ def main() -> None:
         if not module_path.is_file():
             msg = f"Missing compiled documentation route: {module_path}"
             raise RuntimeError(msg)
-        if page.route in LIVE_PREVIEW_ROUTES or any(
-            marker in page.content for marker in LIVE_PREVIEW_MARKERS
-        ):
+        if page.route in INLINE_SVG_PREVIEW_ROUTES:
+            validate_inline_svg_gallery(page.route, module_path)
+        if any(marker in page.content for marker in LIVE_PREVIEW_MARKERS):
             validate_live_preview(page.route, module_path)
         html_paths = route_html_paths(page.route)
         if not any(path.is_file() for path in html_paths):

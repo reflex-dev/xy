@@ -75,7 +75,8 @@ Canvas and WebGL marks are not DOM elements. CSS selectors and Tailwind classes
 cannot paint their geometry; use `style=` or the mark's paint props. In
 particular, `class_name=` is adapter-only trace metadata, not a mark-painting
 hook in the shipped browser, Reflex, SVG, or native renderers. See
-[Mark styles](/docs/xy/styling/mark-styles/) for the compiled CSS subset.
+[Customize Each Part](/docs/xy/styling/customize/#fill,-stroke,-opacity,-and-gradients)
+for the compiled CSS subset.
 
 ## Representation Does Not Change the Mark
 
