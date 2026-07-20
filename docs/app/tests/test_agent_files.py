@@ -1,5 +1,8 @@
 """Tests for the agent-readable documentation files and page actions."""
 
+from pathlib import Path
+
+import pytest
 from reflex_site_shared.docs.content import discover_docs
 from rxconfig import config
 from xy_docs.breadcrumb import xy_docs_breadcrumb
@@ -56,14 +59,15 @@ def test_llms_full_txt_keeps_section_headers_above_page_content() -> None:
         assert f"## {page.title}" in section_headers
 
 
-def test_agent_files_publish_under_the_frontend_path() -> None:
+def test_agent_files_publish_under_the_frontend_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Both agent files land inside the configured frontend path."""
+    monkeypatch.setattr("xy_docs.plugins.get_config", lambda: config)
     assets = XYDocsAgentFilesPlugin(docs=DOCS_CONFIG).get_static_assets()
-    names = {path.name: path.as_posix() for path, _content in assets}
-    assert set(names) == {"llms.txt", "llms-full.txt"}
-    prefix = config.frontend_path.strip("/")
-    for path in names.values():
-        assert f"/{prefix}/" in path
+    paths = {path for path, _content in assets}
+    root = Path("public") / config.frontend_path.strip("/")
+    assert paths == {root / "llms.txt", root / "llms-full.txt"}
 
 
 def test_breadcrumb_actions_use_public_and_local_urls() -> None:
