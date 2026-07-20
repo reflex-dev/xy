@@ -3519,6 +3519,8 @@ class FacetChart(Component):
         cols: int = 3,
         share_x: bool = True,
         share_y: bool = True,
+        link: Optional[Union[str, bool]] = None,
+        link_select: bool = False,
         gap: int = 12,
         **props: Any,
     ) -> None:
@@ -3543,6 +3545,12 @@ class FacetChart(Component):
         self.cols = int(cols)
         self.share_x = _strict_bool(share_x, "facet_chart share_x")
         self.share_y = _strict_bool(share_y, "facet_chart share_y")
+        if isinstance(link, (bool, np.bool_)):
+            link = "both" if bool(link) else None
+        elif link not in (None, "x", "y", "both"):
+            raise ValueError("facet_chart link must be True, False, None, 'x', 'y', or 'both'")
+        self.link = link
+        self.link_select = _strict_bool(link_select, "facet_chart link_select")
         self.gap = int(gap)
         self.props = dict(props)
         self._grid: Any = None
@@ -3595,7 +3603,16 @@ class FacetChart(Component):
             return figures
 
         figures = build_panels({})
-        shared_dims = [dim for dim, shared in (("x", self.share_x), ("y", self.share_y)) if shared]
+        linked_dims = (
+            [] if self.link is None else [self.link] if self.link != "both" else ["x", "y"]
+        )
+        # A linked dimension must start from the same domain; otherwise the
+        # first interaction would make panels jump from incomparable views.
+        shared_dims = [
+            dim
+            for dim, shared in (("x", self.share_x), ("y", self.share_y))
+            if shared or dim in linked_dims
+        ]
         shared_axis_ids = [
             axis_id
             for dim in shared_dims
@@ -3647,11 +3664,19 @@ class FacetChart(Component):
             hi = max(max(pair) for pair in ranges)
             for fig in figures:
                 fig._set_axis_domain(axis_id, (lo, hi))
-        if shared_dims and not any("link_group" in fig.interaction for fig in figures):
-            # Shared-axis panels pan/zoom together in live outputs.
-            group = f"xy-facet-{uuid.uuid4().hex[:8]}"
+        if linked_dims or self.link_select:
+            group = next(
+                (
+                    fig.interaction["link_group"]
+                    for fig in figures
+                    if "link_group" in fig.interaction
+                ),
+                f"xy-facet-{uuid.uuid4().hex[:8]}",
+            )
             for fig in figures:
-                fig.set_interaction(link_group=group, link_axes=tuple(shared_dims))
+                fig.set_interaction(link_group=group, link_axes=tuple(linked_dims))
+                if self.link_select:
+                    fig.interaction["link_select"] = True
         self._grid = FacetGrid(
             figures,
             unique_labels,
@@ -4458,6 +4483,8 @@ def facet_chart(
     cols: int = 3,
     share_x: bool = True,
     share_y: bool = True,
+    link: Optional[Union[str, bool]] = None,
+    link_select: bool = False,
     gap: int = 12,
     **props: Any,
 ) -> FacetChart:
@@ -4469,9 +4496,20 @@ def facet_chart(
         cols: Maximum number of panel columns.
         share_x: Whether panels share an x domain.
         share_y: Whether panels share a y domain.
+        link: Runtime-linked axes: ``True``/``"both"`` for both axes,
+            ``"x"`` or ``"y"`` for one axis, and ``False``/``None`` to disable.
+        link_select: Whether data-space selections are echoed across panels.
         gap: Gap between panels in pixels.
         **props: Additional shared chart properties.
     """
     return FacetChart(
-        children, by=by, cols=cols, share_x=share_x, share_y=share_y, gap=gap, **props
+        children,
+        by=by,
+        cols=cols,
+        share_x=share_x,
+        share_y=share_y,
+        link=link,
+        link_select=link_select,
+        gap=gap,
+        **props,
     )

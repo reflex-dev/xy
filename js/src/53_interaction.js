@@ -567,6 +567,7 @@ Object.assign(ChartView.prototype, {
     const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
     const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
     const range = { x0, x1, y0, y1 };
+    this._broadcastLinkedSelection({ range });
     this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
     if (this.comm) {
       this.comm.send({ type: "select", x0, x1, y0, y1 });
@@ -580,6 +581,7 @@ Object.assign(ChartView.prototype, {
     const polygon = points.map((point) => [point[0], point[1]]);
     if (!polygon.every((point) => point.every(Number.isFinite))) return;
     this._lassoPolygon = polygon;
+    this._broadcastLinkedSelection({ polygon });
     this._renderLassoSelection();
     this._dispatchChartEvent("brush", {
       polygon,
@@ -592,7 +594,7 @@ Object.assign(ChartView.prototype, {
     }
   },
 
-  _selectLocalPolygon(points) {
+  _selectLocalPolygon(points, opts = {}) {
     const xs = points.map((point) => point[0]);
     const ys = points.map((point) => point[1]);
     const minX = Math.min(...xs), maxX = Math.max(...xs);
@@ -628,15 +630,17 @@ Object.assign(ChartView.prototype, {
     }
     this._selectionCount = total;
     this.draw();
-    this._dispatchChartEvent("select", {
-      total,
-      polygon: points,
-      view: this._eventView("select"),
-    });
+    if (opts.dispatch !== false) {
+      this._dispatchChartEvent("select", {
+        total,
+        polygon: points,
+        view: this._eventView("select"),
+      });
+    }
   },
 
   // Standalone selection (no kernel): mask the retained CPU f32 columns (§37).
-  _selectLocal(x0, x1, y0, y1) {
+  _selectLocal(x0, x1, y0, y1, opts = {}) {
     let total = 0;
     for (const g of this.gpuTraces) {
       // _cpu only exists where the standalone entry retained copies (retainCpu).
@@ -657,11 +661,13 @@ Object.assign(ChartView.prototype, {
     }
     this._selectionCount = total;
     this.draw();
-    this._dispatchChartEvent("select", {
-      total,
-      range: { x0, x1, y0, y1 },
-      view: this._eventView("select"),
-    });
+    if (opts.dispatch !== false) {
+      this._dispatchChartEvent("select", {
+        total,
+        range: { x0, x1, y0, y1 },
+        view: this._eventView("select"),
+      });
+    }
   },
 
   _applySelMask(g, maskF32) {
@@ -672,16 +678,19 @@ Object.assign(ChartView.prototype, {
     g.selActive = true;
   },
 
-  _clearSelection() {
+  _clearSelection(opts = {}) {
     this._clearLassoOverlay();
     for (const g of this.gpuTraces) {
       g.selActive = false;
       if (g.drill) g.drill.selActive = false;
     }
     this._selectionCount = 0;
-    if (this._interactionFlag("select", true)) {
-      if (this.comm) this.comm.send({ type: "select_clear" });
-      this._dispatchChartEvent("select", { total: 0, view: this._eventView("select_clear") });
+    if (opts.broadcast !== false) this._broadcastLinkedSelection({ clear: true });
+    if (opts.dispatch !== false) {
+      if (this._interactionFlag("select", true)) {
+        if (this.comm) this.comm.send({ type: "select_clear" });
+        this._dispatchChartEvent("select", { total: 0, view: this._eventView("select_clear") });
+      }
     }
   },
 

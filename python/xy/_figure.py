@@ -254,6 +254,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         view_change: Optional[bool] = None,
         link_group: Optional[str] = None,
         link_axes: tuple[str, ...] = ("x", "y"),
+        link_select: Optional[bool] = None,
     ) -> "Figure":
         updates: dict[str, Any] = {}
         for name, value in (
@@ -266,6 +267,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             ("pan", pan),
             ("zoom", zoom),
             ("view_change", view_change),
+            ("link_select", link_select),
         ):
             normalized = self._optional_bool(value, f"interaction {name}")
             if normalized is not None:
@@ -487,7 +489,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         if not isinstance(value, (tuple, list)):
             raise ValueError("interaction link_axes must be a tuple/list containing 'x' and/or 'y'")
         axes = list(value)
-        if not axes or any(axis not in {"x", "y"} for axis in axes):
+        if any(axis not in {"x", "y"} for axis in axes):
             raise ValueError("interaction link_axes must contain only 'x' and/or 'y'")
         out: list[str] = []
         for axis in axes:
@@ -1053,6 +1055,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             "pan",
             "zoom",
             "view_change",
+            "link_select",
         ):
             if name in self.interaction:
                 spec[name] = self._bool_param(self.interaction[name], f"interaction {name}")

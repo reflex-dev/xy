@@ -484,10 +484,22 @@ class ChartView {
     this._linkAxes = Array.isArray(this.interaction.link_axes)
       ? this.interaction.link_axes.filter((axis) => axis === "x" || axis === "y")
       : ["x", "y"];
-    if (!this._linkAxes.length) this._linkAxes = ["x", "y"];
     this._linkChannel = new BroadcastChannel(`xy:${group}`);
     this._linkChannel.onmessage = (event) => {
       const msg = event.data || {};
+      if (msg.source === this._linkedSource) return;
+      if (this._interactionFlag("link_select") && msg.selection) {
+        const selection = msg.selection;
+        if (selection.clear) this._clearSelection({ broadcast: false, dispatch: false });
+        else if (selection.polygon) this._selectLocalPolygon(selection.polygon, { dispatch: false });
+        else if (selection.range) {
+          const { x0, x1, y0, y1 } = selection.range;
+          if ([x0, x1, y0, y1].every(Number.isFinite)) {
+            this._selectLocal(x0, x1, y0, y1, { dispatch: false });
+          }
+        }
+        return;
+      }
       if (!msg.view || msg.source === this._linkedSource) return;
       const next = { ...this.view };
       if (this._linkAxes.includes("x")) {
@@ -507,6 +519,11 @@ class ChartView {
   _broadcastLinkedView(detail) {
     if (!this._linkChannel) return;
     this._linkChannel.postMessage({ source: this._linkedSource, view: detail });
+  }
+
+  _broadcastLinkedSelection(selection) {
+    if (!this._linkChannel || !this._interactionFlag("link_select")) return;
+    this._linkChannel.postMessage({ source: this._linkedSource, selection });
   }
 
   _applyClass(el, className) {
