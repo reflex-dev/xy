@@ -107,13 +107,16 @@ Object.assign(ChartView.prototype, {
 
     this._listen(c, "pointerdown", (e) => {
       this._cancelViewAnimation();
+      const canPan = this._interactionFlag("pan", true);
+      const canZoom = this._interactionFlag("zoom", true);
+      const canNavigate = this._interactionFlag("navigation", true);
       // Shift-drag box-selects (§34); the modebar can make selection or box-zoom
       // the default plain-drag gesture; otherwise a plain drag pans.
       const canBrush = this._interactionFlag("brush", true) && this._interactionFlag("select", true);
       const selectMode = this.dragMode.startsWith("select") ? this.dragMode : null;
       const mode = (e.shiftKey || selectMode) && canBrush && this._pickable
         ? (e.shiftKey ? "select" : selectMode)
-        : this.dragMode === "zoom" ? "zoom" : null;
+        : this.dragMode === "zoom" && canNavigate && canZoom ? "zoom" : null;
       if (mode) {
         const previousLasso = mode.startsWith("select") && this._lassoPolygon
           ? this._lassoPolygon.map((point) => [...point])
@@ -130,10 +133,11 @@ Object.assign(ChartView.prototype, {
         this.tooltip.style.display = "none";
         return;
       }
-      if (!this._interactionFlag("navigation", true)) return;
-      drag = { px: e.clientX, py: e.clientY, view: { ...this.view }, moved: false };
-      try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
-      this.tooltip.style.display = "none";
+      if (canNavigate && canPan) {
+        drag = { px: e.clientX, py: e.clientY, view: { ...this.view }, moved: false };
+        try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
+        this.tooltip.style.display = "none";
+      }
     });
     this._listen(c, "pointermove", (e) => {
       if (band) { this._updateBand(band, e); return; }
@@ -171,8 +175,9 @@ Object.assign(ChartView.prototype, {
           ? band.points.length >= 3
           : Math.abs(e.clientX - band.sx) > 3 || Math.abs(e.clientY - band.sy) > 3;
         if (moved) {
-          if (band.mode === "zoom") this._zoomToBox(band.d0, d1, true);
-          else if (band.mode === "select-lasso") {
+          if (band.mode === "zoom" && this._interactionFlag("zoom", true)) {
+            this._zoomToBox(band.d0, d1, true);
+          } else if (band.mode === "select-lasso") {
             if (band.points.length >= 3) {
               const editable = this._simplifyLassoPoints(band.points);
               this._sendSelectPolygon(editable.map((point) => point.data));
@@ -233,6 +238,7 @@ Object.assign(ChartView.prototype, {
 
     this._listen(c, "wheel", (e) => {
       if (!this._interactionFlag("navigation", true)) return;
+      if (!this._interactionFlag("zoom", true)) return;
       e.preventDefault();
       const f = Math.pow(1.0015, e.deltaY);
       const r = c.getBoundingClientRect();
@@ -243,6 +249,7 @@ Object.assign(ChartView.prototype, {
 
     this._listen(c, "dblclick", () => {
       if (!this._interactionFlag("navigation", true)) return;
+      if (!this._interactionFlag("zoom", true)) return;
       this._clearSelection();
       this._setView(this.view0, { animate: true });
     });
@@ -820,23 +827,31 @@ Object.assign(ChartView.prototype, {
       return b;
     };
 
-    const zoomTrigger = mk("zoommenu", "Zoom controls", () => {
-      setZoomMenuOpen(!this._zoomMenuOpen);
-    });
-    this._zoomMenuButton = zoomTrigger;
-    zoomTrigger.dataset.xyModebarMenuTrigger = "";
-    zoomTrigger.replaceChildren();
-    const zoomPercent = document.createElement("span");
-    zoomPercent.dataset.xyModebarZoomPercent = "";
-    zoomPercent.textContent = "100%";
-    zoomTrigger.appendChild(zoomPercent);
-    const zoomIndicator = document.createElement("span");
-    zoomIndicator.dataset.xyModebarMenuIndicator = "";
-    zoomIndicator.innerHTML = this._icon("chevrondown");
-    zoomTrigger.appendChild(zoomIndicator);
-    this._zoomMenuLabel = zoomPercent;
-    zoomTrigger.setAttribute("aria-haspopup", "menu");
-    zoomTrigger.setAttribute("aria-expanded", "false");
+    const canPan = this._interactionFlag("pan", true);
+    const canZoom = this._interactionFlag("zoom", true);
+    let zoomTrigger = null;
+    let zoomIndicator = null;
+    this._zoomMenuButton = null;
+    this._zoomMenuLabel = null;
+    if (canZoom) {
+      zoomTrigger = mk("zoommenu", "Zoom controls", () => {
+        setZoomMenuOpen(!this._zoomMenuOpen);
+      });
+      this._zoomMenuButton = zoomTrigger;
+      zoomTrigger.dataset.xyModebarMenuTrigger = "";
+      zoomTrigger.replaceChildren();
+      const zoomPercent = document.createElement("span");
+      zoomPercent.dataset.xyModebarZoomPercent = "";
+      zoomPercent.textContent = "100%";
+      zoomTrigger.appendChild(zoomPercent);
+      zoomIndicator = document.createElement("span");
+      zoomIndicator.dataset.xyModebarMenuIndicator = "";
+      zoomIndicator.innerHTML = this._icon("chevrondown");
+      zoomTrigger.appendChild(zoomIndicator);
+      this._zoomMenuLabel = zoomPercent;
+      zoomTrigger.setAttribute("aria-haspopup", "menu");
+      zoomTrigger.setAttribute("aria-expanded", "false");
+    }
     const canSelect = this._pickable
       && this._interactionFlag("brush", true)
       && this._interactionFlag("select", true);
@@ -863,14 +878,17 @@ Object.assign(ChartView.prototype, {
       this._selectMenuButton = selectTrigger;
       this._selectMenuIcon = selectModeIcon;
     }
-    mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
-    const zoomMenu = document.createElement("div");
-    zoomMenu.dataset.xyModebarMenu = "";
-    zoomMenu.setAttribute("role", "menu");
-    zoomMenu.setAttribute("aria-label", "Zoom controls");
-    zoomMenu.style.cssText =
-      "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
-    bar.appendChild(zoomMenu);
+    if (canPan) mk("pan", "Pan", () => this._setDragMode("pan"), "pan");
+    let zoomMenu = null;
+    if (canZoom) {
+      zoomMenu = document.createElement("div");
+      zoomMenu.dataset.xyModebarMenu = "";
+      zoomMenu.setAttribute("role", "menu");
+      zoomMenu.setAttribute("aria-label", "Zoom controls");
+      zoomMenu.style.cssText =
+        "position:absolute;display:none;flex-direction:column;z-index:7;pointer-events:auto;";
+      bar.appendChild(zoomMenu);
+    }
     const zoomMenuItems = [];
     const mkZoomItem = (name, label, onClick, toggles, separator = false) => {
       const button = document.createElement("button");
@@ -901,14 +919,16 @@ Object.assign(ChartView.prototype, {
       return button;
     };
 
-    const resetView = () => {
-      this._clearSelection();
-      this._setView(this.view0, { animate: true });
-    };
-    mkZoomItem("zoomin", "Zoom In", () => this._zoomBy(0.5, true));
-    mkZoomItem("zoomout", "Zoom Out", () => this._zoomBy(2, true));
-    mkZoomItem("zoom", "Box Zoom", () => this._setDragMode("zoom"), "zoom");
-    mkZoomItem("reset", "Reset View", resetView, null, true);
+    if (canZoom) {
+      const resetView = () => {
+        this._clearSelection();
+        this._setView(this.view0, { animate: true });
+      };
+      mkZoomItem("zoomin", "Zoom In", () => this._zoomBy(0.5, true));
+      mkZoomItem("zoomout", "Zoom Out", () => this._zoomBy(2, true));
+      mkZoomItem("zoom", "Box Zoom", () => this._setDragMode("zoom"), "zoom");
+      mkZoomItem("reset", "Reset View", resetView, null, true);
+    }
 
     const selectMenu = document.createElement("div");
     selectMenu.dataset.xyModebarMenu = "";
@@ -1008,38 +1028,40 @@ Object.assign(ChartView.prototype, {
       if (item) mkExportItem(name, item[0], item[1]);
     }
 
-    setZoomMenuOpen = (open, restoreFocus = false) => {
-      const show = Boolean(open);
-      if (show) {
-        setSelectMenuOpen(false);
-        setExportMenuOpen(false);
-      }
-      this._zoomMenuOpen = show;
-      zoomTrigger.setAttribute("aria-expanded", String(show));
-      if (!show) {
-        zoomMenu.style.display = "none";
-        zoomIndicator.style.transform = "none";
-        if (restoreFocus) zoomTrigger.focus();
-        return;
-      }
-      zoomMenu.style.display = "flex";
-      zoomMenu.style.visibility = "hidden";
-      const rootRect = root.getBoundingClientRect();
-      const barRect = bar.getBoundingClientRect();
-      const rootLeft = barRect.left - rootRect.left;
-      const rootTop = barRect.top - rootRect.top;
-      const below = bar.offsetHeight + 6;
-      const above = -zoomMenu.offsetHeight - 6;
-      const preferredTop = barRect.bottom + 6 + zoomMenu.offsetHeight <= rootRect.bottom
-        ? below
-        : above;
-      zoomIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
-      const maxLeft = root.clientWidth - rootLeft - zoomMenu.offsetWidth;
-      const maxTop = root.clientHeight - rootTop - zoomMenu.offsetHeight;
-      zoomMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, zoomTrigger.offsetLeft))}px`;
-      zoomMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
-      zoomMenu.style.visibility = "visible";
-    };
+    if (zoomTrigger) {
+      setZoomMenuOpen = (open, restoreFocus = false) => {
+        const show = Boolean(open);
+        if (show) {
+          setSelectMenuOpen(false);
+          setExportMenuOpen(false);
+        }
+        this._zoomMenuOpen = show;
+        zoomTrigger.setAttribute("aria-expanded", String(show));
+        if (!show) {
+          zoomMenu.style.display = "none";
+          zoomIndicator.style.transform = "none";
+          if (restoreFocus) zoomTrigger.focus();
+          return;
+        }
+        zoomMenu.style.display = "flex";
+        zoomMenu.style.visibility = "hidden";
+        const rootRect = root.getBoundingClientRect();
+        const barRect = bar.getBoundingClientRect();
+        const rootLeft = barRect.left - rootRect.left;
+        const rootTop = barRect.top - rootRect.top;
+        const below = bar.offsetHeight + 6;
+        const above = -zoomMenu.offsetHeight - 6;
+        const preferredTop = barRect.bottom + 6 + zoomMenu.offsetHeight <= rootRect.bottom
+          ? below
+          : above;
+        zoomIndicator.style.transform = preferredTop === above ? "rotate(180deg)" : "none";
+        const maxLeft = root.clientWidth - rootLeft - zoomMenu.offsetWidth;
+        const maxTop = root.clientHeight - rootTop - zoomMenu.offsetHeight;
+        zoomMenu.style.left = `${Math.max(-rootLeft, Math.min(maxLeft, zoomTrigger.offsetLeft))}px`;
+        zoomMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`;
+        zoomMenu.style.visibility = "visible";
+      };
+    }
     setSelectMenuOpen = (open, restoreFocus = false) => {
       if (!selectTrigger) return;
       const show = Boolean(open);
@@ -1115,29 +1137,31 @@ Object.assign(ChartView.prototype, {
       if (this._selectMenuOpen && !bar.contains(e.target)) setSelectMenuOpen(false);
       if (this._exportMenuOpen && !bar.contains(e.target)) setExportMenuOpen(false);
     });
-    this._listen(zoomTrigger, "keydown", (e) => {
-      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-      e.preventDefault();
-      e.stopPropagation();
-      setZoomMenuOpen(true);
-      const index = e.key === "ArrowDown" ? 0 : zoomMenuItems.length - 1;
-      zoomMenuItems[index].focus();
-    });
-    this._listen(zoomMenu, "keydown", (e) => {
-      if (e.key === "Escape") {
+    if (zoomTrigger) {
+      this._listen(zoomTrigger, "keydown", (e) => {
+        if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
         e.preventDefault();
         e.stopPropagation();
-        setZoomMenuOpen(false, true);
-        return;
-      }
-      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
-      e.preventDefault();
-      const current = zoomMenuItems.indexOf(document.activeElement);
-      let next = e.key === "Home" ? 0 : e.key === "End" ? zoomMenuItems.length - 1 : current;
-      if (e.key === "ArrowDown") next = (current + 1) % zoomMenuItems.length;
-      if (e.key === "ArrowUp") next = (current - 1 + zoomMenuItems.length) % zoomMenuItems.length;
-      zoomMenuItems[next].focus();
-    });
+        setZoomMenuOpen(true);
+        const index = e.key === "ArrowDown" ? 0 : zoomMenuItems.length - 1;
+        zoomMenuItems[index].focus();
+      });
+      this._listen(zoomMenu, "keydown", (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          setZoomMenuOpen(false, true);
+          return;
+        }
+        if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+        e.preventDefault();
+        const current = zoomMenuItems.indexOf(document.activeElement);
+        let next = e.key === "Home" ? 0 : e.key === "End" ? zoomMenuItems.length - 1 : current;
+        if (e.key === "ArrowDown") next = (current + 1) % zoomMenuItems.length;
+        if (e.key === "ArrowUp") next = (current - 1 + zoomMenuItems.length) % zoomMenuItems.length;
+        zoomMenuItems[next].focus();
+      });
+    }
     if (selectTrigger) {
       this._listen(selectTrigger, "keydown", (e) => {
         if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;

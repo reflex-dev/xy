@@ -249,6 +249,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
         brush: Optional[bool] = None,
         crosshair: Optional[bool] = None,
         navigation: Optional[bool] = None,
+        pan: Optional[bool] = None,
+        zoom: Optional[bool] = None,
         view_change: Optional[bool] = None,
         link_group: Optional[str] = None,
         link_axes: tuple[str, ...] = ("x", "y"),
@@ -261,6 +263,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             ("brush", brush),
             ("crosshair", crosshair),
             ("navigation", navigation),
+            ("pan", pan),
+            ("zoom", zoom),
             ("view_change", view_change),
         ):
             normalized = self._optional_bool(value, f"interaction {name}")
@@ -1046,6 +1050,8 @@ class Figure(AnnotationsMixin, PayloadMixin):
             "brush",
             "crosshair",
             "navigation",
+            "pan",
+            "zoom",
             "view_change",
         ):
             if name in self.interaction:

@@ -289,7 +289,7 @@ class Theme(Component):
 
 @dataclass
 class Interaction(Component):
-    """Interaction switches (hover/click/select/brush/crosshair/navigation) and
+    """Interaction switches (hover/click/select/brush/crosshair/navigation/pan/zoom) and
     cross-chart axis linking. Built by `interaction_config`."""
 
     hover: Optional[bool] = None
@@ -298,6 +298,8 @@ class Interaction(Component):
     brush: Optional[bool] = None
     crosshair: Optional[bool] = None
     navigation: Optional[bool] = None
+    pan: Optional[bool] = None
+    zoom: Optional[bool] = None
     view_change: Optional[bool] = None
     link_group: Optional[str] = None
     link_axes: tuple[str, ...] = ("x", "y")
@@ -2427,6 +2429,8 @@ def interaction_config(
     brush: Optional[bool] = None,
     crosshair: Optional[bool] = None,
     navigation: Optional[bool] = None,
+    pan: Optional[bool] = None,
+    zoom: Optional[bool] = None,
     view_change: Optional[bool] = None,
     link_group: Optional[str] = None,
     link_axes: tuple[str, ...] = ("x", "y"),
@@ -2440,6 +2444,11 @@ def interaction_config(
         brush: Whether brush selection is enabled.
         crosshair: Whether plot-aligned hover guides are shown.
         navigation: Whether pointer drag and wheel gestures pan or zoom the chart.
+        pan: Whether plain-drag pan is enabled. ``False`` ignores plain-drag
+            pan gestures. The default keeps panning enabled.
+        zoom: Whether viewport zoom is enabled. ``False`` ignores wheel and
+            box zoom, double-click reset, and modebar zoom controls. The
+            default keeps zooming enabled.
         view_change: Whether pan, zoom, and reset emit range events.
         link_group: Identifier used to synchronize charts in the browser.
         link_axes: Axes synchronized within the link group.
@@ -2451,6 +2460,8 @@ def interaction_config(
         brush=brush,
         crosshair=crosshair,
         navigation=navigation,
+        pan=pan,
+        zoom=zoom,
         view_change=view_change,
         link_group=link_group,
         link_axes=link_axes,
@@ -2556,6 +2567,8 @@ class Chart(Component):
         brush: Optional[bool] = None,
         crosshair: Optional[bool] = None,
         navigation: Optional[bool] = None,
+        pan: Optional[bool] = None,
+        zoom: Optional[bool] = None,
         view_change: Optional[bool] = None,
         link_group: Optional[str] = None,
         link_axes: tuple[str, ...] = ("x", "y"),
@@ -2582,6 +2595,8 @@ class Chart(Component):
         self.brush = brush
         self.crosshair = crosshair
         self.navigation = navigation
+        self.pan = pan
+        self.zoom = zoom
         self.view_change = view_change
         self.link_group = link_group
         self.link_axes = link_axes
@@ -2685,6 +2700,8 @@ class Chart(Component):
             or self.brush is not None
             or self.crosshair is not None
             or self.navigation is not None
+            or self.pan is not None
+            or self.zoom is not None
             or self.view_change is not None
             or self.link_group is not None
         ):
@@ -2695,6 +2712,8 @@ class Chart(Component):
                 brush=self.brush,
                 crosshair=self.crosshair,
                 navigation=self.navigation,
+                pan=self.pan,
+                zoom=self.zoom,
                 view_change=self.view_change,
                 link_group=self.link_group,
                 link_axes=self.link_axes,
@@ -2707,6 +2726,8 @@ class Chart(Component):
                 brush=node.brush,
                 crosshair=node.crosshair,
                 navigation=node.navigation,
+                pan=node.pan,
+                zoom=node.zoom,
                 view_change=node.view_change,
                 link_group=node.link_group,
                 link_axes=node.link_axes,
