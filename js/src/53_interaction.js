@@ -130,6 +130,7 @@ Object.assign(ChartView.prototype, {
         this.tooltip.style.display = "none";
         return;
       }
+      if (!this._interactionFlag("navigation", true)) return;
       drag = { px: e.clientX, py: e.clientY, view: { ...this.view }, moved: false };
       try { c.setPointerCapture(e.pointerId); } catch (_err) { /* synthetic event */ }
       this.tooltip.style.display = "none";
@@ -234,6 +235,7 @@ Object.assign(ChartView.prototype, {
     this._listen(c, "click", (e) => this._click(e));
 
     this._listen(c, "wheel", (e) => {
+      if (!this._interactionFlag("navigation", true)) return;
       e.preventDefault();
       const f = Math.pow(1.0015, e.deltaY);
       const r = c.getBoundingClientRect();
@@ -243,6 +245,7 @@ Object.assign(ChartView.prototype, {
     }, { passive: false });
 
     this._listen(c, "dblclick", () => {
+      if (!this._interactionFlag("navigation", true)) return;
       this._clearSelection();
       this._setView(this.view0, { animate: true });
     });

@@ -53,12 +53,20 @@ node is present, the last node of that family supplies the effective settings.
 
 Family containers make a single-family chart easy to scan:
 
-~~~python
+~~~python demo exec
+import xy
+
 chart = xy.scatter_chart(
     xy.scatter([1, 2, 3], [4, 2, 7]),
     xy.x_axis(label="x"),
     xy.y_axis(label="y"),
 )
+
+
+def family_container_demo():
+    import reflex_xy
+
+    return reflex_xy.chart(chart, height="360px")
 ~~~
 
 Use neutral `chart()` when different mark kinds share one panel. Containers

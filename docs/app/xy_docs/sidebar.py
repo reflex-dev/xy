@@ -23,6 +23,8 @@ def _leaf(
     title: str,
     href: str,
     url: rx.vars.StringVar[str],
+    *,
+    guide_margin_class: str = "ml-[3rem]",
 ) -> rx.Component:
     """Render one memoized XY documentation leaf.
 
@@ -38,7 +40,7 @@ def _leaf(
         title=title,
         href=href,
         active=url == href,
-        guide_margin_class="ml-[3rem]",
+        guide_margin_class=guide_margin_class,
     )
 
 
@@ -50,6 +52,46 @@ def _section_leaves(
     if any(route == landing_route for _title, route in leaves):
         return leaves
     return (("Overview", landing_route), *leaves)
+
+
+def _section_items(
+    title: str,
+    landing_route: str,
+    icon: str,
+    leaves: tuple[tuple[str, str], ...],
+    url: rx.vars.StringVar[str],
+) -> tuple[rx.Component, ...]:
+    """Render one sidebar section as a group or a set of direct links."""
+    section_leaves = _section_leaves(landing_route, leaves)
+    if title == "Integrations":
+        return tuple(
+            _leaf(
+                title if leaf_route == landing_route else leaf_title,
+                leaf_route,
+                url,
+                guide_margin_class="ml-[3.75rem]",
+            )
+            for leaf_title, leaf_route in section_leaves
+        )
+    return (
+        docs_sidebar_group(
+            title,
+            *(
+                _leaf(leaf_title, leaf_route, url)
+                for leaf_title, leaf_route in section_leaves
+            ),
+            icon=icon,
+            open_=(
+                (url == "/") | url.startswith("/overview/")
+                if landing_route == "/"
+                else (
+                    (url == landing_route) | url.startswith("/charts/")
+                    if title == "Chart Gallery"
+                    else url.startswith(landing_route)
+                )
+            ),
+        ),
+    )
 
 
 @rx.memo
@@ -97,27 +139,9 @@ def xy_docs_sidebar_comp(url: rx.vars.StringVar[str]) -> rx.Component:
                 group_title,
                 group_route,
                 *(
-                    docs_sidebar_group(
-                        title,
-                        *(
-                            _leaf(leaf_title, leaf_route, url)
-                            for leaf_title, leaf_route in _section_leaves(
-                                landing_route,
-                                leaves,
-                            )
-                        ),
-                        icon=icon,
-                        open_=(
-                            (url == "/") | url.startswith("/overview/")
-                            if landing_route == "/"
-                            else (
-                                (url == landing_route) | url.startswith("/charts/")
-                                if title == "Chart Gallery"
-                                else url.startswith(landing_route)
-                            )
-                        ),
-                    )
+                    item
                     for title, landing_route, icon, leaves in sections
+                    for item in _section_items(title, landing_route, icon, leaves, url)
                 ),
                 connected_line=False,
             )
