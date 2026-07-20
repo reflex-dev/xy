@@ -276,20 +276,31 @@ def test_shared_named_categorical_axis_uses_its_own_union_category_order() -> No
 # -- interaction linking ------------------------------------------------------
 
 
-def test_shared_axes_link_panels() -> None:
+def test_shared_axes_stay_independent_by_default() -> None:
     grid = xy.facet_chart(xy.line(x="x", y="y"), by="g", data=_table()).figure()
-    groups = {fig.interaction.get("link_group") for fig in grid.figures}
-    assert len(groups) == 1 and None not in groups
-    assert all(fig.interaction["link_axes"] == ["x", "y"] for fig in grid.figures)
+    assert all("link_group" not in fig.interaction for fig in grid.figures)
 
 
-def test_link_axes_follow_share_flags() -> None:
-    grid = xy.facet_chart(xy.line(x="x", y="y"), by="g", data=_table(), share_y=False).figure()
-    assert all(fig.interaction["link_axes"] == ["x"] for fig in grid.figures)
-    unlinked = xy.facet_chart(
-        xy.line(x="x", y="y"), by="g", data=_table(), share_x=False, share_y=False
+@pytest.mark.parametrize(("link", "axes"), [("x", ["x"]), ("y", ["y"]), ("both", ["x", "y"])])
+def test_link_is_explicit_and_selectable(link: str, axes: list[str]) -> None:
+    grid = xy.facet_chart(
+        xy.line(x="x", y="y"), by="g", data=_table(), link=link, link_select=True
     ).figure()
-    assert all("link_group" not in fig.interaction for fig in unlinked.figures)
+    assert len({fig.interaction["link_group"] for fig in grid.figures}) == 1
+    assert all(fig.interaction["link_axes"] == axes for fig in grid.figures)
+    assert all(fig.interaction["link_select"] is True for fig in grid.figures)
+
+
+def test_link_implies_initial_domain_sharing() -> None:
+    grid = xy.facet_chart(
+        xy.line(x="x", y="y"), by="g", data=_table(), share_x=False, link="x"
+    ).figure()
+    assert len({fig.x_range() for fig in grid.figures}) == 1
+
+
+def test_invalid_link_rejected() -> None:
+    with pytest.raises(ValueError, match="link must"):
+        xy.facet_chart(xy.line(x="x", y="y"), by="g", data=_table(), link="z")
 
 
 def test_user_link_group_is_not_overridden() -> None:

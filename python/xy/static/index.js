@@ -2054,10 +2054,22 @@ if (!group || typeof BroadcastChannel !== "function") return;
 this._linkAxes = Array.isArray(this.interaction.link_axes)
 ? this.interaction.link_axes.filter((axis) => axis === "x" || axis === "y")
 : ["x", "y"];
-if (!this._linkAxes.length) this._linkAxes = ["x", "y"];
 this._linkChannel = new BroadcastChannel(`xy:${group}`);
 this._linkChannel.onmessage = (event) => {
 const msg = event.data || {};
+if (msg.source === this._linkedSource) return;
+if (this._interactionFlag("link_select") && msg.selection) {
+const selection = msg.selection;
+if (selection.clear) this._clearSelection({ broadcast: false, dispatch: false });
+else if (selection.polygon) this._selectLocalPolygon(selection.polygon, { dispatch: false });
+else if (selection.range) {
+const { x0, x1, y0, y1 } = selection.range;
+if ([x0, x1, y0, y1].every(Number.isFinite)) {
+this._selectLocal(x0, x1, y0, y1, { dispatch: false });
+}
+}
+return;
+}
 if (!msg.view || msg.source === this._linkedSource) return;
 const next = { ...this.view };
 if (this._linkAxes.includes("x")) {
@@ -2075,6 +2087,10 @@ this._setView(next, { animate: false, source: "linked", broadcast: false });
 _broadcastLinkedView(detail) {
 if (!this._linkChannel) return;
 this._linkChannel.postMessage({ source: this._linkedSource, view: detail });
+}
+_broadcastLinkedSelection(selection) {
+if (!this._linkChannel || !this._interactionFlag("link_select")) return;
+this._linkChannel.postMessage({ source: this._linkedSource, selection });
 }
 _applyClass(el, className) {
 if (typeof className !== "string") return;
@@ -6303,6 +6319,7 @@ this._clearLassoOverlay();
 const x0 = Math.min(d0[0], d1[0]), x1 = Math.max(d0[0], d1[0]);
 const y0 = Math.min(d0[1], d1[1]), y1 = Math.max(d0[1], d1[1]);
 const range = { x0, x1, y0, y1 };
+this._broadcastLinkedSelection({ range });
 this._dispatchChartEvent("brush", { range, view: this._eventView("brush") });
 if (this.comm) {
 this.comm.send({ type: "select", x0, x1, y0, y1 });
@@ -6315,6 +6332,7 @@ if (!Array.isArray(points) || points.length < 3) return;
 const polygon = points.map((point) => [point[0], point[1]]);
 if (!polygon.every((point) => point.every(Number.isFinite))) return;
 this._lassoPolygon = polygon;
+this._broadcastLinkedSelection({ polygon });
 this._renderLassoSelection();
 this._dispatchChartEvent("brush", {
 polygon,
@@ -6326,7 +6344,7 @@ this.comm.send({ type: "select_polygon", points: polygon });
 this._selectLocalPolygon(polygon);
 }
 },
-_selectLocalPolygon(points) {
+_selectLocalPolygon(points, opts = {}) {
 const xs = points.map((point) => point[0]);
 const ys = points.map((point) => point[1]);
 const minX = Math.min(...xs), maxX = Math.max(...xs);
@@ -6362,13 +6380,15 @@ total += count;
 }
 this._selectionCount = total;
 this.draw();
+if (opts.dispatch !== false) {
 this._dispatchChartEvent("select", {
 total,
 polygon: points,
 view: this._eventView("select"),
 });
+}
 },
-_selectLocal(x0, x1, y0, y1) {
+_selectLocal(x0, x1, y0, y1, opts = {}) {
 let total = 0;
 for (const g of this.gpuTraces) {
 if (!g._cpu || g.tier === "density") continue;
@@ -6388,11 +6408,13 @@ total += cnt;
 }
 this._selectionCount = total;
 this.draw();
+if (opts.dispatch !== false) {
 this._dispatchChartEvent("select", {
 total,
 range: { x0, x1, y0, y1 },
 view: this._eventView("select"),
 });
+}
 },
 _applySelMask(g, maskF32) {
 const gl = this.gl;
@@ -6401,16 +6423,19 @@ gl.bindBuffer(gl.ARRAY_BUFFER, g.selBuf);
 gl.bufferData(gl.ARRAY_BUFFER, maskF32, gl.STATIC_DRAW);
 g.selActive = true;
 },
-_clearSelection() {
+_clearSelection(opts = {}) {
 this._clearLassoOverlay();
 for (const g of this.gpuTraces) {
 g.selActive = false;
 if (g.drill) g.drill.selActive = false;
 }
 this._selectionCount = 0;
+if (opts.broadcast !== false) this._broadcastLinkedSelection({ clear: true });
+if (opts.dispatch !== false) {
 if (this._interactionFlag("select", true)) {
 if (this.comm) this.comm.send({ type: "select_clear" });
 this._dispatchChartEvent("select", { total: 0, view: this._eventView("select_clear") });
+}
 }
 },
 _clampModebar(left, top) {
