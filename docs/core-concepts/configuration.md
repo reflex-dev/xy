@@ -12,7 +12,7 @@ charts in one process from changing one another implicitly.
 
 ## Configure one chart
 
-~~~python
+~~~python demo exec
 import xy
 
 chart = xy.scatter_chart(
@@ -29,6 +29,12 @@ chart = xy.scatter_chart(
     width="100%",
     height=420,
 )
+
+
+def chart_configuration_demo():
+    import reflex_xy
+
+    return reflex_xy.chart(chart, height="420px")
 ~~~
 
 | Surface | Configure with | Scope |
@@ -52,14 +58,29 @@ are preferable for deterministic static output and facet layouts.
 Chromium engine when browser fonts, author CSS, or WebGL screenshot fidelity is
 required:
 
-~~~python
+~~~python demo exec
+import xy
 from xy import Engine
 
-chart.to_png(
-    "chart.png",
-    engine=Engine.chromium,
-    custom_css=".xy { font-family: Inter, sans-serif; }",
+chart = xy.line_chart(
+    xy.line([1, 2, 3, 4], [2, 5, 3, 7], color="#6e56cf"),
+    xy.x_axis(label="sample"),
+    xy.y_axis(label="value"),
 )
+
+
+def export_chart(path="chart.png"):
+    chart.to_png(
+        path,
+        engine=Engine.chromium,
+        custom_css=".xy { font-family: Inter, sans-serif; }",
+    )
+
+
+def output_defaults_demo():
+    import reflex_xy
+
+    return reflex_xy.chart(chart, height="360px")
 ~~~
 
 Set the `XY_BROWSER` environment variable to a Chrome/Chromium/Edge executable

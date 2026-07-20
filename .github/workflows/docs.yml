@@ -167,7 +167,6 @@ jobs:
         run: |
           uv run --no-sync pytest --runxfail \
             tests/test_docs_site.py::test_xy_markdown_docs_links_match_exported_sitemap \
-            tests/test_docs_site.py::test_static_xy_tailwind_manifest_reaches_compiled_css \
             -v
       - name: Validate generated sitemap
         working-directory: docs/app

@@ -11,7 +11,7 @@ children share a table.
 
 ## Direct arrays
 
-~~~python
+~~~python demo exec
 import numpy as np
 import xy
 
@@ -19,6 +19,12 @@ x = np.linspace(0, 10, 200)
 y = np.sin(x)
 
 chart = xy.line_chart(xy.line(x, y))
+
+
+def direct_arrays_demo():
+    import reflex_xy
+
+    return reflex_xy.chart(chart, height="360px")
 ~~~
 
 Regular Python sequences and one-dimensional NumPy arrays use the same API.
@@ -28,7 +34,7 @@ than silently coerced.
 
 ## Named columns
 
-~~~python
+~~~python demo exec
 import xy
 
 data = {
@@ -42,6 +48,12 @@ chart = xy.scatter_chart(
     xy.scatter(x="x", y="y", color="segment", size="weight"),
     data=data,
 )
+
+
+def named_columns_demo():
+    import reflex_xy
+
+    return reflex_xy.chart(chart, height="360px")
 ~~~
 
 Dictionaries, pandas DataFrames, and other column-indexable objects work with
@@ -67,13 +79,35 @@ PyArrow is an optional input format, not an XY runtime dependency. Install it
 separately (`uv add pyarrow` or `pip install pyarrow`) and pass an Array or
 ChunkedArray directly:
 
-~~~python
-import pyarrow as pa
+~~~python demo exec
 import xy
 
-x = pa.array([1.0, 2.0, 3.0])
-y = pa.array([3.0, 5.0, 4.0])
-chart = xy.scatter_chart(xy.scatter(x, y))
+try:
+    import pyarrow as pa
+except ModuleNotFoundError:
+    pa = None
+
+values_x = [1.0, 2.0, 3.0]
+values_y = [3.0, 5.0, 4.0]
+x = pa.array(values_x) if pa is not None else values_x
+y = pa.array(values_y) if pa is not None else values_y
+chart = xy.scatter_chart(
+    xy.scatter(
+        x,
+        y,
+        color="#6e56cf",
+        size=12,
+        opacity=1,
+        stroke="#ffffff",
+        stroke_width=2,
+    )
+)
+
+
+def arrow_input_demo():
+    import reflex_xy
+
+    return reflex_xy.chart(chart, height="360px")
 ~~~
 
 A null-free primitive float64 Arrow Array, or a one-chunk column with that
@@ -91,7 +125,7 @@ float64 milliseconds since the Unix epoch; `NaT` becomes a missing value. The
 current contract does not preserve arbitrary nanosecond distinctions end to
 end.
 
-~~~python
+~~~python demo exec
 import numpy as np
 import xy
 
@@ -103,6 +137,12 @@ chart = xy.line_chart(
     xy.line(time, [12, 18, 15]),
     xy.x_axis(label="day", type_="time"),
 )
+
+
+def time_handling_demo():
+    import reflex_xy
+
+    return reflex_xy.chart(chart, height="360px")
 ~~~
 
 Missing numeric values break line/area runs or are omitted from point geometry,

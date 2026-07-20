@@ -27,7 +27,7 @@ write code against the behavior and recorded `tier`, not a hard-coded count.
 
 ## Automatic versus explicit density
 
-~~~python
+~~~python demo exec
 import numpy as np
 import xy
 
@@ -40,6 +40,12 @@ chart = xy.scatter_chart(
     width=1000,
     height=500,
 )
+
+
+def automatic_density_demo():
+    import reflex_xy
+
+    return reflex_xy.chart(chart, height="420px")
 ~~~
 
 - `density=None` chooses automatically and is the normal large-data setting.
@@ -78,11 +84,17 @@ pipeline.
 
 ## Inspect memory and tier decisions
 
-~~~python
+~~~python demo exec
 report = chart.memory_report()
 print(report["canonical_bytes"])
 for column in report["columns"]:
     print(column["len"], column["bytes"], column["ingest_copies"])
+
+
+def memory_report_demo():
+    import reflex_xy
+
+    return reflex_xy.chart(chart, height="420px")
 ~~~
 
 Tier decisions are also recorded in the built payload rather than being

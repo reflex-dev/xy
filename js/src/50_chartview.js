@@ -49,6 +49,8 @@ const UNITLESS_STYLE_PROPS = new Set([
 const XY_CONTEXT_GOVERNOR = {
   views: new Set(),
   seq: 1,
+  hiddenReleaseChannel: null,
+  hiddenReleaseQueue: [],
   budget() {
     const v = typeof window !== "undefined" ? window.XY_CONTEXT_BUDGET : null;
     // 12 leaves headroom under Chrome's ~16 so host-page GL (maps, editors)
@@ -103,6 +105,47 @@ const XY_CONTEXT_GOVERNOR = {
   },
   cancel(requester) {
     requester._ctxPendingReservation = false;
+  },
+  // Releasing a context takes a synchronous framebuffer readback. Queue one
+  // chart per task when a document is hidden so visibilitychange itself stays
+  // cheap and a many-chart page cannot monopolize the event-loop turn.
+  scheduleHiddenReleases() {
+    if (this.hiddenReleaseChannel !== null) return;
+    this.hiddenReleaseQueue = Array.from(this.views);
+    const channel = new MessageChannel();
+    this.hiddenReleaseChannel = channel;
+    channel.port1.onmessage = () => {
+      if (
+        typeof document === "undefined" ||
+        document.visibilityState !== "hidden"
+      ) {
+        this.cancelHiddenReleases();
+        return;
+      }
+      let view = null;
+      while (this.hiddenReleaseQueue.length && !view) {
+        const candidate = this.hiddenReleaseQueue.shift();
+        if (
+          !candidate._destroyed &&
+          candidate.gl &&
+          !candidate._glLost &&
+          !candidate.gl.isContextLost()
+        ) view = candidate;
+      }
+      if (!view) {
+        this.cancelHiddenReleases();
+        return;
+      }
+      view._releaseContext();
+      channel.port2.postMessage(null);
+    };
+    channel.port2.postMessage(null);
+  },
+  cancelHiddenReleases() {
+    this.hiddenReleaseChannel?.port1.close();
+    this.hiddenReleaseChannel?.port2.close();
+    this.hiddenReleaseChannel = null;
+    this.hiddenReleaseQueue = [];
   },
 };
 
@@ -195,7 +238,20 @@ class ChartView {
     this._contextLossCount = 0;
     this._contextRestoreCount = 0;
     this._contextRecoveryError = null;
-    this._initGl(buffer);
+    try {
+      this._initGl(buffer);
+    } catch (err) {
+      // Initial construction has no recovery handler yet and the public entry
+      // points intentionally let the exception surface. Leave a useful DOM
+      // fallback behind for browsers without WebGL2; recovery attempts catch
+      // the same error themselves and therefore never replace their canvas.
+      XY_CONTEXT_GOVERNOR.unregister(this);
+      if (String(err && err.message || err) === "webgl2 unavailable") {
+        this.root.textContent = "xy: WebGL2 unavailable in this browser.";
+      }
+      throw err;
+    }
+    this.canvas.dataset.xyCtx = "live";
     this._initA11y();
     this.root.dataset.xyContextState = "ready";
     this._initContextLossRecovery();
@@ -213,10 +269,10 @@ class ChartView {
     this._armVisibilityResizeWatch();
     this._armDprWatch();
 
-    this.view0 = {
+    this.view0 = this._clampView({
       x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
       y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
-    };
+    });
     this.view = { ...this.view0 };
     this._initLinkedCharts();
 
@@ -428,10 +484,22 @@ class ChartView {
     this._linkAxes = Array.isArray(this.interaction.link_axes)
       ? this.interaction.link_axes.filter((axis) => axis === "x" || axis === "y")
       : ["x", "y"];
-    if (!this._linkAxes.length) this._linkAxes = ["x", "y"];
     this._linkChannel = new BroadcastChannel(`xy:${group}`);
     this._linkChannel.onmessage = (event) => {
       const msg = event.data || {};
+      if (msg.source === this._linkedSource) return;
+      if (this._interactionFlag("link_select") && msg.selection) {
+        const selection = msg.selection;
+        if (selection.clear) this._clearSelection({ broadcast: false, dispatch: false });
+        else if (selection.polygon) this._selectLocalPolygon(selection.polygon, { dispatch: false });
+        else if (selection.range) {
+          const { x0, x1, y0, y1 } = selection.range;
+          if ([x0, x1, y0, y1].every(Number.isFinite)) {
+            this._selectLocal(x0, x1, y0, y1, { dispatch: false });
+          }
+        }
+        return;
+      }
       if (!msg.view || msg.source === this._linkedSource) return;
       const next = { ...this.view };
       if (this._linkAxes.includes("x")) {
@@ -443,6 +511,7 @@ class ChartView {
         next.y1 = Number(msg.view.y1);
       }
       if (![next.x0, next.x1, next.y0, next.y1].every(Number.isFinite)) return;
+      if (!this._interactionFlag("pan", true) && !this._interactionFlag("zoom", true)) return;
       this._setView(next, { animate: false, source: "linked", broadcast: false });
     };
   }
@@ -450,6 +519,11 @@ class ChartView {
   _broadcastLinkedView(detail) {
     if (!this._linkChannel) return;
     this._linkChannel.postMessage({ source: this._linkedSource, view: detail });
+  }
+
+  _broadcastLinkedSelection(selection) {
+    if (!this._linkChannel || !this._interactionFlag("link_select")) return;
+    this._linkChannel.postMessage({ source: this._linkedSource, selection });
   }
 
   _applyClass(el, className) {
@@ -619,6 +693,30 @@ class ChartView {
       this._dispatchChartEvent("context_lost", {
         loss_count: this._contextLossCount,
       });
+      // A governed release keeps a snapshot and deliberately waits until the
+      // chart is requested again. A browser-side eviction is different: the
+      // canvas has no stand-in, and IntersectionObserver may not deliver a
+      // new entry when an already-visible chart loses its context (notably
+      // when other chart-heavy tabs push Chrome over its process-wide cap).
+      // Rebuild on the next task while this document is active so the loss
+      // handler can finish first and the visible chart never waits for a
+      // scroll-out/scroll-in cycle to recover.
+      const documentVisible =
+        typeof document === "undefined" ||
+        !document.visibilityState ||
+        document.visibilityState === "visible";
+      if (!governedRelease && this._ctxVisible && documentVisible) {
+        setTimeout(() => {
+          if (
+            !this._destroyed &&
+            this._glLost &&
+            this.canvas.dataset.xyCtx === "lost" &&
+            this._ctxVisible
+          ) {
+            this._recoverContext();
+          }
+        }, 0);
+      }
     });
     this._listen(this.canvas, "webglcontextrestored", () => {
       // A failed recovery replaced the canvas with the error message; a later
@@ -631,8 +729,31 @@ class ChartView {
       this.pickTex = null;
       try {
         this._initGl(this._payload);
+        this._glLost = false;
+        // Compile the programs this chart actually uses and submit a complete
+        // frame before advertising the replacement context as live. Under
+        // process-wide pressure Chrome can lose a just-created context during
+        // resource setup; an async draw would otherwise leave a blank canvas
+        // stamped "live" and surface a later `shader compile: null` from pick.
+        this._drawNow();
+        this._assertContextFrameReady("restore");
       } catch (err) {
         this._glLost = true;
+        this.canvas.dataset.xyCtx = "lost";
+        this.root.dataset.xyContextState = "lost";
+        // A null shader log is Chromium's characteristic response when the
+        // context disappears mid-compile. Keep the chart recoverable instead
+        // of turning transient global pressure into a permanent error card.
+        const transient =
+          !this.gl ||
+          this.gl.isContextLost() ||
+          String(err && err.message || err).includes("shader compile: null") ||
+          String(err && err.message || err).startsWith("WebGL error ");
+        if (transient) {
+          this._contextRecoveryError = null;
+          this._scheduleContextRecovery();
+          return;
+        }
         this._contextRecoveryError = err;
         this.root.dataset.xyContextState = "failed";
         try { this._destroyGlResources(); } catch (_cleanupErr) {}
@@ -644,12 +765,12 @@ class ChartView {
         this.root.textContent = "xy: WebGL2 context could not be restored.";
         return;
       }
-      this._glLost = false;
       this._contextRestoreCount += 1;
       this._contextRecoveryError = null;
+      this._ctxRecoveryDelay = 0;
+      this.canvas.dataset.xyCtx = "live";
       this.root.dataset.xyContextState = "ready";
       this._scheduleViewRequest(this.view, { delay: 0 });
-      this.draw();
       this._dropContextSnapshot(); // live frame is back; retire the stand-in
       this._dispatchChartEvent("context_restored", {
         loss_count: this._contextLossCount,
@@ -699,7 +820,47 @@ class ChartView {
       snap.height = this.canvas.height;
       snap.style.cssText = this.canvas.style.cssText;
       snap.style.pointerEvents = "none";
-      snap.getContext("2d").drawImage(this.canvas, 0, 0);
+      // Do not copy the default WebGL framebuffer with drawImage(). Contexts
+      // use preserveDrawingBuffer=false, so Chrome may hand the 2D canvas an
+      // already-discarded transparent buffer even though _drawNow() just
+      // submitted the marks. Read the freshly drawn pixels synchronously
+      // before WEBGL_lose_context instead; this keeps governed releases from
+      // showing only the independently painted grid/chrome while scrolling a
+      // many-chart page.
+      const gl = this.gl;
+      const w = this.canvas.width;
+      const h = this.canvas.height;
+      gl.finish();
+      const pixels = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      const ctx = snap.getContext("2d");
+      const image = ctx.createImageData(w, h);
+      const data = image.data;
+      // Flip WebGL's bottom-up rows while converting its premultiplied colors
+      // to the straight-alpha channels expected by ImageData. Keeping both
+      // transforms in one pixel pass avoids scanning every snapshot twice.
+      for (let srcY = 0; srcY < h; srcY++) {
+        let src = srcY * w * 4;
+        const srcEnd = src + w * 4;
+        let dst = (h - 1 - srcY) * w * 4;
+        for (; src < srcEnd; src += 4, dst += 4) {
+          const alpha = pixels[src + 3];
+          let red = pixels[src];
+          let green = pixels[src + 1];
+          let blue = pixels[src + 2];
+          if (alpha > 0 && alpha < 255) {
+            const scale = 255 / alpha;
+            red = Math.min(255, Math.round(red * scale));
+            green = Math.min(255, Math.round(green * scale));
+            blue = Math.min(255, Math.round(blue * scale));
+          }
+          data[dst] = red;
+          data[dst + 1] = green;
+          data[dst + 2] = blue;
+          data[dst + 3] = alpha;
+        }
+      }
+      ctx.putImageData(image, 0, 0);
       this.canvas.before(snap);
       // Chrome composites a lost-context canvas as an opaque broken-image
       // tile, which would sit on top of the stand-in. Events still reach the
@@ -741,11 +902,51 @@ class ChartView {
     this._rebuildEvictedContext();
   }
 
+  _assertContextFrameReady(stage) {
+    if (!this.gl) {
+      throw new Error(`context lost during ${stage} draw`);
+    }
+    // This runs only during recovery. Paying for a synchronous completion
+    // here prevents command-queue acceptance from being mistaken for a real
+    // frame when Chrome revokes the new context under global pressure.
+    this.gl.finish();
+    if (this.gl.isContextLost()) throw new Error(`context lost during ${stage} draw`);
+    // WebGL resource creation can fail under process-wide pressure without a
+    // useful shader log. A clean first frame is the commit point: do not call
+    // the canvas live while setup/draw left an error behind.
+    const error = this.gl.getError();
+    if (error !== this.gl.NO_ERROR) {
+      throw new Error(`WebGL error ${error} during ${stage} draw`);
+    }
+  }
+
+  _scheduleContextRecovery() {
+    if (this._ctxRecoveryTimer || this._destroyed || !this._ctxVisible) return;
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState &&
+      document.visibilityState !== "visible"
+    ) return;
+    const delay = this._ctxRecoveryDelay || 50;
+    this._ctxRecoveryDelay = Math.min(1000, delay * 2);
+    this._ctxRecoveryTimer = setTimeout(() => {
+      this._ctxRecoveryTimer = null;
+      if (this._glLost && !this._destroyed && this._ctxVisible) this._recoverContext();
+    }, delay);
+  }
+
   _rebuildEvictedContext() {
     // The evicted context object is dead for good and a canvas keeps its
     // context forever, so recovery swaps in a fresh canvas (attributes
     // cloned, listeners retargeted) and rebuilds — the same §18/§27 rebuild
     // the restored path uses.
+    // A transactional restore can also reject a technically-live context
+    // whose first frame reported an error. Explicitly release that stale
+    // handle before replacing the canvas so retries do not add to the global
+    // pressure they are trying to escape.
+    if (this.gl && !this.gl.isContextLost()) {
+      try { this.gl.getExtension("WEBGL_lose_context")?.loseContext(); } catch (_err) {}
+    }
     const fresh = this.canvas.cloneNode(false);
     for (const record of this._listeners) {
       if (record.target === this.canvas) {
@@ -762,13 +963,18 @@ class ChartView {
     this.pickTex = null;
     try {
       this._initGl(this._payload);
+      this._glLost = false;
+      this._drawNow();
+      this._assertContextFrameReady("rebuild");
     } catch (_err) {
       this._glLost = true;
       this.canvas.dataset.xyCtx = "lost";
+      this._scheduleContextRecovery();
       return; // context pressure persists; the next visibility pass retries
     }
+    this._ctxRecoveryDelay = 0;
+    this.canvas.dataset.xyCtx = "live";
     this._scheduleViewRequest(this.view, { delay: 0 });
-    this.draw();
     this._dropContextSnapshot();
   }
 
@@ -783,6 +989,30 @@ class ChartView {
     this._listen(this.root, "pointerenter", () => {
       if (this._glLost && !this._destroyed) this._recoverContext();
     });
+    // A background tab can lose contexts without changing any element's
+    // intersection state. When the tab becomes active again, eagerly recover
+    // an on-screen browser-evicted canvas; governed releases still retain
+    // their snapshots and stay demand-driven.
+    if (typeof document !== "undefined") {
+      this._listen(document, "visibilitychange", () => {
+        if (document.visibilityState === "hidden") {
+          // Chrome's WebGL allowance is process-wide in the multi-tab case.
+          // Release healthy contexts from the inactive document without doing
+          // every synchronous snapshot inside this visibilitychange turn.
+          XY_CONTEXT_GOVERNOR.scheduleHiddenReleases();
+          return;
+        }
+        XY_CONTEXT_GOVERNOR.cancelHiddenReleases();
+        if (
+          document.visibilityState === "visible" &&
+          this._ctxVisible &&
+          this._glLost &&
+          !this._destroyed
+        ) {
+          this._recoverContext();
+        }
+      });
+    }
     if (typeof IntersectionObserver === "undefined") {
       this._ctxVisible = true; // no observer: never treat as releasable
       return;
@@ -1301,12 +1531,10 @@ class ChartView {
     });
     if (!gl) {
       XY_CONTEXT_GOVERNOR.cancel(this);
-      this.root.textContent = "xy: WebGL2 unavailable in this browser.";
       throw new Error("webgl2 unavailable");
     }
     this.gl = gl;
     XY_CONTEXT_GOVERNOR.acquired(this);
-    this.canvas.dataset.xyCtx = "live";
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
@@ -3509,8 +3737,23 @@ class ChartView {
   }
 
   _pickAt(cssX, cssY) {
-    if (!this._pickable) return null;
-    if (this._pickDirty) this._renderPick();
+    if (
+      !this._pickable ||
+      this._glLost ||
+      !this.gl ||
+      this.gl.isContextLost()
+    ) return null;
+    if (this._pickDirty) {
+      try {
+        this._renderPick();
+      } catch (err) {
+        // Native eviction can race pointer movement before the asynchronous
+        // webglcontextlost event updates `_glLost`. Suppress only that lost-
+        // context case; real shader/program defects must remain observable.
+        if (!this.gl || this.gl.isContextLost()) return null;
+        throw err;
+      }
+    }
     const gl = this.gl;
     const px = Math.round(cssX * this.dpr);
     const py = Math.round((this.plot.h - cssY) * this.dpr); // GL origin bottom-left
@@ -3812,6 +4055,8 @@ class ChartView {
     XY_CONTEXT_GOVERNOR.unregister(this);
     this._ctxIo?.disconnect();
     this._ctxIo = null;
+    clearTimeout(this._ctxRecoveryTimer);
+    this._ctxRecoveryTimer = null;
     clearTimeout(this._rebinTimer);
     if (this._rebinWorker) {
       this._rebinWorker.terminate();
