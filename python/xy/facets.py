@@ -204,12 +204,12 @@ class FacetGrid:
 <meta http-equiv="Content-Security-Policy" content="{export._STANDALONE_CSP}">
 <title>{title}</title>
 <style>
-html,body{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;background:#fff;}}
-.xy-facet-title{{height:{self._TITLE_H}px;line-height:{self._TITLE_H}px;font:600 14px system-ui,sans-serif;margin:0;text-align:center;color:#1e293b;}}
-.xy-facet-grid{{display:grid;grid-template-columns:repeat({self.cols}, minmax(0, 1fr));gap:{self.gap}px;}}
-.xy-facet-panel{{min-width:0;}}
+.xy-facet-document{{margin:0;width:100%;min-height:100%;font-family:system-ui,sans-serif;background:#fff;}}
+.xy-facet-document .xy-facet-title{{height:{self._TITLE_H}px;line-height:{self._TITLE_H}px;font:600 14px system-ui,sans-serif;margin:0;text-align:center;color:#1e293b;}}
+.xy-facet-document .xy-facet-grid{{display:grid;grid-template-columns:repeat({self.cols}, minmax(0, 1fr));gap:{self.gap}px;}}
+.xy-facet-document .xy-facet-panel{{min-width:0;}}
 </style>
-{css}</head><body>
+{css}</head><body class="xy-facet-document">
 {heading}<div class="xy-facet-grid" id="xy-facet-grid"></div>
 <script>{js}</script>
 <script>
