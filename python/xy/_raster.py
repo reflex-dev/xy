@@ -1311,6 +1311,7 @@ def _emit_scatter(
         sx.affine
         and sy.affine
         and not t.get("channels")
+        and (t.get("stroke") is None or t["stroke"].get("mode") == "match_fill")
         and (color_mode in {"continuous", "categorical"} or size_mode == "continuous")
     ):
         alpha = max(0, min(255, int(round(fill_op * 255))))
@@ -1537,11 +1538,15 @@ def _emit_triangle_mesh(
 
     x0, y0, x1, y1, x2, y2 = vertices
     widths = _paint.style_values(t, "stroke_width", n, read, float(style.get("stroke_width", 0.0)))
-    stroke_intrinsic = (
-        _trace_paint_rgba(t, "stroke", n, color, read)
-        if t.get("stroke") is not None
-        else _trace_paint_rgba(t, "color", n, color, read)
-    )
+    if t.get("stroke") is not None:
+        stroke_intrinsic = _trace_paint_rgba(t, "stroke", n, color, read)
+    elif style.get("stroke") is not None:
+        stroke_intrinsic = np.tile(
+            np.asarray(_parse_color(_css(style.get("stroke"), color)), dtype=np.float64) / 255.0,
+            (n, 1),
+        )
+    else:
+        stroke_intrinsic = _trace_paint_rgba(t, "color", n, color, read)
     strokes = np.rint(
         _paint.effective_rgba(stroke_intrinsic, t, read, component="stroke", default_opacity=1.0)
         * 255.0
@@ -1643,18 +1648,22 @@ def _rect_style_arrays(
         _paint.effective_rgba(face, trace, read, component="fill", default_opacity=default_opacity)
         * 255.0
     ).astype(np.uint8)
-    stroke_face = (
-        _trace_paint_rgba(trace, "stroke", n, fallback, read)
-        if trace.get("stroke") is not None
-        else face
-    )
+    style = trace.get("style") or {}
+    if trace.get("stroke") is not None:
+        stroke_face = _trace_paint_rgba(trace, "stroke", n, fallback, read)
+    elif style.get("stroke") is not None:
+        stroke_face = np.tile(
+            np.asarray(_parse_color(_css(style.get("stroke"), fallback)), dtype=np.float64) / 255.0,
+            (n, 1),
+        )
+    else:
+        stroke_face = face
     strokes = np.rint(
         _paint.effective_rgba(
             stroke_face, trace, read, component="stroke", default_opacity=default_opacity
         )
         * 255.0
     ).astype(np.uint8)
-    style = trace.get("style") or {}
     widths = _paint.style_values(
         trace, "stroke_width", n, read, float(style.get("stroke_width", 0.0))
     )

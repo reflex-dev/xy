@@ -684,3 +684,50 @@ def test_colormap_stops_stay_in_sync_with_js_client() -> None:
             assert f"[{r}, {g}, {b}]" in body, (
                 f"{name} stop ({r},{g},{b}) missing in 10_colormaps.js"
             )
+
+
+def test_scalar_stroke_color_survives_vectorized_style_path() -> None:
+    """Scalar CSS stroke= on rect-family and mesh marks must not collapse to
+    the face paint (regression: the per-item style refactor resolved strokes
+    from the trace stroke channel or face only, skipping style['stroke'])."""
+    bar_svg = (
+        Figure()
+        .bar([0, 1, 2], [1.0, 2.0, 3.0], color="steelblue", stroke="black", stroke_width=2.0)
+        .to_svg()
+    )
+    assert 'stroke="rgb(0,0,0)"' in bar_svg
+    assert 'stroke="rgb(70,130,180)"' not in bar_svg
+
+    mesh_svg = (
+        Figure()
+        .triangle_mesh(
+            [0.0],
+            [0.0],
+            [1.0],
+            [0.0],
+            [0.5],
+            [1.0],
+            color="steelblue",
+            stroke="black",
+            stroke_width=2.0,
+        )
+        .to_svg()
+    )
+    assert 'stroke="rgb(0,0,0)"' in mesh_svg
+
+
+def test_segment_constant_translucent_color_applies_alpha_once() -> None:
+    """A translucent constant segment color must not appear verbatim in
+    stroke= while its alpha also feeds stroke-opacity (double application)."""
+    svg = Figure().segments([0.2], [0.2], [0.8], [0.8], color="rgba(255,0,0,0.5)").to_svg()
+    data_lines = [line for line in re.findall(r"<line[^>]*/>", svg) if "255,0,0" in line]
+    assert data_lines, "segment line missing from SVG"
+    (line,) = data_lines
+    assert 'stroke="rgb(255,0,0)"' in line
+    assert 'stroke-opacity="0.5"' in line
+
+    opaque = Figure().segments([0.2], [0.2], [0.8], [0.8], color="red").to_svg()
+    opaque_lines = [
+        entry for entry in re.findall(r"<line[^>]*/>", opaque) if 'stroke="red"' in entry
+    ]
+    assert opaque_lines, "opaque constant color should pass through verbatim"

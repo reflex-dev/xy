@@ -1985,9 +1985,10 @@ class ChartView {
     const cr = g.cornerRadius || [0, 0];
     gl.uniform2f(u("u_radius"), cr[0] * this.dpr, cr[1] * this.dpr);
     gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
+    // Straight alpha: RECT_FS folds u_strokeOpacity and the per-item alpha
+    // stack in and premultiplies there (uniform and buffer strokes alike).
     const sc = g.strokeColor || [0, 0, 0, 0];
-    const sa = sc[3] * this._strokeOpacity(g.trace.style || {});
-    gl.uniform4f(u("u_stroke"), sc[0] * sa, sc[1] * sa, sc[2] * sa, sa);
+    gl.uniform4f(u("u_stroke"), sc[0], sc[1], sc[2], sc[3]);
     gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
     gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}));
     this._setGradientUniforms(prog, g.grad);
@@ -2608,15 +2609,14 @@ class ChartView {
     gl.uniform4f(u("u_color"), r, gg, b, a);
     gl.uniform1i(u("u_symbol"), g.symbol || 0);
     const sc = g.pointStroke;
-    const strokeAlpha = sc
-      ? sc[3] * this._strokeOpacity(g.trace.style, 0.8) * opacityScale
-      : 0;
     gl.uniform1f(u("u_ptStrokeWidth"), (g.pointStrokeWidth || 0) * this.dpr);
     gl.uniform1i(u("u_ptStrokeFace"), g.pointStrokeFace ? 1 : 0);
     gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
     gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style, 0.8) * opacityScale);
-    gl.uniform4f(u("u_ptStroke"), sc ? sc[0] * strokeAlpha : 0, sc ? sc[1] * strokeAlpha : 0,
-      sc ? sc[2] * strokeAlpha : 0, strokeAlpha);
+    // Straight alpha: POINT_FS folds u_strokeOpacity and the per-item alpha
+    // stack in and premultiplies there (uniform and buffer strokes alike).
+    gl.uniform4f(u("u_ptStroke"), sc ? sc[0] : 0, sc ? sc[1] : 0,
+      sc ? sc[2] : 0, sc ? sc[3] : 0);
 
     gl.uniform1i(u("u_selActive"), g.selActive ? 1 : 0);
     const colorOn = g.colorMode !== 0 && g.cBuf;
@@ -3012,10 +3012,10 @@ class ChartView {
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
     gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], g.color[3]);
+    // Straight alpha: MESH_FS folds u_strokeOpacity and the per-item alpha
+    // stack in and premultiplies there (uniform and buffer strokes alike).
     const stroke = g.meshStroke || [0, 0, 0, 0];
-    const strokeAlpha = stroke[3] * this._strokeOpacity(g.trace.style);
-    gl.uniform4f(u("u_stroke"), stroke[0] * strokeAlpha, stroke[1] * strokeAlpha,
-      stroke[2] * strokeAlpha, strokeAlpha);
+    gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
     gl.uniform1f(u("u_strokeWidth"), g.meshStrokeWidth || 0);
     gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
     gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style));

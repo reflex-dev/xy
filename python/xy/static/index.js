@@ -727,9 +727,12 @@ void main() {
   float intrinsicAlpha = paint.a;
   float fillAlpha = (v_style.y >= 0.0 ? v_style.y : intrinsicAlpha) * v_style.x * u_opacity;
   vec4 px = vec4(rgb * fillAlpha, fillAlpha);   // premultiplied fill
-  float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : v_stroke.a) * v_style.x * u_strokeOpacity;
-  vec4 directStroke = vec4(v_stroke.rgb * strokeAlpha, strokeAlpha);
-  vec4 strokePx = u_ptStrokeFace == 1 ? px : (u_strokeMode == 1 ? directStroke : u_ptStroke);
+  // Uniform (u_ptStroke) and per-item (v_stroke) stroke paint ship straight
+  // alpha and go through the same artist-alpha/opacity stack, so a scalar
+  // CSS edge fades under alpha overrides exactly like SVG/PNG export.
+  vec4 strokeSrc = u_strokeMode == 1 ? v_stroke : u_ptStroke;
+  float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : strokeSrc.a) * v_style.x * u_strokeOpacity;
+  vec4 strokePx = u_ptStrokeFace == 1 ? px : vec4(strokeSrc.rgb * strokeAlpha, strokeAlpha);
   if (lineMarker) {
     outColor = strokePx * (shapeCov * v_dim);
     return;
@@ -1010,8 +1013,11 @@ void main() {
   if (strokeWidth > 0.0) {
     float edge = min(v_bary.x, min(v_bary.y, v_bary.z));
     float coverage = smoothstep(0.0, max(fwidth(edge) * strokeWidth, 1e-5), edge);
-    float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : v_stroke.a) * v_style.x * u_strokeOpacity;
-    vec4 stroke = u_strokeMode == 1 ? vec4(v_stroke.rgb * strokeAlpha, strokeAlpha) : u_stroke;
+    // Both stroke sources ship straight alpha; the per-item alpha stack
+    // applies to scalar strokes as well (parity with static exporters).
+    vec4 strokeSrc = u_strokeMode == 1 ? v_stroke : u_stroke;
+    float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : strokeSrc.a) * v_style.x * u_strokeOpacity;
+    vec4 stroke = vec4(strokeSrc.rgb * strokeAlpha, strokeAlpha);
     outColor = mix(stroke, fill, coverage);
   } else {
     outColor = fill;
@@ -1194,8 +1200,11 @@ void main() {
     float d = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - r;
     float aa = 0.75;
     if (strokeWidth > 0.0) {
-      float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : v_stroke.a) * v_style.x * u_strokeOpacity;
-      vec4 stroke = u_strokeMode == 1 ? vec4(v_stroke.rgb * strokeAlpha, strokeAlpha) : u_stroke;
+      // Both stroke sources ship straight alpha; the per-item alpha stack
+      // applies to scalar strokes as well (parity with static exporters).
+      vec4 strokeSrc = u_strokeMode == 1 ? v_stroke : u_stroke;
+      float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : strokeSrc.a) * v_style.x * u_strokeOpacity;
+      vec4 stroke = vec4(strokeSrc.rgb * strokeAlpha, strokeAlpha);
       float inner = 1.0 - smoothstep(-aa, aa, d + strokeWidth);
       premult = mix(stroke, premult, inner);
     }
@@ -3444,8 +3453,7 @@ const cr = g.cornerRadius || [0, 0];
 gl.uniform2f(u("u_radius"), cr[0] * this.dpr, cr[1] * this.dpr);
 gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
 const sc = g.strokeColor || [0, 0, 0, 0];
-const sa = sc[3] * this._strokeOpacity(g.trace.style || {});
-gl.uniform4f(u("u_stroke"), sc[0] * sa, sc[1] * sa, sc[2] * sa, sa);
+gl.uniform4f(u("u_stroke"), sc[0], sc[1], sc[2], sc[3]);
 gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
 gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}));
 this._setGradientUniforms(prog, g.grad);
@@ -3971,15 +3979,12 @@ const [r, gg, b, a] = g.color;
 gl.uniform4f(u("u_color"), r, gg, b, a);
 gl.uniform1i(u("u_symbol"), g.symbol || 0);
 const sc = g.pointStroke;
-const strokeAlpha = sc
-? sc[3] * this._strokeOpacity(g.trace.style, 0.8) * opacityScale
-: 0;
 gl.uniform1f(u("u_ptStrokeWidth"), (g.pointStrokeWidth || 0) * this.dpr);
 gl.uniform1i(u("u_ptStrokeFace"), g.pointStrokeFace ? 1 : 0);
 gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
 gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style, 0.8) * opacityScale);
-gl.uniform4f(u("u_ptStroke"), sc ? sc[0] * strokeAlpha : 0, sc ? sc[1] * strokeAlpha : 0,
-sc ? sc[2] * strokeAlpha : 0, strokeAlpha);
+gl.uniform4f(u("u_ptStroke"), sc ? sc[0] : 0, sc ? sc[1] : 0,
+sc ? sc[2] : 0, sc ? sc[3] : 0);
 gl.uniform1i(u("u_selActive"), g.selActive ? 1 : 0);
 const colorOn = g.colorMode !== 0 && g.cBuf;
 const sizeOn = g.sizeMode === 1 && g.sBuf;
@@ -4352,9 +4357,7 @@ gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
 gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
 gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], g.color[3]);
 const stroke = g.meshStroke || [0, 0, 0, 0];
-const strokeAlpha = stroke[3] * this._strokeOpacity(g.trace.style);
-gl.uniform4f(u("u_stroke"), stroke[0] * strokeAlpha, stroke[1] * strokeAlpha,
-stroke[2] * strokeAlpha, strokeAlpha);
+gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
 gl.uniform1f(u("u_strokeWidth"), g.meshStrokeWidth || 0);
 gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
 gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style));

@@ -1980,8 +1980,12 @@ def _segment_marks(
     colors = _paint.effective_rgba(intrinsic, t, read, component="stroke", default_opacity=1.0)
     widths = _paint.style_values(t, "width", n, read, float(style.get("width", 1.2)))
     paint = t.get("color") or {}
-    constant_paint = paint.get("mode") in {None, "constant"}
-    css_paint = escape(_css(paint.get("color"), color))
+    plain_css = _css(paint.get("color"), color)
+    # Only an opaque constant color may pass through verbatim: a translucent
+    # CSS constant already contributes its alpha to stroke-opacity through
+    # effective_rgba, so repeating it inside stroke= would apply it twice.
+    constant_paint = paint.get("mode") in {None, "constant"} and _paint_rgba8(plain_css)[3] == 255
+    css_paint = escape(plain_css)
     return "".join(
         f'<line x1="{_num(float(sx(x0[i])))}" y1="{_num(float(sy(y0[i])))}" '
         f'x2="{_num(float(sx(x1[i])))}" y2="{_num(float(sy(y1[i])))}" '
@@ -2247,9 +2251,15 @@ def _triangle_mesh_marks(
 
     face = _trace_paint_rgba(t, "color", n, fallback, read)
     fills = _paint.effective_rgba(face, t, read, component="fill", default_opacity=1.0)
-    stroke_face = (
-        _trace_paint_rgba(t, "stroke", n, fallback, read) if t.get("stroke") is not None else face
-    )
+    if t.get("stroke") is not None:
+        stroke_face = _trace_paint_rgba(t, "stroke", n, fallback, read)
+    elif style.get("stroke") is not None:
+        stroke_face = np.tile(
+            np.asarray(_paint_rgba8(_css(style.get("stroke"), fallback)), dtype=np.float64) / 255.0,
+            (n, 1),
+        )
+    else:
+        stroke_face = face
     strokes = _paint.effective_rgba(stroke_face, t, read, component="stroke", default_opacity=1.0)
     stroke_widths = _paint.style_values(
         t, "stroke_width", n, read, float(style.get("stroke_width", 0.0))
@@ -2324,11 +2334,15 @@ def _rect_svg_styles(
 
     face = _trace_paint_rgba(trace, "color", n, fallback, read)
     fills_rgba = _paint.effective_rgba(face, trace, read, component="fill", default_opacity=0.85)
-    stroke_face = (
-        _trace_paint_rgba(trace, "stroke", n, fallback, read)
-        if trace.get("stroke") is not None
-        else face
-    )
+    if trace.get("stroke") is not None:
+        stroke_face = _trace_paint_rgba(trace, "stroke", n, fallback, read)
+    elif style.get("stroke") is not None:
+        stroke_face = np.tile(
+            np.asarray(_paint_rgba8(_css(style.get("stroke"), fallback)), dtype=np.float64) / 255.0,
+            (n, 1),
+        )
+    else:
+        stroke_face = face
     strokes = _paint.effective_rgba(
         stroke_face, trace, read, component="stroke", default_opacity=0.85
     )

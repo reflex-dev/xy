@@ -248,9 +248,12 @@ void main() {
   float intrinsicAlpha = paint.a;
   float fillAlpha = (v_style.y >= 0.0 ? v_style.y : intrinsicAlpha) * v_style.x * u_opacity;
   vec4 px = vec4(rgb * fillAlpha, fillAlpha);   // premultiplied fill
-  float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : v_stroke.a) * v_style.x * u_strokeOpacity;
-  vec4 directStroke = vec4(v_stroke.rgb * strokeAlpha, strokeAlpha);
-  vec4 strokePx = u_ptStrokeFace == 1 ? px : (u_strokeMode == 1 ? directStroke : u_ptStroke);
+  // Uniform (u_ptStroke) and per-item (v_stroke) stroke paint ship straight
+  // alpha and go through the same artist-alpha/opacity stack, so a scalar
+  // CSS edge fades under alpha overrides exactly like SVG/PNG export.
+  vec4 strokeSrc = u_strokeMode == 1 ? v_stroke : u_ptStroke;
+  float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : strokeSrc.a) * v_style.x * u_strokeOpacity;
+  vec4 strokePx = u_ptStrokeFace == 1 ? px : vec4(strokeSrc.rgb * strokeAlpha, strokeAlpha);
   if (lineMarker) {
     outColor = strokePx * (shapeCov * v_dim);
     return;
@@ -576,8 +579,11 @@ void main() {
   if (strokeWidth > 0.0) {
     float edge = min(v_bary.x, min(v_bary.y, v_bary.z));
     float coverage = smoothstep(0.0, max(fwidth(edge) * strokeWidth, 1e-5), edge);
-    float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : v_stroke.a) * v_style.x * u_strokeOpacity;
-    vec4 stroke = u_strokeMode == 1 ? vec4(v_stroke.rgb * strokeAlpha, strokeAlpha) : u_stroke;
+    // Both stroke sources ship straight alpha; the per-item alpha stack
+    // applies to scalar strokes as well (parity with static exporters).
+    vec4 strokeSrc = u_strokeMode == 1 ? v_stroke : u_stroke;
+    float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : strokeSrc.a) * v_style.x * u_strokeOpacity;
+    vec4 stroke = vec4(strokeSrc.rgb * strokeAlpha, strokeAlpha);
     outColor = mix(stroke, fill, coverage);
   } else {
     outColor = fill;
@@ -786,8 +792,11 @@ void main() {
     float d = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - r;
     float aa = 0.75;
     if (strokeWidth > 0.0) {
-      float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : v_stroke.a) * v_style.x * u_strokeOpacity;
-      vec4 stroke = u_strokeMode == 1 ? vec4(v_stroke.rgb * strokeAlpha, strokeAlpha) : u_stroke;
+      // Both stroke sources ship straight alpha; the per-item alpha stack
+      // applies to scalar strokes as well (parity with static exporters).
+      vec4 strokeSrc = u_strokeMode == 1 ? v_stroke : u_stroke;
+      float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : strokeSrc.a) * v_style.x * u_strokeOpacity;
+      vec4 stroke = vec4(strokeSrc.rgb * strokeAlpha, strokeAlpha);
       float inner = 1.0 - smoothstep(-aa, aa, d + strokeWidth);
       premult = mix(stroke, premult, inner);
     }
