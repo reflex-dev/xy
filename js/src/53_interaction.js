@@ -1167,6 +1167,9 @@ Object.assign(ChartView.prototype, {
     }
     this._listen(grip, "keydown", (e) => {
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      // export_config(formats=[]) (or a PDF/HTML-only list) leaves no
+      // client-side items: nothing to open or focus.
+      if (!exportMenuItems.length) return;
       e.preventDefault();
       e.stopPropagation();
       setExportMenuOpen(true);

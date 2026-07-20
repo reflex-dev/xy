@@ -6879,6 +6879,7 @@ selectMenuItems[next].focus();
 }
 this._listen(grip, "keydown", (e) => {
 if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+if (!exportMenuItems.length) return;
 e.preventDefault();
 e.stopPropagation();
 setExportMenuOpen(true);

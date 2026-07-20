@@ -618,17 +618,40 @@ def _px_size(value: Any, default: float) -> float:
     return default
 
 
+def apply_export_background(spec: dict[str, Any], background: Optional[str]) -> None:
+    """Apply the unified export API's `background=` override to a payload spec.
+
+    An explicit export background replaces the ENTIRE painted backdrop — the
+    canvas underlay, the theme figure patch (`theme(background=)`), and the
+    plot-rect fill (`--chart-bg`) — so the requested color (or transparency)
+    is what actually shows regardless of chart theme, instead of being buried
+    under the theme paints. The plot token becomes "transparent" rather than
+    the override color so translucent backgrounds composite exactly once.
+    Shared by the raster exporter and (via SVG) the PDF exporter."""
+    if background is None:
+        return
+    spec["canvas_background"] = background
+    dom = spec.setdefault("dom", {})
+    if isinstance(dom, dict):
+        style = dom.setdefault("style", {})
+        if isinstance(style, dict):
+            style.pop("background", None)
+            style["--chart-bg"] = "transparent"
+
+
 def _solid_paint(css: Any) -> Optional[str]:
     """A parseable solid CSS color string, or None when unset/unpaintable
     (var(), gradients) — for background rects that must be omitted rather
-    than fallback-painted."""
+    than fallback-painted. Fully transparent colors (alpha 0, e.g. the
+    export background override's plot token) are pure no-op fills and are
+    omitted as well."""
     from . import kernels
 
     s = _css(css, "")
     if not s:
         return None
     _status, rgba = kernels.css_check(kernels.CSS_COLOR, s)
-    if rgba is None:
+    if rgba is None or rgba[3] == 0:
         return None
     return s
 
@@ -2639,8 +2662,7 @@ def to_svg(
         spec["width"] = int(width)
     if height is not None:
         spec["height"] = int(height)
-    if background is not None:
-        spec["canvas_background"] = background
+    apply_export_background(spec, background)
     out = render_svg(spec, blob, id_prefix=id_prefix)
     if path is not None:
         from .export import _atomic_write_text

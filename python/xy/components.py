@@ -2944,15 +2944,18 @@ class Chart(Component):
         scale: Optional[float],
         background: Optional[str],
         quality: Optional[int],
+        *,
+        lossy_webp: bool = False,
     ) -> dict[str, Any]:
         """Fill omitted export options from the chart's `export_config`.
 
         Direct arguments always win. Declarative defaults degrade gracefully
-        where a format cannot honor them (config quality is dropped for
-        non-lossy formats; a config "transparent" background is dropped for
-        JPEG) — only *explicit* arguments produce hard errors downstream."""
+        where a format cannot honor them (config quality applies only where
+        output is actually lossy — JPEG, plus WebP when the resolved engine
+        is Chromium; a config "transparent" background is dropped for JPEG)
+        — only *explicit* arguments produce hard errors downstream."""
         config = self.figure().export_options or {}
-        if quality is None and fmt == "jpeg":
+        if quality is None and (fmt == "jpeg" or (fmt == "webp" and lossy_webp)):
             quality = config.get("quality")
         if background is None:
             background = config.get("background")
@@ -2986,6 +2989,8 @@ class Chart(Component):
         Omitted width/height/scale/background/quality fall back to the
         chart's `export_config` defaults; explicit arguments override them.
         See `export.to_image` for the full format/engine/background policy."""
+        fmt = export._normalize_format(format)
+        resolved = export._resolve_image_engine(engine, fmt, custom_css)
         return self.figure().to_image(
             format,
             engine=engine,
@@ -2994,7 +2999,13 @@ class Chart(Component):
             sandbox=sandbox,
             gl=gl,
             **self._export_defaults(
-                export._normalize_format(format), width, height, scale, background, quality
+                fmt,
+                width,
+                height,
+                scale,
+                background,
+                quality,
+                lossy_webp=resolved == "browser",
             ),
         )
 
@@ -3022,7 +3033,17 @@ class Chart(Component):
             if format is not None
             else export._infer_format(path)
         )
-        defaults = self._export_defaults(fmt, width, height, scale, background, quality)
+        if fmt != "html":
+            resolved = export._resolve_image_engine(engine, fmt, custom_css)
+            defaults = self._export_defaults(
+                fmt,
+                width,
+                height,
+                scale,
+                background,
+                quality,
+                lossy_webp=resolved == "browser",
+            )
         if fmt == "html":
             # HTML routing rejects raster-only options; forward the user's own
             # arguments (not the declarative defaults) so that rejection

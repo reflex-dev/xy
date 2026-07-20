@@ -45,6 +45,7 @@ from ._svg import (
     _solid_paint,
     _step_arrays,
     _tick_label_anchor,
+    apply_export_background,
     axis_ticks,
     hexbin_ring,
     layout,
@@ -1881,17 +1882,7 @@ def _export_payload(
         spec["width"] = int(width)
     if height is not None:
         spec["height"] = int(height)
-    if background is not None:
-        spec["canvas_background"] = background
-        # SVG paints the plot rect only when the theme sets --chart-bg; the
-        # rasterizer would otherwise default it to opaque white, which breaks
-        # cross-format background agreement (and any transparent export). An
-        # explicit export background therefore also becomes the plot-rect
-        # default — a theme-set --chart-bg still wins.
-        dom = spec.setdefault("dom", {})
-        style = dom.setdefault("style", {}) if isinstance(dom, dict) else {}
-        if isinstance(style, dict):
-            style.setdefault("--chart-bg", background)
+    apply_export_background(spec, background)
     return spec, blob, borrowed
 
 

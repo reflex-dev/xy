@@ -539,7 +539,7 @@ def write_images(
     formats: Optional[str | list[str]] = None,
     width: Optional[int] = None,
     height: Optional[int] = None,
-    scale: float = 2.0,
+    scale: Optional[float] = None,
     background: Optional[str] = None,
     engine: Engine | str = Engine.auto,
     quality: Optional[int] = None,
@@ -558,11 +558,12 @@ def write_images(
     `_chromium.py`) instead of paying ~1-2 s of startup per figure — the
     classic batch-export trap. `figures=`/`files=` are keyword aliases for
     the positional pair, and composed charts (anything with a `.figure()`)
-    are accepted directly. Writes are atomic per file; on error, files
-    already exported remain. Other options match `to_image`; `width`/
-    `height`/`background`/`quality` apply to every file (quality is ignored
-    by non-lossy formats rather than rejected, so mixed PNG+JPEG batches
-    stay ergonomic)."""
+    are accepted directly — a chart's `export_config` defaults fill any
+    omitted width/height/scale/background/quality for that chart's files,
+    exactly as in `Chart.to_image`. Writes are atomic per file; on error,
+    files already exported remain. Other options match `to_image`; quality
+    applies to JPEG and Chromium WebP and is ignored by the other formats
+    (native WebP stays lossless), so mixed batches stay ergonomic."""
     if figures is not None:
         if figs is not None:
             raise ValueError("pass figs positionally or figures=, not both")
@@ -573,7 +574,6 @@ def write_images(
         paths = files
     if figs is None or paths is None:
         raise ValueError("write_images needs both figures and files")
-    figs = [f.figure() if callable(getattr(f, "figure", None)) else f for f in figs]
     if len(figs) != len(paths):
         raise ValueError(f"write_images got {len(figs)} figures but {len(paths)} paths")
     if isinstance(formats, str):
@@ -584,43 +584,74 @@ def write_images(
         fmts = [_normalize_format(f, allow_html=True) for f in formats]
     else:
         fmts = [_infer_format(p) for p in paths]
-    scale = _positive_finite_float(scale, "export scale")
+    if scale is not None:
+        scale = _positive_finite_float(scale, "export scale")
+    if quality is not None:
+        # Range-check once up front; per-file policy below decides where the
+        # value actually applies (JPEG + Chromium WebP).
+        _validated_quality(quality, "jpeg", "native")
     optimize = _bool_option(optimize, "export optimize")
     sandbox = _bool_option(sandbox, "export sandbox")
     gl = _gl_option(gl)
 
     # Resolve the whole plan before any I/O so bad arguments fail the batch
-    # up front instead of after a partial export.
-    plan: list[tuple["Figure", str | PathLike[str], str, str, Optional[int], Optional[str]]] = []
-    for fig, path, fmt in zip(figs, paths, fmts, strict=True):
+    # up front instead of after a partial export. Chart wrappers are kept
+    # long enough to resolve their declarative export_config defaults; only
+    # then are they compiled down to figures.
+    plan: list[
+        tuple["Figure", str | PathLike[str], str, str, dict[str, Any], Optional[int], Optional[str]]
+    ] = []
+    for obj, path, fmt in zip(figs, paths, fmts, strict=True):
+        fig = obj.figure() if callable(getattr(obj, "figure", None)) else obj
         if fmt == "html":
-            plan.append((fig, path, fmt, "html", None, None))
+            plan.append((fig, path, fmt, "html", {}, None, None))
             continue
         resolved = _resolve_image_engine(engine, fmt, custom_css)
+        if callable(getattr(obj, "_export_defaults", None)):
+            settings = obj._export_defaults(
+                fmt,
+                width,
+                height,
+                scale,
+                background,
+                quality,
+                lossy_webp=resolved == "browser",
+            )
+        else:
+            settings = {
+                "width": width,
+                "height": height,
+                "scale": scale if scale is not None else 2.0,
+                "background": background,
+                "quality": quality,
+            }
         file_quality = (
-            _validated_quality(quality, fmt, resolved) if fmt in _LOSSY_QUALITY_FORMATS else None
+            _validated_quality(settings["quality"], fmt, resolved)
+            if fmt == "jpeg" or (fmt == "webp" and resolved == "browser")
+            else None
         )
         try:
-            file_background = _validated_background(background, fmt)
+            file_background = _validated_background(settings["background"], fmt)
         except ValueError as exc:
             raise ValueError(f"{path}: {exc}") from None
-        plan.append((fig, path, fmt, resolved, file_quality, file_background))
+        plan.append((fig, path, fmt, resolved, settings, file_quality, file_background))
 
     out: list[bytes] = []
     session: Optional[Any] = None
     try:
-        for fig, path, fmt, resolved, file_quality, file_background in plan:
+        for fig, path, fmt, resolved, settings, file_quality, file_background in plan:
             if resolved == "html":
                 out.append(to_html(fig, path, custom_css=custom_css).encode("utf-8"))
                 continue
-            w, h = _export_dimensions(fig, width, height)
+            w, h = _export_dimensions(fig, settings["width"], settings["height"])
+            file_scale = _positive_finite_float(settings["scale"], "export scale")
             if resolved == "native":
                 data = _native_image(
                     fig,
                     fmt,
                     width=w,
                     height=h,
-                    scale=scale,
+                    scale=file_scale,
                     background=file_background,
                     quality=file_quality,
                     optimize=optimize,
@@ -634,7 +665,7 @@ def write_images(
                     fmt,
                     width=w,
                     height=h,
-                    scale=scale,
+                    scale=file_scale,
                     background=file_background,
                     quality=file_quality,
                     custom_css=custom_css,
@@ -857,14 +888,26 @@ def _flatten_alpha(rgba: "Any") -> "Any":
     return out
 
 
+def _background_css(background: Optional[str]) -> str:
+    """Page CSS for the export `background=` override in browser capture.
+
+    Mirrors `_svg.apply_export_background`: the override replaces the whole
+    painted backdrop, so it must beat the chart root's inline theme background
+    and the `--chart-bg` plot token the render client reads from computed
+    style (`!important` outranks inline styles and the token becomes
+    transparent so translucent overrides composite exactly once)."""
+    if background is None:
+        return ""
+    return (
+        f"html,body{{background:{background} !important;}}"
+        f".xy{{background:{background} !important;--chart-bg:transparent !important;}}"
+    )
+
+
 def _browser_html(fig: "Figure", custom_css: Optional[str], background: Optional[str]) -> str:
     """Standalone document for browser capture, with the export background
     override injected as page CSS (validated by `_validated_background`)."""
-    css = ""
-    if background is not None:
-        css = f"html,body{{background:{background} !important;}}"
-    if custom_css:
-        css += custom_css
+    css = _background_css(background) + (custom_css or "")
     return to_html(fig, custom_css=css or None)
 
 

@@ -66,8 +66,11 @@ chart.to_image("jpeg")                            # flattened onto white
 ~~~
 
 JPEG has no alpha channel, so `background="transparent"` is rejected there
-rather than silently flattened. An explicit color paints the same single
-backdrop in every format (raster canvas, SVG/PDF rect, browser page).
+rather than silently flattened. An explicit color (or `"transparent"`)
+**replaces** the chart's theme backgrounds — both `theme(background=...)` and
+`theme(plot_background=...)` — painting one backdrop consistently in every
+format (raster canvas, SVG/PDF rect, browser page); `"auto"` keeps the theme
+paints untouched.
 
 `scale` is the device-pixel-ratio for raster formats and is ignored by
 SVG/PDF, which are resolution-independent. A 300×200 chart at `scale=2`

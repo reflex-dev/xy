@@ -237,8 +237,13 @@ for(const p of panels){{
 
         # Per-panel id prefixes keep clipPath/gradient ids unique in the
         # composed document; each panel's title is its facet label, and the
-        # grid title is drawn exactly once below.
-        panel_svgs = [_svg.to_svg(fig, id_prefix=f"xy{i}-") for i, fig in enumerate(self.figures)]
+        # grid title is drawn exactly once below. The export background flows
+        # into every panel too, so panel theme paints cannot bury the grid
+        # backdrop (each panel then paints backdrop-colored/transparent).
+        panel_svgs = [
+            _svg.to_svg(fig, id_prefix=f"xy{i}-", background=background)
+            for i, fig in enumerate(self.figures)
+        ]
         total_h = self.grid_height + self._title_height
         body: list[str] = []
         for i, svg in enumerate(panel_svgs):
@@ -403,7 +408,11 @@ for(const p of panels){{
             from . import _webp
 
             return _webp.encode(canvas)
-        doc = self.to_html(custom_css=custom_css)
+        # The background override must actually reach the captured document,
+        # exactly as in the single-chart browser path — the CDP transparency
+        # flag below only clears Chromium's default white page backdrop.
+        bg_css = export._background_css(background)
+        doc = self.to_html(custom_css=(bg_css + (custom_css or "")) or None)
         total_h = self.grid_height + self._title_height
         with export._browser_session(gl=gl, sandbox=sandbox) as session:
             if fmt == "pdf":

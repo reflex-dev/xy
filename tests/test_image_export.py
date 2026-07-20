@@ -115,6 +115,43 @@ def test_svg_background_paints_one_backdrop_rect():
     assert re.search(r'<rect width="\d+" height="\d+" fill="#112233"/>', svg)
 
 
+def _themed_chart():
+    return xy.chart(
+        xy.line("x", "y", data={"x": np.arange(20.0), "y": np.arange(20.0)}),
+        xy.theme(background="#ff0000", plot_background="#00ff00"),
+        width=300,
+        height=200,
+    )
+
+
+def _corner_center(data: bytes):
+    image = np.asarray(_decode(data).convert("RGBA"))
+    h, w = image.shape[:2]
+    return tuple(int(v) for v in image[2, 2]), tuple(int(v) for v in image[h // 2, w // 2])
+
+
+def test_explicit_background_replaces_theme_paints():
+    # An explicit export background must replace the theme figure patch AND
+    # the plot-rect fill — not be buried underneath them (PR #115 review).
+    chart = _themed_chart()
+    corner, center = _corner_center(chart.to_image("png", scale=1.0))
+    assert corner == (255, 0, 0, 255) and center == (0, 255, 0, 255)  # theme intact
+    corner, center = _corner_center(chart.to_image("png", scale=1.0, background="#112233"))
+    assert corner == (0x11, 0x22, 0x33, 255) and center == (0x11, 0x22, 0x33, 255)
+    corner, center = _corner_center(chart.to_image("png", scale=1.0, background="transparent"))
+    assert corner[3] == 0 and center[3] == 0
+    svg = chart.to_image("svg", background="#112233").decode()
+    assert "#ff0000" not in svg and "#00ff00" not in svg
+    assert svg.count("#112233") == 1  # exactly one backdrop, no double-composite
+
+
+def test_browser_background_css_overrides_theme_tokens():
+    css = export._background_css("#112233")
+    assert "html,body{background:#112233 !important;}" in css
+    assert ".xy{background:#112233 !important;--chart-bg:transparent !important;}" in css
+    assert export._background_css(None) == ""
+
+
 def test_background_rejects_unsafe_strings():
     with pytest.raises(ValueError, match="safe CSS color"):
         export.to_image(_fig(), "png", background="url(javascript:1)}{")
@@ -246,10 +283,32 @@ def test_write_images_mixed_formats_and_chart_objects(tmp_path):
 
 
 def test_write_images_quality_ignored_by_non_lossy_batch_members(tmp_path):
+    # PNG and native (lossless) WebP members must not abort a batch whose
+    # quality only targets the lossy members (PR #115 review).
     out = export.write_images(
-        [_fig(), _fig()], [tmp_path / "a.png", tmp_path / "b.jpg"], quality=50
+        [_fig(), _fig(), _fig()],
+        [tmp_path / "a.png", tmp_path / "b.jpg", tmp_path / "c.webp"],
+        quality=50,
     )
     assert out[0][:8] == b"\x89PNG\r\n\x1a\n" and out[1][:3] == b"\xff\xd8\xff"
+    assert out[2][:4] == b"RIFF"
+    with pytest.raises(ValueError, match=r"1\.\.100"):
+        export.write_images([_fig()], [tmp_path / "d.png"], quality=500)
+
+
+def test_write_images_resolves_chart_export_config_defaults(tmp_path):
+    # Converting charts to figures must not drop their declarative export
+    # defaults (PR #115 review): a chart configured for 123x77 at scale 1
+    # exports at exactly 123x77 through the batch API too.
+    chart = xy.chart(
+        xy.line("x", "y", data={"x": np.arange(10.0), "y": np.arange(10.0)}),
+        xy.export_config(width=123, height=77, scale=1.0),
+    )
+    out = export.write_images([chart], [tmp_path / "configured.png"])
+    assert _decode(out[0]).size == (123, 77)
+    # Batch-level arguments still override the declarative defaults.
+    out = export.write_images([chart], [tmp_path / "explicit.png"], width=64, height=32, scale=1.0)
+    assert _decode(out[0]).size == (64, 32)
 
 
 def test_write_images_formats_override_and_mismatch(tmp_path):
@@ -318,6 +377,43 @@ def test_export_config_empty_formats_and_validation():
         xy.export_config(filename="../evil")
     with pytest.raises(ValueError, match=r"1\.\.100"):
         xy.export_config(quality=101)
+
+
+def test_export_config_quality_reaches_chromium_webp(monkeypatch):
+    # Declarative quality must flow to Chromium's lossy WebP, not just JPEG
+    # (PR #115 review); native WebP continues to ignore it (lossless).
+    session = _FakeSession()
+    monkeypatch.setattr(export, "_browser_session", lambda **kw: session)
+    chart = xy.chart(
+        xy.line("x", "y", data={"x": np.arange(10.0), "y": np.arange(10.0)}),
+        xy.export_config(quality=37),
+    )
+    chart.to_image("webp", engine=export.Engine.chromium)
+    image_calls = [c for c in session.calls if c[0] == "image"]
+    assert image_calls[0][1] == "webp" and image_calls[0][5] == 37
+    assert chart.to_image("webp")[:4] == b"RIFF"  # native stays lossless, no error
+
+
+def test_facet_browser_background_reaches_document(monkeypatch):
+    # The facet Chromium path must inject the background override into the
+    # captured document, as the single-chart path does (PR #115 review).
+    session = _FakeSession()
+    captured: list[str] = []
+
+    def fake_session(**kw):
+        return session
+
+    original = session.render_image
+
+    def spying_render_image(html, *args, **kwargs):
+        captured.append(html)
+        return original(html, *args, **kwargs)
+
+    session.render_image = spying_render_image
+    monkeypatch.setattr(export, "_browser_session", fake_session)
+    grid = _grid().figure()
+    grid.to_image("png", engine=export.Engine.chromium, background="#112233")
+    assert ".xy{background:#112233 !important;--chart-bg:transparent !important;}" in captured[0]
 
 
 def test_export_config_component_is_revalidated_at_compile():
