@@ -3301,7 +3301,9 @@ class FacetChart(Component):
             return figures
 
         figures = build_panels({})
-        linked_dims = [] if self.link is None else [self.link] if self.link != "both" else ["x", "y"]
+        linked_dims = (
+            [] if self.link is None else [self.link] if self.link != "both" else ["x", "y"]
+        )
         # A linked dimension must start from the same domain; otherwise the
         # first interaction would make panels jump from incomparable views.
         shared_dims = [

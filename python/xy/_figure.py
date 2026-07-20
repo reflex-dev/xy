@@ -1021,7 +1021,13 @@ class Figure(AnnotationsMixin, PayloadMixin):
     def _interaction_spec(self) -> dict[str, Any]:
         spec: dict[str, Any] = {}
         for name in (
-            "hover", "click", "select", "brush", "crosshair", "view_change", "link_select"
+            "hover",
+            "click",
+            "select",
+            "brush",
+            "crosshair",
+            "view_change",
+            "link_select",
         ):
             if name in self.interaction:
                 spec[name] = self._bool_param(self.interaction[name], f"interaction {name}")
