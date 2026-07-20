@@ -18,6 +18,13 @@ SIDEBAR_SECTION_GROUPS = (
     ("Other", "/integrations/", (*DOCS_SECTIONS[5:7], *DOCS_SECTIONS[8:])),
 )
 
+INTEGRATION_LINK_ICONS = {
+    "/integrations/": "plug",
+    "/integrations/reflex/": "atom",
+    "/integrations/notebooks/": "notebook-tabs",
+    "/integrations/matplotlib/": "chart-no-axes-combined",
+}
+
 
 def _leaf(
     title: str,
@@ -54,6 +61,39 @@ def _section_leaves(
     return (("Overview", landing_route), *leaves)
 
 
+def _top_level_link(
+    title: str,
+    href: str,
+    icon: str,
+    url: rx.vars.StringVar[str],
+) -> rx.Component:
+    """Render an icon-led direct link aligned with sidebar group headings."""
+    active = url == href
+    row_classes = (
+        "relative m-0 flex h-8 w-[calc(100%-2.5rem)] items-center "
+        "justify-start !ml-[2.5rem] rounded-lg !px-0 !py-1 no-underline "
+        "transition-colors xl:max-w-[14rem]"
+    )
+    return rx.el.li(
+        rx.link(
+            rx.icon(tag=icon, size=16, class_name="mr-4 shrink-0"),
+            rx.text(title, class_name="m-0 text-sm font-[525]"),
+            href=href,
+            underline="none",
+            aria_current=rx.cond(active, "page", None),
+            class_name=rx.cond(
+                active,
+                f"{row_classes} bg-secondary-3 text-primary-10",
+                (
+                    f"{row_classes} bg-transparent text-secondary-11 "
+                    "hover:text-secondary-12"
+                ),
+            ),
+        ),
+        class_name="m-0 w-full list-none border-none bg-transparent p-0",
+    )
+
+
 def _section_items(
     title: str,
     landing_route: str,
@@ -65,11 +105,11 @@ def _section_items(
     section_leaves = _section_leaves(landing_route, leaves)
     if title == "Integrations":
         return tuple(
-            _leaf(
+            _top_level_link(
                 title if leaf_route == landing_route else leaf_title,
                 leaf_route,
+                INTEGRATION_LINK_ICONS[leaf_route],
                 url,
-                guide_margin_class="ml-[3.75rem]",
             )
             for leaf_title, leaf_route in section_leaves
         )
@@ -174,6 +214,7 @@ def xy_docs_sidebar(route: str) -> rx.Component:
 
 
 __all__ = [
+    "INTEGRATION_LINK_ICONS",
     "SIDEBAR_SECTION_GROUPS",
     "xy_docs_sidebar",
     "xy_docs_sidebar_comp",

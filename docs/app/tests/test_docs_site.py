@@ -1340,13 +1340,22 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
         r'jsx\(RadixThemesText,\{as:"p",className:"m-0 text-sm font-\[525\]"\},"([^"]+)"\)',
         rendered,
     ) == [
-        title
-        for title, _route, _icon, _leaves in grouped_sections
-        if title != "Integrations"
+        row_title
+        for title, landing_route, _icon, leaves in grouped_sections
+        for row_title in (
+            (
+                title,
+                *(leaf_title for leaf_title, _leaf_route in leaves),
+            )
+            if title == "Integrations"
+            and not any(leaf_route == landing_route for _leaf_title, leaf_route in leaves)
+            else ((leaf_title for leaf_title, _leaf_route in leaves) if title == "Integrations" else (title,))
+        )
     ]
     expected_leaf_count = sum(
         len(leaves) + int(not any(route == landing_route for _title, route in leaves))
-        for _title, landing_route, _icon, leaves in DOCS_SECTIONS
+        for title, landing_route, _icon, leaves in DOCS_SECTIONS
+        if title != "Integrations"
     )
     accordion_count = len(DOCS_SECTIONS) - 1
     assert rendered.count('jsx("details"') == accordion_count
@@ -1377,10 +1386,21 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
     assert 'aria-label":"Navigate to Charts"' not in rendered
     assert 'aria-label":"Navigate to Components"' not in rendered
     assert "Axes and Scales" in rendered
-    assert 'title:"Integrations"' in rendered
-    assert 'title:"Reflex"' in rendered
-    assert 'title:"Notebooks"' in rendered
-    assert 'title:"Matplotlib (xy.pyplot)"' in rendered
+    for route in (
+        "/integrations/",
+        "/integrations/reflex/",
+        "/integrations/notebooks/",
+        "/integrations/matplotlib/",
+    ):
+        assert f'to:"{route}"' in rendered
+    for icon in (
+        "LucidePlug",
+        "LucideAtom",
+        "LucideNotebookTabs",
+        "LucideChartNoAxesCombined",
+    ):
+        assert icon in rendered
+    assert rendered.count('"aria-current":((') == 4
     assert ">XY<" not in rendered
 
 
