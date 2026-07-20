@@ -47,11 +47,13 @@ Windows is supported by XY's native core and release pipeline. The current
 Windows yet. Until a Windows wheel is published, install the tagged source
 with a Rust MSVC toolchain as described below.
 
-WebAssembly is supported through a runtime-verified Pyodide wheel for
-in-browser Python. PyPI does not accept its `pyodide_2025_0_wasm32` platform
-tag, so the WASM wheel is not available through the normal install commands.
-This target runs XY's Python and Rust core inside Pyodide; it is separate from
-the JavaScript/WebGL client included with every chart.
+A runtime-verified Pyodide wheel has been built for in-browser Python, but the
+`v0.0.1` wheel is not yet publicly distributed as a durable release asset.
+PyPI does not accept its `pyodide_2025_0_wasm32` platform tag, so the WASM
+wheel is not available through the normal install commands. This target runs
+XY's Python and Rust core inside Pyodide; it is separate from the
+JavaScript/WebGL client included with every chart. Track publication in
+[#97](https://github.com/reflex-dev/xy/issues/97).
 
 ## What the package includes
 

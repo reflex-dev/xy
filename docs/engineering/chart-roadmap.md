@@ -373,12 +373,14 @@ contour, steps/stairs/stems, and facets** — are done. The first alpha
 `main`; the next sequence is therefore stabilization and compatibility depth,
 not re-implementing shipped primitives.
 
-1. **Stabilize the launched `v0.0.1` alpha.** `v0.0.1` is released (PyPI +
-   Pyodide wheels), the docs site is live, and the reflex-xy adapter is on
-   `main` — so the current gate is the post-launch bug backlog, not shipping.
-   Interaction-correctness issues (heatmap hover kernel crash, box-zoom view
-   collapse, double-click blanking a dense Reflex scatter, reflex-xy static
-   chart crash, FacetChart CSS leak) come before any new chart family.
+1. **Stabilize the launched `v0.0.1` alpha.** `v0.0.1` is released on PyPI;
+   its Pyodide wheel is runtime-verified but is not yet publicly distributed
+   as a durable release asset (#97). The docs site is live, and the reflex-xy
+   adapter is on `main` — so release/distribution correctness and the
+   post-launch bug backlog are the current gate, not shipping. The interaction
+   correctness issues (heatmap hover kernel crash, box-zoom view collapse,
+   double-click blanking a dense Reflex scatter, reflex-xy static chart crash,
+   FacetChart CSS leak) come before any new chart family.
 2. **Reflex-first reactive API — shipped** (PR #55, `python/reflex-xy/`; see
    the capability-layer summary near the top of this doc). Remaining depth is
    adapter polish: install/packaging docs from a clean environment, linked
