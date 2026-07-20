@@ -422,7 +422,8 @@ def test_custom_font_docs_cover_browser_and_static_export_boundaries() -> None:
 def test_theme_component_demo_uses_site_color_mode_tokens() -> None:
     """Keep the introductory theme demo neutral and responsive to site mode."""
     content = (DOCS_ROOT / "styling/themes-and-tokens.md").read_text(encoding="utf-8")
-    demo = content.split("~~~python demo exec", 1)[1].split("~~~", 1)[0]
+    section = content.split("## Start with the theme component", 1)[1].split("## ", 1)[0]
+    demo = section.split("~~~python demo exec", 1)[1].split("~~~", 1)[0]
 
     for token in (
         "var(--secondary-2)",

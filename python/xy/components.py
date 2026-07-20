@@ -36,7 +36,7 @@ import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from os import PathLike
-from typing import Any, Optional, TypeAlias, Union
+from typing import Any, Literal, Optional, TypeAlias, Union
 
 import numpy as np
 
@@ -71,6 +71,10 @@ __all__ = [
     "Mark",
     "Modebar",
     "Theme",
+    "ThemeColorScheme",
+    "ThemeContrast",
+    "ThemePaletteName",
+    "ThemePresetName",
     "Tooltip",
     "area",
     "area_chart",
@@ -137,6 +141,10 @@ __all__ = [
 ]
 
 StyleValue: TypeAlias = str | int | float
+ThemePresetName: TypeAlias = Literal["dashboard", "high_contrast", "minimal", "publication", "xy"]
+ThemePaletteName: TypeAlias = Literal["colorblind", "muted", "okabe_ito", "vibrant", "xy"]
+ThemeColorScheme: TypeAlias = Literal["light", "dark", "system"]
+ThemeContrast: TypeAlias = Literal["normal", "high"]
 
 # One annotation coordinate: a number, a datetime, or (on a categorical
 # axis) a category label.
@@ -2267,11 +2275,11 @@ def modebar(
 def theme(
     style: Optional[dict[str, StyleValue]] = None,
     *,
-    preset: Optional[str] = None,
-    color_scheme: Optional[str] = None,
-    palette: Optional[str] = None,
+    preset: Optional[ThemePresetName] = None,
+    color_scheme: Optional[ThemeColorScheme] = None,
+    palette: Optional[ThemePaletteName] = None,
     accent: Optional[str] = None,
-    contrast: Optional[str] = None,
+    contrast: Optional[ThemeContrast] = None,
     background: Optional[StyleValue] = None,
     plot_background: Optional[StyleValue] = None,
     grid_color: Optional[StyleValue] = None,

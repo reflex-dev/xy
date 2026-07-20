@@ -184,6 +184,19 @@ def test_theme_discovery_functions_are_typed_lazy_exports() -> None:
         assert get_type_hints(function)["return"] == tuple[str, ...]
 
 
+def test_theme_choice_literals_match_runtime_catalogs() -> None:
+    assert set(get_args(xy.ThemePresetName)) == set(xy.theme_presets())
+    assert set(get_args(xy.ThemePaletteName)) == set(xy.theme_palettes())
+    assert get_args(xy.ThemeColorScheme) == ("light", "dark", "system")
+    assert get_args(xy.ThemeContrast) == ("normal", "high")
+
+    hints = get_type_hints(xy.theme)
+    assert xy.ThemePresetName in get_args(hints["preset"])
+    assert xy.ThemePaletteName in get_args(hints["palette"])
+    assert xy.ThemeColorScheme in get_args(hints["color_scheme"])
+    assert xy.ThemeContrast in get_args(hints["contrast"])
+
+
 def test_chart_dom_slots_are_public_styling_contract() -> None:
     expected = (
         "root",
