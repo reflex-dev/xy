@@ -281,14 +281,22 @@ def test_shared_axes_stay_independent_by_default() -> None:
     assert all("link_group" not in fig.interaction for fig in grid.figures)
 
 
-@pytest.mark.parametrize(("link", "axes"), [("x", ["x"]), ("y", ["y"]), ("both", ["x", "y"])])
-def test_link_is_explicit_and_selectable(link: str, axes: list[str]) -> None:
+@pytest.mark.parametrize(
+    ("link", "axes"),
+    [("x", ["x"]), ("y", ["y"]), ("both", ["x", "y"]), (True, ["x", "y"])],
+)
+def test_link_is_explicit_and_selectable(link: str | bool, axes: list[str]) -> None:
     grid = xy.facet_chart(
         xy.line(x="x", y="y"), by="g", data=_table(), link=link, link_select=True
     ).figure()
     assert len({fig.interaction["link_group"] for fig in grid.figures}) == 1
     assert all(fig.interaction["link_axes"] == axes for fig in grid.figures)
     assert all(fig.interaction["link_select"] is True for fig in grid.figures)
+
+
+def test_link_false_disables_runtime_axis_linking() -> None:
+    grid = xy.facet_chart(xy.line(x="x", y="y"), by="g", data=_table(), link=False).figure()
+    assert all("link_group" not in fig.interaction for fig in grid.figures)
 
 
 def test_link_implies_initial_domain_sharing() -> None:

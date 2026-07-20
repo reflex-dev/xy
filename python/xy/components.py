@@ -3219,7 +3219,7 @@ class FacetChart(Component):
         cols: int = 3,
         share_x: bool = True,
         share_y: bool = True,
-        link: Optional[str] = None,
+        link: Optional[Union[str, bool]] = None,
         link_select: bool = False,
         gap: int = 12,
         **props: Any,
@@ -3245,8 +3245,10 @@ class FacetChart(Component):
         self.cols = int(cols)
         self.share_x = _strict_bool(share_x, "facet_chart share_x")
         self.share_y = _strict_bool(share_y, "facet_chart share_y")
-        if link not in (None, "x", "y", "both"):
-            raise ValueError("facet_chart link must be None, 'x', 'y', or 'both'")
+        if isinstance(link, (bool, np.bool_)):
+            link = "both" if bool(link) else None
+        elif link not in (None, "x", "y", "both"):
+            raise ValueError("facet_chart link must be True, False, None, 'x', 'y', or 'both'")
         self.link = link
         self.link_select = _strict_bool(link_select, "facet_chart link_select")
         self.gap = int(gap)
@@ -4115,7 +4117,7 @@ def facet_chart(
     cols: int = 3,
     share_x: bool = True,
     share_y: bool = True,
-    link: Optional[str] = None,
+    link: Optional[Union[str, bool]] = None,
     link_select: bool = False,
     gap: int = 12,
     **props: Any,
@@ -4128,7 +4130,8 @@ def facet_chart(
         cols: Maximum number of panel columns.
         share_x: Whether panels share an x domain.
         share_y: Whether panels share a y domain.
-        link: Runtime-linked axes: ``None``, ``"x"``, ``"y"``, or ``"both"``.
+        link: Runtime-linked axes: ``True``/``"both"`` for both axes,
+            ``"x"`` or ``"y"`` for one axis, and ``False``/``None`` to disable.
         link_select: Whether data-space selections are echoed across panels.
         gap: Gap between panels in pixels.
         **props: Additional shared chart properties.
