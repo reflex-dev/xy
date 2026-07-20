@@ -528,13 +528,23 @@ class _Scale:
         # public axis option is serialized separately as ``scale``. Accept the
         # historical kind form too for old payloads.
         self.log = axis.get("scale") == "log" or self.kind == "log"
+        self.symlog = axis.get("scale") == "symlog"
+        self.constant = float(axis.get("constant", 1.0))
         if self.log:
             lo, hi = np.log10(max(lo, 1e-300)), np.log10(max(hi, 1e-300))
+        elif self.symlog:
+            lo, hi = self._symlog(lo), self._symlog(hi)
         self.lo, self.hi = float(lo), float(hi)
         self.px0, self.px1 = px0, px1
 
     def coord(self, v: Any) -> Any:
-        return np.log10(np.maximum(v, 1e-300)) if self.log else v
+        if self.log:
+            return np.log10(np.maximum(v, 1e-300))
+        return self._symlog(v) if self.symlog else v
+
+    def _symlog(self, v: Any) -> Any:
+        value = np.asarray(v)
+        return np.sign(value) * np.log1p(np.abs(value) / self.constant)
 
     def __call__(self, v: Any) -> Any:
         c = self.coord(v)
@@ -543,7 +553,7 @@ class _Scale:
 
     @property
     def affine(self) -> bool:
-        return not self.log
+        return not (self.log or self.symlog)
 
 
 def _colormap_stops(colormap: str) -> list[tuple[int, int, int]]:
@@ -1167,6 +1177,16 @@ def axis_ticks(
     lo, hi = axis["range"]
     if axis.get("scale") == "log" or kind == "log":
         return _log_ticks(lo, hi, target)
+    if axis.get("scale") == "symlog":
+        constant = float(axis.get("constant", 1.0))
+        transform = lambda v: np.sign(v) * np.log1p(abs(v) / constant)
+        inverse = lambda v: np.sign(v) * constant * np.expm1(abs(v))
+        coords, step = _linear_ticks(float(transform(lo)), float(transform(hi)), target)
+        ticks = [float(inverse(v)) for v in coords]
+        if min(lo, hi) <= 0 <= max(lo, hi) and not any(abs(v) < 1e-12 for v in ticks):
+            ticks.append(0.0)
+            ticks.sort(reverse=lo > hi)
+        return ticks, ticks, abs(float(inverse(step)))
     if kind == "category":
         t = [float(v) for v in _category_ticks(lo, hi, len(axis.get("categories") or []), target)]
         return t, t, 1.0
