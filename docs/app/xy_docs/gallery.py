@@ -23,8 +23,8 @@ _PURPLE_LIGHT = "#C4B5FD"
 _GRAY_DARK = "#1C2024"
 _GRAY_MID = "#8B8D98"
 _GRAY_LIGHT = "#CDCED6"
-# Constructed in two pieces so Tailwind cannot discover the complete arbitrary
-# property from Python source. It must arrive through XYChart's scan manifest.
+# Keep this token split so compiled CSS proves it came from the generated manifest,
+# rather than Tailwind's Python source scan.
 _TAILWIND_BRIDGE_SENTINEL = "[--xy-tailwind-" + "bridge:compiled]"
 _STATIC_SVG_PAINT_TOKENS = {
     "rgba(32,32,32,0.14)": "var(--secondary-a5)",
@@ -696,9 +696,7 @@ def _gallery_preview(chart_factory: ChartFactory, *, live: bool) -> rx.Component
     if live:
         return reflex_xy.chart(chart, width="100%", height="220px")
 
-    # Thirty simultaneous WebGL charts can exhaust a browser's context budget.
-    # Static tiles therefore use SVG rendered by XY itself; one representative
-    # tile in every family stays live, and every linked family page has a live demo.
+    # SVG keeps context use bounded while one tile in each family remains live.
     return rx.html(
         _responsive_gallery_svg(chart),
         class_name="h-[220px] w-full [&>svg]:h-full [&>svg]:w-full",
@@ -719,8 +717,7 @@ def _gallery_card(
             rx.box(
                 _gallery_preview(chart_factory, live=live),
                 class_name=(
-                    "h-[220px] w-full overflow-hidden bg-gradient-to-br "
-                    "from-secondary-1 via-primary-1 to-primary-2 text-secondary-11"
+                    "h-[220px] w-full overflow-hidden bg-white text-secondary-11 dark:bg-black"
                 ),
             ),
             rx.box(

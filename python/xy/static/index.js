@@ -1745,6 +1745,8 @@ const UNITLESS_STYLE_PROPS = new Set([
 const XY_CONTEXT_GOVERNOR = {
 views: new Set(),
 seq: 1,
+hiddenReleaseChannel: null,
+hiddenReleaseQueue: [],
 budget() {
 const v = typeof window !== "undefined" ? window.XY_CONTEXT_BUDGET : null;
 return Number.isFinite(v) && v >= 1 ? Math.floor(v) : 12;
@@ -1788,6 +1790,44 @@ requester._ctxPendingReservation = false;
 },
 cancel(requester) {
 requester._ctxPendingReservation = false;
+},
+scheduleHiddenReleases() {
+if (this.hiddenReleaseChannel !== null) return;
+this.hiddenReleaseQueue = Array.from(this.views);
+const channel = new MessageChannel();
+this.hiddenReleaseChannel = channel;
+channel.port1.onmessage = () => {
+if (
+typeof document === "undefined" ||
+document.visibilityState !== "hidden"
+) {
+this.cancelHiddenReleases();
+return;
+}
+let view = null;
+while (this.hiddenReleaseQueue.length && !view) {
+const candidate = this.hiddenReleaseQueue.shift();
+if (
+!candidate._destroyed &&
+candidate.gl &&
+!candidate._glLost &&
+!candidate.gl.isContextLost()
+) view = candidate;
+}
+if (!view) {
+this.cancelHiddenReleases();
+return;
+}
+view._releaseContext();
+channel.port2.postMessage(null);
+};
+channel.port2.postMessage(null);
+},
+cancelHiddenReleases() {
+this.hiddenReleaseChannel?.port1.close();
+this.hiddenReleaseChannel?.port2.close();
+this.hiddenReleaseChannel = null;
+this.hiddenReleaseQueue = [];
 },
 };
 function xyInitiallyVisible(el) {
@@ -1856,7 +1896,16 @@ if (this._ctxVisible) this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
 this._contextLossCount = 0;
 this._contextRestoreCount = 0;
 this._contextRecoveryError = null;
+try {
 this._initGl(buffer);
+} catch (err) {
+XY_CONTEXT_GOVERNOR.unregister(this);
+if (String(err && err.message || err) === "webgl2 unavailable") {
+this.root.textContent = "xy: WebGL2 unavailable in this browser.";
+}
+throw err;
+}
+this.canvas.dataset.xyCtx = "live";
 this._initA11y();
 this.root.dataset.xyContextState = "ready";
 this._initContextLossRecovery();
@@ -2201,6 +2250,22 @@ this._viewRequestBurstStart = null;
 this._dispatchChartEvent("context_lost", {
 loss_count: this._contextLossCount,
 });
+const documentVisible =
+typeof document === "undefined" ||
+!document.visibilityState ||
+document.visibilityState === "visible";
+if (!governedRelease && this._ctxVisible && documentVisible) {
+setTimeout(() => {
+if (
+!this._destroyed &&
+this._glLost &&
+this.canvas.dataset.xyCtx === "lost" &&
+this._ctxVisible
+) {
+this._recoverContext();
+}
+}, 0);
+}
 });
 this._listen(this.canvas, "webglcontextrestored", () => {
 if (this._destroyed || this._contextRecoveryError) return;
@@ -2209,8 +2274,23 @@ this.pickFbo = null;
 this.pickTex = null;
 try {
 this._initGl(this._payload);
+this._glLost = false;
+this._drawNow();
+this._assertContextFrameReady("restore");
 } catch (err) {
 this._glLost = true;
+this.canvas.dataset.xyCtx = "lost";
+this.root.dataset.xyContextState = "lost";
+const transient =
+!this.gl ||
+this.gl.isContextLost() ||
+String(err && err.message || err).includes("shader compile: null") ||
+String(err && err.message || err).startsWith("WebGL error ");
+if (transient) {
+this._contextRecoveryError = null;
+this._scheduleContextRecovery();
+return;
+}
 this._contextRecoveryError = err;
 this.root.dataset.xyContextState = "failed";
 try { this._destroyGlResources(); } catch (_cleanupErr) {}
@@ -2222,12 +2302,12 @@ message: err instanceof Error ? err.message : String(err),
 this.root.textContent = "xy: WebGL2 context could not be restored.";
 return;
 }
-this._glLost = false;
 this._contextRestoreCount += 1;
 this._contextRecoveryError = null;
+this._ctxRecoveryDelay = 0;
+this.canvas.dataset.xyCtx = "live";
 this.root.dataset.xyContextState = "ready";
 this._scheduleViewRequest(this.view, { delay: 0 });
-this.draw();
 this._dropContextSnapshot();
 this._dispatchChartEvent("context_restored", {
 loss_count: this._contextLossCount,
@@ -2264,7 +2344,37 @@ snap.width = this.canvas.width;
 snap.height = this.canvas.height;
 snap.style.cssText = this.canvas.style.cssText;
 snap.style.pointerEvents = "none";
-snap.getContext("2d").drawImage(this.canvas, 0, 0);
+const gl = this.gl;
+const w = this.canvas.width;
+const h = this.canvas.height;
+gl.finish();
+const pixels = new Uint8Array(w * h * 4);
+gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+const ctx = snap.getContext("2d");
+const image = ctx.createImageData(w, h);
+const data = image.data;
+for (let srcY = 0; srcY < h; srcY++) {
+let src = srcY * w * 4;
+const srcEnd = src + w * 4;
+let dst = (h - 1 - srcY) * w * 4;
+for (; src < srcEnd; src += 4, dst += 4) {
+const alpha = pixels[src + 3];
+let red = pixels[src];
+let green = pixels[src + 1];
+let blue = pixels[src + 2];
+if (alpha > 0 && alpha < 255) {
+const scale = 255 / alpha;
+red = Math.min(255, Math.round(red * scale));
+green = Math.min(255, Math.round(green * scale));
+blue = Math.min(255, Math.round(blue * scale));
+}
+data[dst] = red;
+data[dst + 1] = green;
+data[dst + 2] = blue;
+data[dst + 3] = alpha;
+}
+}
+ctx.putImageData(image, 0, 0);
 this.canvas.before(snap);
 this.canvas.style.visibility = "hidden";
 } catch (_err) {
@@ -2292,7 +2402,35 @@ XY_CONTEXT_GOVERNOR.cancel(this);
 }
 this._rebuildEvictedContext();
 }
+_assertContextFrameReady(stage) {
+if (!this.gl) {
+throw new Error(`context lost during ${stage} draw`);
+}
+this.gl.finish();
+if (this.gl.isContextLost()) throw new Error(`context lost during ${stage} draw`);
+const error = this.gl.getError();
+if (error !== this.gl.NO_ERROR) {
+throw new Error(`WebGL error ${error} during ${stage} draw`);
+}
+}
+_scheduleContextRecovery() {
+if (this._ctxRecoveryTimer || this._destroyed || !this._ctxVisible) return;
+if (
+typeof document !== "undefined" &&
+document.visibilityState &&
+document.visibilityState !== "visible"
+) return;
+const delay = this._ctxRecoveryDelay || 50;
+this._ctxRecoveryDelay = Math.min(1000, delay * 2);
+this._ctxRecoveryTimer = setTimeout(() => {
+this._ctxRecoveryTimer = null;
+if (this._glLost && !this._destroyed && this._ctxVisible) this._recoverContext();
+}, delay);
+}
 _rebuildEvictedContext() {
+if (this.gl && !this.gl.isContextLost()) {
+try { this.gl.getExtension("WEBGL_lose_context")?.loseContext(); } catch (_err) {}
+}
 const fresh = this.canvas.cloneNode(false);
 for (const record of this._listeners) {
 if (record.target === this.canvas) {
@@ -2309,19 +2447,41 @@ this.pickFbo = null;
 this.pickTex = null;
 try {
 this._initGl(this._payload);
+this._glLost = false;
+this._drawNow();
+this._assertContextFrameReady("rebuild");
 } catch (_err) {
 this._glLost = true;
 this.canvas.dataset.xyCtx = "lost";
+this._scheduleContextRecovery();
 return;
 }
+this._ctxRecoveryDelay = 0;
+this.canvas.dataset.xyCtx = "live";
 this._scheduleViewRequest(this.view, { delay: 0 });
-this.draw();
 this._dropContextSnapshot();
 }
 _armContextVisibilityWatch() {
 this._listen(this.root, "pointerenter", () => {
 if (this._glLost && !this._destroyed) this._recoverContext();
 });
+if (typeof document !== "undefined") {
+this._listen(document, "visibilitychange", () => {
+if (document.visibilityState === "hidden") {
+XY_CONTEXT_GOVERNOR.scheduleHiddenReleases();
+return;
+}
+XY_CONTEXT_GOVERNOR.cancelHiddenReleases();
+if (
+document.visibilityState === "visible" &&
+this._ctxVisible &&
+this._glLost &&
+!this._destroyed
+) {
+this._recoverContext();
+}
+});
+}
 if (typeof IntersectionObserver === "undefined") {
 this._ctxVisible = true;
 return;
@@ -2775,12 +2935,10 @@ antialias: false, premultipliedAlpha: true, alpha: true,
 });
 if (!gl) {
 XY_CONTEXT_GOVERNOR.cancel(this);
-this.root.textContent = "xy: WebGL2 unavailable in this browser.";
 throw new Error("webgl2 unavailable");
 }
 this.gl = gl;
 XY_CONTEXT_GOVERNOR.acquired(this);
-this.canvas.dataset.xyCtx = "live";
 gl.enable(gl.BLEND);
 gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 this._progCache = new Map();
@@ -4732,8 +4890,20 @@ gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 this._pickDirty = false;
 }
 _pickAt(cssX, cssY) {
-if (!this._pickable) return null;
-if (this._pickDirty) this._renderPick();
+if (
+!this._pickable ||
+this._glLost ||
+!this.gl ||
+this.gl.isContextLost()
+) return null;
+if (this._pickDirty) {
+try {
+this._renderPick();
+} catch (err) {
+if (!this.gl || this.gl.isContextLost()) return null;
+throw err;
+}
+}
 const gl = this.gl;
 const px = Math.round(cssX * this.dpr);
 const py = Math.round((this.plot.h - cssY) * this.dpr);
@@ -4958,6 +5128,8 @@ this._destroyed = true;
 XY_CONTEXT_GOVERNOR.unregister(this);
 this._ctxIo?.disconnect();
 this._ctxIo = null;
+clearTimeout(this._ctxRecoveryTimer);
+this._ctxRecoveryTimer = null;
 clearTimeout(this._rebinTimer);
 if (this._rebinWorker) {
 this._rebinWorker.terminate();

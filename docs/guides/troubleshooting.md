@@ -52,7 +52,7 @@ Color-shaped typos such as a malformed hex value raise their CSS error instead
 of quietly becoming a column lookup.
 
 See [Styling](/docs/xy/styling/) and
-[Mark styles](/docs/xy/styling/mark-styles/) for the supported surfaces.
+[Customize Each Part](/docs/xy/styling/customize/) for the supported surfaces.
 
 ## Data and Streaming
 

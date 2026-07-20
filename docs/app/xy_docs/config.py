@@ -42,12 +42,10 @@ DOCS_SECTIONS = (
         "palette",
         (
             ("Overview", "/styling/"),
-            ("Styling Gallery", "/styling/gallery/"),
-            ("Chrome Slots", "/styling/chrome-slots/"),
-            ("Component Variations", "/styling/component-variations/"),
-            ("Mark Styles", "/styling/mark-styles/"),
-            ("Themes and Tokens", "/styling/themes-and-tokens/"),
-            ("Recipes", "/styling/recipes/"),
+            ("Examples", "/styling/examples/"),
+            ("Customize Each Part", "/styling/customize/"),
+            ("Themes and Export", "/styling/themes-and-tokens/"),
+            ("Advanced Styling Gallery", "/styling/gallery/"),
         ),
     ),
     (
@@ -153,6 +151,11 @@ DOCS_SECTIONS = (
 
 DOCS_REDIRECTS = {
     "/charts/annotations/": "/components/annotations/",
+    "/styling/playground/": "/styling/examples/#palette-playground",
+    "/styling/recipes/": "/styling/examples/#responsive-combo-chart",
+    "/styling/chrome-slots/": "/styling/customize/#legend",
+    "/styling/mark-styles/": "/styling/customize/#fill,-stroke,-opacity,-and-gradients",
+    "/styling/component-variations/": "/styling/customize/#annotations",
 }
 
 _SECTION_ROUTES = tuple(
@@ -197,6 +200,11 @@ DOCS_CONFIG = DocsSiteConfig(
         "app/**",
         "assets/**",
         "engineering/**",
+        "styling/chrome-slots.md",
+        "styling/component-variations.md",
+        "styling/mark-styles.md",
+        "styling/playground.md",
+        "styling/recipes.md",
     ),
     navigation_order=DOCS_NAVIGATION,
     sitemap_base_url=PUBLIC_DOCS_URL,
