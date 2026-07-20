@@ -83,10 +83,7 @@ def _top_level_link(
             class_name=rx.cond(
                 active,
                 f"{row_classes} bg-secondary-3 text-primary-10",
-                (
-                    f"{row_classes} bg-transparent text-secondary-11 "
-                    "hover:text-secondary-12"
-                ),
+                (f"{row_classes} bg-transparent text-secondary-11 hover:text-secondary-12"),
             ),
         ),
         class_name="m-0 w-full list-none border-none bg-transparent p-0",
@@ -116,10 +113,7 @@ def _section_items(
     return (
         docs_sidebar_group(
             title,
-            *(
-                _leaf(leaf_title, leaf_route, url)
-                for leaf_title, leaf_route in section_leaves
-            ),
+            *(_leaf(leaf_title, leaf_route, url) for leaf_title, leaf_route in section_leaves),
             icon=icon,
             open_=(
                 (url == "/") | url.startswith("/overview/")

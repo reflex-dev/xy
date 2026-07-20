@@ -1343,12 +1343,14 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
         row_title
         for title, landing_route, _icon, leaves in grouped_sections
         for row_title in (
-            (
-                *(leaf_title for leaf_title, _leaf_route in leaves),
-            )
+            (*(leaf_title for leaf_title, _leaf_route in leaves),)
             if title == "Integrations"
             and not any(leaf_route == landing_route for _leaf_title, leaf_route in leaves)
-            else ((leaf_title for leaf_title, _leaf_route in leaves) if title == "Integrations" else (title,))
+            else (
+                (leaf_title for leaf_title, _leaf_route in leaves)
+                if title == "Integrations"
+                else (title,)
+            )
         )
     ]
     expected_leaf_count = sum(
