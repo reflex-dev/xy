@@ -92,6 +92,27 @@ def pick(
         idx = int(shipped_sel[idx])
     if idx < 0 or idx >= t.n_points:
         return None
+    if t.grid_shape is not None:
+        # Grid (heatmap) trace: t.x/t.y hold only the outer edges, so the
+        # point-like readout below would index a 2-element array with a cell
+        # index. Return the bin readout instead (§17): exact f64 z from the
+        # canonical grid. x/y are omitted on purpose — the client's local row
+        # already shows the cell center (with categorical axis labels), and a
+        # kernel-provided numeric x/y would override those labels.
+        rows, cols = t.grid_shape
+        if cols <= 0 or idx >= rows * cols:
+            return None
+        out: dict[str, Any] = {
+            "trace": t.id,
+            "index": idx,
+            "row": idx // cols,
+            "col": idx % cols,
+        }
+        if t.grid is not None:
+            val = float(t.grid.values[idx])
+            if np.isfinite(val):
+                out["color_value"] = val
+        return out
     out: dict[str, Any] = {
         "trace": t.id,
         "index": idx,
