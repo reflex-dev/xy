@@ -1,5 +1,7 @@
 """Native zero-inclusive long-tail axis contracts."""
 
+from __future__ import annotations
+
 import numpy as np
 import pytest
 
