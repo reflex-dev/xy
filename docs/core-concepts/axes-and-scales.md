@@ -60,7 +60,8 @@ axis = xy.y_axis(
 `label_position`, `label_offset`, and `label_angle` position the axis title.
 
 Axis `style=` uses a strict cross-renderer vocabulary for grid, axis, tick, and
-label paint/geometry. See [Mark styles](/docs/xy/styling/mark-styles/#axis-styles)
+label paint/geometry. See
+[Customize Each Part](/docs/xy/styling/customize/#axes,-grid,-and-ticks)
 for the supported keys.
 
 ## Named and opposite-side axes

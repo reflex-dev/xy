@@ -62,7 +62,7 @@ adapter and can be retrieved through `chart.chrome_components()`. It is not
 embedded into standalone HTML, and the shipped `reflex_xy.chart` adapter does
 not mount it. With that adapter, disable the built-in tooltip, handle
 `on_point_hover` in Reflex state, and render the framework-owned tooltip beside
-or over the chart. See [Component Variations](/docs/xy/styling/component-variations/#custom-component-replacements)
+or over the chart. See [Customize Each Part](/docs/xy/styling/customize/#tooltip)
 for the complete integration boundary.
 
 See [Events and callbacks](/docs/xy/api-reference/events-and-callbacks/) for

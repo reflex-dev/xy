@@ -15,7 +15,7 @@ Build a compact trend chart by hiding the axes, legend, tooltip, and toolbar.
 The reduced padding saves space, while the gradient makes the area fill fade
 toward the baseline:
 
-~~~python demo exec
+~~~python demo exec toggle preview-code id=dashboard-sparkline-recipe
 import numpy as np
 import reflex_xy
 import xy
@@ -27,19 +27,35 @@ sparkline = xy.area_chart(
     xy.area(
         x,
         y,
-        color="#3b82f6",
+        color="#fe9a00",
         curve="smooth",
-        line_width=2.5,
+        line_width=2,
         line_opacity=1,
-        fill="linear-gradient(currentColor, transparent)",
+        fill="linear-gradient(#fe9a004d 5%, #fe9a0000 95%)",
     ),
     xy.x_axis(
         tick_label_strategy="none",
-        style={"grid_color": "transparent", "axis_color": "transparent"},
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "grid_opacity": 0,
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
     ),
     xy.y_axis(
         tick_label_strategy="none",
-        style={"grid_color": "transparent", "axis_color": "transparent"},
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "grid_color": "#00000000",
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
     ),
     xy.legend(show=False),
     xy.tooltip(show=False),
@@ -54,15 +70,15 @@ def dashboard_sparkline_recipe():
     return reflex_xy.chart(sparkline, height="180px")
 ~~~
 
-`currentColor` follows the area's `color`, so the same fade recipe works with
-another palette value or CSS variable.
+Keep the stroke and both gradient stops on the same hue when adapting this
+recipe to another palette value.
 
 ## Rounded gradient columns
 
 Use a mark-space gradient so every column fades along its own value direction,
 and round only the value end:
 
-~~~python demo exec
+~~~python demo exec toggle preview-code id=rounded-gradient-columns-recipe
 import reflex_xy
 import xy
 
@@ -70,13 +86,34 @@ gradient_columns = xy.column_chart(
     xy.column(
         ["Starter", "Team", "Business", "Enterprise"],
         [34, 58, 76, 93],
-        fill="linear-gradient(to top, #2563eb, #93c5fd)",
-        corner_radius=(8, 0),
-        stroke="#1e3a8a",
-        stroke_width=1,
+        fill="linear-gradient(to top, #2b7fff, #00b8db)",
+        corner_radius=(6, 0),
+        stroke_width=0,
     ),
-    xy.y_axis(label="adoption", domain=(0, 100), format=".0f"),
-    title="Plan adoption",
+    xy.x_axis(
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "grid_opacity": 0,
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
+    ),
+    xy.y_axis(
+        domain=(0, 100),
+        format=".0f",
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
+    ),
+    xy.tooltip(title="{x}", format={"y": ".0f"}),
 )
 
 
@@ -85,7 +122,7 @@ def gradient_columns_recipe():
 ~~~
 
 For one continuous gradient across the whole plot, pass
-`fill={"gradient": "linear-gradient(to right, #2563eb, #a78bfa)",
+`fill={"gradient": "linear-gradient(to right, #2b7fff, #8e51ff)",
 "space": "plot"}`.
 
 ## Accessible monochrome comparison
@@ -94,7 +131,7 @@ Do not rely on hue alone when a chart must survive grayscale printing or serve
 users with color-vision differences. Combine stroke dash, marker shape, and a
 clear legend so each series has multiple visual identifiers:
 
-~~~python demo exec
+~~~python demo exec toggle preview-code id=accessible-monochrome-comparison-recipe
 import reflex_xy
 import xy
 
@@ -105,15 +142,15 @@ monochrome = xy.line_chart(
         periods,
         [42, 48, 51, 57, 61, 68],
         name="Actual",
-        color="var(--secondary-12)",
+        color="#6a7282",
         width=2.5,
     ),
     xy.scatter(
         periods,
         [42, 48, 51, 57, 61, 68],
         symbol="circle",
-        color="var(--secondary-2)",
-        stroke="var(--secondary-12)",
+        color="#ffffff",
+        stroke="#6a7282",
         stroke_width=2,
         size=8,
     ),
@@ -121,7 +158,7 @@ monochrome = xy.line_chart(
         periods,
         [40, 46, 53, 55, 63, 66],
         name="Plan",
-        color="var(--secondary-10)",
+        color="#6a7282",
         width=2.5,
         dash="dashed",
     ),
@@ -129,20 +166,43 @@ monochrome = xy.line_chart(
         periods,
         [40, 46, 53, 55, 63, 66],
         symbol="square",
-        color="var(--secondary-10)",
+        color="#6a7282",
         size=7,
     ),
     xy.legend(loc="upper left", ncols=2),
     xy.tooltip(title="{x}"),
-    xy.theme(
-        plot_background="var(--secondary-2)",
-        grid_color="var(--secondary-a5)",
-        axis_color="var(--secondary-a8)",
-        text_color="var(--secondary-11)",
+    xy.x_axis(
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "grid_opacity": 0,
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
     ),
-    class_name="bg-secondary-2 text-secondary-11",
-    style={"background": "var(--secondary-2)"},
-    title="Actual versus plan",
+    xy.y_axis(
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
+    ),
+    xy.theme(
+        plot_background="var(--recipe-surface, #ffffff)",
+        grid_color="var(--recipe-grid, #e5e7eb)",
+        text_color="var(--recipe-text, #4b5563)",
+    ),
+    class_name=(
+        "bg-[#ffffff] [--recipe-surface:#ffffff] [--recipe-grid:#e5e7eb] "
+        "[--recipe-text:#4b5563] dark:bg-[#000000] "
+        "dark:[--recipe-surface:#000000] dark:[--recipe-grid:#27272a] "
+        "dark:[--recipe-text:#d4d4d8]"
+    ),
 )
 
 
@@ -155,11 +215,11 @@ series without creating duplicate legend rows.
 
 ## Dense categorical labels
 
-Long category names can overlap or be clipped. Rotate the x-axis labels and
-reserve extra space below the plot so every region name remains readable. If
-showing every label is unnecessary, use `tick_label_strategy="hide"` instead.
+Long category names can overwhelm a compact dashboard. This treatment leaves
+the categories available to the tooltip while removing axis chrome so the
+columns remain easy to compare at a glance.
 
-~~~python demo exec
+~~~python demo exec toggle preview-code id=dense-categorical-labels-recipe
 import reflex_xy
 import xy
 
@@ -174,19 +234,35 @@ dense_categories = xy.column_chart(
             "Asia Pacific",
         ],
         [78, 54, 69, 47, 58, 83],
-        fill="linear-gradient(to top, #4338ca, #a5b4fc)",
+        color="#8e51ff",
         corner_radius=(6, 0),
     ),
     xy.x_axis(
-        tick_label_strategy="rotate",
-        tick_label_angle=-35,
-        tick_label_min_gap=8,
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "grid_opacity": 0,
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
     ),
-    xy.y_axis(label="adoption (%)", domain=(0, 100)),
+    xy.y_axis(
+        domain=(0, 100),
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
+    ),
+    xy.tooltip(title="{x}", format={"y": ".0f"}),
     width="100%",
     height=360,
-    padding=[38, 24, 92, 54],
-    title="Regional adoption",
+    padding=[28, 24, 36, 32],
 )
 
 
@@ -194,15 +270,15 @@ def dense_categorical_axis_recipe():
     return reflex_xy.chart(dense_categories, height="360px")
 ~~~
 
-Keep the chart root's overflow visible. Axis labels are DOM chrome and can be
+Keep the chart root's overflow visible. Tooltips and other DOM chrome can be
 clipped when `overflow-hidden` is applied directly to the XY root.
 
-## Dark chart card
+## Theme-aware scatter
 
-Keep every export-critical color on the chart. Marks can consume a custom
-accent variable while chrome uses the standard token set:
+Keep the exact violet mark color on the chart while neutral surface and grid
+tokens follow the host's light or dark mode:
 
-~~~python demo exec
+~~~python demo exec toggle preview-code id=dark-chart-card-recipe
 import reflex_xy
 import xy
 
@@ -212,24 +288,48 @@ dark_card = xy.scatter_chart(
         [2, 5, 4, 7, 6],
         size=11,
         style={
-            "fill": "var(--chart-accent)",
-            "stroke": "#f8fafc",
+            "fill": "#8e51ff",
+            "stroke": "#ffffff",
             "stroke-width": 1.5,
         },
     ),
     xy.theme(
         style={
-            "--chart-bg": "#18181b",
-            "--chart-text": "#e4e4e7",
-            "--chart-grid": "rgb(212 212 216 / 12%)",
-            "--chart-axis": "rgb(212 212 216 / 55%)",
+            "--chart-bg": "var(--recipe-surface, #ffffff)",
+            "--chart-text": "var(--recipe-text, #4b5563)",
+            "--chart-grid": "var(--recipe-grid, #e5e7eb)",
+            "--chart-axis": "#00000000",
             "--chart-tooltip-bg": "#09090b",
             "--chart-tooltip-text": "#fafafa",
-            "--chart-accent": "#a78bfa",
         }
     ),
-    style={"background": "#18181b", "border_radius": 14},
-    title="Dark-mode card",
+    xy.x_axis(
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "grid_opacity": 0,
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
+    ),
+    xy.y_axis(
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
+    ),
+    class_name=(
+        "bg-[#ffffff] [--recipe-surface:#ffffff] [--recipe-grid:#e5e7eb] "
+        "[--recipe-text:#4b5563] dark:bg-[#000000] "
+        "dark:[--recipe-surface:#000000] dark:[--recipe-grid:#27272a] "
+        "dark:[--recipe-text:#d4d4d8]"
+    ),
 )
 
 
@@ -247,7 +347,7 @@ Put export-critical variables on the chart itself. Browser-only host CSS is
 appropriate for application decoration, but native SVG and PNG cannot inherit
 from the page that happened to contain the chart.
 
-~~~python demo exec
+~~~python demo exec toggle preview-code id=export-safe-brand-theme-recipe
 import reflex_xy
 import xy
 
@@ -256,37 +356,56 @@ branded = xy.area_chart(
         [0, 1, 2, 3, 4, 5],
         [18, 24, 22, 31, 35, 43],
         name="Active teams",
-        color="var(--brand-primary, #2563eb)",
+        color="#00b8db",
         curve="smooth",
-        line_width=2.5,
-        fill="linear-gradient(currentColor, transparent)",
+        line_width=2,
+        fill="linear-gradient(#00b8db4d 5%, #00b8db00 95%)",
     ),
     xy.legend(loc="upper left"),
     xy.tooltip(title="Month {x}"),
     xy.theme(
-        plot_background="var(--brand-surface, #fafafa)",
-        text_color="var(--brand-text, #172554)",
-        grid_color="var(--brand-grid, rgb(37 99 235 / 14%))",
-        axis_color="var(--brand-axis, rgb(30 64 175 / 55%))",
+        plot_background="var(--brand-surface, #ffffff)",
+        text_color="var(--brand-text, #4b5563)",
+        grid_color="var(--brand-grid, #e5e7eb)",
+        axis_color="var(--brand-axis, #d1d5db)",
         style={
-            "--brand-primary": "var(--brand-accent, #2563eb)",
             "--chart-tooltip-bg": "var(--brand-tooltip, #27272a)",
             "--chart-tooltip-text": "var(--brand-tooltip-text, #fafafa)",
-            "--chart-legend-bg": "var(--brand-legend, rgb(250 250 250 / 88%))",
+            "--chart-legend-bg": "var(--brand-legend, #fafafae0)",
+        },
+    ),
+    xy.x_axis(
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "grid_opacity": 0,
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
+    ),
+    xy.y_axis(
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
         },
     ),
     class_name=(
-        "[--brand-surface:#fafafa] [--brand-text:#172554] "
-        "[--brand-grid:#2563eb24] [--brand-axis:#1e40af8c] "
-        "[--brand-accent:#2563eb] [--brand-tooltip:#27272a] "
+        "[--brand-surface:#ffffff] [--brand-text:#4b5563] "
+        "[--brand-grid:#e5e7eb] [--brand-axis:#d1d5db] "
+        "[--brand-tooltip:#27272a] "
         "[--brand-tooltip-text:#fafafa] [--brand-legend:#fafafae0] "
-        "dark:[--brand-surface:#18181b] dark:[--brand-text:#dbeafe] "
-        "dark:[--brand-grid:#93c5fd33] dark:[--brand-axis:#93c5fd99] "
-        "dark:[--brand-accent:#60a5fa] dark:[--brand-tooltip:#09090b] "
-        "dark:[--brand-tooltip-text:#eff6ff] dark:[--brand-legend:#27272ae6]"
+        "dark:[--brand-surface:#000000] dark:[--brand-text:#d4d4d8] "
+        "dark:[--brand-grid:#27272a] dark:[--brand-axis:#3f3f46] "
+        "dark:[--brand-tooltip:#09090b] "
+        "dark:[--brand-tooltip-text:#f8fafc] dark:[--brand-legend:#18181be6]"
     ),
-    style={"background": "var(--brand-surface, #fafafa)"},
-    title="Branded growth",
+    style={"background": "var(--brand-surface, #ffffff)"},
 )
 
 
@@ -298,60 +417,104 @@ The same chart can now use `to_svg()` or native `to_png()` without depending on
 an ancestor stylesheet. Use `custom_css` with the Chromium engine only when an
 export intentionally needs browser selectors or a host-loaded font.
 
-## Responsive dashboard card
+## Responsive combo chart
 
-Make the chart fluid horizontally but give it a real height. Constrain an outer
-host card—not the XY root—so labels remain free to extend into the chart's
-padding and the chart can remeasure when its container changes.
+Combine columns and a line in one responsive coordinate system when two related
+signals need different visual emphasis. Blue bars, an amber line, a compact
+legend, and horizontal guides keep both measures easy to compare.
 
-~~~python demo exec
-import reflex as rx
+~~~python demo exec toggle preview-code id=responsive-dashboard-card-recipe
 import reflex_xy
 import xy
 
-dashboard_card = xy.line_chart(
-    xy.line(
-        ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-        [82, 91, 87, 104, 112, 108, 126],
-        name="Requests",
-        color="#0f766e",
-        width=2.5,
-        curve="smooth",
+months = [
+    "Jan 23", "Feb 23", "Mar 23", "Apr 23", "May 23", "Jun 23",
+    "Jul 23", "Aug 23", "Sep 23", "Oct 23", "Nov 23", "Dec 23",
+]
+solar_panels = [2890, 2756, 3322, 3470, 3475, 3129, 3490, 2903, 2643, 2837, 2954, 3239]
+inverters = [2338, 2103, 2194, 2108, 1812, 1726, 1982, 2012, 2342, 2473, 3848, 3736]
+
+dashboard_combo = xy.chart(
+    xy.column(
+        months,
+        solar_panels,
+        name="Solar panels",
+        color="#2b7fff",
+        corner_radius=0,
+        stroke_width=0,
     ),
     xy.line(
-        ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-        [76, 84, 90, 96, 102, 108, 114],
-        name="Expected",
-        color="#94a3b8",
-        dash="dashed",
+        months,
+        inverters,
+        name="Inverters",
+        color="#fe9a00",
+        width=2,
+        curve="linear",
+        y_axis="y2",
     ),
-    xy.legend(loc="upper left", ncols=2),
-    xy.tooltip(title="{x}", format={"y": ".0f"}),
-    xy.theme(grid_color="rgb(148 163 184 / 20%)"),
+    xy.legend(loc="upper right", ncols=2),
+    xy.tooltip(title="{x}", format={"y": ",.0f"}),
+    xy.x_axis(
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "grid_opacity": 0,
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
+    ),
+    xy.y_axis(
+        domain=(0, 4200),
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
+    ),
+    xy.y_axis(
+        id="y2",
+        side="right",
+        domain=(0, 4200),
+        style={
+            "axis_width": 0,
+            "axis_color": "#00000000",
+            "grid_opacity": 0,
+            "tick_width": 0,
+            "tick_color": "#00000000",
+            "tick_label_color": "#00000000",
+            "label_color": "#00000000",
+        },
+    ),
+    xy.theme(
+        plot_background="var(--recipe-surface, #ffffff)",
+        grid_color="var(--recipe-grid, #e5e7eb)",
+        text_color="var(--recipe-text, #4b5563)",
+    ),
+    class_name=(
+        "bg-[#ffffff] [--recipe-surface:#ffffff] [--recipe-grid:#e5e7eb] "
+        "[--recipe-text:#4b5563] dark:bg-[#000000] "
+        "dark:[--recipe-surface:#000000] dark:[--recipe-grid:#27272a] "
+        "dark:[--recipe-text:#d4d4d8]"
+    ),
     class_names={
         "legend": "rounded-md bg-white/90 text-xs dark:bg-zinc-900/90",
         "tooltip": "rounded-lg bg-zinc-950 px-3 py-2 text-white shadow-xl",
     },
     width="100%",
     height=280,
-    padding=[42, 22, 48, 48],
-    title="Weekly traffic",
+    padding=[42, 24, 36, 32],
 )
 
 
 def responsive_dashboard_card_recipe():
-    return rx.box(
-        reflex_xy.chart(dashboard_card, height="280px"),
-        width="100%",
-        max_width="36rem",
-        margin_x="auto",
-        padding="3",
-        border="1px solid var(--gray-a5)",
-        border_radius="12px",
-        box_shadow="0 8px 24px rgb(15 23 42 / 8%)",
-    )
+    return reflex_xy.chart(dashboard_combo, height="280px")
 ~~~
 
-Avoid `height="100%"` unless every ancestor has a defined height. An explicit
-component height with chart `width="100%"` is the most reliable responsive
-starting point.
+Avoid `height="100%"` unless every ancestor has a defined height. The shared
+preview owns the border and surface; the chart only needs fluid width and an
+explicit component height.
