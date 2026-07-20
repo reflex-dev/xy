@@ -236,6 +236,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
         select: Optional[bool] = None,
         brush: Optional[bool] = None,
         crosshair: Optional[bool] = None,
+        navigation: Optional[bool] = None,
         view_change: Optional[bool] = None,
         link_group: Optional[str] = None,
         link_axes: tuple[str, ...] = ("x", "y"),
@@ -247,6 +248,7 @@ class Figure(AnnotationsMixin, PayloadMixin):
             ("select", select),
             ("brush", brush),
             ("crosshair", crosshair),
+            ("navigation", navigation),
             ("view_change", view_change),
         ):
             normalized = self._optional_bool(value, f"interaction {name}")
@@ -1018,7 +1020,15 @@ class Figure(AnnotationsMixin, PayloadMixin):
 
     def _interaction_spec(self) -> dict[str, Any]:
         spec: dict[str, Any] = {}
-        for name in ("hover", "click", "select", "brush", "crosshair", "view_change"):
+        for name in (
+            "hover",
+            "click",
+            "select",
+            "brush",
+            "crosshair",
+            "navigation",
+            "view_change",
+        ):
             if name in self.interaction:
                 spec[name] = self._bool_param(self.interaction[name], f"interaction {name}")
         link_group = self.interaction.get("link_group")

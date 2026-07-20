@@ -270,7 +270,7 @@ class Theme(Component):
 
 @dataclass
 class Interaction(Component):
-    """Interaction switches (hover/click/select/brush/crosshair) and
+    """Interaction switches (hover/click/select/brush/crosshair/navigation) and
     cross-chart axis linking. Built by `interaction_config`."""
 
     hover: Optional[bool] = None
@@ -278,6 +278,7 @@ class Interaction(Component):
     select: Optional[bool] = None
     brush: Optional[bool] = None
     crosshair: Optional[bool] = None
+    navigation: Optional[bool] = None
     view_change: Optional[bool] = None
     link_group: Optional[str] = None
     link_axes: tuple[str, ...] = ("x", "y")
@@ -2317,6 +2318,7 @@ def interaction_config(
     select: Optional[bool] = None,
     brush: Optional[bool] = None,
     crosshair: Optional[bool] = None,
+    navigation: Optional[bool] = None,
     view_change: Optional[bool] = None,
     link_group: Optional[str] = None,
     link_axes: tuple[str, ...] = ("x", "y"),
@@ -2329,6 +2331,7 @@ def interaction_config(
         select: Whether shift-drag box selection is enabled.
         brush: Whether brush selection is enabled.
         crosshair: Whether plot-aligned hover guides are shown.
+        navigation: Whether pointer drag and wheel gestures pan or zoom the chart.
         view_change: Whether pan, zoom, and reset emit range events.
         link_group: Identifier used to synchronize charts in the browser.
         link_axes: Axes synchronized within the link group.
@@ -2339,6 +2342,7 @@ def interaction_config(
         select=select,
         brush=brush,
         crosshair=crosshair,
+        navigation=navigation,
         view_change=view_change,
         link_group=link_group,
         link_axes=link_axes,
@@ -2443,6 +2447,7 @@ class Chart(Component):
         select: Optional[bool] = None,
         brush: Optional[bool] = None,
         crosshair: Optional[bool] = None,
+        navigation: Optional[bool] = None,
         view_change: Optional[bool] = None,
         link_group: Optional[str] = None,
         link_axes: tuple[str, ...] = ("x", "y"),
@@ -2468,6 +2473,7 @@ class Chart(Component):
         self.select = select
         self.brush = brush
         self.crosshair = crosshair
+        self.navigation = navigation
         self.view_change = view_change
         self.link_group = link_group
         self.link_axes = link_axes
@@ -2567,6 +2573,7 @@ class Chart(Component):
             or self.select is not None
             or self.brush is not None
             or self.crosshair is not None
+            or self.navigation is not None
             or self.view_change is not None
             or self.link_group is not None
         ):
@@ -2576,6 +2583,7 @@ class Chart(Component):
                 select=self.select,
                 brush=self.brush,
                 crosshair=self.crosshair,
+                navigation=self.navigation,
                 view_change=self.view_change,
                 link_group=self.link_group,
                 link_axes=self.link_axes,
@@ -2587,6 +2595,7 @@ class Chart(Component):
                 select=node.select,
                 brush=node.brush,
                 crosshair=node.crosshair,
+                navigation=node.navigation,
                 view_change=node.view_change,
                 link_group=node.link_group,
                 link_axes=node.link_axes,

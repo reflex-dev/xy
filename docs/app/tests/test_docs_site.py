@@ -754,6 +754,21 @@ def test_complete_styling_examples_render_live_previews() -> None:
     assert not violations, "\n".join(violations)
 
 
+def test_every_core_concepts_python_example_renders_a_live_chart() -> None:
+    """Keep Core Concepts examples visual instead of leaving code-only snippets."""
+    violations: list[str] = []
+    example_count = 0
+    for path in sorted((DOCS_ROOT / "core-concepts").glob("*.md")):
+        content = path.read_text(encoding="utf-8")
+        for fence, body in re.findall(r"~~~(python[^\n]*)\n(.*?)\n~~~", content, re.DOTALL):
+            example_count += 1
+            if "demo exec" not in fence or "reflex_xy.chart" not in body:
+                violations.append(f"{path.relative_to(DOCS_ROOT)}: {fence}")
+
+    assert example_count == 17
+    assert not violations, "\n".join(violations)
+
+
 def test_single_chart_styling_demos_keep_only_the_parent_preview_card() -> None:
     """Keep one neutral preview surface without a nested chart-owned card."""
     gallery = (DOCS_ROOT / "styling/gallery.md").read_text(encoding="utf-8")
@@ -814,15 +829,16 @@ def test_styling_demos_pair_light_surfaces_with_readable_text() -> None:
 
 
 @pytest.mark.parametrize(
-    ("relative_path", "demo_name"),
+    ("relative_path", "demo_name", "expected_live_blocks"),
     (
-        ("overview/first-chart.md", "first_chart_demo"),
-        ("core-concepts/index.md", "composition_model_demo"),
+        ("overview/first-chart.md", "first_chart_demo", 1),
+        ("core-concepts/index.md", "composition_model_demo", 2),
     ),
 )
 def test_beginner_examples_use_docdemos(
     relative_path: str,
     demo_name: str,
+    expected_live_blocks: int,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -837,7 +853,7 @@ def test_beginner_examples_use_docdemos(
         and {"demo", "exec"} <= set(block.flags)
     ]
 
-    assert len(live_blocks) == 1
+    assert len(live_blocks) == expected_live_blocks
     assert "demo-only" not in live_blocks[0].flags
     assert demo_name in live_blocks[0].content
     assert "reflex_xy.chart" in live_blocks[0].content
@@ -865,9 +881,9 @@ def test_beginner_examples_use_docdemos(
 
     shell = 'className:"py-4 gap-4 flex flex-col w-full"'
     preview = 'className:"flex flex-col p-6 rounded-xl overflow-x-auto border border-secondary-4 bg-secondary-2 items-center justify-center w-full"'
-    assert rendered.count(shell) == 1
-    assert rendered.count(preview) == 1
-    assert rendered.count("XYChart") == 1
+    assert rendered.count(shell) == expected_live_blocks
+    assert rendered.count(preview) == expected_live_blocks
+    assert rendered.count("XYChart") == expected_live_blocks
     assert rendered.index(shell) < rendered.index(preview)
     assert demo_name in rendered
     assert export_calls == []
@@ -1307,7 +1323,7 @@ def test_xy_link_walker_resolves_references_and_ignores_code_fences() -> None:
 
 
 def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
-    """Render quick tabs plus three labeled groups of direct accordions."""
+    """Render quick tabs plus labeled groups of accordions and direct links."""
     component = xy_docs_sidebar_comp(url="/core-concepts/axes-and-scales/")
     assert isinstance(component, MemoComponent)
 
@@ -1323,14 +1339,29 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
     assert re.findall(
         r'jsx\(RadixThemesText,\{as:"p",className:"m-0 text-sm font-\[525\]"\},"([^"]+)"\)',
         rendered,
-    ) == [title for title, _route, _icon, _leaves in grouped_sections]
+    ) == [
+        row_title
+        for title, landing_route, _icon, leaves in grouped_sections
+        for row_title in (
+            (*(leaf_title for leaf_title, _leaf_route in leaves),)
+            if title == "Integrations"
+            and not any(leaf_route == landing_route for _leaf_title, leaf_route in leaves)
+            else (
+                (leaf_title for leaf_title, _leaf_route in leaves)
+                if title == "Integrations"
+                else (title,)
+            )
+        )
+    ]
     expected_leaf_count = sum(
         len(leaves) + int(not any(route == landing_route for _title, route in leaves))
-        for _title, landing_route, _icon, leaves in DOCS_SECTIONS
+        for title, landing_route, _icon, leaves in DOCS_SECTIONS
+        if title != "Integrations"
     )
-    assert rendered.count('jsx("details"') == len(DOCS_SECTIONS)
-    assert rendered.count('jsx("summary"') == len(DOCS_SECTIONS)
-    assert rendered.count("group/details") == len(DOCS_SECTIONS)
+    accordion_count = len(DOCS_SECTIONS) - 1
+    assert rendered.count('jsx("details"') == accordion_count
+    assert rendered.count('jsx("summary"') == accordion_count
+    assert rendered.count("group/details") == accordion_count
     assert rendered.count("guideMarginClass") == expected_leaf_count
     assert sorted(section[0] for section in grouped_sections) == sorted(
         section[0] for section in DOCS_SECTIONS
@@ -1356,6 +1387,20 @@ def test_xy_sidebar_reuses_memoized_official_navigation_rows() -> None:
     assert 'aria-label":"Navigate to Charts"' not in rendered
     assert 'aria-label":"Navigate to Components"' not in rendered
     assert "Axes and Scales" in rendered
+    for route in (
+        "/integrations/reflex/",
+        "/integrations/notebooks/",
+        "/integrations/matplotlib/",
+    ):
+        assert f'to:"{route}"' in rendered
+    for icon in (
+        "LucideAtom",
+        "LucideNotebookTabs",
+        "LucideChartNoAxesCombined",
+    ):
+        assert icon in rendered
+    assert "LucidePlug" not in rendered
+    assert rendered.count('"aria-current":((') == 3
     assert ">XY<" not in rendered
 
 

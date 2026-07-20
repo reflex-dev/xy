@@ -18,11 +18,19 @@ SIDEBAR_SECTION_GROUPS = (
     ("Other", "/integrations/", (*DOCS_SECTIONS[5:7], *DOCS_SECTIONS[8:])),
 )
 
+INTEGRATION_LINK_ICONS = {
+    "/integrations/reflex/": "atom",
+    "/integrations/notebooks/": "notebook-tabs",
+    "/integrations/matplotlib/": "chart-no-axes-combined",
+}
+
 
 def _leaf(
     title: str,
     href: str,
     url: rx.vars.StringVar[str],
+    *,
+    guide_margin_class: str = "ml-[3rem]",
 ) -> rx.Component:
     """Render one memoized XY documentation leaf.
 
@@ -38,7 +46,7 @@ def _leaf(
         title=title,
         href=href,
         active=url == href,
-        guide_margin_class="ml-[3rem]",
+        guide_margin_class=guide_margin_class,
     )
 
 
@@ -50,6 +58,74 @@ def _section_leaves(
     if any(route == landing_route for _title, route in leaves):
         return leaves
     return (("Overview", landing_route), *leaves)
+
+
+def _top_level_link(
+    title: str,
+    href: str,
+    icon: str,
+    url: rx.vars.StringVar[str],
+) -> rx.Component:
+    """Render an icon-led direct link aligned with sidebar group headings."""
+    active = url == href
+    row_classes = (
+        "relative m-0 flex h-8 w-[calc(100%-2.5rem)] items-center "
+        "justify-start !ml-[2.5rem] rounded-lg !px-0 !py-1 no-underline "
+        "transition-colors xl:max-w-[14rem]"
+    )
+    return rx.el.li(
+        rx.link(
+            rx.icon(tag=icon, size=16, class_name="mr-4 shrink-0"),
+            rx.text(title, class_name="m-0 text-sm font-[525]"),
+            href=href,
+            underline="none",
+            aria_current=rx.cond(active, "page", None),
+            class_name=rx.cond(
+                active,
+                f"{row_classes} bg-secondary-3 text-primary-10",
+                (f"{row_classes} bg-transparent text-secondary-11 hover:text-secondary-12"),
+            ),
+        ),
+        class_name="m-0 w-full list-none border-none bg-transparent p-0",
+    )
+
+
+def _section_items(
+    title: str,
+    landing_route: str,
+    icon: str,
+    leaves: tuple[tuple[str, str], ...],
+    url: rx.vars.StringVar[str],
+) -> tuple[rx.Component, ...]:
+    """Render one sidebar section as a group or a set of direct links."""
+    section_leaves = _section_leaves(landing_route, leaves)
+    if title == "Integrations":
+        return tuple(
+            _top_level_link(
+                title if leaf_route == landing_route else leaf_title,
+                leaf_route,
+                INTEGRATION_LINK_ICONS[leaf_route],
+                url,
+            )
+            for leaf_title, leaf_route in section_leaves
+            if leaf_route != landing_route
+        )
+    return (
+        docs_sidebar_group(
+            title,
+            *(_leaf(leaf_title, leaf_route, url) for leaf_title, leaf_route in section_leaves),
+            icon=icon,
+            open_=(
+                (url == "/") | url.startswith("/overview/")
+                if landing_route == "/"
+                else (
+                    (url == landing_route) | url.startswith("/charts/")
+                    if title == "Chart Gallery"
+                    else url.startswith(landing_route)
+                )
+            ),
+        ),
+    )
 
 
 @rx.memo
@@ -97,27 +173,9 @@ def xy_docs_sidebar_comp(url: rx.vars.StringVar[str]) -> rx.Component:
                 group_title,
                 group_route,
                 *(
-                    docs_sidebar_group(
-                        title,
-                        *(
-                            _leaf(leaf_title, leaf_route, url)
-                            for leaf_title, leaf_route in _section_leaves(
-                                landing_route,
-                                leaves,
-                            )
-                        ),
-                        icon=icon,
-                        open_=(
-                            (url == "/") | url.startswith("/overview/")
-                            if landing_route == "/"
-                            else (
-                                (url == landing_route) | url.startswith("/charts/")
-                                if title == "Chart Gallery"
-                                else url.startswith(landing_route)
-                            )
-                        ),
-                    )
+                    item
                     for title, landing_route, icon, leaves in sections
+                    for item in _section_items(title, landing_route, icon, leaves, url)
                 ),
                 connected_line=False,
             )
@@ -150,6 +208,7 @@ def xy_docs_sidebar(route: str) -> rx.Component:
 
 
 __all__ = [
+    "INTEGRATION_LINK_ICONS",
     "SIDEBAR_SECTION_GROUPS",
     "xy_docs_sidebar",
     "xy_docs_sidebar_comp",
