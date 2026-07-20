@@ -60,6 +60,12 @@ def quarterly_mix():
     return reflex_xy.chart(chart, height="320px")
 ~~~
 
+## Bar and Column
+
+`bar` and `column` use the same mark implementation. Choose the name that fits
+your application, then use `orientation="horizontal"` for bars or the default
+vertical orientation for columns.
+
 ## Variants
 
 Choose `mode="grouped"`, `"stacked"`, or `"normalized"`. Use
