@@ -128,6 +128,7 @@ or a CSS `px` value such as `"3px"`.
 | `tick_length` | Non-negative pixel length |
 | `tick_size` / `tick_label_size`, `label_size` | Positive pixel font size |
 | `tick_direction` | `"in"`, `"out"`, or `"inout"` |
+| `tick_label_anchor` | `"start"`, `"center"`, or `"end"` (mpl `ha` aliases `"left"`/`"right"`/`"middle"` normalize) — which label edge pins to the tick; rotated labels pivot about the pinned edge. Also a first-class `x_axis`/`y_axis` option. X defaults to `"center"`; y defaults to the tick-side edge (`"end"` left of the plot, `"start"` right of it). Honored by static SVG/PNG exports. |
 
 ```python
 xy.x_axis(
@@ -231,7 +232,7 @@ Set them on `.xy` or any ancestor:
 
 | Token | Themes | Default |
 | --- | --- | --- |
-| `--chart-bg` | Plot background | transparent |
+| `--chart-bg` | Plot-rect background only (`theme(plot_background=)`, mpl `axes.facecolor`) | transparent |
 | `--chart-text` | Title, tick/axis titles, legend, annotation labels | inherited text (canvas labels: `currentColor` @ 85%) |
 | `--chart-grid` | Grid lines (canvas) | `currentColor` @ 14% |
 | `--chart-axis` | Axis lines (canvas), modebar glyphs | `currentColor` @ 55% |
@@ -244,6 +245,13 @@ Set them on `.xy` or any ancestor:
 | `--chart-crosshair` | Crosshair lines | `rgba(15,23,42,.42)` |
 | `--chart-annotation-text` | Annotation label color | falls back to `--chart-text` |
 | `--chart-cursor` / `--chart-cursor-pan` | Plot cursor (box-zoom / pan) | `crosshair` / `grab` |
+
+The **figure background** (matplotlib's `figure.facecolor` — the whole card
+including margins, title, and tick labels) is not a token: `theme(background=)`
+sets the root element's CSS `background` directly, and the plot rect shows it
+unless `plot_background` (`--chart-bg`) paints the rect separately. Static SVG
+and PNG exports reproduce both fills (solid colors; gradients stay
+browser-only), so a dark card exports dark.
 
 The compact toolbar appears while the chart is hovered or one of its controls
 has keyboard focus. Drag its grip to move it within the chart. Zoom and

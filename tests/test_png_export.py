@@ -182,6 +182,56 @@ def test_png_is_screen_bounded_for_large_lines() -> None:
     assert spec["traces"][0]["n_points"] == n  # source size still recorded (§28)
 
 
+def test_render_paints_figure_background() -> None:
+    import xy
+
+    chart = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[0.0, 1.0]),
+        xy.theme(background="#000000"),
+        width=200,
+        height=120,
+    )
+    img = _raster.render_raster(*chart.figure().build_payload(), scale=1)
+    # Figure patch (mpl figure.facecolor) covers the margins...
+    assert tuple(img[0, 0]) == (0, 0, 0, 255)
+    # ...and shows through the plot rect when plot_background is unset
+    # (no white fallback fill).
+    assert (img[10, 50][:3] < 100).all()
+
+
+def test_render_composites_translucent_figure_background() -> None:
+    import xy
+
+    chart = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[0.0, 1.0]),
+        xy.theme(background="rgba(0, 0, 0, 0.5)"),
+        width=200,
+        height=120,
+    )
+    img = _raster.render_raster(*chart.figure().build_payload(), scale=1)
+    # A translucent figure patch composites over the white canvas fill (the
+    # browser's white host page) -> mid gray at full alpha, not raw rgba.
+    assert 100 <= int(img[0, 0][0]) <= 155
+    assert img[0, 0][3] == 255
+
+
+def test_raster_honors_tick_label_anchor() -> None:
+    import xy
+
+    def render(**axis_kwargs):
+        chart = xy.line_chart(
+            xy.line(x=[0.0, 1.0], y=[0.0, 1.0]),
+            xy.x_axis(**axis_kwargs),
+            width=200,
+            height=120,
+        )
+        return _raster.render_raster(*chart.figure().build_payload(), scale=1)
+
+    # Anchoring shifts every x tick label left of its tick; the images must
+    # differ only because the anchor reached the rasterizer.
+    assert not np.array_equal(render(), render(tick_label_anchor="end"))
+
+
 def test_raster_legend_text_honors_theme_text_color() -> None:
     # Red is reserved for the theme text color; every other paint is green,
     # and the tick labels are overridden, so red pixels can only come from

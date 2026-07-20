@@ -197,6 +197,7 @@ def test_axis_style_is_normalized_and_rejected_before_render() -> None:
             "grid-width": "3px",
             "tick_label_size": "13px",
             "tick-direction": "inout",
+            "tick-label-anchor": "right",  # mpl `ha` alias -> canonical "end"
             "label-color": "rebeccapurple",
         }
     )
@@ -204,6 +205,7 @@ def test_axis_style_is_normalized_and_rejected_before_render() -> None:
         "grid_width": 3.0,
         "tick_label_size": 13.0,
         "tick_direction": "inout",
+        "tick_label_anchor": "end",
         "label_color": "rebeccapurple",
     }
 
@@ -215,6 +217,8 @@ def test_axis_style_is_normalized_and_rejected_before_render() -> None:
         xy.y_axis(style={"tick_color": "definitely-not-a-color"})
     with pytest.raises(ValueError, match=r"must be one of"):
         xy.y_axis(style={"tick_direction": "sideways"})
+    with pytest.raises(ValueError, match=r"must be one of"):
+        xy.x_axis(style={"tick_label_anchor": "sideways"})
 
 
 def test_area_outline_obeys_whole_mark_and_stroke_opacity() -> None:

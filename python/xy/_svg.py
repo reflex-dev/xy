@@ -594,6 +594,45 @@ def _css(c: Any, fallback: str) -> str:
     return s
 
 
+_TEXT_ANCHORS = {"start": "start", "center": "middle", "end": "end"}
+
+
+def _tick_label_anchor(axis: dict[str, Any], style: dict[str, Any], default: str) -> str:
+    """Canonical tick-label anchor (``start``/``center``/``end``) from the
+    axis spec or its style — validators normalize the mpl aliases upstream —
+    with ``default`` (the classic layout) when unset."""
+    raw = axis.get("tick_label_anchor") or style.get("tick_label_anchor")
+    return raw if raw in ("start", "center", "end") else default
+
+
+def _px_size(value: Any, default: float) -> float:
+    """Tolerant CSS px length — `15` or `"15px"` — matching the browser, where
+    annotation styles land as CSS declarations; `default` on anything else."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip().removesuffix("px"))
+        except ValueError:
+            return default
+    return default
+
+
+def _solid_paint(css: Any) -> Optional[str]:
+    """A parseable solid CSS color string, or None when unset/unpaintable
+    (var(), gradients) — for background rects that must be omitted rather
+    than fallback-painted."""
+    from . import kernels
+
+    s = _css(css, "")
+    if not s:
+        return None
+    _status, rgba = kernels.css_check(kernels.CSS_COLOR, s)
+    if rgba is None:
+        return None
+    return s
+
+
 _CSS_VAR_RE = re.compile(
     r"^var\(\s*(--[A-Za-z_][A-Za-z0-9_-]*)\s*(?:,\s*(.+))?\)$",
     re.DOTALL | re.IGNORECASE,
@@ -1165,6 +1204,11 @@ def _axis_tick_label_layout(
     raw_angle = axis.get("tick_label_angle")
     explicit_angle = float(raw_angle) if raw_angle is not None else None
     base_angle = explicit_angle or 0.0
+    # y collision keeps the centered extent model: every label on an axis
+    # shares one anchor+angle, so an anchored y layout shifts all boxes by
+    # the same offset and pairwise gaps are unchanged.  Mirror JS exactly.
+    axis_style = axis.get("style") or {}
+    anchor = _tick_label_anchor(axis, axis_style, "center") if is_x else "center"
     labels = [
         {
             "value": value,
@@ -1191,13 +1235,34 @@ def _axis_tick_label_layout(
         for item in items:
             rows.setdefault(int(item.get("row", 0)), []).append(item)
         for row in rows.values():
-            last_end = -math.inf
-            for item in sorted(row, key=lambda candidate: float(candidate["pos"])):
-                half = extent(item) / 2.0
-                start = float(item["pos"]) - half
-                if start < last_end + min_gap:
-                    return True
-                last_end = float(item["pos"]) + half
+            sorted_row = sorted(row, key=lambda candidate: float(candidate["pos"]))
+            if is_x and anchor != "center":
+                # Edge-anchored labels all run the same direction from their
+                # tick.  Rotated ones are parallel lines: they clear each other
+                # when the perpendicular gap between adjacent anchors exceeds
+                # the line height, regardless of horizontal bounding-box overlap.
+                # Mirror JS _tickLabelsCollide exactly.
+                for i in range(1, len(sorted_row)):
+                    prev = sorted_row[i - 1]
+                    curr = sorted_row[i]
+                    spacing = float(curr["pos"]) - float(prev["pos"])
+                    angle = abs(float(curr.get("angle", 0.0))) * math.pi / 180.0
+                    if angle:
+                        if spacing * math.sin(angle) < font_size * 1.2 + min_gap:
+                            return True
+                    else:
+                        lead = curr if anchor == "end" else prev
+                        w = max(font_size * 0.7, len(str(lead["text"])) * font_size * 0.62)
+                        if spacing < w + min_gap:
+                            return True
+            else:
+                last_end = -math.inf
+                for item in sorted_row:
+                    half = extent(item) / 2.0
+                    start = float(item["pos"]) - half
+                    if start < last_end + min_gap:
+                        return True
+                    last_end = float(item["pos"]) + half
         return False
 
     if strategy == "auto":
@@ -1363,6 +1428,11 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
         )
         font_size = _axis_tick_font_size(axis)
         side = axis.get("side", "bottom" if is_x else "left")
+        # An explicit tick_label_anchor (axis spec or style) overrides the
+        # angle/side-derived default. Anchored labels rotate about the tick
+        # point (the rotate() pivot below), so anchor and rotation compose —
+        # matching the browser client.
+        explicit_anchor = _tick_label_anchor(axis, axis_style, "")
         for item in _axis_tick_label_layout(axis, values, step, axis_scale, is_x):
             angle = float(item["angle"])
             if is_x:
@@ -1373,7 +1443,9 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
                     if side == "top"
                     else plot["y"] + plot["h"] + 16 + row_offset
                 )
-                if angle == 0:
+                if explicit_anchor:
+                    anchor = _TEXT_ANCHORS[explicit_anchor]
+                elif angle == 0:
                     anchor = "middle"
                 elif (side == "bottom" and angle < 0) or (side == "top" and angle > 0):
                     anchor = "end"
@@ -1382,7 +1454,10 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             else:
                 x = plot["x"] + plot["w"] + 8 if side == "right" else plot["x"] - 8
                 y = float(item["pos"]) + 4
-                anchor = "start" if side == "right" else "end"
+                if explicit_anchor:
+                    anchor = _TEXT_ANCHORS[explicit_anchor]
+                else:
+                    anchor = "start" if side == "right" else "end"
             transform = f' transform="rotate({_num(angle)} {_num(x)} {_num(y)})"' if angle else ""
             labels.append(
                 f'<text x="{_num(x)}" y="{_num(y)}" fill="{color}" '
@@ -1669,10 +1744,27 @@ def render_svg(spec: dict[str, Any], blob: bytes, *, id_prefix: str = "") -> str
             )
 
     defs = f"<defs>{''.join(svg.defs)}</defs>" if svg.defs else ""
+    # Figure patch + plot-rect backgrounds, mirroring the browser: the root
+    # element's CSS `background` (theme(background=)) behind everything, then
+    # the --chart-bg token over the plot rect only. Solid colors only —
+    # gradients stay browser-only, and an unset token stays transparent.
+    backgrounds = ""
+    figure_background = _solid_paint(dom_style.get("background"))
+    if figure_background is not None:
+        backgrounds += (
+            f'<rect width="{width}" height="{height}" fill="{escape(figure_background)}"/>'
+        )
+    plot_paint = _solid_paint(dom_style.get("--chart-bg"))
+    if plot_paint is not None:
+        backgrounds += (
+            f'<rect x="{_num(plot["x"])}" y="{_num(plot["y"])}" width="{_num(plot["w"])}" '
+            f'height="{_num(plot["h"])}" fill="{escape(plot_paint)}"/>'
+        )
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
         f'viewBox="0 0 {width} {height}" font-family="{_FONT}" font-size="11">'
         f"{defs}"
+        f"{backgrounds}"
         f"<g>{''.join(grid)}</g>"
         f'<g clip-path="url(#{clip_id})">{"".join(marks)}</g>'
         f"{baselines}"
@@ -1777,7 +1869,7 @@ def _annotation_svg(
             anchor = {"start": "start", "middle": "middle", "end": "end"}.get(
                 ann.get("anchor"), "start"
             )
-            font_size = float(style.get("font_size", 11))
+            font_size = _px_size(style.get("font_size"), 11.0)
             lines = str(ann["text"]).splitlines() or [""]
             line_height = font_size * 1.2
             rotation = float(style.get("rotation", 0.0)) % 360.0

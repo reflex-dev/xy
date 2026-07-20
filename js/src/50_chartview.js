@@ -174,7 +174,13 @@ class ChartView {
     this._layout();
 
     this._buildDom(el);
+    // getComputedStyle yields nothing on a detached element, so a chart
+    // constructed before its output node lands in the document (notebook
+    // webviews attach asynchronously) would freeze on fallback theme colors —
+    // gray grid over a themed card. Track staleness and heal on the first
+    // frame (or visibility change) after connection.
     this.theme = readTheme(this.root);
+    this._themeStale = !this.root.isConnected;
     // Retained for GL context restore: the payload is screen-bounded (§29) so
     // keeping it is cheap, and every GPU object is rebuildable from
     // spec + payload by design (§18/§27).
@@ -788,6 +794,7 @@ class ChartView {
         if (this._ctxVisible) {
           this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
           if (this._glLost && !this._destroyed) this._recoverContext();
+          if (this._healStaleTheme()) this.draw();
         }
       },
       { rootMargin: "25% 0px 25% 0px" },
@@ -851,6 +858,10 @@ class ChartView {
       (this.fluidH ? "min-height:120px;" : "") + // parent without a height -> visible floor
       "font:12px system-ui,sans-serif;user-select:none;";
     this._applySlot(root, "root");
+    // A chart that brings its own backdrop (theme(background=) → inline root
+    // background) marks itself so host-page overrides — VS Code's white
+    // ipywidget card — can be scoped to charts that don't need it.
+    if (root.style.background || root.style.backgroundColor) root.dataset.xyOwnBg = "";
     el.appendChild(root);
     this.root = root;
     // Visual chrome defaults live in one zero-specificity stylesheet so user
@@ -2184,6 +2195,7 @@ class ChartView {
 
   _drawNow() {
     if (this._destroyed || !this.gl || this._glLost) return;
+    this._healStaleTheme();
     const gl = this.gl;
     const { x0, x1, y0, y1 } = this.view;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -2876,6 +2888,18 @@ class ChartView {
     return ["auto", "hide", "rotate", "stagger", "none", "off"].includes(value) ? value : "auto";
   }
 
+  _axisTickLabelAnchor(axis) {
+    const raw = axis && axis.tick_label_anchor !== undefined
+      ? axis.tick_label_anchor
+      : this._axisStyleValue(axis, "tick_label_anchor");
+    if (raw == null) return null;
+    const value = String(raw).toLowerCase();
+    if (value === "start" || value === "left") return "start";
+    if (value === "end" || value === "right") return "end";
+    if (value === "center" || value === "middle") return "center";
+    return null; // unset/unknown: the caller picks its dimension's default
+  }
+
   _axisTickLabelAngle(axis) {
     const angle = Number(axis ? axis.tick_label_angle : undefined);
     return Number.isFinite(angle) ? angle : null;
@@ -2899,7 +2923,7 @@ class ChartView {
       : Math.abs(Math.cos(angle)) * size.w + Math.abs(Math.sin(angle)) * size.h;
   }
 
-  _tickLabelsCollide(labels, dim, fontSize, minGap) {
+  _tickLabelsCollide(labels, dim, fontSize, minGap, anchor = "center") {
     const rows = new Map();
     for (const label of labels) {
       const row = Number(label.row || 0);
@@ -2908,6 +2932,25 @@ class ChartView {
     }
     for (const rowLabels of rows.values()) {
       rowLabels.sort((a, b) => a.pos - b.pos);
+      if (dim === "x" && anchor !== "center") {
+        // Edge-anchored labels all run the same direction from their tick.
+        // Rotated ones are parallel lines: they clear each other when the
+        // perpendicular gap between adjacent anchors exceeds the line height,
+        // regardless of how far their horizontal bounding boxes overlap.
+        for (let i = 1; i < rowLabels.length; i++) {
+          const prev = rowLabels[i - 1];
+          const label = rowLabels[i];
+          const spacing = label.pos - prev.pos;
+          const angle = Math.abs(Number(label.angle || 0)) * Math.PI / 180;
+          if (angle) {
+            if (spacing * Math.sin(angle) < fontSize * 1.2 + minGap) return true;
+          } else {
+            const lead = anchor === "end" ? label : prev;
+            if (spacing < this._estimateTickLabel(lead.text, fontSize).w + minGap) return true;
+          }
+        }
+        continue;
+      }
       let lastEnd = -Infinity;
       for (const label of rowLabels) {
         const extent = this._tickLabelExtent(label, dim, fontSize);
@@ -2920,11 +2963,11 @@ class ChartView {
     return false;
   }
 
-  _downsampleTickLabels(labels, dim, fontSize, minGap) {
+  _downsampleTickLabels(labels, dim, fontSize, minGap, anchor = "center") {
     if (labels.length <= 1) return labels;
     for (let stride = 2; stride <= labels.length; stride++) {
       const out = labels.filter((_, i) => i % stride === 0);
-      if (!this._tickLabelsCollide(out, dim, fontSize, minGap)) return out;
+      if (!this._tickLabelsCollide(out, dim, fontSize, minGap, anchor)) return out;
     }
     return labels.slice(0, 1);
   }
@@ -2941,12 +2984,16 @@ class ChartView {
       this._axisStyleNumber(axis, "tick_label_size", this._axisStyleNumber(axis, "tick_size", 11)),
     );
     const minGap = this._axisTickLabelMinGap(axis, dim);
+    // y collision keeps the centered extent model: every label on an axis
+    // shares one anchor+angle, so an anchored y layout shifts all boxes by
+    // the same offset and pairwise gaps are unchanged.
+    const anchor = dim === "x" ? (this._axisTickLabelAnchor(axis) ?? "center") : "center";
     const explicitAngle = this._axisTickLabelAngle(axis);
     const baseAngle = explicitAngle === null ? 0 : explicitAngle;
     const withBase = labels.map((label) => ({ ...label, angle: baseAngle, row: 0 }));
     let strategy = strategyValue;
     if (strategy === "auto") {
-      if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap)) return withBase;
+      if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap, anchor)) return withBase;
       if (dim === "x" && axis.kind === "category" && labels.length <= 16) strategy = "rotate";
       else if (dim === "x" && labels.length <= 24) strategy = "stagger";
       else strategy = "hide";
@@ -2962,8 +3009,8 @@ class ChartView {
 
     // Strategies handle collisions; a non-colliding label set stays intact
     // even under an explicit "hide" (matches the Python exporters).
-    if (this._tickLabelsCollide(out, dim, fontSize, minGap)) {
-      out = this._downsampleTickLabels(out, dim, fontSize, minGap);
+    if (this._tickLabelsCollide(out, dim, fontSize, minGap, anchor)) {
+      out = this._downsampleTickLabels(out, dim, fontSize, minGap, anchor);
     }
     return out;
   }
@@ -2971,6 +3018,19 @@ class ChartView {
   _xTickLabelTransform(axis, angle) {
     const value = Number(angle || 0);
     const side = axis && axis.side === "top" ? "top" : "bottom";
+    // An explicit anchor (mpl `ha`) pins that edge as the transform origin,
+    // so a rotated label pivots about the point pinned at the tick instead
+    // of seesawing its trailing half into the plot. Unset, the anchor is
+    // derived from the rotation direction below.
+    const anchor = this._axisTickLabelAnchor(axis);
+    if (anchor) {
+      const shift = anchor === "end" ? "-100%" : anchor === "start" ? "0%" : "-50%";
+      const originX = anchor === "end" ? "right" : anchor === "start" ? "left" : "center";
+      return {
+        transform: `translateX(${shift}) rotate(${value}deg)`,
+        origin: `${originX} ${side === "top" ? "bottom" : "top"}`,
+      };
+    }
     if (value === 0) {
       return {
         transform: "translateX(-50%)",
@@ -3261,12 +3321,12 @@ class ChartView {
       const text = this._axisTickText(xAxis, v, xt.step);
       xLabelCandidates.push({ pos: px, text });
     }
+    const tickLabelSize = this._axisStyleNumber(
+      xAxis,
+      "tick_label_size",
+      this._axisStyleNumber(xAxis, "tick_size", 11),
+    );
     for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
-      const tickLabelSize = this._axisStyleNumber(
-        xAxis,
-        "tick_label_size",
-        this._axisStyleNumber(xAxis, "tick_size", 11),
-      );
       const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
       const top = xAxis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
       const placement = this._xTickLabelTransform(xAxis, item.angle);
@@ -3319,12 +3379,21 @@ class ChartView {
       const text = this._axisTickText(yAxis, v, yt.step);
       yLabelCandidates.push({ pos: py, text });
     }
+    // Same anchored-pivot scheme as the x labels above: the pinned edge is
+    // the transform origin, so a rotated label pivots about the point at the
+    // tick. Unset defaults to the tick-side edge — mpl `ha`: "end" left of
+    // the plot, "start" right of it — reproducing the classic layout.
+    const yLabelCss = (axis, onRight, item) => {
+      const pin = onRight ? p.x + p.w + 8 : p.x - 8;
+      const anchor = this._axisTickLabelAnchor(axis) ?? (onRight ? "start" : "end");
+      const shift = anchor === "end" ? "-100%" : anchor === "start" ? "0%" : "-50%";
+      const originX = anchor === "end" ? "right" : anchor === "start" ? "left" : "center";
+      return `left:${pin}px;top:${item.pos}px;` +
+        `transform:translate(${shift},-50%) rotate(${Number(item.angle || 0)}deg);` +
+        `transform-origin:${originX} center;`;
+    };
     for (const item of this._layoutTickLabels(yAxis, "y", yLabelCandidates)) {
-      const angle = Number(item.angle || 0);
-      const css = yAxis.side === "right"
-        ? `left:${p.x + p.w + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:left center;`
-        : `right:${this.size.w - p.x + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:right center;`;
-      label(item.text, css, yAxis);
+      label(item.text, yLabelCss(yAxis, yAxis.side === "right", item), yAxis);
     }
     for (const axis of extraYAxes) {
       const ticks = this._axisTicks(axis.id, this._axisTickTarget(axis.id, Math.max(3, p.h / 45)));
@@ -3336,11 +3405,7 @@ class ChartView {
         labelCandidates.push({ pos: py, text });
       }
       for (const item of this._layoutTickLabels(axis, "y", labelCandidates)) {
-        const angle = Number(item.angle || 0);
-        const css = axis.side === "left"
-          ? `right:${this.size.w - p.x + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:right center;`
-          : `left:${p.x + p.w + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:left center;`;
-        label(item.text, css, axis);
+        label(item.text, yLabelCss(axis, axis.side !== "left", item), axis);
       }
       if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
         const fallbackCss = axis.side === "left"
@@ -3714,15 +3779,31 @@ class ChartView {
     return new Uint32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
   }
 
-  refreshTheme() {
-    if (this._destroyed) return;
+  _applyTheme() {
     this.theme = readTheme(this.root);
+    // A theme read on a detached root saw no computed styles; stay flagged
+    // stale until the element connects and _healStaleTheme re-reads.
+    this._themeStale = !this.root.isConnected;
     for (const g of this.gpuTraces) {
       // Re-resolve CSS-expressed constant colors (§36 live re-resolution);
       // each mark kind knows where its constant color lives in the spec.
       markOf(g.trace.kind).refreshColor?.(this, g);
     }
+  }
+
+  refreshTheme() {
+    if (this._destroyed) return;
+    this._applyTheme();
     this.draw();
+  }
+
+  // Once a stale-themed root is connected, re-read tokens and re-resolve mark
+  // colors in place. Returns true when a heal happened (callers outside a
+  // frame should redraw).
+  _healStaleTheme() {
+    if (!this._themeStale || !this.root.isConnected) return false;
+    this._applyTheme();
+    return true;
   }
 
   destroy() {

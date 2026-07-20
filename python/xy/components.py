@@ -52,6 +52,7 @@ _finite_number = _validate.finite_scalar
 _axis_id = _validate.axis_id
 _optional_positive_int = _validate.optional_positive_int
 _axis_tick_label_strategy = _validate.axis_tick_label_strategy
+_axis_tick_label_anchor = _validate.axis_tick_label_anchor
 _axis_label_position = _validate.axis_label_position
 _optional_finite_number = _validate.optional_finite_scalar
 _optional_nonnegative_number = _validate.optional_nonnegative_scalar
@@ -204,6 +205,7 @@ class Axis(Component):
     tick_labels: Optional[list[str]] = None
     tick_label_angle: Optional[float] = None
     tick_label_strategy: Optional[AxisTickLabelStrategy] = None
+    tick_label_anchor: Optional[str] = None
     tick_label_min_gap: Optional[float] = None
     side: Optional[str] = None
     style: dict[str, StyleValue] = field(default_factory=dict)
@@ -1932,6 +1934,7 @@ def x_axis(
     tick_labels: Optional[Sequence[str]] = None,
     tick_label_angle: Optional[float] = None,
     tick_label_strategy: Optional[AxisTickLabelStrategy] = None,
+    tick_label_anchor: Optional[str] = None,
     tick_label_min_gap: Optional[float] = None,
     side: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
@@ -1953,6 +1956,12 @@ def x_axis(
         tick_labels: Labels corresponding to explicit tick positions.
         tick_label_angle: Tick-label rotation in degrees.
         tick_label_strategy: Collision-handling strategy for tick labels.
+        tick_label_anchor: Which edge of a tick label pins to its tick —
+            ``"start"``, ``"center"`` (default), or ``"end"`` (matplotlib's
+            ``ha`` values ``"left"``/``"right"`` are accepted as aliases).
+            With ``tick_label_angle``, the label rotates about the pinned
+            edge, so an end-anchored slanted label hangs entirely below a
+            bottom axis instead of seesawing around its midpoint.
         tick_label_min_gap: Minimum gap between tick labels in pixels.
         side: Side of the plot where the axis is drawn.
         style: Axis style overrides.
@@ -1980,6 +1989,7 @@ def x_axis(
         tick_label_strategy=_axis_tick_label_strategy(
             tick_label_strategy, "x_axis tick_label_strategy"
         ),
+        tick_label_anchor=_axis_tick_label_anchor(tick_label_anchor, "x_axis tick_label_anchor"),
         tick_label_min_gap=_optional_nonnegative_number(
             tick_label_min_gap, "x_axis tick_label_min_gap"
         ),
@@ -2004,6 +2014,7 @@ def y_axis(
     tick_labels: Optional[Sequence[str]] = None,
     tick_label_angle: Optional[float] = None,
     tick_label_strategy: Optional[AxisTickLabelStrategy] = None,
+    tick_label_anchor: Optional[str] = None,
     tick_label_min_gap: Optional[float] = None,
     side: Optional[str] = None,
     style: Optional[dict[str, StyleValue]] = None,
@@ -2025,6 +2036,12 @@ def y_axis(
         tick_labels: Labels corresponding to explicit tick positions.
         tick_label_angle: Tick-label rotation in degrees.
         tick_label_strategy: Collision-handling strategy for tick labels.
+        tick_label_anchor: Which edge of a tick label pins to its tick —
+            ``"start"``, ``"center"``, or ``"end"`` (matplotlib's ``ha``
+            values ``"left"``/``"right"`` are accepted as aliases). Unset
+            defaults to the tick-side edge: ``"end"`` for a left-side axis,
+            ``"start"`` for a right-side one. With ``tick_label_angle``,
+            the label rotates about the pinned edge.
         tick_label_min_gap: Minimum gap between tick labels in pixels.
         side: Side of the plot where the axis is drawn.
         style: Axis style overrides.
@@ -2052,6 +2069,7 @@ def y_axis(
         tick_label_strategy=_axis_tick_label_strategy(
             tick_label_strategy, "y_axis tick_label_strategy"
         ),
+        tick_label_anchor=_axis_tick_label_anchor(tick_label_anchor, "y_axis tick_label_anchor"),
         tick_label_min_gap=_optional_nonnegative_number(
             tick_label_min_gap, "y_axis tick_label_min_gap"
         ),
@@ -2243,6 +2261,7 @@ def modebar(
 def theme(
     style: Optional[dict[str, StyleValue]] = None,
     *,
+    background: Optional[StyleValue] = None,
     plot_background: Optional[StyleValue] = None,
     grid_color: Optional[StyleValue] = None,
     axis_color: Optional[StyleValue] = None,
@@ -2256,7 +2275,12 @@ def theme(
 
     Args:
         style: Base chart style overrides.
-        plot_background: Plot-area background color.
+        background: Figure background color — paints the whole chart card
+            including margins, title, and tick labels (matplotlib's
+            ``figure.facecolor``). The plot rect shows through unless
+            ``plot_background`` sets it separately.
+        plot_background: Plot-area background color — the data rect only
+            (matplotlib's ``axes.facecolor``).
         grid_color: Grid-line color.
         axis_color: Axis-line and tick color.
         text_color: Default chart text color.
@@ -2269,6 +2293,7 @@ def theme(
     merged.update(
         _theme_tokens(
             {
+                "background": background,
                 "plot_background": plot_background,
                 "grid_color": grid_color,
                 "axis_color": axis_color,
@@ -2517,6 +2542,7 @@ class Chart(Component):
                 tick_labels=axis.tick_labels,
                 tick_label_angle=axis.tick_label_angle,
                 tick_label_strategy=axis.tick_label_strategy,
+                tick_label_anchor=axis.tick_label_anchor,
                 tick_label_min_gap=axis.tick_label_min_gap,
                 side=axis.side,
                 style=axis.style,
@@ -2988,7 +3014,10 @@ def _slot_styles_dict(value: Any, label: str) -> dict[str, dict[str, StyleValue]
 
 _THEME_TOKEN_ALIASES = {
     "plot_background": "--chart-bg",
-    "background": "--chart-bg",
+    # `background` intentionally has no token alias: it passes through as the
+    # root element's CSS background, painting the whole figure — margins,
+    # title, tick labels — not just the plot rect (mpl figure.facecolor vs
+    # axes.facecolor). Static exporters honor the same key.
     "grid_color": "--chart-grid",
     "axis_color": "--chart-axis",
     "text_color": "--chart-text",

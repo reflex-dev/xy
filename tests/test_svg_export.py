@@ -13,7 +13,7 @@ import pytest
 
 import xy
 from xy._figure import Figure
-from xy._svg import COLORMAP_STOPS
+from xy._svg import COLORMAP_STOPS, _axis_tick_label_layout, _Scale
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -53,6 +53,96 @@ def test_every_chart_kind_exports_wellformed_svg() -> None:
         root = _parse(svg)
         assert root.tag.endswith("svg")
         assert 'xmlns="http://www.w3.org/2000/svg"' in svg
+
+
+def test_svg_paints_figure_and_plot_backgrounds() -> None:
+    chart = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[0.0, 1.0]),
+        xy.theme(background="#000000", plot_background="#101418"),
+        width=300,
+        height=200,
+    )
+    svg = chart.figure().to_svg()
+    assert '<rect width="300" height="200" fill="#000000"/>' in svg  # figure patch
+    assert 'fill="#101418"' in svg  # plot rect
+
+    # Browser-only paints (gradients) are omitted, never fallback-painted.
+    gradient = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[0.0, 1.0]),
+        xy.theme(style={"background": "linear-gradient(red, blue)"}),
+        width=300,
+        height=200,
+    )
+    assert "linear-gradient" not in gradient.figure().to_svg()
+
+
+def test_svg_honors_tick_label_anchor() -> None:
+    chart = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[0.0, 1.0]),
+        xy.x_axis(tick_label_anchor="right"),  # mpl `ha` alias -> "end"
+        xy.y_axis(tick_label_anchor="center"),
+        width=300,
+        height=200,
+    )
+    svg = chart.figure().to_svg()
+    # No title/axis labels, so the only text-anchor sources are tick labels:
+    # x pins its right edge ("end"), y centers ("middle"), nothing at "start".
+    assert 'text-anchor="end"' in svg
+    assert 'text-anchor="middle"' in svg
+    assert 'text-anchor="start"' not in svg
+
+    # Defaults reproduce the classic layout: x centered, y right edge at the
+    # tick ("end" — labels sit left of the plot).
+    default = xy.line_chart(
+        xy.line(x=[0.0, 1.0], y=[0.0, 1.0]),
+        width=300,
+        height=200,
+    )
+    default_svg = default.figure().to_svg()
+    assert 'text-anchor="middle"' in default_svg
+    assert 'text-anchor="end"' in default_svg
+
+
+def test_svg_tick_label_anchor_collision_parity() -> None:
+    """Anchor-aware collision model matches JS _tickLabelsCollide.
+
+    9 categories, tick_label_angle=-30, tick_label_anchor="end", wide chart:
+      spacing * sin(30°) > lineHeight + minGap  →  JS keeps all 9 labels.
+    The old centered-extent model treated labels as ±half-extent boxes centred
+    on each tick and found them colliding (extent > spacing), so it would
+    stride-2 downsample to 5.  The fixed Python exporter must also keep all 9.
+    """
+    # 15-char labels; font_size=11, angle=-30, anchor="end", min_gap=8.
+    #   new model:  spacing * sin(30°) = 90*0.5 = 45  >  11*1.2+8 = 21.2  → ok
+    #   old model:  extent = cos(30°)*109.1 + sin(30°)*13.2 ≈ 101.1
+    #               gap = 90 - 101.1 = -11.1  <  8  → would collide → stride-2
+    n = 9
+    categories = [f"Category_Name_{i:02d}" for i in range(n)]  # 16 chars each
+    axis: dict = {
+        "kind": "category",
+        "categories": categories,
+        "range": [0.0, float(n - 1)],
+        "tick_label_angle": -30,
+        "tick_label_anchor": "end",
+        "tick_label_strategy": "rotate",
+    }
+    # plot_width=720px → spacing = 720/8 = 90px
+    scale = _Scale(axis, px0=100.0, px1=820.0)
+    values = [float(i) for i in range(n)]
+    kept = _axis_tick_label_layout(axis, values, 1.0, scale, is_x=True)
+    assert len(kept) == n, (
+        f"anchor-aware collision model should keep all {n} labels, got {len(kept)}"
+    )
+
+    # Sanity: without the anchor the old centered-extent model is used and the
+    # same geometry collides, so strategy="rotate" still downsample to fit.
+    axis_no_anchor: dict = {**axis}
+    del axis_no_anchor["tick_label_anchor"]
+    kept_no_anchor = _axis_tick_label_layout(axis_no_anchor, values, 1.0, scale, is_x=True)
+    assert len(kept_no_anchor) < n, (
+        "centered-extent model should find collision (geometry not wide enough) "
+        f"but kept {len(kept_no_anchor)} of {n}"
+    )
 
 
 def test_svg_legend_text_honors_theme_text_color() -> None:

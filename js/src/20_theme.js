@@ -128,6 +128,15 @@ const XY_CHROME_CSS = `
 @media (prefers-reduced-motion:reduce){:where(.xy [data-xy-slot="modebar"]){transition-duration:0s!important}}
 @media (forced-colors:active){:where(.xy [data-xy-slot="modebar"],.xy [data-xy-slot="tooltip"]){border:1px solid CanvasText}:where(.xy [data-xy-slot="modebar_button"].xy-active){outline:2px solid Highlight}:where(.xy [data-xy-slot="canvas"]:focus){outline:2px solid Highlight}}
 }
+/* VS Code's Jupyter webview wraps ipywidget outputs in an opaque white card so
+   widgets that assume a light page stay legible on dark editor themes — the
+   same role as matplotlib's always-opaque white figure patch, so unthemed
+   charts keep it. A chart that brings its own background (theme(background=),
+   marked data-xy-own-bg) would sit in a white frame instead, so only those
+   outputs drop the backdrop. !important because the host rule this overrides
+   carries higher specificity; it stays outside the base layer because it
+   overrides host CSS rather than providing an overridable default. */
+.cell-output-ipywidget-background:has(.xy[data-xy-own-bg]){background:transparent!important}
 `;
 
 // Inject XY_CHROME_CSS once per DOM root (document head or shadow root), so

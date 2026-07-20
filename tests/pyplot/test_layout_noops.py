@@ -56,6 +56,19 @@ def test_autofmt_xdate_rotates_x_tick_labels_on_all_axes():
         assert ax._axis_props("x")["style"]["tick_label_anchor"] == "center"
 
 
+def test_autofmt_xdate_survives_chart_build():
+    # The default ha="right" style key must compile and reach the axis spec
+    # (it used to raise "unsupported property" at build time).
+    fig, ax = plt.subplots()
+    ax.plot([0.0, 1.0, 2.0], [1.0, 2.0, 3.0])
+    fig.autofmt_xdate()
+
+    chart = ax._build_chart(640, 480)
+    spec, _ = chart.figure().build_payload()
+    assert spec["x_axis"]["tick_label_angle"] == 30
+    assert spec["x_axis"]["style"]["tick_label_anchor"] == "end"
+
+
 def test_suptitle_accepts_supported_font_kwargs_and_rejects_unknown():
     fig, _ = plt.subplots()
     fig.suptitle("title", fontsize=14, fontweight="bold", color="red", x=0.5, y=0.95)

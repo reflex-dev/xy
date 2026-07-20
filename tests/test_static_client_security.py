@@ -574,12 +574,14 @@ def test_client_axis_tick_labels_have_collision_layout() -> None:
         "_axisTickTarget(axisId, fallback)",
         "_axisTickLabelStrategy(axis)",
         "_axisTickLabelAngle(axis)",
+        "_axisTickLabelAnchor(axis)",
         "_axisTickLabelMinGap(axis, dim)",
-        "_tickLabelsCollide(labels, dim, fontSize, minGap)",
-        "_downsampleTickLabels(labels, dim, fontSize, minGap)",
+        '_tickLabelsCollide(labels, dim, fontSize, minGap, anchor = "center")',
+        '_downsampleTickLabels(labels, dim, fontSize, minGap, anchor = "center")',
         "_layoutTickLabels(axis, dim, labels)",
         "tick_label_strategy",
         "tick_label_angle",
+        "tick_label_anchor",
         "tick_label_min_gap",
     )
 

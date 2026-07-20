@@ -274,6 +274,15 @@ const XY_CHROME_CSS = `
 @media (prefers-reduced-motion:reduce){:where(.xy [data-xy-slot="modebar"]){transition-duration:0s!important}}
 @media (forced-colors:active){:where(.xy [data-xy-slot="modebar"],.xy [data-xy-slot="tooltip"]){border:1px solid CanvasText}:where(.xy [data-xy-slot="modebar_button"].xy-active){outline:2px solid Highlight}:where(.xy [data-xy-slot="canvas"]:focus){outline:2px solid Highlight}}
 }
+/* VS Code's Jupyter webview wraps ipywidget outputs in an opaque white card so
+   widgets that assume a light page stay legible on dark editor themes — the
+   same role as matplotlib's always-opaque white figure patch, so unthemed
+   charts keep it. A chart that brings its own background (theme(background=),
+   marked data-xy-own-bg) would sit in a white frame instead, so only those
+   outputs drop the backdrop. !important because the host rule this overrides
+   carries higher specificity; it stays outside the base layer because it
+   overrides host CSS rather than providing an overridable default. */
+.cell-output-ipywidget-background:has(.xy[data-xy-own-bg]){background:transparent!important}
 `;
 function ensureChromeStylesheet(node) {
 let root = node && node.getRootNode ? node.getRootNode() : document;
@@ -1835,6 +1844,7 @@ h: Math.max(this.fluidH ? 120 : 48, ch),
 this._layout();
 this._buildDom(el);
 this.theme = readTheme(this.root);
+this._themeStale = !this.root.isConnected;
 this._payload = buffer;
 this._glLost = false;
 this._ctxReleasedExt = null;
@@ -2323,6 +2333,7 @@ this._ctxVisible = entry.isIntersecting || entry.intersectionRatio > 0;
 if (this._ctxVisible) {
 this._ctxSeenSeq = XY_CONTEXT_GOVERNOR.seq++;
 if (this._glLost && !this._destroyed) this._recoverContext();
+if (this._healStaleTheme()) this.draw();
 }
 },
 { rootMargin: "25% 0px 25% 0px" },
@@ -2377,6 +2388,7 @@ root.style.cssText =
 (this.fluidH ? "min-height:120px;" : "") +
 "font:12px system-ui,sans-serif;user-select:none;";
 this._applySlot(root, "root");
+if (root.style.background || root.style.backgroundColor) root.dataset.xyOwnBg = "";
 el.appendChild(root);
 this.root = root;
 ensureChromeStylesheet(root);
@@ -3533,6 +3545,7 @@ this._drawNow();
 }
 _drawNow() {
 if (this._destroyed || !this.gl || this._glLost) return;
+this._healStaleTheme();
 const gl = this.gl;
 const { x0, x1, y0, y1 } = this.view;
 gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -4168,6 +4181,17 @@ _axisTickLabelStrategy(axis) {
 const value = String((axis && axis.tick_label_strategy) || "auto").replace(/-/g, "_");
 return ["auto", "hide", "rotate", "stagger", "none", "off"].includes(value) ? value : "auto";
 }
+_axisTickLabelAnchor(axis) {
+const raw = axis && axis.tick_label_anchor !== undefined
+? axis.tick_label_anchor
+: this._axisStyleValue(axis, "tick_label_anchor");
+if (raw == null) return null;
+const value = String(raw).toLowerCase();
+if (value === "start" || value === "left") return "start";
+if (value === "end" || value === "right") return "end";
+if (value === "center" || value === "middle") return "center";
+return null;
+}
 _axisTickLabelAngle(axis) {
 const angle = Number(axis ? axis.tick_label_angle : undefined);
 return Number.isFinite(angle) ? angle : null;
@@ -4187,7 +4211,7 @@ return dim === "y"
 ? Math.abs(Math.sin(angle)) * size.w + Math.abs(Math.cos(angle)) * size.h
 : Math.abs(Math.cos(angle)) * size.w + Math.abs(Math.sin(angle)) * size.h;
 }
-_tickLabelsCollide(labels, dim, fontSize, minGap) {
+_tickLabelsCollide(labels, dim, fontSize, minGap, anchor = "center") {
 const rows = new Map();
 for (const label of labels) {
 const row = Number(label.row || 0);
@@ -4196,6 +4220,21 @@ rows.get(row).push(label);
 }
 for (const rowLabels of rows.values()) {
 rowLabels.sort((a, b) => a.pos - b.pos);
+if (dim === "x" && anchor !== "center") {
+for (let i = 1; i < rowLabels.length; i++) {
+const prev = rowLabels[i - 1];
+const label = rowLabels[i];
+const spacing = label.pos - prev.pos;
+const angle = Math.abs(Number(label.angle || 0)) * Math.PI / 180;
+if (angle) {
+if (spacing * Math.sin(angle) < fontSize * 1.2 + minGap) return true;
+} else {
+const lead = anchor === "end" ? label : prev;
+if (spacing < this._estimateTickLabel(lead.text, fontSize).w + minGap) return true;
+}
+}
+continue;
+}
 let lastEnd = -Infinity;
 for (const label of rowLabels) {
 const extent = this._tickLabelExtent(label, dim, fontSize);
@@ -4207,11 +4246,11 @@ lastEnd = end;
 }
 return false;
 }
-_downsampleTickLabels(labels, dim, fontSize, minGap) {
+_downsampleTickLabels(labels, dim, fontSize, minGap, anchor = "center") {
 if (labels.length <= 1) return labels;
 for (let stride = 2; stride <= labels.length; stride++) {
 const out = labels.filter((_, i) => i % stride === 0);
-if (!this._tickLabelsCollide(out, dim, fontSize, minGap)) return out;
+if (!this._tickLabelsCollide(out, dim, fontSize, minGap, anchor)) return out;
 }
 return labels.slice(0, 1);
 }
@@ -4227,12 +4266,13 @@ const fontSize = Math.max(
 this._axisStyleNumber(axis, "tick_label_size", this._axisStyleNumber(axis, "tick_size", 11)),
 );
 const minGap = this._axisTickLabelMinGap(axis, dim);
+const anchor = dim === "x" ? (this._axisTickLabelAnchor(axis) ?? "center") : "center";
 const explicitAngle = this._axisTickLabelAngle(axis);
 const baseAngle = explicitAngle === null ? 0 : explicitAngle;
 const withBase = labels.map((label) => ({ ...label, angle: baseAngle, row: 0 }));
 let strategy = strategyValue;
 if (strategy === "auto") {
-if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap)) return withBase;
+if (!this._tickLabelsCollide(withBase, dim, fontSize, minGap, anchor)) return withBase;
 if (dim === "x" && axis.kind === "category" && labels.length <= 16) strategy = "rotate";
 else if (dim === "x" && labels.length <= 24) strategy = "stagger";
 else strategy = "hide";
@@ -4244,14 +4284,23 @@ out = labels.map((label) => ({ ...label, angle, row: 0 }));
 } else if (strategy === "stagger" && dim === "x") {
 out = labels.map((label, i) => ({ ...label, angle: baseAngle, row: i % 2 }));
 }
-if (this._tickLabelsCollide(out, dim, fontSize, minGap)) {
-out = this._downsampleTickLabels(out, dim, fontSize, minGap);
+if (this._tickLabelsCollide(out, dim, fontSize, minGap, anchor)) {
+out = this._downsampleTickLabels(out, dim, fontSize, minGap, anchor);
 }
 return out;
 }
 _xTickLabelTransform(axis, angle) {
 const value = Number(angle || 0);
 const side = axis && axis.side === "top" ? "top" : "bottom";
+const anchor = this._axisTickLabelAnchor(axis);
+if (anchor) {
+const shift = anchor === "end" ? "-100%" : anchor === "start" ? "0%" : "-50%";
+const originX = anchor === "end" ? "right" : anchor === "start" ? "left" : "center";
+return {
+transform: `translateX(${shift}) rotate(${value}deg)`,
+origin: `${originX} ${side === "top" ? "bottom" : "top"}`,
+};
+}
 if (value === 0) {
 return {
 transform: "translateX(-50%)",
@@ -4510,12 +4559,12 @@ if (px < p.x - 1 || px > p.x + p.w + 1) continue;
 const text = this._axisTickText(xAxis, v, xt.step);
 xLabelCandidates.push({ pos: px, text });
 }
-for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
 const tickLabelSize = this._axisStyleNumber(
 xAxis,
 "tick_label_size",
 this._axisStyleNumber(xAxis, "tick_size", 11),
 );
+for (const item of this._layoutTickLabels(xAxis, "x", xLabelCandidates)) {
 const rowOffset = Number(item.row || 0) * (Math.max(8, tickLabelSize) + 4);
 const top = xAxis.side === "top" ? p.y - 18 - rowOffset : p.y + p.h + 6 + rowOffset;
 const placement = this._xTickLabelTransform(xAxis, item.angle);
@@ -4568,12 +4617,17 @@ if (py < p.y - 1 || py > p.y + p.h + 1) continue;
 const text = this._axisTickText(yAxis, v, yt.step);
 yLabelCandidates.push({ pos: py, text });
 }
+const yLabelCss = (axis, onRight, item) => {
+const pin = onRight ? p.x + p.w + 8 : p.x - 8;
+const anchor = this._axisTickLabelAnchor(axis) ?? (onRight ? "start" : "end");
+const shift = anchor === "end" ? "-100%" : anchor === "start" ? "0%" : "-50%";
+const originX = anchor === "end" ? "right" : anchor === "start" ? "left" : "center";
+return `left:${pin}px;top:${item.pos}px;` +
+`transform:translate(${shift},-50%) rotate(${Number(item.angle || 0)}deg);` +
+`transform-origin:${originX} center;`;
+};
 for (const item of this._layoutTickLabels(yAxis, "y", yLabelCandidates)) {
-const angle = Number(item.angle || 0);
-const css = yAxis.side === "right"
-? `left:${p.x + p.w + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:left center;`
-: `right:${this.size.w - p.x + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:right center;`;
-label(item.text, css, yAxis);
+label(item.text, yLabelCss(yAxis, yAxis.side === "right", item), yAxis);
 }
 for (const axis of extraYAxes) {
 const ticks = this._axisTicks(axis.id, this._axisTickTarget(axis.id, Math.max(3, p.h / 45)));
@@ -4585,11 +4639,7 @@ const text = this._axisTickText(axis, v, ticks.step);
 labelCandidates.push({ pos: py, text });
 }
 for (const item of this._layoutTickLabels(axis, "y", labelCandidates)) {
-const angle = Number(item.angle || 0);
-const css = axis.side === "left"
-? `right:${this.size.w - p.x + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:right center;`
-: `left:${p.x + p.w + 8}px;top:${item.pos}px;transform:translateY(-50%) rotate(${angle}deg);transform-origin:left center;`;
-label(item.text, css, axis);
+label(item.text, yLabelCss(axis, axis.side !== "left", item), axis);
 }
 if (axis.label && this._axisTickLabelStrategy(axis) !== "none") {
 const fallbackCss = axis.side === "left"
@@ -4885,13 +4935,22 @@ return new Uint32Array(b.buffer, b.byteOffset, Math.floor(b.byteLength / 4));
 }
 return new Uint32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
 }
-refreshTheme() {
-if (this._destroyed) return;
+_applyTheme() {
 this.theme = readTheme(this.root);
+this._themeStale = !this.root.isConnected;
 for (const g of this.gpuTraces) {
 markOf(g.trace.kind).refreshColor?.(this, g);
 }
+}
+refreshTheme() {
+if (this._destroyed) return;
+this._applyTheme();
 this.draw();
+}
+_healStaleTheme() {
+if (!this._themeStale || !this.root.isConnected) return false;
+this._applyTheme();
+return true;
 }
 destroy() {
 if (this._destroyed) return;
