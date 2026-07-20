@@ -47,6 +47,7 @@ from .app import XYPlugin, append, setup
 from .component import chart
 from .namespace import XY_NAMESPACE, XYNamespace
 from .registry import FigureRegistry, _figure_of, registry
+from .selections import resolve_selection
 from .vars import AsyncFigureVar, FigureVar, figure
 
 __all__ = [
@@ -63,6 +64,7 @@ __all__ = [
     "register",
     "registry",
     "release",
+    "resolve_selection",
     "setup",
 ]
 

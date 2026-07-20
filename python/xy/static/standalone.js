@@ -6030,7 +6030,42 @@ g._cpu.x && g._cpu.y && Math.min(g._cpu.x.length, g._cpu.y.length) > 0);
 },
 _onA11yKey(e) {
 const direction = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
-if (direction === undefined && e.key !== "Home" && e.key !== "End" && e.key !== "Escape") {
+const activate = e.key === "Enter" || e.key === " ";
+if (direction === undefined && e.key !== "Home" && e.key !== "End" && e.key !== "Escape"
+&& !activate) {
+return;
+}
+if (activate) {
+if (!this._interactionFlag("click") || !this._hoverTarget) return;
+e.preventDefault();
+const hit = this._hoverTarget;
+const rect = this.canvas.getBoundingClientRect();
+const clientX = this._lastHoverXY?.clientX ?? rect.left;
+const clientY = this._lastHoverXY?.clientY ?? rect.top;
+const screen = { x: clientX - rect.left, y: clientY - rect.top };
+const modifiers = {
+shift: e.shiftKey === true,
+alt: e.altKey === true,
+ctrl: e.ctrlKey === true,
+meta: e.metaKey === true,
+};
+const detail = {
+row: this._localRow ? this._localRow(hit) : null,
+trace: hit.trace,
+index: hit.index,
+screen,
+modifiers,
+view: this._eventView("click"),
+};
+this._dispatchChartEvent("click", detail);
+if (this.comm) {
+const msg = { type: "click", trace: hit.trace, index: hit.index, screen, modifiers };
+const g = hit.g;
+if (g && g.tier === "density" && g.drill && g.drill.seq !== undefined) {
+msg.drill_seq = g.drill.seq;
+}
+this.comm.send(msg);
+}
 return;
 }
 if (e.key === "Escape") {
@@ -6128,7 +6163,18 @@ index: hit ? hit.index : null,
 };
 this._dispatchChartEvent("click", detail);
 if (hit && this.comm) {
-const msg = { type: "click", trace: hit.trace, index: hit.index };
+const msg = {
+type: "click",
+trace: hit.trace,
+index: hit.index,
+screen: { x: cssX, y: cssY },
+modifiers: {
+shift: e.shiftKey === true,
+alt: e.altKey === true,
+ctrl: e.ctrlKey === true,
+meta: e.metaKey === true,
+},
+};
 const g = hit.g;
 if (g && g.tier === "density" && g.drill && g.drill.seq !== undefined) {
 msg.drill_seq = g.drill.seq;

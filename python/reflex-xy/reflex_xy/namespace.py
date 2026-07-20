@@ -155,6 +155,13 @@ class XYNamespace(AsyncNamespace):
         token, entry = await self._entry_for(sid, data, allow_rebuild=True)
         if token is None or entry is None:
             return
+        if isinstance(data, dict) and data.get("v") is not None:
+            try:
+                message_version = int(data["v"])
+            except (TypeError, ValueError):
+                message_version = entry.version
+            if message_version != entry.version:
+                return
         content = data.get("m") if isinstance(data, dict) else None
         async with entry.lock:
             # Kernel work off the event loop: the Rust kernels release the

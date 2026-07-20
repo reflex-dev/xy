@@ -26,8 +26,8 @@ state, wrong for data buffers. The integration splits every chart into:
 
 - **Control plane (Reflex-native, low-frequency, JSON).** Which figure a
   component shows (a token string minted by a computed var), style/layout
-  props, and *semantic* events out: `on_point_hover(row)`,
-  `on_select_end(summary)`, `on_view_change(view)`, `on_point_click(row)`.
+  props, and *semantic* events out: `on_point_hover(event)`,
+  `on_select_end(event)`, `on_view_change(event)`, `on_point_click(event)`.
   These go through normal Reflex event handlers, so app code composes the
   usual way. Rows and summaries are small by construction — never buffers.
 - **Data plane (xy-native, high-frequency, binary).** First paint,
@@ -326,6 +326,113 @@ Multiple mounts of one figure render and stream correctly (room fan-out,
 `mid`-addressed replies); concurrent *drilldown* from several views of the
 same figure shares kernel drill state — same known engine-level shape as
 multiple notebook views today, acceptable and documented.
+
+### 5.1 Semantic event contract
+
+Semantic events are available for live, token-backed figures created with
+`@reflex_xy.figure`, `inline()`, or `register()`. A static `src` chart has no
+socket: browser-local tooltip and navigation behavior remains available, but
+it cannot dispatch Reflex handlers or drive server-side cross-filtering.
+Unset event props install no corresponding interaction work.
+
+Every handler receives a versioned dictionary with `version: 1`, `type`, and
+the stable figure `token`. Point events also contain `trace`, the canonical
+CPU-store `canonical_row_id`, `data: {x, y}`, and a bounded `datum` containing
+the remaining configured pick fields. Click adds canvas-relative `screen`
+coordinates and keyboard `modifiers`. Canonical IDs never refer to a shipped,
+sampled, decimated, or GPU-buffer position.
+
+```python
+@rx.event
+def inspect_point(self, event: dict):
+    self.last_id = event["canonical_row_id"]
+    self.last_xy = event["data"]
+
+reflex_xy.chart(Dash.cloud, on_point_click=Dash.inspect_point)
+```
+
+Selection events use the following shape. P0 supports deterministic `replace`
+mode; an empty clear is explicit (`kind: "clear"`, `cleared: true`). Box and
+lasso rows are ordered by trace then canonical ID.
+
+```python
+{
+  "version": 1, "type": "select_end", "token": "xyv1|...",
+  "selection": {
+    "kind": "box", "mode": "replace",
+    "data_bounds": {"x0": 0, "x1": 10, "y0": 20, "y1": 50},
+    "polygon": None,
+    "canonical_row_ids": [{"trace": 0, "ids": [12, 18, 27]}],
+    "rows": [{"trace": 0, "index": 12, "x": 2.0, "y": 30.0,
+              "x_kind": "linear", "y_kind": "linear"}],
+    "total_count": 3, "truncated": False, "cleared": False,
+  },
+}
+```
+
+The JSON projection is capped at `SELECTION_EVENT_ROW_LIMIT = 1000` rows and
+`SELECTION_EVENT_ID_LIMIT = 10000` canonical IDs. `total_count` always reports
+the complete count and `truncated` is never silent. For complete server-side
+data, re-resolve the geometry against the current live figure; `rows()` is
+unbounded unless the caller supplies a limit:
+
+```python
+@rx.event
+def filter_regions(self, event: dict):
+    selection = event["selection"]
+    if selection["cleared"]:
+        self.selected_regions = []
+        return
+    self.selected_regions = sorted({
+        row["color_category"] for row in selection["rows"]
+        if "color_category" in row
+    })
+    complete = reflex_xy.resolve_selection(event)
+    if selection["truncated"] and complete is not None:
+        process_all_rows(complete.rows())
+```
+
+LOD and density rendering do not change this contract. For example, a box
+drawn over a million-point density tier may return 1000 projected rows and
+10,000 IDs with `total_count: 247381, truncated: true`; `resolve_selection`
+re-runs that box against canonical f64 columns and returns all 247,381 rows,
+never the visible sample or decimated buffer positions.
+
+The source chart retains its box/lasso highlight and viewport when the state
+change republishes its figure; dependent charts update behind their unchanged
+tokens. A restore is tagged `source: "republish"` and does not redispatch
+`on_select_end` or `on_view_change`, preventing feedback loops. Clearing the
+selection resets dependent filters through the same handler.
+
+One handler can route several charts by stable token:
+
+```python
+@rx.event
+def shared(self, event: dict):
+    if event["token"] == self.region_chart:
+        self.apply_regions(event["selection"]["rows"])
+    elif event["token"] == self.product_chart:
+        self.apply_products(event["selection"]["rows"])
+```
+
+View events are `{version, type: "view_change", token, x_domain, y_domain,
+source, phase: "final"}`. User changes are trailing-edge debounced for 200 ms;
+linked and republish sources are suppressed. Hover events are latest-wins and
+throttled to one dispatch per 120 ms. For viewport synchronization:
+
+```python
+@rx.event
+def remember_view(self, event: dict):
+    self.x_domain = event["x_domain"]
+    self.y_domain = event["y_domain"]
+
+reflex_xy.chart(Dash.cloud, on_view_change=Dash.remember_view)
+```
+
+Every kernel message echoes the last payload version as `v`; the namespace
+silently rejects messages for an older figure version. This prevents an
+in-flight pick or selection from resolving in a replacement coordinate space,
+while clients that omit `v` remain compatible.
 
 ## 6. Latency budget
 

@@ -15,7 +15,7 @@ Only row/col faceting is implemented; hue semantics (palette cycling,
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import numpy as np
 
@@ -178,7 +178,7 @@ class FacetGrid:
                     if column.dtype.kind == "f":
                         valid &= ~np.isnan(column)
                 columns = [column[valid] for column in columns]
-            _state.sca(ax)
+            _state.sca(cast(Any, ax))
             func(*columns, **kwargs)
         self._finalize_grid(args[:2])
         return self

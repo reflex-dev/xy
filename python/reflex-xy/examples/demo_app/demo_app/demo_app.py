@@ -5,8 +5,8 @@
   Reflex state; the only chart state is the token string.
 - Hover reads exact f64 rows through the data plane and lands in a normal
   Reflex event handler.
-- Box-select cross-filters a histogram: the selection summary arrives as a
-  small JSON event, the handler bumps a state var, and the histogram's
+- Box-select cross-filters a histogram: bounded semantic rows arrive in a
+  small JSON event, complete rows can be re-resolved server-side, and the histogram's
   figure var recomputes + republishes over the shared websocket.
 - A live line streams from a background task via `reflex_xy.append`.
 
@@ -30,21 +30,22 @@ RNG_SEED = 11
 
 
 @lru_cache(maxsize=1)
-def _cloud(n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _cloud(n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     # Deterministic source data, cached at module scope: figure builders are
     # pure functions of state, so shared raw columns belong outside them.
     rng = np.random.default_rng(RNG_SEED)
     x = rng.normal(0.0, 1.0, n)
     y = x * 0.55 + rng.normal(0.0, 0.55, n)
-    return x, y, np.hypot(x, y)
+    segment = np.where(x < 0, "west", "east")
+    return x, y, np.hypot(x, y), segment
 
 
-async def _magnitudes() -> tuple[np.ndarray, np.ndarray]:
+async def _magnitudes() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Async data source for the histogram builder — stands in for a
     database, HTTP endpoint, or dataframe-store round trip."""
     await asyncio.sleep(0)
-    x, _, mag = _cloud(POINTS)
-    return x, mag
+    x, _, mag, segment = _cloud(POINTS)
+    return x, mag, segment
 
 
 class Demo(rx.State):
@@ -55,14 +56,15 @@ class Demo(rx.State):
     sel_x0: float = 0.0
     sel_x1: float = 0.0
     sel_active: bool = False
+    selected_segments: list[str] = []
     streaming: bool = False
     _stream_t: float = 0.0
 
     @reflex_xy.figure
     def cloud(self) -> xy.Chart:
-        x, y, mag = _cloud(POINTS)
+        x, y, _, segment = _cloud(POINTS)
         return xy.scatter_chart(
-            xy.scatter(x, y, color=mag, colormap="viridis", opacity=0.8, density=True),
+            xy.scatter(x, y, color=segment, opacity=0.8, density=True),
             xy.x_axis(label="feature A"),
             xy.y_axis(label="feature B"),
             title=f"{POINTS // 1_000_000}M points, drillable",
@@ -74,9 +76,12 @@ class Demo(rx.State):
     async def histogram(self) -> xy.Chart:
         # Async builder: reflex evaluates it as an AsyncComputedVar, so the
         # data pull can await a database / HTTP endpoint / dataframe store.
-        x, mag = await _magnitudes()
+        x, mag, segment = await _magnitudes()
         if self.sel_active and self.sel_x1 > self.sel_x0:
-            mag = mag[(x >= self.sel_x0) & (x <= self.sel_x1)]
+            keep = (x >= self.sel_x0) & (x <= self.sel_x1)
+            if self.selected_segments:
+                keep &= np.isin(segment, self.selected_segments)
+            mag = mag[keep]
         label = "selection" if self.sel_active else "all points"
         return xy.histogram_chart(
             xy.histogram(mag, bins=80),
@@ -96,19 +101,34 @@ class Demo(rx.State):
         )
 
     @rx.event
-    def on_hover(self, row: dict):
-        self.hovered = row
+    def on_hover(self, event: dict):
+        self.hovered = event
 
     @rx.event
-    def on_select(self, selection: dict):
-        total = int(selection.get("total") or 0)
-        if total and selection.get("x0") is not None:
-            self.sel_x0 = float(selection["x0"])
-            self.sel_x1 = float(selection["x1"])
+    def on_select(self, event: dict):
+        selection = event.get("selection", {})
+        total = int(selection.get("total_count") or 0)
+        bounds = selection.get("data_bounds")
+        if total and bounds:
+            self.sel_x0 = float(bounds["x0"])
+            self.sel_x1 = float(bounds["x1"])
             self.sel_active = True
-            self.select_note = f"{total:,} points selected"
+            self.selected_segments = sorted(
+                {
+                    str(row["color_category"])
+                    for row in selection.get("rows", [])
+                    if row.get("color_category") is not None
+                }
+            )
+            complete = reflex_xy.resolve_selection(event)
+            complete_count = len(complete) if complete is not None else total
+            self.select_note = (
+                f"{complete_count:,} points selected; segments: "
+                f"{', '.join(self.selected_segments) or 'none'}"
+            )
         else:
             self.sel_active = False
+            self.selected_segments = []
             self.select_note = "selection cleared"
 
     @rx.event(background=True)
@@ -154,7 +174,7 @@ def hover_readout() -> rx.Component:
         rx.text(
             rx.cond(
                 Demo.hovered.length() > 0,
-                f"x={Demo.hovered['x']}  y={Demo.hovered['y']}",
+                f"x={Demo.hovered['data']['x']}  y={Demo.hovered['data']['y']}",
                 "move the cursor over the cloud",
             ),
             font_family="monospace",

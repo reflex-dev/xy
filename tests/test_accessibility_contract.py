@@ -66,6 +66,17 @@ def test_keyboard_navigation_reuses_hover_and_tooltip_pipeline() -> None:
             assert snippet in text, f"{label} keyboard path drifted from hover pipeline"
 
 
+def test_keyboard_activation_uses_the_click_contract() -> None:
+    required = (
+        'const activate = e.key === "Enter" || e.key === " ";',
+        'if (!this._interactionFlag("click") || !this._hoverTarget) return;',
+        'const msg = { type: "click", trace: hit.trace, index: hit.index, screen, modifiers };',
+    )
+    for label, text in CLIENTS:
+        for snippet in required:
+            assert snippet in text, f"{label} keyboard activation drifted"
+
+
 def test_keyboard_exact_replies_preserve_position_and_stale_replies_are_ignored() -> None:
     required = (
         "options.announce !== false",

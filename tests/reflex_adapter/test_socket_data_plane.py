@@ -193,6 +193,76 @@ def test_msg_round_trip_pick_and_select(_fresh_registry):
     run(main())
 
 
+def test_select_round_trip_includes_semantic_rows(_fresh_registry):
+    async def main():
+        token = registry.register(make_figure(16))
+        async with data_plane_server() as (url, _):
+            client = await connect_client(url)
+            collector = Collector(client)
+            await client.emit("sub", {"fig": token, "mid": "m1"}, namespace="/_xy")
+            await collector.next(collector.payloads)
+            await client.emit(
+                "msg",
+                {
+                    "fig": token,
+                    "mid": "m1",
+                    "v": 1,
+                    "m": {
+                        "type": "select",
+                        "x0": 0.0,
+                        "x1": 0.5,
+                        "y0": 0.0,
+                        "y1": 3.0,
+                        "include_rows": True,
+                    },
+                },
+                namespace="/_xy",
+            )
+            reply = await collector.next(collector.messages)
+            await client.disconnect()
+        message = reply["message"]
+        assert message["version"] == 1
+        assert message["kind"] == "box"
+        assert message["rows"][0]["index"] == 0
+        assert message["canonical_row_ids"][0]["ids"] == list(range(8))
+
+    run(main())
+
+
+def test_stale_message_versions_are_dropped(_fresh_registry):
+    async def main():
+        token = registry.register(make_figure(16))
+        async with data_plane_server() as (url, _):
+            client = await connect_client(url)
+            collector = Collector(client)
+            await client.emit("sub", {"fig": token, "mid": "m1"}, namespace="/_xy")
+            await collector.next(collector.payloads)
+            registry.publish(token, make_figure(16))
+            payload = await collector.next(collector.payloads)
+            assert payload["version"] == 2
+
+            message = {"type": "pick", "trace": 0, "index": 2, "seq": 21}
+            await client.emit(
+                "msg", {"fig": token, "mid": "m1", "v": 1, "m": message}, namespace="/_xy"
+            )
+            with pytest.raises(asyncio.TimeoutError):
+                await Collector.next(collector.messages, timeout=0.15)
+
+            await client.emit(
+                "msg", {"fig": token, "mid": "m1", "v": 2, "m": message}, namespace="/_xy"
+            )
+            current = await collector.next(collector.messages)
+            assert current["message"]["seq"] == 21
+
+            message["seq"] = 22
+            await client.emit("msg", {"fig": token, "mid": "m1", "m": message}, namespace="/_xy")
+            compatible = await collector.next(collector.messages)
+            assert compatible["message"]["seq"] == 22
+            await client.disconnect()
+
+    run(main())
+
+
 def test_state_token_affinity_enforced(_fresh_registry):
     async def main():
         state_token = build_state_token(CLIENT_TOKEN, "root.some_state", "chart")
