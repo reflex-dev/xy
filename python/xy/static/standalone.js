@@ -1873,10 +1873,10 @@ this._ro.observe(this.root);
 }
 this._armVisibilityResizeWatch();
 this._armDprWatch();
-this.view0 = {
+this.view0 = this._clampView({
 x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
 y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
-};
+});
 this.view = { ...this.view0 };
 this._initLinkedCharts();
 this._themeWatch = window.matchMedia("(prefers-color-scheme: dark)");
@@ -5927,12 +5927,12 @@ const cx0 = this._axisCoord(xa, x0), cx1 = this._axisCoord(xa, x1);
 const cy0 = this._axisCoord(ya, y0), cy1 = this._axisCoord(ya, y1);
 const dx = ((e.clientX - drag.px) / this.plot.w) * (cx1 - cx0);
 const dy = ((e.clientY - drag.py) / this.plot.h) * (cy1 - cy0);
-this.view = {
+this.view = this._clampView({
 x0: this._axisValue(xa, cx0 - dx),
 x1: this._axisValue(xa, cx1 - dx),
 y0: this._axisValue(ya, cy0 + dy),
 y1: this._axisValue(ya, cy1 + dy),
-};
+});
 this.draw();
 this._scheduleViewRequest();
 this._emitViewChange("pan");
@@ -6970,7 +6970,8 @@ this._viewAnim = null;
 },
 _setView(next, opts = {}) {
 if (this._destroyed) return;
-const target = { x0: next.x0, x1: next.x1, y0: next.y0, y1: next.y1 };
+const target = this._clampView(
+{ x0: next.x0, x1: next.x1, y0: next.y0, y1: next.y1 });
 const animate = opts.animate === true && !this._prefersReducedMotion();
 const duration = opts.duration || 180;
 if (!animate || duration <= 0) {
@@ -7036,6 +7037,36 @@ this._emitViewChange(opts.source || "view", { broadcast: opts.broadcast });
 }
 };
 this._animRaf = requestAnimationFrame(step);
+},
+_clampAxisRange(axisId, lo, hi) {
+const axis = this._axis(axisId);
+if (!Array.isArray(axis.bounds) || axis.bounds.length !== 2) return [lo, hi];
+const c0 = this._axisCoord(axis, lo), c1 = this._axisCoord(axis, hi);
+const b0 = this._axisCoord(axis, axis.bounds[0]);
+const b1 = this._axisCoord(axis, axis.bounds[1]);
+if (![c0, c1, b0, b1].every(Number.isFinite) || b0 === b1) return [lo, hi];
+const reverse = c1 < c0;
+const boundLo = Math.min(b0, b1), boundHi = Math.max(b0, b1);
+const boundSpan = boundHi - boundLo;
+const span = Math.abs(c1 - c0);
+let outLo, outHi;
+if (span >= boundSpan) {
+outLo = boundLo;
+outHi = boundHi;
+} else {
+outLo = Math.min(c0, c1);
+outHi = Math.max(c0, c1);
+if (outLo < boundLo) { outHi += boundLo - outLo; outLo = boundLo; }
+if (outHi > boundHi) { outLo -= outHi - boundHi; outHi = boundHi; }
+}
+const first = reverse ? outHi : outLo;
+const second = reverse ? outLo : outHi;
+return [this._axisValue(axis, first), this._axisValue(axis, second)];
+},
+_clampView(view) {
+const x = this._clampAxisRange("x", view.x0, view.x1);
+const y = this._clampAxisRange("y", view.y0, view.y1);
+return { x0: x[0], x1: x[1], y0: y[0], y1: y[1] };
 },
 _zoomBy(f, animate = false) {
 const base = this._viewAnim ? this._viewAnim.target : this.view;

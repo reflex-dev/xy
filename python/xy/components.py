@@ -36,7 +36,7 @@ import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from os import PathLike
-from typing import Any, Optional, TypeAlias, Union
+from typing import Any, Literal, Optional, TypeAlias, Union
 
 import numpy as np
 
@@ -198,6 +198,7 @@ class Axis(Component):
     label_angle: Optional[float] = None
     type_: Optional[str] = None  # "linear" | "time" | "log" (auto-detected if None)
     domain: Optional[tuple[float, float]] = None
+    bounds: Union[tuple[float, float], Literal["data"], None] = None
     reverse: bool = False
     format: Optional[str] = None
     tick_count: Optional[int] = None
@@ -1927,6 +1928,7 @@ def x_axis(
     label_angle: Optional[float] = None,
     type_: Optional[str] = None,
     domain: Optional[tuple[float, float]] = None,
+    bounds: Union[tuple[float, float], Literal["data"], None] = None,
     reverse: bool = False,
     format: Optional[str] = None,
     tick_count: Optional[int] = None,
@@ -1949,6 +1951,9 @@ def x_axis(
         label_angle: Label rotation in degrees.
         type_: Scale type, such as ``linear``, ``time``, or ``log``.
         domain: Explicit minimum and maximum scale values.
+        bounds: Hard navigation limits, or ``"data"`` to use the data range.
+            Pan and zoom are clamped within these limits; ``None`` leaves
+            navigation unrestricted.
         reverse: Whether to reverse the scale direction.
         format: Tick-label format string.
         tick_count: Requested number of ticks.
@@ -1980,6 +1985,7 @@ def x_axis(
         label_angle=_optional_finite_number(label_angle, "x_axis label_angle"),
         type_=type_,
         domain=_axis_domain(domain, "x_axis domain"),
+        bounds=_axis_bounds(bounds, "x_axis bounds"),
         reverse=_strict_bool(reverse, "x_axis reverse"),
         format=_optional_string(format, "x_axis format"),
         tick_count=_optional_positive_int(tick_count, "x_axis tick_count"),
@@ -2007,6 +2013,7 @@ def y_axis(
     label_angle: Optional[float] = None,
     type_: Optional[str] = None,
     domain: Optional[tuple[float, float]] = None,
+    bounds: Union[tuple[float, float], Literal["data"], None] = None,
     reverse: bool = False,
     format: Optional[str] = None,
     tick_count: Optional[int] = None,
@@ -2029,6 +2036,9 @@ def y_axis(
         label_angle: Label rotation in degrees.
         type_: Scale type, such as ``linear``, ``time``, or ``log``.
         domain: Explicit minimum and maximum scale values.
+        bounds: Hard navigation limits, or ``"data"`` to use the data range.
+            Pan and zoom are clamped within these limits; ``None`` leaves
+            navigation unrestricted.
         reverse: Whether to reverse the scale direction.
         format: Tick-label format string.
         tick_count: Requested number of ticks.
@@ -2060,6 +2070,7 @@ def y_axis(
         label_angle=_optional_finite_number(label_angle, "y_axis label_angle"),
         type_=type_,
         domain=_axis_domain(domain, "y_axis domain"),
+        bounds=_axis_bounds(bounds, "y_axis bounds"),
         reverse=_strict_bool(reverse, "y_axis reverse"),
         format=_optional_string(format, "y_axis format"),
         tick_count=_optional_positive_int(tick_count, "y_axis tick_count"),
@@ -2535,6 +2546,7 @@ class Chart(Component):
                 label_angle=axis.label_angle,
                 type_=axis.type_,
                 domain=axis.domain,
+                bounds=axis.bounds,
                 reverse=axis.reverse,
                 format=axis.format,
                 tick_count=axis.tick_count,
@@ -3457,6 +3469,16 @@ def _validate_axis_type(type_: Optional[str]) -> None:
 def _axis_domain(value: Any, label: str) -> Optional[tuple[float, float]]:
     if value is None:
         return None
+    return _validate.finite_increasing_pair(value, label)
+
+
+def _axis_bounds(value: Any, label: str) -> Union[tuple[float, float], Literal["data"], None]:
+    if value is None:
+        return value
+    if isinstance(value, str):
+        if value == "data":
+            return value
+        raise ValueError(f"{label} must be an increasing pair, 'data', or None")
     return _validate.finite_increasing_pair(value, label)
 
 

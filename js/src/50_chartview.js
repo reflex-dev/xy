@@ -213,10 +213,10 @@ class ChartView {
     this._armVisibilityResizeWatch();
     this._armDprWatch();
 
-    this.view0 = {
+    this.view0 = this._clampView({
       x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
       y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
-    };
+    });
     this.view = { ...this.view0 };
     this._initLinkedCharts();
 
