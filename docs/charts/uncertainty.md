@@ -39,6 +39,18 @@ def uncertainty_chart_demo():
     return reflex_xy.chart(chart, height="360px")
 ~~~
 
+## Chart Types
+
+### Error Band
+
+Use `error_band` for a continuous lower-to-upper interval, commonly layered
+beneath a line to show confidence or forecast ranges.
+
+### Error Bar
+
+Use `errorbar` for uncertainty attached to individual observations. It supports
+x or y uncertainty and symmetric or asymmetric values.
+
 ## Variants
 
 Use symmetric or asymmetric error arrays on either axis. Layer a translucent
