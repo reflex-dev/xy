@@ -18,7 +18,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from . import _png, _scene
+from . import _paint, _png, _scene
 from ._arrowgeom import arrow_shapes as _arrow_shapes
 from ._svg import (
     _AXIS,
@@ -1247,6 +1247,35 @@ def _emit_area(
             cmd.stroke(base, lw, line_color, dash=style.get("dash"))
 
 
+def _trace_paint_rgba(
+    trace: dict[str, Any],
+    key: str,
+    n: int,
+    fallback: str,
+    read: _paint.ColumnReader,
+) -> np.ndarray:
+    """Resolve one payload paint channel to intrinsic float RGBA."""
+    channel = trace.get(key) or {}
+    direct = _paint.direct_rgba(channel, n, read)
+    if direct is not None:
+        return direct
+    rgba = np.empty((n, 4), dtype=np.float64)
+    rgba[:, 3] = 1.0
+    mode = channel.get("mode")
+    if mode == "continuous":
+        rgba[:, :3] = _lut(channel.get("colormap", "viridis"), read(channel["buf"])[:n]) / 255.0
+    elif mode == "categorical":
+        codes = np.asarray(read(channel["buf"]), dtype=np.int64)[:n]
+        palette = channel.get("palette") or DEFAULT_PALETTE
+        table = np.asarray([_parse_color(value) for value in palette], dtype=np.float64) / 255.0
+        rgba[:] = table[codes % len(table)]
+    else:
+        rgba[:] = (
+            np.asarray(_parse_color(_css(channel.get("color"), fallback)), dtype=np.float64) / 255.0
+        )
+    return rgba
+
+
 def _emit_scatter(
     cmd: _Cmd,
     t: dict[str, Any],
@@ -1259,6 +1288,10 @@ def _emit_scatter(
 ) -> None:
     ch = t.get("color") or {}
     size_ch = t.get("size") or {}
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
     fill_op = _fill_opacity(style, 0.8)
     stroke_op = _stroke_opacity(style, 0.8)
     sw = float(style.get("stroke_width", 0.0))
@@ -1277,6 +1310,7 @@ def _emit_scatter(
     if (
         sx.affine
         and sy.affine
+        and not t.get("channels")
         and (color_mode in {"continuous", "categorical"} or size_mode == "continuous")
     ):
         alpha = max(0, min(255, int(round(fill_op * 255))))
@@ -1303,8 +1337,10 @@ def _emit_scatter(
     if (
         sx.affine
         and sy.affine
-        and ch.get("mode") not in {"continuous", "categorical"}
+        and ch.get("mode") not in {"continuous", "categorical", "direct_rgba"}
         and size_ch.get("mode") != "continuous"
+        and not t.get("channels")
+        and (t.get("stroke") is None or t["stroke"].get("mode") == "match_fill")
     ):
         alpha = max(0, min(255, int(round(fill_op * 255))))
         rgb = _parse_color(_css(ch.get("color"), color))[:3]
@@ -1316,18 +1352,13 @@ def _emit_scatter(
     xv, yv = _column(blob, cols[t["x"]]), _column(blob, cols[t["y"]])
     px, py = sx(xv), sy(yv)
     n = len(xv)
-    fills = np.empty((n, 4), dtype=np.uint8)
-    fills[:, 3] = max(0, min(255, int(round(fill_op * 255))))
-    if ch.get("mode") == "continuous":
-        fills[:, :3] = _lut(ch.get("colormap", "viridis"), _column(blob, cols[ch["buf"]]))
-    elif ch.get("mode") == "categorical":
-        codes = _column(blob, cols[ch["buf"]]).astype(np.int64)
-        pal = ch.get("palette") or DEFAULT_PALETTE
-        # Resolve each palette entry once; per-point colors are a table gather.
-        pal_rgb = np.array([_parse_color(c)[:3] for c in pal], dtype=np.uint8)
-        fills[:, :3] = pal_rgb[codes % len(pal)]
-    else:
-        fills[:, :3] = _parse_color(_css(ch.get("color"), color))[:3]
+    if n == 0:
+        return
+    face_intrinsic = _trace_paint_rgba(t, "color", n, color, read)
+    fills = np.rint(
+        _paint.effective_rgba(face_intrinsic, t, read, component="fill", default_opacity=0.8)
+        * 255.0
+    ).astype(np.uint8)
 
     if size_ch.get("mode") == "continuous":
         sv = _column(blob, cols[size_ch["buf"]])
@@ -1336,7 +1367,53 @@ def _emit_scatter(
     else:
         radii = np.full(n, float(size_ch.get("size", 4.0)) / 2)
 
-    cmd.points(px, py, radii, fills, sym, sw, stroke)
+    widths = _paint.style_values(t, "stroke_width", n, read, sw)
+    symbol_channel = (t.get("channels") or {}).get("symbol")
+    symbols = (
+        np.asarray(read(symbol_channel["buf"]), dtype=np.uint8)[:n]
+        if symbol_channel is not None
+        else np.full(n, sym, dtype=np.uint8)
+    )
+    if (t.get("stroke") or {}).get("mode") == "match_fill":
+        stroke_intrinsic = face_intrinsic
+    elif t.get("stroke") is not None:
+        stroke_intrinsic = _trace_paint_rgba(t, "stroke", n, color, read)
+    elif style.get("stroke") is not None:
+        stroke_intrinsic = np.tile(
+            np.asarray(_parse_color(_css(style.get("stroke"), color)), dtype=np.float64) / 255.0,
+            (n, 1),
+        )
+    else:
+        stroke_intrinsic = face_intrinsic
+    strokes = np.rint(
+        _paint.effective_rgba(stroke_intrinsic, t, read, component="stroke", default_opacity=0.8)
+        * 255.0
+    ).astype(np.uint8)
+    if (
+        np.all(widths == widths[0])
+        and np.all(symbols == symbols[0])
+        and np.all(strokes == strokes[0])
+    ):
+        cmd.points(
+            px,
+            py,
+            radii,
+            fills,
+            int(symbols[0]),
+            float(widths[0]),
+            tuple(int(value) for value in strokes[0]),
+        )
+    else:
+        for index in range(n):
+            cmd.points(
+                px[index : index + 1],
+                py[index : index + 1],
+                radii[index : index + 1],
+                fills[index : index + 1],
+                int(symbols[index]),
+                float(widths[index]),
+                tuple(int(value) for value in strokes[index]),
+            )
 
 
 def _emit_segments(
@@ -1353,20 +1430,16 @@ def _emit_segments(
     x1 = _column(blob, cols[t["x1"]])
     y0 = _column(blob, cols[t["y0"]])
     y1 = _column(blob, cols[t["y1"]])
-    ch = t.get("color") or {}
-    opacity = _stroke_opacity(style)
-    colors = np.empty((len(x0), 4), dtype=np.uint8)
-    colors[:, 3] = max(0, min(255, int(round(255 * opacity))))
-    if ch.get("mode") == "continuous":
-        colors[:, :3] = _lut(ch.get("colormap", "viridis"), _column(blob, cols[ch["buf"]]))
-    elif ch.get("mode") == "categorical":
-        codes = _column(blob, cols[ch["buf"]]).astype(np.int64)
-        palette = ch.get("palette") or DEFAULT_PALETTE
-        palette_rgb = np.array([_parse_color(entry)[:3] for entry in palette], dtype=np.uint8)
-        colors[:, :3] = palette_rgb[codes % len(palette_rgb)]
-    else:
-        colors[:] = _rgba(style.get("color"), color, opacity)
-    width = float(style.get("width", 1.2))
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    n = len(x0)
+    intrinsic = _trace_paint_rgba(t, "color", n, color, read)
+    colors = np.rint(
+        _paint.effective_rgba(intrinsic, t, read, component="stroke", default_opacity=1.0) * 255.0
+    ).astype(np.uint8)
+    widths = _paint.style_values(t, "width", n, read, float(style.get("width", 1.2)))
     dash = style.get("dash")
     if dash:
         # The batched segments primitive cannot dash; fall back to one dashed
@@ -1378,12 +1451,26 @@ def _emit_segments(
         for index in range(len(x0)):
             cmd.stroke(
                 [(float(px0[index]), float(py0[index])), (float(px1[index]), float(py1[index]))],
-                width,
+                float(widths[index]),
                 tuple(int(v) for v in colors[index]),
                 dash=dash_pattern,
             )
         return
-    cmd.segments(sx(x0), sy(y0), sx(x1), sy(y1), width, colors)
+    if n == 0:
+        return
+    if np.all(widths == widths[0]):
+        cmd.segments(sx(x0), sy(y0), sx(x1), sy(y1), float(widths[0]), colors)
+    else:
+        px0, py0, px1, py1 = sx(x0), sy(y0), sx(x1), sy(y1)
+        for index in range(n):
+            cmd.stroke(
+                [
+                    (float(px0[index]), float(py0[index])),
+                    (float(px1[index]), float(py1[index])),
+                ],
+                float(widths[index]),
+                tuple(int(value) for value in colors[index]),
+            )
 
 
 def _mesh_fill_rgba(
@@ -1394,20 +1481,13 @@ def _mesh_fill_rgba(
     style: dict[str, Any],
     color: str,
 ) -> np.ndarray:
-    ch = t.get("color") or {}
-    fill_op = _fill_opacity(style)
-    fills = np.empty((n, 4), dtype=np.uint8)
-    fills[:, 3] = max(0, min(255, int(round(fill_op * 255))))
-    if ch.get("mode") == "continuous":
-        fills[:, :3] = _lut(ch.get("colormap", "viridis"), _column(blob, cols[ch["buf"]])[:n])
-    elif ch.get("mode") == "categorical":
-        codes = _column(blob, cols[ch["buf"]])[:n].astype(np.int64)
-        palette = ch.get("palette") or DEFAULT_PALETTE
-        palette_rgb = np.array([_parse_color(entry)[:3] for entry in palette], dtype=np.uint8)
-        fills[:, :3] = palette_rgb[codes % len(palette_rgb)]
-    else:
-        fills[:, :3] = _parse_color(_css(ch.get("color"), color))[:3]
-    return fills
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    intrinsic = _trace_paint_rgba(t, "color", n, color, read)
+    return np.rint(
+        _paint.effective_rgba(intrinsic, t, read, component="fill", default_opacity=1.0) * 255.0
+    ).astype(np.uint8)
 
 
 def _emit_hexbin(
@@ -1449,23 +1529,46 @@ def _emit_triangle_mesh(
 ) -> None:
     vertices = [_column(blob, cols[t[name]]) for name in ("x0", "y0", "x1", "y1", "x2", "y2")]
     n = min(len(values) for values in vertices)
-    stroke_op = _stroke_opacity(style)
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
     fills = _mesh_fill_rgba(t, blob, cols, n, style, color)
 
     x0, y0, x1, y1, x2, y2 = vertices
-    sw = float(style.get("stroke_width", 0.0))
-    stroke = _rgba(style.get("stroke"), color, stroke_op) if sw > 0 else (0, 0, 0, 0)
-    cmd.triangles(
-        sx(x0[:n]),
-        sy(y0[:n]),
-        sx(x1[:n]),
-        sy(y1[:n]),
-        sx(x2[:n]),
-        sy(y2[:n]),
-        fills,
-        sw,
-        stroke,
+    widths = _paint.style_values(t, "stroke_width", n, read, float(style.get("stroke_width", 0.0)))
+    stroke_intrinsic = (
+        _trace_paint_rgba(t, "stroke", n, color, read)
+        if t.get("stroke") is not None
+        else _trace_paint_rgba(t, "color", n, color, read)
     )
+    strokes = np.rint(
+        _paint.effective_rgba(stroke_intrinsic, t, read, component="stroke", default_opacity=1.0)
+        * 255.0
+    ).astype(np.uint8)
+    projected = (sx(x0[:n]), sy(y0[:n]), sx(x1[:n]), sy(y1[:n]), sx(x2[:n]), sy(y2[:n]))
+    if n == 0:
+        return
+    if np.all(widths == widths[0]) and np.all(strokes == strokes[0]):
+        cmd.triangles(
+            *projected,
+            fills,
+            float(widths[0]),
+            tuple(int(value) for value in strokes[0]),
+        )
+    else:
+        for index in range(n):
+            cmd.triangles(
+                projected[0][index : index + 1],
+                projected[1][index : index + 1],
+                projected[2][index : index + 1],
+                projected[3][index : index + 1],
+                projected[4][index : index + 1],
+                projected[5][index : index + 1],
+                fills[index : index + 1],
+                float(widths[index]),
+                tuple(int(value) for value in strokes[index]),
+            )
 
 
 def _bar_geom(
@@ -1527,6 +1630,41 @@ def _fill_maker(
     return fill_cmd, stroke_c, sw
 
 
+def _rect_style_arrays(
+    trace: dict[str, Any],
+    n: int,
+    fallback: str,
+    read: _paint.ColumnReader,
+    default_opacity: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Resolve batched rectangle paint, stroke width, and radii."""
+    face = _trace_paint_rgba(trace, "color", n, fallback, read)
+    fills = np.rint(
+        _paint.effective_rgba(face, trace, read, component="fill", default_opacity=default_opacity)
+        * 255.0
+    ).astype(np.uint8)
+    stroke_face = (
+        _trace_paint_rgba(trace, "stroke", n, fallback, read)
+        if trace.get("stroke") is not None
+        else face
+    )
+    strokes = np.rint(
+        _paint.effective_rgba(
+            stroke_face, trace, read, component="stroke", default_opacity=default_opacity
+        )
+        * 255.0
+    ).astype(np.uint8)
+    style = trace.get("style") or {}
+    widths = _paint.style_values(
+        trace, "stroke_width", n, read, float(style.get("stroke_width", 0.0))
+    )
+    radii = _paint.style_matrix(trace, "corner_radius", n, read)
+    if radii is None:
+        tip, base = _corner_radii(style)
+        radii = np.tile(np.asarray([[tip, base]], dtype=np.float64), (n, 1))
+    return fills, strokes, widths, radii
+
+
 def _emit_bars(
     cmd: _Cmd,
     t: dict[str, Any],
@@ -1548,9 +1686,12 @@ def _emit_bars(
     )
     horizontal = b.get("orientation") == "horizontal"
     half = float(b["width"]) / 2
-    r_tip, r_base = _corner_radii(style)
-    sw = float(style.get("stroke_width", 0.0))
-    if not isinstance(style.get("fill"), dict) and not (r_tip or r_base or sw > 0):
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    fills, strokes, widths, radii = _rect_style_arrays(t, len(pos), color, read, 0.85)
+    if not isinstance(style.get("fill"), dict) and not np.any(radii) and not np.any(widths):
         if horizontal:
             xa, xb = sx(np.minimum(v0, v1)), sx(np.maximum(v0, v1))
             ya, yb = sy(pos + half), sy(pos - half)
@@ -1559,9 +1700,40 @@ def _emit_bars(
             ya, yb = sy(np.maximum(v0, v1)), sy(np.minimum(v0, v1))
         x0, x1 = np.minimum(xa, xb), np.maximum(xa, xb)
         y0, y1 = np.minimum(ya, yb), np.maximum(ya, yb)
-        fill = _rgba(style.get("color"), color, _fill_opacity(style, 0.85))
-        fills = np.tile(np.asarray(fill, dtype=np.uint8), (len(pos), 1))
         cmd.rects(x0, y0, x1, y1, fills)
+        return
+    if not isinstance(style.get("fill"), dict):
+        for i in range(len(pos)):
+            if horizontal:
+                x0, x1 = float(sx(min(v0[i], v1[i]))), float(sx(max(v0[i], v1[i])))
+                y0, y1 = float(sy(pos[i] + half)), float(sy(pos[i] - half))
+                tip_top = True
+            else:
+                x0, x1 = float(sx(pos[i] - half)), float(sx(pos[i] + half))
+                y0, y1 = float(sy(max(v0[i], v1[i]))), float(sy(min(v0[i], v1[i])))
+                tip_top = bool(v1[i] >= v0[i])
+            item_style = dict(style)
+            item_style["corner_radius"] = (
+                float(radii[i, 0])
+                if radii.shape[1] == 1
+                else [float(radii[i, 0]), float(radii[i, 1])]
+            )
+
+            def fill_item(poly: list[tuple[float, float]], index: int = i) -> None:
+                cmd.fill(poly, tuple(int(value) for value in fills[index]))
+
+            _bar_geom(
+                cmd,
+                min(x0, x1),
+                min(y0, y1),
+                abs(x1 - x0),
+                abs(y1 - y0),
+                item_style,
+                fill_item,
+                tuple(int(value) for value in strokes[i]),
+                float(widths[i]),
+                tip_top,
+            )
         return
     fill_cmd, stroke_c, sw = _fill_maker(cmd, style, color, plot)
     for i in range(len(pos)):
@@ -1590,13 +1762,14 @@ def _emit_rects(
 ) -> None:
     x0v, x1v = _column(blob, cols[t["x0"]]), _column(blob, cols[t["x1"]])
     y0v, y1v = _column(blob, cols[t["y0"]]), _column(blob, cols[t["y1"]])
-    r_tip, r_base = _corner_radii(style)
-    sw = float(style.get("stroke_width", 0.0))
-    if not isinstance(style.get("fill"), dict) and not (r_tip or r_base or sw > 0):
+
+    def read(index: int) -> np.ndarray:
+        return _column(blob, cols[index])
+
+    fills, strokes, widths, radii = _rect_style_arrays(t, len(x0v), color, read, 0.85)
+    if not isinstance(style.get("fill"), dict) and not np.any(radii) and not np.any(widths):
         xa, xb = sx(x0v), sx(x1v)
         ya, yb = sy(y0v), sy(y1v)
-        fill = _rgba(style.get("color"), color, _fill_opacity(style, 0.85))
-        fills = np.tile(np.asarray(fill, dtype=np.uint8), (len(x0v), 1))
         cmd.rects(
             np.minimum(xa, xb),
             np.minimum(ya, yb),
@@ -1604,6 +1777,33 @@ def _emit_rects(
             np.maximum(ya, yb),
             fills,
         )
+        return
+    if not isinstance(style.get("fill"), dict):
+        for i in range(len(x0v)):
+            xa_, xb = float(sx(x0v[i])), float(sx(x1v[i]))
+            ya_, yb = float(sy(y0v[i])), float(sy(y1v[i]))
+            item_style = dict(style)
+            item_style["corner_radius"] = (
+                float(radii[i, 0])
+                if radii.shape[1] == 1
+                else [float(radii[i, 0]), float(radii[i, 1])]
+            )
+
+            def fill_item(poly: list[tuple[float, float]], index: int = i) -> None:
+                cmd.fill(poly, tuple(int(value) for value in fills[index]))
+
+            _bar_geom(
+                cmd,
+                min(xa_, xb),
+                min(ya_, yb),
+                abs(xb - xa_),
+                abs(yb - ya_),
+                item_style,
+                fill_item,
+                tuple(int(value) for value in strokes[i]),
+                float(widths[i]),
+                bool(y1v[i] >= y0v[i]),
+            )
         return
     fill_cmd, stroke_c, sw = _fill_maker(cmd, style, color, plot)
     for i in range(len(x0v)):

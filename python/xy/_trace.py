@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from .channels import ColorChannel, SizeChannel
+from .channels import ColorChannel, SizeChannel, StyleChannel
 from .columns import Column
 from .config import DIRECT_SOFT_CEILING, SCATTER_DENSITY_THRESHOLD
 
@@ -40,7 +40,14 @@ class Trace:
     y0: Optional[Column] = None
     y1: Optional[Column] = None
     color_ch: Optional[ColorChannel] = None  # scatter color encoding
+    # Independent per-mark outline paint.  ``None`` means the mark family has
+    # no outline; a constant ``None`` color inside the channel means
+    # edgecolors="face" and is resolved against color_ch by the renderers.
+    stroke_ch: Optional[ColorChannel] = None
     size_ch: Optional[SizeChannel] = None  # scatter size encoding
+    # Direct, final-unit instance attributes (alpha override, opacity, widths,
+    # symbols, corner radii).  Constants stay in ``style`` and cost no buffer.
+    style_channels: dict[str, StyleChannel] = field(default_factory=dict)
     # Tri-state density override: None = auto (threshold), True/False = forced.
     # (A bool here silently ignored density=False — staff-review finding.)
     force_density: Optional[bool] = None

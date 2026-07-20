@@ -22,7 +22,7 @@
 
 "use strict";
 
-const PROTOCOL = 3;
+const PROTOCOL = 4;
 
 // HTTP binary frame v1 (spec/design/wire-protocol.md §7; Python side in
 // python/xy/_framing.py). The chart spec's PROTOCOL

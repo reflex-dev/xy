@@ -420,6 +420,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         opacity: float,
         role: str,
         extra_style: Optional[dict[str, Any]] = None,
+        color_ch: Optional[ColorChannel] = None,
+        stroke_ch: Optional[ColorChannel] = None,
+        style_channels: Optional[dict[str, Any]] = None,
     ) -> None:
         if orientation == "vertical":
             self._append_rect_trace(
@@ -434,6 +437,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 role=role,
                 orientation=orientation,
                 extra_style=extra_style,
+                color_ch=color_ch,
+                stroke_ch=stroke_ch,
+                style_channels=style_channels,
             )
         else:
             self._append_rect_trace(
@@ -448,6 +454,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
                 role=role,
                 orientation=orientation,
                 extra_style=extra_style,
+                color_ch=color_ch,
+                stroke_ch=stroke_ch,
+                style_channels=style_channels,
             )
 
     @staticmethod
@@ -772,7 +781,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
         role: str,
         orientation: Optional[str] = None,
         color_ch: Optional[ColorChannel] = None,
+        stroke_ch: Optional[ColorChannel] = None,
         size_ch: Optional[SizeChannel] = None,
+        style_channels: Optional[dict[str, Any]] = None,
         count: Optional[int] = None,
         extra_style: Optional[dict[str, Any]] = None,
     ) -> None:
@@ -812,7 +823,9 @@ class Figure(AnnotationsMixin, PayloadMixin):
                     name=name,
                     style=style,
                     color_ch=color_ch,
+                    stroke_ch=stroke_ch,
                     size_ch=size_ch,
+                    style_channels=style_channels or {},
                     count=count,
                 )
             )
@@ -1206,14 +1219,37 @@ class Figure(AnnotationsMixin, PayloadMixin):
         return interaction.decimate_view(self, x0, x1, px_width)
 
     def append(
-        self, trace_id: int, x: Any, y: Any, *, color: Any = None, size: Any = None
+        self,
+        trace_id: int,
+        x: Any,
+        y: Any,
+        *,
+        color: Any = None,
+        size: Any = None,
+        stroke: Any = None,
+        opacity: Any = None,
+        alpha: Any = None,
+        stroke_width: Any = None,
+        symbol: Any = None,
     ) -> tuple[dict[str, Any], list[bytes]]:
         """Streaming append: extend a scatter/line trace's canonical columns
         and get the client refresh message back. The widget's `append` sends
         it; headless callers can inspect or discard it. Payloads stay
         screen-bounded, so this is O(pixels) on the wire regardless of how
         much data has accumulated."""
-        return interaction.append_data(self, trace_id, x, y, color, size)
+        return interaction.append_data(
+            self,
+            trace_id,
+            x,
+            y,
+            color,
+            size,
+            stroke,
+            opacity,
+            alpha,
+            stroke_width,
+            symbol,
+        )
 
     # -- output -----------------------------------------------------------
 
