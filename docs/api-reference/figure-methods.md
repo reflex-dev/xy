@@ -50,6 +50,35 @@ document string or PNG bytes; with a path, they also write the result.
 browser CSS/WebGL fidelity. `custom_css` works for HTML and Chromium PNG;
 native PNG rejects author CSS because it has no browser cascade.
 
+## Unified Image Export
+
+~~~python
+chart.to_image(
+    format="png",              # png | jpeg/jpg | webp | svg | pdf
+    *,
+    width=None,
+    height=None,
+    scale=None,                # device-pixel-ratio for raster formats
+    background=None,           # "auto" | CSS color | "transparent"
+    engine=xy.Engine.auto,
+    quality=None,              # JPEG / Chromium-WebP, 1-100 (default 90)
+    optimize=False,
+    custom_css=None,
+    sandbox=True,
+    gl="software",
+) -> bytes
+chart.write_image(path, *, format=None, ...) -> bytes  # same options
+~~~
+
+`write_image()` infers the format from the file extension (`.png`, `.jpg`,
+`.jpeg`, `.webp`, `.svg`, `.pdf`; `.html` routes to `to_html()`), writes
+atomically, and returns the written bytes. `Engine.auto` deterministically
+selects the native path per format, switching to Chromium only when
+`custom_css` is passed. Omitted width/height/scale/background/quality fall
+back to the chart's `export_config()` defaults. Module-level batch export is
+`xy.write_images(figures=..., files=...)` — mixed formats, one shared browser
+session for Chromium-resolved files, atomic per-file writes.
+
 ## Data Readout and Mutation
 
 ~~~python
@@ -83,7 +112,8 @@ objects. `reflex_components()` is an alias retained for adapter code.
 ## FacetChart Methods
 
 `FacetChart` provides `figure()`, `widget()`, `show()`, `to_html()`/`html()`,
-`to_svg()`, `to_png()`, and `memory_report()`. Its widget methods return one
+`to_svg()`, `to_png()`, `to_image()`, `write_image()`, and `memory_report()`.
+Its widget methods return one
 widget per panel, and its figure escape hatch returns an internal facet grid.
 Grid dimensions come from `facet_chart()`, so the facet SVG/PNG methods do not
 accept per-call width or height. Facets do not expose append, pick, or

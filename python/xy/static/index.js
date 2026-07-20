@@ -6890,9 +6890,20 @@ exportMenu.appendChild(button);
 exportMenuItems.push(button);
 return button;
 };
-mkExportItem("png", "Export PNG", () => this._exportPng());
-mkExportItem("svg", "Export SVG", () => this._exportSvg());
-mkExportItem("csv", "Export CSV", () => this._exportCsv());
+const EXPORT_ITEMS = {
+png: ["Export PNG", () => this._exportRaster("png")],
+jpeg: ["Export JPEG", () => this._exportRaster("jpeg")],
+webp: ["Export WebP", () => this._exportRaster("webp")],
+svg: ["Export SVG", () => this._exportSvg()],
+csv: ["Export CSV", () => this._exportCsv()],
+};
+const configuredFormats = Array.isArray(this._exportConfig().formats)
+? this._exportConfig().formats
+: ["png", "svg", "csv"];
+for (const name of configuredFormats) {
+const item = EXPORT_ITEMS[name];
+if (item) mkExportItem(name, item[0], item[1]);
+}
 setZoomMenuOpen = (open, restoreFocus = false) => {
 const show = Boolean(open);
 if (show) {
@@ -6959,7 +6970,7 @@ selectMenu.style.top = `${Math.max(-rootTop, Math.min(maxTop, preferredTop))}px`
 selectMenu.style.visibility = "visible";
 };
 setExportMenuOpen = (open, restoreFocus = false) => {
-const show = Boolean(open);
+const show = Boolean(open) && exportMenuItems.length > 0;
 if (show) {
 setZoomMenuOpen(false);
 setSelectMenuOpen(false);
@@ -7050,6 +7061,7 @@ selectMenuItems[next].focus();
 }
 this._listen(grip, "keydown", (e) => {
 if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+if (!exportMenuItems.length) return;
 e.preventDefault();
 e.stopPropagation();
 setExportMenuOpen(true);
@@ -7286,7 +7298,13 @@ const y0 = yReversed ? yhi : ylo;
 const y1 = yReversed ? ylo : yhi;
 this._setView({ x0, x1, y0, y1 }, { animate });
 },
+_exportConfig() {
+const config = this.spec && this.spec.export;
+return config && typeof config === "object" ? config : {};
+},
 _exportFilename(extension) {
+const configured = this._exportConfig().filename;
+if (typeof configured === "string" && configured) return `${configured}.${extension}`;
 const title = String(this.spec.title || "xy-chart")
 .trim()
 .toLowerCase()
@@ -7376,26 +7394,50 @@ this._exportFilename("svg")
 );
 },
 _exportPng() {
+return this._exportRaster("png");
+},
+_exportRaster(format) {
 const svg = this._exportSvgMarkup();
 const sourceUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 const image = new Image();
+const config = this._exportConfig();
+const mime = { png: "image/png", jpeg: "image/jpeg", webp: "image/webp" }[format];
+if (!mime) return Promise.reject(new Error(`unsupported raster export ${format}`));
 return new Promise((resolve, reject) => {
 image.onload = () => {
-const scale = Math.max(1, window.devicePixelRatio || 1);
+const scale = Number.isFinite(config.scale) && config.scale > 0
+? config.scale
+: Math.max(1, window.devicePixelRatio || 1);
 const canvas = document.createElement("canvas");
 canvas.width = Math.round(this.size.w * scale);
 canvas.height = Math.round(this.size.h * scale);
 const ctx = canvas.getContext("2d");
+const configured = typeof config.background === "string" &&
+config.background !== "auto" ? config.background : null;
+const transparent = configured === "transparent" || configured === "none";
+if (format === "jpeg") {
+ctx.fillStyle = configured && !transparent ? configured : "#ffffff";
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+} else if (configured && !transparent) {
+ctx.fillStyle = configured;
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
 ctx.scale(scale, scale);
 ctx.drawImage(image, 0, 0, this.size.w, this.size.h);
+const quality = Number.isFinite(config.quality)
+? Math.min(1, Math.max(0.01, config.quality / 100))
+: 0.9;
 canvas.toBlob((blob) => {
 if (!blob) {
-reject(new Error("PNG encoding returned no data"));
+reject(new Error(`${format.toUpperCase()} encoding returned no data`));
 return;
 }
-this._downloadExport(blob, this._exportFilename("png"));
+const actual = blob.type === "image/jpeg" ? "jpg"
+: blob.type === "image/webp" ? "webp"
+: "png";
+this._downloadExport(blob, this._exportFilename(actual));
 resolve();
-}, "image/png");
+}, mime, format === "png" ? undefined : quality);
 };
 image.onerror = () => {
 reject(new Error("chart SVG could not be rasterized"));
@@ -7504,6 +7546,13 @@ return svg('<path d="M4 5 H16 M4 15 H16 M7 12 L10 9 L13 12"/>');
 case "png":
 return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
 '<path d="M7 13 L9 10.5 L11 12 L13.5 9 V15 H7 Z"/>');
+case "jpeg":
+return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+'<circle cx="8.5" cy="10" r="1.2"/><path d="M7 15 L10 12 L13.5 15 Z"/>');
+case "webp":
+return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
+'<path d="M7 11 C8 10 9 10 10 11 C11 12 12 12 13.5 11"/>' +
+'<path d="M7 14 C8 13 9 13 10 14 C11 15 12 15 13.5 14"/>');
 case "svg":
 return svg('<path d="M5 2.5 H12 L15.5 6 V17.5 H5 Z"/><path d="M12 2.5 V6 H15.5"/>' +
 '<path d="M7 13 L9 9 L11 14 L13.5 10"/>');

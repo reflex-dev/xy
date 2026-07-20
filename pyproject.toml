@@ -29,6 +29,9 @@ dev = [
     # Optional *input* format, never a runtime dependency: the Arrow ingest
     # tests importorskip it, so it lives in dev where CI exercises them.
     "pyarrow>=15",
+    # Decode oracle for the native JPEG/WebP encoders, never a runtime
+    # dependency: the image-export tests importorskip it.
+    "pillow>=10",
 ]
 # Plotly comparison charts. Matplotlib is deliberately not a project extra:
 # benchmark jobs that compare against it install it explicitly as an external
