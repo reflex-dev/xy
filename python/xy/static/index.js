@@ -563,7 +563,13 @@ float xyAxisCoord(float encoded, vec2 meta, int mode) {
   return value;
 }
 float xyMap(float encoded, vec2 map, vec2 meta, int mode) {
-  return xyAxisCoord(encoded, meta, mode) * map.x + map.y;
+  // Linear columns stay offset-encoded through the affine transform.  Decoding
+  // them first loses the low bits when a deeply zoomed window is far smaller
+  // than meta.offset; a later zoom-out then cannot recover the point spread.
+  // Log axes must decode because log10 is not affine.
+  return mode == 1
+    ? xyAxisCoord(encoded, meta, mode) * map.x + map.y
+    : encoded * map.x + map.y;
 }
 float xyViewCoord(float value, int mode) {
   if (mode == 1) return value > 0.0 ? log(value) / log(10.0) : -1e30;
@@ -3491,7 +3497,7 @@ this._pickW = this.canvas.width;
 this._pickH = this.canvas.height;
 }
 _map(meta, lo, hi, axisId = null) {
-if (!axisId) {
+if (!axisId || this._axisMode(axisId) === 0) {
 const mul = 2 / ((hi - lo) * meta.scale);
 const add = ((meta.offset - lo) / (hi - lo)) * 2 - 1;
 return [mul, add];

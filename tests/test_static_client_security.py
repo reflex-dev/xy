@@ -32,6 +32,19 @@ LOD_FILES = (("js/src/45_lod.js", _read(ROOT / "js/src/45_lod.js")), _INDEX, _ST
 THEME_FILES = (("js/src/20_theme.js", _read(ROOT / "js/src/20_theme.js")), _INDEX, _STANDALONE)
 
 
+def test_linear_mapping_preserves_offset_encoding_during_deep_zoom() -> None:
+    """Linear points must not be decoded to large absolute f32 coordinates
+    before applying the view transform; repeated box zooms would discard their
+    point-to-point deltas and flatten the cloud on the subsequent zoom-out."""
+    markers = (
+        "if (!axisId || this._axisMode(axisId) === 0) {",
+        ": encoded * map.x + map.y;",
+    )
+    for path, text in CLIENT_FILES:
+        for marker in markers:
+            assert marker in text, f"{path} no longer keeps linear mapping offset-relative"
+
+
 def test_chrome_visual_defaults_are_a_defeatable_where_stylesheet() -> None:
     """Chrome styling lives in a layered, zero-specificity :where() stylesheet
     so user class_names / styles always win (the CSS+Tailwind contract).
