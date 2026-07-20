@@ -116,13 +116,13 @@ def test_svg_tick_label_anchor_collision_parity() -> None:
 
     # 15-char labels; font_size=11, angle=-30, anchor="end", min_gap=8.
     #   new model:  spacing * sin(30°) = 90*0.5 = 45  >  11*1.2+8 = 21.2  → ok
-    #   old model:  extent = cos(30°)*102.3 + sin(30°)*13.2 ≈ 95.2
-    #               gap = 90 - 95.2 = -5.2  <  8  → would collide → stride-2
+    #   old model:  extent = cos(30°)*109.1 + sin(30°)*13.2 ≈ 101.1
+    #               gap = 90 - 101.1 = -11.1  <  8  → would collide → stride-2
     n = 9
-    cats = [f"Category_Name_{i:02d}" for i in range(n)]  # 15 chars each
+    categories = [f"Category_Name_{i:02d}" for i in range(n)]  # 16 chars each
     axis: dict = {
         "kind": "category",
-        "categories": cats,
+        "categories": categories,
         "range": [0.0, float(n - 1)],
         "tick_label_angle": -30,
         "tick_label_anchor": "end",
