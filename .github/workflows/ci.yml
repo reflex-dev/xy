@@ -268,8 +268,20 @@ jobs:
           - name: native-and-webgl
             libraries: xy,plotly_gl,bokeh_webgl,datashader
             max_n: 10000000
-          - name: raster-and-svg
-            libraries: matplotlib,seaborn,plotly_svg,bokeh_canvas
+          # These adapters each run a timed render plus a separate tracemalloc
+          # render. Keep them isolated so their expensive ceiling probes run in
+          # parallel instead of serializing the slowest benchmark job.
+          - name: matplotlib
+            libraries: matplotlib
+            max_n: 10000000
+          - name: seaborn
+            libraries: seaborn
+            max_n: 10000000
+          - name: plotly-svg
+            libraries: plotly_svg
+            max_n: 10000000
+          - name: bokeh-canvas
+            libraries: bokeh_canvas
             max_n: 10000000
           - name: html-adapters
             libraries: altair,hvplot_bokeh
