@@ -16,6 +16,7 @@ import contextlib
 import json
 import re
 import secrets
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -392,7 +393,16 @@ class ChromiumSession:
             self._proc.kill()
             self._proc.wait()
         self._stderr_file.close()
-        self._tmp.cleanup()
+        # Chromium helpers (crashpad handler, GPU process) can outlive the
+        # main process briefly and write into the profile while rmtree walks
+        # it, racing cleanup into ENOTEMPTY. Retry, then abandon leftovers.
+        for _ in range(20):
+            try:
+                self._tmp.cleanup()
+                return
+            except OSError:
+                time.sleep(0.25)
+        shutil.rmtree(self._tmp.name, ignore_errors=True)
 
     def __enter__(self) -> "ChromiumSession":
         return self
