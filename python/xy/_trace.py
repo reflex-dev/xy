@@ -78,16 +78,31 @@ class Trace:
             return self.count
         return len(self.x)
 
+    def per_item_channel_names(self) -> tuple[str, ...]:
+        """Names of channels whose values vary independently per rendered item."""
+        names: list[str] = []
+        if self.color_ch is not None and self.color_ch.mode != "constant":
+            names.append("color")
+        if self.stroke_ch is not None and self.stroke_ch.mode not in ("constant", "match_fill"):
+            names.append("stroke")
+        if self.size_ch is not None and self.size_ch.mode != "constant":
+            names.append("size")
+        names.extend(self.style_channels)
+        return tuple(names)
+
+    def has_per_item_channels(self) -> bool:
+        """Whether this trace must preserve independently styled items."""
+        return bool(self.per_item_channel_names())
+
     def use_density(self) -> bool:
         """Whether this scatter renders as a Tier-2 density grid (§5)."""
         if self.kind != "scatter":
             return False
         if self.force_density is not None:
             return self.force_density
-        per_point = (self.color_ch and self.color_ch.mode != "constant") or (
-            self.size_ch and self.size_ch.mode != "constant"
-        )
         # Per-point channels keep direct draw until the hard ceiling; plain
         # scatter aggregates earlier (its whole win is not drawing 10M dots).
-        threshold = DIRECT_SOFT_CEILING if per_point else SCATTER_DENSITY_THRESHOLD
+        threshold = (
+            DIRECT_SOFT_CEILING if self.has_per_item_channels() else SCATTER_DENSITY_THRESHOLD
+        )
         return self.n_points > threshold

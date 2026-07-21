@@ -3943,12 +3943,14 @@ this._renderLassoSelection?.();
 _now() {
 return performance.now();
 }
-_drawPoints(g, xm, ym, opacityScale = 1) {
-const simple =
-g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
+_canDrawSimplePoints(g) {
+return g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
+!g.rgbaBuf && !g.styleBuf && !g.strokeBuf &&
 (g.symbol || 0) === 0 && (g.pointStrokeWidth || 0) <= 0 &&
 Math.max(g.lodBlendShown ?? 0, g.lodBlend ?? 0) <= 0.001;
-if (simple) {
+}
+_drawPoints(g, xm, ym, opacityScale = 1) {
+if (this._canDrawSimplePoints(g)) {
 this._drawSimplePoints(g, xm, ym, opacityScale);
 return;
 }
@@ -4062,8 +4064,10 @@ this._setAxisUniforms(prog, "u_x", g.xMeta, g.xAxis);
 this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
 gl.uniform1f(u("u_dpr"), this.dpr);
 gl.uniform1f(u("u_size"), g.size);
-const [r, gg, b] = g.color;
-gl.uniform4f(u("u_color"), r, gg, b, this._fillOpacity(g.trace.style, 0.8) * opacityScale);
+const [r, gg, b, a] = g.color;
+gl.uniform4f(
+u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.8) * opacityScale
+);
 this._bindVao(
 g,
 "points-simple",

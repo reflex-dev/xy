@@ -1426,21 +1426,8 @@ def scatter(
             force_density=density,
         )
 
-        per_point = (
-            color_ch.mode != "constant"
-            or size_ch.mode != "constant"
-            or stroke_ch is not None
-            or bool(style_channels)
-        )
-        if density is None and per_point and n > DIRECT_SOFT_CEILING:
-            dropped_channels: list[str] = []
-            if color_ch.mode != "constant":
-                dropped_channels.append("color")
-            if stroke_ch is not None:
-                dropped_channels.append("stroke")
-            if size_ch.mode != "constant":
-                dropped_channels.append("size")
-            dropped_channels.extend(style_channels)
+        dropped_channels = trace.per_item_channel_names()
+        if density is None and dropped_channels and n > DIRECT_SOFT_CEILING:
             warnings.warn(
                 f"scatter has {n:,} points with per-point styles — above the "
                 f"direct ceiling ({DIRECT_SOFT_CEILING:,}). Falling back to a "

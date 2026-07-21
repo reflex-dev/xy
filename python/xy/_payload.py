@@ -911,14 +911,7 @@ class PayloadMixin(_Host):
             if (t.color_ch and t.color_ch.mode in ("constant", "continuous"))
             else channels.DEFAULT_COLORMAP
         )
-        dropped_channels: list[str] = []
-        if t.color_ch and t.color_ch.mode != "constant":
-            dropped_channels.append("color")
-        if t.stroke_ch is not None:
-            dropped_channels.append("stroke")
-        if t.size_ch and t.size_ch.mode != "constant":
-            dropped_channels.append("size")
-        dropped_channels.extend(t.style_channels)
+        dropped_channels = list(t.per_item_channel_names())
         density = {
             "buf": pw.ship_u8(encoded_grid),
             "w": w,

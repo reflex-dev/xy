@@ -956,11 +956,19 @@ try{{
           x0:mscol([2.5]),x1:mscol([3.5]),y0:mscol([0]),y1:mscol([6])}},
         {{id:2,kind:"bar",name:"c",tier:"direct",n_points:1,n_marks:1,
           style:{{color:"#2563eb",opacity:1,corner_radius:10,fill:msFill}},
-          bar:{{pos:mscol([2]),value1:mscol([7.5]),width:0.6,orientation:"vertical"}}}}
+          bar:{{pos:mscol([2]),value1:mscol([7.5]),width:0.6,orientation:"vertical"}}}},
+        {{id:3,kind:"scatter",name:"styled",tier:"direct",n_points:2,n_marks:2,
+          style:{{opacity:1}},x:mscol([0.2,3.8]),y:mscol([7.5,7.5]),
+          color:{{mode:"constant",color:"#ff0000"}},size:{{mode:"constant",size:10}},
+          channels:{{opacity:{{mode:"direct",components:1,dtype:"f32",buf:mscol([1,0.2]),n:2}}}}}}
       ],columns:msCols}};
     const holderMs=document.createElement("div");document.body.appendChild(holderMs);
     const vMs=xy.renderStandalone(holderMs,msSpec,msBuf);
+    let msSimpleCalls=0;
+    const msDrawSimple=vMs._drawSimplePoints;
+    vMs._drawSimplePoints=function(...args){{msSimpleCalls++;return msDrawSimple.call(this,...args);}};
     vMs._drawNow();
+    const vstyle=(msSimpleCalls===0 && !!vMs.gpuTraces[3].styleBuf)?1:0;
     const msRead=(dx,dy)=>{{
       const g3=vMs.gl,W3=g3.drawingBufferWidth,H3=g3.drawingBufferHeight;
       const x=Math.max(0,Math.min(W3-1,Math.round(dx/4*W3)));
@@ -1046,6 +1054,7 @@ try{{
     const msmooth=(gLn.n===65 && gLn._cpu.x.length===5 && gAr.n===65 && gAr._cpu.base.length===5)?1:0;
     vSm.destroy();holderSm.remove();
     const base=`XY_OK lit=${{lit}} total=${{w*h}} labels=${{labels}} pick=${{hits}} row=${{hasXY}} selAll=${{selAll}} selSome=${{selSome}} active=${{active}} btns=${{btns}} modebarHidden=${{modebarHidden}} modebarHover=${{modebarHover}} modebarNoCollapse=${{modebarNoCollapse}} modebarMenu=${{modebarMenu}} modebarDrag=${{modebarDrag}} modebarSelect=${{modebarSelect}} lassoEdit=${{lassoEdit}} modebarExport=${{modebarExport}} zin=${{zin}} smooth=${{smooth}} labelThrottle=${{labelThrottle}} hoverSkip=${{hoverSkip}} zanch=${{zanch}} retarget=${{retarget}} nosnap=${{nosnap}} prefetch=${{prefetch}} maxwait=${{maxwait}} box=${{boxOk}} zmode=${{zmode}} densityLit=${{densityLit}} drill=${{drilled}} pending=${{pending}} dblend=${{dblend}} dseq=${{dseq}} hov=${{hov}} sstale=${{sstale}} sfresh=${{sfresh}} plut=${{plut}} reg=${{reg}} refresh=${{refresh}} dpick=${{dpick}} hold=${{hold}} zoomout=${{zoomout}} broad=${{broadfallback}} dying=${{dying}} dback=${{dback}} dnorm=${{dnorm}} dnormDone=${{dnormDone}} stale=${{stale}} thrash=${{thrash}} qwire=${{qwire}} stream=${{stream}} tj=${{Math.round(maxJump*100)}} td=${{Math.round(reviveDip*100)}} malformed=${{malformed}} pixdet=${{pixdet}} splitbuf=${{splitbuf}} barBase=${{barBase}} histBase=${{histBase}} edgepad=${{edgepad}} mgrad=${{mgrad}} axisontop=${{axisontop}} mtipbase=${{mtipbase}} mcorner=${{mcorner}} mstroke=${{mstroke}} bgrad=${{bgrad}} bcorner=${{bcorner}} msmooth=${{msmooth}} bgocc=${{bgocc}}`;
+    const baseWithStyle=`${{base}} vstyle=${{vstyle}}`;
     // Responsive: 100%-by-100% chart in a 400x300 container tracks its parent;
     // growing the container must fire the ResizeObserver and re-render bigger.
     const spec2=JSON.parse(JSON.stringify(spec));
@@ -1173,7 +1182,7 @@ try{{
           && String(v5._dprMq.media).indexOf(`${{dpr0*2}}dppx`)>=0)?1:0;
         Object.defineProperty(window,"devicePixelRatio",{{value:dpr0,configurable:true}});
         v5.destroy(); holder5.remove();
-        document.title=`${{base}} fluid=${{fluid0}} grew=${{grew}} pick2=${{pick2}} destroyed=${{destroyed}} unsub=${{unsub}} ctxloss=${{ctxloss}} ctxcycles=${{ctxcycles}} ctxquiet=${{ctxquiet}} ctxpixels=${{ctxpixels}} ctxhashes=${{ctxhashes.join(",")}} ctxpost=${{ctxpost}} ctxevents=${{rootLost}}/${{rootRestored}} ctxcounts=${{v4._contextLossCount}}/${{v4._contextRestoreCount}} dprw=${{dprw}}`;
+        document.title=`${{baseWithStyle}} fluid=${{fluid0}} grew=${{grew}} pick2=${{pick2}} destroyed=${{destroyed}} unsub=${{unsub}} ctxloss=${{ctxloss}} ctxcycles=${{ctxcycles}} ctxquiet=${{ctxquiet}} ctxpixels=${{ctxpixels}} ctxhashes=${{ctxhashes.join(",")}} ctxpost=${{ctxpost}} ctxevents=${{rootLost}}/${{rootRestored}} ctxcounts=${{v4._contextLossCount}}/${{v4._contextRestoreCount}} dprw=${{dprw}}`;
       }}catch(e){{document.title="XY_ERROR "+(e.stack||e.message)}}}})();
     }}catch(e){{document.title="XY_ERROR "+(e.stack||e.message)}}}},250);
   }}catch(e){{document.title="XY_ERROR "+(e.stack||e.message)}}}},200);
@@ -1279,6 +1288,7 @@ try{{
     mark_stroke = int(re.search(r"mstroke=(\d+)", title).group(1))
     bar_grad = int(re.search(r"bgrad=(\d+)", title).group(1))
     bar_corner = int(re.search(r"bcorner=(\d+)", title).group(1))
+    vector_style = int(re.search(r"vstyle=(\d+)", title).group(1))
     mark_smooth = int(re.search(r"msmooth=(\d+)", title).group(1))
     bg_occlusion = int(re.search(r"bgocc=(\d+)", title).group(1))
     frac = lit / max(total, 1)
@@ -1445,6 +1455,8 @@ try{{
         raise SystemExit("mark-space gradient fill did not fade tip->base (bar program)")
     if bar_corner != 1:
         raise SystemExit("corner_radius left the bar corner pixel lit")
+    if vector_style != 1:
+        raise SystemExit("vector-styled scatter incorrectly entered the simple-point shader")
     if mark_smooth != 1:
         raise SystemExit("curve:'smooth' did not densify line/area GPU geometry")
     if bg_occlusion != 1:
