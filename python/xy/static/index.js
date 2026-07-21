@@ -3215,7 +3215,7 @@ this._refreshReductionBadges();
 }
 _drawDensitySample(g, x0, x1, y0, y1, opacityScale = 1) {
 const s = g && g.sampleOverlay;
-if (!s || !s.n || !this._viewInside(s.win)) return;
+if (!s || !s.n || !this._viewOverlaps(s.win)) return;
 this._drawPoints(
 s,
 this._map(s.xMeta, x0, x1, s.xAxis),
@@ -7729,12 +7729,13 @@ for (const g of targets) this._requestSampleRebin(g, view, seq);
 _requestSampleRebin(g, view, seq) {
 if (!g._homeDensity) g._homeDensity = g.density;
 const v0 = this.view0;
-const ex = Math.max(Math.abs(v0.x1 - v0.x0), 1e-300) * 1e-9;
-const ey = Math.max(Math.abs(v0.y1 - v0.y0), 1e-300) * 1e-9;
-const atHome =
-Math.min(view.x0, view.x1) <= v0.x0 + ex && Math.max(view.x0, view.x1) >= v0.x1 - ex &&
-Math.min(view.y0, view.y1) <= v0.y0 + ey && Math.max(view.y0, view.y1) >= v0.y1 - ey;
-if (atHome) {
+const homeSpanX = Math.max(Math.abs(v0.x1 - v0.x0), 1e-300);
+const homeSpanY = Math.max(Math.abs(v0.y1 - v0.y0), 1e-300);
+const viewSpanX = Math.abs(view.x1 - view.x0);
+const viewSpanY = Math.abs(view.y1 - view.y0);
+const notZoomedIn =
+viewSpanX >= homeSpanX * (1 - 1e-6) && viewSpanY >= homeSpanY * (1 - 1e-6);
+if (notZoomedIn) {
 if (g.density !== g._homeDensity) {
 const hd = g._homeDensity;
 this._applySampleRebinGrid(g, {
@@ -7980,6 +7981,15 @@ const vy0 = Math.min(y0, y1), vy1 = Math.max(y0, y1);
 const wx0 = Math.min(win.x0, win.x1), wx1 = Math.max(win.x0, win.x1);
 const wy0 = Math.min(win.y0, win.y1), wy1 = Math.max(win.y0, win.y1);
 return vx0 >= wx0 - ex && vx1 <= wx1 + ex && vy0 >= wy0 - ey && vy1 <= wy1 + ey;
+},
+_viewOverlaps(win) {
+if (!win) return false;
+const { x0, x1, y0, y1 } = this.view;
+const vx0 = Math.min(x0, x1), vx1 = Math.max(x0, x1);
+const vy0 = Math.min(y0, y1), vy1 = Math.max(y0, y1);
+const wx0 = Math.min(win.x0, win.x1), wx1 = Math.max(win.x0, win.x1);
+const wy0 = Math.min(win.y0, win.y1), wy1 = Math.max(win.y0, win.y1);
+return vx0 <= wx1 && vx1 >= wx0 && vy0 <= wy1 && vy1 >= wy0;
 },
 _viewInsideRange(xRange, yRange) {
 if (!xRange || !yRange) return false;
