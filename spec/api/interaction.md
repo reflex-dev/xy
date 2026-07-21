@@ -1,10 +1,14 @@
 # Interaction and events
 
 This document is the authority on which browser interactions exist, which are
-configurable, and what every event payload contains. Shipped in PRs #103/#105.
-Where another spec describes an interaction as "free" or "always on" (e.g.
-[chart-kind-contract.md](chart-kind-contract.md) §"What you get for free"),
-this document governs.
+configurable, and what every event payload contains. Selection, hover, click,
+and crosshair shipped in PRs #103/#105. The per-axis pan/zoom, reset, and
+view-event contract is specified in full by
+[`../design/pan-and-zoom-configuration.md`](../design/pan-and-zoom-configuration.md)
+and summarized here; where the two agree this document governs the surface and
+that one governs the rationale. Where another spec describes an interaction as
+"free" or "always on" (e.g. [chart-kind-contract.md](chart-kind-contract.md)
+§"What you get for free"), this document governs.
 
 Implementation: `python/xy/components.py` (`interaction_config`, `Chart`,
 `FacetChart`), `python/xy/_figure.py` (`set_interaction`,
@@ -22,6 +26,13 @@ not `False`. The client resolves each read through
 site's fallback; a present key is enabled only when it is exactly `true`.
 The fallback therefore *is* the default, and it differs per switch.
 
+The viewport keys that are not plain booleans — `default_drag_action` (a
+string), `pan_axes`/`zoom_axes`/`reset_axes` (axis-ID tuples), and
+`zoom_limits` (an axis-keyed magnification map) — serialize verbatim when set
+and are absent otherwise; the client fills their defaults (all declared axes,
+`"auto"`, `(1.0, None)`). Python validates them at chart construction, so a
+malformed policy fails before it reaches the wire (§2.1).
+
 `Chart` writes the interaction dict in three passes: chart-level keyword
 arguments, then any `xy.interaction_config(...)` children in order, then a
 final pass derived from the attached handlers (`components.py:2736-2740`).
@@ -30,9 +41,10 @@ together with `hover=False` yields `hover=True`.
 
 ## 2. `xy.interaction_config(...)`
 
-`python/xy/components.py:2424`. All switches are `Optional[bool]` and default
-to `None` (leave unset). "Default" below is the client-side behavior when the
-switch is never set.
+`python/xy/components.py:2437`. The boolean switches below are `Optional[bool]`
+and default to `None` (leave unset). "Default" is the client-side behavior when
+the switch is never set. The non-boolean viewport keys — `default_drag_action`,
+`pan_axes`, `zoom_axes`, `zoom_limits`, and `reset_axes` — are in §2.1.
 
 | Switch | Default | Effect when disabled |
 | --- | --- | --- |
@@ -41,12 +53,15 @@ switch is never set.
 | `select` | on | Suppresses the `xy:select` event and the `select_clear` message, removes the modebar Selection menu, and (with `brush`) disables shift-drag. |
 | `brush` | on | Same conjunction: `canBrush = brush && select` (`53_interaction.js:115`) gates every selection drag and the modebar Selection menu. |
 | `crosshair` | off | The two guide elements are created only when the flag is true, at init (`53_interaction.js:80`). Not togglable after mount. |
-| `navigation` | on | Master gate on pointer-drag pan, wheel zoom, box-zoom drags, and dblclick reset. |
-| `pan` | on | Plain-drag pan is ignored and the modebar Pan button is not built. Requires `navigation` as well. |
-| `zoom` | on | Wheel zoom, box zoom, dblclick reset, and the modebar zoom menu are all ignored. Requires `navigation` as well. |
-| `view_change` | off | Suppresses the `xy:view_change` event and the `view_change` kernel message. Linked-figure broadcast is independent (§4). |
+| `navigation` | on | Master gate on pointer-drag pan, wheel zoom, box-zoom drags, dblclick reset, and every modebar viewport control. |
+| `pan` | on | Plain-drag pan is ignored, the modebar Pan button is not built, and every zoom-enabled axis is contained (§2.2). Requires `navigation`. Pans `pan_axes` (§2.1). |
+| `zoom` | on | Master zoom gate: wheel zoom, box zoom, and the modebar zoom menu are all ignored. Requires `navigation`. Zooms `zoom_axes` (§2.1). |
+| `wheel_zoom` | on | Cursor-anchored wheel/trackpad zoom is ignored and the page keeps scrolling; box and button zoom are unaffected. Requires `navigation` and `zoom` (`53_interaction.js:271-273`). |
+| `box_zoom` | on | Box-zoom drags and the modebar Box Zoom button are removed, and `default_drag_action="zoom"` has no usable drag tool. Requires `navigation` and `zoom` (`53_interaction.js:112-113`, `50_chartview.js:419`). |
+| `zoom_buttons` | on | The modebar Zoom In (×0.5) / Zoom Out (×2) commands are removed; wheel and box zoom keep working. Requires `navigation` and `zoom` (`53_interaction.js:883`). |
+| `double_click_reset` | on | Double-click no longer resets the view. The modebar Reset View button is unaffected. Requires `navigation` only — reset is independent of `zoom` (`53_interaction.js:283-284`). |
 | `link_group` | unset | See §4. |
-| `link_axes` | `("x", "y")` | See §4. |
+| `link_axes` | all declared axes | See §4. |
 
 `link_select` is the one linking switch `interaction_config` does not expose:
 the table above carries `link_group` and `link_axes`, and
@@ -71,17 +86,65 @@ Pickability is *dynamic* for density traces — drill-in to exact points grants
 it, drill-out revokes it — so the Selection trigger is built whenever the
 `brush`/`select` flags allow it and its visibility tracks `_pickable` live:
 every recompute funnels through `ChartView._updatePickable()` (initial build,
-kernel payload swaps, drill updates, and drill drop), which also calls
+kernel payload swaps — including in-place `updatePayload` transitions — drill
+updates, and drill drop), which also calls
 `_syncModebarSelect`. Losing pickability hides the trigger, closes its menu,
 and reverts an active `select*` drag mode to `pan`; regaining it (including a
 re-drill) shows the trigger again. Regression coverage:
 `tests/test_modebar_select_drill.py`.
 
+### 2.1 Axis policy, drag mode, and zoom limits
+
+These keys are not booleans. They scope the actions above to concrete axes and
+bound how far zoom may travel. Python validates them at chart construction, so
+an empty tuple, an unknown or undeclared axis ID, or a zoom-limit interval that
+omits home magnification `1.0` fails before serialization. The full contract,
+including per-source semantics and the shared clamp pipeline, is
+[`../design/pan-and-zoom-configuration.md`](../design/pan-and-zoom-configuration.md).
+
+| Key | Type | Default | Role |
+| --- | --- | --- | --- |
+| `default_drag_action` | `"auto" \| "none" \| "pan" \| "zoom" \| "select" \| "select-x" \| "select-y" \| "select-lasso"` | `"auto"` | Initial tool for an unmodified primary-button drag. `"auto"` resolves pan → box zoom → rectangular select → none. `"zoom"` means **box zoom for drag only**; it does not touch wheel or button zoom. The modebar can change the live tool without mutating this configured default. |
+| `pan_axes` | axis-ID tuple | all declared axes | Concrete axis IDs a pan gesture may translate freely. An axis excluded here while zoom can navigate it is **contained** (§2.2). |
+| `zoom_axes` | axis-ID tuple | all declared axes | Concrete axis IDs wheel, box, and button zoom may scale. Selecting `"y"` never implies `"y2"`. |
+| `reset_axes` | axis-ID tuple | enabled `pan_axes` ∪ enabled `zoom_axes` | Axis IDs restored by reset. Resolved client-side; the modebar Reset button hides when it resolves empty. |
+| `zoom_limits` | `(min, max)` pair, or axis-ID → pair map | `(1.0, None)` per zoom axis | Magnification bounds relative to each axis's home span (`magnification = home_span / current_span`). The default stops zoom-out at the home window. Each interval must contain `1.0`; `(None, None)` opts an axis out. A bare pair broadcasts to every `zoom_axes` entry; a map applies per axis and missing selected axes inherit `(1.0, None)`. Python normalizes both forms to an axis-keyed wire map. |
+
+Axis policies are filters, not permissions: they never grant an action whose
+capability switch is off, and a disabled capability may still carry a dormant
+policy for reuse. Bounds set by `x_axis(bounds=…)` clamp position and maximum
+span after `zoom_limits`, on every mutation path.
+
+### 2.2 Containment of pan-locked axes
+
+Cursor-anchored zoom is a scaling composed with a translation
+(`Δcenter = span · (anchor − ½) · (1 − f)`), so merely excluding an axis from
+the pan *gesture* would leave its position reachable through zoom: a zoom-in /
+zoom-out chain at two cursor positions is an exact pan. Exclusion from pan
+therefore means containment, not gesture removal.
+
+An axis is **contained** when zoom navigation can change it but pan cannot:
+`navigation` and `zoom` are enabled, the axis is in `zoom_axes`, and either
+`pan` is off or the axis is outside `pan_axes`. A contained axis's window can
+never extend past its home extents, on any mutation path — pan, wheel, box,
+and button zoom, linked ranges, and programmatic updates share one clamp.
+Inside that envelope the axis stays live: zoomed in, plain drag still slides
+its window (containment bounds the motion instead of dropping the axis from
+the gesture) and pins flush at the home extent; at home magnification it
+cannot move at all. Consequently `zoom_limits` values that would allow
+magnification below `1.0` cannot carry a contained axis past its home window.
+Containment tightens the positional envelope only; an explicit
+`x_axis(bounds=…)` narrower than home still wins, and axes outside
+`zoom_axes` need no containment because nothing can change their span.
+
 ## 3. Event surface
 
 Every event is a `CustomEvent` on the chart root (`bubbles`, `composed`),
 named `xy:<name>`. `view` is `_eventView(source)` —
-`{x0, x1, y0, y1, source}` in data coordinates.
+`{ranges: {axisId: [lo, hi]}, x0, x1, y0, y1, source}` in data coordinates. The
+per-axis `ranges` map is canonical and covers every declared axis (including
+independent secondary axes such as `y2`); `x0`/`x1`/`y0`/`y1` are compatibility
+aliases for `ranges.x`/`ranges.y` (`50_chartview.js`, `_eventView`).
 
 | Event | Detail |
 | --- | --- |
@@ -90,12 +153,27 @@ named `xy:<name>`. `view` is `_eventView(source)` —
 | `xy:click` | `{x, y, view, row, trace, index}`; `row`/`trace`/`index` are `null` when the click hit no mark. |
 | `xy:brush` | `{range: {x0, x1, y0, y1}, view}` for box/axis-range drags, or `{polygon: [[x, y], …], view}` for lasso. |
 | `xy:select` | `{total, view}` — the resolved count after the kernel replies, or `total: 0` on clear. |
-| `xy:view_change` | `{x0, x1, y0, y1, source}`, coalesced to one dispatch per animation frame. |
+| `xy:view_change` | `{ranges, source, axes, phase, interaction_id}` plus `x0`/`x1`/`y0`/`y1` aliases, coalesced to one dispatch per animation frame. Fields explained below. |
 
-`source` on a view event is `"pan"` for drag-pan (`53_interaction.js:158`),
-`"linked"` for a view applied from a link-group peer, and `"view"` for
-everything else (wheel, box zoom, zoom in/out, reset, programmatic). The
-kernel coerces it with `str(content.get("source", "view"))`.
+A view event carries four fields beyond `ranges`/aliases. `source` names the
+input that caused the change — exactly one of `pan_drag`, `wheel_zoom`,
+`box_zoom`, `zoom_in`, `zoom_out`, `reset`, `linked`, or `programmatic`. `axes`
+lists only the axis IDs that actually changed after clamping, so a one-axis
+zoom on a dual-axis chart reports one ID. `phase` is `update` during a
+continuous gesture and `end` on its final frame (`start` is reserved but not
+currently emitted); discrete commands — zoom in/out, reset, box zoom,
+programmatic — emit `end` only. `interaction_id` is a monotonic id shared by
+every event of one continuous gesture. The kernel coerces `source` and `phase`
+with `str(...)`, defaulting to `"view"`/`"end"` when absent
+(`channel.py:246-253`).
+
+Local DOM `xy:view_change` events are always dispatched. Notebook and Reflex
+transport of the same payload is gated on *listener presence*, not a switch:
+the kernel handler returns immediately unless an `on_view_change` callback is
+registered (`channel.py:218`), and the anywidget path ships view events only
+when Python sets the derived `_transport_view_change` flag — which it does iff a
+callback exists (`widget.py:83-87`). There is no public `view_change`
+configuration flag; linked-figure broadcast is separate again (§4).
 
 Three further events report GL context lifecycle rather than user intent.
 They carry no `view`, and no interaction switch gates them:
@@ -115,8 +193,11 @@ Kernel-side callbacks (`python/xy/channel.py`), wired through
 
 - `on_hover(row)` / `on_click(row)` — the picked row dict resolved by
   `fig.pick(trace, index, drill_seq)`. Not called when the pick misses.
-- `on_view_change(view)` — `{"x0", "x1", "y0", "y1", "source"}`, after
-  `normalize_window(..., require_area=False)` (`channel.py:216-233`).
+- `on_view_change(view)` — `{"ranges", "source", "axes", "phase",
+  "interaction_id"}`, plus `"x0"/"x1"/"y0"/"y1"` aliases when `x`/`y` are
+  present. A legacy `{x0, x1, y0, y1}` message with no `ranges` is still
+  accepted and normalized into a `ranges` map (`channel.py:217-258`). The
+  handler is a no-op unless a callback is registered.
 - `on_brush(brush)` — `{"x0", "x1", "y0", "y1"}` for a range select, or
   `{"polygon": [[x, y], …]}` for a lasso.
 - `on_select(Selection)` — canonical row indices per trace, not JSON.
@@ -140,17 +221,23 @@ own broadcast. Because the transport is `BroadcastChannel`, linking spans
 tabs and windows of the same origin, and is a no-op where the constructor is
 unavailable.
 
-View messages carry the emitting figure's `_eventView` detail. A receiver
-copies only the axes listed in `link_axes` (filtered to `x`/`y`; anything
-else is dropped) onto its current view, rejects non-finite results, and
-applies the result with `animate: false`, `source: "linked"`, and
-`broadcast: false` so the update does not echo. A receiver with both `pan`
-and `zoom` disabled ignores view messages entirely.
+View messages carry the emitting figure's `_eventView` detail (the full
+`ranges` map). A receiver copies only the axis IDs in its own `link_axes` —
+resolved against *declared* axes, so a secondary `y2` links when both peers
+declare it and any absent or non-matching ID is left alone — onto its current
+view, rejects non-finite results, clamps to its own bounds, and applies the
+result with `animate: false`, `source: "linked"`, and `broadcast: false` so the
+update does not echo (`50_chartview.js:591-609`). Outgoing axes are the mirror:
+`actually-changed ∩ link_axes`. Applying a linked view does **not** consult
+local `navigation`/`pan`/`zoom`, so a read-only chart (`navigation=False`) still
+follows its link group — the mechanism behind an overview-plus-linked-detail
+pairing.
 
-Broadcast is not gated on `view_change`: `_emitViewChange` runs whenever
-either `view_change` is on *or* a link channel exists, and then gates the DOM
-event and the kernel message separately. Linked figures therefore stay in
-sync without emitting events.
+Broadcast has no dedicated switch. `_emitViewChange` runs on every committed
+view change: it always dispatches the local DOM event, sends kernel/Reflex
+transport only when a listener is registered (§3), and calls
+`_broadcastLinkedView` when a link channel exists. Linked figures therefore
+stay in sync whether or not anything listens for view events.
 
 Selection messages are gated on `link_select` at both ends. The payload is
 one of `{clear: true}`, `{range: {x0, x1, y0, y1}}`, or `{polygon: [...]}`;
@@ -164,12 +251,12 @@ renderer reads anywhere in `js/src/`.
 
 | Gesture | Action | Requires |
 | --- | --- | --- |
-| Plain drag | Pan (`dragMode === "pan"`) | `navigation` and `pan` |
+| Plain drag | The resolved drag mode — pan by default (`default_drag_action`, §2.1) | mode-dependent; pan needs `navigation` and `pan` |
 | **Shift**-drag | Box select, overriding the current drag mode (`53_interaction.js:117`) | `brush`, `select`, `_pickable` |
 | Drag in `select` / `select-lasso` / `select-x` / `select-y` mode | That selection shape | `brush`, `select`, `_pickable` |
-| Drag in `zoom` mode | Box zoom | `navigation` and `zoom` |
-| Wheel | Cursor-anchored zoom, factor `1.0015 ** deltaY`; `preventDefault` | `navigation` and `zoom` |
-| Double click | Clear selection, animate to the home view | `navigation` and `zoom` |
+| Drag in `zoom` mode | Box zoom, fitting `zoom_axes` on release | `navigation`, `zoom`, and `box_zoom` |
+| Wheel | Cursor-anchored zoom of `zoom_axes`, factor `1.0015 ** deltaY`; `preventDefault` | `navigation`, `zoom`, and `wheel_zoom` |
+| Double click | Reset `reset_axes` to home (animated); does **not** clear selection | `navigation` and `double_click_reset` |
 | Click without drag | Pick; a drag past threshold sets `_ignoreNextClick` and swallows the click | `click` |
 | Pointer down on a lasso vertex handle | Drag that vertex; re-runs the selection on release | an existing lasso |
 | `ArrowRight`/`ArrowDown`, `ArrowLeft`/`ArrowUp`, `Home`, `End` | Keyboard traversal of pickable points in data order | pickable points |
@@ -210,4 +297,4 @@ Not configurable through any switch: tooltip rendering and the kernel `pick`
 round-trip on hover; keyboard point traversal and the live-region readout;
 lasso vertex editing on an existing lasso; selection overlay rendering;
 modebar presence (subject only to the fit check); and view clamping to axis
-bounds. Everything in the §2 table is configurable; nothing else is.
+bounds. Everything in the §2 and §2.1 tables is configurable; nothing else is.

@@ -57,7 +57,7 @@ def test_keyboard_navigation_reuses_hover_and_tooltip_pipeline() -> None:
         "this._showTooltip(hit, clientX, clientY)",
         "this._drawKeepPick()",
         "Point ${prefix.flat + 1} of ${prefix.total}.",
-        "if (this._transitionActive()) return;",
+        "if (this._interactionTransitionActive()) return;",
         'this.a11yLive.textContent = "Readout closed."',
         'this._dispatchChartEvent("leave"',
     )

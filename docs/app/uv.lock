@@ -1289,7 +1289,7 @@ source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Fi
 
 [[package]]
 name = "reflex-site-shared"
-version = "0.0.38"
+version = "0.0.37.post1.dev0+f79d011d"
 source = { git = "https://github.com/reflex-dev/reflex?subdirectory=packages%2Freflex-site-shared&rev=main#f79d011d07050cfedabff5cc8b3670363617a4d8" }
 dependencies = [
     { name = "email-validator" },
@@ -1703,6 +1703,7 @@ requires-dist = [
     { name = "anywidget", specifier = ">=0.9" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6" },
     { name = "numpy", specifier = ">=1.24" },
+    { name = "pillow", marker = "extra == 'dev'", specifier = ">=10" },
     { name = "plotly", marker = "extra == 'bench'", specifier = ">=5" },
     { name = "pyarrow", marker = "extra == 'dev'", specifier = ">=15" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },

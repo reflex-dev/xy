@@ -124,6 +124,8 @@ export function XYChart(props) {
     onPointClick,
     onSelectEnd,
     onViewChange,
+    onAnimationStart,
+    onAnimationEnd,
     // Compile-time-only literal scanned by Reflex's TailwindV4Plugin. The
     // runtime chart receives the same classes from its XYBF payload; keeping
     // this prop out of divProps prevents an unknown attribute or class leak.
@@ -136,7 +138,23 @@ export function XYChart(props) {
   dbg("render", { id: divProps.id, token: String(token).slice(0, 30), src });
   // Live callback refs so socket handlers never close over stale props.
   const cbRef = useRef({});
-  cbRef.current = { onPointHover, onPointClick, onSelectEnd, onViewChange };
+  cbRef.current = {
+    onPointHover, onPointClick, onSelectEnd, onViewChange,
+    onAnimationStart, onAnimationEnd,
+  };
+
+  useEffect(() => {
+    const el = elRef.current;
+    if (!el) return undefined;
+    const start = (event) => cbRef.current.onAnimationStart?.(event.detail);
+    const end = (event) => cbRef.current.onAnimationEnd?.(event.detail);
+    el.addEventListener("xy:animation_start", start);
+    el.addEventListener("xy:animation_end", end);
+    return () => {
+      el.removeEventListener("xy:animation_start", start);
+      el.removeEventListener("xy:animation_end", end);
+    };
+  }, []);
 
   // Static mode: fetch the payload asset, render kernel-less.
   useEffect(() => {
@@ -145,6 +163,8 @@ export function XYChart(props) {
     const key = el.id || `src:${src}`;
     let view = null;
     let cancelled = false;
+    const handleViewChange = (event) => cbRef.current.onViewChange?.(event.detail);
+    el.addEventListener("xy:view_change", handleViewChange);
     fetch(src)
       .then((resp) => {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -168,6 +188,7 @@ export function XYChart(props) {
       if (view) view.destroy();
       view = null;
       window.__xy_views?.delete(key);
+      el.removeEventListener("xy:view_change", handleViewChange);
       el.replaceChildren();
     };
   }, [src]);
@@ -305,6 +326,7 @@ export function XYChart(props) {
           });
         }
       },
+      wantsViewChange: () => Boolean(cbRef.current.onViewChange),
       onMessage: (cb) => {
         viewCallbacks.push(cb);
         return () => {
@@ -328,6 +350,28 @@ export function XYChart(props) {
       );
       const selectionToRestore = lastSelect;
       payloadVersion = Number.isInteger(data.version) ? data.version : null;
+      const spec = eventSpec(data.spec, cbRef.current);
+      const nextBuffers = toSpans(data.spec, data.buffers);
+      if (view?.updatePayload?.(spec, nextBuffers)) {
+        // In-place data swap (animations path): the canvas never tears down,
+        // so no ghost is needed — but updatePayload re-homes the viewport and
+        // rebuilds trace state, so the republish restore contract still
+        // applies: pin the domain (the data-animation tick would keep
+        // lerping this.view otherwise) and re-request the selection mask.
+        settleGhost();
+        if (viewChanged) {
+          view._transitionView = null;
+          view._setView(previousView, { animate: false, source: "republish" });
+        }
+        if (selectionToRestore) {
+          restoringSelection = true;
+          const restore = cbRef.current.onSelectEnd
+            ? { ...selectionToRestore, include_rows: true }
+            : selectionToRestore;
+          emitMessage(restore);
+        }
+        return;
+      }
       settleGhost(); // a racing republish replaces the previous ghost
       const hasDensity = (data.spec.traces || []).some((t) => t.tier === "density");
       if (view) {
@@ -352,11 +396,10 @@ export function XYChart(props) {
         el.replaceChildren();
       }
       viewCallbacks.length = 0;
-      const spec = eventSpec(data.spec, cbRef.current);
       view = new ChartView(
         el,
         spec,
-        toSpans(data.spec, data.buffers),
+        nextBuffers,
         comm,
       );
       if (viewChanged) {

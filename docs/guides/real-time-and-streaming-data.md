@@ -14,6 +14,7 @@ import xy
 
 chart = xy.scatter_chart(
     xy.scatter([0.0, 1.0, 2.0], [0.0, 2.0, 4.0], name="stream"),
+    xy.animation(match="append", duration=220),
     xy.x_axis(label="time"),
     xy.y_axis(label="value"),
 )
@@ -31,6 +32,11 @@ Trace IDs follow rendered mark order, with one ID per rendered series.
 Appending validates the trace kind, coordinate lengths and ordering, and any
 per-point color or size channel tails. A failed append raises before committing
 a partial update.
+
+When an `animation()` child is present, the live browser matches retained x
+values and transitions the appended tail without changing the follow policy.
+See [Animations and data transitions](/docs/xy/styling/animations/) for
+keyed replacement, interruption, reduced motion, and large-data fallback.
 
 For ordered line traces, new x values must continue the series in ascending
 order. Build a new chart when changing component structure, adding marks, or

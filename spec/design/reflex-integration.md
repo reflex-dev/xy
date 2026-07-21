@@ -365,8 +365,10 @@ with the Python that produced it. One renderer for notebooks, static
 export, and Reflex.
 
 The wrapper: opens/reuses the shared namespace socket, `sub`s with the
-element's measured width, builds a `ChartView` per `payload` (full refresh =
-destroy + rebuild), bridges `comm` to `msg` events, and forwards semantic
+element's measured width, builds a `ChartView` for the first `payload`, and
+passes later full payloads to `ChartView.updatePayload` (preserving keyed
+animation state; destroy + rebuild is only the compatibility fallback),
+bridges `comm` to `msg` events, and forwards semantic
 events into Reflex's event system via the component's event-trigger props
 (`props.onPointHover(row)` → `addEvents(...)` → the user's handler).
 Client-side niceties: `view_change` resolves locally (no kernel round-trip;
@@ -456,12 +458,18 @@ tokens. A restore is tagged `source: "republish"` and does not redispatch
 `on_select_end` or `on_view_change`, preventing feedback loops. Clearing the
 selection resets dependent filters through the same handler.
 
-During a republish, the outgoing view remains as a pointer-inert overlay until
-the replacement has restored any selection and drilled density tier. The
-overlay then waits for tier fades to finish before being removed; a 1200 ms
-timeout prevents a lost reply from leaving stale content visible. The client
-retains brush geometry, so points arriving in a re-drill can reconstruct their
-selection mask without a second selection request.
+A republish first attempts an in-place data swap through
+`ChartView.updatePayload` (the animations path): the canvas never tears down,
+but the swap re-homes the viewport and rebuilds trace state, so the restore
+contract still applies — the wrapper pins the domain (clearing any in-flight
+domain interpolation) and re-requests the selection mask. When the in-place
+swap is refused and the view is rebuilt, the outgoing view remains as a
+pointer-inert overlay until the replacement has restored any selection and
+drilled density tier. The overlay then waits for tier fades to finish before
+being removed; a 1200 ms timeout prevents a lost reply from leaving stale
+content visible. The client retains brush geometry, so points arriving in a
+re-drill can reconstruct their selection mask without a second selection
+request.
 
 One handler can route several charts by stable token:
 
@@ -522,8 +530,13 @@ python/reflex-xy/
   reflex_xy/payload_asset.py static tier: Chart -> content-addressed XYBF
                              asset in assets/xy/ (§3.4)
   reflex_xy/assets/          XYChart.jsx; links xy's installed render client
-  examples/demo_app/         1M-point drilldown + hover + cross-filter +
-                             stream + a direct-Chart static payload
+examples/reflex/  (repo root) reflex-xy showcase: figure-var drilldown with
+                             hover/click/select events, a slider-driven +
+                             cross-filtered histogram, a streaming line, an
+                             on_view_change-computed detail chart, and both
+                             fixed-data tiers (direct Chart + inline() token)
+examples/fastapi/ (repo root) the same charts + a live 100M drilldown served
+                             from a plain FastAPI app (no committed HTML)
 tests/reflex_adapter/        69 tests: token/registry/var/bridge/payload-asset
                              units, component compile, and a real-websocket
                              integration suite (uvicorn + socketio client)

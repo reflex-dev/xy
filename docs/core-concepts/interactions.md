@@ -25,7 +25,6 @@ chart = xy.scatter_chart(
         select=True,
         brush=True,
         crosshair=True,
-        view_change=True,
     ),
 )
 
@@ -38,6 +37,10 @@ def browser_behavior_demo():
 
 Standalone HTML keeps these local browser behaviors. It cannot invoke Python
 because no kernel or server is attached.
+
+Viewport DOM events are always available. Add ``on_view_change`` to a live
+notebook or Reflex adapter when Python needs the semantic range events; there
+is no separate transport configuration flag.
 
 ## Python callbacks
 

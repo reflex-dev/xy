@@ -20,8 +20,9 @@ screen-bounded performance core, but the stable commitments today are narrower:
   `.dist-info`, static JavaScript bundles, `py.typed`, and, for native wheels,
   the Rust core. End users do not need Rust, Node, npm, or a CDN.
 - Source distributions include the release support surface: docs, tests,
-  benchmark harnesses/baselines, scripts, Rust/JS source, and the Reflex example
-  app source plus generated chart assets.
+  benchmark harnesses/baselines, scripts, Rust/JS source, and the example apps'
+  source (FastAPI and Reflex). Charts are generated live by the apps, so no
+  static chart HTML is committed or packaged.
 - Source installs require a Rust toolchain to build the native core. There is no
   NumPy fallback: on a platform with no wheel and no local Rust build, importing
   the compute layer raises a clear, actionable error naming the supported
@@ -78,7 +79,7 @@ These must pass before publishing or making a broad performance claim.
 | Real chart render | A real composed chart exports and paints in Chromium | `python scripts/smoke_render.py <chromium>` |
 | Step tier update | A decimated `step` chart keeps its risers after a synthetic kernel `tier_update` replaces the vertex buffers | `python scripts/step_tier_smoke.py <chromium>` |
 | Dashboard reliability | 10/20/50-chart dashboards stay nonblank under the render client's context governor | `python benchmarks/bench_dashboard.py --chart-counts 10,20,50 --chromium <chromium> --json dashboard-smoke.json` then `python scripts/verify_benchmark_report.py dashboard-smoke.json --kind dashboard-browser` |
-| sdist | Source archive contains required source/bundles, benchmark regression harness/baseline, release docs/tests/scripts, the Reflex example app, `PKG-INFO` version/dependencies matching `pyproject.toml`, no duplicate members, and no generated junk | `python scripts/verify_sdist.py dist/*.tar.gz` |
+| sdist | Source archive contains required source/bundles, benchmark regression harness/baseline, release docs/tests/scripts, the example apps' source, `PKG-INFO` version/dependencies matching `pyproject.toml`, no duplicate members, and no generated junk | `python scripts/verify_sdist.py dist/*.tar.gz` |
 | Native wheel | Platform wheel contains package-only files, exactly one native library, `METADATA` version/dependencies matching `pyproject.toml`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, and is tagged non-pure | `python scripts/verify_wheel.py dist/*.whl --expect-native` |
 | Fallback wheel | No-toolchain wheel contains package-only files, `METADATA` version/dependencies matching `pyproject.toml`, complete hash-checked `RECORD`, public export-surface markers, matching filename/`WHEEL` tags, is pure, and contains no native library | `python scripts/verify_wheel.py dist/*.whl --expect-pure` |
 | Wheel size | Platform wheel remains small enough for notebook installs | CI budget: 15 MB |
@@ -168,17 +169,14 @@ names: `Browser lifecycle smoke (Chromium)`, `Browser visual regression smoke
 (Chromium)`, `Step tier-update smoke (Chromium)`, `Browser interaction stress
 smoke (Chromium)`, and `Browser dashboard reliability smoke (Chromium)`.
 `make check-browser` runs all of these except the dashboard reliability smoke,
-which runs in CI only. The Reflex
-lifecycle smoke remounts every committed XY iframe asset, the visual
-regression smoke screenshots generated representative chart families plus every
-committed XY Reflex gallery asset except the Plotly comparison page,
-and the interaction stress smoke enforces real `ChartView` gesture budgets. The
-lifecycle smoke also requires every chart to report nonblank pixels through
-`initial`, `hash-navigation`, `narrow-resize`, `wide-resize`, `scroll-bottom`,
-`fast-scroll`, `visibility-change`, `context-restore`, and `restore`, then
-names the custom chrome, business overview, and retention cohort assets as
-critical and requires each asset/phase pair to report pixels through every
-iframe shell phase, including in-place reload and hidden boot/reveal. The
+which runs in CI only. The lifecycle and visual smokes both boot the
+`examples/fastapi` app under uvicorn and drive Chromium at its live routes (no
+committed HTML): the lifecycle smoke loads every gallery chart and the live
+drilldown and requires each to report nonblank pixels through `initial`,
+`narrow-resize`, `wide-resize`, `visibility-change`, `context-restore`, and
+`restore` (and to keep its runtime DOM slots), then confirms the index page's
+embedded iframes paint; the visual regression smoke screenshots every gallery
+route and checks nonblank/colored/occupancy plus tick-label overlap. The
 `context-restore` phase forces `WEBGL_lose_context` loss/restoration and
 requires the rebuilt chart to remain nonblank. The interaction stress smoke
 validates the real `ChartView` wheel zoom, pan, hover, crosshair, box zoom, and
@@ -287,25 +285,21 @@ For browser checks, pass the local Chromium/Chrome binary explicitly:
 make check-browser CHROMIUM=/path/to/chrome
 ```
 
-The lifecycle gate runs `scripts/reflex_lifecycle_smoke.py`. It loads each
-XY iframe asset twice, requires every asset to survive the child-level
-`initial`, `hash-navigation`, `narrow-resize`, `wide-resize`, `scroll-bottom`,
-`fast-scroll`, `visibility-change`, `context-restore`, and `restore` phases,
-then mounts all assets in a parent iframe shell and exercises hash navigation,
-fast scrolling, resize, visibility changes, full remount, in-place iframe
-reload, and a hidden-boot/reveal pass where charts initialize in zero-sized
-iframe slots before becoming visible. The `context-restore` phase forces
+The lifecycle gate runs `scripts/reflex_lifecycle_smoke.py`. It boots the
+`examples/fastapi` app under uvicorn and, for every gallery chart route plus
+`/drilldown`, injects a probe over CDP (before the chart client loads) and
+requires the view to survive the `initial`, `narrow-resize`, `wide-resize`,
+`visibility-change`, `context-restore`, and `restore` phases with nonblank
+pixels and its runtime DOM slots intact. The `context-restore` phase forces
 `WEBGL_lose_context` loss/restoration and requires the rebuilt chart to remain
-nonblank. Empty canvases, destroyed views, shortened lifecycle reports, failed
-context restores, missing shell-phase reports, or missing per-phase critical
-custom chrome/business/cohort reports fail the gate.
+nonblank. A final pass loads the index page and confirms its embedded iframes
+paint. Empty canvases, destroyed views, shortened lifecycle reports, failed
+context restores, or missing DOM slots fail the gate.
 
-The visual gate runs `scripts/visual_regression_smoke.py`. It verifies generated
-core-family charts and committed XY Reflex gallery assets with title,
-plot, x-axis, y-axis, occupancy, nonblank, color, and tick-overlap probes. It
-also renders static custom-chrome shells for the custom legend/tooltip and
-annotated heatmap examples, and fails if their external chrome DOM is missing
-or hidden.
+The visual gate runs `scripts/visual_regression_smoke.py`. It boots the same
+app and screenshots every gallery chart route plus `/drilldown`, checking
+nonblank, colored, unique-color, plot-occupancy, and tick-label-overlap
+invariants so a blank, flat, or collapsed chart fails the gate.
 
 The interaction gate runs `scripts/interaction_stress_smoke.py`, which is a
 smaller gated version of `benchmarks/bench_interaction.py`. The smoke validates
@@ -358,14 +352,14 @@ Before tagging a release:
   raise a clear ImportError on first compute — never a silent fallback).
 - Confirm the sdist verifier passed and the source archive contains the expected
   `PKG-INFO` package name, Python floor, runtime dependencies, docs, tests,
-  scripts, benchmark harnesses/baselines, Reflex example app, and no native
-  binaries or generated caches.
+  scripts, benchmark harnesses/baselines, the example apps' source, and no
+  native binaries or generated caches.
 - Confirm every wheel passes `scripts/verify_wheel.py --expect-native` and the
   install smoke loads `xy.kernels.BACKEND == "native"`. Wheel
   `METADATA` must keep `Name: xy`, `Requires-Python: >=3.11`,
   `anywidget>=0.9`, and `numpy>=1.24`; wheel `RECORD` must list every archive
   file exactly once with matching `sha256` and size fields. Wheels must stay
-  package-only: docs, tests, benchmarks, scripts, and `examples/reflex/`
+  package-only: docs, tests, benchmarks, scripts, and the `examples/` apps
   are sdist-only.
 - Confirm the wheel size budget is still below 15 MB.
 - Confirm README examples and `spec/api/api-examples.md` run against the tagged API.
@@ -432,8 +426,11 @@ Keep pushing these in low-conflict increments:
   path (today it only stops short of a real publish, it doesn't yet push to a
   test index), plus tying it to version-bump/tag validation and refreshed
   benchmark reports.
-- Keep example app pages split between small business charts and large-data
-  demos so ordinary usage does not get buried by the 100M stress cases.
+- Keep the two example apps focused: `examples/reflex` on the reflex-xy
+  integration surfaces (figure vars, events, state-driven and streaming
+  updates, `on_view_change`), and `examples/fastapi` on the framework-neutral
+  gallery plus the live 100M drilldown. Neither commits static chart HTML, and
+  both surface their own source via `inspect.getsource`.
 - Add first-class docs for the supported-platform matrix and the clear-error
   behavior when the native core is unavailable.
 - Move advisory type checking to a hard gate once the checker and codebase agree

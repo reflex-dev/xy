@@ -378,8 +378,15 @@ in the README).
   removed. On platforms with no wheel and no local Rust build, importing the
   compute layer raises a clear, actionable `ImportError` instead of silently
   degrading. `import xy` remains lightweight.
-- The Reflex example app moved from `reflex_xy_app/` to
-  `examples/reflex/`.
+- The example apps were restructured. `examples/reflex/` is now a pure
+  `reflex-xy` showcase (figure-var drilldown with hover/click/select events, a
+  slider-driven and cross-filtered histogram, a streaming line, an
+  `on_view_change`-computed detail chart, and both fixed-data tiers), and a new
+  `examples/fastapi/` app serves the same charts plus a live 100M-point
+  drilldown from a plain FastAPI app. Both read their own source with
+  `inspect.getsource` for the on-page code panels, and neither commits static
+  chart HTML (everything is generated live). The old
+  `python/reflex-xy/examples/demo_app` was removed.
 - 10M scatter payload build is ~3x faster (fused kernels; ABI v6), and the
   published benchmark tables were re-measured with a warmup-corrected,
   tracer-free harness. Benchmark methodology fixes: library warmup before

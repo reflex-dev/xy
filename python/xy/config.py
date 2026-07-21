@@ -26,6 +26,11 @@ SCATTER_DENSITY_THRESHOLD = 200_000
 # §5-F5 aggregation algebra — we warn and drop them, never silently mislead).
 DIRECT_SOFT_CEILING = 2_000_000
 
+# Stable-key matching retains a browser-side identity table for only bounded
+# direct traces. Larger/density traces fall back explicitly to index/snap
+# rather than allocating an unbounded JS Map alongside canonical data.
+MAX_ANIMATION_MATCH_ROWS = 200_000
+
 # Default density grid resolution (cells). Screen-bounded (§5); the client
 # requests a viewport-matched size on zoom via density_view.
 DENSITY_GRID = (512, 384)

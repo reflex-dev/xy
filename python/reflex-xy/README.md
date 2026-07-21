@@ -153,5 +153,12 @@ direct Chart (static) → `inline()` (fixed data, live kernel) →
 
 ## Demo
 
-`examples/demo_app/` in this directory is a runnable dashboard (drilldown
-scatter, hover readout, box-select cross-filter, live streaming line).
+The repository's [`examples/reflex/`](../../examples/reflex) is a runnable
+showcase of every linking method: a drillable figure var with hover / click /
+box-select events, a histogram driven by a slider and cross-filtered by the
+selection, a streaming line, a detail chart recomputed from `on_view_change`,
+and the two fixed-data tiers (a direct `xy.Chart` and an `inline()` token).
+Each section shows its own source, read live with `inspect.getsource`.
+
+For serving the same charts without Reflex, [`examples/fastapi/`](../../examples/fastapi)
+renders standalone HTML and a live 100M-point drilldown from a plain FastAPI app.

@@ -1,10 +1,10 @@
 import reflex as rx
-from reflex_base.plugins.sitemap import SitemapPlugin
+import reflex_xy
 
 config = rx.Config(
-    app_name="reflex_xy_app",
+    app_name="xy_reflex_demo",
     plugins=[
-        SitemapPlugin(),
-        rx.plugins.RadixThemesPlugin(),
+        rx.plugins.SitemapPlugin(),
+        reflex_xy.XYPlugin(),
     ],
 )

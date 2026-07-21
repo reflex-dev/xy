@@ -6,10 +6,10 @@ from pathlib import Path
 from scripts.merge_benchmark_reports import merge
 
 
-def _partial(path: Path, library: str) -> Path:
+def _partial(path: Path, library: str, *, environment: dict | None = None) -> Path:
     report = {
         "schema_version": 2,
-        "environment": {},
+        "environment": environment or {},
         "libraries": [library],
         "sizes": [1_000],
         "budget_s": 45.0,
@@ -39,6 +39,23 @@ def test_merge_preserves_expected_library_order(tmp_path: Path) -> None:
     assert list(merged["results"]) == ["a", "b"]
     assert merged["libraries"] == ["a", "b"]
     assert merged["ceilings"] == {"a": None, "b": None}
+
+
+def test_merge_uses_xy_environment_regardless_of_partial_order(tmp_path: Path) -> None:
+    competitor = _partial(
+        tmp_path / "competitor.json",
+        "matplotlib",
+        environment={"python": "competitor-only"},
+    )
+    native = _partial(
+        tmp_path / "native.json",
+        "xy",
+        environment={"python": "native-xy"},
+    )
+
+    merged = merge([competitor, native], ["xy", "matplotlib"])
+
+    assert merged["environment"] == {"python": "native-xy"}
 
 
 def test_merge_rejects_duplicate_libraries(tmp_path: Path) -> None:
