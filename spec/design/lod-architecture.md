@@ -244,8 +244,20 @@ invariants so future kinds don't regress them:
   that drops the density frame and strands drilled points over a stale surface.
   Every `_drawDensity` also skips a grid whose texture is not `gl.isTexture`, so
   the invariant can never surface as a GL error even if a new reference is added.
+- **T8 — a hold cannot outlive its reply:** the pending-view hold that keeps
+  drilled marks on screen while a refinement is in flight (T5) is transient by
+  contract — it must keep a frame scheduled so it re-evaluates every tick
+  (`js/src/45_lod.js` `lodDrawDensityTier`, held branch). If the reply never
+  lands (dropped as stale, coalesced away, or never sent — all reachable on the
+  live-drilldown transport), `_lodPendingAt` ages past the hold window,
+  `lodHoldPendingDrill` releases, and the exit fade restores the aggregate.
+  Re-arming only while the view animates was a way the zoom-out "stuck point
+  blob" could persist: a settled view with a stranded pending had nothing to
+  drive it out of the hold, so the drilled subset stayed painted and the full
+  point cloud never returned. (Complements T7, which fixes the same visible
+  symptom from the texture-lifetime side.)
 
-Any new tiered kind must state how it satisfies T1–T7 in its chart-kind
+Any new tiered kind must state how it satisfies T1–T8 in its chart-kind
 contract entry before it lands.
 
 ---

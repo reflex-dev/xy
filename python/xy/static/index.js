@@ -1814,7 +1814,7 @@ view._map(d.xMeta, x0, x1, d.xAxis),
 view._map(d.yMeta, y0, y1, d.yAxis)
 );
 }
-if (view._viewAnim) view.draw();
+view.draw();
 return;
 }
 const exitingDrill = d && g._drillWasInside;

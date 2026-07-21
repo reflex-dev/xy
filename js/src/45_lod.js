@@ -628,7 +628,16 @@ function lodDrawDensityTier(view, g, x0, x1, y0, y1) {
           view._map(d.yMeta, y0, y1, d.yAxis)
         );
       }
-      if (view._viewAnim) view.draw();
+      // A hold is transient — it lives only until the pending refinement lands.
+      // Keep a frame scheduled so the hold re-evaluates every tick: if that
+      // reply never arrives (dropped as stale, coalesced away, or never sent on
+      // the live-drilldown transport) `_lodPendingAt` ages past the hold window
+      // and lodHoldPendingDrill lets go on a later frame, so the exit fade below
+      // restores the aggregate instead of the held marks freezing on screen
+      // forever (the zoom-out "stuck point blob"). Previously this only re-armed
+      // while the view was animating, so a *settled* view whose pending reply
+      // was stranded had nothing to drive it out of the hold.
+      view.draw();
       return;
     }
     const exitingDrill = d && g._drillWasInside;
