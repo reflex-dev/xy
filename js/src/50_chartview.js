@@ -3031,8 +3031,15 @@ class ChartView {
   }
 
   _drawDensity(g, density, opacityScale = 1) {
-    opacityScale *= g._transitionOpacity ?? 1;
     const gl = this.gl;
+    const d = density || g.density;
+    // Structural guard: never bind a freed texture. Eviction pins every live
+    // density (lodDensityPinned), so this should not trigger — but a crossfade
+    // holds its source across frames, and binding a deleted handle is a hard
+    // WebGL error that aborts the draw, so treat an invalid texture as "nothing
+    // to draw" rather than risk it.
+    if (!d || !d.tex || !gl.isTexture(d.tex)) return;
+    opacityScale *= g._transitionOpacity ?? 1;
     const prog = this.densityProg;
     gl.useProgram(prog);
     const u = (n) => uniformOf(gl, prog, n);
@@ -3042,7 +3049,6 @@ class ChartView {
     gl.uniform4f(u("u_view"), vx0 ?? x0, vx1 ?? x1, vy0 ?? y0, vy1 ?? y1);
     gl.uniform1i(u("u_xmode"), this._axisMode(g.xAxis));
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
-    const d = density || g.density;
     gl.uniform4f(u("u_gridRange"), d.xRange[0], d.xRange[1], d.yRange[0], d.yRange[1]);
     gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style) * opacityScale);
     const constant = d.color;

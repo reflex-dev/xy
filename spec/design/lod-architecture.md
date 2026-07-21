@@ -233,8 +233,19 @@ invariants so future kinds don't regress them:
 - **T6 — invalid requests do not mutate:** malformed viewport/screen requests
   fail before `enter_drill`, `exit_drill`, cache replacement, or buffer
   version changes. The previous representation remains the authority.
+- **T7 — cached textures outlive every live reference:** the multi-window
+  density cache (`densityCache`, capped LRU) may free an *evicted* grid's GPU
+  texture, but never one still reachable from the trace. `lodDensityPinned`
+  pins the active grid, the previous grid, the crossfade source
+  (`_densitySwitchPrev`), the last-drawn grid (`_shownDensity`, which becomes
+  the *next* crossfade source), and the standalone overview restore point
+  (`_homeDensity`). Freeing a still-referenced texture makes the next crossfade
+  bind a deleted handle — a hard WebGL error (`bindTexture: … deleted object`)
+  that drops the density frame and strands drilled points over a stale surface.
+  Every `_drawDensity` also skips a grid whose texture is not `gl.isTexture`, so
+  the invariant can never surface as a GL error even if a new reference is added.
 
-Any new tiered kind must state how it satisfies T1–T6 in its chart-kind
+Any new tiered kind must state how it satisfies T1–T7 in its chart-kind
 contract entry before it lands.
 
 ---

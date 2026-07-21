@@ -590,6 +590,16 @@ function overviewEdge(value, domain, cells) {{
   return Math.max(0, Math.min(cells, raw));
 }}
 
+// Inverse of overviewEdge: the data coordinate at a source-bin boundary. A
+// requested window can extend past the data domain, where overviewEdge clamps
+// the bin index; mapping that clamped index back gives the range the grid
+// actually covers, which is what the renderer must be told (see below).
+function overviewEdgeValue(bin, domain, cells) {{
+  const span = domain[1] - domain[0];
+  if (!Number.isFinite(span) || cells <= 0) return domain[0];
+  return domain[0] + (bin / cells) * span;
+}}
+
 function overviewSum(ii, stride, x0, x1, y0, y1) {{
   return (
     ii[y1 * stride + x1] -
@@ -619,6 +629,18 @@ function localDensityUpdate(msg) {{
   const visible = overviewSum(built.integral, built.stride, bx0, bx1, by0, by1);
   if (visible <= DIRECT_POINT_BUDGET * LOCAL_DENSITY_EXACT_FACTOR) return null;
   if (sourceW < 16 || sourceH < 16) return null;
+
+  // The grid's cells span the clamped source bins [bx0,bx1]x[by0,by1], which
+  // cover only the on-domain part of the requested window. Report the data
+  // range those bins actually represent — not the raw request. Reporting the
+  // request would stretch the fixed-extent texture across a wider window
+  // whenever the view reaches past the data, sliding the density off the
+  // point cloud (drilled points and the retained sample draw at true data
+  // coordinates, so any mismatch here shows up as an offset).
+  const gridX0 = overviewEdgeValue(bx0, density.x_range, width);
+  const gridX1 = overviewEdgeValue(bx1, density.x_range, width);
+  const gridY0 = overviewEdgeValue(by0, density.y_range, height);
+  const gridY1 = overviewEdgeValue(by1, density.y_range, height);
 
   const requestedW = Math.round(Number(msg.w) || width);
   const requestedH = Math.round(Number(msg.h) || height);
@@ -651,8 +673,8 @@ function localDensityUpdate(msg) {{
           w: outW,
           h: outH,
           max,
-          x_range: [loX, hiX],
-          y_range: [loY, hiY],
+          x_range: [gridX0, gridX1],
+          y_range: [gridY0, gridY1],
         }},
       }}],
     }},
