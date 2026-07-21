@@ -27,6 +27,7 @@ const ATTR_SLOTS = {
   a_cval: 6, a_sval: 7, a_sel: 8, a_dval: 9,
   a_len0: 10, a_len1: 11,
   a_dash0: 10, a_dashDir: 11,
+  a_rgba: 12, a_style: 13, a_stroke: 14, a_radius: 15,
 };
 
 function makeProgram(gl, vs, fs) {
@@ -92,12 +93,14 @@ float xyViewValue(float coord, int mode) {
 
 const POINT_VS = `#version 300 es
 in float ax; in float ay; in float a_cval; in float a_sval; in float a_sel; in float a_dval;
+in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_xmeta; uniform vec2 u_ymeta; uniform int u_xmode; uniform int u_ymode;
 uniform float u_size; uniform int u_sizeMode; uniform vec2 u_sizeRange;
 uniform int u_colorMode; uniform float u_dpr; uniform int u_selActive;
 uniform float u_selectedOpacity; uniform float u_unselectedOpacity;
 out float v_lutCoord; out float v_dim; out float v_dval; out float v_ptSize; out float v_sel;
+out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke;
 ${AXIS_GLSL}
 void main() {
   gl_Position = vec4(xyMap(ax, u_xmap, u_xmeta, u_xmode), xyMap(ay, u_ymap, u_ymeta, u_ymode), 0.0, 1.0);
@@ -105,6 +108,9 @@ void main() {
   gl_PointSize = sz * u_dpr;
   v_ptSize = sz * u_dpr;
   v_sel = a_sel;
+  v_rgba = a_rgba;
+  v_style = a_style;
+  v_stroke = a_stroke;
   // continuous: coord = value in [0,1]; categorical: center of texel a_cval.
   v_lutCoord = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   // Local log-density LUT coord (drill handoff, §5): lets freshly drilled
@@ -200,26 +206,33 @@ precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
 uniform sampler2D u_dlut; uniform float u_dblend;
 uniform int u_symbol; uniform vec4 u_ptStroke; uniform float u_ptStrokeWidth; uniform int u_ptStrokeFace;
+uniform int u_strokeMode; uniform float u_strokeOpacity;
 uniform int u_selActive; uniform vec4 u_selColor; uniform vec4 u_unselColor;
 in float v_lutCoord; in float v_dim; in float v_dval; in float v_ptSize; in float v_sel;
+in vec4 v_rgba; in vec4 v_style; in vec4 v_stroke;
 out vec4 outColor;
 ${MARKER_SDF_GLSL}
 void main() {
   vec2 d = gl_PointCoord - 0.5;
   float sd;
-  bool lineMarker = u_symbol == 15 || u_symbol == 16;
+  int symbol = v_style.w >= 0.0 ? int(v_style.w + 0.5) : u_symbol;
+  bool lineMarker = symbol == 15 || symbol == 16;
   if (lineMarker) {
-    vec2 q = u_symbol == 16 ? vec2(d.x + d.y, d.y - d.x) * 0.707106781 : d;
-    float halfWidth = max(u_ptStrokeWidth, 1.0) / (2.0 * max(v_ptSize, 1.0));
+    vec2 q = symbol == 16 ? vec2(d.x + d.y, d.y - d.x) * 0.707106781 : d;
+    float itemStrokeWidth = v_style.z >= 0.0 ? v_style.z : u_ptStrokeWidth;
+    float halfWidth = max(itemStrokeWidth, 1.0) / (2.0 * max(v_ptSize, 1.0));
     vec2 a = abs(q);
     sd = min(max(a.x - 0.5, a.y - halfWidth), max(a.y - 0.5, a.x - halfWidth));
   } else {
-    sd = xyMarkerSdf(d, u_symbol);
+    // Scalar-only equivalent: xyMarkerSdf(d, u_symbol). The resolved symbol
+    // also permits a per-item glyph override from v_style.w.
+    sd = xyMarkerSdf(d, symbol);
   }
   float aa = fwidth(sd) + 1e-4;
   float shapeCov = clamp(0.5 - sd / aa, 0.0, 1.0);
   if (shapeCov <= 0.001) discard;
-  vec3 rgb = u_colorMode == 0 ? u_color.rgb : texture(u_lut, vec2(clamp(v_lutCoord, 0.0, 1.0), 0.5)).rgb;
+  vec4 paint = u_colorMode == 3 ? v_rgba : (u_colorMode == 0 ? u_color : vec4(texture(u_lut, vec2(clamp(v_lutCoord, 0.0, 1.0), 0.5)).rgb, 1.0));
+  vec3 rgb = paint.rgb;
   // Drill handoff (§5): near the density boundary, paint by local density with
   // the density ramp; ease into native colors as the zoom deepens (u_dblend->0).
   if (u_dblend > 0.001) {
@@ -232,15 +245,22 @@ void main() {
     vec4 sc = v_sel > 0.5 ? u_selColor : u_unselColor;
     rgb = mix(rgb, sc.rgb, sc.a);
   }
-  float fillAlpha = u_opacity;
+  float intrinsicAlpha = paint.a;
+  float fillAlpha = (v_style.y >= 0.0 ? v_style.y : intrinsicAlpha) * v_style.x * u_opacity;
   vec4 px = vec4(rgb * fillAlpha, fillAlpha);   // premultiplied fill
-  vec4 strokePx = u_ptStrokeFace == 1 ? px : u_ptStroke;
+  // Uniform (u_ptStroke) and per-item (v_stroke) stroke paint ship straight
+  // alpha and go through the same artist-alpha/opacity stack, so a scalar
+  // CSS edge fades under alpha overrides exactly like SVG/PNG export.
+  vec4 strokeSrc = u_strokeMode == 1 ? v_stroke : u_ptStroke;
+  float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : strokeSrc.a) * v_style.x * u_strokeOpacity;
+  vec4 strokePx = u_ptStrokeFace == 1 ? px : vec4(strokeSrc.rgb * strokeAlpha, strokeAlpha);
   if (lineMarker) {
     outColor = strokePx * (shapeCov * v_dim);
     return;
   }
-  if (u_ptStrokeWidth > 0.0) {
-    float sw = u_ptStrokeWidth / max(v_ptSize, 1.0);   // px -> gl_PointCoord units
+  float itemStrokeWidth = v_style.z >= 0.0 ? v_style.z : u_ptStrokeWidth;
+  if (itemStrokeWidth > 0.0) {
+    float sw = itemStrokeWidth / max(v_ptSize, 1.0);   // px -> gl_PointCoord units
     // The supplied point size includes the edge.  Recover Matplotlib's path
     // boundary half a stroke inside it, then source-over the centered stroke.
     float pathCov = clamp(0.5 - (sd + sw * 0.5) / aa, 0.0, 1.0);
@@ -460,13 +480,13 @@ void main() {
 // color. A separate program keeps the polyline path (LINE_VS/LINE_FS) free of
 // the extra meta uniforms and the sampler on its per-frame draw path.
 const SEGMENT_VS = `#version 300 es
-in float ax0; in float ay0; in float ax1; in float ay1; in float a_cval;
+in float ax0; in float ay0; in float ax1; in float ay1; in float a_cval; in vec4 a_rgba; in vec4 a_style;
 in float a_dash0; in float a_dashDir;
 uniform vec2 u_xmap; uniform vec2 u_ymap; uniform vec2 u_res; uniform float u_width;
 uniform int u_colorMode;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec2 u_y1meta;
 uniform int u_x0mode; uniform int u_x1mode; uniform int u_y0mode; uniform int u_y1mode;
-out float v_off; out float v_cval; out float v_dash;
+out float v_off; out float v_cval; out float v_dash; out vec4 v_rgba; out vec4 v_style;
 const vec2 corners[4] = vec2[4](vec2(0.,-1.), vec2(0.,1.), vec2(1.,-1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -479,24 +499,29 @@ void main() {
   dir /= len;
   vec2 n = vec2(-dir.y, dir.x);
   vec2 c = corners[gl_VertexID];
-  float half_w = u_width * 0.5 + 0.5;
+  float itemWidth = a_style.z >= 0.0 ? a_style.z : u_width;
+  float half_w = itemWidth * 0.5 + 0.5;
   vec2 pos = mix(pix0, pix1, c.x) + dir * (c.x * 2.0 - 1.0) * 0.5 + n * c.y * half_w;
   gl_Position = vec4(pos / u_res * 2.0 - 1.0, 0.0, 1.0);
   v_off = c.y * half_w;
   v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   v_dash = a_dash0 + c.x * len * a_dashDir;
+  v_rgba = a_rgba; v_style = a_style;
 }`;
 
 const SEGMENT_FS = `#version 300 es
 precision highp float; precision highp int;
-uniform vec4 u_color; uniform float u_width; uniform int u_colorMode; uniform sampler2D u_lut;
+uniform vec4 u_color; uniform float u_width; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
 uniform int u_dashCount; uniform float u_dashArr[8]; uniform float u_dashPeriod;
-in float v_off; in float v_cval; in float v_dash;
+in float v_off; in float v_cval; in float v_dash; in vec4 v_rgba; in vec4 v_style;
 out vec4 outColor;
 void main() {
-  float half_w = u_width * 0.5;
-  vec3 rgb = u_colorMode != 0 ? texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb : u_color.rgb;
-  float alpha = (1.0 - smoothstep(half_w - 0.5, half_w + 0.5, abs(v_off))) * u_color.a;
+  float itemWidth = v_style.z >= 0.0 ? v_style.z : u_width;
+  float half_w = itemWidth * 0.5;
+  vec4 paint = u_colorMode == 3 ? v_rgba : (u_colorMode != 0 ? vec4(texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb, 1.0) : u_color);
+  vec3 rgb = paint.rgb;
+  float paintAlpha = (v_style.y >= 0.0 ? v_style.y : paint.a) * v_style.x * u_opacity;
+  float alpha = (1.0 - smoothstep(half_w - 0.5, half_w + 0.5, abs(v_off))) * paintAlpha;
   if (u_dashCount > 0) {
     float m = mod(v_dash, u_dashPeriod);
     float acc = 0.0;
@@ -517,13 +542,14 @@ void main() {
 // color and antialiased barycentric edge strokes.
 const MESH_VS = `#version 300 es
 in float ax0; in float ay0; in float ax1; in float ay1; in float ax2; in float ay2; in float a_cval;
+in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke;
 uniform vec2 u_xmap; uniform vec2 u_ymap;
 uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_x2meta;
 uniform vec2 u_y0meta; uniform vec2 u_y1meta; uniform vec2 u_y2meta;
 uniform int u_x0mode; uniform int u_x1mode; uniform int u_x2mode;
 uniform int u_y0mode; uniform int u_y1mode; uniform int u_y2mode;
 uniform int u_colorMode;
-out float v_cval; out vec3 v_bary;
+out float v_cval; out vec3 v_bary; out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke;
 ${AXIS_GLSL}
 void main() {
   int vertex = gl_VertexID % 3;
@@ -536,21 +562,29 @@ void main() {
   gl_Position = vec4(xyMap(x, u_xmap, xm, xmode), xyMap(y, u_ymap, ym, ymode), 0.0, 1.0);
   v_cval = u_colorMode == 2 ? (a_cval + 0.5) / 256.0 : a_cval;
   v_bary = vertex == 0 ? vec3(1.,0.,0.) : (vertex == 1 ? vec3(0.,1.,0.) : vec3(0.,0.,1.));
+  v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke;
 }`;
 
 const MESH_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut; uniform float u_opacity;
-uniform vec4 u_stroke; uniform float u_strokeWidth;
-in float v_cval; in vec3 v_bary;
+uniform vec4 u_stroke; uniform float u_strokeWidth; uniform int u_strokeMode; uniform float u_strokeOpacity;
+in float v_cval; in vec3 v_bary; in vec4 v_rgba; in vec4 v_style; in vec4 v_stroke;
 out vec4 outColor;
 void main() {
-  vec3 rgb = u_colorMode == 0 ? u_color.rgb : texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb;
-  vec4 fill = vec4(rgb * u_opacity, u_opacity);
-  if (u_strokeWidth > 0.0) {
+  vec4 paint = u_colorMode == 3 ? v_rgba : (u_colorMode == 0 ? u_color : vec4(texture(u_lut, vec2(clamp(v_cval, 0.0, 1.0), 0.5)).rgb, 1.0));
+  float alpha = (v_style.y >= 0.0 ? v_style.y : paint.a) * v_style.x * u_opacity;
+  vec4 fill = vec4(paint.rgb * alpha, alpha);
+  float strokeWidth = v_style.z >= 0.0 ? v_style.z : u_strokeWidth;
+  if (strokeWidth > 0.0) {
     float edge = min(v_bary.x, min(v_bary.y, v_bary.z));
-    float coverage = smoothstep(0.0, max(fwidth(edge) * u_strokeWidth, 1e-5), edge);
-    outColor = mix(u_stroke, fill, coverage);
+    float coverage = smoothstep(0.0, max(fwidth(edge) * strokeWidth, 1e-5), edge);
+    // Both stroke sources ship straight alpha; the per-item alpha stack
+    // applies to scalar strokes as well (parity with static exporters).
+    vec4 strokeSrc = u_strokeMode == 1 ? v_stroke : u_stroke;
+    float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : strokeSrc.a) * v_style.x * u_strokeOpacity;
+    vec4 stroke = vec4(strokeSrc.rgb * strokeAlpha, strokeAlpha);
+    outColor = mix(stroke, fill, coverage);
   } else {
     outColor = fill;
   }
@@ -649,9 +683,11 @@ uniform vec2 u_x0meta; uniform vec2 u_x1meta; uniform vec2 u_y0meta; uniform vec
 uniform int u_xmode; uniform int u_ymode;
 uniform vec4 u_edgePad;
 uniform vec2 u_res;
-in float a_cval; uniform int u_colorMode;
+in float a_cval; in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke; in vec2 a_radius;
+uniform int u_colorMode;
 out float v_lutCoord;
 out vec2 v_local; out vec2 v_half; out float v_t;
+out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke; out vec2 v_radius;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -668,6 +704,7 @@ void main() {
   v_half = abs(pB - pA) * 0.5;
   v_local = mix(pA, pB, c) - (pA + pB) * 0.5;
   v_t = c.y;
+  v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke; v_radius = a_radius;
   gl_Position = vec4(mix(x0, x1, c.x), mix(y0, y1, c.y), 0.0, 1.0);
 }`;
 
@@ -677,6 +714,7 @@ void main() {
 // histograms/candles/waterfalls.
 const BAR_VS = `#version 300 es
 in float a_pos; in float a_v0; in float a_v1; in float a_cval;
+in vec4 a_rgba; in vec4 a_style; in vec4 a_stroke; in vec2 a_radius;
 uniform vec2 u_pmap; uniform vec2 u_v0map; uniform vec2 u_v1map;
 uniform vec2 u_pmeta; uniform vec2 u_v0meta; uniform vec2 u_v1meta;
 uniform int u_pmode; uniform int u_vmode;
@@ -686,6 +724,7 @@ uniform vec2 u_res;
 uniform int u_colorMode;
 out float v_lutCoord;
 out vec2 v_local; out vec2 v_half; out float v_t;
+out vec4 v_rgba; out vec4 v_style; out vec4 v_stroke; out vec2 v_radius;
 const vec2 corners[4] = vec2[4](vec2(0.,0.), vec2(1.,0.), vec2(0.,1.), vec2(1.,1.));
 ${AXIS_GLSL}
 void main() {
@@ -711,6 +750,7 @@ void main() {
   vec2 pB = (clipB * 0.5 + 0.5) * u_res;
   v_half = abs(pB - pA) * 0.5;
   v_local = vec2(mix(pA.x, pB.x, c.x), mix(pA.y, pB.y, c.y)) - (pA + pB) * 0.5;
+  v_rgba = a_rgba; v_style = a_style; v_stroke = a_stroke; v_radius = a_radius;
 }`;
 
 // Shared by the rect and compact-bar programs: flat fill or LUT color, then an
@@ -722,29 +762,45 @@ const RECT_FS = `#version 300 es
 precision highp float; precision highp int;
 uniform vec4 u_color; uniform int u_colorMode; uniform sampler2D u_lut;
 uniform vec2 u_radius; uniform float u_strokeWidth; uniform vec4 u_stroke;
+uniform int u_strokeMode; uniform float u_strokeOpacity;
+uniform float u_opacity;
 uniform vec2 u_res;
 in float v_lutCoord;
 in vec2 v_local; in vec2 v_half; in float v_t;
+in vec4 v_rgba; in vec4 v_style; in vec4 v_stroke; in vec2 v_radius;
 out vec4 outColor;
 ${GRAD_GLSL}
 void main() {
-  vec3 rgb = u_colorMode == 0 ? u_color.rgb : texture(u_lut, vec2(clamp(v_lutCoord, 0.0, 1.0), 0.5)).rgb;
-  vec4 premult = vec4(rgb * u_color.a, u_color.a);
-  // Compose the mark opacity (u_color.a) over the gradient — premultiplied, so
-  // one scalar multiply fades every stop, including a fade-to-transparent.
-  if (u_gradMode != 0) premult = xyGradSample(xyGradT(v_t, u_res)) * u_color.a;
-  if (u_radius.x > 0.0 || u_radius.y > 0.0 || u_strokeWidth > 0.0) {
+  vec4 paint = u_colorMode == 3 ? v_rgba : (u_colorMode == 0 ? u_color : vec4(texture(u_lut, vec2(clamp(v_lutCoord, 0.0, 1.0), 0.5)).rgb, 1.0));
+  float alpha = (v_style.y >= 0.0 ? v_style.y : paint.a) * v_style.x * u_opacity;
+  vec4 premult = vec4(paint.rgb * alpha, alpha);
+  if (u_gradMode != 0) {
+    vec4 gradient = xyGradSample(xyGradT(v_t, u_res));
+    float gradientAlpha = (v_style.y >= 0.0 ? v_style.y : gradient.a) * v_style.x * u_opacity;
+    // Gradient stops are uploaded premultiplied. Recover their straight RGB
+    // before applying an artist-alpha override, then premultiply the result.
+    vec3 gradientRgb = gradient.a > 1e-6 ? gradient.rgb / gradient.a : vec3(0.0);
+    premult = vec4(gradientRgb * gradientAlpha, gradientAlpha);
+  }
+  vec2 radius = v_radius.x >= 0.0 ? v_radius : u_radius;
+  float strokeWidth = v_style.z >= 0.0 ? v_style.z : u_strokeWidth;
+  if (radius.x > 0.0 || radius.y > 0.0 || strokeWidth > 0.0) {
     // u_radius = (tip, base) in mark space: v_t > 0.5 is the tip half, so
     // corner_radius=(6, 0) rounds only the value end of the bar. On the
     // straight sides the SDF reduces to |local|-half independent of r, so
     // differing radii meet with no seam.
-    float r = min(v_t > 0.5 ? u_radius.x : u_radius.y, min(v_half.x, v_half.y));
+    float r = min(v_t > 0.5 ? radius.x : radius.y, min(v_half.x, v_half.y));
     vec2 q = abs(v_local) - (v_half - vec2(r));
     float d = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - r;
     float aa = 0.75;
-    if (u_strokeWidth > 0.0) {
-      float inner = 1.0 - smoothstep(-aa, aa, d + u_strokeWidth);
-      premult = mix(u_stroke, premult, inner);
+    if (strokeWidth > 0.0) {
+      // Both stroke sources ship straight alpha; the per-item alpha stack
+      // applies to scalar strokes as well (parity with static exporters).
+      vec4 strokeSrc = u_strokeMode == 1 ? v_stroke : u_stroke;
+      float strokeAlpha = (v_style.y >= 0.0 ? v_style.y : strokeSrc.a) * v_style.x * u_strokeOpacity;
+      vec4 stroke = vec4(strokeSrc.rgb * strokeAlpha, strokeAlpha);
+      float inner = 1.0 - smoothstep(-aa, aa, d + strokeWidth);
+      premult = mix(stroke, premult, inner);
     }
     premult *= 1.0 - smoothstep(-aa, aa, d);
   }
