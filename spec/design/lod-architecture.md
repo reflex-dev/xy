@@ -16,9 +16,13 @@ Interactive means: pan/zoom stays inside the §17 frame budget at any N.
 ## 1. The tier ladder (per-kind, not global)
 
 A **tier is a property of a (trace, viewport) pair**, never of a dataset:
-`tier = f(visible_count, mark_pixel_area × overdraw)` (§5). Implemented today
-for scatter (drill-in/out with hysteresis); this doc extends the same rule to
-every kind.
+what ships is count-only, `tier = f(visible_count)`, hysteresis-guarded (§5).
+`drill_decision(visible, budget, in_drill, exit_factor)` in `python/xy/lod.py`
+returns `visible <= budget * (exit_factor if in_drill else 1.0)`; `js/src/45_lod.js`
+mirrors it. Implemented today for scatter (drill-in/out with hysteresis); this
+doc extends the same rule to every kind. Folding `mark_pixel_area × overdraw`
+into the decision is dossier F3 — *specified, pending, not implemented*; no
+pixel-area or overdraw term exists in `python/xy/` or `js/src/` today.
 
 | Tier | Name | Representation | Cost model | Status |
 |---|---|---|---|---|
@@ -258,14 +262,26 @@ contract entry before it lands.
    Pyramid-served density views still need tile-aware sample overlays so the
    same anti-shimmer contract holds without rescanning raw rows.
 
-**Phase 3 — pyramid (~2-3 wks)**
-6. `src/tiles.rs`: pyramid build + tile fetch (C ABI: `xy_pyramid_build`,
-   `xy_pyramid_tile`); Python `Pyramid` cache keyed per trace; build lazily
-   on first Tier-2 entry above a size threshold (recorded).
-7. `density_view` serves from pyramid when present (level select + compose);
-   below-floor re-bin via `range_indices`.
+**Phase 3 — pyramid (build + serve shipped; client cache and bench gate open)**
+6. **Done (count plane only):** `src/tiles.rs` builds a square count pyramid
+   over the trace's full data bounds — finest level is `PYRAMID_BASE_DIM`²
+   (2048², `python/xy/config.py`), each coarser level an exact 4→1 u64 sum
+   saturating to u32, so every level conserves total count. C ABI is
+   `xy_pyramid_build` / `xy_pyramid_append` / `xy_pyramid_count` /
+   `xy_pyramid_compose` / `xy_pyramid_free` (no per-tile fetch entry point;
+   composition happens kernel-side). Handles are slab indices behind a mutex,
+   cached per trace and built lazily by `interaction._ensure_pyramid` on the
+   first density view at ≥ `PYRAMID_MIN_POINTS` (2,000,000), released by a
+   weakref finalizer. Channel planes (§2, §4.1) are not built yet.
+7. **Done:** `density_view` estimates the window with `pyramid_count` and
+   serves it with `pyramid_compose` when that estimate sits safely above the
+   drill threshold; `compose` picks the coarsest level that still meets the
+   render resolution and refuses beyond `MAX_UPSAMPLE` (2×), so below-floor
+   and near-drill windows fall through to the exact `range_indices` +
+   `bin_2d` path. Level is recorded per update as `binning: "pyramid-L<l>"`.
 8. Client: tile-keyed cache replaces window-keyed `densityCache` (same
-   eviction, same crossfades); `pyramid_level` in updates.
+   eviction, same crossfades). Still pending — `js/src/45_lod.js` keys the
+   cache by density window, and no client code reads the served level.
 9. Bench gate: 100M pan p95 < 16ms kernel time, zoom step < 50ms, memory
    within 1.5× finest level.
 

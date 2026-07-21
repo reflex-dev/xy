@@ -259,6 +259,12 @@ colorbar domains) fully cleared.
   Out-of-order frames (`left >= right`, `bottom >= top`) raise `ValueError`
   as in Matplotlib. This clears the two loud PDSH `subplots_adjust` cells
   (04.08 2×3 labeled grid, 04.10 5×5 zero-gap faces).
+- The interactive modebar is now off by default, matching Matplotlib's inline
+  backend: `rcParams["toolbar"]` defaults to `"none"`, and panels draw the
+  on-chart controls only when it holds any other value (`"toolbar2"`,
+  `"toolmanager"`). `figure(toolbar=...)` — also reachable through
+  `subplots(..., toolbar=...)`, which forwards it to `figure` — overrides
+  rcParams for one figure.
 
 Future entries must identify the Matplotlib release/revision, inventory
 additions or removals, and any compatibility-level changes.

@@ -220,13 +220,13 @@ def validate_ci_workflow(path: Path = DEFAULT_CI_WORKFLOW) -> list[str]:
         '--browser-reps 12 --chromium "$CHROME" --require-browser --json transport.json',
         "scripts/verify_benchmark_report.py transport.json --kind transport-loopback",
         "scripts/check_regressions.py --scatter scatter.json --kernel kernel.json",
-        "--transport transport.json --emit-md docs/engineering/benchmark_metrics.md",
+        "--transport transport.json --emit-md spec/benchmarks/metrics.md",
         "Upload regression benchmark report",
         "if: always()",
         "actions/upload-artifact@",
         "regression-benchmark-report",
         "if-no-files-found: warn",
-        "docs/engineering/benchmark_metrics.md",
+        "spec/benchmarks/metrics.md",
         "transport.json",
     )
     _require_job_contains(

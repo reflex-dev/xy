@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SNAPSHOT = ROOT / "tests/pyplot/matplotlib_311_plotting.json"
 METADATA = ROOT / "tests/pyplot/compatibility.json"
 CORPUS = ROOT / "tests/pyplot/corpus"
-OUTPUT = ROOT / "docs/engineering/matplotlib-compat-matrix.md"
+OUTPUT = ROOT / "spec/matplotlib/compat-matrix.md"
 
 
 def _load(path: Path) -> dict:

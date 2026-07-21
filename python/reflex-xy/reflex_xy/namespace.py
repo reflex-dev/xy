@@ -1,6 +1,6 @@
 """The xy data plane as a second socket.io namespace on Reflex's server.
 
-Transport decision (docs/engineering/design/reflex-integration.md): instead of new HTTP
+Transport decision (spec/design/reflex-integration.md): instead of new HTTP
 endpoints, the data plane multiplexes onto the app's existing engine.io
 websocket as its own namespace (`/_xy`). socket.io multiplexing means the
 browser keeps ONE physical connection for app state and chart data; this

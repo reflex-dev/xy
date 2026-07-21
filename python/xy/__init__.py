@@ -2,7 +2,7 @@
 
 Cost scales with pixels on screen, not points in the dataset: native Rust core
 in the Python process, offset-encoded f32 binary transport, M4 decimation, GPU
-density aggregation, and a WebGL2 render client. See docs/engineering/design-dossier.md.
+density aggregation, and a WebGL2 render client. See spec/design-dossier.md.
 
 One declarative API over one engine — Reflex-flavored composition with
 `on_*` event props:

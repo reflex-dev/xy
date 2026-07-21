@@ -9,7 +9,7 @@
 
 Every call translates onto the public declarative API (`xy.chart`
 and friends); the engine never knows this module exists. Coverage is
-corpus-defined — see docs/engineering/matplotlib-compat.md for the supported surface
+corpus-defined — see spec/matplotlib/compat.md for the supported surface
 and the loud `NotImplementedError` list.
 """
 
@@ -722,7 +722,7 @@ def plot(
     ``marker``, ``markersize``/``ms``, ``markerfacecolor``/``mfc``,
     ``markeredgecolor``/``mec``, ``markeredgewidth``/``mew``,
     ``markevery``, ``drawstyle``, and ``transform``. Anything else
-    raises a loud error (see docs/matplotlib-compat.md).
+    raises a loud error (see spec/matplotlib/compat.md).
 
     Returns the list of `Line2D` handles, one per plotted series.
     """
@@ -2840,9 +2840,7 @@ class _CmapNamespace:
 
         if name.lower() in CMAPS:
             return name
-        raise AttributeError(
-            f"colormap {name!r} is not supported; see docs/engineering/matplotlib-compat.md"
-        )
+        raise AttributeError(f"colormap {name!r} is not supported; see spec/matplotlib/compat.md")
 
 
 cm = _CmapNamespace()

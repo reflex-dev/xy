@@ -7,9 +7,11 @@ from pathlib import Path
 
 import pytest
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 def _load_regression_module():
-    path = Path(__file__).resolve().parents[1] / "scripts" / "check_regressions.py"
+    path = ROOT / "scripts" / "check_regressions.py"
     spec = importlib.util.spec_from_file_location("check_regressions", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -19,6 +21,40 @@ def _load_regression_module():
 
 
 check_regressions = _load_regression_module()
+
+
+def test_committed_metrics_document_matches_baseline_contract() -> None:
+    expected = set(json.loads((ROOT / "benchmarks/baseline.json").read_text())["metrics"])
+    lines = (ROOT / "spec/benchmarks/metrics.md").read_text(encoding="utf-8").splitlines()
+    documented = {
+        cells[0]
+        for line in lines
+        if line.startswith("| ")
+        if len(cells := [cell.strip() for cell in line.strip("|").split("|")]) == 2
+        if cells[0] not in {"metric", "---"}
+    }
+
+    assert documented == expected
+    assert any(line.startswith("Source CI reports: commit ") for line in lines)
+
+
+def test_report_provenance_uses_latest_timestamp() -> None:
+    first = {
+        "environment": {
+            "generated_at_utc": "2026-07-20T23:32:01Z",
+            "git": {"commit": "abc123"},
+        }
+    }
+    second = {
+        "environment": {
+            "generated_at_utc": "2026-07-20T23:32:08Z",
+            "git": {"commit": "abc123"},
+        }
+    }
+
+    assert check_regressions._report_provenance(first, second) == (
+        "Source CI reports: commit `abc123`; latest measurement `2026-07-20T23:32:08Z`."
+    )
 
 
 def test_flatten_accepts_schema_v2_scatter_report() -> None:

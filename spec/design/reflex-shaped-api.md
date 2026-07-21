@@ -151,6 +151,7 @@ Target node types:
 | `legend(...)` | Legend chrome | Exists |
 | `tooltip(...)` | Tooltip chrome/customization | Exists |
 | `modebar(...)` | Zoom/pan/reset controls | Exists |
+| `colorbar(...)` | Continuous-scale chrome | Exists |
 | `theme(...)` | CSS variable defaults | Exists |
 
 The implementation can stay dataclass-like. It does not need React-style
@@ -244,7 +245,12 @@ Recommended token surface:
 | `--chart-tooltip-text` | Tooltip text |
 | `--chart-legend-bg` | Legend panel |
 | `--chart-selection` | Box select fill/stroke |
-| `--chart-accent` | Default accent color for marks/modebar |
+| `--chart-modebar-bg` | Modebar and modebar-menu background |
+| `--chart-modebar-active` | Modebar active/hovered button background |
+
+`--chart-accent` is not an XY token; the renderer never reads it. It is a
+caller-defined convention variable that XY only passes through when a mark
+color is written as `var(--chart-accent)`.
 
 Example:
 
@@ -357,8 +363,9 @@ xy.scatter(x="x", y="y", data=df, color="var(--chart-accent)")
 
 This keeps Tailwind useful without pretending CSS can reach GPU buffers.
 
-The Reflex adapter mirrors class strings from a fixed `xy.Chart`/`xy.Figure`
-into generated JSX so Tailwind can discover them at compile time. A live token
+The Reflex adapter mirrors class strings from a fixed `xy.Chart` (or an
+internal `Figure`) into generated JSX so Tailwind can discover them at compile
+time; the inventory comes from `Figure.dom_class_strings()`. A live token
 or Var figure does not exist until runtime; its complete utility names must
 also appear literally in ordinary application source or in the host safelist.
 
@@ -426,7 +433,7 @@ Events should be semantic, small, and transport-independent.
 
 ```python
 def hover(row: dict): ...
-def selected(selection: dict): ...
+def selected(selection: xy.Selection): ...
 def view_changed(view: dict): ...
 
 xy.chart(
@@ -442,8 +449,8 @@ Event payloads:
 | Event | Payload |
 |---|---|
 | `on_hover` | One row/readout dict |
-| `on_select` | Trace ids, row indices/counts, optional aggregate summary |
-| `on_view_change` | x/y ranges, pixel shape, sequence id |
+| `on_select` | An `xy.Selection`: `.per_trace` (trace id to index array), `.index` (concatenated indices), `len()`, and `.xy(trace_id)` for the selected `(x, y)` arrays |
+| `on_view_change` | `{x0, x1, y0, y1, source}` — the view edges in data space plus the gesture label (`channel.py:216-233`). No pixel shape, no sequence id. |
 
 Render target behavior:
 
@@ -695,10 +702,11 @@ Now part of the core alpha contract:
 - `xy.colorbar(...)` with inferred built-in continuous-scale chrome, the same
   CSS slots, and an opaque adapter-render replacement contract.
 - `class_name`, `class_names`, and `style` props.
+- DOM `CustomEvent`s for standalone host integration (see Phase 4 for the
+  dispatched set).
 
 Can add:
 
-- DOM `CustomEvent`s for standalone host integration.
 - A separate adapter package with optional/minimal Reflex integration.
 
 Should avoid:
@@ -737,8 +745,10 @@ Should avoid:
 ### Phase 4: Events And Standalone Host Hooks
 
 - Add `on_view_change`.
-- For standalone HTML, dispatch optional DOM `CustomEvent`s:
-  `xy:hover`, `xy:select`, `xy:view`.
+- For standalone HTML, dispatch DOM `CustomEvent`s. Shipped: `xy:hover`,
+  `xy:select`, `xy:view_change`, `xy:click`, `xy:brush`, `xy:leave`,
+  `xy:context_lost`, `xy:context_restored`, `xy:context_restore_failed`.
+  All are emitted through one template as `xy:${name}`, bubbling and composed.
 - Keep Python callbacks notebook-only.
 
 ### Phase 5: External Reflex Adapter

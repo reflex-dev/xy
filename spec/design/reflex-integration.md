@@ -51,11 +51,12 @@ per-request HTTP overhead, no SSE keep-alive tuning.
 proved it — but each piece costs something the socket gets free: reverse
 proxies must be taught each route; every `/msg` pays request setup + headers;
 SSE is a second long-lived connection per chart with its own reconnect
-logic; and none of it inherits app-plane auth. The §3.2 binary frame format
-(XYBF) exists because HTTP bodies need framing — socket.io attachments
+logic; and none of it inherits app-plane auth. The XYBF binary frame format
+(`python/xy/_framing.py`; versioning in [wire-protocol.md](wire-protocol.md)
+§7) exists because HTTP bodies need framing — socket.io attachments
 already carry length-delimited binary, so on this transport the framing
-layer disappears too. XYBF remains in `xy.channel` for HTTP/export
-hosts; the namespace does not use it.
+layer disappears too. XYBF remains in `python/xy/_framing.py` (re-exported
+from `xy.channel`) for HTTP/export hosts; the namespace does not use it.
 
 ### The cost we accept (recorded, §28 spirit)
 
@@ -114,6 +115,9 @@ aligned, zero-copy into `Float32Array`s. No JSON numbers for data, no
 base64, no custom framing (§29 preserved; the socket.io protocol already
 length-prefixes attachments).
 
+The envelope is below; the `m` payload it carries is specified field by field
+in `spec/design/wire-protocol.md`.
+
 ```
 client -> server (namespace /_xy)
   sub     {fig, px?, mid}       subscribe; join figure room; reply `payload`
@@ -135,6 +139,30 @@ Rust kernels release the GIL) under a per-figure lock.
 Inbound handlers are total: malformed input drops or answers `err`, never
 raises — `channel.py`'s "hostile client must not crash the kernel" contract
 extended to the transport.
+
+### 2.1 Message catalog (specified in wire-protocol.md)
+
+The envelope above is transport; the `m` object it carries is the kernel
+protocol, dispatched by `xy.channel.handle_message`. Every request type, every
+reply shape, and the `seq` / `_pickSeq` / `drill_seq` staleness rules are
+specified in [wire-protocol.md](wire-protocol.md), which is the sole authority
+for all of it. Unknown types and malformed fields return no reply at all (§2's
+totality contract). This section records only what is specific to this host.
+
+**`view_change` does not reach the kernel here.** The wrapper intercepts the
+outgoing message and invokes the Reflex `on_view_change` prop directly
+(`python/reflex-xy/reflex_xy/assets/XYChart.jsx:164-169`), because the
+namespace registers no Python-side view callback (§5). Every other request
+type crosses the socket unchanged and is dispatched by the shared
+`handle_message`.
+
+**Client-supplied dimensions are untrusted.** `px`, `w`, and `h` pass through
+`lod.screen_shape`, which rejects non-finite values and clamps the rest to
+`[16, MAX_SCREEN_DIM]` (`MAX_SCREEN_DIM = 4096`, `xy/config.py`) — a hostile
+client cannot make the kernel allocate an arbitrary density texture. The bound
+matters more here than in the notebook: the namespace is reachable by anyone
+who can reach the app, so the clamp is an access-control boundary rather than
+a sanity check (§3.3).
 
 ## 3. Figures: registry as cache, state as truth
 
@@ -170,12 +198,27 @@ subclass points dependency analysis at it), so:
 - Reconnect (same node or another): the cached token comes back with the
   state; the component re-`sub`s; hit → serve, miss → §3.2.
 
+Two values are not tokens. Before session hydration there is no client
+token to mint from, so the var evaluates to `""`; and a builder may return
+`None` for "no chart right now", which **releases** any existing registry
+entry and likewise yields `""`. The wrapper treats `""` as "not ready / no
+chart" and mounts nothing, so both cases are a blank mount rather than an
+error.
+
 Async builders are first-class, mirroring reflex's own
 `ComputedVar`/`AsyncComputedVar` split with the same
 `iscoroutinefunction` dispatch `rx.var` uses: an `async def` builder becomes
 an `AsyncFigureVar` (an `AsyncComputedVar`), evaluated and cached by
 reflex's normal async-var machinery, and the rebuild path awaits the same
 builder when a fresh worker recovers the figure.
+
+Figure vars must be **public**: a leading-underscore builder name is refused
+at decoration time with `ValueError`, because backend (underscore) vars never
+sync to the client and so their tokens could never reach the wrapper —
+failing at import beats compiling a chart nobody can subscribe to.
+`@reflex_xy.figure(...)` forwards arbitrary computed-var keywords (`deps=`,
+`auto_deps=`, `interval=`, …) straight through to the underlying var, with
+`cache=True` set as the default.
 
 Builders must be pure functions of their state instance — the discipline
 cached computed vars already impose — because purity is exactly what makes
@@ -223,8 +266,9 @@ whether the kernel still matters:
 **Static payload tier — pass the Chart straight to the component.**
 `reflex_xy.chart(xy.scatter_chart(...))` compiles the figure to its
 first-paint payload at page build, writes it into the app's `assets/xy/` as
-one content-addressed XYBF frame (`<digest>.xyf` — the §3.2 framing's
-natural home), and hands the wrapper a `src` URL instead of a token. The
+one content-addressed XYBF frame (`<digest>.xyf` — the `_framing.py`
+envelope's natural home), and hands the wrapper a `src` URL instead of a
+token. The
 wrapper fetches the static file and runs the render client **kernel-less**:
 the exact `renderStandalone` semantics of `Figure.to_html()` exports —
 client-side hover from retained columns, pan/zoom, worker-based density
@@ -302,6 +346,14 @@ which the wrapper fetches and renders kernel-less. Semantic-event props
 apply to live sources; a static chart resolves hover tooltips client-side
 but dispatches no backend events.
 
+Sizing is the mount's, not the payload's. `chart()` defaults the outer
+element to `width: 100%` / `height: 420px` (override with any style prop),
+and the wrapper rewrites the payload spec's own `width`/`height` to `100%`
+on both the static and live paths, so a chart always follows the box Reflex
+reserved instead of the dimensions baked into its payload. Charts built with
+`width="100%"` therefore track the element responsively, and a fixed-size
+payload cannot paint outside the page flow.
+
 `chart()` is a plain `rx.Component` whose `library` is a **local JSX shared
 asset** (`$/public/external/reflex_xy/assets/XYChart.jsx`, the same
 mechanism reflex's own radix color-mode provider uses) — no npm package, no
@@ -358,7 +410,7 @@ python/reflex-xy/
   reflex_xy/assets/          XYChart.jsx; links xy's installed render client
   examples/demo_app/         1M-point drilldown + hover + cross-filter +
                              stream + a direct-Chart static payload
-tests/reflex_adapter/        65 tests: token/registry/var/bridge/payload-asset
+tests/reflex_adapter/        69 tests: token/registry/var/bridge/payload-asset
                              units, component compile, and a real-websocket
                              integration suite (uvicorn + socketio client)
                              covering payload/pick/select/affinity/rebuild/
@@ -377,9 +429,11 @@ supported surface exists.
 
 The previous revision of this document specified `GET /_xy/{token}/payload`,
 `POST /_xy/{token}/msg`, an SSE `/events` invalidation stream, and the XYBF
-binary frame (§3.2). What survives: `handle_message` extraction (shipped as
-`xy.channel`), the XYBF frame helpers (still in `xy.channel` for
-HTTP/export hosts), the registry API shape, and the two-planes analysis. What
+binary frame (`python/xy/_framing.py`). What survives: `handle_message`
+extraction (shipped as
+`xy.channel`), the XYBF frame helpers (still in `python/xy/_framing.py`,
+re-exported from `xy.channel`, for HTTP/export hosts), the registry API
+shape, and the two-planes analysis. What
 changed: transport (§1–§2) and the multi-worker story — the old draft called
 the registry's process-locality "the honest hard problem" and sketched a
 figure-server; the figure-var + rebuild-from-state design (§3) dissolves it
@@ -391,9 +445,12 @@ message protocol is transport-agnostic either way.
 
 - **Payload push sizing**: room-wide refreshes use the figure's default
   `px_width`; per-sid re-fit to each viewport is a straightforward follow-up.
-- **Static tier px baseline**: payload assets build at the fluid default
-  (2048 px) like `to_html()` exports; decimated line tiers cannot re-refine
-  without a kernel, so extreme upscaling shows the export tier's limits.
+- **Static tier px baseline**: payload assets build at the figure's own
+  resolved px width, same as `to_html()` exports — a chart declared with a
+  numeric `width=` builds at that width, and a responsive chart
+  (`width="100%"`) falls back to the 2048 px fluid default until a browser
+  reports a real width. With no kernel, decimated line tiers cannot re-refine,
+  so extreme upscaling shows the export tier's limits.
   Orphaned `assets/xy/*.xyf` digests accumulate under changing data until
   manually cleared; a compile-time sweep of unreferenced digests is a
   possible follow-up.
