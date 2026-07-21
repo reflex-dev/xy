@@ -97,6 +97,11 @@ def test_drilldown_pan_past_data_keeps_density_aligned(tmp_path: Path) -> None:
     chromium = find_chromium()
     if chromium is None:
         pytest.skip("Chromium unavailable")
+    # examples/fastapi/live_drilldown.py imports starlette at module load (the
+    # callback endpoint), but it is not a core test dependency. Skip cleanly
+    # where the fastapi example extra is not installed — same convention as
+    # tests/test_example_apps.py's importorskip for the fastapi app test.
+    pytest.importorskip("starlette")
 
     document = _drilldown_html().replace(_ANCHOR, _PROBE, 1)
     result = run_browser_probe(
