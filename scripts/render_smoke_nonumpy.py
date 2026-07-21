@@ -23,6 +23,8 @@ import tempfile
 from array import array
 from pathlib import Path
 
+from _protocol import PROTOCOL_VERSION
+
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "python" / "xy" / "static"
 CHROMIUM_CANDIDATES = [
@@ -210,7 +212,7 @@ def build_payload():
         },
     ]
     spec = {
-        "protocol": 3,
+        "protocol": PROTOCOL_VERSION,
         "width": 800,
         "height": 400,
         "title": "nonumpy smoke",
@@ -802,7 +804,7 @@ try{{
       return hcols.length-1;
     }}
     const histSpec={{
-      protocol:3,width:220,height:170,title:"",
+      protocol:{PROTOCOL_VERSION},width:220,height:170,title:"",
       x_axis:{{kind:"linear",label:"",range:[-1,2]}},
       y_axis:{{kind:"linear",label:"",range:[0,8]}},
       traces:[{{id:0,kind:"histogram",name:"hist",style:{{color:"#3b82f6",opacity:1,role:"histogram"}},
@@ -900,7 +902,7 @@ try{{
         so+=vals.length; return scols.length-1;}};
       const xs=[],ys=[];for(let i=0;i<n;i++){{xs.push(i);ys.push(i%5);}}
       ys[n-1]=yTop;
-      return {{spec:{{protocol:3,width:220,height:170,title:"",show_legend:false,show_modebar:false,
+      return {{spec:{{protocol:{PROTOCOL_VERSION},width:220,height:170,title:"",show_legend:false,show_modebar:false,
         x_axis:{{kind:"linear",label:"",range:[0,n-1]}},
         y_axis:{{kind:"linear",label:"",range:[0,yTop]}},
         traces:[{{id:0,kind:"scatter",name:"s",tier:"direct",n_points:n,n_marks:n,
@@ -940,7 +942,7 @@ try{{
       msCols.push({{byte_offset:msOff*4,len:vals.length,offset:0,scale:1,kind:"float"}});
       msOff+=vals.length; return msCols.length-1;}};
     const msFill={{space:"mark",dir:"down",stops:[[0,"rgba(37,99,235,1)"],[1,"rgba(37,99,235,0)"]]}};
-    const msSpec={{protocol:3,width:200,height:160,title:"",backend:"none",
+    const msSpec={{protocol:{PROTOCOL_VERSION},width:200,height:160,title:"",backend:"none",
       show_legend:false,show_modebar:false,
       x_axis:{{kind:"linear",label:"",range:[0,4]}},
       y_axis:{{kind:"linear",label:"",range:[0,8]}},
@@ -992,7 +994,7 @@ try{{
     const occcol=(vals)=>{{new Float32Array(occBuf,occOff*4,vals.length).set(vals);
       occCols.push({{byte_offset:occOff*4,len:vals.length,offset:0,scale:1,kind:"float"}});
       occOff+=vals.length; return occCols.length-1;}};
-    const occSpec={{protocol:3,width:200,height:160,title:"",backend:"none",
+    const occSpec={{protocol:{PROTOCOL_VERSION},width:200,height:160,title:"",backend:"none",
       show_legend:false,show_modebar:false,
       dom:{{style:{{"--chart-bg":"#eaeaf2","--chart-grid":"#ffffff"}}}},
       x_axis:{{kind:"linear",label:"",range:[0,4]}},
@@ -1025,7 +1027,7 @@ try{{
     const smcol=(vals)=>{{new Float32Array(smBuf,smOff*4,vals.length).set(vals);
       smCols.push({{byte_offset:smOff*4,len:vals.length,offset:0,scale:1,kind:"float"}});
       smOff+=vals.length; return smCols.length-1;}};
-    const smSpec={{protocol:3,width:200,height:160,title:"",backend:"none",
+    const smSpec={{protocol:{PROTOCOL_VERSION},width:200,height:160,title:"",backend:"none",
       show_legend:false,show_modebar:false,
       x_axis:{{kind:"linear",label:"",range:[0,4]}},
       y_axis:{{kind:"linear",label:"",range:[0,8]}},

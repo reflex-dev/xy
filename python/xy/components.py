@@ -349,6 +349,7 @@ def scatter(
         symbol: Marker symbol name.
         stroke: Optional marker outline color.
         stroke_width: Marker outline width in pixels.
+        _artist_alpha: Internal Matplotlib alpha override, scalar or per marker.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
@@ -1230,6 +1231,7 @@ def histogram(
         corner_radius: Bar corner radius in pixels.
         stroke: Optional bar outline color.
         stroke_width: Bar outline width in pixels.
+        _artist_alpha: Internal Matplotlib alpha override, scalar or per bin.
         fill: CSS fill value or linear gradient.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
@@ -1347,6 +1349,7 @@ def bar(
         corner_radius: Bar corner radius in pixels.
         stroke: Optional bar outline color.
         stroke_width: Bar outline width in pixels.
+        _artist_alpha: Internal Matplotlib alpha override, scalar or per bar.
         fill: CSS fill value or linear gradient.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.

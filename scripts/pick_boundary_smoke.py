@@ -29,6 +29,8 @@ import tempfile
 from array import array
 from pathlib import Path
 
+from _protocol import PROTOCOL_VERSION
+
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "python" / "xy" / "static"
 
@@ -92,7 +94,7 @@ def build_payload():
             }
         )
     spec = {
-        "protocol": 3,
+        "protocol": PROTOCOL_VERSION,
         "width": 900,
         "height": 420,
         "title": None,
@@ -130,7 +132,7 @@ def build_payload():
     xs[BIG_PICK_INDEX] = 0.75
     ys[BIG_PICK_INDEX] = 0.75
     spec2 = {
-        "protocol": 3,
+        "protocol": PROTOCOL_VERSION,
         "width": 900,
         "height": 420,
         "title": None,
