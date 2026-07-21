@@ -260,6 +260,7 @@ jobs:
   benchmark_vs:
     name: Cross-library benchmark (${{ matrix.name }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -334,9 +335,13 @@ jobs:
         if: matrix.xy
         env:
           XY_REQUIRE_CARGO: "1"
-        run: uv pip install -p .venv/bin/python -e .
+        run: |
+          uv pip install -p .venv/bin/python \
+            --constraint benchmarks/requirements-ci.lock -e .
       - name: Install selected competitors
-        run: uv pip install -p .venv/bin/python ${{ matrix.packages }}
+        run: |
+          uv pip install -p .venv/bin/python \
+            --constraint benchmarks/requirements-ci.lock ${{ matrix.packages }}
       - name: Verify native benchmark backend
         if: matrix.xy
         run: |
@@ -393,8 +398,12 @@ jobs:
           XY_REQUIRE_CARGO: "1"
         run: |
           uv venv .venv
-          uv pip install -p .venv/bin/python -e .
-          uv pip install -p .venv/bin/python matplotlib seaborn plotly kaleido bokeh altair datashader hvplot plotly-resampler psutil
+          uv pip install -p .venv/bin/python \
+            --constraint benchmarks/requirements-ci.lock -e .
+          uv pip install -p .venv/bin/python \
+            --constraint benchmarks/requirements-ci.lock \
+            matplotlib seaborn plotly kaleido bokeh altair datashader hvplot \
+            plotly-resampler psutil
       - name: Verify native benchmark backend
         run: |
           .venv/bin/python - <<'PY'

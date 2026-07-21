@@ -10,9 +10,12 @@ Use Python 3.12, the repository Rust toolchain, Node 22, and Playwright 1.48:
 ```bash
 cargo build --release
 uv venv .venv --python 3.12
-uv pip install -p .venv/bin/python -e ".[dev,codspeed]"
-uv pip install -p .venv/bin/python matplotlib seaborn plotly kaleido bokeh \
-  altair datashader hvplot plotly-resampler psutil
+uv pip install -p .venv/bin/python \
+  --constraint benchmarks/requirements-ci.lock -e ".[dev,codspeed]"
+uv pip install -p .venv/bin/python \
+  --constraint benchmarks/requirements-ci.lock \
+  matplotlib seaborn plotly kaleido bokeh altair datashader hvplot \
+  plotly-resampler psutil
 npm ci
 npx playwright install chromium
 CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
@@ -20,6 +23,9 @@ CHROME=$(node -e "console.log(require('playwright').chromium.executablePath())")
 
 Run from a clean worktree. Keep the generated JSON files together; every report
 contains package versions, executable versions, backend, commit, and dirty state.
+The CI comparison dependencies and their transitives are pinned in
+`benchmarks/requirements-ci.lock`; refresh it only with the command documented
+at the top of `benchmarks/requirements-ci.in`.
 
 ## Core Launch Scatter Benchmarks
 

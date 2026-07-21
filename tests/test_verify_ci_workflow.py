@@ -137,6 +137,39 @@ def test_ci_workflow_rejects_unconditional_cross_library_native_build(
     assert any("Build native core" in error and "matrix.xy" in error for error in errors)
 
 
+def test_ci_workflow_rejects_missing_cross_library_job_timeout(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace("    timeout-minutes: 10\n", "", 1),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any("benchmark_vs" in error and "timeout-minutes: 10" in error for error in errors)
+
+
+def test_ci_workflow_rejects_unlocked_competitor_install(tmp_path: Path) -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    path = tmp_path / "ci.yml"
+    path.write_text(
+        workflow.replace(
+            "            --constraint benchmarks/requirements-ci.lock ${{ matrix.packages }}\n",
+            "            ${{ matrix.packages }}\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    errors = verify_ci_workflow.validate_ci_workflow(path)
+
+    assert any(
+        "Install selected competitors" in error and "requirements-ci.lock" in error
+        for error in errors
+    )
+
+
 def test_ci_workflow_rejects_benchmark_upload_that_skips_after_failures(
     tmp_path: Path,
 ) -> None:
@@ -222,9 +255,11 @@ def test_ci_workflow_rejects_benchmark_job_without_required_native_install(
         workflow.replace(
             '        env:\n          XY_REQUIRE_CARGO: "1"\n'
             "        run: |\n          uv venv .venv\n"
-            "          uv pip install -p .venv/bin/python -e .\n",
+            "          uv pip install -p .venv/bin/python \\\n"
+            "            --constraint benchmarks/requirements-ci.lock -e .\n",
             "        run: |\n          uv venv .venv\n"
-            "          uv pip install -p .venv/bin/python -e .\n",
+            "          uv pip install -p .venv/bin/python \\\n"
+            "            --constraint benchmarks/requirements-ci.lock -e .\n",
         ),
         encoding="utf-8",
     )

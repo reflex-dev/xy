@@ -37,9 +37,10 @@ jobs:
         # competitors; unavailable rows remain explicit in the report.
         run: |
           uv venv
-          uv pip install -e ".[dev]"
-          uv pip install matplotlib seaborn plotly kaleido bokeh altair \
-            datashader hvplot plotly-resampler psutil
+          uv pip install --constraint benchmarks/requirements-ci.lock -e ".[dev]"
+          uv pip install --constraint benchmarks/requirements-ci.lock \
+            matplotlib seaborn plotly kaleido bokeh altair datashader \
+            hvplot plotly-resampler psutil
       - name: Verify native backend is active
         run: uv run python -c "import xy.kernels as k; assert k.BACKEND == 'native', k.BACKEND; print('native')"
       # The 10M scatter table (the one with the actual "pending" Seaborn rows)
