@@ -7,6 +7,16 @@ energy on 3D/volume rendering. Nothing in this section implies immediate
 implementation; it is the coverage backlog we will pull from as the primitives
 land.
 
+> [!IMPORTANT]
+> Roadmap text is not an implementation claim. Every row marked **Planned**,
+> **Planned later**, **Deferred**, **Partially implemented**, or **Prototyped**
+> is **NOT IMPLEMENTED** as a complete public capability. "Implemented in
+> `xy.pyplot`" means the compatibility shim can translate the named workflow;
+> it does not mean a stable declarative mark, uniform host integration, or full
+> renderer/interaction/accessibility parity exists. A closed or unmerged PR is
+> not shipped. The cross-cutting status and acceptance authority is
+> [`capability-gap-contract.md`](capability-gap-contract.md).
+
 The roadmap prioritizes chart types by two signals:
 
 1. **Popularity signal:** chart types that appear prominently across mainstream
@@ -19,16 +29,18 @@ xy should become a **Plotly-class general-purpose charting library** for
 analytics, science, finance, operations, and dashboards. Performance is the
 entry point, not the boundary of the product.
 
-The current implemented surface is **line**, **scatter**, **area**,
-**histogram**, **bar/column**, **heatmap**, **error bars/bands**,
-**box/violin/ECDF**, **hexbin/contour**, **step/stairs/stem**, **pie/donut**,
-**scientific vector fields**, **irregular triangular meshes**, and **faceted
-small multiples**. The last three families are exposed through the
-Matplotlib-flavoured shim over shared xy primitives. Scatter already covers direct
-points, color/size channels, GPU picking, selection, and Tier-2 density
-aggregation. Line and area cover direct and M4-decimated time series. Histogram
-and bar/column share the instanced rectangle renderer; heatmap ships a compact
-grid texture.
+The current implemented **declarative** surface is **line**, **scatter**,
+**area**, **histogram**, **bar/column**, **heatmap**, **error bars/bands**,
+**box/violin/ECDF**, **hexbin/contour**, **step/stairs/stem**, **segments**,
+**triangle meshes**, and **faceted small multiples**. Additional workflows,
+including **pie/donut**, **scientific vector fields**, richer irregular-grid
+science, spectral plots, and geometry-rendered tables, are available only
+through the experimental Matplotlib-flavoured shim. Those shim-only workflows
+remain **NOT IMPLEMENTED in the stable declarative API** under the capability
+gap contract. Scatter already covers direct points, color/size channels, GPU
+picking, selection, and Tier-2 density aggregation. Line and area cover direct
+and M4-decimated time series. Histogram and bar/column share the instanced
+rectangle renderer; heatmap ships a compact grid texture.
 
 Beyond the mark set, four capability layers now ship on `main`:
 

@@ -26,6 +26,11 @@ The public surface: what callers can build, style, export, and interact with.
   type: what the shared machinery provides and what a new kind must supply.
 - [`chart-roadmap.md`](api/chart-roadmap.md) — the single 2D-first chart-type
   coverage backlog, prioritized by popularity and primitive reuse.
+- [`capability-gap-contract.md`](api/capability-gap-contract.md) — the
+  normative cross-library parity backlog for platform behavior, analytical
+  composition, chart breadth, renderer fidelity, accessibility, and hosts.
+  Every listed gap remains explicitly not implemented until code, tests, docs,
+  and required host/export coverage land together.
 - [`export.md`](api/export.md) — how a figure becomes bytes: one entry point
   across five image formats, deterministic engine choice, browser-free default.
 - [`interaction.md`](api/interaction.md) — the authority on which browser

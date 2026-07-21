@@ -407,6 +407,11 @@ Not yet safe:
   at once can still hit browser-side eviction, so do not claim unbounded
   simultaneous live charts.
 
+The complete parity backlog and the rule that partial, shim-only, deferred, or
+prototype work remains **NOT IMPLEMENTED** are normative in
+[`spec/api/capability-gap-contract.md`](../api/capability-gap-contract.md).
+Claims must not outrun the rows marked **Implemented** there.
+
 ## Hardening Backlog
 
 Keep pushing these in low-conflict increments:
