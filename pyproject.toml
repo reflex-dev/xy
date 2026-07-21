@@ -32,6 +32,11 @@ dev = [
     # Decode oracle for the native JPEG/WebP encoders, never a runtime
     # dependency: the image-export tests importorskip it.
     "pillow>=10",
+    # The FastAPI drilldown example's live_drilldown module imports Starlette at
+    # load (its callback endpoint), never a runtime dependency of xy: the
+    # drilldown pan-alignment browser test importorskips it, so it lives in dev
+    # where CI exercises that test.
+    "starlette>=0.36",
 ]
 # Plotly comparison charts. Matplotlib is deliberately not a project extra:
 # benchmark jobs that compare against it install it explicitly as an external
