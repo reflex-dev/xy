@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html as _html
 import re
 import struct
 
@@ -196,6 +197,50 @@ def test_facet_labels_and_grid_title_render_once() -> None:
     assert html.count("My grid") == 2
     # panel titles are the facet labels, not "grid · label" composites
     assert [fig.title for fig in grid.figures] == ["a", "b"]
+
+
+def test_facet_notebook_repr_isolates_standalone_document() -> None:
+    chart = xy.facet_chart(
+        xy.line(x="x", y="y"),
+        by="g",
+        data=_table(),
+        cols=1,
+        width=600,
+        height=200,
+        gap=10,
+        title="Notebook facets",
+    )
+
+    repr_html = chart._repr_html_()
+    document = _html.unescape(repr_html)
+
+    assert repr_html.startswith('<iframe class="xy-notebook-frame"')
+    assert 'sandbox="allow-scripts"' in repr_html
+    assert 'width="600" height="434"' in repr_html
+    assert "<!doctype html>" in document
+    assert '<body class="xy-facet-document">' in document
+    assert "html,body{" not in document
+    assert ".xy-facet-document .xy-facet-grid{" in document
+
+
+def test_facet_ipython_display_uses_isolated_repr(monkeypatch: pytest.MonkeyPatch) -> None:
+    import IPython.display
+
+    displayed: list[tuple[object, bool]] = []
+
+    def record(value: object, *, raw: bool = False) -> None:
+        displayed.append((value, raw))
+
+    monkeypatch.setattr(IPython.display, "display", record)
+    chart = xy.facet_chart(xy.line(x="x", y="y"), by="g", data=_table())
+
+    chart._ipython_display_()
+
+    assert len(displayed) == 1
+    payload, raw = displayed[0]
+    assert raw is True
+    assert isinstance(payload, dict)
+    assert payload["text/html"].startswith('<iframe class="xy-notebook-frame"')
 
 
 # -- PNG geometry -------------------------------------------------------------

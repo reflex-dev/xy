@@ -1800,6 +1800,47 @@ class ChartView {
     g.yBuf = this._upload(y);
   }
 
+  _buildInstanceStyleChannels(g, t, buffer, widthName) {
+    const channel = (name) => t.channels && t.channels[name];
+    const artistScalar = Number(t.style && t.style.artist_alpha);
+    const hasStyle = channel("opacity") || channel("artist_alpha") ||
+      channel(widthName) || channel("symbol") || Number.isFinite(artistScalar);
+    if (hasStyle) {
+      const values = new Float32Array(g.n * 4);
+      for (let i = 0; i < g.n; i++) {
+        values[i * 4] = 1;
+        values[i * 4 + 1] = Number.isFinite(artistScalar) ? artistScalar : -1;
+        values[i * 4 + 2] = -1;
+        values[i * 4 + 3] = -1;
+      }
+      const copy = (name, component, scale = 1) => {
+        const spec = channel(name);
+        if (!spec) return;
+        const source = this._columnView(buffer, this.spec.columns[spec.buf]);
+        for (let i = 0; i < g.n; i++) values[i * 4 + component] = source[i * (spec.components || 1)] * scale;
+      };
+      copy("opacity", 0);
+      copy("artist_alpha", 1);
+      copy(widthName, 2, this.dpr);
+      copy("symbol", 3);
+      g.styleBuf = this._upload(values);
+    }
+    const radius = channel("corner_radius");
+    if (radius) {
+      const source = this._columnView(buffer, this.spec.columns[radius.buf]);
+      const components = radius.components || 1;
+      const values = new Float32Array(g.n * 2);
+      for (let i = 0; i < g.n; i++) {
+        values[i * 2] = source[i * components] * this.dpr;
+        values[i * 2 + 1] = (components > 1 ? source[i * components + 1] : source[i * components]) * this.dpr;
+      }
+      g.radiusBuf = this._upload(values);
+    }
+    if (t.stroke && t.stroke.mode === "direct_rgba") {
+      g.strokeBuf = this._upload(this._columnView(buffer, this.spec.columns[t.stroke.buf]));
+    }
+  }
+
   _buildScatterMark(g, t, buffer) {
     this._buildXY(g, t, buffer);
     g.colorMode = 0;
@@ -1814,6 +1855,10 @@ class ChartView {
       g._cpu.color = this._columnView(buffer, this.spec.columns[t.color.buf]);
       g.cBuf = this._upload(g._cpu.color);
       g.lut = this._paletteLut(t.color.palette);
+    } else if (t.color && t.color.mode === "direct_rgba") {
+      g.colorMode = 3;
+      g._cpu.rgba = this._columnView(buffer, this.spec.columns[t.color.buf]);
+      g.rgbaBuf = this._upload(g._cpu.rgba);
     }
     g.sizeMode = 0;
     g.size = (t.size && t.size.size) || 4.0;
@@ -1824,6 +1869,7 @@ class ChartView {
       g.sBuf = this._upload(g._cpu.size);
       g.sizeRange = t.size.range_px;
     }
+    this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
     this._pointMarkStyle(g, t);
   }
 
@@ -1833,7 +1879,7 @@ class ChartView {
     const s = t.style || {};
     g.symbol = { circle: 0, square: 1, diamond: 2, triangle: 3, cross: 4, hexagon: 5, pentagon: 6, star: 7, triangle_down: 8, triangle_left: 9, triangle_right: 10, x: 11, point: 12, pixel: 13, thin_diamond: 14, plus_line: 15, x_line: 16 }[s.symbol] || 0;
     g.pointStrokeWidth = Number(s.stroke_width) || 0;
-    g.pointStrokeFace = !s.stroke;
+    g.pointStrokeFace = !s.stroke && (!t.stroke || t.stroke.mode === "match_fill");
     g.pointStroke = s.stroke
       ? parseColor(this.root, s.stroke, [g.color[0], g.color[1], g.color[2], 1])
       : null;
@@ -1852,6 +1898,8 @@ class ChartView {
       y_axis: parentTrace.y_axis,
       color: sample.color,
       size: sample.size,
+      stroke: sample.stroke,
+      channels: sample.channels,
     };
   }
 
@@ -1878,7 +1926,8 @@ class ChartView {
   _destroyDensitySample(g) {
     const s = g && g.sampleOverlay;
     if (!s || !this.gl) return;
-    for (const b of [s.xBuf, s.yBuf, s.cBuf, s.sBuf, s.selBuf, s.dBuf]) {
+    for (const b of [s.xBuf, s.yBuf, s.cBuf, s.rgbaBuf, s.sBuf, s.styleBuf,
+      s.strokeBuf, s.selBuf, s.dBuf]) {
       if (b) this.gl.deleteBuffer(b);
     }
     g.sampleOverlay = null;
@@ -1901,6 +1950,8 @@ class ChartView {
       y_axis: g.trace.y_axis,
       color: sample.color,
       size: sample.size,
+      stroke: sample.stroke,
+      channels: sample.channels,
     };
     const s = {
       trace,
@@ -1929,17 +1980,21 @@ class ChartView {
     gl.bindBuffer(gl.ARRAY_BUFFER, s.yBuf);
     gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.y.buf]), gl.STATIC_DRAW);
     if (sample.color && sample.color.buf !== undefined) {
-      s.colorMode = sample.color.mode === "continuous" ? 1 : 2;
-      s.cBuf = gl.createBuffer();
+      s.colorMode = sample.color.mode === "continuous" ? 1 :
+        (sample.color.mode === "categorical" ? 2 : 3);
       const colorValues = sample.color.dtype === "u8"
         ? this._asU8(buffers[sample.color.buf])
         : this._asF32(buffers[sample.color.buf]);
-      s.cBuf._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
-      gl.bindBuffer(gl.ARRAY_BUFFER, s.cBuf);
+      const colorBufferName = s.colorMode === 3 ? "rgbaBuf" : "cBuf";
+      s[colorBufferName] = gl.createBuffer();
+      s[colorBufferName]._fcType = colorValues instanceof Uint8Array ? gl.UNSIGNED_BYTE : gl.FLOAT;
+      gl.bindBuffer(gl.ARRAY_BUFFER, s[colorBufferName]);
       gl.bufferData(gl.ARRAY_BUFFER, colorValues, gl.STATIC_DRAW);
-      s.lut = sample.color.mode === "continuous"
-        ? this._lut(sample.color.colormap)
-        : this._paletteLut(sample.color.palette);
+      if (s.colorMode !== 3) {
+        s.lut = sample.color.mode === "continuous"
+          ? this._lut(sample.color.colormap)
+          : this._paletteLut(sample.color.palette);
+      }
     }
     if (sample.size && sample.size.mode === "continuous") {
       s.sizeMode = 1;
@@ -1948,6 +2003,36 @@ class ChartView {
       gl.bufferData(gl.ARRAY_BUFFER, this._asF32(buffers[sample.size.buf]), gl.STATIC_DRAW);
       s.sizeRange = sample.size.range_px;
     }
+    const channel = (name) => sample.channels && sample.channels[name];
+    const artistScalar = Number(trace.style && trace.style.artist_alpha);
+    if (channel("opacity") || channel("artist_alpha") || channel("stroke_width") ||
+        channel("symbol") || Number.isFinite(artistScalar)) {
+      const values = new Float32Array(s.n * 4);
+      for (let i = 0; i < s.n; i++) {
+        values[i * 4] = 1;
+        values[i * 4 + 1] = Number.isFinite(artistScalar) ? artistScalar : -1;
+        values[i * 4 + 2] = -1;
+        values[i * 4 + 3] = -1;
+      }
+      const copy = (name, component, scale = 1) => {
+        const spec = channel(name);
+        if (!spec) return;
+        const source = spec.dtype === "u8"
+          ? this._asU8(buffers[spec.buf])
+          : this._asF32(buffers[spec.buf]);
+        const components = spec.components || 1;
+        for (let i = 0; i < s.n; i++) values[i * 4 + component] = source[i * components] * scale;
+      };
+      copy("opacity", 0);
+      copy("artist_alpha", 1);
+      copy("stroke_width", 2, this.dpr);
+      copy("symbol", 3);
+      s.styleBuf = this._upload(values);
+    }
+    if (sample.stroke && sample.stroke.mode === "direct_rgba") {
+      s.strokeBuf = this._upload(this._asU8(buffers[sample.stroke.buf]));
+    }
+    this._pointMarkStyle(s, trace);
     g.sampleOverlay = s;
     this._refreshReductionBadges();
   }
@@ -2029,9 +2114,12 @@ class ChartView {
     const cr = g.cornerRadius || [0, 0];
     gl.uniform2f(u("u_radius"), cr[0] * this.dpr, cr[1] * this.dpr);
     gl.uniform1f(u("u_strokeWidth"), (g.strokeWidth || 0) * this.dpr);
+    // Straight alpha: RECT_FS folds u_strokeOpacity and the per-item alpha
+    // stack in and premultiplies there (uniform and buffer strokes alike).
     const sc = g.strokeColor || [0, 0, 0, 0];
-    const sa = sc[3] * this._strokeOpacity(g.trace.style || {});
-    gl.uniform4f(u("u_stroke"), sc[0] * sa, sc[1] * sa, sc[2] * sa, sa);
+    gl.uniform4f(u("u_stroke"), sc[0], sc[1], sc[2], sc[3]);
+    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style || {}));
     this._setGradientUniforms(prog, g.grad);
   }
 
@@ -2136,7 +2224,11 @@ class ChartView {
       g.colorMode = 2;
       g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
       g.lut = this._paletteLut(t.color.palette);
+    } else if (t.color && t.color.mode === "direct_rgba") {
+      g.colorMode = 3;
+      g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
     }
+    this._buildInstanceStyleChannels(g, t, buffer, "width");
     g._cpu = { x: x0, y: y1, xMeta: g.x0Meta, yMeta: g.y1Meta };
   }
 
@@ -2157,7 +2249,11 @@ class ChartView {
       g.colorMode = 2;
       g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
       g.lut = this._paletteLut(t.color.palette);
+    } else if (t.color && t.color.mode === "direct_rgba") {
+      g.colorMode = 3;
+      g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
     }
+    this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
     const style = t.style || {};
     g.meshStrokeWidth = Number(style.stroke_width) || 0;
     g.meshStroke = parseColor(this.root, style.stroke || "transparent", [0, 0, 0, 0]);
@@ -2266,7 +2362,11 @@ class ChartView {
       g.colorMode = 2;
       g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
       g.lut = this._paletteLut(t.color.palette);
+    } else if (t.color && t.color.mode === "direct_rgba") {
+      g.colorMode = 3;
+      g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
     }
+    this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
     this._rectMarkStyleGpu(g, t);
   }
 
@@ -2304,7 +2404,11 @@ class ChartView {
       g.colorMode = 2;
       g.cBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
       g.lut = this._paletteLut(t.color.palette);
+    } else if (t.color && t.color.mode === "direct_rgba") {
+      g.colorMode = 3;
+      g.rgbaBuf = this._upload(this._columnView(buffer, this.spec.columns[t.color.buf]));
     }
+    this._buildInstanceStyleChannels(g, t, buffer, "stroke_width");
     this._rectMarkStyleGpu(g, t);
   }
 
@@ -2457,11 +2561,11 @@ class ChartView {
 
   // Enable slot + pointer into `buf` — only ever called inside a _bindVao
   // setup closure, so the state lands in that VAO, not global state.
-  _vaoAttr(slot, buf, byteOffset, divisor, size = 1) {
+  _vaoAttr(slot, buf, byteOffset, divisor, size = 1, normalized = false) {
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.enableVertexAttribArray(slot);
-    gl.vertexAttribPointer(slot, size, buf._fcType || gl.FLOAT, false, 0, byteOffset);
+    gl.vertexAttribPointer(slot, size, buf._fcType || gl.FLOAT, normalized, 0, byteOffset);
     gl.vertexAttribDivisor(slot, divisor);
   }
 
@@ -2597,12 +2701,15 @@ class ChartView {
   }
 
 
-  _drawPoints(g, xm, ym, opacityScale = 1) {
-    const simple =
-      g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
+  _canDrawSimplePoints(g) {
+    return g.colorMode === 0 && g.sizeMode === 0 && !g.selActive &&
+      !g.rgbaBuf && !g.styleBuf && !g.strokeBuf &&
       (g.symbol || 0) === 0 && (g.pointStrokeWidth || 0) <= 0 &&
       Math.max(g.lodBlendShown ?? 0, g.lodBlend ?? 0) <= 0.001;
-    if (simple) {
+  }
+
+  _drawPoints(g, xm, ym, opacityScale = 1) {
+    if (this._canDrawSimplePoints(g)) {
       this._drawSimplePoints(g, xm, ym, opacityScale);
       return;
     }
@@ -2630,22 +2737,26 @@ class ChartView {
     };
     stateColor(u("u_selColor"), this._markStateValue("selected", "color"));
     stateColor(u("u_unselColor"), this._markStateValue("unselected", "color"));
-    const [r, gg, b] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, 1);
+    const [r, gg, b, a] = g.color;
+    gl.uniform4f(u("u_color"), r, gg, b, a);
     gl.uniform1i(u("u_symbol"), g.symbol || 0);
     const sc = g.pointStroke;
-    const strokeAlpha = sc
-      ? sc[3] * this._strokeOpacity(g.trace.style, 0.8) * opacityScale
-      : 0;
     gl.uniform1f(u("u_ptStrokeWidth"), (g.pointStrokeWidth || 0) * this.dpr);
     gl.uniform1i(u("u_ptStrokeFace"), g.pointStrokeFace ? 1 : 0);
-    gl.uniform4f(u("u_ptStroke"), sc ? sc[0] * strokeAlpha : 0, sc ? sc[1] * strokeAlpha : 0,
-      sc ? sc[2] * strokeAlpha : 0, strokeAlpha);
+    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style, 0.8) * opacityScale);
+    // Straight alpha: POINT_FS folds u_strokeOpacity and the per-item alpha
+    // stack in and premultiplies there (uniform and buffer strokes alike).
+    gl.uniform4f(u("u_ptStroke"), sc ? sc[0] : 0, sc ? sc[1] : 0,
+      sc ? sc[2] : 0, sc ? sc[3] : 0);
 
     gl.uniform1i(u("u_selActive"), g.selActive ? 1 : 0);
     const colorOn = g.colorMode !== 0 && g.cBuf;
     const sizeOn = g.sizeMode === 1 && g.sBuf;
     const selOn = g.selActive && g.selBuf;
+    const rgbaOn = g.colorMode === 3 && g.rgbaBuf;
+    const styleOn = !!g.styleBuf;
+    const strokeOn = !!g.strokeBuf;
     if (g.lut) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -2685,6 +2796,9 @@ class ChartView {
         sizeOn ? g.sBuf._fcId : 0,
         selOn ? g.selBuf._fcId : 0,
         blendOn ? g.dBuf._fcId : 0,
+        rgbaOn ? g.rgbaBuf._fcId : 0,
+        styleOn ? g.styleBuf._fcId : 0,
+        strokeOn ? g.strokeBuf._fcId : 0,
       ],
       () => {
         this._vaoAttr(ATTR_SLOTS.ax, g.xBuf, 0, 0);
@@ -2693,6 +2807,9 @@ class ChartView {
         if (sizeOn) this._vaoAttr(ATTR_SLOTS.a_sval, g.sBuf, 0, 0);
         if (selOn) this._vaoAttr(ATTR_SLOTS.a_sel, g.selBuf, 0, 0);
         if (blendOn) this._vaoAttr(ATTR_SLOTS.a_dval, g.dBuf, 0, 0);
+        if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 0, 4, true);
+        if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 0, 4);
+        if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 0, 4, true);
       }
     );
     // Generic (constant) attribute values are context state, not VAO state —
@@ -2701,6 +2818,9 @@ class ChartView {
     if (!sizeOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sval, 0.5);
     if (!selOn) gl.vertexAttrib1f(ATTR_SLOTS.a_sel, 1.0);
     if (!blendOn) gl.vertexAttrib1f(ATTR_SLOTS.a_dval, 0);
+    if (!rgbaOn) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+    if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+    if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, r, gg, b, a);
     gl.drawArrays(gl.POINTS, 0, g.n);
   }
 
@@ -2715,8 +2835,10 @@ class ChartView {
     this._setAxisUniforms(prog, "u_y", g.yMeta, g.yAxis);
     gl.uniform1f(u("u_dpr"), this.dpr);
     gl.uniform1f(u("u_size"), g.size);
-    const [r, gg, b] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, this._fillOpacity(g.trace.style, 0.8) * opacityScale);
+    const [r, gg, b, a] = g.color;
+    gl.uniform4f(
+      u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style, 0.8) * opacityScale
+    );
     this._bindVao(
       g,
       "points-simple",
@@ -2900,7 +3022,8 @@ class ChartView {
     gl.uniform2f(u("u_res"), this.canvas.width, this.canvas.height);
     gl.uniform1f(u("u_width"), (g.trace.style.width ?? 1.5) * this.dpr);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * this._strokeOpacity(g.trace.style));
+    gl.uniform4f(u("u_color"), r, gg, b, a);
+    gl.uniform1f(u("u_opacity"), this._strokeOpacity(g.trace.style));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     const dashed = this._segmentDash(g, prog);
     if (g.colorMode && g.lut) {
@@ -2912,7 +3035,9 @@ class ChartView {
       g,
       "segment",
       [g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId,
-        g.colorMode ? g.cBuf._fcId : 0,
+        g.colorMode && g.cBuf ? g.cBuf._fcId : 0,
+        g.rgbaBuf ? g.rgbaBuf._fcId : 0,
+        g.styleBuf ? g.styleBuf._fcId : 0,
         dashed ? g._segmentDashOffsetBuf._fcId : 0,
         dashed ? g._segmentDashDirBuf._fcId : 0],
       () => {
@@ -2920,14 +3045,18 @@ class ChartView {
         this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
-        if (g.colorMode) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+        if (g.colorMode && g.cBuf) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+        if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+        if (g.styleBuf) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
         if (dashed) {
           this._vaoAttr(ATTR_SLOTS.a_dash0, g._segmentDashOffsetBuf, 0, 1);
           this._vaoAttr(ATTR_SLOTS.a_dashDir, g._segmentDashDirBuf, 0, 1);
         }
       }
     );
-    if (!g.colorMode) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!g.cBuf) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!g.rgbaBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+    if (!g.styleBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
   }
 
@@ -3016,26 +3145,35 @@ class ChartView {
     for (const name of ["y0", "y1", "y2"]) this._setAxisUniforms(prog, "u_" + name, g[name + "Meta"], g.yAxis);
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
-    gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], 1);
+    gl.uniform4f(u("u_color"), g.color[0], g.color[1], g.color[2], g.color[3]);
+    // Straight alpha: MESH_FS folds u_strokeOpacity and the per-item alpha
+    // stack in and premultiplies there (uniform and buffer strokes alike).
     const stroke = g.meshStroke || [0, 0, 0, 0];
-    const strokeAlpha = stroke[3] * this._strokeOpacity(g.trace.style);
-    gl.uniform4f(u("u_stroke"), stroke[0] * strokeAlpha, stroke[1] * strokeAlpha,
-      stroke[2] * strokeAlpha, strokeAlpha);
+    gl.uniform4f(u("u_stroke"), stroke[0], stroke[1], stroke[2], stroke[3]);
     gl.uniform1f(u("u_strokeWidth"), g.meshStrokeWidth || 0);
+    gl.uniform1i(u("u_strokeMode"), g.strokeBuf ? 1 : 0);
+    gl.uniform1f(u("u_strokeOpacity"), this._strokeOpacity(g.trace.style));
     if (g.colorMode && g.lut) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
       gl.uniform1i(u("u_lut"), 0);
     }
     const parts = ["x0", "x1", "x2", "y0", "y1", "y2"].map((name) => g[name + "Buf"]._fcId);
-    parts.push(g.colorMode ? g.cBuf._fcId : 0);
+    parts.push(g.cBuf ? g.cBuf._fcId : 0, g.rgbaBuf ? g.rgbaBuf._fcId : 0,
+      g.styleBuf ? g.styleBuf._fcId : 0, g.strokeBuf ? g.strokeBuf._fcId : 0);
     this._bindVao(g, "mesh", parts, () => {
       for (const name of ["x0", "x1", "x2", "y0", "y1", "y2"]) {
         this._vaoAttr(ATTR_SLOTS["a" + name], g[name + "Buf"], 0, 1);
       }
-      if (g.colorMode) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+      if (g.cBuf) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+      if (g.rgbaBuf) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+      if (g.styleBuf) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+      if (g.strokeBuf) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
     });
-    if (!g.colorMode) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!g.cBuf) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!g.rgbaBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, ...g.color);
+    if (!g.styleBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+    if (!g.strokeBuf) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...stroke);
     gl.drawArraysInstanced(gl.TRIANGLES, 0, 3, g.n);
   }
 
@@ -3132,10 +3270,15 @@ class ChartView {
     gl.uniform1i(u("u_ymode"), this._axisMode(g.yAxis));
     gl.uniform4f(u("u_edgePad"), edgePad[0], edgePad[1], edgePad[2], edgePad[3]);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style));
+    gl.uniform4f(u("u_color"), r, gg, b, a);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     this._setRectStyleUniforms(prog, g);
-    const colorOn = g.colorMode && g.cBuf;
+    const colorOn = !!g.cBuf;
+    const rgbaOn = !!g.rgbaBuf;
+    const styleOn = !!g.styleBuf;
+    const strokeOn = !!g.strokeBuf;
+    const radiusOn = !!g.radiusBuf;
     if (colorOn) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -3144,16 +3287,27 @@ class ChartView {
     this._bindVao(
       g,
       "rects",
-      [g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId, colorOn ? g.cBuf._fcId : 0],
+      [g.x0Buf._fcId, g.x1Buf._fcId, g.y0Buf._fcId, g.y1Buf._fcId,
+        colorOn ? g.cBuf._fcId : 0, rgbaOn ? g.rgbaBuf._fcId : 0,
+        styleOn ? g.styleBuf._fcId : 0, strokeOn ? g.strokeBuf._fcId : 0,
+        radiusOn ? g.radiusBuf._fcId : 0],
       () => {
         this._vaoAttr(ATTR_SLOTS.ax0, g.x0Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ax1, g.x1Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ay0, g.y0Buf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.ay1, g.y1Buf, 0, 1);
         if (colorOn) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+        if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+        if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+        if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
+        if (radiusOn) this._vaoAttr(ATTR_SLOTS.a_radius, g.radiusBuf, 0, 1, 2);
       }
     );
     if (!colorOn) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!rgbaOn) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+    if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+    if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...(g.strokeColor || g.color));
+    if (!radiusOn) gl.vertexAttrib2f(ATTR_SLOTS.a_radius, -1, -1);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
   }
 
@@ -3179,11 +3333,16 @@ class ChartView {
     gl.uniform1f(u("u_v0Const"), v0Const ?? 0);
     gl.uniform1f(u("u_v0EdgePad"), v0EdgePad);
     const [r, gg, b, a] = g.color;
-    gl.uniform4f(u("u_color"), r, gg, b, a * this._fillOpacity(g.trace.style));
+    gl.uniform4f(u("u_color"), r, gg, b, a);
+    gl.uniform1f(u("u_opacity"), this._fillOpacity(g.trace.style));
     gl.uniform1i(u("u_colorMode"), g.colorMode || 0);
     this._setRectStyleUniforms(prog, g);
     const v0On = g.value0Mode === 1 && g.value0Buf;
-    const colorOn = g.colorMode && g.cBuf;
+    const colorOn = !!g.cBuf;
+    const rgbaOn = !!g.rgbaBuf;
+    const styleOn = !!g.styleBuf;
+    const strokeOn = !!g.strokeBuf;
+    const radiusOn = !!g.radiusBuf;
     if (colorOn) {
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, g.lut);
@@ -3196,16 +3355,28 @@ class ChartView {
         g.posBuf._fcId, g.value1Buf._fcId,
         v0On ? g.value0Buf._fcId : 0,
         colorOn ? g.cBuf._fcId : 0,
+        rgbaOn ? g.rgbaBuf._fcId : 0,
+        styleOn ? g.styleBuf._fcId : 0,
+        strokeOn ? g.strokeBuf._fcId : 0,
+        radiusOn ? g.radiusBuf._fcId : 0,
       ],
       () => {
         this._vaoAttr(ATTR_SLOTS.a_pos, g.posBuf, 0, 1);
         this._vaoAttr(ATTR_SLOTS.a_v1, g.value1Buf, 0, 1);
         if (v0On) this._vaoAttr(ATTR_SLOTS.a_v0, g.value0Buf, 0, 1);
         if (colorOn) this._vaoAttr(ATTR_SLOTS.a_cval, g.cBuf, 0, 1);
+        if (rgbaOn) this._vaoAttr(ATTR_SLOTS.a_rgba, g.rgbaBuf, 0, 1, 4, true);
+        if (styleOn) this._vaoAttr(ATTR_SLOTS.a_style, g.styleBuf, 0, 1, 4);
+        if (strokeOn) this._vaoAttr(ATTR_SLOTS.a_stroke, g.strokeBuf, 0, 1, 4, true);
+        if (radiusOn) this._vaoAttr(ATTR_SLOTS.a_radius, g.radiusBuf, 0, 1, 2);
       }
     );
     if (!v0On) gl.vertexAttrib1f(ATTR_SLOTS.a_v0, 0);
     if (!colorOn) gl.vertexAttrib1f(ATTR_SLOTS.a_cval, 0);
+    if (!rgbaOn) gl.vertexAttrib4f(ATTR_SLOTS.a_rgba, r, gg, b, a);
+    if (!styleOn) gl.vertexAttrib4f(ATTR_SLOTS.a_style, 1, -1, -1, -1);
+    if (!strokeOn) gl.vertexAttrib4f(ATTR_SLOTS.a_stroke, ...(g.strokeColor || g.color));
+    if (!radiusOn) gl.vertexAttrib2f(ATTR_SLOTS.a_radius, -1, -1);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, g.n);
   }
 
@@ -4226,6 +4397,14 @@ class ChartView {
     this._raf = null;
     this._cancelViewAnimation();
     this._destroyGlResources();
+    // Release the GL context now instead of waiting for GC. Republishing a
+    // figure destroys and rebuilds its view, and browsers cap live contexts
+    // (~16); without an explicit loss the destroyed contexts pile up under
+    // repeated rebuilds (e.g. an on_view_change-driven refresh) and trip the
+    // "too many active WebGL contexts" eviction. Listeners are already removed
+    // above and _destroyed is set, so the resulting event starts no recovery.
+    const loseExt = this.gl && this.gl.getExtension("WEBGL_lose_context");
+    if (loseExt) loseExt.loseContext();
     this.gl = null;
     this.root.remove();
   }

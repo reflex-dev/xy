@@ -334,11 +334,12 @@ def scatter(
     colormap: str = channels.DEFAULT_COLORMAP,
     color_domain: Optional[tuple[float, float]] = None,
     size_range: tuple[float, float] = (2.0, 18.0),
-    opacity: float = 0.8,
+    opacity: Any = 0.8,
     density: Optional[bool] = None,
-    symbol: str = "circle",
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    symbol: Any = "circle",
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    _artist_alpha: Any = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -361,6 +362,7 @@ def scatter(
         symbol: Marker symbol name.
         stroke: Optional marker outline color.
         stroke_width: Marker outline width in pixels.
+        _artist_alpha: Internal Matplotlib alpha override, scalar or per marker.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
         x_axis: Identifier of the x axis used by this mark.
@@ -385,6 +387,7 @@ def scatter(
             "symbol": symbol,
             "stroke": stroke,
             "stroke_width": stroke_width,
+            "_artist_alpha": _artist_alpha,
             "x_axis": x_axis,
             "y_axis": y_axis,
         },
@@ -635,8 +638,8 @@ def segments(
     color: Union[str, ColorLike, ArrayLike, None] = None,
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
-    width: float = 1.2,
-    opacity: float = 1.0,
+    width: Any = 1.2,
+    opacity: Any = 1.0,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -696,9 +699,9 @@ def triangle_mesh(
     colormap: str = channels.DEFAULT_COLORMAP,
     domain: Optional[tuple[float, float]] = None,
     name: Optional[str] = None,
-    opacity: float = 1.0,
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    opacity: Any = 1.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
     x_axis: str = "x",
@@ -1214,11 +1217,12 @@ def histogram(
     density: bool = False,
     cumulative: bool = False,
     name: Optional[str] = None,
-    color: Optional[str] = None,
-    opacity: float = 0.85,
-    corner_radius: Union[float, tuple[float, float]] = 0.0,
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    color: Any = None,
+    opacity: Any = 0.85,
+    corner_radius: Any = 0.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    _artist_alpha: Any = None,
     fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
@@ -1240,6 +1244,7 @@ def histogram(
         corner_radius: Bar corner radius in pixels.
         stroke: Optional bar outline color.
         stroke_width: Bar outline width in pixels.
+        _artist_alpha: Internal Matplotlib alpha override, scalar or per bin.
         fill: CSS fill value or linear gradient.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
@@ -1263,6 +1268,7 @@ def histogram(
             "corner_radius": corner_radius,
             "stroke": stroke,
             "stroke_width": stroke_width,
+            "_artist_alpha": _artist_alpha,
             "fill": fill,
             "x_axis": x_axis,
             "y_axis": y_axis,
@@ -1279,11 +1285,12 @@ def hist(
     density: bool = False,
     cumulative: bool = False,
     name: Optional[str] = None,
-    color: Optional[str] = None,
-    opacity: float = 0.85,
-    corner_radius: Union[float, tuple[float, float]] = 0.0,
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    color: Any = None,
+    opacity: Any = 0.85,
+    corner_radius: Any = 0.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    _artist_alpha: Any = None,
     fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
@@ -1304,6 +1311,7 @@ def hist(
         corner_radius=corner_radius,
         stroke=stroke,
         stroke_width=stroke_width,
+        _artist_alpha=_artist_alpha,
         fill=fill,
         style=style,
         class_name=class_name,
@@ -1318,17 +1326,18 @@ def bar(
     *,
     data: TableLike = None,
     name: Optional[str] = None,
-    color: Union[str, Sequence[str], None] = None,
+    color: Any = None,
     colors: Optional[list[str]] = None,
     width: float = 0.8,
     base: Union[str, Scalar, ArrayLike] = 0.0,
     mode: str = "grouped",
     orientation: str = "vertical",
     series: Optional[list[str]] = None,
-    opacity: float = 0.85,
-    corner_radius: Union[float, tuple[float, float]] = 0.0,
-    stroke: Optional[str] = None,
-    stroke_width: float = 0.0,
+    opacity: Any = 0.85,
+    corner_radius: Any = 0.0,
+    stroke: Any = None,
+    stroke_width: Any = 0.0,
+    _artist_alpha: Any = None,
     fill: Union[str, dict[str, str], None] = None,
     style: Optional[dict[str, StyleValue]] = None,
     class_name: Optional[str] = None,
@@ -1353,6 +1362,7 @@ def bar(
         corner_radius: Bar corner radius in pixels.
         stroke: Optional bar outline color.
         stroke_width: Bar outline width in pixels.
+        _artist_alpha: Internal Matplotlib alpha override, scalar or per bar.
         fill: CSS fill value or linear gradient.
         style: Mark style overrides.
         class_name: Adapter-only trace metadata; it does not style canvas geometry.
@@ -1379,6 +1389,7 @@ def bar(
             "corner_radius": corner_radius,
             "stroke": stroke,
             "stroke_width": stroke_width,
+            "_artist_alpha": _artist_alpha,
             "fill": fill,
             "x_axis": x_axis,
             "y_axis": y_axis,
@@ -3801,7 +3812,18 @@ class FacetChart(Component):
         return self.to_html(path, custom_css=custom_css)
 
     def _repr_html_(self) -> str:
-        return self.to_html()
+        grid = self.figure()
+        return export.notebook_iframe(
+            grid.to_html(),
+            width=grid.width,
+            height=grid.grid_height + grid._title_height,
+        )
+
+    def _ipython_display_(self) -> None:
+        """Display the isolated facet document in notebook frontends."""
+        from IPython.display import display  # type: ignore[import-not-found]
+
+        display({"text/html": self._repr_html_()}, raw=True)
 
     def to_svg(self, path: Optional[str | PathLike[str]] = None) -> str:
         """A static SVG render of the facet grid (written to ``path`` if given)."""
@@ -4001,6 +4023,7 @@ def _apply_scatter(fig: Figure, m: Mark, data: Any) -> None:
             symbol=m.props["symbol"],
             stroke=m.props["stroke"],
             stroke_width=m.props["stroke_width"],
+            _artist_alpha=m.props.get("_artist_alpha"),
             style=m.style,
         )
     except Exception:
@@ -4256,6 +4279,7 @@ def _apply_histogram(fig: Figure, m: Mark, data: Any) -> None:
         corner_radius=m.props["corner_radius"],
         stroke=m.props["stroke"],
         stroke_width=m.props["stroke_width"],
+        _artist_alpha=m.props.get("_artist_alpha"),
         fill=m.props["fill"],
         style=m.style,
     )
@@ -4291,6 +4315,7 @@ def _apply_bar(fig: Figure, m: Mark, data: Any) -> None:
         corner_radius=m.props["corner_radius"],
         stroke=m.props["stroke"],
         stroke_width=m.props["stroke_width"],
+        _artist_alpha=m.props.get("_artist_alpha"),
         fill=m.props["fill"],
         style=m.style,
     )
@@ -4592,7 +4617,9 @@ def facet_chart(
             ``"x"`` or ``"y"`` for one axis, and ``False``/``None`` to disable.
         link_select: Whether data-space selections are echoed across panels.
         gap: Gap between panels in pixels.
-        **props: Additional shared chart properties.
+        **props: Additional shared chart properties. ``width`` is the total
+            grid width, while ``height`` is the height of each panel; the
+            composed height grows with the number of facet rows.
     """
     return FacetChart(
         children,

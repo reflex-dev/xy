@@ -402,6 +402,46 @@ the default area `opacity=0.35` produces a `0.35`-alpha outline. For a faint
 fill with an opaque outline, keep whole-mark opacity at `1` and set
 `style={"fill-opacity": 0.35, "stroke-opacity": 1}`.
 
+### Vectorized instance styles
+
+Instanced 2-D primitives accept scalar or per-item styles without splitting a
+collection into one trace per mark:
+
+| Mark | Direct paint | Numeric/glyph channels |
+| --- | --- | --- |
+| scatter | `color`, `stroke`: `(N, 3)` RGB or `(N, 4)` RGBA | `opacity`, `size`, `stroke_width`, `symbol` |
+| bar, column, histogram, rectangles | `color`, `stroke`: `(N, 3|4)` | `opacity`, `stroke_width`, `corner_radius` (`N` or `N × 2`) |
+| independent segments | `color`: `(N, 3|4)` | `opacity`, `width` |
+| triangle mesh | `color`, `stroke`: `(N, 3|4)` | `opacity`, `stroke_width` |
+
+Multi-series bars accept `(S, N, 3|4)` paint and `(S, N)` numeric channels.
+A one-series `(N, …)` value never broadcasts into a differently shaped series;
+shape mismatches fail before the figure is mutated. Direct RGBA is packed as
+four normalized bytes per item. Scalar constants remain spec-only, while
+semantic one-dimensional numeric/categorical color channels keep using a
+scalar plus a lookup table and may produce a colorbar.
+
+An outline that follows its item fill ships as the buffer-free `match_fill`
+paint mode; it does not duplicate direct RGBA bytes.
+
+Alpha composition is ordered and shared by WebGL, PNG, and SVG:
+
+1. the paint contributes intrinsic alpha;
+2. a Matplotlib artist-alpha override replaces that intrinsic alpha (`None`
+   restores it);
+3. core `opacity`, component `fill_opacity`/`stroke_opacity`, and selection
+   opacity multiply the result.
+
+A scalar `style={...}` declaration is intentionally scalar-only and overrides
+the corresponding typed scalar/vector argument. Dense scatter aggregation can
+discard exact instance styles above the direct-render ceiling; its warning
+lists every dropped channel.
+
+Streaming append accepts matching `color`, `size`, `stroke`, `opacity`,
+`alpha`, `stroke_width`, and `symbol` tails for an existing per-item scatter
+channel. All tail shapes are validated before geometry or style storage is
+mutated, so a rejected append cannot leave channel lengths out of sync.
+
 ### Scatter markers — `symbol`, `stroke`, `stroke_width`
 
 `scatter` markers take any of the 17 renderer-backed symbols listed in the
