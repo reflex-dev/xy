@@ -447,11 +447,22 @@ Object.assign(ChartView.prototype, {
     this.markStyle = spec.mark_style || {};
     this.axes = this._normalizeAxes(spec);
     this._payload = buffer;
-    const target = this._clampView({
-      x0: spec.x_axis.range[0], x1: spec.x_axis.range[1],
-      y0: spec.y_axis.range[0], y1: spec.y_axis.range[1],
+    // A full payload re-homes the view to its own axis ranges (reflex-integration
+    // §4 "state-driven rebuild"): unlike streaming append, it carries no
+    // follow-policy, so it behaves like a fresh mount of the new data. Clear the
+    // prior home before clamping so `_clampView` derives extents from the
+    // incoming spec instead of capping the window to the previous home span —
+    // otherwise a recomputed figure whose data range *grew* (e.g. the §4 detail
+    // histogram gaining points, and thus a taller count axis, as its linked
+    // overview zooms out) would be pinned to the old, smaller magnification and
+    // paint as a solid clipped block. Mirrors the constructor's home setup.
+    this.view0 = undefined;
+    this.view0 = this._clampView({
+      ranges: Object.fromEntries(
+        Object.entries(this.axes).map(([id, axis]) => [id, [...axis.range]]),
+      ),
     });
-    this.view0 = { ...target };
+    const target = { ...this.view0 };
     if (this._glLost || !this.gl) {
       this.view = { ...target };
       return true;

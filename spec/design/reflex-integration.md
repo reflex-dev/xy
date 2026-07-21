@@ -315,7 +315,16 @@ absorbs newer publishes and always ships the latest payload.
 
 - **State-driven rebuild** (filter changed): the figure var recomputes,
   `registry.publish` bumps the version and pushes one full `payload` to the
-  room. Stable token: no component re-render, one screen-bounded reship.
+  room. Stable token: no component re-render, one screen-bounded reship. The
+  in-place swap re-homes the viewport to the incoming spec's axis ranges — a
+  full payload carries no follow policy of its own. A chart the viewer has
+  navigated is re-pinned to its prior window afterward (the restore contract
+  below); a dependent chart sitting at its home simply follows the new data. In
+  both cases the home *must* be the new spec's own extents, not the previous
+  payload's: it is what lets an `on_view_change`-computed detail chart track its
+  source both ways — when the linked overview zooms *out*, the recomputed
+  detail's count axis grows and the view expands with it instead of clamping to
+  the previous, smaller home (`ChartView.updatePayload`, `js/src/56_animation.js`).
 - **Streaming**: `reflex_xy.append(token, x=..., y=...)` from any handler,
   background task, or thread → `Figure.append` under the figure lock (worker
   thread) → the same `append` message the notebook widget ships, pushed
