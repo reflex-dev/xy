@@ -226,9 +226,7 @@ def histogram_x_zoom_demo() -> xy.Chart:
 
 def box_zoom_drag_demo() -> xy.Chart:
     rng = np.random.default_rng(107)
-    values = np.concatenate(
-        [rng.normal(38, 7, 140_000), rng.normal(72, 12, 110_000)]
-    )
+    values = np.concatenate([rng.normal(38, 7, 140_000), rng.normal(72, 12, 110_000)])
     return xy.histogram_chart(
         xy.hist(values, bins=120, name="duration", color="#0891b2", opacity=0.84),
         xy.interaction_config(default_drag_action="zoom", zoom_axes=("x",)),

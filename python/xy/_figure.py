@@ -284,7 +284,11 @@ class Figure(AnnotationsMixin, PayloadMixin):
             normalized = self._optional_bool(value, f"interaction {name}")
             if normalized is not None:
                 updates[name] = normalized
-        for name, axes in (("pan_axes", pan_axes), ("zoom_axes", zoom_axes), ("reset_axes", reset_axes)):
+        for name, axes in (
+            ("pan_axes", pan_axes),
+            ("zoom_axes", zoom_axes),
+            ("reset_axes", reset_axes),
+        ):
             if axes is not None:
                 updates[name] = self._axis_policy(axes, name)
         if zoom_limits is not None:
@@ -599,8 +603,10 @@ class Figure(AnnotationsMixin, PayloadMixin):
         action = self._default_drag_action(action)
         if action in {"auto", "none"}:
             return
+
         def enabled(name: str) -> bool:
             return self.interaction.get(name, True) is not False
+
         if action == "pan" and not (enabled("navigation") and enabled("pan")):
             raise ValueError("interaction default_drag_action='pan' requires navigation and pan")
         if action == "zoom" and not (
