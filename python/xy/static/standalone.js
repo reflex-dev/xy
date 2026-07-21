@@ -1962,6 +1962,7 @@ if (typeof window !== "undefined" && window.addEventListener) {
 window.addEventListener("pagehide", () => this._post({ t: "bye", id: this.frameId }));
 window.addEventListener("pageshow", (event) => {
 if (!event || !event.persisted) return;
+this.foreign.clear();
 this._announcedLive = -1;
 this._post({ t: "hello", id: this.frameId });
 this._announceLive(true);

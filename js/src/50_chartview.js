@@ -166,6 +166,11 @@ const XY_CONTEXT_GOVERNOR = {
         window.addEventListener("pagehide", () => this._post({ t: "bye", id: this.frameId }));
         window.addEventListener("pageshow", (event) => {
           if (!event || !event.persisted) return;
+          // Peers may have come and gone while we were frozen, and a departed
+          // peer sent its `bye` to a channel we could not hear. Drop the stale
+          // map and rebuild it from live peers' replies to our `hello` rather
+          // than counting contexts that no longer exist.
+          this.foreign.clear();
           this._announcedLive = -1; // force the announcement below to re-send
           this._post({ t: "hello", id: this.frameId }); // relearn peers' counts
           this._announceLive(true); // and re-advertise ours

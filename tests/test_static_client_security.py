@@ -456,9 +456,11 @@ def test_client_shares_context_budget_across_same_origin_frames() -> None:
         # Effective budget = own live contexts + those reported by other frames.
         "this.localLive() + this.foreignLive() - this.budget()",
         # A bfcache restore must re-advertise, or peers omit the restored frame
-        # forever and the page silently exceeds the browser cap.
+        # forever and the page silently exceeds the browser cap; and it must
+        # discard the membership map that may have gone stale while frozen.
         'window.addEventListener("pageshow"',
         "event.persisted",
+        "this.foreign.clear()",
     )
     for path, text in CLIENT_FILES:
         for marker in required:
