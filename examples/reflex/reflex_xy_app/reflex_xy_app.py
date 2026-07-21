@@ -473,7 +473,7 @@ values = rng.lognormal(mean=4.25, sigma=0.48, size=250_000)
 chart = xy.chart(
     xy.hist(values, bins=140, name="requests", color="#7c3aed"),
     xy.interaction_config(zoom_axes=("x",)),
-    xy.x_axis(label="request latency (ms)"),
+    xy.x_axis(label="request latency (ms)", domain=(0, 250)),
     xy.y_axis(label="requests"),
     title="Latency histogram with x-only zoom",
     width="100%",

@@ -1617,6 +1617,13 @@ Object.assign(ChartView.prototype, {
 
   _queueWheelZoom(factor, fx, fy) {
     if (!Number.isFinite(factor) || factor <= 0) return;
+    // A queued delta keeps the gesture open: kill the pending end timer here,
+    // not in the rAF. Otherwise a wheel event landing just before the 90 ms
+    // timer fires lets "end" emit — and the apply rAF, queued earlier, then
+    // overwrites it in the event coalescer — while this delta is still
+    // pending, so the gesture would never deliver an "end" carrying the final
+    // committed range. The rAF re-arms the timer after the delta applies.
+    clearTimeout(this._wheelZoomEndTimer);
     if (!this._wheelGesture) {
       this._wheelGesture = { interactionId: ++this._interactionSeq, axes: new Set() };
     }

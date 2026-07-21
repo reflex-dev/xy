@@ -3335,7 +3335,7 @@ this._refreshReductionBadges();
 }
 _drawDensitySample(g, x0, x1, y0, y1, opacityScale = 1) {
 const s = g && g.sampleOverlay;
-if (!s || !s.n || !this._viewInside(s.win)) return;
+if (!s || !s.n || !this._viewOverlaps(s.win)) return;
 this._drawPoints(
 s,
 this._map(s.xMeta, x0, x1, s.xAxis),
@@ -7613,6 +7613,7 @@ interactionId: opts.interactionId,
 },
 _queueWheelZoom(factor, fx, fy) {
 if (!Number.isFinite(factor) || factor <= 0) return;
+clearTimeout(this._wheelZoomEndTimer);
 if (!this._wheelGesture) {
 this._wheelGesture = { interactionId: ++this._interactionSeq, axes: new Set() };
 }
@@ -8068,14 +8069,13 @@ const [vx0, vx1] = this._axisRange(g.xAxis, view);
 const [vy0, vy1] = this._axisRange(g.yAxis, view);
 const [hx0, hx1] = this._axisRange(g.xAxis, this.view0);
 const [hy0, hy1] = this._axisRange(g.yAxis, this.view0);
-const ex = Math.max(Math.abs(hx1 - hx0), 1e-300) * 1e-9;
-const ey = Math.max(Math.abs(hy1 - hy0), 1e-300) * 1e-9;
-const atHome =
-Math.min(vx0, vx1) <= Math.min(hx0, hx1) + ex &&
-Math.max(vx0, vx1) >= Math.max(hx0, hx1) - ex &&
-Math.min(vy0, vy1) <= Math.min(hy0, hy1) + ey &&
-Math.max(vy0, vy1) >= Math.max(hy0, hy1) - ey;
-if (atHome) {
+const homeSpanX = Math.max(Math.abs(hx1 - hx0), 1e-300);
+const homeSpanY = Math.max(Math.abs(hy1 - hy0), 1e-300);
+const viewSpanX = Math.abs(vx1 - vx0);
+const viewSpanY = Math.abs(vy1 - vy0);
+const notZoomedIn =
+viewSpanX >= homeSpanX * (1 - 1e-6) && viewSpanY >= homeSpanY * (1 - 1e-6);
+if (notZoomedIn) {
 if (g.density !== g._homeDensity) {
 const hd = g._homeDensity;
 this._applySampleRebinGrid(g, {
@@ -8321,6 +8321,15 @@ const wx0 = Math.min(win.x0, win.x1), wx1 = Math.max(win.x0, win.x1);
 const wy0 = Math.min(win.y0, win.y1), wy1 = Math.max(win.y0, win.y1);
 return vx0 >= wx0 - ex && vx1 <= wx1 + ex && vy0 >= wy0 - ey && vy1 <= wy1 + ey;
 },
+_viewOverlaps(win) {
+if (!win) return false;
+const { x0, x1, y0, y1 } = this.view;
+const vx0 = Math.min(x0, x1), vx1 = Math.max(x0, x1);
+const vy0 = Math.min(y0, y1), vy1 = Math.max(y0, y1);
+const wx0 = Math.min(win.x0, win.x1), wx1 = Math.max(win.x0, win.x1);
+const wy0 = Math.min(win.y0, win.y1), wy1 = Math.max(win.y0, win.y1);
+return vx0 <= wx1 && vx1 >= wx0 && vy0 <= wy1 && vy1 >= wy0;
+},
 _viewInsideRange(xRange, yRange) {
 if (!xRange || !yRange) return false;
 return this._viewInside({ x0: xRange[0], x1: xRange[1], y0: yRange[0], y1: yRange[1] });
@@ -8565,7 +8574,7 @@ window.xy = { render, renderStandalone, decodeFrame, ChartView, MARK_KINDS, mark
 <script>__xyChunks.push("3gutw3WOqsMNEajDpJOlwzwWo8PUmKDDaxuewwOem8OaIJnDMqOWw8kllMNhqJHD+CqPw5CtjMMnMIrDv7KHw1Y1hcPut4LDhTqAwzl6e8Nof3bDl4Rxw8aJbMP1jmfDJJRiw1OZXcODnljDsqNTw+GoTsMQrknDP7NEw264P8OdvTrDzMI1w/vHMMMqzSvDWdImw4jXIcO33BzD5uEXwxXnEsNE7A3Dc/EIw6L2A8Oi9/3CAAL0wl4M6sK8FuDCGiHWwngrzMLWNcLCNEC4wpJKrsLwVKTCTl+awqxpkMIKdIbC0fx4wo0RZcJJJlHCBTs9wsFPKcJ9ZBXCOXkBwusb28FjRbPB226LwacwR8EvB+/AH1ofwB9aH0AvB+9ApzBHQdtui0FjRbNB6xvbQTl5AUJ9ZBVCwU8pQgU7PUJJJlFCjRFlQtH8eEIKdIZCrGmQQk5fmkLwVKRCkkquQjRAuELWNcJCeCvMQhoh1kK8FuBCXgzqQgAC9EKi9/1CovYDQ3PxCENE7A1DFecSQ+bhF0O33BxDiNchQ1nSJkMqzStD+8cwQ8zCNUOdvTpDbrg/Qz+zREMQrklD4ahOQ7KjU0ODnlhDU5ldQySUYkP1jmdDxolsQ5eEcUNof3ZDOXp7Q4U6gEPut4JDVjWFQ7+yh0MnMIpDkK2MQ/gqj0NhqJFDySWUQzKjlkOaIJlDA56bQ2sbnkPUmKBDPBajQ6STpUMNEahDdY6qQ94LrUPeC63DdY6qww0RqMOkk6XDPBajw9SYoMNrG57DA56bw5ogmcMyo5bDySWUw2GokcP4Ko/DkK2MwycwisO/sofDVjWFw+63gsOFOoDDOXp7w2h/dsOXhHHDxolsw/WOZ8MklGLDU5ldw4OeWMOyo1PD4ahOwxCuScM/s0TDbrg/w529OsPMwjXD+8cwwyrNK8NZ0ibDiNchw7fcHMPm4RfDFecSw0TsDcNz8QjDovYDw6L3/cIAAvTCXgzqwrwW4MIaIdbCeCvMwtY1wsI0QLjCkkquwvBUpMJOX5rCrGmQwgp0hsLR/HjCjRFlwkkmUcIFOz3CwU8pwn1kFcI5eQHC6xvbwWNFs8HbbovBpzBHwS8H78AfWh/AH1ofQC8H70CnMEdB226LQWNFs0HrG9tBOXkBQn1kFULBTylCBTs9QkkmUUKNEWVC0fx4Qgp0hkKsaZBCTl+aQvBUpEKSSq5CNEC4QtY1wkJ4K8xCGiHWQrwW4EJeDOpCAAL0QqL3/UKi9gNDc/EIQ0TsDUMV5xJD5uEXQ7fcHEOI1yFDWdImQyrNK0P7xzBDzMI1Q529OkNuuD9DP7NEQxCuSUPhqE5DsqNTQ4OeWENTmV1DJJRiQ/WOZ0PGiWxDl4RxQ2h/dkM5entDhTqAQ+63gkNWNYVDv7KHQycwikOQrYxD+CqPQ2GokUPJJZRDMqOWQ5ogmUMDnptDaxueQ9SYoEM8FqNDpJOlQw0RqEN1jqpD3gutQwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOj+xQD47sUAcLvFAPBNxQAAacMAQDJFAGilRQB41EUAoPtFAOgARgDw9UUAyOJFACjGRQDIoEUAcHlFAJAxRQAAukQAQA1EAADtwwAAvcQAIA7FAGA/xQDgZcUAaIjFAGiVxQBQpsUAQLLFAAC9xQAox8UAGMzFAIjVxQAw2sUAgN7FABDkxQA46cUAeOrFAMjwxQCw8MUAqPPFAJj1xQDQ9sUAAPnFAMj4xQDQ+cUA6PvFAJj7xQCg/MUAuP3FALD9xQAI/sUAcP7FACD/xQBY/8UAAADGANj/xQAYAMYAMADGACQAxgBkAMYAgADGAKAAxgB8AMYAeADGAMAAxgCgAMYAuADGAJQAxgDAAMYApADGAMAAxgDAAMYAwADGAMwAxgDEAMYA3ADGAOQAxgDkAMYA3ADGANAAxgDkAMYA5ADGAOAAxgDkAMYA5ADGANwAxgDcAMYA6ADGANgAxgDkAMYA3ADGAOgAxgDcAMYA6ADGAOQAxgDgAMYA5ADGAOgAxgDkAMYA5ADGAOgAxgDoAMYA6ADGAOgAxgDoAMYA6ADGAOgAxgDoAMYA5ADGAOgAxgDoAMYA6ADGAOgAxgDoAMYA6ADGAOgAxgDoAMYA6ADGAOQAxgDoAMYA5ADGAOgAxgDoAMYA6ADGAOgAxgDoAMYA6ADGAOgAxgDoAMYA6ADGAOQAxgDoAMYA6ADGAOgAxgDoAMYA6ADGAOgAxgDoAMYA6ADGAOgAxgDkAMY=");</script>
 <script>
   function xyDecodeB64(chunks, total) {const bytes = new Uint8Array(total); let off = 0;const native = typeof bytes.setFromBase64 === "function";for (let i = 0; i < chunks.length; i++) {const s = chunks[i];if (native) { off += bytes.subarray(off).setFromBase64(s).written; }else { const bin = atob(s), n = bin.length;for (let j = 0; j < n; j++) bytes[off + j] = bin.charCodeAt(j); off += n; }} return bytes.buffer; }
-  const spec = {"protocol":3,"width":"100%","height":430,"title":"Latency histogram with x-only zoom","x_axis":{"id":"x","kind":"linear","label":"request latency (ms)","range":[-12.133942518350535,726.8611412011858],"side":"bottom"},"y_axis":{"id":"y","kind":"linear","label":"requests","range":[0.0,16995.0],"side":"left"},"axes":{"x":{"id":"x","kind":"linear","label":"request latency (ms)","range":[-12.133942518350535,726.8611412011858],"side":"bottom"},"y":{"id":"y","kind":"linear","label":"requests","range":[0.0,16995.0],"side":"left"}},"traces":[{"id":0,"kind":"histogram","name":"requests","style":{"color":"#7c3aed","opacity":0.86,"role":"histogram","cumulative":false,"density":false},"tier":"direct","n_points":250000,"n_marks":140,"x_axis":"x","y_axis":"y","x0":0,"x1":1,"y0":2,"y1":3}],"columns":[{"byte_offset":0,"len":140,"offset":354.87372372241646,"scale":1.0,"kind":"float"},{"byte_offset":560,"len":140,"offset":359.8534749604188,"scale":1.0,"kind":"float"},{"byte_offset":1120,"len":140,"offset":0.0,"scale":1.0,"kind":"float"},{"byte_offset":1680,"len":140,"offset":8250.0,"scale":1.0,"kind":"float"}],"backend":"native","show_legend":true,"view":{"ranges":{"x":[-12.133942518350535,726.8611412011858],"y":[0.0,16995.0]}},"dom":{"style":{"--chart-bg":"#fafafa","--chart-grid":"rgba(100, 116, 139, 0.16)"}},"interaction":{"zoom_axes":["x"]}};
+  const spec = {"protocol":3,"width":"100%","height":430,"title":"Latency histogram with x-only zoom","x_axis":{"id":"x","kind":"linear","label":"request latency (ms)","range":[0.0,250.0],"side":"bottom","domain":[0.0,250.0]},"y_axis":{"id":"y","kind":"linear","label":"requests","range":[0.0,16995.0],"side":"left"},"axes":{"x":{"id":"x","kind":"linear","label":"request latency (ms)","range":[0.0,250.0],"side":"bottom","domain":[0.0,250.0]},"y":{"id":"y","kind":"linear","label":"requests","range":[0.0,16995.0],"side":"left"}},"traces":[{"id":0,"kind":"histogram","name":"requests","style":{"color":"#7c3aed","opacity":0.86,"role":"histogram","cumulative":false,"density":false},"tier":"direct","n_points":250000,"n_marks":140,"x_axis":"x","y_axis":"y","x0":0,"x1":1,"y0":2,"y1":3}],"columns":[{"byte_offset":0,"len":140,"offset":354.87372372241646,"scale":1.0,"kind":"float"},{"byte_offset":560,"len":140,"offset":359.8534749604188,"scale":1.0,"kind":"float"},{"byte_offset":1120,"len":140,"offset":0.0,"scale":1.0,"kind":"float"},{"byte_offset":1680,"len":140,"offset":8250.0,"scale":1.0,"kind":"float"}],"backend":"native","show_legend":true,"view":{"ranges":{"x":[0.0,250.0],"y":[0.0,16995.0]}},"dom":{"style":{"--chart-bg":"#fafafa","--chart-grid":"rgba(100, 116, 139, 0.16)"}},"interaction":{"zoom_axes":["x"]}};
   const buf = xyDecodeB64(__xyChunks, 2240);
   __xyChunks.length = 0;
   xy.renderStandalone(document.getElementById("chart"), spec, buf);

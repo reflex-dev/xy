@@ -7601,6 +7601,7 @@ interactionId: opts.interactionId,
 },
 _queueWheelZoom(factor, fx, fy) {
 if (!Number.isFinite(factor) || factor <= 0) return;
+clearTimeout(this._wheelZoomEndTimer);
 if (!this._wheelGesture) {
 this._wheelGesture = { interactionId: ++this._interactionSeq, axes: new Set() };
 }

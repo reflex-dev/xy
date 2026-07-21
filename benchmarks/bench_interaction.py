@@ -104,7 +104,8 @@ def _core_interaction_figures() -> list[dict[str, Any]]:
         "select": True,
         "brush": True,
         "crosshair": True,
-        "view_change": True,
+        # No view_change switch: xy:view_change DOM events are always emitted,
+        # and the harness listens on the chart root.
     }
 
     rng = np.random.default_rng(89_021)

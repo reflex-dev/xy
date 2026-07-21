@@ -215,7 +215,10 @@ def histogram_x_zoom_demo() -> xy.Chart:
     return xy.histogram_chart(
         xy.hist(values, bins=140, name="requests", color="#7c3aed", opacity=0.86),
         xy.interaction_config(zoom_axes=("x",)),
-        xy.x_axis(label="request latency (ms)"),
+        # Home view frames the bulk of the long-tailed distribution; the tail
+        # stays reachable by panning right, and the default zoom limit stops
+        # zoom-out at this window.
+        xy.x_axis(label="request latency (ms)", domain=(0.0, 250.0)),
         xy.y_axis(label="requests"),
         xy.theme(plot_background="#fafafa", grid_color="rgba(100, 116, 139, 0.16)"),
         title="Latency histogram with x-only zoom",
