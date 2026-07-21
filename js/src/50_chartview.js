@@ -4094,6 +4094,14 @@ class ChartView {
     this._raf = null;
     this._cancelViewAnimation();
     this._destroyGlResources();
+    // Release the GL context now instead of waiting for GC. Republishing a
+    // figure destroys and rebuilds its view, and browsers cap live contexts
+    // (~16); without an explicit loss the destroyed contexts pile up under
+    // repeated rebuilds (e.g. an on_view_change-driven refresh) and trip the
+    // "too many active WebGL contexts" eviction. Listeners are already removed
+    // above and _destroyed is set, so the resulting event starts no recovery.
+    const loseExt = this.gl && this.gl.getExtension("WEBGL_lose_context");
+    if (loseExt) loseExt.loseContext();
     this.gl = null;
     this.root.remove();
   }
