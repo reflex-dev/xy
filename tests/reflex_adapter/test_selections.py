@@ -41,7 +41,7 @@ def test_resolve_selection_box_and_lasso(_fresh_registry):
         )
     )
     assert lasso is not None
-    assert len(lasso) > 0
+    np.testing.assert_array_equal(lasso.index, [0, 1, 2])
 
 
 def test_resolve_selection_returns_none_for_clear_unknown_and_garbage(_fresh_registry):

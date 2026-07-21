@@ -430,9 +430,16 @@ the complete count and `truncated` is never silent. For complete server-side
 data, re-resolve the geometry against the current live figure; `rows()` is
 unbounded unless the caller supplies a limit:
 
+Every envelope shape is declared as a `TypedDict` in `reflex_xy.events`
+(exported from the package root: `PointHoverEvent`, `PointClickEvent`,
+`SelectEndEvent`, `SelectionPayload`, `ViewChangeEvent`, plus their component
+pieces). Handlers still receive plain dicts — the declarations exist for type
+checking and editor support; `assets/XYChart.jsx` is the single producer they
+mirror, and the two must change together.
+
 ```python
 @rx.event
-def filter_regions(self, event: dict):
+def filter_regions(self, event: reflex_xy.SelectEndEvent):
     selection = event["selection"]
     if selection["cleared"]:
         self.selected_regions = []

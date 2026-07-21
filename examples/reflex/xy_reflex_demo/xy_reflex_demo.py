@@ -221,12 +221,12 @@ class Demo(rx.State):
         )
 
     @rx.event
-    def on_hover(self, event: dict):
+    def on_hover(self, event: reflex_xy.PointHoverEvent):
         # v1 point envelope: canonical_row_id + f64 data coordinates.
         self.hovered = event.get("data", {})
 
     @rx.event
-    def on_click(self, event: dict):
+    def on_click(self, event: reflex_xy.PointClickEvent):
         self.click_events += 1
         self.interaction_revision += 1
         modifiers = event.get("modifiers", {})
@@ -237,7 +237,7 @@ class Demo(rx.State):
         }
 
     @rx.event
-    def on_select(self, event: dict):
+    def on_select(self, event: reflex_xy.SelectEndEvent):
         self.select_events += 1
         self.interaction_revision += 1
         selection = event.get("selection", {})
@@ -260,7 +260,7 @@ class Demo(rx.State):
         self.bins = int(value[0])
 
     @rx.event
-    def on_view(self, event: dict):
+    def on_view(self, event: reflex_xy.ViewChangeEvent):
         # `event` is the v1 view-change envelope; `x_domain` is the reported
         # [x0, x1] window (debounced by the wrapper). Store the window; the
         # `detail` figure var depends on it and recomputes.
