@@ -20,10 +20,13 @@ Measures, per library, per point count N, on identical random data:
                 RSS delta too when psutil is present
   out_bytes   — PNG bytes / HTML bytes / xy wire bytes
   pts_per_s   — N / total_s
-  status      — ok | failed(reason) | skipped(over budget)
+  status      — ok | failed(reason) | skipped(over budget or hard timeout)
 
 Then a **ceiling probe**: the largest N each library renders under a wall-clock
 budget without erroring — the "how many points can it actually draw" number.
+The budget is also a hard per-library/per-size deadline across timed rendering,
+the separate memory pass, artifact serialization, and browser TTFR. Once a row
+times out, larger sizes for that library are recorded as skipped.
 
 Design notes / fairness:
 - Data generation is excluded from every timing (shared arrays).
@@ -49,6 +52,9 @@ import argparse
 import gc
 import io
 import json
+import multiprocessing
+import os
+import signal
 import sys
 import time
 import tracemalloc
@@ -169,6 +175,131 @@ def _measure(
         "status": "ok",
         **render_metadata,
     }
+
+
+def _measure_adapter(
+    factory: Callable,
+    x,
+    y,
+    n: int,
+    *,
+    capture_artifact: bool,
+    chromium: str | None,
+) -> dict[str, Any]:
+    """Measure one adapter/size row inside an isolated worker process."""
+    adapter = factory(x, y)
+    if adapter is None:
+        return {"status": "unavailable"}
+
+    build, render, artifact_fn = _normalize(adapter)
+    row = _measure(build, render, artifact_fn if capture_artifact else None)
+    row["pts_per_s"] = (n / row["total_s"]) if row.get("total_s") else None
+
+    # Time to first render: browser paint for HTML artifacts; the render itself
+    # for raster libs (PNG already = pixels).
+    if capture_artifact and row.get("status") == "ok":
+        html = row.pop("_artifact", None)
+        if html:
+            browser = chart_ready_metrics(html, chromium=chromium)
+            ready = None if browser is None else browser["ready_ms"]
+            row["browser_ready_ms"] = ready
+            row["browser_fcp_ms"] = None if browser is None else browser["fcp_ms"]
+            row["browser_js_heap_bytes"] = None if browser is None else browser["js_heap_bytes"]
+            row["browser_paint_ms"] = ready  # schema-v2 compatibility
+            artifact_s = row.get("artifact_s")
+            row["ttfr_ms"] = (
+                (row["build_s"] + artifact_s) * 1e3 + ready
+                if ready is not None and artifact_s is not None
+                else None
+            )
+        else:  # raster: build+render already produced pixels
+            row["ttfr_ms"] = row["total_s"] * 1e3
+    row.pop("_artifact", None)
+    return row
+
+
+def _measurement_worker(send, factory, x, y, n, capture_artifact, chromium) -> None:
+    """Process entry point; always send a small, artifact-free result."""
+    try:
+        os.setsid()
+        global _PROC
+        if _PROC is not None:
+            _PROC = psutil.Process()
+        result = _measure_adapter(
+            factory,
+            x,
+            y,
+            n,
+            capture_artifact=capture_artifact,
+            chromium=chromium,
+        )
+    except BaseException as exc:
+        if tracemalloc.is_tracing():
+            tracemalloc.stop()
+        result = {"status": f"failed({type(exc).__name__}: {str(exc)[:80]})"}
+    try:
+        send.send(result)
+    finally:
+        send.close()
+
+
+def _stop_process_tree(process) -> None:
+    """Terminate a worker and renderer descendants, escalating to SIGKILL."""
+    if not process.is_alive():
+        process.join()
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        process.terminate()
+    process.join(timeout=0.25)
+    if process.is_alive():
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            process.kill()
+        process.join()
+
+
+def _run_measurement_process(
+    factory: Callable,
+    x,
+    y,
+    n: int,
+    budget_s: float,
+    *,
+    capture_artifact: bool,
+    chromium: str | None,
+) -> dict[str, Any]:
+    """Run one row with a parent-enforced wall deadline."""
+    try:
+        context = multiprocessing.get_context("fork")
+    except ValueError as exc:  # pragma: no cover - benchmark reference hosts are POSIX
+        raise RuntimeError("hard benchmark timeouts require POSIX process forking") from exc
+
+    receive, send = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_measurement_worker,
+        args=(send, factory, x, y, n, capture_artifact, chromium),
+    )
+    process.start()
+    send.close()
+    try:
+        if receive.poll(budget_s):
+            try:
+                result = receive.recv()
+            except EOFError:
+                result = {"status": f"failed(worker exited with code {process.exitcode})"}
+            _stop_process_tree(process)
+            return result
+        _stop_process_tree(process)
+        return {"status": f"skipped(hard timeout after {budget_s:g}s budget)"}
+    finally:
+        receive.close()
 
 
 # ---------------------------------------------------------------------------
@@ -541,6 +672,8 @@ def run(
     ttfr_max_n: int | None = None,
     chromium: str | None = None,
 ) -> dict:
+    if budget_s <= 0:
+        raise SystemExit("--budget must be greater than zero")
     if np is None:
         raise SystemExit(
             "numpy is required to run the comparison (data generation). "
@@ -580,40 +713,20 @@ def run(
                 row["status"] = "skipped(over budget)"
                 results[name].append(row)
                 continue
-            adapter = factory(x, y)
-            if adapter is None:
-                row["status"] = "unavailable"
-                results[name].append(row)
-                continue
-            build, render, artifact_fn = _normalize(adapter)
-            try:
-                row.update(_measure(build, render, artifact_fn if ttfr else None))
-            except Exception as e:
-                row["status"] = f"failed({type(e).__name__}: {str(e)[:80]})"
-            row["pts_per_s"] = (n / row["total_s"]) if row.get("total_s") else None
-            # Time to first render: browser paint for HTML artifacts; the render
-            # itself for raster libs (PNG already = pixels). §17 makes this the
-            # metric that matters — bytes and serialize time don't equal pixels.
-            if ttfr and row.get("status") == "ok" and (ttfr_max_n is None or n <= ttfr_max_n):
-                html = row.pop("_artifact", None)
-                if html:
-                    browser = chart_ready_metrics(html, chromium=chromium)
-                    ready = None if browser is None else browser["ready_ms"]
-                    row["browser_ready_ms"] = ready
-                    row["browser_fcp_ms"] = None if browser is None else browser["fcp_ms"]
-                    row["browser_js_heap_bytes"] = (
-                        None if browser is None else browser["js_heap_bytes"]
-                    )
-                    row["browser_paint_ms"] = ready  # schema-v2 compatibility
-                    artifact_s = row.get("artifact_s")
-                    row["ttfr_ms"] = (
-                        (row["build_s"] + artifact_s) * 1e3 + ready
-                        if ready is not None and artifact_s is not None
-                        else None
-                    )
-                else:  # raster: build+render already produced pixels
-                    row["ttfr_ms"] = row["total_s"] * 1e3
-            row.pop("_artifact", None)
+            capture_artifact = ttfr and (ttfr_max_n is None or n <= ttfr_max_n)
+            row.update(
+                _run_measurement_process(
+                    factory,
+                    x,
+                    y,
+                    n,
+                    budget_s,
+                    capture_artifact=capture_artifact,
+                    chromium=chromium,
+                )
+            )
+            if row["status"].startswith("skipped(hard timeout"):
+                over_budget.add(name)
             results[name].append(row)
             if row.get("total_s", 0) > budget_s:
                 over_budget.add(name)  # ceiling reached; skip larger N
@@ -786,7 +899,12 @@ def to_markdown(report: dict) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sizes", default="1e3,1e4,1e5,1e6,1e7")
-    ap.add_argument("--budget", type=float, default=45.0)
+    ap.add_argument(
+        "--budget",
+        type=float,
+        default=45.0,
+        help="hard wall-clock deadline in seconds for each library/size row",
+    )
     ap.add_argument("--out", default=None, help="write Markdown report here")
     ap.add_argument("--json", default=None, help="write JSON results here")
     ap.add_argument(
